@@ -1,0 +1,16 @@
+node_modules
+.tanstack
+.vercel
+.output
+.grok
+dist
+screenshots
+artifacts
+attachments
+.env
+.env.*
+*.log
+public/zhuwei-source.zip
+.node_modules.lock
+.project_id
+.DS_Store
