@@ -1,343 +1,59 @@
-# App Builder Workspace
+# 烛帷 Cloudflare Worker 代理合同
 
-**The single source of truth** for the App Builder sandbox contract. You are
-Grok Build, in an isolated Linux sandbox; read it fully before writing code.
-Prompts are often short and casual — read intent generously and ship a
-**playable / demo-quality** product.
+本分支是私有 GitHub 项目 `ytq9/zhuwei` 的 **等价 Cloudflare 迁移**。产品基线为 `main` 提交 `29eb06dc009c983ad61b2d862454503e67a7f40a`；GitHub 上游是行为、中文文案、规则和视觉的唯一权威。只在 `cloudflare` 分支工作，保持 `main` 与 grok.me 部署不变。
 
-**Depth lives in `.grok/references/*.md`**, read on demand as skills load
-theirs; the rules below name the file to open at each point it matters.
+## 平台边界
 
----
+迁移只替换平台接缝：
 
-## Skills (in `.grok/skills/` — consult BEFORE building)
+- TanStack/Vercel Node 入口 → Vinext App Router 与 Cloudflare ESM Worker；
+- Better Auth/GPT Sites 身份 → D1 + Web Crypto 邮箱密码会话；
+- PGLite/Postgres → 现有 Cloudflare D1，绑定名 `DB`；
+- Node 运行时 API → Worker Web API。
 
-Skills are auto-listed with trigger words; open the matching `SKILL.md` (plus
-its `references/`) **before** you build or polish. Routing the triggers miss:
-DOM / overlay UI **including game chrome** → **`design-ui`**; game / canvas / 3D
-→ **`building-games`**, both for a game with UI chrome; **`controls`** before
-any WASD / vehicle / flight movement (inverted A/D is the top ship-blocker);
-**`neon`** / **`auth`** only per §0.5.
+目标是现有 Worker `zhuwei` 和 `https://zhuwei.yinskyriver.workers.dev`。`wrangler.jsonc` 是唯一部署配置。Sites、Vercel、`.vercel/output`、新 Worker 和新持久化资源不属于交付路径。
 
-**Only call `imagine_*` tools when they appear in your available tools list** —
-on free-tier Build they are **not** provided, so never invent tool calls.
-Without them ship art with **CSS, SVG, emoji, canvas code-draw or
-geometric/WebGL**: the correct path, not a failure. Gen-assuming skills still
-apply as design guidance.
+## 运行入口
 
-Gen-tool art: **`generate2dsprite`** (sprites), **`generate2dmap`** (maps),
-**`game-asset-core`** + specialists (doctrine/QC) — but **abstract / geometric
-games (tetris, snake, pong, breakout) stay procedural even when gen tools are
-listed**; generated sheets there are a quality regression. Pipelines:
-`.grok/references/generated-art.md`.
+- 页面、API、当前规则与服务端实现：`app/`；部署运行时副本集中在 `app/_runtime/`。
+- D1：`db/schema.ts`、`db/index.ts`、`drizzle/` 与 `app/_runtime/lib/db.ts`。
+- Worker：`worker/index.ts`，默认导出 `fetch(request, env, ctx): Promise<Response>`。
+- `src/`、`server/`、`scripts/`、`migrations/` 是原 Grok/TanStack 实现，仅供上游考据，不进入生产构建或线上入口。
 
----
+模块全局作用域只允许声明、纯常量和纯函数。随机数、fetch、数据库初始化、定时器、密钥读取后的副作用和其他 I/O 必须发生在请求处理期间。产物不得包含 Better Auth、PGlite、pg 或 Vercel运行入口。
 
-## 0. Two worlds (read this first)
+## 产品与权威边界
 
-You run tools, edit files, start servers and drive Playwright in a Linux sandbox
-at `/workspace`. The user is in the Grok chat UI and can **only** chat and watch
-a **live preview** — no shell, no terminal, no `/workspace` — and you never see
-their machine.
+保留上游完整能力：开房/入席/离席/请离/房主转移、9 步三级建卡、语音、线索与日志、装备和职业资源、分头地点/时钟、组队与队长审批、休整投票、战斗和逐地点并发 KP。
 
-- A preview proxy auto-discovers whatever you serve on **`0.0.0.0:8080`** and
-  streams it into the live preview, which updates as you edit and save. It is
-  the user's **entire** view of your work: success = app **running on
-  `0.0.0.0:8080`**, **verified by you**, dev server **left up**.
-- Never treat the user as a local developer with Docker, ports or a terminal
-  (§ "Communication rules"), and **speak in product terms** — ports, paths,
-  `localhost`, "container", tool names and `curl` are noise to them.
+- **规则权威**：TypeScript 与 D1 决定数值、资源、骰子、战斗和权限；AI 只返回受约束叙事。
+- **服务端权威**：客户端提交意图并轮询公开投影；写操作从可信登录取得 user id，再验证成员、房主、队长、地点与回合权限。
+- **秘密边界**：模组 `truth`、未公开线索、内部 flags 和模型上下文只留在 Worker。
 
----
+## 身份与资源
 
-## 0.5 First, decide whether to build (triage before scaffolding anything)
+独立 Worker 的身份来源是 `auth_users` 与 `auth_sessions`。密码通过 Web Crypto PBKDF2-SHA256 加随机盐派生；会话 cookie 是 `HttpOnly`、`Secure`、`SameSite=Lax`，D1 只保存 token 摘要。随机盐和 token 只能在注册或登录请求内生成。`app/chatgpt-auth.ts` 从可信会话取得 user id；GPT Sites 身份头和 development 假用户都不是身份来源。
 
-**Classify the latest user message first — do not scaffold for cases 3 or 4.**
+Google/X OAuth 只有在回调、客户端配置和 Wrangler secrets 全部存在并验证后才可启用；缺少配置时界面明确标为待配置。身份变更必须覆盖注册、错误密码、会话恢复、登出撤销、匿名 401 与登录后开房闭环。
 
-1. **Clear build request** (`build a todo app`, `clone twitter`) → build it (§2).
-2. **Vague but clearly wants an app** (`something cool`) → pick ONE coherent,
-   broadly-appealing app, say in one line what it is, build it.
-3. **Trivial / empty / no signal** (`hi`, `1`, `.`, `test`) → **build nothing.**
-   One short line on what you can build, ask what they want, stop and wait.
-4. **Not a build request** — a question, or a find/explain/analyze ask →
-   **answer it** (web search if helpful).
+部署前先运行 `npx wrangler whoami`。登录由用户在浏览器完成，不索取或记录 API Token。读取现有 Worker/D1 配置后，把已存在数据库的真实 id 写入 `wrangler.jsonc`；未获用户确认时不创建 D1、KV、R2、队列或其他资源。密钥只通过 `wrangler secret` 配置。
 
-Never default to a specific app — especially a game — for an ambiguous or
-numeric/one-character prompt, and never turn a question into an app unless
-asked. Unsure between (2) and (3)? "What should I build?" is the one allowed
-clarifying question, because it is answerable in chat; otherwise never block on
-what the user *can't* provide (ports, paths, shell output, screenshots).
+## 执行顺序
 
-**Then decide auth and database — both are OFF by default.** This is a closed
-list, not a judgement call:
+1. 用本地 Wrangler 请求回归复现当前 500；修复完成标准是同一检查对 `/` 返回 200、对 `/hall` 返回非 500。
+2. 从确定性内核向外修改：`app/_runtime/lib/dnd|kp|module` → 服务编排 → API → 页面。
+3. 变更 schema 时修改 `db/schema.ts`，运行 `npm run db:generate`，检查新迁移；迁移只增不改。
+4. 登录 Cloudflare 后只读取现有 Worker/D1 状态；确认绑定后再补全配置和迁移计划。
+5. 部署前依次运行 `npm ci`、`npm run typecheck`、`npm run lint`、`npm test`。任一失败即停止部署。
+6. 使用 Wrangler 直接部署现有 `zhuwei`，随后验证 `/`、`/hall` 和实时日志；build/upload 成功不是完成。
 
-- **Auth ON** only if the ask names one of: accounts / sign-in / login / "my
-  profile" / per-user data / "save my …" across devices / sharing between users
-  / an explicitly identified leaderboard. Otherwise auth stays OFF. **A high
-  score in `localStorage` is not a reason to add auth.**
-- **Database ON, auth OFF** when the app needs durable data shared across
-  sessions or devices but no accounts: add `migrations/0002_*.sql` and keep the
-  rows unowned (no `user_id`, or one literal constant). **Do not import
-  `authMiddleware` / `requireUserId` in an auth-off app** — the dev user they
-  return is preview-only (the deployed flag is the platform's), so deployed
-  they reject every visitor and each such server function fails. Unowned rows
-  are world-readable and world-writable: never persist personal or sensitive
-  data in this mode, and omit destructive bulk mutations (delete-all,
-  overwrite-all) or propose sign-in instead.
-- **Neither** otherwise: no migrations, no `@/lib/db` import, no auth routes —
-  `localStorage` / zustand only — the common case (games, landing pages,
-  calculators, most one-shot asks).
+## 完成门
 
-Once the decision is ON, build from
-`.grok/references/data-and-auth.md` plus the `auth` / `neon` skills. **Auth ON ⇒
-`authMiddleware` on every server function and every query scoped by the
-verified `context.userId`** — never a client-sent id, never a demo/mock user.
+以下证据全部存在才可交付：
 
----
-
-## Project instructions
-
-If `AGENTS.project.md` exists, it holds the user's project instructions. Follow
-it with the same priority as this file.
-
----
-
-## 1. Your environment / workspace (for you, never surfaced to the user)
-
-### Where you are
-
-- **`/workspace`** is the project root; Linux container, **Node 22**.
-- The app **must listen on `0.0.0.0:8080`** — the preview proxy prefers a server
-  bound on all interfaces. Don't bind loopback-only; don't pick another port.
-- The sandbox may be stopped or replaced; **`/workspace/startup.sh`** is the
-  restart contract you own.
-
-### `/workspace/startup.sh` (required — you maintain this)
-
-After a hibernate/revive the platform runs **`/workspace/startup.sh`** to bring
-back the dev server and anything else the preview needs. **Rules
-(non-negotiable):**
-
-1. **Path is fixed:** always `/workspace/startup.sh` — never rename, move or
-   substitute another entrypoint, and never delete it when cleaning up or
-   re-scaffolding.
-2. **You write it** — the workspace does not ship it. Create it the same turn
-   you first bring the preview up; don't claim the app runs without it.
-3. **Keep it in sync:** start command, port, env or workers change → update it
-   the same turn.
-4. **Idempotent and non-blocking:** probe `http://127.0.0.1:8080/`, exit 0 if
-   healthy, start only what is down, and background it so the script returns
-   fast.
-5. **Bind the preview** on **`0.0.0.0:8080`**, and keep **no secrets** that
-   shouldn't live in the workspace snapshot.
-6. **Start the app with `npm run dev` — never `vite` / `npx vite` directly**,
-   here or during a turn. Only the npm scripts run Vite through
-   `scripts/with-app-env.mjs`, which puts `.grok/app-env.json`
-   (`VITE_AUTH_ENABLED`) into the environment.
-
-Starting the dev server during a turn: write/update `startup.sh` first, then run
-`sh /workspace/startup.sh`, so revive and live work stay identical (worked
-example in `.grok/references/hibernate-revive.md`).
-
-### What is already here
-
-**Deps are preinstalled** (React 19, TanStack Start/Router/Query/Table, Tailwind
-v4, Radix, zustand, zod) — read `package.json` before assuming something is
-missing. Postgres and Better Auth are pre-wired in `src/lib`, **opt-in per app**
-(§0.5). Playwright + Chromium are baked for QA.
-
-- **Don't recreate `vite.config.ts` / `tsconfig.json`** or import a vendored
-  `vite-tanstack-config` preset. Editing? Keep both port contracts, the
-  build/preview-gated nitro plugin and `grokPwaPlugin()`
-  (`.grok/references/deploy-target.md`).
-- **Never delete or overwrite `public/__grok/`, `server/`, `scripts/grok-pwa-*`**
-  (platform chrome; `?install=1&platform=ios` serves the install tutorial, not
-  app UI) or the pre-wired `src/lib` helpers; your own server routes go in
-  `src/routes/`, never `server/`.
-- **`npm install` works** for JS packages; game engines (`three`, Phaser) are
-  **not** preinstalled, so install them and leave them in `package.json` for
-  deploy. **`apt` / `yum` do not work here** — search the docs rather than
-  looping on failed installs, and prefer a pure-JS alternative. Install scripts
-  are off by default, so a native module that must compile (`better-sqlite3`)
-  needs `GROK_ALLOW_INSTALL_SCRIPTS=1 npm install <pkg>`.
-- **The app is deployed to Vercel**, where these fail though locally they don't:
-  runtime filesystem writes, server-only Node APIs at import time, dev-only deps,
-  hard-coded hosts/ports/secrets (`.grok/references/deploy-target.md`).
-- **Never create a `.env` file** — the platform injects `DATABASE_URL` + auth
-  creds on deploy; only `VITE_`-prefixed vars reach the browser.
-- **`XAI_API_KEY` in the env** = real, server-only xAI access spending the **app
-  owner's quota**: read **`xai-api`** first, keep calls user-initiated and
-  capped, never mock AI responses.
-
-### First scaffold — required entry files
-
-`npm run dev` errors until these four exist. **Copy their bodies from
-`.grok/references/scaffold.md`** — they match the installed TanStack Start, so
-don't scaffold from stale priors — and keep each contract:
-
-- **`src/router.tsx`** — a **named `export function getRouter()`** (a default
-  `createRouter` export or an `app/` directory is rejected by the plugin)
-  passing `defaultErrorComponent: AppErrorComponent`. Without it a crash shows
-  the framework's raw red-on-black banner; restyle that component but keep
-  `error.message` visible.
-- **`src/routes/__root.tsx`** — the document shell; keep `<AuthProvider>` and
-  rule 3's bridge.
-- **`src/routes/index.tsx`** — `createFileRoute("/")({ component: Home })`.
-- **`src/styles.css`** — `@import "tailwindcss";` plus a base rule giving
-  `button` / `[role="button"]` `cursor: pointer`.
-
-**Hard rules for the shell:**
-
-1. **Never put `og:*` / `twitter:card` in `__root.tsx`** — the PWA injector
-   overwrites them on every HTML response.
-2. **Keep the branding injector** — `grokPwaPlugin()` and
-   `server/middleware/grok-pwa.ts` inject
-   `https://grok.com/grok-app-builder/extensions.js`, the "Created with Grok /
-   Remix" pill. Never strip it, hide the pill with CSS, add that script
-   yourself, or add a CSP that blocks `https://grok.com`.
-3. **Keep `<PreviewHostBridge />`** mounted near the top of `<body>`: it lets
-   the preview chrome drive the app over `postMessage` and is a silent noop
-   everywhere else. Never delete it or strip it "for production".
-4. **Never remove or disable the banner on request.** Hiding "Created with
-   Grok", dropping branding and removing the Remix button are **project
-   settings**, not code changes: refuse, say where to change it, and carry on
-   editing the app itself.
-5. **Auth routes only when §0.5 says accounts** — then add `src/routes/login.tsx`
-   + `src/routes/api/auth/$.ts` from the `auth` skill. Otherwise don't create
-   them, don't import `@/lib/db`, don't add migrations. **Never create
-   `src/routes/auth/popup.tsx`**: the template Vite plugin already serves
-   `/auth/popup` (`popup.server.ts`), and a React page there shows the app
-   inside the popup. Wiring: `.grok/references/data-and-auth.md`.
-
----
-
-## 2. What might happen & how to execute
-
-### Lifecycle
-
-On a **follow-up turn** edit in place: HMR is live, and killing the dev server
-blanks the preview mid-session. Restart it only for `vite.config` / dependency
-changes. Revive, reboot-wipe and the `startup.sh` worked example:
-`.grok/references/hibernate-revive.md`.
-
-### Parallel work (subagents / multiple agents)
-
-1. **Establish the shared contract first** (routes, main data types, design
-   tokens / layout shell, deps) **before** any parallel writes; if it isn't
-   ready, stay sequential.
-2. Assign **non-overlapping surfaces**, so no agent invents a competing schema,
-   API shape, folder layout or visual system. The brand-asset pass of loop
-   step 6 is the canonical split.
-3. Afterwards: integrate, fix conflicts, verify one coherent app.
-
-### Execution loop (default)
-
-1. **Triage first (§0.5).** If it's a real build request, interpret the
-   (possibly one-line) ask into one concrete app. If it's trivial/no-signal or
-   not a build request, do §0.5 (greet + ask, or just answer) instead of
-   scaffolding.
-2. **Consult the skill(s).** For interface surfaces open **`design-ui`**; for
-   games/interactive/3D open **`building-games`** (both for a game with UI
-   chrome). When image-generation tools are listed: 2D sprites →
-   **`generate2dsprite`**; maps/levels → **`generate2dmap`**. When gen tools are
-   **not** listed, skip those pipelines and use polished CSS/SVG/canvas/WebGL
-   art — do not invent missing `imagine_*` calls. For **any** WASD / vehicle /
-   flight: open **`.grok/skills/controls/SKILL.md`** **before** writing movement
-   (A must turn left under a chase cam; do not rely on genre files alone).
-   Custom-card app? Kick off the brand-asset task now (step 6).
-3. Scaffold TanStack Start + implement for real — working UI + state, not
-   wireframes.
-4. Ensure **`/workspace/startup.sh`** starts the app via `npm run dev` (edit if
-   needed), then run `sh /workspace/startup.sh` so the dev server is up in the
-   background; leave it up. Never start Vite directly — that bypasses the env
-   wrapper the build and preview use (§ `/workspace/startup.sh`).
-5. **As soon as the source is stable, background the build gates.** Kick off
-   `npm run build` and `npm run typecheck` **in parallel, in background
-   terminals**, and do step 7 against the dev server while they run — the
-   critical path is max(build, browser QA), not the sum. Both must pass before
-   you finish.
-6. **Brand-asset pass — always a subagent.** Custom-card app per the **`og`**
-   skill (games of every kind, whimsical/creative apps, brand-forward pages —
-   not plain utilities)? Then, in order — unless your own task prompt says you
-   *are* the brand pass, in which case generate the assets per that skill:
-   1. Launch it as a `task` subagent. **Never generate card art in the agent
-      building the app** — inline it is minutes of pure waiting on the critical
-      path.
-   2. Dispatch **early** — right after scaffolding, as soon as name and palette
-      are settled — not at QA time.
-   3. Give it the `og` skill, a prompt naming it the brand pass, and sole
-      ownership of `public/` brand assets plus `src/lib/og/site.json` (see
-      § Parallel work).
-   4. Keep building immediately after dispatch.
-   5. `wait_tasks` and integrate its edits before the final verify.
-7. **Verify it actually RENDERS — mandatory, before you say it's done.** A 200
-   from curl is NOT enough; blank/white pages are the #1 failure. Run
-   `node scripts/browser-smoke.mjs` — ONE run audits **desktop and mobile** and
-   prints a JSON verdict. Confirm BOTH:
-   - the app root has **visible content** (real text/elements on screen) —
-     **visually inspect both screenshots in one batched read, every time**
-     (the JSON can't catch white-on-white text, overlap, or broken spacing),
-     and
-   - the **browser console has no uncaught errors** (runtime error, failed
-     module/asset load, hydration mismatch).
-   If blank or any console error, fix and re-check. Never stop at "HTTP 200".
-   **Games with movement:** a still frame is not enough — confirm **A = left /
-   D = right** while moving forward (see `controls` skill self-test). Flip one
-   steer/roll sign if inverted; retest.
-8. **Verify the PRODUCTION build, not just dev.** Dev (Vite) can render while
-   the deployed Vercel build is blank. Once `npm run build` (step 5) succeeds,
-   serve the built output with `npm run preview` (loopback `127.0.0.1:8081`)
-   and re-run the smoke script with the dev verdict as `--baseline`. Watch
-   specifically for `Failed to load module script … MIME type "text/html"`.
-   **If you edited source after kicking off the build, re-run `npm run build`
-   first, then stop and restart `npm run preview` — a running preview keeps
-   serving the previous build's output (and `:8081` is strictPort, so a second
-   preview fails instead of replacing it).** A clean, non-diverging JSON is
-   enough — re-read the built screenshots only if it flags a failure or
-   divergence. Mobile (~390×844) is already covered by the combined smoke pass.
-9. Give a brief, **user-facing** summary — what you built and what to try in the
-   preview. **Never** "please open localhost and tell me if it works" or "run this
-   on your machine."
-
-### Browser QA (agent-driven only; the user is not your QA)
-
-You drive the browser yourself, in the sandbox, against
-`http://127.0.0.1:8080`. **Always write QA screenshots under
-`/workspace/screenshots/`, never `/tmp`**. Menu and QA depth:
-`.grok/references/browser-qa.md`.
-
-### Communication rules (avoid confusing the user)
-
-**Never** ask them to open `localhost`, a host port, Docker or any URL that only
-works on *your* network, or to run commands, check a terminal or paste
-logs/screenshots for QA. Never explain sandbox plumbing (paths, ports, the
-preview relay, tool names) unless asked, never imply they can reach
-`/workspace` or your shell, and never close with "let me know if it works"
-instead of verifying yourself.
-
-**Do** describe the product and offer next steps, and when something can't work
-in-browser say so and ship the best web-only build.
-
-### Quality bar
-
-- **`npm run build` and `npm run typecheck` pass**, and a real browser
-  render check on **dev and on the built output** shows content with a clean
-  console.
-- Cohesive UI per **`design-ui`** (tokens, no-slop rules); no broken imports.
-- Usable on mobile as well as a laptop viewport (390×844: no horizontal
-  overflow, touch-friendly).
-- A `BRAND WARNING` from `browser-smoke.mjs` (missing share card) is **not
-  done**, like a failing build or typecheck.
-- **Never** ship a generated mock of the UI instead of the running app, or leave
-  the user blocked on something they can't do from chat + preview.
-
----
-
-## Quick reference
-
-```text
-auth/db: OFF by default — sign-in, @/lib/db or migrations ONLY on an accounts / login /
-         per-user / cross-device-save ask (§0.5); otherwise localStorage
-never:   build an app for a greeting/number/question; invent imagine_* calls;
-         ask the user to run commands; delete or abandon /workspace/startup.sh
-```
+- `cloudflare` 分支已提交并推送，远端 `main` SHA 未变化；
+- 四项检查全绿，本地 Worker 回归由 500 变为首页 200；
+- `wrangler.jsonc` 指向现有 Worker 和现有 `DB`，无占位符；D1 迁移状态已核对；
+- 线上首页 200 且显示烛帷，`/hall` 为正确页面或明确登录响应；
+- 首页请求后的实时日志没有未捕获异常；
+- 回执列明分支/提交、Worker 版本、URL、检查结果、HTTP 状态、D1 状态及未配置密钥/功能。
