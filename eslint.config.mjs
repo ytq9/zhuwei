@@ -19,6 +19,7 @@ export default defineConfig([
     "server/**",
     "scripts/**",
     "next-env.d.ts",
+    "worker-configuration.d.ts",
   ]),
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

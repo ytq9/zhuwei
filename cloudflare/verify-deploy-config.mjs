@@ -7,6 +7,7 @@ const config = JSON.parse(
 
 assert.equal(config.name, "zhuwei", "Wrangler target must remain the existing zhuwei Worker");
 assert.equal(config.main, "worker/index.ts", "Deployment must use the Worker ESM entry");
+assert.equal(config.ai?.binding, "AI", "Workers AI binding must be named AI");
 assert.equal(config.d1_databases?.length, 1, "Exactly one existing D1 binding is required");
 assert.equal(config.d1_databases[0]?.binding, "DB", "D1 binding must be named DB");
 assert.equal(

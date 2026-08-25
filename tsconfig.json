@@ -10,7 +10,7 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
-    "types": ["@cloudflare/workers-types", "vite/client"],
+    "types": ["vite/client"],
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
@@ -20,6 +20,7 @@
   },
   "include": [
     "next-env.d.ts",
+    "worker-configuration.d.ts",
     "app/**/*.ts",
     "app/**/*.tsx",
     "db/**/*.ts",

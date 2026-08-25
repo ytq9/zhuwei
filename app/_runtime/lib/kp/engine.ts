@@ -52,30 +52,71 @@ import {
 export type { KpSpeech, PendingRoll };
 
 async function chatJson(messages: { role: "system" | "user"; content: string }[]) {
-  const apiKey = (env as unknown as { XAI_API_KEY?: string }).XAI_API_KEY;
-  if (!apiKey) return { ok: false as const, error: "AI 暂不可用" };
-  const res = await fetch("https://api.x.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "grok-4.5",
-      temperature: 0.7,
-      max_tokens: 1200,
-      response_format: { type: "json_object" },
-      messages,
-    }),
-  });
-  if (!res.ok) {
-    return { ok: false as const, error: `KP 无法应答（${res.status}）` };
-  }
-  const body = (await res.json()) as {
-    choices: { message: { content: string } }[];
+  const secrets = env as typeof env & {
+    DEEPSEEK_API_KEY?: string;
+    XAI_API_KEY?: string;
   };
-  const text = body.choices[0]?.message.content ?? "";
-  return { ok: true as const, data: parseKpSafe(text) };
+  const providers = [
+    secrets.DEEPSEEK_API_KEY
+      ? {
+          name: "DeepSeek",
+          url: "https://api.deepseek.com/chat/completions",
+          apiKey: secrets.DEEPSEEK_API_KEY,
+          body: {
+            model: "deepseek-v4-flash",
+            thinking: { type: "disabled" },
+            temperature: 0.7,
+            max_tokens: 1200,
+            response_format: { type: "json_object" },
+            messages,
+          },
+        }
+      : null,
+    secrets.XAI_API_KEY
+      ? {
+          name: "xAI",
+          url: "https://api.x.ai/v1/chat/completions",
+          apiKey: secrets.XAI_API_KEY,
+          body: {
+            model: "grok-4.5",
+            temperature: 0.7,
+            max_tokens: 1200,
+            response_format: { type: "json_object" },
+            messages,
+          },
+        }
+      : null,
+  ].filter((provider) => provider !== null);
+
+  if (providers.length === 0) {
+    return { ok: false as const, error: "AI 密钥未配置" };
+  }
+
+  let lastError = "KP 无法应答";
+  for (const provider of providers) {
+    try {
+      const res = await fetch(provider.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${provider.apiKey}`,
+        },
+        body: JSON.stringify(provider.body),
+      });
+      if (!res.ok) {
+        lastError = `${provider.name} 无法应答（${res.status}）`;
+        continue;
+      }
+      const body = (await res.json()) as {
+        choices?: { message?: { content?: string } }[];
+      };
+      const text = body.choices?.[0]?.message?.content ?? "";
+      return { ok: true as const, data: parseKpSafe(text) };
+    } catch {
+      lastError = `${provider.name} 返回了无效结果`;
+    }
+  }
+  return { ok: false as const, error: lastError };
 }
 
 type StateRow = {

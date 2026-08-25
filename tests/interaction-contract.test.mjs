@@ -58,6 +58,24 @@ test("exposes every upstream table and voice command through the authenticated A
   assert.match(route, /userId: user\.userId/);
 });
 
+test("uses DeepSeek for structured KP text and Workers AI for Chinese voice", async () => {
+  const [configText, engine, voice] = await Promise.all([
+    source("wrangler.jsonc"),
+    source("app/_runtime/lib/kp/engine.ts"),
+    source("app/_runtime/lib/voice/server.ts"),
+  ]);
+  const config = JSON.parse(configText);
+  assert.equal(config.ai?.binding, "AI");
+  assert.match(engine, /DEEPSEEK_API_KEY/);
+  assert.match(engine, /https:\/\/api\.deepseek\.com\/chat\/completions/);
+  assert.match(engine, /response_format:\s*\{ type: "json_object" \}/);
+  assert.match(voice, /@cf\/openai\/whisper-large-v3-turbo/);
+  assert.match(voice, /@cf\/myshell-ai\/melotts/);
+  assert.doesNotMatch(voice, /api\.x\.ai/);
+  assert.doesNotMatch(voice, /XAI_API_KEY/);
+  assert.doesNotMatch(voice, /new Map/);
+});
+
 test("keeps clocks, squads, rest voting, combat, voice and public projection in the live UI", async () => {
   const [play, server, engine] = await Promise.all([
     source("app/_runtime/components/play-table.tsx"),

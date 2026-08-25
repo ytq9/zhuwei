@@ -5,9 +5,7 @@ import {
 } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
-interface Env {
-  ASSETS: Fetcher;
-  DB: D1Database;
+type WorkerEnv = Env & {
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -18,17 +16,12 @@ interface Env {
       };
     };
   };
-}
-
-interface ExecutionContext {
-  waitUntil(promise: Promise<unknown>): void;
-  passThroughOnException(): void;
-}
+};
 
 const worker = {
   async fetch(
     request: Request,
-    env: Env,
+    env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
@@ -53,4 +46,4 @@ const worker = {
   },
 };
 
-export default worker;
+export default worker satisfies ExportedHandler<WorkerEnv>;

@@ -2,7 +2,13 @@ import { env } from "cloudflare:workers";
 import { authMiddleware, createServerFn } from "@/lib/platform/server-fn";
 import { getSql } from "@/lib/db";
 
-const ttsCache = new Map<string, string>();
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
 
 async function assertMember(roomId: string, userId: string) {
   const sql = await getSql();
@@ -16,40 +22,25 @@ export const transcribeAudio = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { mime: string; b64: string }) => input)
   .handler(async ({ data }) => {
-    const apiKey = (env as unknown as { XAI_API_KEY?: string }).XAI_API_KEY;
-    if (!apiKey) return { ok: false as const, error: "语音识别暂不可用" };
     if (!data.b64 || data.b64.length > 2_800_000) {
       return { ok: false as const, error: "录音过长，请说得更短一些" };
     }
-    const binary = atob(data.b64);
-    const bin = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    const mime = data.mime || "audio/webm";
-    const ext = mime.includes("mp4") ? "mp4" : mime.includes("mpeg") ? "mp3" : "webm";
-    const form = new FormData();
-    form.append(
-      "file",
-      new Blob([bin], { type: mime }),
-      `take.${ext}`,
-    );
-    form.append("model", "grok-stt");
-    const tryUrls = ["https://api.x.ai/v1/stt", "https://api.x.ai/v1/audio/transcriptions"];
-    let lastErr = "语音识别失败";
-    for (const url of tryUrls) {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}` },
-        body: form,
+    try {
+      const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+        audio: data.b64,
+        task: "transcribe",
+        language: "zh",
+        vad_filter: true,
+        initial_prompt: "中文 D&D 跑团，人物、地点、法术、装备、检定与骰点。",
+        beam_size: 5,
+        condition_on_previous_text: false,
       });
-      if (!res.ok) {
-        lastErr = `语音识别失败（${res.status}）`;
-        continue;
-      }
-      const body = (await res.json()) as { text?: string };
-      const text = (body.text ?? "").trim();
+      const text = result.text.trim();
       if (!text) return { ok: false as const, error: "没听清，请再试一次" };
       return { ok: true as const, text };
+    } catch {
+      return { ok: false as const, error: "语音识别失败，请再试一次" };
     }
-    return { ok: false as const, error: lastErr };
   });
 
 export const speakNarration = createServerFn({ method: "POST" })
@@ -57,13 +48,6 @@ export const speakNarration = createServerFn({ method: "POST" })
   .validator((input: { roomId: string; messageId: string }) => input)
   .handler(async ({ data, context }) => {
     await assertMember(data.roomId, context.userId);
-    const cacheKey = data.messageId;
-    const cached = ttsCache.get(cacheKey);
-    if (cached) return { ok: true as const, b64: cached, mime: "audio/mpeg" };
-
-    const apiKey = (env as unknown as { XAI_API_KEY?: string }).XAI_API_KEY;
-    if (!apiKey) return { ok: false as const, error: "语音播报暂不可用" };
-
     const sql = await getSql();
     const rows = await sql<{ tts_text: string | null; body: string; kind: string }>`
       select tts_text, body, kind from messages
@@ -77,31 +61,23 @@ export const speakNarration = createServerFn({ method: "POST" })
     const text = (row.tts_text || row.body).slice(0, 800);
     if (!text) return { ok: false as const, error: "空旁白" };
 
-    const res = await fetch("https://api.x.ai/v1/tts", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        text,
-        voice_id: "orion",
-        language: "zh",
-      }),
-    });
-    if (!res.ok) {
-      return { ok: false as const, error: `播报失败（${res.status}）` };
+    try {
+      const res = await env.AI.run(
+        "@cf/myshell-ai/melotts",
+        { prompt: text, lang: "zh" },
+        { returnRawResponse: true },
+      );
+      if (!res.ok) {
+        return { ok: false as const, error: `播报失败（${res.status}）` };
+      }
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.length === 0) {
+        return { ok: false as const, error: "播报没有生成音频" };
+      }
+      const contentType = res.headers.get("content-type")?.split(";")[0];
+      const mime = contentType?.startsWith("audio/") ? contentType : "audio/mpeg";
+      return { ok: true as const, b64: bytesToBase64(bytes), mime };
+    } catch {
+      return { ok: false as const, error: "语音播报失败，请再试一次" };
     }
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    let binary = "";
-    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-    }
-    const b64 = btoa(binary);
-    if (ttsCache.size > 80) {
-      const first = ttsCache.keys().next().value;
-      if (first) ttsCache.delete(first);
-    }
-    ttsCache.set(cacheKey, b64);
-    return { ok: true as const, b64, mime: "audio/mpeg" };
   });
