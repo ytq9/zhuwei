@@ -25,6 +25,16 @@ import { ensureResources, left, listStocks, type StockItem } from "@/lib/dnd/res
 import { toast } from "sonner";
 import { Mic, Send, ScrollText, UserRound, MapPinned, Users } from "lucide-react";
 
+export type TableMessage = {
+  id: string;
+  user_id: string | null;
+  kind: string;
+  name: string;
+  body: string;
+  created_at: string;
+  clues?: { id: string; name: string; hint: string }[];
+};
+
 export type TableSnap = {
   me: { userId: string; is_host: boolean; nickname: string };
   room: {
@@ -37,14 +47,11 @@ export type TableSnap = {
   };
   members: { user_id: string; nickname: string; is_host: boolean }[];
   characters: { userId: string; locked: boolean; sheet: CharacterSheet }[];
-  messages: {
-    id: string;
-    user_id: string | null;
-    kind: string;
+  messages: TableMessage[];
+  locationThreads: {
+    placeId: string;
     name: string;
-    body: string;
-    created_at: string;
-    clues?: { id: string; name: string; hint: string }[];
+    messages: TableMessage[];
   }[];
   logs: { id: string; entry: string; created_at: string }[];
   state: {
@@ -259,6 +266,10 @@ export function PlayTable({
             </button>
           </div>
         </div>
+        <LocationHistoryBar
+          threads={snap.locationThreads}
+          meId={snap.me.userId}
+        />
         {snap.state.combat ? (
           <div className="shrink-0 overflow-y-auto border-b border-border px-4 py-3 lg:max-h-[30vh]">
             <CombatStrip
@@ -807,6 +818,76 @@ function MessageBubble({
         </ul>
       )}
     </article>
+  );
+}
+
+function LocationHistoryBar({
+  threads,
+  meId,
+}: {
+  threads: TableSnap["locationThreads"];
+  meId: string;
+}) {
+  const [openPlace, setOpenPlace] = useState<string | null>(null);
+  if (!threads.length) return null;
+  const openThread = threads.find((thread) => thread.placeId === openPlace);
+
+  return (
+    <div className="shrink-0 border-b border-border bg-bg/35">
+      <div className="flex items-center gap-2 overflow-x-auto px-4 py-2">
+        <span className="shrink-0 text-[10px] tracking-[0.16em] text-subtle">
+          曾到过
+        </span>
+        {threads.map((thread) => {
+          const open = thread.placeId === openPlace;
+          return (
+            <button
+              key={thread.placeId}
+              type="button"
+              aria-expanded={open}
+              className={cn(
+                "shrink-0 rounded-full border px-3 py-1 text-[11px] transition",
+                open
+                  ? "border-brass bg-brass/10 text-brass"
+                  : "border-border text-muted hover:border-brass/60 hover:text-fg",
+              )}
+              onClick={() => setOpenPlace(open ? null : thread.placeId)}
+            >
+              {thread.name} · {thread.messages.length}
+            </button>
+          );
+        })}
+      </div>
+      {openThread ? (
+        <section
+          aria-label={`${openThread.name}的历史对话`}
+          className="max-h-[42dvh] overflow-y-auto border-t border-border px-5 py-4"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="font-display text-sm text-fg">{openThread.name}</p>
+              <p className="text-[11px] text-subtle">只收录你在这里经历过的对话</p>
+            </div>
+            <button
+              type="button"
+              className="text-xs text-muted hover:text-fg"
+              onClick={() => setOpenPlace(null)}
+            >
+              收起
+            </button>
+          </div>
+          <div className="space-y-4">
+            {openThread.messages.map((message) => (
+              <MessageBubble
+                key={message.id}
+                m={message}
+                mine={message.user_id === meId}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
   );
 }
 
@@ -1946,24 +2027,37 @@ function Stat({
 function ClueBoard({ clues }: { clues: TableSnap["state"]["clues"] }) {
   if (!clues.length) {
     return (
-      <p className="text-sm text-muted">线索板还是空的。去看、去问、去翻。</p>
+      <div>
+        <p className="text-[11px] text-subtle">全桌共享，任何人发现后都会同步到这里。</p>
+        <p className="mt-2 text-sm text-muted">线索板还是空的。去看、去问、去翻。</p>
+      </div>
     );
   }
   return (
-    <ul className="grid gap-3">
-      {clues.map((c) => (
-        <li
-          key={c.id}
-          className="rounded-[16px] border border-border bg-bg/40 p-3"
-        >
-          <p className="font-medium">{c.name}</p>
-          <p className="mt-1 text-sm leading-relaxed text-muted">{c.text}</p>
-          {c.hint ? (
-            <p className="mt-1 text-[11px] text-brass">{c.hint}</p>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+    <div>
+      <p className="mb-3 text-[11px] text-subtle">
+        全桌共享 · 表层线索可继续检定，成功后会在原卡片上更新。
+      </p>
+      <ul className="grid gap-3">
+        {clues.map((c) => (
+          <li
+            key={c.id}
+            className="rounded-[16px] border border-border bg-bg/40 p-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-medium">{c.name}</p>
+              <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-subtle">
+                {c.layer === "full" ? "已确认" : "表层"}
+              </span>
+            </div>
+            <p className="mt-1 text-sm leading-relaxed text-muted">{c.text}</p>
+            {c.layer === "talk" && c.hint ? (
+              <p className="mt-1 text-[11px] text-brass">{c.hint}</p>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

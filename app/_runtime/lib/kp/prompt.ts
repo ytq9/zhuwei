@@ -69,7 +69,7 @@ export const KP_JSON_SHAPE = `{
   "hat": "refuse" | "call_roll" | "narrate" | "oppose",
   "speech": "玩家可见旁白，中文，完整句，只写此刻能感知的，禁剧透，不超过 260 字",
   "tts": "适合朗读的稍短版本，完整句，不要堆省略号",
-  "rolls": [{"userId":"","name":"","ability":"str|dex|con|int|wis|cha","skill":"athletics 等英文 id 或空","kind":"check|save|attack|init|damage|death|heal","dc":15,"targetId":"npc:naes 或 userId","dice":"1d8","clueId":"c-leaf 或空","reason":"玩家能感知的双轨预告：失败停在刚才那层，成功多一层","advantage":false}],
+  "rolls": [{"userId":"","name":"","ability":"str|dex|con|int|wis|cha","skill":"athletics 等英文 id 或空","kind":"check|save|attack|init|damage|death|heal","dc":15,"targetId":"npc:naes 或 userId","dice":"1d8","clueId":"c-leaf 或空","reason":"只写模糊的检定目的，例如：进一步确认眼前的细节。不得写成功、失败、答案或线索内容","advantage":false}],
   "revealClues": ["c-leaf"],
   "revealNpcs": ["lian"],
   "scene": {"chapterId":"ch1","sceneId":"wake"} | null,
@@ -144,7 +144,7 @@ export function buildKpMessages(input: KpInput) {
    有人离开、有人留下：wherePatch 必须写下每一个人的新地点。旁白里两头都要写到。
 2. 判合理性：完全离谱 → hat=refuse，给一句世界内原因，不掷骰。勉强能发生 → 拆成 5e 检定。
 3. 要骰：寒暄、自我介绍、请人读、掀开一看——先把免费层写成清楚的现场描述，不骰。
-   **关键段落必须骰。** 线索表里带 dc 的，免费层说完立刻 hat=call_roll。rolls 填 clueId、skill、dc。reason 写清双轨：「失败则停留在刚才听到/看到的；成功则多一层。」不要替玩家掷。
+   **关键段落必须骰。** 线索表里带 dc 的，免费层说完立刻 hat=call_roll。rolls 填 clueId、skill、dc。reason 只写模糊的检定目的，不得写成功、失败、答案、暗示或线索内容。不要替玩家掷。
 4. 叙事：骰子或无需骰的动作落定后 hat=narrate。对话里该说的话让 NPC 说完。
 5. 对抗：敌对者按自己目标行动。hat=oppose 用于 NPC 主动出手。
 6. 禁剧透：speech、tts、log、线索可见文本都不得出现模组真相页里玩家尚未发现的内容。
@@ -269,7 +269,7 @@ ${offerBlock || "无"}
 # 输出
 只输出一个 JSON 对象，不要 markdown。形状：
 ${KP_JSON_SHAPE}
-rolls 仅在 hat=call_roll 时非空。带 dc 的关键线索必须在 rolls 里写 clueId。revealClues 只包含此刻因行动而新发现的 id。NPC 一旦被玩家看见或听见，用 revealNpcs 写下他们的 id（只能用模组里的 id）。scene 仅在场景确实转换时填写。有人离开当前地点必须 wherePatch。speech 不超过 260 字，完整清楚，禁止点名收尾。tts 更短，用完整句。`;
+rolls 仅在 hat=call_roll 时非空。带 dc 的关键线索必须在 rolls 里写 clueId，reason 只概括检定动作，不写双轨结果。revealClues 只包含此刻因行动而新发现的 id。NPC 一旦被玩家看见或听见，用 revealNpcs 写下他们的 id（只能用模组里的 id）。scene 仅在场景确实转换时填写。有人离开当前地点必须 wherePatch。speech 不超过 260 字，完整清楚，禁止点名收尾。tts 更短，用完整句。`;
 
   const history = input.recent
     .map((m) => `${m.name}[${m.kind}]：${m.body.slice(0, 180)}`)

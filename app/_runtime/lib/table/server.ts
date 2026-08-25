@@ -12,7 +12,9 @@ import { getModule, listModules } from "@/lib/module";
 import { publicNpc } from "@/lib/module/schema";
 import type { PendingRoll } from "@/lib/kp/prompt";
 import { kpModelConfigurationError, readClueLayer, runKpTurn, KP_BUSY_MSG } from "@/lib/kp/engine";
+import { publicPendingRoll } from "@/lib/kp/clue-state";
 import { DEFAULT_KP_MODEL, isKpModelId, type KpModelId } from "@/lib/kp/models";
+import { projectLocationMessages } from "@/lib/table/message-projection";
 import { openingStances } from "@/lib/kp/stance";
 import { placeOf, readWhere } from "@/lib/kp/where";
 import { publicClocks, readClocks, readRestHold, restRemain, REST_BEATS, clockOf } from "@/lib/kp/clock";
@@ -482,9 +484,13 @@ export const fetchTable = createServerFn({ method: "GET" })
       created_at: string;
     }>`
       select id, user_id, kind, name, body, tts_text, meta, created_at
-      from messages where room_id = ${room.id}
-      order by created_at asc
-      limit 200
+      from (
+        select rowid, id, user_id, kind, name, body, tts_text, meta, created_at
+        from messages where room_id = ${room.id}
+        order by rowid desc
+        limit 400
+      )
+      order by rowid asc
     `;
     const logs = await sql<{ id: string; entry: string; created_at: string }>`
       select id, entry, created_at from session_logs
@@ -521,17 +527,9 @@ export const fetchTable = createServerFn({ method: "GET" })
     )
       ? ((visitedRaw as Record<string, string[]>)[context.userId] ?? [])
       : [myPlace];
-    const been = new Set(visited.length ? visited : [myPlace]);
-    const allowedClues = new Set(
-      module.chapters
-        .flatMap((c) => c.scenes)
-        .filter((s) => been.has(s.id))
-        .flatMap((s) => s.clues),
-    );
     const clueLayer = readClueLayer(flags);
     const clues = module.clues
       .filter((c) => revealedIds.includes(c.id))
-      .filter((c) => allowedClues.size === 0 || allowedClues.has(c.id))
       .map((c) => {
         const layer = clueLayer[c.id] ?? "full";
         return {
@@ -570,18 +568,46 @@ export const fetchTable = createServerFn({ method: "GET" })
       .filter((n) => metIds.includes(n.id))
       .filter((n) => !sceneHere || sceneHere.npcs.includes(n.id))
       .map(publicNpc);
-    const visibleMessages = messages.filter((m) => {
-      if (m.user_id === context.userId) return true;
-      const meta = asJson<Record<string, unknown>>(m.meta, {});
-      const places = Array.isArray(meta.places)
-        ? meta.places.map((x) => String(x))
-        : [];
-      if (places.includes("all")) return true;
-      if (places.length) return places.includes(myPlace);
-      const p = meta.place ? String(meta.place) : "";
-      if (!p || p === "all") return true;
-      return p === myPlace;
+    const locationLabels = Object.fromEntries(
+      allScenes.map((scene) => [scene.id, scene.location || scene.name || scene.id]),
+    );
+    const projectedMessages = projectLocationMessages({
+      rows: messages,
+      userId: context.userId,
+      currentPlace: myPlace,
+      visitedPlaces: visited.length ? visited : [myPlace],
+      labels: locationLabels,
+      userNames: [
+        me.nickname,
+        ensureGear(
+          asJson<CharacterSheet>(
+            characters.find((character) => character.user_id === context.userId)?.sheet,
+            {} as CharacterSheet,
+          ),
+        ).name,
+      ].filter(Boolean),
     });
+    const publicMessage = (m: (typeof messages)[number]) => {
+      const meta = asJson<Record<string, unknown>>(m.meta, {});
+      const raw = Array.isArray(meta.clues) ? meta.clues : [];
+      const pinned = raw
+        .map((row) => {
+          if (!row || typeof row !== "object") return null;
+          const o = row as { id?: string; name?: string; hint?: string };
+          if (!o.id || !o.name || !o.hint) return null;
+          return { id: String(o.id), name: String(o.name), hint: String(o.hint) };
+        })
+        .filter((clue): clue is { id: string; name: string; hint: string } => Boolean(clue));
+      return {
+        id: m.id,
+        user_id: m.user_id,
+        kind: m.kind,
+        name: m.name,
+        body: m.body,
+        created_at: m.created_at,
+        clues: pinned,
+      };
+    };
 
     return {
       ok: true as const,
@@ -593,33 +619,18 @@ export const fetchTable = createServerFn({ method: "GET" })
         locked: c.locked,
         sheet: ensureGear(asJson<CharacterSheet>(c.sheet, {} as CharacterSheet)),
       })),
-      messages: visibleMessages.map((m) => {
-        const meta = asJson<Record<string, unknown>>(m.meta, {});
-        const raw = Array.isArray(meta.clues) ? meta.clues : [];
-        const clues = raw
-          .map((row) => {
-            if (!row || typeof row !== "object") return null;
-            const o = row as { id?: string; name?: string; hint?: string };
-            if (!o.id || !o.name || !o.hint) return null;
-            return { id: String(o.id), name: String(o.name), hint: String(o.hint) };
-          })
-          .filter((c): c is { id: string; name: string; hint: string } => Boolean(c));
-        return {
-          id: m.id,
-          user_id: m.user_id,
-          kind: m.kind,
-          name: m.name,
-          body: m.body,
-          created_at: m.created_at,
-          clues,
-        };
-      }),
+      messages: projectedMessages.current.map(publicMessage),
+      locationThreads: projectedMessages.history.map((thread) => ({
+        placeId: thread.placeId,
+        name: thread.name,
+        messages: thread.messages.map(publicMessage),
+      })),
       logs,
       state: {
         chapterName: chapter?.name ?? "第一章",
         sceneName: sceneHere?.name ?? scene?.name ?? "开场",
         kpBusy: isPlaceBusy(flags, myPlace),
-        pendingRolls: asJson<PendingRoll[]>(st?.pending_rolls, []),
+        pendingRolls: asJson<PendingRoll[]>(st?.pending_rolls, []).map(publicPendingRoll),
         clues,
         npcs,
         sceneId: st?.scene_id ?? "wake",
@@ -1000,12 +1011,22 @@ export const sendAction = createServerFn({ method: "POST" })
       context.userId,
       flagsSay?.scene_id ?? "wake",
     );
+    const sayWhere = readWhere(asJson<Record<string, unknown>>(flagsSay?.npc_flags, {}));
+    const sayMembers = await sql<{ user_id: string }>`
+      select user_id from room_members where room_id = ${room.id}
+    `;
+    const sayAudience = sayMembers
+      .filter(
+        (member) =>
+          placeOf(sayWhere, member.user_id, flagsSay?.scene_id ?? "wake") === sayPlace,
+      )
+      .map((member) => member.user_id);
     const sayId = uid("msg");
     await sql`
       insert into messages (id, room_id, user_id, kind, name, body, meta)
       values (
         ${sayId}, ${room.id}, ${context.userId}, ${"say"}, ${name}, ${text},
-        ${JSON.stringify({ place: sayPlace })}::jsonb
+        ${JSON.stringify({ place: sayPlace, audience: sayAudience })}::jsonb
       )
     `;
     let lastErr = KP_BUSY_MSG;
@@ -1085,6 +1106,12 @@ export const resolveRoll = createServerFn({ method: "POST" })
         ? "heal"
         : kind0;
     const myPlace = placeOf(where, context.userId, stFull?.scene_id ?? "wake");
+    const rollAudience = party
+      .filter(
+        (member) =>
+          placeOf(where, member.userId, stFull?.scene_id ?? "wake") === myPlace,
+      )
+      .map((member) => member.userId);
     const placeFree = !isPlaceBusy(
       asJson<Record<string, unknown>>(stFull?.npc_flags, {}),
       myPlace,
@@ -1124,7 +1151,7 @@ export const resolveRoll = createServerFn({ method: "POST" })
         values (
           ${uid("msg")}, ${room.id}, ${context.userId}, ${"roll"}, ${sheet.name ?? "冒险者"},
           ${`治疗 ${heal}（${spell} ${expr}${mod >= 0 ? "+" : ""}${mod}）生命 ${sheet.hp.current - heal}→${nextHp}`},
-          ${JSON.stringify({ place: myPlace, heal, spell })}::jsonb
+          ${JSON.stringify({ place: myPlace, audience: rollAudience, heal, spell })}::jsonb
         )
       `;
       if (next.every((r) => r.result) && placeFree) {
@@ -1229,7 +1256,7 @@ export const resolveRoll = createServerFn({ method: "POST" })
         values (
           ${uid("msg")}, ${room.id}, ${context.userId}, ${"roll"}, ${sheet.name ?? "冒险者"},
           ${`伤害 ${dmg}（${w.weapon}${crit ? " 重击" : ""}${extraParts.length ? " " + extraParts.join(" ") : ""}）`},
-          ${JSON.stringify({ place: myPlace, dmg, targetId: roll.targetId })}::jsonb
+          ${JSON.stringify({ place: myPlace, audience: rollAudience, dmg, targetId: roll.targetId })}::jsonb
         )
       `;
       if (next.every((r) => r.result) && placeFree) {
@@ -1489,7 +1516,7 @@ export const resolveRoll = createServerFn({ method: "POST" })
       values (
         ${uid("msg")}, ${room.id}, ${context.userId}, ${"roll"}, ${sheet.name ?? "冒险者"},
         ${`${skillLabel} ${kind === "init" ? total : face === 20 ? "大成功" : face === 1 ? "大失败" : success ? "成功" : "失败"}：${formula}`},
-        ${JSON.stringify({ d20: face, bonus: bonus + extra, total, dc: roll.dc, success, boosts: chosen, parts, place: myPlace })}::jsonb
+        ${JSON.stringify({ d20: face, bonus: bonus + extra, total, dc: roll.dc, success, boosts: chosen, parts, place: myPlace, audience: rollAudience })}::jsonb
       )
     `;
 

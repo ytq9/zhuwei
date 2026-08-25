@@ -40,6 +40,7 @@ import {
 } from "./squad";
 import { anyPlaceBusy, isPlaceBusy, readBusyPlaces, sweepBusyPlaces } from "./busy";
 import { kpModelById, type KpModelId } from "./models";
+import { reconcileClueState } from "./clue-state";
 import {
   asCombat,
   coverAc,
@@ -547,18 +548,15 @@ export async function runKpTurn(opts: {
       const prev = Array.isArray(visited0[id]) ? visited0[id] : [];
       visited0[id] = Array.from(new Set([...prev, place, sceneId]));
     }
-    const clueLayer = readClueLayer(flags);
-    for (const id of prevClues) {
-      if (!clueLayer[id]) clueLayer[id] = "full";
-    }
-    for (const id of data.revealClues) {
-      if (!clueLayer[id]) clueLayer[id] = "talk";
-    }
-    if (opts.kind === "roll-followup") {
-      for (const r of resolved) {
-        if (r.result?.success && r.clueId) clueLayer[r.clueId] = "full";
-      }
-    }
+    const clueState = reconcileClueState({
+      knownClueIds: module.clues.map((clue) => clue.id),
+      previousIds: prevClues,
+      explicitIds: data.revealClues,
+      calledRolls: nextPending,
+      resolvedRolls: opts.kind === "roll-followup" ? resolved : [],
+      layers: readClueLayer(flags),
+    });
+    const clueLayer = clueState.layers;
 
     const beatUserIds = opts.solo
       ? [opts.actorUserId]
@@ -641,8 +639,7 @@ export async function runKpTurn(opts: {
       squadQueue: queueExp.keep,
     };
     if (!hold) delete (npcFlags as { restHold?: unknown }).restHold;
-    const pinnedClues = data.revealClues
-      .filter((id) => !prevClues.includes(id))
+    const pinnedClues = clueState.newIds
       .map((id) => module.clues.find((c) => c.id === id))
       .filter((c): c is NonNullable<typeof c> => Boolean(c))
       .map((c) => ({ id: c.id, name: c.name, hint: c.hint }));
@@ -769,6 +766,13 @@ export async function runKpTurn(opts: {
     }
     const msgPlaces = [...involved].filter(Boolean);
     const msgPlace = actorPlace;
+    const audienceFor = (places: string[]) =>
+      partyIds.filter((userId) => {
+        const before = placeOf(whereBefore, userId, st.scene_id);
+        const after = placeOf(where, userId, sceneId);
+        return places.includes("all") || places.includes(before) || places.includes(after);
+      });
+    const msgAudience = audienceFor(msgPlaces);
 
     const npcHurt: Record<string, number> = {};
     const reacts = [...(combat?.reacts ?? [])];
@@ -836,12 +840,12 @@ export async function runKpTurn(opts: {
         : data.hat === "call_roll"
           ? "call_roll"
           : "narrate";
-    const clues = Array.from(new Set([...prevClues, ...data.revealClues]));
+    const clues = clueState.revealedIds;
     await sql`
       insert into messages (id, room_id, user_id, kind, name, body, tts_text, meta)
       values (
         ${msgId}, ${opts.roomId}, null, ${kind}, ${"KP"}, ${data.speech}, ${data.tts},
-        ${JSON.stringify({ hat: data.hat, rolls: nextPending, revealClues: data.revealClues, clues: pinnedClues, place: msgPlace, places: msgPlaces, npcRolls: npcDice.lines })}::jsonb
+        ${JSON.stringify({ hat: data.hat, rolls: nextPending, revealClues: clueState.newIds, clues: pinnedClues, place: msgPlace, places: msgPlaces, audience: msgAudience, npcRolls: npcDice.lines })}::jsonb
       )
     `;
     for (const note of restNotes) {
@@ -885,7 +889,7 @@ export async function runKpTurn(opts: {
         values (
           ${uid("msg")}, ${opts.roomId}, null, ${"stage"}, ${"去向"},
           ${`${g.names.join("、")} 去了 ${label}`},
-          ${JSON.stringify({ place: places[0], places })}::jsonb
+          ${JSON.stringify({ place: places[0], places, audience: audienceFor(places) })}::jsonb
         )
       `;
     }
@@ -896,7 +900,7 @@ export async function runKpTurn(opts: {
         values (
           ${uid("msg")}, ${opts.roomId}, null, ${"stage"}, ${"队内"},
           ${`${who} 的队内提议未获队长批准，随这一拍消散。`},
-          ${JSON.stringify({ place: actorPlace, places: [actorPlace] })}::jsonb
+          ${JSON.stringify({ place: actorPlace, places: [actorPlace], audience: audienceFor([actorPlace]) })}::jsonb
         )
       `;
     }
@@ -908,7 +912,7 @@ export async function runKpTurn(opts: {
         insert into messages (id, room_id, user_id, kind, name, body, meta)
         values (
           ${uid("msg")}, ${opts.roomId}, null, ${"roll"}, ${line.name}, ${line.text},
-          ${JSON.stringify({ place: msgPlace, places: msgPlaces, npc: true, kind: line.kind, hit: line.hit, damage: line.damage })}::jsonb
+          ${JSON.stringify({ place: msgPlace, places: msgPlaces, audience: msgAudience, npc: true, kind: line.kind, hit: line.hit, damage: line.damage })}::jsonb
         )
       `;
     }
@@ -949,6 +953,13 @@ export async function runKpTurn(opts: {
     delete liveBusy[actorPlace];
     const liveMet = Array.isArray(liveFlags.met) ? liveFlags.met.map(String) : [];
     const liveHold = readRestHold(liveFlags);
+    const liveClueLayer = readClueLayer(liveFlags);
+    const mergedClueLayer = { ...liveClueLayer, ...clueLayer };
+    for (const id of new Set([...Object.keys(liveClueLayer), ...Object.keys(clueLayer)])) {
+      if (liveClueLayer[id] === "full" || clueLayer[id] === "full") {
+        mergedClueLayer[id] = "full";
+      }
+    }
     const mergedFlags: Record<string, unknown> = {
       ...liveFlags,
       ...npcFlags,
@@ -956,6 +967,7 @@ export async function runKpTurn(opts: {
       where: mergedWhere,
       clock: mergedClocks,
       visited: mergedVisited,
+      clueLayer: mergedClueLayer,
       kpBusyPlaces: liveBusy,
       restHold: hold ?? liveHold ?? undefined,
       squads: splitSquadsOnDiverge(readSquads(liveFlags), mergedWhere, sceneId),

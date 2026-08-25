@@ -18,7 +18,6 @@ const upstreamFiles = {
   "app/_runtime/lib/kp/busy.ts": "99f2e46dcfbc43fe73ebc492148c5f69ba67863b75a19f5362cc4baa281562f4",
   "app/_runtime/lib/kp/clock.ts": "6d52a518a4229a64fbb28d0973efddc4c17374c6ee9b1f58452308cba84a6557",
   "app/_runtime/lib/kp/combat.ts": "1dd9cbf2c29e9333acbcb5c7bb1d453973f3ec09e3b99bc13f9b6399b9d732a6",
-  "app/_runtime/lib/kp/prompt.ts": "51a866d342e6bb8bf4f3de2617e5c37c2f5d6ee261af1233b3710b183a702ae3",
   "app/_runtime/lib/kp/sanitize.ts": "0997ca7b2d641b92848d46650234836d8183fe99ce3720fc337c4b0d9e0897eb",
   "app/_runtime/lib/kp/squad.ts": "0cfb5cdac63697a168a8fc1c491239ff0a6b6f4f5ae08a16c723c09790da6e89",
   "app/_runtime/lib/kp/stance.ts": "7d44e30bddcbd82771ecc4c1ab6bcc07dfc632dfad46bb0d4478868b966a69bc",
@@ -26,7 +25,12 @@ const upstreamFiles = {
   "app/_runtime/lib/module/black-oak-will.ts": "7b3c28829a29e483184a01ef24afd44cdd2bfe0f126270b5b84168f3a73d0dd2",
   "app/_runtime/lib/module/index.ts": "c593be1fcfb06598b563bd109ef3bf6ec3acf5c6f76c31c6d1da970892dac868",
   "app/_runtime/lib/module/schema.ts": "c3dc303c04ec1192c46c2f48d38a0f2fd1c831d7adcfd3d107d1bcb3cff13a2f",
-  "app/_runtime/lib/module/writing.ts": "b5300ac28783e5c7a719ecf9a720904c6a8dacdffbece5aca14db0df09a9d106",
+};
+
+const approvedProductDeltas = {
+  // 玩家明确要求检定选项不展示成功、失败、谜底或线索内容。
+  "app/_runtime/lib/kp/prompt.ts": "15c178e66197cf281952fc1bbcfc4fd4bdf65a7aa5f701bf68e0649aa0e70947",
+  "app/_runtime/lib/module/writing.ts": "642d30e595506b7a4c3eb8330bb7b1174b3138bcd152108d661aef2ce4d34c35",
 };
 
 test("deterministic rules, module and character UI stay byte-identical to GitHub baseline", async () => {
@@ -34,5 +38,13 @@ test("deterministic rules, module and character UI stay byte-identical to GitHub
     const bytes = await readFile(new URL(path, root));
     const actual = createHash("sha256").update(bytes).digest("hex");
     assert.equal(actual, expected, `${path} drifted from upstream 29eb06d`);
+  }
+});
+
+test("keeps explicitly approved player-facing prompt deltas reviewed", async () => {
+  for (const [path, expected] of Object.entries(approvedProductDeltas)) {
+    const bytes = await readFile(new URL(path, root));
+    const actual = createHash("sha256").update(bytes).digest("hex");
+    assert.equal(actual, expected, `${path} changed without reviewing the approved delta`);
   }
 });
