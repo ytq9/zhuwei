@@ -200,6 +200,7 @@ test("targets the existing Worker and declares the D1 migration contract", async
   assert.equal(config.main, "worker/index.ts");
   assert.equal(config.d1_databases?.length, 1);
   assert.equal(config.d1_databases[0].binding, "DB");
+  assert.equal(config.d1_databases[0].database_name, "zhuwei-dev");
   assert.equal(config.d1_databases[0].migrations_dir, "drizzle");
   const tick = String.fromCharCode(96);
   for (const table of [

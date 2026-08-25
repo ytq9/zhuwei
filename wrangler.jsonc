@@ -11,8 +11,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "zhuwei",
-      "database_id": "EXISTING_D1_DATABASE_ID_REQUIRED",
+      "database_name": "zhuwei-dev",
+      "database_id": "f5a448fd-4224-4e52-bafb-a84cb190b618",
       "migrations_dir": "drizzle"
     }
   ],

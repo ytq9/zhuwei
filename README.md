@@ -63,7 +63,7 @@ npx wrangler whoami
 npm run cf:deploy
 ```
 
-`cf:deploy` 会先验证 Worker 名称和现有 D1 UUID，再构建并部署。仓库当前保留不可部署的 D1 占位值，必须在登录 Cloudflare、只读确认现有绑定后替换；这用于防止误建数据库或误发到别的 Worker。
+`cf:deploy` 会先验证 Worker 名称和已授权的 `zhuwei-dev` D1 UUID，再构建并部署，防止误发到别的 Worker 或数据库。
 
 ## 许可与说明
 
