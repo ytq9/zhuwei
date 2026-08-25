@@ -11,9 +11,11 @@ import {
   kickMember,
   leaveTable,
   lockCharacter,
+  setRoomModel,
   startGame,
   joinRoom,
 } from "@/lib/table/client";
+import { KP_MODELS, kpModelById, type KpModelId } from "@/lib/kp/models";
 import { toast } from "sonner";
 import { classById, raceById } from "@/lib/dnd/catalog";
 import { LogoutButton } from "../../logout-button";
@@ -99,6 +101,19 @@ function Lobby({
   const mine = snap.characters.find((c) => c.userId === snap.me.userId);
   const qc = useQueryClient();
   const [kickId, setKickId] = useState<string | null>(null);
+  const selectedModel = kpModelById(snap.room.kp_model) ?? KP_MODELS[0];
+  const chooseModel = useMutation({
+    mutationFn: (model: KpModelId) =>
+      setRoomModel({ data: { code, model } }),
+    onSuccess: (res) => {
+      if (!res.ok) toast.error(res.error);
+      else {
+        toast.success("本桌模型已保存");
+        void qc.invalidateQueries({ queryKey: ["table", code] });
+      }
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   const start = useMutation({
     mutationFn: () => startGame({ data: code }),
     onSuccess: (res) => {
@@ -145,6 +160,47 @@ function Lobby({
           复制房间码
         </Button>
         <p className="mt-1 text-xs text-muted">发给朋友，让他们从酒馆加入。</p>
+        <div className="mt-6 border-t border-border pt-5">
+          <p className="text-xs text-subtle">本次跑团模型</p>
+          {snap.me.is_host ? (
+            <div className="mt-3 grid gap-2" aria-label="选择本次跑团模型">
+              {KP_MODELS.map((model) => {
+                const selected = model.id === selectedModel.id;
+                return (
+                  <button
+                    key={model.id}
+                    type="button"
+                    aria-pressed={selected}
+                    disabled={chooseModel.isPending}
+                    className={`rounded-[14px] border px-3 py-3 text-left transition ${
+                      selected
+                        ? "border-brass bg-brass/10 text-fg"
+                        : "border-border text-muted hover:border-brass/60 hover:text-fg"
+                    } disabled:cursor-wait disabled:opacity-60`}
+                    onClick={() => {
+                      if (!selected) chooseModel.mutate(model.id);
+                    }}
+                  >
+                    <span className="block text-sm font-medium">{model.name}</span>
+                    <span className="mt-1 block text-xs leading-relaxed text-muted">
+                      {model.summary}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="mt-2 rounded-[14px] border border-border px-3 py-3">
+              <p className="text-sm text-fg">{selectedModel.name}</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                {selectedModel.summary}
+              </p>
+            </div>
+          )}
+          <p className="mt-2 text-xs text-subtle">
+            房主可在开团前更换；开始后整桌锁定，不会中途切换。
+          </p>
+        </div>
         <h3 className="mt-6 font-display">在座 {snap.members.length}/5</h3>
         <ul className="mt-3 space-y-2 text-sm">
           {snap.members.map((m) => {
@@ -221,7 +277,7 @@ function Lobby({
         {snap.me.is_host && (
           <Button
             className="mt-6 w-full"
-            disabled={start.isPending}
+            disabled={start.isPending || chooseModel.isPending}
             onClick={() => start.mutate()}
           >
             {start.isPending ? "掀开帷幕……" : "开始守灵"}

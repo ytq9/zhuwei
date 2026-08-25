@@ -11,7 +11,8 @@ import { d20, d4, eligibleBoosts, rollKind, type BoostId } from "@/lib/dnd/boost
 import { getModule, listModules } from "@/lib/module";
 import { publicNpc } from "@/lib/module/schema";
 import type { PendingRoll } from "@/lib/kp/prompt";
-import { readClueLayer, runKpTurn, KP_BUSY_MSG } from "@/lib/kp/engine";
+import { kpModelConfigurationError, readClueLayer, runKpTurn, KP_BUSY_MSG } from "@/lib/kp/engine";
+import { DEFAULT_KP_MODEL, isKpModelId, type KpModelId } from "@/lib/kp/models";
 import { openingStances } from "@/lib/kp/stance";
 import { placeOf, readWhere } from "@/lib/kp/where";
 import { publicClocks, readClocks, readRestHold, restRemain, REST_BEATS, clockOf } from "@/lib/kp/clock";
@@ -380,8 +381,8 @@ export const createRoom = createServerFn({ method: "POST" })
     }
     const nick = data.nickname.trim().slice(0, 16) || "房主";
     await sql`
-      insert into rooms (id, code, host_user_id, title, module_id, status)
-      values (${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"}, ${"black-oak-will"}, ${"lobby"})
+      insert into rooms (id, code, host_user_id, title, module_id, kp_model, status)
+      values (${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"}, ${"black-oak-will"}, ${DEFAULT_KP_MODEL}, ${"lobby"})
     `;
     await sql`
       insert into room_members (room_id, user_id, nickname, is_host)
@@ -446,8 +447,9 @@ export const fetchTable = createServerFn({ method: "GET" })
         title: string;
         status: string;
         module_id: string;
+        kp_model: KpModelId;
       }>`
-        select id, code, title, status, module_id from rooms where id = ${room.id}
+        select id, code, title, status, module_id, kp_model from rooms where id = ${room.id}
       `
     )[0];
     const members = await sql<{
@@ -681,6 +683,36 @@ export const fetchTable = createServerFn({ method: "GET" })
     };
   });
 
+export const setRoomModel = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string; model: string }) => input)
+  .handler(async ({ context, data }) => {
+    if (!isKpModelId(data.model)) {
+      return { ok: false as const, error: "这个模型不在本桌支持范围内" };
+    }
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    const me = await memberOf(room.id, context.userId);
+    if (!me.is_host) return { ok: false as const, error: "只有房主能选择模型" };
+    const sql = await getSql();
+    await sql`
+      update rooms set kp_model = ${data.model}
+      where id = ${room.id} and host_user_id = ${context.userId} and status = ${"lobby"}
+    `;
+    const current = (
+      await sql<{ status: string; kp_model: string }>`
+        select status, kp_model from rooms where id = ${room.id}
+      `
+    )[0];
+    if (current.status !== "lobby") {
+      return { ok: false as const, error: "守灵已经开始，整桌模型不能再更换" };
+    }
+    if (current.kp_model !== data.model) {
+      return { ok: false as const, error: "模型没有保存，请再试一次" };
+    }
+    return { ok: true as const, model: data.model };
+  });
+
 export const lockCharacter = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { code: string; draft: DraftSheet }) => input)
@@ -765,11 +797,16 @@ export const startGame = createServerFn({ method: "POST" })
     if (!me.is_host) return { ok: false as const, error: "只有房主能开始" };
     const sql = await getSql();
     const info = (
-      await sql<{ status: string; module_id: string }>`
-        select status, module_id from rooms where id = ${room.id}
+      await sql<{ status: string; module_id: string; kp_model: string }>`
+        select status, module_id, kp_model from rooms where id = ${room.id}
       `
     )[0];
     if (info.status === "play") return { ok: true as const };
+    if (!isKpModelId(info.kp_model)) {
+      return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
+    }
+    const modelError = kpModelConfigurationError(info.kp_model);
+    if (modelError) return { ok: false as const, error: modelError };
     const module = getModule(info.module_id);
     const opening = module.chapters[0]?.scenes[0]?.boxedText ?? "蜡烛亮了。你们可以问、看、或动手。";
     const openingNpcs = module.chapters[0]?.scenes[0]?.npcs ?? [];

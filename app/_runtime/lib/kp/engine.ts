@@ -39,6 +39,7 @@ import {
   squadOf,
 } from "./squad";
 import { anyPlaceBusy, isPlaceBusy, readBusyPlaces, sweepBusyPlaces } from "./busy";
+import { kpModelById, type KpModelId } from "./models";
 import {
   asCombat,
   coverAc,
@@ -51,72 +52,54 @@ import {
 
 export type { KpSpeech, PendingRoll };
 
-async function chatJson(messages: { role: "system" | "user"; content: string }[]) {
+function deepSeekApiKey() {
   const secrets = env as typeof env & {
     DEEPSEEK_API_KEY?: string;
-    XAI_API_KEY?: string;
   };
-  const providers = [
-    secrets.DEEPSEEK_API_KEY
-      ? {
-          name: "DeepSeek",
-          url: "https://api.deepseek.com/chat/completions",
-          apiKey: secrets.DEEPSEEK_API_KEY,
-          body: {
-            model: "deepseek-v4-flash",
-            thinking: { type: "disabled" },
-            temperature: 0.7,
-            max_tokens: 1200,
-            response_format: { type: "json_object" },
-            messages,
-          },
-        }
-      : null,
-    secrets.XAI_API_KEY
-      ? {
-          name: "xAI",
-          url: "https://api.x.ai/v1/chat/completions",
-          apiKey: secrets.XAI_API_KEY,
-          body: {
-            model: "grok-4.5",
-            temperature: 0.7,
-            max_tokens: 1200,
-            response_format: { type: "json_object" },
-            messages,
-          },
-        }
-      : null,
-  ].filter((provider) => provider !== null);
+  return secrets.DEEPSEEK_API_KEY;
+}
 
-  if (providers.length === 0) {
-    return { ok: false as const, error: "AI 密钥未配置" };
+export function kpModelConfigurationError(model: KpModelId) {
+  if (!deepSeekApiKey()) {
+    return `${kpModelById(model)?.name ?? model} 尚未配置 API 密钥`;
   }
+  return null;
+}
 
-  let lastError = "KP 无法应答";
-  for (const provider of providers) {
-    try {
-      const res = await fetch(provider.url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${provider.apiKey}`,
-        },
-        body: JSON.stringify(provider.body),
-      });
-      if (!res.ok) {
-        lastError = `${provider.name} 无法应答（${res.status}）`;
-        continue;
-      }
-      const body = (await res.json()) as {
-        choices?: { message?: { content?: string } }[];
-      };
-      const text = body.choices?.[0]?.message?.content ?? "";
-      return { ok: true as const, data: parseKpSafe(text) };
-    } catch {
-      lastError = `${provider.name} 返回了无效结果`;
+async function chatJson(
+  model: KpModelId,
+  messages: { role: "system" | "user"; content: string }[],
+) {
+  const apiKey = deepSeekApiKey();
+  const modelName = kpModelById(model)?.name ?? model;
+  if (!apiKey) return { ok: false as const, error: `${modelName} 尚未配置 API 密钥` };
+  try {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        thinking: { type: "disabled" },
+        temperature: 0.7,
+        max_tokens: 1200,
+        response_format: { type: "json_object" },
+        messages,
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false as const, error: `${modelName} 无法应答（${res.status}）` };
     }
+    const body = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const text = body.choices?.[0]?.message?.content ?? "";
+    return { ok: true as const, data: parseKpSafe(text) };
+  } catch {
+    return { ok: false as const, error: `${modelName} 返回了无效结果` };
   }
-  return { ok: false as const, error: lastError };
 }
 
 type StateRow = {
@@ -294,8 +277,8 @@ export async function runKpTurn(opts: {
   consumeSayId?: string;
 }) {
   const sql = await getSql();
-  const rooms = await sql<{ module_id: string; status: string }>`
-    select module_id, status from rooms where id = ${opts.roomId}
+  const rooms = await sql<{ module_id: string; status: string; kp_model: KpModelId }>`
+    select module_id, status, kp_model from rooms where id = ${opts.roomId}
   `;
   if (!rooms[0] || rooms[0].status !== "play") {
     return { ok: false as const, error: "这一桌还没开团" };
@@ -417,7 +400,7 @@ export async function runKpTurn(opts: {
         memory,
       });
 
-      let out = await chatJson(messages);
+      let out = await chatJson(rooms[0].kp_model, messages);
       if (!out.ok) {
         await sql`
           insert into messages (id, room_id, user_id, kind, name, body, meta)
@@ -434,7 +417,7 @@ export async function runKpTurn(opts: {
 
       data = out.data;
       if (memory.lastSpeeches.some((s) => tooLike(s, data.speech))) {
-        const retry = await chatJson([
+        const retry = await chatJson(rooms[0].kp_model, [
           ...messages,
           {
             role: "user",

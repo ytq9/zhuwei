@@ -47,6 +47,7 @@ export const rooms = sqliteTable(
     hostUserId: text("host_user_id").notNull(),
     title: text("title").notNull(),
     moduleId: text("module_id").notNull().default("black-oak-will"),
+    kpModel: text("kp_model").notNull().default("deepseek-v4-flash"),
     status: text("status").notNull().default("lobby"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },

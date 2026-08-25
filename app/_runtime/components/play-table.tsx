@@ -27,7 +27,14 @@ import { Mic, Send, ScrollText, UserRound, MapPinned, Users } from "lucide-react
 
 export type TableSnap = {
   me: { userId: string; is_host: boolean; nickname: string };
-  room: { id: string; code: string; title: string; status: string };
+  room: {
+    id: string;
+    code: string;
+    title: string;
+    status: string;
+    module_id: string;
+    kp_model: string;
+  };
   members: { user_id: string; nickname: string; is_host: boolean }[];
   characters: { userId: string; locked: boolean; sheet: CharacterSheet }[];
   messages: {

@@ -27,6 +27,7 @@ export const fetchTable = ({ data }: Args) =>
   call<FetchTableResult>("fetchTable", data);
 export const lockCharacter = ({ data }: Args) => call<Result>("lockCharacter", data);
 export const setGear = ({ data }: Args) => call<Result>("setGear", data);
+export const setRoomModel = ({ data }: Args) => call<Result>("setRoomModel", data);
 export const startGame = ({ data }: Args) => call<Result>("startGame", data);
 export const sendAction = ({ data }: Args) => call<Result>("sendAction", data);
 export const resolveRoll = ({ data }: Args) => call<Result>("resolveRoll", data);

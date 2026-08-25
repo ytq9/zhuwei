@@ -106,6 +106,41 @@ test("email session opens the hall and can create a table", async () => {
   assert.equal(roomResult.ok, true);
   assert.match(roomResult.code, /^[A-Z0-9]{6}$/);
 
+  const modelUpdate = await authPath("/api/game", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      command: "setRoomModel",
+      data: { code: roomResult.code, model: "deepseek-v4-pro" },
+    }),
+  });
+  assert.equal(modelUpdate.status, 200);
+  assert.deepEqual(await modelUpdate.json(), {
+    ok: true,
+    model: "deepseek-v4-pro",
+  });
+
+  const snapshot = await authPath("/api/game", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ command: "fetchTable", data: roomResult.code }),
+  });
+  assert.equal(snapshot.status, 200);
+  const snapshotResult = await snapshot.json();
+  assert.equal(snapshotResult.ok, true);
+  assert.equal(snapshotResult.room.kp_model, "deepseek-v4-pro");
+
+  const invalidModel = await authPath("/api/game", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      command: "setRoomModel",
+      data: { code: roomResult.code, model: "client-injected-model" },
+    }),
+  });
+  assert.equal(invalidModel.status, 200);
+  assert.equal((await invalidModel.json()).ok, false);
+
   const table = await authPath(`/table/${roomResult.code}`, {
     headers: { accept: "text/html", cookie },
   });
@@ -180,7 +215,7 @@ test("registered credentials reject a wrong password and restore a session", asy
 });
 
 test("targets the existing Worker and declares the D1 migration contract", async () => {
-  const [wrangler, migration, parityMigration, authMigration] = await Promise.all([
+  const [wrangler, migration, parityMigration, authMigration, modelMigration] = await Promise.all([
     readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
     readFile(
       new URL("../drizzle/0000_cheerful_freak.sql", import.meta.url),
@@ -192,6 +227,10 @@ test("targets the existing Worker and declares the D1 migration contract", async
     ),
     readFile(
       new URL("../drizzle/0002_robust_lord_tyger.sql", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../drizzle/0003_rich_boom_boom.sql", import.meta.url),
       "utf8",
     ),
   ]);
@@ -218,6 +257,7 @@ test("targets the existing Worker and declares the D1 migration contract", async
   assert.match(parityMigration, /ADD `seated` integer/);
   assert.match(authMigration, /CREATE TABLE `auth_users`/);
   assert.match(authMigration, /CREATE TABLE `auth_sessions`/);
+  assert.match(modelMigration, /ALTER TABLE `rooms` ADD `kp_model`/);
   assert.match(authMigration, /`password_hash` text NOT NULL/);
   assert.doesNotMatch(authMigration, /`password` text/);
 });

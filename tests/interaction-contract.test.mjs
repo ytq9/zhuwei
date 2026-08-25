@@ -76,6 +76,28 @@ test("uses DeepSeek for structured KP text and Workers AI for Chinese voice", as
   assert.doesNotMatch(voice, /new Map/);
 });
 
+test("locks one host-selected KP model to the room before play", async () => {
+  const [schema, models, server, engine, lobby, migration] = await Promise.all([
+    source("db/schema.ts"),
+    source("app/_runtime/lib/kp/models.ts"),
+    source("app/_runtime/lib/table/server.ts"),
+    source("app/_runtime/lib/kp/engine.ts"),
+    source("app/table/[code]/table-client.tsx"),
+    source("drizzle/0003_rich_boom_boom.sql"),
+  ]);
+  assert.match(schema, /kpModel: text\("kp_model"\).*default\("deepseek-v4-flash"\)/);
+  assert.match(models, /deepseek-v4-flash/);
+  assert.match(models, /deepseek-v4-pro/);
+  assert.match(server, /export const setRoomModel = createServerFn/);
+  assert.match(server, /if \(!me\.is_host\)/);
+  assert.match(server, /status = \$\{"lobby"\}/);
+  assert.match(engine, /chatJson\(rooms\[0\]\.kp_model, messages\)/);
+  assert.doesNotMatch(engine, /grok-4\.5/);
+  assert.match(lobby, /本次跑团模型/);
+  assert.match(lobby, /开始后整桌锁定/);
+  assert.match(migration, /ALTER TABLE `rooms` ADD `kp_model`/);
+});
+
 test("keeps clocks, squads, rest voting, combat, voice and public projection in the live UI", async () => {
   const [play, server, engine] = await Promise.all([
     source("app/_runtime/components/play-table.tsx"),

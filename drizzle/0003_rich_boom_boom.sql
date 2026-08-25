@@ -1,0 +1,1 @@
+ALTER TABLE `rooms` ADD `kp_model` text DEFAULT 'deepseek-v4-flash' NOT NULL;

@@ -26,6 +26,7 @@ const schemaStatements = [
     host_user_id TEXT NOT NULL,
     title TEXT NOT NULL,
     module_id TEXT NOT NULL DEFAULT 'black-oak-will',
+    kp_model TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
     status TEXT NOT NULL DEFAULT 'lobby',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
@@ -86,6 +87,7 @@ let ready: Promise<void> | null = null;
 
 async function ensureCompatibilityColumns(db: D1Database) {
   const additions = [
+    { table: "rooms", column: "kp_model", sql: "ALTER TABLE rooms ADD COLUMN kp_model TEXT NOT NULL DEFAULT 'deepseek-v4-flash'" },
     { table: "room_members", column: "seated", sql: "ALTER TABLE room_members ADD COLUMN seated INTEGER NOT NULL DEFAULT 1" },
     { table: "messages", column: "tts_text", sql: "ALTER TABLE messages ADD COLUMN tts_text TEXT" },
     { table: "game_states", column: "combat", sql: "ALTER TABLE game_states ADD COLUMN combat TEXT" },
