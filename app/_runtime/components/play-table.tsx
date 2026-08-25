@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
@@ -1709,11 +1710,23 @@ function FeatureLine({ text, stock }: { text: string; stock?: StockItem }) {
   const [open, setOpen] = useState(false);
   const title = text.split(/[：:]/)[0] ?? text;
   const rest = text.slice(title.length).replace(/^[：:]/, "");
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
+
   return (
     <div className="rounded-[10px] border border-border bg-bg/40">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => setOpen(true)}
         className="flex w-full items-baseline gap-2 px-2.5 py-2 text-left text-xs"
       >
         <span className="font-medium">{title}</span>
@@ -1729,11 +1742,44 @@ function FeatureLine({ text, stock }: { text: string; stock?: StockItem }) {
           <span className="min-w-0 flex-1 truncate text-subtle">{rest}</span>
         )}
       </button>
-      {open && (
-        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] border-t border-border px-2.5 py-2 text-xs leading-relaxed text-muted">
-          {text}
-        </p>
-      )}
+      {open &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-black/70 p-4"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setOpen(false);
+            }}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${title}详情`}
+              className="max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-lg rounded-[20px] border border-border bg-surface shadow-2xl"
+            >
+              <header className="sticky top-0 flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-fg">{title}</p>
+                  {stock && (
+                    <p className="mt-0.5 text-xs text-subtle">
+                      剩余 {stock.remain}{stock.max != null ? `/${stock.max}` : ""}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-full border border-border px-3 py-1 text-xs text-muted hover:text-fg"
+                  onClick={() => setOpen(false)}
+                >
+                  关闭
+                </button>
+              </header>
+              <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] px-4 py-4 text-sm leading-7 text-fg">
+                {text}
+              </p>
+            </section>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

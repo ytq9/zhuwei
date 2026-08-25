@@ -29,14 +29,23 @@ test("host can manage a hall table from one menu", async () => {
 });
 
 test("expanded action copy wraps without being clipped", async () => {
-  const playTable = await source("app/_runtime/components/play-table.tsx");
+  const [playTable, catalog] = await Promise.all([
+    source("app/_runtime/components/play-table.tsx"),
+    source("app/_runtime/lib/dnd/catalog.ts"),
+  ]);
   const featureStart = playTable.indexOf("function FeatureLine");
   const featureEnd = playTable.indexOf("function SpellLine", featureStart);
   const featureLine = playTable.slice(featureStart, featureEnd);
 
+  assert.match(
+    catalog,
+    /吐息武器：动作，3 级 2d6（对应龙种伤害）。15 尺锥或 30 尺线，豁免 DC＝8＋熟练＋体质。短休后可用/,
+  );
   assert.match(playTable, /<Fold title="动作"/);
   assert.match(featureLine, /whitespace-pre-wrap/);
   assert.match(featureLine, /break-words/);
   assert.match(featureLine, /\[overflow-wrap:anywhere\]/);
-  assert.match(playTable, /min-h-0 flex-1 overflow-y-auto p-4/);
+  assert.match(featureLine, /createPortal\(/);
+  assert.match(featureLine, /role="dialog"/);
+  assert.match(featureLine, /max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto/);
 });
