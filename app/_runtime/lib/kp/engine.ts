@@ -6,6 +6,8 @@ import { getModule } from "@/lib/module";
 import { uniqueSpellIds } from "@/lib/dnd/catalog";
 import { applyIncomingDamage, ensureResources, left, longRestSheet, shortRestSheet, spendHitDice } from "@/lib/dnd/resources";
 import { ensureGear } from "@/lib/dnd/compute";
+import { ITEMS } from "@/lib/dnd/gear";
+import { applyWorldEffect } from "@/lib/dnd/world-items";
 import { buildKpMessages, type PendingRoll } from "./prompt";
 import {
   parseKpSafe,
@@ -41,6 +43,13 @@ import {
 import { anyPlaceBusy, isPlaceBusy, readBusyPlaces, sweepBusyPlaces } from "./busy";
 import { kpModelById, type KpModelId } from "./models";
 import { reconcileClueState } from "./clue-state";
+import {
+  normalizeActionCheck,
+  readWorldItemClaims,
+  resolveActionRuling,
+  type ActionProposal,
+  type ActionRuling,
+} from "./action-ruling";
 import {
   asCombat,
   coverAc,
@@ -195,6 +204,46 @@ async function unlockPlace(
 export const KP_BUSY_MSG = "KP 正在思考，稍等片刻";
 
 type OpenSay = { id: string; userId: string; name: string; body: string };
+
+function kpSpeechForRuling(
+  ruling: Exclude<ActionRuling, { kind: "none" }>,
+  actor: { userId: string; name: string },
+): KpSpeech {
+  const rolls =
+    ruling.kind === "check"
+      ? [
+          {
+            id: "",
+            userId: actor.userId,
+            name: actor.name,
+            ability: ruling.check.ability,
+            skill: ruling.check.skill,
+            kind: "check" as const,
+            dc: ruling.check.dc,
+            reason: ruling.check.reason,
+            worldEffect: ruling.effect,
+          },
+        ]
+      : [];
+  return {
+    hat: ruling.kind === "refuse" ? "refuse" : ruling.kind === "check" ? "call_roll" : "narrate",
+    speech: ruling.speech,
+    tts: ruling.speech,
+    actionProposal: null,
+    rolls,
+    revealClues: [],
+    revealNpcs: [],
+    scene: null,
+    characterUpdates: [],
+    secretPatch: {},
+    stancePatch: [],
+    wherePatch: [],
+    log: ruling.kind === "allow" ? ruling.speech : "",
+    npcRolls: [],
+    spendPatch: null,
+    combat: null,
+  };
+}
 
 async function listOpenSays(
   sql: Awaited<ReturnType<typeof getSql>>,
@@ -372,10 +421,67 @@ export async function runKpTurn(opts: {
       hold0?.resters ?? [],
     );
     const waiting = isWaitAction(opts.action) || isWaitAction(beat.action);
+    const sceneDef = module.chapters
+      .flatMap((chapter) => chapter.scenes)
+      .find((scene) => scene.id === st.scene_id);
+    const rulingActor = chars.find((row) => row.user_id === beat.actorUserId);
+    const rulingSheet = rulingActor
+      ? ensureGear(asJson<CharacterSheet>(rulingActor.sheet, {} as CharacterSheet))
+      : null;
+    const claims = readWorldItemClaims(flags0);
+    const reservedSourceIds = pending
+      .filter((roll) => !roll.result && roll.worldEffect?.type === "grant_item")
+      .map((roll) =>
+        roll.worldEffect?.type === "grant_item" ? roll.worldEffect.sourceId : "",
+      )
+      .filter(Boolean);
+    const adjudicate = (proposal: ActionProposal | null) => {
+      if (!rulingSheet || !sceneDef || beat.action.startsWith("【同时行动】")) {
+        return { kind: "none" } as ActionRuling;
+      }
+      const resources = ensureResources(rulingSheet).resources!;
+      const itemIds = [
+        ...(rulingSheet.backpack ?? []).map((entry) => entry.itemId),
+        ...Object.values(rulingSheet.equipped ?? {}).filter(
+          (itemId): itemId is string => typeof itemId === "string",
+        ),
+      ];
+      return resolveActionRuling({
+        text: beat.action,
+        actor: {
+          userId: beat.actorUserId,
+          name: rulingSheet.name || beat.actorName,
+          inventory: {
+            resources: { torch: resources.torch, ration: resources.ration },
+            itemIds,
+          },
+        },
+        scene: sceneDef,
+        claimedSourceIds: Object.keys(claims),
+        reservedSourceIds,
+        catalogItems: ITEMS.map((item) => ({
+          itemId: item.id,
+          name: item.name,
+          aliases: item.aliases,
+        })),
+        proposal,
+      });
+    };
+    const initialRuling =
+      opts.kind === "action" && !waiting
+        ? adjudicate(null)
+        : ({ kind: "none" } as ActionRuling);
 
     let data: KpSpeech;
+    let actionRuling: ActionRuling = initialRuling;
     if (opts.kind === "action" && skew.blocked && !waiting) {
+      actionRuling = { kind: "none" };
       data = skew.reason === "resting" ? restingRefuseSpeech() : spotlightRefuseSpeech(skew);
+    } else if (initialRuling.kind !== "none") {
+      data = kpSpeechForRuling(initialRuling, {
+        userId: beat.actorUserId,
+        name: rulingSheet?.name || beat.actorName,
+      });
     } else {
       const messages = buildKpMessages({
         module,
@@ -427,6 +533,44 @@ export async function runKpTurn(opts: {
           },
         ]);
         if (retry.ok) data = retry.data;
+      }
+      data.rolls = data.rolls.map((roll) => normalizeActionCheck(beat.action, roll));
+      const proposedRuling = opts.kind === "action" ? adjudicate(data.actionProposal) : null;
+      if (proposedRuling && proposedRuling.kind !== "none") {
+        actionRuling = proposedRuling;
+        data = kpSpeechForRuling(proposedRuling, {
+          userId: beat.actorUserId,
+          name: rulingSheet?.name || beat.actorName,
+        });
+      }
+    }
+
+    if (actionRuling.kind === "allow" && actionRuling.effect && rulingActor) {
+      const currentSheet = asJson<CharacterSheet>(rulingActor.sheet, {} as CharacterSheet);
+      const applied = applyWorldEffect(currentSheet, actionRuling.effect);
+      if (!applied.ok) {
+        actionRuling = {
+          kind: "refuse",
+          speech: applied.error,
+          alternatives: ["检查当前库存", "换一种做法"],
+        };
+        data = kpSpeechForRuling(actionRuling, {
+          userId: beat.actorUserId,
+          name: rulingSheet?.name || beat.actorName,
+        });
+      } else {
+        rulingActor.sheet = applied.sheet;
+        await sql`
+          update characters set sheet = ${JSON.stringify(applied.sheet)}::jsonb, updated_at = now()
+          where room_id = ${opts.roomId} and user_id = ${beat.actorUserId}
+        `;
+        if (actionRuling.effect.type === "grant_item") {
+          flags0.worldItemClaims = {
+            ...readWorldItemClaims(flags0),
+            [actionRuling.effect.sourceId]: beat.actorUserId,
+          };
+        }
+        data.log = `${data.log ? `${data.log}；` : ""}${applied.note}`.slice(0, 160);
       }
     }
 
@@ -499,7 +643,7 @@ export async function runKpTurn(opts: {
       },
     );
 
-    const flags = asJson<Record<string, unknown>>(st.npc_flags, {});
+    const flags = flags0;
     const prevMet = Array.isArray(flags.met) ? flags.met.map(String) : [];
     const sceneNpcs =
       module.chapters
@@ -955,6 +1099,10 @@ export async function runKpTurn(opts: {
     const liveHold = readRestHold(liveFlags);
     const liveClueLayer = readClueLayer(liveFlags);
     const mergedClueLayer = { ...liveClueLayer, ...clueLayer };
+    const mergedWorldItemClaims = {
+      ...readWorldItemClaims(liveFlags),
+      ...readWorldItemClaims(npcFlags),
+    };
     for (const id of new Set([...Object.keys(liveClueLayer), ...Object.keys(clueLayer)])) {
       if (liveClueLayer[id] === "full" || clueLayer[id] === "full") {
         mergedClueLayer[id] = "full";
@@ -968,6 +1116,7 @@ export async function runKpTurn(opts: {
       clock: mergedClocks,
       visited: mergedVisited,
       clueLayer: mergedClueLayer,
+      worldItemClaims: mergedWorldItemClaims,
       kpBusyPlaces: liveBusy,
       restHold: hold ?? liveHold ?? undefined,
       squads: splitSquadsOnDiverge(readSquads(liveFlags), mergedWhere, sceneId),
@@ -1047,6 +1196,7 @@ function inferClueId(
   module: ReturnType<typeof getModule>,
   sceneId: string,
 ): string | undefined {
+  if (roll.worldEffect) return undefined;
   if (roll.clueId && module.clues.some((c) => c.id === roll.clueId)) return roll.clueId;
   if (roll.kind && roll.kind !== "check") return undefined;
   const sceneClues = new Set(

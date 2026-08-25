@@ -8,6 +8,10 @@ import { combatPromptBlock, asCombat } from "./combat";
 import { placeOf, readWhere, wherePromptBlock } from "./where";
 import { clockPromptBlock, readClocks, readRestHold } from "./clock";
 import { readSquads, squadPromptBlock } from "./squad";
+import {
+  readWorldItemClaims,
+  type WorldEffect,
+} from "./action-ruling";
 
 export type RollKind = "check" | "save" | "attack" | "init" | "damage" | "death" | "heal";
 
@@ -27,12 +31,15 @@ export type PendingRoll = {
   sneakOk?: boolean;
   /** 双轨检定绑定的线索。失败停在免费层，成功给完整层。 */
   clueId?: string;
+  /** 仅服务端使用；检定成功后应用，绝不进入公开投影。 */
+  worldEffect?: WorldEffect;
   result?: {
     d20: number;
     total: number;
     success: boolean;
     bonus?: number;
     parts?: string[];
+    effectNote?: string;
   };
 };
 
@@ -69,6 +76,7 @@ export const KP_JSON_SHAPE = `{
   "hat": "refuse" | "call_roll" | "narrate" | "oppose",
   "speech": "玩家可见旁白，中文，完整句，只写此刻能感知的，禁剧透，不超过 260 字",
   "tts": "适合朗读的稍短版本，完整句，不要堆省略号",
+  "actionProposal": null | {"kind":"none|allow|check|refuse","intent":"find_item|physical|other","sourceId":"只能填当前场景列出的物品或动作 id","ability":"str|dex|con|int|wis|cha","skill":"athletics 等英文 id 或空","dc":10,"reason":"内部裁决理由"},
   "rolls": [{"userId":"","name":"","ability":"str|dex|con|int|wis|cha","skill":"athletics 等英文 id 或空","kind":"check|save|attack|init|damage|death|heal","dc":15,"targetId":"npc:naes 或 userId","dice":"1d8","clueId":"c-leaf 或空","reason":"只写模糊的检定目的，例如：进一步确认眼前的细节。不得写成功、失败、答案或线索内容","advantage":false}],
   "revealClues": ["c-leaf"],
   "revealNpcs": ["lian"],
@@ -101,6 +109,34 @@ export function buildKpMessages(input: KpInput) {
     .flatMap((c) => listFreeBoosts(c.sheet))
     .map((b) => `[${b.when}] ${b.line}`)
     .join("\n");
+  const itemClaims = readWorldItemClaims(input.npcFlags);
+  const sceneItems = scene?.scene.environmentItems ?? [];
+  const sceneChallenges = scene?.scene.physicalChallenges ?? [];
+  const sceneRulingBlock = [
+    "当前场景临场物品（只能使用这些 sourceId；未列出的物品没有权威来源）：",
+    sceneItems.length
+      ? sceneItems
+          .map((item) => {
+            const state = itemClaims[item.id] ? `已被 ${itemClaims[item.id]} 取走` : "尚未取得";
+            const check = item.check
+              ? `${item.check.ability}${item.check.skill ? `/${item.check.skill}` : ""} DC ${item.check.dc}`
+              : "无需检定";
+            return `- ${item.id}: ${item.name}(${item.itemId})，${item.availability}，${check}，${state}`;
+          })
+          .join("\n")
+      : "- 无",
+    "当前场景确定性动作：",
+    sceneChallenges.length
+      ? sceneChallenges
+          .map((challenge) => {
+            const check = challenge.check
+              ? `${challenge.check.ability}${challenge.check.skill ? `/${challenge.check.skill}` : ""} DC ${challenge.check.dc}`
+              : challenge.ruling;
+            return `- ${challenge.id}: ${challenge.name}，${check}`;
+          })
+          .join("\n")
+      : "- 无",
+  ].join("\n");
 
   const system = `你是「烛帷」的 KP（地下城主），主持《龙与地下城》第 5 版、3 级。语言：简体中文。术语用中文（力量（运动）、DC 15、熟练加值）。
 
@@ -212,8 +248,18 @@ ${input.module.stallBeats.map((b, i) => `${i + 1}. ${b}`).join("\n")}
 - 玩家可以 battle 规则：论证合理就改判并说明 5e 依据；撒娇无效。
 - 不要代替玩家做决定。不要因为「主线该发生了」而改骰。
 
+# 临场物品与属性检定
+${sceneRulingBlock}
+- 人物卡库存和当前场景清单是事实。库存为 0 或背包没有的物品不能直接使用；不得事后编造「刚才顺手拿过」「木盒里原来还有」来圆叙事矛盾。
+- 玩家寻找环境物品时必须写 actionProposal：obvious → allow；plausible → check；当前场景未列出或已经取走 → refuse。sourceId 只能抄上方 id。不得临时赠送武器、护甲、魔法物品或补偿装备。
+- 玩家做当前场景确定性动作时，actionProposal.sourceId 填对应动作 id；服务端会执行最终裁决。
+- 先判断是否需要骰：明显可行且无风险就直接成立；结果不确定且成败会改变状态才检定；物理不可能则拒绝并建议工具、协助或换方法，不能让高点把不可能变可能。
+- 属性由做法决定，不由玩家想得到的结果决定：看见/听见用感知（察觉）；翻找/推断存放处用智力（调查）；搬、抬、推、拖、扯、砸用力量（运动）或纯力量；攀爬、游泳、跳跃用力量（运动）；平衡、翻滚用敏捷（特技）；精细藏取用敏捷（巧手）；野外找材料用感知（求生）；开锁拆陷阱用敏捷＋盗贼工具。
+- 不要把「调查」当万能技能。玩家说「用手扯布」时，普通薄布可直接成功；若材料结实而结果不确定，用力量（运动）。玩家搬沉重石头、石座或重箱时，按重量决定直接成功、力量（运动）、或要求杠杆/协助。
+- 小检定使用 DC 8–12；真正困难才到 15。检定 reason 仍只写模糊目的，不展示成功所得或失败后果。
+
 # 库存（系统记账，你改不了）
-人物卡上的环位、引导、狂暴、如潮、生命骰、箭、口粮以「库存」那一行为准。
+人物卡上的环位、引导、狂暴、如潮、生命骰、箭、火把、口粮以「库存」那一行为准。
 - 没有对应次数就不要让法术/狂暴成功。hat=refuse，可建议医药、包扎、威吓等土办法（效果更差），不要送一发免费法术。
 - 短休/长休由程序结算。危险时可 hat=refuse 阻止休整。战斗中系统会自己拒。
 - 不要在 characterUpdates 里改 hp 来代替治疗法术（治疗骰走 heal）。不要给环位。
@@ -269,7 +315,7 @@ ${offerBlock || "无"}
 # 输出
 只输出一个 JSON 对象，不要 markdown。形状：
 ${KP_JSON_SHAPE}
-rolls 仅在 hat=call_roll 时非空。带 dc 的关键线索必须在 rolls 里写 clueId，reason 只概括检定动作，不写双轨结果。revealClues 只包含此刻因行动而新发现的 id。NPC 一旦被玩家看见或听见，用 revealNpcs 写下他们的 id（只能用模组里的 id）。scene 仅在场景确实转换时填写。有人离开当前地点必须 wherePatch。speech 不超过 260 字，完整清楚，禁止点名收尾。tts 更短，用完整句。`;
+rolls 仅在 hat=call_roll 时非空。寻找临场物品或处理确定性场景动作时必须填写 actionProposal；其他行动填 null。带 dc 的关键线索必须在 rolls 里写 clueId，reason 只概括检定动作，不写双轨结果。revealClues 只包含此刻因行动而新发现的 id。NPC 一旦被玩家看见或听见，用 revealNpcs 写下他们的 id（只能用模组里的 id）。scene 仅在场景确实转换时填写。有人离开当前地点必须 wherePatch。speech 不超过 260 字，完整清楚，禁止点名收尾。tts 更短，用完整句。`;
 
   const history = input.recent
     .map((m) => `${m.name}[${m.kind}]：${m.body.slice(0, 180)}`)

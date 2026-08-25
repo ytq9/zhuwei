@@ -6,6 +6,7 @@ import { applyCast, applyFeature, applyIncomingDamage, consumeAmmo, dropConcentr
 import type { CharacterSheet, DraftSheet, SkillId } from "@/lib/dnd/types";
 import { SKILLS } from "@/lib/dnd/types";
 import { acFromGear, stowSlot, wearItem, type GearSlot } from "@/lib/dnd/gear";
+import { applyWorldEffect } from "@/lib/dnd/world-items";
 import { classById, spellById } from "@/lib/dnd/catalog";
 import { d20, d4, eligibleBoosts, rollKind, type BoostId } from "@/lib/dnd/boosts";
 import { getModule, listModules } from "@/lib/module";
@@ -13,6 +14,7 @@ import { publicNpc } from "@/lib/module/schema";
 import type { PendingRoll } from "@/lib/kp/prompt";
 import { kpModelConfigurationError, readClueLayer, runKpTurn, KP_BUSY_MSG } from "@/lib/kp/engine";
 import { publicPendingRoll } from "@/lib/kp/clue-state";
+import { readWorldItemClaims } from "@/lib/kp/action-ruling";
 import { DEFAULT_KP_MODEL, isKpModelId, type KpModelId } from "@/lib/kp/models";
 import { projectLocationMessages } from "@/lib/table/message-projection";
 import { openingStances } from "@/lib/kp/stance";
@@ -1425,6 +1427,52 @@ export const resolveRoll = createServerFn({ method: "POST" })
       bonus: bonus + extra,
       parts,
     };
+    if (roll.worldEffect) {
+      if (!success) {
+        roll.result.effectNote =
+          roll.worldEffect.type === "grant_item"
+            ? `没有找到${roll.worldEffect.itemName}`
+            : "没有完成这次物品操作";
+      } else {
+        const latestState = (
+          await sql<{ npc_flags: unknown }>`
+            select npc_flags from game_states where room_id = ${room.id}
+          `
+        )[0];
+        const latestFlags = asJson<Record<string, unknown>>(latestState?.npc_flags, {});
+        const latestClaims = readWorldItemClaims(latestFlags);
+        if (
+          roll.worldEffect.type === "grant_item" &&
+          latestClaims[roll.worldEffect.sourceId]
+        ) {
+          roll.result.effectNote = `${roll.worldEffect.itemName}已经被人取走`;
+        } else {
+          const applied = applyWorldEffect(sheet, roll.worldEffect);
+          if (!applied.ok) {
+            roll.result.effectNote = applied.error;
+          } else {
+            sheet = applied.sheet;
+            roll.result.effectNote = applied.note;
+            await sql`
+              update characters
+              set sheet = ${JSON.stringify(sheet)}::jsonb, updated_at = now()
+              where room_id = ${room.id} and user_id = ${context.userId}
+            `;
+            if (roll.worldEffect.type === "grant_item") {
+              latestFlags.worldItemClaims = {
+                ...latestClaims,
+                [roll.worldEffect.sourceId]: context.userId,
+              };
+              await sql`
+                update game_states
+                set npc_flags = ${JSON.stringify(latestFlags)}::jsonb, updated_at = now()
+                where room_id = ${room.id}
+              `;
+            }
+          }
+        }
+      }
+    }
     let next = rolls.map((r) => (r.id === roll.id ? roll : r));
 
     if (kind === "init" && combat) {
@@ -1491,7 +1539,8 @@ export const resolveRoll = createServerFn({ method: "POST" })
     `;
 
     if (chosen.includes("inspiration") && pc) {
-      const nextSheet = { ...pc.sheet, inspiration: false };
+      const nextSheet = { ...sheet, inspiration: false };
+      sheet = nextSheet;
       await sql`
         update characters
         set sheet = ${JSON.stringify(nextSheet)}::jsonb, updated_at = now()
@@ -1515,7 +1564,7 @@ export const resolveRoll = createServerFn({ method: "POST" })
       insert into messages (id, room_id, user_id, kind, name, body, meta)
       values (
         ${uid("msg")}, ${room.id}, ${context.userId}, ${"roll"}, ${sheet.name ?? "冒险者"},
-        ${`${skillLabel} ${kind === "init" ? total : face === 20 ? "大成功" : face === 1 ? "大失败" : success ? "成功" : "失败"}：${formula}`},
+        ${`${skillLabel} ${kind === "init" ? total : face === 20 ? "大成功" : face === 1 ? "大失败" : success ? "成功" : "失败"}：${formula}${roll.result.effectNote ? `；${roll.result.effectNote}` : ""}`},
         ${JSON.stringify({ d20: face, bonus: bonus + extra, total, dc: roll.dc, success, boosts: chosen, parts, place: myPlace, audience: rollAudience })}::jsonb
       )
     `;
@@ -1526,7 +1575,8 @@ export const resolveRoll = createServerFn({ method: "POST" })
           const lab = SKILLS.find((s) => s.id === r.skill)?.label ?? r.ability;
           const p = r.result?.parts?.join(" ") ?? "";
           const clue = r.clueId ? ` clueId=${r.clueId}` : "";
-          return `${r.name} 的${lab}：d20=${r.result!.d20} ${p} → ${r.result!.total} vs DC ${r.dc}（${r.result!.success ? "成功" : "失败"}）${clue}`;
+          const effect = r.result?.effectNote ? `；物品结果：${r.result.effectNote}` : "";
+          return `${r.name} 的${lab}：d20=${r.result!.d20} ${p} → ${r.result!.total} vs DC ${r.dc}（${r.result!.success ? "成功" : "失败"}）${clue}${effect}`;
         })
         .join("；");
       const kp = await runKpTurn({

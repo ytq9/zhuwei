@@ -45,10 +45,13 @@ export function reconcileClueState({
   };
 }
 
-export function publicPendingRoll<T extends { clueId?: string; reason: string }>(
+export function publicPendingRoll<
+  T extends { clueId?: string; worldEffect?: unknown; reason: string },
+>(
   roll: T,
-): Omit<T, "clueId"> {
-  const { clueId, ...publicRoll } = roll;
+): Omit<T, "clueId" | "worldEffect"> {
+  const { clueId, worldEffect: _worldEffect, ...publicRoll } = roll;
+  void _worldEffect;
   return clueId
     ? { ...publicRoll, reason: "进一步确认眼前的细节。" }
     : publicRoll;

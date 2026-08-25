@@ -45,6 +45,29 @@ export type NpcDef = {
   lines: string[];
 };
 
+export type SceneEnvironmentItemDef = {
+  /** 场景内这一份物品的稳定 id，用于防止重复领取。 */
+  id: string;
+  /** 规则库存 id；必须由服务端物品目录识别。 */
+  itemId: string;
+  name: string;
+  aliases?: string[];
+  /** obvious 直接取得；plausible 需要小检定。 */
+  availability: "obvious" | "plausible";
+  quantity?: number;
+  check?: { ability: string; skill?: string; dc: number };
+};
+
+export type ScenePhysicalChallengeDef = {
+  id: string;
+  name: string;
+  aliases: string[];
+  verbs: string[];
+  ruling: "automatic" | "check" | "impossible";
+  check?: { ability: string; skill?: string; dc: number };
+  alternatives?: string[];
+};
+
 export type SceneDef = {
   id: string;
   name: string;
@@ -54,6 +77,10 @@ export type SceneDef = {
   clues: string[];
   defaultConflict?: string;
   unlockIf?: string;
+  /** 可取得的环境物品。未登记的物品不能由 KP 临时写进背包。 */
+  environmentItems?: SceneEnvironmentItemDef[];
+  /** 需要确定性属性/技能裁决的场景动作。 */
+  physicalChallenges?: ScenePhysicalChallengeDef[];
   /** 场地危害。开战时抄进 combat.hazards。 */
   hazards?: {
     id: string;
@@ -127,6 +154,34 @@ export function assertModule(mod: ModuleDef) {
     }
     if (c.dc && c.dc.value > 15) {
       errors.push(`${mod.id}/${c.id}: DC ${c.dc.value} 过高，3 级桌很少用 16+`);
+    }
+  }
+  for (const chapter of mod.chapters) {
+    for (const scene of chapter.scenes) {
+      const sourceIds = new Set<string>();
+      for (const item of scene.environmentItems ?? []) {
+        if (sourceIds.has(item.id)) {
+          errors.push(`${mod.id}/${scene.id}: 环境物品 id 重复 ${item.id}`);
+        }
+        sourceIds.add(item.id);
+        if (item.availability === "plausible" && !item.check) {
+          errors.push(`${mod.id}/${scene.id}/${item.id}: plausible 物品需要检定`);
+        }
+        if (item.check && (item.check.dc < 8 || item.check.dc > 15)) {
+          errors.push(`${mod.id}/${scene.id}/${item.id}: 临场物品 DC 应为 8–15`);
+        }
+        if ((item.quantity ?? 1) < 1 || (item.quantity ?? 1) > 9) {
+          errors.push(`${mod.id}/${scene.id}/${item.id}: 临场物品数量应为 1–9`);
+        }
+      }
+      for (const challenge of scene.physicalChallenges ?? []) {
+        if (challenge.ruling === "check" && !challenge.check) {
+          errors.push(`${mod.id}/${scene.id}/${challenge.id}: check 动作缺检定`);
+        }
+        if (challenge.check && (challenge.check.dc < 8 || challenge.check.dc > 15)) {
+          errors.push(`${mod.id}/${scene.id}/${challenge.id}: 场景动作 DC 应为 8–15`);
+        }
+      }
     }
   }
   const bannedJoin = mod.banned.join("");

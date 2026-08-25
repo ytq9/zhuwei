@@ -16,20 +16,20 @@ const upstreamFiles = {
   "app/_runtime/lib/dnd/resources.ts": "02e6f6ca0730ce91330f2b3b82276b08cc2034d9b447fe191cbf660567582ffc",
   "app/_runtime/lib/dnd/types.ts": "45dd9f8e4abcb2df96ae9638114a46c04403176c593aa103b1957ef25057d1c0",
   "app/_runtime/lib/kp/busy.ts": "99f2e46dcfbc43fe73ebc492148c5f69ba67863b75a19f5362cc4baa281562f4",
-  "app/_runtime/lib/kp/clock.ts": "6d52a518a4229a64fbb28d0973efddc4c17374c6ee9b1f58452308cba84a6557",
   "app/_runtime/lib/kp/combat.ts": "1dd9cbf2c29e9333acbcb5c7bb1d453973f3ec09e3b99bc13f9b6399b9d732a6",
-  "app/_runtime/lib/kp/sanitize.ts": "0997ca7b2d641b92848d46650234836d8183fe99ce3720fc337c4b0d9e0897eb",
   "app/_runtime/lib/kp/squad.ts": "0cfb5cdac63697a168a8fc1c491239ff0a6b6f4f5ae08a16c723c09790da6e89",
   "app/_runtime/lib/kp/stance.ts": "7d44e30bddcbd82771ecc4c1ab6bcc07dfc632dfad46bb0d4478868b966a69bc",
   "app/_runtime/lib/kp/where.ts": "800cda358cc8b2a8f86a4cb5b32f43c65fdf17c198fb0d1eaba3186808a5dffe",
-  "app/_runtime/lib/module/black-oak-will.ts": "7b3c28829a29e483184a01ef24afd44cdd2bfe0f126270b5b84168f3a73d0dd2",
   "app/_runtime/lib/module/index.ts": "c593be1fcfb06598b563bd109ef3bf6ec3acf5c6f76c31c6d1da970892dac868",
-  "app/_runtime/lib/module/schema.ts": "c3dc303c04ec1192c46c2f48d38a0f2fd1c831d7adcfd3d107d1bcb3cff13a2f",
 };
 
 const approvedProductDeltas = {
-  // 玩家明确要求检定选项不展示成功、失败、谜底或线索内容。
-  "app/_runtime/lib/kp/prompt.ts": "15c178e66197cf281952fc1bbcfc4fd4bdf65a7aa5f701bf68e0649aa0e70947",
+  // 玩家明确要求检定选项不剧透，并由服务端裁定库存、环境物品与物理动作。
+  "app/_runtime/lib/kp/clock.ts": "85a911284ffa0abbb3100fa0baf8df76a69f4db58441507d3bcad60c481b654a",
+  "app/_runtime/lib/kp/prompt.ts": "a575bcdd2ac13a193068bd52335adfe6d58016083cac0ab3b6e086b28489d1ec",
+  "app/_runtime/lib/kp/sanitize.ts": "1f7b576177bfe5c9f43033729216ff5ee2b04e5e4b462583842a1369d37e0ff2",
+  "app/_runtime/lib/module/black-oak-will.ts": "60f96253f18a407f024c03254e63494d179c4539a4fbdf3eca8bc66daba5c86d",
+  "app/_runtime/lib/module/schema.ts": "ca6d6214d2b3eb6f501361049434e50e4e0703c6973fe21a26be48a4f1ddb741",
   "app/_runtime/lib/module/writing.ts": "642d30e595506b7a4c3eb8330bb7b1174b3138bcd152108d661aef2ce4d34c35",
 };
 

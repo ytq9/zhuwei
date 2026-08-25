@@ -58,6 +58,16 @@ export const BLACK_OAK_WILL: ModuleDef = {
           npcs: ["lian"],
           clues: ["c-singing", "c-new-nails"],
           defaultConflict: "强行破门：力量 DC 15。成功会惊动镇上并让神龛进度 +1。失败则 entangle 式的寒意，1d6 冷冻，门仍在。",
+          physicalChallenges: [
+            {
+              id: "force-cellar-door",
+              name: "强行破开钉死的酒窖门",
+              aliases: ["酒窖门", "橡木门", "门"],
+              verbs: ["破", "撞", "踹", "推", "砸", "撬"],
+              ruling: "check",
+              check: { ability: "str", skill: "athletics", dc: 15 },
+            },
+          ],
           hazards: [
             { id: "mud", name: "泥泞", text: "贴身移动视为困难地形。隐匿在泥里劣势。", when: "move" },
             { id: "rain", name: "细雨", text: "远距射击再加一层劣势（与长射程不叠，仍只掷一次劣势）。", when: "start" },
@@ -90,6 +100,26 @@ export const BLACK_OAK_WILL: ModuleDef = {
           npcs: [],
           clues: ["c-salt", "c-tally"],
           defaultConflict: "两具骷髅从桶后站起（AC 13，HP 13，短剑 +4 1d6+2）。它们不先攻击唱歌的人；对唱歌者态度如同「引路」。",
+          environmentItems: [
+            {
+              id: "cellar-spare-torch",
+              itemId: "torch",
+              name: "备用火把",
+              aliases: ["火把", "照明物"],
+              availability: "plausible",
+              quantity: 1,
+              check: { ability: "int", skill: "investigation", dc: 10 },
+            },
+            {
+              id: "cellar-crowbar",
+              itemId: "crowbar",
+              name: "旧撬棍",
+              aliases: ["撬棍", "撬门工具"],
+              availability: "plausible",
+              quantity: 1,
+              check: { ability: "int", skill: "investigation", dc: 12 },
+            },
+          ],
           hazards: [
             { id: "stairs", name: "陡阶", text: "进入酒窖：敏捷 DC 12，失败滑下 1d6 钝击并倒地。", dc: 12, save: "dex", damage: "1d6", when: "enter" },
             { id: "salt", name: "盐霜", text: "光脚或摔倒时体质 DC 12，失败 1d4 冷冻。", dc: 12, save: "con", damage: "1d4", when: "move" },
@@ -105,6 +135,17 @@ export const BLACK_OAK_WILL: ModuleDef = {
           npcs: ["echo"],
           clues: ["c-third-will", "c-journal"],
           defaultConflict: "触碰石座或出声应和：神龛进度 +1。骸骨祭师残响会问：「你肯唱完吗？」",
+          physicalChallenges: [
+            {
+              id: "move-stone-seat",
+              name: "移动沉重的石座",
+              aliases: ["石座", "神龛石座"],
+              verbs: ["搬", "抬", "推", "挪", "拖", "移动"],
+              ruling: "check",
+              check: { ability: "str", skill: "athletics", dc: 14 },
+              alternatives: ["找撬棍借力", "请同伴协助"],
+            },
+          ],
         },
       ],
     },

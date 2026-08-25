@@ -1,9 +1,11 @@
 import type { NpcRollReq, PendingRoll } from "./prompt";
+import type { ActionProposal } from "./action-ruling";
 
 export type KpSpeech = {
   hat: "refuse" | "call_roll" | "narrate" | "oppose";
   speech: string;
   tts: string;
+  actionProposal: ActionProposal | null;
   rolls: PendingRoll[];
   revealClues: string[];
   revealNpcs: string[];
@@ -61,6 +63,7 @@ export function parseKpSafe(raw: string): KpSpeech {
     hat,
     speech: speech || "现场暂时安静。你们还可以问、看、或动手。",
     tts: tts || speech,
+    actionProposal: parseActionProposal(v.actionProposal),
     rolls: Array.isArray(v.rolls) ? (v.rolls as KpSpeech["rolls"]) : [],
     revealClues: Array.isArray(v.revealClues) ? v.revealClues.map(String) : [],
     revealNpcs: Array.isArray(v.revealNpcs) ? v.revealNpcs.map(String) : [],
@@ -81,6 +84,24 @@ export function parseKpSafe(raw: string): KpSpeech {
         ? (v.spendPatch as KpSpeech["spendPatch"])
         : null,
     combat: v.combat ?? null,
+  };
+}
+
+function parseActionProposal(value: unknown): ActionProposal | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const kind = String(raw.kind ?? "");
+  const intent = String(raw.intent ?? "");
+  if (!["none", "allow", "check", "refuse"].includes(kind)) return null;
+  if (!["find_item", "physical", "other"].includes(intent)) return null;
+  return {
+    kind: kind as ActionProposal["kind"],
+    intent: intent as ActionProposal["intent"],
+    sourceId: typeof raw.sourceId === "string" ? raw.sourceId.slice(0, 80) : undefined,
+    ability: typeof raw.ability === "string" ? raw.ability.slice(0, 12) : undefined,
+    skill: typeof raw.skill === "string" ? raw.skill.slice(0, 32) : undefined,
+    dc: typeof raw.dc === "number" && Number.isFinite(raw.dc) ? raw.dc : undefined,
+    reason: typeof raw.reason === "string" ? raw.reason.slice(0, 160) : undefined,
   };
 }
 
@@ -123,6 +144,7 @@ function fallbackSpeech(speech: string): KpSpeech {
     hat: "narrate",
     speech,
     tts: speech.slice(0, 180),
+    actionProposal: null,
     rolls: [],
     revealClues: [],
     revealNpcs: [],

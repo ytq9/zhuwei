@@ -74,9 +74,11 @@ test("public clue rolls hide the clue id and success or failure payload", () => 
     kind: "check",
     dc: 11,
     clueId: "c-salt",
+    worldEffect: { type: "grant_item", sourceId: "hidden-source" },
     reason: "失败只看到盐霜，成功认出盐霜与亡骨封禁有关。",
   });
   assert.equal("clueId" in publicRoll, false);
+  assert.equal("worldEffect" in publicRoll, false);
   assert.equal(publicRoll.reason, "进一步确认眼前的细节。");
   assert.doesNotMatch(JSON.stringify(publicRoll), /亡骨|封禁|失败|成功|c-salt/);
 });
