@@ -367,6 +367,79 @@ export const listMyRooms = createServerFn({ method: "GET" })
     `;
   });
 
+export const getRoomManagement = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string }) => input)
+  .handler(async ({ context, data }) => {
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    const me = await memberOf(room.id, context.userId);
+    if (!me.is_host) {
+      return { ok: false as const, error: "只有房主能管理这张桌" };
+    }
+    const sql = await getSql();
+    const roomInfo = (
+      await sql<{
+        code: string;
+        title: string;
+        status: string;
+        kp_model: KpModelId;
+      }>`
+        select code, title, status, kp_model
+        from rooms
+        where id = ${room.id} and host_user_id = ${context.userId}
+      `
+    )[0];
+    if (!roomInfo) {
+      return { ok: false as const, error: "房主状态已经变化，请刷新酒馆" };
+    }
+    const characterRows = await sql<{
+      user_id: string;
+      locked: boolean;
+      sheet: unknown;
+      updated_at: string;
+    }>`
+      select user_id, locked, sheet, updated_at
+      from characters
+      where room_id = ${room.id}
+      order by updated_at desc
+    `;
+    return {
+      ok: true as const,
+      room: roomInfo,
+      characters: characterRows.map((character) => ({
+        userId: character.user_id,
+        locked: character.locked,
+        sheet: asJson<CharacterSheet>(character.sheet, {} as CharacterSheet),
+        updatedAt: character.updated_at,
+      })),
+    };
+  });
+
+export const deleteRoom = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string }) => input)
+  .handler(async ({ context, data }) => {
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    const me = await memberOf(room.id, context.userId);
+    if (!me.is_host) {
+      return { ok: false as const, error: "只有房主能删除这张桌" };
+    }
+    const sql = await getSql();
+    await sql`
+      delete from rooms
+      where id = ${room.id} and host_user_id = ${context.userId}
+    `;
+    const remaining = await sql<{ id: string }>`
+      select id from rooms where id = ${room.id}
+    `;
+    if (remaining[0]) {
+      return { ok: false as const, error: "桌子没有删除，请刷新后再试" };
+    }
+    return { ok: true as const, code: room.code };
+  });
+
 export const getCatalog = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async () => ({ modules: listModules() }));

@@ -1,6 +1,8 @@
 "use client";
 
 import type { TableSnap } from "@/components/play-table";
+import type { CharacterSheet } from "@/lib/dnd/types";
+import type { KpModelId } from "@/lib/kp/models";
 
 async function call<T>(command: string, data?: unknown): Promise<T> {
   const response = await fetch("/api/game", {
@@ -16,7 +18,28 @@ async function call<T>(command: string, data?: unknown): Promise<T> {
 type Args = { data: any };
 type Result = any;
 
+export type RoomManagementResult =
+  | {
+      ok: true;
+      room: {
+        code: string;
+        title: string;
+        status: string;
+        kp_model: KpModelId;
+      };
+      characters: {
+        userId: string;
+        locked: boolean;
+        sheet: CharacterSheet;
+        updatedAt: string;
+      }[];
+    }
+  | { ok: false; error: string };
+
 export const listMyRooms = () => call<Result>("listMyRooms");
+export const getRoomManagement = ({ data }: Args) =>
+  call<RoomManagementResult>("getRoomManagement", data);
+export const deleteRoom = ({ data }: Args) => call<Result>("deleteRoom", data);
 export const getCatalog = () => call<Result>("getCatalog");
 export const createRoom = ({ data }: Args) => call<Result>("createRoom", data);
 export const joinRoom = ({ data }: Args) => call<Result>("joinRoom", data);

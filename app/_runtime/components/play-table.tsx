@@ -1730,7 +1730,7 @@ function FeatureLine({ text, stock }: { text: string; stock?: StockItem }) {
         )}
       </button>
       {open && (
-        <p className="border-t border-border px-2.5 py-2 text-xs leading-relaxed text-muted">
+        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] border-t border-border px-2.5 py-2 text-xs leading-relaxed text-muted">
           {text}
         </p>
       )}

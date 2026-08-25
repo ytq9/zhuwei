@@ -173,6 +173,107 @@ test("email session opens the hall and can create a table", async () => {
   }
 });
 
+test("host can inspect character history and delete a room but a player cannot", async () => {
+  const authWorker = await startDevWorker();
+  const authPath = (path, init = {}) =>
+    authWorker.fetch(`https://zhuwei.test${path}`, init);
+  const register = async (name) => {
+    const response = await authPath("/api/auth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: `${name}-${crypto.randomUUID()}@example.test`,
+        password: "correct-horse-battery-staple",
+        name,
+      }),
+    });
+    assert.equal(response.status, 201, await response.text());
+    return (response.headers.get("set-cookie") ?? "").split(";", 1)[0];
+  };
+  const game = async (cookie, command, data) => {
+    const response = await authPath("/api/game", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ command, data }),
+    });
+    const body = await response.text();
+    assert.equal(response.status, 200, body);
+    return JSON.parse(body);
+  };
+
+  try {
+    const hostCookie = await register("房主管理员");
+    const created = await game(hostCookie, "createRoom", { nickname: "房主" });
+    assert.equal(created.ok, true);
+
+    const locked = await game(hostCookie, "lockCharacter", {
+      code: created.code,
+      draft: {
+        name: "旧日守灯人",
+        raceId: "human",
+        classId: "fighter",
+        subclassId: "champion",
+        backgroundId: "soldier",
+        scores: { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 },
+        extraSkillIds: [],
+        cantrips: [],
+        prepared: [],
+        spellbook: [],
+        equipmentChoice: 0,
+        appearance: "提着旧灯。",
+        trait: "谨慎",
+        ideal: "真相",
+        bond: "遗嘱",
+        flaw: "多疑",
+      },
+    });
+    assert.equal(locked.ok, true);
+
+    const management = await game(hostCookie, "getRoomManagement", {
+      code: created.code,
+    });
+    assert.equal(management.ok, true);
+    assert.equal(management.room.kp_model, "deepseek-v4-flash");
+    assert.equal(management.characters.length, 1);
+    assert.equal(management.characters[0].sheet.name, "旧日守灯人");
+
+    const playerCookie = await register("普通玩家");
+    assert.equal(
+      (await game(playerCookie, "joinRoom", {
+        code: created.code,
+        nickname: "玩家",
+      })).ok,
+      true,
+    );
+    const forbiddenManagement = await game(
+      playerCookie,
+      "getRoomManagement",
+      { code: created.code },
+    );
+    assert.deepEqual(forbiddenManagement, {
+      ok: false,
+      error: "只有房主能管理这张桌",
+    });
+    const forbiddenDelete = await game(playerCookie, "deleteRoom", {
+      code: created.code,
+    });
+    assert.deepEqual(forbiddenDelete, {
+      ok: false,
+      error: "只有房主能删除这张桌",
+    });
+
+    assert.deepEqual(await game(hostCookie, "deleteRoom", { code: created.code }), {
+      ok: true,
+      code: created.code,
+    });
+    assert.deepEqual(await game(hostCookie, "listMyRooms"), []);
+    const deletedTable = await game(playerCookie, "fetchTable", created.code);
+    assert.deepEqual(deletedTable, { ok: false, error: "找不到这间房" });
+  } finally {
+    await authWorker.stop();
+  }
+});
+
 test("registered credentials reject a wrong password and restore a session", async () => {
   const authWorker = await startDevWorker();
   const authPath = (path, init = {}) =>
