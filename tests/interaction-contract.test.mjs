@@ -114,6 +114,14 @@ test("keeps production entrypoints out of the legacy src and Vercel trees", asyn
   assert.doesNotMatch(auth, /local-cloudflare-user|import\.meta\.env\.DEV/);
   assert.match(authServer, /PBKDF2/);
   assert.match(authServer, /crypto\.getRandomValues/);
+  const passwordIterations = authServer.match(
+    /const PASSWORD_ITERATIONS = ([\d_]+);/,
+  );
+  assert.ok(passwordIterations, "password iteration policy is explicit");
+  assert.ok(
+    Number(passwordIterations[1].replaceAll("_", "")) <= 100_000,
+    "Cloudflare Workers rejects PBKDF2 requests above 100,000 iterations",
+  );
   assert.doesNotMatch(authServer, /randomBytes|randomFillSync|BETTER_AUTH_SECRET/);
 });
 

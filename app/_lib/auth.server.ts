@@ -1,6 +1,8 @@
 import { ensureDb, first, run } from "../../db";
 
-const PASSWORD_ITERATIONS = 210_000;
+// Cloudflare Workers rejects PBKDF2 requests above 100,000 iterations.
+// Keep this at the platform maximum so production and local workerd agree.
+const PASSWORD_ITERATIONS = 100_000;
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
 const PRODUCTION_COOKIE = "__Host-zhuwei_session";
 const DEVELOPMENT_COOKIE = "zhuwei_session";
