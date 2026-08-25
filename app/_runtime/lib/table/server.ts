@@ -11,6 +11,20 @@ import { classById, spellById } from "@/lib/dnd/catalog";
 import { d20, d4, eligibleBoosts, rollKind, type BoostId } from "@/lib/dnd/boosts";
 import { getModule, listModules } from "@/lib/module";
 import { publicNpc } from "@/lib/module/schema";
+import { interpretPlayerAction, narrateDecision } from "@/lib/rules/ai-adapter";
+import { rollDie, RULESET_VERSION } from "@/lib/rules/ruleset";
+import type { Command } from "@/lib/rules/model";
+import {
+  commitRoomTurn,
+  departRoomPlayer,
+  failRoomInterpretation,
+  finishRoomNarration,
+  initializeRoomAuthority,
+  prepareRoomTurn,
+  roomProjection,
+  synchronizeRoomPlayerLoadout,
+  upsertRoomPlayer,
+} from "@/lib/room/server";
 import type { PendingRoll } from "@/lib/kp/prompt";
 import { kpModelConfigurationError, readClueLayer, runKpTurn, KP_BUSY_MSG } from "@/lib/kp/engine";
 import { publicPendingRoll } from "@/lib/kp/clue-state";
@@ -65,6 +79,331 @@ function asJson<T>(v: unknown, fallback: T): T {
     }
   }
   return v as T;
+}
+
+function overlayRuleResources(
+  sheet: CharacterSheet,
+  viewer: {
+    hp?: { current: number; max: number };
+    resources: Array<{ id: string; current: number; max?: number }>;
+  } | undefined,
+) {
+  if (!viewer) return sheet;
+  const next = structuredClone(sheet);
+  if (viewer.hp) next.hp = { ...next.hp, ...viewer.hp };
+  const inspiration = viewer.resources.find((pool) => pool.id === "inspiration");
+  if (inspiration) next.inspiration = inspiration.current > 0;
+  if (next.resources) {
+    const resources = next.resources as unknown as Record<string, unknown>;
+    for (const pool of viewer.resources) {
+      const current = resources[pool.id];
+      if (current && typeof current === "object" && "max" in current) {
+        const charge = current as { max: number; used: number };
+        resources[pool.id] = {
+          ...charge,
+          used: Math.max(0, charge.max - pool.current),
+        };
+      } else if (typeof current === "number") {
+        resources[pool.id] = pool.current;
+      }
+    }
+  }
+  return next;
+}
+
+async function runRulesV2Action(input: {
+  sql: Awaited<ReturnType<typeof getSql>>;
+  roomId: string;
+  moduleId: string;
+  model: KpModelId;
+  actorId: string;
+  actorName: string;
+  text: string;
+}) {
+  const completeServerDice = async (command: Command, projection: Awaited<ReturnType<typeof prepareRoomTurn>>["projection"]) => {
+    if (command.kind !== "combatMove" || command.mode === "disengage" || !projection.combat) {
+      return command;
+    }
+    const mover = projection.combat.order.find(
+      (entry) => entry.entityId === command.actorId,
+    );
+    if (!mover) return command;
+    const opportunityRolls: Extract<Command, { kind: "combatMove" }>["opportunityRolls"] = {};
+    for (const entry of projection.combat.order) {
+      if (
+        entry.side === mover.side ||
+        entry.economy.reaction === false
+      ) {
+        continue;
+      }
+      const enemyView = (await roomProjection(input.roomId, entry.entityId)).projection;
+      const attack = enemyView.viewer.attacks.find((candidate) => candidate.kind !== "ranged");
+      const reach = attack?.reachFeet ?? 5;
+      if (
+        !attack ||
+        Math.abs(mover.positionFeet - entry.positionFeet) > reach ||
+        Math.abs(command.toPositionFeet - entry.positionFeet) <= reach
+      ) {
+        continue;
+      }
+      const face = rollDie(20);
+      opportunityRolls[entry.entityId] = {
+        d20Roll: face,
+        damageRolls: Array.from(
+          { length: attack.damage.count * (face === 20 ? 2 : 1) },
+          () => rollDie(attack.damage.sides),
+        ),
+      };
+    }
+    return { ...command, opportunityRolls };
+  };
+  const module = getModule(input.moduleId);
+  let ticket = await prepareRoomTurn(input.roomId, input.actorId);
+  const archiveSay = async () => {
+    const audience = ticket.projection.visibleEntities
+      .filter((entity) => entity.kind === "player")
+      .map((entity) => entity.id);
+    await input.sql`
+      insert into messages (id, room_id, user_id, kind, name, body, meta)
+      values (
+        ${uid("msg")}, ${input.roomId}, ${input.actorId}, ${"say"}, ${input.actorName}, ${input.text},
+        ${JSON.stringify({
+          place: ticket.projection.viewer.sceneId,
+          audience,
+          rulesetVersion: RULESET_VERSION,
+        })}::jsonb
+      )
+    `;
+  };
+  await archiveSay();
+  let interpretation = await interpretPlayerAction({
+    model: input.model,
+    module,
+    ticket,
+    rawText: input.text,
+  });
+  if (!interpretation.ok) {
+    await failRoomInterpretation(input.roomId, ticket.id);
+    return { ok: false as const, error: interpretation.error };
+  }
+  interpretation = {
+    ...interpretation,
+    command: await completeServerDice(interpretation.command, ticket.projection),
+  };
+  let committed = await commitRoomTurn(
+    input.roomId,
+    ticket.id,
+    interpretation.command,
+  );
+  if (committed.conflictedScope) {
+    ticket = await prepareRoomTurn(input.roomId, input.actorId);
+    interpretation = await interpretPlayerAction({
+      model: input.model,
+      module,
+      ticket,
+      rawText: input.text,
+    });
+    if (!interpretation.ok) {
+      await failRoomInterpretation(input.roomId, ticket.id);
+      return { ok: false as const, error: interpretation.error };
+    }
+    interpretation = {
+      ...interpretation,
+      command: await completeServerDice(interpretation.command, ticket.projection),
+    };
+    committed = await commitRoomTurn(input.roomId, ticket.id, interpretation.command);
+  }
+  const projection =
+    committed.projection ?? (await roomProjection(input.roomId, input.actorId)).projection;
+  const narration = await narrateDecision({
+    model: input.model,
+    module,
+    rawText: input.text,
+    decision: committed.decision,
+    projection,
+  });
+  const place = projection.viewer.sceneId;
+  const audience = projection.visibleEntities
+    .filter((entity) => entity.kind === "player")
+    .map((entity) => entity.id);
+  await input.sql`
+    insert into messages (id, room_id, user_id, kind, name, body, tts_text, meta)
+    values (
+      ${uid("msg")}, ${input.roomId}, null,
+      ${committed.decision.kind === "rejected" ? "refuse" : committed.decision.kind === "awaitingRoll" ? "call_roll" : "narrate"},
+      ${"KP"}, ${narration.speech}, ${narration.tts},
+      ${JSON.stringify({
+        place,
+        audience,
+        rulesetVersion: RULESET_VERSION,
+        eventIds: narration.referencedEventIds,
+        canonicalFacts: narration.canonicalFacts,
+      })}::jsonb
+    )
+  `;
+  for (const fact of narration.canonicalFacts) {
+    await input.sql`
+      insert into session_logs (id, room_id, entry)
+      values (${uid("log")}, ${input.roomId}, ${fact})
+    `;
+  }
+  await finishRoomNarration(input.roomId, ticket.id);
+  if (projection.combat) {
+    await settleNpcCombatTurns({
+      sql: input.sql,
+      roomId: input.roomId,
+      moduleId: input.moduleId,
+      model: input.model,
+      viewerId: input.actorId,
+    });
+  }
+  return {
+    ok: true as const,
+    rulesetVersion: RULESET_VERSION,
+    decision: committed.decision.kind,
+  };
+}
+
+type DirectCommand = Command extends infer Candidate
+  ? Candidate extends Command
+    ? Omit<Candidate, "id" | "actorId" | "expectedVersion">
+    : never
+  : never;
+
+async function commitRulesV2Direct(
+  roomId: string,
+  actorId: string,
+  draft: DirectCommand,
+) {
+  let ticket = await prepareRoomTurn(roomId, actorId);
+  const makeCommand = () =>
+    ({
+      ...draft,
+      id: crypto.randomUUID(),
+      actorId,
+      expectedVersion: ticket.stateVersion,
+    }) as Command;
+  let result = await commitRoomTurn(roomId, ticket.id, makeCommand());
+  if (result.conflictedScope) {
+    ticket = await prepareRoomTurn(roomId, actorId);
+    result = await commitRoomTurn(roomId, ticket.id, makeCommand());
+  }
+  await finishRoomNarration(roomId, ticket.id);
+  return result;
+}
+
+async function roomRuleset(
+  sql: Awaited<ReturnType<typeof getSql>>,
+  roomId: string,
+) {
+  return (
+    await sql<{ ruleset_version: string; module_id: string; kp_model: KpModelId; status: string }>`
+      select ruleset_version, module_id, kp_model, status from rooms where id = ${roomId}
+    `
+  )[0];
+}
+
+async function settleNpcCombatTurns(input: {
+  sql: Awaited<ReturnType<typeof getSql>>;
+  roomId: string;
+  moduleId: string;
+  model: KpModelId;
+  viewerId: string;
+}) {
+  for (let turn = 0; turn < 12; turn += 1) {
+    const publicView = (await roomProjection(input.roomId, input.viewerId)).projection;
+    const combat = publicView.combat;
+    if (!combat) return;
+    const activeId = combat.order[combat.activeIndex]?.entityId;
+    if (!activeId) return;
+    const activePublic = publicView.visibleEntities.find((entity) => entity.id === activeId);
+    if (activePublic?.kind !== "npc") return;
+    const npcView = (await roomProjection(input.roomId, activeId)).projection;
+    const attack = npcView.viewer.attacks[0];
+    const attackerCombatant = npcView.combat?.order.find(
+      (entry) => entry.entityId === activeId,
+    );
+    const hostileTargets = npcView.combat?.order
+      .filter((entry) => entry.side !== attackerCombatant?.side)
+      .map((entry) => npcView.visibleEntities.find((entity) => entity.id === entry.entityId))
+      .filter((entity) => entity?.kind === "player");
+    const target = hostileTargets?.find((entity) => entity?.condition === "active") ?? hostileTargets?.[0];
+    if (attack && target && npcView.combat) {
+      const targetCombatant = npcView.combat.order.find((entry) => entry.entityId === target.id);
+      const distance = attackerCombatant && targetCombatant
+        ? Math.abs(attackerCombatant.positionFeet - targetCombatant.positionFeet)
+        : 0;
+      const adjacentHostile = attack.kind === "ranged" && attackerCombatant
+        ? npcView.combat.order.some((entry) => {
+            return entry.side !== attackerCombatant.side &&
+              Math.abs(entry.positionFeet - attackerCombatant.positionFeet) <= 5;
+          })
+        : false;
+      const rangedDisadvantage =
+        attack.kind === "ranged" &&
+        (distance > (attack.normalRangeFeet ?? 80) || adjacentHostile);
+      const downedAdvantage = target.condition === "down" && distance <= 5;
+      const mode = rangedDisadvantage && downedAdvantage
+        ? ("normal" as const)
+        : rangedDisadvantage
+          ? ("disadvantage" as const)
+          : downedAdvantage
+            ? ("advantage" as const)
+            : ("normal" as const);
+      const d20Rolls = Array.from({ length: mode === "normal" ? 1 : 2 }, () => rollDie(20));
+      const face = mode === "advantage"
+        ? Math.max(...d20Rolls)
+        : mode === "disadvantage"
+          ? Math.min(...d20Rolls)
+          : d20Rolls[0];
+      const damageRolls = Array.from(
+        { length: attack.damage.count * (face === 20 ? 2 : 1) },
+        () => rollDie(attack.damage.sides),
+      );
+      const attacked = await commitRulesV2Direct(input.roomId, activeId, {
+        kind: "combatAttack",
+        combatId: npcView.combat.id,
+        targetId: target.id,
+        attackId: attack.id,
+        mode,
+        d20Rolls,
+        damageRolls,
+      });
+      const projection =
+        attacked.projection ?? (await roomProjection(input.roomId, activeId)).projection;
+      const narration = await narrateDecision({
+        model: input.model,
+        module: getModule(input.moduleId),
+        rawText: `${activePublic.name} 按已声明的战斗能力攻击 ${target.name}`,
+        decision: attacked.decision,
+        projection,
+      });
+      const audience = projection.visibleEntities
+        .filter((entity) => entity.kind === "player")
+        .map((entity) => entity.id);
+      await input.sql`
+        insert into messages (id, room_id, user_id, kind, name, body, tts_text, meta)
+        values (
+          ${uid("msg")}, ${input.roomId}, null, ${"narrate"}, ${"KP"},
+          ${narration.speech}, ${narration.tts},
+          ${JSON.stringify({
+            place: projection.viewer.sceneId,
+            audience,
+            rulesetVersion: RULESET_VERSION,
+            eventIds: narration.referencedEventIds,
+            canonicalFacts: narration.canonicalFacts,
+          })}::jsonb
+        )
+      `;
+    }
+    const after = (await roomProjection(input.roomId, activeId)).projection;
+    if (!after.combat) return;
+    const ended = await commitRulesV2Direct(input.roomId, activeId, {
+      kind: "endCombatTurn",
+      combatId: after.combat.id,
+    });
+    if (ended.decision.kind === "rejected") return;
+  }
 }
 
 async function memberOf(roomId: string, userId: string) {
@@ -458,8 +797,8 @@ export const createRoom = createServerFn({ method: "POST" })
     }
     const nick = data.nickname.trim().slice(0, 16) || "房主";
     await sql`
-      insert into rooms (id, code, host_user_id, title, module_id, kp_model, status)
-      values (${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"}, ${"black-oak-will"}, ${DEFAULT_KP_MODEL}, ${"lobby"})
+      insert into rooms (id, code, host_user_id, title, module_id, ruleset_version, kp_model, status)
+      values (${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"}, ${"black-oak-will"}, ${RULESET_VERSION}, ${DEFAULT_KP_MODEL}, ${"lobby"})
     `;
     await sql`
       insert into room_members (room_id, user_id, nickname, is_host)
@@ -493,6 +832,33 @@ export const joinRoom = createServerFn({ method: "POST" })
       values (${room.id}, ${context.userId}, ${nick}, false)
     `;
     await reseatPlayer(sql, room.id, context.userId);
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION && rules.status === "play") {
+      const character = (
+        await sql<{ sheet: unknown; locked: boolean }>`
+          select sheet, locked from characters
+          where room_id = ${room.id} and user_id = ${context.userId}
+        `
+      )[0];
+      if (character?.locked) {
+        const sheet = ensureGear(asJson<CharacterSheet>(character.sheet, {} as CharacterSheet));
+        try {
+          await upsertRoomPlayer(room.id, context.userId, sheet);
+          const synchronized = await synchronizeRoomPlayerLoadout(
+            room.id,
+            context.userId,
+            sheet,
+          );
+          if (!synchronized.ok) throw new Error(synchronized.error);
+        } catch (error) {
+          await sql`
+            delete from room_members
+            where room_id = ${room.id} and user_id = ${context.userId}
+          `;
+          throw error;
+        }
+      }
+    }
     return { ok: true as const, code: room.code };
   });
 
@@ -524,9 +890,10 @@ export const fetchTable = createServerFn({ method: "GET" })
         title: string;
         status: string;
         module_id: string;
+        ruleset_version: string;
         kp_model: KpModelId;
       }>`
-        select id, code, title, status, module_id, kp_model from rooms where id = ${room.id}
+        select id, code, title, status, module_id, ruleset_version, kp_model from rooms where id = ${room.id}
       `
     )[0];
     const members = await sql<{
@@ -588,25 +955,41 @@ export const fetchTable = createServerFn({ method: "GET" })
       `
     )[0];
     const module = getModule(info.module_id);
+    const ruleSnapshot =
+      info.ruleset_version === RULESET_VERSION &&
+      info.status === "play" &&
+      characters.some(
+        (character) => character.user_id === context.userId && character.locked,
+      )
+        ? await roomProjection(room.id, context.userId)
+        : null;
     const revealedIds = asJson<string[]>(st?.revealed_clues, []);
     const flags = asJson<Record<string, unknown>>(st?.npc_flags, {});
     if (sweepBusyPlaces(flags)) {
       void writeFlags(sql, room.id, flags);
     }
-    const myPlace = placeOf(readWhere(flags), context.userId, st?.scene_id ?? "wake");
+    const myPlace =
+      ruleSnapshot?.projection.viewer.sceneId ??
+      placeOf(readWhere(flags), context.userId, st?.scene_id ?? "wake");
     const visitedRaw = flags.visited;
-    const visited: string[] = Array.isArray(
-      visitedRaw && typeof visitedRaw === "object"
-        ? (visitedRaw as Record<string, unknown>)[context.userId]
-        : null,
-    )
-      ? ((visitedRaw as Record<string, string[]>)[context.userId] ?? [])
-      : [myPlace];
+    const visited: string[] = ruleSnapshot
+      ? ruleSnapshot.projection.viewer.visitedSceneIds
+      : Array.isArray(
+            visitedRaw && typeof visitedRaw === "object"
+              ? (visitedRaw as Record<string, unknown>)[context.userId]
+              : null,
+          )
+        ? ((visitedRaw as Record<string, string[]>)[context.userId] ?? [])
+        : [myPlace];
     const clueLayer = readClueLayer(flags);
+    const v2Knowledge = new Map(
+      ruleSnapshot?.projection.knowledge.map((entry) => [entry.clueId, entry.layer]) ?? [],
+    );
     const clues = module.clues
-      .filter((c) => revealedIds.includes(c.id))
+      .filter((c) => (ruleSnapshot ? v2Knowledge.has(c.id) : revealedIds.includes(c.id)))
       .map((c) => {
-        const layer = clueLayer[c.id] ?? "full";
+        const v2Layer = v2Knowledge.get(c.id);
+        const layer = v2Layer ? (v2Layer === "full" ? "full" : "talk") : (clueLayer[c.id] ?? "full");
         return {
           id: c.id,
           name: c.name,
@@ -639,9 +1022,14 @@ export const fetchTable = createServerFn({ method: "GET" })
     const metIds = Array.isArray(flags.met)
       ? flags.met.map(String)
       : (sceneHere?.npcs ?? []);
+    const visibleNpcIds = new Set(
+      ruleSnapshot?.projection.visibleEntities
+        .filter((entity) => entity.kind === "npc")
+        .map((entity) => entity.id) ?? [],
+    );
     const npcs = module.npcs
-      .filter((n) => metIds.includes(n.id))
-      .filter((n) => !sceneHere || sceneHere.npcs.includes(n.id))
+      .filter((n) => ruleSnapshot ? visibleNpcIds.has(n.id) : metIds.includes(n.id))
+      .filter((n) => ruleSnapshot || !sceneHere || sceneHere.npcs.includes(n.id))
       .map(publicNpc);
     const locationLabels = Object.fromEntries(
       allScenes.map((scene) => [scene.id, scene.location || scene.name || scene.id]),
@@ -683,6 +1071,20 @@ export const fetchTable = createServerFn({ method: "GET" })
         clues: pinned,
       };
     };
+    const projectedRuleLogs = ruleSnapshot
+      ? [...projectedMessages.current, ...projectedMessages.history.flatMap((thread) => thread.messages)]
+          .flatMap((message) => {
+            const meta = asJson<Record<string, unknown>>(message.meta, {});
+            const facts = Array.isArray(meta.canonicalFacts)
+              ? meta.canonicalFacts.filter((fact): fact is string => typeof fact === "string")
+              : [];
+            return facts.map((entry, index) => ({
+              id: `${message.id}:fact:${index}`,
+              entry,
+              created_at: message.created_at,
+            }));
+          })
+      : logs;
 
     return {
       ok: true as const,
@@ -692,7 +1094,12 @@ export const fetchTable = createServerFn({ method: "GET" })
       characters: characters.map((c) => ({
         userId: c.user_id,
         locked: c.locked,
-        sheet: ensureGear(asJson<CharacterSheet>(c.sheet, {} as CharacterSheet)),
+        sheet: overlayRuleResources(
+          ensureGear(asJson<CharacterSheet>(c.sheet, {} as CharacterSheet)),
+          ruleSnapshot && c.user_id === context.userId
+            ? ruleSnapshot.projection.viewer
+            : undefined,
+        ),
       })),
       messages: projectedMessages.current.map(publicMessage),
       locationThreads: projectedMessages.history.map((thread) => ({
@@ -700,28 +1107,89 @@ export const fetchTable = createServerFn({ method: "GET" })
         name: thread.name,
         messages: thread.messages.map(publicMessage),
       })),
-      logs,
+      logs: projectedRuleLogs,
       state: {
         chapterName: chapter?.name ?? "第一章",
         sceneName: sceneHere?.name ?? scene?.name ?? "开场",
-        kpBusy: isPlaceBusy(flags, myPlace),
-        pendingRolls: asJson<PendingRoll[]>(st?.pending_rolls, []).map(publicPendingRoll),
+        kpBusy: ruleSnapshot
+          ? ruleSnapshot.ux.some((lease) => lease.scopeId === myPlace)
+          : isPlaceBusy(flags, myPlace),
+        pendingRolls: ruleSnapshot
+          ? ruleSnapshot.projection.pendingRolls.map((roll) => ({
+              ...roll,
+              userId: context.userId,
+              name: ruleSnapshot.projection.viewer.name,
+              kind: "check" as const,
+              advantage: roll.mode === "advantage",
+            }))
+          : asJson<PendingRoll[]>(st?.pending_rolls, []).map(publicPendingRoll),
         clues,
         npcs,
-        sceneId: st?.scene_id ?? "wake",
-        places: Object.fromEntries(
-          characters.map((c) => [
-            c.user_id,
-            placeOf(where, c.user_id, st?.scene_id ?? "wake"),
-          ]),
-        ),
-        placeNames,
-        partySplit,
-        clocks: publicClocks(
-          readClocks(flags),
-          characters.map((c) => c.user_id),
-        ),
+        sceneId: ruleSnapshot ? myPlace : (st?.scene_id ?? "wake"),
+        places: ruleSnapshot
+          ? Object.fromEntries(
+              characters.map((c) => [
+                c.user_id,
+                ruleSnapshot.projection.visibleEntities.some(
+                  (entity) => entity.kind === "player" && entity.id === c.user_id,
+                )
+                  ? myPlace
+                  : "unknown",
+              ]),
+            )
+          : Object.fromEntries(
+              characters.map((c) => [
+                c.user_id,
+                placeOf(where, c.user_id, st?.scene_id ?? "wake"),
+              ]),
+            ),
+        placeNames: ruleSnapshot
+          ? Object.fromEntries(
+              characters.map((c) => [
+                c.user_id,
+                ruleSnapshot.projection.visibleEntities.some(
+                  (entity) => entity.kind === "player" && entity.id === c.user_id,
+                )
+                  ? labelOf(myPlace)
+                  : "未知位置",
+              ]),
+            )
+          : placeNames,
+        partySplit: ruleSnapshot
+          ? ruleSnapshot.projection.visibleEntities.filter((entity) => entity.kind === "player").length <
+            characters.length
+          : partySplit,
+        clocks: ruleSnapshot
+          ? {
+              [context.userId]: {
+                beats: ruleSnapshot.projection.viewer.timeline.spotlightBeat,
+                minutes: Math.floor(
+                  ruleSnapshot.projection.viewer.timeline.fictionSeconds / 60,
+                ),
+              },
+            }
+          : publicClocks(
+              readClocks(flags),
+              characters.map((c) => c.user_id),
+            ),
         restVote: (() => {
+          if (ruleSnapshot) {
+            const v = ruleSnapshot.projection.restVote;
+            if (!v) return null;
+            const fromName =
+              ensureGear(
+                asJson<CharacterSheet>(
+                  characters.find((character) => character.user_id === v.proposerId)?.sheet,
+                  {} as CharacterSheet,
+                ),
+              ).name || "同伴";
+            return {
+              kind: v.kind,
+              fromName,
+              agreed: v.agreedIds,
+              waiting: v.eligibleIds.filter((id) => !v.agreedIds.includes(id)),
+            };
+          }
           const v = readRestVote(flags);
           if (!v) return null;
           const lockedIds = characters.filter((c) => c.locked).map((c) => c.user_id);
@@ -734,6 +1202,7 @@ export const fetchTable = createServerFn({ method: "GET" })
           };
         })(),
         restHold: (() => {
+          if (ruleSnapshot) return null;
           const h = readRestHold(flags);
           if (!h) return null;
           return {
@@ -744,11 +1213,35 @@ export const fetchTable = createServerFn({ method: "GET" })
             remain: restRemain(h, readClocks(flags), characters.map((c) => c.user_id)),
           };
         })(),
-        squads: readSquads(flags).map((s) => ({
-          ids: s.ids,
-          captain: s.captain,
-        })),
+        squads: ruleSnapshot?.projection.squad
+          ? [{
+              ids: ruleSnapshot.projection.squad.memberIds,
+              captain: ruleSnapshot.projection.squad.captainId,
+            }]
+          : ruleSnapshot
+            ? []
+            : readSquads(flags).map((s) => ({
+                ids: s.ids,
+                captain: s.captain,
+              })),
         squadInvite: (() => {
+          if (ruleSnapshot) {
+            const invite = ruleSnapshot.projection.squadInvites[0];
+            if (!invite) return null;
+            const fromName =
+              ensureGear(
+                asJson<CharacterSheet>(
+                  characters.find((character) => character.user_id === invite.fromId)?.sheet,
+                  {} as CharacterSheet,
+                ),
+              ).name || "同伴";
+            return {
+              from: invite.fromId,
+              to: invite.toId,
+              fromName,
+              at: 0,
+            };
+          }
           if (sweepSquadInvite(flags)) {
             void writeFlags(sql, room.id, flags);
             return null;
@@ -756,11 +1249,56 @@ export const fetchTable = createServerFn({ method: "GET" })
           return readSquadInvite(flags);
         })(),
         squadQueue: (() => {
+          if (ruleSnapshot) return [];
           const mine = squadRecord(readSquads(flags), context.userId);
           if (!mine) return [];
           return readSquadQueue(flags).filter((q) => mine.ids.includes(q.userId));
         })(),
-        combat: publicCombat(asCombat(st?.combat)),
+        combat: ruleSnapshot?.projection.combat
+          ? {
+              place: ruleSnapshot.projection.combat.sceneId,
+              round: ruleSnapshot.projection.combat.round,
+              activeId:
+                ruleSnapshot.projection.combat.order[
+                  ruleSnapshot.projection.combat.activeIndex
+                ]?.entityId ?? null,
+              waiting: "turn" as const,
+              hazards: [],
+              reacts: [],
+              order: ruleSnapshot.projection.combat.order.map((entry) => {
+                const entity = ruleSnapshot.projection.visibleEntities.find(
+                  (candidate) => candidate.id === entry.entityId,
+                );
+                const viewerPosition =
+                  ruleSnapshot.projection.combat?.order.find(
+                    (candidate) => candidate.entityId === context.userId,
+                  )?.positionFeet ?? 0;
+                const distance = Math.abs(entry.positionFeet - viewerPosition);
+                return {
+                  id: entry.entityId,
+                  name: entity?.name ?? entry.entityId,
+                  kind: entity?.kind === "npc" ? ("npc" as const) : ("pc" as const),
+                  init: entry.initiative,
+                  band: distance <= 5
+                    ? ("melee" as const)
+                    : distance <= 30
+                      ? ("near" as const)
+                      : ("far" as const),
+                  cover: "none" as const,
+                  inCombat: true,
+                  spend: {
+                    action: entry.economy.action,
+                    bonus: entry.economy.bonusAction,
+                    reaction: entry.economy.reaction,
+                    attacked: entry.attackedThisTurn ?? false,
+                  },
+                };
+              }),
+            }
+          : ruleSnapshot
+            ? null
+            : publicCombat(asCombat(st?.combat)),
+        ruleProjection: ruleSnapshot?.projection ?? null,
       },
       module: {
         title: module.title,
@@ -827,6 +1365,10 @@ export const lockCharacter = createServerFn({ method: "POST" })
         values (${uid("pc")}, ${room.id}, ${context.userId}, ${JSON.stringify(sheet)}::jsonb, true)
       `;
     }
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION && rules.status === "play") {
+      await upsertRoomPlayer(room.id, context.userId, sheet);
+    }
     return { ok: true as const, sheet };
   });
 
@@ -865,6 +1407,17 @@ export const setGear = createServerFn({ method: "POST" })
     sheet.equipped = next.equipped;
     sheet.backpack = next.backpack;
     sheet.ac = acFromGear(sheet.classId, sheet.scores, sheet.equipped);
+    const activeRules = await roomRuleset(sql, room.id);
+    if (activeRules?.ruleset_version === RULESET_VERSION && activeRules.status === "play") {
+      const synchronized = await synchronizeRoomPlayerLoadout(
+        room.id,
+        context.userId,
+        sheet,
+      );
+      if (!synchronized.ok) {
+        return { ok: false as const, error: synchronized.error };
+      }
+    }
     await sql`
       update characters
       set sheet = ${JSON.stringify(sheet)}::jsonb, updated_at = now()
@@ -883,8 +1436,8 @@ export const startGame = createServerFn({ method: "POST" })
     if (!me.is_host) return { ok: false as const, error: "只有房主能开始" };
     const sql = await getSql();
     const info = (
-      await sql<{ status: string; module_id: string; kp_model: string }>`
-        select status, module_id, kp_model from rooms where id = ${room.id}
+      await sql<{ status: string; module_id: string; ruleset_version: string; kp_model: string }>`
+        select status, module_id, ruleset_version, kp_model from rooms where id = ${room.id}
       `
     )[0];
     if (info.status === "play") return { ok: true as const };
@@ -900,6 +1453,23 @@ export const startGame = createServerFn({ method: "POST" })
     const seated = await sql<{ user_id: string }>`
       select user_id from room_members where room_id = ${room.id}
     `;
+    if (info.ruleset_version === RULESET_VERSION) {
+      const ruleCharacters = await sql<{ user_id: string; sheet: unknown }>`
+        select user_id, sheet from characters
+        where room_id = ${room.id} and locked = true
+      `;
+      if (!ruleCharacters.length) {
+        return { ok: false as const, error: "至少需要一张已锁定的人物卡才能开始" };
+      }
+      await initializeRoomAuthority({
+        roomId: room.id,
+        moduleId: info.module_id,
+        characters: ruleCharacters.map((character) => ({
+          userId: character.user_id,
+          sheet: ensureGear(asJson<CharacterSheet>(character.sheet, {} as CharacterSheet)),
+        })),
+      });
+    }
     const where: Record<string, string> = {};
     const visited: Record<string, string[]> = {};
     for (const s of seated) {
@@ -943,8 +1513,13 @@ export const sendAction = createServerFn({ method: "POST" })
     const me = await memberOf(room.id, context.userId);
     const sql = await getSql();
     const info = (
-      await sql<{ status: string }>`
-        select status from rooms where id = ${room.id}
+      await sql<{
+        status: string;
+        module_id: string;
+        ruleset_version: string;
+        kp_model: KpModelId;
+      }>`
+        select status, module_id, ruleset_version, kp_model from rooms where id = ${room.id}
       `
     )[0];
     if (info.status !== "play") return { ok: false as const, error: "这一桌还没开团" };
@@ -957,6 +1532,17 @@ export const sendAction = createServerFn({ method: "POST" })
     if (!pc?.locked) return { ok: false as const, error: "先锁定人物卡" };
     let sheet = ensureGear(asJson<CharacterSheet>(pc.sheet, {} as CharacterSheet));
     const name = sheet.name || me.nickname || "冒险者";
+    if (info.ruleset_version === RULESET_VERSION) {
+      return runRulesV2Action({
+        sql,
+        roomId: room.id,
+        moduleId: info.module_id,
+        model: info.kp_model,
+        actorId: context.userId,
+        actorName: name,
+        text,
+      });
+    }
     const flagsNow = asJson<Record<string, unknown>>(
       (
         await sql<{ npc_flags: unknown }>`
@@ -1130,6 +1716,143 @@ export const resolveRoll = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const roomInfo = (
+      await sql<{
+        module_id: string;
+        ruleset_version: string;
+        kp_model: KpModelId;
+      }>`
+        select module_id, ruleset_version, kp_model
+        from rooms where id = ${room.id}
+      `
+    )[0];
+    if (roomInfo?.ruleset_version === RULESET_VERSION) {
+      let ticket = await prepareRoomTurn(room.id, context.userId);
+      let pending = ticket.projection.pendingRolls.find((entry) => entry.id === data.rollId);
+      if (!pending) return { ok: false as const, error: "没有这个检定" };
+      const available = new Set(ticket.projection.viewer.availableRollBoosts);
+      const chosen = [...new Set(data.boostIds ?? [])];
+      if (chosen.some((boost) => !available.has(boost as "guidance" | "inspiration" | "lucky"))) {
+        return { ok: false as const, error: "所选加值不在当前规则状态中。" };
+      }
+      const useInspiration = chosen.includes("inspiration");
+      const hasAdvantage = pending.mode === "advantage" || useInspiration;
+      const hasDisadvantage = pending.mode === "disadvantage";
+      const effectiveMode = hasAdvantage === hasDisadvantage
+        ? ("normal" as const)
+        : hasAdvantage
+          ? ("advantage" as const)
+          : ("disadvantage" as const);
+      let luckyReplacedOnes = 0;
+      const rolled = Array.from({ length: effectiveMode === "normal" ? 1 : 2 }, () => {
+        const initial = rollDie(20);
+        if (chosen.includes("lucky") && initial === 1) {
+          luckyReplacedOnes += 1;
+          return rollDie(20);
+        }
+        return initial;
+      });
+      const guidanceRoll = chosen.includes("guidance") ? rollDie(4) : undefined;
+      const makeCommand = () => ({
+        id: crypto.randomUUID(),
+        actorId: context.userId,
+        expectedVersion: ticket.stateVersion,
+        kind: "resolveRoll" as const,
+        requestId: data.rollId,
+        rolls: rolled,
+        boosts: {
+          guidanceRoll,
+          useInspiration: useInspiration || undefined,
+          luckyReplacedOnes: chosen.includes("lucky") ? luckyReplacedOnes : undefined,
+        },
+      });
+      let committed = await commitRoomTurn(room.id, ticket.id, makeCommand());
+      if (committed.conflictedScope) {
+        ticket = await prepareRoomTurn(room.id, context.userId);
+        pending = ticket.projection.pendingRolls.find((entry) => entry.id === data.rollId);
+        if (!pending) return { ok: false as const, error: "这个检定已经被结算" };
+        committed = await commitRoomTurn(room.id, ticket.id, makeCommand());
+      }
+      const projection =
+        committed.projection ?? (await roomProjection(room.id, context.userId)).projection;
+      const module = getModule(roomInfo.module_id);
+      const narration = await narrateDecision({
+        model: roomInfo.kp_model,
+        module,
+        rawText: `掷出 ${rolled.join("、")}${guidanceRoll ? `，神导术 d4=${guidanceRoll}` : ""}，结算 ${pending.reason}`,
+        decision: committed.decision,
+        projection,
+      });
+      const audience = projection.visibleEntities
+        .filter((entity) => entity.kind === "player")
+        .map((entity) => entity.id);
+      const resolved =
+        committed.decision.kind === "committed"
+          ? committed.decision.events.find((event) => event.type === "RollResolved")
+          : undefined;
+      await sql`
+        insert into messages (id, room_id, user_id, kind, name, body, meta)
+        values (
+          ${uid("msg")}, ${room.id}, ${context.userId}, ${"roll"}, ${projection.viewer.name},
+          ${resolved
+            ? `${pending.reason}：${rolled.join(" / ")}，总值 ${resolved.total}，${resolved.success ? "成功" : "失败"}`
+            : narration.speech},
+          ${JSON.stringify({
+            place: projection.viewer.sceneId,
+            audience,
+            rulesetVersion: RULESET_VERSION,
+            requestId: pending.id,
+            rolls: rolled,
+            boosts: chosen,
+            guidanceRoll,
+            luckyReplacedOnes,
+            total: resolved?.total,
+            success: resolved?.success,
+          })}::jsonb
+        )
+      `;
+      await sql`
+        insert into messages (id, room_id, user_id, kind, name, body, tts_text, meta)
+        values (
+          ${uid("msg")}, ${room.id}, null,
+          ${committed.decision.kind === "rejected" ? "refuse" : "narrate"},
+          ${"KP"}, ${narration.speech}, ${narration.tts},
+          ${JSON.stringify({
+            place: projection.viewer.sceneId,
+            audience,
+            rulesetVersion: RULESET_VERSION,
+            eventIds: narration.referencedEventIds,
+            canonicalFacts: narration.canonicalFacts,
+          })}::jsonb
+        )
+      `;
+      for (const fact of narration.canonicalFacts) {
+        await sql`
+          insert into session_logs (id, room_id, entry)
+          values (${uid("log")}, ${room.id}, ${fact})
+        `;
+      }
+      await finishRoomNarration(room.id, ticket.id);
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      return {
+        ok: true as const,
+        roll: resolved
+          ? {
+              d20:
+                effectiveMode === "advantage"
+                  ? Math.max(...rolled)
+                  : effectiveMode === "disadvantage"
+                    ? Math.min(...rolled)
+                    : rolled[0],
+              total: resolved.total,
+              success: resolved.success,
+            }
+          : undefined,
+        rulesetVersion: RULESET_VERSION,
+      };
+    }
     const st = (
       await sql<{ pending_rolls: unknown; kp_busy: boolean }>`
         select pending_rolls, kp_busy from game_states where room_id = ${room.id}
@@ -1672,6 +2395,27 @@ export const joinCombat = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const projection = (await roomProjection(room.id, context.userId)).projection;
+      if (!projection.combat) return { ok: false as const, error: "现在没有战斗" };
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "joinCombat",
+        combatId: projection.combat.id,
+        initiativeRoll: rollDie(20),
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      await settleNpcCombatTurns({
+        sql,
+        roomId: room.id,
+        moduleId: rules.module_id,
+        model: rules.kp_model,
+        viewerId: context.userId,
+      });
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const st = (
       await sql<{ combat: unknown; npc_flags: unknown; scene_id: string; pending_rolls: unknown }>`
         select combat, npc_flags, scene_id, pending_rolls from game_states where room_id = ${room.id}
@@ -1723,6 +2467,87 @@ export const extraAttack = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const before = (await roomProjection(room.id, context.userId)).projection;
+      const combat = before.combat;
+      const attack = before.viewer.attacks[0];
+      if (!combat || !attack || !combat.order.some((entry) => entry.entityId === data.targetId)) {
+        return { ok: false as const, error: "找不到这场战斗中的目标或攻击方式。" };
+      }
+      const attackerCombatant = combat.order.find((entry) => entry.entityId === context.userId);
+      const targetCombatant = combat.order.find((entry) => entry.entityId === data.targetId);
+      const distance = attackerCombatant && targetCombatant
+        ? Math.abs(attackerCombatant.positionFeet - targetCombatant.positionFeet)
+        : 0;
+      const adjacentHostile = attack.kind === "ranged" && attackerCombatant
+        ? combat.order.some((entry) => {
+            return entry.side !== attackerCombatant.side &&
+              Math.abs(entry.positionFeet - attackerCombatant.positionFeet) <= 5;
+          })
+        : false;
+      const rangedDisadvantage =
+        attack.kind === "ranged" &&
+        (distance > (attack.normalRangeFeet ?? 80) || adjacentHostile);
+      const downedAdvantage =
+        before.visibleEntities.find((entity) => entity.id === data.targetId)?.condition === "down" &&
+        distance <= 5;
+      const mode = rangedDisadvantage && downedAdvantage
+        ? ("normal" as const)
+        : rangedDisadvantage
+          ? ("disadvantage" as const)
+          : downedAdvantage
+            ? ("advantage" as const)
+            : ("normal" as const);
+      const d20Rolls = Array.from({ length: mode === "normal" ? 1 : 2 }, () => rollDie(20));
+      const face = mode === "advantage"
+        ? Math.max(...d20Rolls)
+        : mode === "disadvantage"
+          ? Math.min(...d20Rolls)
+          : d20Rolls[0];
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "combatAttack",
+        combatId: combat.id,
+        targetId: data.targetId,
+        attackId: attack.id,
+        mode,
+        d20Rolls,
+        damageRolls: Array.from(
+          { length: attack.damage.count * (face === 20 ? 2 : 1) },
+          () => rollDie(attack.damage.sides),
+        ),
+        cost: "bonusAction",
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      const projection =
+        committed.projection ?? (await roomProjection(room.id, context.userId)).projection;
+      const narration = await narrateDecision({
+        model: rules.kp_model,
+        module: getModule(rules.module_id),
+        rawText: `使用战争祭司，以${attack.name}附赠攻击 ${data.targetId}`,
+        decision: committed.decision,
+        projection,
+      });
+      await sql`
+        insert into messages (id, room_id, user_id, kind, name, body, tts_text, meta)
+        values (
+          ${uid("msg")}, ${room.id}, null, ${"narrate"}, ${"KP"},
+          ${narration.speech}, ${narration.tts},
+          ${JSON.stringify({
+            place: projection.viewer.sceneId,
+            audience: projection.visibleEntities
+              .filter((entity) => entity.kind === "player")
+              .map((entity) => entity.id),
+            rulesetVersion: RULESET_VERSION,
+            eventIds: narration.referencedEventIds,
+            canonicalFacts: narration.canonicalFacts,
+          })}::jsonb
+        )
+      `;
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const st = (
       await sql<{ combat: unknown; pending_rolls: unknown }>`
         select combat, pending_rolls from game_states where room_id = ${room.id}
@@ -1795,6 +2620,26 @@ export const endTurn = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     const me = await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const projection = (await roomProjection(room.id, context.userId)).projection;
+      if (!projection.combat) return { ok: false as const, error: "现在没有战斗" };
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "endCombatTurn",
+        combatId: projection.combat.id,
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      await settleNpcCombatTurns({
+        sql,
+        roomId: room.id,
+        moduleId: rules.module_id,
+        model: rules.kp_model,
+        viewerId: context.userId,
+      });
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const st = (
       await sql<{ combat: unknown }>`
         select combat from game_states where room_id = ${room.id}
@@ -1849,6 +2694,16 @@ export const leaveFight = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      return {
+        ok: false as const,
+        error:
+          data.kind === "disengage"
+            ? "撤离是本回合的动作；请在行动栏使用撤离后再移动。"
+            : "D&D 5e 没有无条件“退出战斗”状态；必须按移动、撤离、疾走、投降或借机攻击逐项结算。",
+      };
+    }
     const st = (
       await sql<{ combat: unknown }>`
         select combat from game_states where room_id = ${room.id}
@@ -1928,6 +2783,13 @@ export const resolveReact = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      return {
+        ok: false as const,
+        error: "当前规则内核没有向该角色开放待处理反应；不会回退到旧 D1 战斗状态。",
+      };
+    }
     const st = (
       await sql<{ combat: unknown }>`
         select combat from game_states where room_id = ${room.id}
@@ -1997,7 +2859,13 @@ export const resolveReact = createServerFn({ method: "POST" })
 
 export const restNow = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; kind: "short" | "long"; hitDice?: number; arcane?: 0 | 1 | 2 }) => input)
+  .validator((input: {
+    code: string;
+    kind: "short" | "long";
+    mode?: "personal" | "group";
+    hitDice?: number;
+    arcane?: 0 | 1 | 2;
+  }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
@@ -2010,6 +2878,64 @@ export const restNow = createServerFn({ method: "POST" })
       `
     )[0];
     const sheet = ensureGear(asJson<CharacterSheet>(pc?.sheet, {} as CharacterSheet));
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const snapshot = await roomProjection(room.id, context.userId);
+      const projection = snapshot.projection;
+      const hitDiceCount = Math.max(0, Math.floor(data.hitDice ?? 0));
+      const hitDie = sheet.resources?.hitDice.die ?? 8;
+      const options =
+        data.kind === "short"
+          ? {
+              hitDiceRolls: Array.from(
+                { length: hitDiceCount },
+                () => rollDie(hitDie),
+              ),
+              arcaneRecovery: data.arcane === 1 || data.arcane === 2 ? data.arcane : undefined,
+            }
+          : undefined;
+      let draft: DirectCommand;
+      if (data.mode === "personal" || !projection.squad) {
+        draft = { kind: "startRest", rest: data.kind, options };
+      } else if (projection.restVote) {
+        if (projection.restVote.kind !== data.kind) {
+          return { ok: false as const, error: "当前正在表决另一种休息。" };
+        }
+        draft = {
+          kind: "voteGroupRest",
+          voteId: projection.restVote.id,
+          agree: true,
+          options,
+        };
+      } else {
+        draft = {
+          kind: "proposeGroupRest",
+          squadId: projection.squad.id,
+          rest: data.kind,
+          options,
+        };
+      }
+      const committed = await commitRulesV2Direct(room.id, context.userId, draft);
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      const personal = draft.kind === "startRest";
+      await sql`
+        insert into messages (id, room_id, user_id, kind, name, body, meta)
+        values (
+          ${uid("msg")}, ${room.id}, null, ${"stage"}, ${"休整"},
+          ${personal
+            ? `${sheet.name || me.nickname} 选择单独${data.kind === "long" ? "长休" : "短休"}；若原在队伍中，已直接离队。`
+            : `${sheet.name || me.nickname} ${draft.kind === "proposeGroupRest" ? "发起" : "同意"}队伍${data.kind === "long" ? "长休" : "短休"}。`},
+          ${JSON.stringify({
+            place: projection.viewer.sceneId,
+            rulesetVersion: RULESET_VERSION,
+            mode: personal ? "personal" : "group",
+          })}::jsonb
+        )
+      `;
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     return requestRestInner(
       sql,
       room.id,
@@ -2037,6 +2963,31 @@ export const cancelRest = createServerFn({ method: "POST" })
       `
     )[0];
     const sheet = ensureGear(asJson<CharacterSheet>(pc?.sheet, {} as CharacterSheet));
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const projection = (await roomProjection(room.id, context.userId)).projection;
+      const draft: DirectCommand = projection.viewer.rest?.status === "resting"
+        ? { kind: "interruptRest" }
+        : projection.restVote
+          ? { kind: "voteGroupRest", voteId: projection.restVote.id, agree: false }
+          : { kind: "interruptRest" };
+      const committed = await commitRulesV2Direct(room.id, context.userId, draft);
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      await sql`
+        insert into messages (id, room_id, user_id, kind, name, body, meta)
+        values (
+          ${uid("msg")}, ${room.id}, null, ${"stage"}, ${"休整"},
+          ${`${sheet.name || me.nickname} ${draft.kind === "interruptRest" ? "提前结束了自己的休息" : "没有同意这次队伍休息"}。`},
+          ${JSON.stringify({
+            place: projection.viewer.sceneId,
+            rulesetVersion: RULESET_VERSION,
+          })}::jsonb
+        )
+      `;
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     return cancelRestInner(
       sql,
       room.id,
@@ -2061,6 +3012,39 @@ export const castSpell = createServerFn({ method: "POST" })
     )[0];
     if (!row) return { ok: false as const, error: "没有人物卡" };
     const sheet0 = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "castSpell",
+        spellId: data.spellId,
+        slotLevel: data.slot === 2 ? 2 : data.slot === 1 ? 1 : undefined,
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      const projection =
+        committed.projection ?? (await roomProjection(room.id, context.userId)).projection;
+      const narration = await narrateDecision({
+        model: rules.kp_model,
+        module: getModule(rules.module_id),
+        rawText: `施放${spellById(data.spellId)?.name ?? data.spellId}`,
+        decision: committed.decision,
+        projection,
+      });
+      await sql`
+        insert into messages (id, room_id, user_id, kind, name, body, tts_text, meta)
+        values (
+          ${uid("msg")}, ${room.id}, null, ${"narrate"}, ${"KP"},
+          ${narration.speech}, ${narration.tts},
+          ${JSON.stringify({
+            place: projection.viewer.sceneId,
+            rulesetVersion: RULESET_VERSION,
+            eventIds: narration.referencedEventIds,
+          })}::jsonb
+        )
+      `;
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const st = (
       await sql<{ combat: unknown }>`select combat from game_states where room_id = ${room.id}`
     )[0];
@@ -2118,6 +3102,37 @@ export const useFeature = createServerFn({ method: "POST" })
     )[0];
     if (!row) return { ok: false as const, error: "没有人物卡" };
     let sheet = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const rolls =
+        data.feat === "secondWind"
+          ? [rollDie(10)]
+          : data.feat === "breath"
+            ? [rollDie(6), rollDie(6)]
+            : undefined;
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "useFeature",
+        featureId: data.feat,
+        rolls,
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      const used = committed.decision.events.find((event) => event.type === "FeatureUsed");
+      await sql`
+        insert into messages (id, room_id, user_id, kind, name, body, meta)
+        values (
+          ${uid("msg")}, ${room.id}, ${context.userId}, ${"say"}, ${sheet.name},
+          ${`使用 ${data.feat}${used?.total === undefined ? "" : `，规则结果 ${used.total}`}。`},
+          ${JSON.stringify({
+            place: committed.projection?.viewer.sceneId,
+            rulesetVersion: RULESET_VERSION,
+            eventIds: committed.decision.events.map((event) => event.id),
+          })}::jsonb
+        )
+      `;
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     if (data.feat === "surge") {
       const feat = applyFeature(sheet, "surge");
       if (!feat.ok) return { ok: false as const, error: feat.error };
@@ -2193,6 +3208,13 @@ export const useHitDie = createServerFn({ method: "POST" })
     )[0];
     if (!row) return { ok: false as const, error: "没有人物卡" };
     const sheet = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      return {
+        ok: false as const,
+        error: "D&D 5e 2014 的生命骰在短休结束时结算；请从短休面板选择要花的颗数。",
+      };
+    }
     const out = spendHitDie(sheet);
     if (!out.ok) return { ok: false as const, error: out.error };
     await sql`
@@ -2261,6 +3283,10 @@ async function detachSeated(
   roomId: string,
   userId: string,
 ) {
+  const activeRules = await roomRuleset(sql, roomId);
+  if (activeRules?.ruleset_version === RULESET_VERSION && activeRules.status === "play") {
+    await departRoomPlayer(roomId, userId);
+  }
   const nameRow = (
     await sql<{ sheet: unknown; nickname: string | null }>`
       select c.sheet, m.nickname
@@ -2400,6 +3426,17 @@ export const inviteSquad = createServerFn({ method: "POST" })
       return { ok: false as const, error: "不能和自己组队" };
     }
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "inviteSquad",
+        targetId: data.targetUserId,
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const { flags, sceneId } = await flagsOf(sql, room.id);
     sweepSquadInvite(flags);
     const live = readSquadInvite(flags);
@@ -2446,6 +3483,20 @@ export const cancelSquadInvite = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const projection = (await roomProjection(room.id, context.userId)).projection;
+      const invite = projection.squadInvites.find((entry) => entry.fromId === context.userId);
+      if (!invite) return { ok: true as const };
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "cancelSquadInvite",
+        inviteId: invite.id,
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const { flags } = await flagsOf(sql, room.id);
     sweepSquadInvite(flags);
     const invite = readSquadInvite(flags);
@@ -2466,6 +3517,21 @@ export const answerSquad = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const projection = (await roomProjection(room.id, context.userId)).projection;
+      const invite = projection.squadInvites.find((entry) => entry.toId === context.userId);
+      if (!invite) return { ok: false as const, error: "没有发给你的组队邀请" };
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "respondSquadInvite",
+        inviteId: invite.id,
+        accept: data.accept,
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const { flags, sceneId } = await flagsOf(sql, room.id);
     if (sweepSquadInvite(flags)) await writeFlags(sql, room.id, flags);
     const invite = readSquadInvite(flags);
@@ -2517,6 +3583,16 @@ export const leaveSquadNow = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "leaveSquad",
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const { flags, sceneId } = await flagsOf(sql, room.id);
     const squads = readSquads(flags);
     if (squadOf(squads, context.userId).length < 2) {
@@ -2555,6 +3631,20 @@ export const passCaptain = createServerFn({ method: "POST" })
       return { ok: false as const, error: "你已经是队长" };
     }
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      const projection = (await roomProjection(room.id, context.userId)).projection;
+      if (!projection.squad) return { ok: false as const, error: "你不在任何组里" };
+      const committed = await commitRulesV2Direct(room.id, context.userId, {
+        kind: "transferSquadCaptain",
+        squadId: projection.squad.id,
+        targetId: data.toUserId,
+      });
+      if (committed.decision.kind === "rejected") {
+        return { ok: false as const, error: committed.decision.rejection.message };
+      }
+      return { ok: true as const, rulesetVersion: RULESET_VERSION };
+    }
     const { flags, sceneId } = await flagsOf(sql, room.id);
     const next = transferCaptain(readSquads(flags), context.userId, data.toUserId);
     if (!next) return { ok: false as const, error: "只能把队长交给同队的人" };
@@ -2587,6 +3677,13 @@ export const approveSquadQueue = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      return {
+        ok: false as const,
+        error: "个人合法行动不再进入队长审批队列；成员可直接行动，移动或单独休息时会自动离队。",
+      };
+    }
     const { flags, sceneId } = await flagsOf(sql, room.id);
     const squads = readSquads(flags);
     if (!isCaptain(squads, context.userId)) {

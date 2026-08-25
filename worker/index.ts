@@ -5,6 +5,8 @@ import {
 } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
+export { RoomDurableObject } from "../app/_runtime/lib/room/durable-object";
+
 type WorkerEnv = Env & {
   IMAGES: {
     input(stream: ReadableStream): {

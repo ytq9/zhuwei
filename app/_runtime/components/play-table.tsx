@@ -45,6 +45,7 @@ export type TableSnap = {
     status: string;
     module_id: string;
     kp_model: string;
+    ruleset_version?: string;
   };
   members: { user_id: string; nickname: string; is_host: boolean }[];
   characters: { userId: string; locked: boolean; sheet: CharacterSheet }[];
@@ -90,6 +91,18 @@ export type TableSnap = {
     squadInvite?: { from: string; to: string; fromName: string } | null;
     squadQueue?: { id: string; userId: string; name: string; body: string; beat: number }[];
     combat?: PublicCombat | null;
+    ruleProjection?: {
+      viewer: {
+        timeline: { spotlightBeat: number; fictionSeconds: number };
+        rest?: {
+          kind: "short" | "long";
+          startedAt: number;
+          requiredSeconds: number;
+          status: "resting" | "interrupted" | "completed";
+        };
+        availableRollBoosts: Array<"guidance" | "inspiration" | "lucky">;
+      };
+    } | null;
   };
   module: { title: string; chapters: { id: string; name: string }[] };
 };
@@ -244,6 +257,11 @@ export function PlayTable({
               {snap.state.chapterName} · {snap.state.sceneName}
               {snap.state.kpBusy ? " · KP 正在落笔" : ""}
             </p>
+            {snap.state.ruleProjection ? (
+              <p className="mt-0.5 text-[11px] text-subtle">
+                第 {snap.state.ruleProjection.viewer.timeline.spotlightBeat} 拍 · 虚构时间约 {Math.floor(snap.state.ruleProjection.viewer.timeline.fictionSeconds / 60)} 分钟
+              </p>
+            ) : null}
             {snap.state.partySplit ? (
               <p className="mt-0.5 text-[11px] text-brass">
                 队伍已分开，同一条时间线。你只听见自己这边；最多差三拍，领先的人先停。
@@ -278,6 +296,7 @@ export function PlayTable({
               combat={snap.state.combat}
               meId={snap.me.userId}
               isHost={snap.me.is_host}
+              rulesV2={Boolean(snap.state.ruleProjection)}
               myPlace={snap.state.places?.[snap.me.userId] ?? snap.state.sceneId ?? "wake"}
               meSheet={
                 snap.characters.find((c) => c.userId === snap.me.userId)?.sheet
@@ -327,6 +346,7 @@ export function PlayTable({
                   where={snap.state.places ?? {}}
                   sceneId={snap.state.sceneId ?? "wake"}
                   combat={snap.state.combat ?? null}
+                  ruleBoosts={snap.state.ruleProjection?.viewer.availableRollBoosts}
                 />
               ))}
             </div>
@@ -444,6 +464,7 @@ export function PlayTable({
               squads={snap.state.squads}
               squadInvite={snap.state.squadInvite}
               places={snap.state.places}
+              ruleProjection={snap.state.ruleProjection}
             />
           )}
           {tab === "npcs" && <NpcBoard npcs={snap.state.npcs} />}
@@ -460,6 +481,7 @@ function CombatStrip({
   combat,
   meId,
   isHost,
+  rulesV2,
   myPlace,
   meSheet,
   party,
@@ -468,6 +490,7 @@ function CombatStrip({
   combat: PublicCombat | null;
   meId: string;
   isHost: boolean;
+  rulesV2: boolean;
   myPlace: string;
   meSheet?: CharacterSheet;
   party: { userId: string; name: string; place?: string }[];
@@ -545,7 +568,7 @@ function CombatStrip({
           ))}
         </ul>
       )}
-      {combat.reacts
+      {!rulesV2 && combat.reacts
         ?.filter((r) => r.userId === meId)
         .map((r) => (
           <div key={r.id} className="mt-3 rounded-[12px] border border-brass/40 px-3 py-2">
@@ -587,6 +610,20 @@ function CombatStrip({
         {inFight && !mine?.init && combat.waiting === "init" && (
           <p className="text-xs text-muted">先掷下面的先攻。</p>
         )}
+        {rulesV2 && myTurn && inFight && meSheet?.hp.current === 0 && (
+          <Button
+            variant="brass"
+            disabled={busy === "death-save"}
+            onClick={() =>
+              act(
+                () => sendAction({ data: { code, text: "进行本回合的死亡豁免" } }),
+                "death-save",
+              )
+            }
+          >
+            {busy === "death-save" ? "掷骰……" : "死亡豁免"}
+          </Button>
+        )}
         {(myTurn || isHost) && combat.waiting === "turn" && inFight && (
           <Button
             disabled={busy === "end"}
@@ -595,7 +632,7 @@ function CombatStrip({
             {busy === "end" ? "……" : myTurn ? "结束回合" : "跳过这人"}
           </Button>
         )}
-        {inFight && (myTurn || isHost) && (
+        {!rulesV2 && inFight && (myTurn || isHost) && (
           <>
             <Button
               variant="ghost"
@@ -630,6 +667,11 @@ function CombatStrip({
               投降
             </Button>
           </>
+        )}
+        {rulesV2 && inFight && myTurn && (
+          <p className="self-center text-[11px] text-muted">
+            攻击、施法、撤离或疾走请直接写进行动；规则内核会结算本回合资源。
+          </p>
         )}
       </div>
       {(() => {
@@ -899,6 +941,7 @@ function RollButton({
   where,
   sceneId,
   combat,
+  ruleBoosts,
 }: {
   code: string;
   roll: PendingRoll;
@@ -906,20 +949,40 @@ function RollButton({
   where: Record<string, string>;
   sceneId: string;
   combat: PublicCombat | null;
+  ruleBoosts?: Array<"guidance" | "inspiration" | "lucky">;
 }) {
-  const boosts = eligibleBoosts(
-    party.map((p) => ({ userId: p.userId, sheet: p.sheet })),
-    roll,
-    {
-      where,
-      sceneId,
-      inCombat: Boolean(combat),
-      activeId: combat?.activeId ?? null,
-      spendAction: Object.fromEntries(
-        (combat?.order ?? []).map((o) => [o.id, o.spend?.action !== false]),
-      ),
-    },
-  );
+  const boosts = ruleBoosts
+    ? ruleBoosts.map((id) => ({
+        id,
+        fromUserId: roll.userId,
+        label:
+          id === "guidance"
+            ? "已有神导术 +1d4"
+            : id === "inspiration"
+              ? "激励（优势）"
+              : "半身人幸运",
+        detail:
+          id === "guidance"
+            ? "使用已生效的神导术并结束这项专注。"
+            : id === "inspiration"
+              ? "花费激励；优势与劣势按 2014 规则相消。"
+              : "若 d20 出 1，重掷一次并采用新结果。",
+        defaultOn: id === "lucky",
+        blocked: undefined,
+      }))
+    : eligibleBoosts(
+        party.map((p) => ({ userId: p.userId, sheet: p.sheet })),
+        roll,
+        {
+          where,
+          sceneId,
+          inCombat: Boolean(combat),
+          activeId: combat?.activeId ?? null,
+          spendAction: Object.fromEntries(
+            (combat?.order ?? []).map((o) => [o.id, o.spend?.action !== false]),
+          ),
+        },
+      );
   const [on, setOn] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(boosts.map((b) => [b.id, Boolean(b.defaultOn)])),
   );
@@ -940,8 +1003,10 @@ function RollButton({
               roll.ability);
   const alreadyGuide =
     (roll.kind === "check" || roll.kind === "init" || !roll.kind) &&
-    party.find((p) => p.userId === roll.userId)?.sheet.resources?.conc?.id ===
-      "guidance";
+    (ruleBoosts
+      ? ruleBoosts.includes("guidance")
+      : party.find((p) => p.userId === roll.userId)?.sheet.resources?.conc?.id ===
+        "guidance");
   return (
     <div className="rounded-[16px] border border-border bg-elevated px-3 py-3">
       <p className="text-xs text-muted">{roll.reason}</p>
@@ -1017,6 +1082,7 @@ function SheetView({
   squads,
   squadInvite,
   places,
+  ruleProjection,
 }: {
   party: TableSnap["characters"];
   meId: string;
@@ -1031,6 +1097,7 @@ function SheetView({
   squads?: { ids: string[]; captain: string }[];
   squadInvite?: { from: string; to: string; fromName: string } | null;
   places?: Record<string, string>;
+  ruleProjection?: TableSnap["state"]["ruleProjection"];
 }) {
   const [openId, setOpenId] = useState<string | null>(meId);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1062,7 +1129,7 @@ function SheetView({
     <div className="grid gap-2">
       {inviteToMe ? (
         <div className="rounded-[12px] border border-brass/40 bg-brass/10 px-3 py-2">
-          <p className="text-xs text-fg">{inviteToMe.fromName} 邀请你组队。组队后去留一致。一分钟内不应答会自动取消。</p>
+          <p className="text-xs text-fg">{inviteToMe.fromName} 邀请你组队。队长可组织整队移动；你仍可直接个人行动，单独移动或休息时会提示并离队。</p>
           <div className="mt-2 flex gap-2">
             <Button
               size="sm"
@@ -1248,6 +1315,7 @@ function SheetView({
                 restHold={restHold}
                 meId={meId}
                 partyCount={party.length}
+                activeRule={p.userId === meId ? ruleProjection?.viewer : undefined}
               />
             )}
           </li>
@@ -1295,6 +1363,7 @@ function CharacterDetail({
   restHold,
   meId,
   partyCount,
+  activeRule,
 }: {
   sheet: CharacterSheet;
   canEdit: boolean;
@@ -1305,6 +1374,7 @@ function CharacterDetail({
   restHold?: TableSnap["state"]["restHold"];
   meId?: string;
   partyCount?: number;
+  activeRule?: NonNullable<TableSnap["state"]["ruleProjection"]>["viewer"];
 }) {
   const live = ensureGear(sheet);
   const race = raceById(live.raceId);
@@ -1339,6 +1409,7 @@ function CharacterDetail({
         restHold={restHold}
         meId={meId}
         partyCount={partyCount ?? 1}
+        activeRule={activeRule}
       />
       <div className="grid grid-cols-3 gap-2">
         {ABILITIES.map((a) => (
@@ -1453,6 +1524,7 @@ function ResourcePanel({
   restHold,
   meId,
   partyCount,
+  activeRule,
 }: {
   sheet: CharacterSheet;
   canEdit: boolean;
@@ -1462,6 +1534,7 @@ function ResourcePanel({
   restHold?: TableSnap["state"]["restHold"];
   meId?: string;
   partyCount: number;
+  activeRule?: NonNullable<TableSnap["state"]["ruleProjection"]>["viewer"];
 }) {
   const r = sheet.resources!;
   const [busy, setBusy] = useState<string | null>(null);
@@ -1536,12 +1609,41 @@ function ResourcePanel({
             disabled={Boolean(busy) || inCombat}
             onClick={() =>
               go("s", () =>
-                restNow({ data: { code, kind: "short", hitDice: dice, arcane } }),
+                restNow({
+                  data: {
+                    code,
+                    kind: "short",
+                    mode: needVote ? "group" : "personal",
+                    hitDice: dice,
+                    arcane,
+                  },
+                }),
               )
             }
           >
-            {busy === "s" ? "结算……" : needVote ? "提议短休" : "开始短休"}
+            {busy === "s" ? "结算……" : needVote ? "提议队伍短休" : "开始短休"}
           </Button>
+          {needVote ? (
+            <Button
+              variant="subtle"
+              disabled={Boolean(busy) || inCombat}
+              onClick={() =>
+                go("solo-s", () =>
+                  restNow({
+                    data: {
+                      code,
+                      kind: "short",
+                      mode: "personal",
+                      hitDice: dice,
+                      arcane,
+                    },
+                  }),
+                )
+              }
+            >
+              {busy === "solo-s" ? "结算……" : "单独短休"}
+            </Button>
+          ) : null}
           <Button disabled={Boolean(busy)} onClick={() => setRest(null)}>
             返回
           </Button>
@@ -1551,7 +1653,6 @@ function ResourcePanel({
   }
 
   if (rest === "long") {
-    const hungry = r.ration <= 0;
     return (
       <div className="rounded-[12px] border border-brass/40 px-3 py-3">
         <p className="font-display text-sm">长休 · 过夜</p>
@@ -1561,10 +1662,7 @@ function ResourcePanel({
         <p className="mt-2 text-xs text-muted">
           口粮{" "}
           <span className="font-display tabular-nums text-fg">{r.ration}</span>
-          {" "}份。
-          {hungry
-            ? " 没有口粮：仍能撑过一晚，生命只恢复一半失去的，环位照常回满。"
-            : " 会吃掉 1 份。"}
+          {" "}份。口粮按旅途与环境规则另行消耗，不会自行改写 5e 长休恢复量。
         </p>
         {inCombat && (
           <p className="mt-2 text-[11px] text-brass">战斗中不能休整。</p>
@@ -1572,10 +1670,23 @@ function ResourcePanel({
         <div className="mt-3 flex gap-2">
           <Button
             disabled={Boolean(busy) || inCombat}
-            onClick={() => go("l", () => restNow({ data: { code, kind: "long" } }))}
+            onClick={() => go("l", () => restNow({ data: { code, kind: "long", mode: needVote ? "group" : "personal" } }))}
           >
-            {busy === "l" ? "结算……" : needVote ? "提议长休" : "开始长休"}
+            {busy === "l" ? "结算……" : needVote ? "提议队伍长休" : "开始长休"}
           </Button>
+          {needVote ? (
+            <Button
+              variant="subtle"
+              disabled={Boolean(busy) || inCombat}
+              onClick={() =>
+                go("solo-l", () =>
+                  restNow({ data: { code, kind: "long", mode: "personal" } }),
+                )
+              }
+            >
+              {busy === "solo-l" ? "结算……" : "单独长休"}
+            </Button>
+          ) : null}
           <Button disabled={Boolean(busy)} onClick={() => setRest(null)}>
             返回
           </Button>
@@ -1586,6 +1697,22 @@ function ResourcePanel({
 
   return (
     <div className="rounded-[12px] border border-border px-3 py-3">
+      {canEdit && activeRule?.rest?.status === "resting" ? (
+        <div className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2">
+          <p className="text-xs text-fg">
+            你正在{activeRule.rest.kind === "long" ? "长休" : "短休"}。还需约 {Math.ceil(Math.max(0, activeRule.rest.requiredSeconds - (activeRule.timeline.fictionSeconds - activeRule.rest.startedAt)) / 60)} 分钟虚构时间；拍数不会替代这段时长。
+          </p>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-2"
+            disabled={Boolean(busy)}
+            onClick={() => go("wake-v2", () => cancelRest({ data: { code } }))}
+          >
+            提前结束自己的休息
+          </Button>
+        </div>
+      ) : null}
       {canEdit && restHold ? (
         <div className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2">
           <p className="text-xs text-fg">
@@ -1623,6 +1750,7 @@ function ResourcePanel({
                       data: {
                         code,
                         kind: restVote.kind,
+                        mode: "group",
                         hitDice: restVote.kind === "short" ? dice : undefined,
                         arcane: restVote.kind === "short" ? arcane : undefined,
                       },

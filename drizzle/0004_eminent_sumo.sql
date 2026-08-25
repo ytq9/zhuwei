@@ -1,0 +1,1 @@
+ALTER TABLE `rooms` ADD `ruleset_version` text DEFAULT 'legacy' NOT NULL;

@@ -1,8 +1,11 @@
 /**
- * 模组数据结构。撰写规则以 `writing.ts` 为准（修订 7）。
+ * 模组数据结构。撰写规则以 `writing.ts` 为准（修订 9）。
  * 登记新案子时必须能通过 assertModule。
  */
 import { WRITING_REVISION } from "./writing";
+import { assertWorldDefinition } from "../rules/compiler";
+import type { WorldDefinition } from "../rules/model";
+import type { RulesetVersion } from "../rules/ruleset";
 
 export type ClueDef = {
   id: string;
@@ -105,6 +108,9 @@ export type TriggerDef = { if: string; then: string };
 export type ModuleDef = {
   id: string;
   title: string;
+  rulesetVersion: RulesetVersion;
+  /** 所有持久世界事实、通道和交互的结构化定义。 */
+  world: WorldDefinition;
   level: number;
   players: string;
   duration: string;
@@ -147,7 +153,7 @@ export function assertModule(mod: ModuleDef) {
       errors.push(`${mod.id}/${c.id}: failText 不能等于 playerText`);
     }
     if (c.failText.trim().length < 20) {
-      errors.push(`${mod.id}/${c.id}: failText 太短，三拍写不全`);
+      errors.push(`${mod.id}/${c.id}: failText 太短，观察、后果、替代三项写不全`);
     }
     if (/什么都没|没有发现|今晚不能再|再试一次调查/.test(c.failText)) {
       errors.push(`${mod.id}/${c.id}: failText 踩了禁写`);
@@ -206,6 +212,39 @@ export function assertModule(mod: ModuleDef) {
     (t) => t.if.includes("冷场") || t.if.includes("卡住"),
   );
   if (!hasStall) errors.push(`${mod.id}: triggers 需要一条冷场推进`);
+  try {
+    assertWorldDefinition(mod.world, {
+      sceneIds: mod.chapters.flatMap((chapter) => chapter.scenes.map((scene) => scene.id)),
+      clueIds: mod.clues.map((clue) => clue.id),
+      npcIds: mod.npcs.map((npc) => npc.id),
+      sceneClues: Object.fromEntries(
+        mod.chapters.flatMap((chapter) =>
+          chapter.scenes.map((scene) => [scene.id, scene.clues]),
+        ),
+      ),
+    });
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+  if (mod.rulesetVersion !== mod.world.rulesetVersion) {
+    errors.push(`${mod.id}: 模组与世界的 rulesetVersion 不一致`);
+  }
+  const forbiddenWorldKeys: string[] = [];
+  const visitWorld = (value: unknown, path: string) => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const childPath = `${path}.${key}`;
+      if (/^(truth|secret|gmOnly|hiddenText)$/i.test(key)) forbiddenWorldKeys.push(childPath);
+      visitWorld(child, childPath);
+    }
+  };
+  visitWorld(mod.world, "world");
+  if (forbiddenWorldKeys.length) {
+    errors.push(`${mod.id}: 结构化世界不能携带秘密文本字段 ${forbiddenWorldKeys.join("、")}`);
+  }
+  if (mod.truth.trim() && JSON.stringify(mod.world).includes(mod.truth.trim())) {
+    errors.push(`${mod.id}: truth 不得复制进结构化世界或玩家投影`);
+  }
   if (errors.length) {
     throw new Error(`模组合同未通过：\n- ${errors.join("\n- ")}`);
   }

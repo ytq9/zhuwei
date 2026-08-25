@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import { getSql } from "@/lib/db";
 import { uid } from "@/lib/utils";
 import type { CharacterSheet } from "@/lib/dnd/types";
@@ -41,7 +40,11 @@ import {
   squadOf,
 } from "./squad";
 import { anyPlaceBusy, isPlaceBusy, readBusyPlaces, sweepBusyPlaces } from "./busy";
-import { kpModelById, type KpModelId } from "./models";
+import type { KpModelId } from "./models";
+import {
+  chatModelText,
+  kpModelConfigurationError as providerConfigurationError,
+} from "./provider";
 import { reconcileClueState } from "./clue-state";
 import {
   normalizeActionCheck,
@@ -62,54 +65,17 @@ import {
 
 export type { KpSpeech, PendingRoll };
 
-function deepSeekApiKey() {
-  const secrets = env as typeof env & {
-    DEEPSEEK_API_KEY?: string;
-  };
-  return secrets.DEEPSEEK_API_KEY;
-}
-
 export function kpModelConfigurationError(model: KpModelId) {
-  if (!deepSeekApiKey()) {
-    return `${kpModelById(model)?.name ?? model} 尚未配置 API 密钥`;
-  }
-  return null;
+  return providerConfigurationError(model);
 }
 
 async function chatJson(
   model: KpModelId,
   messages: { role: "system" | "user"; content: string }[],
 ) {
-  const apiKey = deepSeekApiKey();
-  const modelName = kpModelById(model)?.name ?? model;
-  if (!apiKey) return { ok: false as const, error: `${modelName} 尚未配置 API 密钥` };
-  try {
-    const res = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        thinking: { type: "disabled" },
-        temperature: 0.7,
-        max_tokens: 1200,
-        response_format: { type: "json_object" },
-        messages,
-      }),
-    });
-    if (!res.ok) {
-      return { ok: false as const, error: `${modelName} 无法应答（${res.status}）` };
-    }
-    const body = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const text = body.choices?.[0]?.message?.content ?? "";
-    return { ok: true as const, data: parseKpSafe(text) };
-  } catch {
-    return { ok: false as const, error: `${modelName} 返回了无效结果` };
-  }
+  const response = await chatModelText(model, messages);
+  if (!response.ok) return response;
+  return { ok: true as const, data: parseKpSafe(response.text) };
 }
 
 type StateRow = {

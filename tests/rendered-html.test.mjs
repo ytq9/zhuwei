@@ -315,8 +315,16 @@ test("registered credentials reject a wrong password and restore a session", asy
   }
 });
 
-test("targets the existing Worker and declares the D1 migration contract", async () => {
-  const [wrangler, migration, parityMigration, authMigration, modelMigration] = await Promise.all([
+test("targets the existing Worker and declares the D1 and Room DO migration contract", async () => {
+  const [
+    wrangler,
+    migration,
+    parityMigration,
+    authMigration,
+    modelMigration,
+    rulesetMigration,
+    eventArchiveMigration,
+  ] = await Promise.all([
     readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
     readFile(
       new URL("../drizzle/0000_cheerful_freak.sql", import.meta.url),
@@ -334,6 +342,14 @@ test("targets the existing Worker and declares the D1 migration contract", async
       new URL("../drizzle/0003_rich_boom_boom.sql", import.meta.url),
       "utf8",
     ),
+    readFile(
+      new URL("../drizzle/0004_eminent_sumo.sql", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../drizzle/0005_unusual_pestilence.sql", import.meta.url),
+      "utf8",
+    ),
   ]);
   const config = JSON.parse(wrangler);
   assert.equal(config.name, "zhuwei");
@@ -342,6 +358,12 @@ test("targets the existing Worker and declares the D1 migration contract", async
   assert.equal(config.d1_databases[0].binding, "DB");
   assert.equal(config.d1_databases[0].database_name, "zhuwei-dev");
   assert.equal(config.d1_databases[0].migrations_dir, "drizzle");
+  assert.deepEqual(config.durable_objects?.bindings, [
+    { name: "ROOMS", class_name: "RoomDurableObject" },
+  ]);
+  assert.deepEqual(config.migrations, [
+    { tag: "room-do-v1", new_sqlite_classes: ["RoomDurableObject"] },
+  ]);
   const tick = String.fromCharCode(96);
   for (const table of [
     "rooms",
@@ -359,6 +381,10 @@ test("targets the existing Worker and declares the D1 migration contract", async
   assert.match(authMigration, /CREATE TABLE `auth_users`/);
   assert.match(authMigration, /CREATE TABLE `auth_sessions`/);
   assert.match(modelMigration, /ALTER TABLE `rooms` ADD `kp_model`/);
+  assert.match(rulesetMigration, /ALTER TABLE `rooms` ADD `ruleset_version`/);
+  assert.match(eventArchiveMigration, /CREATE TABLE `room_event_archive`/);
+  assert.match(eventArchiveMigration, /PRIMARY KEY\(`room_id`, `version`\)/);
+  assert.match(eventArchiveMigration, /`event_json` text NOT NULL/);
   assert.match(authMigration, /`password_hash` text NOT NULL/);
   assert.doesNotMatch(authMigration, /`password` text/);
 });

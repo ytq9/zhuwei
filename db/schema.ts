@@ -47,6 +47,7 @@ export const rooms = sqliteTable(
     hostUserId: text("host_user_id").notNull(),
     title: text("title").notNull(),
     moduleId: text("module_id").notNull().default("black-oak-will"),
+    rulesetVersion: text("ruleset_version").notNull().default("legacy"),
     kpModel: text("kp_model").notNull().default("deepseek-v4-flash"),
     status: text("status").notNull().default("lobby"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -136,4 +137,25 @@ export const sessionLogs = sqliteTable(
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index("idx_session_logs_room_created").on(table.roomId, table.createdAt)],
+);
+
+export const roomEventArchive = sqliteTable(
+  "room_event_archive",
+  {
+    roomId: text("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    eventId: text("event_id").notNull(),
+    commandId: text("command_id").notNull(),
+    eventType: text("event_type").notNull(),
+    fictionSeconds: integer("fiction_seconds").notNull(),
+    eventJson: text("event_json").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roomId, table.version] }),
+    uniqueIndex("idx_room_event_archive_event").on(table.roomId, table.eventId),
+    index("idx_room_event_archive_command").on(table.roomId, table.commandId),
+  ],
 );

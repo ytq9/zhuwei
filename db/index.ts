@@ -26,6 +26,7 @@ const schemaStatements = [
     host_user_id TEXT NOT NULL,
     title TEXT NOT NULL,
     module_id TEXT NOT NULL DEFAULT 'black-oak-will',
+    ruleset_version TEXT NOT NULL DEFAULT 'legacy',
     kp_model TEXT NOT NULL DEFAULT 'deepseek-v4-flash',
     status TEXT NOT NULL DEFAULT 'lobby',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -81,12 +82,27 @@ const schemaStatements = [
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   "CREATE INDEX IF NOT EXISTS idx_session_logs_room_created ON session_logs(room_id, created_at)",
+  `CREATE TABLE IF NOT EXISTS room_event_archive (
+    room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    command_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    fiction_seconds INTEGER NOT NULL,
+    event_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (room_id, version),
+    UNIQUE (room_id, event_id)
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_event_archive_event ON room_event_archive(room_id, event_id)",
+  "CREATE INDEX IF NOT EXISTS idx_room_event_archive_command ON room_event_archive(room_id, command_id)",
 ];
 
 let ready: Promise<void> | null = null;
 
 async function ensureCompatibilityColumns(db: D1Database) {
   const additions = [
+    { table: "rooms", column: "ruleset_version", sql: "ALTER TABLE rooms ADD COLUMN ruleset_version TEXT NOT NULL DEFAULT 'legacy'" },
     { table: "rooms", column: "kp_model", sql: "ALTER TABLE rooms ADD COLUMN kp_model TEXT NOT NULL DEFAULT 'deepseek-v4-flash'" },
     { table: "room_members", column: "seated", sql: "ALTER TABLE room_members ADD COLUMN seated INTEGER NOT NULL DEFAULT 1" },
     { table: "messages", column: "tts_text", sql: "ALTER TABLE messages ADD COLUMN tts_text TEXT" },

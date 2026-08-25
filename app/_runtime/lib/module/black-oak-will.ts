@@ -1,9 +1,425 @@
 import type { ModuleDef } from "./schema";
+import type { Ability } from "../rules/ruleset";
+import type { InteractionDefinition } from "../rules/model";
 import { WRITING_REVISION } from "./writing";
+import { RULESET_VERSION } from "../rules/ruleset";
+
+function clueDiscovery(input: {
+  clueId: string;
+  sceneId: string;
+  name: string;
+  aliases: string[];
+  verbs: string[];
+  ability: Ability;
+  skill: string;
+  dc: number;
+}): InteractionDefinition[] {
+  return [
+    {
+      id: `notice-${input.clueId}-${input.sceneId}`,
+      name: `留意${input.name}`,
+      sceneId: input.sceneId,
+      aliases: input.aliases,
+      verbs: input.verbs,
+      resolution: { kind: "automatic" },
+      success: [{ kind: "revealClue", clueId: input.clueId, layer: "hint" }],
+      duration: { unit: "round", value: 1 },
+      spotlightBeats: 1,
+    },
+    {
+      id: `inspect-${input.clueId}-${input.sceneId}`,
+      name: `仔细查明${input.name}`,
+      sceneId: input.sceneId,
+      aliases: [...input.aliases, input.name],
+      verbs: ["仔细", "查", "调查", "辨认", ...input.verbs],
+      prerequisites: [{ kind: "actorKnows", clueId: input.clueId, minimumLayer: "hint" }],
+      resolution: {
+        kind: "check",
+        ability: input.ability,
+        skill: input.skill,
+        dc: input.dc,
+        reason: `查明${input.name}的完整信息。`,
+      },
+      success: [{ kind: "revealClue", clueId: input.clueId, layer: "full" }],
+      failure: [{ kind: "revealClue", clueId: input.clueId, layer: "hint" }],
+      duration: { unit: "minute", value: 1 },
+      spotlightBeats: 1,
+    },
+  ];
+}
+
+const CLUE_DISCOVERIES: InteractionDefinition[] = [
+  ...clueDiscovery({ clueId: "c-leaf", sceneId: "wake", name: "齿间的黑橡叶", aliases: ["遗体", "嘴", "叶子", "黑橡叶"], verbs: ["看", "检查", "掀", "问"], ability: "int", skill: "investigation", dc: 11 }),
+  ...clueDiscovery({ clueId: "c-varo-ink", sceneId: "wake", name: "第一份遗嘱的新墨", aliases: ["瓦罗", "第一份遗嘱", "墨", "末三行"], verbs: ["看", "读", "问", "对比"], ability: "int", skill: "investigation", dc: 12 }),
+  ...clueDiscovery({ clueId: "c-varo-ink", sceneId: "wills", name: "第一份遗嘱的新墨", aliases: ["第一份遗嘱", "墨", "末三行"], verbs: ["看", "读", "对比"], ability: "int", skill: "investigation", dc: 12 }),
+  ...clueDiscovery({ clueId: "c-lian-insomnia", sceneId: "wake", name: "莉安对酒窖的惧怕", aliases: ["莉安", "酒窖", "睡不着", "害怕"], verbs: ["问", "听", "观察"], ability: "wis", skill: "insight", dc: 12 }),
+  ...clueDiscovery({ clueId: "c-lian-insomnia", sceneId: "private-lian", name: "莉安对酒窖的惧怕", aliases: ["莉安", "酒窖", "害怕"], verbs: ["问", "听", "观察"], ability: "wis", skill: "insight", dc: 12 }),
+  ...clueDiscovery({ clueId: "c-naes-symbol", sceneId: "wake", name: "奈斯被刮掉的圣徽", aliases: ["奈斯", "领口", "圣徽", "刮痕"], verbs: ["看", "问", "辨认"], ability: "int", skill: "religion", dc: 12 }),
+  ...clueDiscovery({ clueId: "c-second-seal", sceneId: "wills", name: "第二份遗嘱的火漆与行文", aliases: ["第二份遗嘱", "火漆", "真印", "行文"], verbs: ["看", "读", "对比"], ability: "int", skill: "investigation", dc: 13 }),
+  ...clueDiscovery({ clueId: "c-singing", sceneId: "yard", name: "门缝里的女声", aliases: ["门缝", "女声", "歌", "摇篮曲"], verbs: ["听", "贴门", "安静"], ability: "wis", skill: "perception", dc: 10 }),
+  ...clueDiscovery({ clueId: "c-new-nails", sceneId: "yard", name: "酒窖门上的新钉", aliases: ["钉子", "钉帽", "门", "红蜡"], verbs: ["看", "检查", "问"], ability: "int", skill: "investigation", dc: 11 }),
+  ...clueDiscovery({ clueId: "c-lullaby", sceneId: "private-lian", name: "未唱完的摇篮曲", aliases: ["莉安", "摇篮曲", "最后一句", "歌"], verbs: ["问", "听", "安慰"], ability: "wis", skill: "insight", dc: 12 }),
+  ...clueDiscovery({ clueId: "c-salt", sceneId: "cellar", name: "反向蔓延的盐霜", aliases: ["盐霜", "白霜", "酒桶", "海盐"], verbs: ["看", "摸", "沿着"], ability: "int", skill: "investigation", dc: 11 }),
+  ...clueDiscovery({ clueId: "c-tally", sceneId: "cellar", name: "墙根的刮痕日历", aliases: ["刮痕", "日历", "墙根", "数日子"], verbs: ["看", "数", "描"], ability: "int", skill: "investigation", dc: 10 }),
+  ...clueDiscovery({ clueId: "c-journal", sceneId: "shrine", name: "赫斯日记残页", aliases: ["日记", "残页", "木盒", "父亲的字"], verbs: ["翻", "看", "拼", "打开"], ability: "int", skill: "investigation", dc: 11 }),
+];
 
 export const BLACK_OAK_WILL: ModuleDef = {
   id: "black-oak-will",
   title: "黑橡居酒屋的第三份遗嘱",
+  rulesetVersion: RULESET_VERSION,
+  world: {
+    rulesetVersion: RULESET_VERSION,
+    initialSceneId: "wake",
+    locationSceneIds: ["wake", "wills", "yard", "private-lian", "cellar", "shrine"],
+    portals: [
+      {
+        id: "wake-wills",
+        from: "wake",
+        to: "wills",
+        initialState: "open",
+        traversalTime: { unit: "round", value: 1 },
+      },
+      {
+        id: "wake-yard",
+        from: "wake",
+        to: "yard",
+        initialState: "open",
+        traversalTime: { unit: "minute", value: 1 },
+      },
+      {
+        id: "wake-private-lian",
+        from: "wake",
+        to: "private-lian",
+        initialState: "open",
+        traversalTime: { unit: "minute", value: 1 },
+      },
+      {
+        id: "yard-cellar",
+        from: "yard",
+        to: "cellar",
+        initialState: "locked",
+        traversalTime: { unit: "minute", value: 1 },
+      },
+      {
+        id: "cellar-shrine",
+        from: "cellar",
+        to: "shrine",
+        initialState: "open",
+        traversalTime: { unit: "minute", value: 2 },
+      },
+    ],
+    artifacts: [
+      {
+        id: "artifact-third-will",
+        name: "第三份遗嘱",
+        initialSceneId: "shrine",
+        aliases: ["遗嘱", "羊皮纸", "纸片"],
+        initialVisibility: "hidden",
+      },
+      {
+        id: "artifact-cellar-key",
+        name: "酒窖铁钥",
+        initialSceneId: "wake",
+        initialHolderId: "varo",
+        aliases: ["铁钥匙", "酒窖钥匙", "钥匙"],
+        initialVisibility: "hidden",
+      },
+      {
+        id: "artifact-cellar-torch",
+        name: "备用火把",
+        initialSceneId: "cellar",
+        aliases: ["火把", "照明物"],
+        initialVisibility: "hidden",
+      },
+      {
+        id: "artifact-cellar-crowbar",
+        name: "旧撬棍",
+        initialSceneId: "cellar",
+        aliases: ["撬棍", "撬门工具"],
+        initialVisibility: "hidden",
+      },
+    ],
+    interactions: [
+      {
+        id: "request-cellar-key-wake",
+        name: "请瓦罗交出酒窖铁钥",
+        sceneId: "wake",
+        targetId: "artifact-cellar-key",
+        aliases: ["瓦罗", "铁钥匙", "酒窖钥匙", "钥匙"],
+        verbs: ["问", "请求", "索要", "说服", "交出"],
+        prerequisites: [
+          { kind: "entityAt", entityId: "varo", sceneId: "wake" },
+          { kind: "artifactHeldByEntity", artifactId: "artifact-cellar-key", entityId: "varo" },
+        ],
+        resolution: {
+          kind: "check",
+          ability: "cha",
+          skill: "persuasion",
+          dc: 13,
+          reason: "让瓦罗相信把酒窖铁钥交给你比继续隐瞒更安全。",
+        },
+        success: [
+          { kind: "transferArtifact", artifactId: "artifact-cellar-key", to: "actor" },
+        ],
+        duration: { unit: "minute", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "request-cellar-key-yard",
+        name: "在后院请瓦罗交出酒窖铁钥",
+        sceneId: "yard",
+        targetId: "artifact-cellar-key",
+        aliases: ["瓦罗", "铁钥匙", "酒窖钥匙", "钥匙"],
+        verbs: ["问", "请求", "索要", "说服", "交出"],
+        prerequisites: [
+          { kind: "entityAt", entityId: "varo", sceneId: "yard" },
+          { kind: "artifactHeldByEntity", artifactId: "artifact-cellar-key", entityId: "varo" },
+        ],
+        resolution: {
+          kind: "check",
+          ability: "cha",
+          skill: "persuasion",
+          dc: 13,
+          reason: "当面迫使瓦罗把酒窖铁钥交给能够处理门后危险的人。",
+        },
+        success: [
+          { kind: "transferArtifact", artifactId: "artifact-cellar-key", to: "actor" },
+        ],
+        duration: { unit: "minute", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "force-cellar-door",
+        name: "强行破开钉死的酒窖门",
+        sceneId: "yard",
+        targetId: "yard-cellar",
+        aliases: ["酒窖门", "橡木门", "门"],
+        verbs: ["破", "撞", "踹", "推", "砸", "撬"],
+        prerequisites: [{ kind: "portalState", portalId: "yard-cellar", state: "locked" }],
+        resolution: {
+          kind: "check",
+          ability: "str",
+          skill: "athletics",
+          dc: 15,
+          reason: "强行破开钉死的酒窖门。",
+        },
+        success: [
+          { kind: "setPortalState", portalId: "yard-cellar", state: "destroyed" },
+          { kind: "setFlag", flag: "shrine-progress", value: 1 },
+        ],
+        duration: { unit: "round", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "unlock-cellar-door",
+        name: "用铁钥打开酒窖门",
+        sceneId: "yard",
+        targetId: "yard-cellar",
+        prerequisites: [
+          { kind: "portalState", portalId: "yard-cellar", state: "locked" },
+          { kind: "artifactHeldByActor", artifactId: "artifact-cellar-key" },
+        ],
+        resolution: { kind: "automatic" },
+        success: [{ kind: "setPortalState", portalId: "yard-cellar", state: "open" }],
+        duration: { unit: "round", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "retrieve-third-will",
+        name: "从石座夹层取出第三份遗嘱",
+        sceneId: "shrine",
+        targetId: "artifact-third-will",
+        aliases: ["第三份遗嘱", "遗嘱", "羊皮纸", "纸片", "夹层"],
+        verbs: ["倒", "取", "抽", "撬", "夹", "拍"],
+        prerequisites: [
+          { kind: "artifactAt", artifactId: "artifact-third-will", sceneId: "shrine" },
+        ],
+        resolution: {
+          kind: "check",
+          ability: "dex",
+          skill: "sleight",
+          dc: 11,
+          reason: "在不撕裂脆纸的情况下把遗嘱取出。",
+        },
+        success: [
+          { kind: "transferArtifact", artifactId: "artifact-third-will", to: "actor" },
+          { kind: "revealClue", clueId: "c-third-will", layer: "full" },
+        ],
+        failure: [{ kind: "revealClue", clueId: "c-third-will", layer: "hint" }],
+        duration: { unit: "minute", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "move-stone-seat",
+        name: "移动沉重的石座",
+        sceneId: "shrine",
+        targetId: "stone-seat",
+        aliases: ["石座", "神龛石座"],
+        verbs: ["搬", "抬", "推", "挪", "拖", "移动"],
+        resolution: {
+          kind: "check",
+          ability: "str",
+          skill: "athletics",
+          dc: 14,
+          reason: "尝试移动沉重的石座。",
+        },
+        success: [{ kind: "setFlag", flag: "stone-seat-moved", value: true }],
+        duration: { unit: "round", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "notice-c-third-will-shrine",
+        name: "摸到石座夹层里的羊皮边",
+        sceneId: "shrine",
+        aliases: ["石座", "夹层", "羊皮", "纸边"],
+        verbs: ["摸", "看", "搜", "检查"],
+        prerequisites: [
+          { kind: "artifactAt", artifactId: "artifact-third-will", sceneId: "shrine" },
+        ],
+        resolution: { kind: "automatic" },
+        success: [{ kind: "revealClue", clueId: "c-third-will", layer: "hint" }],
+        duration: { unit: "round", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "retrieve-cellar-torch",
+        name: "从酒桶后找出备用火把",
+        sceneId: "cellar",
+        targetId: "artifact-cellar-torch",
+        aliases: ["备用火把", "火把", "照明物"],
+        verbs: ["找", "搜", "取", "拿"],
+        prerequisites: [
+          { kind: "artifactAt", artifactId: "artifact-cellar-torch", sceneId: "cellar" },
+        ],
+        resolution: {
+          kind: "check",
+          ability: "int",
+          skill: "investigation",
+          dc: 10,
+          reason: "在堆叠的旧酒桶后找到还能使用的备用火把。",
+        },
+        success: [
+          { kind: "transferArtifact", artifactId: "artifact-cellar-torch", to: "actor" },
+        ],
+        duration: { unit: "minute", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "retrieve-cellar-crowbar",
+        name: "从杂物堆找出旧撬棍",
+        sceneId: "cellar",
+        targetId: "artifact-cellar-crowbar",
+        aliases: ["旧撬棍", "撬棍", "撬门工具"],
+        verbs: ["找", "搜", "取", "拿"],
+        prerequisites: [
+          { kind: "artifactAt", artifactId: "artifact-cellar-crowbar", sceneId: "cellar" },
+        ],
+        resolution: {
+          kind: "check",
+          ability: "int",
+          skill: "investigation",
+          dc: 12,
+          reason: "从酒窖杂物里辨认并取出可用的旧撬棍。",
+        },
+        success: [
+          { kind: "transferArtifact", artifactId: "artifact-cellar-crowbar", to: "actor" },
+        ],
+        duration: { unit: "minute", value: 1 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "destroy-stone-seat",
+        name: "依照遗嘱毁掉石座",
+        sceneId: "shrine",
+        targetId: "stone-seat",
+        aliases: ["石座", "神龛", "骨纹石座"],
+        verbs: ["毁", "砸", "拆", "破坏"],
+        prerequisites: [
+          { kind: "actorKnows", clueId: "c-third-will", minimumLayer: "full" },
+          { kind: "not", predicate: { kind: "flagEquals", flag: "stone-seat-destroyed", value: true } },
+        ],
+        resolution: {
+          kind: "check",
+          ability: "str",
+          skill: "athletics",
+          dc: 15,
+          reason: "用足够的力量破坏厚重石座，使其无法继续充当神龛。",
+        },
+        success: [{ kind: "setFlag", flag: "stone-seat-destroyed", value: true }],
+        duration: { unit: "minute", value: 10 },
+        spotlightBeats: 1,
+      },
+      {
+        id: "reseal-cellar-door",
+        name: "依照遗嘱重新钉死酒窖门",
+        sceneId: "yard",
+        targetId: "yard-cellar",
+        aliases: ["酒窖门", "橡木门", "门"],
+        verbs: ["钉", "封", "锁", "重新封死"],
+        prerequisites: [
+          { kind: "actorKnows", clueId: "c-third-will", minimumLayer: "full" },
+          { kind: "portalState", portalId: "yard-cellar", state: "open" },
+        ],
+        resolution: { kind: "automatic" },
+        success: [
+          { kind: "setPortalState", portalId: "yard-cellar", state: "locked" },
+          { kind: "setFlag", flag: "cellar-resealed", value: true },
+        ],
+        duration: { unit: "minute", value: 10 },
+        spotlightBeats: 1,
+      },
+      ...CLUE_DISCOVERIES,
+    ],
+    npcInitialKnowledge: {},
+    npcCapabilities: { varo: ["nail-door"] },
+    npcPlans: [
+      {
+        id: "varo-nail-cellar-door",
+        actorId: "varo",
+        requiredCapabilities: ["nail-door"],
+        prerequisites: [{ kind: "actorAt", sceneId: "wake" }],
+        effects: [
+          { kind: "moveActor", portalId: "wake-yard", to: "yard" },
+          { kind: "setPortalState", portalId: "yard-cellar", state: "locked" },
+        ],
+        duration: { unit: "minute", value: 10 },
+      },
+    ],
+    scheduledEvents: [
+      {
+        id: "varo-door-deadline",
+        atSeconds: 20 * 60,
+        scope: { kind: "global" },
+        cancelIf: [{ kind: "portalState", portalId: "yard-cellar", state: "locked" }],
+        npcPlanId: "varo-nail-cellar-door",
+        interruption: "mayInterruptActivity",
+      },
+    ],
+    endings: [
+      {
+        id: "ending-seat-destroyed",
+        name: "遵照第三份遗嘱",
+        outcome: "success",
+        when: [
+          { kind: "artifactStatus", artifactId: "artifact-third-will", status: "held" },
+          { kind: "flagEquals", flag: "stone-seat-destroyed", value: true },
+        ],
+        publicText: "第三份遗嘱已经取出，石座也被彻底毁坏。",
+      },
+      {
+        id: "ending-cellar-resealed",
+        name: "把门再钉死",
+        outcome: "mixed",
+        when: [
+          { kind: "artifactStatus", artifactId: "artifact-third-will", status: "held" },
+          { kind: "portalState", portalId: "yard-cellar", state: "locked" },
+          { kind: "flagEquals", flag: "cellar-resealed", value: true },
+        ],
+        publicText: "第三份遗嘱已经取出，酒窖门依照赫斯的备用嘱托重新封死。",
+      },
+    ],
+  },
   writingRevision: WRITING_REVISION,
   level: 3,
   players: "2–5 名玩家 + AI KP",
