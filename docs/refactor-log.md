@@ -1609,3 +1609,24 @@
 | 2026-08-28 | `npm run cf:deploy` | 0 | 更新现有 `zhuwei`；Version `5ee177c8-8f1c-4d8d-8b9e-679178b4d629`。 |
 | 2026-08-28 | `npx --no-install wrangler deployments list --json` | 0 | 新版本承接 100% 流量。 |
 | 2026-08-28 | production root `curl`；独立远程抓取/代理复核 | 28；受安全门拒绝/28 | DNS 正常，连接在 HTTP 前超时；记录传输层限制，未虚报应用响应。 |
+
+## 角色侧栏冗余入口与动作换行修复正式发布（2026-08-28）
+
+- 基线：远端 `cloudflare` / `98ffd1d402e5ba2c5d4bdbe8fede6ecabb9f2ff6`，远端 `main` / `29eb06dc009c983ad61b2d862454503e67a7f40a`。任务开始时本地另有 DeepSeek/KP、`AGENTS.md`、本日志及 `.playwright-cli/` 等在途改动；本次通过隔离 checkpoint 与选择性暂存，只集成、提交和部署下述侧栏组件与测试，未覆盖、提交或发布其他任务的改动。
+- 症状：角色侧栏重复显示“所在 · 黑橡居酒屋大厅”，提供不需要的“点火把”按钮；展开“动作”后，长动作说明的最小内容宽度把整条右栏撑宽，部分内容被横向裁掉。
+- 根因：`CharacterDetail` 重复渲染了外层角色摘要已有的地点；`ResourcePanel` 直接暴露火把规则按钮；`FeatureLine` 摘要使用 `truncate`（强制单行），且外层 grid/flex/aside 滚动链缺少 `min-w-0`、横向裁剪和任意长词换行约束，浏览器按 min-content 宽度扩张侧栏。
+- 修改：`app/_runtime/components/play-table.tsx` 仅移除 `CharacterDetail` 的重复地点段落和 `ResourcePanel` 的“点火把”按钮，保留摘要地点徽标、火把资源/规则及服务端能力；在 PlayTable、aside、列表、折叠栏与动作摘要链补充 `min-w-0`、`overflow-x-hidden`、`flex-wrap`、`break-words` 与 `[overflow-wrap:anywhere]`，让长文本在既有右栏宽度内换行。`tests/room-management-and-action-copy.test.mjs` 新增精确源码合同，验证冗余入口不存在、位置摘要仍保留、动作链可收缩且不再使用单行截断。
+- 集成与发布：隔离 checkpoint `f93021576c3ae255e0d1a37e75b3db512a151127` 与本地 `cloudflare` 提交 `69e494e5088f1c400ff5cdc3909017c1e66e7cfa` 的 tree 均为 `0dd31105db170051750e85f7ad035d5ed4dc4c0a`；该提交已非 force 推送。部署仍使用现有 Worker `zhuwei`、现有 `DB`/ROOMS/AI/ASSETS bindings，无 schema 或 migration 修改，远端复查为 `No migrations to apply`。
+- 部署结果：`npm run cf:deploy` 退出 0，配置门和 Vinext production build 通过，更新现有 `zhuwei`；Cloudflare Version `d5dd869b-7dda-4b81-877d-d997d9346fb0` 已由 deployment status 确认承接 100% 流量。远端 `cloudflare` 已等于 `69e494e`，远端 `main` 保持不变。
+- 线上限制：部署后 `GET /table/H5KJNS` 的 `curl` 在 HTTPS 建连 8 秒后退出 28、status `000`；独立 Chrome 通道也在页面加载阶段超时。两个通道都未取得 HTTP/DOM 响应，按止损线停止重试；本地代码和控制面部署已验证，但不能据此宣称代表性线上页面冒烟或外部可达性已恢复。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28（TDD RED → GREEN） | `npx --no-install tsx --test tests/room-management-and-action-copy.test.mjs` | 1 → 0 | 先复现重复地点；修改后 2/2，通过无火把按钮、摘要保留与动作换行合同。 |
+| 2026-08-28 | `npm ci` | 0 | 隔离 worktree 依赖缺失时按 lockfile 安装 506 个包；audit 报告既有 12 项提示（1 low、4 moderate、7 high），未执行自动修复且 manifest/lockfile 无变化。 |
+| 2026-08-28 | 目标 ESLint；`npm run typecheck` | 0；0 | 测试文件静态检查和类型检查通过；强制绕过项目 ignore 检查整份历史组件时另见 6 项非本次 hunks 的既有告警，未扩大修复范围。 |
+| 2026-08-28（冻结门） | `npm run typecheck`；`npm run lint`；`npm test` | 0；0；0 | production build 通过；Node 327/327；Worker/Vitest 42/42 文件，158 passed / 5 个既有条件 skip。故障注入 reporter 文本未造成测试失败。 |
+| 2026-08-28 | `wrangler whoami`；部署配置门；远端 migration list | 0；0；0 | 既有 OAuth 会话可用，目标仍为现有 Worker/资源；无待应用 migration。 |
+| 2026-08-28 | `git push origin HEAD:refs/heads/cloudflare`；远端分支复核 | 0；0 | 只推送 `69e494e`；远端 `main` 仍为冻结基线。 |
+| 2026-08-28 | `npm run cf:deploy`；`wrangler deployments status --json` | 0；0 | Version `d5dd869b-7dda-4b81-877d-d997d9346fb0` 发布并承接 100% 流量。 |
+| 2026-08-28 | production table `curl`；独立 Chrome | 28；timeout | 均在得到 HTTP/DOM 前超时；记录传输层限制，不虚报应用响应。 |
