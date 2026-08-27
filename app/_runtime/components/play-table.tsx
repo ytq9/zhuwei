@@ -701,7 +701,7 @@ export function PlayTable({
   ].join(":");
 
   return (
-    <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(13.5rem,38dvh)] gap-4 overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(17.5rem,22rem)] lg:grid-rows-1">
+    <div className="grid min-h-0 min-w-0 w-full flex-1 grid-rows-[minmax(0,1fr)_minmax(13.5rem,38dvh)] gap-4 overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(17.5rem,22rem)] lg:grid-rows-1">
       <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-border bg-surface">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <div>
@@ -1021,7 +1021,7 @@ export function PlayTable({
         </form> : null}
       </section>
 
-      <aside className="flex min-h-0 flex-col rounded-[28px] border border-border bg-surface">
+      <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[28px] border border-border bg-surface">
         <div className="flex border-b border-border">
           {(
             [
@@ -1045,7 +1045,7 @@ export function PlayTable({
             </button>
           ))}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 [overflow-wrap:anywhere]">
           {tab === "sheet" && (
             <SheetView
               party={snap.characters}
@@ -2120,7 +2120,7 @@ function SheetView({
     return <p className="text-sm text-muted">还没有锁定的人物卡。</p>;
   }
   return (
-    <div className="grid gap-2">
+    <div className="grid min-w-0 gap-2">
       {inviteToMe ? (
         <div className="rounded-[12px] border border-brass/40 bg-brass/10 px-3 py-2">
           <p className="text-xs text-fg">{inviteToMe.fromName} 邀请你组队。队长可组织整队移动；你仍可直接个人行动，单独移动或休息时会提示并离队。</p>
@@ -2143,7 +2143,7 @@ function SheetView({
           </div>
         </div>
       ) : null}
-      <ul className="grid gap-2">
+      <ul className="grid min-w-0 gap-2">
       {party.map((p) => {
         const sheet = p.sheet;
         const identityOnly = p.visibility === "identityOnly";
@@ -2158,7 +2158,7 @@ function SheetView({
         );
         const theirGroup = groups.find((g) => g.ids.includes(p.userId));
         return (
-          <li key={p.userId} className="overflow-hidden rounded-[16px] border border-border">
+          <li key={p.userId} className="min-w-0 overflow-hidden rounded-[16px] border border-border">
             <div className="flex w-full items-start justify-between gap-2 px-3 py-3">
               <button
                 type="button"
@@ -2321,7 +2321,6 @@ function SheetView({
                 canEdit={p.userId === meId}
                 code={code}
                 inCombat={inCombat}
-                placeName={placeNames?.[p.userId]}
                 restVote={restVote}
                 restHold={restHold}
                 meId={meId}
@@ -2360,18 +2359,18 @@ function Fold({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-[12px] border border-border">
+    <div className="min-w-0 max-w-full overflow-hidden rounded-[12px] border border-border">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left"
+        className="flex w-full min-w-0 items-center justify-between gap-2 px-2.5 py-2 text-left"
       >
         <span className="text-xs font-medium">{title}</span>
         <span className="min-w-0 truncate text-[11px] text-subtle">
           {open ? "收起" : hint || "展开"}
         </span>
       </button>
-      {open && <div className="border-t border-border px-2.5 py-2">{children}</div>}
+      {open && <div className="border-t border-border px-2.5 py-2 min-w-0">{children}</div>}
     </div>
   );
 }
@@ -2381,7 +2380,6 @@ function CharacterDetail({
   canEdit,
   code,
   inCombat,
-  placeName,
   restVote,
   restHold,
   meId,
@@ -2396,7 +2394,6 @@ function CharacterDetail({
   canEdit: boolean;
   code: string;
   inCombat: boolean;
-  placeName?: string;
   restVote?: TableSnap["state"]["restVote"];
   restHold?: TableSnap["state"]["restHold"];
   meId?: string;
@@ -2424,10 +2421,7 @@ function CharacterDetail({
     ) ?? []),
   ];
   return (
-    <div className="grid gap-3 border-t border-border px-3 py-3 text-sm">
-      {placeName ? (
-        <p className="text-xs text-brass">所在 · {placeName}</p>
-      ) : null}
+    <div className="grid min-w-0 gap-3 border-t border-border px-3 py-3 text-sm">
       <p className="text-muted">
         {race?.name}
         {cls?.name}
@@ -2498,7 +2492,7 @@ function CharacterDetail({
       </Fold>
       {live.features.length > 0 && (
         <Fold title="动作" hint={`${live.features.length} 条`}>
-          <ul className="grid gap-2">
+          <ul className="grid min-w-0 gap-2">
             {live.features.map((f) => (
               <FeatureLine
                 key={f.slice(0, 24)}
@@ -2906,11 +2900,6 @@ function ResourcePanel({
               回气
             </Button>
           )}
-          {r.torch > 0 && (
-            <Button disabled={Boolean(busy)} onClick={() => go("t", () => useFeature({ data: { code, feat: "torch" } }))}>
-              点火把
-            </Button>
-          )}
         </div>
       )}
     </div>
@@ -2944,15 +2933,15 @@ function FeatureLine({ text, stock }: { text: string; stock?: StockItem }) {
   }, [open]);
 
   return (
-    <div className="rounded-[10px] border border-border bg-bg/40">
+    <div className="min-w-0 max-w-full rounded-[10px] border border-border bg-bg/40">
       <button
         type="button"
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen(true)}
-        className="flex w-full items-baseline gap-2 px-2.5 py-2 text-left text-xs"
+        className="flex w-full min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 px-2.5 py-2 text-left text-xs"
       >
-        <span className="font-medium">{title}</span>
+        <span className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{title}</span>
         {stock && (
           <span className="ml-auto shrink-0 tabular-nums">
             <span className="font-display text-sm text-fg">{stock.remain}</span>
@@ -2962,7 +2951,9 @@ function FeatureLine({ text, stock }: { text: string; stock?: StockItem }) {
           </span>
         )}
         {!open && !stock && rest && (
-          <span className="min-w-0 flex-1 truncate text-subtle">{rest}</span>
+          <span className="min-w-0 flex-[1_1_10rem] whitespace-normal break-words text-subtle [overflow-wrap:anywhere]">
+            {rest}
+          </span>
         )}
       </button>
       {open &&
