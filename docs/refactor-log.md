@@ -1715,3 +1715,18 @@
 | 2026-08-28 | Playwright 1440/375 视觉与键盘验收；1023→1024 断点恢复 | 0 | 无溢出；焦点 trap/Escape/还焦/滚动锁清理与 `64rem` 跨断点均通过，控制台 0 error / 0 warning。 |
 | 2026-08-28 | 最终 `npm run module:check && npm run typecheck && npm run lint && npm test` | 0 | production build；Node 334/334；Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip。故障注入 reporter 文本未造成失败。 |
 | 2026-08-28 | `wrangler --version`；`whoami`；部署配置门；Secret/migration/deployment 只读检查 | 0 | 现有账号、Worker、绑定和 D1 一致；无待处理 migration；发布前版本为 100% 流量。 |
+
+## 简洁战术地图正式发布（2026-08-28）
+
+- 用户明确授权“修好后尝试合并，无错后推送部署”。功能提交 `9ecc6f93b5bf4e8d2d28995f3d5e5b2b7b912991` 与发布前日志提交 `81f5fdaaf301813109796518f18edc91844e15f9` 已从 `388b527` 非 force 快进推送到远端 `cloudflare`；推送后 `git ls-remote` 证明 `cloudflare=81f5fda`，`main` 仍为冻结基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+- `npm run cf:deploy` 退出 0：部署配置门与 Vinext 五阶段 production build 通过，上传 10 个新增或变化静态资产，只更新现有 Worker `zhuwei`。新 Cloudflare Version `4a0666e7-87cb-4bf5-8af3-794159ad7efe` 已由 deployment `a7d86980-0742-4b94-96c9-e8587f3647be` 确认自 `2026-08-27T21:59:20.734388Z` 起承接 100% 流量。
+- `wrangler versions view` 复核 handler 为 `fetch`、compatibility date `2026-05-22`、flag 为 `nodejs_compat`；绑定仍为现有 ROOMS、D1 `DB` / `f5a448fd-4224-4e52-bafb-a84cb190b618`、AI、ASSETS，Secret 名称仍为 `DEEPSEEK_API_KEY`。没有创建资源、修改 Secret 或执行 migration。
+- 代表性生产根入口 `curl` 在 0.21 秒内退出 7，HTTP status `000`，没有取得远端 IP 或 HTTP 响应；独立远程抓取通道因 URL 安全门以 non-retryable 拒绝，未发出请求。按同域既有多轮传输层证据与探针止损线停止重试，未据此修改业务代码。结论分层：本地源码与浏览器交互已验证，Cloudflare 部署完成且控制面为 100% 流量；本次未取得生产页面响应，不能宣称外部页面可达性已恢复。
+- 部署后只增加本节事实记录，没有修改已冻结和已部署的生产源码、测试、依赖、配置或 fixture，因此完整门仍有效。后续交付提交为 docs-only，不要求再次部署；其远端分支状态将在提交后复核。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `git push origin HEAD:refs/heads/cloudflare`；`git ls-remote origin refs/heads/{cloudflare,main}` | 0；0 | `cloudflare=81f5fda`；`main=29eb06d`，非 force 快进且冻结基线未变。 |
+| 2026-08-28 | `npm run cf:deploy` | 0 | 配置门、production build、10 个变化资产上传通过；Version `4a0666e7-87cb-4bf5-8af3-794159ad7efe`。 |
+| 2026-08-28 | `wrangler deployments status --json`；`versions view 4a0666e7-…` | 0；0 | 新 deployment 为 100% 流量；handler、兼容性、Secret 名称与既有绑定一致。 |
+| 2026-08-28 | production root `curl`；独立远程抓取 | 7；受安全门拒绝 | 未获得远端 IP/HTTP；记录传输层限制并停止重试，不虚报应用响应。 |
