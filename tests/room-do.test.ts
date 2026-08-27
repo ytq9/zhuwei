@@ -30,6 +30,52 @@ async function room(name: string, players = [player("a")]) {
 }
 
 describe("RoomDurableObject", () => {
+  it("fills authoritative spell dice inside the DO before deterministic step adjudication", async () => {
+    const mage = {
+      ...player("a"),
+      abilityScores: { str: 10, dex: 14, con: 12, int: 16, wis: 10, cha: 10 },
+      spellLevels: { "magic-missile": 1 },
+      spellActionCosts: { "magic-missile": "action" as const },
+      spellcasting: {
+        "magic-missile": {
+          ability: "int" as const,
+          castingModifier: 3,
+          attackBonus: 5,
+          saveDc: 13,
+        },
+      },
+      hp: { current: 20, max: 20 },
+      resources: { slot1: 1 },
+      resourceRules: { slot1: { max: 1, recovery: "long" as const } },
+    };
+    const foe = {
+      ...player("foe"),
+      kind: "npc" as const,
+      ac: 1,
+      hp: { current: 20, max: 20 },
+    };
+    const stub = await room("spell-roll-room", [mage, foe]);
+    const ticket = await stub.prepareTurn({ actorId: "a" });
+    const result = await stub.commitTurn({
+      ticketId: ticket.id,
+      command: {
+        id: "authoritative-magic-missile",
+        actorId: "a",
+        expectedVersion: ticket.stateVersion,
+        kind: "castSpell",
+        spellId: "magic-missile",
+        targetIds: ["foe"],
+      },
+    });
+    expect(result.decision.kind).toBe("committed");
+    expect(result.decision.kind === "committed" && result.decision.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "SpellAttackResolved", spellId: "magic-missile", hit: true }),
+        expect.objectContaining({ type: "EntityDamaged", entityId: "foe" }),
+      ]),
+    );
+  });
+
   it("persists a ticketed command and returns the same result for an idempotent retry", async () => {
     const stub = await room("idempotent-room");
     const now = Date.now();

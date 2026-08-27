@@ -1,12 +1,44 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import test, { after } from "node:test";
 import { unstable_dev } from "wrangler";
+import { AUTHORITATIVE_KP_MODEL } from "../app/_runtime/lib/kp/models.ts";
 
-function startDevWorker() {
+const execFileAsync = promisify(execFile);
+
+const localD1Promise = (async () => {
+  const persistTo = await mkdtemp(join(tmpdir(), "zhuwei-rendered-html-"));
+  await execFileAsync(process.execPath, [
+    fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url)),
+    "d1",
+    "migrations",
+    "apply",
+    "DB",
+    "--local",
+    "--config",
+    "dist/server/wrangler.json",
+    "--persist-to",
+    persistTo,
+  ], {
+    cwd: new URL("../", import.meta.url),
+    env: { ...process.env, CI: "true", WRANGLER_SEND_METRICS: "false" },
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  return persistTo;
+})();
+
+async function startDevWorker() {
+  const persistTo = await localD1Promise;
   return unstable_dev("dist/server/index.js", {
     config: "dist/server/wrangler.json",
     local: true,
+    persistTo,
     logLevel: "error",
     experimental: { watch: false, disableDevRegistry: true },
   });
@@ -17,6 +49,7 @@ const devWorkerPromise = startDevWorker();
 after(async () => {
   const worker = await devWorkerPromise;
   await worker.stop();
+  await rm(await localD1Promise, { recursive: true, force: true });
 });
 
 async function renderRoot() {
@@ -116,8 +149,8 @@ test("email session opens the hall and can create a table", async () => {
   });
   assert.equal(modelUpdate.status, 200);
   assert.deepEqual(await modelUpdate.json(), {
-    ok: true,
-    model: "deepseek-v4-pro",
+    ok: false,
+    error: "权威规则房间的 KP 模型由运行时 Profile 固定",
   });
 
   const snapshot = await authPath("/api/game", {
@@ -128,7 +161,7 @@ test("email session opens the hall and can create a table", async () => {
   assert.equal(snapshot.status, 200);
   const snapshotResult = await snapshot.json();
   assert.equal(snapshotResult.ok, true);
-  assert.equal(snapshotResult.room.kp_model, "deepseek-v4-pro");
+  assert.equal(snapshotResult.room.kp_model, AUTHORITATIVE_KP_MODEL);
 
   const invalidModel = await authPath("/api/game", {
     method: "POST",
@@ -233,7 +266,11 @@ test("host can inspect character history and delete a room but a player cannot",
       code: created.code,
     });
     assert.equal(management.ok, true);
-    assert.equal(management.room.kp_model, "deepseek-v4-flash");
+    assert.equal(management.room.kp_model, AUTHORITATIVE_KP_MODEL);
+    assert.equal(
+      management.room.ruleset_version,
+      "dnd5e-2014-srd5.1-authoritative-v2",
+    );
     assert.equal(management.characters.length, 1);
     assert.equal(management.characters[0].sheet.name, "旧日守灯人");
 
@@ -265,6 +302,7 @@ test("host can inspect character history and delete a room but a player cannot",
     assert.deepEqual(await game(hostCookie, "deleteRoom", { code: created.code }), {
       ok: true,
       code: created.code,
+      authorityCleanup: "notApplicable",
     });
     assert.deepEqual(await game(hostCookie, "listMyRooms"), []);
     const deletedTable = await game(playerCookie, "fetchTable", created.code);

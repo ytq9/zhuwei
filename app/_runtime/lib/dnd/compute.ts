@@ -10,6 +10,8 @@ import {
   raceById,
   uniqueSpellIds,
 } from "./catalog";
+import { spellDefinition } from "../rules/spell-catalog";
+import type { SpellcastingProfile } from "../rules/spell-model";
 import { acFromGear, kitToGear, wornSummary, packSummary } from "./gear";
 import { initResources, ensureResources, resourceLine } from "./resources";
 import {
@@ -22,9 +24,39 @@ import {
   SKILLS,
 } from "./types";
 
-export function casterMod(sheet: CharacterSheet) {
-  const ab = (classById(sheet.classId)?.primary?.[0] ?? "wis") as Ability;
+export function spellcastingAbility(
+  sheet: Pick<CharacterSheet, "classId" | "raceId">,
+  spellId?: string,
+): Ability {
+  if (sheet.raceId === "high-elf" && spellId === "prestidigitation" && sheet.classId !== "wizard") {
+    return "int";
+  }
+  if (sheet.raceId === "tiefling" && (spellId === "thaumaturgy" || spellId === "hellish-rebuke")) {
+    return "cha";
+  }
+  const kind = classById(sheet.classId)?.spellcasting;
+  if (kind === "wizard") return "int";
+  if (kind === "cleric" || kind === "ranger") return "wis";
+  return "wis";
+}
+
+export function casterMod(sheet: CharacterSheet, spellId?: string) {
+  const ab = spellcastingAbility(sheet, spellId);
   return { ability: ab, mod: abilityMod(sheet.scores?.[ab] ?? 10) };
+}
+
+export function spellcastingProfile(
+  sheet: CharacterSheet,
+  spellId: string,
+): SpellcastingProfile | undefined {
+  if (!spellDefinition(spellId)) return undefined;
+  const { ability, mod } = casterMod(sheet, spellId);
+  return {
+    ability,
+    castingModifier: mod,
+    attackBonus: sheet.proficiency + mod,
+    saveDc: 8 + sheet.proficiency + mod,
+  };
 }
 
 export const POINT_COST: Record<number, number> = {
@@ -147,6 +179,9 @@ export function compileSheet(draft: DraftSheet): CharacterSheet {
   const cantrips = [...draft.cantrips];
   if (race.extraCantrip && !cantrips.includes("prestidigitation")) {
     cantrips.push("prestidigitation");
+  }
+  if (race.id === "tiefling" && !cantrips.includes("thaumaturgy")) {
+    cantrips.push("thaumaturgy");
   }
 
   return {

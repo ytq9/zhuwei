@@ -49,6 +49,8 @@ export const rooms = sqliteTable(
     moduleId: text("module_id").notNull().default("black-oak-will"),
     rulesetVersion: text("ruleset_version").notNull().default("legacy"),
     kpModel: text("kp_model").notNull().default("deepseek-v4-flash"),
+    runtimeEpochId: text("runtime_epoch_id"),
+    genesisHash: text("genesis_hash"),
     status: text("status").notNull().default("lobby"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -157,5 +159,98 @@ export const roomEventArchive = sqliteTable(
     primaryKey({ columns: [table.roomId, table.version] }),
     uniqueIndex("idx_room_event_archive_event").on(table.roomId, table.eventId),
     index("idx_room_event_archive_command").on(table.roomId, table.commandId),
+  ],
+);
+
+/**
+ * Immutable authoritative-v2 genesis copies. The Room Durable Object remains
+ * the live authority; these rows exist only to rebuild an empty DO.
+ */
+export const authoritativeRoomGenesisArchive = sqliteTable(
+  "authoritative_room_genesis_archive",
+  {
+    roomId: text("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    runtimeEpochId: text("runtime_epoch_id").notNull(),
+    genesisHash: text("genesis_hash").notNull(),
+    manifestProfileId: text("manifest_profile_id").notNull(),
+    manifestProfileHash: text("manifest_profile_hash").notNull(),
+    rulesetProfileId: text("ruleset_profile_id").notNull(),
+    rulesetProfileHash: text("ruleset_profile_hash").notNull(),
+    eventSchemaProfileId: text("event_schema_profile_id").notNull(),
+    eventSchemaProfileHash: text("event_schema_profile_hash").notNull(),
+    moduleProfileId: text("module_profile_id").notNull(),
+    moduleProfileHash: text("module_profile_hash").notNull(),
+    definitionProfileId: text("definition_profile_id").notNull(),
+    definitionProfileHash: text("definition_profile_hash").notNull(),
+    genesisJson: text("genesis_json").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roomId, table.runtimeEpochId] }),
+    uniqueIndex("idx_authoritative_genesis_hash")
+      .on(table.roomId, table.genesisHash),
+  ],
+);
+
+/** Append-only authoritative-v2 events; never read as a live state snapshot. */
+export const authoritativeRoomEventArchive = sqliteTable(
+  "authoritative_room_event_archive",
+  {
+    roomId: text("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    runtimeEpochId: text("runtime_epoch_id").notNull(),
+    eventSeq: integer("event_seq").notNull(),
+    eventId: text("event_id").notNull(),
+    rootActionId: text("root_action_id").notNull(),
+    branchId: text("branch_id").notNull(),
+    eventType: text("event_type").notNull(),
+    eventTypeVersion: text("event_type_version").notNull(),
+    manifestProfileId: text("manifest_profile_id").notNull(),
+    manifestProfileHash: text("manifest_profile_hash").notNull(),
+    rulesetProfileId: text("ruleset_profile_id").notNull(),
+    rulesetProfileHash: text("ruleset_profile_hash").notNull(),
+    eventSchemaProfileId: text("event_schema_profile_id").notNull(),
+    eventSchemaProfileHash: text("event_schema_profile_hash").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    previousEventHash: text("previous_event_hash").notNull(),
+    stateBeforeHash: text("state_before_hash").notNull(),
+    stateHashAfter: text("state_hash_after").notNull(),
+    eventHash: text("event_hash").notNull(),
+    eventJson: text("event_json").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roomId, table.runtimeEpochId, table.eventSeq] }),
+    uniqueIndex("idx_authoritative_event_id")
+      .on(table.roomId, table.runtimeEpochId, table.eventId),
+    index("idx_authoritative_event_branch")
+      .on(table.roomId, table.runtimeEpochId, table.branchId, table.eventSeq),
+    index("idx_authoritative_event_action")
+      .on(table.roomId, table.runtimeEpochId, table.rootActionId),
+  ],
+);
+
+/** Hash-only representative projections used to verify archive rebuilds. */
+export const authoritativeProjectionAuditArchive = sqliteTable(
+  "authoritative_projection_audit_archive",
+  {
+    roomId: text("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    runtimeEpochId: text("runtime_epoch_id").notNull(),
+    eventSeq: integer("event_seq").notNull(),
+    viewerHash: text("viewer_hash").notNull(),
+    projectionHash: text("projection_hash").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.roomId, table.runtimeEpochId, table.eventSeq, table.viewerHash],
+    }),
+    index("idx_authoritative_projection_head")
+      .on(table.roomId, table.runtimeEpochId, table.eventSeq),
   ],
 );

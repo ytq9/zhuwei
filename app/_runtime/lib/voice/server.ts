@@ -1,6 +1,16 @@
 import { env } from "cloudflare:workers";
-import { authMiddleware, createServerFn } from "@/lib/platform/server-fn";
+import {
+  authMiddleware,
+  createServerFn,
+  PublicServerError,
+} from "@/lib/platform/server-fn";
 import { getSql } from "@/lib/db";
+import { observeAuthoritativeRoom } from "@/lib/room/server";
+import {
+  AUTHORITATIVE_RULESET_VERSION,
+  LEGACY_RULESET_VERSION,
+} from "@/lib/rules/ruleset";
+import { synthesizeCurrentDeliveryNarration } from "./current-delivery";
 
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
@@ -15,7 +25,11 @@ async function assertMember(roomId: string, userId: string) {
   const rows = await sql<{ user_id: string }>`
     select user_id from room_members where room_id = ${roomId} and user_id = ${userId}
   `;
-  if (!rows[0]) throw new Error("不在这一桌");
+  if (!rows[0]) throw new PublicServerError("不在这一桌");
+}
+
+function narrationUnavailable() {
+  return { ok: false as const, error: "这段旁白已经不可回看" };
 }
 
 export const transcribeAudio = createServerFn({ method: "POST" })
@@ -47,15 +61,71 @@ export const speakNarration = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { roomId: string; messageId: string }) => input)
   .handler(async ({ data, context }) => {
-    await assertMember(data.roomId, context.userId);
     const sql = await getSql();
+    const room = (
+      await sql<{ ruleset_version: string }>`
+        select ruleset_version from rooms where id = ${data.roomId}
+      `
+    )[0];
+
+    if (room?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      try {
+        await assertMember(data.roomId, context.userId);
+      } catch {
+        return narrationUnavailable();
+      }
+      let result;
+      try {
+        result = await synthesizeCurrentDeliveryNarration({
+          messageId: data.messageId,
+          observe: (query) => observeAuthoritativeRoom(
+            data.roomId,
+            context.userId,
+            query,
+          ),
+          synthesize: async (text) => await env.AI.run(
+            "@cf/myshell-ai/melotts",
+            { prompt: text, lang: "zh" },
+            { returnRawResponse: true },
+          ),
+        });
+      } catch {
+        return { ok: false as const, error: "语音播报失败，请再试一次" };
+      }
+      if (result.kind === "unavailable") return narrationUnavailable();
+      if (result.kind === "synthesisFailed") {
+        return {
+          ok: false as const,
+          error: result.empty
+            ? "播报没有生成音频"
+            : `播报失败（${result.status ?? 500}）`,
+        };
+      }
+      return {
+        ok: true as const,
+        b64: bytesToBase64(result.bytes),
+        mime: result.mime,
+      };
+    }
+
+    if (room?.ruleset_version !== LEGACY_RULESET_VERSION) {
+      return narrationUnavailable();
+    }
+
+    // Legacy rooms retain their exact message-table presentation contract.
+    await assertMember(data.roomId, context.userId);
     const rows = await sql<{ tts_text: string | null; body: string; kind: string }>`
       select tts_text, body, kind from messages
       where id = ${data.messageId} and room_id = ${data.roomId}
     `;
     const row = rows[0];
     if (!row) return { ok: false as const, error: "没有这段旁白" };
-    if (row.kind !== "narrate" && row.kind !== "refuse" && row.kind !== "call_roll" && row.kind !== "open") {
+    if (
+      row.kind !== "narrate"
+      && row.kind !== "refuse"
+      && row.kind !== "call_roll"
+      && row.kind !== "open"
+    ) {
       return { ok: false as const, error: "这段不必朗读" };
     }
     const text = (row.tts_text || row.body).slice(0, 800);

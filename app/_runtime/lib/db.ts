@@ -25,8 +25,7 @@ function postgresToD1(text: string) {
     .replace(/\bnow\(\)/gi, "CURRENT_TIMESTAMP");
 }
 
-async function execute<T>(text: string, values: unknown[]): Promise<T[]> {
-  const db = await ensureDb();
+async function execute<T>(db: D1Database, text: string, values: unknown[]): Promise<T[]> {
   const result = await db
     .prepare(postgresToD1(text))
     .bind(...values.map(valueForD1))
@@ -34,7 +33,7 @@ async function execute<T>(text: string, values: unknown[]): Promise<T[]> {
   return result.results;
 }
 
-function makeSql(): Sql {
+function makeSql(db: D1Database): Sql {
   const sql = (async <T = Record<string, unknown>>(
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -43,7 +42,7 @@ function makeSql(): Sql {
     for (let index = 0; index < values.length; index += 1) {
       text += `?${strings[index + 1]}`;
     }
-    return execute<T>(text, values);
+    return execute<T>(db, text, values);
   }) as Sql;
 
   sql.query = <T = Record<string, unknown>>(
@@ -55,15 +54,12 @@ function makeSql(): Sql {
       ordered.push(params[Number(rawIndex) - 1]);
       return "?";
     });
-    return execute<T>(translated, ordered);
+    return execute<T>(db, translated, ordered);
   };
   return sql;
 }
 
-let shared: Sql | null = null;
-
 export async function getSql(): Promise<Sql> {
-  await ensureDb();
-  shared ??= makeSql();
-  return shared;
+  const db = await ensureDb();
+  return makeSql(db);
 }

@@ -5,12 +5,10 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const upstreamFiles = {
-  "app/_runtime/components/character-wizard.tsx": "f3718f1aedd08226dd41812f07700465f85709616ae112ef39b1f98da910ef73",
   "app/_runtime/components/ui/button.tsx": "4c18b9e3676e5df089ce722b795ebf33e34bd21d5cdf441674f4f9755bcbd79d",
   "app/_runtime/components/ui/input.tsx": "33d15e661f6e9545024d2111752f78689add8afbac6ece3675c4e17a48e50326",
   "app/_runtime/lib/utils.ts": "0258450fa385716503ce96af40147b7d62b247816fcd4a6312bed0b4fa5936f7",
   "app/_runtime/lib/dnd/boosts.ts": "f0a701e6c8682b53d34d7b4a6e6bc71963833bcd31f09753672c4517b77df927",
-  "app/_runtime/lib/dnd/compute.ts": "a19ec205c6ac494ce725f4f607227bf669fd856c711bb70ac16393342070344b",
   "app/_runtime/lib/dnd/gear.ts": "584ea2ff3bb4a7433503fa433d017f05004f51d2dca31453fcdf7e0dea2a0321",
   "app/_runtime/lib/dnd/resources.ts": "02e6f6ca0730ce91330f2b3b82276b08cc2034d9b447fe191cbf660567582ffc",
   "app/_runtime/lib/dnd/types.ts": "45dd9f8e4abcb2df96ae9638114a46c04403176c593aa103b1957ef25057d1c0",
@@ -22,8 +20,12 @@ const upstreamFiles = {
 };
 
 const approvedProductDeltas = {
+  // 通用规则 v2 的三级人物卡显示结构化目标、伤害、豁免与状态，并按职业/种族计算施法档案。
+  "app/_runtime/components/character-wizard.tsx": "5424ae8c31fd871141e2f39a7d11973832803c7f8bf10aa9f8cc8bb7d3a0bceb",
+  "app/_runtime/lib/dnd/compute.ts": "55a843abe678b42465b7b2b9a67ef5147710d734b8252d667f3c01789962bd83",
   // 上游游侠射术文案错误地移除了长射程劣势；按 2014 规则保留攻击检定 +2 并恢复长射程劣势。
-  "app/_runtime/lib/dnd/catalog.ts": "ef9a91558dc9ce2e552cf09668dc0d02556ffa9ca7277dc6caeacff4e39d2f85",
+  // v2 还补齐易容术/治疗祈祷选择入口，并按 SRD 把治疗祈祷修正为 10 分钟施法。
+  "app/_runtime/lib/dnd/catalog.ts": "8b9eb617dc284e985a8c036aa9d168d4b73c371c140cddef88af5b6be7a7a001",
   // 玩家明确要求检定选项不剧透，并由服务端裁定库存、环境物品与物理动作。
   "app/_runtime/lib/kp/clock.ts": "85a911284ffa0abbb3100fa0baf8df76a69f4db58441507d3bcad60c481b654a",
   "app/_runtime/lib/kp/prompt.ts": "a575bcdd2ac13a193068bd52335adfe6d58016083cac0ab3b6e086b28489d1ec",

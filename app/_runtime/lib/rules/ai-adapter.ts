@@ -476,7 +476,25 @@ function eventFacts(module: ModuleDef, events: WorldEvent[]): string[] {
     } else if (event.type === "SquadLeft") {
       facts.push(`${event.actorId} 已选择个人行动并自动离开原队伍，无需队长批准。`);
     } else if (event.type === "SpellCast") {
-      facts.push(`${event.entityId} 已按规则施放 ${event.spellId}${event.slotLevel ? `，消耗 ${event.slotLevel} 环法术位` : "（戏法，不消耗法术位）"}。`);
+      facts.push(`${event.entityId} 已按规则施放 ${event.spellId}${event.ritual ? "（仪式，不消耗法术位）" : event.slotLevel ? `，消耗 ${event.slotLevel} 环法术位` : "（戏法，不消耗法术位）"}。`);
+    } else if (event.type === "SpellAttackResolved") {
+      facts.push(`${event.entityId} 的 ${event.spellId} 对 ${event.targetId} 法术攻击总值 ${event.attackTotal}，${event.hit ? `命中并造成 ${event.damage} 点伤害${event.critical ? "（重击）" : ""}` : "未命中"}。`);
+    } else if (event.type === "SpellSaveResolved") {
+      facts.push(`${event.targetId} 对 ${event.spellId} 的${event.ability}豁免总值 ${event.total}，对抗 DC ${event.dc}，结果为${event.success ? "成功" : "失败"}。`);
+    } else if (event.type === "SpellEffectApplied") {
+      facts.push(`${event.effect.targetId} 获得 ${event.effect.label}，来源为 ${event.effect.spellId}${event.effect.concentration ? "（专注）" : ""}。`);
+    } else if (event.type === "SpellEffectRemoved") {
+      facts.push(`法术效果 ${event.effectId} 已因 ${event.reason} 结束。`);
+    } else if (event.type === "EntityDamaged") {
+      facts.push(`${event.entityId} 受到 ${event.amount} 点${event.damageType}伤害。`);
+    } else if (event.type === "EntityHealed") {
+      facts.push(`${event.entityId} 恢复 ${event.amount} 点生命值（不超过最大生命）。`);
+    } else if (event.type === "EntityStabilized") {
+      facts.push(`${event.entityId} 已稳定伤势，不再进行死亡豁免。`);
+    } else if (event.type === "CombatantTeleported") {
+      facts.push(`${event.entityId} 由 ${event.spellId} 传送到战场 ${event.toPositionFeet} 尺位置。`);
+    } else if (event.type === "CombatantForcedMoved") {
+      facts.push(`${event.entityId} 被 ${event.sourceId} 强制移动 ${event.feet} 尺。`);
     } else if (event.type === "FeatureUsed") {
       facts.push(`${event.entityId} 已使用 ${event.featureId}${event.total === undefined ? "" : `，规则结果为 ${event.total}`}。`);
     } else if (event.type === "CombatStarted") {

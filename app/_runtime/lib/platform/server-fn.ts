@@ -3,6 +3,15 @@ export type ServerInvocation<T> = {
   userId: string;
 };
 
+export class PublicServerError extends Error {
+  constructor(
+    message: string,
+    public readonly status = 400,
+  ) {
+    super(message);
+  }
+}
+
 type ServerHandler<T, R> = (args: {
   data: T;
   context: { userId: string };

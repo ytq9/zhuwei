@@ -1,4 +1,9 @@
 import type { Ability, D20Mode, Duration, RulesetVersion } from "./ruleset";
+import type {
+  SpellCastRolls,
+  SpellEffectState,
+  SpellcastingProfile,
+} from "./spell-model";
 
 export type EntityId = string;
 export type SceneId = string;
@@ -155,11 +160,15 @@ export type EntityState = {
   visitedSceneIds: SceneId[];
   abilityScores: Record<Ability, number>;
   proficiencyBonus: number;
+  proficientSaves: Ability[];
   proficientSkills: string[];
   expertiseSkills: string[];
+  creatureType: string;
+  conditionImmunities: string[];
   capabilities: string[];
   spellLevels: Record<string, number>;
   spellActionCosts: Record<string, "action" | "bonusAction" | "reaction">;
+  spellcasting: Record<string, SpellcastingProfile>;
   featureIds: string[];
   activeEffects: string[];
   attacks: AttackProfile[];
@@ -297,6 +306,7 @@ export type WorldState = {
   squadInvites: Record<string, SquadInviteState>;
   restVote?: RestVoteState;
   combats: Record<SceneId, RulesCombatState>;
+  spellEffects: Record<string, SpellEffectState>;
   scheduledEvents: Record<string, "pending" | "attempted" | "cancelled">;
   flags: Record<string, string | number | boolean>;
   processedCommandIds: string[];
@@ -319,7 +329,20 @@ export type Command =
       mode: "personal" | "squad";
     })
   | (CommandBase & { kind: "advanceTime"; duration: Duration; spotlightBeats?: number })
-  | (CommandBase & { kind: "castSpell"; spellId: string; slotLevel?: 1 | 2 })
+  | (CommandBase & {
+      kind: "castSpell";
+      spellId: string;
+      slotLevel?: 1 | 2;
+      targetIds?: EntityId[];
+      rolls?: SpellCastRolls;
+      /** 命令术口令、次等复原术移除项等封闭选择。 */
+      choice?: string;
+      /** 迷踪步等战斗内位移在一维战场上的目标位置。 */
+      destinationFeet?: number;
+      /** 点状区域法术在一维战场上的中心位置。 */
+      originFeet?: number;
+      ritual?: boolean;
+    })
   | (CommandBase & { kind: "useFeature"; featureId: string; rolls?: number[] })
   | (CommandBase & {
       kind: "startCombat";
@@ -385,6 +408,12 @@ export type WorldEvent = EventBase &
         ac: number;
         attacks: AttackProfile[];
         capabilities: string[];
+        proficientSaves?: Ability[];
+        creatureType?: string;
+        conditionImmunities?: string[];
+        spellLevels?: Record<string, number>;
+        spellActionCosts?: Record<string, "action" | "bonusAction" | "reaction">;
+        spellcasting?: Record<string, SpellcastingProfile>;
       }
     | { type: "RollRequested"; roll: PendingRoll }
     | { type: "RollResolved"; requestId: string; success: boolean; total: number }
@@ -396,7 +425,39 @@ export type WorldEvent = EventBase &
     | { type: "EntityHealed"; entityId: EntityId; amount: number }
     | { type: "ResourceSpent"; entityId: EntityId; resource: string; amount: number }
     | { type: "ResourceRecovered"; entityId: EntityId; resource: string; amount: number }
-    | { type: "SpellCast"; entityId: EntityId; spellId: string; slotLevel: 0 | 1 | 2 }
+    | {
+        type: "SpellCast";
+        entityId: EntityId;
+        spellId: string;
+        slotLevel: 0 | 1 | 2;
+        targetIds: EntityId[];
+        attackBonus: number;
+        saveDc: number;
+        ritual: boolean;
+      }
+    | {
+        type: "SpellAttackResolved";
+        entityId: EntityId;
+        targetId: EntityId;
+        spellId: string;
+        attackTotal: number;
+        hit: boolean;
+        critical: boolean;
+        damage: number;
+      }
+    | {
+        type: "SpellSaveResolved";
+        entityId: EntityId;
+        targetId: EntityId;
+        spellId: string;
+        ability: Ability;
+        total: number;
+        dc: number;
+        success: boolean;
+      }
+    | { type: "SpellEffectApplied"; effect: SpellEffectState }
+    | { type: "SpellEffectRemoved"; effectId: string; reason: "concentration" | "consumed" | "ended" }
+    | { type: "EntityStabilized"; entityId: EntityId }
     | { type: "FeatureUsed"; entityId: EntityId; featureId: string; total?: number }
     | { type: "ActiveEffectSet"; entityId: EntityId; effectId: string; active: boolean }
     | { type: "CombatStarted"; combat: RulesCombatState }
@@ -428,6 +489,23 @@ export type WorldEvent = EventBase &
         toPositionFeet: number;
         feet: number;
         mode: "normal" | "dash" | "disengage";
+      }
+    | {
+        type: "CombatantTeleported";
+        sceneId: SceneId;
+        entityId: EntityId;
+        fromPositionFeet: number;
+        toPositionFeet: number;
+        spellId: string;
+      }
+    | {
+        type: "CombatantForcedMoved";
+        sceneId: SceneId;
+        entityId: EntityId;
+        fromPositionFeet: number;
+        toPositionFeet: number;
+        feet: number;
+        sourceId: string;
       }
     | {
         type: "EntityDropped";
@@ -530,6 +608,16 @@ export type PlayerProjection = {
     speedFeet: number;
     deathSaves: { successes: number; failures: number };
     activeEffects: string[];
+    spellcasting: Array<{ spellId: string; ability: Ability; attackBonus: number; saveDc: number }>;
+    spellEffects: Array<{
+      id: string;
+      spellId: string;
+      sourceId: string;
+      label: string;
+      tags: string[];
+      concentration: boolean;
+      expiresAtSeconds?: number;
+    }>;
     availableRollBoosts: Array<"guidance" | "inspiration" | "lucky">;
     resources: Array<{ id: string; current: number; max?: number }>;
     attacks: AttackProfile[];

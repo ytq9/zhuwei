@@ -8,6 +8,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["tests/room-do.test.ts"],
+    include: ["tests/*.test.ts"],
+    fileParallelism: false,
   },
 });

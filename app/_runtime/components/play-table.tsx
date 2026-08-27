@@ -3,10 +3,14 @@ import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
-import type { CharacterSheet, SkillId } from "@/lib/dnd/types";
+import { TacticalMap } from "@/components/tactical-map";
+import type { Ability, CharacterSheet, SkillId } from "@/lib/dnd/types";
 import { ABILITIES, ABILITY_LABEL, SKILLS } from "@/lib/dnd/types";
 import { classById, raceById, spellById } from "@/lib/dnd/catalog";
-import { ensureGear, skillBonus } from "@/lib/dnd/compute";
+import { ensureGear, skillBonus, spellcastingProfile } from "@/lib/dnd/compute";
+import { spellCardFacts } from "@/lib/dnd/spell-card";
+import { spellDefinition, spellMaxTargets } from "@/lib/rules/spell-catalog";
+import type { TacticalProjection } from "@/lib/rules/tactical-projection";
 import {
   GEAR_SLOTS,
   allowedSlots,
@@ -18,7 +22,13 @@ import {
 } from "@/lib/dnd/gear";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/client";
-import { resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import { acknowledgeDelivery, adjustSafetyPresentation, requestSafetyPause, resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import { acknowledgeAfterPresentation } from "@/lib/table/authoritative-client";
+import {
+  arcaneRecoveryAvailability,
+  changeArcaneRecoverySelection,
+  type ArcaneRecoverySlotLevel,
+} from "@/lib/table/authoritative";
 import type { PendingRoll } from "@/lib/kp/prompt";
 import type { PublicCombat } from "@/lib/kp/combat";
 import { eligibleBoosts } from "@/lib/dnd/boosts";
@@ -36,6 +46,84 @@ export type TableMessage = {
   clues?: { id: string; name: string; hint: string }[];
 };
 
+type AdvancementOptions = {
+  classId: string;
+  newLevel: number;
+  hitPointMethod: "fixed2014";
+  fixedHitPointGain: number;
+  abilityScoreBudget: number;
+  maximumAbilityScore: number;
+  grantedFeatureIds: string[];
+};
+
+type GroupRestOptions = {
+  initiatorCharacterId: string;
+  restKind: "short" | "long";
+  intendedDurationMicros: string;
+  offeredAtFictionMicros: string;
+};
+
+type AuthoritativeControlledCharacter = {
+  characterId: string;
+  name?: string;
+  sceneId?: string;
+  hitPoints?: { current: number; maximum: number };
+  resources?: Record<string, number>;
+  resourceMaximums?: Record<string, number>;
+  classId?: string;
+  level?: number;
+  experiencePoints?: number;
+  abilityScores?: Record<Ability, number>;
+  loadout?: {
+    armorClass: number;
+    speedFeet: number;
+    equipped: Record<string, string>;
+    backpack: Array<{ itemId: string; quantity: number }>;
+  };
+  restRecoveryOptions?: {
+    shortRest?: {
+      hitDiceMaximumSpend?: number;
+      hitDieSides?: number;
+      arcaneRecovery?: {
+        eligible?: boolean;
+        spellLevelBudget?: number;
+        maximumSlotsByLevel?: Partial<Record<ArcaneRecoverySlotLevel, number>>;
+      };
+    };
+  };
+};
+
+type TablePendingInput = {
+  pendingInputId: string;
+  rootActionId: string;
+  question: string;
+} & (
+  | { kind: "clarification"; options?: undefined }
+  | {
+      kind: "playerChoice";
+      options?: undefined;
+      choices: Array<{ choiceId: string; label: string; consequence: string }>;
+    }
+  | { kind: "advancementChoice"; options: AdvancementOptions }
+  | { kind: "groupRestConsent"; options: GroupRestOptions }
+  | { kind: "partyMoveConsent"; options?: undefined }
+  | {
+      kind: "combatChoice";
+      options?: undefined;
+    } & (
+      | { choiceKind: "target"; candidateEntityIds: string[] }
+      | {
+          choiceKind: "reaction";
+          candidateAbilityRefs: string[];
+          targetEntityId: string;
+        }
+      | { choiceKind: "initiativeTieOrder"; orderedEntityIds: string[] }
+      | { choiceKind: "encounterConclusion" }
+    )
+);
+
+type CombatPendingInput = Extract<TablePendingInput, { kind: "combatChoice" }>;
+
 export type TableSnap = {
   me: { userId: string; is_host: boolean; nickname: string };
   room: {
@@ -48,7 +136,12 @@ export type TableSnap = {
     ruleset_version?: string;
   };
   members: { user_id: string; nickname: string; is_host: boolean }[];
-  characters: { userId: string; locked: boolean; sheet: CharacterSheet }[];
+  characters: {
+    userId: string;
+    locked: boolean;
+    sheet: CharacterSheet;
+    visibility?: "identityOnly";
+  }[];
   messages: TableMessage[];
   locationThreads: {
     placeId: string;
@@ -61,6 +154,7 @@ export type TableSnap = {
     sceneName: string;
     kpBusy: boolean;
     pendingRolls: PendingRoll[];
+    pendingInputs?: TablePendingInput[];
     clues: {
       id: string;
       name: string;
@@ -74,6 +168,37 @@ export type TableSnap = {
     placeNames?: Record<string, string>;
     partySplit?: boolean;
     clocks?: Record<string, { beats: number; minutes: number; lag: number }>;
+    fictionTime?: { branchId: string; nowMicros: string };
+    currentDeliveryId?: string;
+    receipts?: Array<{ receiptId: string; rootActionId: string; status: string }>;
+    authoritative?: {
+      stateVersion?: string;
+      projectionHash?: string;
+      controlledCharacter: AuthoritativeControlledCharacter | null;
+      activities?: Array<{
+        activityId: string;
+        characterId: string;
+        status: "active" | "completed" | "interrupted";
+        startedAtFictionMicros: string;
+        intendedDurationMicros: string;
+        restKind?: "short" | "long";
+      }>;
+      inCombat?: boolean;
+      safetyPresentation?: {
+        status: "paused" | "resumed";
+        presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent" | null;
+      };
+      lifecycle?: {
+        kind: "successorRequired";
+        defaultPredecessorCharacterId: string;
+        eligiblePredecessors: Array<{
+          characterId: string;
+          name: string;
+          tenureStatus: string;
+        }>;
+      };
+      tacticalProjection?: TacticalProjection;
+    } | null;
     restVote?: {
       kind: "short" | "long";
       fromName: string;
@@ -93,7 +218,19 @@ export type TableSnap = {
     combat?: PublicCombat | null;
     ruleProjection?: {
       viewer: {
+        id: string;
         timeline: { spotlightBeat: number; fictionSeconds: number };
+        hp?: { current: number; max: number };
+        ac: number;
+        speedFeet: number;
+        activeEffects: string[];
+        spellEffects: Array<{
+          id: string;
+          spellId: string;
+          label: string;
+          tags: string[];
+          concentration: boolean;
+        }>;
         rest?: {
           kind: "short" | "long";
           startedAt: number;
@@ -101,6 +238,15 @@ export type TableSnap = {
           status: "resting" | "interrupted" | "completed";
         };
         availableRollBoosts: Array<"guidance" | "inspiration" | "lucky">;
+      };
+      visibleEntities: Array<{
+        id: string;
+        name: string;
+        kind: "player" | "npc";
+        condition: "active" | "down" | "dead";
+      }>;
+      combat?: {
+        order: Array<{ entityId: string; positionFeet: number }>;
       };
     } | null;
   };
@@ -115,14 +261,17 @@ export function PlayTable({
   snap: TableSnap;
 }) {
   const [tab, setTab] = useState<"sheet" | "npcs" | "clues" | "log">("sheet");
+  const draftStorageKey = `zhuwei-draft-${snap.me.userId}-${code}`;
   const [text, setText] = useState(() => {
     try {
-      return sessionStorage.getItem(`zhuwei-draft-${code}`) ?? "";
+      return sessionStorage.getItem(draftStorageKey) ?? "";
     } catch {
       return "";
     }
   });
   const [sending, setSending] = useState(false);
+  const [safetyLocallyPaused, setSafetyLocallyPaused] = useState(false);
+  const qc = useQueryClient();
   const [rec, setRec] = useState<"idle" | "rec" | "stt">("idle");
   const spokenRef = useRef<Set<string>>(new Set());
   const primedRef = useRef(false);
@@ -131,18 +280,49 @@ export function PlayTable({
   const chunksRef = useRef<BlobPart[]>([]);
   const composingRef = useRef(false);
   const sendingRef = useRef(false);
+  const submissionRef = useRef<{
+    body: string;
+    pendingInputId?: string;
+    submissionId: string;
+  } | null>(null);
+  const ackedDeliveryRef = useRef<Set<string>>(new Set());
+  const deliveryPresentationRef = useRef<Map<string, Promise<void>>>(new Map());
+  const presentationEpochRef = useRef(0);
+  const activeNarrationRef = useRef<HTMLAudioElement | null>(null);
   const [localSays, setLocalSays] = useState<
     { id: string; body: string; name: string }[]
   >([]);
+  const currentDeliveryRendered = Boolean(
+    snap.state.currentDeliveryId &&
+      snap.messages.some((message) => message.id === snap.state.currentDeliveryId),
+  );
+  const safetyPresentation = snap.state.authoritative?.safetyPresentation;
+  const safetyPaused = safetyLocallyPaused || safetyPresentation?.status === "paused";
+  const currentPending = safetyPaused ? undefined : snap.state.pendingInputs?.[0];
+  const advancementPending = currentPending?.kind === "advancementChoice"
+    ? currentPending
+    : undefined;
+  const groupRestPending = currentPending?.kind === "groupRestConsent"
+    ? currentPending
+    : undefined;
+  const partyMovePending = currentPending?.kind === "partyMoveConsent"
+    ? currentPending
+    : undefined;
+  const playerChoicePending = currentPending?.kind === "playerChoice"
+    ? currentPending
+    : undefined;
+  const combatPending = currentPending?.kind === "combatChoice"
+    ? currentPending
+    : undefined;
 
   useEffect(() => {
     try {
-      if (text) sessionStorage.setItem(`zhuwei-draft-${code}`, text);
-      else sessionStorage.removeItem(`zhuwei-draft-${code}`);
+      if (text) sessionStorage.setItem(draftStorageKey, text);
+      else sessionStorage.removeItem(draftStorageKey);
     } catch {
       /* ignore */
     }
-  }, [code, text]);
+  }, [draftStorageKey, text]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -152,16 +332,39 @@ export function PlayTable({
     const kpKinds = new Set(["narrate", "refuse", "call_roll", "open"]);
     if (!primedRef.current) {
       for (const m of snap.messages) {
-        if (kpKinds.has(m.kind)) spokenRef.current.add(m.id);
+        if (kpKinds.has(m.kind) && m.id !== snap.state.currentDeliveryId) {
+          spokenRef.current.add(m.id);
+        }
       }
       primedRef.current = true;
-      return;
+      if (!snap.state.currentDeliveryId) return;
     }
-    const latest = [...snap.messages].reverse().find((m) => kpKinds.has(m.kind));
+    const latest = snap.state.currentDeliveryId
+      ? snap.messages.find((message) => message.id === snap.state.currentDeliveryId)
+      : [...snap.messages].reverse().find((message) => kpKinds.has(message.kind));
     if (!latest || spokenRef.current.has(latest.id)) return;
     spokenRef.current.add(latest.id);
-    void playTts(snap.room.id, latest.id);
-  }, [snap.messages, snap.room.id]);
+    const presentationEpoch = presentationEpochRef.current;
+    const presentation = playTts(snap.room.id, latest.id, {
+      isCurrent: () => presentationEpochRef.current === presentationEpoch,
+      register: (audio) => {
+        activeNarrationRef.current = audio;
+      },
+    });
+    if (latest.id === snap.state.currentDeliveryId) {
+      deliveryPresentationRef.current.clear();
+      deliveryPresentationRef.current.set(latest.id, presentation);
+    }
+    void presentation;
+  }, [snap.messages, snap.room.id, snap.state.currentDeliveryId]);
+
+  useEffect(() => {
+    if (!safetyPaused) return;
+    presentationEpochRef.current += 1;
+    activeNarrationRef.current?.pause();
+    activeNarrationRef.current = null;
+    deliveryPresentationRef.current.clear();
+  }, [safetyPaused]);
 
   useEffect(() => {
     setLocalSays((prev) =>
@@ -177,9 +380,127 @@ export function PlayTable({
     );
   }, [snap.messages, snap.me.userId]);
 
+  useEffect(() => {
+    const deliveryId = snap.state.currentDeliveryId;
+    if (
+      !deliveryId ||
+      ackedDeliveryRef.current.has(deliveryId) ||
+      !currentDeliveryRendered
+    ) {
+      return;
+    }
+    let cancelled = false;
+    let firstFrame = 0;
+    let secondFrame = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const confirmRenderedDelivery = async (attempt: number) => {
+      if (cancelled || ackedDeliveryRef.current.has(deliveryId)) return;
+      ackedDeliveryRef.current.add(deliveryId);
+      try {
+        const result = await acknowledgeAfterPresentation({
+          presentation: deliveryPresentationRef.current.get(deliveryId),
+          timeoutMs: 5_000,
+          acknowledge: () => cancelled
+            ? Promise.resolve({ ok: false as const })
+            : acknowledgeDelivery({ data: { code, deliveryId } }),
+        });
+        if (!result?.ok) throw new Error("delivery acknowledgement rejected");
+        deliveryPresentationRef.current.delete(deliveryId);
+      } catch {
+        ackedDeliveryRef.current.delete(deliveryId);
+        if (!cancelled && attempt < 3) {
+          retryTimer = setTimeout(
+            () => void confirmRenderedDelivery(attempt + 1),
+            500 * 2 ** attempt,
+          );
+        }
+      }
+    };
+
+    firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        void confirmRenderedDelivery(1);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
+    };
+  }, [code, currentDeliveryRendered, snap.state.currentDeliveryId]);
+
+  function withdrawCurrentPresentation() {
+    presentationEpochRef.current += 1;
+    activeNarrationRef.current?.pause();
+    activeNarrationRef.current = null;
+    deliveryPresentationRef.current.clear();
+  }
+
+  async function pauseSafetyPresentation() {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    setSafetyLocallyPaused(true);
+    withdrawCurrentPresentation();
+    try {
+      const result = await requestSafetyPause({ data: { code } });
+      if (!result.ok) {
+        setSafetyLocallyPaused(false);
+        toast.error(result.error);
+        return;
+      }
+      void qc.invalidateQueries({ queryKey: ["table", code] });
+    } catch (error) {
+      setSafetyLocallyPaused(false);
+      toast.error(error instanceof Error ? error.message : "没能立即暂停呈现");
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  }
+
+  async function resumeWithSafetyAdjustment(
+    presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent",
+  ) {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      const result = await adjustSafetyPresentation({
+        data: { code, presentationAdjustment },
+      });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      setSafetyLocallyPaused(false);
+      void qc.invalidateQueries({ queryKey: ["table", code] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "没能提交安全调整");
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  }
+
   async function submit() {
     const body = text.trim();
     if (!body || sendingRef.current) return;
+    const pendingInputId = snap.state.pendingInputs?.[0]?.pendingInputId;
+    if (
+      !submissionRef.current ||
+      submissionRef.current.body !== body ||
+      submissionRef.current.pendingInputId !== pendingInputId
+    ) {
+      submissionRef.current = {
+        body,
+        ...(pendingInputId ? { pendingInputId } : {}),
+        submissionId: crypto.randomUUID(),
+      };
+    }
+    const submission = submissionRef.current;
     sendingRef.current = true;
     setSending(true);
     const mineName =
@@ -188,19 +509,164 @@ export function PlayTable({
     setLocalSays((ls) => [...ls, { id: localId, body, name: mineName }]);
     setText("");
     try {
-      const res = await sendAction({ data: { code, text: body } });
+      const res = await sendAction({
+        data: {
+          code,
+          text: body,
+          submissionId: submission.submissionId,
+          ...(submission.pendingInputId
+            ? { pendingInputId: submission.pendingInputId }
+            : {}),
+        },
+      });
       if (!res.ok) {
+        if (!res.retryable) submissionRef.current = null;
         setLocalSays((ls) => ls.filter((x) => x.id !== localId));
         setText((t) => (t ? t : body));
         toast.error(res.error);
       } else if ("queued" in res && res.queued) {
+        submissionRef.current = null;
         setLocalSays((ls) => ls.filter((x) => x.id !== localId));
         toast.message("已入队内缓冲。队长本拍内未批准就会消失。");
+      } else {
+        submissionRef.current = null;
+        void qc.invalidateQueries({ queryKey: ["table", code] });
       }
     } catch (e) {
       setLocalSays((ls) => ls.filter((x) => x.id !== localId));
       setText((t) => (t ? t : body));
       toast.error(e instanceof Error ? e.message : "没能送出");
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  }
+
+  async function submitAdvancement(answer: {
+    classId: string;
+    newLevel: number;
+    hitPointMethod: "fixed2014";
+    selectedFeatureIds: string[];
+    abilityScoreIncreases?: Partial<Record<Ability, number>>;
+  }) {
+    if (!advancementPending || sendingRef.current) return;
+    const body = `确认晋升至 ${answer.newLevel} 级。`;
+    const answerFingerprint = JSON.stringify(answer);
+    if (
+      !submissionRef.current
+      || submissionRef.current.body !== `${body}\u0000${answerFingerprint}`
+      || submissionRef.current.pendingInputId !== advancementPending.pendingInputId
+    ) {
+      submissionRef.current = {
+        body: `${body}\u0000${answerFingerprint}`,
+        pendingInputId: advancementPending.pendingInputId,
+        submissionId: crypto.randomUUID(),
+      };
+    }
+    const submission = submissionRef.current;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      const res = await sendAction({
+        data: {
+          code,
+          text: body,
+          submissionId: submission.submissionId,
+          pendingInputId: advancementPending.pendingInputId,
+          answer,
+        },
+      });
+      if (!res.ok) {
+        if (!res.retryable) submissionRef.current = null;
+        toast.error(res.error);
+      } else {
+        submissionRef.current = null;
+        void qc.invalidateQueries({ queryKey: ["table", code] });
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "没能提交成长选择");
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  }
+
+  async function answerGroupRest(input: {
+    accept: boolean;
+    hitDice: number;
+    arcaneRecoverySlotLevels: number[];
+  }) {
+    if (!groupRestPending || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      const result = input.accept
+        ? await restNow({
+            data: {
+              code,
+              pendingInputId: groupRestPending.pendingInputId,
+              kind: groupRestPending.options.restKind,
+              mode: "group",
+              hitDice: groupRestPending.options.restKind === "short" ? input.hitDice : undefined,
+              arcaneRecoverySlotLevels: groupRestPending.options.restKind === "short"
+                ? input.arcaneRecoverySlotLevels
+                : undefined,
+            },
+          })
+        : await cancelRest({
+            data: { code, pendingInputId: groupRestPending.pendingInputId },
+          });
+      if (!result.ok) toast.error(result.error);
+      else void qc.invalidateQueries({ queryKey: ["table", code] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "没能提交休整决定");
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  }
+
+  async function answerTypedPending(input: {
+    pendingInputId: string;
+    answer: Record<string, unknown>;
+    body: string;
+    failureMessage: string;
+  }) {
+    if (sendingRef.current) return;
+    const fingerprint = `${input.body}\u0000${JSON.stringify(input.answer)}`;
+    if (
+      !submissionRef.current
+      || submissionRef.current.body !== fingerprint
+      || submissionRef.current.pendingInputId !== input.pendingInputId
+    ) {
+      submissionRef.current = {
+        body: fingerprint,
+        pendingInputId: input.pendingInputId,
+        submissionId: crypto.randomUUID(),
+      };
+    }
+    const submission = submissionRef.current;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      const result = await sendAction({
+        data: {
+          code,
+          text: input.body,
+          submissionId: submission.submissionId,
+          pendingInputId: input.pendingInputId,
+          answer: input.answer,
+        },
+      });
+      if (!result.ok) {
+        if (!result.retryable) submissionRef.current = null;
+        toast.error(result.error);
+      } else {
+        submissionRef.current = null;
+        void qc.invalidateQueries({ queryKey: ["table", code] });
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : input.failureMessage);
     } finally {
       sendingRef.current = false;
       setSending(false);
@@ -289,6 +755,9 @@ export function PlayTable({
           threads={snap.locationThreads}
           meId={snap.me.userId}
         />
+        {snap.state.authoritative ? (
+          <TacticalMap projection={snap.state.authoritative.tacticalProjection ?? null} />
+        ) : null}
         {snap.state.combat ? (
           <div className="shrink-0 overflow-y-auto border-b border-border px-4 py-3 lg:max-h-[30vh]">
             <CombatStrip
@@ -310,7 +779,9 @@ export function PlayTable({
           </div>
         ) : null}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          {snap.messages.map((m) => (
+          {(safetyPaused
+            ? snap.messages.filter((message) => message.id !== snap.state.currentDeliveryId)
+            : snap.messages).map((m) => (
             <MessageBubble
               key={m.id}
               m={m}
@@ -333,7 +804,7 @@ export function PlayTable({
           ))}
           <div ref={endRef} />
         </div>
-        {pendingMine.length > 0 && (
+        {!safetyPaused && pendingMine.length > 0 && (
           <div className="shrink-0 border-t border-border px-5 py-3">
             <p className="mb-2 text-xs text-brass">轮到你掷骰</p>
             <div className="flex flex-col gap-3">
@@ -360,7 +831,153 @@ export function PlayTable({
             squads={snap.state.squads ?? []}
           />
         )}
-        <form
+        {snap.state.authoritative ? (
+          <div className="shrink-0 border-t border-border px-5 py-3">
+            {safetyPaused ? (
+              <div className="space-y-2">
+                <p className="text-sm text-fg">呈现已立即暂停在最近的稳定状态。</p>
+                <p className="text-xs text-subtle">只有你能选择最小呈现调整并恢复。</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={sending}
+                    onClick={() => void resumeWithSafetyAdjustment("fadeToBlack")}
+                  >
+                    淡出当前内容
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="subtle"
+                    disabled={sending}
+                    onClick={() => void resumeWithSafetyAdjustment("reduceDetail")}
+                  >
+                    降低呈现细节
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={sending}
+                    onClick={() => void resumeWithSafetyAdjustment("skipSensitiveContent")}
+                  >
+                    跳过敏感内容
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={sending}
+                onClick={() => void pauseSafetyPresentation()}
+              >
+                立即安全暂停
+              </Button>
+            )}
+          </div>
+        ) : null}
+        {currentPending ? (
+          <div className="shrink-0 border-t border-border px-5 py-3">
+            <p className="text-xs text-brass">KP 等你明确决定</p>
+            <p className="mt-1 text-sm text-fg">
+              {currentPending.question}
+            </p>
+            {advancementPending ? (
+              <AdvancementChoicePanel
+                key={advancementPending.pendingInputId}
+                options={advancementPending.options!}
+                scores={snap.state.authoritative?.controlledCharacter?.abilityScores}
+                sending={sending}
+                onSubmit={submitAdvancement}
+              />
+            ) : null}
+            {groupRestPending ? (
+              <GroupRestConsentPanel
+                key={groupRestPending.pendingInputId}
+                options={groupRestPending.options}
+                character={snap.state.authoritative?.controlledCharacter ?? null}
+                sending={sending}
+                onSubmit={answerGroupRest}
+              />
+            ) : null}
+            {partyMovePending ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={sending}
+                  onClick={() => void answerTypedPending({
+                    pendingInputId: partyMovePending.pendingInputId,
+                    answer: { accept: true },
+                    body: "我同意这次整队移动。",
+                    failureMessage: "没能提交整队移动决定",
+                  })}
+                >
+                  同意同行
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={sending}
+                  onClick={() => void answerTypedPending({
+                    pendingInputId: partyMovePending.pendingInputId,
+                    answer: { accept: false },
+                    body: "我不同意这次整队移动。",
+                    failureMessage: "没能提交整队移动决定",
+                  })}
+                >
+                  拒绝同行
+                </Button>
+              </div>
+            ) : null}
+            {playerChoicePending ? (
+              <div className="mt-3 grid gap-2">
+                {playerChoicePending.choices.map((choice) => (
+                  <Button
+                    key={choice.choiceId}
+                    type="button"
+                    disabled={sending}
+                    onClick={() => void answerTypedPending({
+                      pendingInputId: playerChoicePending.pendingInputId,
+                      answer: { choiceId: choice.choiceId },
+                      body: `我选择：${choice.label}。`,
+                      failureMessage: "没能提交这项决定",
+                    })}
+                  >
+                    <span className="text-left">
+                      <span className="block">{choice.label}</span>
+                      <span className="block text-xs font-normal text-muted">{choice.consequence}</span>
+                    </span>
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+            {combatPending ? (
+              <CombatChoicePanel
+                key={combatPending.pendingInputId}
+                pending={combatPending}
+                sending={sending}
+                entityLabel={(entityId) => {
+                  const controlled = snap.state.authoritative?.controlledCharacter;
+                  if (controlled?.characterId === entityId) return controlled.name ?? "你";
+                  const character = snap.characters.find((candidate) =>
+                    entityId === `character:${candidate.userId}` || entityId.includes(candidate.userId));
+                  if (character) return character.sheet.name || entityId;
+                  return snap.state.npcs.find((npc) => npc.id === entityId)?.name ?? entityId;
+                }}
+                onSubmit={(answer, body) => answerTypedPending({
+                  pendingInputId: combatPending.pendingInputId,
+                  answer,
+                  body,
+                  failureMessage: "没能提交战斗决定",
+                })}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        {!safetyPaused && !advancementPending && !groupRestPending && !partyMovePending && !playerChoicePending && !combatPending ? <form
           className="flex shrink-0 items-end gap-2 border-t border-border p-3"
           onSubmit={(e) => e.preventDefault()}
         >
@@ -421,7 +1038,7 @@ export function PlayTable({
           >
             <Send className="size-4" />
           </Button>
-        </form>
+        </form> : null}
       </section>
 
       <aside className="flex min-h-0 flex-col rounded-[28px] border border-border bg-surface">
@@ -455,7 +1072,7 @@ export function PlayTable({
               meId={snap.me.userId}
               isHost={snap.me.is_host}
               code={code}
-              inCombat={Boolean(snap.state.combat)}
+              inCombat={Boolean(snap.state.combat) || snap.state.authoritative?.inCombat === true}
               placeNames={snap.state.placeNames}
               clocks={snap.state.clocks}
               partySplit={snap.state.partySplit}
@@ -465,6 +1082,7 @@ export function PlayTable({
               squadInvite={snap.state.squadInvite}
               places={snap.state.places}
               ruleProjection={snap.state.ruleProjection}
+              authoritative={snap.state.authoritative}
             />
           )}
           {tab === "npcs" && <NpcBoard npcs={snap.state.npcs} />}
@@ -472,6 +1090,399 @@ export function PlayTable({
           {tab === "log" && <LogView logs={snap.logs} party={snap.characters} />}
         </div>
       </aside>
+    </div>
+  );
+}
+
+function CombatChoicePanel({
+  pending,
+  sending,
+  entityLabel,
+  onSubmit,
+}: {
+  pending: CombatPendingInput;
+  sending: boolean;
+  entityLabel: (entityId: string) => string;
+  onSubmit: (answer: Record<string, unknown>, body: string) => Promise<void>;
+}) {
+  const [initiativeOrder, setInitiativeOrder] = useState<string[]>(
+    pending.choiceKind === "initiativeTieOrder" ? pending.orderedEntityIds : [],
+  );
+
+  if (pending.choiceKind === "target") {
+    return (
+      <div className="mt-3 flex flex-wrap gap-2">
+        {pending.candidateEntityIds.map((entityId) => (
+          <Button
+            key={entityId}
+            type="button"
+            disabled={sending}
+            onClick={() => void onSubmit(
+              { kind: "selectTarget", targetEntityId: entityId },
+              `我选择 ${entityLabel(entityId)} 作为目标。`,
+            )}
+          >
+            {entityLabel(entityId)}
+          </Button>
+        ))}
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={sending}
+          onClick={() => void onSubmit({ kind: "cancel" }, "我取消这次战斗行动。")}
+        >
+          取消行动
+        </Button>
+      </div>
+    );
+  }
+
+  if (pending.choiceKind === "reaction") {
+    return (
+      <div className="mt-3 flex flex-wrap gap-2">
+        {pending.candidateAbilityRefs.map((abilityRef) => (
+          <Button
+            key={abilityRef}
+            type="button"
+            disabled={sending}
+            onClick={() => void onSubmit({
+              kind: "useReaction",
+              abilityRef,
+              targetEntityId: pending.targetEntityId,
+            }, `我对 ${entityLabel(pending.targetEntityId)} 使用反应。`)}
+          >
+            {abilityRef === "action:opportunity-attack" ? "借机攻击" : abilityRef}
+          </Button>
+        ))}
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={sending}
+          onClick={() => void onSubmit({ kind: "decline" }, "我不使用这次反应。")}
+        >
+          不使用反应
+        </Button>
+      </div>
+    );
+  }
+
+  if (pending.choiceKind === "encounterConclusion") {
+    return (
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          disabled={sending}
+          onClick={() => void onSubmit(
+            { kind: "acceptEncounterConclusion" },
+            "我接受当前遭遇的收束。",
+          )}
+        >
+          接受遭遇收束
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={sending}
+          onClick={() => void onSubmit(
+            { kind: "rejectEncounterConclusion" },
+            "我拒绝当前遭遇的收束，继续采取合法行动。",
+          )}
+        >
+          拒绝并继续
+        </Button>
+      </div>
+    );
+  }
+
+  const move = (index: number, delta: -1 | 1) => {
+    const target = index + delta;
+    if (target < 0 || target >= initiativeOrder.length) return;
+    setInitiativeOrder((previous) => {
+      const next = [...previous];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+  return (
+    <div className="mt-3 rounded-[16px] border border-border bg-bg/40 p-3">
+      <ol className="grid gap-2">
+        {initiativeOrder.map((entityId, index) => (
+          <li
+            key={entityId}
+            className="flex items-center justify-between gap-3 rounded-[10px] border border-border px-3 py-2 text-sm"
+          >
+            <span>{index + 1}. {entityLabel(entityId)}</span>
+            <span className="flex gap-2">
+              <button
+                type="button"
+                aria-label={`让${entityLabel(entityId)}提前`}
+                disabled={sending || index === 0}
+                className="text-brass disabled:opacity-30"
+                onClick={() => move(index, -1)}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                aria-label={`让${entityLabel(entityId)}延后`}
+                disabled={sending || index === initiativeOrder.length - 1}
+                className="text-brass disabled:opacity-30"
+                onClick={() => move(index, 1)}
+              >
+                ↓
+              </button>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <Button
+        type="button"
+        className="mt-3"
+        disabled={sending}
+        onClick={() => void onSubmit(
+          { orderedEntityIds: initiativeOrder },
+          `我确认先攻顺序为 ${initiativeOrder.map(entityLabel).join("、")}。`,
+        )}
+      >
+        确认先攻顺序
+      </Button>
+    </div>
+  );
+}
+
+function AdvancementChoicePanel({
+  options,
+  scores,
+  sending,
+  onSubmit,
+}: {
+  options: AdvancementOptions;
+  scores?: Record<Ability, number>;
+  sending: boolean;
+  onSubmit: (answer: {
+    classId: string;
+    newLevel: number;
+    hitPointMethod: "fixed2014";
+    selectedFeatureIds: string[];
+    abilityScoreIncreases?: Partial<Record<Ability, number>>;
+  }) => Promise<void>;
+}) {
+  const [increases, setIncreases] = useState<Partial<Record<Ability, number>>>({});
+  const spent = Object.values(increases).reduce((sum, amount) => sum + (amount ?? 0), 0);
+  const ready = spent === options.abilityScoreBudget;
+  return (
+    <div className="mt-3 rounded-[16px] border border-border bg-bg/40 p-3">
+      <p className="text-xs text-muted">
+        采用 2014 固定生命值：最大生命值 +{options.fixedHitPointGain}。
+        {options.grantedFeatureIds.length > 0
+          ? ` 获得：${options.grantedFeatureIds.map((id) => id.replace(/^feature:/, "")).join("、")}。`
+          : " 本级没有新增通用职业特性。"}
+      </p>
+      {options.abilityScoreBudget > 0 ? (
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {ABILITIES.map((ability) => {
+            const current = scores?.[ability];
+            const added = increases[ability] ?? 0;
+            const capped = current !== undefined
+              && current + added >= options.maximumAbilityScore;
+            return (
+              <div key={ability} className="flex items-center justify-between rounded-[12px] border border-border px-3 py-2 text-sm">
+                <span>{ABILITY_LABEL[ability]} {current ?? "?"}{added ? ` +${added}` : ""}</span>
+                <span className="flex gap-2">
+                  <button
+                    type="button"
+                    aria-label={`减少${ABILITY_LABEL[ability]}`}
+                    disabled={added === 0 || sending}
+                    className="text-muted disabled:opacity-30"
+                    onClick={() => setIncreases((previous) => {
+                      const next = { ...previous };
+                      const value = (next[ability] ?? 0) - 1;
+                      if (value > 0) next[ability] = value;
+                      else delete next[ability];
+                      return next;
+                    })}
+                  >−</button>
+                  <button
+                    type="button"
+                    aria-label={`提高${ABILITY_LABEL[ability]}`}
+                    disabled={sending || spent >= options.abilityScoreBudget || added >= 2 || capped}
+                    className="text-brass disabled:opacity-30"
+                    onClick={() => setIncreases((previous) => ({
+                      ...previous,
+                      [ability]: (previous[ability] ?? 0) + 1,
+                    }))}
+                  >＋</button>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      <Button
+        type="button"
+        className="mt-3"
+        disabled={!ready || sending}
+        onClick={() => void onSubmit({
+          classId: options.classId,
+          newLevel: options.newLevel,
+          hitPointMethod: options.hitPointMethod,
+          selectedFeatureIds: [...options.grantedFeatureIds],
+          ...(options.abilityScoreBudget === 0 ? {} : { abilityScoreIncreases: increases }),
+        })}
+      >
+        {sending ? "提交成长……" : `确认晋升至 ${options.newLevel} 级`}
+      </Button>
+    </div>
+  );
+}
+
+function ArcaneRecoveryPicker({
+  character,
+  selection,
+  disabled,
+  onChange,
+}: {
+  character: AuthoritativeControlledCharacter | null | undefined;
+  selection: number[];
+  disabled: boolean;
+  onChange: (selection: number[]) => void;
+}) {
+  const availability = arcaneRecoveryAvailability(character);
+  if (!availability.eligible) return null;
+  const spent = selection.reduce((sum, level) => sum + level, 0);
+  const levels = ([1, 2, 3, 4, 5] as const)
+    .filter((level) => availability.missingByLevel[level] > 0);
+  return (
+    <div className="space-y-2 text-sm">
+      <div>
+        <p>奥术恢复（每日一次）</p>
+        <p className="text-[11px] text-subtle">
+          可恢复环数预算 {availability.budget}；已选择 {spent}。这里只冻结你的选择，完成短休后由规则结算。
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {levels.map((level) => {
+          const selected = selection.filter((entry) => entry === level).length;
+          const canAdd = selected < availability.missingByLevel[level]
+            && spent + level <= availability.budget;
+          return (
+            <div
+              key={level}
+              className="flex items-center gap-2 rounded-[10px] border border-border/70 px-2 py-1.5"
+            >
+              <span className="min-w-16 text-xs">{level} 环位</span>
+              <Button
+                size="sm"
+                variant="subtle"
+                disabled={disabled || selected === 0}
+                onClick={() => onChange(changeArcaneRecoverySelection(
+                  character,
+                  selection,
+                  level as ArcaneRecoverySlotLevel,
+                  -1,
+                ))}
+              >−</Button>
+              <span className="min-w-5 text-center tabular-nums">{selected}</span>
+              <Button
+                size="sm"
+                variant="subtle"
+                disabled={disabled || !canAdd}
+                onClick={() => onChange(changeArcaneRecoverySelection(
+                  character,
+                  selection,
+                  level as ArcaneRecoverySlotLevel,
+                  1,
+                ))}
+              >＋</Button>
+              <span className="text-[10px] text-subtle">
+                缺 {availability.missingByLevel[level]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {selection.length > 0 ? (
+        <Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange([])}>
+          不使用奥术恢复
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function GroupRestConsentPanel({
+  options,
+  character,
+  sending,
+  onSubmit,
+}: {
+  options: GroupRestOptions;
+  character: AuthoritativeControlledCharacter | null;
+  sending: boolean;
+  onSubmit: (input: {
+    accept: boolean;
+    hitDice: number;
+    arcaneRecoverySlotLevels: number[];
+  }) => Promise<void>;
+}) {
+  const availableHitDice = Math.max(
+    0,
+    Math.floor(character?.restRecoveryOptions?.shortRest?.hitDiceMaximumSpend ?? 0),
+  );
+  const [hitDice, setHitDice] = useState(0);
+  const [arcaneRecoverySlotLevels, setArcaneRecoverySlotLevels] = useState<number[]>([]);
+  return (
+    <div className="mt-3 rounded-[16px] border border-brass/40 bg-brass/10 p-3">
+      <p className="text-xs text-muted">
+        发起者只决定自己的休整。你是否加入由你决定；拒绝或暂不回答都不会替你推进虚构时间。
+      </p>
+      {options.restKind === "short" ? (
+        <div className="mt-3 space-y-3">
+          <div className="flex items-center gap-2 text-sm">
+            <span>花费生命骰</span>
+            <Button
+              size="sm"
+              variant="subtle"
+              disabled={sending || hitDice === 0}
+              onClick={() => setHitDice((value) => Math.max(0, value - 1))}
+            >−</Button>
+            <span className="min-w-6 text-center tabular-nums">{hitDice}</span>
+            <Button
+              size="sm"
+              variant="subtle"
+              disabled={sending || hitDice >= availableHitDice}
+              onClick={() => setHitDice((value) => Math.min(availableHitDice, value + 1))}
+            >＋</Button>
+          </div>
+          <ArcaneRecoveryPicker
+            character={character}
+            selection={arcaneRecoverySlotLevels}
+            disabled={sending}
+            onChange={setArcaneRecoverySlotLevels}
+          />
+        </div>
+      ) : null}
+      <div className="mt-3 flex gap-2">
+        <Button
+          disabled={sending}
+          onClick={() => void onSubmit({
+            accept: true,
+            hitDice,
+            arcaneRecoverySlotLevels,
+          })}
+        >
+          {sending ? "提交中……" : `加入${options.restKind === "long" ? "长休" : "短休"}`}
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={sending}
+          onClick={() => void onSubmit({
+            accept: false,
+            hitDice: 0,
+            arcaneRecoverySlotLevels: [],
+          })}
+        >拒绝</Button>
+      </div>
     </div>
   );
 }
@@ -1083,6 +2094,7 @@ function SheetView({
   squadInvite,
   places,
   ruleProjection,
+  authoritative,
 }: {
   party: TableSnap["characters"];
   meId: string;
@@ -1098,6 +2110,7 @@ function SheetView({
   squadInvite?: { from: string; to: string; fromName: string } | null;
   places?: Record<string, string>;
   ruleProjection?: TableSnap["state"]["ruleProjection"];
+  authoritative?: TableSnap["state"]["authoritative"];
 }) {
   const [openId, setOpenId] = useState<string | null>(meId);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1152,6 +2165,7 @@ function SheetView({
       <ul className="grid gap-2">
       {party.map((p) => {
         const sheet = p.sheet;
+        const identityOnly = p.visibility === "identityOnly";
         const race = raceById(sheet.raceId)?.name;
         const cls = classById(sheet.classId)?.name;
         const open = openId === p.userId;
@@ -1167,7 +2181,9 @@ function SheetView({
             <div className="flex w-full items-start justify-between gap-2 px-3 py-3">
               <button
                 type="button"
-                onClick={() => setOpenId(open ? null : p.userId)}
+                onClick={() => {
+                  if (!identityOnly) setOpenId(open ? null : p.userId);
+                }}
                 className="min-w-0 flex-1 text-left"
               >
                 <span className="font-medium">{sheet.name || "未名"}</span>
@@ -1203,17 +2219,31 @@ function SheetView({
                   </span>
                 ) : null}
                 <span className="mt-0.5 block text-xs text-subtle">
-                  {race}
-                  {cls}
-                  {" · 生命 "}
-                  <span className="font-display tabular-nums text-fg">
-                    {sheet.hp.current}
-                  </span>
-                  <span className="tabular-nums">/{sheet.hp.max}</span>
+                  {identityOnly ? (
+                    "人物详情仅本人可见"
+                  ) : (
+                    <>
+                      {race}
+                      {cls}
+                      {" · 生命 "}
+                      <span className="font-display tabular-nums text-fg">
+                        {p.userId === meId
+                          ? authoritative?.controlledCharacter?.hitPoints?.current ?? sheet.hp.current
+                          : sheet.hp.current}
+                      </span>
+                      <span className="tabular-nums">/
+                        {p.userId === meId
+                          ? authoritative?.controlledCharacter?.hitPoints?.maximum ?? sheet.hp.max
+                          : sheet.hp.max}
+                      </span>
+                    </>
+                  )}
                 </span>
               </button>
               <div className="flex shrink-0 flex-col items-end gap-1">
-                <span className="text-xs text-subtle">{open ? "收起" : "展开"}</span>
+                {!identityOnly ? (
+                  <span className="text-xs text-subtle">{open ? "收起" : "展开"}</span>
+                ) : null}
                 {p.userId !== meId && together && !groupedWithMe ? (
                   squadInvite?.from === meId && squadInvite.to === p.userId ? (
                     <Button
@@ -1304,7 +2334,7 @@ function SheetView({
                 ) : null}
               </div>
             </div>
-            {open && (
+            {open && !identityOnly && (
               <CharacterDetail
                 sheet={sheet}
                 canEdit={p.userId === meId}
@@ -1314,8 +2344,20 @@ function SheetView({
                 restVote={restVote}
                 restHold={restHold}
                 meId={meId}
-                partyCount={party.length}
+                partyCount={myGroup?.ids.length ?? 1}
                 activeRule={p.userId === meId ? ruleProjection?.viewer : undefined}
+                authoritativeCharacter={p.userId === meId
+                  ? authoritative?.controlledCharacter ?? undefined
+                  : undefined}
+                authoritativeActivities={p.userId === meId
+                  ? authoritative?.activities
+                  : undefined}
+                visibleEntities={p.userId === meId ? ruleProjection?.visibleEntities : undefined}
+                actorPosition={
+                  p.userId === meId
+                    ? ruleProjection?.combat?.order.find((entry) => entry.entityId === meId)?.positionFeet
+                    : undefined
+                }
               />
             )}
           </li>
@@ -1364,6 +2406,10 @@ function CharacterDetail({
   meId,
   partyCount,
   activeRule,
+  authoritativeCharacter,
+  authoritativeActivities,
+  visibleEntities,
+  actorPosition,
 }: {
   sheet: CharacterSheet;
   canEdit: boolean;
@@ -1375,6 +2421,10 @@ function CharacterDetail({
   meId?: string;
   partyCount?: number;
   activeRule?: NonNullable<TableSnap["state"]["ruleProjection"]>["viewer"];
+  authoritativeCharacter?: AuthoritativeControlledCharacter;
+  authoritativeActivities?: NonNullable<TableSnap["state"]["authoritative"]>["activities"];
+  visibleEntities?: NonNullable<TableSnap["state"]["ruleProjection"]>["visibleEntities"];
+  actorPosition?: number;
 }) {
   const live = ensureGear(sheet);
   const race = raceById(live.raceId);
@@ -1385,6 +2435,13 @@ function CharacterDetail({
   ];
   const stocks = listStocks(live);
   const packed = ensureResources(live);
+  const liveConditions = [
+    ...live.conditions,
+    ...(activeRule?.activeEffects ?? []),
+    ...(activeRule?.spellEffects.map((effect) =>
+      `${effect.label}${effect.concentration ? "（专注）" : ""}`,
+    ) ?? []),
+  ];
   return (
     <div className="grid gap-3 border-t border-border px-3 py-3 text-sm">
       {placeName ? (
@@ -1393,13 +2450,26 @@ function CharacterDetail({
       <p className="text-muted">
         {race?.name}
         {cls?.name}
-        {sub ? ` · ${sub.name}` : ""} 3 级
+        {sub ? ` · ${sub.name}` : ""} {authoritativeCharacter?.level ?? 3} 级
       </p>
       <div className="flex gap-3 tabular-nums">
-        <Stat k="AC" v={live.ac} />
-        <Stat k="生命" remain={live.hp.current} max={live.hp.max} />
-        <Stat k="速度" v={`${live.speed}尺`} />
+        <Stat k="AC" v={activeRule?.ac ?? live.ac} />
+        <Stat
+          k="生命"
+          remain={authoritativeCharacter?.hitPoints?.current ?? activeRule?.hp?.current ?? live.hp.current}
+          max={authoritativeCharacter?.hitPoints?.maximum ?? activeRule?.hp?.max ?? live.hp.max}
+        />
+        <Stat k="速度" v={`${activeRule?.speedFeet ?? live.speed}尺`} />
       </div>
+      {liveConditions.length > 0 && (
+        <Fold title="状态" hint={`${liveConditions.length} 项生效`}>
+          <ul className="grid gap-1 text-xs text-muted">
+            {[...new Set(liveConditions)].map((condition) => (
+              <li key={condition}>· {condition}</li>
+            ))}
+          </ul>
+        </Fold>
+      )}
       <ResourcePanel
         sheet={packed}
         canEdit={canEdit}
@@ -1410,6 +2480,8 @@ function CharacterDetail({
         meId={meId}
         partyCount={partyCount ?? 1}
         activeRule={activeRule}
+        authoritativeCharacter={authoritativeCharacter}
+        authoritativeActivities={authoritativeActivities}
       />
       <div className="grid grid-cols-3 gap-2">
         {ABILITIES.map((a) => (
@@ -1473,6 +2545,11 @@ function CharacterDetail({
                 canEdit={canEdit}
                 code={code}
                 stocks={packed}
+                sheet={live}
+                actorId={activeRule?.id}
+                visibleEntities={visibleEntities}
+                inCombat={inCombat}
+                actorPosition={actorPosition}
               />
             ))}
           </ul>
@@ -1525,6 +2602,8 @@ function ResourcePanel({
   meId,
   partyCount,
   activeRule,
+  authoritativeCharacter,
+  authoritativeActivities,
 }: {
   sheet: CharacterSheet;
   canEdit: boolean;
@@ -1535,16 +2614,25 @@ function ResourcePanel({
   meId?: string;
   partyCount: number;
   activeRule?: NonNullable<TableSnap["state"]["ruleProjection"]>["viewer"];
+  authoritativeCharacter?: AuthoritativeControlledCharacter;
+  authoritativeActivities?: NonNullable<TableSnap["state"]["authoritative"]>["activities"];
 }) {
   const r = sheet.resources!;
   const [busy, setBusy] = useState<string | null>(null);
   const [rest, setRest] = useState<null | "short" | "long">(null);
   const [dice, setDice] = useState(0);
+  const [arcaneRecoverySlotLevels, setArcaneRecoverySlotLevels] = useState<number[]>([]);
+  // Legacy Adapter choice. authoritative-v2 uses arcaneRecoverySlotLevels only.
   const [arcane, setArcane] = useState<0 | 1 | 2>(0);
-  const hdLeft = left(r.hitDice);
-  const con = abilityMod(sheet.scores.con);
+  const hdLeft = authoritativeCharacter?.restRecoveryOptions?.shortRest?.hitDiceMaximumSpend
+    ?? (authoritativeCharacter === undefined ? left(r.hitDice) : 0);
+  const hitDieSides = authoritativeCharacter?.restRecoveryOptions?.shortRest?.hitDieSides
+    ?? r.hitDice.die;
+  const con = abilityMod(authoritativeCharacter?.abilityScores?.con ?? sheet.scores.con);
   const needVote = partyCount > 1;
   const myAgreed = Boolean(meId && restVote?.agreed.includes(meId));
+  const authoritativeRest = authoritativeActivities?.find((activity) =>
+    activity.status === "active" && activity.restKind !== undefined);
 
   async function go(key: string, fn: () => Promise<{ ok: boolean; error?: string }>) {
     if (!canEdit || busy) return;
@@ -1572,7 +2660,7 @@ function ResourcePanel({
           <p className="mt-0.5 text-xs text-muted">
             还剩{" "}
             <span className="font-display tabular-nums text-fg">{hdLeft}</span>
-            {" "}颗 d{r.hitDice.die}。每颗大约 1d{r.hitDice.die}＋{con} 生命，不会超过上限 {sheet.hp.max}。现在{" "}
+            {" "}颗 d{hitDieSides}。每颗大约 1d{hitDieSides}＋{con} 生命，不会超过上限 {sheet.hp.max}。现在{" "}
             <span className="font-display tabular-nums text-fg">{sheet.hp.current}</span>
             <span className="tabular-nums text-subtle">/{sheet.hp.max}</span>
             。
@@ -1588,7 +2676,16 @@ function ResourcePanel({
             <span className="text-xs text-subtle">颗</span>
           </div>
         </div>
-        {sheet.classId === "wizard" && !r.arcaneRecovery && (
+        {authoritativeCharacter !== undefined ? (
+          <div className="mt-3">
+            <ArcaneRecoveryPicker
+              character={authoritativeCharacter}
+              selection={arcaneRecoverySlotLevels}
+              disabled={Boolean(busy)}
+              onChange={setArcaneRecoverySlotLevels}
+            />
+          </div>
+        ) : sheet.classId === "wizard" && !r.arcaneRecovery ? (
           <div className="mt-3">
             <p className="text-xs font-medium">奥术恢复（每日一次）</p>
             <div className="mt-1 flex gap-1.5">
@@ -1600,7 +2697,7 @@ function ResourcePanel({
             </div>
             <p className="mt-1 text-[11px] text-subtle">当前选：{arcane === 0 ? "不用" : arcane === 1 ? "一环" : "二环"}</p>
           </div>
-        )}
+        ) : null}
         {inCombat && (
           <p className="mt-2 text-[11px] text-brass">战斗中不能休整。</p>
         )}
@@ -1615,7 +2712,9 @@ function ResourcePanel({
                     kind: "short",
                     mode: needVote ? "group" : "personal",
                     hitDice: dice,
-                    arcane,
+                    ...(authoritativeCharacter === undefined
+                      ? { arcane }
+                      : { arcaneRecoverySlotLevels }),
                   },
                 }),
               )
@@ -1635,7 +2734,9 @@ function ResourcePanel({
                       kind: "short",
                       mode: "personal",
                       hitDice: dice,
-                      arcane,
+                      ...(authoritativeCharacter === undefined
+                        ? { arcane }
+                        : { arcaneRecoverySlotLevels }),
                     },
                   }),
                 )
@@ -1697,10 +2798,12 @@ function ResourcePanel({
 
   return (
     <div className="rounded-[12px] border border-border px-3 py-3">
-      {canEdit && activeRule?.rest?.status === "resting" ? (
+      {canEdit && (activeRule?.rest?.status === "resting" || authoritativeRest !== undefined) ? (
         <div className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2">
           <p className="text-xs text-fg">
-            你正在{activeRule.rest.kind === "long" ? "长休" : "短休"}。还需约 {Math.ceil(Math.max(0, activeRule.rest.requiredSeconds - (activeRule.timeline.fictionSeconds - activeRule.rest.startedAt)) / 60)} 分钟虚构时间；拍数不会替代这段时长。
+            {activeRule?.rest?.status === "resting"
+              ? `你正在${activeRule.rest.kind === "long" ? "长休" : "短休"}。还需约 ${Math.ceil(Math.max(0, activeRule.rest.requiredSeconds - (activeRule.timeline.fictionSeconds - activeRule.rest.startedAt)) / 60)} 分钟虚构时间；拍数不会替代这段时长。`
+              : `你正在${authoritativeRest?.restKind === "long" ? "长休" : "短休"}。恢复选择已经冻结；只有完整虚构时长过去且 Activity 完成后才会结算。`}
           </p>
           <Button
             size="sm"
@@ -1752,7 +2855,11 @@ function ResourcePanel({
                         kind: restVote.kind,
                         mode: "group",
                         hitDice: restVote.kind === "short" ? dice : undefined,
-                        arcane: restVote.kind === "short" ? arcane : undefined,
+                        ...(restVote.kind !== "short"
+                          ? {}
+                          : authoritativeCharacter === undefined
+                            ? { arcane }
+                            : { arcaneRecoverySlotLevels }),
                       },
                     }),
                   )
@@ -1790,7 +2897,14 @@ function ResourcePanel({
       )}
       {canEdit && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          <Button disabled={Boolean(busy)} onClick={() => setRest("short")}>
+          <Button
+            disabled={Boolean(busy)}
+            onClick={() => {
+              setArcane(0);
+              setArcaneRecoverySlotLevels([]);
+              setRest("short");
+            }}
+          >
             短休
           </Button>
           <Button disabled={Boolean(busy)} onClick={() => setRest("long")}>
@@ -1917,19 +3031,84 @@ function SpellLine({
   canEdit,
   code,
   stocks,
+  sheet,
+  actorId,
+  visibleEntities,
+  inCombat,
+  actorPosition,
 }: {
   id: string;
   canEdit: boolean;
   code: string;
   stocks: CharacterSheet;
+  sheet: CharacterSheet;
+  actorId?: string;
+  visibleEntities?: NonNullable<TableSnap["state"]["ruleProjection"]>["visibleEntities"];
+  inCombat: boolean;
+  actorPosition?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [targetIds, setTargetIds] = useState<string[]>([]);
+  const [choice, setChoice] = useState("");
+  const [ritual, setRitual] = useState(false);
+  const [upcast, setUpcast] = useState(false);
+  const [destinationFeet, setDestinationFeet] = useState(30);
+  const [areaOriginFeet, setAreaOriginFeet] = useState<number | undefined>(undefined);
   const sp = spellById(id);
   if (!sp) return null;
+  const definition = spellDefinition(id);
+  const profile = spellcastingProfile(sheet, id);
   const r = ensureResources(stocks).resources!;
   const slot = sp.level === 1 ? r.slot1 : sp.level === 2 ? r.slot2 : null;
   const ring = sp.level === 0 ? "戏法" : `${sp.level} 环`;
+  const selectedSlot = sp.level === 1 && upcast ? 2 : sp.level;
+  const facts = spellCardFacts(id, profile, selectedSlot);
+  const attackAllocations = definition
+    ? definition.resolution.special === "magic-missile"
+      ? 3 + Math.max(0, selectedSlot - definition.level)
+      : definition.resolution.mode === "attack"
+        ? (definition.resolution.attacks ?? 1) +
+          Math.max(0, selectedSlot - definition.level) *
+            (definition.resolution.attacksPerSlotAbove ?? 0)
+        : 0
+    : 0;
+  const needsAreaTargets =
+    definition?.resolution.mode === "save" ||
+    definition?.resolution.special === "sleep-hp-pool";
+  const needsEntityTarget = Boolean(
+    definition &&
+      !["self", "object", "space", "area"].includes(definition.targets.filter),
+  );
+  const needsSelection = Boolean(needsEntityTarget || needsAreaTargets);
+  const options = (visibleEntities ?? []).filter((entity) => {
+    if (entity.condition === "dead") return false;
+    if (definition?.targets.filter === "living-at-zero-hp") return entity.condition === "down";
+    if (definition?.targets.filter === "self") return entity.id === actorId;
+    return true;
+  });
+  const ready = !needsSelection ||
+    (attackAllocations > 1
+      ? targetIds.length === attackAllocations && targetIds.every(Boolean)
+      : targetIds.length > 0);
+
+  function updateAllocation(index: number, value: string) {
+    setTargetIds((current) => {
+      const next = Array.from({ length: attackAllocations }, (_, i) => current[i] ?? "");
+      next[index] = value;
+      return next;
+    });
+  }
+
+  function toggleTarget(targetId: string) {
+    setTargetIds((current) => {
+      if (current.includes(targetId)) return current.filter((entry) => entry !== targetId);
+      const maximum = definition ? spellMaxTargets(definition, selectedSlot) : undefined;
+      if (maximum !== null && maximum !== undefined && current.length >= maximum) return current;
+      return [...current, targetId];
+    });
+  }
+
   return (
     <div className="rounded-[10px] border border-border bg-bg/40">
       <button
@@ -1958,15 +3137,172 @@ function SpellLine({
               {[sp.time, sp.range, sp.duration].filter(Boolean).join(" · ")}
             </p>
           )}
+          {profile && (
+            <p className="mt-1 text-[11px] text-brass">
+              施法攻击 {signed(profile.attackBonus)} · 豁免 DC {profile.saveDc} · {ABILITY_LABEL[profile.ability]}
+            </p>
+          )}
+          {facts && (
+            <div className="mt-2 grid gap-1 rounded-[8px] border border-border bg-surface px-2 py-1.5 text-[11px] text-fg">
+              <p>{facts.target}</p>
+              <p>{facts.resolution}</p>
+            </div>
+          )}
           <p className="mt-1 text-xs leading-relaxed text-muted">{sp.text}</p>
+          {canEdit && sp.level === 1 && r.slot2.max > 0 && (
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-subtle">
+              <input
+                type="checkbox"
+                checked={upcast}
+                disabled={left(r.slot2) < 1 || ritual}
+                onChange={(event) => {
+                  setUpcast(event.target.checked);
+                  setTargetIds([]);
+                }}
+              />
+              使用二环法术位施放（剩 {left(r.slot2)}/{r.slot2.max}）
+            </label>
+          )}
+          {canEdit && needsSelection && attackAllocations > 1 && (
+            <div className="mt-2 grid gap-1.5">
+              {Array.from({ length: attackAllocations }, (_, index) => (
+                <label key={index} className="grid grid-cols-[4.5rem_1fr] items-center gap-2 text-[11px] text-subtle">
+                  <span>第 {index + 1} 发</span>
+                  <select
+                    value={targetIds[index] ?? ""}
+                    onChange={(event) => updateAllocation(index, event.target.value)}
+                    className="min-w-0 rounded-[8px] border border-border bg-bg px-2 py-1 text-xs text-fg"
+                  >
+                    <option value="">选择目标</option>
+                    {options.map((entity) => (
+                      <option key={entity.id} value={entity.id}>{entity.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
+          {canEdit && needsSelection && attackAllocations <= 1 && definition && spellMaxTargets(definition, selectedSlot) === 1 && (
+            <label className="mt-2 grid gap-1 text-[11px] text-subtle">
+              <span>目标</span>
+              <select
+                value={targetIds[0] ?? ""}
+                onChange={(event) => setTargetIds(event.target.value ? [event.target.value] : [])}
+                className="rounded-[8px] border border-border bg-bg px-2 py-1 text-xs text-fg"
+              >
+                <option value="">选择目标</option>
+                {options.map((entity) => (
+                  <option key={entity.id} value={entity.id}>{entity.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {canEdit && needsSelection && attackAllocations <= 1 && definition && spellMaxTargets(definition, selectedSlot) !== 1 && (
+            <div className="mt-2">
+              <p className="text-[11px] text-subtle">选择范围内目标</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {options.map((entity) => (
+                  <label key={entity.id} className="flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11px]">
+                    <input
+                      type="checkbox"
+                      checked={targetIds.includes(entity.id)}
+                      onChange={() => toggleTarget(entity.id)}
+                    />
+                    {entity.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+          {canEdit && id === "command" && (
+            <label className="mt-2 grid gap-1 text-[11px] text-subtle">
+              <span>命令词</span>
+              <select
+                value={choice}
+                onChange={(event) => setChoice(event.target.value)}
+                className="rounded-[8px] border border-border bg-bg px-2 py-1 text-xs text-fg"
+              >
+                <option value="">选择命令</option>
+                {["过来", "放下", "逃走", "趴下", "停下"].map((word) => <option key={word}>{word}</option>)}
+              </select>
+            </label>
+          )}
+          {canEdit && id === "lesser-restoration" && (
+            <label className="mt-2 grid gap-1 text-[11px] text-subtle">
+              <span>结束状态</span>
+              <select
+                value={choice}
+                onChange={(event) => setChoice(event.target.value)}
+                className="rounded-[8px] border border-border bg-bg px-2 py-1 text-xs text-fg"
+              >
+                <option value="">自动选择已有状态</option>
+                <option value="diseased">疾病</option>
+                <option value="blinded">目盲</option>
+                <option value="deafened">耳聋</option>
+                <option value="paralyzed">麻痹</option>
+                <option value="poisoned">中毒</option>
+              </select>
+            </label>
+          )}
+          {canEdit && id === "misty" && inCombat && (
+            <label className="mt-2 grid gap-1 text-[11px] text-subtle">
+              <span>战场目标位置（尺）</span>
+              <input
+                type="number"
+                min={0}
+                value={destinationFeet}
+                onChange={(event) => setDestinationFeet(Number(event.target.value))}
+                className="rounded-[8px] border border-border bg-bg px-2 py-1 text-xs text-fg"
+              />
+            </label>
+          )}
+          {canEdit && definition?.area?.origin === "point" && inCombat && (
+            <label className="mt-2 grid gap-1 text-[11px] text-subtle">
+              <span>区域中心位置（尺）</span>
+              <input
+                type="number"
+                min={0}
+                value={areaOriginFeet ?? actorPosition ?? 0}
+                onChange={(event) => setAreaOriginFeet(Number(event.target.value))}
+                className="rounded-[8px] border border-border bg-bg px-2 py-1 text-xs text-fg"
+              />
+            </label>
+          )}
+          {canEdit && definition?.ritual && !inCombat && (
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-subtle">
+              <input
+                type="checkbox"
+                checked={ritual}
+                onChange={(event) => {
+                  setRitual(event.target.checked);
+                  if (event.target.checked) setUpcast(false);
+                }}
+              />
+              以仪式施放（不耗法术位，额外 10 分钟）
+            </label>
+          )}
           {canEdit && (
             <Button
               className="mt-2"
-              disabled={busy}
+              disabled={busy || !ready}
               onClick={async () => {
                 setBusy(true);
                 try {
-                  const res = await castSpell({ data: { code, spellId: id } });
+                  const res = await castSpell({
+                    data: {
+                      code,
+                      spellId: id,
+                      slot: selectedSlot > 0 ? selectedSlot : undefined,
+                      targetIds: targetIds.filter(Boolean),
+                      choice: choice || undefined,
+                      destinationFeet: id === "misty" && inCombat ? destinationFeet : undefined,
+                      originFeet:
+                        definition?.area?.origin === "point" && inCombat
+                          ? areaOriginFeet ?? actorPosition ?? 0
+                          : undefined,
+                      ritual,
+                    },
+                  });
                   if (!res.ok) toast.error(res.error ?? "施放失败");
                 } catch (e) {
                   toast.error(e instanceof Error ? e.message : "施放失败");
@@ -1985,6 +3321,7 @@ function SpellLine({
 }
 
 function useGearAct(code: string, canEdit: boolean) {
+  const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   async function act(
     action: "wear" | "stow",
@@ -1996,6 +3333,7 @@ function useGearAct(code: string, canEdit: boolean) {
     try {
       const res = await setGear({ data: { code, action, slot, itemId } });
       if (!res.ok) toast.error(String(res.error));
+      else void qc.invalidateQueries({ queryKey: ["table", code] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "换装失败");
     } finally {
@@ -2245,6 +3583,7 @@ function LogView({
   const hp = useMemo(
     () =>
       party
+        .filter((p) => p.visibility !== "identityOnly")
         .map((p) => `${p.sheet.name} ${p.sheet.hp.current}/${p.sheet.hp.max}`)
         .join(" · "),
     [party],
@@ -2266,15 +3605,32 @@ function LogView({
   );
 }
 
-async function playTts(roomId: string, messageId: string) {
+async function playTts(
+  roomId: string,
+  messageId: string,
+  presentation: {
+    isCurrent(): boolean;
+    register(audio: HTMLAudioElement | null): void;
+  },
+) {
   try {
     const out = await speakNarration({ data: { roomId, messageId } });
-    if (!out.ok) return;
+    if (!out.ok || !presentation.isCurrent()) return;
     const bytes = Uint8Array.from(atob(out.b64), (c) => c.charCodeAt(0));
     const blob = new Blob([bytes], { type: out.mime });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
+    presentation.register(audio);
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      presentation.register(null);
+    };
+    if (!presentation.isCurrent()) {
+      audio.pause();
+      URL.revokeObjectURL(url);
+      presentation.register(null);
+      return;
+    }
     await audio.play();
   } catch {
     /* autoplay blocked until a gesture */

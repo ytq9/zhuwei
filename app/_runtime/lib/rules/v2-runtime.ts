@@ -1,0 +1,394 @@
+import {
+  createRuntimeProfileRegistry,
+  PRODUCTION_RUNTIME_PROFILE_REGISTRY,
+  resolveRuntimeProfileManifest,
+} from "./profiles/registry";
+import type {
+  RuntimeInterpreterRegistration,
+  RuntimeProfileRegistry,
+} from "./profiles/registry";
+import type { ProfileRef, RuntimeProfileManifest } from "./profiles/types";
+import {
+  eventHash,
+  foldEvent,
+  validateEventEnvelope,
+} from "./v2/events";
+import {
+  initializeAuthoritativeWorld,
+  stepAuthoritativeWorld,
+} from "./v2/actions";
+import type {
+  AuthoritativeWorldState,
+  EventEnvelope,
+  JsonRecord,
+  KpViewer,
+  NpcViewer,
+  PlayerViewer,
+  ProjectionQuery,
+  ProjectionResult,
+  ReplayResult,
+  ReplayedRulesResult,
+  RuntimeGenesis,
+  StepResult,
+} from "./v2/model";
+import { projectWorld } from "./v2/projector";
+import { normalizeCampaignGenesis } from "./v2/campaign-normalization";
+import { normalizeCombatGenesis } from "./v2/combat-normalization";
+import { rejected } from "./v2/results";
+import {
+  hashWorldState,
+  isAuthoritativeWorldState,
+  isGenesisIntegrityValid,
+  isRecord,
+  isRuntimeGenesis,
+} from "./v2/validation";
+
+function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
+  return left.profileId === right.profileId && left.profileHash === right.profileHash;
+}
+
+function stateProfileRejection(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+): ReturnType<typeof rejected> | undefined {
+  return profilesMatch(profiles.manifest, state.runtimeManifestRef)
+    ? undefined
+    : rejected(
+      "runtimeProfileMismatch",
+      "The provided runtime manifest does not match the manifest pinned by this room epoch.",
+    );
+}
+
+function containsForbidden2024Semantics(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase();
+    return normalized.includes("dnd2024")
+      || normalized.includes("d&d 2024")
+      || normalized.includes("5.5e")
+      || normalized === "latest"
+      || /weapon[\s_-]*mastery/i.test(value);
+  }
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  if (seen.has(value)) {
+    return true;
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsForbidden2024Semantics(entry, seen));
+  }
+  return Object.entries(value).some(
+    ([key, entry]) => containsForbidden2024Semantics(key, seen)
+      || containsForbidden2024Semantics(entry, seen),
+  );
+}
+
+function profilesMatchEpoch(
+  registry: RuntimeProfileRegistry,
+  event: EventEnvelope,
+  genesis: RuntimeGenesis,
+): boolean {
+  const resolution = resolveRuntimeProfileManifest(registry, event.profiles);
+  if (!resolution.ok) {
+    return false;
+  }
+  return profilesMatch(resolution.profiles.manifest, genesis.profiles.manifest);
+}
+
+function isContinuousEvent(
+  registry: RuntimeProfileRegistry,
+  event: EventEnvelope,
+  state: AuthoritativeWorldState,
+  genesis: RuntimeGenesis,
+): boolean {
+  const expectedEventSeq = (BigInt(state.version) + 1n).toString();
+  const expectedCausalParents = state.lastEventId === null ? [] : [state.lastEventId];
+  const timeline = state.fictionTimelines[event.fictionTimelineId];
+  return event.roomId === genesis.roomId
+    && event.runtimeEpochId === genesis.runtimeEpochId
+    && event.eventSeq === expectedEventSeq
+    && event.eventId === `event:${genesis.runtimeEpochId}:${expectedEventSeq}`
+    && event.branchId === state.activeBranchId
+    && timeline !== undefined
+    && timeline.branchId === event.branchId
+    && event.fictionInstantMicros === timeline.nowMicros
+    && event.parentEventId === state.lastEventId
+    && event.causalParentEventIds.length === expectedCausalParents.length
+    && event.causalParentEventIds.every((entry, index) => entry === expectedCausalParents[index])
+    && event.previousEventHash === state.eventHeadHash
+    && event.stateBeforeHash === hashWorldState(state)
+    && profilesMatchEpoch(registry, event, genesis);
+}
+
+/**
+ * Reconstructs a room from genesis plus its closed, typed event log. Replay is
+ * pure: it folds committed payloads and never recompiles definitions, rerolls,
+ * reads a wall clock, or delegates historical events to the current adapter.
+ */
+function replayWithRegistry(
+  registry: RuntimeProfileRegistry,
+  genesisValue: unknown,
+  eventsValue: unknown,
+): ReplayResult {
+  if (!isRecord(genesisValue) || !("profiles" in genesisValue)) {
+    return rejected("invalidGenesis", "Replay requires a complete roomGenesis record.");
+  }
+  const genesisProfileResolution = resolveRuntimeProfileManifest(registry, genesisValue.profiles);
+  if (!genesisProfileResolution.ok) {
+    return rejected(
+      genesisProfileResolution.rejection.code,
+      genesisProfileResolution.rejection.message,
+    );
+  }
+  if (!isRuntimeGenesis(genesisValue)) {
+    return rejected("invalidGenesis", "roomGenesis is missing a required canonical field.");
+  }
+  if (!isGenesisIntegrityValid(genesisValue)) {
+    return rejected(
+      "archiveIntegrityMismatch",
+      "roomGenesis state or hash commitment does not match canonical bytes.",
+    );
+  }
+  if (!Array.isArray(eventsValue)) {
+    return rejected("invalidReplayInput", "Replay events must be an ordered array.");
+  }
+
+  let state: JsonRecord;
+  try {
+    const cloned = structuredClone(genesisValue.initialState);
+    state = normalizeCampaignGenesis(normalizeCombatGenesis(cloned, genesisValue), genesisValue);
+  } catch {
+    return rejected("invalidGenesis", "roomGenesis initial state is not cloneable canonical data.");
+  }
+
+  if (eventsValue.length > 0 && !isAuthoritativeWorldState(state)) {
+    return rejected(
+      "unsupportedEventSchema",
+      "Non-empty authoritative-v2 archives require a canonical v2 genesis state.",
+    );
+  }
+  if (
+    isRecord(state)
+    && state.schema === "zhuwei.authoritative-world-state/v2"
+    && !isAuthoritativeWorldState(state)
+  ) {
+    return rejected(
+      "invalidWorldState",
+      "Authoritative-v2 genesis state is malformed or lacks its runtime manifest pin.",
+    );
+  }
+  if (isAuthoritativeWorldState(state)) {
+    const mismatch = stateProfileRejection(genesisProfileResolution.profiles, state);
+    if (mismatch !== undefined) {
+      return mismatch;
+    }
+  }
+
+  for (const eventValue of eventsValue) {
+    if (!isAuthoritativeWorldState(state)) {
+      return rejected("invalidWorldState", "Replay state left the authoritative-v2 schema.");
+    }
+    const validation = validateEventEnvelope(eventValue);
+    if (!validation.ok) {
+      return rejected("invalidEventEnvelope", validation.message);
+    }
+    const event = validation.event;
+    const eventProfileResolution = resolveRuntimeProfileManifest(registry, event.profiles);
+    if (!eventProfileResolution.ok) {
+      return rejected(
+        eventProfileResolution.rejection.code,
+        eventProfileResolution.rejection.message,
+      );
+    }
+    if (!isContinuousEvent(registry, event, state, genesisValue)) {
+      return rejected(
+        "archiveIntegrityMismatch",
+        "Event sequence, branch, profile, causal, fiction-time, or previous hash commitment diverged.",
+      );
+    }
+    try {
+      const next = foldEvent(state, event);
+      if (hashWorldState(next) !== event.stateHashAfter || eventHash(event) !== event.eventHash) {
+        return rejected(
+          "archiveIntegrityMismatch",
+          "Folded state or event hash does not match its canonical commitment.",
+        );
+      }
+      state = next;
+    } catch {
+      return rejected(
+        "invalidEventEnvelope",
+        "Typed event payload cannot be legally folded from the committed prior state.",
+      );
+    }
+  }
+
+  const eventSeq = isAuthoritativeWorldState(state) ? state.version : "0";
+  const stateHash = hashWorldState(state);
+  const eventHeadHash = isAuthoritativeWorldState(state)
+    ? state.eventHeadHash
+    : genesisValue.initialStateHash;
+  return {
+    kind: "replayed",
+    interpreterKind: "authoritative",
+    profiles: structuredClone(genesisProfileResolution.profiles),
+    state,
+    cache: structuredClone(state),
+    head: {
+      runtimeEpochId: genesisValue.runtimeEpochId,
+      eventSeq,
+      stateHash,
+      genesisHash: genesisValue.genesisHash,
+      eventHash: eventHeadHash,
+    },
+  } satisfies ReplayedRulesResult;
+}
+
+/** The sole observer projection seam; query channels are audit metadata only. */
+function projectWithRegistry(
+  registry: RuntimeProfileRegistry,
+  profiles: unknown,
+  state: unknown,
+  viewer: PlayerViewer | NpcViewer | KpViewer | unknown,
+  query?: ProjectionQuery,
+): ProjectionResult {
+  const resolution = resolveRuntimeProfileManifest(registry, profiles);
+  if (!resolution.ok) {
+    return rejected(resolution.rejection.code, resolution.rejection.message);
+  }
+  if (
+    isRecord(state)
+    && state.schema === "zhuwei.authoritative-world-state/v2"
+    && !isAuthoritativeWorldState(state)
+  ) {
+    return rejected(
+      "invalidWorldState",
+      "Authoritative-v2 state is malformed or lacks its runtime manifest pin.",
+    );
+  }
+  if (isAuthoritativeWorldState(state)) {
+    const mismatch = stateProfileRejection(resolution.profiles, state);
+    if (mismatch !== undefined) {
+      return mismatch;
+    }
+  }
+  return projectWorld(resolution.profiles, state, viewer, query);
+}
+
+/**
+ * The sole public mechanical transition seam. Initialization is the one case
+ * where callers provide neither a profile nor mutable state; Rules pins both.
+ */
+function stepWithRegistry(
+  registry: RuntimeProfileRegistry,
+  profiles: unknown,
+  state: unknown,
+  input: unknown,
+): StepResult {
+  if (isRecord(input) && input.kind === "initializeAuthoritativeWorld") {
+    return initializeAuthoritativeWorld(
+      registry.defaultManifest,
+      profiles,
+      state,
+      input,
+    );
+  }
+  const resolution = resolveRuntimeProfileManifest(registry, profiles);
+  if (!resolution.ok) {
+    return rejected(resolution.rejection.code, resolution.rejection.message);
+  }
+  if (!isRecord(input)) {
+    return rejected("invalidRulesInput", "Rules step input must be a structured proposal.");
+  }
+  if (containsForbidden2024Semantics(input)) {
+    return rejected(
+      "unsupportedRulesBasis",
+      "Only SRD 5.1 / D&D 5e 2014 mechanics are accepted by this runtime.",
+      [{
+        code: "unsupportedRulesBasis",
+        message: "dnd2024, 5.5e, latest, and Weapon Mastery semantics are outside this ruleset.",
+        path: "input",
+        source: "SPEC 0013",
+        visibility: "public",
+      }],
+    );
+  }
+  if (!isAuthoritativeWorldState(state)) {
+    if (input.kind === "registerAbilityDefinition" && isRecord(state)) {
+      return rejected(
+        "unsupportedOperation",
+        "The authoritative Ability compiler adapter is not enabled in this runtime slice.",
+      );
+    }
+    return rejected("invalidWorldState", "Rules step requires a canonical authoritative-v2 state.");
+  }
+  const mismatch = stateProfileRejection(resolution.profiles, state);
+  if (mismatch !== undefined) {
+    return mismatch;
+  }
+  return stepAuthoritativeWorld(resolution.profiles, state, input);
+}
+
+export type VersionedRulesRuntime = {
+  replay: (genesisValue: unknown, eventsValue: unknown) => ReplayResult;
+  project: (
+    profiles: unknown,
+    state: unknown,
+    viewer: PlayerViewer | NpcViewer | KpViewer | unknown,
+    query?: ProjectionQuery,
+  ) => ProjectionResult;
+  step: (profiles: unknown, state: unknown, input: unknown) => StepResult;
+};
+
+function runtimeForRegistry(registry: RuntimeProfileRegistry): VersionedRulesRuntime {
+  return {
+    replay: (genesisValue, eventsValue) => replayWithRegistry(registry, genesisValue, eventsValue),
+    project: (profiles, state, viewer, query) =>
+      projectWithRegistry(registry, profiles, state, viewer, query),
+    step: (profiles, state, input) => stepWithRegistry(registry, profiles, state, input),
+  };
+}
+
+/** Internal construction seam used by conformance tests and future shipped adapters. */
+export function createVersionedRulesRuntime(config: {
+  registrations: readonly RuntimeInterpreterRegistration[];
+  defaultManifest: ProfileRef;
+}): VersionedRulesRuntime {
+  return runtimeForRegistry(createRuntimeProfileRegistry(config));
+}
+
+const productionRuntime = runtimeForRegistry(PRODUCTION_RUNTIME_PROFILE_REGISTRY);
+
+export const replay = productionRuntime.replay;
+export const project = productionRuntime.project;
+export const step = productionRuntime.step;
+
+export type {
+  AuthoritativeWorldState,
+  AwaitingInputRulesResult,
+  AwaitingRandomnessRulesResult,
+  CommittedRulesResult,
+  ConcludedRulesResult,
+  EventEnvelope,
+  EventPayloadByType,
+  InitializedRulesResult,
+  KpSpatialReadModel,
+  KpViewer,
+  NeedsKpRulesResult,
+  NpcViewer,
+  PlayerViewer,
+  ProjectionQuery,
+  ProjectionResult,
+  RejectedRulesResult,
+  ReplayHead,
+  ReplayResult,
+  ReplayedRulesResult,
+  RuleDiagnostic,
+  RulesRejection,
+  RulesRejectionCode,
+  RuntimeGenesis,
+  SafeReadModel,
+  ScopeProof,
+  StepResult,
+} from "./v2/model";

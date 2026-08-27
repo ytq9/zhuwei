@@ -1,6 +1,10 @@
 import { env } from "cloudflare:workers";
 
-import { kpModelById, type KpModelId } from "./models";
+import {
+  isAuthoritativeKpModel,
+  kpModelById,
+  type KpModelId,
+} from "./models";
 
 function deepSeekApiKey() {
   const secrets = env as typeof env & { DEEPSEEK_API_KEY?: string };
@@ -8,6 +12,10 @@ function deepSeekApiKey() {
 }
 
 export function kpModelConfigurationError(model: KpModelId) {
+  if (isAuthoritativeKpModel(model)) {
+    const ai = (env as typeof env & { AI?: Ai }).AI;
+    return ai ? null : `${kpModelById(model)?.name ?? model} 尚未绑定 Workers AI`;
+  }
   if (!deepSeekApiKey()) {
     return `${kpModelById(model)?.name ?? model} 尚未配置 API 密钥`;
   }
@@ -19,6 +27,12 @@ export async function chatModelText(
   messages: { role: "system" | "user"; content: string }[],
   options: { temperature?: number; maxTokens?: number } = {},
 ) {
+  if (isAuthoritativeKpModel(model)) {
+    return {
+      ok: false as const,
+      error: `${kpModelById(model)?.name ?? model} 必须通过 authoritative KP Adapter 调用`,
+    };
+  }
   const apiKey = deepSeekApiKey();
   const modelName = kpModelById(model)?.name ?? model;
   if (!apiKey) return { ok: false as const, error: `${modelName} 尚未配置 API 密钥` };

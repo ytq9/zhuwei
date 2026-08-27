@@ -133,6 +133,13 @@ export function commandScopes(
     scopes.add(`timeline:${command.actorId}`);
     scopes.add(`scene:${state.entities[command.actorId]?.sceneId ?? "unknown"}`);
     scopes.add(`resources:${command.actorId}`);
+    if (command.kind === "castSpell") {
+      scopes.add(`spell-effects:${command.actorId}`);
+      for (const targetId of command.targetIds ?? []) {
+        scopes.add(`entity:${targetId}`);
+        scopes.add(`spell-effects:${targetId}`);
+      }
+    }
   } else if (command.kind === "startCombat") {
     const sceneId = state.entities[command.actorId]?.sceneId ?? "unknown";
     scopes.add(`combat:${sceneId}`);

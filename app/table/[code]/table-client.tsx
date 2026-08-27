@@ -79,7 +79,12 @@ export function TableClient({ code, userName }: { code: string; userName: string
                 <p className="mb-4 text-sm text-muted">
                   团已经开始。先把人物卡锁定，才能开口。
                 </p>
-                <LockWizard code={code} />
+                <LockWizard
+                  code={code}
+                  predecessorCharacterId={
+                    data.state.authoritative?.lifecycle?.defaultPredecessorCharacterId
+                  }
+                />
               </div>
             ) : (
               <PlayTable code={code} snap={data} />
@@ -288,7 +293,13 @@ function Lobby({
   );
 }
 
-function LockWizard({ code }: { code: string }) {
+function LockWizard({
+  code,
+  predecessorCharacterId,
+}: {
+  code: string;
+  predecessorCharacterId?: string;
+}) {
   const [busy, setBusy] = useState(false);
   return (
     <CharacterWizard
@@ -296,7 +307,9 @@ function LockWizard({ code }: { code: string }) {
       onLock={async (draft) => {
         setBusy(true);
         try {
-          const res = await lockCharacter({ data: { code, draft } });
+          const res = await lockCharacter({
+            data: { code, draft, ...(predecessorCharacterId ? { predecessorCharacterId } : {}) },
+          });
           if (!res.ok) toast.error(res.error);
           else toast.success(`${res.sheet.name} 已坐下`);
         } catch (e) {

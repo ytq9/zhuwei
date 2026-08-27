@@ -1,5 +1,8 @@
 import { requireApiUser, requestJson, routeError } from "../_shared";
+import { assertSameOrigin } from "../../_lib/auth.server";
 import {
+  acknowledgeDelivery,
+  adjustSafetyPresentation,
   answerSquad,
   approveSquadQueue,
   cancelRest,
@@ -25,6 +28,7 @@ import {
   resolveReact,
   resolveRoll,
   restNow,
+  requestSafetyPause,
   sendAction,
   setGear,
   setRoomModel,
@@ -41,7 +45,9 @@ export const dynamic = "force-dynamic";
 
 type Callable = (input: { data: never; userId: string }) => Promise<unknown>;
 
-const commands: Record<string, Callable> = {
+const commands: Record<string, Callable> = Object.assign(Object.create(null), {
+  acknowledgeDelivery,
+  adjustSafetyPresentation,
   answerSquad,
   approveSquadQueue,
   cancelRest,
@@ -67,6 +73,7 @@ const commands: Record<string, Callable> = {
   resolveReact,
   resolveRoll,
   restNow,
+  requestSafetyPause,
   sendAction,
   setGear,
   setRoomModel,
@@ -75,18 +82,32 @@ const commands: Record<string, Callable> = {
   transcribeAudio,
   useFeature,
   useHitDie,
-};
+});
+
+function preventDomainResponseCaching(response: Response): Response {
+  response.headers.set("cache-control", "no-store, private");
+  response.headers.set("pragma", "no-cache");
+  return response;
+}
 
 export async function POST(request: Request) {
   try {
+    assertSameOrigin(request);
     const user = await requireApiUser();
     const payload = await requestJson<{ command?: string; data?: unknown }>(request);
-    const command = payload.command ? commands[payload.command] : undefined;
-    if (!command) return Response.json({ error: "未知桌面指令。" }, { status: 404 });
-    return Response.json(
+    const command = typeof payload.command === "string"
+        && Object.hasOwn(commands, payload.command)
+      ? commands[payload.command]
+      : undefined;
+    if (!command) {
+      return preventDomainResponseCaching(
+        Response.json({ error: "未知桌面指令。" }, { status: 404 }),
+      );
+    }
+    return preventDomainResponseCaching(Response.json(
       await command({ data: payload.data as never, userId: user.userId }),
-    );
+    ));
   } catch (error) {
-    return routeError(error);
+    return preventDomainResponseCaching(routeError(error));
   }
 }

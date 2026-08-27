@@ -1,4 +1,8 @@
-import { authMiddleware, createServerFn } from "@/lib/platform/server-fn";
+import {
+  authMiddleware,
+  createServerFn,
+  PublicServerError,
+} from "@/lib/platform/server-fn";
 import { getSql } from "@/lib/db";
 import { abilityMod, roomCode, uid } from "@/lib/utils";
 import { compileSheet, ensureGear, casterMod } from "@/lib/dnd/compute";
@@ -12,9 +16,29 @@ import { d20, d4, eligibleBoosts, rollKind, type BoostId } from "@/lib/dnd/boost
 import { getModule, listModules } from "@/lib/module";
 import { publicNpc } from "@/lib/module/schema";
 import { interpretPlayerAction, narrateDecision } from "@/lib/rules/ai-adapter";
-import { rollDie, RULESET_VERSION } from "@/lib/rules/ruleset";
-import type { Command } from "@/lib/rules/model";
 import {
+  AUTHORITATIVE_RULESET_VERSION,
+  rollDie,
+  RULESET_VERSION,
+} from "@/lib/rules/ruleset";
+import type { Command } from "@/lib/rules/model";
+import type { RoomActionInput } from "@/lib/room/action";
+import {
+  acknowledgeAuthoritativeDelivery,
+  activateAuthoritativeMember,
+  authoritativeCharacterId,
+  cancelAuthoritativeRoomDeletion,
+  departAuthoritativeMember,
+  finalizeAuthoritativeRoomDeletion,
+  initializeAuthoritativeRoom,
+  introduceAuthoritativeSuccessor,
+  materializeAuthoritativeCharacter,
+  observeAuthoritativeRoom,
+  prepareAuthoritativeRoomDeletion,
+  removeAuthoritativeMember,
+  runAuthoritativeRoomAction,
+  runAuthoritativePartyAction,
+  transferAndDepartAuthoritativeHost,
   commitRoomTurn,
   departRoomPlayer,
   failRoomInterpretation,
@@ -29,8 +53,24 @@ import type { PendingRoll } from "@/lib/kp/prompt";
 import { kpModelConfigurationError, readClueLayer, runKpTurn, KP_BUSY_MSG } from "@/lib/kp/engine";
 import { publicPendingRoll } from "@/lib/kp/clue-state";
 import { readWorldItemClaims } from "@/lib/kp/action-ruling";
-import { DEFAULT_KP_MODEL, isKpModelId, type KpModelId } from "@/lib/kp/models";
+import {
+  AUTHORITATIVE_KP_MODEL,
+  isKpModelId,
+  type KpModelId,
+} from "@/lib/kp/models";
 import { projectLocationMessages } from "@/lib/table/message-projection";
+import {
+  buildAuthoritativeActionInput,
+  buildAuthoritativeButtonAction,
+  buildAuthoritativeRoomSeeds,
+  buildAuthoritativeTableState,
+  projectAuthoritativeTableObservation,
+} from "@/lib/table/authoritative";
+import {
+  synchronizeAuthoritativeGrowthStaticCard,
+  synchronizeGrowthAfterAuthoritativeOutcome,
+} from "@/lib/table/authoritative-growth";
+import { buildRoomTelemetryEvent } from "@/lib/room/telemetry";
 import { openingStances } from "@/lib/kp/stance";
 import { placeOf, readWhere } from "@/lib/kp/where";
 import { publicClocks, readClocks, readRestHold, restRemain, REST_BEATS, clockOf } from "@/lib/kp/clock";
@@ -86,6 +126,12 @@ function overlayRuleResources(
   viewer: {
     hp?: { current: number; max: number };
     resources: Array<{ id: string; current: number; max?: number }>;
+    loadout?: {
+      armorClass: number;
+      speedFeet: number;
+      equipped: Record<string, string>;
+      backpack: Array<{ itemId: string; quantity: number }>;
+    };
   } | undefined,
 ) {
   if (!viewer) return sheet;
@@ -99,16 +145,189 @@ function overlayRuleResources(
       const current = resources[pool.id];
       if (current && typeof current === "object" && "max" in current) {
         const charge = current as { max: number; used: number };
+        const maximum = pool.max ?? charge.max;
         resources[pool.id] = {
           ...charge,
-          used: Math.max(0, charge.max - pool.current),
+          max: maximum,
+          used: Math.max(0, maximum - pool.current),
         };
       } else if (typeof current === "number") {
         resources[pool.id] = pool.current;
       }
     }
   }
+  if (viewer.loadout) {
+    next.ac = viewer.loadout.armorClass;
+    next.speed = viewer.loadout.speedFeet;
+    next.equipped = structuredClone(viewer.loadout.equipped);
+    next.backpack = viewer.loadout.backpack.map(({ itemId, quantity }) => ({
+      itemId,
+      qty: quantity,
+    }));
+  }
   return next;
+}
+
+function emptyCharacterSheet(name: string): CharacterSheet {
+  return {
+    name,
+    raceId: "",
+    classId: "",
+    subclassId: "",
+    backgroundId: "",
+    level: 3,
+    scores: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+    skills: [],
+    expertise: [],
+    cantrips: [],
+    prepared: [],
+    spellbook: [],
+    equipment: [],
+    appearance: "",
+    trait: "",
+    ideal: "",
+    bond: "",
+    flaw: "",
+    hp: { current: 0, max: 0, temp: 0 },
+    ac: 0,
+    speed: 0,
+    proficiency: 2,
+    deathSaves: { success: 0, fail: 0 },
+    conditions: [],
+    inspiration: false,
+    features: [],
+  };
+}
+
+function observerIdentitySheet(name: string): CharacterSheet {
+  return {
+    ...emptyCharacterSheet(name),
+    observerSummary: true,
+  } as CharacterSheet;
+}
+
+function authoritativeSubmissionId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const submissionId = value.trim();
+  return submissionId && submissionId.length <= 200 ? submissionId : undefined;
+}
+
+function hasExactTableInputKeys(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  return value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.keys(value).length === keys.length
+    && keys.every((key) => Object.hasOwn(value, key));
+}
+
+async function bestEffortSynchronizeAuthoritativeGrowthCard(input: {
+  roomId: string;
+  userId: string;
+}): Promise<void> {
+  const startedAt = Date.now();
+  let result: "synchronized" | "unchanged" | "failed" = "failed";
+  try {
+    const observation = await observeAuthoritativeRoom(input.roomId, input.userId);
+    const sql = await getSql();
+    const current = (await sql<{ sheet: unknown }>`
+      select sheet from characters
+      where room_id = ${input.roomId} and user_id = ${input.userId}
+    `)[0];
+    if (current !== undefined) {
+      const synchronized = await synchronizeAuthoritativeGrowthStaticCard({
+        currentStaticCard: current.sheet,
+        observation,
+        writeStaticCard: async (card) => {
+          await sql`
+            update characters
+            set sheet = ${JSON.stringify(card)}::jsonb, updated_at = now()
+            where room_id = ${input.roomId} and user_id = ${input.userId}
+          `;
+        },
+      });
+      result = synchronized.kind;
+    }
+  } catch {
+    result = "failed";
+  }
+  if (result === "unchanged") return;
+  const event = buildRoomTelemetryEvent({
+    occurredAt: new Date().toISOString(),
+    severity: result === "synchronized" ? "info" : "warn",
+    eventName: result === "synchronized"
+      ? "room.static-card-sync.completed"
+      : "room.static-card-sync.failed",
+    correlation: { roomId: input.roomId, principalId: input.userId },
+    outcome: { kind: result },
+    measurements: {
+      operationKind: "directorySync",
+      durationMs: Math.max(0, Date.now() - startedAt),
+    },
+  });
+  const serialized = JSON.stringify(event);
+  if (result === "synchronized") console.info(serialized);
+  else console.warn(serialized);
+}
+
+async function submitAuthoritativeTableAction(input: {
+  roomId: string;
+  userId: string;
+  submissionId: string;
+  action: RoomActionInput;
+}) {
+  const committedOutcome = await runAuthoritativeRoomAction({
+    roomId: input.roomId,
+    userId: input.userId,
+    action: input.action,
+  });
+  const outcome = await synchronizeGrowthAfterAuthoritativeOutcome({
+    outcome: committedOutcome,
+    synchronize: () => bestEffortSynchronizeAuthoritativeGrowthCard(input),
+  });
+  return authoritativeTableOutcome(input.submissionId, outcome);
+}
+
+function authoritativeTableOutcome(
+  submissionId: string,
+  outcome:
+    | Awaited<ReturnType<typeof runAuthoritativeRoomAction>>
+    | Awaited<ReturnType<typeof runAuthoritativePartyAction>>,
+) {
+  if (
+    outcome.kind === "committed" ||
+    outcome.kind === "awaitingInput" ||
+    outcome.kind === "concluded"
+  ) {
+    return { ok: true as const, submissionId, outcome };
+  }
+  if (outcome.kind === "rejected") {
+    return {
+      ok: false as const,
+      submissionId,
+      outcomeKind: outcome.kind,
+      error: outcome.explanation || "当前行动没有被接受",
+    };
+  }
+  return {
+    ok: false as const,
+    submissionId,
+    outcomeKind: outcome.kind,
+    retryable: true as const,
+    error: outcome.kind === "needsKp"
+      ? "KP 需要重新裁定这项行动，请稍后用同一行动重试"
+      : "这项行动暂时没有提交，请稍后重试",
+  };
+}
+
+function authoritativeAdministrationError(
+  result: { ok: true } | { ok: false; error: string },
+) {
+  return result.ok
+    ? undefined
+    : { ok: false as const, error: result.error };
 }
 
 async function runRulesV2Action(input: {
@@ -412,7 +631,7 @@ async function memberOf(roomId: string, userId: string) {
     select is_host, nickname from room_members
     where room_id = ${roomId} and user_id = ${userId}
   `;
-  if (!rows[0]) throw new Error("你不在这一桌");
+  if (!rows[0]) throw new PublicServerError("你不在这一桌");
   return rows[0];
 }
 
@@ -722,9 +941,10 @@ export const getRoomManagement = createServerFn({ method: "GET" })
         code: string;
         title: string;
         status: string;
+        ruleset_version: string;
         kp_model: KpModelId;
       }>`
-        select code, title, status, kp_model
+        select code, title, status, ruleset_version, kp_model
         from rooms
         where id = ${room.id} and host_user_id = ${context.userId}
       `
@@ -743,13 +963,33 @@ export const getRoomManagement = createServerFn({ method: "GET" })
       where room_id = ${room.id}
       order by updated_at desc
     `;
+    const managementMembers = roomInfo.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+      && roomInfo.status === "play"
+      ? await sql<{ user_id: string; nickname: string }>`
+          select user_id, nickname from room_members where room_id = ${room.id}
+        `
+      : [];
+    const nicknameByUserId = new Map(
+      managementMembers.map((member) => [member.user_id, member.nickname]),
+    );
     return {
       ok: true as const,
       room: roomInfo,
       characters: characterRows.map((character) => ({
         userId: character.user_id,
         locked: character.locked,
-        sheet: asJson<CharacterSheet>(character.sheet, {} as CharacterSheet),
+        sheet: roomInfo.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+            && roomInfo.status === "play"
+            && character.user_id !== context.userId
+          ? observerIdentitySheet(
+              nicknameByUserId.get(character.user_id) ?? "在座玩家",
+            )
+          : asJson<CharacterSheet>(character.sheet, {} as CharacterSheet),
+        ...(roomInfo.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+            && roomInfo.status === "play"
+            && character.user_id !== context.userId
+          ? { visibility: "identityOnly" as const }
+          : {}),
         updatedAt: character.updated_at,
       })),
     };
@@ -766,17 +1006,145 @@ export const deleteRoom = createServerFn({ method: "POST" })
       return { ok: false as const, error: "只有房主能删除这张桌" };
     }
     const sql = await getSql();
-    await sql`
-      delete from rooms
+    const directory = (await sql<{
+      id: string;
+      code: string;
+      host_user_id: string;
+      ruleset_version: string;
+      runtime_epoch_id: string | null;
+      status: string;
+    }>`
+      select id, code, host_user_id, ruleset_version, runtime_epoch_id, status
+      from rooms
       where id = ${room.id} and host_user_id = ${context.userId}
-    `;
-    const remaining = await sql<{ id: string }>`
-      select id from rooms where id = ${room.id}
-    `;
-    if (remaining[0]) {
+    `)[0];
+    if (!directory) {
+      return { ok: false as const, error: "房主状态已经变化，请刷新酒馆" };
+    }
+    const previousStatus = directory.status;
+    const markedHere = previousStatus !== "deleting";
+    if (markedHere) {
+      await sql`
+        update rooms
+        set status = ${"deleting"}
+        where id = ${room.id} and host_user_id = ${context.userId}
+          and status = ${previousStatus}
+      `;
+    }
+    const marked = (await sql<{ id: string; status: string }>`
+      select id, status from rooms
+      where id = ${room.id} and host_user_id = ${context.userId}
+    `)[0];
+    if (marked?.status !== "deleting") {
+      return { ok: false as const, error: "桌子状态已经变化，请刷新后再试" };
+    }
+
+    const restoreDirectoryStatus = async (): Promise<"restored" | "missing" | "unknown"> => {
+      if (!markedHere) return "unknown";
+      try {
+        await sql`
+          update rooms
+          set status = ${previousStatus}
+          where id = ${room.id} and host_user_id = ${context.userId}
+            and status = ${"deleting"}
+        `;
+        const restored = (await sql<{ id: string; status: string }>`
+          select id, status from rooms
+          where id = ${room.id} and host_user_id = ${context.userId}
+        `)[0];
+        if (!restored) return "missing";
+        return restored.status === previousStatus ? "restored" : "unknown";
+      } catch {
+        return "unknown";
+      }
+    };
+
+    const initializedAuthority = directory.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+      && directory.runtime_epoch_id !== null;
+    const finalizeAuthorityCleanup = async (): Promise<
+      "finalized" | "scheduled" | "notApplicable"
+    > => {
+      if (!initializedAuthority) return "notApplicable";
+      try {
+        const result = await finalizeAuthoritativeRoomDeletion({ roomId: room.id });
+        return result
+          && typeof result === "object"
+          && (result as { kind?: unknown }).kind === "deletionFinalized"
+          ? "finalized"
+          : "scheduled";
+      } catch {
+        return "scheduled";
+      }
+    };
+    if (initializedAuthority) {
+      let prepared: unknown;
+      try {
+        prepared = await prepareAuthoritativeRoomDeletion({
+          roomId: room.id,
+          userId: context.userId,
+        });
+      } catch {
+        const recovery = await restoreDirectoryStatus();
+        if (recovery === "restored") {
+          await cancelAuthoritativeRoomDeletion({
+            roomId: room.id,
+            userId: context.userId,
+          }).catch(() => undefined);
+        } else if (recovery === "missing") {
+          const authorityCleanup = await finalizeAuthorityCleanup();
+          return { ok: true as const, code: room.code, authorityCleanup };
+        }
+        return { ok: false as const, error: "房间权威暂时无法准备删除，请稍后再试" };
+      }
+      if (
+        !prepared
+        || typeof prepared !== "object"
+        || (prepared as { kind?: unknown }).kind !== "deletionPrepared"
+      ) {
+        const recovery = await restoreDirectoryStatus();
+        if (recovery === "restored") {
+          await cancelAuthoritativeRoomDeletion({
+            roomId: room.id,
+            userId: context.userId,
+          }).catch(() => undefined);
+        } else if (recovery === "missing") {
+          const authorityCleanup = await finalizeAuthorityCleanup();
+          return { ok: true as const, code: room.code, authorityCleanup };
+        }
+        return { ok: false as const, error: "房间权威没有接受删除，请刷新后再试" };
+      }
+    }
+
+    try {
+      await sql`
+        delete from rooms
+        where id = ${room.id} and host_user_id = ${context.userId}
+          and status = ${"deleting"}
+      `;
+      const remaining = await sql<{ id: string }>`
+        select id from rooms where id = ${room.id}
+      `;
+      if (remaining[0]) throw new Error("room directory delete was not committed");
+    } catch {
+      const recovery = await restoreDirectoryStatus();
+      if (recovery === "missing") {
+        const authorityCleanup = await finalizeAuthorityCleanup();
+        return { ok: true as const, code: room.code, authorityCleanup };
+      }
+      if (recovery === "restored" && initializedAuthority) {
+        await cancelAuthoritativeRoomDeletion({
+          roomId: room.id,
+          userId: context.userId,
+        }).catch(() => undefined);
+      }
       return { ok: false as const, error: "桌子没有删除，请刷新后再试" };
     }
-    return { ok: true as const, code: room.code };
+    // D1 absence is the terminal directory decision. If this best-effort RPC
+    // is lost, the persisted Room alarm repeats the same D1 check and clears
+    // the object without recreating directory state. The response distinguishes
+    // immediate proof from scheduled reconciliation instead of claiming both.
+    const authorityCleanup = await finalizeAuthorityCleanup();
+    return { ok: true as const, code: room.code, authorityCleanup };
   });
 
 export const getCatalog = createServerFn({ method: "GET" })
@@ -798,51 +1166,110 @@ export const createRoom = createServerFn({ method: "POST" })
     const nick = data.nickname.trim().slice(0, 16) || "房主";
     await sql`
       insert into rooms (id, code, host_user_id, title, module_id, ruleset_version, kp_model, status)
-      values (${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"}, ${"black-oak-will"}, ${RULESET_VERSION}, ${DEFAULT_KP_MODEL}, ${"lobby"})
+      values (${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"}, ${"black-oak-will"}, ${AUTHORITATIVE_RULESET_VERSION}, ${AUTHORITATIVE_KP_MODEL}, ${"lobby"})
     `;
     await sql`
       insert into room_members (room_id, user_id, nickname, is_host)
       values (${id}, ${context.userId}, ${nick}, true)
-    `;
-    await sql`
-      insert into game_states (room_id, chapter_id, scene_id)
-      values (${id}, ${"ch1"}, ${"wake"})
     `;
     return { ok: true as const, code };
   });
 
 export const joinRoom = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; nickname: string }) => input)
+  .validator((input: { code: string; nickname: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     const sql = await getSql();
-    const existing = await sql<{ user_id: string }>`
-      select user_id from room_members where room_id = ${room.id} and user_id = ${context.userId}
+    const rules = await roomRuleset(sql, room.id);
+    const existing = await sql<{ user_id: string; joined_at: string }>`
+      select user_id, joined_at from room_members
+      where room_id = ${room.id} and user_id = ${context.userId}
     `;
-    if (existing[0]) return { ok: true as const, code: room.code };
+    const authoritativePlay =
+      rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION && rules.status === "play";
+    if (existing[0] && !authoritativePlay) {
+      return { ok: true as const, code: room.code };
+    }
     const count = await sql<{ n: number }>`
       select count(*)::int as n from room_members where room_id = ${room.id}
     `;
-    if ((count[0]?.n ?? 0) >= 5) return { ok: false as const, error: "这桌已经满了" };
+    if (!existing[0] && (count[0]?.n ?? 0) >= 5) {
+      return { ok: false as const, error: "这桌已经满了" };
+    }
     const nick = data.nickname.trim().slice(0, 16) || "冒险者";
-    await sql`
-      insert into room_members (room_id, user_id, nickname, is_host)
-      values (${room.id}, ${context.userId}, ${nick}, false)
-    `;
-    await reseatPlayer(sql, room.id, context.userId);
-    const rules = await roomRuleset(sql, room.id);
-    if (rules?.ruleset_version === RULESET_VERSION && rules.status === "play") {
+    if (authoritativePlay) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) {
+        return { ok: false as const, error: "入席缺少可重试提交标识" };
+      }
+      if (existing[0]) {
+        try {
+          const observed: unknown = await observeAuthoritativeRoom(room.id, context.userId);
+          if (
+            observed && typeof observed === "object" && "readModel" in observed
+            && observed.readModel && typeof observed.readModel === "object"
+            && "kind" in observed.readModel && observed.readModel.kind === "projected"
+          ) {
+            return { ok: true as const, code: room.code };
+          }
+        } catch {
+          // An inactive Room seat is repaired below with the caller's stable submission id.
+        }
+      }
       const character = (
         await sql<{ sheet: unknown; locked: boolean }>`
           select sheet, locked from characters
           where room_id = ${room.id} and user_id = ${context.userId}
         `
       )[0];
-      if (character?.locked) {
-        const sheet = ensureGear(asJson<CharacterSheet>(character.sheet, {} as CharacterSheet));
-        try {
+      if (existing[0] && !character?.locked) {
+        return { ok: true as const, code: room.code };
+      }
+      const activated = await activateAuthoritativeMember({
+        roomId: room.id,
+        commandId: `table:${submissionId}:join`,
+        principalId: context.userId,
+        role: "player",
+        ...(character?.locked
+          ? { characterId: authoritativeCharacterId(context.userId) }
+          : {}),
+      });
+      const activationError = authoritativeAdministrationError(activated);
+      if (activationError) return activationError;
+      if (!existing[0]) {
+        await sql`
+          insert into room_members (room_id, user_id, nickname, is_host)
+          values (${room.id}, ${context.userId}, ${nick}, false)
+          on conflict (room_id, user_id) do nothing
+        `;
+      }
+      return { ok: true as const, code: room.code };
+    }
+    if (
+      rules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      && rules?.ruleset_version !== RULESET_VERSION
+    ) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
+    if (!existing[0]) {
+      await sql`
+        insert into room_members (room_id, user_id, nickname, is_host)
+        values (${room.id}, ${context.userId}, ${nick}, false)
+      `;
+    }
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      await reseatPlayer(sql, room.id, context.userId);
+      if (rules.status === "play") {
+        const character = (
+          await sql<{ sheet: unknown; locked: boolean }>`
+            select sheet, locked from characters
+            where room_id = ${room.id} and user_id = ${context.userId}
+          `
+        )[0];
+        if (character?.locked) {
+          const sheet = ensureGear(asJson<CharacterSheet>(character.sheet, {} as CharacterSheet));
           await upsertRoomPlayer(room.id, context.userId, sheet);
           const synchronized = await synchronizeRoomPlayerLoadout(
             room.id,
@@ -850,12 +1277,6 @@ export const joinRoom = createServerFn({ method: "POST" })
             sheet,
           );
           if (!synchronized.ok) throw new Error(synchronized.error);
-        } catch (error) {
-          await sql`
-            delete from room_members
-            where room_id = ${room.id} and user_id = ${context.userId}
-          `;
-          throw error;
         }
       }
     }
@@ -915,6 +1336,154 @@ export const fetchTable = createServerFn({ method: "GET" })
       join room_members m on m.room_id = c.room_id and m.user_id = c.user_id
       where c.room_id = ${room.id}
     `;
+    if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const module = getModule(info.module_id);
+      const allScenes = module.chapters.flatMap((chapter) => chapter.scenes);
+      const locationLabels = Object.fromEntries(
+        allScenes.map((scene) => [scene.id, scene.location || scene.name || scene.id]),
+      );
+      let projected: ReturnType<typeof projectAuthoritativeTableObservation> | null = null;
+      if (info.status === "play") {
+        try {
+          projected = projectAuthoritativeTableObservation({
+            userId: context.userId,
+            members: members.map((member) => member.user_id),
+            locationLabels,
+            observation: await observeAuthoritativeRoom(room.id, context.userId),
+          });
+        } catch {
+          const ownsLockedD1Card = characters.some(
+            (character) => character.user_id === context.userId && character.locked,
+          );
+          if (ownsLockedD1Card) {
+            return { ok: false as const, error: "房间投影暂时不可用，请稍后刷新" };
+          }
+        }
+      }
+      const projectedLifecycle = projected && "lifecycle" in projected
+        ? projected.lifecycle
+        : undefined;
+      const projectedFictionTime = projected && "fictionTime" in projected
+        ? projected.fictionTime
+        : undefined;
+      const authoritativeState = buildAuthoritativeTableState({
+        rulesetVersion: info.ruleset_version,
+        projected,
+      });
+      const sceneId = projected?.controlledCharacter?.sceneId ?? allScenes[0]?.id ?? "wake";
+      const chapter = module.chapters.find((candidate) =>
+        candidate.scenes.some((scene) => scene.id === sceneId)
+      );
+      const scene = allScenes.find((candidate) => candidate.id === sceneId);
+
+      const authoritativeCharacters = info.status === "play"
+        ? await sql<{ user_id: string; locked: boolean; sheet: unknown }>`
+            select user_id, locked, sheet from characters where room_id = ${room.id}
+          `
+        : characters;
+      const characterByOwner = new Map(
+        authoritativeCharacters.map((character) => [character.user_id, character]),
+      );
+      const controlledOwnerId = projected?.controlledCharacter?.characterId
+        ?.startsWith("character:")
+        ? projected.controlledCharacter.characterId.slice("character:".length)
+        : undefined;
+      const controlledStaticCard = controlledOwnerId === undefined
+        ? characterByOwner.get(context.userId)
+        : characterByOwner.get(controlledOwnerId) ?? characterByOwner.get(context.userId);
+
+      return {
+        ok: true as const,
+        me: { userId: context.userId, ...me },
+        room: info,
+        members,
+        characters: members.map((member) => {
+          const ownControlledCharacter = member.user_id === context.userId
+            ? projected?.controlledCharacter
+            : undefined;
+          const staticCard = member.user_id === context.userId
+            ? controlledStaticCard
+            : characterByOwner.get(member.user_id);
+          if (member.user_id !== context.userId && info.status === "play") {
+            return {
+              userId: member.user_id,
+              locked: staticCard?.locked ?? false,
+              sheet: observerIdentitySheet(member.nickname || "在座玩家"),
+              visibility: "identityOnly" as const,
+            };
+          }
+          const sheet = staticCard === undefined
+            ? emptyCharacterSheet(ownControlledCharacter?.name ?? member.nickname ?? "冒险者")
+            : ensureGear(asJson<CharacterSheet>(staticCard.sheet, {} as CharacterSheet));
+          return {
+            userId: member.user_id,
+            locked: projectedLifecycle?.kind === "successorRequired"
+              && member.user_id === context.userId
+              ? false
+              : ownControlledCharacter !== undefined || (staticCard?.locked ?? false),
+            sheet: ownControlledCharacter
+              ? overlayRuleResources(sheet, {
+                  hp: ownControlledCharacter.hitPoints
+                    ? {
+                        current: ownControlledCharacter.hitPoints.current,
+                        max: ownControlledCharacter.hitPoints.maximum,
+                      }
+                    : undefined,
+                  resources: Object.entries(
+                    ownControlledCharacter.resources ?? {},
+                  ).map(([id, current]) => ({
+                    id,
+                    current,
+                    ...(ownControlledCharacter.resourceMaximums?.[id] === undefined
+                      ? {}
+                      : { max: ownControlledCharacter.resourceMaximums[id] }),
+                  })),
+                  ...(ownControlledCharacter.loadout === undefined
+                    ? {}
+                    : { loadout: ownControlledCharacter.loadout }),
+                })
+              : sheet,
+          };
+        }),
+        messages: projected?.messages ?? [],
+        locationThreads: [],
+        logs: [],
+        state: {
+          chapterName: chapter?.name ?? module.chapters[0]?.name ?? "第一章",
+          sceneName: scene?.name ?? locationLabels[sceneId] ?? "开场",
+          kpBusy: false,
+          pendingRolls: [],
+          pendingInputs: projected?.pendingInputs ?? [],
+          clues: projected?.clues ?? [],
+          npcs: projected?.npcs ?? [],
+          sceneId,
+          places: projected?.places ?? {},
+          placeNames: projected?.placeNames ?? {},
+          partySplit: false,
+          clocks: {},
+          fictionTime: projectedFictionTime,
+          currentDeliveryId: projected?.currentDeliveryId,
+          receipts: projected?.receipts ?? [],
+          authoritative: authoritativeState,
+          restVote: null,
+          restHold: null,
+          squads: projected?.squads ?? [],
+          squadInvite: projected?.squadInvite ?? null,
+          squadQueue: [],
+          combat: null,
+          ruleProjection: null,
+        },
+        module: {
+          title: module.title,
+          chapters: chapter === undefined
+            ? []
+            : [{ id: chapter.id, name: chapter.name }],
+        },
+      };
+    }
+    if (info.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     const messages = await sql<{
       id: string;
       user_id: string | null;
@@ -1319,19 +1888,36 @@ export const setRoomModel = createServerFn({ method: "POST" })
     const me = await memberOf(room.id, context.userId);
     if (!me.is_host) return { ok: false as const, error: "只有房主能选择模型" };
     const sql = await getSql();
+    const current = (
+      await sql<{ status: string; kp_model: string; ruleset_version: string }>`
+        select status, kp_model, ruleset_version from rooms where id = ${room.id}
+      `
+    )[0];
+    if (
+      current.ruleset_version === AUTHORITATIVE_RULESET_VERSION &&
+      data.model !== AUTHORITATIVE_KP_MODEL
+    ) {
+      return { ok: false as const, error: "权威规则房间的 KP 模型由运行时 Profile 固定" };
+    }
+    if (current.status !== "lobby") {
+      return { ok: false as const, error: "守灵已经开始，整桌模型不能再更换" };
+    }
+    if (current.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      return { ok: true as const, model: AUTHORITATIVE_KP_MODEL };
+    }
+    if (current.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     await sql`
       update rooms set kp_model = ${data.model}
       where id = ${room.id} and host_user_id = ${context.userId} and status = ${"lobby"}
     `;
-    const current = (
-      await sql<{ status: string; kp_model: string }>`
-        select status, kp_model from rooms where id = ${room.id}
+    const saved = (
+      await sql<{ kp_model: string }>`
+        select kp_model from rooms where id = ${room.id}
       `
     )[0];
-    if (current.status !== "lobby") {
-      return { ok: false as const, error: "守灵已经开始，整桌模型不能再更换" };
-    }
-    if (current.kp_model !== data.model) {
+    if (saved.kp_model !== data.model) {
       return { ok: false as const, error: "模型没有保存，请再试一次" };
     }
     return { ok: true as const, model: data.model };
@@ -1339,17 +1925,81 @@ export const setRoomModel = createServerFn({ method: "POST" })
 
 export const lockCharacter = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; draft: DraftSheet }) => input)
+  .validator((input: {
+    code: string;
+    draft: DraftSheet;
+    submissionId?: string;
+    predecessorCharacterId?: string;
+    worldEntry?: string;
+  }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sheet = compileSheet(data.draft);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
     const existing = await sql<{ id: string; locked: boolean }>`
       select id, locked from characters
       where room_id = ${room.id} and user_id = ${context.userId}
     `;
+    if (
+      rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+      && rules.status === "play"
+    ) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) {
+        return { ok: false as const, error: "锁定人物卡缺少可重试提交标识" };
+      }
+      const openingScene = getModule(rules.module_id).chapters[0]?.scenes[0]?.id ?? "wake";
+      const successor = existing[0]?.locked === true;
+      const characterId = successor
+        ? `${authoritativeCharacterId(context.userId)}:successor:${submissionId}`
+        : authoritativeCharacterId(context.userId);
+      const staticCharacter = {
+        characterId,
+        controllerPrincipalId: context.userId,
+        staticCard: { ...sheet, sceneId: openingScene },
+      };
+      const materialized = successor
+        ? await introduceAuthoritativeSuccessor({
+            roomId: room.id,
+            commandId: `table:${submissionId}:introduce-successor`,
+            principalId: context.userId,
+            predecessorCharacterId: data.predecessorCharacterId
+              ?? authoritativeCharacterId(context.userId),
+            character: staticCharacter,
+            worldEntry: data.worldEntry?.trim() || "作为继任冒险者加入当前长团",
+          })
+        : await materializeAuthoritativeCharacter({
+            roomId: room.id,
+            commandId: `table:${submissionId}:lock-character`,
+            principalId: context.userId,
+            character: staticCharacter,
+          });
+      if (!materialized.ok) {
+        return { ok: false as const, error: materialized.error };
+      }
+      if (existing[0]) {
+        await sql`
+          update characters
+          set sheet = ${JSON.stringify(sheet)}::jsonb, locked = true, updated_at = now()
+          where id = ${existing[0].id}
+        `;
+      } else {
+        await sql`
+          insert into characters (id, room_id, user_id, sheet, locked)
+          values (${uid("pc")}, ${room.id}, ${context.userId}, ${JSON.stringify(sheet)}::jsonb, true)
+        `;
+      }
+      return { ok: true as const, sheet };
+    }
+    if (
+      rules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      && rules?.ruleset_version !== RULESET_VERSION
+    ) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
     if (existing[0]?.locked) {
       return { ok: false as const, error: "人物卡已经锁定" };
     }
@@ -1365,7 +2015,6 @@ export const lockCharacter = createServerFn({ method: "POST" })
         values (${uid("pc")}, ${room.id}, ${context.userId}, ${JSON.stringify(sheet)}::jsonb, true)
       `;
     }
-    const rules = await roomRuleset(sql, room.id);
     if (rules?.ruleset_version === RULESET_VERSION && rules.status === "play") {
       await upsertRoomPlayer(room.id, context.userId, sheet);
     }
@@ -1380,6 +2029,7 @@ export const setGear = createServerFn({ method: "POST" })
       action: "wear" | "stow";
       slot: GearSlot;
       itemId?: string;
+      submissionId?: string;
     }) => input,
   )
   .handler(async ({ context, data }) => {
@@ -1387,6 +2037,34 @@ export const setGear = createServerFn({ method: "POST" })
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const activeRules = await roomRuleset(sql, room.id);
+    if (
+      activeRules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+      && activeRules.status === "play"
+    ) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) {
+        return { ok: false as const, error: "装备变更缺少可重试提交标识" };
+      }
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: {
+          kind: "gear",
+          submissionId,
+          action: data.action,
+          slot: data.slot,
+          ...(data.action === "wear" ? { itemId: data.itemId } : {}),
+        },
+      });
+    }
+    if (
+      activeRules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      && activeRules?.ruleset_version !== RULESET_VERSION
+    ) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
     const row = (
       await sql<{ sheet: unknown }>`
         select sheet from characters
@@ -1397,6 +2075,12 @@ export const setGear = createServerFn({ method: "POST" })
     const sheet = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
     const equipped = sheet.equipped ?? {};
     const backpack = sheet.backpack ?? [];
+    if (
+      (data.action === "wear" && equipped[data.slot] === data.itemId)
+      || (data.action === "stow" && equipped[data.slot] === undefined)
+    ) {
+      return { ok: true as const };
+    }
     const next =
       data.action === "stow"
         ? stowSlot(equipped, backpack, data.slot)
@@ -1407,7 +2091,6 @@ export const setGear = createServerFn({ method: "POST" })
     sheet.equipped = next.equipped;
     sheet.backpack = next.backpack;
     sheet.ac = acFromGear(sheet.classId, sheet.scores, sheet.equipped);
-    const activeRules = await roomRuleset(sql, room.id);
     if (activeRules?.ruleset_version === RULESET_VERSION && activeRules.status === "play") {
       const synchronized = await synchronizeRoomPlayerLoadout(
         room.id,
@@ -1450,9 +2133,87 @@ export const startGame = createServerFn({ method: "POST" })
     const opening = module.chapters[0]?.scenes[0]?.boxedText ?? "蜡烛亮了。你们可以问、看、或动手。";
     const openingNpcs = module.chapters[0]?.scenes[0]?.npcs ?? [];
     const openingScene = module.chapters[0]?.scenes[0]?.id ?? "wake";
-    const seated = await sql<{ user_id: string }>`
-      select user_id from room_members where room_id = ${room.id}
+    const seated = await sql<{ user_id: string; nickname: string; is_host: boolean }>`
+      select user_id, nickname, is_host from room_members where room_id = ${room.id}
     `;
+    if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      if (info.kp_model !== AUTHORITATIVE_KP_MODEL) {
+        return { ok: false as const, error: "新规则房间必须使用已固定的权威 KP 模型" };
+      }
+      const lockedCharacters = await sql<{ user_id: string; sheet: unknown }>`
+        select c.user_id, c.sheet
+        from characters c
+        join room_members m on m.room_id = c.room_id and m.user_id = c.user_id
+        where c.room_id = ${room.id} and c.locked = true
+      `;
+      if (!lockedCharacters.length) {
+        return { ok: false as const, error: "至少需要一张已锁定的人物卡才能开始" };
+      }
+      let seeds: ReturnType<typeof buildAuthoritativeRoomSeeds>;
+      try {
+        seeds = buildAuthoritativeRoomSeeds({
+          members: seated.map((member) => ({
+            userId: member.user_id,
+            nickname: member.nickname,
+            isHost: member.is_host,
+          })),
+          lockedCharacters: lockedCharacters.map((character) => ({
+            userId: character.user_id,
+            sheet: asJson<Record<string, unknown>>(character.sheet, {}),
+          })),
+          openingSceneId: openingScene,
+          characterIdFor: authoritativeCharacterId,
+        });
+      } catch {
+        return { ok: false as const, error: "已锁定的人物卡无法初始化，请检查人物姓名" };
+      }
+      const initialized = await initializeAuthoritativeRoom({
+        roomId: room.id,
+        moduleId: info.module_id,
+        members: seeds.members,
+        characters: seeds.characters,
+      });
+      if (
+        initialized
+        && typeof initialized === "object"
+        && "kind" in initialized
+        && initialized.kind === "rejected"
+      ) {
+        return { ok: false as const, error: "权威房间初始化失败，请稍后重试" };
+      }
+      const runtimeEpochId = initialized
+        && typeof initialized === "object"
+        && "runtimeEpochId" in initialized
+        && typeof initialized.runtimeEpochId === "string"
+          ? initialized.runtimeEpochId
+          : undefined;
+      const genesisHash = initialized
+        && typeof initialized === "object"
+        && "genesisHash" in initialized
+        && typeof initialized.genesisHash === "string"
+          ? initialized.genesisHash
+          : undefined;
+      if (!runtimeEpochId || !genesisHash) {
+        return {
+          ok: false as const,
+          error: "权威房间初始化没有返回完整运行时元数据，请稍后重试",
+        };
+      }
+      await sql`
+        update rooms
+        set status = ${"play"},
+            runtime_epoch_id = ${runtimeEpochId},
+            genesis_hash = ${genesisHash}
+        where id = ${room.id} and host_user_id = ${context.userId}
+      `;
+      return {
+        ok: true as const,
+        rulesetVersion: AUTHORITATIVE_RULESET_VERSION,
+      };
+    }
+    if (info.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     if (info.ruleset_version === RULESET_VERSION) {
       const ruleCharacters = await sql<{ user_id: string; sheet: unknown }>`
         select user_id, sheet from characters
@@ -1503,7 +2264,13 @@ export const startGame = createServerFn({ method: "POST" })
 
 export const sendAction = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; text: string }) => input)
+  .validator((input: {
+    code: string;
+    text: string;
+    submissionId?: string;
+    pendingInputId?: string;
+    answer?: unknown;
+  }) => input)
   .handler(async ({ context, data }) => {
     const text = data.text.trim();
     if (!text) return { ok: false as const, error: "空话不会进桌" };
@@ -1530,9 +2297,39 @@ export const sendAction = createServerFn({ method: "POST" })
       `
     )[0];
     if (!pc?.locked) return { ok: false as const, error: "先锁定人物卡" };
-    let sheet = ensureGear(asJson<CharacterSheet>(pc.sheet, {} as CharacterSheet));
-    const name = sheet.name || me.nickname || "冒险者";
+    if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const suppliedSubmissionId = data.submissionId?.trim();
+      const pendingInputId = data.pendingInputId?.trim();
+      if ((suppliedSubmissionId?.length ?? 0) > 200 || (pendingInputId?.length ?? 0) > 200) {
+        return { ok: false as const, error: "行动标识无效" };
+      }
+      const submissionId = suppliedSubmissionId || uid("submission");
+      const action = buildAuthoritativeActionInput({
+        submissionId,
+        text,
+        ...(pendingInputId ? { pendingInputId } : {}),
+        ...(pendingInputId && data.answer !== undefined ? { answer: data.answer } : {}),
+      });
+      const committedOutcome = await runAuthoritativeRoomAction({
+        roomId: room.id,
+        userId: context.userId,
+        action,
+      });
+      const outcome = await synchronizeGrowthAfterAuthoritativeOutcome({
+        outcome: committedOutcome,
+        synchronize: () => bestEffortSynchronizeAuthoritativeGrowthCard({
+          roomId: room.id,
+          userId: context.userId,
+        }),
+      });
+      return authoritativeTableOutcome(submissionId, outcome);
+    }
+    if (info.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     if (info.ruleset_version === RULESET_VERSION) {
+      const sheet = ensureGear(asJson<CharacterSheet>(pc.sheet, {} as CharacterSheet));
+      const name = sheet.name || me.nickname || "冒险者";
       return runRulesV2Action({
         sql,
         roomId: room.id,
@@ -1543,6 +2340,8 @@ export const sendAction = createServerFn({ method: "POST" })
         text,
       });
     }
+    let sheet = ensureGear(asJson<CharacterSheet>(pc.sheet, {} as CharacterSheet));
+    const name = sheet.name || me.nickname || "冒险者";
     const flagsNow = asJson<Record<string, unknown>>(
       (
         await sql<{ npc_flags: unknown }>`
@@ -1708,9 +2507,130 @@ export const sendAction = createServerFn({ method: "POST" })
     return { ok: false as const, error: lastErr };
   });
 
+export const requestSafetyPause = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string; submissionId: string }) => input)
+  .handler(async ({ context, data }) => {
+    if (!hasExactTableInputKeys(data, ["code", "submissionId"])) {
+      return { ok: false as const, error: "安全暂停不接受原因或自由文本" };
+    }
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    await memberOf(room.id, context.userId);
+    const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (
+      rules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      || rules.status !== "play"
+    ) {
+      return { ok: false as const, error: "这间房当前不能使用安全暂停" };
+    }
+    const submissionId = authoritativeSubmissionId(data.submissionId);
+    if (!submissionId) {
+      return { ok: false as const, error: "安全暂停缺少可重试提交标识" };
+    }
+    return submitAuthoritativeTableAction({
+      roomId: room.id,
+      userId: context.userId,
+      submissionId,
+      action: { kind: "safetyPause", submissionId },
+    });
+  });
+
+export const adjustSafetyPresentation = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: {
+    code: string;
+    submissionId: string;
+    presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent";
+  }) => input)
+  .handler(async ({ context, data }) => {
+    if (!hasExactTableInputKeys(data, [
+      "code",
+      "presentationAdjustment",
+      "submissionId",
+    ]) || ![
+      "fadeToBlack",
+      "reduceDetail",
+      "skipSensitiveContent",
+    ].includes(data.presentationAdjustment)) {
+      return { ok: false as const, error: "安全调整只接受已注册的最小呈现选项" };
+    }
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    await memberOf(room.id, context.userId);
+    const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (
+      rules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      || rules.status !== "play"
+    ) {
+      return { ok: false as const, error: "这间房当前不能提交安全调整" };
+    }
+    const submissionId = authoritativeSubmissionId(data.submissionId);
+    if (!submissionId) {
+      return { ok: false as const, error: "安全调整缺少可重试提交标识" };
+    }
+    return submitAuthoritativeTableAction({
+      roomId: room.id,
+      userId: context.userId,
+      submissionId,
+      action: {
+        kind: "safetyAdjust",
+        submissionId,
+        presentationAdjustment: data.presentationAdjustment,
+      },
+    });
+  });
+
+export const acknowledgeDelivery = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string; deliveryId: string }) => input)
+  .handler(async ({ context, data }) => {
+    const room = await roomByCode(data.code);
+    const unavailable = () => ({
+      ok: false as const,
+      error: "当前回应已确认或不再可用",
+    });
+    if (!room) return unavailable();
+    const deliveryId = data.deliveryId.trim();
+    if (!deliveryId || deliveryId.length > 200) {
+      return { ok: false as const, error: "回应标识无效" };
+    }
+    const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      await memberOf(room.id, context.userId);
+      return { ok: false as const, error: "这间房不使用当前回应确认协议" };
+    }
+    if (rules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION) {
+      return unavailable();
+    }
+    const result = await acknowledgeAuthoritativeDelivery(
+      room.id,
+      context.userId,
+      deliveryId,
+    );
+    const acknowledged: unknown = result;
+    if (
+      acknowledged &&
+      typeof acknowledged === "object" &&
+      "kind" in acknowledged &&
+      acknowledged.kind === "acknowledged"
+    ) {
+      return { ok: true as const, deliveryId };
+    }
+    return unavailable();
+  });
+
 export const resolveRoll = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; rollId: string; boostIds?: string[] }) => input)
+  .validator((input: {
+    code: string;
+    rollId: string;
+    boostIds?: string[];
+    submissionId?: string;
+  }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
@@ -1726,6 +2646,18 @@ export const resolveRoll = createServerFn({ method: "POST" })
         from rooms where id = ${room.id}
       `
     )[0];
+    if (roomInfo?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      return {
+        ok: false as const,
+        submissionId,
+        error: "权威骰面只能由 Room Authority 在骰前冻结后生成；客户端不能提供骰面。",
+      };
+    }
+    if (roomInfo?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     if (roomInfo?.ruleset_version === RULESET_VERSION) {
       let ticket = await prepareRoomTurn(room.id, context.userId);
       let pending = ticket.projection.pendingRolls.find((entry) => entry.id === data.rollId);
@@ -2389,13 +3321,29 @@ export const resolveRoll = createServerFn({ method: "POST" })
 
 export const joinCombat = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string }) => input)
+  .validator((input: { code: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: buildAuthoritativeButtonAction({
+          submissionId,
+          command: { kind: "joinCombat" },
+        }),
+      });
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       const projection = (await roomProjection(room.id, context.userId)).projection;
       if (!projection.combat) return { ok: false as const, error: "现在没有战斗" };
@@ -2461,13 +3409,33 @@ export const joinCombat = createServerFn({ method: "POST" })
 
 export const extraAttack = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; targetId: string }) => input)
+  .validator((input: { code: string; targetId: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      try {
+        return submitAuthoritativeTableAction({
+          roomId: room.id,
+          userId: context.userId,
+          submissionId,
+          action: buildAuthoritativeButtonAction({
+            submissionId,
+            command: { kind: "extraAttack", targetId: data.targetId },
+          }),
+        });
+      } catch {
+        return { ok: false as const, submissionId, error: "必须明确选择一个可见目标" };
+      }
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       const before = (await roomProjection(room.id, context.userId)).projection;
       const combat = before.combat;
@@ -2614,13 +3582,29 @@ export const extraAttack = createServerFn({ method: "POST" })
 
 export const endTurn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string }) => input)
+  .validator((input: { code: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     const me = await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: buildAuthoritativeButtonAction({
+          submissionId,
+          command: { kind: "endTurn" },
+        }),
+      });
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       const projection = (await roomProjection(room.id, context.userId)).projection;
       if (!projection.combat) return { ok: false as const, error: "现在没有战斗" };
@@ -2688,13 +3672,29 @@ export const endTurn = createServerFn({ method: "POST" })
 
 export const leaveFight = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; kind: LeaveKind }) => input)
+  .validator((input: { code: string; kind: LeaveKind; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: buildAuthoritativeButtonAction({
+          submissionId,
+          command: { kind: "leaveFight", leaveKind: data.kind },
+        }),
+      });
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       return {
         ok: false as const,
@@ -2777,13 +3777,44 @@ export const leaveFight = createServerFn({ method: "POST" })
 
 export const resolveReact = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; reactId: string; use: boolean }) => input)
+  .validator((input: {
+    code: string;
+    reactId: string;
+    use: boolean;
+    submissionId?: string;
+    pendingInputId?: string;
+  }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      try {
+        return submitAuthoritativeTableAction({
+          roomId: room.id,
+          userId: context.userId,
+          submissionId,
+          action: buildAuthoritativeButtonAction({
+            submissionId,
+            pendingInputId: data.pendingInputId?.trim() || data.reactId,
+            command: {
+              kind: "resolveReact",
+              reactionId: data.reactId,
+              use: data.use,
+            },
+          }),
+        });
+      } catch {
+        return { ok: false as const, submissionId, error: "当前反应选择无效" };
+      }
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       return {
         ok: false as const,
@@ -2864,13 +3895,41 @@ export const restNow = createServerFn({ method: "POST" })
     kind: "short" | "long";
     mode?: "personal" | "group";
     hitDice?: number;
+    arcaneRecoverySlotLevels?: number[];
+    /** Legacy Adapter shorthand; never used by authoritative-v2. */
     arcane?: 0 | 1 | 2;
+    submissionId?: string;
+    pendingInputId?: string;
   }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     const me = await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: buildAuthoritativeButtonAction({
+          submissionId,
+          ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
+          command: {
+            kind: "restNow",
+            restKind: data.kind,
+            mode: data.mode,
+            hitDice: data.hitDice,
+            arcaneRecoverySlotLevels: data.arcaneRecoverySlotLevels,
+          },
+        }),
+      });
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     const pc = (
       await sql<{ sheet: unknown }>`
         select sheet from characters
@@ -2878,7 +3937,6 @@ export const restNow = createServerFn({ method: "POST" })
       `
     )[0];
     const sheet = ensureGear(asJson<CharacterSheet>(pc?.sheet, {} as CharacterSheet));
-    const rules = await roomRuleset(sql, room.id);
     if (rules?.ruleset_version === RULESET_VERSION) {
       const snapshot = await roomProjection(room.id, context.userId);
       const projection = snapshot.projection;
@@ -2950,12 +4008,34 @@ export const restNow = createServerFn({ method: "POST" })
 
 export const cancelRest = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string }) => input)
+  .validator((input: {
+    code: string;
+    submissionId?: string;
+    pendingInputId?: string;
+  }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     const me = await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: buildAuthoritativeButtonAction({
+          submissionId,
+          ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
+          command: { kind: "cancelRest" },
+        }),
+      });
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     const pc = (
       await sql<{ sheet: unknown }>`
         select sheet from characters
@@ -2963,7 +4043,6 @@ export const cancelRest = createServerFn({ method: "POST" })
       `
     )[0];
     const sheet = ensureGear(asJson<CharacterSheet>(pc?.sheet, {} as CharacterSheet));
-    const rules = await roomRuleset(sql, room.id);
     if (rules?.ruleset_version === RULESET_VERSION) {
       const projection = (await roomProjection(room.id, context.userId)).projection;
       const draft: DirectCommand = projection.viewer.rest?.status === "resting"
@@ -2998,12 +4077,54 @@ export const cancelRest = createServerFn({ method: "POST" })
 
 export const castSpell = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; spellId: string; slot?: number }) => input)
+  .validator((input: {
+    code: string;
+    spellId: string;
+    slot?: number;
+    targetIds?: string[];
+    choice?: string;
+    destinationFeet?: number;
+    originFeet?: number;
+    ritual?: boolean;
+    submissionId?: string;
+    pendingInputId?: string;
+  }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      try {
+        return submitAuthoritativeTableAction({
+          roomId: room.id,
+          userId: context.userId,
+          submissionId,
+          action: buildAuthoritativeButtonAction({
+            submissionId,
+            ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
+            command: {
+              kind: "castSpell",
+              spellId: data.spellId,
+              slot: data.slot,
+              targetIds: data.targetIds,
+              choice: data.choice,
+              destinationFeet: data.destinationFeet,
+              originFeet: data.originFeet,
+              ritual: data.ritual,
+            },
+          }),
+        });
+      } catch {
+        return { ok: false as const, submissionId, error: "法术选择或目标无效" };
+      }
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     const row = (
       await sql<{ sheet: unknown }>`
         select sheet from characters
@@ -3012,12 +4133,16 @@ export const castSpell = createServerFn({ method: "POST" })
     )[0];
     if (!row) return { ok: false as const, error: "没有人物卡" };
     const sheet0 = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
-    const rules = await roomRuleset(sql, room.id);
     if (rules?.ruleset_version === RULESET_VERSION) {
       const committed = await commitRulesV2Direct(room.id, context.userId, {
         kind: "castSpell",
         spellId: data.spellId,
         slotLevel: data.slot === 2 ? 2 : data.slot === 1 ? 1 : undefined,
+        targetIds: data.targetIds,
+        choice: data.choice,
+        destinationFeet: data.destinationFeet,
+        originFeet: data.originFeet,
+        ritual: data.ritual,
       });
       if (committed.decision.kind === "rejected") {
         return { ok: false as const, error: committed.decision.rejection.message };
@@ -3088,12 +4213,35 @@ export const castSpell = createServerFn({ method: "POST" })
 
 export const useFeature = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; feat: FeatId }) => input)
+  .validator((input: {
+    code: string;
+    feat: FeatId;
+    submissionId?: string;
+    pendingInputId?: string;
+  }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: buildAuthoritativeButtonAction({
+          submissionId,
+          ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
+          command: { kind: "useFeature", featureId: data.feat },
+        }),
+      });
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     const row = (
       await sql<{ sheet: unknown }>`
         select sheet from characters
@@ -3102,7 +4250,6 @@ export const useFeature = createServerFn({ method: "POST" })
     )[0];
     if (!row) return { ok: false as const, error: "没有人物卡" };
     let sheet = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
-    const rules = await roomRuleset(sql, room.id);
     if (rules?.ruleset_version === RULESET_VERSION) {
       const rolls =
         data.feat === "secondWind"
@@ -3194,12 +4341,34 @@ export const useFeature = createServerFn({ method: "POST" })
 
 export const useHitDie = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string }) => input)
+  .validator((input: {
+    code: string;
+    submissionId?: string;
+    pendingInputId?: string;
+  }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: buildAuthoritativeButtonAction({
+          submissionId,
+          ...(data.pendingInputId ? { pendingInputId: data.pendingInputId } : {}),
+          command: { kind: "useHitDie" },
+        }),
+      });
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
     const row = (
       await sql<{ sheet: unknown }>`
         select sheet from characters
@@ -3208,7 +4377,6 @@ export const useHitDie = createServerFn({ method: "POST" })
     )[0];
     if (!row) return { ok: false as const, error: "没有人物卡" };
     const sheet = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
-    const rules = await roomRuleset(sql, room.id);
     if (rules?.ruleset_version === RULESET_VERSION) {
       return {
         ok: false as const,
@@ -3228,9 +4396,34 @@ export const useHitDie = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
+async function detachAuthoritativeDirectory(
+  sql: Awaited<ReturnType<typeof getSql>>,
+  roomId: string,
+  userId: string,
+  nextHostUserId?: string,
+) {
+  if (nextHostUserId !== undefined) {
+    await sql`
+      update room_members set is_host = false
+      where room_id = ${roomId} and user_id = ${userId}
+    `;
+    await sql`
+      update room_members set is_host = true
+      where room_id = ${roomId} and user_id = ${nextHostUserId}
+    `;
+    await sql`
+      update rooms set host_user_id = ${nextHostUserId}
+      where id = ${roomId} and host_user_id = ${userId}
+    `;
+  }
+  await sql`
+    delete from room_members where room_id = ${roomId} and user_id = ${userId}
+  `;
+}
+
 export const kickMember = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; userId: string }) => input)
+  .validator((input: { code: string; userId: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
@@ -3238,32 +4431,107 @@ export const kickMember = createServerFn({ method: "POST" })
     if (!me.is_host) return { ok: false as const, error: "只有房主能请离" };
     if (data.userId === context.userId) return { ok: false as const, error: "房主不能请离自己" };
     const sql = await getSql();
+    const rules = await roomRuleset(sql, room.id);
+    if (
+      rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+      && rules.status === "play"
+    ) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) {
+        return { ok: false as const, error: "请离缺少可重试提交标识" };
+      }
+      const removed = await removeAuthoritativeMember({
+        roomId: room.id,
+        commandId: `table:${submissionId}:kick`,
+        principalId: data.userId,
+        reason: "hostRemovedMember",
+      });
+      const removalError = authoritativeAdministrationError(removed);
+      if (removalError) return removalError;
+      await detachAuthoritativeDirectory(sql, room.id, data.userId);
+      return { ok: true as const };
+    }
     const there = (
       await sql<{ user_id: string }>`
         select user_id from room_members where room_id = ${room.id} and user_id = ${data.userId}
       `
     )[0];
     if (!there) return { ok: false as const, error: "这人不在桌上" };
-    await detachSeated(sql, room.id, data.userId);
-    return { ok: true as const };
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      await detachAuthoritativeDirectory(sql, room.id, data.userId);
+      return { ok: true as const };
+    }
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      await detachSeated(sql, room.id, data.userId);
+      return { ok: true as const };
+    }
+    return { ok: false as const, error: "这间旧房间的规则版本不可用" };
   });
 
 export const leaveTable = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string }) => input)
+  .validator((input: { code: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     const sql = await getSql();
     const there = (
-      await sql<{ user_id: string }>`
-        select user_id from room_members
+      await sql<{ user_id: string; is_host: boolean }>`
+        select user_id, is_host from room_members
         where room_id = ${room.id} and user_id = ${context.userId}
       `
     )[0];
     if (!there) return { ok: true as const };
-    await detachSeated(sql, room.id, context.userId);
-    return { ok: true as const };
+    const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const nextHost = there.is_host
+        ? (
+            await sql<{ user_id: string }>`
+              select user_id from room_members
+              where room_id = ${room.id} and user_id <> ${context.userId}
+              order by joined_at asc
+              limit 1
+            `
+          )[0]
+        : undefined;
+      if (there.is_host && !nextHost) {
+        return { ok: false as const, error: "最后一位房主请从房间管理页删除房间" };
+      }
+      if (rules.status === "play") {
+        const submissionId = authoritativeSubmissionId(data.submissionId);
+        if (!submissionId) {
+          return { ok: false as const, error: "离席缺少可重试提交标识" };
+        }
+        const departed = there.is_host
+          ? await transferAndDepartAuthoritativeHost({
+              roomId: room.id,
+              commandId: `table:${submissionId}:host-leave`,
+              fromPrincipalId: context.userId,
+              toPrincipalId: nextHost!.user_id,
+              reason: "hostLeftTable",
+            })
+          : await departAuthoritativeMember({
+              roomId: room.id,
+              commandId: `table:${submissionId}:leave`,
+              principalId: context.userId,
+              reason: "memberLeftTable",
+            });
+        const departureError = authoritativeAdministrationError(departed);
+        if (departureError) return departureError;
+      }
+      await detachAuthoritativeDirectory(
+        sql,
+        room.id,
+        context.userId,
+        nextHost?.user_id,
+      );
+      return { ok: true as const };
+    }
+    if (rules?.ruleset_version === RULESET_VERSION) {
+      await detachSeated(sql, room.id, context.userId);
+      return { ok: true as const };
+    }
+    return { ok: false as const, error: "这间旧房间的规则版本不可用" };
   });
 
 async function seatedLocked(
@@ -3417,7 +4685,7 @@ async function flagsOf(sql: Awaited<ReturnType<typeof getSql>>, roomId: string) 
 
 export const inviteSquad = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; targetUserId: string }) => input)
+  .validator((input: { code: string; targetUserId: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
@@ -3427,6 +4695,20 @@ export const inviteSquad = createServerFn({ method: "POST" })
     }
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "同行邀请缺少可重试提交标识" };
+      const outcome = await runAuthoritativePartyAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: { kind: "invite", targetPrincipalId: data.targetUserId },
+      });
+      return authoritativeTableOutcome(submissionId, outcome);
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       const committed = await commitRulesV2Direct(room.id, context.userId, {
         kind: "inviteSquad",
@@ -3477,13 +4759,27 @@ export const inviteSquad = createServerFn({ method: "POST" })
 
 export const cancelSquadInvite = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string }) => input)
+  .validator((input: { code: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "取消邀请缺少可重试提交标识" };
+      const outcome = await runAuthoritativePartyAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: { kind: "cancelInvitation" },
+      });
+      return authoritativeTableOutcome(submissionId, outcome);
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       const projection = (await roomProjection(room.id, context.userId)).projection;
       const invite = projection.squadInvites.find((entry) => entry.fromId === context.userId);
@@ -3511,13 +4807,27 @@ export const cancelSquadInvite = createServerFn({ method: "POST" })
 
 export const answerSquad = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; accept: boolean }) => input)
+  .validator((input: { code: string; accept: boolean; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "邀请回应缺少可重试提交标识" };
+      const outcome = await runAuthoritativePartyAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: { kind: "answerInvitation", accept: data.accept },
+      });
+      return authoritativeTableOutcome(submissionId, outcome);
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       const projection = (await roomProjection(room.id, context.userId)).projection;
       const invite = projection.squadInvites.find((entry) => entry.toId === context.userId);
@@ -3577,13 +4887,27 @@ export const answerSquad = createServerFn({ method: "POST" })
 
 export const leaveSquadNow = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string }) => input)
+  .validator((input: { code: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "离队缺少可重试提交标识" };
+      const outcome = await runAuthoritativePartyAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: { kind: "leave" },
+      });
+      return authoritativeTableOutcome(submissionId, outcome);
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       const committed = await commitRulesV2Direct(room.id, context.userId, {
         kind: "leaveSquad",
@@ -3622,7 +4946,7 @@ export const leaveSquadNow = createServerFn({ method: "POST" })
 
 export const passCaptain = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { code: string; toUserId: string }) => input)
+  .validator((input: { code: string; toUserId: string; submissionId?: string }) => input)
   .handler(async ({ context, data }) => {
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
@@ -3632,6 +4956,20 @@ export const passCaptain = createServerFn({ method: "POST" })
     }
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const submissionId = authoritativeSubmissionId(data.submissionId);
+      if (!submissionId) return { ok: false as const, error: "移交队长缺少可重试提交标识" };
+      const outcome = await runAuthoritativePartyAction({
+        roomId: room.id,
+        userId: context.userId,
+        submissionId,
+        action: { kind: "transferLeadership", targetPrincipalId: data.toUserId },
+      });
+      return authoritativeTableOutcome(submissionId, outcome);
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       const projection = (await roomProjection(room.id, context.userId)).projection;
       if (!projection.squad) return { ok: false as const, error: "你不在任何组里" };
@@ -3678,6 +5016,15 @@ export const approveSquadQueue = createServerFn({ method: "POST" })
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const rules = await roomRuleset(sql, room.id);
+    if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      return {
+        ok: false as const,
+        error: "个人合法行动不再进入队长审批队列；成员可直接行动，移动或单独休息时会自动离队。",
+      };
+    }
+    if (rules?.ruleset_version !== RULESET_VERSION) {
+      return { ok: false as const, error: "这间旧房间的规则版本不可用" };
+    }
     if (rules?.ruleset_version === RULESET_VERSION) {
       return {
         ok: false as const,

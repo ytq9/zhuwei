@@ -32,6 +32,7 @@ import {
   type SkillId,
 } from "@/lib/dnd/types";
 import { abilityMod, cn, signed } from "@/lib/utils";
+import { spellCardFacts } from "@/lib/dnd/spell-card";
 
 const STEPS = [
   "种族",
@@ -546,6 +547,7 @@ function SpellGroup({
         {ids.map((id) => {
           const sp = SPELLS.find((s) => s.id === id);
           if (!sp) return null;
+          const facts = spellCardFacts(id);
           const on = selected.includes(id);
           return (
             <button
@@ -568,6 +570,12 @@ function SpellGroup({
                 <p className="mt-0.5 text-[11px] text-subtle">
                   {[sp.time, sp.range, sp.duration].filter(Boolean).join(" · ")}
                 </p>
+              )}
+              {facts && (
+                <div className="mt-1 grid gap-0.5 text-[11px] text-brass">
+                  <p>{facts.target}</p>
+                  <p>{facts.resolution}</p>
+                </div>
               )}
               <p className="mt-1 text-xs leading-relaxed text-muted">{sp.text}</p>
             </button>

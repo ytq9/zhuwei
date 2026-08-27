@@ -1,0 +1,1510 @@
+# 全量版本化重构执行日志
+
+- Goal 状态：进行中；只有完成规格、实现、验证、必要迁移、正式部署与 GitHub 推送后才可结束。
+- 执行分支：`cloudflare`
+- 创建时间：2026-08-26 04:53:06 +08:00（2026-08-25T20:53:06Z）
+- 冻结产品准则：`docs/specs/0001-llm-kp-responsibility-contract.md`
+- SPEC 0001 基线 SHA-256：`b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be`
+- 日志约束：只写实际执行证据与脱敏因果链；不记录 Cookie、Token、Prompt、模组真相、未公开线索或私人叙述。
+
+## 阶段 0：固定基线
+
+### 目标
+
+完整读取代理合同、领域词汇、ADR、冻结 SPEC 0001 与待裁定 SPEC 0002；记录分支、提交、工作树、远端基线与中断残留，并保留全部既有修改。
+
+### 已读取输入
+
+- `AGENTS.md`（97 行）
+- `CONTEXT.md`（129 行）
+- `docs/adr/0001-rules-own-world-facts.md` 至 `0005-separate-kp-fiction-and-mechanical-authority.md`
+- `docs/specs/0001-llm-kp-responsibility-contract.md`（356 行）
+- `docs/specs/0002-authoritative-combat-framework.md`（943 行；状态仍为“待审查，未批准”）
+
+### Git 与工作树证据
+
+- 当前分支：`cloudflare`
+- 初始 HEAD：`9eb0a6c44b6f22afdc88e710886d1c59b9529313`
+- 初始 `origin/cloudflare`：`4bc3c3801f451a83a2491757237d3126ab7987bd`
+- 初始关系：本地分支较 `origin/cloudflare` ahead 1。
+- 远端 `main`：`29eb06dc009c983ad61b2d862454503e67a7f40a`，与 Goal 预期一致。
+- 中断残留检查：未发现正在运行的 Wrangler、Vitest、npm test、tsc 或 tsx 进程。
+- package manifest、lockfile、`db/schema.ts`、`drizzle/` 与 `wrangler.jsonc` 在初始工作树中无修改；因此基线阶段不运行 `npm ci`，也不存在已观察到的待生成 schema 迁移。
+
+初始已修改文件及差异行数（新增/删除）：
+
+| 文件 | 差异 |
+| --- | ---: |
+| `AGENTS.md` | 7 / 3 |
+| `CONTEXT.md` | 58 / 6 |
+| `app/_runtime/components/character-wizard.tsx` | 8 / 0 |
+| `app/_runtime/components/play-table.tsx` | 286 / 6 |
+| `app/_runtime/lib/dnd/catalog.ts` | 4 / 4 |
+| `app/_runtime/lib/dnd/compute.ts` | 37 / 2 |
+| `app/_runtime/lib/room/coordinator.ts` | 7 / 0 |
+| `app/_runtime/lib/room/durable-object.ts` | 11 / 1 |
+| `app/_runtime/lib/room/server.ts` | 40 / 16 |
+| `app/_runtime/lib/room/types.ts` | 8 / 1 |
+| `app/_runtime/lib/rules/ai-adapter.ts` | 19 / 1 |
+| `app/_runtime/lib/rules/engine.ts` | 810 / 58 |
+| `app/_runtime/lib/rules/model.ts` | 90 / 2 |
+| `app/_runtime/lib/table/server.ts` | 15 / 1 |
+| `docs/adr/0001-rules-own-world-facts.md` | 8 / 6 |
+| `tests/room-do.test.ts` | 46 / 0 |
+| `tests/upstream-parity.test.mjs` | 5 / 3 |
+
+初始未跟踪文件：
+
+- `app/_runtime/lib/dnd/spell-card.ts`
+- `app/_runtime/lib/rules/spell-catalog.ts`
+- `app/_runtime/lib/rules/spell-model.ts`
+- `app/_runtime/lib/rules/spell-rolls.ts`
+- `docs/adr/0004-data-driven-spell-adjudication.md`
+- `docs/adr/0005-separate-kp-fiction-and-mechanical-authority.md`
+- `docs/specs/0001-llm-kp-responsibility-contract.md`
+- `docs/specs/0002-authoritative-combat-framework.md`
+- `tests/spells.test.mjs`
+
+这些文件全部视为既有用户工作并保留。未执行 `reset`、`clean`、强制 checkout、强推或删除操作。
+
+### 命令账本
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-25T20:53Z | `git status --short --branch` | 0 | `cloudflare...origin/cloudflare [ahead 1]`，17 个修改、9 个未跟踪 |
+| 2026-08-25T20:53Z | `git rev-parse HEAD` | 0 | `9eb0a6c44b6f22afdc88e710886d1c59b9529313` |
+| 2026-08-25T20:53Z | `git ls-remote origin refs/heads/main` | 0 | `29eb06dc009c983ad61b2d862454503e67a7f40a` |
+| 2026-08-25T20:53Z | `git ls-remote origin refs/heads/cloudflare` | 0 | `4bc3c3801f451a83a2491757237d3126ab7987bd` |
+| 2026-08-25T20:53Z | `shasum -a 256 docs/specs/0001-llm-kp-responsibility-contract.md` | 0 | `b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be` |
+| 2026-08-25T20:53Z | 中断进程只读检查 | 0 | 无遗留工作进程 |
+
+### 阶段结论与剩余条件
+
+事实基线已经固定；阶段 0 仍需在最终交付审计中再次校验 SPEC 0001 内容哈希与远端 `main` SHA。下一阶段必须先完成替代规格、Profile、ADR、十板块/A–O 追踪矩阵和 SPEC 0002 B01–B53 逐项处置，交叉审查后才能把新产品行为作为实施依据。
+
+## 阶段 1：规格收口
+
+- 状态：已完成规格级收口；实现与运行证据不在本阶段计入。
+
+### 已裁定规格与记录
+
+- `docs/specs/0003-authoritative-action-transaction.md`：两个深 Module、Room Authority、随机、幂等、作用域、恢复、回放和更正。
+- `0004`–`0011`：非战斗机械、事实/知识、模组/NPC、多人/时间、长团、失败/收束、观察者单槽投递及可靠性/评测。
+- `0012-authoritative-combat-mechanics.md`：仅保留 Encounter、空间、先攻、回合、反应、能力、伤害和死亡等 Rules 内部机械。
+- `0013-versioned-runtime-profiles.md`：完整 Profile manifest、Ability compiler、Geometry、Trigger 与 Fiction/Combat Time 的确定算法和 48 条 conformance 向量。
+- `0002-disposition-matrix.md`：原未批准 SPEC 0002 的章节和 B01–B53 已逐条标为保留、修订、拆往通用规格或否决，并给出替代规格及依据。
+- 原 `0002-authoritative-combat-framework.md` 只修改头部状态为“已被替代，未曾批准”，正文作为迁移证据原样保留；没有伪称用户逐条批准。
+- `decision-register.md`：记录本轮自主裁定的来源、候选、选择、玩家行为、秘密/权限、迁移和验收。
+- `traceability-matrix.md`：P1–P10 与 SPEC 0001 A–O 均已映射到用户行为、权威状态/事件、Viewer 投影、责任 Interface 和待实现测试。
+- `README.md`：索引 0001–0013，明确冻结、替代、授权状态和五项审查证据口径。
+- `cross-spec-review.md`：对 0003–0013 完成 55 项五维审查，记录 12 个组合问题、正式消解、护栏、测试映射和 10 条跨规格验收切片。
+- ADR-0003/0004 已按新协议细化；新增 ADR-0006–0010，固定深模块、单槽投递、版本隔离、长团继任和可审计恢复。
+- `CONTEXT.md` 在保留既有内容后追加 Principal、Root Action、Pending Input、Scope Proof、Receipt、Read Model、Audience、Delivery、Campaign/Chapter/Tenure/Successor、Encounter、Ability、Active Branch 与 Correction 领域词汇。
+
+### 实现差距因果链
+
+只读审计确认第一处违反不变量的位置及直接证据如下；这些是后续红测试和重构的目标，不是已修复声明：
+
+1. 自然语言在 `rules/ai-adapter.ts` 被限定为白名单命令翻译，`table/server.ts` 再作事后叙述；根因是没有 Room Action Module 的 KP 提案/修订事务。
+2. AI Adapter、页面服务编排和旧命令接收/产生骰面；根因是随机请求没有在参数冻结后由 Room DO 统一满足。
+3. 服务端自动选 NPC 首个攻击、首个目标并自动结束回合；根因是 NPC 有限知识提案和控制者待决没有进入统一事务。
+4. D1 `game_states`、`messages` 和 Room DO 同时保存活跃玩法或旁白；根因是新规则版本没有与 Legacy 路径、单槽 Delivery 和唯一 DO 状态权威隔离。
+5. Rules 包公开 `applyEvents/createWorldState/predicateMatches/rollDie`，外部协调器复制作用域算法；根因是深 Module 边界尚未落实。
+6. 单一 `expectedVersion`、无 HTTP 幂等 ID、无归档重建/更正和未知版本回退；根因是根行动、scope proof、Profile manifest 与事件完整性尚未成为权威数据。
+
+### 阶段命令账本
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-25T21:31Z | `git diff --check -- docs/specs docs/adr docs/refactor-log.md CONTEXT.md` | 0 | 截至该源码状态无空白错误 |
+| 2026-08-25T21:31Z | `shasum -a 256 docs/specs/0001-llm-kp-responsibility-contract.md` | 0 | 仍为基线 `b420123d…23be` |
+
+### 剩余条件
+
+规格级交叉审查已经完成且未发现需要修改 SPEC 0001 的冲突。五处文档/测试映射差异已登记，其中追踪矩阵的战斗/可靠性旧占位文字已回填；其余在实际 runner 与 manifest 落定时同步。随后以新责任 Interface 的红测试进入阶段 2。规格文本本身不计实现或测试完成证据。
+
+## 阶段 2：验收先行
+
+- 状态：进行中
+
+### 首批 RED 证据
+
+| 时间（UTC） | 命令 | 退出码 | 首个失败与因果 |
+| --- | --- | ---: | --- |
+| 2026-08-25T21:34Z | `npx tsx --test tests/authoritative-action.test.mjs` | 1（预期 RED） | `ERR_MODULE_NOT_FOUND`：目标 `app/_runtime/lib/room/action.ts` 尚不存在；测试尚未进入断言，证明旧代码没有统一 Room Action 责任 seam |
+| 2026-08-25T21:37Z | `npx tsx --test tests/runtime-profiles-v2.test.mjs` | 1（预期 RED；7/7 失败） | `replay` 仍是裸 `applyEvents`，`step` 仍是旧 WorldDefinition/Command，`project` 仍把 Viewer 当旧 viewerId；没有 manifest/hash/Legacy fail-closed、Ability 2014 护栏或版本化 Fiction Time Read Model |
+| 2026-08-25T21:47Z | `npm run test:worker -- --reporter=verbose` | 1（预期 RED；17 项） | 既有 Room DO 测试 9/9 通过，新权威事务测试 8/8 失败；首因是 RPC receiver 尚未实现 `initializeAuthoritative`，因此可信控制、幂等、DO 随机、作用域并发、重启恢复和更正均没有被旧实现伪装为成功 |
+| 2026-08-25T21:52Z | `npx tsx --test tests/observer-projection-v2.test.mjs` | 1（预期 RED；5/5 失败） | 目标 `RoomGenesis/acquireKnowledge` 被旧 `step` 解释为 legacy 参数并以 `ruleset_mismatch` 拒绝；尚无知识、分享、NPC 有限知识、继任边界或统一旁路投影协议 |
+| 2026-08-25T22:10Z | `npx tsx --test tests/observer-projection-v2.test.mjs` | 1（预期 RED；5/5 失败） | 修正测试自身的伪 Profile/hash 与非规范 genesis 后，测试不再直接构造 WorldState：由 `step(...initializeAuthoritativeWorld)` 请求 Rules 自选当前 manifest 并签发 genesis；当前首因是该初始化协议尚未实现，返回 `invalidRuntimeManifest` 而非 `initialized` |
+| 2026-08-25T22:18Z | `npm run test:worker -- --reporter=verbose` | 1（预期 RED；21 项） | 扩展 runner 到全部 Worker TS 测试；既有 Legacy Room DO 9/9 仍通过，新权威事务 8/8 与观察者单槽 4/4 失败，统一首因仍是 `initializeAuthoritative` RPC 尚未实现。新增切片锁定提交时 Audience、逐观察者帧、刷新/重连、ACK 后正文不可取、覆盖/迟到响应和七类旁路共用 Read Model |
+| 2026-08-25T22:20Z | `npx tsx --test tests/world-campaign-v2.test.mjs` | 1（预期 RED；4/4 失败） | 四条仅经 genesis → `step` events → `replay` → `project` 的长链覆盖五类可行性、随机冻结、非战斗/Activity/危险、事实知识/NPC势力、失败收束与长团继任；首缺口分别是 `resolveFreeAction`、`resolveContest`、`registerDynamicDefinition`、`grantMilestone` 尚无 v2 adapter |
+| 2026-08-25T22:24Z | `npx tsx --test tests/combat-mechanics-v2.test.mjs` | 1（预期 RED；4/4 失败） | 四条 `step/project/replay` 战斗链以可回放 genesis 起步，锁定动态 Encounter/敌人、2014先攻与法术限制、2D Geometry、动作/资源/伤害死亡、玩家/NPC待决与触发顺序、六秒轮和非战斗共用 damage pipeline；统一首因是 `startEncounter` 尚无 v2 adapter |
+| 2026-08-25T22:28Z | `npx vitest run tests/archive-correction-v2.test.ts` | 1（预期 RED；5/5 失败） | 归档/更正测试固定脱敏 signed genesis+连续事件+最小 Receipt refs、空 DO 灾难重建、四类完整性篡改、opaque capability、更正幂等、前向补偿及因果分支；统一首因是 `initializeAuthoritative` RPC 尚未实现 |
+| 2026-08-25T22:20Z | `npx tsx --test tests/structured-telemetry-v2.test.mjs`（实现前） | 1（预期 RED；4/4 失败） | `ERR_MODULE_NOT_FOUND`：尚无固定白名单的 `room/telemetry.ts`；旧运行路径无法证明 Cookie、Prompt、意图、私人投影、语音/转写和未知字段不会进入日志 |
+| 2026-08-25T23:21Z | `npx tsx --test tests/module-npc-v2.test.mjs`（实现前） | 1（预期 RED） | `ERR_MODULE_NOT_FOUND`：新房尚无版本化 Module Bible/Legacy Anchor seam，无法固定 `moduleVersion + contentHash` 或为 KP/NPC 分离故事真相与有限知识 |
+| 2026-08-25T23:28Z | `npx vitest run tests/multiplayer-room-v2.test.ts --reporter=verbose` | 1（预期 RED；3/3 失败） | 三条 Seat/Control、全员同意原子整队移动/个人原子离队、分地点 FictionTimeline/CausalFrontier/Spotlight 责任链均在初始化后首个断言失败：Room Authority 尚无 service-only `roomAdministration` capability；未回退到 D1 `where/clocks/squad` |
+| 2026-08-25T23:32Z | `npx vitest run tests/randomness-recovery-v2.test.ts --reporter=verbose` | 1（预期 RED；4/4 失败） | 四个崩溃点测试均未触发预期 checkpoint，现有 commit 直接一次性返回；证明尚无“请求先持久化 → 候选持久化 → 结果原子提交 → 响应丢失幂等恢复”的可注入恢复边界。测试只注入崩溃，不注入 WorldState、骰面、事件或窗口 |
+| 2026-08-25T23:41Z | `npx vitest run tests/authoritative-opening-v2.test.ts --reporter=verbose` | 1（预期 RED；1/1 失败） | authoritative 初始化后 Alice 的合法 observation 没有当前 Delivery frame；新房启动静默丢失上游开场旁白。验收要求从已钉住 Module Profile 的 `publicOpening` 向开场地点在场角色分别建立单槽、可重连、可 ACK 且无历史的投递，不回退到 D1 `messages` |
+| 2026-08-25T23:45Z | `npx vitest run tests/compound-action-v2.test.ts --reporter=verbose` | 1（预期 RED；1/1 失败） | 真实 production KP draft（动态危险 + NPC 有限知识计划 + 场景问题 + 非战斗检定）被 Room Authority 拒绝；现有 adapter 只接受测试用紧凑提案并忽略生产 envelope 的复合语义，尚未满足同一 Root Action 同时提交叙事事实、NPC 行动和机械结果 |
+
+该测试只在 `handleRoomAction(context, input)` 外层 Interface 观察 Room Authority 与 KP Adapter 调用，不直接修改 WorldState、骰面、事件或待决窗口。覆盖可信 Principal、提交后叙述、澄清、KP 修订上限、模型失败和六种 Outcome；生产实现完成前不计通过证据。
+
+### 首个 RED → GREEN 切片
+
+| 时间（UTC） | 命令 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-25T21:40Z | `npx tsx --test tests/authoritative-action.test.mjs` | 0 | 7/7；Room Action 严格执行 prepare → KP propose → commit → 提交后 narrate → publish → observe，并覆盖澄清、两次修订上限、模型失败与六种 Outcome |
+| 2026-08-25T21:40Z | `npm run typecheck` | 0 | 新增 `app/_runtime/lib/room/action.ts` 与当前源码类型兼容 |
+| 2026-08-25T21:50Z | `npx tsx --test tests/runtime-profiles-v2.test.mjs` | 0 | 7/7；Rules 包运行时入口精确为 `step/project/replay`，当前 Profile id/hash 被钉死，缺失、错 hash、历史版本和 Legacy 均 fail closed，2014/2024 护栏与版本化时间投影生效 |
+| 2026-08-25T21:50Z | `npm run typecheck` | 0 | 版本化 Profile 注册表、canonical bytes/hash 与 v2 runtime 类型通过；该结果只覆盖空 archive/read model 和结构化拒绝，非空事件 fold 与真实 Ability compiler 仍是显式未实现 |
+| 2026-08-25T22:08Z | `npx tsx --test tests/runtime-profiles-v2.test.mjs` | 0 | 10/10；按交叉审查 XR-06 补齐 presentation/projection/delivery 三个强制策略 Profile，逐项缺失、错位、错 hash 均 fail closed；完整 extensions 闭包为 combat、damage/death 与三项观察者策略 |
+| 2026-08-25T22:08Z | `npm run typecheck` | 0 | 12 份 canonical Profile 文档与 golden hash 注册表一致；运行 manifest hash 更新为 `sha256:311717…ff5f1`，所有 Profile payload 均记录其决定性语义 |
+| 2026-08-25T22:20Z | `npx tsx --test tests/structured-telemetry-v2.test.mjs` | 0 | 4/4；`buildRoomTelemetryEvent` 只构造固定非内容字段，未知/敏感字段无法影响输出或关联哈希，六类故障映射一致，延迟/免费成本/归档滞后仅输出桶 |
+| 2026-08-25T22:20Z | `npm run typecheck`、遥测目标 `git diff --check` | 0 | 新增 Worker-safe 纯 telemetry serializer 类型通过且无空白错误；尚未宣称所有生产 `console.*` 调用已接入该 seam |
+| 2026-08-25T22:20Z | `npx tsx --test tests/runtime-profiles-v2.test.mjs tests/observer-projection-v2.test.mjs` | 0 | 15/15；Rules 自选 canonical genesis，非空 typed EventEnvelope 可连续 fold/replay 并按哈希/Profile/分支/因果/虚构时间 fail closed；知识、世界内分享、NPC 有限知识、控制转移与继任均只经统一 projector |
+| 2026-08-25T22:20Z | `npm run module:check`、`npm run typecheck`、全局 `git diff --check` | 0 | 当前 Rules 事件/回放/观察者核心与现有模组类型通过；公开 runtime 仍只有 `step / project / replay`。世界/长团其余动作、战斗、DO 自动满足随机和归档/更正仍是后续切片 |
+| 2026-08-25T22:20Z | `npm run typecheck`、DB adapter 目标 `git diff --check` | 0 | 移除 `db/index.ts` 的模块级初始化 Promise 与 `lib/db.ts` 的共享可变 SQL cache；D1 schema 只由版本化 `drizzle/` migration 管理，缺迁移会在真实查询处失败，不再由请求路径静默补 schema |
+| 2026-08-25T22:20Z | `npx tsx --test tests/interaction-contract.test.mjs` | 0 | 8/8；在保留已绑定 legacy DeepSeek 路径的同时，模型目录新增 authoritative 默认 `@cf/zai-org/glm-4.7-flash`；完整 typecheck 待并行 Rules 切片恢复稳定源码后重跑 |
+| 2026-08-25T22:20Z | `node cloudflare/verify-deploy-config.mjs`、目标 `git diff --check` | 0 | 部署护栏现在同时固定现有 `zhuwei`、`worker/index.ts`、AI、唯一 `ROOMS` SQLite DO、唯一既有 `DB/zhuwei-dev/f5a448fd…`，并拒绝新增 KV/R2/Queue/Workflow/Vectorize 配置 |
+| 2026-08-25T22:20Z | `npm run db:generate` | 0 | 由 `db/schema.ts` 唯一生成新增 `drizzle/0006_nice_iron_lad.sql`；逐行检查确认只新增 v2 genesis/event/projection-audit 归档表及 `rooms.runtime_epoch_id/genesis_hash` 两个目录引用，既有 migration/legacy archive 未改 |
+| 2026-08-25T22:20Z | 全部 `drizzle/*.sql` → SQLite `:memory:` + `PRAGMA integrity_check` | 0 | 0000–0006 可按序应用，`authoritative_room_event_archive` 的复合 epoch/eventSeq 主键与三个索引实际建立，完整性结果 `ok`；尚未将 0006 应用于远端 D1 |
+| 2026-08-25T22:20Z | `npx tsx --test tests/world-campaign-v2.test.mjs tests/runtime-profiles-v2.test.mjs tests/observer-projection-v2.test.mjs` | 0 | 19/19；五类裁决、冻结随机、非战斗资源/物品/Activity/伤害死亡、事实知识/NPC势力、失败与收束、成长/章节/退休继任全部由 typed event → fold/replay → observer project 完成；未直改 WorldState 或注入骰面 |
+| 2026-08-25T22:20Z | `npm run module:check` | 0 | 世界/长团切片后唯一模组检查通过，Rules runtime 实际导出仍仅 `step / project / replay`；combat 仍在下一切片 |
+| 2026-08-25T22:20Z | `npx vitest run tests/room-authority-v2.test.ts tests/observer-delivery-v2.test.ts tests/room-do.test.ts`（并行切片回执） | 0 | v2 authority/delivery 12/12 + legacy 9/9，共 21/21；可信控制、payload 幂等、作用域并发、DO 随机复用、Pending 恢复、Audience 冻结、单槽覆盖/ACK/重连与七旁路同 projector 已落 SQLite DO |
+| 2026-08-25T22:20Z | `npx tsx --test tests/authoritative-kp-adapter.test.mjs tests/authoritative-action.test.mjs`（并行切片回执） | 0 | 4/4 + 7/7；默认 GLM tool calling、不假设 JSON mode、五类开放裁决/诊断修订、逐观察者提交后叙述及超时/配额/无效输出脱敏均通过；尚未接入 table/API |
+| 2026-08-25T23:21Z | `npx tsx --test tests/module-npc-v2.test.mjs` | 0 | 4/4；`black-oak-will@legacy-anchor-v1` 内容哈希固定为 `sha256:198ad1…37f9`，旧 DSL 只转成 Story Anchor/open blanks，核心真相只进 KP 投影，NPC fixture 只含各自有限知识，未知版本 fail closed |
+| 2026-08-25T23:21Z | Module Bible 目标 `git diff --check` | 0 | 新 seam、验收与本日志无空白错误；尚未宣称 DO genesis/KP prepare 已接入该 Module Profile |
+
+该切片只证明外层编排责任；Room DO 持久化、Rules 机械、权威随机、专属投影和 API 接线仍待后续测试，不能据此把 A–O 标为完成。
+
+## 阶段 3：从内向外重构
+
+- 状态：进行中；Rules 世界/长团/战斗主链、strict production ActionPlan、Room Action、Room DO 权威链、KP Adapter、观察者单槽、随机崩溃恢复、显式 retry、归档/灾难重建与两类更正已经实现并有局部回执；最终冻结全量门、真实 Workers AI、远端迁移/部署/冒烟/推送仍未完成。
+
+### 已实现切片
+
+- Rules 包公共运行时保持精确为 `step / project / replay`；canonical Profile 注册表、签名 genesis、typed EventEnvelope、fold/replay、观察者 projector 均按未知版本/错 hash fail closed，并拒绝 D&D 2024/5.5e 语义。
+- 世界/非战斗/长团机械已经覆盖五类可行性、检定/对抗/豁免、资源/物品、Activity、危险、事实/知识/NPC/势力、失败/收束、成长/章节、退休/死亡与继任边界。
+- 战斗机械已经覆盖动态遭遇、二维空间与掩护、2014 先攻/动作/反应/施法限制、资源、攻击/豁免/集中、统一伤害与死亡、显式玩家/NPC 决策、六秒轮、遭遇结论与故事结论分离；非战斗危险复用同一伤害管线。
+- Room Action 已实现 prepare → KP proposal/diagnosis revision → commit → committed-state narration → per-audience delivery；Room DO 已实现可信控制、幂等、作用域并发、待决恢复、DO 随机、单槽 Delivery/ACK/重连，以及可重建脱敏归档。
+- KP Adapter 固定 authoritative GLM tool-calling 模型，输出五类开放裁决和机械提案；LLM 调用位于 DO 事务外，未知/敏感内容不能进入结构化 telemetry。
+- D1 运行时建表副作用已移除；唯一新增 migration `0006_nice_iron_lad.sql` 只承载 v2 可重建归档及房间目录引用，尚未应用到远端 D1。
+
+### 阶段 3 命令账本
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-25T23:10Z | `npx tsx --test tests/combat-mechanics-v2.test.mjs`（并行切片回执） | 0 | 4/4；动态 Encounter、空间/先攻/动作/反应/施法/伤害死亡、显式待决、六秒轮和非战斗共用 damage pipeline 全部经 `step/project/replay` |
+| 2026-08-25T23:10Z | runtime + observer + world + combat 组合回归（并行切片回执） | 0 | 23/23；战斗新增事件与既有 Profile、知识投影、世界/长团回放兼容 |
+| 2026-08-25T23:10Z | `npm run module:check`、`npm run typecheck`、`npm run lint`、`git diff --check`（并行切片回执） | 0 | Rules 战斗切片后的公共入口、类型、静态规则和空白检查均通过；这不是生产源码冻结后的最终全量门 |
+| 2026-08-25T23:37Z | `npx vitest run tests/kp-multiturn-eval.test.ts`（并行切片回执） | 0 | 1/1 场景内 31/31 连续玩家意图或待决回答通过；覆盖同 Root Action 回答、玩家/KP/NPC 专属投影、动态危险与双哈希随机、幂等/模型失败、有意义失败、世界内秘密分享、NPC 有限知识、聚光灯、结局/尾声和安全 Read Model |
+| 2026-08-25T23:37Z | Room authority/delivery/legacy、archive 主链、Module Bible/telemetry 与 production KP adapter 组合回归（并行切片回执） | 0 | 分别 21/21、3/3、8/8、4/4；DO genesis 已钉住模组 profile/hash，全部故事地点与 NPC 有限知识 fixture 可回放，归档失败只产生脱敏 telemetry；更正测试不在本行通过范围 |
+| 2026-08-25T23:37Z | `node --import tsx --test tests/authoritative-kp-adapter.test.mjs`（keyed `npcViewers` 修改前） | 1（预期 RED；2/4 失败） | Room/KP 生产投影使用按 `npcId` 索引的有限知识 map，而 helper 仅接受旧数组，合法 NPC 提案被错误标为 `modelPermanent` |
+| 2026-08-25T23:37Z | `node --import tsx --test tests/authoritative-kp-adapter.test.mjs` | 0 | 4/4；helper 以 keyed map 精确选择 NPC 有限知识投影，并仅为迁移兼容保留旧数组读取；NPC 仍不能引用 KP 私密事实 |
+| 2026-08-25T23:45Z | `node --import tsx --test tests/authoritative-table-v2.test.mjs tests/interaction-contract.test.mjs`（并行切片回执） | 0 | 9/9 + 8/8；11 个 v2 按钮均在 Legacy 机械/骰面前返回 Room Action 语义意图，`resolveRoll` 拒绝客户端骰面，模型固定，客户端以 payload 指纹稳定复用 submissionId；当前 Delivery ACK 等语音请求取得音频或 5 秒有界超时，不保存历史 |
+| 2026-08-25T23:45Z | table/client/UI 切片 `git diff --check`（并行切片回执） | 0 | 无空白错误；同一时点全局 typecheck 仅被并行 `multiplayer-actions.ts` 的 TS18046 阻塞，本行不把它记为全局通过 |
+| 2026-08-25T23:45Z | `npx vitest run tests/randomness-recovery-v2.test.ts --reporter=verbose`（并行切片回执） | 0 | 4/4；请求/冻结哈希 journal、独立 DO 候选 face 与最终 Rules events/state/Receipt/Delivery 三段持久化覆盖四个崩溃点，evict/retry 复用同一骰面且归档各只有一个请求、结算和 Receipt ref |
+| 2026-08-25T23:45Z | randomness 后 Room authority/delivery/legacy、archive 主链组合回归（并行切片回执） | 0 | 21/21 + 3/3；相关组合 28/28，archive correction 两项按既有 RED 未计通过。`module:check` 与 `git diff --check` 为 0；全局 typecheck 只被并行 multiplayer Rules 收窄错误阻断 |
+| 2026-08-25T23:45Z | 随机恢复/20+ 评测口径文档目标 `git diff --check` | 0 | `SPEC 0003/0011`、DEC-005 与 cross-spec 索引同步实际三段 DO SQLite journal：请求、候选、最终事件；candidate 不进 D1/投影/日志。连续评测最低门与用户 Goal 统一为 20+，canonical 文件修正为实际 `tests/kp-multiturn-eval.test.ts`；SPEC 0001 未改 |
+| 2026-08-26T00:19Z | `npx vitest run tests/archive-correction-v2.test.ts -t "forward compensation"`（并行切片回执） | 0 | 1/1；只有 server 持有的 opaque capability 可调用更正；`correctionId` 与载荷幂等，Rules 公开 `step/replay` 生成补偿，旧 Receipt 标记 superseded，旧 Delivery plan/slot 只留无正文 tombstone，事件、状态、新 Receipt、擦除与幂等结果在同一 DO SQLite 事务提交 |
+| 2026-08-26T00:19Z | `npx vitest run tests/archive-correction-v2.test.ts`（并行切片回执） | 1（预期 RED；4/5 通过） | 归档、灾难重建、篡改拒绝与前向更正均绿；唯一因果分支场景在更正调用前因没有正式 `DiceRolled(face/faces)` 审计事件而失败。未伪造后果或让 DO 越权选择 causal strategy，等待 compound Rules 提交真实知识/位置/资源影响 |
+| 2026-08-26T00:24Z | `npm run module:check`；`git diff --check -- scripts/check-modules.mjs` | 0 | 门禁由仅验证模组扩展为同时检查 Rules 公开值严格只有 `step/project/replay`、外层不得导入 v2 私有 runtime、authoritative KP/Room/Table 外层不得掷骰或接回旧活跃状态 SQL；当前 1 个模组与全部深模块边界通过 |
+| 2026-08-26T00:31Z | `npx tsx --test tests/runtime-profiles-v2.test.mjs tests/observer-projection-v2.test.mjs tests/world-campaign-v2.test.mjs tests/combat-mechanics-v2.test.mjs tests/rules-pending-v2.test.mjs tests/rules-multiplayer-v2.test.mjs`（并行切片回执） | 0 | 32/32；service-only Seat/Control/host、Pending suspend/reassign、全员同意 PartyMove、个人移动/休整原子离队、分地点 FictionTimeline/CausalFrontier、世界媒介传播、显式会合和 Spotlight≤3 均经 Rules `step→replay→project`；NPC 投影不含 roomMembers/party/spotlight |
+| 2026-08-26T00:31Z | 多人 Rules 切片 `npm run typecheck`、`npm run module:check`、`git diff --check`（并行切片回执） | 0 | 多人/时间新增 typed event、fold、validation 与 projector 兼容现有世界/战斗/更正；未把 DO 或 D1 当作 Rules 第二路径 |
+| 2026-08-26T00:34Z | `npx vitest run tests/authoritative-opening-v2.test.ts --reporter=verbose`（并行切片回执） | 0 | 1/1；初始化与逐 Viewer opening 单槽/watermark 同一 DO SQLite 事务，正文来自 pinned Module `publicOpening`，只给开场现场受控角色；不生成世界事件、Receipt 历史、D1 message 或时间推进，重连同帧且 ACK 后不可回看 |
+| 2026-08-26T00:34Z | opening 后 observer projection/randomness/Room authority/Legacy + typecheck/module/diff 组合回归（并行切片回执） | 0 | 分别 5/5、4/4、8/8、9/9；灾难归档本身不含 Delivery，因此不会恢复已失效开场正文 |
+| 2026-08-26T00:35Z | `node --import tsx --test tests/authoritative-kp-adapter.test.mjs`（typed ActionPlan 实现前/后，并行切片回执） | 1 → 0 | RED 4/5 首因是未知 operation 未拒绝；GREEN 5/5。production/NPC 共用 `authoritative-kp-action-plan-v1` 17 项 operation，机械/cost/effect 额外键、未知 operation、dice/faces 及动态定义中的 authority/state/event/profile 注入均 fail closed；开放 JSON 只留动态世界定义 |
+| 2026-08-26T00:35Z | KP ActionPlan 切片 `npm run typecheck`、`npm run module:check`、`git diff --check`（并行切片回执） | 0 | 提案 schema 固定为 `authoritative-kp-proposal-v2`；本行只证明模型边界验证，Rules compound/DO 接入仍单独验收 |
+| 2026-08-26T00:39Z | `npx vitest run tests/room-retry-v2.test.ts --reporter=verbose` | 1（预期 RED；0/1） | 显式 retry 在既有 submission payload-hash 分支先被当作“改变原始 intent 载荷”拒绝；首个可区分断言得到 `idempotencyPayloadMismatch` 而非 `retryReferenceMismatch`，尚未恢复同一 prepared/root 或已提交 Receipt。测试只经可信 RPC，不改状态、时间、事件或骰面 |
+| 2026-08-26T00:31Z | `npx vitest run tests/multiplayer-room-v2.test.ts --reporter=verbose`（并行切片回执） | 0 | 3/3；Room DO 以 service-only capability 管理 Seat/Control/host，可信 Principal 无法伪造管理权限；多人邀请/回答、全员同意整队移动、个人离队移动、分地点 FictionTimeline/CausalFrontier 与重连后的 Spotlight 均只提交 Rules 结果。Pending owner 由 Rules controller 沿 Control→Seat→Principal 派生，非提交者自报 |
+| 2026-08-26T00:31Z | 多人 Room 后 Rules multiplayer/pending/observer 组合回归、`npm run module:check`、`git diff --check`（并行切片回执） | 0 | 14/14；管理命令幂等、state/events/Receipt/索引/Pending/Delivery 擦除在同一 DO SQLite 事务；初始化保留显式 role，Room 不再用 Store 重算 Spotlight。并行 Rules 复合切片一度使全局 typecheck 在其私有事件类型处失败，本行未把 typecheck 记为通过 |
+| 2026-08-26T00:32Z | `npx vitest run tests/observer-delivery-v2.test.ts --reporter=verbose` | 0 | 4/4；单槽 current response 的 frozen Audience 只含行动发生地点的角色，且逐观察者 narration projection 删除非虚构观察的全局房间成员、Party 协调与 Spotlight 元数据，异地角色标识不再进入任一 narration plan；刷新/重连、ACK 擦除、迟到覆盖与七类旁路继续共用同一 projector |
+| 2026-08-26T00:32Z | observer 修复后 `npm run module:check`、`git diff --check` | 0 | Rules 公共面与 Room/KP/Table 权威边界继续通过；修改只收窄 `project(viewer)` 派生的 narration 目的投影，没有建立第二知识投影或改变玩家 Read Model |
+
+### 未完成条件
+
+- 零到多随机请求的普通、对抗、战斗与复合批次已经进入同一 Room journal/Receipt 恢复链；记录的 Room 迁移组合覆盖单随机四崩溃点、对抗/战斗批次和显式 retry。它们仍须在最终冻结 SHA 作为全量门重跑。
+- 可审计更正的授权、幂等、灾难重建、前向补偿、正式位置/知识/骰面后果触发的因果分支、Receipt supersede 与旧 Delivery 擦除已在 `archive-correction-v2` 5/5 转绿；后续源码演进后的最终组合仍待冻结重跑。
+- 31 次连续交互已迁移为完整 production draft，逐轮通过 `validateProposal` 与 projection-bound 并达记录阈值；真实 Workers AI 模型调用、生产 HTTP/浏览器、远端迁移、部署与冒烟仍未完成，因此不能把上述回执解释为整站完成。
+
+## 阶段 4：清除平行路径
+
+- 状态：进行中；已把 Rules 公共面、私有实现导入、外层权威随机及 v2 旧活跃表 SQL 加入 `module:check` 硬门。生产 table/API 的全部服务命令、旧骰面路径隔离与 projector 旁路仍需完成动态验收。
+
+### 根因审计的后续处置（不冒充最终冻结门）
+
+- 服务命令：`joinRoom`、`kickMember`、`leaveTable`、`lockCharacter`、装备及组队入口已按精确 `ruleset_version` 先行路由 authoritative-v2/Legacy；记录的 service-routing/Room 迁移组合已转绿。`getRoomManagement` 现返回 `ruleset_version` 与 `kp_model`，但其新增 HTTP 断言仍须随冻结 `npm test` 执行。
+- 装备与静态卡：authoritative-v2 已从可信静态卡编译 canonical loadout/资源/HP/class seed，并把运行期消费/穿戴影响交给 Rules/Room；D1 不再充当 v2 活跃库存状态。最终开房—建卡—装备 HTTP 回归仍待全量门。
+- retry：`RoomActionInput.retry` 已恢复同 principal 的既有 prepared/root/Receipt，并区分错误 root、越权与幂等载荷；`room-retry-v2` 3/3 已包含在记录的 Room 16/16 恢复组合。
+- proposal/delivery：authoritative-v2 DO compact proposal branches 已删除；normalizer 只接完整 production draft/精确 Pending capability，持久随机恢复只接受 ActionPlan v1/同版本待决续接。Legacy delivery/命令只由精确旧 ruleset 可达。
+- 归档：DO 持久游标/outbox 已改为有界幂等增量续传，D1 allowlist 只包含 genesis、Rules events 与 projection audit，Delivery/intent/Prompt 不进入归档；专项测试已建立，最终冻结组合仍待重跑。
+- 随机：Room journal 已支持零到多请求；对抗、战斗与复合动作在各恢复点复用每个稳定 face，并只产生一个最终 Receipt。相关 25/25 Room 迁移组合已转绿。
+
+## 阶段 5：验证、迁移、发布和推送
+
+- 状态：未开始
+
+### 发布前只读控制面基线（2026-08-26T00:12:58Z）
+
+- 本节只记录发布前事实；本轮没有执行 D1/DO migration apply、Worker deploy/version upload、流量修改、资源创建/删除或 Git push。
+- Wrangler CLI 为 `4.125.0`。`whoami` 退出码为 0，确认当前浏览器/OAuth 会话已认证到 1 个账户且返回权限清单；账户名、邮箱、account id 与授权细节在显示和记录前均已脱敏。
+- `zhuwei` 最近 10 条 deployment 与最近 10 个 version 均可只读列出。Wrangler 返回的最新既有 deployment 为 `cc1b9c96-a1e6-4e72-b8fd-c5cbef6a3740`，对应 version `3b22748d-9725-406e-b276-429fe99662b0`（version number 16），记录时间 `2026-08-25T16:43:31.100571Z`，该 deployment 条目为 100% 流量。它是核验前已经存在的线上版本，不是本 Goal 的 `DEPLOY_SOURCE_SHA`，也不构成本轮已部署证据。
+- 远端 D1 migrations list 只列“尚未应用”的 migration；当前唯一待应用项为 `0006_nice_iron_lad.sql`。本轮未应用它，也未对远端 D1 做测试写入。
+- `wrangler.jsonc` 与部署护栏共同确认目标仍为现有 Worker `zhuwei`、入口 `worker/index.ts`、D1 `DB/zhuwei-dev/f5a448fd-4224-4e52-bafb-a84cb190b618`、Durable Object `ROOMS/RoomDurableObject` 和 Workers AI `AI`；另有既有静态资产绑定 `ASSETS`。没有 KV、R2、Queue、Workflow、Vectorize 或第二个 D1/DO 状态权威。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 脱敏证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-26T00:12Z | `npx wrangler --version` | 0 | `4.125.0` |
+| 2026-08-26T00:12Z | `npx wrangler whoami`（输出先聚合并脱敏） | 0 | 已认证；1 个账户；权限清单存在；未记录账户标识或凭据 |
+| 2026-08-26T00:12Z | `npx wrangler deployments list --name zhuwei --json`（身份字段脱敏） | 0 | 返回最近 10 条；最新既有 deployment `cc1b9c96-…-c5cbef6a3740` → version `3b22748d-…-429fe99662b0`，条目流量 100% |
+| 2026-08-26T00:12Z | `npx wrangler versions list --name zhuwei --json`（身份字段脱敏） | 0 | 返回最近 10 个；最高 version number 16，id 与最新 deployment 一致 |
+| 2026-08-26T00:12Z | `npx wrangler d1 migrations list zhuwei-dev --remote --config wrangler.jsonc` | 0 | `Resource location: remote`；唯一待应用 migration 为 `0006_nice_iron_lad.sql` |
+| 2026-08-26T00:12Z | `git ls-remote origin refs/heads/main refs/heads/cloudflare` | 0 | `main=29eb06dc009c983ad61b2d862454503e67a7f40a`；`cloudflare=4bc3c3801f451a83a2491757237d3126ab7987bd` |
+| 2026-08-26T00:12Z | `node cloudflare/verify-deploy-config.mjs` | 0 | SPEC 0001 哈希及现有 Worker/入口/AI/ROOMS/DB 资源护栏通过 |
+
+### 迁移恢复前提与剩余发布条件
+
+- 后续发布阶段应用 `0006_nice_iron_lad.sql` 前，必须冻结并提交生产源码，确认它仍是唯一新增 migration、既有 `drizzle/*.sql` 未被修改，并再次记录远端待应用列表。
+- D1 schema apply 前必须先建立并记录可实际恢复的迁移前恢复点（例如经验证可用的导出或平台恢复书签）及对应恢复命令；不能把“migration 文件存在”当作自动回滚能力。本次只读核验没有建立恢复点。
+- 应用后必须重新运行远端 migrations list，确认无待应用项，再执行可清理的最小写入—读取闭环；这些动作本轮均未执行。
+- 正式部署仍须从干净、已提交且完成全量冻结门的源码执行，并另行记录 `DEPLOY_SOURCE_SHA`、Cloudflare version/deployment、线上冒烟、日志检查、`DELIVERY_SHA` 与远端 `cloudflare` SHA；当前只读基线不能替代这些证据。
+
+## 规格、决策与追踪证据回填（2026-08-26）
+
+- 目标：只在 `docs/` 内把已经实现并实际执行的 production typed ActionPlan、权威休整/Activity、Arcane Recovery、有意义失败、世界内分享及生命周期证据映射回已裁定规格；不修改 `SPEC 0001`，不把局部绿色写成最终全量/发布完成。
+- 实际修改：新增 DEC-020（`resolveDirectConsequences` / `advanceCampaignLifecycle` 的封闭语义）与 DEC-021（canonical `arcaneRecoverySlotLevels`）；更新 DEC-006/010/011/012/018/019 的实际证据；修正 SPEC 0003/0004/0005/0008/0009 的生产文件和测试映射；同步索引、五项交叉审查和 P1–P10/A–O 追踪矩阵中的旧 RED。
+- 权限/秘密结论：直接后果和生命周期事件仍只经 Rules `step` 与 Room DO 原子提交；Arcane Recovery UI 只冻结控制者选择，不能提交角色等级、资源上限或结算；世界内分享只产生带来源的新知识取得，旧 Delivery 不追溯；`startSequel` 使用新 Story/Chapter 与旧事实/威胁锚点。
+- 证据边界：`startSequel` 已由直接 Rules 生命周期场景和 KP schema enum 验证；当前没有把它误写成专门的 compound translation 断言。所有命令均使用当前共享工作区源码；并行生产代码仍可能继续变化，最终必须在冻结 SHA 重跑全量门。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-26T11:27Z | `node --import tsx --test tests/rules-compound-action-v2.test.mjs tests/authoritative-table-v2.test.mjs tests/world-campaign-v2.test.mjs tests/observer-projection-v2.test.mjs` | 1 | 33/34；唯一失败是纯虚构时间用例仍读取已迁移前的 `timeline.micros`，而权威状态已在 `fictionTimelines[activeBranchId].nowMicros`。这是测试断言与当前版本化时间状态不一致，不是生产规则回退；并行实现随后修正断言，本 docs 切片未改代码。 |
+| 2026-08-26T11:28Z | `npx vitest run tests/compound-action-v2.test.ts --reporter=verbose` | 0 | 1/1；production KP draft 经 Room Action/Authority 与两份 DO 随机，在同一 Root Action 提交动态定义、有限知识 NPC 计划、场景问题和两份机械结果；归档无 raw intent。 |
+| 2026-08-26T11:29Z | `node --import tsx --test tests/rules-compound-action-v2.test.mjs tests/authoritative-kp-adapter.test.mjs` | 0 | 17/17（Rules compound 12/12 + KP Adapter 5/5）；直接后果/纯虚构时间、结局候选/收束/尾声、全部非检定 operation、schema 注入拒绝及同 Root Action 复合语义已绿。 |
+| 2026-08-26T11:30Z | `npx vitest run tests/multiplayer-room-v2.test.ts --reporter=verbose` | 0 | 8/8；个人 canonical 多槽 Arcane Recovery、DO 短休随机/完成点、整队自愿 Pending、长休拒绝、成长/退休/继任、service-only 控制、分队/时间/聚光灯已绿。 |
+| 2026-08-26T11:31Z | `node --import tsx --test tests/world-campaign-v2.test.mjs tests/observer-projection-v2.test.mjs tests/rules-multiplayer-v2.test.mjs tests/authoritative-table-v2.test.mjs` | 0 | 30/30（world/campaign 7、observer 5、Rules multiplayer 8、table 10）；休整/Activity、世界内分享、失败/重试、真实 sequel boundary、私人投影和 UI-only Arcane Recovery 选择均绿。 |
+| 2026-08-26T11:45Z | `shasum -a 256 docs/specs/0001-llm-kp-responsibility-contract.md`；`git diff -- docs/specs/0001-llm-kp-responsibility-contract.md` | 0 | 冻结文件 SHA-256 仍为 `b420123d…323be`，目标 diff 为空；本切片未修改 SPEC 0001。 |
+| 2026-08-26T11:46Z | Markdown 连续表格 pipe-count 检查；映射文件存在性检查；`rg -n '[ \t]+$'`（本切片文档） | 0 | README/追踪矩阵/交叉审查/refactor-log 表格列数一致；所有记录的生产/测试路径存在；未发现行尾空白。 |
+| 2026-08-26T11:46Z | `git diff --check` | 0 | 当前共享工作区已跟踪差异无空白错误；`docs/specs/` 与 `docs/refactor-log.md` 仍为待提交新文件，因此另以上述行尾/表格检查覆盖本切片新增文档。 |
+
+## 严格 production 边界与迁移证据同步（2026-08-26）
+
+- 目标：只在 `docs/` 同步当前已实现事实与真实命令回执；不修改 `SPEC 0001`，不把局部测试、公开方案文档或源码接线写成远端 D1 迁移、真实 Workers AI、正式部署或最终推送。
+- 实际修改：新增 DEC-022–DEC-025，分别裁定完整 production proposal/恢复 allowlist、复合非战斗豁免、六种 typed `partyAction` 与管理 Read Model 规则版本；同步 SPEC 0003/0004/0007/0011/0013、索引、五项交叉审查及 P1–P10/A–O 追踪矩阵。authoritative-v2 的 compact DO proposal 分支已删除；Legacy 仅由精确旧 `ruleset_version` 可达。
+- 非战斗机械：`resolveNoncombatSave` 现在与 check 共用复合事务，骰前冻结 duration、物品/资源成本、成功/失败后果；由 canonical class seed 应用 SRD 5.1/2014 职业豁免熟练，成功/失败的 HP、伤害和位置变化只由 Rules 事件结算。六种队伍语义为 `invite`、`accept`、`decline`、`leave`、`proposeMove`、`answerMove`，不得由可选字段猜测。
+- 管理读取：`getRoomManagement` 已在房主鉴权后返回目录 `ruleset_version` 与 `kp_model`，HTTP 验收断言已写入；本节记录时尚未执行包含该断言的冻结 `npm test`，因此不把它列为最终测试通过。
+- Cloudflare 公开事实复核：2026-08-26 官方文档列出 Workers Free 100,000 请求/日；D1 Free 5,000,000 行读/日、100,000 行写/日、5 GB；SQLite DO Free 100,000 请求/日、13,000 GB-s/日、5,000,000 行读/日、100,000 行写/日、5 GB 总存储；Workers AI 10,000 neurons/日。GLM 4.7 Flash 模型页确认 function calling 与 131,072 context；2026-07-28 付费限定清单不包含该模型，因此公开目录仍将它归入 Free 可用范围。本次没有读取或声称账户实际用量余量，真实 entitlement/调用仍待发布前验证。
+
+### RED → 根因 → GREEN 与迁移组合回执
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-26（记录的迁移切片） | `npx vitest run tests/room-authority-v2.test.ts tests/contest-room-randomness-v2.test.ts tests/combat-room-randomness-v2.test.ts tests/multiplayer-room-v2.test.ts tests/authoritative-service-routing-v2.test.ts` | 0 | 5 files / 25 tests；可信 Room 权威链、对抗/战斗批次随机、多人控制与精确 service routing 通过。 |
+| 2026-08-26（记录的迁移切片） | `npx vitest run tests/observer-delivery-v2.test.ts tests/archive-correction-v2.test.ts tests/randomness-recovery-v2.test.ts tests/room-retry-v2.test.ts` | 0 | 4 files / 16 tests；单槽投递、灾难重建/篡改拒绝、前向补偿/正式后果驱动因果分支、四阶段随机恢复和显式 retry 通过；两组 Room 迁移合计 41/41。该命令是在后续删除代理修改前记录，冻结源码仍须重跑；本行正式取代当前状态中的旧 `archive-correction 4/5`。 |
+| 2026-08-26（本 docs 切片实跑） | `node --import tsx --test tests/rules-compound-action-v2.test.mjs tests/authoritative-kp-adapter.test.mjs` | 0 | 25/25（Rules compound 18/18 + KP Adapter 7/7）；strict production normalization、save 成本/职业熟练/HP/位置、六种 partyAction 与 schema 注入拒绝通过；取代旧 12/12 + 5/5 的当前证据计数。 |
+| 2026-08-26（严格评测首跑） | `npx vitest run tests/kp-multiturn-eval.test.ts --reporter=verbose` | 1 | RED：interaction 12 预期 `committed`，实际 `rejected`。fixture 的 `resolveNoncombatSave` 缺完整冻结 duration/cost/success/failure，又把物品放在 strict Rules 不读取的 legacy `staticCard.inventory`，因此权威校验正确拒绝不可用成本/效果。 |
+| 2026-08-26（修正 fixture 后回执） | `npx vitest run tests/kp-multiturn-eval.test.ts` | 0 | GREEN 1/1，约 25.67 s；补齐完整 save 冻结字段、dynamic destination 及 canonical loadout/HP/class seed 后，31/31 连续意图/待决响应逐轮通过真实 `validateProposal` 与 projection-bound，并达到已记录硬门/评分阈值。受控 fixture 不替代真实 Workers AI。 |
+| 2026-08-26T13:18Z | `npm run module:check` | 0 | 当前共享源码的 Rules 公共值仍严格为 `step/project/replay`；Room/AI/Table 外层骰源、v2 旧活跃表、compact DO proposal 分支与未受限恢复输入护栏通过。生产源码尚未冻结，阶段 5 仍须重跑。 |
+| 2026-08-26T13:20Z | 冻结文件 SHA-256 与目标 diff | 0 | `SPEC 0001` 仍为 `b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be`，目标 diff 为空；内容与状态未修改。 |
+| 2026-08-26T13:20Z | `git diff --check -- docs`；全 docs 行尾空白扫描；README/decision/cross-review/trace/refactor-log 连续表格 pipe-count | 0 | 已跟踪文档差异无空白错误；未跟踪规格/日志另经全文件行尾与表格列数检查，均通过。 |
+
+### 当前未执行项
+
+- 生产源码仍在并行演进；上述局部/迁移回执不是生产源码冻结后的 `module:check`、`typecheck`、`lint`、`npm test` 与全局 diff 最终门。
+- 远端 D1 的 `0006_nice_iron_lad.sql` **尚未应用**；尚未建立迁移前恢复点，未执行远端最小写入—读取闭环，也未确认迁移后无待应用项。
+- 本 Goal 的 Cloudflare Worker 正式部署、version/流量确认、线上入口冒烟、有界日志检查、`DEPLOY_SOURCE_SHA`/`DELIVERY_SHA` 记录及 GitHub `HEAD:refs/heads/cloudflare` 推送均**尚未执行**。既有线上 version 16 不属于本 Goal 部署证据。
+
+## 长团 XP AdvancementProfile 收口（2026-08-26）
+
+- 目标：落实 DEC-010 / SPEC 0008 已裁定的 `milestone | srdXp2014`，不修改 `SPEC 0001`；所有奖励、资格、玩家选择、回放、投影和更正仍只经 Rules `step/project/replay` 与生产 typed ActionPlan。
+- RED 因果链：公开行为测试先证明两处首个不变量违反——XP 档案仍接受 `grantMilestone`，且 `initializeAuthoritativeWorld`/ActionPlan 不认识 XP Profile/奖励字段。失败不是 UI 问题，而是成长 Profile 尚未进入权威 genesis、事件与语义计划。
+- 实际修改：Campaign genesis 默认固定 `milestone`，可显式固定 `srdXp2014`；角色保存累计 `experiencePoints`；SRD 2014 的 1–20 级累计阈值固定在 `character-progression.ts`。新增有界 `ExperienceAwarded`，达到阈值只打开 `AdvancementAvailable`；一次奖励跨多级时，每次 `CharacterAdvanced` 后继续打开下一份玩家专属选择，不自动代选。生产 `advanceCampaignLifecycle/awardExperience`、严格 KP schema/normalizer、统一 Read Model 和 correction audit 同步接入。
+- 权限/秘密：成长选项继续只投影给控制角色；奖励事件及累计 XP 不从 D1 或页面计算，来源引用必须是已固化事实。档案不允许静默互换；XP 档案拒绝里程碑动作，milestone 档案拒绝 XP 奖励。
+- 剩余条件：本切片不声称最终冻结门、远端迁移或部署；共享工作区后续并行 UI 变化一度使全局 typecheck 退出 1，具体只报 `play-table.tsx` 的既有 Button variant 与 `table/authoritative.ts` pending union 推断，XP 目标测试未失败，最终仍须在冻结源码重跑全量门。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-26T13:30Z | `npx tsx --test tests/world-campaign-v2.test.mjs tests/rules-compound-action-v2.test.mjs`（实现前） | 1 | 25/27；两项预期 RED 分别证明 XP 档案错误接受里程碑、初始化拒绝 `advancementProfile`。 |
+| 2026-08-26T13:43Z | `npx tsx --test tests/world-campaign-v2.test.mjs tests/rules-compound-action-v2.test.mjs tests/authoritative-kp-adapter.test.mjs` | 0 | 36/36（world 9、compound 19、KP Adapter 8）；覆盖默认/显式 Profile、0/超界拒绝、XP 事件/投影/回放、更正、跨两级逐级选择、生产 ActionPlan 与严格 schema enum。 |
+| 2026-08-26T13:43Z | `npm run module:check`；`git diff --check` | 0 | Rules 公共面仍仅 `step/project/replay`，未建立 XP 第二裁决/投影路径；当前共享工作区已跟踪差异无空白错误。 |
+| 2026-08-26T13:43Z | `npm run typecheck -- --pretty false` | 1 | 并行 UI/投影改动产生 4 个非 XP 错误：3 个 `Button variant="outline"` 与 1 个 pending union `flatMap` 推断；本行不冒充 typecheck 通过，留待冻结源码修复并重跑。 |
+
+## 固定解释器 Registry 收口（2026-08-26）
+
+- 目标：消除“只有 `CURRENT_RUNTIME_PROFILE_MANIFEST`”导致未来部署无法解释旧 authoritative-v2 房间的版本缺口，不修改 `SPEC 0001`，不借测试改变 production default。
+- RED 因果链：新增公开 `step/project/replay` 行为测试后，首次运行因尚无隔离 Registry/runtime 构造而在模块加载期失败；既有 `v2-runtime.ts` 的 replay/project/step 又都直接返回或执行 current manifest，证明 genesis pin 未真正选择解释器。实现初版时一次 patch 把 `runtimeManifestRef` 临时误列入 `GENESIS_KEYS`，导致初始化后 replay 返回 `invalidGenesis`；将它移回权威 `STATE_KEYS` 后恢复。
+- 实际修改：Registry 现在以完整 manifest 精确映射 interpreter，拷贝并冻结注册表；同一 Profile ID 不允许不同 hash，未知、错 hash、扩展闭包错位、历史无 Adapter 与 2024/5.5e 均 fail closed。production Registry 仍只以当前 manifest 为新 genesis default。权威 state 保存 genesis manifest ref；step/project 必须与 state pin 一致，replay 以 genesis manifest 选择解释器并逐事件核对。测试通过两个隔离 runtime 注册合成第二个 2014 manifest 并切换 default，未把该 manifest 写入生产目录。
+- 权限/秘密：ProfileRef 可公开且不含 Prompt、模组 truth 或私人叙述；调用者不能通过请求切换既有房解释器。state pin 是 genesis 的缓存校验，不成为第二版本事实。
+- 剩余条件：全局 typecheck 此时仍被并行 table/loadout 编辑的暂态错误阻塞；冻结源码必须重跑 typecheck/full test。本节只记录 Registry 局部证据，不冒充最终门、远端迁移或部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-26（Registry RED） | `npx tsx --test tests/runtime-profiles-v2.test.mjs` | 1 | 新测试在 import `createVersionedRulesRuntime` 时失败，直接证明尚无可保留多 manifest/切换新 genesis default 的运行时接缝。 |
+| 2026-08-26（Registry GREEN） | `npx tsx --test tests/runtime-profiles-v2.test.mjs` | 0 | 13/13；旧 archive 在隔离 Registry default 切换前后 replay/project 深相等，新 genesis 采用新 default，unknown/mismatch fail closed，2024 输入无事件。 |
+| 2026-08-26T14:19Z | `npx tsx --test tests/runtime-profiles-v2.test.mjs tests/world-campaign-v2.test.mjs tests/combat-mechanics-v2.test.mjs tests/rules-pending-v2.test.mjs tests/rules-compound-action-v2.test.mjs` | 0 | 52/52；版本 pin/旧 archive、新旧随机与待决、复合行动、战斗、长团 XP/继任及更正均经公开 `step/project/replay` 通过。 |
+| 2026-08-26T14:20Z | `npx vitest run tests/room-authority-v2.test.ts tests/archive-correction-v2.test.ts` | 0 | 2 files / 13 tests；Room 创建/DO 权威随机、重试、归档 replay、篡改拒绝与更正仍可使用 genesis 固定 Profile。 |
+| 2026-08-26（当前共享源码） | `npm run module:check`；`git diff --check` | 0 | Rules 包公开值仍只有 `step/project/replay`；Registry 构造留在私有实现，已跟踪差异无空白错误。 |
+| 2026-08-26（当前共享源码） | `npm run typecheck -- --pretty false` | 1 | 仅报告并行中的 `table/server.ts` loadout 投影/同步符号错误；Registry/rules 文件无 TypeScript 诊断。本行不计最终 typecheck。 |
+| 2026-08-26T14:18Z | `npm run typecheck -- --pretty false` | 0 | 并行 table/playerChoice 收口后当前共享源码全量 TypeScript 检查通过；生产源码仍未冻结，最终阶段仍须重跑。 |
+
+## 单权威评测与 Geometry Profile 收口（2026-08-26）
+
+- 31 轮评测不再用 `secondAuthority: false` 常量自证。评测器现从 DO 单调版本、逐 Root Receipt 事件区间覆盖、连续 archive hash chain、head projection audit，以及 D1 静态人物卡与 DO 活跃投影边界推导单权威信号；任何信号都成为硬失败。只修改 D1 fixture 中同一背包物品数量、保持 DO 版本与 Receipt 头不变时，负向测试稳定报告 `activeCardDivergedFromProjection` 与 `secondAuthority=true`。
+- 同一 31 轮证据揭露 `StoryConcluded` 的 Rules Receipt 为 `committed`、Room/Archive 为 `concluded`。根因在 Rules 公共 Receipt union 与事件映射；修复后 actor projection、Room 结果与 archive Receipt ref 对同一 `receiptId/rootActionId/status` 严格一致，没有放宽断言。
+- Geometry 首个实现切片以整数英寸/BigInt 实现 measurement core 三维范围、路径 milli-inch、占位、64 点掩护与 65 点区域采样；随后把硬遮挡从多边形 bounding box 近似替换为任意简单多边形棱柱的精确开线段求交，并加入 sphere/cylinder/cube/cone/line、方向基底、clear-path 原点冻结、straight/aroundCorners 传播及连续生物/地形移动分析。上述新增形状与传播仍须接入公开 `step/replay/project` 并完成 G01–G15 全向量后，才可把 SPEC 0013 的 Geometry 标为完成。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-26（31 轮严格证据切片） | `npx vitest run tests/kp-multiturn-eval.test.ts` | 0 | 1/1，31 次连续意图/待决响应；严格核对 Receipt id/root/status/branch/scope/range、全部 archive event 被 Receipt refs 覆盖、head projection audits 与两 Viewer projection hash。 |
+| 2026-08-26（评测边界切片） | `node --test tests/live-workers-ai-kp-eval-runner.test.mjs tests/live-workers-ai-kp-eval-provisioner.test.mjs` | 0 | 11/11；正常、评测失败与清理不完整路径保持精确清理语义，未执行真实外部 Workers AI。 |
+| 2026-08-26（31 轮修复后） | `npx tsx --test tests/world-campaign-v2.test.mjs`；`npm run typecheck`；`npm run module:check`；`node --check scripts/live-kp-eval.mjs` | 0 | world/campaign 9/9；结局 Receipt 状态统一且 Rules 公共面、评测脚本语法通过。 |
+| 2026-08-26T15:36Z | `npx tsx --test --test-name-pattern='Geometry measures creature footprints\|Geometry rejects movement' tests/combat-mechanics-v2.test.mjs` | 0 | 2/2；大体型 measurement core 边界、速度超限与重叠终点在公开 `step→replay` 路径保持。 |
+| 2026-08-26T15:38Z | `npm run typecheck`；`git diff --check -- app/_runtime/lib/rules/profiles/combat-geometry.ts` | 0 | 任意简单多边形棱柱求交及五种区域形状首批实现通过 TypeScript/空白检查；此时共享 campaign 继承线尚未开始写入其暂态类型。 |
+| 2026-08-26T15:45Z | `npm run typecheck` | 1（并行暂态） | 仅报并行长团继承实现的 `campaign-events.ts` 两处 `InheritanceAuthorization` 暂态字段不一致；Geometry 文件无诊断。本行不冒充冻结 typecheck，已通知对应切片收口。 |
+
+### 仍需完成的 Profile 证据
+
+- Ability Compiler A01–A09 尚缺正式 compiled graph/hash、复杂度/循环/未绑定选择诊断及事件内旧图回放证据。
+- Geometry G01–G15 尚需把新内部算法接入唯一公开事务，覆盖五种区域、墙前原点、绕角、连续移动/困难地形、挤入和 Viewer 安全错误；不能把内部开发探针列为验收。
+- Trigger T01–T07 与 Time F01–F09 必须在当前并行 Ready/Shield/Counterspell、长团及战斗相位实现合并后逐项建立公开 Interface 映射。
+- 本节未执行远端迁移、真实 Workers AI、部署、流量修改或 Git push，阶段 5 状态仍为未开始。
+
+## 中断恢复与 Profile 冻结前审计（2026-08-27）
+
+- 当前阶段：继续阶段 3/4 的版本化 Profile 验收收口；阶段 5 仍未开始。本轮先区分“实现已经存在但日志滞后”和真实未覆盖向量，不把局部绿色冒充最终冻结门。
+- 工作区恢复：当前仍为 `cloudflare`，`HEAD=9eb0a6c44b6f22afdc88e710886d1c59b9529313`，`origin/cloudflare=4bc3c3801f451a83a2491757237d3126ab7987bd`，本地领先 1；发现 35 个已跟踪变更和 75 个未跟踪入口，全部保留。未执行 reset、clean、强制 checkout、重新克隆、删除、迁移、部署或 push。
+- 差异与冻结准则：`git diff --check` 为 0；`SPEC 0001` SHA-256 仍为 `b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be`，目标 diff 为空。package manifest 与 lockfile 当前无差异，因此没有运行 `npm ci`。
+- 当前实现事实：日志末尾所称 A/G/T/F 尚缺证据已部分过时。工作区现有 `tests/ability-profile-v2.test.mjs`、Geometry 公共事务场景与 `tests/runtime-trigger-time-v2.test.mjs`；首次组合运行 48/48 通过。A06、F05/F06/F08 及 G01–G15 的逐向量责任映射仍在只读审计，未因测试名称或相关性先行勾选。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-26T18:33Z | 完整读取 `AGENTS.md`、`CONTEXT.md`、Goal、`docs/refactor-log.md`；核对 `git status`、差异摘要与未跟踪清单 | 0 | 从共享工作区原地恢复；分支、HEAD、35 个已跟踪变更与 75 个未跟踪入口已记录，未覆盖既有工作。 |
+| 2026-08-26T18:33Z | 完整读取冻结 `SPEC 0001`、全部 `docs/adr/*.md` 与当前直接约束 `SPEC 0013` | 0 | 重新确认叙事/机械/状态边界、两个深 Module、版本隔离以及 P/A/G/T/F 公开 Interface 完成门。 |
+| 2026-08-26T18:33Z | `npx tsx --test tests/runtime-profiles-v2.test.mjs tests/ability-profile-v2.test.mjs tests/combat-mechanics-v2.test.mjs tests/runtime-trigger-time-v2.test.mjs` | 0 | 48/48；现有 Ability、Geometry、2014 战斗、Trigger、Activity、分支时间与 Profile Registry 场景均通过，逐向量完备性仍待审计。 |
+| 2026-08-26T18:33Z | `npm run typecheck -- --pretty false` | 0 | 当前共享源码 TypeScript 检查通过。 |
+| 2026-08-26T18:33Z | `npm run module:check` | 0 | Rules 公共值与 Room/AI/Table 单权威边界护栏通过。 |
+
+### 当前剩余条件与下一步
+
+- 等待 Ability、Geometry、Trigger/Time 三条只读审计逐项报告；只为真实缺口补生产实现或公开 Interface 测试，并同步 `SPEC 0013`、总追踪矩阵、决策登记与本日志中的实际证据。
+- Profile 完成门闭合后才冻结生产源码并运行阶段 5 全量门；远端 D1 `0006_nice_iron_lad.sql`、真实 Workers AI、正式部署、流量、冒烟、日志检查和 GitHub 推送仍未执行。
+
+## Profile 矩阵闭包与战斗 grant 根因修复（2026-08-27）
+
+- 当前阶段：阶段 3/4 继续。Ability A04/A06/A07/A09 的真实缺口已在编译器、公开 `NeedsKpRulesResult`、冻结定义图调用与私有字段拒绝边界修复；A01–A09 定向测试现为 8/8。Trigger T01/T03/T07 与 Time F05/F06 的首个不变量违反已修复；F08 使用真正不同的 Time/Trigger 合成默认版本证明旧事件仍由旧 pin 解释，而不是只更换无关 manifest 字段。
+- Geometry：G01–G09 的整数英寸、measurement core、路径、挤入与连续占位已通过；本轮补齐 G10 的 31/32/48/64 hard-cover 与 soft-only 上限、G11 的 20 尺边界/外 1 英寸及 caller 集合拒绝、G12 的墙前原点与集合同事件原子冻结、G13 的障碍顺序扰动。G14（分段移动被 Ready/Grapple 降速中断）与 G15（玩家安全错误、隐藏墙/实体、KP service-only 空间证据）已先取得 RED，生产修复仍在收口，故此处不提前标成完成。
+- 战斗 grant 根因：旧 `turn.action + attacksRemaining` 在第一次 Attack 后仍保留 `action=1`，导致 Extra Attack 的剩余攻击可被错误泛化为 Cast a Spell；TurnStarted 又没有独立 haste grant，附赠动作法术限制只检查一个顺序。现改为开始 Attack 时立即消耗一个普通动作、只在该 Attack 内维护剩余攻击；haste 使用独立一次受限 grant；Action Surge 只增加普通动作；同回合附赠动作法术与一动作环法术双向约束。B11/B12/B17 的 RED 现 3/3 转绿。
+- 当前并行安全：保留全部旧修改；未执行 reset/clean/checkout、远端迁移、部署或 push。生产仍未冻结，下面的定向绿色不是最终全量门。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-26T18:37Z | `npm run typecheck -- --pretty false`；`npm run module:check` | 0 | Ability/Geometry/Trigger/Time 首轮合并后类型与 Rules/Room 单权威边界通过。 |
+| 2026-08-26T18:39Z | `npx tsx --test tests/ability-profile-v2.test.mjs tests/runtime-profiles-v2.test.mjs tests/runtime-trigger-time-v2.test.mjs tests/combat-mechanics-v2.test.mjs tests/rules-compound-action-v2.test.mjs tests/authoritative-kp-adapter.test.mjs` | 0 | 94/94；Ability 8、Runtime Profiles 13、Trigger/Time 14 及相关 Geometry/Compound/KP 集成无回归。 |
+| 2026-08-26（F08 RED/GREEN） | `npx tsx --test --test-name-pattern='F08' tests/runtime-trigger-time-v2.test.mjs`；随后全文件 | 1 → 0 | RED 证明旧 P07 fixture 没有更换 Time/Trigger；改用独立 refs 后 F08 1/1、全文件 15/15，旧 instant、phase task、Profile pin、state hash 与 projection 在新 default 下保持。 |
+| 2026-08-26T19:04Z | `npx tsx --test --test-name-pattern='Geometry G1[0-3]' tests/combat-mechanics-v2.test.mjs` | 0 | 4/4；G10–G13 全部从公开 `step/replay/project` 建立权威场景证据。 |
+| 2026-08-26T19:18Z | `npx tsx --test --test-name-pattern='B11|B12|B17' tests/combat-mechanics-v2.test.mjs`（修复前） | 1 | 0/3；分别暴露剩余攻击泛化、缺失 haste grant、反向附赠法术限制缺失。 |
+| 2026-08-26T19:24Z | 同一 B11/B12/B17 定向命令（修复后） | 0 | 3/3；Extra Attack 可攻击—移动—换目标—再攻击但不可转施法，haste 不刷新附赠/反应/Extra Attack，Action Surge 可支持两个一动作环法术。 |
+
+### 当前剩余条件与下一步
+
+- 先完成 G14/G15 并重跑整组 Profile 回归；随后继续 SPEC 0012 已确认的 Hostility、伤害/临时 HP/专注、死亡/非致命、全玩家战斗结束同意、长施法/仪式及 B53 Room 垂直段，不以新增测试名称代替真实语义。
+- Profile 与替代规格/ADR 的状态、验收场景、实现映射和证据仍需同步；冻结源码后的 `module:check`、`typecheck`、`lint`、`npm test` 尚未执行。
+- 阶段 5 仍未开始：远端 D1 恢复点/迁移/写读闭环、真实 Workers AI、正式部署/流量/冒烟/日志、提交推送及远端 `main` 不变核对均仍待完成。
+
+## SPEC 0012 战斗尾项闭包（2026-08-27）
+
+- 当前阶段：阶段 3/4 继续，生产源码尚未冻结。G14/G15 的公开路径修复已合入共享工作区；B29/B30 的首因是结论提案只选择第一名存活玩家且一次接受即结束，现按稳定 ordinal 依次冻结全部存活玩家的私有同意，拒绝保持 Encounter 活跃，逃离结论还必须引用覆盖全部存活玩家的 canonical escape fact。UI 同步提供拒绝按钮。
+- B19 根因链：环境扰动没有规则命令；临时 HP 没有定义/事件/fold；伤害结算在确认实际伤害前预取专注骰，导致免疫伤害也消费未使用随机；专注结果缺少审计事件。现由 `testConcentration` 固定环境 DC 10，`ConcentrationTested` 记录每一独立来源，实际伤害提交后才分阶段请求一次专注骰；0 伤害不请求；替换先结束旧专注，主动结束不消耗动作；临时 HP 取较高值、不叠加、不复活也不移除稳定/昏迷。
+- B21/B22 根因链：0 HP 状态把 melee 误当 critical，近战伤害在玩家非致命选择前就提交巨量伤害死亡；稳定状态没有 1d4 小时 Activity、Medicine DC 10、治疗/受伤中断。现把 critical 与 melee 分离，在任何死亡事件前打开控制者私有 `knockOut` 窗口；非致命选择覆盖巨量伤害为稳定昏迷，重要 NPC 的 `deathPolicy=deathSaves` 由 Encounter 事前固定。Medicine/第三次成功/非致命均由 Room 权威掷 1d4 并启动 `stableRecovery2014`，到期前不生效，到期后恢复 1 HP；治疗或后续实际伤害显式 `ActivityInterrupted`。自然 1、自然 20、0 HP 受伤、三次成功/失败继续走同一事件链。
+- 修改范围：`rules/v2/model.ts`、`combat-events.ts`、`combat-actions.ts`、`campaign-actions.ts`、Ability 编译/人物同步相关文件、`projector.ts`、`room/durable-object.ts`、`play-table.tsx` 与 `tests/combat-mechanics-v2.test.mjs`；没有修改或缩小 `SPEC 0001`/Goal，没有远端写入、部署、提交或 push。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（B29/B30 子切片） | conclusion 定向 4 项、pending/randomness 1 项、`tests/runtime-trigger-time-v2.test.mjs`、UI 定向、`module:check`、`git diff --check` | 0 | 分别 4/4、1/1、15/15、1/1；全部存活玩家依次接受/任一拒绝、逃离事实覆盖、重连与 UI 拒绝入口通过。 |
+| 2026-08-27（B19 环境 RED/GREEN） | `--test-name-pattern='B19 environmental disruption'` | 1 → 0 | 首次 `unsupportedOperation`；实现后两个独立环境来源各产生一次冻结 DC 10/Con 修正的 `ConcentrationTested`，先成功后失败，replay 一致。 |
+| 2026-08-27（临时 HP RED/GREEN） | `--test-name-pattern='temporary hit points absorb'` | 1 → 0 | 首次目标不可用；实现编译/事件/fold 后 4 点临时 HP 不改变 0 HP、稳定、昏迷或 lifeState，replay 一致。 |
+| 2026-08-27（B22 RED/GREEN） | `--test-name-pattern='B22'` | 1 → 0 | 首次巨量伤害先提交死亡；修复后 2/2，致命分支死亡，非致命分支稳定且先启动 1d4 Activity；重要 NPC `deathSaves` 分支保持 0 HP 未死亡。 |
+| 2026-08-27（B21 Medicine/Activity RED/GREEN） | Medicine、稳定恢复中断定向测试 | 1 → 0 | 首次缺定义/目标及无 `ActivityInterrupted`；修复后 Medicine DC 10、自然恢复到期 1 HP、治疗/后续伤害中断均通过。 |
+| 2026-08-27（B19 伤害随机 RED/GREEN） | `--test-name-pattern='fully negated damage'` | 1 → 0 | 首次免疫后的 0 伤害仍请求专注骰；分阶段后不再消费随机且专注保持。两个真实伤害来源又各自产生恰好一次专注检定。 |
+| 2026-08-27T04:34Z | `npx tsx --test --test-name-pattern='action economy derives|B19|B21|B22' tests/combat-mechanics-v2.test.mjs` | 0 | 11/11；B19–B22、B20 混合伤害取整/抗性/免疫/易伤/资源原子性与 replay 组合回归通过。 |
+| 2026-08-27T04:30Z | `npm run typecheck`；`npm run module:check` | 0 | 修正 campaign Activity readonly 联合、长施法返回联合及 KP/player 投影类型收窄后，全量 TypeScript 与唯一 `step/project/replay`/Room 权威护栏通过。 |
+
+### 当前剩余条件与下一步
+
+- B07 阵营敌对关系、B38 长施法/仪式和 B53 自然语言 Room 垂直段正在独立公共接缝切片收口；合入后须重算 Event/Ability/manifest Profile hashes，并重跑所有 Profile 与 SPEC 0012 回归。
+- 随后同步替代规格、ADR、B01–B53 处置矩阵、交叉审查与追踪证据；只有冻结源码上的 `module:check`、`typecheck`、`lint`、`npm test`、评测、远端迁移/写读、部署/流量/冒烟、提交/push 和远端 `main` 不变全部取得实际证据后才能标记 COMPLETE。
+
+## B07/B38 与 Profile 级联冻结（2026-08-27）
+
+- B07 根因：敌对候选命中第一条定向关系即返回，三个以上阵营时遗漏后续敌对方；同时没有在 Encounter 因果链中改变关系的公开命令/事件。现合并同源的全部定向关系，并由 `changeEncounterHostility → HostilityChanged → fold` 固化新目标集和前值，显式目标与候选、replay/project 一致；非玩家阵营没有被压成单一敌方。
+- B38 根因：通用 `interruptActivity` 只中断 Activity，却遗留关联的 `longSpellcasting` 专注；无 campaign 元数据时玩家投影也漏掉自己受控角色的 Activity。现中断在同事务结束专注，受控 Activity 始终投影。8 个场景覆盖逐轮动作投入、完成点才耗位、伤害专注失败、0 HP 失能、漏投动作、主动中断、ritual 额外十分钟不耗位，以及完成后普通 Counterspell 不返位。
+- Geometry G14/G15 已从先前 RED 收口：移动只提交触发前/反应后仍合法的前缀；隐藏实体/障碍、猜测目标和 KP 空间证据复用唯一 projector，空间全知只接受 service-only capability。
+- Profile 根因：B07 的 Event/Combat hash 先行更新后，B19–B22 的新专注审计、临时 HP、非致命/稳定恢复，B38 的长施法 Activity，以及 G15 的投影语义尚未进入对应 canonical 文档。现将 EventSchema、AbilityCompiler、Combat、DamageDeath、ProjectionPolicy 文档升级并自底向上实算叶子 ref 与总 Manifest；没有把 hash 当常量自证。测试 genesis 随 Manifest 变化后第一次因旧冻结 genesis hash 失败，重算 canonical unsigned genesis 后恢复，运行时 integrity 检查未放宽。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（B07 RED/GREEN） | `node --import tsx --test tests/combat-hostility-v2.test.mjs` | 1 → 0 | 首个 RED 只返回一个敌对阵营；第二个 RED 为 `changeEncounterHostility` 未支持。修复后 2/2，三阵营候选、停战后显式目标拒绝、事件前值、replay/project 通过。 |
+| 2026-08-27（B38 RED/GREEN） | `npx tsx --test tests/combat-long-casting-v2.test.mjs` | 1 → 0 | 首次主动中断只有 `ActivityInterrupted` 而无 `ConcentrationEnded`；最终 8/8，未完成效果/槽位保持未发生。 |
+| 2026-08-27T04:45Z | G14 与 G15 两条公开 Interface 定向命令 | 0 | G14 1/1；G15 1/1。连续移动中断、重连/回放和 service-only 空间秘密通过。 |
+| 2026-08-27T05:05Z | canonical leaf/manifest hash 实算与 `profileRegistryMatchesCanonicalDocuments()` | 0 | 返回 `true`；当前 manifest=`9872dfe9…187a7`、event=`29266fcf…faea6`、ability=`561710d6…25ba3`、combat=`b9e12294…4acc6`、damage/death=`37dbf131…37d7a`、projection=`18786732…374d9`。 |
+| 2026-08-27T05:07Z | Profile 组合回归首次运行 | 1 | 29/32；仅 P01/A08/F02 因测试仍固定旧 Manifest 对应 genesis hash 而在 replay 前 fail closed；这是冻结 fixture 未级联，不是生产解释器回退。 |
+| 2026-08-27T05:12Z | Registry/Ability/B07/B38/G15 组合；B19–B22/B20/G14 组合 | 0 | 32/32 + 12/12；重算 genesis hash 后 Profile 完整性、旧版本隔离、2014 护栏和全部新增机械共同通过。 |
+
+### 当前剩余条件与下一步
+
+- B53 目前已有自然语言开战/动态危险/多人投影/NPC 投降提案/全员同意/长期状态保留的生产 Room Action→DO→Rules→viewer 场景，但仍须在同一垂直链补齐并证实移动中断、玩家私人反应、实际伤害/专注和断线恢复，不能用独立 Rules 测试替代。
+- B53 完整后再做 SPEC 0012 全矩阵和所有替代规格完成门审计；随后才可冻结生产源码并进入阶段 5。
+
+## B53 生产 Room 垂直段恢复（2026-08-27）
+
+- 当前阶段：阶段 3/4 的最后一条战斗垂直验收。测试继续只走 `handleRoomAction → Room Durable Object → Rules step/project/replay`；没有从测试注入骰面、内部状态补丁或第二裁决路径。
+- 首个 RED：动态哨兵定义把熟练加值写成 `12`，超过权威动态战斗员校验允许的 2014 范围 `2..9`，生产 ActionPlan 被 `invalidRulesInput: Dynamic combatant is malformed` 正确退回。夹具改为 `9` 后，自然语言开战、动态危险/敌人固化与多人 Viewer 投影进入后续链。
+- 第二个夹具边界：`guidance` 在当前 v2 编译图中尚未完整表达 willing-creature 的战斗目标亲和与 modifier 效果，不适合作为 B53 的专注载体；垂直场景改用已完整支持的 Ranger 自身 `ensnaring` 一环专注，仍由静态卡编译、耗位和权威状态启动专注，没有放宽目标校验。
+- 当前确认的生产根因：NPC 的保底正伤害先产生一波攻击/豁免与伤害随机；伤害命中正在专注的玩家后，B19 规则正确返回第二个 `awaitingRandomness` 以冻结一次专注豁免。`app/_runtime/lib/room/durable-object.ts` 在首波 fulfillment 后只接受终态，遇到合法第二波便在 `3088–3106` 以 `invalidRulesResult: Rules did not close authoritative randomness` 拒绝。首个违反不变量的位置是 Room 持久化随机数编排，不是战斗规则、KP 或 UI。
+- 已写入但尚未转绿的同链验收：NPC 撤离触发 Bob 私有借机反应；Alice 看不到反应详情；在 Pending 时驱逐并重建 DO 后 Bob 必须看到逐字段相同的 Pending，再由认证回答完成反应与剩余移动；最后 NPC 投降仍需两名存活玩家分别同意，并保留 HP、位置、状态与动态危险事实。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T05:19Z | `npx vitest run tests/combat-vertical-v2.test.ts --reporter=verbose` | 1 | RED：开战提案重试两次，诊断为动态战斗员不合法；定位到测试熟练加值 `12` 超界，未修改生产校验。 |
+| 2026-08-27T05:20Z | 同一 B53 命令 | 1 | RED：`guidance` 自身目标不在当前敌对候选中；改用已完整编译的自身专注能力，不借此扩大目标集合。 |
+| 2026-08-27T05:23Z | 同一 B53 命令 | 1 | 随机先攻同点打开合法 `initiativeTieOrder` Pending；测试改为由实际控制者通过认证 `answer` 处理，不假设随机结果永不相同。 |
+| 2026-08-27T05:26Z | 同一 B53 命令 | 1 | 当前关键 RED：伤害首波完成后规则返回专注豁免第二波，Room DO 拒绝 `awaitingRandomness`，结果为 `invalidRulesResult`；多波持久化/恢复闭环尚待修复。 |
+| 2026-08-27T05:33Z | `npx tsx --test --test-name-pattern='semantic multiplayer combat start' tests/rules-compound-action-v2.test.mjs`（修复前/后） | 1 → 0 | RED 证明 `startCombat` 只冻结 actor↔target 敌对关系，`memberRefs` 中的 Bob 虽是参与者却不敌对，因而不可能获得借机反应；在 ActionPlan 单一翻译器将全部显式盟友与目标双向分组后 1/1 GREEN。 |
+| 2026-08-27T05:35Z | `npx tsx --test --test-name-pattern='finite-knowledge NPC mechanical action' tests/rules-compound-action-v2.test.mjs`（修复前/后） | 1 → 0 | 全文件回归暴露拒绝借机反应后同一移动分段再次向同一角色提供相同 Pending。`continueMovement` 只在当前分段排除已回答反应者后转绿；后续分段仍可按新触发重新评估。 |
+| 2026-08-27T05:36Z | `npx tsx --test tests/rules-compound-action-v2.test.mjs` | 0 | 27/27；多人开战敌对冻结、有限知识 NPC 行动、借机反应接受/拒绝与其余 compound 语义组合无回归。 |
+| 2026-08-27T05:38Z | `npx vitest run tests/combat-room-randomness-v2.test.ts -t 'durably completes NPC save damage followed by a concentration-save randomness wave' --reporter=verbose` | 1 | focused RED 为 1 failed / 6 skipped；公共 Room prepare/commit/observe/export 已完成首波豁免+伤害，第二波专注检定仍在 DO 返回 `invalidRulesResult`。测试同时冻结预期的三份 commitment/faces、两次 `RandomnessRequested`、单次伤害/专注事件及丢响应同 Receipt 重试。 |
+| 2026-08-27T05:47Z | second-wave `afterRandomnessRequestCommit` / `afterRandomnessCandidateCommit` 恢复用例 | 0 | 2/2；现有 batch 行升级为有界累计 multi-wave envelope。每波事件/state/下一请求同事务提交，候选随后固化；在第二波请求提交后或候选提交后模拟崩溃、驱逐 DO，恢复均保留既有波骰面并最终返回同一 Receipt/commitments/faces。 |
+| 2026-08-27T05:48Z | `npm run typecheck -- --pretty false` | 0 | 多波 Room 编排与 reaction decline 局部收窄均通过全量 TypeScript；`reactionQueue` 在守卫后缓存为局部常量，未改变运行语义。 |
+| 2026-08-27T05:48Z | `npx vitest run tests/combat-vertical-v2.test.ts --reporter=verbose` | 1 | 首次越过多波伤害后触发默认 5 秒测试超时；仅将该真实多 RPC 垂直测试的专用 timeout 提高，不改变产品行为。 |
+| 2026-08-27T05:49Z | 同一 B53 命令（提高 timeout 后） | 1 | 生产移动已提交但未打开借机反应。事实显示 Bob 在 `x=60`、哨兵在 `x=180`，标准 5 尺格的中心相距 10 尺，不在 5 尺触及内；这是测试夹具错误，不是几何/敌对规则错误。 |
+| 2026-08-27T05:52Z | 同一 B53 命令（相邻夹具修正后） | 0 | 1/1，约 28.7 秒；哨兵起点改为与 Bob 相邻的 `x=120`，完整贯通自然语言开战、动态事实、伤害/专注多波骰、私有反应、Pending 驱逐重连、移动完成、NPC 投降、全部存活玩家逐人同意、故事继续、长期状态及归档事件。 |
+
+### 当前剩余条件与下一步
+
+- 多波与 B53 主链现已转绿；仍须收口同一 prepared/proposal 并发提交时“第一份已持久化候选获胜”的幂等竞争，不能因两个调用在异步 hash 间交错并各自产生本地骰面而让后到调用返回 integrity mismatch。
+- 多波 journal 使用现有 `authority_randomness_batches` 行的向后兼容累计 envelope，不新增 schema：每波先原子提交该波事件、下一波请求与权威 state，再生成并持久化下一波候选；恢复必须保留先前骰面且在第二波 request/candidate 两个检查点驱逐后仍得到同一 Receipt/commitments/faces。
+- 并发随机恢复收口后重跑 SPEC 0012/Profile 组合并回填替代规格/ADR/矩阵；阶段 5 仍未开始，远端 D1、Workers AI、部署、流量与 push 均未执行。
+
+## B53 多波并发、旧 journal 与归档唤醒硬化（2026-08-27）
+
+- 当前阶段：阶段 3/4 收尾，尚未冻结生产源码。多波随机继续复用现有 `authority_randomness_batches` 单行累计 envelope；没有新增 D1/DO schema，也没有建立第二随机源、第二事件表或第二投影路径。
+- 严格并发根因：候选在异步 hash 间交错时，慢调用可能比胜者 journal 落后两波；旧 CAS 只接受精确同波或相邻状态，因此虽不会覆盖已落盘骰面，却可能返回 `randomnessJournalIntegrityMismatch`。现只接受两类可证明前进：同波 candidate 首写，或 requests/waves/requestEvents 同步严格扩展；慢调用重载胜者 journal 后继续由同一 `step` 闭环，最终 Receipt 与全部 faces 相同。
+- 向后兼容：旧 plain fulfillment 自动规范为 wave 0；真正旧 `authority_randomness_journal` 的 `candidateCommitted` 行在首次读取时无损提升为 batch，沿用原 candidate faces 并最终标记 finalized。恢复测试直接读取迁移前候选并逐 faces 对比 KP 机械结果和丢响应重试，没有以结果范围替代“不重掷”证据。
+- 场景与归档不变量：同一 scene 同时只允许一个未结随机 settlement；不同 scene 仍可推进。每次原子 append request-wave 或 final events 时同步增加 archive pending generation；丢失 alarm 后，cached retry 与 DO constructor 都可重新合并 archive/TTL alarm。
+- 完整性复审发现并修复一个 P1：forward-extension 曾把 `request_events_json` 单独增长视为进展，且重载后没有证明事件已存在于 `authority_events`，理论上可把伪事件带入 Receipt/Delivery。现 events-only 不能构成前进，累计 request events 必须是当前 Root 已持久化事件中的精确连续片段，逐项核对 root、eventSeq、eventId 和完整 JSON，并拒绝重复。历史前缀改写与伪造后缀两例均 fail closed。
+- 归档测试诊断：`archive-do-resume-v2` 的 43 次逐步增员会让每次完整 replay/索引同步随角色和事件数量超线性增长；分段数据为 init 16ms、10 次 0.61s、20 次 3.94s、30 次 13.94s、40 次 36.26s、43 次 46.35s、export 53.39s、首个 synthetic-failure alarm 60.42s。临时完全禁用 `applyRoomAdministration` 的机会性归档后曲线不变，排除本轮 archive scheduler/mark-pending 为因；测试夹具仍须在不删减 85+ events、48 audits、分页/重试/驱逐/TTL 断言的前提下优化，不能只继续抬 timeout。临时诊断日志已回退。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（并发/兼容切片） | `npx vitest run tests/combat-room-randomness-v2.test.ts tests/randomness-recovery-v2.test.ts tests/contest-room-randomness-v2.test.ts --testTimeout=30000` | 0 | 3 files / 22 tests；两波四崩溃点、严格慢调用落后两波、同 Receipt/三份 faces、同/异 scene settlement、plain fulfillment、旧 journal lazy promotion 与一波恢复通过。后续新增两项 request-event 篡改测试，最终计数须在冻结源码重跑后记录。 |
+| 2026-08-27（P1 定向） | contest、room retry frozen、target pending、两项 journal 篡改、严格多波并发的定向组合 | 0 | 4 files / 6 tests；合法 pending/contest/慢并发通过，改写历史前缀和只加未持久化事件后缀均返回 `randomnessJournalIntegrityMismatch`。 |
+| 2026-08-27（当前源码） | `npm run typecheck`；目标 ESLint / `git diff --check` | 0 | 多波 journal 类型、并发收敛、旧 journal 提升、scene lock 与 P1 完整性校验通过；最终全量 lint/diff 门仍待源码冻结。 |
+| 2026-08-27T06:31Z | `npx vitest run tests/archive-do-resume-v2.test.ts --reporter=verbose --testTimeout=60000` | 1 | 测试尾部局部 `30_000` 覆盖 CLI 预算，31.3s 时超时，并产生 teardown pending RPC；尚未到恢复断言。 |
+| 2026-08-27T06:32Z | 局部预算改为 `60_000` 后重跑同文件 | 1 | 62.3s 超时；预期 synthetic D1 outage 日志只在超时边缘出现，分段诊断随后确认瓶颈在造大历史而非 alarm 断言。该失败保留为待修验证基础设施，不冒充归档行为通过。 |
+| 2026-08-27（归档夹具等价优化） | `npx vitest run tests/archive-do-resume-v2.test.ts -t "resumes 80\\+ events through bounded alarms" --testTimeout=60000` | 0 | 1/1，约 10.73s；48 个稳定 Viewer + 单个可移除 Seat 的 83 个 seed characters，经一次公开 `removeMember` 产生 85 个合法事件；85+ events、48 audits、每批不超过 40、首次 D1 失败重试、eviction 游标恢复与 TTL 原断言全部保留。 |
+| 2026-08-27（最终随机组合） | `npx vitest run tests/combat-room-randomness-v2.test.ts tests/randomness-recovery-v2.test.ts tests/contest-room-randomness-v2.test.ts --testTimeout=30000` | 0 | 3 files / 24 tests；包含新增 request-event prefix/suffix 篡改拒绝，取代本节较早的 22 项切片计数。 |
+| 2026-08-27T06:56Z | `npm run typecheck && npx vitest run tests/combat-room-randomness-v2.test.ts tests/randomness-recovery-v2.test.ts tests/contest-room-randomness-v2.test.ts tests/room-retry-v2.test.ts tests/archive-do-resume-v2.test.ts tests/combat-vertical-v2.test.ts --testTimeout=60000 --reporter=verbose` | 0 | TypeScript 退出 0；6 files / 30 tests 全绿，组合覆盖 24 项随机/恢复、3 项 retry、2 项增量归档和 1 项 B53 自然语言 Room 垂直链。预期 synthetic archive outage 只产生脱敏 telemetry，随后同测试成功恢复。 |
+
+### 当前剩余条件与下一步
+
+- Room randomness/retry/archive/B53 最终组合已实际通过；下一步完成 SPEC 0012/Profile 公开组合、替代规格证据终审与阶段 4 平行路径清除审计。
+- 复核并同步 SPEC 0012/0013、DEC-034、交叉审查与追踪矩阵中的最终测试计数；`SPEC 0001` SHA/diff 仍必须保持不变。
+- 冻结源码后的 `module:check`、`typecheck`、`lint`、`npm test`、受控/真实 Workers AI 评测、远端 D1 恢复点/迁移/写读、部署/流量/冒烟/日志、提交/push 和远端 `main` 不变仍全部待执行。
+
+## Profile 公开组合与阶段 4 单投影边界收口（2026-08-27）
+
+- 当前阶段：阶段 4 最终审计，尚未冻结或部署。完整公开 Profile 组合已经通过；本节记录审计后补出的两个真正单权威缺口和一个 Activity 到期随机恢复缺口，不把文档同步或局部绿色写成阶段 5 完成。
+- Geometry/OA 根因链：移动编排曾把内部 ally-occupied waypoint 当作整个自愿终点，合法完整路径因此返回 `occupiedEndpoint`；反应队列的已处理角色又未跨随机 Pending 冻结，拒绝后的同一角色可能被重复询问。现先对完整路径原子预检，只有真正可暂停的合法前缀才持久化；内部占位 waypoint 向前延展到首个合法暂停点；`processedReactionEntityIds` 随请求与 Pending 冻结并严格排除已经处理的队列前缀。G08/G14 组合及 A06 双反应者场景同时通过，未允许任何重叠终点落盘。
+- 生命周期投影根因：Room 的 `successorRequired` 分支曾手工拼装 `readModel/projectionHash`，而普通 former controller 仍可投影已退役完整人物。现 `PlayerViewer` 增加仅内部使用的 `purpose: "lifecycle"`，`projectLifecycle` 同时验证可信 principal session、活跃 seat、人物最后控制席和 former tenure；普通 player 授权要求活跃 tenure。Room 统一调用 `projectAuthoritative`，生命周期输出保持原有最小公开字节形状，`module:check` 禁止 Room 手工 projection hash。
+- 恢复候选根因：Table/UI 曾按等级、法术槽和职业资源本地推导 Arcane Recovery 与短休生命骰候选，形成第二套机械候选。现 Rules 的 `projectRestRecoveryOptions` 同时服务 canonical rest validator 与 SafeReadModel，投影 `hitDiceMaximumSpend`、生命骰面及 Arcane Recovery 资格/预算/各环最大恢复数；Table/UI 只清洗、展示和提交投影值，Rules 提交时仍重验。Legacy 精确旧 ruleset 的展示 fallback 保留。
+- Profile 级联：Projection Policy 升至 `1.2.0`，明确 `successorLifecycle=trusted-active-seat-former-character-minimal-view` 与 `mechanicalCandidates=rest-recovery-options-derived-by-rules-projector`。实算 projection hash=`sha256:9312f68960f1c53f79b5c95bfd8c95ab87aec903603796f455a6c1d2d4514d8c`、manifest hash=`sha256:2f7af76e9a7262675210c18528ca9c6bead5c676aecc71113304eaf01f42dbe9`、unsigned genesis hash=`sha256:7e858e340283252d67779ddb1ae773fb5ac5a98d3859fdcef467c58a34935355`；`profileRegistryMatchesCanonicalDocuments()` 返回 true，旧完整 hash 在 app/tests/docs 已无残留。
+- Activity 到期随机恢复根因链：短休生命骰完成由 F04 调度为独立 `activity-due:<activityId>:<completionFictionMicros>` Root，而 journal checker 只从当前 `submission:*:complete` Root 查找请求事件，合法恢复被误报 `randomnessJournalIntegrityMismatch`。现只额外接受从冻结 Activity id/完成时刻精确构造的 canonical due Root，并要求 randomness id 前缀、所有请求同一 Root、在该 Root 的权威事件中构成完整 JSON/eventSeq/eventId 精确连续片段；普通 combat/submission Root 仍按既有绑定，跨 Root、伪造前后缀和重复事件继续 fail closed。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（movement/OA RED→GREEN） | G08/G14 与 A06 定向测试；随后 `tests/combat-mechanics-v2.test.mjs` 全文件 | 1 → 0 | RED 分别定位 ally waypoint 误当终点及 reaction queue 丢 processed prefix；修复后战斗机械 45/45，完整路径、真实终点占位拒绝、敌对阻断、双反应者 use/decline 与 Pending 持久化通过。 |
+| 2026-08-27（公开 Profile 组合） | `npx tsx --test tests/runtime-profiles-v2.test.mjs tests/ability-profile-v2.test.mjs tests/runtime-trigger-time-v2.test.mjs tests/combat-mechanics-v2.test.mjs tests/combat-hostility-v2.test.mjs tests/combat-long-casting-v2.test.mjs tests/rules-compound-action-v2.test.mjs tests/privacy-bypass-v2.test.mjs` | 0 | 119/119，约 167.65 秒；Registry/Ability/Trigger/Time/Geometry/Combat/Compound/Privacy 全部通过。 |
+| 2026-08-27（lifecycle RED→GREEN） | lifecycle 定向公开 Rules 测试；Room successor integration；`npm run typecheck -- --pretty false`；`npm run module:check` | 1 → 0 | RED 证明 former player 可见退役完整人物；修复后 lifecycle 4/4、Room 2/2、类型和 Room 不得手工 projection hash 护栏通过。 |
+| 2026-08-27（rest candidates RED→GREEN） | world/campaign 2014 rest 定向；authoritative Table 定向；Room Arcane Recovery/短休/组队休整四项；`npm run typecheck -- --pretty false` | 1 → 0 | RED 为 `restRecoveryOptions` 缺失；修复后 Rules/Table 2/2、Room 4/4，机械候选只来自 Rules projector。 |
+| 2026-08-27（canonical Profile） | canonical 文档实算、`profileRegistryMatchesCanonicalDocuments()`、旧 hash 扫描、`tests/runtime-profiles-v2.test.mjs` | 0 | Registry 完整性 true；新 projection/manifest/genesis 三层 hash 对齐；Runtime Profile 13/13，旧完整 hash 扫描无命中。 |
+| 2026-08-27（Activity due Root RED→GREEN） | `npm run typecheck -- --pretty false && npx vitest run tests/randomness-recovery-v2.test.ts tests/combat-room-randomness-v2.test.ts tests/contest-room-randomness-v2.test.ts --testTimeout=30000 --reporter=verbose && npx vitest run tests/multiplayer-room-v2.test.ts -t 'Arcane Recovery|short-rest hit-die|group-rest consent|long-rest consent' --reporter=verbose` | 1 → 0 | RED 为合法短休 journal 查错 Root；修复后 typecheck 通过、随机/恢复 3 files / 24 tests、Room rest 4/4；两项 request-event 篡改拒绝仍绿。 |
+
+### 当前剩余条件与下一步
+
+- 完成派生规格/追踪矩阵/决策登记同步，并把 Room 对 Legacy `applyEvents` 的直接导入隔离为精确旧版本 Adapter；随后运行阶段 4 边界组合，冻结生产源码。
+- 阶段 5 仍须在干净提交上运行 `module:check`、`typecheck`、`lint`、`npm test` 和 31 轮受控评测，再按 Goal 授权执行远端 D1 恢复点/迁移/写读、真实 Workers AI、现有 Worker 部署、流量/冒烟/日志、文档回执提交、非强制推送及远端 `main` 不变证明。
+
+## Legacy Facade 与生命周期 fixture 冻结前修正（2026-08-27）
+
+- 阶段 4 的 Legacy 边界已从“DO 内有精确版本条件”收紧为代码接缝：新增 `rules/legacy-adapter.ts`，只有该 rules 内部 facade 可导入旧 `engine`；对外以 `initializeWorld/adjudicate/applyCommittedEvents/projectViewer` 命名，并在取得 adapter、定义、state 及每次 fold/project 前都验证精确旧 `RULESET_VERSION`。authoritative-v2 或未知版本 fail closed，不能触达旧 `applyEvents`。
+- Room DO 的旧初始化、入/离席、loadout 同步、prepare/commit/snapshot 全部改经 facade；没有改变 DO SQLite 表、事务、alarm、RPC 或持久化顺序。`module:check` 递归扫描 app/worker/db/cloudflare/scripts 的 static import、dynamic import 与 require，禁止 rules 目录外直接导入 `rules/engine`；tests 的旧内核单元测试保持明确例外。
+- 完整 world/campaign 复核唯一 RED 不是生产回归：致死后角色控制已按新生命周期规则移除，旧 fixture 仍以普通 `ALICE_VIEWER` 读取 former character。测试改由同一 Rules `project` 的可信 lifecycle purpose 验证 `successorRequired` 与 `tenureStatus=dead`；未放宽普通 former viewer 的 `viewerUnauthorized`。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（Legacy facade） | `npm run module:check`；`npx tsx --test tests/legacy-rules-adapter.test.mjs`；`npx vitest run tests/room-do.test.ts --reporter=verbose`；`npm run typecheck`；定向 `git diff --check` | 0 | module 边界、facade 2/2、精确 Legacy Room 9/9、TypeScript 与空白检查通过；生产侧 `rules/engine` import 唯一剩余为 facade 自身，另两项只在明确 Legacy 测试。 |
+| 2026-08-27（world fixture RED→GREEN） | `npx tsx --test tests/world-campaign-v2.test.mjs` | 1 → 0 | 首次 12/13，唯一失败为 dead former character 的普通 viewer；改用 lifecycle projector 后 13/13，普通 former viewer 拒绝语义未改。 |
+
+### 当前剩余条件与下一步
+
+- 规格终审又发现安全暂停只有裁定、没有生产事件/入口；正在用公开 Room→Rules→project 路径补齐。随机 journal 复审还发现真实跨 Root slice 可替换风险，正在增加三类真实篡改 RED 并把合法 Activity-due Root 绑定到当前 submission。
+- 两项都收口并重算 Profile 后，重新执行 Stage 4 结构/隐私组合与派生文档审查，再冻结源码；阶段 5 远端操作仍未开始。
+
+## 全规格完成门终审与 ADR 合同补全（2026-08-27）
+
+- 当前阶段：阶段 4 最终完整性审计，源码尚未冻结。Goal 要求每份替代规格和 ADR 都具有明确状态、验收场景与实现映射；十份 ADR 原来只有状态/决策/后果。本轮逐份加入可证伪的公开行为场景和现有生产/测试路径，没有修改或缩小冻结 `SPEC 0001`。`SPEC 0006` 的三处失效映射也改到真实 v2 model/actions/events、multiplayer implementation 与 `.ts` 评测文件。
+- 文档验证：`git diff --check -- docs/adr docs/specs/0006-module-npc-and-faction-protocol.md` 退出 0；逐个映射文件存在性检查无缺失。此证据只证明文档结构和路径，不把仍缺生产语义的场景写成已完成。
+- 终审发现的冻结前实现缺口：`SPEC 0004` 裁定先例事件/状态；`SPEC 0005` 隐藏现实完整候选冻结和 DO 选择；`SPEC 0006/0008` 章节级 module ref/version/hash、显式迁移与 Actor/Faction 到期优先结算；`SPEC 0011` D1 归档清空后由已有 DO 重建；`SPEC 0013` 活跃/可恢复归档 Profile 引用部署扫描；以及 `SPEC 0011` prepare/observe/commit/ack 分阶段遥测。另须补 Delivery 控制撤销的 Room 级证据、P03/P04 精确向量及动态 Ability 归档恢复后继续使用。
+- 并行中的两个更早缺口仍保持未完成状态：安全暂停的 principal 私有事件/Room 入口/投递失效，以及 randomness recovery 对持久根行动绑定的严格 journal 证明。任何定向绿色都必须在这些实现合并后重算 Profile，并重跑责任 Interface 组合。
+
+### 当前剩余条件与下一步
+
+- 收拢安全暂停、随机 journal 与逐规格审计结果；按正式场景拆分 TDD 切片，先取得每个缺口的真实 RED，再在 Rules→Room→D1/UI 的单一权威位置修复。
+- 所有切片闭合后同步规格、追踪矩阵、决策登记与本日志，并运行阶段 4 模块、隐私、投影、Legacy、随机和 Profile 组合。只有冻结提交完成后才进入已授权的远端 D1/Workers AI/部署/push 阶段。
+
+## 安全暂停、随机 Root 绑定、D1 重建与 Profile 部署门（2026-08-27）
+
+- 安全暂停：先前规格只有裁定，没有事件、状态、Room action 或页面入口。现 `requestSafetyPause` 在任何到期 Activity 结算前提交 principal 私有 `SafetyPauseRequested`；全桌后续世界意图/回答/装备和机械动作返回统一 `presentationUnavailable`，不改变虚构时间、HP、资源或 spotlight。只有请求 Principal 可从 `fadeToBlack | reduceDetail | skipSensitiveContent` 闭集调整并恢复；状态随 Principal 经控制撤销、角色退役和继任持续，不跟角色转移。请求 schema 不接受原因或自由文本。
+- 投递失效：暂停提交同时 supersede 所有当前受控角色 Delivery；已进入 narrate 但尚未 publish 的 capability 失效，晚到敏感正文不能发布。UI 点击立即隐藏 current frame、清理待 ACK presentation，并停止/失效当前或在途 TTS。API 只从可信会话恢复 principal，经精确 authoritative-v2 路由直达 Room→Rules，不调用 KP propose/narrate。
+- 随机恢复 P1：真实另一条 activity-due Root 连续 slice、同 Root 但无 `RandomnessRequested`、事件 request 与 `requests_json` 不同、以及删除 recovery root binding 的旧格式行，修复前均可错误 `committed`。现 `initialRandomnessRootActionId` 进入 recovery 且由 recovery hash 覆盖；缺 binding 只兼容 submission Root。journal 必须至少含一个请求、单一固定 Root、逐波计数与请求 JSON 完全相等，并是该 Root 已持久事件的无重复精确连续片段。
+- 概率 fixture：多请求先攻崩溃恢复测试曾把合法同点 `awaitingInput` 写死为 `committed`。测试现保留原 Receipt/faces 重试断言，并在真同点时通过认证 pending answer 完成；四个崩溃点定向 4/4，不再依赖随机不平手。
+- D1 清空恢复：归档 writer 原来直接信任 DO caught-up cursor；只清空 D1 事件行后，下一次归档会跳过旧前缀。现每页先用一条只读 probe 核对 genesis hash、前缀 COUNT、首尾 seq 与 cursor event hash；不匹配时先原子持久重置 DO progress，再沿既有 alarm 从 DO 连续事件分页重建。D1 从不提供 WorldState/game_states；每页最多 1 probe + 40 写，批失败、驱逐和再次清空仍 fail/retry safe。
+- Profile 正式向量：补齐 P03“同 profileId 两个 hash 的 Registry 构建失败”和 P04“事件缺 ProfileRef/eventTypeVersion/previousEventHash 时 replay 拒绝”精确场景，去掉旧测试对这些编号的误占用。新增 P06 只读部署门：读取同一 D1 snapshot 的 active room 与全部 recoverable genesis，比较完整 manifest closure；引用 Adapter 被移除、active room 缺 genesis、row/genesis 不匹配均退出失败且不改写 genesis。`npm run profile:reference-gate` 从 stdin 消费 Wrangler D1 JSON；当前只用空 fixture 验证 CLI，真实远端扫描留在 Stage 5。
+- canonical Profile 因安全语义升级后的当前实算引用：ruleset `sha256:d92de17bae466ff3ca4a58d25323f0a28d3b1269bb8c7201dd1a3089b0153afd`；event `sha256:635b3b47a36de6bd5b8f67923d437ea06d63baba7a148ecd5113335e0cfcd2de`；presentation `sha256:86bfdfebe7062d90f87e4add65d1d109cb14dead7b3d758e452af76c13f7457c`；projection `sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91`；delivery `sha256:cd0d684841bd43f621665dc538db35b81c25421d8b345e444681054bbc894d7e`；manifest `sha256:ccad909e3e273a2354c5a959cabe12e8382daf82cbd3ff65554d077da503ff6d`；genesis `sha256:92337145a729e89063bd94a80da08fd45adf1dfb9c824fc58acb7afc7e078051`。后续先例/隐藏现实等事件变更还会再次级联，故此处不是最终发布 hash。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（Safety RED→GREEN） | Rules safety、Room safety、Table safety 首轮定向；随后 `node --import tsx --test tests/rules-safety-pause-v2.test.mjs tests/runtime-profiles-v2.test.mjs` | 1 → 0 | RED 分别为 unsupported operation/Room action/Table projection；最终 Rules/Profile 18/18。 |
+| 2026-08-27（Safety Room/Delivery） | `npx vitest run tests/safety-pause-room-v2.test.ts tests/observer-delivery-v2.test.ts`；Table 单测；`npm run typecheck`；`npm run module:check` | 0 | Room/Delivery 2 files / 10 tests；Table 14/14；类型与模块边界通过，含 in-flight publication 和 UI/TTS 失效。 |
+| 2026-08-27（random binding RED→GREEN） | `tests/randomness-recovery-v2.test.ts` 四项真实篡改定向 | 1 → 0 | 四项修复前均错误 committed；修复后 integrity mismatch。randomness recovery 16/16、room retry 3/3。 |
+| 2026-08-27（initiative fixture） | `npx vitest run tests/combat-room-randomness-v2.test.ts -t 'recovers a two-request initiative batch' --no-file-parallelism --maxWorkers=1 --testTimeout=30000 --reporter=verbose` | 0 | 4/4；四个随机持久化崩溃点均允许真实同点 pending 并保持原 faces/Receipt。 |
+| 2026-08-27（D1 clear RED→GREEN） | `archive-do-resume-v2` 的 `rebuilds every DO event after D1 is cleared behind a caught-up cursor` | 1 → 0 | RED 仅 D1 events 3–4、DO 1–4；GREEN D1 event_json 与 DO export 1–4 逐项一致。 |
+| 2026-08-27（archive 回归） | archive DO 全文件；D1 batches；archive/correction 组合；`npm run typecheck`；`npm run module:check` | 0 | 3/3、5/5、8/8；85+ events、40 写上限、原子 retry、wrong epoch、战斗/普通更正无回归。 |
+| 2026-08-27（P03/P04） | `npx tsx --test --test-name-pattern='P03|P04 replay' tests/runtime-profiles-v2.test.mjs` | 0 | 2/2；Registry hash 冲突与三种事件封套缺失均 fail closed。 |
+| 2026-08-27（P06） | `npx tsx --test tests/runtime-profile-deployment-gate.test.mjs`；`npm run profile:reference-gate <<< '[]'` | 0 | 4/4；CLI 空引用 fixture 输出 ok/0 rooms。真实 D1 scan 尚未执行。 |
+
+### 当前剩余条件与下一步
+
+- 正在并行实现裁定先例、隐藏现实候选协议和玩家叙事能动性 validator。之后仍须补章节模组版本/迁移、到期 NPC/faction plan、causal correction 新帧和分阶段 SLO instrumentation，并按审计清单补最小责任 Interface 组合。
+- 新事件/Projection 语义全部完成后再统一重算 Profile、同步替代规格/矩阵/决策登记；阶段 5 的真实 D1 ProfileRef scan、迁移、Workers AI、部署、流量、冒烟、日志和 push 仍未开始。
+
+## Room Authority 分阶段 SLO 遥测（2026-08-27）
+
+- 根因：生产日志原来只在 `handleRoomAction` 外层记录一次 `room.action.completed`，且只保留 `withinBudget/overBudget` 桶；无法区分 `prepare/observe/commit/ack`，也没有可用于自然月 p95/p99 的毫秒样本，因此不能计算 SPEC 0011 的逐操作成功率与时延目标。
+- 修改：新增 `room/authority-telemetry.ts`，在 server Adapter 边界包装四个公开 Room Authority 操作；每次调用输出固定白名单中的 operation/result、精确非负 `durationMs`、粗粒度 budget bucket、脱敏 correlation 与稳定 failure class。参数、返回投影、错误 message/stack 均不进入 serializer。返回值、异常和可选 `observe` query 原样透传；遥测 emitter 失败不能改变已经取得的权威结果。
+- 生产接线：自然语言/回答/装备/安全 Action 的内部四操作走同一包装；table/voice 的直接轮询 `observeAuthoritativeRoom` 与 Delivery ACK 也走同一包装，不只覆盖测试 helper。KP 模型仍由独立 `ModelInvocationReceipt` 遥测，未被混入“不含模型”的 Authority SLO。
+- 修改文件：`app/_runtime/lib/room/authority-telemetry.ts`、`telemetry.ts`、`action.ts`、`server.ts`、`tests/room-authority-telemetry-v2.test.mjs`、`tests/structured-telemetry-v2.test.mjs`。未修改 SPEC 0001、Goal、D1 schema、DO 状态或规则机械。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T09:03Z | `node --import tsx --test tests/room-authority-telemetry-v2.test.mjs`（实现前） | 1 | 2/2 RED，生产分阶段遥测模块不存在；证实不是已有粗粒度日志可满足。 |
+| 2026-08-27T09:07Z | `node --import tsx --test tests/room-authority-telemetry-v2.test.mjs tests/structured-telemetry-v2.test.mjs` | 0 | 9/9；四操作各一份精确样本、query 透传、retryable/throw 分类、返回/异常不变及禁止内容扫描全部通过。 |
+| 2026-08-27T09:07Z | `npm run typecheck` | 2 | 并行中的裁定先例/隐藏现实切片尚处 GREEN 中间态：`KpProposalDraft.adjudicationPrecedent` builder 未补，hidden randomness union 尚未收窄；错误均位于对应代理当前改动，分阶段遥测文件无 TypeScript 报错。已把逐项诊断发送给两位实现代理，须在其合入后重跑，不能把本次失败写成通过。 |
+
+### 当前剩余条件与下一步
+
+- 等待并复核三条并行 TDD 切片，消除上述中间态类型错误后重跑 typecheck/module check；随后补章节 module ref/migration、到期 Actor/Faction plan 和 causal correction replacement Delivery。
+- 此实现只建立可计算真实月度 SLO 的生产样本；尚未部署，当然也没有声称已有自然月生产分位数。Stage 5 部署后须用代表性请求确认四类实际日志进入现有控制面，并在最终回执明确观察窗口边界。
+
+## 多版本 Module Registry 与获批迁移底座（2026-08-27）
+
+- 当前阶段：仍为 Stage 4。保持新房间默认 `black-oak-will@legacy-anchor-v1` 和其既有 hash 不变；新增 `legacy-anchor-v2` 作为同一 Story Bible 的兼容版本化发布，不修改模组真相、中文内容或现有房间 pin。
+- Registry 现在同时把每个版本固定到独立 `moduleId + moduleVersion + profileHash`，`verifyAuthoritativeModuleProfile` 既重算 canonical payload，也必须命中内置 pinned hash，不能用任意自算 hash 自证。唯一获批映射为 v1→v2、只允许章节边界、明确列出保持的权威状态集合；反向、未知版本和篡改 from/to/hash 均 fail closed。
+- 这只是章节绑定的可信内容底座；`ChapterStarted.moduleRef` 与 `ModuleVersionMigrated` 事件、Room 在 ActionPlan 接缝的 Registry 验证尚未完成，不能把本节写成 SPEC 0006/0008 全部通过。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T09:13Z | `node --import tsx --test tests/module-npc-v2.test.mjs`（实现前） | 1 | RED：缺 `authoritativeModuleMigration` 导出；旧单版本实现不能满足双版本/迁移合同。 |
+| 2026-08-27T09:16Z | 同一命令（先固定 v2、再固定 migration canonical hash） | 1 → 0 | 最终 5/5；v1 hash 保持、v2 独立 hash、正向映射可验证、反向和篡改拒绝、Story Bible 秘密边界与 NPC 有限知识回归通过。v2=`sha256:283e0b6d…0a03`，迁移=`sha256:447f943f…7c4d`。 |
+| 2026-08-27T09:17Z | 定向 ESLint；定向 `git diff --check` | 0 | ESLint 无错误（3 个生产 `.ts` 因项目 ignore 规则只报 ignored warning）；diff whitespace 检查无输出。冻结源码仍须执行全量 lint。 |
+
+### 当前剩余条件与下一步
+
+- 并行核心事件模型收口后，把 Registry 精确引用接到 chapter start/transition：同版本沿用、跨版本必须携带服务端验证的迁移引用并产生 `ModuleVersionMigrated`，旧章保留旧 ref；再经 replay/project 和真实 Room transaction 验证。
+
+## 裁定先例、隐藏现实候选与玩家能动性合同（2026-08-27）
+
+- 裁定先例：KP 的同一 `ActionPlan` 现在可携带结构化 precedent 注解；Rules 在任何 `CheckFrozen`/随机请求前提交 `AdjudicationPrecedentRecorded` 或 `AdjudicationPrecedentSuperseded`。记录固定 context fingerprint、公开/私有依据引用、能力/技能、DC、耗时、结果、作用域和适用 Profile；supersede 只接受仍活跃先例，必须列出实质差异且 fingerprint 已变化。KP 投影可见完整记录，玩家只见公开部分，归档恢复和 replay 保持一致。
+- 隐藏现实候选：KP 必须一次提交完整的互斥候选集、权重和物化效果；直接物化与候选集互斥。Rules 先整体验证全部候选，任一无效即无事件、无随机；合法集合在同一 Root Action 内以 `1d(sum weights)` 冻结选择，记录 `DiceRolled` 与仅内部可见的 `HiddenRealityCandidatesFrozen`，只提交获选候选的权威物化事件。多波 DO journal、崩溃点和驱逐恢复复用既有随机权威链，未选候选不进入五类玩家投影、错误、Delivery 或恢复输出。
+- 玩家能动性：所有 KP narration 改为 v3 结构，必须逐条声明 `agencyClaims` 的 subject、claim kind 与 frozen-basis refs。玩家主体只允许 `committedObservableAction` 和 `sensoryConsequence`；思想、情绪、未承诺对白与下一行动等闭集 claim 均在 adapter、Action 和 DO 三处确定性拒绝，依据必须绑定冻结投影。此接缝不做自然语言关键词扫描；若模型故意把文本错误标注为允许种类，属于结构化模型合同违约而非机械层 NLP 猜测，Stage 5 的模型评测仍须覆盖。
+- 修改集中在 `app/_runtime/lib/kp/` 的 authoritative schema/policy/helpers、`app/_runtime/lib/room/` 的 proposal/action/DO 接缝，以及 `app/_runtime/lib/rules/v2/` 的 model/events/actions/projector/compound 路径；新增 `tests/adjudication-precedent-v2.test.ts`、`tests/hidden-reality-room-v2.test.ts`，并扩展相应 adapter、Rules、observer、randomness 和 Profile fixtures。没有修改或缩小 SPEC 0001。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（precedent RED→GREEN） | Room precedent、KP adapter、Rules compound 定向测试；随后 `npm run typecheck`、`npm run module:check`、`git diff --check` | 1 → 0 | Room 1/1、KP 3/3、Rules 2/2；事件顺序、私密投影、supersede 约束、归档恢复通过。 |
+| 2026-08-27（hidden reality RED→GREEN） | Rules/Room hidden candidate、randomness recovery、KP/Profile/fixture 组合；随后类型与模块边界 | 1 → 0 | Rules 1/1、Room 1/1、随机恢复 16/16、KP/Profile 25/25、fixtures 39/39；坏候选零副作用、崩溃后不重掷、未选候选零泄露。 |
+| 2026-08-27（agency validator RED→GREEN） | KP adapter/action、observer DO、structured telemetry 定向组合；随后 `npm run typecheck`、`npm run module:check` | 1 → 0 | adapter/action 24/24、observer 9/9、telemetry 7/7；禁止 claim、伪造 basis 和绕过三道接缝均 fail closed。 |
+| 2026-08-27（合并后全量类型） | `npm run typecheck -- --pretty false` | 0 | 先前并行中间态的两个 TypeScript 错误均已消除；三条事件/随机/叙事合同在共享源码状态下通过全量类型检查。 |
+
+### 当前剩余条件与下一步
+
+- 这些语义改变了 Event/Projection/Presentation 等 canonical 文档；当前实算 ruleset=`sha256:7651d581…4af0`、event=`sha256:3f1d9537…a67`、manifest=`sha256:496da17f…8051`、genesis=`sha256:b34ffa38…a71f`，仍不是发布冻结值。章节迁移、ActorPlan 和 correction replacement Delivery 完成后再统一重算并跑完整 Profile 组合。
+- 正在以三个互不改生产代码的 RED 测试切片冻结章节版本迁移、到期角色计划和因果纠正替代帧的真实 Room 合同；RED 证据复核后再按共享文件顺序实施，避免并行覆盖。
+
+## 复合行动 NPC fixture 因果修正（2026-08-27）
+
+- 症状：precedent/hidden reality 合并后，`tests/compound-action-v2.test.ts` 的 NPC `resolveNoncombatSave` 提案返回 `needsKp`。诊断首先补齐 canonical save 计划后，Rules 继续明确报告 frozen cost/effect 不可用。
+- 根因：该测试初始化的动态 NPC 没有编译后的 2014 ability statistics，却让夹具要求该 NPC 自行执行机械豁免；生产规则正确拒绝不完整/不可冻结的机械计划。这个测试原本只验同一 Root Action 对动态事实、NPC 计划、场景问题与玩家检定的原子提交，不需要发明 NPC 数值或放宽校验。
+- 修改：NPC 草稿保留非机械计划并把 `mechanicalProposal` 设为 `null`；随机承诺与检定事件预期由两份改为真实的一份玩家检定，同时移除会在失败输出中展开完整 KP truth 的调试捕获。生产代码未改。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T09:31Z | `npx vitest run tests/compound-action-v2.test.ts --reporter=verbose --testTimeout=30000` | 0 | 1/1；同一生产 KP draft 仍原子提交动态事实、NPC 非机械计划、场景问题与玩家检定，只有可由人物卡冻结的玩家检定消费随机。 |
+
+### 当前剩余条件与下一步
+
+- 该 GREEN 只修正测试前提，不替代 SPEC 0006/0008 的结构化到期 Actor/Faction plan；后者仍须由真实 Room 在受影响玩家意图前结算，并覆盖驱逐恢复、有限知识、alternate target 和不自动攻击/pass。
+
+## Stage 4 三条剩余主干的真实 Room RED（2026-08-27）
+
+- 章节绑定首因：Campaign genesis 已固定 moduleRef，但 opening Chapter 与 `ChapterStarted` 没有绑定；ActionPlan 闭合 schema 也不接受迁移引用，Room 无法校验 Registry 并产生显式迁移事件。独立测试冻结 v1/v2/migration 三个 pinned hash、同版继承、唯一获批 v1→v2、旧章保留与所有篡改零事件。
+- ActorPlan 首因：`NpcActionProposal` 的严格 validator 只接受旧五字段，完整 premise/有限知识/next step/resources/Activity/due-or-trigger/trace/alternate target 在进入 Rules 前已 fail closed；现有 `NpcPlanFormed` 事件也只能保存 goal/refs/nextAction/resources。第一条 tracer 先固定真实 Room 能完整固化且玩家不见秘密，GREEN 后再增加“到期计划先于受影响玩家意图”的二阶段 Room 编排、驱逐恢复和禁止自动 attack/pass。
+- O16 首因：`commitCorrection` 已在一个 DO transaction 中正确 supersede 旧 Receipt/Delivery，并切换新 active branch；但 correction outcome 没有以更正前状态、新状态、更正事件与目标 actor 冻结 replacement `DeliveryPlan`，所以事务外 KP 没有可重试的新分支专属投影可叙述。测试同时证明旧正文立即不可取、错误分支秘密消失、旧 Receipt superseded，唯一 RED 是 plan 缺失。
+- 新增测试仅为 `tests/chapter-module-migration-v2.test.ts`、`tests/actor-plan-room-v2.test.ts`、`tests/correction-delivery-o16-red.test.ts`；三个 RED 代理都未改生产、文档、共享 helper 或提交。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（chapter RED） | `npx vitest run tests/chapter-module-migration-v2.test.ts --reporter=verbose --testTimeout=30000` | 1 | 4/4 按预期 RED：opening chapter `moduleRef=undefined`；获批迁移也被旧 ActionPlan schema 退回 `needsKp`；反向/任意/篡改没有可授权路径。 |
+| 2026-08-27（ActorPlan RED） | `npx vitest run tests/actor-plan-room-v2.test.ts --reporter=verbose --testTimeout=30000` | 1 | 真实 `handleRoomAction + ROOMS` 返回 `needsKp` 而非 committed；首个拒绝位于 `npcActions()` 的旧 exactKeys。 |
+| 2026-08-27（O16 RED） | `npx vitest run tests/correction-delivery-o16-red.test.ts --reporter=verbose --testTimeout=30000` | 1 | 旧帧/Receipt/秘密失效部分全通过；唯一失败为 `corrected.deliveryPlan` 是 `undefined`，精确定位 replacement freeze 缩口。 |
+| 2026-08-27（三个新测试） | 定向 `git diff --check` / no-index whitespace 检查 | 0 | 三个独立测试文件无空白错误；没有借 RED 改生产行为。 |
+
+### 当前剩余条件与下一步
+
+- 章节迁移已进入最小 GREEN；完成并复核后，再串行实现 ActorPlan 固化及其 due preflight，最后实现 O16 replacement Delivery，避免三条主线同时修改 kp/Rules/Room 共享文件。
+- 全部 GREEN 后仍需按终审清单补最小责任 Interface 组合并统一冻结 Profile；当前仍未进入 Stage 5，也未进行远端 D1、Workers AI、部署或 push。
+
+## Chapter ModuleRef 与获批版本迁移 GREEN（2026-08-27）
+
+- opening chapter 现在从已验证 genesis 固定精确 `moduleRef`；`ChapterStarted` 必须携带当前 Campaign ref，同版本 transition 继承而不重解释旧章。旧 Rules genesis fixture 的兼容规范化只允许从同一已验证 genesis ref 补齐缺省字段，已存在但不合法/不一致的 ref 仍 fail closed。
+- 公共 KP ActionPlan 只可声明 `moduleMigration:{fromModuleRef,toModuleRef,migrationRef}` 三个引用。Room adapter 把它们视为查找主张，独立调用内置 Registry 取得 pinned mapping、重算校验并逐字段比对；随后删除来宾字段，注入不可由公共 schema 提交的内部 `verifiedModuleMigration`。反向、未知、自算、任一 hash/字段篡改均返回 `profileIntegrityMismatch` 且零事件。
+- Registry 的 Web Crypto 校验发生在事务外；await 后 DO 重放最新权威 head，Rules 再检查 current Campaign binding，最终 transaction 仍核对 head，因此并发章节变化不会拿旧校验结果提交。
+- 唯一获批 v1→v2 在同一 Root Action 中严格生成 `ChapterConcluded → ChapterContinuityRecorded → ModuleVersionMigrated → ChapterStarted`。migration event 只切换 Campaign current ref；旧 chapter 保留旧 ref，新 chapter 固定 v2；KP module projection 随 Campaign 当前绑定读取相应 Registry 版本。
+- 修改：KP type/schema/helper、Room proposal-adapter/DO、Rules model/actions/compound/campaign action+event/correction/normalization，以及 `tests/chapter-module-migration-v2.test.ts`。没有修改 SPEC 0001、Goal、远端或持久化 schema。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（Chapter GREEN） | `npx vitest run tests/chapter-module-migration-v2.test.ts tests/compound-action-v2.test.ts --reporter=verbose --testTimeout=30000` | 0 | 5/5；opening/同版/获批迁移/反向或任意/哈希篡改真实 Room 路径通过。 |
+| 2026-08-27（相关回归） | module/NPC/world/Profile/Rules compound 组合 | 0 | 61/61；旧 world fixture 首次因缺 ref 失败后，只在规范化 Adapter 从 genesis 精确补齐，最终全绿。 |
+| 2026-08-27（KP schema） | authoritative KP adapter 组合 | 0 | 10/10；公共 migration 字段闭合验证、内部字段不可自报及其余提案无回归。 |
+| 2026-08-27（结构门） | `npm run typecheck -- --pretty false`；`npm run module:check`；`git diff --check` | 0 | 类型、单一 Rules/Room 接缝和空白检查均通过。 |
+
+### 当前剩余条件与下一步
+
+- ActorPlan 第一切片正在把完整 premise/有限知识/计划步骤/资源/Activity schedule/trace/alternate target 固化为同一 Rules 事件与私有状态；这一步 GREEN 后再实现可驱逐恢复的 due stage 编排，不能把“能保存计划”误写成“已满足到期优先”。
+- O16 已有 replacement plan RED 与完整幂等设计，待 ActorPlan 共享文件稳定后串行实现。之后统一重算 canonical Profile 并执行 Stage 4 完整责任 Interface 审计。
+
+## ActorPlan 权威形成与私密持久化 GREEN（2026-08-27）
+
+- KP 提案新增闭合 `ActorPlanProposal`：premise refs、next step、resources、唯一 Activity、且仅一个 fiction-time due 或已提交 trigger、可察觉 trace template 与 alternate target。公共提案不能自报 actor/revision/status/chapter/module；Rules 从当前权威 NPC、Campaign 与 Chapter 派生这些字段。
+- Rules 逐项证明 premise/trigger knowledge 由该 NPC 持有，资源来自其自身或已物化且包含该 NPC 的 Faction，alternate target 是已存在或同事务物化的实体/场景；plan/activity/trace ID 在同一 proposal 唯一且不能与既有权威状态冲突。非法值返回 `invalidRulesInput`/`npcKnowledgeInsufficient`，不靠 KP 全知补齐。
+- 合法计划在一个 Root Action 内先提交完整私密 `NpcPlanFormed`，再提交绑定 planId 的私密 `ActivityStarted{completion:{kind:'actorPlan'}}`；fold 交叉核对 NPC、Activity kind/duration、chapter/module pin 和 trace 未先物化。玩家 projector 不公开 NPC plan、premise、alternate reason 或 Activity 私密内容。
+- 旧六字段 `NpcPlanFormed` 保持显式 legacy union，不被新解释器静默重写；本切片没有实现 due 检测/执行、Faction plan 或阶段 journal，不能据此宣称 SPEC 0006 验收 5–6 已完成。
+- 修改：`kp/authoritative-types.ts`、`authoritative-helpers.ts`、`authoritative-policy.ts`、Rules `model.ts`、`campaign-events.ts`、`compound-actions.ts`，以及 `tests/actor-plan-room-v2.test.ts`；未新增 Room/D1 第二状态表。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（formation GREEN） | `npx vitest run tests/actor-plan-room-v2.test.ts --reporter=verbose --testTimeout=30000` | 0 | 1/1；真实 `handleRoomAction → Room DO → Rules → archive/observe` 固化完整 plan/Activity，玩家 surface 不含 knowledge ref、plan id 或 alternate 原因。 |
+| 2026-08-27（相关规则回归） | KP adapter + Rules compound + world campaign + module NPC + Runtime Profile | 0 | 71/71；旧 NPC plan、模块绑定、世界连续性与 Profile integrity 无回归。 |
+| 2026-08-27（Room/迁移回归） | Room compound + chapter moduleMigration | 0 | 5/5；ActorPlan 改动未覆盖或放宽 `ModuleVersionMigrated` 三个拒绝向量。 |
+| 2026-08-27（结构门） | `npm run typecheck`；`npm run module:check`；`npm run profile:reference-gate <<< '[]'`；tracked/untracked diff check | 0 | 类型、唯一权威入口、空远端引用 fixture 和 whitespace 均通过；首次无 stdin gate 的 `invalidGateInput` 是 CLI 正确拒绝，补合同要求的空 JSON 输入后通过。 |
+
+### 当前剩余条件与下一步
+
+- 先修 Chapter 只读复审发现的四项：direct `step` 内部迁移伪造、await 跨 scene 章节竞态、旧章 ref 不一致及 canonical Profile 级联（Profile 最终 hash 待所有事件语义完成统一冻结）。
+- 然后给 ActorPlan 增加真实 due tracer：受影响玩家意图前的有限知识 KP 阶段、显式 execute/revise/defer/cancel、同一外层 Root 的恢复 continuation、模型失败零自动 attack/pass/时间推进，以及两个驱逐点 exactly-once。
+
+## ActorPlan 到期优先 Room 编排 RED（2026-08-27）
+
+- 独立测试先通过真实 Room 形成上一节的 scheduled plan，再提交受同一 scene/timeline 影响的玩家 intent。它固定同一 submission/root 的 KP 阶段顺序必须是 `dueActorPlan → playerIntent`；due projection 只能含单一 NPC Viewer 与该 plan 的有限知识，不能复用玩家/全体 NPC/Module truth 的混合 KP 投影。
+- KP 必须显式返回 `execute | revise | defer | cancel`；当前 RED 先使用 execute，并要求 `NpcActionCommitted` 与按 trace template 产生的公开事实先于玩家 `FeasibilityRuled`，随后才以更新投影处理原意图。alternate target 只是 KP 可选许可，不允许自动选第一个目标。
+- 第二向量让 due KP 模型失败：稳定状态必须不产生 NPC action、Attack、pass、TurnEnded、ActivityCompleted、玩家事件或虚构时间推进，并返回可重试的 `modelTransient`。当前实现既没有 due phase，也把普通 proposal 的两次机械诊断重试误当作两次 player phase。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（due RED） | `npx vitest run tests/actor-plan-due-room-v2.test.ts --reporter=verbose --testTimeout=30000` | 1 | 2/2 精确 RED；阶段实际为 `[playerIntent, playerIntent]` 而非 `[dueActorPlan, playerIntent]`，故障向量得到 `needsKp` 而非 `modelTransient`。 |
+| 2026-08-27（formation 前置） | 同文件 formation setup 及 `tests/actor-plan-room-v2.test.ts` | 0 | 完整 plan 仍可真实形成；RED 只定位 Room due orchestration 缺失，不是形成协议回归。 |
+
+### 当前剩余条件与下一步
+
+- Chapter 三项复审修复完成后，按此 RED 增加最小持久 stage/continuation：Rules 决定 eligible plan 与 scope closure；Room 保存外层原意图和 due stage；Action 有界循环。先转绿 execute/模型失败，再补两个驱逐点、显式 alternate、Faction agent 与 trigger/chapter pin。
+
+## Chapter 迁移复审的三个安全闭包（2026-08-27）
+
+- Direct `step`：复审证明公共 Rules Interface 可伪造完整 `verifiedModuleMigration` JSON 并迁往任意 target。现抽出无 I/O 的 `module/migration-registry.ts`，Module authoritative 与 Rules 共享唯一 pinned descriptor；Room 仍额外执行 Web Crypto 内容哈希验证，Rules 则逐字段核对 module/from/to/migration/ruleset/policy/preserved state。完整 JSON 不再能自证。
+- Registry await 竞态：迁移提案在异步验证期间，另一 scene 原可先切章；旧调用随后从最新章重新推导 fromChapter 并再次提交。现只对“已绑定 module migration”保存校验前全局 event head；await 后任何变化统一 `scopeConflict`，普通非迁移的跨 scene 并发仍由原 scene scope 允许。
+- Genesis normalization：缺失 campaign/chapter ref 可以从已验证 genesis 精确补齐；显式存在的 ref 必须与 genesis 一致。重签名但塞入攻击者 chapter ref 的 genesis 现在 `invalidGenesis`，不会被“格式合法”掩盖。
+- Profile/EventSchema 级联没有在中间源码上执行。最终冻结时一次更新 Ruleset/EventSchema/Projection/Delivery/Manifest canonical leaves，并保留旧 manifest/interpreter Adapter；待更新清单已由复审明确记录。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（direct step） | chapter 定向 direct `step` 伪造向量 | 1 → 0 | RED 任意 attacker-v99 target 被 committed；GREEN target、migrationRef、moduleId、hash 四类伪造均拒绝且零事件。 |
+| 2026-08-27（await race） | 两 scene Registry-await 竞态真实 Room 测试 | 1 → 0 | RED Bob 先切章后旧迁移仍 committed；GREEN 旧调用 `scopeConflict`，竞争章与事件保持唯一。 |
+| 2026-08-27（normalization） | world-campaign 重签 genesis 向量 | 1 → 0 | RED 显式冲突章 ref 被 replay；GREEN 只有缺失值可补齐，显式冲突 `invalidGenesis`。 |
+| 2026-08-27（回归/结构） | chapter/module/world/Profile/Rules；chapter/ActorPlan/Room；typecheck/modulecheck/diff | 0 | 62/62、6/6、1/1、9/9；类型、模块边界、普通跨 scene 并发与 whitespace 全通过。 |
+
+### 当前剩余条件与下一步
+
+- Chapter 运行时边界现可冻结；canonical Profile 仍明确待最终事件/投影/Delivery 语义齐备后版本化。当前进入 ActorPlan due GREEN，不把两个已知 RED 写成通过。
+
+## Stage 4 责任 Interface 终审的首批硬缺口（2026-08-27）
+
+- 本轮只读对照 Goal 完成门、SPEC 0002–0013、当前生产入口与既有测试；没有把“已有类型/单元函数”当成真实 Room 证据，也没有提前进入 Cloudflare/Wrangler 阶段。
+- Delivery 通用恢复缺口：普通 Room Action 在世界结果已提交、`publishDelivery` 已写入但 RPC 响应丢失后，会从缓存的同一 DeliveryPlan 再次调用 narration；若模型返回不同措辞，DO 正确拒绝不同 publication hash，但外层会永久表现为 `deliveryPending`。O08/O15 与 O16 必须共用一个持久 `open | published | superseded` 状态查询，在叙述前跳过已完成/已失效 plan，不能只给更正做旁路。
+- Campaign continuity manifest 仍未覆盖 Actor/Faction plan 状态；precedent 清单也只含旧 meaningful-failure/retry-change，没有新 `adjudicationPrecedents`。最终须把它们纳入章节连续性/迁移的显式 preserved-state 合同，并用真实 chapter transition/restore 证明。
+- 当前完整 ActorPlan 只允许 NPC 已持有的 knowledge refs 作为 premise；关系、承诺和债务虽可在 NPC projector 中观察，却还不能成为计划前提。Faction 目前只有一次性 `FactionPlanAdvanced`，没有与 ActorPlan 同等级的形成、修订、取消、到期和行动闭环。
+- 归档 alarm 目前只有失败 telemetry；缺少成功样本和可计算 lag 的非内容 measurement，故 SPEC 0011 的 archive lag SLO 尚无生产可观测证据。
+- canonical Profile 文档/hash 仍未冻结 ModuleRef/迁移、ActorPlan/due 和 correction replacement/retry 新语义。必须等这些事件与投影稳定后一次版本化 canonical leaves、manifest、genesis 与 Registry/旧 Adapter，不能在中间源码状态反复伪造发布 hash。
+
+### 当前剩余条件与下一步
+
+- 先完成 ActorPlan due 的 Rules selector、有限 NPC 投影与 Room 两阶段恢复 journal；随后接管共享 `authority-store`/DO/Action 文件，以通用 publication-status seam 实现 O08/O15/O16，并为更正生成不含失效分支秘密的专属 delta。
+- 终审代理仍在收敛最小垂直测试组合；其完整矩阵返回后再按实现缺口优先级执行，避免补重复源码正则或同义单测。
+
+### 完整只读审计回执
+
+- 已确认不再重复补测的充分证据：统一事务/战斗/触发、DO 随机与崩溃恢复、分页归档与重建、基础多人/成长/章节/生命周期、投影/ACK/覆盖/HTTP 隐私/安全暂停、31 轮离线 KP 评测、Legacy/Profile/服务路由。最终只须在冻结 SHA 上按风险组合重跑。
+- 仍需真实实现或责任 Interface 证据：
+  - SPEC 0003/0011：真实 Room `forwardCompensation`；十二错误类完整代数；archive success/catch-up/lag telemetry。
+  - SPEC 0004/0005/0006/0007：v2 唯一物品并发、长休中断跨驱逐、冻结危险与 hidden candidate 不随 HP 重算、信件阅后销毁/固定接收者、动态能力跨归档新 DO、同事务 passage+scene+move、合法空房、私密槽控制权转移/撤销。
+  - SPEC 0005/0006/0008：社会关系/承诺/债务成为 ActorPlan 前提；完整 Faction plan lifecycle；retired→NPC 有限知识行动；continuity manifest 纳入 NPC/Faction plans 与 adjudication precedents。
+  - SPEC 0008/0009：成长跨驱逐 exactly-once 及 D1 静态卡写失败不回滚 DO；错误死亡→继任行动→真实 Room correction；胜利/不可逆失败/明确放弃三类结局；卡住时 reorient→existing opportunity、现实等待不惩罚。
+  - SPEC 0010：O05/O06/O08/O11/O12/O15 与上述纵切合并；O13/O18 还依赖 Stage 5 真实模型、HTTP、日志和 D1 证据。
+  - SPEC 0013：最终事件/continuity/delivery 语义稳定后，统一 canonical profile/manifest/genesis/Registry/Adapter 与动态能力恢复向量。
+- 规格冲突待显式决议：SPEC 0005 §12.7 字面要求“同一知识错误同时有前向补偿与因果分支”，但知识影响按 SPEC 0011 必须走因果分支，不能伪造可删除知识的前向修复。最终应以 SPEC 0001 的不秘密改史、有限知识和可审计更正不变量写一份 ADR/替代验收映射，而非放宽 Rules。
+- 最小新增测试面：扩展 ActorPlan due 与 observer delivery/O16；新增一个 `stage4-world-campaign-vertical-v2` 合并世界连续性向量；只在 `archive-correction`、`structured-telemetry`、`runtime-profiles` 补各自唯一缺口。已派发世界纵切 RED，只改测试、不改生产。
+
+### 知识更正的规格一致性决议
+
+- 使用 `domain-modeling` Skill 对照根 glossary、SPEC 0001/0005/0010/0011 与现有 correction fold，新增 ADR 0011，并在 `CONTEXT.md` 固定“知识更正”一词。没有修改或缩小任何 SPEC。
+- 决议：有权取得、`publiclyObservable` 且没有后继 Root/玩家选择影响的错误知识可用显式前向补偿；活动投影移除错误内容并展示说明，但原取得事件/Receipt/更正永久可审计，也不声称现实玩家遗忘。私人/共享秘密误授、原本无资格取得或已影响后继选择时必须打开因果分支；Room 请求的 `errorKind` 不能自报降低策略。
+- 验收映射因此是两个同类不同资格的真实 Room 场景，而不是让同一秘密既“前向删除”又因果分支：公开错误知识产生 `CorrectionApplied`；秘密误授产生 `CorrectionBranchOpened → BranchActivated`，两者都要经过 observe、归档恢复及安全 replacement Delivery。
+- 修改文件：`CONTEXT.md`、`docs/adr/0011-public-knowledge-correction-versus-secret-causal-branch.md`、本日志。实现和 RED/GREEN 尚未执行，不能把决议写成行为已通过。
+
+## ActorPlan 到期优先编排第一阶段 GREEN（2026-08-27）
+
+- 根因闭包：通用 `settleDueActivityBeforeInput` 原会把 `completion.kind='actorPlan'` 当普通 Activity 自动完成，玩家请求随后落入普通 KP 诊断；系统既没有有限知识决策阶段，也无法保证 NPC action 在受影响意图前发生。现由专用 Rules selector 选择同 scene/timeline 最早 eligible plan，普通 Activity preflight 跳过该类型。
+- Rules 新增内部 `dueActorPlanFor` 投影与确定性 child root。投影只含单一 NPC、该 plan、NPC 自身有限知识及合法目标，不含玩家原始 input、玩家私人知识或全体 NPC/Module truth。execute 产生 `NpcActionCommitted → CanonicalFactDeclared(trace) → ActivityCompleted`，payload 以 `causedByRootActionId` 绑定外层玩家 Root；fold 将 plan 置为 resolved。
+- Room 新增 `authority_action_stages(prepared_action_id, submission_id, phase, target_id, child_root_action_id, status, proposal_hash, result_json)`，并在 submission continuation 持久化 canonical original intent。due commit 后同一事务把 prepared/action stage 推进到 `playerIntent`，重新从更新后的权威状态投影；Action 以有界 continuation 继续原意图。
+- due decision schema 已闭合为 `execute | revise | defer | cancel`，但本切片只有 execute 有领域效果，其余明确拒绝；不能据此声称生命周期完整。模型异常返回 `retryableFailure/modelTransient`，且无 NPC action、攻击、pass、TurnEnded、ActivityCompleted、玩家事件或 Fiction Time 推进。
+- 修改：Rules `actor-plans.ts`、`model.ts`、`projector.ts`、`campaign-actions.ts`、`campaign-events.ts`；Room `authority-types.ts`、`authority-store.ts`、`durable-object.ts`、`action.ts`；`tests/actor-plan-due-room-v2.test.ts`。未提交、未改 Goal/Profile。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（due GREEN） | `npx vitest run tests/actor-plan-due-room-v2.test.ts ...` | 0 | 2/2；execute 先于 player intent，模型失败零事件/零时间。 |
+| 2026-08-27（相关回归） | formation/KP/compound/world/chapter/Room Vitest；Node/tsx KP/compound/world | 0 | 6 files / 22 tests 与 52/52 通过。 |
+| 2026-08-27（结构门） | `npm run module:check`；`npm run typecheck -- --pretty false`；`git diff --check` | 0 | 单一 Rules/Room 接缝、类型与 whitespace 全通过。 |
+
+### 当前剩余条件与下一步
+
+- ActorPlan 仍须真实实现 revise/defer/cancel、alternate target、trigger due、两个 eviction/retry 点、Faction plan/resource、社会状态 premise、retired→NPC 与 chapter/module pin 向量。
+- 共享 Room 文件现已交回主任务；接下来实现通用 publication-status seam，先关闭普通 O08/O15 响应丢失，再在同一机制上冻结/发布 O16 correction replacement plan。
+
+## Stage 4 世界/长团五向量真实责任 Interface 补证（2026-08-27）
+
+- 新增 `tests/stage4-world-campaign-vertical-v2.test.ts`，只经 `handleRoomAction + env.ROOMS` 与公开 observe/archive/retry 接缝；没有直接改 WorldState、事件、Audience 或内部表。五条审计向量在现状源码已全部 GREEN，因此没有为补证修改生产：
+  1. 同一 Root 原子注册此前不存在的 location + passage，并立即 `CharacterMoved` 到新 scene；
+  2. 合法空房只固化“为空”的结果，不强制生成 Artifact、Knowledge、Encounter、Milestone、XP 或 Resource 奖励；
+  3. 两个提案以屏障同时基于争夺前投影竞争同一唯一 Artifact，恰好一个 committed、全日志仅一条 `ArtifactAcquired`；
+  4. Alice/Bob 各自阅读同一信件后将 Artifact destroyed，两人的结构化知识仍在；后来移入的 Carol 不回补，归档只有两条对应 `KnowledgeAcquired`；
+  5. 在 `afterRandomnessCandidateCommit` 真实 checkpoint 中断后，另一 scene 的 Bob HP 改变；retry 不再调用 propose，HiddenReality frozen/materialized/dice 各唯一一份，选中 Definition 与冻结参数完全相同，不按 HP 重选/缩放。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（world vertical） | `npx vitest run tests/stage4-world-campaign-vertical-v2.test.ts --reporter=verbose --testTimeout=30000` | 0 | 5/5；上述动态通路、空房、唯一物并发、阅后销毁/不回补、HP 改变后的冻结 hidden candidate 全通过。 |
+| 2026-08-27（test diff） | `git diff --check -- tests/stage4-world-campaign-vertical-v2.test.ts` | 0 | 新垂直测试无 whitespace 错误；运行中的 checkpoint 日志是故障注入预期，进程 exit 0。 |
+
+### 当前剩余条件与下一步
+
+- 终审先前列出的 SPEC 0004 唯一物争夺/危险冻结、SPEC 0005 信件销毁、SPEC 0006 动态通路/空房、SPEC 0010 O05/O06/O11 对应事实边界，现已有同一真实 Room 垂直证据；冻结 SHA 只需重跑，不再补同义测试。
+- 长休中断跨驱逐、动态能力归档新 DO、成长/D1、角色/阵营计划、三类结局与投递恢复仍未由本文件覆盖。
+
+## O08/O15/O16 可恢复投递与更正替代帧 GREEN（2026-08-27）
+
+- 症状与首因：普通行动在 `publishDelivery` 已原子写入、RPC 响应随后丢失时，缓存 outcome 的 retry 会重新调用 narration；更正事务虽能失效旧 Receipt/Delivery 并切换分支，却没有冻结新分支专属 DeliveryPlan，也没有事务外可重试的更正发布入口。另一个真实生产接缝是 `withRoomAuthorityTelemetry` 没有透传新状态查询，测试内的幂等能力在线上代理后会消失。
+- 通用修复：Room Authority 增加只接受 `publishCapability` 的 `deliveryPublicationStatus`，持久状态严格为 `open | published | superseded`；较新观众水位会把未发布旧 plan 原子 tombstone。Action 在任何 narration 前查询状态，published/superseded 直接返回；cached committed/concluded outcome 也重新进入同一 publication continuation。零 audience 的 plan 仍须发布空 frames 以完成阶段，不能永久保持 open。
+- 更正修复：`PublicReceipt`/archive reference 保存可信 `actorCharacterId`；Rules correction 只绑定该 Receipt 的主体。`commitCorrection` 从更正前重放状态、新 active state、更正事件和目标 actor 冻结 replacement plan，并在同一事务中 supersede 旧 Receipt/Delivery、保存新 Receipt/plan/outcome。因果分支更正的 committed range 可跨 `BranchActivated` 保持同一 correction Root；公共 delta 只描述当前安全字段与显式更正说明，不序列化失效分支的 before 值、旧地点或错误秘密。
+- 恢复入口：新增 `handleRoomCorrection`，模型失败、发布响应丢失和再次 retry 都复用同一 correctionId/plan/publication status。`runAuthoritativeRoomCorrection` 是唯一生产 server-only 接缝，能力来自 `roomServiceCapabilities().correction`，未暴露玩家 API；模型与完成结果均走固定字段遥测。普通行动的遥测代理也透传 status/publish，不记录 capability、frame 或投影内容。
+- 修改：Rules `model.ts`、`events.ts`、`actions.ts`、`projector.ts`；Room `authority-types.ts`、`archive.ts`、`authority-store.ts`、`durable-object.ts`、`action.ts`、`authority-telemetry.ts`、`server.ts`；新增/扩展 delivery/correction/telemetry 测试。没有修改 SPEC、Goal、远端、D1 schema 或部署配置。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（publication RED） | `npx vitest run tests/delivery-publication-retry-v2.test.ts ...` | 1 | 2/2 按预期 RED：响应丢失 retry 未查询 status；已被新回应取代的旧 plan 仍调用 narration。 |
+| 2026-08-27（O16 RED→GREEN） | `npx vitest run tests/correction-delivery-o16-red.test.ts ...` | 1 → 0 | RED 无 replacement plan；GREEN Alice/Bob 获得新分支帧、Carol 无 audience，旧 slot/Receipt 失效，错误秘密和旧正文不进入新帧。 |
+| 2026-08-27（correction recovery RED→GREEN） | `npx vitest run tests/correction-delivery-retry-v2.test.ts ...` | 1 → 0 | RED 尚无 handler；GREEN 模型失败后 correction 已提交且 pending，发布成功但响应丢失只写一次，第三次不叙述/不发布，frame 与 archive event 集合不变。 |
+| 2026-08-27（通用投递组合） | correction/delivery 三文件 Vitest | 0 | 4/4；普通响应丢失、旧 plan supersede、更正替代帧及更正三段恢复同时通过。 |
+| 2026-08-27（遥测代理 RED→GREEN） | `node --import tsx --test tests/room-authority-telemetry-v2.test.mjs` | 1 → 0 | RED status 方法丢失；GREEN 3/3，status/publish 原样透传且零内容日志。 |
+| 2026-08-27T11:16Z | correction/archive/observer/delivery Vitest + voice race Node | 0 | 6 files / 21 tests 与 2/2 通过；归档恢复、战斗 correction、observer single-slot、ACK/覆盖/晚到 narration 无回归。 |
+| 2026-08-27T11:15Z | `npm run typecheck && npm run check:runtime-module && git diff --check` | 1 | Typecheck 已 exit 0；第二项脚本名写错，npm 明确报 `Missing script: check:runtime-module`，后续项未执行，不计为产品失败。 |
+| 2026-08-27T11:16Z | `npm run module:check && git diff --check` | 0 | 正确脚本验证唯一 Rules/Room 权威边界，whitespace 通过。 |
+
+### 当前剩余条件与下一步
+
+- O08/O15/O16 的通用 publication continuation 与 server-only correction 接缝已有责任 Interface 证据；最终冻结 SHA 只需纳入完整门重跑。公开知识 forward-compensation 的 ADR 映射仍须一条真实 Room 向量，不能用本节的秘密因果分支替代。
+- 当前并行完成 Actor/Faction plan 生命周期与长休跨驱逐 RED；其后补 continuity manifest、动态能力 archive restore、成长/D1、错误死亡到更正、三类结局、归档成功/lag 遥测和最终 Profile 冻结。
+
+## 公开知识前向补偿的真实 Room 闭环（2026-08-27）
+
+- RED：由 ActionPlan 对一个既存 `visibility:public` canonical fact 执行公开感官读取，知识原被 fold 成 `private`；即使改为 `publiclyObservable`，通用 ActionPlan 自动生成的 action-basis Definition/CanonicalFact 与 SceneQuestion 也让 correction 一律判为 causal branch。`errorKind` 没有参与策略，失败来自 Rules 自身保守闭包。
+- 修复：`SensoryEvidenceAcquired` 只在其事实本身是 `visibility:public` 时由 Rules 派生 `publiclyObservable`，KP 不能自报该升级。Correction 仍要求无 downstream Root，且新增知识必须是当前记录、由受影响事件取得、before 为 null；只有存在这种公开知识时，才允许同 Root 自动生成且可精确识别的 `fact:action-basis:<root>` Definition/CanonicalFact、`scene-question:<root>` 和 fiction-time 作为同一前向补偿闭包。私人/共享知识、任一其他世界效果、动态 location/NPC/item/faction/combat 状态或任何后继 Root 仍强制 causal branch。
+- 真实闭环：目标知识在更正前投影为 `publiclyObservable`；`handleRoomCorrection` 返回 `forwardCompensation` 且 active branch 不变，目标 Receipt/旧 Delivery 原子 supersede，新安全帧发布；当前 knowledge 投影移除错误转写但保留原公开事实，更正事件为 `CorrectionApplied` 而非 branch；archive 不含 narration，恢复到全新 DO 后 read model 等价、Delivery 为 none、错误内容不回生。
+- 修改：`campaign-events.ts`、`correction.ts`、`tests/archive-correction-v2.test.ts`；遵循 ADR 0011，没有修改或缩小 SPEC。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（公开知识 RED） | archive correction 单向量 | 1 | 第一 RED 为 visibility 实际 `private`；派生公开后第二 RED 仍是 `causalBranch`，精确定位自动 action scaffolding 的 correction effect 分类。 |
+| 2026-08-27T11:30Z | `npx vitest run tests/archive-correction-v2.test.ts -t 'forward-compensates public acquired knowledge' ...` | 0 | 1/1；公开知识前向补偿、替代帧、归档与新 DO 恢复闭环通过。 |
+| 2026-08-27T11:31Z | archive/O16/retry/combat correction Vitest | 0 | 4 files / 11 tests；公开 forward 与秘密/资源/位置/战斗 causal branch 同时通过。 |
+| 2026-08-27T11:31Z | `npm run typecheck && npm run module:check && git diff --check` | 2 | correction 测试已绿；typecheck 被并行尚未完成的 ActorPlan `campaign-actions.ts:2080-2081`（`eventRef` narrowing）阻断，已通知责任代理，后两项未执行；不得记为本切片完成门。 |
+
+### 当前剩余条件与下一步
+
+- ADR 0011 的两个策略现在都有真实 Room/投递/归档证据；待 ActorPlan 并行修改稳定后重跑类型与结构门。
+- 长休跨驱逐 RED 已独立定位：DO 正确恢复 active rest，但一小时 strenuous travel 的移动事务没有派生 `ActivityInterrupted`，幽灵 activity 随后挡住新休整；下一步在统一 consequence→Activity interruption 位置修复，不放宽 `startRest`。
+
+## 2014 长休中断跨 DO 驱逐 GREEN（2026-08-27）
+
+- RED 因果链：开始八小时长休后真实驱逐 Room DO；新实例正确重放出 active Rest Activity，且一小时旅行没有提前恢复 HP/资源。首个不变量破坏发生在 `compound-actions.ts:consequenceDrafts`：移动只派生 `CharacterMoved`/Fiction Time，没有在同一 Root 检查该角色的 active long rest，因此 Activity 永久 active，后续合法 restart 被 `startRest` 的 `alreadyActive` 正确挡住。
+- 修复：当且仅当已冻结移动时长至少一小时、移动实体自身存在 active `restKind:'long'` Activity 时，在同一 Rules 事务内先提交一个确定排序的 `ActivityInterrupted{cause:{kind:'longRestStrenuousTravel2014',durationMicros,destinationSceneId}}`，再提交移动。没有按 wall clock、DO 生命周期或玩家原文判断；纯粹推进八小时休息时间不会被误判为旅行。
+- 闭环：驱逐后的一小时 shrine→yard 旅行将旧 Activity 置 interrupted，HP/资源仍未恢复；新 Root 可重新开始长休。完整八小时后再次驱逐，`completeActivity` 恢复至 20 HP 与 2014 资源值；同 prepared retry 返回同 Receipt；archive 恰好一条 ActivityInterrupted、一条 RestCompleted。
+- 修改：新增 `tests/rest-activity-eviction-v2.test.ts`；生产只改 `compound-actions.ts` 的统一 consequence draft seam。没有修改 store/DO、`startRest`、SPEC、D1 或部署配置。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（eviction RED） | `npx vitest run tests/rest-activity-eviction-v2.test.ts ...` | 1 | 驱逐后旧 Activity 实际 `active`、restart `needsKp`；未完成恢复值保持不变，证明首因不是提前效果或重建丢失。 |
+| 2026-08-27T11:33Z | 同一窄测 | 0 | 1/1；中断、restart、第二次驱逐、完成、同 prepared retry、归档 exactly-once 全绿。 |
+| 2026-08-27T11:34Z | rest + multiplayer + randomness recovery Vitest | 0 | 3 files / 26 tests；短休骰源、群体休整私密同意、四个随机 checkpoint/scene lock、驱逐恢复无回归。 |
+| 2026-08-27T11:34Z | Rules/time/long-casting Node 组合 | 1 | 49/51 当时通过；两项失败来自 O16 新 actor 字段尚未同步的 direct correction test fixture，不在休整路径。随后已为所有 direct `applyServiceCorrection` fixture 补可信 actor；完整重跑仍等待并行 ActorPlan helper 稳定。 |
+
+### 当前剩余条件与下一步
+
+- 本切片的机械与恢复路径已满足；冻结 SHA 上重跑完整组合。正在并行补动态 AbilityDefinition 的 archive→新 DO→调用纵切。
+- ActorPlan 并行改动曾令三个 NPC helper 回归报 `state is not defined`，责任代理已定位并修复 `commonStoryDrafts` 参数，待其窄测完成后统一重跑类型/结构门；不可把并行中间态当成休整回归。
+
+## D1 权威归档成功、追赶与 lag 遥测 GREEN（2026-08-27）
+
+- 症状与 RED：归档 alarm 只有 `room.archive.failed`，成功分页和最终追平没有任何生产样本；现有游标只保存下一次尝试时间，不能区分“刚排队”与“积压十分钟仍在重试”。新增真实 Room/D1 fake 向量首先因 `authority_archive_progress` 不存在 `pending_since_at` 以 `SQLITE_ERROR` 失败，证明旧实现无法计算代次年龄。
+- 单一事实源修复：私有 Room DO SQLite 游标新增 nullable `pending_since_at`。同一 pending generation 的 `mark/defer/restart/save-page` 都保留最早时间；只有真正 caught up 才清空，下一代工作重新起钟。DO 构造时用 `PRAGMA table_info` 原位升级旧表，并以旧 `updated_at` 保守回填仍 pending 的代次，重建不会把 SLO 时钟归零。没有修改 D1 schema、公开 archive 格式或活跃 WorldState。
+- 生产遥测：每个成功页在持久保存游标后输出固定白名单 `room.archive.page.completed`，明确 `catchingUp | caughtUp`、`replayIntegrity:verified`、非负页时长和由持久起点计算的 lag bucket；失败样本也使用同一 lag 计量并继续原有 retry。事件只含哈希 room correlation 与桶，不含 room id、角色卡、删除原因、事件正文、Delivery/Prompt 或 error message/stack。
+- 责任 Interface 证据：一个 42 角色移除生成的多页真实 archive 先遭 synthetic D1 outage，在 650 秒持久积压上得到 failure `alert`，随后分页得到 catching-up `alert` 与 caught-up `alert`；新 pending generation 成功后得到 `withinTarget`。另一个测试把对象表实际降为旧列集合、驱逐并重建，确认新增列和原 `updated_at` 起钟值都被保留。
+- 修改：`app/_runtime/lib/room/authority-store.ts`、`durable-object.ts`、`tests/archive-do-resume-v2.test.ts`。未改 Goal、SPEC、远端 D1、Wrangler 或部署状态。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T11:45Z | 归档 telemetry 窄测（实现前） | 1（预期 RED） | `no such column: pending_since_at`；首因固定在持久游标而非 serializer 或测试常量。 |
+| 2026-08-27T11:46Z | 同一 telemetry 窄测（实现后） | 0 | 1/1；failure/catching-up/caught-up 与 `alert → withinTarget` 全部来自生产 alarm，敏感哨兵扫描为零。 |
+| 2026-08-27T11:47Z | `npx vitest run tests/archive-do-resume-v2.test.ts --testTimeout=60000 --reporter=verbose` | 0 | 5/5；旧表迁移、D1 清空后重建、代际竞态、85+ events 有界分页/失败重试/驱逐/TTL 及新遥测同时通过。 |
+| 2026-08-27T11:48Z | `node --import tsx --test tests/structured-telemetry-v2.test.mjs && npm run typecheck && git diff --check -- ...` | 0 | serializer 7/7；当前并行源码类型通过；本切片三文件 whitespace 通过。 |
+
+### 当前剩余条件与下一步
+
+- SPEC 0011 审计指出的 archive success/catch-up/lag 生产可观测缺口已关闭；冻结 SHA 上只需纳入归档与结构化遥测组合，不再补同义测试。
+- 等待 ActorPlan 生命周期与动态 Ability 跨新 DO 两个并行切片返回后合并窄门禁；随后继续成长/D1 边界、角色继任更正、三类结局与 continuity manifest 的剩余责任 Interface。
+
+## ActorPlan/FactionPlan 非机械生命周期与社会 premise GREEN（2026-08-27）
+
+- 症状与首因：formation/首个 execute 已存在，但 closed due decision 拒绝 `revise | defer | cancel`，fold 没有版本化修订/取消事实；关系、承诺、债务虽已是权威状态却不能成为有限社会前提；`npcTransitioned` 的退场 PC 被 active-only 谓词排除；Faction 只有一次性 advance，没有 formation/resource snapshot/due lifecycle。实现期间 `commonStoryDrafts` 新增社会 scope 时漏传 `state`，三条复合测试实际抛 `state is not defined`，随后在唯一调用点显式传入并转绿。
+- Rules/Room 修复：ActorPlan 可 execute/revise/defer/cancel，修订只能使用当前 NPC 可得 premise、冻结资源、due xor trigger 与显式 alternate target；cancel 中断 Activity，defer 不提前触发，execute 依次提交 NPC action、trace fact 和 Activity completion。关系/承诺/债务/知识统一进入有限 premise 与 scope；退场并经玩家同意转 NPC 的实体可继续形成/执行计划。FactionPlan 同步形成、冻结成员/资源引用并在关联 actor plan 的版本/状态上镜像推进。
+- 恢复证据：真实 Room 覆盖知识 trigger、due、alternate target，以及 due commit 前和 due commit 后/player intent 前两处驱逐；child root、NPC 事件与原玩家 intent 都 exactly once，模型失败不推进。玩家 surface 不含私密 premise/plan/resource ref。
+- 修改：`actor-plans.ts`、`compound-actions.ts`、`model.ts`、`campaign-events.ts`、`campaign-actions.ts`、`room/durable-object.ts` 与三份 ActorPlan/compound 测试。未改 Action/server、文档/Profile/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（生命周期最终回执） | ActorPlan Room Vitest | 0 | 2 files / 8 tests；四种 decision、trigger/due、alternate target、两处 eviction 与 player-intent resume 全绿。 |
+| 2026-08-27（复合最终回执） | `node --import tsx --test tests/rules-compound-action-v2.test.mjs` | 0 | 31/31；offscreen faction、社会 premise、FactionPlan、退场 PC→NPC 与 NPC follow-up 均绿，`state is not defined` 已消失。 |
+| 2026-08-27（相邻回归） | world/module Node + stage4/chapter Vitest | 0 | 19/19 + 11/11；世界、模组 pin/迁移和五向量无回归。 |
+| 2026-08-27（结构门） | `npm run typecheck`；`npm run module:check`；`git diff --check` | 0 | 类型、单一 Rules/Room 权威入口和 whitespace 全通过。 |
+
+### 当前剩余条件与下一步
+
+- 本节没有冒充机械计划完整：due stage 当时仍明确拒绝非 null `mechanicalProposal`，Faction resource refs 只证明授权/存在/冻结而未臆造尚无模型的数量消耗。已续派同一纵切补 NPC 攻击/检定经 DO 随机 continuation 与驱逐恢复；在其转绿前不把 SPEC 0006 actor/faction 全合同标完成。
+
+## 动态 AbilityDefinition 归档到新 DO 后继续调用 GREEN（2026-08-27）
+
+- RED 因果链：真实 `handleRoomAction` 的动态注册返回 `needsKp`。首个违反点是 KP/Rules 动态 materialization 白名单不接受 `ability`；通用 DefinitionRegistered 仅包装 lore `content`，没有走既有 Ability Compiler，故即使归档也不能恢复成可执行 mechanic graph。
+- 修复：正式 KP proposal schema 接受 `ability`；Rules 要求 `definitionId === factRef`，用既有 Compiler 验证并冻结 `definitionHash/compilerProfile/mechanicGraph/compiledHash/referenceClosure`，两条复合行动事件路径复用同一 definition draft。没有在 restore 处特判或建立第二编译器。
+- 真实纵切：源 Room 注册定义并导出 archive；全新 DO 恢复返回 `projectionIntegrity:verified`。源/恢复 Room 都经同一 `handleRoomAction` 与相同 submission 调用该能力，`focus 2 → 1`，read model、archive head、definition/compiled hash 及 `ResourceSpent/AbilityInvoked` payload 深相等，各流 exactly once。
+- 修改：KP `authoritative-types.ts`、`authoritative-helpers.ts`、`authoritative-policy.ts`；Rules `compound-actions.ts`；新增 `tests/dynamic-ability-archive-restore-v2.test.ts`。未改 DO/correction/campaign-events/ActorPlan/docs/Profile/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（ability RED） | 动态 Ability archive 窄测 | 1（预期 RED） | production normalizer 白名单拒绝 ability，Room 返回 `needsKp` 且零定义提交。 |
+| 2026-08-27（ability GREEN） | 同一窄测 | 0 | 1/1；冻结 compiler artifact、归档、新 DO 恢复、源/恢复调用与资源 exactly-once 全绿。 |
+| 2026-08-27（相关回归） | Ability Profile Node；dynamic/archive/world Vitest | 0 | 8/8 + 11/11；既有静态编译、分页归档/恢复及世界五向量无回归。 |
+| 2026-08-27（结构门） | `npm run typecheck`；`npm run module:check`；目标 `git diff --check` | 0 | 类型、单一权威入口和 whitespace 全通过。 |
+
+### 当前剩余条件与下一步
+
+- 本责任向量选择无需骰的 free activation，充分证明定义/编译/hash/资源/调用跨归档恢复；它不替代正在补的 due ActorPlan 机械随机纵切。最终 Profile 冻结时须把新增 ability materialization/compiled event 语义纳入实算 hash。
+
+## 成长跨驱逐 exactly-once 与 D1 静态卡失败边界 GREEN（2026-08-27）
+
+- RED：新增真实 Room 测试最初因 production sync seam 不存在而 `ERR_MODULE_NOT_FOUND`。现状 Table 在 Room 成长提交后完全没有静态目录更新责任，因而也没有可故障注入并证明“不回滚 DO”的接缝。
+- 修复：新增 `table/authoritative-growth.ts`。只在 Room 已返回 `committed | concluded` 后，从可信 observe projection 派生可重建的成长静态摘要；只同步 level、能力值、最大 HP、熟练加值和 feature ids，明确保留 D1 既有 current HP、资源、装备、位置等字段，禁止镜像活跃状态。D1 写、读取或观察失败均返回/记录 rebuildable mirror failure，精确原 Room outcome 不变；同 submission retry 会重试镜像但不会重做成长。
+- 生产接线：自然语言与所有 authoritative table button 都走同一 post-commit helper。成功/失败只输出哈希 room/principal、固定 event/outcome/duration，不记录 sheet、投影或 error message。D1 更新是幂等 JSON 单行写；下一次 committed action 可修复先前失败。
+- 真实证据：里程碑只打开该玩家 Pending，明确选择后成长到 4 级；synthetic D1 writer 抛错仍返回原 committed outcome。驱逐 DO 后同 submission 直接返回缓存 outcome；投影仍为 level 4/dex 18/HP 7/24，archive 恰好一条 `CharacterAdvanced` 和一条 `CharacterMechanicsSynchronized`。后续成功镜像保留静态哨兵 current HP=999 和原 resources，只更新可重建成长摘要，证明 D1 不成为活跃状态权威。
+- 修改：新增 `app/_runtime/lib/table/authoritative-growth.ts`、`tests/growth-d1-boundary-v2.test.ts`，接线 `table/server.ts`。未改 D1 schema、Room 状态、Rules mechanics、SPEC/Profile/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T11:54Z | growth/D1 窄测（实现前） | 1（预期 RED） | `ERR_MODULE_NOT_FOUND: authoritative-growth`，证明没有 post-commit sync 责任接缝。 |
+| 2026-08-27T11:55Z | 第一版窄测 | 1 | 驱逐后同 submission 的 `prepare` 正确直接返回 cached committed；测试夹具错误坚持必须再次 prepared。修改 helper 接受缓存终态，未改产品幂等语义。 |
+| 2026-08-27T11:56Z | 第二版窄测 | 1 | 产品以带 canonical `choice` 的 `CharacterAdvanced` 保存选择，没有另发测试假设的独立 `AdvancementChoiceRecorded`；改核对实际权威事件 `CharacterAdvanced + CharacterMechanicsSynchronized`，未放宽 exactly-once。 |
+| 2026-08-27T11:57Z | growth/D1 窄测 + typecheck | 0 | 1/1；D1 failure、原 outcome、驱逐缓存、投影、后续 mirror repair 与两类事件各一全部通过；类型通过。 |
+| 2026-08-27T11:58Z | growth + multiplayer Room Vitest | 0 | 2 files / 10 tests；成长、休整、退休/继任、控制权、组队/时间均无回归。 |
+| 2026-08-27T11:58Z | table/service Node 回归首轮 | 1 | 17/18；旧源码护栏只接受 sendAction 分支内字面 `runAuthoritativeRoomAction`，抽取 helper 后虽行为等价仍被拒。恢复分支内可信调用并在其后接 post-commit helper。 |
+| 2026-08-27T11:59Z | table/service Node；typecheck；module check；目标 diff check | 0 | 18/18；类型、公开单一权威边界和 whitespace 全通过。 |
+
+### 当前剩余条件与下一步
+
+- SPEC 0008 验收 1 的两项责任现有同一真实 Room 证据；冻结 SHA 只需纳入成长/multiplayer/table 组合。继续处理错误死亡→继任行动→因果更正、三类结局、卡住 reorient 与 continuity manifest 终审。
+
+## Chapter Continuity Manifest v2 与生产 FactionPlan 接缝 GREEN（2026-08-27）
+
+- 审计目标：SPEC 0008 要求裁定先例、到期计划与势力计划跨章持续；旧 `campaign-continuity-manifest/v1` 的 `precedentStates` 实际只哈希 meaningful failure/retry change，`npcPlans`、`factionPlans` 和正式 `adjudicationPrecedents` 都不在清单。
+- 首层 RED/因果：真实 Room 的 faction ActorPlan formation 先返回 `needsKp`。拆开裁定和 formation 后定位为 KP `ActorPlanProposal`/strict schema 没有 `factionRef`，Rules 内部虽支持 FactionPlan，模型输出进入生产 normalizer 时却必被拒绝/剥离；此前只有 direct Rules FactionPlan 证据。现将 optional `factionRef` 加入类型、closed validator 与模型 JSON schema，Rules 仍验证 faction 存在、NPC 成员资格及全部冻结 resource refs。
+- 测试夹具修正：Rules 要求 fiction-time due 精确等于 NPC 当前虚构时间 + Activity duration；最初使用任意远期 due 的 `needsKp` 属测试非法，改为两秒 Activity/三秒到期，使 formation 后尚余一秒，切章时可合法选择 `continue`。没有放宽 due 机械。
+- 第二层 RED/修复：formation 转绿后，真实切章事件仍明确返回 v1 且缺三组状态。新房间现写 `zhuwei.campaign-continuity-manifest/v2`：`precedentStates` 增加正式 adjudication precedents，新增 `actorPlanStates`、`factionPlanStates`；每项仍只保存 ref + canonical state hash。旧 v1 closed shape、hash validator 与按旧 schema 重算函数保留，历史 v1 事件不会因新字段被隐式解释为 v2。
+- 真实责任 Interface：Room 先执行一次带公开规则依据的权威检定并记录 AdjudicationPrecedent，再由有限知识 NPC 形成带 faction/resource pin 的未到期计划，随后以 `activityTransitions:[continue]` 原子切章。archive 的 `ChapterContinuityRecorded` v2 同时钉住 precedent/NPC plan/Faction plan/Activity；玩家不获得内部状态正文。
+- 修改：KP `authoritative-types/helpers/policy`；Rules `campaign-continuity.ts`、`campaign-events.ts`；新增 `tests/chapter-continuity-manifest-v2.test.ts`。未改 SPEC/Goal/Profile、D1/DO schema、部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（continuity 初始 RED） | 新真实 Room 窄测 | 1 | formation 返回 `needsKp`；拆分裁定/formation 后仍复现，确认不是随机或裁定组合造成。 |
+| 2026-08-27（生产 Faction schema RED→GREEN） | 同一窄测迭代 | 1 → 1 | optional `factionRef` 接入 strict KP schema 后通过 proposal 层；下一拒绝来自测试 far-future due 不满足“当前时间 + Activity duration”，修正夹具而非生产。 |
+| 2026-08-27T12:09Z | canonical due 后同一窄测 | 1（预期 manifest RED） | formation/transition 已 committed；首个失败精确为实际 schema v1，不是预期 v2。 |
+| 2026-08-27T12:12Z | v2 实现后同一窄测 | 0 | 1/1；真实 Room archive 同时含 AdjudicationPrecedentRecorded、NpcPlanFormed、FactionPlanFormed、ChapterContinuityRecorded v2 与四组哈希状态。 |
+| 2026-08-27T12:12Z | continuity + ActorPlan + adjudication Room Vitest；world campaign Node | 0 | 3/3 + 14/14；生产 formation、裁定 supersede/新 DO 恢复、成长/切章/更正/继任无回归。 |
+| 2026-08-27T12:13Z | KP adapter Node；目标 `git diff --check` | 0 | 10/10；strict proposal/normalizer、诊断修订、失败代数与 whitespace 全通过。全局 typecheck 等 due mechanical 并行切片结束后统一执行。 |
+
+### 当前剩余条件与下一步
+
+- Continuity Manifest 的 actor/faction/adjudication 缺口已闭合；最终 Profile 冻结需纳入 v2 schema 与 KP factionRef 语义。正在等待 due mechanical、错误死亡 Room 更正和三类结局/重定向三个并行纵切回执。
+
+## 错误死亡、独立继任与因果分支更正真实 Room 闭环（2026-08-27）
+
+- 新增 `tests/death-successor-correction-room-v2.test.ts`，只经真实 `env.ROOMS`、`handleRoomAction`、server-held correction capability、公开 observe/archive/retry/restore 接缝；未直接改内部 WorldState、事件、Receipt 或投影。
+- 错误分支先由冻结机械将前任 HP 归零并派生死亡，立即撤销控制；继任者用独立人物卡进入，未继承前任私密知识、装备或资源，随后真实花费资源、形成动态事实并取得自己的知识。
+- 玩家 principal 直接持有 correction 请求会被 `correctionUnauthorized` 拒绝。可信服务更正因继任者已经行动而选择 `causalBranch`，原死亡 Root、继任引入 Root 与继任行动 Root 全部 supersede；旧事件和 Receipt 仍逐项可审计，没有删除或改写历史。
+- 同 correctionId retry 返回完全相同结果，不再调用 narration、不追加事件；同 id 不同 payload 被 `idempotencyPayloadMismatch` 拒绝。新分支恢复前任的原 HP/资源/装备/私密知识，清除失效继任者、其事实和知识；替代 Delivery 只绑定新 branch/Receipt，不泄漏错误正文或任一私密知识。
+- 将更正后 archive 恢复到全新 DO，得到 `projectionIntegrity:verified`、零 Delivery slot、read model/事件/Receipt/head 等价，证明错误分支不会经恢复重新成为当前真相。本切片只补强责任 Interface 证据，没有修改生产、SPEC、Goal、D1 或部署配置。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T12:15Z（并行测试回执） | `npx vitest run tests/death-successor-correction-room-v2.test.ts` | 0 | 1/1；死亡撤权、干净继任、后继行动、服务端 causalBranch、更正幂等、秘密安全替代帧及新 DO 恢复全绿。 |
+| 2026-08-27T12:16Z（主代理复核） | 同一 Vitest + `git diff --no-index --check /dev/null tests/death-successor-correction-room-v2.test.ts` | 0 | 主代理完整读取测试并独立复跑；测试文件 whitespace clean，无生产修改。 |
+
+### 当前剩余条件与下一步
+
+- SPEC 0008 验收 6 现在已有“错误死亡 → 干净继任 → 继任真实行动 → 服务端因果分支更正 → archive 新 DO 恢复”的单一纵切证据；最终冻结 SHA 只需纳入组合门，不再增加同义测试。
+- 继续等待 due ActorPlan 机械 continuation 与三类结局/卡住重定向真实 Room 回执；随后审计错误代数、私密 slot 控制与 Stage 4 余项。
+
+## 到期 ActorPlan 机械随机 continuation 跨驱逐 GREEN（2026-08-27）
+
+- RED 因果链：真实 Room 选中带非空 `mechanicalProposal` 的到期 NPC plan 后，Rules 返回 `invalidMechanicalProposal: The selected due ActorPlan has no frozen mechanical proposal.`。原 due stage 只支持无机械的 execute/revise/defer/cancel，且若直接复用父 submission 的随机 journal，会与随后恢复的玩家意图发生根绑定冲突。
+- 修复：due mechanics 仍由 `stepCompoundActionPlan` 进入既有 semantic command / Rules `step`，先提交同事务 ActorPlan 生命周期，再用 plan 的确定 child root 结算 NPC 机械；Room 的 proposal recovery/randomness journal 对 due stage 使用 child root，父 prepared submission 保留给随后玩家意图。没有新增骰源、NPC 默认攻击或第二套检定。
+- 权限/有限知识：提交时重新验证 NPC、plan/premise/knowledge、冻结 target/resource 与真实人物卡；未冻结引用、伪造资源、DC 31 越界等拒绝。退场 PC 转 NPC 使用其真实卡面；尚无数量模型的 faction 资源消耗未被猜测实现。
+- 故障闭环：`afterRandomnessRequestCommit`、`afterRandomnessCandidateCommit`、`afterOutcomeCommitBeforeResponse` 三处驱逐/丢响应均产生唯一 child Receipt，`RandomnessRequested`、`DiceRolled`、`ImprovisedCheckResolved`、`NpcActionCommitted`、`ActivityCompleted` 各恰好一次；NPC child root 在原玩家 `FeasibilityRuled` 前完成，随后同一玩家意图继续。
+- O08/O15/O16 后的过时夹具同步：随机恢复完成世界提交且 DeliveryPlan 仍 open 时，首次 retry 应叙述/发布一次；第二次相同 retry 不再叙述，并保持 frame/Receipt/archive events 不变。只更新 `tests/room-retry-v2.test.ts` 的旧计数，不改 `action.ts`。
+- 修改：`compound-actions.ts`、Room `durable-object.ts`、`tests/actor-plan-due-room-v2.test.ts`、`tests/room-retry-v2.test.ts`。未改 SPEC/Profile/D1/部署配置。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（并行 TDD） | ActorPlan due 窄测（实现前） | 1（预期 RED） | 旧 7 项绿；新增机械计划真实 Room 场景被硬拒，首因固定在 due Rules/Room continuation。 |
+| 2026-08-27（并行最终回执） | 6 files Room 联合回归；Rules compound；typecheck；module:check；diff check | 0 | 42/42、31/31；类型、唯一 Module 边界与 whitespace 通过。 |
+| 2026-08-27T12:29Z（主代理复核） | `npx vitest run tests/ending-reorientation-room-v2.test.ts tests/actor-plan-due-room-v2.test.ts tests/room-retry-v2.test.ts --no-file-parallelism --maxWorkers=1 --testTimeout=30000 --reporter=verbose` | 0 | 本切片 ActorPlan 10/10、retry 3/3；与结局 5 项合计 18/18，主代理在当前共享源码独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- SPEC 0006 Actor/Faction plan 的 formation/lifecycle、有限知识、到期优先、机械随机、三点驱逐和玩家意图续接均有真实 Room 证据；最终冻结 Profile 后纳入完整门。
+- 原计划进入 Stage 5 已被用户新增的战术地图硬阻塞取代；不得因本纵切绿色而部署。
+
+## 胜利/不可逆失败/明确放弃与停滞重定向 GREEN（2026-08-27）
+
+- 首个真实 RED：胜利 `StoryConcluded` 已提交、归档并恢复，玩家明确不开始续篇后，普通 KP ActionPlan 仍能追加 `DefinitionRegistered + CanonicalFactDeclared`，以“追溯隐藏反派”改变已结束故事。`StoryConcluded` fold 只标记状态，Rules 复合行动入口缺少 concluded-story gate，是第一个违反点。
+- Rules 单点修复：当存在 concluded story 且没有 active story 时，普通 compound ActionPlan 统一拒绝；只允许规范化 `advanceCampaignLifecycle + recordEpilogueChoice | startSequel`。没有自然语言关键词扫描，也没有 Room/UI 特判；显式尾声和续篇仍复用同一事务。
+- 新增 `tests/ending-reorientation-room-v2.test.ts` 的五个真实责任 Interface 场景：胜利及长期后果跨 archive/new DO 且不容追溯反派；不可逆失败保留 canonical loss；仅玩家明确放弃后收束；相同重掷被拒并重定向到已经固化的机会、不临时造保底路线/骰面；现实等待与 DO 驱逐不推进虚构时间或施加惩罚。
+- 修改：Rules `compound-actions.ts` 与上述新测试。未改 Room/UI、SPEC 0001、D1 或部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（真实 Room RED） | 结局/重定向新套件首轮 `--bail=1` | 1（预期 RED） | victory/StoryConcluded/archive/restore 均先通过；随后 retroactive hidden villain 实际 committed，定位 Rules gate 缺失。 |
+| 2026-08-27（并行最终回执） | 新套件；Rules compound + world/campaign；31 轮 KP eval；typecheck；目标 diff check | 0 | 5/5、45/45、1/1；结局、长团、多轮与类型通过。 |
+| 2026-08-27T12:29Z（主代理复核） | 与 ActorPlan/retry 的联合 Vitest | 0 | 本切片 5/5，联合 18/18；当前源码独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- SPEC 0009/O 的三种合法收束、长期后果、明确 continuation gate、停滞 reorient 与现实等待不惩罚现有真实 Room/恢复证据。最终 Profile 与 traceability 仍须在全部语义稳定后重算。
+- 用户新增战术地图后，继续按其 TM01–TM14 建立新的权威环境/Viewer/UI 纵切；原 Stage 5 暂不开始。
+
+## 用户追加二维战术地图交付合同与领域边界（2026-08-27）
+
+- 目标变更：用户把 authoritative-v2 简单二维战术地图及 14 项验收标准追加为 `COMPLETE` 硬阻塞。原 Goal、SPEC 0001 和既有交付标准全部保留；不得把 Geometry helper、静态地图、局部 UI 或既有 Stage 4 绿色冒充完成。
+- Goal 追加：`docs/goals/0001-cloudflare-program.md` 的产品方向、规格板块、架构不变量、Stage 1–5 和完成标准已逐项加入用户批准的 12 项产品决定与 TM01–TM14；只追加，没有删除或缩写原合同。
+- 领域建模：`CONTEXT.md` 新增“权威战术空间、环境要素、环境状态、战术投影、战术预览、地图意图”，明确页面方格/像素、完整 GM 图和客户端 targets 不是域事实。此处使用 `domain-modeling` Skill；它促使 UI Adapter 与权威空间使用不同术语，并记录难以逆转的边界 ADR。
+- 规格/决策：新增 `SPEC 0014`（状态为用户 Goal 明确批准）、ADR-0012、DEC-035；同步规格索引和追踪矩阵 P11/TM01–TM14。合同固定真实 scene geometry、有限环境状态、骰前冻结、ordered path、Rules 全目标集合、Viewer Tactical Projection/preview、地图与文字同源、Legacy 不猜迁移及双视口浏览器门。
+- 当前事实边界：既有 `SPEC 0012/0013` 和 G01–G15 只证明 Geometry 算法底座；环境状态、真实 Room geometry→projection→archive、UI 输入、地图/文字 Adapter、hidden-state indistinguishability 与浏览器证据仍明确写为待实现。现已按 TDD 分派第一条 Rules/Room tracer RED 与第一条 table/UI tracer RED。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T12:17Z | 首次完整重读当前 `docs/goals/0001-cloudflare-program.md` | 0 | 读取原 201 行合同后才追加用户新决定；未重复输出全文给用户。 |
+| 2026-08-27T12:19Z | 首次追加后的 `rg ... authoritative-v2 的 `WorldState`` 核对 | 0（含 shell 诊断） | 搜索双引号中误放反引号，shell 先输出 `WorldState: command not found`；后续 rg/diff 检查仍完成，文件未受影响。该命令失误不作为验证证据。 |
+| 2026-08-27T12:28Z | `shasum -a 256 docs/specs/0001-llm-kp-responsibility-contract.md`；tracked diff check；四个 untracked 文档逐个 no-index whitespace check | 0 | SPEC 0001 仍为冻结 hash `b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be`；新增/修改 Goal、CONTEXT、SPEC/ADR/README/decision/matrix 无 whitespace 诊断。 |
+
+### 当前剩余条件与下一步
+
+- 当前仍为扩展后的 Stage 1/2/3 纵切，不是 Stage 5。先取得 TM01（真实 Room geometry/project/archive）与 TM03/TM05（table/UI 不丢投影且不要求实际 targets）的可证伪 RED，再一条一条转绿。
+- SPEC 0014 的完成状态、实现映射与测试证据只能随实际纵切回填；Cloudflare/Workers/Wrangler/浏览器 Skill 在进入相应实现/验证操作前不提前加载。
+
+## Stage 4 错误代数与 Delivery 控制撤销审计（2026-08-27）
+
+- 错误代数首因：Room Action 的 `modelFailure()` 没有读取 KP Adapter 的稳定错误码，导致 `modelPermanent` 与 `quotaExhausted` 都被压成 `modelTransient`；telemetry 虽声明 13 类，却没有覆盖生产实际的 `invalidRulesInput`、`missingPrerequisite/worldLawViolation`、`projectionFailure`、`seatInactive`，`needsKp` 也未标作机械诊断。
+- 修复：`modelPermanent` 变为脱敏 `rejected/modelPermanent`，`quotaExhausted` 变为 `retryableFailure/quotaExhausted`，未知异常仍安全落为 transient；生产码分别映射 validation/worldInfeasible/projectionIntegrity/authentication，Authority 与 Room Action 的 `needsKp` 都映射 `mechanicalDiagnostic`。没有记录 error message/stack/Prompt。
+- 私密槽审计：生产 `applyRoomAdministration` 原本已在同一事务按 changed-control character 调用 `supersedeCharacterDeliveries`，清除正文并 tombstone plan，但缺真实 Room 责任证据。现补控制转移、`departMember` 主动离席和 `removeMember` 请离：旧 controller/离席者不能 observe/ACK，晚到 narration 不能重新发布，新 controller 只取得角色当前结构化知识而没有旧 DeliveryFrame。
+- 尚未清零的严格缺口：普通玩家受限 `ErrorReport/correctionRequired` 入口仍不存在；`sinceEventSeq` 连续增量、起止 hash 验证与坏增量 `projectionIntegrity/retryableFailure` 也不存在。已续派前者的独立 TDD 切片；本节不得写成全错误合同完成。
+- 修改：Room `action.ts`、`telemetry.ts`、`authority-telemetry.ts`、`server.ts`；扩展 authoritative action、telemetry 和 observer delivery 测试。未改 SPEC/Goal/D1/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（错误代数） | authoritative action Node | 0 | 15/15；永久/额度/瞬时模型失败的稳定 Outcome 与脱敏边界通过。 |
+| 2026-08-27（私密槽） | observer delivery Vitest | 0 | 10/10；控制转移、离席、请离、ACK/覆盖/晚到 narration/新 controller 知识边界通过。 |
+| 2026-08-27（telemetry） | authority + structured telemetry Node | 0 | 11/11；13 类矩阵和实际生产错误码分类通过。 |
+| 2026-08-27（旁路回归） | privacy + voice Node；hidden reality Room Vitest | 0 | 3/3 + 1/1；错误/候选/语音/转写与隐藏现实旁路无回归。 |
+| 2026-08-27（结构） | typecheck；目标 ESLint | 0 | 类型通过；ESLint 无 error，一个 app 文件只有项目既有 ignore warning。 |
+
+### 当前剩余条件与下一步
+
+- 先完成普通玩家 ErrorReport（只报告、不更正、不扩权）并复用现有 service correction；随后以独立纵切补 `sinceEventSeq` 连续增量完整性。二者全绿前，SPEC 0011 故障/更正与 SPEC 0010 增量投影不能标完成。
+- Tactical P11/TM01–TM14 同时按两条 tracer RED 进行，互不改动上述错误/Delivery 文件。
+
+## Tactical Projection 桌面 Adapter 首个封闭透传切片（2026-08-27）
+
+- RED 因果：真实 `projectAuthoritativeTableObservation` 只从 Room read model 白名单提取既有字段；即使 Room 已提供 viewer-filtered `tacticalProjection`，桌面 Adapter 仍将其完全丢弃，TM02 的第一个跨层接缝因此可证伪失败。
+- 单点 GREEN：在 `app/_runtime/lib/table/authoritative.ts` 定义封闭、版本化的 `zhuwei.tactical-projection/v1` 防御性验证器；只接受整数英寸、scene/self 一致、稳定唯一实体/feature/zone、封闭 geometry/encounter/preview/readout。合法值只 `structuredClone` 原样返回，不补坐标、不排序、不推断距离或目标；未知字段或非规范结构整份以固定、无秘密内容的 `TypeError` 拒绝。
+- 责任边界：本切片尚未把该字段送入 `fetchTable.state.authoritative`，也没有 PlayTable、地图绘制、手势或区域目标改变；Rules/Room 仍须生成相同封闭协议。它只修复 Adapter 丢字段，不冒充 TM02/TM03 完成。
+- 修改：`app/_runtime/lib/table/authoritative.ts`、`tests/authoritative-table-v2.test.mjs`。未改 Rules/Room、Legacy、页面、SPEC/Profile、部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（并行 TDD） | 新增两个 table Adapter 测试 | 1（预期 RED） | 首个失败为 `projected.tacticalProjection === undefined`；未知字段负测在实现前亦为 `Missing expected exception`，锁定 allow-list 缺口。 |
+| 2026-08-27（并行回执） | `npx tsx --test tests/authoritative-table-v2.test.mjs`；typecheck；diff check | 0 | 16/16；封闭透传、整份 fail-closed 和原 table/client 回归全绿，类型及 whitespace 通过。 |
+| 2026-08-27（主代理复核） | 同一 Node 测试 | 0 | 16/16；主代理读取 validator/调用点/负测并在共享源码独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- 以第二个 TDD 纵切把已验证的投影沿真实 `fetchTable` 公共返回结构送到 `state.authoritative`，但仍不在 server 计算任何空间事实；之后再让 PlayTable 的地图与文字读数只消费这一字段。
+- Room/Rules tracer 必须输出与此处完全相同的 v1 封闭结构；若 schema 不一致，应统一协议而不是在 Adapter 修补数据。
+
+## 普通玩家受限 ErrorReport → 可信更正责任接缝 GREEN（2026-08-27）
+
+- RED 因果：公开 `RoomActionInput`/`AuthoritativeActionInput` 与 DO `prepare` 没有受限错误报告类型；玩家对自己可见 Receipt 提交报告时实际得到 `validation`，无法形成 SPEC 0011 的 `correctionRequired` 信号。更正能力本身已经存在且正确限于可信服务，因此缺口在公开报告入口，不在 Rules 更正机械。
+- 单点修复：新增 closed `{kind:"errorReport", submissionId, receiptId, concern:"rules"|"facts", explanation<=500}`。首层 action 与 Authority 双重拒绝额外 statePatch/events/mechanicOps/branchGraph/correctionCapability；DO 以可信 principal 的 Rules `project` 核对 Receipt 对该 Viewer 可见，再从权威 store 取得目标公开 Receipt。私密和不存在引用统一经内部 `privateOrUnknownReference` 映射为无差异 `referenceUnavailable`。
+- 状态边界：报告的 payload hash、concern/explanation 与 `needsKp/correctionRequired` 结果原子保存到 Room SQLite submission journal；相同提交跨 stub 幂等恢复，换 payload 拒绝。报告不调用 KP、不执行 `step`、不追加 World Event、不改 WorldState/branch/scope、不创建 Delivery，成功响应也不回显说明正文。
+- 权限闭环：玩家直接 `commitCorrection` 仍为 `correctionUnauthorized`；初始化返回的 server capability 经原 `handleRoomCorrection → commitCorrection` 成功更正，未建立第二更正路径。telemetry 将带 code 的 `needsKp/correctionRequired` 分类为 correctionRequired；普通 `needsKp` 仍是 mechanicalDiagnostic。
+- 修改：Room `action.ts`、`authority-types.ts`、`durable-object.ts`、`authority-telemetry.ts`、telemetry 映射；新增 `tests/error-report-room-v2.test.ts` 并扩展 telemetry 测试。未改页面/table、SPEC/Goal、战术文件、D1/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（真实 RED） | `npx vitest run tests/error-report-room-v2.test.ts` | 1（预期 RED） | 玩家报告自己的可见 Receipt 实际返回 validation；首因锁定公开 Action/Authority 输入缺口。 |
+| 2026-08-27（并行回执） | ErrorReport + archive correction + Room Authority；telemetry；authoritative action；typecheck；module check；diff check | 0 | 16/16、11/11、15/15；幂等、引用不可区分、拒绝注入、可信更正和结构门全绿。 |
+| 2026-08-27（主代理复核） | `npx vitest run tests/error-report-room-v2.test.ts tests/archive-correction-v2.test.ts tests/room-authority-v2.test.ts ...`；两个 telemetry Node 套件 | 0 | 16/16 + 11/11；主代理读取真实 Room 测试及 journal/投影核验/公开错误映射后独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- 本切片没有玩家页面按钮，也没有供客服枚举报告的第二读模型；报告 journal 尚不在灾难归档中。若最终产品合同要求 UI 或跨灾备工单保留，应另开公开 API/归档纵切，不能从此 seam 证明。
+- SPEC 0010 尚需 `sinceEventSeq` 连续增量、起止 hash 和破坏增量的 `projectionIntegrity/retryableFailure`；复用本代理开始下一独立 TDD 切片。
+
+## Tactical Projection 进入真实 fetchTable state 的第二个切片（2026-08-27）
+
+- 协议冲突与裁定：最初 table tracer 使用 JS number 坐标和独立 entity height，而 Rules 权威 Geometry 使用 canonical integer-string 的 `x/y/elevation` 与三维 `footprint.width/depth/height`。已裁定复用后者，删除 table 内第二套 types/validator；唯一 contract 迁至 `app/_runtime/lib/rules/tactical-projection.ts`，table 只做 viewer self/scene 绑定检查与 `structuredClone`。
+- 真实 RED 因果：`projectAuthoritativeTableObservation` 已不再丢投影后，`fetchTable` authoritative 分支仍手写旧 state envelope，未把已验证投影放入公共 `state.authoritative`。因此 adapter unit 绿色但用户真实 fetch 仍看不到地图数据。
+- 单点 GREEN：新增 `buildAuthoritativeTableState({rulesetVersion, projected})`，只对 exact authoritative-v2 构造公共 envelope并原样携带 `tacticalProjection`；Legacy 与未知 ruleset 功能性返回 null。真实 `fetchTable` 改用该 builder，`TableSnap` 仅引用共享 type，没有渲染或空间计算。
+- 审查中发现共享 v1 仍暂时把 `knownZones` 限为空、`preview` 限为 null 且尚未强制稳定排序；这会阻塞最终 TM06/TM09/TM12，已要求 Rules owner 在首个 Room tracer 完成前把同一 v1 一次性扩成最终 closed union。完成前不得把协议或 TM02 标为冻结。
+- 修改：共享 tactical contract、table `authoritative.ts`/`server.ts`/`client.ts`、authoritative table 测试。未改 PlayTable、targetIds、Legacy mechanics、D1/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（第二切片 RED） | table state builder / fetch source seam | 1（预期 RED） | builder 起初不存在；加入 builder 后真实 fetch 源码仍未调用，锁定内联旧 envelope。 |
+| 2026-08-27（并行回执） | authoritative table；interaction + room management；typecheck；module check；diff check | 0 | 17/17 + 10/10；exact v2 透传，Legacy/unknown null，类型/Module/whitespace 通过。 |
+
+### 当前剩余条件与下一步
+
+- 等唯一共享 v1 contract 支持最终 zone/preview 与稳定排序后，主代理复跑本切片；之后才以 TDD 接入 PlayTable 的 SVG/HTML 二维展示和同源文字读数。
+- Rules/Room 仍必须生成真实、viewer-filtered、可回放投影；server 只携带数据，不能把本切片作为 TM01/TM03 完成证据。
+
+## 基础二维 TacticalMap 与真实 PlayTable DOM 纵切（2026-08-27）
+
+- 第一轮 RED：共享投影已有 boundary/self/visibleEntities/knownFeatures/readout，但没有生产组件；纯 React SSR seam 无 `TacticalMap` module。新增 `app/_runtime/components/tactical-map.tsx`，只消费 `TacticalProjection|null`，将 canonical integer-string 英寸映射到 SVG `viewBox`/形状，不计算距离、碰撞、掩护、传播或目标。
+- 展示内容：场景边界与 60 英寸网格；自身及可见单位的关系、占位、高程/高度；barrier/terrain/interactable/destructible/portal 五类 known feature；`impassable/opaque/cover/propagation` 同时成为公开 data 属性、视觉 class/title 与中文可见标签。同一 `textualReadout` 在页面可见、可聚焦并带 aria label，投影缺失时组件渲染空。
+- 第二轮 RED：纯组件绿色后，完整 authoritative `TableSnap` 的真实 `PlayTable` SSR 仍没有 `data-tactical-map`。PlayTable 现只在 `state.authoritative.tacticalProjection` 存在时接入，不读取 Legacy `ruleProjection`；没有手工重组空间事实。
+- 主审再发现中心语义 bug：Rules Geometry 规定 entity position 是占位棱柱中心，首版 SVG 却把 x/y 当 rect 左上角。追加 DOM RED 后只在展示层用 `center - footprint/2` 画矩形，label/data 仍保留权威中心；偶数与奇数尺寸分别证明不舍入、不回写权威坐标。
+- 新 table adapter import 起初使用 `@/` alias，Cloudflare Vitest 真实 importer 无法 collect；改为相对 import 后 observer Delivery 重新 10/10。修改未触碰 Rules contract、区域/preview、路径输入、targetIds、D1/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（组件 RED→GREEN） | TacticalMap DOM/SSR | 1 → 0 | module missing 后组件输出 boundary/grid/entity/五类 feature/机械标签/readout；null 输出空。 |
+| 2026-08-27（PlayTable RED→GREEN） | 完整 authoritative snap SSR | 1 → 0 | 接线前页面无 map；接线后只从 authoritative tactical projection 出现地图与同源 readout。 |
+| 2026-08-27（中心语义 RED→GREEN） | 单一 TacticalMap DOM case | 1 → 0 | 首版实际 rect `(120,180)`/label `(150,210)`；修复后 60×60 为 `(90,150)`/label `(120,180)`，61×59 使用展示用半英寸且不舍入。 |
+| 2026-08-27（并行最终回执） | tactical-map + authoritative-table；observer-delivery Vitest；typecheck；module check；diff check | 0 | 20/20 + 10/10；Node SSR、真实 Cloudflare importer、类型、Module 边界和 whitespace 全绿。 |
+| 2026-08-27（主代理复核） | 同一 20 项 Node DOM/Adapter + observer-delivery Cloudflare Vitest | 0 | 20/20 + 10/10；主代理读取组件/SSR断言/PlayTable接线并在当前共享源码独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- 这只是 TM03/TM04 的基础展示证据；knownZones/preview、路径与区域输入、环境状态变化、最终 375/1440 浏览器视觉/DOM 均未完成。
+- 共享 contract 已预留 zone/preview closed union，但 Rules projector 当前输出空/null。先完成 Room 真实 geometry 与 viewer-safe spatial revision，再从 Rules 垂直实现有限环境状态和区域目标，最后接 UI 控件。
+
+## `sinceEventSeq` 连续观察者增量与完整性失败 GREEN（2026-08-27）
+
+- 初始 RED 因果：`publicProjectionQuery()` 丢弃 `sinceEventSeq`，Rules `ProjectionQuery` 只有提交后叙述使用的内部 `committedRange`；DO `observe` 不会从游标重建 prior state/连续事件片段，也不能把断序/错误 hash 映射为 `retryableFailure/projectionIntegrity`。真实请求因此只返回普通快照，`incrementalDelta` 为 undefined。
+- 唯一链路：`Room observe → replay(genesis,prefix) → Rules project(current, viewer, incrementalRange)`。DO 只解析闭合 public cursor、用既有 replay 重建游标状态并传连续 suffix，不生成 changes、不解释事件、不自行脱敏。Rules projector 逐项验证 eventSeq、room/runtime、parent/previous hash、stateBeforeHash、完整 Profiles、fold 后 stateHashAfter/eventHash，且最终 folded state/head/hash 必须等于当前权威状态。
+- 投影结果：before/current 均由同一 `projectAuthoritative` 得到；delta anchors 是 `{from,to}.{eventSeq,stateHash,eventHash,projectionHash}`，changes 只返回当前 Viewer 投影的 `current` 或 `removed:true`，不返回历史 before 值。原始 eventType、payload/hash 链和私密正文不离开 DO；增量本身计入最终 projection hash。
+- 公开失败：null/missing/future cursor、错误 start state、tampered event/projection hash，以及只有任一 hash 而没有 sinceEventSeq，全部逐字段收敛为 `{kind:"retryableFailure",code:"projectionIntegrity"}`。没有 raw log fallback。
+- 主审追加 lifecycle RED：former-character/successorRequired 分支原先在 query 构造前 early-return，合法 cursor 静默得到全 snapshot。现 lifecycle 同样传入 `incrementalRange`；prior 存活时以同一 player viewer 投影，prior 已结束时复用 lifecycle projector，仍验证 anchor 并输出统一 delta。
+- 修改：Rules `model.ts`/`projector.ts`、Room `durable-object.ts`、新增 `tests/observer-incremental-room-v2.test.ts`。未改 table/tactical module、SPEC/Goal、D1/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（首个 RED） | observer incremental Room | 1（预期 RED） | `observe(...,{sinceEventSeq})` 返回普通 snapshot，无 incrementalDelta。 |
+| 2026-08-27（首个 GREEN） | 同一真实 Room | 0 | 1/1；合法/完整 anchor、DO eviction、秘密 sentinel 与五类坏增量通过。 |
+| 2026-08-27（lifecycle RED→GREEN） | 扩展 incremental Room | 1 → 0 | 1 pass/1 fail 精确复现 lifecycle early-return；修复后 2/2，含死亡后的 successorRequired delta 和三种孤立 hash cursor。 |
+| 2026-08-27（并行最终回执） | Delivery/retry/hidden；archive correction/resume；HTTP/projection/privacy；telemetry；typecheck；module/diff | 0 | 14/14、11/11、7/7、11/11；相邻隐私、驱逐、归档、HTTP、遥测与结构门全绿。 |
+| 2026-08-27（主代理复核） | incremental + archive correction + bounded D1 archive resume Cloudflare Vitest | 0 | 13/13；主代理读取 Room prefix replay/Rules range验证/delta生成后独立复跑，含 80+ events、失败重试、驱逐、TTL 与更正归档。 |
+
+### 当前剩余条件与下一步
+
+- 已知的 SPEC 0010 连续增量缺口现闭合；最终冻结源码仍需把新 tactical projection 字段纳入同一增量组合并随全量门重跑。
+- 增量层不得再为地图建立专项 delta；战术投影作为 SafeReadModel 字段自然由同一投影差异进入 changes。
+
+## TM01 首个 Rules/Room 真实战术场景纵切（2026-08-27）
+
+- 症状/首因：新 authoritative 房的 `combatRuntime.scenes[*].geometry` 由 Rules genesis 统一造 `{unit:"inch",obstacles:[]}` placeholder，人物位置由 ordinal 合成一维横线；Room 没有从版本化 Module/Profile 取得真实场景边界、出生点与要素。真实 Room tracer 在 archive genesis 看到 boundary 缺失、obstacles 为空，玩家 read model 也无 tacticalProjection。
+- 模块版本：新增 pinned `black-oak-will@tactical-map-v1`，8 个既有 location 都在 StoryBible 中携带 closed canonical `zhuwei.tactical-geometry/v1`：整数英寸 boundary、至少一个真实 feature、排序的 spawnPoints/obstacles、visibility policy。新房默认该版本；缺任何场景几何即初始化拒绝，不合成通用矩形、不按输入猜 Legacy。旧 `legacy-anchor-v1/v2` 的内容和 hash 原样保留。
+- 权威链：Room 只把可信 pinned Module geometry 送入 `initializeAuthoritativeWorld`；Rules closed validator 验证并固化到 genesis/WorldState。初始玩家/NPC 按场景内稳定 spawnPoints 分配，不再使用 ordinal 一维位置。archive 在全新 DO 恢复后得到等价 tactical projection。
+- 唯一投影协议：新增共享 `rules/tactical-projection.ts`，以 canonical integer-string 坐标、三维 footprint、known feature、完整 zone/preview union、稳定排序/上限和 SHA-256 spatial revision 定义 closed v1；Rules projector 从权威 scene/entity/encounter 与 visibility policy 构造 self、可见单位、已知要素和同源读数，剥离 `visibilityPolicyId` 与隐藏实体/知识。
+- 主审侧信道 RED：首版 `spatialRevision=state.version`，一次带秘密 reason 的 observer 移除使全局 version 0→2，即使公开空间完全不变仍改变 tactical revision。现 revision 对 viewer-safe scene/self/visibleEntities/features/zones/encounter 规范哈希；真实 Room 证明非空间/秘密变化前后 tacticalProjection byte-equal。读数同时修正“高程/实体高度”和中文掩护标签。
+- Legacy 纪律：旧 custom/dynamic/bulk 测试夹具显式 pin `legacy-anchor-v1`，不根据场景缺失自动 fallback。新增 hash：tactical Module `sha256:661fb063fa1cf8f2fd84056f8067273fe3b56d619df8ad19660dd1adae87c896`；旧 v1 `sha256:198ad1c122a84abffc881cfb4b0c5f6bcb32cd2411acb07aceb33163694b37f9`、v2 `sha256:283e0b6dfd7bab0a27895e741b9b56a2c536ba02ef922d4a35ebe43227ce0a03` 不变。
+- 修改：Module authoritative/profile/migration 与新 black-oak tactical layouts；Rules tactical geometry/projection、genesis/player combat entity/projector/model；Room initialization；新 tactical Room tracer、Module hash tests及若干旧责任 fixture 的显式 Legacy pin。未改 SPEC 0001、D1/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（真实 Room RED） | `tests/tactical-scene-room-v2.test.ts` | 1（预期 RED） | archive geometry 只有 empty obstacles，无 boundary；player read model 无 tacticalProjection。 |
+| 2026-08-27（并行 GREEN） | tactical Room；module/hash；chapter migration；observer/incremental/error/authority；legacy custom/bulk；type/module/diff | 0 | 1/1、6/6、6/6、22/22、15/15；真实初始化/秘密过滤/archive/fresh DO、旧 hash/显式 Legacy 与结构门通过。 |
+| 2026-08-27（TM12 早期侧信道 RED→GREEN） | observer secret-reason removal 同一 tracer | 1 → 0 | 全局 version 改变但 viewer-safe tactical payload/revision 现逐字段相同，revision 为 canonical SHA-256。 |
+| 2026-08-27（主代理复核） | tactical Room + module/hash | 0 | 1/1 + 6/6；主代理读取 Module layouts/validator/genesis/projector后独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- TM01 尚不能完整勾选：动态 `join/materialize/successor` 的 `buildPlayerCombatEntity` 调用仍可能走 ordinal×60 fallback；已启动下一真实 Room TDD 切片，要求确定性选择未占 module spawn、用尽即拒绝且 replay 等价。
+- Shared TacticalProjection 改变 Projection Policy 语义；尽管 moduleRef 已新 pin，最终首次发布前仍必须把 TacticalProjection/Environment schema Profile 纳入完整 Runtime manifest 并重算 projection/manifest/genesis hashes。不能沿用当前旧 Projection Profile hash；待环境/preview语义稳定后一次冻结。
+- 全量探索性回归中 tactical 初始化类失败已清零；`combat-room-randomness-v2` 尚有 3 个既有 5 秒 timeout，当前不作为本切片绿色证据，最终源码冻结门必须解决并全量通过。
+
+## Tactical 新房动态角色权威出生点 GREEN（2026-08-27）
+
+- RED 因果：初始 genesis 已使用 module spawn 后，`grantSeat`、`materializeCharacter` 和 `introduceCampaignSuccessor` 仍调用未传 tactical position 的 `buildPlayerCombatEntity`；真实 tactical Room 新加入角色得到旧 ordinal fallback `{x:"300",y:"0",elevation:"0"}`，而权威 wake geometry 的首个未占 spawn 是 `{x:"180",y:"-240",elevation:"0"}`。
+- 单点修复：新增 Rules 私有唯一 `allocateDynamicCombatantSpawn(state, sceneId)`。tactical room 只按 pinned geometry `spawnPoints` 顺序选首个未被该场景 combat entity 占用的位置；缺/坏 geometry 或用尽统一 `spatialCapacityUnavailable`。Legacy 返回显式 `legacy`，继续历史 ordinal 行为；没有 fallback 矩形、随机位置或页面坐标。
+- 三个动态入口在构造既有 `CharacterMechanicsSynchronized` 前调用同一 allocator，位置随现有 World Event 冻结并回放。休整/成长仍通过 `synchronizePlayerCombatEntity` 保留原位置，不重复分配。
+- 真实 Room tracer 从 archive genesis 的 pinned spawn 列表与初始公开占位推导期望位置，逐一 join 填满并逐角色 observe 核对；溢出明确拒绝，archive→fresh DO 的完整 tactical projection 等价。相邻多人/继任/更正证明 materialize/successor 与旧房未回归。
+- 修改：新 `rules/v2/spatial-spawn.ts`，multiplayer/campaign dynamic character callers，新 `tests/tactical-dynamic-character-room-v2.test.ts`。未改 UI/环境状态、SPEC/Profile、D1/部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（真实 RED） | tactical dynamic-character Room tracer | 1（预期 RED） | grantSeat 实际位置为 ordinal×60 横线，不是 pinned free spawn。 |
+| 2026-08-27（并行 GREEN） | dynamic + initial tactical tracer；legacy multiplayer；tactical successor/correction；type/module/diff | 0 | 1/1、2/2、9/9、1/1；分配、容量拒绝、Legacy、继任及恢复通过。 |
+| 2026-08-27（主代理复核） | dynamic/initial tactical + multiplayer + death-successor-correction 联合 Vitest | 0 | 12/12；主代理读取 allocator/三个调用点/真实 Room测试后独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- TM01 的“真实 geometry 且不再合成一维位置”现有初始与动态角色证据；最终勾选仍待环境/zone 事件进入同一 WorldState/replay，并随冻结 Profile/全量门复证。
+- 进入有限环境状态：先门 open/closed，再毁坏/残骸与持续区域；所有状态转换必须由 Rules 事件更新同一 scene feature。
+
+## TM07 有限环境状态首纵切：Portal open ↔ closed GREEN（2026-08-27）
+
+- 症状/首因：真实 `handleRoomAction` 没有环境交互输入，yard genesis 的门只有静态 `closed` 属性而没有版本化状态图；因此玩家无法通过同一 Room/Rules 权威链改变通路，archive/replay 也没有环境转换事件可恢复。
+- 闭合输入：公开 Action 仅接受 `{kind:"environmentInteract",submissionId,featureId,intent:"open"|"close"}`；Action 与 DO 双层 exact-key，拒绝客户端提交 state、props、patch、visibility 或通用 command。DO 只将可信 principal、唯一受控角色和已保存 continuation 转成 Rules `interactEnvironmentFeature`，走 `authorityDirect` 且不调用 KP。
+- 状态权威：tactical Module 为 public/hidden portal 固化 definition id、排序的 closed/open semantics 与双向 transition。Rules 验证 controller、同 scene、可见 portal、当前 state/transition 后生成单一 `EnvironmentFeatureStateChanged`；fold 从 genesis 同一 graph 重验 definition/from/intent/to，原地更新 `combatRuntime.scenes[*].geometry` 的 feature。没有第二状态表或专项 projector。
+- 投影/隐私：既有 viewer Tactical Projection 自动读取当前 opaque/impassable/cover/propagation；`stateGraph`、definition id 和隐藏通路不进入玩家读模型。hidden、unknown、wrong-scene 与 Legacy 引用在公开 Action 层逐字段等价为 `referenceUnavailable`。重复相同 submission 返回原 Receipt，换 payload 拒绝。
+- 版本：`black-oak-will@tactical-map-v1` 因 pinned state graph 更新为 `sha256:0578d10767ab92749547b0de4f9fe1b737a3c5e90a70beeb76498eb3550f1f41`；两个 Legacy Module hash 未改。最终 Projection/Profile/manifest hash 仍等环境、zone、preview schema 稳定后统一冻结。
+- 修改：Room `action.ts`/`authority-types.ts`/`durable-object.ts`；Rules `model.ts`/`actions.ts`/`events.ts` 与新 `v2/environment.ts`；tactical geometry validator/Module/migration hash；新增真实 Room portal 测试。未改 SPEC 0001、D1 或部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（真实 RED） | `npx vitest run tests/environment-portal-room-v2.test.ts` | 1（预期 RED） | 0/2；公开 action algebra 首层 validation，且 genesis 无 state graph/hidden portal。 |
+| 2026-08-27（并行 GREEN） | portal Room；Module/privacy/action；相邻 Room；typecheck；module/diff check | 0 | 2/2、27/27、23/23；open/close、事件、幂等、引用等价、archive→fresh DO 与结构门通过。 |
+| 2026-08-27（主代理复核） | `npx vitest run tests/environment-portal-room-v2.test.ts tests/tactical-scene-room-v2.test.ts --no-file-parallelism --maxWorkers=1`；`npx tsx --test tests/module-npc-v2.test.mjs` | 0 | 3/3 + 6/6；主代理读取状态图/Rules fold/Room direct mapping/隐私断言并独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- 本切片只证明 portal `open/closed` 和投影语义随权威状态改变；TM07 的完整机械证据仍需同一状态实际改变移动、视线、掩护、传播结果，并补 destructible `intact/damaged/destroyed/rubble` 的伤害路径。不得以公开按钮直接写 `destroyed`。
+- 下一纵切先以能力/伤害结果驱动可破坏物状态，再做持续区域创建、到期和中断；所有结果继续进入同一 event/replay/project/archive 链。
+
+## `combat-room-randomness-v2` 随机 5 秒 timeout 根因与夹具确定化（2026-08-27）
+
+- 症状：完整文件在默认 5 秒单测门限下出现 4 个 multi-wave recovery timeout；同一 `beforeRandomnessRequestCommit` case 连续运行会在约 3.7 秒通过或约 5.2 秒超时，无法归因于稳定的功能失败。
+- 根因：`preparedConcentrationAttack` 未固定前置 encounter 先攻。NPC 先手时 helper 会额外提交一次“结束 NPC 当前回合”，增加约 10 条事件；Room 在 prepare/observe/commit/recovery/archive 边界反复做完整 `authoritativeReplay`，使 42/43-event 快簇约 3.8 秒、52/53-event 慢簇约 5.9–6.1 秒，后者越过 Vitest 默认 5 秒。TacticalProjection 在显式 `legacy-anchor-v1` 房间 geometry guard 即返回，实测 0–1ms，不是根因；alarm/eviction 也只有 0–1ms。
+- 诊断收敛：起初把“新增战术投影成本”和“archive/alarm 等待”列为候选；逐阶段计时和 event-count 分簇排除二者，最终以 `setupEnemyActsFirst=true/false` 四次对照确认未固定先攻是直接触发，重复全量 replay 是既有成本放大器。
+- 最小修复：只在测试的 opening encounter commit 所在 DO 回调内临时覆盖 `authorityRoll`，严格要求恰好两枚 d20 并返回 `[20,1]`，由公开 observe 再断言 Alice 先手；`try/finally` 在 opening commit 完成后立即恢复真实函数。删除随机 NPC 先手时的额外 setup 分支。待测 NPC 伤害、专注豁免、三波 commitment/recovery 和 concurrent duplicate 继续使用真实 Room randomness journal；未改生产代码或全局/局部 timeout。
+- 后续性能边界：同一 RPC 内重复 full replay 可另开生产优化切片，但本次没有借测试修复改变 archive durability、事件链或缓存语义。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（最小复现） | 单个 `beforeRandomnessRequestCommit` case 连续 3 次，默认 5s | 1/0/1 | 5.250s timeout、3.73s pass、5.191s timeout，确认双峰而非稳定断言失败。 |
+| 2026-08-27（诊断 harness） | 临时阶段/replay/event-count 计时，20s 诊断门限 | 0 | 快簇 42/43 events≈3.73–3.82s；慢簇 52/53 events≈5.88–6.08s；Legacy tactical 0–1ms，alarm 0–1ms。所有 `[DEBUG-tactical-randomness-perf]` 随后清除。 |
+| 2026-08-27（并行修复验证） | 目标 4 recovery + concurrent 默认 5s，连续 3 轮；完整文件；typecheck；diff check | 0 | 每轮 5/5；完整 11/11；无 instrumentation/临时文件，生产源码未改。 |
+| 2026-08-27（主代理复核） | `npx vitest run tests/combat-room-randomness-v2.test.ts --no-file-parallelism --maxWorkers=1` | 0 | 11/11，默认单测 5s 门限，tests 22.67s；主代理读取 scoped override/finally/公开先手断言后独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- 此回归已从最终 `npm test` 的已知随机红点清除；冻结源码上的全量门仍只在所有战术纵切合并后运行一次。
+- 若将来 initiative request 顺序、骰子数量或 opening 语义变化，夹具会因 sides/count/公开 active actor 断言 fail closed，而不是静默固定错误对象。
+
+## TM09 持续区域真实 Room tracer 首个 RED（2026-08-27）
+
+- 测试边界：新增 `tests/environment-zone-room-v2.test.ts`，只通过真实 tactical Room 初始化、`observe` 和后续公开 `handleRoomAction` 设计生命周期；没有在 fixture 注入 AbilityDefinition、WorldState、事件、骰面或 zone。archive 只预留作可信服务证据。
+- 首个不变量违反点：`fog` 是现有 SRD 2014 catalog 中的 point-origin sphere、120 尺、1 小时专注区域法术，但 v2 `compileSpell` 当前排除 `resolution.mode:"utility"`，因此受控角色投影只有 improvised strike，没有 `spell:fog` AbilityDefinition。`entangle` 未注册；`web` 虽为 area+concentration，当前形状编译又拒绝 cube，不能作为绕过。
+- 分阶段 RED：只执行第一项“玩家必须从 observe 取得真实 fog definition”，其余四项以显式 `it.skip` 留作后续转换门：闭合 ability 输入/拒绝客户端 zone fields、viewer-safe zone+restore+幂等、到期 exactly-once、真实专注中断。避免五项都在 action algebra 前产生同义失败并被误写为执行过。
+- 目标闭包：公开 area ability 只允许 submissionId、真实受控 abilityRef、areaOrigin、形状需要时的 areaDirection 与 slotLevel；拒绝 targetIds/affectedEntityIds/zone/duration/effect/visibility/geometry/state。Rules 从完整权威空间计算内部集合，zone 生命周期进入同一 event/replay/project/archive 链。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（真实 RED） | `npx vitest run tests/environment-zone-room-v2.test.ts` | 1（预期 RED） | 1 failed、4 skipped；tactical Room/observe 成功，但 controlled definitions 中 `spell:fog` 为 undefined，首因早于 Room action algebra。 |
+| 2026-08-27（主代理复核 RED） | 同一文件，`--no-file-parallelism --maxWorkers=1` | 1（预期 RED） | 主代理复现 exact controlled definitions 仅有 `improvised-strike`；失败仍在真实 fog definition 缺失，未被其他共享改动掩盖。 |
+
+### 当前剩余条件与下一步
+
+- 先最小扩展版本化 spell/Ability compiler，让真实 `fog` 以 SRD target/effect 进入受控 definitions，并以 compiler/profile 测试锁定；不得在 Room 或测试临时造法术定义。
+- 其后逐项取消 skip：闭合 `ability` Room 输入 → typed zone created/project/archive → fiction-time 到期 exactly-once → closed concentration end；actual target set/hidden indistinguishability 属于紧接其后的 TM06 区域结算纵切。
+
+## TM07/TM08 真实环境破坏、残骸与传送门 destroyed 纵切 GREEN（2026-08-27）
+
+- 症状/首因：既有环境交互只能在 portal 的 `open/closed` 间转换；公开 Room Action 没有由真实角色能力攻击环境要素的闭合入口，Rules 也没有把攻击、伤害、耐久和 `intact/damaged/destroyed` 写入同一场景几何的 typed event/fold。因此公开状态能显示门，却不能由规则机械摧毁、形成残骸或在 archive/replay 中恢复。
+- 闭合入口与唯一机械路径：新增公开 exact-key `{kind:"environmentAbility",submissionId,featureId,abilityRef}`；Room 从可信会话绑定唯一受控角色，不接受客户端 actor、伤害、骰面、目标集合、state/patch/visibility。Rules 只允许受控角色已编译且装备的真实 AbilityDefinition，并复用 attack d20、伤害公式、Room randomness journal、战斗 initiative/action grant 与统一 Geometry 的 range/clear-path 检查；不调用 KP 重建机械，也没有第二状态表。
+- 状态与重放：Module 固化 portal 与 destructible 的耐久、AC、阈值、伤害免疫和有限状态图。`EnvironmentFeatureDamaged` 冻结 ability/module definition hash、攻击与伤害事实、`rangeInches`、from/to state 和耐久；fold 重新编译定义、验证 hash/数值，并用同一 `entityCanTargetTacticalFeature` 重验当时 actor→feature 的范围和通路，再原位更新 `combatRuntime.scenes[*].geometry`。closed/open portal 均可真实毁坏；stone seat 经过 damaged 后成为 rubble，投影同步改变 opaque/impassable/cover/propagation/terrain。
+- 隐私：含 AC、threshold、immunity、完整 state graph/definition 的 `AbilityInvoked` 与 `EnvironmentFeatureDamaged` 为 `room-authority-only/internal`。玩家 known feature 只含公开 state、terrain、current/maximum durability 与公共几何；hidden/unknown/wrong-scene/Legacy 仍逐字段同形 `referenceUnavailable`。客户端伪造 damage/state/dice/patch/targetIds 被首层 validation 拒绝。
+- 模组几何：全部 8 个 tactical scene 的 spawn 使用同一 `entityOccupanciesOverlap` 检查；修复 shrine 与 private-lian 两处既有出生点/不可通行物重叠。最终 `black-oak-will@tactical-map-v1` pin 为 `sha256:3ec138d7af5210a253f7160e9099eed8f3e2c1378f5fd793eb460bea8b3d1f93`；两个 Legacy pin 不变。
+- 稳定性因果链：主代理首次三文件串行复跑出现 seat opening 单例 5059ms timeout，而同文件独跑曾绿。对照确认随机 NPC 先手会额外提交一整组结束回合事件并触发多次 full replay；跨完整 authority turn 是第二慢簇。测试只对 opening initiative 两枚 d20 做 scoped player-first 夹具并在 `finally` 恢复；环境 attack/damage 仍由真实 Room randomness 产生。测试职责拆为 opening、每次最多一个 Fighter authority turn、收束/archive/replay，未放宽默认 5 秒。合法 Fighter20/+9 对 AC11 仅 natural 1 miss；portal 四击全 miss 概率 `6.25e-6`，stone seat 在 16 次内少于三次命中的概率上界约 `6.66e-17`。
+- 修改：tactical Module/migration；Room action/authority/DO；Ability compiler、共享 attack resolution/Geometry/tactical contract；Rules character ability/combat/environment/model/projector；portal/destruction/module/TacticalMap 测试。未改 Goal、SPEC 0001、D1 或部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（真实破坏 GREEN） | `npx vitest run tests/environment-destruction-room-v2.test.ts tests/environment-portal-room-v2.test.ts`；相邻 creature/loadout/projection/module/Room retry/privacy；type/module/diff | 0 | 真实 warhammer、随机请求、action grant、range/path、状态转换、幂等、隐藏引用、archive→fresh DO 与相邻责任通过。 |
+| 2026-08-27（主审稳定性 RED） | destruction + portal + tactical scene，串行单 worker | 1（不可接受 RED） | 其余 10/10 通过；seat opening 5059ms timeout，证明原单文件绿色不足以支持稳定完成。 |
+| 2026-08-27（诊断后并行复跑） | 同一精确三文件串行命令连续两轮 | 0 | 两轮均 15/15，11.89s / 11.60s；最慢单例 2149ms，默认 timeout 未改。 |
+| 2026-08-27（主代理独立复核） | `npx vitest run tests/environment-destruction-room-v2.test.ts tests/environment-portal-room-v2.test.ts tests/tactical-scene-room-v2.test.ts --no-file-parallelism --maxWorkers=1` | 0 | 15/15，11.57s；真实 Room 状态、portal 与基础 tactical projection 联合通过。 |
+| 2026-08-27（主代理结构门） | Module 6 项；SPEC SHA-256；registry pin；`git diff --check`；branch/main baseline | 0 | Module 6/6；SPEC hash 仍为 `b420123...323be`；分支 `cloudflare`；`origin/main` 仍为 `29eb06dc...f40a`。 |
+
+### 当前剩余条件与下一步
+
+- TM07 的 open/closed/destroyed 状态及 TM08 的 destructible/rubble 已进入同一 Room/Rules/event/project/replay 链；完整 TM07 仍需由真实移动、视线、掩护或区域传播结果证明这些状态确实改变机械，不只改变公开标签。
+- 本切片的 range/path 证明不是 TM05 移动 outcome。下一步先在最终稳定 pin 上复现 `tactical-movement-room-v2` 的真实 action-algebra RED，再按闭合 movement → 逐段事件/归档 → 隐私阻挡 → 高程路线 → OA pending 顺序实施。
+
+## TM05/TM10 玩家移动真实 Room tracer 首个 RED（2026-08-27）
+
+- 责任边界：新增的 movement tracer 先用真实 tactical Room、两名真实受控角色和 `handleRoomAction → production startCombat` 建立 Encounter；从 Player tactical projection 读取当前 active mover、self position 与 viewer-safe `spatialRevision`，再提交最短 60 英寸 ordered path。测试不注入 actor、encounter、距离、终点 patch、WorldState、事件或骰面。
+- 输入闭包：目标公开输入只允许 `{kind:"movement",submissionId,movementMode:"walk",spatialRevision,path}`。同一测试先加入 actor/sourceEntityId/encounterId/distance/positionPatch/target/state，确认首层 exact-key validation 拒绝且不调用 KP。
+- 真实 RED：在最终稳定 Module pin 上，初始化、开战、主动角色与投影均成功；合法 movement 仍返回 `{kind:"rejected",code:"validation",explanation:"不支持的行动输入类型。"}`。第一个违反不变量的位置因此是 Room Action algebra 缺少 movement，而不是旧的 module hash mismatch、Rules Geometry 或 encounter 建立。
+- 后续四个 tracer 保持显式 skip：逐段 `MovementSegmentCommitted`/fresh DO/duplicate Receipt；速度/公开与隐藏阻挡/坏起点/stale revision 的秘密安全失败；真实 elevation/height 机械；OA/中断只提交已走前缀并把控制权交给正确参与者。待每一前置责任变绿后逐项取消，不制造五个同义 RED。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（主代理真实 RED） | `npx vitest run tests/tactical-movement-room-v2.test.ts --no-file-parallelism --maxWorkers=1` | 1（预期 RED） | 1 failed、4 skipped；真实 Room/Encounter/投影成功，合法闭合 movement 在公开 Action 首层以 unsupported validation 失败。 |
+
+### 当前剩余条件与下一步
+
+- 先把 movement 作为窄 Room adapter 映射到唯一既有 Rules `moveCombatant → analyzeCombatMovement → MovementSegmentCommitted`，由可信 principal/self/encounter 派生内部字段；Room 不重算 Geometry、不调用 KP。
+- 幂等 Receipt 必须先于 stale revision 检查；新 submission 在 prepare/commit 前后比较 viewer-safe revision，Rules 始终在最新完整状态重算 path。隐藏 scope 改变但公开 revision 不变时不得泄露 `scopeConflict`。
+- TM10 还缺版本化可行走高程路线/支撑面事实；不能以允许任意 elevation 改动冒充上下楼或坠落机械。
+
+## TM09 真实 SRD `fog` AbilityDefinition 编译首切片 GREEN（2026-08-27）
+
+- RED 首因：SRD 2014 catalog 已有 `fog` 的 point-origin sphere、120 尺范围、20 尺半径、1 小时 concentration 和 heavily-obscured area effect，但角色 v2 `compileSpell` 一律排除 `resolution.mode:"utility"`；真实 tactical Room observe 因而看不到 `spell:fog`，失败早于公开 ability action。
+- 最小修复：只允许同时满足“非瞬发 duration + compiled target.kind=area + 至少一个 resolution area effect”的 utility 法术进入既有 AbilityDefinition 编译。没有泛化启用其他 utility、没有新定义结构、没有改变 manifest，也没有在测试/Room 注入法术或 WorldState。
+- 真实夹具：zone tracer 改为确实能准备 `fog` 的 Ranger/WIS 静态卡，修正文案与 submission 的 web 漂移。Player observe 取得真实 `revision:"1"`、`rulesBasis:"srd5.1-2014"`、1440 英寸 range、240 英寸 sphere、3600000000 微秒 concentration 和 heavily-obscured area effect。
+- 修改仅限 `rules/v2/character-abilities.ts` 与 `tests/environment-zone-room-v2.test.ts`；Room action/authority/DO、zone event/fold/projector/lifecycle 未触碰，后四项仍显式 skip。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（并行 RED→GREEN） | zone 首测 | 1 → 0 | 初始 fog undefined；修复后 1 passed / 4 skipped，真实 catalog/角色 compiler/observe 链通过。 |
+| 2026-08-27（并行回归） | ability compiler + spells；静态角色 AbilityDefinition；typecheck；diff check | 0 | 15/15 + 1/1；结构未扩张、旧攻击/豁免/专注法术未回归。 |
+| 2026-08-27（主代理复核） | zone Room；`ability-profile-v2` + `spells` | 0 | 1 passed / 4 skipped + 15/15；主代理读取准入谓词与 Ranger 夹具后独立复跑。 |
+
+### 当前剩余条件与下一步
+
+- 下一项才是闭合 `ability` Room 输入与服务端 area 求交；当前仅证明真实 fog definition 可用，不能标记 zone 创建、目标集合、持续、到期、中断、重连或 replay 完成。
+- `areaTargets()` 当前在 Geometry 前先按 hostile candidate 过滤，尚不能把施法者、盟友、中立、隐藏实体及环境特征按定义正确纳入；修复必须采用 definition-driven candidate applicability 并继续由完整权威状态调用同一 Geometry，不能接受客户端 targetIds。
+
+## TM05 玩家移动前两段真实 Room GREEN（2026-08-27）
+
+- 首段 RED/首因：真实 tactical Room 与随机先攻 Encounter 已成立，Player projection 提供 active mover、self position 和 viewer-safe `spatialRevision`；合法 `{kind:"movement",submissionId,movementMode:"walk",spatialRevision,path}` 仍在 `RoomAction` exact algebra 以“不支持的行动输入类型”拒绝，未进入 Authority/Rules。伪造 actor/source/encounter/distance/positionPatch/target/state 同时被 validation 拒绝。
+- 闭合权威链：Room Action 与 DO 均只接受 `walk`、2–64 个 canonical integer-string `TacticalPosition` 和 SHA-256 spatial revision。DO 从可信 principal→Seat→唯一 CharacterControl 派生 actor，从同一 Player Tactical Projection 绑定 self 与包含该角色的 encounter，保存规范 continuation 后以 `authorityDirect` 映射到既有 Rules `moveCombatant`；距离、速度、碰撞、占位、障碍与终点继续只由 Rules/Geometry 计算，KP propose 为 0。
+- 并发/幂等：同 submission/payload 的已有 prepared/result 在 stale revision 前返回；新 submission 在 prepare 后与 commit 前分别重投 Player Projection，比较 viewer-safe `spatialRevision` 与 encounter binding。提交事务仍以既有 scene scope 防竞态；本切片未扩展隐藏 scope refresh，后续隐私阻挡 tracer 仍须证明同形失败。
+- 第二段 RED/首因：初版测试的三点共线，被既有 `canonicalizeCombatPath` 正确折叠为一段，因此 archive 只有一个 `MovementSegmentCommitted`；测试改成两条 60 英寸直角段后，真实 Room 得到两个按 eventSeq 排序的 typed segment、最终 self 投影、同 Receipt duplicate 且事件不追加，archive→fresh DO projection byte-equal。
+- fold 加固：`MovementSegmentCommitted` 现在只接受 canonical path/正距离/同源 entity patch；fold 从提交前权威位置连续验证 path 起点，以同一 Geometry 重算 segment 与困难地形/挤压距离，验证终点、spent 精确增量，并要求 patch 等于“原实体 + position/movement/squeezing”而不能夹带 HP、资源等无关修改。兼容旧 v2 combat entity 仅有 `id` 的合法形状，同时拒绝冲突的可选 `entityId`。
+- 投影 encounter：战术 projector 优先选择包含当前 self 的唯一未结束 encounter；没有活跃 encounter 时才显示该 self 的已结束 encounter，不再取同场景任意字典首项。
+- 修改：Room `action.ts`、`authority-types.ts`、`durable-object.ts`；Rules shared tactical validator、`v2/projector.ts`、`v2/combat-events.ts`；真实 Room movement tracer。本切片未改 Module pin、TM10 elevation route、机会攻击、zone、UI、Goal/SPEC 或部署。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（首段 RED→GREEN） | `npx vitest run tests/tactical-movement-room-v2.test.ts -t "accepts only the closed movement path intent"` | 1 → 0 | 首因由 unsupported action 收敛；合法 movement committed、伪造字段 validation、KP 0。 |
+| 2026-08-27（第二段 RED→GREEN） | `npx vitest run tests/tactical-movement-room-v2.test.ts -t "commits ordered movement segments"` | 1 → 0 | 共线路径只产生 1 event；改成规范直角路径后 2 events、终点、duplicate、archive/fresh DO 全部通过。 |
+| 2026-08-27（fold 相邻回归） | `npx tsx --test --test-name-pattern='Geometry rejects movement\|Geometry applies one-size\|dynamic encounter solidification\|movement after a reaction\|Geometry G14' tests/combat-mechanics-v2.test.mjs` | 1 → 0 | 首轮暴露旧合法 fixture 只有 `id`；兼容后 5/5，含困难地形/挤压、阻挡与中断前缀。 |
+| 2026-08-27（compound movement） | `npx tsx --test --test-name-pattern='semantic combat start, movement\|Geometry G01' tests/rules-compound-action-v2.test.mjs` | 0 | 2/2；既有 compound→combat kernel 与 feet/inches 路径未回归。 |
+| 2026-08-27（最终定向门） | movement Room；typecheck；module:check；diff check | 0 | 2 passed / 3 skipped；类型、Rules/Room import boundary 与 whitespace 门通过。 |
+| 2026-08-27（相邻真实 Room） | tactical scene + portal + room retry，串行单 worker | 0 | 6/6；基础投影、环境 direct action、archive 与幂等恢复未回归。 |
+
+### 当前剩余条件与下一步
+
+- TM05 后三项仍是显式 skip，不能标记完整完成：速度/公开与隐藏阻挡/坏起点/stale revision 的秘密安全失败；TM10 的版本化 elevation route/支撑面机械；机会攻击/中断的已走前缀与正确 controller pending。
+- 下一切片只取消隐私阻挡 tracer：先固定公开/隐藏两条均在当前 active mover 剩余速度内的 Module 路径，再统一公开失败，不得让隐藏 scene scope 差异通过 `scopeConflict`、停止点或说明文字泄漏。
+- 当前 `black-oak-will@tactical-map-v1` pin 保持 `sha256:3ec138d7af5210a253f7160e9099eed8f3e2c1378f5fd793eb460bea8b3d1f93`，本切片未重算或修改 Module/Profile。
+
+## TM09 闭合 `fog` Room ability action 首个真实 RED（2026-08-27）
+
+- 在真实 `fog` AbilityDefinition 已可从 Ranger observe 获得后，取消第二项 skip。测试从 Player tactical projection 取 self position、从 controlled definitions 取真实 abilityRef，只提交 abilityRef、areaOrigin 与 slotLevel；没有注入 definition、targetIds、zone、WorldState、事件或骰面。
+- 同一测试先提交含 `targetIds/affectedEntityIds/zone/duration/effect/visibility/geometry/state` 的 forged 输入：首层 validation 拒绝，KP propose 计数仍为 0。合法闭合 fog 输入也保持 KP 0，却得到 `{kind:"rejected",code:"validation",explanation:"不支持的行动输入类型。"}`。
+- 因此首个违反不变量的位置已从 compiler 前移到公开 Room Action algebra 缺少 `ability`；不是 fog catalog、真实 abilityRef/self position、伪造字段防线或 KP 绕行。其余 zone create/replay、expiry、concentration-end 三项继续显式 skip。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27（并行真实 RED） | zone 第二 tracer name pattern | 1（预期 RED） | forged fields validation + KP 0；合法闭合 ability 在 RoomAction unsupported kind 失败。 |
+| 2026-08-27（主代理复核 RED） | `npx vitest run tests/environment-zone-room-v2.test.ts -t "rejects client-computed zone fields and commits the closed fog ability without calling KP" --no-file-parallelism --maxWorkers=1` | 1（预期 RED） | 1 failed / 4 skipped；同一首因，未被 movement 共享改动掩盖。 |
+
+### 当前剩余条件与下一步
+
+- 待 movement 共享 Room 文件停止修改后，实现闭合 ability direct route；Room 只绑定 principal/source/scene，Rules 依据 AbilityDefinition 和完整权威几何派生 area affected set、slot/concentration/zone event，不调用 KP。
+- 本 RED 尚不证明 area candidates、hidden indistinguishability 或 zone lifecycle；不得仅让 action 返回 committed 就一次性取消后三项 skip。
+
+## 产品决定：本轮改为可上线体验的最小战术地图 Milestone 1（2026-08-27）
+
+- 用户明确取代了此前“全部详细战术地图/环境机械阻塞本轮”的终止条件，但保持 SPEC 0001 不变。当前交付目标改为：authoritative-v2 实际游戏桌中的 Viewer-only 简单二维地图、当前角色/可见参战者/行动者/基础距离、已知 feature/zone 状态、诚实 unknown 与“后续支持”、375/1440 浏览器证据、最终全量门、现有 `zhuwei` Worker 部署和非 force 推送。最终状态只能写 `MILESTONE_1_COMPLETE`，不能宣称原完整计划 COMPLETE。
+- 已立即 interrupt 正在扩展第三移动 tracer/Geometry 的代理与只读三维几何审计；未 reset、clean、回退、删除或覆盖任何文件。中断时工作区已经包含 movementMode/fold、hidden wake barriers 与连续障碍求交的部分完成修改，故先按原样运行稳定性检查，不丢弃成果。
+- 中断后事实：`tactical-movement-room-v2` 在当前源码为 3 passed / 2 skipped，Module hash 6/6；第三项超速/公开与隐藏障碍/坏起点/stale revision 已实际绿色，TM10 高程与 OA 仍 skip。当前 tactical pin 为 `sha256:df49e12260b590d339961c2a19b3ddc5f59741d2a8521d4d97dbf151d9177947`。这些成果保留，但不再继续扩大到完整移动/高程/OA。
+- zone 第二 tracer 在决定前刚建立为真实 RED：forged fields 安全拒绝且 KP 0，合法 fog ability 因 RoomAction unsupported kind 失败；后三项仍 skip。新里程碑不要求地图点选施法或完整 zone lifecycle，该 RED 及恢复入口转入 Goal 0002；当前里程碑仍必须以新产品决定测试“后续支持/无虚假成功”，并让最终默认测试集真实全绿，不能隐藏失败。
+- 正在创建 `docs/goals/0002-advanced-tactical-combat.md`，按每项延期能力记录已完成/部分/未实现、已有测试、已知 RED、恢复文件与机器完成标准。Goal 0002 不修改、不复制缩小 SPEC 0001；Milestone 1 部署后立即停止。
+
+### 当前里程碑恢复入口
+
+1. 先审计 `tactical-map.tsx → PlayTable → fetchTable authoritative state` 的实际桌接线，只补展示合同：active actor、viewer-safe 距离、feature/zone 状态、feet 高度、unknown/后续支持与响应式。
+2. 新增/更新 DOM 责任测试后做 375/1440 真实浏览器验收；浏览器前不加载相关大型 Skill。
+3. 冻结 Profile/hash，运行 `module:check/typecheck/lint/npm test/diff` 一次；任何 active RED 必须按新产品决定真实修复，不能 skip/delete。
+4. 只读核对 Cloudflare，再部署现有 Worker/D1，线上冒烟/有界日志、提交与非 force push；remote main 必须仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+
+## Milestone 1：高级区域操作安全延期并清除默认测试 RED（2026-08-28）
+
+- 症状 → 根因：默认 `environment-zone-room-v2` 第二项仍要求合法 `kind:"ability"` 直接提交持续区域，和用户刚确定的“本轮不实现地图点选施法/完整区域生命周期”冲突；生产首层仅给通用“不支持的行动输入类型”，既不构成可体验的明确延期提示，也使默认测试保持 RED。
+- 修改：`RoomAction` 在调用 Authority/KP 前识别这一窄输入。顶层只接受 `abilityRef/kind/parameters/submissionId`，参数只接受规范 `areaOrigin` 与正整数 `slotLevel`；客户端提交 targetIds、affectedEntityIds、zone、duration、effect、visibility、geometry 或 state 仍以 `validation` 拒绝。合法闭合输入明确返回 `tacticalMapAbilityDeferred` 与“地图点选区域施法后续支持”，不伪造 committed。
+- 非扩张证明：没有给 `RoomActionInput`、DO、Rules、事件、zone fold/projector 或客户端新增区域执行路径；KP propose 为 0，前后 Room observation 逐值相等，`knownZones` 仍为空。原始真实 RED、后三项 lifecycle skip 与恢复入口完整保存在 Goal 0002，未写成已验证。
+- 修改文件：`app/_runtime/lib/room/action.ts`、`tests/environment-zone-room-v2.test.ts`。未改 SPEC 0001、Goal 0001、Module/Profile、D1 或部署配置。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `npx vitest run tests/environment-zone-room-v2.test.ts --no-file-parallelism --maxWorkers=1` | 0 | 2 passed / 3 skipped；真实 fog definition 仍可见，伪造字段 validation，合法高级操作明确延期，KP 0 且权威状态未改变。 |
+
+### 当前剩余条件与下一步
+
+- 默认 zone 文件已不再含 active RED；三个明确 skip 是 Goal 0002 的创建/到期/专注中断恢复入口，不属于当前里程碑已完成项。
+- 等待实际游戏桌地图展示补丁后，主代理审阅并运行 DOM/authoritative projection 定向测试；随后才进入 Playwright 375/1440 浏览器阶段。
+
+## Milestone 1：实际游戏桌 Viewer-only 二维地图展示 GREEN（2026-08-28）
+
+- 接线：authoritative-v2 `fetchTable → projectAuthoritativeTableObservation → PlayTable → TacticalMap` 继续只传观察者专属 `tacticalProjection`。若 authoritative read model 存在但投影暂缺，实际桌仍挂载诚实 unknown 面板；Legacy 桌不挂载新地图，原有 CombatStrip、文本行动与战斗按钮顺序/入口未改。
+- 服务端距离：`project(viewer)` 对 self 与每个 Viewer-visible entity 复用同一 Geometry Profile 的 `pathLengthMilliInches`，在同源文字读数输出“中心直线约距 N 尺”；客户端只显示该读数，不计算范围、碰撞、掩护、目标或成功结果。
+- 地图展示：SVG 显示场景边界/5 尺格、自身、可见参战者、权威 x/y 占位、当前行动者、地面或 `+N 尺` 高程、实体高度，以及仅来自 `knownFeatures/knownZones` 的障碍、地形、可互动物、门、可破坏物、区域状态、耐久和已投影机械标签。当前行动者若不在 Viewer-visible entities 中显示 unknown，不输出原始隐藏 id。
+- 诚实降级：投影缺失、无 encounter、无已知 feature、无已知 zone 均有独立 unknown 文案；界面明确标注“地图交互后续支持”，不提供拖拽移动、点选施法或精确预览。移动端容器只纵向滚动，SVG/列表/长文本均有 `min-w-0/max-w-full/overflow-wrap` 约束；真实 375/1440 视觉证据仍待下一阶段浏览器执行。
+- 旧夹具漂移：viewer-only 回归首次为 16/17；生产 `TacticalKnownFeature` validator 已正确要求 `terrain`，旧 portal fixture 缺该字段而被 fail closed。只给 fixture 补 `terrain:"normal"`，未放宽 validator；随后 17/17 GREEN。
+- 修改：`app/_runtime/lib/rules/v2/projector.ts`、`app/_runtime/components/tactical-map.tsx`、`app/_runtime/components/play-table.tsx`、`tests/tactical-map-v2.test.mjs`、`tests/authoritative-table-v2.test.mjs`。未实现 Goal 0002 的 movement/area action/preview，未改 SPEC 0001、Goal 0001、Profile、D1 或部署配置。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28（TDD RED） | `npx tsx --test tests/tactical-map-v2.test.mjs` | 1（预期 RED） | 0/4；距离、完整地图 DOM、unknown 和实际 PlayTable 接线四项分别命中新增验收缺口。 |
+| 2026-08-28（并行 GREEN） | 四项 name-pattern 后完整 tactical-map；authoritative-table；typecheck；diff | 0 | 地图 4/4、Viewer-only 17/17、类型与 whitespace 通过。 |
+| 2026-08-28（主代理联合复核） | `npx tsx --test tests/tactical-map-v2.test.mjs tests/authoritative-table-v2.test.mjs tests/observer-projection-v2.test.mjs tests/privacy-bypass-v2.test.mjs` | 0 | 27/27；真实 table adapter、投影校验、个人/NPC/继任隐私、隐藏空间 G15 与地图 DOM 联合通过。 |
+| 2026-08-28（Room Action 相邻复核） | `npx tsx --test tests/authoritative-action.test.mjs` | 0 | 15/15；区域安全延期未改变既有六类 outcome、直接战斗/待决/发布/失败行为。 |
+
+### 当前剩余条件与下一步
+
+- 进入真实浏览器阶段：在实际 `/table/<code>` authoritative-v2 游戏桌分别以 375×812 与 1440×900 验证 `scrollWidth === innerWidth`、地图/人物/当前位置/feature/+N 尺/当前行动者可辨认，并保存截图与 DOM 证据。
+- 浏览器通过后才冻结源码并运行同一源码的五项完整门；本阶段的 typecheck 是定向证据，不冒充最终冻结门。
+
+## Milestone 1：实际 authoritative-v2 桌 375/1440 浏览器验收 GREEN（2026-08-28）
+
+- 环境：按 Playwright Skill 先确认 `npx` 可用；Wrangler 4.125.0 对空的本地 Miniflare D1 应用既有 0000–0006 七个 migration，全部成功，仅改变 `.wrangler` 本地状态，不创建/修改任何远程资源。随后通过真实 `/register → /hall → 创建桌 → 九步建卡 → 锁卡 → 开始守灵 → /table/R5CZPW` 产品路径建立 authoritative-v2 桌；不是测试页或独立原型。
+- 实际投影：真实桌 `守灵夜` 显示 self 阿莱莎、Viewer 可见的莉安/奈斯/瓦罗、四个权威当前位置、10/20/30 尺中心约距、三项已知 feature（石砌炉台/拼起长桌/带泥湿地）、状态 `intact/wet`、移动/视线/掩护/传播标签、地面与 1 英寸/3 尺/5 尺高度。没有 encounter/zone 时分别诚实显示“当前遭遇信息未知”“尚无已知区域效果”；原自由行动输入与安全暂停仍在，地图明确标注交互后续支持。
+- 视觉 RED 因果链：首次两档 DOM 均满足 `scrollWidth===clientWidth`，但截图显示 SVG 只剩细横带。测量发现 SVG 自身 972×288，而 `overflow-hidden` frame 因 bounded CSS grid 被压成 988×16，人物/障碍实际被裁剪。测试新增 intrinsic width/height 与非收缩 frame 合同；地图容器改为纵向 flex+滚动，frame `shrink-0`，复测 frame 为桌面 988×304、移动端 315×178。
+- 可读性 RED 因果链：展开后完整姓名在相邻单位占位上叠字。SVG 内改为 self“我”与其他单位两字短标，完整姓名仍只从同一投影保留于 `<title>`、实体列表和文字读数；最终标签为 `我/莉安/奈斯/书记`，四个 entity 与三个 feature 的浏览器 bounding box 均为非零且在地图内。
+- 响应式证据：375×812 下 document/body 均 375/375、map 349px 宽且位于 x=13…362，frame 315×178；1440×900 下 document 1440/1440、map 1022px 宽且位于 x=25…1047，frame 988×304。两档均无横向溢出，`data-map-label`、feature state、deferred 文案与原行动输入真实存在。
+- 截图：`output/playwright/milestone1-table-375.png`（375×812，SHA-256 `896c0086623991766257b9dd1110f6f7c038b0abed0f427c96eab12df40e2fce`）；`output/playwright/milestone1-table-1440.png`（1440×900，SHA-256 `51c47204f14e3ccc18693808693574e5c9e0cf6ca5a1e963696748815b7345a9`）。主代理已用原始分辨率逐张目视复核；浏览器 console 有界搜索无 error/warning。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `npx wrangler d1 migrations apply DB --local` | 0 | 0000–0006 本地七项 migration 全部应用；远程未触碰。 |
+| 2026-08-28（浏览器首轮） | Playwright 真实注册/开桌/建卡/开始；375 与 1440 DOM + screenshot | 0，但视觉 RED | 两档无横向 overflow、数据齐全；截图揭示 SVG frame 16px 裁剪，未接受为完成。 |
+| 2026-08-28（TDD 修复） | tactical map name-pattern RED→GREEN；完整 `tests/tactical-map-v2.test.mjs` | 1 → 0 | frame 布局与短标分别先 RED；最终 4/4，未改变 Projection 或机械。 |
+| 2026-08-28（浏览器最终） | 375×812、1440×900 DOM 测量、截图、原图目视；console 有界搜索；`git diff --check` | 0 | 两档 documentFits=true、实体/feature bbox 非零、地图可见、短标不叠字、原行动入口在场；console 无 error/warning。 |
+
+### 当前剩余条件与下一步
+
+- 浏览器阶段完成；关闭 Playwright session 并停止本地 dev server，避免影响冻结检查。
+- 进入最终源码冻结门：运行 `module:check`、`typecheck`、`lint`、`npm test`、`git diff --check`；若修改任何可能影响结果的源码，必须重跑受影响门。
+
+## Milestone 1：首次全量冻结门与五项测试夹具回归收口（2026-08-28）
+
+- 首次冻结检查：`module:check`、`typecheck` 通过；`lint` 暴露 23 项仅位于新增测试的静态规则问题，均以等价的 const、显式删除未用字段和正则清理机械修复，未删除/跳过/弱化测试。精确 ESLint 批次与随后完整 `npm run lint` 均通过。
+- 首次 `npm test` 的构建通过，Node 套件为 314/319；五个失败分成三个既有测试夹具漂移，没有产品实现回归：
+  1. `rendered-html` 创建但未启动 authoritative runtime 的房间，生产删除结果现会诚实返回 `authorityCleanup:"notApplicable"`，旧精确对象断言漏掉该已被删除编排测试要求的字段。补齐断言后目标路径 1/1、相邻删除编排 2/2 通过。
+  2. `combat-mechanics-v2` 的合成半掩护平面跨过初始 60 英寸生物占位，却误标 `impassable:true`；连续配置空间验证正确发现 1 英寸正体积重叠，三条原本测试穿越/反应语义的用例在到达该语义前统一拒绝。只将此仅用于 cover ray 的平面标为 `impassable:false` 并保留 `opaque:true`；原失败 3/3 与相邻 G02/G03/G14 3/3 通过。
+  3. `runtime-trigger-time-v2` T04 的旧 Ready 路径从 `(0,0)` 到 `(300,0)` 穿过另外两个 PC 与 hostile 占位，新的事件 fold 几何重校验正确拒绝。只给 T04 设置 y=60 的无占位平行通道，保留两个响应竞争同一终点的核心语义；T04 1/1、T01–T05 5/5 通过。
+- 修改仅涉及测试期望/夹具和 lint 等价清理；没有改生产 Geometry、规则结果、断言、skip 或 timeout。主代理将原五项与相邻几何/时间批次合并复核为 11/11，精确 ESLint 通过。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28（首次冻结） | `npm run module:check`; `npm run typecheck`; `npm run lint` | 0; 0; 1 | 前两项通过；lint 仅 23 项新增测试静态规则问题。 |
+| 2026-08-28（lint 收口） | 精确 ESLint 批次；`npm run lint` | 0 | 全部测试逻辑与断言保留，完整 lint 通过。 |
+| 2026-08-28（首次全量） | `npm test` | 1 | build 通过；Node 314/319，五项失败均定位到上述旧夹具/精确期望；Worker suite 因 Node 门失败尚未启动。 |
+| 2026-08-28（删除路径） | rendered-html 精确 name-pattern；room deletion orchestration | 0 | 1/1 + 2/2。 |
+| 2026-08-28（主代理合并复核） | 六项 Geometry；T01–T05；三个修复文件精确 ESLint | 0 | 6/6 + 5/5；无生产逻辑修改。 |
+
+### 当前剩余条件与下一步
+
+- 在当前已收口源码上重新运行全部五项最终门；首次失败结果只作因果链证据，不能作为交付通过证据。
+- 全套通过后冻结并提交部署源码；随后才读取部署阶段直接需要的 Cloudflare 指令，核对现有 Worker/D1、应用待处理 migration、部署、线上冒烟与有界日志。
+
+## Milestone 1：Cloudflare Worker 测试并行资源争用收口（2026-08-28）
+
+- 第二次完整 `npm test` 中 build 与 Node 319/319 已通过；Worker/Vitest 为 154 passed / 5 skipped / 4 failed。四个失败全部来自 `combat-room-randomness-v2` 的 multi-wave recovery cases，均以原 5000ms 测试门槛 timeout；没有断言差异或某个特定 recovery checkpoint 的功能失败。
+- 因果证据：该文件独占单 Worker 时 11/11 通过，四个 recovery case 分别约 3648/3652/3658/3738ms；精确四项独占复核也为 4/4，约 3605–3750ms。与完整 42 文件并行时同四项一起约 5.0–5.45s 越线形成对照。分段时序显示初始化/开战/专注/交班/prepare 约 1425ms、故障注入到 crash 约 433ms、恢复 commit 约 1004ms、retry 约 254ms、archive export 约 506ms，未发现挂死或 checkpoint 特异异常。
+- 复现实验：再次全量并行时前两项分别约 5433/5160ms timeout，而同一轮后两项随并发重文件退出而降至约 4152/3885ms；运行时间跟随全局负载而非 checkpoint，确认首因是 Cloudflare Miniflare/DO 测试文件并行资源争用。
+- 修复：`vitest.config.ts` 只增加 `fileParallelism:false`，使 Cloudflare Worker 测试文件串行。没有提高 `testTimeout`、删除/skip/弱化断言，也没有改生产代码或随机恢复逻辑；每个 case 仍必须在原 5 秒门槛内完整通过。代价仅是最终 Worker 套件墙钟时间增加。
+- 同轮出现的 `stage4-hazard-freeze-response-loss` 输出来自另一个房间 DO 实例的同步故障注入：room id、实例属性和闭包均不同，未建立跨测试全局状态/异步 listener，与四项 timeout 仅同处并行输出，不构成因果。
+
+### 当前剩余条件与下一步
+
+- 配置改变后重新运行 `typecheck`、`lint`、完整 `npm test` 与 `git diff --check`；只有串行 Worker 全套真实通过才接受冻结门。
+
+## Milestone 1：最终冻结源码门 GREEN（2026-08-28）
+
+- 最终冻结源码上的静态门全部通过：`module:check` 验证 1 个模组及 Rules/Room 权威边界；`typecheck` 与完整 `lint` 均退出 0。
+- 最终完整 `npm test` 退出 0：Vinext 五阶段 build 成功；Node 为 319/319；Cloudflare Worker/Vitest 为 42/42 文件、158 passed、5 skipped。5 个 skip 均是 Goal 0002 明列的高级 tactical movement/elevation/OA/zone lifecycle 恢复入口，不属于本里程碑虚报完成项。
+- Worker 串行套件仍输出一次测试专用 `stage4-hazard-freeze-response-loss` 故障注入 reporter 行，但对应测试与全套均通过；该 hook 是实例级同步 throw，随后 recovery/retry/archive 均 await 并断言，没有跨房间状态泄漏或线上代码吞错。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28（最终静态门） | `npm run module:check`; `npm run typecheck`; `npm run lint` | 0; 0; 0 | 当前配置/源码通过。 |
+| 2026-08-28（最终完整门） | `npm test` | 0 | build；Node 319/319；Worker 42/42 files，158 passed / 5 deferred skipped，耗时 218.73s（Worker 段）。 |
+
+### 当前剩余条件与下一步
+
+- 运行最终 `git diff --check`、SPEC 0001 哈希与工作区提交边界复核；严格排除 `.playwright-cli`、`.wrangler`、构建产物和本地数据库状态，保留两张一次性本地 QA 截图作为验收证据。
+- 进入部署阶段：只读核对身份、现有 `zhuwei` Worker/DB、远端 migration 与版本；从提交 SHA 部署，做线上冒烟和有界日志，再写部署证据的 docs-only 交付提交并非 force 推送。
+
+## Milestone 1：部署前 Cloudflare 只读核对与远端 D1 migration（2026-08-28）
+
+- Cloudflare Skill 在部署阶段才加载。`npx wrangler whoami` 确认 OAuth 登录账号 `yinskyriver@gmail.com`、Account `7aca31eae821510ea477022b0c0e0e91`，具备现有 Workers/D1 写权限；缺少的 websearch/agent-memory/challenge-widget scope 与本部署无关，未重新登录、未索取 token。
+- `wrangler.jsonc` 与部署配置门确认唯一目标仍是 Worker `zhuwei`、D1 binding `DB`、数据库 `zhuwei-dev` / `f5a448fd-4224-4e52-bafb-a84cb190b618`、ROOMS Durable Object；没有 Sites/Vercel、新 Worker 或新持久化资源。
+- 部署前当前 100% 流量版本为 `3b22748d-9725-406e-b276-429fe99662b0`（2026-08-25T16:43:31.100Z）。远端 Git `main` 为冻结基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`，远端 `cloudflare` 为 `4bc3c3801f451a83a2491757237d3126ab7987bd`。
+- 远端 D1 migration list 只列 `0006_nice_iron_lad.sql`。逐行核对为三张 authoritative 可重建归档表、索引及 `rooms.runtime_epoch_id/genesis_hash` 两个 nullable 列，无删除或数据改写。
+- 用户已明确授权本里程碑部署现有 Worker；执行 `npx wrangler d1 migrations apply DB --remote`，退出 0，在现有数据库执行 11 条命令，`0006_nice_iron_lad.sql` 状态为成功。未创建任何新资源。
+
+### 当前剩余条件与下一步
+
+- 复查 remote migration list 为空并查询 schema；线上注册/登录/建桌路径将提供现有 D1 的最小写入—读取闭环。
+- 排除本地浏览器 raw DOM 与 Wrangler 状态后提交冻结部署源码，记录 `DEPLOY_SOURCE_SHA`，只从该 commit 发布。

@@ -1,4 +1,4 @@
-import type { InitialEntity } from "../rules/engine";
+import type { LegacyInitialEntity } from "../rules/legacy-adapter";
 import type {
   AttackProfile,
   Command,
@@ -7,23 +7,30 @@ import type {
   SquadState,
   WorldEvent,
 } from "../rules/model";
-import type { RulesetVersion } from "../rules/ruleset";
+import type { Ability, RulesetVersion } from "../rules/ruleset";
+import type { SpellcastingProfile } from "../rules/spell-model";
 
 export type InitializeRoomInput = {
   roomId: string;
   moduleId: string;
   rulesetVersion: RulesetVersion;
-  players: InitialEntity[];
+  players: LegacyInitialEntity[];
   squads?: SquadState[];
 };
 
-export type UpsertPlayerInput = { player: InitialEntity };
+export type UpsertPlayerInput = { player: LegacyInitialEntity };
 
 export type SynchronizePlayerLoadoutInput = {
   playerId: string;
   ac: number;
   attacks: AttackProfile[];
   capabilities: string[];
+  proficientSaves?: Ability[];
+  creatureType?: string;
+  conditionImmunities?: string[];
+  spellLevels?: Record<string, number>;
+  spellActionCosts?: Record<string, "action" | "bonusAction" | "reaction">;
+  spellcasting?: Record<string, SpellcastingProfile>;
 };
 
 export type PrepareTurnInput = {

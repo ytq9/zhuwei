@@ -1,4 +1,6 @@
 import { getChatGPTUser, type ChatGPTUser } from "../chatgpt-auth";
+import { AuthError } from "../_lib/auth.server";
+import { PublicServerError } from "../_runtime/lib/platform/server-fn";
 
 export class HttpError extends Error {
   constructor(
@@ -16,6 +18,13 @@ export async function requireApiUser(): Promise<ChatGPTUser> {
 }
 
 export async function requestJson<T>(request: Request): Promise<T> {
+  const contentType = request.headers.get("content-type")
+    ?.split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (contentType !== "application/json" && !contentType?.endsWith("+json")) {
+    throw new HttpError("请求内容类型必须是 JSON。", 415);
+  }
   try {
     return (await request.json()) as T;
   } catch {
@@ -24,8 +33,15 @@ export async function requestJson<T>(request: Request): Promise<T> {
 }
 
 export function routeError(error: unknown) {
-  const status = error instanceof HttpError ? error.status : 400;
-  const message =
-    error instanceof Error ? error.message : "桌面暂时无法响应，请稍后再试。";
-  return Response.json({ error: message }, { status });
+  if (
+    error instanceof HttpError
+    || error instanceof AuthError
+    || error instanceof PublicServerError
+  ) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+  return Response.json(
+    { error: "桌面暂时无法响应，请稍后再试。" },
+    { status: 500 },
+  );
 }

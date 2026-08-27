@@ -19,11 +19,19 @@ import type {
   WorldState,
 } from "./model";
 import {
+  formulaAtSlot,
+  spellAreaSize,
+  spellDefinition,
+  spellMaxTargets,
+} from "./spell-catalog";
+import type { SpellDefinition, SpellEffectState } from "./spell-model";
+import {
   LONG_REST_LIMIT_SECONDS,
   LONG_REST_SECONDS,
   MAX_SPOTLIGHT_SKEW,
   RULESET_VERSION,
   SHORT_REST_SECONDS,
+  abilityModifier,
   combineD20Modes,
   durationSeconds,
   resolveD20Check,
@@ -70,11 +78,15 @@ export function createWorldState(
           visitedSceneIds: entity.visitedSceneIds ?? [sceneId],
           abilityScores: entity.abilityScores ?? { ...DEFAULT_ABILITIES },
           proficiencyBonus: entity.proficiencyBonus ?? 2,
+          proficientSaves: entity.proficientSaves ?? [],
           proficientSkills: entity.proficientSkills ?? [],
           expertiseSkills: entity.expertiseSkills ?? [],
+          creatureType: entity.creatureType ?? "humanoid",
+          conditionImmunities: entity.conditionImmunities ?? [],
           capabilities: entity.capabilities ?? [],
           spellLevels: entity.spellLevels ?? {},
           spellActionCosts: entity.spellActionCosts ?? {},
+          spellcasting: entity.spellcasting ?? {},
           featureIds: entity.featureIds ?? [],
           activeEffects: entity.activeEffects ?? [],
           attacks: entity.attacks ?? [],
@@ -133,6 +145,7 @@ export function createWorldState(
     squads: Object.fromEntries(squads.map((squad) => [squad.id, squad])),
     squadInvites: {},
     combats: {},
+    spellEffects: {},
     scheduledEvents: Object.fromEntries(
       definition.scheduledEvents.map((event) => [event.id, "pending" as const]),
     ),
@@ -147,6 +160,41 @@ function reject(code: RuleRejection["code"], message: string): DecisionOutcome {
 
 function actorTime(state: WorldState, actorId: string): number {
   return state.timelines[actorId]?.fictionSeconds ?? 0;
+}
+
+function activeSpellEffects(state: WorldState, targetId: string) {
+  const now = state.timelines[targetId]?.fictionSeconds ?? 0;
+  return Object.values(state.spellEffects ?? {}).filter(
+    (effect) => {
+      if (effect.targetId !== targetId) return false;
+      const combat = state.combats[state.entities[targetId]?.sceneId ?? ""];
+      if (effect.expiresOnTurn && combat?.status === "active") return true;
+      return effect.expiresAtSeconds === undefined || now < effect.expiresAtSeconds;
+    },
+  );
+}
+
+function effectiveArmorClass(state: WorldState, entity: EntityState): number {
+  const effects = activeSpellEffects(state, entity.id);
+  const base = effects.reduce(
+    (value, effect) => Math.max(value, effect.modifiers?.baseAc ?? Number.NEGATIVE_INFINITY),
+    entity.ac,
+  );
+  return base + effects.reduce((sum, effect) => sum + (effect.modifiers?.acBonus ?? 0), 0);
+}
+
+function effectiveSpeedFeet(state: WorldState, entity: EntityState): number {
+  return Math.max(
+    0,
+    entity.speedFeet + activeSpellEffects(state, entity.id)
+      .reduce((sum, effect) => sum + (effect.modifiers?.speedFeet ?? 0), 0),
+  );
+}
+
+function effectiveMaxHp(state: WorldState, entity: EntityState): number | undefined {
+  if (!entity.hp) return undefined;
+  return entity.hp.max + activeSpellEffects(state, entity.id)
+    .reduce((sum, effect) => sum + (effect.modifiers?.maxHp ?? 0), 0);
 }
 
 function actorBeat(state: WorldState, actorId: string): number {
@@ -813,10 +861,15 @@ function combatCost(
 }
 
 function mitigatedDamage(target: EntityState, amount: number, damageType: string) {
+  if (target.capabilities.includes(`immunity:${damageType}`)) return 0;
   const rageResists = new Set(["bludgeoning", "piercing", "slashing", "physical"]);
-  return target.activeEffects.includes("rage") && rageResists.has(damageType)
-    ? Math.floor(amount / 2)
-    : amount;
+  const resistant =
+    target.capabilities.includes(`resistance:${damageType}`) ||
+    (target.activeEffects.includes("rage") && rageResists.has(damageType));
+  const vulnerable = target.capabilities.includes(`vulnerability:${damageType}`);
+  if (resistant && vulnerable) return amount;
+  if (resistant) return Math.floor(amount / 2);
+  return vulnerable ? amount * 2 : amount;
 }
 
 function commandActivity(input: {
@@ -971,12 +1024,15 @@ function stepResolveRoll(
   }
   const actor = state.entities[command.actorId];
   const boosts = command.boosts ?? {};
+  const guidanceEffect = activeSpellEffects(state, actor.id).find((effect) =>
+    effect.tags.includes("guidance"),
+  );
   if (boosts.useInspiration && (actor.resources.inspiration ?? 0) < 1) {
     return reject("not_allowed", "角色没有可花费的激励。 ");
   }
   if (
     boosts.guidanceRoll !== undefined &&
-    (!actor.activeEffects.includes("guidance") ||
+    ((!actor.activeEffects.includes("guidance") && !guidanceEffect) ||
       !Number.isInteger(boosts.guidanceRoll) ||
       boosts.guidanceRoll < 1 ||
       boosts.guidanceRoll > 4)
@@ -1044,7 +1100,11 @@ function stepResolveRoll(
     });
   }
   if (boosts.guidanceRoll !== undefined) {
-    bodies.push({ type: "ActiveEffectSet", entityId: actor.id, effectId: "guidance", active: false });
+    if (guidanceEffect) {
+      bodies.push({ type: "SpellEffectRemoved", effectId: guidanceEffect.id, reason: "consumed" });
+    } else {
+      bodies.push({ type: "ActiveEffectSet", entityId: actor.id, effectId: "guidance", active: false });
+    }
   }
   const timed = timeEvents(
     definition,
@@ -1212,6 +1272,656 @@ function startRestEvent(
   return { event: { type: "RestStarted", rest } };
 }
 
+function spellTargetRejection(
+  state: WorldState,
+  actor: EntityState,
+  command: Extract<Command, { kind: "castSpell" }>,
+  spell: SpellDefinition,
+  slotLevel: number,
+): RuleRejection | null {
+  const targetIds = command.targetIds ?? [];
+  const maximum = spellMaxTargets(spell, slotLevel);
+  const countedTargets = spell.targets.allowsRepeat ? targetIds : [...new Set(targetIds)];
+  if (maximum !== null && countedTargets.length > maximum) {
+    return { code: "not_allowed", message: `这个法术至多选择 ${maximum} 个目标。` };
+  }
+  if (!spell.targets.allowsRepeat && new Set(targetIds).size !== targetIds.length) {
+    return { code: "not_allowed", message: "这个法术不能重复选择同一目标。" };
+  }
+  const needsCreature = !["self", "object", "space", "area"].includes(spell.targets.filter);
+  const needsAreaTargets =
+    spell.resolution.mode === "save" || spell.resolution.special === "sleep-hp-pool";
+  if ((needsCreature || needsAreaTargets) && targetIds.length < (spell.targets.min ?? 1)) {
+    return { code: "unknown_target", message: "需要先选择合法的法术目标。" };
+  }
+  if (spell.targets.filter === "self" && targetIds.some((id) => id !== actor.id)) {
+    return { code: "not_allowed", message: "这个法术只能以自身为目标。" };
+  }
+  const targets = targetIds.map((id) => state.entities[id]);
+  if (targets.some((target) => !target || target.active === false)) {
+    return { code: "unknown_target", message: "法术目标不存在或已经离开房间。" };
+  }
+  if (targets.some((target) => target.sceneId !== actor.sceneId)) {
+    return { code: "unreachable", message: "法术目标不在施法者当前地点。" };
+  }
+  for (const target of targets) {
+    if (spell.targets.filter === "humanoid" && (target.creatureType ?? "humanoid") !== "humanoid") {
+      return { code: "not_allowed", message: `${target.name} 不是类人生物。` };
+    }
+    if (
+      spell.targets.filter === "living-at-zero-hp" &&
+      ((target.hp?.current ?? 1) !== 0 || target.activeEffects.includes("dead"))
+    ) {
+      return { code: "not_allowed", message: `${target.name} 当前不能被稳定伤势。` };
+    }
+    if (
+      spell.targets.filter === "creature-except-undead-construct" &&
+      ["undead", "construct"].includes(target.creatureType ?? "humanoid")
+    ) {
+      return { code: "not_allowed", message: `${target.name} 不受这个治疗法术影响。` };
+    }
+  }
+  const combat = state.combats[actor.sceneId];
+  if (!combat || combat.status !== "active") return null;
+  const actorPosition = combat.order.find((entry) => entry.entityId === actor.id)?.positionFeet;
+  if (actorPosition === undefined) return null;
+  const targetPositions = targetIds.map((id) =>
+    combat.order.find((entry) => entry.entityId === id)?.positionFeet,
+  );
+  if (targetPositions.some((position) => position === undefined)) {
+    return { code: "unreachable", message: "战斗中的法术目标必须已经加入当前战斗。" };
+  }
+  if (spell.area?.origin === "point") {
+    const origin = command.originFeet ?? targetPositions[0] ?? actorPosition;
+    const castRange = spell.range.kind === "distance" ? spell.range.feet : 0;
+    if (Math.abs(origin - actorPosition) > castRange) {
+      return { code: "unreachable", message: "法术区域中心超出施法距离。" };
+    }
+    if (targetPositions.some(
+      (position) => Math.abs(position! - origin) > (spellAreaSize(spell, slotLevel) ?? 0),
+    )) {
+      return { code: "unreachable", message: "所选目标没有全部位于法术区域内。" };
+    }
+    return null;
+  }
+  for (const position of targetPositions) {
+    const distance = Math.abs(position! - actorPosition);
+    const limit = spell.area?.origin === "self"
+      ? spellAreaSize(spell, slotLevel) ?? spell.area.sizeFeet
+      : spell.range.kind === "touch"
+        ? 5
+        : spell.range.kind === "distance"
+          ? spell.range.feet
+          : 0;
+    if (distance > limit) {
+      return { code: "unreachable", message: `目标在 ${distance} 英尺外，超出法术范围。` };
+    }
+  }
+  return null;
+}
+
+function validFaces(faces: number[], count: number, sides: number) {
+  return faces.length === count && faces.every(
+    (face) => Number.isInteger(face) && face >= 1 && face <= sides,
+  );
+}
+
+function chosenD20(mode: "normal" | "advantage" | "disadvantage", faces: number[]) {
+  if (!validFaces(faces, mode === "normal" ? 1 : 2, 20)) return undefined;
+  return mode === "advantage"
+    ? Math.max(...faces)
+    : mode === "disadvantage"
+      ? Math.min(...faces)
+      : faces[0];
+}
+
+function formulaModifier(
+  modifier: number | "casting" | undefined,
+  profile: EntityState["spellcasting"][string],
+) {
+  return modifier === "casting" ? profile.castingModifier : (modifier ?? 0);
+}
+
+function makeSpellEffect(input: {
+  state: WorldState;
+  commandId: string;
+  actor: EntityState;
+  target: EntityState;
+  spell: SpellDefinition;
+  effect: NonNullable<SpellDefinition["resolution"]["effects"]>[number];
+  startedAtSeconds: number;
+  slotLevel: number;
+  originFeet?: number;
+}): SpellEffectState {
+  const duration = input.spell.duration;
+  const combat = input.state.combats[input.actor.sceneId];
+  const actorPosition = combat?.order.find(
+    (entry) => entry.entityId === input.actor.id,
+  )?.positionFeet;
+  const targetPosition = combat?.order.find(
+    (entry) => entry.entityId === input.target.id,
+  )?.positionFeet;
+  const boundary = duration.kind === "timed" ? duration.turnBoundary : undefined;
+  const boundaryEntityId = boundary?.startsWith("caster")
+    ? input.actor.id
+    : boundary?.startsWith("target")
+      ? input.target.id
+      : undefined;
+  const boundaryIndex = combat?.order.findIndex(
+    (entry) => entry.entityId === boundaryEntityId,
+  ) ?? -1;
+  const boundaryRound =
+    combat && boundaryIndex >= 0
+      ? combat.round + (boundaryIndex <= combat.activeIndex ? 1 : 0)
+      : undefined;
+  const modifiers: NonNullable<SpellEffectState["modifiers"]> = {};
+  if (input.effect.tag === "speed-10") modifiers.speedFeet = -10;
+  if (input.effect.tag === "mage-armor") {
+    modifiers.baseAc = 13 + abilityModifier(input.target.abilityScores.dex ?? 10);
+  }
+  if (input.effect.tag === "shield-ac") modifiers.acBonus = 5;
+  if (input.effect.tag === "shield-of-faith") modifiers.acBonus = 2;
+  if (input.effect.tag === "aid") modifiers.maxHp = input.effect.value ?? 5;
+  return {
+    id: `spell-effect:${input.commandId}:${input.effect.tag}:${input.target.id}`,
+    spellId: input.spell.id,
+    sourceId: input.actor.id,
+    targetId: input.target.id,
+    label: input.effect.label,
+    tags: [input.effect.tag],
+    concentration: duration.kind !== "instant" && Boolean(duration.concentration),
+    startedAtSeconds: input.startedAtSeconds,
+    expiresAtSeconds:
+      duration.kind === "timed" ? input.startedAtSeconds + duration.seconds : undefined,
+    turnBoundary: duration.kind === "timed" ? duration.turnBoundary : undefined,
+    expiresOnTurn:
+      boundaryEntityId && boundary && boundaryRound !== undefined
+        ? {
+            entityId: boundaryEntityId,
+            phase: boundary.endsWith("Start") ? "start" : "end",
+            round: boundaryRound,
+          }
+        : undefined,
+    area: input.spell.area
+      ? {
+          sceneId: input.actor.sceneId,
+          shape: input.spell.area.shape,
+          sizeFeet: spellAreaSize(input.spell, input.slotLevel) ?? input.spell.area.sizeFeet,
+          originFeet:
+            input.spell.area.origin === "self"
+              ? actorPosition
+              : input.originFeet ?? targetPosition,
+        }
+      : undefined,
+    modifiers: Object.keys(modifiers).length ? modifiers : undefined,
+  };
+}
+
+function addDropEvents(
+  bodies: UnstampedEvent[],
+  state: WorldState,
+  damageByTarget: Map<string, number>,
+  damageType: string,
+) {
+  for (const [targetId, damage] of damageByTarget) {
+    const target = state.entities[targetId];
+    const currentHp = target.hp?.current ?? 1;
+    if (damage <= 0) continue;
+    bodies.push({ type: "EntityDamaged", entityId: targetId, amount: damage, damageType });
+    if (currentHp > 0 && damage >= currentHp) {
+      const massive = damage - currentHp >= (effectiveMaxHp(state, target) ?? Number.POSITIVE_INFINITY);
+      bodies.push({
+        type: "EntityDropped",
+        entityId: targetId,
+        outcome: target.kind === "npc" || massive ? "dead" : "unconscious",
+      });
+    } else if (currentHp === 0 && target.kind === "player") {
+      const failures = Math.min(3, target.deathSaves.failures + 1);
+      bodies.push({
+        type: "DeathSaveResolved",
+        entityId: targetId,
+        d20Roll: 0,
+        successes: target.deathSaves.successes,
+        failures,
+        outcome: failures >= 3 ? "dead" : "pending",
+      });
+    }
+  }
+}
+
+function stepCastSpell(
+  definition: WorldDefinition,
+  state: WorldState,
+  command: Extract<Command, { kind: "castSpell" }>,
+): DecisionOutcome {
+  const actor = state.entities[command.actorId];
+  if ((actor.hp?.current ?? 1) <= 0 || actor.activeEffects.includes("dead")) {
+    return reject("not_allowed", "失去意识或死亡的角色不能施法。");
+  }
+  const spell = spellDefinition(command.spellId);
+  const knownLevel = actor.spellLevels[command.spellId];
+  if (!spell || knownLevel === undefined || knownLevel !== spell.level) {
+    return reject("not_allowed", "角色没有准备或掌握这个法术。");
+  }
+  if (command.ritual && !spell.ritual) {
+    return reject("not_allowed", "这个法术不能以仪式方式施放。");
+  }
+  let slotLevel: 0 | 1 | 2 = 0;
+  if (spell.level > 0 && !command.ritual) {
+    slotLevel = command.slotLevel ?? spell.level;
+    if (slotLevel < spell.level || slotLevel > 2) {
+      return reject("not_allowed", "所选法术位不能施放这个法术。");
+    }
+    if ((actor.resources[`slot${slotLevel}`] ?? 0) < 1) {
+      return reject("not_allowed", `${slotLevel} 环法术位已经用完。`);
+    }
+  }
+  let targetIds = command.targetIds?.length ? [...command.targetIds] : [];
+  if (
+    targetIds.length === 0 &&
+    ["self", "willing-creature", "creature-except-undead-construct"].includes(
+      spell.targets.filter,
+    )
+  ) {
+    targetIds = [actor.id];
+  }
+  const attackCount =
+    (spell.resolution.attacks ?? 1) +
+    Math.max(0, slotLevel - spell.level) * (spell.resolution.attacksPerSlotAbove ?? 0);
+  if (spell.resolution.mode === "attack" && attackCount > 1 && targetIds.length === 1) {
+    targetIds = Array.from({ length: attackCount }, () => targetIds[0]);
+  }
+  if (spell.resolution.special === "magic-missile" && targetIds.length === 1) {
+    targetIds = Array.from(
+      { length: 3 + Math.max(0, slotLevel - spell.level) },
+      () => targetIds[0],
+    );
+  }
+  const castCommand = { ...command, targetIds };
+  const targetError = spellTargetRejection(state, actor, castCommand, spell, slotLevel);
+  if (targetError) return { kind: "rejected", rejection: targetError };
+  const skew = spotlightRejection(state, actor.id, 1);
+  if (skew) return { kind: "rejected", rejection: skew };
+
+  const castingSeconds = spell.castingSeconds + (command.ritual ? 10 * 60 : 0);
+  const combat = state.combats[actor.sceneId];
+  if (combat?.status === "active" && castingSeconds > 6) {
+    return reject("not_allowed", "这个法术的施法时间超过一轮，不能作为当前战斗动作完成。");
+  }
+  const combatCasting = combatCost(state, actor.id, spell.actionCost);
+  if (combatCasting.rejection) {
+    return { kind: "rejected", rejection: combatCasting.rejection };
+  }
+  const profile = actor.spellcasting?.[spell.id] ?? {
+    ability: "wis" as const,
+    castingModifier: abilityModifier(actor.abilityScores.wis ?? 10),
+    attackBonus:
+      actor.proficiencyBonus + abilityModifier(actor.abilityScores.wis ?? 10),
+    saveDc:
+      8 + actor.proficiencyBonus + abilityModifier(actor.abilityScores.wis ?? 10),
+  };
+  const targetsById = new Map(targetIds.map((id) => [id, state.entities[id]]));
+  const rolls = command.rolls ?? {};
+  const resolutionBodies: UnstampedEvent[] = [];
+  const damageByTarget = new Map<string, number>();
+  const effectTargets = new Set<string>();
+
+  const recordDamage = (target: EntityState, amount: number) => {
+    damageByTarget.set(target.id, (damageByTarget.get(target.id) ?? 0) + amount);
+  };
+  const applyEffect = (
+    target: EntityState,
+    effectDefinition: NonNullable<SpellDefinition["resolution"]["effects"]>[number],
+  ) => {
+    if ((target.conditionImmunities ?? []).includes(effectDefinition.tag)) return;
+    if (effectDefinition.tag === "push-10") {
+      const activeCombat = state.combats[target.sceneId];
+      const casterPosition = activeCombat?.order.find(
+        (entry) => entry.entityId === actor.id,
+      )?.positionFeet;
+      const targetPosition = activeCombat?.order.find(
+        (entry) => entry.entityId === target.id,
+      )?.positionFeet;
+      if (activeCombat && casterPosition !== undefined && targetPosition !== undefined) {
+        const direction = targetPosition < casterPosition ? -1 : 1;
+        resolutionBodies.push({
+          type: "CombatantForcedMoved",
+          sceneId: activeCombat.sceneId,
+          entityId: target.id,
+          fromPositionFeet: targetPosition,
+          toPositionFeet: Math.max(0, targetPosition + direction * (effectDefinition.value ?? 10)),
+          feet: effectDefinition.value ?? 10,
+          sourceId: spell.id,
+        });
+      }
+      return;
+    }
+    if (spell.duration.kind === "instant") return;
+    resolutionBodies.push({
+      type: "SpellEffectApplied",
+      effect: makeSpellEffect({
+        state,
+        commandId: command.id,
+        actor,
+        target,
+        spell,
+        effect: effectDefinition,
+        startedAtSeconds: actorTime(state, actor.id) + (castingSeconds > 6 ? castingSeconds : 0),
+        slotLevel,
+        originFeet: command.originFeet,
+      }),
+    });
+    if (effectDefinition.tag === "aid") {
+      resolutionBodies.push({
+        type: "EntityHealed",
+        entityId: target.id,
+        amount: effectDefinition.value ?? 5,
+      });
+    }
+  };
+
+  if (spell.resolution.mode === "attack") {
+    const attacks = rolls.attack ?? [];
+    const formula = formulaAtSlot(spell.resolution.damage!.formula, spell.level, slotLevel);
+    const effectRolls = rolls.effect ?? [];
+    if (attacks.length !== attackCount || targetIds.length !== attackCount) {
+      return reject("invalid_roll", "法术攻击次数或目标数量不合法。");
+    }
+    if (!validFaces(effectRolls, attackCount * formula.count * 2, formula.sides)) {
+      return reject("invalid_roll", "法术伤害骰数量或点数不合法。");
+    }
+    for (let index = 0; index < attackCount; index += 1) {
+      const attackRoll = attacks[index];
+      if (attackRoll.mode !== "normal") {
+        return reject("invalid_roll", "当前法术攻击没有已声明的优势或劣势来源。");
+      }
+      const face = chosenD20(attackRoll.mode, attackRoll.faces);
+      if (face === undefined) return reject("invalid_roll", "法术攻击 d20 不合法。");
+      const target = targetsById.get(targetIds[index])!;
+      const total = face + profile.attackBonus;
+      const hit = face === 20 || (face !== 1 && total >= effectiveArmorClass(state, target));
+      const critical = hit && face === 20;
+      const offset = index * formula.count * 2;
+      const diceCount = formula.count * (critical ? 2 : 1);
+      const rawDamage = hit
+        ? Math.max(
+            0,
+            effectRolls.slice(offset, offset + diceCount).reduce((sum, value) => sum + value, 0) +
+              formulaModifier(formula.modifier, profile),
+          )
+        : 0;
+      const damage = mitigatedDamage(target, rawDamage, spell.resolution.damage!.type);
+      resolutionBodies.push({
+        type: "SpellAttackResolved",
+        entityId: actor.id,
+        targetId: target.id,
+        spellId: spell.id,
+        attackTotal: total,
+        hit,
+        critical,
+        damage,
+      });
+      if (damage > 0) recordDamage(target, damage);
+      if (hit) effectTargets.add(target.id);
+    }
+  } else if (spell.resolution.mode === "save" && spell.resolution.save) {
+    const saveRolls = rolls.saves ?? {};
+    const uniqueTargets = [...targetsById.values()];
+    const formula = spell.resolution.damage
+      ? formulaAtSlot(spell.resolution.damage.formula, spell.level, slotLevel)
+      : undefined;
+    const effectRolls = rolls.effect ?? [];
+    if (formula && !validFaces(effectRolls, formula.count, formula.sides)) {
+      return reject("invalid_roll", "法术伤害骰数量或点数不合法。");
+    }
+    if (Object.keys(saveRolls).some((id) => !targetsById.has(id))) {
+      return reject("invalid_roll", "存在不属于本次法术目标的豁免骰。");
+    }
+    const sharedDamage = formula
+      ? Math.max(
+          0,
+          effectRolls.reduce((sum, value) => sum + value, 0) +
+            formulaModifier(formula.modifier, profile),
+        )
+      : 0;
+    for (const target of uniqueTargets) {
+      const submitted = saveRolls[target.id];
+      const requiredAdvantage = Boolean(
+        (spell.resolution.save.advantageInCombat && combat?.status === "active") ||
+          target.capabilities.includes(
+            `save-advantage:${spell.resolution.effects?.[0]?.tag ?? spell.id}`,
+          ),
+      );
+      const requiredMode = requiredAdvantage ? "advantage" as const : "normal" as const;
+      if (!submitted || submitted.mode !== requiredMode) {
+        return reject("invalid_roll", "法术豁免的优势状态与规则来源不一致。");
+      }
+      const face = chosenD20(submitted.mode, submitted.faces);
+      if (face === undefined) return reject("invalid_roll", "法术豁免 d20 不合法。");
+      const modifier =
+        abilityModifier(target.abilityScores[spell.resolution.save.ability] ?? 10) +
+        ((target.proficientSaves ?? []).includes(spell.resolution.save.ability)
+          ? target.proficiencyBonus
+          : 0);
+      const total = face + modifier;
+      const success = total >= profile.saveDc;
+      resolutionBodies.push({
+        type: "SpellSaveResolved",
+        entityId: actor.id,
+        targetId: target.id,
+        spellId: spell.id,
+        ability: spell.resolution.save.ability,
+        total,
+        dc: profile.saveDc,
+        success,
+      });
+      if (formula) {
+        const rawDamage = success
+          ? spell.resolution.save.onSuccess === "half"
+            ? Math.floor(sharedDamage / 2)
+            : 0
+          : sharedDamage;
+        const damage = mitigatedDamage(target, rawDamage, spell.resolution.damage!.type);
+        if (damage > 0) recordDamage(target, damage);
+      }
+      if (!success) effectTargets.add(target.id);
+    }
+  } else if (spell.resolution.special === "magic-missile") {
+    const formula = formulaAtSlot(spell.resolution.damage!.formula, spell.level, slotLevel);
+    const effectRolls = rolls.effect ?? [];
+    if (!targetIds.length || !validFaces(effectRolls, targetIds.length * formula.count, formula.sides)) {
+      return reject("invalid_roll", "魔法飞弹的飞弹数量或伤害骰不合法。");
+    }
+    targetIds.forEach((targetId, index) => {
+      const target = targetsById.get(targetId)!;
+      const blocked = activeSpellEffects(state, target.id).some((entry) =>
+        entry.tags.includes("magic-missile-immunity"),
+      );
+      const rawDamage = blocked
+        ? 0
+        : effectRolls
+            .slice(index * formula.count, (index + 1) * formula.count)
+            .reduce((sum, value) => sum + value, 0) + formulaModifier(formula.modifier, profile);
+      const damage = mitigatedDamage(target, Math.max(0, rawDamage), spell.resolution.damage!.type);
+      resolutionBodies.push({
+        type: "SpellAttackResolved",
+        entityId: actor.id,
+        targetId: target.id,
+        spellId: spell.id,
+        attackTotal: 0,
+        hit: !blocked,
+        critical: false,
+        damage,
+      });
+      if (damage > 0) recordDamage(target, damage);
+    });
+  } else if (spell.resolution.special === "sleep-hp-pool") {
+    const formula = formulaAtSlot(spell.resolution.damage!.formula, spell.level, slotLevel);
+    const effectRolls = rolls.effect ?? [];
+    if (!validFaces(effectRolls, formula.count, formula.sides)) {
+      return reject("invalid_roll", "睡眠术生命值池骰不合法。");
+    }
+    let pool = effectRolls.reduce((sum, value) => sum + value, 0);
+    const candidates = [...targetsById.values()]
+      .filter(
+        (target) =>
+          !["undead", "construct"].includes(target.creatureType ?? "humanoid") &&
+          !(target.conditionImmunities ?? []).includes("magical-sleep") &&
+          !target.activeEffects.includes("unconscious") &&
+          (target.hp?.current ?? Number.POSITIVE_INFINITY) > 0,
+      )
+      .sort((a, b) => (a.hp?.current ?? 0) - (b.hp?.current ?? 0) || a.id.localeCompare(b.id));
+    for (const target of candidates) {
+      const hp = target.hp?.current ?? Number.POSITIVE_INFINITY;
+      if (hp > pool) continue;
+      pool -= hp;
+      effectTargets.add(target.id);
+    }
+  } else if (spell.resolution.special === "stabilize") {
+    resolutionBodies.push({ type: "EntityStabilized", entityId: targetIds[0] });
+  } else if (spell.resolution.special === "misty-step") {
+    const activeCombat = state.combats[actor.sceneId];
+    if (activeCombat?.status === "active") {
+      const combatant = activeCombat.order.find((entry) => entry.entityId === actor.id);
+      const destination = command.destinationFeet ?? (combatant?.positionFeet ?? 0) + 30;
+      if (!combatant || destination < 0 || Math.abs(destination - combatant.positionFeet) > 30) {
+        return reject("unreachable", "迷踪步目的地必须是 30 尺内的未占据空间。");
+      }
+      if (activeCombat.order.some((entry) => entry.entityId !== actor.id && entry.positionFeet === destination)) {
+        return reject("unreachable", "迷踪步目的地已经被占据。");
+      }
+      resolutionBodies.push({
+        type: "CombatantTeleported",
+        sceneId: activeCombat.sceneId,
+        entityId: actor.id,
+        fromPositionFeet: combatant.positionFeet,
+        toPositionFeet: destination,
+        spellId: spell.id,
+      });
+    }
+  } else if (spell.resolution.special === "goodberry") {
+    resolutionBodies.push({ type: "ResourceRecovered", entityId: actor.id, resource: "goodberry", amount: 10 });
+  } else if (spell.resolution.special === "lesser-restoration") {
+    const target = targetsById.get(targetIds[0])!;
+    const removable = new Set(["diseased", "blinded", "deafened", "paralyzed", "poisoned"]);
+    const choice = command.choice && removable.has(command.choice)
+      ? command.choice
+      : activeSpellEffects(state, target.id).flatMap((entry) => entry.tags).find((tag) => removable.has(tag)) ??
+        target.activeEffects.find((tag) => removable.has(tag));
+    if (choice) {
+      const tracked = activeSpellEffects(state, target.id).find((entry) => entry.tags.includes(choice));
+      if (tracked) resolutionBodies.push({ type: "SpellEffectRemoved", effectId: tracked.id, reason: "ended" });
+      else resolutionBodies.push({ type: "ActiveEffectSet", entityId: target.id, effectId: choice, active: false });
+    }
+  } else if (spell.resolution.healing) {
+    const formula = formulaAtSlot(spell.resolution.healing, spell.level, slotLevel);
+    const effectRolls = rolls.effect ?? [];
+    if (!validFaces(effectRolls, formula.count, formula.sides)) {
+      return reject("invalid_roll", "治疗骰数量或点数不合法。");
+    }
+    const lifeBonus = actor.featureIds.includes("discipleOfLife") && spell.level > 0
+      ? 2 + slotLevel
+      : 0;
+    const healing = Math.max(
+      0,
+      effectRolls.reduce((sum, value) => sum + value, 0) +
+        formulaModifier(formula.modifier, profile) +
+        lifeBonus,
+    );
+    for (const target of targetsById.values()) {
+      resolutionBodies.push({ type: "EntityHealed", entityId: target.id, amount: healing });
+    }
+  } else {
+    for (const target of targetsById.values()) effectTargets.add(target.id);
+    if (effectTargets.size === 0) effectTargets.add(actor.id);
+  }
+
+  if (spell.resolution.mode === "automatic" || spell.resolution.mode === "utility") {
+    for (const target of targetsById.values()) effectTargets.add(target.id);
+    if (effectTargets.size === 0 && spell.resolution.effects?.length) effectTargets.add(actor.id);
+  }
+  if (spell.id === "spiritual") {
+    effectTargets.clear();
+    effectTargets.add(actor.id);
+  }
+  for (const targetId of effectTargets) {
+    const target = state.entities[targetId];
+    if (!target) continue;
+    for (const effectDefinition of spell.resolution.effects ?? []) {
+      applyEffect(target, effectDefinition);
+    }
+  }
+  if (damageByTarget.size && spell.resolution.damage) {
+    addDropEvents(
+      resolutionBodies,
+      state,
+      damageByTarget,
+      spell.resolution.damage.type,
+    );
+  }
+
+  const castBodies: UnstampedEvent[] = [];
+  if (combatCasting.event) castBodies.push(combatCasting.event);
+  for (const current of Object.values(state.spellEffects ?? {})) {
+    if (
+      current.sourceId === actor.id &&
+      current.concentration &&
+      (current.expiresAtSeconds === undefined || actorTime(state, actor.id) < current.expiresAtSeconds)
+    ) {
+      castBodies.push({
+        type: "SpellEffectRemoved",
+        effectId: current.id,
+        reason: "concentration",
+      });
+    }
+  }
+  if (slotLevel > 0) {
+    castBodies.push({
+      type: "ResourceSpent",
+      entityId: actor.id,
+      resource: `slot${slotLevel}`,
+      amount: 1,
+    });
+  }
+  castBodies.push({
+    type: "SpellCast",
+    entityId: actor.id,
+    spellId: spell.id,
+    slotLevel,
+    targetIds,
+    attackBonus: profile.attackBonus,
+    saveDc: profile.saveDc,
+    ritual: Boolean(command.ritual),
+  });
+  castBodies.push(...resolutionBodies);
+
+  const bodies: UnstampedEvent[] = [];
+  if (!combatCasting.inCombat && castingSeconds > 6) {
+    const activity = commandActivity({
+      id: command.id,
+      actorId: actor.id,
+      kind: "general",
+      sourceId: spell.id,
+      name: `施放 ${spell.id}`,
+      startedAt: actorTime(state, actor.id),
+      durationSeconds: castingSeconds,
+    });
+    bodies.push({ type: "ActivityStarted", activity });
+    const timed = timeEvents(definition, state, actor.id, castingSeconds, 1, activity);
+    bodies.push(...timed);
+    if (!activityReached(actorTime(state, actor.id), activity, timed)) {
+      return { kind: "committed", events: stampEvents(state, command, bodies, "committed") };
+    }
+    bodies.push({ type: "ActivityCompleted", activityId: activity.id }, ...castBodies);
+  } else {
+    bodies.push(...castBodies);
+    if (!combatCasting.inCombat) {
+      bodies.push(...timeEvents(definition, state, actor.id, castingSeconds, 1));
+    }
+  }
+  return { kind: "committed", events: stampEvents(state, command, bodies, "committed") };
+}
+
 function decide(
   definition: WorldDefinition,
   state: WorldState,
@@ -1235,6 +1945,7 @@ function decide(
   if (command.kind === "interact") return stepInteraction(definition, state, command);
   if (command.kind === "resolveRoll") return stepResolveRoll(definition, state, command);
   if (command.kind === "move") return stepMove(definition, state, command);
+  if (command.kind === "castSpell") return stepCastSpell(definition, state, command);
   if (command.kind === "startCombat") {
     const actor = state.entities[command.actorId];
     if (state.combats[actor.sceneId]?.status === "active") {
@@ -1736,13 +2447,28 @@ function decide(
         .filter((entry) => !state.entities[entry.entityId]?.activeEffects.includes("dead"))
         .map((entry) => entry.side),
     );
+    const endingEffects: UnstampedEvent[] = Object.values(state.spellEffects ?? {})
+      .filter(
+        (effect) =>
+          effect.expiresOnTurn?.entityId === command.actorId &&
+          effect.expiresOnTurn.phase === "end" &&
+          effect.expiresOnTurn.round <= combat.round,
+      )
+      .map((effect) => ({
+        type: "SpellEffectRemoved" as const,
+        effectId: effect.id,
+        reason: "ended" as const,
+      }));
     if (survivingSides.size < 2) {
       return {
         kind: "committed",
         events: stampEvents(
           state,
           command,
-          [{ type: "CombatEnded", sceneId: combat.sceneId, reason: "一方已经没有仍在战斗中的成员" }],
+          [
+            ...endingEffects,
+            { type: "CombatEnded", sceneId: combat.sceneId, reason: "一方已经没有仍在战斗中的成员" },
+          ],
           "committed",
         ),
       };
@@ -1757,65 +2483,34 @@ function decide(
     }
     const wrapped = nextIndex === 0;
     const nextRound = wrapped ? combat.round + 1 : combat.round;
+    const nextEntityId = combat.order[nextIndex].entityId;
+    const startingEffects: UnstampedEvent[] = Object.values(state.spellEffects ?? {})
+      .filter(
+        (effect) =>
+          effect.expiresOnTurn?.entityId === nextEntityId &&
+          effect.expiresOnTurn.phase === "start" &&
+          effect.expiresOnTurn.round <= nextRound,
+      )
+      .map((effect) => ({
+        type: "SpellEffectRemoved" as const,
+        effectId: effect.id,
+        reason: "ended" as const,
+      }));
     const bodies: UnstampedEvent[] = [
+      ...endingEffects,
       { type: "SpotlightAdvanced", entityId: command.actorId, beats: 1 },
       {
         type: "CombatTurnAdvanced",
         sceneId: combat.sceneId,
         fromEntityId: command.actorId,
-        toEntityId: combat.order[nextIndex].entityId,
+        toEntityId: nextEntityId,
         round: nextRound,
       },
+      ...startingEffects,
     ];
     if (wrapped) {
       bodies.push(
         ...timeEvents(definition, state, command.actorId, durationSeconds({ unit: "round", value: 1 }), 0),
-      );
-    }
-    return { kind: "committed", events: stampEvents(state, command, bodies, "committed") };
-  }
-  if (command.kind === "castSpell") {
-    const actor = state.entities[command.actorId];
-    const skew = spotlightRejection(state, actor.id, 1);
-    if (skew) return { kind: "rejected", rejection: skew };
-    const spellLevel = actor.spellLevels[command.spellId];
-    if (spellLevel === undefined) return reject("not_allowed", "角色没有准备或掌握这个法术。 ");
-    const bodies: UnstampedEvent[] = [];
-    const castingCost = actor.spellActionCosts[command.spellId] ?? "action";
-    const combatCasting = combatCost(state, actor.id, castingCost);
-    if (combatCasting.rejection) {
-      return { kind: "rejected", rejection: combatCasting.rejection };
-    }
-    if (combatCasting.event) bodies.push(combatCasting.event);
-    let slotLevel: 0 | 1 | 2 = 0;
-    if (spellLevel > 0) {
-      slotLevel = command.slotLevel ?? (spellLevel as 1 | 2);
-      if (slotLevel < spellLevel || slotLevel > 2) {
-        return reject("not_allowed", "所选法术位不能施放这个法术。 ");
-      }
-      const resource = `slot${slotLevel}`;
-      if ((actor.resources[resource] ?? 0) < 1) {
-        return reject("not_allowed", `${slotLevel} 环法术位已经用完。`);
-      }
-      bodies.push({ type: "ResourceSpent", entityId: actor.id, resource, amount: 1 });
-    }
-    bodies.push({ type: "SpellCast", entityId: actor.id, spellId: command.spellId, slotLevel });
-    if (command.spellId === "guidance" || command.spellId === "bless") {
-      for (const effectId of actor.activeEffects.filter(
-        (effect) => effect === "guidance" || effect === "bless",
-      )) {
-        bodies.push({ type: "ActiveEffectSet", entityId: actor.id, effectId, active: false });
-      }
-      bodies.push({
-        type: "ActiveEffectSet",
-        entityId: actor.id,
-        effectId: command.spellId,
-        active: true,
-      });
-    }
-    if (!combatCasting.inCombat) {
-      bodies.push(
-        ...timeEvents(definition, state, actor.id, durationSeconds({ unit: "round", value: 1 }), 1),
       );
     }
     return { kind: "committed", events: stampEvents(state, command, bodies, "committed") };
@@ -2119,6 +2814,7 @@ export function step(
 export function applyEvents(state: WorldState, events: WorldEvent[]): WorldState {
   const next = structuredClone(state);
   next.activities ??= {};
+  next.spellEffects ??= {};
   for (const event of events) {
     if (event.version !== next.version + 1) {
       throw new Error(`事件版本不连续：需要 ${next.version + 1}，收到 ${event.version}`);
@@ -2183,6 +2879,12 @@ export function applyEvents(state: WorldState, events: WorldEvent[]): WorldState
         entity.ac = event.ac;
         entity.attacks = event.attacks;
         entity.capabilities = event.capabilities;
+        if (event.proficientSaves) entity.proficientSaves = event.proficientSaves;
+        if (event.creatureType) entity.creatureType = event.creatureType;
+        if (event.conditionImmunities) entity.conditionImmunities = event.conditionImmunities;
+        if (event.spellLevels) entity.spellLevels = event.spellLevels;
+        if (event.spellActionCosts) entity.spellActionCosts = event.spellActionCosts;
+        if (event.spellcasting) entity.spellcasting = event.spellcasting;
       }
     } else if (event.type === "RollRequested") {
       next.pendingRolls[event.roll.id] = event.roll;
@@ -2211,7 +2913,7 @@ export function applyEvents(state: WorldState, events: WorldEvent[]): WorldState
       const entity = next.entities[event.entityId];
       const hp = entity?.hp;
       if (hp) {
-        hp.current = Math.min(hp.max, hp.current + event.amount);
+        hp.current = Math.min(effectiveMaxHp(next, entity) ?? hp.max, hp.current + event.amount);
         if (hp.current > 0) {
           entity.deathSaves = { successes: 0, failures: 0 };
           entity.activeEffects = entity.activeEffects.filter(
@@ -2229,6 +2931,23 @@ export function applyEvents(state: WorldState, events: WorldEvent[]): WorldState
         maximum,
         (entity.resources[event.resource] ?? 0) + event.amount,
       );
+    } else if (event.type === "SpellEffectApplied") {
+      next.spellEffects[event.effect.id] = event.effect;
+    } else if (event.type === "SpellEffectRemoved") {
+      delete next.spellEffects[event.effectId];
+    } else if (event.type === "EntityStabilized") {
+      const entity = next.entities[event.entityId];
+      if (entity) {
+        entity.deathSaves = { successes: 0, failures: 0 };
+        entity.activeEffects = [
+          ...new Set([
+            ...entity.activeEffects.filter(
+              (effect) => effect !== "unconscious" && effect !== "dead",
+            ),
+            "stable",
+          ]),
+        ];
+      }
     } else if (event.type === "ActiveEffectSet") {
       const entity = next.entities[event.entityId];
       entity.activeEffects = event.active
@@ -2280,6 +2999,16 @@ export function applyEvents(state: WorldState, events: WorldEvent[]): WorldState
         );
         combatant.economy.movement = combatant.economy.movementFeet > 0;
       }
+    } else if (event.type === "CombatantTeleported") {
+      const combatant = next.combats[event.sceneId]?.order.find(
+        (entry) => entry.entityId === event.entityId,
+      );
+      if (combatant) combatant.positionFeet = event.toPositionFeet;
+    } else if (event.type === "CombatantForcedMoved") {
+      const combatant = next.combats[event.sceneId]?.order.find(
+        (entry) => entry.entityId === event.entityId,
+      );
+      if (combatant) combatant.positionFeet = event.toPositionFeet;
     } else if (event.type === "EntityDropped") {
       const entity = next.entities[event.entityId];
       if (entity) {
@@ -2460,13 +3189,36 @@ export function project(
       visitedSceneIds: [...viewer.visitedSceneIds],
       timeline: state.timelines[viewerId],
       rest: state.rests[viewerId],
-      hp: viewer.hp,
-      ac: viewer.ac,
-      speedFeet: viewer.speedFeet,
+      hp: viewer.hp
+        ? {
+            current: Math.min(viewer.hp.current, effectiveMaxHp(state, viewer) ?? viewer.hp.max),
+            max: effectiveMaxHp(state, viewer) ?? viewer.hp.max,
+          }
+        : undefined,
+      ac: effectiveArmorClass(state, viewer),
+      speedFeet: effectiveSpeedFeet(state, viewer),
       deathSaves: { ...viewer.deathSaves },
       activeEffects: [...viewer.activeEffects],
+      spellcasting: Object.entries(viewer.spellcasting ?? {}).map(([spellId, profile]) => ({
+        spellId,
+        ability: profile.ability,
+        attackBonus: profile.attackBonus,
+        saveDc: profile.saveDc,
+      })),
+      spellEffects: activeSpellEffects(state, viewer.id).map((effect) => ({
+        id: effect.id,
+        spellId: effect.spellId,
+        sourceId: effect.sourceId,
+        label: effect.label,
+        tags: [...effect.tags],
+        concentration: effect.concentration,
+        expiresAtSeconds: effect.expiresAtSeconds,
+      })),
       availableRollBoosts: [
-        ...(viewer.activeEffects.includes("guidance") ? ["guidance" as const] : []),
+        ...(viewer.activeEffects.includes("guidance") ||
+        activeSpellEffects(state, viewer.id).some((effect) => effect.tags.includes("guidance"))
+          ? ["guidance" as const]
+          : []),
         ...((viewer.resources.inspiration ?? 0) > 0 ? ["inspiration" as const] : []),
         ...(viewer.featureIds.includes("halflingLucky") ? ["lucky" as const] : []),
       ],

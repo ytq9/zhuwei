@@ -903,17 +903,17 @@ export const SPELLS: Spell[] = [
     name: "治疗祈祷",
     level: 2,
     school: "塑能",
-    time: "动作",
+    time: "10 分钟",
     range: "30 尺",
     duration: "即效",
-    text: "最多六个你能看见的生物各恢复 2d8＋感知调整生命。对不死与构装无效。耗 2 环。",
+    text: "最多六个你能看见的生物各恢复 2d8＋感知调整生命。施法时间为 10 分钟，不能作为战斗内动作使用。对不死与构装无效。耗 2 环。",
   },
 ];
 
 export const WIZARD_CANTRIPS = ["fire-bolt", "ray-frost", "shocking", "mage-hand", "prestidigitation", "light", "minor-illusion"];
-export const WIZARD_SPELLS = ["mage-armor", "shield", "magic-missile", "sleep", "detect-magic", "identify", "charm", "thunderwave", "burning-hands", "misty", "scorching", "invisibility", "mirror-image", "web", "hold-person"];
+export const WIZARD_SPELLS = ["mage-armor", "shield", "magic-missile", "sleep", "detect-magic", "identify", "charm", "disguise", "thunderwave", "burning-hands", "misty", "scorching", "invisibility", "mirror-image", "web", "hold-person"];
 export const CLERIC_CANTRIPS = ["guidance", "sacred-flame", "thaumaturgy", "spare", "light"];
-export const CLERIC_SPELLS = ["bless", "cure", "healing-word", "guiding-bolt", "inflict", "shield-faith", "command", "detect-evil", "detect-magic", "spiritual", "aid", "lesser-restoration", "silence", "hold-person"];
+export const CLERIC_SPELLS = ["bless", "cure", "healing-word", "guiding-bolt", "inflict", "shield-faith", "command", "detect-evil", "detect-magic", "spiritual", "aid", "lesser-restoration", "silence", "hold-person", "prayer"];
 export const RANGER_SPELLS = ["hunters-mark", "goodberry", "ensnaring", "fog", "speak-animals", "cure"];
 
 export const CLASS_KITS: Record<string, string[][]> = {
