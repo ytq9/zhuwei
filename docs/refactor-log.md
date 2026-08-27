@@ -1508,3 +1508,31 @@
 
 - 复查 remote migration list 为空并查询 schema；线上注册/登录/建桌路径将提供现有 D1 的最小写入—读取闭环。
 - 排除本地浏览器 raw DOM 与 Wrangler 状态后提交冻结部署源码，记录 `DEPLOY_SOURCE_SHA`，只从该 commit 发布。
+
+## Milestone 1：现有 `zhuwei` Worker 正式部署与有界线上检查（2026-08-28）
+
+- 冻结部署源码提交：`9e3c13df6ef5ae5771d8a54468845a6ea7b477a6`。提交前索引/工作树相对 HEAD 无差异，唯一未跟踪内容为明确排除的 `.playwright-cli/` 本地 raw DOM；部署只从该 commit 运行。
+- `npm run cf:deploy` 退出 0：配置门通过、Vinext 五阶段 production build 通过、11 个变更资产上传成功；仍部署到既有 `zhuwei`，URL `https://zhuwei.yinskyriver.workers.dev`，Cloudflare Version `1b9d282e-45ba-4839-bf72-3acea30eaa34`。
+- `wrangler deployments status` 显示该版本自 2026-08-27T17:19:58.458Z 起获得 100% 流量；`versions view` 确认 fetch handler、compatibility date `2026-05-22`、`nodejs_compat`，以及既有 ROOMS/DB/AI/ASSETS bindings。Secret 只由控制面列出名称，未读取或记录值。
+- migration 后复查：remote list 为 `No migrations to apply`；远端 schema 实际读到三张归档表、五个索引与 `rooms.runtime_epoch_id/genesis_hash` 两列。
+
+### 线上冒烟与日志的传输层边界
+
+- 代表性脚本计划执行根页面、匿名 401、注册/安全 cookie、开桌、锁卡、启动、`fetchTable` tactical projection、table HTML、删除房间与登出；首个 `GET /` 尚未到 Worker 即在本地 Node HTTPS 连接 10 秒超时，故没有执行任何后续写操作。
+- 按合同只换一次独立浏览器通道；Chrome 在文档加载前同样超时。两个独立通道都在建立 HTTPS 连接前失败，不能支持“应用返回错误”的判断，因此没有修改业务代码，也停止继续重试。
+- 有界 `wrangler tail zhuwei --format json --version-id 1b9d282e-45ba-4839-bf72-3acea30eaa34` 会话本身以 `connect ETIMEDOUT 199.16.158.8:443` 结束，未建立日志流；不能声称观察到线上请求或“零错误日志”。控制面 deploy/status/version/D1 API 同期可用，边界限定为本机到 Worker/tail 流通道。
+- 远端 D1 精确查询该计划冒烟邮箱得到 `smoke_users=0`，确认未注册账号、未创建房间、无需清理。当前 D1 写入—读取证据限定为成功应用 migration 后立即读取真实 schema；没有虚报产品注册闭环。
+- 本里程碑可体验证据仍包括部署前同一冻结实现的真实本地 authoritative-v2 `/table/R5CZPW` 浏览器闭环与两张 375/1440 截图；线上控制面证明版本已发布并路由 100%，但代表性 HTTP 冒烟与 tail 内容受上述外部传输层限制，最终回执必须显式列为限制。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-27T17:19Z | `npm run cf:deploy` | 0 | URL `https://zhuwei.yinskyriver.workers.dev`；Version `1b9d282e-45ba-4839-bf72-3acea30eaa34`。 |
+| 2026-08-27T17:20Z | `npx wrangler deployments status`; `versions view` | 0; 0 | 新版本 100% 流量；handler/bindings/compatibility 与配置一致。 |
+| 2026-08-27T17:22Z | Node 代表性线上脚本；独立 Chrome | 1; timeout | 均在首个页面连接前超时；未到 Worker、零产品写入。 |
+| 2026-08-27T17:23Z | bounded `wrangler tail` | 1 | tail 连接 `ETIMEDOUT 199.16.158.8:443`，无日志内容可审计。 |
+| 2026-08-27T17:24Z | remote D1 smoke-user count | 0 | `smoke_users=0`；没有残留账号/房间。 |
+
+### 当前剩余条件与下一步
+
+- 创建 docs-only 交付提交并以非 force 方式推送 `cloudflare`；随后用 `git ls-remote` 证明远端 `cloudflare` 等于交付 SHA、远端 `main` 仍为冻结基线。
+- 推送证明完成后立即停止；延期能力保持 Goal 0002 `PENDING`，最终只标 `MILESTONE_1_COMPLETE`，不得宣称原完整计划 COMPLETE。
