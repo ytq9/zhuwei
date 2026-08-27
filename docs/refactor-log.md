@@ -1699,3 +1699,19 @@
 | 2026-08-28 | `npm run cf:deploy` | 0 | 配置门、production build 与上传通过；新 Version `80d665fe-01e5-4f2b-b608-4454cf903b75`。 |
 | 2026-08-28 | `wrangler deployments status --json`；`wrangler versions view 80d665fe-…` | 0；0 | 新版本 100% 流量；handler、compatibility、Secret 名称与原绑定一致。 |
 | 2026-08-28 | production root `curl`；独立远程抓取 | 28；受安全门拒绝 | 首个通道在 HTTP 前超时，第二通道未发起请求；记录外部传输限制并停止重试。 |
+
+## 简洁战术地图布局、响应式焦点修复与发布前冻结（2026-08-28）
+
+- 基线与范围：从最新远端 `cloudflare` / `388b527dc9e91346b4dfd1eb603b8b5b4178074a` 建立隔离集成 Worktree；远端 `main` 为冻结基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`。原工作区同时存在 KP、文档、侧栏与浏览器产物等其他在途改动，本次只收回 `app/_runtime/components/tactical-map.tsx`、`tests/fixtures/tactical-map-v2.mjs`、`tests/tactical-map-interaction-v2.test.mjs`、`tests/tactical-map-v2.test.mjs` 四个文件。两个只读范围审计确认 `388b527` 相对原地图 checkpoint 的远端提交未修改这些文件或 TacticalMap 接口；没有合入旧工作区整份日志、KP/Room/Table 改动或浏览器原始状态。
+- 需求与决策：桌面战斗态默认展开一块约 314px 高的内联地图，探索态默认收起；移动端只显示紧凑入口，打开后使用全屏 dialog。地图与文字版互斥；实体、环境要素与已知区域均可点选/键盘选中。移动、视线、区域传播与掩护除颜色外分别使用实线/虚线、斜线纹理、点状纹理和 `½`/`¾`/`全` 标记；高程、尺寸、状态、地形、遮挡和传播均使用中文详情。选择与展开只保存在客户端，不写入 Room、Rules 或 D1；组件只消费观察者公开 `TacticalProjection`，没有建立第二机械/状态权威或暴露隐藏几何。
+- 集成复审根因与修复：首轮复审发现移动 dialog 打开后跨入桌面 `lg` 断点时，`lg:hidden` 只隐藏 DOM，原 effect 仍可能锁定 `body` 并把 Tab 困在不可见 dialog。组件现监听与 Tailwind v4 `lg` 同源的 `(min-width: 64rem)`；跨断点时关闭 dialog，cleanup 移除键盘和 MediaQuery 监听、恢复原 `body.overflow`，并将焦点交给可见桌面入口；Escape/普通关闭仍还焦移动入口。初稿使用 effect 内同步 `setState`，目标 ESLint 以 `react-hooks/set-state-in-effect` 退出 1；改为仅在“effect 建立时已处于桌面”这一竞态下用 `requestAnimationFrame` 收口，随后显式 ESLint 通过。复审另指出 `1024px` 与 `64rem` 在用户默认字号下不等价，修正为 `64rem` 后阻断清零。
+- 浏览器验收：一次性本地预览路由通过 Playwright 启动真实 PlayTable，验收后已删除，未进入提交。1440×900 下地图盒为 `1022×314`、页面 `scrollWidth=1440`，最新侧栏保持独立收缩/滚动，三种 SVG pattern 与铁门中文详情可见；375×812 下入口保持紧凑，dialog 为 `375×812`、`body.overflow=hidden`，初始焦点在关闭按钮，Shift+Tab 到图例 summary、Tab 回到关闭按钮，Escape 后 dialog 消失、滚动解锁并还焦入口。最终断点探针在 1023px 确认移动入口可见且 `64rem` 查询为 false；打开后调整到 1024px，CSS 与 JS 同时切换、dialog 消失、滚动解锁、焦点落到可见桌面入口，下一次 Tab 进入桌面地图页签。控制台均为 0 error / 0 warning。一次详情探针因未限定可见实例同时匹配隐藏桌面与移动详情而 strict-mode 失败，改为 dialog-scoped locator 后通过；这是自动化定位问题，不是产品错误。两张最终预览图保存于工作区外的 Codex visualization 目录；仓库内截图与 `.playwright-cli` 原始状态已移到废纸篓，可恢复且未提交。
+- 冻结与外部状态：最终生产源码提交候选为 `9ecc6f93b5bf4e8d2d28995f3d5e5b2b7b912991`。隔离 Worktree 首次缺少依赖，`npm ci` 按锁文件安装 506 个包并退出 0，报告既有 12 项 audit 提示（1 low、4 moderate、7 high）；未自动修复，manifest/lockfile 无变化。首次完整门在 `1024px` 候选上通过，但因复审要求改为 `64rem` 而失效；最终候选重新运行完整冻结门并通过。发布前 Wrangler `4.125.0` 的现有 OAuth 会话、部署配置门、Secret 名称、远端 migration 与当前 deployment 均只读核对成功：目标仍为现有 `zhuwei`、`DB` / `zhuwei-dev`、ROOMS/AI/ASSETS，`DEEPSEEK_API_KEY` 值未读取，远端为 `No migrations to apply`，当前版本 `80d665fe-01e5-4f2b-b608-4454cf903b75` 承接 100% 流量。本节记录时尚未 push、migration apply 或 deploy，未创建资源。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `npm ci` | 0 | 安装 506 个锁定依赖；12 项既有 audit 提示，未改 manifest/lockfile。 |
+| 2026-08-28 | 目标 ESLint；地图组件定向测试 | 1 → 0；0 | 首稿同步 effect state 被静态门拒绝并修正；最终地图 5/5。 |
+| 2026-08-28 | Playwright 1440/375 视觉与键盘验收；1023→1024 断点恢复 | 0 | 无溢出；焦点 trap/Escape/还焦/滚动锁清理与 `64rem` 跨断点均通过，控制台 0 error / 0 warning。 |
+| 2026-08-28 | 最终 `npm run module:check && npm run typecheck && npm run lint && npm test` | 0 | production build；Node 334/334；Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip。故障注入 reporter 文本未造成失败。 |
+| 2026-08-28 | `wrangler --version`；`whoami`；部署配置门；Secret/migration/deployment 只读检查 | 0 | 现有账号、Worker、绑定和 D1 一致；无待处理 migration；发布前版本为 100% 流量。 |
