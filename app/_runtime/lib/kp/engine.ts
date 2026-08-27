@@ -65,7 +65,7 @@ import {
 
 export type { KpSpeech, PendingRoll };
 
-export function kpModelConfigurationError(model: KpModelId) {
+export function kpModelConfigurationError(model: string) {
   return providerConfigurationError(model);
 }
 

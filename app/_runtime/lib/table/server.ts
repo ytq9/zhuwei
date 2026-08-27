@@ -63,6 +63,7 @@ import {
   isAuthoritativeKpModel,
   isKpModelId,
   isLegacyKpModel,
+  publicKpModelId,
   type KpModelId,
 } from "@/lib/kp/models";
 import { projectLocationMessages } from "@/lib/table/message-projection";
@@ -281,17 +282,16 @@ async function bestEffortSynchronizeAuthoritativeGrowthCard(input: {
 }
 
 function authoritativeRoomKpProfileIsAvailable(
-  model: KpModelId,
+  model: string,
   modelProfileVersion: string,
 ): boolean {
-  return isAuthoritativeKpModel(model)
-    && authoritativeKpProfileByBinding(model, modelProfileVersion) !== undefined;
+  return authoritativeKpProfileByBinding(model, modelProfileVersion) !== undefined;
 }
 
 async function submitAuthoritativeTableAction(input: {
   roomId: string;
   userId: string;
-  model: KpModelId;
+  model: string;
   modelProfileVersion: string;
   submissionId: string;
   action: RoomActionInput;
@@ -320,7 +320,7 @@ async function submitAuthoritativeTableAction(input: {
 async function submitAuthoritativePartyTableAction(input: {
   roomId: string;
   userId: string;
-  model: KpModelId;
+  model: string;
   modelProfileVersion: string;
   submissionId: string;
   action: AuthoritativePartyAction;
@@ -570,7 +570,7 @@ async function roomRuleset(
     await sql<{
       ruleset_version: string;
       module_id: string;
-      kp_model: KpModelId;
+      kp_model: string;
       kp_model_profile: string;
       status: string;
     }>`
@@ -1000,7 +1000,7 @@ export const getRoomManagement = createServerFn({ method: "GET" })
         title: string;
         status: string;
         ruleset_version: string;
-        kp_model: KpModelId;
+        kp_model: string;
         kp_model_profile: string;
       }>`
         select code, title, status, ruleset_version, kp_model, kp_model_profile
@@ -1033,7 +1033,13 @@ export const getRoomManagement = createServerFn({ method: "GET" })
     );
     return {
       ok: true as const,
-      room: roomInfo,
+      room: {
+        code: roomInfo.code,
+        title: roomInfo.title,
+        status: roomInfo.status,
+        ruleset_version: roomInfo.ruleset_version,
+        kp_model: publicKpModelId(roomInfo.kp_model),
+      },
       characters: characterRows.map((character) => ({
         userId: character.user_id,
         locked: character.locked,
@@ -1383,7 +1389,7 @@ export const fetchTable = createServerFn({ method: "GET" })
         status: string;
         module_id: string;
         ruleset_version: string;
-        kp_model: KpModelId;
+        kp_model: string;
         kp_model_profile: string;
       }>`
         select id, code, title, status, module_id, ruleset_version,
@@ -1410,10 +1416,18 @@ export const fetchTable = createServerFn({ method: "GET" })
       join room_members m on m.room_id = c.room_id and m.user_id = c.user_id
       where c.room_id = ${room.id}
     `;
+    const publicRoomInfo = {
+      id: info.id,
+      code: info.code,
+      title: info.title,
+      status: info.status,
+      module_id: info.module_id,
+      ruleset_version: info.ruleset_version,
+      kp_model: publicKpModelId(info.kp_model),
+    };
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       if (
-        !isAuthoritativeKpModel(info.kp_model)
-        || authoritativeKpProfileByBinding(
+        authoritativeKpProfileByBinding(
           info.kp_model,
           info.kp_model_profile,
         ) === undefined
@@ -1478,7 +1492,7 @@ export const fetchTable = createServerFn({ method: "GET" })
       return {
         ok: true as const,
         me: { userId: context.userId, ...me },
-        room: info,
+        room: publicRoomInfo,
         members,
         characters: members.map((member) => {
           const ownControlledCharacter = member.user_id === context.userId
@@ -1741,7 +1755,7 @@ export const fetchTable = createServerFn({ method: "GET" })
     return {
       ok: true as const,
       me: { userId: context.userId, ...me },
-      room: info,
+      room: publicRoomInfo,
       members,
       characters: characters.map((c) => ({
         userId: c.user_id,
@@ -2218,8 +2232,7 @@ export const startGame = createServerFn({ method: "POST" })
     if (
       info.ruleset_version === AUTHORITATIVE_RULESET_VERSION
       && (
-        !isAuthoritativeKpModel(info.kp_model)
-        || authoritativeKpProfileByBinding(
+        authoritativeKpProfileByBinding(
           info.kp_model,
           info.kp_model_profile,
         ) === undefined
@@ -2227,7 +2240,10 @@ export const startGame = createServerFn({ method: "POST" })
     ) {
       return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
     }
-    if (!isKpModelId(info.kp_model)) {
+    if (
+      info.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      && !isKpModelId(info.kp_model)
+    ) {
       return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
     }
     const modelError = kpModelConfigurationError(info.kp_model);
@@ -2384,7 +2400,7 @@ export const sendAction = createServerFn({ method: "POST" })
         status: string;
         module_id: string;
         ruleset_version: string;
-        kp_model: KpModelId;
+        kp_model: string;
         kp_model_profile: string;
       }>`
         select status, module_id, ruleset_version, kp_model, kp_model_profile
@@ -2401,8 +2417,7 @@ export const sendAction = createServerFn({ method: "POST" })
     if (!pc?.locked) return { ok: false as const, error: "先锁定人物卡" };
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       if (
-        !isAuthoritativeKpModel(info.kp_model)
-        || authoritativeKpProfileByBinding(
+        authoritativeKpProfileByBinding(
           info.kp_model,
           info.kp_model_profile,
         ) === undefined
@@ -2441,6 +2456,9 @@ export const sendAction = createServerFn({ method: "POST" })
       return { ok: false as const, error: "这间房的规则版本不可用" };
     }
     if (info.ruleset_version === RULESET_VERSION) {
+      if (!isKpModelId(info.kp_model)) {
+        return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
+      }
       const sheet = ensureGear(asJson<CharacterSheet>(pc.sheet, {} as CharacterSheet));
       const name = sheet.name || me.nickname || "冒险者";
       return runRulesV2Action({
@@ -2757,7 +2775,7 @@ export const resolveRoll = createServerFn({ method: "POST" })
       await sql<{
         module_id: string;
         ruleset_version: string;
-        kp_model: KpModelId;
+        kp_model: string;
       }>`
         select module_id, ruleset_version, kp_model
         from rooms where id = ${room.id}
@@ -2776,6 +2794,9 @@ export const resolveRoll = createServerFn({ method: "POST" })
       return { ok: false as const, error: "这间房的规则版本不可用" };
     }
     if (roomInfo?.ruleset_version === RULESET_VERSION) {
+      if (!isKpModelId(roomInfo.kp_model)) {
+        return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
+      }
       let ticket = await prepareRoomTurn(room.id, context.userId);
       let pending = ticket.projection.pendingRolls.find((entry) => entry.id === data.rollId);
       if (!pending) return { ok: false as const, error: "没有这个检定" };
@@ -3464,6 +3485,9 @@ export const joinCombat = createServerFn({ method: "POST" })
       return { ok: false as const, error: "这间房的规则版本不可用" };
     }
     if (rules?.ruleset_version === RULESET_VERSION) {
+      if (!isKpModelId(rules.kp_model)) {
+        return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
+      }
       const projection = (await roomProjection(room.id, context.userId)).projection;
       if (!projection.combat) return { ok: false as const, error: "现在没有战斗" };
       const committed = await commitRulesV2Direct(room.id, context.userId, {
@@ -3558,6 +3582,9 @@ export const extraAttack = createServerFn({ method: "POST" })
       return { ok: false as const, error: "这间房的规则版本不可用" };
     }
     if (rules?.ruleset_version === RULESET_VERSION) {
+      if (!isKpModelId(rules.kp_model)) {
+        return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
+      }
       const before = (await roomProjection(room.id, context.userId)).projection;
       const combat = before.combat;
       const attack = before.viewer.attacks[0];
@@ -3729,6 +3756,9 @@ export const endTurn = createServerFn({ method: "POST" })
       return { ok: false as const, error: "这间房的规则版本不可用" };
     }
     if (rules?.ruleset_version === RULESET_VERSION) {
+      if (!isKpModelId(rules.kp_model)) {
+        return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
+      }
       const projection = (await roomProjection(room.id, context.userId)).projection;
       if (!projection.combat) return { ok: false as const, error: "现在没有战斗" };
       const committed = await commitRulesV2Direct(room.id, context.userId, {
@@ -4267,6 +4297,9 @@ export const castSpell = createServerFn({ method: "POST" })
     if (!row) return { ok: false as const, error: "没有人物卡" };
     const sheet0 = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
     if (rules?.ruleset_version === RULESET_VERSION) {
+      if (!isKpModelId(rules.kp_model)) {
+        return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
+      }
       const committed = await commitRulesV2Direct(room.id, context.userId, {
         kind: "castSpell",
         spellId: data.spellId,

@@ -42,7 +42,7 @@ export type {
   KpProposalRequest,
   ModelInvocationReceipt,
   ModelInvocationResult,
-  WorkersAiBinding,
+  AuthoritativeModelBinding,
 } from "./authoritative-types";
 
 const DEFAULT_INVOCATION_TIMEOUT_MS = 45_000;
@@ -186,7 +186,7 @@ export function createAuthoritativeKpAdapter(
   options: AuthoritativeKpAdapterOptions,
 ): AuthoritativeKpAdapter {
   if (!options?.ai || typeof options.ai.run !== "function") {
-    throw new TypeError("Workers AI binding is required for the authoritative KP adapter.");
+    throw new TypeError("A model binding is required for the authoritative KP adapter.");
   }
   const profile = options.profile ?? AUTHORITATIVE_KP_PROFILE;
   const registeredProfile = authoritativeKpProfileByBinding(

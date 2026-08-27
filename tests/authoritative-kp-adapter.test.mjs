@@ -6,16 +6,17 @@ import {
   AuthoritativeKpModelError,
   createAuthoritativeKpAdapter,
 } from "../app/_runtime/lib/kp/authoritative.ts";
+import { authoritativeKpProfileByBinding } from "../app/_runtime/lib/kp/authoritative-policy.ts";
 import { normalizeRoomKpProposal } from "../app/_runtime/lib/room/proposal-adapter.ts";
 
 const ROOT_ACTION_ID = "root:free-action:001";
 const PREPARED_ACTION_ID = "prepared:free-action:001";
 const PRIVATE_FACT = "truth:the-regent-forged-the-seal";
-const GEMMA_KP_PROFILE = Object.freeze({
-  ...AUTHORITATIVE_KP_PROFILE,
-  modelId: "@cf/google/gemma-4-26b-a4b-it",
-  modelProfileVersion: "authoritative-kp-model-gemma-4-26b-a4b-it-v1",
-});
+const GEMMA_KP_PROFILE = authoritativeKpProfileByBinding(
+  "@cf/google/gemma-4-26b-a4b-it",
+  "authoritative-kp-model-gemma-4-26b-a4b-it-v1",
+);
+if (GEMMA_KP_PROFILE === undefined) throw new Error("historical Gemma profile is missing");
 
 const KP_PROJECTION = Object.freeze({
   viewer: Object.freeze({ kind: "kp" }),
@@ -253,11 +254,11 @@ test("authoritative KP proposes open-world mechanics and revises only from Rules
   const revisedResult = await adapter.propose(proposalRequest({ attempt: 2, diagnostics }));
 
   assert.equal(ai.calls.length, 2);
-  assert.ok(ai.calls.every((call) => call.model === "@cf/zai-org/glm-4.7-flash"));
+  assert.ok(ai.calls.every((call) => call.model === AUTHORITATIVE_KP_PROFILE.modelId));
   for (const call of ai.calls) {
     assert.equal(call.input.tool_choice, "required");
     assert.equal(call.input.parallel_tool_calls, false);
-    assert.equal("response_format" in call.input, false, "GLM JSON mode must not be assumed");
+    assert.equal("response_format" in call.input, false, "provider JSON mode must not be assumed");
     assert.equal(call.input.tools.length, 1);
     assert.equal(call.input.tools[0].function.name, "submit_kp_proposal");
     const system = call.input.messages[0].content;
@@ -280,7 +281,7 @@ test("authoritative KP proposes open-world mechanics and revises only from Rules
   assert.equal(revisedResult.proposalAttemptId, `${ROOT_ACTION_ID}:kp:2`);
   assert.equal(revisedResult.mechanicalProposal.dc, 17);
   assert.equal(revisedResult.modelInvocationReceipt.result, "success");
-  assert.equal(revisedResult.modelInvocationReceipt.provider, "cloudflare-workers-ai");
+  assert.equal(revisedResult.modelInvocationReceipt.provider, "deepseek");
   assert.equal(revisedResult.modelInvocationReceipt.modelId, AUTHORITATIVE_KP_PROFILE.modelId);
   assert.equal(
     revisedResult.modelInvocationReceipt.promptPolicyVersion,

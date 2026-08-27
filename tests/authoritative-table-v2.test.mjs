@@ -42,7 +42,6 @@ test("every authoritative party endpoint rejects an unavailable room profile bef
   assert.notEqual(wrapperEnd, -1, "party dispatch wrapper boundary is missing");
   const guard = server.slice(guardStart, wrapperStart);
   const wrapper = server.slice(wrapperStart, wrapperEnd);
-  assert.match(guard, /isAuthoritativeKpModel/);
   assert.match(guard, /authoritativeKpProfileByBinding/);
   assert.match(wrapper, /authoritativeRoomKpProfileIsAvailable/);
   assert.match(wrapper, /本桌绑定的权威 KP 模型 Profile 已不可用/);

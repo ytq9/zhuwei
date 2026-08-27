@@ -1630,3 +1630,55 @@
 | 2026-08-28 | `git push origin HEAD:refs/heads/cloudflare`；远端分支复核 | 0；0 | 只推送 `69e494e`；远端 `main` 仍为冻结基线。 |
 | 2026-08-28 | `npm run cf:deploy`；`wrangler deployments status --json` | 0；0 | Version `d5dd869b-7dda-4b81-877d-d997d9346fb0` 发布并承接 100% 流量。 |
 | 2026-08-28 | production table `curl`；独立 Chrome | 28；timeout | 均在得到 HTTP/DOM 前超时；记录传输层限制，不虚报应用响应。 |
+
+## 代理合同：最小充分验证与外部探针止损（2026-08-28）
+
+- 基线：`cloudflare` / `0a8f5817284f`；工作区已有业务代码、测试、`AGENTS.md` 与本日志的在途修改，本次只增量编辑验证合同及对应日志，没有覆盖或收回其他修改。
+- 需求：开发期测试与 Workers AI 多组合超时探针累计耗时过长，需要只在关键位置验证，同时保留正式发布前的完整质量门。
+- 根因与决策：原合同把所有跨层改造直接升级为 `typecheck`、Lint 与全量测试，且外部推理故障没有模型/参数/调用方式的探针止损线。验证现分为开发闭环与冻结门：开发期默认不超过三类定向检查，跨层本身不触发全量；审查和定向修复收口后，仅在发布、里程碑或影响面无法界定等条件下对同一冻结候选运行一次完整门。外部真实探针使用生产默认组合一次，只有边界仍不清时再追加一次对照。
+- 修改：`AGENTS.md` 收窄并行组合回归范围，替换根因驱动的外部故障处理条款，将“适度验证”改为“最小充分验证”，增加检查失效范围、命令包含关系去重和冻结门，并把本地代码、部署与外部能力拆分报告。
+- 集成状态：修改保留在当前工作区；未运行代码测试、migration、部署、提交或推送。文档规则变更按合同只执行目标段落、whitespace 与最终 diff 检查。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | 目标段落复核；`git diff --check -- AGENTS.md`；`git diff --stat -- AGENTS.md`；目标 diff 复核 | 0 | 验证合同仅调整测试选择、冻结门、外部探针和完成状态表达；无 whitespace 错误，未触碰业务实现。 |
+
+## KP 公开模型恢复为 DeepSeek 与失败边界收口（2026-08-28）
+
+- 基线：`cloudflare` / `98ffd1d402e5ba2c5d4bdbe8fede6ecabb9f2ff6`。任务开始前工作区已有用户在途的 `AGENTS.md`、本日志修改及未跟踪 `.playwright-cli/`，本次均保留；三个 Worker 仅做模型后端、公开前端和失败重试的只读诊断/终审，没有并发写日志或源码。
+- 需求与症状：用户看到“KP 模型暂时不可用或响应超时，行动未提交”，要求解释原因、恢复原 DeepSeek，只在前端提供 DeepSeek V4 Flash / Pro，并询问“确认当前回应”是否需要。
+- 根因：此前 authoritative-v2 新房已从 DeepSeek 改为公开 GLM/Gemma Workers AI Profile；既有生产 envelope 中 GLM、Gemma 与对照 Workers AI 调用均在 45 秒超时，因此前端收到统一 `modelTransient` 文案。失败发生在 DO prepare 后、世界 commit 前，所以行动、虚构时间和资源均未提交。DeepSeek secret 与 legacy 接缝没有被删除，只是被排除在新规则公开目录和权威调用之外；本次只读 `wrangler secret list` 仍确认现有 Worker 存在 `DEEPSEEK_API_KEY` 名称，未读取值。
+- 决策：公开目录严格只保留 `deepseek-v4-flash`、`deepseek-v4-pro`，新房精确固定对应 DeepSeek Profile 并通过同一 authoritative Adapter 调用；不自动换模型。此前已固定的 GLM/Gemma 房间仍按原精确 Profile 在服务端兼容，不允许用于新房，也不把真实 ID、Profile 或 Provider 暴露给浏览器。历史房公开投影只返回 `kp_model:null` 和通用兼容文案。`SPEC 0010` 明确要求展示后的显式 ACK，因此保留“确认当前回应”：它只销毁当前 Viewer 的单槽旁白，不确认行动、不推进世界；曾临时改成无 ACK 的测试尝试在完整复核规格后全部撤回，未进入最终 diff。
+- 修改：
+  - `app/_runtime/lib/kp/{models,authoritative-policy,authoritative-types,authoritative-helpers,authoritative,deepseek,provider,engine}.ts`：新增 DeepSeek authoritative Chat Completions binding；转发 AbortSignal，转换 token 参数，保留 required tool call；402、429、5xx、422、缺密钥及 HTTP 200 `insufficient_system_resource` 进入稳定脱敏分类。公开两个 DeepSeek Profile，历史 Workers AI Profile 独立冻结并仅作服务端兼容。
+  - `app/_runtime/lib/{room/server,table/server,table/client}.ts`、`app/_runtime/components/play-table.tsx`、Hall/Table 页面：Room action、party 与 correction 按房间 Profile 选择真实 Provider；新建只接受两个 DeepSeek；公开 Room DTO 不返回 `kp_model_profile`，历史模型 ID 投影为 `null`；数据库行保持 `string` 并在 authoritative/legacy 分支显式收窄。页面只渲染两个 DeepSeek 选项或“历史兼容模型”。
+  - `tests/{deepseek-authoritative-provider,authoritative-kp-adapter,authoritative-table-v2,interaction-contract,rendered-html}.test.mjs`：覆盖 DeepSeek 请求协议、状态/容量/超时分类、缺密钥、四个精确 Profile、公开目录/DTO、非法隐藏模型拒绝和本地 Worker+D1 创建读回。`docs/specs/decision-register.md` 与 `SPEC 0011` 同步用户的新模型决策；无 schema/migration 变化。
+- 失败与收口：模型目录 RED 探针两次退出 1，实际仍为 GLM/Gemma；首轮定向实现为 42/43，仅旧源码正则不匹配新 binding，修正观察点后通过。首轮 typecheck 因隐藏历史 model 被错误收窄为公开 union 退出 2；公开 DTO 收口后又暴露五个 Legacy 调用缺少显式 model guard，均在真实分支加 fail-closed 收窄后通过。`eslint --no-ignore` 首次发现新 `deepseek.ts` 一个未用解构字段及被项目配置长期忽略的九项既有 runtime 告警；只修正本次字段，最终对新增/直接相关 KP 文件的显式 lint 与项目 lint 均通过。
+- 集成状态：本地代码与安全失败路径已验证，改动仍在未提交工作区；未运行真实 DeepSeek 外部调用，不能宣称线上 KP 能力已恢复。未执行 D1 migration、部署、流量变更、Git commit 或 push；远端现有 Worker 仍运行此前版本。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28（TDD RED） | DeepSeek 公开目录精确断言 | 1（预期 RED） | 实际为 GLM/Gemma，复现“DeepSeek 从新房公开目录消失”。 |
+| 2026-08-28 | `npx tsx --test tests/deepseek-authoritative-provider.test.mjs tests/interaction-contract.test.mjs tests/authoritative-kp-adapter.test.mjs tests/delivery-confirmation-v2.test.mjs tests/authoritative-table-v2.test.mjs` | 0 | 47/47；DeepSeek tool/错误/Abort、Profile、公开目录、Delivery ACK 与 authoritative table 合并通过。 |
+| 2026-08-28 | `npm run build && npx tsx --test tests/rendered-html.test.mjs` | 0 | Vinext production build 通过；本地 Worker+D1 HTTP 7/7，大厅只渲染 DeepSeek 两项，隐藏模型 ID 被拒绝，公开 room 不含 Profile。 |
+| 2026-08-28 | authoritative action + Room retry 两条失败不推进定向测试 | 0 | 1/1 + 1/1；模型暂态失败保留原 prepared action，不提交 WorldEvent、不推进状态。 |
+| 2026-08-28 | `npm run typecheck && npm run lint`；新增/相关 KP runtime 显式 ESLint | 0 | 最终类型、项目静态检查和 DeepSeek/models/policy/provider 显式 lint 通过。 |
+| 2026-08-28 | `npx --no-install wrangler secret list` | 0 | 只读确认现有 Worker 有 `DEEPSEEK_API_KEY` secret 名称；未读取值、未调用模型、未修改控制面。 |
+| 2026-08-28（并行只读复核） | rendered-html 目标筛选探针；同 checkpoint 含 Worker warm-up 重跑 | 1 → 0 | 首次因共享测试 Worker 初始化竞态出现临时 `SQLITE_BUSY` 并中止；按夹具顺序重跑 3/3，通过建房/桌面快照与管理 DTO。Worker 未改文件，主代理独占完整 HTTP 套件另为 7/7。 |
+
+## DeepSeek 发布前冻结与远端引用门（2026-08-28）
+
+- 用户已明确授权提交、推送并部署。冻结基线为当前 `cloudflare` / `982bcf095572a256248736980c853b4e621480e2`；任务期间并行完成的侧栏提交 `69e494e5088f1c400ff5cdc3909017c1e66e7cfa` 及其日志提交 `982bcf0` 已进入该基线，本次最终完整门在两者之后运行。远端 `main` 仍为冻结基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+- 首轮完整门在 Node 332/333 失败：`observer-http-privacy-v2` 的本地 `unstable_dev` 夹具未注入 DeepSeek 测试密钥，建房提前返回“DeepSeek V4 Flash 尚未配置 API 密钥”，没有进入该用例要验证的观察者隐私路径。只在该本地夹具加入假值 `DEEPSEEK_API_KEY=local-observer-test-key`，不写入生产 Secret；定向用例随后 1/1，通过完整门为 Node 333/333、Worker/Vitest 158 passed / 5 个既有条件 skip。
+- 远端 ProfileRef 只读门首次返回 `invalidGateInput`；Wrangler 的 D1 错误码 7500 明确指出复合 `UNION ALL` 查询的第二个 `ORDER BY` 项不匹配结果列。根因是发布门 SQL 用源表列名排序复合结果；改为按输出列序号 `ORDER BY 2, 4, 1`，并新增 SQL 形态回归。定向门 5/5，通过后同一远端只读查询确认 2 个现有房间只引用已打包的 `runtime-srd51-2014-authoritative-v2` 清单，未发现未知 ProfileRef。
+- Cloudflare 只读发布检查通过：Wrangler `4.125.0` 使用现有 OAuth 会话；`wrangler.jsonc` 仍只指向现有 Worker `zhuwei`、现有 D1 `zhuwei-dev` / `f5a448fd-4224-4e52-bafb-a84cb190b618`、`DB`、`ROOMS`、`AI` 与 `ASSETS` bindings；Secret 列表仅确认已有 `DEEPSEEK_API_KEY` 名称，不读取值；远端为 `No migrations to apply`。当前线上仍为侧栏版本 `d5dd869b-7dda-4b81-877d-d997d9346fb0`，100% 流量，本节记录时尚未执行本次 Git push 或 Worker 部署。
+- 最终冻结候选在上述两个修正后执行一次完整门：模块边界、typecheck、项目 lint、Vinext production build 均退出 0；Node 334/334；Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip。故障注入 reporter 文本为预期覆盖，未造成测试失败。后续只允许增加部署事实日志，不再修改已验证的生产源码或测试。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | 首轮 `npm run module:check && npm run typecheck && npm run lint && npm test` | 1 | 模块、类型、lint、build 通过；Node 332/333，唯一失败为观察者 HTTP 夹具缺少本地假 DeepSeek secret。 |
+| 2026-08-28 | `npx tsx --test tests/observer-http-privacy-v2.test.mjs` | 0 | 修正夹具后 1/1，进入并通过原定隐私路径。 |
+| 2026-08-28 | 第二轮 `npm run typecheck && npm run lint && npm test` | 0 | Node 333/333；Worker/Vitest 42/42 文件、158 passed / 5 skipped。 |
+| 2026-08-28 | 初次远端 ProfileRef SQL → SQL 形态回归 → 修正后远端门 | 1 → 0 → 0 | 首次为 D1 code 7500；定向门 5/5；远端 2 个房间引用均在部署清单中。 |
+| 2026-08-28 | 最终 `npm run module:check && npm run typecheck && npm run lint && npm test` | 0 | 最终冻结候选：Node 334/334；Worker/Vitest 158 passed / 5 skipped，production build 通过。 |
+| 2026-08-28 | `wrangler whoami`；部署配置门；Secret/migration/deployment 只读检查 | 0 | 现有账号、Worker、绑定和 D1 配置一致；无 migration；部署前线上 Version `d5dd869b` 为 100%。 |

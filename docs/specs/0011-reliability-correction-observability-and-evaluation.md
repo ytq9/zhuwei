@@ -3,7 +3,8 @@
 - 状态：**已裁定（本 Goal 授权）**
 - 裁定日期：2026-08-26
 - 上位规格：`SPEC 0001`、`SPEC 0003`、`SPEC 0010`
-- 平台：现有 Cloudflare Worker `zhuwei`、D1 `zhuwei-dev`、SQLite Room Durable Object、Workers AI binding `AI`
+- 平台：现有 Cloudflare Worker `zhuwei`、D1 `zhuwei-dev`、SQLite Room Durable Object、DeepSeek API；Workers AI binding `AI` 仅保留历史房间兼容与语音能力
+- 补充裁定：2026-08-28 用户明确要求公开 KP 模型只保留 DeepSeek V4 Flash / Pro；本规格此前把 Workers AI 作为新房默认的条款由本次补充取代。
 - 取代范围：`SPEC 0002` 第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款
 
 ## 1. 故障分类
@@ -24,7 +25,7 @@
 | `archiveFailure` | D1 追加失败 | DO 已提交结果不回滚 | `committed` + 内部待归档 |
 | `projectionIntegrity` | 增量断序/哈希不符 | 不返回原始事件 | `retryableFailure` |
 | `correctionRequired` | 已提交机械/事实错误 | 保持旧历史直至授权更正 | `needsKp`/错误报告 Receipt |
-| `quotaExhausted` | Workers/AI/D1 免费额度耗尽 | 不自动推进 | `retryableFailure` |
+| `quotaExhausted` | 已绑定模型 Provider、Workers 或 D1 额度耗尽 | 不自动推进 | `retryableFailure` |
 
 错误响应不得包含 Cookie、Token、Prompt、模组真相、未公开线索、内部 flags、私人叙述、原始模型输出、候选数量或其他 Viewer 数据。
 
@@ -58,11 +59,11 @@ SLO 未达成时先报告真实分类与恢复条件；不得吞错、伪造成�
 - Prompt 只含当前 KP Viewer、相关事实摘要、裁定先例和连续性索引，不发送完整事件/聊天历史；首个 Profile 目标输入 ≤ 16k tokens、提案输出 ≤ 2k、叙述输出 ≤ 800。
 - 当前回应每 Viewer 单槽，确认或被新回应覆盖即删除文本，避免长期存储与重生成成本；结构化事实长期保存。
 - `observe` 读取当前快照索引和必要增量，不全表扫描；D1 归档按提交事件批量/幂等追加。
-- 达到 AI 免费额度、模型付费限制或容量错误时返回 `retryableFailure`；不自动启用付费模型、外部 API 或弱化 KP 职责。
+- 达到已绑定 Provider 的额度、付费限制或容量错误时返回 `retryableFailure`；不自动切模型、启用其他 Provider 或弱化 KP 职责。
 
-新规则默认模型必须是部署时在现有 Workers Free/当前账号权限内可用的版本化模型 Profile。需要付费或未配置密钥的模型只能用于已经明确绑定且账户当前可用的旧房间，不能成为新房间默认，也不能静默替换。
+新规则公开模型严格只有版本化的 `deepseek-v4-flash` 与 `deepseek-v4-pro` Profile，前者为默认。部署前必须确认现有 `DEEPSEEK_API_KEY` secret 及代表性真实调用；未配置、无权或余额不足时 fail closed，不能以隐藏候选替换。此前已经精确绑定 GLM/Gemma Workers AI Profile 的旧房间继续由服务端兼容解释，但这些 Profile 不进入公开模型目录，也不允许用于创建新房间。
 
-同日复核的 [`@cf/zai-org/glm-4.7-flash` 模型页](https://developers.cloudflare.com/workers-ai/models/glm-4.7-flash/)列出 function calling 与 131,072 token context；Cloudflare [2026-07-28 模型方案 changelog](https://developers.cloudflare.com/changelog/post/2026-07-28-models-require-workers-paid/) 的付费限定清单不包含 GLM 4.7 Flash（清单包括 Kimi 2.6/2.7、GLM 5.2 等模型），因此公开目录仍把它归入 Free 可用范围。这只证明公开产品能力/方案归类，不证明本账户部署时 entitlement、当前 neurons 余量、真实调用延迟或输出质量；这些仍须阶段 5 能力探测和有界真实调用确认。
+DeepSeek 官方 [Chat Completions API](https://api-docs.deepseek.com/api/create-chat-completion/) 列出上述两个模型、tools 与 required tool choice；[错误码文档](https://api-docs.deepseek.com/quick_start/error_codes/) 区分余额不足、限流和服务端错误。公开资料只证明协议能力，不证明本账户余额、真实调用延迟或输出质量；这些仍须部署阶段以生产默认组合做一次有界真实调用确认。
 
 ## 4. 模型版本与调用证据
 
@@ -148,7 +149,7 @@ D1 丢失可从 Room DO 重新导出；Room DO 活跃状态不得从 D1 `game_st
 
 Fixture 只能在 KP/熵/时钟/外部故障 Adapter seam 控制输入；不得直接改 WorldState、事件、骰面、窗口或内部表。
 
-确定性 KP fixture 也必须生成完整 production draft，并逐轮调用与线上 Adapter 相同的 `validateProposal` 与 `assertProposalProjectionBound`；只构造已经归一化的 compact Room proposal 不计入本评测。它证明 schema、Viewer 依据和 Room Action 责任链，但仍不替代真实 Workers AI 模型调用与线上 table/API 冒烟。
+确定性 KP fixture 也必须生成完整 production draft，并逐轮调用与线上 Adapter 相同的 `validateProposal` 与 `assertProposalProjectionBound`；只构造已经归一化的 compact Room proposal 不计入本评测。它证明 schema、Viewer 依据和 Room Action 责任链，但仍不替代真实 DeepSeek 模型调用与线上 table/API 冒烟。
 
 ## 10. 验收场景
 
@@ -170,7 +171,7 @@ Fixture 只能在 KP/熵/时钟/外部故障 Adapter seam 控制输入；不得�
 ### 11.1 当前实现映射（2026-08-26）
 
 - `app/_runtime/lib/room/proposal-adapter.ts` 复用 production `validateProposal`；`app/_runtime/lib/room/durable-object.ts` 在恢复分支重新执行 `isCanonicalAuthorityRecoveryInput`，`scripts/check-modules.mjs` 禁止 compact DO 分支和未受限恢复输入。
-- `tests/kp-multiturn-eval.test.ts` 的 31 次连续交互已经迁移为完整 production proposal fixture，逐轮执行 `validateProposal` 与 projection-bound 检查；补齐 `resolveNoncombatSave` 冻结成本/后果及角色 canonical loadout/HP/class seed 后，当前源码 1/1 通过并达到全部硬门/评分阈值。它仍是受控模型 fixture，真实 Workers AI/部署另行验收。
+- `tests/kp-multiturn-eval.test.ts` 的 31 次连续交互已经迁移为完整 production proposal fixture，逐轮执行 `validateProposal` 与 projection-bound 检查；补齐 `resolveNoncombatSave` 冻结成本/后果及角色 canonical loadout/HP/class seed 后，当前源码 1/1 通过并达到全部硬门/评分阈值。它仍是受控模型 fixture，真实 DeepSeek/部署另行验收。
 - `app/_runtime/lib/room/pending-bindings.ts` 是 live commit、归档恢复与更正后 SQL 索引同步的唯一待决枚举；`app/_runtime/lib/rules/v2/correction.ts` 以 fold 前完整 `combatRuntime` 快照恢复遭遇、先攻/回合、反应、战斗待决与结论。`tests/combat-archive-correction-v2.test.ts` 当前 3/3 通过，覆盖恢复后同候选、伪造拒绝、合法继续、遭遇/待决更正、旧待决失效及更正归档的新 DO 重建；冻结源码仍须重跑全量门。
 
 ## 12. 交叉审查

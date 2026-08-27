@@ -59,7 +59,7 @@ SELECT
   g.genesis_json
 FROM authoritative_room_genesis_archive AS g
 LEFT JOIN rooms AS r ON r.id = g.room_id
-ORDER BY room_id, runtime_epoch_id, source
+ORDER BY 2, 4, 1
 `.trim();
 
 function isRecord(value: unknown): value is Record<string, unknown> {

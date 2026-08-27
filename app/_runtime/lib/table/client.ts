@@ -60,8 +60,7 @@ export type RoomManagementResult =
         title: string;
         status: string;
         ruleset_version: string;
-        kp_model: KpModelId;
-        kp_model_profile: string;
+        kp_model: KpModelId | null;
       };
       characters: {
         userId: string;

@@ -40,6 +40,7 @@ const workerPromise = localD1Promise.then((persistTo) => unstable_dev("dist/serv
   local: true,
   persistTo,
   logLevel: "error",
+  vars: { DEEPSEEK_API_KEY: "local-observer-test-key" },
   experimental: { watch: false, disableDevRegistry: true },
 }));
 

@@ -252,7 +252,7 @@ export function HallClient({
                           {managementData.room.ruleset_version === AUTHORITATIVE_RULESET_VERSION ? (
                             <div className="mt-2 rounded-[12px] border border-brass bg-brass/10 px-3 py-3">
                               <p className="text-sm font-medium">
-                                {managedModel?.name ?? managementData.room.kp_model}
+                                {managedModel?.name ?? "历史兼容模型"}
                               </p>
                               {managedModel && (
                                 <p className="mt-0.5 text-xs leading-relaxed text-muted">

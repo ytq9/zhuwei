@@ -1329,7 +1329,8 @@ export function classifyModelError(
     code.includes("quota_exhausted") ||
     code.includes("quotaexhausted") ||
     message.includes("quota exhausted") ||
-    message.includes("neuron quota")
+    message.includes("neuron quota") ||
+    status === 402
   ) {
     return "quotaExhausted";
   }
@@ -1351,6 +1352,7 @@ export function classifyModelError(
     status === 401 ||
     status === 403 ||
     status === 404 ||
+    status === 422 ||
     code === "7502" ||
     code === "7504" ||
     code.includes("model_not_found") ||

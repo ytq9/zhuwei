@@ -247,21 +247,21 @@
 - 验收场景：B32、B40、B52。
 - 测试证据：`tests/runtime-profiles-v2.test.mjs` 当前 13/13，覆盖 canonical Profile/manifest/genesis golden、当前/历史/Legacy/未知/错 hash、state pin 不匹配、2014/2024 护栏，并以隔离合成第二 manifest 证明切换 default 后旧 archive 的 replay/project 不变而仅新 genesis 采用新 default；`getRoomManagement` 已返回 `ruleset_version` 供精确服务路由，冻结源码 HTTP/全量组合仍待最终门。
 
-## DEC-016：免费额度内的模型 Profile
+## DEC-016：公开 DeepSeek 模型与房间固定 Profile
 
 - 决策 ID：DEC-016
-- 日期：2026-08-26；2026-08-28 因创建期模型选择补充。
+- 日期：2026-08-26；2026-08-28 因创建期模型选择补充；2026-08-28 按用户明确要求改回 DeepSeek。
 - 问题：新规则默认/可选 KP 模型、房间 Profile 固定和成本失败语义。
-- 来源类别：Goal 免费额度/不得升级付费要求 + 用户要求创建桌子时可选模型 + Cloudflare 官方定价、模型页和 2026-07-28 模型可用性 changelog。
+- 来源类别：Goal 不自动升级付费要求 + 用户明确要求前端只提供两个 DeepSeek 模型 + DeepSeek 官方 API/模型资料 + 既有生产探针。
 - 关联 SPEC 0001：§2、§19–§20；A–O。
-- 候选方案：继续外部 DeepSeek 密钥模型；付费限定 Workers AI 模型；现有 AI binding 的免费可用版本化模型。
-- 最终选择：新 ruleset 默认使用 `@cf/zai-org/glm-4.7-flash`，创建桌子时还可选择已注册、Free 可用且满足权威 KP 合同的 `@cf/google/gemma-4-26b-a4b-it`。创建请求同时固定 model id 与 `modelProfileVersion`，创建后不可更换；实际 Workers AI 调用与 `ModelInvocationReceipt` 必须精确使用该组合。外部/付费 DeepSeek 项不进入新规则选项，已绑定旧模型仅旧房继续。额度/容量错误返回 retryableFailure，不自动付费或降为命令翻译器。
-- 理由：复用现有 `AI` binding，无新资源/密钥/网络跳转，并满足不升级付费。
-- 玩家可观察行为：房主在创建桌子前可选受支持模型，入桌后只读显示；模型暂不可用时行动保持可恢复，不伪造 NPC/玩家选择。
+- 候选方案：继续公开 GLM/Gemma；公开 DeepSeek 但仍调用 Workers AI；公开并真实调用 DeepSeek、把其他候选仅保留为服务端历史兼容 Profile。
+- 最终选择：新 ruleset 默认使用 `deepseek-v4-flash`，创建桌子时还可选择 `deepseek-v4-pro`；公开模型目录严格只包含这两个模型。创建请求同时固定 model id 与 `modelProfileVersion`，创建后不可更换；实际 DeepSeek 调用与 `ModelInvocationReceipt` 必须精确使用该组合。此前已固定的 GLM/Gemma Profile 只在服务端继续解释旧房间，不进入公开目录、不显示真实模型名，也不允许新房间提交其 ID。额度、容量或超时仍返回 retryableFailure；配置/权限错误 fail closed；任何失败均不自动切换模型、不推进世界或降为命令翻译器。
+- 理由：用户明确指定产品只公开两个 DeepSeek 模型；现网 GLM、Gemma 与对照 Workers AI 调用均在 45 秒生产 envelope 内超时，而现有 Worker 的 `DEEPSEEK_API_KEY` secret 仍存在。公开选项与实际权威调用必须一致，内部验证候选不得泄漏为产品选项。
+- 玩家可观察行为：房主在创建桌子前只看见 DeepSeek V4 Flash / Pro，入桌后只读显示已固定的 DeepSeek 模型；历史房间只显示通用兼容文案。模型暂不可用时行动保持可恢复，不伪造 NPC/玩家选择。
 - 秘密与权限影响：只向模型发送 KP Viewer；不记录 Prompt/原文。
-- 迁移/可逆性：新增 `rooms.kp_model_profile` 目录字段；迁移默认值只回填此前唯一合法的 authoritative-v2 GLM Profile，Legacy 行不读取该字段。模型 Profile 升级必须显式迁移，不改已提交事实；未知 model/profile 组合 fail closed。
+- 迁移/可逆性：不新增 schema 或 migration。既有 `rooms.kp_model_profile` 的 GLM 回填值保留为历史绑定，旧房间按精确 model/profile 继续运行；不静默迁移或改写已提交事实。新房间写入 DeepSeek Profile；未知组合 fail closed。
 - 验收场景：模型额度、容量、失败恢复、20+ 轮评测。
-- 测试证据：官方模型资料已确认 GLM 4.7 Flash 与 Gemma 4 26B A4B 支持 function calling 且归入 Free 可用范围。`tests/rendered-html.test.mjs` 覆盖创建请求、Profile 持久化、创建后不可变与不支持模型拒绝；`tests/authoritative-kp-adapter.test.mjs` 覆盖 AI 调用/Receipt 精确同 Profile。这不代表本账户仍有 neurons 用量余量，也不替代发布前 entitlement、真实模型调用、延迟/质量与控制面验证。
+- 测试证据：DeepSeek 官方 Chat Completions 文档列出 `deepseek-v4-flash`、`deepseek-v4-pro` 与 tool calls。`tests/deepseek-authoritative-provider.test.mjs` 覆盖 tool request、token 参数转换、Abort、402 与缺密钥失败；`tests/rendered-html.test.mjs` 覆盖页面只显示两个 DeepSeek、拒绝隐藏 Workers AI ID、Profile 持久化和创建后不可变；authoritative adapter/table/Room retry 回归覆盖精确 Profile、脱敏分类与失败不提交。这些本地证据不替代部署后的代表性 DeepSeek 真实调用。
 
 ## DEC-017：验收 seam 与 Legacy 测试隔离
 

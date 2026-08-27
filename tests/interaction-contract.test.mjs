@@ -59,17 +59,18 @@ test("exposes every upstream table and voice command through the authenticated A
 });
 
 test("uses one DeepSeek provider adapter for structured KP text and Workers AI for Chinese voice", async () => {
-  const [configText, engine, provider, voice] = await Promise.all([
+  const [configText, engine, provider, deepseek, voice] = await Promise.all([
     source("wrangler.jsonc"),
     source("app/_runtime/lib/kp/engine.ts"),
     source("app/_runtime/lib/kp/provider.ts"),
+    source("app/_runtime/lib/kp/deepseek.ts"),
     source("app/_runtime/lib/voice/server.ts"),
   ]);
   const config = JSON.parse(configText);
   assert.equal(config.ai?.binding, "AI");
   assert.match(engine, /chatModelText/);
   assert.match(provider, /DEEPSEEK_API_KEY/);
-  assert.match(provider, /https:\/\/api\.deepseek\.com\/chat\/completions/);
+  assert.match(deepseek, /https:\/\/api\.deepseek\.com\/chat\/completions/);
   assert.match(provider, /response_format:\s*\{ type: "json_object" \}/);
   assert.match(voice, /@cf\/openai\/whisper-large-v3-turbo/);
   assert.match(voice, /@cf\/myshell-ai\/melotts/);
@@ -89,6 +90,8 @@ test("pins one host-selected KP profile when the room is created", async () => {
     migration,
     profileMigration,
     roomServer,
+    provider,
+    policy,
   ] = await Promise.all([
     source("db/schema.ts"),
     source("app/_runtime/lib/kp/models.ts"),
@@ -99,14 +102,69 @@ test("pins one host-selected KP profile when the room is created", async () => {
     source("drizzle/0003_rich_boom_boom.sql"),
     source("drizzle/0007_free_black_bolt.sql"),
     source("app/_runtime/lib/room/server.ts"),
+    source("app/_runtime/lib/kp/provider.ts"),
+    source("app/_runtime/lib/kp/authoritative-policy.ts"),
   ]);
+  const {
+    AUTHORITATIVE_KP_MODELS,
+    LEGACY_KP_MODELS,
+    kpModelById,
+    publicKpModelId,
+  } = await import("../app/_runtime/lib/kp/models.ts");
+  assert.deepEqual(
+    AUTHORITATIVE_KP_MODELS.map(({ id }) => id),
+    ["deepseek-v4-flash", "deepseek-v4-pro"],
+  );
+  assert.deepEqual(
+    LEGACY_KP_MODELS.map(({ id }) => id),
+    ["deepseek-v4-flash", "deepseek-v4-pro"],
+  );
+  assert.equal(kpModelById("@cf/zai-org/glm-4.7-flash"), undefined);
+  assert.equal(kpModelById("@cf/google/gemma-4-26b-a4b-it"), undefined);
+  assert.equal(publicKpModelId("@cf/zai-org/glm-4.7-flash"), null);
+  assert.equal(publicKpModelId("@cf/google/gemma-4-26b-a4b-it"), null);
   assert.match(schema, /kpModel: text\("kp_model"\).*default\("deepseek-v4-flash"\)/);
   assert.match(schema, /kpModelProfile: text\("kp_model_profile"\)/);
   assert.match(models, /AUTHORITATIVE_KP_MODELS/);
   assert.match(models, /LEGACY_KP_MODELS/);
-  assert.match(models, /@cf\/google\/gemma-4-26b-a4b-it/);
+  assert.doesNotMatch(models, /@cf\/zai-org|@cf\/google/);
   assert.match(models, /deepseek-v4-flash/);
   assert.match(models, /deepseek-v4-pro/);
+  assert.match(policy, /@cf\/zai-org\/glm-4\.7-flash/);
+  assert.match(policy, /@cf\/google\/gemma-4-26b-a4b-it/);
+  assert.match(policy, /provider: "deepseek"/);
+  const { AUTHORITATIVE_KP_PROFILES } = await import(
+    "../app/_runtime/lib/kp/authoritative-policy.ts"
+  );
+  assert.deepEqual(
+    AUTHORITATIVE_KP_PROFILES.map((profile) => ({
+      modelId: profile.modelId,
+      modelProfileVersion: profile.modelProfileVersion,
+      provider: profile.provider,
+    })),
+    [
+      {
+        modelId: "deepseek-v4-flash",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-v1",
+        provider: "deepseek",
+      },
+      {
+        modelId: "deepseek-v4-pro",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-v1",
+        provider: "deepseek",
+      },
+      {
+        modelId: "@cf/zai-org/glm-4.7-flash",
+        modelProfileVersion: "authoritative-kp-profile-v1",
+        provider: "cloudflare-workers-ai",
+      },
+      {
+        modelId: "@cf/google/gemma-4-26b-a4b-it",
+        modelProfileVersion: "authoritative-kp-model-gemma-4-26b-a4b-it-v1",
+        provider: "cloudflare-workers-ai",
+      },
+    ],
+  );
   assert.match(server, /export const setRoomModel = createServerFn/);
   assert.match(server, /if \(!me\.is_host\)/);
   assert.match(server, /status = \$\{"lobby"\}/);
@@ -114,9 +172,16 @@ test("pins one host-selected KP profile when the room is created", async () => {
   assert.match(server, /isLegacyKpModel\(data\.model\)/);
   assert.match(server, /kp_model, kp_model_profile/);
   assert.match(roomServer, /authoritativeKpProfileByBinding/);
-  assert.match(roomServer, /function workersAiBinding\(\): WorkersAiBinding/);
-  assert.match(roomServer, /return env\.AI\.run\(model, input, options\)/);
-  assert.doesNotMatch(roomServer, /as unknown as WorkersAiBinding/);
+  assert.match(roomServer, /authoritativeKpModelBinding\(profile\)/);
+  assert.match(provider, /createDeepSeekAuthoritativeBinding/);
+  assert.match(provider, /return ai\.run\(model, input, options\)/);
+  const publicRoomProjection = server.slice(
+    server.indexOf("const publicRoomInfo ="),
+    server.indexOf("if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION)"),
+  );
+  assert.match(publicRoomProjection, /kp_model: publicKpModelId\(info\.kp_model\)/);
+  assert.doesNotMatch(publicRoomProjection, /kp_model_profile/);
+  assert.doesNotMatch(server, /room: info|room: roomInfo/);
   const correction = roomServer.slice(
     roomServer.indexOf("export type AuthoritativeRoomCorrectionInput"),
     roomServer.indexOf("async function executeAuthoritativeRoomAction"),
@@ -128,6 +193,7 @@ test("pins one host-selected KP profile when the room is created", async () => {
   assert.doesNotMatch(engine, /grok-4\.5/);
   assert.match(hall, /创建桌子前选择 KP 模型/);
   assert.match(hall, /createRoom\(\{ data: \{ nickname: nick, model \} \}\)/);
+  assert.match(hall, /AUTHORITATIVE_KP_MODELS\.map/);
   assert.match(hall, /LEGACY_KP_MODELS\.map/);
   assert.match(lobby, /本次跑团模型/);
   assert.match(lobby, /模型在创建桌子时固定/);

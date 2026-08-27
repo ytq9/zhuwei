@@ -5,11 +5,9 @@ import { classById } from "../dnd/catalog";
 import { itemById } from "../dnd/gear";
 import { getSql } from "../db";
 import { weaponAttack } from "../kp/combat";
-import {
-  createAuthoritativeKpAdapter,
-  type WorkersAiBinding,
-} from "../kp/authoritative";
+import { createAuthoritativeKpAdapter } from "../kp/authoritative";
 import { authoritativeKpProfileByBinding } from "../kp/authoritative-policy";
+import { authoritativeKpModelBinding } from "../kp/provider";
 import type {
   KpNarrationRequest,
   KpProposalDraft,
@@ -45,14 +43,6 @@ import type { CommitTurnResult, TurnTicket } from "./types";
 
 function roomStub(roomId: string) {
   return env.ROOMS.getByName(roomId);
-}
-
-function workersAiBinding(): WorkersAiBinding {
-  return {
-    run(model, input, options) {
-      return env.AI.run(model, input, options);
-    },
-  };
 }
 
 function telemetryRoomAuthority(input: {
@@ -118,7 +108,7 @@ export async function runAuthoritativeRoomAction(input: {
     throw new TypeError("The room is not bound to a supported authoritative KP model profile.");
   }
   const kp = createAuthoritativeKpAdapter({
-    ai: workersAiBinding(),
+    ai: authoritativeKpModelBinding(profile),
     profile,
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
@@ -171,7 +161,7 @@ export async function runAuthoritativeRoomCorrection(
     throw new TypeError("The room is not bound to a supported authoritative KP model profile.");
   }
   const kp = createAuthoritativeKpAdapter({
-    ai: workersAiBinding(),
+    ai: authoritativeKpModelBinding(profile),
     profile,
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
@@ -670,7 +660,7 @@ export async function runAuthoritativePartyAction(input: {
     }
   }
   const narration = createAuthoritativeKpAdapter({
-    ai: workersAiBinding(),
+    ai: authoritativeKpModelBinding(profile),
     profile,
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({

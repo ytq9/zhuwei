@@ -198,7 +198,7 @@ function Lobby({
             </div>
           ) : (
             <div className="mt-2 rounded-[14px] border border-border px-3 py-3">
-              <p className="text-sm text-fg">{selectedModel?.name ?? snap.room.kp_model}</p>
+              <p className="text-sm text-fg">{selectedModel?.name ?? "历史兼容模型"}</p>
               {selectedModel && (
                 <p className="mt-1 text-xs leading-relaxed text-muted">
                   {selectedModel.summary}

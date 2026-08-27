@@ -4,6 +4,7 @@ import test from "node:test";
 import { CURRENT_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 import {
   evaluateRuntimeProfileReferenceGate,
+  RUNTIME_PROFILE_REFERENCE_SCAN_SQL,
   runtimeProfileReferenceRowsFromD1,
 } from "../app/_runtime/lib/rules/profiles/deployment-gate.ts";
 
@@ -13,6 +14,10 @@ PRIOR.manifest = {
   profileId: "runtime-srd51-2014-authoritative-v1",
   profileHash: `sha256:${"1".repeat(64)}`,
 };
+
+test("P06 remote scan orders a SQLite compound SELECT by output columns", () => {
+  assert.match(RUNTIME_PROFILE_REFERENCE_SCAN_SQL, /ORDER BY 2, 4, 1$/u);
+});
 
 function genesis(roomId, runtimeEpochId, profiles) {
   return JSON.stringify({

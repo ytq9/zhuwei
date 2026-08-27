@@ -113,7 +113,7 @@ export type ModelInvocationResult =
   | "quotaExhausted";
 
 export type ModelInvocationReceipt = {
-  provider: "cloudflare-workers-ai";
+  provider: "cloudflare-workers-ai" | "deepseek";
   modelId: string;
   modelRevision: string;
   modelProfileVersion: string;
@@ -478,10 +478,10 @@ export type CurrentNarration = CurrentNarrationDraft & {
   modelInvocationReceipt: ModelInvocationReceipt;
 };
 
-export type WorkersAiRunOptions = { signal?: AbortSignal };
+export type AuthoritativeModelRunOptions = { signal?: AbortSignal };
 
 export type AuthoritativeKpProfile = Readonly<{
-  provider: "cloudflare-workers-ai";
+  provider: ModelInvocationReceipt["provider"];
   modelId: string;
   modelRevision: string;
   modelProfileVersion: string;
@@ -491,16 +491,16 @@ export type AuthoritativeKpProfile = Readonly<{
   narrationSchemaVersion: string;
 }>;
 
-export type WorkersAiBinding = {
+export type AuthoritativeModelBinding = {
   run(
     model: string,
     input: Record<string, unknown>,
-    options?: WorkersAiRunOptions,
+    options?: AuthoritativeModelRunOptions,
   ): Promise<unknown>;
 };
 
 export type AuthoritativeKpAdapterOptions = {
-  ai: WorkersAiBinding;
+  ai: AuthoritativeModelBinding;
   profile?: AuthoritativeKpProfile;
   now?: () => number;
   invocationTimeoutMs?: number;

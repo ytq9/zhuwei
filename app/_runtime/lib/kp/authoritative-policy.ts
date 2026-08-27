@@ -18,8 +18,15 @@ import {
 } from "./authoritative-types";
 
 const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
-  provider: "cloudflare-workers-ai" as const,
-  modelRevision: "cloudflare-managed",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v4",
+  proposalSchemaVersion: "authoritative-kp-proposal-v2",
+  actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
+  narrationSchemaVersion: "authoritative-kp-narration-v3",
+});
+
+const HISTORICAL_WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
+const HISTORICAL_ALTERNATIVE_WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+const HISTORICAL_WORKERS_AI_POLICY = Object.freeze({
   promptPolicyVersion: "authoritative-kp-prompt-policy-v4",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
@@ -29,12 +36,31 @@ const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
 export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
   Object.freeze({
     ...BASE_AUTHORITATIVE_KP_POLICY,
+    provider: "deepseek" as const,
     modelId: AUTHORITATIVE_KP_MODEL,
-    modelProfileVersion: "authoritative-kp-profile-v1",
+    modelRevision: "deepseek-v4-flash-0731",
+    modelProfileVersion: "authoritative-kp-deepseek-v4-flash-v1",
   }),
   Object.freeze({
     ...BASE_AUTHORITATIVE_KP_POLICY,
+    provider: "deepseek" as const,
     modelId: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
+    modelRevision: "deepseek-v4-pro",
+    modelProfileVersion: "authoritative-kp-deepseek-v4-pro-v1",
+  }),
+  // Existing authoritative rooms remain bound to their original server-only profiles.
+  Object.freeze({
+    ...HISTORICAL_WORKERS_AI_POLICY,
+    provider: "cloudflare-workers-ai" as const,
+    modelId: HISTORICAL_WORKERS_AI_MODEL,
+    modelRevision: "cloudflare-managed",
+    modelProfileVersion: "authoritative-kp-profile-v1",
+  }),
+  Object.freeze({
+    ...HISTORICAL_WORKERS_AI_POLICY,
+    provider: "cloudflare-workers-ai" as const,
+    modelId: HISTORICAL_ALTERNATIVE_WORKERS_AI_MODEL,
+    modelRevision: "cloudflare-managed",
     modelProfileVersion: "authoritative-kp-model-gemma-4-26b-a4b-it-v1",
   }),
 ] satisfies readonly AuthoritativeKpProfile[]);

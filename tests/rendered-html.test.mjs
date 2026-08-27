@@ -8,11 +8,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test, { after } from "node:test";
 import { unstable_dev } from "wrangler";
-import { AUTHORITATIVE_KP_MODEL } from "../app/_runtime/lib/kp/models.ts";
-
-const ALTERNATIVE_AUTHORITATIVE_KP_MODEL = "@cf/google/gemma-4-26b-a4b-it";
-const ALTERNATIVE_AUTHORITATIVE_KP_PROFILE =
-  "authoritative-kp-model-gemma-4-26b-a4b-it-v1";
+import {
+  ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
+  AUTHORITATIVE_KP_MODEL,
+} from "../app/_runtime/lib/kp/models.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +43,7 @@ async function startDevWorker() {
     local: true,
     persistTo,
     logLevel: "error",
+    vars: { DEEPSEEK_API_KEY: "local-render-test-key" },
     experimental: { watch: false, disableDevRegistry: true },
   });
 }
@@ -130,9 +130,9 @@ test("email session opens the hall and can create a table", async () => {
   assert.match(hallHtml, /迁移验收员/);
   assert.match(hallHtml, /我来做房主/);
   assert.match(hallHtml, /创建桌子前选择 KP 模型/);
-  assert.match(hallHtml, /GLM 4\.7 Flash/);
-  assert.match(hallHtml, /Gemma 4 26B A4B/);
-  assert.doesNotMatch(hallHtml, /DeepSeek V4/);
+  assert.match(hallHtml, /DeepSeek V4 Flash/);
+  assert.match(hallHtml, /DeepSeek V4 Pro/);
+  assert.doesNotMatch(hallHtml, /GLM 4\.7 Flash|Gemma 4 26B A4B/);
 
   for (const malformedModel of [null, {}, ""]) {
     const malformedRoom = await authPath("/api/game", {
@@ -155,7 +155,7 @@ test("email session opens the hall and can create a table", async () => {
     headers: { "content-type": "application/json", cookie },
     body: JSON.stringify({
       command: "createRoom",
-      data: { nickname: "迁移验收员", model: "deepseek-v4-pro" },
+      data: { nickname: "迁移验收员", model: "@cf/zai-org/glm-4.7-flash" },
     }),
   });
   assert.equal(unsupportedRoom.status, 200);
@@ -203,10 +203,7 @@ test("email session opens the hall and can create a table", async () => {
   const snapshotResult = await snapshot.json();
   assert.equal(snapshotResult.ok, true);
   assert.equal(snapshotResult.room.kp_model, ALTERNATIVE_AUTHORITATIVE_KP_MODEL);
-  assert.equal(
-    snapshotResult.room.kp_model_profile,
-    ALTERNATIVE_AUTHORITATIVE_KP_PROFILE,
-  );
+  assert.equal("kp_model_profile" in snapshotResult.room, false);
 
   const startWithoutCharacter = await authPath("/api/game", {
     method: "POST",
@@ -323,6 +320,7 @@ test("host can inspect character history and delete a room but a player cannot",
     });
     assert.equal(management.ok, true);
     assert.equal(management.room.kp_model, AUTHORITATIVE_KP_MODEL);
+    assert.equal("kp_model_profile" in management.room, false);
     assert.equal(
       management.room.ruleset_version,
       "dnd5e-2014-srd5.1-authoritative-v2",

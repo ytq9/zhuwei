@@ -30,6 +30,7 @@ import {
 } from "@/lib/table/authoritative";
 import type { PendingRoll } from "@/lib/kp/prompt";
 import type { PublicCombat } from "@/lib/kp/combat";
+import type { KpModelId } from "@/lib/kp/models";
 import { eligibleBoosts } from "@/lib/dnd/boosts";
 import { ensureResources, left, listStocks, type StockItem } from "@/lib/dnd/resources";
 import { toast } from "sonner";
@@ -131,7 +132,7 @@ export type TableSnap = {
     title: string;
     status: string;
     module_id: string;
-    kp_model: string;
+    kp_model: KpModelId | null;
     ruleset_version?: string;
   };
   members: { user_id: string; nickname: string; is_host: boolean }[];
