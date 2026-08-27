@@ -1590,3 +1590,22 @@
 | 2026-08-28 | `npm run typecheck` | 0 | 删除前端入口后类型检查通过。 |
 | 2026-08-28 | `npx tsx --test tests/authoritative-table-v2.test.mjs tests/delivery-confirmation-v2.test.mjs tests/interaction-contract.test.mjs` | 0 | 相邻交互 29/29；确认按钮消失，Delivery 与既有恢复路径未回归。 |
 | 2026-08-28 | `npm run lint` | 0 | 最终静态检查通过。 |
+
+## 建桌、对话、地图与安全暂停修复正式发布（2026-08-28）
+
+- 用户已明确授权提交、推送并部署。冻结部署源码为 `0a8f5817284fb421ccc78f69ce4a3bce1ac5c1f8`（`feat: improve table model and conversation flows`），已非 force 推送到远端 `cloudflare`；远端 `main` 复核仍为冻结基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+- 发布前身份与资源核对通过：Wrangler `4.125.0` 使用现有 OAuth 会话，目标保持现有 Worker `zhuwei`、D1 binding `DB`、数据库 `zhuwei-dev` / `f5a448fd-4224-4e52-bafb-a84cb190b618`、ROOMS Durable Object 与 AI/ASSETS bindings；未创建新 Worker、数据库或其他资源。
+- 正式冻结门通过：`npm run typecheck`、`npm run lint`、`npm test` 均退出 0；完整测试包含 production build、Node 327/327，以及 Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip。测试中的故障注入 reporter 输出为预期用例，未造成失败。
+- 远端仅有 migration `0007_free_black_bolt.sql` 待应用；在现有 D1 执行 2 条命令后成功。复查为 `No migrations to apply`，并从 `pragma_table_info('rooms')` 读回非空 `TEXT` 列 `kp_model_profile`，默认值为 `authoritative-kp-profile-v1`。
+- `npm run cf:deploy` 退出 0：配置门与 Vinext production build 通过，上传 11 个变更静态资产，更新现有 `zhuwei`；新 Cloudflare Version 为 `5ee177c8-8f1c-4d8d-8b9e-679178b4d629`。控制面 deployment `28ea04fb-0248-42a0-b8f2-9254e4b32c65` 显示该版本自 `2026-08-27T19:36:47.640245Z` 起承接 100% 流量。
+- 代表性 `GET https://zhuwei.yinskyriver.workers.dev/` 在本机解析到 `104.16.252.55`，但 HTTPS 建连 15 秒超时、HTTP status 为 `000`，未到达 Worker；独立远程抓取通道受 URL 安全门拒绝发起请求，转用不同代理主机也在本机 TCP 建连前超时。按既有同域 Node/Chrome 双通道证据停止重试，未据此修改业务代码，也不宣称本次线上页面冒烟成功。
+- Workers AI 的生产形态探针在本次发布前仍于 45 秒返回 `modelTransient`；本次发布修复了模型选择、Delivery 保留/确认、错误呈现、重试顺序、地图收起与安全暂停按钮，但不能宣称外部推理能力已恢复。恢复条件仍是当前 Cloudflare 账号的 AI binding 推理链路能在生产超时内返回。
+- 发布时应用、数据库、Worker、部署配置与测试路径相对部署 SHA 无差异。发布后另一本地任务开始编辑 `AGENTS.md` 及其日志条目；这些并发文档改动和既有 `.playwright-cli/` 均未进入本次部署源码或源码提交。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `git commit`；`git push origin cloudflare`；`git ls-remote origin refs/heads/{cloudflare,main}` | 0 | 源码提交 `0a8f5817284f` 已推送；远端 `main` 未变。 |
+| 2026-08-28 | `npx --no-install wrangler d1 migrations apply zhuwei-dev --remote` | 0 | `0007_free_black_bolt.sql` 执行成功；随后无待处理 migration，目标列读回正确。 |
+| 2026-08-28 | `npm run cf:deploy` | 0 | 更新现有 `zhuwei`；Version `5ee177c8-8f1c-4d8d-8b9e-679178b4d629`。 |
+| 2026-08-28 | `npx --no-install wrangler deployments list --json` | 0 | 新版本承接 100% 流量。 |
+| 2026-08-28 | production root `curl`；独立远程抓取/代理复核 | 28；受安全门拒绝/28 | DNS 正常，连接在 HTTP 前超时；记录传输层限制，未虚报应用响应。 |
