@@ -1682,3 +1682,20 @@
 | 2026-08-28 | 初次远端 ProfileRef SQL → SQL 形态回归 → 修正后远端门 | 1 → 0 → 0 | 首次为 D1 code 7500；定向门 5/5；远端 2 个房间引用均在部署清单中。 |
 | 2026-08-28 | 最终 `npm run module:check && npm run typecheck && npm run lint && npm test` | 0 | 最终冻结候选：Node 334/334；Worker/Vitest 158 passed / 5 skipped，production build 通过。 |
 | 2026-08-28 | `wrangler whoami`；部署配置门；Secret/migration/deployment 只读检查 | 0 | 现有账号、Worker、绑定和 D1 配置一致；无 migration；部署前线上 Version `d5dd869b` 为 100%。 |
+
+## DeepSeek KP 模型恢复正式发布（2026-08-28）
+
+- 用户明确授权“推送部署”。冻结源码提交 `d817e88f111d3ba9a64766b345af8a185cf4bac7`（`fix: restore DeepSeek KP models`）已非 force 推送到远端 `cloudflare`；推送后 `git ls-remote` 证明远端分支等于该 SHA，远端 `main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+- `npm run cf:deploy` 依次通过现有部署配置门和 Vinext production build，上传 10 个新增或变化静态资产，只更新现有 Worker `zhuwei`。Cloudflare Version `80d665fe-01e5-4f2b-b608-4454cf903b75` 已由 deployment `a3af697d-1516-42bb-ba2b-d5483de5568a` 确认承接 100% 流量。
+- `wrangler versions view` 复核新版本仍为 `fetch` handler、compatibility date `2026-05-22`、`nodejs_compat`；绑定仍为现有 `ROOMS`、D1 `DB` / `f5a448fd-4224-4e52-bafb-a84cb190b618`、`AI`、`ASSETS`，Secret 名称仍为 `DEEPSEEK_API_KEY`。没有创建资源、修改 Secret、执行 D1 migration 或改变 `main`。
+- 代表性生产根入口 `curl` 在 HTTPS 建连 8 秒后退出 28，HTTP status `000`，没有到达 Worker；独立远程抓取通道因 URL 安全门拒绝发起请求。按既有同域多次本地/Chrome 传输层超时证据和探针止损线停止重试，未为此修改业务代码。
+- 结论分层：本地冻结源码、失败不提交、公开只显示两个 DeepSeek、历史模型后台兼容及部署控制面均已验证；部署完成。由于本次无法从生产入口提交代表性真实行动，也未读取 Secret 值或绕过产品入口直连模型，外部 DeepSeek 推理能力仍未被生产探针证明，不能宣称“线上 KP 能力已恢复”。恢复确认条件是生产房间使用任一 DeepSeek 选项在既定超时内产生并提交一次真实 KP 回应。
+- 本地未跟踪 `.playwright-cli/` 始终未纳入源码或日志提交。部署后只增加本节事实记录，不修改已冻结和部署的生产源码、测试或配置，因此不使已通过的完整门失效。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `git commit`；`git push origin HEAD:refs/heads/cloudflare` | 0；0 | 源码提交 `d817e88` 已非 force 推送。 |
+| 2026-08-28 | `git ls-remote origin refs/heads/{cloudflare,main}` | 0 | `cloudflare=d817e88`；`main=29eb06d`，冻结基线未变。 |
+| 2026-08-28 | `npm run cf:deploy` | 0 | 配置门、production build 与上传通过；新 Version `80d665fe-01e5-4f2b-b608-4454cf903b75`。 |
+| 2026-08-28 | `wrangler deployments status --json`；`wrangler versions view 80d665fe-…` | 0；0 | 新版本 100% 流量；handler、compatibility、Secret 名称与原绑定一致。 |
+| 2026-08-28 | production root `curl`；独立远程抓取 | 28；受安全门拒绝 | 首个通道在 HTTP 前超时，第二通道未发起请求；记录外部传输限制并停止重试。 |
