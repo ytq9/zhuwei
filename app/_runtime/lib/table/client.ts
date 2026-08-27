@@ -59,7 +59,9 @@ export type RoomManagementResult =
         code: string;
         title: string;
         status: string;
+        ruleset_version: string;
         kp_model: KpModelId;
+        kp_model_profile: string;
       };
       characters: {
         userId: string;
@@ -87,8 +89,6 @@ export const setGear = ({ data }: Args) => callWithStableTableSubmission("setGea
 export const setRoomModel = ({ data }: Args) => call<Result>("setRoomModel", data);
 export const startGame = ({ data }: Args) => call<Result>("startGame", data);
 export const sendAction = ({ data }: Args) => call<Result>("sendAction", data);
-export const requestSafetyPause = ({ data }: Args) =>
-  callWithStableTableSubmission("requestSafetyPause", data);
 export const adjustSafetyPresentation = ({ data }: Args) =>
   callWithStableTableSubmission("adjustSafetyPresentation", data);
 export const acknowledgeDelivery = ({ data }: Args) =>

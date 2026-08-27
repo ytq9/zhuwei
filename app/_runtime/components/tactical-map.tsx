@@ -1,3 +1,4 @@
+import { useId, useState } from "react";
 import type {
   TacticalEntity,
   TacticalKnownFeature,
@@ -179,26 +180,54 @@ function TacticalZoneShape({ zone }: { zone: TacticalZone }) {
 
 export function TacticalMap({
   projection,
+  defaultExpanded = false,
 }: {
   projection: TacticalProjection | null | undefined;
+  defaultExpanded?: boolean;
 }) {
-  if (!projection) {
-    return (
-      <section
-        data-tactical-map="unknown"
-        aria-label="战术地图状态未知"
-        className="grid min-w-0 max-w-full shrink-0 gap-2 overflow-x-hidden border-b border-border bg-bg/45 px-4 py-3"
-      >
-        <p className="font-display text-base">二维战术地图</p>
-        <p className="break-words text-sm text-muted [overflow-wrap:anywhere]">
+  const contentId = useId();
+  const [expanded, setExpanded] = useState(Boolean(projection) && defaultExpanded);
+  const isExpanded = Boolean(projection) && expanded;
+
+  return (
+    <section
+      data-tactical-map-disclosure={projection ? "ready" : "unknown"}
+      aria-label="战术地图"
+      className="min-w-0 max-w-full shrink-0 border-b border-border bg-bg/45"
+    >
+      <div className="flex min-w-0 items-center gap-3 px-4 py-2.5">
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          aria-controls={contentId}
+          disabled={!projection}
+          onClick={() => setExpanded((current) => !current)}
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-[12px] border border-border bg-surface px-3 py-2 text-left transition-colors hover:bg-elevated disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          <span className="min-w-0">
+            <span className="block font-display text-sm">二维战术地图</span>
+            <span className="block truncate text-[11px] text-subtle">
+              {projection ? projection.scene.name : "当前没有可显示的观察者投影"}
+            </span>
+          </span>
+          <span className="shrink-0 text-xs text-brass">
+            {projection ? (isExpanded ? "收起" : "展开") : "暂不可用"}
+          </span>
+        </button>
+      </div>
+      {!projection ? (
+        <p className="break-words px-4 pb-2.5 text-xs text-muted [overflow-wrap:anywhere]">
           尚无观察者可见的战术地图数据；未投影的空间、实体与环境保持未知。
         </p>
-        <p data-tactical-interactions="deferred" className="text-xs text-subtle">
-          地图交互后续支持；当前战斗操作仍从原有入口提交。
-        </p>
-      </section>
-    );
-  }
+      ) : null}
+      <div id={contentId} hidden={!isExpanded}>
+        {isExpanded && projection ? <TacticalMapExpanded projection={projection} /> : null}
+      </div>
+    </section>
+  );
+}
+
+function TacticalMapExpanded({ projection }: { projection: TacticalProjection }) {
   const xs = projection.scene.boundary.points.map((point) => inches(point.x));
   const ys = projection.scene.boundary.points.map((point) => inches(point.y));
   const minX = Math.min(...xs);
@@ -221,7 +250,7 @@ export function TacticalMap({
   return (
     <section
       data-tactical-map="v1"
-      className="flex max-h-[32dvh] min-w-0 max-w-full shrink-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain border-b border-border bg-bg/45 px-4 py-3 lg:max-h-[45dvh]"
+      className="flex max-h-[32dvh] min-w-0 max-w-full shrink-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pb-3 lg:max-h-[45dvh]"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>

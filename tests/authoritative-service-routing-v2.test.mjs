@@ -85,7 +85,10 @@ test("authoritative party APIs use stable Room Action submissions and never lega
     const branch = authoritativeBranch(section);
     assert.match(section, /submissionId\?: string/, `${name} transport identity is missing`);
     if (name !== "cancelSquadInvite") {
-      assert.match(branch, /runAuthoritativePartyAction|个人合法行动不再进入队长审批队列/);
+      assert.match(
+        branch,
+        /submitAuthoritativePartyTableAction|个人合法行动不再进入队长审批队列/,
+      );
     }
     assert.doesNotMatch(branch, /flagsOf|writeFlags|game_states|messages|runKpTurn|commitRulesV2Direct/);
   }
@@ -108,7 +111,12 @@ test("authoritative party APIs use stable Room Action submissions and never lega
 
 test("authoritative initialization persists both runtime epoch and genesis metadata", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
-  const start = authoritativeBranch(exportedSection(server, "startGame", "sendAction"));
+  const startGame = exportedSection(server, "startGame", "sendAction");
+  const authoritativeStart = startGame.indexOf(
+    "if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {",
+  );
+  assert.notEqual(authoritativeStart, -1, "authoritative initialization branch is missing");
+  const start = startGame.slice(authoritativeStart);
   assert.match(start, /runtimeEpochId/);
   assert.match(start, /genesisHash/);
   assert.match(start, /runtime_epoch_id\s*=\s*\$\{runtimeEpochId\}/);

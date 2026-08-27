@@ -341,6 +341,27 @@ test("the production KP adapter emits actual receipts instead of hard-coded mode
   assert.match(completion, /outcome\.kind === "needsKp"[^]*code: "mechanicalDiagnostic"/);
 });
 
+test("party narration emits its own redacted model invocation receipt", async () => {
+  const server = await readFile(
+    new URL("../app/_runtime/lib/room/server.ts", import.meta.url),
+    "utf8",
+  );
+  const partyStart = server.indexOf("export async function runAuthoritativePartyAction");
+  const partyEnd = server.indexOf("export function observeAuthoritativeRoom", partyStart);
+  assert.notEqual(partyStart, -1);
+  assert.notEqual(partyEnd, -1);
+  const party = server.slice(partyStart, partyEnd);
+  const narrationStart = party.indexOf("const narration = createAuthoritativeKpAdapter");
+  const narrationEnd = party.indexOf("return executeAuthoritativeRoomAction", narrationStart);
+  assert.notEqual(narrationStart, -1);
+  assert.notEqual(narrationEnd, -1);
+  const narrationAdapter = party.slice(narrationStart, narrationEnd);
+  assert.match(narrationAdapter, /onInvocationReceipt\(receipt\)/);
+  assert.match(narrationAdapter, /roomId: input\.roomId/);
+  assert.match(narrationAdapter, /principalId: input\.userId/);
+  assert.match(narrationAdapter, /buildModelInvocationTelemetryEvent\(\{[^]*receipt,/);
+});
+
 test("unknown and sensitive content cannot affect a stable telemetry event or become a covert content hash", async () => {
   const first = await buildRoomTelemetryEvent(structuredClone(BASE_INPUT));
   const identical = await buildRoomTelemetryEvent(structuredClone(BASE_INPUT));

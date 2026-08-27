@@ -3,11 +3,13 @@ import { env } from "cloudflare:workers";
 import { ensureGear, spellcastingProfile } from "../dnd/compute";
 import { classById } from "../dnd/catalog";
 import { itemById } from "../dnd/gear";
+import { getSql } from "../db";
 import { weaponAttack } from "../kp/combat";
 import {
   createAuthoritativeKpAdapter,
   type WorkersAiBinding,
 } from "../kp/authoritative";
+import { authoritativeKpProfileByBinding } from "../kp/authoritative-policy";
 import type {
   KpNarrationRequest,
   KpProposalDraft,
@@ -16,7 +18,10 @@ import type {
 import type { CharacterSheet } from "../dnd/types";
 import type { ProjectionQuery } from "../rules";
 import type { Command } from "../rules/model";
-import { RULESET_VERSION } from "../rules/ruleset";
+import {
+  AUTHORITATIVE_RULESET_VERSION,
+  RULESET_VERSION,
+} from "../rules/ruleset";
 import { spellDefinition } from "../rules/spell-catalog";
 import {
   handleRoomAction,
@@ -40,6 +45,14 @@ import type { CommitTurnResult, TurnTicket } from "./types";
 
 function roomStub(roomId: string) {
   return env.ROOMS.getByName(roomId);
+}
+
+function workersAiBinding(): WorkersAiBinding {
+  return {
+    run(model, input, options) {
+      return env.AI.run(model, input, options);
+    },
+  };
 }
 
 function telemetryRoomAuthority(input: {
@@ -93,10 +106,20 @@ export async function initializeAuthoritativeRoom(input: {
 export async function runAuthoritativeRoomAction(input: {
   roomId: string;
   userId: string;
+  modelId: string;
+  modelProfileVersion: string;
   action: RoomActionInput;
 }) {
+  const profile = authoritativeKpProfileByBinding(
+    input.modelId,
+    input.modelProfileVersion,
+  );
+  if (profile === undefined) {
+    throw new TypeError("The room is not bound to a supported authoritative KP model profile.");
+  }
   const kp = createAuthoritativeKpAdapter({
-    ai: env.AI as unknown as WorkersAiBinding,
+    ai: workersAiBinding(),
+    profile,
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
         roomId: input.roomId,
@@ -125,8 +148,31 @@ export async function runAuthoritativeRoomCorrection(
 ) {
   const servicePrincipalId = "service:room-correction";
   const startedAt = Date.now();
+  const sql = await getSql();
+  const binding = (
+    await sql<{
+      ruleset_version: string;
+      kp_model: string;
+      kp_model_profile: string;
+    }>`
+      select ruleset_version, kp_model, kp_model_profile
+      from rooms
+      where id = ${input.roomId}
+    `
+  )[0];
+  const profile = authoritativeKpProfileByBinding(
+    binding?.kp_model,
+    binding?.kp_model_profile,
+  );
+  if (
+    binding?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+    || profile === undefined
+  ) {
+    throw new TypeError("The room is not bound to a supported authoritative KP model profile.");
+  }
   const kp = createAuthoritativeKpAdapter({
-    ai: env.AI as unknown as WorkersAiBinding,
+    ai: workersAiBinding(),
+    profile,
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
         roomId: input.roomId,
@@ -484,9 +530,18 @@ function projectedActiveCharacterId(observation: unknown, principalId: string): 
 export async function runAuthoritativePartyAction(input: {
   roomId: string;
   userId: string;
+  modelId: string;
+  modelProfileVersion: string;
   submissionId: string;
   action: AuthoritativePartyAction;
 }) {
+  const profile = authoritativeKpProfileByBinding(
+    input.modelId,
+    input.modelProfileVersion,
+  );
+  if (profile === undefined) {
+    throw new TypeError("The room is not bound to a supported authoritative KP model profile.");
+  }
   let action: RoomActionInput;
   let proposal: KpProposalDraft | undefined;
   switch (input.action.kind) {
@@ -615,7 +670,15 @@ export async function runAuthoritativePartyAction(input: {
     }
   }
   const narration = createAuthoritativeKpAdapter({
-    ai: env.AI as unknown as WorkersAiBinding,
+    ai: workersAiBinding(),
+    profile,
+    onInvocationReceipt(receipt) {
+      console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
+        roomId: input.roomId,
+        principalId: input.userId,
+        receipt,
+      })));
+    },
   });
   return executeAuthoritativeRoomAction({
     roomId: input.roomId,

@@ -1536,3 +1536,57 @@
 
 - 创建 docs-only 交付提交并以非 force 方式推送 `cloudflare`；随后用 `git ls-remote` 证明远端 `cloudflare` 等于交付 SHA、远端 `main` 仍为冻结基线。
 - 推送证明完成后立即停止；延期能力保持 Goal 0002 `PENDING`，最终只标 `MILESTONE_1_COMPLETE`，不得宣称原完整计划 COMPLETE。
+
+## 代理合同：执行日志与并行协调（2026-08-28）
+
+- 需求：后续每次代码、测试、文档、配置、迁移、部署或 Git 交付修改都必须进入现有执行日志；测试期间新发现的问题应能在不干扰在途修复的前提下并行派工，并由主任务统一收回。
+- 决策：`docs/refactor-log.md` 保持唯一执行日志，采用协调代理单写模型。独立 Fork/Worktree Worker 不并发编辑共享日志，而是返回带基线、文件、命令/退出码、commit、冲突和剩余限制的结构化回执；协调代理在集成或判定不集成时逐项登记。
+- 分流：独立且文件所有权不重叠的问题进入隔离 Worktree；重叠文件/公共接口的问题先只读诊断或排队；依赖在途修改的问题等待 checkpoint；共享 D1、Durable Object、Worker、端口、migration、部署和 push 的操作串行。
+- 修改：只在根 `AGENTS.md` 新增“执行日志与并行协调”全局合同，并在本日志记录该合同变更；未触碰工作区既有的 `play-table.tsx`、`tactical-map.tsx`、`tactical-map-v2.test.mjs` 或 `.playwright-cli/` 修改。
+- 集成状态：本次为当前 `cloudflare` 工作区的文档规则修改，尚未提交、部署或推送；没有外部状态变更。
+
+| 时间（UTC） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `git diff --check -- AGENTS.md` | 0 | 新增合同无 whitespace 错误；目标 diff 只增加日志门与并行分流/回收规则。 |
+| 2026-08-28 | `git diff --check -- AGENTS.md docs/refactor-log.md`、目标最终 diff/status 复核 | 0 | 两个文档共新增 25 行；既有页面、测试和 `.playwright-cli/` 工作保持原状且未纳入本次修改。 |
+
+## 建桌模型、战术地图、Delivery 与行动提交诊断（2026-08-28）
+
+- 基线：`cloudflare` / `805bb582cc7e371d7aad94b074eb5dda35b00885`；远端 `main` 仍为冻结基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`。任务开始时 `.playwright-cli/` 已未跟踪；任务进行中另一个本地任务新增了上方代理合同与日志条目，本次保留并在其后单写集成记录。
+- 症状：创建桌子没有模型选择；非战斗战术地图长期占据主界面；当前 KP 回应一闪即逝且对话区为空；所有行动统一显示“没有提交，请稍后再试”；用户同时询问安全暂停语义。
+- 根因：Hall 创建请求未携带模型且服务端固定 GLM，创建后的 setter 又按设计拒绝 authoritative 房变更；战术投影每约 1.6 秒刷新但地图没有 disclosure；页面在两帧后自动 ACK 当前 Delivery，Room Authority 按隐私合同正确销毁已确认正文；本地行动原本排在当前 Delivery 后，且模糊响应丢失后的同 ID 重试会丢失首次排序锚点。行动失败的首个违反点位于当前 Cloudflare 账号/AI binding 的模型推理调用：权限、座位、DO prepare 和投影均正常，GLM、Gemma 与对照模型的 trivial/tool 调用仍停滞，生产 envelope 在 45 秒返回 `modelTransient`，世界状态未提交。现有证据只能把边界定位到账号配额、账户级路由或 Cloudflare 后端之一，不能继续区分。
+- 修改：
+  - `app/_runtime/lib/kp/{models,authoritative-policy,authoritative-types,authoritative}.ts`、`app/_runtime/lib/{room/server,table/server,table/client}.ts`、Hall/Table 页面与相关测试：创建期提供 GLM 4.7 Flash / Gemma 4 26B A4B，并把 model id 与版本化 Profile 一同固定到房间；action、party、correction、AI 调用及 Receipt 使用同一精确组合，未知组合 fail closed；Legacy 仍只接受原 DeepSeek 项。
+  - `db/schema.ts` 与仅新增迁移 `drizzle/0007_free_black_bolt.sql`：增加非空 `rooms.kp_model_profile`，默认值只回填此前唯一合法的 authoritative GLM Profile；未修改既有迁移。
+  - `app/_runtime/components/tactical-map.tsx` 与 `play-table.tsx`：地图保留实时观察者投影，探索态默认收起、战斗态默认展开，始终可手动折叠；同场景轮询保留手动状态，模式/场景切换重置默认值。
+  - `play-table.tsx`、`table/authoritative.ts` 与 Delivery/HTTP 测试：删除自动 ACK，改为明确“确认当前回应”；轮询与重连保留当前单份回应，确认后仍按隐私合同不可回看。普通行动以首次 `submissionId` 同时固定本地消息 ID 与 Delivery 排序锚点，保证响应丢失后的幂等重试不重复、不倒序。模型、额度与 Room Authority 暂态错误改为稳定公开原因，仍明确“行动未提交”。
+  - `tests/authoritative-service-routing-v2.test.mjs`：两条源码契约测试改为识别新的 party 包装接缝与真正的 authoritative 初始化分支；生产语义未因此改变。
+  - `package.json` / `package-lock.json`：加入与 React 版本一致的 `react-test-renderer@19.2.6`，用于真实 mount/click/update 交互回归。测试运行会输出该包官方弃用警告，但不影响结果。
+- 决策与秘密边界：地图只消费 `project(viewer)` 的公开投影；Delivery 继续采用单槽、显式确认后的不可恢复销毁，不建立永久叙述历史；模型调用失败不自动换模型、不延长等待伪造成功，也不把 Prompt、正文或内部错误写入遥测。安全暂停仅作只读解释，没有修改其既有权威语义。
+- 并行集成：三个 Worker 分别诊断模型/Profile、地图 disclosure、Delivery/行动提交；协调代理审查合并 diff，并由只读复核补出普通顺序与模糊重试顺序两个高风险边界。后续复核清零。Worker 未修改共享日志；没有 remote migration、部署、Git commit 或 push。
+- 结果：改动保留在当前未提交工作区；`0007` 必须先于对应应用代码部署。当前账号的 Workers AI 推理通路恢复前，真实模型行动仍会安全地返回 retryableFailure，不能宣称行动提交已恢复。`npm ci` 同时报告依赖图现有 12 项 audit 提示（1 low、4 moderate、7 high），本任务未执行破坏性或可能升级主版本的自动修复。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `npm ci` | 0 | 依据锁文件重装 506 个包；新增测试依赖版本与 React 对齐。 |
+| 2026-08-28 | `npm run db:generate` 与本地旧 GLM 行迁移读回 | 0 | 生成并逐行检查 `0007_free_black_bolt.sql`；迁移后旧 authoritative 行得到精确默认 Profile。 |
+| 2026-08-28 | 模型/Profile 定向单元与本地 Worker+D1 HTTP 回归 | 0 | 定向 49/49、HTTP 7/7；非法模型拒绝，Gemma 创建/读回成功，创建后变更拒绝，未知 Profile 返回稳定公开错误。 |
+| 2026-08-28 | Delivery/地图定向组件、SSR 与 HTTP 回归 | 0 | 当前 Delivery 经轮询/重连保持到显式 ACK；地图 5/5；新增真实组件交互通过。远程 AI 探针单独复现 45 秒 `modelTransient`，未误记为成功路径。 |
+| 2026-08-28 | 首次 `npm test` | 1 | 324/326 unit；两条旧源码结构断言没有识别新 party helper/Profile 前置校验。修正测试观察边界后定向 4/4。 |
+| 2026-08-28 | 对话因果顺序与模糊重试测试（先红后绿） | 1 → 0 | 先复现 `[Delivery, local action]`；固定首次提交锚点后，普通响应与“响应丢失→轮询→同 ID 重试”均为 `[local action, Delivery]`。 |
+| 2026-08-28 | 最终 `npm run typecheck`、`npm run lint` | 0、0 | 最终业务源码与测试通过类型和静态检查。 |
+| 2026-08-28 | 最终 `npm test` | 0 | Vinext 构建通过；unit 327/327；Vitest 42/42 文件、158 通过、5 按既有条件跳过。 |
+
+## 移除玩家安全暂停按钮（2026-08-28）
+
+- 需求：用户明确表示不需要“立即安全暂停”按钮。
+- 决策：只移除玩家主动触发入口及其未使用的浏览器 client 包装，不删除服务端 `requestSafetyPause`、Rules/Room 事件或既有暂停状态的恢复投影；因此旧房间、历史事件和已经暂停的玩家仍能选择最小呈现调整后恢复。
+- 修改：`app/_runtime/components/play-table.tsx` 删除按钮、本地乐观暂停状态和请求函数；`app/_runtime/lib/table/client.ts` 删除未使用的 `requestSafetyPause` 导出；`tests/authoritative-table-v2.test.mjs` 固定“无主动按钮、保留服务端兼容与恢复 UI”的新合同。
+- 集成状态：保留在当前未提交工作区；未迁移、部署、提交或推送。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | 新 UI 合同定向测试（修改实现前） | 1 | 正确复现 client 导出和按钮仍存在。 |
+| 2026-08-28 | `npm run typecheck` | 0 | 删除前端入口后类型检查通过。 |
+| 2026-08-28 | `npx tsx --test tests/authoritative-table-v2.test.mjs tests/delivery-confirmation-v2.test.mjs tests/interaction-contract.test.mjs` | 0 | 相邻交互 29/29；确认按钮消失，Delivery 与既有恢复路径未回归。 |
+| 2026-08-28 | `npm run lint` | 0 | 最终静态检查通过。 |

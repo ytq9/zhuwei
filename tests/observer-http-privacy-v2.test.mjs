@@ -202,6 +202,13 @@ test("authoritative HTTP poll, reconnect, ACK, and voice expose only the caller'
   );
   assert.equal(JSON.stringify(hostPoll.body).includes("酒窖之下"), false);
 
+  const hostPollAgain = await api(hostCookie, "fetchTable", code);
+  const hostReconnectBeforeAck = await api(hostCookie, "fetchTable", code);
+  assert.equal(hostPollAgain.body.messages[0].id, hostDeliveryId);
+  assert.equal(hostReconnectBeforeAck.body.messages[0].id, hostDeliveryId);
+  assert.equal(hostPollAgain.body.state.currentDeliveryId, hostDeliveryId);
+  assert.equal(hostReconnectBeforeAck.body.state.currentDeliveryId, hostDeliveryId);
+
   const hostManagement = await api(hostCookie, "getRoomManagement", { code });
   assert.equal(hostManagement.status, 200);
   assert.equal(hostManagement.body.ok, true);

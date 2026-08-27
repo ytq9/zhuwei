@@ -2,147 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-
-function tacticalProjectionFixture() {
-  const feature = ({ x, ...input }) => ({
-    elevation: "0",
-    height: "120",
-    polygon: [
-      { x, y: "120" },
-      { x: String(Number(x) + 60), y: "120" },
-      { x: String(Number(x) + 60), y: "240" },
-      { x, y: "240" },
-    ],
-    state: "intact",
-    terrain: "normal",
-    ...input,
-  });
-  return {
-    schema: "zhuwei.tactical-projection/v1",
-    scene: {
-      id: "scene:bell-yard",
-      name: "钟楼庭院",
-      boundary: {
-        kind: "polygon",
-        points: [
-          { x: "0", y: "0" },
-          { x: "1200", y: "0" },
-          { x: "1200", y: "900" },
-          { x: "0", y: "900" },
-        ],
-      },
-      gridInches: 60,
-    },
-    self: {
-      id: "character:alice",
-      name: "阿莱莎",
-      kind: "player",
-      position: { x: "120", y: "180", elevation: "60" },
-      footprint: { width: "60", depth: "60", height: "66" },
-      relation: "self",
-      publicStates: ["life:alive"],
-    },
-    visibleEntities: [{
-      id: "npc:warden",
-      name: "守夜人",
-      kind: "npc",
-      position: { x: "720", y: "180", elevation: "0" },
-      footprint: { width: "61", depth: "59", height: "72" },
-      relation: "enemy",
-      publicStates: [],
-    }],
-    knownFeatures: [
-      feature({
-        id: "feature:barrier",
-        kind: "barrier",
-        label: "钟楼石墙",
-        x: "300",
-        opaque: true,
-        impassable: true,
-        cover: "full",
-        propagation: "blocks",
-      }),
-      feature({
-        id: "feature:destructible",
-        kind: "destructible",
-        label: "朽坏木箱",
-        x: "420",
-        opaque: false,
-        impassable: true,
-        cover: "threeQuarters",
-        propagation: "passes",
-      }),
-      feature({
-        id: "feature:interactable",
-        kind: "interactable",
-        label: "警铃拉杆",
-        x: "540",
-        opaque: false,
-        impassable: false,
-        cover: "half",
-        propagation: "passes",
-      }),
-      feature({
-        id: "feature:portal",
-        kind: "portal",
-        label: "关闭的庭院铁门",
-        state: "closed",
-        x: "660",
-        opaque: true,
-        impassable: true,
-        cover: "half",
-        propagation: "blocks",
-      }),
-      feature({
-        id: "feature:terrain",
-        kind: "terrain",
-        label: "碎石坡",
-        state: "difficult",
-        x: "780",
-        opaque: false,
-        impassable: false,
-        cover: "none",
-        propagation: "passes",
-      }),
-    ],
-    knownZones: [{
-      id: "zone:fog-cloud",
-      label: "庭院浓雾",
-      sourceRef: "spell:fog-cloud",
-      state: "active",
-      geometry: {
-        kind: "polygon",
-        points: [
-          { x: "840", y: "360" },
-          { x: "1080", y: "360" },
-          { x: "1080", y: "600" },
-          { x: "840", y: "600" },
-        ],
-        elevation: "0",
-        height: "120",
-      },
-      effectTags: ["heavily-obscured"],
-      startsAtMicros: "0",
-      expiresAtMicros: "60000000",
-    }],
-    encounter: {
-      id: "encounter:yard",
-      status: "starting",
-      round: 1,
-      activeEntityId: "character:alice",
-      participantEntityIds: ["character:alice", "npc:warden"],
-    },
-    preview: null,
-    textualReadout: {
-      sceneId: "scene:bell-yard",
-      summary: "阿莱莎位于钟楼庭院；可见守夜人与五个环境要素。",
-      entities: ["守夜人与我中心直线约距 50 尺；位于东侧，地面高程 0 英寸。"],
-      features: ["关闭的庭院铁门阻挡移动与视线，并提供半掩护。"],
-    },
-    spatialRevision:
-      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  };
-}
+import {
+  playTableSnapFixture,
+  tacticalProjectionFixture,
+} from "./fixtures/tactical-map-v2.mjs";
 
 test("TacticalMap renders only the public projection as a readable two-dimensional map", async () => {
   const [{ TacticalMap }, { isTacticalProjection }] = await Promise.all([
@@ -151,8 +14,13 @@ test("TacticalMap renders only the public projection as a readable two-dimension
   ]);
   const projection = tacticalProjectionFixture();
   assert.equal(isTacticalProjection(projection), true, "the DOM fixture must be a valid public projection");
-  const html = renderToStaticMarkup(createElement(TacticalMap, { projection }));
+  const html = renderToStaticMarkup(createElement(TacticalMap, {
+    projection,
+    defaultExpanded: true,
+  }));
 
+  assert.match(html, /data-tactical-map-disclosure="ready"/);
+  assert.match(html, /aria-expanded="true"/);
   assert.match(html, /data-tactical-map="v1"/);
   assert.match(
     html,
@@ -230,11 +98,40 @@ test("TacticalMap renders only the public projection as a readable two-dimension
   assert.match(html, /关闭的庭院铁门阻挡移动与视线，并提供半掩护。/);
 });
 
-test("TacticalMap reports unknown information instead of inventing a complete map", async () => {
+test("TacticalMap is collapsible and keeps unavailable projections compact", async () => {
   const { TacticalMap } = await import("../app/_runtime/components/tactical-map.tsx");
-  const absent = renderToStaticMarkup(createElement(TacticalMap, { projection: null }));
-  assert.match(absent, /data-tactical-map="unknown"/);
+  const projection = tacticalProjectionFixture();
+  projection.encounter = null;
+  const collapsed = renderToStaticMarkup(createElement(TacticalMap, {
+    projection,
+    defaultExpanded: false,
+  }));
+  assert.match(collapsed, /data-tactical-map-disclosure="ready"/);
+  assert.match(collapsed, /aria-expanded="false"/);
+  const collapsedControls = collapsed.match(/aria-controls="([^"]+)"/)?.[1];
+  assert.ok(collapsedControls, "the disclosure button must name its controlled region");
+  assert.ok(
+    collapsed.includes(`<div id="${collapsedControls}" hidden=""></div>`),
+    "the collapsed controlled region must remain in the DOM and be hidden",
+  );
+  assert.doesNotMatch(collapsed, /data-tactical-map="v1"/);
+  assert.doesNotMatch(collapsed, /data-tactical-readout="v1"/);
+
+  const absent = renderToStaticMarkup(createElement(TacticalMap, {
+    projection: null,
+    defaultExpanded: true,
+  }));
+  assert.match(absent, /data-tactical-map-disclosure="unknown"/);
+  assert.match(absent, /aria-expanded="false"/);
+  const absentControls = absent.match(/aria-controls="([^"]+)"/)?.[1];
+  assert.ok(absentControls, "the unavailable status must still name its compact region");
+  assert.ok(
+    absent.includes(`<div id="${absentControls}" hidden=""></div>`),
+    "the unavailable controlled region must remain valid without mounting map content",
+  );
+  assert.doesNotMatch(absent, /data-tactical-map="unknown"/);
   assert.match(absent, /尚无观察者可见的战术地图数据/);
+  assert.doesNotMatch(absent, /data-tactical-readout="v1"/);
 
   const emptyProjection = tacticalProjectionFixture();
   emptyProjection.knownFeatures = [];
@@ -243,6 +140,7 @@ test("TacticalMap reports unknown information instead of inventing a complete ma
   emptyProjection.textualReadout.features = [];
   const empty = renderToStaticMarkup(createElement(TacticalMap, {
     projection: emptyProjection,
+    defaultExpanded: true,
   }));
   assert.match(empty, /尚无已知环境要素/);
   assert.match(empty, /尚无已知区域效果/);
@@ -352,82 +250,7 @@ test("PlayTable renders the authoritative tactical projection through TacticalMa
       import("../app/_runtime/lib/dnd/compute.ts"),
       import("../app/_runtime/components/play-table.tsx"),
     ]);
-  const sheet = compileSheet({
-    name: "阿莱莎",
-    raceId: "human",
-    classId: "fighter",
-    subclassId: "champion",
-    backgroundId: "soldier",
-    scores: { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 },
-    extraSkillIds: [],
-    cantrips: [],
-    prepared: [],
-    spellbook: [],
-    equipmentChoice: 0,
-    appearance: "提着旧灯。",
-    trait: "谨慎",
-    ideal: "真相",
-    bond: "遗嘱",
-    flaw: "多疑",
-  });
-  const projection = tacticalProjectionFixture();
-  const snap = {
-    me: { userId: "principal:alice", is_host: true, nickname: "爱丽丝" },
-    room: {
-      id: "room:tactical",
-      code: "TACTIC",
-      title: "战术桌",
-      status: "play",
-      module_id: "black-oak-will",
-      kp_model: "deepseek-chat",
-      ruleset_version: "dnd5e-2014-srd5.1-authoritative-v2",
-    },
-    members: [{ user_id: "principal:alice", nickname: "爱丽丝", is_host: true }],
-    characters: [{ userId: "principal:alice", locked: true, sheet }],
-    messages: [],
-    locationThreads: [],
-    logs: [],
-    state: {
-      chapterName: "第一章",
-      sceneName: "钟楼庭院",
-      kpBusy: false,
-      pendingRolls: [],
-      pendingInputs: [],
-      clues: [],
-      npcs: [],
-      sceneId: "scene:bell-yard",
-      places: { "principal:alice": "scene:bell-yard" },
-      placeNames: { "principal:alice": "钟楼庭院" },
-      partySplit: false,
-      clocks: {},
-      receipts: [],
-      authoritative: {
-        stateVersion: "17",
-        projectionHash: "sha256:alice-tactical",
-        controlledCharacter: {
-          characterId: "character:alice",
-          name: "阿莱莎",
-          sceneId: "scene:bell-yard",
-          hitPoints: { current: sheet.hp.current, maximum: sheet.hp.max },
-          resources: {},
-          resourceMaximums: {},
-          classId: "fighter",
-          level: 3,
-        },
-        activities: [],
-        inCombat: true,
-        tacticalProjection: projection,
-      },
-      restVote: null,
-      restHold: null,
-      squads: [],
-      squadInvite: null,
-      squadQueue: [],
-      combat: null,
-      ruleProjection: null,
-    },
-    module: { title: "黑橡木遗嘱", chapters: [{ id: "chapter:one", name: "第一章" }] },
-  };
+  const snap = playTableSnapFixture(compileSheet);
   const html = renderToStaticMarkup(
     createElement(
       QueryClientProvider,
@@ -437,9 +260,25 @@ test("PlayTable renders the authoritative tactical projection through TacticalMa
   );
 
   assert.match(html, /data-tactical-map="v1"/);
+  assert.match(html, /aria-expanded="true"/);
   assert.match(html, /data-scene-boundary="scene:bell-yard"/);
   assert.match(html, /data-tactical-readout="v1"/);
   assert.match(html, /阿莱莎位于钟楼庭院；可见守夜人与五个环境要素。/);
+
+  const explorationSnap = structuredClone(snap);
+  explorationSnap.state.authoritative.inCombat = false;
+  explorationSnap.state.authoritative.tacticalProjection.encounter = null;
+  const explorationHtml = renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client: new QueryClient() },
+      createElement(PlayTable, { code: "TACTIC", snap: explorationSnap }),
+    ),
+  );
+  assert.match(explorationHtml, /data-tactical-map-disclosure="ready"/);
+  assert.match(explorationHtml, /aria-expanded="false"/);
+  assert.doesNotMatch(explorationHtml, /data-tactical-map="v1"/);
+  assert.doesNotMatch(explorationHtml, /data-tactical-readout="v1"/);
 
   const unknownSnap = structuredClone(snap);
   delete unknownSnap.state.authoritative.tacticalProjection;
@@ -450,7 +289,9 @@ test("PlayTable renders the authoritative tactical projection through TacticalMa
       createElement(PlayTable, { code: "TACTIC", snap: unknownSnap }),
     ),
   );
-  assert.match(unknownHtml, /data-tactical-map="unknown"/);
+  assert.match(unknownHtml, /data-tactical-map-disclosure="unknown"/);
+  assert.match(unknownHtml, /aria-expanded="false"/);
+  assert.doesNotMatch(unknownHtml, /data-tactical-map="unknown"/);
   assert.match(unknownHtml, /尚无观察者可见的战术地图数据/);
   assert.match(unknownHtml, /你做什么、说什么/);
 });

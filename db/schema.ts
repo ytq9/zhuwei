@@ -49,6 +49,9 @@ export const rooms = sqliteTable(
     moduleId: text("module_id").notNull().default("black-oak-will"),
     rulesetVersion: text("ruleset_version").notNull().default("legacy"),
     kpModel: text("kp_model").notNull().default("deepseek-v4-flash"),
+    kpModelProfile: text("kp_model_profile")
+      .notNull()
+      .default("authoritative-kp-profile-v1"),
     runtimeEpochId: text("runtime_epoch_id"),
     genesisHash: text("genesis_hash"),
     status: text("status").notNull().default("lobby"),

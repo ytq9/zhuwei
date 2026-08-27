@@ -6,6 +6,25 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
+export function publicAuthoritativeOutcomeError(outcome: {
+  kind: string;
+  code?: unknown;
+}): string {
+  if (outcome.kind === "needsKp") {
+    return "KP 需要重新裁定这项行动，请稍后用同一行动重试";
+  }
+  if (outcome.code === "modelTransient") {
+    return "KP 模型暂时不可用或响应超时，行动未提交；可用同一行动重试";
+  }
+  if (outcome.code === "quotaExhausted") {
+    return "KP 模型额度暂不可用，行动未提交；请在额度恢复后用同一行动重试";
+  }
+  if (outcome.code === "authorityTransient") {
+    return "房间权威暂时不可用，行动未提交；可用同一行动重试";
+  }
+  return "这项行动暂时没有提交，请稍后重试";
+}
+
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

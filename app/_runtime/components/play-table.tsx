@@ -22,8 +22,7 @@ import {
 } from "@/lib/dnd/gear";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/client";
-import { acknowledgeDelivery, adjustSafetyPresentation, requestSafetyPause, resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
-import { acknowledgeAfterPresentation } from "@/lib/table/authoritative-client";
+import { acknowledgeDelivery, adjustSafetyPresentation, resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
 import {
   arcaneRecoveryAvailability,
   changeArcaneRecoverySelection,
@@ -270,7 +269,6 @@ export function PlayTable({
     }
   });
   const [sending, setSending] = useState(false);
-  const [safetyLocallyPaused, setSafetyLocallyPaused] = useState(false);
   const qc = useQueryClient();
   const [rec, setRec] = useState<"idle" | "rec" | "stt">("idle");
   const spokenRef = useRef<Set<string>>(new Set());
@@ -284,20 +282,50 @@ export function PlayTable({
     body: string;
     pendingInputId?: string;
     submissionId: string;
+    localId?: string;
+    deliveryIdAtFirstSubmission?: string;
   } | null>(null);
-  const ackedDeliveryRef = useRef<Set<string>>(new Set());
-  const deliveryPresentationRef = useRef<Map<string, Promise<void>>>(new Map());
   const presentationEpochRef = useRef(0);
   const activeNarrationRef = useRef<HTMLAudioElement | null>(null);
+  const [confirmingDeliveryId, setConfirmingDeliveryId] = useState<string | null>(null);
   const [localSays, setLocalSays] = useState<
-    { id: string; body: string; name: string }[]
+    { id: string; body: string; name: string; deliveryIdAtSubmission: string | undefined }[]
   >([]);
-  const currentDeliveryRendered = Boolean(
-    snap.state.currentDeliveryId &&
-      snap.messages.some((message) => message.id === snap.state.currentDeliveryId),
-  );
+  const currentDelivery = snap.state.currentDeliveryId
+    ? snap.messages.find((message) => message.id === snap.state.currentDeliveryId)
+    : undefined;
   const safetyPresentation = snap.state.authoritative?.safetyPresentation;
-  const safetyPaused = safetyLocallyPaused || safetyPresentation?.status === "paused";
+  const safetyPaused = safetyPresentation?.status === "paused";
+  const visibleMessages = safetyPaused
+    ? snap.messages.filter((message) => message.id !== snap.state.currentDeliveryId)
+    : snap.messages;
+  const localMessage = (
+    local: (typeof localSays)[number],
+  ): TableMessage => ({
+    id: local.id,
+    user_id: snap.me.userId,
+    kind: "say",
+    name: local.name,
+    body: local.body,
+    created_at: "",
+  });
+  const visibleCurrentDeliveryId = visibleMessages.some(
+    (message) => message.id === snap.state.currentDeliveryId,
+  )
+    ? snap.state.currentDeliveryId
+    : undefined;
+  const conversationMessages = visibleCurrentDeliveryId
+    ? visibleMessages.flatMap((message) => {
+        if (message.id !== visibleCurrentDeliveryId) return [message];
+        const submittedBefore = localSays
+          .filter((local) => local.deliveryIdAtSubmission !== visibleCurrentDeliveryId)
+          .map(localMessage);
+        const submittedAfter = localSays
+          .filter((local) => local.deliveryIdAtSubmission === visibleCurrentDeliveryId)
+          .map(localMessage);
+        return [...submittedBefore, message, ...submittedAfter];
+      })
+    : [...visibleMessages, ...localSays.map(localMessage)];
   const currentPending = safetyPaused ? undefined : snap.state.pendingInputs?.[0];
   const advancementPending = currentPending?.kind === "advancementChoice"
     ? currentPending
@@ -345,17 +373,12 @@ export function PlayTable({
     if (!latest || spokenRef.current.has(latest.id)) return;
     spokenRef.current.add(latest.id);
     const presentationEpoch = presentationEpochRef.current;
-    const presentation = playTts(snap.room.id, latest.id, {
+    void playTts(snap.room.id, latest.id, {
       isCurrent: () => presentationEpochRef.current === presentationEpoch,
       register: (audio) => {
         activeNarrationRef.current = audio;
       },
     });
-    if (latest.id === snap.state.currentDeliveryId) {
-      deliveryPresentationRef.current.clear();
-      deliveryPresentationRef.current.set(latest.id, presentation);
-    }
-    void presentation;
   }, [snap.messages, snap.room.id, snap.state.currentDeliveryId]);
 
   useEffect(() => {
@@ -363,7 +386,6 @@ export function PlayTable({
     presentationEpochRef.current += 1;
     activeNarrationRef.current?.pause();
     activeNarrationRef.current = null;
-    deliveryPresentationRef.current.clear();
   }, [safetyPaused]);
 
   useEffect(() => {
@@ -380,84 +402,28 @@ export function PlayTable({
     );
   }, [snap.messages, snap.me.userId]);
 
-  useEffect(() => {
-    const deliveryId = snap.state.currentDeliveryId;
-    if (
-      !deliveryId ||
-      ackedDeliveryRef.current.has(deliveryId) ||
-      !currentDeliveryRendered
-    ) {
-      return;
-    }
-    let cancelled = false;
-    let firstFrame = 0;
-    let secondFrame = 0;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const confirmRenderedDelivery = async (attempt: number) => {
-      if (cancelled || ackedDeliveryRef.current.has(deliveryId)) return;
-      ackedDeliveryRef.current.add(deliveryId);
-      try {
-        const result = await acknowledgeAfterPresentation({
-          presentation: deliveryPresentationRef.current.get(deliveryId),
-          timeoutMs: 5_000,
-          acknowledge: () => cancelled
-            ? Promise.resolve({ ok: false as const })
-            : acknowledgeDelivery({ data: { code, deliveryId } }),
-        });
-        if (!result?.ok) throw new Error("delivery acknowledgement rejected");
-        deliveryPresentationRef.current.delete(deliveryId);
-      } catch {
-        ackedDeliveryRef.current.delete(deliveryId);
-        if (!cancelled && attempt < 3) {
-          retryTimer = setTimeout(
-            () => void confirmRenderedDelivery(attempt + 1),
-            500 * 2 ** attempt,
-          );
-        }
-      }
-    };
-
-    firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        void confirmRenderedDelivery(1);
-      });
-    });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(firstFrame);
-      cancelAnimationFrame(secondFrame);
-      if (retryTimer !== undefined) clearTimeout(retryTimer);
-    };
-  }, [code, currentDeliveryRendered, snap.state.currentDeliveryId]);
-
   function withdrawCurrentPresentation() {
     presentationEpochRef.current += 1;
     activeNarrationRef.current?.pause();
     activeNarrationRef.current = null;
-    deliveryPresentationRef.current.clear();
   }
 
-  async function pauseSafetyPresentation() {
-    if (sendingRef.current) return;
-    sendingRef.current = true;
-    setSending(true);
-    setSafetyLocallyPaused(true);
-    withdrawCurrentPresentation();
+  async function confirmCurrentDelivery() {
+    const deliveryId = snap.state.currentDeliveryId;
+    if (!deliveryId || confirmingDeliveryId !== null) return;
+    setConfirmingDeliveryId(deliveryId);
     try {
-      const result = await requestSafetyPause({ data: { code } });
-      if (!result.ok) {
-        setSafetyLocallyPaused(false);
-        toast.error(result.error);
+      const result = await acknowledgeDelivery({ data: { code, deliveryId } });
+      if (!result?.ok) {
+        toast.error(result?.error ?? "当前回应没能确认，请稍后再试");
         return;
       }
-      void qc.invalidateQueries({ queryKey: ["table", code] });
+      withdrawCurrentPresentation();
+      await qc.invalidateQueries({ queryKey: ["table", code] });
     } catch (error) {
-      setSafetyLocallyPaused(false);
-      toast.error(error instanceof Error ? error.message : "没能立即暂停呈现");
+      toast.error(error instanceof Error ? error.message : "当前回应没能确认，请稍后再试");
     } finally {
-      sendingRef.current = false;
-      setSending(false);
+      setConfirmingDeliveryId(null);
     }
   }
 
@@ -475,7 +441,6 @@ export function PlayTable({
         toast.error(result.error);
         return;
       }
-      setSafetyLocallyPaused(false);
       void qc.invalidateQueries({ queryKey: ["table", code] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "没能提交安全调整");
@@ -492,21 +457,33 @@ export function PlayTable({
     if (
       !submissionRef.current ||
       submissionRef.current.body !== body ||
-      submissionRef.current.pendingInputId !== pendingInputId
+      submissionRef.current.pendingInputId !== pendingInputId ||
+      !submissionRef.current.localId
     ) {
+      const submissionId = crypto.randomUUID();
       submissionRef.current = {
         body,
         ...(pendingInputId ? { pendingInputId } : {}),
-        submissionId: crypto.randomUUID(),
+        submissionId,
+        localId: `local-${submissionId}`,
+        deliveryIdAtFirstSubmission: snap.state.currentDeliveryId,
       };
     }
     const submission = submissionRef.current;
+    if (!submission?.localId) return;
     sendingRef.current = true;
     setSending(true);
     const mineName =
       snap.characters.find((c) => c.userId === snap.me.userId)?.sheet.name || "你";
-    const localId = `local-${Date.now()}`;
-    setLocalSays((ls) => [...ls, { id: localId, body, name: mineName }]);
+    const localId = submission.localId;
+    setLocalSays((ls) => ls.some((local) => local.id === localId)
+      ? ls
+      : [...ls, {
+          id: localId,
+          body,
+          name: mineName,
+          deliveryIdAtSubmission: submission.deliveryIdAtFirstSubmission,
+        }]);
     setText("");
     try {
       const res = await sendAction({
@@ -712,6 +689,16 @@ export function PlayTable({
   const pendingMine = snap.state.pendingRolls.filter(
     (r) => r.userId === snap.me.userId && !r.result,
   );
+  const tacticalProjection = snap.state.authoritative?.tacticalProjection ?? null;
+  const tacticalEncounterActive = tacticalProjection?.encounter !== null
+    && tacticalProjection?.encounter !== undefined
+    && tacticalProjection.encounter.status !== "concluded";
+  const tacticalMapInCombat = snap.state.authoritative?.inCombat === true
+    || tacticalEncounterActive;
+  const tacticalMapKey = [
+    tacticalMapInCombat ? "combat" : "exploration",
+    tacticalProjection?.scene.id ?? "unknown",
+  ].join(":");
 
   return (
     <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(13.5rem,38dvh)] gap-4 overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(17.5rem,22rem)] lg:grid-rows-1">
@@ -756,7 +743,11 @@ export function PlayTable({
           meId={snap.me.userId}
         />
         {snap.state.authoritative ? (
-          <TacticalMap projection={snap.state.authoritative.tacticalProjection ?? null} />
+          <TacticalMap
+            key={tacticalMapKey}
+            projection={tacticalProjection}
+            defaultExpanded={tacticalMapInCombat}
+          />
         ) : null}
         {snap.state.combat ? (
           <div className="shrink-0 overflow-y-auto border-b border-border px-4 py-3 lg:max-h-[30vh]">
@@ -779,31 +770,32 @@ export function PlayTable({
           </div>
         ) : null}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          {(safetyPaused
-            ? snap.messages.filter((message) => message.id !== snap.state.currentDeliveryId)
-            : snap.messages).map((m) => (
+          {conversationMessages.map((m) => (
             <MessageBubble
               key={m.id}
               m={m}
               mine={m.user_id === snap.me.userId}
             />
           ))}
-          {localSays.map((l) => (
-            <MessageBubble
-              key={l.id}
-              m={{
-                id: l.id,
-                user_id: snap.me.userId,
-                kind: "say",
-                name: l.name,
-                body: l.body,
-                created_at: "",
-              }}
-              mine
-            />
-          ))}
           <div ref={endRef} />
         </div>
+        {!safetyPaused && currentDelivery ? (
+          <div className="shrink-0 border-t border-border px-5 py-3">
+            <p className="text-xs text-subtle">
+              当前 KP 回应会在刷新或重连后保留；确认后不可回看。
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="mt-2"
+              data-delivery-action="acknowledge"
+              disabled={confirmingDeliveryId !== null}
+              onClick={() => void confirmCurrentDelivery()}
+            >
+              {confirmingDeliveryId === currentDelivery.id ? "确认中……" : "确认当前回应"}
+            </Button>
+          </div>
+        ) : null}
         {!safetyPaused && pendingMine.length > 0 && (
           <div className="shrink-0 border-t border-border px-5 py-3">
             <p className="mb-2 text-xs text-brass">轮到你掷骰</p>
@@ -831,52 +823,40 @@ export function PlayTable({
             squads={snap.state.squads ?? []}
           />
         )}
-        {snap.state.authoritative ? (
+        {snap.state.authoritative && safetyPaused ? (
           <div className="shrink-0 border-t border-border px-5 py-3">
-            {safetyPaused ? (
-              <div className="space-y-2">
-                <p className="text-sm text-fg">呈现已立即暂停在最近的稳定状态。</p>
-                <p className="text-xs text-subtle">只有你能选择最小呈现调整并恢复。</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={sending}
-                    onClick={() => void resumeWithSafetyAdjustment("fadeToBlack")}
-                  >
-                    淡出当前内容
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="subtle"
-                    disabled={sending}
-                    onClick={() => void resumeWithSafetyAdjustment("reduceDetail")}
-                  >
-                    降低呈现细节
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={sending}
-                    onClick={() => void resumeWithSafetyAdjustment("skipSensitiveContent")}
-                  >
-                    跳过敏感内容
-                  </Button>
-                </div>
+            <div className="space-y-2">
+              <p className="text-sm text-fg">呈现已立即暂停在最近的稳定状态。</p>
+              <p className="text-xs text-subtle">只有你能选择最小呈现调整并恢复。</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={sending}
+                  onClick={() => void resumeWithSafetyAdjustment("fadeToBlack")}
+                >
+                  淡出当前内容
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="subtle"
+                  disabled={sending}
+                  onClick={() => void resumeWithSafetyAdjustment("reduceDetail")}
+                >
+                  降低呈现细节
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={sending}
+                  onClick={() => void resumeWithSafetyAdjustment("skipSensitiveContent")}
+                >
+                  跳过敏感内容
+                </Button>
               </div>
-            ) : (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={sending}
-                onClick={() => void pauseSafetyPresentation()}
-              >
-                立即安全暂停
-              </Button>
-            )}
+            </div>
           </div>
         ) : null}
         {currentPending ? (
@@ -1833,6 +1813,7 @@ function MessageBubble({
   const kp = !m.user_id;
   return (
     <article
+      data-delivery-id={m.id}
       className={cn("max-w-[42rem]", mine && "ml-auto", kp && "mx-0 w-full max-w-none")}
     >
       <p className="mb-1 text-[11px] tracking-wide text-subtle">

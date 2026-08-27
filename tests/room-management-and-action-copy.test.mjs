@@ -17,7 +17,8 @@ test("host can manage a hall table from one menu", async () => {
   ]);
 
   assert.match(hall, /管理桌子/);
-  assert.match(hall, /选择 AI 模型/);
+  assert.match(hall, /创建桌子前选择 KP 模型/);
+  assert.match(hall, /创建时已固定/);
   assert.match(hall, /历史人物卡/);
   assert.match(hall, /删除桌子/);
   assert.match(client, /deleteRoom/);

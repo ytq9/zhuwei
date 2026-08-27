@@ -11,6 +11,11 @@ import { normalizeRoomKpProposal } from "../app/_runtime/lib/room/proposal-adapt
 const ROOT_ACTION_ID = "root:free-action:001";
 const PREPARED_ACTION_ID = "prepared:free-action:001";
 const PRIVATE_FACT = "truth:the-regent-forged-the-seal";
+const GEMMA_KP_PROFILE = Object.freeze({
+  ...AUTHORITATIVE_KP_PROFILE,
+  modelId: "@cf/google/gemma-4-26b-a4b-it",
+  modelProfileVersion: "authoritative-kp-model-gemma-4-26b-a4b-it-v1",
+});
 
 const KP_PROJECTION = Object.freeze({
   viewer: Object.freeze({ kind: "kp" }),
@@ -153,6 +158,48 @@ function monotonicClock(start = 1_787_690_000_000) {
 function serialized(value) {
   return JSON.stringify(value);
 }
+
+test("authoritative KP invokes and receipts the room-pinned model profile", async () => {
+  const ai = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal()),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    now: monotonicClock(),
+    profile: GEMMA_KP_PROFILE,
+  });
+
+  const result = await adapter.propose(proposalRequest());
+
+  assert.deepEqual(
+    {
+      invokedModel: ai.calls[0]?.model,
+      receiptModel: result.modelInvocationReceipt.modelId,
+      receiptProfile: result.modelInvocationReceipt.modelProfileVersion,
+    },
+    {
+      invokedModel: GEMMA_KP_PROFILE.modelId,
+      receiptModel: GEMMA_KP_PROFILE.modelId,
+      receiptProfile: GEMMA_KP_PROFILE.modelProfileVersion,
+    },
+  );
+});
+
+test("authoritative KP rejects a mismatched room model/profile pair before invocation", () => {
+  const ai = scriptedAi([]);
+
+  assert.throws(
+    () => createAuthoritativeKpAdapter({
+      ai,
+      profile: {
+        ...GEMMA_KP_PROFILE,
+        modelProfileVersion: AUTHORITATIVE_KP_PROFILE.modelProfileVersion,
+      },
+    }),
+    /registered authoritative KP model profile/,
+  );
+  assert.equal(ai.calls.length, 0);
+});
 
 test("authoritative KP proposes open-world mechanics and revises only from Rules diagnostics", async () => {
   const first = proposal();

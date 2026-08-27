@@ -480,6 +480,17 @@ export type CurrentNarration = CurrentNarrationDraft & {
 
 export type WorkersAiRunOptions = { signal?: AbortSignal };
 
+export type AuthoritativeKpProfile = Readonly<{
+  provider: "cloudflare-workers-ai";
+  modelId: string;
+  modelRevision: string;
+  modelProfileVersion: string;
+  promptPolicyVersion: string;
+  proposalSchemaVersion: string;
+  actionPlanSchemaVersion: string;
+  narrationSchemaVersion: string;
+}>;
+
 export type WorkersAiBinding = {
   run(
     model: string,
@@ -490,6 +501,7 @@ export type WorkersAiBinding = {
 
 export type AuthoritativeKpAdapterOptions = {
   ai: WorkersAiBinding;
+  profile?: AuthoritativeKpProfile;
   now?: () => number;
   invocationTimeoutMs?: number;
   onInvocationReceipt?: (receipt: ModelInvocationReceipt) => void;

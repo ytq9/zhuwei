@@ -1,0 +1,1 @@
+ALTER TABLE `rooms` ADD `kp_model_profile` text DEFAULT 'authoritative-kp-profile-v1' NOT NULL;

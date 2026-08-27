@@ -10,6 +10,10 @@ import test, { after } from "node:test";
 import { unstable_dev } from "wrangler";
 import { AUTHORITATIVE_KP_MODEL } from "../app/_runtime/lib/kp/models.ts";
 
+const ALTERNATIVE_AUTHORITATIVE_KP_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+const ALTERNATIVE_AUTHORITATIVE_KP_PROFILE =
+  "authoritative-kp-model-gemma-4-26b-a4b-it-v1";
+
 const execFileAsync = promisify(execFile);
 
 const localD1Promise = (async () => {
@@ -125,13 +129,50 @@ test("email session opens the hall and can create a table", async () => {
   const hallHtml = await hall.text();
   assert.match(hallHtml, /迁移验收员/);
   assert.match(hallHtml, /我来做房主/);
+  assert.match(hallHtml, /创建桌子前选择 KP 模型/);
+  assert.match(hallHtml, /GLM 4\.7 Flash/);
+  assert.match(hallHtml, /Gemma 4 26B A4B/);
+  assert.doesNotMatch(hallHtml, /DeepSeek V4/);
+
+  for (const malformedModel of [null, {}, ""]) {
+    const malformedRoom = await authPath("/api/game", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({
+        command: "createRoom",
+        data: { nickname: "迁移验收员", model: malformedModel },
+      }),
+    });
+    assert.equal(malformedRoom.status, 200);
+    assert.deepEqual(await malformedRoom.json(), {
+      ok: false,
+      error: "这个模型不支持新规则房间",
+    });
+  }
+
+  const unsupportedRoom = await authPath("/api/game", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      command: "createRoom",
+      data: { nickname: "迁移验收员", model: "deepseek-v4-pro" },
+    }),
+  });
+  assert.equal(unsupportedRoom.status, 200);
+  assert.deepEqual(await unsupportedRoom.json(), {
+    ok: false,
+    error: "这个模型不支持新规则房间",
+  });
 
   const room = await authPath("/api/game", {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
     body: JSON.stringify({
       command: "createRoom",
-      data: { nickname: "迁移验收员" },
+      data: {
+        nickname: "迁移验收员",
+        model: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
+      },
     }),
   });
   assert.equal(room.status, 200);
@@ -144,13 +185,13 @@ test("email session opens the hall and can create a table", async () => {
     headers: { "content-type": "application/json", cookie },
     body: JSON.stringify({
       command: "setRoomModel",
-      data: { code: roomResult.code, model: "deepseek-v4-pro" },
+      data: { code: roomResult.code, model: AUTHORITATIVE_KP_MODEL },
     }),
   });
   assert.equal(modelUpdate.status, 200);
   assert.deepEqual(await modelUpdate.json(), {
     ok: false,
-    error: "权威规则房间的 KP 模型由运行时 Profile 固定",
+    error: "本桌模型在创建时固定，创建后不能更换",
   });
 
   const snapshot = await authPath("/api/game", {
@@ -161,7 +202,22 @@ test("email session opens the hall and can create a table", async () => {
   assert.equal(snapshot.status, 200);
   const snapshotResult = await snapshot.json();
   assert.equal(snapshotResult.ok, true);
-  assert.equal(snapshotResult.room.kp_model, AUTHORITATIVE_KP_MODEL);
+  assert.equal(snapshotResult.room.kp_model, ALTERNATIVE_AUTHORITATIVE_KP_MODEL);
+  assert.equal(
+    snapshotResult.room.kp_model_profile,
+    ALTERNATIVE_AUTHORITATIVE_KP_PROFILE,
+  );
+
+  const startWithoutCharacter = await authPath("/api/game", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ command: "startGame", data: roomResult.code }),
+  });
+  assert.equal(startWithoutCharacter.status, 200);
+  assert.deepEqual(await startWithoutCharacter.json(), {
+    ok: false,
+    error: "至少需要一张已锁定的人物卡才能开始",
+  });
 
   const invalidModel = await authPath("/api/game", {
     method: "POST",

@@ -38,6 +38,7 @@ import {
   removeAuthoritativeMember,
   runAuthoritativeRoomAction,
   runAuthoritativePartyAction,
+  type AuthoritativePartyAction,
   transferAndDepartAuthoritativeHost,
   commitRoomTurn,
   departRoomPlayer,
@@ -54,8 +55,14 @@ import { kpModelConfigurationError, readClueLayer, runKpTurn, KP_BUSY_MSG } from
 import { publicPendingRoll } from "@/lib/kp/clue-state";
 import { readWorldItemClaims } from "@/lib/kp/action-ruling";
 import {
+  authoritativeKpProfileByBinding,
+  authoritativeKpProfileByModelId,
+} from "@/lib/kp/authoritative-policy";
+import {
   AUTHORITATIVE_KP_MODEL,
+  isAuthoritativeKpModel,
   isKpModelId,
+  isLegacyKpModel,
   type KpModelId,
 } from "@/lib/kp/models";
 import { projectLocationMessages } from "@/lib/table/message-projection";
@@ -64,6 +71,7 @@ import {
   buildAuthoritativeButtonAction,
   buildAuthoritativeRoomSeeds,
   buildAuthoritativeTableState,
+  publicAuthoritativeOutcomeError,
   projectAuthoritativeTableObservation,
 } from "@/lib/table/authoritative";
 import {
@@ -272,20 +280,65 @@ async function bestEffortSynchronizeAuthoritativeGrowthCard(input: {
   else console.warn(serialized);
 }
 
+function authoritativeRoomKpProfileIsAvailable(
+  model: KpModelId,
+  modelProfileVersion: string,
+): boolean {
+  return isAuthoritativeKpModel(model)
+    && authoritativeKpProfileByBinding(model, modelProfileVersion) !== undefined;
+}
+
 async function submitAuthoritativeTableAction(input: {
   roomId: string;
   userId: string;
+  model: KpModelId;
+  modelProfileVersion: string;
   submissionId: string;
   action: RoomActionInput;
 }) {
+  if (!authoritativeRoomKpProfileIsAvailable(input.model, input.modelProfileVersion)) {
+    return {
+      ok: false as const,
+      submissionId: input.submissionId,
+      error: "本桌绑定的权威 KP 模型 Profile 已不可用",
+    };
+  }
   const committedOutcome = await runAuthoritativeRoomAction({
     roomId: input.roomId,
     userId: input.userId,
+    modelId: input.model,
+    modelProfileVersion: input.modelProfileVersion,
     action: input.action,
   });
   const outcome = await synchronizeGrowthAfterAuthoritativeOutcome({
     outcome: committedOutcome,
     synchronize: () => bestEffortSynchronizeAuthoritativeGrowthCard(input),
+  });
+  return authoritativeTableOutcome(input.submissionId, outcome);
+}
+
+async function submitAuthoritativePartyTableAction(input: {
+  roomId: string;
+  userId: string;
+  model: KpModelId;
+  modelProfileVersion: string;
+  submissionId: string;
+  action: AuthoritativePartyAction;
+}) {
+  if (!authoritativeRoomKpProfileIsAvailable(input.model, input.modelProfileVersion)) {
+    return {
+      ok: false as const,
+      submissionId: input.submissionId,
+      error: "本桌绑定的权威 KP 模型 Profile 已不可用",
+    };
+  }
+  const outcome = await runAuthoritativePartyAction({
+    roomId: input.roomId,
+    userId: input.userId,
+    modelId: input.model,
+    modelProfileVersion: input.modelProfileVersion,
+    submissionId: input.submissionId,
+    action: input.action,
   });
   return authoritativeTableOutcome(input.submissionId, outcome);
 }
@@ -316,9 +369,7 @@ function authoritativeTableOutcome(
     submissionId,
     outcomeKind: outcome.kind,
     retryable: true as const,
-    error: outcome.kind === "needsKp"
-      ? "KP 需要重新裁定这项行动，请稍后用同一行动重试"
-      : "这项行动暂时没有提交，请稍后重试",
+    error: publicAuthoritativeOutcomeError(outcome),
   };
 }
 
@@ -516,8 +567,15 @@ async function roomRuleset(
   roomId: string,
 ) {
   return (
-    await sql<{ ruleset_version: string; module_id: string; kp_model: KpModelId; status: string }>`
-      select ruleset_version, module_id, kp_model, status from rooms where id = ${roomId}
+    await sql<{
+      ruleset_version: string;
+      module_id: string;
+      kp_model: KpModelId;
+      kp_model_profile: string;
+      status: string;
+    }>`
+      select ruleset_version, module_id, kp_model, kp_model_profile, status
+      from rooms where id = ${roomId}
     `
   )[0];
 }
@@ -943,8 +1001,9 @@ export const getRoomManagement = createServerFn({ method: "GET" })
         status: string;
         ruleset_version: string;
         kp_model: KpModelId;
+        kp_model_profile: string;
       }>`
-        select code, title, status, ruleset_version, kp_model
+        select code, title, status, ruleset_version, kp_model, kp_model_profile
         from rooms
         where id = ${room.id} and host_user_id = ${context.userId}
       `
@@ -1153,8 +1212,13 @@ export const getCatalog = createServerFn({ method: "GET" })
 
 export const createRoom = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { nickname: string }) => input)
+  .validator((input: { nickname: string; model?: string }) => input)
   .handler(async ({ context, data }) => {
+    const model = data.model === undefined ? AUTHORITATIVE_KP_MODEL : data.model;
+    const profile = authoritativeKpProfileByModelId(model);
+    if (!isAuthoritativeKpModel(model) || profile === undefined) {
+      return { ok: false as const, error: "这个模型不支持新规则房间" };
+    }
     const sql = await getSql();
     const id = uid("room");
     let code = roomCode();
@@ -1165,8 +1229,15 @@ export const createRoom = createServerFn({ method: "POST" })
     }
     const nick = data.nickname.trim().slice(0, 16) || "房主";
     await sql`
-      insert into rooms (id, code, host_user_id, title, module_id, ruleset_version, kp_model, status)
-      values (${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"}, ${"black-oak-will"}, ${AUTHORITATIVE_RULESET_VERSION}, ${AUTHORITATIVE_KP_MODEL}, ${"lobby"})
+      insert into rooms (
+        id, code, host_user_id, title, module_id, ruleset_version,
+        kp_model, kp_model_profile, status
+      )
+      values (
+        ${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"},
+        ${"black-oak-will"}, ${AUTHORITATIVE_RULESET_VERSION}, ${profile.modelId},
+        ${profile.modelProfileVersion}, ${"lobby"}
+      )
     `;
     await sql`
       insert into room_members (room_id, user_id, nickname, is_host)
@@ -1313,8 +1384,11 @@ export const fetchTable = createServerFn({ method: "GET" })
         module_id: string;
         ruleset_version: string;
         kp_model: KpModelId;
+        kp_model_profile: string;
       }>`
-        select id, code, title, status, module_id, ruleset_version, kp_model from rooms where id = ${room.id}
+        select id, code, title, status, module_id, ruleset_version,
+               kp_model, kp_model_profile
+        from rooms where id = ${room.id}
       `
     )[0];
     const members = await sql<{
@@ -1337,6 +1411,15 @@ export const fetchTable = createServerFn({ method: "GET" })
       where c.room_id = ${room.id}
     `;
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      if (
+        !isAuthoritativeKpModel(info.kp_model)
+        || authoritativeKpProfileByBinding(
+          info.kp_model,
+          info.kp_model_profile,
+        ) === undefined
+      ) {
+        return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
+      }
       const module = getModule(info.module_id);
       const allScenes = module.chapters.flatMap((chapter) => chapter.scenes);
       const locationLabels = Object.fromEntries(
@@ -1894,19 +1977,18 @@ export const setRoomModel = createServerFn({ method: "POST" })
       `
     )[0];
     if (
-      current.ruleset_version === AUTHORITATIVE_RULESET_VERSION &&
-      data.model !== AUTHORITATIVE_KP_MODEL
+      current.ruleset_version === AUTHORITATIVE_RULESET_VERSION
     ) {
-      return { ok: false as const, error: "权威规则房间的 KP 模型由运行时 Profile 固定" };
+      return { ok: false as const, error: "本桌模型在创建时固定，创建后不能更换" };
     }
     if (current.status !== "lobby") {
       return { ok: false as const, error: "守灵已经开始，整桌模型不能再更换" };
     }
-    if (current.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      return { ok: true as const, model: AUTHORITATIVE_KP_MODEL };
-    }
     if (current.ruleset_version !== RULESET_VERSION) {
       return { ok: false as const, error: "这间房的规则版本不可用" };
+    }
+    if (!isLegacyKpModel(data.model)) {
+      return { ok: false as const, error: "旧规则房间只支持已配置的 Legacy 模型" };
     }
     await sql`
       update rooms set kp_model = ${data.model}
@@ -2049,6 +2131,8 @@ export const setGear = createServerFn({ method: "POST" })
       return submitAuthoritativeTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: activeRules.kp_model,
+        modelProfileVersion: activeRules.kp_model_profile,
         submissionId,
         action: {
           kind: "gear",
@@ -2119,11 +2203,30 @@ export const startGame = createServerFn({ method: "POST" })
     if (!me.is_host) return { ok: false as const, error: "只有房主能开始" };
     const sql = await getSql();
     const info = (
-      await sql<{ status: string; module_id: string; ruleset_version: string; kp_model: string }>`
-        select status, module_id, ruleset_version, kp_model from rooms where id = ${room.id}
+      await sql<{
+        status: string;
+        module_id: string;
+        ruleset_version: string;
+        kp_model: string;
+        kp_model_profile: string;
+      }>`
+        select status, module_id, ruleset_version, kp_model, kp_model_profile
+        from rooms where id = ${room.id}
       `
     )[0];
     if (info.status === "play") return { ok: true as const };
+    if (
+      info.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+      && (
+        !isAuthoritativeKpModel(info.kp_model)
+        || authoritativeKpProfileByBinding(
+          info.kp_model,
+          info.kp_model_profile,
+        ) === undefined
+      )
+    ) {
+      return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
+    }
     if (!isKpModelId(info.kp_model)) {
       return { ok: false as const, error: "本桌选择的模型已不可用，请重新选择" };
     }
@@ -2137,9 +2240,6 @@ export const startGame = createServerFn({ method: "POST" })
       select user_id, nickname, is_host from room_members where room_id = ${room.id}
     `;
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      if (info.kp_model !== AUTHORITATIVE_KP_MODEL) {
-        return { ok: false as const, error: "新规则房间必须使用已固定的权威 KP 模型" };
-      }
       const lockedCharacters = await sql<{ user_id: string; sheet: unknown }>`
         select c.user_id, c.sheet
         from characters c
@@ -2285,8 +2385,10 @@ export const sendAction = createServerFn({ method: "POST" })
         module_id: string;
         ruleset_version: string;
         kp_model: KpModelId;
+        kp_model_profile: string;
       }>`
-        select status, module_id, ruleset_version, kp_model from rooms where id = ${room.id}
+        select status, module_id, ruleset_version, kp_model, kp_model_profile
+        from rooms where id = ${room.id}
       `
     )[0];
     if (info.status !== "play") return { ok: false as const, error: "这一桌还没开团" };
@@ -2298,6 +2400,15 @@ export const sendAction = createServerFn({ method: "POST" })
     )[0];
     if (!pc?.locked) return { ok: false as const, error: "先锁定人物卡" };
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      if (
+        !isAuthoritativeKpModel(info.kp_model)
+        || authoritativeKpProfileByBinding(
+          info.kp_model,
+          info.kp_model_profile,
+        ) === undefined
+      ) {
+        return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
+      }
       const suppliedSubmissionId = data.submissionId?.trim();
       const pendingInputId = data.pendingInputId?.trim();
       if ((suppliedSubmissionId?.length ?? 0) > 200 || (pendingInputId?.length ?? 0) > 200) {
@@ -2313,6 +2424,8 @@ export const sendAction = createServerFn({ method: "POST" })
       const committedOutcome = await runAuthoritativeRoomAction({
         roomId: room.id,
         userId: context.userId,
+        modelId: info.kp_model,
+        modelProfileVersion: info.kp_model_profile,
         action,
       });
       const outcome = await synchronizeGrowthAfterAuthoritativeOutcome({
@@ -2532,6 +2645,8 @@ export const requestSafetyPause = createServerFn({ method: "POST" })
     return submitAuthoritativeTableAction({
       roomId: room.id,
       userId: context.userId,
+      model: rules.kp_model,
+      modelProfileVersion: rules.kp_model_profile,
       submissionId,
       action: { kind: "safetyPause", submissionId },
     });
@@ -2574,6 +2689,8 @@ export const adjustSafetyPresentation = createServerFn({ method: "POST" })
     return submitAuthoritativeTableAction({
       roomId: room.id,
       userId: context.userId,
+      model: rules.kp_model,
+      modelProfileVersion: rules.kp_model_profile,
       submissionId,
       action: {
         kind: "safetyAdjust",
@@ -3334,6 +3451,8 @@ export const joinCombat = createServerFn({ method: "POST" })
       return submitAuthoritativeTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: buildAuthoritativeButtonAction({
           submissionId,
@@ -3423,6 +3542,8 @@ export const extraAttack = createServerFn({ method: "POST" })
         return submitAuthoritativeTableAction({
           roomId: room.id,
           userId: context.userId,
+          model: rules.kp_model,
+          modelProfileVersion: rules.kp_model_profile,
           submissionId,
           action: buildAuthoritativeButtonAction({
             submissionId,
@@ -3595,6 +3716,8 @@ export const endTurn = createServerFn({ method: "POST" })
       return submitAuthoritativeTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: buildAuthoritativeButtonAction({
           submissionId,
@@ -3685,6 +3808,8 @@ export const leaveFight = createServerFn({ method: "POST" })
       return submitAuthoritativeTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: buildAuthoritativeButtonAction({
           submissionId,
@@ -3797,6 +3922,8 @@ export const resolveReact = createServerFn({ method: "POST" })
         return submitAuthoritativeTableAction({
           roomId: room.id,
           userId: context.userId,
+          model: rules.kp_model,
+          modelProfileVersion: rules.kp_model_profile,
           submissionId,
           action: buildAuthoritativeButtonAction({
             submissionId,
@@ -3913,6 +4040,8 @@ export const restNow = createServerFn({ method: "POST" })
       return submitAuthoritativeTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: buildAuthoritativeButtonAction({
           submissionId,
@@ -4025,6 +4154,8 @@ export const cancelRest = createServerFn({ method: "POST" })
       return submitAuthoritativeTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: buildAuthoritativeButtonAction({
           submissionId,
@@ -4102,6 +4233,8 @@ export const castSpell = createServerFn({ method: "POST" })
         return submitAuthoritativeTableAction({
           roomId: room.id,
           userId: context.userId,
+          model: rules.kp_model,
+          modelProfileVersion: rules.kp_model_profile,
           submissionId,
           action: buildAuthoritativeButtonAction({
             submissionId,
@@ -4231,6 +4364,8 @@ export const useFeature = createServerFn({ method: "POST" })
       return submitAuthoritativeTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: buildAuthoritativeButtonAction({
           submissionId,
@@ -4358,6 +4493,8 @@ export const useHitDie = createServerFn({ method: "POST" })
       return submitAuthoritativeTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: buildAuthoritativeButtonAction({
           submissionId,
@@ -4698,13 +4835,14 @@ export const inviteSquad = createServerFn({ method: "POST" })
     if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       const submissionId = authoritativeSubmissionId(data.submissionId);
       if (!submissionId) return { ok: false as const, error: "同行邀请缺少可重试提交标识" };
-      const outcome = await runAuthoritativePartyAction({
+      return submitAuthoritativePartyTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: { kind: "invite", targetPrincipalId: data.targetUserId },
       });
-      return authoritativeTableOutcome(submissionId, outcome);
     }
     if (rules?.ruleset_version !== RULESET_VERSION) {
       return { ok: false as const, error: "这间旧房间的规则版本不可用" };
@@ -4769,13 +4907,14 @@ export const cancelSquadInvite = createServerFn({ method: "POST" })
     if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       const submissionId = authoritativeSubmissionId(data.submissionId);
       if (!submissionId) return { ok: false as const, error: "取消邀请缺少可重试提交标识" };
-      const outcome = await runAuthoritativePartyAction({
+      return submitAuthoritativePartyTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: { kind: "cancelInvitation" },
       });
-      return authoritativeTableOutcome(submissionId, outcome);
     }
     if (rules?.ruleset_version !== RULESET_VERSION) {
       return { ok: false as const, error: "这间旧房间的规则版本不可用" };
@@ -4817,13 +4956,14 @@ export const answerSquad = createServerFn({ method: "POST" })
     if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       const submissionId = authoritativeSubmissionId(data.submissionId);
       if (!submissionId) return { ok: false as const, error: "邀请回应缺少可重试提交标识" };
-      const outcome = await runAuthoritativePartyAction({
+      return submitAuthoritativePartyTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: { kind: "answerInvitation", accept: data.accept },
       });
-      return authoritativeTableOutcome(submissionId, outcome);
     }
     if (rules?.ruleset_version !== RULESET_VERSION) {
       return { ok: false as const, error: "这间旧房间的规则版本不可用" };
@@ -4897,13 +5037,14 @@ export const leaveSquadNow = createServerFn({ method: "POST" })
     if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       const submissionId = authoritativeSubmissionId(data.submissionId);
       if (!submissionId) return { ok: false as const, error: "离队缺少可重试提交标识" };
-      const outcome = await runAuthoritativePartyAction({
+      return submitAuthoritativePartyTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: { kind: "leave" },
       });
-      return authoritativeTableOutcome(submissionId, outcome);
     }
     if (rules?.ruleset_version !== RULESET_VERSION) {
       return { ok: false as const, error: "这间旧房间的规则版本不可用" };
@@ -4959,13 +5100,14 @@ export const passCaptain = createServerFn({ method: "POST" })
     if (rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       const submissionId = authoritativeSubmissionId(data.submissionId);
       if (!submissionId) return { ok: false as const, error: "移交队长缺少可重试提交标识" };
-      const outcome = await runAuthoritativePartyAction({
+      return submitAuthoritativePartyTableAction({
         roomId: room.id,
         userId: context.userId,
+        model: rules.kp_model,
+        modelProfileVersion: rules.kp_model_profile,
         submissionId,
         action: { kind: "transferLeadership", targetPrincipalId: data.toUserId },
       });
-      return authoritativeTableOutcome(submissionId, outcome);
     }
     if (rules?.ruleset_version !== RULESET_VERSION) {
       return { ok: false as const, error: "这间旧房间的规则版本不可用" };

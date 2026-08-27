@@ -99,25 +99,3 @@ export async function callWithStableSubmission<
   if (result.retryable !== true) clearSubmission(input.storage, key);
   return result;
 }
-
-export async function acknowledgeAfterPresentation<Result>(input: {
-  presentation?: Promise<unknown>;
-  timeoutMs: number;
-  acknowledge(): Promise<Result>;
-}): Promise<Result> {
-  if (input.presentation) {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const boundedTimeout = new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, Math.max(1, input.timeoutMs));
-    });
-    try {
-      await Promise.race([
-        input.presentation.then(() => undefined, () => undefined),
-        boundedTimeout,
-      ]);
-    } finally {
-      if (timeout !== undefined) clearTimeout(timeout);
-    }
-  }
-  return input.acknowledge();
-}

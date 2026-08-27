@@ -9,7 +9,15 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { classById, raceById } from "@/lib/dnd/catalog";
-import { KP_MODELS, type KpModelId } from "@/lib/kp/models";
+import {
+  AUTHORITATIVE_KP_MODELS,
+  DEFAULT_KP_MODEL,
+  LEGACY_KP_MODELS,
+  kpModelById,
+  type AuthoritativeKpModelId,
+  type KpModelId,
+} from "@/lib/kp/models";
+import { AUTHORITATIVE_RULESET_VERSION } from "@/lib/rules/ruleset";
 import {
   createRoom,
   deleteRoom,
@@ -38,6 +46,7 @@ export function HallClient({
   initialRooms: RoomRow[];
 }) {
   const [nick, setNick] = useState(userName.slice(0, 16));
+  const [model, setModel] = useState<AuthoritativeKpModelId>(DEFAULT_KP_MODEL);
   const [code, setCode] = useState("");
   const [managedCode, setManagedCode] = useState<string | null>(null);
   const [deleteConfirmCode, setDeleteConfirmCode] = useState<string | null>(null);
@@ -56,9 +65,10 @@ export function HallClient({
     enabled: Boolean(managedCode),
   });
   const creating = useMutation({
-    mutationFn: () => createRoom({ data: { nickname: nick } }),
+    mutationFn: () => createRoom({ data: { nickname: nick, model } }),
     onSuccess: (result) => {
-      if (result.ok) window.location.assign(`/table/${result.code}`);
+      if (!result.ok) return toast.error(result.error);
+      window.location.assign(`/table/${result.code}`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -112,6 +122,33 @@ export function HallClient({
             <p className="mt-3 text-sm leading-relaxed text-muted">你来当房主，把房间码发给朋友。每人先建一张 3 级人物卡，你宣布守灵开始。</p>
             <label htmlFor="hall-nickname" className="mt-6 block text-xs text-subtle">桌上怎么称呼你</label>
             <Input id="hall-nickname" className="mt-2" value={nick} onChange={(event) => setNick(event.target.value)} placeholder="名字" maxLength={16} />
+            <fieldset className="mt-5">
+              <legend className="text-xs text-subtle">创建桌子前选择 KP 模型</legend>
+              <div className="mt-2 grid gap-2">
+                {AUTHORITATIVE_KP_MODELS.map((option) => {
+                  const selected = option.id === model;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-pressed={selected}
+                      className={`rounded-[12px] border px-3 py-3 text-left transition ${
+                        selected
+                          ? "border-brass bg-brass/10 text-fg"
+                          : "border-border text-muted hover:border-brass/60 hover:text-fg"
+                      }`}
+                      onClick={() => setModel(option.id)}
+                    >
+                      <span className="block text-sm font-medium">{option.name}</span>
+                      <span className="mt-0.5 block text-xs leading-relaxed text-muted">
+                        {option.summary}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-xs text-subtle">模型随桌子固定，创建后不能更换。</p>
+            </fieldset>
             <Button className="mt-4 w-full" size="lg" disabled={creating.isPending} onClick={() => creating.mutate()}>
               {creating.isPending ? "正在摆桌……" : "我来做房主"}
             </Button>
@@ -134,6 +171,9 @@ export function HallClient({
                 management.data?.ok && management.data.room.code === room.code
                   ? management.data
                   : null;
+              const managedModel = managementData
+                ? kpModelById(managementData.room.kp_model)
+                : null;
               return (
                 <article
                   key={room.id}
@@ -198,44 +238,63 @@ export function HallClient({
                       <div className="grid gap-5">
                         <section>
                           <div className="flex items-center justify-between gap-3">
-                            <h3 className="text-sm font-medium">选择 AI 模型</h3>
-                            {managementData.room.status !== "lobby" && (
+                            <h3 className="text-sm font-medium">
+                              {managementData.room.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+                                ? "AI 模型"
+                                : "选择 AI 模型"}
+                            </h3>
+                            {managementData.room.ruleset_version === AUTHORITATIVE_RULESET_VERSION ? (
+                              <span className="text-[11px] text-subtle">创建时已固定</span>
+                            ) : managementData.room.status !== "lobby" ? (
                               <span className="text-[11px] text-subtle">开团后已锁定</span>
-                            )}
+                            ) : null}
                           </div>
-                          <div className="mt-2 grid gap-2">
-                            {KP_MODELS.map((model) => {
-                              const selected = model.id === managementData.room.kp_model;
-                              const pending =
-                                choosingModel.isPending &&
-                                choosingModel.variables?.roomCode === room.code;
-                              return (
-                                <button
-                                  key={model.id}
-                                  type="button"
-                                  aria-pressed={selected}
-                                  disabled={
-                                    pending ||
-                                    selected ||
-                                    managementData.room.status !== "lobby"
-                                  }
-                                  className={`rounded-[12px] border px-3 py-2 text-left transition disabled:cursor-default ${
-                                    selected
-                                      ? "border-brass bg-brass/10 text-fg"
-                                      : "border-border text-muted hover:border-brass/60 hover:text-fg disabled:opacity-50"
-                                  }`}
-                                  onClick={() =>
-                                    choosingModel.mutate({ roomCode: room.code, model: model.id })
-                                  }
-                                >
-                                  <span className="block text-sm font-medium">{model.name}</span>
-                                  <span className="mt-0.5 block text-xs leading-relaxed text-muted">
-                                    {model.summary}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
+                          {managementData.room.ruleset_version === AUTHORITATIVE_RULESET_VERSION ? (
+                            <div className="mt-2 rounded-[12px] border border-brass bg-brass/10 px-3 py-3">
+                              <p className="text-sm font-medium">
+                                {managedModel?.name ?? managementData.room.kp_model}
+                              </p>
+                              {managedModel && (
+                                <p className="mt-0.5 text-xs leading-relaxed text-muted">
+                                  {managedModel.summary}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="mt-2 grid gap-2">
+                              {LEGACY_KP_MODELS.map((option) => {
+                                const selected = option.id === managementData.room.kp_model;
+                                const pending = choosingModel.isPending
+                                  && choosingModel.variables?.roomCode === room.code;
+                                return (
+                                  <button
+                                    key={option.id}
+                                    type="button"
+                                    aria-pressed={selected}
+                                    disabled={
+                                      pending
+                                      || selected
+                                      || managementData.room.status !== "lobby"
+                                    }
+                                    className={`rounded-[12px] border px-3 py-2 text-left transition disabled:cursor-default ${
+                                      selected
+                                        ? "border-brass bg-brass/10 text-fg"
+                                        : "border-border text-muted hover:border-brass/60 hover:text-fg disabled:opacity-50"
+                                    }`}
+                                    onClick={() => choosingModel.mutate({
+                                      roomCode: room.code,
+                                      model: option.id,
+                                    })}
+                                  >
+                                    <span className="block text-sm font-medium">{option.name}</span>
+                                    <span className="mt-0.5 block text-xs leading-relaxed text-muted">
+                                      {option.summary}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </section>
                         <section className="border-t border-border pt-4">
                           <div className="flex items-center justify-between gap-3">

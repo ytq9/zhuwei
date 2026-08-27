@@ -1,4 +1,7 @@
-import { AUTHORITATIVE_KP_MODEL } from "./models";
+import {
+  ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
+  AUTHORITATIVE_KP_MODEL,
+} from "./models";
 import { canonicalJson } from "./authoritative-helpers";
 import {
   ACTION_PLAN_ABILITIES,
@@ -11,18 +14,48 @@ import {
   NARRATION_AGENCY_SUBJECT_KINDS,
   type KpNarrationRequest,
   type KpProposalRequest,
+  type AuthoritativeKpProfile,
 } from "./authoritative-types";
 
-export const AUTHORITATIVE_KP_PROFILE = Object.freeze({
+const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
   provider: "cloudflare-workers-ai" as const,
-  modelId: AUTHORITATIVE_KP_MODEL,
   modelRevision: "cloudflare-managed",
-  modelProfileVersion: "authoritative-kp-profile-v1",
   promptPolicyVersion: "authoritative-kp-prompt-policy-v4",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
 });
+
+export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
+  Object.freeze({
+    ...BASE_AUTHORITATIVE_KP_POLICY,
+    modelId: AUTHORITATIVE_KP_MODEL,
+    modelProfileVersion: "authoritative-kp-profile-v1",
+  }),
+  Object.freeze({
+    ...BASE_AUTHORITATIVE_KP_POLICY,
+    modelId: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
+    modelProfileVersion: "authoritative-kp-model-gemma-4-26b-a4b-it-v1",
+  }),
+] satisfies readonly AuthoritativeKpProfile[]);
+
+export const AUTHORITATIVE_KP_PROFILE = AUTHORITATIVE_KP_PROFILES[0];
+
+export function authoritativeKpProfileByModelId(
+  modelId: unknown,
+): AuthoritativeKpProfile | undefined {
+  return AUTHORITATIVE_KP_PROFILES.find((profile) => profile.modelId === modelId);
+}
+
+export function authoritativeKpProfileByBinding(
+  modelId: unknown,
+  modelProfileVersion: unknown,
+): AuthoritativeKpProfile | undefined {
+  return AUTHORITATIVE_KP_PROFILES.find(
+    (profile) => profile.modelId === modelId
+      && profile.modelProfileVersion === modelProfileVersion,
+  );
+}
 
 export const PROPOSAL_TOOL_NAME = "submit_kp_proposal";
 export const NARRATION_TOOL_NAME = "submit_current_narration";

@@ -78,26 +78,62 @@ test("uses one DeepSeek provider adapter for structured KP text and Workers AI f
   assert.doesNotMatch(voice, /new Map/);
 });
 
-test("locks one host-selected KP model to the room before play", async () => {
-  const [schema, models, server, engine, lobby, migration] = await Promise.all([
+test("pins one host-selected KP profile when the room is created", async () => {
+  const [
+    schema,
+    models,
+    server,
+    engine,
+    hall,
+    lobby,
+    migration,
+    profileMigration,
+    roomServer,
+  ] = await Promise.all([
     source("db/schema.ts"),
     source("app/_runtime/lib/kp/models.ts"),
     source("app/_runtime/lib/table/server.ts"),
     source("app/_runtime/lib/kp/engine.ts"),
+    source("app/hall/hall-client.tsx"),
     source("app/table/[code]/table-client.tsx"),
     source("drizzle/0003_rich_boom_boom.sql"),
+    source("drizzle/0007_free_black_bolt.sql"),
+    source("app/_runtime/lib/room/server.ts"),
   ]);
   assert.match(schema, /kpModel: text\("kp_model"\).*default\("deepseek-v4-flash"\)/);
+  assert.match(schema, /kpModelProfile: text\("kp_model_profile"\)/);
+  assert.match(models, /AUTHORITATIVE_KP_MODELS/);
+  assert.match(models, /LEGACY_KP_MODELS/);
+  assert.match(models, /@cf\/google\/gemma-4-26b-a4b-it/);
   assert.match(models, /deepseek-v4-flash/);
   assert.match(models, /deepseek-v4-pro/);
   assert.match(server, /export const setRoomModel = createServerFn/);
   assert.match(server, /if \(!me\.is_host\)/);
   assert.match(server, /status = \$\{"lobby"\}/);
+  assert.match(server, /本桌模型在创建时固定，创建后不能更换/);
+  assert.match(server, /isLegacyKpModel\(data\.model\)/);
+  assert.match(server, /kp_model, kp_model_profile/);
+  assert.match(roomServer, /authoritativeKpProfileByBinding/);
+  assert.match(roomServer, /function workersAiBinding\(\): WorkersAiBinding/);
+  assert.match(roomServer, /return env\.AI\.run\(model, input, options\)/);
+  assert.doesNotMatch(roomServer, /as unknown as WorkersAiBinding/);
+  const correction = roomServer.slice(
+    roomServer.indexOf("export type AuthoritativeRoomCorrectionInput"),
+    roomServer.indexOf("async function executeAuthoritativeRoomAction"),
+  );
+  assert.doesNotMatch(correction, /modelId|modelProfileVersion/);
+  assert.match(correction, /select ruleset_version, kp_model, kp_model_profile/);
+  assert.match(correction, /where id = \$\{input\.roomId\}/);
   assert.match(engine, /chatJson\(rooms\[0\]\.kp_model, messages\)/);
   assert.doesNotMatch(engine, /grok-4\.5/);
+  assert.match(hall, /创建桌子前选择 KP 模型/);
+  assert.match(hall, /createRoom\(\{ data: \{ nickname: nick, model \} \}\)/);
+  assert.match(hall, /LEGACY_KP_MODELS\.map/);
   assert.match(lobby, /本次跑团模型/);
-  assert.match(lobby, /开始后整桌锁定/);
+  assert.match(lobby, /模型在创建桌子时固定/);
+  assert.match(lobby, /LEGACY_KP_MODELS\.map/);
   assert.match(migration, /ALTER TABLE `rooms` ADD `kp_model`/);
+  assert.match(profileMigration, /ALTER TABLE `rooms` ADD `kp_model_profile`/);
 });
 
 test("keeps clocks, squads, rest voting, combat, voice and public projection in the live UI", async () => {

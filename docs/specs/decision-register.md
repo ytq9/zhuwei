@@ -250,18 +250,18 @@
 ## DEC-016：免费额度内的模型 Profile
 
 - 决策 ID：DEC-016
-- 日期：2026-08-26
-- 问题：新规则默认 KP 模型和成本失败语义。
-- 来源类别：Goal 免费额度/不得升级付费要求 + 2026-08-26 重新核对的 Cloudflare 官方定价、模型页和 2026-07-28 模型可用性 changelog。
+- 日期：2026-08-26；2026-08-28 因创建期模型选择补充。
+- 问题：新规则默认/可选 KP 模型、房间 Profile 固定和成本失败语义。
+- 来源类别：Goal 免费额度/不得升级付费要求 + 用户要求创建桌子时可选模型 + Cloudflare 官方定价、模型页和 2026-07-28 模型可用性 changelog。
 - 关联 SPEC 0001：§2、§19–§20；A–O。
 - 候选方案：继续外部 DeepSeek 密钥模型；付费限定 Workers AI 模型；现有 AI binding 的免费可用版本化模型。
-- 最终选择：新 ruleset 默认使用发布时在当前账号/Free 配额可用的 Workers AI Model Profile，初始候选 `@cf/zai-org/glm-4.7-flash`；部署前能力探测确认。已绑定旧模型仅旧房继续。额度/容量错误返回 retryableFailure，不自动付费或降为命令翻译器。
+- 最终选择：新 ruleset 默认使用 `@cf/zai-org/glm-4.7-flash`，创建桌子时还可选择已注册、Free 可用且满足权威 KP 合同的 `@cf/google/gemma-4-26b-a4b-it`。创建请求同时固定 model id 与 `modelProfileVersion`，创建后不可更换；实际 Workers AI 调用与 `ModelInvocationReceipt` 必须精确使用该组合。外部/付费 DeepSeek 项不进入新规则选项，已绑定旧模型仅旧房继续。额度/容量错误返回 retryableFailure，不自动付费或降为命令翻译器。
 - 理由：复用现有 `AI` binding，无新资源/密钥/网络跳转，并满足不升级付费。
-- 玩家可观察行为：模型暂不可用时行动保持可恢复，不伪造 NPC/玩家选择。
+- 玩家可观察行为：房主在创建桌子前可选受支持模型，入桌后只读显示；模型暂不可用时行动保持可恢复，不伪造 NPC/玩家选择。
 - 秘密与权限影响：只向模型发送 KP Viewer；不记录 Prompt/原文。
-- 迁移/可逆性：模型 Profile 可显式升级，不改已提交事实；若能力探测失败需选择另一个免费可用官方模型并登记新决定。
+- 迁移/可逆性：新增 `rooms.kp_model_profile` 目录字段；迁移默认值只回填此前唯一合法的 authoritative-v2 GLM Profile，Legacy 行不读取该字段。模型 Profile 升级必须显式迁移，不改已提交事实；未知 model/profile 组合 fail closed。
 - 验收场景：模型额度、容量、失败恢复、20+ 轮评测。
-- 测试证据：官方模型页已确认 `@cf/zai-org/glm-4.7-flash` 支持 function calling、context 为 131,072；2026-07-28 官方付费限定清单不包含该模型，公开目录仍将其归入 Free 可用范围。`tests/interaction-contract.test.mjs` 已固定模型选择，KP Adapter 7/7 已覆盖 tool schema/失败分类；这不代表本账户仍有 neurons 用量余量，也不替代发布前 entitlement、真实模型调用、延迟/质量与控制面验证。
+- 测试证据：官方模型资料已确认 GLM 4.7 Flash 与 Gemma 4 26B A4B 支持 function calling 且归入 Free 可用范围。`tests/rendered-html.test.mjs` 覆盖创建请求、Profile 持久化、创建后不可变与不支持模型拒绝；`tests/authoritative-kp-adapter.test.mjs` 覆盖 AI 调用/Receipt 精确同 Profile。这不代表本账户仍有 neurons 用量余量，也不替代发布前 entitlement、真实模型调用、延迟/质量与控制面验证。
 
 ## DEC-017：验收 seam 与 Legacy 测试隔离
 

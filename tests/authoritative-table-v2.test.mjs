@@ -24,7 +24,45 @@ test("new rooms pin authoritative profiles without creating legacy active state"
   assert.match(server, /import \{[^}]*AUTHORITATIVE_KP_MODEL[^}]*\} from "@\/lib\/kp\/models"/s);
   assert.match(create, /AUTHORITATIVE_RULESET_VERSION/);
   assert.match(create, /AUTHORITATIVE_KP_MODEL/);
+  assert.match(create, /data\.model === undefined \? AUTHORITATIVE_KP_MODEL : data\.model/);
+  assert.doesNotMatch(create, /data\.model \?\?/);
+  assert.match(create, /authoritativeKpProfileByModelId\(model\)/);
+  assert.match(create, /kp_model, kp_model_profile/);
+  assert.match(create, /profile\.modelProfileVersion/);
   assert.doesNotMatch(create, /game_states/);
+});
+
+test("every authoritative party endpoint rejects an unavailable room profile before dispatch", async () => {
+  const server = await source("app/_runtime/lib/table/server.ts");
+  const guardStart = server.indexOf("function authoritativeRoomKpProfileIsAvailable");
+  const wrapperStart = server.indexOf("async function submitAuthoritativePartyTableAction");
+  const wrapperEnd = server.indexOf("function authoritativeTableOutcome", wrapperStart);
+  assert.notEqual(guardStart, -1, "shared authoritative profile guard is missing");
+  assert.notEqual(wrapperStart, -1, "party dispatch wrapper is missing");
+  assert.notEqual(wrapperEnd, -1, "party dispatch wrapper boundary is missing");
+  const guard = server.slice(guardStart, wrapperStart);
+  const wrapper = server.slice(wrapperStart, wrapperEnd);
+  assert.match(guard, /isAuthoritativeKpModel/);
+  assert.match(guard, /authoritativeKpProfileByBinding/);
+  assert.match(wrapper, /authoritativeRoomKpProfileIsAvailable/);
+  assert.match(wrapper, /本桌绑定的权威 KP 模型 Profile 已不可用/);
+  assert.ok(
+    wrapper.indexOf("authoritativeRoomKpProfileIsAvailable")
+      < wrapper.indexOf("runAuthoritativePartyAction"),
+    "party profile validation must run before Room dispatch",
+  );
+
+  for (const [name, nextName] of [
+    ["inviteSquad", "cancelSquadInvite"],
+    ["cancelSquadInvite", "answerSquad"],
+    ["answerSquad", "leaveSquadNow"],
+    ["leaveSquadNow", "passCaptain"],
+    ["passCaptain", "approveSquadQueue"],
+  ]) {
+    const endpoint = exportedSection(server, name, nextName);
+    assert.match(endpoint, /submitAuthoritativePartyTableAction\(\{/);
+    assert.doesNotMatch(endpoint, /runAuthoritativePartyAction\(\{/);
+  }
 });
 
 test("starting authoritative-v2 seeds the Room Authority from members and locked static cards only", async () => {
@@ -929,7 +967,7 @@ test("the browser owns transport choices only and the API restores trusted ident
   assert.doesNotMatch(worker, mechanicalRandomness);
 });
 
-test("the table client acknowledges only the current delivery after rendering it", async () => {
+test("the table client acknowledges only the current delivery after explicit player confirmation", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
   const ack = exportedSection(server, "acknowledgeDelivery", "resolveRoll");
   assert.match(ack, /memberOf\(room\.id, context\.userId\)/);
@@ -943,8 +981,9 @@ test("the table client acknowledges only the current delivery after rendering it
   const ui = await source("app/_runtime/components/play-table.tsx");
   assert.match(ui, /acknowledgeDelivery/);
   assert.match(ui, /currentDeliveryId/);
-  assert.match(ui, /ackedDeliveryRef/);
-  assert.match(ui, /requestAnimationFrame/);
+  assert.match(ui, /data-delivery-action="acknowledge"/);
+  assert.match(ui, /确认后不可回看/);
+  assert.doesNotMatch(ui, /ackedDeliveryRef|acknowledgeAfterPresentation|requestAnimationFrame/);
   assert.match(ui, /submissionId/);
   assert.match(ui, /function CombatChoicePanel/);
   assert.match(ui, /selectTarget/);
@@ -958,7 +997,7 @@ test("the table client acknowledges only the current delivery after rendering it
   assert.doesNotMatch(ui, /narrationHistory/);
 });
 
-test("safety pause is a direct authenticated Table action with a closed private recovery UI", async () => {
+test("safety pause keeps server compatibility and recovery UI without a player pause button", async () => {
   const { projectAuthoritativeTableObservation } = await import(
     "../app/_runtime/lib/table/authoritative.ts"
   );
@@ -1010,9 +1049,9 @@ test("safety pause is a direct authenticated Table action with a closed private 
   assert.match(adjust, /fadeToBlack[^]*reduceDetail[^]*skipSensitiveContent/);
 
   const client = await source("app/_runtime/lib/table/client.ts");
-  assert.match(
+  assert.doesNotMatch(
     client,
-    /export const requestSafetyPause[^]*callWithStableTableSubmission\("requestSafetyPause"/,
+    /export const requestSafetyPause/,
   );
   assert.match(
     client,
@@ -1024,7 +1063,7 @@ test("safety pause is a direct authenticated Table action with a closed private 
   assert.match(route, /adjustSafetyPresentation/);
 
   const ui = await source("app/_runtime/components/play-table.tsx");
-  assert.match(ui, /立即安全暂停/);
+  assert.doesNotMatch(ui, /立即安全暂停|pauseSafetyPresentation|requestSafetyPause/);
   assert.match(ui, /淡出当前内容/);
   assert.match(ui, /降低呈现细节/);
   assert.match(ui, /跳过敏感内容/);
@@ -1267,7 +1306,7 @@ test("every authoritative table button returns before legacy state, dice, and me
   const modelWrite = model.indexOf("update rooms");
   assert.notEqual(modelV2, -1, "authoritative model pin is missing");
   assert.ok(modelV2 < modelWrite, "authoritative model must be checked before a D1 write");
-  assert.match(model, /data\.model !== AUTHORITATIVE_KP_MODEL/);
+  assert.match(model, /本桌模型在创建时固定，创建后不能更换/);
 });
 
 test("authoritative button submission ids survive transport retries and clear only on terminal outcomes", async () => {
@@ -1349,51 +1388,48 @@ test("authoritative button submission ids survive transport retries and clear on
   assert.doesNotMatch(client, /new Map\s*</, "submission retries cannot rely on module-global memory");
 });
 
-test("delivery ACK waits for the current voice request to acquire audio or hit a bounded timeout", async () => {
-  const { acknowledgeAfterPresentation } = await import(
-    "../app/_runtime/lib/table/authoritative-client.ts"
-  );
-  let releaseAudio;
-  const audioReady = new Promise((resolve) => {
-    releaseAudio = resolve;
-  });
-  let acknowledgements = 0;
-  const waiting = acknowledgeAfterPresentation({
-    presentation: audioReady,
-    timeoutMs: 100,
-    acknowledge: async () => {
-      acknowledgements += 1;
-      return "acknowledged";
-    },
-  });
-  await Promise.resolve();
-  assert.equal(acknowledgements, 0, "ACK raced ahead of the voice response");
-  releaseAudio();
-  assert.equal(await waiting, "acknowledged");
-  assert.equal(acknowledgements, 1);
-
-  await acknowledgeAfterPresentation({
-    presentation: new Promise(() => {}),
-    timeoutMs: 5,
-    acknowledge: async () => {
-      acknowledgements += 1;
-      return "timed-out-ack";
-    },
-  });
-  assert.equal(acknowledgements, 2, "a stalled voice request blocked delivery forever");
-
-  await acknowledgeAfterPresentation({
-    timeoutMs: 100,
-    acknowledge: async () => {
-      acknowledgements += 1;
-      return "no-voice-ack";
-    },
-  });
-  assert.equal(acknowledgements, 3, "an explicit no-voice delivery was not acknowledged");
-
+test("voice presentation never acknowledges a current Delivery", async () => {
+  const deliveryClient = await source("app/_runtime/lib/table/authoritative-client.ts");
   const ui = await source("app/_runtime/components/play-table.tsx");
-  assert.match(ui, /deliveryPresentationRef/);
-  assert.match(ui, /acknowledgeAfterPresentation/);
-  assert.match(ui, /presentation:\s*deliveryPresentationRef\.current\.get\(deliveryId\)/);
+  assert.doesNotMatch(deliveryClient, /acknowledgeAfterPresentation/);
+  assert.doesNotMatch(ui, /acknowledgeAfterPresentation|requestAnimationFrame/);
+  assert.match(ui, /async function confirmCurrentDelivery/);
+  assert.match(ui, /onClick=\{\(\) => void confirmCurrentDelivery\(\)\}/);
   assert.doesNotMatch(ui, /localStorage/);
+});
+
+test("authoritative retry outcomes expose a stable public cause without internal details", async () => {
+  const { publicAuthoritativeOutcomeError } = await import(
+    "../app/_runtime/lib/table/authoritative.ts"
+  );
+  const cases = [
+    [
+      { kind: "retryableFailure", code: "modelTransient", privateReceipt: "omit-me" },
+      "KP 模型暂时不可用或响应超时，行动未提交；可用同一行动重试",
+    ],
+    [
+      { kind: "retryableFailure", code: "quotaExhausted", privateReceipt: "omit-me" },
+      "KP 模型额度暂不可用，行动未提交；请在额度恢复后用同一行动重试",
+    ],
+    [
+      { kind: "retryableFailure", code: "authorityTransient", privateReceipt: "omit-me" },
+      "房间权威暂时不可用，行动未提交；可用同一行动重试",
+    ],
+    [
+      { kind: "needsKp", code: "correctionRequired", privateReceipt: "omit-me" },
+      "KP 需要重新裁定这项行动，请稍后用同一行动重试",
+    ],
+    [
+      { kind: "retryableFailure", code: "projectionFailure", privateReceipt: "omit-me" },
+      "这项行动暂时没有提交，请稍后重试",
+    ],
+  ];
+  for (const [outcome, expected] of cases) {
+    const message = publicAuthoritativeOutcomeError(outcome);
+    assert.equal(message, expected);
+    assert.doesNotMatch(message, /omit-me|receipt|projectionFailure/iu);
+  }
+
+  const server = await source("app/_runtime/lib/table/server.ts");
+  assert.match(server, /error: publicAuthoritativeOutcomeError\(outcome\)/);
 });

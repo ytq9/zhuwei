@@ -1,5 +1,6 @@
 import {
   AUTHORITATIVE_KP_PROFILE,
+  authoritativeKpProfileByBinding,
   NARRATION_TOOL_NAME,
   PROPOSAL_TOOL_NAME,
   narrationModelInput,
@@ -23,6 +24,7 @@ import {
 import type {
   AuthoritativeKpAdapter,
   AuthoritativeKpAdapterOptions,
+  AuthoritativeKpProfile,
   KpNarrationRequest,
   KpProposalRequest,
   ModelInvocationReceipt,
@@ -33,6 +35,7 @@ export { AUTHORITATIVE_KP_PROFILE } from "./authoritative-policy";
 export type {
   AuthoritativeKpAdapter,
   AuthoritativeKpAdapterOptions,
+  AuthoritativeKpProfile,
   AuthoritativeKpProposal,
   CurrentNarration,
   KpNarrationRequest,
@@ -92,13 +95,14 @@ function requiredString(value: unknown): string {
   return value;
 }
 
-function schemaVersion(task: InvocationTask): string {
+function schemaVersion(profile: AuthoritativeKpProfile, task: InvocationTask): string {
   return task === "proposal"
-    ? AUTHORITATIVE_KP_PROFILE.proposalSchemaVersion
-    : AUTHORITATIVE_KP_PROFILE.narrationSchemaVersion;
+    ? profile.proposalSchemaVersion
+    : profile.narrationSchemaVersion;
 }
 
 function receipt(
+  profile: AuthoritativeKpProfile,
   task: InvocationTask,
   rootActionId: string,
   attempt: number,
@@ -108,12 +112,12 @@ function receipt(
   additions: Partial<ModelInvocationReceipt> = {},
 ): ModelInvocationReceipt {
   return {
-    provider: AUTHORITATIVE_KP_PROFILE.provider,
-    modelId: AUTHORITATIVE_KP_PROFILE.modelId,
-    modelRevision: AUTHORITATIVE_KP_PROFILE.modelRevision,
-    modelProfileVersion: AUTHORITATIVE_KP_PROFILE.modelProfileVersion,
-    promptPolicyVersion: AUTHORITATIVE_KP_PROFILE.promptPolicyVersion,
-    schemaVersion: schemaVersion(task),
+    provider: profile.provider,
+    modelId: profile.modelId,
+    modelRevision: profile.modelRevision,
+    modelProfileVersion: profile.modelProfileVersion,
+    promptPolicyVersion: profile.promptPolicyVersion,
+    schemaVersion: schemaVersion(profile, task),
     task,
     rootActionId,
     attempt,
@@ -125,6 +129,7 @@ function receipt(
 }
 
 function permanentContractError(
+  profile: AuthoritativeKpProfile,
   task: InvocationTask,
   rootActionId: string,
   attempt: number,
@@ -133,7 +138,7 @@ function permanentContractError(
   const at = now();
   return new AuthoritativeKpModelError(
     "modelPermanent",
-    receipt(task, rootActionId, attempt, at, at, "modelPermanent"),
+    receipt(profile, task, rootActionId, attempt, at, at, "modelPermanent"),
   );
 }
 
@@ -183,6 +188,20 @@ export function createAuthoritativeKpAdapter(
   if (!options?.ai || typeof options.ai.run !== "function") {
     throw new TypeError("Workers AI binding is required for the authoritative KP adapter.");
   }
+  const profile = options.profile ?? AUTHORITATIVE_KP_PROFILE;
+  const registeredProfile = authoritativeKpProfileByBinding(
+    profile.modelId,
+    profile.modelProfileVersion,
+  );
+  if (
+    registeredProfile === undefined
+    || Object.keys(registeredProfile).length !== Object.keys(profile).length
+    || Object.entries(registeredProfile).some(
+      ([key, value]) => profile[key as keyof AuthoritativeKpProfile] !== value,
+    )
+  ) {
+    throw new TypeError("A registered authoritative KP model profile is required.");
+  }
   const now = options.now ?? Date.now;
   const invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
   if (
@@ -210,7 +229,7 @@ export function createAuthoritativeKpAdapter(
         }, invocationTimeoutMs);
       });
       const modelCall = options.ai.run(
-        AUTHORITATIVE_KP_PROFILE.modelId,
+        profile.modelId,
         input,
         { signal: abortController.signal },
       );
@@ -218,7 +237,7 @@ export function createAuthoritativeKpAdapter(
       const endedAt = now();
       return {
         response,
-        receipt: receipt(task, rootActionId, attempt, startedAt, endedAt, "success", {
+        receipt: receipt(profile, task, rootActionId, attempt, startedAt, endedAt, "success", {
           ...usageFrom(response),
           responseHash: await responseHash(response),
         }),
@@ -228,7 +247,7 @@ export function createAuthoritativeKpAdapter(
       const result = classifyModelError(error);
       throw new AuthoritativeKpModelError(
         result,
-        receipt(task, rootActionId, attempt, startedAt, endedAt, result),
+        receipt(profile, task, rootActionId, attempt, startedAt, endedAt, result),
         retryAfterFrom(error),
       );
     } finally {
@@ -269,14 +288,14 @@ export function createAuthoritativeKpAdapter(
         try {
           validateProposalRequest(request);
         } catch {
-          throw permanentContractError("proposal", rootActionId, attempt, now);
+          throw permanentContractError(profile, "proposal", rootActionId, attempt, now);
         }
 
         let modelInput: Record<string, unknown>;
         try {
           modelInput = proposalModelInput(request);
         } catch {
-          throw permanentContractError("proposal", request.rootActionId, request.attempt, now);
+          throw permanentContractError(profile, "proposal", request.rootActionId, request.attempt, now);
         }
         const invocation = await invoke(
           "proposal",
@@ -311,14 +330,14 @@ export function createAuthoritativeKpAdapter(
         try {
           validateNarrationRequest(request);
         } catch {
-          throw permanentContractError("narration", rootActionId, attempt, now);
+          throw permanentContractError(profile, "narration", rootActionId, attempt, now);
         }
         const audience = audienceIdentity(request.projection);
         let modelInput: Record<string, unknown>;
         try {
           modelInput = narrationModelInput(request);
         } catch {
-          throw permanentContractError("narration", request.rootActionId, attempt, now);
+          throw permanentContractError(profile, "narration", request.rootActionId, attempt, now);
         }
         const invocation = await invoke(
           "narration",
