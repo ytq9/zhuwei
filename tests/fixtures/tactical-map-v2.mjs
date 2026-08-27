@@ -93,6 +93,7 @@ export function tacticalProjectionFixture() {
         kind: "terrain",
         label: "碎石坡",
         state: "difficult",
+        terrain: "rubble",
         x: "780",
         opaque: false,
         impassable: false,
