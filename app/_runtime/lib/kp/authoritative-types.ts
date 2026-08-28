@@ -112,6 +112,15 @@ export type ModelInvocationResult =
   | "modelPermanent"
   | "quotaExhausted";
 
+export const MODEL_INVOCATION_FAILURE_STAGES = [
+  "structuredOutput",
+  "proposalSchema",
+  "projectionBinding",
+] as const;
+
+export type ModelInvocationFailureStage =
+  typeof MODEL_INVOCATION_FAILURE_STAGES[number];
+
 export type ModelInvocationReceipt = {
   provider: "cloudflare-workers-ai" | "deepseek";
   modelId: string;
@@ -125,6 +134,7 @@ export type ModelInvocationReceipt = {
   startedAt: number;
   endedAt: number;
   result: ModelInvocationResult;
+  failureStage?: ModelInvocationFailureStage;
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;

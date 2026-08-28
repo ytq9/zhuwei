@@ -26,7 +26,9 @@ import type {
   AuthoritativeKpAdapterOptions,
   AuthoritativeKpProfile,
   KpNarrationRequest,
+  KpProposalDraft,
   KpProposalRequest,
+  ModelInvocationFailureStage,
   ModelInvocationReceipt,
   ModelInvocationResult,
 } from "./authoritative-types";
@@ -139,6 +141,22 @@ function permanentContractError(
   return new AuthoritativeKpModelError(
     "modelPermanent",
     receipt(profile, task, rootActionId, attempt, at, at, "modelPermanent"),
+  );
+}
+
+function permanentOutputError(
+  error: unknown,
+  invocationReceipt: ModelInvocationReceipt,
+  failureStage: ModelInvocationFailureStage,
+): AuthoritativeKpModelError {
+  if (!(error instanceof ModelOutputValidationError)) throw error;
+  return new AuthoritativeKpModelError(
+    "modelPermanent",
+    {
+      ...invocationReceipt,
+      result: "modelPermanent",
+      failureStage,
+    },
   );
 }
 
@@ -303,21 +321,28 @@ export function createAuthoritativeKpAdapter(
           request.attempt,
           modelInput,
         );
+        let structured: Record<string, unknown>;
         try {
-          const structured = extractStructuredOutput(invocation.response, PROPOSAL_TOOL_NAME);
-          const proposal = validateProposal(structured);
-          assertProposalProjectionBound(proposal, request.projection);
-          return {
-            ...proposal,
-            proposalAttemptId: `${request.rootActionId}:kp:${request.attempt}`,
-            modelInvocationReceipt: invocation.receipt,
-          };
-        } catch {
-          throw new AuthoritativeKpModelError(
-            "modelPermanent",
-            { ...invocation.receipt, result: "modelPermanent" },
-          );
+          structured = extractStructuredOutput(invocation.response, PROPOSAL_TOOL_NAME);
+        } catch (error) {
+          throw permanentOutputError(error, invocation.receipt, "structuredOutput");
         }
+        let proposal: KpProposalDraft;
+        try {
+          proposal = validateProposal(structured);
+        } catch (error) {
+          throw permanentOutputError(error, invocation.receipt, "proposalSchema");
+        }
+        try {
+          assertProposalProjectionBound(proposal, request.projection);
+        } catch (error) {
+          throw permanentOutputError(error, invocation.receipt, "projectionBinding");
+        }
+        return {
+          ...proposal,
+          proposalAttemptId: `${request.rootActionId}:kp:${request.attempt}`,
+          modelInvocationReceipt: invocation.receipt,
+        };
       });
     },
 

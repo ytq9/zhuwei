@@ -1,4 +1,8 @@
 import { canonicalSha256 } from "../rules/profiles/canonical";
+import {
+  MODEL_INVOCATION_FAILURE_STAGES,
+  type ModelInvocationFailureStage,
+} from "../kp/authoritative-types";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -98,8 +102,19 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   projectionFailure: ["projectionIntegrity", "projectionIntegrity"],
   correctionRequired: ["correctionRequired", "correctionRequired"],
   quotaExhausted: ["quotaExhausted", "quotaExhausted"],
+  structuredOutput: ["modelPermanent", "structuredOutput"],
+  proposalSchema: ["modelPermanent", "proposalSchema"],
+  projectionBinding: ["modelPermanent", "projectionBinding"],
   seatInactive: ["authentication", "authenticationRequired"],
 } as const;
+
+const MODEL_FAILURE_STAGE_SET = new Set<string>(MODEL_INVOCATION_FAILURE_STAGES);
+
+function modelFailureStage(value: unknown): ModelInvocationFailureStage | undefined {
+  return typeof value === "string" && MODEL_FAILURE_STAGE_SET.has(value)
+    ? value as ModelInvocationFailureStage
+    : undefined;
+}
 
 function record(value: unknown): UnknownRecord | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -301,6 +316,7 @@ export function buildModelInvocationTelemetryEvent(input: unknown): RoomTelemetr
   const result = modelResult(receipt?.result);
   const startedAt = nonNegativeInteger(receipt?.startedAt);
   const endedAt = nonNegativeInteger(receipt?.endedAt);
+  const failureStage = modelFailureStage(receipt?.failureStage);
   const durationMs = startedAt !== undefined && endedAt !== undefined && endedAt >= startedAt
     ? endedAt - startedAt
     : undefined;
@@ -316,7 +332,9 @@ export function buildModelInvocationTelemetryEvent(input: unknown): RoomTelemetr
     },
     model: receipt,
     outcome: { kind: result },
-    failure: result === undefined || result === "success" ? undefined : { code: result },
+    failure: result === undefined || result === "success"
+      ? undefined
+      : { code: failureStage ?? result },
     measurements: {
       operationKind: task === "narration" ? "kpNarration" : "kpProposal",
       durationMs,

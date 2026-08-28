@@ -751,7 +751,11 @@ test("permanent and quota KP failures keep their stable outer classifications wi
     {
       error: Object.assign(new Error(privateModelDetail), {
         code: "modelPermanent",
-        modelInvocationReceipt: { result: "modelPermanent", responseHash: "sha256:private" },
+        modelInvocationReceipt: {
+          result: "modelPermanent",
+          failureStage: "proposalSchema",
+          responseHash: "sha256:private",
+        },
       }),
       expected: {
         kind: "rejected",

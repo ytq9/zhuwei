@@ -278,7 +278,8 @@ test("model invocation receipts become one complete redacted evidence event", as
     attempt: 1,
     startedAt: 1_777_100_000_000,
     endedAt: 1_777_100_012_345,
-    result: "success",
+    result: "modelPermanent",
+    failureStage: "proposalSchema",
     inputTokens: 321,
     outputTokens: 123,
     totalTokens: 444,
@@ -294,10 +295,12 @@ test("model invocation receipts become one complete redacted evidence event", as
 
   assert.deepEqual(Object.keys(event).sort(), [...ALLOWED_OUTPUT_KEYS].sort());
   assert.equal(event.eventName, "room.model.invocation.completed");
-  assert.equal(event.severity, "info");
+  assert.equal(event.severity, "error");
   assert.equal(event.modelId, receipt.modelId);
   assert.equal(event.modelTask, "proposal");
-  assert.equal(event.modelResult, "success");
+  assert.equal(event.modelResult, "modelPermanent");
+  assert.equal(event.failureClass, "modelPermanent");
+  assert.equal(event.errorCode, "proposalSchema");
   assert.equal(event.modelInputTokens, 321);
   assert.equal(event.modelOutputTokens, 123);
   assert.equal(event.modelTotalTokens, 444);
@@ -313,6 +316,15 @@ test("model invocation receipts become one complete redacted evidence event", as
   );
   assert.equal(JSON.stringify(event).includes(SENSITIVE.prompt), false);
   assert.equal(JSON.stringify(event).includes(SENSITIVE.projection), false);
+  for (const failureStage of ["structuredOutput", "projectionBinding"]) {
+    const stageEvent = telemetry.buildModelInvocationTelemetryEvent({
+      roomId: "room:model-stage",
+      principalId: "principal:model-stage",
+      receipt: { ...receipt, failureStage },
+    });
+    assert.equal(stageEvent.failureClass, "modelPermanent");
+    assert.equal(stageEvent.errorCode, failureStage);
+  }
 });
 
 test("client-controlled request ids are never emitted as log content", async () => {

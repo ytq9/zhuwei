@@ -831,6 +831,7 @@ test("timeout, quota exhaustion, and invalid model output return stable redacted
     assert.ok(error instanceof AuthoritativeKpModelError);
     assert.equal(error.code, "modelPermanent");
     assert.equal(error.modelInvocationReceipt.result, "modelPermanent");
+    assert.equal(error.modelInvocationReceipt.failureStage, "structuredOutput");
     assert.match(error.modelInvocationReceipt.responseHash, /^sha256:[a-f0-9]{64}$/);
     assert.equal(serialized(error).includes(leakedOutput), false);
     assert.equal(serialized(error).includes(PRIVATE_FACT), false);
@@ -856,6 +857,22 @@ test("timeout, quota exhaustion, and invalid model output return stable redacted
   await assert.rejects(forgedAuthorityAdapter.propose(proposalRequest()), (error) => {
     assert.ok(error instanceof AuthoritativeKpModelError);
     assert.equal(error.code, "modelPermanent");
+    assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema");
+    return true;
+  });
+
+  const unboundReferenceAdapter = createAuthoritativeKpAdapter({
+    ai: scriptedAi([
+      officialToolResponse("submit_kp_proposal", proposal({
+        publicBasisRefs: ["fact:not-in-the-kp-projection"],
+      })),
+    ]),
+    now: monotonicClock(),
+  });
+  await assert.rejects(unboundReferenceAdapter.propose(proposalRequest()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.code, "modelPermanent");
+    assert.equal(error.modelInvocationReceipt.failureStage, "projectionBinding");
     return true;
   });
 

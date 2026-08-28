@@ -1730,3 +1730,24 @@
 | 2026-08-28 | `npm run cf:deploy` | 0 | 配置门、production build、10 个变化资产上传通过；Version `4a0666e7-87cb-4bf5-8af3-794159ad7efe`。 |
 | 2026-08-28 | `wrangler deployments status --json`；`versions view 4a0666e7-…` | 0；0 | 新 deployment 为 100% 流量；handler、兼容性、Secret 名称与既有绑定一致。 |
 | 2026-08-28 | production root `curl`；独立远程抓取 | 7；受安全门拒绝 | 未获得远端 IP/HTTP；记录传输层限制并停止重试，不虚报应用响应。 |
+
+## DeepSeek V4 Flash 真实回话失败的 Proposal 分层诊断（2026-08-28）
+
+- 基线与范围：从最新远端 `cloudflare` / `ff115990e6cf92d1f1575425a05cb0268374b8c8` 新建干净克隆；远端 `main` 只读复核仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。原目录的 `AGENTS.md`、`docs/refactor-log.md` 与 `.playwright-cli/` 在途文件未被覆盖或纳入。三个 Worker 只读审计 DeepSeek 协议、Proposal→Narration 管线与生产观测入口，没有编辑文件、日志、控制面或远端。
+- 症状与安全不变量：生产测试房 `8BTWKL` 使用 `deepseek-v4-flash`；提交“我站在原地环顾大厅，寻找明显可见的出口，不触碰任何物品。”后，输入恢复、当前 Delivery 与世界投影不变，前端保持稳定文案“权威 KP 模型配置或输出无效。”，没有伪造成功或提交世界、时间、资源变化。
+- 生产证据：现有 `room.model.invocation.completed` 脱敏遥测记录 `modelTask=proposal`、`modelResult=modelPermanent`、调用耗时 `6845ms`、输入/输出/总 token 为 `48751/706/49457`、`modelResponseHash` 存在。由此确定 DeepSeek HTTP 2xx 已返回，排除缺密钥、401/400/422 与 2000-token 截断；失败发生在 Proposal 响应提取、Proposal schema 校验或 KP 投影引用绑定之一，且在 Room commit 前。
+- 观测通道处置：本机 `wrangler tail` 到 Cloudflare Tail WebSocket 发生 TCP 超时；Workers Observability 历史查询 API 因当前 OAuth 缺少该权限返回 403，Cloudflare Dashboard 当前 Chrome 会话未登录。随后只用现有 Wrangler OAuth 创建临时 Tail，让 Chrome 连接 `tail.developers.workers.dev`，过滤 `room.model.invocation.completed` 并在本地页面仅保留任务、模型、耗时、token 数及响应哈希是否存在；未读取或输出 Cookie、Secret、Authorization、Prompt、投影、工具参数或模型正文，Tail 用后删除。
+- 决策与修改：不放宽权威 Proposal validator，也不自动换模型。`app/_runtime/lib/kp/authoritative-types.ts` 为内容无关的模型 Receipt 增加共享、固定的三值 `failureStage` 枚举；`app/_runtime/lib/kp/authoritative.ts` 只将已由生产证据锁定的 Proposal 结构提取、schema 校验和投影绑定三个后处理边界分开归因，并只捕获协议校验异常，其他程序异常继续抛出；`app/_runtime/lib/room/telemetry.ts` 把这三个固定值映射到既有 `errorCode` 白名单。`tests/authoritative-kp-adapter.test.mjs`、`tests/structured-telemetry-v2.test.mjs` 先红后绿覆盖三个阶段及脱敏遥测，`tests/authoritative-action.test.mjs` 证明内部阶段不会进入公开 Room 结果；前端公开文案与结果结构不变。
+- 当前集成状态：本节记录时已完成本地分层实现、双轴复审收口和最终发布冻结门，复审没有代码或规格阻断；尚未提交、推送或部署该诊断版本，没有 schema/migration、Secret 或 Cloudflare 资源变化。下一步部署同一现有 Worker，用同一 Flash 行动取得精确 `errorCode`，再在首个违反不变量的位置修复并完成真实 Proposal→commit→Narration→Delivery。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `npm ci` | 0 | 新克隆安装锁定的 506 个包；报告既有 12 项 audit 提示（1 low、4 moderate、7 high），未自动修复，manifest/lockfile 未变。 |
+| 2026-08-28 | 生产 Chrome 提交 + Cloudflare 脱敏 Tail | 应用拒绝 / Tail 成功 | 取得上述 Proposal 2xx 后失败证据；世界与当前 Delivery 未变化。 |
+| 2026-08-28 | `npx wrangler tail zhuwei --format=json`；Observability query API | TCP `ETIMEDOUT`；HTTP 403 | 两条读取限制均记录；改走浏览器 Tail，没有误判为 Worker 故障。 |
+| 2026-08-28（RED） | `npx tsx --test tests/authoritative-kp-adapter.test.mjs tests/structured-telemetry-v2.test.mjs` | 1 | 18/20；失败精确证明旧 Receipt 无阶段且遥测只能返回 `modelUnavailable`。 |
+| 2026-08-28（GREEN） | `npx tsx --test tests/authoritative-kp-adapter.test.mjs tests/authoritative-action.test.mjs tests/structured-telemetry-v2.test.mjs` | 0 | 35/35；三个 Proposal 后处理阶段、固定遥测映射、公开结果不携带内部阶段均通过。 |
+| 2026-08-28 | `npm run typecheck` | 2 → 0 | 首次发现 Narration 草稿误标为完整 Delivery 类型；改用 `CurrentNarrationDraft` 后通过。 |
+| 2026-08-28（收窄前冻结候选） | `npm run typecheck && npm run lint && npm test` | 0 | production build 通过，Node 334/334，Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip；随后按复审意见收窄生产诊断分支并补测试，因此该结果不作为最终发布门。 |
+| 2026-08-28（最终冻结门） | `npm run typecheck && npm run lint && npm test` | 0 | 对复审收口后的最终生产代码和测试重跑：production build 通过，Node 334/334，Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip；故障注入 reporter 文本未造成测试失败。 |
+| 2026-08-28 | 部署配置门；Secret/migration/deployment/远端 refs 只读检查 | 0 | 目标仍为现有 `zhuwei`、`DB` / `zhuwei-dev`、ROOMS/AI/ASSETS；仅确认 `DEEPSEEK_API_KEY` 名称，无 migration；发布前 Version `4a0666e7` 为 100%，远端 `main` 未变。 |
