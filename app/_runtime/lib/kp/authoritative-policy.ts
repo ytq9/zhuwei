@@ -13,12 +13,13 @@ import {
   NARRATION_AGENCY_CLAIM_KINDS,
   NARRATION_AGENCY_SUBJECT_KINDS,
   type KpNarrationRequest,
+  type KpProposalDraft,
   type KpProposalRequest,
   type AuthoritativeKpProfile,
 } from "./authoritative-types";
 
 const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-prompt-policy-v4",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v5",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
@@ -27,7 +28,7 @@ const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
 const HISTORICAL_WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 const HISTORICAL_ALTERNATIVE_WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const HISTORICAL_WORKERS_AI_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-prompt-policy-v4",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v5",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
@@ -90,6 +91,21 @@ const stringArray = {
   type: "array",
   items: { type: "string", minLength: 1, maxLength: 240 },
   maxItems: 40,
+};
+
+const projectionBasisRefArray = {
+  ...stringArray,
+  description: "每一项都必须从本次输入 kpProjection 中已有的字符串值逐字复制；不得填写 JSON 路径、字段名、标签、释义或新造 ID。没有稳定依据时提交空数组 []。",
+};
+
+const causalBasisRefArray = {
+  ...stringArray,
+  description: "每一项都必须从本次输入 kpProjection 中已固化事实条目的 id 字符串值逐字复制；不得引用本次新建的 dynamicMaterializations[].factRef，不得填写 JSON 路径、字段名、释义或新造 ID。没有已固化因果依据时提交空数组 []。",
+};
+
+const npcKnowledgeRefArray = {
+  ...stringArray,
+  description: "每一项都必须从 npcId 对应的 kpProjection.npcViewers 条目中已有的字符串值逐字复制；不得借用 KP 全知信息、JSON 路径、释义或新造 ID。没有可引用知识时提交空数组 []。",
 };
 
 const fictionDurationSchema = {
@@ -196,7 +212,12 @@ const adjudicationPrecedentSchema = {
       additionalProperties: false,
       properties: {
         kind: { const: "supersede" },
-        supersededPrecedentId: { type: "string", minLength: 1, maxLength: 240 },
+        supersededPrecedentId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 240,
+          description: "必须从本次输入 kpProjection 中已有的旧 precedentId 字符串值逐字复制。",
+        },
         materialDifferences: {
           type: "array",
           minItems: 1,
@@ -563,8 +584,8 @@ const proposalParameters = {
     },
     goal: { type: "string", minLength: 1, maxLength: 480 },
     method: { type: "string", minLength: 1, maxLength: 480 },
-    publicBasisRefs: stringArray,
-    privateBasisRefs: stringArray,
+    publicBasisRefs: projectionBasisRefArray,
+    privateBasisRefs: projectionBasisRefArray,
     adjudicationPrecedent: adjudicationPrecedentSchema,
     estimatedFictionTime: fictionDurationSchema,
     risk: riskSchema,
@@ -580,7 +601,7 @@ const proposalParameters = {
             enum: ["fact", "location", "passage", "npc", "enemy", "item", "faction", "hazard", "opportunity", "ability"],
           },
           factRef: { type: "string", minLength: 1, maxLength: 160 },
-          causalBasisRefs: stringArray,
+          causalBasisRefs: causalBasisRefArray,
           visibilityPolicyRef: { type: "string", minLength: 1, maxLength: 160 },
           definition: openWorldDefinition,
         },
@@ -602,7 +623,7 @@ const proposalParameters = {
                 hiddenWeight: { type: "integer", minimum: 1, maximum: 1000000 },
                 kind: { enum: ["fact", "location", "passage", "npc", "enemy", "item", "faction", "hazard", "opportunity", "ability"] },
                 factRef: { type: "string", minLength: 1, maxLength: 160 },
-                causalBasisRefs: stringArray,
+                causalBasisRefs: causalBasisRefArray,
                 visibilityPolicyRef: { type: "string", minLength: 1, maxLength: 160 },
                 definition: openWorldDefinition,
               },
@@ -620,10 +641,15 @@ const proposalParameters = {
         type: "object",
         additionalProperties: false,
         properties: {
-          npcId: { type: "string", minLength: 1, maxLength: 160 },
+          npcId: {
+            type: "string",
+            minLength: 1,
+            maxLength: 160,
+            description: "必须逐字复制 kpProjection.npcViewers 中一个现有 NPC 条目的标识；不得使用姓名、JSON 路径或新造 ID。",
+          },
           goal: { type: "string", minLength: 1, maxLength: 480 },
           method: { type: "string", minLength: 1, maxLength: 480 },
-          knowledgeRefs: stringArray,
+          knowledgeRefs: npcKnowledgeRefArray,
           actorPlan: actorPlanSchema,
           mechanicalProposal: { anyOf: [{ type: "null" }, actionPlanSchema] },
         },
@@ -726,6 +752,8 @@ const PROPOSAL_SYSTEM = `你是烛帷中承担叙事权威的真正 KP，不是�
 
 职责：接受未登记但合理的行动；依据因果在开放留白中创建场景、通路、人物、危险、物品、机会或空白结果；在首次证据、引用或机械影响前提出动态固化；区分隐藏真相、感官证据、角色推断与有来源主张；让失败产生相称变化和新选择；依据事实推动 NPC、势力、节奏与真实收束。
 
+引用契约：publicBasisRefs、privateBasisRefs、causalBasisRefs、supersededPrecedentId、npcActions[].npcId 与 knowledgeRefs 不是说明文字，也不是 JSON 路径或字段名。它们必须从本次 kpProjection 对应范围中已有的字符串值逐字复制，不得改写、翻译、缩写或新造 ID；没有稳定依据时，数组必须为 []。causalBasisRefs 只能逐字引用 kpProjection 中已经固化的事实 ID，不得引用本次新建的 dynamicMaterializations[].factRef。无法逐字匹配 npcViewer 或引用越界知识的 NPC 行动必须省略。若输入含 proposalRepair，只删除校验失败的数组引用或省略校验失败的 NPC 行动；所有已经合法的引用、NPC 行动、先例 ID，以及原提案的玩家目标、做法、裁决类别、风险、机械方案与场景都必须原样保留，不得添加替代引用、改派 NPC、改指先例或借纠错改判。
+
 机械边界：你可以提出 DC、能力/技能、优势劣势依据、时间、资源成本、风险与有限结果范围，但不得提供 dice/faces/骰面、随机结果、WorldEvent、WorldState/state patch、作用域版本、Principal、可信 actor 或运行 Profile。Rules Module 拥有机械权威，Room Authority 拥有随机与提交权。不得在看到诊断后改变玩家目标；若已有骰前冻结内容或骰面，也不得借修订改判或重掷。
 
 mechanicalProposal 使用 authoritative-kp-action-plan-v1：必须是 schema 中 operation 枚举的一项及其闭合语义字段；frozenCosts、success、failure 也只能使用各自 kind 枚举和闭合字段。不得添加未声明机械键、脚本、状态补丁或事件。开放世界定义只能放在 dynamicMaterializations[].definition，并仍不得携带 actor/principal/profile/state/events/dice/faces。NPC mechanicalProposal 与主行动严格复用同一 ActionPlan 协议；缺少字段或组合不合法应交给 Rules 诊断，不得自行伪造结果。
@@ -781,6 +809,36 @@ export function proposalModelInput(request: KpProposalRequest): Record<string, u
     action: request.input,
     rulesDiagnostics: request.diagnostics ?? null,
     kpProjection: request.projection,
+  };
+  return {
+    messages: [
+      { role: "system", content: PROPOSAL_SYSTEM },
+      { role: "user", content: canonicalJson(userPayload) },
+    ],
+    tools: [PROPOSAL_TOOL],
+    tool_choice: "required",
+    parallel_tool_calls: false,
+    temperature: 0.2,
+    max_completion_tokens: 2_000,
+  };
+}
+
+const PROJECTION_BINDING_REPAIR_INSTRUCTION = "上次提案的引用未绑定到权威投影。只删除校验失败的数组引用；causalBasisRefs 只可保留从 kpProjection 已固化事实条目逐字复制的精确 ID，不得引用本次新建 factRef；无法逐字匹配 npcViewer 或引用越界知识的 NPC 行动从 npcActions 中省略。所有已经合法的引用和 NPC 行动必须原样保留；不得添加替代引用、改派 NPC、改指 supersededPrecedentId，也不得改变玩家目标、做法、裁决类别、风险、机械方案、动态定义或场景。";
+
+export function proposalProjectionRepairModelInput(
+  request: KpProposalRequest,
+  rejectedProposal: KpProposalDraft,
+): Record<string, unknown> {
+  const userPayload = {
+    proposalAttempt: request.attempt,
+    action: request.input,
+    rulesDiagnostics: request.diagnostics ?? null,
+    kpProjection: request.projection,
+    proposalRepair: {
+      failureStage: "projectionBinding",
+      requiredCorrection: PROJECTION_BINDING_REPAIR_INSTRUCTION,
+      rejectedProposal,
+    },
   };
   return {
     messages: [

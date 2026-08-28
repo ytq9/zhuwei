@@ -1731,6 +1731,25 @@
 | 2026-08-28 | `wrangler deployments status --json`；`versions view 4a0666e7-…` | 0；0 | 新 deployment 为 100% 流量；handler、兼容性、Secret 名称与既有绑定一致。 |
 | 2026-08-28 | production root `curl`；独立远程抓取 | 7；受安全门拒绝 | 未获得远端 IP/HTTP；记录传输层限制并停止重试，不虚报应用响应。 |
 
+## DeepSeek KP Proposal 引用绑定修复（2026-08-28）
+
+- 基线与诊断发布：从远端 `cloudflare` / `ff115990e6cf92d1f1575425a05cb0268374b8c8` 开始；分层诊断提交 `42672a90834fc5c3dd2c85724b7646836e5da229` 已非 force 推送并更新现有 Worker `zhuwei`。Cloudflare Version `f7b4987e-cfe9-4d01-81ec-6439eb64a934`、deployment `f4d8d833-e356-49cd-9b9a-a07ee2d25560` 已确认承接 100% 流量；既有 `ROOMS`、`DB`、`AI`、`ASSETS` 与 `DEEPSEEK_API_KEY` Secret 绑定不变，无 migration 或新资源。
+- 精确生产证据：在一次性测试房 `8BTWKL` 使用公开默认 `deepseek-v4-flash` 提交“我站在原地环顾大厅，寻找明显可见的出口，不触碰任何物品。”。脱敏 Cloudflare Tail 返回 Proposal `modelResult=modelPermanent`、`errorCode=projectionBinding`、耗时 `7650ms`、输入/输出/总 token `48745/667/49412` 且响应哈希存在；这证明模型 HTTP 调用和 Proposal schema 均成功，首个违反不变量的位置是模型引用没有逐字命中 KP 投影。Room 未 commit，页面未得到内部阶段、Prompt、投影或原始输出。临时 Tail 会话随后删除成功。
+- 根因：`assertProposalProjectionBound` 正确地对 basis、动态因果、旧先例与 NPC 有限知识引用执行精确字符串绑定，但 system prompt 与工具 schema 只声明了字符串数组，没有告诉 DeepSeek“引用必须从 `kpProjection` 对应范围逐字复制、不能使用 JSON 路径/释义/新造 ID、无依据时用空数组”。因此模型产生 schema-valid Proposal 后仍会在 Adapter 后处理被拒绝。
+- 修复决策：不放宽 validator、不猜测映射、不自动切换模型、不伪造成功。`app/_runtime/lib/kp/authoritative-policy.ts` 在 system prompt 和具体 ref schema 中补齐逐字引用合同，并为首轮 `projectionBinding` 提供同一固定模型的内部纠错载荷；`app/_runtime/lib/kp/authoritative-helpers.ts` 把 causal 引用收窄为投影中已固化事实的 ID，与生产 Rules 的 `state.canonicalFacts` 要求一致；`app/_runtime/lib/kp/authoritative.ts` 只允许一次纠错，与首调用共享原 45 秒总预算。纠错只能删除已证明非法的数组引用或 NPC 行动；合法引用、合法 NPC 行动和先例 ID 必须原样保留，禁止添加替代引用、改派 NPC、改指先例或改变目标、做法、裁决、风险、机械方案、动态定义与场景。第二次仍错、超时或改判立即使用原稳定错误失败，绝不进行第三次内部调用或世界提交。Room 的后续 Rules 机械修订仍只有原一次调用，因此每根行动最多三次 Proposal 调用。
+- 版本处置：模型 ID、温度、Proposal 验证形态与叙事语义均未改变；Prompt、Tool 描述与纠错策略已显式升级为 `authoritative-kp-prompt-policy-v5`，DeepSeek 与仍调用同一 Adapter 的历史服务端 Profile Receipt 均记录 v5，从而可与修复前 v4 调用区分。房间仍按原模型 Profile 固定，不做 D1 数据迁移；实际代码提交、部署版本和每次调用 Receipt 共同保留审计链。
+- 当前集成状态：实现、定向测试、独立复审与同一候选的正式冻结门已完成；尚未形成根因修复提交、推送或部署。本节后续会补记发布版本、真实 Proposal→commit→Narration→Delivery 与测试房清理结果。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | 分层诊断 `git push`、`npm run cf:deploy`、deployment status | 0 | `42672a9` 已推送；Version `f7b4987e-…` / deployment `f4d8d833-…` 为 100% 流量，远端 `main` 未变。 |
+| 2026-08-28 | 生产 V4 Flash 行动 + 脱敏 Cloudflare Tail | 应用拒绝 / Tail 成功 | 精确定位 `projectionBinding`；模型 2xx/schema-valid，世界状态未提交。 |
+| 2026-08-28（TDD RED → GREEN） | `npx tsx --test tests/authoritative-kp-adapter.test.mjs` | 1 → 0 | RED 精确缺少逐字引用合同与内部纠错；GREEN 13/13，覆盖 basis、Rules-compatible 动态因果、NPC 知识、合法 NPC 保留、禁止改派/改指先例、持续失败、改判拒绝、无第三次调用和共享总超时。 |
+| 2026-08-28 | authoritative Adapter/Room/DeepSeek/遥测/交互/Rules 定向组合 | 0 | 81/81；成功与失败不提交、脱敏 Receipt、公开模型目录、Provider Abort/错误分类及 causal Rules 合法性均未回归。 |
+| 2026-08-28 | `npm run typecheck`；`git diff --check` | 0；0 | 当前生产 TypeScript 与补充测试类型正确，无 whitespace 错误。 |
+| 2026-08-28 | 独立只读修复复审 | HIGH 3 → 0 | 首轮发现合法 NPC/先例可被改写、causal 合同宽于 Rules、Prompt 版本未升级；逐项修正并补测试后复审确认无新 blocker。 |
+| 2026-08-28（最终冻结门） | `npm run typecheck && npm run lint && npm test` | 0 | Prompt v5 与收紧保真门的同一候选：production build 通过；Node 335/335；Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip。故障注入 reporter 文本未造成失败。 |
+
 ## DeepSeek V4 Flash 真实回话失败的 Proposal 分层诊断（2026-08-28）
 
 - 基线与范围：从最新远端 `cloudflare` / `ff115990e6cf92d1f1575425a05cb0268374b8c8` 新建干净克隆；远端 `main` 只读复核仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。原目录的 `AGENTS.md`、`docs/refactor-log.md` 与 `.playwright-cli/` 在途文件未被覆盖或纳入。三个 Worker 只读审计 DeepSeek 协议、Proposal→Narration 管线与生产观测入口，没有编辑文件、日志、控制面或远端。

@@ -1079,15 +1079,61 @@ export function validateProposal(value: unknown): KpProposalDraft {
   };
 }
 
+function addCanonicalFactRefs(value: unknown, output: Set<string>): void {
+  if (!Array.isArray(value)) return;
+  for (const entry of value) {
+    if (typeof entry === "string" && entry.length > 0) {
+      output.add(entry);
+      continue;
+    }
+    if (!isRecord(entry)) continue;
+    const factRef = typeof entry.id === "string"
+      ? entry.id
+      : typeof entry.factId === "string"
+        ? entry.factId
+        : undefined;
+    if (factRef !== undefined && factRef.length > 0) output.add(factRef);
+  }
+}
+
+export function projectionCanonicalFactRefs(projection: unknown): Set<string> {
+  const output = new Set<string>();
+  if (!isRecord(projection)) return output;
+  addCanonicalFactRefs(projection.canonicalFacts, output);
+  addCanonicalFactRefs(projection.visibleFacts, output);
+  if (isRecord(projection.actorProjection)) {
+    addCanonicalFactRefs(projection.actorProjection.visibleFacts, output);
+  }
+  return output;
+}
+
+export function projectionNpcKnowledgeRefs(
+  projection: unknown,
+  npcId: string,
+): Set<string> | undefined {
+  const projectionRecord = isRecord(projection) ? projection : {};
+  const npcViewerMap = isRecord(projectionRecord.npcViewers)
+    ? projectionRecord.npcViewers
+    : undefined;
+  const legacyNpcViewers = Array.isArray(projectionRecord.npcViewers)
+    ? projectionRecord.npcViewers.filter(isRecord)
+    : [];
+  const keyedProjection = npcViewerMap?.[npcId];
+  const npcProjection = isRecord(keyedProjection)
+    ? keyedProjection
+    : legacyNpcViewers.find((candidate) => {
+        const viewer = isRecord(candidate.viewer) ? candidate.viewer : candidate;
+        return viewer.npcId === npcId || viewer.id === npcId;
+      });
+  return npcProjection === undefined ? undefined : collectStrings(npcProjection);
+}
+
 export function assertProposalProjectionBound(
   proposal: KpProposalDraft,
   projection: unknown,
 ): void {
   const available = collectStrings(projection);
-  const causalReferences = new Set([
-    ...available,
-    ...proposal.dynamicMaterializations.map((materialization) => materialization.factRef),
-  ]);
+  const causalReferences = projectionCanonicalFactRefs(projection);
   if (
     [...proposal.publicBasisRefs, ...proposal.privateBasisRefs].some(
       (reference) => !available.has(reference),
@@ -1103,23 +1149,9 @@ export function assertProposalProjectionBound(
     invalid();
   }
 
-  const projectionRecord = isRecord(projection) ? projection : {};
-  const npcViewerMap = isRecord(projectionRecord.npcViewers)
-    ? projectionRecord.npcViewers
-    : undefined;
-  const legacyNpcViewers = Array.isArray(projectionRecord.npcViewers)
-    ? projectionRecord.npcViewers.filter(isRecord)
-    : [];
   for (const action of proposal.npcActions) {
-    const keyedProjection = npcViewerMap?.[action.npcId];
-    const npcProjection = isRecord(keyedProjection)
-      ? keyedProjection
-      : legacyNpcViewers.find((candidate) => {
-          const viewer = isRecord(candidate.viewer) ? candidate.viewer : candidate;
-          return viewer.npcId === action.npcId || viewer.id === action.npcId;
-        });
-    if (!npcProjection) invalid();
-    const npcKnowledge = collectStrings(npcProjection);
+    const npcKnowledge = projectionNpcKnowledgeRefs(projection, action.npcId);
+    if (npcKnowledge === undefined) invalid();
     if (action.knowledgeRefs.some((reference) => !npcKnowledge.has(reference))) invalid();
   }
 }

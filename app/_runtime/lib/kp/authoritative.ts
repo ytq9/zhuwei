@@ -5,6 +5,7 @@ import {
   PROPOSAL_TOOL_NAME,
   narrationModelInput,
   proposalModelInput,
+  proposalProjectionRepairModelInput,
 } from "./authoritative-policy";
 import {
   ModelInvocationTimeoutError,
@@ -12,9 +13,13 @@ import {
   assertProposalProjectionBound,
   assertKpProjection,
   audienceIdentity,
+  canonicalJson,
   classifyModelError,
+  collectStrings,
   extractStructuredOutput,
   isRecord,
+  projectionCanonicalFactRefs,
+  projectionNpcKnowledgeRefs,
   responseHash,
   retryAfterFrom,
   usageFrom,
@@ -196,6 +201,81 @@ function validateNarrationRequest(request: KpNarrationRequest): void {
   ) throw new ModelOutputValidationError();
 }
 
+function proposalWithoutRepairableProjectionRefs(
+  proposal: KpProposalDraft,
+): KpProposalDraft {
+  const copy = structuredClone(proposal);
+  copy.publicBasisRefs = [];
+  copy.privateBasisRefs = [];
+  for (const materialization of copy.dynamicMaterializations) {
+    materialization.causalBasisRefs = [];
+  }
+  for (const candidate of copy.hiddenRealityCandidateSet?.candidates ?? []) {
+    candidate.causalBasisRefs = [];
+  }
+  copy.npcActions = [];
+  return copy;
+}
+
+function assertProjectionRepairPreservesProposal(
+  rejectedProposal: KpProposalDraft,
+  repairedProposal: KpProposalDraft,
+  projection: unknown,
+): void {
+  if (
+    canonicalJson(proposalWithoutRepairableProjectionRefs(rejectedProposal))
+    !== canonicalJson(proposalWithoutRepairableProjectionRefs(repairedProposal))
+  ) {
+    throw new ModelOutputValidationError();
+  }
+
+  const available = collectStrings(projection);
+  const expectedPublicBasisRefs = rejectedProposal.publicBasisRefs.filter(
+    (reference) => available.has(reference),
+  );
+  const expectedPrivateBasisRefs = rejectedProposal.privateBasisRefs.filter(
+    (reference) => available.has(reference),
+  );
+  if (
+    canonicalJson(repairedProposal.publicBasisRefs) !== canonicalJson(expectedPublicBasisRefs)
+    || canonicalJson(repairedProposal.privateBasisRefs) !== canonicalJson(expectedPrivateBasisRefs)
+  ) {
+    throw new ModelOutputValidationError();
+  }
+
+  const causalReferences = projectionCanonicalFactRefs(projection);
+  for (let index = 0; index < rejectedProposal.dynamicMaterializations.length; index += 1) {
+    const expected = rejectedProposal.dynamicMaterializations[index].causalBasisRefs.filter(
+      (reference) => causalReferences.has(reference),
+    );
+    if (
+      canonicalJson(repairedProposal.dynamicMaterializations[index].causalBasisRefs)
+      !== canonicalJson(expected)
+    ) {
+      throw new ModelOutputValidationError();
+    }
+  }
+  const rejectedCandidates = rejectedProposal.hiddenRealityCandidateSet?.candidates ?? [];
+  const repairedCandidates = repairedProposal.hiddenRealityCandidateSet?.candidates ?? [];
+  for (let index = 0; index < rejectedCandidates.length; index += 1) {
+    const expected = rejectedCandidates[index].causalBasisRefs.filter(
+      (reference) => causalReferences.has(reference),
+    );
+    if (canonicalJson(repairedCandidates[index].causalBasisRefs) !== canonicalJson(expected)) {
+      throw new ModelOutputValidationError();
+    }
+  }
+
+  const expectedNpcActions = rejectedProposal.npcActions.filter((action) => {
+    const knowledgeRefs = projectionNpcKnowledgeRefs(projection, action.npcId);
+    return knowledgeRefs !== undefined
+      && action.knowledgeRefs.every((reference) => knowledgeRefs.has(reference));
+  });
+  if (canonicalJson(repairedProposal.npcActions) !== canonicalJson(expectedNpcActions)) {
+    throw new ModelOutputValidationError();
+  }
+}
+
 /**
  * Creates the v2 KP boundary. It performs model I/O only; it owns no world state,
  * mechanics, randomness, delivery history, or authority to commit a proposal.
@@ -235,6 +315,7 @@ export function createAuthoritativeKpAdapter(
     rootActionId: string,
     attempt: number,
     input: Record<string, unknown>,
+    timeoutBudgetMs = invocationTimeoutMs,
   ): Promise<InvocationSuccess> {
     const startedAt = now();
     const abortController = new AbortController();
@@ -244,7 +325,7 @@ export function createAuthoritativeKpAdapter(
         timer = setTimeout(() => {
           abortController.abort();
           reject(new ModelInvocationTimeoutError());
-        }, invocationTimeoutMs);
+        }, timeoutBudgetMs);
       });
       const modelCall = options.ai.run(
         profile.modelId,
@@ -296,9 +377,36 @@ export function createAuthoritativeKpAdapter(
     }
   }
 
+  function proposalDraftFromInvocation(invocation: InvocationSuccess): KpProposalDraft {
+    let structured: Record<string, unknown>;
+    try {
+      structured = extractStructuredOutput(invocation.response, PROPOSAL_TOOL_NAME);
+    } catch (error) {
+      throw permanentOutputError(error, invocation.receipt, "structuredOutput");
+    }
+    try {
+      return validateProposal(structured);
+    } catch (error) {
+      throw permanentOutputError(error, invocation.receipt, "proposalSchema");
+    }
+  }
+
+  function assertProjectionBoundProposal(
+    proposal: KpProposalDraft,
+    projection: unknown,
+    invocationReceipt: ModelInvocationReceipt,
+  ): void {
+    try {
+      assertProposalProjectionBound(proposal, projection);
+    } catch (error) {
+      throw permanentOutputError(error, invocationReceipt, "projectionBinding");
+    }
+  }
+
   return {
     async propose(request) {
       return withInvocationReceipt(async () => {
+        const proposalBudgetStartedAt = now();
         const rootActionId = typeof request?.rootActionId === "string"
           ? request.rootActionId
           : "invalid";
@@ -321,22 +429,55 @@ export function createAuthoritativeKpAdapter(
           request.attempt,
           modelInput,
         );
-        let structured: Record<string, unknown>;
+        const proposal = proposalDraftFromInvocation(invocation);
         try {
-          structured = extractStructuredOutput(invocation.response, PROPOSAL_TOOL_NAME);
+          assertProjectionBoundProposal(proposal, request.projection, invocation.receipt);
         } catch (error) {
-          throw permanentOutputError(error, invocation.receipt, "structuredOutput");
-        }
-        let proposal: KpProposalDraft;
-        try {
-          proposal = validateProposal(structured);
-        } catch (error) {
-          throw permanentOutputError(error, invocation.receipt, "proposalSchema");
-        }
-        try {
-          assertProposalProjectionBound(proposal, request.projection);
-        } catch (error) {
-          throw permanentOutputError(error, invocation.receipt, "projectionBinding");
+          if (
+            !(error instanceof AuthoritativeKpModelError)
+            || error.modelInvocationReceipt.failureStage !== "projectionBinding"
+            || request.attempt !== 1
+          ) {
+            throw error;
+          }
+
+          const elapsedMs = Math.max(0, now() - proposalBudgetStartedAt);
+          const remainingBudgetMs = Math.floor(invocationTimeoutMs - elapsedMs);
+          if (remainingBudgetMs < 1) throw error;
+
+          const repairInput = proposalProjectionRepairModelInput(request, proposal);
+          emitInvocationReceipt(error.modelInvocationReceipt);
+          const repairInvocation = await invoke(
+            "proposal",
+            request.rootActionId,
+            request.attempt,
+            repairInput,
+            remainingBudgetMs,
+          );
+          const repairedProposal = proposalDraftFromInvocation(repairInvocation);
+          try {
+            assertProjectionRepairPreservesProposal(
+              proposal,
+              repairedProposal,
+              request.projection,
+            );
+          } catch (repairError) {
+            throw permanentOutputError(
+              repairError,
+              repairInvocation.receipt,
+              "projectionBinding",
+            );
+          }
+          assertProjectionBoundProposal(
+            repairedProposal,
+            request.projection,
+            repairInvocation.receipt,
+          );
+          return {
+            ...repairedProposal,
+            proposalAttemptId: `${request.rootActionId}:kp:${request.attempt}`,
+            modelInvocationReceipt: repairInvocation.receipt,
+          };
         }
         return {
           ...proposal,

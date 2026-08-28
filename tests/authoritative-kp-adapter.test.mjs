@@ -269,6 +269,11 @@ test("authoritative KP proposes open-world mechanics and revises only from Rules
     assert.match(system, /worldLawViolation/);
     assert.match(system, /命令翻译器|白名单/);
     assert.match(system, /不得.*代替玩家|不能.*代替玩家/);
+    assert.match(system, /逐字复制/);
+    assert.match(
+      call.input.tools[0].function.parameters.properties.publicBasisRefs.description,
+      /逐字复制/,
+    );
   }
   assert.match(ai.calls[0].input.messages[1].content, /雨披铺在泥地/);
   assert.match(ai.calls[0].input.messages[1].content, new RegExp(PRIVATE_FACT));
@@ -310,7 +315,7 @@ test("authoritative KP proposes open-world mechanics and revises only from Rules
       return true;
     },
   );
-  assert.equal(ai.calls.length, 3, "more than two diagnostic revisions must not invoke the model");
+  assert.equal(ai.calls.length, 3, "Rules revisions do not receive a second protocol repair");
 });
 
 test("authoritative KP accepts only versioned closed semantic ActionPlan operations", async () => {
@@ -405,7 +410,8 @@ test("authoritative KP accepts only versioned closed semantic ActionPlan operati
   }
   assert.equal(ai.calls.length, 6);
 
-  assert.equal(AUTHORITATIVE_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v4");
+  assert.equal(AUTHORITATIVE_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v5");
+  assert.equal(GEMMA_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v5");
   assert.equal(AUTHORITATIVE_KP_PROFILE.proposalSchemaVersion, "authoritative-kp-proposal-v2");
   assert.equal(AUTHORITATIVE_KP_PROFILE.actionPlanSchemaVersion, "authoritative-kp-action-plan-v1");
   assert.equal(AUTHORITATIVE_KP_PROFILE.narrationSchemaVersion, "authoritative-kp-narration-v3");
@@ -837,6 +843,7 @@ test("timeout, quota exhaustion, and invalid model output return stable redacted
     assert.equal(serialized(error).includes(PRIVATE_FACT), false);
     return true;
   });
+  assert.equal(invalidAi.calls.length, 1, "structured-output failures are not repairable");
 
   const forgedAuthorityAi = scriptedAi([
     officialToolResponse(
@@ -860,21 +867,229 @@ test("timeout, quota exhaustion, and invalid model output return stable redacted
     assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema");
     return true;
   });
+  assert.equal(forgedAuthorityAi.calls.length, 1, "proposal-schema failures are not repairable");
 
+  const repairReceipts = [];
+  const unboundReferenceAi = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal({
+      publicBasisRefs: ["fact:not-in-the-kp-projection"],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({ publicBasisRefs: [] })),
+  ]);
   const unboundReferenceAdapter = createAuthoritativeKpAdapter({
-    ai: scriptedAi([
+    ai: unboundReferenceAi,
+    now: monotonicClock(),
+    onInvocationReceipt(value) {
+      repairReceipts.push(value);
+    },
+  });
+  const repaired = await unboundReferenceAdapter.propose(proposalRequest());
+  assert.equal(repaired.kind, "checkRequired");
+  assert.equal(unboundReferenceAi.calls.length, 2);
+  assert.ok(unboundReferenceAi.calls.every(
+    (call) => call.model === AUTHORITATIVE_KP_PROFILE.modelId,
+  ));
+  const repairPayload = JSON.parse(unboundReferenceAi.calls[1].input.messages[1].content);
+  assert.equal(repairPayload.proposalRepair.failureStage, "projectionBinding");
+  assert.deepEqual(
+    repairPayload.proposalRepair.rejectedProposal.publicBasisRefs,
+    ["fact:not-in-the-kp-projection"],
+  );
+  assert.match(repairPayload.proposalRepair.requiredCorrection, /逐字复制/);
+  assert.deepEqual(
+    repairReceipts.map(({ result, failureStage }) => ({ result, failureStage })),
+    [
+      { result: "modelPermanent", failureStage: "projectionBinding" },
+      { result: "success", failureStage: undefined },
+    ],
+  );
+
+  const projectionBoundRepairCases = [
+    {
+      label: "dynamic causal reference",
+      rejected: proposal({
+        dynamicMaterializations: [{
+          kind: "passage",
+          factRef: "fact:newly-seen-exit",
+          causalBasisRefs: ["fact:newly-seen-exit"],
+          visibilityPolicyRef: "visibility:public",
+          definition: { summary: "大厅东侧有一扇明显可见的门。" },
+        }],
+      }),
+      repaired: proposal({
+        dynamicMaterializations: [{
+          kind: "passage",
+          factRef: "fact:newly-seen-exit",
+          causalBasisRefs: [],
+          visibilityPolicyRef: "visibility:public",
+          definition: { summary: "大厅东侧有一扇明显可见的门。" },
+        }],
+      }),
+    },
+    {
+      label: "NPC finite-knowledge reference",
+      rejected: proposal({
+        npcActions: [{
+          npcId: "npc:warden",
+          goal: "检查大厅里的动静",
+          method: "沿回廊巡视",
+          knowledgeRefs: [PRIVATE_FACT],
+          mechanicalProposal: null,
+        }],
+      }),
+      repaired: proposal({ npcActions: [] }),
+    },
+  ];
+  for (const { label, rejected, repaired: repairedDraft } of projectionBoundRepairCases) {
+    const repairAi = scriptedAi([
+      officialToolResponse("submit_kp_proposal", rejected),
+      officialToolResponse("submit_kp_proposal", repairedDraft),
+    ]);
+    const repairAdapter = createAuthoritativeKpAdapter({ ai: repairAi, now: monotonicClock() });
+    const repairResult = await repairAdapter.propose(proposalRequest());
+    assert.equal(repairResult.proposalAttemptId, `${ROOT_ACTION_ID}:kp:1`, label);
+    assert.equal(repairAi.calls.length, 2, label);
+  }
+
+  const persistentlyUnboundAi = scriptedAi([
       officialToolResponse("submit_kp_proposal", proposal({
         publicBasisRefs: ["fact:not-in-the-kp-projection"],
       })),
-    ]),
+      officialToolResponse("submit_kp_proposal", proposal({
+        publicBasisRefs: ["fact:not-in-the-kp-projection"],
+      })),
+  ]);
+  const persistentlyUnboundAdapter = createAuthoritativeKpAdapter({
+    ai: persistentlyUnboundAi,
     now: monotonicClock(),
   });
-  await assert.rejects(unboundReferenceAdapter.propose(proposalRequest()), (error) => {
+  await assert.rejects(persistentlyUnboundAdapter.propose(proposalRequest()), (error) => {
     assert.ok(error instanceof AuthoritativeKpModelError);
     assert.equal(error.code, "modelPermanent");
     assert.equal(error.modelInvocationReceipt.failureStage, "projectionBinding");
     return true;
   });
+  assert.equal(persistentlyUnboundAi.calls.length, 2, "a failed repair must not invoke a third time");
+
+  const semanticsChangingRepairAi = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal({
+      publicBasisRefs: ["fact:not-in-the-kp-projection"],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      goal: "借纠错改成另一个目标",
+    })),
+  ]);
+  const semanticsChangingRepairAdapter = createAuthoritativeKpAdapter({
+    ai: semanticsChangingRepairAi,
+    now: monotonicClock(),
+  });
+  await assert.rejects(semanticsChangingRepairAdapter.propose(proposalRequest()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.code, "modelPermanent");
+    assert.equal(error.modelInvocationReceipt.failureStage, "projectionBinding");
+    return true;
+  });
+  assert.equal(
+    semanticsChangingRepairAi.calls.length,
+    2,
+    "projection repair cannot change the adjudication or trigger another call",
+  );
+
+  const legalNpcDeletionAi = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal({
+      publicBasisRefs: ["fact:not-in-the-kp-projection"],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      publicBasisRefs: [],
+      npcActions: [],
+    })),
+  ]);
+  const legalNpcDeletionAdapter = createAuthoritativeKpAdapter({
+    ai: legalNpcDeletionAi,
+    now: monotonicClock(),
+  });
+  await assert.rejects(legalNpcDeletionAdapter.propose(proposalRequest()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.modelInvocationReceipt.failureStage, "projectionBinding");
+    return true;
+  });
+  assert.equal(legalNpcDeletionAi.calls.length, 2, "a valid NPC action must survive repair");
+
+  const validBasisDeletionAi = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal({
+      publicBasisRefs: [
+        "fact:ordinary-courtyard-door-is-unlocked",
+        "fact:not-in-the-kp-projection",
+      ],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({ publicBasisRefs: [] })),
+  ]);
+  const validBasisDeletionAdapter = createAuthoritativeKpAdapter({
+    ai: validBasisDeletionAi,
+    now: monotonicClock(),
+  });
+  await assert.rejects(validBasisDeletionAdapter.propose(proposalRequest()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.modelInvocationReceipt.failureStage, "projectionBinding");
+    return true;
+  });
+  assert.equal(validBasisDeletionAi.calls.length, 2, "a valid basis ref must survive repair");
+
+  const npcReassignmentAi = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal({
+      npcActions: [{
+        npcId: "npc:unknown",
+        goal: "确认院内是否出现异常声响",
+        method: "沿回廊继续巡查并留意钟架方向",
+        knowledgeRefs: ["claim:warden-heard-a-bell"],
+        mechanicalProposal: null,
+      }],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal()),
+  ]);
+  const npcReassignmentAdapter = createAuthoritativeKpAdapter({
+    ai: npcReassignmentAi,
+    now: monotonicClock(),
+  });
+  await assert.rejects(npcReassignmentAdapter.propose(proposalRequest()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.modelInvocationReceipt.failureStage, "projectionBinding");
+    return true;
+  });
+  assert.equal(npcReassignmentAi.calls.length, 2, "repair cannot reassign an NPC action");
+
+  const precedentProjection = {
+    ...KP_PROJECTION,
+    adjudicationPrecedents: [{ precedentId: "precedent:other" }],
+  };
+  const precedent = {
+    kind: "supersede",
+    supersededPrecedentId: "precedent:missing",
+    materialDifferences: ["场景压力发生实质变化"],
+    publicRuleBasis: ["同类裁定应保持一致"],
+    applicabilityScope: { kind: "scene", ref: "scene:courtyard" },
+  };
+  const precedentSwitchAi = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal({ adjudicationPrecedent: precedent })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      adjudicationPrecedent: {
+        ...precedent,
+        supersededPrecedentId: "precedent:other",
+      },
+    })),
+  ]);
+  const precedentSwitchAdapter = createAuthoritativeKpAdapter({
+    ai: precedentSwitchAi,
+    now: monotonicClock(),
+  });
+  await assert.rejects(precedentSwitchAdapter.propose(proposalRequest({
+    projection: precedentProjection,
+  })), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.modelInvocationReceipt.failureStage, "projectionBinding");
+    return true;
+  });
+  assert.equal(precedentSwitchAi.calls.length, 2, "repair cannot switch precedent identity");
 
   const quotaAi = scriptedAi([
     () => {
@@ -906,6 +1121,40 @@ test("timeout, quota exhaustion, and invalid model output return stable redacted
     assert.equal(serialized(error).includes(PRIVATE_FACT), false);
     return true;
   });
+});
+
+test("a projection-binding repair shares the original invocation timeout budget", async () => {
+  const clockValues = [0, 0, 1, 99, 100];
+  const now = () => clockValues.shift() ?? 101;
+  const ai = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal({
+      publicBasisRefs: ["fact:not-in-the-kp-projection"],
+    })),
+    ({ options }) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => {
+        const error = new Error("repair invocation aborted at the shared deadline");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    }),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    now,
+    invocationTimeoutMs: 100,
+  });
+
+  const startedAt = Date.now();
+  await assert.rejects(adapter.propose(proposalRequest()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.code, "modelTransient");
+    return true;
+  });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(ai.calls.length, 2);
+  assert.equal(ai.calls[1].options.signal.aborted, true);
+  assert.ok(elapsedMs < 90, `repair reset the 100ms budget (${elapsedMs}ms)`);
 });
 
 test("every final model task result emits exactly one redacted invocation receipt", async () => {
