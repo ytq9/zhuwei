@@ -2,7 +2,9 @@
 
 朋友围坐，你开口，骰子落地。帷幕后，烛火未灭。
 
-烛帷是中文多人 D&D 5e 网页跑团：2–5 名玩家围坐一桌，创建 3 级角色，由 AI KP 主持《黑橡居酒屋的第三份遗嘱》。本分支把 [GitHub 主项目](https://github.com/ytq9/zhuwei) 在 `29eb06dc009c983ad61b2d862454503e67a7f40a` 的完整产品面等价迁移到现有 Cloudflare Worker `zhuwei`，不会改写 `main`，也不会影响 grok.me MVP。
+烛帷是中文多人 D&D 5e 网页跑团：2–5 名玩家围坐一桌，创建角色，由 LLM/KP 主持开放世界冒险。本 `cloudflare` 分支是产品 **V3** 的唯一工作树，运行在现有 Cloudflare Worker `zhuwei`；远端 `main` 固定在 `29eb06dc009c983ad61b2d862454503e67a7f40a`，不会影响 grok.me MVP。
+
+V3 表示产品与仓库架构代际，不等于把持久化协议改名。现有房间仍由其 genesis 固定的 `dnd5e-2014-srd5.1-authoritative-v2` 或明确 Legacy Adapter 解释；任何持久化规则、事件、投影、模组或 Profile 语义变化都必须新增完整 runtime manifest 和相应 Adapter，解释语义变化还必须新增 interpreter。
 
 ## 功能范围
 
@@ -14,7 +16,7 @@
 - 战斗先攻、回合、生命、反应和同场景可见性。
 - 语音转写、发送前确认和 KP 旁白语音。
 
-规则数值由 TypeScript 与 D1 决定，客户端只提交意图；模组 `truth` 和内部状态不进入玩家响应或日志。
+玩家可以用自然语言自由提出行动；LLM/KP 按 [SPEC 0001](docs/specs/0001-llm-kp-responsibility-contract.md) 创作和裁决故事，TypeScript Rules 内核诚实执行机械，Room Durable Object 原子保存权威状态。模组真相、其他观察者的秘密和内部状态不进入玩家响应或普通日志。
 
 ## Cloudflare 架构
 
@@ -23,9 +25,10 @@
 - D1 访问与 schema：`db/`
 - Worker ESM 入口：`worker/index.ts`
 - D1 迁移：`drizzle/`
+- 模块/Profile 门与有界评测：`tools/`
 - 唯一部署配置：`wrangler.jsonc`
 
-旧 `src/`、`server/`、`scripts/` 和 `migrations/` 只保留作 GitHub 原实现的迁移证据，不会进入生产入口。生产依赖中没有 Better Auth、PGLite、Postgres 驱动、Sites 插件或 Vercel 产物。
+TanStack/Grok、PGLite/Postgres、Sites/Vercel 的旧入口已从 V3 工作树移除，由私有 GitHub archive 分支保存。生产依赖中没有 Better Auth、PGLite、Postgres 驱动、Sites 插件或 Vercel 产物。目录裁定、归档 SHA 和恢复门见 [ADR 0013](docs/adr/0013-v3-product-generation-and-repository-boundary.md)。
 
 ## 本地验证
 
@@ -52,7 +55,7 @@ development 环境使用固定本地用户；该用户绝不会成为生产身�
 
 独立 Worker 使用邮箱/密码注册登录：PBKDF2-SHA256 派生值和随机盐存于 D1，30 天会话只在 D1 保存 token 摘要，浏览器收到 `HttpOnly`、`Secure`、`SameSite=Lax` cookie。匿名访问 `/hall` 会看到登录入口，受保护 API 返回 401；没有生产假用户。
 
-Google/X OAuth 仍需各自的客户端配置和 Wrangler secrets，未配置时界面明确禁用。`XAI_API_KEY` 也仅通过 `wrangler secret` 管理，不能写入源码或配置。D1 只能绑定现有数据库；未经确认不得创建新 D1 或其他 Cloudflare 资源。
+Google/X OAuth 仍需各自的客户端配置和 Wrangler secrets，未配置时界面明确禁用。模型密钥也只能通过 `wrangler secret` 管理，不能写入源码或配置。D1 只能绑定现有数据库；未经确认不得创建新 D1 或其他 Cloudflare 资源。
 
 ## 部署保护
 

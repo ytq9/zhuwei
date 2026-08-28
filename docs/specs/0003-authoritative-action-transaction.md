@@ -221,7 +221,7 @@ ID 语义分离：
 - `tests/authoritative-kp-adapter.test.mjs` 7/7：生产 schema/Room normalizer 只接受版本化封闭 operation、完整 production draft 或精确待决 capability；compact proposal、未知 operation、额外机械字段、骰面与 authority/state/event/profile 注入均 fail closed。
 - `tests/rules-compound-action-v2.test.mjs` 18/18：`resolveDirectConsequences`、`advanceCampaignLifecycle`、`resolveNoncombatSave`、Activity、休整、知识、资源、物品、六种 typed partyAction 和战斗等语义均进入同一 Rules `step`；动态定义、NPC 计划、场景问题、零到多随机与 typed consequences 共用一个 Root Action，任一非法子项零事件。
 - `tests/compound-action-v2.test.ts` 1/1：真实 production KP draft 经 Room Action、Room Authority 与两次 DO 随机后，动态事实、有限知识 NPC 计划、场景问题和两份机械结果在同一 Root Action 原子提交；归档不保存 raw intent。
-- `scripts/check-modules.mjs` 已增加 authoritative-v2 DO 无 compact proposal 分支、随机恢复只接受版本化 ActionPlan/待决回答的结构护栏；最终冻结 SHA 的 `npm run module:check` 仍须在发布前全量门重跑。
+- `tools/check-modules.mjs` 已增加 authoritative-v2 DO 无 compact proposal 分支、随机恢复只接受版本化 ActionPlan/待决回答的结构护栏；最终冻结 SHA 的 `npm run module:check` 仍须在发布前全量门重跑。
 - 上述是局部冻结源码的行为证据；最终全量门、真实模型、迁移、部署与线上冒烟仍须以 `refactor-log.md` 后续记录为准。
 
 ## 15. 交叉审查结论

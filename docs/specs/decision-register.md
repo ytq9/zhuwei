@@ -357,7 +357,7 @@
 - 秘密与权限影响：模型/caller 不能借 `rootActionId`、authority/state/event/profile、骰面或任意 Rules input 注入内部 capability；Pending capability 只能由已认证 Room continuation 形成，错误不回显其内容。
 - 迁移/可逆性：旧 compact 行为仅由精确旧 `ruleset_version` 的 Legacy Adapter 承担；若未来 ActionPlan 变更，发布新版本和显式恢复 Adapter，不能放宽 v1 allowlist 或按 latest 猜测。
 - 验收场景：production draft 正常归一化；compact kinds、额外 Pending 字段和 schema 注入均拒绝；随机请求 journal 后驱逐再恢复仍只执行同一版本 ActionPlan；源码门禁止 DO 重新出现 compact 分支。
-- 测试证据：`tests/authoritative-kp-adapter.test.mjs` 7/7 已通过严格 normalizer/compact 拒绝/精确 Pending capability；`scripts/check-modules.mjs` 已加入 compact 分支与恢复 allowlist 静态护栏。最终冻结源码上的 `npm run module:check` 仍须随全量门重跑。
+- 测试证据：`tests/authoritative-kp-adapter.test.mjs` 7/7 已通过严格 normalizer/compact 拒绝/精确 Pending capability；`tools/check-modules.mjs` 已加入 compact 分支与恢复 allowlist 静态护栏。最终冻结源码上的 `npm run module:check` 仍须随全量门重跑。
 
 ## DEC-023：非战斗豁免复用复合事务、2014 职业熟练与统一后果
 

@@ -170,7 +170,7 @@ Fixture 只能在 KP/熵/时钟/外部故障 Adapter seam 控制输入；不得�
 
 ### 11.1 当前实现映射（2026-08-26）
 
-- `app/_runtime/lib/room/proposal-adapter.ts` 复用 production `validateProposal`；`app/_runtime/lib/room/durable-object.ts` 在恢复分支重新执行 `isCanonicalAuthorityRecoveryInput`，`scripts/check-modules.mjs` 禁止 compact DO 分支和未受限恢复输入。
+- `app/_runtime/lib/room/proposal-adapter.ts` 复用 production `validateProposal`；`app/_runtime/lib/room/durable-object.ts` 在恢复分支重新执行 `isCanonicalAuthorityRecoveryInput`，`tools/check-modules.mjs` 禁止 compact DO 分支和未受限恢复输入。
 - `tests/kp-multiturn-eval.test.ts` 的 31 次连续交互已经迁移为完整 production proposal fixture，逐轮执行 `validateProposal` 与 projection-bound 检查；补齐 `resolveNoncombatSave` 冻结成本/后果及角色 canonical loadout/HP/class seed 后，当前源码 1/1 通过并达到全部硬门/评分阈值。它仍是受控模型 fixture，真实 DeepSeek/部署另行验收。
 - `app/_runtime/lib/room/pending-bindings.ts` 是 live commit、归档恢复与更正后 SQL 索引同步的唯一待决枚举；`app/_runtime/lib/rules/v2/correction.ts` 以 fold 前完整 `combatRuntime` 快照恢复遭遇、先攻/回合、反应、战斗待决与结论。`tests/combat-archive-correction-v2.test.ts` 当前 3/3 通过，覆盖恢复后同候选、伪造拒绝、合法继续、遭遇/待决更正、旧待决失效及更正归档的新 DO 重建；冻结源码仍须重跑全量门。
 

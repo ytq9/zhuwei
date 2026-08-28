@@ -8,12 +8,13 @@ async function source(path) {
   return readFile(new URL(path, projectRoot), "utf8");
 }
 
-test("pins GitHub as the product authority and records the migrated baseline", async () => {
+test("pins the frozen main baseline and the V3 product authority", async () => {
   const agents = await source("AGENTS.md");
   assert.match(agents, /ytq9\/zhuwei/);
   assert.match(agents, /29eb06dc009c983ad61b2d862454503e67a7f40a/);
-  assert.match(agents, /唯一权威/);
-  assert.match(agents, /等价 Cloudflare 迁移/);
+  assert.match(agents, /产品 V3/);
+  assert.match(agents, /0001-llm-kp-responsibility-contract\.md/);
+  assert.match(agents, /旧平台源码只存在于已核验的私有归档分支/);
 });
 
 test("retains the complete nine-step level-three character builder", async () => {
@@ -239,7 +240,7 @@ test("keeps clocks, squads, rest voting, combat, voice and public projection in 
   assert.doesNotMatch(play, /\btruth\b/);
 });
 
-test("keeps production entrypoints out of the legacy src and Vercel trees", async () => {
+test("keeps production entrypoints in the V3 app and out of archived platform trees", async () => {
   const [packageJson, tsconfig, worker, auth, authServer] = await Promise.all([
     source("package.json"),
     source("tsconfig.json"),
@@ -251,7 +252,8 @@ test("keeps production entrypoints out of the legacy src and Vercel trees", asyn
     assert.ok(!packageJson.includes(forbidden), `production manifest still includes ${forbidden}`);
   }
   assert.match(tsconfig, /\.\/app\/_runtime\/\*/);
-  assert.match(tsconfig, /"src"/);
+  assert.doesNotMatch(tsconfig, /"src"|"server"|"scripts"|"migrations"/);
+  assert.match(packageJson, /tools\/check-modules\.mjs/);
   assert.doesNotMatch(worker, /\.vercel|PGlite|previewAuthSecret|randomBytes/);
   assert.match(auth, /userFromCookie/);
   assert.doesNotMatch(auth, /oai-authenticated-user-id/);

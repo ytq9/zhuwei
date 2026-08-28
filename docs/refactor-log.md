@@ -1824,3 +1824,61 @@
 | 2026-08-28 | `wrangler whoami`；配置/Secret/migration 门 | 0；0；0 | 现有账号登录；目标仍为 `zhuwei`、`DB`/`zhuwei-dev`、ROOMS/AI/ASSETS；仅确认 `DEEPSEEK_API_KEY` 名称；远端无待执行 migration。 |
 | 2026-08-28 | `npm run cf:deploy`；`wrangler deployments status --json` | 0；0 | 只更新现有 Worker；Version `9f0e2a54-bcfb-4ef5-ada6-4336e5146d63` / deployment `126c27d9-ab6d-4b83-b888-601efa9509ae` 承接 100% 流量，无新资源。 |
 | 2026-08-28 | 发布后根入口 curl；独立 Chrome 产品探针 | TCP 超时；控制通道超时 | 两个独立通道均未取得应用响应，按用户要求与传输层停止条件不再追日志或重试；不能宣称真实 V4 Flash Proposal→commit→Narration→Delivery 已恢复，`8BTWKL` 未清理。 |
+## 代理合同：冻结后有界增量验证与单次构建（2026-08-28）
+
+- 基线：`cloudflare` / `388b527dc9e2`；任务开始时目标文件无未提交修改。
+- 需求：冻结门通过后的局部小修仍可能触发整套验证，正式部署路径还会分别由 `npm test` 和 `npm run cf:deploy` 重复 production build，需要在影响可界定时复用完整门证据。
+- 决策：有界增量补丁必须同时限定在单个叶子模块及直接测试、保持公共与权威边界不变，并通过改动行为、相邻路径和相关文件 ESLint；满足时由“此前完整门 + 增量证据”构成最终发布证据，任一条件不满足则形成新冻结候选。非部署完整门仍用 `npm test` 构建一次；正式部署完整门拆为 typecheck、Lint、unit、Worker 测试，再由获授权的 `npm run cf:deploy` 执行唯一一次构建和部署。
+- 修改：仅修改 `AGENTS.md` 的“最小充分验证”段落，并记录本条执行事实；未修改 `package.json`、业务源码、测试或部署配置。
+- 集成状态：修改保留在当前工作区；未运行代码测试、migration、部署、提交或推送。文档变更只执行目标段落、whitespace 与最终 diff 检查。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | 目标段落复核；`git diff --check -- AGENTS.md`；`git diff --stat -- AGENTS.md`；目标 diff 复核 | 0 | `AGENTS.md` 仅新增有界增量补丁判定，并把正式部署完整门改为单次构建路径。 |
+
+## 代理合同：症状即输入（2026-08-28）
+
+- 基线：`cloudflare` / `388b527dc9e2`；本次在尚未提交的验证合同修改上继续增量编辑。
+- 需求：用户通常只描述观察到的问题，不希望每次重复期望、复现、测试或停止条件模板。
+- 决策：症状本身足以启动开发修复。代理负责从产品基线、规格、测试和上下文推断期望行为；只有多个合理解释会产生实质不同产品结果时才提出一个最小澄清问题。截图、错误文案、复现步骤和期望结果保留为可选线索。
+- 修改：在 `AGENTS.md` 项目介绍后新增“用户输入默认”，没有改变业务逻辑、现有测试证据、部署状态或远端资源。
+- 影响：本任务后续修复按新输入规则执行；已经完成的修改和验证不被追溯重做，其他任务正在执行的一轮不会因此重启，后续轮次以重新读取到的项目规则为准。
+- 集成状态：修改保留在当前工作区；未运行代码测试、migration、部署、提交或推送。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | 目标段落复核；`git diff --check -- AGENTS.md`；`git diff --stat -- AGENTS.md` | 0 | “用户输入默认”位于全局执行规则之前；文档无 whitespace 错误。 |
+
+## 代理合同：开发快修默认与按需加载（2026-08-28）
+
+- 基线：`cloudflare` / `388b527dc9e2`；用户确认其他任务均已完成并授权直接修改代理文档。工作区原有未提交的 `AGENTS.md`、本日志修改和未跟踪 `.playwright-cli/` 均按现状保留。
+- 需求：开发阶段只需用自然语言描述症状，代理应快速定位并修复 Bug、检查直接连带错误；普通跨层修改、审查后的末尾小修和“任务完成”不得自动触发全量验证。
+- 根因与决策：原根合同同时常驻开发、冻结发布和并行协调细则，普通修复容易沿保守条款升级。根合同现只保留开发期高频不变量、定向验证和停止条件；完整回归/发布与并行协议分别移至按显式触发读取的文档。只有用户在当前任务明确要求完整回归、发布、部署、远端 migration、Git push 或里程碑冻结，才切换对应流程。
+- 修改：重写 `AGENTS.md` 为“症状即输入、根因修复、直接连带检查、证据满足即停止”的开发默认，并保留写操作权限验证与文档专用验证规则；新增 `docs/agent/release.md` 和 `docs/agent/parallel.md`，分别承载冻结/发布门与隔离 Worker 规则。发布/部署只授权更新既有 Worker，Git push 仍需单独授权。没有创建强制 Prompt 模板。
+- 集成状态：仅修改代理说明与执行日志；未修改业务源码、测试、依赖或部署配置，未运行代码测试、build、migration、部署、commit 或 push。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | 三份目标文档逐段复核；路径/触发词检查；tracked `git diff --check`；四份文档 trailing-whitespace 扫描；最终 diff 与状态复核 | 0 | 开发默认、显式升级与授权边界、按需读取链接和文档格式一致；未执行代码验证。 |
+
+## V3 项目主管审计、旧实现归档与单工作区收口（2026-08-28）
+
+- 基线与授权：任务从远端 `cloudflare` / `4f2abee4cdf53a430d7df66e4644069e35dc09d9` 收口；用户要求主管级目录审计、把新产品标为 V3、将旧实现上传 GitHub 分支后删除本地、完成验证并推送，但明确不得改动 `main`。远端 `main` 在本节记录时仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。本任务未获新的 Cloudflare 部署授权，因而不部署、不迁移、不修改 Secret 或远端资源。
+- 目录审计：`/Users/sanmu/Documents` 原有当前 Cloudflare 仓库、同版本修复克隆、独立 Sites 迁移仓库、Vercel/Nitro 诊断产物及三个 Codex worktree。审计后只保留 `/Users/sanmu/Documents/zhuwei-cloudflare`；`git worktree list` 只剩当前工作树。重复克隆、诊断产物、旧源码、已收口 worktree、`.playwright-cli` 和旧截图原始状态均移入 macOS 废纸篓，未永久擦除。首次批量移动命令因误用 zsh 保留变量 `path` 而在任何移动发生前失败；随后改用任务专用变量与绝对 `/bin/mv` 完成全部可恢复移动。
+- 私有本地数据：独立 Sites 仓库的 ignored `.wrangler` 内含 3 个本地房间及角色、消息、游戏状态和剧情秘密。该目录未进入任何 Git 对象，随原仓库保留在废纸篓可恢复副本；除非用户以后明确要求，不永久销毁。归档前对三提交 Sites 源码及 detached 源码/测试执行高置信 Secret 扫描，没有发现私钥、token 或 `.env`；该结论不代表废纸篓中的本地 D1 可以公开。
+- 远端恢复点：以非 force push 建立 `codex/archive/pre-v3-authoritative-v2-20260828` → `4f2abee4cdf53a430d7df66e4644069e35dc09d9`（414 个跟踪文件）、`codex/archive/sites-migration-20260825` → `932c39f4b006b2a7bce845ff8d4d74cfececc17d`（独立三提交历史、143 个跟踪文件）、`codex/archive/detached-85aa-pre-v3-20260828` → `21ca594cac3b2cad3ee1c6cff5b96fd41d1a9030`（414 个跟踪文件）。三条 ref 均在全新临时仓库独立 fetch，SHA、文件数与 `git fsck` 通过后才清理本地副本；验证仓库随后也移入废纸篓。detached 档案未加入其未跟踪的 `.playwright-cli` 和三张战术截图，但继承 pre-v3 基线中两张已跟踪的里程碑截图，ADR 如实记录。
+- 并行工作收口：`f930215` 的补丁与已集成 `69e494e` patch-id 相同；`ff11599` 已是当前基线祖先；85aa 的独立在途源码已进入上述 detached 档案。注册 worktree 已 prune，内容已集成的临时 stash、已合并本地战术分支及上传核验后的本地 archive 分支均已删除；本地只保留当前 `cloudflare` 分支，远端 archive refs 仍可恢复。三个只读 Worker 分别审计外部目录、V3 项目布局和版本/回放边界，没有并发修改业务文件；终审均为无 Blocker/High。
+- V3 决策：`package.json`/lockfile 升为 `0.3.0`，README、`AGENTS.md` 与新接受的 `ADR 0013` 把产品和仓库代际标为 V3。V3 不复制 `app-v3`/`src-v3`，也不机械改名已持久化协议；现有房间继续固定 `dnd5e-2014-srd5.1-authoritative-v2`。任何持久化规则、事件、投影、模组或 Profile 语义变化都必须新增完整 runtime manifest 和 Adapter，解释语义变化时再新增 interpreter；SPEC 0001 继续是 LLM/KP 行为最高准则。
+- V3 主树：保留 `app/`、`worker/`、`db/`、`drizzle/`、实际 `public/`、`tests/`、`tools/`、`cloudflare/`、规格/ADR/代理文档与根构建配置。删除只供旧平台考据的 `src/`、`server/`、`migrations/`、Sites/PWA/PGlite/preview 旧脚本、`public/__grok/`、`startup.sh`、`AGENTS.project.md` 和仓内旧截图；四个仍被调用的模块/Profile/评测工具迁到 `tools/` 并更新全部调用方。`.gitignore` 明确忽略根 `.playwright-cli` 与 `output`，新增项目布局回归防止旧入口回流。
+- 评测收口：live KP 评测从遗留 Workers AI/GLM 命名更新为当前 DeepSeek V3 工具，并把 schema 固定为 v2。独立复审发现 provisioner 只验证报告存在；最终门强制 `modelId=deepseek-v4-flash`、`modelProvider=deepseek`、`execution.mode=live`，新增历史模型伪通过负例。此处只修改有界评测工具和确定性测试，没有发出真实模型请求。
+- 验证与失败处置：首次完整 `npm test` 的 production build 通过，Node 仅有 2 个旧项目布局/代理文案断言失败；这些断言仍要求已裁定删除的 `src` 与旧“等价迁移”表述。更新为 V3 单生产树合同后，定向 22/22 通过。最终同一冻结候选上，`git diff --check`、`npm run module:check`、`npm run typecheck`、`npm run lint` 均退出 0；`npm test` 退出 0，production build 通过，Node 343/343，Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip。故障注入 reporter 的 `stage4-hazard-freeze-response-loss` 文本属于通过用例预期输出。
+- 当前状态：目录、远端归档、V3 文档与冻结门均已完成；本节记录时 V3 候选尚未提交到远端 `cloudflare`。没有 D1 schema/migration 变化，没有 Cloudflare deploy、流量变更、Secret 读取/修改或新资源。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | Documents/Git/worktree/ignored 数据只读审计；高置信 Secret 扫描 | 0 | 识别四类外部目录、三个 worktree 与 Sites 私有 `.wrangler` D1；未把本地数据纳入 Git。 |
+| 2026-08-28 | 三条 archive ref 非 force push；全新仓库 fetch、SHA/文件数、`git fsck` | 0 | 三个远端恢复点均可独立取回；远端 `main` 未变。 |
+| 2026-08-28 | `/bin/mv` 到 macOS 废纸篓；`git worktree prune`；本地 stash/已合并分支清理 | 0 | Documents 只剩当前仓库，Git 只剩一个注册工作树；私有 D1 仍可恢复。 |
+| 2026-08-28 | V3 layout、interaction、live eval 定向测试 | 0 | 最终 22/22；旧平台入口不回流，规则版本不被 V3 产品代际改名，评测模型身份精确固定。 |
+| 2026-08-28（首次完整门） | `npm test` | 1 | production build 通过；2 个遗留项目布局/代理文案断言暴露并修正，候选未发布。 |
+| 2026-08-28（最终冻结门） | `git diff --check`；`npm run module:check`；`npm run typecheck`；`npm run lint`；`npm test` | 0 | production build；Node 343/343；Worker/Vitest 42/42 文件、158 passed / 5 skipped。 |

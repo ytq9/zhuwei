@@ -32,5 +32,5 @@ Registry 采用只增的完整 manifest→interpreter 映射。default manifest 
 
 - Profile 与 Registry：`app/_runtime/lib/rules/profiles/canonical.ts`、`app/_runtime/lib/rules/profiles/manifests.ts`、`app/_runtime/lib/rules/profiles/registry.ts`
 - Genesis/回放绑定：`app/_runtime/lib/rules/v2-runtime.ts`
-- Legacy 隔离：`app/_runtime/lib/rules/legacy-adapter.ts`、`scripts/check-modules.mjs`
+- Legacy 隔离：`app/_runtime/lib/rules/legacy-adapter.ts`、`tools/check-modules.mjs`
 - 验收：`tests/runtime-profiles-v2.test.mjs`、`tests/legacy-rules-adapter.test.mjs`、`tests/archive-do-resume-v2.test.ts`

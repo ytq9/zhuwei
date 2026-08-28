@@ -33,5 +33,5 @@ Room Durable Object 是 Room Authority 的生产实现，提供 `prepare / obser
 
 - Rules 深模块：`app/_runtime/lib/rules/v2-runtime.ts`、`app/_runtime/lib/rules/index.ts`
 - Room Action 深模块：`app/_runtime/lib/room/action.ts`、`app/_runtime/lib/room/durable-object.ts`
-- 静态边界门：`scripts/check-modules.mjs`
+- 静态边界门：`tools/check-modules.mjs`
 - 验收：`tests/authoritative-table-v2.test.mjs`、`tests/room-authority-v2.test.ts`、`tests/rules-pending-v2.test.mjs`

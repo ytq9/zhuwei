@@ -1,6 +1,6 @@
 {
   "name": "zhuwei-cloudflare-worker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,9 +13,9 @@
     "test": "npm run build && npm run test:unit && npm run test:worker",
     "test:unit": "tsx --test tests/**/*.test.mjs",
     "test:worker": "vitest run",
-    "module:check": "tsx scripts/check-modules.mjs",
-    "profile:reference-gate": "tsx scripts/check-runtime-profile-references.mts",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern src --ignore-pattern server --ignore-pattern scripts",
+    "module:check": "tsx tools/check-modules.mjs",
+    "profile:reference-gate": "tsx tools/check-runtime-profile-references.mts",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "cf:dev": "wrangler dev",

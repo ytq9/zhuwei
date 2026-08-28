@@ -4,6 +4,8 @@
 /dist
 /.wrangler
 /.vercel
+/.playwright-cli
+/output
 /tsconfig.tsbuildinfo
 /drizzle/meta
 /.env*
