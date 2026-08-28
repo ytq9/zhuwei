@@ -1930,3 +1930,16 @@
 | 2026-08-29 | `npm run typecheck`；`npm run lint`；production build | 0 | 最终增量类型、lint 与 Cloudflare 构建通过。 |
 | 2026-08-29 | `npm run cf:deploy`；Cloudflare deployment status | 0 | `2c10b854-5fc3-445e-8e4c-32f7ab8e3f79` 接收 100% 流量。 |
 | 2026-08-29 | 两行动生产探针；ACK、重复 fetch、模拟刷新、grounding 与清理断言 | 0 | 2 条行动一次成功；4 条亲历记录稳定；无目标越界细节；房间 finalized、会话 revoked。 |
+
+## 当前权威对话交付状态 Git 快照（2026-08-29）
+
+- 交付范围：应用户要求，将上述已部署但尚未入库的亲历对话、连续发送、手动 ACK 移除、KP 结构恢复和叙述边界改动作为当前状态快照提交。基线为 `d63b4b83670ea60c1fa9f1ef4d98523cab2085fa`，源码快照提交为 `737e0a90929638a2804f96ba2d913dc21c4fec23`（`chore: snapshot authoritative dialogue delivery`）。本次仅做 Git 交付，没有再次部署 Cloudflare、执行 migration、修改 Secret/config 或变更流量。
+- 定向验证：按本批实际修改范围运行 Node 合同/交互用例 54/54、Worker 亲历投递/开场/更正/安全用例 15/15，并运行 `npm run typecheck`；全部退出 0。`git diff --check` 通过。未运行全仓 `npm test`、build 或全量 lint。
+- 推送审计：未发现凭据、个人路径、冲突标记、调试残留、构建产物或异常二进制；两个新增文件均为普通测试。提交以非 force 快进从 `d63b4b8` 推送到远端 `cloudflare`，推送后远端 `main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+- 范围声明：这是现有部署状态的可恢复快照，不表示随后讨论的 body-only Narration 或表单化 Proposal 已实现。快照仍保留完整结构字段、受限的二次模型 correction，以及两次 `narrationGrounding` 失败后的硬编码确定性回应；该回应可能把权威拒绝呈现成成功，必须在后续设计修复中移除或改成显式失败。完整待重试行动会暂存于同源 `sessionStorage`，ViewerKey 专属亲历正文会持久化于 Room DO SQLite，属于当前恢复/留存设计边界。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-29 | Node 定向测试；Worker 定向测试；`npm run typecheck`；`git diff --check` | 0 | 54/54；15/15；类型与 whitespace 通过。 |
+| 2026-08-29 | `git commit -m 'chore: snapshot authoritative dialogue delivery'`；`git push origin HEAD:refs/heads/cloudflare` | 0 | 快照提交 `737e0a90929638a2804f96ba2d913dc21c4fec23` 已非 force 推送。 |
+| 2026-08-29 | `git ls-remote origin refs/heads/cloudflare refs/heads/main` | 0 | `cloudflare=737e0a90929638a2804f96ba2d913dc21c4fec23`；`main=29eb06dc009c983ad61b2d862454503e67a7f40a` 未变。 |
