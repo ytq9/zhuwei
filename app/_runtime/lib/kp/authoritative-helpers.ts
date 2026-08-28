@@ -1,8 +1,11 @@
 import type {
   AdjudicationPrecedentProposal,
   ActorPlanProposal,
+  ActionPlanAbility,
+  ActionPlanCheckMode,
   ActionPlanCost,
   ActionPlanEffect,
+  ActionPlanOperation,
   CurrentNarrationDraft,
   DynamicMaterialization,
   FictionDuration,
@@ -14,6 +17,7 @@ import type {
   ModelInvocationResult,
   NarrationAgencyClaim,
   NpcActionProposal,
+  NpcSemanticActionPlan,
   ProposalPendingInput,
   ProposalRisk,
   SceneProposal,
@@ -247,7 +251,7 @@ function optionalFictionDuration(value: unknown): FictionDuration | undefined {
   if (!isRecord(value)) invalid();
   exactKeys(value, ["unit", "value"]);
   if (typeof value.unit !== "string" || !DURATION_UNITS.has(value.unit)) invalid();
-  if (typeof value.value !== "number" || !Number.isFinite(value.value) || value.value <= 0) invalid();
+  if (!Number.isSafeInteger(value.value) || Number(value.value) <= 0) invalid();
   return value as FictionDuration;
 }
 
@@ -415,131 +419,178 @@ function optionalDurationField(record: UnknownRecord, key: string): FictionDurat
   return key in record ? optionalFictionDuration(record[key]) : undefined;
 }
 
-const ACTION_PLAN_COST_KEYS = [
-  "kind",
-  "artifactRef",
-  "resourceRef",
-  "amount",
-  "distanceFeet",
-  "slotLevel",
-  "count",
-  "duration",
-] as const;
-
 function actionPlanCost(value: unknown): ActionPlanCost {
   if (!isRecord(value)) invalid();
-  exactKeys(value, ACTION_PLAN_COST_KEYS, ["kind"]);
   if (typeof value.kind !== "string" || !ACTION_PLAN_COST_KIND_SET.has(value.kind)) invalid();
-  const artifactRef = optionalStringField(value, "artifactRef");
-  const resourceRef = optionalStringField(value, "resourceRef");
-  const amount = optionalFiniteNumber(value, "amount");
-  const distanceFeet = optionalFiniteNumber(value, "distanceFeet");
-  const slotLevel = optionalFiniteNumber(value, "slotLevel", {
-    integer: true,
-    minimum: 0,
-    maximum: 9,
-  });
-  const count = optionalFiniteNumber(value, "count", { integer: true, minimum: 0 });
-  const duration = optionalDurationField(value, "duration");
-  return {
-    kind: value.kind as ActionPlanCost["kind"],
-    ...(artifactRef !== undefined ? { artifactRef } : {}),
-    ...(resourceRef !== undefined ? { resourceRef } : {}),
-    ...(amount !== undefined ? { amount } : {}),
-    ...(distanceFeet !== undefined ? { distanceFeet } : {}),
-    ...(slotLevel !== undefined ? { slotLevel } : {}),
-    ...(count !== undefined ? { count } : {}),
-    ...(duration !== undefined ? { duration } : {}),
-  };
+  switch (value.kind) {
+    case "consumeResource": {
+      exactKeys(value, ["amount", "kind", "resourceRef"]);
+      const amount = optionalFiniteNumber(value, "amount", {
+        integer: true,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      });
+      return {
+        kind: "consumeResource",
+        resourceRef: boundedString(value.resourceRef, 240),
+        amount: amount!,
+      };
+    }
+    case "consumeArtifact": {
+      exactKeys(value, ["artifactRef", "count", "kind"], ["artifactRef", "kind"]);
+      const artifactRef = boundedString(value.artifactRef, 240);
+      const count = optionalFiniteNumber(value, "count", {
+        integer: true,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      });
+      if (!artifactRef.startsWith("item:") || artifactRef.length === "item:".length) invalid();
+      return {
+        kind: "consumeArtifact",
+        artifactRef,
+        ...(count === undefined ? {} : { count }),
+      };
+    }
+    case "fictionTime": {
+      exactKeys(value, ["duration", "kind"]);
+      return { kind: "fictionTime", duration: requiredDuration(value.duration) };
+    }
+    default:
+      return invalid();
+  }
 }
-
-const ACTION_PLAN_EFFECT_KEYS = [
-  "kind",
-  "artifactRef",
-  "to",
-  "observerRef",
-  "evidence",
-  "evidenceRef",
-  "npcId",
-  "entityRef",
-  "targetRef",
-  "resourceRef",
-  "amount",
-  "conditionRef",
-  "sceneRef",
-  "activityRef",
-  "duration",
-  "encounterRef",
-  "knowledgeRef",
-  "recipientRefs",
-  "partyRef",
-  "campaignRef",
-  "chapterRef",
-  "relationshipRef",
-  "commitmentRef",
-  "debtRef",
-  "status",
-  "value",
-  "definitionRef",
-] as const;
 
 function actionPlanEffect(value: unknown): ActionPlanEffect {
   if (!isRecord(value)) invalid();
-  exactKeys(value, ACTION_PLAN_EFFECT_KEYS, ["kind"]);
   if (typeof value.kind !== "string" || !ACTION_PLAN_EFFECT_KIND_SET.has(value.kind)) invalid();
-  const strings = Object.fromEntries(
-    [
-      "artifactRef",
-      "to",
-      "observerRef",
-      "evidenceRef",
-      "npcId",
-      "entityRef",
-      "targetRef",
-      "resourceRef",
-      "conditionRef",
-      "sceneRef",
-      "activityRef",
-      "encounterRef",
-      "knowledgeRef",
-      "partyRef",
-      "campaignRef",
-      "chapterRef",
-      "relationshipRef",
-      "commitmentRef",
-      "debtRef",
-      "definitionRef",
-    ].flatMap((key) => {
-      const field = optionalStringField(value, key);
-      return field === undefined ? [] : [[key, field]];
-    }),
-  );
-  const evidence = optionalStringField(value, "evidence", 480);
-  const status = optionalStringField(value, "status", 120);
-  const amount = optionalFiniteNumber(value, "amount");
-  const duration = optionalDurationField(value, "duration");
-  const recipientRefs = optionalStringArrayField(value, "recipientRefs");
-  const primitiveValue = value.value;
-  if (
-    "value" in value &&
-    primitiveValue !== null &&
-    typeof primitiveValue !== "string" &&
-    typeof primitiveValue !== "number" &&
-    typeof primitiveValue !== "boolean"
-  ) {
-    invalid();
+  switch (value.kind) {
+    case "acquireEvidence": {
+      exactKeys(value, ["definitionRef", "evidence", "evidenceRef", "kind"], ["evidenceRef", "kind"]);
+      const definitionRef = optionalStringField(value, "definitionRef");
+      const evidence = optionalStringField(value, "evidence", 480);
+      return {
+        kind: "acquireEvidence",
+        evidenceRef: boundedString(value.evidenceRef, 240),
+        ...(definitionRef === undefined ? {} : { definitionRef }),
+        ...(evidence === undefined ? {} : { evidence }),
+      };
+    }
+    case "acquireKnowledge": {
+      exactKeys(value, ["definitionRef", "kind", "knowledgeRef", "value"], ["kind", "knowledgeRef"]);
+      const definitionRef = optionalStringField(value, "definitionRef");
+      const primitive = value.value;
+      if (
+        "value" in value
+        && typeof primitive !== "string"
+        && typeof primitive !== "number"
+        && typeof primitive !== "boolean"
+      ) invalid();
+      if (typeof primitive === "number" && !Number.isFinite(primitive)) invalid();
+      if (typeof primitive === "string" && primitive.length > 480) invalid();
+      return {
+        kind: "acquireKnowledge",
+        knowledgeRef: boundedString(value.knowledgeRef, 240),
+        ...(definitionRef === undefined ? {} : { definitionRef }),
+        ...("value" in value ? { value: primitive as string | number | boolean } : {}),
+      };
+    }
+    case "changeResource": {
+      exactKeys(value, ["amount", "kind", "resourceRef", "targetRef"], ["amount", "kind", "resourceRef"]);
+      const amount = optionalFiniteNumber(value, "amount", {
+        integer: true,
+        minimum: Number.MIN_SAFE_INTEGER,
+        maximum: -1,
+      });
+      const targetRef = optionalStringField(value, "targetRef");
+      return {
+        kind: "changeResource",
+        resourceRef: boundedString(value.resourceRef, 240),
+        amount: amount!,
+        ...(targetRef === undefined ? {} : { targetRef }),
+      };
+    }
+    case "changeHitPoints": {
+      exactKeys(value, ["amount", "kind", "targetRef"], ["amount", "kind"]);
+      const amount = optionalFiniteNumber(value, "amount", {
+        integer: true,
+        minimum: Number.MIN_SAFE_INTEGER,
+        maximum: Number.MAX_SAFE_INTEGER,
+      });
+      if (amount === 0) invalid();
+      const targetRef = optionalStringField(value, "targetRef");
+      return {
+        kind: "changeHitPoints",
+        amount: amount!,
+        ...(targetRef === undefined ? {} : { targetRef }),
+      };
+    }
+    case "alertNpc": {
+      exactKeys(value, ["kind", "npcId", "status"], ["kind", "npcId"]);
+      const status = optionalStringField(value, "status", 120);
+      return {
+        kind: "alertNpc",
+        npcId: boundedString(value.npcId, 240),
+        ...(status === undefined ? {} : { status }),
+      };
+    }
+    case "moveEntity": {
+      exactKeys(value, ["entityRef", "kind", "sceneRef"], ["kind", "sceneRef"]);
+      const entityRef = optionalStringField(value, "entityRef");
+      return {
+        kind: "moveEntity",
+        sceneRef: boundedString(value.sceneRef, 240),
+        ...(entityRef === undefined ? {} : { entityRef }),
+      };
+    }
+    case "advanceFictionTime": {
+      exactKeys(value, ["duration", "kind"]);
+      return { kind: "advanceFictionTime", duration: requiredDuration(value.duration) };
+    }
+    case "updateRelationship": {
+      exactKeys(
+        value,
+        ["definitionRef", "kind", "recipientRefs", "relationshipRef", "value"],
+        ["kind", "recipientRefs", "relationshipRef", "value"],
+      );
+      const definitionRef = optionalStringField(value, "definitionRef");
+      const recipientRefs = stringArray(value.recipientRefs);
+      if (recipientRefs.length === 0) invalid();
+      return {
+        kind: "updateRelationship",
+        relationshipRef: boundedString(value.relationshipRef, 240),
+        recipientRefs,
+        value: boundedString(value.value, 480),
+        ...(definitionRef === undefined ? {} : { definitionRef }),
+      };
+    }
+    case "recordCommitment":
+      exactKeys(value, ["commitmentRef", "kind", "status", "targetRef", "value"]);
+      return {
+        kind: "recordCommitment",
+        commitmentRef: boundedString(value.commitmentRef, 240),
+        targetRef: boundedString(value.targetRef, 240),
+        value: boundedString(value.value, 480),
+        status: boundedString(value.status, 120),
+      };
+    case "recordDebt": {
+      exactKeys(
+        value,
+        ["debtRef", "definitionRef", "kind", "status", "targetRef", "value"],
+        ["debtRef", "kind", "status", "targetRef", "value"],
+      );
+      const definitionRef = optionalStringField(value, "definitionRef");
+      return {
+        kind: "recordDebt",
+        debtRef: boundedString(value.debtRef, 240),
+        targetRef: boundedString(value.targetRef, 240),
+        value: boundedString(value.value, 480),
+        status: boundedString(value.status, 120),
+        ...(definitionRef === undefined ? {} : { definitionRef }),
+      };
+    }
+    default:
+      return invalid();
   }
-  if (typeof primitiveValue === "number" && !Number.isFinite(primitiveValue)) invalid();
-  return {
-    kind: value.kind as ActionPlanEffect["kind"],
-    ...strings,
-    ...(evidence !== undefined ? { evidence } : {}),
-    ...(status !== undefined ? { status } : {}),
-    ...(amount !== undefined ? { amount } : {}),
-    ...(duration !== undefined ? { duration } : {}),
-    ...(recipientRefs !== undefined ? { recipientRefs } : {}),
-    ...("value" in value ? { value: primitiveValue as ActionPlanEffect["value"] } : {}),
-  };
 }
 
 const ACTION_PLAN_KEYS = [
@@ -605,12 +656,152 @@ const ACTION_PLAN_KEYS = [
   "consequenceRefs",
 ] as const;
 
-function semanticActionPlan(value: unknown): SemanticActionPlan {
+function requiredDuration(value: unknown): FictionDuration {
+  const duration = optionalFictionDuration(value);
+  if (duration === undefined) invalid();
+  return duration;
+}
+
+function actionPlanCosts(value: unknown): ActionPlanCost[] {
+  if (!Array.isArray(value) || value.length > 24) invalid();
+  return value.map(actionPlanCost);
+}
+
+function actionPlanEffects(value: unknown): ActionPlanEffect[] {
+  if (!Array.isArray(value) || value.length > 24) invalid();
+  const effects = value.map(actionPlanEffect);
+  if (effects.filter(({ kind }) => kind === "moveEntity").length > 1) invalid();
+  if (effects.filter(({ kind }) => kind === "changeHitPoints").length > 1) invalid();
+  return effects;
+}
+
+function strictResolutionActionPlan(
+  value: UnknownRecord,
+  actorKind: "player" | "npc",
+): SemanticActionPlan | undefined {
+  if (value.operation === "resolveDirectConsequences") {
+    exactKeys(value, ["duration", "failure", "frozenCosts", "operation", "success"]);
+    if (!Array.isArray(value.frozenCosts) || value.frozenCosts.length !== 0) invalid();
+    if (!Array.isArray(value.failure) || value.failure.length !== 0) invalid();
+    return {
+      operation: "resolveDirectConsequences",
+      duration: requiredDuration(value.duration),
+      frozenCosts: [],
+      success: actionPlanEffects(value.success),
+      failure: [],
+    };
+  }
+
+  if (
+    value.operation !== "resolveNoncombatCheck"
+    && value.operation !== "resolveNoncombatSave"
+    && value.operation !== "retryFailedAction"
+  ) return undefined;
+
+  const savingThrow = value.operation === "resolveNoncombatSave";
+  const retry = value.operation === "retryFailedAction";
+  if (retry && actorKind === "npc") invalid();
+  if (
+    retry
+    && Object.keys(value).length === 2
+    && "operation" in value
+    && "precedentRef" in value
+  ) {
+    return {
+      operation: "retryFailedAction",
+      precedentRef: boundedString(value.precedentRef, 240),
+    };
+  }
+  const required = savingThrow
+    ? [
+        "dc",
+        "duration",
+        "failure",
+        "frozenCosts",
+        "mode",
+        "operation",
+        "saveAbility",
+        "success",
+      ]
+    : [
+        "ability",
+        "dc",
+        "duration",
+        "failure",
+        "frozenCosts",
+        "mode",
+        "operation",
+        ...(retry ? ["precedentRef"] : []),
+        "skill",
+        "success",
+      ];
+  exactKeys(
+    value,
+    savingThrow && actorKind === "player" ? [...required, "targetEntityRef"] : required,
+    required,
+  );
+  if (
+    !Number.isSafeInteger(value.dc)
+    || Number(value.dc) < 0
+    || Number(value.dc) > 30
+    || typeof value.mode !== "string"
+    || !ACTION_PLAN_CHECK_MODE_SET.has(value.mode)
+  ) invalid();
+  const common = {
+    dc: Number(value.dc),
+    mode: value.mode as ActionPlanCheckMode,
+    duration: requiredDuration(value.duration),
+    frozenCosts: actionPlanCosts(value.frozenCosts),
+    success: actionPlanEffects(value.success),
+    failure: actionPlanEffects(value.failure),
+  };
+  if (savingThrow) {
+    if (typeof value.saveAbility !== "string" || !ACTION_PLAN_ABILITY_SET.has(value.saveAbility)) invalid();
+    const targetEntityRef = optionalStringField(value, "targetEntityRef");
+    return {
+      operation: "resolveNoncombatSave",
+      saveAbility: value.saveAbility as ActionPlanAbility,
+      ...common,
+      ...(targetEntityRef === undefined ? {} : { targetEntityRef }),
+    };
+  }
+  if (typeof value.ability !== "string" || !ACTION_PLAN_ABILITY_SET.has(value.ability)) invalid();
+  const skill = optionalNullableStringField(value, "skill");
+  if (skill === undefined) invalid();
+  if (retry) {
+    return {
+      operation: "retryFailedAction",
+      ability: value.ability as ActionPlanAbility,
+      skill,
+      precedentRef: boundedString(value.precedentRef, 240),
+      ...common,
+    };
+  }
+  return {
+    operation: "resolveNoncombatCheck",
+    ability: value.ability as ActionPlanAbility,
+    skill,
+    ...common,
+  };
+}
+
+function semanticActionPlan(value: unknown, actorKind: "npc"): NpcSemanticActionPlan;
+function semanticActionPlan(value: unknown, actorKind?: "player"): SemanticActionPlan;
+function semanticActionPlan(
+  value: unknown,
+  actorKind: "player" | "npc" = "player",
+): SemanticActionPlan | NpcSemanticActionPlan {
   if (!isRecord(value)) invalid();
-  exactKeys(value, ACTION_PLAN_KEYS, ["operation"]);
   if (typeof value.operation !== "string" || !ACTION_PLAN_OPERATION_SET.has(value.operation)) {
     invalid();
   }
+  if (
+    (actorKind === "player" && value.operation === "advanceFactionPlan")
+    || (actorKind === "npc" && value.operation === "resolveNoncombatContest")
+  ) invalid();
+  const strictResolution = strictResolutionActionPlan(value, actorKind);
+  if (strictResolution !== undefined) return strictResolution;
+  exactKeys(value, ACTION_PLAN_KEYS, ["operation"]);
   for (const abilityKey of ["ability", "opposedAbility", "saveAbility"] as const) {
     const ability = value[abilityKey];
     if (ability !== undefined && (typeof ability !== "string" || !ACTION_PLAN_ABILITY_SET.has(ability))) {
@@ -661,18 +852,16 @@ function semanticActionPlan(value: unknown): SemanticActionPlan {
   const skill = optionalNullableStringField(value, "skill");
   const opposedSkill = optionalNullableStringField(value, "opposedSkill");
   const duration = optionalDurationField(value, "duration");
-  const frozenCosts = "frozenCosts" in value
-    ? Array.isArray(value.frozenCosts) && value.frozenCosts.length <= 24
-      ? value.frozenCosts.map(actionPlanCost)
-      : invalid()
-    : undefined;
+  const frozenCosts = "frozenCosts" in value ? actionPlanCosts(value.frozenCosts) : undefined;
   const effects = (key: "success" | "failure") => key in value
-    ? Array.isArray(value[key]) && value[key].length <= 24
-      ? value[key].map(actionPlanEffect)
-      : invalid()
+    ? actionPlanEffects(value[key])
     : undefined;
   const success = effects("success");
   const failure = effects("failure");
+  if (
+    value.operation === "startActivity"
+    && [...(success ?? []), ...(failure ?? [])].some(({ kind }) => kind === "advanceFictionTime")
+  ) invalid();
   const stringKeys = [
     "sourceEntityRef",
     "targetEntityRef",
@@ -791,18 +980,18 @@ function semanticActionPlan(value: unknown): SemanticActionPlan {
   const amount = optionalFiniteNumber(value, "amount");
   const experienceAmount = optionalFiniteNumber(value, "experienceAmount");
   return {
-    operation: value.operation as SemanticActionPlan["operation"],
-    ...(value.ability !== undefined ? { ability: value.ability as SemanticActionPlan["ability"] } : {}),
+    operation: value.operation as ActionPlanOperation,
+    ...(value.ability !== undefined ? { ability: value.ability as ActionPlanAbility } : {}),
     ...(skill !== undefined ? { skill } : {}),
     ...(value.opposedAbility !== undefined
-      ? { opposedAbility: value.opposedAbility as SemanticActionPlan["opposedAbility"] }
+      ? { opposedAbility: value.opposedAbility as ActionPlanAbility }
       : {}),
     ...(opposedSkill !== undefined ? { opposedSkill } : {}),
     ...(value.saveAbility !== undefined
-      ? { saveAbility: value.saveAbility as SemanticActionPlan["saveAbility"] }
+      ? { saveAbility: value.saveAbility as ActionPlanAbility }
       : {}),
     ...(dc !== undefined ? { dc } : {}),
-    ...(value.mode !== undefined ? { mode: value.mode as SemanticActionPlan["mode"] } : {}),
+    ...(value.mode !== undefined ? { mode: value.mode as ActionPlanCheckMode } : {}),
     ...(duration !== undefined ? { duration } : {}),
     ...(frozenCosts !== undefined ? { frozenCosts } : {}),
     ...(success !== undefined ? { success } : {}),
@@ -827,11 +1016,19 @@ function semanticActionPlan(value: unknown): SemanticActionPlan {
     ...(moduleMigration !== undefined ? { moduleMigration } : {}),
     ...(inheritanceAuthorization !== undefined ? { inheritanceAuthorization } : {}),
     ...(value.continueAsNpc === undefined ? {} : { continueAsNpc: value.continueAsNpc }),
-  } as SemanticActionPlan;
+  } as SemanticActionPlan | NpcSemanticActionPlan;
 }
 
-function nullableActionPlan(value: unknown): SemanticActionPlan | null {
-  return value === null ? null : semanticActionPlan(value);
+function nullableActionPlan(value: unknown, actorKind: "npc"): NpcSemanticActionPlan | null;
+function nullableActionPlan(value: unknown, actorKind?: "player"): SemanticActionPlan | null;
+function nullableActionPlan(
+  value: unknown,
+  actorKind: "player" | "npc" = "player",
+): SemanticActionPlan | NpcSemanticActionPlan | null {
+  if (value === null) return null;
+  return actorKind === "npc"
+    ? semanticActionPlan(value, "npc")
+    : semanticActionPlan(value, "player");
 }
 
 function dynamicMaterializations(value: unknown): DynamicMaterialization[] {
@@ -976,7 +1173,7 @@ function npcActions(value: unknown): NpcActionProposal[] {
       method: boundedString(entry.method, 480),
       knowledgeRefs,
       ...(entry.actorPlan === undefined ? {} : { actorPlan: actorPlan(entry.actorPlan, knowledgeRefs) }),
-      mechanicalProposal: nullableActionPlan(entry.mechanicalProposal),
+      mechanicalProposal: nullableActionPlan(entry.mechanicalProposal, "npc"),
     };
   });
 }
@@ -1165,6 +1362,52 @@ const PLAYER_OWNED_AGENCY_CLAIMS = new Set<string>([
   "nextAction",
 ]);
 
+function narrationSubjectRefs(projection: unknown): {
+  playerRefs: Set<string>;
+  npcRefs: Set<string>;
+} {
+  const playerRefs = new Set<string>();
+  const npcRefs = new Set<string>();
+  if (!isRecord(projection)) return { playerRefs, npcRefs };
+  const add = (target: Set<string>, value: unknown) => {
+    if (typeof value === "string" && value.trim().length > 0) target.add(value.trim());
+  };
+  const viewer = isRecord(projection.viewer) ? projection.viewer : undefined;
+  if (viewer?.kind === "player") {
+    add(playerRefs, viewer.characterId);
+    add(playerRefs, viewer.subjectId);
+  }
+  const controlledCharacter = isRecord(projection.controlledCharacter)
+    ? projection.controlledCharacter
+    : undefined;
+  add(playerRefs, controlledCharacter?.characterId);
+
+  if (Array.isArray(projection.agencySubjects)) {
+    for (const subject of projection.agencySubjects) {
+      if (!isRecord(subject)) continue;
+      if (subject.subjectKind === "playerCharacter") add(playerRefs, subject.subjectRef);
+      if (subject.subjectKind === "npc") add(npcRefs, subject.subjectRef);
+    }
+  }
+
+  const addEntity = (value: unknown, fallbackId?: string) => {
+    if (!isRecord(value) || (value.kind !== "player" && value.kind !== "npc")) return;
+    const target = value.kind === "player" ? playerRefs : npcRefs;
+    add(target, value.id ?? value.characterId ?? value.entityId ?? fallbackId);
+  };
+  if (isRecord(projection.entities)) {
+    for (const [entityId, entity] of Object.entries(projection.entities)) addEntity(entity, entityId);
+  }
+  const tacticalProjection = isRecord(projection.tacticalProjection)
+    ? projection.tacticalProjection
+    : undefined;
+  addEntity(tacticalProjection?.self);
+  if (Array.isArray(tacticalProjection?.visibleEntities)) {
+    for (const entity of tacticalProjection.visibleEntities) addEntity(entity);
+  }
+  return { playerRefs, npcRefs };
+}
+
 export function validateNarrationAgencyClaims(
   value: unknown,
   projection: unknown,
@@ -1173,9 +1416,7 @@ export function validateNarrationAgencyClaims(
     invalid();
   }
   const availableStrings = collectStrings(projection);
-  const declaredProjectionRefs = Array.isArray(value.referencedProjectionRefs)
-    ? new Set(stringArray(value.referencedProjectionRefs))
-    : undefined;
+  const { playerRefs, npcRefs } = narrationSubjectRefs(projection);
   const claims = value.agencyClaims.map((claim) => {
     if (!isRecord(claim)) invalid();
     exactKeys(claim, ["subjectKind", "subjectRef", "claimKind", "basisRefs"]);
@@ -1192,6 +1433,10 @@ export function validateNarrationAgencyClaims(
       (claim.subjectKind === "world" && subjectRef !== null)
       || (claim.subjectKind !== "world"
         && (subjectRef === null || !availableStrings.has(subjectRef)))
+      || (claim.subjectKind === "playerCharacter"
+        && (subjectRef === null || !playerRefs.has(subjectRef)))
+      || (claim.subjectKind === "npc"
+        && (subjectRef === null || !npcRefs.has(subjectRef)))
       || (claim.subjectKind === "world" && claim.claimKind !== "sensoryConsequence")
       || (claim.subjectKind === "playerCharacter"
         && PLAYER_OWNED_AGENCY_CLAIMS.has(claim.claimKind))
@@ -1200,8 +1445,6 @@ export function validateNarrationAgencyClaims(
     if (
       basisRefs.length === 0
       || basisRefs.some((reference) => !availableStrings.has(reference))
-      || (declaredProjectionRefs !== undefined
-        && basisRefs.some((reference) => !declaredProjectionRefs.has(reference)))
     ) invalid();
     return {
       subjectKind: claim.subjectKind,
@@ -1218,10 +1461,16 @@ export function validateNarrationAgencyClaims(
 export function validateNarration(value: unknown, projection: unknown): CurrentNarrationDraft {
   if (!isRecord(value)) invalid();
   exactKeys(value, ["body", "tts", "decisionPrompt", "referencedProjectionRefs", "agencyClaims"]);
-  const referencedProjectionRefs = stringArray(value.referencedProjectionRefs);
+  const declaredProjectionRefs = stringArray(value.referencedProjectionRefs);
   const availableStrings = collectStrings(projection);
-  if (referencedProjectionRefs.some((reference) => !availableStrings.has(reference))) invalid();
+  if (declaredProjectionRefs.some((reference) => !availableStrings.has(reference))) invalid();
   const agencyClaims = validateNarrationAgencyClaims(value, projection);
+  const referencedProjectionRefs = stringArray([
+    ...new Set([
+      ...declaredProjectionRefs,
+      ...agencyClaims.flatMap(({ basisRefs }) => basisRefs),
+    ]),
+  ]);
   return {
     body: boundedString(value.body, 1_600),
     tts: boundedString(value.tts, 900),

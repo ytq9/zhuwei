@@ -3364,6 +3364,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         projection as unknown as JsonObject,
         character.id,
         receiptId,
+        state.entities,
       );
       bindings.push({
         audienceId: `audience:${receiptId}:${character.id}`,

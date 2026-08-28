@@ -7,7 +7,11 @@ import {
   createAuthoritativeKpAdapter,
 } from "../app/_runtime/lib/kp/authoritative.ts";
 import { authoritativeKpProfileByBinding } from "../app/_runtime/lib/kp/authoritative-policy.ts";
-import { normalizeRoomKpProposal } from "../app/_runtime/lib/room/proposal-adapter.ts";
+import {
+  narrationProjection,
+  normalizeRoomKpProposal,
+} from "../app/_runtime/lib/room/proposal-adapter.ts";
+import { replay, step } from "../app/_runtime/lib/rules/index.ts";
 
 const ROOT_ACTION_ID = "root:free-action:001";
 const PREPARED_ACTION_ID = "prepared:free-action:001";
@@ -72,9 +76,13 @@ function proposal(overrides = {}) {
       dc: 15,
       mode: "normal",
       duration: { unit: "minute", value: 10 },
-      frozenCosts: [{ kind: "artifactDurabilityRisk", artifactRef: "item:rain-cape" }],
-      success: [{ kind: "moveArtifact", artifactRef: "artifact:bell-frame", to: "place:wall" }],
-      failure: [{ kind: "sensoryEvidence", observerRef: "npc:warden", evidence: "metal-scrape" }],
+      frozenCosts: [{ kind: "consumeArtifact", artifactRef: "item:rain-cape", count: 1 }],
+      success: [{
+        kind: "acquireEvidence",
+        evidenceRef: "evidence:bell-frame-reached-wall",
+        evidence: "钟架已被拖到墙根。",
+      }],
+      failure: [{ kind: "alertNpc", npcId: "npc:warden", status: "heard-metal-scrape" }],
     },
     scene: {
       question: "Alice 能否在不惊动守卫的情况下移动钟架？",
@@ -160,6 +168,49 @@ function serialized(value) {
   return JSON.stringify(value);
 }
 
+function initializeObservationWorld() {
+  const profileRef = (profileId, digit) => ({
+    profileId,
+    profileHash: `sha256:${digit.repeat(64)}`,
+  });
+  const initialized = step(undefined, undefined, {
+    kind: "initializeAuthoritativeWorld",
+    roomId: "room:kp-observation-seam",
+    runtimeEpochId: "epoch:kp-observation-seam:1",
+    moduleRef: profileRef("module:kp-observation-seam", "a"),
+    initialDefinitionCatalogRef: profileRef("definitions:kp-observation-seam", "b"),
+    activeBranchId: "branch:main",
+    fictionInstantMicros: "0",
+    scenes: [{ id: "scene:hall", name: "大厅" }],
+    principals: [{ id: "principal:alice", sessionVersion: 1, role: "host" }],
+    seats: [{ id: "seat:alice", principalId: "principal:alice", status: "active" }],
+    characters: [{
+      id: "character:alice",
+      kind: "player",
+      name: "阿莱莎",
+      sceneId: "scene:hall",
+      tenureStatus: "active",
+      abilityScores: { str: 10, dex: 10, con: 10, int: 10, wis: 12, cha: 10 },
+      proficiencyBonus: 2,
+      resources: {},
+    }],
+    characterControls: [{ characterId: "character:alice", seatId: "seat:alice" }],
+    canonicalFacts: [{
+      id: "fact:ordinary-courtyard-door-is-unlocked",
+      kind: "visibleExit",
+      source: "moduleAnchor",
+      subjectRefs: ["scene:hall"],
+      value: { description: "大厅东侧有一扇普通且没有上锁的门。" },
+      visibilityPolicyId: "visibility:public",
+    }],
+    initialKnowledge: [],
+  });
+  assert.equal(initialized.kind, "initialized", JSON.stringify(initialized));
+  const replayed = replay(initialized.genesis, []);
+  assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
+  return { profiles: initialized.profiles, state: replayed.state };
+}
+
 test("authoritative KP invokes and receipts the room-pinned model profile", async () => {
   const ai = scriptedAi([
     officialToolResponse("submit_kp_proposal", proposal()),
@@ -220,8 +271,12 @@ test("authoritative KP proposes open-world mechanics and revises only from Rules
       mode: "normal",
       duration: { unit: "minute", value: 10 },
       frozenCosts: [{ kind: "consumeArtifact", artifactRef: "item:rain-cape" }],
-      success: [{ kind: "moveArtifact", artifactRef: "artifact:bell-frame", to: "place:wall" }],
-      failure: [{ kind: "sensoryEvidence", observerRef: "npc:warden", evidence: "metal-scrape" }],
+      success: [{
+        kind: "acquireEvidence",
+        evidenceRef: "evidence:bell-frame-reached-wall",
+        evidence: "钟架已被拖到墙根。",
+      }],
+      failure: [{ kind: "alertNpc", npcId: "npc:warden", status: "heard-metal-scrape" }],
     },
   });
   const allKnowingNpc = proposal({
@@ -270,6 +325,9 @@ test("authoritative KP proposes open-world mechanics and revises only from Rules
     assert.match(system, /命令翻译器|白名单/);
     assert.match(system, /不得.*代替玩家|不能.*代替玩家/);
     assert.match(system, /逐字复制/);
+    assert.match(system, /观察、查看、环顾或检查明显可见内容/);
+    assert.match(system, /estimatedFictionTime.*完全相同.*duration/);
+    assert.match(system, /没有结构化状态变化时 success=\[\]/);
     assert.match(
       call.input.tools[0].function.parameters.properties.publicBasisRefs.description,
       /逐字复制/,
@@ -409,22 +467,79 @@ test("authoritative KP accepts only versioned closed semantic ActionPlan operati
   }
   assert.equal(ai.calls.length, 6);
 
-  assert.equal(AUTHORITATIVE_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v6");
-  assert.equal(GEMMA_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v6");
+  const serializedProposalToolBytes = Buffer.byteLength(
+    JSON.stringify(ai.calls[0].input.tools[0]),
+    "utf8",
+  );
+  assert.ok(
+    serializedProposalToolBytes < 60_000,
+    `proposal tool schema must stay compact, received ${serializedProposalToolBytes} bytes`,
+  );
+
+  assert.equal(AUTHORITATIVE_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v7");
+  assert.equal(GEMMA_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v7");
   assert.equal(AUTHORITATIVE_KP_PROFILE.proposalSchemaVersion, "authoritative-kp-proposal-v2");
   assert.equal(AUTHORITATIVE_KP_PROFILE.actionPlanSchemaVersion, "authoritative-kp-action-plan-v1");
   assert.equal(AUTHORITATIVE_KP_PROFILE.narrationSchemaVersion, "authoritative-kp-narration-v3");
 
-  const planSchema = ai.calls[0].input.tools[0].function.parameters
-    .properties.mechanicalProposal.anyOf[1];
-  assert.equal(planSchema.additionalProperties, false);
-  assert.deepEqual(planSchema.properties.operation.enum, [
-    "resolveNoncombatCheck",
+  const proposalParameters = ai.calls[0].input.tools[0].function.parameters;
+  const definitions = proposalParameters.$def;
+  const dereference = (schema) => schema.$ref
+    ? definitions[schema.$ref.split("/").at(-1)]
+    : schema;
+  const planSchema = proposalParameters.properties.mechanicalProposal.anyOf[1];
+  const planBranches = planSchema.anyOf.map(dereference);
+  const strictPlan = (operation) => planBranches.find((branch) =>
+    branch.properties?.operation?.const === operation);
+  const directSchema = strictPlan("resolveDirectConsequences");
+  const checkSchema = strictPlan("resolveNoncombatCheck");
+  const saveSchema = strictPlan("resolveNoncombatSave");
+  const retrySchemas = planBranches.filter((branch) =>
+    branch.properties?.operation?.const === "retryFailedAction");
+  const unchangedRetrySchema = retrySchemas.find((branch) => branch.required.length === 2);
+  const retrySchema = retrySchemas.find((branch) => branch.required.length > 2);
+  const reservedSchema = planBranches.find((branch) =>
+    Array.isArray(branch.properties?.operation?.enum));
+  assert.deepEqual(directSchema.required, [
+    "operation",
+    "duration",
+    "frozenCosts",
+    "success",
+    "failure",
+  ]);
+  assert.equal(directSchema.additionalProperties, false);
+  assert.equal(directSchema.properties.duration.properties.value.type, "integer");
+  assert.equal(directSchema.properties.frozenCosts.maxItems, 0);
+  assert.equal(directSchema.properties.failure.maxItems, 0);
+  assert.deepEqual(checkSchema.required, [
+    "operation",
+    "ability",
+    "skill",
+    "dc",
+    "mode",
+    "duration",
+    "frozenCosts",
+    "success",
+    "failure",
+  ]);
+  assert.deepEqual(saveSchema.required, [
+    "operation",
+    "saveAbility",
+    "dc",
+    "mode",
+    "duration",
+    "frozenCosts",
+    "success",
+    "failure",
+  ]);
+  assert.ok("targetEntityRef" in saveSchema.properties);
+  assert.equal(saveSchema.required.includes("targetEntityRef"), false);
+  assert.deepEqual(retrySchema.required, [...checkSchema.required, "precedentRef"]);
+  assert.deepEqual(unchangedRetrySchema.required, ["operation", "precedentRef"]);
+  assert.equal(unchangedRetrySchema.additionalProperties, false);
+  assert.deepEqual(reservedSchema.properties.operation.enum, [
     "resolveNoncombatContest",
-    "resolveNoncombatSave",
-    "resolveDirectConsequences",
     "commitMeaningfulFailure",
-    "retryFailedAction",
     "rejectInfeasibleAction",
     "startActivity",
     "interruptActivity",
@@ -441,18 +556,39 @@ test("authoritative KP accepts only versioned closed semantic ActionPlan operati
     "acquireArtifact",
     "useArtifact",
     "transferArtifact",
-    "advanceFactionPlan",
     "changeKnowledge",
     "changeParty",
     "advanceCampaignLifecycle",
   ]);
-  assert.equal(planSchema.properties.frozenCosts.items.additionalProperties, false);
-  assert.deepEqual(planSchema.properties.experienceAmount, {
+  assert.deepEqual(
+    definitions.actionPlanCost.anyOf.map((branch) => branch.properties.kind.const),
+    ["consumeResource", "consumeArtifact", "fictionTime"],
+  );
+  assert.ok(definitions.actionPlanCost.anyOf.every((branch) =>
+    branch.additionalProperties === false));
+  assert.deepEqual(
+    definitions.actionPlanEffect.anyOf.map((branch) => branch.properties.kind.const),
+    [
+      "acquireEvidence",
+      "acquireKnowledge",
+      "changeResource",
+      "changeHitPoints",
+      "alertNpc",
+      "moveEntity",
+      "advanceFictionTime",
+      "updateRelationship",
+      "recordCommitment",
+      "recordDebt",
+    ],
+  );
+  assert.ok(definitions.actionPlanEffect.anyOf.every((branch) =>
+    branch.additionalProperties === false));
+  assert.deepEqual(reservedSchema.properties.experienceAmount, {
     type: "integer",
     minimum: 1,
     maximum: 1_000_000,
   });
-  assert.deepEqual(planSchema.properties.lifecycleAction.enum, [
+  assert.deepEqual(reservedSchema.properties.lifecycleAction.enum, [
     "grantMilestone",
     "awardExperience",
     "concludeChapter",
@@ -467,16 +603,315 @@ test("authoritative KP accepts only versioned closed semantic ActionPlan operati
     "startSequel",
   ]);
   assert.deepEqual(
-    planSchema.properties.activityTransitions.items.properties.disposition.enum,
+    reservedSchema.properties.activityTransitions.items.properties.disposition.enum,
     ["continue", "summarize", "interrupt", "complete"],
   );
-  assert.equal(planSchema.properties.success.items.additionalProperties, false);
-  assert.equal(planSchema.properties.failure.items.additionalProperties, false);
+  const npcPlanSchema = proposalParameters.properties.npcActions.items.properties.mechanicalProposal.anyOf[1];
+  const npcPlanBranches = npcPlanSchema.anyOf.map(dereference);
+  const npcSaveSchema = npcPlanBranches.find((branch) =>
+    branch.properties?.operation?.const === "resolveNoncombatSave");
+  const npcReservedSchema = npcPlanBranches.find((branch) =>
+    Array.isArray(branch.properties?.operation?.enum));
+  assert.equal("targetEntityRef" in npcSaveSchema.properties, false);
+  assert.equal(npcPlanBranches.some((branch) =>
+    branch.properties?.operation?.const === "retryFailedAction"), false);
+  assert.equal(npcReservedSchema.properties.operation.enum.includes("resolveNoncombatContest"), false);
+  assert.equal(npcReservedSchema.properties.operation.enum.includes("advanceFactionPlan"), true);
+});
+
+test("model boundary rejects resolution ActionPlans that the compound Rules contract cannot execute", async () => {
+  const directProposal = (mechanicalProposal) => proposal({
+    kind: "directSuccess",
+    risk: null,
+    npcActions: [],
+    mechanicalProposal,
+  });
+  const ai = scriptedAi([
+    officialToolResponse("submit_kp_proposal", directProposal({
+      operation: "resolveDirectConsequences",
+    })),
+    officialToolResponse("submit_kp_proposal", directProposal({
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [{
+        kind: "sensoryEvidence",
+        observerRef: "character:alice",
+        evidence: "大厅东侧有一扇明显可见的门。",
+      }],
+      failure: [],
+    })),
+    officialToolResponse("submit_kp_proposal", directProposal({
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [],
+      failure: [],
+      ability: "wis",
+    })),
+    officialToolResponse("submit_kp_proposal", directProposal({
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [
+        { kind: "changeHitPoints", amount: -1 },
+        { kind: "changeHitPoints", amount: -1 },
+      ],
+      failure: [],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      mechanicalProposal: {
+        operation: "resolveNoncombatCheck",
+        ability: "wis",
+        skill: "perception",
+        dc: 10,
+        mode: "normal",
+        duration: { unit: "second", value: 1 },
+        frozenCosts: [],
+        success: [],
+      },
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      mechanicalProposal: {
+        operation: "resolveNoncombatSave",
+        saveAbility: "dex",
+        dc: 10,
+        mode: "normal",
+        duration: { unit: "second", value: 1 },
+        frozenCosts: [],
+        success: [],
+      },
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      mechanicalProposal: {
+        operation: "retryFailedAction",
+        ability: "wis",
+        skill: "perception",
+        dc: 10,
+        mode: "normal",
+        duration: { unit: "second", value: 1 },
+        frozenCosts: [],
+        success: [],
+        failure: [],
+      },
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      npcActions: [{
+        npcId: "npc:warden",
+        goal: "避开落下的碎石",
+        method: "向侧面闪避",
+        knowledgeRefs: ["claim:warden-heard-a-bell"],
+        mechanicalProposal: {
+          operation: "resolveNoncombatSave",
+          saveAbility: "dex",
+          dc: 10,
+          mode: "normal",
+          duration: { unit: "second", value: 1 },
+          frozenCosts: [],
+          success: [],
+          failure: [],
+          targetEntityRef: "character:alice",
+        },
+      }],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      npcActions: [{
+        npcId: "npc:warden",
+        goal: "重复搜查",
+        method: "沿原路线再次搜查",
+        knowledgeRefs: ["claim:warden-heard-a-bell"],
+        mechanicalProposal: {
+          operation: "retryFailedAction",
+          ability: "wis",
+          skill: "perception",
+          dc: 10,
+          mode: "normal",
+          duration: { unit: "second", value: 1 },
+          frozenCosts: [],
+          success: [],
+          failure: [],
+          precedentRef: "failure:npc-search",
+        },
+      }],
+    })),
+    officialToolResponse("submit_kp_proposal", directProposal({
+      operation: "advanceFactionPlan",
+      factionRef: "faction:watch",
+      basisRefs: ["fact:ordinary-courtyard-door-is-unlocked"],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      npcActions: [{
+        npcId: "npc:warden",
+        goal: "阻止阿莱莎穿过大厅",
+        method: "与阿莱莎角力",
+        knowledgeRefs: ["claim:warden-heard-a-bell"],
+        mechanicalProposal: {
+          operation: "resolveNoncombatContest",
+          ability: "str",
+          skill: "athletics",
+          opposedAbility: "str",
+          opposedSkill: "athletics",
+          targetEntityRef: "character:alice",
+        },
+      }],
+    })),
+    officialToolResponse("submit_kp_proposal", directProposal({
+      operation: "startActivity",
+      activityRef: "activity:watch-door",
+      duration: { unit: "minute", value: 1 },
+      success: [{ kind: "advanceFictionTime", duration: { unit: "minute", value: 1 } }],
+      failure: [],
+    })),
+    officialToolResponse("submit_kp_proposal", directProposal({
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [{ kind: "changeHitPoints", amount: Number.MAX_SAFE_INTEGER + 1 }],
+      failure: [],
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      mechanicalProposal: {
+        operation: "resolveNoncombatCheck",
+        ability: "wis",
+        skill: "perception",
+        dc: 10,
+        mode: "normal",
+        duration: { unit: "second", value: 1 },
+        frozenCosts: [{
+          kind: "consumeResource",
+          resourceRef: "resource:focus",
+          amount: Number.MAX_SAFE_INTEGER + 1,
+        }],
+        success: [],
+        failure: [],
+      },
+    })),
+    officialToolResponse("submit_kp_proposal", directProposal({
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [{ kind: "acquireKnowledge", knowledgeRef: "knowledge:visible-exit", value: null }],
+      failure: [],
+    })),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
+
+  for (const label of [
+    "missing direct frozen plan",
+    "unsupported direct effect",
+    "additional direct field",
+    "duplicate authority-owned hit-point effect",
+    "incomplete check",
+    "incomplete save",
+    "retry without precedent",
+    "NPC save cannot target another entity",
+    "NPC retry is not a Rules operation",
+    "player cannot submit an NPC faction plan",
+    "NPC contest has no registered compound protocol",
+    "Activity duration cannot also be an outcome time effect",
+    "unsafe hit-point amount",
+    "unsafe frozen resource cost",
+    "null knowledge content would be rewritten by Rules",
+  ]) {
+    await assert.rejects(adapter.propose(proposalRequest()), (error) => {
+      assert.ok(error instanceof AuthoritativeKpModelError, label);
+      assert.equal(error.code, "modelPermanent", label);
+      assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema", label);
+      return true;
+    });
+  }
+  assert.equal(ai.calls.length, 15);
+});
+
+test("model boundary accepts complete saves and both Rules-valid retry shapes", async () => {
+  const frozenOutcome = {
+    dc: 12,
+    mode: "normal",
+    duration: { unit: "second", value: 1 },
+    frozenCosts: [],
+    success: [],
+    failure: [],
+  };
+  const ai = scriptedAi([
+    officialToolResponse("submit_kp_proposal", proposal({
+      mechanicalProposal: {
+        operation: "resolveNoncombatSave",
+        saveAbility: "dex",
+        ...frozenOutcome,
+      },
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      mechanicalProposal: {
+        operation: "retryFailedAction",
+        precedentRef: "failure:unchanged-search",
+      },
+    })),
+    officialToolResponse("submit_kp_proposal", proposal({
+      mechanicalProposal: {
+        operation: "retryFailedAction",
+        ability: "wis",
+        skill: "perception",
+        precedentRef: "failure:blocked-search",
+        ...frozenOutcome,
+      },
+    })),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
+
+  const savingThrow = await adapter.propose(proposalRequest());
+  const unchangedRetry = await adapter.propose(proposalRequest());
+  const retry = await adapter.propose(proposalRequest());
+
+  assert.equal(savingThrow.mechanicalProposal.operation, "resolveNoncombatSave");
+  assert.deepEqual(unchangedRetry.mechanicalProposal, {
+    operation: "retryFailedAction",
+    precedentRef: "failure:unchanged-search",
+  });
+  assert.equal(retry.mechanicalProposal.operation, "retryFailedAction");
+});
+
+test("a simple observation draft crosses the model, Room normalization, and real Rules step seams", async () => {
+  const draft = proposal({
+    kind: "directSuccess",
+    goal: "看清大厅里有哪些明显出口",
+    method: "站在原地环顾大厅",
+    estimatedFictionTime: { unit: "second", value: 1 },
+    risk: null,
+    npcActions: [],
+    mechanicalProposal: {
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [],
+      failure: [],
+    },
+    scene: {
+      question: "阿莱莎看见了哪些明显出口？",
+      pressure: "",
+      opportunities: ["查看东侧没有上锁的门"],
+      conclusionCandidate: null,
+    },
+  });
+  const ai = scriptedAi([officialToolResponse("submit_kp_proposal", draft)]);
+  const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
+  const modelDraft = await adapter.propose(proposalRequest());
+  const rulesProposal = normalizeRoomKpProposal(modelDraft);
+  assert.ok(rulesProposal);
+  const world = initializeObservationWorld();
+
+  const outcome = step(world.profiles, world.state, {
+    ...rulesProposal,
+    rootActionId: ROOT_ACTION_ID,
+    actorCharacterId: "character:alice",
+  });
+
+  assert.equal(outcome.kind, "committed", JSON.stringify(outcome));
+  assert.ok(outcome.events.some(({ eventType }) => eventType === "FictionTimeAdvanced"));
 });
 
 test("post-commit narration is generated once from each audience's isolated projection", async () => {
   const aliceProjection = {
-    viewer: { kind: "player", viewerKey: "character:alice" },
+    viewer: { kind: "player", viewerKey: "character:alice", characterId: "character:alice" },
     projectionHash: "projection:alice:after-commit",
     committedDelta: {
       schema: "zhuwei.observer-committed-delta/v1",
@@ -489,7 +924,7 @@ test("post-commit narration is generated once from each audience's isolated proj
     pressure: "巡逻者正在回廊尽头转身。",
   };
   const bobProjection = {
-    viewer: { kind: "player", viewerKey: "character:bob" },
+    viewer: { kind: "player", viewerKey: "character:bob", characterId: "character:bob" },
     projectionHash: "projection:bob:after-commit",
     committedDelta: {
       schema: "zhuwei.observer-committed-delta/v1",
@@ -571,7 +1006,142 @@ test("post-commit narration is generated once from each audience's isolated proj
   assert.equal(ai.calls.length, 2, "an ungrounded narration must fail before model I/O");
 });
 
-test("post-commit narration fails closed on undeclared or player-owned agency claims", async () => {
+test("observation narration deterministically binds valid agency bases omitted from top-level references", async () => {
+  const projection = {
+    viewer: { kind: "player", viewerKey: "character:alice", characterId: "character:alice" },
+    projectionHash: "projection:alice:visible-exit",
+    committedDelta: {
+      schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: "character:alice",
+      viewerCharacterId: "character:alice",
+      receipt: { receiptId: "receipt:visible-exit", rootActionId: ROOT_ACTION_ID, status: "committed" },
+      changes: [{ kind: "fictionTimeAdvanced", durationMicros: "1000000" }],
+    },
+    committedFacts: ["fact:ordinary-courtyard-door-is-unlocked"],
+    visibleOpportunities: ["查看东侧没有上锁的门"],
+  };
+  const observationNarration = {
+    body: "你环顾大厅，东侧那扇普通木门清楚可见，门闩没有扣上。",
+    tts: "东侧有一扇没有上锁的普通木门。",
+    decisionPrompt: "你要走近木门，还是继续观察大厅其他方向？",
+    referencedProjectionRefs: [],
+    agencyClaims: [{
+      subjectKind: "world",
+      subjectRef: null,
+      claimKind: "sensoryConsequence",
+      basisRefs: ["fact:ordinary-courtyard-door-is-unlocked"],
+    }],
+  };
+  const ai = scriptedAi([
+    officialToolResponse("submit_current_narration", observationNarration),
+    officialToolResponse("submit_current_narration", {
+      ...observationNarration,
+      agencyClaims: [{
+        ...observationNarration.agencyClaims[0],
+        basisRefs: ["fact:not-in-the-audience-projection"],
+      }],
+    }),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
+
+  const narration = await adapter.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:visible-exit", status: "committed" },
+    projection,
+  });
+
+  assert.deepEqual(narration.referencedProjectionRefs, [
+    "fact:ordinary-courtyard-door-is-unlocked",
+  ]);
+  assert.equal(narration.agencyClaims[0].subjectKind, "world");
+  await assert.rejects(
+    adapter.narrate({
+      rootActionId: ROOT_ACTION_ID,
+      receipt: { receiptId: "receipt:visible-exit", status: "committed" },
+      projection,
+    }),
+    (error) => error instanceof AuthoritativeKpModelError && error.code === "modelPermanent",
+  );
+
+  const system = ai.calls[0].input.messages[0].content;
+  assert.match(system, /每个 basisRef.*同时列入 referencedProjectionRefs/);
+  assert.match(system, /world.*subjectRef=null.*sensoryConsequence/);
+});
+
+test("narration projection carries typed noncombat subjects without exposing hidden entities", async () => {
+  const projection = narrationProjection({
+    kind: "projected",
+    projectionHash: "projection:alice:noncombat-npc",
+    viewer: { kind: "player", subjectId: "character:alice" },
+    controlledCharacter: { characterId: "character:alice", sceneId: "scene:hall" },
+    visibleFacts: [{
+      id: "fact:warden-spoke-about-door",
+      kind: "npcStatement",
+      subjectRefs: ["npc:warden"],
+      value: "守卫说东侧的门没有上锁。",
+    }],
+    committedDelta: {
+      schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: "npc:warden",
+      viewerCharacterId: "character:alice",
+      receipt: { receiptId: "receipt:warden-speaks", rootActionId: ROOT_ACTION_ID, status: "committed" },
+      changes: [{ kind: "factCommitted", factId: "fact:warden-spoke-about-door" }],
+    },
+  }, "character:alice", "receipt:warden-speaks", {
+    "character:alice": { id: "character:alice", kind: "player" },
+    "npc:warden": { id: "npc:warden", kind: "npc" },
+    "npc:hidden-spy": { id: "npc:hidden-spy", kind: "npc" },
+  });
+
+  assert.deepEqual(projection.agencySubjects, [
+    { subjectKind: "playerCharacter", subjectRef: "character:alice" },
+    { subjectKind: "npc", subjectRef: "npc:warden" },
+  ]);
+  assert.equal(JSON.stringify(projection).includes("npc:hidden-spy"), false);
+  assert.equal("entities" in projection, false, "noncombat narration must not need combat entities");
+
+  const baseNarration = {
+    body: "守卫看向你说：‘东侧的门没有上锁。’",
+    tts: "守卫告诉你，东侧的门没有上锁。",
+    decisionPrompt: "你要走向东侧的门，还是继续询问守卫？",
+    referencedProjectionRefs: ["fact:warden-spoke-about-door"],
+  };
+  const ai = scriptedAi([
+    officialToolResponse("submit_current_narration", {
+      ...baseNarration,
+      agencyClaims: [{
+        subjectKind: "playerCharacter",
+        subjectRef: "npc:warden",
+        claimKind: "committedObservableAction",
+        basisRefs: ["fact:warden-spoke-about-door"],
+      }],
+    }),
+    officialToolResponse("submit_current_narration", {
+      ...baseNarration,
+      agencyClaims: [{
+        subjectKind: "npc",
+        subjectRef: "npc:warden",
+        claimKind: "dialogue",
+        basisRefs: ["fact:warden-spoke-about-door"],
+      }],
+    }),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
+  const request = {
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:warden-speaks", status: "committed" },
+    projection,
+  };
+
+  await assert.rejects(
+    adapter.narrate(request),
+    (error) => error instanceof AuthoritativeKpModelError && error.code === "modelPermanent",
+  );
+  await assert.doesNotReject(() => adapter.narrate(request));
+  assert.match(ai.calls.at(-1).input.messages[0].content, /audienceProjection\.agencySubjects/);
+});
+
+test("post-commit narration rejects missing, mis-typed, or player-owned agency claims", async () => {
   const projection = {
     viewer: { kind: "player", viewerKey: "character:alice", characterId: "character:alice" },
     projectionHash: "projection:alice:agency",
@@ -583,6 +1153,10 @@ test("post-commit narration fails closed on undeclared or player-owned agency cl
       changes: [{ kind: "checkResolved", outcome: "success", result: "门已经打开。" }],
     },
     committedFacts: ["fact:door-open"],
+    agencySubjects: [
+      { subjectKind: "playerCharacter", subjectRef: "character:alice" },
+      { subjectKind: "npc", subjectRef: "npc:warden" },
+    ],
   };
   const baseNarration = {
     tts: "门打开了。",
@@ -601,6 +1175,26 @@ test("post-commit narration fails closed on undeclared or player-owned agency cl
     ["dialogue", "你说：‘大家跟我来。’"],
     ["nextAction", "你决定立刻冲进走廊。"],
   ];
+  const misTyped = [
+    {
+      subjectKind: "npc",
+      subjectRef: "character:alice",
+      claimKind: "dialogue",
+      basisRefs: ["fact:door-open"],
+    },
+    {
+      subjectKind: "playerCharacter",
+      subjectRef: "npc:warden",
+      claimKind: "committedObservableAction",
+      basisRefs: ["fact:door-open"],
+    },
+    {
+      subjectKind: "npc",
+      subjectRef: "fact:door-open",
+      claimKind: "dialogue",
+      basisRefs: ["fact:door-open"],
+    },
+  ];
   const allowed = {
     ...baseNarration,
     body: "你推开的门已经敞开；冷风从门后的走廊迎面吹来。",
@@ -618,6 +1212,11 @@ test("post-commit narration fails closed on undeclared or player-owned agency cl
       ...baseNarration,
       body,
       agencyClaims: [playerClaim(claimKind)],
+    })),
+    ...misTyped.map((claim) => officialToolResponse("submit_current_narration", {
+      ...baseNarration,
+      body: "门边传来一句简短回应。",
+      agencyClaims: [claim],
     })),
     officialToolResponse("submit_current_narration", allowed),
   ]);
@@ -640,6 +1239,13 @@ test("post-commit narration fails closed on undeclared or player-owned agency cl
       return true;
     });
   }
+  for (const claim of misTyped) {
+    await assert.rejects(adapter.narrate(request), (error) => {
+      assert.ok(error instanceof AuthoritativeKpModelError, JSON.stringify(claim));
+      assert.equal(error.code, "modelPermanent", JSON.stringify(claim));
+      return true;
+    });
+  }
   await assert.doesNotReject(async () => {
     const narration = await adapter.narrate(request);
     assert.deepEqual(narration.agencyClaims, allowed.agencyClaims);
@@ -647,13 +1253,17 @@ test("post-commit narration fails closed on undeclared or player-owned agency cl
 
   const schema = ai.calls.at(-1).input.tools[0].function.parameters;
   assert.ok(schema.required.includes("agencyClaims"));
-  assert.equal(schema.properties.agencyClaims.items.additionalProperties, false);
-  assert.deepEqual(schema.properties.agencyClaims.items.properties.subjectKind.enum, [
-    "playerCharacter",
-    "npc",
-    "world",
+  assert.equal(schema.properties.referencedProjectionRefs.uniqueItems, true);
+  assert.equal(schema.properties.agencyClaims.uniqueItems, true);
+  const agencyBranches = schema.properties.agencyClaims.items.anyOf;
+  const agencyBranch = (subjectKind) => agencyBranches.find((branch) =>
+    branch.properties.subjectKind.const === subjectKind);
+  assert.ok(agencyBranches.every((branch) => branch.additionalProperties === false));
+  assert.deepEqual(agencyBranch("playerCharacter").properties.claimKind.enum, [
+    "committedObservableAction",
+    "sensoryConsequence",
   ]);
-  assert.deepEqual(schema.properties.agencyClaims.items.properties.claimKind.enum, [
+  assert.deepEqual(agencyBranch("npc").properties.claimKind.enum, [
     "committedObservableAction",
     "sensoryConsequence",
     "thought",
@@ -661,6 +1271,9 @@ test("post-commit narration fails closed on undeclared or player-owned agency cl
     "dialogue",
     "nextAction",
   ]);
+  assert.deepEqual(agencyBranch("world").properties.subjectRef, { type: "null" });
+  assert.deepEqual(agencyBranch("world").properties.claimKind, { const: "sensoryConsequence" });
+  assert.equal(schema.properties.body.pattern, "\\S");
 });
 
 test("strict text fallback accepts only a complete schema-valid JSON object", async () => {

@@ -1795,3 +1795,28 @@
 | 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
 | --- | --- | ---: | --- |
 | 2026-08-28（最终冻结门） | `npm run typecheck && npm run lint && npm test` | 0 | production build；Node 335/335；Worker/Vitest 42/42 文件、158 passed / 5 skipped。 |
+
+## DeepSeek KP ActionPlan 与当前回话合同修复（2026-08-28）
+
+- 基线与 v6 发布事实：本次从干净 `cloudflare` / `5579801a961f96f06d247e02f47c3fc3d2081856` 继续；该提交已非 force 推送，远端 `main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。v6 已只更新现有 Worker `zhuwei`，Cloudflare Version `c35ce2c4-e9f6-49c9-8519-d7560c30297a` / deployment `137addbb-ef70-4580-abe3-5ac108d448c9` 承接 100% 流量；现有 ROOMS、DB、AI、ASSETS 与 Secret 名称不变，无 migration 或新资源。
+- v6 生产症状：在一次性房间 `8BTWKL`、公开 `deepseek-v4-flash` 中再次提交精确行动“我站在原地环顾大厅，寻找明显可见的出口，不触碰任何物品。”，输入仍恢复、没有行动或新 Delivery，证明失败仍在 commit 前的 Proposal/Rules 路径；v6 的投影引用归一化不足以恢复回话。`wrangler tail` 仍在 TCP 边界超时，Observability 历史查询因既有 OAuth 缺少 scope 返回 403；用户明确要求停止继续等待日志后不再重试。临时本地脱敏脚本已删除，最后创建的 Tail 会话随后返回 `TAIL_DELETED`，没有残留采集进程或内容型日志。
+- 首个代码根因：模型工具 schema 与 semantic validator 只要求 `mechanicalProposal.operation`，并允许 Rules 从未实现的 `sensoryEvidence` 等 effect；Rules 对 `resolveDirectConsequences` 实际要求正整数 duration、`frozenCosts=[]`、合法 success、`failure=[]`。因此 DeepSeek 可返回“模型边界合法、Rules 必拒”的观察计划，Room 随后进入第二次完整 Proposal 或最终安全失败。修复把 direct/check/save/retry 的字段形状、成本、效果、安全整数、玩家/NPC operation 范围与 Rules 对齐；观察类无不确定行动固定使用 direct、复制 estimated time、没有结构化状态变化时 `success=[]`。`retryFailedAction` 同步保留 Rules 的两种闭合形状：原样重试只带 operation/precedentRef 并由既有失败先例直接拒绝，可能执行的重试必须完整冻结检定。玩家不得提交只属于 NPC 的 `advanceFactionPlan`；NPC 不得提交 contest、retry 或替其他实体 save；Activity completion 不得再次推进其 duration 已拥有的虚构时间；显式 null 知识值在进入 Rules 前拒绝，避免静默改写。
+- 当前回话根因：Narration schema 没表达本地 agency validator 的交叉约束；合法 `basisRefs` 若未重复填写在 `referencedProjectionRefs`，或 world/player 字段组合错误，会在行动已提交后得到统一 `modelPermanent` 而没有 Delivery。修复将 player/NPC/world agency claim 分支闭合，拒绝纯空白和重复数组；所有越界引用继续 fail closed，只把已经逐项验证属于该 audienceProjection 的 basis 确定性并入顶层引用，避免让模型重复填写同一事实成为单点失败。独立复审补出的 `subjectRef` 类型冒用也已闭合：Room 只把权威 `state.entities` 中、其 ID 已经出现在 observer-safe 投影里的实体加入 `agencySubjects`，Narration 必须逐字使用该类型目录；不再从无类型的 `committedDelta.actorCharacterId` 猜玩家/NPC，隐藏实体也不会因目录生成而泄露。
+- 模型输入体积与 Provider 兼容：首轮严格分支内联让 `PROPOSAL_TOOL` 从约 33 KB 增至 `99,469` bytes，可能反向增加 V4 Flash 超时/无效输出风险；最终使用 DeepSeek 当前工具调用文档明确展示的 `$def/#/$def` 共享同一 cost/effect 与玩家/NPC ActionPlan 定义，工具为 `33,213` bytes，并新增 `<60,000` bytes 回归门。模型仍是非 strict 调用，真实可用性必须由发布后的默认 V4 Flash 产品探针证明，不能由 scripted fixture 替代。
+- 修改范围：`app/_runtime/lib/kp/authoritative-types.ts`、`app/_runtime/lib/kp/authoritative-policy.ts`、`app/_runtime/lib/kp/authoritative-helpers.ts`、`app/_runtime/lib/room/proposal-adapter.ts`、`app/_runtime/lib/room/durable-object.ts`、`tests/authoritative-kp-adapter.test.mjs`；本节日志由协调代理单写。没有前端目录、模型目录、D1 schema、Secret、Worker 配置或受保护房间修改；前端仍只显示 DeepSeek V4 Flash / Pro，“确认当前回应”语义不变。
+- 已知限制：结构化 agency claim 已 fail closed，但 validator 无法从任意自然语言正文证明模型没有漏报 claim；例如正文自行声称玩家下一行动而同时给出空数组，仍依赖 Prompt 合同。未用脆弱关键词扫描伪装解决该自然语言完备性问题；这不属于本次观察行动无法进入 Rules/Delivery 的根因，后续若要机械证明需把正文重构为受控叙事子句。
+- 当前状态：三条 RED、ActionPlan/Rules 与 Narration 定向 GREEN、类型与相关 lint 已完成；独立复审先后发现的玩家/NPC operation 分裂、schema 膨胀、null 知识、安全整数、Activity 重复时间、agency 主体类型冒用与非战斗 NPC 类型来源缺口均已逐项修正并补回归。第二个冻结候选已通过正式冻结门；Git 提交/推送、部署和真实 V4 Flash Proposal→Rules→Narration→Delivery 尚未执行，在真实探针成功前不得写“外部能力已恢复”。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28（ActionPlan RED） | `npx tsx --test --test-name-pattern='model boundary rejects direct consequences' tests/authoritative-kp-adapter.test.mjs` | 1 | operation-only direct 报 `Missing expected rejection`，复现模型边界放行而 Rules 必拒。 |
+| 2026-08-28（Narration RED → GREEN） | 观察回话引用归一化定向测试 | 1 → 0 | 合法 basis 漏填顶层引用从统一 `modelPermanent` 改为确定性补齐；越界 basis 仍拒绝。 |
+| 2026-08-28（schema 体积 RED → GREEN） | ActionPlan schema 定向测试 | 1 → 0 | 内联版本为 `99,469` bytes；共享定义后 `PROPOSAL_TOOL=32,955` bytes。 |
+| 2026-08-28 | `npx tsx --test tests/authoritative-kp-adapter.test.mjs tests/rules-compound-action-v2.test.mjs` | 0 | 最终为 49/49；含观察 draft→Room normalization→真实 Rules `step` committed、两种闭合 retry、ActionPlan 边界、Narration 与完整 compound Rules 套件。 |
+| 2026-08-28 | `$def` 兼容性与 schema 体积复核；Adapter 定向回归 | 0 | 所有共享引用均指向根 `$def`；最终 `PROPOSAL_TOOL=33,213` bytes；Adapter 18/18。 |
+| 2026-08-28 | 非战斗 `agencySubjects` 回归；`npm run typecheck` | 0；0 | Adapter 18/18；NPC actor 可按权威类型叙述、不能冒充玩家，目录不要求 combat `entities`，未出现在 observer-safe 投影的隐藏 NPC 不进入模型输入。 |
+| 2026-08-28 | `npm run typecheck`；四文件显式 ESLint；`git diff --check` | 0；0（3 个 TS 文件按仓库配置忽略、无 error）；0 | 当前 TypeScript 与 whitespace 正确；最终仓库级 Lint 由正式冻结门覆盖。 |
+| 2026-08-28 | 独立只读首轮复审 | blocker 2 / HIGH 2 / MEDIUM 3 | 所列 operation 分型、schema 体积、null、安全整数与 Activity 缺口均已修正；save/retry 的跨 adapter→Rules 专项仍由两侧既有测试分别覆盖，本次用户观察路径已有真实 direct seam。 |
+| 2026-08-28（首个冻结候选） | `npm run typecheck && npm run lint && npm test` | 1 | typecheck、Lint、production build、Node 340/340 通过；Worker/Vitest 41/42 文件、157 passed / 1 failed / 5 skipped。唯一失败为多轮评估第 23 步的 Rules 合法最小 retry 被模型边界拒绝后映射成 `modelTransient`；该失败使候选失效，未提交或发布。 |
+| 2026-08-28（冻结失败定向修复） | Adapter + compound Rules；`npx vitest run tests/kp-multiturn-eval.test.ts`；`npm run typecheck` | 0；0；0 | 49/49；多轮评估 1/1；边界只增加 Rules 已支持的原样重试最小闭合分支，可能执行的 retry 仍要求完整冻结。 |
+| 2026-08-28（最终冻结门） | `git diff --check && npm run typecheck && npm run lint && npm test` | 0 | 同一最终候选：production build；Node 340/340；Worker/Vitest 42/42 文件、158 passed / 5 skipped。故障注入 reporter 的 `stage4-hazard-freeze-response-loss` 文本为通过用例的预期输出。 |

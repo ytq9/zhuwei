@@ -6,19 +6,16 @@ import { canonicalJson } from "./authoritative-helpers";
 import {
   ACTION_PLAN_ABILITIES,
   ACTION_PLAN_CHECK_MODES,
-  ACTION_PLAN_COST_KINDS,
-  ACTION_PLAN_EFFECT_KINDS,
   ACTION_PLAN_OPERATIONS,
   CAMPAIGN_LIFECYCLE_ACTIONS,
   NARRATION_AGENCY_CLAIM_KINDS,
-  NARRATION_AGENCY_SUBJECT_KINDS,
   type KpNarrationRequest,
   type KpProposalRequest,
   type AuthoritativeKpProfile,
 } from "./authoritative-types";
 
 const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-prompt-policy-v6",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v7",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
@@ -27,7 +24,7 @@ const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
 const HISTORICAL_WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 const HISTORICAL_ALTERNATIVE_WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const HISTORICAL_WORKERS_AI_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-prompt-policy-v6",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v7",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
@@ -112,7 +109,7 @@ const fictionDurationSchema = {
   additionalProperties: false,
   properties: {
     unit: { enum: ["round", "second", "minute", "hour", "day"] },
-    value: { type: "number", exclusiveMinimum: 0 },
+    value: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
   },
   required: ["unit", "value"],
 };
@@ -252,68 +249,190 @@ const openWorldDefinition = {
 };
 
 const actionPlanCostSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    kind: { enum: [...ACTION_PLAN_COST_KINDS] },
-    artifactRef: { type: "string", minLength: 1, maxLength: 240 },
-    resourceRef: { type: "string", minLength: 1, maxLength: 240 },
-    amount: { type: "number" },
-    distanceFeet: { type: "number" },
-    slotLevel: { type: "integer", minimum: 0, maximum: 9 },
-    count: { type: "integer", minimum: 0 },
-    duration: fictionDurationSchema,
-  },
-  required: ["kind"],
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "consumeResource" },
+        resourceRef: { type: "string", minLength: 1, maxLength: 240 },
+        amount: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      },
+      required: ["kind", "resourceRef", "amount"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "consumeArtifact" },
+        artifactRef: { type: "string", pattern: "^item:.+", maxLength: 240 },
+        count: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      },
+      required: ["kind", "artifactRef"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "fictionTime" },
+        duration: fictionDurationSchema,
+      },
+      required: ["kind", "duration"],
+    },
+  ],
+};
+
+const primitiveValueSchema = {
+  anyOf: [
+    { type: "string", maxLength: 480 },
+    { type: "number" },
+    { type: "boolean" },
+  ],
 };
 
 const actionPlanEffectSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    kind: { enum: [...ACTION_PLAN_EFFECT_KINDS] },
-    artifactRef: { type: "string", minLength: 1, maxLength: 240 },
-    to: { type: "string", minLength: 1, maxLength: 240 },
-    observerRef: { type: "string", minLength: 1, maxLength: 240 },
-    evidence: { type: "string", minLength: 1, maxLength: 480 },
-    evidenceRef: { type: "string", minLength: 1, maxLength: 240 },
-    npcId: { type: "string", minLength: 1, maxLength: 240 },
-    entityRef: { type: "string", minLength: 1, maxLength: 240 },
-    targetRef: { type: "string", minLength: 1, maxLength: 240 },
-    resourceRef: { type: "string", minLength: 1, maxLength: 240 },
-    amount: { type: "number" },
-    conditionRef: { type: "string", minLength: 1, maxLength: 240 },
-    sceneRef: { type: "string", minLength: 1, maxLength: 240 },
-    activityRef: { type: "string", minLength: 1, maxLength: 240 },
-    duration: fictionDurationSchema,
-    encounterRef: { type: "string", minLength: 1, maxLength: 240 },
-    knowledgeRef: { type: "string", minLength: 1, maxLength: 240 },
-    recipientRefs: stringArray,
-    partyRef: { type: "string", minLength: 1, maxLength: 240 },
-    campaignRef: { type: "string", minLength: 1, maxLength: 240 },
-    chapterRef: { type: "string", minLength: 1, maxLength: 240 },
-    relationshipRef: { type: "string", minLength: 1, maxLength: 240 },
-    commitmentRef: { type: "string", minLength: 1, maxLength: 240 },
-    debtRef: { type: "string", minLength: 1, maxLength: 240 },
-    status: { type: "string", minLength: 1, maxLength: 120 },
-    value: {
-      anyOf: [
-        { type: "null" },
-        { type: "string", maxLength: 480 },
-        { type: "number" },
-        { type: "boolean" },
-      ],
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "acquireEvidence" },
+        evidenceRef: { type: "string", minLength: 1, maxLength: 240 },
+        definitionRef: { type: "string", minLength: 1, maxLength: 240 },
+        evidence: { type: "string", minLength: 1, maxLength: 480 },
+      },
+      required: ["kind", "evidenceRef"],
     },
-    definitionRef: { type: "string", minLength: 1, maxLength: 240 },
-  },
-  required: ["kind"],
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "acquireKnowledge" },
+        knowledgeRef: { type: "string", minLength: 1, maxLength: 240 },
+        definitionRef: { type: "string", minLength: 1, maxLength: 240 },
+        value: primitiveValueSchema,
+      },
+      required: ["kind", "knowledgeRef"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "changeResource" },
+        resourceRef: { type: "string", minLength: 1, maxLength: 240 },
+        amount: {
+          type: "integer",
+          minimum: Number.MIN_SAFE_INTEGER,
+          maximum: -1,
+        },
+        targetRef: { type: "string", minLength: 1, maxLength: 240 },
+      },
+      required: ["kind", "resourceRef", "amount"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "changeHitPoints" },
+        amount: {
+          anyOf: [
+            { type: "integer", minimum: Number.MIN_SAFE_INTEGER, maximum: -1 },
+            { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          ],
+        },
+        targetRef: { type: "string", minLength: 1, maxLength: 240 },
+      },
+      required: ["kind", "amount"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "alertNpc" },
+        npcId: { type: "string", minLength: 1, maxLength: 240 },
+        status: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["kind", "npcId"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "moveEntity" },
+        sceneRef: { type: "string", minLength: 1, maxLength: 240 },
+        entityRef: { type: "string", minLength: 1, maxLength: 240 },
+      },
+      required: ["kind", "sceneRef"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "advanceFictionTime" },
+        duration: fictionDurationSchema,
+      },
+      required: ["kind", "duration"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "updateRelationship" },
+        relationshipRef: { type: "string", minLength: 1, maxLength: 240 },
+        recipientRefs: { ...stringArray, minItems: 1, uniqueItems: true },
+        value: { type: "string", minLength: 1, maxLength: 480 },
+        definitionRef: { type: "string", minLength: 1, maxLength: 240 },
+      },
+      required: ["kind", "relationshipRef", "recipientRefs", "value"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "recordCommitment" },
+        commitmentRef: { type: "string", minLength: 1, maxLength: 240 },
+        targetRef: { type: "string", minLength: 1, maxLength: 240 },
+        value: { type: "string", minLength: 1, maxLength: 480 },
+        status: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["kind", "commitmentRef", "targetRef", "value", "status"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { const: "recordDebt" },
+        debtRef: { type: "string", minLength: 1, maxLength: 240 },
+        targetRef: { type: "string", minLength: 1, maxLength: 240 },
+        value: { type: "string", minLength: 1, maxLength: 480 },
+        status: { type: "string", minLength: 1, maxLength: 120 },
+        definitionRef: { type: "string", minLength: 1, maxLength: 240 },
+      },
+      required: ["kind", "debtRef", "targetRef", "value", "status"],
+    },
+  ],
 };
 
-const actionPlanSchema = {
+const actionPlanCostRef = { $ref: "#/$def/actionPlanCost" };
+const actionPlanEffectRef = { $ref: "#/$def/actionPlanEffect" };
+
+const STRICT_RESOLUTION_OPERATIONS = new Set([
+  "resolveDirectConsequences",
+  "resolveNoncombatCheck",
+  "resolveNoncombatSave",
+  "retryFailedAction",
+]);
+
+const playerReservedActionPlanOperations = ACTION_PLAN_OPERATIONS.filter((operation) =>
+  !STRICT_RESOLUTION_OPERATIONS.has(operation) && operation !== "advanceFactionPlan");
+const npcReservedActionPlanOperations = ACTION_PLAN_OPERATIONS.filter((operation) =>
+  !STRICT_RESOLUTION_OPERATIONS.has(operation) && operation !== "resolveNoncombatContest");
+
+const reservedActionPlanSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    operation: { enum: [...ACTION_PLAN_OPERATIONS] },
+    operation: { enum: playerReservedActionPlanOperations },
     ability: { enum: [...ACTION_PLAN_ABILITIES] },
     skill: { anyOf: [{ type: "null" }, { type: "string", minLength: 1, maxLength: 120 }] },
     opposedAbility: { enum: [...ACTION_PLAN_ABILITIES] },
@@ -322,9 +441,9 @@ const actionPlanSchema = {
     dc: { type: "number" },
     mode: { enum: [...ACTION_PLAN_CHECK_MODES] },
     duration: fictionDurationSchema,
-    frozenCosts: { type: "array", maxItems: 24, items: actionPlanCostSchema },
-    success: { type: "array", maxItems: 24, items: actionPlanEffectSchema },
-    failure: { type: "array", maxItems: 24, items: actionPlanEffectSchema },
+    frozenCosts: { type: "array", maxItems: 24, items: actionPlanCostRef },
+    success: { type: "array", maxItems: 24, items: actionPlanEffectRef },
+    failure: { type: "array", maxItems: 24, items: actionPlanEffectRef },
     sourceEntityRef: { type: "string", minLength: 1, maxLength: 240 },
     targetEntityRef: { type: "string", minLength: 1, maxLength: 240 },
     targetEntityRefs: stringArray,
@@ -476,6 +595,162 @@ const actionPlanSchema = {
   required: ["operation"],
 };
 
+const npcReservedActionPlanSchema = {
+  ...reservedActionPlanSchema,
+  properties: {
+    ...reservedActionPlanSchema.properties,
+    operation: { enum: npcReservedActionPlanOperations },
+  },
+};
+
+const compoundOutcomeArraySchema = {
+  type: "array",
+  maxItems: 24,
+  items: actionPlanEffectRef,
+};
+
+const compoundCostArraySchema = {
+  type: "array",
+  maxItems: 24,
+  items: actionPlanCostRef,
+};
+
+const directConsequencesActionPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: { const: "resolveDirectConsequences" },
+    duration: fictionDurationSchema,
+    frozenCosts: { ...compoundCostArraySchema, maxItems: 0 },
+    success: compoundOutcomeArraySchema,
+    failure: { ...compoundOutcomeArraySchema, maxItems: 0 },
+  },
+  required: ["operation", "duration", "frozenCosts", "success", "failure"],
+};
+
+const noncombatCheckActionPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: { const: "resolveNoncombatCheck" },
+    ability: { enum: [...ACTION_PLAN_ABILITIES] },
+    skill: { anyOf: [{ type: "null" }, { type: "string", minLength: 1, maxLength: 120 }] },
+    dc: { type: "integer", minimum: 0, maximum: 30 },
+    mode: { enum: [...ACTION_PLAN_CHECK_MODES] },
+    duration: fictionDurationSchema,
+    frozenCosts: compoundCostArraySchema,
+    success: compoundOutcomeArraySchema,
+    failure: compoundOutcomeArraySchema,
+  },
+  required: [
+    "operation",
+    "ability",
+    "skill",
+    "dc",
+    "mode",
+    "duration",
+    "frozenCosts",
+    "success",
+    "failure",
+  ],
+};
+
+const noncombatSaveActionPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: { const: "resolveNoncombatSave" },
+    saveAbility: { enum: [...ACTION_PLAN_ABILITIES] },
+    dc: { type: "integer", minimum: 0, maximum: 30 },
+    mode: { enum: [...ACTION_PLAN_CHECK_MODES] },
+    duration: fictionDurationSchema,
+    frozenCosts: compoundCostArraySchema,
+    success: compoundOutcomeArraySchema,
+    failure: compoundOutcomeArraySchema,
+    targetEntityRef: { type: "string", minLength: 1, maxLength: 240 },
+  },
+  required: [
+    "operation",
+    "saveAbility",
+    "dc",
+    "mode",
+    "duration",
+    "frozenCosts",
+    "success",
+    "failure",
+  ],
+};
+
+const retryFailedActionPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...noncombatCheckActionPlanSchema.properties,
+    operation: { const: "retryFailedAction" },
+    precedentRef: { type: "string", minLength: 1, maxLength: 240 },
+  },
+  required: [...noncombatCheckActionPlanSchema.required, "precedentRef"],
+};
+
+const unchangedRetryFailedActionPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: { const: "retryFailedAction" },
+    precedentRef: { type: "string", minLength: 1, maxLength: 240 },
+  },
+  required: ["operation", "precedentRef"],
+};
+
+const actionPlanSchema = {
+  anyOf: [
+    { $ref: "#/$def/directConsequencesActionPlan" },
+    { $ref: "#/$def/noncombatCheckActionPlan" },
+    { $ref: "#/$def/noncombatSaveActionPlan" },
+    { $ref: "#/$def/unchangedRetryFailedActionPlan" },
+    { $ref: "#/$def/retryFailedActionPlan" },
+    { $ref: "#/$def/playerReservedActionPlan" },
+  ],
+};
+
+const npcNoncombatSaveActionPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: { const: "resolveNoncombatSave" },
+    saveAbility: { enum: [...ACTION_PLAN_ABILITIES] },
+    dc: { type: "integer", minimum: 0, maximum: 30 },
+    mode: { enum: [...ACTION_PLAN_CHECK_MODES] },
+    duration: fictionDurationSchema,
+    frozenCosts: compoundCostArraySchema,
+    success: compoundOutcomeArraySchema,
+    failure: compoundOutcomeArraySchema,
+  },
+  required: noncombatSaveActionPlanSchema.required,
+};
+
+const npcActionPlanSchema = {
+  anyOf: [
+    { $ref: "#/$def/directConsequencesActionPlan" },
+    { $ref: "#/$def/noncombatCheckActionPlan" },
+    { $ref: "#/$def/npcNoncombatSaveActionPlan" },
+    { $ref: "#/$def/npcReservedActionPlan" },
+  ],
+};
+
+const proposalSchemaDefinitions = {
+  actionPlanCost: actionPlanCostSchema,
+  actionPlanEffect: actionPlanEffectSchema,
+  directConsequencesActionPlan: directConsequencesActionPlanSchema,
+  noncombatCheckActionPlan: noncombatCheckActionPlanSchema,
+  noncombatSaveActionPlan: noncombatSaveActionPlanSchema,
+  npcNoncombatSaveActionPlan: npcNoncombatSaveActionPlanSchema,
+  unchangedRetryFailedActionPlan: unchangedRetryFailedActionPlanSchema,
+  retryFailedActionPlan: retryFailedActionPlanSchema,
+  playerReservedActionPlan: reservedActionPlanSchema,
+  npcReservedActionPlan: npcReservedActionPlanSchema,
+};
+
 const actorPlanSchema = {
   type: "object",
   additionalProperties: false,
@@ -571,6 +846,7 @@ const actorPlanSchema = {
 const proposalParameters = {
   type: "object",
   additionalProperties: false,
+  $def: proposalSchemaDefinitions,
   properties: {
     kind: {
       enum: [
@@ -650,7 +926,7 @@ const proposalParameters = {
           method: { type: "string", minLength: 1, maxLength: 480 },
           knowledgeRefs: npcKnowledgeRefArray,
           actorPlan: actorPlanSchema,
-          mechanicalProposal: { anyOf: [{ type: "null" }, actionPlanSchema] },
+          mechanicalProposal: { anyOf: [{ type: "null" }, npcActionPlanSchema] },
         },
         required: ["npcId", "goal", "method", "knowledgeRefs", "mechanicalProposal"],
       },
@@ -683,38 +959,88 @@ const proposalParameters = {
   ],
 };
 
+const narrationRefSchema = {
+  type: "string",
+  minLength: 1,
+  maxLength: 240,
+  pattern: "\\S",
+};
+
+const narrationBasisRefsSchema = {
+  type: "array",
+  minItems: 1,
+  maxItems: 12,
+  uniqueItems: true,
+  items: narrationRefSchema,
+  description: "每一项都必须从 audienceProjection 中已有的字符串值逐字复制，并同时列入顶层 referencedProjectionRefs。",
+};
+
+const narrationPlayerAgencyClaimSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    subjectKind: { const: "playerCharacter" },
+    subjectRef: {
+      ...narrationRefSchema,
+      description: "必须逐字复制 audienceProjection 中该玩家角色的现有标识。",
+    },
+    claimKind: { enum: ["committedObservableAction", "sensoryConsequence"] },
+    basisRefs: narrationBasisRefsSchema,
+  },
+  required: ["subjectKind", "subjectRef", "claimKind", "basisRefs"],
+};
+
+const narrationNpcAgencyClaimSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    subjectKind: { const: "npc" },
+    subjectRef: {
+      ...narrationRefSchema,
+      description: "必须逐字复制 audienceProjection 中该 NPC 的现有标识。",
+    },
+    claimKind: { enum: [...NARRATION_AGENCY_CLAIM_KINDS] },
+    basisRefs: narrationBasisRefsSchema,
+  },
+  required: ["subjectKind", "subjectRef", "claimKind", "basisRefs"],
+};
+
+const narrationWorldAgencyClaimSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    subjectKind: { const: "world" },
+    subjectRef: { type: "null" },
+    claimKind: { const: "sensoryConsequence" },
+    basisRefs: narrationBasisRefsSchema,
+  },
+  required: ["subjectKind", "subjectRef", "claimKind", "basisRefs"],
+};
+
 const narrationParameters = {
   type: "object",
   additionalProperties: false,
   properties: {
-    body: { type: "string", minLength: 1, maxLength: 1_600 },
-    tts: { type: "string", minLength: 1, maxLength: 900 },
-    decisionPrompt: { type: "string", minLength: 1, maxLength: 480 },
-    referencedProjectionRefs: stringArray,
+    body: { type: "string", minLength: 1, maxLength: 1_600, pattern: "\\S" },
+    tts: { type: "string", minLength: 1, maxLength: 900, pattern: "\\S" },
+    decisionPrompt: { type: "string", minLength: 1, maxLength: 480, pattern: "\\S" },
+    referencedProjectionRefs: {
+      type: "array",
+      maxItems: 40,
+      uniqueItems: true,
+      items: narrationRefSchema,
+      description: "回应引用的每个标识都必须从 audienceProjection 中已有字符串逐字复制；每个 agencyClaims[].basisRefs 也必须在此列出。",
+    },
     agencyClaims: {
       type: "array",
       maxItems: 24,
+      uniqueItems: true,
       items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          subjectKind: { enum: [...NARRATION_AGENCY_SUBJECT_KINDS] },
-          subjectRef: {
-            anyOf: [
-              { type: "null" },
-              { type: "string", minLength: 1, maxLength: 240 },
-            ],
-          },
-          claimKind: { enum: [...NARRATION_AGENCY_CLAIM_KINDS] },
-          basisRefs: {
-            type: "array",
-            minItems: 1,
-            maxItems: 12,
-            uniqueItems: true,
-            items: { type: "string", minLength: 1, maxLength: 240 },
-          },
-        },
-        required: ["subjectKind", "subjectRef", "claimKind", "basisRefs"],
+        anyOf: [
+          narrationPlayerAgencyClaimSchema,
+          narrationNpcAgencyClaimSchema,
+          narrationWorldAgencyClaimSchema,
+        ],
       },
     },
   },
@@ -755,10 +1081,11 @@ const PROPOSAL_SYSTEM = `你是烛帷中承担叙事权威的真正 KP，不是�
 
 机械边界：你可以提出 DC、能力/技能、优势劣势依据、时间、资源成本、风险与有限结果范围，但不得提供 dice/faces/骰面、随机结果、WorldEvent、WorldState/state patch、作用域版本、Principal、可信 actor 或运行 Profile。Rules Module 拥有机械权威，Room Authority 拥有随机与提交权。不得在看到诊断后改变玩家目标；若已有骰前冻结内容或骰面，也不得借修订改判或重掷。
 
-mechanicalProposal 使用 authoritative-kp-action-plan-v1：必须是 schema 中 operation 枚举的一项及其闭合语义字段；frozenCosts、success、failure 也只能使用各自 kind 枚举和闭合字段。不得添加未声明机械键、脚本、状态补丁或事件。开放世界定义只能放在 dynamicMaterializations[].definition，并仍不得携带 actor/principal/profile/state/events/dice/faces。NPC mechanicalProposal 与主行动严格复用同一 ActionPlan 协议；缺少字段或组合不合法应交给 Rules 诊断，不得自行伪造结果。
+mechanicalProposal 使用 authoritative-kp-action-plan-v1：必须是 schema 中 operation 枚举的一项及其闭合语义字段；frozenCosts、success、failure 也只能使用各自 kind 枚举和闭合字段，每个效果数组最多各有一个 moveEntity 和一个 changeHitPoints。不得添加未声明机械键、脚本、状态补丁或事件。开放世界定义只能放在 dynamicMaterializations[].definition，并仍不得携带 actor/principal/profile/state/events/dice/faces。NPC mechanicalProposal 也必须严格服从其独立 schema；NPC 不得替其他实体提交 save，也不得提交 retryFailedAction。缺少字段或组合不合法时必须按 schema 重做，不得自行伪造结果。
 当门后内容、身份或其他隐藏现实需要随机决定时，不得先用 dynamicMaterializations 直接宣告结果。必须提交一个完整 hiddenRealityCandidateSet：每项含唯一 candidateId、正整数 hiddenWeight、因果依据、visibility 与可执行 definition；不得遗漏未选候选。Rules 会在请求随机数前整组验证，任一候选非法时整组退回修订。
 重要即兴裁定可用 adjudicationPrecedent 形成可追溯先例：首次为 record；只有事实、做法或版本实质变化时才可用 supersede，并引用 KP 投影中的旧 precedentId 和逐项 materialDifferences。它只是同一 ActionPlan 的冻结注记，不是事件或状态补丁；不得在看到骰面后用它改写原裁定。
-没有待决玩家输入时必须提交一个 mechanicalProposal：无不确定性的叙事与时间后果用 resolveDirectConsequences；确定且有意义的失败用 commitMeaningfulFailure；原样重试用 retryFailedAction；missingPrerequisite/worldLawViolation 若不提交失败后果则用 rejectInfeasibleAction。只有 pendingInput 非 null 时 mechanicalProposal 才必须为 null。directSuccess 可在确实没有风险时令 risk=null；场景暂时没有压力时 pressure 可为空字符串。
+没有待决玩家输入时必须提交一个 mechanicalProposal：无不确定性的叙事与时间后果用 resolveDirectConsequences；确定且有意义的失败用 commitMeaningfulFailure；原样重试用 retryFailedAction；missingPrerequisite/worldLawViolation 若不提交失败后果则用 rejectInfeasibleAction。只有 pendingInput 非 null 时 mechanicalProposal 才必须为 null。directSuccess 可在确实没有风险时令 risk=null；场景暂时没有压力时 pressure 可为空字符串。只有做法与事实均未改变、应由 Rules 依据既有先例拒绝的原样重试，retryFailedAction 才使用仅含 operation/precedentRef 的精确最小形状；只要重试可能执行，就必须同时完整冻结 ability、skill、dc、mode、duration、frozenCosts、success、failure。
+观察、查看、环顾或检查明显可见内容等没有真实不确定性的行动，使用精确的 resolveDirectConsequences 形状：operation、duration、frozenCosts、success、failure 五个字段缺一不可且不得添加其他字段；frozenCosts=[]、failure=[]。若填写 estimatedFictionTime，必须把完全相同的 unit/value 复制到 duration。没有结构化状态变化时 success=[]；不要为了填满数组虚构 effect，也不得使用 schema 未列出的 sensoryEvidence 等 kind。
 
 玩家控制玩家角色，你不得代替玩家选择。重大歧义、目标、资源、反应、成长、继任与其他玩家选择必须形成 clarification/playerChoice；不得自动 pass、选择第一攻击、最近目标、最低 HP、目标、资源或反应。resolveRest 必须原样冻结发起玩家明确选择的 hitDiceToSpend 与 arcaneRecoverySlotLevels；选择缺失且会影响恢复时先澄清，不得替玩家花生命骰或选择奥术恢复环位。个人休整不得携带 memberRefs；队伍休整必须在 memberRefs 中精确列出投影里同一 PartyGroup 除发起者外的全部其他角色，且不得替这些角色选择恢复资源，他们会各自收到私人同意窗口。只有玩家明确同意退役角色继续成为 NPC 时，retireCharacter 才可提交 continueAsNpc=true；否则必须为 false。NPC 行动只能使用该 NPC 自己的 npcViewer 有限知识，不得从 KP 全知事实补全其视角。
 changeParty 必须显式选择 partyAction：inviteMember/transferLeadership 各要求 memberRefs 中恰有一个目标；leave 不得带成员；cancelInvitation 必须带投影中的 pendingInputRef；proposeMove/moveIndividually 必须带 destinationRef 与 duration。resolveNoncombatSave 必须在骰前冻结 saveAbility、dc、mode、duration、frozenCosts、success 和 failure；不得自行计算职业豁免熟练或骰面。
@@ -770,7 +1097,8 @@ const NARRATION_SYSTEM = `你是烛帷 KP。现在只能叙述一个已经提交
 
 当前回应应清楚、具体、可行动：先说明行动实际造成的变化，再给两三个该观察者能感知的关键细节，呈现当前压力或机会，并把决定权交还玩家。不得替玩家决定思想、情绪、台词或下一步；提示可以列明显方向，但必须允许其他合理方法。故事已真实收束时展示后果并允许尾声、续篇或结束，不为延长故事追加幕后黑手。
 
-agencyClaims 必须显式列出回应中涉及能动性归属的全部断言；没有此类断言时也必须提交空数组。每项都要声明 subjectKind、subjectRef、claimKind 和投影内 basisRefs。玩家角色只允许 committedObservableAction（已经提交且可观察的行动）或 sensoryConsequence（外界刺激、身体感觉或规则后果）；thought、emotion、dialogue、nextAction 只可用于由 KP 控制且投影有依据的 NPC。不得漏报、伪装或用正文绕开这些声明。
+引用契约：referencedProjectionRefs、agencyClaims[].subjectRef 与 basisRefs 都不是说明文字或 JSON 路径，必须从本次 audienceProjection 中已有的字符串值逐字复制，不得改写、翻译、缩写或新造 ID；每个 basisRef 还必须同时列入 referencedProjectionRefs。
+agencyClaims 必须显式列出回应中涉及能动性归属的全部断言；没有此类断言时也必须提交空数组。每项都要声明 subjectKind、subjectRef、claimKind 和投影内 basisRefs。playerCharacter 或 npc 的 subjectKind/subjectRef 必须逐字复制 audienceProjection.agencySubjects 中同一完整条目；playerCharacter 只允许 committedObservableAction（已经提交且可观察的行动）或 sensoryConsequence（外界刺激、身体感觉或规则后果）；world 必须使用 subjectRef=null 且只允许 sensoryConsequence。thought、emotion、dialogue、nextAction 只可用于由 KP 控制且投影有依据的 NPC。不得漏报、伪装或用正文绕开这些声明。
 
 这是单槽、不可回看的当前回应，不生成历史摘要。输出只调用 submit_current_narration 一次。不要输出解释文字。`;
 

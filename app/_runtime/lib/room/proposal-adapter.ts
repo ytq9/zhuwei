@@ -1,4 +1,4 @@
-import { validateProposal } from "../kp/authoritative-helpers";
+import { collectStrings, validateProposal } from "../kp/authoritative-helpers";
 import {
   authoritativeModuleMigration,
   verifyAuthoritativeModuleMigration,
@@ -340,6 +340,7 @@ export function narrationProjection(
   projection: JsonObject,
   characterId: string,
   _receiptId: string,
+  entityCatalog: Readonly<Record<string, unknown>> = {},
 ): JsonObject {
   const playerProjection = roomPlayerProjection(projection, characterId);
   // Room membership, Party coordination, and the global Spotlight ledger are
@@ -357,8 +358,23 @@ export function narrationProjection(
   const committedDelta = isRecord(observerNarrationProjection.committedDelta)
     ? structuredClone(observerNarrationProjection.committedDelta)
     : undefined;
+  const observableStrings = collectStrings(observerNarrationProjection);
+  const agencySubjects: Array<{
+    subjectKind: "playerCharacter" | "npc";
+    subjectRef: string;
+  }> = [];
+  for (const [subjectRef, entity] of Object.entries(entityCatalog)) {
+    if (!observableStrings.has(subjectRef) || !isRecord(entity)) continue;
+    if (entity.kind === "player") {
+      agencySubjects.push({ subjectKind: "playerCharacter", subjectRef });
+    } else if (entity.kind === "npc") {
+      agencySubjects.push({ subjectKind: "npc", subjectRef });
+    }
+  }
+  agencySubjects.sort((left, right) => left.subjectRef.localeCompare(right.subjectRef));
   return {
     ...observerNarrationProjection,
+    agencySubjects,
     narration: {
       ...(committedDelta === undefined ? {} : { committedDelta }),
       decisionPrompt: `决定权交还 ${characterId}：你接下来怎么做？`,

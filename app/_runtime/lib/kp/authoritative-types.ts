@@ -32,38 +32,19 @@ export const ACTION_PLAN_OPERATIONS = [
 ] as const;
 
 export const ACTION_PLAN_COST_KINDS = [
-  "consumeArtifact",
-  "artifactDurabilityRisk",
   "consumeResource",
-  "spendAction",
-  "spendBonusAction",
-  "spendReaction",
-  "spendMovement",
-  "spendSpellSlot",
-  "spendHitDie",
+  "consumeArtifact",
   "fictionTime",
 ] as const;
 
 export const ACTION_PLAN_EFFECT_KINDS = [
-  "moveArtifact",
-  "sensoryEvidence",
   "acquireEvidence",
-  "alertNpc",
+  "acquireKnowledge",
   "changeResource",
   "changeHitPoints",
-  "applyCondition",
-  "removeCondition",
+  "alertNpc",
   "moveEntity",
-  "startActivity",
-  "interruptActivity",
   "advanceFictionTime",
-  "startEncounter",
-  "endEncounter",
-  "openPendingInput",
-  "acquireKnowledge",
-  "shareKnowledge",
-  "changeParty",
-  "advanceCampaign",
   "updateRelationship",
   "recordCommitment",
   "recordDebt",
@@ -193,46 +174,46 @@ export type DynamicMaterialization = {
   definition: JsonObject;
 };
 
-export type ActionPlanCost = {
-  kind: ActionPlanCostKind;
-  artifactRef?: string;
-  resourceRef?: string;
-  amount?: number;
-  distanceFeet?: number;
-  slotLevel?: number;
-  count?: number;
-  duration?: FictionDuration;
-};
+export type ActionPlanCost =
+  | { kind: "consumeArtifact"; artifactRef: string; count?: number }
+  | { kind: "consumeResource"; resourceRef: string; amount: number }
+  | { kind: "fictionTime"; duration: FictionDuration };
 
-export type ActionPlanEffect = {
-  kind: ActionPlanEffectKind;
-  artifactRef?: string;
-  to?: string;
-  observerRef?: string;
-  evidence?: string;
-  evidenceRef?: string;
-  npcId?: string;
-  entityRef?: string;
-  targetRef?: string;
-  resourceRef?: string;
-  amount?: number;
-  conditionRef?: string;
-  sceneRef?: string;
-  activityRef?: string;
-  duration?: FictionDuration;
-  encounterRef?: string;
-  knowledgeRef?: string;
-  recipientRefs?: string[];
-  partyRef?: string;
-  campaignRef?: string;
-  chapterRef?: string;
-  relationshipRef?: string;
-  commitmentRef?: string;
-  debtRef?: string;
-  status?: string;
-  value?: JsonPrimitive;
-  definitionRef?: string;
-};
+export type ActionPlanEffect =
+  | { kind: "acquireEvidence"; evidenceRef: string; definitionRef?: string; evidence?: string }
+  | {
+      kind: "acquireKnowledge";
+      knowledgeRef: string;
+      definitionRef?: string;
+      value?: Exclude<JsonPrimitive, null>;
+    }
+  | { kind: "changeResource"; resourceRef: string; amount: number; targetRef?: string }
+  | { kind: "changeHitPoints"; amount: number; targetRef?: string }
+  | { kind: "alertNpc"; npcId: string; status?: string }
+  | { kind: "moveEntity"; sceneRef: string; entityRef?: string }
+  | { kind: "advanceFictionTime"; duration: FictionDuration }
+  | {
+      kind: "updateRelationship";
+      relationshipRef: string;
+      recipientRefs: string[];
+      value: string;
+      definitionRef?: string;
+    }
+  | {
+      kind: "recordCommitment";
+      commitmentRef: string;
+      targetRef: string;
+      value: string;
+      status: string;
+    }
+  | {
+      kind: "recordDebt";
+      debtRef: string;
+      targetRef: string;
+      value: string;
+      status: string;
+      definitionRef?: string;
+    };
 
 export type MeaningfulFailureOption = {
   id: string;
@@ -332,16 +313,78 @@ type SemanticActionPlanFields = {
   consequenceRefs?: string[];
 };
 
-export type ResolveNoncombatCheckActionPlan = SemanticActionPlanFields & {
+type FrozenCheckActionPlanFields = {
+  ability: ActionPlanAbility;
+  skill: string | null;
+  dc: number;
+  mode: ActionPlanCheckMode;
+  duration: FictionDuration;
+  frozenCosts: ActionPlanCost[];
+  success: ActionPlanEffect[];
+  failure: ActionPlanEffect[];
+};
+
+export type ResolveDirectConsequencesActionPlan = {
+  operation: "resolveDirectConsequences";
+  duration: FictionDuration;
+  frozenCosts: [];
+  success: ActionPlanEffect[];
+  failure: [];
+};
+
+export type ResolveNoncombatCheckActionPlan = FrozenCheckActionPlanFields & {
   operation: "resolveNoncombatCheck";
 };
 
-export type ReservedSemanticActionPlan = SemanticActionPlanFields & {
-  operation: Exclude<ActionPlanOperation, "resolveNoncombatCheck">;
+export type ResolveNoncombatSaveActionPlan = Omit<FrozenCheckActionPlanFields, "ability" | "skill"> & {
+  operation: "resolveNoncombatSave";
+  saveAbility: ActionPlanAbility;
+  targetEntityRef?: string;
 };
 
-export type SemanticActionPlan =
+export type RetryFailedActionPlan =
+  | {
+      operation: "retryFailedAction";
+      precedentRef: string;
+    }
+  | (FrozenCheckActionPlanFields & {
+      operation: "retryFailedAction";
+      precedentRef: string;
+    });
+
+export type ReservedSemanticActionPlan = SemanticActionPlanFields & {
+  operation: Exclude<
+    ActionPlanOperation,
+    | "resolveDirectConsequences"
+    | "resolveNoncombatCheck"
+    | "resolveNoncombatSave"
+    | "retryFailedAction"
+    | "advanceFactionPlan"
+  >;
+};
+
+export type NpcReservedSemanticActionPlan = SemanticActionPlanFields & {
+  operation: Exclude<
+    ActionPlanOperation,
+    | "resolveDirectConsequences"
+    | "resolveNoncombatCheck"
+    | "resolveNoncombatSave"
+    | "retryFailedAction"
+    | "resolveNoncombatContest"
+  >;
+};
+
+export type NpcSemanticActionPlan =
+  | ResolveDirectConsequencesActionPlan
   | ResolveNoncombatCheckActionPlan
+  | Omit<ResolveNoncombatSaveActionPlan, "targetEntityRef">
+  | NpcReservedSemanticActionPlan;
+
+export type SemanticActionPlan =
+  | ResolveDirectConsequencesActionPlan
+  | ResolveNoncombatCheckActionPlan
+  | ResolveNoncombatSaveActionPlan
+  | RetryFailedActionPlan
   | ReservedSemanticActionPlan;
 
 export type ActorPlanActivityProposal = {
@@ -394,7 +437,7 @@ export type NpcActionProposal = {
   method: string;
   knowledgeRefs: string[];
   actorPlan?: ActorPlanProposal;
-  mechanicalProposal: SemanticActionPlan | null;
+  mechanicalProposal: NpcSemanticActionPlan | null;
 };
 
 export type SceneProposal = {
