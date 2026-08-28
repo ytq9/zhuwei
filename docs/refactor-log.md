@@ -1805,7 +1805,7 @@
 - 模型输入体积与 Provider 兼容：首轮严格分支内联让 `PROPOSAL_TOOL` 从约 33 KB 增至 `99,469` bytes，可能反向增加 V4 Flash 超时/无效输出风险；最终使用 DeepSeek 当前工具调用文档明确展示的 `$def/#/$def` 共享同一 cost/effect 与玩家/NPC ActionPlan 定义，工具为 `33,213` bytes，并新增 `<60,000` bytes 回归门。模型仍是非 strict 调用，真实可用性必须由发布后的默认 V4 Flash 产品探针证明，不能由 scripted fixture 替代。
 - 修改范围：`app/_runtime/lib/kp/authoritative-types.ts`、`app/_runtime/lib/kp/authoritative-policy.ts`、`app/_runtime/lib/kp/authoritative-helpers.ts`、`app/_runtime/lib/room/proposal-adapter.ts`、`app/_runtime/lib/room/durable-object.ts`、`tests/authoritative-kp-adapter.test.mjs`；本节日志由协调代理单写。没有前端目录、模型目录、D1 schema、Secret、Worker 配置或受保护房间修改；前端仍只显示 DeepSeek V4 Flash / Pro，“确认当前回应”语义不变。
 - 已知限制：结构化 agency claim 已 fail closed，但 validator 无法从任意自然语言正文证明模型没有漏报 claim；例如正文自行声称玩家下一行动而同时给出空数组，仍依赖 Prompt 合同。未用脆弱关键词扫描伪装解决该自然语言完备性问题；这不属于本次观察行动无法进入 Rules/Delivery 的根因，后续若要机械证明需把正文重构为受控叙事子句。
-- 当前状态：三条 RED、ActionPlan/Rules 与 Narration 定向 GREEN、类型与相关 lint 已完成；独立复审先后发现的玩家/NPC operation 分裂、schema 膨胀、null 知识、安全整数、Activity 重复时间、agency 主体类型冒用与非战斗 NPC 类型来源缺口均已逐项修正并补回归。第二个冻结候选已通过正式冻结门；Git 提交/推送、部署和真实 V4 Flash Proposal→Rules→Narration→Delivery 尚未执行，在真实探针成功前不得写“外部能力已恢复”。
+- 当前状态：三条 RED、ActionPlan/Rules 与 Narration 定向 GREEN、类型与相关 lint 已完成；独立复审先后发现的玩家/NPC operation 分裂、schema 膨胀、null 知识、安全整数、Activity 重复时间、agency 主体类型冒用与非战斗 NPC 类型来源缺口均已逐项修正并补回归。第二个冻结候选已通过正式冻结门，根因修复提交已推送并部署；但发布后的本机 curl 与独立 Chrome 控制通道均在传输/控制边界超时，依停止条件不再重试，因此只能写“本地代码已验证、部署已完成、外部能力未实证恢复”。一次性测试房 `8BTWKL` 暂时保留，未触碰受保护房间。
 
 | 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
 | --- | --- | ---: | --- |
@@ -1820,3 +1820,7 @@
 | 2026-08-28（首个冻结候选） | `npm run typecheck && npm run lint && npm test` | 1 | typecheck、Lint、production build、Node 340/340 通过；Worker/Vitest 41/42 文件、157 passed / 1 failed / 5 skipped。唯一失败为多轮评估第 23 步的 Rules 合法最小 retry 被模型边界拒绝后映射成 `modelTransient`；该失败使候选失效，未提交或发布。 |
 | 2026-08-28（冻结失败定向修复） | Adapter + compound Rules；`npx vitest run tests/kp-multiturn-eval.test.ts`；`npm run typecheck` | 0；0；0 | 49/49；多轮评估 1/1；边界只增加 Rules 已支持的原样重试最小闭合分支，可能执行的 retry 仍要求完整冻结。 |
 | 2026-08-28（最终冻结门） | `git diff --check && npm run typecheck && npm run lint && npm test` | 0 | 同一最终候选：production build；Node 340/340；Worker/Vitest 42/42 文件、158 passed / 5 skipped。故障注入 reporter 的 `stage4-hazard-freeze-response-loss` 文本为通过用例的预期输出。 |
+| 2026-08-28 | `git commit`；`git push origin cloudflare`；远端 refs 复核 | 0；0；0 | 根因修复提交 `aa538603b75dad97acfd1861121c9cbbcdaec2ad` 已非 force 推送；远端 `main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。 |
+| 2026-08-28 | `wrangler whoami`；配置/Secret/migration 门 | 0；0；0 | 现有账号登录；目标仍为 `zhuwei`、`DB`/`zhuwei-dev`、ROOMS/AI/ASSETS；仅确认 `DEEPSEEK_API_KEY` 名称；远端无待执行 migration。 |
+| 2026-08-28 | `npm run cf:deploy`；`wrangler deployments status --json` | 0；0 | 只更新现有 Worker；Version `9f0e2a54-bcfb-4ef5-ada6-4336e5146d63` / deployment `126c27d9-ab6d-4b83-b888-601efa9509ae` 承接 100% 流量，无新资源。 |
+| 2026-08-28 | 发布后根入口 curl；独立 Chrome 产品探针 | TCP 超时；控制通道超时 | 两个独立通道均未取得应用响应，按用户要求与传输层停止条件不再追日志或重试；不能宣称真实 V4 Flash Proposal→commit→Narration→Delivery 已恢复，`8BTWKL` 未清理。 |
