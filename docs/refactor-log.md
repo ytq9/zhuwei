@@ -1882,3 +1882,15 @@
 | 2026-08-28 | V3 layout、interaction、live eval 定向测试 | 0 | 最终 22/22；旧平台入口不回流，规则版本不被 V3 产品代际改名，评测模型身份精确固定。 |
 | 2026-08-28（首次完整门） | `npm test` | 1 | production build 通过；2 个遗留项目布局/代理文案断言暴露并修正，候选未发布。 |
 | 2026-08-28（最终冻结门） | `git diff --check`；`npm run module:check`；`npm run typecheck`；`npm run lint`；`npm test` | 0 | production build；Node 343/343；Worker/Vitest 42/42 文件、158 passed / 5 skipped。 |
+
+## V3 仓库边界 Git 交付（2026-08-28）
+
+- 冻结候选以提交 `c292c9e6ac9e59050f2e8893bd8eeebc17811680`（`chore: establish V3 project boundary`）落地，并从 `4f2abee` 非 force 快进推送到远端 `cloudflare`。该提交包含上述已验证的 V3 边界、旧平台目录移除、工具迁移、回归测试、ADR 与发布/并行代理文档；没有 `app/`、`worker/`、`db/`、`drizzle/`、`wrangler.jsonc` 或 SPEC 0001 diff。
+- 推送后 `git ls-remote` 证明 `cloudflare=c292c9e6ac9e59050f2e8893bd8eeebc17811680`；三个 archive ref 仍分别为 `4f2abee4cdf53a430d7df66e4644069e35dc09d9`、`932c39f4b006b2a7bce845ff8d4d74cfececc17d`、`21ca594cac3b2cad3ee1c6cff5b96fd41d1a9030`；`main` 仍为冻结基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+- 本节是推送后的 docs-only 事实记录，不改变已冻结源码、测试、依赖或构建配置，因此不使完整门失效。没有执行 Cloudflare deploy、D1 migration、Secret 或流量操作。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | `git commit -m 'chore: establish V3 project boundary'` | 0 | 冻结候选提交 `c292c9e6ac9e59050f2e8893bd8eeebc17811680`。 |
+| 2026-08-28 | `git push origin HEAD:refs/heads/cloudflare` | 0 | 非 force 快进 `4f2abee..c292c9e`，只更新 `cloudflare`。 |
+| 2026-08-28 | `git ls-remote` 复核 cloudflare/main/三条 archive refs | 0 | V3 与三个恢复点均可达；`main=29eb06dc009c983ad61b2d862454503e67a7f40a` 未变。 |
