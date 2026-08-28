@@ -5,7 +5,6 @@ import {
   PROPOSAL_TOOL_NAME,
   narrationModelInput,
   proposalModelInput,
-  proposalProjectionRepairModelInput,
 } from "./authoritative-policy";
 import {
   ModelInvocationTimeoutError,
@@ -276,6 +275,37 @@ function assertProjectionRepairPreservesProposal(
   }
 }
 
+function normalizeProposalProjectionReferences(
+  proposal: KpProposalDraft,
+  projection: unknown,
+): KpProposalDraft {
+  const normalized = structuredClone(proposal);
+  const available = collectStrings(projection);
+  normalized.publicBasisRefs = proposal.publicBasisRefs.filter((reference) =>
+    available.has(reference));
+  normalized.privateBasisRefs = proposal.privateBasisRefs.filter((reference) =>
+    available.has(reference));
+
+  const causalReferences = projectionCanonicalFactRefs(projection);
+  for (const materialization of normalized.dynamicMaterializations) {
+    materialization.causalBasisRefs = materialization.causalBasisRefs.filter((reference) =>
+      causalReferences.has(reference));
+  }
+  for (const candidate of normalized.hiddenRealityCandidateSet?.candidates ?? []) {
+    candidate.causalBasisRefs = candidate.causalBasisRefs.filter((reference) =>
+      causalReferences.has(reference));
+  }
+
+  normalized.npcActions = proposal.npcActions.filter((action) => {
+    const knowledgeRefs = projectionNpcKnowledgeRefs(projection, action.npcId);
+    return knowledgeRefs !== undefined
+      && action.knowledgeRefs.every((reference) => knowledgeRefs.has(reference));
+  });
+
+  assertProjectionRepairPreservesProposal(proposal, normalized, projection);
+  return normalized;
+}
+
 /**
  * Creates the v2 KP boundary. It performs model I/O only; it owns no world state,
  * mechanics, randomness, delivery history, or authority to commit a proposal.
@@ -406,7 +436,6 @@ export function createAuthoritativeKpAdapter(
   return {
     async propose(request) {
       return withInvocationReceipt(async () => {
-        const proposalBudgetStartedAt = now();
         const rootActionId = typeof request?.rootActionId === "string"
           ? request.rootActionId
           : "invalid";
@@ -430,57 +459,22 @@ export function createAuthoritativeKpAdapter(
           modelInput,
         );
         const proposal = proposalDraftFromInvocation(invocation);
+        let projectionBoundProposal: KpProposalDraft;
         try {
-          assertProjectionBoundProposal(proposal, request.projection, invocation.receipt);
-        } catch (error) {
-          if (
-            !(error instanceof AuthoritativeKpModelError)
-            || error.modelInvocationReceipt.failureStage !== "projectionBinding"
-            || request.attempt !== 1
-          ) {
-            throw error;
-          }
-
-          const elapsedMs = Math.max(0, now() - proposalBudgetStartedAt);
-          const remainingBudgetMs = Math.floor(invocationTimeoutMs - elapsedMs);
-          if (remainingBudgetMs < 1) throw error;
-
-          const repairInput = proposalProjectionRepairModelInput(request, proposal);
-          emitInvocationReceipt(error.modelInvocationReceipt);
-          const repairInvocation = await invoke(
-            "proposal",
-            request.rootActionId,
-            request.attempt,
-            repairInput,
-            remainingBudgetMs,
-          );
-          const repairedProposal = proposalDraftFromInvocation(repairInvocation);
-          try {
-            assertProjectionRepairPreservesProposal(
-              proposal,
-              repairedProposal,
-              request.projection,
-            );
-          } catch (repairError) {
-            throw permanentOutputError(
-              repairError,
-              repairInvocation.receipt,
-              "projectionBinding",
-            );
-          }
-          assertProjectionBoundProposal(
-            repairedProposal,
+          projectionBoundProposal = normalizeProposalProjectionReferences(
+            proposal,
             request.projection,
-            repairInvocation.receipt,
           );
-          return {
-            ...repairedProposal,
-            proposalAttemptId: `${request.rootActionId}:kp:${request.attempt}`,
-            modelInvocationReceipt: repairInvocation.receipt,
-          };
+        } catch (error) {
+          throw permanentOutputError(error, invocation.receipt, "projectionBinding");
         }
+        assertProjectionBoundProposal(
+          projectionBoundProposal,
+          request.projection,
+          invocation.receipt,
+        );
         return {
-          ...proposal,
+          ...projectionBoundProposal,
           proposalAttemptId: `${request.rootActionId}:kp:${request.attempt}`,
           modelInvocationReceipt: invocation.receipt,
         };

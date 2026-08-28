@@ -13,13 +13,12 @@ import {
   NARRATION_AGENCY_CLAIM_KINDS,
   NARRATION_AGENCY_SUBJECT_KINDS,
   type KpNarrationRequest,
-  type KpProposalDraft,
   type KpProposalRequest,
   type AuthoritativeKpProfile,
 } from "./authoritative-types";
 
 const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-prompt-policy-v5",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v6",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
@@ -28,7 +27,7 @@ const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
 const HISTORICAL_WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 const HISTORICAL_ALTERNATIVE_WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const HISTORICAL_WORKERS_AI_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-prompt-policy-v5",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v6",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
@@ -752,7 +751,7 @@ const PROPOSAL_SYSTEM = `你是烛帷中承担叙事权威的真正 KP，不是�
 
 职责：接受未登记但合理的行动；依据因果在开放留白中创建场景、通路、人物、危险、物品、机会或空白结果；在首次证据、引用或机械影响前提出动态固化；区分隐藏真相、感官证据、角色推断与有来源主张；让失败产生相称变化和新选择；依据事实推动 NPC、势力、节奏与真实收束。
 
-引用契约：publicBasisRefs、privateBasisRefs、causalBasisRefs、supersededPrecedentId、npcActions[].npcId 与 knowledgeRefs 不是说明文字，也不是 JSON 路径或字段名。它们必须从本次 kpProjection 对应范围中已有的字符串值逐字复制，不得改写、翻译、缩写或新造 ID；没有稳定依据时，数组必须为 []。causalBasisRefs 只能逐字引用 kpProjection 中已经固化的事实 ID，不得引用本次新建的 dynamicMaterializations[].factRef。无法逐字匹配 npcViewer 或引用越界知识的 NPC 行动必须省略。若输入含 proposalRepair，只删除校验失败的数组引用或省略校验失败的 NPC 行动；所有已经合法的引用、NPC 行动、先例 ID，以及原提案的玩家目标、做法、裁决类别、风险、机械方案与场景都必须原样保留，不得添加替代引用、改派 NPC、改指先例或借纠错改判。
+引用契约：publicBasisRefs、privateBasisRefs、causalBasisRefs、supersededPrecedentId、npcActions[].npcId 与 knowledgeRefs 不是说明文字，也不是 JSON 路径或字段名。它们必须从本次 kpProjection 对应范围中已有的字符串值逐字复制，不得改写、翻译、缩写或新造 ID；没有稳定依据时，数组必须为 []。causalBasisRefs 只能逐字引用 kpProjection 中已经固化的事实 ID，不得引用本次新建的 dynamicMaterializations[].factRef。无法逐字匹配 npcViewer 或引用越界知识的 NPC 行动必须省略。
 
 机械边界：你可以提出 DC、能力/技能、优势劣势依据、时间、资源成本、风险与有限结果范围，但不得提供 dice/faces/骰面、随机结果、WorldEvent、WorldState/state patch、作用域版本、Principal、可信 actor 或运行 Profile。Rules Module 拥有机械权威，Room Authority 拥有随机与提交权。不得在看到诊断后改变玩家目标；若已有骰前冻结内容或骰面，也不得借修订改判或重掷。
 
@@ -809,36 +808,6 @@ export function proposalModelInput(request: KpProposalRequest): Record<string, u
     action: request.input,
     rulesDiagnostics: request.diagnostics ?? null,
     kpProjection: request.projection,
-  };
-  return {
-    messages: [
-      { role: "system", content: PROPOSAL_SYSTEM },
-      { role: "user", content: canonicalJson(userPayload) },
-    ],
-    tools: [PROPOSAL_TOOL],
-    tool_choice: "required",
-    parallel_tool_calls: false,
-    temperature: 0.2,
-    max_completion_tokens: 2_000,
-  };
-}
-
-const PROJECTION_BINDING_REPAIR_INSTRUCTION = "上次提案的引用未绑定到权威投影。只删除校验失败的数组引用；causalBasisRefs 只可保留从 kpProjection 已固化事实条目逐字复制的精确 ID，不得引用本次新建 factRef；无法逐字匹配 npcViewer 或引用越界知识的 NPC 行动从 npcActions 中省略。所有已经合法的引用和 NPC 行动必须原样保留；不得添加替代引用、改派 NPC、改指 supersededPrecedentId，也不得改变玩家目标、做法、裁决类别、风险、机械方案、动态定义或场景。";
-
-export function proposalProjectionRepairModelInput(
-  request: KpProposalRequest,
-  rejectedProposal: KpProposalDraft,
-): Record<string, unknown> {
-  const userPayload = {
-    proposalAttempt: request.attempt,
-    action: request.input,
-    rulesDiagnostics: request.diagnostics ?? null,
-    kpProjection: request.projection,
-    proposalRepair: {
-      failureStage: "projectionBinding",
-      requiredCorrection: PROJECTION_BINDING_REPAIR_INSTRUCTION,
-      rejectedProposal,
-    },
   };
   return {
     messages: [

@@ -1770,3 +1770,28 @@
 | 2026-08-28（收窄前冻结候选） | `npm run typecheck && npm run lint && npm test` | 0 | production build 通过，Node 334/334，Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip；随后按复审意见收窄生产诊断分支并补测试，因此该结果不作为最终发布门。 |
 | 2026-08-28（最终冻结门） | `npm run typecheck && npm run lint && npm test` | 0 | 对复审收口后的最终生产代码和测试重跑：production build 通过，Node 334/334，Worker/Vitest 42/42 文件、158 passed / 5 个既有条件 skip；故障注入 reporter 文本未造成测试失败。 |
 | 2026-08-28 | 部署配置门；Secret/migration/deployment/远端 refs 只读检查 | 0 | 目标仍为现有 `zhuwei`、`DB` / `zhuwei-dev`、ROOMS/AI/ASSETS；仅确认 `DEEPSEEK_API_KEY` 名称，无 migration；发布前 Version `4a0666e7` 为 100%，远端 `main` 未变。 |
+
+## DeepSeek KP Projection 确定性引用归一化（2026-08-28）
+
+- 基线与上一轮发布：引用提示与单次同模型纠错修复已形成提交 `11a8113d0809e5d40ce793391c2b1cafe3e3695d`，非 force 推送到远端 `cloudflare`，并只更新现有 Worker `zhuwei`。Cloudflare Version `a52c65b2-44d6-43ba-809d-0940352a7817` / deployment `8467b66b-57a3-4084-a883-ee1ec4fa636e` 已确认承接 100% 流量；既有 ROOMS、DB、AI、ASSETS 与 Secret 名称不变，无 schema、migration 或新资源。
+- 上一轮生产结果：在一次性房间 `8BTWKL` 清除初始 Delivery 后，多次通过真实产品入口提交同一 V4 Flash 行动，输入最终均完整恢复、发送按钮恢复、没有新 Delivery，也没有行动进入对话投影，证明仍为 commit 前安全失败。此前已取得的精确 Tail 证据仍是 schema-valid Proposal 在 `projectionBinding` 被拒绝；新增的第二次随机模型纠错未让真实路径达到可用状态，并显著增加等待时间，因此不能保留为生产恢复方案。
+- Cloudflare 日志边界：Workers Logs/Live Tail 可以读取；本轮浏览器 Tail WebSocket 以 `1006` 断开，另一次无过滤 Tail 也未收到 frame；Workers Observability 历史查询 API 对现有 Wrangler OAuth 返回 HTTP 403 / code 10000，Dashboard Chrome 会话未登录。没有申请新 token，也没有输出 Prompt、正文、Cookie、Secret 或 Authorization。最后一次本地 Tail collector 已停止；其删除请求因进程持有的 OAuth 已失效返回 401，未把“删除成功”写入证据。
+- 根因与决策：DeepSeek 已能形成 schema-valid 的完整裁决，失败只来自四类投影引用字段中的臆造或释义引用；让模型再次猜测这些引用既不确定，也会重新消耗一次完整生成。Adapter 现在只调用模型一次，随后在服务端对已通过 Proposal schema 的对象做确定性归一化：public/private basis 只保留投影中逐字存在的字符串，动态与隐藏候选 causal refs 只保留 canonical/visible fact ID，未知 NPC 或越过该 NPC 有限知识边界的整项 NPC action 直接省略。有效值及顺序、有效 NPC 整项和所有其他 Proposal 语义必须原样保留；旧先例或其他不可归一化错误继续以 `modelPermanent/projectionBinding` fail closed。
+- 修改：`app/_runtime/lib/kp/authoritative.ts` 删除第二次 Proposal 模型纠错和第二个超时窗口，加入上述确定性过滤并复用完整结构保真门与最终严格绑定验证；`app/_runtime/lib/kp/authoritative-policy.ts` 删除失效的 repair payload/提示，保留逐字复制合同并把 DeepSeek 与历史服务端 Profile 的 Prompt policy 统一升级为 `authoritative-kp-prompt-policy-v6`；`tests/authoritative-kp-adapter.test.mjs` 固定一次模型调用、一次 Receipt、合法引用/NPC 保留、非法引用/NPC 省略及非法先例继续拒绝。
+- 前端与产品边界：未修改公开模型目录、Hall/Table 页面或 Room DTO；前端仍只可选择 DeepSeek V4 Flash / Pro，其他历史 Profile 仅服务端兼容。没有自动换模型、伪造引用、吞掉不可归一化错误或建立第二套机械/状态权威。
+- 集成状态：确定性 v6 候选已完成定向测试、类型检查、whitespace 检查和独立只读复审，复审未发现 blocker/HIGH；本节记录时尚未运行发布冻结门、提交、推送或部署，也尚未取得真实 Proposal→commit→Narration→Delivery。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28 | v5 `git push`、`npm run cf:deploy`、deployment status | 0 | `11a8113` 已推送；Version `a52c65b2-…` / deployment `8467b66b-…` 为 100% 流量，远端 `main` 未变。 |
+| 2026-08-28 | 生产 V4 Flash 同一行动复测 | 应用拒绝 | 多次均无行动或 Delivery commit；输入恢复，状态保持，不能宣称 v5 恢复。 |
+| 2026-08-28 | Live Tail；Observability query；Tail cleanup | WebSocket `1006` / 0 frame；HTTP 403；HTTP 401 | 记录读取和清理限制；本地 collector 已停止，没有取得或泄露内容型数据。 |
+| 2026-08-28（TDD RED → GREEN） | `npx --no-install tsx --test tests/authoritative-kp-adapter.test.mjs` | 1 → 0 | RED 复现旧实现请求第二次模型 fixture；GREEN 13/13，一次模型调用后确定性收窄引用。 |
+| 2026-08-28 | Adapter/Room/DeepSeek/遥测/交互/Rules 定向组合 | 0 | 85/85；成功与安全失败、Receipt、Provider、交互及 Rules 接缝未回归。 |
+| 2026-08-28 | `npm run typecheck`；`git diff --check`；独立只读复审 | 0；0；无 blocker/HIGH | v6 候选类型与 whitespace 正确；复审确认只过滤四类可归一化字段，其他语义严格保真。 |
+
+- 冻结结果：在独立复审收口后的同一 v6 候选上完成正式发布门，类型、Lint、production build、335 项 Node 测试及 158 项 Worker/Vitest 测试均通过；5 项按既有条件跳过。故障注入 reporter 的 `stage4-hazard-freeze-response-loss` 文本为通过用例的预期输出，没有造成失败。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-28（最终冻结门） | `npm run typecheck && npm run lint && npm test` | 0 | production build；Node 335/335；Worker/Vitest 42/42 文件、158 passed / 5 skipped。 |
