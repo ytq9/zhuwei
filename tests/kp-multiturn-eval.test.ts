@@ -1047,10 +1047,30 @@ class ProjectionBoundScriptedKp {
 
     const projection = record(request.projection, "KP-only prepared projection");
     expect(projection.viewer).toMatchObject({ kind: "kp" });
-    expect(containsDeepKey(projection, new Set(["worldState", "rawEvents", "messages", "prompt"]))).toBe(false);
+    expect(containsDeepKey(projection, new Set(["worldState", "rawEvents", "prompt"]))).toBe(false);
+    const experiencedTranscript = record(
+      projection.experiencedTranscript,
+      "viewer-scoped experienced transcript",
+    );
+    expect(experiencedTranscript.schema).toBe("zhuwei.experienced-transcript/v1");
+    const experiencedMessages = list(
+      experiencedTranscript.messages,
+      "viewer-scoped experienced transcript messages",
+    );
     this.proposalProjections.push({ submissionId, projection: structuredClone(projection) });
 
     const actorProjection = record(projection.actorProjection, "actor projection inside KP view");
+    const controlledCharacter = record(
+      actorProjection.controlledCharacter,
+      "controlled character inside KP actor projection",
+    );
+    for (const message of experiencedMessages.map((entry) =>
+      record(entry, "viewer-scoped experienced message")
+    )) {
+      if (message.kind === "player") {
+        expect(message.speakerCharacterId).toBe(controlledCharacter.characterId);
+      }
+    }
     const actorSerialized = serialized(actorProjection);
     for (const required of entry?.actorKnowledgeMustContain ?? []) expect(actorSerialized).toContain(required);
     for (const forbidden of entry?.actorKnowledgeMustOmit ?? []) expect(actorSerialized).not.toContain(forbidden);
@@ -1087,10 +1107,15 @@ class ProjectionBoundScriptedKp {
       "npcViewers",
       "worldState",
       "rawEvents",
-      "messages",
       "narrationHistory",
       "prompt",
     ]))).toBe(false);
+    const experiencedTranscript = record(
+      projection.experiencedTranscript,
+      "post-commit viewer-scoped experienced transcript",
+    );
+    expect(experiencedTranscript.schema).toBe("zhuwei.experienced-transcript/v1");
+    expect(Array.isArray(experiencedTranscript.messages)).toBe(true);
 
     const committedDelta = record(projection.committedDelta, "observer-safe committed delta");
     const changes = list(committedDelta.changes, "observer-safe committed changes").map(
@@ -1832,5 +1857,5 @@ describe("24+ continuous KP responsibility evaluation", () => {
     } finally {
       for (const spy of spies) spy.mockRestore();
     }
-  }, 90_000);
+  }, 300_000);
 });

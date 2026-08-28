@@ -90,8 +90,8 @@ export async function callWithStableSubmission<
     ? requestedSubmissionId.trim()
     : undefined;
   const submissionId =
-    requested ??
     cachedSubmission(input.storage, key, fingerprint) ??
+    requested ??
     (input.createSubmissionId ?? (() => crypto.randomUUID()))();
   saveSubmission(input.storage, key, fingerprint, submissionId);
 

@@ -350,6 +350,19 @@ function authoritativeTableOutcome(
     | Awaited<ReturnType<typeof runAuthoritativePartyAction>>,
 ) {
   if (
+    (outcome.kind === "committed" || outcome.kind === "concluded")
+    && outcome.deliveryPending === true
+  ) {
+    return {
+      ok: false as const,
+      submissionId,
+      outcomeKind: outcome.kind,
+      committed: true as const,
+      retryable: true as const,
+      error: "行动已经提交，但 KP 回应尚未送达。请重试；不会重复执行行动。",
+    };
+  }
+  if (
     outcome.kind === "committed" ||
     outcome.kind === "awaitingInput" ||
     outcome.kind === "concluded"
@@ -1543,7 +1556,7 @@ export const fetchTable = createServerFn({ method: "GET" })
           };
         }),
         messages: projected?.messages ?? [],
-        locationThreads: [],
+        locationThreads: projected?.locationThreads ?? [],
         logs: [],
         state: {
           chapterName: chapter?.name ?? module.chapters[0]?.name ?? "第一章",

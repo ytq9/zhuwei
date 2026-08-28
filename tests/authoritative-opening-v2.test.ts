@@ -41,7 +41,7 @@ function character(characterId: string, controllerPrincipalId: string, sceneId: 
 }
 
 describe("authoritative room opening delivery", () => {
-  it("publishes the pinned module opening only to characters present there and never creates history", async () => {
+  it("publishes and retains the pinned opening only for characters who experienced it", async () => {
     const roomName = "authoritative-opening-v2-current-slot";
     const stub = env.ROOMS.getByName(roomName) as unknown as Authority;
     await expect(stub.initializeAuthoritative({
@@ -93,6 +93,27 @@ describe("authoritative room opening delivery", () => {
       "Alice after opening ACK",
     );
     expect(afterAck.delivery).toEqual({ kind: "none" });
-    expect(JSON.stringify(afterAck)).not.toContain(opening);
+    expect(afterAck.transcript).toEqual([
+      expect.objectContaining({
+        messageId: deliveryId,
+        kind: "kp",
+        body: opening,
+        sceneIds: ["wake"],
+      }),
+    ]);
+
+    const bobDeliveryId = String(bobFrame.deliveryId);
+    await expect(stub.acknowledge(BOB, bobDeliveryId, "ack:opening:bob"))
+      .resolves.toMatchObject({ kind: "acknowledged", deliveryId: bobDeliveryId });
+    const bobAfterAck = record(await stub.observe(BOB), "Bob after opening ACK");
+    expect(bobAfterAck.transcript).toEqual([
+      expect.objectContaining({
+        messageId: bobDeliveryId,
+        kind: "kp",
+        body: opening,
+        sceneIds: ["wake"],
+      }),
+    ]);
+    expect(carol.transcript).toEqual([]);
   });
 });

@@ -22,7 +22,7 @@ import {
 } from "@/lib/dnd/gear";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/client";
-import { acknowledgeDelivery, adjustSafetyPresentation, resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import { adjustSafetyPresentation, resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
 import {
   arcaneRecoveryAvailability,
   changeArcaneRecoverySelection,
@@ -45,6 +45,87 @@ export type TableMessage = {
   created_at: string;
   clues?: { id: string; name: string; hint: string }[];
 };
+
+type SendActionPayload = {
+  code: string;
+  text: string;
+  submissionId: string;
+  pendingInputId?: string;
+  answer?: unknown;
+};
+
+type RecoverableSendAction = {
+  source: "composer" | "pending";
+  fingerprint: string;
+  payload: SendActionPayload;
+  localId?: string;
+  deliveryIdAtFirstSubmission?: string;
+  failureMessage: string;
+  committed?: true;
+  lastError?: string;
+};
+
+function recordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function restoredSendAction(
+  storageKey: string,
+  code: string,
+): RecoverableSendAction | null {
+  try {
+    const raw = sessionStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!recordValue(parsed) || !recordValue(parsed.payload)) return null;
+    const source = parsed.source;
+    const fingerprint = parsed.fingerprint;
+    const failureMessage = parsed.failureMessage;
+    const payload = parsed.payload;
+    if (
+      (source !== "composer" && source !== "pending")
+      || typeof fingerprint !== "string"
+      || typeof failureMessage !== "string"
+      || payload.code !== code
+      || typeof payload.text !== "string"
+      || typeof payload.submissionId !== "string"
+      || (payload.pendingInputId !== undefined && typeof payload.pendingInputId !== "string")
+    ) return null;
+    return {
+      source,
+      fingerprint,
+      failureMessage,
+      payload: {
+        code,
+        text: payload.text,
+        submissionId: payload.submissionId,
+        ...(typeof payload.pendingInputId === "string"
+          ? { pendingInputId: payload.pendingInputId }
+          : {}),
+        ...(Object.hasOwn(payload, "answer") ? { answer: payload.answer } : {}),
+      },
+      ...(typeof parsed.localId === "string" ? { localId: parsed.localId } : {}),
+      ...(typeof parsed.deliveryIdAtFirstSubmission === "string"
+        ? { deliveryIdAtFirstSubmission: parsed.deliveryIdAtFirstSubmission }
+        : {}),
+      ...(parsed.committed === true ? { committed: true as const } : {}),
+      lastError: typeof parsed.lastError === "string"
+        ? parsed.lastError
+        : "上次提交中断了。请用原提交标识恢复 KP 回应。",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistSendAction(storageKey: string, submission: RecoverableSendAction | null) {
+  try {
+    if (submission === null) sessionStorage.removeItem(storageKey);
+    else sessionStorage.setItem(storageKey, JSON.stringify(submission));
+  } catch {
+    // Same-page retries still use the in-memory ref when session storage is unavailable.
+  }
+}
 
 type AdvancementOptions = {
   classId: string;
@@ -262,6 +343,7 @@ export function PlayTable({
 }) {
   const [tab, setTab] = useState<"sheet" | "npcs" | "clues" | "log">("sheet");
   const draftStorageKey = `zhuwei-draft-${snap.me.userId}-${code}`;
+  const actionRecoveryStorageKey = `zhuwei:v2-action-recovery:${snap.me.userId}:${code}`;
   const [text, setText] = useState(() => {
     try {
       return sessionStorage.getItem(draftStorageKey) ?? "";
@@ -269,6 +351,7 @@ export function PlayTable({
       return "";
     }
   });
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const qc = useQueryClient();
   const [rec, setRec] = useState<"idle" | "rec" | "stt">("idle");
@@ -279,22 +362,15 @@ export function PlayTable({
   const chunksRef = useRef<BlobPart[]>([]);
   const composingRef = useRef(false);
   const sendingRef = useRef(false);
-  const submissionRef = useRef<{
-    body: string;
-    pendingInputId?: string;
-    submissionId: string;
-    localId?: string;
-    deliveryIdAtFirstSubmission?: string;
-  } | null>(null);
+  const [recoverableSubmission, setRecoverableSubmission] = useState<RecoverableSendAction | null>(
+    () => restoredSendAction(actionRecoveryStorageKey, code),
+  );
+  const submissionRef = useRef<RecoverableSendAction | null>(recoverableSubmission);
   const presentationEpochRef = useRef(0);
   const activeNarrationRef = useRef<HTMLAudioElement | null>(null);
-  const [confirmingDeliveryId, setConfirmingDeliveryId] = useState<string | null>(null);
   const [localSays, setLocalSays] = useState<
     { id: string; body: string; name: string; deliveryIdAtSubmission: string | undefined }[]
   >([]);
-  const currentDelivery = snap.state.currentDeliveryId
-    ? snap.messages.find((message) => message.id === snap.state.currentDeliveryId)
-    : undefined;
   const safetyPresentation = snap.state.authoritative?.safetyPresentation;
   const safetyPaused = safetyPresentation?.status === "paused";
   const visibleMessages = safetyPaused
@@ -343,6 +419,24 @@ export function PlayTable({
   const combatPending = currentPending?.kind === "combatChoice"
     ? currentPending
     : undefined;
+
+  function rememberSubmission(submission: RecoverableSendAction) {
+    submissionRef.current = submission;
+    setRecoverableSubmission(submission);
+    persistSendAction(actionRecoveryStorageKey, submission);
+  }
+
+  function clearRememberedSubmission() {
+    submissionRef.current = null;
+    setRecoverableSubmission(null);
+    persistSendAction(actionRecoveryStorageKey, null);
+  }
+
+  useEffect(() => {
+    const restored = restoredSendAction(actionRecoveryStorageKey, code);
+    submissionRef.current = restored;
+    setRecoverableSubmission(restored);
+  }, [actionRecoveryStorageKey, code]);
 
   useEffect(() => {
     try {
@@ -403,31 +497,6 @@ export function PlayTable({
     );
   }, [snap.messages, snap.me.userId]);
 
-  function withdrawCurrentPresentation() {
-    presentationEpochRef.current += 1;
-    activeNarrationRef.current?.pause();
-    activeNarrationRef.current = null;
-  }
-
-  async function confirmCurrentDelivery() {
-    const deliveryId = snap.state.currentDeliveryId;
-    if (!deliveryId || confirmingDeliveryId !== null) return;
-    setConfirmingDeliveryId(deliveryId);
-    try {
-      const result = await acknowledgeDelivery({ data: { code, deliveryId } });
-      if (!result?.ok) {
-        toast.error(result?.error ?? "当前回应没能确认，请稍后再试");
-        return;
-      }
-      withdrawCurrentPresentation();
-      await qc.invalidateQueries({ queryKey: ["table", code] });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "当前回应没能确认，请稍后再试");
-    } finally {
-      setConfirmingDeliveryId(null);
-    }
-  }
-
   async function resumeWithSafetyAdjustment(
     presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent",
   ) {
@@ -451,73 +520,120 @@ export function PlayTable({
     }
   }
 
-  async function submit() {
-    const body = text.trim();
-    if (!body || sendingRef.current) return;
-    const pendingInputId = snap.state.pendingInputs?.[0]?.pendingInputId;
-    if (
-      !submissionRef.current ||
-      submissionRef.current.body !== body ||
-      submissionRef.current.pendingInputId !== pendingInputId ||
-      !submissionRef.current.localId
-    ) {
-      const submissionId = crypto.randomUUID();
-      submissionRef.current = {
-        body,
-        ...(pendingInputId ? { pendingInputId } : {}),
-        submissionId,
-        localId: `local-${submissionId}`,
-        deliveryIdAtFirstSubmission: snap.state.currentDeliveryId,
-      };
-    }
-    const submission = submissionRef.current;
-    if (!submission?.localId) return;
+  function requireRecoveryFirst() {
+    const message = "上一条行动仍在等待 KP 回应，请先恢复后再提交新行动。";
+    setSubmissionError(message);
+    toast.error(message);
+  }
+
+  async function submitRememberedAction(submission: RecoverableSendAction) {
+    if (sendingRef.current) return;
+    rememberSubmission(submission);
     sendingRef.current = true;
     setSending(true);
-    const mineName =
-      snap.characters.find((c) => c.userId === snap.me.userId)?.sheet.name || "你";
+    setSubmissionError(null);
     const localId = submission.localId;
-    setLocalSays((ls) => ls.some((local) => local.id === localId)
-      ? ls
-      : [...ls, {
-          id: localId,
-          body,
-          name: mineName,
-          deliveryIdAtSubmission: submission.deliveryIdAtFirstSubmission,
-        }]);
-    setText("");
+    const composerSubmission = submission.source === "composer" && localId !== undefined;
+    if (composerSubmission) {
+      const mineName =
+        snap.characters.find((c) => c.userId === snap.me.userId)?.sheet.name || "你";
+      setLocalSays((ls) => ls.some((local) => local.id === localId)
+        ? ls
+        : [...ls, {
+            id: localId,
+            body: submission.payload.text,
+            name: mineName,
+            deliveryIdAtSubmission: submission.deliveryIdAtFirstSubmission,
+          }]);
+      setText((draft) => draft.trim() === submission.payload.text ? "" : draft);
+    }
     try {
       const res = await sendAction({
-        data: {
-          code,
-          text: body,
-          submissionId: submission.submissionId,
-          ...(submission.pendingInputId
-            ? { pendingInputId: submission.pendingInputId }
-            : {}),
-        },
+        data: submission.payload,
       });
+      const returnedSubmissionId = typeof res.submissionId === "string"
+        ? res.submissionId.trim()
+        : "";
+      const stableSubmission = returnedSubmissionId
+        && returnedSubmissionId !== submission.payload.submissionId
+        ? {
+            ...submission,
+            payload: { ...submission.payload, submissionId: returnedSubmissionId },
+          }
+        : submission;
       if (!res.ok) {
-        if (!res.retryable) submissionRef.current = null;
-        setLocalSays((ls) => ls.filter((x) => x.id !== localId));
-        setText((t) => (t ? t : body));
-        toast.error(res.error);
+        const message = typeof res.error === "string" ? res.error : submission.failureMessage;
+        if (res.retryable === true) {
+          rememberSubmission({
+            ...stableSubmission,
+            ...(res.committed === true || stableSubmission.committed === true
+              ? { committed: true as const }
+              : {}),
+            lastError: message,
+          });
+        } else {
+          clearRememberedSubmission();
+        }
+        if (composerSubmission) {
+          setLocalSays((ls) => ls.filter((x) => x.id !== localId));
+          setText((draft) => draft || submission.payload.text);
+        }
+        setSubmissionError(message);
+        toast.error(message);
       } else if ("queued" in res && res.queued) {
-        submissionRef.current = null;
-        setLocalSays((ls) => ls.filter((x) => x.id !== localId));
+        clearRememberedSubmission();
+        if (localId !== undefined) {
+          setLocalSays((ls) => ls.filter((x) => x.id !== localId));
+        }
         toast.message("已入队内缓冲。队长本拍内未批准就会消失。");
       } else {
-        submissionRef.current = null;
+        clearRememberedSubmission();
         void qc.invalidateQueries({ queryKey: ["table", code] });
       }
     } catch (e) {
-      setLocalSays((ls) => ls.filter((x) => x.id !== localId));
-      setText((t) => (t ? t : body));
-      toast.error(e instanceof Error ? e.message : "没能送出");
+      if (composerSubmission) {
+        setLocalSays((ls) => ls.filter((x) => x.id !== localId));
+        setText((draft) => draft || submission.payload.text);
+      }
+      const message = e instanceof Error ? e.message : submission.failureMessage;
+      rememberSubmission({ ...submission, lastError: message });
+      setSubmissionError(message);
+      toast.error(message);
     } finally {
       sendingRef.current = false;
       setSending(false);
     }
+  }
+
+  async function submit() {
+    const body = text.trim();
+    if (!body || sendingRef.current) return;
+    const existing = submissionRef.current;
+    if (existing !== null) {
+      if (existing.source === "composer" && existing.fingerprint === body) {
+        await submitRememberedAction(existing);
+      } else {
+        requireRecoveryFirst();
+      }
+      return;
+    }
+    const pendingInputId = snap.state.pendingInputs?.[0]?.pendingInputId;
+    const submissionId = crypto.randomUUID();
+    const submission: RecoverableSendAction = {
+      source: "composer",
+      fingerprint: body,
+      payload: {
+        code,
+        text: body,
+        submissionId,
+        ...(pendingInputId ? { pendingInputId } : {}),
+      },
+      localId: `local-${submissionId}`,
+      deliveryIdAtFirstSubmission: snap.state.currentDeliveryId,
+      failureMessage: "没能送出",
+    };
+    rememberSubmission(submission);
+    await submitRememberedAction(submission);
   }
 
   async function submitAdvancement(answer: {
@@ -529,44 +645,31 @@ export function PlayTable({
   }) {
     if (!advancementPending || sendingRef.current) return;
     const body = `确认晋升至 ${answer.newLevel} 级。`;
-    const answerFingerprint = JSON.stringify(answer);
-    if (
-      !submissionRef.current
-      || submissionRef.current.body !== `${body}\u0000${answerFingerprint}`
-      || submissionRef.current.pendingInputId !== advancementPending.pendingInputId
-    ) {
-      submissionRef.current = {
-        body: `${body}\u0000${answerFingerprint}`,
-        pendingInputId: advancementPending.pendingInputId,
-        submissionId: crypto.randomUUID(),
-      };
-    }
-    const submission = submissionRef.current;
-    sendingRef.current = true;
-    setSending(true);
-    try {
-      const res = await sendAction({
-        data: {
-          code,
-          text: body,
-          submissionId: submission.submissionId,
-          pendingInputId: advancementPending.pendingInputId,
-          answer,
-        },
-      });
-      if (!res.ok) {
-        if (!res.retryable) submissionRef.current = null;
-        toast.error(res.error);
+    const fingerprint = `${advancementPending.pendingInputId}\u0000${body}\u0000${JSON.stringify(answer)}`;
+    const existing = submissionRef.current;
+    if (existing !== null) {
+      if (existing.source === "pending" && existing.fingerprint === fingerprint) {
+        await submitRememberedAction(existing);
       } else {
-        submissionRef.current = null;
-        void qc.invalidateQueries({ queryKey: ["table", code] });
+        requireRecoveryFirst();
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "没能提交成长选择");
-    } finally {
-      sendingRef.current = false;
-      setSending(false);
+      return;
     }
+    const submissionId = crypto.randomUUID();
+    const submission: RecoverableSendAction = {
+      source: "pending",
+      fingerprint,
+      payload: {
+        code,
+        text: body,
+        submissionId,
+        pendingInputId: advancementPending.pendingInputId,
+        answer,
+      },
+      failureMessage: "没能提交成长选择",
+    };
+    rememberSubmission(submission);
+    await submitRememberedAction(submission);
   }
 
   async function answerGroupRest(input: {
@@ -575,6 +678,10 @@ export function PlayTable({
     arcaneRecoverySlotLevels: number[];
   }) {
     if (!groupRestPending || sendingRef.current) return;
+    if (submissionRef.current !== null) {
+      requireRecoveryFirst();
+      return;
+    }
     sendingRef.current = true;
     setSending(true);
     try {
@@ -611,44 +718,31 @@ export function PlayTable({
     failureMessage: string;
   }) {
     if (sendingRef.current) return;
-    const fingerprint = `${input.body}\u0000${JSON.stringify(input.answer)}`;
-    if (
-      !submissionRef.current
-      || submissionRef.current.body !== fingerprint
-      || submissionRef.current.pendingInputId !== input.pendingInputId
-    ) {
-      submissionRef.current = {
-        body: fingerprint,
-        pendingInputId: input.pendingInputId,
-        submissionId: crypto.randomUUID(),
-      };
-    }
-    const submission = submissionRef.current;
-    sendingRef.current = true;
-    setSending(true);
-    try {
-      const result = await sendAction({
-        data: {
-          code,
-          text: input.body,
-          submissionId: submission.submissionId,
-          pendingInputId: input.pendingInputId,
-          answer: input.answer,
-        },
-      });
-      if (!result.ok) {
-        if (!result.retryable) submissionRef.current = null;
-        toast.error(result.error);
+    const fingerprint = `${input.pendingInputId}\u0000${input.body}\u0000${JSON.stringify(input.answer)}`;
+    const existing = submissionRef.current;
+    if (existing !== null) {
+      if (existing.source === "pending" && existing.fingerprint === fingerprint) {
+        await submitRememberedAction(existing);
       } else {
-        submissionRef.current = null;
-        void qc.invalidateQueries({ queryKey: ["table", code] });
+        requireRecoveryFirst();
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : input.failureMessage);
-    } finally {
-      sendingRef.current = false;
-      setSending(false);
+      return;
     }
+    const submissionId = crypto.randomUUID();
+    const submission: RecoverableSendAction = {
+      source: "pending",
+      fingerprint,
+      payload: {
+        code,
+        text: input.body,
+        submissionId,
+        pendingInputId: input.pendingInputId,
+        answer: input.answer,
+      },
+      failureMessage: input.failureMessage,
+    };
+    rememberSubmission(submission);
+    await submitRememberedAction(submission);
   }
 
   async function startRec() {
@@ -780,20 +874,30 @@ export function PlayTable({
           ))}
           <div ref={endRef} />
         </div>
-        {!safetyPaused && currentDelivery ? (
-          <div className="shrink-0 border-t border-border px-5 py-3">
-            <p className="text-xs text-subtle">
-              当前 KP 回应会在刷新或重连后保留；确认后不可回看。
+        {recoverableSubmission?.lastError ? (
+          <div
+            data-action-recovery="send-action"
+            role="alert"
+            className="shrink-0 border-t border-danger/40 bg-danger/10 px-5 py-3"
+          >
+            <p className="text-sm text-fg">
+              {recoverableSubmission.committed
+                ? "行动已经提交，KP 回应尚未送达。"
+                : "上次提交的结果还没有确认。"}
             </p>
+            <p className="mt-1 text-xs text-subtle">
+              将原样使用同一个提交标识恢复，不会按当前待决状态创建新行动。
+            </p>
+            <p className="mt-1 text-xs text-danger">{recoverableSubmission.lastError}</p>
             <Button
               type="button"
               size="sm"
               className="mt-2"
-              data-delivery-action="acknowledge"
-              disabled={confirmingDeliveryId !== null}
-              onClick={() => void confirmCurrentDelivery()}
+              data-action-recovery-submit
+              disabled={sending}
+              onClick={() => void submitRememberedAction(recoverableSubmission)}
             >
-              {confirmingDeliveryId === currentDelivery.id ? "确认中……" : "确认当前回应"}
+              {sending ? "恢复中……" : "恢复 KP 回应"}
             </Button>
           </div>
         ) : null}
@@ -959,7 +1063,7 @@ export function PlayTable({
           </div>
         ) : null}
         {!safetyPaused && !advancementPending && !groupRestPending && !partyMovePending && !playerChoicePending && !combatPending ? <form
-          className="flex shrink-0 items-end gap-2 border-t border-border p-3"
+          className="flex shrink-0 flex-wrap items-end gap-2 border-t border-border p-3"
           onSubmit={(e) => e.preventDefault()}
         >
           <button
@@ -981,7 +1085,12 @@ export function PlayTable({
           </button>
           <Textarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              setSubmissionError(null);
+            }}
+            aria-invalid={submissionError ? true : undefined}
+            aria-describedby={submissionError ? "action-submission-error" : undefined}
             onCompositionStart={() => {
               composingRef.current = true;
             }}
@@ -1019,6 +1128,16 @@ export function PlayTable({
           >
             <Send className="size-4" />
           </Button>
+          {submissionError ? (
+            <p
+              id="action-submission-error"
+              role="alert"
+              data-submission-error
+              className="basis-full text-xs text-danger"
+            >
+              {submissionError}
+            </p>
+          ) : null}
         </form> : null}
       </section>
 

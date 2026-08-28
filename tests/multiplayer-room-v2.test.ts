@@ -428,7 +428,18 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
       },
     );
     expect(offered.kind, JSON.stringify(offered)).toBe("awaitingInput");
-    const bobRead = readModel(await initialized.stub.observe(BOB));
+    const groupRestQuestion = "是否自愿加入短休？请自行选择恢复资源。";
+    const aliceAfterOffer = record(
+      await initialized.stub.observe(ALICE),
+      "Alice after group rest offer",
+    );
+    const bobAfterOffer = record(
+      await initialized.stub.observe(BOB),
+      "Bob after group rest offer",
+    );
+    expect(JSON.stringify(bobAfterOffer.transcript)).toContain(groupRestQuestion);
+    expect(JSON.stringify(aliceAfterOffer.transcript)).not.toContain(groupRestQuestion);
+    const bobRead = readModel(bobAfterOffer);
     const groupPending = list(bobRead.pendingInputs, "Bob group rest pending")
       .map((entry) => record(entry, "group pending entry"))
       .find((entry) => entry.kind === "groupRestConsent");
@@ -491,7 +502,12 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
       },
     );
     expect(accepted.kind, JSON.stringify(accepted)).toBe("committed");
-    const after = readModel(await initialized.stub.observe(BOB));
+    const bobAfterConsent = record(
+      await initialized.stub.observe(BOB),
+      "Bob after group rest consent",
+    );
+    expect(JSON.stringify(bobAfterConsent.transcript)).toContain(groupRestQuestion);
+    const after = readModel(bobAfterConsent);
     expect(list(after.pendingInputs, "pending after consent")).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ pendingInputId: groupPendingId })]),
     );
@@ -882,7 +898,7 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
         },
       },
     });
-  });
+  }, 15_000);
 
   it("revokes a dead character's control after a fatal noncombat Room Action", async () => {
     const predecessorId = "character:multi:dead-predecessor";

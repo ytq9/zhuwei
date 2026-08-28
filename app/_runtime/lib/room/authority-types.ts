@@ -44,6 +44,7 @@ export type AuthoritativeActionInput =
       submissionId: string;
       pendingInputId: string;
       answer: unknown;
+      displayText?: string;
       acknowledgementId?: string;
     }
   | {
@@ -139,9 +140,27 @@ export type DeliveryAudienceBinding = {
   sessionVersion: number;
   seatId: string;
   characterId: string;
+  /** Frozen observer locations for this result. Optional for pre-deployment open plans. */
+  sceneIds?: string[];
   projectionHash: string;
   kpProjection: unknown;
 };
+
+export type ExperiencedTranscriptMessage = {
+  ordinal: number;
+  messageId: string;
+  sceneIds: string[];
+  kind: "player" | "kp";
+  speakerCharacterId: string | null;
+  speakerName: string;
+  body: string;
+  sourceEventSeq: string;
+  receiptId: string;
+};
+
+export type ExperiencedTranscriptMessageInput =
+  & Omit<ExperiencedTranscriptMessage, "ordinal">
+  & { viewerKey: string };
 
 export type DeliveryPlan = {
   publishCapability: string;
@@ -150,6 +169,13 @@ export type DeliveryPlan = {
   activeBranchId: string;
   eventRange: { first: string; last: string } | null;
   audiences: DeliveryAudienceBinding[];
+  actorMessage?: {
+    messageId: string;
+    characterId: string;
+    name: string;
+    body: string;
+    sceneIds: string[];
+  };
 };
 
 export type DeliveryFrame = {
@@ -161,6 +187,7 @@ export type DeliveryFrame = {
   narrationPolicyVersion: string;
   payloadHash: string;
   text: string;
+  sceneIds?: string[];
   audio?: { kind: "clientTts"; textHash: string };
 };
 
@@ -170,6 +197,7 @@ export type ObserverDeliveryOutcome =
 
 export type AuthoritativeRoomObservation = {
   readModel: unknown;
+  transcript: ExperiencedTranscriptMessage[];
   delivery: ObserverDeliveryOutcome;
 };
 

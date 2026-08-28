@@ -55,6 +55,7 @@ import type {
 import {
   AuthoritativeRoomStore,
   type AuthorityActionStageRow,
+  type AuthorityDeliverySlotRow,
   type AuthorityRandomnessBatchJournalRow,
   type AuthorityProposalRecoveryRow,
   type AuthoritySubmissionRow,
@@ -128,6 +129,35 @@ function parseJson<T>(value: string): T {
 
 function isObserverProjection(value: ReturnType<typeof projectAuthoritative>): value is SafeReadModel {
   return value.kind === "projected" && value.viewer.kind !== "kp";
+}
+
+function uniqueSceneIds(values: unknown[]): string[] {
+  return [...new Set(values.filter(nonEmptyString))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function pendingTranscriptBody(pending: unknown): string | undefined {
+  if (!isJsonRecord(pending)) return undefined;
+  return nonEmptyString(pending.question)
+    ? pending.question
+    : nonEmptyString(pending.prompt) ? pending.prompt : undefined;
+}
+
+function projectionTranscriptSceneIds(projection: unknown): string[] {
+  if (!isJsonRecord(projection)) return [];
+  const controlledCharacter = isJsonRecord(projection.controlledCharacter)
+    ? projection.controlledCharacter
+    : undefined;
+  const committedDelta = isJsonRecord(projection.committedDelta)
+    ? projection.committedDelta
+    : undefined;
+  const changes = Array.isArray(committedDelta?.changes)
+    ? committedDelta.changes.filter(isJsonRecord)
+    : [];
+  return uniqueSceneIds([
+    controlledCharacter?.sceneId,
+    ...changes.flatMap((change) => [change.sceneId, change.fromSceneId, change.toSceneId]),
+  ]);
 }
 
 function staleDecision(commandId: string, message: string): Decision {
@@ -744,6 +774,61 @@ export class RoomDurableObject extends DurableObject<Env> {
       : undefined;
   }
 
+  private authoritySceneIdAtEventSeq(
+    replay: AuthorityReplay,
+    characterId: string,
+    eventSeq: string,
+  ): string | undefined {
+    if (replay.replay.head.eventSeq === eventSeq) {
+      return replay.state.entities[characterId]?.sceneId;
+    }
+    let cursor: bigint;
+    try {
+      cursor = BigInt(eventSeq);
+    } catch {
+      return undefined;
+    }
+    const prefix = this.authorityStore.events()
+      .filter((event) => BigInt(event.eventSeq) <= cursor);
+    if (cursor > 0n && prefix[prefix.length - 1]?.eventSeq !== eventSeq) return undefined;
+    const reconstructed = replayAuthoritative(replay.genesis, prefix);
+    return reconstructed.kind === "replayed"
+      ? (reconstructed.state as AuthoritativeWorldState).entities[characterId]?.sceneId
+      : undefined;
+  }
+
+  private authorityDeliveryFrameSceneIds(
+    replay: AuthorityReplay,
+    characterId: string,
+    slot: AuthorityDeliverySlotRow,
+    frame: DeliveryFrame,
+  ): string[] {
+    if (frame.sceneIds?.length) return uniqueSceneIds(frame.sceneIds);
+    const receipt = this.authorityStore.receipt(frame.receiptId);
+    if (receipt?.eventRange !== null && receipt?.eventRange !== undefined) {
+      let priorEventSeq: string | undefined;
+      try {
+        const first = BigInt(receipt.eventRange.first);
+        priorEventSeq = first > 0n ? (first - 1n).toString() : "0";
+      } catch {
+        priorEventSeq = undefined;
+      }
+      const receiptSceneIds = uniqueSceneIds([
+        priorEventSeq === undefined
+          ? undefined
+          : this.authoritySceneIdAtEventSeq(replay, characterId, priorEventSeq),
+        this.authoritySceneIdAtEventSeq(replay, characterId, receipt.eventRange.last),
+      ]);
+      if (receiptSceneIds.length > 0) return receiptSceneIds;
+    }
+    const sourceSceneId = this.authoritySceneIdAtEventSeq(
+      replay,
+      characterId,
+      slot.source_event_seq,
+    );
+    return sourceSceneId === undefined ? [] : [sourceSceneId];
+  }
+
   private authorityIncrementalProjectionQuery(
     replay: AuthorityReplay,
     query: unknown,
@@ -910,6 +995,95 @@ export class RoomDurableObject extends DurableObject<Env> {
     };
   }
 
+  private experiencedTranscriptForViewer(
+    viewer: PlayerViewer,
+    state: AuthoritativeWorldState,
+    currentActorMessage?: {
+      messageId?: string;
+      characterId: string;
+      name: string;
+      body: string;
+      sceneIds: string[];
+    },
+  ): JsonObject {
+    const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
+    const currentSceneId = state.entities[viewer.characterId]?.sceneId;
+    const messages = (currentSceneId === undefined
+      ? this.authorityStore.experiencedMessages(viewerKey, 48)
+      : this.authorityStore.experiencedMessagesForScene(viewerKey, currentSceneId, 48))
+      .map((message) => ({
+        messageId: message.messageId,
+        kind: message.kind,
+        speakerCharacterId: message.speakerCharacterId,
+        speakerName: message.speakerName,
+        body: message.body,
+        sceneIds: [...message.sceneIds],
+        sourceEventSeq: message.sourceEventSeq,
+        receiptId: message.receiptId,
+      } satisfies JsonObject));
+    const seen = new Set(messages.map((message) => String(message.messageId)));
+    const slot = this.authorityStore.deliverySlot(viewerKey);
+    if (slot !== undefined) {
+      const frame = parseJson<DeliveryFrame>(slot.frame_json);
+      const sceneIds = frame.sceneIds?.length
+        ? [...frame.sceneIds]
+        : currentSceneId === undefined ? [] : [currentSceneId];
+      if (
+        !seen.has(frame.deliveryId)
+        && (currentSceneId === undefined || sceneIds.includes(currentSceneId))
+      ) {
+        messages.push({
+          messageId: frame.deliveryId,
+          kind: "kp",
+          speakerCharacterId: null,
+          speakerName: "KP",
+          body: frame.text,
+          sceneIds,
+          sourceEventSeq: slot.source_event_seq,
+          receiptId: frame.receiptId,
+        });
+        seen.add(frame.deliveryId);
+      }
+    }
+    if (
+      currentActorMessage?.characterId === viewer.characterId
+      && (currentSceneId === undefined || currentActorMessage.sceneIds.includes(currentSceneId))
+    ) {
+      const messageId = currentActorMessage.messageId
+        ?? `action:current:${currentActorMessage.characterId}`;
+      if (!seen.has(messageId)) {
+        messages.push({
+          messageId,
+          kind: "player",
+          speakerCharacterId: currentActorMessage.characterId,
+          speakerName: currentActorMessage.name,
+          body: currentActorMessage.body,
+          sceneIds: [...currentActorMessage.sceneIds],
+          sourceEventSeq: "current",
+          receiptId: "current",
+        });
+      }
+    }
+    return {
+      schema: "zhuwei.experienced-transcript/v1",
+      sceneId: currentSceneId ?? "unknown",
+      messages: messages.slice(-48),
+    };
+  }
+
+  private experiencedObservationTranscript(viewerKey: string, sceneId?: string) {
+    const latest = this.authorityStore.experiencedMessages(viewerKey, 120);
+    if (!nonEmptyString(sceneId)) return latest;
+    const currentScene = this.authorityStore.experiencedMessagesForScene(
+      viewerKey,
+      sceneId,
+      120,
+    );
+    const merged = new Map(latest.map((message) => [message.messageId, message]));
+    for (const message of currentScene) merged.set(message.messageId, message);
+    return [...merged.values()].sort((left, right) => left.ordinal - right.ordinal);
+  }
+
   private kpAuthorityProjection(
     replay: AuthorityReplay,
     actorViewer: PlayerViewer,
@@ -946,6 +1120,10 @@ export class RoomDurableObject extends DurableObject<Env> {
         ? {}
         : { adjudicationPrecedents: kpProjection.adjudicationPrecedents }),
       spatialEvidence: kpProjection.spatialEvidence as unknown as JsonObject,
+      experiencedTranscript: this.experiencedTranscriptForViewer(
+        actorViewer,
+        replay.state,
+      ),
     };
   }
 
@@ -1364,6 +1542,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             narrationPolicyVersion: NARRATION_POLICY_VERSION,
             payloadHash: openingPayloadHash,
             text: openingLocation.publicOpening,
+            sceneIds: [openingLocation.sceneId],
           },
         });
       }
@@ -2032,6 +2211,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         submissionId: actionInput.submissionId,
         pendingInputId: actionInput.pendingInputId,
         answer: structuredClone(actionInput.answer),
+        ...(nonEmptyString(actionInput.displayText)
+          ? { displayText: actionInput.displayText }
+          : {}),
         ...(nonEmptyString(actionInput.acknowledgementId)
           ? { acknowledgementId: actionInput.acknowledgementId }
           : {}),
@@ -2462,6 +2644,9 @@ export class RoomDurableObject extends DurableObject<Env> {
               continuation: {
                 pendingInputId: actionInput.pendingInputId,
                 answer: structuredClone(actionInput.answer),
+                ...(nonEmptyString(actionInput.displayText)
+                  ? { displayText: actionInput.displayText }
+                  : {}),
               },
             }
           : actionInput.kind === "gear"
@@ -3332,6 +3517,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     receiptId: string,
     priorState: AuthoritativeWorldState,
     events: EventEnvelope[],
+    actorMessage?: NonNullable<DeliveryPlan["actorMessage"]>,
   ): DeliveryAudienceBinding[] {
     const actor = state.entities[actorCharacterId];
     if (actor === undefined) return [];
@@ -3366,12 +3552,20 @@ export class RoomDurableObject extends DurableObject<Env> {
         receiptId,
         state.entities,
       );
+      projectedForNarration.experiencedTranscript = this.experiencedTranscriptForViewer(
+        viewer,
+        state,
+        actorMessage,
+      );
+      const priorSceneId = priorState.entities[character.id]?.sceneId;
+      const currentSceneId = state.entities[character.id]?.sceneId;
       bindings.push({
         audienceId: `audience:${receiptId}:${character.id}`,
         principalId: viewer.principalId,
         sessionVersion: viewer.sessionVersion!,
         seatId: viewer.seatId!,
         characterId: character.id,
+        sceneIds: uniqueSceneIds([priorSceneId, currentSceneId]),
         projectionHash: projection.projectionHash,
         kpProjection: projectedForNarration,
       });
@@ -4970,6 +5164,40 @@ export class RoomDurableObject extends DurableObject<Env> {
     let deliveryPlan: DeliveryPlan | undefined;
     const safetyDirect = submission.input_kind === "safetyPause"
       || submission.input_kind === "safetyAdjust";
+    const continuation = submission.continuation_json === null
+      ? undefined
+      : parseJson<JsonObject>(submission.continuation_json);
+    const originalInput = isJsonRecord(continuation?.originalInput)
+      ? continuation.originalInput
+      : undefined;
+    const pendingAnswer = isJsonRecord(continuation?.answer)
+      ? continuation.answer
+      : undefined;
+    const actorText = submission.input_kind === "intent"
+      && nonEmptyString(originalInput?.text)
+      ? originalInput.text
+      : submission.input_kind === "answer"
+        ? nonEmptyString(continuation?.displayText)
+          ? continuation.displayText
+          : nonEmptyString(pendingAnswer?.text) ? pendingAnswer.text : undefined
+        : undefined;
+    const resolvedActorName = resolved.state.entities[submission.character_id]?.name;
+    const priorActorName = replay.state.entities[submission.character_id]?.name;
+    const actorName = nonEmptyString(resolvedActorName)
+      ? resolvedActorName
+      : nonEmptyString(priorActorName) ? priorActorName : "你";
+    const actorMessage: DeliveryPlan["actorMessage"] = safetyDirect || actorText === undefined
+      ? undefined
+      : {
+          messageId: `action:${receipt.receiptId}:${submission.character_id}`,
+          characterId: submission.character_id,
+          name: actorName,
+          body: actorText,
+          sceneIds: uniqueSceneIds([
+            replay.state.entities[submission.character_id]?.sceneId,
+            resolved.state.entities[submission.character_id]?.sceneId,
+          ]),
+        };
     if (resolved.kind === "awaitingInput") {
       pendingBindings = authorityPendingBindings(
         resolved.state,
@@ -5010,9 +5238,51 @@ export class RoomDurableObject extends DurableObject<Env> {
           receipt.receiptId,
           deliveryPriorState,
           receiptEvents,
+          actorMessage,
         ),
+        ...(actorMessage === undefined ? {} : { actorMessage }),
       };
     }
+    const pendingMessages = resolved.kind === "awaitingInput"
+      ? pendingBindings.flatMap((binding) => {
+          const body = pendingTranscriptBody(binding.pending);
+          return body === undefined
+            ? []
+            : [{
+                viewerKey: `${binding.controllerPrincipalId}\u001f${binding.controllerCharacterId}`,
+                messageId: `pending:${binding.pendingInputId}:prompt`,
+                characterId: binding.controllerCharacterId,
+                body,
+                sceneIds: uniqueSceneIds([
+                  replay.state.entities[binding.controllerCharacterId]?.sceneId,
+                  resolved.state.entities[binding.controllerCharacterId]?.sceneId,
+                ]),
+              }];
+        })
+      : [];
+    const answeredPendingMessage = answeredPendingInputId === undefined
+      ? undefined
+      : (() => {
+          const pendingRow = this.authorityStore.pending(answeredPendingInputId);
+          if (pendingRow === undefined) return undefined;
+          try {
+            const body = pendingTranscriptBody(parseJson<JsonObject>(pendingRow.pending_json));
+            return body === undefined
+              ? undefined
+              : {
+                  viewerKey: `${submission.principal_id}\u001f${submission.character_id}`,
+                  messageId: `pending:${answeredPendingInputId}:prompt`,
+                  characterId: submission.character_id,
+                  body,
+                  sceneIds: uniqueSceneIds([
+                    replay.state.entities[submission.character_id]?.sceneId,
+                    resolved.state.entities[submission.character_id]?.sceneId,
+                  ]),
+                };
+          } catch {
+            return undefined;
+          }
+        })();
 
     const outcome: AuthorityCommitOutcome = resolved.kind === "awaitingInput"
       ? {
@@ -5027,6 +5297,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           kpProjection,
           ...(deliveryPlan === undefined ? {} : { deliveryPlan }),
         };
+    const transcriptSourceEventSeq = receiptEvents.at(-1)?.eventSeq
+      ?? replay.replay.head.eventSeq;
 
     const persisted = this.authorityStore.transaction(() => {
       if (this.authorityStore.roomDeletion() !== undefined) {
@@ -5086,6 +5358,19 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.authorityStore.updateState(resolved.state);
       this.authorityStore.advanceScope(current.scene_scope);
       this.authorityStore.saveReceipt(receipt);
+      if (answeredPendingMessage !== undefined) {
+        this.authorityStore.appendExperiencedMessage({
+          viewerKey: answeredPendingMessage.viewerKey,
+          messageId: answeredPendingMessage.messageId,
+          sceneIds: answeredPendingMessage.sceneIds,
+          kind: "kp",
+          speakerCharacterId: null,
+          speakerName: "KP",
+          body: answeredPendingMessage.body,
+          sourceEventSeq: transcriptSourceEventSeq,
+          receiptId: receipt.receiptId,
+        });
+      }
       if (answeredPendingInputId !== undefined) {
         this.authorityStore.closePending(answeredPendingInputId);
       }
@@ -5104,6 +5389,53 @@ export class RoomDurableObject extends DurableObject<Env> {
           deliveryPlan,
           receiptEvents[receiptEvents.length - 1].eventSeq,
         );
+      }
+      if (actorMessage !== undefined) {
+        const actorViewerKey = `${submission.principal_id}\u001f${actorMessage.characterId}`;
+        const currentSlot = this.authorityStore.deliverySlot(actorViewerKey);
+        if (currentSlot !== undefined) {
+          const currentFrame = parseJson<DeliveryFrame>(currentSlot.frame_json);
+          this.authorityStore.appendExperiencedMessage({
+            viewerKey: actorViewerKey,
+            messageId: currentFrame.deliveryId,
+            sceneIds: this.authorityDeliveryFrameSceneIds(
+              replay,
+              actorMessage.characterId,
+              currentSlot,
+              currentFrame,
+            ),
+            kind: "kp",
+            speakerCharacterId: null,
+            speakerName: "KP",
+            body: currentFrame.text,
+            sourceEventSeq: currentSlot.source_event_seq,
+            receiptId: currentFrame.receiptId,
+          });
+        }
+        this.authorityStore.appendExperiencedMessage({
+          viewerKey: actorViewerKey,
+          messageId: actorMessage.messageId,
+          sceneIds: actorMessage.sceneIds,
+          kind: "player",
+          speakerCharacterId: actorMessage.characterId,
+          speakerName: actorMessage.name,
+          body: actorMessage.body,
+          sourceEventSeq: transcriptSourceEventSeq,
+          receiptId: receipt.receiptId,
+        });
+      }
+      for (const pendingMessage of pendingMessages) {
+        this.authorityStore.appendExperiencedMessage({
+          viewerKey: pendingMessage.viewerKey,
+          messageId: pendingMessage.messageId,
+          sceneIds: pendingMessage.sceneIds,
+          kind: "kp",
+          speakerCharacterId: null,
+          speakerName: "KP",
+          body: pendingMessage.body,
+          sourceEventSeq: transcriptSourceEventSeq,
+          receiptId: receipt.receiptId,
+        });
       }
       if (submission.input_kind === "safetyPause") {
         this.authorityStore.supersedeCharacterDeliveries(
@@ -5427,6 +5759,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         characterId: binding.characterId,
       };
       const payloadHash = await authorityHash({ text: frameValue.narration.text });
+      const sceneIds = binding.sceneIds?.length
+        ? [...binding.sceneIds]
+        : projectionTranscriptSceneIds(binding.kpProjection);
       preparedFrames.push({
         binding,
         viewer,
@@ -5439,9 +5774,11 @@ export class RoomDurableObject extends DurableObject<Env> {
           narrationPolicyVersion: NARRATION_POLICY_VERSION,
           payloadHash,
           text: frameValue.narration.text,
+          sceneIds,
         },
       });
     }
+    const publicationReplay = this.authoritativeReplay();
 
     return this.authorityStore.transaction(() => {
       if (this.authorityStore.roomDeletion() !== undefined) {
@@ -5482,6 +5819,22 @@ export class RoomDurableObject extends DurableObject<Env> {
         const oldSlot = this.authorityStore.deliverySlot(viewerKey);
         if (oldSlot !== undefined) {
           const oldFrame = parseJson<DeliveryFrame>(oldSlot.frame_json);
+          this.authorityStore.appendExperiencedMessage({
+            viewerKey,
+            messageId: oldFrame.deliveryId,
+            sceneIds: this.authorityDeliveryFrameSceneIds(
+              publicationReplay,
+              viewer.characterId,
+              oldSlot,
+              oldFrame,
+            ),
+            kind: "kp",
+            speakerCharacterId: null,
+            speakerName: "KP",
+            body: oldFrame.text,
+            sourceEventSeq: oldSlot.source_event_seq,
+            receiptId: oldFrame.receiptId,
+          });
           this.authorityStore.tombstoneDelivery(
             oldSlot,
             oldFrame.receiptId,
@@ -5557,12 +5910,24 @@ export class RoomDurableObject extends DurableObject<Env> {
         const slot = this.authorityStore.deliverySlot(viewerKey);
         return {
           readModel,
+          transcript: this.experiencedObservationTranscript(viewerKey, latest.sceneId),
           delivery: slot === undefined
-            ? { kind: "none" }
-            : (() => {
-                const frame = parseJson<DeliveryFrame>(slot.frame_json);
-                return { kind: "current" as const, frame, body: frame.text };
-              })(),
+              ? { kind: "none" }
+              : (() => {
+                  const frame = parseJson<DeliveryFrame>(slot.frame_json);
+                  const observedFrame = frame.sceneIds?.length
+                    ? frame
+                    : {
+                        ...frame,
+                        sceneIds: this.authorityDeliveryFrameSceneIds(
+                          replay,
+                          latest.id,
+                          slot,
+                          frame,
+                        ),
+                      };
+                  return { kind: "current" as const, frame: observedFrame, body: frame.text };
+                })(),
         };
       }
     }
@@ -5626,11 +5991,26 @@ export class RoomDurableObject extends DurableObject<Env> {
     const slot = this.authorityStore.deliverySlot(viewerKey);
     return {
       readModel,
+      transcript: this.experiencedObservationTranscript(
+        viewerKey,
+        replay.state.entities[characterId]?.sceneId,
+      ),
       delivery: slot === undefined
         ? { kind: "none" }
         : (() => {
             const frame = parseJson<DeliveryFrame>(slot.frame_json);
-            return { kind: "current" as const, frame, body: frame.text };
+            const observedFrame = frame.sceneIds?.length
+              ? frame
+              : {
+                  ...frame,
+                  sceneIds: this.authorityDeliveryFrameSceneIds(
+                    replay,
+                    characterId,
+                    slot,
+                    frame,
+                  ),
+                };
+            return { kind: "current" as const, frame: observedFrame, body: frame.text };
           })(),
     };
   }
@@ -5688,6 +6068,22 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       const frame = parseJson<DeliveryFrame>(slot.frame_json);
       const result = { kind: "acknowledged" as const, deliveryId };
+      this.authorityStore.appendExperiencedMessage({
+        viewerKey,
+        messageId: frame.deliveryId,
+        sceneIds: this.authorityDeliveryFrameSceneIds(
+          replay,
+          characterId,
+          slot,
+          frame,
+        ),
+        kind: "kp",
+        speakerCharacterId: null,
+        speakerName: "KP",
+        body: frame.text,
+        sourceEventSeq: slot.source_event_seq,
+        receiptId: frame.receiptId,
+      });
       this.authorityStore.tombstoneDelivery(
         slot,
         frame.receiptId,
@@ -5863,6 +6259,27 @@ export class RoomDurableObject extends DurableObject<Env> {
           kind: "retryableFailure" as const,
           code: "correctionConflict",
         };
+      }
+      for (const slot of this.authorityStore.deliverySlotsForRootActions(
+        supersededRootActionIds,
+      )) {
+        const frame = parseJson<DeliveryFrame>(slot.frame_json);
+        this.authorityStore.appendExperiencedMessage({
+          viewerKey: slot.viewer_key,
+          messageId: frame.deliveryId,
+          sceneIds: this.authorityDeliveryFrameSceneIds(
+            replay,
+            slot.character_id,
+            slot,
+            frame,
+          ),
+          kind: "kp",
+          speakerCharacterId: null,
+          speakerName: "KP",
+          body: frame.text,
+          sourceEventSeq: slot.source_event_seq,
+          receiptId: frame.receiptId,
+        });
       }
       this.authorityStore.appendEvents(corrected.events);
       this.authorityStore.updateState(corrected.state);

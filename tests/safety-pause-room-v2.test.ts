@@ -15,6 +15,7 @@ const BOB = Object.freeze({
 });
 const ALICE_ID = "character:safety-room:alice";
 const BOB_ID = "character:safety-room:bob";
+const SAFETY_INVALIDATED_BODY = "SAFETY_INVALIDATED_BODY_MUST_NOT_ENTER_TRANSCRIPT";
 
 type Authority = {
   initializeAuthoritative(input: unknown): Promise<unknown>;
@@ -117,7 +118,7 @@ describe("production safety pause authority path", () => {
           { duration: { unit: "second", value: 1 } },
         ),
         narrate: async ({ audienceId }: JsonRecord) => ({
-          body: `当前叙述 ${String(audienceId)}`,
+          body: `${SAFETY_INVALIDATED_BODY}:${String(audienceId)}`,
           agencyClaims: [],
         }),
       },
@@ -164,11 +165,18 @@ describe("production safety pause authority path", () => {
     expect(record(paused.delivery, "paused delivery").kind).toBe("none");
     expect(stableFictionAndMechanics(pausedRead)).toEqual(aliceStable);
 
+    const aliceDuringPause = await observation(authority, ALICE);
+    expect(aliceDuringPause.delivery).toEqual({ kind: "none" });
+    expect(JSON.stringify(aliceDuringPause.observed.transcript))
+      .not.toContain(SAFETY_INVALIDATED_BODY);
+
     const bobDuringPause = await observation(authority, BOB);
     expect(bobDuringPause.readModel).not.toHaveProperty("safetyPresentation");
     expect(JSON.stringify(bobDuringPause.readModel)).not.toContain("SafetyPauseRequested");
     expect(JSON.stringify(bobDuringPause.readModel)).not.toContain("submission:safety-room:pause");
     expect(bobDuringPause.delivery).toEqual({ kind: "none" });
+    expect(JSON.stringify(bobDuringPause.observed.transcript))
+      .not.toContain(SAFETY_INVALIDATED_BODY);
     expect(stableFictionAndMechanics(bobDuringPause.readModel)).toEqual(bobStable);
 
     const blockedRevision = String(bobDuringPause.readModel.worldRevision);

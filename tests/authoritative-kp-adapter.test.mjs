@@ -144,6 +144,10 @@ function scriptedAi(responses) {
   };
 }
 
+function schemaInvalidTwice(responses) {
+  return responses.flatMap((response) => [response, response]);
+}
+
 function proposalRequest(overrides = {}) {
   return {
     preparedActionId: PREPARED_ACTION_ID,
@@ -375,6 +379,134 @@ test("authoritative KP proposes open-world mechanics and revises only from Rules
   assert.equal(ai.calls.length, 3, "Rules revisions do not receive a second model call");
 });
 
+test("a schema-invalid proposal is discarded and receives one bounded same-profile replacement", async () => {
+  const invalidDraftCanary = "model-output:missing-failure-array";
+  const invalidDraft = proposal({
+    goal: invalidDraftCanary,
+    mechanicalProposal: {
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [],
+    },
+  });
+  const replacement = proposal();
+  const receipts = [];
+  const ai = scriptedAi([
+    officialToolResponse("submit_kp_proposal", { kpProjection: invalidDraft }),
+    officialToolResponse("submit_kp_proposal", { proposal: replacement }),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    now: monotonicClock(),
+    onInvocationReceipt(value) {
+      receipts.push(value);
+    },
+  });
+
+  const result = await adapter.propose(proposalRequest());
+
+  assert.equal(result.kind, "checkRequired");
+  assert.equal(ai.calls.length, 2);
+  assert.ok(ai.calls.every(({ model }) => model === AUTHORITATIVE_KP_PROFILE.modelId));
+  assert.match(ai.calls[1].input.messages[1].content, /proposalSchemaCorrection/);
+  assert.equal(ai.calls[1].input.temperature, 0);
+  const correctionPayload = JSON.parse(ai.calls[1].input.messages[1].content);
+  assert.deepEqual(correctionPayload.action, INTENT);
+  assert.equal(
+    Object.hasOwn(
+      correctionPayload.proposalSchemaCorrection,
+      "validCompleteSimpleObservationExample",
+    ),
+    false,
+  );
+  assert.match(
+    correctionPayload.proposalSchemaCorrection.requirements.join("\n"),
+    /保持 action 的原始目标、做法、对象、风险、资源选择与语义范围/,
+  );
+  assert.doesNotMatch(
+    ai.calls[1].input.messages[1].content,
+    /站在原地观察/,
+    "schema correction must not carry a generic action that can replace the player's intent",
+  );
+  assert.doesNotMatch(
+    ai.calls[1].input.messages[1].content,
+    new RegExp(invalidDraftCanary),
+    "the rejected model output must not be copied into the replacement prompt",
+  );
+  assert.deepEqual(
+    receipts.map(({ result: receiptResult, failureStage }) => ({
+      result: receiptResult,
+      failureStage,
+    })),
+    [
+      { result: "modelPermanent", failureStage: "proposalSchema" },
+      { result: "success", failureStage: undefined },
+    ],
+  );
+});
+
+test("a single provider proposal envelope is accepted only when its inner proposal is closed and unambiguous", async () => {
+  const replacement = proposal();
+  const acceptedAi = scriptedAi([
+    officialToolResponse("submit_kp_proposal", { proposal: replacement }),
+    officialToolResponse("submit_kp_proposal", { kpProjection: replacement }),
+  ]);
+  const acceptedAdapter = createAuthoritativeKpAdapter({
+    ai: acceptedAi,
+    now: monotonicClock(),
+  });
+  const accepted = await acceptedAdapter.propose(proposalRequest());
+  assert.equal(accepted.kind, replacement.kind);
+  const alternateEnvelope = await acceptedAdapter.propose(proposalRequest());
+  assert.equal(alternateEnvelope.kind, replacement.kind);
+  assert.equal(acceptedAi.calls.length, 2);
+
+  const ambiguousEnvelope = {
+    proposal: replacement,
+    kpProjection: { viewer: { kind: "kp" } },
+  };
+  const rejectedAi = scriptedAi(schemaInvalidTwice([
+    officialToolResponse("submit_kp_proposal", ambiguousEnvelope),
+  ]));
+  const rejectedAdapter = createAuthoritativeKpAdapter({
+    ai: rejectedAi,
+    now: monotonicClock(),
+  });
+  await assert.rejects(rejectedAdapter.propose(proposalRequest()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema");
+    return true;
+  });
+  assert.equal(rejectedAi.calls.length, 2);
+});
+
+test("a schema replacement cannot start a fresh invocation timeout window", async () => {
+  const invalidDraft = proposal({
+    mechanicalProposal: {
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [],
+    },
+  });
+  const clockValues = [1_000, 45_999, 46_000];
+  const ai = scriptedAi([
+    officialToolResponse("submit_kp_proposal", invalidDraft),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    now: () => clockValues.shift() ?? 46_000,
+  });
+
+  await assert.rejects(adapter.propose(proposalRequest()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema");
+    return true;
+  });
+  assert.equal(ai.calls.length, 1);
+});
+
 test("authoritative KP accepts only versioned closed semantic ActionPlan operations", async () => {
   const productionCheck = {
     operation: "resolveNoncombatCheck",
@@ -425,23 +557,25 @@ test("authoritative KP accepts only versioned closed semantic ActionPlan operati
         }],
       },
     })),
-    officialToolResponse("submit_kp_proposal", withPlans({
-      ...productionCheck,
-      operation: "rewriteAuthoritativeState",
-    })),
-    officialToolResponse("submit_kp_proposal", withPlans({
-      ...productionCheck,
-      internalDirective: "commit without Rules diagnostics",
-    })),
-    officialToolResponse("submit_kp_proposal", withPlans({
-      ...productionCheck,
-      dice: [{ sides: 20 }],
-      faces: [20],
-    })),
-    officialToolResponse("submit_kp_proposal", withPlans(
-      productionCheck,
-      { ...productionCheck, operation: "rewriteAuthoritativeState" },
-    )),
+    ...schemaInvalidTwice([
+      officialToolResponse("submit_kp_proposal", withPlans({
+        ...productionCheck,
+        operation: "rewriteAuthoritativeState",
+      })),
+      officialToolResponse("submit_kp_proposal", withPlans({
+        ...productionCheck,
+        internalDirective: "commit without Rules diagnostics",
+      })),
+      officialToolResponse("submit_kp_proposal", withPlans({
+        ...productionCheck,
+        dice: [{ sides: 20 }],
+        faces: [20],
+      })),
+      officialToolResponse("submit_kp_proposal", withPlans(
+        productionCheck,
+        { ...productionCheck, operation: "rewriteAuthoritativeState" },
+      )),
+    ]),
   ]);
   const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
 
@@ -465,7 +599,7 @@ test("authoritative KP accepts only versioned closed semantic ActionPlan operati
       return true;
     });
   }
-  assert.equal(ai.calls.length, 6);
+  assert.equal(ai.calls.length, 10);
 
   const serializedProposalToolBytes = Buffer.byteLength(
     JSON.stringify(ai.calls[0].input.tools[0]),
@@ -476,8 +610,8 @@ test("authoritative KP accepts only versioned closed semantic ActionPlan operati
     `proposal tool schema must stay compact, received ${serializedProposalToolBytes} bytes`,
   );
 
-  assert.equal(AUTHORITATIVE_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v7");
-  assert.equal(GEMMA_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v7");
+  assert.equal(AUTHORITATIVE_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v8");
+  assert.equal(GEMMA_KP_PROFILE.promptPolicyVersion, "authoritative-kp-prompt-policy-v8");
   assert.equal(AUTHORITATIVE_KP_PROFILE.proposalSchemaVersion, "authoritative-kp-proposal-v2");
   assert.equal(AUTHORITATIVE_KP_PROFILE.actionPlanSchemaVersion, "authoritative-kp-action-plan-v1");
   assert.equal(AUTHORITATIVE_KP_PROFILE.narrationSchemaVersion, "authoritative-kp-narration-v3");
@@ -626,7 +760,7 @@ test("model boundary rejects resolution ActionPlans that the compound Rules cont
     npcActions: [],
     mechanicalProposal,
   });
-  const ai = scriptedAi([
+  const ai = scriptedAi(schemaInvalidTwice([
     officialToolResponse("submit_kp_proposal", directProposal({
       operation: "resolveDirectConsequences",
     })),
@@ -793,7 +927,7 @@ test("model boundary rejects resolution ActionPlans that the compound Rules cont
       success: [{ kind: "acquireKnowledge", knowledgeRef: "knowledge:visible-exit", value: null }],
       failure: [],
     })),
-  ]);
+  ]));
   const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
 
   for (const label of [
@@ -820,7 +954,7 @@ test("model boundary rejects resolution ActionPlans that the compound Rules cont
       return true;
     });
   }
-  assert.equal(ai.calls.length, 15);
+  assert.equal(ai.calls.length, 30);
 });
 
 test("model boundary accepts complete saves and both Rules-valid retry shapes", async () => {
@@ -937,7 +1071,7 @@ test("post-commit narration is generated once from each audience's isolated proj
     pressure: "院外的雨声盖住了短暂响动。",
   };
   const ai = scriptedAi([
-    officialToolResponse("submit_current_narration", {
+    officialToolResponse("submit_current_narration", { narration: {
       body: "门已经打开。Alice 还看见门框内侧有一道粉笔记号。",
       tts: "门打开了，门框内侧留着一道粉笔记号。",
       decisionPrompt: "巡逻者正在转身，你要继续进门还是先隐藏？",
@@ -956,7 +1090,7 @@ test("post-commit narration is generated once from each audience's isolated proj
           basisRefs: ["knowledge:alice-only-chalk-mark"],
         },
       ],
-    }),
+    } }),
     officialToolResponse("submit_current_narration", {
       body: "门已经打开，院外的雨声仍在继续。",
       tts: "门已经打开，雨声仍在继续。",
@@ -1034,13 +1168,15 @@ test("observation narration deterministically binds valid agency bases omitted f
   };
   const ai = scriptedAi([
     officialToolResponse("submit_current_narration", observationNarration),
-    officialToolResponse("submit_current_narration", {
-      ...observationNarration,
-      agencyClaims: [{
-        ...observationNarration.agencyClaims[0],
-        basisRefs: ["fact:not-in-the-audience-projection"],
-      }],
-    }),
+    ...schemaInvalidTwice([
+      officialToolResponse("submit_current_narration", {
+        ...observationNarration,
+        agencyClaims: [{
+          ...observationNarration.agencyClaims[0],
+          basisRefs: ["fact:not-in-the-audience-projection"],
+        }],
+      }),
+    ]),
   ]);
   const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
 
@@ -1064,8 +1200,279 @@ test("observation narration deterministically binds valid agency bases omitted f
   );
 
   const system = ai.calls[0].input.messages[0].content;
+  assert.equal(ai.calls[0].input.temperature, 0);
   assert.match(system, /每个 basisRef.*同时列入 referencedProjectionRefs/);
   assert.match(system, /world.*subjectRef=null.*sensoryConsequence/);
+  assert.match(system, /tacticalProjection.*UI 的机械数据.*不是默认旁白稿/s);
+  assert.match(system, /没有明确 facing.*不得从 x\/y 推断左右、前后、身后/s);
+  assert.match(system, /可见 NPC 的存在和位置不表示其正在注视谁/);
+  assert.match(system, /feature 的 label\/state 只证明该要素及其已投影状态/);
+  assert.match(system, /experiencedTranscript.*只用于延续.*不是当前空间、状态、感官证据/s);
+});
+
+test("narration rejects unsupported sensory extrapolations from tactical labels", async () => {
+  const unsupportedBodies = [
+    "你脚下有一片带泥的湿地。",
+    "泥土的痕迹从门口一路拖进来。",
+    "三人的目光越过你，望向你身后。",
+    "拼起的长桌上铺着白布。",
+    "炉台里的火苗噼啪作响。",
+    "石砌炉台投下暗影，三人都保持着守灵的姿态。",
+    "空气里弥漫着蜡烛与潮湿泥土的气味。",
+    "莉安站在你左前方。",
+  ];
+  const projection = {
+    viewer: { kind: "player", characterId: "character:alice" },
+    projectionHash: "projection:alice:wake-grounding",
+    committedDelta: {
+      schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: "character:alice",
+      viewerCharacterId: "character:alice",
+      receipt: {
+        receiptId: "receipt:wake-grounding",
+        rootActionId: ROOT_ACTION_ID,
+        status: "committed",
+      },
+      changes: [{
+        kind: "actionRuled",
+        goal: "环顾大厅里明显可见的环境",
+        method: "站在原地环顾，低头看向脚下后再转向左前方，不触碰物品",
+        feasibility: "directSuccess",
+        publicBasis: "",
+      }],
+    },
+    tacticalProjection: {
+      self: {
+        id: "character:alice",
+        name: "阿莱莎",
+        kind: "player",
+        position: { x: "-300", y: "-240", elevation: "0" },
+      },
+      visibleEntities: [
+        { id: "npc:lian", name: "莉安", kind: "npc", position: { x: "-180", y: "-240" } },
+        { id: "npc:naes", name: "奈斯", kind: "npc", position: { x: "-60", y: "-240" } },
+        { id: "npc:varo", name: "瓦罗", kind: "npc", position: { x: "60", y: "-240" } },
+      ],
+      knownFeatures: [
+        { id: "feature:tables", label: "拼起的长桌", state: "intact" },
+        { id: "feature:wet-floor", label: "带泥湿地", state: "wet" },
+        { id: "feature:hearth", label: "石砌炉台", state: "intact" },
+      ],
+      textualReadout: {
+        summary: "你可见三个其他单位与三个已知环境要素。",
+        entities: ["莉安与我约距 10 尺。", "奈斯与我约距 20 尺。", "瓦罗与我约距 30 尺。"],
+        features: ["拼起的长桌。", "带泥湿地。", "石砌炉台。"],
+      },
+    },
+    experiencedTranscript: [{
+      deliveryId: "delivery:old",
+      text: unsupportedBodies.join(""),
+    }],
+  };
+  const narration = (body) => ({
+    body,
+    tts: "你看清了当前环境。",
+    decisionPrompt: "你接下来怎么做？",
+    referencedProjectionRefs: [],
+    agencyClaims: [],
+  });
+  const groundedBody = unsupportedBodies.join("");
+  const actionOnlyBody = "你低头看向脚下，又转向左前方。";
+  const safeReplacementBody = "你完成了观察；目前没有更多可以确认的细节。";
+  const rejectedNarrationCanary = "无效输出回填金丝雀";
+  const receipts = [];
+  const ai = scriptedAi([
+    officialToolResponse(
+      "submit_current_narration",
+      narration(`${unsupportedBodies[0]}${rejectedNarrationCanary}`),
+    ),
+    officialToolResponse("submit_current_narration", narration(safeReplacementBody)),
+    ...schemaInvalidTwice(unsupportedBodies.map((body) =>
+      officialToolResponse("submit_current_narration", narration(body)))),
+    ...schemaInvalidTwice([
+      officialToolResponse("submit_current_narration", {
+        ...narration("你看清了当前环境。"),
+        tts: unsupportedBodies[0],
+      }),
+    ]),
+    officialToolResponse("submit_current_narration", narration(actionOnlyBody)),
+    officialToolResponse("submit_current_narration", narration(groundedBody)),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    now: monotonicClock(),
+    onInvocationReceipt(value) {
+      receipts.push(value);
+    },
+  });
+  const request = {
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:wake-grounding", status: "committed" },
+    projection,
+  };
+
+  const repaired = await adapter.narrate(request);
+  assert.equal(repaired.body, safeReplacementBody);
+  assert.equal(ai.calls[0].model, AUTHORITATIVE_KP_PROFILE.modelId);
+  assert.equal(ai.calls[1].model, AUTHORITATIVE_KP_PROFILE.modelId);
+  assert.equal(ai.calls[1].input.temperature, 0);
+  const correctionPayload = JSON.parse(ai.calls[1].input.messages[1].content);
+  assert.equal(
+    correctionPayload.narrationOutputCorrection.previousNarrationStatus,
+    "discardedBeforeDelivery",
+  );
+  assert.match(
+    correctionPayload.narrationOutputCorrection.requirements.join("\n"),
+    /只呈现当前投影明确支持.*没有就省略/s,
+  );
+  assert.doesNotMatch(
+    ai.calls[1].input.messages[1].content,
+    new RegExp(rejectedNarrationCanary),
+    "the rejected narration must not be copied into the replacement prompt",
+  );
+  assert.deepEqual(
+    receipts.map(({ result }) => result),
+    ["modelPermanent", "success"],
+    "the discarded invocation and its successful replacement are both observable",
+  );
+
+  const fallbackBody = "刚才的尝试已经结算。眼下没有更多可以确认的新变化。";
+  for (const body of unsupportedBodies) {
+    const fallback = await adapter.narrate(request);
+    assert.equal(fallback.body, fallbackBody, body);
+    assert.equal(fallback.body.includes(body), false);
+    assert.equal(fallback.modelInvocationReceipt.failureStage, "narrationGrounding");
+  }
+  const ttsFallback = await adapter.narrate(request);
+  assert.equal(ttsFallback.body, fallbackBody, "tts grounding failure must also degrade safely");
+  assert.equal(ttsFallback.modelInvocationReceipt.failureStage, "narrationGrounding");
+  const actionOnly = await adapter.narrate(request);
+  assert.equal(actionOnly.body, actionOnlyBody, "the guard must not be a bare phrase blacklist");
+
+  const groundedProjection = {
+    ...projection,
+    projectionHash: "projection:alice:wake-grounded",
+    visibleFacts: [{
+      id: "fact:wake-current-sensory-evidence",
+      kind: "sensoryEvidence",
+      value: [
+        "你脚下有一片带泥的湿地。",
+        "泥土的痕迹从门口一路拖进来。",
+        "三人的目光越过你，望向你身后。",
+        "长桌上铺着白布。",
+        "炉台里的火苗噼啪作响。",
+        "石砌炉台投下暗影，三人都保持着守灵的姿态。",
+        "空气里弥漫着蜡烛与潮湿泥土的气味。",
+        "莉安站在你左前方。",
+      ],
+    }],
+  };
+  const result = await adapter.narrate({ ...request, projection: groundedProjection });
+  assert.equal(result.body, groundedBody);
+  assert.equal(ai.calls.length, 2 + unsupportedBodies.length * 2 + 2 + 2);
+});
+
+test("narration rejects unsolicited tactical distance readouts but allows an explicit distance question", async () => {
+  const distanceBody = "莉安与你相距十尺，奈斯与你相距二十尺，瓦罗与你相距三十尺。";
+  const distanceRequest = "我想知道这三个人分别与我相距多少尺。";
+  const narration = {
+    body: distanceBody,
+    tts: distanceBody,
+    decisionPrompt: "你接下来怎么做？",
+    referencedProjectionRefs: [],
+    agencyClaims: [],
+  };
+  const projection = {
+    viewer: { kind: "player", characterId: "character:alice" },
+    projectionHash: "projection:alice:distance-readout",
+    committedDelta: {
+      schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: "character:alice",
+      viewerCharacterId: "character:alice",
+      receipt: {
+        receiptId: "receipt:distance-readout",
+        rootActionId: ROOT_ACTION_ID,
+        status: "committed",
+      },
+      changes: [{ kind: "actionCommitted", status: "committed" }],
+    },
+    tacticalProjection: {
+      textualReadout: {
+        entities: ["莉安与你相距十尺。", "奈斯与你相距二十尺。", "瓦罗与你相距三十尺。"],
+      },
+    },
+    experiencedTranscript: {
+      schema: "zhuwei.experienced-transcript/v1",
+      messages: [{
+        messageId: "action:current:alice",
+        kind: "player",
+        body: "我环顾大厅，只确认眼前可见的事物。",
+        sourceEventSeq: "current",
+        receiptId: "current",
+      }],
+    },
+  };
+  const ai = scriptedAi([
+    officialToolResponse("submit_current_narration", narration),
+    officialToolResponse("submit_current_narration", narration),
+    officialToolResponse("submit_current_narration", {
+      ...narration,
+      referencedProjectionRefs: [distanceRequest],
+    }),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
+  const request = {
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:distance-readout", status: "committed" },
+    projection,
+  };
+
+  const fallback = await adapter.narrate(request);
+  assert.equal(fallback.body, "刚才的尝试已经结算。眼下没有更多可以确认的新变化。");
+  assert.equal(fallback.body.includes(distanceBody), false);
+  assert.equal(fallback.modelInvocationReceipt.failureStage, "narrationGrounding");
+  const requestedProjection = structuredClone(projection);
+  requestedProjection.projectionHash = "projection:alice:distance-requested";
+  requestedProjection.experiencedTranscript.messages[0].body = distanceRequest;
+  const accepted = await adapter.narrate({ ...request, projection: requestedProjection });
+  assert.equal(accepted.body, distanceBody);
+  assert.equal(ai.calls.length, 3);
+});
+
+test("a narration replacement cannot start a fresh invocation timeout window", async () => {
+  const projection = {
+    viewer: { kind: "player", characterId: "character:alice" },
+    projectionHash: "projection:alice:narration-timeout",
+    committedDelta: {
+      schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: "character:alice",
+      viewerCharacterId: "character:alice",
+      receipt: {
+        receiptId: "receipt:narration-timeout",
+        rootActionId: ROOT_ACTION_ID,
+        status: "committed",
+      },
+      changes: [{ kind: "fictionTimeAdvanced", durationMicros: "1000000" }],
+    },
+  };
+  const ai = scriptedAi([
+    officialToolResponse("submit_current_narration", {
+      body: "缺少其余必填字段。",
+    }),
+  ]);
+  const clockValues = [1_000, 45_999, 46_000];
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    now: () => clockValues.shift() ?? 46_000,
+    invocationTimeoutMs: 45_000,
+  });
+
+  await assert.rejects(adapter.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:narration-timeout", status: "committed" },
+    projection,
+  }), (error) => error instanceof AuthoritativeKpModelError && error.code === "modelPermanent");
+  assert.equal(ai.calls.length, 1);
 });
 
 test("narration projection carries typed noncombat subjects without exposing hidden entities", async () => {
@@ -1107,15 +1514,17 @@ test("narration projection carries typed noncombat subjects without exposing hid
     referencedProjectionRefs: ["fact:warden-spoke-about-door"],
   };
   const ai = scriptedAi([
-    officialToolResponse("submit_current_narration", {
-      ...baseNarration,
-      agencyClaims: [{
-        subjectKind: "playerCharacter",
-        subjectRef: "npc:warden",
-        claimKind: "committedObservableAction",
-        basisRefs: ["fact:warden-spoke-about-door"],
-      }],
-    }),
+    ...schemaInvalidTwice([
+      officialToolResponse("submit_current_narration", {
+        ...baseNarration,
+        agencyClaims: [{
+          subjectKind: "playerCharacter",
+          subjectRef: "npc:warden",
+          claimKind: "committedObservableAction",
+          basisRefs: ["fact:warden-spoke-about-door"],
+        }],
+      }),
+    ]),
     officialToolResponse("submit_current_narration", {
       ...baseNarration,
       agencyClaims: [{
@@ -1204,20 +1613,22 @@ test("post-commit narration rejects missing, mis-typed, or player-owned agency c
     ],
   };
   const ai = scriptedAi([
-    officialToolResponse("submit_current_narration", {
-      ...baseNarration,
-      body: "你认定门后绝对安全。",
-    }),
-    ...forbidden.map(([claimKind, body]) => officialToolResponse("submit_current_narration", {
-      ...baseNarration,
-      body,
-      agencyClaims: [playerClaim(claimKind)],
-    })),
-    ...misTyped.map((claim) => officialToolResponse("submit_current_narration", {
-      ...baseNarration,
-      body: "门边传来一句简短回应。",
-      agencyClaims: [claim],
-    })),
+    ...schemaInvalidTwice([
+      officialToolResponse("submit_current_narration", {
+        ...baseNarration,
+        body: "你认定门后绝对安全。",
+      }),
+      ...forbidden.map(([claimKind, body]) => officialToolResponse("submit_current_narration", {
+        ...baseNarration,
+        body,
+        agencyClaims: [playerClaim(claimKind)],
+      })),
+      ...misTyped.map((claim) => officialToolResponse("submit_current_narration", {
+        ...baseNarration,
+        body: "门边传来一句简短回应。",
+        agencyClaims: [claim],
+      })),
+    ]),
     officialToolResponse("submit_current_narration", allowed),
   ]);
   const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
@@ -1424,10 +1835,10 @@ test("feasibility rulings and mechanical operations cannot contradict each other
       failure: [],
     },
   });
-  const ai = scriptedAi([
+  const ai = scriptedAi(schemaInvalidTwice([
     officialToolResponse("submit_kp_proposal", directButRolled),
     officialToolResponse("submit_kp_proposal", uncertainButDeterministic),
-  ]);
+  ]));
   const adapter = createAuthoritativeKpAdapter({ ai, now: monotonicClock() });
 
   for (const label of ["direct success with a roll", "uncertainty without an uncertain operation"]) {
@@ -1437,7 +1848,7 @@ test("feasibility rulings and mechanical operations cannot contradict each other
       return true;
     });
   }
-  assert.equal(ai.calls.length, 2);
+  assert.equal(ai.calls.length, 4);
 });
 
 test("timeout, quota exhaustion, and invalid model output return stable redacted failures", async () => {
@@ -1457,7 +1868,8 @@ test("timeout, quota exhaustion, and invalid model output return stable redacted
   });
   assert.equal(invalidAi.calls.length, 1, "structured-output failures are not repairable");
 
-  const forgedAuthorityAi = scriptedAi([
+  const forgedAuthorityReceipts = [];
+  const forgedAuthorityAi = scriptedAi(schemaInvalidTwice([
     officialToolResponse(
       "submit_kp_proposal",
       proposal({
@@ -1468,10 +1880,13 @@ test("timeout, quota exhaustion, and invalid model output return stable redacted
         },
       }),
     ),
-  ]);
+  ]));
   const forgedAuthorityAdapter = createAuthoritativeKpAdapter({
     ai: forgedAuthorityAi,
     now: monotonicClock(),
+    onInvocationReceipt(value) {
+      forgedAuthorityReceipts.push(value);
+    },
   });
   await assert.rejects(forgedAuthorityAdapter.propose(proposalRequest()), (error) => {
     assert.ok(error instanceof AuthoritativeKpModelError);
@@ -1479,7 +1894,18 @@ test("timeout, quota exhaustion, and invalid model output return stable redacted
     assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema");
     return true;
   });
-  assert.equal(forgedAuthorityAi.calls.length, 1, "proposal-schema failures are not repairable");
+  assert.equal(
+    forgedAuthorityAi.calls.length,
+    2,
+    "one replacement attempt must not turn consecutive invalid proposals into success",
+  );
+  assert.deepEqual(
+    forgedAuthorityReceipts.map(({ result, failureStage }) => ({ result, failureStage })),
+    [
+      { result: "modelPermanent", failureStage: "proposalSchema" },
+      { result: "modelPermanent", failureStage: "proposalSchema" },
+    ],
+  );
 
   const deterministicReceipts = [];
   const deterministicallyRepairableAi = scriptedAi([

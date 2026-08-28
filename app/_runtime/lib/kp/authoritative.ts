@@ -4,11 +4,14 @@ import {
   NARRATION_TOOL_NAME,
   PROPOSAL_TOOL_NAME,
   narrationModelInput,
+  narrationSchemaCorrectionModelInput,
   proposalModelInput,
+  proposalSchemaCorrectionModelInput,
 } from "./authoritative-policy";
 import {
   ModelInvocationTimeoutError,
   ModelOutputValidationError,
+  NarrationGroundingValidationError,
   assertProposalProjectionBound,
   assertKpProjection,
   audienceIdentity,
@@ -415,10 +418,57 @@ export function createAuthoritativeKpAdapter(
       throw permanentOutputError(error, invocation.receipt, "structuredOutput");
     }
     try {
-      return validateProposal(structured);
+      const structuredKeys = Object.keys(structured);
+      const onlyValue = structuredKeys.length === 1
+        ? structured[structuredKeys[0]]
+        : undefined;
+      // Some Workers AI tool-call responses add one redundant provider
+      // envelope around otherwise valid arguments. The envelope name is not
+      // authoritative; the inner object still has to pass the exact same
+      // closed Proposal validator. Sibling fields and invalid inner objects
+      // therefore remain fail-closed.
+      const proposalCandidate = isRecord(onlyValue) ? onlyValue : structured;
+      return validateProposal(proposalCandidate);
     } catch (error) {
       throw permanentOutputError(error, invocation.receipt, "proposalSchema");
     }
+  }
+
+  function narrationDraftFromInvocation(
+    invocation: InvocationSuccess,
+    projection: unknown,
+  ): ReturnType<typeof validateNarration> {
+    try {
+      const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
+      const structuredKeys = Object.keys(structured);
+      const onlyValue = structuredKeys.length === 1
+        ? structured[structuredKeys[0]]
+        : undefined;
+      const narrationCandidate = isRecord(onlyValue) ? onlyValue : structured;
+      return validateNarration(narrationCandidate, projection);
+    } catch (error) {
+      if (!(error instanceof ModelOutputValidationError)) throw error;
+      throw permanentOutputError(
+        error,
+        invocation.receipt,
+        error instanceof NarrationGroundingValidationError
+          ? "narrationGrounding"
+          : "narrationSchema",
+      );
+    }
+  }
+
+  function deterministicGroundingFallback(
+    projection: unknown,
+  ): ReturnType<typeof validateNarration> {
+    const body = "刚才的尝试已经结算。眼下没有更多可以确认的新变化。";
+    return validateNarration({
+      body,
+      tts: body,
+      decisionPrompt: "你接下来怎么做？",
+      referencedProjectionRefs: [],
+      agencyClaims: [],
+    }, projection);
   }
 
   function assertProjectionBoundProposal(
@@ -452,13 +502,49 @@ export function createAuthoritativeKpAdapter(
         } catch {
           throw permanentContractError(profile, "proposal", request.rootActionId, request.attempt, now);
         }
-        const invocation = await invoke(
+        let invocation = await invoke(
           "proposal",
           request.rootActionId,
           request.attempt,
           modelInput,
         );
-        const proposal = proposalDraftFromInvocation(invocation);
+        let proposal: KpProposalDraft;
+        try {
+          proposal = proposalDraftFromInvocation(invocation);
+        } catch (error) {
+          if (
+            !(error instanceof AuthoritativeKpModelError)
+            || error.modelInvocationReceipt.failureStage !== "proposalSchema"
+          ) {
+            throw error;
+          }
+          let correctionInput: Record<string, unknown>;
+          try {
+            correctionInput = proposalSchemaCorrectionModelInput(request);
+          } catch {
+            throw permanentContractError(
+              profile,
+              "proposal",
+              request.rootActionId,
+              request.attempt,
+              now,
+            );
+          }
+          const remainingInvocationMs = invocationTimeoutMs - Math.max(
+            0,
+            now() - invocation.receipt.startedAt,
+          );
+          if (remainingInvocationMs < 1) throw error;
+          emitInvocationReceipt(error.modelInvocationReceipt);
+          invocation = await invoke(
+            "proposal",
+            request.rootActionId,
+            request.attempt,
+            correctionInput,
+            remainingInvocationMs,
+          );
+          proposal = proposalDraftFromInvocation(invocation);
+        }
         let projectionBoundProposal: KpProposalDraft;
         try {
           projectionBoundProposal = normalizeProposalProjectionReferences(
@@ -499,26 +585,62 @@ export function createAuthoritativeKpAdapter(
         } catch {
           throw permanentContractError(profile, "narration", request.rootActionId, attempt, now);
         }
-        const invocation = await invoke(
+        let invocation = await invoke(
           "narration",
           request.rootActionId,
           attempt,
           modelInput,
         );
+        let narration: ReturnType<typeof validateNarration>;
+        let finalInvocationReceipt = invocation.receipt;
         try {
-          const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
-          const narration = validateNarration(structured, request.projection);
-          return {
-            ...narration,
-            audience,
-            modelInvocationReceipt: invocation.receipt,
-          };
-        } catch {
-          throw new AuthoritativeKpModelError(
-            "modelPermanent",
-            { ...invocation.receipt, result: "modelPermanent" },
+          narration = narrationDraftFromInvocation(invocation, request.projection);
+        } catch (error) {
+          if (!(error instanceof AuthoritativeKpModelError) || error.code !== "modelPermanent") {
+            throw error;
+          }
+          let correctionInput: Record<string, unknown>;
+          try {
+            correctionInput = narrationSchemaCorrectionModelInput(request);
+          } catch {
+            throw permanentContractError(
+              profile,
+              "narration",
+              request.rootActionId,
+              attempt,
+              now,
+            );
+          }
+          const remainingInvocationMs = invocationTimeoutMs - Math.max(
+            0,
+            now() - invocation.receipt.startedAt,
           );
+          if (remainingInvocationMs < 1) throw error;
+          emitInvocationReceipt(error.modelInvocationReceipt);
+          invocation = await invoke(
+            "narration",
+            request.rootActionId,
+            attempt,
+            correctionInput,
+            remainingInvocationMs,
+          );
+          finalInvocationReceipt = invocation.receipt;
+          try {
+            narration = narrationDraftFromInvocation(invocation, request.projection);
+          } catch (replacementError) {
+            if (
+              !(replacementError instanceof AuthoritativeKpModelError)
+              || replacementError.modelInvocationReceipt.failureStage !== "narrationGrounding"
+            ) throw replacementError;
+            narration = deterministicGroundingFallback(request.projection);
+            finalInvocationReceipt = replacementError.modelInvocationReceipt;
+          }
         }
+        return {
+          ...narration,
+          audience,
+          modelInvocationReceipt: finalInvocationReceipt,
+        };
       });
     },
   };

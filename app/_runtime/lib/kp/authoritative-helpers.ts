@@ -165,6 +165,13 @@ export class ModelOutputValidationError extends Error {
   }
 }
 
+export class NarrationGroundingValidationError extends ModelOutputValidationError {
+  constructor() {
+    super();
+    this.name = "NarrationGroundingValidationError";
+  }
+}
+
 export class ModelInvocationTimeoutError extends Error {
   constructor() {
     super("权威 KP 模型调用超时。");
@@ -224,6 +231,10 @@ export async function responseHash(value: unknown): Promise<string> {
 
 function invalid(): never {
   throw new ModelOutputValidationError();
+}
+
+function groundingInvalid(): never {
+  throw new NarrationGroundingValidationError();
 }
 
 function exactKeys(record: UnknownRecord, allowed: readonly string[], required = allowed): void {
@@ -1415,7 +1426,7 @@ export function validateNarrationAgencyClaims(
   if (!isRecord(value) || !Array.isArray(value.agencyClaims) || value.agencyClaims.length > 24) {
     invalid();
   }
-  const availableStrings = collectStrings(projection);
+  const availableStrings = narrationReferenceStrings(projection);
   const { playerRefs, npcRefs } = narrationSubjectRefs(projection);
   const claims = value.agencyClaims.map((claim) => {
     if (!isRecord(claim)) invalid();
@@ -1458,11 +1469,180 @@ export function validateNarrationAgencyClaims(
   return claims;
 }
 
+const NARRATION_NON_EVIDENCE_KEYS = new Set([
+  "decisionPrompt",
+  "experiencedTranscript",
+  "goal",
+  "method",
+  "narration",
+  "nextAction",
+  "opportunities",
+  "prompt",
+  "question",
+  "sceneQuestion",
+]);
+
+function narrationReferenceStrings(projection: unknown): Set<string> {
+  if (!isRecord(projection)) return collectStrings(projection);
+  const { experiencedTranscript: _experiencedTranscript, ...currentProjection } = projection;
+  const references = collectStrings(currentProjection);
+  // The exact current player input is carried in the transcript envelope so
+  // it can remain actor-only, but it is also a valid basis for narrating that
+  // just-committed action. Older transcript text remains unavailable as a
+  // projection reference and all transcript text stays excluded from current
+  // sensory evidence below.
+  for (const currentIntent of currentPlayerIntentStrings(projection)) {
+    references.add(currentIntent);
+  }
+  return references;
+}
+
+function narrationEvidenceStrings(
+  value: unknown,
+  output = new Set<string>(),
+  seen = new WeakSet<object>(),
+): Set<string> {
+  if (typeof value === "string") {
+    const text = value.normalize("NFKC").trim();
+    if (text.length > 0) output.add(text);
+    return output;
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return output;
+    seen.add(value);
+    for (const item of value) narrationEvidenceStrings(item, output, seen);
+    return output;
+  }
+  if (!isRecord(value) || seen.has(value)) return output;
+  seen.add(value);
+  for (const [key, item] of Object.entries(value)) {
+    if (NARRATION_NON_EVIDENCE_KEYS.has(key)) continue;
+    narrationEvidenceStrings(item, output, seen);
+  }
+  return output;
+}
+
+function hasNarrationEvidence(
+  evidence: readonly string[],
+  predicate: (text: string) => boolean,
+): boolean {
+  return evidence.some(predicate);
+}
+
+const UNDERFOOT_ASSERTION = /(?:脚下(?:的)?.{0,20}(?:有|是|出现|铺|积|湿|泥|水|血|痕|脚印|足迹)|(?:湿|泥|水|血|痕|脚印|足迹).{0,20}脚下)/u;
+const UNDERFOOT_EVIDENCE = /(?:脚下|足下|脚边|所站(?:之处|位置)|站立位置|当前位置.{0,12}(?:湿|泥)|(?:湿|泥).{0,12}当前位置)/u;
+const MUD_TRACE_ASSERTION = /(?:泥(?:土)?(?:的)?(?:痕迹|印迹|脚印|足迹|靴印)|泥痕|泥迹|带泥(?:的)?(?:脚印|足迹|靴印))/u;
+const TRAIL_EXTENT_ASSERTION = /(?:一路|一串|一行|延伸|拖进|拖出|通向|从.{0,32}(?:到|向|进|出|延|拖))/u;
+const GAZE_ASSERTION = /(?:目光|视线|注视|凝视|盯(?:着|住)?)/u;
+const BEHIND_ASSERTION = /(?:身后|背后|肩后|越过.{0,8}肩)/u;
+const WHITE_CLOTH_ASSERTION = /白布/u;
+const WHITE_CLOTH_EVIDENCE = /(?:白布|白色.{0,8}(?:布|织物|罩布|桌布|裹尸布))/u;
+const CANDLE_ASSERTION = /(?:蜡烛|烛台|烛火)/u;
+const SHADOW_ASSERTION = /(?:暗影|阴影|影子|投下.{0,8}(?:影|黑影))/u;
+const SMELL_ASSERTION = /(?:气味|味道|闻到|嗅到|霉味|泥土味|蜡味|腐臭|腥臭|芳香)/u;
+const POSTURE_ASSERTION = /(?:姿态|姿势|站姿|坐姿|跪姿)/u;
+const FIRE_ASSERTION = /(?:火苗|火焰|炉火|篝火|烛火|火堆|燃烧)/u;
+const CRACKLING_ASSERTION = /(?:噼啪|劈啪|哔剥|爆裂声|燃烧声|(?:火|燃).{0,8}作响)/u;
+const PRECISE_DISTANCE_ASSERTION = /(?:\d{1,3}|[零〇一二两三四五六七八九十百]+)\s*尺/gu;
+const DISTANCE_REQUEST = /(?:距离|相距|间距|多远|几尺|多少尺|坐标|方位|高度|高程|战术位置)/u;
+
+const RELATIVE_DIRECTION_EVIDENCE_GROUPS = [
+  ["左前方"],
+  ["右前方"],
+  ["左后方"],
+  ["右后方"],
+  ["正前方"],
+  ["身后", "背后", "正后方"],
+] as const;
+
+function assertsRelativePosition(body: string, alternatives: readonly string[]): boolean {
+  return alternatives.some((phrase) => {
+    const index = body.indexOf(phrase);
+    if (index < 0) return false;
+    const before = body.slice(Math.max(0, index - 16), index);
+    const after = body.slice(index + phrase.length, index + phrase.length + 12);
+    return /(?:位于|站在|处于|停在|出现在|就在|落在|靠在|目光|视线|注视|凝视|盯)/u.test(before)
+      || /(?:位置|方向|之处|处)/u.test(after);
+  });
+}
+
+function currentPlayerIntentStrings(projection: unknown): string[] {
+  if (!isRecord(projection)) return [];
+  const transcript = projection.experiencedTranscript;
+  const messages = Array.isArray(transcript)
+    ? transcript
+    : isRecord(transcript) && Array.isArray(transcript.messages)
+      ? transcript.messages
+      : [];
+  return messages.flatMap((message) => {
+    if (!isRecord(message) || message.kind !== "player") return [];
+    const isCurrent = message.sourceEventSeq === "current" || message.receiptId === "current";
+    return isCurrent && typeof message.body === "string" ? [message.body] : [];
+  });
+}
+
+/** Rejects a narrow set of concrete sensory/spatial assertions that the model
+ * commonly extrapolates from map labels. This is evidence-aware rather than a
+ * scene blacklist: the same wording remains valid when a current projected
+ * fact actually states it. Historical transcript and intent/question fields
+ * are deliberately excluded from current-state sensory evidence. */
+function assertNarrationTextGrounded(body: string, projection: unknown): void {
+  const evidence = [...narrationEvidenceStrings(projection)];
+  const preciseDistances = [...body.matchAll(PRECISE_DISTANCE_ASSERTION)];
+  if (preciseDistances.length >= 2
+    && !currentPlayerIntentStrings(projection).some((text) => DISTANCE_REQUEST.test(text))) {
+    groundingInvalid();
+  }
+
+  if (UNDERFOOT_ASSERTION.test(body)
+    && !hasNarrationEvidence(evidence, (text) => UNDERFOOT_EVIDENCE.test(text))) groundingInvalid();
+
+  if (MUD_TRACE_ASSERTION.test(body)
+    && TRAIL_EXTENT_ASSERTION.test(body)
+    && !hasNarrationEvidence(evidence, (text) =>
+      MUD_TRACE_ASSERTION.test(text) && TRAIL_EXTENT_ASSERTION.test(text))) groundingInvalid();
+
+  if (GAZE_ASSERTION.test(body)
+    && BEHIND_ASSERTION.test(body)
+    && !hasNarrationEvidence(evidence, (text) =>
+      GAZE_ASSERTION.test(text) && BEHIND_ASSERTION.test(text))) groundingInvalid();
+
+  if (WHITE_CLOTH_ASSERTION.test(body)
+    && !hasNarrationEvidence(evidence, (text) => WHITE_CLOTH_EVIDENCE.test(text))) {
+    groundingInvalid();
+  }
+
+  for (const sensoryAssertion of [
+    CANDLE_ASSERTION,
+    SHADOW_ASSERTION,
+    SMELL_ASSERTION,
+    POSTURE_ASSERTION,
+  ]) {
+    if (sensoryAssertion.test(body)
+      && !hasNarrationEvidence(evidence, (text) => sensoryAssertion.test(text))) groundingInvalid();
+  }
+
+  if (FIRE_ASSERTION.test(body)
+    && CRACKLING_ASSERTION.test(body)
+    && !hasNarrationEvidence(evidence, (text) =>
+      FIRE_ASSERTION.test(text) && CRACKLING_ASSERTION.test(text))) groundingInvalid();
+
+  for (const alternatives of RELATIVE_DIRECTION_EVIDENCE_GROUPS) {
+    if (!assertsRelativePosition(body, alternatives)) continue;
+    if (!hasNarrationEvidence(evidence, (text) =>
+      alternatives.some((phrase) => text.includes(phrase)))) groundingInvalid();
+  }
+}
+
 export function validateNarration(value: unknown, projection: unknown): CurrentNarrationDraft {
   if (!isRecord(value)) invalid();
   exactKeys(value, ["body", "tts", "decisionPrompt", "referencedProjectionRefs", "agencyClaims"]);
+  const body = boundedString(value.body, 1_600);
+  const tts = boundedString(value.tts, 900);
+  assertNarrationTextGrounded(body, projection);
+  assertNarrationTextGrounded(tts, projection);
   const declaredProjectionRefs = stringArray(value.referencedProjectionRefs);
-  const availableStrings = collectStrings(projection);
+  const availableStrings = narrationReferenceStrings(projection);
   if (declaredProjectionRefs.some((reference) => !availableStrings.has(reference))) invalid();
   const agencyClaims = validateNarrationAgencyClaims(value, projection);
   const referencedProjectionRefs = stringArray([
@@ -1472,8 +1652,8 @@ export function validateNarration(value: unknown, projection: unknown): CurrentN
     ]),
   ]);
   return {
-    body: boundedString(value.body, 1_600),
-    tts: boundedString(value.tts, 900),
+    body,
+    tts,
     decisionPrompt: boundedString(value.decisionPrompt, 480),
     referencedProjectionRefs,
     agencyClaims,

@@ -82,6 +82,7 @@ test("terminal deletion explicitly covers every Room DO application table withou
     "authority_pending_inputs",
     "authority_delivery_plans",
     "authority_delivery_slots",
+    "authority_experienced_messages",
     "authority_delivery_watermarks",
     "authority_delivery_tombstones",
     "authority_delivery_plan_tombstones",

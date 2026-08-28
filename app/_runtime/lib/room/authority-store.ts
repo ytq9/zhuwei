@@ -4,11 +4,15 @@ import type {
   AuthoritativeMemberSeed,
   DeliveryFrame,
   DeliveryPlan,
+  ExperiencedTranscriptMessage,
+  ExperiencedTranscriptMessageInput,
   JsonObject,
   PublicReceipt,
 } from "./authority-types";
 import type { AuthoritativeArchiveProgress } from "./archive";
 import { authorityPendingBindings } from "./pending-bindings";
+
+export type { ExperiencedTranscriptMessage };
 
 export type AuthorityRoomRow = {
   room_id: string;
@@ -120,6 +124,19 @@ export type AuthorityDeliverySlotRow = {
   delivery_id: string;
   source_event_seq: string;
   frame_json: string;
+};
+
+export type AuthorityExperiencedMessageRow = {
+  ordinal: number;
+  viewer_key: string;
+  message_id: string;
+  scene_ids_json: string;
+  kind: "player" | "kp";
+  speaker_character_id: string | null;
+  speaker_name: string;
+  body: string;
+  source_event_seq: string;
+  receipt_id: string;
 };
 
 export type AuthorityAcknowledgementRow = {
@@ -318,6 +335,22 @@ export class AuthoritativeRoomStore {
         source_event_seq TEXT NOT NULL,
         frame_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS authority_experienced_messages (
+        ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
+        viewer_key TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        scene_ids_json TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('player', 'kp')),
+        speaker_character_id TEXT,
+        speaker_name TEXT NOT NULL,
+        body TEXT NOT NULL,
+        source_event_seq TEXT NOT NULL,
+        receipt_id TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS authority_experienced_messages_identity_idx
+        ON authority_experienced_messages(viewer_key, message_id);
+      CREATE INDEX IF NOT EXISTS authority_experienced_messages_viewer_order_idx
+        ON authority_experienced_messages(viewer_key, ordinal);
       CREATE TABLE IF NOT EXISTS authority_delivery_watermarks (
         viewer_key TEXT PRIMARY KEY,
         source_event_seq TEXT NOT NULL
@@ -458,6 +491,7 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_pending_inputs)
         + (SELECT COUNT(*) FROM authority_delivery_plans)
         + (SELECT COUNT(*) FROM authority_delivery_slots)
+        + (SELECT COUNT(*) FROM authority_experienced_messages)
         + (SELECT COUNT(*) FROM authority_delivery_watermarks)
         + (SELECT COUNT(*) FROM authority_delivery_tombstones)
         + (SELECT COUNT(*) FROM authority_delivery_plan_tombstones)
@@ -1415,6 +1449,91 @@ export class AuthoritativeRoomStore {
     );
   }
 
+  appendExperiencedMessage(input: ExperiencedTranscriptMessageInput): boolean {
+    const result = this.storage.sql.exec(
+      `INSERT INTO authority_experienced_messages (
+         viewer_key, message_id, scene_ids_json, kind, speaker_character_id,
+         speaker_name, body, source_event_seq, receipt_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(viewer_key, message_id) DO NOTHING`,
+      input.viewerKey,
+      input.messageId,
+      JSON.stringify(input.sceneIds),
+      input.kind,
+      input.speakerCharacterId,
+      input.speakerName,
+      input.body,
+      input.sourceEventSeq,
+      input.receiptId,
+    );
+    return result.rowsWritten > 0;
+  }
+
+  experiencedMessages(viewerKey: string, limit = 240): ExperiencedTranscriptMessage[] {
+    const boundedLimit = Math.max(1, Math.min(1_000, Math.trunc(limit)));
+    return this.storage.sql.exec<AuthorityExperiencedMessageRow>(`
+      SELECT ordinal, viewer_key, message_id, scene_ids_json, kind,
+             speaker_character_id, speaker_name, body, source_event_seq, receipt_id
+      FROM (
+        SELECT ordinal, viewer_key, message_id, scene_ids_json, kind,
+               speaker_character_id, speaker_name, body, source_event_seq, receipt_id
+        FROM authority_experienced_messages
+        WHERE viewer_key = ?
+        ORDER BY ordinal DESC
+        LIMIT ?
+      )
+      ORDER BY ordinal
+    `, viewerKey, boundedLimit).toArray().map((row) => ({
+      ordinal: row.ordinal,
+      messageId: row.message_id,
+      sceneIds: parseJson<string[]>(row.scene_ids_json),
+      kind: row.kind,
+      speakerCharacterId: row.speaker_character_id,
+      speakerName: row.speaker_name,
+      body: row.body,
+      sourceEventSeq: row.source_event_seq,
+      receiptId: row.receipt_id,
+    }));
+  }
+
+  experiencedMessagesForScene(
+    viewerKey: string,
+    sceneId: string,
+    limit = 48,
+  ): ExperiencedTranscriptMessage[] {
+    const boundedLimit = Math.max(1, Math.min(240, Math.trunc(limit)));
+    return this.storage.sql.exec<AuthorityExperiencedMessageRow>(`
+      SELECT ordinal, viewer_key, message_id, scene_ids_json, kind,
+             speaker_character_id, speaker_name, body, source_event_seq, receipt_id
+      FROM (
+        SELECT message.ordinal, message.viewer_key, message.message_id,
+               message.scene_ids_json, message.kind, message.speaker_character_id,
+               message.speaker_name, message.body, message.source_event_seq,
+               message.receipt_id
+        FROM authority_experienced_messages AS message
+        WHERE message.viewer_key = ?
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(message.scene_ids_json) AS scene
+            WHERE scene.value = ?
+          )
+        ORDER BY message.ordinal DESC
+        LIMIT ?
+      )
+      ORDER BY ordinal
+    `, viewerKey, sceneId, boundedLimit).toArray().map((row) => ({
+      ordinal: row.ordinal,
+      messageId: row.message_id,
+      sceneIds: parseJson<string[]>(row.scene_ids_json),
+      kind: row.kind,
+      speakerCharacterId: row.speaker_character_id,
+      speakerName: row.speaker_name,
+      body: row.body,
+      sourceEventSeq: row.source_event_seq,
+      receiptId: row.receipt_id,
+    }));
+  }
+
   tombstoneDelivery(
     slot: AuthorityDeliverySlotRow,
     receiptId: string,
@@ -1537,6 +1656,24 @@ export class AuthoritativeRoomStore {
     }
   }
 
+  deliverySlotsForRootActions(rootActionIds: string[]): AuthorityDeliverySlotRow[] {
+    const roots = new Set(rootActionIds);
+    if (roots.size === 0) return [];
+    const receiptIds = new Set(this.receipts()
+      .filter((receipt) => roots.has(receipt.rootActionId))
+      .map((receipt) => receipt.receiptId));
+    if (receiptIds.size === 0) return [];
+    return this.storage.sql.exec<AuthorityDeliverySlotRow>(`
+      SELECT viewer_key, principal_id, character_id, delivery_id,
+             source_event_seq, frame_json
+      FROM authority_delivery_slots
+      ORDER BY viewer_key
+    `).toArray().filter((slot) => {
+      const frame = parseJson<DeliveryFrame>(slot.frame_json);
+      return receiptIds.has(frame.receiptId);
+    });
+  }
+
   correction(correctionId: string): AuthorityCorrectionRow | undefined {
     return this.storage.sql.exec<AuthorityCorrectionRow>(`
       SELECT correction_id, payload_hash, target_receipt_id, result_json
@@ -1620,6 +1757,7 @@ export class AuthoritativeRoomStore {
     this.storage.sql.exec(`
       DELETE FROM authority_delivery_acknowledgements;
       DELETE FROM authority_delivery_slots;
+      DELETE FROM authority_experienced_messages;
       DELETE FROM authority_delivery_watermarks;
       DELETE FROM authority_delivery_tombstones;
       DELETE FROM authority_delivery_plan_tombstones;

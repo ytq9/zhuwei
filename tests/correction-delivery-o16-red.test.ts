@@ -30,7 +30,7 @@ const ALICE_CHARACTER = "character:o16:alice";
 const BOB_CHARACTER = "character:o16:bob";
 const CAROL_CHARACTER = "character:o16:carol";
 const WRONG_BRANCH_SECRET = "错误分支的秘密依据：银钥匙藏在钟罩下";
-const OLD_BODY = "O16_OLD_BODY_MUST_BE_INVALIDATED";
+const EXPERIENCED_OLD_BODY = "O16_OLD_BODY_MUST_REMAIN_VIEWER_SCOPED";
 const REPLACEMENT_BODY = "O16_REPLACEMENT_BODY";
 
 function record(value: unknown, label: string): JsonRecord {
@@ -131,7 +131,7 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
           },
         ),
         narrate: async (request: JsonRecord) => ({
-          text: `${OLD_BODY}:${String(request.audienceId)}`,
+          text: `${EXPERIENCED_OLD_BODY}:${String(request.audienceId)}`,
           agencyClaims: [],
         }),
       },
@@ -148,8 +148,8 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
     const beforeAlice = record(await authority.observe(ALICE), "Alice before correction");
     const beforeBob = record(await authority.observe(BOB), "Bob before correction");
     const beforeCarol = record(await authority.observe(CAROL), "Carol before correction");
-    expect(JSON.stringify(beforeAlice.delivery)).toContain(OLD_BODY);
-    expect(JSON.stringify(beforeBob.delivery)).toContain(OLD_BODY);
+    expect(JSON.stringify(beforeAlice.delivery)).toContain(EXPERIENCED_OLD_BODY);
+    expect(JSON.stringify(beforeBob.delivery)).toContain(EXPERIENCED_OLD_BODY);
     expect(beforeCarol.delivery).toEqual({ kind: "none" });
     expect(JSON.stringify(beforeAlice.readModel)).toContain(WRONG_BRANCH_SECRET);
     expect(JSON.stringify(beforeBob)).not.toContain(WRONG_BRANCH_SECRET);
@@ -177,16 +177,20 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
     });
     expect(corrected.activeBranchId).not.toBe(originalBranchId);
 
-    // The correction commit itself is the atomic boundary: no narration has
-    // been generated yet, but the invalid branch can no longer be observed.
+    // The correction commit itself is the atomic boundary: no replacement
+    // narration has been generated yet. The invalid branch can no longer be
+    // observed as current truth, while narration already experienced by each
+    // frozen viewer remains in that viewer's transcript.
     const invalidatedAlice = record(await authority.observe(ALICE), "Alice after correction commit");
     const invalidatedBob = record(await authority.observe(BOB), "Bob after correction commit");
     const invalidatedCarol = record(await authority.observe(CAROL), "Carol after correction commit");
     for (const observation of [invalidatedAlice, invalidatedBob, invalidatedCarol]) {
       expect(observation.delivery).toEqual({ kind: "none" });
-      expect(JSON.stringify(observation)).not.toContain(OLD_BODY);
       expect(JSON.stringify(observation)).not.toContain(WRONG_BRANCH_SECRET);
     }
+    expect(JSON.stringify(invalidatedAlice.transcript)).toContain(EXPERIENCED_OLD_BODY);
+    expect(JSON.stringify(invalidatedBob.transcript)).toContain(EXPERIENCED_OLD_BODY);
+    expect(JSON.stringify(invalidatedCarol.transcript)).not.toContain(EXPERIENCED_OLD_BODY);
     const correctedAliceReadModel = observationReadModel(
       invalidatedAlice,
       "Alice after correction commit",
@@ -220,10 +224,20 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
       BOB_CHARACTER,
     ]);
     for (const audience of replacementAudiences) {
-      expect(record(audience.kpProjection, "replacement KP projection").activeBranchId)
+      const kpProjection = record(audience.kpProjection, "replacement KP projection");
+      expect(kpProjection.activeBranchId)
         .toBe(corrected.activeBranchId);
-      expect(JSON.stringify(audience.kpProjection)).not.toContain(WRONG_BRANCH_SECRET);
-      expect(JSON.stringify(audience.kpProjection)).not.toContain(OLD_BODY);
+      expect(JSON.stringify(kpProjection)).not.toContain(WRONG_BRANCH_SECRET);
+      expect(JSON.stringify(kpProjection.experiencedTranscript))
+        .toContain(EXPERIENCED_OLD_BODY);
+      const otherCharacterId = audience.characterId === ALICE_CHARACTER
+        ? BOB_CHARACTER
+        : ALICE_CHARACTER;
+      expect(JSON.stringify(kpProjection.experiencedTranscript))
+        .not.toContain(otherCharacterId);
+      const currentProjection = { ...kpProjection };
+      delete currentProjection.experiencedTranscript;
+      expect(JSON.stringify(currentProjection)).not.toContain(EXPERIENCED_OLD_BODY);
     }
 
     const replacementFrames = replacementAudiences.map((audience) => ({
@@ -257,8 +271,28 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
     });
     expect(afterCarol.delivery).toEqual({ kind: "none" });
     for (const observation of [afterAlice, afterBob, afterCarol]) {
-      expect(JSON.stringify(observation)).not.toContain(OLD_BODY);
       expect(JSON.stringify(observation)).not.toContain(WRONG_BRANCH_SECRET);
+    }
+    expect(JSON.stringify(afterAlice.transcript)).toContain(EXPERIENCED_OLD_BODY);
+    expect(JSON.stringify(afterBob.transcript)).toContain(EXPERIENCED_OLD_BODY);
+    expect(JSON.stringify(afterCarol.transcript)).not.toContain(EXPERIENCED_OLD_BODY);
+
+    for (const [viewer, observation, characterId] of [
+      [ALICE, afterAlice, ALICE_CHARACTER],
+      [BOB, afterBob, BOB_CHARACTER],
+    ] as const) {
+      const frame = record(record(observation.delivery, "replacement delivery").frame, "replacement frame");
+      await expect(authority.acknowledge(viewer, String(frame.deliveryId)))
+        .resolves.toMatchObject({ kind: "acknowledged", deliveryId: frame.deliveryId });
+      const acknowledged = record(await authority.observe(viewer), "acknowledged correction view");
+      expect(acknowledged.delivery).toEqual({ kind: "none" });
+      const kpBodies = list(acknowledged.transcript, "acknowledged transcript")
+        .map((entry) => record(entry, "acknowledged transcript entry"))
+        .filter((entry) => entry.kind === "kp")
+        .map((entry) => String(entry.body));
+      expect(kpBodies).toHaveLength(2);
+      expect(kpBodies[0]).toContain(EXPERIENCED_OLD_BODY);
+      expect(kpBodies[1]).toBe(`${REPLACEMENT_BODY}:${characterId}`);
     }
   });
 });

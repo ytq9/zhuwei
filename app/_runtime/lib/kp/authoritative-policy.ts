@@ -15,7 +15,7 @@ import {
 } from "./authoritative-types";
 
 const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-prompt-policy-v7",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v8",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
@@ -24,7 +24,7 @@ const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
 const HISTORICAL_WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 const HISTORICAL_ALTERNATIVE_WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const HISTORICAL_WORKERS_AI_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-prompt-policy-v7",
+  promptPolicyVersion: "authoritative-kp-prompt-policy-v8",
   proposalSchemaVersion: "authoritative-kp-proposal-v2",
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
@@ -1093,9 +1093,13 @@ changeParty 必须显式选择 partyAction：inviteMember/transferLeadership 各
 输出只调用 submit_kp_proposal 一次。不要输出解释文字。`;
 
 const NARRATION_SYSTEM = `你是烛帷 KP。现在只能叙述一个已经提交的结果，并且只面向一个冻结的观察者受众。
-输入包含安全 Receipt 元数据、该受众在本次提交中实际可见的 committedDelta，以及提交后的该受众专属投影；它不是完整世界、原始事件、聊天历史或其他人的投影。必须以 committedDelta 的 success/failure 和结构化变化为本次回应依据，只能引用该投影中的已提交事实、知识、感官细节、压力与可行动机会。不得补写状态、改判机械、泄露未出现的信息、复述其他观察者私人叙述，或把文学旁白当成正史。
+输入包含安全 Receipt 元数据、该受众在本次提交中实际可见的 committedDelta，以及提交后的该受众专属投影；它不是完整世界、原始事件或其他人的投影，也不包含 experiencedTranscript 以外的聊天历史。必须以 committedDelta 的 success/failure 和结构化变化为本次回应依据，只能引用该投影中的已提交事实、知识、感官细节、压力与可行动机会。不得补写状态、改判机械、泄露未出现的信息、复述其他观察者私人叙述，或把文学旁白当成正史。
 
-当前回应应清楚、具体、可行动：先说明行动实际造成的变化，再给两三个该观察者能感知的关键细节，呈现当前压力或机会，并把决定权交还玩家。不得替玩家决定思想、情绪、台词或下一步；提示可以列明显方向，但必须允许其他合理方法。故事已真实收束时展示后果并允许尾声、续篇或结束，不为延长故事追加幕后黑手。
+如果 audienceProjection 含 experiencedTranscript，它只用于延续该观察者已经历的对话与措辞、避免重复开场；它不是当前空间、状态、感官证据或新行动的依据。旧叙述与当前 committedDelta 或当前投影不一致时，必须服从后两者，不得把已被后续变化取代的描述当成现状。
+
+当前回应应清楚、具体、可行动：先说明行动实际造成的变化；只在投影明确提供时，再选择最多两三个该观察者能感知的关键细节。细节不足时必须省略，不得为补齐画面而推测或润色。然后呈现当前压力或机会，并把决定权交还玩家。不得替玩家决定思想、情绪、台词或下一步；提示可以列明显方向，但必须允许其他合理方法。故事已真实收束时展示后果并允许尾声、续篇或结束，不为延长故事追加幕后黑手。
+
+tacticalProjection 中的坐标、中心约距、高程、实体高度、feature 状态和 textualReadout 是规则与 UI 的机械数据，不是默认旁白稿。玩家没有明确询问距离、坐标或战术细节时，不得逐项复述若干尺、坐标、高度或掩护数据。没有明确 facing 或文字方位证据时，不得从 x/y 推断左右、前后、身后或视线方向。可见 NPC 的存在和位置不表示其正在注视谁、保持何种姿态或采取行动；没有已提交 NPC 行动或可见事实时，不得补写目光、转身、凝视或意图。feature 的 label/state 只证明该要素及其已投影状态：不得由“湿/带泥”扩写出脚下重合、一路脚印、痕迹来源、靴子或气味，不得由炉台/火炬/烛台扩写出未投影的火苗、声音、阴影或气味，不得由桌、床或台面扩写出白布、停灵用途或其他陈设。
 
 引用契约：referencedProjectionRefs、agencyClaims[].subjectRef 与 basisRefs 都不是说明文字或 JSON 路径，必须从本次 audienceProjection 中已有的字符串值逐字复制，不得改写、翻译、缩写或新造 ID；每个 basisRef 还必须同时列入 referencedProjectionRefs。
 agencyClaims 必须显式列出回应中涉及能动性归属的全部断言；没有此类断言时也必须提交空数组。每项都要声明 subjectKind、subjectRef、claimKind 和投影内 basisRefs。playerCharacter 或 npc 的 subjectKind/subjectRef 必须逐字复制 audienceProjection.agencySubjects 中同一完整条目；playerCharacter 只允许 committedObservableAction（已经提交且可观察的行动）或 sensoryConsequence（外界刺激、身体感觉或规则后果）；world 必须使用 subjectRef=null 且只允许 sensoryConsequence。thought、emotion、dialogue、nextAction 只可用于由 KP 控制且投影有依据的 NPC。不得漏报、伪装或用正文绕开这些声明。
@@ -1130,13 +1134,10 @@ function safeNarrationReceipt(value: unknown): Record<string, unknown> {
   return safe;
 }
 
-export function proposalModelInput(request: KpProposalRequest): Record<string, unknown> {
-  const userPayload = {
-    proposalAttempt: request.attempt,
-    action: request.input,
-    rulesDiagnostics: request.diagnostics ?? null,
-    kpProjection: request.projection,
-  };
+function proposalToolModelInput(
+  userPayload: Record<string, unknown>,
+  temperature = 0.2,
+): Record<string, unknown> {
   return {
     messages: [
       { role: "system", content: PROPOSAL_SYSTEM },
@@ -1145,24 +1146,59 @@ export function proposalModelInput(request: KpProposalRequest): Record<string, u
     tools: [PROPOSAL_TOOL],
     tool_choice: "required",
     parallel_tool_calls: false,
-    temperature: 0.2,
+    temperature,
     max_completion_tokens: 2_000,
   };
 }
 
-export function narrationModelInput(request: KpNarrationRequest): Record<string, unknown> {
+export function proposalModelInput(request: KpProposalRequest): Record<string, unknown> {
+  return proposalToolModelInput({
+    proposalAttempt: request.attempt,
+    action: request.input,
+    rulesDiagnostics: request.diagnostics ?? null,
+    kpProjection: request.projection,
+  });
+}
+
+export function proposalSchemaCorrectionModelInput(
+  request: KpProposalRequest,
+): Record<string, unknown> {
+  return proposalToolModelInput({
+    proposalAttempt: request.attempt,
+    action: request.input,
+    rulesDiagnostics: request.diagnostics ?? null,
+    kpProjection: request.projection,
+    proposalSchemaCorrection: {
+      previousProposalStatus: "discardedBeforeCommit",
+      reason: "closedSchemaValidationFailed",
+      replacementAttempt: 1,
+      instruction: "重新依据同一 action、rulesDiagnostics 和 kpProjection 作答，只调用一次 submit_kp_proposal，提交一个完整的替代提案。",
+      requirements: [
+        "不要复述、引用或局部修补先前模型输出；从本条消息中的原始输入重新生成完整对象。",
+        "这次替代只能纠正输出结构；必须保持 action 的原始目标、做法、对象、风险、资源选择与语义范围，不得替换成更简单、更安全或不同的行动。",
+        "严格遵守工具中的封闭 schema：必填字段全部提供，禁止额外字段，null 与数组形状必须精确匹配。",
+        "若行动只是观察明显可见内容，resolveDirectConsequences 必须且只能包含 operation、duration、frozenCosts、success、failure；frozenCosts 和 failure 均为 []。",
+      ],
+    },
+  }, 0);
+}
+
+function narrationUserPayload(request: KpNarrationRequest): Record<string, unknown> {
   const projection = request.projection !== null
     && typeof request.projection === "object"
     && !Array.isArray(request.projection)
     ? request.projection as Record<string, unknown>
     : {};
-  const userPayload = {
+  return {
     committedReceipt: safeNarrationReceipt(request.receipt),
     ...(projection.committedDelta === undefined
       ? {}
       : { committedDelta: projection.committedDelta }),
     audienceProjection: projection,
   };
+}
+
+function narrationToolModelInput(userPayload: Record<string, unknown>): Record<string, unknown> {
   return {
     messages: [
       { role: "system", content: NARRATION_SYSTEM },
@@ -1171,7 +1207,33 @@ export function narrationModelInput(request: KpNarrationRequest): Record<string,
     tools: [NARRATION_TOOL],
     tool_choice: "required",
     parallel_tool_calls: false,
-    temperature: 0.4,
+    temperature: 0,
     max_completion_tokens: 800,
   };
+}
+
+export function narrationModelInput(request: KpNarrationRequest): Record<string, unknown> {
+  return narrationToolModelInput(narrationUserPayload(request));
+}
+
+export function narrationSchemaCorrectionModelInput(
+  request: KpNarrationRequest,
+): Record<string, unknown> {
+  return narrationToolModelInput({
+    ...narrationUserPayload(request),
+    narrationOutputCorrection: {
+      previousNarrationStatus: "discardedBeforeDelivery",
+      reason: "closedSchemaOrCurrentProjectionGroundingValidationFailed",
+      replacementAttempt: 1,
+      instruction: "重新只依据本条消息中的当前 committedReceipt、committedDelta 与 audienceProjection，调用一次 submit_current_narration，提交一个完整且有依据的替代回应。",
+      requirements: [
+        "不要复述、引用、解释或局部修补先前模型输出；先前无效正文不会提供，也不得猜测其内容。",
+        "不得改判已提交结果、改变受众或添加新事件；只呈现当前投影明确支持的结果与可行动信息。",
+        "experiencedTranscript 只可维持对话连续性，不是当前状态、空间或感官证据；与当前 committedDelta 或当前投影冲突时以后两者为准。",
+        "body 与 tts 中每个具体感官、空间、姿态、目光、声音、气味或陈设细节都必须有当前投影中的明确文字证据；没有就省略，即使替代回应因此更短。",
+        "tacticalProjection 的坐标、约距、feature 标签和 textualReadout 是机械/UI 数据，不得自行扩写成文学细节，也不得在玩家未询问时逐项报距离。",
+        "严格遵守工具的封闭 schema、agencyClaims 与引用契约；必填字段全部提供，禁止额外字段。",
+      ],
+    },
+  });
 }

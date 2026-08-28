@@ -96,6 +96,8 @@ export type ModelInvocationResult =
 export const MODEL_INVOCATION_FAILURE_STAGES = [
   "structuredOutput",
   "proposalSchema",
+  "narrationSchema",
+  "narrationGrounding",
   "projectionBinding",
 ] as const;
 

@@ -1894,3 +1894,39 @@
 | 2026-08-28 | `git commit -m 'chore: establish V3 project boundary'` | 0 | 冻结候选提交 `c292c9e6ac9e59050f2e8893bd8eeebc17811680`。 |
 | 2026-08-28 | `git push origin HEAD:refs/heads/cloudflare` | 0 | 非 force 快进 `4f2abee..c292c9e`，只更新 `cloudflare`。 |
 | 2026-08-28 | `git ls-remote` 复核 cloudflare/main/三条 archive refs | 0 | V3 与三个恢复点均可达；`main=29eb06dc009c983ad61b2d862454503e67a7f40a` 未变。 |
+
+## 移除桌面手动确认当前回应（2026-08-28）
+
+- 症状与根因：桌面在当前 KP 回应下方额外要求玩家点击“确认当前回应”；该手动操作不是下一轮投递的前置条件，Room DO 已保证新回应原子覆盖旧回应，因此按钮只增加无必要的交互步骤。
+- 修改：`app/_runtime/components/play-table.tsx` 移除确认按钮、提示、请求状态和 ACK 调用；当前回应仍在刷新与轮询中保留，直到同一 ViewerKey 收到新回应。服务端鉴权 ACK 协议、单槽投递和不可回看边界不变。同步更新 `tests/delivery-confirmation-v2.test.mjs` 与 `tests/authoritative-table-v2.test.mjs` 的直接交互合同。
+- 定向验证：`npx tsx --test tests/delivery-confirmation-v2.test.mjs tests/authoritative-table-v2.test.mjs` 退出 0，21/21 通过；覆盖无手动确认控件、轮询不隐式 ACK、行动与回应顺序、语音不 ACK，以及服务端 ACK 权限接缝保留。
+- 剩余限制：未运行全量测试、production build、浏览器 QA、部署或 Git push；后端 ACK 仍保留给现有协议消费者。
+
+## 修复自由行动被模型 Schema 拒绝后无声退回（2026-08-28）
+
+- 生产诊断：在不接触用户房间或数据的临时账号/房间中连续提交两条简单观察行动；两次请求均为 HTTP 200，Room Authority 的 prepare 均成功，但 DeepSeek `deepseek-v4-flash` 的 proposal 调用分别在约 4.4 秒和 7.3 秒后以 `modelPermanent/proposalSchema` 结束，动作未提交且当前 Delivery 未变化。排除鉴权、网络、ACK、房间状态、超时、限流和额度故障；临时房间随后删除。
+- 根因：普通 DeepSeek tool call 返回的 arguments 能被提取为 JSON，但不保证自动满足本地封闭 Schema；短期、仅对随机验收提交 ID 生效的结构形状诊断进一步确认，实际失败输出交替把工具参数包成 `{kpProjection: ...}` 或 `{proposal: ...}`，而适配器只接受顶层直接 Proposal。桌面会恢复草稿，却只显示瞬时 toast，因此玩家容易感知为“直接退回、没有报错”。结构诊断不记录文本、Prompt、投影或任意值，定位后已从最终版本删除。
+- 修复：provider 参数顶层恰好只有 `proposal` 一个键且值为对象时，先移除这一层冗余 envelope，再把内部对象交给完全相同的封闭 Proposal 校验；任何兄弟字段、`kpProjection` 包装或内部无效仍拒绝。首次且仅首次 `proposalSchema` 失败时，丢弃未提交提案，以同一房间固定 Profile、同一 action/Rules diagnostics/KP projection、零温度和完整合法结构样例请求一个替代提案；不把无效模型输出回填 Prompt。第二次调用只能使用原 45 秒调用窗口的剩余预算，并继续通过相同的投影边界与 Rules/Room 提交流程。解析失败、投影越界、超时、额度或其他 provider 故障不走该路径；连续 Schema 无效仍稳定拒绝。两次脱敏 invocation receipt 均保留可观测性。
+- 桌面反馈：行动被拒绝或传输抛错时，除 toast 外在输入框下方保留 `role=alert` 的公开错误，同时恢复草稿；玩家开始编辑或再次提交后清除旧错误。
+- 定向验证：`npm run typecheck` 退出 0；`npx tsx --test tests/authoritative-kp-adapter.test.mjs tests/rules-compound-action-v2.test.mjs tests/delivery-confirmation-v2.test.mjs tests/authoritative-table-v2.test.mjs` 退出 0，74/74 通过。覆盖精确单键 provider envelope、带兄弟字段的 envelope 仍拒绝、Schema 无效后一次同模型替代、替代成功、连续无效仍 fail-closed、无效输出不进入新 Prompt、共享总超时窗口、公开错误固定显示与草稿恢复，以及真实 Rules compound seam。
+- 发布与故障处置：首个候选 `257e6b2f-bdfe-4191-90f7-35f86515c644` 和仅强化 Prompt 的候选 `4a1888a4-9c19-4d83-a2fe-c33055f009a6` 均在真实两行动探针中继续失败，因此没有宣告完成；短期结构诊断版本 `b443a369-1db1-4798-829b-a0f92ca0bd07` 定位 envelope 后被立即替换。最终版本 `2e0199f7-48e6-4525-8d96-bf5438437514` 已由 Cloudflare 确认为 100% 流量。最终同房间连续两条简单观察均为 HTTP 200、`committed` 且各自推进新 Delivery；第二条先产生一次 `proposalSchema` receipt，随后同 Profile 替代提案成功、叙述成功并提交，精确覆盖原故障路径。
+- 清理与剩余限制：所有临时房间均返回 `deleted:finalized`，会话均注销；本轮真实探针在 D1 留下 5 个无房间、无角色、无有效会话的空测试用户记录，另有首次诊断留下的 1 个空测试用户，应用暂无删除账号接口且本轮未扩权修改 D1。未运行全量 `npm test` 或真实浏览器 QA；没有 D1 migration、Secret 修改、Git commit 或 Git push。production build 在每次候选发布前均成功。
+
+## 恢复亲历对话、连续发送与叙述事实边界（2026-08-29）
+
+- 症状：玩家曾亲历的玩家发言与 KP 回应在 Delivery 被确认、被下一条覆盖、离开后返回或刷新后消失；连续发送可能只把输入退回且没有固定错误；KP 会把战术地图标签和坐标扩写成脚下泥迹、一路靴印、白布、目光/身后、火苗声、姿态、气味、左右方位和十/二十/三十尺等未经当前投影支持的文学细节。
+- 历史语义：Room DO SQLite 新增按 `(viewer_key, message_id)` 唯一的 `authority_experienced_messages`。只有冻结 Audience 中实际收到内容的 ViewerKey 才追加亲历记录；玩家自己的原始输入只进入该玩家记录。ACK、下一条 Delivery 覆盖、离开后返回、刷新和 DO 重启都从同一权威记录恢复；当时缺席者后来到场不补历史，控制权转移不继承前控制者记录。普通更正保留原 Audience 当时听到的旧话并追加替代回应；安全失效不保存有风险正文。D1 archive 仍不存正文，没有新增 D1 migration。
+- 发送恢复：浏览器在请求前把完整可重试 payload 与稳定 `submissionId` 写入 `sessionStorage`；传输失败、Room 可重试失败或 `committed + deliveryPending` 都保留同一提交身份和固定错误，刷新后可恢复/重试，已经提交的行动只重试回应发布而不会再次执行。成功或不可重试结果才清除恢复记录；浏览器禁用 session storage 时降级为当前请求内的稳定 ID。
+- KP 边界：Prompt 把 `experiencedTranscript` 限定为对话连续性而非当前事实，并禁止从坐标、feature 标签或 NPC 可见性推导方位、目光、姿态、声音、气味和陈设。发布前确定性 grounding guard 同时检查正文与 TTS；历史、目标、方法、问题和机会字段不作为当前感官证据，未明确询问距离时也禁止逐项输出多个精确尺数。单层 provider envelope 只有在内部对象仍通过原封闭 Proposal/Narration Schema 时才可去除；带兄弟字段或无效内部对象仍拒绝。当前玩家原文可作为刚提交行动的 actor-only 引用，旧 transcript 仍不能充当当前状态依据。
+- 无声回应根因与降级：最终线上诊断证明 Proposal 已提交成功，Narration 两次均是字段、引用和 agency claims 合法但正文 grounding 不合格；旧路径因此永久停在 `deliveryPending`。现在第一次 grounding 失败仍以同一 Profile、同一总超时窗口请求一次不含旧正文的替代；替代仍越界时丢弃模型正文，以已 committed 状态发布简短确定性回应。只有 `narrationGrounding` 走该安全降级；Schema、权限、投影、超时、额度和其他模型故障继续 fail-closed。短期诊断只记录字段类型、计数和四项验证布尔值，不记录正文、Prompt、ID 或引用值，并已从最终版本删除。
+- 定向验证：历史/更正/安全 Worker 用例 10/10、返回与控制转移补充用例 2/2；最终 KP 适配器与 grounding 24/24、结构化脱敏遥测 8/8；`npm run typecheck`、`npm run lint`、`git diff --check` 均通过。此前同任务 Node 定向/合同集为 355/355；用户要求后续只测修改范围，因此最终增量没有再跑无关 Worker 全量套件。每次发布前 production build 均成功。
+- 线上验收与发布：最终 Worker 版本 `2c10b854-5fc3-445e-8e4c-32f7ab8e3f79` 发布到 `https://zhuwei.yinskyriver.workers.dev`。受控同房间连续两条观察行动均第一次请求成功，分别产生新玩家原文与新 KP 回应；第一组在第二条之后仍在，四条记录在模拟刷新及两次 ACK 后正文和 ID 均稳定；新 KP 回应未命中上述无依据细节。探针房间均 `finalized` 删除、会话均注销。
+- 剩余限制：部署前已经被旧单槽覆盖且没有保存的正文无法逆向恢复，只能从本版本之后可靠保留；观察接口当前返回有界的最近 120 条与当前场景最多 120 条，没有历史分页。本次追加诊断/验收产生 7 个无房间、无角色、无有效会话的空测试用户记录；应用没有删除账号接口，当前 Cloudflare 授权也不含 D1 写权限，未扩权清理。没有新 Cloudflare 资源、Secret/config 修改、D1 migration、Git commit 或 Git push。
+
+| 时间（Asia/Shanghai） | 命令/检查 | 退出码 | 证据摘要 |
+| --- | --- | ---: | --- |
+| 2026-08-29 | 历史/更正/安全与返回/控制转移定向 Worker 用例 | 0 | 10/10 + 2/2；亲历保留、缺席隔离、普通更正与安全失效语义通过。 |
+| 2026-08-29 | `npx tsx --test tests/authoritative-kp-adapter.test.mjs`；`npx tsx --test tests/structured-telemetry-v2.test.mjs` | 0 | 24/24 + 8/8；单层 envelope、grounding、距离询问例外、安全降级与无内容遥测通过。 |
+| 2026-08-29 | `npm run typecheck`；`npm run lint`；production build | 0 | 最终增量类型、lint 与 Cloudflare 构建通过。 |
+| 2026-08-29 | `npm run cf:deploy`；Cloudflare deployment status | 0 | `2c10b854-5fc3-445e-8e4c-32f7ab8e3f79` 接收 100% 流量。 |
+| 2026-08-29 | 两行动生产探针；ACK、重复 fetch、模拟刷新、grounding 与清理断言 | 0 | 2 条行动一次成功；4 条亲历记录稳定；无目标越界细节；房间 finalized、会话 revoked。 |

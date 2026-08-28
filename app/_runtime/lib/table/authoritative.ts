@@ -39,6 +39,48 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+type ExperiencedTableMessage = {
+  id: string;
+  user_id: string | null;
+  kind: "say" | "narrate";
+  name: string;
+  body: string;
+  created_at: string;
+  clues: Array<{ id: string; name: string; hint: string }>;
+  sceneIds: string[];
+};
+
+function experiencedTableMessages(value: unknown, trustedUserId: string): ExperiencedTableMessage[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const id = nonEmptyString(entry.messageId) ?? nonEmptyString(entry.id);
+    const body = nonEmptyString(entry.body);
+    const name = nonEmptyString(entry.speakerName) ?? nonEmptyString(entry.name);
+    const speakerKind = entry.kind === "player" || entry.speakerKind === "player"
+      ? "player"
+      : entry.kind === "kp" || entry.speakerKind === "kp"
+        ? "kp"
+        : undefined;
+    const sceneIds = Array.isArray(entry.sceneIds)
+      ? [...new Set(entry.sceneIds.map(nonEmptyString).filter((sceneId): sceneId is string => Boolean(sceneId)))]
+      : [];
+    if (!id || !body || !name || !speakerKind || sceneIds.length === 0 || seen.has(id)) return [];
+    seen.add(id);
+    return [{
+      id,
+      user_id: speakerKind === "player" ? trustedUserId : null,
+      kind: speakerKind === "player" ? ("say" as const) : ("narrate" as const),
+      name,
+      body,
+      created_at: "",
+      clues: [],
+      sceneIds,
+    }];
+  });
+}
+
 function safeSafetyPresentation(value: unknown) {
   if (!isRecord(value)) return undefined;
   const status = value.status === "paused" || value.status === "resumed"
@@ -429,6 +471,7 @@ export function buildAuthoritativeActionInput(input: {
         submissionId,
         pendingInputId,
         answer: "answer" in input ? input.answer : { text },
+        displayText: text,
       }
     : {
         kind: "intent" as const,
@@ -570,7 +613,7 @@ function buttonIntentText(command: AuthoritativeButtonCommand): string {
             ? "我尝试离开当前战场，但不投降。"
             : "我明确放下抵抗并投降。";
     case "resolveReact":
-      return `我明确${command.use ? "使用" : "放弃"}反应 ${command.reactionId}。`;
+      return `我明确${command.use ? "使用" : "放弃"}这次反应。`;
     case "restNow": {
       const mode = command.mode === "group" ? "队伍" : "个人";
       const kind = command.restKind === "long" ? "长休" : "短休";
@@ -993,17 +1036,46 @@ export function projectAuthoritativeTableObservation(input: {
     : undefined;
   const deliveryId = nonEmptyString(frame?.deliveryId);
   const deliveryText = nonEmptyString(frame?.text);
-  const messages = deliveryId && deliveryText
-    ? [{
+  const transcriptMessages = experiencedTableMessages(
+    input.observation.transcript,
+    input.userId,
+  );
+  const currentDeliverySceneIds = Array.isArray(frame?.sceneIds)
+    ? [...new Set(frame.sceneIds.map(nonEmptyString).filter((id): id is string => Boolean(id)))]
+    : sceneId ? [sceneId] : [];
+  const currentDeliveryMessage: ExperiencedTableMessage | undefined = deliveryId && deliveryText
+    ? {
         id: deliveryId,
         user_id: null,
         kind: "narrate",
         name: "KP",
         body: deliveryText,
         created_at: "",
-        clues: [] as Array<{ id: string; name: string; hint: string }>,
-      }]
-    : [];
+        clues: [],
+        sceneIds: currentDeliverySceneIds,
+      }
+    : undefined;
+  const experienced = currentDeliveryMessage === undefined
+    || transcriptMessages.some((message) => message.id === currentDeliveryMessage.id)
+    ? transcriptMessages
+    : [...transcriptMessages, currentDeliveryMessage];
+  const publicMessage = ({ sceneIds: _sceneIds, ...message }: ExperiencedTableMessage) => message;
+  const messages = sceneId === undefined
+    ? experienced.map(publicMessage)
+    : experienced
+        .filter((message) => message.sceneIds.includes(sceneId))
+        .map(publicMessage);
+  const experiencedSceneIds = [...new Set(experienced.flatMap((message) => message.sceneIds))];
+  const locationThreads = experiencedSceneIds
+    .filter((experiencedSceneId) => experiencedSceneId !== sceneId)
+    .map((experiencedSceneId) => ({
+      placeId: experiencedSceneId,
+      name: input.locationLabels[experiencedSceneId] ?? experiencedSceneId,
+      messages: experienced
+        .filter((message) => message.sceneIds.includes(experiencedSceneId))
+        .map(publicMessage),
+    }))
+    .filter((thread) => thread.messages.length > 0);
 
   return {
     stateVersion: nonEmptyString(readModel.stateVersion),
@@ -1042,7 +1114,7 @@ export function projectAuthoritativeTableObservation(input: {
       ? { [input.userId]: input.locationLabels[sceneId] ?? sceneId }
       : {},
     messages,
-    locationThreads: [] as never[],
+    locationThreads,
     logs: [] as never[],
     ...(deliveryId ? { currentDeliveryId: deliveryId } : {}),
   };

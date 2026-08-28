@@ -56,6 +56,15 @@ export function TableClient({ code, userName }: { code: string; userName: string
             : "flex min-h-0 flex-1 flex-col px-3 pb-4 md:px-6"
         }
       >
+        {q.isError && (
+          <p
+            role="alert"
+            data-table-sync-error
+            className="mb-3 shrink-0 rounded-[14px] border border-danger/40 bg-danger/10 px-4 py-2 text-sm text-danger"
+          >
+            桌面同步暂时中断，正在自动重试。已经提交的行动不会因此重复执行。
+          </p>
+        )}
         {q.isLoading && !data && (
           <p className="m-auto text-muted">正在掀开帷幕……</p>
         )}

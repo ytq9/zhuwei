@@ -127,7 +127,7 @@ test("starting authoritative-v2 seeds the Room Authority from members and locked
   assert.doesNotMatch(v2Branch, /messages|session_logs|game_states/);
 });
 
-test("authoritative table reads only the viewer projection and current delivery without a narration history", async () => {
+test("authoritative table reads only the viewer projection, experienced transcript, and current delivery", async () => {
   const { projectAuthoritativeTableObservation } = await import(
     "../app/_runtime/lib/table/authoritative.ts"
   );
@@ -477,6 +477,7 @@ test("authoritative table reads only the viewer projection and current delivery 
   const v2Branch = fetch.slice(v2Start, legacyMessages);
   assert.match(v2Branch, /observeAuthoritativeRoom/);
   assert.match(v2Branch, /projectAuthoritativeTableObservation/);
+  assert.match(v2Branch, /locationThreads:\s*projected\?\.locationThreads \?\? \[\]/);
   assert.match(v2Branch, /return/);
   assert.doesNotMatch(v2Branch, /from messages|session_logs|game_states/);
 });
@@ -888,6 +889,7 @@ test("authoritative actions derive the character from the trusted viewer and pre
     submissionId: "submission:answer",
     pendingInputId: "pending:lever",
     answer: { text: "拉右侧闸门。" },
+    displayText: "拉右侧闸门。",
   });
 
   const structuredAnswer = buildAuthoritativeActionInput({
@@ -914,6 +916,7 @@ test("authoritative actions derive the character from the trusted viewer and pre
       selectedFeatureIds: ["feature:ability-score-improvement"],
       abilityScoreIncreases: { dex: 2 },
     },
+    displayText: "确认晋升。",
   });
 
   const server = await source("app/_runtime/lib/table/server.ts");
@@ -966,7 +969,7 @@ test("the browser owns transport choices only and the API restores trusted ident
   assert.doesNotMatch(worker, mechanicalRandomness);
 });
 
-test("the table client acknowledges only the current delivery after explicit player confirmation", async () => {
+test("the server keeps authenticated acknowledgement while the table has no manual confirmation control", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
   const ack = exportedSection(server, "acknowledgeDelivery", "resolveRoll");
   assert.match(ack, /memberOf\(room\.id, context\.userId\)/);
@@ -978,10 +981,11 @@ test("the table client acknowledges only the current delivery after explicit pla
   assert.match(client, /export const acknowledgeDelivery[^]*call<Result>\("acknowledgeDelivery", data\)/);
 
   const ui = await source("app/_runtime/components/play-table.tsx");
-  assert.match(ui, /acknowledgeDelivery/);
   assert.match(ui, /currentDeliveryId/);
-  assert.match(ui, /data-delivery-action="acknowledge"/);
-  assert.match(ui, /确认后不可回看/);
+  assert.doesNotMatch(
+    ui,
+    /acknowledgeDelivery|data-delivery-action="acknowledge"|确认当前回应|确认后不可回看/,
+  );
   assert.doesNotMatch(ui, /ackedDeliveryRef|acknowledgeAfterPresentation|requestAnimationFrame/);
   assert.match(ui, /submissionId/);
   assert.match(ui, /function CombatChoicePanel/);
@@ -1141,6 +1145,7 @@ test("authoritative table buttons become trusted semantic actions without client
       reactionId: "reaction:shield",
       use: false,
     },
+    displayText: "我明确放弃这次反应。",
   });
 });
 
@@ -1387,13 +1392,12 @@ test("authoritative button submission ids survive transport retries and clear on
   assert.doesNotMatch(client, /new Map\s*</, "submission retries cannot rely on module-global memory");
 });
 
-test("voice presentation never acknowledges a current Delivery", async () => {
+test("voice presentation neither acknowledges nor exposes a manual confirmation control", async () => {
   const deliveryClient = await source("app/_runtime/lib/table/authoritative-client.ts");
   const ui = await source("app/_runtime/components/play-table.tsx");
   assert.doesNotMatch(deliveryClient, /acknowledgeAfterPresentation/);
   assert.doesNotMatch(ui, /acknowledgeAfterPresentation|requestAnimationFrame/);
-  assert.match(ui, /async function confirmCurrentDelivery/);
-  assert.match(ui, /onClick=\{\(\) => void confirmCurrentDelivery\(\)\}/);
+  assert.doesNotMatch(ui, /confirmCurrentDelivery|data-delivery-action="acknowledge"/);
   assert.doesNotMatch(ui, /localStorage/);
 });
 

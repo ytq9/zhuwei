@@ -104,6 +104,8 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   quotaExhausted: ["quotaExhausted", "quotaExhausted"],
   structuredOutput: ["modelPermanent", "structuredOutput"],
   proposalSchema: ["modelPermanent", "proposalSchema"],
+  narrationSchema: ["modelPermanent", "narrationSchema"],
+  narrationGrounding: ["modelPermanent", "narrationGrounding"],
   projectionBinding: ["modelPermanent", "projectionBinding"],
   seatInactive: ["authentication", "authenticationRequired"],
 } as const;

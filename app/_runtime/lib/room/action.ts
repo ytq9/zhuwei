@@ -19,6 +19,7 @@ export type RoomActionInput =
       submissionId: string;
       pendingInputId: string;
       answer: unknown;
+      displayText?: string;
       acknowledgementId?: string;
     }
   | { kind: "retry"; submissionId: string; rootActionId: string }
@@ -203,11 +204,13 @@ function rebuildInput(input: unknown): RoomActionInput | RoomActionOutcome {
       return rejectedValidation("待决回答缺少 submissionId、pendingInputId 或 answer。");
     }
     const acknowledgementId = optionalString(input, "acknowledgementId");
+    const displayText = optionalString(input, "displayText");
     return {
       kind: "answer",
       submissionId,
       pendingInputId,
       answer: input.answer,
+      ...(displayText ? { displayText } : {}),
       ...(acknowledgementId ? { acknowledgementId } : {}),
     };
   }

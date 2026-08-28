@@ -470,7 +470,113 @@ describe("observer-specific single-slot delivery", () => {
     expect(JSON.stringify(alice.delivery)).not.toContain("character:delivery:bob");
   });
 
-  it("returns the same current frame after refresh and named-stub reacquisition, then erases its body on ACK", async () => {
+  it("keeps only each viewer's experienced scene conversation across leaving and returning", async () => {
+    const roomName = "observer-delivery-v2-experienced-return";
+    const stub = await initialized(roomName);
+    const first = await committedResult(
+      stub,
+      "submission:delivery:experienced:first",
+      "档案柜里留有一张公开可见的便笺。",
+    );
+    const committedBeforePublication = record(
+      await authority(roomName).observe(ALICE, { channel: "reconnect" }),
+      "Alice after commit before narration publication",
+    );
+    const bystanderBeforePublication = record(
+      await authority(roomName).observe(BOB, { channel: "reconnect" }),
+      "Bob after Alice commit before narration publication",
+    );
+    expect(JSON.stringify(committedBeforePublication.transcript)).toContain(
+      "我轻轻推开档案柜，观察里面留下了什么。",
+    );
+    expect(JSON.stringify(bystanderBeforePublication.transcript)).not.toContain(
+      "我轻轻推开档案柜，观察里面留下了什么。",
+    );
+    expect(committedBeforePublication.transcript.map((message) => message.kind)).toEqual([
+      "player",
+    ]);
+    await publishForAudience(stub, first.plan, "档案室亲历回应");
+
+    const departed = await commitProposal(
+      stub,
+      "submission:delivery:experienced:depart",
+      (rootActionId) => directConsequencesProposal(rootActionId, {
+        proposalAttemptId: "proposal:delivery:experienced:depart",
+        goal: "从档案室走到院子",
+        method: "沿走廊正常步行",
+        duration: { unit: "minute", value: 1 },
+        success: [{ kind: "moveEntity", sceneRef: "yard" }],
+      }),
+      "我离开档案室，沿走廊走进院子。",
+    );
+    const beforeDeparturePublication = record(
+      await authority(roomName).observe(ALICE, { channel: "reconnect" }),
+      "Alice after departure commit before narration publication",
+    );
+    expect(beforeDeparturePublication.transcript.map((message) => message.kind)).toEqual([
+      "player",
+      "kp",
+      "player",
+    ]);
+    expect(JSON.stringify(beforeDeparturePublication.transcript)).toMatch(
+      /我轻轻推开档案柜[^]*档案室亲历回应[^]*我离开档案室/,
+    );
+    await publishForAudience(stub, departed.plan, "离开档案室回应");
+
+    const returned = await commitProposal(
+      stub,
+      "submission:delivery:experienced:return",
+      (rootActionId) => directConsequencesProposal(rootActionId, {
+        proposalAttemptId: "proposal:delivery:experienced:return",
+        goal: "从院子回到档案室",
+        method: "沿原路正常步行",
+        duration: { unit: "minute", value: 1 },
+        success: [{ kind: "moveEntity", sceneRef: "archive" }],
+      }),
+      "我从院子沿原路回到档案室。",
+    );
+    await publishForAudience(stub, returned.plan, "回到档案室回应");
+
+    const aliceObservation = record(
+      await authority(roomName).observe(ALICE, { channel: "reconnect" }),
+      "Alice after returning",
+    );
+    const bobObservation = record(
+      await authority(roomName).observe(BOB, { channel: "reconnect" }),
+      "Bob after Alice returned",
+    );
+    const carolObservation = record(
+      await authority(roomName).observe(CAROL, { channel: "reconnect" }),
+      "Carol after Alice left the yard",
+    );
+
+    expect(JSON.stringify(aliceObservation.transcript)).toContain("档案室亲历回应");
+    expect(JSON.stringify(aliceObservation.transcript)).toContain("我离开档案室");
+    expect(JSON.stringify(aliceObservation.transcript)).toContain("离开档案室回应");
+    expect(JSON.stringify(bobObservation.transcript)).toContain("档案室亲历回应");
+    expect(JSON.stringify(carolObservation.transcript)).not.toContain("档案室亲历回应");
+    expect(JSON.stringify(carolObservation.transcript)).not.toContain("我离开档案室");
+    expect(JSON.stringify(carolObservation)).toContain("离开档案室回应");
+
+    const aliceTable = projectAuthoritativeTableObservation({
+      userId: ALICE.principal.id,
+      members: [
+        ALICE.principal.id,
+        BOB.principal.id,
+        CAROL.principal.id,
+        DAVE.principal.id,
+      ],
+      locationLabels: { archive: "档案室", yard: "院子", chapel: "礼拜堂" },
+      observation: aliceObservation,
+    });
+    expect(JSON.stringify(aliceTable.messages)).toContain("档案室亲历回应");
+    expect(JSON.stringify(aliceTable.messages)).toContain("回到档案室回应");
+    const yardHistory = aliceTable.locationThreads.find((thread) => thread.placeId === "yard");
+    expect(yardHistory?.name).toBe("院子");
+    expect(JSON.stringify(yardHistory?.messages)).toContain("离开档案室回应");
+  });
+
+  it("returns the same current frame after reconnect and keeps the experienced body after ACK", async () => {
     const roomName = "observer-delivery-v2-recovery";
     const stub = await initialized(roomName);
     const { plan } = await committedResult(stub, "submission:delivery:recovery", "一阵纸页摩擦声从柜后传来。");
@@ -493,7 +599,7 @@ describe("observer-specific single-slot delivery", () => {
 
     const afterAck = record(await reacquired.observe(ALICE, { channel: "history", referenceId: deliveryId }), "after ACK");
     expect(afterAck.delivery).toEqual({ kind: "none" });
-    expect(JSON.stringify(afterAck)).not.toContain("断线前回应");
+    expect(JSON.stringify(afterAck.transcript)).toContain("断线前回应");
   });
 
   it("supersedes the old body with one new slot and rejects an older narration that arrives late", async () => {
@@ -576,6 +682,53 @@ describe("observer-specific single-slot delivery", () => {
         "knowledge:delivery:control-transfer",
         privateText,
       );
+      const pendingQuestion = "你要拉警铃还是闸门？";
+      const pendingPrepared = record(await stub.prepare(ALICE, {
+        kind: "intent",
+        submissionId: "submission:delivery:control-transfer-pending",
+        text: "我检查两根外观相同的拉杆。",
+      }), "pending prepared before control transfer");
+      const pendingResult = record(await stub.commit(
+        ALICE,
+        String(pendingPrepared.preparedActionId),
+        {
+          kind: "directSuccess",
+          rootActionId: pendingPrepared.rootActionId,
+          proposalAttemptId: "proposal:delivery:control-transfer-pending",
+          goal: "确认玩家要拉动哪一根拉杆",
+          method: "先询问明确选择",
+          publicBasisRefs: [],
+          privateBasisRefs: [],
+          risk: null,
+          pendingInput: {
+            kind: "clarification",
+            prompt: pendingQuestion,
+            choices: [
+              { id: "alarm", label: "警铃", consequence: "拉响警铃。" },
+              { id: "gate", label: "闸门", consequence: "触发闸门机构。" },
+            ],
+          },
+          dynamicMaterializations: [],
+          npcActions: [],
+          mechanicalProposal: null,
+          scene: {
+            question: pendingQuestion,
+            pressure: "",
+            opportunities: [],
+            conclusionCandidate: null,
+          },
+        },
+      ), "pending committed before control transfer");
+      expect(pendingResult.kind).toBe("awaitingInput");
+      const pendingInputId = String(record(
+        pendingResult.pending,
+        "pending input before control transfer",
+      ).pendingInputId);
+      const originalPendingViewer = record(
+        await stub.observe(ALICE),
+        "original pending viewer before control transfer",
+      );
+      expect(JSON.stringify(originalPendingViewer.transcript)).toContain(pendingQuestion);
 
       await expect(stub.applyRoomAdministration(administration, {
         commandId: "room-admin:delivery:transfer-control",
@@ -599,8 +752,37 @@ describe("observer-specific single-slot delivery", () => {
       expect(JSON.stringify(oldController)).not.toContain(current.deliveryId);
       expect(JSON.stringify(newController.delivery)).not.toContain(current.deliveryId);
       expect(JSON.stringify(newController.readModel)).toContain(privateText);
+      expect(JSON.stringify(newController.transcript)).not.toContain(privateText);
+      expect(JSON.stringify(newController.transcript)).not.toContain(pendingQuestion);
       await expect(stub.acknowledge(ALICE, current.deliveryId, "ack:after-transfer"))
         .resolves.toMatchObject({ kind: "rejected" });
+
+      const answerPrepared = record(await stub.prepare(DAVE, {
+        kind: "answer",
+        submissionId: "submission:delivery:control-transfer-answer",
+        pendingInputId,
+        answer: { text: "alarm" },
+        displayText: "我选择拉响警铃。",
+      }), "new controller pending answer");
+      expect(answerPrepared.kind).toBe("prepared");
+      const answered = record(await stub.commit(
+        DAVE,
+        String(answerPrepared.preparedActionId),
+        directConsequencesProposal(String(answerPrepared.rootActionId), {
+          proposalAttemptId: "proposal:delivery:control-transfer-answer",
+          goal: "拉响玩家明确选择的警铃",
+          method: "按玩家回答拉动警铃拉杆",
+          duration: { unit: "second", value: 1 },
+        }),
+      ), "new controller pending answer commit");
+      expect(answered.kind, JSON.stringify(answered)).toBe("committed");
+      const newControllerAfterAnswer = record(
+        await stub.observe(DAVE, { channel: "reconnect" }),
+        "new controller transcript after answering",
+      );
+      expect(JSON.stringify(newControllerAfterAnswer.transcript)).toContain(pendingQuestion);
+      expect(JSON.stringify(newControllerAfterAnswer.transcript)).toContain("我选择拉响警铃。");
+      expect(JSON.stringify(newControllerAfterAnswer.transcript)).not.toContain(privateText);
       await expect(stub.publishDelivery(
         { publishCapability: current.plan.publishCapability },
         { frames: audiences(current.plan).map((audience) => ({
@@ -649,7 +831,7 @@ describe("observer-specific single-slot delivery", () => {
     }
   });
 
-  it("uses one projector for realtime/history/reconnect/error/candidates/voice/transcript without narration history", async () => {
+  it("uses one projector for realtime/history/reconnect/error/candidates/voice/transcript without a cross-channel history bypass", async () => {
     const stub = await initialized("observer-delivery-v2-bypass");
     const { plan } = await committedResult(stub, "submission:delivery:bypass", "现场结构化结果");
     await publishForAudience(stub, plan, "单槽正文");
@@ -657,10 +839,12 @@ describe("observer-specific single-slot delivery", () => {
     const channels = ["realtime", "history", "reconnect", "error", "candidates", "voice", "transcript"];
     const observations = await Promise.all(channels.map((channel) => stub.observe(BOB, { channel })));
     const readModels = observations.map((entry) => record(entry, channelLabel(entry)).readModel);
+    const transcripts = observations.map((entry) => record(entry, channelLabel(entry)).transcript);
     for (const readModel of readModels.slice(1)) expect(readModel).toEqual(readModels[0]);
+    for (const transcript of transcripts.slice(1)) expect(transcript).toEqual(transcripts[0]);
     for (const observation of observations) {
       const encoded = JSON.stringify(observation);
-      expect(encoded).not.toMatch(/messages|messageHistory|narrationHistory|deliveryHistory|voiceHistory|transcriptHistory/);
+      expect(encoded).not.toMatch(/messageHistory|narrationHistory|deliveryHistory|voiceHistory|transcriptHistory/);
     }
   });
 });

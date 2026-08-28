@@ -131,8 +131,12 @@ describe("O15/O16 correction delivery recovery", () => {
       deliveryPending: true,
     });
     expect(narrationCalls).toBe(2);
-    expect(record(await authority.observe(ALICE), "Alice after correction").delivery)
-      .toEqual({ kind: "none" });
+    const aliceAfterCorrection = record(
+      await authority.observe(ALICE),
+      "Alice after correction",
+    );
+    expect(aliceAfterCorrection.delivery).toEqual({ kind: "none" });
+    expect(JSON.stringify(aliceAfterCorrection.transcript)).toContain("旧分支:");
     const eventsAfterCorrection = await eventSnapshot(authority, capabilities.archiveExport);
 
     let publicationCalls = 0;

@@ -87,7 +87,8 @@ export const lockCharacter = ({ data }: Args) => callWithStableTableSubmission("
 export const setGear = ({ data }: Args) => callWithStableTableSubmission("setGear", data);
 export const setRoomModel = ({ data }: Args) => call<Result>("setRoomModel", data);
 export const startGame = ({ data }: Args) => call<Result>("startGame", data);
-export const sendAction = ({ data }: Args) => call<Result>("sendAction", data);
+export const sendAction = ({ data }: Args) =>
+  callWithStableTableSubmission("sendAction", data);
 export const adjustSafetyPresentation = ({ data }: Args) =>
   callWithStableTableSubmission("adjustSafetyPresentation", data);
 export const acknowledgeDelivery = ({ data }: Args) =>

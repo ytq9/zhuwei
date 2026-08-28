@@ -358,6 +358,10 @@ describe("Room Authority authoritative-v2 public contract", () => {
     const restored = roomStub(roomName);
     const observed = asRecord(await restored.observe(ALICE), "restored observation");
     const readModel = asRecord(observed.readModel, "restored viewer read model");
+    expect(JSON.stringify(observed.transcript)).toContain("我拉下那根拉杆。");
+    expect(JSON.stringify(observed.transcript)).toContain(
+      "你要拉左侧警铃拉杆，还是右侧闸门拉杆？",
+    );
     expect(readModel.pendingInputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ pendingInputId: pending.pendingInputId }),
     ]));
@@ -370,6 +374,7 @@ describe("Room Authority authoritative-v2 public contract", () => {
       submissionId: "submission:pending:answer",
       pendingInputId: pending.pendingInputId,
       answer: { choiceId: "gate" },
+      displayText: "我选择右侧闸门拉杆。",
     }));
     expect(answer.rootActionId).toBe(prepared.rootActionId);
     await expect(restored.commit(
@@ -379,6 +384,10 @@ describe("Room Authority authoritative-v2 public contract", () => {
     )).resolves.toMatchObject({ kind: "committed" });
     const afterAnswer = asRecord(await restored.observe(ALICE), "answered observation");
     expect(asRecord(afterAnswer.readModel, "answered read model").pendingInputs).toEqual([]);
+    expect(JSON.stringify(afterAnswer.transcript)).toContain("我选择右侧闸门拉杆。");
+    expect(JSON.stringify(afterAnswer.transcript)).toMatch(
+      /我拉下那根拉杆[^]*你要拉左侧警铃拉杆，还是右侧闸门拉杆[^]*我选择右侧闸门拉杆/,
+    );
   });
 
   it("rejects a forged playerChoice candidate without closing the pending input", async () => {

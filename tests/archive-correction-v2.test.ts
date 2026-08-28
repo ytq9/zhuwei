@@ -680,7 +680,7 @@ describe("authoritative archive recovery and correction", () => {
     expect(JSON.stringify(restoredView)).not.toContain(wrongPublicContent);
   });
 
-  it("opens a causal branch after knowledge/location/resource impact while preserving old audit and erasing old Delivery", async () => {
+  it("opens a causal branch while preserving audit and viewer-scoped experienced narration", async () => {
     const room = await initializeRoom("archive-v2-causal-correction");
     const action = await prepareIntent(
       room.stub,
@@ -756,8 +756,10 @@ describe("authoritative archive recovery and correction", () => {
       .toBe(corrected.activeBranchId);
     expect(JSON.stringify(alice)).not.toContain(PRIVATE_KNOWLEDGE_SENTINEL);
     expect(JSON.stringify(bob)).not.toContain(PRIVATE_KNOWLEDGE_SENTINEL);
-    expect(JSON.stringify(alice)).not.toContain(DELIVERY_BODY_SENTINEL);
-    expect(JSON.stringify(bob)).not.toContain(DELIVERY_BODY_SENTINEL);
+    expect(alice.delivery).toEqual({ kind: "none" });
+    expect(bob.delivery).toEqual({ kind: "none" });
+    expect(JSON.stringify(alice.transcript)).toContain(DELIVERY_BODY_SENTINEL);
+    expect(JSON.stringify(bob.transcript)).not.toContain(DELIVERY_BODY_SENTINEL);
     expect(JSON.stringify(after)).not.toContain(DELIVERY_BODY_SENTINEL);
   });
 });
