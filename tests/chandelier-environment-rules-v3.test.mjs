@@ -13,6 +13,8 @@ import {
   CHANDELIER_FEATURE_DEFINITION,
   CHANDELIER_ID,
   CRATE_ID,
+  CUSTOM_SCENERY_WALL_FEATURE_DEFINITION,
+  CUSTOM_SCENERY_WALL_ID,
   chandelierGeometry,
 } from "./fixtures/chandelier-environment-v3.mjs";
 
@@ -94,10 +96,14 @@ function npc(id, name, hitPoints, overrides = {}) {
   };
 }
 
-function initialize({ existingChandelier = false, rulesRuntime = runtime } = {}) {
-  const compiled = compileEnvironmentFeature(CHANDELIER_FEATURE_DEFINITION);
+function initialize({
+  existingChandelier = false,
+  featureDefinition = CHANDELIER_FEATURE_DEFINITION,
+  rulesRuntime = runtime,
+} = {}) {
+  const compiled = compileEnvironmentFeature(featureDefinition);
   assert.equal(compiled.ok, true, JSON.stringify(compiled));
-  if (!compiled.ok) throw new Error("chandelier fixture did not compile");
+  if (!compiled.ok) throw new Error("environment fixture did not compile");
   const initialized = rulesRuntime.step(undefined, undefined, {
     kind: "initializeAuthoritativeWorld",
     roomId: `room:environment:${existingChandelier ? "existing" : "blank"}`,
@@ -150,20 +156,24 @@ function initialize({ existingChandelier = false, rulesRuntime = runtime } = {})
     state: replayed.state,
     events: [],
     abilityRef: longbow.definitionId,
+    featureId: compiled.artifact.tacticalFeature.featureId,
     rulesRuntime,
   };
 }
 
 function stuntInput(world, rootActionId, options = {}) {
-  return {
+  const input = {
     kind: "invokeEnvironmentalStunt",
     rootActionId,
     actorCharacterId: ALICE.characterId,
     controllerPrincipalId: ALICE.principalId,
-    featureId: CHANDELIER_ID,
-    abilityRef: world.abilityRef,
+    featureId: world.featureId,
     ...options,
   };
+  if (options.activation?.kind !== "check" && options.activation?.kind !== "direct") {
+    input.abilityRef = world.abilityRef;
+  }
+  return input;
 }
 
 let responseOrdinal = 0;
@@ -334,6 +344,216 @@ test("miss and hit below durability threshold consume the frozen action branch w
   assert.equal(feature(damaged.state, CHANDELIER_ID).state, "suspended");
   assert.ok(Number(feature(damaged.state, CHANDELIER_ID).durability.current) > 0);
   assert.ok(Number(feature(damaged.state, CHANDELIER_ID).durability.current) < 10);
+});
+
+test("KP-authored non-chandelier scenery supports attack, check, and direct activation without caller targets or rerolls", () => {
+  const attackWorld = initialize({
+    existingChandelier: true,
+    featureDefinition: CUSTOM_SCENERY_WALL_FEATURE_DEFINITION,
+  });
+  const attackInput = stuntInput(attackWorld, "root:environment:custom-attack", {
+    activation: { kind: "attack" },
+  });
+  const attackAwaiting = attackWorld.rulesRuntime.step(
+    attackWorld.profiles,
+    attackWorld.state,
+    attackInput,
+  );
+  assert.equal(attackAwaiting.kind, "awaitingRandomness", JSON.stringify(attackAwaiting));
+  assert.deepEqual(
+    attackAwaiting.state.combatRuntime.randomnessResolutions[attackAwaiting.resolutionId]
+      .operation.activation,
+    { kind: "attack" },
+  );
+  const attackHazard = fulfill(attackWorld, attackAwaiting, (purpose) =>
+    purpose.startsWith("attack:environment:") ? 20 : 8);
+  assert.equal(attackHazard.kind, "awaitingRandomness", JSON.stringify(attackHazard));
+  assert.equal(feature(attackHazard.state, CUSTOM_SCENERY_WALL_ID).state, "toppling");
+  assert.ok(attackWorld.events.some(({ eventType }) => eventType === "EnvironmentFeatureDamaged"));
+
+  const failedCheckWorld = initialize({
+    existingChandelier: true,
+    featureDefinition: CUSTOM_SCENERY_WALL_FEATURE_DEFINITION,
+  });
+  const failedCheckInput = stuntInput(
+    failedCheckWorld,
+    "root:environment:custom-check-failure",
+    {
+      activation: {
+        kind: "check",
+        ability: "dex",
+        skill: "acrobatics",
+        dc: "30",
+        mode: "advantage",
+      },
+    },
+  );
+  const failedCheckAwaiting = failedCheckWorld.rulesRuntime.step(
+    failedCheckWorld.profiles,
+    failedCheckWorld.state,
+    failedCheckInput,
+  );
+  assert.equal(failedCheckAwaiting.kind, "awaitingRandomness", JSON.stringify(failedCheckAwaiting));
+  assert.deepEqual(failedCheckAwaiting.randomnessRequests.map((request) => request.dice), [[{
+    count: "2",
+    sides: "20",
+  }]]);
+  assert.deepEqual(failedCheckAwaiting.randomnessRequests[0].frozenParameters, {
+    sourceEntityId: ALICE.characterId,
+    featureId: CUSTOM_SCENERY_WALL_ID,
+    ability: "dex",
+    skill: "acrobatics",
+    dc: "30",
+    mode: "advantage",
+    modifier: 3,
+    environmentFeatureHash: feature(failedCheckAwaiting.state, CUSTOM_SCENERY_WALL_ID)
+      .environment.featureDefinitionHash,
+  });
+  const failedCheckRetry = failedCheckWorld.rulesRuntime.step(
+    failedCheckWorld.profiles,
+    failedCheckAwaiting.state,
+    failedCheckInput,
+  );
+  assert.equal(failedCheckRetry.kind, "rejected");
+  assert.equal(failedCheckRetry.rejection.code, "duplicateRootAction");
+  assert.deepEqual(
+    failedCheckAwaiting.state.combatRuntime.randomnessResolutions[failedCheckAwaiting.resolutionId]
+      .randomnessRequests,
+    failedCheckAwaiting.randomnessRequests,
+  );
+  const failedCheck = fulfill(failedCheckWorld, failedCheckAwaiting, () => [20, 1]);
+  assert.equal(failedCheck.kind, "committed", JSON.stringify(failedCheck));
+  assert.deepEqual(failedCheck.mechanicalResult, {
+    kind: "environmentalStuntCheckResolved",
+    activation: {
+      kind: "check",
+      ability: "dex",
+      skill: "acrobatics",
+      dc: "30",
+      mode: "advantage",
+    },
+    featureId: CUSTOM_SCENERY_WALL_ID,
+    rolls: [20, 1],
+    selectedRoll: 20,
+    modifier: 3,
+    total: 23,
+    succeeded: false,
+    outcome: "checkFailed",
+  });
+  assert.equal(feature(failedCheck.state, CUSTOM_SCENERY_WALL_ID).state, "braced");
+  assert.equal(feature(failedCheck.state, CUSTOM_SCENERY_WALL_ID).durability.current, "8");
+  assert.equal(failedCheck.state.combatRuntime.entities[ALICE.characterId].turn.action, "0");
+  assert.ok(!failedCheckWorld.events.some(({ eventType }) =>
+    eventType === "EnvironmentHazardTriggered"));
+  const failedCheckReplay = failedCheckWorld.rulesRuntime.replay(
+    failedCheckWorld.genesis,
+    failedCheckWorld.events,
+  );
+  assert.equal(failedCheckReplay.kind, "replayed", JSON.stringify(failedCheckReplay));
+  assert.equal(hashWorldState(failedCheckReplay.state), hashWorldState(failedCheck.state));
+
+  const successfulCheckWorld = initialize({
+    existingChandelier: true,
+    featureDefinition: CUSTOM_SCENERY_WALL_FEATURE_DEFINITION,
+  });
+  const successfulCheckInput = stuntInput(
+    successfulCheckWorld,
+    "root:environment:custom-check-success",
+    {
+      activation: {
+        kind: "check",
+        ability: "str",
+        skill: "athletics",
+        dc: "12",
+        mode: "normal",
+      },
+    },
+  );
+  const successfulCheckAwaiting = successfulCheckWorld.rulesRuntime.step(
+    successfulCheckWorld.profiles,
+    successfulCheckWorld.state,
+    successfulCheckInput,
+  );
+  const successfulCheckHazard = fulfill(successfulCheckWorld, successfulCheckAwaiting, () => 20);
+  assert.equal(successfulCheckHazard.kind, "awaitingRandomness", JSON.stringify(successfulCheckHazard));
+  assert.equal(successfulCheckHazard.mechanicalResult.outcome, "triggered");
+  assert.equal(feature(successfulCheckHazard.state, CUSTOM_SCENERY_WALL_ID).state, "toppling");
+  const successfulCheckInvocation = successfulCheckWorld.events.find(({ eventType }) =>
+    eventType === "AbilityInvoked");
+  assert.equal(successfulCheckInvocation.payload.mechanicalResult.succeeded, true);
+  assert.deepEqual(successfulCheckInvocation.payload.mechanicalResult.activation, {
+    kind: "check",
+    ability: "str",
+    skill: "athletics",
+    dc: "12",
+    mode: "normal",
+  });
+  const successfulCheckResolved = fulfill(
+    successfulCheckWorld,
+    successfulCheckHazard,
+    (purpose, count) => {
+      if (purpose.startsWith("damage:environment-hazard:")) return Array(count).fill(6);
+      if (purpose.endsWith(`:${HIDDEN_ID}`)) return 1;
+      return 20;
+    },
+  );
+  assert.equal(successfulCheckResolved.kind, "committed", JSON.stringify(successfulCheckResolved));
+  assert.equal(feature(successfulCheckResolved.state, CUSTOM_SCENERY_WALL_ID).state, "debris");
+  assert.equal(successfulCheckResolved.state.combatRuntime.entities[HIDDEN_ID].lifeState, "dead");
+  const successfulCheckHazardEvent = successfulCheckWorld.events.find(({ eventType }) =>
+    eventType === "EnvironmentHazardTriggered");
+  assert.ok(successfulCheckHazardEvent.payload.entityTargetIds.includes(HIDDEN_ID));
+  const successfulCheckReplay = successfulCheckWorld.rulesRuntime.replay(
+    successfulCheckWorld.genesis,
+    successfulCheckWorld.events,
+  );
+  assert.equal(successfulCheckReplay.kind, "replayed", JSON.stringify(successfulCheckReplay));
+  assert.equal(
+    hashWorldState(successfulCheckReplay.state),
+    hashWorldState(successfulCheckResolved.state),
+  );
+
+  const directWorld = initialize({
+    existingChandelier: true,
+    featureDefinition: CUSTOM_SCENERY_WALL_FEATURE_DEFINITION,
+  });
+  const directInput = stuntInput(directWorld, "root:environment:custom-direct", {
+    activation: { kind: "direct" },
+  });
+  const directHazard = directWorld.rulesRuntime.step(
+    directWorld.profiles,
+    directWorld.state,
+    directInput,
+  );
+  assert.equal(directHazard.kind, "awaitingRandomness", JSON.stringify(directHazard));
+  assert.deepEqual(directHazard.events.map(({ eventType }) => eventType), [
+    "AbilityInvoked",
+    "EnvironmentFeatureStateChanged",
+    "RandomnessRequested",
+  ]);
+  assert.deepEqual(directHazard.mechanicalResult.activation, { kind: "direct" });
+  assert.equal(feature(directHazard.state, CUSTOM_SCENERY_WALL_ID).state, "toppling");
+  assert.ok(directHazard.randomnessRequests.every(({ purposeKey }) =>
+    !purposeKey.startsWith("check:")));
+  const directRetry = directWorld.rulesRuntime.step(
+    directWorld.profiles,
+    directHazard.state,
+    directInput,
+  );
+  assert.equal(directRetry.kind, "rejected");
+  assert.equal(directRetry.rejection.code, "duplicateRootAction");
+  assert.deepEqual(
+    directHazard.state.combatRuntime.randomnessResolutions[directHazard.resolutionId]
+      .randomnessRequests,
+    directHazard.randomnessRequests,
+  );
+  const directResolved = fulfill(directWorld, directHazard, (purpose, count) =>
+    purpose.startsWith("damage:environment-hazard:") ? Array(count).fill(1) : 20);
+  assert.equal(directResolved.kind, "committed", JSON.stringify(directResolved));
+  assert.equal(feature(directResolved.state, CUSTOM_SCENERY_WALL_ID).state, "debris");
+  const directReplay = directWorld.rulesRuntime.replay(directWorld.genesis, directWorld.events);
+  assert.equal(directReplay.kind, "replayed", JSON.stringify(directReplay));
+  assert.equal(hashWorldState(directReplay.state), hashWorldState(directResolved.state));
 });
 
 test("falling chandelier resolves complete authority geometry, hidden death, debris, replay, correction, and duplicate root", () => {

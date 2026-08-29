@@ -81,8 +81,8 @@ export const MANIFEST_PROFILE = {
 } as const satisfies ProfileRef;
 
 export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE = {
-  profileId: "runtime-srd51-2014-authoritative-environment-v1",
-  profileHash: "sha256:545e80e94c81222616e4e58d9c54cc3bf6c6e4ff5abae7a2fa130d5232064c1e",
+  profileId: "runtime-srd51-2014-authoritative-environment-v2",
+  profileHash: "sha256:0021280335296ecfc5b65a221fec7009550fac96db65925e47daef9f9d4f0456",
 } as const satisfies ProfileRef;
 
 export const CURRENT_RUNTIME_PROFILE_MANIFEST = {
@@ -326,11 +326,11 @@ export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocu
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "runtimeManifest",
   profileId: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE.profileId,
-  semanticVersion: "1.0.0",
+  semanticVersion: "2.0.0",
   normativePayload: {
     conformanceVersion: "1",
     profileDispatch: "exact-id-and-hash",
-    compatibility: "authoritative-v2-plus-explicit-environment-feature-fsm-v1",
+    compatibility: "authoritative-v2-plus-explicit-environment-feature-fsm-v2",
     publicInterface: ["step", "project", "replay"],
     ruleset: RULESET_PROFILE,
     eventSchema: EVENT_SCHEMA_PROFILE,

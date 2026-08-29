@@ -109,7 +109,7 @@ function eventRequiresEnvironmentProfile(eventType: EventType, payload: unknown)
   return PROFILED_ENVIRONMENT_EVENT_TYPES.has(eventType)
     || (eventType === "EnvironmentFeatureStateChanged"
       && isRecord(payload)
-      && payload.intent === "resolveHazard");
+      && (payload.intent === "triggerHazard" || payload.intent === "resolveHazard"));
 }
 
 function envelopeEnvironmentProfileEnabled(profiles: JsonRecord): boolean {

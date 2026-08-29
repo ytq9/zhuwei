@@ -506,7 +506,7 @@ export function validateEnvironmentEventPayload(
           value.sceneId,
           value.toState,
         ].every(isNonEmptyString)
-        && ["open", "close", "resolveHazard"].includes(String(value.intent))
+        && ["open", "close", "triggerHazard", "resolveHazard"].includes(String(value.intent))
         && value.fromState !== value.toState;
     case "EnvironmentHazardTriggered":
       return validateEnvironmentHazardPayload(value);
@@ -1000,7 +1000,7 @@ export function applyEnvironmentEvent(
     && candidate.intent === payload.intent
     && candidate.toState === payload.toState);
   const semantics = graph?.states.find((candidate) => candidate.state === payload.toState);
-  const validFeatureKind = payload.intent === "resolveHazard"
+  const validFeatureKind = payload.intent === "resolveHazard" || payload.intent === "triggerHazard"
     ? feature?.kind === "destructible" && feature.environment !== undefined
     : feature?.kind === "portal";
   if (feature === undefined

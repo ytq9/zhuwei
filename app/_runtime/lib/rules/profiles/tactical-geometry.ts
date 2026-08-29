@@ -49,7 +49,7 @@ export type CanonicalTacticalFeatureStateGraph = {
   states: CanonicalTacticalFeatureState[];
   transitions: Array<{
     fromState: string;
-    intent: "open" | "close" | "resolveHazard";
+    intent: "open" | "close" | "triggerHazard" | "resolveHazard";
     toState: string;
   }>;
   durability?: Omit<CanonicalTacticalFeatureDurability, "current">;
@@ -185,6 +185,7 @@ function featureStateGraph(value: unknown): value is CanonicalTacticalFeatureSta
     && nonEmptyString(transition.fromState)
     && (transition.intent === "open"
       || transition.intent === "close"
+      || transition.intent === "triggerHazard"
       || transition.intent === "resolveHazard")
     && nonEmptyString(transition.toState)
     && transition.fromState !== transition.toState

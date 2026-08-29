@@ -694,7 +694,7 @@ export type EventPayloadByType = {
     sceneId: string;
     featureId: string;
     definitionId: string;
-    intent: "open" | "close" | "resolveHazard";
+    intent: "open" | "close" | "triggerHazard" | "resolveHazard";
     fromState: string;
     toState: string;
   };

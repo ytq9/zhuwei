@@ -2,6 +2,7 @@ import { ENVIRONMENT_PROFILE } from "../../app/_runtime/lib/rules/profiles/envir
 
 export const CHANDELIER_ID = "feature:gallery:chandelier";
 export const CRATE_ID = "feature:gallery:crate";
+export const CUSTOM_SCENERY_WALL_ID = "feature:gallery:custom-scenery-wall";
 
 export const CHANDELIER_FEATURE_DEFINITION = Object.freeze({
   schema: "zhuwei.environment-feature/v1",
@@ -89,6 +90,102 @@ export const CHANDELIER_FEATURE_DEFINITION = Object.freeze({
     },
     save: { ability: "dex", dc: "12", halfOnSuccess: false },
     damage: { type: "bludgeoning", formula: "2d6" },
+    failureStatus: "prone",
+  },
+});
+
+// Deliberately fixture-local content: production has no object/archetype catalog.
+export const CUSTOM_SCENERY_WALL_FEATURE_DEFINITION = Object.freeze({
+  schema: "zhuwei.environment-feature/v1",
+  environmentProfile: ENVIRONMENT_PROFILE,
+  featureId: CUSTOM_SCENERY_WALL_ID,
+  sceneId: "scene:gallery",
+  kind: "destructible",
+  label: "临时拼装的舞台布景墙",
+  polygon: [
+    { x: "72", y: "-6" },
+    { x: "72", y: "6" },
+    { x: "84", y: "6" },
+    { x: "84", y: "-6" },
+  ],
+  elevation: "0",
+  height: "96",
+  visibilityPolicyId: "visibility:scene-observers",
+  initialState: "braced",
+  destructible: {
+    schema: "zhuwei.destructible-definition/v1",
+    definitionId: "destructible:gallery:custom-scenery-wall",
+    armorClass: "10",
+    maximumDurability: "8",
+    damageThreshold: "0",
+    immuneDamageTypes: ["poison", "psychic"],
+  },
+  stateGraph: {
+    schema: "zhuwei.environment-state-graph/v1",
+    definitionId: "environment-state-graph:gallery:custom-scenery-wall",
+    states: [
+      {
+        state: "braced",
+        opaque: true,
+        impassable: true,
+        cover: "full",
+        propagation: "blocks",
+        terrain: "normal",
+      },
+      {
+        state: "debris",
+        opaque: false,
+        impassable: true,
+        cover: "half",
+        propagation: "passes",
+        terrain: "rubble",
+      },
+      {
+        state: "toppling",
+        opaque: false,
+        impassable: false,
+        cover: "none",
+        propagation: "passes",
+        terrain: "normal",
+      },
+    ],
+    transitions: [
+      {
+        fromState: "braced",
+        trigger: "damageAtOrBelow",
+        remainingDurabilityAtOrBelow: "0",
+        toState: "toppling",
+      },
+      {
+        fromState: "braced",
+        trigger: "stuntSucceeded",
+        toState: "toppling",
+      },
+      {
+        fromState: "toppling",
+        trigger: "hazardResolved",
+        toState: "debris",
+      },
+    ],
+  },
+  hazard: {
+    schema: "zhuwei.triggered-hazard/v1",
+    definitionId: "hazard:gallery:custom-scenery-wall-topples",
+    trigger: { kind: "stateEntered", state: "toppling" },
+    areaEffectRef: "area-effect:gallery:custom-scenery-wall-topples",
+    resolvedState: "debris",
+  },
+  areaEffect: {
+    schema: "zhuwei.area-effect/v1",
+    definitionId: "area-effect:gallery:custom-scenery-wall-topples",
+    origin: { kind: "featureCentroid", elevationInches: "0" },
+    shape: {
+      kind: "sphere",
+      radiusInches: "144",
+      propagation: "straight",
+    },
+    save: { ability: "dex", dc: "11", halfOnSuccess: false },
+    damage: { type: "bludgeoning", formula: "1d6" },
     failureStatus: "prone",
   },
 });

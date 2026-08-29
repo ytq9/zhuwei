@@ -7,19 +7,22 @@ import type {
 } from "./types";
 
 export const ENVIRONMENT_PROFILE = {
-  profileId: "environment-feature-fsm-2014-v1",
-  profileHash: "sha256:b36295f26e899fd737ed53df1fd2c2cf48b67d6d380fc602adca5421b07eff0c",
+  profileId: "environment-feature-fsm-2014-v2",
+  profileHash: "sha256:702b2559c821a52e1c7d6a137c6b261cec21d6cc513e3c0301b4b5ab007f7c87",
 } as const satisfies ProfileRef;
 
 export const ENVIRONMENT_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "environmentMechanics",
   profileId: ENVIRONMENT_PROFILE.profileId,
-  semanticVersion: "1.0.0",
+  semanticVersion: "2.0.0",
   normativePayload: {
     conformanceVersion: "1",
     rulesBasis: "srd5.1-2014-plus-versioned-product-ruling",
-    trustedPrimitive: "environmental-stunt.v1",
+    trustedPrimitive: "environmental-stunt.v2",
+    activationModes: ["attack", "check", "direct"],
+    checkAuthority: "server-freezes-ability-skill-dc-and-d20-mode-rules-resolves",
+    directAuthority: "server-freezes-trigger-no-precheck-area-randomness-remains-authoritative",
     featureIdentity: "stable-scene-scoped-id-materialized-before-randomness",
     stateModel: "bounded-finite-state-transitions-only",
     targetAuthority: "rules-computes-complete-authoritative-geometry-set",
@@ -64,7 +67,7 @@ export type EnvironmentStateGraph = {
   states: EnvironmentStateSemantics[];
   transitions: Array<{
     fromState: string;
-    trigger: "damageAtOrBelow" | "hazardResolved";
+    trigger: "damageAtOrBelow" | "hazardResolved" | "stuntSucceeded";
     toState: string;
     remainingDurabilityAtOrBelow?: string;
   }>;
@@ -164,7 +167,7 @@ export type CompiledEnvironmentTacticalFeature = {
     states: EnvironmentStateSemantics[];
     transitions: Array<{
       fromState: string;
-      intent: "resolveHazard";
+      intent: "triggerHazard" | "resolveHazard";
       toState: string;
     }>;
     durability: {
@@ -327,7 +330,8 @@ function stateGraph(value: unknown): value is EnvironmentStateGraph {
       || transition.fromState === transition.toState
       || !states.has(transition.fromState)
       || !states.has(transition.toState)
-      || (transition.trigger !== "damageAtOrBelow" && transition.trigger !== "hazardResolved")) {
+      || !["damageAtOrBelow", "hazardResolved", "stuntSucceeded"]
+        .includes(String(transition.trigger))) {
       return false;
     }
     if (transition.trigger === "damageAtOrBelow") {
@@ -437,14 +441,18 @@ function environmentFeature(value: unknown): value is EnvironmentFeature {
     entry.trigger === "damageAtOrBelow");
   const hazardTransitions = definition.stateGraph.transitions.filter((entry) =>
     entry.trigger === "hazardResolved");
+  const stuntTransitions = definition.stateGraph.transitions.filter((entry) =>
+    entry.trigger === "stuntSucceeded");
   return stateIds.has(definition.initialState)
     && definition.hazard.areaEffectRef === definition.areaEffect.definitionId
     && stateIds.has(definition.hazard.trigger.state)
     && stateIds.has(definition.hazard.resolvedState)
-    && damageTransitions.some((entry) => entry.fromState === definition.initialState
-      && entry.toState === definition.hazard.trigger.state
-      && BigInt(entry.remainingDurabilityAtOrBelow ?? "0")
-        <= BigInt(definition.destructible.maximumDurability))
+    && (damageTransitions.some((entry) => entry.fromState === definition.initialState
+        && entry.toState === definition.hazard.trigger.state
+        && BigInt(entry.remainingDurabilityAtOrBelow ?? "0")
+          <= BigInt(definition.destructible.maximumDurability))
+      || stuntTransitions.some((entry) => entry.fromState === definition.initialState
+        && entry.toState === definition.hazard.trigger.state))
     && hazardTransitions.some((entry) => entry.fromState === definition.hazard.trigger.state
       && entry.toState === definition.hazard.resolvedState);
 }
@@ -477,10 +485,12 @@ function tacticalCore(definition: EnvironmentFeature) {
       definitionId: definition.stateGraph.definitionId,
       states: structuredClone(definition.stateGraph.states),
       transitions: definition.stateGraph.transitions
-        .filter((entry) => entry.trigger === "hazardResolved")
+        .filter((entry) => entry.trigger === "hazardResolved" || entry.trigger === "stuntSucceeded")
         .map((entry) => ({
           fromState: entry.fromState,
-          intent: "resolveHazard" as const,
+          intent: entry.trigger === "hazardResolved"
+            ? "resolveHazard" as const
+            : "triggerHazard" as const,
           toState: entry.toState,
         })),
       durability: {
