@@ -566,3 +566,99 @@
 - 迁移/可逆性：旧一维/页面坐标只留 Legacy，不猜 authoritative-v2 geometry。Geometry、环境状态图、projection schema 或采样/传播变化需要新 Profile/Adapter 并保留旧房解释器；地图视觉可替换但不得改变域合同。
 - 验收场景：SPEC 0014 场景 1–14，包括真实 scene geometry、Viewer projection、门三态、可破坏物、环境持续 zone、高度、区域 hidden target、不可区分 preview、Room/replay 和 375px/1440px 浏览器证据。
 - 测试证据：决策与 [ADR-0012](../adr/0012-tactical-map-is-a-viewer-projection-adapter.md)、SPEC 0014、Goal 和追踪矩阵已落盘；现有 G01–G15 只证明 Geometry 算法底座。环境/Tactical Projection/Room/UI/浏览器纵切尚待实现，明确不能写成已满足。
+
+## DEC-036：主 KP 使用私有小表，compound 保留开放行动逃生舱
+
+- 决策 ID：DEC-036
+- 日期：2026-08-29
+- 问题：如何缩小超级 Schema，而不把玩家自然语言或 `SPEC 0001` 的开放世界 KP 裁决降成命令白名单。
+- 来源类别：用户本 Goal 明确授权 + SPEC 0001 冻结 KP 权威 + SPEC 0003 单一 Room Action/Rules Interface。
+- 关联 SPEC 0001：§§2–8、11–14、17–19；A、B、C、D、G、H、J、O。
+- 候选方案：继续单一超级 Schema；向玩家公开 Form 菜单；由 Planner 选择唯一 Form；服务端每次给 3–6 张私有小表并在不确定路径保留 compound。
+- 最终选择：注册 SPEC 0015 的十个精确 Form；Room 从可信状态筛 3–6 张，已有结构化 UI 由服务端直接定 Form，其他不确定/跨域路径必须含 `compound.v1`。Form 只属模型内部，authority/骰面/事件/targets/Profile 均由服务端派生；合法草稿确定性编译为独立版本的 closed/acyclic/bounded `CausalActionProgram`。
+- 理由：小表降低 Schema/token，compound 仍能承载未预见、动态、多目标和跨作用域行动；服务端派生权限字段阻止模型或玩家自报权威。
+- 玩家可观察行为：玩家继续用自然语言提出合理行动，不需要理解或选择 Form；复杂行动不会仅因没有专用表而被拒绝。
+- 秘密与权限影响：Form 不扩大 KP Viewer 内容；principal、actor、Audience、实际 target 与骰面不进入模型字段或客户端。
+- 迁移/可逆性：新 Form/Action Language/Profile 只进新 V3 房间；不改 `authoritative-kp-action-plan-v1`。只增 Form 可发布新 Profile，新增 primitive 必须发布新 Rules manifest/interpreter。
+- 验收场景：十 Form 注册；普通动作只收 3–6 张；不确定路径永含 compound；未知字段/脚本/JSON Patch/事件/骰面/authority 注入 fail closed；复杂动作误入简单 Form 为 0。
+- 测试证据：SPEC/ADR/追踪映射已建立；`form-catalog.ts`、编译器、行为/模型测试尚未实现，当前不得计入完成门。
+
+## DEC-037：Required/ Retrieved/ Optional 分层，D1 FTS 只作静态派生索引
+
+- 决策 ID：DEC-037
+- 日期：2026-08-29
+- 问题：如何减少完整上下文并提高规则/模组召回，同时避免索引成为活跃状态、秘密或版本的第二事实源。
+- 来源类别：用户本 Goal 明确授权 + SPEC 0001 世界/知识权威 + SPEC 0005/0006 事实/模组/NPC + SPEC 0003 Room DO 唯一权威。
+- 关联 SPEC 0001：§§3–4、7–9、11、14–19；A、D、F、G、K、M、N。
+- 候选方案：每次发送完整 WorldState/Story Bible；把动态 Room 快照写入向量库；信任检索摘要；RequiredContext 直取 Authority、静态引用检索后按 hash/权限重读。
+- 最终选择：RequiredContext 来自 Room Authority/`project` 且不可裁剪；Retrieved 仅为 SRD/模组/Story Bible/Ability/敌人/环境的静态版本化 ref；Optional 最先裁剪。D1 FTS 只保存可重建中文别名、双字词、术语和结构关系；命中后按 sourceRef/hash/span/profile/sensitivity/dependencies 重读权威原文。NPC 必须重投影，Narration 不接收 Story Bible/完整 KP Context。
+- 理由：权威动态切片与静态资料分层后，缺失/过期索引不能改写世界，仍可度量召回和 token；重新读取解决版本、权限和秘密变化。
+- 玩家可观察行为：相关规则和模组依据更稳定，FTS/Planner 故障在 RequiredContext 足够时只降级检索；权威上下文不足则诚实失败，不由模型猜测。
+- 秘密与权限影响：当前位置、资源、Pending、角色/NPC 当前知识、Audience、私人对话和动态事实禁止入索引；KP-only chunk 仍逐次鉴权。
+- 迁移/可逆性：D1 FTS 可从权威静态语料删除并重建；若改 schema，从 `db/schema.ts` 生成只增不改 migration，先本地闭环再远端。无需 schema 变化时明确记录无 migration。
+- 验收场景：Required 不可删；中文别名/FTS/依赖召回；篡改 source/profile/hash/span 拒绝；删除索引后规范重建；NPC 无全知继承；动态状态索引扫描为 0。
+- 测试证据：`context-pack.ts`、`static-retrieval.ts`、语料/schema/migration 和本地写读测试均待实现；规格文字不算运行证据。
+
+## DEC-038：Proposal 采用一次首调用加一次窄修订并冻结玩家语义
+
+- 决策 ID：DEC-038
+- 日期：2026-08-29
+- 问题：Schema、引用或 Rules 诊断失败时，如何恢复可执行 Proposal，又不允许多轮完整 Prompt 改变玩家意图、骰前裁决或成本。
+- 来源类别：用户本 Goal 明确授权 + SPEC 0001 玩家能动性/骰前公正 + SPEC 0003/0011 诊断、恢复与模型预算。
+- 关联 SPEC 0001：§§5–7、10、12–13、17–19；B、C、D、E、G、L、N。
+- 候选方案：失败即终止；无限自动重提；现有两次完整机械修订；一次窄修订并冻结语义 hash。
+- 最终选择：每 RootAction 最多一次首 Proposal 和一次窄修订。修订只携所选 schema、原草稿、合并诊断、有限引用与 goal/method/target/playerChoices/NPC 回应的冻结语义 hash；只修字段/引用/机械组合或升级 compound。修订耗尽返回 `needsKp`/`PROPOSAL_REPAIR_EXHAUSTED`，无第三次完整调用。
+- 理由：一次窄修订覆盖结构性可恢复错误，同时限制 token、循环和逐轮语义漂移；冻结 hash 与骰后禁改维持玩家控制和公正。
+- 玩家可观察行为：可修复的结构错误通常自动恢复；不能修时显示诚实稳定失败/等待，不伪造世界成功，不重复提交输入。
+- 秘密与权限影响：修订不重发完整模组、历史或 Story Bible；诊断按 KP Viewer 投影，不向玩家泄漏秘密引用。
+- 迁移/可逆性：只对新 Proposal Profile 生效；旧房保持原修订预算。改变预算/语义字段需新 Profile 和明确裁定。
+- 验收场景：字段/引用修复、升级 compound、语义 hash 篡改、骰后改变 DC/后果、修订 Provider 超时、耗尽后无第三调用。
+- 测试证据：新 proposal journal/validator、调用计数和故障测试待实现；既有 1+2 证据不能抵扣。
+
+## DEC-039：Narration 只输出 body，行动和逐受众发布分别建模
+
+- 决策 ID：DEC-039
+- 日期：2026-08-29
+- 问题：如何区分“世界已经提交”和“某位观察者叙述尚未发布”，并消除模型自报权限/证据与伪成功 fallback。
+- 来源类别：用户本 Goal 明确授权 + SPEC 0001 事实/叙事/秘密边界 + SPEC 0010 Audience/亲历/Delivery + SPEC 0003 提交稳定点。
+- 关联 SPEC 0001：§§2–4、8–10、12、14–19；E、F、J、K、M、N、O。
+- 候选方案：继续单一 `ok`/Outcome kind；Narration 失败回滚行动；固定成功文案；body-only + 服务端元数据 + action/narration 双状态。
+- 最终选择：模型 schema exact `{body}`，删除 `tts/decisionPrompt/referencedProjectionRefs/agencyClaims`；服务端派生 Audience/Receipt/projectionHash/evidence/agency/Policy/InvocationReceipt。公开 action 为 `notCommitted|awaitingInput|committed|resolvedInWorld|concluded`，narration 为 `notApplicable|pending|published|rejected|retryableFailure`。发布按 `(rootActionId, ViewerKey, projectionHash, deliveryGeneration)` 独立；Grounding 拒绝显式失败。
+- 理由：提交和呈现是不同稳定点。分离后 Provider 故障不能重复骰/资源，一个受众故障也不能改变其他受众；body-only 去掉模型权限字段和语义不同的 TTS。
+- 玩家可观察行为：行动已提交时气泡与世界结果保留；“重试 KP 回复”只重用原 Receipt/冻结投影。Alice 可看到成功回应，Bob 的失败只在 Bob 侧重试；NPC 世界内拒绝仍是 resolvedInWorld。
+- 秘密与权限影响：Audience 提交时冻结；不在场者不能补取；换席/新控制者不继承旧亲历。Narration 不接收完整 KP Context，错误/DOM/TTS/日志不泄漏。
+- 迁移/可逆性：只对新 publication/narration Profile 生效；旧 Outcome/Delivery Adapter 按 genesis 保留。改变状态或保留语义需新协议版本。
+- 验收场景：exact body schema；额外字段拒绝；Grounding 拒绝无 fallback；提交后 timeout 不回滚；Alice/Bob 独立；刷新/离场/换席/重试/幂等；固定伪成功文本不存在。
+- 测试证据：Room/API/UI/DO 双状态和逐受众恢复尚未实现；SPEC 0010 既有 Delivery 测试只能作底座，不能证明本决策完成。
+
+## DEC-040：G2 是默认候选，辅助模型必须角色化验证且未达门即移除接线
+
+- 决策 ID：DEC-040
+- 日期：2026-08-29
+- 问题：何时值得引入 Planner、embedding/Vectorize 或 rerank，以及如何避免辅助模型取得 KP 权威或隐藏切换主模型。
+- 来源类别：用户本 Goal 明确授权 + SPEC 0001 KP 权威 + SPEC 0011 Model Receipt/无隐藏切换 + Cloudflare 既有资源约束。
+- 关联 SPEC 0001：§§2–8、11–14、17–19；A、B、D、G、H、J、N、O。
+- 候选方案：默认启用全部 AI/RAG；完全不做检索实验；固定 G0–G5 并按质量/安全/token/延迟增益门采用。
+- 最终选择：Model Profile Registry 固定 provider/model revision、roles、schema、验证套件、上下文/延迟/成本；主 KP Profile 按房间固定。G2（小表+三层 Context+D1 FTS）是默认发布候选；G3 Planner、G4 本地精确向量、G5 rerank 只有在同一 120 条 gold 上达 SPEC 0015 的硬门和预注册增益才采用。UI 提供 Planner 关闭/确定性选项与至少一个验证 Profile；失败回退确定性查询，不自动换主 KP。
+- 理由：辅助能力只有带来可量化净收益才值得承担版本、延迟、秘密和故障面；角色 allowlist 阻止其决定 DC/NPC/世界/targets/Audience/骰面。
+- 玩家可观察行为：主 KP 仍是主要设置；Planner 是次要高级选项且可关闭。辅助故障不改变行动语义；未验证模型不会出现在 UI。
+- 秘密与权限影响：辅助模型只做 Form 排序、实体/代词、查询、rerank、引用/结构提示；秘密 canary、allowlist 和脱敏 Receipt 是上线硬门。
+- 迁移/可逆性：辅助 Profile 只在新 RootAction 边界切换；未达门接线删除。未经另行授权不创建远端 Vectorize、新 Worker/D1/DO/KV/R2/Queue/Workflow。
+- 验收场景：G0–G5 同集报告；Planner off/verified；DeepSeek 候选独立 Receipt；故障注入 100% 安全回退；无隐藏切换；拒绝实验产品接线扫描。
+- 测试证据：Registry、UI、真实 Planner、120 gold 与实验报告均待实现；当前 DeepSeek 主 KP 能力记录不证明辅助角色通过。
+
+## DEC-041：动态环境以版本化有限状态和吊灯因果链进入同一事务
+
+- 决策 ID：DEC-041
+- 日期：2026-08-29
+- 问题：如何支持吊灯、油桶、书架/石柱、吊桥等环境即兴行动，同时避免通用物理、客户端 targets 或模型 patch 成为第二机械。
+- 来源类别：用户本 Goal 明确授权 + SPEC 0001 动态世界/公正危险 + SPEC 0014 Geometry/Tactical Projection + SPEC 0012/0013 Rules/Profile。
+- 关联 SPEC 0001：§§3–8、10–14、17–19；A、B、C、D、E、G、H、J、N。
+- 候选方案：仅做叙述动画；客户端物理/区域目标；通用物理引擎；版本化 EnvironmentFeature/Definition/Hazard/Area/StateGraph 经现有 Rules/Room。
+- 最终选择：KP 在骰前定义/复用稳定环境要素与有限状态，Rules 从完整 Geometry 计算实际集合并执行；Room DO 在一个 RootAction/Receipt 保存 materialize/reuse→成本→攻击锁链→对象伤害/阈值→falling→区域→逐目标豁免/伤害/死亡→debris→地形/掩护/通行。隐藏目标可被影响但不公开；高伤害/致死不按队伍等级削弱。
+- 理由：有限状态覆盖产品需要并可版本化回放；吊灯链同时检验动态事实、对象破坏、区域、死亡、残骸、随机、秘密和恢复，没有引入平行物理引擎。
+- 玩家可观察行为：既有物件稳定复用，合理开放留白在骰前形成，明确不存在时世界内拒绝；失手、未破坏和坠落有不同真实后果，残骸改变战场。
+- 秘密与权限影响：玩家/KP/客户端不提交实际目标集合；隐藏目标、完整 Geometry、内部采样不从 preview、错误、DOM、Narration 或长度泄漏。
+- 迁移/可逆性：环境定义/状态图/Profile 只进新房；旧抽象距离/空 obstacles 不猜迁移。新增 primitive 发布新 Rules manifest/interpreter。
+- 验收场景：SPEC 0015 §11 的吊灯 14 场景，以及 SPEC 0014 的 Geometry/Tactical Projection/双视口门。
+- 测试证据：现有 G01–G15 只证明 Geometry 算法底座；环境编译、Room/archive/replay、吊灯 14 场景与浏览器均待实现。

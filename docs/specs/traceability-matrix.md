@@ -1,10 +1,10 @@
 # 全局产品—实现—验收追踪矩阵
 
 - 状态：**持续维护；不是实施完成证明**
-- 基线日期：2026-08-27
+- 基线日期：2026-08-29
 - 适用分支：`cloudflare`
 - 冻结产品准则：`SPEC 0001`（已批准、产品行为冻结）
-- 覆盖范围：原十个产品板块 P1–P10、用户追加批准的战术地图板块 P11，以及 `SPEC 0001` 验收场景 A–O
+- 覆盖范围：原十个产品板块 P1–P10、战术地图板块 P11、私有 Form/Context/RAG/叙述与动态环境板块 P12，以及 `SPEC 0001` 验收场景 A–O
 
 本矩阵把产品来源追踪到玩家可观察行为、权威事件/状态、观察者专属投影、责任 Interface、测试文件与完成门证据。规格中的“验收场景”或本表中的“计划测试”都不等于测试已实现或已通过；只有通过真实责任 Interface 执行并留下命令、退出码和结果的测试，才能回填为有效证据。
 
@@ -20,7 +20,7 @@
 
 责任 Interface 的语义边界如下；具体 TypeScript 名称可以按已裁定规格实现，但责任不能被拆成平行路径：
 
-- Room Action Module：接收已认证意图、待决回答、重试或 ACK，协调 KP 提案/修订并返回 `committed`、`awaitingInput`、`needsKp`、`retryableFailure`、`rejected` 或 `concluded`。
+- Room Action Module：接收已认证意图、待决回答、重试或 ACK，协调 KP 提案/修订；旧 Profile 保留既有六类 Outcome，新 SPEC 0015 Profile 分别返回 action/narration 公开状态，不用顶层 `ok` 混淆提交与叙述。
 - Rules Module：外部只公开 `step / project / replay`；机械、世界变化、所有 Viewer 投影和事件回放分别只有这一条路径。
 - Room Authority / Room Durable Object：`prepare / observe / commit / acknowledge / commitCorrection`；唯一保存活跃世界、事件、作用域版本、幂等 Receipt、待决输入与当前投递槽，并提供权威随机。
 - 页面/API：只从可信会话提交自然语言意图、待决回答、重试、观察和 ACK；不能自报 principal/actor/viewer、骰面、Audience、投影哈希或机械结果。
@@ -30,7 +30,7 @@
 以下结果来自 `docs/refactor-log.md` 已记录的命令与退出码；“当前声明数”直接取当前测试源码，“已记录绿色”只证明实际运行过的对应切片。二者都不代表生产源码冻结后的最终全量门：
 
 - **当前公开 runner 声明规模**：`authoritative-action` 13、Room Authority 9、Rules/Room multiplayer 各 9、world/campaign 12、observer delivery 8、authoritative table 13、KP Adapter 9、Rules compound 27、telemetry 7、runtime Profile 13、Ability 8、Trigger/Time 15、combat mechanics 45、hostility 2、long casting 8、combat archive 3、archive DO resume 2、privacy G15 1、B53 vertical 1。循环参数化展开后，`randomness-recovery` 12、`combat-room-randomness` 11、contest randomness 1。
-- **已记录绿色切片**：Profile registry/Ability/B07/B38/G15 32/32；B19–B22/B20/G14 定向 12/12；Rules compound 27/27；B53 vertical 1/1；最新 Room randomness/recovery/contest 3 files / 24 tests；Room retry 3/3；archive DO resume 2/2；canonical production-validator 31/31。其它 P1–P10/A–O 行保留的较小计数是当时命令的历史通过数，不应被误读为当前文件声明规模。
+- **已记录绿色切片**：Profile registry/Ability/B07/B38/G15 32/32；B19–B22/B20/G14 定向 12/12；Rules compound 27/27；B53 vertical 1/1；最新 Room randomness/recovery/contest 3 files / 24 tests；Room retry 3/3；archive DO resume 2/2；canonical production-validator 31/31。其它 P1–P10/A–O 行保留的较小计数是当时命令的历史通过数，不应被误读为当前文件声明规模；这些既有结果不证明 SPEC 0015 的新 Profile、120 gold 或发布管线。
 - **当前 canonical Profile 快照**：Projection Policy `projection-observer-safe-v1` 1.2.0 = `sha256:9312f68960f1c53f79b5c95bfd8c95ab87aec903603796f455a6c1d2d4514d8c`；完整 Runtime manifest = `sha256:2f7af76e9a7262675210c18528ca9c6bead5c676aecc71113304eaf01f42dbe9`；canonical genesis golden = `sha256:7e858e340283252d67779ddb1ae773fb5ac5a98d3859fdcef467c58a34935355`。该 Profile 把 `successorRequired`、恢复候选与普通玩家读取固定到同一 Rules projector。
 - **实际（局部）**：`tests/authoritative-kp-adapter.test.mjs`、`structured-telemetry-v2.test.mjs`、`authoritative-table-v2.test.mjs` 都已有局部绿色记录，但分别不等于真实模型线上调用、所有生产日志调用点或生产 HTTP/浏览器冒烟；`getRoomManagement.ruleset_version` 的 HTTP 断言已接入但尚待冻结源码 `npm test`。
 - **Legacy（不计）**：上述 Room 组合回归中的 `room-do.test.ts` 9/9 只作为旧版本回归，不抵扣 v2 完成门。
@@ -84,12 +84,33 @@
 | TM13 双视口/无障碍 | in-app browser 或真实浏览器 DOM/视觉；同源 text fallback | 375px/1440px 待执行 | **待实现** |
 | TM14 最终门 | 最终冻结 SHA 的行为 + module/type/lint/test/diff | Stage 5 统一执行 | **未满足** |
 
-## 2. 原十个产品板块与新增战术地图板块追踪
+### 1.5 `SPEC 0015` Form/Context/RAG/Narration 新增完成标准映射
+
+| 向量 | 唯一责任 | 计划 / 当前真实 runner | 当前状态与证据边界 |
+| --- | --- | --- | --- |
+| KR01 新房/Interface 边界 | 新 V3 manifest + Room Action；Rules 仍只有 `step/project/replay` | 待新增新旧房 manifest、包入口和 module guard | **待实现**：SPEC/ADR 不是结构护栏 |
+| KR02 十 Form/Catalog | `kp/form-catalog.ts` + closed schema/Profile | 待新增十精确 ID、字段/大小/注入拒绝测试 | **待实现** |
+| KR03 3–6 张与 compound | Room 可信筛选 + Planner allowlist | 待新增结构化 UI/自然语言/复杂动作选择测试 | **待实现**：Planner 不得删除 compound |
+| KR04 三层 Context | `kp/context-pack.ts` + Room Authority/Rules `project` | 待新增 Required 不可删、Optional 先裁、NPC 重投影/Narration 缩小测试 | **待实现** |
+| KR05 静态 RAG/权威重读 | `kp/static-retrieval.ts` + 静态 corpus/D1 FTS | 待新增中文别名/双字词/依赖、ref/hash/span/Profile/权限、静态性与重建测试 | **待实现** |
+| KR06 Proposal 1+1/CAP | proposal validator/journal + `kp/causal-action-program.ts` + Rules `step` | 待新增语义 hash、升级 compound、无第三调用、骰后冻结、closed/acyclic/bounded 测试 | **待实现** |
+| KR07 Body-only/Grounding | Narration Adapter + server-derived metadata | 待新增 exact `{body}`、旧四字段拒绝、Grounding/无 fallback/TTS 同正文测试 | **待实现** |
+| KR08 action/narration 双状态 | Room Action/API/DTO/UI | 待新增五加五状态组合、草稿保留、已提交不回滚/不重复机械测试 | **待实现** |
+| KR09 逐受众发布/亲历 | Room DO delivery journal + `project(viewer)` | 待新增 Alice 成功/Bob retry、不在场无补取、换席不继承、冻结重试/幂等 | **待实现** |
+| KR10 Model Profile/Planner | `kp/model-registry.ts` + server/table settings | 待新增 off/确定性/verified、角色 allowlist、DeepSeek Planner Receipt、无隐藏切换 | **待实现** |
+| KR11 G0–G5 采用门 | gold/eval/experiment runner + 产品接线审计 | 待记录 G0；同 120 集比较 G1–G5；未达门接线删除 | **待实现** |
+| KR12 动态环境/吊灯 | `environmental-stunt.v1` + Rules v2/Geometry/Room/archive/replay | 待新增五类环境对象、吊灯 14 场景、隐藏 target 与不按等级缩放 | **待实现**；G01–G15 仅算法底座 |
+| KR13 十错误/日志 | API failure DTO + `room/telemetry.ts` | 待新增十精确代码、Planner/RAG 降级、字段 allowlist/秘密扫描 | **待实现** |
+| KR14 120 gold/量化门 | production-equivalent evaluation seam | 待报告 recall、Form、token、latency、calls、fallback、p50/p95/CI、故障注入和零容忍 | **待实现** |
+| KR15 D1 migration/本地闭环 | `db/schema.ts` → drizzle migration → local D1/corpus rebuild | 有变化时待 generate/逐行审查/新库+旧库写读；无变化需明确证据 | **待实现/待裁定是否需 schema** |
+| KR16 浏览器/发布/远端 | 375/1440 QA + 完整门 + 既有 deploy/smoke/cleanup/push guard | 待五路径、部署版本/日志/清理、远端 cloudflare 与 main SHA 证明 | **未满足** |
+
+## 2. 十二个产品板块追踪
 
 | ID | 来源 | 用户可观察行为 | 权威事件 / 状态 | Viewer 投影 | 责任 Interface | 计划 / 实际测试文件 | 完成门证据 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | P1 冻结 KP 责任 | Goal §二；`SPEC 0001` §§2–20、A–O | 玩家可提出任何世界内合理自然语言行动；KP 理解目标与做法、创造开放内容、扮演有限知识 NPC、推动并真实收束故事，而不是白名单翻译器或事后旁白；玩家始终控制自己的角色 | `RootAction`、KP 提案/修订、已固化事实、机械结果、NPC/势力计划、聚光灯与结局状态；Prompt 或封闭 DSL 不能成为正史 | 每名观察者只看其角色有权感知/知道的 `ViewerReadModel` 与当前回应；回应明确变化、可行动信息并交还决定权 | 已认证 API → Room Action → Room Authority → Rules `step` → 原子 `commit` → `project` → 提交后叙述 | **实际（有效）**：`authoritative-action` 7/7、Rules compound 18/18、production compound 1/1、`kp-multiturn-eval` production-validator 31/31。**实际（局部）**：KP Adapter 7/7 | **部分满足**：strict production typed ActionPlan 已把动态事实、有限知识 NPC、场景问题、随机和机械结果合并到同一 Root Action，compact DO 分支已清除；真实 Workers AI 与线上 table 闭环尚未验证 |
-| P2 权威行动事务 | Goal §三.1、§四；`SPEC 0003` | 同一自由行动可澄清、等待玩家选择、等待 KP 修订、可靠重试；骰前参数冻结，刷新/重试不重复骰、扣资源或提交；冲突只影响相关作用域；错误可公开更正 | `RootAction`、`PreparedAction`、`PendingInput`、冻结提案、`RandomnessRequested` / `DiceRolled`、连续事件、scope heads、幂等 `PublicReceipt`、活动分支与更正记录 | 六种外层 Outcome、公开 Receipt、公开待决输入和专属 Read Model；错误/候选项不泄密 | Room Action；Rules `step/project/replay`；Room Authority `prepare/observe/commit/acknowledge/commitCorrection` | **实际（有效）**：Room Action 7/7；Rules compound 18/18；production compound 1/1；production-validator 31/31；记录的 Room 迁移组合 41/41（含随机恢复、retry、archive/correction 5/5） | **部分满足**：可信控制、严格提案/恢复 allowlist、幂等、作用域并发、零到多权威随机、Pending/重连、更正/灾难重建和六种 Outcome 已有证据；冻结 SHA 全量门仍待 |
+| P2 权威行动事务 | Goal §三.1、§四；`SPEC 0003`；`SPEC 0015` §§2、6、8、17 | 同一自由行动可澄清、等待玩家选择、等待 KP 修订、可靠重试；骰前参数冻结，刷新/重试不重复骰、扣资源或提交；冲突只影响相关作用域；错误可公开更正 | `RootAction`、`PreparedAction`、`PendingInput`、冻结提案、`RandomnessRequested` / `DiceRolled`、连续事件、scope heads、幂等 `PublicReceipt`、活动分支与更正记录 | 旧 Profile 保留六种 Outcome；新 Profile 分别投影 action/narration 状态、Receipt、Pending 与专属 Read Model；错误/候选项不泄密 | Room Action；Rules `step/project/replay`；Room Authority `prepare/observe/commit/acknowledge/commitCorrection` | **实际（有效）**：既有 Room Action/Rules/Room 证据。**待实现**：新 1+1 Proposal 和双状态 | **部分满足**：事务、随机、恢复底座有证据；SPEC 0015 新 Profile 的语义 hash、无第三调用、双状态/不回滚仍为硬缺口 |
 | P3 KP 与非战斗机械 | Goal §三.2；`SPEC 0004`；`SPEC 0001` §§5–6、8、10、13、17、19 | 五类可行性裁决可区分；不可能与无意义行动不掷骰；检定、对抗、豁免、物品、资源、休整、Activity 和非战斗危险均先冻结风险/成本再结算；同情境裁定一致，原样失败不能无限重掷 | `FeasibilityRuled`、`ClarificationRequested/Answered`、`Check/Contest/SaveFrozen`、`RandomnessRequested`、`DiceRolled`、`CheckResolved`、物品/资源/Activity/Rest/Hazard/AdjudicationPrecedent 事件 | 骰前显示角色理应知道的风险与成本，不公开隐藏 DC/真相；Rules projector 同时给控制者 `restRecoveryOptions` 的合法上限、资格与预算；提交后显示真实资源、时间、状态和新局面 | Room Action 的 KP 可行性提案；Rules `step` 机械诊断/执行；Room DO 权威随机与提交；`project` | **实际（有效）**：world/campaign 7/7、Rules compound 18/18、Rules multiplayer 8/8、Room multiplayer 8/8、Room Action 7/7、combat mechanics 4/4。**实际（局部）**：table 10/10 | **部分满足**：五类裁决、资源/物件、Activity、个人/整队休整、有意义失败、非战斗危险及 production compound 已绿；save 的物品成本、2014 职业豁免熟练、HP/移动分支均在同一复合事务，Arcane Recovery UI 消费 Rules projector 的恢复候选并只冻结选择。完整裁定先例与线上浏览器仍待 |
 | P4 世界事实与知识 | Goal §三.3；`SPEC 0005`；`SPEC 0001` §§3–4、7、9、16–17 | 动态现实在首次证据/引用/机械影响前固化；玩家能区分感官证据、角色推断和有来源主张；关系、承诺、债务、传闻与知识跨时间持续；分支/更正不静默改写历史 | `CanonicalFact`、`WorldEvent`、因果/来源/可见性；`FactDeclared/Changed/Ended`、`HiddenRealityCandidatesFrozen/Materialized`、`SensoryEvidenceAcquired`、`SourceClaimCreated`、`CharacterInferenceFormed`、`KnowledgeAcquired/Shared`、关系/承诺/债务与更正分支事件 | `project(viewer)` 只给该角色的事实、证据、主张、推断和知识；隐藏真相、来源内部依据和其他角色私密知识不可见 | Rules `step/project/replay`；Room Authority 原子提交/更正；Room Action 只以专属投影调用 KP | **实际（有效）**：world/campaign 7/7、observer projection 5/5、Rules compound 18/18、production compound 1/1、production-validator 31/31、archive/correction 5/5 | **部分满足**：生产动态事实、typed 知识/关系/承诺后果、世界内分享、非追溯、NPC/继任、跨章持续及审计更正已绿；冻结源码归档组合仍须重跑 |
 | P5 模组、NPC 与势力 | Goal §三.4；`SPEC 0006`；`SPEC 0001` §§3–4、8、11、14、18 | 模组提供故事圣经、核心真相与开放留白，不是流程图；KP 可动态形成地点/实体/危险；NPC/势力只凭有限知识、目标和资源行动，能投降、逃跑、改变计划；封闭 DSL 不拒绝合理自由行动 | `ModuleBound/ModuleVersionMigrated`、`DefinitionRegistered`、`DynamicEntity/LocationMaterialized`、`NpcKnowledgeAcquired`、`NpcInferenceFormed`、NPC/势力计划与行动、敌对/投降/逃跑状态；Legacy Adapter 仅绑定旧版本 | 玩家只见已观察到的 NPC 行为和因果痕迹；NPC Viewer 不得收到玩家未暴露计划；KP 私密投影不向玩家泄露 | Room Action KP 提案/修订；Rules `step/project` 验证动态定义和 NPC 机械；Room Authority 提交；版本化 Module Adapter | **实际（有效）**：module/NPC 4/4、world/campaign 7/7、observer 5/5、opening 1/1、Rules compound 18/18、production compound 1/1、production-validator 31/31 | **部分满足**：Module hash/open blanks、开场单槽、真相隔离、有限知识 NPC 和生产动态定义/NPC 计划复合提交已绿；完整模组迁移与线上真实 KP 仍待 |
@@ -99,6 +120,7 @@
 | P9 观察者专属呈现 | Goal §三.8；`SPEC 0010`；`SPEC 0001` §§9、12、14–17、19 | 个人线索默认私有；只能通过世界内行动分享，范围在提交时冻结且不追溯旧回应；每个 ViewerKey 最多一个当前帧；刷新/轮询/断线/重启恢复同一帧；ACK/覆盖/失权后正文不可回看；不存在完整 KP 旁白历史 | `AudienceSnapshot`、角色知识与 `KnowledgeShared`、每 ViewerKey 单槽 `DeliveryFrame`、ACK/superseded tombstone、投递幂等 Receipt、投影/呈现/协议版本 | 所有快照、增量、错误、候选、lifecycle `successorRequired`、休整恢复候选、重连、日志摘要、语音和转写复用同一 `project(viewer)`；缺席者与无权者得到 indistinguishable 的脱敏结果 | Rules `project`；Room Authority `observe/acknowledge` 与内部发布 capability；Room Action 提交后叙述；已认证 observe/ACK API | **实际（有效）**：observer projection 5/5、delivery 4/4、opening 1/1、Room multiplayer 8/8、Room Action 7/7、31/31 连续评测。**实际（局部）**：table 10/10 | **部分满足**：个人线索、世界内分享、统一 query/lifecycle/机械候选、单槽/ACK/覆盖/重连、开场与控制转移已绿；生产 HTTP/语音/转写和日志旁路仍待线上冒烟 |
 | P10 可靠性、纠错、可观测性与评测 | Goal §三.9、§五、§六；`SPEC 0003` §§7–11；`SPEC 0005` §13；`SPEC 0011`；`SPEC 0013` | 同一请求可靠重试且不重复后果；模型/网络/Worker 故障停在稳定点；重启或归档重建后权威状态一致；更正公开且可审计；性能/成本在免费额度预算内；日志不含秘密；多轮 KP 行为达到阈值 | 故障分类、SLO/预算、幂等键与 Receipt、随机承诺及 canonical due-root journal、连续事件/哈希、版本清单、归档游标、活动分支/更正、白名单 telemetry 元数据、评测运行/评分记录 | 玩家只见稳定的公开失败、重试、当前状态和有权知道的更正；运维只见脱敏关联 ID、分类、耗时桶、版本与哈希 | Room Action 重试/模型恢复；Room Authority 恢复/幂等/更正；Rules `replay/project`；归档重建器；结构化 telemetry；多轮 eval runner | **实际（有效）**：runtime 10/10、production-validator 31/31、记录的 Room 迁移组合 41/41（含四阶段随机 4/4、archive/correction 5/5、retry 3/3）。**实际（局部）**：telemetry 4/4、table 10/10 | **未满足**：严格恢复/更正/归档主链已绿，到期 Activity 随机恢复须先验证 canonical 根与持久事件前缀；全生产日志调用点、增量归档最终重跑、真实 Workers AI、冻结 SHA 全量门、迁移/部署/推送仍须单独证明 |
 | P11 权威战术空间与二维地图 | 用户追加 Goal 产品决定/完成标准；`SPEC 0014`；ADR-0012；协作 `SPEC 0003/0005/0010/0012/0013` | 玩家在简单二维图和同源文字读数中看到自身、可见单位、已知障碍/门/地形/持续区/占位/高度/掩护，提交有序路径或区域原点/方向；隐藏实体/障碍不从 preview/DOM/错误泄漏；地图不可用仍可操作 | scene geometry、实体 position/footprint/elevation/height、EnvironmentDefinition/State、portal/destructible/terrain/zone、实际通过路径、Ability/Effect、内部全目标集合、版本/Profile/branch 与连续 WorldEvent | `TacticalProjection` 由 `project(viewer)` 生成并同时供地图、文字、ARIA、preview；只含 Viewer 已知子集，GM geometry/实际隐藏 targets 留在 Rules/Internal | 地图/自然语言 → Room Action → Rules `step` → Room DO 原子提交/权威随机 → `project/replay`；preview 作为同一 projector query；页面只作 Adapter | **实际（局部）**：G01–G15 的 Geometry 算法底座。**待实现**：TM01–TM14 的真实 Room/UI/浏览器 runner | **未满足（新增硬阻塞）**：需完成环境状态、Tactical Projection/preview、路径/区域页面输入、门/破坏物/持续区/高度、隐藏不可区分、archive/replay、双视口及最终门 |
+| P12 私有 Proposal、Context/RAG、逐受众叙述与动态环境 | 用户本 Goal 全文与完成标准；`SPEC 0015`；ADR-0014；DEC-036–041 | 玩家仍只说自然语言；复杂行动不因小表受限；行动已提交而 KP 回复失败时世界/气泡保留；每位在场观察者独立得到自己的 body；可利用吊灯等真实环境且不泄漏隐藏目标 | Form/Profile、Context refs、Proposal semantic hash、CausalActionProgram、RootAction/Receipt、action/narration 状态、AudienceSnapshot/delivery generation、环境定义/状态/事件、ModelInvocationReceipt；D1 FTS 仅派生 | RequiredContext 和 NPC Viewer 经 `project`；Narration 只用冻结 `renderableClaims`；逐 ViewerKey 发布/亲历；错误/日志/DOM 无 Prompt、正文、秘密或 hidden target | Room Action → Form/Context/static retrieval/Proposal compiler → Rules `step` → Room DO → `project` → body Grounding/publish；D1 只静态索引/归档 | **待实现**：KR01–KR16、120 gold、31 轮新增长轨迹、吊灯 14、375/1440 五路径 | **未满足（新增硬阻塞）**：当前仅规格/ADR/决策/追踪；旧 ActionPlan/Delivery/Geometry 证据不能抵扣新 Profile、指标、migration、部署或远端证明 |
 
 ## 3. `SPEC 0001` A–O 验收追踪
 
@@ -124,7 +146,7 @@
 
 ## 4. Legacy 与无效替代证据
 
-以下测试可帮助理解旧实现，但不能证明新规则版本满足本矩阵。重构后可以保留在明确的 Legacy Adapter 套件中，不能用其绿色结果抵扣 P1–P11 或 A–O。
+以下测试可帮助理解旧实现，但不能证明新规则版本满足本矩阵。重构后可以保留在明确的 Legacy Adapter 套件中，不能用其绿色结果抵扣 P1–P12 或 A–O。
 
 | 现有证据 | 静态位置 | 不计入原因 |
 | --- | --- | --- |
@@ -138,7 +160,7 @@
 | `tests/interaction-contract.test.mjs` | 7–9、19–55（及同类断言） | 读取源码并匹配字符串/导出；能发现代码表面漂移，不能证明产品运行行为、权限或秘密边界 |
 | `tests/upstream-parity.test.mjs` | 40–53 | 文件哈希能证明选定文件未漂移，不能证明开房、建卡、语音、线索、资源、分头、休整、战斗等用户路径无回归 |
 
-可保留的局部候选证据：`tests/rendered-html.test.mjs` 55–169 从实际 Worker HTTP 路径验证匿名 401、邮箱会话、开房、错误密码和登出撤销；176 行以后还有部分房主权限场景。它仍未进入新 Room Action/Rules/Viewer 事务，所以只可在相同源码状态实际运行通过后计入身份与房间管理回归，不能证明任何 P1–P10 核心玩法行完成。
+可保留的局部候选证据：`tests/rendered-html.test.mjs` 55–169 从实际 Worker HTTP 路径验证匿名 401、邮箱会话、开房、错误密码和登出撤销；176 行以后还有部分房主权限场景。它仍未进入新 Room Action/Rules/Viewer 事务，所以只可在相同源码状态实际运行通过后计入身份与房间管理回归，不能证明任何 P1–P12 核心玩法行完成。
 
 ## 5. 测试运行器与当前证据门
 
@@ -160,10 +182,10 @@
 
 该账本只描述还必须回填的证据，不替代 `docs/refactor-log.md` 的命令、退出码、部署和推送记录。
 
-| 完成门 | 所需证据 | 当前状态（2026-08-27 证据更新时） |
+| 完成门 | 所需证据 | 当前状态（2026-08-29 证据更新时） |
 | --- | --- | --- |
 | `SPEC 0001` 不变 | 冻结文件内容/状态与基线哈希或 diff 核对 | **当前切片已核对**：SHA-256 仍为 `b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be`，目标文件 diff 为空；最终冻结 SHA 前仍须再核对一次 |
-| 原十板块、追加战术地图与 A–O 无未归属项 | 本矩阵 P1–P11、TM01–TM14 和 A–O 每行均有来源、状态、投影、Interface 与测试映射 | **结构映射已列出；P11/TM01–TM14 明确为新增未满足硬阻塞，不能被既有 Geometry helper 抵扣** |
+| 十二板块与 A–O 无未归属项 | 本矩阵 P1–P12、TM01–TM14、KR01–KR16 和 A–O 每行均有来源、状态、投影、Interface 与测试映射 | **结构映射已列出；P11/P12 及 TM/KR 全部待实现项明确为硬阻塞，不能被既有 helper 或规格文字抵扣** |
 | `SPEC 0002` B01–B53 有明确处置 | 单独的逐条处置记录、替代规格交叉审查与实现映射 | **规格与公开测试映射已建立**：`0002-disposition-matrix.md` 逐条处置，本矩阵 §1.2 无编号缺口地映射生产责任与真实 runner；冻结全量/线上门仍须按实际结果清零 |
 | 单一权威事务/机械/投影/回放 | 架构检查 + A–O/各规格行为测试，且无外部 fold/骰子/D1 第二状态 | **部分证据**：Rules、Room Action、Room Authority、strict compound、multiplayer、randomness/recovery、archive/correction、observer 与 B53 vertical 已有公开 seam 证据；compact DO 分支已清除，最终生产接线仍须冻结门证明 |
 | 长团、继任与个人知识 | P7、P9、O17 的跨章节、死亡/退役/继任、合法继承测试 | **部分证据**：world/campaign 9/9、Rules compound 19/19、Room multiplayer 8/8、observer 5/5 与结构化灾难重建/更正 5/5 已绿；两种成长 Profile 与 XP 完整阈值已覆盖，冻结源码/部署组合仍待 |
@@ -172,6 +194,7 @@
 | 20+ 多轮 KP 评测 | 单一连续评测轨迹、验收阈值、逐轮 Receipt/Viewer 证据和评分 | **数量、production validator 与已记录阈值满足**：单场景 31/31，逐轮 `validateProposal`/projection-bound，production compound 1/1；仍不能据此宣称真实 Workers AI/整站完成 |
 | 未涉及上游能力无回归 | 开房、席位、建卡、语音、线索、装备、职业资源、分头、组队、休整、战斗的真实用户路径 | **局部证据**：authoritative table 10/10、Room multiplayer 8/8、opening 1/1 与 Legacy Room 9/9；仍缺冻结源码上的完整用户路径/浏览器回归 |
 | 战术地图 TM01–TM14 | SPEC 0014 场景 1–14、真实 Room/archive/replay、Viewer indistinguishability、地图/文字/ARIA、375px/1440px、最终冻结门 | **未满足**：现有 G01–G15 只计 Geometry 算法底座；环境状态、投影、UI 和浏览器纵切尚未实现 |
+| Form/Context/RAG/Narration KR01–KR16 | 十 Form、三层 Context、静态重读、1+1、body-only、双状态、逐受众、模型角色/G0–G5、十错误、120 gold、D1/浏览器/发布 | **未满足**：当前只有 SPEC 0015、ADR-0014、DEC-036–041 和本矩阵；所有运行、指标、migration、部署和 Git 证据待补 |
 | 本地验证命令 | `module:check`、`typecheck`、`lint`、`npm test`、`git diff --check` 的源码 SHA、命令、退出码 | **未满足**：局部切片命令已有回执；生产源码冻结后的同一 SHA 全量门尚未运行/通过 |
 | 迁移、部署、冒烟、日志、推送 | 必要迁移状态与闭环、Cloudflare version/流量/URL/冒烟/日志、`DEPLOY_SOURCE_SHA`、`DELIVERY_SHA`、远端 `cloudflare` SHA、远端 `main` 前后 SHA | **未满足**：尚未完成必要远端迁移、正式部署、流量确认、生产冒烟/日志检查与显式 refspec 推送 |
 

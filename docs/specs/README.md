@@ -1,18 +1,19 @@
 # 烛帷规格索引与交叉审查
 
 - 索引状态：**持续维护**
-- 审查日期：2026-08-27
+- 审查日期：2026-08-29
 - 适用分支：`cloudflare`
 - 规则边界：D&D 5e 2014 / SRD 5.1；禁止 D&D 2024/5.5e 混入
 
-本目录的产品权威起点是冻结的 `SPEC 0001`。`SPEC 0003–0013` 是在本 Goal 明确授权下作出的后续产品与技术裁定，`SPEC 0014` 是用户在同一 Goal 中明确追加批准的二维战术地图合同；这不表示实现、测试、迁移或部署已经完成。任何后续规格都不能修改、缩小或绕过 `SPEC 0001`。
+本目录的产品权威起点是冻结的 `SPEC 0001`。`SPEC 0003–0013` 是既有 Goal 明确授权的产品与技术裁定，`SPEC 0014` 是用户批准的二维战术地图合同，`SPEC 0015` 是 2026-08-29 用户明确授权的私有 Form、Context Pack/RAG、body-only Narration、双状态与动态环境合同；这些状态不表示实现、测试、迁移或部署已经完成。任何后续规格都不能修改、缩小或绕过 `SPEC 0001`。
 
 ## 导航
 
 - [冻结产品准则：SPEC 0001](./0001-llm-kp-responsibility-contract.md)
 - [原 SPEC 0002 的 B01–B53 逐项处置](./0002-disposition-matrix.md)
 - [本 Goal 自主裁定登记册](./decision-register.md)
-- [十板块与 SPEC 0001 A–O 追踪矩阵](./traceability-matrix.md)
+- [十二板块、专项向量与 SPEC 0001 A–O 追踪矩阵](./traceability-matrix.md)
+- [ADR-0014：私有提案、派生检索与发布边界](../adr/0014-private-proposal-derived-retrieval-and-publication-boundary.md)
 - [执行、命令与证据日志](../refactor-log.md)
 
 ## 规格清单
@@ -21,7 +22,7 @@
 | --- | --- | --- | --- |
 | [0001：LLM/KP 职责与叙事权威](./0001-llm-kp-responsibility-contract.md) | **已批准，产品行为冻结** | 固定玩家意图、KP 叙事、Rules 机械与权威状态的权力分配；定义开放世界、公正、知识、NPC、失败、聚光灯、连续性、更正、收束及 A–O 验收 | 事实优先级仅次于用户在本 Goal 的明确决定；不依赖后续规格，后续规格全部服从它 |
 | [0002：权威战斗框架](./0002-authoritative-combat-framework.md) | **已被替代，未曾批准** | 只作为原始草案与迁移证据保留，不是新规则实现依据 | 上位仅为 0001；通用责任与纯战斗机械已拆往 0003–0013；逐条结果见 [处置矩阵](./0002-disposition-matrix.md) |
-| [0003：权威行动事务与深 Module Interface](./0003-authoritative-action-transaction.md) | **已裁定（本 Goal 授权）** | 定义 Room Action Module、Rules Module `step/project/replay`、Room Authority、根行动、待决、权威随机、幂等、作用域版本、恢复、回放、更正与统一 Outcome | 上位：0001；是 0004–0014 共用的事务、提交、投影与回放底座 |
+| [0003：权威行动事务与深 Module Interface](./0003-authoritative-action-transaction.md) | **已裁定（本 Goal 授权）** | 定义 Room Action Module、Rules Module `step/project/replay`、Room Authority、根行动、待决、权威随机、幂等、作用域版本、恢复、回放、更正与统一 Outcome | 上位：0001；是 0004–0015 共用的事务、提交、投影与回放底座；新房公开双状态和 1+1 修订由 0015 窄取代 |
 | [0004：KP 裁决与非战斗机械](./0004-kp-and-noncombat-mechanics.md) | **已裁定（本 Goal 授权）** | 五类可行性、检定/对抗/豁免、物品、资源、休整、Activity、非战斗危险、骰前冻结与裁定先例 | 上位：0001、0003；事实/知识交给 0005，战斗机械交给 0012，版本化定义交给 0013 |
 | [0005：世界事实、因果与角色知识](./0005-world-facts-and-knowledge.md) | **已裁定（本 Goal 授权）** | `CanonicalFact`、`WorldEvent`、来源/因果/可见性、隐藏现实、证据/主张/推断、知识传播、关系/承诺/债务、分支与更正 | 上位：0001、0003、0004；观察者交付由 0010，可靠更正/归档由 0011 |
 | [0006：模组、动态实体、NPC 与势力协议](./0006-module-npc-and-faction-protocol.md) | **已裁定（本 Goal 授权）** | 故事圣经、核心真相、开放留白、动态定义、NPC 有限知识、NPC/势力计划、模组版本与 Legacy Adapter | 上位：0001、0003、0005；控制权/时间依赖 0007，NPC 战斗提案进入 0012 而不另建战术权威 |
@@ -33,8 +34,9 @@
 | [0012：权威战斗机械](./0012-authoritative-combat-mechanics.md) | **已裁定（本 Goal 授权）** | 仅定义 Encounter、空间、先攻/突袭、轮/回合/行动授予、移动/反应、能力/施法、效果/伤害/专注、0 HP/死亡及非歼灭结束；战斗只是 Rules Module 内部实现 | 上位：0001、0003、0006–0011；Profile/确定排序/几何与能力定义引用 0013；不得出现 CombatCoordinator 或战斗专属状态/骰源/projector |
 | [0013：版本化运行时 Profiles 与确定性 Conformance](./0013-versioned-runtime-profiles.md) | **已裁定（本 Goal 授权）** | 固定 Ruleset/EventSchema、AbilityDefinition 与受限 MechanicOp 编译器、BattlefieldGeometry、TriggerOrdering、Fiction/Combat Time 等 Profile 及 hash/conformance/fail-closed 规则 | 上位：0001、0003–0007、0010–0012；为 0012 的战斗 Profile、0011 的恢复/审计和所有旧房回放提供确定版本解释 |
 | [0014：观察者战术地图、权威环境与空间意图](./0014-observer-tactical-map-and-environment.md) | **已裁定（用户 Goal 明确批准）** | 把真实 scene geometry、环境有限状态、移动/区域地图意图、秘密安全 Tactical Projection/preview、二维地图和同源文字读数接入唯一事务 | 上位：0001、0003、0005、0007、0010、0012、0013；不重写 Geometry 算法，不建立 UI/GM 第二空间 |
+| [0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境](./0015-private-form-context-rag-and-narration.md) | **已裁定（用户本 Goal 明确授权）** | 定义十 Form、三层 Context、静态 D1 FTS/权威重读、一次窄修订、CausalActionProgram、body-only Narration、action/narration 双状态、模型角色/实验门和吊灯纵切 | `SPEC 0001` 最高；复用 0003 Room/Rules/DO、0010 Viewer/Audience、0013 Profile、0014 Geometry；仅窄取代 0003/0010/0011/0014 的明示冲突条款且只进新 V3 房间 |
 
-## 当前实现证据索引（2026-08-27）
+## 当前实现证据索引（2026-08-29）
 
 本节把**当前存在的公开测试映射**与 `docs/refactor-log.md` 已记录的局部绿色分开陈述。测试文件存在或声明了多少场景，不等于当前未冻结源码已经全量通过；最终仍以同一冻结 SHA 的完整门为准。
 
@@ -46,8 +48,9 @@
 | `SPEC 0013` P/A/G/T/F Profile conformance | `rules/profiles/*`、`rules/compiler/*`、`rules/combat/*`、`rules/timeline.ts` | P：`tests/runtime-profiles-v2.test.mjs`；A：`tests/ability-profile-v2.test.mjs` + combat A06；G：`tests/combat-mechanics-v2.test.mjs` + `tests/privacy-bypass-v2.test.mjs`；T/F：`tests/runtime-trigger-time-v2.test.mjs` | 当前文件分别声明 13、8、45+1、15 个场景；日志已记录 Profile 组合和逐向量定向绿色，生产源码冻结后仍须整组重跑 |
 | 精确版本管理读取 | `table/server.ts#getRoomManagement` | 源码与 `tests/rendered-html.test.mjs` 的 HTTP 验收断言已接入 | 房主 Read Model 返回 `ruleset_version`/`kp_model`，普通成员拒绝；冻结源码 `npm test` 尚未执行，故不计最终门 |
 | `SPEC 0014` 战术空间与二维地图 | 既有 Geometry/Profile + 待实现的环境状态、Tactical Projection/preview、Room Action 输入与 `play-table.tsx` Adapter | G01–G15 只提供算法底座；SPEC 0014 场景 1–14 的真实 Room/UI/浏览器证据尚待建立 | 明确为新增硬阻塞；不得以现有 helper 测试、空 obstacles、静态示意或直接 WorldState fixture 冒充完成 |
+| `SPEC 0015` Form/Context/RAG/Narration/双状态/动态环境 | 计划中的 `kp/{form-catalog,context-pack,static-retrieval,causal-action-program,model-registry}.ts` + 既有 Room/Rules/Geometry/DO/D1/UI | 当前只有本规格、ADR、决策与追踪映射；十 Form、120 gold、吊灯 14 场景、迁移/浏览器/部署均无运行证据 | **待实现，硬阻塞**：不得用旧 ActionPlan/Delivery/Geometry 局部绿色冒充新 Profile 或发布完成 |
 
-相关自主裁定为 [DEC-018](./decision-register.md#dec-018生产-kp-提案采用有类型的复合-action-plan)、[DEC-020](./decision-register.md#dec-020直接后果与-campaign-生命周期是-actionplan-的封闭语义操作)、[DEC-021](./decision-register.md#dec-021arcane-recovery-使用玩家冻结的多槽位规范选择)、[DEC-022](./decision-register.md#dec-022authoritative-v2-只接受完整生产提案与版本化恢复输入)、[DEC-023](./decision-register.md#dec-023非战斗豁免复用复合事务2014-职业熟练与统一后果)、[DEC-024](./decision-register.md#dec-024队伍协调的六种语义动作必须显式判别)、[DEC-025](./decision-register.md#dec-025房主管理-read-model-显式返回房间规则版本) 与 [DEC-035](./decision-register.md#dec-035战术地图只适配-viewer-tactical-projection不拥有空间事实)。
+相关自主裁定为 [DEC-018](./decision-register.md#dec-018生产-kp-提案采用有类型的复合-action-plan)、[DEC-035](./decision-register.md#dec-035战术地图只适配-viewer-tactical-projection不拥有空间事实)、[DEC-036](./decision-register.md#dec-036主-kp-使用私有小表compound-保留开放行动逃生舱)、[DEC-037](./decision-register.md#dec-037required-retrieved-optional-分层d1-fts-只作静态派生索引)、[DEC-038](./decision-register.md#dec-038proposal-采用一次首调用加一次窄修订并冻结玩家语义)、[DEC-039](./decision-register.md#dec-039narration-只输出-body行动和逐受众发布分别建模)、[DEC-040](./decision-register.md#dec-040g2-是默认候选辅助模型必须角色化验证且未达门即移除接线) 与 [DEC-041](./decision-register.md#dec-041动态环境以版本化有限状态和吊灯因果链进入同一事务)。
 
 ## 五项交叉审查摘要
 
@@ -55,16 +58,16 @@
 
 | 审查项 | 规格层结论 | 仍待实现 / 验证的证据 |
 | --- | --- | --- |
-| 跨规格矛盾 | 未发现需要修改 `SPEC 0001` 的规格冲突。0003 统一所有行动事务；0004/0005/0006/0007/0008/0009 分别拥有非战斗、事实知识、模组 NPC、多人时间、长团和故事交互；0010 统一呈现；0011 统一可靠性；0012 只保留纯战斗机械；0013 只固定版本化确定解释；0014 只把真实环境与地图 Adapter 接到同一 Geometry/Viewer 链。Encounter 结束不等于故事收束，叙述文本不等于正史，聚光灯不等于虚构时间，地图像素不等于空间事实。0002 不再拥有任何新实现责任 | 既有 Action/Rules 证据仍须清零原组合门；新增 SPEC 0014 的环境状态、Tactical Projection、Room/UI 纵切和双视口浏览器证据尚未建立，明确阻塞冻结 |
-| 权限 | principal 只能来自可信会话；Seat/CharacterControl 决定玩家控制权；玩家只决定自己的角色，KP 只为 NPC/世界提案且使用有限知识；房主/队长/页面/模型不扩大控制或观察权；更正、恢复、内部 continuation 和投递发布均是独立内部 capability | Room multiplayer 8/8 已覆盖 service-only 管理、休整 Pending 与成长/继任控制；仍需最终 HTTP/浏览器路径、全部战斗封闭选择与发布态越权回归 |
-| 秘密 | 世界事实只保存一份，知识按角色及来源取得；所有玩家/NPC/KP/内部输出复用 `project(viewer)`；Audience 提交时冻结，分享不追溯；DeliveryFrame 不入正史或归档；地图/preview/文字读数只消费 Viewer Tactical Projection，不下发后隐藏 GM geometry；日志只允许白名单元数据；语音、转写、错误、候选、重连和历史不得成为旁路 | 原 projection/delivery/world/table 局部证据保留；新增隐藏实体/障碍不可区分 preview、DOM/ARIA 无泄漏及生产日志/HTTP/语音/转写线上旁路仍待实际证明 |
-| 版本 | 房间 genesis 固定 ruleset、事件 schema、模组、定义/编译器、投影/呈现、模型/Prompt 与各 Profile 的 ID/hash；未知或不兼容组合 fail closed；旧房只按原解释器/Legacy Adapter 回放，不因部署静默重算；所有新机械只采用 2014/SRD 5.1 | 当前 Profile/registry 局部证据与 `getRoomManagement.ruleset_version` 路由已接入；2026-08-26 已复核公开 Free 方案与 GLM 4.7 Flash 的 function calling/131,072 context/Free 归类，但未检查或声称账户用量余量；冻结源码 conformance/旧房 replay、真实模型能力探测、版本迁移与归档重建组合仍待 |
-| 第二权威 | Rules 外部机械/投影/回放只有 `step/project/replay`；Room DO 是活跃世界、事件、Receipt、待决、随机结果、投递槽与 geometry 唯一权威；LLM 永远在 DO 事务外；D1 只保存身份/目录/静态人物卡/可重建结构化归档。页面格子/像素、AI/NPC/语音 Adapter、日志、Profile 目录和测试 fixture 均不得写第二状态、另算结果或自报区域 targets | 原 module 护栏需在冻结 SHA 重跑；还须新增页面无 Geometry 运算/无 GM payload/无区域 targetIds、Tactical Projection 单源、环境/移动/区域 Room vertical 与 archive/replay 的可证伪检查 |
+| 跨规格矛盾 | 未发现需要修改 `SPEC 0001` 的规格冲突。0003 统一事务，0010 统一 Viewer/Audience，0013 固定 Profile，0014 拥有 Geometry/地图；0015 只给新房增加私有 Proposal/Context/RAG/逐受众叙述和动态环境纵切，并在 §17 精确列出对 0003/0010/0011/0014 的窄 supersede。Encounter 结束不等于故事收束，叙述文本不等于正史，产品 V3 不等于 ruleset v3，检索命中不等于世界事实 | 既有 Action/Rules 组合门仍须冻结重跑；SPEC 0014/0015 的 Room/UI/环境、Form/RAG、120 gold、双状态和发布证据均未建立，明确阻塞冻结 |
+| 权限 | principal 只能来自可信会话；Seat/CharacterControl 决定玩家控制权；玩家只决定自己的角色；Form/Planner/RAG/LLM 不接收或决定 actor、Audience、骰面、事件、实际 targets；NPC Context 重新按有限知识投影；发布 capability 按 ViewerKey 冻结 | 既有 Room multiplayer 权限证据只算底座；仍需 Form 注入拒绝、NPC 重投影、Planner allowlist、逐受众重试、HTTP/浏览器越权回归 |
+| 秘密 | 世界事实只保存一份，知识按角色取得；动态 Room 状态不入 RAG；静态 ref 按 hash/Profile/权限重读；Narration 只收逐受众投影；Audience 提交时冻结；日志仅含 SPEC 0015 的阶段/Form/Profile/model/token/耗时/错误/fallback/hash/命中桶；地图/DOM/TTS/错误/历史无旁路 | 原 projection/delivery/world/table 局部证据保留；还需 RAG 静态性/秘密 canary、NPC 重投影、body Grounding、隐藏目标不可区分和生产日志/浏览器扫描 |
+| 版本 | 房间 genesis 固定 ruleset/event/module/definition/projection 以及 Form/Action Language/Context/corpus/retrieval/model/narration/publication/environment Profile 的精确 ID/hash；未知组合 fail closed；产品 V3 与机械版本轴分离，旧房不猜迁移 | 既有 Profile registry 只算底座；新完整 manifest、旧 `authoritative-kp-action-plan-v1` 隔离、模型角色验证、旧房 replay/引用扫描和部署 hash guard 均待 |
+| 第二权威 | Rules 外部只有 `step/project/replay`；Room DO 保存活跃世界、事件、Receipt、随机、Audience 与发布状态；Form/compiler 只产 Rules Input，D1 FTS/Vectorize/缓存/日志/页面只作派生 Adapter；实际环境 targets 只由 Rules 从完整 Geometry 算出 | 原 module 护栏需冻结重跑；还须新增 Form/compiler 无第四机械、索引无动态状态、页面无 targets/GM payload、双状态不回滚与环境 archive/replay 检查 |
 
 ## 审查结论与证据状态
 
-1. 规格体系已经把 0002 的通用责任与纯战斗机械分配到 0003–0013，并以 0014 追加用户批准的战术空间/地图呈现合同；B01–B53 的每项处置以 [0002 逐项处置矩阵](./0002-disposition-matrix.md) 为准。这里的“被替代”不等于 0002 曾被批准。
+1. 规格体系已经把 0002 的通用责任与纯战斗机械分配到 0003–0013，以 0014 固定战术空间/地图合同，并以 0015 新增私有 Proposal/Context/RAG/叙述双状态与动态环境；0015 §17 只窄取代明示冲突，不修改 0001 或旧房解释器。B01–B53 的每项处置仍以 [0002 逐项处置矩阵](./0002-disposition-matrix.md) 为准。
 2. 自主产品/技术选择及其来源、玩家行为、权限/秘密、迁移和验收场景记录在 [决策登记册](./decision-register.md) 以及各规格的内嵌决策章节；状态“已裁定（本 Goal 授权）”不等于测试通过。
-3. [总追踪矩阵](./traceability-matrix.md) 已为 P1–P10、A–O、B01–B53 与 P/A/G/T/F 标出责任 Interface、真实测试路径和完成门；其中标为“待实现”“未满足”、仅声明规模或 Legacy 的内容不能作为完成证据。
+3. [总追踪矩阵](./traceability-matrix.md) 已为 P1–P12、A–O、B01–B53、P/A/G/T/F、TM01–TM14 与 KR01–KR16 标出责任 Interface、测试路径和完成门；“待实现”“未满足”、仅声明规模或 Legacy 的内容不能作为完成证据。
 4. 本索引只把已在 `refactor-log.md` 留下命令/退出码的测试写成已验证；局部绿色不能拼接成生产源码冻结门。仍须完成全量验证、必要迁移、Cloudflare 正式部署与 GitHub `cloudflare` 推送。
 5. 最终只有实际命令、退出码、测试报告、迁移状态、部署 version/源码 SHA、线上冒烟/日志、远端分支 SHA 和远端 `main` 不变证据全部回填后，才能宣告 `COMPLETE`。
