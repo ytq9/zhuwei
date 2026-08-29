@@ -1,58 +1,281 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const config = JSON.parse(
-  await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
-);
-const frozenSpec = await readFile(
-  new URL("../docs/specs/0001-llm-kp-responsibility-contract.md", import.meta.url),
-);
-assert.equal(
-  createHash("sha256").update(frozenSpec).digest("hex"),
-  "b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be",
-  "SPEC 0001 content and frozen status must remain unchanged",
-);
+const defaultRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const frozenSpecSha256 = "b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be";
+const expectedConfigKeys = [
+  "$schema",
+  "ai",
+  "assets",
+  "compatibility_date",
+  "compatibility_flags",
+  "d1_databases",
+  "durable_objects",
+  "main",
+  "migrations",
+  "name",
+  "observability",
+].sort();
 
-assert.equal(config.name, "zhuwei", "Wrangler target must remain the existing zhuwei Worker");
-assert.equal(config.main, "worker/index.ts", "Deployment must use the Worker ESM entry");
-assert.equal(config.ai?.binding, "AI", "Workers AI binding must be named AI");
-assert.deepEqual(
-  config.durable_objects?.bindings,
-  [{ name: "ROOMS", class_name: "RoomDurableObject" }],
-  "Deployment must retain the one authorized ROOMS Durable Object binding",
-);
-assert.ok(
-  config.migrations?.some(
-    (migration) =>
-      migration.tag === "room-do-v1"
-      && migration.new_sqlite_classes?.includes("RoomDurableObject"),
-  ),
-  "Deployment must retain the existing RoomDurableObject SQLite migration",
-);
-assert.equal(config.d1_databases?.length, 1, "Exactly one existing D1 binding is required");
-assert.equal(config.d1_databases[0]?.binding, "DB", "D1 binding must be named DB");
-assert.equal(
-  config.d1_databases[0]?.database_name,
-  "zhuwei-dev",
-  "D1 binding must target the authorized zhuwei-dev database",
-);
-assert.equal(
-  config.d1_databases[0]?.database_id,
-  "f5a448fd-4224-4e52-bafb-a84cb190b618",
-  "D1 binding must target the authorized zhuwei-dev database id",
-);
-for (const forbiddenResource of [
-  "kv_namespaces",
-  "r2_buckets",
-  "queues",
-  "workflows",
-  "vectorize",
-]) {
-  assert.ok(
-    !config[forbiddenResource]?.length,
-    `Deployment must not add ${forbiddenResource}`,
+function sha256(text) {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+function environmentFlag(value) {
+  if (typeof value !== "string") return Boolean(value);
+  return !["", "0", "false", "no", "off"].includes(value.trim().toLowerCase());
+}
+
+function git(root, args) {
+  const result = spawnSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(result.status, 0, `git ${args.join(" ")} failed: ${result.stderr.trim()}`);
+  return result.stdout.trim();
+}
+
+export function assertStaticDeployConfiguration({ config, frozenSpec }) {
+  assert.equal(
+    sha256(frozenSpec),
+    frozenSpecSha256,
+    "SPEC 0001 hash drifted; deploy requires an explicit freeze update",
+  );
+  assert.deepEqual(
+    Object.keys(config).sort(),
+    expectedConfigKeys,
+    "wrangler.jsonc contains a missing or new top-level deployment/resource surface",
+  );
+  assert.equal(config.name, "zhuwei", "deploy must target the existing zhuwei Worker");
+  assert.equal(config.main, "worker/index.ts", "deploy must keep the existing Worker entry");
+  assert.deepEqual(config.compatibility_flags, ["nodejs_compat"], "Worker compatibility flags drifted");
+  assert.deepEqual(config.assets, { directory: "./dist/client", binding: "ASSETS" }, "assets binding drifted");
+  assert.deepEqual(config.ai, { binding: "AI" }, "Workers AI binding drifted");
+  assert.deepEqual(
+    config.durable_objects,
+    { bindings: [{ name: "ROOMS", class_name: "RoomDurableObject" }] },
+    "Durable Object resources drifted",
+  );
+  assert.deepEqual(
+    config.migrations,
+    [{ tag: "room-do-v1", new_sqlite_classes: ["RoomDurableObject"] }],
+    "Durable Object migration/resource set drifted",
+  );
+  assert.deepEqual(
+    config.d1_databases,
+    [{
+      binding: "DB",
+      database_name: "zhuwei-dev",
+      database_id: "f5a448fd-4224-4e52-bafb-a84cb190b618",
+      migrations_dir: "drizzle",
+    }],
+    "D1 binding must remain the existing DB/zhuwei-dev resource",
+  );
+  assert.deepEqual(config.observability, { enabled: true }, "Worker observability configuration drifted");
+}
+
+export function assertDeploymentGitState({
+  branch,
+  status,
+  head,
+  deploySourceSha,
+  requireSourceProof,
+  ciSourceBranch,
+  ciBaseBranch,
+}) {
+  assert.equal(branch, "cloudflare", "deploy is permitted only from the cloudflare branch");
+  if (ciSourceBranch) {
+    assert.equal(ciSourceBranch, "cloudflare", "CI deploy source must be the cloudflare branch");
+  }
+  assert.ok(!ciBaseBranch, "deploy is forbidden from pull-request/target-branch CI contexts");
+  assert.equal(status, "", "deploy requires a clean tracked and untracked worktree");
+  assert.match(head, /^[0-9a-f]{40}$/, "git HEAD must be a full lowercase commit SHA");
+  if (deploySourceSha === undefined || deploySourceSha === "") {
+    assert.equal(
+      requireSourceProof,
+      false,
+      "DEPLOY_SOURCE_SHA is required in CI and cf:deploy lifecycle runs",
+    );
+    return;
+  }
+  assert.match(
+    deploySourceSha,
+    /^[0-9a-f]{40}$/,
+    "DEPLOY_SOURCE_SHA must be a full lowercase commit SHA",
+  );
+  assert.equal(deploySourceSha, head, "DEPLOY_SOURCE_SHA must exactly match git HEAD");
+}
+
+export function assertProfileReferenceGateContract({ packageJson, gateSource }) {
+  assert.equal(
+    packageJson.scripts?.["profile:reference-gate"],
+    "tsx tools/check-runtime-profile-references.mts",
+    "profile:reference-gate script must remain wired to the frozen profile reference checker",
+  );
+  assert.match(
+    gateSource,
+    /runtimeProfileReferenceRowsFromD1/,
+    "profile reference gate must parse D1 reference rows",
+  );
+  assert.match(
+    gateSource,
+    /evaluateRuntimeProfileReferenceGate/,
+    "profile reference gate must evaluate frozen runtime profile references",
   );
 }
 
-console.log("Cloudflare deployment configuration is complete.");
+export function assertProfileReferenceGateResult({
+  result,
+  invoked,
+  evidenceProvided,
+  requireEvidence,
+}) {
+  assert.equal(invoked, true, "deploy guard must invoke the profile reference gate");
+  if (requireEvidence) {
+    assert.equal(
+      evidenceProvided,
+      true,
+      "PROFILE_REFERENCE_GATE_JSON is required in CI and cf:deploy lifecycle runs",
+    );
+  }
+  assert.equal(result?.ok, true, `profile reference gate rejected deploy: ${result?.code ?? "unknown"}`);
+  assert.ok(Array.isArray(result.referencedManifestRefs), "profile reference gate result is malformed");
+  assert.ok(Number.isSafeInteger(result.roomCount) && result.roomCount >= 0, "profile reference gate roomCount is malformed");
+}
+
+export function verifyDeployGuard({
+  config,
+  frozenSpec,
+  packageJson,
+  gateSource,
+  branch,
+  status,
+  head,
+  deploySourceSha,
+  requireSourceProof,
+  ciSourceBranch,
+  ciBaseBranch,
+  profileGate,
+  requireProfileEvidence,
+}) {
+  assertStaticDeployConfiguration({ config, frozenSpec });
+  assertDeploymentGitState({
+    branch,
+    status,
+    head,
+    deploySourceSha,
+    requireSourceProof,
+    ciSourceBranch,
+    ciBaseBranch,
+  });
+  assertProfileReferenceGateContract({ packageJson, gateSource });
+  assertProfileReferenceGateResult({
+    result: profileGate.result,
+    invoked: profileGate.invoked,
+    evidenceProvided: profileGate.evidenceProvided,
+    requireEvidence: requireProfileEvidence,
+  });
+  return {
+    ok: true,
+    branch,
+    sourceSha: head,
+    profileRoomCount: profileGate.result.roomCount,
+    referencedManifestRefs: profileGate.result.referencedManifestRefs,
+  };
+}
+
+export function invokeProfileReferenceGate(root, input) {
+  const result = spawnSync(
+    "npx",
+    ["--no-install", "tsx", "tools/check-runtime-profile-references.mts"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      input,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout.trim());
+  } catch {
+    parsed = undefined;
+  }
+  assert.equal(
+    result.status,
+    0,
+    `profile reference gate invocation failed: ${parsed?.code ?? (result.stderr.trim() || "invalid output")}`,
+  );
+  assert.ok(parsed && typeof parsed === "object", "profile reference gate returned invalid JSON");
+  return parsed;
+}
+
+export function verifyCurrentDeployment({
+  root = defaultRepoRoot,
+  environment = process.env,
+  profileGateRunner = invokeProfileReferenceGate,
+} = {}) {
+  const configPath = join(root, "wrangler.jsonc");
+  const specPath = join(root, "docs/specs/0001-llm-kp-responsibility-contract.md");
+  const packagePath = join(root, "package.json");
+  const gatePath = join(root, "tools/check-runtime-profile-references.mts");
+  for (const path of [configPath, specPath, packagePath, gatePath]) {
+    assert.ok(existsSync(path), `required deploy guard input is missing: ${path}`);
+  }
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const frozenSpec = readFileSync(specPath, "utf8");
+  const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
+  const gateSource = readFileSync(gatePath, "utf8");
+  const isCi = environmentFlag(environment.CI);
+  const isDeployLifecycle = environment.npm_lifecycle_event === "cf:deploy"
+    || environment.npm_lifecycle_event === "deploy"
+    || /(?:^|\s)wrangler\s+deploy(?:\s|$)/.test(environment.npm_lifecycle_script ?? "");
+  const requireEvidence = isCi || isDeployLifecycle;
+  const profileEvidence = environment.PROFILE_REFERENCE_GATE_JSON;
+  const profileInput = profileEvidence?.trim() ? profileEvidence : "[]";
+  const profileResult = profileGateRunner(root, profileInput);
+  const localBranch = git(root, ["branch", "--show-current"]);
+  const ciSourceBranch = isCi
+    ? environment.GITHUB_HEAD_REF ?? environment.GITHUB_REF_NAME ?? environment.DEPLOY_SOURCE_BRANCH ?? ""
+    : undefined;
+  const branch = localBranch || ciSourceBranch || "";
+
+  return verifyDeployGuard({
+    config,
+    frozenSpec,
+    packageJson,
+    gateSource,
+    branch,
+    status: git(root, ["status", "--porcelain", "--untracked-files=all"]),
+    head: git(root, ["rev-parse", "HEAD"]),
+    deploySourceSha: environment.DEPLOY_SOURCE_SHA,
+    requireSourceProof: requireEvidence,
+    ciSourceBranch,
+    ciBaseBranch: isCi ? environment.GITHUB_BASE_REF : undefined,
+    profileGate: {
+      invoked: true,
+      evidenceProvided: Boolean(profileEvidence?.trim()),
+      result: profileResult,
+    },
+    requireProfileEvidence: requireEvidence,
+  });
+}
+
+function main() {
+  const result = verifyCurrentDeployment();
+  console.log(JSON.stringify(result));
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`deploy guard rejected: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
+}
