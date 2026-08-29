@@ -320,8 +320,24 @@ function projectedReceiptContains(snapshot, receipt) {
     && candidate.status === receipt.status);
 }
 
+function compactReceiptIdentity(receipt) {
+  if (!isRecord(receipt)) return undefined;
+  for (const field of [
+    "receiptId",
+    "rootActionId",
+    "status",
+    "runtimeEpochId",
+    "activeBranchId",
+  ]) {
+    if (typeof receipt[field] !== "string" || receipt[field].trim().length === 0) return undefined;
+  }
+  if (receipt.eventRange !== undefined || receipt.scopeVersions !== undefined) return undefined;
+  return canonicalJson([receipt.receiptId, receipt.rootActionId]);
+}
+
 export function assessPublicSingleAuthority(trace, initialTables) {
   const signals = new Set();
+  const mutationReceiptIdentities = new Set();
   let previous = {
     host: tableAuthoritySnapshot(initialTables?.host),
     player: tableAuthoritySnapshot(initialTables?.player),
@@ -381,6 +397,7 @@ export function assessPublicSingleAuthority(trace, initialTables) {
       mutationCount += 1;
       const receipt = receiptOf(entry.response);
       const range = eventRange(receipt);
+      const compactIdentity = compactReceiptIdentity(receipt);
       const receiptCanonical = isRecord(receipt)
         && typeof receipt.receiptId === "string"
         && receipt.receiptId.length > 0
@@ -389,7 +406,16 @@ export function assessPublicSingleAuthority(trace, initialTables) {
         && typeof receipt.status === "string"
         && isRecord(receipt.scopeVersions)
         && Object.values(receipt.scopeVersions).every((value) => canonicalSequence(value) !== undefined);
-      if (!receiptCanonical || range === undefined) {
+      if (compactIdentity !== undefined) {
+        if (!projectedReceiptContains(current[entry.step.actor], receipt)) {
+          signals.add("receiptMissingFromActorProjection");
+        } else if (mutationReceiptIdentities.has(compactIdentity)) {
+          signals.add("compactReceiptReusedForMutation");
+        } else {
+          mutationReceiptIdentities.add(compactIdentity);
+          receiptCoveredMutationCount += 1;
+        }
+      } else if (!receiptCanonical || range === undefined) {
         signals.add("versionAdvancedWithoutDoReceipt");
       } else if (
         range.to !== afterVersion

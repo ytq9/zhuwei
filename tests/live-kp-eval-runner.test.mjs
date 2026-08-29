@@ -7,12 +7,31 @@ import {
   LIVE_KP_EVAL_PROVIDER,
   LIVE_KP_EVAL_REPORT_SCHEMA,
   LIVE_KP_EVAL_THRESHOLDS,
+  assessPublicSingleAuthority,
   buildLiveKpScenario,
   runLiveKpEvaluation,
 } from "../tools/live-kp-eval.mjs";
 
 function json(response, status = 200) {
   return { status, body: JSON.stringify(response) };
+}
+
+function compactReceipt(receipt) {
+  return Object.fromEntries([
+    "receiptId",
+    "rootActionId",
+    "status",
+    "runtimeEpochId",
+    "activeBranchId",
+  ].map((field) => [field, receipt[field]]));
+}
+
+function projectedReceipt(receipt) {
+  return Object.fromEntries([
+    "receiptId",
+    "rootActionId",
+    "status",
+  ].map((field) => [field, receipt[field]]));
 }
 
 async function mockAuthoritativeServer(options = {}) {
@@ -31,6 +50,11 @@ async function mockAuthoritativeServer(options = {}) {
 
   function actorFor(request) {
     return request.headers.cookie === "session=host" ? "host" : "player";
+  }
+
+  function responseReceipt(receipt) {
+    if (options.compactResponseReceipts !== true) return receipt;
+    return compactReceipt(receipt);
   }
 
   function delivery(actor, text, submissionId) {
@@ -70,7 +94,7 @@ async function mockAuthoritativeServer(options = {}) {
         "character:host": { decisionBeats: spotlight.host },
         "character:player": { decisionBeats: spotlight.player },
       },
-      receipts: [...receipts.values()].map((entry) => entry.receipt),
+      receipts: [...receipts.values()].map((entry) => projectedReceipt(entry.receipt)),
       ...(concluded
         ? { story: { status: "concluded", endingCandidateRef: "ending:test", epilogue: {} } }
         : {}),
@@ -107,7 +131,7 @@ async function mockAuthoritativeServer(options = {}) {
           ? [{ pendingInputId: "pending:private-choice", kind: "clarification" }]
           : [],
         clues: [...knowledge[actor]].map((text, index) => ({ id: `clue:${index}`, text })),
-        receipts: [...receipts.values()].map((entry) => entry.receipt),
+        receipts: [...receipts.values()].map((entry) => projectedReceipt(entry.receipt)),
         authoritative: {
           stateVersion: readModel(actor).stateVersion,
           projectionHash: readModel(actor).projectionHash,
@@ -148,7 +172,7 @@ async function mockAuthoritativeServer(options = {}) {
       : `当前结果 ${submissionId} 已经提交，决定权交还给你。`;
     const outcome = {
       kind: concluded ? "concluded" : "committed",
-      receipt,
+      receipt: responseReceipt(receipt),
       readModel: readModel(actor),
       delivery: delivery(actor, text, submissionId),
     };
@@ -217,7 +241,7 @@ async function mockAuthoritativeServer(options = {}) {
         };
         const outcome = {
           kind: "awaitingInput",
-          receipt,
+          receipt: responseReceipt(receipt),
           readModel: readModel(actor),
           pending: { pendingInputId: "pending:private-choice", kind: "clarification" },
         };
@@ -264,7 +288,84 @@ async function mockAuthoritativeServer(options = {}) {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     calls,
+    receiptPairs: () => [...receipts.values()].map((entry) => ({
+      authoritative: entry.receipt,
+      projected: projectedReceipt(entry.receipt),
+      response: entry.outcome.receipt,
+    })),
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+function authorityTable(actor, stateVersion, projectedReceipts = []) {
+  const userId = `principal:${actor}`;
+  const characterId = `character:${actor}`;
+  return {
+    me: { userId },
+    characters: [{
+      userId,
+      sheet: {
+        hp: { current: 10, max: 10 },
+        resources: { secondWind: { max: 1, used: 0 } },
+        ac: 14,
+        speed: 30,
+        equipped: {},
+        backpack: [{ itemId: "ration", qty: 1 }],
+      },
+    }],
+    state: {
+      sceneId: "scene:shared",
+      receipts: projectedReceipts,
+      authoritative: {
+        stateVersion: String(stateVersion),
+        projectionHash: `sha256:${actor === "host" ? "a" : "b"}${String(stateVersion).padStart(63, "0")}`,
+        controlledCharacter: {
+          characterId,
+          sceneId: "scene:shared",
+          hitPoints: { current: 10, maximum: 10 },
+          resources: { secondWind: 1 },
+          loadout: {
+            armorClass: 14,
+            speedFeet: 30,
+            equipped: {},
+            backpack: [{ itemId: "ration", quantity: 1 }],
+          },
+        },
+        activities: [],
+        inCombat: false,
+      },
+    },
+  };
+}
+
+function authorityTraceEntry(responseReceipt, stateVersion, projectedReceipts, actor = "host") {
+  return {
+    step: { actor },
+    response: { outcome: { receipt: responseReceipt } },
+    hostTable: authorityTable("host", stateVersion, projectedReceipts),
+    playerTable: authorityTable("player", stateVersion, projectedReceipts),
+    authorityInputKeys: new Set(),
+    forbiddenResponseKeys: new Set(),
+    legacyActiveStateKeys: new Set(),
+  };
+}
+
+function authorityInitialTables() {
+  return {
+    host: authorityTable("host", 0),
+    player: authorityTable("player", 0),
+  };
+}
+
+function fullReceipt(receiptId, from, to) {
+  return {
+    receiptId,
+    rootActionId: `root:${receiptId}`,
+    status: "committed",
+    runtimeEpochId: "epoch:mock:1",
+    activeBranchId: "branch:main",
+    eventRange: { first: String(from), last: String(to), from, to },
+    scopeVersions: { "scene:shared": String(to) },
   };
 }
 
@@ -355,7 +456,7 @@ test("the HTTP runner uses only public table commands, applies hard gates, and e
 });
 
 test("the explicit three-interaction smoke uses the same public evaluator without claiming full quality gates", async () => {
-  const mock = await mockAuthoritativeServer();
+  const mock = await mockAuthoritativeServer({ compactResponseReceipts: true });
   try {
     const report = await runLiveKpEvaluation({
       baseUrl: mock.baseUrl,
@@ -380,9 +481,84 @@ test("the explicit three-interaction smoke uses the same public evaluator withou
     assert.ok(Object.values(report.hardGates).every((failed) => failed === false));
     assert.equal(JSON.stringify(report).includes("ZEVAL-RUNNER-SMOKE"), false);
     assert.equal(JSON.stringify(report).includes("ZPLAN-RUNNER-SMOKE"), false);
+    for (const pair of mock.receiptPairs()) {
+      assert.deepEqual(pair.response, compactReceipt(pair.authoritative));
+      assert.deepEqual(pair.projected, projectedReceipt(pair.authoritative));
+      assert.equal("eventRange" in pair.response, false);
+      assert.equal("scopeVersions" in pair.response, false);
+      assert.equal("runtimeEpochId" in pair.projected, false);
+      assert.equal("activeBranchId" in pair.projected, false);
+    }
   } finally {
     await mock.close();
   }
+});
+
+test("a compact V3 receipt covers one monotonic mutation and fails closed when reused", () => {
+  const authoritative = fullReceipt("receipt:compact-once", 1, 1);
+  const compact = compactReceipt(authoritative);
+  const projected = [projectedReceipt(authoritative)];
+  const result = assessPublicSingleAuthority([
+    authorityTraceEntry(compact, 1, projected),
+    authorityTraceEntry(compact, 2, projected),
+  ], authorityInitialTables());
+
+  assert.equal(result.secondAuthority, true);
+  assert.deepEqual(result.signals, ["compactReceiptReusedForMutation"]);
+  assert.equal(result.mutationCount, 2);
+  assert.equal(result.receiptCoveredMutationCount, 1);
+});
+
+test("a compact V3 receipt rejects every missing identity or status field", () => {
+  const authoritative = fullReceipt("receipt:compact-required-fields", 1, 1);
+  for (const field of [
+    "receiptId",
+    "rootActionId",
+    "status",
+    "runtimeEpochId",
+    "activeBranchId",
+  ]) {
+    const compact = compactReceipt(authoritative);
+    delete compact[field];
+    const result = assessPublicSingleAuthority([
+      authorityTraceEntry(compact, 1, [projectedReceipt(authoritative)]),
+    ], authorityInitialTables());
+
+    assert.equal(result.secondAuthority, true, field);
+    assert.deepEqual(result.signals, ["versionAdvancedWithoutDoReceipt"], field);
+    assert.equal(result.receiptCoveredMutationCount, 0, field);
+  }
+});
+
+test("a compact V3 receipt must match the actor projection identity and status", () => {
+  const authoritative = fullReceipt("receipt:compact-projection", 1, 1);
+  const projected = projectedReceipt(authoritative);
+  projected.status = "awaitingInput";
+  const result = assessPublicSingleAuthority([
+    authorityTraceEntry(compactReceipt(authoritative), 1, [projected]),
+  ], authorityInitialTables());
+
+  assert.equal(result.secondAuthority, true);
+  assert.deepEqual(result.signals, ["receiptMissingFromActorProjection"]);
+  assert.equal(result.receiptCoveredMutationCount, 0);
+});
+
+test("a full receipt retains strict event-range validation", () => {
+  const valid = fullReceipt("receipt:full-valid", 1, 1);
+  const validResult = assessPublicSingleAuthority([
+    authorityTraceEntry(valid, 1, [projectedReceipt(valid)]),
+  ], authorityInitialTables());
+  assert.equal(validResult.secondAuthority, false);
+  assert.deepEqual(validResult.signals, []);
+  assert.equal(validResult.receiptCoveredMutationCount, 1);
+
+  const invalid = fullReceipt("receipt:full-invalid", 2, 2);
+  const invalidResult = assessPublicSingleAuthority([
+    authorityTraceEntry(invalid, 1, [projectedReceipt(invalid)]),
+  ], authorityInitialTables());
+  assert.equal(invalidResult.secondAuthority, true);
+  assert.deepEqual(invalidResult.signals, ["receiptDoesNotCoverMutation"]);
+  assert.equal(invalidResult.receiptCoveredMutationCount, 0);
 });
 
 test("the deterministic runner fails when a D1 card mutates active item quantity outside the DO event and Receipt head", async () => {
