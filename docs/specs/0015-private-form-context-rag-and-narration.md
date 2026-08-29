@@ -1,6 +1,6 @@
 # SPEC 0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境
 
-- 状态：**已裁定；本地实现与定向证据已建立，发布门待完成**
+- 状态：**已裁定；实现、远端 migration、部署、双视口浏览器与 Git 发布事实已建立；完整门依用户豁免未运行，完整线上指标仍待用户自测**
 - 裁定日期：2026-08-29
 - 产品：烛帷 V3
 - 适用规则：D&D 5e 2014 / SRD 5.1
@@ -266,7 +266,7 @@ G2 只在 §13 全部硬门通过后发布。G3/G4/G5 还必须相对当前已�
 
 G2 通过生产 D1 Adapter 合同在隔离 `node:sqlite` FTS5 中写入 13/13 条 public projection、执行 120/120 次 SQL `MATCH` 并完成 174 次非空权威原文重读；D1 中 KP-only 行与正文 body 都是 0。G3 与 G4 相对 G2 的 required recall、critical recall 和首次合法率三项配对差值均为 0/120，95% CI 均为 `[0, 0]`，且输入中位数和 p95 都变差，故两组 `passed=false`、`adopted=false`。G3 没有真实模型角色验证，明确为 `unvalidated`、不可泛化并在生产禁用。G4 只在评测器中使用 Unicode-scalar TF-IDF `Float64Array` 和 brute-force exact cosine，120 次搜索/1920 次比较中有 56 个案例发生真实重排，但没有质量增益，也不接入生产。G2 的 MRR 为 1，故 G5 的“召回足够但排序明显失败”前提不成立，`applicable=false`。Planner/RAG/Embedding/Vector/rerank 五类故障注入为 5/5 安全回退且冻结语义不变。
 
-以上只证明离线结构实现和采用选择，不是线上模型或发布证据。2026-08-29 用户后续明确取消本代理的完整线上测评并自行执行；因此本次发布只允许一次精确三交互生产冒烟，且不得把它写成 31 轮质量评测或用它填充 Provider tokenizer、Proposal 端到端 p95、平均调用数、正常 fallback、真实首次合法率与配对重复等完整线上指标。这些指标在本次代理回执中必须保持“未测/由用户后续测评”。完整冻结门、浏览器、migration、部署和三交互线上冒烟仍服从 §§14–15。
+以上离线结果只证明结构实现和采用选择，本身不是线上模型或发布证据。2026-08-29 用户后续明确取消本代理的完整线上测评并自行执行；因此本次发布只允许一次精确三交互生产冒烟，且不得把它写成 31 轮质量评测或用它填充 Provider tokenizer、Proposal 端到端 p95、平均调用数、正常 fallback、真实首次合法率与配对重复等完整线上指标。这些指标在本次代理回执中继续保持“未测/由用户后续测评”。§§14–15 的远端 migration、部署、浏览器与唯一三交互已按下文回填实际结果；完整冻结门由用户明确豁免，未在最终源码上重跑且不得记为通过。
 
 ## 11. KP 自定义动态战术环境与 `area-hazard` 纵切
 
@@ -373,7 +373,7 @@ D1 FTS、别名表、实验结果和静态 chunk 可重建且不持有活跃 Roo
 
 归档只有在 `internalContinuations` 与 `combatRuntime.randomnessResolutions` 都已结清时才可取快照。分页每批最多 40 条并为最终 checkpoint 预留一条；只有完整 event prefix 与 head projection-audit 集合都已物化时，checkpoint 才在同一最终 batch 单调推进。旧 checkpoint 必须同时通过 event/state hash、active branch 与权威 prefix replay；伪造 audit cursor、缺行、回退或同序冲突均 fail closed。灾备读取只接受精确 room/epoch locator，忽略 checkpoint 之后的行，重放并校验 genesis/event/state/branch/audit 后，才可由 service-only disaster-recovery capability 恢复空的 Room DO；恢复只从活跃 member/control 重建派生权限索引，不把历史已撤权实体重新授权。
 
-`npm run db:generate` 已生成并逐行审查 `0011_low_leo.sql`（SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`）。隔离 Wrangler local D1 已顺序应用 `0000–0011` 并完成 checkpoint 写入/读取；独立 SQLite 已验证 `0000–0010 → 0011` 升级写读。静态 corpus 的 fresh/upgrade/MATCH/权威重读/清除/重建仍由原定向套件覆盖；archive D1 分页/伪造游标/前缀篡改、checkpoint ahead event/genesis conflict 防线 11/11、80+ 事件和 48 个 projection audits 的 D1 reader→fresh DO restore 1/1，以及无当前受控 viewer 的 D1→fresh DO 1/1 均通过。远端应用仍属于发布阶段待办，不能由本地证据替代。
+`npm run db:generate` 已生成并逐行审查 `0011_low_leo.sql`（SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`）。隔离 Wrangler local D1 已顺序应用 `0000–0011` 并完成 checkpoint 写入/读取；独立 SQLite 已验证 `0000–0010 → 0011` 升级写读。静态 corpus 的 fresh/upgrade/MATCH/权威重读/清除/重建仍由原定向套件覆盖；archive D1 分页/伪造游标/前缀篡改、checkpoint ahead event/genesis conflict 防线 11/11、80+ 事件和 48 个 projection audits 的 D1 reader→fresh DO restore 1/1，以及无当前受控 viewer 的 D1→fresh DO 1/1 均通过。发布阶段已在既有远端 `DB` 串行应用 `0008–0011`，全部成功并复核无 pending；`0011` 临时 checkpoint 写入、读取和精确删除闭环后相关计数为 0，没有创建新 D1。
 
 ## 15. 浏览器、发布与远端证据
 
@@ -391,7 +391,11 @@ npm run test:worker
 npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有 Worker
 ```
 
+本轮用户随后明确裁定改动较小，只运行实际需要的定向检查并豁免完整门；因此 `module:check`、全量 unit/Worker、全量 Lint 等没有在最终源码上统一重跑，不能写成通过。该事实是本次执行范围例外，不修改上面的长期发布合同。
+
 真实浏览器必须在 375px 与 1440px 各完成观察、NPC 对话、Proposal 失败、Narration 重试和动态环境入口五条路径；要求无横向溢出、console error、秘密 DOM/ARIA/网络旁路，且已提交行动在 Narration 失败时保持可见、不被重复结算。
+
+实际已部署前端壳在 375×812 与 1440×900 各完成上述五条路径的前端视觉/DOM 验收，共 10/10。五条路径的页面数据均由公开 DTO 注入；其中本规格明示允许的 Proposal 失败、Narration 重试与动态环境三路使用确定性故障/动态注入，额外 Provider action 为 0。两档 document/body 宽度均等于 viewport、可见元素无横向越界，console/page error、失败请求和秘密 canary 的 DOM/ARIA/URL/网络正文命中均为 0。Proposal 失败保留草稿且不产生 committed bubble；Narration 失败后已提交行动只保留一条，重试没有重复 settlement；动态入口只提交自然语言与稳定 submission id，并展示 KP 自定义 `state-only` 与 `area-hazard` 内容，不含吊灯专项。该结果只证明已部署前端的视觉/DOM 边界，不声称五路浏览器流程穿过真实 `/api/game`/auth/Room/Provider；这些真实接缝只由下述独立三交互 smoke 提供。语音/TTS 和 SPEC 0014 的完整战术地图纵切仍未覆盖。
 
 ### 15.2 串行发布顺序
 
@@ -405,6 +409,8 @@ npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有
 部署、远端 migration、线上冒烟、清理和 Git push 必须串行，不能由隔离 Worker 并发执行。部署保护必须绑定交付 SHA、SPEC/Profile/hash、既有 bindings 与环境；分支不净、SHA/Profile 不匹配、迁移不明确或全量门缺证时 fail closed。
 
 本轮线上冒烟的精确上限为三次计数交互；它只验证部署后的真实 HTTP/auth/Room/Provider 接缝、公开状态与清理，不应用 §13.2 的完整质量阈值。默认 31 轮 runner 仍保留给用户自行运行，但本代理不得在本次发布中调用或宣称其通过。
+
+发布源码 `4822d2b62d40d922758e77762f378495398958f8` 已通过唯一一次实际 build/deploy 更新既有 Worker `zhuwei`；Version `97291f34-67cf-47a4-a9f6-899db6ee975a` / deployment `834c2b79-c24f-4d7c-9aca-ef523b4e7eea` 承接 100% 流量。唯一一次 `node tools/run-live-kp-eval.mjs --interactions=3` 实际完成 3/3 真实 HTTP/auth/Room/Provider 交互并得到 `liveModelVerified=true`；原命令因旧 evaluator 把合法 compact V3 receipt 误判为第二权威而退出 1。修复该纯评测器判断的 `9cc5e3cd97143ac1f6ad2e26513a91e82e617f3e` 已通过定向检查，但为遵守三交互上限没有重跑生产 Provider，所以原命令不能记为绿色，完整线上指标仍未测。临时房间、会话和账号均已精确清理；15 秒 exact-version error Tail 为 0，历史 Observability 查询因权限返回 403，故没有完整历史日志证据。功能源码与 evaluator 提交 `9cc5e3cd97143ac1f6ad2e26513a91e82e617f3e` 已非 force 进入 `origin/cloudflare` 提交历史，复核时远端 `main` 保持 `29eb06dc009c983ad61b2d862454503e67a7f40a`；其后只追加 docs-only 发布事实。
 
 ## 16. 新房、版本与迁移边界
 
@@ -434,19 +440,19 @@ npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有
 
 | 责任 | 唯一生产映射 | 验收映射 | 当前状态 |
 | --- | --- | --- | --- |
-| Form Catalog/筛选/Profile | `app/_runtime/lib/kp/form-catalog.ts` + Room `prepare`/action | 十 Form、3–6 张、compound、注入拒绝 | **已实现/定向证据**：Form/环境 Profile/Builder 组合 14/14；冻结全量门待运行 |
-| Context Pack | `app/_runtime/lib/kp/context-pack.ts`、`v3-context-runtime.ts` + Rules `project` + Room Authority | Required 不可删、NPC 重投影、Narration 缩小 | **已实现/定向证据**：静态 corpus 与 production context 组合 14/14；真实模型/线上待验证 |
-| 静态 RAG/FTS 与灾备 checkpoint | `app/_runtime/lib/kp/{static-retrieval,static-corpus}.ts` + `room/archive.ts`/DO + `db/schema.ts`/D1 Adapter | 中文别名、ref/hash 重读、重建、本地写读；settled checkpoint、prefix/audit、ahead event/genesis conflict 校验、capability-only restore | **已实现/定向证据**：静态 fresh/upgrade/FTS 14/14；`0011` 由 schema 生成，Wrangler local `0000–0011` 与 SQLite `0010→0011` 写读通过；archive D1 11/11、真实 reader→fresh DO 1/1、无当前受控 viewer 的 D1→fresh DO 1/1，远端应用待完成 |
-| Proposal/一次修订 | `private-form-policy.ts` + Form validator + Room Action proposal journal | 语义 hash、1+1、无第三次、骰后冻结 | **已实现/定向证据**：窄修订 5/5；真实 Provider 故障与完整冻结门待完成 |
+| Form Catalog/筛选/Profile | `app/_runtime/lib/kp/form-catalog.ts` + Room `prepare`/action | 十 Form、3–6 张、compound、注入拒绝 | **已实现/定向证据**：Form/环境 Profile/Builder 组合 14/14；完整门依用户豁免未运行，不计通过 |
+| Context Pack | `app/_runtime/lib/kp/context-pack.ts`、`v3-context-runtime.ts` + Rules `project` + Room Authority | Required 不可删、NPC 重投影、Narration 缩小 | **已实现/定向证据**：静态 corpus 与 production context 组合 14/14；三交互真实 Provider 接缝 3/3，但完整线上 Context/质量指标仍由用户自测 |
+| 静态 RAG/FTS 与灾备 checkpoint | `app/_runtime/lib/kp/{static-retrieval,static-corpus}.ts` + `room/archive.ts`/DO + `db/schema.ts`/D1 Adapter | 中文别名、ref/hash 重读、重建、本地写读；settled checkpoint、prefix/audit、ahead event/genesis conflict 校验、capability-only restore | **已实现/定向证据**：静态 fresh/upgrade/FTS 14/14；Wrangler local `0000–0011` 与 SQLite `0010→0011` 写读通过；archive D1 11/11、真实 reader→fresh DO 1/1、无当前受控 viewer 的 D1→fresh DO 1/1；远端 `0008–0011` 已成功应用且无 pending |
+| Proposal/一次修订 | `private-form-policy.ts` + Form validator + Room Action proposal journal | 语义 hash、1+1、无第三次、骰后冻结 | **已实现/定向证据**：窄修订 5/5；Proposal 失败的公开 DTO/确定性故障前端路径在两视口通过，完整 Provider 故障统计与完整门未测 |
 | CausalActionProgram | `app/_runtime/lib/kp/causal-action-program.ts` + `rules/profiles/causal-action-interpreter.ts` + Rules `step` | closed/acyclic/bounded、复合拓扑执行、无脚本/patch/事件/骰面 | **已实现/定向证据**：Causal/环境 Rules 组合 8/8 |
 | 模型角色/Profile | `app/_runtime/lib/kp/{model-registry,context-planner-policy}.ts` + `room/v3-binding.ts` | 主 KP 固定、Planner disabled/verified、无隐藏切换 | **已实现/定向证据**：角色/Profile 6/6；G3/G4 未达增益，生产绑定只接受 disabled，故无 Planner UI；真实候选验证未执行且不冒充产品证据 |
-| Body-only Narration/Grounding | `app/_runtime/lib/kp/narration-v3.ts` + Room Action/DO delivery | exact `{body}`、服务器元数据、显式拒绝 | **已实现/定向证据**：public action/table 21/21 与 Viewer recovery 4/4 覆盖公开裁剪、冻结投影、控制权变化和失败恢复；浏览器待完成 |
+| Body-only Narration/Grounding | `app/_runtime/lib/kp/narration-v3.ts` + Room Action/DO delivery | exact `{body}`、服务器元数据、显式拒绝 | **已实现/定向证据**：public action/table 21/21 与 Viewer recovery 4/4 覆盖公开裁剪、冻结投影、控制权变化和失败恢复；双视口公开 DTO Narration 重试前端路径通过且不重复 settlement，语音/TTS 仍未覆盖 |
 | 双状态/逐受众恢复 | Room Action/DO `action.ts`、`durable-object.ts`、Rules projector、table API/UI | Alice/Bob 独立、提交不回滚、冻结重试 | **已实现/定向证据**：同上 21/21 + 4/4；死亡/退役/transfer/revoke、继任拒绝、恢复态不读取当前世界与不重复机械有责任 seam 证据 |
-| 动态环境与人物熟练 | Rules v2/Geometry/Profile/Room/archive/replay + 环境编译器 + character-proficiency Profile | 任意 KP 内容、`state-only` / `area-hazard`、§11 通用动态场景；v4 Expertise/豁免熟练与旧 manifest 隔离 | **已实现/定向证据**：Profile/causal/compound 57/57、workflow/table 25/25、campaign 2/2、concentration 1/1、控制/继任 1/1、动态环境 Room 6/6；workflow-v2/v4 长轨迹 1/1；具体吊灯专项已由用户取消，双视口浏览器与最终门待完成 |
-| Telemetry/错误 | `app/_runtime/lib/room/{action,telemetry}.ts` 与公开 API DTO | 十错误、白名单、故障注入 | **已实现/定向证据**：十个精确公开代码及阶段分类已有 V3 runner；G2 五类故障 5/5 安全回退；生产日志冒烟待完成 |
-| 实验/发布 | `tests/fixtures/kp-v3-gold.json` + `tools/run-kp-v3-eval.mjs`、live runner/provisioner、生产 seam 长轨迹、浏览器 QA、现有 deploy/smoke guard | §10、§13–15 | **部分满足**：120 条结构报告 4/4、16/16 hard gates，G2 采用、G3/G4 拒绝、G5 不适用；live harness/provisioner 13/13 证明确定性 HTTP 生命周期、默认 31 interaction 约束与显式三交互冒烟边界，但不等于 Provider 质量测评；新增真实 Room seam 长轨迹 1/1 通过。完整 live Provider 指标由用户后续自行测评；冻结全量、浏览器、migration 发布、部署、三交互冒烟、清理和推送仍待 |
+| 动态环境与人物熟练 | Rules v2/Geometry/Profile/Room/archive/replay + 环境编译器 + character-proficiency Profile | 任意 KP 内容、`state-only` / `area-hazard`、§11 通用动态场景；v4 Expertise/豁免熟练与旧 manifest 隔离 | **已实现/定向证据**：Profile/causal/compound 57/57、workflow/table 25/25、campaign 2/2、concentration 1/1、控制/继任 1/1、动态环境 Room 6/6；workflow-v2/v4 长轨迹 1/1；具体吊灯专项已取消，双视口公开 DTO 自定义环境前端入口已通过，SPEC 0014 完整战术地图仍未覆盖 |
+| Telemetry/错误 | `app/_runtime/lib/room/{action,telemetry}.ts` 与公开 API DTO | 十错误、白名单、故障注入 | **已实现/定向证据**：十个精确公开代码及阶段分类已有 V3 runner；G2 五类故障 5/5 安全回退；部署后 15 秒 exact-version error Tail 为 0，历史日志查询受 OAuth 403 限制，不能冒充完整生产日志证据 |
+| 实验/发布 | `tests/fixtures/kp-v3-gold.json` + `tools/run-kp-v3-eval.mjs`、live runner/provisioner、生产 seam 长轨迹、浏览器 QA、现有 deploy/smoke guard | §10、§13–15 | **发布事实已建立，质量边界保留**：远端 `0008–0011` 无 pending；源码 `4822d2b` 已部署为 Version `97291f34` / deployment `834c2b79` 100%；双视口前端视觉/DOM 五路径（页面数据全部为公开 DTO）10/10 且额外 Provider action 为 0；独立的唯一三交互实际穿过真实 HTTP/auth/Room/Provider 3/3、live verified，但原命令因 compact receipt evaluator 误判退出 1且未重跑；修复随 `9cc5e3c` 非 force 推送，`main` 未变。完整门依用户豁免未运行，完整 live Provider 指标仍由用户自测 |
 
-上述“已实现/定向证据”只按其明确责任切片计数，不能拼接为发布完成。最终完成证据仍必须来自同一冻结源码的实际命令、退出码、指标报告、migration、本地/远端状态、双视口浏览器、部署版本/冒烟/清理和远端 SHA 证明。
+上述“已实现/定向证据”和发布事实只按各自明确责任计数，不能拼接成完整线上质量门。远端 migration、双视口浏览器、部署版本、清理与 Git SHA 已有证据；完整门没有运行，三交互原命令不是绿色，Provider 完整指标、语音/TTS 与完整战术地图仍保持未覆盖。
 
 ## 19. 固定不变量
 

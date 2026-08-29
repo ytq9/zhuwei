@@ -581,7 +581,7 @@
 - 秘密与权限影响：Form 不扩大 KP Viewer 内容；principal、actor、Audience、实际 target 与骰面不进入模型字段或客户端。
 - 迁移/可逆性：新 Form/Action Language/Profile 只进新 V3 房间；不改 `authoritative-kp-action-plan-v1`。只增 Form 可发布新 Profile，新增 primitive 必须发布新 Rules manifest/interpreter。
 - 验收场景：十 Form 注册；普通动作只收 3–6 张；不确定路径永含 compound；未知字段/脚本/JSON Patch/事件/骰面/authority 注入 fail closed；复杂动作误入简单 Form 为 0。
-- 测试证据：Form/Profile/Builder 定向组合 14/14，Causal/环境 Rules 8/8；十 Form、3–6 allowlist、compound、closed/bounded DAG 与 authority 字段拒绝已有责任 seam。真实 Provider、冻结全量与浏览器仍待，局部绿色不等于发布完成。
+- 测试证据：Form/Profile/Builder 定向组合 14/14，Causal/环境 Rules 8/8；十 Form、3–6 allowlist、compound、closed/bounded DAG 与 authority 字段拒绝已有责任 seam。已部署前端的观察/NPC/失败/恢复/动态入口双视口共 10/10，唯一三交互实际完成 3/3 且 live verified；后者原命令因 compact receipt evaluator 误判退出 1且没有生产重跑。完整 Provider 指标仍由用户自测，完整门依用户豁免未运行，局部与发布事实都不等于完整质量门。
 
 ## DEC-037：Required/ Retrieved/ Optional 分层，D1 FTS 只作静态派生索引
 
@@ -597,7 +597,7 @@
 - 秘密与权限影响：当前位置、资源、Pending、角色/NPC 当前知识、Audience、私人对话和动态事实禁止入索引；KP-only chunk 仍逐次鉴权。
 - 迁移/可逆性：D1 FTS 可从权威静态语料删除并重建；若改 schema，从 `db/schema.ts` 生成只增不改 migration，先本地闭环再远端。无需 schema 变化时明确记录无 migration。
 - 验收场景：Required 不可删；中文别名/FTS/依赖召回；篡改 source/profile/hash/span 拒绝；删除索引后规范重建；NPC 无全知继承；动态状态索引扫描为 0。
-- 测试证据：静态 corpus + production context 定向组合 14/14，覆盖 Required/Optional、动态源拒绝、中文别名/FTS、ref/hash/Profile/权限重读、全新 corpus schema、`0008→0010` 与无请求时 DDL；`0010` 只逻辑清空三张可重建派生索引表，不改权威 Room/身份/归档。`0011` 灾备 checkpoint 及其独立恢复证据见 DEC-044；远端 migration、真实 Provider 与浏览器仍待。
+- 测试证据：静态 corpus + production context 定向组合 14/14，覆盖 Required/Optional、动态源拒绝、中文别名/FTS、ref/hash/Profile/权限重读、全新 corpus schema、`0008→0010` 与无请求时 DDL；`0010` 只逻辑清空三张可重建派生索引表，不改权威 Room/身份/归档。`0011` 灾备 checkpoint 及其独立恢复证据见 DEC-044。发布阶段已在既有远端 `DB` 串行应用 `0008–0011` 并复核无 pending；三交互只证明有界真实 Provider 接缝，完整 Context/质量指标仍未测。
 
 ## DEC-038：Proposal 采用一次首调用加一次窄修订并冻结玩家语义
 
@@ -613,7 +613,7 @@
 - 秘密与权限影响：修订不重发完整模组、历史或 Story Bible；诊断按 KP Viewer 投影，不向玩家泄漏秘密引用。
 - 迁移/可逆性：只对新 Proposal Profile 生效；旧房保持原修订预算。改变预算/语义字段需新 Profile 和明确裁定。
 - 验收场景：字段/引用修复、升级 compound、语义 hash 篡改、骰后改变 DC/后果、修订 Provider 超时、耗尽后无第三调用。
-- 测试证据：`tests/private-form-repair-v3.test.mjs` 定向 5/5，覆盖语义冻结、无隐式 compound、有限引用修复、scope/Profile 漂移拒绝与显式升级；Causal/环境 Rules 8/8 覆盖合法编译/执行。真实 Provider 调用计数、骰后线上故障和冻结全量仍待。
+- 测试证据：`tests/private-form-repair-v3.test.mjs` 定向 5/5，覆盖语义冻结、无隐式 compound、有限引用修复、scope/Profile 漂移拒绝与显式升级；Causal/环境 Rules 8/8 覆盖合法编译/执行。双视口 Proposal 失败路径以确定性故障证明草稿保留且不产生 committed bubble；唯一三交互为真实 Provider 3/3，但不足以填写调用率或完整故障统计。完整门依用户豁免未运行。
 
 ## DEC-039：Narration 只输出 body，行动和逐受众发布分别建模
 
@@ -629,7 +629,7 @@
 - 秘密与权限影响：Audience 提交时冻结；不在场者不能补取；换席/新控制者不继承旧亲历。Narration 不接收完整 KP Context，错误/DOM/TTS/日志不泄漏。
 - 迁移/可逆性：只对新 publication/narration Profile 生效；旧 Outcome/Delivery Adapter 按 genesis 保留。改变状态或保留语义需新协议版本。
 - 验收场景：exact body schema；额外字段拒绝；Grounding 拒绝无 fallback；提交后 timeout 不回滚；Alice/Bob 独立；刷新/离场/换席/重试/幂等；固定伪成功文本不存在。
-- 测试证据：public action/table 定向 21/21，Viewer recovery 4/4；覆盖 body-only 公开裁剪、action/narration 双状态、Alice/Bob 独立、驱逐/刷新、死亡/退役及 transfer/revoke 后原 ViewerKey 恢复、继任者拒绝、恢复态不读取当前世界，以及不重提案/重掷/扣资源。375/1440 浏览器、语音/TTS/日志旁路与冻结全量仍待。
+- 测试证据：public action/table 定向 21/21，Viewer recovery 4/4；覆盖 body-only 公开裁剪、action/narration 双状态、Alice/Bob 独立、驱逐/刷新、死亡/退役及 transfer/revoke 后原 ViewerKey 恢复、继任者拒绝、恢复态不读取当前世界，以及不重提案/重掷/扣资源。375/1440 的 Narration failure/retry 路径均通过，已提交行动保持单一可见且重试不重复 settlement；秘密 DOM/ARIA/网络正文命中为 0。语音/TTS、完整历史日志与完整门仍未覆盖。
 
 ## DEC-040：G2 是采用配置，辅助模型未达增益门即移除接线
 
@@ -645,7 +645,7 @@
 - 秘密与权限影响：辅助模型只做 Form 排序、实体/代词、查询、rerank、引用/结构提示；秘密 canary、allowlist 和脱敏 Receipt 是上线硬门。
 - 迁移/可逆性：辅助 Profile 只在新 RootAction 边界切换；未达门接线删除。未经另行授权不创建远端 Vectorize、新 Worker/D1/DO/KV/R2/Queue/Workflow。
 - 验收场景：G0–G5 同集报告；生产 Planner disabled；实验候选有独立 Receipt 且无产品接线；故障注入 100% 安全回退；无隐藏切换；拒绝待验证 Profile 的扫描。
-- 测试证据：`tests/context-planner-profile-v3.test.mjs` 定向 6/6；120 条离线结构报告 4/4 且 16/16 hard gates，G2 以真实本地 SQLite FTS5/D1 Adapter 合同完成 120/120 MATCH，G3 `unvalidated`/production disabled，G4 完成 120 次 exact-cosine 搜索与 1920 次比较并在 56 个案例实际重排，但两者仍为 `adopted=false`，G5 `applicable=false`，五类故障 5/5 安全回退。该报告没有网络调用；完整 Provider 指标不在本轮代理测评范围。
+- 测试证据：`tests/context-planner-profile-v3.test.mjs` 定向 6/6；120 条离线结构报告 4/4 且 16/16 hard gates，G2 以真实本地 SQLite FTS5/D1 Adapter 合同完成 120/120 MATCH，G3 `unvalidated`/production disabled，G4 完成 120 次 exact-cosine 搜索与 1920 次比较并在 56 个案例实际重排，但两者仍为 `adopted=false`，G5 `applicable=false`，五类故障 5/5 安全回退。该报告没有网络调用；唯一三交互的 live verified 事实不改变这一实验口径，完整 Provider 指标仍不在本轮代理测评范围。
 
 ## DEC-041：动态环境由 KP 自定义并以显式效果模式进入同一事务
 
@@ -661,7 +661,7 @@
 - 秘密与权限影响：玩家/KP/客户端不提交实际目标集合；隐藏目标、完整 Geometry、内部采样不从 preview、错误、DOM、Narration 或长度泄漏。
 - 迁移/可逆性：历史 hazard-only `environment-feature-fsm-2014-v2`（`sha256:702b2559c821a52e1c7d6a137c6b261cec21d6cc513e3c0301b4b5ab007f7c87`）及 `runtime-srd51-2014-authoritative-environment-v2`（`sha256:0021280335296ecfc5b65a221fec7009550fac96db65925e47daef9f9d4f0456`）按原义保留；显式双模式 `environment-feature-fsm-2014-v3`（`sha256:1656fd548905d6ea886fd4cf97357a9d67c56422be3a2c6bd281fc93a22b4fe6`）先由 workflow-v1/env-v3 固定，当前新房 workflow-v2/env-v4 仍复用该 FSM 并增加独立人物熟练 Profile。三代完整 manifest/canonical document 同时注册、按 genesis 精确匹配；旧抽象距离/空 obstacles 不猜迁移，也不把旧状态静默改名。新增 primitive 或持久化机械语义发布新完整 Rules manifest/interpreter。
 - 验收场景：任意 KP 自定义内容不按名称派发；`state-only` 无 Hazard/Area/区域 save/区域目标 damage；通用 `area-hazard` 覆盖创建/复用、对象破坏、完整 Geometry、多/隐藏目标、逐目标豁免/伤害/死亡、残骸、恢复、回放和幂等；两态都服从 SPEC 0014 的 Geometry/Tactical Projection/双视口门。2026-08-29 用户后续裁定取消具体吊灯专项完成门。
-- 测试证据：动态环境 Room 6/6；已覆盖自定义非吊灯对象、`state-only`、完整 `area-hazard`、隐藏目标、replay/correction/duplicate root 和 legacy/new Profile 隔离。新增 workflow-v2/env-v4 生产 seam 长轨迹 1/1 以 31 次真实 Room 接口交互覆盖真实 Form allowlist/三层 Context/validator/compiler、双模式、2 实体 hazard、Bob viewer-local retry、无重复 Proposal/随机/资源，以及 archive→fresh DO 后 state/project hash 一致；Viewer recovery + 动态环境两文件 10/10。最终冻结全量与 375/1440 浏览器仍待。
+- 测试证据：动态环境 Room 6/6；已覆盖自定义非吊灯对象、`state-only`、完整 `area-hazard`、隐藏目标、replay/correction/duplicate root 和 legacy/new Profile 隔离。新增 workflow-v2/env-v4 生产 seam 长轨迹 1/1 以 31 次真实 Room 接口交互覆盖真实 Form allowlist/三层 Context/validator/compiler、双模式、2 实体 hazard、Bob viewer-local retry、无重复 Proposal/随机/资源，以及 archive→fresh DO 后 state/project hash 一致；Viewer recovery + 动态环境两文件 10/10。已部署前端的两视口动态入口以自然语言展示任意 `state-only` / `area-hazard` 内容且额外 Provider action 为 0；SPEC 0014 完整战术地图和完整门仍未覆盖。
 
 ## DEC-042：本次发布只做三交互线上冒烟，完整线上测评由用户执行
 
@@ -671,13 +671,13 @@
 - 来源类别：用户在本轮的后续明确指令 + 发布最小外部探针边界。
 - 关联 SPEC 0001：不改变产品合同；只收窄本次代理的外部验证范围。
 - 候选方案：运行完整 31 轮线上测评；完全不做生产探针；只做一次精确三交互生产冒烟并把完整测评留给用户。
-- 最终选择：本代理不得调用默认 31 轮线上 runner；部署后只以显式 `--interactions=3` 运行一次三交互冒烟。三次交互覆盖普通观察、NPC 对话和分头观察的真实 HTTP/auth/Room/Provider 接缝，随后必须删除房间、注销会话并按精确 ID/email 清除临时账号。浏览器 Proposal 失败、Narration 重试与任意动态环境输入使用确定性网络故障/公开 DTO 注入，不增加 Provider 行动。
+- 最终选择：本代理不得调用默认 31 轮线上 runner；部署后只以显式 `--interactions=3` 运行一次三交互冒烟。三次交互覆盖普通观察、NPC 对话和分头观察的真实 HTTP/auth/Room/Provider 接缝，随后必须删除房间、注销会话并按精确 ID/email 清除临时账号。五条浏览器路径都只在页面 `/api/game` 边界拦截确定性公开 DTO；Proposal 失败、Narration 重试与任意动态环境三路再分别注入故障或自定义动态状态，不增加 Provider 行动。
 - 理由：用户明确表示完整线上测评由自己完成，同时允许一个三轮检查；三交互足以证明部署接缝可达，但样本不足以证明质量、延迟、调用率或置信区间门。
 - 玩家可观察行为：不改变产品行为。发布回执只声明“三交互冒烟通过/失败”，不得写“31 轮线上评测通过”。
 - 秘密与权限影响：线上报告继续只保留哈希、计数和脱敏指标，不保存正文、Prompt、凭据、canary 或原始 ID；浏览器注入不能接触真实用户房间。
 - 迁移/可逆性：不改变 schema、Profile、Worker 资源或默认 31 轮 runner；用户可在发布后自行运行完整评测。
 - 验收场景：CLI 只接受无参 31 轮或精确 `--interactions=3`；本次实际命令必须是后者，`evaluationScope=three-interaction-smoke`、`qualityThresholdsApplied=false`、`interactionsCompleted=3`，并证明房间/会话/账号清理完成。
-- 测试证据：`tests/live-kp-eval-runner.test.mjs` 与 `tests/live-kp-eval-provisioner.test.mjs` 定向 13/13；真实三交互结果只在部署后回填执行日志。
+- 测试证据：`tests/live-kp-eval-runner.test.mjs` 与 `tests/live-kp-eval-provisioner.test.mjs` 定向 13/13。部署后严格且仅运行一次 `node tools/run-live-kp-eval.mjs --interactions=3`：真实 HTTP/auth/Room/Provider 完成 3/3，`liveModelVerified=true`，临时房间、会话和账号均已精确清理。原命令因旧 evaluator 将合法 compact V3 receipt 误判为第二权威而退出 1；`9cc5e3c` 已修复该纯评测器判断并通过定向检查，但依据三交互上限未再次调用生产 Provider。因此只能记录“3/3 live verified + 原命令非绿色”，不能写成冒烟命令通过或完整线上测评通过。
 
 ## DEC-043：2014 Expertise/豁免熟练只随新完整 manifest 发布
 
@@ -693,7 +693,7 @@
 - 秘密与权限影响：人物熟练仍由可信 staticCard→Rules state 固化，模型、页面和 DTO 不能自报 modifier；字段随 `project(viewer)` 的既有角色可见性边界输出。
 - 迁移/可逆性：default、environment-v2、environment-v3 的 ID/hash/state/results 保持不变；旧 genesis/events 不补字段。只有新建 workflow-v2 房间选择 v4；未来变更需再发完整 manifest。
 - 验收场景：v4 Expertise=2×PB、显式 save proficiency=1×PB、expertise⊆proficient、别名适配、初始/同步/升级/继任/战斗实体保持字段、旧三 manifest 精确 1×PB/旧 save 回放。
-- 测试证据：Profile/causal/compound 57/57、workflow/table 25/25、campaign 2/2、concentration save 1/1、V4 控制/继任 1/1、动态 Room 6/6、workflow-v2/env-v4 31 交互长轨迹 1/1；`npm run typecheck` 与 `git diff --check` 退出 0。最终冻结全量仍待。
+- 测试证据：Profile/causal/compound 57/57、workflow/table 25/25、campaign 2/2、concentration save 1/1、V4 控制/继任 1/1、动态 Room 6/6、workflow-v2/env-v4 31 交互长轨迹 1/1；`npm run typecheck` 与 `git diff --check` 退出 0。含 exact v4 的源码 `4822d2b` 已部署至既有 Worker；完整门依用户豁免未运行，不能记为通过。
 
 ## DEC-044：D1 灾备恢复只信任已结清、可重放的单调 checkpoint
 
@@ -707,6 +707,6 @@
 - 理由：event/audit 表可有领先于 settled head 的分页行，单看 MAX 或持久化 cursor 会恢复半个快照。checkpoint + replay + audit set 把可恢复边界变成可证明事实，同时 D1 仍只是 Room DO 的追加灾备副本，不是活跃状态权威。
 - 玩家可观察行为：灾备恢复保持同一 Rules state/projection hash；已移除成员与无控制历史实体不会被恢复成活跃权限，当前 host/player/session/seat/control 索引从恢复 state 的活跃关系重建。
 - 秘密与权限影响：D1 allowlist 仍只有 genesis、Rules events、projection hashes 和 checkpoint hashes/branch；没有 Prompt、模型原始输出、Cookie、正文、Delivery 或 KP-only projection。无 capability、非空目标、缺审计、篡改/回退 checkpoint 都 fail closed。
-- 迁移/可逆性：`0011_low_leo.sql` 只增 checkpoint 表，SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`；旧无 checkpoint 归档在下一次完整 caught-up batch 回填，不修改旧 events/audits。远端只在发布串行阶段应用。
+- 迁移/可逆性：`0011_low_leo.sql` 只增 checkpoint 表，SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`；旧无 checkpoint 归档在下一次完整 caught-up batch 回填，不修改旧 events/audits。发布阶段已在既有远端 `DB` 串行应用并与 `0008–0010` 一并复核无 pending。
 - 验收场景：80+ events 分页、最终原子 checkpoint、无回退/同序冲突、伪造 audit cursor 缺行拒绝、seq0/prefix replay、未结清多波随机拒绝、D1 reader→fresh DO、移除成员不复权、旧归档 backfill。
-- 测试证据：`archive-d1-batches-v2` 11/11（含旧 checkpoint 的 D1 前缀篡改、ahead event/genesis conflict 拒绝）；`archive-do-resume-v2 -t 'resumes 80'` 1/1（80+ events、48 audits、真实 reader→fresh DO、活跃索引），无当前受控 viewer 的 D1→fresh DO 1/1；相关 randomness settlement 定向 1/1；Wrangler local `0000–0011` 与 checkpoint 写读、SQLite `0010→0011` 写读均退出 0。远端 migration 与最终冻结全量仍待。
+- 测试证据：`archive-d1-batches-v2` 11/11（含旧 checkpoint 的 D1 前缀篡改、ahead event/genesis conflict 拒绝）；`archive-do-resume-v2 -t 'resumes 80'` 1/1（80+ events、48 audits、真实 reader→fresh DO、活跃索引），无当前受控 viewer 的 D1→fresh DO 1/1；相关 randomness settlement 定向 1/1；Wrangler local `0000–0011` 与 checkpoint 写读、SQLite `0010→0011` 写读均退出 0。远端 `0008–0011` 已成功应用且无 pending，临时 checkpoint 写读后已精确清理；完整门依用户豁免未运行。

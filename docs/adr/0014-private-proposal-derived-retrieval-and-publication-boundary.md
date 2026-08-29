@@ -3,7 +3,7 @@
 - 状态：已接受（用户本 Goal 明确授权）
 - 日期：2026-08-29
 - 关联规格：SPEC 0001、SPEC 0003、SPEC 0005、SPEC 0006、SPEC 0010、SPEC 0011、SPEC 0013、SPEC 0014、SPEC 0015
-- 实现状态：本地生产映射与定向证据已建立；冻结全量、浏览器、远端 migration、部署和推送待完成
+- 实现状态：生产映射、定向证据、远端 migration、既有 Worker 部署、双视口浏览器与 Git 推送已有事实证据；用户豁免的完整门未运行且不计通过，完整线上模型指标仍由用户自行测评
 
 ## 背景
 
@@ -74,7 +74,7 @@ G2（小表 + 三层 Context + D1 FTS）是采用配置。120 条同集离线结
 
 历史 hazard-only 环境 Profile 固定为 `environment-feature-fsm-2014-v2`（`sha256:702b2559c821a52e1c7d6a137c6b261cec21d6cc513e3c0301b4b5ab007f7c87`），并只随 `runtime-srd51-2014-authoritative-environment-v2`（`sha256:0021280335296ecfc5b65a221fec7009550fac96db65925e47daef9f9d4f0456`）解释。第一代私有 Form workflow-v1 的双模式 `environment-feature-fsm-2014-v3`（`sha256:1656fd548905d6ea886fd4cf97357a9d67c56422be3a2c6bd281fc93a22b4fe6`）继续绑定 `runtime-srd51-2014-authoritative-environment-v3`（`sha256:4038f09e546eb8a0c925e892634625fe09859d2aeba91f044a8ecae76aa99c57`），保持旧 1×PB/既有豁免解释。当前新房 workflow-v2 固定完整 `runtime-srd51-2014-authoritative-environment-v4`（`sha256:8d0df2563b1e9fca31b1ab7b1678683075fc013b5220ba7b32aa054861203685`），复用同一环境 FSM 并增加 `character-proficiency-srd51-2014-v1`（`sha256:718bf64554e4b032f3bea564797edf67b1695c2335879db4bd3e5332069a1001`）的 2014 Expertise/豁免熟练语义。Registry 同时保留三代完整 manifest/canonical document 和原 hash，Room genesis 必须精确匹配，不能以产品代际、字段存在或共享 helper 静默升级旧事件。
 
-D1 变化只从 `db/schema.ts` 生成只增不改 migration，并先通过本地 migration/写入/查询/重建闭环；D1 FTS 永远是派生索引。`0008`/`0009` 实现静态 corpus/FTS、房间 workflow 绑定和 corpus/profile/hash 加固；`0010` 是一次性逻辑 scrub，只清空三张可重建派生索引表；`0011_low_leo.sql`（SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`）只新增灾备 checkpoint 表。checkpoint 仅在随机已结清、完整 event prefix 与 head audit 精确集合物化后的最终 D1 batch 单调推进；reader 只接受精确 room/epoch、重放并核验 checkpoint prefix，并拒绝 checkpoint 之后的 ahead event、genesis 冲突或 prefix 篡改，恢复只允许 service capability 且目标 DO 必须为空。Wrangler local `0000–0011`、SQLite `0010→0011` 写读、archive D1 11/11 与 D1 reader→fresh DO 1/1 已通过；另有无当前受控 viewer 的 D1→fresh DO 1/1。远端 migration、部署、清理和 push 仍按发布流程串行。
+D1 变化只从 `db/schema.ts` 生成只增不改 migration，并先通过本地 migration/写入/查询/重建闭环；D1 FTS 永远是派生索引。`0008`/`0009` 实现静态 corpus/FTS、房间 workflow 绑定和 corpus/profile/hash 加固；`0010` 是一次性逻辑 scrub，只清空三张可重建派生索引表；`0011_low_leo.sql`（SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`）只新增灾备 checkpoint 表。checkpoint 仅在随机已结清、完整 event prefix 与 head audit 精确集合物化后的最终 D1 batch 单调推进；reader 只接受精确 room/epoch、重放并核验 checkpoint prefix，并拒绝 checkpoint 之后的 ahead event、genesis 冲突或 prefix 篡改，恢复只允许 service capability 且目标 DO 必须为空。Wrangler local `0000–0011`、SQLite `0010→0011` 写读、archive D1 11/11 与 D1 reader→fresh DO 1/1 已通过；另有无当前受控 viewer 的 D1→fresh DO 1/1。发布阶段已在既有远端 `DB` 串行应用 `0008–0011` 并复核无 pending；临时 checkpoint 写读后已精确清理，没有创建新 D1 或其他资源。
 
 ## 当前实现证据边界
 
@@ -82,7 +82,9 @@ D1 变化只从 `db/schema.ts` 生成只增不改 migration，并先通过本地
 
 新增生产 seam 长轨迹也已在 workflow-v2/environment-v4 上通过 1/1：31 次真实 Room 接口交互由 15 次 Intent/RootAction/Proposal、15 次 ACK 与 1 次 Bob viewer-local retry 组成；每个 Intent 都经过生产 Form allowlist、三层 Context、validator、compiler、Room、Rules 与 projector，同轨迹结算 `area-hazard` 对 2 个实体的完整 trigger/resolve/debris，并结算 KP 自定义竹骨声屏 `state-only` 且保持 `hazard/areaEffect=null`。没有重复 Proposal、随机或资源；archive 恢复到 fresh DO 后最终 state hash 与每位 Viewer 的 projection hash 均一致。Viewer recovery 与动态环境 Room 分别为 4/4 和 6/6。
 
-这些是当前未冻结源码上的局部证据。用户已明确把完整线上测评留给自己；本代理只执行部署后三交互冒烟，不能据此填写完整 Provider 指标。本地 migration/checkpoint 已复核；同一 SHA 全量门、375/1440 浏览器、远端 D1、部署、三交互冒烟/日志/清理和 Git 证明仍待完成；ADR 的“已接受”与局部绿色都不等于发布完成。
+发布源码 `4822d2b62d40d922758e77762f378495398958f8` 已更新既有 Worker `zhuwei`；Cloudflare Version `97291f34-67cf-47a4-a9f6-899db6ee975a` / deployment `834c2b79-c24f-4d7c-9aca-ef523b4e7eea` 承接 100% 流量。已部署前端壳在 375×812 与 1440×900 各完成观察、NPC 对话、Proposal 失败、Narration 重试和动态环境入口的前端视觉/DOM 验收，共 10/10。五条路径的页面数据均由公开 DTO 注入；其中本规格明示允许的 Proposal 失败、Narration 重试与动态环境三路使用确定性故障/动态注入，增加的 Provider action 为 0。两档无横向溢出、console/page error、失败请求或秘密 DOM/ARIA/网络正文旁路；Narration 失败后已提交行动保持单一可见，重试没有重复 settlement。该证据只验收已部署前端的视觉/DOM 边界，不声称五路浏览器流程穿过真实 `/api/game`/auth/Room/Provider；后者由下述独立三交互 smoke 提供。浏览器 QA 的临时会话与账号已精确清理，语音/TTS 和完整战术地图纵切仍未覆盖。
+
+唯一一次 `--interactions=3` 生产运行实际完成 3/3 HTTP/auth/Room/Provider 交互且 `liveModelVerified=true`；原命令因旧 evaluator 把合法 compact V3 receipt 误判为第二权威而退出 1。`9cc5e3cd97143ac1f6ad2e26513a91e82e617f3e` 已修正该纯评测器判断并通过定向检查，但依据三交互上限没有重跑生产 Provider，因此不能把原命令记成绿色，也不能据此填写 Provider tokenizer、端到端 p95、平均调用数、正常 fallback、真实首次合法率或完整质量阈值。用户已明确豁免本轮完整门；这些门没有在最终源码上重跑，不能改写为通过。功能源码与 evaluator 提交 `9cc5e3cd97143ac1f6ad2e26513a91e82e617f3e` 已非 force 进入 `origin/cloudflare` 提交历史，复核时远端 `main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`；其后的发布事实只追加 docs-only 提交。ADR 的“已接受”、定向绿色和已部署事实都不等于完整线上质量评测完成。
 
 ## 验收
 
