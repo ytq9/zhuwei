@@ -1,0 +1,3364 @@
+{
+  "schemaVersion": "zhuwei-kp-v3-gold-v1",
+  "language": "zh-CN",
+  "caseCount": 120,
+  "categories": [
+    {
+      "code": "observation",
+      "label": "观察",
+      "count": 8
+    },
+    {
+      "code": "npc",
+      "label": "NPC",
+      "count": 8
+    },
+    {
+      "code": "major-ambiguity",
+      "label": "重大歧义",
+      "count": 8
+    },
+    {
+      "code": "high-risk",
+      "label": "高风险",
+      "count": 8
+    },
+    {
+      "code": "missing-prerequisite",
+      "label": "缺前提",
+      "count": 8
+    },
+    {
+      "code": "dynamic-fact",
+      "label": "动态事实",
+      "count": 8
+    },
+    {
+      "code": "hidden-reality",
+      "label": "隐藏现实",
+      "count": 8
+    },
+    {
+      "code": "personal-knowledge",
+      "label": "个人知识",
+      "count": 8
+    },
+    {
+      "code": "npc-limited-knowledge",
+      "label": "NPC有限知识",
+      "count": 8
+    },
+    {
+      "code": "meaningful-failure",
+      "label": "有意义失败",
+      "count": 8
+    },
+    {
+      "code": "activity",
+      "label": "Activity",
+      "count": 8
+    },
+    {
+      "code": "combat",
+      "label": "战斗",
+      "count": 8
+    },
+    {
+      "code": "resource",
+      "label": "资源",
+      "count": 8
+    },
+    {
+      "code": "conclusion",
+      "label": "收束",
+      "count": 8
+    },
+    {
+      "code": "compound-dynamic",
+      "label": "复合动态行动",
+      "count": 8
+    }
+  ],
+  "cases": [
+    {
+      "id": "observation-01",
+      "category": "观察",
+      "categoryCode": "observation",
+      "intent": "我贴近门缝观察大厅里巡逻者的移动规律。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:observation-01",
+        "gold:observation",
+        "fact:observation-01"
+      ],
+      "criticalRefs": [
+        "gold:observation",
+        "fact:observation-01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "观察线索",
+      "retrievalQuery": "观察线索 痕迹 感知",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "observation-02",
+      "category": "观察",
+      "categoryCode": "observation",
+      "intent": "我检查泥地上新旧脚印的方向和深浅。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:observation-02",
+        "gold:observation",
+        "fact:observation-02"
+      ],
+      "criticalRefs": [
+        "gold:observation",
+        "fact:observation-02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "观察线索",
+      "retrievalQuery": "观察线索 痕迹 感知",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "observation-03",
+      "category": "观察",
+      "categoryCode": "observation",
+      "intent": "我侧耳分辨钟楼上传来的金属摩擦声。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:observation-03",
+        "gold:observation",
+        "fact:observation-03"
+      ],
+      "criticalRefs": [
+        "gold:observation",
+        "fact:observation-03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "观察线索",
+      "retrievalQuery": "观察线索 痕迹 感知",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "observation-04",
+      "category": "观察",
+      "categoryCode": "observation",
+      "intent": "我查看封蜡边缘是否留下被重新加热的痕迹。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:observation-04",
+        "gold:observation",
+        "fact:observation-04"
+      ],
+      "criticalRefs": [
+        "gold:observation",
+        "fact:observation-04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "观察线索",
+      "retrievalQuery": "观察线索 痕迹 感知",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "observation-05",
+      "category": "观察",
+      "categoryCode": "observation",
+      "intent": "我闻一闻酒杯残液，判断是否混入异常气味。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:observation-05",
+        "gold:observation",
+        "fact:observation-05"
+      ],
+      "criticalRefs": [
+        "gold:observation",
+        "fact:observation-05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "观察线索",
+      "retrievalQuery": "观察线索 痕迹 感知",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "observation-06",
+      "category": "观察",
+      "categoryCode": "observation",
+      "intent": "我沿墙寻找可供攀爬的裂缝与旧钉孔。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:observation-06",
+        "gold:observation",
+        "fact:observation-06"
+      ],
+      "criticalRefs": [
+        "gold:observation",
+        "fact:observation-06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "观察线索",
+      "retrievalQuery": "观察线索 痕迹 感知",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "observation-07",
+      "category": "观察",
+      "categoryCode": "observation",
+      "intent": "我观察守卫交班时谁会短暂离开视线。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:observation-07",
+        "gold:observation",
+        "fact:observation-07"
+      ],
+      "criticalRefs": [
+        "gold:observation",
+        "fact:observation-07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "观察线索",
+      "retrievalQuery": "观察线索 痕迹 感知",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "observation-08",
+      "category": "观察",
+      "categoryCode": "observation",
+      "intent": "我翻看桌面灰尘，确认最近有哪些物件被移动过。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:observation-08",
+        "gold:observation",
+        "fact:observation-08"
+      ],
+      "criticalRefs": [
+        "gold:observation",
+        "fact:observation-08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "观察线索",
+      "retrievalQuery": "观察线索 痕迹 感知",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-01",
+      "category": "NPC",
+      "categoryCode": "npc",
+      "intent": "我向老门房解释来意，请他告诉我昨夜访客的姓名。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-01",
+        "gold:npc",
+        "fact:npc-01"
+      ],
+      "criticalRefs": [
+        "gold:npc",
+        "fact:npc-01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "NPC交涉",
+      "retrievalQuery": "NPC交涉 对话 诉求",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-02",
+      "category": "NPC",
+      "categoryCode": "npc",
+      "intent": "我把徽记放在桌上，问守卫是否认得它的主人。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-02",
+        "gold:npc",
+        "fact:npc-02"
+      ],
+      "criticalRefs": [
+        "gold:npc",
+        "fact:npc-02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "NPC交涉",
+      "retrievalQuery": "NPC交涉 对话 诉求",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-03",
+      "category": "NPC",
+      "categoryCode": "npc",
+      "intent": "我请药师回忆那名受伤旅客购买过哪些药材。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-03",
+        "gold:npc",
+        "fact:npc-03"
+      ],
+      "criticalRefs": [
+        "gold:npc",
+        "fact:npc-03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "NPC交涉",
+      "retrievalQuery": "NPC交涉 对话 诉求",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-04",
+      "category": "NPC",
+      "categoryCode": "npc",
+      "intent": "我试着说服船夫在宵禁前送我们过河。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-04",
+        "gold:npc",
+        "fact:npc-04"
+      ],
+      "criticalRefs": [
+        "gold:npc",
+        "fact:npc-04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "NPC交涉",
+      "retrievalQuery": "NPC交涉 对话 诉求",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-05",
+      "category": "NPC",
+      "categoryCode": "npc",
+      "intent": "我向俘虏保证不会伤害他，询问仓库的暗门。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-05",
+        "gold:npc",
+        "fact:npc-05"
+      ],
+      "criticalRefs": [
+        "gold:npc",
+        "fact:npc-05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "NPC交涉",
+      "retrievalQuery": "NPC交涉 对话 诉求",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-06",
+      "category": "NPC",
+      "categoryCode": "npc",
+      "intent": "我和酒馆老板闲聊，套问最近失踪客人的消息。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-06",
+        "gold:npc",
+        "fact:npc-06"
+      ],
+      "criticalRefs": [
+        "gold:npc",
+        "fact:npc-06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "NPC交涉",
+      "retrievalQuery": "NPC交涉 对话 诉求",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-07",
+      "category": "NPC",
+      "categoryCode": "npc",
+      "intent": "我请修女转告院长，我们愿意交换一条可靠线索。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-07",
+        "gold:npc",
+        "fact:npc-07"
+      ],
+      "criticalRefs": [
+        "gold:npc",
+        "fact:npc-07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "NPC交涉",
+      "retrievalQuery": "NPC交涉 对话 诉求",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-08",
+      "category": "NPC",
+      "categoryCode": "npc",
+      "intent": "我直视队长，要求他说明为何隐瞒第二支巡逻队。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-08",
+        "gold:npc",
+        "fact:npc-08"
+      ],
+      "criticalRefs": [
+        "gold:npc",
+        "fact:npc-08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "NPC交涉",
+      "retrievalQuery": "NPC交涉 对话 诉求",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "major-ambiguity-01",
+      "category": "重大歧义",
+      "categoryCode": "major-ambiguity",
+      "intent": "我处理掉那个人，但不要让任何人发现。",
+      "goldForm": "clarification.v1",
+      "requiredRefs": [
+        "scene:major-ambiguity-01",
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-01"
+      ],
+      "criticalRefs": [
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "awaiting-input",
+      "expectedExecutable": false,
+      "signals": {
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "重大歧义",
+      "retrievalQuery": "重大歧义 选择 澄清",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "major-ambiguity-02",
+      "category": "重大歧义",
+      "categoryCode": "major-ambiguity",
+      "intent": "我把重要的东西带走，其他的先别管。",
+      "goldForm": "clarification.v1",
+      "requiredRefs": [
+        "scene:major-ambiguity-02",
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-02"
+      ],
+      "criticalRefs": [
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "awaiting-input",
+      "expectedExecutable": false,
+      "signals": {
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "重大歧义",
+      "retrievalQuery": "重大歧义 选择 澄清",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "major-ambiguity-03",
+      "category": "重大歧义",
+      "categoryCode": "major-ambiguity",
+      "intent": "我答应他的条件，不过只答应必要的部分。",
+      "goldForm": "clarification.v1",
+      "requiredRefs": [
+        "scene:major-ambiguity-03",
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-03"
+      ],
+      "criticalRefs": [
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "awaiting-input",
+      "expectedExecutable": false,
+      "signals": {
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "重大歧义",
+      "retrievalQuery": "重大歧义 选择 澄清",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "major-ambiguity-04",
+      "category": "重大歧义",
+      "categoryCode": "major-ambiguity",
+      "intent": "我启动装置，同时确保我们不会承担风险。",
+      "goldForm": "clarification.v1",
+      "requiredRefs": [
+        "scene:major-ambiguity-04",
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-04"
+      ],
+      "criticalRefs": [
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "awaiting-input",
+      "expectedExecutable": false,
+      "signals": {
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "重大歧义",
+      "retrievalQuery": "重大歧义 选择 澄清",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "major-ambiguity-05",
+      "category": "重大歧义",
+      "categoryCode": "major-ambiguity",
+      "intent": "我用最合适的法术解决眼前所有麻烦。",
+      "goldForm": "clarification.v1",
+      "requiredRefs": [
+        "scene:major-ambiguity-05",
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-05"
+      ],
+      "criticalRefs": [
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "awaiting-input",
+      "expectedExecutable": false,
+      "signals": {
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "重大歧义",
+      "retrievalQuery": "重大歧义 选择 澄清",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "major-ambiguity-06",
+      "category": "重大歧义",
+      "categoryCode": "major-ambiguity",
+      "intent": "我让队伍撤退，但也不能放弃这里的目标。",
+      "goldForm": "clarification.v1",
+      "requiredRefs": [
+        "scene:major-ambiguity-06",
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-06"
+      ],
+      "criticalRefs": [
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "awaiting-input",
+      "expectedExecutable": false,
+      "signals": {
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "重大歧义",
+      "retrievalQuery": "重大歧义 选择 澄清",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "major-ambiguity-07",
+      "category": "重大歧义",
+      "categoryCode": "major-ambiguity",
+      "intent": "我把证据交给可信的人，然后立刻离开。",
+      "goldForm": "clarification.v1",
+      "requiredRefs": [
+        "scene:major-ambiguity-07",
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-07"
+      ],
+      "criticalRefs": [
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "awaiting-input",
+      "expectedExecutable": false,
+      "signals": {
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "重大歧义",
+      "retrievalQuery": "重大歧义 选择 澄清",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "major-ambiguity-08",
+      "category": "重大歧义",
+      "categoryCode": "major-ambiguity",
+      "intent": "我按照之前说的方案行动，优先完成关键步骤。",
+      "goldForm": "clarification.v1",
+      "requiredRefs": [
+        "scene:major-ambiguity-08",
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-08"
+      ],
+      "criticalRefs": [
+        "gold:major-ambiguity",
+        "fact:major-ambiguity-08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "awaiting-input",
+      "expectedExecutable": false,
+      "signals": {
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "重大歧义",
+      "retrievalQuery": "重大歧义 选择 澄清",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "high-risk-01",
+      "category": "高风险",
+      "categoryCode": "high-risk",
+      "intent": "我抓住断裂的主索荡过峡谷，争取落在对岸平台。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:high-risk-01",
+        "gold:high-risk",
+        "fact:high-risk-01"
+      ],
+      "criticalRefs": [
+        "gold:high-risk",
+        "fact:high-risk-01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "高风险行动",
+      "retrievalQuery": "高风险行动 危险 后果",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "high-risk-02",
+      "category": "高风险",
+      "categoryCode": "high-risk",
+      "intent": "我在屋顶坍塌前冲进去，把昏迷的孩子拖出来。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:high-risk-02",
+        "gold:high-risk",
+        "fact:high-risk-02"
+      ],
+      "criticalRefs": [
+        "gold:high-risk",
+        "fact:high-risk-02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "高风险行动",
+      "retrievalQuery": "高风险行动 危险 后果",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "high-risk-03",
+      "category": "高风险",
+      "categoryCode": "high-risk",
+      "intent": "我顶着箭雨跑向闸门，尝试手动落下门栓。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:high-risk-03",
+        "gold:high-risk",
+        "fact:high-risk-03"
+      ],
+      "criticalRefs": [
+        "gold:high-risk",
+        "fact:high-risk-03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "高风险行动",
+      "retrievalQuery": "高风险行动 危险 后果",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "high-risk-04",
+      "category": "高风险",
+      "categoryCode": "high-risk",
+      "intent": "我喝下未经辨认的药剂，赌它能压制体内毒素。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:high-risk-04",
+        "gold:high-risk",
+        "fact:high-risk-04"
+      ],
+      "criticalRefs": [
+        "gold:high-risk",
+        "fact:high-risk-04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "高风险行动",
+      "retrievalQuery": "高风险行动 危险 后果",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "high-risk-05",
+      "category": "高风险",
+      "categoryCode": "high-risk",
+      "intent": "我从燃烧的横梁下钻过，抢回装有契约的铁盒。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:high-risk-05",
+        "gold:high-risk",
+        "fact:high-risk-05"
+      ],
+      "criticalRefs": [
+        "gold:high-risk",
+        "fact:high-risk-05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "高风险行动",
+      "retrievalQuery": "高风险行动 危险 后果",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "high-risk-06",
+      "category": "高风险",
+      "categoryCode": "high-risk",
+      "intent": "我独自引开食人魔，让同伴从侧门撤离。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:high-risk-06",
+        "gold:high-risk",
+        "fact:high-risk-06"
+      ],
+      "criticalRefs": [
+        "gold:high-risk",
+        "fact:high-risk-06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "高风险行动",
+      "retrievalQuery": "高风险行动 危险 后果",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "high-risk-07",
+      "category": "高风险",
+      "categoryCode": "high-risk",
+      "intent": "我跳上失控马车，试图在悬崖前夺回缰绳。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:high-risk-07",
+        "gold:high-risk",
+        "fact:high-risk-07"
+      ],
+      "criticalRefs": [
+        "gold:high-risk",
+        "fact:high-risk-07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "高风险行动",
+      "retrievalQuery": "高风险行动 危险 后果",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "high-risk-08",
+      "category": "高风险",
+      "categoryCode": "high-risk",
+      "intent": "我割断自己所在吊桥的一侧绳索，把追兵甩下去。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:high-risk-08",
+        "gold:high-risk",
+        "fact:high-risk-08"
+      ],
+      "criticalRefs": [
+        "gold:high-risk",
+        "fact:high-risk-08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "高风险行动",
+      "retrievalQuery": "高风险行动 危险 后果",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "missing-prerequisite-01",
+      "category": "缺前提",
+      "categoryCode": "missing-prerequisite",
+      "intent": "我在没有钥匙和工具的情况下直接打开密封金库。",
+      "goldForm": "in-world-refusal.v1",
+      "requiredRefs": [
+        "scene:missing-prerequisite-01",
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-01"
+      ],
+      "criticalRefs": [
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "resolved-in-world",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedRefusal": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "缺少前提",
+      "retrievalQuery": "缺少前提 世界内拒绝",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "missing-prerequisite-02",
+      "category": "缺前提",
+      "categoryCode": "missing-prerequisite",
+      "intent": "我隔着三堵石墙听清远处房间里的低声密谈。",
+      "goldForm": "in-world-refusal.v1",
+      "requiredRefs": [
+        "scene:missing-prerequisite-02",
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-02"
+      ],
+      "criticalRefs": [
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "resolved-in-world",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedRefusal": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "缺少前提",
+      "retrievalQuery": "缺少前提 世界内拒绝",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "missing-prerequisite-03",
+      "category": "缺前提",
+      "categoryCode": "missing-prerequisite",
+      "intent": "我让已经碎成灰的卷轴恢复原样并继续阅读。",
+      "goldForm": "in-world-refusal.v1",
+      "requiredRefs": [
+        "scene:missing-prerequisite-03",
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-03"
+      ],
+      "criticalRefs": [
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "resolved-in-world",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedRefusal": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "缺少前提",
+      "retrievalQuery": "缺少前提 世界内拒绝",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "missing-prerequisite-04",
+      "category": "缺前提",
+      "categoryCode": "missing-prerequisite",
+      "intent": "我徒手举起整座落下的城门让队伍通过。",
+      "goldForm": "in-world-refusal.v1",
+      "requiredRefs": [
+        "scene:missing-prerequisite-04",
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-04"
+      ],
+      "criticalRefs": [
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "resolved-in-world",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedRefusal": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "缺少前提",
+      "retrievalQuery": "缺少前提 世界内拒绝",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "missing-prerequisite-05",
+      "category": "缺前提",
+      "categoryCode": "missing-prerequisite",
+      "intent": "我命令从未见过我的敌军立刻听从我的指挥。",
+      "goldForm": "in-world-refusal.v1",
+      "requiredRefs": [
+        "scene:missing-prerequisite-05",
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-05"
+      ],
+      "criticalRefs": [
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "resolved-in-world",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedRefusal": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "缺少前提",
+      "retrievalQuery": "缺少前提 世界内拒绝",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "missing-prerequisite-06",
+      "category": "缺前提",
+      "categoryCode": "missing-prerequisite",
+      "intent": "我在完全没有光源时辨认墙上褪色的细小文字。",
+      "goldForm": "in-world-refusal.v1",
+      "requiredRefs": [
+        "scene:missing-prerequisite-06",
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-06"
+      ],
+      "criticalRefs": [
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "resolved-in-world",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedRefusal": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "缺少前提",
+      "retrievalQuery": "缺少前提 世界内拒绝",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "missing-prerequisite-07",
+      "category": "缺前提",
+      "categoryCode": "missing-prerequisite",
+      "intent": "我用已经耗尽的法术位再次施放同一个法术。",
+      "goldForm": "in-world-refusal.v1",
+      "requiredRefs": [
+        "scene:missing-prerequisite-07",
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-07"
+      ],
+      "criticalRefs": [
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "resolved-in-world",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedRefusal": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "缺少前提",
+      "retrievalQuery": "缺少前提 世界内拒绝",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "missing-prerequisite-08",
+      "category": "缺前提",
+      "categoryCode": "missing-prerequisite",
+      "intent": "我从当前位置一步跨到地图另一端并立即攻击。",
+      "goldForm": "in-world-refusal.v1",
+      "requiredRefs": [
+        "scene:missing-prerequisite-08",
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-08"
+      ],
+      "criticalRefs": [
+        "gold:missing-prerequisite",
+        "fact:missing-prerequisite-08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "resolved-in-world",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedRefusal": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "缺少前提",
+      "retrievalQuery": "缺少前提 世界内拒绝",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "dynamic-fact-01",
+      "category": "动态事实",
+      "categoryCode": "dynamic-fact",
+      "intent": "我检查仓库门边是否有日常装卸使用的空手推车。",
+      "goldForm": "materialization.v1",
+      "requiredRefs": [
+        "scene:dynamic-fact-01",
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-01"
+      ],
+      "criticalRefs": [
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "动态事实",
+      "retrievalQuery": "动态事实 开放留白 固化",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "dynamic-fact-02",
+      "category": "动态事实",
+      "categoryCode": "dynamic-fact",
+      "intent": "我寻找礼堂里可能用于悬挂旗帜的长绳。",
+      "goldForm": "materialization.v1",
+      "requiredRefs": [
+        "scene:dynamic-fact-02",
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-02"
+      ],
+      "criticalRefs": [
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "动态事实",
+      "retrievalQuery": "动态事实 开放留白 固化",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "dynamic-fact-03",
+      "category": "动态事实",
+      "categoryCode": "dynamic-fact",
+      "intent": "我看看厨房是否备有能快速制造浓烟的湿柴。",
+      "goldForm": "materialization.v1",
+      "requiredRefs": [
+        "scene:dynamic-fact-03",
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-03"
+      ],
+      "criticalRefs": [
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "动态事实",
+      "retrievalQuery": "动态事实 开放留白 固化",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "dynamic-fact-04",
+      "category": "动态事实",
+      "categoryCode": "dynamic-fact",
+      "intent": "我确认马厩旁是否放着修理围栏用的锤子。",
+      "goldForm": "materialization.v1",
+      "requiredRefs": [
+        "scene:dynamic-fact-04",
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-04"
+      ],
+      "criticalRefs": [
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "动态事实",
+      "retrievalQuery": "动态事实 开放留白 固化",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "dynamic-fact-05",
+      "category": "动态事实",
+      "categoryCode": "dynamic-fact",
+      "intent": "我在旧档案室寻找惯常配备的防潮油布。",
+      "goldForm": "materialization.v1",
+      "requiredRefs": [
+        "scene:dynamic-fact-05",
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-05"
+      ],
+      "criticalRefs": [
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "动态事实",
+      "retrievalQuery": "动态事实 开放留白 固化",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "dynamic-fact-06",
+      "category": "动态事实",
+      "categoryCode": "dynamic-fact",
+      "intent": "我查看渡口是否拴着供巡河人使用的小艇。",
+      "goldForm": "materialization.v1",
+      "requiredRefs": [
+        "scene:dynamic-fact-06",
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-06"
+      ],
+      "criticalRefs": [
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "动态事实",
+      "retrievalQuery": "动态事实 开放留白 固化",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "dynamic-fact-07",
+      "category": "动态事实",
+      "categoryCode": "dynamic-fact",
+      "intent": "我寻找矿道里支撑顶板的备用木柱。",
+      "goldForm": "materialization.v1",
+      "requiredRefs": [
+        "scene:dynamic-fact-07",
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-07"
+      ],
+      "criticalRefs": [
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "动态事实",
+      "retrievalQuery": "动态事实 开放留白 固化",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "dynamic-fact-08",
+      "category": "动态事实",
+      "categoryCode": "dynamic-fact",
+      "intent": "我检查祭坛附近是否留有清理烛泪的刮刀。",
+      "goldForm": "materialization.v1",
+      "requiredRefs": [
+        "scene:dynamic-fact-08",
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-08"
+      ],
+      "criticalRefs": [
+        "gold:dynamic-fact",
+        "fact:dynamic-fact-08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "动态事实",
+      "retrievalQuery": "动态事实 开放留白 固化",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "hidden-reality-01",
+      "category": "隐藏现实",
+      "categoryCode": "hidden-reality",
+      "intent": "我不惊动任何人地验证账册缺页是否与密道入口有关。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:hidden-reality-01",
+        "gold:hidden-reality",
+        "fact:hidden-reality-01"
+      ],
+      "criticalRefs": [
+        "gold:hidden-reality",
+        "fact:hidden-reality-01"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "隐藏现实",
+      "retrievalQuery": "隐藏现实 候选 真相",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "hidden-reality-02",
+      "category": "隐藏现实",
+      "categoryCode": "hidden-reality",
+      "intent": "我同时比较三名证人的说法，找出谁在替幕后者遮掩。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:hidden-reality-02",
+        "gold:hidden-reality",
+        "fact:hidden-reality-02"
+      ],
+      "criticalRefs": [
+        "gold:hidden-reality",
+        "fact:hidden-reality-02"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "隐藏现实",
+      "retrievalQuery": "隐藏现实 候选 真相",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "hidden-reality-03",
+      "category": "隐藏现实",
+      "categoryCode": "hidden-reality",
+      "intent": "我用假消息试探守卫，观察谁会把消息传向禁区。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:hidden-reality-03",
+        "gold:hidden-reality",
+        "fact:hidden-reality-03"
+      ],
+      "criticalRefs": [
+        "gold:hidden-reality",
+        "fact:hidden-reality-03"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "隐藏现实",
+      "retrievalQuery": "隐藏现实 候选 真相",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "hidden-reality-04",
+      "category": "隐藏现实",
+      "categoryCode": "hidden-reality",
+      "intent": "我检查祭坛、封印和旧伤痕之间是否存在同一仪式线索。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:hidden-reality-04",
+        "gold:hidden-reality",
+        "fact:hidden-reality-04"
+      ],
+      "criticalRefs": [
+        "gold:hidden-reality",
+        "fact:hidden-reality-04"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "隐藏现实",
+      "retrievalQuery": "隐藏现实 候选 真相",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "hidden-reality-05",
+      "category": "隐藏现实",
+      "categoryCode": "hidden-reality",
+      "intent": "我安排同伴制造声响，自己观察暗处是否有人提前反应。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:hidden-reality-05",
+        "gold:hidden-reality",
+        "fact:hidden-reality-05"
+      ],
+      "criticalRefs": [
+        "gold:hidden-reality",
+        "fact:hidden-reality-05"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "隐藏现实",
+      "retrievalQuery": "隐藏现实 候选 真相",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "hidden-reality-06",
+      "category": "隐藏现实",
+      "categoryCode": "hidden-reality",
+      "intent": "我逐一触碰三枚徽记，记录只有真品才会触发的细节。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:hidden-reality-06",
+        "gold:hidden-reality",
+        "fact:hidden-reality-06"
+      ],
+      "criticalRefs": [
+        "gold:hidden-reality",
+        "fact:hidden-reality-06"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "隐藏现实",
+      "retrievalQuery": "隐藏现实 候选 真相",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "hidden-reality-07",
+      "category": "隐藏现实",
+      "categoryCode": "hidden-reality",
+      "intent": "我先确认房间无人监视，再检验信件墨水是否会显出暗文。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:hidden-reality-07",
+        "gold:hidden-reality",
+        "fact:hidden-reality-07"
+      ],
+      "criticalRefs": [
+        "gold:hidden-reality",
+        "fact:hidden-reality-07"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "隐藏现实",
+      "retrievalQuery": "隐藏现实 候选 真相",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "hidden-reality-08",
+      "category": "隐藏现实",
+      "categoryCode": "hidden-reality",
+      "intent": "我利用巡逻间隙进入书房，验证摄政者是否伪造了旧誓约。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:hidden-reality-08",
+        "gold:hidden-reality",
+        "fact:hidden-reality-08"
+      ],
+      "criticalRefs": [
+        "gold:hidden-reality",
+        "fact:hidden-reality-08"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayMaterialize": true,
+        "mayNeedClarification": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "隐藏现实",
+      "retrievalQuery": "隐藏现实 候选 真相",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "personal-knowledge-01",
+      "category": "个人知识",
+      "categoryCode": "personal-knowledge",
+      "intent": "我回想自己在学院见过的纹章，判断这枚戒指属于哪个家族。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:personal-knowledge-01",
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:01"
+      ],
+      "criticalRefs": [
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "个人知识",
+      "retrievalQuery": "个人知识 亲历 回忆",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "personal-knowledge-02",
+      "category": "个人知识",
+      "categoryCode": "personal-knowledge",
+      "intent": "我根据亲历的战场经验判断远处号角代表哪种阵形。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:personal-knowledge-02",
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:02"
+      ],
+      "criticalRefs": [
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "个人知识",
+      "retrievalQuery": "个人知识 亲历 回忆",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "personal-knowledge-03",
+      "category": "个人知识",
+      "categoryCode": "personal-knowledge",
+      "intent": "我回忆导师教过的暗号，辨认门上刻痕是否是警告。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:personal-knowledge-03",
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:03"
+      ],
+      "criticalRefs": [
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "个人知识",
+      "retrievalQuery": "个人知识 亲历 回忆",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "personal-knowledge-04",
+      "category": "个人知识",
+      "categoryCode": "personal-knowledge",
+      "intent": "我比较自己喝过的解毒剂味道，判断瓶中液体是否相似。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:personal-knowledge-04",
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:04"
+      ],
+      "criticalRefs": [
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "个人知识",
+      "retrievalQuery": "个人知识 亲历 回忆",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "personal-knowledge-05",
+      "category": "个人知识",
+      "categoryCode": "personal-knowledge",
+      "intent": "我回想童年走过的山路，寻找暴雨后仍安全的岔道。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:personal-knowledge-05",
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:05"
+      ],
+      "criticalRefs": [
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "个人知识",
+      "retrievalQuery": "个人知识 亲历 回忆",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "personal-knowledge-06",
+      "category": "个人知识",
+      "categoryCode": "personal-knowledge",
+      "intent": "我根据自己的锻造经验检查断剑是否被人为做过手脚。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:personal-knowledge-06",
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:06"
+      ],
+      "criticalRefs": [
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "个人知识",
+      "retrievalQuery": "个人知识 亲历 回忆",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "personal-knowledge-07",
+      "category": "个人知识",
+      "categoryCode": "personal-knowledge",
+      "intent": "我回忆昨夜独自听见的谈话，确认来者声音是否相同。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:personal-knowledge-07",
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:07"
+      ],
+      "criticalRefs": [
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "个人知识",
+      "retrievalQuery": "个人知识 亲历 回忆",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "personal-knowledge-08",
+      "category": "个人知识",
+      "categoryCode": "personal-knowledge",
+      "intent": "我用只有自己读过的家书内容核对信使身份。",
+      "goldForm": "observe.v1",
+      "requiredRefs": [
+        "scene:personal-knowledge-08",
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:08"
+      ],
+      "criticalRefs": [
+        "gold:personal-knowledge",
+        "personal-knowledge:alice:08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "observe",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "个人知识",
+      "retrievalQuery": "个人知识 亲历 回忆",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-limited-knowledge-01",
+      "category": "NPC有限知识",
+      "categoryCode": "npc-limited-knowledge",
+      "intent": "我问守卫他亲眼看见了什么，不让他猜测地下室里的事。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-limited-knowledge-01",
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:01"
+      ],
+      "criticalRefs": [
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "NPC有限知识",
+      "retrievalQuery": "NPC有限知识 视角 计划",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-limited-knowledge-02",
+      "category": "NPC有限知识",
+      "categoryCode": "npc-limited-knowledge",
+      "intent": "我请马夫只描述昨夜经过马厩的人和马匹。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-limited-knowledge-02",
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:02"
+      ],
+      "criticalRefs": [
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "NPC有限知识",
+      "retrievalQuery": "NPC有限知识 视角 计划",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-limited-knowledge-03",
+      "category": "NPC有限知识",
+      "categoryCode": "npc-limited-knowledge",
+      "intent": "我询问学徒师父离开前实际交代过哪些任务。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-limited-knowledge-03",
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:03"
+      ],
+      "criticalRefs": [
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "NPC有限知识",
+      "retrievalQuery": "NPC有限知识 视角 计划",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-limited-knowledge-04",
+      "category": "NPC有限知识",
+      "categoryCode": "npc-limited-knowledge",
+      "intent": "我让俘虏画出他负责巡逻的区域，不追问他没去过的楼层。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-limited-knowledge-04",
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:04"
+      ],
+      "criticalRefs": [
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "NPC有限知识",
+      "retrievalQuery": "NPC有限知识 视角 计划",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-limited-knowledge-05",
+      "category": "NPC有限知识",
+      "categoryCode": "npc-limited-knowledge",
+      "intent": "我问孩子记得的衣着和声音，不暗示嫌疑人的身份。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-limited-knowledge-05",
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:05"
+      ],
+      "criticalRefs": [
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "NPC有限知识",
+      "retrievalQuery": "NPC有限知识 视角 计划",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-limited-knowledge-06",
+      "category": "NPC有限知识",
+      "categoryCode": "npc-limited-knowledge",
+      "intent": "我让商人列出亲手收过的货物，不采信道听途说。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-limited-knowledge-06",
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:06"
+      ],
+      "criticalRefs": [
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "NPC有限知识",
+      "retrievalQuery": "NPC有限知识 视角 计划",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-limited-knowledge-07",
+      "category": "NPC有限知识",
+      "categoryCode": "npc-limited-knowledge",
+      "intent": "我询问幽灵生前最后看见的房间与来客。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-limited-knowledge-07",
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:07"
+      ],
+      "criticalRefs": [
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "NPC有限知识",
+      "retrievalQuery": "NPC有限知识 视角 计划",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "npc-limited-knowledge-08",
+      "category": "NPC有限知识",
+      "categoryCode": "npc-limited-knowledge",
+      "intent": "我请哨兵说明他的下一轮巡逻计划和已知警报。",
+      "goldForm": "npc-exchange.v1",
+      "requiredRefs": [
+        "scene:npc-limited-knowledge-08",
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:08"
+      ],
+      "criticalRefs": [
+        "gold:npc-limited-knowledge",
+        "npc-view:warden:08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "npc-exchange",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "NPC有限知识",
+      "retrievalQuery": "NPC有限知识 视角 计划",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "meaningful-failure-01",
+      "category": "有意义失败",
+      "categoryCode": "meaningful-failure",
+      "intent": "我尝试在谈判破裂前揭穿使者的矛盾，即使失败也会暴露我们的怀疑。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:meaningful-failure-01",
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-01"
+      ],
+      "criticalRefs": [
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "有意义失败",
+      "retrievalQuery": "有意义失败 后果 推进",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "meaningful-failure-02",
+      "category": "有意义失败",
+      "categoryCode": "meaningful-failure",
+      "intent": "我拆除门后的警铃；失败时至少要判断警报通向哪里。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:meaningful-failure-02",
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-02"
+      ],
+      "criticalRefs": [
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "有意义失败",
+      "retrievalQuery": "有意义失败 后果 推进",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "meaningful-failure-03",
+      "category": "有意义失败",
+      "categoryCode": "meaningful-failure",
+      "intent": "我追踪雨中的脚印，接受跟丢后可能走进对方布置的假线索。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:meaningful-failure-03",
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-03"
+      ],
+      "criticalRefs": [
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "有意义失败",
+      "retrievalQuery": "有意义失败 后果 推进",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "meaningful-failure-04",
+      "category": "有意义失败",
+      "categoryCode": "meaningful-failure",
+      "intent": "我说服矿工继续开路，失败则会让他们公开拒绝并影响士气。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:meaningful-failure-04",
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-04"
+      ],
+      "criticalRefs": [
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "有意义失败",
+      "retrievalQuery": "有意义失败 后果 推进",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "meaningful-failure-05",
+      "category": "有意义失败",
+      "categoryCode": "meaningful-failure",
+      "intent": "我抢在潮水上涨前取回箱子，失败可能让箱子漂向敌方码头。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:meaningful-failure-05",
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-05"
+      ],
+      "criticalRefs": [
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "有意义失败",
+      "retrievalQuery": "有意义失败 后果 推进",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "meaningful-failure-06",
+      "category": "有意义失败",
+      "categoryCode": "meaningful-failure",
+      "intent": "我修复古老机关，失败时机关会锁死但显露一段铭文。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:meaningful-failure-06",
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-06"
+      ],
+      "criticalRefs": [
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "有意义失败",
+      "retrievalQuery": "有意义失败 后果 推进",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "meaningful-failure-07",
+      "category": "有意义失败",
+      "categoryCode": "meaningful-failure",
+      "intent": "我潜入营帐偷取地图，失败会迫使敌军提前转移。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:meaningful-failure-07",
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-07"
+      ],
+      "criticalRefs": [
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "有意义失败",
+      "retrievalQuery": "有意义失败 后果 推进",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "meaningful-failure-08",
+      "category": "有意义失败",
+      "categoryCode": "meaningful-failure",
+      "intent": "我冒险横穿冰面救人，失败时冰层破裂并改变后续路线。",
+      "goldForm": "high-risk-action.v1",
+      "requiredRefs": [
+        "scene:meaningful-failure-08",
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-08"
+      ],
+      "criticalRefs": [
+        "gold:meaningful-failure",
+        "fact:meaningful-failure-08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "有意义失败",
+      "retrievalQuery": "有意义失败 后果 推进",
+      "initialDraft": "repairable-invalid"
+    },
+    {
+      "id": "activity-01",
+      "category": "Activity",
+      "categoryCode": "activity",
+      "intent": "我花两个小时整理散落档案并建立可检索的时间顺序。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:activity-01",
+        "gold:activity",
+        "activity:activity-01"
+      ],
+      "criticalRefs": [
+        "gold:activity",
+        "activity:activity-01"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "activity",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "耗时活动",
+      "retrievalQuery": "耗时活动 虚构时间 完成",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "activity-02",
+      "category": "Activity",
+      "categoryCode": "activity",
+      "intent": "我用半天修补渡船，再试着把它拖回可下水的位置。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:activity-02",
+        "gold:activity",
+        "activity:activity-02"
+      ],
+      "criticalRefs": [
+        "gold:activity",
+        "activity:activity-02"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "activity",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "耗时活动",
+      "retrievalQuery": "耗时活动 虚构时间 完成",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "activity-03",
+      "category": "Activity",
+      "categoryCode": "activity",
+      "intent": "我连续守夜观察灯塔信号，记录每次间隔与颜色。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:activity-03",
+        "gold:activity",
+        "activity:activity-03"
+      ],
+      "criticalRefs": [
+        "gold:activity",
+        "activity:activity-03"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "activity",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "耗时活动",
+      "retrievalQuery": "耗时活动 虚构时间 完成",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "activity-04",
+      "category": "Activity",
+      "categoryCode": "activity",
+      "intent": "我在营地制作一套能承受一次坠落的简易绳索装置。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:activity-04",
+        "gold:activity",
+        "activity:activity-04"
+      ],
+      "criticalRefs": [
+        "gold:activity",
+        "activity:activity-04"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "activity",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "耗时活动",
+      "retrievalQuery": "耗时活动 虚构时间 完成",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "activity-05",
+      "category": "Activity",
+      "categoryCode": "activity",
+      "intent": "我沿河搜索一整段河岸，标记所有近期靠岸痕迹。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:activity-05",
+        "gold:activity",
+        "activity:activity-05"
+      ],
+      "criticalRefs": [
+        "gold:activity",
+        "activity:activity-05"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "activity",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "耗时活动",
+      "retrievalQuery": "耗时活动 虚构时间 完成",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "activity-06",
+      "category": "Activity",
+      "categoryCode": "activity",
+      "intent": "我分阶段治疗伤员、清点药品并安排下一轮照护。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:activity-06",
+        "gold:activity",
+        "activity:activity-06"
+      ],
+      "criticalRefs": [
+        "gold:activity",
+        "activity:activity-06"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "activity",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "耗时活动",
+      "retrievalQuery": "耗时活动 虚构时间 完成",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "activity-07",
+      "category": "Activity",
+      "categoryCode": "activity",
+      "intent": "我用数小时审阅账本，把重复出现的假名串联起来。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:activity-07",
+        "gold:activity",
+        "activity:activity-07"
+      ],
+      "criticalRefs": [
+        "gold:activity",
+        "activity:activity-07"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "activity",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "耗时活动",
+      "retrievalQuery": "耗时活动 虚构时间 完成",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "activity-08",
+      "category": "Activity",
+      "categoryCode": "activity",
+      "intent": "我在天亮前加固废墟入口并布置可察觉的警戒线。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:activity-08",
+        "gold:activity",
+        "activity:activity-08"
+      ],
+      "criticalRefs": [
+        "gold:activity",
+        "activity:activity-08"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "activity",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "mayMaterialize": true,
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "耗时活动",
+      "retrievalQuery": "耗时活动 虚构时间 完成",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "combat-01",
+      "category": "战斗",
+      "categoryCode": "combat",
+      "intent": "我借石柱掩护逼近弩手，再用盾牌撞开他的射击角度。",
+      "goldForm": "combat-action.v1",
+      "requiredRefs": [
+        "scene:combat-01",
+        "gold:combat",
+        "turn:combat-01"
+      ],
+      "criticalRefs": [
+        "gold:combat",
+        "turn:combat-01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "combat",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "combat",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "战斗行动",
+      "retrievalQuery": "战斗行动 回合 攻击",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "combat-02",
+      "category": "战斗",
+      "categoryCode": "combat",
+      "intent": "我绕到食尸鬼侧面攻击，试图为同伴创造撤离路线。",
+      "goldForm": "combat-action.v1",
+      "requiredRefs": [
+        "scene:combat-02",
+        "gold:combat",
+        "turn:combat-02"
+      ],
+      "criticalRefs": [
+        "gold:combat",
+        "turn:combat-02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "combat",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "combat",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "战斗行动",
+      "retrievalQuery": "战斗行动 回合 攻击",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "combat-03",
+      "category": "战斗",
+      "categoryCode": "combat",
+      "intent": "我先压制门口敌人，再退到不会挡住法师的位置。",
+      "goldForm": "combat-action.v1",
+      "requiredRefs": [
+        "scene:combat-03",
+        "gold:combat",
+        "turn:combat-03"
+      ],
+      "criticalRefs": [
+        "gold:combat",
+        "turn:combat-03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "combat",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "combat",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "战斗行动",
+      "retrievalQuery": "战斗行动 回合 攻击",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "combat-04",
+      "category": "战斗",
+      "categoryCode": "combat",
+      "intent": "我用长矛阻止骑手冲锋，保持自己站在窄桥中央。",
+      "goldForm": "combat-action.v1",
+      "requiredRefs": [
+        "scene:combat-04",
+        "gold:combat",
+        "turn:combat-04"
+      ],
+      "criticalRefs": [
+        "gold:combat",
+        "turn:combat-04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "combat",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "combat",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "战斗行动",
+      "retrievalQuery": "战斗行动 回合 攻击",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "combat-05",
+      "category": "战斗",
+      "categoryCode": "combat",
+      "intent": "我攻击正在施法的祭司，优先打断他而不是追求伤害。",
+      "goldForm": "combat-action.v1",
+      "requiredRefs": [
+        "scene:combat-05",
+        "gold:combat",
+        "turn:combat-05"
+      ],
+      "criticalRefs": [
+        "gold:combat",
+        "turn:combat-05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "combat",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "combat",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "战斗行动",
+      "retrievalQuery": "战斗行动 回合 攻击",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "combat-06",
+      "category": "战斗",
+      "categoryCode": "combat",
+      "intent": "我护住倒地同伴，同时用短剑逼退最近的敌人。",
+      "goldForm": "combat-action.v1",
+      "requiredRefs": [
+        "scene:combat-06",
+        "gold:combat",
+        "turn:combat-06"
+      ],
+      "criticalRefs": [
+        "gold:combat",
+        "turn:combat-06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "combat",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "combat",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "战斗行动",
+      "retrievalQuery": "战斗行动 回合 攻击",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "combat-07",
+      "category": "战斗",
+      "categoryCode": "combat",
+      "intent": "我冲上楼梯占据高处，迫使两名守卫分散注意。",
+      "goldForm": "combat-action.v1",
+      "requiredRefs": [
+        "scene:combat-07",
+        "gold:combat",
+        "turn:combat-07"
+      ],
+      "criticalRefs": [
+        "gold:combat",
+        "turn:combat-07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "combat",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "combat",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "战斗行动",
+      "retrievalQuery": "战斗行动 回合 攻击",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "combat-08",
+      "category": "战斗",
+      "categoryCode": "combat",
+      "intent": "我用弓箭射击兽人手中的火把，阻止他点燃油沟。",
+      "goldForm": "combat-action.v1",
+      "requiredRefs": [
+        "scene:combat-08",
+        "gold:combat",
+        "turn:combat-08"
+      ],
+      "criticalRefs": [
+        "gold:combat",
+        "turn:combat-08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "combat",
+      "expectedExecutable": true,
+      "signals": {
+        "interaction": "combat",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "战斗行动",
+      "retrievalQuery": "战斗行动 回合 攻击",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "resource-01",
+      "category": "资源",
+      "categoryCode": "resource",
+      "intent": "我消耗一份治疗药剂稳定伤势，然后继续赶路。",
+      "goldForm": "ordinary-check.v1",
+      "requiredRefs": [
+        "scene:resource-01",
+        "gold:resource",
+        "resource:alice:01"
+      ],
+      "criticalRefs": [
+        "gold:resource",
+        "resource:alice:01"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "资源消耗",
+      "retrievalQuery": "资源消耗 装备 次数",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "resource-02",
+      "category": "资源",
+      "categoryCode": "resource",
+      "intent": "我用最后一捆绳索把两段断桥临时连接起来。",
+      "goldForm": "ordinary-check.v1",
+      "requiredRefs": [
+        "scene:resource-02",
+        "gold:resource",
+        "resource:alice:02"
+      ],
+      "criticalRefs": [
+        "gold:resource",
+        "resource:alice:02"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "资源消耗",
+      "retrievalQuery": "资源消耗 装备 次数",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "resource-03",
+      "category": "资源",
+      "categoryCode": "resource",
+      "intent": "我花费一枚法术位制造光源并维持到搜查结束。",
+      "goldForm": "ordinary-check.v1",
+      "requiredRefs": [
+        "scene:resource-03",
+        "gold:resource",
+        "resource:alice:03"
+      ],
+      "criticalRefs": [
+        "gold:resource",
+        "resource:alice:03"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "资源消耗",
+      "retrievalQuery": "资源消耗 装备 次数",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "resource-04",
+      "category": "资源",
+      "categoryCode": "resource",
+      "intent": "我拿出仅剩的银箭测试门后生物是否畏惧银器。",
+      "goldForm": "ordinary-check.v1",
+      "requiredRefs": [
+        "scene:resource-04",
+        "gold:resource",
+        "resource:alice:04"
+      ],
+      "criticalRefs": [
+        "gold:resource",
+        "resource:alice:04"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "资源消耗",
+      "retrievalQuery": "资源消耗 装备 次数",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "resource-05",
+      "category": "资源",
+      "categoryCode": "resource",
+      "intent": "我消耗盗贼工具的一次耐久尝试拆开生锈锁芯。",
+      "goldForm": "ordinary-check.v1",
+      "requiredRefs": [
+        "scene:resource-05",
+        "gold:resource",
+        "resource:alice:05"
+      ],
+      "criticalRefs": [
+        "gold:resource",
+        "resource:alice:05"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "资源消耗",
+      "retrievalQuery": "资源消耗 装备 次数",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "resource-06",
+      "category": "资源",
+      "categoryCode": "resource",
+      "intent": "我分出两天口粮安抚饥饿的难民并换取消息。",
+      "goldForm": "ordinary-check.v1",
+      "requiredRefs": [
+        "scene:resource-06",
+        "gold:resource",
+        "resource:alice:06"
+      ],
+      "criticalRefs": [
+        "gold:resource",
+        "resource:alice:06"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "资源消耗",
+      "retrievalQuery": "资源消耗 装备 次数",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "resource-07",
+      "category": "资源",
+      "categoryCode": "resource",
+      "intent": "我使用职业能力恢复同伴，但保留自己的反应。",
+      "goldForm": "ordinary-check.v1",
+      "requiredRefs": [
+        "scene:resource-07",
+        "gold:resource",
+        "resource:alice:07"
+      ],
+      "criticalRefs": [
+        "gold:resource",
+        "resource:alice:07"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "资源消耗",
+      "retrievalQuery": "资源消耗 装备 次数",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "resource-08",
+      "category": "资源",
+      "categoryCode": "resource",
+      "intent": "我点燃最后一瓶灯油制造阻隔追兵的火线。",
+      "goldForm": "ordinary-check.v1",
+      "requiredRefs": [
+        "scene:resource-08",
+        "gold:resource",
+        "resource:alice:08"
+      ],
+      "criticalRefs": [
+        "gold:resource",
+        "resource:alice:08"
+      ],
+      "complexity": "simple",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "资源消耗",
+      "retrievalQuery": "资源消耗 装备 次数",
+      "initialDraft": "repairable-invalid"
+    },
+    {
+      "id": "conclusion-01",
+      "category": "收束",
+      "categoryCode": "conclusion",
+      "intent": "我公开全部证据，要求摄政者回应旧誓约被伪造的事实。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:conclusion-01",
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-01"
+      ],
+      "criticalRefs": [
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-01"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "conclusion",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedClarification": true,
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "故事收束",
+      "retrievalQuery": "故事收束 核心冲突 尾声",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "conclusion-02",
+      "category": "收束",
+      "categoryCode": "conclusion",
+      "intent": "我把幸存者召集到大厅，让他们决定城镇接下来的领导者。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:conclusion-02",
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-02"
+      ],
+      "criticalRefs": [
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-02"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "conclusion",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedClarification": true,
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "故事收束",
+      "retrievalQuery": "故事收束 核心冲突 尾声",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "conclusion-03",
+      "category": "收束",
+      "categoryCode": "conclusion",
+      "intent": "我归还圣物并兑现承诺，然后询问还有哪项核心威胁未解决。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:conclusion-03",
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-03"
+      ],
+      "criticalRefs": [
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-03"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "conclusion",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedClarification": true,
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "故事收束",
+      "retrievalQuery": "故事收束 核心冲突 尾声",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "conclusion-04",
+      "category": "收束",
+      "categoryCode": "conclusion",
+      "intent": "我接受敌方投降，但要求先释放人质并交出账册。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:conclusion-04",
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-04"
+      ],
+      "criticalRefs": [
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-04"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "conclusion",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedClarification": true,
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "故事收束",
+      "retrievalQuery": "故事收束 核心冲突 尾声",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "conclusion-05",
+      "category": "收束",
+      "categoryCode": "conclusion",
+      "intent": "我烧毁仪式核心，确认持续整章的诅咒是否真正结束。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:conclusion-05",
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-05"
+      ],
+      "criticalRefs": [
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-05"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "conclusion",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedClarification": true,
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "故事收束",
+      "retrievalQuery": "故事收束 核心冲突 尾声",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "conclusion-06",
+      "category": "收束",
+      "categoryCode": "conclusion",
+      "intent": "我护送继承人登上议席，并让各派公开表明立场。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:conclusion-06",
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-06"
+      ],
+      "criticalRefs": [
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-06"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "conclusion",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedClarification": true,
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "故事收束",
+      "retrievalQuery": "故事收束 核心冲突 尾声",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "conclusion-07",
+      "category": "收束",
+      "categoryCode": "conclusion",
+      "intent": "我与宿敌完成最后谈判，决定是和解、放逐还是审判。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:conclusion-07",
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-07"
+      ],
+      "criticalRefs": [
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-07"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "conclusion",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedClarification": true,
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "故事收束",
+      "retrievalQuery": "故事收束 核心冲突 尾声",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "conclusion-08",
+      "category": "收束",
+      "categoryCode": "conclusion",
+      "intent": "我离开黑橡树前逐一告别盟友，确认每条主要线索的结局。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:conclusion-08",
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-08"
+      ],
+      "criticalRefs": [
+        "gold:conclusion",
+        "campaign-conclusion:conclusion-08"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "conclusion",
+      "expectedExecutable": true,
+      "signals": {
+        "mayNeedClarification": true,
+        "risk": "ordinary",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "故事收束",
+      "retrievalQuery": "故事收束 核心冲突 尾声",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "compound-dynamic-01",
+      "category": "复合动态行动",
+      "categoryCode": "compound-dynamic",
+      "intent": "我射断吊灯锁链，让它坠落砸开桌阵并形成阻挡追兵的残骸。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:compound-dynamic-01",
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-01"
+      ],
+      "criticalRefs": [
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-01"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayUseEnvironment": true,
+        "mayMaterialize": true,
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "复合动态行动",
+      "retrievalQuery": "复合动态行动 多阶段 跨范围",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "compound-dynamic-02",
+      "category": "复合动态行动",
+      "categoryCode": "compound-dynamic",
+      "intent": "我先放下闸门分割敌人，再爬上控制台关闭蒸汽管线。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:compound-dynamic-02",
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-02"
+      ],
+      "criticalRefs": [
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-02"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayUseEnvironment": true,
+        "mayMaterialize": true,
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "复合动态行动",
+      "retrievalQuery": "复合动态行动 多阶段 跨范围",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "compound-dynamic-03",
+      "category": "复合动态行动",
+      "categoryCode": "compound-dynamic",
+      "intent": "我点燃油沟逼退前排，同时推倒书架封住侧门。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:compound-dynamic-03",
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-03"
+      ],
+      "criticalRefs": [
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-03"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayUseEnvironment": true,
+        "mayMaterialize": true,
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "复合动态行动",
+      "retrievalQuery": "复合动态行动 多阶段 跨范围",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "compound-dynamic-04",
+      "category": "复合动态行动",
+      "categoryCode": "compound-dynamic",
+      "intent": "我利用吊桥配重把同伴送上平台，再切断追兵一侧绳索。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:compound-dynamic-04",
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-04"
+      ],
+      "criticalRefs": [
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-04"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayUseEnvironment": true,
+        "mayMaterialize": true,
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "复合动态行动",
+      "retrievalQuery": "复合动态行动 多阶段 跨范围",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "compound-dynamic-05",
+      "category": "复合动态行动",
+      "categoryCode": "compound-dynamic",
+      "intent": "我撞翻火盆制造烟幕，趁乱夺走钥匙并释放囚犯。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:compound-dynamic-05",
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-05"
+      ],
+      "criticalRefs": [
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-05"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayUseEnvironment": true,
+        "mayMaterialize": true,
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "复合动态行动",
+      "retrievalQuery": "复合动态行动 多阶段 跨范围",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "compound-dynamic-06",
+      "category": "复合动态行动",
+      "categoryCode": "compound-dynamic",
+      "intent": "我破坏石柱支点迫使屋顶局部坍塌，但保留我们的撤离通道。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:compound-dynamic-06",
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-06"
+      ],
+      "criticalRefs": [
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-06"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayUseEnvironment": true,
+        "mayMaterialize": true,
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "fts",
+      "retrievalAlias": "复合动态行动",
+      "retrievalQuery": "复合动态行动 多阶段 跨范围",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "compound-dynamic-07",
+      "category": "复合动态行动",
+      "categoryCode": "compound-dynamic",
+      "intent": "我驾驶矿车冲散路障，在到达岔口前跳车并扳动转轨器。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:compound-dynamic-07",
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-07"
+      ],
+      "criticalRefs": [
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-07"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayUseEnvironment": true,
+        "mayMaterialize": true,
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "structure",
+      "retrievalAlias": "复合动态行动",
+      "retrievalQuery": "复合动态行动 多阶段 跨范围",
+      "initialDraft": "valid"
+    },
+    {
+      "id": "compound-dynamic-08",
+      "category": "复合动态行动",
+      "categoryCode": "compound-dynamic",
+      "intent": "我用冰面引诱巨兽靠近，再击碎薄冰让它陷入水中。",
+      "goldForm": "compound.v1",
+      "requiredRefs": [
+        "scene:compound-dynamic-08",
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-08"
+      ],
+      "criticalRefs": [
+        "gold:compound-dynamic",
+        "fact:compound-dynamic-08"
+      ],
+      "complexity": "complex",
+      "expectedRoute": "executable",
+      "expectedExecutable": true,
+      "signals": {
+        "mayUseEnvironment": true,
+        "mayMaterialize": true,
+        "risk": "high",
+        "preferredCount": 3
+      },
+      "retrievalMode": "alias",
+      "retrievalAlias": "复合动态行动",
+      "retrievalQuery": "复合动态行动 多阶段 跨范围",
+      "initialDraft": "repairable-invalid"
+    }
+  ]
+}
