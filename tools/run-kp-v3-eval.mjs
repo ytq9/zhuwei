@@ -1025,7 +1025,6 @@ function openBlankEnvironmentDraft(goldCase, common, basisRefs) {
       ? "按玩家的具体想法改变环境状态、通行与掩体，不凭空生成区域伤害"
       : "按玩家的具体想法改变局势，并由 Rules 计算实际影响范围",
     featureDisposition: "reasonable-open-blank",
-    basisRefs: ["scene:gold:current"],
     effectMode,
     activation,
     ...activationFields,

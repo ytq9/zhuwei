@@ -481,7 +481,8 @@ function genesisWithEnvironmentFeature(genesis, tacticalFeature) {
     .sort((left, right) => left.featureId.localeCompare(right.featureId));
   forged.initialStateHash = hashWorldState(forged.initialState);
   forged.initialState.eventHeadHash = forged.initialStateHash;
-  const { genesisHash: _genesisHash, ...unsigned } = forged;
+  const unsigned = { ...forged };
+  delete unsigned.genesisHash;
   forged.genesisHash = canonicalSha256(unsigned);
   return forged;
 }

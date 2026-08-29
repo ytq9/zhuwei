@@ -1991,3 +1991,9 @@
 - 修改文件：`db/schema.ts`、`drizzle/0011_low_leo.sql`、`app/_runtime/lib/room/archive.ts`、`app/_runtime/lib/room/durable-object.ts`、`tests/archive-d1-batches-v2.test.mjs`、`tests/archive-do-resume-v2.test.ts`。最终分页批次先核对已写与本页 audit 的精确 `viewerHash+projectionHash` 集合，再原子单调推进 checkpoint；probe/reader 核验 genesis、event/state/branch 与 checkpoint prefix replay。只有 service capability 可从 D1 恢复到空 DO；恢复审计按 event/viewer/projection canonical 排序，成员/控制索引只从当前活跃状态重建，历史实体仍留 Rules state 但不复权；archive 在导出及 replay 后都拒绝未结清随机。
 - 定向检查：`npx tsx --test tests/archive-d1-batches-v2.test.mjs` 退出 0，11/11（含旧 checkpoint 的 D1 `event_json` 前缀篡改、ahead event 与 genesis conflict 拒绝）；`npx vitest run tests/archive-do-resume-v2.test.ts -t 'resumes 80'` 退出 0，1/1（80+ events、48 audits、真实 D1 reader→fresh DO，73.73 s）；同文件无当前受控 viewer 的 D1→fresh DO 退出 0，1/1；combat archive/randomness 与 recovery 定向各 1/1；`npm run typecheck`、`git diff --check` 退出 0。Wrangler local `0000–0011` 与独立 SQLite `0010→0011` 的 migration/checkpoint 写读均退出 0。
 - 剩余限制：本地证据不替代冻结全量和远端 D1。发布时仍须先取得新的 Time Travel bookmark，再串行应用 `0008–0011`、验证无 pending，然后才部署现有 Worker。
+
+## 冻结候选 Lint 快修（2026-08-30）
+
+- 症状与根因：冻结提交 `162b61c` 的前三项正式门通过后，首次 `npm run lint` 退出 1；三项均为本批新增代码中的静态错误：测试重算 genesis hash 时留下未用解构变量，module scanner 的字符类含多余转义，离线评测环境草稿重复声明 `basisRefs`。
+- 修改文件：`tests/chandelier-environment-rules-v3.test.mjs`、`tools/check-modules.mjs`、`tools/run-kp-v3-eval.mjs`。改为复制后删除旧 genesis hash、用等价十六进制字符类表示左方括号，并保留调用者传入的唯一 `basisRefs`；没有改变产品规则、断言或评测范围。
+- 定向检查：`npx eslint tests/chandelier-environment-rules-v3.test.mjs tools/check-modules.mjs tools/run-kp-v3-eval.mjs` 退出 0。修复将形成新的冻结提交，随后从 `git diff --check` 起完整重跑全部正式门；首次失败结果不作为发布通过证据。

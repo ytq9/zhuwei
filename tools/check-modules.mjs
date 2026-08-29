@@ -144,7 +144,7 @@ function maskCommentsAndStrings(source) {
     }
     if (mode === "code" && char === "/" && next !== "/" && next !== "*") {
       const prefix = source.slice(0, index).trimEnd();
-      if (/(?:^|[=(,:;!&|?{}\[]|=>|\breturn|\bcase|\bthrow)$/.test(prefix)) {
+      if (/(?:^|[=(,:;!&|?{}\x5b]|=>|\breturn|\bcase|\bthrow)$/.test(prefix)) {
         output += " ";
         index += 1;
         mode = "regex";
