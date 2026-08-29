@@ -1,4 +1,9 @@
 import type { TacticalPoint2d, TacticalPosition } from "../tactical-projection";
+import {
+  environmentBindingMatchesFeature,
+  isCompiledEnvironmentBinding,
+  type CompiledEnvironmentBinding,
+} from "./environment";
 
 export type CanonicalTacticalFeature = {
   featureId: string;
@@ -15,6 +20,7 @@ export type CanonicalTacticalFeature = {
   terrain?: "normal" | "rubble";
   durability?: CanonicalTacticalFeatureDurability;
   stateGraph?: CanonicalTacticalFeatureStateGraph;
+  environment?: CompiledEnvironmentBinding;
   visibilityPolicyId:
     | "visibility:public"
     | "visibility:scene-observers"
@@ -43,7 +49,7 @@ export type CanonicalTacticalFeatureStateGraph = {
   states: CanonicalTacticalFeatureState[];
   transitions: Array<{
     fromState: string;
-    intent: "open" | "close";
+    intent: "open" | "close" | "resolveHazard";
     toState: string;
   }>;
   durability?: Omit<CanonicalTacticalFeatureDurability, "current">;
@@ -177,7 +183,9 @@ function featureStateGraph(value: unknown): value is CanonicalTacticalFeatureSta
     isRecord(transition)
     && exactKeys(transition, ["fromState", "intent", "toState"])
     && nonEmptyString(transition.fromState)
-    && (transition.intent === "open" || transition.intent === "close")
+    && (transition.intent === "open"
+      || transition.intent === "close"
+      || transition.intent === "resolveHazard")
     && nonEmptyString(transition.toState)
     && transition.fromState !== transition.toState
     && stateIds.has(transition.fromState)
@@ -225,12 +233,16 @@ function feature(value: unknown): value is CanonicalTacticalFeature {
       "state",
       "visibilityPolicyId",
     ];
-  const optionalKeys = ["durability", "stateGraph", "terrain"];
+  const optionalKeys = ["durability", "environment", "stateGraph", "terrain"];
   if (!keys.every((key) => key in value)
     || Object.keys(value).some((key) => !keys.includes(key) && !optionalKeys.includes(key))) return false;
   if (!(value.stateGraph === undefined
     || ((value.kind === "portal" || value.kind === "destructible")
       && featureStateGraph(value.stateGraph)))) return false;
+  if (!(value.environment === undefined
+    || (value.kind === "destructible"
+      && isCompiledEnvironmentBinding(value.environment)
+      && environmentBindingMatchesFeature(value.environment, value)))) return false;
   const pinnedState = isRecord(value.stateGraph)
     && Array.isArray(value.stateGraph.states)
     ? value.stateGraph.states.find((entry) => isRecord(entry) && entry.state === value.state)

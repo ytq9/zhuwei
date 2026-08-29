@@ -664,6 +664,10 @@ export function correctionEffectsBefore(
     }
     case "EncounterStarted":
     case "HostilityChanged":
+    case "EnvironmentFeatureMaterialized":
+    case "EnvironmentFeatureDamaged":
+    case "EnvironmentFeatureStateChanged":
+    case "EnvironmentAreaFeatureDamaged":
     case "InitiativeRequested":
     case "InitiativeEstablished":
     case "InitiativeTieOrdered":

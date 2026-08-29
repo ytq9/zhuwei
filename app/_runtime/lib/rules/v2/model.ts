@@ -645,6 +645,22 @@ export type ActorPlanFormedPayload = LegacyNpcPlanFormedPayload & {
 };
 
 export type EventPayloadByType = {
+  EnvironmentFeatureMaterialized: {
+    actorCharacterId: string;
+    sceneId: string;
+    featureId: string;
+    environmentProfile: ProfileRef;
+    featureDefinition: JsonRecord;
+    featureDefinitionHash: Sha256Ref;
+    compiledHash: Sha256Ref;
+    feature: JsonRecord;
+  };
+  EnvironmentStuntRefused: {
+    actorCharacterId: string;
+    sceneId: string;
+    featureId: string;
+    reason: "featureAbsent";
+  };
   EnvironmentFeatureDamaged: {
     actorCharacterId: string;
     sceneId: string;
@@ -678,7 +694,56 @@ export type EventPayloadByType = {
     sceneId: string;
     featureId: string;
     definitionId: string;
-    intent: "open" | "close";
+    intent: "open" | "close" | "resolveHazard";
+    fromState: string;
+    toState: string;
+  };
+  EnvironmentHazardTriggered: {
+    actorCharacterId: string;
+    sceneId: string;
+    featureId: string;
+    environmentProfile: ProfileRef;
+    featureDefinitionHash: Sha256Ref;
+    hazardDefinition: JsonRecord;
+    hazardDefinitionHash: Sha256Ref;
+    areaEffectDefinition: JsonRecord;
+    areaEffectDefinitionHash: Sha256Ref;
+    origin: { x: string; y: string; elevation: string };
+    entityTargetIds: string[];
+    featureTargetIds: string[];
+  };
+  EnvironmentAreaTargetResolved: {
+    actorCharacterId: string;
+    sceneId: string;
+    sourceFeatureId: string;
+    targetEntityId: string;
+    areaEffectDefinitionHash: Sha256Ref;
+    saveAbility: "str" | "dex" | "con" | "int" | "wis" | "cha";
+    saveDc: string;
+    saveMode: "normal" | "advantage" | "disadvantage";
+    saveRolls: number[];
+    selectedSaveRoll: number;
+    saveModifier: string;
+    saveTotal: string;
+    saveSucceeded: boolean;
+    damageType: string;
+    rolledDamage: string;
+    appliedDamage: string;
+    statusApplied: "none" | "prone";
+    targetBeforeHash: Sha256Ref;
+    targetPatch: JsonRecord;
+  };
+  EnvironmentAreaFeatureDamaged: {
+    actorCharacterId: string;
+    sceneId: string;
+    sourceFeatureId: string;
+    targetFeatureId: string;
+    areaEffectDefinitionHash: Sha256Ref;
+    damageType: string;
+    rolledDamage: string;
+    appliedDamage: string;
+    durabilityBefore: string;
+    durabilityAfter: string;
     fromState: string;
     toState: string;
   };

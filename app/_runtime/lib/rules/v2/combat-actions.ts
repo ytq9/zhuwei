@@ -1,5 +1,10 @@
 import { canonicalSha256 } from "../profiles/canonical";
 import { compileAbilityDefinition } from "../profiles/ability-compiler";
+import {
+  compileEnvironmentFeature,
+  environmentProfileEnabled,
+  type AreaEffect,
+} from "../profiles/environment";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import {
   COMBAT_ROUND_MICROS,
@@ -46,7 +51,12 @@ import { characterTimelineId, sceneTimelineId } from "./timeline";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
 import {
   controlledEnvironmentPlayer,
+  currentTacticalFeature,
+  environmentAreaTargets,
+  environmentDamageTarget,
+  profiledEnvironmentFeature,
   publicDamageableFeature,
+  resolveEnvironmentAreaTarget,
 } from "./environment";
 
 type Draft = {
@@ -2053,6 +2063,206 @@ function invokeAbility(
   return awaitRandomness(profiles, state, root, operation, specs);
 }
 
+function invokeEnvironmentalStunt(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!environmentProfileEnabled(profiles.extensions)) {
+    return rejected(
+      "unsupportedProfile",
+      "The runtime epoch did not opt into the dynamic environment Profile.",
+    );
+  }
+  if (!hasOnlyKeys(input, [
+    "abilityRef",
+    "actorCharacterId",
+    "controllerPrincipalId",
+    "featureId",
+    "kind",
+    "rootActionId",
+  ], ["materialization"])
+    || input.kind !== "invokeEnvironmentalStunt"
+    || ![
+      input.abilityRef,
+      input.actorCharacterId,
+      input.controllerPrincipalId,
+      input.featureId,
+      input.rootActionId,
+    ].every(isNonEmptyString)) {
+    return rejected("invalidRulesInput", "Environmental stunt invocation is not canonical.");
+  }
+  const root = rootAction(state, input);
+  if (root === undefined) {
+    return rejected("duplicateRootAction", "The environmental stunt root action is already used.");
+  }
+  if (!controlledEnvironmentPlayer(state, input.controllerPrincipalId, input.actorCharacterId)) {
+    return rejected("viewerUnauthorized", "The environmental stunt controller is unavailable.");
+  }
+  const actorCharacterId = String(input.actorCharacterId);
+  const actor = state.entities[actorCharacterId];
+  const source = combatEntity(state, actorCharacterId);
+  if (actor === undefined || source === undefined || source.lifeState === "dead") {
+    return rejected("privateOrUnknownReference", "The environmental stunt source is unavailable.");
+  }
+
+  const existing = profiledEnvironmentFeature(state, actorCharacterId, String(input.featureId));
+  const anyExisting = currentTacticalFeature(state, actorCharacterId, String(input.featureId));
+  let feature = existing;
+  const prefix: Draft[] = [];
+  if (existing === undefined) {
+    if (anyExisting !== undefined) {
+      return rejected(
+        "privateOrUnknownReference",
+        "The environment feature is unavailable to this versioned primitive.",
+      );
+    }
+    if (input.materialization === undefined) {
+      return sequence("committed", profiles, state, root, [{
+        eventType: "EnvironmentStuntRefused",
+        payload: {
+          actorCharacterId,
+          sceneId: actor.sceneId,
+          featureId: String(input.featureId),
+          reason: "featureAbsent",
+        },
+      }], {
+        mechanicalResult: {
+          kind: "environmentStuntRefused",
+          outcome: "resolvedInWorld",
+          reason: "featureAbsent",
+        },
+      });
+    }
+    if (!isRecord(input.materialization)
+      || !hasExactKeys(input.materialization, ["featureDefinition"])) {
+      return rejected("invalidRulesInput", "Environment materialization is not canonical.");
+    }
+    const compiledEnvironment = compileEnvironmentFeature(input.materialization.featureDefinition);
+    if (!compiledEnvironment.ok
+      || compiledEnvironment.artifact.tacticalFeature.featureId !== input.featureId
+      || compiledEnvironment.artifact.tacticalFeature.environment.featureDefinition.sceneId
+        !== actor.sceneId) {
+      return rejected("invalidRulesInput", "Environment materialization does not match the frozen scene.");
+    }
+    const materializedFeature = compiledEnvironment.artifact.tacticalFeature;
+    feature = materializedFeature;
+    prefix.push({
+      eventType: "EnvironmentFeatureMaterialized",
+      payload: {
+        actorCharacterId,
+        sceneId: actor.sceneId,
+        featureId: materializedFeature.featureId,
+        environmentProfile: structuredClone(materializedFeature.environment.profile),
+        featureDefinition: structuredClone(materializedFeature.environment.featureDefinition),
+        featureDefinitionHash: materializedFeature.environment.featureDefinitionHash,
+        compiledHash: materializedFeature.environment.compiledHash,
+        feature: structuredClone(materializedFeature),
+      },
+      visibilityPolicyId: "visibility:room-authority-only",
+      secrecy: "internal",
+    });
+  } else if (input.materialization !== undefined) {
+    return rejected("invalidRulesInput", "An existing environment feature must be reused by stable id.");
+  }
+
+  if (feature === undefined
+    || feature.environment === undefined
+    || feature.durability === undefined
+    || feature.stateGraph?.durability === undefined
+    || feature.stateGraph.damageTransitions === undefined
+    || feature.durability.current === "0"
+    || feature.state !== feature.environment.featureDefinition.initialState) {
+    return rejected("worldLawViolation", "The environmental stunt cannot trigger from this feature state.");
+  }
+  const definition = state.combatRuntime.definitions[String(input.abilityRef)];
+  const compiledAbility = compileAbilityDefinition(definition);
+  const target = isRecord(definition?.target) ? definition.target : undefined;
+  const components = Array.isArray(definition?.damage)
+    ? definition.damage.filter(isRecord)
+    : [];
+  if (definition === undefined
+    || !compiledAbility.ok
+    || !Array.isArray(source.abilityRefs)
+    || !source.abilityRefs.includes(input.abilityRef)
+    || target?.kind !== "creatureOrEnvironmentFeature"
+    || components.length !== 1
+    || !isNonEmptyString(components[0].formula)
+    || !isNonEmptyString(components[0].type)) {
+    return rejected("privateOrUnknownReference", "The environmental stunt ability is unavailable.");
+  }
+  const encounter = activeEncounter(state, actorCharacterId);
+  if (encounter !== undefined && !currentGroupAllows(encounter, actorCharacterId)) {
+    return rejected("invalidRulesInput", "Combatant does not hold the current initiative turn.");
+  }
+  const rangeInches = [target.reachInches, target.rangeInches, target.rangeNormalInches]
+    .find(isNonEmptyString);
+  const scene = state.combatRuntime.scenes[String(source.sceneId)];
+  if (rangeInches === undefined
+    || !entityCanTargetTacticalFeature(scene, source, feature, rangeInches)) {
+    return rejected("privateOrUnknownReference", "The environment feature is outside authoritative range.");
+  }
+  const sourcePatch = consumeTurnGrant(source, definition, String(input.abilityRef));
+  if (sourcePatch === undefined) {
+    return rejected("invalidRulesInput", "The environmental stunt action grant is unavailable.");
+  }
+  const spent = spendCosts(sourcePatch, definition);
+  if (spent === undefined) {
+    return rejected("insufficientResource", "The environmental stunt resource is unavailable.");
+  }
+  const graph = structuredClone(feature.stateGraph);
+  const binding = structuredClone(feature.environment);
+  const purposeKey = `damage:environmental-stunt:${String(input.abilityRef)}:${feature.featureId}`;
+  const operation = {
+    kind: "resolveEnvironmentalStuntAttack",
+    sourceEntityId: actorCharacterId,
+    featureId: feature.featureId,
+    abilityRef: input.abilityRef,
+    definition: structuredClone(definition),
+    abilityDefinitionHash: compiledAbility.artifact.definitionHash,
+    compiledHash: compiledAbility.artifact.compiledHash,
+    environmentBinding: binding,
+    environmentDefinition: graph,
+    environmentDefinitionHash: canonicalSha256(graph),
+    definitionId: graph.definitionId,
+    sceneId: source.sceneId,
+    fromState: feature.state,
+    durabilityBefore: feature.durability.current,
+    damageThreshold: feature.durability.damageThreshold,
+    immuneDamageTypes: [...feature.durability.immuneDamageTypes],
+    damageType: components[0].type,
+    damageFormula: components[0].formula,
+    armorClass: feature.durability.armorClass,
+    rangeInches,
+    sourcePatch,
+    spent,
+    purposeKey,
+    materialized: existing === undefined,
+  };
+  return awaitRandomness(profiles, state, root, operation, [
+    formulaSpec(purposeKey, components[0].formula, {
+      sourceEntityId: actorCharacterId,
+      featureId: feature.featureId,
+      featureDefinitionHash: binding.featureDefinitionHash,
+      destructibleDefinitionHash: binding.destructibleDefinitionHash,
+      stateGraphHash: binding.stateGraphHash,
+    }),
+    {
+      purposeKey: `attack:environment:${String(input.abilityRef)}:${feature.featureId}`,
+      dice: attackDice("normal"),
+      frozenParameters: {
+        sourceEntityId: actorCharacterId,
+        featureId: feature.featureId,
+        abilityRef: input.abilityRef,
+        mode: "normal",
+        attackBonus: attackBonus(source, definition),
+        armorClass: feature.durability.armorClass,
+        rangeInches,
+      },
+    },
+  ].sort((left, right) => left.purposeKey.localeCompare(right.purposeKey)), prefix);
+}
+
 function invokeEnvironmentAbility(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -2222,11 +2432,17 @@ function resolveEnvironmentAbilityRandomness(
   }
   const source = combatEntity(state, operation.sourceEntityId);
   const definition = state.combatRuntime.definitions[String(operation.abilityRef)];
-  const feature = publicDamageableFeature(
-    state,
-    String(operation.sourceEntityId),
-    String(operation.featureId),
-  );
+  const feature = isRecord(operation.environmentBinding)
+    ? profiledEnvironmentFeature(
+        state,
+        String(operation.sourceEntityId),
+        String(operation.featureId),
+      )
+    : publicDamageableFeature(
+        state,
+        String(operation.sourceEntityId),
+        String(operation.featureId),
+      );
   const compiled = compileAbilityDefinition(definition);
   const durability = feature?.durability;
   const immuneDamageTypes = operation.immuneDamageTypes.filter(isNonEmptyString);
@@ -2345,6 +2561,335 @@ function resolveEnvironmentAbilityRandomness(
     String(resolution.rootActionId),
     drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })),
     { mechanicalResult },
+  );
+}
+
+function resolveEnvironmentalStuntAttackRandomness(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation)
+    || operation.kind !== "resolveEnvironmentalStuntAttack"
+    || !isRecord(operation.environmentBinding)
+    || !isRecord(operation.environmentBinding.featureDefinition)) {
+    return rejected("invalidRulesInput", "Environmental stunt continuation is malformed.");
+  }
+  const compiledEnvironment = compileEnvironmentFeature(
+    operation.environmentBinding.featureDefinition,
+  );
+  if (!compiledEnvironment.ok
+    || compiledEnvironment.artifact.featureDefinitionHash
+      !== operation.environmentBinding.featureDefinitionHash
+    || compiledEnvironment.artifact.compiledHash !== operation.environmentBinding.compiledHash) {
+    return rejected("invalidRulesInput", "Environmental stunt definition hash changed.");
+  }
+  const adaptedResolution = {
+    ...structuredClone(resolution),
+    operation: {
+      ...structuredClone(operation),
+      kind: "resolveEnvironmentAbility",
+    },
+  };
+  const attackResult = resolveEnvironmentAbilityRandomness(
+    profiles,
+    state,
+    adaptedResolution,
+    faces,
+  );
+  if (attackResult.kind !== "committed") return attackResult;
+  const binding = compiledEnvironment.artifact.tacticalFeature.environment;
+  const definition = binding.featureDefinition;
+  const feature = profiledEnvironmentFeature(
+    attackResult.state,
+    String(operation.sourceEntityId),
+    String(operation.featureId),
+  );
+  if (feature === undefined || feature.state !== definition.hazard.trigger.state) {
+    return attackResult;
+  }
+  const targets = environmentAreaTargets(
+    attackResult.state,
+    String(operation.sceneId),
+    feature.featureId,
+    definition.areaEffect,
+  );
+  if (targets === undefined) {
+    throw new TypeError("materialized environment hazard has no authoritative geometry");
+  }
+  const damagePurposeKey = `damage:environment-hazard:${feature.featureId}`;
+  const hazardOperation = {
+    kind: "resolveEnvironmentHazard",
+    sourceEntityId: operation.sourceEntityId,
+    sceneId: operation.sceneId,
+    featureId: feature.featureId,
+    environmentBinding: structuredClone(binding),
+    origin: structuredClone(targets.origin),
+    entityTargetIds: [...targets.entityTargetIds],
+    featureTargetIds: [...targets.featureTargetIds],
+    damagePurposeKey,
+  };
+  const saveAbility = definition.areaEffect.save.ability;
+  const specs: DiceSpec[] = [
+    formulaSpec(damagePurposeKey, definition.areaEffect.damage.formula, {
+      featureId: feature.featureId,
+      areaEffectDefinitionHash: binding.areaEffectDefinitionHash,
+      entityTargetIds: [...targets.entityTargetIds],
+      featureTargetIds: [...targets.featureTargetIds],
+    }),
+    ...targets.entityTargetIds.map((targetEntityId): DiceSpec => {
+      const target = environmentDamageTarget(attackResult.state, targetEntityId);
+      if (target === undefined) {
+        throw new TypeError("environment hazard target disappeared before randomness freeze");
+      }
+      const mode = savingThrowMode(target, saveAbility);
+      return {
+        purposeKey: `save:environment-hazard:${feature.featureId}:${targetEntityId}`,
+        dice: attackDice(mode),
+        frozenParameters: {
+          targetEntityId,
+          ability: saveAbility,
+          dc: definition.areaEffect.save.dc,
+          modifier: abilityModifier(target, saveAbility),
+          mode,
+          areaEffectDefinitionHash: binding.areaEffectDefinitionHash,
+        },
+      };
+    }),
+  ].sort((left, right) => left.purposeKey.localeCompare(right.purposeKey));
+  const hazardResult = awaitRandomness(
+    profiles,
+    attackResult.state,
+    String(resolution.rootActionId),
+    hazardOperation,
+    specs,
+  );
+  return appendTransitions(attackResult, hazardResult);
+}
+
+function resolveEnvironmentHazardRandomness(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  resolution: JsonRecord,
+  faces: AuthorityFaces,
+): StepResult {
+  const operation = resolution.operation;
+  if (!isRecord(operation)
+    || operation.kind !== "resolveEnvironmentHazard"
+    || ![
+      operation.sourceEntityId,
+      operation.sceneId,
+      operation.featureId,
+      operation.damagePurposeKey,
+    ].every(isNonEmptyString)
+    || !isRecord(operation.environmentBinding)
+    || !isRecord(operation.environmentBinding.featureDefinition)
+    || !isRecord(operation.origin)
+    || !Array.isArray(operation.entityTargetIds)
+    || !operation.entityTargetIds.every(isNonEmptyString)
+    || !Array.isArray(operation.featureTargetIds)
+    || !operation.featureTargetIds.every(isNonEmptyString)) {
+    return rejected("invalidRulesInput", "Environment hazard continuation is malformed.");
+  }
+  const compiled = compileEnvironmentFeature(operation.environmentBinding.featureDefinition);
+  if (!compiled.ok
+    || compiled.artifact.compiledHash !== operation.environmentBinding.compiledHash) {
+    return rejected("invalidRulesInput", "Environment hazard definition hash changed.");
+  }
+  const binding = compiled.artifact.tacticalFeature.environment;
+  const definition = binding.featureDefinition;
+  const areaEffect = definition.areaEffect;
+  const sourceFeature = profiledEnvironmentFeature(
+    state,
+    String(operation.sourceEntityId),
+    String(operation.featureId),
+  );
+  const targets = environmentAreaTargets(
+    state,
+    String(operation.sceneId),
+    String(operation.featureId),
+    areaEffect,
+  );
+  if (sourceFeature?.state !== definition.hazard.trigger.state
+    || sourceFeature.environment?.compiledHash !== binding.compiledHash
+    || targets === undefined
+    || canonicalSha256(targets.origin) !== canonicalSha256(operation.origin)
+    || canonicalSha256(targets.entityTargetIds) !== canonicalSha256(operation.entityTargetIds)
+    || canonicalSha256(targets.featureTargetIds) !== canonicalSha256(operation.featureTargetIds)) {
+    return rejected("privateOrUnknownReference", "Environment hazard geometry changed before resolution.");
+  }
+  const rolledDamage = formulaTotal(
+    faces,
+    String(operation.damagePurposeKey),
+    areaEffect.damage.formula,
+  );
+  const internal = {
+    visibilityPolicyId: "visibility:room-authority-only",
+    secrecy: "internal" as const,
+  };
+  const drafts: Draft[] = [{
+    eventType: "EnvironmentHazardTriggered",
+    payload: {
+      actorCharacterId: String(operation.sourceEntityId),
+      sceneId: String(operation.sceneId),
+      featureId: String(operation.featureId),
+      environmentProfile: structuredClone(binding.profile),
+      featureDefinitionHash: binding.featureDefinitionHash,
+      hazardDefinition: structuredClone(definition.hazard),
+      hazardDefinitionHash: binding.hazardDefinitionHash,
+      areaEffectDefinition: structuredClone(areaEffect),
+      areaEffectDefinitionHash: binding.areaEffectDefinitionHash,
+      origin: structuredClone(targets.origin),
+      entityTargetIds: [...targets.entityTargetIds],
+      featureTargetIds: [...targets.featureTargetIds],
+    },
+    ...internal,
+  }];
+  for (const targetEntityId of targets.entityTargetIds) {
+    const target = environmentDamageTarget(state, targetEntityId);
+    if (target === undefined) {
+      return rejected("privateOrUnknownReference", "Environment hazard target is unavailable.");
+    }
+    const saveRolls = faces.get(
+      `save:environment-hazard:${String(operation.featureId)}:${targetEntityId}`,
+    ) ?? [];
+    const outcome = resolveEnvironmentAreaTarget(target, areaEffect, rolledDamage, saveRolls);
+    drafts.push({
+      eventType: "EnvironmentAreaTargetResolved",
+      payload: {
+        actorCharacterId: String(operation.sourceEntityId),
+        sceneId: String(operation.sceneId),
+        sourceFeatureId: String(operation.featureId),
+        targetEntityId,
+        areaEffectDefinitionHash: binding.areaEffectDefinitionHash,
+        saveAbility: areaEffect.save.ability,
+        saveDc: areaEffect.save.dc,
+        saveMode: outcome.saveMode,
+        saveRolls: [...saveRolls],
+        selectedSaveRoll: outcome.selectedSaveRoll,
+        saveModifier: String(outcome.saveModifier),
+        saveTotal: String(outcome.saveTotal),
+        saveSucceeded: outcome.saveSucceeded,
+        damageType: areaEffect.damage.type,
+        rolledDamage: String(rolledDamage),
+        appliedDamage: String(outcome.appliedDamage),
+        statusApplied: outcome.statusApplied,
+        targetBeforeHash: canonicalSha256(target),
+        targetPatch: structuredClone(outcome.targetPatch),
+      },
+      ...internal,
+    });
+    drafts.push({
+      eventType: "DamagePacketResolved",
+      payload: {
+        encounterId: activeEncounter(state, targetEntityId)?.encounterId ?? null,
+        pipelineProfileId: "damage-death-srd51-2014-v1",
+        sourceDefinitionId: definition.hazard.definitionId,
+        targetEntityId,
+        components: structuredClone(outcome.components),
+        totalApplied: outcome.appliedDamage,
+        targetPatch: structuredClone(outcome.targetPatch),
+      },
+      ...internal,
+    });
+    if (outcome.statusApplied === "prone") {
+      drafts.push({
+        eventType: "ConditionChanged",
+        payload: {
+          entityId: targetEntityId,
+          conditions: structuredClone(outcome.targetPatch.conditions),
+        },
+        ...internal,
+      });
+    }
+    if (outcome.died) {
+      drafts.push({
+        eventType: "CreatureDied",
+        payload: { characterId: targetEntityId, causeId: String(resolution.rootActionId) },
+        ...internal,
+      });
+    }
+  }
+  const scene = state.combatRuntime.scenes[String(operation.sceneId)];
+  const geometry = isRecord(scene) ? scene.geometry : undefined;
+  if (!isRecord(geometry) || !Array.isArray(geometry.obstacles)) {
+    return rejected("invalidWorldState", "Environment hazard scene geometry is unavailable.");
+  }
+  for (const targetFeatureId of targets.featureTargetIds) {
+    const target = geometry.obstacles.find((candidate) =>
+      isRecord(candidate) && candidate.featureId === targetFeatureId);
+    if (!isRecord(target) || !isRecord(target.durability) || !isRecord(target.stateGraph)
+      || !Array.isArray(target.stateGraph.states)) continue;
+    const immune = Array.isArray(target.durability.immuneDamageTypes)
+      && target.durability.immuneDamageTypes.includes(areaEffect.damage.type);
+    const appliedDamage = immune
+      || rolledDamage < Number(target.durability.damageThreshold)
+      ? 0
+      : rolledDamage;
+    const durabilityAfter = Math.max(0, Number(target.durability.current) - appliedDamage);
+    const transition = Array.isArray(target.stateGraph.damageTransitions)
+      ? target.stateGraph.damageTransitions.find((candidate) => isRecord(candidate)
+        && candidate.fromState === target.state
+        && durabilityAfter <= Number(candidate.remainingDurabilityAtOrBelow))
+      : undefined;
+    const toState = isRecord(transition) && isNonEmptyString(transition.toState)
+      ? transition.toState
+      : String(target.state);
+    drafts.push({
+      eventType: "EnvironmentAreaFeatureDamaged",
+      payload: {
+        actorCharacterId: String(operation.sourceEntityId),
+        sceneId: String(operation.sceneId),
+        sourceFeatureId: String(operation.featureId),
+        targetFeatureId,
+        areaEffectDefinitionHash: binding.areaEffectDefinitionHash,
+        damageType: areaEffect.damage.type,
+        rolledDamage: String(rolledDamage),
+        appliedDamage: String(appliedDamage),
+        durabilityBefore: String(target.durability.current),
+        durabilityAfter: String(durabilityAfter),
+        fromState: String(target.state),
+        toState,
+      },
+      ...internal,
+    });
+  }
+  const finalTransition = sourceFeature.stateGraph?.transitions.find((candidate) =>
+    candidate.fromState === sourceFeature.state
+    && candidate.intent === "resolveHazard"
+    && candidate.toState === definition.hazard.resolvedState);
+  if (finalTransition === undefined) {
+    return rejected("invalidWorldState", "Environment hazard has no bounded debris transition.");
+  }
+  drafts.push({
+    eventType: "EnvironmentFeatureStateChanged",
+    payload: {
+      actorCharacterId: String(operation.sourceEntityId),
+      sceneId: String(operation.sceneId),
+      featureId: String(operation.featureId),
+      definitionId: sourceFeature.stateGraph!.definitionId,
+      intent: "resolveHazard",
+      fromState: sourceFeature.state,
+      toState: finalTransition.toState,
+    },
+    ...internal,
+  });
+  return sequence(
+    "committed",
+    profiles,
+    state,
+    String(resolution.rootActionId),
+    drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })),
+    {
+      mechanicalResult: {
+        kind: "environmentalStuntResolved",
+        featureId: String(operation.featureId),
+        finalState: finalTransition.toState,
+        outcome: "hazardResolved",
+      },
+    },
   );
 }
 
@@ -5012,6 +5557,18 @@ function fulfillRandomness(
       authority.resolution,
       authority.faces,
     );
+    case "resolveEnvironmentalStuntAttack": return resolveEnvironmentalStuntAttackRandomness(
+      profiles,
+      state,
+      authority.resolution,
+      authority.faces,
+    );
+    case "resolveEnvironmentHazard": return resolveEnvironmentHazardRandomness(
+      profiles,
+      state,
+      authority.resolution,
+      authority.faces,
+    );
     case "resolveSpellAbilityEffect": return resolveSpellAbilityRandomness(profiles, state, authority.resolution, authority.faces);
     case "resolveCounterspellCheck": return resolveCounterspellCheckRandomness(profiles, state, authority.resolution, authority.faces);
     case "resolvePostAttackDamage": return resolvePostAttackDamageRandomness(profiles, state, authority.resolution, authority.faces);
@@ -6003,6 +6560,7 @@ export function stepCombatWorld(
     case "authoritativeRandomness": return fulfillRandomness(profiles, state, input);
     case "invokeAbility": return invokeAbility(profiles, state, input);
     case "invokeEnvironmentAbility": return invokeEnvironmentAbility(profiles, state, input);
+    case "invokeEnvironmentalStunt": return invokeEnvironmentalStunt(profiles, state, input);
     case "continueLongSpellcasting": return continueLongSpellcasting(profiles, state, input);
     case "endConcentration": return endConcentration(profiles, state, input);
     case "testConcentration": return testConcentration(profiles, state, input);

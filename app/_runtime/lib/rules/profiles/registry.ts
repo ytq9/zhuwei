@@ -1,5 +1,6 @@
 import {
   CURRENT_RUNTIME_PROFILE_MANIFEST,
+  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
   profileRegistryMatchesCanonicalDocuments,
 } from "./manifests";
 import type {
@@ -216,10 +217,16 @@ export function createRuntimeProfileRegistry(config: {
 }
 
 export const PRODUCTION_RUNTIME_PROFILE_REGISTRY = createRuntimeProfileRegistry({
-  registrations: [{
-    manifest: CURRENT_RUNTIME_PROFILE_MANIFEST,
-    interpreterKind: "authoritative-v2",
-  }],
+  registrations: [
+    {
+      manifest: CURRENT_RUNTIME_PROFILE_MANIFEST,
+      interpreterKind: "authoritative-v2",
+    },
+    {
+      manifest: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      interpreterKind: "authoritative-v2",
+    },
+  ],
   defaultManifest: CURRENT_RUNTIME_PROFILE_MANIFEST.manifest,
   conformanceCheck: profileRegistryMatchesCanonicalDocuments,
 });

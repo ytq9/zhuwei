@@ -3,10 +3,20 @@ import {
   type CanonicalTacticalFeature,
   type CanonicalTacticalFeatureState,
 } from "../profiles/tactical-geometry";
+import {
+  compileEnvironmentFeature,
+  environmentBindingMatchesFeature,
+  ENVIRONMENT_PROFILE,
+  isCompiledEnvironmentBinding,
+  type AreaEffect,
+} from "../profiles/environment";
 import { compileAbilityDefinition } from "../profiles/ability-compiler";
 import { canonicalSha256 } from "../profiles/canonical";
 import { resolveCombatAttackRoll } from "../profiles/attack-resolution";
-import { entityCanTargetTacticalFeature } from "../profiles/combat-geometry";
+import {
+  entitiesAffectedByArea,
+  entityCanTargetTacticalFeature,
+} from "../profiles/combat-geometry";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { createEventTransition, createScopeProof } from "./events";
 import type {
@@ -18,6 +28,7 @@ import type {
   StepResult,
 } from "./model";
 import { rejected } from "./results";
+import { resolveCombatDamage } from "./damage";
 import {
   hasExactKeys,
   isNonEmptyString,
@@ -25,8 +36,13 @@ import {
 } from "./validation";
 
 export const ENVIRONMENT_EVENT_TYPES = [
+  "EnvironmentFeatureMaterialized",
+  "EnvironmentStuntRefused",
   "EnvironmentFeatureDamaged",
   "EnvironmentFeatureStateChanged",
+  "EnvironmentHazardTriggered",
+  "EnvironmentAreaTargetResolved",
+  "EnvironmentAreaFeatureDamaged",
 ] as const satisfies readonly EventType[];
 
 type PortalIntent = "open" | "close";
@@ -57,6 +73,256 @@ export function currentTacticalFeature(
   const geometry = isRecord(scene) ? scene.geometry : undefined;
   if (!isCanonicalTacticalGeometry(geometry)) return undefined;
   return geometry.obstacles.find((candidate) => candidate.featureId === featureId);
+}
+
+export function profiledEnvironmentFeature(
+  state: AuthoritativeWorldState,
+  actorCharacterId: string,
+  featureId: string,
+): CanonicalTacticalFeature | undefined {
+  const feature = currentTacticalFeature(state, actorCharacterId, featureId);
+  return feature?.kind === "destructible"
+    && feature.environment !== undefined
+    && isCompiledEnvironmentBinding(feature.environment)
+    && environmentBindingMatchesFeature(feature.environment, feature)
+    && (feature.visibilityPolicyId === "visibility:public"
+      || feature.visibilityPolicyId === "visibility:scene-observers")
+    ? feature
+    : undefined;
+}
+
+function featureOrigin(
+  feature: CanonicalTacticalFeature,
+  areaEffect: AreaEffect,
+): { x: string; y: string; elevation: string } {
+  const xs = feature.polygon.map(({ x }) => BigInt(x));
+  const ys = feature.polygon.map(({ y }) => BigInt(y));
+  const minimumX = xs.reduce((minimum, value) => value < minimum ? value : minimum);
+  const maximumX = xs.reduce((maximum, value) => value > maximum ? value : maximum);
+  const minimumY = ys.reduce((minimum, value) => value < minimum ? value : minimum);
+  const maximumY = ys.reduce((maximum, value) => value > maximum ? value : maximum);
+  return {
+    x: ((minimumX + maximumX) / 2n).toString(),
+    y: ((minimumY + maximumY) / 2n).toString(),
+    elevation: areaEffect.origin.elevationInches,
+  };
+}
+
+function featureAsGeometryEntity(
+  feature: CanonicalTacticalFeature,
+  ordinal: number,
+): JsonRecord {
+  const xs = feature.polygon.map(({ x }) => BigInt(x));
+  const ys = feature.polygon.map(({ y }) => BigInt(y));
+  const minimumX = xs.reduce((minimum, value) => value < minimum ? value : minimum);
+  const maximumX = xs.reduce((maximum, value) => value > maximum ? value : maximum);
+  const minimumY = ys.reduce((minimum, value) => value < minimum ? value : minimum);
+  const maximumY = ys.reduce((maximum, value) => value > maximum ? value : maximum);
+  return {
+    id: feature.featureId,
+    entityOrdinal: String(100_000 + ordinal),
+    lifeState: "alive",
+    position: {
+      x: ((minimumX + maximumX) / 2n).toString(),
+      y: ((minimumY + maximumY) / 2n).toString(),
+      elevation: feature.elevation,
+    },
+    footprint: {
+      width: (maximumX > minimumX ? maximumX - minimumX : 1n).toString(),
+      depth: (maximumY > minimumY ? maximumY - minimumY : 1n).toString(),
+      height: feature.height,
+    },
+  };
+}
+
+/** Complete target discovery; no caller-supplied target list participates. */
+export function environmentAreaTargets(
+  state: AuthoritativeWorldState,
+  sceneId: string,
+  sourceFeatureId: string,
+  areaEffect: AreaEffect,
+): {
+  origin: { x: string; y: string; elevation: string };
+  entityTargetIds: string[];
+  featureTargetIds: string[];
+} | undefined {
+  const scene = state.combatRuntime.scenes[sceneId];
+  const geometry = isRecord(scene) ? scene.geometry : undefined;
+  if (!isCanonicalTacticalGeometry(geometry)) return undefined;
+  const sourceFeature = geometry.obstacles.find(({ featureId }) =>
+    featureId === sourceFeatureId);
+  if (sourceFeature === undefined) return undefined;
+  const origin = featureOrigin(sourceFeature, areaEffect);
+  const entityCandidates = Object.values(state.combatRuntime.entities)
+    .filter((entity) => entity.sceneId === sceneId);
+  const featureCandidates = geometry.obstacles
+    .filter((feature) => feature.featureId !== sourceFeatureId)
+    .map(featureAsGeometryEntity);
+  return {
+    origin,
+    entityTargetIds: entitiesAffectedByArea(
+      entityCandidates,
+      scene,
+      origin,
+      areaEffect.shape,
+    ).sort(),
+    featureTargetIds: entitiesAffectedByArea(
+      featureCandidates,
+      scene,
+      origin,
+      areaEffect.shape,
+    ).sort(),
+  };
+}
+
+/**
+ * The initialization path gives established NPCs a spatial combat record while
+ * keeping their hit points and abilities on the authoritative world identity.
+ * Hazards resolve against one deterministic combat-shaped view so they do not
+ * need a caller-supplied or separately materialized NPC target.
+ */
+export function environmentDamageTarget(
+  state: AuthoritativeWorldState,
+  targetEntityId: string,
+): JsonRecord | undefined {
+  const spatial = state.combatRuntime.entities[targetEntityId];
+  if (spatial === undefined) return undefined;
+  if (isRecord(spatial.hitPoints)) return spatial;
+  const identity = state.entities[targetEntityId];
+  if (identity?.kind !== "npc" || identity.hitPoints === undefined) return undefined;
+  const scores = identity.abilityScores ?? {};
+  return {
+    ...structuredClone(spatial),
+    stats: Object.fromEntries(
+      ["str", "dex", "con", "int", "wis", "cha"].map((ability) => [
+        ability,
+        String(scores[ability] ?? 10),
+      ]),
+    ),
+    proficiencyBonus: String(identity.proficiencyBonus ?? 2),
+    hitPoints: {
+      current: String(identity.hitPoints.current),
+      maximum: String(identity.hitPoints.maximum),
+      temporary: "0",
+    },
+    deathPolicy: "deadAtZero",
+  };
+}
+
+function environmentCondition(target: JsonRecord, conditionId: string): boolean {
+  return isRecord(target.conditions) && target.conditions[conditionId] === true;
+}
+
+function environmentSaveMode(
+  target: JsonRecord,
+  ability: string,
+): "normal" | "disadvantage" {
+  return ability === "dex"
+    && ["restrained", "squeezing"].some((conditionId) =>
+      environmentCondition(target, conditionId))
+    ? "disadvantage"
+    : "normal";
+}
+
+function environmentAbilityModifier(target: JsonRecord, ability: string): number {
+  const score = isRecord(target.stats) ? Number(target.stats[ability]) : 10;
+  return Number.isInteger(score) ? Math.floor((score - 10) / 2) : 0;
+}
+
+/** Shared target calculation used both when producing and replay-validating hazard events. */
+export function resolveEnvironmentAreaTarget(
+  target: JsonRecord,
+  areaEffect: AreaEffect,
+  rolledDamage: number,
+  saveRolls: number[],
+): {
+  saveMode: "normal" | "disadvantage";
+  selectedSaveRoll: number;
+  saveModifier: number;
+  saveTotal: number;
+  saveSucceeded: boolean;
+  appliedDamage: number;
+  statusApplied: "none" | "prone";
+  targetPatch: JsonRecord;
+  components: ReturnType<typeof resolveCombatDamage>["components"];
+  died: boolean;
+} {
+  if (!Number.isSafeInteger(rolledDamage) || rolledDamage < 0) {
+    throw new TypeError("environment area damage is not canonical");
+  }
+  const saveMode = environmentSaveMode(target, areaEffect.save.ability);
+  const expectedRollCount = saveMode === "normal" ? 1 : 2;
+  if (saveRolls.length !== expectedRollCount
+    || !saveRolls.every((roll) => Number.isInteger(roll) && roll >= 1 && roll <= 20)) {
+    throw new TypeError("environment area save faces are unavailable");
+  }
+  const selectedSaveRoll = saveMode === "disadvantage"
+    ? Math.min(...saveRolls)
+    : saveRolls[0];
+  const saveModifier = environmentAbilityModifier(target, areaEffect.save.ability);
+  const saveTotal = selectedSaveRoll + saveModifier;
+  const saveSucceeded = saveTotal >= Number(areaEffect.save.dc);
+  const damageBeforeMitigation = saveSucceeded
+    ? areaEffect.save.halfOnSuccess ? Math.floor(rolledDamage / 2) : 0
+    : rolledDamage;
+  const resolution = resolveCombatDamage(
+    target,
+    [{ type: areaEffect.damage.type, rolled: damageBeforeMitigation }],
+  );
+  const targetPatch = structuredClone(resolution.targetPatch);
+  if (!isRecord(target.hitPoints) || !isRecord(targetPatch.hitPoints)) {
+    throw new TypeError("environment area target lacks hit points");
+  }
+  const beforeCurrent = Number(target.hitPoints.current);
+  const temporaryBefore = Number(target.hitPoints.temporary ?? 0);
+  const hitPointDamage = Math.max(0, resolution.totalApplied - temporaryBefore);
+  const afterCurrent = Number(targetPatch.hitPoints.current);
+  let died = false;
+  if (afterCurrent === 0) {
+    const conditions = { ...(isRecord(targetPatch.conditions) ? targetPatch.conditions : {}) };
+    delete conditions.stable;
+    targetPatch.conditions = { ...conditions, unconscious: true, prone: true };
+    const maximum = Number(targetPatch.hitPoints.maximum);
+    const massiveDamage = beforeCurrent > 0 && hitPointDamage - beforeCurrent >= maximum;
+    if (targetPatch.deathPolicy === "deadAtZero" || massiveDamage) {
+      targetPatch.lifeState = "dead";
+      died = true;
+    } else if (beforeCurrent === 0 && hitPointDamage > 0) {
+      const saves = isRecord(targetPatch.deathSaves)
+        ? targetPatch.deathSaves
+        : { successes: 0, failures: 0 };
+      saves.failures = Number(saves.failures ?? 0) + 1;
+      targetPatch.deathSaves = saves;
+      if (Number(saves.failures) >= 3) {
+        targetPatch.lifeState = "dead";
+        died = true;
+      }
+    }
+    if (!died) targetPatch.lifeState = "unconscious";
+  }
+  const statusApplied = !saveSucceeded
+    && areaEffect.failureStatus === "prone"
+    && !died
+    ? "prone" as const
+    : "none" as const;
+  if (statusApplied === "prone") {
+    targetPatch.conditions = {
+      ...(isRecord(targetPatch.conditions) ? targetPatch.conditions : {}),
+      prone: true,
+    };
+  }
+  return {
+    saveMode,
+    selectedSaveRoll,
+    saveModifier,
+    saveTotal,
+    saveSucceeded,
+    appliedDamage: resolution.totalApplied,
+    statusApplied,
+    targetPatch,
+    components: resolution.components,
+    died,
+  };
 }
 
 function publicPortal(
@@ -90,6 +356,7 @@ export function publicDamageableFeature(
     || !moduleRef.profileId.endsWith(":tactical-map-v1")) return undefined;
   const feature = currentTacticalFeature(state, actorCharacterId, featureId);
   return (feature?.kind === "portal" || feature?.kind === "destructible")
+    && feature.environment === undefined
     && (feature.visibilityPolicyId === "visibility:public"
       || feature.visibilityPolicyId === "visibility:scene-observers")
     && feature.stateGraph?.durability !== undefined
@@ -210,30 +477,206 @@ export function validateEnvironmentEventPayload(
   eventType: EventType,
   value: unknown,
 ): boolean {
-  if (eventType === "EnvironmentFeatureDamaged") {
-    return validateEnvironmentDamagePayload(value);
+  switch (eventType) {
+    case "EnvironmentFeatureMaterialized":
+      return validateEnvironmentMaterializedPayload(value);
+    case "EnvironmentStuntRefused":
+      return isRecord(value)
+        && hasExactKeys(value, ["actorCharacterId", "featureId", "reason", "sceneId"])
+        && [value.actorCharacterId, value.featureId, value.sceneId].every(isNonEmptyString)
+        && value.reason === "featureAbsent";
+    case "EnvironmentFeatureDamaged":
+      return validateEnvironmentDamagePayload(value);
+    case "EnvironmentFeatureStateChanged":
+      return isRecord(value)
+        && hasExactKeys(value, [
+          "actorCharacterId",
+          "definitionId",
+          "featureId",
+          "fromState",
+          "intent",
+          "sceneId",
+          "toState",
+        ])
+        && [
+          value.actorCharacterId,
+          value.definitionId,
+          value.featureId,
+          value.fromState,
+          value.sceneId,
+          value.toState,
+        ].every(isNonEmptyString)
+        && ["open", "close", "resolveHazard"].includes(String(value.intent))
+        && value.fromState !== value.toState;
+    case "EnvironmentHazardTriggered":
+      return validateEnvironmentHazardPayload(value);
+    case "EnvironmentAreaTargetResolved":
+      return validateEnvironmentAreaTargetPayload(value);
+    case "EnvironmentAreaFeatureDamaged":
+      return validateEnvironmentAreaFeaturePayload(value);
+    default:
+      return false;
   }
-  return eventType === "EnvironmentFeatureStateChanged"
-    && isRecord(value)
+}
+
+function sha256(value: unknown): boolean {
+  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
+function canonicalIds(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.length <= 512
+    && value.every(isNonEmptyString)
+    && new Set(value).size === value.length
+    && value.every((entry, index) => index === 0 || value[index - 1] < entry);
+}
+
+function validateEnvironmentMaterializedPayload(value: unknown): boolean {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      "actorCharacterId",
+      "compiledHash",
+      "environmentProfile",
+      "feature",
+      "featureDefinition",
+      "featureDefinitionHash",
+      "featureId",
+      "sceneId",
+    ])
+    || ![value.actorCharacterId, value.featureId, value.sceneId].every(isNonEmptyString)
+    || !isRecord(value.environmentProfile)
+    || canonicalSha256(value.environmentProfile) !== canonicalSha256(ENVIRONMENT_PROFILE)
+    || !isRecord(value.featureDefinition)
+    || !isRecord(value.feature)
+    || !sha256(value.featureDefinitionHash)
+    || !sha256(value.compiledHash)) return false;
+  const compiled = compileEnvironmentFeature(value.featureDefinition);
+  return compiled.ok
+    && value.featureDefinition.sceneId === value.sceneId
+    && value.featureDefinition.featureId === value.featureId
+    && value.featureDefinitionHash === compiled.artifact.featureDefinitionHash
+    && value.compiledHash === compiled.artifact.compiledHash
+    && canonicalSha256(value.feature) === canonicalSha256(compiled.artifact.tacticalFeature);
+}
+
+function validateEnvironmentHazardPayload(value: unknown): boolean {
+  return isRecord(value)
     && hasExactKeys(value, [
       "actorCharacterId",
-      "definitionId",
+      "areaEffectDefinition",
+      "areaEffectDefinitionHash",
+      "entityTargetIds",
+      "environmentProfile",
+      "featureDefinitionHash",
       "featureId",
-      "fromState",
-      "intent",
+      "featureTargetIds",
+      "hazardDefinition",
+      "hazardDefinitionHash",
+      "origin",
       "sceneId",
+    ])
+    && [value.actorCharacterId, value.featureId, value.sceneId].every(isNonEmptyString)
+    && isRecord(value.environmentProfile)
+    && canonicalSha256(value.environmentProfile) === canonicalSha256(ENVIRONMENT_PROFILE)
+    && isRecord(value.hazardDefinition)
+    && isRecord(value.areaEffectDefinition)
+    && [
+      value.featureDefinitionHash,
+      value.hazardDefinitionHash,
+      value.areaEffectDefinitionHash,
+    ].every(sha256)
+    && canonicalSha256(value.hazardDefinition) === value.hazardDefinitionHash
+    && canonicalSha256(value.areaEffectDefinition) === value.areaEffectDefinitionHash
+    && isRecord(value.origin)
+    && hasExactKeys(value.origin, ["elevation", "x", "y"])
+    && [value.origin.x, value.origin.y, value.origin.elevation]
+      .every((entry) => typeof entry === "string" && /^-?(0|[1-9][0-9]*)$/.test(entry))
+    && canonicalIds(value.entityTargetIds)
+    && canonicalIds(value.featureTargetIds);
+}
+
+function validateEnvironmentAreaTargetPayload(value: unknown): boolean {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      "actorCharacterId",
+      "appliedDamage",
+      "areaEffectDefinitionHash",
+      "damageType",
+      "rolledDamage",
+      "saveAbility",
+      "saveDc",
+      "saveMode",
+      "saveModifier",
+      "saveRolls",
+      "saveSucceeded",
+      "saveTotal",
+      "sceneId",
+      "selectedSaveRoll",
+      "sourceFeatureId",
+      "statusApplied",
+      "targetBeforeHash",
+      "targetEntityId",
+      "targetPatch",
+    ])
+    || ![
+      value.actorCharacterId,
+      value.damageType,
+      value.sceneId,
+      value.sourceFeatureId,
+      value.targetEntityId,
+    ].every(isNonEmptyString)
+    || !sha256(value.areaEffectDefinitionHash)
+    || !sha256(value.targetBeforeHash)
+    || !["str", "dex", "con", "int", "wis", "cha"].includes(String(value.saveAbility))
+    || !["normal", "advantage", "disadvantage"].includes(String(value.saveMode))
+    || ![value.saveDc, value.rolledDamage, value.appliedDamage]
+      .every((entry) => typeof entry === "string" && /^(0|[1-9][0-9]*)$/.test(entry))
+    || ![value.saveModifier, value.saveTotal]
+      .every((entry) => typeof entry === "string" && /^-?(0|[1-9][0-9]*)$/.test(entry))
+    || !Array.isArray(value.saveRolls)
+    || value.saveRolls.length !== (value.saveMode === "normal" ? 1 : 2)
+    || !value.saveRolls.every((roll) => Number.isInteger(roll) && roll >= 1 && roll <= 20)
+    || !Number.isInteger(value.selectedSaveRoll)
+    || !value.saveRolls.includes(value.selectedSaveRoll)
+    || typeof value.saveSucceeded !== "boolean"
+    || !["none", "prone"].includes(String(value.statusApplied))
+    || !isRecord(value.targetPatch)) return false;
+  return value.targetPatch.id === value.targetEntityId
+    && BigInt(String(value.appliedDamage)) <= BigInt(String(value.rolledDamage));
+}
+
+function validateEnvironmentAreaFeaturePayload(value: unknown): boolean {
+  return isRecord(value)
+    && hasExactKeys(value, [
+      "actorCharacterId",
+      "appliedDamage",
+      "areaEffectDefinitionHash",
+      "damageType",
+      "durabilityAfter",
+      "durabilityBefore",
+      "fromState",
+      "rolledDamage",
+      "sceneId",
+      "sourceFeatureId",
+      "targetFeatureId",
       "toState",
     ])
     && [
       value.actorCharacterId,
-      value.definitionId,
-      value.featureId,
+      value.damageType,
       value.fromState,
       value.sceneId,
+      value.sourceFeatureId,
+      value.targetFeatureId,
       value.toState,
     ].every(isNonEmptyString)
-    && (value.intent === "open" || value.intent === "close")
-    && value.fromState !== value.toState;
+    && sha256(value.areaEffectDefinitionHash)
+    && [
+      value.appliedDamage,
+      value.durabilityAfter,
+      value.durabilityBefore,
+      value.rolledDamage,
+    ].every((entry) => typeof entry === "string" && /^(0|[1-9][0-9]*)$/.test(entry));
 }
 
 function validateEnvironmentDamagePayload(value: unknown): boolean {
@@ -310,6 +753,37 @@ export function applyEnvironmentEvent(
   state: AuthoritativeWorldState,
   event: EventEnvelope,
 ): boolean {
+  if (event.eventType === "EnvironmentFeatureMaterialized") {
+    const payload = event.payload as EventPayloadByType["EnvironmentFeatureMaterialized"];
+    const actor = state.entities[payload.actorCharacterId];
+    const scene = state.combatRuntime.scenes[payload.sceneId];
+    const geometry = isRecord(scene) ? scene.geometry : undefined;
+    const compiled = compileEnvironmentFeature(payload.featureDefinition);
+    if (actor?.sceneId !== payload.sceneId
+      || !isCanonicalTacticalGeometry(geometry)
+      || !compiled.ok
+      || compiled.artifact.featureDefinitionHash !== payload.featureDefinitionHash
+      || compiled.artifact.compiledHash !== payload.compiledHash
+      || canonicalSha256(compiled.artifact.tacticalFeature) !== canonicalSha256(payload.feature)
+      || geometry.obstacles.some(({ featureId }) => featureId === payload.featureId)) {
+      throw new TypeError("environment feature materialization is unavailable");
+    }
+    geometry.obstacles.push(structuredClone(compiled.artifact.tacticalFeature));
+    geometry.obstacles.sort((left, right) => left.featureId.localeCompare(right.featureId));
+    if (!isCanonicalTacticalGeometry(geometry)) {
+      throw new TypeError("environment feature materialization violates canonical geometry");
+    }
+    return true;
+  }
+  if (event.eventType === "EnvironmentStuntRefused") {
+    const payload = event.payload as EventPayloadByType["EnvironmentStuntRefused"];
+    const actor = state.entities[payload.actorCharacterId];
+    if (actor?.sceneId !== payload.sceneId
+      || currentTacticalFeature(state, payload.actorCharacterId, payload.featureId) !== undefined) {
+      throw new TypeError("environment refusal contradicts authoritative geometry");
+    }
+    return true;
+  }
   if (event.eventType === "EnvironmentFeatureDamaged") {
     const payload = event.payload as EventPayloadByType["EnvironmentFeatureDamaged"];
     const actor = state.entities[payload.actorCharacterId];
@@ -387,6 +861,130 @@ export function applyEnvironmentEvent(
     }
     return true;
   }
+  if (event.eventType === "EnvironmentHazardTriggered") {
+    const payload = event.payload as EventPayloadByType["EnvironmentHazardTriggered"];
+    const actor = state.entities[payload.actorCharacterId];
+    const feature = profiledEnvironmentFeature(
+      state,
+      payload.actorCharacterId,
+      payload.featureId,
+    );
+    const binding = feature?.environment;
+    const definition = binding?.featureDefinition;
+    const targets = definition === undefined
+      ? undefined
+      : environmentAreaTargets(
+          state,
+          payload.sceneId,
+          payload.featureId,
+          definition.areaEffect,
+        );
+    if (actor?.sceneId !== payload.sceneId
+      || feature?.state !== definition?.hazard.trigger.state
+      || binding?.featureDefinitionHash !== payload.featureDefinitionHash
+      || binding?.hazardDefinitionHash !== payload.hazardDefinitionHash
+      || binding?.areaEffectDefinitionHash !== payload.areaEffectDefinitionHash
+      || canonicalSha256(definition?.hazard) !== canonicalSha256(payload.hazardDefinition)
+      || canonicalSha256(definition?.areaEffect) !== canonicalSha256(payload.areaEffectDefinition)
+      || targets === undefined
+      || canonicalSha256(targets.origin) !== canonicalSha256(payload.origin)
+      || canonicalSha256(targets.entityTargetIds) !== canonicalSha256(payload.entityTargetIds)
+      || canonicalSha256(targets.featureTargetIds) !== canonicalSha256(payload.featureTargetIds)) {
+      throw new TypeError("environment hazard targets violate authoritative geometry");
+    }
+    return true;
+  }
+  if (event.eventType === "EnvironmentAreaTargetResolved") {
+    const payload = event.payload as EventPayloadByType["EnvironmentAreaTargetResolved"];
+    const target = environmentDamageTarget(state, payload.targetEntityId);
+    const feature = profiledEnvironmentFeature(
+      state,
+      payload.actorCharacterId,
+      payload.sourceFeatureId,
+    );
+    const areaEffect = feature?.environment?.featureDefinition.areaEffect;
+    const outcome = target === undefined || areaEffect === undefined
+      ? undefined
+      : resolveEnvironmentAreaTarget(
+          target,
+          areaEffect,
+          Number(payload.rolledDamage),
+          payload.saveRolls,
+        );
+    if (target?.sceneId !== payload.sceneId
+      || canonicalSha256(target) !== payload.targetBeforeHash
+      || feature?.environment?.areaEffectDefinitionHash !== payload.areaEffectDefinitionHash
+      || areaEffect?.save.ability !== payload.saveAbility
+      || areaEffect.save.dc !== payload.saveDc
+      || areaEffect.damage.type !== payload.damageType
+      || outcome === undefined
+      || outcome.saveMode !== payload.saveMode
+      || outcome.selectedSaveRoll !== payload.selectedSaveRoll
+      || String(outcome.saveModifier) !== payload.saveModifier
+      || String(outcome.saveTotal) !== payload.saveTotal
+      || outcome.saveSucceeded !== payload.saveSucceeded
+      || String(outcome.appliedDamage) !== payload.appliedDamage
+      || outcome.statusApplied !== payload.statusApplied
+      || payload.targetPatch.id !== payload.targetEntityId
+      || canonicalSha256(outcome.targetPatch) !== canonicalSha256(payload.targetPatch)) {
+      throw new TypeError("environment area target resolution is unavailable");
+    }
+    return true;
+  }
+  if (event.eventType === "EnvironmentAreaFeatureDamaged") {
+    const payload = event.payload as EventPayloadByType["EnvironmentAreaFeatureDamaged"];
+    const actor = state.entities[payload.actorCharacterId];
+    const scene = state.combatRuntime.scenes[payload.sceneId];
+    const geometry = isRecord(scene) ? scene.geometry : undefined;
+    const source = isCanonicalTacticalGeometry(geometry)
+      ? geometry.obstacles.find(({ featureId }) => featureId === payload.sourceFeatureId)
+      : undefined;
+    const sourceAreaHash = source?.environment?.areaEffectDefinitionHash;
+    const target = isCanonicalTacticalGeometry(geometry)
+      ? geometry.obstacles.find(({ featureId }) => featureId === payload.targetFeatureId)
+      : undefined;
+    const durability = target?.durability;
+    const graph = target?.stateGraph;
+    const rolled = BigInt(payload.rolledDamage);
+    const expectedApplied = durability === undefined
+      || durability.immuneDamageTypes.includes(payload.damageType)
+      || rolled < BigInt(durability.damageThreshold)
+      ? 0n
+      : rolled;
+    const expectedAfter = durability === undefined
+      ? 0n
+      : BigInt(durability.current) > expectedApplied
+        ? BigInt(durability.current) - expectedApplied
+        : 0n;
+    const transition = graph?.damageTransitions?.find((candidate) =>
+      candidate.fromState === target?.state
+      && expectedAfter <= BigInt(candidate.remainingDurabilityAtOrBelow));
+    const expectedState = transition?.toState ?? target?.state;
+    const semantics = graph?.states.find(({ state: stateId }) => stateId === expectedState);
+    if (actor?.sceneId !== payload.sceneId
+      || sourceAreaHash !== payload.areaEffectDefinitionHash
+      || target === undefined
+      || durability === undefined
+      || target.state !== payload.fromState
+      || durability.current !== payload.durabilityBefore
+      || expectedApplied.toString() !== payload.appliedDamage
+      || expectedAfter.toString() !== payload.durabilityAfter
+      || expectedState !== payload.toState
+      || semantics === undefined) {
+      throw new TypeError("environment area feature damage violates its frozen definition");
+    }
+    durability.current = payload.durabilityAfter;
+    target.state = semantics.state;
+    target.opaque = semantics.opaque;
+    target.impassable = semantics.impassable;
+    target.cover = semantics.cover;
+    target.propagation = semantics.propagation;
+    target.terrain = semantics.terrain ?? "normal";
+    if (!isCanonicalTacticalGeometry(geometry)) {
+      throw new TypeError("environment area damage violates canonical tactical geometry");
+    }
+    return true;
+  }
   if (event.eventType !== "EnvironmentFeatureStateChanged") return false;
   const payload = event.payload as EventPayloadByType["EnvironmentFeatureStateChanged"];
   const actor = state.entities[payload.actorCharacterId];
@@ -402,7 +1000,11 @@ export function applyEnvironmentEvent(
     && candidate.intent === payload.intent
     && candidate.toState === payload.toState);
   const semantics = graph?.states.find((candidate) => candidate.state === payload.toState);
-  if (feature?.kind !== "portal"
+  const validFeatureKind = payload.intent === "resolveHazard"
+    ? feature?.kind === "destructible" && feature.environment !== undefined
+    : feature?.kind === "portal";
+  if (feature === undefined
+    || !validFeatureKind
     || graph?.definitionId !== payload.definitionId
     || feature.state !== payload.fromState
     || transition === undefined

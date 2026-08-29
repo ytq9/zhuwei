@@ -1,5 +1,6 @@
 import { canonicalSha256 } from "../profiles/canonical";
-import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
+import { environmentProfileEnabled } from "../profiles/environment";
+import type { ProfileRef, RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import type {
   AuthoritativeWorldState,
   CanonicalFactRecord,
@@ -95,6 +96,31 @@ const EVENT_KEYS = [
   "stateBeforeHash",
   "visibilityPolicyId",
 ] as const;
+
+const PROFILED_ENVIRONMENT_EVENT_TYPES = new Set<EventType>([
+  "EnvironmentFeatureMaterialized",
+  "EnvironmentStuntRefused",
+  "EnvironmentHazardTriggered",
+  "EnvironmentAreaTargetResolved",
+  "EnvironmentAreaFeatureDamaged",
+]);
+
+function eventRequiresEnvironmentProfile(eventType: EventType, payload: unknown): boolean {
+  return PROFILED_ENVIRONMENT_EVENT_TYPES.has(eventType)
+    || (eventType === "EnvironmentFeatureStateChanged"
+      && isRecord(payload)
+      && payload.intent === "resolveHazard");
+}
+
+function envelopeEnvironmentProfileEnabled(profiles: JsonRecord): boolean {
+  return Array.isArray(profiles.extensions)
+    && profiles.extensions.every((extension): extension is ProfileRef =>
+      isRecord(extension)
+      && hasExactKeys(extension, ["profileHash", "profileId"])
+      && isNonEmptyString(extension.profileId)
+      && isSha256(extension.profileHash))
+    && environmentProfileEnabled(profiles.extensions);
+}
 
 const EVENT_TYPES = new Set<EventType>([
   "ImprovisedActionResolved",
@@ -1015,6 +1041,10 @@ export function validateEventEnvelope(value: unknown): EventValidation {
   if (!isTypedPayload(value.eventType as EventType, value.payload)) {
     return { ok: false, message: "Event payload does not match its closed event type schema." };
   }
+  if (eventRequiresEnvironmentProfile(value.eventType as EventType, value.payload)
+    && !envelopeEnvironmentProfileEnabled(value.profiles)) {
+    return { ok: false, message: "Event requires the pinned dynamic environment Profile." };
+  }
   const event = value as EventEnvelope;
   try {
     if (canonicalSha256(event.payload) !== event.payloadHash || eventHash(event) !== event.eventHash) {
@@ -1059,6 +1089,10 @@ export function createEventTransition<T extends EventType>(
 ): { event: EventEnvelope<T>; state: AuthoritativeWorldState; receipt: PublicReceipt } {
   if (!isAuthoritativeWorldState(source)) {
     throw new TypeError("event transition requires an authoritative v2 state");
+  }
+  if (eventRequiresEnvironmentProfile(draft.eventType, draft.payload)
+    && !environmentProfileEnabled(profiles.extensions)) {
+    throw new TypeError("event transition requires the dynamic environment Profile");
   }
   const nextEventSeq = (BigInt(source.version) + 1n).toString();
   const fictionTimelineId = eventFictionTimelineId(

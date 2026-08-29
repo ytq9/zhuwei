@@ -12,6 +12,10 @@ import {
   FICTION_COMBAT_TIME_PROFILE,
   FICTION_COMBAT_TIME_PROFILE_DOCUMENT,
 } from "./fiction-time";
+import {
+  ENVIRONMENT_PROFILE,
+  ENVIRONMENT_PROFILE_DOCUMENT,
+} from "./environment";
 
 export {
   TRIGGER_ORDERING_PROFILE,
@@ -21,6 +25,10 @@ export {
   FICTION_COMBAT_TIME_PROFILE,
   FICTION_COMBAT_TIME_PROFILE_DOCUMENT,
 } from "./fiction-time";
+export {
+  ENVIRONMENT_PROFILE,
+  ENVIRONMENT_PROFILE_DOCUMENT,
+} from "./environment";
 
 export const RULESET_PROFILE = {
   profileId: "dnd5e-2014-srd5.1-authoritative-v2",
@@ -72,6 +80,11 @@ export const MANIFEST_PROFILE = {
   profileHash: "sha256:496da17f16d52cbe5dfa3e97facfa8ed7dcf3f4bbb7a882fc0e384d464898051",
 } as const satisfies ProfileRef;
 
+export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE = {
+  profileId: "runtime-srd51-2014-authoritative-environment-v1",
+  profileHash: "sha256:545e80e94c81222616e4e58d9c54cc3bf6c6e4ff5abae7a2fa130d5232064c1e",
+} as const satisfies ProfileRef;
+
 export const CURRENT_RUNTIME_PROFILE_MANIFEST = {
   manifest: MANIFEST_PROFILE,
   ruleset: RULESET_PROFILE,
@@ -86,6 +99,29 @@ export const CURRENT_RUNTIME_PROFILE_MANIFEST = {
     PRESENTATION_POLICY_PROFILE,
     PROJECTION_POLICY_PROFILE,
     DELIVERY_PROTOCOL_PROFILE,
+  ],
+} as const satisfies RuntimeProfileManifest;
+
+/**
+ * Explicit opt-in manifest for the dynamic environment primitive. The shipped
+ * v2 manifest remains byte-for-byte addressable and stays the registry default
+ * until Room wiring deliberately selects this generation for a new epoch.
+ */
+export const ENVIRONMENT_RUNTIME_PROFILE_MANIFEST = {
+  manifest: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE,
+  ruleset: RULESET_PROFILE,
+  eventSchema: EVENT_SCHEMA_PROFILE,
+  abilityCompiler: ABILITY_COMPILER_PROFILE,
+  geometry: GEOMETRY_PROFILE,
+  triggerOrdering: TRIGGER_ORDERING_PROFILE,
+  fictionCombatTime: FICTION_COMBAT_TIME_PROFILE,
+  extensions: [
+    COMBAT_PROFILE,
+    DAMAGE_DEATH_PROFILE,
+    PRESENTATION_POLICY_PROFILE,
+    PROJECTION_POLICY_PROFILE,
+    DELIVERY_PROTOCOL_PROFILE,
+    ENVIRONMENT_PROFILE,
   ],
 } as const satisfies RuntimeProfileManifest;
 
@@ -286,8 +322,39 @@ export const MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   },
 };
 
+export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
+  schema: "zhuwei.runtime-profile/v1",
+  profileKind: "runtimeManifest",
+  profileId: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE.profileId,
+  semanticVersion: "1.0.0",
+  normativePayload: {
+    conformanceVersion: "1",
+    profileDispatch: "exact-id-and-hash",
+    compatibility: "authoritative-v2-plus-explicit-environment-feature-fsm-v1",
+    publicInterface: ["step", "project", "replay"],
+    ruleset: RULESET_PROFILE,
+    eventSchema: EVENT_SCHEMA_PROFILE,
+    abilityCompiler: ABILITY_COMPILER_PROFILE,
+    geometry: GEOMETRY_PROFILE,
+    triggerOrdering: TRIGGER_ORDERING_PROFILE,
+    fictionCombatTime: FICTION_COMBAT_TIME_PROFILE,
+    extensions: [
+      COMBAT_PROFILE,
+      DAMAGE_DEATH_PROFILE,
+      PRESENTATION_POLICY_PROFILE,
+      PROJECTION_POLICY_PROFILE,
+      DELIVERY_PROTOCOL_PROFILE,
+      ENVIRONMENT_PROFILE,
+    ],
+  },
+};
+
 export const CANONICAL_PROFILE_DOCUMENTS = [
   { ref: MANIFEST_PROFILE, document: MANIFEST_PROFILE_DOCUMENT },
+  {
+    ref: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE,
+    document: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
+  },
   { ref: RULESET_PROFILE, document: RULESET_PROFILE_DOCUMENT },
   { ref: EVENT_SCHEMA_PROFILE, document: EVENT_SCHEMA_PROFILE_DOCUMENT },
   { ref: ABILITY_COMPILER_PROFILE, document: ABILITY_COMPILER_PROFILE_DOCUMENT },
@@ -299,6 +366,7 @@ export const CANONICAL_PROFILE_DOCUMENTS = [
   { ref: PRESENTATION_POLICY_PROFILE, document: PRESENTATION_POLICY_PROFILE_DOCUMENT },
   { ref: PROJECTION_POLICY_PROFILE, document: PROJECTION_POLICY_PROFILE_DOCUMENT },
   { ref: DELIVERY_PROTOCOL_PROFILE, document: DELIVERY_PROTOCOL_PROFILE_DOCUMENT },
+  { ref: ENVIRONMENT_PROFILE, document: ENVIRONMENT_PROFILE_DOCUMENT },
 ] as const;
 
 /** Golden seam: every Registry ref must be the hash of its canonical Profile bytes. */
