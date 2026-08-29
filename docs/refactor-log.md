@@ -1998,3 +1998,10 @@
 - 修改文件：`tests/chandelier-environment-rules-v3.test.mjs`、`tools/check-modules.mjs`、`tools/run-kp-v3-eval.mjs`。改为复制后删除旧 genesis hash、用等价十六进制字符类表示左方括号，并保留调用者传入的唯一 `basisRefs`；没有改变产品规则、断言或评测范围。
 - 定向检查：`npx eslint tests/chandelier-environment-rules-v3.test.mjs tools/check-modules.mjs tools/run-kp-v3-eval.mjs` 退出 0。修复将形成新的冻结提交，随后从 `git diff --check` 起完整重跑全部正式门；首次失败结果不作为发布通过证据。
 - Node 门连带修复：`015aebf` 上的首次 `npm run test:unit` 退出 1，477/479 通过；两个失败都是旧测试合同未同步既有产品语义：Profile 枚举漏掉两项 private-forms Profile，HTTP 隐私测试仍假定 ACK 会删除 ViewerKey 已亲历的开场叙述。只更新 `tests/interaction-contract.test.mjs` 与 `tests/observer-http-privacy-v2.test.mjs`，继续断言 ACK 后当前 Delivery/TTS 失效、重连保留亲历正文且跨玩家内容不可见；两文件定向复核退出 0，9/9。新冻结提交仍须完整重跑六项门。
+
+## Worker 拒绝合同与同头 replay 定向收口（2026-08-30）
+
+- 症状与根因：`dd2d7a6` 上 Node 门为 479/479，但首次完整 Worker 门出现 35 项失败；其中五个拒绝用例仍按旧 DTO 精确比较，漏掉生产合同早已统一要求的 `action:notCommitted` / `narration:notApplicable`，chapter migration 测试钩子仍转发旧三参数签名，dynamic ability 恢复用例又把全局登记但未授予角色的 AbilityDefinition 当成可调用能力。其余大量 5 秒 timeout 的共同成本是同一持久事件头在 prepare、commit、publication 和 observe 间被完整 replay 6–8 次；关闭 archive scheduler 的隔离 A/B 无改善，旧/新事件序列与单次 replay 成本一致，排除 D1 checkpoint 和 Profile 穿透。
+- 修改：五个拒绝测试补齐双轴结果；chapter 钩子按当前五参数原样转发；dynamic ability 改为验证源 Room 与 fresh restore 都一致拒绝 ownerless 定义、资源与 archive head 不推进。Room 新增只读派生 replay cache：key 精确包含 room/module/profile/genesis/state 原始持久值及 event count、末事件 seq/id/完整 JSON；miss 保存克隆，hit 返回克隆，因此调用者不能污染缓存，提交、更正、恢复或重建会因持久 key 改变自动 miss，跨 `await` 的 archive 二次检查仍重新读取 key。生产事件表仍只追加；热实例绕过 Store 直接改写非末尾事件但同时保持 count/head/state 不变属于未暴露内部写能力的 P2 信任假设，冷实例仍完整 replay 并拒绝。
+- 定向证据：原 60 秒超时的 `combat-vertical-v2` 在默认预算下 1/1、49.91 秒；environment destruction 12/12；cache + combat correction + multi-wave randomness 16/16（四崩溃点、并发同 Receipt/faces，命令级 30 秒预算）；D1→fresh DO 的零当前 Viewer 与 80+ events/48 audits 两条恢复 2/2（命令级 60 秒预算）；chapter/dynamic 7/7；portal/zone/error-report 5 passed/3 skipped，tactical 精确拒绝 1 passed/4 skipped。`npm run typecheck`、目标测试 ESLint 与 `git diff --check` 均退出 0。
+- 范围裁定：用户在本轮明确要求小改只跑需要的定向测试，因此没有在当前源码上重跑完整 `module:check`、unit、Worker、build 或六项冻结门；一次扩展 Worker 组合在确认剩余红点均为既有 5 秒预算后按该指令中止，不能作为通过证据。远端 migration、部署、浏览器与三交互生产验证仍按已授权发布范围继续。

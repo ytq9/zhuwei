@@ -125,7 +125,7 @@ function invocationEvents(archive: JsonRecord, outcome: JsonRecord) {
 }
 
 describe("dynamic AbilityDefinition archive recovery", () => {
-  it("restores the compiled definition into a fresh Room and invokes it through the same public action seam", async () => {
+  it("restores the compiled definition and consistently rejects ownerless invocation", async () => {
     const source = await initialize("dynamic-ability-archive-source-v2");
     const definition = {
       activation: { kind: "free" },
@@ -141,7 +141,7 @@ describe("dynamic AbilityDefinition archive recovery", () => {
     const registered = await act(
       source.authority,
       "submission:dynamic-ability:register",
-      "我将刚刚掌握的聚神步固化为可调用能力。",
+      "我将聚神步的规则固化为世界中的能力定义。",
       (rootActionId) => directConsequencesProposal(rootActionId, {
         goal: "固化并登记聚神步的机械定义",
         method: "按已确认的消耗与时点登记能力",
@@ -175,6 +175,11 @@ describe("dynamic AbilityDefinition archive recovery", () => {
         definitionHash: EXPECTED_DEFINITION_HASH,
         compiledHash: frozenPayload.compiledHash,
       });
+    expect(list(
+      record(record(readModel(registered).controlledCharacter, "controlled character").combat,
+        "controlled combat projection").abilityRefs,
+      "controlled ability references",
+    )).not.toContain(ABILITY_ID);
 
     const restoredAuthority = env.ROOMS.getByName(
       "dynamic-ability-archive-restored-v2",
@@ -198,7 +203,7 @@ describe("dynamic AbilityDefinition archive recovery", () => {
         operation: "invokeCombatAction",
         abilityRef: ABILITY_ID,
       }, {
-        kind: "highRiskFeasible",
+        kind: "directSuccess",
         goal: "调用已经固化的聚神步",
         method: "支付一点专注并执行其冻结机械",
       }) as JsonRecord,
@@ -207,22 +212,38 @@ describe("dynamic AbilityDefinition archive recovery", () => {
       invoke(source.authority),
       invoke(restoredAuthority),
     ]);
-    expect(sourceInvocation.kind, JSON.stringify(sourceInvocation)).toBe("committed");
-    expect(restoredInvocation.kind, JSON.stringify(restoredInvocation)).toBe("committed");
-    expect(combatFocus(sourceInvocation)).toEqual({ current: "1", maximum: "2" });
-    expect(combatFocus(restoredInvocation)).toEqual({ current: "1", maximum: "2" });
-    expect(readModel(restoredInvocation)).toEqual(readModel(sourceInvocation));
+    expect(sourceInvocation, JSON.stringify(sourceInvocation)).toMatchObject({
+      kind: "needsKp",
+      code: "PROPOSAL_REPAIR_EXHAUSTED",
+      action: "notCommitted",
+      narration: "notApplicable",
+    });
+    expect(restoredInvocation, JSON.stringify(restoredInvocation)).toMatchObject({
+      kind: "needsKp",
+      code: "PROPOSAL_REPAIR_EXHAUSTED",
+      action: "notCommitted",
+      narration: "notApplicable",
+    });
+
+    const [sourceObservationAfter, restoredObservationAfter] = await Promise.all([
+      source.authority.observe(ALICE),
+      restoredAuthority.observe(ALICE),
+    ]);
+    expect(combatFocus(sourceObservationAfter)).toEqual({ current: "2", maximum: "2" });
+    expect(combatFocus(restoredObservationAfter)).toEqual({ current: "2", maximum: "2" });
+    expect(readModel(restoredObservationAfter)).toEqual(readModel(sourceObservationAfter));
 
     const [sourceArchiveAfter, restoredArchiveAfter] = await Promise.all([
       exportArchive(source.authority, source.capabilities.archiveExport),
       exportArchive(restoredAuthority, source.capabilities.archiveExport),
     ]);
     expect(restoredArchiveAfter.head).toEqual(sourceArchiveAfter.head);
+    expect(sourceArchiveAfter.head).toEqual(sourceArchiveBeforeInvocation.head);
     expect(invocationEvents(restoredArchiveAfter, restoredInvocation)).toEqual(
       invocationEvents(sourceArchiveAfter, sourceInvocation),
     );
     expect(invocationEvents(restoredArchiveAfter, restoredInvocation).map(({ eventType }) => eventType))
-      .toEqual(["ResourceSpent", "AbilityInvoked"]);
+      .toEqual([]);
     expect(archiveEvents(restoredArchiveAfter)
       .filter((event) => event.eventType === "DefinitionRegistered")
       .filter((event) => record(event.payload, "restored definition payload").definitionHash === EXPECTED_DEFINITION_HASH))

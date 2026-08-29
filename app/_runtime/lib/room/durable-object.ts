@@ -333,6 +333,38 @@ type AuthorityReplay = {
   replay: ReplayedRulesResult;
 };
 
+type AuthorityReplayCacheKey = {
+  roomId: string;
+  moduleId: string;
+  profilesJson: string;
+  genesisJson: string;
+  stateJson: string;
+  eventCount: number;
+  eventSeq: string | null;
+  eventId: string | null;
+  eventJson: string | null;
+};
+
+type AuthorityReplayCache = {
+  key: AuthorityReplayCacheKey;
+  value: AuthorityReplay;
+};
+
+function sameAuthorityReplayCacheKey(
+  left: AuthorityReplayCacheKey,
+  right: AuthorityReplayCacheKey,
+): boolean {
+  return left.roomId === right.roomId
+    && left.moduleId === right.moduleId
+    && left.profilesJson === right.profilesJson
+    && left.genesisJson === right.genesisJson
+    && left.stateJson === right.stateJson
+    && left.eventCount === right.eventCount
+    && left.eventSeq === right.eventSeq
+    && left.eventId === right.eventId
+    && left.eventJson === right.eventJson;
+}
+
 type AuthenticatedAuthorityViewer = {
   principalId: string;
   sessionVersion: number;
@@ -849,6 +881,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   private authorityArchiveDatabaseOverride: D1Database | undefined;
   private authorityDeletionDatabaseOverride: D1Database | undefined;
   private authorityArchiveFlight: Promise<void> | undefined;
+  private authoritativeReplayCache: AuthorityReplayCache | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -991,17 +1024,40 @@ export class RoomDurableObject extends DurableObject<Env> {
   private authoritativeReplay(): AuthorityReplay {
     const room = this.authorityStore.room();
     if (room === undefined) throw new Error("authoritative-v2 room has not been initialized");
+    const eventHead = this.authorityStore.eventHead();
+    const cacheKey: AuthorityReplayCacheKey = {
+      roomId: room.room_id,
+      moduleId: room.module_id,
+      profilesJson: room.profiles_json,
+      genesisJson: room.genesis_json,
+      stateJson: room.state_json,
+      eventCount: eventHead?.eventCount ?? 0,
+      eventSeq: eventHead?.eventSeq ?? null,
+      eventId: eventHead?.eventId ?? null,
+      eventJson: eventHead?.eventJson ?? null,
+    };
+    if (
+      this.authoritativeReplayCache !== undefined
+      && sameAuthorityReplayCacheKey(this.authoritativeReplayCache.key, cacheKey)
+    ) {
+      return structuredClone(this.authoritativeReplayCache.value);
+    }
     const genesis = parseJson<RuntimeGenesis>(room.genesis_json);
     const replayed = replayAuthoritative(genesis, this.authorityStore.events());
     if (replayed.kind !== "replayed") {
       throw new Error(`authoritative-v2 replay rejected: ${replayed.rejection.code}`);
     }
-    return {
+    const value = {
       profiles: replayed.profiles,
       genesis,
       state: replayed.state as AuthoritativeWorldState,
       replay: replayed,
     };
+    this.authoritativeReplayCache = {
+      key: cacheKey,
+      value: structuredClone(value),
+    };
+    return value;
   }
 
   private authorityStateBeforeEventRange(

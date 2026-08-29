@@ -356,7 +356,9 @@ describe("chapter-bound authoritative ModuleRef migration", () => {
         authorityMechanicalInput(
           submission: unknown,
           proposal: unknown,
+          profiles: unknown,
           state: unknown,
+          authenticated: unknown,
         ): Promise<unknown>;
         commit(context: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
       };
@@ -370,7 +372,13 @@ describe("chapter-bound authoritative ModuleRef migration", () => {
         signalMigrationPaused = resolve;
       });
       let paused = false;
-      target.authorityMechanicalInput = async (submission, proposal, state) => {
+      target.authorityMechanicalInput = async (
+        submission,
+        proposal,
+        profiles,
+        state,
+        authenticated,
+      ) => {
         const mechanical = record(record(proposal, "proposal at Registry boundary").mechanicalProposal,
           "mechanical proposal at Registry boundary");
         if (!paused && mechanical.moduleMigration !== undefined) {
@@ -378,7 +386,7 @@ describe("chapter-bound authoritative ModuleRef migration", () => {
           signalMigrationPaused();
           await migrationGate;
         }
-        return originalMechanicalInput(submission, proposal, state);
+        return originalMechanicalInput(submission, proposal, profiles, state, authenticated);
       };
 
       const stalePromise = target.commit(

@@ -203,6 +203,8 @@ describe("SPEC 0011 restricted ErrorReport at the Room responsibility interface"
       kind: "rejected",
       code: "referenceUnavailable",
       explanation: "该对象当前不可用。",
+      action: "notCommitted",
+      narration: "notApplicable",
     });
     expect(unknownReference).toEqual(privateReference);
     expect(JSON.stringify(privateReference)).not.toContain(String(bobReceipt.receiptId));

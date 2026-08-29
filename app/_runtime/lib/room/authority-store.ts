@@ -30,6 +30,13 @@ export type AuthorityCharacterRow = {
   static_card_json: string;
 };
 
+export type AuthorityEventHead = {
+  eventCount: number;
+  eventSeq: string;
+  eventId: string;
+  eventJson: string;
+};
+
 export type AuthoritySubmissionRow = {
   submission_id: string;
   principal_id: string;
@@ -826,6 +833,28 @@ export class AuthoritativeRoomStore {
       SELECT event_json FROM authority_events
       ORDER BY length(event_seq), event_seq
     `).toArray().map(({ event_json }) => parseJson<EventEnvelope>(event_json));
+  }
+
+  eventHead(): AuthorityEventHead | undefined {
+    const row = this.storage.sql.exec<{
+      event_count: number;
+      event_seq: string;
+      event_id: string;
+      event_json: string;
+    }>(`
+      SELECT event_seq, event_id, event_json, COUNT(*) OVER () AS event_count
+      FROM authority_events
+      ORDER BY length(event_seq) DESC, event_seq DESC
+      LIMIT 1
+    `).toArray()[0];
+    return row === undefined
+      ? undefined
+      : {
+          eventCount: row.event_count,
+          eventSeq: row.event_seq,
+          eventId: row.event_id,
+          eventJson: row.event_json,
+        };
   }
 
   appendEvents(events: EventEnvelope[]): void {

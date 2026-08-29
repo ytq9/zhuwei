@@ -318,6 +318,8 @@ describe("SPEC 0014 Room portal finite-state vertical", () => {
       kind: "rejected",
       code: "referenceUnavailable",
       explanation: "该对象当前不可用。",
+      action: "notCommitted",
+      narration: "notApplicable",
     });
     expect(proposed.value).toBe(0);
 

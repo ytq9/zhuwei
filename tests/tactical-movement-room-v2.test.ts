@@ -355,6 +355,8 @@ describe("SPEC 0014 TM05/TM10 tactical movement Room vertical", () => {
         explanation: expectedCode === "spatialStateChanged"
           ? "战术空间已变化，请按当前视图重新选择路径。"
           : "该移动当前不可用。",
+        action: "notCommitted",
+        narration: "notApplicable",
       });
       expect(JSON.stringify(outcome)).not.toContain("feature:");
       expect(JSON.stringify(outcome)).not.toContain("obstacle");

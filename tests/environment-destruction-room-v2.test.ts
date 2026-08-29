@@ -728,6 +728,8 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
       kind: "rejected",
       code: "referenceUnavailable",
       explanation: "该对象当前不可用。",
+      action: "notCommitted",
+      narration: "notApplicable",
     });
 
     const legacy = authority("environment-destruction-room-v2-legacy");

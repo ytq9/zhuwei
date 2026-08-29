@@ -182,6 +182,8 @@ describe("SPEC 0014 TM09 persistent environment zone Room vertical", () => {
       kind: "rejected",
       code: "tacticalMapAbilityDeferred",
       explanation: "地图点选区域施法后续支持；请继续使用当前已有的战斗操作。",
+      action: "notCommitted",
+      narration: "notApplicable",
     });
     expect(await source.room.observe(ALICE)).toEqual(before);
     expect(tacticalProjection(before).knownZones).toEqual([]);
