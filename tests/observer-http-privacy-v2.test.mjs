@@ -308,10 +308,12 @@ test("authoritative HTTP poll, reconnect, ACK, and voice expose only the caller'
 
   const refreshed = await api(hostCookie, "fetchTable", code);
   const reconnected = await api(hostCookie, "fetchTable", code);
-  assert.deepEqual(refreshed.body.messages, []);
-  assert.deepEqual(reconnected.body.messages, []);
-  assert.equal(JSON.stringify(refreshed.body).includes(hostDeliveryId), false);
-  assert.equal(JSON.stringify(reconnected.body).includes(hostDeliveryId), false);
+  assert.deepEqual(refreshed.body.messages, hostPoll.body.messages);
+  assert.deepEqual(reconnected.body.messages, hostPoll.body.messages);
+  assert.equal(refreshed.body.state.currentDeliveryId, undefined);
+  assert.equal(reconnected.body.state.currentDeliveryId, undefined);
+  assert.equal(JSON.stringify(refreshed.body).includes(playerDeliveryId), false);
+  assert.equal(JSON.stringify(reconnected.body).includes(playerDeliveryId), false);
 
   const voiceAfterAck = await api(hostCookie, "speakNarration", {
     roomId,

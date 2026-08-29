@@ -1997,3 +1997,4 @@
 - 症状与根因：冻结提交 `162b61c` 的前三项正式门通过后，首次 `npm run lint` 退出 1；三项均为本批新增代码中的静态错误：测试重算 genesis hash 时留下未用解构变量，module scanner 的字符类含多余转义，离线评测环境草稿重复声明 `basisRefs`。
 - 修改文件：`tests/chandelier-environment-rules-v3.test.mjs`、`tools/check-modules.mjs`、`tools/run-kp-v3-eval.mjs`。改为复制后删除旧 genesis hash、用等价十六进制字符类表示左方括号，并保留调用者传入的唯一 `basisRefs`；没有改变产品规则、断言或评测范围。
 - 定向检查：`npx eslint tests/chandelier-environment-rules-v3.test.mjs tools/check-modules.mjs tools/run-kp-v3-eval.mjs` 退出 0。修复将形成新的冻结提交，随后从 `git diff --check` 起完整重跑全部正式门；首次失败结果不作为发布通过证据。
+- Node 门连带修复：`015aebf` 上的首次 `npm run test:unit` 退出 1，477/479 通过；两个失败都是旧测试合同未同步既有产品语义：Profile 枚举漏掉两项 private-forms Profile，HTTP 隐私测试仍假定 ACK 会删除 ViewerKey 已亲历的开场叙述。只更新 `tests/interaction-contract.test.mjs` 与 `tests/observer-http-privacy-v2.test.mjs`，继续断言 ACK 后当前 Delivery/TTS 失效、重连保留亲历正文且跨玩家内容不可见；两文件定向复核退出 0，9/9。新冻结提交仍须完整重跑六项门。

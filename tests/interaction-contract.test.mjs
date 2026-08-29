@@ -155,6 +155,16 @@ test("pins one host-selected KP profile when the room is created", async () => {
         provider: "deepseek",
       },
       {
+        modelId: "deepseek-v4-flash",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-forms-v1",
+        provider: "deepseek",
+      },
+      {
+        modelId: "deepseek-v4-pro",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-forms-v1",
+        provider: "deepseek",
+      },
+      {
         modelId: "@cf/zai-org/glm-4.7-flash",
         modelProfileVersion: "authoritative-kp-profile-v1",
         provider: "cloudflare-workers-ai",
@@ -188,7 +198,10 @@ test("pins one host-selected KP profile when the room is created", async () => {
     roomServer.indexOf("async function executeAuthoritativeRoomAction"),
   );
   assert.doesNotMatch(correction, /modelId|modelProfileVersion/);
-  assert.match(correction, /select ruleset_version, kp_model, kp_model_profile/);
+  assert.match(
+    correction,
+    /select ruleset_version, module_id, host_user_id, kp_model, kp_model_profile/,
+  );
   assert.match(correction, /where id = \$\{input\.roomId\}/);
   assert.match(engine, /chatJson\(rooms\[0\]\.kp_model, messages\)/);
   assert.doesNotMatch(engine, /grok-4\.5/);
