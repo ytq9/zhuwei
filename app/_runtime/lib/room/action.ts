@@ -886,7 +886,9 @@ function narrationFailure(error: unknown): {
     errorCode: explicit === "NARRATION_PROVIDER_TIMEOUT"
       || explicit === "NARRATION_PUBLICATION_FAILED"
       ? explicit
-      : "NARRATION_PROVIDER_TIMEOUT",
+      : candidate?.code === "modelTransient" || candidate?.code === "quotaExhausted"
+        ? "NARRATION_PROVIDER_TIMEOUT"
+        : "NARRATION_PUBLICATION_FAILED",
   };
 }
 

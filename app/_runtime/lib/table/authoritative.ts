@@ -32,6 +32,34 @@ export function publicV3FailureCode(value: unknown): V3PublicFailureCode | undef
     : undefined;
 }
 
+export function publicNarrationFailureReason(value: unknown): string {
+  switch (publicV3FailureCode(value)) {
+    case "NARRATION_PROVIDER_TIMEOUT":
+      return "KP 服务暂时不可用，或本次响应超过时限";
+    case "NARRATION_BODY_INVALID":
+      return "KP 服务配置或返回内容未通过有效性检查";
+    case "NARRATION_GROUNDING_REJECTED":
+      return "KP 回复与已经结算的事实不一致";
+    case "NARRATION_PUBLICATION_FAILED":
+      return "KP 回复生成或传送过程中出现故障";
+    default:
+      return "KP 回复暂未完成，原因尚未确认";
+  }
+}
+
+export function publicNarrationRecoveryReason(value: unknown): string {
+  switch (value) {
+    case "pending":
+      return "KP 回复仍在处理，或上次连接在完成前中断。";
+    case "rejected":
+      return "KP 回复未通过格式或已结算事实检查。";
+    case "retryableFailure":
+      return "KP 服务或回复发布暂时失败；这不代表一定等待超时。";
+    default:
+      return "KP 回复暂未完成，原因尚未确认。";
+  }
+}
+
 export function publicAuthoritativeOutcomeError(outcome: {
   kind: string;
   code?: unknown;

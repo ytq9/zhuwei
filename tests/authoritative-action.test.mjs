@@ -1096,9 +1096,16 @@ test("permanent and quota KP failures keep their stable outer classifications wi
 test("the current viewer receives exact provider and grounding narration failure codes after commit", async () => {
   const cases = [
     {
-      error: new Error("private provider timeout detail"),
+      error: Object.assign(new Error("private provider transient detail"), {
+        code: "modelTransient",
+      }),
       state: "retryableFailure",
       code: "NARRATION_PROVIDER_TIMEOUT",
+    },
+    {
+      error: new Error("private unclassified narration detail"),
+      state: "retryableFailure",
+      code: "NARRATION_PUBLICATION_FAILED",
     },
     {
       error: Object.assign(new Error("private grounding detail"), {

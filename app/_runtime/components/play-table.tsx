@@ -30,6 +30,7 @@ import {
 import {
   arcaneRecoveryAvailability,
   changeArcaneRecoverySelection,
+  publicNarrationRecoveryReason,
   type ArcaneRecoverySlotLevel,
 } from "@/lib/table/authoritative";
 import type { PendingRoll } from "@/lib/kp/prompt";
@@ -935,9 +936,12 @@ export function PlayTable({
             role="alert"
             className="shrink-0 border-t border-danger/40 bg-danger/10 px-5 py-3"
           >
-            <p className="text-sm text-fg">你的行动状态不变，但这条 KP 回复尚未送达。</p>
+            <p className="text-sm text-fg">行动已经结算，但这条 KP 回复尚未送达。</p>
             <p className="mt-1 text-xs text-subtle">
-              这里只恢复你自己的回复，不会重新裁定、掷骰或消耗资源。
+              {publicNarrationRecoveryReason(viewerNarrationRecovery.state)}
+            </p>
+            <p className="mt-1 text-xs text-subtle">
+              重试只恢复你自己的回复，不会重新裁定、掷骰或消耗资源。
             </p>
             <Button
               type="button"

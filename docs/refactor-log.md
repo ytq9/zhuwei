@@ -2025,3 +2025,10 @@
 | 2026-08-30 | `node tools/run-live-kp-eval.mjs --interactions=3` | 1 | 3/3、live model verified；仅旧 evaluator 的 compact-receipt 单权威误判置红，其余五硬门与脱敏通过；房间/会话/账号均已清理，未重跑。 |
 | 2026-08-30 | `npx tsx --test tests/live-kp-eval-runner.test.mjs`；目标 ESLint；`npx tsx --test tests/table-server-outcome-v2.test.mjs`；`git diff --check` | 0 | 8/8；Lint 0；7/7；V3 compact receipt 误判修复及完整 receipt fail-closed 连带路径通过。 |
 | 2026-08-30 | `git push origin HEAD:refs/heads/cloudflare`；远端 refs 复核 | 0；0 | 源码/evaluator 非 force 快进至 `9cc5e3c`；本节 docs-only 发布事实也以同一显式 refspec 非 force 快进，提交后 `origin/cloudflare` 与本地 `HEAD` 相等；远端 `main=29eb06dc009c983ad61b2d862454503e67a7f40a` 未变。 |
+
+## KP 回复快速失败原因澄清（2026-08-30）
+
+- 症状与根因：叙述可能在数秒内立即进入“重试 KP 回复”，但未分类异常仍被 `narrationFailure` 默认记为 `NARRATION_PROVIDER_TIMEOUT`；页面又只说明“尚未送达”，没有区分模型/格式/事实校验/发布故障。首个违规点是错误分类把“可重试”误当作“确实超时”，而恢复按钮本身只表示叙述未完成。
+- 修改：`app/_runtime/lib/room/action.ts` 只把明确的兼容模型瞬时/额度错误保留为 Provider timeout 类，未知异常改为通用 publication failure；`table/authoritative.ts` 新增安全的失败原因与恢复状态文案；`table/server.ts` 在不暴露私密错误的前提下返回对应原因；`play-table.tsx` 明示行动已结算，并分别解释处理中、格式/事实拒绝与服务/发布失败，强调快速失败不等于超时且重试不会重新裁定、掷骰或消耗资源。生产公开错误码集合与持久化 Profile 均未改变。
+- 定向验证：新增 RED 先稳定复现未知异常实际得到 `NARRATION_PROVIDER_TIMEOUT`；修复后该用例 1/1、`tests/table-server-outcome-v2.test.mjs` 8/8、`tests/viewer-narration-recovery-v3.test.ts` 4/4、`npm run typecheck` 与 `git diff --check` 均退出 0。既有 `vinext dev --hostname 127.0.0.1 --port 3000` 来自当前工作树并由 HMR 接收改动，`http://127.0.0.1:3000/` 返回 200。首次真实本地注册因 local D1 尚未应用 migration 返回 500；顺序应用既有 `0000–0011` 后复核无 pending，通过真实 `/api/auth/register` 创建专用本地测试身份，认证 cookie 访问 `/hall` 返回 200 且页面含该身份称呼。
+- 剩余限制：本轮按用户要求只送到 localhost，专用账号只存在本地 D1；未加入假身份或鉴权旁路，也未提交、推送或重新部署生产 Worker；没有为该纯文案/分类快修扩大完整测试门或线上 Provider 调用。

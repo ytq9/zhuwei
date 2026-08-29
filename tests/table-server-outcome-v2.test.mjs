@@ -5,6 +5,8 @@ import test from "node:test";
 import ts from "typescript";
 
 import {
+  publicNarrationFailureReason,
+  publicNarrationRecoveryReason,
   publicV3FailureCode,
   V3_PUBLIC_FAILURE_CODES,
 } from "../app/_runtime/lib/table/authoritative.ts";
@@ -28,8 +30,13 @@ async function tableOutcomeMapper() {
   return Function(
     "publicAuthoritativeOutcomeError",
     "publicV3FailureCode",
+    "publicNarrationFailureReason",
     `${compiled}\nreturn authoritativeTableOutcome;`,
-  )(() => "暂时无法完成这次行动", publicV3FailureCode);
+  )(
+    () => "暂时无法完成这次行动",
+    publicV3FailureCode,
+    publicNarrationFailureReason,
+  );
 }
 
 async function viewerNarrationOutcomeMapper() {
@@ -49,9 +56,37 @@ async function viewerNarrationOutcomeMapper() {
   }).outputText;
   return Function(
     "publicV3FailureCode",
+    "publicNarrationFailureReason",
     `${compiled}\nreturn viewerNarrationRecoveryTableOutcome;`,
-  )(publicV3FailureCode);
+  )(publicV3FailureCode, publicNarrationFailureReason);
 }
+
+test("narration recovery explains cause separately from the retry action", () => {
+  assert.equal(
+    publicNarrationFailureReason("NARRATION_PROVIDER_TIMEOUT"),
+    "KP 服务暂时不可用，或本次响应超过时限",
+  );
+  assert.equal(
+    publicNarrationFailureReason("NARRATION_BODY_INVALID"),
+    "KP 服务配置或返回内容未通过有效性检查",
+  );
+  assert.equal(
+    publicNarrationFailureReason("NARRATION_GROUNDING_REJECTED"),
+    "KP 回复与已经结算的事实不一致",
+  );
+  assert.equal(
+    publicNarrationFailureReason("NARRATION_PUBLICATION_FAILED"),
+    "KP 回复生成或传送过程中出现故障",
+  );
+  assert.equal(
+    publicNarrationFailureReason("PRIVATE_FAILURE"),
+    "KP 回复暂未完成，原因尚未确认",
+  );
+  assert.equal(
+    publicNarrationRecoveryReason("retryableFailure"),
+    "KP 服务或回复发布暂时失败；这不代表一定等待超时。",
+  );
+});
 
 test("committed and concluded actions expose a pending Delivery as an explicit same-id retry", async () => {
   const mapOutcome = await tableOutcomeMapper();
@@ -72,7 +107,7 @@ test("committed and concluded actions expose a pending Delivery as an explicit s
       narration: "retryableFailure",
       committed: true,
       retryable: true,
-      error: "行动已经提交，但 KP 回应尚未送达。请重试；不会重复执行行动。",
+      error: "行动已经提交；KP 回复暂未完成，原因尚未确认。请重试；不会重复执行行动。",
     });
     assert.deepEqual(mapOutcome(submissionId, outcome, true), {
       submissionId,
@@ -80,7 +115,7 @@ test("committed and concluded actions expose a pending Delivery as an explicit s
       action: kind,
       narration: "retryableFailure",
       retryable: true,
-      error: "行动已经提交，但 KP 回应尚未送达。请重试；不会重复执行行动。",
+      error: "行动已经提交；KP 回复暂未完成，原因尚未确认。请重试；不会重复执行行动。",
     });
   }
 });
@@ -243,7 +278,7 @@ test("a V3 success exposes only the public outcome allowlist and never Audience 
     action: "committed",
     narration: "retryableFailure",
     retryable: true,
-    error: "行动已经提交，但 KP 回应尚未送达。请重试；不会重复执行行动。",
+    error: "行动已经提交；KP 回复暂未完成，原因尚未确认。请重试；不会重复执行行动。",
     outcomeKind: "committed",
   });
   assert.equal(JSON.stringify(mapped).includes("audience:bob-secret"), false);
@@ -318,7 +353,7 @@ test("viewer-local narration retry preserves its exact safe failure code", async
     action: "committed",
     narration: "rejected",
     code: "NARRATION_GROUNDING_REJECTED",
-    error: "行动保持已提交，但 KP 回复仍未送达。",
+    error: "行动保持已提交；KP 回复与已经结算的事实不一致。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
   });
   const privateFailure = mapRecovery({
     kind: "committed",

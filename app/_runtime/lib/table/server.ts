@@ -85,6 +85,7 @@ import {
   buildAuthoritativeRoomSeeds,
   buildAuthoritativeTableState,
   publicAuthoritativeOutcomeError,
+  publicNarrationFailureReason,
   publicV3FailureCode,
   projectAuthoritativeTableObservation,
 } from "@/lib/table/authoritative";
@@ -466,7 +467,7 @@ function authoritativeTableOutcome(
       narration: narrationState,
       committed: true as const,
       retryable: true as const,
-      error: "行动已经提交，但 KP 回应尚未送达。请重试；不会重复执行行动。",
+      error: `行动已经提交；${publicNarrationFailureReason(failureCode)}。请重试；不会重复执行行动。`,
     };
     if (!v3) return result;
     const { ok: _ok, committed: _committed, ...v3Result } = result;
@@ -539,17 +540,16 @@ function viewerNarrationRecoveryTableOutcome(outcome: {
     || outcome.narration === "retryableFailure"
     ? outcome.narration
     : "notApplicable" as const;
+  const failureCode = publicV3FailureCode(outcome.narrationFailureCode);
   if (action === "committed" && narration === "published") {
     return { action, narration };
   }
   return {
     action,
     narration,
-    ...(publicV3FailureCode(outcome.narrationFailureCode) === undefined
-      ? {}
-      : { code: publicV3FailureCode(outcome.narrationFailureCode) }),
+    ...(failureCode === undefined ? {} : { code: failureCode }),
     error: action === "committed"
-      ? "行动保持已提交，但 KP 回复仍未送达。"
+      ? `行动保持已提交；${publicNarrationFailureReason(failureCode)}。重试只恢复回复，不会重新裁定、掷骰或消耗资源。`
       : "当前没有可恢复的 KP 回复。",
   };
 }
