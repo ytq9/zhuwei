@@ -42,6 +42,7 @@ import { characterTimelineId } from "./timeline";
 import { projectRestRecoveryOptions } from "./character-rest";
 import {
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
+  canonicalFactVisibleToCharacter,
   isAuthoritativeWorldState,
   isNonEmptyString,
   isRecord,
@@ -234,28 +235,6 @@ function authorizeNpc(
   return character?.kind === "npc" && (explicitCapability || campaignInternalViewer)
     ? { kind: "npc", character }
     : undefined;
-}
-
-function factVisibleTo(
-  state: AuthoritativeWorldState,
-  fact: AuthoritativeWorldState["canonicalFacts"][string],
-  character: CharacterRecord,
-): boolean {
-  if (fact.visibilityPolicyId.startsWith("visibility:public")) {
-    return true;
-  }
-  if (fact.visibilityPolicyId === "visibility:hidden-until-evidence") {
-    return fact.id in (state.knowledge[character.id] ?? {});
-  }
-  if (
-    fact.visibilityPolicyId === "visibility:channel-participants"
-    || fact.visibilityPolicyId === "visibility:scene-observers"
-  ) {
-    return fact.subjectRefs.includes(character.id)
-      || fact.subjectRefs.includes(character.sceneId)
-      || (isRecord(fact.value) && fact.value.sceneId === character.sceneId);
-  }
-  return fact.visibilityPolicyId === `visibility:knowledge-holder:${character.id}`;
 }
 
 function safeArtifactFor(
@@ -793,7 +772,7 @@ function projectAuthoritative(
   const timelineId = characterTimelineId(state, character.id) ?? state.activeBranchId;
   const timeline = state.fictionTimelines[timelineId];
   const visibleFacts = Object.values(state.canonicalFacts)
-    .filter((fact) => factVisibleTo(state, fact, character))
+    .filter((fact) => canonicalFactVisibleToCharacter(state, fact, character))
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((fact) => structuredClone(fact));
   const knowledge = Object.values(state.knowledge[character.id] ?? {})
@@ -1058,6 +1037,15 @@ function projectAuthoritative(
       ...(character.proficiencyBonus === undefined
         ? {}
         : { proficiencyBonus: character.proficiencyBonus }),
+      ...(character.proficientSkills === undefined
+        ? {}
+        : { proficientSkills: [...character.proficientSkills] }),
+      ...(character.expertiseSkills === undefined
+        ? {}
+        : { expertiseSkills: [...character.expertiseSkills] }),
+      ...(character.proficientSaves === undefined
+        ? {}
+        : { proficientSaves: [...character.proficientSaves] }),
       ...(character.featureIds === undefined ? {} : { featureIds: [...character.featureIds] }),
       ...(character.lastLongRestCompletedAtMicros === undefined
         ? {}
@@ -1253,6 +1241,7 @@ const ACTOR_DELTA_FIELDS = [
   "epilogues",
   "entities",
   "encounters",
+  "tacticalProjection",
   "story",
 ] as const;
 
@@ -1265,6 +1254,7 @@ const OBSERVER_DELTA_FIELDS = [
   "stories",
   "entities",
   "encounters",
+  "tacticalProjection",
   "story",
 ] as const;
 

@@ -15,7 +15,17 @@ import {
 import {
   ENVIRONMENT_PROFILE,
   ENVIRONMENT_PROFILE_DOCUMENT,
+  LEGACY_ENVIRONMENT_PROFILE,
+  LEGACY_ENVIRONMENT_PROFILE_DOCUMENT,
 } from "./environment";
+import {
+  CAUSAL_ACTION_INTERPRETER_PROFILE,
+  CAUSAL_ACTION_INTERPRETER_PROFILE_DOCUMENT,
+} from "./causal-action-interpreter";
+import {
+  CHARACTER_PROFICIENCY_PROFILE,
+  CHARACTER_PROFICIENCY_PROFILE_DOCUMENT,
+} from "./character-proficiency";
 
 export {
   TRIGGER_ORDERING_PROFILE,
@@ -28,7 +38,17 @@ export {
 export {
   ENVIRONMENT_PROFILE,
   ENVIRONMENT_PROFILE_DOCUMENT,
+  LEGACY_ENVIRONMENT_PROFILE,
+  LEGACY_ENVIRONMENT_PROFILE_DOCUMENT,
 } from "./environment";
+export {
+  CAUSAL_ACTION_INTERPRETER_PROFILE,
+  CAUSAL_ACTION_INTERPRETER_PROFILE_DOCUMENT,
+} from "./causal-action-interpreter";
+export {
+  CHARACTER_PROFICIENCY_PROFILE,
+  CHARACTER_PROFICIENCY_PROFILE_DOCUMENT,
+} from "./character-proficiency";
 
 export const RULESET_PROFILE = {
   profileId: "dnd5e-2014-srd5.1-authoritative-v2",
@@ -75,14 +95,31 @@ export const DELIVERY_PROTOCOL_PROFILE = {
   profileHash: "sha256:cd0d684841bd43f621665dc538db35b81c25421d8b345e444681054bbc894d7e",
 } as const satisfies ProfileRef;
 
+/** New-room-only publication contract. Historical rooms remain pinned to
+ * DELIVERY_PROTOCOL_PROFILE and its all-audiences, agency-claim envelope. */
+export const INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE = {
+  profileId: "delivery-independent-audience-body-v2",
+  profileHash: "sha256:0139e0644e94c45140db12508c6fdd2ca7992cda29c73ee18fc15fa7efc2b703",
+} as const satisfies ProfileRef;
+
 export const MANIFEST_PROFILE = {
   profileId: "runtime-srd51-2014-authoritative-v2",
   profileHash: "sha256:496da17f16d52cbe5dfa3e97facfa8ed7dcf3f4bbb7a882fc0e384d464898051",
 } as const satisfies ProfileRef;
 
-export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE = {
+export const LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE = {
   profileId: "runtime-srd51-2014-authoritative-environment-v2",
   profileHash: "sha256:0021280335296ecfc5b65a221fec7009550fac96db65925e47daef9f9d4f0456",
+} as const satisfies ProfileRef;
+
+export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE = {
+  profileId: "runtime-srd51-2014-authoritative-environment-v3",
+  profileHash: "sha256:4038f09e546eb8a0c925e892634625fe09859d2aeba91f044a8ecae76aa99c57",
+} as const satisfies ProfileRef;
+
+export const ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE = {
+  profileId: "runtime-srd51-2014-authoritative-environment-v4",
+  profileHash: "sha256:8d0df2563b1e9fca31b1ab7b1678683075fc013b5220ba7b32aa054861203685",
 } as const satisfies ProfileRef;
 
 export const CURRENT_RUNTIME_PROFILE_MANIFEST = {
@@ -120,8 +157,51 @@ export const ENVIRONMENT_RUNTIME_PROFILE_MANIFEST = {
     DAMAGE_DEATH_PROFILE,
     PRESENTATION_POLICY_PROFILE,
     PROJECTION_POLICY_PROFILE,
-    DELIVERY_PROTOCOL_PROFILE,
+    INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+    CAUSAL_ACTION_INTERPRETER_PROFILE,
     ENVIRONMENT_PROFILE,
+  ],
+} as const satisfies RuntimeProfileManifest;
+
+/** New-room-only manifest adding complete 2014 Expertise and saving-throw
+ * proficiency semantics without reinterpreting the existing environment-v3
+ * epoch. Environment FSM and causal language refs remain independently pinned. */
+export const ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST = {
+  manifest: ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE,
+  ruleset: RULESET_PROFILE,
+  eventSchema: EVENT_SCHEMA_PROFILE,
+  abilityCompiler: ABILITY_COMPILER_PROFILE,
+  geometry: GEOMETRY_PROFILE,
+  triggerOrdering: TRIGGER_ORDERING_PROFILE,
+  fictionCombatTime: FICTION_COMBAT_TIME_PROFILE,
+  extensions: [
+    COMBAT_PROFILE,
+    DAMAGE_DEATH_PROFILE,
+    PRESENTATION_POLICY_PROFILE,
+    PROJECTION_POLICY_PROFILE,
+    INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+    CAUSAL_ACTION_INTERPRETER_PROFILE,
+    ENVIRONMENT_PROFILE,
+    CHARACTER_PROFICIENCY_PROFILE,
+  ],
+} as const satisfies RuntimeProfileManifest;
+
+/** Exact immutable manifest used by the hazard-only environment generation. */
+export const LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST = {
+  manifest: LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE,
+  ruleset: RULESET_PROFILE,
+  eventSchema: EVENT_SCHEMA_PROFILE,
+  abilityCompiler: ABILITY_COMPILER_PROFILE,
+  geometry: GEOMETRY_PROFILE,
+  triggerOrdering: TRIGGER_ORDERING_PROFILE,
+  fictionCombatTime: FICTION_COMBAT_TIME_PROFILE,
+  extensions: [
+    COMBAT_PROFILE,
+    DAMAGE_DEATH_PROFILE,
+    PRESENTATION_POLICY_PROFILE,
+    PROJECTION_POLICY_PROFILE,
+    DELIVERY_PROTOCOL_PROFILE,
+    LEGACY_ENVIRONMENT_PROFILE,
   ],
 } as const satisfies RuntimeProfileManifest;
 
@@ -295,6 +375,26 @@ export const DELIVERY_PROTOCOL_PROFILE_DOCUMENT = profileDocument(
     safetyPause: "supersede-current-slots-and-open-publication-capabilities-before-observe",
   },
 );
+export const INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE_DOCUMENT = profileDocument(
+  "deliveryProtocol",
+  INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileId,
+  "2.0.0",
+  {
+    conformanceVersion: "1",
+    spec: "SPEC 0015",
+    crossSpec: "SPEC 0010",
+    narrationInput: "exact-non-empty-body-only",
+    audiencePublication: "independent-persisted-generation-per-frozen-audience",
+    retry: "unfinished-audiences-only-without-proposal-commit-or-randomness-repeat",
+    metadataAuthority: "server-derived-from-frozen-projection-and-committed-delta",
+    slot: "one-current-frame-per-viewer-key",
+    acknowledgement: "body-unavailable-after-ack",
+    ordinaryRestart: "restore-current-slot-and-audience-publication-journal",
+    archiveRebuild: "do-not-reconstruct-old-frame",
+    realTimeEffect: "no-fiction-time-advance",
+    safetyPause: "supersede-current-slots-and-open-publication-capabilities-before-observe",
+  },
+);
 export const MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "runtimeManifest",
@@ -322,10 +422,10 @@ export const MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   },
 };
 
-export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
+export const LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "runtimeManifest",
-  profileId: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE.profileId,
+  profileId: LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE.profileId,
   semanticVersion: "2.0.0",
   normativePayload: {
     conformanceVersion: "1",
@@ -344,7 +444,67 @@ export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocu
       PRESENTATION_POLICY_PROFILE,
       PROJECTION_POLICY_PROFILE,
       DELIVERY_PROTOCOL_PROFILE,
+      LEGACY_ENVIRONMENT_PROFILE,
+    ],
+  },
+};
+
+export const ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
+  schema: "zhuwei.runtime-profile/v1",
+  profileKind: "runtimeManifest",
+  profileId: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE.profileId,
+  semanticVersion: "3.0.0",
+  normativePayload: {
+    conformanceVersion: "1",
+    profileDispatch: "exact-id-and-hash",
+    compatibility: "authoritative-v2-plus-causal-action-v3-and-environment-feature-fsm-v3",
+    roomGeneration: "new-v3-rooms-only-no-silent-existing-room-upgrade",
+    publicInterface: ["step", "project", "replay"],
+    ruleset: RULESET_PROFILE,
+    eventSchema: EVENT_SCHEMA_PROFILE,
+    abilityCompiler: ABILITY_COMPILER_PROFILE,
+    geometry: GEOMETRY_PROFILE,
+    triggerOrdering: TRIGGER_ORDERING_PROFILE,
+    fictionCombatTime: FICTION_COMBAT_TIME_PROFILE,
+    extensions: [
+      COMBAT_PROFILE,
+      DAMAGE_DEATH_PROFILE,
+      PRESENTATION_POLICY_PROFILE,
+      PROJECTION_POLICY_PROFILE,
+      INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+      CAUSAL_ACTION_INTERPRETER_PROFILE,
       ENVIRONMENT_PROFILE,
+    ],
+  },
+};
+
+export const ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
+  schema: "zhuwei.runtime-profile/v1",
+  profileKind: "runtimeManifest",
+  profileId: ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE.profileId,
+  semanticVersion: "4.0.0",
+  normativePayload: {
+    conformanceVersion: "1",
+    profileDispatch: "exact-id-and-hash",
+    compatibility: "authoritative-v2-plus-causal-action-v3-environment-fsm-v3-and-character-proficiency-v1",
+    roomGeneration: "new-v3-rooms-only-no-silent-existing-room-upgrade",
+    noncombatEnvironmentActionGrant: "per-root-temporary-not-persisted-outside-encounter",
+    publicInterface: ["step", "project", "replay"],
+    ruleset: RULESET_PROFILE,
+    eventSchema: EVENT_SCHEMA_PROFILE,
+    abilityCompiler: ABILITY_COMPILER_PROFILE,
+    geometry: GEOMETRY_PROFILE,
+    triggerOrdering: TRIGGER_ORDERING_PROFILE,
+    fictionCombatTime: FICTION_COMBAT_TIME_PROFILE,
+    extensions: [
+      COMBAT_PROFILE,
+      DAMAGE_DEATH_PROFILE,
+      PRESENTATION_POLICY_PROFILE,
+      PROJECTION_POLICY_PROFILE,
+      INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+      CAUSAL_ACTION_INTERPRETER_PROFILE,
+      ENVIRONMENT_PROFILE,
+      CHARACTER_PROFICIENCY_PROFILE,
     ],
   },
 };
@@ -354,6 +514,14 @@ export const CANONICAL_PROFILE_DOCUMENTS = [
   {
     ref: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE,
     document: ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
+  },
+  {
+    ref: ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE,
+    document: ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
+  },
+  {
+    ref: LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE,
+    document: LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
   },
   { ref: RULESET_PROFILE, document: RULESET_PROFILE_DOCUMENT },
   { ref: EVENT_SCHEMA_PROFILE, document: EVENT_SCHEMA_PROFILE_DOCUMENT },
@@ -366,7 +534,20 @@ export const CANONICAL_PROFILE_DOCUMENTS = [
   { ref: PRESENTATION_POLICY_PROFILE, document: PRESENTATION_POLICY_PROFILE_DOCUMENT },
   { ref: PROJECTION_POLICY_PROFILE, document: PROJECTION_POLICY_PROFILE_DOCUMENT },
   { ref: DELIVERY_PROTOCOL_PROFILE, document: DELIVERY_PROTOCOL_PROFILE_DOCUMENT },
+  {
+    ref: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+    document: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE_DOCUMENT,
+  },
+  {
+    ref: CAUSAL_ACTION_INTERPRETER_PROFILE,
+    document: CAUSAL_ACTION_INTERPRETER_PROFILE_DOCUMENT,
+  },
+  {
+    ref: CHARACTER_PROFICIENCY_PROFILE,
+    document: CHARACTER_PROFICIENCY_PROFILE_DOCUMENT,
+  },
   { ref: ENVIRONMENT_PROFILE, document: ENVIRONMENT_PROFILE_DOCUMENT },
+  { ref: LEGACY_ENVIRONMENT_PROFILE, document: LEGACY_ENVIRONMENT_PROFILE_DOCUMENT },
 ] as const;
 
 /** Golden seam: every Registry ref must be the hash of its canonical Profile bytes. */

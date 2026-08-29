@@ -33,6 +33,8 @@ import {
   retrieveStaticReferences,
 } from "../app/_runtime/lib/kp/static-retrieval.ts";
 import {
+  CONTEXT_PLANNER_VALIDATION_GATES,
+  createContextPlannerRoleValidationEvidence,
   createDeterministicPlannerAdapter,
   createDisabledPlannerAdapter,
   createModelPlannerAdapter,
@@ -40,6 +42,11 @@ import {
   runContextPlanner,
   validatedProfilesForRole,
 } from "../app/_runtime/lib/kp/model-registry.ts";
+import {
+  CONTEXT_PLANNER_ROLE_VALIDATION_SUITE_VERSION,
+  CONTEXT_PLANNER_TOOL_NAME,
+} from "../app/_runtime/lib/kp/context-planner-policy.ts";
+import { privateFormProposalModelInput } from "../app/_runtime/lib/kp/private-form-policy.ts";
 
 const EXACT_FORM_IDS = [
   "clarification.v1",
@@ -65,18 +72,34 @@ const VALID_FORM_DRAFTS = Object.freeze({
     method: "检查泥地和金属底座",
     focus: "钟架周边",
     desiredInformation: "移动方向与大致时间",
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
   },
   "npc-exchange.v1": {
     goal: "让守卫暂时离开回廊",
     method: "以失火风险说服他检查厨房",
     utterance: "厨房有焦味，你最好立刻看看。",
     desiredResponse: "守卫前往厨房核实",
+    npcResponse: "守卫皱眉嗅了嗅空气，转身快步走向厨房。",
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
   },
   "ordinary-check.v1": {
     goal: "安静移开木箱",
     method: "垫上雨披后缓慢拖动",
     intendedOutcome: "露出木箱后的门",
     risk: "雨披可能撕裂并发出声音",
+    resolution: "check",
+    ability: "str",
+    skill: "athletics",
+    dc: 12,
+    mode: "normal",
+    durationUnit: "minute",
+    durationValue: 1,
+    successConsequence: "木箱被无声移开，暗门显露。",
+    failureConsequence: "木箱摩擦石地，惊动邻近守卫。",
   },
   "high-risk-action.v1": {
     goal: "穿过正在坍塌的吊桥",
@@ -84,39 +107,100 @@ const VALID_FORM_DRAFTS = Object.freeze({
     intendedOutcome: "在桥面断裂前抵达对岸",
     risk: "失手会跌入峡谷",
     stakes: "同伴将失去撤离路线",
+    resolution: "check",
+    ability: "dex",
+    skill: "acrobatics",
+    dc: 17,
+    mode: "normal",
+    durationUnit: "round",
+    durationValue: 1,
+    successConsequence: "角色在断裂前抵达对岸。",
+    failureConsequence: "角色坠落并承受峡谷危险。",
   },
   "in-world-refusal.v1": {
     goal: "徒手搬起整座城门",
+    method: "仅凭双手从下方抬起城门",
     reason: "城门重量远超凡人力量",
     alternatives: ["寻找绞盘", "破坏门轴"],
+    durationUnit: "round",
+    durationValue: 1,
   },
   "materialization.v1": {
     goal: "寻找可阻断追兵的物件",
     method: "检查仓库日常装卸设施",
     proposedFact: "门边有一辆空载手推车",
     basisRefs: ["scene:working-warehouse"],
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
   },
   "combat-action.v1": {
     goal: "迫使持弩者离开射击位置",
     method: "压低身形冲向掩体并进行压制",
     intendedOutcome: "为同伴创造通过门口的机会",
     combatApproach: "压制与移动",
+    abilityRef: "ability:combat:shove",
   },
   "environmental-stunt.v1": {
     goal: "让吊灯坠落阻断追兵",
     method: "射断悬挂吊灯的锁链",
     featureDescription: "大厅中央的重型铁制吊灯",
     intendedOutcome: "吊灯坠落并形成残骸障碍",
+    featureDisposition: "reasonable-open-blank",
+    basisRefs: ["scene:grand-hall"],
+    effectMode: "area-hazard",
+    activation: "attack",
+    attackApproach: "ranged",
+    abilityRef: "ability:combat:longbow",
+    material: "锻铁与玻璃",
+    centerXInches: 600,
+    centerYInches: 480,
+    elevationInches: 720,
+    widthInches: 120,
+    depthInches: 120,
+    heightInches: 48,
+    objectAc: 19,
+    objectHitPoints: 18,
+    damageThreshold: 5,
+    immuneDamageTypes: ["poison", "psychic"],
+    initialPhase: "suspended",
+    phaseNames: ["suspended", "falling", "debris"],
+    phaseOpaque: [false, false, false],
+    phaseImpassable: [false, false, true],
+    phaseCover: ["none", "none", "half"],
+    phaseEffectPropagation: ["passes", "passes", "passes"],
+    phaseTerrain: ["normal", "normal", "rubble"],
+    damageFromPhases: ["suspended"],
+    damageRemainingAtOrBelow: [0],
+    damageToPhases: ["falling"],
+    hazardFromPhases: ["falling"],
+    hazardToPhases: ["debris"],
+    hazardTriggerPhase: "falling",
+    hazardResolvedPhase: "debris",
+    trigger: "悬挂锁链被破坏",
+    areaOriginElevationInches: 0,
+    areaRadiusInches: 180,
+    propagation: "straight",
+    saveAbility: "dex",
+    saveDc: 14,
+    halfOnSuccess: false,
+    damage: "2d10",
+    damageType: "bludgeoning",
+    condition: "prone",
+    debrisOutcome: "该区域成为困难地形",
   },
   "compound.v1": {
     goal: "无声移动钟架后伪造巡检痕迹",
     method: "分阶段利用雨披、木杆和旧封条",
     stages: [
-      { goal: "隔绝摩擦", method: "把雨披铺在底座下", intendedOutcome: "拖动时不接触石地" },
-      { goal: "移动钟架", method: "以木杆缓慢撬动", intendedOutcome: "钟架抵达墙根" },
-      { goal: "掩盖行动", method: "在原位放置旧封条", intendedOutcome: "留下可解释痕迹" },
+      { goal: "隔绝摩擦", method: "把雨披铺在底座下", intendedOutcome: "拖动时不接触石地", resolution: "direct" },
+      { goal: "移动钟架", method: "以木杆缓慢撬动", intendedOutcome: "钟架抵达墙根", resolution: "direct" },
+      { goal: "掩盖行动", method: "在原位放置旧封条", intendedOutcome: "留下可解释痕迹", resolution: "direct" },
     ],
     intendedOutcome: "钟架被移动且短时间不引起怀疑",
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 10,
   },
 });
 
@@ -172,7 +256,53 @@ test("private catalog has exactly ten forms and exposes only deterministic 3-6 a
     ...VALID_FORM_DRAFTS["ordinary-check.v1"],
     risk: { description: "open object is not part of the closed form" },
   }).ok, false);
+
+  const stateOnly = structuredClone(VALID_FORM_DRAFTS["environmental-stunt.v1"]);
+  stateOnly.effectMode = "state-only";
+  stateOnly.activation = "direct";
+  delete stateOnly.attackApproach;
+  delete stateOnly.abilityRef;
+  stateOnly.stuntFromPhases = [stateOnly.initialPhase];
+  stateOnly.stuntToPhases = ["debris"];
+  for (const field of [
+    "hazardFromPhases", "hazardToPhases", "hazardTriggerPhase", "hazardResolvedPhase",
+    "areaOriginElevationInches", "areaRadiusInches", "propagation", "spreadBudgetInches",
+    "saveAbility", "saveDc", "halfOnSuccess", "damage", "damageType", "condition",
+    "debrisOutcome",
+  ]) delete stateOnly[field];
+  assert.equal(validateKpFormDraft("environmental-stunt.v1", stateOnly).ok, true);
+  assert.equal(validateKpFormDraft("environmental-stunt.v1", {
+    ...stateOnly,
+    saveDc: 13,
+  }).errors.includes("saveDc:state-only-forbidden"), true);
+  const incompleteHazard = structuredClone(VALID_FORM_DRAFTS["environmental-stunt.v1"]);
+  delete incompleteHazard.damage;
+  assert.equal(validateKpFormDraft("environmental-stunt.v1", incompleteHazard).errors
+    .includes("damage:area-hazard-required"), true);
+  const baselessOpenBlank = structuredClone(VALID_FORM_DRAFTS["environmental-stunt.v1"]);
+  delete baselessOpenBlank.basisRefs;
+  assert.equal(validateKpFormDraft("environmental-stunt.v1", baselessOpenBlank).errors
+    .includes("basisRefs:environment-required"), true);
   assert.throws(() => modelFormDescriptors(["observe.v1", "ordinary-check.v1"]), /ALLOWLIST_SIZE/);
+});
+
+test("environment proposal policy asks KP for arbitrary content and an explicit mechanical mode", () => {
+  const input = privateFormProposalModelInput({
+    request: { rootActionId: "root:custom-environment", attempt: 1 },
+    allowedForms: [
+      "ordinary-check.v1",
+      "environmental-stunt.v1",
+      "compound.v1",
+    ],
+    contextPack: { required: { originalIntent: "把眼前的结构改造成一道障碍" } },
+  });
+  const policy = input.messages[0].content;
+  assert.match(policy, /没有任何按对象名称、关键词、家族或原型分派的预设内容/u);
+  assert.match(policy, /自行定义对象内容/u);
+  assert.match(policy, /state-only 只改变环境状态、地形、掩护或通行/u);
+  assert.match(policy, /area-hazard 才继续冻结触发、区域、豁免、伤害和残骸机械/u);
+  assert.match(policy, /不得按玩家措辞、对象标签、能力名称或别名猜测机械引用/u);
+  assert.doesNotMatch(policy, /吊灯|油桶/u);
 });
 
 test("new action language compiles every form into a closed, stable, bounded DAG", () => {
@@ -231,6 +361,7 @@ test("new action language compiles every form into a closed, stable, bounded DAG
       goal: `stage ${index}`,
       method: "bounded method",
       intendedOutcome: "bounded outcome",
+      resolution: "direct",
     })),
   }), /DEPTH_EXCEEDED/);
 });
@@ -274,6 +405,29 @@ test("context pack preserves required authority, keeps the latest 8-12 dialogue,
   ]);
   assert.ok(trimmed.budget.usedUnits <= trimmed.budget.maxUnits);
   assert.throws(() => buildContextPack({ required, retrieved: [], optional: [], maxUnits: 1 }), /REQUIRED_BUDGET/);
+});
+
+test("context pack budgets a retrieved dependency group atomically", () => {
+  const required = requiredContext([], 10);
+  const root = {
+    ...retrievedChunk("source:root", 20, "根命中".repeat(200)),
+    dependencyRefs: ["source:truth"],
+  };
+  const truth = retrievedChunk("source:truth", 20, "约束真相".repeat(200));
+  const oneChunk = buildContextPack({
+    required,
+    retrieved: [root],
+    optional: [],
+    maxUnits: 100_000,
+  });
+  const trimmed = buildContextPack({
+    required,
+    retrieved: [root, truth],
+    optional: [],
+    maxUnits: oneChunk.budget.usedUnits,
+  });
+  assert.deepEqual(trimmed.retrieved.chunks, []);
+  assert.deepEqual(trimmed.budget.droppedRetrievedRefs, ["source:root", "source:truth"]);
 });
 
 test("static retrieval indexes Chinese aliases/bigrams, merges exact and FTS refs, then re-reads authority", () => {
@@ -349,6 +503,78 @@ test("static retrieval indexes Chinese aliases/bigrams, merges exact and FTS ref
   }), /SENSITIVITY_FORBIDDEN/);
 });
 
+test("static retrieval closes and authorizes dependency groups before applying its result limit", () => {
+  const root = {
+    sourceKind: "static",
+    sourceRef: "module:clue",
+    sourceHash: "sha256:clue-v1",
+    sourceSpan: { start: 0, end: 12 },
+    profileRef: "module:pinned-v1",
+    sensitivity: "public",
+    dependencyRefs: ["story:core-truth"],
+    purpose: "module",
+    body: "门框上的刻痕指向旧誓约。",
+    aliases: ["门框刻痕"],
+    structuralRefs: ["clue:door-mark"],
+  };
+  const truth = {
+    sourceKind: "static",
+    sourceRef: "story:core-truth",
+    sourceHash: "sha256:truth-v1",
+    sourceSpan: { start: 0, end: 12 },
+    profileRef: "module:pinned-v1",
+    sensitivity: "kp-only",
+    dependencyRefs: ["module:pinned-v1"],
+    purpose: "story-bible",
+    body: "旧誓约的封印其实已经被伪造。",
+    aliases: [],
+    structuralRefs: [],
+  };
+  const chunks = [root, truth];
+  const index = buildStaticRetrievalIndex(chunks);
+  const request = createStaticRetrievalRequest({ structuralRefs: ["clue:door-mark"], limit: 2 });
+  const hits = retrieveStaticReferences(index, request, createDeterministicFtsAdapter(index));
+  assert.deepEqual(hits.map((hit) => hit.sourceRef), ["module:clue", "story:core-truth"]);
+  assert.ok(hits[1].routes.includes("dependency"));
+  assert.deepEqual(
+    retrieveStaticReferences(
+      index,
+      createStaticRetrievalRequest({ structuralRefs: ["clue:door-mark"], limit: 1 }),
+      createDeterministicFtsAdapter(index),
+    ),
+    [],
+  );
+
+  const byRef = new Map(chunks.map((chunk) => [chunk.sourceRef, chunk]));
+  const hydrated = rehydrateStaticContext(hits, (sourceRef) => byRef.get(sourceRef), {
+    allowedProfileRefs: ["module:pinned-v1"],
+    allowKpOnly: true,
+  });
+  assert.deepEqual(hydrated.map((chunk) => chunk.sourceRef), ["module:clue", "story:core-truth"]);
+  assert.throws(() => rehydrateStaticContext(hits, (sourceRef) => byRef.get(sourceRef), {
+    allowedProfileRefs: ["module:pinned-v1"],
+    allowKpOnly: false,
+  }), /SENSITIVITY_FORBIDDEN/);
+  assert.throws(() => rehydrateStaticContext(hits, (sourceRef) => sourceRef === truth.sourceRef
+    ? { ...truth, sourceHash: "sha256:forged" }
+    : byRef.get(sourceRef), {
+    allowedProfileRefs: ["module:pinned-v1"],
+    allowKpOnly: true,
+  }), /SOURCE_HASH_MISMATCH/);
+
+  const missingRoot = { ...root, dependencyRefs: ["story:missing"] };
+  const missingIndex = buildStaticRetrievalIndex([missingRoot]);
+  const missingHits = retrieveStaticReferences(
+    missingIndex,
+    createStaticRetrievalRequest({ structuralRefs: ["clue:door-mark"], limit: 2 }),
+    createDeterministicFtsAdapter(missingIndex),
+  );
+  assert.throws(() => rehydrateStaticContext(missingHits, () => missingRoot, {
+    allowedProfileRefs: ["module:pinned-v1"],
+    allowKpOnly: true,
+  }), /DEPENDENCY_UNRESOLVED/);
+});
+
 test("role registry exposes only validated Planner profiles and all Planner failures fall back without switching KP", async () => {
   const registry = createModelProfileRegistry(modelProfiles());
   assert.match(registry.registryHash, /^fnv1a64:/u);
@@ -387,13 +613,16 @@ test("role registry exposes only validated Planner profiles and all Planner fail
   });
   assert.equal(disabled.receipt.status, "disabled");
   assert.equal(disabled.receipt.fallbackUsed, false);
+  assert.equal(disabled.receipt.plannerProfileRef, "context-planner-disabled-v1");
   assert.equal(disabled.pinnedPrimaryKpProfileRef, "kp:primary:pinned");
+  assert.deepEqual(disabled.suggestion.orderedFormIds, plannerInput.allowedFormIds);
+  assert.deepEqual(disabled.suggestion.queryTerms, []);
 
   const model = createModelPlannerAdapter({
     registry,
     profileRef: "planner:model:validated",
-    invoke: (input) => ({
-      orderedFormIds: [...input.allowedFormIds].reverse(),
+    invoke: () => plannerToolResponse({
+      orderedFormIds: [...plannerInput.allowedFormIds].reverse(),
       queryTerms: ["锁链", "坠落", "对象伤害"],
     }),
   });
@@ -428,8 +657,8 @@ test("role registry exposes only validated Planner profiles and all Planner fail
   const invalidModel = createModelPlannerAdapter({
     registry,
     profileRef: "planner:model:validated",
-    invoke: (input) => ({
-      orderedFormIds: input.allowedFormIds,
+    invoke: () => plannerToolResponse({
+      orderedFormIds: plannerInput.allowedFormIds,
       queryTerms: ["吊灯"],
       dc: 20,
     }),
@@ -542,7 +771,7 @@ function staticChunks() {
       sourceSpan: { start: 120, end: 260 },
       profileRef: "module:black-oak-v3",
       sensitivity: "public",
-      dependencyRefs: ["scene:great-hall", "truth:hall-construction"],
+      dependencyRefs: ["module:black-oak-v3"],
       purpose: "environment",
       body: "大厅中央悬挂一盏重型铁制吊灯，以旧锁链固定；锁链断裂后吊灯会坠落。",
       aliases: ["吊灯", "大厅灯架"],
@@ -555,7 +784,7 @@ function staticChunks() {
       sourceSpan: { start: 900, end: 1060 },
       profileRef: "rules:srd5.1-v2",
       sensitivity: "public",
-      dependencyRefs: ["rules:objects"],
+      dependencyRefs: ["rules:srd5.1-v2"],
       purpose: "rules",
       body: "对象拥有由材质决定的护甲等级与生命值；攻击可能损坏或摧毁对象。",
       aliases: ["对象伤害", "物体破坏"],
@@ -568,7 +797,7 @@ function staticChunks() {
       sourceSpan: { start: 20, end: 90 },
       profileRef: "module:black-oak-v3",
       sensitivity: "kp-only",
-      dependencyRefs: ["truth:seal-forged"],
+      dependencyRefs: ["module:black-oak-v3"],
       purpose: "story-bible",
       body: "黑橡树旧誓约的印记曾被摄政者伪造。",
       aliases: ["黑橡树", "旧誓约"],
@@ -578,6 +807,28 @@ function staticChunks() {
 }
 
 function modelProfiles() {
+  const validatedPlanner = {
+    profileRef: "planner:model:validated",
+    provider: "test-planner",
+    modelId: "planner-model",
+    modelRevision: "2026-08-20",
+    supportedRoles: ["context-planner"],
+    validationSuiteVersion: CONTEXT_PLANNER_ROLE_VALIDATION_SUITE_VERSION,
+    validationStatus: "passed",
+    structuredOutputMode: "strict-tool",
+    contextWindowTokens: 32_000,
+    latencyTier: "low",
+    costTier: "low",
+  };
+  validatedPlanner.roleValidation = createContextPlannerRoleValidationEvidence({
+    profile: validatedPlanner,
+    executionMode: "offline-fixture",
+    validatedAt: "2026-08-29T00:00:00.000Z",
+    caseCount: 5,
+    liveProviderCalls: 0,
+    latencyMs: { p50: 1, p95: 2, budget: 8_000 },
+    gates: Object.fromEntries(CONTEXT_PLANNER_VALIDATION_GATES.map((gate) => [gate, true])),
+  });
   return [
     {
       profileRef: "kp:primary:pinned",
@@ -592,19 +843,7 @@ function modelProfiles() {
       latencyTier: "standard",
       costTier: "standard",
     },
-    {
-      profileRef: "planner:model:validated",
-      provider: "workers-ai",
-      modelId: "planner-model",
-      modelRevision: "2026-08-20",
-      supportedRoles: ["context-planner"],
-      validationSuiteVersion: "planner-role-suite-v1",
-      validationStatus: "passed",
-      structuredOutputMode: "strict-json-schema",
-      contextWindowTokens: 32_000,
-      latencyTier: "low",
-      costTier: "low",
-    },
+    validatedPlanner,
     {
       profileRef: "planner:model:pending",
       provider: "workers-ai",
@@ -619,4 +858,20 @@ function modelProfiles() {
       costTier: "low",
     },
   ];
+}
+
+function plannerToolResponse(argumentsValue) {
+  return {
+    choices: [{
+      message: {
+        tool_calls: [{
+          type: "function",
+          function: {
+            name: CONTEXT_PLANNER_TOOL_NAME,
+            arguments: JSON.stringify(argumentsValue),
+          },
+        }],
+      },
+    }],
+  };
 }

@@ -6,15 +6,16 @@ import type {
   Sha256Ref,
 } from "./types";
 
-export const ENVIRONMENT_PROFILE = {
+/** Immutable first-generation hazard-only environment extension. */
+export const LEGACY_ENVIRONMENT_PROFILE = {
   profileId: "environment-feature-fsm-2014-v2",
   profileHash: "sha256:702b2559c821a52e1c7d6a137c6b261cec21d6cc513e3c0301b4b5ab007f7c87",
 } as const satisfies ProfileRef;
 
-export const ENVIRONMENT_PROFILE_DOCUMENT: CanonicalProfileDocument = {
+export const LEGACY_ENVIRONMENT_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "environmentMechanics",
-  profileId: ENVIRONMENT_PROFILE.profileId,
+  profileId: LEGACY_ENVIRONMENT_PROFILE.profileId,
   semanticVersion: "2.0.0",
   normativePayload: {
     conformanceVersion: "1",
@@ -31,6 +32,50 @@ export const ENVIRONMENT_PROFILE_DOCUMENT: CanonicalProfileDocument = {
     randomnessAuthority: "room-durable-object-only",
     causality: "one-root-action-ordered-event-chain",
     replay: "frozen-profile-and-definition-hashes-no-reroll",
+    eventNamespace: [
+      "EnvironmentFeatureMaterialized",
+      "EnvironmentStuntRefused",
+      "EnvironmentFeatureDamaged",
+      "EnvironmentHazardTriggered",
+      "EnvironmentAreaTargetResolved",
+      "EnvironmentAreaFeatureDamaged",
+      "EnvironmentFeatureStateChanged",
+    ],
+  },
+};
+
+/** New-room-only environment extension. Its mechanical mode is chosen by KP,
+ * not inferred from object names, keywords, families, or player-facing types. */
+export const ENVIRONMENT_PROFILE = {
+  profileId: "environment-feature-fsm-2014-v3",
+  profileHash: "sha256:1656fd548905d6ea886fd4cf97357a9d67c56422be3a2c6bd281fc93a22b4fe6",
+} as const satisfies ProfileRef;
+
+export const ENVIRONMENT_PROFILE_DOCUMENT: CanonicalProfileDocument = {
+  schema: "zhuwei.runtime-profile/v1",
+  profileKind: "environmentMechanics",
+  profileId: ENVIRONMENT_PROFILE.profileId,
+  semanticVersion: "3.0.0",
+  normativePayload: {
+    conformanceVersion: "1",
+    rulesBasis: "srd5.1-2014-plus-versioned-product-ruling",
+    trustedPrimitive: "environmental-stunt.v3",
+    activationModes: ["attack", "check", "direct"],
+    effectModes: ["state-only", "area-hazard"],
+    effectModeAuthority: "kp-freezes-explicit-mechanical-mode-before-randomness",
+    objectClassification: "forbidden-no-name-keyword-family-or-archetype-dispatch",
+    stateOnlySemantics: "finite-state-terrain-cover-passage-only-no-save-damage-or-hazard",
+    areaHazardSemantics: "finite-state-trigger-rules-targeting-save-damage-and-settlement",
+    checkAuthority: "server-freezes-ability-skill-dc-and-d20-mode-rules-resolves",
+    directAuthority: "server-freezes-trigger-and-state-transition-before-execution",
+    featureIdentity: "stable-scene-scoped-id-materialized-before-randomness",
+    stateModel: "bounded-finite-state-transitions-only",
+    targetAuthority: "rules-computes-complete-authoritative-geometry-set-for-area-hazard-only",
+    callerTargetLists: "forbidden",
+    observerProjection: "safe-geometry-only-no-definition-or-hidden-target-cardinality",
+    randomnessAuthority: "room-durable-object-only",
+    causality: "one-root-action-ordered-event-chain",
+    replay: "frozen-profile-effect-mode-and-definition-hashes-no-reroll",
     eventNamespace: [
       "EnvironmentFeatureMaterialized",
       "EnvironmentStuntRefused",
@@ -109,8 +154,7 @@ export type TriggeredHazard = {
   resolvedState: string;
 };
 
-export type EnvironmentFeature = {
-  schema: "zhuwei.environment-feature/v1";
+type EnvironmentFeatureCore = {
   environmentProfile: ProfileRef;
   featureId: string;
   sceneId: string;
@@ -126,14 +170,29 @@ export type EnvironmentFeature = {
   initialState: string;
   destructible: DestructibleDefinition;
   stateGraph: EnvironmentStateGraph;
+};
+
+export type LegacyEnvironmentFeature = EnvironmentFeatureCore & {
+  schema: "zhuwei.environment-feature/v1";
   hazard: TriggeredHazard;
   areaEffect: AreaEffect;
 };
 
+export type EnvironmentEffectMode = "state-only" | "area-hazard";
+
+export type EnvironmentFeature = EnvironmentFeatureCore & {
+  schema: "zhuwei.environment-feature/v2";
+  effectMode: EnvironmentEffectMode;
+  hazard: TriggeredHazard | null;
+  areaEffect: AreaEffect | null;
+};
+
+export type AnyEnvironmentFeature = LegacyEnvironmentFeature | EnvironmentFeature;
+
 export type CompiledEnvironmentBinding = {
   schema: "zhuwei.environment-feature-binding/v1";
   profile: ProfileRef;
-  featureDefinition: EnvironmentFeature;
+  featureDefinition: AnyEnvironmentFeature;
   featureDefinitionHash: Sha256Ref;
   destructibleDefinitionHash: Sha256Ref;
   stateGraphHash: Sha256Ref;
@@ -167,7 +226,7 @@ export type CompiledEnvironmentTacticalFeature = {
     states: EnvironmentStateSemantics[];
     transitions: Array<{
       fromState: string;
-      intent: "triggerHazard" | "resolveHazard";
+      intent: "applyStunt" | "triggerHazard" | "resolveHazard";
       toState: string;
     }>;
     durability: {
@@ -182,7 +241,7 @@ export type CompiledEnvironmentTacticalFeature = {
       toState: string;
     }>;
   };
-  visibilityPolicyId: EnvironmentFeature["visibilityPolicyId"];
+  visibilityPolicyId: AnyEnvironmentFeature["visibilityPolicyId"];
   environment: CompiledEnvironmentBinding;
 };
 
@@ -261,11 +320,13 @@ function point(value: unknown): value is TacticalPoint2d {
     && /^-?(0|[1-9][0-9]*)$/.test(value.y);
 }
 
-function profile(value: unknown): value is ProfileRef {
+export function isEnvironmentProfileRef(value: unknown): value is ProfileRef {
   return record(value)
     && exact(value, ["profileHash", "profileId"])
-    && value.profileId === ENVIRONMENT_PROFILE.profileId
-    && value.profileHash === ENVIRONMENT_PROFILE.profileHash;
+    && ((value.profileId === ENVIRONMENT_PROFILE.profileId
+        && value.profileHash === ENVIRONMENT_PROFILE.profileHash)
+      || (value.profileId === LEGACY_ENVIRONMENT_PROFILE.profileId
+        && value.profileHash === LEGACY_ENVIRONMENT_PROFILE.profileHash));
 }
 
 function canonicalStrings(value: unknown, maximum: number): value is string[] {
@@ -307,22 +368,27 @@ function destructible(value: unknown): value is DestructibleDefinition {
     && value.immuneDamageTypes.every((entry) => DAMAGE_TYPES.has(entry));
 }
 
-function stateGraph(value: unknown): value is EnvironmentStateGraph {
+function stateGraph(
+  value: unknown,
+  minimumStates: 2 | 3,
+  minimumTransitions: 1 | 2,
+  requireDeterministicSelectors = false,
+): value is EnvironmentStateGraph {
   if (!record(value)
     || !exact(value, ["definitionId", "schema", "states", "transitions"])
     || value.schema !== "zhuwei.environment-state-graph/v1"
     || !nonEmpty(value.definitionId)
     || !Array.isArray(value.states)
-    || value.states.length < 3
+    || value.states.length < minimumStates
     || value.states.length > 16
     || !value.states.every(stateSemantics)
     || !value.states.every((entry, index, entries) => index === 0
       || String(entries[index - 1].state).localeCompare(String(entry.state)) < 0)
     || !Array.isArray(value.transitions)
-    || value.transitions.length < 2
+    || value.transitions.length < minimumTransitions
     || value.transitions.length > 32) return false;
   const states = new Set(value.states.map((entry) => entry.state));
-  return value.transitions.every((transition, index, transitions) => {
+  const canonicalTransitions = value.transitions.every((transition, index, transitions) => {
     if (!record(transition)
       || !only(transition, ["fromState", "toState", "trigger"], ["remainingDurabilityAtOrBelow"])
       || !nonEmpty(transition.fromState)
@@ -346,6 +412,14 @@ function stateGraph(value: unknown): value is EnvironmentStateGraph {
     const previousKey = `${String(previous.fromState)}\u0000${String(previous.trigger)}\u0000${String(previous.remainingDurabilityAtOrBelow ?? "")}\u0000${String(previous.toState)}`;
     return previousKey.localeCompare(key) < 0;
   });
+  if (!canonicalTransitions || !requireDeterministicSelectors) return canonicalTransitions;
+  const selectors = value.transitions.map((transition) =>
+    `${String(transition.fromState)}\u0000${String(transition.trigger)}\u0000${String(
+      transition.trigger === "damageAtOrBelow"
+        ? transition.remainingDurabilityAtOrBelow
+        : "",
+    )}`);
+  return new Set(selectors).size === selectors.length;
 }
 
 function areaEffect(value: unknown): value is AreaEffect {
@@ -393,9 +467,32 @@ function hazard(value: unknown): value is TriggeredHazard {
     && nonEmpty(value.trigger.state);
 }
 
-function environmentFeature(value: unknown): value is EnvironmentFeature {
+function environmentFeatureCore(value: JsonRecord, expectedKeys: readonly string[]): boolean {
+  return exact(value, expectedKeys)
+    && isEnvironmentProfileRef(value.environmentProfile)
+    && nonEmpty(value.featureId)
+    && nonEmpty(value.sceneId)
+    && value.kind === "destructible"
+    && nonEmpty(value.label)
+    && Array.isArray(value.polygon)
+    && value.polygon.length >= 3
+    && value.polygon.length <= 32
+    && value.polygon.every(point)
+    && typeof value.elevation === "string"
+    && /^-?(0|[1-9][0-9]*)$/.test(value.elevation)
+    && positive(value.height, 12_000)
+    && [
+      "visibility:public",
+      "visibility:scene-observers",
+      "visibility:hidden-until-evidence",
+    ].includes(String(value.visibilityPolicyId))
+    && nonEmpty(value.initialState)
+    && destructible(value.destructible);
+}
+
+function legacyEnvironmentFeature(value: unknown): value is LegacyEnvironmentFeature {
   if (!record(value)
-    || !exact(value, [
+    || !environmentFeatureCore(value, [
       "areaEffect",
       "destructible",
       "elevation",
@@ -413,29 +510,13 @@ function environmentFeature(value: unknown): value is EnvironmentFeature {
       "visibilityPolicyId",
     ])
     || value.schema !== "zhuwei.environment-feature/v1"
-    || !profile(value.environmentProfile)
-    || !nonEmpty(value.featureId)
-    || !nonEmpty(value.sceneId)
-    || value.kind !== "destructible"
-    || !nonEmpty(value.label)
-    || !Array.isArray(value.polygon)
-    || value.polygon.length < 3
-    || value.polygon.length > 32
-    || !value.polygon.every(point)
-    || typeof value.elevation !== "string"
-    || !/^-?(0|[1-9][0-9]*)$/.test(value.elevation)
-    || !positive(value.height, 12_000)
-    || ![
-      "visibility:public",
-      "visibility:scene-observers",
-      "visibility:hidden-until-evidence",
-    ].includes(String(value.visibilityPolicyId))
-    || !nonEmpty(value.initialState)
-    || !destructible(value.destructible)
-    || !stateGraph(value.stateGraph)
+    || !record(value.environmentProfile)
+    || value.environmentProfile.profileId !== LEGACY_ENVIRONMENT_PROFILE.profileId
+    || value.environmentProfile.profileHash !== LEGACY_ENVIRONMENT_PROFILE.profileHash
+    || !stateGraph(value.stateGraph, 3, 2)
     || !hazard(value.hazard)
     || !areaEffect(value.areaEffect)) return false;
-  const definition = value as unknown as EnvironmentFeature;
+  const definition = value as unknown as LegacyEnvironmentFeature;
   const stateIds = new Set(definition.stateGraph.states.map((entry) => entry.state));
   const damageTransitions = definition.stateGraph.transitions.filter((entry) =>
     entry.trigger === "damageAtOrBelow");
@@ -457,7 +538,73 @@ function environmentFeature(value: unknown): value is EnvironmentFeature {
       && entry.toState === definition.hazard.resolvedState);
 }
 
-function tacticalCore(definition: EnvironmentFeature) {
+function environmentFeature(value: unknown): value is AnyEnvironmentFeature {
+  if (legacyEnvironmentFeature(value)) return true;
+  if (!record(value)
+    || !environmentFeatureCore(value, [
+      "areaEffect",
+      "destructible",
+      "effectMode",
+      "elevation",
+      "environmentProfile",
+      "featureId",
+      "hazard",
+      "height",
+      "initialState",
+      "kind",
+      "label",
+      "polygon",
+      "sceneId",
+      "schema",
+      "stateGraph",
+      "visibilityPolicyId",
+    ])
+    || value.schema !== "zhuwei.environment-feature/v2"
+    || !record(value.environmentProfile)
+    || value.environmentProfile.profileId !== ENVIRONMENT_PROFILE.profileId
+    || value.environmentProfile.profileHash !== ENVIRONMENT_PROFILE.profileHash
+    || (value.effectMode !== "state-only" && value.effectMode !== "area-hazard")
+    || !stateGraph(value.stateGraph, 2, 1, true)) return false;
+  const definition = value as unknown as EnvironmentFeature;
+  const stateIds = new Set(definition.stateGraph.states.map((entry) => entry.state));
+  const damageTransitions = definition.stateGraph.transitions.filter((entry) =>
+    entry.trigger === "damageAtOrBelow");
+  const hazardTransitions = definition.stateGraph.transitions.filter((entry) =>
+    entry.trigger === "hazardResolved");
+  const stuntTransitions = definition.stateGraph.transitions.filter((entry) =>
+    entry.trigger === "stuntSucceeded");
+  if (!stateIds.has(definition.initialState)
+    || ![...damageTransitions, ...stuntTransitions]
+      .some((entry) => entry.fromState === definition.initialState)) return false;
+  if (definition.effectMode === "state-only") {
+    return definition.hazard === null
+      && definition.areaEffect === null
+      && hazardTransitions.length === 0
+      && stuntTransitions.filter((entry) => entry.fromState === definition.initialState).length <= 1;
+  }
+  if (!hazard(definition.hazard) || !areaEffect(definition.areaEffect)) return false;
+  return definition.hazard.areaEffectRef === definition.areaEffect.definitionId
+    && stateIds.has(definition.hazard.trigger.state)
+    && stateIds.has(definition.hazard.resolvedState)
+    && (damageTransitions.some((entry) => entry.fromState === definition.initialState
+        && entry.toState === definition.hazard!.trigger.state
+        && BigInt(entry.remainingDurabilityAtOrBelow ?? "0")
+          <= BigInt(definition.destructible.maximumDurability))
+      || stuntTransitions.some((entry) => entry.fromState === definition.initialState
+        && entry.toState === definition.hazard!.trigger.state))
+    && hazardTransitions.some((entry) => entry.fromState === definition.hazard!.trigger.state
+      && entry.toState === definition.hazard!.resolvedState);
+}
+
+export function environmentEffectMode(
+  definition: AnyEnvironmentFeature,
+): EnvironmentEffectMode {
+  return definition.schema === "zhuwei.environment-feature/v1"
+    ? "area-hazard"
+    : definition.effectMode;
+}
+
+function tacticalCore(definition: AnyEnvironmentFeature) {
   const initial = definition.stateGraph.states.find((entry) =>
     entry.state === definition.initialState)!;
   const destructibleDefinition = definition.destructible;
@@ -490,7 +637,9 @@ function tacticalCore(definition: EnvironmentFeature) {
           fromState: entry.fromState,
           intent: entry.trigger === "hazardResolved"
             ? "resolveHazard" as const
-            : "triggerHazard" as const,
+            : environmentEffectMode(definition) === "state-only"
+              ? "applyStunt" as const
+              : "triggerHazard" as const,
           toState: entry.toState,
         })),
       durability: {
@@ -523,7 +672,7 @@ export function compileEnvironmentFeature(value: unknown): EnvironmentCompilatio
   const areaEffectDefinitionHash = canonicalSha256(definition.areaEffect);
   const core = tacticalCore(definition);
   const compiledHash = canonicalSha256({
-    profile: ENVIRONMENT_PROFILE,
+    profile: definition.environmentProfile,
     featureDefinitionHash,
     destructibleDefinitionHash,
     stateGraphHash,
@@ -533,7 +682,7 @@ export function compileEnvironmentFeature(value: unknown): EnvironmentCompilatio
   });
   const environment: CompiledEnvironmentBinding = {
     schema: "zhuwei.environment-feature-binding/v1",
-    profile: structuredClone(ENVIRONMENT_PROFILE),
+    profile: structuredClone(definition.environmentProfile),
     featureDefinition: definition,
     featureDefinitionHash,
     destructibleDefinitionHash,
@@ -570,10 +719,12 @@ export function isCompiledEnvironmentBinding(value: unknown): value is CompiledE
       "stateGraphHash",
     ])
     || value.schema !== "zhuwei.environment-feature-binding/v1"
-    || !profile(value.profile)) return false;
+    || !isEnvironmentProfileRef(value.profile)) return false;
   const compiled = compileEnvironmentFeature(value.featureDefinition);
   if (!compiled.ok) return false;
-  return value.featureDefinitionHash === compiled.artifact.featureDefinitionHash
+  return canonicalSha256(value)
+    === canonicalSha256(compiled.artifact.tacticalFeature.environment)
+    && value.featureDefinitionHash === compiled.artifact.featureDefinitionHash
     && value.destructibleDefinitionHash === compiled.artifact.destructibleDefinitionHash
     && value.stateGraphHash === compiled.artifact.stateGraphHash
     && value.hazardDefinitionHash === compiled.artifact.hazardDefinitionHash
@@ -609,7 +760,12 @@ export function environmentBindingMatchesFeature(
     && BigInt(durability.current) <= BigInt(expected.durability.maximum);
 }
 
-export function environmentProfileEnabled(extensions: readonly ProfileRef[]): boolean {
-  return extensions.some((extension) => extension.profileId === ENVIRONMENT_PROFILE.profileId
-    && extension.profileHash === ENVIRONMENT_PROFILE.profileHash);
+export function environmentProfileEnabled(
+  extensions: readonly ProfileRef[],
+  expected?: ProfileRef,
+): boolean {
+  return extensions.some((extension) => isEnvironmentProfileRef(extension)
+    && (expected === undefined
+      || (extension.profileId === expected.profileId
+        && extension.profileHash === expected.profileHash)));
 }

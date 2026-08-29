@@ -5,8 +5,9 @@ export const CRATE_ID = "feature:gallery:crate";
 export const CUSTOM_SCENERY_WALL_ID = "feature:gallery:custom-scenery-wall";
 
 export const CHANDELIER_FEATURE_DEFINITION = Object.freeze({
-  schema: "zhuwei.environment-feature/v1",
+  schema: "zhuwei.environment-feature/v2",
   environmentProfile: ENVIRONMENT_PROFILE,
+  effectMode: "area-hazard",
   featureId: CHANDELIER_ID,
   sceneId: "scene:gallery",
   kind: "destructible",
@@ -96,8 +97,9 @@ export const CHANDELIER_FEATURE_DEFINITION = Object.freeze({
 
 // Deliberately fixture-local content: production has no object/archetype catalog.
 export const CUSTOM_SCENERY_WALL_FEATURE_DEFINITION = Object.freeze({
-  schema: "zhuwei.environment-feature/v1",
+  schema: "zhuwei.environment-feature/v2",
   environmentProfile: ENVIRONMENT_PROFILE,
+  effectMode: "area-hazard",
   featureId: CUSTOM_SCENERY_WALL_ID,
   sceneId: "scene:gallery",
   kind: "destructible",

@@ -1,11 +1,11 @@
 # 烛帷规格索引与交叉审查
 
 - 索引状态：**持续维护**
-- 审查日期：2026-08-29
+- 审查日期：2026-08-30
 - 适用分支：`cloudflare`
 - 规则边界：D&D 5e 2014 / SRD 5.1；禁止 D&D 2024/5.5e 混入
 
-本目录的产品权威起点是冻结的 `SPEC 0001`。`SPEC 0003–0013` 是既有 Goal 明确授权的产品与技术裁定，`SPEC 0014` 是用户批准的二维战术地图合同，`SPEC 0015` 是 2026-08-29 用户明确授权的私有 Form、Context Pack/RAG、body-only Narration、双状态与动态环境合同；这些状态不表示实现、测试、迁移或部署已经完成。任何后续规格都不能修改、缩小或绕过 `SPEC 0001`。
+本目录的产品权威起点是冻结的 `SPEC 0001`。`SPEC 0003–0013` 是既有 Goal 明确授权的产品与技术裁定，`SPEC 0014` 是用户批准的二维战术地图合同，`SPEC 0015` 是 2026-08-29 用户明确授权的私有 Form、Context Pack/RAG、body-only Narration、双状态与动态环境合同。SPEC 0015 已有本地实现和定向证据，但“已裁定”本身仍不表示冻结全量、migration、浏览器、部署或远端已经完成。任何后续规格都不能修改、缩小或绕过 `SPEC 0001`。
 
 ## 导航
 
@@ -34,9 +34,9 @@
 | [0012：权威战斗机械](./0012-authoritative-combat-mechanics.md) | **已裁定（本 Goal 授权）** | 仅定义 Encounter、空间、先攻/突袭、轮/回合/行动授予、移动/反应、能力/施法、效果/伤害/专注、0 HP/死亡及非歼灭结束；战斗只是 Rules Module 内部实现 | 上位：0001、0003、0006–0011；Profile/确定排序/几何与能力定义引用 0013；不得出现 CombatCoordinator 或战斗专属状态/骰源/projector |
 | [0013：版本化运行时 Profiles 与确定性 Conformance](./0013-versioned-runtime-profiles.md) | **已裁定（本 Goal 授权）** | 固定 Ruleset/EventSchema、AbilityDefinition 与受限 MechanicOp 编译器、BattlefieldGeometry、TriggerOrdering、Fiction/Combat Time 等 Profile 及 hash/conformance/fail-closed 规则 | 上位：0001、0003–0007、0010–0012；为 0012 的战斗 Profile、0011 的恢复/审计和所有旧房回放提供确定版本解释 |
 | [0014：观察者战术地图、权威环境与空间意图](./0014-observer-tactical-map-and-environment.md) | **已裁定（用户 Goal 明确批准）** | 把真实 scene geometry、环境有限状态、移动/区域地图意图、秘密安全 Tactical Projection/preview、二维地图和同源文字读数接入唯一事务 | 上位：0001、0003、0005、0007、0010、0012、0013；不重写 Geometry 算法，不建立 UI/GM 第二空间 |
-| [0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境](./0015-private-form-context-rag-and-narration.md) | **已裁定（用户本 Goal 明确授权）** | 定义十 Form、三层 Context、静态 D1 FTS/权威重读、一次窄修订、CausalActionProgram、body-only Narration、action/narration 双状态、模型角色/实验门和吊灯纵切 | `SPEC 0001` 最高；复用 0003 Room/Rules/DO、0010 Viewer/Audience、0013 Profile、0014 Geometry；仅窄取代 0003/0010/0011/0014 的明示冲突条款且只进新 V3 房间 |
+| [0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境](./0015-private-form-context-rag-and-narration.md) | **已裁定；本地实现/定向证据已建立** | 定义十 Form、三层 Context、静态 D1 FTS/权威重读、一次窄修订、CausalActionProgram、body-only Narration、action/narration 双状态、模型角色/实验门，以及由 KP 任意定义、显式 `state-only` / `area-hazard` 且不按对象名派发的动态环境 | `SPEC 0001` 最高；复用 0003 Room/Rules/DO、0010 Viewer/Audience、0013 Profile、0014 Geometry；仅窄取代 0003/0010/0011/0014 的明示冲突条款且只进新 V3 房间；发布门仍待 |
 
-## 当前实现证据索引（2026-08-29）
+## 当前实现证据索引（2026-08-30）
 
 本节把**当前存在的公开测试映射**与 `docs/refactor-log.md` 已记录的局部绿色分开陈述。测试文件存在或声明了多少场景，不等于当前未冻结源码已经全量通过；最终仍以同一冻结 SHA 的完整门为准。
 
@@ -44,13 +44,13 @@
 | --- | --- | --- | --- |
 | 通用 ActionPlan、非战斗、长团与投影 | KP `authoritative-*`；Rules `rules/v2/*`；Room `room/action.ts`、`durable-object.ts` | 公开 runner 已存在：`tests/authoritative-action.test.mjs`、`tests/rules-compound-action-v2.test.mjs`、`tests/world-campaign-v2.test.mjs`、`tests/observer-projection-v2.test.mjs`、`tests/observer-delivery-v2.test.ts`、`tests/kp-multiturn-eval.test.ts`；日志已记录 production validator 31/31 等局部绿色 | 只证明各 runner 明示的事务、知识、多人、收束与投影切片；真实 Workers AI、HTTP/浏览器和最终全量门另计 |
 | `SPEC 0012` 战斗机械 B07–B15、B17–B22、B29–B30、B35–B40、B49 | `rules/v2/combat-*`、`combat/*`、`campaign-actions.ts`、`projector.ts` | `tests/combat-mechanics-v2.test.mjs`、`tests/combat-hostility-v2.test.mjs`、`tests/combat-long-casting-v2.test.mjs`、`tests/runtime-trigger-time-v2.test.mjs`、`tests/privacy-bypass-v2.test.mjs`；日志已记录 B07 2/2、B38 8/8、Trigger/Time 15/15 及 B19–B22/B20/G14 定向 12/12 | 当前文件分别声明 45、2、8、15、1 个场景；声明规模不是冻结源码全文件通过证明 |
-| B16/B27/B50 通用恢复与 B53 生产垂直链 | Room DO 随机 journal、归档/恢复、Room Action → Rules → Viewer | `tests/randomness-recovery-v2.test.ts`、`tests/combat-room-randomness-v2.test.ts`、`tests/archive-do-resume-v2.test.ts`、`tests/combat-archive-correction-v2.test.ts`、`tests/combat-vertical-v2.test.ts`；最新 randomness/recovery/contest 3 files / 24 tests、retry 3/3、archive resume 2/2、B53 vertical 1/1 | 并发、多波、旧 journal、篡改拒绝与归档恢复局部证据已绿；不得把它扩张为冻结源码或远端 D1 生产恢复完成 |
+| B16/B27/B50 通用恢复与 B53 生产垂直链 | Room DO 随机 journal、D1 checkpoint/归档恢复、Room Action → Rules → Viewer | `tests/randomness-recovery-v2.test.ts`、`tests/combat-room-randomness-v2.test.ts`、`tests/archive-d1-batches-v2.test.mjs`、`tests/archive-do-resume-v2.test.ts`、`tests/combat-archive-correction-v2.test.ts`、`tests/combat-vertical-v2.test.ts`；archive D1 11/11、80+ events/48 audits 的 reader→fresh DO 1/1、无当前受控 viewer 的 D1→fresh DO 1/1 | 结清随机、单调 checkpoint、prefix/audit、ahead event/genesis conflict 校验、移除成员不复权已有局部证据；不得把它扩张为冻结源码或远端 D1 生产恢复完成 |
 | `SPEC 0013` P/A/G/T/F Profile conformance | `rules/profiles/*`、`rules/compiler/*`、`rules/combat/*`、`rules/timeline.ts` | P：`tests/runtime-profiles-v2.test.mjs`；A：`tests/ability-profile-v2.test.mjs` + combat A06；G：`tests/combat-mechanics-v2.test.mjs` + `tests/privacy-bypass-v2.test.mjs`；T/F：`tests/runtime-trigger-time-v2.test.mjs` | 当前文件分别声明 13、8、45+1、15 个场景；日志已记录 Profile 组合和逐向量定向绿色，生产源码冻结后仍须整组重跑 |
-| 精确版本管理读取 | `table/server.ts#getRoomManagement` | 源码与 `tests/rendered-html.test.mjs` 的 HTTP 验收断言已接入 | 房主 Read Model 返回 `ruleset_version`/`kp_model`，普通成员拒绝；冻结源码 `npm test` 尚未执行，故不计最终门 |
-| `SPEC 0014` 战术空间与二维地图 | 既有 Geometry/Profile + 待实现的环境状态、Tactical Projection/preview、Room Action 输入与 `play-table.tsx` Adapter | G01–G15 只提供算法底座；SPEC 0014 场景 1–14 的真实 Room/UI/浏览器证据尚待建立 | 明确为新增硬阻塞；不得以现有 helper 测试、空 obstacles、静态示意或直接 WorldState fixture 冒充完成 |
-| `SPEC 0015` Form/Context/RAG/Narration/双状态/动态环境 | 计划中的 `kp/{form-catalog,context-pack,static-retrieval,causal-action-program,model-registry}.ts` + 既有 Room/Rules/Geometry/DO/D1/UI | 当前只有本规格、ADR、决策与追踪映射；十 Form、120 gold、吊灯 14 场景、迁移/浏览器/部署均无运行证据 | **待实现，硬阻塞**：不得用旧 ActionPlan/Delivery/Geometry 局部绿色冒充新 Profile 或发布完成 |
+| 精确版本管理读取 | `table/server.ts#getRoomManagement` | 源码与 `tests/rendered-html.test.mjs` 的 HTTP 验收断言已接入 | 房主 Read Model 返回 `ruleset_version`/`kp_model`，普通成员拒绝；冻结源码 Node/Worker 发布门尚未执行，故不计最终门 |
+| `SPEC 0014` 战术空间与二维地图 | 既有 Geometry/Profile + 新 Environment Profile/Builder/Rules/Room + 待完成的 Tactical Projection/preview 与 `play-table.tsx` Adapter | G01–G15 算法底座；动态环境 Room 6/6；workflow-v2/env-v4 长轨迹 1/1 | **部分实现，仍阻塞**：环境 FSM、破坏/区域、隐藏 target、archive→fresh DO 与 replay 已有定向证据；完整地图/preview、路径输入和双视口仍待 |
+| `SPEC 0015` Form/Context/RAG/Narration/双状态/动态环境 | `kp/{form-catalog,context-pack,v3-context-runtime,static-retrieval,static-corpus,private-form-policy,causal-action-program,model-registry,context-planner-policy,narration-v3}.ts` + `room/v3-binding.ts` + 既有 Room/Rules/Geometry/DO/D1/UI | Profile/causal/compound 57/57、workflow/table 25/25、动态环境 Room 6/6、静态 corpus/production context 14/14、public action/table 21/21、Viewer recovery 4/4、archive D1 11/11/restore 1/1 + zero-current-viewer 1/1、Planner 6/6、120 结构报告 4/4/16 hard gates、live harness 13/13、workflow-v2/env-v4 长轨迹 1/1 与 Viewer+环境 10/10 | **已实现/局部证据，发布未完成**：G2 已采用；G3/G4 无增益拒绝、G5 不适用；新房 exact v4 增加 2014 Expertise/豁免熟练，旧 manifest 不变；完整线上测评由用户自行执行，本代理只做部署后三交互冒烟；冻结全量、375/1440、远端 D1/部署/冒烟/清理/push 仍待 |
 
-相关自主裁定为 [DEC-018](./decision-register.md#dec-018生产-kp-提案采用有类型的复合-action-plan)、[DEC-035](./decision-register.md#dec-035战术地图只适配-viewer-tactical-projection不拥有空间事实)、[DEC-036](./decision-register.md#dec-036主-kp-使用私有小表compound-保留开放行动逃生舱)、[DEC-037](./decision-register.md#dec-037required-retrieved-optional-分层d1-fts-只作静态派生索引)、[DEC-038](./decision-register.md#dec-038proposal-采用一次首调用加一次窄修订并冻结玩家语义)、[DEC-039](./decision-register.md#dec-039narration-只输出-body行动和逐受众发布分别建模)、[DEC-040](./decision-register.md#dec-040g2-是默认候选辅助模型必须角色化验证且未达门即移除接线) 与 [DEC-041](./decision-register.md#dec-041动态环境以版本化有限状态和吊灯因果链进入同一事务)。
+相关自主裁定为 [DEC-018](./decision-register.md#dec-018生产-kp-提案采用有类型的复合-action-plan)、[DEC-035](./decision-register.md#dec-035战术地图只适配-viewer-tactical-projection不拥有空间事实)、[DEC-036](./decision-register.md#dec-036主-kp-使用私有小表compound-保留开放行动逃生舱)、[DEC-037](./decision-register.md#dec-037required-retrieved-optional-分层d1-fts-只作静态派生索引)、[DEC-038](./decision-register.md#dec-038proposal-采用一次首调用加一次窄修订并冻结玩家语义)、[DEC-039](./decision-register.md#dec-039narration-只输出-body行动和逐受众发布分别建模)、[DEC-040](./decision-register.md#dec-040g2-是采用配置辅助模型未达增益门即移除接线)、[DEC-041](./decision-register.md#dec-041动态环境由-kp-自定义并以显式效果模式进入同一事务)、[DEC-042](./decision-register.md#dec-042本次发布只做三交互线上冒烟完整线上测评由用户执行)、[DEC-043](./decision-register.md#dec-0432014-expertise豁免熟练只随新完整-manifest-发布) 与 [DEC-044](./decision-register.md#dec-044d1-灾备恢复只信任已结清可重放的单调-checkpoint)。
 
 ## 五项交叉审查摘要
 
@@ -58,16 +58,16 @@
 
 | 审查项 | 规格层结论 | 仍待实现 / 验证的证据 |
 | --- | --- | --- |
-| 跨规格矛盾 | 未发现需要修改 `SPEC 0001` 的规格冲突。0003 统一事务，0010 统一 Viewer/Audience，0013 固定 Profile，0014 拥有 Geometry/地图；0015 只给新房增加私有 Proposal/Context/RAG/逐受众叙述和动态环境纵切，并在 §17 精确列出对 0003/0010/0011/0014 的窄 supersede。Encounter 结束不等于故事收束，叙述文本不等于正史，产品 V3 不等于 ruleset v3，检索命中不等于世界事实 | 既有 Action/Rules 组合门仍须冻结重跑；SPEC 0014/0015 的 Room/UI/环境、Form/RAG、120 gold、双状态和发布证据均未建立，明确阻塞冻结 |
-| 权限 | principal 只能来自可信会话；Seat/CharacterControl 决定玩家控制权；玩家只决定自己的角色；Form/Planner/RAG/LLM 不接收或决定 actor、Audience、骰面、事件、实际 targets；NPC Context 重新按有限知识投影；发布 capability 按 ViewerKey 冻结 | 既有 Room multiplayer 权限证据只算底座；仍需 Form 注入拒绝、NPC 重投影、Planner allowlist、逐受众重试、HTTP/浏览器越权回归 |
-| 秘密 | 世界事实只保存一份，知识按角色取得；动态 Room 状态不入 RAG；静态 ref 按 hash/Profile/权限重读；Narration 只收逐受众投影；Audience 提交时冻结；日志仅含 SPEC 0015 的阶段/Form/Profile/model/token/耗时/错误/fallback/hash/命中桶；地图/DOM/TTS/错误/历史无旁路 | 原 projection/delivery/world/table 局部证据保留；还需 RAG 静态性/秘密 canary、NPC 重投影、body Grounding、隐藏目标不可区分和生产日志/浏览器扫描 |
-| 版本 | 房间 genesis 固定 ruleset/event/module/definition/projection 以及 Form/Action Language/Context/corpus/retrieval/model/narration/publication/environment Profile 的精确 ID/hash；未知组合 fail closed；产品 V3 与机械版本轴分离，旧房不猜迁移 | 既有 Profile registry 只算底座；新完整 manifest、旧 `authoritative-kp-action-plan-v1` 隔离、模型角色验证、旧房 replay/引用扫描和部署 hash guard 均待 |
-| 第二权威 | Rules 外部只有 `step/project/replay`；Room DO 保存活跃世界、事件、Receipt、随机、Audience 与发布状态；Form/compiler 只产 Rules Input，D1 FTS/Vectorize/缓存/日志/页面只作派生 Adapter；实际环境 targets 只由 Rules 从完整 Geometry 算出 | 原 module 护栏需冻结重跑；还须新增 Form/compiler 无第四机械、索引无动态状态、页面无 targets/GM payload、双状态不回滚与环境 archive/replay 检查 |
+| 跨规格矛盾 | 未发现需要修改 `SPEC 0001` 的规格冲突。0003 统一事务，0010 统一 Viewer/Audience，0013 固定 Profile，0014 拥有 Geometry/地图；0015 只给新房增加私有 Proposal/Context/RAG/逐受众叙述和 KP 自定义动态环境。default/env-v2/env-v3 精确保留；当前新房 workflow-v2/env-v4 才增加 character-proficiency；产品 V3 不等于 ruleset v3，检索命中不等于世界事实 | 新责任的大部分本地实现/定向证据已建立；既有 Action/Rules 组合与新增代码仍须在冻结 SHA 统一重跑，浏览器/远端迁移/线上证据仍阻塞完成声明 |
+| 权限 | principal 只能来自可信会话；Seat/CharacterControl 决定玩家控制权；玩家只决定自己的角色；Form/Planner/RAG/LLM 不接收或决定 actor、Audience、骰面、事件、实际 targets；NPC Context 重新按有限知识投影；发布 capability 按 ViewerKey 冻结 | Form 禁止字段、Planner allowlist/fallback、Context projection 和逐受众 capability 已有定向证据；仍需冻结全量与 HTTP/浏览器越权回归 |
+| 秘密 | 世界事实只保存一份，知识按角色取得；动态 Room 状态不入 RAG；静态 ref 按 hash/Profile/权限重读；Narration 只收逐受众投影；Audience 提交时冻结；日志只走固定白名单；地图/DOM/TTS/错误/历史无旁路 | 静态 corpus 动态输入拒绝、权威重读、body-only/Viewer recovery、隐藏环境目标与十错误分类已有定向证据；生产日志和双视口浏览器扫描仍待 |
+| 版本 | 房间 genesis 固定 ruleset/event/module/definition/projection 以及 Form/Action Language/Context/corpus/retrieval/model/narration/publication/environment/character-proficiency Profile 的精确 ID/hash；未知组合 fail closed；产品 V3 与机械版本轴分离，旧房不猜迁移 | workflow-v1/env-v3 与 workflow-v2/env-v4 完整 manifest、canonical documents、legacy compile/replay 与旧 modifier 隔离已有定向证据；冻结引用扫描和部署 hash guard 仍待 |
+| 第二权威 | Rules 外部只有 `step/project/replay`；Room DO 保存活跃世界、事件、Receipt、随机、Audience 与发布状态；Form/compiler 只产 Rules Input，D1 FTS/缓存/日志/页面只作派生 Adapter；D1 checkpoint 只标记可重放灾备 prefix；`state-only` 无区域目标，`area-hazard` targets 只由 Rules 计算 | Causal interpreter、D1 静态性/重建、checkpoint reader→fresh DO、动态环境 Room/replay 和 Narration 不回滚已有定向证据；module guard 冻结重跑、页面无 GM payload 与线上检查仍待 |
 
 ## 审查结论与证据状态
 
 1. 规格体系已经把 0002 的通用责任与纯战斗机械分配到 0003–0013，以 0014 固定战术空间/地图合同，并以 0015 新增私有 Proposal/Context/RAG/叙述双状态与动态环境；0015 §17 只窄取代明示冲突，不修改 0001 或旧房解释器。B01–B53 的每项处置仍以 [0002 逐项处置矩阵](./0002-disposition-matrix.md) 为准。
 2. 自主产品/技术选择及其来源、玩家行为、权限/秘密、迁移和验收场景记录在 [决策登记册](./decision-register.md) 以及各规格的内嵌决策章节；状态“已裁定（本 Goal 授权）”不等于测试通过。
-3. [总追踪矩阵](./traceability-matrix.md) 已为 P1–P12、A–O、B01–B53、P/A/G/T/F、TM01–TM14 与 KR01–KR16 标出责任 Interface、测试路径和完成门；“待实现”“未满足”、仅声明规模或 Legacy 的内容不能作为完成证据。
-4. 本索引只把已在 `refactor-log.md` 留下命令/退出码的测试写成已验证；局部绿色不能拼接成生产源码冻结门。仍须完成全量验证、必要迁移、Cloudflare 正式部署与 GitHub `cloudflare` 推送。
+3. [总追踪矩阵](./traceability-matrix.md) 已为 P1–P12、A–O、B01–B53、P/A/G/T/F、TM01–TM14 与 KR01–KR16 标出责任 Interface、测试路径和完成门；当前 KR01–KR15 已有不同范围的本地实现/定向证据，KR16 和所有明确标注的发布缺口仍不能被局部绿色抵扣。
+4. 本索引只把已有实际命令/退出码的测试写成已验证；新增 31 交互生产 seam 长轨迹与本地 `0000–0011` migration/checkpoint 闭环已定向通过，但局部绿色不能拼接成生产源码冻结门。仍须完成冻结全量门、远端 D1 migration、双视口浏览器、Cloudflare 正式部署与 GitHub `cloudflare` 推送。
 5. 最终只有实际命令、退出码、测试报告、迁移状态、部署 version/源码 SHA、线上冒烟/日志、远端分支 SHA 和远端 `main` 不变证据全部回填后，才能宣告 `COMPLETE`。

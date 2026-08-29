@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -185,6 +186,60 @@ describe("Room Authority authoritative-v2 public contract", () => {
       kind: "rejected",
       code: "idempotencyPayloadMismatch",
     });
+  });
+
+  it("rejects a cross-principal prepare race before returning the winner's private projection", async () => {
+    const stub = await authoritativeRoom("authority-v2-cross-principal-prepare-race", [
+      character("character:alice", ALICE.principal.id, "shrine"),
+      character("character:bob", BOB.principal.id, "yard"),
+    ]);
+    const action = {
+      kind: "intent",
+      submissionId: "submission:cross-principal-race",
+      text: "我先确认自己所在地点周围有没有新的危险。",
+    } as const;
+    const raced = await runInDurableObject(stub as never, async (instance) => {
+      const target = instance as unknown as {
+        pinnedAuthorityModule(replay: unknown): Promise<unknown>;
+        prepare(context: unknown, input: unknown): Promise<unknown>;
+      };
+      const originalPinnedModule = target.pinnedAuthorityModule.bind(target);
+      let pinnedCalls = 0;
+      let releaseSlow!: () => void;
+      let signalSlowPaused!: () => void;
+      const slowGate = new Promise<void>((resolve) => {
+        releaseSlow = resolve;
+      });
+      const slowPaused = new Promise<void>((resolve) => {
+        signalSlowPaused = resolve;
+      });
+      target.pinnedAuthorityModule = async (replay: unknown) => {
+        pinnedCalls += 1;
+        if (pinnedCalls === 1) {
+          signalSlowPaused();
+          await slowGate;
+        }
+        return originalPinnedModule(replay);
+      };
+
+      const slowAlice = target.prepare(ALICE, structuredClone(action));
+      await slowPaused;
+      const winningBob = await target.prepare(BOB, structuredClone(action));
+      releaseSlow();
+      const losingAlice = await slowAlice;
+      const repeatedBob = await target.prepare(BOB, structuredClone(action));
+      return { winningBob, losingAlice, repeatedBob };
+    });
+
+    expect(raced.losingAlice).toMatchObject({
+      kind: "rejected",
+      code: "submissionUnauthorized",
+    });
+    expect(raced.winningBob).toMatchObject({
+      kind: "prepared",
+      preparedActionId: "prepared-action:submission:cross-principal-race",
+    });
+    expect(raced.repeatedBob).toEqual(raced.winningBob);
   });
 
   it("commits a direct-success proposal and exposes only a public receipt through observe", async () => {

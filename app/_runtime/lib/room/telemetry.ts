@@ -64,6 +64,14 @@ export type RoomTelemetryEvent = {
   archiveStatus: string | undefined;
   replayIntegrity: string | undefined;
   correctionIntegrity: string | undefined;
+  contextProfileRef: string | undefined;
+  plannerMode: "disabled" | "deterministic" | "model" | undefined;
+  plannerStatus: "disabled" | "suggested" | "fallback" | undefined;
+  plannerFallbackUsed: boolean | undefined;
+  retrievalMode: "d1-fts" | "deterministic" | undefined;
+  retrievalStatus: "selected" | "fallback" | undefined;
+  retrievalFallbackUsed: boolean | undefined;
+  retrievalHitCountBucket: string | undefined;
 };
 
 const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]>> = {
@@ -83,6 +91,16 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   CORRECTION_REQUIRED: ["correctionRequired", "correctionRequired"],
   MECHANICAL_DIAGNOSTIC: ["mechanicalDiagnostic", "mechanicalDiagnostic"],
   WORLD_INFEASIBLE: ["worldInfeasible", "worldInfeasible"],
+  PROPOSAL_PROVIDER_TIMEOUT: ["modelTransient", "PROPOSAL_PROVIDER_TIMEOUT"],
+  PROPOSAL_FORM_INVALID: ["modelPermanent", "PROPOSAL_FORM_INVALID"],
+  PROPOSAL_REFERENCE_INVALID: ["modelPermanent", "PROPOSAL_REFERENCE_INVALID"],
+  PROPOSAL_RULES_DIAGNOSTIC: ["mechanicalDiagnostic", "PROPOSAL_RULES_DIAGNOSTIC"],
+  PROPOSAL_REPAIR_EXHAUSTED: ["modelPermanent", "PROPOSAL_REPAIR_EXHAUSTED"],
+  CONTEXT_INSUFFICIENT: ["validation", "CONTEXT_INSUFFICIENT"],
+  NARRATION_PROVIDER_TIMEOUT: ["modelTransient", "NARRATION_PROVIDER_TIMEOUT"],
+  NARRATION_BODY_INVALID: ["modelPermanent", "NARRATION_BODY_INVALID"],
+  NARRATION_GROUNDING_REJECTED: ["modelPermanent", "NARRATION_GROUNDING_REJECTED"],
+  NARRATION_PUBLICATION_FAILED: ["authorityTransient", "NARRATION_PUBLICATION_FAILED"],
   unauthenticated: ["authentication", "authenticationRequired"],
   viewerUnauthorized: ["authorization", "notAuthorized"],
   notController: ["authorization", "notAuthorized"],
@@ -104,6 +122,8 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   quotaExhausted: ["quotaExhausted", "quotaExhausted"],
   structuredOutput: ["modelPermanent", "structuredOutput"],
   proposalSchema: ["modelPermanent", "proposalSchema"],
+  proposalReference: ["modelPermanent", "proposalReference"],
+  contextPack: ["validation", "contextPack"],
   narrationSchema: ["modelPermanent", "narrationSchema"],
   narrationGrounding: ["modelPermanent", "narrationGrounding"],
   projectionBinding: ["modelPermanent", "projectionBinding"],
@@ -126,6 +146,10 @@ function record(value: unknown): UnknownRecord | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function finiteNumber(value: unknown): number | undefined {
@@ -256,6 +280,9 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
   const outcome = record(source?.outcome);
   const measurements = record(source?.measurements);
   const archive = record(source?.archive);
+  const context = record(source?.context);
+  const planner = record(context?.planner);
+  const retrieval = record(context?.retrieval);
   const classification = failure(source?.failure);
 
   return {
@@ -301,6 +328,22 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     archiveStatus: stringValue(archive?.status),
     replayIntegrity: stringValue(archive?.replayIntegrity),
     correctionIntegrity: stringValue(archive?.correctionIntegrity),
+    contextProfileRef: stringValue(context?.profileRef),
+    plannerMode: ["disabled", "deterministic", "model"].includes(String(planner?.mode))
+      ? planner?.mode as RoomTelemetryEvent["plannerMode"]
+      : undefined,
+    plannerStatus: ["disabled", "suggested", "fallback"].includes(String(planner?.status))
+      ? planner?.status as RoomTelemetryEvent["plannerStatus"]
+      : undefined,
+    plannerFallbackUsed: booleanValue(planner?.fallbackUsed),
+    retrievalMode: ["d1-fts", "deterministic"].includes(String(retrieval?.mode))
+      ? retrieval?.mode as RoomTelemetryEvent["retrievalMode"]
+      : undefined,
+    retrievalStatus: ["selected", "fallback"].includes(String(retrieval?.status))
+      ? retrieval?.status as RoomTelemetryEvent["retrievalStatus"]
+      : undefined,
+    retrievalFallbackUsed: booleanValue(retrieval?.fallbackUsed),
+    retrievalHitCountBucket: stringValue(retrieval?.hitCountBucket),
   };
 }
 

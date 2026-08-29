@@ -3,6 +3,14 @@ import {
   AUTHORITATIVE_KP_MODEL,
 } from "./models";
 import { canonicalJson } from "./authoritative-helpers";
+import { CAUSAL_ACTION_LANGUAGE_PROFILE, stableStructuralHash } from "./causal-action-program";
+import { KP_FORM_CATALOG_REGISTRATION } from "./form-catalog";
+import {
+  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+  ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+  INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+} from "../rules/profiles/manifests";
+import type { RuntimeProfileManifest } from "../rules/profiles/types";
 import {
   ACTION_PLAN_ABILITIES,
   ACTION_PLAN_CHECK_MODES,
@@ -20,6 +28,65 @@ const BASE_AUTHORITATIVE_KP_POLICY = Object.freeze({
   actionPlanSchemaVersion: "authoritative-kp-action-plan-v1",
   narrationSchemaVersion: "authoritative-kp-narration-v3",
 });
+
+const V3_PRIVATE_FORM_KP_POLICY = Object.freeze({
+  promptPolicyVersion: "authoritative-kp-private-form-context-policy-v1",
+  proposalSchemaVersion: "authoritative-kp-private-form-envelope-v1",
+  actionPlanSchemaVersion: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
+  narrationSchemaVersion: "authoritative-kp-body-only-narration-v1",
+});
+
+const V3_WORKFLOW_REGISTRATION = Object.freeze({
+  workflowRef: "authoritative-kp-private-form-context-workflow-v1",
+  formCatalogRef: KP_FORM_CATALOG_REGISTRATION.catalogRef,
+  formCatalogHash: KP_FORM_CATALOG_REGISTRATION.catalogHash,
+  actionLanguageRef: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
+  actionLanguageHash: CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash,
+  contextProfileRef: "kp-three-layer-context-pack-v1",
+  retrievalProfileRef: "kp-static-structure-d1-fts-v1",
+  narrationSchemaVersion: "authoritative-kp-body-only-narration-v1",
+  publicationProtocolRef: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileId,
+  publicationProtocolHash: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileHash,
+  runtimeManifestRef: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.manifest.profileId,
+  runtimeManifestHash: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.manifest.profileHash,
+  defaultExperimentGroup: "G2",
+});
+
+export const V3_KP_WORKFLOW_MANIFEST = Object.freeze({
+  ...V3_WORKFLOW_REGISTRATION,
+  workflowHash: stableStructuralHash(V3_WORKFLOW_REGISTRATION),
+});
+
+/** Exact persisted binding for rooms created on the V3 product generation. */
+export const V3_KP_WORKFLOW_MANIFEST_JSON = JSON.stringify(V3_KP_WORKFLOW_MANIFEST);
+
+const V4_WORKFLOW_REGISTRATION = Object.freeze({
+  ...V3_WORKFLOW_REGISTRATION,
+  workflowRef: "authoritative-kp-private-form-context-workflow-v2",
+  runtimeManifestRef: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST.manifest.profileId,
+  runtimeManifestHash: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST.manifest.profileHash,
+});
+
+export const V4_KP_WORKFLOW_MANIFEST = Object.freeze({
+  ...V4_WORKFLOW_REGISTRATION,
+  workflowHash: stableStructuralHash(V4_WORKFLOW_REGISTRATION),
+});
+
+/** Latest persisted V3-product binding. The v1 value above remains immutable
+ * so existing environment-v3 rooms replay under their original semantics. */
+export const V4_KP_WORKFLOW_MANIFEST_JSON = JSON.stringify(V4_KP_WORKFLOW_MANIFEST);
+
+export function runtimeManifestForExactV3KpWorkflow(
+  value: unknown,
+): RuntimeProfileManifest | undefined {
+  if (value === V3_KP_WORKFLOW_MANIFEST_JSON) return ENVIRONMENT_RUNTIME_PROFILE_MANIFEST;
+  if (value === V4_KP_WORKFLOW_MANIFEST_JSON) return ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST;
+  return undefined;
+}
+
+export function hasExactV3KpWorkflowManifest(value: unknown): value is string {
+  return runtimeManifestForExactV3KpWorkflow(value) !== undefined;
+}
 
 const HISTORICAL_WORKERS_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 const HISTORICAL_ALTERNATIVE_WORKERS_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it";
@@ -45,6 +112,23 @@ export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
     modelRevision: "deepseek-v4-pro",
     modelProfileVersion: "authoritative-kp-deepseek-v4-pro-v1",
   }),
+  // Only rooms explicitly created with the workflow manifest below use the
+  // private Form/Context/Body-only protocol. Existing bindings stay byte-for-
+  // byte on their historical profile and ActionPlan semantics.
+  Object.freeze({
+    ...V3_PRIVATE_FORM_KP_POLICY,
+    provider: "deepseek" as const,
+    modelId: AUTHORITATIVE_KP_MODEL,
+    modelRevision: "deepseek-v4-flash-0731",
+    modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-forms-v1",
+  }),
+  Object.freeze({
+    ...V3_PRIVATE_FORM_KP_POLICY,
+    provider: "deepseek" as const,
+    modelId: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
+    modelRevision: "deepseek-v4-pro",
+    modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-forms-v1",
+  }),
   // Existing authoritative rooms remain bound to their original server-only profiles.
   Object.freeze({
     ...HISTORICAL_WORKERS_AI_POLICY,
@@ -64,10 +148,23 @@ export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
 
 export const AUTHORITATIVE_KP_PROFILE = AUTHORITATIVE_KP_PROFILES[0];
 
+export const V3_AUTHORITATIVE_KP_PROFILES = Object.freeze(
+  AUTHORITATIVE_KP_PROFILES.filter((profile) =>
+    profile.actionPlanSchemaVersion === CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef),
+);
+
+export function isV3AuthoritativeKpProfile(
+  profile: AuthoritativeKpProfile,
+): boolean {
+  return profile.actionPlanSchemaVersion === CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
+    && profile.proposalSchemaVersion === V3_PRIVATE_FORM_KP_POLICY.proposalSchemaVersion
+    && profile.narrationSchemaVersion === "authoritative-kp-body-only-narration-v1";
+}
+
 export function authoritativeKpProfileByModelId(
   modelId: unknown,
 ): AuthoritativeKpProfile | undefined {
-  return AUTHORITATIVE_KP_PROFILES.find((profile) => profile.modelId === modelId);
+  return V3_AUTHORITATIVE_KP_PROFILES.find((profile) => profile.modelId === modelId);
 }
 
 export function authoritativeKpProfileByBinding(
@@ -426,7 +523,9 @@ const STRICT_RESOLUTION_OPERATIONS = new Set([
 const playerReservedActionPlanOperations = ACTION_PLAN_OPERATIONS.filter((operation) =>
   !STRICT_RESOLUTION_OPERATIONS.has(operation) && operation !== "advanceFactionPlan");
 const npcReservedActionPlanOperations = ACTION_PLAN_OPERATIONS.filter((operation) =>
-  !STRICT_RESOLUTION_OPERATIONS.has(operation) && operation !== "resolveNoncombatContest");
+  !STRICT_RESOLUTION_OPERATIONS.has(operation)
+  && operation !== "resolveNoncombatContest"
+  && operation !== "advanceCampaignLifecycle");
 
 const reservedActionPlanSchema = {
   type: "object",
@@ -750,6 +849,14 @@ const proposalSchemaDefinitions = {
   playerReservedActionPlan: reservedActionPlanSchema,
   npcReservedActionPlan: npcReservedActionPlanSchema,
 };
+
+/** Shared closed schema source for the server-private due ActorPlan boundary.
+ * Keeping this on the same definitions as ordinary NPC mechanics prevents a
+ * second, looser mechanical proposal dialect. */
+export const AUTHORITATIVE_NPC_ACTION_PLAN_SCHEMA = Object.freeze(npcActionPlanSchema);
+export const AUTHORITATIVE_ACTION_PLAN_SCHEMA_DEFINITIONS = Object.freeze(
+  proposalSchemaDefinitions,
+);
 
 const actorPlanSchema = {
   type: "object",

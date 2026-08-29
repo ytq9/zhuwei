@@ -176,5 +176,58 @@ export function withRoomAuthorityTelemetry(
             return authority.deliveryPublicationStatus!(query);
           },
         }),
+    ...(authority.beginDeliveryAudiencePublication === undefined
+      ? {}
+      : {
+          beginDeliveryAudiencePublication(query: {
+            publishCapability: unknown;
+            audienceId: string;
+          }) {
+            return authority.beginDeliveryAudiencePublication!(query);
+          },
+        }),
+    ...(authority.failDeliveryAudiencePublication === undefined
+      ? {}
+      : {
+          failDeliveryAudiencePublication(
+            authorization: unknown,
+            failure: UnknownRecord,
+          ) {
+            return authority.failDeliveryAudiencePublication!(authorization, failure);
+          },
+        }),
+    ...(authority.beginViewerNarrationRecovery === undefined
+      ? {}
+      : {
+          beginViewerNarrationRecovery(principal: unknown, capability: string) {
+            return authority.beginViewerNarrationRecovery!(principal, capability);
+          },
+        }),
+    ...(authority.publishViewerNarrationRecovery === undefined
+      ? {}
+      : {
+          publishViewerNarrationRecovery(
+            principal: unknown,
+            capability: string,
+            publication: UnknownRecord,
+          ) {
+            return authority.publishViewerNarrationRecovery!(
+              principal,
+              capability,
+              publication,
+            );
+          },
+        }),
+    ...(authority.failViewerNarrationRecovery === undefined
+      ? {}
+      : {
+          failViewerNarrationRecovery(
+            principal: unknown,
+            capability: string,
+            failure: UnknownRecord,
+          ) {
+            return authority.failViewerNarrationRecovery!(principal, capability, failure);
+          },
+        }),
   };
 }

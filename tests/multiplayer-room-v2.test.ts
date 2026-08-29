@@ -1,5 +1,7 @@
 import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
 
 type RecordValue = Record<string, unknown>;
 
@@ -48,6 +50,7 @@ function character(
   id: string,
   principalId: string,
   sceneId: "shrine" | "yard" | "cellar" = "shrine",
+  proficiencyFields: RecordValue = {},
 ) {
   return {
     characterId: id,
@@ -59,6 +62,7 @@ function character(
       proficiencyBonus: 2,
       proficientSkills: [],
       resources: { resolve: 1 },
+      ...proficiencyFields,
     },
   };
 }
@@ -128,6 +132,7 @@ async function initialize(
   input: {
     members: Array<{ principalId: string; role: "host" | "player" | "observer" }>;
     characters: ReturnType<typeof character>[];
+    runtimeProfiles?: unknown;
   },
 ): Promise<Initialized> {
   const stub = room(name);
@@ -137,6 +142,7 @@ async function initialize(
     moduleVersion: "legacy-anchor-v1",
     members: input.members,
     characters: input.characters,
+    ...(input.runtimeProfiles === undefined ? {} : { runtimeProfiles: input.runtimeProfiles }),
   }), "multiplayer initialization");
   expect(initialized).toMatchObject({ created: true });
   const capabilities = record(initialized.serviceCapabilities, "service capabilities");
@@ -236,6 +242,59 @@ async function answerPending(
 }
 
 describe("authoritative multiplayer room, group, time, and spotlight", () => {
+  it("carries exact-v4 Expertise and saves through Room control and successor synchronization", async () => {
+    const predecessorId = "character:multi:v4-predecessor";
+    const successorId = "character:multi:v4-successor";
+    const initialized = await initialize("multiplayer-v4-proficiency-lifecycle", {
+      members: [{ principalId: ALICE.principal.id, role: "host" }],
+      characters: [character(predecessorId, ALICE.principal.id, "shrine", {
+        proficientSkills: ["investigation"],
+        expertise: ["investigation"],
+        proficientSaves: ["dex", "int"],
+      })],
+      runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+    });
+    expect(readModel(await initialized.stub.observe(ALICE)).controlledCharacter).toMatchObject({
+      characterId: predecessorId,
+      proficientSkills: ["investigation"],
+      expertiseSkills: ["investigation"],
+      proficientSaves: ["dex", "int"],
+      combat: expect.any(Object),
+    });
+
+    const retired = await commitIntent(
+      initialized.stub,
+      ALICE,
+      "submission:v4-proficiency:retire",
+      predecessorId,
+      "我结束前任的冒险生涯，并安排一名继任者加入。",
+      { operation: "advanceCampaignLifecycle", lifecycleAction: "retireCharacter" },
+    );
+    expect(retired.kind, JSON.stringify(retired)).toBe("committed");
+
+    const successor = character(successorId, ALICE.principal.id, "shrine", {
+      proficientSkills: ["stealth"],
+      expertiseSkills: ["stealth"],
+      expertise: ["stealth"],
+      proficientSaves: ["dex", "int"],
+    });
+    await expect(initialized.stub.applyRoomAdministration(initialized.administration, {
+      commandId: "room-admin:v4-proficiency-successor",
+      kind: "introduceSuccessor",
+      principalId: ALICE.principal.id,
+      predecessorCharacterId: predecessorId,
+      character: successor,
+      worldEntry: "继任者按已固化人物卡加入神龛。",
+    })).resolves.toMatchObject({ kind: "committed" });
+    expect(readModel(await initialized.stub.observe(ALICE)).controlledCharacter).toMatchObject({
+      characterId: successorId,
+      proficientSkills: ["stealth"],
+      expertiseSkills: ["stealth"],
+      proficientSaves: ["dex", "int"],
+      combat: expect.any(Object),
+    });
+  });
+
   it("freezes a personal wizard's canonical multi-slot Arcane Recovery choice", async () => {
     const characterId = "character:multi:personal-arcane-recovery";
     const initialized = await initialize("multiplayer-v2-personal-arcane-recovery", {
@@ -907,6 +966,12 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
       members: [{ principalId: ALICE.principal.id, role: "host" }],
       characters: [campaignCharacter(predecessorId, ALICE.principal.id, 1)],
     });
+    const preparedBeforeDeath = prepared(await initialized.stub.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:campaign:prepared-before-death",
+      characterId: predecessorId,
+      text: "我准备在石梁落下后继续检查神龛。",
+    }));
 
     const fatal = await commitIntent(
       initialized.stub,
@@ -950,6 +1015,21 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
       characterId: predecessorId,
       text: "我仍以已经死亡的前任身份行动。",
     })).resolves.toMatchObject({ kind: "rejected", code: "notController" });
+    await expect(initialized.stub.commit(
+      ALICE,
+      preparedBeforeDeath.preparedActionId,
+      kpProposal(
+        preparedBeforeDeath.rootActionId,
+        "proposal:campaign:prepared-before-death",
+        {
+          operation: "resolveDirectConsequences",
+          duration: { unit: "second", value: 1 },
+          frozenCosts: [],
+          success: [],
+          failure: [],
+        },
+      ),
+    )).resolves.toMatchObject({ kind: "rejected", code: "preparedActionUnauthorized" });
 
     const successorSeed = campaignCharacter(successorId, ALICE.principal.id, 18);
     await expect(initialized.stub.applyRoomAdministration(initialized.administration, {
@@ -1076,6 +1156,177 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
       fromPrincipalId: ALICE.principal.id,
       toPrincipalId: CHARLIE.principal.id,
     })).resolves.toMatchObject({ kind: "rejected", code: "targetSeatUnavailable" });
+  });
+
+  it("invalidates a prepared action when CharacterControl transfers to another active Seat", async () => {
+    const characterId = "character:multi:control-transfer";
+    const initialized = await initialize("multiplayer-v2-prepared-control-transfer", {
+      members: [
+        { principalId: ALICE.principal.id, role: "host" },
+        { principalId: BOB.principal.id, role: "player" },
+      ],
+      characters: [character(characterId, ALICE.principal.id)],
+    });
+    const frozen = prepared(await initialized.stub.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:multi:prepared-before-transfer",
+      characterId,
+      text: "我准备检查神龛边缘的刻痕。",
+    }));
+    const proposal = kpProposal(frozen.rootActionId, "proposal:multi:prepared-before-transfer", {
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [],
+      failure: [],
+    });
+    const raced = await runInDurableObject(initialized.stub as never, async (instance) => {
+      const target = instance as unknown as MultiplayerAuthority & {
+        authorityMechanicalInput(...args: unknown[]): Promise<unknown>;
+      };
+      const originalMechanicalInput = target.authorityMechanicalInput.bind(target);
+      let releaseCommit!: () => void;
+      let signalCommitPaused!: () => void;
+      const commitGate = new Promise<void>((resolve) => {
+        releaseCommit = resolve;
+      });
+      const commitPaused = new Promise<void>((resolve) => {
+        signalCommitPaused = resolve;
+      });
+      let paused = false;
+      target.authorityMechanicalInput = async (...args: unknown[]) => {
+        if (!paused) {
+          paused = true;
+          signalCommitPaused();
+          await commitGate;
+        }
+        return originalMechanicalInput(...args);
+      };
+      const oldControllerCommit = target.commit(
+        ALICE,
+        frozen.preparedActionId,
+        structuredClone(proposal),
+      );
+      await commitPaused;
+      const transfer = await target.applyRoomAdministration(initialized.administration, {
+        commandId: "room-admin:transfer-prepared-character",
+        kind: "transferControl",
+        characterId,
+        fromSeatId: `seat:${ALICE.principal.id}`,
+        toSeatId: `seat:${BOB.principal.id}`,
+      });
+      releaseCommit();
+      const commit = await oldControllerCommit;
+      target.authorityMechanicalInput = originalMechanicalInput;
+      return { commit, transfer };
+    });
+    expect(raced.transfer).toMatchObject({ kind: "committed" });
+    expect(raced.commit).toMatchObject({ kind: "rejected", code: "preparedActionUnauthorized" });
+    await expect(initialized.stub.commit(
+      ALICE,
+      frozen.preparedActionId,
+      structuredClone(proposal),
+    )).resolves.toMatchObject({ kind: "rejected", code: "preparedActionUnauthorized" });
+    await expect(initialized.stub.commit(
+      BOB,
+      frozen.preparedActionId,
+      structuredClone(proposal),
+    )).resolves.toMatchObject({ kind: "rejected", code: "preparedActionUnauthorized" });
+
+    const bobPrepared = prepared(await initialized.stub.prepare(BOB, {
+      kind: "intent",
+      submissionId: "submission:multi:after-control-transfer",
+      characterId,
+      text: "我现在检查神龛边缘的刻痕。",
+    }));
+    expect(record(bobPrepared.kpProjection, "transferred KP projection")).toMatchObject({
+      actorProjection: { controlledCharacter: { characterId } },
+    });
+  });
+
+  it("keeps a stale prepared action invalid after CharacterControl transfers away and back", async () => {
+    const characterId = "character:multi:control-round-trip";
+    const initialized = await initialize("multiplayer-v2-prepared-control-round-trip", {
+      members: [
+        { principalId: ALICE.principal.id, role: "host" },
+        { principalId: BOB.principal.id, role: "player" },
+      ],
+      characters: [character(characterId, ALICE.principal.id)],
+    });
+    const frozen = prepared(await initialized.stub.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:multi:prepared-before-control-round-trip",
+      characterId,
+      text: "我按原先看到的状态检查神龛边缘。",
+    }));
+    const proposal = kpProposal(frozen.rootActionId, "proposal:multi:control-round-trip", {
+      operation: "resolveDirectConsequences",
+      duration: { unit: "second", value: 1 },
+      frozenCosts: [],
+      success: [],
+      failure: [],
+    });
+    const raced = await runInDurableObject(initialized.stub as never, async (instance) => {
+      const target = instance as unknown as MultiplayerAuthority & {
+        authorityMechanicalInput(...args: unknown[]): Promise<unknown>;
+      };
+      const originalMechanicalInput = target.authorityMechanicalInput.bind(target);
+      let releaseCommit!: () => void;
+      let signalCommitPaused!: () => void;
+      const commitGate = new Promise<void>((resolve) => {
+        releaseCommit = resolve;
+      });
+      const commitPaused = new Promise<void>((resolve) => {
+        signalCommitPaused = resolve;
+      });
+      let paused = false;
+      target.authorityMechanicalInput = async (...args: unknown[]) => {
+        if (!paused) {
+          paused = true;
+          signalCommitPaused();
+          await commitGate;
+        }
+        return originalMechanicalInput(...args);
+      };
+      const staleCommit = target.commit(
+        ALICE,
+        frozen.preparedActionId,
+        structuredClone(proposal),
+      );
+      await commitPaused;
+      const away = await target.applyRoomAdministration(initialized.administration, {
+        commandId: "room-admin:round-trip-away",
+        kind: "transferControl",
+        characterId,
+        fromSeatId: `seat:${ALICE.principal.id}`,
+        toSeatId: `seat:${BOB.principal.id}`,
+      });
+      const back = await target.applyRoomAdministration(initialized.administration, {
+        commandId: "room-admin:round-trip-back",
+        kind: "transferControl",
+        characterId,
+        fromSeatId: `seat:${BOB.principal.id}`,
+        toSeatId: `seat:${ALICE.principal.id}`,
+      });
+      releaseCommit();
+      const commit = await staleCommit;
+      target.authorityMechanicalInput = originalMechanicalInput;
+      return { away, back, commit };
+    });
+    expect(raced.away).toMatchObject({ kind: "committed" });
+    expect(raced.back).toMatchObject({ kind: "committed" });
+    expect(raced.commit).toMatchObject({ kind: "rejected", code: "scopeConflict" });
+    await expect(initialized.stub.commit(
+      ALICE,
+      frozen.preparedActionId,
+      structuredClone(proposal),
+    )).resolves.toMatchObject({ kind: "rejected", code: "scopeConflict" });
+    await expect(initialized.stub.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:multi:fresh-after-control-round-trip",
+      characterId,
+      text: "我按当前状态重新检查神龛边缘。",
+    })).resolves.toMatchObject({ kind: "prepared" });
   });
 
   it("requires every member's consent for atomic group movement and lets one character atomically leave", async () => {

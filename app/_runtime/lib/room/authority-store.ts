@@ -2,6 +2,7 @@ import type { AuthoritativeWorldState, EventEnvelope } from "../rules";
 import type {
   AuthoritativeCharacterSeed,
   AuthoritativeMemberSeed,
+  DeliveryAudienceState,
   DeliveryFrame,
   DeliveryPlan,
   ExperiencedTranscriptMessage,
@@ -115,6 +116,18 @@ export type AuthorityDeliveryPlanTombstoneRow = {
   receipt_id: string;
   root_action_id: string;
   reason: string;
+};
+
+export type AuthorityDeliveryAudienceRow = {
+  publish_capability: string;
+  audience_id: string;
+  viewer_key: string;
+  projection_hash: string;
+  delivery_generation: number;
+  status: DeliveryAudienceState;
+  attempt_hash: string | null;
+  result_json: string | null;
+  error_code: string | null;
 };
 
 export type AuthorityDeliverySlotRow = {
@@ -327,6 +340,22 @@ export class AuthoritativeRoomStore {
         publication_result_json TEXT,
         status TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS authority_delivery_audiences (
+        publish_capability TEXT NOT NULL,
+        audience_id TEXT NOT NULL,
+        viewer_key TEXT NOT NULL,
+        projection_hash TEXT NOT NULL,
+        delivery_generation INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL CHECK (
+          status IN ('pending', 'published', 'rejected', 'retryableFailure', 'superseded')
+        ),
+        attempt_hash TEXT,
+        result_json TEXT,
+        error_code TEXT,
+        PRIMARY KEY (publish_capability, audience_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_authority_delivery_audiences_viewer
+        ON authority_delivery_audiences (viewer_key, status);
       CREATE TABLE IF NOT EXISTS authority_delivery_slots (
         viewer_key TEXT PRIMARY KEY,
         principal_id TEXT NOT NULL,
@@ -490,6 +519,7 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_receipts)
         + (SELECT COUNT(*) FROM authority_pending_inputs)
         + (SELECT COUNT(*) FROM authority_delivery_plans)
+        + (SELECT COUNT(*) FROM authority_delivery_audiences)
         + (SELECT COUNT(*) FROM authority_delivery_slots)
         + (SELECT COUNT(*) FROM authority_experienced_messages)
         + (SELECT COUNT(*) FROM authority_delivery_watermarks)
@@ -711,6 +741,21 @@ export class AuthoritativeRoomStore {
     );
   }
 
+  pauseArchiveUntilAuthorityChanges(nowMs: number): void {
+    this.storage.sql.exec(
+      `UPDATE authority_archive_progress
+       SET pending = 1,
+           pending_since_at = CASE
+             WHEN pending = 1 AND pending_since_at IS NOT NULL THEN pending_since_at
+             ELSE ?
+           END,
+           next_attempt_at = NULL, updated_at = ?
+       WHERE singleton = 1`,
+      nowMs,
+      nowMs,
+    );
+  }
+
   updateState(state: unknown): void {
     this.storage.sql.exec(
       "UPDATE authority_rooms SET state_json = ?, updated_at = ? WHERE singleton = 1",
@@ -889,6 +934,34 @@ export class AuthoritativeRoomStore {
       input.submissionId,
       input.targetId,
       input.childRootActionId,
+    );
+  }
+
+  invalidatePreparedActionStagesInScopes(sceneScopes: string[]): void {
+    const scopes = [...new Set(sceneScopes)].sort();
+    if (scopes.length === 0) return;
+    const placeholders = scopes.map(() => "?").join(", ");
+    this.storage.sql.exec(
+      `DELETE FROM authority_proposal_recovery
+       WHERE prepared_action_id IN (
+         SELECT stage.child_root_action_id
+         FROM authority_action_stages stage
+         JOIN authority_submissions submission
+           ON submission.prepared_action_id = stage.prepared_action_id
+         WHERE stage.status = 'prepared'
+           AND submission.scene_scope IN (${placeholders})
+       )`,
+      ...scopes,
+    );
+    this.storage.sql.exec(
+      `DELETE FROM authority_action_stages
+       WHERE status = 'prepared'
+         AND prepared_action_id IN (
+           SELECT prepared_action_id
+           FROM authority_submissions
+           WHERE scene_scope IN (${placeholders})
+         )`,
+      ...scopes,
     );
   }
 
@@ -1343,6 +1416,18 @@ export class AuthoritativeRoomStore {
       sourceEventSeq,
       JSON.stringify(plan),
     );
+    for (const audience of plan.audiences) {
+      this.storage.sql.exec(
+        `INSERT INTO authority_delivery_audiences (
+           publish_capability, audience_id, viewer_key, projection_hash,
+           delivery_generation, status, attempt_hash, result_json, error_code
+         ) VALUES (?, ?, ?, ?, 0, 'pending', NULL, NULL, NULL)`,
+        plan.publishCapability,
+        audience.audienceId,
+        `${audience.principalId}\u001f${audience.characterId}`,
+        audience.projectionHash,
+      );
+    }
   }
 
   deliveryPlan(publishCapability: string): AuthorityDeliveryPlanRow | undefined {
@@ -1352,6 +1437,155 @@ export class AuthoritativeRoomStore {
              publication_result_json, status
       FROM authority_delivery_plans WHERE publish_capability = ?
     `, publishCapability).toArray()[0];
+  }
+
+  deliveryAudiences(publishCapability: string): AuthorityDeliveryAudienceRow[] {
+    return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
+      SELECT publish_capability, audience_id, viewer_key, projection_hash,
+             delivery_generation, status, attempt_hash, result_json, error_code
+      FROM authority_delivery_audiences
+      WHERE publish_capability = ?
+      ORDER BY audience_id
+    `, publishCapability).toArray();
+  }
+
+  deliveryAudience(
+    publishCapability: string,
+    audienceId: string,
+  ): AuthorityDeliveryAudienceRow | undefined {
+    return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
+      SELECT publish_capability, audience_id, viewer_key, projection_hash,
+             delivery_generation, status, attempt_hash, result_json, error_code
+      FROM authority_delivery_audiences
+      WHERE publish_capability = ? AND audience_id = ?
+    `, publishCapability, audienceId).toArray()[0];
+  }
+
+  /** Returns at most one unfinished publication owned by this exact frozen
+   * ViewerKey. Ordering is by authoritative source sequence, not insertion
+   * timing, so Durable Object eviction cannot change which recovery is shown. */
+  recoverableDeliveryAudience(viewerKey: string): AuthorityDeliveryAudienceRow | undefined {
+    return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
+      SELECT audience.publish_capability, audience.audience_id,
+             audience.viewer_key, audience.projection_hash,
+             audience.delivery_generation, audience.status,
+             audience.attempt_hash, audience.result_json, audience.error_code
+      FROM authority_delivery_audiences AS audience
+      JOIN authority_delivery_plans AS plan
+        ON plan.publish_capability = audience.publish_capability
+      WHERE audience.viewer_key = ?
+        AND audience.status IN ('pending', 'rejected', 'retryableFailure')
+        AND plan.status = 'open'
+      ORDER BY length(plan.source_event_seq) DESC, plan.source_event_seq DESC
+      LIMIT 1
+    `, viewerKey).toArray()[0];
+  }
+
+  /** Lists unfinished journals whose frozen ViewerKey belongs to one
+   * principal. The Room still has to revalidate the exact frozen Seat,
+   * Character, session, projection hash, and plan before authorizing use. */
+  recoverableDeliveryAudiencesForPrincipal(
+    principalId: string,
+  ): AuthorityDeliveryAudienceRow[] {
+    const viewerKeyPrefix = `${principalId}\u001f`;
+    return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
+      SELECT audience.publish_capability, audience.audience_id,
+             audience.viewer_key, audience.projection_hash,
+             audience.delivery_generation, audience.status,
+             audience.attempt_hash, audience.result_json, audience.error_code
+      FROM authority_delivery_audiences AS audience
+      JOIN authority_delivery_plans AS plan
+        ON plan.publish_capability = audience.publish_capability
+      WHERE instr(audience.viewer_key, ?) = 1
+        AND audience.status IN ('pending', 'rejected', 'retryableFailure')
+        AND plan.status = 'open'
+      ORDER BY length(plan.source_event_seq) DESC, plan.source_event_seq DESC,
+               audience.audience_id
+    `, viewerKeyPrefix).toArray();
+  }
+
+  /** Backfills open plans created by the immediately preceding delivery
+   * protocol. Their frozen plan remains the source for viewer identity. */
+  ensureDeliveryAudiences(plan: DeliveryPlan): AuthorityDeliveryAudienceRow[] {
+    let rows = this.deliveryAudiences(plan.publishCapability);
+    if (rows.length === plan.audiences.length) return rows;
+    if (rows.length !== 0) {
+      throw new Error("Delivery audience journal is only partially initialized.");
+    }
+    for (const audience of plan.audiences) {
+      this.storage.sql.exec(
+        `INSERT OR IGNORE INTO authority_delivery_audiences (
+           publish_capability, audience_id, viewer_key, projection_hash,
+           delivery_generation, status, attempt_hash, result_json, error_code
+         ) VALUES (?, ?, ?, ?, 0, 'pending', NULL, NULL, NULL)`,
+        plan.publishCapability,
+        audience.audienceId,
+        `${audience.principalId}\u001f${audience.characterId}`,
+        audience.projectionHash,
+      );
+    }
+    rows = this.deliveryAudiences(plan.publishCapability);
+    if (rows.length !== plan.audiences.length) {
+      throw new Error("Delivery audience journal could not be initialized.");
+    }
+    return rows;
+  }
+
+  beginDeliveryAudienceAttempt(
+    publishCapability: string,
+    audienceId: string,
+  ): number | undefined {
+    this.storage.sql.exec(
+      `UPDATE authority_delivery_audiences
+       SET delivery_generation = delivery_generation + 1,
+           status = 'pending', attempt_hash = NULL,
+           result_json = NULL, error_code = NULL
+       WHERE publish_capability = ? AND audience_id = ?
+         AND status IN ('pending', 'rejected', 'retryableFailure')`,
+      publishCapability,
+      audienceId,
+    );
+    return this.storage.sql.exec<{ delivery_generation: number }>(`
+      SELECT delivery_generation FROM authority_delivery_audiences
+      WHERE publish_capability = ? AND audience_id = ?
+    `, publishCapability, audienceId).toArray()[0]?.delivery_generation;
+  }
+
+  finishDeliveryAudience(input: {
+    publishCapability: string;
+    audienceId: string;
+    attemptHash: string;
+    state: "published" | "superseded";
+    result: unknown;
+  }): void {
+    this.storage.sql.exec(
+      `UPDATE authority_delivery_audiences
+       SET status = ?, attempt_hash = ?, result_json = ?, error_code = NULL
+       WHERE publish_capability = ? AND audience_id = ?`,
+      input.state,
+      input.attemptHash,
+      JSON.stringify(input.result),
+      input.publishCapability,
+      input.audienceId,
+    );
+  }
+
+  failDeliveryAudience(input: {
+    publishCapability: string;
+    audienceId: string;
+    state: "rejected" | "retryableFailure";
+    errorCode: string;
+  }): void {
+    this.storage.sql.exec(
+      `UPDATE authority_delivery_audiences
+       SET status = ?, attempt_hash = NULL, result_json = NULL, error_code = ?
+       WHERE publish_capability = ? AND audience_id = ?
+         AND status <> 'published' AND status <> 'superseded'`,
+      input.state,
+      input.errorCode,
+      input.publishCapability,
+      input.audienceId,
+    );
   }
 
   deliveryPlanTombstone(
@@ -1373,6 +1607,10 @@ export class AuthoritativeRoomStore {
       plan.publish_capability,
       plan.receipt_id,
       plan.root_action_id,
+    );
+    this.storage.sql.exec(
+      "DELETE FROM authority_delivery_audiences WHERE publish_capability = ?",
+      publishCapability,
     );
     this.storage.sql.exec(
       "DELETE FROM authority_delivery_plans WHERE publish_capability = ? AND status = 'open'",
@@ -1600,6 +1838,10 @@ export class AuthoritativeRoomStore {
         plan.root_action_id,
       );
       this.storage.sql.exec(
+        "DELETE FROM authority_delivery_audiences WHERE publish_capability = ?",
+        plan.publish_capability,
+      );
+      this.storage.sql.exec(
         "DELETE FROM authority_delivery_plans WHERE publish_capability = ?",
         plan.publish_capability,
       );
@@ -1638,6 +1880,10 @@ export class AuthoritativeRoomStore {
         plan.publish_capability,
         plan.receipt_id,
         plan.root_action_id,
+      );
+      this.storage.sql.exec(
+        "DELETE FROM authority_delivery_audiences WHERE publish_capability = ?",
+        plan.publish_capability,
       );
       this.storage.sql.exec(
         "DELETE FROM authority_delivery_plans WHERE publish_capability = ?",
@@ -1761,6 +2007,7 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_delivery_watermarks;
       DELETE FROM authority_delivery_tombstones;
       DELETE FROM authority_delivery_plan_tombstones;
+      DELETE FROM authority_delivery_audiences;
       DELETE FROM authority_delivery_plans;
       DELETE FROM authority_pending_inputs;
       DELETE FROM authority_randomness_batches;

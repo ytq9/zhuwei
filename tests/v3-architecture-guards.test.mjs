@@ -170,6 +170,15 @@ test("module-global random, fetch, DB, timer, secret, and IIFE effects are rejec
       "  return { db, secret };",
       "}",
     ].join("\n"),
+    "app/request-adapter.ts": [
+      "const EMPTY = Object.freeze([]);",
+      "export function makeAdapter(db) {",
+      "  return { async search() { return db.prepare('SELECT 1').all(); } };",
+      "}",
+      "export async function retrieve(adapter, skip) {",
+      "  return skip ? Object.freeze([]) : await adapter.search(Object.freeze({ terms: [] }));",
+      "}",
+    ].join("\n"),
   });
   assert.doesNotThrow(() => assertNoModuleScopeEffects(allowed));
 

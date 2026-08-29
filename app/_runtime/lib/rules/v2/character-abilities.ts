@@ -2,6 +2,8 @@ import { itemById } from "../../dnd/gear";
 import { spellDefinition } from "../spell-catalog";
 import type { DiceFormula, SpellDefinition, SpellRange } from "../spell-model";
 import type { TacticalPosition } from "../tactical-projection";
+import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
+import type { RuntimeProfileManifest } from "../profiles/types";
 
 import type { CharacterRecord, JsonRecord } from "./model";
 import { isNonEmptyString, isRecord } from "./validation";
@@ -14,6 +16,7 @@ export type CompiledCharacterCombat = {
 };
 
 export function buildPlayerCombatEntity(
+  profiles: RuntimeProfileManifest,
   character: CharacterRecord,
   compiled: CompiledCharacterCombat,
   controllerPrincipalId?: string,
@@ -56,6 +59,12 @@ export function buildPlayerCombatEntity(
     ),
     proficiencyBonus: String(character.proficiencyBonus ?? 0),
     proficientSkills: [...(character.proficientSkills ?? [])].sort(),
+    ...(characterProficiencyProfileEnabled(profiles.extensions)
+      ? {
+          expertiseSkills: [...(character.expertiseSkills ?? [])].sort(),
+          proficientSaves: [...(character.proficientSaves ?? [])].sort(),
+        }
+      : {}),
     armorClass: String(character.loadout?.armorClass ?? (10 + abilityModifier(dexterity))),
     hitPoints: {
       current: String(currentHitPoints),
@@ -105,7 +114,12 @@ export function synchronizePlayerCombatEntity(
   initial: JsonRecord,
 ): JsonRecord {
   if (existing === undefined) return structuredClone(initial);
-  const { spellcasting: _spellcasting, ...prior } = existing;
+  const {
+    expertiseSkills: _expertiseSkills,
+    proficientSaves: _proficientSaves,
+    spellcasting: _spellcasting,
+    ...prior
+  } = existing;
   return {
     ...structuredClone(prior),
     name: initial.name,
@@ -113,6 +127,12 @@ export function synchronizePlayerCombatEntity(
     stats: structuredClone(initial.stats),
     proficiencyBonus: initial.proficiencyBonus,
     proficientSkills: structuredClone(initial.proficientSkills ?? []),
+    ...(initial.expertiseSkills === undefined
+      ? {}
+      : { expertiseSkills: structuredClone(initial.expertiseSkills) }),
+    ...(initial.proficientSaves === undefined
+      ? {}
+      : { proficientSaves: structuredClone(initial.proficientSaves) }),
     armorClass: initial.armorClass,
     hitPoints: structuredClone(initial.hitPoints),
     speedInches: structuredClone(initial.speedInches),

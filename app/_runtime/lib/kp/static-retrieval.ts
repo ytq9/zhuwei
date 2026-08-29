@@ -102,7 +102,11 @@ export function chineseBigrams(text: string): readonly string[] {
 
 export function staticSearchTerms(text: string, aliases: readonly string[] = []): readonly string[] {
   const normalized = text.normalize("NFKC").toLowerCase();
-  const words = normalized.match(/[\p{Letter}\p{Number}][\p{Letter}\p{Number}._-]*/gu) ?? [];
+  // Han runs must not be copied wholesale into a derived FTS row. Chinese is
+  // indexed by the declared bigram tokenizer below; Latin/numeric rule terms
+  // keep their exact token form.
+  const words = (normalized.match(/[\p{Letter}\p{Number}][\p{Letter}\p{Number}._-]*/gu) ?? [])
+    .filter((word) => !/\p{Script=Han}/u.test(word));
   return Object.freeze(uniqueSorted([
     ...aliases.map(normalizeExactAlias),
     ...words,
@@ -131,6 +135,7 @@ export type StaticRetrievalRequest = Readonly<{
   structuralRefs: readonly string[];
   exactAliases: readonly string[];
   queryTerms: readonly string[];
+  publicD1QueryTerms: readonly string[];
   limit: number;
 }>;
 
@@ -139,6 +144,9 @@ export function createStaticRetrievalRequest(input: Readonly<{
   exactAliases?: readonly string[];
   queryText?: string;
   plannerQueryTerms?: readonly string[];
+  /** Terms derived exclusively from public static corpus metadata. Player/KP
+   * text and Planner output must never be supplied through this field. */
+  publicD1QueryTerms?: readonly string[];
   limit?: number;
 }>): StaticRetrievalRequest {
   const limit = input.limit ?? 8;
@@ -150,13 +158,48 @@ export function createStaticRetrievalRequest(input: Readonly<{
       ...staticSearchTerms(input.queryText ?? ""),
       ...(input.plannerQueryTerms ?? []).flatMap((term) => staticSearchTerms(term)),
     ])),
+    publicD1QueryTerms: Object.freeze(uniqueSorted(
+      (input.publicD1QueryTerms ?? []).map((term) => term.normalize("NFKC").trim().toLowerCase()).filter(Boolean),
+    )),
     limit,
   });
 }
 
+/** Builds a D1-safe query only from public, server-owned index metadata bound
+ * to authoritative structural references. It never consumes free text. */
+export function publicD1QueryTermsForStructuralRefs(
+  index: StaticRetrievalIndex,
+  structuralRefs: readonly string[],
+  limit = 24,
+): readonly string[] {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 64) throw new Error("RAG_D1_TERM_LIMIT_INVALID");
+  const sourceRefs = new Set<string>();
+  for (const ref of uniqueSorted(structuralRefs.map(normalizeRef))) {
+    for (const sourceRef of index.structuralRefs[ref] ?? []) sourceRefs.add(sourceRef);
+  }
+  return Object.freeze(uniqueSorted([...sourceRefs]
+    .flatMap((sourceRef) => {
+      const entry = index.entries[sourceRef];
+      return entry?.sensitivity === "public" ? [...entry.searchTerms] : [];
+    }))
+    .slice(0, limit));
+}
+
 export type StaticRetrievalHit = StaticIndexEntry & Readonly<{
   relevance: number;
-  routes: readonly ("structural" | "alias" | "fts")[];
+  routes: readonly ("structural" | "alias" | "fts" | "dependency")[];
+}>;
+
+const MAX_STATIC_DEPENDENCY_REFS = 16;
+const MAX_STATIC_DEPENDENCY_DEPTH = 8;
+const MAX_STATIC_DEPENDENCY_GROUP_CHUNKS = 64;
+const MAX_STATIC_RETRIEVAL_ROOTS = 128;
+
+type DirectRetrievalRoute = "structural" | "alias" | "fts";
+type DirectRetrievalRank = Readonly<{
+  sourceRef: string;
+  relevance: number;
+  routes: readonly DirectRetrievalRoute[];
 }>;
 
 /** Exact structure and aliases precede FTS; merging is stable and ref-only. */
@@ -168,9 +211,9 @@ export function retrieveStaticReferences(
   const accumulated = new Map<string, {
     routePriority: number;
     ftsScore: number;
-    routes: Set<"structural" | "alias" | "fts">;
+    routes: Set<DirectRetrievalRoute>;
   }>();
-  const add = (sourceRef: string, route: "structural" | "alias" | "fts", ftsScore = 0): void => {
+  const add = (sourceRef: string, route: DirectRetrievalRoute, ftsScore = 0): void => {
     if (index.entries[sourceRef] === undefined) return;
     const priority = route === "structural" ? 3 : route === "alias" ? 2 : 1;
     const current = accumulated.get(sourceRef) ?? {
@@ -198,15 +241,48 @@ export function retrieveStaticReferences(
     }
   }
 
-  return Object.freeze([...accumulated.entries()]
+  const rankedRoots: readonly DirectRetrievalRank[] = Object.freeze([...accumulated.entries()]
     .map(([sourceRef, value]) => Object.freeze({
-      ...index.entries[sourceRef]!,
+      sourceRef,
       relevance: value.routePriority * 1_000_000
         + (Number.isFinite(value.ftsScore) ? Math.max(-999_999, Math.min(999_999, value.ftsScore)) : 0),
-      routes: Object.freeze([...value.routes].sort()),
+      routes: Object.freeze([...value.routes].sort()) as readonly DirectRetrievalRoute[],
     }))
-    .sort((left, right) => right.relevance - left.relevance || left.sourceRef.localeCompare(right.sourceRef))
-    .slice(0, request.limit));
+    .sort((left, right) => right.relevance - left.relevance || left.sourceRef.localeCompare(right.sourceRef)));
+  if (rankedRoots.length > MAX_STATIC_RETRIEVAL_ROOTS) {
+    throw new Error("RAG_DEPENDENCY_ROOT_LIMIT_EXCEEDED");
+  }
+
+  // A retrieval limit applies only after every candidate root has acquired its
+  // complete bounded dependency closure. Groups which do not fit are omitted
+  // whole; a dependency is never truncated away from a retained root.
+  const chunksBySource = staticChunksByParentSource(index);
+  const selected = new Set<string>();
+  const relevanceByRef = new Map<string, number>();
+  const routesByRef = new Map<string, Set<StaticRetrievalHit["routes"][number]>>();
+  const directByRef = new Map(rankedRoots.map((root) => [root.sourceRef, root]));
+  for (const root of rankedRoots) {
+    const group = dependencyClosure(index, chunksBySource, root.sourceRef);
+    const additions = group.filter((sourceRef) => !selected.has(sourceRef));
+    if (selected.size + additions.length > request.limit) continue;
+    for (const sourceRef of group) {
+      selected.add(sourceRef);
+      relevanceByRef.set(sourceRef, Math.max(relevanceByRef.get(sourceRef) ?? Number.NEGATIVE_INFINITY, root.relevance));
+      const routes = routesByRef.get(sourceRef) ?? new Set();
+      const direct = directByRef.get(sourceRef);
+      for (const route of direct?.routes ?? []) routes.add(route);
+      if (sourceRef !== root.sourceRef) routes.add("dependency");
+      routesByRef.set(sourceRef, routes);
+    }
+  }
+
+  return Object.freeze([...selected]
+    .map((sourceRef) => Object.freeze({
+      ...index.entries[sourceRef]!,
+      relevance: relevanceByRef.get(sourceRef)!,
+      routes: Object.freeze([...routesByRef.get(sourceRef)!].sort()),
+    }))
+    .sort((left, right) => right.relevance - left.relevance || left.sourceRef.localeCompare(right.sourceRef)));
 }
 
 /** Pure in-memory adapter for deterministic tests and disabled-platform fallback. */
@@ -243,8 +319,14 @@ export function rehydrateStaticContext(
   readAuthoritative: AuthoritativeStaticReader,
   policy: RehydratePolicy,
 ): readonly RetrievedContextChunk[] {
+  if (hits.length > MAX_STATIC_DEPENDENCY_GROUP_CHUNKS) {
+    throw new Error("RAG_DEPENDENCY_GROUP_LIMIT_EXCEEDED");
+  }
+  if (new Set(hits.map((hit) => hit.sourceRef)).size !== hits.length) {
+    throw new Error("RAG_SOURCE_REF_DUPLICATE");
+  }
   const allowedProfiles = new Set(policy.allowedProfileRefs);
-  return Object.freeze(hits.map((hit) => {
+  const hydrated = hits.map((hit) => {
     const authoritative = readAuthoritative(hit.sourceRef);
     if (authoritative === undefined || authoritative.sourceKind !== "static") {
       throw new Error("RAG_AUTHORITATIVE_SOURCE_MISSING");
@@ -261,6 +343,9 @@ export function rehydrateStaticContext(
     if (!sameStrings(authoritative.dependencyRefs, hit.dependencyRefs)) {
       throw new Error("RAG_DEPENDENCY_MISMATCH");
     }
+    if (authoritative.dependencyRefs.length > MAX_STATIC_DEPENDENCY_REFS) {
+      throw new Error("RAG_DEPENDENCY_REF_LIMIT_EXCEEDED");
+    }
     return Object.freeze({
       sourceRef: authoritative.sourceRef,
       sourceHash: authoritative.sourceHash,
@@ -272,7 +357,84 @@ export function rehydrateStaticContext(
       body: authoritative.body,
       relevance: hit.relevance,
     });
-  }));
+  });
+
+  // Dependencies are authority coordinates, not advisory labels. A reference
+  // must resolve either to an exact room-pinned profile binding or to every
+  // retained chunk of an authoritative static source. Since each resolved
+  // chunk was independently checked above, this also gates profile, hash,
+  // span, sensitivity, and KP-only access for the whole dependency group.
+  const hydratedByRef = new Map(hydrated.map((chunk) => [chunk.sourceRef, chunk]));
+  const hydratedBySource = staticChunksByParentSource(hydrated);
+  for (const chunk of hydrated) {
+    for (const dependencyRef of chunk.dependencyRefs) {
+      const dependencyChunks = hydratedByRef.has(dependencyRef)
+        ? [dependencyRef]
+        : hydratedBySource.get(dependencyRef) ?? [];
+      if (dependencyChunks.length > 0) continue;
+      if (allowedProfiles.has(dependencyRef)) continue;
+      throw new Error("RAG_DEPENDENCY_UNRESOLVED");
+    }
+  }
+  return Object.freeze(hydrated);
+}
+
+function dependencyClosure(
+  index: StaticRetrievalIndex,
+  chunksBySource: ReadonlyMap<string, readonly string[]>,
+  rootSourceRef: string,
+): readonly string[] {
+  const visited = new Set<string>();
+  const pending: Array<{ sourceRef: string; depth: number }> = [{ sourceRef: rootSourceRef, depth: 1 }];
+  while (pending.length > 0) {
+    const current = pending.shift()!;
+    if (visited.has(current.sourceRef)) continue;
+    if (current.depth > MAX_STATIC_DEPENDENCY_DEPTH) {
+      throw new Error("RAG_DEPENDENCY_DEPTH_EXCEEDED");
+    }
+    const entry = index.entries[current.sourceRef];
+    if (entry === undefined) throw new Error("RAG_DEPENDENCY_CHUNK_MISSING");
+    if (entry.dependencyRefs.length > MAX_STATIC_DEPENDENCY_REFS) {
+      throw new Error("RAG_DEPENDENCY_REF_LIMIT_EXCEEDED");
+    }
+    visited.add(current.sourceRef);
+    if (visited.size > MAX_STATIC_DEPENDENCY_GROUP_CHUNKS) {
+      throw new Error("RAG_DEPENDENCY_GROUP_LIMIT_EXCEEDED");
+    }
+    for (const dependencyRef of entry.dependencyRefs) {
+      const dependencyChunks = index.entries[dependencyRef] === undefined
+        ? chunksBySource.get(dependencyRef) ?? []
+        : [dependencyRef];
+      for (const sourceRef of dependencyChunks) {
+        if (!visited.has(sourceRef)) pending.push({ sourceRef, depth: current.depth + 1 });
+      }
+    }
+  }
+  return Object.freeze([...visited].sort());
+}
+
+function staticChunksByParentSource<T extends Readonly<{ sourceRef: string }>>(
+  source: StaticRetrievalIndex | readonly T[],
+): ReadonlyMap<string, readonly string[]> {
+  const sourceRefs = Array.isArray(source)
+    ? source.map((entry) => entry.sourceRef)
+    : Object.keys((source as StaticRetrievalIndex).entries);
+  const mutable = new Map<string, string[]>();
+  for (const sourceRef of sourceRefs) {
+    const parentRef = parentStaticSourceRef(sourceRef);
+    const refs = mutable.get(parentRef) ?? [];
+    refs.push(sourceRef);
+    mutable.set(parentRef, refs);
+  }
+  return new Map([...mutable.entries()].map(([parentRef, refs]) => [
+    parentRef,
+    Object.freeze([...refs].sort()),
+  ]));
+}
+
+function parentStaticSourceRef(sourceRef: string): string {
+  const marker = sourceRef.lastIndexOf("#span:");
+  return marker < 0 ? sourceRef : sourceRef.slice(0, marker);
 }
 
 function validateStaticChunk(chunk: StaticSourceChunk): void {

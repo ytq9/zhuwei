@@ -10,6 +10,9 @@ type RecordValue = Record<string, unknown>;
 const ALICE = Object.freeze({
   principal: Object.freeze({ id: "principal:combat-room:alice", sessionVersion: 1 }),
 });
+const BOB = Object.freeze({
+  principal: Object.freeze({ id: "principal:combat-room:bob", sessionVersion: 1 }),
+});
 
 const CHECKPOINTS = [
   "beforeRandomnessRequestCommit",
@@ -20,6 +23,7 @@ const CHECKPOINTS = [
 
 type Authority = {
   initializeAuthoritative(input: unknown): Promise<unknown>;
+  applyRoomAdministration(capability: unknown, command: unknown): Promise<unknown>;
   prepare(context: unknown, input: unknown): Promise<unknown>;
   commit(context: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
   observe(context: unknown, query?: unknown): Promise<unknown>;
@@ -106,7 +110,7 @@ function encounterProposal(
 
 async function initializedRoom(
   checkpoint: string,
-  options: { concentrationCaster?: boolean } = {},
+  options: { concentrationCaster?: boolean; transferSeat?: boolean } = {},
 ) {
   const roomId = `combat-room-randomness-v2-${checkpoint}`;
   const stub = env.ROOMS.getByName(roomId) as unknown as Authority;
@@ -114,7 +118,12 @@ async function initializedRoom(
     roomId,
     moduleId: "black-oak-will",
     moduleVersion: "legacy-anchor-v1",
-    members: [{ principalId: ALICE.principal.id, role: "host" }],
+    members: [
+      { principalId: ALICE.principal.id, role: "host" },
+      ...(options.transferSeat
+        ? [{ principalId: BOB.principal.id, role: "player" as const }]
+        : []),
+    ],
     characters: [{
       characterId: "character:combat-room:alice",
       controllerPrincipalId: ALICE.principal.id,
@@ -151,6 +160,7 @@ async function initializedRoom(
   return {
     stub,
     archiveExport: capabilities.archiveExport,
+    roomAdministration: capabilities.roomAdministration,
     preparedActionId: String(prepared.preparedActionId),
     ...encounter,
   };
@@ -311,6 +321,59 @@ async function preparedConcentrationAttack(scenario: string) {
 }
 
 describe("Room DO multi-request combat randomness", () => {
+  it("defers CharacterControl transfer until a journaled randomness wave settles", async () => {
+    const room = await initializedRoom("control-transfer-settlement-gate", {
+      transferSeat: true,
+    });
+    const raced = await runInDurableObject(room.stub as never, async (instance) => {
+      const target = instance as unknown as Authority & {
+        authorityRecoveryCheckpoint?: (name: string) => void;
+      };
+      let signalRequestCommitted!: () => void;
+      const requestCommitted = new Promise<void>((resolve) => {
+        signalRequestCommitted = resolve;
+      });
+      let signaled = false;
+      target.authorityRecoveryCheckpoint = (name) => {
+        if (name === "afterRandomnessRequestCommit" && !signaled) {
+          signaled = true;
+          signalRequestCommitted();
+        }
+      };
+      const openingCommit = target.commit(
+        ALICE,
+        room.preparedActionId,
+        structuredClone(room.proposal),
+      );
+      await requestCommitted;
+      const command = {
+        commandId: "room-admin:combat-randomness-control-transfer",
+        kind: "transferControl",
+        characterId: "character:combat-room:alice",
+        fromSeatId: `seat:${ALICE.principal.id}`,
+        toSeatId: `seat:${BOB.principal.id}`,
+      };
+      const blocked = await target.applyRoomAdministration(
+        room.roomAdministration,
+        structuredClone(command),
+      );
+      const settled = await openingCommit;
+      const transferred = await target.applyRoomAdministration(
+        room.roomAdministration,
+        structuredClone(command),
+      );
+      delete target.authorityRecoveryCheckpoint;
+      return { blocked, settled, transferred };
+    });
+    expect(raced.blocked).toMatchObject({
+      kind: "retryableFailure",
+      code: "roomAdministrationRandomnessSettlementPending",
+    });
+    expect(record(raced.settled, "settled opening combat").kind)
+      .toMatch(/^(?:awaitingInput|committed)$/u);
+    expect(raced.transferred).toMatchObject({ kind: "committed" });
+  });
+
   for (const checkpoint of CHECKPOINTS) {
     it(`recovers a two-request initiative batch at ${checkpoint}`, async () => {
       const room = await initializedRoom(checkpoint);
@@ -579,6 +642,12 @@ describe("Room DO multi-request combat randomness", () => {
       );
     })).rejects.toThrow(`simulated-second-wave-crash:${multiWaveCheckpoint}`);
     expect(checkpointHits).toBe(recoveryCase.crashOnHit);
+    if (multiWaveCheckpoint !== "afterOutcomeCommitBeforeResponse") {
+      await expect(room.stub.exportAuthoritativeArchive(room.archiveExport)).resolves.toMatchObject({
+        kind: "retryableFailure",
+        code: "archiveSettlementPending",
+      });
+    }
     if (multiWaveCheckpoint === "afterOutcomeCommitBeforeResponse") {
       expect(archiveGenerationBefore).toBeTypeOf("number");
       const afterCrash = await runInDurableObject(harnessStub, async (instance, state) => {

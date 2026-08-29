@@ -268,13 +268,13 @@ async function mockAuthoritativeServer(options = {}) {
   };
 }
 
-test("the live scenario contains 24+ player intents or pending responses and no authority payloads", () => {
+test("the live scenario contains exactly 31 player intents or pending responses and no authority payloads", () => {
   const scenario = buildLiveKpScenario({
     runId: "scenario-test",
     secretCanary: "ZEVAL-SCENARIO-SECRET",
     privatePlanCanary: "ZPLAN-SCENARIO-PRIVATE",
   });
-  assert.ok(scenario.filter((step) => step.countsAsInteraction).length >= 24);
+  assert.equal(scenario.filter((step) => step.countsAsInteraction).length, 31);
   assert.ok(scenario.every((step) => !JSON.stringify(step).match(/statePatch|events|dieFaces|principalId|actorId/)));
   assert.equal(LIVE_KP_EVAL_THRESHOLDS.minimumTotal, 18);
   assert.equal(LIVE_KP_EVAL_THRESHOLDS.minimumDimension, 1);
@@ -320,7 +320,7 @@ test("the HTTP runner uses only public table commands, applies hard gates, and e
     assert.ok(report.authorityEvidence.mutationCount > 0);
     assert.ok(report.authorityEvidence.projectionChecks > 0);
     assert.ok(report.authorityEvidence.activeCardChecks > 0);
-    assert.ok(report.execution.interactionsCompleted >= 24);
+    assert.equal(report.execution.interactionsCompleted, 31);
     assert.ok(report.scores.total >= LIVE_KP_EVAL_THRESHOLDS.minimumTotal);
 
     const serialized = JSON.stringify(report);
@@ -349,6 +349,37 @@ test("the HTTP runner uses only public table commands, applies hard gates, and e
     assert.ok(mock.calls
       .filter((call) => call.command === "sendAction")
       .every((call) => !JSON.stringify(call.data).match(/statePatch|events|dieFaces|principalId|actorId/)));
+  } finally {
+    await mock.close();
+  }
+});
+
+test("the explicit three-interaction smoke uses the same public evaluator without claiming full quality gates", async () => {
+  const mock = await mockAuthoritativeServer();
+  try {
+    const report = await runLiveKpEvaluation({
+      baseUrl: mock.baseUrl,
+      roomCode: "SMOKE3",
+      actors: {
+        host: { cookie: "session=host" },
+        player: { cookie: "session=player" },
+      },
+      allowNonProductionTarget: true,
+      runId: "runner-three-interaction-smoke",
+      secretCanary: "ZEVAL-RUNNER-SMOKE",
+      privatePlanCanary: "ZPLAN-RUNNER-SMOKE",
+      interactionLimit: 3,
+    });
+
+    assert.equal(report.status, "pass", JSON.stringify(report.hardGates));
+    assert.equal(report.execution.evaluationScope, "three-interaction-smoke");
+    assert.equal(report.execution.interactionMinimum, 3);
+    assert.equal(report.execution.interactionsCompleted, 3);
+    assert.equal(report.execution.totalActionRequests, 3);
+    assert.equal(report.execution.qualityThresholdsApplied, false);
+    assert.ok(Object.values(report.hardGates).every((failed) => failed === false));
+    assert.equal(JSON.stringify(report).includes("ZEVAL-RUNNER-SMOKE"), false);
+    assert.equal(JSON.stringify(report).includes("ZPLAN-RUNNER-SMOKE"), false);
   } finally {
     await mock.close();
   }

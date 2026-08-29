@@ -92,6 +92,29 @@ export type AuthoritativeArchiveAppendResult = {
   statementsWritten: number;
 };
 
+export type AuthoritativeArchiveCheckpoint = {
+  roomId: string;
+  runtimeEpochId: string;
+  genesisHash: `sha256:${string}`;
+  settledEventSeq: string;
+  eventHash: `sha256:${string}`;
+  stateHash: `sha256:${string}`;
+  activeBranchId: string;
+  updatedAt: number;
+};
+
+export type AuthoritativeArchiveD1Locator = {
+  roomId: string;
+  runtimeEpochId: string;
+};
+
+export class AuthoritativeArchiveD1ReadError extends Error {
+  constructor(message = "The D1 archive has no verified settled checkpoint.") {
+    super(message);
+    this.name = "AuthoritativeArchiveD1ReadError";
+  }
+}
+
 export class AuthoritativeArchiveCursorMismatchError extends Error {
   constructor() {
     super("The durable archive cursor is not materialized in D1.");
@@ -316,8 +339,7 @@ export async function validateAuthoritativeArchive(value: unknown): Promise<Arch
     return { ok: false, code: "archiveIntegrityMismatch" };
   }
   if (
-    value.projectionAudits.length === 0
-    || !value.projectionAudits.every((entry) =>
+    !value.projectionAudits.every((entry) =>
       isRecord(entry)
       && hasExactKeys(entry, ["eventSeq", "projectionHash", "viewerHash"])
       && isCanonicalSequence(entry.eventSeq)
@@ -505,8 +527,10 @@ type PendingArchiveWrite =
   | {
       kind: "audit";
       cursor: AuthoritativeArchiveAuditCursor;
+      projectionHash: `sha256:${string}`;
       statement: D1PreparedStatement;
-    };
+    }
+  | { kind: "checkpoint"; statement: D1PreparedStatement };
 
 type AuthoritativeArchiveCursorProbe = {
   genesis_hash: string | null;
@@ -514,6 +538,14 @@ type AuthoritativeArchiveCursorProbe = {
   first_event_seq: string | number | null;
   last_event_seq: string | number | null;
   cursor_event_hash: string | null;
+  checkpoint_genesis_hash: string | null;
+  checkpoint_settled_event_seq: string | number | null;
+  checkpoint_event_hash: string | null;
+  checkpoint_state_hash: string | null;
+  checkpoint_active_branch_id: string | null;
+  checkpoint_materialized_event_hash: string | null;
+  checkpoint_materialized_state_hash: string | null;
+  checkpoint_materialized_branch_id: string | null;
 };
 
 function archiveSequence(value: unknown): string | undefined {
@@ -529,13 +561,7 @@ async function assertArchiveProgressMaterializedInD1(
   db: D1Database,
   archive: AuthoritativeRoomArchive,
   progress: AuthoritativeArchiveProgress,
-): Promise<void> {
-  if (
-    !progress.genesisArchived
-    && progress.lastEventSeq === "0"
-    && progress.auditCursor === null
-  ) return;
-
+): Promise<AuthoritativeArchiveCursorProbe> {
   const probe = await db.prepare(`/* authoritative_archive_cursor_probe */
     SELECT
       (SELECT genesis_hash
@@ -548,13 +574,63 @@ async function assertArchiveProgressMaterializedInD1(
       MAX(CASE
         WHEN event_seq = CAST(?3 AS INTEGER) THEN event_hash
         ELSE NULL
-      END) AS cursor_event_hash
+      END) AS cursor_event_hash,
+      (SELECT genesis_hash
+        FROM authoritative_room_archive_checkpoint
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+        LIMIT 1) AS checkpoint_genesis_hash,
+      (SELECT CAST(settled_event_seq AS TEXT)
+        FROM authoritative_room_archive_checkpoint
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+        LIMIT 1) AS checkpoint_settled_event_seq,
+      (SELECT event_hash
+        FROM authoritative_room_archive_checkpoint
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+        LIMIT 1) AS checkpoint_event_hash,
+      (SELECT state_hash
+        FROM authoritative_room_archive_checkpoint
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+        LIMIT 1) AS checkpoint_state_hash,
+      (SELECT active_branch_id
+        FROM authoritative_room_archive_checkpoint
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+        LIMIT 1) AS checkpoint_active_branch_id,
+      (SELECT event_hash
+        FROM authoritative_room_event_archive
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+          AND event_seq = (
+            SELECT settled_event_seq
+            FROM authoritative_room_archive_checkpoint
+            WHERE room_id = ?1 AND runtime_epoch_id = ?2
+            LIMIT 1)
+        LIMIT 1) AS checkpoint_materialized_event_hash,
+      (SELECT state_hash_after
+        FROM authoritative_room_event_archive
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+          AND event_seq = (
+            SELECT settled_event_seq
+            FROM authoritative_room_archive_checkpoint
+            WHERE room_id = ?1 AND runtime_epoch_id = ?2
+            LIMIT 1)
+        LIMIT 1) AS checkpoint_materialized_state_hash
+      ,(SELECT branch_id
+        FROM authoritative_room_event_archive
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+          AND event_seq = (
+            SELECT settled_event_seq
+            FROM authoritative_room_archive_checkpoint
+            WHERE room_id = ?1 AND runtime_epoch_id = ?2
+            LIMIT 1)
+        LIMIT 1) AS checkpoint_materialized_branch_id
     FROM authoritative_room_event_archive
     WHERE room_id = ?1
       AND runtime_epoch_id = ?2
       AND event_seq <= CAST(?3 AS INTEGER)`)
     .bind(archive.roomId, archive.signedGenesis.runtimeEpochId, progress.lastEventSeq)
     .first<AuthoritativeArchiveCursorProbe>();
+  if (probe === null || probe === undefined) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
   const cursorEvent = progress.lastEventSeq === "0"
     ? undefined
     : archive.events.find((event) => event.eventSeq === progress.lastEventSeq);
@@ -573,6 +649,278 @@ async function assertArchiveProgressMaterializedInD1(
   if (!genesisMatches || !eventPrefixMatches) {
     throw new AuthoritativeArchiveCursorMismatchError();
   }
+  return probe;
+}
+
+function checkpointMatchesArchive(
+  probe: AuthoritativeArchiveCursorProbe,
+  archive: AuthoritativeRoomArchive,
+): boolean {
+  return probe.checkpoint_genesis_hash === archive.signedGenesis.genesisHash
+    && archiveSequence(probe.checkpoint_settled_event_seq) === archive.head.eventSeq
+    && probe.checkpoint_event_hash === archive.head.eventHash
+    && probe.checkpoint_state_hash === archive.head.stateHash
+    && probe.checkpoint_active_branch_id === archive.head.activeBranchId;
+}
+
+async function assertCheckpointIsSafe(
+  db: D1Database,
+  probe: AuthoritativeArchiveCursorProbe,
+  archive: AuthoritativeRoomArchive,
+): Promise<void> {
+  const checkpointFields = [
+    probe.checkpoint_genesis_hash,
+    probe.checkpoint_settled_event_seq,
+    probe.checkpoint_event_hash,
+    probe.checkpoint_state_hash,
+    probe.checkpoint_active_branch_id,
+  ];
+  const hasCheckpoint = checkpointFields.some((value) => value !== null);
+  if (!hasCheckpoint) return;
+  if (checkpointFields.some((value) => value === null)) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+  const checkpointSeq = archiveSequence(probe.checkpoint_settled_event_seq);
+  if (checkpointSeq === undefined
+    || compareSequences(checkpointSeq, archive.head.eventSeq) > 0
+    || probe.checkpoint_genesis_hash !== archive.signedGenesis.genesisHash
+    || !isSha256(probe.checkpoint_event_hash)
+    || !isSha256(probe.checkpoint_state_hash)
+    || typeof probe.checkpoint_active_branch_id !== "string"
+    || probe.checkpoint_active_branch_id.length === 0) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+  if (checkpointSeq !== "0"
+    && (probe.checkpoint_materialized_event_hash !== probe.checkpoint_event_hash
+      || probe.checkpoint_materialized_state_hash !== probe.checkpoint_state_hash)) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+  if (checkpointSeq === archive.head.eventSeq
+    && (probe.checkpoint_event_hash !== archive.head.eventHash
+      || probe.checkpoint_state_hash !== archive.head.stateHash
+      || probe.checkpoint_active_branch_id !== archive.head.activeBranchId)) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+  if (checkpointSeq === "0") {
+    const genesisReplay = replay(archive.signedGenesis, []);
+    if (genesisReplay.kind !== "replayed"
+      || genesisReplay.head.eventSeq !== "0"
+      || genesisReplay.head.eventHash !== probe.checkpoint_event_hash
+      || genesisReplay.head.stateHash !== probe.checkpoint_state_hash
+      || genesisReplay.state.activeBranchId !== probe.checkpoint_active_branch_id) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+  } else {
+    const expectedCheckpointEvent = archive.events.find((event) =>
+      event.eventSeq === checkpointSeq);
+    if (expectedCheckpointEvent === undefined
+      || expectedCheckpointEvent.eventHash !== probe.checkpoint_event_hash
+      || expectedCheckpointEvent.stateHashAfter !== probe.checkpoint_state_hash
+      || expectedCheckpointEvent.branchId !== probe.checkpoint_active_branch_id
+      || probe.checkpoint_materialized_branch_id !== probe.checkpoint_active_branch_id) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    const prefixRows = await db.prepare(`/* authoritative_archive_checkpoint_prefix_replay */
+      SELECT event_json
+      FROM authoritative_room_event_archive
+      WHERE room_id = ?1 AND runtime_epoch_id = ?2
+        AND event_seq <= CAST(?3 AS INTEGER)
+      ORDER BY event_seq ASC`)
+      .bind(archive.roomId, archive.signedGenesis.runtimeEpochId, checkpointSeq)
+      .all<D1ArchiveEventRow>();
+    if (!Array.isArray(prefixRows.results)
+      || String(prefixRows.results.length) !== checkpointSeq) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    let checkpointEvents: EventEnvelope[];
+    try {
+      checkpointEvents = prefixRows.results.map((row) =>
+        parseArchiveJson<EventEnvelope>(row.event_json));
+    } catch {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    const checkpointReplay = replay(archive.signedGenesis, checkpointEvents);
+    if (checkpointReplay.kind !== "replayed"
+      || checkpointReplay.head.eventSeq !== checkpointSeq
+      || checkpointReplay.head.eventHash !== probe.checkpoint_event_hash
+      || checkpointReplay.head.stateHash !== probe.checkpoint_state_hash
+      || checkpointReplay.state.activeBranchId !== probe.checkpoint_active_branch_id) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+  }
+}
+
+function checkpointStatement(
+  db: D1Database,
+  archive: AuthoritativeRoomArchive,
+): D1PreparedStatement {
+  return db.prepare(`INSERT INTO authoritative_room_archive_checkpoint (
+    room_id, runtime_epoch_id, genesis_hash, settled_event_seq,
+    event_hash, state_hash, active_branch_id, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(room_id, runtime_epoch_id) DO UPDATE SET
+    genesis_hash = excluded.genesis_hash,
+    settled_event_seq = excluded.settled_event_seq,
+    event_hash = excluded.event_hash,
+    state_hash = excluded.state_hash,
+    active_branch_id = excluded.active_branch_id,
+    updated_at = excluded.updated_at
+  WHERE excluded.settled_event_seq >= authoritative_room_archive_checkpoint.settled_event_seq`)
+    .bind(
+      archive.roomId,
+      archive.signedGenesis.runtimeEpochId,
+      archive.signedGenesis.genesisHash,
+      archive.head.eventSeq,
+      archive.head.eventHash,
+      archive.head.stateHash,
+      archive.head.activeBranchId,
+      Date.now(),
+    );
+}
+
+async function assertArchiveHeadAuditsMaterializedInD1(
+  db: D1Database,
+  archive: AuthoritativeRoomArchive,
+  pending: PendingArchiveWrite[],
+): Promise<void> {
+  const expected = archive.projectionAudits
+    .filter((audit) => audit.eventSeq === archive.head.eventSeq)
+    .map((audit) => `${audit.viewerHash}\u0000${audit.projectionHash}`)
+    .sort();
+  if (expected.length !== archive.projectionAudits.length) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+  const rows = await db.prepare(`SELECT event_seq, viewer_hash, projection_hash
+    FROM authoritative_projection_audit_archive
+    WHERE room_id = ?1 AND runtime_epoch_id = ?2
+      AND event_seq = CAST(?3 AS INTEGER)
+    ORDER BY viewer_hash ASC`)
+    .bind(archive.roomId, archive.signedGenesis.runtimeEpochId, archive.head.eventSeq)
+    .all<D1ArchiveAuditRow>();
+  if (!Array.isArray(rows.results)) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+  const materialized = new Map<string, string>();
+  for (const row of rows.results) {
+    if (archiveSequence(row.event_seq) !== archive.head.eventSeq
+      || !isSha256(row.viewer_hash)
+      || !isSha256(row.projection_hash)) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    materialized.set(row.viewer_hash, row.projection_hash);
+  }
+  for (const entry of pending) {
+    if (entry.kind !== "audit" || entry.cursor.eventSeq !== archive.head.eventSeq) continue;
+    if (!isSha256(entry.cursor.viewerHash) || !isSha256(entry.projectionHash)) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    if (!materialized.has(entry.cursor.viewerHash)) {
+      materialized.set(entry.cursor.viewerHash, entry.projectionHash);
+    }
+  }
+  const actual = [...materialized.entries()]
+    .map(([viewerHash, projectionHash]) => `${viewerHash}\u0000${projectionHash}`)
+    .sort();
+  if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+}
+
+type D1ArchiveGenesisMaterializationRow = {
+  genesis_hash: string;
+  genesis_json: string;
+};
+
+type D1ArchiveEventMaterializationRow = {
+  event_seq: string | number;
+  event_hash: string;
+  state_hash_after: string;
+  branch_id: string;
+  event_json: string;
+};
+
+async function assertArchiveHeadEventsMaterializedInD1(
+  db: D1Database,
+  archive: AuthoritativeRoomArchive,
+  pending: PendingArchiveWrite[],
+): Promise<void> {
+  const pendingGenesis = pending.some((entry) => entry.kind === "genesis");
+  const genesisRow = await db.prepare(`/* authoritative_archive_head_genesis */
+    SELECT genesis_hash, genesis_json
+    FROM authoritative_room_genesis_archive
+    WHERE room_id = ?1 AND runtime_epoch_id = ?2
+    LIMIT 1`)
+    .bind(archive.roomId, archive.signedGenesis.runtimeEpochId)
+    .first<D1ArchiveGenesisMaterializationRow>();
+  if (genesisRow === null || genesisRow === undefined) {
+    if (!pendingGenesis) throw new AuthoritativeArchiveCursorMismatchError();
+  } else {
+    let persistedGenesis: RuntimeGenesis;
+    try {
+      persistedGenesis = parseArchiveJson<RuntimeGenesis>(genesisRow.genesis_json);
+    } catch {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    if (genesisRow.genesis_hash !== archive.signedGenesis.genesisHash
+      || canonicalJson(persistedGenesis) !== canonicalJson(archive.signedGenesis)) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+  }
+
+  const rows = await db.prepare(`/* authoritative_archive_head_events */
+    SELECT event_seq, event_hash, state_hash_after, branch_id, event_json
+    FROM authoritative_room_event_archive
+    WHERE room_id = ?1 AND runtime_epoch_id = ?2
+      AND event_seq <= CAST(?3 AS INTEGER)
+    ORDER BY event_seq ASC`)
+    .bind(archive.roomId, archive.signedGenesis.runtimeEpochId, archive.head.eventSeq)
+    .all<D1ArchiveEventMaterializationRow>();
+  if (!Array.isArray(rows.results)) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+  const persisted = new Map<string, D1ArchiveEventMaterializationRow>();
+  for (const row of rows.results) {
+    const eventSeq = archiveSequence(row.event_seq);
+    if (eventSeq === undefined || persisted.has(eventSeq)) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    persisted.set(eventSeq, row);
+  }
+  const pendingEventSeqs = new Set(pending.flatMap((entry) =>
+    entry.kind === "event" ? [entry.eventSeq] : []));
+  for (const event of archive.events) {
+    const row = persisted.get(event.eventSeq);
+    if (row === undefined) {
+      if (!pendingEventSeqs.has(event.eventSeq)) {
+        throw new AuthoritativeArchiveCursorMismatchError();
+      }
+      continue;
+    }
+    let persistedEvent: EventEnvelope;
+    try {
+      persistedEvent = parseArchiveJson<EventEnvelope>(row.event_json);
+    } catch {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    if (row.event_hash !== event.eventHash
+      || row.state_hash_after !== event.stateHashAfter
+      || row.branch_id !== event.branchId
+      || canonicalJson(persistedEvent) !== canonicalJson(event)) {
+      throw new AuthoritativeArchiveCursorMismatchError();
+    }
+    persisted.delete(event.eventSeq);
+  }
+  if (persisted.size !== 0) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
+  const headReplay = replay(archive.signedGenesis, archive.events);
+  if (headReplay.kind !== "replayed"
+    || headReplay.head.eventSeq !== archive.head.eventSeq
+    || headReplay.head.eventHash !== archive.head.eventHash
+    || headReplay.head.stateHash !== archive.head.stateHash
+    || headReplay.state.activeBranchId !== archive.head.activeBranchId) {
+    throw new AuthoritativeArchiveCursorMismatchError();
+  }
 }
 
 export async function appendAuthoritativeArchiveToD1(
@@ -582,7 +930,9 @@ export async function appendAuthoritativeArchiveToD1(
 ): Promise<AuthoritativeArchiveAppendResult> {
   const genesis = archive.signedGenesis;
   const progress = normalizeArchiveProgress(archive, persistedProgress);
-  await assertArchiveProgressMaterializedInD1(db, archive, progress);
+  const probe = await assertArchiveProgressMaterializedInD1(db, archive, progress);
+  await assertCheckpointIsSafe(db, probe, archive);
+  const checkpointMatches = checkpointMatchesArchive(probe, archive);
   const pending: PendingArchiveWrite[] = [];
 
   // The persistence allowlist is intentionally only genesis, Rules events,
@@ -675,6 +1025,7 @@ export async function appendAuthoritativeArchiveToD1(
     pending.push({
       kind: "audit",
       cursor,
+      projectionHash: audit.projectionHash,
       statement: db.prepare(`INSERT OR IGNORE INTO authoritative_projection_audit_archive (
       room_id, runtime_epoch_id, event_seq, viewer_hash, projection_hash
     ) VALUES (?, ?, ?, ?, ?)`)
@@ -688,7 +1039,20 @@ export async function appendAuthoritativeArchiveToD1(
     });
   }
 
-  const page = pending.slice(0, AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT);
+  const needsCheckpoint = !checkpointMatches;
+  const archiveWriteLimit = needsCheckpoint
+    ? AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT - 1
+    : AUTHORITATIVE_ARCHIVE_D1_BATCH_LIMIT;
+  const page = pending.slice(0, archiveWriteLimit);
+  const archiveWritesComplete = page.length === pending.length;
+  if (needsCheckpoint && archiveWritesComplete) {
+    await assertArchiveHeadEventsMaterializedInD1(db, archive, page);
+    await assertArchiveHeadAuditsMaterializedInD1(db, archive, page);
+    page.push({
+      kind: "checkpoint",
+      statement: checkpointStatement(db, archive),
+    });
+  }
   if (page.length === 0) {
     return { progress, caughtUp: true, statementsWritten: 0 };
   }
@@ -709,11 +1073,155 @@ export async function appendAuthoritativeArchiveToD1(
       case "audit":
         nextProgress.auditCursor = structuredClone(entry.cursor);
         break;
+      case "checkpoint":
+        break;
     }
   }
   return {
     progress: nextProgress,
-    caughtUp: page.length === pending.length,
+    caughtUp: archiveWritesComplete
+      && (!needsCheckpoint || page.some((entry) => entry.kind === "checkpoint")),
     statementsWritten: page.length,
   };
+}
+
+type D1ArchiveCheckpointRow = {
+  room_id: string;
+  runtime_epoch_id: string;
+  genesis_hash: string;
+  settled_event_seq: string | number;
+  event_hash: string;
+  state_hash: string;
+  active_branch_id: string;
+};
+
+type D1ArchiveGenesisRow = {
+  genesis_json: string;
+};
+
+type D1ArchiveEventRow = {
+  event_json: string;
+};
+
+type D1ArchiveAuditRow = {
+  event_seq: string | number;
+  viewer_hash: string;
+  projection_hash: string;
+};
+
+function exactArchiveLocator(value: unknown): value is AuthoritativeArchiveD1Locator {
+  return isRecord(value)
+    && Object.keys(value).length === 2
+    && typeof value.roomId === "string"
+    && value.roomId.length > 0
+    && typeof value.runtimeEpochId === "string"
+    && value.runtimeEpochId.length > 0;
+}
+
+function parseArchiveJson<T>(value: unknown): T {
+  if (typeof value !== "string") throw new AuthoritativeArchiveD1ReadError();
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    throw new AuthoritativeArchiveD1ReadError("The D1 archive contains malformed JSON.");
+  }
+}
+
+export async function readAuthoritativeArchiveFromD1(
+  db: D1Database,
+  locator: unknown,
+): Promise<AuthoritativeRoomArchive> {
+  if (!exactArchiveLocator(locator)) {
+    throw new AuthoritativeArchiveD1ReadError("The D1 archive locator is not exact.");
+  }
+  const checkpoint = await db.prepare(`SELECT
+      room_id, runtime_epoch_id, genesis_hash, settled_event_seq,
+      event_hash, state_hash, active_branch_id
+    FROM authoritative_room_archive_checkpoint
+    WHERE room_id = ?1 AND runtime_epoch_id = ?2
+    LIMIT 1`)
+    .bind(locator.roomId, locator.runtimeEpochId)
+    .first<D1ArchiveCheckpointRow>();
+  if (
+    checkpoint === null
+    || checkpoint === undefined
+    || checkpoint.room_id !== locator.roomId
+    || checkpoint.runtime_epoch_id !== locator.runtimeEpochId
+    || !isSha256(checkpoint.genesis_hash)
+    || !isSha256(checkpoint.event_hash)
+    || !isSha256(checkpoint.state_hash)
+    || typeof checkpoint.active_branch_id !== "string"
+    || checkpoint.active_branch_id.length === 0
+  ) {
+    throw new AuthoritativeArchiveD1ReadError();
+  }
+  const settledEventSeq = archiveSequence(checkpoint.settled_event_seq);
+  if (settledEventSeq === undefined) {
+    throw new AuthoritativeArchiveD1ReadError();
+  }
+  const genesisRow = await db.prepare(`SELECT genesis_json
+    FROM authoritative_room_genesis_archive
+    WHERE room_id = ?1 AND runtime_epoch_id = ?2
+    LIMIT 1`)
+    .bind(locator.roomId, locator.runtimeEpochId)
+    .first<D1ArchiveGenesisRow>();
+  if (genesisRow === null || genesisRow === undefined) {
+    throw new AuthoritativeArchiveD1ReadError("The D1 archive genesis is unavailable.");
+  }
+  const eventRows = await db.prepare(`SELECT event_json
+    FROM authoritative_room_event_archive
+    WHERE room_id = ?1 AND runtime_epoch_id = ?2
+      AND event_seq <= CAST(?3 AS INTEGER)
+    ORDER BY event_seq ASC`)
+    .bind(locator.roomId, locator.runtimeEpochId, settledEventSeq)
+    .all<D1ArchiveEventRow>();
+  const auditRows = await db.prepare(`SELECT event_seq, viewer_hash, projection_hash
+    FROM authoritative_projection_audit_archive
+    WHERE room_id = ?1 AND runtime_epoch_id = ?2
+      AND event_seq = CAST(?3 AS INTEGER)
+    ORDER BY viewer_hash ASC`)
+    .bind(locator.roomId, locator.runtimeEpochId, settledEventSeq)
+    .all<D1ArchiveAuditRow>();
+  if (!Array.isArray(eventRows.results) || !Array.isArray(auditRows.results)) {
+    throw new AuthoritativeArchiveD1ReadError("The D1 archive rows are unavailable.");
+  }
+  const genesis = parseArchiveJson<RuntimeGenesis>(genesisRow.genesis_json);
+  const events = eventRows.results.map((row) => parseArchiveJson<EventEnvelope>(row.event_json));
+  const projectionAudits = auditRows.results.map((row) => {
+    const eventSeq = archiveSequence(row.event_seq);
+    if (eventSeq === undefined || !isSha256(row.viewer_hash) || !isSha256(row.projection_hash)) {
+      throw new AuthoritativeArchiveD1ReadError("The D1 projection audit is malformed.");
+    }
+    return {
+      eventSeq,
+      viewerHash: row.viewer_hash,
+      projectionHash: row.projection_hash,
+    };
+  });
+  let archive: AuthoritativeRoomArchive;
+  try {
+    archive = await buildAuthoritativeArchive({
+      roomId: locator.roomId,
+      signedGenesis: genesis,
+      events,
+      receiptRefs: [],
+      projectionAudits,
+    });
+  } catch {
+    throw new AuthoritativeArchiveD1ReadError("The D1 archive prefix failed authoritative replay.");
+  }
+  if (
+    archive.head.eventSeq !== settledEventSeq
+    || archive.head.eventHash !== checkpoint.event_hash
+    || archive.head.stateHash !== checkpoint.state_hash
+    || archive.head.activeBranchId !== checkpoint.active_branch_id
+    || archive.signedGenesis.genesisHash !== checkpoint.genesis_hash
+  ) {
+    throw new AuthoritativeArchiveD1ReadError("The D1 checkpoint does not match its settled archive prefix.");
+  }
+  const validation = await validateAuthoritativeArchive(archive);
+  if (!validation.ok) {
+    throw new AuthoritativeArchiveD1ReadError("The D1 archive failed closed validation.");
+  }
+  return validation.value.archive;
 }

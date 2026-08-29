@@ -3,7 +3,29 @@ type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type StableSubmissionResult = {
   ok?: boolean;
   retryable?: boolean;
+  committed?: boolean;
+  action?: unknown;
 };
+
+export type TableActionResponse = StableSubmissionResult & {
+  action?: unknown;
+  error?: unknown;
+};
+
+/**
+ * V3 intentionally exposes the action/narration axes without a compatibility
+ * `ok` flag. Legacy actions still use `ok`, so every direct-action UI consumes
+ * both generations through this single boundary.
+ */
+export function tableActionAccepted(result: TableActionResponse): boolean {
+  if (result.ok !== undefined) return result.ok === true;
+  return (
+    result.action === "awaitingInput"
+    || result.action === "committed"
+    || result.action === "resolvedInWorld"
+    || result.action === "concluded"
+  );
+}
 
 function canonicalValue(value: unknown): unknown {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
@@ -96,6 +118,17 @@ export async function callWithStableSubmission<
   saveSubmission(input.storage, key, fingerprint, submissionId);
 
   const result = await input.invoke({ ...payload, submissionId });
-  if (result.retryable !== true) clearSubmission(input.storage, key);
+  const v3Terminal = result.ok === undefined && (
+    result.action === "awaitingInput"
+    || result.action === "committed"
+    || result.action === "resolvedInWorld"
+    || result.action === "concluded"
+  );
+  // V3 retries narration by ViewerKey after the action has committed. Legacy
+  // rooms have no viewer-local recovery seam, so an ok:false retryable result
+  // must retain the same submission id even when it says committed:true.
+  if (result.retryable !== true || v3Terminal || result.ok === true) {
+    clearSubmission(input.storage, key);
+  }
   return result;
 }

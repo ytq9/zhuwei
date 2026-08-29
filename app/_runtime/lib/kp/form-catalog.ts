@@ -23,17 +23,53 @@ export type KpFormId = (typeof KP_FORM_IDS)[number];
 
 export const KP_FORM_CATALOG_REGISTRATION = Object.freeze({
   catalogRef: "kp-private-form-catalog-v3",
-  catalogVersion: "kp-private-form-catalog-v3.1",
-  catalogHash: "sha256:edb812fe635ba4d77db59f36276d0e8c44847b64c0990f1758bca2e921a5a4bb",
+  catalogVersion: "kp-private-form-catalog-v3.4",
+  catalogHash: "sha256:807cd49e7e81a8f8a85231f0d39186ef737187ecc80b35403d83f0e20dd57869",
   formCount: 10,
 });
+
+type FieldKind =
+  | "text"
+  | "text-list"
+  | "stage-list"
+  | "ability"
+  | "skill"
+  | "check-mode"
+  | "resolution"
+  | "duration-unit"
+  | "boolean"
+  | "positive-integer"
+  | "nonnegative-integer"
+  | "signed-integer"
+  | "dc"
+  | "save-dc"
+  | "armor-class"
+  | "bounded-distance"
+  | "even-distance"
+  | "feature-disposition"
+  | "environment-effect-mode"
+  | "damage-formula"
+  | "damage-type"
+  | "damage-type-list"
+  | "failure-status"
+  | "propagation"
+  | "phase-name"
+  | "phase-name-list"
+  | "phase-ref-list"
+  | "boolean-list"
+  | "cover-list"
+  | "phase-propagation-list"
+  | "terrain-list"
+  | "nonnegative-integer-list"
+  | "environment-activation"
+  | "attack-approach";
 
 type CatalogForm = Readonly<{
   id: KpFormId;
   purpose: string;
   requiredFields: readonly string[];
   optionalFields: readonly string[];
-  fieldKinds: Readonly<Record<string, "text" | "text-list" | "stage-list">>;
+  fieldKinds: Readonly<Record<string, FieldKind>>;
 }>;
 
 export type ModelFormDescriptor = CatalogForm;
@@ -48,56 +84,141 @@ const FORM_CATALOG: Readonly<Record<KpFormId, CatalogForm>> = Object.freeze({
   "observe.v1": form(
     "observe.v1",
     "Resolve an attempt to perceive, inspect, recall, or investigate.",
-    ["goal", "method", "focus", "desiredInformation"],
-    ["basisRefs", "risk", "fictionTime"],
+    ["goal", "method", "focus", "desiredInformation", "resolution", "durationUnit", "durationValue"],
+    ["basisRefs", "risk", "ability", "skill", "dc", "mode", "successConsequence", "failureConsequence"],
+    mechanicalFieldKinds(),
   ),
   "npc-exchange.v1": form(
     "npc-exchange.v1",
     "Resolve an in-world exchange with a projected NPC.",
-    ["goal", "method", "utterance", "desiredResponse"],
-    ["basisRefs", "risk", "fictionTime"],
+    ["goal", "method", "utterance", "desiredResponse", "npcResponse", "resolution", "durationUnit", "durationValue"],
+    ["basisRefs", "risk", "ability", "skill", "dc", "mode", "successConsequence", "failureConsequence"],
+    mechanicalFieldKinds(),
   ),
   "ordinary-check.v1": form(
     "ordinary-check.v1",
     "Resolve a bounded ordinary action whose consequences fit one check.",
-    ["goal", "method", "intendedOutcome", "risk"],
-    ["basisRefs", "fictionTime", "alternatives"],
+    [
+      "goal", "method", "intendedOutcome", "risk", "resolution", "ability", "skill", "dc", "mode",
+      "durationUnit", "durationValue", "successConsequence", "failureConsequence",
+    ],
+    ["basisRefs", "alternatives", "resourceRef", "resourceAmount", "artifactRef", "artifactCount"],
+    mechanicalFieldKinds(),
   ),
   "high-risk-action.v1": form(
     "high-risk-action.v1",
     "Resolve a dangerous action with meaningful success and failure stakes.",
-    ["goal", "method", "intendedOutcome", "risk", "stakes"],
-    ["basisRefs", "fictionTime", "alternatives"],
+    [
+      "goal", "method", "intendedOutcome", "risk", "stakes", "resolution", "ability", "skill", "dc", "mode",
+      "durationUnit", "durationValue", "successConsequence", "failureConsequence",
+    ],
+    ["basisRefs", "alternatives", "resourceRef", "resourceAmount", "artifactRef", "artifactCount"],
+    mechanicalFieldKinds(),
   ),
   "in-world-refusal.v1": form(
     "in-world-refusal.v1",
     "Resolve an impossible or premise-breaking attempt inside the fiction.",
-    ["goal", "reason", "alternatives"],
-    ["basisRefs", "fictionTime"],
+    ["goal", "method", "reason", "alternatives", "durationUnit", "durationValue"],
+    ["basisRefs"],
+    mechanicalFieldKinds(),
   ),
   "materialization.v1": form(
     "materialization.v1",
     "Propose one bounded open-world fact before any random result is known.",
-    ["goal", "method", "proposedFact", "basisRefs"],
-    ["risk", "fictionTime", "alternatives"],
+    ["goal", "method", "proposedFact", "basisRefs", "resolution", "durationUnit", "durationValue"],
+    [
+      "risk", "alternatives", "ability", "skill", "dc", "mode", "successConsequence",
+      "failureConsequence",
+    ],
+    mechanicalFieldKinds(),
   ),
   "combat-action.v1": form(
     "combat-action.v1",
     "Resolve one combat intent without selecting authoritative entities.",
-    ["goal", "method", "intendedOutcome", "combatApproach"],
-    ["basisRefs", "risk", "fictionTime", "contingencies"],
+    ["goal", "method", "intendedOutcome", "combatApproach", "abilityRef"],
+    ["basisRefs", "risk", "contingencies"],
   ),
   "environmental-stunt.v1": form(
     "environmental-stunt.v1",
     "Resolve an improvised interaction with a possible environment feature.",
-    ["goal", "method", "featureDescription", "intendedOutcome"],
-    ["basisRefs", "risk", "fictionTime", "contingencies"],
+    ["goal", "method", "featureDescription", "intendedOutcome", "featureDisposition"],
+    [
+      "activation", "attackApproach", "abilityRef", "checkAbility", "checkSkill", "checkDc", "checkMode",
+      "checkSuccessConsequence", "checkFailureConsequence",
+      "effectMode",
+      "material", "centerXInches", "centerYInches", "elevationInches",
+      "widthInches", "depthInches", "heightInches", "objectAc", "objectHitPoints",
+      "damageThreshold", "immuneDamageTypes", "initialPhase", "phaseNames", "phaseOpaque",
+      "phaseImpassable", "phaseCover", "phaseEffectPropagation", "phaseTerrain",
+      "damageFromPhases", "damageRemainingAtOrBelow", "damageToPhases",
+      "stuntFromPhases", "stuntToPhases",
+      "hazardFromPhases", "hazardToPhases", "hazardTriggerPhase", "hazardResolvedPhase",
+      "trigger", "areaOriginElevationInches", "areaRadiusInches", "propagation",
+      "spreadBudgetInches", "saveAbility", "saveDc", "halfOnSuccess", "damage",
+      "damageType", "condition", "debrisOutcome", "basisRefs", "risk", "contingencies",
+      "resourceRef", "resourceAmount",
+    ],
+    {
+      featureDisposition: "feature-disposition",
+      effectMode: "environment-effect-mode",
+      activation: "environment-activation",
+      attackApproach: "attack-approach",
+      checkAbility: "ability",
+      checkSkill: "skill",
+      checkDc: "dc",
+      checkMode: "check-mode",
+      centerXInches: "signed-integer",
+      centerYInches: "signed-integer",
+      elevationInches: "signed-integer",
+      widthInches: "even-distance",
+      depthInches: "even-distance",
+      heightInches: "bounded-distance",
+      objectAc: "armor-class",
+      objectHitPoints: "positive-integer",
+      damageThreshold: "nonnegative-integer",
+      immuneDamageTypes: "damage-type-list",
+      initialPhase: "phase-name",
+      phaseNames: "phase-name-list",
+      phaseOpaque: "boolean-list",
+      phaseImpassable: "boolean-list",
+      phaseCover: "cover-list",
+      phaseEffectPropagation: "phase-propagation-list",
+      phaseTerrain: "terrain-list",
+      damageFromPhases: "phase-ref-list",
+      damageRemainingAtOrBelow: "nonnegative-integer-list",
+      damageToPhases: "phase-ref-list",
+      stuntFromPhases: "phase-ref-list",
+      stuntToPhases: "phase-ref-list",
+      hazardFromPhases: "phase-ref-list",
+      hazardToPhases: "phase-ref-list",
+      hazardTriggerPhase: "phase-name",
+      hazardResolvedPhase: "phase-name",
+      areaOriginElevationInches: "signed-integer",
+      areaRadiusInches: "bounded-distance",
+      propagation: "propagation",
+      spreadBudgetInches: "bounded-distance",
+      saveAbility: "ability",
+      saveDc: "save-dc",
+      halfOnSuccess: "boolean",
+      damage: "damage-formula",
+      damageType: "damage-type",
+      condition: "failure-status",
+      resourceAmount: "positive-integer",
+    },
   ),
   "compound.v1": form(
     "compound.v1",
     "Describe a bounded causal sequence for an unforeseen or multi-stage action.",
-    ["goal", "method", "stages", "intendedOutcome"],
-    ["basisRefs", "risk", "fictionTime", "alternatives"],
+    [
+      "goal", "method", "stages", "intendedOutcome", "resolution", "durationUnit",
+      "durationValue",
+    ],
+    [
+      "basisRefs", "risk", "alternatives", "ability", "skill", "dc", "mode",
+      "successConsequence", "failureConsequence", "resourceRef", "resourceAmount",
+      "artifactRef", "artifactCount",
+    ],
+    mechanicalFieldKinds(),
   ),
 });
 
@@ -106,9 +227,12 @@ function form(
   purpose: string,
   requiredFields: readonly string[],
   optionalFields: readonly string[],
+  fieldKindOverrides: Readonly<Record<string, FieldKind>> = {},
 ): CatalogForm {
-  const fieldKinds: Record<string, "text" | "text-list" | "stage-list"> = {};
-  for (const field of [...requiredFields, ...optionalFields]) fieldKinds[field] = fieldKind(field);
+  const fieldKinds: Record<string, FieldKind> = {};
+  for (const field of [...requiredFields, ...optionalFields]) {
+    fieldKinds[field] = fieldKindOverrides[field] ?? fieldKind(field);
+  }
   return Object.freeze({
     id,
     purpose,
@@ -118,7 +242,21 @@ function form(
   });
 }
 
-function fieldKind(field: string): "text" | "text-list" | "stage-list" {
+function mechanicalFieldKinds(): Readonly<Record<string, FieldKind>> {
+  return Object.freeze({
+    resolution: "resolution",
+    ability: "ability",
+    skill: "skill",
+    mode: "check-mode",
+    dc: "dc",
+    durationUnit: "duration-unit",
+    durationValue: "positive-integer",
+    resourceAmount: "positive-integer",
+    artifactCount: "positive-integer",
+  });
+}
+
+function fieldKind(field: string): FieldKind {
   if (field === "stages") return "stage-list";
   if (["choices", "basisRefs", "alternatives", "contingencies"].includes(field)) return "text-list";
   return "text";
@@ -160,12 +298,14 @@ export function selectAllowedKpForms(signals: FormSelectionSignals): readonly Kp
   };
 
   add(signals.serverSelectedForm);
+  // V3 arbitrary prose must always retain the environmental form even when a
+  // deterministic router can identify one likely non-environmental form.
+  if (signals.mayUseEnvironment === true) add("environmental-stunt.v1");
   if (signals.interaction === "observe") add("observe.v1");
   if (signals.interaction === "npc-exchange") add("npc-exchange.v1");
   if (signals.interaction === "combat") add("combat-action.v1");
   if (signals.risk === "high") add("high-risk-action.v1");
   if (signals.risk === "ordinary" || signals.risk === "low") add("ordinary-check.v1");
-  if (signals.mayUseEnvironment === true) add("environmental-stunt.v1");
   if (signals.mayMaterialize === true) add("materialization.v1");
   if (signals.mayNeedClarification === true) add("clarification.v1");
   if (signals.mayNeedRefusal === true) add("in-world-refusal.v1");
@@ -201,6 +341,18 @@ export function buildKpFormModelParameters(
   });
 }
 
+/** A repair call receives exactly one selected schema. Selection (including a
+ * permitted upgrade to compound) happens server-side before this function. */
+export function buildKpFormRepairParameters(
+  formId: KpFormId,
+): KpFormModelParameters {
+  if (!Object.hasOwn(FORM_CATALOG, formId)) throw new Error("KP_FORM_UNKNOWN");
+  return Object.freeze({
+    type: "object" as const,
+    oneOf: Object.freeze([modelBranchSchema(FORM_CATALOG[formId])]),
+  });
+}
+
 function modelBranchSchema(definition: CatalogForm): Readonly<Record<string, unknown>> {
   const draftProperties: Record<string, unknown> = {};
   for (const field of [...definition.requiredFields, ...definition.optionalFields]) {
@@ -217,14 +369,246 @@ function modelBranchSchema(definition: CatalogForm): Readonly<Record<string, unk
         additionalProperties: false,
         properties: draftProperties,
         required: definition.requiredFields,
+        ...(
+          definition.fieldKinds.resolution === "resolution"
+          || definition.fieldKinds.featureDisposition === "feature-disposition"
+            ? {
+                allOf: [
+                  ...(definition.fieldKinds.resolution === "resolution"
+                    ? [{
+                        if: { properties: { resolution: { const: "check" } } },
+                        then: {
+                          required: [
+                            "ability", "skill", "dc", "mode", "successConsequence",
+                            "failureConsequence",
+                          ],
+                        },
+                      }]
+                    : []),
+                  ...(definition.fieldKinds.featureDisposition === "feature-disposition"
+                    ? [
+                      {
+                        if: {
+                          properties: {
+                            featureDisposition: { const: "reasonable-open-blank" },
+                          },
+                        },
+                        then: {
+                          required: [
+                            "material", "centerXInches", "centerYInches",
+                            "elevationInches", "widthInches", "depthInches", "heightInches",
+                            "objectAc", "objectHitPoints", "damageThreshold", "effectMode",
+                            "initialPhase", "phaseNames", "phaseOpaque", "phaseImpassable",
+                            "phaseCover", "phaseEffectPropagation", "phaseTerrain",
+                            "damageFromPhases", "damageRemainingAtOrBelow", "damageToPhases",
+                            "trigger", "basisRefs",
+                          ],
+                        },
+                      },
+                      {
+                        if: {
+                          properties: {
+                            featureDisposition: { const: "reasonable-open-blank" },
+                            effectMode: { const: "area-hazard" },
+                          },
+                          required: ["featureDisposition", "effectMode"],
+                        },
+                        then: {
+                          required: [
+                            "hazardFromPhases", "hazardToPhases", "hazardTriggerPhase",
+                            "hazardResolvedPhase", "areaOriginElevationInches",
+                            "areaRadiusInches", "propagation", "saveAbility", "saveDc",
+                            "halfOnSuccess", "damage", "damageType", "condition", "debrisOutcome",
+                          ],
+                        },
+                      },
+                      {
+                        if: {
+                          properties: {
+                            featureDisposition: { const: "reasonable-open-blank" },
+                            effectMode: { const: "state-only" },
+                          },
+                          required: ["featureDisposition", "effectMode"],
+                        },
+                        then: {
+                          allOf: [
+                            "hazardFromPhases", "hazardToPhases", "hazardTriggerPhase",
+                            "hazardResolvedPhase", "areaOriginElevationInches",
+                            "areaRadiusInches", "propagation", "spreadBudgetInches",
+                            "saveAbility", "saveDc", "halfOnSuccess", "damage",
+                            "damageType", "condition", "debrisOutcome",
+                          ].map((field) => ({ not: { required: [field] } })),
+                        },
+                      },
+                      {
+                        if: {
+                          properties: { propagation: { const: "aroundCorners" } },
+                          required: ["propagation"],
+                        },
+                        then: { required: ["spreadBudgetInches"] },
+                      },
+                      {
+                        if: {
+                          properties: {
+                            featureDisposition: {
+                              enum: ["reuse-existing", "reasonable-open-blank"],
+                            },
+                          },
+                          required: ["featureDisposition"],
+                        },
+                        then: { required: ["activation"] },
+                      },
+                      {
+                        if: {
+                          properties: { activation: { const: "attack" } },
+                          required: ["activation"],
+                        },
+                        then: {
+                          required: [
+                            "attackApproach", "abilityRef",
+                          ],
+                        },
+                      },
+                      {
+                        if: {
+                          properties: {
+                            featureDisposition: { const: "reasonable-open-blank" },
+                            activation: { enum: ["check", "direct"] },
+                          },
+                          required: ["activation", "featureDisposition"],
+                        },
+                        then: { required: ["stuntFromPhases", "stuntToPhases"] },
+                      },
+                      {
+                        if: {
+                          properties: { activation: { const: "check" } },
+                          required: ["activation"],
+                        },
+                        then: {
+                          required: [
+                            "checkAbility", "checkSkill", "checkDc", "checkMode",
+                            "checkSuccessConsequence", "checkFailureConsequence",
+                          ],
+                        },
+                      },
+                    ]
+                    : []),
+                ],
+              }
+            : {}),
       },
     },
     required: ["formId", "draft"],
   }) as Readonly<Record<string, unknown>>;
 }
 
-function modelFieldSchema(kind: "text" | "text-list" | "stage-list"): Readonly<Record<string, unknown>> {
+function modelFieldSchema(kind: FieldKind): Readonly<Record<string, unknown>> {
   if (kind === "text") return Object.freeze({ type: "string", minLength: 1, maxLength: 2_000 });
+  if (kind === "ability") return Object.freeze({ enum: ["str", "dex", "con", "int", "wis", "cha"] });
+  if (kind === "skill") {
+    return Object.freeze({
+      enum: [
+        "none", "acrobatics", "animal", "arcana", "athletics", "deception", "history",
+        "insight", "intimidation", "investigation", "medicine", "nature", "perception",
+        "performance", "persuasion", "religion", "sleight", "stealth", "survival",
+      ],
+    });
+  }
+  if (kind === "check-mode") return Object.freeze({ enum: ["normal", "advantage", "disadvantage"] });
+  if (kind === "resolution") return Object.freeze({ enum: ["direct", "check"] });
+  if (kind === "duration-unit") return Object.freeze({ enum: ["round", "second", "minute", "hour", "day"] });
+  if (kind === "boolean") return Object.freeze({ type: "boolean" });
+  if (kind === "positive-integer") {
+    return Object.freeze({ type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+  }
+  if (kind === "nonnegative-integer") {
+    return Object.freeze({ type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+  }
+  if (kind === "signed-integer") {
+    return Object.freeze({ type: "integer", minimum: -1_000_000, maximum: 1_000_000 });
+  }
+  if (kind === "dc") return Object.freeze({ type: "integer", minimum: 0, maximum: 30 });
+  if (kind === "save-dc" || kind === "armor-class") {
+    return Object.freeze({ type: "integer", minimum: 1, maximum: 30 });
+  }
+  if (kind === "bounded-distance") {
+    return Object.freeze({ type: "integer", minimum: 1, maximum: 12_000 });
+  }
+  if (kind === "even-distance") {
+    return Object.freeze({ type: "integer", minimum: 2, maximum: 12_000, multipleOf: 2 });
+  }
+  if (kind === "feature-disposition") {
+    return Object.freeze({ enum: ["reuse-existing", "reasonable-open-blank", "explicitly-absent"] });
+  }
+  if (kind === "environment-effect-mode") {
+    return Object.freeze({ enum: ["state-only", "area-hazard"] });
+  }
+  if (kind === "damage-formula") {
+    return Object.freeze({ type: "string", pattern: "^([1-9]|1[0-9]|20)d(4|6|8|10|12)(?:\\+(0|[1-9][0-9]*))?$" });
+  }
+  if (kind === "damage-type") {
+    return Object.freeze({
+      enum: [
+        "acid", "bludgeoning", "cold", "fire", "force", "lightning", "necrotic",
+        "piercing", "poison", "psychic", "radiant", "slashing", "thunder",
+      ],
+    });
+  }
+  if (kind === "damage-type-list") {
+    return Object.freeze({
+      type: "array",
+      minItems: 1,
+      maxItems: 16,
+      uniqueItems: true,
+      items: modelFieldSchema("damage-type"),
+    });
+  }
+  if (kind === "failure-status") return Object.freeze({ enum: ["none", "prone"] });
+  if (kind === "propagation") return Object.freeze({ enum: ["straight", "aroundCorners"] });
+  if (kind === "phase-name") {
+    return Object.freeze({ type: "string", minLength: 1, maxLength: 80, pattern: "^[A-Za-z0-9][A-Za-z0-9._:/-]*$" });
+  }
+  if (kind === "phase-name-list") {
+    return Object.freeze({
+      type: "array", minItems: 2, maxItems: 16, uniqueItems: true,
+      items: modelFieldSchema("phase-name"),
+    });
+  }
+  if (kind === "phase-ref-list") {
+    return Object.freeze({
+      type: "array", minItems: 1, maxItems: 16,
+      items: modelFieldSchema("phase-name"),
+    });
+  }
+  if (kind === "boolean-list") {
+    return Object.freeze({ type: "array", minItems: 1, maxItems: 16, items: { type: "boolean" } });
+  }
+  if (kind === "cover-list") {
+    return Object.freeze({
+      type: "array", minItems: 1, maxItems: 16,
+      items: { enum: ["none", "half", "threeQuarters", "full"] },
+    });
+  }
+  if (kind === "phase-propagation-list") {
+    return Object.freeze({
+      type: "array", minItems: 1, maxItems: 16,
+      items: { enum: ["passes", "blocks"] },
+    });
+  }
+  if (kind === "terrain-list") {
+    return Object.freeze({
+      type: "array", minItems: 1, maxItems: 16,
+      items: { enum: ["normal", "rubble"] },
+    });
+  }
+  if (kind === "nonnegative-integer-list") {
+    return Object.freeze({
+      type: "array", minItems: 1, maxItems: 16,
+      items: { type: "integer", minimum: 0, maximum: 1_000_000 },
+    });
+  }
+  if (kind === "environment-activation") return Object.freeze({ enum: ["attack", "check", "direct"] });
+  if (kind === "attack-approach") return Object.freeze({ enum: ["any", "melee", "ranged", "spell"] });
   if (kind === "text-list") {
     return deepFreezeSchema({
       type: "array",
@@ -245,6 +629,13 @@ function modelFieldSchema(kind: "text" | "text-list" | "stage-list"): Readonly<R
         method: { type: "string", minLength: 1, maxLength: 1_000 },
         intendedOutcome: { type: "string", minLength: 1, maxLength: 1_000 },
         risk: { type: "string", minLength: 1, maxLength: 1_000 },
+        resolution: { enum: ["direct", "check"] },
+        ability: { enum: ["str", "dex", "con", "int", "wis", "cha"] },
+        skill: { type: "string", minLength: 1, maxLength: 120 },
+        dc: { type: "integer", minimum: 0, maximum: 30 },
+        mode: { enum: ["normal", "advantage", "disadvantage"] },
+        successConsequence: { type: "string", minLength: 1, maxLength: 1_000 },
+        failureConsequence: { type: "string", minLength: 1, maxLength: 1_000 },
         basisRefs: {
           type: "array",
           minItems: 1,
@@ -252,7 +643,13 @@ function modelFieldSchema(kind: "text" | "text-list" | "stage-list"): Readonly<R
           items: { type: "string", minLength: 1, maxLength: 300 },
         },
       },
-      required: ["goal", "method", "intendedOutcome"],
+      required: ["goal", "method", "intendedOutcome", "resolution"],
+      allOf: [{
+        if: { properties: { resolution: { const: "check" } } },
+        then: {
+          required: ["ability", "skill", "dc", "mode", "successConsequence", "failureConsequence"],
+        },
+      }],
     },
   }) as Readonly<Record<string, unknown>>;
 }
@@ -359,9 +756,232 @@ export function validateKpFormDraft(formId: KpFormId, draft: unknown): FormDraft
       errors.push(`${field}:type-invalid`);
     }
   }
+  if (definition.fieldKinds.resolution === "resolution") {
+    const checkFields = ["ability", "skill", "dc", "mode", "successConsequence", "failureConsequence"];
+    if (draft.resolution === "check") {
+      for (const field of checkFields) {
+        if (!Object.hasOwn(draft, field) || !hasContent(draft[field])) errors.push(`${field}:check-required`);
+      }
+    } else if (draft.resolution === "direct") {
+      for (const field of checkFields) {
+        if (Object.hasOwn(draft, field)) errors.push(`${field}:direct-forbidden`);
+      }
+    }
+  }
+  for (const [refField, amountField] of [
+    ["resourceRef", "resourceAmount"],
+    ["artifactRef", "artifactCount"],
+  ] as const) {
+    if (Object.hasOwn(draft, refField) !== Object.hasOwn(draft, amountField)) {
+      errors.push(`${refField}:${amountField}:pair-required`);
+    }
+  }
+  if (formId === "environmental-stunt.v1" && draft.featureDisposition === "reasonable-open-blank") {
+    for (const field of [
+      "material", "centerXInches", "centerYInches", "elevationInches",
+      "widthInches", "depthInches", "heightInches", "objectAc", "objectHitPoints",
+      "damageThreshold", "effectMode", "initialPhase", "phaseNames", "phaseOpaque",
+      "phaseImpassable", "phaseCover", "phaseEffectPropagation", "phaseTerrain",
+      "damageFromPhases", "damageRemainingAtOrBelow", "damageToPhases", "trigger", "basisRefs",
+    ]) {
+      if (!Object.hasOwn(draft, field) || !hasContent(draft[field])) {
+        errors.push(`${field}:environment-required`);
+      }
+    }
+  }
+  if (formId === "environmental-stunt.v1") {
+    const definitionFields = [
+      "effectMode", "material", "centerXInches", "centerYInches", "elevationInches", "widthInches",
+      "depthInches", "heightInches", "objectAc", "objectHitPoints", "damageThreshold",
+      "immuneDamageTypes", "initialPhase", "phaseNames", "phaseOpaque", "phaseImpassable",
+      "phaseCover", "phaseEffectPropagation", "phaseTerrain", "damageFromPhases",
+      "damageRemainingAtOrBelow", "damageToPhases", "stuntFromPhases", "stuntToPhases",
+      "hazardFromPhases", "hazardToPhases",
+      "hazardTriggerPhase", "hazardResolvedPhase", "trigger", "areaOriginElevationInches",
+      "areaRadiusInches", "propagation", "spreadBudgetInches", "saveAbility", "saveDc",
+      "halfOnSuccess", "damage", "damageType", "condition", "debrisOutcome",
+    ];
+    if (draft.featureDisposition !== "reasonable-open-blank") {
+      for (const field of definitionFields) {
+        if (Object.hasOwn(draft, field)) errors.push(`${field}:established-definition-forbidden`);
+      }
+    }
+    if (draft.featureDisposition === "explicitly-absent") {
+      for (const field of [
+        "activation", "attackApproach", "abilityRef", "checkAbility", "checkSkill", "checkDc", "checkMode",
+        "checkSuccessConsequence", "checkFailureConsequence",
+      ]) {
+        if (Object.hasOwn(draft, field)) errors.push(`${field}:absent-feature-forbidden`);
+      }
+    } else {
+      if (!Object.hasOwn(draft, "activation")) errors.push("activation:environment-required");
+      if (draft.activation === "attack") {
+        for (const field of ["attackApproach", "abilityRef"]) {
+          if (!Object.hasOwn(draft, field) || !hasContent(draft[field])) {
+            errors.push(`${field}:attack-required`);
+          }
+        }
+      }
+      if (draft.activation === "check") {
+        for (const field of [
+          "checkAbility", "checkSkill", "checkDc", "checkMode", "checkSuccessConsequence",
+          "checkFailureConsequence",
+        ]) {
+          if (!Object.hasOwn(draft, field) || !hasContent(draft[field])) {
+            errors.push(`${field}:environment-check-required`);
+          }
+        }
+      }
+    }
+    validateEnvironmentalDraft(draft, errors);
+  }
   findNestedForbiddenFields(draft, "$", errors);
 
   return Object.freeze({ ok: errors.length === 0, errors: Object.freeze([...new Set(errors)].sort()) });
+}
+
+function validateEnvironmentalDraft(
+  draft: Record<string, unknown>,
+  errors: string[],
+): void {
+  if (draft.featureDisposition !== "reasonable-open-blank") return;
+  const areaHazard = draft.effectMode === "area-hazard";
+  const stateOnly = draft.effectMode === "state-only";
+  const hazardFields = [
+    "hazardFromPhases", "hazardToPhases", "hazardTriggerPhase", "hazardResolvedPhase",
+    "areaOriginElevationInches", "areaRadiusInches", "propagation", "spreadBudgetInches",
+    "saveAbility", "saveDc", "halfOnSuccess", "damage", "damageType", "condition",
+    "debrisOutcome",
+  ];
+  if (stateOnly) {
+    for (const field of hazardFields) {
+      if (Object.hasOwn(draft, field)) errors.push(`${field}:state-only-forbidden`);
+    }
+  }
+  if (areaHazard) {
+    for (const field of hazardFields.filter((field) => field !== "spreadBudgetInches")) {
+      if (!Object.hasOwn(draft, field) || !hasContent(draft[field])) {
+        errors.push(`${field}:area-hazard-required`);
+      }
+    }
+  }
+  if (areaHazard && draft.propagation === "aroundCorners" && !Object.hasOwn(draft, "spreadBudgetInches")) {
+    errors.push("spreadBudgetInches:around-corners-required");
+  }
+  if (areaHazard && draft.propagation === "straight" && Object.hasOwn(draft, "spreadBudgetInches")) {
+    errors.push("spreadBudgetInches:straight-forbidden");
+  }
+  if (Number.isSafeInteger(draft.damageThreshold)
+    && Number.isSafeInteger(draft.objectHitPoints)
+    && Number(draft.damageThreshold) > Number(draft.objectHitPoints)) {
+    errors.push("damageThreshold:exceeds-object-hit-points");
+  }
+
+  const phaseNames = Array.isArray(draft.phaseNames)
+    ? draft.phaseNames.filter((value): value is string => typeof value === "string")
+    : [];
+  const phaseSet = new Set(phaseNames);
+  if (phaseNames.length < 2) errors.push("phaseNames:minimum-two");
+  for (const field of [
+    "phaseOpaque", "phaseImpassable", "phaseCover", "phaseEffectPropagation", "phaseTerrain",
+  ]) {
+    if (Array.isArray(draft[field]) && draft[field].length !== phaseNames.length) {
+      errors.push(`${field}:phase-cardinality-mismatch`);
+    }
+  }
+  for (const field of ["initialPhase", ...(areaHazard
+    ? ["hazardTriggerPhase", "hazardResolvedPhase"] as const
+    : [])] as const) {
+    if (typeof draft[field] === "string" && !phaseSet.has(draft[field])) {
+      errors.push(`${field}:unknown-phase`);
+    }
+  }
+
+  const transitionGroups = [
+    ["damageFromPhases", "damageToPhases", "damageRemainingAtOrBelow"],
+    ["stuntFromPhases", "stuntToPhases"],
+    ["hazardFromPhases", "hazardToPhases"],
+  ] as const;
+  for (const group of transitionGroups) {
+    const arrays = group.map((field) => Array.isArray(draft[field]) ? draft[field] as unknown[] : []);
+    const populated = arrays.filter((values) => values.length > 0);
+    if (populated.length > 0 && arrays.some((values) => values.length !== populated[0]!.length)) {
+      errors.push(`${group.join(":")}:cardinality-mismatch`);
+    }
+    for (const field of group.filter((field) => field !== "damageRemainingAtOrBelow")) {
+      for (const phase of Array.isArray(draft[field]) ? draft[field] : []) {
+        if (typeof phase === "string" && !phaseSet.has(phase)) {
+          errors.push(`${field}:unknown-phase:${phase}`);
+        }
+      }
+    }
+  }
+
+  const damageFrom = Array.isArray(draft.damageFromPhases) ? draft.damageFromPhases : [];
+  const damageTo = Array.isArray(draft.damageToPhases) ? draft.damageToPhases : [];
+  const thresholds = Array.isArray(draft.damageRemainingAtOrBelow)
+    ? draft.damageRemainingAtOrBelow
+    : [];
+  const stuntFrom = Array.isArray(draft.stuntFromPhases) ? draft.stuntFromPhases : [];
+  const stuntTo = Array.isArray(draft.stuntToPhases) ? draft.stuntToPhases : [];
+  const hazardFrom = Array.isArray(draft.hazardFromPhases) ? draft.hazardFromPhases : [];
+  const hazardTo = Array.isArray(draft.hazardToPhases) ? draft.hazardToPhases : [];
+  const transitionCount = Math.max(damageFrom.length, damageTo.length, thresholds.length)
+    + Math.max(stuntFrom.length, stuntTo.length)
+    + Math.max(hazardFrom.length, hazardTo.length);
+  if (transitionCount > 32) errors.push("environmentTransitions:limit-exceeded");
+  if (Number.isSafeInteger(draft.objectHitPoints)) {
+    thresholds.forEach((threshold, index) => {
+      if (Number.isSafeInteger(threshold) && Number(threshold) > Number(draft.objectHitPoints)) {
+        errors.push(`damageRemainingAtOrBelow[${index}]:exceeds-object-hit-points`);
+      }
+    });
+  }
+  const assertTransitionPairs = (from: unknown[], to: unknown[], label: string): void => {
+    const keys = new Set<string>();
+    for (let index = 0; index < Math.min(from.length, to.length); index += 1) {
+      if (from[index] === to[index]) errors.push(`${label}[${index}]:self-transition`);
+      const key = `${String(from[index])}\u0000${String(to[index])}`;
+      if (keys.has(key)) errors.push(`${label}[${index}]:duplicate`);
+      keys.add(key);
+    }
+  };
+  assertTransitionPairs(damageFrom, damageTo, "damageTransition");
+  assertTransitionPairs(stuntFrom, stuntTo, "stuntTransition");
+  assertTransitionPairs(hazardFrom, hazardTo, "hazardTransition");
+
+  for (const field of ["damageFromPhases", "damageRemainingAtOrBelow", "damageToPhases"]) {
+    if (!Array.isArray(draft[field]) || draft[field].length === 0) {
+      errors.push(`${field}:environment-required`);
+    }
+  }
+  if (draft.activation === "attack" && areaHazard) {
+    if (!damageFrom.some((from, index) => from === draft.initialPhase
+      && damageTo[index] === draft.hazardTriggerPhase)) {
+      errors.push("damageTransition:initial-to-trigger-required");
+    }
+  }
+  if (draft.activation === "check" || draft.activation === "direct") {
+    for (const field of ["stuntFromPhases", "stuntToPhases"]) {
+      if (!Array.isArray(draft[field]) || draft[field].length === 0) {
+        errors.push(`${field}:stunt-required`);
+      }
+    }
+    if (!stuntFrom.some((from) => from === draft.initialPhase)) {
+      errors.push("stuntTransition:initial-transition-required");
+    }
+    if (stateOnly && stuntFrom.filter((from) => from === draft.initialPhase).length !== 1) {
+      errors.push("stuntTransition:state-only-initial-must-be-unique");
+    }
+    if (areaHazard && !stuntFrom.some((from, index) => from === draft.initialPhase
+      && stuntTo[index] === draft.hazardTriggerPhase)) {
+      errors.push("stuntTransition:initial-to-trigger-required");
+    }
+  }
+  if (areaHazard && !hazardFrom.some((from, index) => from === draft.hazardTriggerPhase
+    && hazardTo[index] === draft.hazardResolvedPhase)) {
+    errors.push("hazardTransition:trigger-to-resolved-required");
+  }
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -374,18 +994,122 @@ function hasContent(value: unknown): boolean {
   return value !== null && value !== undefined;
 }
 
-function matchesFieldKind(kind: "text" | "text-list" | "stage-list", value: unknown): boolean {
+function matchesFieldKind(kind: FieldKind, value: unknown): boolean {
   if (kind === "text") return typeof value === "string" && value.trim().length > 0;
+  if (kind === "ability") return ["str", "dex", "con", "int", "wis", "cha"].includes(String(value));
+  if (kind === "skill") {
+    return [
+      "none", "acrobatics", "animal", "arcana", "athletics", "deception", "history",
+      "insight", "intimidation", "investigation", "medicine", "nature", "perception",
+      "performance", "persuasion", "religion", "sleight", "stealth", "survival",
+    ].includes(String(value));
+  }
+  if (kind === "check-mode") return ["normal", "advantage", "disadvantage"].includes(String(value));
+  if (kind === "resolution") return value === "direct" || value === "check";
+  if (kind === "duration-unit") return ["round", "second", "minute", "hour", "day"].includes(String(value));
+  if (kind === "boolean") return typeof value === "boolean";
+  if (kind === "positive-integer") return Number.isSafeInteger(value) && Number(value) > 0;
+  if (kind === "nonnegative-integer") return Number.isSafeInteger(value) && Number(value) >= 0;
+  if (kind === "signed-integer") {
+    return Number.isSafeInteger(value) && Number(value) >= -1_000_000 && Number(value) <= 1_000_000;
+  }
+  if (kind === "dc") return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 30;
+  if (kind === "save-dc" || kind === "armor-class") {
+    return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 30;
+  }
+  if (kind === "bounded-distance") {
+    return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 12_000;
+  }
+  if (kind === "even-distance") {
+    return Number.isSafeInteger(value) && Number(value) >= 2 && Number(value) <= 12_000
+      && Number(value) % 2 === 0;
+  }
+  if (kind === "feature-disposition") {
+    return ["reuse-existing", "reasonable-open-blank", "explicitly-absent"].includes(String(value));
+  }
+  if (kind === "environment-effect-mode") {
+    return value === "state-only" || value === "area-hazard";
+  }
+  if (kind === "damage-formula") {
+    return typeof value === "string"
+      && /^([1-9]|1[0-9]|20)d(4|6|8|10|12)(?:\+(0|[1-9][0-9]*))?$/u.test(value);
+  }
+  if (kind === "damage-type") {
+    return [
+      "acid", "bludgeoning", "cold", "fire", "force", "lightning", "necrotic",
+      "piercing", "poison", "psychic", "radiant", "slashing", "thunder",
+    ].includes(String(value));
+  }
+  if (kind === "damage-type-list") {
+    return Array.isArray(value) && value.length > 0 && value.length <= 16
+      && new Set(value).size === value.length
+      && value.every((entry) => matchesFieldKind("damage-type", entry));
+  }
+  if (kind === "failure-status") return value === "none" || value === "prone";
+  if (kind === "propagation") return value === "straight" || value === "aroundCorners";
+  if (kind === "phase-name") {
+    return typeof value === "string" && value.length <= 80
+      && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u.test(value);
+  }
+  if (kind === "phase-name-list") {
+    return Array.isArray(value) && value.length >= 2 && value.length <= 16
+      && new Set(value).size === value.length
+      && value.every((entry) => matchesFieldKind("phase-name", entry));
+  }
+  if (kind === "phase-ref-list") {
+    return Array.isArray(value) && value.length > 0 && value.length <= 16
+      && value.every((entry) => matchesFieldKind("phase-name", entry));
+  }
+  if (kind === "boolean-list") {
+    return Array.isArray(value) && value.length > 0 && value.length <= 16
+      && value.every((entry) => typeof entry === "boolean");
+  }
+  if (kind === "cover-list") {
+    return Array.isArray(value) && value.length > 0 && value.length <= 16
+      && value.every((entry) => ["none", "half", "threeQuarters", "full"].includes(String(entry)));
+  }
+  if (kind === "phase-propagation-list") {
+    return Array.isArray(value) && value.length > 0 && value.length <= 16
+      && value.every((entry) => entry === "passes" || entry === "blocks");
+  }
+  if (kind === "terrain-list") {
+    return Array.isArray(value) && value.length > 0 && value.length <= 16
+      && value.every((entry) => entry === "normal" || entry === "rubble");
+  }
+  if (kind === "nonnegative-integer-list") {
+    return Array.isArray(value) && value.length > 0 && value.length <= 16
+      && value.every((entry) => Number.isSafeInteger(entry)
+        && Number(entry) >= 0 && Number(entry) <= 1_000_000);
+  }
+  if (kind === "environment-activation") return ["attack", "check", "direct"].includes(String(value));
+  if (kind === "attack-approach") return ["any", "melee", "ranged", "spell"].includes(String(value));
   if (kind === "text-list") {
     return Array.isArray(value) && value.length > 0
       && value.every((item) => typeof item === "string" && item.trim().length > 0);
   }
   return Array.isArray(value) && value.length > 0 && value.every((stage) => {
     if (!isPlainRecord(stage)) return false;
-    const allowed = new Set(["goal", "method", "intendedOutcome", "risk", "basisRefs"]);
+    const allowed = new Set([
+      "goal", "method", "intendedOutcome", "risk", "basisRefs", "resolution", "ability",
+      "skill", "dc", "mode", "successConsequence", "failureConsequence",
+    ]);
     if (Object.keys(stage).some((key) => !allowed.has(key))) return false;
     if (["goal", "method", "intendedOutcome"].some((key) => typeof stage[key] !== "string"
       || (stage[key] as string).trim().length === 0)) return false;
+    if (stage.resolution !== "direct" && stage.resolution !== "check") return false;
+    if (stage.resolution === "check") {
+      if (!["str", "dex", "con", "int", "wis", "cha"].includes(String(stage.ability))) return false;
+      if (![
+        "none", "acrobatics", "animal", "arcana", "athletics", "deception", "history",
+        "insight", "intimidation", "investigation", "medicine", "nature", "perception",
+        "performance", "persuasion", "religion", "sleight", "stealth", "survival",
+      ].includes(String(stage.skill))) return false;
+      if (!Number.isSafeInteger(stage.dc) || Number(stage.dc) < 0 || Number(stage.dc) > 30) return false;
+      if (!["normal", "advantage", "disadvantage"].includes(String(stage.mode))) return false;
+      if (typeof stage.successConsequence !== "string" || !stage.successConsequence.trim()) return false;
+      if (typeof stage.failureConsequence !== "string" || !stage.failureConsequence.trim()) return false;
+    } else if (["ability", "skill", "dc", "mode", "successConsequence", "failureConsequence"]
+      .some((key) => Object.hasOwn(stage, key))) return false;
     if (stage.risk !== undefined && (typeof stage.risk !== "string" || stage.risk.trim().length === 0)) return false;
     return stage.basisRefs === undefined || (Array.isArray(stage.basisRefs)
       && stage.basisRefs.length > 0

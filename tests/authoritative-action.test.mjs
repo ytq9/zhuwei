@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action.ts";
+import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 
 const TRUSTED_PRINCIPAL = Object.freeze({
   id: "principal:alice",
@@ -65,6 +66,13 @@ const DEFAULT_DELIVERY_PLAN = Object.freeze({
   ]),
 });
 
+function independentDeliveryPlan(plan = DEFAULT_DELIVERY_PLAN) {
+  return Object.freeze({
+    ...plan,
+    deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+  });
+}
+
 const COMMITTED_RECEIPT = Object.freeze({
   receiptId: "receipt:open-door",
   rootActionId: PREPARED.rootActionId,
@@ -115,7 +123,11 @@ const COMMITTED_AUTHORITY_RESULT = Object.freeze({
 
 const OBSERVED_COMMITTED = Object.freeze({
   readModel: PLAYER_READ_MODEL,
-  delivery: DELIVERY,
+  delivery: Object.freeze({
+    kind: "current",
+    frame: DELIVERY,
+    body: DELIVERY.body,
+  }),
 });
 
 function trustedPrincipalId(authenticatedContext) {
@@ -133,15 +145,20 @@ function createHarness({
   prepareResult = PREPARED,
   proposals = [DIRECT_SUCCESS_PROPOSAL],
   commitResults = [COMMITTED_AUTHORITY_RESULT],
-  narratives = [{ text: DELIVERY.body, agencyClaims: [] }],
+  narratives = [{
+    body: DELIVERY.body,
+    agencyClaims: [],
+  }],
   publicationResults = [{ kind: "published", deliveryIds: [DELIVERY.deliveryId] }],
   observed = OBSERVED_COMMITTED,
+  independentPublication = false,
 } = {}) {
   const trace = [];
   const proposalQueue = [...proposals];
   const commitQueue = [...commitResults];
   const narrativeQueue = [...narratives];
   const publicationQueue = [...publicationResults];
+  const audiencePublications = new Map();
 
   const authority = {
     worldCommitCount: 0,
@@ -154,7 +171,9 @@ function createHarness({
         input,
       });
       if (prepareResult instanceof Error) throw prepareResult;
-      return prepareResult;
+      return typeof prepareResult === "function"
+        ? prepareResult(authenticatedContext, input)
+        : prepareResult;
     },
 
     async commit(authenticatedContext, preparedActionId, rulesInput) {
@@ -180,7 +199,18 @@ function createHarness({
         authorization: authenticatedContext,
         publication,
       });
-      return scriptedValue(publicationQueue, "authority.publishDelivery");
+      const result = scriptedValue(publicationQueue, "authority.publishDelivery");
+      if (independentPublication && ["published", "superseded"].includes(result.kind)) {
+        for (const frame of publication.frames ?? []) {
+          const current = audiencePublications.get(frame.audienceId);
+          audiencePublications.set(frame.audienceId, {
+            audienceId: frame.audienceId,
+            deliveryGeneration: frame.deliveryGeneration ?? current?.deliveryGeneration ?? 0,
+            state: result.kind,
+          });
+        }
+      }
+      return result;
     },
 
     async observe(authenticatedContext) {
@@ -189,6 +219,7 @@ function createHarness({
         operation: "observe",
         principalId: trustedPrincipalId(authenticatedContext),
       });
+      if (observed instanceof Error) throw observed;
       return observed;
     },
 
@@ -202,6 +233,63 @@ function createHarness({
       return { kind: "acknowledged", deliveryId };
     },
   };
+
+  if (independentPublication) {
+    Object.assign(authority, {
+      async deliveryPublicationStatus({ publishCapability }) {
+        trace.push({
+          boundary: "authority",
+          operation: "deliveryPublicationStatus",
+          publishCapability,
+        });
+        const audiences = [...audiencePublications.values()];
+        const terminal = audiences.length > 0 && audiences.every(({ state }) =>
+          state === "published" || state === "superseded");
+        return {
+          kind: terminal
+            ? audiences.every(({ state }) => state === "superseded") ? "superseded" : "published"
+            : "open",
+          audiences,
+        };
+      },
+
+      async beginDeliveryAudiencePublication({ publishCapability, audienceId }) {
+        trace.push({
+          boundary: "authority",
+          operation: "beginDeliveryAudiencePublication",
+          publishCapability,
+          audienceId,
+        });
+        const current = audiencePublications.get(audienceId);
+        if (current?.state === "published" || current?.state === "superseded") {
+          return { kind: current.state, audienceId, deliveryGeneration: current.deliveryGeneration };
+        }
+        const pending = {
+          audienceId,
+          deliveryGeneration: (current?.deliveryGeneration ?? 0) + 1,
+          state: "pending",
+        };
+        audiencePublications.set(audienceId, pending);
+        return { kind: "pending", audienceId, deliveryGeneration: pending.deliveryGeneration };
+      },
+
+      async failDeliveryAudiencePublication(authorization, failure) {
+        trace.push({
+          boundary: "authority",
+          operation: "failDeliveryAudiencePublication",
+          authorization,
+          failure,
+        });
+        audiencePublications.set(failure.audienceId, {
+          audienceId: failure.audienceId,
+          deliveryGeneration: failure.deliveryGeneration,
+          state: failure.state,
+          errorCode: failure.errorCode,
+        });
+        return { kind: failure.state, ...failure };
+      },
+    });
+  }
 
   const kp = {
     async propose(request) {
@@ -218,6 +306,7 @@ function createHarness({
   return {
     context: { principal: TRUSTED_PRINCIPAL, authority, kp },
     authority,
+    audiencePublications,
     trace,
   };
 }
@@ -251,6 +340,8 @@ function diagnosticResult(attempt, receiptId = `receipt:diagnostic:${attempt}`) 
 function assertOutcomeShape(outcome) {
   assert.equal(typeof outcome, "object");
   assert.ok(outcome !== null);
+  assert.equal(typeof outcome.action, "string");
+  assert.equal(typeof outcome.narration, "string");
 
   switch (outcome.kind) {
     case "committed":
@@ -318,7 +409,14 @@ test("direct success commits before narration and publishes only the observer pr
     kind: "committed",
     receipt: COMMITTED_RECEIPT,
     readModel: PLAYER_READ_MODEL,
-    delivery: DELIVERY,
+    delivery: OBSERVED_COMMITTED.delivery,
+    audienceNarrations: [{
+      audienceId: "audience:alice",
+      deliveryGeneration: 0,
+      state: "published",
+    }],
+    action: "committed",
+    narration: "published",
   });
 
   const commit = calls(harness.trace, "authority", "commit")[0];
@@ -366,14 +464,11 @@ test("an authenticated combat or consent answer bypasses KP proposal and preserv
 
 test("a committed delivery plan narrates each frozen audience projection and publishes with only the Room capability", async () => {
   const aliceNarration = Object.freeze({
-    text: "门在你眼前打开，银钥匙落入视线。",
+    body: "门在你眼前打开，银钥匙落入视线。",
     agencyClaims: Object.freeze([]),
   });
   const bobNarration = Object.freeze({
     body: "庭院那头传来一声遥远的门轴轻响。",
-    tts: "远处传来门轴轻响。",
-    decisionPrompt: "你要继续留在庭院，还是走近查看？",
-    referencedProjectionRefs: Object.freeze(["fact:distant-hinge"]),
     agencyClaims: Object.freeze([]),
   });
   const deliveryPlan = Object.freeze({
@@ -450,7 +545,10 @@ test("a committed delivery plan narrates each frozen audience projection and pub
   assert.equal(publicationCall.principalId, undefined);
   assert.deepEqual(publicationCall.publication, {
     frames: [
-      { audienceId: "audience:alice", narration: aliceNarration },
+      {
+        audienceId: "audience:alice",
+        narration: { text: aliceNarration.body, agencyClaims: aliceNarration.agencyClaims },
+      },
       {
         audienceId: "audience:bob",
         narration: { text: bobNarration.body, agencyClaims: bobNarration.agencyClaims },
@@ -459,12 +557,14 @@ test("a committed delivery plan narrates each frozen audience projection and pub
   });
 });
 
-test("a partial per-audience narration failure keeps the commit and publishes no mixed or partial frames", async () => {
+test("one audience failure does not turn another viewer's published response into a retry", async () => {
   const aliceNarration = Object.freeze({
-    text: "alice-private-success-must-not-escape",
-    agencyClaims: Object.freeze([]),
+    body: "门在爱丽丝面前打开，银钥匙落入她的视线。",
   });
-  const deliveryPlan = Object.freeze({
+  const bobRetryNarration = Object.freeze({
+    body: "庭院里的鲍勃终于听见了远处门轴的轻响。",
+  });
+  const deliveryPlan = independentDeliveryPlan({
     publishCapability: DELIVERY_PUBLISH_CAPABILITY,
     audiences: Object.freeze([
       Object.freeze({ audienceId: "audience:alice", projection: ALICE_AUDIENCE_PROJECTION }),
@@ -472,29 +572,73 @@ test("a partial per-audience narration failure keeps the commit and publishes no
     ]),
   });
   const harness = createHarness({
+    prepareResult: (_context, input) => input.kind === "retry"
+      ? { ...COMMITTED_AUTHORITY_RESULT, rootActionId: PREPARED.rootActionId, deliveryPlan }
+      : PREPARED,
     commitResults: [{ ...COMMITTED_AUTHORITY_RESULT, deliveryPlan }],
-    narratives: [aliceNarration, new Error("Bob narration model timeout")],
+    narratives: [aliceNarration, new Error("Bob narration model timeout"), bobRetryNarration],
+    publicationResults: [
+      { kind: "published", deliveryIds: [DELIVERY.deliveryId] },
+      { kind: "published", deliveryIds: ["delivery:open-door:bob"] },
+    ],
+    observed: {
+      readModel: PLAYER_READ_MODEL,
+      delivery: {
+        kind: "current",
+        frame: { ...DELIVERY, receiptId: COMMITTED_RECEIPT.receiptId },
+        body: aliceNarration.body,
+      },
+    },
+    independentPublication: true,
   });
 
   const outcome = await handleRoomAction(harness.context, INTENT);
 
-  assert.deepEqual(outcome, {
-    kind: "committed",
-    receipt: COMMITTED_RECEIPT,
-    readModel: PLAYER_READ_MODEL,
-    deliveryPending: true,
-  });
+  assert.equal(outcome.kind, "committed");
+  assert.equal(outcome.action, "committed");
+  assert.equal(outcome.narration, "published");
+  assert.equal("deliveryPending" in outcome, false);
+  assert.deepEqual(outcome.audienceNarrations, [
+    {
+      audienceId: "audience:alice",
+      deliveryGeneration: 1,
+      state: "published",
+    },
+    {
+      audienceId: "audience:bob",
+      deliveryGeneration: 1,
+      state: "retryableFailure",
+      errorCode: "NARRATION_PROVIDER_TIMEOUT",
+    },
+  ]);
   assert.equal(harness.authority.worldCommitCount, 1);
   assert.equal(calls(harness.trace, "kp", "narrate").length, 2);
-  assert.equal(calls(harness.trace, "authority", "publishDelivery").length, 0);
+  assert.equal(calls(harness.trace, "authority", "publishDelivery").length, 1);
+  assert.equal(calls(harness.trace, "authority", "failDeliveryAudiencePublication").length, 1);
   assert.equal(calls(harness.trace, "authority", "observe").length, 1);
   assert.equal(calls(harness.trace, "authority", "observe")[0].principalId, TRUSTED_PRINCIPAL.id);
-  assert.ok(!JSON.stringify(outcome).includes(aliceNarration.text));
+
+  assert.equal(harness.authority.worldCommitCount, 1);
+  assert.equal(calls(harness.trace, "kp", "propose").length, 1);
+  assert.equal(calls(harness.trace, "authority", "commit").length, 1);
+  assert.deepEqual(
+    calls(harness.trace, "kp", "narrate").map(({ request }) => request.audienceId),
+    ["audience:alice", "audience:bob"],
+  );
+  assert.deepEqual(
+    calls(harness.trace, "authority", "publishDelivery")
+      .flatMap(({ publication }) => publication.frames.map(({ audienceId }) => audienceId)),
+    ["audience:alice"],
+  );
 });
 
-test("a player-owned narration claim is rejected before Room publication without repeating mechanics", async () => {
+test("a narration with fields beyond body is rejected before Room publication without repeating mechanics", async () => {
   const maliciousText = "你认定走廊绝对安全，并决定立刻独自冲进去。";
   const harness = createHarness({
+    commitResults: [{
+      ...COMMITTED_AUTHORITY_RESULT,
+      deliveryPlan: independentDeliveryPlan(),
+    }],
     narratives: [{
       body: maliciousText,
       agencyClaims: [{
@@ -504,6 +648,16 @@ test("a player-owned narration claim is rejected before Room publication without
         basisRefs: [ALICE_AUDIENCE_PROJECTION.projectionHash],
       }],
     }],
+    observed: {
+      readModel: PLAYER_READ_MODEL,
+      delivery: { kind: "none" },
+      narrationRecovery: {
+        kind: "available",
+        capability: DELIVERY_PUBLISH_CAPABILITY,
+        state: "rejected",
+      },
+    },
+    independentPublication: true,
   });
 
   const outcome = await handleRoomAction(harness.context, INTENT);
@@ -512,7 +666,18 @@ test("a player-owned narration claim is rejected before Room publication without
     kind: "committed",
     receipt: COMMITTED_RECEIPT,
     readModel: PLAYER_READ_MODEL,
+    delivery: { kind: "none" },
     deliveryPending: true,
+    audienceNarrations: [{
+      audienceId: "audience:alice",
+      deliveryGeneration: 1,
+      state: "rejected",
+      errorCode: "NARRATION_BODY_INVALID",
+    }],
+    narrationFailureState: "rejected",
+    narrationFailureCode: "NARRATION_BODY_INVALID",
+    action: "committed",
+    narration: "rejected",
   });
   assert.equal(harness.authority.worldCommitCount, 1);
   assert.equal(calls(harness.trace, "authority", "commit").length, 1);
@@ -523,10 +688,9 @@ test("a player-owned narration claim is rejected before Room publication without
 
 test("a delivery-plan publication failure never rolls back or repeats the committed world result", async () => {
   const aliceNarration = Object.freeze({
-    text: "Alice sees only Alice's projection.",
-    agencyClaims: Object.freeze([]),
+    body: "Alice sees only Alice's projection.",
   });
-  const deliveryPlan = Object.freeze({
+  const deliveryPlan = independentDeliveryPlan({
     publishCapability: DELIVERY_PUBLISH_CAPABILITY,
     audiences: Object.freeze([
       Object.freeze({ audienceId: "audience:alice", projection: ALICE_AUDIENCE_PROJECTION }),
@@ -540,18 +704,134 @@ test("a delivery-plan publication failure never rolls back or repeats the commit
       code: "audienceMismatch",
       explanation: "Room rejected a non-authoritative audience publication.",
     })],
+    observed: {
+      readModel: PLAYER_READ_MODEL,
+      delivery: { kind: "none" },
+      narrationRecovery: {
+        kind: "available",
+        capability: DELIVERY_PUBLISH_CAPABILITY,
+        state: "retryableFailure",
+      },
+    },
+    independentPublication: true,
   });
 
   const outcome = await handleRoomAction(harness.context, INTENT);
 
   assert.equal(outcome.kind, "committed");
   assert.equal(outcome.deliveryPending, true);
-  assert.equal("delivery" in outcome, false);
+  assert.deepEqual(outcome.delivery, { kind: "none" });
+  assert.deepEqual(outcome.audienceNarrations, [{
+    audienceId: "audience:alice",
+    deliveryGeneration: 1,
+    state: "retryableFailure",
+    errorCode: "NARRATION_PUBLICATION_FAILED",
+  }]);
+  assert.equal(outcome.action, "committed");
+  assert.equal(outcome.narration, "retryableFailure");
+  assert.equal(outcome.narrationFailureCode, "NARRATION_PUBLICATION_FAILED");
   assert.equal(harness.authority.worldCommitCount, 1);
   assert.equal(calls(harness.trace, "authority", "commit").length, 1);
   assert.equal(calls(harness.trace, "kp", "narrate").length, 1);
   assert.equal(calls(harness.trace, "authority", "publishDelivery").length, 1);
   assert.equal(calls(harness.trace, "authority", "observe").length, 1);
+});
+
+test("a post-commit observation failure keeps the action committed and only makes narration retryable", async () => {
+  const harness = createHarness({
+    observed: new Error("injected post-commit observe failure"),
+  });
+
+  const outcome = await handleRoomAction(harness.context, INTENT);
+
+  assert.equal(outcome.kind, "committed");
+  assert.equal(outcome.action, "committed");
+  assert.equal(outcome.narration, "retryableFailure");
+  assert.equal(outcome.deliveryPending, true);
+  assert.equal(outcome.narrationFailureCode, "NARRATION_PUBLICATION_FAILED");
+  assert.equal(outcome.readModel, undefined);
+  assert.deepEqual(outcome.receipt, COMMITTED_RECEIPT);
+  assert.equal(harness.authority.worldCommitCount, 1);
+  assert.equal(calls(harness.trace, "kp", "propose").length, 1);
+  assert.equal(calls(harness.trace, "authority", "commit").length, 1);
+  assert.equal(calls(harness.trace, "kp", "narrate").length, 1);
+  assert.equal(calls(harness.trace, "authority", "publishDelivery").length, 1);
+  assert.equal(calls(harness.trace, "authority", "observe").length, 1);
+});
+
+test("a direct safety commit survives projection failure without inventing narration failure", async () => {
+  const receipt = Object.freeze({
+    ...COMMITTED_RECEIPT,
+    receiptId: "receipt:safety-adjustment",
+    resolutionDisposition: "committed",
+  });
+  const harness = createHarness({
+    prepareResult: {
+      ...PREPARED,
+      resolutionMode: "authorityDirect",
+    },
+    proposals: [],
+    commitResults: [{ kind: "committed", receipt }],
+    narratives: [],
+    observed: new Error("injected safety projection failure"),
+  });
+
+  const outcome = await handleRoomAction(harness.context, {
+    kind: "safetyAdjust",
+    submissionId: "submission:safety-adjustment",
+    presentationAdjustment: "fadeToBlack",
+  });
+
+  assert.deepEqual(outcome, {
+    kind: "committed",
+    receipt,
+    readModel: undefined,
+    action: "committed",
+    narration: "notApplicable",
+  });
+  assert.equal(harness.authority.worldCommitCount, 1);
+  assert.deepEqual(operations(harness.trace), [
+    "authority.prepare",
+    "authority.commit",
+    "authority.observe",
+  ]);
+});
+
+test("an awaiting-input projection failure preserves the action axis and hides authority pending data", async () => {
+  const secret = "AUTHORITY_ONLY_PENDING_SENTINEL";
+  const receipt = Object.freeze({
+    receiptId: "receipt:awaiting-hidden",
+    rootActionId: PREPARED.rootActionId,
+    status: "awaitingInput",
+  });
+  const harness = createHarness({
+    prepareResult: {
+      kind: "awaitingInput",
+      receipt,
+      pending: {
+        pendingInputId: "pending:hidden",
+        controllerPrincipalId: "principal:bob",
+        internalCandidates: [secret],
+      },
+    },
+    proposals: [],
+    commitResults: [],
+    narratives: [],
+    observed: new Error("injected awaiting-input projection failure"),
+  });
+
+  const outcome = await handleRoomAction(harness.context, INTENT);
+
+  assert.deepEqual(outcome, {
+    kind: "awaitingInput",
+    receipt,
+    readModel: undefined,
+    pending: { kind: "pending" },
+    action: "awaitingInput",
+    narration: "notApplicable",
+  });
+  assert.equal(JSON.stringify(outcome).includes(secret), false);
+  assert.deepEqual(operations(harness.trace), ["authority.prepare", "authority.observe"]);
 });
 
 test("major ambiguity becomes awaitingInput and is never answered by the system", async () => {
@@ -606,6 +886,8 @@ test("major ambiguity becomes awaitingInput and is never answered by the system"
     receipt,
     readModel: projectedReadModel,
     pending: projectedPending,
+    action: "awaitingInput",
+    narration: "notApplicable",
   });
   assert.equal(harness.authority.worldCommitCount, 0);
   assert.equal(calls(harness.trace, "kp", "propose").length, 1);
@@ -714,6 +996,9 @@ test("two illegal proposals return needsKp without narration, delivery, or a hal
   assert.deepEqual(outcome, {
     kind: "needsKp",
     receipt: secondDiagnostic.receipt,
+    code: "PROPOSAL_REPAIR_EXHAUSTED",
+    action: "notCommitted",
+    narration: "notApplicable",
   });
   assert.deepEqual(operations(harness.trace), [
     "authority.prepare",
@@ -738,7 +1023,9 @@ test("a transient model failure is retryable and cannot advance the world", asyn
   const outcome = await handleRoomAction(harness.context, INTENT);
 
   assert.equal(outcome.kind, "retryableFailure");
-  assert.equal(outcome.code, "modelTransient");
+  assert.equal(outcome.code, "PROPOSAL_PROVIDER_TIMEOUT");
+  assert.equal(outcome.action, "notCommitted");
+  assert.equal(outcome.narration, "notApplicable");
   assert.equal(harness.authority.worldCommitCount, 0);
   assert.deepEqual(operations(harness.trace), ["authority.prepare", "kp.propose"]);
   assert.equal(calls(harness.trace, "authority", "commit").length, 0);
@@ -759,8 +1046,23 @@ test("permanent and quota KP failures keep their stable outer classifications wi
       }),
       expected: {
         kind: "rejected",
-        code: "modelPermanent",
+        code: "PROPOSAL_FORM_INVALID",
         explanation: "权威 KP 模型配置或输出无效。",
+        action: "notCommitted",
+        narration: "notApplicable",
+      },
+    },
+    {
+      error: Object.assign(new Error(privateModelDetail), {
+        code: "modelPermanent",
+        publicCode: "CONTEXT_INSUFFICIENT",
+      }),
+      expected: {
+        kind: "rejected",
+        code: "CONTEXT_INSUFFICIENT",
+        explanation: "权威 KP 模型配置或输出无效。",
+        action: "notCommitted",
+        narration: "notApplicable",
       },
     },
     {
@@ -773,6 +1075,8 @@ test("permanent and quota KP failures keep their stable outer classifications wi
         kind: "retryableFailure",
         code: "quotaExhausted",
         retryAfter: 17,
+        action: "notCommitted",
+        narration: "notApplicable",
       },
     },
   ];
@@ -786,6 +1090,94 @@ test("permanent and quota KP failures keep their stable outer classifications wi
     assert.equal(JSON.stringify(outcome).includes("responseHash"), false);
     assert.equal(harness.authority.worldCommitCount, 0);
     assert.deepEqual(operations(harness.trace), ["authority.prepare", "kp.propose"]);
+  }
+});
+
+test("the current viewer receives exact provider and grounding narration failure codes after commit", async () => {
+  const cases = [
+    {
+      error: new Error("private provider timeout detail"),
+      state: "retryableFailure",
+      code: "NARRATION_PROVIDER_TIMEOUT",
+    },
+    {
+      error: Object.assign(new Error("private grounding detail"), {
+        publicCode: "NARRATION_GROUNDING_REJECTED",
+      }),
+      state: "rejected",
+      code: "NARRATION_GROUNDING_REJECTED",
+    },
+  ];
+
+  for (const { error, state, code } of cases) {
+    const harness = createHarness({
+      commitResults: [{
+        ...COMMITTED_AUTHORITY_RESULT,
+        deliveryPlan: independentDeliveryPlan(),
+      }],
+      narratives: [error],
+      observed: {
+        readModel: PLAYER_READ_MODEL,
+        delivery: { kind: "none" },
+        narrationRecovery: {
+          kind: "available",
+          capability: DELIVERY_PUBLISH_CAPABILITY,
+          state,
+        },
+      },
+      independentPublication: true,
+    });
+
+    const outcome = await handleRoomAction(harness.context, INTENT);
+    assert.equal(outcome.action, "committed");
+    assert.equal(outcome.narration, state);
+    assert.equal(outcome.narrationFailureCode, code);
+    assert.equal(harness.authority.worldCommitCount, 1);
+    assert.equal(calls(harness.trace, "kp", "propose").length, 1);
+    assert.equal(calls(harness.trace, "authority", "commit").length, 1);
+    assert.equal(calls(harness.trace, "kp", "narrate").length, 1);
+  }
+});
+
+test("V3 proposal failure stages retain their exact public code and stable action semantics", async () => {
+  const privateModelDetail = "PRIVATE_PROPOSAL_FAILURE_SENTINEL: hidden reference";
+  const cases = [
+    {
+      error: Object.assign(new Error(privateModelDetail), {
+        code: "modelPermanent",
+        modelInvocationReceipt: {
+          result: "modelPermanent",
+          failureStage: "proposalReference",
+        },
+      }),
+      expected: {
+        kind: "rejected",
+        code: "PROPOSAL_REFERENCE_INVALID",
+        explanation: "权威 KP 模型配置或输出无效。",
+        action: "notCommitted",
+        narration: "notApplicable",
+      },
+    },
+    ...["PROPOSAL_RULES_DIAGNOSTIC", "PROPOSAL_REPAIR_EXHAUSTED"].map((publicCode) => ({
+      error: Object.assign(new Error(privateModelDetail), {
+        code: "modelPermanent",
+        publicCode,
+      }),
+      expected: {
+        kind: "needsKp",
+        code: publicCode,
+        action: "notCommitted",
+        narration: "notApplicable",
+      },
+    })),
+  ];
+
+  for (const { error, expected } of cases) {
+    const harness = createHarness({ proposals: [error], commitResults: [], narratives: [] });
+    const outcome = await handleRoomAction(harness.context, INTENT);
+    assert.deepEqual(outcome, expected);
+    assert.equal(JSON.stringify(outcome).includes(privateModelDetail), false);
+    assert.equal(harness.authority.worldCommitCount, 0);
   }
 });
 
@@ -825,6 +1217,8 @@ test("protected reference failures are indistinguishable and never expose intern
       kind: "rejected",
       code: "referenceUnavailable",
       explanation: "该对象当前不可用。",
+      action: "notCommitted",
+      narration: "notApplicable",
     });
     assert.equal(JSON.stringify(outcome).includes(secret), false);
   }

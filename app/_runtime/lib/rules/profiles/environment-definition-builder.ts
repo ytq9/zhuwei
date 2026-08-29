@@ -41,6 +41,7 @@ const INPUT_KEYS = new Set([
   "damageTransitions",
   "damageType",
   "depthInches",
+  "effectMode",
   "elevationInches",
   "failureStatus",
   "featureId",
@@ -59,10 +60,29 @@ const INPUT_KEYS = new Set([
   "sceneId",
   "spreadBudgetInches",
   "states",
+  "stuntTransitions",
   "visibilityPolicyId",
   "widthInches",
 ]);
-const REQUIRED_INPUT_KEYS = [...INPUT_KEYS].filter((key) => key !== "spreadBudgetInches");
+const AREA_HAZARD_INPUT_KEYS = new Set([
+  "areaOriginElevationInches",
+  "areaPropagation",
+  "areaRadiusInches",
+  "damageFormula",
+  "damageType",
+  "failureStatus",
+  "halfOnSuccess",
+  "hazardResolvedState",
+  "hazardTransitions",
+  "hazardTriggerState",
+  "saveAbility",
+  "saveDc",
+  "spreadBudgetInches",
+]);
+const REQUIRED_COMMON_INPUT_KEYS = [...INPUT_KEYS]
+  .filter((key) => !AREA_HAZARD_INPUT_KEYS.has(key));
+const REQUIRED_AREA_HAZARD_INPUT_KEYS = [...AREA_HAZARD_INPUT_KEYS]
+  .filter((key) => key !== "spreadBudgetInches");
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 const DAMAGE_FORMULA = /^([1-9]|1[0-9]|20)d(4|6|8|10|12)(?:\+(0|[1-9][0-9]*))?$/;
 
@@ -90,13 +110,18 @@ export type CustomEnvironmentHazardTransitionInput = Readonly<{
   toState: string;
 }>;
 
+export type CustomEnvironmentStuntTransitionInput = Readonly<{
+  fromState: string;
+  toState: string;
+}>;
+
 /**
  * A closed transport for one KP-frozen custom environment definition.
  *
  * It intentionally has no product family/category selector and no entity or
  * target list. The Rules geometry layer remains the sole target authority.
  */
-export type CustomEnvironmentFeatureDefinitionInput = Readonly<{
+type CustomEnvironmentFeatureDefinitionCore = {
   featureId: string;
   sceneId: string;
   label: string;
@@ -115,6 +140,15 @@ export type CustomEnvironmentFeatureDefinitionInput = Readonly<{
   initialState: string;
   states: readonly CustomEnvironmentStateInput[];
   damageTransitions: readonly CustomEnvironmentDamageTransitionInput[];
+  stuntTransitions: readonly CustomEnvironmentStuntTransitionInput[];
+};
+
+type StateOnlyEnvironmentEffectInput = {
+  effectMode: "state-only";
+};
+
+type AreaHazardEnvironmentEffectInput = {
+  effectMode: "area-hazard";
   hazardTransitions: readonly CustomEnvironmentHazardTransitionInput[];
   hazardTriggerState: string;
   hazardResolvedState: string;
@@ -128,7 +162,12 @@ export type CustomEnvironmentFeatureDefinitionInput = Readonly<{
   damageFormula: string;
   damageType: string;
   failureStatus: "none" | "prone";
-}>;
+};
+
+export type CustomEnvironmentFeatureDefinitionInput = Readonly<
+  CustomEnvironmentFeatureDefinitionCore
+  & (StateOnlyEnvironmentEffectInput | AreaHazardEnvironmentEffectInput)
+>;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -228,6 +267,16 @@ function normalizeHazardTransition(value: unknown, index: number) {
   };
 }
 
+function normalizeStuntTransition(value: unknown, index: number) {
+  const field = `stuntTransitions[${index}]`;
+  if (!record(value) || !exactKeys(value, ["fromState", "toState"])) fail(field);
+  return {
+    fromState: identifier(value.fromState, `${field}.fromState`, 80),
+    trigger: "stuntSucceeded" as const,
+    toState: identifier(value.toState, `${field}.toState`, 80),
+  };
+}
+
 function transitionKey(value: {
   fromState: string;
   trigger: string;
@@ -249,8 +298,20 @@ export function buildCustomEnvironmentFeatureDefinition(
   for (const key of Object.keys(input)) {
     if (!INPUT_KEYS.has(key)) fail(`${key}:unknown`);
   }
-  for (const key of REQUIRED_INPUT_KEYS) {
+  for (const key of REQUIRED_COMMON_INPUT_KEYS) {
     if (!Object.hasOwn(input, key)) fail(`${key}:required`);
+  }
+  if (input.effectMode !== "state-only" && input.effectMode !== "area-hazard") {
+    fail("effectMode");
+  }
+  if (input.effectMode === "state-only") {
+    for (const key of AREA_HAZARD_INPUT_KEYS) {
+      if (Object.hasOwn(input, key)) fail(`${key}:state-only-forbidden`);
+    }
+  } else {
+    for (const key of REQUIRED_AREA_HAZARD_INPUT_KEYS) {
+      if (!Object.hasOwn(input, key)) fail(`${key}:required`);
+    }
   }
 
   const featureId = identifier(input.featureId, "featureId");
@@ -287,61 +348,106 @@ export function buildCustomEnvironmentFeatureDefinition(
   immuneDamageTypes.sort();
 
   const initialState = identifier(input.initialState, "initialState", 80);
-  if (!Array.isArray(input.states) || input.states.length < 3 || input.states.length > 16) {
+  if (!Array.isArray(input.states) || input.states.length < 2 || input.states.length > 16) {
     fail("states:bounded");
   }
   const states = input.states.map(normalizeState)
     .sort((left, right) => left.state.localeCompare(right.state));
   if (new Set(states.map((state) => state.state)).size !== states.length) fail("states:duplicate");
 
-  if (!Array.isArray(input.damageTransitions) || !Array.isArray(input.hazardTransitions)) {
+  if (!Array.isArray(input.damageTransitions)
+    || input.damageTransitions.length === 0
+    || !Array.isArray(input.stuntTransitions)) {
     fail("transitions");
+  }
+  if (input.effectMode === "area-hazard" && !Array.isArray(input.hazardTransitions)) {
+    fail("hazardTransitions");
   }
   const transitions = [
     ...input.damageTransitions.map((value, index) =>
       normalizeDamageTransition(value, index, maximumDurability)),
-    ...input.hazardTransitions.map(normalizeHazardTransition),
+    ...input.stuntTransitions.map(normalizeStuntTransition),
+    ...(input.effectMode === "area-hazard"
+      ? input.hazardTransitions.map(normalizeHazardTransition)
+      : []),
   ];
-  if (transitions.length < 2 || transitions.length > 32) fail("transitions:bounded");
+  if (transitions.length < 1 || transitions.length > 32) fail("transitions:bounded");
+  const transitionSelectors = transitions.map((transition) =>
+    `${transition.fromState}\u0000${transition.trigger}\u0000${"remainingDurabilityAtOrBelow" in transition
+      ? transition.remainingDurabilityAtOrBelow
+      : ""}`);
+  if (new Set(transitionSelectors).size !== transitionSelectors.length) {
+    fail("transitions:ambiguous");
+  }
   transitions.sort((left, right) => transitionKey(left).localeCompare(transitionKey(right)));
   const transitionKeys = transitions.map(transitionKey);
   if (new Set(transitionKeys).size !== transitionKeys.length) fail("transitions:duplicate");
 
-  const hazardTriggerState = identifier(input.hazardTriggerState, "hazardTriggerState", 80);
-  const hazardResolvedState = identifier(input.hazardResolvedState, "hazardResolvedState", 80);
-  const areaOriginElevation = integer(
-    input.areaOriginElevationInches,
-    "areaOriginElevationInches",
-    -1_000_000,
-    1_000_000,
-  );
-  const areaRadius = integer(input.areaRadiusInches, "areaRadiusInches", 1, 12_000);
-  if (input.areaPropagation !== "straight" && input.areaPropagation !== "aroundCorners") {
-    fail("areaPropagation");
-  }
-  let spreadBudget: number | undefined;
-  if (input.areaPropagation === "aroundCorners") {
-    spreadBudget = integer(input.spreadBudgetInches, "spreadBudgetInches", 1, 12_000);
-  } else if (input.spreadBudgetInches !== undefined) {
-    fail("spreadBudgetInches:straight-forbidden");
-  }
-  if (!ABILITIES.has(String(input.saveAbility))) fail("saveAbility");
-  const saveDc = integer(input.saveDc, "saveDc", 1, 30);
-  if (typeof input.halfOnSuccess !== "boolean") fail("halfOnSuccess");
-  const damageFormula = canonicalText(input.damageFormula, "damageFormula", 40);
-  if (!DAMAGE_FORMULA.test(damageFormula)) fail("damageFormula");
-  const damageType = canonicalText(input.damageType, "damageType", 40);
-  if (!DAMAGE_TYPES.has(damageType)) fail("damageType");
-  if (input.failureStatus !== "none" && input.failureStatus !== "prone") fail("failureStatus");
+  let hazardDefinition: EnvironmentFeature["hazard"] = null;
+  let areaEffectDefinition: EnvironmentFeature["areaEffect"] = null;
 
   // The closed EnvironmentFeature schema has no free-form material property.
   // Preserve the exact KP-frozen material in stable private definition IDs;
   // the public tactical feature continues to expose only its safe label.
   const definitionScope = `${sceneId}:${featureId}:material=${encodeURIComponent(material)}`;
-  const areaEffectDefinitionId = `area-effect:${definitionScope}`;
+  if (input.effectMode === "area-hazard") {
+    const hazardTriggerState = identifier(input.hazardTriggerState, "hazardTriggerState", 80);
+    const hazardResolvedState = identifier(input.hazardResolvedState, "hazardResolvedState", 80);
+    const areaOriginElevation = integer(
+      input.areaOriginElevationInches,
+      "areaOriginElevationInches",
+      -1_000_000,
+      1_000_000,
+    );
+    const areaRadius = integer(input.areaRadiusInches, "areaRadiusInches", 1, 12_000);
+    if (input.areaPropagation !== "straight" && input.areaPropagation !== "aroundCorners") {
+      fail("areaPropagation");
+    }
+    let spreadBudget: number | undefined;
+    if (input.areaPropagation === "aroundCorners") {
+      spreadBudget = integer(input.spreadBudgetInches, "spreadBudgetInches", 1, 12_000);
+    } else if (input.spreadBudgetInches !== undefined) {
+      fail("spreadBudgetInches:straight-forbidden");
+    }
+    if (!ABILITIES.has(String(input.saveAbility))) fail("saveAbility");
+    const saveDc = integer(input.saveDc, "saveDc", 1, 30);
+    if (typeof input.halfOnSuccess !== "boolean") fail("halfOnSuccess");
+    const damageFormula = canonicalText(input.damageFormula, "damageFormula", 40);
+    if (!DAMAGE_FORMULA.test(damageFormula)) fail("damageFormula");
+    const damageType = canonicalText(input.damageType, "damageType", 40);
+    if (!DAMAGE_TYPES.has(damageType)) fail("damageType");
+    if (input.failureStatus !== "none" && input.failureStatus !== "prone") fail("failureStatus");
+    const areaEffectDefinitionId = `area-effect:${definitionScope}`;
+    hazardDefinition = {
+      schema: "zhuwei.triggered-hazard/v1",
+      definitionId: `hazard:${definitionScope}`,
+      trigger: { kind: "stateEntered", state: hazardTriggerState },
+      areaEffectRef: areaEffectDefinitionId,
+      resolvedState: hazardResolvedState,
+    };
+    areaEffectDefinition = {
+      schema: "zhuwei.area-effect/v1",
+      definitionId: areaEffectDefinitionId,
+      origin: { kind: "featureCentroid", elevationInches: String(areaOriginElevation) },
+      shape: {
+        kind: "sphere",
+        radiusInches: String(areaRadius),
+        propagation: input.areaPropagation,
+        ...(spreadBudget === undefined ? {} : { spreadBudgetInches: String(spreadBudget) }),
+      },
+      save: {
+        ability: input.saveAbility,
+        dc: String(saveDc),
+        halfOnSuccess: input.halfOnSuccess,
+      },
+      damage: { type: damageType, formula: damageFormula },
+      failureStatus: input.failureStatus,
+    };
+  }
   const definition: EnvironmentFeature = {
-    schema: "zhuwei.environment-feature/v1",
+    schema: "zhuwei.environment-feature/v2",
     environmentProfile: ENVIRONMENT_PROFILE,
+    effectMode: input.effectMode,
     featureId,
     sceneId,
     kind: "destructible",
@@ -370,34 +476,11 @@ export function buildCustomEnvironmentFeatureDefinition(
       states,
       transitions,
     },
-    hazard: {
-      schema: "zhuwei.triggered-hazard/v1",
-      definitionId: `hazard:${definitionScope}`,
-      trigger: { kind: "stateEntered", state: hazardTriggerState },
-      areaEffectRef: areaEffectDefinitionId,
-      resolvedState: hazardResolvedState,
-    },
-    areaEffect: {
-      schema: "zhuwei.area-effect/v1",
-      definitionId: areaEffectDefinitionId,
-      origin: { kind: "featureCentroid", elevationInches: String(areaOriginElevation) },
-      shape: {
-        kind: "sphere",
-        radiusInches: String(areaRadius),
-        propagation: input.areaPropagation,
-        ...(spreadBudget === undefined ? {} : { spreadBudgetInches: String(spreadBudget) }),
-      },
-      save: {
-        ability: input.saveAbility,
-        dc: String(saveDc),
-        halfOnSuccess: input.halfOnSuccess,
-      },
-      damage: { type: damageType, formula: damageFormula },
-      failureStatus: input.failureStatus,
-    },
+    hazard: hazardDefinition,
+    areaEffect: areaEffectDefinition,
   };
 
   const compiled = compileEnvironmentFeature(definition);
   if (!compiled.ok) fail("profile-compiler");
-  return compiled.artifact.tacticalFeature.environment.featureDefinition;
+  return definition;
 }

@@ -15,7 +15,12 @@ import {
 } from "../rules/profiles/manifests";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 import { SPELL_DEFINITIONS } from "../rules/spell-catalog";
-import { buildContextPack, type ContextPack } from "./context-pack";
+import {
+  buildContextPack,
+  type ContextPack,
+  type OptionalContextItem,
+  type RequiredContext,
+} from "./context-pack";
 import { KP_FORM_IDS, assertAllowedFormSet, type KpFormId } from "./form-catalog";
 import type { KpProposalRequest } from "./authoritative-types";
 import {
@@ -41,6 +46,7 @@ import {
 import {
   createDeterministicFtsAdapter,
   createStaticRetrievalRequest,
+  publicD1QueryTermsForStructuralRefs,
   rehydrateStaticContext,
   retrieveStaticReferences,
   staticSearchTerms,
@@ -172,6 +178,15 @@ export function createV3ProductionContextPreparer(
   const planner = options.plannerAdapter ?? createDisabledPlannerAdapter();
   const deterministicPlanner = createDeterministicPlannerAdapter();
   const allowedProfiles = allowedProfilesForModule(options.moduleProfile, corpus);
+  // D1 sees one corpus/profile-derived cover query for this immutable module
+  // configuration. Request-local scene, loadout, knowledge, intent, aliases,
+  // and Planner selections are merged only inside Worker memory; otherwise
+  // the choice of individually public terms would still disclose active Room
+  // state through the query seam.
+  const publicD1QueryTerms = publicD1QueryTermsForStructuralRefs(
+    corpus.index,
+    allowedProfiles,
+  );
   const d1 = options.database === undefined
     ? undefined
     : createD1StaticCorpusAdapter(options.database, {
@@ -191,7 +206,16 @@ export function createV3ProductionContextPreparer(
     if (d1 === undefined || synchronizedCorpusHash === corpus.corpusHash) return;
     if (synchronization === undefined) {
       synchronization = (async () => {
-        await d1.migrate();
+        try {
+          if (await d1.isCurrent(corpus)) {
+            synchronizedCorpusHash = corpus.corpusHash;
+            return;
+          }
+        } catch {
+          // Schema ownership stays with db/schema.ts and ordered Drizzle
+          // migrations. The caller records D1_SYNC_FAILED and falls back to
+          // deterministic retrieval when the deployed schema is unavailable.
+        }
         await d1.upsert(corpus);
         synchronizedCorpusHash = corpus.corpusHash;
       })().finally(() => {
@@ -230,6 +254,7 @@ export function createV3ProductionContextPreparer(
         exactAliases: exactAliasesInText(corpus, querySeed.queryText),
         queryText: querySeed.queryText,
         plannerQueryTerms: plannerRun.suggestion.queryTerms,
+        publicD1QueryTerms,
         limit: retrievalLimit,
       });
       const retrieved = await retrieveWithFallback({
@@ -243,7 +268,7 @@ export function createV3ProductionContextPreparer(
       const contextPack = buildContextPack({
         required,
         retrieved: retrieved.chunks,
-        optional: [],
+        optional: productionOptionalContext(options.moduleProfile, required),
         maxUnits,
       });
       return Object.freeze({
@@ -258,6 +283,60 @@ export function createV3ProductionContextPreparer(
       });
     },
   });
+}
+
+function productionOptionalContext(
+  profile: AuthoritativeModuleProfile,
+  required: RequiredContext,
+): readonly OptionalContextItem[] {
+  const items: OptionalContextItem[] = [{
+    ref: `optional:theme:${profile.moduleRef.profileId}`,
+    kind: "theme",
+    body: profile.tone.slice(0, 1_000),
+    priority: 30,
+  }];
+  const relevantNpcRefs = new Set(required.npcViews.map((entry) => entry.npcRef));
+  for (const npc of profile.storyBible.importantNpcs
+    .filter((entry) => relevantNpcRefs.has(entry.entityId))
+    .sort((left, right) => left.entityId.localeCompare(right.entityId))
+    .slice(0, 6)) {
+    items.push({
+      ref: `optional:voice:${profile.moduleRef.profileId}:${npc.entityId}`,
+      kind: "voice",
+      body: JSON.stringify({
+        npcRef: npc.entityId,
+        voice: npc.voice,
+        exampleLines: npc.exampleLines.slice(0, 3),
+      }),
+      priority: 40,
+    });
+  }
+  const sceneRef = typeof required.sceneDynamics.sceneRef === "string"
+    ? required.sceneDynamics.sceneRef
+    : undefined;
+  const location = sceneRef === undefined
+    ? undefined
+    : profile.storyBible.storyAnchors.locations.find((entry) => entry.sceneId === sceneRef);
+  if (location !== undefined) {
+    items.push({
+      ref: `optional:scene-index:${profile.moduleRef.profileId}:${location.sceneId}`,
+      kind: "lightweight-index",
+      body: JSON.stringify({
+        sceneRef: location.sceneId,
+        chapterRef: location.chapterId,
+        name: location.name,
+        location: location.location,
+      }),
+      priority: 20,
+    });
+    items.push({
+      ref: `optional:scene-background:${profile.moduleRef.profileId}:${location.sceneId}`,
+      kind: "secondary-background",
+      body: location.publicOpening.slice(0, 1_200),
+      priority: 10,
+    });
+  }
+  return Object.freeze(items.map((item) => Object.freeze(item)));
 }
 
 function rulesDocuments(): StaticDocument[] {

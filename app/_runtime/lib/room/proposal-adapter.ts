@@ -1,8 +1,23 @@
-import { collectStrings, validateProposal } from "../kp/authoritative-helpers";
+import { canonicalJson, collectStrings, validateProposal } from "../kp/authoritative-helpers";
+import {
+  CAUSAL_ACTION_LANGUAGE_PROFILE,
+  compileKpFormDraft,
+  lowerCausalActionProgram,
+  validateCausalActionProgram,
+  type CausalActionProgram,
+} from "../kp/causal-action-program";
+import {
+  KP_FORM_IDS,
+  validateKpFormDraft,
+  type KpFormId,
+} from "../kp/form-catalog";
 import {
   authoritativeModuleMigration,
   verifyAuthoritativeModuleMigration,
 } from "../module/authoritative";
+import { compileAbilityDefinition } from "../rules/profiles/ability-compiler";
+import { ENVIRONMENT_PROFILE } from "../rules/profiles/environment";
+import type { AuthoritativeWorldState } from "../rules";
 import type { AuthoritativeCharacterSeed, JsonObject } from "./authority-types";
 
 type CanonicalFixtureFact = {
@@ -48,6 +63,54 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+/** Resolves only a KP-submitted finite reference. Narrative text and labels
+ * are intentionally absent from this authority seam. */
+export function ownedEnvironmentAttackAbilityRef(
+  state: AuthoritativeWorldState,
+  actorCharacterId: string,
+  draft: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const source = state.combatRuntime.entities[actorCharacterId];
+  const requestedAbilityRef = draft.abilityRef;
+  if (!isRecord(source)
+    || !Array.isArray(source.abilityRefs)
+    || !isNonEmptyString(requestedAbilityRef)
+    || !source.abilityRefs.includes(requestedAbilityRef)) return undefined;
+  const definition = state.combatRuntime.definitions[requestedAbilityRef];
+  if (!isRecord(definition) || !compileAbilityDefinition(definition).ok) return undefined;
+  const target = isRecord(definition.target) ? definition.target : undefined;
+  const damage = Array.isArray(definition.damage) ? definition.damage.filter(isRecord) : [];
+  if (target?.kind !== "creatureOrEnvironmentFeature" || damage.length !== 1) return undefined;
+  const approach = String(draft.attackApproach);
+  const definitionKind = String(definition.definitionKind ?? "").toLowerCase();
+  const ranged = isNonEmptyString(target.rangeInches) || isNonEmptyString(target.rangeNormalInches);
+  const melee = isNonEmptyString(target.reachInches);
+  if ((approach === "spell" && definitionKind !== "spell")
+    || (approach === "ranged" && !ranged)
+    || (approach === "melee" && !melee)
+    || !["any", "spell", "ranged", "melee"].includes(approach)) return undefined;
+  return requestedAbilityRef;
+}
+
+/** Canonical serialized V3 Rules input used by the DO recovery journal. The
+ * Rules interpreter revalidates executable semantics at execution time; this
+ * seam prevents a forged version/profile/key surface from entering recovery. */
+export function isCanonicalV3CausalRulesInput(value: unknown): value is JsonObject {
+  if (!isRecord(value)
+    || Object.keys(value).sort().join(",")
+      !== "actionLanguageHash,actionPlanVersion,actorCharacterId,causalActionProgram,kind,rootActionId"
+    || value.kind !== "resolveCompoundActionPlan"
+    || value.actionPlanVersion !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
+    || value.actionLanguageHash !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash
+    || !isNonEmptyString(value.actorCharacterId)
+    || !isNonEmptyString(value.rootActionId)
+    || !isRecord(value.causalActionProgram)) return false;
+  const validation = validateCausalActionProgram(value.causalActionProgram);
+  return validation.ok
+    && value.causalActionProgram.languageRef === value.actionPlanVersion
+    && value.causalActionProgram.languageHash === value.actionLanguageHash;
+}
+
 function isProfileRef(value: unknown): value is { profileId: string; profileHash: string } {
   return isRecord(value)
     && Object.keys(value).sort().join(",") === "profileHash,profileId"
@@ -66,6 +129,68 @@ function sameProfileRef(
 export type RoomModuleMigrationBinding =
   | { kind: "bound"; proposal: JsonObject }
   | { kind: "rejected" };
+
+function normalizePrivateFormKpProposal(value: Record<string, unknown>): JsonObject | undefined {
+  const allowedKeys = new Set([
+    "kind", "formId", "draft", "causalActionProgram", "loweredCausalProgram",
+    "semanticFreezeHash", "repairUsed", "proposalAttemptId", "modelInvocationReceipt",
+    "rootActionId",
+  ]);
+  if (
+    Object.keys(value).some((key) => !allowedKeys.has(key))
+    ||
+    value.kind !== "privateFormProposal"
+    || typeof value.formId !== "string"
+    || !(KP_FORM_IDS as readonly string[]).includes(value.formId)
+    || !isRecord(value.draft)
+    || !isRecord(value.causalActionProgram)
+    || !isRecord(value.loweredCausalProgram)
+    || typeof value.semanticFreezeHash !== "string"
+    || !/^fnv1a64:[0-9a-f]{16}$/u.test(value.semanticFreezeHash)
+    || typeof value.repairUsed !== "boolean"
+    || !isNonEmptyString(value.proposalAttemptId)
+    || !isRecord(value.modelInvocationReceipt)
+  ) return undefined;
+  const formId = value.formId as KpFormId;
+  if (!validateKpFormDraft(formId, value.draft).ok) return undefined;
+  let program: CausalActionProgram;
+  try {
+    program = compileKpFormDraft(formId, value.draft);
+  } catch {
+    return undefined;
+  }
+  if (
+    canonicalJson(program) !== canonicalJson(value.causalActionProgram)
+    || canonicalJson(lowerCausalActionProgram(program)) !== canonicalJson(value.loweredCausalProgram)
+  ) return undefined;
+
+  if (
+    formId === "environmental-stunt.v1"
+    && value.draft.featureDisposition !== "explicitly-absent"
+  ) {
+    // The environment Rules profile owns this specialized lowering. It is
+    // connected only when the matching manifest is installed.
+    return {
+      kind: "resolveDynamicEnvironmentStunt",
+      environmentProgramVersion: ENVIRONMENT_PROFILE.profileId,
+      actionPlanVersion: program.languageRef,
+      actionLanguageHash: program.languageHash,
+      formProgramHash: program.semanticHash,
+      causalActionProgram: structuredClone(program) as unknown as JsonObject,
+      draft: structuredClone(value.draft) as JsonObject,
+    };
+  }
+
+  // Room supplies only the authenticated actor/root. Rules owns every
+  // semantic validation and transition derived from the complete frozen
+  // causal program; V3 is never relabelled as the historical ActionPlan v1.
+  return {
+    kind: "resolveCompoundActionPlan",
+    actionPlanVersion: program.languageRef,
+    actionLanguageHash: program.languageHash,
+    causalActionProgram: structuredClone(program) as unknown as JsonObject,
+  };
+}
 
 /**
  * Replaces the three caller-visible migration refs with the exact Registry
@@ -140,6 +265,7 @@ export async function bindRoomModuleMigration(
  */
 export function normalizeRoomKpProposal(value: unknown): JsonObject | undefined {
   if (!isRecord(value) || !isNonEmptyString(value.kind)) return undefined;
+  if (value.kind === "privateFormProposal") return normalizePrivateFormKpProposal(value);
   if (value.kind === "authenticatedPendingAnswer") {
     const keys = Object.keys(value).sort();
     return keys.length === 2
@@ -358,6 +484,14 @@ export function narrationProjection(
   const committedDelta = isRecord(observerNarrationProjection.committedDelta)
     ? structuredClone(observerNarrationProjection.committedDelta)
     : undefined;
+  const committedChanges = committedDelta !== undefined && Array.isArray(committedDelta.changes)
+    ? committedDelta.changes.filter(isRecord)
+    : [];
+  const pressure = committedChanges.find((change) => isNonEmptyString(change.pressure))?.pressure;
+  const opportunities = committedChanges.flatMap((change) =>
+    Array.isArray(change.opportunities)
+      ? change.opportunities.filter(isNonEmptyString)
+      : []);
   const observableStrings = collectStrings(observerNarrationProjection);
   const agencySubjects: Array<{
     subjectKind: "playerCharacter" | "npc";
@@ -377,6 +511,8 @@ export function narrationProjection(
     agencySubjects,
     narration: {
       ...(committedDelta === undefined ? {} : { committedDelta }),
+      pressure: isNonEmptyString(pressure) ? pressure : "",
+      opportunities: [...new Set(opportunities)].slice(0, 8),
       decisionPrompt: `决定权交还 ${characterId}：你接下来怎么做？`,
     },
   };

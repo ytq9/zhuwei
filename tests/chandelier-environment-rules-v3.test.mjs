@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { compileEnvironmentFeature } from "../app/_runtime/lib/rules/profiles/environment.ts";
+import { compileKpFormDraft } from "../app/_runtime/lib/kp/causal-action-program.ts";
+import {
+  compileEnvironmentFeature,
+  ENVIRONMENT_PROFILE,
+  LEGACY_ENVIRONMENT_PROFILE,
+} from "../app/_runtime/lib/rules/profiles/environment.ts";
+import {
+  buildCustomEnvironmentFeatureDefinition,
+} from "../app/_runtime/lib/rules/profiles/environment-definition-builder.ts";
+import { customEnvironmentDefinitionInputFromDraft } from "../app/_runtime/lib/rules/profiles/environment-form-lowering.ts";
+import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
 import {
   CURRENT_RUNTIME_PROFILE_MANIFEST,
   ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+  LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
 } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 import { createVersionedRulesRuntime } from "../app/_runtime/lib/rules/v2-runtime.ts";
 import { eventHash, validateEventEnvelope } from "../app/_runtime/lib/rules/v2/events.ts";
@@ -46,6 +57,101 @@ const legacyRuntime = createVersionedRulesRuntime({
   }],
   defaultManifest: CURRENT_RUNTIME_PROFILE_MANIFEST.manifest,
 });
+const legacyEnvironmentRuntime = createVersionedRulesRuntime({
+  registrations: [{
+    manifest: LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+    interpreterKind: "authoritative-v2",
+  }],
+  defaultManifest: LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.manifest,
+});
+
+function legacyChandelierDefinition() {
+  const definition = structuredClone(CHANDELIER_FEATURE_DEFINITION);
+  definition.schema = "zhuwei.environment-feature/v1";
+  definition.environmentProfile = structuredClone(LEGACY_ENVIRONMENT_PROFILE);
+  delete definition.effectMode;
+  return definition;
+}
+
+function stateOnlyThreePhaseDefinition() {
+  const definition = structuredClone(CUSTOM_SCENERY_WALL_FEATURE_DEFINITION);
+  definition.featureId = "feature:gallery:three-phase-screen";
+  definition.label = "可分两次展开的榆木屏风";
+  definition.effectMode = "state-only";
+  definition.initialState = "folded";
+  definition.stateGraph.definitionId = "environment-state-graph:gallery:three-phase-screen";
+  definition.stateGraph.states = [
+    {
+      state: "folded", opaque: false, impassable: false, cover: "none",
+      propagation: "passes", terrain: "normal",
+    },
+    {
+      state: "half-open", opaque: true, impassable: false, cover: "half",
+      propagation: "blocks", terrain: "normal",
+    },
+    {
+      state: "open", opaque: true, impassable: true, cover: "full",
+      propagation: "blocks", terrain: "normal",
+    },
+  ];
+  definition.stateGraph.transitions = [
+    { fromState: "folded", trigger: "damageAtOrBelow", remainingDurabilityAtOrBelow: "0", toState: "half-open" },
+    { fromState: "folded", trigger: "stuntSucceeded", toState: "half-open" },
+    { fromState: "half-open", trigger: "damageAtOrBelow", remainingDurabilityAtOrBelow: "0", toState: "open" },
+    { fromState: "half-open", trigger: "stuntSucceeded", toState: "open" },
+  ];
+  definition.hazard = null;
+  definition.areaEffect = null;
+  return definition;
+}
+
+function v3MultiThresholdCrateDefinition() {
+  const definition = structuredClone(CUSTOM_SCENERY_WALL_FEATURE_DEFINITION);
+  definition.featureId = CRATE_ID;
+  definition.label = "多阈值木箱";
+  definition.effectMode = "state-only";
+  definition.polygon = [
+    { x: "30", y: "-6" },
+    { x: "30", y: "6" },
+    { x: "42", y: "6" },
+    { x: "42", y: "-6" },
+  ];
+  definition.elevation = "0";
+  definition.height = "24";
+  definition.initialState = "intact";
+  definition.destructible.definitionId = "destructible:gallery:multi-threshold-crate";
+  definition.destructible.armorClass = "10";
+  definition.destructible.maximumDurability = "12";
+  definition.destructible.damageThreshold = "0";
+  definition.stateGraph.definitionId = "environment-state-graph:gallery:multi-threshold-crate";
+  definition.stateGraph.states = [
+    {
+      state: "damaged", opaque: false, impassable: true, cover: "half",
+      propagation: "passes", terrain: "normal",
+    },
+    {
+      state: "destroyed", opaque: false, impassable: false, cover: "none",
+      propagation: "passes", terrain: "rubble",
+    },
+    {
+      state: "intact", opaque: false, impassable: true, cover: "half",
+      propagation: "passes", terrain: "normal",
+    },
+  ];
+  definition.stateGraph.transitions = [
+    {
+      fromState: "intact", trigger: "damageAtOrBelow",
+      remainingDurabilityAtOrBelow: "10", toState: "damaged",
+    },
+    {
+      fromState: "intact", trigger: "damageAtOrBelow",
+      remainingDurabilityAtOrBelow: "2", toState: "destroyed",
+    },
+  ];
+  definition.hazard = null;
+  definition.areaEffect = null;
+  return definition;
+}
 
 function profileRef(profileId, digit) {
   return { profileId, profileHash: `sha256:${digit.repeat(64)}` };
@@ -65,7 +171,7 @@ function player(id, name, overrides = {}) {
     abilityScores: { str: 12, dex: 16, con: 12, int: 10, wis: 10, cha: 10 },
     proficiencyBonus: 2,
     proficientSkills: [],
-    resources: {},
+    resources: { resolve: 2 },
     loadout: {
       armorClass: 14,
       speedFeet: 30,
@@ -162,18 +268,147 @@ function initialize({
 }
 
 function stuntInput(world, rootActionId, options = {}) {
+  let normalizedOptions = structuredClone(options);
+  const activation = normalizedOptions.activation ?? { kind: "attack" };
+  const v3 = world.profiles.extensions.some((profile) =>
+    profile.profileId === ENVIRONMENT_PROFILE.profileId
+    && profile.profileHash === ENVIRONMENT_PROFILE.profileHash);
+  let causalBinding = {};
+  if (v3) {
+    normalizedOptions.activation ??= structuredClone(activation);
+    const suppliedDefinition = normalizedOptions.materialization?.featureDefinition;
+    const definition = suppliedDefinition === undefined ? undefined : structuredClone(suppliedDefinition);
+    const base = {
+      goal: "按玩家的自定义想法改变当前环境",
+      method: "由 KP 冻结具体对象与机械后执行",
+      featureDescription: definition?.label ?? feature(world.state, world.featureId)?.label ?? "既有环境对象",
+      intendedOutcome: "结算已冻结的环境变化",
+      featureDisposition: definition === undefined ? "reuse-existing" : "reasonable-open-blank",
+      activation: activation.kind,
+      basisRefs: [definition === undefined ? world.featureId : definition.sceneId],
+      ...(activation.kind === "attack"
+        ? { attackApproach: "any", abilityRef: world.abilityRef }
+        : activation.kind === "check"
+          ? {
+              checkAbility: activation.ability,
+              checkSkill: activation.skill,
+              checkDc: Number(activation.dc),
+              checkMode: activation.mode,
+              checkSuccessConsequence: "环境按冻结的成功分支变化。",
+              checkFailureConsequence: "环境保持当前状态。",
+            }
+          : {}),
+      ...(normalizedOptions.resourceCost === undefined ? {} : {
+        resourceRef: normalizedOptions.resourceCost.resourceRef,
+        resourceAmount: normalizedOptions.resourceCost.amount,
+      }),
+    };
+    let draft = base;
+    if (definition !== undefined) {
+      const xs = definition.polygon.map(({ x }) => Number(x));
+      const ys = definition.polygon.map(({ y }) => Number(y));
+      const damageTransitions = definition.stateGraph.transitions.filter((entry) =>
+        entry.trigger === "damageAtOrBelow");
+      const stuntTransitions = definition.stateGraph.transitions.filter((entry) =>
+        entry.trigger === "stuntSucceeded");
+      const hazardTransitions = definition.stateGraph.transitions.filter((entry) =>
+        entry.trigger === "hazardResolved");
+      draft = {
+        ...base,
+        effectMode: definition.effectMode,
+        material: "fixture-frozen-material",
+        centerXInches: (Math.min(...xs) + Math.max(...xs)) / 2,
+        centerYInches: (Math.min(...ys) + Math.max(...ys)) / 2,
+        elevationInches: Number(definition.elevation),
+        widthInches: Math.max(...xs) - Math.min(...xs),
+        depthInches: Math.max(...ys) - Math.min(...ys),
+        heightInches: Number(definition.height),
+        objectAc: Number(definition.destructible.armorClass),
+        objectHitPoints: Number(definition.destructible.maximumDurability),
+        damageThreshold: Number(definition.destructible.damageThreshold),
+        immuneDamageTypes: [...definition.destructible.immuneDamageTypes],
+        initialPhase: definition.initialState,
+        phaseNames: definition.stateGraph.states.map(({ state }) => state),
+        phaseOpaque: definition.stateGraph.states.map(({ opaque }) => opaque),
+        phaseImpassable: definition.stateGraph.states.map(({ impassable }) => impassable),
+        phaseCover: definition.stateGraph.states.map(({ cover }) => cover),
+        phaseEffectPropagation: definition.stateGraph.states.map(({ propagation }) => propagation),
+        phaseTerrain: definition.stateGraph.states.map(({ terrain }) => terrain ?? "normal"),
+        damageFromPhases: damageTransitions.map(({ fromState }) => fromState),
+        damageRemainingAtOrBelow: damageTransitions.map(({ remainingDurabilityAtOrBelow }) =>
+          Number(remainingDurabilityAtOrBelow)),
+        damageToPhases: damageTransitions.map(({ toState }) => toState),
+        ...(stuntTransitions.length === 0 ? {} : {
+          stuntFromPhases: stuntTransitions.map(({ fromState }) => fromState),
+          stuntToPhases: stuntTransitions.map(({ toState }) => toState),
+        }),
+        trigger: "KP 冻结的具体环境触发条件",
+        ...(definition.effectMode === "state-only" ? {} : {
+          hazardFromPhases: hazardTransitions.map(({ fromState }) => fromState),
+          hazardToPhases: hazardTransitions.map(({ toState }) => toState),
+          hazardTriggerPhase: definition.hazard.trigger.state,
+          hazardResolvedPhase: definition.hazard.resolvedState,
+          areaOriginElevationInches: Number(definition.areaEffect.origin.elevationInches),
+          areaRadiusInches: Number(definition.areaEffect.shape.radiusInches),
+          propagation: definition.areaEffect.shape.propagation,
+          ...(definition.areaEffect.shape.spreadBudgetInches === undefined ? {} : {
+            spreadBudgetInches: Number(definition.areaEffect.shape.spreadBudgetInches),
+          }),
+          saveAbility: definition.areaEffect.save.ability,
+          saveDc: Number(definition.areaEffect.save.dc),
+          halfOnSuccess: definition.areaEffect.save.halfOnSuccess,
+          damage: definition.areaEffect.damage.formula,
+          damageType: definition.areaEffect.damage.type,
+          condition: definition.areaEffect.failureStatus,
+          debrisOutcome: "进入 KP 冻结的最终环境状态。",
+        }),
+      };
+      normalizedOptions.materialization.featureDefinition = buildCustomEnvironmentFeatureDefinition(
+        customEnvironmentDefinitionInputFromDraft({
+          draft,
+          featureId: world.featureId,
+          sceneId: definition.sceneId,
+        }),
+      );
+    }
+    const program = compileKpFormDraft("environmental-stunt.v1", draft);
+    causalBinding = {
+      actionPlanVersion: program.languageRef,
+      actionLanguageHash: program.languageHash,
+      causalActionProgram: program,
+    };
+  }
   const input = {
     kind: "invokeEnvironmentalStunt",
     rootActionId,
     actorCharacterId: ALICE.characterId,
     controllerPrincipalId: ALICE.principalId,
     featureId: world.featureId,
-    ...options,
+    ...causalBinding,
+    ...normalizedOptions,
   };
-  if (options.activation?.kind !== "check" && options.activation?.kind !== "direct") {
+  if (activation.kind !== "check" && activation.kind !== "direct") {
     input.abilityRef = world.abilityRef;
   }
   return input;
+}
+
+function explicitAbsenceInput(rootActionId) {
+  const program = compileKpFormDraft("environmental-stunt.v1", {
+    goal: "利用当前场景中不存在的对象",
+    method: "尝试触发该对象",
+    featureDescription: "并不存在的环境对象",
+    intendedOutcome: "在世界内确认该前提不成立",
+    featureDisposition: "explicitly-absent",
+  });
+  return {
+    kind: "resolveCompoundActionPlan",
+    rootActionId,
+    actorCharacterId: ALICE.characterId,
+    actionPlanVersion: program.languageRef,
+    actionLanguageHash: program.languageHash,
+    causalActionProgram: program,
+  };
 }
 
 let responseOrdinal = 0;
@@ -228,6 +463,136 @@ function playerProjection(world) {
   return projected;
 }
 
+function eventWithPayload(event, payload) {
+  const forged = structuredClone(event);
+  forged.payload = structuredClone(payload);
+  forged.payloadHash = canonicalSha256(forged.payload);
+  forged.eventHash = eventHash(forged);
+  return forged;
+}
+
+function genesisWithEnvironmentFeature(genesis, tacticalFeature) {
+  const forged = structuredClone(genesis);
+  const geometry = forged.initialState.combatRuntime.scenes["scene:gallery"].geometry;
+  geometry.obstacles = geometry.obstacles
+    .map((feature) => feature.featureId === tacticalFeature.featureId
+      ? structuredClone(tacticalFeature)
+      : feature)
+    .sort((left, right) => left.featureId.localeCompare(right.featureId));
+  forged.initialStateHash = hashWorldState(forged.initialState);
+  forged.initialState.eventHeadHash = forged.initialStateHash;
+  const { genesisHash: _genesisHash, ...unsigned } = forged;
+  forged.genesisHash = canonicalSha256(unsigned);
+  return forged;
+}
+
+function installMultiThresholdCrate(world, targetGeneration = "unprofiled") {
+  const geometry = world.state.combatRuntime.scenes["scene:gallery"].geometry;
+  let crate;
+  if (targetGeneration === "v3") {
+    const compiled = compileEnvironmentFeature(v3MultiThresholdCrateDefinition());
+    assert.equal(compiled.ok, true, JSON.stringify(compiled));
+    if (!compiled.ok) throw new Error("V3 multi-threshold crate did not compile");
+    crate = structuredClone(compiled.artifact.tacticalFeature);
+  } else {
+    crate = structuredClone(geometry.obstacles.find((entry) => entry.featureId === CRATE_ID));
+    assert.ok(crate);
+    crate.state = "intact";
+    crate.durability.current = "12";
+    crate.durability.maximum = "12";
+    crate.stateGraph.durability.maximum = "12";
+    crate.stateGraph.states = [
+      {
+        state: "damaged", opaque: false, impassable: true, cover: "half",
+        propagation: "passes", terrain: "normal",
+      },
+      {
+        state: "destroyed", opaque: false, impassable: false, cover: "none",
+        propagation: "passes", terrain: "rubble",
+      },
+      {
+        state: "intact", opaque: false, impassable: true, cover: "half",
+        propagation: "passes", terrain: "normal",
+      },
+    ];
+    crate.stateGraph.damageTransitions = [
+      { fromState: "intact", remainingDurabilityAtOrBelow: "10", toState: "damaged" },
+      { fromState: "intact", remainingDurabilityAtOrBelow: "2", toState: "destroyed" },
+    ];
+    crate.stateGraph.transitions = [];
+  }
+  world.genesis = genesisWithEnvironmentFeature(world.genesis, crate);
+  const rebuilt = world.rulesRuntime.replay(world.genesis, []);
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+  world.state = rebuilt.state;
+  return crate;
+}
+
+test("environment bindings and materialization events reject both cross-generation directions", () => {
+  const legacyDefinition = legacyChandelierDefinition();
+  const v3Blank = initialize();
+  const v2Blank = initialize({
+    featureDefinition: legacyDefinition,
+    rulesRuntime: legacyEnvironmentRuntime,
+  });
+  const v3Materialized = v3Blank.rulesRuntime.step(
+    v3Blank.profiles,
+    v3Blank.state,
+    stuntInput(v3Blank, "root:environment:cross-v3", {
+      materialization: { featureDefinition: CHANDELIER_FEATURE_DEFINITION },
+    }),
+  );
+  const v2Materialized = v2Blank.rulesRuntime.step(
+    v2Blank.profiles,
+    v2Blank.state,
+    stuntInput(v2Blank, "root:environment:cross-v2", {
+      materialization: { featureDefinition: legacyDefinition },
+    }),
+  );
+  assert.equal(v3Materialized.kind, "awaitingRandomness", JSON.stringify(v3Materialized));
+  assert.equal(v2Materialized.kind, "awaitingRandomness", JSON.stringify(v2Materialized));
+  const v3Event = v3Materialized.events.find((event) =>
+    event.eventType === "EnvironmentFeatureMaterialized");
+  const v2Event = v2Materialized.events.find((event) =>
+    event.eventType === "EnvironmentFeatureMaterialized");
+  assert.ok(v3Event);
+  assert.ok(v2Event);
+
+  for (const [target, donor, world] of [
+    [v3Event, v2Event, v3Blank],
+    [v2Event, v3Event, v2Blank],
+  ]) {
+    const forged = eventWithPayload(target, donor.payload);
+    assert.equal(validateEventEnvelope(forged).ok, false);
+    const replayed = world.rulesRuntime.replay(world.genesis, [forged]);
+    assert.equal(replayed.kind, "rejected", JSON.stringify(replayed));
+    assert.equal(replayed.rejection.code, "invalidEventEnvelope");
+  }
+
+  const v3Existing = initialize({ existingChandelier: true });
+  const v2Existing = initialize({
+    existingChandelier: true,
+    featureDefinition: legacyDefinition,
+    rulesRuntime: legacyEnvironmentRuntime,
+  });
+  const v3Compiled = compileEnvironmentFeature(CHANDELIER_FEATURE_DEFINITION);
+  const v2Compiled = compileEnvironmentFeature(legacyDefinition);
+  assert.equal(v3Compiled.ok, true);
+  assert.equal(v2Compiled.ok, true);
+  if (!v3Compiled.ok || !v2Compiled.ok) return;
+  for (const [world, donorFeature] of [
+    [v3Existing, v2Compiled.artifact.tacticalFeature],
+    [v2Existing, v3Compiled.artifact.tacticalFeature],
+  ]) {
+    const replayed = world.rulesRuntime.replay(
+      genesisWithEnvironmentFeature(world.genesis, donorFeature),
+      [],
+    );
+    assert.equal(replayed.kind, "rejected", JSON.stringify(replayed));
+    assert.equal(replayed.rejection.code, "profileIntegrityMismatch");
+  }
+});
+
 test("existing features reuse stable ids; blank features materialize before randomness; absence resolves in world", () => {
   const legacy = initialize({ rulesRuntime: legacyRuntime });
   const unsupported = legacy.rulesRuntime.step(
@@ -245,7 +610,10 @@ test("existing features reuse stable ids; blank features materialize before rand
     stuntInput(existing, "root:environment:reuse"),
   );
   assert.equal(reused.kind, "awaitingRandomness", JSON.stringify(reused));
-  assert.deepEqual(reused.events.map(({ eventType }) => eventType), ["RandomnessRequested"]);
+  assert.deepEqual(reused.events.map(({ eventType }) => eventType), [
+    "ImprovisedActionResolved",
+    "RandomnessRequested",
+  ]);
   assert.equal(
     feature(reused.state, CHANDELIER_ID).environment.featureDefinitionHash,
     feature(existing.state, CHANDELIER_ID).environment.featureDefinitionHash,
@@ -261,29 +629,44 @@ test("existing features reuse stable ids; blank features materialize before rand
   );
   assert.equal(materialized.kind, "awaitingRandomness", JSON.stringify(materialized));
   assert.deepEqual(materialized.events.map(({ eventType }) => eventType), [
+    "ImprovisedActionResolved",
     "EnvironmentFeatureMaterialized",
     "RandomnessRequested",
   ]);
-  assert.equal(materialized.events[0].secrecy, "internal");
+  assert.equal(materialized.events[1].secrecy, "internal");
   assert.equal(feature(materialized.state, CHANDELIER_ID).state, "suspended");
   const materializedProjection = playerProjection({ ...blank, state: materialized.state });
   assert.ok(materializedProjection.tacticalProjection.knownFeatures
     .some(({ id }) => id === CHANDELIER_ID));
   assert.ok(!JSON.stringify(materializedProjection).includes("featureDefinitionHash"));
-  const forgedLegacyEvent = structuredClone(materialized.events[0]);
+  const forgedLegacyEvent = structuredClone(materialized.events[1]);
   forgedLegacyEvent.profiles = structuredClone(CURRENT_RUNTIME_PROFILE_MANIFEST);
   forgedLegacyEvent.eventHash = eventHash(forgedLegacyEvent);
   assert.equal(validateEventEnvelope(forgedLegacyEvent).ok, false);
+  const forgedCausalLink = eventWithPayload(materialized.events[1], {
+    ...materialized.events[1].payload,
+    causalProgramHash: "fnv1a64:0000000000000000",
+  });
+  assert.equal(validateEventEnvelope(forgedCausalLink).ok, true);
+  const forgedReplay = blank.rulesRuntime.replay(
+    blank.genesis,
+    [materialized.events[0], forgedCausalLink],
+  );
+  assert.equal(forgedReplay.kind, "rejected", JSON.stringify(forgedReplay));
 
   const absent = initialize();
   const refused = absent.rulesRuntime.step(
     absent.profiles,
     absent.state,
-    stuntInput(absent, "root:environment:absent"),
+    explicitAbsenceInput("root:environment:absent"),
   );
   assert.equal(refused.kind, "committed", JSON.stringify(refused));
-  assert.deepEqual(refused.events.map(({ eventType }) => eventType), ["EnvironmentStuntRefused"]);
-  assert.equal(refused.mechanicalResult.outcome, "resolvedInWorld");
+  assert.deepEqual(refused.events.map(({ eventType }) => eventType), [
+    "ImprovisedActionResolved",
+    "ImprovisedActionResolved",
+    "KnowledgeAcquired",
+  ]);
+  assert.equal(refused.mechanicalResult.disposition, "inWorldRefusal");
   assert.equal(feature(refused.state, CHANDELIER_ID), undefined);
   assert.equal(refused.state.combatRuntime.randomnessResolutions["root:environment:absent"], undefined);
 
@@ -344,6 +727,145 @@ test("miss and hit below durability threshold consume the frozen action branch w
   assert.equal(feature(damaged.state, CHANDELIER_ID).state, "suspended");
   assert.ok(Number(feature(damaged.state, CHANDELIER_ID).durability.current) > 0);
   assert.ok(Number(feature(damaged.state, CHANDELIER_ID).durability.current) < 10);
+});
+
+test("area damage uses the target generation for multi-threshold semantics and replay", () => {
+  for (const [label, targetGeneration, expectedState] of [
+    ["unprofiled-target", "unprofiled", "damaged"],
+    ["v3-target", "v3", "destroyed"],
+  ]) {
+    const world = initialize({ existingChandelier: true });
+    installMultiThresholdCrate(world, targetGeneration);
+    const attack = world.rulesRuntime.step(
+      world.profiles,
+      world.state,
+      stuntInput(world, `root:environment:multi-threshold:${label}`),
+    );
+    assert.equal(attack.kind, "awaitingRandomness", JSON.stringify(attack));
+    assert.ok(attack.state.combatRuntime.randomnessResolutions[attack.resolutionId]);
+    const hazard = fulfill(world, attack, (purpose) =>
+      purpose.startsWith("attack:environment:") ? 20 : 8);
+    assert.equal(hazard.kind, "awaitingRandomness", JSON.stringify(hazard));
+    const resolved = fulfill(world, hazard, (purpose, count) =>
+      purpose.startsWith("damage:environment-hazard:")
+        ? [5, 6].slice(0, count)
+        : Array(count).fill(20));
+    assert.equal(resolved.kind, "committed", JSON.stringify(resolved));
+    const crate = feature(resolved.state, CRATE_ID);
+    assert.equal(crate.durability.current, "1");
+    assert.equal(crate.state, expectedState, label);
+    const damaged = world.events.find((event) =>
+      event.eventType === "EnvironmentAreaFeatureDamaged"
+      && event.payload.targetFeatureId === CRATE_ID);
+    assert.equal(damaged.payload.toState, expectedState, label);
+    const replayed = world.rulesRuntime.replay(world.genesis, world.events);
+    assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
+    assert.equal(feature(replayed.state, CRATE_ID).state, expectedState, `${label}:replay`);
+  }
+});
+
+test("only V3 supports resource-priced successor-state environmental stunts", () => {
+  const definition = stateOnlyThreePhaseDefinition();
+  const world = initialize({ existingChandelier: true, featureDefinition: definition });
+  const first = world.rulesRuntime.step(world.profiles, world.state, stuntInput(
+    world,
+    "root:environment:three-phase:first",
+    {
+      activation: { kind: "direct" },
+      resourceCost: { resourceRef: "resolve", amount: 1 },
+    },
+  ));
+  assert.equal(first.kind, "committed", JSON.stringify(first));
+  assert.equal(feature(first.state, definition.featureId).state, "half-open");
+  assert.equal(first.state.entities[ALICE.characterId].resources.resolve, 1);
+  assert.equal(first.events.filter((event) => event.eventType === "ResourceReserved").length, 1);
+
+  const nextEligibleTurn = structuredClone(first.state);
+  nextEligibleTurn.combatRuntime.entities[ALICE.characterId].turn.action = "1";
+  const second = world.rulesRuntime.step(world.profiles, nextEligibleTurn, stuntInput(
+    world,
+    "root:environment:three-phase:second",
+    {
+      activation: { kind: "direct" },
+      resourceCost: { resourceRef: "resolve", amount: 1 },
+    },
+  ));
+  assert.equal(second.kind, "committed", JSON.stringify(second));
+  assert.equal(feature(second.state, definition.featureId).state, "open");
+  assert.equal(second.state.entities[ALICE.characterId].resources.resolve, 0);
+  assert.equal(second.events.filter((event) => event.eventType === "ResourceReserved").length, 1);
+
+  const noEdge = world.rulesRuntime.step(world.profiles, second.state, stuntInput(
+    world,
+    "root:environment:three-phase:no-edge",
+    { activation: { kind: "direct" } },
+  ));
+  assert.equal(noEdge.kind, "rejected", JSON.stringify(noEdge));
+  assert.equal(noEdge.rejection.code, "worldLawViolation");
+  assert.equal(noEdge.events.length, 0);
+
+  const insufficientWorld = initialize({ existingChandelier: true, featureDefinition: definition });
+  const insufficient = insufficientWorld.rulesRuntime.step(
+    insufficientWorld.profiles,
+    insufficientWorld.state,
+    stuntInput(insufficientWorld, "root:environment:three-phase:insufficient", {
+      activation: { kind: "direct" },
+      resourceCost: { resourceRef: "resolve", amount: 3 },
+    }),
+  );
+  assert.equal(insufficient.kind, "rejected", JSON.stringify(insufficient));
+  assert.equal(insufficient.rejection.code, "insufficientResource");
+  assert.equal(insufficient.events.length, 0);
+  assert.equal(insufficientWorld.state.entities[ALICE.characterId].resources.resolve, 2);
+
+  const legacyDefinition = legacyChandelierDefinition();
+  legacyDefinition.stateGraph.transitions.push({
+    fromState: "debris",
+    trigger: "stuntSucceeded",
+    toState: "falling",
+  });
+  legacyDefinition.stateGraph.transitions.sort((left, right) =>
+    `${left.fromState}\u0000${left.trigger}\u0000${left.remainingDurabilityAtOrBelow ?? ""}\u0000${left.toState}`
+      .localeCompare(`${right.fromState}\u0000${right.trigger}\u0000${right.remainingDurabilityAtOrBelow ?? ""}\u0000${right.toState}`));
+  const legacyWorld = initialize({
+    existingChandelier: true,
+    featureDefinition: legacyDefinition,
+    rulesRuntime: legacyEnvironmentRuntime,
+  });
+  const legacyCost = legacyWorld.rulesRuntime.step(
+    legacyWorld.profiles,
+    legacyWorld.state,
+    stuntInput(legacyWorld, "root:environment:legacy-resource", {
+      activation: { kind: "direct" },
+      resourceCost: { resourceRef: "resolve", amount: 1 },
+    }),
+  );
+  assert.equal(legacyCost.kind, "rejected", JSON.stringify(legacyCost));
+  assert.equal(legacyCost.rejection.code, "invalidRulesInput");
+  assert.equal(legacyCost.events.length, 0);
+  assert.equal(legacyWorld.state.entities[ALICE.characterId].resources.resolve, 2);
+
+  const legacyAttack = legacyWorld.rulesRuntime.step(
+    legacyWorld.profiles,
+    legacyWorld.state,
+    stuntInput(legacyWorld, "root:environment:legacy-to-debris"),
+  );
+  const legacyHazard = fulfill(legacyWorld, legacyAttack, (purpose) =>
+    purpose.startsWith("attack:environment:") ? 20 : 8);
+  const legacyResolved = fulfill(legacyWorld, legacyHazard, (purpose, count) =>
+    purpose.startsWith("damage:environment-hazard:")
+      ? Array(count).fill(1)
+      : Array(count).fill(20));
+  assert.equal(legacyResolved.kind, "committed", JSON.stringify(legacyResolved));
+  assert.equal(feature(legacyResolved.state, legacyDefinition.featureId).state, "debris");
+  const legacySuccessor = legacyWorld.rulesRuntime.step(
+    legacyWorld.profiles,
+    legacyResolved.state,
+    stuntInput(legacyWorld, "root:environment:legacy-successor", { activation: { kind: "direct" } }),
+  );
+  assert.equal(legacySuccessor.kind, "rejected", JSON.stringify(legacySuccessor));
+  assert.equal(legacySuccessor.rejection.code, "worldLawViolation");
+  assert.equal(legacySuccessor.events.length, 0);
 });
 
 test("KP-authored non-chandelier scenery supports attack, check, and direct activation without caller targets or rerolls", () => {
@@ -527,6 +1049,7 @@ test("KP-authored non-chandelier scenery supports attack, check, and direct acti
   );
   assert.equal(directHazard.kind, "awaitingRandomness", JSON.stringify(directHazard));
   assert.deepEqual(directHazard.events.map(({ eventType }) => eventType), [
+    "ImprovisedActionResolved",
     "AbilityInvoked",
     "EnvironmentFeatureStateChanged",
     "RandomnessRequested",
@@ -580,7 +1103,8 @@ test("falling chandelier resolves complete authority geometry, hidden death, deb
   assert.ok(world.events.every(({ rootActionId }) => rootActionId === input.rootActionId));
   assert.ok(world.events.every((event, index, events) => index === 0
     || BigInt(events[index - 1].eventSeq) + 1n === BigInt(event.eventSeq)));
-  assert.deepEqual(eventTypes.slice(0, 2), [
+  assert.deepEqual(eventTypes.slice(0, 3), [
+    "ImprovisedActionResolved",
     "EnvironmentFeatureMaterialized",
     "RandomnessRequested",
   ]);
@@ -594,6 +1118,19 @@ test("falling chandelier resolves complete authority geometry, hidden death, deb
   assert.equal(eventTypes.at(-1), "EnvironmentFeatureStateChanged");
 
   const hazard = world.events.find(({ eventType }) => eventType === "EnvironmentHazardTriggered");
+  assert.ok(hazard);
+  const forgedHazard = structuredClone(hazard);
+  forgedHazard.payload.environmentProfile = structuredClone(LEGACY_ENVIRONMENT_PROFILE);
+  forgedHazard.payloadHash = canonicalSha256(forgedHazard.payload);
+  forgedHazard.eventHash = eventHash(forgedHazard);
+  assert.equal(validateEventEnvelope(forgedHazard).ok, false);
+  const hazardIndex = world.events.indexOf(hazard);
+  const forgedHazardReplay = world.rulesRuntime.replay(
+    world.genesis,
+    [...world.events.slice(0, hazardIndex), forgedHazard],
+  );
+  assert.equal(forgedHazardReplay.kind, "rejected", JSON.stringify(forgedHazardReplay));
+  assert.equal(forgedHazardReplay.rejection.code, "invalidEventEnvelope");
   assert.deepEqual(hazard.payload.entityTargetIds, [
     ALICE.characterId,
     ALLY.characterId,

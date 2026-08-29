@@ -96,6 +96,8 @@ export type ModelInvocationResult =
 export const MODEL_INVOCATION_FAILURE_STAGES = [
   "structuredOutput",
   "proposalSchema",
+  "proposalReference",
+  "contextPack",
   "narrationSchema",
   "narrationGrounding",
   "projectionBinding",
@@ -479,6 +481,21 @@ export type AuthoritativeKpProposal = KpProposalDraft & {
   modelInvocationReceipt: ModelInvocationReceipt;
 };
 
+/** New-room-only private Form envelope. It is server-side data and is never a
+ * player/API input surface. Room normalization verifies and lowers it before
+ * the existing Rules `step` boundary. */
+export type V3AuthoritativeKpProposal = {
+  kind: "privateFormProposal";
+  formId: string;
+  draft: Record<string, unknown>;
+  causalActionProgram: unknown;
+  loweredCausalProgram: unknown;
+  semanticFreezeHash: string;
+  repairUsed: boolean;
+  proposalAttemptId: string;
+  modelInvocationReceipt: ModelInvocationReceipt;
+};
+
 export type KpProposalRequest = {
   preparedActionId: string;
   rootActionId: string;
@@ -486,7 +503,64 @@ export type KpProposalRequest = {
   projection: unknown;
   attempt: number;
   diagnostics?: unknown;
+  /** Server-local prior envelope for the sole narrow repair. Never accepted
+   * from a page or public API. */
+  priorProposal?: unknown;
 };
+
+/** Server-private decision input for one already-due NPC/Faction ActorPlan.
+ * It is deliberately separate from player intent and V3 private Forms. */
+export type DueActorPlanDecisionRequest = {
+  preparedActionId: string;
+  rootActionId: string;
+  dueActorPlan: unknown;
+  projection: unknown;
+  attempt: 1;
+};
+
+export type DueActorPlanRevision = {
+  reason: string;
+  premiseRefs: string[];
+  nextStep: string;
+  resourceRefs: string[];
+  due: ActorPlanDueProposal | null;
+  trigger: ActorPlanTriggerProposal | null;
+  trace: ActorPlanTraceProposal;
+  alternateTarget: ActorPlanAlternateTargetProposal;
+};
+
+type DueActorPlanDecisionBase = {
+  kind: "actorPlanDecision";
+  planId: string;
+  proposalAttemptId: string;
+  rootActionId: string;
+};
+
+/** Exact envelope accepted by RoomDO.commitDueActorPlan. Model receipts stay
+ * outside this value because the DO contract is closed. */
+export type DueActorPlanDecision = DueActorPlanDecisionBase & (
+  | {
+      decision: "execute";
+      mechanicalProposal: NpcSemanticActionPlan | null;
+      targetRef?: string;
+    }
+  | {
+      decision: "revise";
+      mechanicalProposal: null;
+      revision: DueActorPlanRevision;
+    }
+  | {
+      decision: "defer";
+      mechanicalProposal: null;
+      reason: string;
+      deferUntilFictionMicros: string;
+    }
+  | {
+      decision: "cancel";
+      mechanicalProposal: null;
+      reason: string;
+    }
+);
 
 export type KpNarrationRequest = {
   rootActionId: string;
@@ -525,6 +599,19 @@ export type CurrentNarrationDraft = {
   agencyClaims: NarrationAgencyClaim[];
 };
 
+/** SPEC-0015 model output. All publication metadata is derived server-side. */
+export type BodyOnlyNarrationDraft = {
+  body: string;
+};
+
+export type BodyOnlyCurrentNarration = BodyOnlyNarrationDraft & {
+  audience: {
+    viewerKey: string;
+    projectionHash: string;
+  };
+  modelInvocationReceipt: ModelInvocationReceipt;
+};
+
 export type CurrentNarration = CurrentNarrationDraft & {
   audience: {
     viewerKey: string;
@@ -560,9 +647,23 @@ export type AuthoritativeKpAdapterOptions = {
   now?: () => number;
   invocationTimeoutMs?: number;
   onInvocationReceipt?: (receipt: ModelInvocationReceipt) => void;
+  /** Optional production seam for D1/static retrieval and Planner. Required
+   * context is still rebuilt and checked inside the adapter. */
+  prepareV3Context?: (
+    request: KpProposalRequest,
+    allowedFormIds: readonly string[],
+  ) => Promise<{
+    contextPack: unknown;
+    orderedFormIds?: readonly string[];
+    plannerReceipt?: unknown;
+    retrievalReceipt?: unknown;
+  }>;
 };
 
 export type AuthoritativeKpAdapter = {
-  propose(request: KpProposalRequest): Promise<AuthoritativeKpProposal>;
-  narrate(request: KpNarrationRequest): Promise<CurrentNarration>;
+  propose(request: KpProposalRequest): Promise<AuthoritativeKpProposal | V3AuthoritativeKpProposal>;
+  /** Present on V3 production adapters. Optional so historical/test adapters
+   * keep their exact generic-proposal behavior. */
+  decideDueActorPlan?(request: DueActorPlanDecisionRequest): Promise<DueActorPlanDecision>;
+  narrate(request: KpNarrationRequest): Promise<CurrentNarration | BodyOnlyCurrentNarration>;
 };

@@ -1164,8 +1164,9 @@
       "id": "dynamic-fact-01",
       "category": "动态事实",
       "categoryCode": "dynamic-fact",
-      "intent": "我检查仓库门边是否有日常装卸使用的空手推车。",
-      "goldForm": "materialization.v1",
+      "intent": "我想按顺序敲击墙上的陶片，让墙腔里的风压喷向追兵。",
+      "goldForm": "environmental-stunt.v1",
+      "environmentScenario": "open-check",
       "requiredRefs": [
         "scene:dynamic-fact-01",
         "gold:dynamic-fact",
@@ -1179,8 +1180,8 @@
       "expectedRoute": "executable",
       "expectedExecutable": true,
       "signals": {
-        "mayMaterialize": true,
-        "preferredCount": 3
+        "mayUseEnvironment": true,
+        "preferredCount": 6
       },
       "retrievalMode": "structure",
       "retrievalAlias": "动态事实",
@@ -1191,8 +1192,9 @@
       "id": "dynamic-fact-02",
       "category": "动态事实",
       "categoryCode": "dynamic-fact",
-      "intent": "我寻找礼堂里可能用于悬挂旗帜的长绳。",
-      "goldForm": "materialization.v1",
+      "intent": "我射断檐角那串陶制雨链，让蓄在槽内的水幕砸向门口。",
+      "goldForm": "environmental-stunt.v1",
+      "environmentScenario": "open-attack",
       "requiredRefs": [
         "scene:dynamic-fact-02",
         "gold:dynamic-fact",
@@ -1206,8 +1208,8 @@
       "expectedRoute": "executable",
       "expectedExecutable": true,
       "signals": {
-        "mayMaterialize": true,
-        "preferredCount": 3
+        "mayUseEnvironment": true,
+        "preferredCount": 6
       },
       "retrievalMode": "alias",
       "retrievalAlias": "动态事实",
@@ -1218,8 +1220,9 @@
       "id": "dynamic-fact-03",
       "category": "动态事实",
       "categoryCode": "dynamic-fact",
-      "intent": "我看看厨房是否备有能快速制造浓烟的湿柴。",
-      "goldForm": "materialization.v1",
+      "intent": "我翻转墙边的折叠木格，让它顺着地槽展开并封住窄道。",
+      "goldForm": "environmental-stunt.v1",
+      "environmentScenario": "open-direct",
       "requiredRefs": [
         "scene:dynamic-fact-03",
         "gold:dynamic-fact",
@@ -1233,8 +1236,8 @@
       "expectedRoute": "executable",
       "expectedExecutable": true,
       "signals": {
-        "mayMaterialize": true,
-        "preferredCount": 3
+        "mayUseEnvironment": true,
+        "preferredCount": 6
       },
       "retrievalMode": "fts",
       "retrievalAlias": "动态事实",
@@ -1245,8 +1248,9 @@
       "id": "dynamic-fact-04",
       "category": "动态事实",
       "categoryCode": "dynamic-fact",
-      "intent": "我确认马厩旁是否放着修理围栏用的锤子。",
-      "goldForm": "materialization.v1",
+      "intent": "我再次敲击刚才已确认存在的陶片风琴墙，换一套音序释放风压。",
+      "goldForm": "environmental-stunt.v1",
+      "environmentScenario": "reuse-check",
       "requiredRefs": [
         "scene:dynamic-fact-04",
         "gold:dynamic-fact",
@@ -1260,8 +1264,8 @@
       "expectedRoute": "executable",
       "expectedExecutable": true,
       "signals": {
-        "mayMaterialize": true,
-        "preferredCount": 3
+        "mayUseEnvironment": true,
+        "preferredCount": 6
       },
       "retrievalMode": "structure",
       "retrievalAlias": "动态事实",
@@ -1272,8 +1276,9 @@
       "id": "dynamic-fact-05",
       "category": "动态事实",
       "categoryCode": "dynamic-fact",
-      "intent": "我在旧档案室寻找惯常配备的防潮油布。",
-      "goldForm": "materialization.v1",
+      "intent": "我扳动已经确认存在的折叠木格，让它再次展开封住窄道。",
+      "goldForm": "environmental-stunt.v1",
+      "environmentScenario": "reuse-direct",
       "requiredRefs": [
         "scene:dynamic-fact-05",
         "gold:dynamic-fact",
@@ -1287,8 +1292,8 @@
       "expectedRoute": "executable",
       "expectedExecutable": true,
       "signals": {
-        "mayMaterialize": true,
-        "preferredCount": 3
+        "mayUseEnvironment": true,
+        "preferredCount": 6
       },
       "retrievalMode": "alias",
       "retrievalAlias": "动态事实",
@@ -1299,8 +1304,9 @@
       "id": "dynamic-fact-06",
       "category": "动态事实",
       "categoryCode": "dynamic-fact",
-      "intent": "我查看渡口是否拴着供巡河人使用的小艇。",
-      "goldForm": "materialization.v1",
+      "intent": "我扯下院子上方的船帆，把它罩到守卫头上。",
+      "goldForm": "environmental-stunt.v1",
+      "environmentScenario": "explicitly-absent",
       "requiredRefs": [
         "scene:dynamic-fact-06",
         "gold:dynamic-fact",
@@ -1314,8 +1320,8 @@
       "expectedRoute": "executable",
       "expectedExecutable": true,
       "signals": {
-        "mayMaterialize": true,
-        "preferredCount": 3
+        "mayUseEnvironment": true,
+        "preferredCount": 6
       },
       "retrievalMode": "fts",
       "retrievalAlias": "动态事实",

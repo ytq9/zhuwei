@@ -2,7 +2,12 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import {
+  compileKpFormDraft,
+  lowerCausalActionProgram,
+} from "../app/_runtime/lib/kp/causal-action-program";
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
+import { ENVIRONMENT_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
 import {
   directConsequencesProposal,
   noncombatCheckProposal,
@@ -30,6 +35,73 @@ function record(value: unknown, label: string): JsonRecord {
   expect(value, label).not.toBeNull();
   expect(Array.isArray(value), label).toBe(false);
   return value as JsonRecord;
+}
+
+function list(value: unknown, label: string): unknown[] {
+  expect(Array.isArray(value), label).toBe(true);
+  return value as unknown[];
+}
+
+function privateFormProposal(
+  rootActionId: string,
+  formId: "clarification.v1" | "ordinary-check.v1",
+  draft: JsonRecord,
+) {
+  const causalActionProgram = compileKpFormDraft(formId, draft);
+  return {
+    kind: "privateFormProposal",
+    formId,
+    draft: structuredClone(draft),
+    causalActionProgram,
+    loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
+    semanticFreezeHash: causalActionProgram.semanticHash,
+    repairUsed: false,
+    proposalAttemptId: `${rootActionId}:proposal:1`,
+    modelInvocationReceipt: { task: "proposal", result: "success" },
+    rootActionId,
+  };
+}
+
+function ordinaryCheckDraft(overrides: JsonRecord = {}): JsonRecord {
+  return {
+    goal: "安静移开木箱",
+    method: "垫上雨披后缓慢拖动",
+    intendedOutcome: "露出木箱后的门",
+    risk: "雨披可能撕裂并发出声音",
+    resolution: "check",
+    ability: "str",
+    skill: "athletics",
+    dc: 12,
+    mode: "normal",
+    durationUnit: "minute",
+    durationValue: 1,
+    successConsequence: "木箱被无声移开，暗门显露。",
+    failureConsequence: "木箱摩擦石地，惊动邻近守卫。",
+    ...overrides,
+  };
+}
+
+function v3Character(characterId: string) {
+  return {
+    characterId,
+    controllerPrincipalId: ALICE.principal.id,
+    staticCard: {
+      name: "阿莱莎",
+      sceneId: "yard",
+      classId: "fighter",
+      raceId: "human",
+      level: 1,
+      scores: { str: 14, dex: 12, con: 12, int: 10, wis: 10, cha: 10 },
+      proficiency: 2,
+      skills: ["athletics"],
+      hp: { current: 12, max: 12, temp: 0 },
+      ac: 14,
+      speed: 30,
+      equipped: { armor: "leather", main: "shortsword" },
+      backpack: [],
+      resources: { resolve: 2 },
+    },
+  };
 }
 
 describe("authoritative Room explicit retry recovery", () => {
@@ -154,7 +226,10 @@ describe("authoritative Room explicit retry recovery", () => {
         },
       },
     }, intent);
-    expect(outcome).toMatchObject({ kind: "retryableFailure", code: "modelTransient" });
+    expect(outcome).toMatchObject({
+      kind: "retryableFailure",
+      code: "PROPOSAL_PROVIDER_TIMEOUT",
+    });
     expect(proposalCalls).toBe(1);
 
     const prepared = record(await authority.prepare(ALICE, structuredClone(intent)), "prepared after model failure");
@@ -295,5 +370,306 @@ describe("authoritative Room explicit retry recovery", () => {
     const mechanics = record(record(committed.kpProjection, "recovery projection").mechanicalResult, "mechanics");
     expect(record(record(repeated.kpProjection, "repeat projection").mechanicalResult, "repeat mechanics").randomness)
       .toEqual(mechanics.randomness);
+  });
+
+  it("recovers a V3 causal check after its request commit without replaying cost or accepting a changed program", async () => {
+    const roomId = "authoritative-v3-causal-request-commit-recovery";
+    const characterId = "character:retry:v3-causal";
+    const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
+    const initialized = record(await authority.initializeAuthoritative({
+      roomId,
+      moduleId: "black-oak-will",
+      moduleVersion: "tactical-map-v1",
+      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      members: [{ principalId: ALICE.principal.id, role: "host" }],
+      characters: [v3Character(characterId)],
+    }), "V3 causal recovery initialization");
+    const archiveExport = record(
+      initialized.serviceCapabilities,
+      "V3 causal recovery capabilities",
+    ).archiveExport;
+    const submissionId = "submission:retry:v3-causal";
+    const prepared = record(await authority.prepare(ALICE, {
+      kind: "intent",
+      submissionId,
+      text: "我把雨披垫在木箱下，慢慢把它拖开。",
+    }), "V3 causal recovery prepare");
+    const rootActionId = String(prepared.rootActionId);
+    const proposal = privateFormProposal(rootActionId, "ordinary-check.v1", ordinaryCheckDraft({
+      resourceRef: "resolve",
+      resourceAmount: 1,
+    }));
+
+    await expect(runInDurableObject(authority as never, async (instance) => {
+      const target = instance as unknown as {
+        authorityRoll(sides: number): number;
+        authorityRecoveryCheckpoint?: (name: string) => void;
+        commit(context: unknown, preparedActionId: string, proposalValue: unknown): Promise<unknown>;
+      };
+      target.authorityRoll = () => {
+        throw new Error("a face must not be drawn before the causal request is durable");
+      };
+      target.authorityRecoveryCheckpoint = (name) => {
+        if (name === "afterRandomnessRequestCommit") {
+          throw new Error("simulated-crash:v3-causal-after-request");
+        }
+      };
+      return target.commit(ALICE, String(prepared.preparedActionId), structuredClone(proposal));
+    })).rejects.toThrow("simulated-crash:v3-causal-after-request");
+    await evictDurableObject(authority as never);
+
+    await expect(authority.exportAuthoritativeArchive(archiveExport)).resolves.toMatchObject({
+      kind: "retryableFailure",
+      code: "archiveSettlementPending",
+    });
+
+    const changedProposal = privateFormProposal(
+      rootActionId,
+      "ordinary-check.v1",
+      ordinaryCheckDraft({
+        dc: 13,
+        resourceRef: "resolve",
+        resourceAmount: 1,
+      }),
+    );
+    await expect(runInDurableObject(authority as never, async (instance) => {
+      const target = instance as unknown as {
+        authorityRoll(sides: number): number;
+        commit(context: unknown, preparedActionId: string, proposalValue: unknown): Promise<unknown>;
+      };
+      target.authorityRoll = () => {
+        throw new Error("a changed causal program must fail before rolling");
+      };
+      return target.commit(
+        ALICE,
+        String(prepared.preparedActionId),
+        structuredClone(changedProposal),
+      );
+    })).resolves.toMatchObject({ kind: "rejected", code: "idempotencyPayloadMismatch" });
+
+    let rollCount = 0;
+    const recovered = record(await runInDurableObject(authority as never, async (instance) => {
+      const target = instance as unknown as {
+        authorityRoll(sides: number): number;
+        commit(context: unknown, preparedActionId: string, proposalValue: unknown): Promise<unknown>;
+      };
+      target.authorityRoll = (sides) => {
+        expect(sides).toBe(20);
+        rollCount += 1;
+        return 20;
+      };
+      return target.commit(ALICE, String(prepared.preparedActionId), structuredClone(proposal));
+    }), "recovered V3 causal outcome");
+    expect(recovered.kind, JSON.stringify(recovered)).toBe("committed");
+    expect(rollCount).toBe(1);
+
+    const repeated = record(await runInDurableObject(authority as never, async (instance) => {
+      const target = instance as unknown as {
+        authorityRoll(sides: number): number;
+        commit(context: unknown, preparedActionId: string, proposalValue: unknown): Promise<unknown>;
+      };
+      target.authorityRoll = () => {
+        throw new Error("an idempotent causal retry must not reroll");
+      };
+      return target.commit(ALICE, String(prepared.preparedActionId), structuredClone(proposal));
+    }), "repeated V3 causal outcome");
+    expect(repeated.receipt).toEqual(recovered.receipt);
+
+    const exported = record(await authority.exportAuthoritativeArchive(
+      archiveExport,
+    ), "V3 causal recovery archive export");
+    const rootEvents = list(record(exported.archive, "V3 causal archive").events, "V3 causal events")
+      .map((event) => record(event, "V3 causal event"))
+      .filter((event) => event.rootActionId === rootActionId);
+    for (const eventType of [
+      "ResourceReserved",
+      "RandomnessRequested",
+      "DiceRolled",
+      "ImprovisedCheckResolved",
+    ]) {
+      expect(rootEvents.filter((event) => event.eventType === eventType), eventType).toHaveLength(1);
+    }
+  }, 15_000);
+
+  it("recovers a clarification answer that becomes a V3 check under the original root", async () => {
+    const roomId = "authoritative-v3-clarification-causal-recovery";
+    const characterId = "character:retry:v3-clarification";
+    const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
+    const initialized = record(await authority.initializeAuthoritative({
+      roomId,
+      moduleId: "black-oak-will",
+      moduleVersion: "tactical-map-v1",
+      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      members: [{ principalId: ALICE.principal.id, role: "host" }],
+      characters: [v3Character(characterId)],
+    }), "V3 clarification recovery initialization");
+    const archiveExport = record(
+      initialized.serviceCapabilities,
+      "V3 clarification recovery capabilities",
+    ).archiveExport;
+    const initialPrepared = record(await authority.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:retry:v3-clarification:question",
+      text: "我检查这扇门。",
+    }), "V3 clarification prepare");
+    const rootActionId = String(initialPrepared.rootActionId);
+    const opened = record(await authority.commit(
+      ALICE,
+      String(initialPrepared.preparedActionId),
+      privateFormProposal(rootActionId, "clarification.v1", {
+        goal: "确认玩家想检查门轴还是门锁",
+        question: "你先检查门轴，还是门锁？",
+        choices: ["门轴", "门锁"],
+      }),
+    ), "V3 clarification opening");
+    expect(opened.kind, JSON.stringify(opened)).toBe("awaitingInput");
+    const pendingInputId = String(record(opened.pending, "V3 clarification pending").pendingInputId);
+    const answerPrepared = record(await authority.prepare(ALICE, {
+      kind: "answer",
+      submissionId: "submission:retry:v3-clarification:answer",
+      pendingInputId,
+      answer: { text: "先检查门轴" },
+      displayText: "我先检查门轴。",
+    }), "V3 clarification answer prepare");
+    expect(answerPrepared.rootActionId).toBe(rootActionId);
+    const answerProposal = privateFormProposal(
+      rootActionId,
+      "ordinary-check.v1",
+      ordinaryCheckDraft({
+        goal: "检查门轴是否刚被使用",
+        method: "观察磨损并试推",
+        intendedOutcome: "确认门轴最近是否转动过",
+        successConsequence: "新鲜磨痕表明门轴刚被使用。",
+        failureConsequence: "磨痕太杂，无法判断最近是否有人开门。",
+      }),
+    );
+
+    await expect(runInDurableObject(authority as never, async (instance) => {
+      const target = instance as unknown as {
+        authorityRecoveryCheckpoint?: (name: string) => void;
+        commit(context: unknown, preparedActionId: string, proposalValue: unknown): Promise<unknown>;
+      };
+      target.authorityRecoveryCheckpoint = (name) => {
+        if (name === "afterRandomnessRequestCommit") {
+          throw new Error("simulated-crash:v3-clarification-after-request");
+        }
+      };
+      return target.commit(
+        ALICE,
+        String(answerPrepared.preparedActionId),
+        structuredClone(answerProposal),
+      );
+    })).rejects.toThrow("simulated-crash:v3-clarification-after-request");
+    await evictDurableObject(authority as never);
+
+    let rollCount = 0;
+    const recovered = record(await runInDurableObject(authority as never, async (instance) => {
+      const target = instance as unknown as {
+        authorityRoll(sides: number): number;
+        commit(context: unknown, preparedActionId: string, proposalValue: unknown): Promise<unknown>;
+      };
+      target.authorityRoll = (sides) => {
+        expect(sides).toBe(20);
+        rollCount += 1;
+        return 20;
+      };
+      return target.commit(
+        ALICE,
+        String(answerPrepared.preparedActionId),
+        structuredClone(answerProposal),
+      );
+    }), "recovered V3 clarification answer");
+    expect(recovered.kind, JSON.stringify(recovered)).toBe("committed");
+    expect(rollCount).toBe(1);
+    const observation = record(await authority.observe(ALICE), "V3 clarification recovery observation");
+    expect(record(observation.readModel, "V3 clarification recovery read model").pendingInputs)
+      .toEqual([]);
+
+    const exported = record(await authority.exportAuthoritativeArchive(
+      archiveExport,
+    ), "V3 clarification recovery archive export");
+    const rootEvents = list(
+      record(exported.archive, "V3 clarification archive").events,
+      "V3 clarification events",
+    ).map((event) => record(event, "V3 clarification event"))
+      .filter((event) => event.rootActionId === rootActionId);
+    expect(rootEvents.filter((event) => event.eventType === "ClarificationRequested")).toHaveLength(1);
+    expect(rootEvents.filter((event) => event.eventType === "PendingInputAnswered")).toHaveLength(1);
+    expect(rootEvents.filter((event) => event.eventType === "RandomnessRequested")).toHaveLength(1);
+    expect(rootEvents.filter((event) => event.eventType === "DiceRolled")).toHaveLength(1);
+  }, 15_000);
+
+  it("keeps a committed Receipt authoritative when the archive alarm scheduler fails", async () => {
+    const roomId = "authoritative-v2-archive-alarm-failure";
+    const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
+    await authority.initializeAuthoritative({
+      roomId,
+      moduleId: "black-oak-will",
+      members: [{ principalId: ALICE.principal.id, role: "host" }],
+      characters: [{
+        characterId: "character:retry:archive-alarm",
+        controllerPrincipalId: ALICE.principal.id,
+        staticCard: {
+          name: "阿莱莎",
+          sceneId: "wake",
+          abilityScores: { str: 12, dex: 12, con: 12, int: 12, wis: 12, cha: 12 },
+          proficiencyBonus: 2,
+          proficientSkills: [],
+        },
+      }],
+    });
+    const prepared = record(await authority.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:retry:archive-alarm",
+      characterId: "character:retry:archive-alarm",
+      text: "我确认门闩已经松开。",
+    }), "archive alarm prepare");
+    const proposal = directConsequencesProposal(String(prepared.rootActionId), {
+      proposalAttemptId: "proposal:retry:archive-alarm:1",
+      goal: "确认门闩是否松开",
+      method: "观察门闩位置",
+      duration: { unit: "second", value: 1 },
+    });
+
+    const result = await runInDurableObject(authority as never, async (instance) => {
+      const target = instance as unknown as {
+        scheduleExpiryAlarm(): Promise<void>;
+        flushAuthoritativeD1ArchivePage(): Promise<void>;
+        commit(context: unknown, preparedActionId: string, proposalValue: unknown): Promise<unknown>;
+        authorityStore: {
+          archiveProgress(): { pending?: boolean } | undefined;
+          events(): unknown[];
+        };
+      };
+      target.scheduleExpiryAlarm = async () => {
+        throw new Error("injected archive alarm failure");
+      };
+      target.flushAuthoritativeD1ArchivePage = async () => {};
+
+      const first = record(await target.commit(
+        ALICE,
+        String(prepared.preparedActionId),
+        structuredClone(proposal),
+      ), "first commit despite archive alarm failure");
+      const eventCount = target.authorityStore.events().length;
+      const repeated = record(await target.commit(
+        ALICE,
+        String(prepared.preparedActionId),
+        structuredClone(proposal),
+      ), "repeated commit despite archive alarm failure");
+      return {
+        first,
+        repeated,
+        eventCount,
+        repeatedEventCount: target.authorityStore.events().length,
+        archivePending: target.authorityStore.archiveProgress()?.pending,
+      };
+    });
+
+    expect(result.first.kind).toBe("committed");
+    expect(result.repeated.kind).toBe("committed");
+    expect(result.repeated.receipt).toEqual(result.first.receipt);
+    expect(result.repeatedEventCount).toBe(result.eventCount);
+    expect(result.archivePending).toBe(true);
   });
 });

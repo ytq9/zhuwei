@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
+import { ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 
 const ALICE = {
   principalId: "principal:compound-rules:alice",
@@ -23,8 +24,8 @@ function profileRef(profileId, digit) {
   return { profileId, profileHash: `sha256:${digit.repeat(64)}` };
 }
 
-function initialize(aliceOverrides = {}, advancementProfile, entityOverrides = {}) {
-  const initialized = step(undefined, undefined, {
+function initialize(aliceOverrides = {}, advancementProfile, entityOverrides = {}, profiles) {
+  const initialized = step(profiles, undefined, {
     kind: "initializeAuthoritativeWorld",
     roomId: "room:rules-compound-v2",
     runtimeEpochId: "epoch:rules-compound-v2:1",
@@ -1034,6 +1035,32 @@ test("SRD 2014 class saving-throw proficiencies determine save modifiers instead
       assert.equal(requested.randomnessRequest.frozenCheck.modifier, "3", `${classId} ${ability}`);
     }
   }
+});
+
+test("environment-v4 noncombat saves use the explicit proficientSaves field", () => {
+  const scenario = initialize({
+    classId: "fighter",
+    abilityScores: { str: 12, dex: 14, con: 12, int: 12, wis: 12, cha: 12 },
+    proficiencyBonus: 2,
+    proficientSkills: ["investigation"],
+    expertiseSkills: ["investigation"],
+    proficientSaves: ["dex"],
+  }, undefined, {}, ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST);
+  const requested = step(scenario.profiles, scenario.state, semanticPlan(
+    "root:compound-rules:v4-explicit-save",
+    {
+      operation: "resolveNoncombatSave",
+      saveAbility: "dex",
+      dc: 12,
+      mode: "normal",
+      duration: { unit: "round", value: 1 },
+      frozenCosts: [],
+      success: [],
+      failure: [],
+    },
+  ));
+  assert.equal(requested.kind, "awaitingRandomness", JSON.stringify(requested));
+  assert.equal(requested.randomnessRequest.frozenCheck.modifier, "4");
 });
 
 test("a successful noncombat save commits its separately frozen movement branch", () => {

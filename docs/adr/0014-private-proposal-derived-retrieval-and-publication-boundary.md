@@ -3,6 +3,7 @@
 - 状态：已接受（用户本 Goal 明确授权）
 - 日期：2026-08-29
 - 关联规格：SPEC 0001、SPEC 0003、SPEC 0005、SPEC 0006、SPEC 0010、SPEC 0011、SPEC 0013、SPEC 0014、SPEC 0015
+- 实现状态：本地生产映射与定向证据已建立；冻结全量、浏览器、远端 migration、部署和推送待完成
 
 ## 背景
 
@@ -38,11 +39,13 @@ Narration 模型只输出 exact `{ body: non-empty string }`。Audience、Receip
 
 所有具体模型以 Profile Registry 固定 provider/model revision、supportedRoles、schema、验证套件、上下文、延迟和成本等级。辅助模型只能建议 Form 排序、实体/代词、查询、rerank、引用和结构错误；不决定 KP 或 Rules 权限。主 KP 选择按房间固定，Planner 失败只回到确定性查询，不隐藏切模型。
 
-G2（小表 + 三层 Context + D1 FTS）是默认发布候选。G3/G4/G5 只有在同一 120 条金标上满足 SPEC 0015 的质量、安全、token/延迟与增益门才进入产品；未达门的产品接线删除。未经用户另行授权不创建远端 Vectorize 或其他 Cloudflare 资源。
+G2（小表 + 三层 Context + D1 FTS）是采用配置。120 条同集离线结构报告通过 G2 结构硬门；G3 确定性 Planner 控制和 G4 本地精确向量对照相对 G2 的三项配对质量差值均为 0/120、95% CI `[0, 0]`，输入还增加，故两者拒绝；G5 因 G2 recall 与 MRR 均充分而不适用。生产新房绑定只接受 `context-planner-disabled-v1`，Hall/Table 不出现 Planner 设置。未通过角色验证的模型候选与离线 Adapter 只留实验/测试层。未经用户另行授权不创建远端 Vectorize 或其他 Cloudflare 资源。
 
 ### 6. 动态环境复用现有 Room/Rules/Geometry
 
-EnvironmentFeature、DestructibleDefinition、TriggeredHazard、AreaEffect 和 EnvironmentStateGraph 是版本化有限状态。KP 决定合理性和骰前定义，Rules 从完整 Geometry 决定实际目标并执行状态转换，Room DO 在同一 RootAction/Receipt 提交。吊灯纵切用于证明 materialize/reuse、攻击锁链、对象破坏、坠落区域、逐目标豁免/伤害/死亡和残骸地形是一条可恢复链，而不是通用物理引擎或客户端 target list。
+玩家可以提出任意自然语言环境想法；生产端没有按对象名、关键词、家族或 archetype 派发的目录。KP 决定具体材质、Geometry、耐久、有限状态图、触发和显式机械模式，并在骰前冻结。`state-only` 只改变对象自身状态/耐久以及地形、掩护、视线或通行，`TriggeredHazard`/`AreaEffect` 必须为空且不产生区域 save 或区域目标 damage；`area-hazard` 才要求 KP 定义区域、豁免、目标伤害和残骸，Rules 再从完整 Geometry 决定实际目标。Room DO 在同一 RootAction/Receipt 提交。
+
+`area-hazard` 的通用验收用于证明 materialize/reuse、攻击或检定、对象破坏、触发区域、逐目标豁免/伤害/死亡和残骸地形是一条可恢复链；吊灯只保留为已有 Rules 示例，不是产品模板或发布前置。折叠栅栏一类 `state-only` 自定义定义在合法状态/地形事件后结束，不伪造区域或伤害。两类都不是通用物理引擎或客户端 target list。
 
 ## 被否决的方案
 
@@ -61,7 +64,7 @@ EnvironmentFeature、DestructibleDefinition、TriggeredHazard、AreaEffect 和 E
 
 优点：Proposal schema 和 Context 可以独立量化；静态检索可重建而不污染 Room 权威；一次窄修订和语义 hash 限制失控循环；逐受众发布故障不会改变世界；动态环境仍穿过既有 Rules/Geometry/Room/replay。
 
-代价：需要版本化 Form/Action Language/corpus/model/narration/publication Profiles、D1 FTS 构建链、Gold eval、逐受众发布 journal 和更严格的浏览器/故障证据。G3–G5 可能全部被拒绝，产品仍应诚实停在 G2。
+代价：需要版本化 Form/Action Language/corpus/model/narration/publication Profiles、D1 FTS 构建链、Gold eval、逐受众发布 journal 和更严格的浏览器/故障证据。本轮 G3/G4 已因无增益被拒绝、G5 不适用，产品诚实停在 G2，也不提供空的 Planner UI。
 
 安全影响：Prompt、正文、秘密和 chunk 原文不得进日志；Retrieved ref 使用前重新鉴权；Audience 只在提交时冻结；Planner/RAG/模型失败不能扩大权限或更换主 KP；客户端永远看不到完整 Geometry/targets。
 
@@ -69,12 +72,22 @@ EnvironmentFeature、DestructibleDefinition、TriggeredHazard、AreaEffect 和 E
 
 该决定只对绑定完整新 Profile/manifest 的新 V3 房间生效。旧房的提案、Outcome、Delivery 和环境解释器保持原 genesis 行为，不从旧对话、Prompt、距离或事件猜测迁移。Form/Profile-only 变化与新增 Rules primitive 分别发布；所有 hash 都进入房间 manifest。未来迁移旧房需独立规格和用户授权。
 
-D1 变化只从 `db/schema.ts` 生成只增不改 migration，并先通过本地 migration/写入/查询/重建闭环；D1 FTS 永远是派生索引。远端 migration、部署、清理和 push 按发布流程串行。
+历史 hazard-only 环境 Profile 固定为 `environment-feature-fsm-2014-v2`（`sha256:702b2559c821a52e1c7d6a137c6b261cec21d6cc513e3c0301b4b5ab007f7c87`），并只随 `runtime-srd51-2014-authoritative-environment-v2`（`sha256:0021280335296ecfc5b65a221fec7009550fac96db65925e47daef9f9d4f0456`）解释。第一代私有 Form workflow-v1 的双模式 `environment-feature-fsm-2014-v3`（`sha256:1656fd548905d6ea886fd4cf97357a9d67c56422be3a2c6bd281fc93a22b4fe6`）继续绑定 `runtime-srd51-2014-authoritative-environment-v3`（`sha256:4038f09e546eb8a0c925e892634625fe09859d2aeba91f044a8ecae76aa99c57`），保持旧 1×PB/既有豁免解释。当前新房 workflow-v2 固定完整 `runtime-srd51-2014-authoritative-environment-v4`（`sha256:8d0df2563b1e9fca31b1ab7b1678683075fc013b5220ba7b32aa054861203685`），复用同一环境 FSM 并增加 `character-proficiency-srd51-2014-v1`（`sha256:718bf64554e4b032f3bea564797edf67b1695c2335879db4bd3e5332069a1001`）的 2014 Expertise/豁免熟练语义。Registry 同时保留三代完整 manifest/canonical document 和原 hash，Room genesis 必须精确匹配，不能以产品代际、字段存在或共享 helper 静默升级旧事件。
+
+D1 变化只从 `db/schema.ts` 生成只增不改 migration，并先通过本地 migration/写入/查询/重建闭环；D1 FTS 永远是派生索引。`0008`/`0009` 实现静态 corpus/FTS、房间 workflow 绑定和 corpus/profile/hash 加固；`0010` 是一次性逻辑 scrub，只清空三张可重建派生索引表；`0011_low_leo.sql`（SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`）只新增灾备 checkpoint 表。checkpoint 仅在随机已结清、完整 event prefix 与 head audit 精确集合物化后的最终 D1 batch 单调推进；reader 只接受精确 room/epoch、重放并核验 checkpoint prefix，并拒绝 checkpoint 之后的 ahead event、genesis 冲突或 prefix 篡改，恢复只允许 service capability 且目标 DO 必须为空。Wrangler local `0000–0011`、SQLite `0010→0011` 写读、archive D1 11/11 与 D1 reader→fresh DO 1/1 已通过；另有无当前受控 viewer 的 D1→fresh DO 1/1。远端 migration、部署、清理和 push 仍按发布流程串行。
+
+## 当前实现证据边界
+
+当前源码已有私有 Form/Context、一次窄修订、CausalActionProgram Rules interpreter、body-only Narration、action/narration 双状态、逐 ViewerKey 恢复、十个公开错误、静态 D1 FTS、双模式动态环境和 v4 角色熟练的生产映射。定向结果包括 Profile/causal/compound 57/57、workflow/table 25/25、动态环境 Room 6/6、静态 corpus/production context 14/14、public action/table 21/21、Viewer recovery 4/4、Planner Profile 6/6、archive D1 11/11（含 prefix/ahead event/genesis conflict 防线）、真实 D1 reader→fresh DO 1/1、无当前受控 viewer 的 D1→fresh DO 1/1、120 条结构报告 4/4 且 16/16 hard gates，以及 live harness/provisioner 13/13 的确定性 HTTP 生命周期、默认 31 interaction 约束和显式三交互冒烟边界。最后一项不包含真实 Provider 调用。
+
+新增生产 seam 长轨迹也已在 workflow-v2/environment-v4 上通过 1/1：31 次真实 Room 接口交互由 15 次 Intent/RootAction/Proposal、15 次 ACK 与 1 次 Bob viewer-local retry 组成；每个 Intent 都经过生产 Form allowlist、三层 Context、validator、compiler、Room、Rules 与 projector，同轨迹结算 `area-hazard` 对 2 个实体的完整 trigger/resolve/debris，并结算 KP 自定义竹骨声屏 `state-only` 且保持 `hazard/areaEffect=null`。没有重复 Proposal、随机或资源；archive 恢复到 fresh DO 后最终 state hash 与每位 Viewer 的 projection hash 均一致。Viewer recovery 与动态环境 Room 分别为 4/4 和 6/6。
+
+这些是当前未冻结源码上的局部证据。用户已明确把完整线上测评留给自己；本代理只执行部署后三交互冒烟，不能据此填写完整 Provider 指标。本地 migration/checkpoint 已复核；同一 SHA 全量门、375/1440 浏览器、远端 D1、部署、三交互冒烟/日志/清理和 Git 证明仍待完成；ADR 的“已接受”与局部绿色都不等于发布完成。
 
 ## 验收
 
 1. SPEC 0015 的十 Form、三层 Context、静态重读、1+1 修订、body-only、双状态、逐受众恢复、模型角色、G0–G5 门和十错误有真实公开责任 Interface 证据。
 2. 120 条金标、Recall/Form/token/延迟/调用/回退指标及置信区间达门；故障注入与零容忍项全部通过。
-3. 吊灯 14 场景经真实 Room Action → Rules → Room DO → project/replay，通过隐藏目标、断线、幂等和逐受众失败验证。
+3. 任意 KP 自定义环境不经对象名/archetype 派发；`state-only` 无伪造 Hazard/Area/区域 save/区域目标 damage；通用 `area-hazard` 场景经真实 Form/Context/validator/compiler → Room Action → Rules → Room DO → project/replay，覆盖完整 Geometry、多/隐藏目标、致死、残骸、断线、幂等和逐受众失败。具体吊灯专项不再是完成前置。
 4. 若有 D1 migration，本地与远端证据完整；375px/1440px 五条浏览器路径、全量门、现有 Worker 部署、线上冒烟、临时数据清理与 Git/`main` SHA 证明齐全。
 5. 以上证据缺一项时，ADR/SPEC 已接受不等于实现或发布完成。

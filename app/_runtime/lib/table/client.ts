@@ -89,6 +89,8 @@ export const setRoomModel = ({ data }: Args) => call<Result>("setRoomModel", dat
 export const startGame = ({ data }: Args) => call<Result>("startGame", data);
 export const sendAction = ({ data }: Args) =>
   callWithStableTableSubmission("sendAction", data);
+export const retryNarration = ({ data }: Args) =>
+  call<Result>("retryNarration", data);
 export const adjustSafetyPresentation = ({ data }: Args) =>
   callWithStableTableSubmission("adjustSafetyPresentation", data);
 export const acknowledgeDelivery = ({ data }: Args) =>

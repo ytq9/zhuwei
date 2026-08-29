@@ -1,23 +1,27 @@
 import {
   isCanonicalTacticalGeometry,
   type CanonicalTacticalFeature,
+  type CanonicalTacticalFeatureStateGraph,
   type CanonicalTacticalFeatureState,
 } from "../profiles/tactical-geometry";
 import {
   compileEnvironmentFeature,
-  environmentBindingMatchesFeature,
   ENVIRONMENT_PROFILE,
+  environmentEffectMode,
+  environmentBindingMatchesFeature,
+  environmentProfileEnabled,
   isCompiledEnvironmentBinding,
+  isEnvironmentProfileRef,
   type AreaEffect,
 } from "../profiles/environment";
 import { compileAbilityDefinition } from "../profiles/ability-compiler";
 import { canonicalSha256 } from "../profiles/canonical";
 import { resolveCombatAttackRoll } from "../profiles/attack-resolution";
+import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
 import {
-  entitiesAffectedByArea,
   entityCanTargetTacticalFeature,
 } from "../profiles/combat-geometry";
-import type { RuntimeProfileManifest } from "../profiles/types";
+import type { ProfileRef, RuntimeProfileManifest } from "../profiles/types";
 import { createEventTransition, createScopeProof } from "./events";
 import type {
   AuthoritativeWorldState,
@@ -29,11 +33,16 @@ import type {
 } from "./model";
 import { rejected } from "./results";
 import { resolveCombatDamage } from "./damage";
+import { savingThrowModifier, type ProficiencyAbility } from "./proficiency";
 import {
   hasExactKeys,
   isNonEmptyString,
   isRecord,
 } from "./validation";
+import { environmentAreaTargets } from "./environment-targeting";
+import { causalProgramFactRef, isCausalProgramFactValue } from "./causal-model";
+
+export { environmentAreaTargets } from "./environment-targeting";
 
 export const ENVIRONMENT_EVENT_TYPES = [
   "EnvironmentFeatureMaterialized",
@@ -46,6 +55,25 @@ export const ENVIRONMENT_EVENT_TYPES = [
 ] as const satisfies readonly EventType[];
 
 type PortalIntent = "open" | "close";
+type DamageTransition = NonNullable<CanonicalTacticalFeatureStateGraph["damageTransitions"]>[number];
+
+export function damageTransitionAt(
+  graph: CanonicalTacticalFeatureStateGraph | undefined,
+  fromState: string | undefined,
+  remainingDurability: bigint,
+  mostSpecific: boolean,
+): DamageTransition | undefined {
+  const eligible = graph?.damageTransitions?.filter((candidate) =>
+    candidate.fromState === fromState
+    && remainingDurability <= BigInt(candidate.remainingDurabilityAtOrBelow));
+  if (!mostSpecific) return eligible?.[0];
+  return eligible?.reduce<DamageTransition | undefined>((selected, candidate) =>
+      selected === undefined
+      || BigInt(candidate.remainingDurabilityAtOrBelow)
+        < BigInt(selected.remainingDurabilityAtOrBelow)
+        ? candidate
+        : selected, undefined);
+}
 
 export function controlledEnvironmentPlayer(
   state: AuthoritativeWorldState,
@@ -91,90 +119,6 @@ export function profiledEnvironmentFeature(
     : undefined;
 }
 
-function featureOrigin(
-  feature: CanonicalTacticalFeature,
-  areaEffect: AreaEffect,
-): { x: string; y: string; elevation: string } {
-  const xs = feature.polygon.map(({ x }) => BigInt(x));
-  const ys = feature.polygon.map(({ y }) => BigInt(y));
-  const minimumX = xs.reduce((minimum, value) => value < minimum ? value : minimum);
-  const maximumX = xs.reduce((maximum, value) => value > maximum ? value : maximum);
-  const minimumY = ys.reduce((minimum, value) => value < minimum ? value : minimum);
-  const maximumY = ys.reduce((maximum, value) => value > maximum ? value : maximum);
-  return {
-    x: ((minimumX + maximumX) / 2n).toString(),
-    y: ((minimumY + maximumY) / 2n).toString(),
-    elevation: areaEffect.origin.elevationInches,
-  };
-}
-
-function featureAsGeometryEntity(
-  feature: CanonicalTacticalFeature,
-  ordinal: number,
-): JsonRecord {
-  const xs = feature.polygon.map(({ x }) => BigInt(x));
-  const ys = feature.polygon.map(({ y }) => BigInt(y));
-  const minimumX = xs.reduce((minimum, value) => value < minimum ? value : minimum);
-  const maximumX = xs.reduce((maximum, value) => value > maximum ? value : maximum);
-  const minimumY = ys.reduce((minimum, value) => value < minimum ? value : minimum);
-  const maximumY = ys.reduce((maximum, value) => value > maximum ? value : maximum);
-  return {
-    id: feature.featureId,
-    entityOrdinal: String(100_000 + ordinal),
-    lifeState: "alive",
-    position: {
-      x: ((minimumX + maximumX) / 2n).toString(),
-      y: ((minimumY + maximumY) / 2n).toString(),
-      elevation: feature.elevation,
-    },
-    footprint: {
-      width: (maximumX > minimumX ? maximumX - minimumX : 1n).toString(),
-      depth: (maximumY > minimumY ? maximumY - minimumY : 1n).toString(),
-      height: feature.height,
-    },
-  };
-}
-
-/** Complete target discovery; no caller-supplied target list participates. */
-export function environmentAreaTargets(
-  state: AuthoritativeWorldState,
-  sceneId: string,
-  sourceFeatureId: string,
-  areaEffect: AreaEffect,
-): {
-  origin: { x: string; y: string; elevation: string };
-  entityTargetIds: string[];
-  featureTargetIds: string[];
-} | undefined {
-  const scene = state.combatRuntime.scenes[sceneId];
-  const geometry = isRecord(scene) ? scene.geometry : undefined;
-  if (!isCanonicalTacticalGeometry(geometry)) return undefined;
-  const sourceFeature = geometry.obstacles.find(({ featureId }) =>
-    featureId === sourceFeatureId);
-  if (sourceFeature === undefined) return undefined;
-  const origin = featureOrigin(sourceFeature, areaEffect);
-  const entityCandidates = Object.values(state.combatRuntime.entities)
-    .filter((entity) => entity.sceneId === sceneId);
-  const featureCandidates = geometry.obstacles
-    .filter((feature) => feature.featureId !== sourceFeatureId)
-    .map(featureAsGeometryEntity);
-  return {
-    origin,
-    entityTargetIds: entitiesAffectedByArea(
-      entityCandidates,
-      scene,
-      origin,
-      areaEffect.shape,
-    ).sort(),
-    featureTargetIds: entitiesAffectedByArea(
-      featureCandidates,
-      scene,
-      origin,
-      areaEffect.shape,
-    ).sort(),
-  };
-}
-
 /**
  * The initialization path gives established NPCs a spatial combat record while
  * keeping their hit points and abilities on the authoritative world identity.
@@ -182,6 +126,7 @@ export function environmentAreaTargets(
  * need a caller-supplied or separately materialized NPC target.
  */
 export function environmentDamageTarget(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   targetEntityId: string,
 ): JsonRecord | undefined {
@@ -200,6 +145,13 @@ export function environmentDamageTarget(
       ]),
     ),
     proficiencyBonus: String(identity.proficiencyBonus ?? 2),
+    ...(characterProficiencyProfileEnabled(profiles.extensions)
+      ? {
+          expertiseSkills: [...(identity.expertiseSkills ?? [])].sort(),
+          proficientSaves: [...(identity.proficientSaves ?? [])].sort(),
+          proficientSkills: [...(identity.proficientSkills ?? [])].sort(),
+        }
+      : {}),
     hitPoints: {
       current: String(identity.hitPoints.current),
       maximum: String(identity.hitPoints.maximum),
@@ -224,13 +176,9 @@ function environmentSaveMode(
     : "normal";
 }
 
-function environmentAbilityModifier(target: JsonRecord, ability: string): number {
-  const score = isRecord(target.stats) ? Number(target.stats[ability]) : 10;
-  return Number.isInteger(score) ? Math.floor((score - 10) / 2) : 0;
-}
-
 /** Shared target calculation used both when producing and replay-validating hazard events. */
 export function resolveEnvironmentAreaTarget(
+  profiles: RuntimeProfileManifest,
   target: JsonRecord,
   areaEffect: AreaEffect,
   rolledDamage: number,
@@ -259,7 +207,11 @@ export function resolveEnvironmentAreaTarget(
   const selectedSaveRoll = saveMode === "disadvantage"
     ? Math.min(...saveRolls)
     : saveRolls[0];
-  const saveModifier = environmentAbilityModifier(target, areaEffect.save.ability);
+  const saveModifier = savingThrowModifier(
+    profiles,
+    target,
+    areaEffect.save.ability as ProficiencyAbility,
+  ) ?? 0;
   const saveTotal = selectedSaveRoll + saveModifier;
   const saveSucceeded = saveTotal >= Number(areaEffect.save.dc);
   const damageBeforeMitigation = saveSucceeded
@@ -506,7 +458,7 @@ export function validateEnvironmentEventPayload(
           value.sceneId,
           value.toState,
         ].every(isNonEmptyString)
-        && ["open", "close", "triggerHazard", "resolveHazard"].includes(String(value.intent))
+        && ["open", "close", "applyStunt", "triggerHazard", "resolveHazard"].includes(String(value.intent))
         && value.fromState !== value.toState;
     case "EnvironmentHazardTriggered":
       return validateEnvironmentHazardPayload(value);
@@ -532,8 +484,8 @@ function canonicalIds(value: unknown): value is string[] {
 }
 
 function validateEnvironmentMaterializedPayload(value: unknown): boolean {
-  if (!isRecord(value)
-    || !hasExactKeys(value, [
+  if (!isRecord(value)) return false;
+  const baseKeys = [
       "actorCharacterId",
       "compiledHash",
       "environmentProfile",
@@ -542,21 +494,42 @@ function validateEnvironmentMaterializedPayload(value: unknown): boolean {
       "featureDefinitionHash",
       "featureId",
       "sceneId",
-    ])
+    ];
+  const v3 = sameProfileRef(value.environmentProfile, ENVIRONMENT_PROFILE);
+  if (!hasExactKeys(value, v3
+    ? [...baseKeys, "causalProgramFactRef", "causalProgramHash"]
+    : baseKeys)
     || ![value.actorCharacterId, value.featureId, value.sceneId].every(isNonEmptyString)
-    || !isRecord(value.environmentProfile)
-    || canonicalSha256(value.environmentProfile) !== canonicalSha256(ENVIRONMENT_PROFILE)
+    || !isEnvironmentProfileRef(value.environmentProfile)
     || !isRecord(value.featureDefinition)
     || !isRecord(value.feature)
     || !sha256(value.featureDefinitionHash)
-    || !sha256(value.compiledHash)) return false;
+    || !sha256(value.compiledHash)
+    || (v3 && (
+      !isNonEmptyString(value.causalProgramFactRef)
+      || !/^fnv1a64:[0-9a-f]{16}$/u.test(String(value.causalProgramHash))
+    ))) return false;
   const compiled = compileEnvironmentFeature(value.featureDefinition);
   return compiled.ok
+    && sameProfileRef(
+      value.environmentProfile,
+      compiled.artifact.tacticalFeature.environment.profile,
+    )
     && value.featureDefinition.sceneId === value.sceneId
     && value.featureDefinition.featureId === value.featureId
     && value.featureDefinitionHash === compiled.artifact.featureDefinitionHash
     && value.compiledHash === compiled.artifact.compiledHash
     && canonicalSha256(value.feature) === canonicalSha256(compiled.artifact.tacticalFeature);
+}
+
+function sameProfileRef(left: unknown, right: ProfileRef): boolean {
+  return isRecord(left)
+    && left.profileId === right.profileId
+    && left.profileHash === right.profileHash;
+}
+
+function eventEnablesEnvironmentProfile(event: EventEnvelope, expected: ProfileRef): boolean {
+  return environmentProfileEnabled(event.profiles.extensions, expected);
 }
 
 function validateEnvironmentHazardPayload(value: unknown): boolean {
@@ -576,8 +549,7 @@ function validateEnvironmentHazardPayload(value: unknown): boolean {
       "sceneId",
     ])
     && [value.actorCharacterId, value.featureId, value.sceneId].every(isNonEmptyString)
-    && isRecord(value.environmentProfile)
-    && canonicalSha256(value.environmentProfile) === canonicalSha256(ENVIRONMENT_PROFILE)
+    && isEnvironmentProfileRef(value.environmentProfile)
     && isRecord(value.hazardDefinition)
     && isRecord(value.areaEffectDefinition)
     && [
@@ -759,12 +731,43 @@ export function applyEnvironmentEvent(
     const scene = state.combatRuntime.scenes[payload.sceneId];
     const geometry = isRecord(scene) ? scene.geometry : undefined;
     const compiled = compileEnvironmentFeature(payload.featureDefinition);
+    const causalFact = payload.causalProgramFactRef === undefined
+      ? undefined
+      : state.canonicalFacts[payload.causalProgramFactRef];
+    const causalValue = causalFact?.value;
+    let causalProgramMatches = false;
+    if (causalFact?.kind === "causalActionProgram"
+      && causalFact.source === "characterAction"
+      && causalFact.subjectRefs.length === 1
+      && causalFact.subjectRefs[0] === payload.actorCharacterId
+      && isCausalProgramFactValue(causalValue)
+      && isRecord(causalValue)) {
+      causalProgramMatches = causalValue.formRef === "environmental-stunt.v1"
+        && causalValue.programHash === payload.causalProgramHash
+        && payload.causalProgramFactRef === causalProgramFactRef(
+          event.rootActionId,
+          payload.causalProgramHash ?? "",
+        );
+    }
+    const v3 = compiled.ok && sameProfileRef(
+      compiled.artifact.tacticalFeature.environment.profile,
+      ENVIRONMENT_PROFILE,
+    );
     if (actor?.sceneId !== payload.sceneId
       || !isCanonicalTacticalGeometry(geometry)
       || !compiled.ok
+      || !sameProfileRef(
+        payload.environmentProfile,
+        compiled.artifact.tacticalFeature.environment.profile,
+      )
+      || !eventEnablesEnvironmentProfile(
+        event,
+        compiled.artifact.tacticalFeature.environment.profile,
+      )
       || compiled.artifact.featureDefinitionHash !== payload.featureDefinitionHash
       || compiled.artifact.compiledHash !== payload.compiledHash
       || canonicalSha256(compiled.artifact.tacticalFeature) !== canonicalSha256(payload.feature)
+      || (v3 && !causalProgramMatches)
       || geometry.obstacles.some(({ featureId }) => featureId === payload.featureId)) {
       throw new TypeError("environment feature materialization is unavailable");
     }
@@ -802,11 +805,13 @@ export function applyEnvironmentEvent(
     }
     const compiled = compileAbilityDefinition(definition);
     const feature = geometry.obstacles.find((candidate) => candidate.featureId === payload.featureId);
+    const binding = feature?.environment;
     const graph = feature?.stateGraph;
     const durability = feature?.durability;
     if (!compiled.ok
       || compiled.artifact.definitionHash !== payload.abilityDefinitionHash
       || compiled.artifact.compiledHash !== payload.compiledHash
+      || (binding !== undefined && !eventEnablesEnvironmentProfile(event, binding.profile))
       || graph?.definitionId !== payload.definitionId
       || canonicalSha256(graph) !== payload.environmentDefinitionHash
       || canonicalSha256(graph) !== canonicalSha256(payload.environmentDefinition)
@@ -834,9 +839,13 @@ export function applyEnvironmentEvent(
     const expectedAfter = BigInt(payload.durabilityBefore) > expectedApplied
       ? BigInt(payload.durabilityBefore) - expectedApplied
       : 0n;
-    const damageTransition = graph.damageTransitions?.find((candidate) =>
-      candidate.fromState === payload.fromState
-      && expectedAfter <= BigInt(candidate.remainingDurabilityAtOrBelow));
+    const damageTransition = damageTransitionAt(
+      graph,
+      payload.fromState,
+      expectedAfter,
+      binding?.profile.profileId === ENVIRONMENT_PROFILE.profileId
+        && binding.profile.profileHash === ENVIRONMENT_PROFILE.profileHash,
+    );
     const expectedToState = damageTransition?.toState ?? payload.fromState;
     const semantics = graph.states.find((candidate) => candidate.state === expectedToState);
     if (payload.selectedAttackRoll !== attack.selected
@@ -871,21 +880,36 @@ export function applyEnvironmentEvent(
     );
     const binding = feature?.environment;
     const definition = binding?.featureDefinition;
+    const hazardDefinition = definition?.hazard;
+    const areaEffectDefinition = definition?.areaEffect;
     const targets = definition === undefined
+      || hazardDefinition === undefined
+      || hazardDefinition === null
+      || areaEffectDefinition === undefined
+      || areaEffectDefinition === null
       ? undefined
       : environmentAreaTargets(
           state,
           payload.sceneId,
           payload.featureId,
-          definition.areaEffect,
+          areaEffectDefinition,
         );
     if (actor?.sceneId !== payload.sceneId
-      || feature?.state !== definition?.hazard.trigger.state
+      || definition === undefined
+      || environmentEffectMode(definition) !== "area-hazard"
+      || hazardDefinition === undefined
+      || hazardDefinition === null
+      || areaEffectDefinition === undefined
+      || areaEffectDefinition === null
+      || feature?.state !== hazardDefinition.trigger.state
+      || binding === undefined
+      || !sameProfileRef(payload.environmentProfile, binding.profile)
+      || !eventEnablesEnvironmentProfile(event, binding.profile)
       || binding?.featureDefinitionHash !== payload.featureDefinitionHash
       || binding?.hazardDefinitionHash !== payload.hazardDefinitionHash
       || binding?.areaEffectDefinitionHash !== payload.areaEffectDefinitionHash
-      || canonicalSha256(definition?.hazard) !== canonicalSha256(payload.hazardDefinition)
-      || canonicalSha256(definition?.areaEffect) !== canonicalSha256(payload.areaEffectDefinition)
+      || canonicalSha256(hazardDefinition) !== canonicalSha256(payload.hazardDefinition)
+      || canonicalSha256(areaEffectDefinition) !== canonicalSha256(payload.areaEffectDefinition)
       || targets === undefined
       || canonicalSha256(targets.origin) !== canonicalSha256(payload.origin)
       || canonicalSha256(targets.entityTargetIds) !== canonicalSha256(payload.entityTargetIds)
@@ -896,16 +920,18 @@ export function applyEnvironmentEvent(
   }
   if (event.eventType === "EnvironmentAreaTargetResolved") {
     const payload = event.payload as EventPayloadByType["EnvironmentAreaTargetResolved"];
-    const target = environmentDamageTarget(state, payload.targetEntityId);
+    const target = environmentDamageTarget(event.profiles, state, payload.targetEntityId);
     const feature = profiledEnvironmentFeature(
       state,
       payload.actorCharacterId,
       payload.sourceFeatureId,
     );
     const areaEffect = feature?.environment?.featureDefinition.areaEffect;
-    const outcome = target === undefined || areaEffect === undefined
+    const binding = feature?.environment;
+    const outcome = target === undefined || areaEffect === undefined || areaEffect === null
       ? undefined
       : resolveEnvironmentAreaTarget(
+          event.profiles,
           target,
           areaEffect,
           Number(payload.rolledDamage),
@@ -913,6 +939,8 @@ export function applyEnvironmentEvent(
         );
     if (target?.sceneId !== payload.sceneId
       || canonicalSha256(target) !== payload.targetBeforeHash
+      || binding === undefined
+      || !eventEnablesEnvironmentProfile(event, binding.profile)
       || feature?.environment?.areaEffectDefinitionHash !== payload.areaEffectDefinitionHash
       || areaEffect?.save.ability !== payload.saveAbility
       || areaEffect.save.dc !== payload.saveDc
@@ -940,6 +968,7 @@ export function applyEnvironmentEvent(
       ? geometry.obstacles.find(({ featureId }) => featureId === payload.sourceFeatureId)
       : undefined;
     const sourceAreaHash = source?.environment?.areaEffectDefinitionHash;
+    const sourceBinding = source?.environment;
     const target = isCanonicalTacticalGeometry(geometry)
       ? geometry.obstacles.find(({ featureId }) => featureId === payload.targetFeatureId)
       : undefined;
@@ -956,12 +985,18 @@ export function applyEnvironmentEvent(
       : BigInt(durability.current) > expectedApplied
         ? BigInt(durability.current) - expectedApplied
         : 0n;
-    const transition = graph?.damageTransitions?.find((candidate) =>
-      candidate.fromState === target?.state
-      && expectedAfter <= BigInt(candidate.remainingDurabilityAtOrBelow));
+    const transition = damageTransitionAt(
+      graph,
+      target?.state,
+      expectedAfter,
+      target?.environment?.profile.profileId === ENVIRONMENT_PROFILE.profileId
+        && target.environment.profile.profileHash === ENVIRONMENT_PROFILE.profileHash,
+    );
     const expectedState = transition?.toState ?? target?.state;
     const semantics = graph?.states.find(({ state: stateId }) => stateId === expectedState);
     if (actor?.sceneId !== payload.sceneId
+      || sourceBinding === undefined
+      || !eventEnablesEnvironmentProfile(event, sourceBinding.profile)
       || sourceAreaHash !== payload.areaEffectDefinitionHash
       || target === undefined
       || durability === undefined
@@ -1000,11 +1035,19 @@ export function applyEnvironmentEvent(
     && candidate.intent === payload.intent
     && candidate.toState === payload.toState);
   const semantics = graph?.states.find((candidate) => candidate.state === payload.toState);
-  const validFeatureKind = payload.intent === "resolveHazard" || payload.intent === "triggerHazard"
+  const validFeatureKind = payload.intent === "resolveHazard"
+    || payload.intent === "triggerHazard"
+    || payload.intent === "applyStunt"
     ? feature?.kind === "destructible" && feature.environment !== undefined
     : feature?.kind === "portal";
+  const environmentIntent = payload.intent === "applyStunt"
+    || payload.intent === "triggerHazard"
+    || payload.intent === "resolveHazard";
   if (feature === undefined
     || !validFeatureKind
+    || (environmentIntent
+      && (feature.environment === undefined
+        || !eventEnablesEnvironmentProfile(event, feature.environment.profile)))
     || graph?.definitionId !== payload.definitionId
     || feature.state !== payload.fromState
     || transition === undefined

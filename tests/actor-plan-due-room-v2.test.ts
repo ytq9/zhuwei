@@ -8,6 +8,7 @@ type JsonRecord = Record<string, unknown>;
 
 type Authority = {
   initializeAuthoritative(input: unknown): Promise<unknown>;
+  applyRoomAdministration(capability: unknown, command: unknown): Promise<unknown>;
   prepare(context: unknown, input: unknown): Promise<unknown>;
   commit(context: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
   observe(context: unknown, query?: unknown): Promise<unknown>;
@@ -25,7 +26,9 @@ const BOB = Object.freeze({
 const PLAYER_CHARACTER_ID = "character:actor-plan-due:alice";
 const NPC_ID = "npc:actor-plan-due:watcher";
 const NPC_KNOWLEDGE_REF = "knowledge:actor-plan-due:hidden-watch-order";
+const NPC_UNFROZEN_KNOWLEDGE_REF = "knowledge:actor-plan-due:unfrozen-watch-secret";
 const PLAYER_PRIVATE_REF = "knowledge:actor-plan-due:player-private-route";
+const PLAYER_ACTIVITY_ID = "activity:actor-plan-due:player-investigation";
 const FACTION_REF = "faction:actor-plan-due:night-watch";
 const PLAN_ID = "actor-plan:due:night-watch:close-yard";
 const ACTIVITY_ID = "activity:actor-plan-due:close-yard";
@@ -255,13 +258,17 @@ function playerIntentProposal(rootActionId: string) {
 
 async function initializeRoom(roomId: string): Promise<{
   authority: Authority;
+  administrationCapability: unknown;
   archiveCapability: unknown;
 }> {
   const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
   const initialized = record(await authority.initializeAuthoritative({
     roomId,
     moduleId: "black-oak-will",
-    members: [{ principalId: ALICE.principal.id, role: "host" }],
+    members: [
+      { principalId: ALICE.principal.id, role: "host" },
+      { principalId: BOB.principal.id, role: "player" },
+    ],
     characters: [{
       characterId: PLAYER_CHARACTER_ID,
       controllerPrincipalId: ALICE.principal.id,
@@ -279,13 +286,21 @@ async function initializeRoom(roomId: string): Promise<{
       sceneId: "wake",
       content: "只有守夜人知道：钟响后封闭院门，但不要惊动灵堂。",
     }, {
+      knowledgeRef: NPC_UNFROZEN_KNOWLEDGE_REF,
+      holderEntityId: NPC_ID,
+      content: "只有守夜人知道：北墙后还藏着另一份未写入计划的密令。",
+    }, {
       knowledgeRef: PLAYER_PRIVATE_REF,
       holderEntityId: PLAYER_CHARACTER_ID,
       content: "只有阿莱莎知道：她准备从侧门秘密离开。",
     }],
   }), "due ActorPlan room initialization");
   const capabilities = record(initialized.serviceCapabilities, "service capabilities");
-  return { authority, archiveCapability: capabilities.archiveExport };
+  return {
+    authority,
+    administrationCapability: capabilities.roomAdministration,
+    archiveCapability: capabilities.archiveExport,
+  };
 }
 
 async function initializeMechanicalRoom(roomId: string): Promise<{
@@ -382,6 +397,54 @@ async function retireMechanicalNpc(authority: Authority): Promise<void> {
     submissionId: "submission:actor-plan-due:retire-watcher",
     text: "我退席，但让守夜人继续留在故事中。",
   } as never), "retired mechanical NPC outcome");
+  expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
+}
+
+async function startPlayerActivity(authority: Authority): Promise<void> {
+  const submissionId = "submission:actor-plan-due:start-player-activity";
+  const outcome = record(await handleRoomAction({
+    principal: ALICE,
+    authority,
+    kp: {
+      async propose(request) {
+        const rootActionId = String(record(request, "player Activity request").rootActionId);
+        return {
+          kind: "directSuccess",
+          goal: "持续调查院墙上的旧刻痕",
+          method: "阿莱莎独自拓印并核对每一道刻痕",
+          publicBasisRefs: [],
+          privateBasisRefs: [],
+          adjudicationPrecedent: null,
+          risk: null,
+          pendingInput: null,
+          dynamicMaterializations: [],
+          hiddenRealityCandidateSet: null,
+          npcActions: [],
+          mechanicalProposal: {
+            operation: "startActivity",
+            activityRef: PLAYER_ACTIVITY_ID,
+            duration: { unit: "hour", value: 1 },
+            success: [],
+            failure: [],
+          },
+          scene: {
+            question: "旧刻痕会揭示什么？",
+            pressure: "这项调查需要持续一小时。",
+            opportunities: [],
+            conclusionCandidate: null,
+          },
+          proposalAttemptId: `proposal:${rootActionId}:start-player-activity`,
+        };
+      },
+      async narrate() {
+        return { body: "阿莱莎开始逐段拓印院墙上的旧刻痕。", agencyClaims: [] };
+      },
+    },
+  }, {
+    kind: "intent",
+    submissionId,
+    text: "我开始拓印院墙上的旧刻痕。",
+  } as never), "player Activity start outcome");
   expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
 }
 
@@ -554,7 +617,7 @@ describe("due ActorPlan Room Action phase", () => {
 
     expect(outcome).toMatchObject({
       kind: "retryableFailure",
-      code: "modelTransient",
+      code: "PROPOSAL_PROVIDER_TIMEOUT",
       retryAfter: 3,
     });
     const after = await archiveEvents(authority, archiveCapability);
@@ -613,6 +676,46 @@ describe("due ActorPlan Room Action phase", () => {
     expect(interruptedIndex).toBeGreaterThan(cancellationIndex);
     expect(playerIndex).toBeGreaterThan(interruptedIndex);
     expect(JSON.stringify(events)).not.toMatch(/Attack|Pass|TurnEnded/);
+  });
+
+  it("rejects a due-plan lifecycle decision prepared by a former controller", async () => {
+    const { authority, administrationCapability } = await initializeRoom(
+      "actor-plan-due-control-transfer-v2",
+    );
+    await formDuePlan(authority, "submission:actor-plan-due:form:control-transfer");
+    const due = record(await authority.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:actor-plan-due:prepared-before-control-transfer",
+      text: "我从灵堂走向院门。",
+    }), "prepared due stage before control transfer");
+    expect(due).toMatchObject({ kind: "prepared", phase: "dueActorPlan" });
+    const decision = {
+      ...cancelDuePlanDecision(String(due.rootActionId)),
+      rootActionId: due.rootActionId,
+    };
+
+    await expect(authority.applyRoomAdministration(administrationCapability, {
+      commandId: "room-admin:actor-plan-due-transfer",
+      kind: "transferControl",
+      characterId: PLAYER_CHARACTER_ID,
+      fromSeatId: `seat:${ALICE.principal.id}`,
+      toSeatId: `seat:${BOB.principal.id}`,
+    })).resolves.toMatchObject({ kind: "committed" });
+    await expect(authority.commit(
+      ALICE,
+      String(due.preparedActionId),
+      structuredClone(decision),
+    )).resolves.toMatchObject({ kind: "rejected", code: "preparedActionUnauthorized" });
+    await expect(authority.commit(
+      BOB,
+      String(due.preparedActionId),
+      structuredClone(decision),
+    )).resolves.toMatchObject({ kind: "rejected", code: "preparedActionUnauthorized" });
+    await expect(authority.prepare(BOB, {
+      kind: "intent",
+      submissionId: "submission:actor-plan-due:fresh-after-control-transfer",
+      text: "我按当前状态重新处理守夜人的到期计划。",
+    })).resolves.toMatchObject({ kind: "prepared", phase: "dueActorPlan" });
   });
 
   it("defers a due plan to a later fiction instant without completing its Activity or firing early", async () => {
@@ -854,6 +957,156 @@ describe("due ActorPlan Room Action phase", () => {
       .toBe(`root-action:${submissionId}`);
   });
 
+  it("rejects unfrozen due-plan activities, knowledge, and recipients before lifecycle events", async () => {
+    const roomId = "actor-plan-due-capability-guard-v2";
+    const { authority, archiveCapability } = await initializeRoom(roomId);
+    await startPlayerActivity(authority);
+    await formDuePlan(
+      authority,
+      "submission:actor-plan-due:form:capability-guard",
+      formationProposal,
+    );
+
+    const submissionId = "submission:actor-plan-due:capability-guard";
+    const intent = {
+      kind: "intent",
+      submissionId,
+      text: "我走向院门，看看守夜人的计划是否已经完成。",
+    };
+    const prepared = record(await authority.prepare(ALICE, intent), "prepared guarded due stage");
+    expect(prepared).toMatchObject({
+      kind: "prepared",
+      phase: "dueActorPlan",
+      rootActionId: `root-action:${submissionId}`,
+    });
+    const rootActionId = String(prepared.rootActionId);
+    const baseDecision = {
+      ...executeDuePlanDecision(rootActionId),
+      rootActionId,
+    };
+    const before = await archiveEvents(authority, archiveCapability);
+    const rejectedCapabilities = [{
+      label: "interrupt another character's active Activity",
+      mechanicalProposal: { operation: "interruptActivity", activityRef: PLAYER_ACTIVITY_ID },
+    }, {
+      label: "complete another character's active Activity",
+      mechanicalProposal: { operation: "completeActivity", activityRef: PLAYER_ACTIVITY_ID },
+    }, {
+      label: "acquire held but unfrozen knowledge without recipients",
+      mechanicalProposal: {
+        operation: "changeKnowledge",
+        knowledgeRef: NPC_UNFROZEN_KNOWLEDGE_REF,
+      },
+    }, {
+      label: "share held but unfrozen knowledge",
+      mechanicalProposal: {
+        operation: "changeKnowledge",
+        knowledgeRef: NPC_UNFROZEN_KNOWLEDGE_REF,
+        recipientRefs: [PLAYER_CHARACTER_ID],
+      },
+    }, {
+      label: "share frozen knowledge with an unfrozen recipient",
+      mechanicalProposal: {
+        operation: "changeKnowledge",
+        knowledgeRef: NPC_KNOWLEDGE_REF,
+        recipientRefs: [PLAYER_CHARACTER_ID],
+      },
+    }];
+    for (const candidate of rejectedCapabilities) {
+      await expect(authority.commit(ALICE, String(prepared.preparedActionId), {
+        ...baseDecision,
+        mechanicalProposal: candidate.mechanicalProposal,
+      }), candidate.label).resolves.toMatchObject({
+        kind: "rejected",
+        code: "privateOrUnknownReference",
+      });
+      expect(
+        await archiveEvents(authority, archiveCapability),
+        `${candidate.label} must not commit the due lifecycle prefix`,
+      ).toEqual(before);
+    }
+
+    const continued = record(await authority.commit(ALICE, String(prepared.preparedActionId), {
+      ...baseDecision,
+      mechanicalProposal: {
+        operation: "changeKnowledge",
+        knowledgeRef: TRACE_FACT_REF,
+      },
+    }), "frozen no-recipient knowledge outcome");
+    expect(continued).toMatchObject({
+      kind: "continue",
+      prepared: { phase: "playerIntent" },
+    });
+    const after = await archiveEvents(authority, archiveCapability);
+    expect(after.some((event) =>
+      event.eventType === "NpcActionCommitted"
+      && record(event.payload, "guarded NpcAction payload").planId === PLAN_ID
+    )).toBe(true);
+    expect(after.some((event) =>
+      event.eventType === "ActivityCompleted"
+      && record(event.payload, "guarded plan Activity payload").activityId === ACTIVITY_ID
+    )).toBe(true);
+    expect(after.some((event) =>
+      event.eventType === "SensoryEvidenceAcquired"
+      && record(event.payload, "frozen no-recipient knowledge payload").characterId === NPC_ID
+      && record(event.payload, "frozen no-recipient knowledge payload").factId === TRACE_FACT_REF
+    )).toBe(true);
+    expect(after.some((event) =>
+      (event.eventType === "ActivityInterrupted" || event.eventType === "ActivityCompleted")
+      && record(event.payload, "foreign Activity payload").activityId === PLAYER_ACTIVITY_ID
+    )).toBe(false);
+  }, 15_000);
+
+  it("shares only plan-frozen knowledge with the exact frozen due target", async () => {
+    const roomId = "actor-plan-due-frozen-knowledge-recipient-v2";
+    const { authority, archiveCapability } = await initializeRoom(roomId);
+    await formDuePlan(
+      authority,
+      "submission:actor-plan-due:form:frozen-recipient",
+      (rootActionId) => {
+        const proposal = formationProposal(rootActionId);
+        proposal.npcActions[0].actorPlan.alternateTarget = {
+          targetRef: PLAYER_CHARACTER_ID,
+          reason: "院门处的行动需要直接告知在场的阿莱莎",
+        };
+        return proposal;
+      },
+    );
+
+    const submissionId = "submission:actor-plan-due:frozen-recipient";
+    const prepared = record(await authority.prepare(ALICE, {
+      kind: "intent",
+      submissionId,
+      text: "我留在原地，等守夜人说明行动结果。",
+    }), "prepared frozen-recipient due stage");
+    expect(prepared).toMatchObject({ kind: "prepared", phase: "dueActorPlan" });
+    const rootActionId = String(prepared.rootActionId);
+    const continued = record(await authority.commit(ALICE, String(prepared.preparedActionId), {
+      ...executeDuePlanDecision(rootActionId),
+      rootActionId,
+      targetRef: PLAYER_CHARACTER_ID,
+      mechanicalProposal: {
+        operation: "changeKnowledge",
+        knowledgeRef: NPC_KNOWLEDGE_REF,
+        recipientRefs: [PLAYER_CHARACTER_ID],
+      },
+    }), "frozen-recipient knowledge outcome");
+    expect(continued).toMatchObject({
+      kind: "continue",
+      prepared: { phase: "playerIntent" },
+    });
+
+    const events = await archiveEvents(authority, archiveCapability);
+    const acquired = events.find((event) => {
+      if (event.eventType !== "KnowledgeAcquired") return false;
+      const payload = record(event.payload, "shared knowledge payload");
+      if (payload.characterId !== PLAYER_CHARACTER_ID || !Array.isArray(payload.items)) return false;
+      return payload.items.some((item) =>
+        record(item, "shared knowledge item").knowledgeRef === NPC_KNOWLEDGE_REF);
+    });
+    expect(acquired).toBeDefined();
+  }, 10_000);
+
   it("resumes exactly once after eviction both before and after the due-plan commit", async () => {
     const roomId = "actor-plan-due-two-evictions-v2";
     const { authority: initialAuthority, archiveCapability } = await initializeRoom(roomId);
@@ -1001,6 +1254,45 @@ describe("due ActorPlan Room Action phase", () => {
         label: "Rules-illegal DC",
         expectedCode: "invalidRulesInput",
         proposal: { ...mechanical, dc: 31 },
+      }, {
+        label: "unfrozen secret knowledge effect",
+        expectedCode: "privateOrUnknownReference",
+        proposal: {
+          ...mechanical,
+          success: [{
+            kind: "acquireKnowledge",
+            definitionRef: PLAYER_PRIVATE_REF,
+            knowledgeRef: "knowledge:actor-plan-due:forged-player-secret",
+          }],
+        },
+      }, {
+        label: "unfrozen resource effect",
+        expectedCode: "privateOrUnknownReference",
+        proposal: {
+          ...mechanical,
+          success: [{
+            kind: "changeResource",
+            resourceRef: "resource:actor-plan-due:forged",
+            delta: 1,
+          }],
+        },
+      }, {
+        label: "unfrozen movement effect",
+        expectedCode: "privateOrUnknownReference",
+        proposal: {
+          ...mechanical,
+          success: [{
+            kind: "moveEntity",
+            sceneRef: "scene:actor-plan-due:forged",
+          }],
+        },
+      }, {
+        label: "campaign lifecycle authority",
+        expectedCode: "privateOrUnknownReference",
+        proposal: {
+          operation: "advanceCampaignLifecycle",
+          lifecycleAction: "concludeStory",
+        },
       }];
       for (const forged of forgedCases) {
         await expect(authority.commit(ALICE, preparedActionId, {
@@ -1102,6 +1394,6 @@ describe("due ActorPlan Room Action phase", () => {
     expect(list(archive.receiptRefs, "due check receipt refs").filter((entry) =>
       record(entry, "due check receipt ref").receiptId === dueReceipt.receiptId
     )).toHaveLength(1);
-  });
+  }, 15_000);
   }
 });

@@ -1660,6 +1660,17 @@ export function validateNarration(value: unknown, projection: unknown): CurrentN
   };
 }
 
+export function validateBodyOnlyNarration(
+  value: unknown,
+  projection: unknown,
+): { body: string } {
+  if (!isRecord(value)) invalid();
+  exactKeys(value, ["body"]);
+  const body = boundedString(value.body, 1_600);
+  assertNarrationTextGrounded(body, projection);
+  return { body };
+}
+
 function strictJsonObject(text: string): UnknownRecord {
   let value: unknown;
   try {

@@ -8,6 +8,9 @@ import type {
   RuntimeProfileRegistry,
 } from "./profiles/registry";
 import type { ProfileRef, RuntimeProfileManifest } from "./profiles/types";
+import { causalActionInterpreterEnabled } from "./profiles/causal-action-interpreter";
+import { environmentProfileEnabled } from "./profiles/environment";
+import { isCanonicalTacticalGeometry } from "./profiles/tactical-geometry";
 import {
   eventHash,
   foldEvent,
@@ -36,12 +39,20 @@ import { normalizeCampaignGenesis } from "./v2/campaign-normalization";
 import { normalizeCombatGenesis } from "./v2/combat-normalization";
 import { rejected } from "./v2/results";
 import {
+  isCausalActionPlanMarker,
+  isCausalProgramFactValue,
+  isCausalActionResolutionPlan,
+  isCausalContinuationStateBinding,
+  isCausalRandomnessEventBinding,
+} from "./v2/causal-model";
+import {
   hashWorldState,
   isAuthoritativeWorldState,
   isGenesisIntegrityValid,
   isRecord,
   isRuntimeGenesis,
 } from "./v2/validation";
+import { characterProficiencyFieldsMatchProfile } from "./v2/proficiency";
 
 function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
   return left.profileId === right.profileId && left.profileHash === right.profileHash;
@@ -57,6 +68,63 @@ function stateProfileRejection(
       "runtimeProfileMismatch",
       "The provided runtime manifest does not match the manifest pinned by this room epoch.",
     );
+}
+
+function stateEnvironmentProfilesMatch(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+): boolean {
+  return Object.values(state.combatRuntime.scenes).every((scene) => {
+    const geometry = isRecord(scene) ? scene.geometry : undefined;
+    if (geometry === undefined) return true;
+    if (!isRecord(geometry) || !Array.isArray(geometry.obstacles)) return false;
+    const hasEnvironmentBinding = geometry.obstacles.some((feature) =>
+      isRecord(feature) && feature.environment !== undefined);
+    // Historical rooms use the compact `{ unit, obstacles }` geometry shape.
+    // Preserve it byte-for-byte when it carries no V3 environment binding;
+    // only the new executable binding requires the closed canonical geometry.
+    if (!hasEnvironmentBinding) return true;
+    if (!isCanonicalTacticalGeometry(geometry)) return false;
+    return geometry.obstacles.every((feature) => feature.environment === undefined
+      || environmentProfileEnabled(profiles.extensions, feature.environment.profile));
+  });
+}
+
+function stateCharacterProficiencyProfilesMatch(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+): boolean {
+  return Object.values(state.entities).every((entity) =>
+    characterProficiencyFieldsMatchProfile(profiles, entity))
+    && Object.values(state.combatRuntime.entities).every((entity) =>
+      !isRecord(entity)
+      || entity.kind !== "player"
+      || characterProficiencyFieldsMatchProfile(profiles, entity));
+}
+
+function stateCausalActionProfilesMatch(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+): boolean {
+  const causalContinuations = Object.entries(state.internalContinuations)
+    .filter(([, continuation]) => continuation.resolutionPlan !== undefined
+      && isCausalActionPlanMarker(continuation.resolutionPlan));
+  const causalPlans = causalContinuations
+    .flatMap(([, continuation]) => continuation.resolutionPlan === undefined
+      ? []
+      : [continuation.resolutionPlan]);
+  const causalFacts = Object.values(state.canonicalFacts)
+    .filter((fact) => fact.kind === "causalActionProgram");
+  if (causalPlans.length === 0 && causalFacts.length === 0) return true;
+  return causalActionInterpreterEnabled(profiles.extensions)
+    && causalFacts.every((fact) =>
+      fact.source === "characterAction"
+      && fact.subjectRefs.length === 1
+      && state.entities[fact.subjectRefs[0]]?.kind === "player"
+      && isCausalProgramFactValue(fact.value))
+    && causalPlans.every(isCausalActionResolutionPlan)
+    && causalContinuations.every(([continuationId, continuation]) =>
+      isCausalContinuationStateBinding(profiles, state, continuationId, continuation));
 }
 
 function containsForbidden2024Semantics(value: unknown, seen = new WeakSet<object>()): boolean {
@@ -183,6 +251,24 @@ function replayWithRegistry(
     if (mismatch !== undefined) {
       return mismatch;
     }
+    if (!stateEnvironmentProfilesMatch(genesisProfileResolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "Genesis environment bindings do not match the room manifest extensions.",
+      );
+    }
+    if (!stateCharacterProficiencyProfilesMatch(genesisProfileResolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "Genesis character proficiency fields do not match the room manifest extensions.",
+      );
+    }
+    if (!stateCausalActionProfilesMatch(genesisProfileResolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "Genesis V3 causal artifacts do not match the room manifest extensions.",
+      );
+    }
   }
 
   for (const eventValue of eventsValue) {
@@ -201,6 +287,23 @@ function replayWithRegistry(
         eventProfileResolution.rejection.message,
       );
     }
+    if (
+      event.eventType === "RandomnessRequested"
+      && isRecord(event.payload)
+      && "resolutionPlan" in event.payload
+      && isCausalActionPlanMarker(event.payload.resolutionPlan)
+      && !isCausalRandomnessEventBinding(
+        eventProfileResolution.profiles,
+        state,
+        event.rootActionId,
+        event.payload,
+      )
+    ) {
+      return rejected(
+        "invalidEventEnvelope",
+        "Causal randomness request does not match its frozen program, actor, or capability.",
+      );
+    }
     if (!isContinuousEvent(registry, event, state, genesisValue)) {
       return rejected(
         "archiveIntegrityMismatch",
@@ -209,6 +312,24 @@ function replayWithRegistry(
     }
     try {
       const next = foldEvent(state, event);
+      if (!stateEnvironmentProfilesMatch(eventProfileResolution.profiles, next)) {
+        return rejected(
+          "profileIntegrityMismatch",
+          "Replayed environment bindings do not match the event manifest extensions.",
+        );
+      }
+      if (!stateCharacterProficiencyProfilesMatch(eventProfileResolution.profiles, next)) {
+        return rejected(
+          "profileIntegrityMismatch",
+          "Replayed character proficiency fields do not match the event manifest extensions.",
+        );
+      }
+      if (!stateCausalActionProfilesMatch(eventProfileResolution.profiles, next)) {
+        return rejected(
+          "profileIntegrityMismatch",
+          "Replayed V3 causal artifacts do not match the event manifest extensions.",
+        );
+      }
       if (hashWorldState(next) !== event.stateHashAfter || eventHash(event) !== event.eventHash) {
         return rejected(
           "archiveIntegrityMismatch",
@@ -272,6 +393,24 @@ function projectWithRegistry(
     if (mismatch !== undefined) {
       return mismatch;
     }
+    if (!stateEnvironmentProfilesMatch(resolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "State environment bindings do not match the room manifest extensions.",
+      );
+    }
+    if (!stateCharacterProficiencyProfilesMatch(resolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "State character proficiency fields do not match the room manifest extensions.",
+      );
+    }
+    if (!stateCausalActionProfilesMatch(resolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "State V3 causal artifacts do not match the room manifest extensions.",
+      );
+    }
   }
   return projectWorld(resolution.profiles, state, viewer, query);
 }
@@ -287,9 +426,18 @@ function stepWithRegistry(
   input: unknown,
 ): StepResult {
   if (isRecord(input) && input.kind === "initializeAuthoritativeWorld") {
+    const initializationProfiles = profiles === undefined || profiles === null
+      ? { ok: true as const, profiles: registry.defaultManifest }
+      : resolveRuntimeProfileManifest(registry, profiles);
+    if (!initializationProfiles.ok) {
+      return rejected(
+        initializationProfiles.rejection.code,
+        initializationProfiles.rejection.message,
+      );
+    }
     return initializeAuthoritativeWorld(
-      registry.defaultManifest,
-      profiles,
+      initializationProfiles.profiles,
+      undefined,
       state,
       input,
     );
@@ -326,6 +474,24 @@ function stepWithRegistry(
   const mismatch = stateProfileRejection(resolution.profiles, state);
   if (mismatch !== undefined) {
     return mismatch;
+  }
+  if (!stateEnvironmentProfilesMatch(resolution.profiles, state)) {
+    return rejected(
+      "profileIntegrityMismatch",
+      "State environment bindings do not match the room manifest extensions.",
+    );
+  }
+  if (!stateCharacterProficiencyProfilesMatch(resolution.profiles, state)) {
+    return rejected(
+      "profileIntegrityMismatch",
+      "State character proficiency fields do not match the room manifest extensions.",
+    );
+  }
+  if (!stateCausalActionProfilesMatch(resolution.profiles, state)) {
+    return rejected(
+      "profileIntegrityMismatch",
+      "State V3 causal artifacts do not match the room manifest extensions.",
+    );
   }
   return stepAuthoritativeWorld(resolution.profiles, state, input);
 }

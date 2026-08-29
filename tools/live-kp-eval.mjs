@@ -7,7 +7,7 @@ export const LIVE_KP_EVAL_PROVIDER = "deepseek";
 export const LIVE_KP_EVAL_REPORT_SCHEMA = "zhuwei-live-kp-eval-report-v2";
 
 export const LIVE_KP_EVAL_THRESHOLDS = Object.freeze({
-  minimumInteractions: 24,
+  minimumInteractions: 31,
   minimumDimension: 1,
   minimumTotal: 18,
   maximumSpotlightDifference: 3,
@@ -152,6 +152,10 @@ function outcomeKind(response) {
   const outcome = outcomeOf(response);
   if (typeof outcome?.kind === "string") return outcome.kind;
   if (typeof response?.outcomeKind === "string") return response.outcomeKind;
+  if (typeof response?.action === "string") {
+    if (response.action === "notCommitted") return "rejected";
+    return response.action;
+  }
   return response?.ok === false ? "rejected" : "unknown";
 }
 
@@ -648,6 +652,7 @@ async function evidenceRow(trace) {
     submissionIdHash: sha256(trace.submissionId),
     responseOk: trace.response?.ok === true,
     outcomeKind: outcomeKind(trace.response),
+    actionRequestDurationMs: trace.actionRequestDurationMs,
     publicErrorCode: publicErrorCode(trace.response),
     receipt: receipt
       ? {
@@ -775,6 +780,9 @@ function scoreTrace(trace, context) {
     trace.filter((entry) => entry.step.actor === actor && entry.step.countsAsInteraction).length,
   ]));
   const interactionBalance = Math.abs(actorCounts.host - actorCounts.player);
+  const actionRequestDurations = trace
+    .filter((entry) => entry.step.countsAsInteraction)
+    .map((entry) => entry.actionRequestDurationMs);
 
   const concluded = trace.find((entry) => outcomeKind(entry.response) === "concluded");
   const conclusionStructured = concluded
@@ -867,6 +875,7 @@ function scoreTrace(trace, context) {
       failureHasNewOptions,
       maximumSpotlightDifference,
       interactionBalance,
+      actionRequestLatencyMs: latencyDistribution(actionRequestDurations),
       structuredConclusion: conclusionStructured,
       narrationCount,
       repeatedDelivery,
@@ -947,7 +956,16 @@ export async function runLiveKpEvaluation(options) {
     ?? `ZEVAL-${randomBytes(8).toString("hex").toUpperCase()}`;
   const privatePlanCanary = options.privatePlanCanary
     ?? `ZPLAN-${randomBytes(8).toString("hex").toUpperCase()}`;
-  const scenario = buildLiveKpScenario({ runId, secretCanary, privatePlanCanary });
+  const interactionLimit = options.interactionLimit === undefined
+    ? LIVE_KP_EVAL_THRESHOLDS.minimumInteractions
+    : options.interactionLimit;
+  if (interactionLimit !== 3
+    && interactionLimit !== LIVE_KP_EVAL_THRESHOLDS.minimumInteractions) {
+    throw new TypeError("Live KP evaluation interaction limit must be 3 or 31.");
+  }
+  const smokeRun = interactionLimit === 3;
+  const fullScenario = buildLiveKpScenario({ runId, secretCanary, privatePlanCanary });
+  const scenario = smokeRun ? fullScenario.slice(0, 3) : fullScenario;
   const trace = [];
   const sentInputs = new Map();
   const [initialHostTable, initialPlayerTable] = await Promise.all([
@@ -981,13 +999,18 @@ export async function runLiveKpEvaluation(options) {
       sentInputs.set(step.id, structuredClone(data));
     }
 
+    const actionStartedAt = performance.now();
     const response = await client.command("sendAction", data);
+    const actionRequestDurationMs = Math.max(0, performance.now() - actionStartedAt);
     const authorityInputKeys = deepKeys(data, FORBIDDEN_AUTHORITY_INPUT_KEYS);
     if (!pendingInputId) {
       pendingInputId = pendingIdFrom(response);
       if (pendingInputId && !openedPendingInputId) openedPendingInputId = pendingInputId;
     }
-    if (step.kind === "ownerAnswer" && response?.ok === true) pendingInputId = undefined;
+    if (step.kind === "ownerAnswer"
+      && ["committed", "resolvedInWorld", "concluded"].includes(outcomeKind(response))) {
+      pendingInputId = undefined;
+    }
 
     const [hostTable, playerTable] = await Promise.all([
       host.command("fetchTable", roomCode),
@@ -1016,6 +1039,7 @@ export async function runLiveKpEvaluation(options) {
       step,
       submissionId,
       response,
+      actionRequestDurationMs,
       ...views,
       repeatedReadStable,
       ackErased: hostAckErased && playerAckErased,
@@ -1047,8 +1071,12 @@ export async function runLiveKpEvaluation(options) {
   const thresholdFailed = Object.values(scored.scores).some((value) =>
     value < LIVE_KP_EVAL_THRESHOLDS.minimumDimension)
     || scoresWithTotal.total < LIVE_KP_EVAL_THRESHOLDS.minimumTotal;
-  const incomplete = interactionsCompleted < LIVE_KP_EVAL_THRESHOLDS.minimumInteractions;
-  const status = incomplete ? "inconclusive" : hardGateFailed || thresholdFailed ? "fail" : "pass";
+  const incomplete = interactionsCompleted < interactionLimit;
+  const status = incomplete
+    ? "inconclusive"
+    : hardGateFailed || (!smokeRun && thresholdFailed)
+      ? "fail"
+      : "pass";
   const evidence = [];
   for (const entry of trace) evidence.push(await evidenceRow(entry));
 
@@ -1066,13 +1094,15 @@ export async function runLiveKpEvaluation(options) {
     },
     execution: {
       mode: productionTarget ? "live" : "selfTest",
+      evaluationScope: smokeRun ? "three-interaction-smoke" : "full-31-interaction-evaluation",
       liveModelVerified: productionTarget
         && trace.some((entry) => ["committed", "concluded", "awaitingInput"].includes(outcomeKind(entry.response))),
       externalInterface: "/api/game → authoritative Room Action → Room DO",
       commands: [...ALLOWED_GAME_COMMANDS],
-      interactionMinimum: LIVE_KP_EVAL_THRESHOLDS.minimumInteractions,
+      interactionMinimum: interactionLimit,
       interactionsCompleted,
       totalActionRequests: trace.length,
+      qualityThresholdsApplied: !smokeRun,
       runIdHash: sha256(runId),
     },
     thresholds: LIVE_KP_EVAL_THRESHOLDS,
@@ -1098,4 +1128,20 @@ export async function runLiveKpEvaluation(options) {
     }
   }
   return report;
+}
+
+function latencyDistribution(values) {
+  const sorted = values.filter(Number.isFinite).sort((left, right) => left - right);
+  if (sorted.length === 0) {
+    return { count: 0, unit: "milliseconds", min: null, p50: null, p95: null, max: null };
+  }
+  const percentile = (quantile) => sorted[Math.max(0, Math.ceil(sorted.length * quantile) - 1)];
+  return {
+    count: sorted.length,
+    unit: "milliseconds",
+    min: sorted[0],
+    p50: percentile(0.50),
+    p95: percentile(0.95),
+    max: sorted.at(-1),
+  };
 }

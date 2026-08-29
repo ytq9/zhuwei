@@ -47,6 +47,7 @@ function fixture({
   failureStatus = "prone",
 }) {
   return {
+    effectMode: "area-hazard",
     featureId: `feature:builder-fixtures:${slug}`,
     sceneId: "scene:builder-fixtures",
     label,
@@ -73,6 +74,7 @@ function fixture({
       remainingDurabilityAtOrBelow: 0,
       toState: triggerState,
     }],
+    stuntTransitions: [],
     hazardTransitions: [{ fromState: triggerState, toState: debrisState }],
     hazardTriggerState: triggerState,
     hazardResolvedState: debrisState,
@@ -279,6 +281,57 @@ test("one open builder compiles every required custom object without a product a
     hashes.push(compiled.artifact.featureDefinitionHash);
   }
   assert.equal(new Set(hashes).size, CUSTOM_OBJECT_FIXTURES.length);
+});
+
+test("KP can compile a two-state non-hazard feature without inventing saves or damage", () => {
+  const hazardInput = fixture({
+    slug: "folding-lattice",
+    label: "沿地槽展开的折叠木格",
+    material: "榆木格片、铁铰与石质地槽",
+    initialState: "folded",
+    triggerState: "unfolded",
+    debrisState: "unused",
+  });
+  const common = structuredClone(hazardInput);
+  for (const field of [
+    "areaOriginElevationInches", "areaPropagation", "areaRadiusInches", "damageFormula",
+    "damageType", "failureStatus", "halfOnSuccess", "hazardResolvedState",
+    "hazardTransitions", "hazardTriggerState", "saveAbility", "saveDc",
+    "spreadBudgetInches",
+  ]) delete common[field];
+  const input = {
+    ...common,
+    effectMode: "state-only",
+    states: [
+      semantics("folded"),
+      semantics("unfolded", {
+        opaque: true,
+        impassable: true,
+        cover: "half",
+        propagation: "blocks",
+      }),
+    ],
+    damageTransitions: [{
+      fromState: "folded",
+      remainingDurabilityAtOrBelow: 0,
+      toState: "unfolded",
+    }],
+    stuntTransitions: [{ fromState: "folded", toState: "unfolded" }],
+  };
+  const definition = buildCustomEnvironmentFeatureDefinition(input);
+  const compiled = compileEnvironmentFeature(definition);
+  assert.equal(compiled.ok, true, JSON.stringify(compiled));
+  assert.equal(definition.effectMode, "state-only");
+  assert.equal(definition.hazard, null);
+  assert.equal(definition.areaEffect, null);
+  assert.equal(Object.hasOwn(input, "saveDc"), false);
+  assert.equal(Object.hasOwn(input, "damageFormula"), false);
+  if (!compiled.ok) return;
+  assert.deepEqual(compiled.artifact.tacticalFeature.stateGraph.transitions, [{
+    fromState: "folded",
+    intent: "applyStunt",
+    toState: "unfolded",
+  }]);
 });
 
 test("custom definition identity and hash are stable under unordered finite input", () => {

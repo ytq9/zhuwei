@@ -36,6 +36,7 @@ import {
   observeAuthoritativeRoom,
   prepareAuthoritativeRoomDeletion,
   removeAuthoritativeMember,
+  retryAuthoritativeViewerNarration,
   runAuthoritativeRoomAction,
   runAuthoritativePartyAction,
   type AuthoritativePartyAction,
@@ -57,7 +58,17 @@ import { readWorldItemClaims } from "@/lib/kp/action-ruling";
 import {
   authoritativeKpProfileByBinding,
   authoritativeKpProfileByModelId,
+  hasExactV3KpWorkflowManifest,
+  isV3AuthoritativeKpProfile,
+  runtimeManifestForExactV3KpWorkflow,
+  V4_KP_WORKFLOW_MANIFEST_JSON,
 } from "@/lib/kp/authoritative-policy";
+import { canonicalJson } from "@/lib/kp/authoritative-helpers";
+import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "@/lib/kp/model-registry";
+import {
+  CURRENT_RUNTIME_PROFILE_MANIFEST,
+} from "@/lib/rules/profiles/manifests";
+import { claimsV3RoomBinding } from "@/lib/room/v3-binding";
 import {
   AUTHORITATIVE_KP_MODEL,
   isAuthoritativeKpModel,
@@ -70,9 +81,11 @@ import { projectLocationMessages } from "@/lib/table/message-projection";
 import {
   buildAuthoritativeActionInput,
   buildAuthoritativeButtonAction,
+  buildAuthoritativeCharacterSeed,
   buildAuthoritativeRoomSeeds,
   buildAuthoritativeTableState,
   publicAuthoritativeOutcomeError,
+  publicV3FailureCode,
   projectAuthoritativeTableObservation,
 } from "@/lib/table/authoritative";
 import {
@@ -296,12 +309,25 @@ async function submitAuthoritativeTableAction(input: {
   submissionId: string;
   action: RoomActionInput;
 }) {
+  const sql = await getSql();
+  const workflow = (await sql<{ kp_workflow_manifest: string | null }>`
+    select kp_workflow_manifest from rooms where id = ${input.roomId}
+  `)[0];
+  const v3 = hasExactV3KpWorkflowManifest(workflow?.kp_workflow_manifest);
   if (!authoritativeRoomKpProfileIsAvailable(input.model, input.modelProfileVersion)) {
-    return {
+    const failure = {
       ok: false as const,
       submissionId: input.submissionId,
       error: "本桌绑定的权威 KP 模型 Profile 已不可用",
     };
+    return v3
+      ? {
+          submissionId: input.submissionId,
+          action: "notCommitted" as const,
+          narration: "notApplicable" as const,
+          error: failure.error,
+        }
+      : failure;
   }
   const committedOutcome = await runAuthoritativeRoomAction({
     roomId: input.roomId,
@@ -314,7 +340,7 @@ async function submitAuthoritativeTableAction(input: {
     outcome: committedOutcome,
     synchronize: () => bestEffortSynchronizeAuthoritativeGrowthCard(input),
   });
-  return authoritativeTableOutcome(input.submissionId, outcome);
+  return authoritativeTableOutcome(input.submissionId, outcome, v3);
 }
 
 async function submitAuthoritativePartyTableAction(input: {
@@ -325,12 +351,25 @@ async function submitAuthoritativePartyTableAction(input: {
   submissionId: string;
   action: AuthoritativePartyAction;
 }) {
+  const sql = await getSql();
+  const workflow = (await sql<{ kp_workflow_manifest: string | null }>`
+    select kp_workflow_manifest from rooms where id = ${input.roomId}
+  `)[0];
+  const v3 = hasExactV3KpWorkflowManifest(workflow?.kp_workflow_manifest);
   if (!authoritativeRoomKpProfileIsAvailable(input.model, input.modelProfileVersion)) {
-    return {
+    const failure = {
       ok: false as const,
       submissionId: input.submissionId,
       error: "本桌绑定的权威 KP 模型 Profile 已不可用",
     };
+    return v3
+      ? {
+          submissionId: input.submissionId,
+          action: "notCommitted" as const,
+          narration: "notApplicable" as const,
+          error: failure.error,
+        }
+      : failure;
   }
   const outcome = await runAuthoritativePartyAction({
     roomId: input.roomId,
@@ -340,7 +379,7 @@ async function submitAuthoritativePartyTableAction(input: {
     submissionId: input.submissionId,
     action: input.action,
   });
-  return authoritativeTableOutcome(input.submissionId, outcome);
+  return authoritativeTableOutcome(input.submissionId, outcome, v3);
 }
 
 function authoritativeTableOutcome(
@@ -348,18 +387,92 @@ function authoritativeTableOutcome(
   outcome:
     | Awaited<ReturnType<typeof runAuthoritativeRoomAction>>
     | Awaited<ReturnType<typeof runAuthoritativePartyAction>>,
+  v3 = false,
 ) {
+  const failureCode = publicV3FailureCode(
+    "narrationFailureCode" in outcome
+      ? outcome.narrationFailureCode
+      : "code" in outcome ? outcome.code : undefined,
+  );
+  const v3Outcome = () => {
+    const source = outcome as unknown as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    for (const key of [
+      "code",
+      "kind",
+      "retryAfter",
+    ]) {
+      if (Object.hasOwn(source, key)) result[key] = source[key];
+    }
+    const receipt = source.receipt;
+    if (typeof receipt === "object" && receipt !== null && !Array.isArray(receipt)) {
+      const record = receipt as Record<string, unknown>;
+      if (
+        typeof record.receiptId === "string"
+        && typeof record.rootActionId === "string"
+        && typeof record.status === "string"
+        && typeof record.runtimeEpochId === "string"
+        && typeof record.activeBranchId === "string"
+      ) {
+        // The Room/archive receipt intentionally retains exact event ranges,
+        // scope versions, and per-request randomness commitments.  A V3 table
+        // response exposes only this fixed-cardinality identity/status view so
+        // an area effect cannot reveal hidden target counts through lengths.
+        result.receipt = {
+          receiptId: record.receiptId,
+          rootActionId: record.rootActionId,
+          status: record.status,
+          runtimeEpochId: record.runtimeEpochId,
+          activeBranchId: record.activeBranchId,
+        };
+      }
+    }
+    return result;
+  };
+  const publicView = outcome as unknown as {
+    kind: string;
+    action?: string;
+    narration?: string;
+    delivery?: unknown;
+    deliveryPending?: boolean;
+  };
+  const actionState = typeof publicView.action === "string"
+    ? publicView.action
+    : publicView.kind === "awaitingInput"
+      ? "awaitingInput"
+      : publicView.kind === "committed"
+        ? "committed"
+        : publicView.kind === "concluded"
+          ? "concluded"
+          : "notCommitted";
+  const narrationState = typeof publicView.narration === "string"
+    ? publicView.narration
+    : (publicView.kind === "committed" || publicView.kind === "concluded")
+      ? publicView.delivery !== undefined
+        ? "published"
+        : publicView.deliveryPending === true
+          ? "retryableFailure"
+          : "notApplicable"
+      : "notApplicable";
   if (
     (outcome.kind === "committed" || outcome.kind === "concluded")
-    && outcome.deliveryPending === true
+    && (narrationState === "rejected" || narrationState === "retryableFailure")
   ) {
-    return {
+    const result = {
       ok: false as const,
       submissionId,
       outcomeKind: outcome.kind,
+      action: actionState,
+      narration: narrationState,
       committed: true as const,
       retryable: true as const,
       error: "行动已经提交，但 KP 回应尚未送达。请重试；不会重复执行行动。",
+    };
+    if (!v3) return result;
+    const { ok: _ok, committed: _committed, ...v3Result } = result;
+    return {
+      ...v3Result,
+      ...(failureCode === undefined ? {} : { code: failureCode }),
     };
   }
   if (
@@ -367,22 +480,91 @@ function authoritativeTableOutcome(
     outcome.kind === "awaitingInput" ||
     outcome.kind === "concluded"
   ) {
-    return { ok: true as const, submissionId, outcome };
+    const result = {
+      ok: true as const,
+      submissionId,
+      action: actionState,
+      narration: narrationState,
+      outcome: v3 ? v3Outcome() : outcome,
+    };
+    if (!v3) return result;
+    const { ok: _ok, ...v3Result } = result;
+    return {
+      ...v3Result,
+      ...(failureCode === undefined ? {} : { code: failureCode }),
+    };
   }
   if (outcome.kind === "rejected") {
-    return {
+    const result = {
       ok: false as const,
       submissionId,
       outcomeKind: outcome.kind,
+      action: actionState,
+      narration: narrationState,
       error: outcome.explanation || "当前行动没有被接受",
     };
+    if (!v3) return result;
+    const { ok: _ok, ...v3Result } = result;
+    return {
+      ...v3Result,
+      ...(failureCode === undefined ? {} : { code: failureCode }),
+    };
   }
-  return {
+  const result = {
     ok: false as const,
     submissionId,
     outcomeKind: outcome.kind,
+    action: actionState,
+    narration: narrationState,
     retryable: true as const,
     error: publicAuthoritativeOutcomeError(outcome),
+  };
+  if (!v3) return result;
+  const { ok: _ok, ...v3Result } = result;
+  return {
+    ...v3Result,
+    ...(failureCode === undefined ? {} : { code: failureCode }),
+  };
+}
+
+function viewerNarrationRecoveryTableOutcome(outcome: {
+  kind: string;
+  action?: string;
+  narration?: string;
+  narrationFailureCode?: unknown;
+}) {
+  const action = outcome.action === "committed" ? "committed" as const : "notCommitted" as const;
+  const narration = outcome.narration === "published"
+    || outcome.narration === "rejected"
+    || outcome.narration === "retryableFailure"
+    ? outcome.narration
+    : "notApplicable" as const;
+  if (action === "committed" && narration === "published") {
+    return { action, narration };
+  }
+  return {
+    action,
+    narration,
+    ...(publicV3FailureCode(outcome.narrationFailureCode) === undefined
+      ? {}
+      : { code: publicV3FailureCode(outcome.narrationFailureCode) }),
+    error: action === "committed"
+      ? "行动保持已提交，但 KP 回复仍未送达。"
+      : "当前没有可恢复的 KP 回复。",
+  };
+}
+
+function publicActionInputFailure(
+  error: string,
+  v3: boolean,
+  submissionId?: string,
+) {
+  if (!v3) return { ok: false as const, error };
+  return {
+    ...(submissionId === undefined || submissionId.length === 0 ? {} : { submissionId }),
+    action: "notCommitted" as const,
+    narration: "notApplicable" as const,
+    error,
   };
 }
 
@@ -585,9 +767,11 @@ async function roomRuleset(
       module_id: string;
       kp_model: string;
       kp_model_profile: string;
+      kp_workflow_manifest: string | null;
       status: string;
     }>`
-      select ruleset_version, module_id, kp_model, kp_model_profile, status
+      select ruleset_version, module_id, kp_model, kp_model_profile,
+             kp_workflow_manifest, status
       from rooms where id = ${roomId}
     `
   )[0];
@@ -1250,12 +1434,14 @@ export const createRoom = createServerFn({ method: "POST" })
     await sql`
       insert into rooms (
         id, code, host_user_id, title, module_id, ruleset_version,
-        kp_model, kp_model_profile, status
+        kp_model, kp_model_profile, kp_workflow_manifest,
+        kp_context_planner_profile, status
       )
       values (
         ${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"},
         ${"black-oak-will"}, ${AUTHORITATIVE_RULESET_VERSION}, ${profile.modelId},
-        ${profile.modelProfileVersion}, ${"lobby"}
+        ${profile.modelProfileVersion}, ${V4_KP_WORKFLOW_MANIFEST_JSON},
+        ${DISABLED_CONTEXT_PLANNER_PROFILE_REF}, ${"lobby"}
       )
     `;
     await sql`
@@ -2065,11 +2251,16 @@ export const lockCharacter = createServerFn({ method: "POST" })
       const characterId = successor
         ? `${authoritativeCharacterId(context.userId)}:successor:${submissionId}`
         : authoritativeCharacterId(context.userId);
-      const staticCharacter = {
+      const runtimeProfiles = runtimeManifestForExactV3KpWorkflow(
+        rules.kp_workflow_manifest,
+      );
+      const staticCharacter = buildAuthoritativeCharacterSeed({
         characterId,
         controllerPrincipalId: context.userId,
-        staticCard: { ...sheet, sceneId: openingScene },
-      };
+        sheet,
+        sceneId: openingScene,
+        ...(runtimeProfiles === undefined ? {} : { runtimeProfiles }),
+      });
       const materialized = successor
         ? await introduceAuthoritativeSuccessor({
             roomId: room.id,
@@ -2236,22 +2427,35 @@ export const startGame = createServerFn({ method: "POST" })
         ruleset_version: string;
         kp_model: string;
         kp_model_profile: string;
+        kp_workflow_manifest: string | null;
+        kp_context_planner_profile: string | null;
       }>`
-        select status, module_id, ruleset_version, kp_model, kp_model_profile
+        select status, module_id, ruleset_version, kp_model, kp_model_profile,
+               kp_workflow_manifest, kp_context_planner_profile
         from rooms where id = ${room.id}
       `
     )[0];
     if (info.status === "play") return { ok: true as const };
+    const authoritativeProfile = info.ruleset_version === AUTHORITATIVE_RULESET_VERSION
+      ? authoritativeKpProfileByBinding(info.kp_model, info.kp_model_profile)
+      : undefined;
     if (
       info.ruleset_version === AUTHORITATIVE_RULESET_VERSION
-      && (
-        authoritativeKpProfileByBinding(
-          info.kp_model,
-          info.kp_model_profile,
-        ) === undefined
-      )
+      && authoritativeProfile === undefined
     ) {
       return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
+    }
+    const startClaimsV3 = claimsV3RoomBinding({
+      binding: info,
+      roomProfile: authoritativeProfile,
+    });
+    if (startClaimsV3 && (
+      authoritativeProfile === undefined
+      || !isV3AuthoritativeKpProfile(authoritativeProfile)
+      || !hasExactV3KpWorkflowManifest(info.kp_workflow_manifest)
+      || info.kp_context_planner_profile !== DISABLED_CONTEXT_PLANNER_PROFILE_REF
+    )) {
+      return { ok: false as const, error: "本桌的 V3 工作流或 Context Planner Profile 已不可用" };
     }
     if (
       info.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
@@ -2269,6 +2473,9 @@ export const startGame = createServerFn({ method: "POST" })
       select user_id, nickname, is_host from room_members where room_id = ${room.id}
     `;
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
+      const workflowRuntimeProfiles = runtimeManifestForExactV3KpWorkflow(
+        info.kp_workflow_manifest,
+      );
       const lockedCharacters = await sql<{ user_id: string; sheet: unknown }>`
         select c.user_id, c.sheet
         from characters c
@@ -2292,6 +2499,9 @@ export const startGame = createServerFn({ method: "POST" })
           })),
           openingSceneId: openingScene,
           characterIdFor: authoritativeCharacterId,
+          ...(workflowRuntimeProfiles === undefined
+            ? {}
+            : { runtimeProfiles: workflowRuntimeProfiles }),
         });
       } catch {
         return { ok: false as const, error: "已锁定的人物卡无法初始化，请检查人物姓名" };
@@ -2301,6 +2511,9 @@ export const startGame = createServerFn({ method: "POST" })
         moduleId: info.module_id,
         members: seeds.members,
         characters: seeds.characters,
+        ...(workflowRuntimeProfiles === undefined
+          ? {}
+          : { runtimeProfiles: workflowRuntimeProfiles }),
       });
       if (
         initialized
@@ -2309,6 +2522,17 @@ export const startGame = createServerFn({ method: "POST" })
         && initialized.kind === "rejected"
       ) {
         return { ok: false as const, error: "权威房间初始化失败，请稍后重试" };
+      }
+      const expectedRuntimeProfiles = startClaimsV3
+        ? workflowRuntimeProfiles
+        : CURRENT_RUNTIME_PROFILE_MANIFEST;
+      if (
+        expectedRuntimeProfiles === undefined
+        ||
+        !("runtimeProfiles" in initialized)
+        || canonicalJson(initialized.runtimeProfiles) !== canonicalJson(expectedRuntimeProfiles)
+      ) {
+        return { ok: false as const, error: "权威房间已绑定到另一套运行时 Profile" };
       }
       const runtimeEpochId = initialized
         && typeof initialized === "object"
@@ -2402,8 +2626,6 @@ export const sendAction = createServerFn({ method: "POST" })
   }) => input)
   .handler(async ({ context, data }) => {
     const text = data.text.trim();
-    if (!text) return { ok: false as const, error: "空话不会进桌" };
-    if (text.length > 1200) return { ok: false as const, error: "太长了，拆开说" };
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     const me = await memberOf(room.id, context.userId);
@@ -2415,19 +2637,29 @@ export const sendAction = createServerFn({ method: "POST" })
         ruleset_version: string;
         kp_model: string;
         kp_model_profile: string;
+        kp_workflow_manifest: string | null;
       }>`
-        select status, module_id, ruleset_version, kp_model, kp_model_profile
+        select status, module_id, ruleset_version, kp_model, kp_model_profile,
+               kp_workflow_manifest
         from rooms where id = ${room.id}
       `
     )[0];
-    if (info.status !== "play") return { ok: false as const, error: "这一桌还没开团" };
+    const v3 = hasExactV3KpWorkflowManifest(info.kp_workflow_manifest);
+    const suppliedSubmissionId = data.submissionId?.trim();
+    if (!text) return publicActionInputFailure("空话不会进桌", v3, suppliedSubmissionId);
+    if (text.length > 1200) {
+      return publicActionInputFailure("太长了，拆开说", v3, suppliedSubmissionId);
+    }
+    if (info.status !== "play") {
+      return publicActionInputFailure("这一桌还没开团", v3, suppliedSubmissionId);
+    }
     const pc = (
       await sql<{ sheet: unknown; locked: boolean }>`
         select sheet, locked from characters
         where room_id = ${room.id} and user_id = ${context.userId}
       `
     )[0];
-    if (!pc?.locked) return { ok: false as const, error: "先锁定人物卡" };
+    if (!pc?.locked) return publicActionInputFailure("先锁定人物卡", v3, suppliedSubmissionId);
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       if (
         authoritativeKpProfileByBinding(
@@ -2435,12 +2667,15 @@ export const sendAction = createServerFn({ method: "POST" })
           info.kp_model_profile,
         ) === undefined
       ) {
-        return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
+        return publicActionInputFailure(
+          "本桌绑定的权威 KP 模型 Profile 已不可用",
+          v3,
+          suppliedSubmissionId,
+        );
       }
-      const suppliedSubmissionId = data.submissionId?.trim();
       const pendingInputId = data.pendingInputId?.trim();
       if ((suppliedSubmissionId?.length ?? 0) > 200 || (pendingInputId?.length ?? 0) > 200) {
-        return { ok: false as const, error: "行动标识无效" };
+        return publicActionInputFailure("行动标识无效", v3, suppliedSubmissionId);
       }
       const submissionId = suppliedSubmissionId || uid("submission");
       const action = buildAuthoritativeActionInput({
@@ -2463,7 +2698,11 @@ export const sendAction = createServerFn({ method: "POST" })
           userId: context.userId,
         }),
       });
-      return authoritativeTableOutcome(submissionId, outcome);
+      return authoritativeTableOutcome(
+        submissionId,
+        outcome,
+        v3,
+      );
     }
     if (info.ruleset_version !== RULESET_VERSION) {
       return { ok: false as const, error: "这间房的规则版本不可用" };
@@ -2474,7 +2713,7 @@ export const sendAction = createServerFn({ method: "POST" })
       }
       const sheet = ensureGear(asJson<CharacterSheet>(pc.sheet, {} as CharacterSheet));
       const name = sheet.name || me.nickname || "冒险者";
-      return runRulesV2Action({
+    return runRulesV2Action({
         sql,
         roomId: room.id,
         moduleId: info.module_id,
@@ -2649,6 +2888,65 @@ export const sendAction = createServerFn({ method: "POST" })
       await new Promise((r) => setTimeout(r, 700));
     }
     return { ok: false as const, error: lastErr };
+  });
+
+export const retryNarration = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string; capability: string }) => input)
+  .handler(async ({ context, data }) => {
+    const capability = data.capability?.trim();
+    const room = await roomByCode(data.code);
+    if (!room || !capability || capability.length > 200) {
+      return {
+        action: "notCommitted" as const,
+        narration: "notApplicable" as const,
+        error: "当前没有可恢复的 KP 回复。",
+      };
+    }
+    const me = await memberOf(room.id, context.userId);
+    if (!me) {
+      return {
+        action: "notCommitted" as const,
+        narration: "notApplicable" as const,
+        error: "当前没有可恢复的 KP 回复。",
+      };
+    }
+    const sql = await getSql();
+    const info = (
+      await sql<{
+        ruleset_version: string;
+        kp_model: string;
+        kp_model_profile: string;
+        kp_workflow_manifest: string | null;
+      }>`
+        select ruleset_version, kp_model, kp_model_profile, kp_workflow_manifest
+        from rooms where id = ${room.id}
+      `
+    )[0];
+    const profile = authoritativeKpProfileByBinding(
+      info?.kp_model,
+      info?.kp_model_profile,
+    );
+    if (
+      info?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      || profile === undefined
+      || !isV3AuthoritativeKpProfile(profile)
+      || !hasExactV3KpWorkflowManifest(info.kp_workflow_manifest)
+    ) {
+      return {
+        action: "notCommitted" as const,
+        narration: "notApplicable" as const,
+        error: "当前没有可恢复的 KP 回复。",
+      };
+    }
+    const outcome = await retryAuthoritativeViewerNarration({
+      roomId: room.id,
+      userId: context.userId,
+      capability,
+      modelId: info.kp_model,
+      modelProfileVersion: info.kp_model_profile,
+    });
+    return viewerNarrationRecoveryTableOutcome(outcome);
   });
 
 export const requestSafetyPause = createServerFn({ method: "POST" })

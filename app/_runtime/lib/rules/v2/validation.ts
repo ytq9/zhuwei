@@ -2,6 +2,8 @@ import { canonicalSha256 } from "../profiles/canonical";
 import type { ProfileRef, Sha256Ref } from "../profiles/types";
 import type {
   AuthoritativeWorldState,
+  CanonicalFactRecord,
+  CharacterRecord,
   CharacterLoadoutRecord,
   JsonRecord,
   RuntimeGenesis,
@@ -87,6 +89,29 @@ export const CANONICAL_SIGNED_INTEGER_PATTERN = /^(0|-?[1-9][0-9]*)$/;
 
 export function isRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** One shared authority predicate for both projection and Rules-side basis
+ * validation. A private or scene-scoped fact is usable only when the same
+ * character would receive it from the canonical projector. */
+export function canonicalFactVisibleToCharacter(
+  state: AuthoritativeWorldState,
+  fact: CanonicalFactRecord,
+  character: CharacterRecord,
+): boolean {
+  if (fact.visibilityPolicyId.startsWith("visibility:public")) return true;
+  if (fact.visibilityPolicyId === "visibility:hidden-until-evidence") {
+    return fact.id in (state.knowledge[character.id] ?? {});
+  }
+  if (
+    fact.visibilityPolicyId === "visibility:channel-participants"
+    || fact.visibilityPolicyId === "visibility:scene-observers"
+  ) {
+    return fact.subjectRefs.includes(character.id)
+      || fact.subjectRefs.includes(character.sceneId)
+      || (isRecord(fact.value) && fact.value.sceneId === character.sceneId);
+  }
+  return fact.visibilityPolicyId === `visibility:knowledge-holder:${character.id}`;
 }
 
 export function hasExactKeys(record: JsonRecord, expected: readonly string[]): boolean {

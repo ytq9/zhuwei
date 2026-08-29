@@ -30,9 +30,9 @@ export type StaticCorpusSourceType = (typeof STATIC_CORPUS_SOURCE_TYPES)[number]
 
 const STATIC_CORPUS_PROFILE_SOURCE = Object.freeze({
   profileRef: "kp-static-corpus-compiler-v1",
-  compilerVersion: "kp-static-corpus-compiler-v1.0.0",
-  indexSchemaVersion: "kp-static-corpus-d1-fts-v1",
-  tokenizerVersion: "unicode61-zh-bigram-v1",
+  compilerVersion: "kp-static-corpus-compiler-v1.1.0",
+  indexSchemaVersion: "kp-static-corpus-d1-fts-v2",
+  tokenizerVersion: "unicode61-public-zh-bigram-v2",
   spanPolicyVersion: "authoritative-explicit-span-v1",
   allowedSourceTypes: STATIC_CORPUS_SOURCE_TYPES,
 });
@@ -85,6 +85,8 @@ export type CompiledStaticCorpus = Readonly<{
   compilerProfileRef: string;
   compilerProfileHash: string;
   corpusHash: string;
+  d1CorpusHash: string;
+  d1StorageScope: string;
   chunks: readonly StaticSourceChunk[];
   authorityByRef: Readonly<Record<string, StaticSourceChunk>>;
   index: StaticRetrievalIndex;
@@ -182,9 +184,24 @@ export function compileStaticCorpus(
     chunks,
   });
   const authorityByRef: Record<string, StaticSourceChunk> = {};
+  const publicChunks = chunks.filter((chunk) => chunk.sensitivity === "public");
+  const d1CorpusHash = stableStructuralHash({
+    compilerProfileRef: STATIC_CORPUS_PROFILE.profileRef,
+    compilerProfileHash: STATIC_CORPUS_PROFILE.profileHash,
+    chunks: publicChunks,
+  });
+  const d1StorageScope = stableStructuralHash({
+    compilerProfileRef: STATIC_CORPUS_PROFILE.profileRef,
+    sourceProfileRefs: uniqueSorted(publicChunks.map((chunk) => chunk.profileRef)),
+    d1CorpusHash,
+  });
   const d1Rows: CompiledStaticCorpusRow[] = [];
   for (const chunk of chunks) {
     authorityByRef[chunk.sourceRef] = chunk;
+    // KP-only prose, aliases, refs, tokens, and content-derived hashes remain
+    // inside the Worker authority. D1 indexes only public static material;
+    // private free-text retrieval is merged deterministically in memory.
+    if (chunk.sensitivity !== "public") continue;
     const entry = index.entries[chunk.sourceRef]!;
     d1Rows.push(Object.freeze({
       sourceRef: chunk.sourceRef,
@@ -194,7 +211,7 @@ export function compileStaticCorpus(
       sourceProfileRef: chunk.profileRef,
       corpusProfileRef: STATIC_CORPUS_PROFILE.profileRef,
       corpusProfileHash: STATIC_CORPUS_PROFILE.profileHash,
-      corpusHash,
+      corpusHash: d1CorpusHash,
       sensitivity: chunk.sensitivity,
       dependencyRefsJson: JSON.stringify(entry.dependencyRefs),
       structuralRefsJson: JSON.stringify(entry.structuralRefs),
@@ -208,6 +225,8 @@ export function compileStaticCorpus(
     compilerProfileRef: STATIC_CORPUS_PROFILE.profileRef,
     compilerProfileHash: STATIC_CORPUS_PROFILE.profileHash,
     corpusHash,
+    d1CorpusHash,
+    d1StorageScope,
     chunks: Object.freeze(chunks),
     authorityByRef: freezeRecord(authorityByRef),
     index,
@@ -313,90 +332,60 @@ function purposeForSourceType(sourceType: StaticCorpusSourceType): StaticContext
   return sourceType;
 }
 
-export const STATIC_CORPUS_D1_MIGRATION_SQL = `
-CREATE TABLE IF NOT EXISTS kp_static_corpus_meta (
-  singleton_key TEXT PRIMARY KEY CHECK (singleton_key = 'active'),
-  corpus_profile_ref TEXT NOT NULL,
-  corpus_profile_hash TEXT NOT NULL,
-  corpus_hash TEXT NOT NULL,
-  compiler_version TEXT NOT NULL,
-  chunk_count INTEGER NOT NULL CHECK (chunk_count >= 0)
-);
-
-CREATE TABLE IF NOT EXISTS kp_static_corpus_chunks (
-  source_ref TEXT PRIMARY KEY,
-  source_hash TEXT NOT NULL,
-  source_span_start INTEGER NOT NULL CHECK (source_span_start >= 0),
-  source_span_end INTEGER NOT NULL CHECK (source_span_end > source_span_start),
-  source_profile_ref TEXT NOT NULL,
-  corpus_profile_ref TEXT NOT NULL,
-  corpus_profile_hash TEXT NOT NULL,
-  corpus_hash TEXT NOT NULL,
-  sensitivity TEXT NOT NULL CHECK (sensitivity IN ('public', 'kp-only')),
-  dependency_refs_json TEXT NOT NULL,
-  structural_refs_json TEXT NOT NULL,
-  aliases_json TEXT NOT NULL,
-  purpose TEXT NOT NULL CHECK (purpose IN ('rules', 'module', 'story-bible', 'ability', 'enemy', 'environment')),
-  source_type TEXT NOT NULL CHECK (source_type IN ('srd', 'module', 'story-bible', 'ability', 'enemy', 'environment')),
-  search_text TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS kp_static_corpus_profile_idx
-  ON kp_static_corpus_chunks (source_profile_ref, sensitivity);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS kp_static_corpus_fts USING fts5(
-  source_ref UNINDEXED,
-  search_text,
-  tokenize = 'unicode61 remove_diacritics 2'
-);
-`;
-
 export const STATIC_CORPUS_D1_UPSERT_CHUNK_SQL = `
-INSERT INTO kp_static_corpus_chunks (
-  source_ref, source_hash, source_span_start, source_span_end,
-  source_profile_ref, corpus_profile_ref, corpus_profile_hash, corpus_hash,
-  sensitivity, dependency_refs_json, structural_refs_json, aliases_json,
-  purpose, source_type, search_text
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO kp_static_chunks (
+  source_ref, source_hash, source_span, profile_ref,
+  corpus_profile_ref, corpus_profile_hash, corpus_hash,
+  sensitivity, dependency_refs, structural_refs, aliases,
+  purpose, source_type, body, search_text
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
 ON CONFLICT(source_ref) DO UPDATE SET
   source_hash = excluded.source_hash,
-  source_span_start = excluded.source_span_start,
-  source_span_end = excluded.source_span_end,
-  source_profile_ref = excluded.source_profile_ref,
+  source_span = excluded.source_span,
+  profile_ref = excluded.profile_ref,
   corpus_profile_ref = excluded.corpus_profile_ref,
   corpus_profile_hash = excluded.corpus_profile_hash,
   corpus_hash = excluded.corpus_hash,
   sensitivity = excluded.sensitivity,
-  dependency_refs_json = excluded.dependency_refs_json,
-  structural_refs_json = excluded.structural_refs_json,
-  aliases_json = excluded.aliases_json,
+  dependency_refs = excluded.dependency_refs,
+  structural_refs = excluded.structural_refs,
+  aliases = excluded.aliases,
   purpose = excluded.purpose,
   source_type = excluded.source_type,
+  body = '',
   search_text = excluded.search_text
 `;
 
 export const STATIC_CORPUS_D1_DELETE_FTS_REF_SQL =
-  "DELETE FROM kp_static_corpus_fts WHERE source_ref = ?";
+  "DELETE FROM kp_static_chunks_fts WHERE source_ref = ?";
 export const STATIC_CORPUS_D1_INSERT_FTS_SQL =
-  "INSERT INTO kp_static_corpus_fts (source_ref, search_text) VALUES (?, ?)";
-export const STATIC_CORPUS_D1_CLEAR_FTS_SQL = "DELETE FROM kp_static_corpus_fts";
-export const STATIC_CORPUS_D1_CLEAR_CHUNKS_SQL = "DELETE FROM kp_static_corpus_chunks";
-export const STATIC_CORPUS_D1_CLEAR_META_SQL = "DELETE FROM kp_static_corpus_meta";
-export const STATIC_CORPUS_D1_DELETE_STALE_FTS_SQL = `
-DELETE FROM kp_static_corpus_fts
+  "INSERT INTO kp_static_chunks_fts (source_ref, search_text) VALUES (?, ?)";
+export const STATIC_CORPUS_D1_CLEAR_FTS_SQL = "DELETE FROM kp_static_chunks_fts";
+export const STATIC_CORPUS_D1_CLEAR_CHUNKS_SQL = "DELETE FROM kp_static_chunks";
+export const STATIC_CORPUS_D1_CLEAR_META_SQL = "DELETE FROM kp_static_corpus_profiles";
+export const STATIC_CORPUS_D1_DELETE_SCOPE_FTS_SQL = `
+DELETE FROM kp_static_chunks_fts
 WHERE source_ref IN (
-  SELECT source_ref FROM kp_static_corpus_chunks WHERE corpus_hash <> ?
+  SELECT source_ref FROM kp_static_chunks WHERE source_ref LIKE ?
+)
+`;
+export const STATIC_CORPUS_D1_DELETE_SCOPE_CHUNKS_SQL =
+  "DELETE FROM kp_static_chunks WHERE source_ref LIKE ?";
+export const STATIC_CORPUS_D1_DELETE_STALE_FTS_SQL = `
+DELETE FROM kp_static_chunks_fts
+WHERE source_ref IN (
+  SELECT source_ref FROM kp_static_chunks
+  WHERE source_ref LIKE ? AND (corpus_hash IS NULL OR corpus_hash <> ?)
 )
 `;
 export const STATIC_CORPUS_D1_DELETE_STALE_CHUNKS_SQL =
-  "DELETE FROM kp_static_corpus_chunks WHERE corpus_hash <> ?";
+  "DELETE FROM kp_static_chunks WHERE source_ref LIKE ? AND (corpus_hash IS NULL OR corpus_hash <> ?)";
 export const STATIC_CORPUS_D1_UPSERT_META_SQL = `
-INSERT INTO kp_static_corpus_meta (
-  singleton_key, corpus_profile_ref, corpus_profile_hash, corpus_hash, compiler_version, chunk_count
-) VALUES ('active', ?, ?, ?, ?, ?)
-ON CONFLICT(singleton_key) DO UPDATE SET
-  corpus_profile_ref = excluded.corpus_profile_ref,
-  corpus_profile_hash = excluded.corpus_profile_hash,
+INSERT INTO kp_static_corpus_profiles (
+  profile_ref, profile_hash, corpus_hash, compiler_version, chunk_count
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(profile_ref) DO UPDATE SET
+  profile_hash = excluded.profile_hash,
   corpus_hash = excluded.corpus_hash,
   compiler_version = excluded.compiler_version,
   chunk_count = excluded.chunk_count
@@ -427,10 +416,55 @@ export interface D1CorpusPreparedStatement {
 }
 
 export interface D1CorpusDatabase {
-  exec(sql: string): Promise<unknown>;
   prepare(sql: string): D1CorpusPreparedStatement;
   batch(statements: D1CorpusPreparedStatement[]): Promise<readonly unknown[]>;
 }
+
+type D1StoredChunkRow = Readonly<{
+  source_ref: string;
+  source_hash: string;
+  source_span: string;
+  profile_ref: string;
+  corpus_profile_ref: string;
+  corpus_profile_hash: string;
+  corpus_hash: string;
+  sensitivity: string;
+  dependency_refs: string;
+  structural_refs: string;
+  aliases: string;
+  purpose: string;
+  source_type: string;
+  body: string;
+  search_text: string;
+}>;
+
+type D1StoredFtsRow = Readonly<{
+  source_ref: string;
+  search_text: string;
+}>;
+
+const D1_STORED_CHUNK_INTEGRITY_KEYS = Object.freeze([
+  "source_ref",
+  "source_hash",
+  "source_span",
+  "profile_ref",
+  "corpus_profile_ref",
+  "corpus_profile_hash",
+  "corpus_hash",
+  "sensitivity",
+  "dependency_refs",
+  "structural_refs",
+  "aliases",
+  "purpose",
+  "source_type",
+  "body",
+  "search_text",
+] as const);
+
+const D1_STORED_FTS_INTEGRITY_KEYS = Object.freeze([
+  "source_ref",
+  "search_text",
+] as const);
 
 export type D1StaticCorpusPolicy = Readonly<{
   allowedProfileRefs: readonly string[];
@@ -439,10 +473,11 @@ export type D1StaticCorpusPolicy = Readonly<{
 
 export interface D1StaticCorpusAdapter {
   readonly mode: "d1-fts";
-  migrate(): Promise<void>;
-  upsert(corpus: CompiledStaticCorpus): Promise<void>;
-  rebuild(corpus: CompiledStaticCorpus): Promise<void>;
-  search(query: StaticFtsQuery): Promise<readonly StaticFtsHit[]>;
+  readonly allowKpOnly: boolean;
+  readonly isCurrent: (corpus: CompiledStaticCorpus) => Promise<boolean>;
+  readonly upsert: (corpus: CompiledStaticCorpus) => Promise<void>;
+  readonly rebuild: (corpus: CompiledStaticCorpus) => Promise<void>;
+  readonly search: (query: StaticFtsQuery) => Promise<readonly StaticFtsHit[]>;
 }
 
 export function createD1StaticCorpusAdapter(
@@ -453,20 +488,77 @@ export function createD1StaticCorpusAdapter(
   if (allowedProfiles.length === 0 || allowedProfiles.length > 32) {
     throw new Error("STATIC_CORPUS_D1_PROFILE_POLICY_INVALID");
   }
-  return Object.freeze({
+  let activeCorpus: CompiledStaticCorpus | undefined;
+  const adapter: D1StaticCorpusAdapter = {
     mode: "d1-fts" as const,
-    async migrate(): Promise<void> {
-      await db.exec(STATIC_CORPUS_D1_MIGRATION_SQL);
+    allowKpOnly: policy.allowKpOnly,
+    async isCurrent(corpus: CompiledStaticCorpus): Promise<boolean> {
+      activeCorpus = corpus;
+      const metadataResult = await db.prepare(`
+SELECT profile_ref, profile_hash, corpus_hash, compiler_version, chunk_count
+FROM kp_static_corpus_profiles
+WHERE profile_ref = ?
+LIMIT 1
+`).bind(
+        d1MetaRef(corpus),
+      ).all<{
+        profile_ref: string;
+        profile_hash: string;
+        corpus_hash: string;
+        compiler_version: string;
+        chunk_count: number;
+      }>();
+      const metadata = metadataResult.results?.[0];
+      if (metadata?.profile_ref !== d1MetaRef(corpus)
+        || metadata.profile_hash !== corpus.compilerProfileHash
+        || metadata.corpus_hash !== corpus.d1CorpusHash
+        || metadata.compiler_version !== STATIC_CORPUS_PROFILE.compilerVersion
+        || metadata.chunk_count !== corpus.d1Rows.length) return false;
+
+      const chunkResult = await db.prepare(`
+SELECT source_ref, source_hash, source_span, profile_ref,
+       corpus_profile_ref, corpus_profile_hash, corpus_hash,
+       sensitivity, dependency_refs, structural_refs, aliases,
+       purpose, source_type, body, search_text
+FROM kp_static_chunks
+WHERE source_ref LIKE ?
+ORDER BY source_ref
+`).bind(d1StorageLike(corpus)).all<D1StoredChunkRow>();
+      const ftsResult = await db.prepare(`
+SELECT source_ref, search_text
+FROM kp_static_chunks_fts
+WHERE source_ref LIKE ?
+ORDER BY source_ref
+`).bind(d1StorageLike(corpus)).all<D1StoredFtsRow>();
+      const expectedChunks = corpus.d1Rows
+        .map((row) => d1StoredChunkRow(corpus, row))
+        .sort((left, right) => left.source_ref.localeCompare(right.source_ref));
+      const expectedFts = expectedChunks.map((row) => Object.freeze({
+        source_ref: row.source_ref,
+        search_text: row.search_text,
+      }));
+      return rowsExactlyMatch(
+        chunkResult.results,
+        expectedChunks,
+        D1_STORED_CHUNK_INTEGRITY_KEYS,
+      ) && rowsExactlyMatch(
+        ftsResult.results,
+        expectedFts,
+        D1_STORED_FTS_INTEGRITY_KEYS,
+      );
     },
     async upsert(corpus: CompiledStaticCorpus): Promise<void> {
+      activeCorpus = corpus;
       await upsertCorpusRows(db, corpus);
       await activateCorpus(db, corpus, true);
     },
     async rebuild(corpus: CompiledStaticCorpus): Promise<void> {
+      activeCorpus = corpus;
       await runBatches(db, [
-        db.prepare(STATIC_CORPUS_D1_CLEAR_META_SQL),
-        db.prepare(STATIC_CORPUS_D1_CLEAR_FTS_SQL),
-        db.prepare(STATIC_CORPUS_D1_CLEAR_CHUNKS_SQL),
+        db.prepare(STATIC_CORPUS_D1_DELETE_SCOPE_FTS_SQL).bind(d1StorageLike(corpus)),
+        db.prepare(STATIC_CORPUS_D1_DELETE_SCOPE_CHUNKS_SQL).bind(d1StorageLike(corpus)),
+        db.prepare("DELETE FROM kp_static_corpus_profiles WHERE profile_ref = ?")
+          .bind(d1MetaRef(corpus)),
       ]);
       await upsertCorpusRows(db, corpus);
       await activateCorpus(db, corpus, false);
@@ -475,32 +567,40 @@ export function createD1StaticCorpusAdapter(
       if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 32) {
         throw new Error("STATIC_CORPUS_D1_QUERY_LIMIT_INVALID");
       }
-      const terms = uniqueSorted(query.terms.map(normalizeFtsTerm).filter(Boolean));
+      if (activeCorpus === undefined) throw new Error("STATIC_CORPUS_D1_NOT_SYNCHRONIZED");
+      const publicTerms = new Set(activeCorpus.d1Rows.flatMap((row) => row.searchText.split(" ")));
+      // A query can contain player-private prose. Only tokens already present
+      // in the public index may cross the D1 seam.
+      const terms = uniqueSorted(query.terms
+        .map(normalizeFtsTerm)
+        .filter((term) => Boolean(term) && publicTerms.has(term)));
       if (terms.length === 0) return Object.freeze([]);
       const profilePlaceholders = allowedProfiles.map(() => "?").join(", ");
-      const sensitivities = policy.allowKpOnly ? ["public", "kp-only"] : ["public"];
-      const sensitivityPlaceholders = sensitivities.map(() => "?").join(", ");
       const sql = `
-SELECT kp_static_corpus_fts.source_ref AS source_ref,
-       -bm25(kp_static_corpus_fts) AS score
-FROM kp_static_corpus_fts
-JOIN kp_static_corpus_chunks
-  ON kp_static_corpus_chunks.source_ref = kp_static_corpus_fts.source_ref
-JOIN kp_static_corpus_meta
-  ON kp_static_corpus_meta.singleton_key = 'active'
- AND kp_static_corpus_meta.corpus_hash = kp_static_corpus_chunks.corpus_hash
-WHERE kp_static_corpus_fts MATCH ?
-  AND kp_static_corpus_meta.corpus_profile_hash = ?
-  AND kp_static_corpus_chunks.source_profile_ref IN (${profilePlaceholders})
-  AND kp_static_corpus_chunks.sensitivity IN (${sensitivityPlaceholders})
-ORDER BY bm25(kp_static_corpus_fts), kp_static_corpus_fts.source_ref
+SELECT kp_static_chunks_fts.source_ref AS source_ref,
+       -bm25(kp_static_chunks_fts) AS score
+FROM kp_static_chunks_fts
+JOIN kp_static_chunks
+  ON kp_static_chunks.source_ref = kp_static_chunks_fts.source_ref
+JOIN kp_static_corpus_profiles
+  ON kp_static_corpus_profiles.profile_ref = ?
+ AND kp_static_corpus_profiles.corpus_hash = kp_static_chunks.corpus_hash
+WHERE kp_static_chunks_fts MATCH ?
+  AND kp_static_corpus_profiles.profile_hash = ?
+  AND kp_static_chunks.profile_ref IN (${profilePlaceholders})
+  AND kp_static_chunks.sensitivity = 'public'
+  AND kp_static_chunks.corpus_hash = ?
+  AND kp_static_chunks.source_ref LIKE ?
+ORDER BY bm25(kp_static_chunks_fts), kp_static_chunks_fts.source_ref
 LIMIT ?
 `;
       const result = await db.prepare(sql).bind(
+        d1MetaRef(activeCorpus),
         ftsMatchExpression(terms),
         STATIC_CORPUS_PROFILE.profileHash,
         ...allowedProfiles,
-        ...sensitivities,
+        activeCorpus.d1CorpusHash,
+        d1StorageLike(activeCorpus),
         query.limit,
       ).all<{ source_ref: string; score: number }>();
       const rows = result.results ?? [];
@@ -508,34 +608,38 @@ LIMIT ?
         if (typeof row.source_ref !== "string" || row.source_ref.length === 0 || !Number.isFinite(row.score)) {
           throw new Error("STATIC_CORPUS_D1_HIT_INVALID");
         }
-        return Object.freeze({ sourceRef: row.source_ref, score: row.score });
+        return Object.freeze({
+          sourceRef: logicalD1SourceRef(activeCorpus!, row.source_ref),
+          score: row.score,
+        });
       }));
     },
-  });
+  };
+  return Object.freeze(adapter);
 }
 
 async function upsertCorpusRows(db: D1CorpusDatabase, corpus: CompiledStaticCorpus): Promise<void> {
   const statements: D1CorpusPreparedStatement[] = [];
   for (const row of corpus.d1Rows) {
+    const stored = d1StoredChunkRow(corpus, row);
     statements.push(db.prepare(STATIC_CORPUS_D1_UPSERT_CHUNK_SQL).bind(
-      row.sourceRef,
-      row.sourceHash,
-      row.sourceSpanStart,
-      row.sourceSpanEnd,
-      row.sourceProfileRef,
-      row.corpusProfileRef,
-      row.corpusProfileHash,
-      row.corpusHash,
-      row.sensitivity,
-      row.dependencyRefsJson,
-      row.structuralRefsJson,
-      row.aliasesJson,
-      row.purpose,
-      row.sourceType,
-      row.searchText,
+      stored.source_ref,
+      stored.source_hash,
+      stored.source_span,
+      stored.profile_ref,
+      stored.corpus_profile_ref,
+      stored.corpus_profile_hash,
+      stored.corpus_hash,
+      stored.sensitivity,
+      stored.dependency_refs,
+      stored.structural_refs,
+      stored.aliases,
+      stored.purpose,
+      stored.source_type,
+      stored.search_text,
     ));
-    statements.push(db.prepare(STATIC_CORPUS_D1_DELETE_FTS_REF_SQL).bind(row.sourceRef));
-    statements.push(db.prepare(STATIC_CORPUS_D1_INSERT_FTS_SQL).bind(row.sourceRef, row.searchText));
+    statements.push(db.prepare(STATIC_CORPUS_D1_DELETE_FTS_REF_SQL).bind(stored.source_ref));
+    statements.push(db.prepare(STATIC_CORPUS_D1_INSERT_FTS_SQL).bind(stored.source_ref, stored.search_text));
   }
   await runBatches(db, statements);
 }
@@ -547,13 +651,19 @@ async function activateCorpus(
 ): Promise<void> {
   const statements: D1CorpusPreparedStatement[] = [];
   if (pruneStale) {
-    statements.push(db.prepare(STATIC_CORPUS_D1_DELETE_STALE_FTS_SQL).bind(corpus.corpusHash));
-    statements.push(db.prepare(STATIC_CORPUS_D1_DELETE_STALE_CHUNKS_SQL).bind(corpus.corpusHash));
+    statements.push(db.prepare(STATIC_CORPUS_D1_DELETE_STALE_FTS_SQL).bind(
+      d1StorageLike(corpus),
+      corpus.d1CorpusHash,
+    ));
+    statements.push(db.prepare(STATIC_CORPUS_D1_DELETE_STALE_CHUNKS_SQL).bind(
+      d1StorageLike(corpus),
+      corpus.d1CorpusHash,
+    ));
   }
   statements.push(db.prepare(STATIC_CORPUS_D1_UPSERT_META_SQL).bind(
-    corpus.compilerProfileRef,
+    d1MetaRef(corpus),
     corpus.compilerProfileHash,
-    corpus.corpusHash,
+    corpus.d1CorpusHash,
     STATIC_CORPUS_PROFILE.compilerVersion,
     corpus.d1Rows.length,
   ));
@@ -573,7 +683,37 @@ export async function retrieveStaticReferencesFromD1(
   request: StaticRetrievalRequest,
   d1: D1StaticCorpusAdapter,
 ): Promise<readonly StaticRetrievalHit[]> {
-  const refOnlyHits = await d1.search(Object.freeze({ terms: request.queryTerms, limit: request.limit }));
+  // Only public corpus-derived structural terms may cross this seam. The
+  // player's prose and Planner suggestions remain in Worker memory even when
+  // every individual token also happens to exist in the public corpus: their
+  // co-occurrence would otherwise disclose a reconstructable private query.
+  const publicHits = request.publicD1QueryTerms.length === 0
+    ? Object.freeze([])
+    : await d1.search(Object.freeze({
+        terms: request.publicD1QueryTerms,
+        limit: request.limit,
+      }));
+  const requestedTerms = new Set(request.queryTerms);
+  const memoryTextHits = Object.values(index.entries)
+      .filter((entry) => entry.sensitivity === "public" || d1.allowKpOnly)
+      .map((entry) => Object.freeze({
+        sourceRef: entry.sourceRef,
+        score: entry.searchTerms.reduce(
+          (count, term) => count + (requestedTerms.has(term) ? 1 : 0),
+          0,
+        ),
+      }))
+      .filter((hit) => hit.score > 0)
+      .sort((left, right) => right.score - left.score || left.sourceRef.localeCompare(right.sourceRef))
+      .slice(0, request.limit);
+  const mergedScores = new Map<string, number>();
+  for (const hit of [...publicHits, ...memoryTextHits]) {
+    mergedScores.set(hit.sourceRef, Math.max(mergedScores.get(hit.sourceRef) ?? Number.NEGATIVE_INFINITY, hit.score));
+  }
+  const refOnlyHits = [...mergedScores]
+    .map(([sourceRef, score]) => Object.freeze({ sourceRef, score }))
+    .sort((left, right) => right.score - left.score || left.sourceRef.localeCompare(right.sourceRef))
+    .slice(0, request.limit);
   const bridge: D1FtsAdapter = Object.freeze({
     mode: "d1-fts" as const,
     search(): readonly StaticFtsHit[] {
@@ -581,6 +721,74 @@ export async function retrieveStaticReferencesFromD1(
     },
   });
   return retrieveStaticReferences(index, request, bridge);
+}
+
+function d1StoragePrefix(corpus: CompiledStaticCorpus): string {
+  return `corpus:${corpus.d1StorageScope}:`;
+}
+
+function d1StorageLike(corpus: CompiledStaticCorpus): string {
+  return `${d1StoragePrefix(corpus)}%`;
+}
+
+function d1MetaRef(corpus: CompiledStaticCorpus): string {
+  return `${corpus.compilerProfileRef}:${corpus.d1StorageScope}`;
+}
+
+function d1StoredSourceRef(corpus: CompiledStaticCorpus, logicalSourceRef: string): string {
+  return `${d1StoragePrefix(corpus)}${corpus.d1CorpusHash}:${logicalSourceRef}`;
+}
+
+function d1StoredChunkRow(
+  corpus: CompiledStaticCorpus,
+  row: CompiledStaticCorpusRow,
+): D1StoredChunkRow {
+  return Object.freeze({
+    source_ref: d1StoredSourceRef(corpus, row.sourceRef),
+    source_hash: row.sourceHash,
+    source_span: JSON.stringify({ start: row.sourceSpanStart, end: row.sourceSpanEnd }),
+    profile_ref: row.sourceProfileRef,
+    corpus_profile_ref: row.corpusProfileRef,
+    corpus_profile_hash: row.corpusProfileHash,
+    corpus_hash: row.corpusHash,
+    sensitivity: row.sensitivity,
+    dependency_refs: row.dependencyRefsJson,
+    structural_refs: row.structuralRefsJson,
+    aliases: row.aliasesJson,
+    purpose: row.purpose,
+    source_type: row.sourceType,
+    body: "",
+    search_text: row.searchText,
+  });
+}
+
+function rowsExactlyMatch<T extends { readonly source_ref: string }>(
+  actual: readonly T[] | undefined,
+  expected: readonly T[],
+  keys: readonly (keyof T)[],
+): boolean {
+  if (actual === undefined || actual.length !== expected.length) return false;
+  const actualBySourceRef = new Map<string, T>();
+  for (const actualRow of actual) {
+    if (actualBySourceRef.has(actualRow.source_ref)) return false;
+    actualBySourceRef.set(actualRow.source_ref, actualRow);
+  }
+  const expectedSourceRefs = new Set<string>();
+  return expected.every((expectedRow) => {
+    if (expectedSourceRefs.has(expectedRow.source_ref)) return false;
+    expectedSourceRefs.add(expectedRow.source_ref);
+    const actualRow = actualBySourceRef.get(expectedRow.source_ref);
+    return actualRow !== undefined
+      && keys.every((key) => actualRow[key] === expectedRow[key]);
+  });
+}
+
+function logicalD1SourceRef(corpus: CompiledStaticCorpus, storedSourceRef: string): string {
+  const prefix = `${d1StoragePrefix(corpus)}${corpus.d1CorpusHash}:`;
+  if (!storedSourceRef.startsWith(prefix) || storedSourceRef.length === prefix.length) {
+    throw new Error("STATIC_CORPUS_D1_HIT_SCOPE_INVALID");
+  }
+  return storedSourceRef.slice(prefix.length);
 }
 
 export function corpusChineseTerms(corpus: CompiledStaticCorpus, sourceRef: string): readonly string[] {

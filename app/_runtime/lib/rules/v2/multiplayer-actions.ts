@@ -28,6 +28,7 @@ import {
 } from "./character-abilities";
 import { changeCharacterGear, isGearSlot } from "./character-gear";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
+import { characterProficiencyFieldsMatchProfile } from "./proficiency";
 
 type Draft = {
   eventType: EventType;
@@ -98,7 +99,11 @@ function canonicalStringList(value: unknown): string[] | undefined {
     : undefined;
 }
 
-export function canonicalControlledCharacter(value: unknown, ordinal: string): CharacterRecord | undefined {
+export function canonicalControlledCharacter(
+  profiles: RuntimeProfileManifest,
+  value: unknown,
+  ordinal: string,
+): CharacterRecord | undefined {
   if (
     !isRecord(value)
     || !hasOnlyKeys(value, ["id", "kind", "name", "sceneId", "tenureStatus"], [
@@ -107,6 +112,7 @@ export function canonicalControlledCharacter(value: unknown, ordinal: string): C
       "characterBuild",
       "classId",
       "featureIds",
+      "expertiseSkills",
       "hitPoints",
       "lastLongRestCompletedAtMicros",
       "level",
@@ -114,6 +120,7 @@ export function canonicalControlledCharacter(value: unknown, ordinal: string): C
       "preparedSpellIds",
       "proficiencyBonus",
       "proficientSkills",
+      "proficientSaves",
       "raceId",
       "resourceMaximums",
       "resources",
@@ -162,6 +169,7 @@ export function canonicalControlledCharacter(value: unknown, ordinal: string): C
       && (!Array.isArray(value.proficientSkills)
         || !value.proficientSkills.every(isNonEmptyString)
         || value.proficientSkills.length !== new Set(value.proficientSkills).size))
+    || !characterProficiencyFieldsMatchProfile(profiles, value)
     || (value.loadout !== undefined && !isCharacterLoadout(value.loadout))
     || ([value.classId, value.raceId, value.subclassId]
       .some((entry) => entry !== undefined && !isNonEmptyString(entry)))
@@ -197,6 +205,12 @@ export function canonicalControlledCharacter(value: unknown, ordinal: string): C
     ...(value.proficientSkills === undefined
       ? {}
       : { proficientSkills: [...value.proficientSkills].sort() }),
+    ...(value.expertiseSkills === undefined
+      ? {}
+      : { expertiseSkills: [...value.expertiseSkills as string[]].sort() }),
+    ...(value.proficientSaves === undefined
+      ? {}
+      : { proficientSaves: [...value.proficientSaves as string[]].sort() }),
     ...(value.classId === undefined ? {} : { classId: value.classId as string }),
     ...(value.raceId === undefined ? {} : { raceId: value.raceId as string }),
     ...(value.subclassId === undefined ? {} : { subclassId: value.subclassId as string }),
@@ -247,7 +261,7 @@ function grantSeat(
   );
   const character = command.character === undefined
     ? undefined
-    : canonicalControlledCharacter(command.character, nextOrdinal);
+    : canonicalControlledCharacter(profiles, command.character, nextOrdinal);
   const existingCharacter = character === undefined ? undefined : state.entities[character.id];
   const restoringCharacter = existingCharacter !== undefined
     && existingCharacter.kind === "player"
@@ -304,6 +318,7 @@ function grantSeat(
         );
       }
       const combatEntity = buildPlayerCombatEntity(
+        profiles,
         character,
         compiled,
         principal.id,
@@ -359,7 +374,7 @@ function materializeCharacter(
     Object.values(state.entities).reduce((maximum, entity) =>
       Math.max(maximum, Number(entity.entityOrdinal)), 0) + 1,
   );
-  const character = canonicalControlledCharacter(command.character, nextOrdinal);
+  const character = canonicalControlledCharacter(profiles, command.character, nextOrdinal);
   if (
     character === undefined
     || character.id in state.entities
@@ -376,6 +391,7 @@ function materializeCharacter(
     );
   }
   const combatEntity = buildPlayerCombatEntity(
+    profiles,
     character,
     compiled,
     command.principalId as string,

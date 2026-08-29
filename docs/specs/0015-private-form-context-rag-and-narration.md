@@ -1,6 +1,6 @@
 # SPEC 0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境
 
-- 状态：**已裁定（用户本 Goal 明确授权）**
+- 状态：**已裁定；本地实现与定向证据已建立，发布门待完成**
 - 裁定日期：2026-08-29
 - 产品：烛帷 V3
 - 适用规则：D&D 5e 2014 / SRD 5.1
@@ -58,7 +58,7 @@ Catalog 至少注册下列精确 ID：
 | `in-world-refusal.v1` | 缺前提、不可能、违反已固化规律 | 世界内理由、真实尝试成本和仍可行动的信息；不是 Provider 错误 |
 | `materialization.v1` | 在合理开放留白中固化动态事实/实体 | 依据、稳定 ID、定义/Profile、可见性、时间点和骰前冻结条件 |
 | `combat-action.v1` | Encounter 内封闭战斗行动 | 玩家目标/做法对应的版本化能力、选择、成本、时点与后果；不自报骰面/实际区域集合 |
-| `environmental-stunt.v1` | 利用、创造或改变有限环境要素 | feature 复用/形成、材质/尺寸/高度、状态图、触发、区域、对象阈值与残骸后果 |
+| `environmental-stunt.v1` | 利用、创造或改变有限环境要素 | feature 复用/形成、材质/尺寸/高度、状态图、显式 `state-only` / `area-hazard` 效果模式，以及该模式实际需要的对象阈值、触发、区域或残骸后果 |
 | `compound.v1` | 未预见、动态、多目标、多阶段或跨作用域行动 | 有界阶段、依赖、条件分支、事实/机械/NPC/Activity/环境组合及原子边界 |
 
 Form 只是模型侧内部 Interface，不是玩家命令菜单。已有结构化 UI 的移动、休息、反应和待决选择由服务端直接确定 Form；自然语言行动由 Room 状态筛选。普通动作只给当前相关的 3–6 张，且在意图不确定、跨域或任何候选可能过窄时必须包含 `compound.v1`。Planner 无权删除 `compound.v1`。
@@ -235,9 +235,11 @@ Narration 只在存在该受众发布任务时进入 `pending`；合法正文发
 
 辅助模型只允许 Form 排序建议、实体/代词候选、规则/模组查询生成、chunk rerank、缺失引用和纯结构错误提示。它不得决定可行性、DC、危险、失败后果、NPC 台词、世界事实、敌人、实际区域目标、Audience、可见性、骰面、事件或状态 patch。
 
-UI 中主 KP 选择保持主要视觉层级并按房间固定；Context Planner 位于次要/高级设置，至少提供“关闭/确定性检索”和一个真实通过角色验证的 Planner。DeepSeek V4 Flash 可以是辅助候选，但必须拥有独立 Planner Profile/Receipt，并通过中文、structured output、schema/allowlist、秘密 canary、延迟、错误和故障注入验证后才可出现。
+UI 中主 KP 选择保持主要视觉层级并按房间固定。只有 G3 先达到 §10 的量化增益门时，Context Planner 才进入次要/高级设置，并至少提供“关闭/确定性检索”和一个真实通过角色验证的 Planner；G3 未达门时按 §10 删除 Planner 产品接线，不以空的、待验证的或无增益的选项冒充完成。DeepSeek V4 Flash 可以是辅助候选，但必须拥有独立 Planner Profile/Receipt，并通过中文、structured output、schema/allowlist、秘密 canary、延迟、错误和故障注入验证后才可出现。
 
 辅助 Profile 只能在新 RootAction 边界更换；当前 RootAction 固定原 Profile。Planner 失败回退确定性查询且不改变主 KP；禁止隐藏自动切换 provider/model。未通过验证的 Adapter 可以留在测试/实验层，但不得出现在生产 UI。
+
+本轮 120 条同集结构评测已经裁定产品停在 G2：G3 的离线确定性 Planner 控制与 G4 的评测器本地精确向量对照均未产生预注册增益，G5 因 G2 召回与排序都充分而不适用。因此当前新房绑定明确固定 `context-planner-disabled-v1`，Hall/Table 不提供 Planner 产品设置；待验证候选、离线 Adapter 和角色验证 runner 只保留在实验/测试层，不构成可选产品能力。
 
 ## 10. G0–G5 实验与采用门
 
@@ -247,7 +249,7 @@ UI 中主 KP 选择保持主要视觉层级并按房间固定；Context Planner 
 | --- | --- | --- |
 | G0 | 当前超级 Schema + 完整上下文 | 改造前基线，只用于同集比较 |
 | G1 | 小表 + 当前完整上下文 | 分离 Form 收益，不是默认候选 |
-| G2 | 小表 + 三层 Context Pack + D1 FTS | 默认发布候选 |
+| G2 | 小表 + 三层 Context Pack + D1 FTS | 本轮采用配置；仍须通过发布硬门 |
 | G3 | G2 + 可选 Context Planner | 只有量化增益达门才采用 |
 | G4 | G3 + 本地精确 Embedding/Vectorize 对照 | 只做本地对照；无另行授权不创建远端 Vectorize |
 | G5 | 仅当召回足够但排序明显失败时，加辅助模型 rerank | 条件实验；达门才采用 |
@@ -258,7 +260,15 @@ G2 只在 §13 全部硬门通过后发布。G3/G4/G5 还必须相对当前已�
 
 未达门的 Planner/Embedding/Vectorize/rerank 产品接线必须删除；只保留可复现实验记录、Disabled/确定性测试 Adapter 和诚实结论。不得为“使用 AI/RAG”保留无价值复杂度。
 
-## 11. 动态战术环境与吊灯纵切
+### 10.1 本轮采用结论与证据边界
+
+同一 120 条中文金标的离线结构报告通过全部 16 项结构硬门，故采用 G2 作为当前产品配置：关键引用 240/240、全部 required refs 360/360；简单 Form 首次合法 86/88、compound 首次合法 31/32；一次窄修订后最终合法 120/120、可执行路由 120/120、32 个复杂案例误入简单 Form 为 0。相对 G0，Form Schema 字节中位数下降 60.07%，Proposal 输入估算中位数下降 77.22%；G2 输入估算 p50/p95 为 4918/5812。该 token 口径是 UTF-8 请求字节除以四，不是 Provider tokenizer 计数。
+
+G2 通过生产 D1 Adapter 合同在隔离 `node:sqlite` FTS5 中写入 13/13 条 public projection、执行 120/120 次 SQL `MATCH` 并完成 174 次非空权威原文重读；D1 中 KP-only 行与正文 body 都是 0。G3 与 G4 相对 G2 的 required recall、critical recall 和首次合法率三项配对差值均为 0/120，95% CI 均为 `[0, 0]`，且输入中位数和 p95 都变差，故两组 `passed=false`、`adopted=false`。G3 没有真实模型角色验证，明确为 `unvalidated`、不可泛化并在生产禁用。G4 只在评测器中使用 Unicode-scalar TF-IDF `Float64Array` 和 brute-force exact cosine，120 次搜索/1920 次比较中有 56 个案例发生真实重排，但没有质量增益，也不接入生产。G2 的 MRR 为 1，故 G5 的“召回足够但排序明显失败”前提不成立，`applicable=false`。Planner/RAG/Embedding/Vector/rerank 五类故障注入为 5/5 安全回退且冻结语义不变。
+
+以上只证明离线结构实现和采用选择，不是线上模型或发布证据。2026-08-29 用户后续明确取消本代理的完整线上测评并自行执行；因此本次发布只允许一次精确三交互生产冒烟，且不得把它写成 31 轮质量评测或用它填充 Provider tokenizer、Proposal 端到端 p95、平均调用数、正常 fallback、真实首次合法率与配对重复等完整线上指标。这些指标在本次代理回执中必须保持“未测/由用户后续测评”。完整冻结门、浏览器、migration、部署和三交互线上冒烟仍服从 §§14–15。
+
+## 11. KP 自定义动态战术环境与 `area-hazard` 纵切
 
 ### 11.1 版本化对象
 
@@ -266,49 +276,38 @@ G2 只在 §13 全部硬门通过后发布。G3/G4/G5 还必须相对当前已�
 
 - `EnvironmentFeature`：稳定 ID、scene、geometry、材质/尺寸/高度、可见性、definition/profile 引用；
 - `DestructibleDefinition`：AC、耐久/阈值、伤害类型、免疫、允许状态和残骸语义；
-- `TriggeredHazard`：冻结触发条件、区域、豁免、伤害、状态、时点和结束条件；
-- `AreaEffect`：来源、完整权威 Geometry 计算、持续/中断/到期；
+- `TriggeredHazard`：只属于 `area-hazard`，冻结触发条件、区域、豁免、伤害、状态、时点和结束条件；
+- `AreaEffect`：只属于 `area-hazard`，记录来源、完整权威 Geometry 计算、持续/中断/到期；`state-only` 中必须为 `null`；
 - `EnvironmentStateGraph`：版本化有限状态、允许转换与每态移动/视线/掩护/通行语义。
 
-`environmental-stunt.v1` 至少支持吊灯、油桶、书架/石柱、吊桥、火盆、闸门、临时掩体、可破坏地板/楼梯和环境阻断。KP 决定合理性、开放留白、位置/材质/尺寸/高度、对象 AC/耐久/阈值/免疫、做法、触发、区域、豁免、伤害、状态与残骸后果；这些会影响机械的参数必须在任何骰面前固化。
+`environmental-stunt.v1` 必须承接玩家的任意自然语言想法；吊灯、油桶、书架/石柱、吊桥、火盆、闸门、临时掩体、可破坏地板/楼梯和环境阻断只是验收覆盖，不是对象族、关键词模板或预设内容。KP 决定具体对象内容、合理性、开放留白、位置/材质/尺寸/高度、对象 AC/耐久/阈值/免疫、做法、状态图和机械效果模式；这些会影响机械的参数必须在任何骰面前固化。
+
+机械效果模式由 KP 明确冻结为 `state-only` 或 `area-hazard`，不得按对象名称、关键词或家族推断。`state-only` 只结算对象自身的状态/耐久以及地形、掩护、视线或通行变化，定义中不得伪造 Hazard、Area、区域豁免或对区域目标的伤害；只有 `area-hazard` 才要求 KP 继续定义触发、区域、豁免、目标伤害、状态和残骸后果，并由 Rules 计算实际受影响实体。
 
 玩家一句话不能召唤有利物件。既有对象复用稳定 ID/状态；已明确不存在时正常 `resolvedInWorld` 拒绝；合理开放留白必须先用 `materialization.v1` 在骰前固化。Rules 从完整权威 Geometry 计算 caster、ally、enemy、hidden entity 和 environment feature 的实际集合；KP/客户端不能提交该集合。隐藏对象可被影响，但不得从 preview、错误、DOM、Narration 或列表长度泄漏。
 
 不实现通用物理引擎，只执行版本化有限状态和 Rules primitive。合理但高伤害或致命的环境后果不得按队伍等级自动削弱。
 
-### 11.2 吊灯强制因果链
+### 11.2 `area-hazard` 的通用因果链
+
+下列链说明 `area-hazard` 可以表达的完整因果上限，不绑定吊灯或任何具体物件，也不能据此把玩家想法按名称或类别派发。`state-only` 在合法对象/状态转换与地形/掩护/视线/通行事件提交后结束，不请求区域目标、区域豁免或对区域目标的伤害随机。
 
 ```text
 materialize/reuse feature
 → 消耗行动/弹药
 → 攻击锁链
 → 对象命中与伤害
-→ 达到阈值后 suspended→falling
+→ 达到阈值后进入触发态
 → Rules 计算区域目标
 → 各目标豁免
 → 伤害/状态/死亡
-→ falling→debris
+→ 进入残骸/已结算态
 → 更新地形/掩护/通行
 ```
 
-动态定义、攻击/检定、对象破坏、区域豁免、伤害、状态、死亡和残骸地形必须属于同一 RootAction/Receipt 和可恢复事件链。未命中、命中未破坏、成功坠落是三个骰前冻结且可回放的合法分支。
+动态定义、攻击/检定、对象破坏、区域豁免、伤害、状态、死亡和残骸地形必须属于同一 RootAction/Receipt 和可恢复事件链。未命中、命中未破坏和成功触发是三个骰前冻结且可回放的合法分支。
 
-吊灯专项必须逐项证明 14 个场景：
-
-1. 既有吊灯按稳定 ID/状态复用；
-2. 合理开放留白在骰前固化；
-3. 明确无吊灯时正常世界内拒绝；
-4. 攻击失手；
-5. 命中但未达到破坏阈值；
-6. 成功坠落；
-7. 多目标分别豁免；
-8. 隐藏目标被正确结算且无侧漏；
-9. 合理致死结果不被等级缩放；
-10. 残骸改变地形、掩护或通行；
-11. 某受众 Narration 失败不阻塞其他受众；
-12. 断线/DO 驱逐后不重掷或重复消耗；
-13. archive/replay 得到一致状态与投影；
-14. 幂等重试不重复生成 feature、事件、随机或 Delivery。
+发布验收采用通用动态场景，不要求再为吊灯或任何具体名词建立专项 Room 套件。吊灯只保留为已有 Rules 回归示例，不是完成前置。通用场景必须证明：KP 可创建任意非预设 `state-only` 与 `area-hazard` 定义；既有对象只按稳定 ID 复用；合理留白在骰前固化且明确不存在时世界内拒绝；Rules 从完整 Geometry 结算多目标及隐藏目标而不侧漏；合理致死不按等级缩放；残骸能改变地形/掩护/通行；逐受众失败与恢复不重复机械；archive→fresh DO 后 state/project hash 一致；同 submission 幂等重试不重复 feature、事件、随机、资源或 Delivery。
 
 ## 12. 稳定错误、降级与日志
 
@@ -360,6 +359,8 @@ Planner、RAG、Embedding、Vectorize 和辅助模型分别故障注入时，安
 
 既有 31 轮 KP 评测及全部硬门继续通过；新增至少一条长轨迹覆盖动态环境和逐受众 Narration 失败/恢复。确定性 fixture 必须走与生产相同的 Form、Context、validator、compiler、Room、Rules 和 projector seam，不能直接构造归一化成功结果。
 
+`npx vitest run tests/kp-v3-long-track-production-seams.test.ts` 已在当前新房 workflow-v2/environment-v4 上以 exit 0 定向通过 1/1（198.18 秒）：它经真实 Room 接口完成精确 31 次交互，即 15 次 Intent/RootAction/Proposal、15 次 ACK 和 1 次 Bob viewer-local Narration retry。每个 Intent 都经过生产 Form allowlist、三层 Context、validator、compiler、Room、Rules 与 projector；轨迹同时覆盖 `area-hazard` 对 2 个实体的完整 trigger/resolve/debris、KP 自定义竹骨声屏的 `state-only`（`hazard=null`、`areaEffect=null`）、Bob 独立恢复、无重复 Proposal/随机/资源，以及 archive→fresh DO 后 state/project hash 一致。连带的 Viewer recovery 与动态环境 Room 分别为 4/4 和 6/6。以上仍是本地定向证据，不替代真实 Provider、冻结全量或浏览器/发布门。
+
 ## 14. D1、migration 与派生语料闭环
 
 如静态语料/FTS 需要 D1 schema 变化，`db/schema.ts` 是唯一 schema 源；运行 `npm run db:generate` 后逐行审查只增不改的新 migration。已生成 migration 禁止修改。必须先在全新和已迁移本地 D1 各完成 migration，并通过最小“编译静态语料 → 写入 → FTS/别名查询 → sourceRef/hash 重读 → 删除索引 → 从权威语料重建”的闭环。
@@ -368,19 +369,26 @@ Planner、RAG、Embedding、Vectorize 和辅助模型分别故障注入时，安
 
 D1 FTS、别名表、实验结果和静态 chunk 可重建且不持有活跃 Room 状态。临时语料、测试用户、房间和实验数据必须带唯一前缀/清单，由创建者在证明不是真实用户数据后走既有精确清理路径；禁止广泛删除。
 
+当前实现已生成 `0008` 静态 corpus/FTS 与房间 workflow 绑定、`0009` corpus/profile/hash 加固、`0010` 三张可重建派生索引表的一次性逻辑 scrub，以及 `0011` `authoritative_room_archive_checkpoint`。`0010` 不修改权威 Room、身份或归档 schema/data，也不宣称物理擦除 SQLite 空闲页或历史恢复点；`0011` 只增加按 `(room_id, runtime_epoch_id)` 定位的灾备 checkpoint，不把 D1 变成活跃状态权威。
+
+归档只有在 `internalContinuations` 与 `combatRuntime.randomnessResolutions` 都已结清时才可取快照。分页每批最多 40 条并为最终 checkpoint 预留一条；只有完整 event prefix 与 head projection-audit 集合都已物化时，checkpoint 才在同一最终 batch 单调推进。旧 checkpoint 必须同时通过 event/state hash、active branch 与权威 prefix replay；伪造 audit cursor、缺行、回退或同序冲突均 fail closed。灾备读取只接受精确 room/epoch locator，忽略 checkpoint 之后的行，重放并校验 genesis/event/state/branch/audit 后，才可由 service-only disaster-recovery capability 恢复空的 Room DO；恢复只从活跃 member/control 重建派生权限索引，不把历史已撤权实体重新授权。
+
+`npm run db:generate` 已生成并逐行审查 `0011_low_leo.sql`（SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`）。隔离 Wrangler local D1 已顺序应用 `0000–0011` 并完成 checkpoint 写入/读取；独立 SQLite 已验证 `0000–0010 → 0011` 升级写读。静态 corpus 的 fresh/upgrade/MATCH/权威重读/清除/重建仍由原定向套件覆盖；archive D1 分页/伪造游标/前缀篡改、checkpoint ahead event/genesis conflict 防线 11/11、80+ 事件和 48 个 projection audits 的 D1 reader→fresh DO restore 1/1，以及无当前受控 viewer 的 D1→fresh DO 1/1 均通过。远端应用仍属于发布阶段待办，不能由本地证据替代。
+
 ## 15. 浏览器、发布与远端证据
 
 ### 15.1 定向与完整验证
 
-实现阶段先跑相关 Form/Context/RAG/Room/Rules/Environment/Narration/telemetry 定向测试。最终冻结 SHA 必须依次通过：
+实现阶段先跑相关 Form/Context/RAG/Room/Rules/Environment/Narration/telemetry 定向测试。正式部署的最终冻结 SHA 必须依次通过仓库发布合同去重后的门；production build 只能由最后的 `npm run cf:deploy` 执行一次：
 
 ```text
 git diff --check
+npm run module:check
 npm run typecheck
 npm run lint
-npm run module:check
-npm test
-npm run build
+npm run test:unit
+npm run test:worker
+npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有 Worker
 ```
 
 真实浏览器必须在 375px 与 1440px 各完成观察、NPC 对话、Proposal 失败、Narration 重试和动态环境入口五条路径；要求无横向溢出、console error、秘密 DOM/ARIA/网络旁路，且已提交行动在 Narration 失败时保持可见、不被重复结算。
@@ -390,15 +398,21 @@ npm run build
 1. 冻结交付 SHA，确认工作树、`cloudflare` 分支、Profile/hash、迁移状态和所有门；记录远端 `main` 初始 SHA。
 2. 若有 migration，先完成本地闭环，再在明确目标上应用现有远端 D1 migration 并证明无 pending。
 3. 用现有 `npm run cf:deploy` 部署现有 Worker `zhuwei`；不得创建新 Worker、D1、DO、KV、R2、Queue、Workflow 或未经授权的 Vectorize。
-4. 对部署版本执行有界线上 HTTP、认证、建房、普通 KP、Narration 失败恢复、权威状态读取与动态环境冒烟，并核对脱敏日志。
+4. 对部署版本执行有界线上 HTTP、认证、建房、三次普通生产 KP 交互和权威状态读取冒烟，并核对脱敏日志；Proposal 失败、Narration 重试和动态环境输入的浏览器路径可使用确定性网络故障/公开 DTO 注入，不得借浏览器 QA 增加第四次 Provider 行动。
 5. 按精确清单清理本次临时账号、房间和实验数据，不删除真实用户数据；清理失败必须阻塞发布完成声明。
 6. 仅以非 force 显式 refspec 推送 `HEAD:refs/heads/cloudflare`，证明远端 `cloudflare` 等于交付 SHA，且远端 `main` 等于任务开始记录值。
 
 部署、远端 migration、线上冒烟、清理和 Git push 必须串行，不能由隔离 Worker 并发执行。部署保护必须绑定交付 SHA、SPEC/Profile/hash、既有 bindings 与环境；分支不净、SHA/Profile 不匹配、迁移不明确或全量门缺证时 fail closed。
 
+本轮线上冒烟的精确上限为三次计数交互；它只验证部署后的真实 HTTP/auth/Room/Provider 接缝、公开状态与清理，不应用 §13.2 的完整质量阈值。默认 31 轮 runner 仍保留给用户自行运行，但本代理不得在本次发布中调用或宣称其通过。
+
 ## 16. 新房、版本与迁移边界
 
 本规格的 Form Catalog、Action Language、Context Pack、corpus/retrieval、Model Registry、Narration schema、publication protocol、Environment state graph 和相关 compiler 全部进入房间完整 runtime manifest。创建新房时固定精确 ID/hash，不接受 `latest`。
+
+环境/人物机械的隔离已经具体化为三代不可混用的固定 manifest。历史 hazard-only `environment-feature-fsm-2014-v2`（`sha256:702b2559c821a52e1c7d6a137c6b261cec21d6cc513e3c0301b4b5ab007f7c87`）继续绑定 `runtime-srd51-2014-authoritative-environment-v2`（`sha256:0021280335296ecfc5b65a221fec7009550fac96db65925e47daef9f9d4f0456`）。第一代私有 Form workflow-v1 的显式双模式 `environment-feature-fsm-2014-v3`（`sha256:1656fd548905d6ea886fd4cf97357a9d67c56422be3a2c6bd281fc93a22b4fe6`）继续绑定 `runtime-srd51-2014-authoritative-environment-v3`（`sha256:4038f09e546eb8a0c925e892634625fe09859d2aeba91f044a8ecae76aa99c57`），保持其冻结的 1×PB/既有 saving-throw 解释。
+
+当前新建 V3 房间固定 workflow-v2 与完整 `runtime-srd51-2014-authoritative-environment-v4`（`sha256:8d0df2563b1e9fca31b1ab7b1678683075fc013b5220ba7b32aa054861203685`）。v4 复用同一 environment-v3 FSM，并新增 exact `character-proficiency-srd51-2014-v1`（`sha256:718bf64554e4b032f3bea564797edf67b1695c2335879db4bd3e5332069a1001`）：`expertiseSkills`（兼容 CharacterSheet 输入别名 `expertise`）必须是 `proficientSkills` 子集，技能专精为能力调整值 + 2×PB，`proficientSaves` 只接受六项能力且豁免为能力调整值 + 1×PB。该字段贯穿初始化、事件、控制/继任、combat entity、同步、投影与 archive restore；非遭遇环境行动的临时 action grant 也只在 exact v4 RootAction 内生效。default、environment-v2、environment-v3 的 ID/hash、state shape 与冻结结果保持不变，绝不以“字段存在”或 helper 默认值启用新语义。
 
 既有房间、旧 `authoritative-kp-action-plan-v1`、旧 Outcome/Delivery Adapter 和旧环境状态继续由 genesis 指定的解释器回放。不得从旧 Prompt、Delivery、聊天、抽象距离或 D1 数据猜测新 Form/Context/Environment 状态。不兼容变化要求重新开房；将来若要迁移，必须另写显式迁移规格、验证旧事件可重放并取得用户授权。
 
@@ -412,27 +426,27 @@ npm run build
 | `SPEC 0003` §6、场景 5 | 默认最多两次自动修订 | 一次首 Proposal + 最多一次窄修订；耗尽后无第三次完整 Prompt | Rules 诊断、未提交稳定点和 `needsKp` 语义不变 |
 | `SPEC 0010` §§8、10–12 | 当前帧发布未区分逐受众 Narration 状态，且未固定模型 body-only schema | §7–8 的 `{body}`、服务器派生元数据、逐受众独立状态/重试优先 | Audience 提交冻结、projector、ViewerKey 亲历、ACK/覆盖、秘密与语音同正文边界不变 |
 | `SPEC 0011` §§1、3–5、8–10 | 1+2 修订预算、旧模型调用/日志与笼统故障分类 | §6 的 1+1、§9–10 角色化 Profile/实验门、§12 精确错误和更窄日志、§13 新指标 | 恢复、更正、D1 archive、无隐藏主 KP 切换和既有 31 轮硬门不变 |
-| `SPEC 0014` §§2–5、9、11–12 | 通用环境有限状态和破坏/区域验收 | §11 增补五类版本化对象、`environmental-stunt.v1`、吊灯因果链与 14 场景 | Geometry/Tactical Projection/preview、客户端不提交 targets、地图 Adapter 与旧房隔离不变 |
+| `SPEC 0014` §§2–5、9、11–12 | 通用环境有限状态和破坏/区域验收 | §11 增补五类版本化机械结构、`environmental-stunt.v1`、显式效果模式与不绑定具体物件的通用动态纵切；后续用户裁定取消吊灯专项完成门 | Geometry/Tactical Projection/preview、客户端不提交 targets、地图 Adapter 与旧房隔离不变 |
 
 若本表之外出现解释差异，优先保持 `SPEC 0001`、单一 Room/Rules/DO 权威和秘密边界；不能用本规格扩大模型、页面、D1 或辅助模型权限。
 
 ## 18. 实现映射与当前证据状态
 
-| 责任 | 计划中的唯一生产映射 | 验收映射 | 当前状态 |
+| 责任 | 唯一生产映射 | 验收映射 | 当前状态 |
 | --- | --- | --- | --- |
-| Form Catalog/筛选/Profile | `app/_runtime/lib/kp/form-catalog.ts` + Room `prepare`/action | 十 Form、3–6 张、compound、注入拒绝 | **待实现** |
-| Context Pack | `app/_runtime/lib/kp/context-pack.ts` + Rules `project` + Room Authority | Required 不可删、NPC 重投影、Narration 缩小 | **待实现** |
-| 静态 RAG/FTS | `app/_runtime/lib/kp/static-retrieval.ts` + `db/schema.ts`/D1 Adapter | 中文别名、ref/hash 重读、重建、本地写读 | **待实现** |
-| Proposal/一次修订 | Form validator + Room Action proposal journal | 语义 hash、1+1、无第三次、骰后冻结 | **待实现** |
-| CausalActionProgram | `app/_runtime/lib/kp/causal-action-program.ts` + Rules `step` | closed/acyclic/bounded、无脚本/patch/事件/骰面 | **待实现** |
-| 模型角色/Profile | `app/_runtime/lib/kp/model-registry.ts` + server/table settings | 主 KP 固定、Planner off/verified、无隐藏切换 | **待实现** |
-| Body-only Narration/Grounding | Room Action + narration/grounding Adapter + Room DO delivery | exact `{body}`、服务器元数据、显式拒绝 | **待实现** |
-| 双状态/逐受众恢复 | Room Action/DO `action.ts`、`durable-object.ts`、Rules projector、table API/UI | Alice/Bob 独立、提交不回滚、冻结重试 | **待实现** |
-| 动态环境/吊灯 | 既有 Rules v2/Geometry/Profile/Room/archive/replay + 环境编译器 | §11 的 14 场景 | **待实现**；既有 Geometry 只算底座 |
-| Telemetry/错误 | `app/_runtime/lib/room/telemetry.ts` 与公开 API DTO | 十错误、白名单、故障注入 | **待实现** |
-| 实验/发布 | 计划中的 gold/eval runner、浏览器 QA、现有 deploy/smoke guard | §10、§13–15 | **待实现** |
+| Form Catalog/筛选/Profile | `app/_runtime/lib/kp/form-catalog.ts` + Room `prepare`/action | 十 Form、3–6 张、compound、注入拒绝 | **已实现/定向证据**：Form/环境 Profile/Builder 组合 14/14；冻结全量门待运行 |
+| Context Pack | `app/_runtime/lib/kp/context-pack.ts`、`v3-context-runtime.ts` + Rules `project` + Room Authority | Required 不可删、NPC 重投影、Narration 缩小 | **已实现/定向证据**：静态 corpus 与 production context 组合 14/14；真实模型/线上待验证 |
+| 静态 RAG/FTS 与灾备 checkpoint | `app/_runtime/lib/kp/{static-retrieval,static-corpus}.ts` + `room/archive.ts`/DO + `db/schema.ts`/D1 Adapter | 中文别名、ref/hash 重读、重建、本地写读；settled checkpoint、prefix/audit、ahead event/genesis conflict 校验、capability-only restore | **已实现/定向证据**：静态 fresh/upgrade/FTS 14/14；`0011` 由 schema 生成，Wrangler local `0000–0011` 与 SQLite `0010→0011` 写读通过；archive D1 11/11、真实 reader→fresh DO 1/1、无当前受控 viewer 的 D1→fresh DO 1/1，远端应用待完成 |
+| Proposal/一次修订 | `private-form-policy.ts` + Form validator + Room Action proposal journal | 语义 hash、1+1、无第三次、骰后冻结 | **已实现/定向证据**：窄修订 5/5；真实 Provider 故障与完整冻结门待完成 |
+| CausalActionProgram | `app/_runtime/lib/kp/causal-action-program.ts` + `rules/profiles/causal-action-interpreter.ts` + Rules `step` | closed/acyclic/bounded、复合拓扑执行、无脚本/patch/事件/骰面 | **已实现/定向证据**：Causal/环境 Rules 组合 8/8 |
+| 模型角色/Profile | `app/_runtime/lib/kp/{model-registry,context-planner-policy}.ts` + `room/v3-binding.ts` | 主 KP 固定、Planner disabled/verified、无隐藏切换 | **已实现/定向证据**：角色/Profile 6/6；G3/G4 未达增益，生产绑定只接受 disabled，故无 Planner UI；真实候选验证未执行且不冒充产品证据 |
+| Body-only Narration/Grounding | `app/_runtime/lib/kp/narration-v3.ts` + Room Action/DO delivery | exact `{body}`、服务器元数据、显式拒绝 | **已实现/定向证据**：public action/table 21/21 与 Viewer recovery 4/4 覆盖公开裁剪、冻结投影、控制权变化和失败恢复；浏览器待完成 |
+| 双状态/逐受众恢复 | Room Action/DO `action.ts`、`durable-object.ts`、Rules projector、table API/UI | Alice/Bob 独立、提交不回滚、冻结重试 | **已实现/定向证据**：同上 21/21 + 4/4；死亡/退役/transfer/revoke、继任拒绝、恢复态不读取当前世界与不重复机械有责任 seam 证据 |
+| 动态环境与人物熟练 | Rules v2/Geometry/Profile/Room/archive/replay + 环境编译器 + character-proficiency Profile | 任意 KP 内容、`state-only` / `area-hazard`、§11 通用动态场景；v4 Expertise/豁免熟练与旧 manifest 隔离 | **已实现/定向证据**：Profile/causal/compound 57/57、workflow/table 25/25、campaign 2/2、concentration 1/1、控制/继任 1/1、动态环境 Room 6/6；workflow-v2/v4 长轨迹 1/1；具体吊灯专项已由用户取消，双视口浏览器与最终门待完成 |
+| Telemetry/错误 | `app/_runtime/lib/room/{action,telemetry}.ts` 与公开 API DTO | 十错误、白名单、故障注入 | **已实现/定向证据**：十个精确公开代码及阶段分类已有 V3 runner；G2 五类故障 5/5 安全回退；生产日志冒烟待完成 |
+| 实验/发布 | `tests/fixtures/kp-v3-gold.json` + `tools/run-kp-v3-eval.mjs`、live runner/provisioner、生产 seam 长轨迹、浏览器 QA、现有 deploy/smoke guard | §10、§13–15 | **部分满足**：120 条结构报告 4/4、16/16 hard gates，G2 采用、G3/G4 拒绝、G5 不适用；live harness/provisioner 13/13 证明确定性 HTTP 生命周期、默认 31 interaction 约束与显式三交互冒烟边界，但不等于 Provider 质量测评；新增真实 Room seam 长轨迹 1/1 通过。完整 live Provider 指标由用户后续自行测评；冻结全量、浏览器、migration 发布、部署、三交互冒烟、清理和推送仍待 |
 
-“待实现”是硬阻塞，不因本规格、ADR 或计划文件存在而转绿。完成证据必须来自同一冻结源码的实际命令、退出码、指标报告、必要 migration、双视口浏览器、部署版本/冒烟/清理和远端 SHA 证明。
+上述“已实现/定向证据”只按其明确责任切片计数，不能拼接为发布完成。最终完成证据仍必须来自同一冻结源码的实际命令、退出码、指标报告、migration、本地/远端状态、双视口浏览器、部署版本/冒烟/清理和远端 SHA 证明。
 
 ## 19. 固定不变量
 
@@ -446,5 +460,6 @@ npm run build
 8. 已提交行动不因任何受众 Narration 失败而回滚、重提案、重掷或重复消耗。
 9. Audience 与逐受众发布键在提交时冻结；一个受众失败不影响另一个。
 10. 辅助模型只建议检索/结构，不决定 KP、Rules 或 Audience 权限；失败不自动换主 KP。
-11. 环境使用版本化有限状态，不是通用物理；实际区域集合只由 Rules 从完整 Geometry 计算。
-12. 新协议只进新 V3 房间；旧房无猜测迁移。
+11. 环境使用 KP 自定义的版本化有限状态，不是对象目录或通用物理；机械模式只能由 KP 显式选择，名称、关键词和对象族不得触发派发。
+12. `state-only` 不得伪造 Hazard/Area/区域 save/区域目标 damage；`area-hazard` 的实际区域集合只由 Rules 从完整 Geometry 计算。
+13. 新协议只进新 V3 房间；旧房无猜测迁移，旧 `environment-feature-fsm-2014-v2` 与新 v3 Profile/manifest 分别按原 hash 回放。

@@ -1,4 +1,5 @@
 import { canonicalSha256 } from "../profiles/canonical";
+import { causalActionInterpreterEnabled } from "../profiles/causal-action-interpreter";
 import { environmentProfileEnabled } from "../profiles/environment";
 import type { ProfileRef, RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import type {
@@ -57,6 +58,11 @@ import {
   recordSpotlightDecision,
 } from "./timeline";
 import { isCompoundResolutionPlan } from "./compound-model";
+import {
+  isCausalActionResolutionPlan,
+  isCausalProgramFactValue,
+  isCausalRandomnessEventBinding,
+} from "./causal-model";
 import { endCharacterTenure } from "./character-lifecycle";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
 import {
@@ -109,17 +115,62 @@ function eventRequiresEnvironmentProfile(eventType: EventType, payload: unknown)
   return PROFILED_ENVIRONMENT_EVENT_TYPES.has(eventType)
     || (eventType === "EnvironmentFeatureStateChanged"
       && isRecord(payload)
-      && (payload.intent === "triggerHazard" || payload.intent === "resolveHazard"));
+      && (payload.intent === "applyStunt"
+        || payload.intent === "triggerHazard"
+        || payload.intent === "resolveHazard"));
 }
 
-function envelopeEnvironmentProfileEnabled(profiles: JsonRecord): boolean {
+function payloadEnvironmentProfile(
+  eventType: EventType,
+  payload: unknown,
+): ProfileRef | undefined {
+  if (eventType !== "EnvironmentFeatureMaterialized"
+    && eventType !== "EnvironmentHazardTriggered") return undefined;
+  if (!isRecord(payload)
+    || !isRecord(payload.environmentProfile)
+    || !hasExactKeys(payload.environmentProfile, ["profileHash", "profileId"])
+    || !isNonEmptyString(payload.environmentProfile.profileId)
+    || !isSha256(payload.environmentProfile.profileHash)) return undefined;
+  return payload.environmentProfile as ProfileRef;
+}
+
+function envelopeEnvironmentProfileEnabled(
+  profiles: JsonRecord,
+  expected?: ProfileRef,
+): boolean {
   return Array.isArray(profiles.extensions)
     && profiles.extensions.every((extension): extension is ProfileRef =>
       isRecord(extension)
       && hasExactKeys(extension, ["profileHash", "profileId"])
       && isNonEmptyString(extension.profileId)
       && isSha256(extension.profileHash))
-    && environmentProfileEnabled(profiles.extensions);
+    && environmentProfileEnabled(profiles.extensions, expected);
+}
+
+function eventRequiresCausalActionProfile(eventType: EventType, payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  if (eventType === "EnvironmentFeatureMaterialized") {
+    return isNonEmptyString(payload.causalProgramFactRef)
+      && isNonEmptyString(payload.causalProgramHash);
+  }
+  if (eventType === "RandomnessRequested") {
+    return isRecord(payload.resolutionPlan)
+      && payload.resolutionPlan.schema === "zhuwei.causal-action-resolution-plan/v3";
+  }
+  return eventType === "ImprovisedActionResolved"
+    && isRecord(payload.fact)
+    && payload.fact.kind === "causalActionProgram"
+    && isCausalProgramFactValue(payload.fact.value);
+}
+
+function envelopeCausalActionProfileEnabled(profiles: JsonRecord): boolean {
+  return Array.isArray(profiles.extensions)
+    && profiles.extensions.every((extension): extension is ProfileRef =>
+      isRecord(extension)
+      && hasExactKeys(extension, ["profileHash", "profileId"])
+      && isNonEmptyString(extension.profileId)
+      && isSha256(extension.profileHash))
+    && causalActionInterpreterEnabled(profiles.extensions);
 }
 
 const EVENT_TYPES = new Set<EventType>([
@@ -309,6 +360,7 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
       "classId",
       "controllerPrincipalId",
       "experiencePoints",
+      "expertiseSkills",
       "featureIds",
       "hitPoints",
       "lastLongRestCompletedAtMicros",
@@ -318,6 +370,7 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
       "preparedSpellIds",
       "proficiencyBonus",
       "proficientSkills",
+      "proficientSaves",
       "raceId",
       "resourceMaximums",
       "resources",
@@ -342,6 +395,16 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
         && CANONICAL_UNSIGNED_INTEGER_PATTERN.test(value.lastLongRestCompletedAtMicros)))
     && [value.cantripIds, value.preparedSpellIds, value.featureIds]
       .every((entry) => entry === undefined || isCanonicalStringArray(entry))
+    && [value.proficientSkills, value.expertiseSkills, value.proficientSaves]
+      .every((entry) => entry === undefined || isCanonicalStringArray(entry))
+    && (value.proficientSaves === undefined
+      || (Array.isArray(value.proficientSaves) && value.proficientSaves.every((ability) =>
+        ["str", "dex", "con", "int", "wis", "cha"].includes(ability))))
+    && (value.expertiseSkills === undefined
+      || (Array.isArray(value.expertiseSkills)
+        && Array.isArray(value.proficientSkills)
+        && value.expertiseSkills.every((skill) =>
+          (value.proficientSkills as string[]).includes(skill))))
     && (value.resourceMaximums === undefined || (isRecord(value.resourceMaximums)
       && Object.entries(value.resourceMaximums).every(([resourceId, maximum]) =>
         isNonEmptyString(resourceId) && Number.isSafeInteger(maximum) && Number(maximum) >= 0)));
@@ -451,6 +514,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
           && value.purpose === value.request.purpose
           && value.formula === value.request.diceExpression
           && (isCompoundResolutionPlan(value.resolutionPlan)
+            || isCausalActionResolutionPlan(value.resolutionPlan)
             || isContestResolutionPlan(value.resolutionPlan)
             || isHiddenRealityResolutionPlan(value.resolutionPlan));
       }
@@ -1042,8 +1106,15 @@ export function validateEventEnvelope(value: unknown): EventValidation {
     return { ok: false, message: "Event payload does not match its closed event type schema." };
   }
   if (eventRequiresEnvironmentProfile(value.eventType as EventType, value.payload)
-    && !envelopeEnvironmentProfileEnabled(value.profiles)) {
+    && !envelopeEnvironmentProfileEnabled(
+      value.profiles,
+      payloadEnvironmentProfile(value.eventType as EventType, value.payload),
+    )) {
     return { ok: false, message: "Event requires the pinned dynamic environment Profile." };
+  }
+  if (eventRequiresCausalActionProfile(value.eventType as EventType, value.payload)
+    && !envelopeCausalActionProfileEnabled(value.profiles)) {
+    return { ok: false, message: "Event requires the pinned V3 causal action interpreter Profile." };
   }
   const event = value as EventEnvelope;
   try {
@@ -1091,8 +1162,20 @@ export function createEventTransition<T extends EventType>(
     throw new TypeError("event transition requires an authoritative v2 state");
   }
   if (eventRequiresEnvironmentProfile(draft.eventType, draft.payload)
-    && !environmentProfileEnabled(profiles.extensions)) {
+    && !environmentProfileEnabled(
+      profiles.extensions,
+      payloadEnvironmentProfile(draft.eventType, draft.payload),
+    )) {
     throw new TypeError("event transition requires the dynamic environment Profile");
+  }
+  if (eventRequiresCausalActionProfile(draft.eventType, draft.payload)
+    && !causalActionInterpreterEnabled(profiles.extensions)) {
+    throw new TypeError("event transition requires the V3 causal action interpreter Profile");
+  }
+  if (draft.eventType === "RandomnessRequested"
+    && eventRequiresCausalActionProfile(draft.eventType, draft.payload)
+    && !isCausalRandomnessEventBinding(profiles, source, draft.rootActionId, draft.payload)) {
+    throw new TypeError("causal randomness request does not match its frozen program and actor");
   }
   const nextEventSeq = (BigInt(source.version) + 1n).toString();
   const fictionTimelineId = eventFictionTimelineId(

@@ -1,4 +1,5 @@
 import { canonicalSha256 } from "../profiles/canonical";
+import { environmentProfileEnabled } from "../profiles/environment";
 import {
   isCanonicalTacticalGeometry,
   type CanonicalTacticalGeometry,
@@ -44,6 +45,11 @@ import {
   fulfillCompoundActionPlanRandomness,
   stepCompoundActionPlan,
 } from "./compound-actions";
+import {
+  fulfillCausalActionProgramRandomness,
+  fulfillCausalActionProgramRandomnessBatch,
+  stepCausalActionProgram,
+} from "./causal-actions";
 import { continueCompoundRoot } from "./internal-compound";
 import { stepSafetyWorld } from "./safety";
 import { stepEnvironmentWorld } from "./environment";
@@ -53,6 +59,7 @@ import {
   compileStaticCharacterCombat,
 } from "./character-abilities";
 import { experienceThresholdForLevel } from "./character-progression";
+import { characterProficiencyFieldsMatchProfile } from "./proficiency";
 import {
   CANONICAL_SIGNED_INTEGER_PATTERN,
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
@@ -97,7 +104,10 @@ function recordById<T extends { id: string }>(entries: T[]): Record<string, T> {
   );
 }
 
-function validateInitializationCollections(input: JsonRecord): boolean {
+function validateInitializationCollections(
+  input: JsonRecord,
+  profiles: RuntimeProfileManifest,
+): boolean {
   if (
     !Array.isArray(input.scenes)
     || !Array.isArray(input.principals)
@@ -145,6 +155,7 @@ function validateInitializationCollections(input: JsonRecord): boolean {
           "classId",
           "featureIds",
           "experiencePoints",
+          "expertiseSkills",
           "hitPoints",
           "lastControllerSeatId",
           "lastLongRestCompletedAtMicros",
@@ -153,6 +164,7 @@ function validateInitializationCollections(input: JsonRecord): boolean {
           "preparedSpellIds",
           "proficiencyBonus",
           "proficientSkills",
+          "proficientSaves",
           "raceId",
           "resourceMaximums",
           "resources",
@@ -205,6 +217,7 @@ function validateInitializationCollections(input: JsonRecord): boolean {
         || (Array.isArray(character.proficientSkills)
           && character.proficientSkills.every(isNonEmptyString)
           && character.proficientSkills.length === new Set(character.proficientSkills).size))
+      && characterProficiencyFieldsMatchProfile(profiles, character)
       && [character.classId, character.raceId, character.subclassId, character.lastControllerSeatId]
         .every((entry) => entry === undefined || isNonEmptyString(entry))
       && (character.spatialVisibilityPolicyId === undefined
@@ -267,7 +280,7 @@ function buildInitialState(
   input: JsonRecord,
   profiles: RuntimeProfileManifest,
 ): AuthoritativeWorldState | undefined {
-  if (!validateInitializationCollections(input)) {
+  if (!validateInitializationCollections(input, profiles)) {
     return undefined;
   }
   const sceneInputs = input.scenes as Array<{
@@ -275,6 +288,12 @@ function buildInitialState(
     name: string;
     geometry?: CanonicalTacticalGeometry;
   }>;
+  if (!sceneInputs.every((scene) => scene.geometry === undefined
+    || scene.geometry.obstacles.every((feature) => feature.environment === undefined
+      || environmentProfileEnabled(
+        profiles.extensions,
+        feature.environment.profile,
+      )))) return undefined;
   const principalInputs = input.principals as Array<{
     id: string;
     sessionVersion: number;
@@ -295,6 +314,8 @@ function buildInitialState(
     abilityScores?: Record<string, number>;
     proficiencyBonus?: number;
     proficientSkills?: string[];
+    expertiseSkills?: string[];
+    proficientSaves?: string[];
     classId?: string;
     raceId?: string;
     subclassId?: string;
@@ -373,6 +394,12 @@ function buildInitialState(
     ...(core.proficientSkills === undefined
       ? {}
       : { proficientSkills: [...core.proficientSkills].sort() }),
+    ...(core.expertiseSkills === undefined
+      ? {}
+      : { expertiseSkills: [...core.expertiseSkills].sort() }),
+    ...(core.proficientSaves === undefined
+      ? {}
+      : { proficientSaves: [...core.proficientSaves].sort() }),
     ...(core.cantripIds === undefined ? {} : { cantripIds: [...core.cantripIds].sort() }),
     ...(core.preparedSpellIds === undefined
       ? {}
@@ -472,6 +499,7 @@ function buildInitialState(
     const seat = control === undefined ? undefined : seats[control.seatId];
     const tacticalPosition = tacticalPositionByCharacter.get(character.id);
     combatEntities[character.id] = buildPlayerCombatEntity(
+      profiles,
       character,
       compiled,
       seat?.principalId,
@@ -1097,12 +1125,12 @@ function answerPendingInput(
     visibilityPolicyId: `visibility:character-controller:${actor.id}`,
     secrecy: "private",
   });
-  const outcome = input.proposal.kind === "resolveCompoundActionPlan"
-    ? stepCompoundActionPlan(
-        profiles,
-        close.state,
-        continueCompoundRoot(structuredClone(input.proposal), pending.rootActionId),
-      )
+  const continuedProposal = input.proposal.kind === "resolveCompoundActionPlan"
+    ? continueCompoundRoot(structuredClone(input.proposal), pending.rootActionId)
+    : undefined;
+  const outcome = continuedProposal !== undefined
+    ? stepCausalActionProgram(profiles, close.state, continuedProposal)
+      ?? stepCompoundActionPlan(profiles, close.state, continuedProposal)
     : resolveImprovisedRuling(
         profiles,
         close.state,
@@ -1332,6 +1360,13 @@ function fulfillAuthoritativeRandomness(
   if (stored.request.purpose === "restHitDice") {
     return rest ?? rejected("invalidWorldState", "The frozen rest continuation could not be resumed.");
   }
+  const causal = fulfillCausalActionProgramRandomness(
+    profiles,
+    state,
+    input.continuation.continuationId,
+    input.rolls as number[],
+  );
+  if (causal !== undefined) return causal;
   const compound = fulfillCompoundActionPlanRandomness(
     profiles,
     state,
@@ -1453,6 +1488,13 @@ function fulfillAuthoritativeRandomnessBatch(
       !== canonicalResults.length
     || new Set(canonicalResults.map(({ stored }) => stored.rootActionId)).size !== 1
   ) return rejected("invalidRulesInput", "Continuation batch entries are unavailable, duplicated, or cross-root.");
+
+  const causal = fulfillCausalActionProgramRandomnessBatch(
+    profiles,
+    state,
+    canonicalResults.map(({ continuation, rolls }) => ({ continuation, rolls })),
+  );
+  if (causal !== undefined) return causal;
 
   const isCanonicalContest = canonicalResults.length === 2
     && canonicalResults.every(({ stored }) =>
@@ -1665,6 +1707,10 @@ export function stepAuthoritativeWorld(
     const multiplayerResult = stepMultiplayerWorld(profiles, stateValue, input);
     if (multiplayerResult !== undefined) {
       return multiplayerResult;
+    }
+    const causalResult = stepCausalActionProgram(profiles, stateValue, input);
+    if (causalResult !== undefined) {
+      return causalResult;
     }
     const compoundResult = stepCompoundActionPlan(profiles, stateValue, input);
     if (compoundResult !== undefined) {

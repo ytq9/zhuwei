@@ -10,6 +10,7 @@ import { authoritativeKpProfileByBinding } from "../app/_runtime/lib/kp/authorit
 import {
   narrationProjection,
   normalizeRoomKpProposal,
+  ownedEnvironmentAttackAbilityRef,
 } from "../app/_runtime/lib/room/proposal-adapter.ts";
 import { replay, step } from "../app/_runtime/lib/rules/index.ts";
 
@@ -42,6 +43,57 @@ const INTENT = Object.freeze({
   submissionId: "submission:free-action:001",
   characterId: "character:alice",
   text: "我不用现成入口，想把雨披铺在泥地上，从墙根悄悄拖过钟架。",
+});
+
+test("environment attacks require one exact owned finite reference and never inspect narrative text", () => {
+  const meleeRef = "ability:actor:owned-melee";
+  const rangedRef = "ability:actor:owned-ranged";
+  const definition = (definitionId, target) => ({
+    definitionId,
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    mechanicalKey: definitionId,
+    activation: { kind: "attack", actionGrant: "attack" },
+    target,
+    attack: { ability: "dex", proficiency: true },
+    damage: [{ type: "piercing", formula: "1d6+1" }],
+  });
+  const state = {
+    combatRuntime: {
+      entities: {
+        "character:actor": { abilityRefs: [meleeRef, rangedRef] },
+      },
+      definitions: {
+        [meleeRef]: definition(meleeRef, {
+          kind: "creatureOrEnvironmentFeature", count: "1", reachInches: "60",
+        }),
+        [rangedRef]: definition(rangedRef, {
+          kind: "creatureOrEnvironmentFeature", count: "1",
+          rangeNormalInches: "960", rangeLongInches: "3840", requiresSight: true,
+        }),
+      },
+    },
+  };
+
+  assert.equal(ownedEnvironmentAttackAbilityRef(state, "character:actor", {
+    goal: rangedRef,
+    method: meleeRef,
+    attackApproach: "any",
+  }), undefined, "two names in prose cannot select either legal ability");
+  assert.equal(ownedEnvironmentAttackAbilityRef(state, "character:actor", {
+    goal: meleeRef,
+    method: rangedRef,
+    attackApproach: "any",
+    abilityRef: rangedRef,
+  }), rangedRef, "the exact finite reference wins independently of rewritten prose");
+  assert.equal(ownedEnvironmentAttackAbilityRef(state, "character:actor", {
+    attackApproach: "any",
+    abilityRef: "ability:actor:not-owned",
+  }), undefined);
+  assert.equal(ownedEnvironmentAttackAbilityRef(state, "character:actor", {
+    attackApproach: "melee",
+    abilityRef: rangedRef,
+  }), undefined);
 });
 
 function proposal(overrides = {}) {
@@ -1336,16 +1388,22 @@ test("narration rejects unsupported sensory extrapolations from tactical labels"
     "the discarded invocation and its successful replacement are both observable",
   );
 
-  const fallbackBody = "刚才的尝试已经结算。眼下没有更多可以确认的新变化。";
   for (const body of unsupportedBodies) {
-    const fallback = await adapter.narrate(request);
-    assert.equal(fallback.body, fallbackBody, body);
-    assert.equal(fallback.body.includes(body), false);
-    assert.equal(fallback.modelInvocationReceipt.failureStage, "narrationGrounding");
+    await assert.rejects(
+      adapter.narrate(request),
+      (error) => error instanceof AuthoritativeKpModelError
+        && error.code === "modelPermanent"
+        && error.modelInvocationReceipt.failureStage === "narrationGrounding",
+      body,
+    );
   }
-  const ttsFallback = await adapter.narrate(request);
-  assert.equal(ttsFallback.body, fallbackBody, "tts grounding failure must also degrade safely");
-  assert.equal(ttsFallback.modelInvocationReceipt.failureStage, "narrationGrounding");
+  await assert.rejects(
+    adapter.narrate(request),
+    (error) => error instanceof AuthoritativeKpModelError
+      && error.code === "modelPermanent"
+      && error.modelInvocationReceipt.failureStage === "narrationGrounding",
+    "tts grounding failure must remain an explicit delivery failure",
+  );
   const actionOnly = await adapter.narrate(request);
   assert.equal(actionOnly.body, actionOnlyBody, "the guard must not be a bare phrase blacklist");
 
@@ -1427,10 +1485,12 @@ test("narration rejects unsolicited tactical distance readouts but allows an exp
     projection,
   };
 
-  const fallback = await adapter.narrate(request);
-  assert.equal(fallback.body, "刚才的尝试已经结算。眼下没有更多可以确认的新变化。");
-  assert.equal(fallback.body.includes(distanceBody), false);
-  assert.equal(fallback.modelInvocationReceipt.failureStage, "narrationGrounding");
+  await assert.rejects(
+    adapter.narrate(request),
+    (error) => error instanceof AuthoritativeKpModelError
+      && error.code === "modelPermanent"
+      && error.modelInvocationReceipt.failureStage === "narrationGrounding",
+  );
   const requestedProjection = structuredClone(projection);
   requestedProjection.projectionHash = "projection:alice:distance-requested";
   requestedProjection.experiencedTranscript.messages[0].body = distanceRequest;

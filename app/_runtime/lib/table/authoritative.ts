@@ -1,10 +1,36 @@
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
+import { classById } from "../dnd/catalog";
+import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
+import type { RuntimeProfileManifest } from "../rules/profiles/types";
 import {
   isTacticalProjection,
   type TacticalProjection,
 } from "../rules/tactical-projection";
 
 type JsonRecord = Record<string, unknown>;
+
+export const V3_PUBLIC_FAILURE_CODES = [
+  "PROPOSAL_PROVIDER_TIMEOUT",
+  "PROPOSAL_FORM_INVALID",
+  "PROPOSAL_REFERENCE_INVALID",
+  "PROPOSAL_RULES_DIAGNOSTIC",
+  "PROPOSAL_REPAIR_EXHAUSTED",
+  "CONTEXT_INSUFFICIENT",
+  "NARRATION_PROVIDER_TIMEOUT",
+  "NARRATION_BODY_INVALID",
+  "NARRATION_GROUNDING_REJECTED",
+  "NARRATION_PUBLICATION_FAILED",
+] as const;
+
+export type V3PublicFailureCode = typeof V3_PUBLIC_FAILURE_CODES[number];
+
+const V3_PUBLIC_FAILURE_CODE_SET = new Set<string>(V3_PUBLIC_FAILURE_CODES);
+
+export function publicV3FailureCode(value: unknown): V3PublicFailureCode | undefined {
+  return typeof value === "string" && V3_PUBLIC_FAILURE_CODE_SET.has(value)
+    ? value as V3PublicFailureCode
+    : undefined;
+}
 
 export function publicAuthoritativeOutcomeError(outcome: {
   kind: string;
@@ -13,7 +39,7 @@ export function publicAuthoritativeOutcomeError(outcome: {
   if (outcome.kind === "needsKp") {
     return "KP 需要重新裁定这项行动，请稍后用同一行动重试";
   }
-  if (outcome.code === "modelTransient") {
+  if (outcome.code === "modelTransient" || outcome.code === "PROPOSAL_PROVIDER_TIMEOUT") {
     return "KP 模型暂时不可用或响应超时，行动未提交；可用同一行动重试";
   }
   if (outcome.code === "quotaExhausted") {
@@ -33,6 +59,29 @@ function nonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function viewerNarrationRecovery(value: unknown): {
+  kind: "available";
+  capability: string;
+  state: "pending" | "rejected" | "retryableFailure";
+} | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)
+    || value.kind !== "available"
+    || Object.keys(value).sort().join("\u0000") !== "capability\u0000kind\u0000state"
+    || !["pending", "rejected", "retryableFailure"].includes(String(value.state))) {
+    throw new TypeError("Authoritative narration recovery projection is invalid.");
+  }
+  const capability = nonEmptyString(value.capability);
+  if (capability === undefined || capability.length > 200) {
+    throw new TypeError("Authoritative narration recovery capability is invalid.");
+  }
+  return {
+    kind: "available",
+    capability,
+    state: value.state as "pending" | "rejected" | "retryableFailure",
+  };
 }
 
 function finiteNumber(value: unknown): number | undefined {
@@ -419,11 +468,60 @@ function knowledgeHint(objectKind: string) {
   }
 }
 
+export function buildAuthoritativeCharacterSeed(input: {
+  characterId: string;
+  controllerPrincipalId: string;
+  sheet: unknown;
+  sceneId: string;
+  runtimeProfiles?: RuntimeProfileManifest;
+}) {
+  if (!isRecord(input.sheet)) {
+    throw new TypeError("An authoritative character seed requires a structured sheet.");
+  }
+  const name = typeof input.sheet.name === "string" ? input.sheet.name.trim() : "";
+  if (!name || !input.sceneId) {
+    throw new TypeError("An authoritative character seed requires a name and scene.");
+  }
+  const includeCharacterProficiency = input.runtimeProfiles !== undefined
+    && characterProficiencyProfileEnabled(input.runtimeProfiles.extensions);
+  const canonicalStrings = (value: unknown) => Array.isArray(value)
+    && value.every((entry) => typeof entry === "string" && entry.length > 0)
+    && value.length === new Set(value).size
+    ? [...value].sort()
+    : undefined;
+  const proficientSkills = includeCharacterProficiency
+    ? canonicalStrings(input.sheet.proficientSkills ?? input.sheet.skills)
+    : undefined;
+  const expertiseSkills = includeCharacterProficiency
+    ? canonicalStrings(input.sheet.expertiseSkills ?? input.sheet.expertise)
+    : undefined;
+  const proficientSaves = !includeCharacterProficiency
+    ? undefined
+    : input.sheet.proficientSaves === undefined
+      ? typeof input.sheet.classId === "string"
+        ? classById(input.sheet.classId)?.saves
+        : undefined
+      : canonicalStrings(input.sheet.proficientSaves);
+  return {
+    characterId: input.characterId,
+    controllerPrincipalId: input.controllerPrincipalId,
+    staticCard: {
+      ...structuredClone(input.sheet),
+      name,
+      sceneId: input.sceneId,
+      ...(proficientSkills === undefined ? {} : { proficientSkills }),
+      ...(expertiseSkills === undefined ? {} : { expertiseSkills }),
+      ...(proficientSaves === undefined ? {} : { proficientSaves: [...proficientSaves].sort() }),
+    },
+  };
+}
+
 export function buildAuthoritativeRoomSeeds(input: {
   members: Array<{ userId: string; nickname: string; isHost: boolean }>;
   lockedCharacters: Array<{ userId: string; sheet: unknown }>;
   openingSceneId: string;
   characterIdFor(userId: string): string;
+  runtimeProfiles?: RuntimeProfileManifest;
 }) {
   if (!input.openingSceneId) throw new TypeError("An opening scene is required.");
   const members = input.members.map((member) => ({
@@ -435,19 +533,15 @@ export function buildAuthoritativeRoomSeeds(input: {
     if (!memberIds.has(character.userId) || !isRecord(character.sheet)) {
       throw new TypeError("Every locked character must belong to a current room member.");
     }
-    const name = typeof character.sheet.name === "string"
-      ? character.sheet.name.trim()
-      : "";
-    if (!name) throw new TypeError("Every locked character must have a name.");
-    return {
+    return buildAuthoritativeCharacterSeed({
       characterId: input.characterIdFor(character.userId),
       controllerPrincipalId: character.userId,
-      staticCard: {
-        ...structuredClone(character.sheet),
-        name,
-        sceneId: input.openingSceneId,
-      },
-    };
+      sheet: character.sheet,
+      sceneId: input.openingSceneId,
+      ...(input.runtimeProfiles === undefined
+        ? {}
+        : { runtimeProfiles: input.runtimeProfiles }),
+    });
   });
   return { members, characters };
 }
@@ -684,9 +778,67 @@ export function projectAuthoritativeTableObservation(input: {
     throw new TypeError("Authoritative projection viewer is not a current room member.");
   }
   const readModel = input.observation.readModel;
+  const narrationRecovery = viewerNarrationRecovery(
+    input.observation.narrationRecovery,
+  );
   const safetyPresentation = isRecord(readModel)
     ? safeSafetyPresentation(readModel.safetyPresentation)
     : undefined;
+  if (readModel === null && narrationRecovery !== undefined) {
+    const transcriptMessages = experiencedTableMessages(
+      input.observation.transcript,
+      input.userId,
+    );
+    const delivery = isRecord(input.observation.delivery)
+      ? input.observation.delivery
+      : undefined;
+    const frame = delivery?.kind === "current" && isRecord(delivery.frame)
+      ? delivery.frame
+      : undefined;
+    const deliveryId = nonEmptyString(frame?.deliveryId);
+    const deliveryText = nonEmptyString(frame?.text);
+    const currentDeliveryMessage: ExperiencedTableMessage | undefined = deliveryId && deliveryText
+      ? {
+          id: deliveryId,
+          user_id: null,
+          kind: "narrate",
+          name: "KP",
+          body: deliveryText,
+          created_at: "",
+          clues: [],
+          sceneIds: Array.isArray(frame?.sceneIds)
+            ? [...new Set(frame.sceneIds
+                .map(nonEmptyString)
+                .filter((sceneId): sceneId is string => Boolean(sceneId)))]
+            : [],
+        }
+      : undefined;
+    const experienced = currentDeliveryMessage === undefined
+      || transcriptMessages.some((message) => message.id === currentDeliveryMessage.id)
+      ? transcriptMessages
+      : [...transcriptMessages, currentDeliveryMessage];
+    const publicMessage = ({ sceneIds: _sceneIds, ...message }: ExperiencedTableMessage) => message;
+    return {
+      stateVersion: undefined,
+      projectionHash: undefined,
+      controlledCharacter: null,
+      activities: [],
+      inCombat: false,
+      pendingInputs: [],
+      receipts: [],
+      clues: [],
+      npcs: [],
+      squads: [],
+      squadInvite: null,
+      places: {},
+      placeNames: {},
+      messages: experienced.map(publicMessage),
+      locationThreads: [] as never[],
+      logs: [] as never[],
+      ...(deliveryId ? { currentDeliveryId: deliveryId } : {}),
+      narrationRecovery,
+    };
+  }
   if (
     isRecord(readModel)
     && readModel.kind === "projected"
@@ -758,6 +910,7 @@ export function projectAuthoritativeTableObservation(input: {
       locationThreads: [] as never[],
       logs: [] as never[],
       ...(deliveryId ? { currentDeliveryId: deliveryId } : {}),
+      ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
     };
   }
   const viewerCharacterId = isRecord(readModel) && isRecord(readModel.viewer)
@@ -1117,6 +1270,7 @@ export function projectAuthoritativeTableObservation(input: {
     locationThreads,
     logs: [] as never[],
     ...(deliveryId ? { currentDeliveryId: deliveryId } : {}),
+    ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
   };
 }
 
@@ -1141,6 +1295,9 @@ export function buildAuthoritativeTableState(input: {
   const tacticalProjection = "tacticalProjection" in projected
     ? projected.tacticalProjection
     : undefined;
+  const narrationRecovery = "narrationRecovery" in projected
+    ? projected.narrationRecovery
+    : undefined;
   return {
     stateVersion: projected.stateVersion,
     projectionHash: projected.projectionHash,
@@ -1150,5 +1307,6 @@ export function buildAuthoritativeTableState(input: {
     ...(safetyPresentation === undefined ? {} : { safetyPresentation }),
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
+    ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
   };
 }

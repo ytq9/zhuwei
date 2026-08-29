@@ -53,6 +53,11 @@ import { isContinuedCompoundRoot } from "./internal-compound";
 import { characterTimelineId, completedActivityMovementPlan } from "./timeline";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
 import {
+  savingThrowModifier,
+  skillCheckModifier,
+  type ProficiencyAbility,
+} from "./proficiency";
+import {
   actorPlanPremiseIsAvailable,
   dueActorPlanChildRoot,
   earliestEligibleDueActorPlan,
@@ -254,11 +259,13 @@ const ABILITY_NAMES: Record<string, FrozenCheck["ability"]> = {
 };
 
 function frozenCheck(
+  profiles: RuntimeProfileManifest,
   value: unknown,
   goal: string,
   method: string,
   actor?: AuthoritativeWorldState["entities"][string],
   risk = "存在有意义失败后果",
+  savingThrow = false,
 ): { requestCheck: FrozenCheck; publicCheck: EventPayloadByType["CheckFrozen"] } | undefined {
   if (
     !isRecord(value)
@@ -275,13 +282,16 @@ function frozenCheck(
   }
   const success = isRecord(value.success) ? structuredClone(value.success) : { publicResult: "成功" };
   const failure = isRecord(value.failure) ? structuredClone(value.failure) : { publicResult: "失败" };
-  const score = actor?.abilityScores?.[value.ability];
-  const modifier = Number.isSafeInteger(score)
-    ? Math.floor((Number(score) - 10) / 2)
-      + (typeof value.skill === "string" && actor?.proficientSkills?.includes(value.skill)
-        ? actor.proficiencyBonus ?? 0
-        : 0)
-    : 0;
+  const modifier = actor === undefined
+    ? 0
+    : (savingThrow
+        ? savingThrowModifier(profiles, actor, value.ability as ProficiencyAbility)
+        : skillCheckModifier(
+            profiles,
+            actor,
+            value.ability as ProficiencyAbility,
+            typeof value.skill === "string" ? value.skill : null,
+          )) ?? 0;
   return {
     requestCheck: {
       kind: value.kind,
@@ -432,7 +442,7 @@ function resolveFreeAction(
     }
     return sequence("committed", profiles, state, root, drafts);
   }
-  const frozen = frozenCheck(input.check, input.goal, input.method, actor, publicBasis);
+  const frozen = frozenCheck(profiles, input.check, input.goal, input.method, actor, publicBasis);
   if (frozen === undefined) return rejected("invalidRulesInput", "Check parameters must be frozen before randomness.");
   if (input.feasibility.kind === "highRiskFeasible") {
     if (!isRecord(input.acceptedCost)
@@ -475,12 +485,14 @@ function resolveContest(profiles: RuntimeProfileManifest, state: AuthoritativeWo
   const initiator = character(state, input.initiatorId);
   const defender = character(state, input.defenderId);
   const left = frozenCheck(
+    profiles,
     { ...(isRecord(input.initiatorCheck) ? input.initiatorCheck : {}), kind: "skill", dc: 0 },
     "对抗",
     "发起对抗",
     initiator,
   );
   const right = frozenCheck(
+    profiles,
     { ...(isRecord(input.defenderCheck) ? input.defenderCheck : {}), kind: "skill", dc: 0 },
     "对抗",
     "回应对抗",
@@ -518,10 +530,13 @@ function resolveSavingThrow(profiles: RuntimeProfileManifest, state: Authoritati
   const root = rootAction(state, input);
   const target = character(state, input.targetId);
   const frozen = frozenCheck(
+    profiles,
     { kind: "ability", ability: input.ability, dc: input.dc, mode: "normal", success: input.success, failure: input.failure },
     "抵抗危险",
     String(input.sourceDefinitionId),
     target,
+    "存在有意义失败后果",
+    true,
   );
   if (root === undefined || target === undefined || frozen === undefined || !isNonEmptyString(input.sourceDefinitionId)) {
     return rejected("invalidRulesInput", "Saving throw target or parameters are unavailable.");
@@ -1275,6 +1290,7 @@ function interruptActivity(profiles: RuntimeProfileManifest, state: Authoritativ
 }
 
 function restCompletionDrafts(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   activityId: string,
   activity: JsonRecord,
@@ -1305,6 +1321,7 @@ function restCompletionDrafts(
   const control = state.characterControls[characterId];
   const seat = control === undefined ? undefined : state.seats[control.seatId];
   const initialCombat = buildPlayerCombatEntity(
+    profiles,
     recovered.character,
     compiled,
     seat?.principalId ?? recovered.character.controllerPrincipalId,
@@ -1414,6 +1431,7 @@ function restRandomness(
 }
 
 function prepareActivityCompletion(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   rootActionId: string,
   activityId: string,
@@ -1499,6 +1517,7 @@ function prepareActivityCompletion(
         : { kind: "awaitingRandomness", random } as const;
     }
     const drafts = restCompletionDrafts(
+      profiles,
       state,
       activityId,
       activity,
@@ -1525,7 +1544,7 @@ function completeActivity(profiles: RuntimeProfileManifest, state: Authoritative
   if (root === undefined || !isNonEmptyString(input.activityId)) {
     return rejected("privateOrUnknownReference", "Activity is unavailable.");
   }
-  const prepared = prepareActivityCompletion(state, root, input.activityId);
+  const prepared = prepareActivityCompletion(profiles, state, root, input.activityId);
   if (prepared.kind === "rejected") return prepared.result;
   if (prepared.kind === "awaitingRandomness") {
     return sequence("awaitingRandomness", profiles, state, root, [prepared.random.draft], {
@@ -1596,7 +1615,7 @@ export function settleDueActivityBeforeInput(
     + BigInt(String(due.intendedDurationMicros))).toString();
   const rootActionId = `activity-due:${String(due.activityId)}:${dueMicros}`;
   if (rootActionId in state.receipts) return undefined;
-  const prepared = prepareActivityCompletion(state, rootActionId, String(due.activityId));
+  const prepared = prepareActivityCompletion(profiles, state, rootActionId, String(due.activityId));
   if (prepared.kind === "rejected") return prepared.result;
   const additions = {
     mechanicalResult: {
@@ -1650,6 +1669,7 @@ export function fulfillRestRandomness(
     return rejected("invalidRulesInput", "The authoritative rest rolls do not match the frozen request.");
   }
   const completion = restCompletionDrafts(
+    profiles,
     state,
     activityId,
     activity,
@@ -2057,6 +2077,7 @@ function resolveDueActorPlan(
       || !isNonEmptyString(revision.trace.factRef)
       || !isNonEmptyString(revision.trace.description)
       || !isNonEmptyString(revision.trace.visibilityPolicyRef)
+      || revision.trace.visibilityPolicyRef !== trace.visibilityPolicyRef
       || revision.trace.factRef in state.canonicalFacts
       || !isRecord(revision.alternateTarget)
       || !hasExactKeys(revision.alternateTarget, ["reason", "targetRef"])
@@ -2504,6 +2525,7 @@ function recordAdvancementChoice(profiles: RuntimeProfileManifest, state: Author
   const control = state.characterControls[actor.id];
   const seat = control === undefined ? undefined : state.seats[control.seatId];
   const initialCombat = buildPlayerCombatEntity(
+    profiles,
     advanced.character,
     compiled,
     seat?.principalId ?? actor.controllerPrincipalId,
@@ -2686,7 +2708,7 @@ function transitionChapter(
         payload: { activityId: transition.activityId, cause: structuredClone(interruptionCause) },
       }];
     } else if (transition.disposition === "complete") {
-      const prepared = prepareActivityCompletion(manifestState, root, transition.activityId);
+      const prepared = prepareActivityCompletion(profiles, manifestState, root, transition.activityId);
       if (prepared.kind === "rejected") return prepared.result;
       if (prepared.kind === "awaitingRandomness") {
         return rejected(
@@ -2778,7 +2800,7 @@ function introduceCampaignSuccessor(profiles: RuntimeProfileManifest, state: Aut
     ? undefined
     : state.seats[predecessor.lastControllerSeatId];
   const nextOrdinal = Object.values(state.entities).reduce((maximum, entry) => Math.max(maximum, Number(entry.entityOrdinal)), 0) + 1;
-  const successor = canonicalControlledCharacter(input.successor, String(nextOrdinal));
+  const successor = canonicalControlledCharacter(profiles, input.successor, String(nextOrdinal));
   if (root === undefined || predecessor === undefined
     || !["dead", "retired", "missing", "npcTransitioned"].includes(predecessor.tenureStatus)
     || seat?.status !== "active"
@@ -2803,6 +2825,7 @@ function introduceCampaignSuccessor(profiles: RuntimeProfileManifest, state: Aut
     );
   }
   const combatEntity = buildPlayerCombatEntity(
+    profiles,
     successor,
     compiled,
     seat.principalId,

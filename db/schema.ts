@@ -52,6 +52,10 @@ export const rooms = sqliteTable(
     kpModelProfile: text("kp_model_profile")
       .notNull()
       .default("authoritative-kp-profile-v1"),
+    /** Null on every pre-SPEC-0015 room; only newly created V3 rooms bind the
+     * private Form/Action-Language/Context profile manifest. */
+    kpWorkflowManifest: text("kp_workflow_manifest"),
+    kpContextPlannerProfile: text("kp_context_planner_profile"),
     runtimeEpochId: text("runtime_epoch_id"),
     genesisHash: text("genesis_hash"),
     status: text("status").notNull().default("lobby"),
@@ -62,6 +66,53 @@ export const rooms = sqliteTable(
     index("idx_rooms_host").on(table.hostUserId),
   ],
 );
+
+/** Rebuild metadata for the derived static index. The authoritative prose
+ * remains in versioned code/module registries; `body` is retained as a
+ * migration-compatible column but production writes only an empty sentinel. */
+export const kpStaticChunks = sqliteTable(
+  "kp_static_chunks",
+  {
+    sourceRef: text("source_ref").primaryKey(),
+    sourceHash: text("source_hash").notNull(),
+    sourceSpan: text("source_span").notNull(),
+    profileRef: text("profile_ref").notNull(),
+    corpusProfileRef: text("corpus_profile_ref"),
+    corpusProfileHash: text("corpus_profile_hash"),
+    corpusHash: text("corpus_hash"),
+    sensitivity: text("sensitivity").notNull(),
+    dependencyRefs: text("dependency_refs").notNull(),
+    structuralRefs: text("structural_refs"),
+    purpose: text("purpose").notNull(),
+    sourceType: text("source_type"),
+    body: text("body").notNull(),
+    aliases: text("aliases").notNull(),
+    searchText: text("search_text").notNull(),
+    rebuiltAt: text("rebuilt_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_kp_static_chunks_profile").on(table.profileRef),
+    index("idx_kp_static_chunks_hash").on(table.sourceHash),
+  ],
+);
+
+export const kpStaticCorpusProfiles = sqliteTable(
+  "kp_static_corpus_profiles",
+  {
+    profileRef: text("profile_ref").primaryKey(),
+    profileHash: text("profile_hash").notNull(),
+    corpusHash: text("corpus_hash"),
+    compilerVersion: text("compiler_version"),
+    chunkCount: integer("chunk_count").notNull(),
+    rebuiltAt: text("rebuilt_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+);
+
+/** Drizzle does not model SQLite virtual tables. Keeping the exact statement
+ * beside the relational source makes the FTS projection reproducible and lets
+ * migration/tests verify it byte-for-byte. */
+export const KP_STATIC_FTS_SCHEMA_SQL =
+  "CREATE VIRTUAL TABLE `kp_static_chunks_fts` USING fts5(`source_ref` UNINDEXED, `search_text`, tokenize='unicode61')";
 
 export const roomMembers = sqliteTable(
   "room_members",
@@ -255,5 +306,30 @@ export const authoritativeProjectionAuditArchive = sqliteTable(
     }),
     index("idx_authoritative_projection_head")
       .on(table.roomId, table.runtimeEpochId, table.eventSeq),
+  ],
+);
+
+/**
+ * A checkpoint is advanced only in the same D1 batch that finishes the full
+ * settled archive head.  It is the sole recovery locator; event rows after it
+ * are deliberately ignored by disaster recovery until a later checkpoint is
+ * committed.
+ */
+export const authoritativeRoomArchiveCheckpoint = sqliteTable(
+  "authoritative_room_archive_checkpoint",
+  {
+    roomId: text("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    runtimeEpochId: text("runtime_epoch_id").notNull(),
+    genesisHash: text("genesis_hash").notNull(),
+    settledEventSeq: integer("settled_event_seq").notNull(),
+    eventHash: text("event_hash").notNull(),
+    stateHash: text("state_hash").notNull(),
+    activeBranchId: text("active_branch_id").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roomId, table.runtimeEpochId] }),
   ],
 );

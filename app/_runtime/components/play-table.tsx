@@ -22,7 +22,11 @@ import {
 } from "@/lib/dnd/gear";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/client";
-import { adjustSafetyPresentation, resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import { adjustSafetyPresentation, resolveRoll, retryNarration, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import {
+  tableActionAccepted,
+  type TableActionResponse,
+} from "@/lib/table/authoritative-client";
 import {
   arcaneRecoveryAvailability,
   changeArcaneRecoverySelection,
@@ -279,6 +283,11 @@ export type TableSnap = {
         }>;
       };
       tacticalProjection?: TacticalProjection;
+      narrationRecovery?: {
+        kind: "available";
+        capability: string;
+        state: "pending" | "rejected" | "retryableFailure";
+      };
     } | null;
     restVote?: {
       kind: "short" | "long";
@@ -372,6 +381,7 @@ export function PlayTable({
     { id: string; body: string; name: string; deliveryIdAtSubmission: string | undefined }[]
   >([]);
   const safetyPresentation = snap.state.authoritative?.safetyPresentation;
+  const viewerNarrationRecovery = snap.state.authoritative?.narrationRecovery;
   const safetyPaused = safetyPresentation?.status === "paused";
   const visibleMessages = safetyPaused
     ? snap.messages.filter((message) => message.id !== snap.state.currentDeliveryId)
@@ -507,13 +517,43 @@ export function PlayTable({
       const result = await adjustSafetyPresentation({
         data: { code, presentationAdjustment },
       });
-      if (!result.ok) {
-        toast.error(result.error);
+      if (!tableActionAccepted(result)) {
+        toast.error(result.error ?? "没能提交安全调整");
         return;
       }
       void qc.invalidateQueries({ queryKey: ["table", code] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "没能提交安全调整");
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  }
+
+  async function retryViewerNarration() {
+    if (sendingRef.current || viewerNarrationRecovery?.kind !== "available") return;
+    sendingRef.current = true;
+    setSending(true);
+    setSubmissionError(null);
+    try {
+      const result = await retryNarration({
+        data: { code, capability: viewerNarrationRecovery.capability },
+      });
+      if (result.action === "committed" && result.narration === "published") {
+        clearRememberedSubmission();
+        void qc.invalidateQueries({ queryKey: ["table", code] });
+        return;
+      }
+      const message = typeof result.error === "string"
+        ? result.error
+        : "KP 回复仍未送达，请稍后再试。";
+      setSubmissionError(message);
+      toast.error(message);
+      void qc.invalidateQueries({ queryKey: ["table", code] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "没能重试 KP 回复";
+      setSubmissionError(message);
+      toast.error(message);
     } finally {
       sendingRef.current = false;
       setSending(false);
@@ -561,12 +601,27 @@ export function PlayTable({
             payload: { ...submission.payload, submissionId: returnedSubmissionId },
           }
         : submission;
-      if (!res.ok) {
+      const explicitAction = typeof res.action === "string" ? res.action : undefined;
+      const actionCommitted = explicitAction === "committed"
+        || explicitAction === "resolvedInWorld"
+        || explicitAction === "concluded"
+        || res.committed === true;
+      const requestFailed = res.ok === false
+        || (res.ok !== true && !actionCommitted && explicitAction !== "awaitingInput");
+      if (requestFailed || (actionCommitted && (
+        res.narration === "rejected" || res.narration === "retryableFailure"
+      ))) {
         const message = typeof res.error === "string" ? res.error : submission.failureMessage;
-        if (res.retryable === true) {
+        const viewerLocalNarrationFailure = actionCommitted
+          && res.ok === undefined
+          && (res.narration === "rejected" || res.narration === "retryableFailure");
+        if (viewerLocalNarrationFailure) {
+          clearRememberedSubmission();
+          void qc.invalidateQueries({ queryKey: ["table", code] });
+        } else if (res.retryable === true || actionCommitted) {
           rememberSubmission({
             ...stableSubmission,
-            ...(res.committed === true || stableSubmission.committed === true
+            ...(actionCommitted || stableSubmission.committed === true
               ? { committed: true as const }
               : {}),
             lastError: message,
@@ -574,7 +629,7 @@ export function PlayTable({
         } else {
           clearRememberedSubmission();
         }
-        if (composerSubmission) {
+        if (composerSubmission && !actionCommitted) {
           setLocalSays((ls) => ls.filter((x) => x.id !== localId));
           setText((draft) => draft || submission.payload.text);
         }
@@ -701,7 +756,7 @@ export function PlayTable({
         : await cancelRest({
             data: { code, pendingInputId: groupRestPending.pendingInputId },
           });
-      if (!result.ok) toast.error(result.error);
+      if (!tableActionAccepted(result)) toast.error(result.error ?? "没能提交休整决定");
       else void qc.invalidateQueries({ queryKey: ["table", code] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "没能提交休整决定");
@@ -874,7 +929,29 @@ export function PlayTable({
           ))}
           <div ref={endRef} />
         </div>
-        {recoverableSubmission?.lastError ? (
+        {viewerNarrationRecovery?.kind === "available" ? (
+          <div
+            data-narration-recovery="viewer"
+            role="alert"
+            className="shrink-0 border-t border-danger/40 bg-danger/10 px-5 py-3"
+          >
+            <p className="text-sm text-fg">你的行动状态不变，但这条 KP 回复尚未送达。</p>
+            <p className="mt-1 text-xs text-subtle">
+              这里只恢复你自己的回复，不会重新裁定、掷骰或消耗资源。
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="mt-2"
+              data-narration-recovery-submit
+              disabled={sending}
+              onClick={() => void retryViewerNarration()}
+            >
+              {sending ? "重试中……" : "重试 KP 回复"}
+            </Button>
+          </div>
+        ) : null}
+        {viewerNarrationRecovery === undefined && recoverableSubmission?.lastError ? (
           <div
             data-action-recovery="send-action"
             role="alert"
@@ -1619,11 +1696,11 @@ function CombatStrip({
       !combat.order.some((o) => o.id === p.userId && o.inCombat),
   );
 
-  async function act(fn: () => Promise<{ ok: boolean; error?: string }>, key: string) {
+  async function act(fn: () => Promise<TableActionResponse>, key: string) {
     setBusy(key);
     try {
       const res = await fn();
-      if (!res.ok) toast.error(res.error ?? "做不到");
+      if (!tableActionAccepted(res)) toast.error(String(res.error ?? "做不到"));
       else void qc.invalidateQueries({ queryKey: ["table", code] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "做不到");
@@ -2223,12 +2300,12 @@ function SheetView({
   const myGroup = groups.find((g) => g.ids.includes(meId));
   const inviteToMe = squadInvite?.to === meId ? squadInvite : null;
 
-  async function act(key: string, fn: () => Promise<{ ok: boolean; error?: string }>) {
+  async function act(key: string, fn: () => Promise<TableActionResponse>) {
     if (busy) return;
     setBusy(key);
     try {
       const res = await fn();
-      if (!res.ok) toast.error(res.error ?? "做不到");
+      if (!tableActionAccepted(res)) toast.error(String(res.error ?? "做不到"));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "做不到");
     } finally {
@@ -2729,12 +2806,12 @@ function ResourcePanel({
   const authoritativeRest = authoritativeActivities?.find((activity) =>
     activity.status === "active" && activity.restKind !== undefined);
 
-  async function go(key: string, fn: () => Promise<{ ok: boolean; error?: string }>) {
+  async function go(key: string, fn: () => Promise<TableActionResponse>) {
     if (!canEdit || busy) return;
     setBusy(key);
     try {
       const res = await fn();
-      if (!res.ok) toast.error(res.error ?? "做不到");
+      if (!tableActionAccepted(res)) toast.error(String(res.error ?? "做不到"));
       else setRest(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "做不到");
@@ -3395,7 +3472,7 @@ function SpellLine({
                       ritual,
                     },
                   });
-                  if (!res.ok) toast.error(res.error ?? "施放失败");
+                  if (!tableActionAccepted(res)) toast.error(String(res.error ?? "施放失败"));
                 } catch (e) {
                   toast.error(e instanceof Error ? e.message : "施放失败");
                 } finally {
@@ -3424,7 +3501,7 @@ function useGearAct(code: string, canEdit: boolean) {
     setBusy(`${action}-${slot}`);
     try {
       const res = await setGear({ data: { code, action, slot, itemId } });
-      if (!res.ok) toast.error(String(res.error));
+      if (!tableActionAccepted(res)) toast.error(String(res.error ?? "换装失败"));
       else void qc.invalidateQueries({ queryKey: ["table", code] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "换装失败");

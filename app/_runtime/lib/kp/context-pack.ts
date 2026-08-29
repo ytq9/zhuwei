@@ -31,6 +31,10 @@ export type RequiredContext = Readonly<{
     npcRef: string;
     knowledgeRefs: readonly string[];
     planRefs: readonly string[];
+    /** Bounded content from that NPC's own Rules projection. This is not KP
+     * omniscience and must never be filled from static Story Bible retrieval. */
+    knowledge?: readonly ContextRecord[];
+    plans?: readonly ContextRecord[];
   }>[];
   temporal: Readonly<{
     pendingRefs: readonly string[];
@@ -188,9 +192,15 @@ export function buildContextPack(input: ContextPackInput): ContextPack {
     optional.splice(lowestPriority.index, 1);
     droppedOptionalRefs.push(lowestPriority.item.ref);
   }
-  while (estimatePackPayloadUnits(input.required, retrieved, optional) > input.maxUnits && retrieved.length > 0) {
-    const removed = retrieved.pop()!;
-    droppedRetrievedRefs.push(removed.sourceRef);
+  const dependencyGroups = atomicRetrievedDependencyGroups(retrieved)
+    .sort((left, right) => left.relevance - right.relevance || right.groupRef.localeCompare(left.groupRef));
+  while (estimatePackPayloadUnits(input.required, retrieved, optional) > input.maxUnits && dependencyGroups.length > 0) {
+    const removedGroup = dependencyGroups.shift()!;
+    const removedRefs = new Set(removedGroup.sourceRefs);
+    for (let index = retrieved.length - 1; index >= 0; index -= 1) {
+      if (removedRefs.has(retrieved[index]!.sourceRef)) retrieved.splice(index, 1);
+    }
+    droppedRetrievedRefs.push(...removedGroup.sourceRefs);
   }
 
   const provisional = packShape(
@@ -260,11 +270,84 @@ function freezeRetrievedChunk(chunk: RetrievedContextChunk): RetrievedContextChu
     || chunk.sourceSpan.start < 0 || chunk.sourceSpan.end <= chunk.sourceSpan.start) {
     throw new Error("CONTEXT_SOURCE_SPAN_INVALID");
   }
+  if (!Array.isArray(chunk.dependencyRefs)
+    || chunk.dependencyRefs.length > 16
+    || chunk.dependencyRefs.some((reference) =>
+      typeof reference !== "string" || reference.trim().length === 0)
+    || new Set(chunk.dependencyRefs).size !== chunk.dependencyRefs.length) {
+    throw new Error("CONTEXT_DEPENDENCY_REFS_INVALID");
+  }
   return Object.freeze({
     ...chunk,
     sourceSpan: Object.freeze({ ...chunk.sourceSpan }),
     dependencyRefs: Object.freeze([...chunk.dependencyRefs]),
   });
+}
+
+type RetrievedDependencyGroup = Readonly<{
+  groupRef: string;
+  sourceRefs: readonly string[];
+  relevance: number;
+}>;
+
+/** Dependency-connected chunks are one budget unit. Profile-binding refs have
+ * no matching chunk and were already authorized during rehydration, so they do
+ * not create a synthetic group member here. */
+function atomicRetrievedDependencyGroups(
+  chunks: readonly RetrievedContextChunk[],
+): RetrievedDependencyGroup[] {
+  const indexByRef = new Map(chunks.map((chunk, index) => [chunk.sourceRef, index]));
+  const refsBySource = new Map<string, number[]>();
+  for (const [index, chunk] of chunks.entries()) {
+    const parentRef = parentStaticSourceRef(chunk.sourceRef);
+    const indexes = refsBySource.get(parentRef) ?? [];
+    indexes.push(index);
+    refsBySource.set(parentRef, indexes);
+  }
+  const parents = chunks.map((_, index) => index);
+  const find = (index: number): number => {
+    let current = index;
+    while (parents[current] !== current) current = parents[current]!;
+    while (parents[index] !== index) {
+      const next = parents[index]!;
+      parents[index] = current;
+      index = next;
+    }
+    return current;
+  };
+  const union = (left: number, right: number): void => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parents[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
+  };
+  for (const [index, chunk] of chunks.entries()) {
+    for (const dependencyRef of chunk.dependencyRefs) {
+      const exact = indexByRef.get(dependencyRef);
+      const dependencyIndexes = exact === undefined ? refsBySource.get(dependencyRef) ?? [] : [exact];
+      for (const dependencyIndex of dependencyIndexes) union(index, dependencyIndex);
+    }
+  }
+  const members = new Map<number, RetrievedContextChunk[]>();
+  for (const [index, chunk] of chunks.entries()) {
+    const root = find(index);
+    const group = members.get(root) ?? [];
+    group.push(chunk);
+    members.set(root, group);
+  }
+  return [...members.values()].map((group) => {
+    if (group.length > 64) throw new Error("CONTEXT_DEPENDENCY_GROUP_LIMIT_EXCEEDED");
+    const sourceRefs = Object.freeze(group.map((chunk) => chunk.sourceRef).sort());
+    return Object.freeze({
+      groupRef: sourceRefs[0]!,
+      sourceRefs,
+      relevance: Math.max(...group.map((chunk) => chunk.relevance)),
+    });
+  });
+}
+
+function parentStaticSourceRef(sourceRef: string): string {
+  const marker = sourceRef.lastIndexOf("#span:");
+  return marker < 0 ? sourceRef : sourceRef.slice(0, marker);
 }
 
 function assertUniqueRefs(refs: readonly string[], code: string): void {

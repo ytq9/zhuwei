@@ -34,6 +34,11 @@ import {
 } from "./validation";
 import { isCompoundResolutionPlan } from "./compound-model";
 import { MAX_EXPERIENCE_AWARD } from "./character-progression";
+import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
+import {
+  savingThrowModifier as profiledSavingThrowModifier,
+  skillCheckModifier,
+} from "./proficiency";
 import {
   actorPlanNpcIsAvailable,
   actorPlanPremiseIsAvailable,
@@ -1028,22 +1033,17 @@ function normalizeEffects(
 }
 
 function abilityModifier(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   actorCharacterId: string,
   ability: typeof ABILITIES[number],
   skill: string | null,
 ): number | undefined {
-  const actor = state.entities[actorCharacterId];
-  const score = actor?.abilityScores?.[ability];
-  if (!Number.isSafeInteger(score)) return undefined;
-  const base = Math.floor((Number(score) - 10) / 2);
-  const proficiency = skill !== null && actor.proficientSkills?.includes(skill)
-    ? actor.proficiencyBonus ?? 0
-    : 0;
-  return base + proficiency;
+  return skillCheckModifier(profiles, state.entities[actorCharacterId], ability, skill);
 }
 
 function savingThrowModifier(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   actorCharacterId: string,
   ability: typeof ABILITIES[number],
@@ -1051,6 +1051,9 @@ function savingThrowModifier(
   const actor = state.entities[actorCharacterId];
   const score = actor?.abilityScores?.[ability];
   if (!Number.isSafeInteger(score)) return undefined;
+  if (characterProficiencyProfileEnabled(profiles.extensions)) {
+    return profiledSavingThrowModifier(profiles, actor, ability);
+  }
   const base = Math.floor((Number(score) - 10) / 2);
   const proficient = SAVING_THROW_PROFICIENCIES[actor.classId ?? ""]?.includes(ability) ?? false;
   return base + (proficient ? actor.proficiencyBonus ?? 0 : 0);
@@ -1471,6 +1474,7 @@ const SEMANTIC_MECHANICAL_KEYS = [
 ] as const;
 
 function npcCompoundRandomnessCommand(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   rootActionId: string,
   actorCharacterId: string,
@@ -1538,8 +1542,8 @@ function npcCompoundRandomnessCommand(
     mechanical.failure,
   );
   const modifier = savingThrow
-    ? savingThrowModifier(state, actorCharacterId, ability as typeof ABILITIES[number])
-    : abilityModifier(state, actorCharacterId, ability as typeof ABILITIES[number], skill as string | null);
+    ? savingThrowModifier(profiles, state, actorCharacterId, ability as typeof ABILITIES[number])
+    : abilityModifier(profiles, state, actorCharacterId, ability as typeof ABILITIES[number], skill as string | null);
   const materializedFactRefs = new Set(materializations.map(({ factRef }) => factRef));
   if (
     duration === undefined
@@ -1613,6 +1617,7 @@ function npcCompoundRandomnessCommand(
 }
 
 function semanticCommand(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   rootActionId: string,
   actorCharacterId: string,
@@ -1736,6 +1741,7 @@ function semanticCommand(
       return npcContext === undefined
         ? rejected("invalidRulesInput", "Player checks must use the primary compound resolution path.")
         : npcCompoundRandomnessCommand(
+            profiles,
             state,
             rootActionId,
             actorCharacterId,
@@ -1778,6 +1784,7 @@ function semanticCommand(
       return npcContext === undefined
         ? rejected("invalidRulesInput", "Player saves must use the primary compound resolution path.")
         : npcCompoundRandomnessCommand(
+            profiles,
             state,
             rootActionId,
             actorCharacterId,
@@ -2694,6 +2701,7 @@ function resolveDueActorPlanMechanics(
   const knowledgeRefs = canonicalStrings(plan?.knowledgeRefs);
   const resourceRefs = canonicalStrings(plan?.resourceRefs);
   const trace = isRecord(plan?.trace) ? plan.trace : undefined;
+  const planActivity = isRecord(plan?.activity) ? plan.activity : undefined;
   if (
     input.decision !== "execute"
     || mechanical === undefined
@@ -2710,7 +2718,14 @@ function resolveDueActorPlanMechanics(
     || !isNonEmptyString(plan.goal)
     || !isNonEmptyString(plan.nextStep)
     || !isNonEmptyString(trace?.factRef)
+    || !isNonEmptyString(planActivity?.activityId)
   ) return rejected("invalidRulesInput", "Due ActorPlan mechanics exceed the frozen finite plan.");
+  if (mechanical.operation === "advanceCampaignLifecycle") {
+    return rejected(
+      "privateOrUnknownReference",
+      "A finite due ActorPlan cannot exercise campaign lifecycle authority.",
+    );
+  }
 
   const mechanicalBasisRefs = mechanical.basisRefs === undefined
     ? []
@@ -2728,13 +2743,66 @@ function resolveDueActorPlanMechanics(
     }
     return [];
   });
+  const directResourceRefs = [
+    mechanical.resourceRef,
+    mechanical.itemRef,
+    mechanical.artifactRef,
+  ].filter(isNonEmptyString);
+  const recipients = mechanical.recipientRefs === undefined
+    ? []
+    : canonicalStrings(mechanical.recipientRefs);
+  const actor = state.entities[selected.npcId];
+  const alternateTarget = isRecord(plan.alternateTarget) ? plan.alternateTarget : undefined;
+  const frozenTargetRef = input.targetRef === undefined
+    ? actor?.sceneId
+    : isNonEmptyString(input.targetRef)
+      && alternateTarget?.targetRef === input.targetRef
+      && (input.targetRef in state.entities || input.targetRef in state.scenes)
+      ? input.targetRef
+      : undefined;
+  const targetRefs = mechanical.targetEntityRefs === undefined
+    ? []
+    : canonicalStrings(mechanical.targetEntityRefs);
+  const activity = state.campaignRuntime.activities[planActivity.activityId];
+  const activityOperation = mechanical.operation === "interruptActivity"
+    || mechanical.operation === "completeActivity";
+  const allowedKnowledgeRefs = new Set([trace.factRef, ...knowledgeRefs]);
   if (
     mechanicalBasisRefs === undefined
     || mechanicalBasisRefs.some((reference) => !premiseRefs.includes(reference))
     || costRefs.some((reference) => !resourceRefs.includes(reference))
-    || (isNonEmptyString(mechanical.resourceRef)
-      && !resourceRefs.includes(mechanical.resourceRef))
-  ) return rejected("privateOrUnknownReference", "Due ActorPlan mechanics cite an unfrozen premise or resource.");
+    || directResourceRefs.some((reference) => !resourceRefs.includes(reference))
+    || recipients === undefined
+    || targetRefs === undefined
+    || frozenTargetRef === undefined
+    || (isNonEmptyString(mechanical.targetEntityRef)
+      && mechanical.targetEntityRef !== frozenTargetRef)
+    || targetRefs.some((reference) => reference !== frozenTargetRef)
+    || (activityOperation && (
+      mechanical.activityRef !== planActivity.activityId
+      || activity?.status !== "active"
+      || activity.characterId !== selected.npcId
+    ))
+    || (mechanical.operation === "changeKnowledge" && (
+      !isNonEmptyString(mechanical.knowledgeRef)
+      || !allowedKnowledgeRefs.has(mechanical.knowledgeRef)
+      || recipients.some((reference) => reference !== frozenTargetRef)
+    ))
+  ) return rejected(
+    "privateOrUnknownReference",
+    "Due ActorPlan mechanics cite an unfrozen premise, resource, activity, knowledge, or recipient.",
+  );
+  if (!dueActorPlanOutcomeEffectsAreFrozen(
+    mechanical,
+    new Set([trace.factRef, ...premiseRefs, ...knowledgeRefs]),
+    new Set(resourceRefs),
+    frozenTargetRef,
+  )) {
+    return rejected(
+      "privateOrUnknownReference",
+      "Due ActorPlan consequences cite unfrozen knowledge or lifecycle targets.",
+    );
+  }
 
   const lifecycle = stepCampaignWorld(profiles, state, {
     ...structuredClone(input),
@@ -2749,18 +2817,15 @@ function resolveDueActorPlanMechanics(
   const actionPayload: JsonRecord | undefined = actionEvent === undefined
     ? undefined
     : actionEvent.payload as JsonRecord;
-  const targetRef = isNonEmptyString(actionPayload?.targetRef) ? actionPayload.targetRef : undefined;
-  const targetRefs = mechanical.targetEntityRefs === undefined
-    ? []
-    : canonicalStrings(mechanical.targetEntityRefs);
-  if (
-    targetRef === undefined
-    || (isNonEmptyString(mechanical.targetEntityRef) && mechanical.targetEntityRef !== targetRef)
-    || targetRefs === undefined
-    || targetRefs.some((reference) => reference !== targetRef)
-  ) return rejected("privateOrUnknownReference", "Due ActorPlan mechanics select an unfrozen target.");
+  const committedTargetRef = isNonEmptyString(actionPayload?.targetRef)
+    ? actionPayload.targetRef
+    : undefined;
+  if (committedTargetRef !== frozenTargetRef) {
+    return rejected("invalidWorldState", "Due ActorPlan lifecycle changed its frozen target.");
+  }
 
   const command = semanticCommand(
+    profiles,
     lifecycle.state,
     input.proposalId as string,
     selected.npcId,
@@ -2779,7 +2844,7 @@ function resolveDueActorPlanMechanics(
   );
 }
 
-function storyWaitsForExplicitContinuation(state: AuthoritativeWorldState): boolean {
+export function storyWaitsForExplicitContinuation(state: AuthoritativeWorldState): boolean {
   const stories = Object.values(state.campaignRuntime.stories).filter(isRecord);
   return stories.some((entry) => entry.status === "concluded")
     && !stories.some((entry) => entry.status === "active");
@@ -2791,6 +2856,43 @@ function isExplicitPostConclusionLifecycle(input: JsonRecord): boolean {
     : undefined;
   return mechanical?.operation === "advanceCampaignLifecycle"
     && ["recordEpilogueChoice", "startSequel"].includes(String(mechanical.lifecycleAction));
+}
+
+function dueActorPlanOutcomeEffectsAreFrozen(
+  mechanical: JsonRecord,
+  allowedFactRefs: ReadonlySet<string>,
+  frozenResourceRefs: ReadonlySet<string>,
+  frozenTargetRef: string,
+): boolean {
+  for (const branch of [mechanical.success, mechanical.failure]) {
+    if (branch === undefined) continue;
+    if (!Array.isArray(branch)) return false;
+    for (const value of branch) {
+      if (!isRecord(value) || !isNonEmptyString(value.kind)) return false;
+      if (isNonEmptyString(value.definitionRef)
+        && !allowedFactRefs.has(value.definitionRef)) return false;
+      if (value.kind === "acquireEvidence" || value.kind === "acquireKnowledge") {
+        const definitionRef = isNonEmptyString(value.definitionRef)
+          ? value.definitionRef
+          : undefined;
+        if (definitionRef !== undefined && !allowedFactRefs.has(definitionRef)) return false;
+      }
+      if (value.kind === "updateRelationship") {
+        const recipientRefs = canonicalStrings(value.recipientRefs);
+        if (recipientRefs === undefined
+          || recipientRefs.length === 0
+          || recipientRefs.some((reference) => reference !== frozenTargetRef)) return false;
+      }
+      if ((value.kind === "recordCommitment" || value.kind === "recordDebt")
+        && value.targetRef !== frozenTargetRef) return false;
+      if (value.kind === "alertNpc" && value.npcId !== frozenTargetRef) return false;
+      if (value.kind === "changeResource"
+        && (!isNonEmptyString(value.resourceRef)
+          || !frozenResourceRefs.has(value.resourceRef))) return false;
+      if (value.kind === "moveEntity" && value.sceneRef !== frozenTargetRef) return false;
+    }
+  }
+  return true;
 }
 
 export function stepCompoundActionPlan(
@@ -3051,6 +3153,7 @@ export function stepCompoundActionPlan(
   const isCompoundSave = input.mechanicalProposal.operation === "resolveNoncombatSave";
   if (!isCompoundCheck && !isCompoundSave) {
     const playerCommand = semanticCommand(
+      profiles,
       state,
       input.rootActionId,
       actor.id,
@@ -3066,6 +3169,7 @@ export function stepCompoundActionPlan(
     for (const [index, npcAction] of npcActions.entries()) {
       if (npcAction.mechanicalProposal === null) continue;
       const npcCommand = semanticCommand(
+        profiles,
         state,
         input.rootActionId,
         npcAction.npcId,
@@ -3209,11 +3313,13 @@ export function stepCompoundActionPlan(
   );
   const modifier = isCompoundSave
     ? savingThrowModifier(
+        profiles,
         state,
         resolutionActor.id,
         checkAbility as typeof ABILITIES[number],
       )
     : abilityModifier(
+        profiles,
         state,
         resolutionActor.id,
         checkAbility as typeof ABILITIES[number],
@@ -3422,6 +3528,7 @@ export function stepCompoundActionPlan(
   for (const [index, npcAction] of npcActions.entries()) {
     if (npcAction.mechanicalProposal === null) continue;
     const npcCommand = semanticCommand(
+      profiles,
       currentState,
       input.rootActionId,
       npcAction.npcId,

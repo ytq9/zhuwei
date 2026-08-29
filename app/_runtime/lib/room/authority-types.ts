@@ -1,4 +1,6 @@
 import type { TacticalPosition } from "../rules/tactical-projection";
+import type { RuntimeProfileManifest } from "../rules";
+import type { ProfileRef } from "../rules/profiles/types";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -30,6 +32,8 @@ export type InitializeAuthoritativeRoomInput = {
   members: AuthoritativeMemberSeed[];
   characters: AuthoritativeCharacterSeed[];
   fixtureFacts?: unknown[];
+  /** Exact registered manifest selected only when a new room epoch is born. */
+  runtimeProfiles?: RuntimeProfileManifest;
 };
 
 export type AuthoritativeActionInput =
@@ -121,6 +125,7 @@ export type PublicReceipt = {
   projectionHash?: string;
   meaningfulFailure?: boolean;
   newOptions?: JsonObject[];
+  resolutionDisposition?: "inWorldRefusal";
 };
 
 export type PreparedAuthoritativeAction = {
@@ -146,6 +151,26 @@ export type DeliveryAudienceBinding = {
   kpProjection: unknown;
 };
 
+export const DELIVERY_AUDIENCE_STATES = [
+  "pending",
+  "published",
+  "rejected",
+  "retryableFailure",
+  "superseded",
+] as const;
+
+export type DeliveryAudienceState = typeof DELIVERY_AUDIENCE_STATES[number];
+
+/** Room-owned publication state for one immutable audience snapshot. */
+export type DeliveryAudiencePublication = {
+  audienceId: string;
+  viewerKey: string;
+  projectionHash: string;
+  deliveryGeneration: number;
+  state: DeliveryAudienceState;
+  errorCode?: string;
+};
+
 export type ExperiencedTranscriptMessage = {
   ordinal: number;
   messageId: string;
@@ -163,6 +188,9 @@ export type ExperiencedTranscriptMessageInput =
   & { viewerKey: string };
 
 export type DeliveryPlan = {
+  /** Frozen publication interpreter. Plans persisted before this field existed
+   * are historical DELIVERY_PROTOCOL_PROFILE plans by genesis contract. */
+  deliveryProtocol?: ProfileRef;
   publishCapability: string;
   rootActionId: string;
   receiptId: string;
@@ -188,6 +216,14 @@ export type DeliveryFrame = {
   payloadHash: string;
   text: string;
   sceneIds?: string[];
+  derivedEvidenceRefs?: string[];
+  derivedAgencyClaims?: Array<{
+    subjectKind: "playerCharacter" | "npc" | "world";
+    subjectRef: string | null;
+    claimKind: "committedObservableAction" | "sensoryConsequence";
+    basisRefs: string[];
+  }>;
+  deliveryGeneration?: number;
   audio?: { kind: "clientTts"; textHash: string };
 };
 
@@ -195,10 +231,23 @@ export type ObserverDeliveryOutcome =
   | { kind: "none" }
   | { kind: "current"; frame: DeliveryFrame; body?: string };
 
+/**
+ * The only narration-recovery datum allowed through a player observation.
+ * The capability is random and carries no Receipt, Audience, ViewerKey, or
+ * projection claim; the Room must resolve all of those again from the trusted
+ * principal and its frozen private journal.
+ */
+export type ViewerNarrationRecovery = {
+  kind: "available";
+  capability: string;
+  state: "pending" | "rejected" | "retryableFailure";
+};
+
 export type AuthoritativeRoomObservation = {
   readModel: unknown;
   transcript: ExperiencedTranscriptMessage[];
   delivery: ObserverDeliveryOutcome;
+  narrationRecovery?: ViewerNarrationRecovery;
 };
 
 export type AuthorityCommitOutcome =

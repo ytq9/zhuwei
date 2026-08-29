@@ -118,6 +118,8 @@ export type CharacterRecord = {
   abilityScores?: Record<string, number>;
   proficiencyBonus?: number;
   proficientSkills?: string[];
+  expertiseSkills?: string[];
+  proficientSaves?: string[];
   cantripIds?: string[];
   preparedSpellIds?: string[];
   featureIds?: string[];
@@ -419,6 +421,23 @@ export type CompoundResolutionPlan = {
   failureEffects: CompoundActionEffect[];
 };
 
+/** Frozen executable V3 program carried only inside authoritative randomness
+ * continuations. The complete program is retained so replay/recovery never
+ * recompiles a model draft or consults a current adapter. */
+export type CausalActionResolutionPlan = {
+  schema: "zhuwei.causal-action-resolution-plan/v3";
+  rootActionId: string;
+  actorCharacterId: string;
+  sourceSceneId: string;
+  languageRef: string;
+  languageHash: string;
+  programHash: string;
+  program: JsonRecord;
+  checkNodeRefs: string[];
+  durationMicros: string;
+  programFactRef: string;
+};
+
 export type ContestResolutionPlan = {
   schema: "zhuwei.contest-resolution-plan/v1";
   initiatorId: string;
@@ -524,7 +543,7 @@ export type InternalContinuationRecord = {
   continuation: AuthorityContinuation;
   rootActionId: string;
   request: RandomnessRequest;
-  resolutionPlan?: CompoundResolutionPlan | ContestResolutionPlan | HiddenRealityResolutionPlan;
+  resolutionPlan?: CompoundResolutionPlan | CausalActionResolutionPlan | ContestResolutionPlan | HiddenRealityResolutionPlan;
 };
 
 export type AuthoritativeWorldState = {
@@ -654,6 +673,8 @@ export type EventPayloadByType = {
     featureDefinitionHash: Sha256Ref;
     compiledHash: Sha256Ref;
     feature: JsonRecord;
+    causalProgramFactRef?: string;
+    causalProgramHash?: string;
   };
   EnvironmentStuntRefused: {
     actorCharacterId: string;
@@ -694,7 +715,7 @@ export type EventPayloadByType = {
     sceneId: string;
     featureId: string;
     definitionId: string;
-    intent: "open" | "close" | "triggerHazard" | "resolveHazard";
+    intent: "open" | "close" | "applyStunt" | "triggerHazard" | "resolveHazard";
     fromState: string;
     toState: string;
   };
@@ -923,7 +944,7 @@ export type EventPayloadByType = {
     continuation: AuthorityContinuation;
     purpose: RandomnessRequest["purpose"];
     formula: RandomnessRequest["diceExpression"];
-    resolutionPlan: CompoundResolutionPlan | ContestResolutionPlan | HiddenRealityResolutionPlan;
+    resolutionPlan: CompoundResolutionPlan | CausalActionResolutionPlan | ContestResolutionPlan | HiddenRealityResolutionPlan;
   } | { resolution: JsonRecord };
   DiceRolled: {
     randomnessId: string;

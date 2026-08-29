@@ -33,6 +33,8 @@ const structuredConsoleBuilders = new Set([
 export const moduleScopeEffectAllowlist = new Map();
 const moduleScopeInvocationAllowlist = new Map([
   ["tools/check-modules.mjs", new Set(["main"])],
+  ["tools/run-context-planner-role-validation.mjs", new Set(["main"])],
+  ["tools/run-kp-v3-eval.mjs", new Set(["main"])],
 ]);
 
 function walkSourceFiles(root, roots = scanRoots) {
@@ -348,7 +350,13 @@ function functionBodyRanges(source) {
       const openParenIndex = matches.get(index);
       const methodName = tokens[openParenIndex - 1]?.value;
       const bodyOpen = bodyAfterSignature(index);
-      if (methodName && bodyOpen !== -1) addBlockRange(bodyOpen, openParenIndex - 1);
+      const receiver = tokens[openParenIndex - 2]?.value;
+      if (
+        methodName
+        && receiver !== "."
+        && receiver !== "?."
+        && bodyOpen !== -1
+      ) addBlockRange(bodyOpen, openParenIndex - 1);
     }
   }
   return ranges;

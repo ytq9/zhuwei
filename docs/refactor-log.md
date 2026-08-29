@@ -1943,3 +1943,51 @@
 | 2026-08-29 | Node 定向测试；Worker 定向测试；`npm run typecheck`；`git diff --check` | 0 | 54/54；15/15；类型与 whitespace 通过。 |
 | 2026-08-29 | `git commit -m 'chore: snapshot authoritative dialogue delivery'`；`git push origin HEAD:refs/heads/cloudflare` | 0 | 快照提交 `737e0a90929638a2804f96ba2d913dc21c4fec23` 已非 force 推送。 |
 | 2026-08-29 | `git ls-remote origin refs/heads/cloudflare refs/heads/main` | 0 | `cloudflare=737e0a90929638a2804f96ba2d913dc21c4fec23`；`main=29eb06dc009c983ad61b2d862454503e67a7f40a` 未变。 |
+
+## Causal 根路径 Profile 隔离矩阵（2026-08-29）
+
+- 症状与根因：原测试只覆盖普通随机 continuation 的 Profile 隔离，未逐一证明普通 direct、动态事实、世界内拒绝、澄清和战斗五条 causal 根路径都固化精确 V3 marker，也未覆盖两个 legacy manifest 的事件改绑与 genesis marker 注入。
+- 修改文件：`tests/causal-action-rules-v3.test.mjs`；新增共享 marker/genesis helper 和五路径 × 两 legacy manifest 矩阵，生产代码无需修改。
+- 定向检查：`npx tsx --test tests/causal-action-rules-v3.test.mjs` 退出 0，19/19 通过；覆盖正确 V3 事件流回放、legacy 改绑事件校验/回放 fail-closed，以及 legacy genesis 注入 marker 返回 `profileIntegrityMismatch`。首轮测试构造因注入 fact 缺少状态元数据而退出 1，补齐 canonical state metadata 后通过。
+- 剩余限制：未运行全量测试、typecheck、build 或浏览器 QA；未提交、推送、部署或修改 migration。
+
+## Static RAG 依赖闭包与预算原子性（2026-08-29）
+
+- 症状与根因：静态检索先按命中上限截断单个 chunk，Context Pack 又按单 chunk 逐个裁剪；命中的规则、模块或线索可能在其 source/profile 依赖未同时进入上下文时继续使用，权威回读也只校验命中自身而未拒绝未解析依赖。
+- 修改文件：`app/_runtime/lib/kp/static-retrieval.ts`、`app/_runtime/lib/kp/context-pack.ts`、`tests/kp-form-context-v3.test.mjs`、`tests/kp-static-corpus-d1-v3.test.mjs`。检索在最终 limit 前展开有界传递依赖闭包，逐 chunk 回读校验 source/profile/hash/span/sensitivity，并要求每个依赖解析到已授权的 pinned profile 或已完整纳入的静态 source/chunk；超预算时按依赖连通组整体淘汰。
+- 定向检查：`npx tsx --test tests/kp-form-context-v3.test.mjs tests/kp-static-corpus-d1-v3.test.mjs` 退出 0，13/13 通过；`git diff --check -- app/_runtime/lib/kp/static-retrieval.ts app/_runtime/lib/kp/context-pack.ts tests/kp-form-context-v3.test.mjs tests/kp-static-corpus-d1-v3.test.mjs` 退出 0。`npm run typecheck` 退出 2，仅报告授权范围外共享改动 `app/_runtime/lib/rules/v2/environment.ts:752-753` 的 `TS18046`，目标文件无类型错误。
+- 剩余限制：未运行全量测试、build、lint 或浏览器 QA；未修改 Durable Object、rules、migration，未提交、推送或部署。全仓 typecheck 仍由上述范围外类型错误阻塞。
+
+## V3 私有 Form、Context/RAG、逐受众叙述与 KP 自定义环境冻结前审计（2026-08-29）
+
+- 基线与授权：只在 `cloudflare` 工作；本批开始时本地 HEAD 为 `33c9a9ba693f501c9853d3e6ef9429f174dc92af`，远端 `cloudflare=1685981378cc08521560251305b6d81d19d89eba`，远端 `main=29eb06dc009c983ad61b2d862454503e67a7f40a`。用户明确授权现有 D1 的远端 migration、现有 Worker `zhuwei` 的部署和非 force `cloudflare` push；没有授权新 Worker/D1/Vectorize/Secret。未跟踪的 `docs/goals/v3-kp-rag-refactor.md` 只作输入，未修改且不得纳入提交。
+- 症状与首个根因：旧生产管线把大型 Proposal Schema、完整上下文、模型自报叙述元数据和单一成功/失败结果绑在一起；静态检索缺少可验证的依赖闭包；叙述失败会模糊已提交世界状态；动态环境能力又容易被误解为按吊灯等对象名派发。首个违反不变量的位置分别位于模型私有输入边界、Room Action/Publication 稳定点、D1 派生索引重读边界和 Rules 环境定义/Profile，而不是页面文案。
+- 规格裁定：新增/修订 SPEC 0015、ADR-0014、DEC-036–044、规格索引和追踪矩阵；`SPEC 0001` 工作树 diff 为空，SHA-256 仍为 `b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be`。2026-08-29 用户后续裁定两次收窄验收：动态环境由 KP 依据玩家任意自然语言自定义，机械只显式选择 `state-only | area-hazard`，不再补具体吊灯 Room 专项；完整线上测评由用户自行执行，本代理部署后只运行一次精确三交互冒烟。
+- 主要修改：十个 exact private Forms、3–6 allowlist 与 `compound` escape hatch；三层 Context Pack、D1 FTS/中文别名/结构依赖与 authority rehydrate；1+1 窄修订及冻结语义 hash；版本化 CausalActionProgram 经唯一 Rules `step/project/replay`；body-only `{body}` Narration、服务器派生 Audience/Receipt/evidence、action/narration 双状态和逐 ViewerKey publication/recovery；十个稳定公开错误与无正文 telemetry；新房 workflow/profile 固定；KP 自定义 EnvironmentDefinition/StateGraph 的 `state-only`/`area-hazard` 编译、权威 Geometry targets、Room DO 原子事件、archive/replay；旧 environment v2 manifest/profile 保留原义。
+- G0 预改造生产基线（未重跑）：31/31 交互、32 请求，质量总分 4 且 hard gates fail；延迟 min/p50/p95/max = 7090.64/12015.28/20094.78/21314.31 ms。30 个 RootAction 产生 45 次 Proposal 调用，平均 1.50；首次成功 26/30（86.67%，Wilson 95% `[0.7032,0.9469]`），repair 30%；Proposal input p50/p95 = 56668/57075 tokens，output p50/p95 = 558/875；Narration 14 次中 7 成功/7 grounding failure。临时房间、会话和账号已按该轮记录精确清理，报告不保留正文或标识符。
+- G2/G3/G4 离线同集结果：120 条结构报告 exit 0、4/4，16/16 hard gates。G2 critical refs 240/240（Wilson low 0.984246）、required refs 360/360（Wilson low 0.989442）、MRR 1；简单首次合法 86/88、compound 31/32、最终合法与 route 120/120、complex→simple 0/32。Schema median 13182 bytes，相对 G0 下降 60.07%；输入估算 p50/p95 4918/5812，相对 G0 median 下降 77.22%，口径为 UTF-8 bytes/4 而非 Provider tokenizer。隔离 `node:sqlite` FTS5 通过生产 D1 Adapter contract 写 public rows 13/13、G2 SQL MATCH 120/120（G2–G4 合计 360）、权威非空重读 174，D1 KP-only/body 为 0，本地正常 RAG fallback 0/120。G3 没有真实 supported candidate，标记 `unvalidated`/不可泛化/production disabled；G4 只在评测器以 Unicode-scalar TF-IDF Float64 + brute-force exact cosine 执行 120 searches/1920 comparisons，56 个案例实际重排但三项配对质量差均 0/120、输入退化，故 G3/G4 都不采用；G5 因 G2 MRR=1 不适用。五类故障注入 5/5 安全回退。完整 Provider tokenizer/端到端 p95/调用率/首次合法率均未测，按用户裁定留给后续自行测评。
+- D1：`db/schema.ts` 是源；`npm run db:generate` exit 0。新增连续只增 migration `0008`（static corpus/FTS + nullable room workflow fields，SHA-256 `cdcfd1d021de6ef4227bb78bd8372385f5cbb1af4041bfd511ecbbaed3555733`）、`0009`（nullable corpus/profile/hash metadata，`16794c67e03f8808122b9c1fd4259fa8805ffcb34dc2ce2986e7b0718fe85688`）、`0010`（只逻辑清空三张可重建派生索引表，`bb3968cb26c9a797b9ae03503845b764a1180b59d193f587927f4ee8f3257e04`）和 `0011`（settled archive checkpoint，`da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`）。隔离 Wrangler local D1 顺序应用 `0000–0011` 后无 pending，空 body public row 的写入→FTS MATCH→authority read→清理和 checkpoint 写读闭环通过；独立 `node:sqlite` 的 `0010→0011` 升级/写读也通过。`0010` 不修改权威 Room/身份/归档，也不宣称 SQLite 空闲页或 Time Travel 的物理擦除；`0011` 只增加单调 checkpoint。远端执行前必须重新取得当下恢复书签，旧书签 `0000008b-00000000-000050d6-867f6e9fd3b20df3d2d7953511b31b02` 仅作历史记录。
+- 关键定向证据：Profile/causal/compound 57/57；workflow/table 25/25；campaign 2/2；concentration 1/1；控制/继任 1/1；dynamic environment Room 6/6；静态 corpus/production context 14/14；public action/table 21/21；Viewer recovery 4/4；archive D1 11/11（含 checkpoint prefix、ahead event 与 genesis conflict 防线）；80+ events/48 audits 的 D1 reader→fresh DO 1/1；无当前受控 viewer 的 D1→fresh DO 1/1；Planner 6/6；live harness/provisioner 13/13；V3 long track 1/1（202.03 s），经生产 Form allowlist、Context、validator/compiler、Room/Rules/projector 完成 15 Intent + 15 ACK + 1 Bob retry，覆盖任意 `state-only` 与 `area-hazard`、无重复 Proposal/随机/资源及 archive→fresh DO 的 state/project hash 一致。Viewer/dynamic Room 连带合计 10/10。`npm run typecheck` 与 `git diff --check` 在当前源码上 exit 0；早先 Static RAG 子任务记录的 exit 2 已由同一共享树后续修复消除。
+- 评测/测试中的有效失败：live runner/provisioner 首次把默认 32-step（其中 duplicate 不计 interaction）的场景截为 31 个数组项，实际只计 30；修复为默认不切片、仅显式 smoke 取前三项后，两文件 13/13。Causal legacy 注入 fixture 首次缺 canonical state metadata，补齐测试输入后 19/19。未吞错或放宽断言。
+- 冻结前剩余：只读安全/完整性审查、最终 `git diff --check/module:check/typecheck/lint/test:unit/test:worker`、远端 migration、唯一一次 deploy build、375/1440 浏览器五路径、三交互生产冒烟、日志/清理、docs-only 发布事实提交和非 force push 仍待；这些结果将在本节后的发布审计中按实际值回填。
+
+## V3 新房角色专精与豁免熟练（2026-08-30）
+
+- 症状与根因：Room 静态人物卡已有 `expertise`，旧 Rules 状态却只保留技能熟练，战役/战斗/环境豁免又分别忽略或按职业旁路推导；若直接修改现有 manifest，会静默重解释旧 env-v3/default 回放。修复新增 exact-hash `environment-v4` manifest 与 character-proficiency extension，仅新建 V3 workflow 选择 v4；旧 workflow/env-v3/default 常量、hash、状态 shape 和既有分路径修正值保持不变。
+- 修改：staticCard 同时接受 canonical `expertiseSkills` 与 CharacterSheet `expertise`，并贯通 `proficientSaves`、初始化、事件、控制/继任、combat entity、同步和投影；Table 的开局与 play 中锁卡/继任共用 manifest-gated seed builder，只有 exact env-v4 补 canonical aliases 与职业豁免，旧 current/env-v2/env-v3 的 `static_card_json` 保留原 `skills`/`expertise` sheet shape。统一 profile 必填的 skill/save helper 覆盖 causal、compound、campaign、combat、environment，校验 Expertise 是技能熟练子集且豁免只含六项能力。旧 compound 职业豁免与 grapple/shove 历史特例只在非 v4 保留。
+- 定向检查：profile/causal/compound Node 组合 57/57、workflow/table 25/25（其中最新 Table seed Profile 矩阵 21/21）、campaign 2/2、combat concentration save 1/1、V4 control/successor Worker 1/1、dynamic Room 6/6，均退出 0；dynamic Room 首轮因两个长用例超过默认 5 秒退出 1，给这两个既有长边界显式 15 秒预算后普通目标命令退出 0。`npm run typecheck` 与 `git diff --check` 均退出 0。
+- 剩余限制：未运行全量测试、build、lint、浏览器 QA、远端操作或部署；未提交、推送。完整发布门由当前冻结流程统一执行。
+
+## V3 权限竞态与 Context 秘密边界（2026-08-30）
+
+- 症状与根因：准备阶段曾可能在跨 principal 重试时复用另一玩家投影；自由文本点名还会把不同 scene NPC 的 `knowledge/plans` 注入主 KP；控制权转移与已经排队的普通/到期 ActorPlan 之间缺少最终权限重验，并可能留下旧作用域 prepared stage。另有部分 V3 workflow 绑定可降级到旧解释器。首个违规点分别在 Room prepare/projection cache、`relevantNpcViews`、管理事务后的提交边界与 exact binding 校验。
+- 修改：投影复用绑定 authenticated principal/session/seat/control 与 projection hash；NPC Context 只纳入当前 scene；V3 workflow/runtime/module/profile 必须完整精确匹配；控制转移原子更新所有受影响 scope version、删除对应 prepared stage，并在普通与 due ActorPlan 最终提交前重新鉴权；未结清 combat randomness 时拒绝转移。
+- 定向检查：Room authority 10/10、production context 11/11、V3 binding 4/4、multiplayer control 2/2、due former-controller 1/1、combat randomness transfer 1/1，均退出 0。只读安全复核随后未发现新的 P0/P1；telemetry、API、Rules projector、环境 exact basis/target discovery 与 archive allowlist 均保持服务端权威。
+- 剩余限制：`unresolvedThreats/stories` 与玩家公共投影字段相同，仅记为未证实泄漏的 P2 观察；冻结全量、真实 HTTP/浏览器与线上日志仍由发布门验证。
+
+## D1 settled archive checkpoint 与真实恢复（2026-08-30）
+
+- 症状与根因：D1 归档原先只有分页 append，没有声明“完整可恢复前缀”的单调 checkpoint，也没有 D1 rows→完整 archive→空 DO 的真实入口；旧完成判断还可能相信伪造 `auditCursor`，恢复端按 character id 与 D1 `viewer_hash` 的不同顺序比较审计，并会把已经移除的历史成员重新授权。
+- 修改文件：`db/schema.ts`、`drizzle/0011_low_leo.sql`、`app/_runtime/lib/room/archive.ts`、`app/_runtime/lib/room/durable-object.ts`、`tests/archive-d1-batches-v2.test.mjs`、`tests/archive-do-resume-v2.test.ts`。最终分页批次先核对已写与本页 audit 的精确 `viewerHash+projectionHash` 集合，再原子单调推进 checkpoint；probe/reader 核验 genesis、event/state/branch 与 checkpoint prefix replay。只有 service capability 可从 D1 恢复到空 DO；恢复审计按 event/viewer/projection canonical 排序，成员/控制索引只从当前活跃状态重建，历史实体仍留 Rules state 但不复权；archive 在导出及 replay 后都拒绝未结清随机。
+- 定向检查：`npx tsx --test tests/archive-d1-batches-v2.test.mjs` 退出 0，11/11（含旧 checkpoint 的 D1 `event_json` 前缀篡改、ahead event 与 genesis conflict 拒绝）；`npx vitest run tests/archive-do-resume-v2.test.ts -t 'resumes 80'` 退出 0，1/1（80+ events、48 audits、真实 D1 reader→fresh DO，73.73 s）；同文件无当前受控 viewer 的 D1→fresh DO 退出 0，1/1；combat archive/randomness 与 recovery 定向各 1/1；`npm run typecheck`、`git diff --check` 退出 0。Wrangler local `0000–0011` 与独立 SQLite `0010→0011` 的 migration/checkpoint 写读均退出 0。
+- 剩余限制：本地证据不替代冻结全量和远端 D1。发布时仍须先取得新的 Time Travel bookmark，再串行应用 `0008–0011`、验证无 pending，然后才部署现有 Worker。

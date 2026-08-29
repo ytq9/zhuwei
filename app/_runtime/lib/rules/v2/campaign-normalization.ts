@@ -152,6 +152,15 @@ function normalizeCharacter(
     ...(Number.isSafeInteger(entry.proficiencyBonus)
       ? { proficiencyBonus: Number(entry.proficiencyBonus) }
       : {}),
+    ...(stringList(entry.proficientSkills) === undefined
+      ? {}
+      : { proficientSkills: stringList(entry.proficientSkills)! }),
+    ...(stringList(entry.expertiseSkills) === undefined
+      ? {}
+      : { expertiseSkills: stringList(entry.expertiseSkills)! }),
+    ...(stringList(entry.proficientSaves) === undefined
+      ? {}
+      : { proficientSaves: stringList(entry.proficientSaves)! }),
     ...(isNonEmptyString(entry.classId) ? { classId: entry.classId } : {}),
     ...(isNonEmptyString(entry.raceId) ? { raceId: entry.raceId } : {}),
     ...(isNonEmptyString(entry.subclassId) ? { subclassId: entry.subclassId } : {}),

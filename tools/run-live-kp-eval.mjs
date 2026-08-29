@@ -559,6 +559,9 @@ export async function runProvisionedLiveKpEvaluation(options = {}) {
       runId,
       secretCanary,
       privatePlanCanary,
+      ...(options.interactionLimit === undefined
+        ? {}
+        : { interactionLimit: options.interactionLimit }),
     }));
     if (evaluation?.status !== "pass") {
       throw new InternalProvisionError(LIVE_KP_CLI_ERROR_CODES.evaluationStatus);
@@ -569,7 +572,8 @@ export async function runProvisionedLiveKpEvaluation(options = {}) {
     ) {
       throw new InternalProvisionError(LIVE_KP_CLI_ERROR_CODES.evaluationVerification);
     }
-    if (Number(evaluation?.execution?.interactionsCompleted) < 24) {
+    const requiredInteractions = options.interactionLimit === 3 ? 3 : 31;
+    if (Number(evaluation?.execution?.interactionsCompleted) < requiredInteractions) {
       throw new InternalProvisionError(LIVE_KP_CLI_ERROR_CODES.evaluationInteractions);
     }
   } catch (error) {
@@ -676,7 +680,12 @@ export async function runProvisionedLiveKpEvaluation(options = {}) {
 export async function runProvisionedLiveKpEvalCli(options = {}) {
   const argv = options.argv ?? process.argv.slice(2);
   const write = options.write ?? ((value) => process.stdout.write(value));
-  if (argv.length > 0) {
+  const interactionLimit = argv.length === 0
+    ? undefined
+    : argv.length === 1 && argv[0] === "--interactions=3"
+      ? 3
+      : null;
+  if (interactionLimit === null) {
     const report = failureReport(
       LIVE_KP_CLI_ERROR_CODES.unsupportedArguments,
       cleanupState(),
@@ -685,7 +694,9 @@ export async function runProvisionedLiveKpEvalCli(options = {}) {
     return 64;
   }
   try {
-    const report = await (options.run ?? runProvisionedLiveKpEvaluation)();
+    const report = await (options.run ?? runProvisionedLiveKpEvaluation)({
+      ...(interactionLimit === undefined ? {} : { interactionLimit }),
+    });
     write(`${JSON.stringify(report)}\n`);
     return 0;
   } catch (error) {

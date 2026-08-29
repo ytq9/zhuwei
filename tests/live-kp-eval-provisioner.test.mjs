@@ -371,7 +371,7 @@ test("provisions two distinct fighter seats, verifies the live report, and exact
 
     assert.equal(report.schemaVersion, LIVE_KP_PROVISION_REPORT_SCHEMA);
     assert.equal(report.status, "pass");
-    assert.equal(report.evaluation.execution.interactionsCompleted >= 24, true);
+    assert.equal(report.evaluation.execution.interactionsCompleted, 31);
     assert.equal(report.evaluation.execution.liveModelVerified, true);
     assert.equal(report.evaluation.execution.mode, "live");
     assert.equal(report.evaluation.target.modelId, LIVE_KP_EVAL_MODEL);
@@ -485,7 +485,7 @@ test("runs the real 31-interaction evaluator through a production-routed mock HT
     const commands = mock.calls
       .filter((call) => call.path === "/api/game")
       .map((call) => call.body.command);
-    assert.equal(commands.filter((command) => command === "sendAction").length >= 24, true);
+    assert.equal(commands.filter((command) => command === "sendAction").length, 32);
     assert.equal(commands.at(-1), "deleteRoom");
     const logoutCalls = mock.calls.filter((call) => call.path === "/api/auth/logout");
     assert.equal(logoutCalls.length, 2);
@@ -709,6 +709,22 @@ test("the CLI rejects arguments and unexpected failures with content-free stable
   const usage = JSON.parse(writes.pop());
   assert.equal(usage.error.code, LIVE_KP_CLI_ERROR_CODES.unsupportedArguments);
   assert.equal(JSON.stringify(usage).includes("must-not-appear"), false);
+
+  let smokeOptions;
+  const smokeExit = await runProvisionedLiveKpEvalCli({
+    argv: ["--interactions=3"],
+    run: async (options) => {
+      smokeOptions = options;
+      return { status: "pass", scope: "three-interaction-smoke" };
+    },
+    write: (value) => writes.push(value),
+  });
+  assert.equal(smokeExit, 0);
+  assert.deepEqual(smokeOptions, { interactionLimit: 3 });
+  assert.deepEqual(JSON.parse(writes.pop()), {
+    status: "pass",
+    scope: "three-interaction-smoke",
+  });
 
   const runtimeExit = await runProvisionedLiveKpEvalCli({
     argv: [],

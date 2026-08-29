@@ -64,6 +64,7 @@ function character(value: unknown): value is CharacterRecord {
       "abilityScores",
       "cantripIds",
       "classId",
+      "expertiseSkills",
       "featureIds",
       "hitPoints",
       "lastControllerSeatId",
@@ -73,6 +74,7 @@ function character(value: unknown): value is CharacterRecord {
       "preparedSpellIds",
       "proficiencyBonus",
       "proficientSkills",
+      "proficientSaves",
       "raceId",
       "resourceMaximums",
       "resources",
@@ -93,6 +95,16 @@ function character(value: unknown): value is CharacterRecord {
         && /^(0|[1-9][0-9]*)$/.test(value.lastLongRestCompletedAtMicros)))
     && [value.cantripIds, value.preparedSpellIds, value.featureIds]
       .every((entry) => entry === undefined || canonicalStrings(entry))
+    && [value.proficientSkills, value.expertiseSkills, value.proficientSaves]
+      .every((entry) => entry === undefined || canonicalStrings(entry))
+    && (value.proficientSaves === undefined
+      || (Array.isArray(value.proficientSaves) && value.proficientSaves.every((ability) =>
+        ["str", "dex", "con", "int", "wis", "cha"].includes(ability))))
+    && (value.expertiseSkills === undefined
+      || (Array.isArray(value.expertiseSkills)
+        && Array.isArray(value.proficientSkills)
+        && value.expertiseSkills.every((skill) =>
+          (value.proficientSkills as string[]).includes(skill))))
     && (value.resourceMaximums === undefined || (isRecord(value.resourceMaximums)
       && Object.entries(value.resourceMaximums).every(([resourceId, maximum]) =>
         isNonEmptyString(resourceId) && Number.isSafeInteger(maximum) && Number(maximum) >= 0)));

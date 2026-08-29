@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import {
+  CURRENT_RUNTIME_PROFILE_MANIFEST,
+  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+  ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+  LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+} from "../app/_runtime/lib/rules/profiles/manifests.ts";
+
 const projectRoot = new URL("../", import.meta.url);
 
 async function source(path) {
@@ -29,7 +36,65 @@ test("new rooms pin authoritative profiles without creating legacy active state"
   assert.match(create, /authoritativeKpProfileByModelId\(model\)/);
   assert.match(create, /kp_model, kp_model_profile/);
   assert.match(create, /profile\.modelProfileVersion/);
+  assert.match(create, /V4_KP_WORKFLOW_MANIFEST_JSON/);
   assert.doesNotMatch(create, /game_states/);
+});
+
+test("exact environment-v4 static cards carry canonical skills, Expertise, and class saves into Room seeds", async () => {
+  const { buildAuthoritativeRoomSeeds } = await import(
+    "../app/_runtime/lib/table/authoritative.ts"
+  );
+  const seeds = buildAuthoritativeRoomSeeds({
+    members: [{ userId: "principal:rogue", nickname: "游荡者", isHost: true }],
+    lockedCharacters: [{
+      userId: "principal:rogue",
+      sheet: {
+        name: "影刃",
+        classId: "rogue",
+        skills: ["stealth", "investigation"],
+        expertise: ["stealth"],
+      },
+    }],
+    openingSceneId: "wake",
+    characterIdFor: (userId) => `character:${userId}`,
+    runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+  });
+  assert.deepEqual(seeds.characters[0].staticCard.proficientSkills, ["investigation", "stealth"]);
+  assert.deepEqual(seeds.characters[0].staticCard.expertiseSkills, ["stealth"]);
+  assert.deepEqual(seeds.characters[0].staticCard.proficientSaves, ["dex", "int"]);
+});
+
+test("historical runtime static cards preserve sheet aliases without V4 proficiency fields", async () => {
+  const { buildAuthoritativeCharacterSeed } = await import(
+    "../app/_runtime/lib/table/authoritative.ts"
+  );
+  const sheet = {
+    name: " 影刃 ",
+    classId: "rogue",
+    skills: ["stealth", "investigation"],
+    expertise: ["stealth"],
+  };
+  for (const runtimeProfiles of [
+    CURRENT_RUNTIME_PROFILE_MANIFEST,
+    LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+    ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+  ]) {
+    const seed = buildAuthoritativeCharacterSeed({
+      characterId: `character:${runtimeProfiles.manifest.profileId}`,
+      controllerPrincipalId: "principal:rogue",
+      sheet,
+      sceneId: "wake",
+      runtimeProfiles,
+    });
+    assert.deepEqual(seed.staticCard, {
+      ...sheet,
+      name: "影刃",
+      sceneId: "wake",
+    });
+    assert.equal("proficientSkills" in seed.staticCard, false);
+    assert.equal("expertiseSkills" in seed.staticCard, false);
+    assert.equal("proficientSaves" in seed.staticCard, false);
+  }
 });
 
 test("every authoritative party endpoint rejects an unavailable room profile before dispatch", async () => {
@@ -1314,9 +1379,22 @@ test("every authoritative table button returns before legacy state, dice, and me
 });
 
 test("authoritative button submission ids survive transport retries and clear only on terminal outcomes", async () => {
-  const { callWithStableSubmission } = await import(
+  const { callWithStableSubmission, tableActionAccepted } = await import(
     "../app/_runtime/lib/table/authoritative-client.ts"
   );
+  for (const action of ["awaitingInput", "committed", "resolvedInWorld", "concluded"]) {
+    assert.equal(
+      tableActionAccepted({ action }),
+      true,
+      `V3 ${action} must be accepted without a legacy ok flag`,
+    );
+  }
+  assert.equal(tableActionAccepted({ action: "committed", ok: true }), true);
+  assert.equal(tableActionAccepted({ action: "committed", ok: false }), false);
+  assert.equal(tableActionAccepted({ ok: true }), true);
+  assert.equal(tableActionAccepted({ action: "notCommitted" }), false);
+  assert.equal(tableActionAccepted({ ok: false }), false);
+  assert.equal(tableActionAccepted({}), false);
   const values = new Map();
   const storage = {
     getItem: (key) => values.get(key) ?? null,
@@ -1359,6 +1437,28 @@ test("authoritative button submission ids survive transport retries and clear on
     ...base,
     invoke: async (payload) => {
       ids.push(payload.submissionId);
+      return { action: "committed", narration: "retryableFailure", retryable: true };
+    },
+  });
+  const legacyNarrationFailure = await callWithStableSubmission({
+    ...base,
+    invoke: async (payload) => {
+      ids.push(payload.submissionId);
+      return { action: "committed", ok: false, committed: true, retryable: true };
+    },
+  });
+  assert.equal(tableActionAccepted(legacyNarrationFailure), false);
+  await callWithStableSubmission({
+    ...base,
+    invoke: async (payload) => {
+      ids.push(payload.submissionId);
+      return { ok: true };
+    },
+  });
+  await callWithStableSubmission({
+    ...base,
+    invoke: async (payload) => {
+      ids.push(payload.submissionId);
       return { ok: false, retryable: false };
     },
   });
@@ -1367,6 +1467,9 @@ test("authoritative button submission ids survive transport retries and clear on
     "submission:1",
     "submission:1",
     "submission:2",
+    "submission:3",
+    "submission:3",
+    "submission:4",
   ]);
 
   const client = await source("app/_runtime/lib/table/client.ts");
