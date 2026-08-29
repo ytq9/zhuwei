@@ -2032,3 +2032,11 @@
 - 修改：`app/_runtime/lib/room/action.ts` 只把明确的兼容模型瞬时/额度错误保留为 Provider timeout 类，未知异常改为通用 publication failure；`table/authoritative.ts` 新增安全的失败原因与恢复状态文案；`table/server.ts` 在不暴露私密错误的前提下返回对应原因；`play-table.tsx` 明示行动已结算，并分别解释处理中、格式/事实拒绝与服务/发布失败，强调快速失败不等于超时且重试不会重新裁定、掷骰或消耗资源。生产公开错误码集合与持久化 Profile 均未改变。
 - 定向验证：新增 RED 先稳定复现未知异常实际得到 `NARRATION_PROVIDER_TIMEOUT`；修复后该用例 1/1、`tests/table-server-outcome-v2.test.mjs` 8/8、`tests/viewer-narration-recovery-v3.test.ts` 4/4、`npm run typecheck` 与 `git diff --check` 均退出 0。既有 `vinext dev --hostname 127.0.0.1 --port 3000` 来自当前工作树并由 HMR 接收改动，`http://127.0.0.1:3000/` 返回 200。首次真实本地注册因 local D1 尚未应用 migration 返回 500；顺序应用既有 `0000–0011` 后复核无 pending，通过真实 `/api/auth/register` 创建专用本地测试身份，认证 cookie 访问 `/hall` 返回 200 且页面含该身份称呼。
 - 剩余限制：本轮按用户要求只送到 localhost，专用账号只存在本地 D1；未加入假身份或鉴权旁路，也未提交、推送或重新部署生产 Worker；没有为该纯文案/分类快修扩大完整测试门或线上 Provider 调用。
+
+## KP 回复澄清增量发布（2026-08-30）
+
+- 授权与源码：用户随后明确要求“推送部署”，并继续要求小改不跑完整门。上节 7 个文件以 `25c05ec7315808331f43026cd2ff0aafced922c2`（`fix: clarify kp narration recovery`）冻结；独立复审未见 P0/P1，并把 `NARRATION_BODY_INVALID` 公开文案收宽为“服务配置或返回内容未通过有效性检查”，避免把权限/配置永久错误也误说成回复格式错误。
+- 验证裁定：复用前述冻结证据，本增量实际通过原 RED 修复路径 1/1、`tests/table-server-outcome-v2.test.mjs` 8/8、`tests/viewer-narration-recovery-v3.test.ts` 4/4、`npm run typecheck` 与 `git diff --check`；文案收宽后只重跑直接的 table outcome 8/8。未把未运行的全量 module/Lint/unit/Worker 门写成通过。
+- 远端前置：`wrangler.jsonc`、schema、migration、依赖与 lockfile 均无本次改动；既有 `DB` 复核为无 pending migration，脱敏 Profile reference gate 验证 6 条引用全部对应已注册的 authoritative-v2/environment-v4 manifest。只确认既有 Worker 含 `DEEPSEEK_API_KEY` Secret 名称，未读取或改写其值；localhost 不会继承该远端 Secret，需由用户在被 Git 忽略的本地 `.env` 单独配置。
+- 部署：干净临时 clone 精确检出 `25c05ec`；`npm ci` 按 lockfile 安装 511 个包，报告既有 12 项 audit 提示而未自动修改。首次命令因把未裁剪 genesis 证据放入环境变量而在本机以 `Argument list too long` / 126 退出，发生在 build 和远端写入前；改用同一 D1 查询中只保留 gate 实际验证的 room/epoch/Profile 字段后，唯一一次实际 `npm run cf:deploy` 成功。新 deployment `2c1f5d25-e1ab-4209-94e2-480f04193bdf` / Version `6de01858-453a-4c4a-a91c-415c74f7f3e8` 承接 100% 流量，`https://zhuwei.yinskyriver.workers.dev/` 公开入口返回 HTTP 200。
+- Git 与剩余限制：源码提交已以显式 refspec 非 force 推送到 `origin/cloudflare`，当时精确为 `25c05ec`；远端 `main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。本节 docs-only 事实提交将再以同一非 force refspec 推送并复核两个 ref。发布后只执行控制面与公开 HTTP 冒烟，没有创建生产账号/房间、提交行动、诱发故障或再次调用 DeepSeek；因此证明了新版本已上线，不另行声称外部 Provider 能力的新一轮验收。
