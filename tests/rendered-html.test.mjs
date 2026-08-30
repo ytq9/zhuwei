@@ -180,20 +180,6 @@ test("email session opens the hall and can create a table", async () => {
   assert.equal(roomResult.ok, true);
   assert.match(roomResult.code, /^[A-Z0-9]{6}$/);
 
-  const modelUpdate = await authPath("/api/game", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({
-      command: "setRoomModel",
-      data: { code: roomResult.code, model: AUTHORITATIVE_KP_MODEL },
-    }),
-  });
-  assert.equal(modelUpdate.status, 200);
-  assert.deepEqual(await modelUpdate.json(), {
-    ok: false,
-    error: "本桌模型在创建时固定，创建后不能更换",
-  });
-
   const snapshot = await authPath("/api/game", {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
@@ -215,17 +201,6 @@ test("email session opens the hall and can create a table", async () => {
     ok: false,
     error: "至少需要一张已锁定的人物卡才能开始",
   });
-
-  const invalidModel = await authPath("/api/game", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({
-      command: "setRoomModel",
-      data: { code: roomResult.code, model: "client-injected-model" },
-    }),
-  });
-  assert.equal(invalidModel.status, 200);
-  assert.equal((await invalidModel.json()).ok, false);
 
   const table = await authPath(`/table/${roomResult.code}`, {
     headers: { accept: "text/html", cookie },
@@ -415,7 +390,9 @@ test("targets the existing Worker and declares the D1 and Room DO migration cont
     authMigration,
     modelMigration,
     rulesetMigration,
-    eventArchiveMigration,
+    retirementMigration,
+    roomResetMigration,
+    privateToolsMigration,
   ] = await Promise.all([
     readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
     readFile(
@@ -438,10 +415,9 @@ test("targets the existing Worker and declares the D1 and Room DO migration cont
       new URL("../drizzle/0004_eminent_sumo.sql", import.meta.url),
       "utf8",
     ),
-    readFile(
-      new URL("../drizzle/0005_unusual_pestilence.sql", import.meta.url),
-      "utf8",
-    ),
+    readFile(new URL("../drizzle/0012_fluffy_hulk.sql", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0013_reset_pre_0_4_rooms.sql", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0014_private_form_tools.sql", import.meta.url), "utf8"),
   ]);
   const config = JSON.parse(wrangler);
   assert.equal(config.name, "zhuwei");
@@ -461,9 +437,6 @@ test("targets the existing Worker and declares the D1 and Room DO migration cont
     "rooms",
     "room_members",
     "characters",
-    "messages",
-    "game_states",
-    "session_logs",
   ]) {
     assert.ok(migration.includes("CREATE TABLE " + tick + table + tick));
   }
@@ -474,9 +447,22 @@ test("targets the existing Worker and declares the D1 and Room DO migration cont
   assert.match(authMigration, /CREATE TABLE `auth_sessions`/);
   assert.match(modelMigration, /ALTER TABLE `rooms` ADD `kp_model`/);
   assert.match(rulesetMigration, /ALTER TABLE `rooms` ADD `ruleset_version`/);
-  assert.match(eventArchiveMigration, /CREATE TABLE `room_event_archive`/);
-  assert.match(eventArchiveMigration, /PRIMARY KEY\(`room_id`, `version`\)/);
-  assert.match(eventArchiveMigration, /`event_json` text NOT NULL/);
+  for (const retiredTable of ["game_states", "messages", "room_event_archive", "session_logs"]) {
+    assert.match(retirementMigration, new RegExp("DROP TABLE `" + retiredTable + "`"));
+  }
+  assert.match(retirementMigration, /authoritative-kp-deepseek-v4-flash-private-forms-v2/);
+  for (const roomTable of [
+    "authoritative_projection_audit_archive",
+    "authoritative_room_archive_checkpoint",
+    "authoritative_room_event_archive",
+    "authoritative_room_genesis_archive",
+    "characters",
+    "room_members",
+    "rooms",
+  ]) {
+    assert.match(roomResetMigration, new RegExp("DELETE FROM `" + roomTable + "`"));
+  }
+  assert.match(privateToolsMigration, /authoritative-kp-deepseek-v4-flash-private-tools-v1/);
   assert.match(authMigration, /`password_hash` text NOT NULL/);
   assert.doesNotMatch(authMigration, /`password` text/);
 });

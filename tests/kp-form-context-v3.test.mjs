@@ -4,13 +4,13 @@ import test from "node:test";
 import {
   KP_FORM_CATALOG_REGISTRATION,
   KP_FORM_IDS,
-  buildKpFormModelParameters,
-  buildKpFormRepairParameters,
+  buildKpFormToolParameters,
   isForbiddenModelField,
+  kpFormIdForToolName,
+  kpFormToolName,
   modelFormDescriptors,
   selectAllowedKpForms,
   validateKpFormDraft,
-  validateKpFormModelEnvelope,
 } from "../app/_runtime/lib/kp/form-catalog.ts";
 import {
   CAUSAL_ACTION_LANGUAGE_PROFILE,
@@ -231,19 +231,22 @@ test("private catalog has exactly ten forms and exposes only deterministic 3-6 a
     assert.equal(descriptors.length, first.length);
     assert.equal(Object.hasOwn(descriptors[0], "catalogHash"), false);
     for (const key of recursiveKeys(descriptors)) assert.equal(isForbiddenModelField(key), false, key);
-    const parameters = buildKpFormModelParameters(first);
-    assert.equal(parameters.oneOf.length, first.length);
-    for (const key of recursiveKeys(parameters)) assert.equal(isForbiddenModelField(key), false, key);
-    assert.equal(validateKpFormModelEnvelope(first, {
-      formId: first[0],
-      draft: VALID_FORM_DRAFTS[first[0]],
-    }).ok, true);
+    const toolNames = first.map(kpFormToolName);
+    assert.equal(new Set(toolNames).size, first.length);
+    for (const [index, formId] of first.entries()) {
+      assert.equal(kpFormIdForToolName(toolNames[index]), formId);
+      const parameters = buildKpFormToolParameters(formId);
+      for (const key of recursiveKeys(parameters)) {
+        assert.equal(isForbiddenModelField(key), false, key);
+      }
+      assert.equal(recursiveKeys(parameters).includes("oneOf"), false);
+      assert.equal(recursiveKeys(parameters).includes("formId"), false);
+      assert.equal(recursiveKeys(parameters).includes("draft"), false);
+      assert.equal(validateKpFormDraft(formId, VALID_FORM_DRAFTS[formId]).ok, true);
+    }
     const notAllowed = EXACT_FORM_IDS.find((formId) => !first.includes(formId));
     if (notAllowed !== undefined) {
-      assert.equal(validateKpFormModelEnvelope(first, {
-        formId: notAllowed,
-        draft: VALID_FORM_DRAFTS[notAllowed],
-      }).ok, false);
+      assert.equal(toolNames.includes(kpFormToolName(notAllowed)), false);
     }
   }
 
@@ -314,7 +317,6 @@ test("private Form policy keeps player premise questions direct while preserving
     request: { rootActionId: "root:character-premise", attempt: 1 },
     allowedForms: ["observe.v1", "materialization.v1", "compound.v1"],
     contextPack: { required: { intent: { text: "我是来做什么的" } } },
-    socialResolution: true,
   });
   const policy = input.messages[0].content;
   assert.match(policy, /你仍然拥有叙事权威/u);
@@ -328,66 +330,32 @@ test("private Form policy keeps player premise questions direct while preserving
   assert.match(policy, /不按名称、职业、语言或任何示例关键词触发/u);
 });
 
-test("V5 private materialization expands only proposedFact and teaches the three typed NPC protocols", () => {
+test("product 0.4 private materialization exposes only the current typed NPC and item protocols", () => {
   const allowedForms = ["observe.v1", "materialization.v1", "compound.v1"];
-  const v5Options = { npcMechanics: true, socialResolution: true };
-  const v4Parameters = buildKpFormModelParameters(allowedForms);
-  const explicitV4Parameters = buildKpFormModelParameters(allowedForms, {
-    npcMechanics: false,
-    socialResolution: false,
-  });
-  const v5Parameters = buildKpFormModelParameters(allowedForms, v5Options);
-  assert.deepEqual(explicitV4Parameters, v4Parameters);
-  assert.equal(proposedFactSchema(v4Parameters).maxLength, 2_000);
-  assert.equal(proposedFactSchema(v5Parameters).maxLength, 8_000);
-  const normalizedV5Parameters = structuredClone(v5Parameters);
-  proposedFactSchema(normalizedV5Parameters).maxLength = 2_000;
-  assert.deepEqual(
-    normalizedV5Parameters,
-    v4Parameters,
-    "no other V3/V4 tool field or text limit may drift",
-  );
+  const currentParameters = buildKpFormToolParameters("materialization.v1");
+  const currentRepairParameters = buildKpFormToolParameters("materialization.v1");
+  assert.equal(proposedFactSchema(currentParameters).maxLength, 8_000);
+  assert.equal(proposedFactSchema(currentRepairParameters).maxLength, 8_000);
 
-  const v4RepairParameters = buildKpFormRepairParameters("materialization.v1");
-  const v5RepairParameters = buildKpFormRepairParameters("materialization.v1", v5Options);
-  assert.equal(proposedFactSchema(v4RepairParameters).maxLength, 2_000);
-  assert.equal(proposedFactSchema(v5RepairParameters).maxLength, 8_000);
-  const normalizedV5Repair = structuredClone(v5RepairParameters);
-  proposedFactSchema(normalizedV5Repair).maxLength = 2_000;
-  assert.deepEqual(normalizedV5Repair, v4RepairParameters);
-
-  const descriptor = modelFormDescriptors(allowedForms, v5Options)
+  const descriptor = modelFormDescriptors(allowedForms)
     .find(({ id }) => id === "materialization.v1");
   assert.match(descriptor.purpose, /exact typed JSON drafts/u);
-
-  const legacyProposal = privateFormProposalModelInput({
-    request: { rootActionId: "root:v4-materialization", attempt: 1 },
-    allowedForms,
-    contextPack: { required: {} },
-  });
-  assert.equal(legacyProposal.max_completion_tokens, 1_400);
-  assert.equal(
-    proposedFactSchema(legacyProposal.tools[0].function.parameters).maxLength,
-    2_000,
-  );
-  assert.doesNotMatch(
-    legacyProposal.messages[0].content,
-    /zhuwei\.npc-mechanical-encounter-draft\/v1/u,
-  );
+  assert.match(descriptor.purpose, /healing-potion materialization/u);
 
   const v5Proposal = privateFormProposalModelInput({
     request: { rootActionId: "root:v5-materialization", attempt: 1 },
     allowedForms,
     contextPack: { required: {} },
-    socialResolution: true,
   });
   assert.equal(v5Proposal.max_completion_tokens, 4_000);
   assert.equal(
-    proposedFactSchema(v5Proposal.tools[0].function.parameters).maxLength,
+    proposedFactSchema(v5Proposal.tools.find((tool) =>
+      tool.function.name === kpFormToolName("materialization.v1")).function.parameters).maxLength,
     8_000,
   );
   const policy = v5Proposal.messages[0].content;
   for (const method of [
+    "materializeItem",
     "materializeNpcMechanicalEncounter",
     "transferItem",
     "changeNpcGear",
@@ -396,12 +364,16 @@ test("V5 private materialization expands only proposedFact and teaches the three
     assert.match(policy, new RegExp(`method 精确填 ${method}`, "u"));
   }
   for (const schema of [
+    "zhuwei.item-materialization-draft/v1",
     "zhuwei.npc-mechanical-encounter-draft/v1",
     "zhuwei.item-transfer-draft/v1",
     "zhuwei.npc-gear-change-draft/v1",
     "zhuwei.npc-item-state-change-draft/v1",
   ]) assert.match(policy, new RegExp(schema.replace("/", "\\/"), "u"));
   assert.match(policy, /收到物品只改变双方权威背包，不会自动装备/u);
+  assert.match(policy, /item-definition:srd51:healing-potion:1/u);
+  assert.match(policy, /不得提交物品名称、说明、规则来源、能力、治疗骰式、目标、actor、entryId/u);
+  assert.match(policy, /当前闭合 Form 不提交显式资源或物品成本/u);
   assert.match(policy, /不得提交 AC、abilityRefs/u);
   assert.match(policy, /ammoRef:null/u);
   assert.match(policy, /causeFactRef/u);
@@ -423,7 +395,6 @@ test("V5 private materialization expands only proposedFact and teaches the three
       artifactRefs: [],
     },
     semanticFreezeHash: "fnv1a64:0000000000000000",
-    socialResolution: true,
   });
   assert.equal(v5Repair.max_completion_tokens, 4_000);
   assert.equal(
@@ -432,12 +403,14 @@ test("V5 private materialization expands only proposedFact and teaches the three
   );
   const repairPolicy = v5Repair.messages[0].content;
   for (const schema of [
+    "zhuwei.item-materialization-draft/v1",
     "zhuwei.npc-mechanical-encounter-draft/v1",
     "zhuwei.item-transfer-draft/v1",
     "zhuwei.npc-gear-change-draft/v1",
     "zhuwei.npc-item-state-change-draft/v1",
   ]) assert.match(repairPolicy, new RegExp(schema.replace("/", "\\/"), "u"));
   assert.match(repairPolicy, /intrinsicAbilities、itemDefinitions、itemDefinitionRefs、initialLoadout/u);
+  assert.match(repairPolicy, /definitionRef 精确为 item-definition:srd51:healing-potion:1/u);
   assert.match(repairPolicy, /causeFactRef/u);
 });
 
@@ -810,10 +783,9 @@ test("role registry exposes only validated Planner profiles and all Planner fail
 });
 
 function proposedFactSchema(parameters) {
-  const branch = parameters.oneOf.find((candidate) =>
-    candidate.properties.formId.const === "materialization.v1");
-  assert.ok(branch, "materialization.v1 branch is required");
-  return branch.properties.draft.properties.proposedFact;
+  assert.equal(parameters.type, "object");
+  assert.equal(parameters.additionalProperties, false);
+  return parameters.properties.proposedFact;
 }
 
 function recursiveKeys(value) {

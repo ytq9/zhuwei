@@ -96,10 +96,10 @@ test("KP V3 runner invokes production seams and passes local evaluation hard gat
   assert.equal(report.execution.caseCount, KP_V3_EVAL_THRESHOLDS.exactCaseCount);
   assert.deepEqual(report.execution.productionPureInterfacesInvoked, [
     "selectAllowedKpForms",
-    "buildKpFormModelParameters",
+    "buildKpFormToolParameters",
+    "kpFormToolName",
     "v3FormSelectionSignals",
     "validateKpFormDraft",
-    "validateKpFormModelEnvelope",
     "compileKpFormDraft",
     "lowerCausalActionProgram",
     "createRequiredContext",

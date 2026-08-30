@@ -1704,14 +1704,21 @@ export function validateNarration(value: unknown, projection: unknown): CurrentN
 export function validateBodyOnlyNarration(
   value: unknown,
   projection: unknown,
+  options: Readonly<{
+    excludeActorActionFromGrounding?: boolean;
+    skipGrounding?: boolean;
+  }> = {},
 ): { body: string } {
   if (!isRecord(value)) invalid();
   exactKeys(value, ["body"]);
   const body = boundedString(value.body, 1_600);
-  const groundingProjection = isRecord(projection)
+  const groundingProjection = options.excludeActorActionFromGrounding === true
+    && isRecord(projection)
     ? (({ actorAction: _actorAction, ...withoutActorAction }) => withoutActorAction)(projection)
     : projection;
-  assertNarrationTextGrounded(body, groundingProjection);
+  if (options.skipGrounding !== true) {
+    assertNarrationTextGrounded(body, groundingProjection);
+  }
   return { body };
 }
 
@@ -1732,6 +1739,25 @@ function toolCalls(response: UnknownRecord): unknown[] | undefined {
   const choice = response.choices[0];
   if (!isRecord(choice) || !isRecord(choice.message)) return undefined;
   return Array.isArray(choice.message.tool_calls) ? choice.message.tool_calls : undefined;
+}
+
+/** Extracts exactly one function call without interpreting its arguments.
+ * Selection encoded in the function name therefore survives malformed JSON
+ * arguments and can enter the bounded same-tool repair path. */
+export function extractSingleToolCall(response: unknown): Readonly<{
+  name: string;
+  arguments: unknown;
+}> {
+  if (!isRecord(response)) invalid();
+  const calls = toolCalls(response);
+  if (calls === undefined || calls.length !== 1 || !isRecord(calls[0])) invalid();
+  const call = calls[0];
+  const functionCall = isRecord(call.function) ? call.function : call;
+  if (typeof functionCall.name !== "string" || functionCall.name.length === 0) invalid();
+  return Object.freeze({
+    name: functionCall.name,
+    arguments: functionCall.arguments,
+  });
 }
 
 function responseText(response: UnknownRecord): string | undefined {

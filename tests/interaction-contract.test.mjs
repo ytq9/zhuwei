@@ -60,19 +60,19 @@ test("exposes every upstream table and voice command through the authenticated A
 });
 
 test("uses one DeepSeek provider adapter for structured KP text and Workers AI for Chinese voice", async () => {
-  const [configText, engine, provider, deepseek, voice] = await Promise.all([
+  const [configText, provider, deepseek, roomServer, voice] = await Promise.all([
     source("wrangler.jsonc"),
-    source("app/_runtime/lib/kp/engine.ts"),
     source("app/_runtime/lib/kp/provider.ts"),
     source("app/_runtime/lib/kp/deepseek.ts"),
+    source("app/_runtime/lib/room/server.ts"),
     source("app/_runtime/lib/voice/server.ts"),
   ]);
   const config = JSON.parse(configText);
   assert.equal(config.ai?.binding, "AI");
-  assert.match(engine, /chatModelText/);
   assert.match(provider, /DEEPSEEK_API_KEY/);
   assert.match(deepseek, /https:\/\/api\.deepseek\.com\/chat\/completions/);
   assert.match(provider, /response_format:\s*\{ type: "json_object" \}/);
+  assert.match(roomServer, /authoritativeKpModelBinding\(profile\)/);
   assert.match(voice, /@cf\/openai\/whisper-large-v3-turbo/);
   assert.match(voice, /@cf\/myshell-ai\/melotts/);
   assert.doesNotMatch(voice, /api\.x\.ai/);
@@ -85,11 +85,8 @@ test("pins one host-selected KP profile when the room is created", async () => {
     schema,
     models,
     server,
-    engine,
     hall,
     lobby,
-    migration,
-    profileMigration,
     roomServer,
     provider,
     policy,
@@ -97,27 +94,19 @@ test("pins one host-selected KP profile when the room is created", async () => {
     source("db/schema.ts"),
     source("app/_runtime/lib/kp/models.ts"),
     source("app/_runtime/lib/table/server.ts"),
-    source("app/_runtime/lib/kp/engine.ts"),
     source("app/hall/hall-client.tsx"),
     source("app/table/[code]/table-client.tsx"),
-    source("drizzle/0003_rich_boom_boom.sql"),
-    source("drizzle/0007_free_black_bolt.sql"),
     source("app/_runtime/lib/room/server.ts"),
     source("app/_runtime/lib/kp/provider.ts"),
     source("app/_runtime/lib/kp/authoritative-policy.ts"),
   ]);
   const {
     AUTHORITATIVE_KP_MODELS,
-    LEGACY_KP_MODELS,
     kpModelById,
     publicKpModelId,
   } = await import("../app/_runtime/lib/kp/models.ts");
   assert.deepEqual(
     AUTHORITATIVE_KP_MODELS.map(({ id }) => id),
-    ["deepseek-v4-flash", "deepseek-v4-pro"],
-  );
-  assert.deepEqual(
-    LEGACY_KP_MODELS.map(({ id }) => id),
     ["deepseek-v4-flash", "deepseek-v4-pro"],
   );
   assert.equal(kpModelById("@cf/zai-org/glm-4.7-flash"), undefined);
@@ -127,12 +116,11 @@ test("pins one host-selected KP profile when the room is created", async () => {
   assert.match(schema, /kpModel: text\("kp_model"\).*default\("deepseek-v4-flash"\)/);
   assert.match(schema, /kpModelProfile: text\("kp_model_profile"\)/);
   assert.match(models, /AUTHORITATIVE_KP_MODELS/);
-  assert.match(models, /LEGACY_KP_MODELS/);
+  assert.doesNotMatch(models, /LEGACY_KP_MODELS|isLegacyKpModel/);
   assert.doesNotMatch(models, /@cf\/zai-org|@cf\/google/);
   assert.match(models, /deepseek-v4-flash/);
   assert.match(models, /deepseek-v4-pro/);
-  assert.match(policy, /@cf\/zai-org\/glm-4\.7-flash/);
-  assert.match(policy, /@cf\/google\/gemma-4-26b-a4b-it/);
+  assert.doesNotMatch(policy, /@cf\/zai-org|@cf\/google/);
   assert.match(policy, /provider: "deepseek"/);
   const { AUTHORITATIVE_KP_PROFILES } = await import(
     "../app/_runtime/lib/kp/authoritative-policy.ts"
@@ -146,46 +134,28 @@ test("pins one host-selected KP profile when the room is created", async () => {
     [
       {
         modelId: "deepseek-v4-flash",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-v1",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v1",
         provider: "deepseek",
       },
       {
         modelId: "deepseek-v4-pro",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-v1",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v1",
         provider: "deepseek",
-      },
-      {
-        modelId: "deepseek-v4-flash",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-forms-v1",
-        provider: "deepseek",
-      },
-      {
-        modelId: "deepseek-v4-pro",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-forms-v1",
-        provider: "deepseek",
-      },
-      {
-        modelId: "@cf/zai-org/glm-4.7-flash",
-        modelProfileVersion: "authoritative-kp-profile-v1",
-        provider: "cloudflare-workers-ai",
-      },
-      {
-        modelId: "@cf/google/gemma-4-26b-a4b-it",
-        modelProfileVersion: "authoritative-kp-model-gemma-4-26b-a4b-it-v1",
-        provider: "cloudflare-workers-ai",
       },
     ],
   );
-  assert.match(server, /export const setRoomModel = createServerFn/);
-  assert.match(server, /if \(!me\.is_host\)/);
-  assert.match(server, /status = \$\{"lobby"\}/);
-  assert.match(server, /本桌模型在创建时固定，创建后不能更换/);
-  assert.match(server, /isLegacyKpModel\(data\.model\)/);
-  assert.match(server, /kp_model, kp_model_profile/);
+  assert.doesNotMatch(server, /setRoomModel|isLegacyKpModel/);
+  const create = server.slice(
+    server.indexOf("export const createRoom ="),
+    server.indexOf("export const joinRoom ="),
+  );
+  assert.match(create, /AUTHORITATIVE_RULESET_VERSION/);
+  assert.match(create, /PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON/);
+  assert.match(create, /kp_model, kp_model_profile/);
   assert.match(roomServer, /authoritativeKpProfileByBinding/);
   assert.match(roomServer, /authoritativeKpModelBinding\(profile\)/);
   assert.match(provider, /createDeepSeekAuthoritativeBinding/);
-  assert.match(provider, /return ai\.run\(model, input, options\)/);
+  assert.match(provider, /createDeepSeekAuthoritativeBinding/);
   const publicRoomProjection = server.slice(
     server.indexOf("const publicRoomInfo ="),
     server.indexOf("if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION)"),
@@ -203,24 +173,21 @@ test("pins one host-selected KP profile when the room is created", async () => {
     /select ruleset_version, module_id, host_user_id, kp_model, kp_model_profile/,
   );
   assert.match(correction, /where id = \$\{input\.roomId\}/);
-  assert.match(engine, /chatJson\(rooms\[0\]\.kp_model, messages\)/);
-  assert.doesNotMatch(engine, /grok-4\.5/);
   assert.match(hall, /创建桌子前选择 KP 模型/);
   assert.match(hall, /createRoom\(\{ data: \{ nickname: nick, model \} \}\)/);
   assert.match(hall, /AUTHORITATIVE_KP_MODELS\.map/);
-  assert.match(hall, /LEGACY_KP_MODELS\.map/);
+  assert.doesNotMatch(hall, /LEGACY_KP_MODELS/);
   assert.match(lobby, /本次跑团模型/);
   assert.match(lobby, /模型在创建桌子时固定/);
-  assert.match(lobby, /LEGACY_KP_MODELS\.map/);
-  assert.match(migration, /ALTER TABLE `rooms` ADD `kp_model`/);
-  assert.match(profileMigration, /ALTER TABLE `rooms` ADD `kp_model_profile`/);
+  assert.doesNotMatch(lobby, /LEGACY_KP_MODELS/);
 });
 
 test("keeps clocks, squads, rest voting, combat, voice and public projection in the live UI", async () => {
-  const [play, server, engine] = await Promise.all([
+  const [play, server, clock, busy] = await Promise.all([
     source("app/_runtime/components/play-table.tsx"),
     source("app/_runtime/lib/table/server.ts"),
-    source("app/_runtime/lib/kp/engine.ts"),
+    source("app/_runtime/lib/kp/clock.ts"),
+    source("app/_runtime/lib/kp/busy.ts"),
   ]);
   for (const token of [
     "transcribeAudio",
@@ -237,19 +204,19 @@ test("keeps clocks, squads, rest voting, combat, voice and public projection in 
     assert.match(play, new RegExp(`\\b${token}\\b`), `table UI omits ${token}`);
   }
   for (const token of [
-    "publicClocks",
-    "readRestHold",
-    "readSquads",
-    "publicCombat",
+    "clocks:",
+    "restHold:",
+    "squads:",
+    "combat:",
     "partySplit",
     "placeNames",
   ]) {
-    assert.match(server, new RegExp(`\\b${token}\\b`), `snapshot omits ${token}`);
+    assert.match(server, new RegExp(token), `snapshot omits ${token}`);
   }
-  assert.match(engine, /spotlightSkew/);
-  assert.match(engine, /syncReunion/);
-  assert.match(engine, /isPlaceBusy/);
-  assert.match(server, /\.map\(publicNpc\)/);
+  assert.match(clock, /spotlightSkew/);
+  assert.match(clock, /syncReunion/);
+  assert.match(busy, /isPlaceBusy/);
+  assert.match(server, /projectAuthoritativeTableObservation/);
   assert.doesNotMatch(play, /\btruth\b/);
 });
 

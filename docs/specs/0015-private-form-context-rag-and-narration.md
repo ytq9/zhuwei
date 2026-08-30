@@ -6,7 +6,8 @@
 - 适用规则：D&D 5e 2014 / SRD 5.1
 - 上位规格：`SPEC 0001`（最高产品合同）、`SPEC 0003`、`SPEC 0005`、`SPEC 0006`、`SPEC 0007`、`SPEC 0010`、`SPEC 0011`、`SPEC 0012`、`SPEC 0013`、`SPEC 0014`
 - ADR：[ADR-0014：私有提案、派生检索与发布状态边界](../adr/0014-private-proposal-derived-retrieval-and-publication-boundary.md)
-- 适用边界：只用于启用本规格完整 Profile/manifest 的**新 V3 房间**；不静默迁移、重命名或重解释既有房间
+- 0.4 修订：2026-08-31 用户明确放弃全部更早房间；本规格只用于 0.4 当前 V5 Profile/manifest，旧 Adapter/迁移/恢复条款由 `SPEC 0013` 的 0.4 修订窄取代
+- 适用边界：只用于启用本规格当前完整 Profile/manifest 的 **0.4 新房**；退役绑定显式拒绝，不静默重命名或重解释
 
 ## 1. 目的、权威顺序与不变 Interface
 
@@ -21,7 +22,7 @@
 5. D1、FTS、Vectorize、本地 embedding、模型缓存、日志、页面、测试 fixture 和 Delivery 文本都不能成为第二状态权威。
 6. 叙述文本不是正史；事实、知识、机械、Audience 和可恢复发布依据必须先由 `step`、Room DO 与 `project(viewer)` 固化。
 
-当前机械解释器版本轴与产品代际继续分离。V3 不等于 ruleset v3；仍被房间 manifest 精确固定的 `dnd5e-2014-srd5.1-authoritative-v2` 不因本规格静默改名。只复用既有机械原语的新 Form 可以发布新的 Form/Action Language/Profile；新增机械原语必须发布新的 Rules manifest/interpreter，并保留旧房解释器。
+当前机械解释器版本轴、产品代际与应用版本继续分离。V3 不等于 ruleset v3，0.4 也不等于 runtime v4；房间 manifest 精确固定的 `dnd5e-2014-srd5.1-authoritative-v2` 不因本规格静默改名。只复用既有机械原语的新 Form 可以发布新的 Form/Action Language/Profile；新增机械原语必须发布新的 Rules manifest/interpreter，并在当时先明确裁定现役房间的兼容、迁移或退役策略。0.4 当前不预留旧解释器。
 
 ## 2. 固定十二步运行流程
 
@@ -75,11 +76,17 @@ Form 只是模型侧内部 Interface，不是玩家命令菜单。已有结构�
 
 每张 Form 是 `additionalProperties: false` 的版本化 closed schema，明确最大字段数、数组长度、字符串长度、阶段数和引用数。未知字段、脚本、表达式、JSON Patch、任意事件、骰面、authority 字段或未注册 primitive 一律 fail closed。
 
+### 3.2.1 窄工具传输合同
+
+0.4 当前 Proposal protocol 为每个 Catalog Form 固定一个稳定私有工具名：`submit_kp_clarification_v1`、`submit_kp_observe_v1`、`submit_kp_npc_exchange_v1`、`submit_kp_ordinary_check_v1`、`submit_kp_high_risk_action_v1`、`submit_kp_in_world_refusal_v1`、`submit_kp_materialization_v1`、`submit_kp_combat_action_v1`、`submit_kp_environmental_stunt_v1`、`submit_kp_compound_v1`。服务端每次只暴露本次 allowlist 中的 3–6 个工具；工具名选择既有 Form，`arguments` 直接是该 Form 的 draft，不再嵌套 `{ formId, draft }` envelope，也不暴露统一超级 Schema。
+
+主 KP 每次 Proposal 响应必须且只能调用一个已暴露工具；Provider 请求固定要求工具调用并关闭并行工具。这里的“工具调用”只是声明式 Proposal 传输，不授权模型执行数据库、网络、随机、事件、状态 patch 或任何机械副作用。服务端只有在解析、closed-schema、引用、冻结语义、确定性编译和 Rules 诊断全部通过后，才把候选交给 Room DO；真实 actor/target/Audience、骰面、事件、资源与状态仍由可信服务端、Rules 和 Room DO 派生。
+
 ### 3.3 Form/Profile 发布
 
 `FormCatalogProfile` 至少固定 Catalog ID/version/hash、各 Form schema hash、Action Language/Profile、编译器 hash、primitive vocabulary、兼容 Rules manifest 和 conformance suite。改变 Form 含义不得覆盖旧 hash；新增 Form 只在新 Profile 中出现。
 
-本规格不得静默改变既有 `authoritative-kp-action-plan-v1` 的含义。新 Proposal 必须使用独立 schema/profile ID，并只通过显式 Adapter 编译到新 `CausalActionProgram`；旧房继续由旧提案解释器处理。
+本规格不得把既有 `authoritative-kp-action-plan-v1` 的含义原地改名。0.4 当前 Proposal 使用独立的窄工具 protocol/profile，并只通过显式编译器进入 `CausalActionProgram`；前 0.4 提案和房间已经退役，进入当前入口时稳定拒绝，不注册旧提案解释器或 fallback。
 
 ## 4. 三层 Context Pack
 
@@ -145,7 +152,7 @@ D1 FTS 是可从权威静态语料重建的派生索引，不保存活跃房间�
 
 ### 6.1 调用预算
 
-每个 RootAction 普通路径最多一次主 KP Proposal 调用；仅在本地 Schema、引用、版本或 Rules 诊断可被结构修复时，最多追加一次窄修订。一次修订后仍非法即返回 `needsKp` 或稳定 `PROPOSAL_REPAIR_EXHAUSTED`，不得第三次发送完整 Prompt。
+每个 RootAction 普通路径最多一次主 KP Proposal 调用。无工具、多个工具、未知工具或未在本次 allowlist 中的工具属于选择协议错误，立即返回稳定 `PROPOSAL_FORM_INVALID`，不得借修订让模型重新选择 Form。只有模型已经选择一个合法且获准的工具，但其 arguments 存在 JSON/schema、引用、版本、冻结语义或可结构修复的 Rules 诊断时，才最多追加一次同工具窄修订。一次修订后仍非法、修订改用别的工具或再次违反语义即返回 `PROPOSAL_REPAIR_EXHAUSTED`；总调用数最多两次，不得第三次发送完整 Prompt。
 
 ### 6.2 冻结语义 hash
 
@@ -156,7 +163,7 @@ D1 FTS 是可从权威静态语料重建的派生索引，不保存活跃房间�
 - 已产生并将被采用的 NPC 回应语义；
 - PreparedAction、相关 scope baseline 与 Profile refs。
 
-修订只能收到：所选 Form schema、原草稿、合并后的精确诊断、有限引用列表和冻结语义 hash。它可以修字段、引用和机械组合；原 Form 过窄时只能升级到 `compound.v1`。它不得改变上述冻结语义，不得重发完整模组、完整历史或完整 Story Bible。
+修订只能收到：唯一所选工具及其 Form schema、经过长度限制的原始 arguments/可解析草稿、合并后的精确诊断、有限引用列表和冻结语义 hash。它可以修字段、引用和机械组合，但必须调用同一个工具，不能自行换 Form。arguments 语法损坏时，只有完整、直接、顶层且键不重复的已解析成员可以证明冻结语义；嵌套同名键、重复键、截断值或无法证明的字段不能被猜测。普通或高风险 Form 被 Rules 证明表达力过窄时，只有服务端可以在冻结语义不变、总调用预算仍为两次的前提下授权升级到 `compound.v1`。修订不得重发完整模组、完整历史或完整 Story Bible。
 
 任何权威骰面出现后，禁止改变 DC、风险、成本、对象属性、目标选择规则、成功/失败后果或环境阈值。语义 hash、引用或骰前参数不一致时 fail closed，不把非法 Proposal 当作世界内失败。
 
@@ -328,6 +335,8 @@ materialize/reuse feature
 
 错误响应只返回该 Viewer 有权知道的状态、稳定代码、公开 Receipt/重试提示。Planner、FTS、Embedding、Vectorize 和辅助模型失败只记录降级阶段；RequiredContext 足够时不得让行动失败。世界内拒绝、NPC 拒绝和缺前提不是 Provider 技术错误。
 
+Proposal 的 Provider 网络错误、超时、限流或不可用与 Form 修订严格分离：它们记录脱敏 `ModelInvocationReceipt`、稳定 Provider 错误和适用的 `retryAfter`，不消耗“同工具结构修订”机会，也不把残缺响应送进 Rules。系统不得自动换模型、伪造成功或生成世界内拒绝来掩盖平台故障；在没有权威提交时行动保持 `notCommitted`，由相同 submission ID 走幂等平台重试。若 Room DO 已提交而只有 Narration Provider 失败，则按 §8.2 的独立发布恢复处理，绝不重跑 Proposal、随机或机械。
+
 ### 12.2 新管线日志白名单
 
 对本规格的新 Proposal/Context/RAG/Narration 管线，日志字段只允许：阶段、Form/Profile、模型 ID/revision、输入/输出 token、耗时、公开错误码、fallback 类别、不可逆 hash 和命中数量桶。不得记录 Prompt、玩家正文、NPC 秘密、模组真相、chunk 原文、模型原始输出、Cookie、Authorization、Session/Token、密钥、完整 ID、WorldEvent、骰面候选或任何受众正文。
@@ -416,11 +425,9 @@ npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有
 
 本规格的 Form Catalog、Action Language、Context Pack、corpus/retrieval、Model Registry、Narration schema、publication protocol、Environment state graph 和相关 compiler 全部进入房间完整 runtime manifest。创建新房时固定精确 ID/hash，不接受 `latest`。
 
-环境/人物机械的隔离已经具体化为三代不可混用的固定 manifest。历史 hazard-only `environment-feature-fsm-2014-v2`（`sha256:702b2559c821a52e1c7d6a137c6b261cec21d6cc513e3c0301b4b5ab007f7c87`）继续绑定 `runtime-srd51-2014-authoritative-environment-v2`（`sha256:0021280335296ecfc5b65a221fec7009550fac96db65925e47daef9f9d4f0456`）。第一代私有 Form workflow-v1 的显式双模式 `environment-feature-fsm-2014-v3`（`sha256:1656fd548905d6ea886fd4cf97357a9d67c56422be3a2c6bd281fc93a22b4fe6`）继续绑定 `runtime-srd51-2014-authoritative-environment-v3`（`sha256:4038f09e546eb8a0c925e892634625fe09859d2aeba91f044a8ecae76aa99c57`），保持其冻结的 1×PB/既有 saving-throw 解释。
+0.4 当前只注册完整 `runtime-srd51-2014-authoritative-environment-v5`，并精确绑定 `authoritative-kp-private-form-narrow-tools-workflow-v1`、本规格的 private Form catalog、V5 NPC/物品/环境闭包与独立 Body-only Delivery。具体 runtime、event、module、Proposal protocol 和 workflow hash 以 `SPEC 0013` §2.1 的当前闭包为准；任一 ID/hash、planner、model profile 或 module 不一致都在模型调用前 fail closed。
 
-当前新建 V3 房间固定 workflow-v2 与完整 `runtime-srd51-2014-authoritative-environment-v4`（`sha256:8d0df2563b1e9fca31b1ab7b1678683075fc013b5220ba7b32aa054861203685`）。v4 复用同一 environment-v3 FSM，并新增 exact `character-proficiency-srd51-2014-v1`（`sha256:718bf64554e4b032f3bea564797edf67b1695c2335879db4bd3e5332069a1001`）：`expertiseSkills`（兼容 CharacterSheet 输入别名 `expertise`）必须是 `proficientSkills` 子集，技能专精为能力调整值 + 2×PB，`proficientSaves` 只接受六项能力且豁免为能力调整值 + 1×PB。该字段贯穿初始化、事件、控制/继任、combat entity、同步、投影与 archive restore；非遭遇环境行动的临时 action grant 也只在 exact v4 RootAction 内生效。default、environment-v2、environment-v3 的 ID/hash、state shape 与冻结结果保持不变，绝不以“字段存在”或 helper 默认值启用新语义。
-
-既有房间、旧 `authoritative-kp-action-plan-v1`、旧 Outcome/Delivery Adapter 和旧环境状态继续由 genesis 指定的解释器回放。不得从旧 Prompt、Delivery、聊天、抽象距离或 D1 数据猜测新 Form/Context/Environment 状态。不兼容变化要求重新开房；将来若要迁移，必须另写显式迁移规格、验证旧事件可重放并取得用户授权。
+历史 environment-v2/v3/v4、旧 `authoritative-kp-action-plan-v1`、旧 Outcome/Delivery Adapter 和旧房状态只保留文档/Git 审计意义，不进入 0.4 Registry 或回放。不得从旧 Prompt、Delivery、聊天、抽象距离或 D1 数据猜测当前 Form/Context/Environment 状态。未来若需要兼容或迁移，必须另写规格并取得用户授权，不能预留自动 fallback。
 
 ## 17. 对下位规格的窄 supersede
 

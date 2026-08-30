@@ -1,20 +1,15 @@
 import { env } from "cloudflare:workers";
 
-import { ensureGear, spellcastingProfile } from "../dnd/compute";
-import { classById } from "../dnd/catalog";
-import { itemById } from "../dnd/gear";
 import { getSql } from "../db";
-import { weaponAttack } from "../kp/combat";
+import type { CharacterSheet } from "../dnd/types";
 import { createAuthoritativeKpAdapter } from "../kp/authoritative";
 import {
   authoritativeKpProfileByBinding,
-  hasExactV3KpWorkflowManifest,
-  isV3AuthoritativeKpProfile,
+  isSocialResolutionKpProfile,
 } from "../kp/authoritative-policy";
 import {
   createDisabledPlannerAdapter,
   createModelProfileRegistry,
-  DISABLED_CONTEXT_PLANNER_PROFILE_REF,
 } from "../kp/model-registry";
 import { authoritativeKpModelBinding } from "../kp/provider";
 import { createV3ProductionContextPreparer } from "../kp/v3-production-context";
@@ -23,15 +18,8 @@ import type {
   KpProposalDraft,
   SemanticActionPlan,
 } from "../kp/authoritative-types";
-import type { CharacterSheet } from "../dnd/types";
 import { authoritativeModuleProfile } from "../module/authoritative";
 import type { ProjectionQuery, RuntimeProfileManifest } from "../rules";
-import type { Command } from "../rules/model";
-import {
-  AUTHORITATIVE_RULESET_VERSION,
-  RULESET_VERSION,
-} from "../rules/ruleset";
-import { spellDefinition } from "../rules/spell-catalog";
 import {
   handleRoomAction,
   handleRoomCorrection,
@@ -51,7 +39,6 @@ import {
   buildRoomTelemetryEvent,
 } from "./telemetry";
 import { withRoomAuthorityTelemetry } from "./authority-telemetry";
-import type { CommitTurnResult, TurnTicket } from "./types";
 import {
   type PersistedRoomKpBinding,
   validateV3RoomBinding,
@@ -133,103 +120,96 @@ export async function runAuthoritativeRoomAction(input: {
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  if (
-    binding?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
-    || profile === undefined
-    || profile.modelId !== input.modelId
-    || profile.modelProfileVersion !== input.modelProfileVersion
-  ) {
-    throw new TypeError("The room is not bound to a supported authoritative KP model profile.");
-  }
-  const v3 = isV3AuthoritativeKpProfile(profile);
-  const bindingObservation = v3
-    ? await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId))
-    : undefined;
-  const boundModuleProfile = v3
-    ? await projectedModuleProfile(binding.module_id, bindingObservation)
-    : undefined;
+  const requestedProfile = authoritativeKpProfileByBinding(
+    input.modelId,
+    input.modelProfileVersion,
+  );
+  const bindingObservation = binding === undefined
+    ? undefined
+    : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
+  const boundModuleProfile = binding === undefined
+    ? undefined
+    : await projectedModuleProfile(binding.module_id, bindingObservation);
   const v3Binding = validateV3RoomBinding({
     binding,
     roomProfile: profile,
-    requestedProfile: profile,
+    requestedProfile,
     expectedModuleRef: boundModuleProfile?.moduleRef,
     observation: bindingObservation,
   });
-  if (v3Binding.kind === "invalid") {
+  if (
+    v3Binding.kind === "invalid"
+    || binding === undefined
+    || profile === undefined
+    || boundModuleProfile === undefined
+  ) {
     return v3BindingRejection();
   }
-  const registry = v3
-    ? createModelProfileRegistry([{
-        profileRef: profile.modelProfileVersion,
-        provider: profile.provider,
-        modelId: profile.modelId,
-        modelRevision: profile.modelRevision,
-        supportedRoles: ["primary-kp", "narration"],
-        validationSuiteVersion: "authoritative-kp-v3-role-validation-v1",
-        validationStatus: "passed",
-        structuredOutputMode: "strict-tool",
-        contextWindowTokens: 64_000,
-        latencyTier: "standard",
-        costTier: "standard",
-      }])
-    : undefined;
-  let productionContext = v3 && boundModuleProfile !== undefined && registry !== undefined
-    ? createV3ProductionContextPreparer({
-        moduleProfile: boundModuleProfile,
-        database: env.DB,
-        registry,
-        pinnedPrimaryKpProfileRef: profile.modelProfileVersion,
-        plannerAdapter: createDisabledPlannerAdapter(),
-        allowKpOnly: true,
-      })
-    : undefined;
+  const registry = createModelProfileRegistry([{
+    profileRef: profile.modelProfileVersion,
+    provider: profile.provider,
+    modelId: profile.modelId,
+    modelRevision: profile.modelRevision,
+    supportedRoles: ["primary-kp", "narration"],
+    validationSuiteVersion: "authoritative-kp-v3-role-validation-v1",
+    validationStatus: "passed",
+    structuredOutputMode: "strict-tool",
+    contextWindowTokens: 64_000,
+    latencyTier: "standard",
+    costTier: "standard",
+  }]);
+  let productionContext = createV3ProductionContextPreparer({
+    moduleProfile: boundModuleProfile,
+    database: env.DB,
+    registry,
+    pinnedPrimaryKpProfileRef: profile.modelProfileVersion,
+    plannerAdapter: createDisabledPlannerAdapter(),
+    allowKpOnly: true,
+    includeDynamicAuthoritativeFacts: isSocialResolutionKpProfile(profile),
+  });
   const kp = createAuthoritativeKpAdapter({
     ai: authoritativeKpModelBinding(profile),
     profile,
-    ...(productionContext === undefined
-      ? {}
-      : {
-          prepareV3Context: async (request, allowedFormIds) => {
-            const exactModule = await projectedModuleProfile(binding.module_id, request.projection);
-            if (exactModule === undefined || registry === undefined) {
-              throw new Error("CONTEXT_INSUFFICIENT");
-            }
-            if (productionContext === undefined
-              || productionContext.corpus.chunks.some((chunk) =>
-                chunk.profileRef === exactModule.moduleRef.profileId) === false) {
-              productionContext = createV3ProductionContextPreparer({
-                moduleProfile: exactModule,
-                database: env.DB,
-                registry,
-                pinnedPrimaryKpProfileRef: profile.modelProfileVersion,
-                plannerAdapter: createDisabledPlannerAdapter(),
-                allowKpOnly: true,
-              });
-            }
-            const prepared = await productionContext.prepare(request, allowedFormIds);
-            console.info(JSON.stringify(buildRoomTelemetryEvent({
-              occurredAt: new Date().toISOString(),
-              severity: "info",
-              eventName: "kp.context.prepared",
-              correlation: { roomId: input.roomId, principalId: input.userId },
-              context: {
-                profileRef: productionContext.profile.profileRef,
-                planner: {
-                  mode: prepared.plannerReceipt.adapterMode,
-                  status: prepared.plannerReceipt.status,
-                  fallbackUsed: prepared.plannerReceipt.fallbackUsed,
-                },
-                retrieval: {
-                  mode: prepared.retrievalReceipt.retrievalMode,
-                  status: prepared.retrievalReceipt.status,
-                  fallbackUsed: prepared.retrievalReceipt.fallbackUsed,
-                  hitCountBucket: prepared.retrievalReceipt.hitCountBucket,
-                },
-              },
-            })));
-            return prepared;
+    prepareV3Context: async (request, allowedFormIds) => {
+      const exactModule = await projectedModuleProfile(binding.module_id, request.projection);
+      if (exactModule === undefined) {
+        throw new Error("CONTEXT_INSUFFICIENT");
+      }
+      if (productionContext.corpus.chunks.some((chunk) =>
+        chunk.profileRef === exactModule.moduleRef.profileId) === false) {
+        productionContext = createV3ProductionContextPreparer({
+          moduleProfile: exactModule,
+          database: env.DB,
+          registry,
+          pinnedPrimaryKpProfileRef: profile.modelProfileVersion,
+          plannerAdapter: createDisabledPlannerAdapter(),
+          allowKpOnly: true,
+          includeDynamicAuthoritativeFacts: isSocialResolutionKpProfile(profile),
+        });
+      }
+      const prepared = await productionContext.prepare(request, allowedFormIds);
+      console.info(JSON.stringify(buildRoomTelemetryEvent({
+        occurredAt: new Date().toISOString(),
+        severity: "info",
+        eventName: "kp.context.prepared",
+        correlation: { roomId: input.roomId, principalId: input.userId },
+        context: {
+          profileRef: productionContext.profile.profileRef,
+          planner: {
+            mode: prepared.plannerReceipt.adapterMode,
+            status: prepared.plannerReceipt.status,
+            fallbackUsed: prepared.plannerReceipt.fallbackUsed,
           },
-        }),
+          retrieval: {
+            mode: prepared.retrievalReceipt.retrievalMode,
+            status: prepared.retrievalReceipt.status,
+            fallbackUsed: prepared.retrievalReceipt.fallbackUsed,
+            hitCountBucket: prepared.retrievalReceipt.hitCountBucket,
+          },
+        },
+      })));
+      return prepared;
+    },
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
         roomId: input.roomId,
@@ -250,36 +230,41 @@ export async function retryAuthoritativeViewerNarration(input: {
 }) {
   const sql = await getSql();
   const binding = (
-    await sql<{
-      ruleset_version: string;
-      kp_model: string;
-      kp_model_profile: string;
-      kp_workflow_manifest: string | null;
-      kp_context_planner_profile: string | null;
-    }>`
-      select ruleset_version, kp_model, kp_model_profile,
+    await sql<PersistedRoomKpBinding>`
+      select ruleset_version, module_id, host_user_id, kp_model, kp_model_profile,
              kp_workflow_manifest, kp_context_planner_profile
       from rooms where id = ${input.roomId}
     `
   )[0];
-  const profile = authoritativeKpProfileByBinding(
+  const roomProfile = authoritativeKpProfileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
+  const requestedProfile = authoritativeKpProfileByBinding(
+    input.modelId,
+    input.modelProfileVersion,
+  );
+  const observation = binding === undefined
+    ? undefined
+    : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
+  const v3Binding = validateV3RoomBinding({
+    binding,
+    roomProfile,
+    requestedProfile,
+    expectedModuleRef: binding === undefined
+      ? undefined
+      : await expectedModuleRef(binding.module_id, observation),
+    observation,
+  });
   if (
-    binding?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
-    || profile === undefined
-    || !isV3AuthoritativeKpProfile(profile)
-    || profile.modelId !== input.modelId
-    || profile.modelProfileVersion !== input.modelProfileVersion
-    || !hasExactV3KpWorkflowManifest(binding.kp_workflow_manifest)
-    || binding.kp_context_planner_profile !== DISABLED_CONTEXT_PLANNER_PROFILE_REF
+    v3Binding.kind === "invalid"
+    || roomProfile === undefined
   ) {
     return v3BindingRejection();
   }
   const kp = createAuthoritativeKpAdapter({
-    ai: authoritativeKpModelBinding(profile),
-    profile,
+    ai: authoritativeKpModelBinding(roomProfile),
+    profile: roomProfile,
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
         roomId: input.roomId,
@@ -390,27 +375,18 @@ export async function runAuthoritativeRoomCorrection(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  const correctionRequiresV3Binding = (
-    profile !== undefined && isV3AuthoritativeKpProfile(profile)
-  ) || binding?.kp_workflow_manifest != null;
-  const correctionObservation = !correctionRequiresV3Binding || binding === undefined
+  const correctionObservation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(binding.host_user_id));
   const v3Binding = validateV3RoomBinding({
     binding,
     roomProfile: profile,
-    expectedModuleRef: !correctionRequiresV3Binding || binding === undefined
+    expectedModuleRef: binding === undefined
       ? undefined
       : await expectedModuleRef(binding.module_id, correctionObservation),
     observation: correctionObservation,
   });
-  if (v3Binding.kind === "invalid") return v3BindingRejection();
-  if (
-    binding?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
-    || profile === undefined
-  ) {
-    throw new TypeError("The room is not bound to a supported authoritative KP model profile.");
-  }
+  if (v3Binding.kind === "invalid" || profile === undefined) return v3BindingRejection();
   const kp = createAuthoritativeKpAdapter({
     ai: authoritativeKpModelBinding(profile),
     profile,
@@ -803,37 +779,31 @@ export async function runAuthoritativePartyAction(input: {
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  const persistedRoomClaimsV3 = (
-    roomProfile !== undefined && isV3AuthoritativeKpProfile(roomProfile)
-  ) || binding?.kp_workflow_manifest != null
-    || binding?.kp_context_planner_profile != null;
   if (requestedProfile === undefined) {
-    if (persistedRoomClaimsV3) return v3BindingRejection();
-    throw new TypeError("The room is not bound to a supported authoritative KP model profile.");
+    return v3BindingRejection();
   }
-  const partyRequiresV3Binding = isV3AuthoritativeKpProfile(requestedProfile)
-    || persistedRoomClaimsV3;
-  const partyObservation = !partyRequiresV3Binding || binding === undefined
+  const partyObservation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
   const v3Binding = validateV3RoomBinding({
     binding,
     roomProfile,
     requestedProfile,
-    expectedModuleRef: !partyRequiresV3Binding || binding === undefined
+    expectedModuleRef: binding === undefined
       ? undefined
       : await expectedModuleRef(binding.module_id, partyObservation),
     observation: partyObservation,
   });
-  if (v3Binding.kind === "invalid") return v3BindingRejection();
-  const profile = v3Binding.kind === "valid" ? roomProfile! : requestedProfile;
+  if (v3Binding.kind === "invalid" || roomProfile === undefined) {
+    return v3BindingRejection();
+  }
+  const profile = roomProfile;
   let action: RoomActionInput;
   let proposal: KpProposalDraft | undefined;
   switch (input.action.kind) {
     case "invite": {
       const targetCharacterId = projectedActiveCharacterId(
-        partyObservation
-          ?? await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId)),
+        partyObservation,
         input.action.targetPrincipalId,
       );
       if (targetCharacterId === undefined) {
@@ -860,10 +830,8 @@ export async function runAuthoritativePartyAction(input: {
       break;
     }
     case "cancelInvitation": {
-      const authority = roomStub(input.roomId);
-      const principal = trustedRoomPrincipal(input.userId);
       const pendingInputId = projectedPendingInput(
-        partyObservation ?? await authority.observe(principal),
+        partyObservation,
         "partyInvitation",
         "initiator",
       );
@@ -891,10 +859,8 @@ export async function runAuthoritativePartyAction(input: {
       break;
     }
     case "answerInvitation": {
-      const authority = roomStub(input.roomId);
-      const principal = trustedRoomPrincipal(input.userId);
       const pendingInputId = projectedPendingInput(
-        partyObservation ?? await authority.observe(principal),
+        partyObservation,
         "partyInvitation",
         "controller",
       );
@@ -928,8 +894,7 @@ export async function runAuthoritativePartyAction(input: {
       break;
     case "transferLeadership": {
       const targetCharacterId = projectedActiveCharacterId(
-        partyObservation
-          ?? await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId)),
+        partyObservation,
         input.action.targetPrincipalId,
       );
       if (targetCharacterId === undefined) {
@@ -1020,221 +985,4 @@ function resourceCounts(sheet: CharacterSheet) {
   }
   values.inspiration = sheet.inspiration ? 1 : 0;
   return values;
-}
-
-function resourceRules(sheet: CharacterSheet) {
-  const values: Record<
-    string,
-    { max: number; recovery: "none" | "short" | "long" | "shortOrLong"; die?: number }
-  > = {};
-  const short = new Set(["channel", "surge", "secondWind", "superiority", "breath"]);
-  const long = new Set(["slot1", "slot2", "hitDice", "rage", "warPriest", "relentless"]);
-  for (const [key, value] of Object.entries(sheet.resources ?? {})) {
-    if (value && typeof value === "object" && "max" in value) {
-      const maximum = Number((value as { max?: unknown }).max);
-      if (Number.isFinite(maximum) && maximum >= 0) {
-        values[key] = {
-          max: maximum,
-          recovery: short.has(key) ? "shortOrLong" : long.has(key) ? "long" : "none",
-          die:
-            key === "hitDice" && "die" in value
-              ? Number((value as { die?: unknown }).die)
-              : undefined,
-        };
-      }
-    } else if (typeof value === "number") {
-      values[key] = { max: value, recovery: "none" };
-    }
-  }
-  if (sheet.classId === "wizard") {
-    values.arcaneRecovery = { max: 1, recovery: "long" };
-  }
-  values.inspiration = { max: 1, recovery: "none" };
-  return values;
-}
-
-function primaryAttack(sheet: CharacterSheet) {
-  const attack = weaponAttack(sheet);
-  const match = /^(\d+)d(\d+)([+-]\d+)?$/i.exec(attack.damage.replace(/\s/g, ""));
-  const item = itemById(sheet.equipped?.main);
-  const range = /（?(\d+)\/(\d+)）?/.exec(item?.text ?? "");
-  return {
-    id: "primary-weapon",
-    name: attack.weapon,
-    attackBonus: attack.bonus,
-    kind: attack.ranged ? ("ranged" as const) : ("melee" as const),
-    ammoResource:
-      item?.id === "light-crossbow"
-        ? ("bolt" as const)
-        : item?.id === "shortbow" || item?.id === "longbow"
-          ? ("arrow" as const)
-          : undefined,
-    reachFeet: attack.ranged ? undefined : /触及/.test(item?.text ?? "") ? 10 : 5,
-    normalRangeFeet: attack.ranged ? Number(range?.[1] ?? 80) : undefined,
-    longRangeFeet: attack.ranged ? Number(range?.[2] ?? 320) : undefined,
-    damage: {
-      count: Number(match?.[1] ?? 1),
-      sides: Number(match?.[2] ?? 4),
-      bonus: Number(match?.[3] ?? 0),
-      damageType: attack.ranged ? "piercing" : "physical",
-    },
-  };
-}
-
-function playerCapabilities(sheet: CharacterSheet) {
-  return [
-    ...(sheet.equipment ?? []).map((item) => `equipment:${item}`),
-    ...(sheet.backpack ?? []).map((entry) => `item:${entry.itemId}`),
-    ...(["high-elf", "wood-elf", "half-elf"].includes(sheet.raceId)
-      ? ["immunity:magical-sleep", "save-advantage:charmed"]
-      : []),
-    ...(["hill-dwarf", "mountain-dwarf"].includes(sheet.raceId)
-      ? ["resistance:poison", "save-advantage:poisoned"]
-      : []),
-    ...(sheet.raceId === "tiefling" ? ["resistance:fire"] : []),
-  ];
-}
-
-function playerEntity(userId: string, rawSheet: CharacterSheet) {
-  const sheet = ensureGear(rawSheet);
-  const resources = resourceCounts(sheet);
-  const ownedResourceFeatures = new Set(Object.keys(sheet.resources ?? {}));
-  const spellIds = [...new Set([...sheet.cantrips, ...sheet.prepared, ...sheet.spellbook])];
-  return {
-    id: userId,
-    kind: "player" as const,
-    name: sheet.name || "冒险者",
-    abilityScores: sheet.scores,
-    proficiencyBonus: sheet.proficiency,
-    proficientSaves: [...(classById(sheet.classId)?.saves ?? [])],
-    proficientSkills: [...sheet.skills],
-    expertiseSkills: [...sheet.expertise],
-    creatureType: "humanoid",
-    conditionImmunities: playerCapabilities(sheet)
-      .filter((entry) => entry.startsWith("immunity:"))
-      .map((entry) => entry.slice("immunity:".length)),
-    capabilities: playerCapabilities(sheet),
-    level: sheet.level,
-    spellLevels: Object.fromEntries(
-      spellIds
-        .map((spellId) => [spellId, spellDefinition(spellId)?.level] as const)
-        .filter((entry): entry is [string, 0 | 1 | 2] => entry[1] !== undefined),
-    ),
-    spellActionCosts: Object.fromEntries(
-      spellIds.flatMap((spellId) => {
-        const definition = spellDefinition(spellId);
-        return definition ? [[spellId, definition.actionCost] as const] : [];
-      }),
-    ),
-    spellcasting: Object.fromEntries(
-      spellIds.flatMap((spellId) => {
-        const profile = spellcastingProfile(sheet, spellId);
-        return profile ? [[spellId, profile] as const] : [];
-      }),
-    ),
-    featureIds: [
-      "rage",
-      "surge",
-      "secondWind",
-      "channel",
-      "breath",
-      "torch",
-      "ration",
-      ...(sheet.classId === "rogue" ? ["cunningAction"] : []),
-      ...(sheet.raceId === "lightfoot" ? ["halflingLucky"] : []),
-      ...(sheet.classId === "wizard" ? ["arcaneRecovery"] : []),
-      ...(sheet.classId === "cleric" && sheet.subclassId === "life"
-        ? ["discipleOfLife"]
-        : []),
-    ].filter(
-      (featureId) =>
-        featureId === "arcaneRecovery" ||
-        featureId === "discipleOfLife" ||
-        featureId === "cunningAction" ||
-        featureId === "halflingLucky" ||
-        ownedResourceFeatures.has(featureId),
-    ),
-    activeEffects: [
-      ...(sheet.resources?.rage.on ? ["rage"] : []),
-      ...(["guidance", "bless"].includes(sheet.resources?.conc?.id ?? "")
-        ? [sheet.resources!.conc!.id]
-        : []),
-    ],
-    attacks: [primaryAttack(sheet)],
-    resources,
-    resourceRules: resourceRules(sheet),
-    hp: { current: sheet.hp.current, max: sheet.hp.max },
-    ac: sheet.ac,
-    speedFeet: sheet.speed,
-  };
-}
-
-export async function initializeRoomAuthority(input: {
-  roomId: string;
-  moduleId: string;
-  characters: Array<{ userId: string; sheet: CharacterSheet }>;
-}) {
-  const stub = roomStub(input.roomId);
-  const players = input.characters.map(({ userId, sheet }) => playerEntity(userId, sheet));
-  const result = await stub.initialize({
-    roomId: input.roomId,
-    moduleId: input.moduleId,
-    rulesetVersion: RULESET_VERSION,
-    players,
-  });
-  for (const player of players) await stub.upsertPlayer({ player });
-  return result;
-}
-
-export function upsertRoomPlayer(roomId: string, userId: string, sheet: CharacterSheet) {
-  return roomStub(roomId).upsertPlayer({ player: playerEntity(userId, sheet) });
-}
-
-export function departRoomPlayer(roomId: string, userId: string) {
-  return roomStub(roomId).departPlayer(userId);
-}
-
-export function synchronizeRoomPlayerLoadout(
-  roomId: string,
-  userId: string,
-  rawSheet: CharacterSheet,
-) {
-  const sheet = ensureGear(rawSheet);
-  const player = playerEntity(userId, sheet);
-  return roomStub(roomId).synchronizePlayerLoadout({
-    playerId: userId,
-    ac: sheet.ac,
-    attacks: [primaryAttack(sheet)],
-    capabilities: player.capabilities,
-    proficientSaves: player.proficientSaves,
-    creatureType: player.creatureType,
-    conditionImmunities: player.conditionImmunities,
-    spellLevels: player.spellLevels,
-    spellActionCosts: player.spellActionCosts,
-    spellcasting: player.spellcasting,
-  });
-}
-
-export function prepareRoomTurn(roomId: string, actorId: string): Promise<TurnTicket> {
-  return roomStub(roomId).prepareTurn({ actorId });
-}
-
-export function commitRoomTurn(
-  roomId: string,
-  ticketId: string,
-  command: Command,
-): Promise<CommitTurnResult> {
-  return roomStub(roomId).commitTurn({ ticketId, command });
-}
-
-export function roomProjection(roomId: string, viewerId: string) {
-  return roomStub(roomId).getSnapshot(viewerId);
-}
-
-export function finishRoomNarration(roomId: string, ticketId: string) {
-  return roomStub(roomId).finishNarration(ticketId);
-}
-
-export function failRoomInterpretation(roomId: string, ticketId: string) {
-  return roomStub(roomId).markInterpretationFailed(ticketId);
 }

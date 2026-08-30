@@ -1,7 +1,6 @@
 import type { AuthoritativeKpProfile } from "../kp/authoritative-types";
 import {
-  V3_AUTHORITATIVE_KP_PROFILES,
-  V5_KP_WORKFLOW_MANIFEST_JSON,
+  PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON,
   hasExactV3KpWorkflowManifest,
   isSocialResolutionKpProfile,
   isV3AuthoritativeKpProfile,
@@ -34,25 +33,8 @@ export type V3RoomBindingViolation =
   | "module";
 
 export type V3RoomBindingValidation =
-  | Readonly<{ kind: "historical" }>
   | Readonly<{ kind: "valid" }>
   | Readonly<{ kind: "invalid"; violation: V3RoomBindingViolation }>;
-
-export function claimsV3RoomBinding(input: Readonly<{
-  binding?: Pick<
-    PersistedRoomKpBinding,
-    "kp_model_profile" | "kp_workflow_manifest" | "kp_context_planner_profile"
-  >;
-  roomProfile?: AuthoritativeKpProfile;
-  requestedProfile?: AuthoritativeKpProfile;
-}>): boolean {
-  return (input.roomProfile !== undefined && isV3AuthoritativeKpProfile(input.roomProfile))
-    || (input.requestedProfile !== undefined && isV3AuthoritativeKpProfile(input.requestedProfile))
-    || (input.binding !== undefined && V3_AUTHORITATIVE_KP_PROFILES.some((profile) =>
-      profile.modelProfileVersion === input.binding!.kp_model_profile))
-    || input.binding?.kp_workflow_manifest != null
-    || input.binding?.kp_context_planner_profile != null;
-}
 
 /** The persisted model policy and workflow are one generation binding. This
  * prevents a newer prompt from driving an older Rules epoch (or vice versa). */
@@ -61,9 +43,9 @@ export function hasExactV3KpGenerationBinding(
   workflowManifest: unknown,
 ): boolean {
   return isV3AuthoritativeKpProfile(profile)
+    && isSocialResolutionKpProfile(profile)
     && hasExactV3KpWorkflowManifest(workflowManifest)
-    && ((workflowManifest === V5_KP_WORKFLOW_MANIFEST_JSON)
-      === isSocialResolutionKpProfile(profile));
+    && workflowManifest === PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON;
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -85,7 +67,7 @@ function projectedReadModel(observation: unknown): UnknownRecord | undefined {
 
 /**
  * Validates every server-side binding that distinguishes a V3 room from a
- * historical authoritative room. The complete runtime manifest comparison
+ * a valid 0.4 room. The complete runtime manifest comparison
  * covers the frozen Rules, Geometry, Event and Delivery refs; Module and
  * Planner are pinned separately by their own registries.
  */
@@ -96,15 +78,10 @@ export function validateV3RoomBinding(input: Readonly<{
   expectedModuleRef?: AuthoritativeModuleRef;
   observation?: unknown;
 }>): V3RoomBindingValidation {
-  const roomV3 = input.roomProfile !== undefined
-    && isV3AuthoritativeKpProfile(input.roomProfile);
-  const claimsV3 = claimsV3RoomBinding(input);
-  if (!claimsV3) return { kind: "historical" };
-
   if (
     input.binding === undefined
     || input.roomProfile === undefined
-    || !roomV3
+    || !isV3AuthoritativeKpProfile(input.roomProfile)
     || input.binding.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
     || input.roomProfile.modelId !== input.binding.kp_model
     || input.roomProfile.modelProfileVersion !== input.binding.kp_model_profile
@@ -121,7 +98,6 @@ export function validateV3RoomBinding(input: Readonly<{
   if (!hasExactV3KpWorkflowManifest(input.binding.kp_workflow_manifest)) {
     return { kind: "invalid", violation: "workflow" };
   }
-  const socialGeneration = input.binding.kp_workflow_manifest === V5_KP_WORKFLOW_MANIFEST_JSON;
   if (!hasExactV3KpGenerationBinding(
     input.roomProfile,
     input.binding.kp_workflow_manifest,
@@ -151,9 +127,7 @@ export function validateV3RoomBinding(input: Readonly<{
     input.binding.module_id,
     SOCIAL_RESOLUTION_MODULE_VERSION,
   );
-  const hasSocialModule = socialModuleRef !== undefined
-    && exactJson(input.expectedModuleRef, socialModuleRef);
-  if (socialGeneration !== hasSocialModule) {
+  if (socialModuleRef === undefined || !exactJson(input.expectedModuleRef, socialModuleRef)) {
     return { kind: "invalid", violation: "module" };
   }
   return { kind: "valid" };

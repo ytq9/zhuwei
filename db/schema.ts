@@ -47,13 +47,15 @@ export const rooms = sqliteTable(
     hostUserId: text("host_user_id").notNull(),
     title: text("title").notNull(),
     moduleId: text("module_id").notNull().default("black-oak-will"),
-    rulesetVersion: text("ruleset_version").notNull().default("legacy"),
+    rulesetVersion: text("ruleset_version")
+      .notNull()
+      .default("dnd5e-2014-srd5.1-authoritative-v2"),
     kpModel: text("kp_model").notNull().default("deepseek-v4-flash"),
     kpModelProfile: text("kp_model_profile")
       .notNull()
-      .default("authoritative-kp-profile-v1"),
-    /** Null on every pre-SPEC-0015 room; only newly created V3 rooms bind the
-     * private Form/Action-Language/Context profile manifest. */
+      .default("authoritative-kp-deepseek-v4-flash-private-tools-v1"),
+    /** Every room created by product 0.4 binds the complete private
+     * Form/Action-Language/Context workflow manifest. */
     kpWorkflowManifest: text("kp_workflow_manifest"),
     kpContextPlannerProfile: text("kp_context_planner_profile"),
     runtimeEpochId: text("runtime_epoch_id"),
@@ -68,8 +70,7 @@ export const rooms = sqliteTable(
 );
 
 /** Rebuild metadata for the derived static index. The authoritative prose
- * remains in versioned code/module registries; `body` is retained as a
- * migration-compatible column but production writes only an empty sentinel. */
+ * remains in code/module registries; `body` is an empty derived-index sentinel. */
 export const kpStaticChunks = sqliteTable(
   "kp_static_chunks",
   {
@@ -146,73 +147,6 @@ export const characters = sqliteTable(
   },
   (table) => [
     uniqueIndex("idx_characters_room_user").on(table.roomId, table.userId),
-  ],
-);
-
-export const messages = sqliteTable(
-  "messages",
-  {
-    id: text("id").primaryKey(),
-    roomId: text("room_id")
-      .notNull()
-      .references(() => rooms.id, { onDelete: "cascade" }),
-    userId: text("user_id"),
-    kind: text("kind").notNull(),
-    name: text("name").notNull(),
-    body: text("body").notNull(),
-    ttsText: text("tts_text"),
-    meta: text("meta").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  },
-  (table) => [index("idx_messages_room_created").on(table.roomId, table.createdAt)],
-);
-
-export const gameStates = sqliteTable("game_states", {
-  roomId: text("room_id")
-    .primaryKey()
-    .references(() => rooms.id, { onDelete: "cascade" }),
-  chapterId: text("chapter_id").notNull().default("ch1"),
-  sceneId: text("scene_id").notNull().default("wake"),
-  revealedClues: text("revealed_clues").notNull().default("[]"),
-  npcFlags: text("npc_flags").notNull().default("{}"),
-  combat: text("combat"),
-  pendingRolls: text("pending_rolls").notNull().default("[]"),
-  kpBusy: integer("kp_busy", { mode: "boolean" }).notNull().default(false),
-  secret: text("secret").notNull().default("{}"),
-  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
-
-export const sessionLogs = sqliteTable(
-  "session_logs",
-  {
-    id: text("id").primaryKey(),
-    roomId: text("room_id")
-      .notNull()
-      .references(() => rooms.id, { onDelete: "cascade" }),
-    entry: text("entry").notNull(),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  },
-  (table) => [index("idx_session_logs_room_created").on(table.roomId, table.createdAt)],
-);
-
-export const roomEventArchive = sqliteTable(
-  "room_event_archive",
-  {
-    roomId: text("room_id")
-      .notNull()
-      .references(() => rooms.id, { onDelete: "cascade" }),
-    version: integer("version").notNull(),
-    eventId: text("event_id").notNull(),
-    commandId: text("command_id").notNull(),
-    eventType: text("event_type").notNull(),
-    fictionSeconds: integer("fiction_seconds").notNull(),
-    eventJson: text("event_json").notNull(),
-    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  },
-  (table) => [
-    primaryKey({ columns: [table.roomId, table.version] }),
-    uniqueIndex("idx_room_event_archive_event").on(table.roomId, table.eventId),
-    index("idx_room_event_archive_command").on(table.roomId, table.commandId),
   ],
 );
 

@@ -3,7 +3,6 @@ import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
-import { PROPOSAL_TOOL, proposalModelInput } from "../app/_runtime/lib/kp/authoritative-policy.ts";
 import {
   compileKpFormDraft,
   lowerCausalActionProgram,
@@ -15,10 +14,10 @@ import {
 } from "../app/_runtime/lib/kp/context-pack.ts";
 import {
   KP_FORM_IDS,
-  buildKpFormModelParameters,
+  buildKpFormToolParameters,
+  kpFormToolName,
   selectAllowedKpForms,
   validateKpFormDraft,
-  validateKpFormModelEnvelope,
 } from "../app/_runtime/lib/kp/form-catalog.ts";
 import {
   createDeterministicPlannerAdapter,
@@ -64,6 +63,11 @@ export const KP_V3_EVAL_THRESHOLDS = Object.freeze({
 const DEFAULT_FIXTURE_URL = new URL("../tests/fixtures/kp-v3-gold.json", import.meta.url);
 const GROUP_IDS = Object.freeze(["G0", "G1", "G2", "G3", "G4"]);
 const LOCAL_EMBEDDING_PROFILE = "unicode-scalar-tfidf-exact-cosine-v1";
+const FROZEN_G0_SUPER_SCHEMA_BASELINE = Object.freeze({
+  schemaBytes: 34_177,
+  fixedRequestBytes: 60_000,
+  source: "pre-0.4 authoritative super-schema structural benchmark",
+});
 const EVAL_PUBLIC_D1_COVER_TOKEN = "evalpubliccoverv1";
 const SOURCE_TYPE_BY_CATEGORY = Object.freeze({
   observation: "srd",
@@ -217,7 +221,7 @@ export async function runKpV3Evaluation(options = {}) {
     productionEnabled: false,
   });
   const groups = {
-    G0: summarizeGroup("G0", "现役超级 Schema 与完整静态上下文结构基线", results.G0, false),
+    G0: summarizeGroup("G0", "冻结的 0.4 前超级 Schema 与完整静态上下文结构基线", results.G0, false),
     G1: summarizeGroup("G1", "私有小表与完整静态上下文", results.G1, true),
     G2: Object.freeze({
       ...summarizeGroup("G2", "私有小表、三层 Context Pack 与本地 SQLite FTS5/D1 合同检索", results.G2, true),
@@ -370,10 +374,10 @@ export async function runKpV3Evaluation(options = {}) {
       caseCount: fixture.cases.length,
       productionPureInterfacesInvoked: Object.freeze([
         "selectAllowedKpForms",
-        "buildKpFormModelParameters",
+        "buildKpFormToolParameters",
+        "kpFormToolName",
         "v3FormSelectionSignals",
         "validateKpFormDraft",
-        "validateKpFormModelEnvelope",
         "compileKpFormDraft",
         "lowerCausalActionProgram",
         "createRequiredContext",
@@ -559,10 +563,20 @@ function compileEvaluationCorpus(fixture) {
   return compileStaticCorpus(sources);
 }
 
+function formToolDefinitions(allowedForms) {
+  return allowedForms.map((formId) => ({
+    type: "function",
+    function: {
+      name: kpFormToolName(formId),
+      parameters: buildKpFormToolParameters(formId),
+    },
+  }));
+}
+
 function evaluateFormAndRequiredContext(goldCase, corpus) {
   const started = performance.now();
   const allowedForms = productionAllowedForms(goldCase);
-  const modelParameters = buildKpFormModelParameters(allowedForms);
+  const modelParameters = formToolDefinitions(allowedForms);
   const validDraft = goldDraft(goldCase);
   const initialDraft = goldCase.initialDraft === "repairable-invalid"
     ? invalidDraftForRepair(goldCase.goldForm, validDraft)
@@ -570,10 +584,7 @@ function evaluateFormAndRequiredContext(goldCase, corpus) {
   const initialValidation = validateKpFormDraft(goldCase.goldForm, initialDraft);
   let firstProgram = null;
   if (initialValidation.ok) firstProgram = compileKpFormDraft(goldCase.goldForm, initialDraft);
-  const finalEnvelope = validateKpFormModelEnvelope(allowedForms, {
-    formId: goldCase.goldForm,
-    draft: validDraft,
-  });
+  const finalDraft = validateKpFormDraft(goldCase.goldForm, validDraft);
   const finalProgram = compileKpFormDraft(goldCase.goldForm, validDraft);
   const lowered = lowerCausalActionProgram(finalProgram);
   const staticRequiredRefs = goldCase.requiredRefs.filter((ref) => corpus.index.structuralRefs[ref] !== undefined);
@@ -586,7 +597,7 @@ function evaluateFormAndRequiredContext(goldCase, corpus) {
     modelParameters,
     validDraft,
     initialLegal: initialValidation.ok && firstProgram !== null,
-    finalLegal: finalEnvelope.ok,
+    finalLegal: allowedForms.includes(goldCase.goldForm) && finalDraft.ok,
     finalProgram,
     lowered,
     routeMatch: allowedForms.includes(goldCase.goldForm)
@@ -618,18 +629,19 @@ function productionAllowedForms(goldCase) {
 function evaluateG0(goldCase, common, corpus) {
   const started = performance.now();
   const projection = fullProjection(common.required, corpus);
-  const modelInput = proposalModelInput({
-    preparedActionId: `prepared:${goldCase.id}`,
-    rootActionId: `root:${goldCase.id}`,
-    input: { kind: "intent", submissionId: `submission:${goldCase.id}`, text: goldCase.intent },
-    projection,
-    attempt: 1,
-  });
+  const variablePayload = {
+    proposalAttempt: 1,
+    action: { kind: "intent", submissionId: `submission:${goldCase.id}`, text: goldCase.intent },
+    rulesDiagnostics: null,
+    kpProjection: projection,
+  };
   return caseResult({
     goldCase,
     common,
-    schemaBytes: utf8Bytes(PROPOSAL_TOOL.function.parameters),
-    inputTokensEstimate: estimatedTokens(modelInput),
+    schemaBytes: FROZEN_G0_SUPER_SCHEMA_BASELINE.schemaBytes,
+    inputTokensEstimate: Math.ceil((
+      FROZEN_G0_SUPER_SCHEMA_BASELINE.fixedRequestBytes + utf8Bytes(variablePayload)
+    ) / 4),
     providedRefs: new Set(goldCase.requiredRefs),
     rank: 1,
     localLatencyMs: common.localLatencyMs + performance.now() - started,
@@ -691,7 +703,7 @@ async function evaluateRetrievalGroup(input) {
     maxUnits: 16_000,
   });
   const orderedForms = input.planner?.suggestion?.orderedFormIds ?? input.common.allowedForms;
-  const modelParameters = buildKpFormModelParameters(orderedForms);
+  const modelParameters = formToolDefinitions(orderedForms);
   const modelInput = {
     action: { kind: "intent", text: input.goldCase.intent },
     contextPack,

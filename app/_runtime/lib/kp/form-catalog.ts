@@ -21,6 +21,39 @@ export const KP_FORM_IDS = Object.freeze([
 
 export type KpFormId = (typeof KP_FORM_IDS)[number];
 
+/** Stable function names for the current private-Form transport. The tool
+ * name selects the Form; arguments contain that Form's draft directly. */
+export const KP_FORM_TOOL_NAMES = Object.freeze({
+  "clarification.v1": "submit_kp_clarification_v1",
+  "observe.v1": "submit_kp_observe_v1",
+  "npc-exchange.v1": "submit_kp_npc_exchange_v1",
+  "ordinary-check.v1": "submit_kp_ordinary_check_v1",
+  "high-risk-action.v1": "submit_kp_high_risk_action_v1",
+  "in-world-refusal.v1": "submit_kp_in_world_refusal_v1",
+  "materialization.v1": "submit_kp_materialization_v1",
+  "combat-action.v1": "submit_kp_combat_action_v1",
+  "environmental-stunt.v1": "submit_kp_environmental_stunt_v1",
+  "compound.v1": "submit_kp_compound_v1",
+} as const satisfies Readonly<Record<KpFormId, string>>);
+
+const KP_FORM_ID_BY_TOOL_NAME: ReadonlyMap<string, KpFormId> = new Map<string, KpFormId>(
+  KP_FORM_IDS.map((formId) => [KP_FORM_TOOL_NAMES[formId], formId] as const),
+);
+if (KP_FORM_ID_BY_TOOL_NAME.size !== KP_FORM_IDS.length) {
+  throw new Error("KP_FORM_TOOL_NAME_COLLISION");
+}
+
+export function kpFormToolName(formId: KpFormId): string {
+  const name = KP_FORM_TOOL_NAMES[formId];
+  if (name === undefined) throw new Error("KP_FORM_UNKNOWN");
+  return name;
+}
+
+export function kpFormIdForToolName(toolName: unknown): KpFormId | undefined {
+  if (typeof toolName !== "string") return undefined;
+  return KP_FORM_ID_BY_TOOL_NAME.get(toolName);
+}
+
 export const KP_FORM_CATALOG_REGISTRATION = Object.freeze({
   catalogRef: "kp-private-form-catalog-v3",
   catalogVersion: "kp-private-form-catalog-v3.4",
@@ -73,11 +106,6 @@ type CatalogForm = Readonly<{
 }>;
 
 export type ModelFormDescriptor = CatalogForm;
-
-export type KpFormModelOptions = Readonly<{
-  npcMechanics?: boolean;
-  socialResolution?: boolean;
-}>;
 
 const FORM_CATALOG: Readonly<Record<KpFormId, CatalogForm>> = Object.freeze({
   "clarification.v1": form(
@@ -329,7 +357,16 @@ export function selectAllowedKpForms(signals: FormSelectionSignals): readonly Kp
   if (signals.mayNeedRefusal === true) add("in-world-refusal.v1");
   for (const id of DEFAULT_FORM_ORDER) add(id);
 
-  const selected = ranked.slice(0, desiredCount - 1);
+  const selectedCount = Math.min(
+    5,
+    desiredCount - 1 + (signals.mayNeedClarification === true ? 1 : 0),
+  );
+  const selected = ranked.slice(0, selectedCount);
+  if (signals.mayNeedClarification === true && !selected.includes("clarification.v1")) {
+    // Ambiguous free prose must retain an actual clarification capability;
+    // ranking hints cannot consume every slot and force KP to guess intent.
+    selected[Math.max(0, selected.length - 1)] = "clarification.v1";
+  }
   selected.push("compound.v1");
   return Object.freeze(selected);
 }
@@ -340,15 +377,10 @@ export function selectAllowedKpForms(signals: FormSelectionSignals): readonly Kp
  */
 export function modelFormDescriptors(
   allowedForms: readonly KpFormId[],
-  options: KpFormModelOptions = {},
 ): readonly ModelFormDescriptor[] {
   assertAllowedFormSet(allowedForms);
   return Object.freeze(allowedForms.map((id) => {
-    if (options.socialResolution !== true && options.npcMechanics !== true) {
-      return FORM_CATALOG[id];
-    }
     if (id === "npc-exchange.v1") {
-      if (options.socialResolution !== true) return FORM_CATALOG[id];
       return Object.freeze({
         ...FORM_CATALOG[id],
         purpose: "Resolve an exchange with one projected NPC. desiredResponse is a typed social-intent JSON string with explicit evidenceRefs; npcResponse is typed and source-checked against finite NPC knowledge; utterance is overwritten with authenticated player text.",
@@ -357,19 +389,15 @@ export function modelFormDescriptors(
     if (id === "materialization.v1") {
       const purpose = [
         FORM_CATALOG[id].purpose,
-        ...(options.socialResolution === true
-          ? ["Character-premise answers use the establishCharacterPremise method and a typed, source-cited premise JSON string."]
-          : []),
-        ...(options.npcMechanics === true
-          ? ["NPC encounters, item transfers, NPC gear changes, and established item-state changes use exact typed JSON drafts; Rules freezes intrinsic/item sources and derives all authoritative effects."]
-          : []),
+        "Character-premise answers use the establishCharacterPremise method and a typed, source-cited premise JSON string.",
+        "NPC encounters, built-in healing-potion materialization, item transfers, NPC gear changes, and established item-state changes use exact typed JSON drafts; Rules derives trusted actors, item identities, definitions, abilities, targets, and all authoritative effects.",
       ].join(" ");
       return Object.freeze({
         ...FORM_CATALOG[id],
         purpose,
       });
     }
-    if (id !== "observe.v1" || options.socialResolution !== true) return FORM_CATALOG[id];
+    if (id !== "observe.v1") return FORM_CATALOG[id];
     return Object.freeze({
       ...FORM_CATALOG[id],
       purpose: "Resolve perception, inspection, recall, or investigation. For direct resolution, desiredInformation is the concrete answer committed to the character; for a check, it names the question answered by the frozen success/failure consequences.",
@@ -377,46 +405,27 @@ export function modelFormDescriptors(
   }));
 }
 
-export type KpFormModelParameters = Readonly<{
-  type: "object";
-  oneOf: readonly Readonly<Record<string, unknown>>[];
-}>;
-
-/** Builds the strict tool parameters for only this RootAction's allowlist. */
-export function buildKpFormModelParameters(
-  allowedForms: readonly KpFormId[],
-  options: KpFormModelOptions = {},
-): KpFormModelParameters {
-  assertAllowedFormSet(allowedForms);
-  return Object.freeze({
-    type: "object" as const,
-    oneOf: Object.freeze(allowedForms.map((formId) =>
-      modelBranchSchema(FORM_CATALOG[formId], options))),
-  });
-}
-
-/** A repair call receives exactly one selected schema. Selection (including a
- * permitted upgrade to compound) happens server-side before this function. */
-export function buildKpFormRepairParameters(
+/** Builds the direct draft schema for exactly one Form. No formId/draft
+ * envelope or cross-Form oneOf is exposed to the model. */
+export function buildKpFormToolParameters(
   formId: KpFormId,
-  options: KpFormModelOptions = {},
-): KpFormModelParameters {
+): Readonly<Record<string, unknown>> {
   if (!Object.hasOwn(FORM_CATALOG, formId)) throw new Error("KP_FORM_UNKNOWN");
-  return Object.freeze({
-    type: "object" as const,
-    oneOf: Object.freeze([modelBranchSchema(FORM_CATALOG[formId], options)]),
-  });
+  const branch = modelBranchSchema(FORM_CATALOG[formId]);
+  const properties = branch.properties;
+  if (!isPlainRecord(properties) || !isPlainRecord(properties.draft)) {
+    throw new Error("KP_FORM_SCHEMA_INVALID");
+  }
+  return properties.draft;
 }
 
 function modelBranchSchema(
   definition: CatalogForm,
-  options: KpFormModelOptions,
 ): Readonly<Record<string, unknown>> {
   const draftProperties: Record<string, unknown> = {};
   for (const field of [...definition.requiredFields, ...definition.optionalFields]) {
     const schema = modelFieldSchema(definition.fieldKinds[field]!);
-    draftProperties[field] = options.npcMechanics === true
-      && definition.id === "materialization.v1"
+    draftProperties[field] = definition.id === "materialization.v1"
       && field === "proposedFact"
       ? Object.freeze({ ...schema, maxLength: 8_000 })
       : schema;
@@ -723,26 +732,6 @@ function deepFreezeSchema(value: unknown): unknown {
   const frozen: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) frozen[key] = deepFreezeSchema(child);
   return Object.freeze(frozen);
-}
-
-export function validateKpFormModelEnvelope(
-  allowedForms: readonly KpFormId[],
-  value: unknown,
-): FormDraftValidation {
-  assertAllowedFormSet(allowedForms);
-  if (!isPlainRecord(value)) {
-    return Object.freeze({ ok: false, errors: Object.freeze(["envelope:object-required"]) });
-  }
-  const errors: string[] = [];
-  for (const key of Object.keys(value)) {
-    if (key !== "formId" && key !== "draft") errors.push(`${key}:unknown-field`);
-  }
-  if (typeof value.formId !== "string" || !allowedForms.includes(value.formId as KpFormId)) {
-    errors.push("formId:not-allowed");
-  } else {
-    errors.push(...validateKpFormDraft(value.formId as KpFormId, value.draft).errors);
-  }
-  return Object.freeze({ ok: errors.length === 0, errors: Object.freeze([...new Set(errors)].sort()) });
 }
 
 export function assertAllowedFormSet(allowedForms: readonly KpFormId[]): void {

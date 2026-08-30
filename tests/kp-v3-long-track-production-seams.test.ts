@@ -4,10 +4,13 @@ import { describe, expect, it } from "vitest";
 import { createAuthoritativeKpAdapter } from "../app/_runtime/lib/kp/authoritative";
 import {
   NARRATION_TOOL_NAME,
-  V3_AUTHORITATIVE_KP_PROFILES,
+  AUTHORITATIVE_KP_PROFILES,
 } from "../app/_runtime/lib/kp/authoritative-policy";
 import { createModelProfileRegistry } from "../app/_runtime/lib/kp/model-registry";
-import { PRIVATE_FORM_PROPOSAL_TOOL_NAME } from "../app/_runtime/lib/kp/private-form-policy";
+import {
+  kpFormIdForToolName,
+  kpFormToolName,
+} from "../app/_runtime/lib/kp/form-catalog";
 import { createV3ProductionContextPreparer } from "../app/_runtime/lib/kp/v3-production-context";
 import { authoritativeModuleProfile } from "../app/_runtime/lib/module/authoritative";
 import {
@@ -15,7 +18,7 @@ import {
   handleViewerNarrationRecovery,
 } from "../app/_runtime/lib/room/action";
 import { project, replay } from "../app/_runtime/lib/rules";
-import { ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
 import { AUTHORITATIVE_RULESET_VERSION } from "../app/_runtime/lib/rules/ruleset";
 import {
   buildAuthoritativeActionInput,
@@ -211,7 +214,7 @@ function toolResponse(
     id: `model-response:kp-v3-long-track:${sequence}`,
     object: "chat.completion",
     created: 1_788_000_000 + sequence,
-    model: V3_AUTHORITATIVE_KP_PROFILES[0].modelId,
+    model: AUTHORITATIVE_KP_PROFILES[0].modelId,
     choices: [{
       index: 0,
       finish_reason: "tool_calls",
@@ -229,16 +232,6 @@ function toolResponse(
   };
 }
 
-function privateFormEnvelope(
-  formId: "observe.v1" | "environmental-stunt.v1",
-  draft: JsonRecord,
-) {
-  return {
-    formId,
-    draft: structuredClone(draft),
-  };
-}
-
 class LongTrackModelBinding {
   proposalCalls = 0;
   narrationCalls = 0;
@@ -253,13 +246,15 @@ class LongTrackModelBinding {
   async run(_model: string, value: unknown) {
     const request = record(value, "model request");
     const tools = list(request.tools, "strict model tools");
-    const tool = record(record(tools[0], "strict model tool").function, "tool definition");
-    const toolName = String(tool.name);
+    const toolNames = tools.map((candidate) => String(record(
+      record(candidate, "strict model tool").function,
+      "tool definition",
+    ).name));
     const messages = list(request.messages, "bounded model messages");
     const payload = JSON.parse(String(record(messages[1], "model user message").content)) as JsonRecord;
     this.responseSequence += 1;
 
-    if (toolName === NARRATION_TOOL_NAME) {
+    if (toolNames.length === 1 && toolNames[0] === NARRATION_TOOL_NAME) {
       this.narrationCalls += 1;
       expect(Object.keys(payload).sort()).toEqual([
         "actorAction",
@@ -294,7 +289,9 @@ class LongTrackModelBinding {
       );
     }
 
-    expect(toolName).toBe(PRIVATE_FORM_PROPOSAL_TOOL_NAME);
+    expect(toolNames.length).toBeGreaterThanOrEqual(3);
+    expect(toolNames.length).toBeLessThanOrEqual(6);
+    expect(toolNames.every((name) => kpFormIdForToolName(name) !== undefined)).toBe(true);
     this.proposalCalls += 1;
     const contextPack = record(payload.contextPack, "production three-layer Context Pack");
     const required = record(contextPack.required, "RequiredContext");
@@ -311,22 +308,25 @@ class LongTrackModelBinding {
     this.rootsBySubmission.set(submissionId, rootActionId);
     if (index === 2) this.bobFailureRootActionId = rootActionId;
     if (index === 10) {
+      expect(toolNames).toContain(kpFormToolName("environmental-stunt.v1"));
       return toolResponse(
-        PRIVATE_FORM_PROPOSAL_TOOL_NAME,
-        privateFormEnvelope("environmental-stunt.v1", stateOnlyEnvironmentDraft()),
+        kpFormToolName("environmental-stunt.v1"),
+        stateOnlyEnvironmentDraft(),
         this.responseSequence,
       );
     }
     if (index === 2) {
+      expect(toolNames).toContain(kpFormToolName("environmental-stunt.v1"));
       return toolResponse(
-        PRIVATE_FORM_PROPOSAL_TOOL_NAME,
-        privateFormEnvelope("environmental-stunt.v1", areaHazardEnvironmentDraft()),
+        kpFormToolName("environmental-stunt.v1"),
+        areaHazardEnvironmentDraft(),
         this.responseSequence,
       );
     }
+    expect(toolNames).toContain(kpFormToolName("observe.v1"));
     return toolResponse(
-      PRIVATE_FORM_PROPOSAL_TOOL_NAME,
-      privateFormEnvelope("observe.v1", observeDraft(index, String(intent.text))),
+      kpFormToolName("observe.v1"),
+      observeDraft(index, String(intent.text)),
       this.responseSequence,
     );
   }
@@ -357,8 +357,8 @@ describe("V3 31-interaction production-seam long track", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId: ROOM_ID,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },
@@ -375,7 +375,7 @@ describe("V3 31-interaction production-seam long track", () => {
     );
     const archiveExport = serviceCapabilities.archiveExport;
     const model = new LongTrackModelBinding();
-    const kpProfile = V3_AUTHORITATIVE_KP_PROFILES[0];
+    const kpProfile = AUTHORITATIVE_KP_PROFILES[0];
     const registry = createModelProfileRegistry([{
       profileRef: kpProfile.modelProfileVersion,
       provider: kpProfile.provider,
@@ -675,12 +675,12 @@ describe("V3 31-interaction production-seam long track", () => {
       const sourceReadModel = record(sourceTable.observation.readModel, "source final read model");
       const viewer = record(sourceReadModel.viewer, "source final frozen viewer");
       const sourceProjection = record(project(
-        ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+        ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
         replayed.state,
         viewer,
       ), "source replay viewer projection");
       const restoredProjection = record(project(
-        ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+        ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
         restoredReplay.state,
         viewer,
       ), "restored replay viewer projection");

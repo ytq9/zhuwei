@@ -16,7 +16,7 @@ test("the authoritative DeepSeek binding preserves tool calls and translates the
           message: {
             tool_calls: [{
               type: "function",
-              function: { name: "submit_kp_proposal", arguments: "{\"ok\":true}" },
+              function: { name: "submit_kp_observe_v1", arguments: "{\"ok\":true}" },
             }],
           },
         }],
@@ -33,7 +33,7 @@ test("the authoritative DeepSeek binding preserves tool calls and translates the
     tools: [{
       type: "function",
       function: {
-        name: "submit_kp_proposal",
+        name: "submit_kp_observe_v1",
         parameters: { type: "object", properties: {} },
       },
     }],
@@ -54,7 +54,7 @@ test("the authoritative DeepSeek binding preserves tool calls and translates the
     tools: [{
       type: "function",
       function: {
-        name: "submit_kp_proposal",
+        name: "submit_kp_observe_v1",
         parameters: { type: "object", properties: {} },
       },
     }],

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-import { narrationModelInput } from "../app/_runtime/lib/kp/authoritative-policy";
+import { bodyOnlyNarrationModelInput } from "../app/_runtime/lib/kp/narration-v3";
 import { projectAuthoritativeTableObservation } from "../app/_runtime/lib/table/authoritative";
 import {
   directConsequencesProposal,
@@ -61,7 +61,7 @@ async function initializedWithAdministration(name: string) {
   const result = record(await stub.initializeAuthoritative({
     roomId: name,
     moduleId: "black-oak-will",
-    moduleVersion: "legacy-anchor-v1",
+    moduleVersion: "social-resolution-v1",
     members: [
       { principalId: ALICE.principal.id, role: "player" },
       { principalId: BOB.principal.id, role: "player" },
@@ -332,16 +332,16 @@ describe("observer-specific single-slot delivery", () => {
     );
     const actorProjection = (plan: RecordValue) => audiences(plan).find((entry) =>
       entry.characterId === "character:delivery:alice")?.kpProjection;
-    const successInput = narrationModelInput({
+    const successInput = bodyOnlyNarrationModelInput({
       rootActionId: String(success.prepared.rootActionId),
       receipt: success.committed.receipt,
       projection: actorProjection(success.plan),
-    });
-    const failureInput = narrationModelInput({
+    }, { socialResolution: true });
+    const failureInput = bodyOnlyNarrationModelInput({
       rootActionId: String(failure.prepared.rootActionId),
       receipt: failure.committed.receipt,
       projection: actorProjection(failure.plan),
-    });
+    }, { socialResolution: true });
     const successPrompt = String((successInput.messages as Array<RecordValue>)[1].content);
     const failurePrompt = String((failureInput.messages as Array<RecordValue>)[1].content);
 

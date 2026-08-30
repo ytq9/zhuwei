@@ -2,12 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import {
-  CURRENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
-  LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-} from "../app/_runtime/lib/rules/profiles/manifests.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 
 const projectRoot = new URL("../", import.meta.url);
 
@@ -36,12 +31,12 @@ test("new rooms pin authoritative profiles without creating legacy active state"
   assert.match(create, /authoritativeKpProfileByModelId\(model\)/);
   assert.match(create, /kp_model, kp_model_profile/);
   assert.match(create, /profile\.modelProfileVersion/);
-  assert.match(create, /V5_KP_WORKFLOW_MANIFEST_JSON/);
+  assert.match(create, /PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON/);
   assert.doesNotMatch(create, /V4_KP_WORKFLOW_MANIFEST_JSON/);
   assert.doesNotMatch(create, /game_states/);
 });
 
-test("exact environment-v4 static cards carry canonical skills, Expertise, and class saves into Room seeds", async () => {
+test("exact V5 static cards carry canonical skills, Expertise, and class saves into Room seeds", async () => {
   const { buildAuthoritativeRoomSeeds } = await import(
     "../app/_runtime/lib/table/authoritative.ts"
   );
@@ -58,44 +53,11 @@ test("exact environment-v4 static cards carry canonical skills, Expertise, and c
     }],
     openingSceneId: "wake",
     characterIdFor: (userId) => `character:${userId}`,
-    runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+    runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   });
   assert.deepEqual(seeds.characters[0].staticCard.proficientSkills, ["investigation", "stealth"]);
   assert.deepEqual(seeds.characters[0].staticCard.expertiseSkills, ["stealth"]);
   assert.deepEqual(seeds.characters[0].staticCard.proficientSaves, ["dex", "int"]);
-});
-
-test("historical runtime static cards preserve sheet aliases without V4 proficiency fields", async () => {
-  const { buildAuthoritativeCharacterSeed } = await import(
-    "../app/_runtime/lib/table/authoritative.ts"
-  );
-  const sheet = {
-    name: " 影刃 ",
-    classId: "rogue",
-    skills: ["stealth", "investigation"],
-    expertise: ["stealth"],
-  };
-  for (const runtimeProfiles of [
-    CURRENT_RUNTIME_PROFILE_MANIFEST,
-    LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-    ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-  ]) {
-    const seed = buildAuthoritativeCharacterSeed({
-      characterId: `character:${runtimeProfiles.manifest.profileId}`,
-      controllerPrincipalId: "principal:rogue",
-      sheet,
-      sceneId: "wake",
-      runtimeProfiles,
-    });
-    assert.deepEqual(seed.staticCard, {
-      ...sheet,
-      name: "影刃",
-      sceneId: "wake",
-    });
-    assert.equal("proficientSkills" in seed.staticCard, false);
-    assert.equal("expertiseSkills" in seed.staticCard, false);
-    assert.equal("proficientSaves" in seed.staticCard, false);
-  }
 });
 
 test("every authoritative party endpoint rejects an unavailable room profile before dispatch", async () => {
@@ -184,10 +146,8 @@ test("starting authoritative-v2 seeds the Room Authority from members and locked
   const server = await source("app/_runtime/lib/table/server.ts");
   const start = exportedSection(server, "startGame", "sendAction");
   const v2Start = start.indexOf("info.ruleset_version === AUTHORITATIVE_RULESET_VERSION");
-  const legacyStart = start.indexOf("info.ruleset_version === RULESET_VERSION", v2Start + 1);
   assert.notEqual(v2Start, -1, "authoritative start branch is missing");
-  assert.notEqual(legacyStart, -1, "legacy start branch is missing");
-  const v2Branch = start.slice(v2Start, legacyStart);
+  const v2Branch = start.slice(v2Start);
   assert.match(v2Branch, /initializeAuthoritativeRoom/);
   assert.match(v2Branch, /return\s*\{\s*ok: true as const/);
   assert.doesNotMatch(v2Branch, /messages|session_logs|game_states/);
@@ -558,12 +518,10 @@ test("authoritative table reads only the viewer projection, experienced transcri
   }), "the current Room read-model adapter uses viewer.characterId");
 
   const server = await source("app/_runtime/lib/table/server.ts");
-  const fetch = exportedSection(server, "fetchTable", "setRoomModel");
+  const fetch = exportedSection(server, "fetchTable", "lockCharacter");
   const v2Start = fetch.indexOf("info.ruleset_version === AUTHORITATIVE_RULESET_VERSION");
-  const legacyMessages = fetch.indexOf("const messages =", v2Start + 1);
   assert.notEqual(v2Start, -1, "authoritative fetch branch is missing");
-  assert.notEqual(legacyMessages, -1, "legacy message query boundary is missing");
-  const v2Branch = fetch.slice(v2Start, legacyMessages);
+  const v2Branch = fetch.slice(v2Start);
   assert.match(v2Branch, /observeAuthoritativeRoom/);
   assert.match(v2Branch, /projectAuthoritativeTableObservation/);
   assert.match(v2Branch, /locationThreads:\s*projected\?\.locationThreads \?\? \[\]/);
@@ -868,7 +826,7 @@ test("fetchTable authoritative state carries only the exact-ruleset tactical pro
       projected,
     }),
     null,
-    "the Legacy Adapter must not receive authoritative tactical space",
+    "a non-current ruleset must not receive authoritative tactical space",
   );
   assert.equal(
     buildAuthoritativeTableState({ rulesetVersion: "unknown-ruleset", projected }),
@@ -877,12 +835,11 @@ test("fetchTable authoritative state carries only the exact-ruleset tactical pro
   );
 
   const server = await source("app/_runtime/lib/table/server.ts");
-  const fetch = exportedSection(server, "fetchTable", "setRoomModel");
+  const fetch = exportedSection(server, "fetchTable", "lockCharacter");
   const authoritativeStart = fetch.indexOf(
     "info.ruleset_version === AUTHORITATIVE_RULESET_VERSION",
   );
-  const legacyStart = fetch.indexOf("if (info.ruleset_version !== RULESET_VERSION)");
-  const authoritativeBranch = fetch.slice(authoritativeStart, legacyStart);
+  const authoritativeBranch = fetch.slice(authoritativeStart);
   assert.match(
     authoritativeBranch,
     /buildAuthoritativeTableState/,
@@ -890,54 +847,38 @@ test("fetchTable authoritative state carries only the exact-ruleset tactical pro
   );
 });
 
-test("table reads fail closed before Legacy storage unless the ruleset version is exact", async () => {
+test("table reads expose only the exact current ruleset and no retired storage path", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
-  const fetch = exportedSection(server, "fetchTable", "setRoomModel");
-  const authoritativeEnd = fetch.indexOf("const messages =");
-  assert.notEqual(authoritativeEnd, -1, "Legacy table reads are missing from the audit boundary");
-
-  const beforeLegacyReads = fetch.slice(0, authoritativeEnd);
-  assert.match(
-    beforeLegacyReads,
-    /info\.ruleset_version\s*!==\s*RULESET_VERSION[^]*return\s*\{\s*ok:\s*false as const/,
-    "an unknown ruleset can fall through to messages/session_logs/game_states",
-  );
+  const fetch = exportedSection(server, "fetchTable", "lockCharacter");
+  assert.match(fetch, /AUTHORITATIVE_RULESET_VERSION/);
+  assert.match(fetch, /0\.4 之前的开发数据/);
+  assert.doesNotMatch(fetch, /\bRULESET_VERSION\b|from messages|session_logs|game_states/);
 });
 
-test("unknown rulesets cannot reach unversioned Table mechanics or active-state writes", async () => {
+test("current-only Table endpoints contain no retired mechanics or active-state writes", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
   const cases = [
-    ["setRoomModel", "lockCharacter", "current.ruleset_version !== RULESET_VERSION", "update rooms set kp_model"],
-    ["startGame", "sendAction", "info.ruleset_version !== RULESET_VERSION", "const where:"],
-    ["sendAction", "acknowledgeDelivery", "info.ruleset_version !== RULESET_VERSION", "let sheet = ensureGear"],
-    ["resolveRoll", "joinCombat", "roomInfo?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["joinCombat", "extraAttack", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["extraAttack", "endTurn", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["endTurn", "leaveFight", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["leaveFight", "resolveReact", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["resolveReact", "restNow", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["restNow", "cancelRest", "rules?.ruleset_version !== RULESET_VERSION", "const pc = ("],
-    ["cancelRest", "castSpell", "rules?.ruleset_version !== RULESET_VERSION", "const pc = ("],
-    ["castSpell", "useFeature", "rules?.ruleset_version !== RULESET_VERSION", "const row = ("],
-    ["useFeature", "useHitDie", "rules?.ruleset_version !== RULESET_VERSION", "const row = ("],
-    ["useHitDie", "kickMember", "rules?.ruleset_version !== RULESET_VERSION", "const row = ("],
+    ["startGame", "sendAction"],
+    ["sendAction", "retryNarration"],
+    ["resolveRoll", "joinCombat"],
+    ["joinCombat", "extraAttack"],
+    ["extraAttack", "endTurn"],
+    ["endTurn", "leaveFight"],
+    ["leaveFight", "resolveReact"],
+    ["resolveReact", "restNow"],
+    ["restNow", "cancelRest"],
+    ["cancelRest", "castSpell"],
+    ["castSpell", "useFeature"],
+    ["useFeature", "useHitDie"],
+    ["useHitDie", "kickMember"],
   ];
 
-  for (const [name, nextName, gateText, legacyFallbackText] of cases) {
+  for (const [name, nextName] of cases) {
     const section = exportedSection(server, name, nextName);
-    const authoritative = section.indexOf("AUTHORITATIVE_RULESET_VERSION");
-    const gate = section.indexOf(gateText, authoritative);
-    const legacyFallback = section.indexOf(legacyFallbackText, authoritative);
-    assert.notEqual(authoritative, -1, `${name} authoritative branch is missing`);
-    assert.notEqual(legacyFallback, -1, `${name} unversioned Legacy boundary is missing`);
-    assert.ok(
-      gate > authoritative && gate < legacyFallback,
-      `${name} can reach unversioned Legacy mechanics without an exact ruleset gate`,
-    );
-    assert.match(
-      section.slice(gate, legacyFallback),
-      /return\s*\{\s*ok:\s*false as const/,
-      `${name} does not fail closed for an unknown ruleset`,
+    assert.match(section, /AUTHORITATIVE_RULESET_VERSION/, `${name} current gate is missing`);
+    assert.doesNotMatch(
+      section,
+      /\bRULESET_VERSION\b|game_states|session_logs|runRulesV2Action|commitRulesV2Direct/,
     );
   }
 });
@@ -1009,12 +950,10 @@ test("authoritative actions derive the character from the trusted viewer and pre
   });
 
   const server = await source("app/_runtime/lib/table/server.ts");
-  const send = exportedSection(server, "sendAction", "resolveRoll");
+  const send = exportedSection(server, "sendAction", "retryNarration");
   const v2Start = send.indexOf("info.ruleset_version === AUTHORITATIVE_RULESET_VERSION");
-  const legacyStart = send.indexOf("info.ruleset_version === RULESET_VERSION", v2Start + 1);
   assert.notEqual(v2Start, -1, "authoritative send branch is missing");
-  assert.notEqual(legacyStart, -1, "legacy send boundary is missing");
-  const v2Branch = send.slice(v2Start, legacyStart);
+  const v2Branch = send.slice(v2Start);
   assert.match(v2Branch, /runAuthoritativeRoomAction/);
   assert.doesNotMatch(v2Branch, /characterId\s*:/);
   assert.match(v2Branch, /submissionId/);
@@ -1061,9 +1000,9 @@ test("the browser owns transport choices only and the API restores trusted ident
 test("the server keeps authenticated acknowledgement while the table has no manual confirmation control", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
   const ack = exportedSection(server, "acknowledgeDelivery", "resolveRoll");
-  assert.match(ack, /memberOf\(room\.id, context\.userId\)/);
+  assert.match(ack, /acknowledgeAuthoritativeDelivery\(\s*room\.id,\s*context\.userId/s);
   assert.match(ack, /AUTHORITATIVE_RULESET_VERSION/);
-  assert.match(ack, /acknowledgeAuthoritativeDelivery/);
+  assert.doesNotMatch(ack, /data\.(?:userId|principalId)/);
   assert.doesNotMatch(ack, /messages|session_logs|game_states|delete|update|insert/);
 
   const client = await source("app/_runtime/lib/table/client.ts");
@@ -1330,14 +1269,12 @@ test("Arcane Recovery exposes every legal 1-5 slot deficit and freezes a bounded
   const server = await source("app/_runtime/lib/table/server.ts");
   const restSection = exportedSection(server, "restNow", "cancelRest");
   const authoritativeStart = restSection.indexOf("rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION");
-  const legacyStart = restSection.indexOf("rules?.ruleset_version === RULESET_VERSION", authoritativeStart + 1);
-  const authoritativeBranch = restSection.slice(authoritativeStart, legacyStart);
+  const authoritativeBranch = restSection.slice(authoritativeStart);
   assert.match(authoritativeBranch, /arcaneRecoverySlotLevels:\s*data\.arcaneRecoverySlotLevels/);
   assert.doesNotMatch(authoritativeBranch, /arcane:\s*data\.arcane/);
 
   const client = await source("app/_runtime/lib/table/client.ts");
   assert.match(client, /export type RestNowData[^]*arcaneRecoverySlotLevels\?: number\[\]/);
-  assert.match(client, /Legacy Adapter only[^]*arcane\?: 0 \| 1 \| 2/);
 
   const ui = await source("app/_runtime/components/play-table.tsx");
   assert.match(ui, /\(\[1, 2, 3, 4, 5\] as const\)/);
@@ -1352,7 +1289,7 @@ test("Arcane Recovery exposes every legal 1-5 slot deficit and freezes a bounded
   assert.match(authoritativeAdapter, /projected\?\.maximumSlotsByLevel/);
 });
 
-test("every authoritative table button returns before legacy state, dice, and mechanics", async () => {
+test("every authoritative table button uses only the current Room Action seam", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
   const boundaries = [
     ["joinCombat", "extraAttack"],
@@ -1369,40 +1306,26 @@ test("every authoritative table button returns before legacy state, dice, and me
   for (const [name, nextName] of boundaries) {
     const section = exportedSection(server, name, nextName);
     assert.match(section, /submissionId\?: string/, `${name} must accept a transport submission id`);
-    const v2Start = section.indexOf("rules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION");
-    const legacyStart = section.indexOf("rules?.ruleset_version === RULESET_VERSION", v2Start + 1);
+    const v2Start = section.indexOf("AUTHORITATIVE_RULESET_VERSION");
     assert.notEqual(v2Start, -1, `${name} authoritative branch is missing`);
-    assert.notEqual(legacyStart, -1, `${name} legacy boundary is missing`);
     const forbiddenPattern = /game_states|messages|session_logs|rollDie|roomProjection|commitRulesV2Direct|ensureGear|applyCast|applyFeature|spendHitDie|spendCost|runKpTurn|narrateDecision/;
-    const forbidden = forbiddenPattern.exec(section.slice(v2Start));
-    assert.ok(forbidden, `${name} legacy implementation evidence is missing`);
-    const beforeLegacyAuthority = section.slice(v2Start, v2Start + forbidden.index);
-    const v2Branch = section.slice(v2Start, legacyStart);
+    const v2Branch = section.slice(v2Start);
     assert.match(v2Branch, /submitAuthoritativeTableAction/, `${name} must use the Room Action seam`);
     assert.match(v2Branch, /buildAuthoritativeButtonAction/, `${name} must rebuild an allowlisted semantic action`);
-    assert.match(beforeLegacyAuthority, /return submitAuthoritativeTableAction/);
-    assert.doesNotMatch(beforeLegacyAuthority, forbiddenPattern);
+    assert.match(v2Branch, /return submitAuthoritativeTableAction/);
+    assert.doesNotMatch(v2Branch, forbiddenPattern);
   }
 
   const resolve = exportedSection(server, "resolveRoll", "joinCombat");
   assert.match(resolve, /submissionId\?: string/);
   const resolveV2 = resolve.indexOf("roomInfo?.ruleset_version === AUTHORITATIVE_RULESET_VERSION");
-  const resolveLegacy = resolve.indexOf("roomInfo?.ruleset_version === RULESET_VERSION", resolveV2 + 1);
   assert.notEqual(resolveV2, -1, "resolveRoll authoritative branch is missing");
-  assert.notEqual(resolveLegacy, -1, "resolveRoll legacy boundary is missing");
-  const resolveBranch = resolve.slice(resolveV2, resolveLegacy);
+  const resolveBranch = resolve.slice(resolveV2);
   assert.match(resolveBranch, /submitAuthoritativeTableAction/);
   assert.match(resolveBranch, /kind: "roll"/);
   assert.match(resolveBranch, /randomnessId: data\.rollId/);
   assert.match(resolveBranch, /不接受客户端追加骰值或加值/);
   assert.doesNotMatch(resolveBranch, /rollDie|game_states/);
-
-  const model = exportedSection(server, "setRoomModel", "lockCharacter");
-  const modelV2 = model.indexOf("AUTHORITATIVE_RULESET_VERSION");
-  const modelWrite = model.indexOf("update rooms");
-  assert.notEqual(modelV2, -1, "authoritative model pin is missing");
-  assert.ok(modelV2 < modelWrite, "authoritative model must be checked before a D1 write");
-  assert.match(model, /本桌模型在创建时固定，创建后不能更换/);
 });
 
 test("authoritative button submission ids survive transport retries and clear only on terminal outcomes", async () => {

@@ -5,14 +5,20 @@ import {
   AuthoritativeKpModelError,
   createAuthoritativeKpAdapter,
 } from "../app/_runtime/lib/kp/authoritative.ts";
-import { V3_AUTHORITATIVE_KP_PROFILES } from "../app/_runtime/lib/kp/authoritative-policy.ts";
-import { PRIVATE_FORM_PROPOSAL_TOOL_NAME } from "../app/_runtime/lib/kp/private-form-policy.ts";
+import { AUTHORITATIVE_KP_PROFILES } from "../app/_runtime/lib/kp/authoritative-policy.ts";
+import {
+  KP_FORM_IDS,
+  kpFormToolName,
+} from "../app/_runtime/lib/kp/form-catalog.ts";
+import { HEALING_POTION_ITEM_DEFINITION_ID } from "../app/_runtime/lib/rules/v2/items.ts";
 
-const PROFILE = V3_AUTHORITATIVE_KP_PROFILES[0];
+const PROFILE = AUTHORITATIVE_KP_PROFILES[0];
 const ABILITY_REF = "ability:alice:test-bow";
 const FACT_REF = "fact:scene:loose-balcony";
 
 function toolResponse(value, index = 1) {
+  const formId = typeof value?.formId === "string" ? value.formId : undefined;
+  const knownForm = KP_FORM_IDS.includes(formId);
   return {
     id: `model-response:private-form:${index}`,
     object: "chat.completion",
@@ -28,8 +34,8 @@ function toolResponse(value, index = 1) {
           id: `call:private-form:${index}`,
           type: "function",
           function: {
-            name: PRIVATE_FORM_PROPOSAL_TOOL_NAME,
-            arguments: JSON.stringify(value),
+            name: knownForm ? kpFormToolName(formId) : "submit_kp_invented_v1",
+            arguments: JSON.stringify(value?.draft ?? value),
           },
         }],
       },
@@ -146,6 +152,228 @@ test("one narrow repair cannot change goal, method, target semantics, or player 
   assert.equal(typeof repairPayload.semanticFreezeHash, "string");
   assert.equal("contextPack" in repairPayload, false);
   assert.equal("projection" in repairPayload, false);
+});
+
+test("V5 materialization rejects model-authored item mechanics before Rules", async () => {
+  const calls = [];
+  const sceneRef = "scene:private-form:apothecary";
+  const materializationContext = contextPack();
+  materializationContext.required.sceneDynamics = { sceneRef };
+  const base = {
+    goal: "取得药柜中因先前线索而存在的治疗药水",
+    method: "materializeItem",
+    basisRefs: [sceneRef, FACT_REF],
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
+  };
+  const invalid = {
+    ...base,
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.item-materialization-draft/v1",
+      definitionRef: "item-definition:model-invented:greater-healing",
+      quantity: 1,
+      healing: "20d20+200",
+    }),
+  };
+  const repaired = {
+    ...base,
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.item-materialization-draft/v1",
+      definitionRef: HEALING_POTION_ITEM_DEFINITION_ID,
+      quantity: 1,
+    }),
+  };
+  const adapter = createAuthoritativeKpAdapter({
+    profile: PROFILE,
+    prepareV3Context: async (_request, allowedForms) => ({
+      contextPack: materializationContext,
+      orderedFormIds: allowedForms,
+    }),
+    ai: {
+      async run(_model, input) {
+        calls.push(input);
+        return calls.length === 1
+          ? toolResponse({ formId: "materialization.v1", draft: invalid }, 1)
+          : toolResponse({ formId: "materialization.v1", draft: repaired }, 2);
+      },
+    },
+  });
+
+  await assert.rejects(adapter.propose(request("我拿起线索所指药柜里的治疗药水。")), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.publicCode, "PROPOSAL_REPAIR_EXHAUSTED");
+    assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema");
+    return true;
+  });
+  assert.equal(calls.length, 2);
+  const repairPayload = JSON.parse(calls[1].messages[1].content);
+  assert.ok(repairPayload.errors.includes("draft.proposedFact:item-materialization-schema-invalid"));
+  assert.equal(JSON.stringify(repairPayload).includes("20d20+200"), true);
+  assert.equal(JSON.stringify(repairPayload.finiteReferences).includes("greater-healing"), false);
+});
+
+test("a social Form repair cannot replace the typed goal, assertion, or NPC response", async () => {
+  const calls = [];
+  const npcRef = "npc:varo";
+  const actorRef = "character:alice";
+  const invalidEvidenceRef = "fact:not-authoritative";
+  const originalIntent = {
+    schema: "zhuwei.social-intent-draft/v1",
+    npcRef,
+    influenceGoal: "deemphasize",
+    desiredBehavior: "不再追问猎魔人身份，转回眼前事务",
+    addressedThreadRef: null,
+    evidenceRefs: [invalidEvidenceRef],
+    assertion: null,
+  };
+  const baseDraft = {
+    goal: "让瓦罗不再紧抓猎魔人身份",
+    method: "说明身份并不影响今天前来帮忙",
+    utterance: "我对瓦罗说：是不是猎魔人都不重要，我今天是来这里帮忙的。",
+    desiredResponse: JSON.stringify(originalIntent),
+    npcResponse: JSON.stringify({
+      schema: "zhuwei.npc-response-draft/v1",
+      mode: "reaction",
+      reaction: "redirect",
+    }),
+    basisRefs: [npcRef],
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
+  };
+  const maliciousRepair = {
+    ...baseDraft,
+    desiredResponse: JSON.stringify({
+      ...originalIntent,
+      influenceGoal: "beBelieved",
+      desiredBehavior: "相信我是剑湾法庭猎魔人",
+      evidenceRefs: [],
+      assertion: {
+        subjectRef: actorRef,
+        predicate: "isA",
+        polarity: "affirm",
+        object: { referenceKind: "unresolvedLabel", label: "剑湾法庭猎魔人" },
+      },
+    }),
+    npcResponse: JSON.stringify({
+      schema: "zhuwei.npc-response-draft/v1",
+      mode: "reaction",
+      reaction: "acknowledge",
+    }),
+  };
+  const socialContext = contextPack();
+  socialContext.required.trustedControl = {
+    characterRef: actorRef,
+    controllerRef: actorRef,
+  };
+  socialContext.required.npcViews = [{ npcRef, knowledgeRefs: [] }];
+  const adapter = createAuthoritativeKpAdapter({
+    profile: PROFILE,
+    prepareV3Context: async (_request, allowedForms) => ({
+      contextPack: socialContext,
+      orderedFormIds: allowedForms,
+    }),
+    ai: {
+      async run(_model, input) {
+        calls.push(input);
+        return calls.length === 1
+          ? toolResponse({ formId: "npc-exchange.v1", draft: baseDraft }, 1)
+          : toolResponse({ formId: "npc-exchange.v1", draft: maliciousRepair }, 2);
+      },
+    },
+  });
+
+  await assert.rejects(adapter.propose({
+    ...request(baseDraft.utterance),
+    input: {
+      kind: "intent",
+      submissionId: "submission:private-form",
+      characterId: actorRef,
+      text: baseDraft.utterance,
+    },
+  }), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.publicCode, "PROPOSAL_REPAIR_EXHAUSTED");
+    assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema");
+    return true;
+  });
+  assert.equal(calls.length, 2);
+});
+
+test("a social Form repair may only remove the specifically invalid evidence leaf", async () => {
+  const calls = [];
+  const npcRef = "npc:varo";
+  const actorRef = "character:alice";
+  const invalidEvidenceRef = "fact:not-authoritative";
+  const intent = {
+    schema: "zhuwei.social-intent-draft/v1",
+    npcRef,
+    influenceGoal: "beBelieved",
+    desiredBehavior: "暂时按玩家陈述的身份继续交谈",
+    addressedThreadRef: null,
+    evidenceRefs: [invalidEvidenceRef],
+    assertion: {
+      subjectRef: actorRef,
+      predicate: "isA",
+      polarity: "affirm",
+      object: { referenceKind: "unresolvedLabel", label: "剑湾法庭猎魔人" },
+    },
+  };
+  const initial = {
+    goal: "让瓦罗暂时相信我的自述身份",
+    method: "清楚说明来由",
+    utterance: "我对瓦罗说：我是剑湾法庭的一名猎魔人。",
+    desiredResponse: JSON.stringify(intent),
+    npcResponse: JSON.stringify({
+      schema: "zhuwei.npc-response-draft/v1",
+      mode: "reaction",
+      reaction: "acknowledge",
+    }),
+    basisRefs: [npcRef],
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
+  };
+  const repaired = {
+    ...initial,
+    desiredResponse: JSON.stringify({ ...intent, evidenceRefs: [] }),
+  };
+  const socialContext = contextPack();
+  socialContext.required.trustedControl = {
+    characterRef: actorRef,
+    controllerRef: actorRef,
+  };
+  socialContext.required.npcViews = [{ npcRef, knowledgeRefs: [] }];
+  const adapter = createAuthoritativeKpAdapter({
+    profile: PROFILE,
+    prepareV3Context: async (_request, allowedForms) => ({
+      contextPack: socialContext,
+      orderedFormIds: allowedForms,
+    }),
+    ai: {
+      async run(_model, input) {
+        calls.push(input);
+        return calls.length === 1
+          ? toolResponse({ formId: "npc-exchange.v1", draft: initial }, 1)
+          : toolResponse({ formId: "npc-exchange.v1", draft: repaired }, 2);
+      },
+    },
+  });
+
+  const result = await adapter.propose({
+    ...request(initial.utterance),
+    input: {
+      kind: "intent",
+      submissionId: "submission:private-form",
+      characterId: actorRef,
+      text: initial.utterance,
+    },
+  });
+  assert.equal(result.repairUsed, true);
+  assert.deepEqual(JSON.parse(result.draft.desiredResponse).evidenceRefs, []);
+  assert.notEqual(result.finalSemanticHash, result.semanticFreezeHash);
+  assert.equal(calls.length, 2);
 });
 
 test("an invalid or missing initial Form selection fails without an implicit compound repair", async () => {

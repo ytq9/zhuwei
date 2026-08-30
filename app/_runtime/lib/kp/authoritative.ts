@@ -4,11 +4,6 @@ import {
   isSocialResolutionKpProfile,
   isV3AuthoritativeKpProfile,
   NARRATION_TOOL_NAME,
-  PROPOSAL_TOOL_NAME,
-  narrationModelInput,
-  narrationSchemaCorrectionModelInput,
-  proposalModelInput,
-  proposalSchemaCorrectionModelInput,
 } from "./authoritative-policy";
 import {
   compileKpFormDraft,
@@ -17,9 +12,10 @@ import {
 } from "./causal-action-program";
 import {
   KP_FORM_IDS,
+  kpFormIdForToolName,
+  kpFormToolName,
   selectAllowedKpForms,
   validateKpFormDraft,
-  validateKpFormModelEnvelope,
   type KpFormId,
 } from "./form-catalog";
 import {
@@ -28,7 +24,6 @@ import {
   validateBodyOnlyNarrationOutput,
 } from "./narration-v3";
 import {
-  PRIVATE_FORM_PROPOSAL_TOOL_NAME,
   privateFormProposalModelInput,
   privateFormRepairModelInput,
   type FiniteReferenceCatalog,
@@ -38,26 +33,21 @@ import {
   actorPlanDecisionModelInput,
   validateActorPlanDecisionOutput,
 } from "./actor-plan-policy";
+import { HEALING_POTION_ITEM_DEFINITION_ID } from "../rules/v2/items";
 import { buildV3ContextPack, v3FormSelectionSignals } from "./v3-context-runtime";
 import {
   ModelInvocationTimeoutError,
   ModelOutputValidationError,
   NarrationGroundingValidationError,
-  assertProposalProjectionBound,
-  assertKpProjection,
   audienceIdentity,
   canonicalJson,
   classifyModelError,
-  collectStrings,
+  extractSingleToolCall,
   extractStructuredOutput,
   isRecord,
-  projectionCanonicalFactRefs,
-  projectionNpcKnowledgeRefs,
   responseHash,
   retryAfterFrom,
   usageFrom,
-  validateNarration,
-  validateProposal,
 } from "./authoritative-helpers";
 import type {
   AuthoritativeKpAdapter,
@@ -66,7 +56,6 @@ import type {
   DueActorPlanDecisionRequest,
   V3AuthoritativeKpProposal,
   KpNarrationRequest,
-  KpProposalDraft,
   KpProposalRequest,
   ModelInvocationFailureStage,
   ModelInvocationReceipt,
@@ -91,7 +80,6 @@ export type {
 } from "./authoritative-types";
 
 const DEFAULT_INVOCATION_TIMEOUT_MS = 45_000;
-const MAX_PROPOSAL_ATTEMPT = 3;
 
 type InvocationTask = "proposal" | "narration";
 
@@ -187,34 +175,6 @@ function permanentContractError(
   );
 }
 
-function permanentOutputError(
-  error: unknown,
-  invocationReceipt: ModelInvocationReceipt,
-  failureStage: ModelInvocationFailureStage,
-): AuthoritativeKpModelError {
-  if (!(error instanceof ModelOutputValidationError)) throw error;
-  return new AuthoritativeKpModelError(
-    "modelPermanent",
-    {
-      ...invocationReceipt,
-      result: "modelPermanent",
-      failureStage,
-    },
-  );
-}
-
-function validateProposalRequest(request: KpProposalRequest): void {
-  requiredString(request.preparedActionId);
-  requiredString(request.rootActionId);
-  if (!Number.isInteger(request.attempt) || request.attempt < 1 || request.attempt > MAX_PROPOSAL_ATTEMPT) {
-    throw new ModelOutputValidationError();
-  }
-  if (request.attempt > 1 && request.diagnostics === undefined) {
-    throw new ModelOutputValidationError();
-  }
-  assertKpProjection(request.projection);
-}
-
 function validateV3ProposalRequest(request: KpProposalRequest): void {
   requiredString(request.preparedActionId);
   requiredString(request.rootActionId);
@@ -252,25 +212,250 @@ function unwrapSingleEnvelope(value: Record<string, unknown>): Record<string, un
   return isRecord(only) ? only : value;
 }
 
-function privateFormEnvelope(
+const MAX_REJECTED_RAW_ARGUMENTS_LENGTH = 4_000;
+
+function boundedRejectedRawArguments(
+  value: unknown,
+  kind: "unparseableJson" | "nonObjectJson" | "invalidArgumentsType",
+): Readonly<{
+  kind: "unparseableJson" | "nonObjectJson" | "invalidArgumentsType";
+  value: string;
+  truncated: boolean;
+  originalLength: number;
+}> {
+  let serialized: string;
+  if (typeof value === "string") serialized = value;
+  else {
+    try {
+      serialized = canonicalJson(value);
+    } catch {
+      serialized = Object.prototype.toString.call(value);
+    }
+  }
+  return Object.freeze({
+    kind,
+    value: serialized.slice(0, MAX_REJECTED_RAW_ARGUMENTS_LENGTH),
+    truncated: serialized.length > MAX_REJECTED_RAW_ARGUMENTS_LENGTH,
+    originalLength: serialized.length,
+  });
+}
+
+type RecoveredTopLevelJsonMembers = Readonly<{
+  members: ReadonlyMap<string, unknown>;
+  duplicateKeys: ReadonlySet<string>;
+}>;
+
+function skipJsonWhitespace(source: string, start: number): number {
+  let cursor = start;
+  while (cursor < source.length
+    && [" ", "\t", "\n", "\r"].includes(source[cursor]!)) cursor += 1;
+  return cursor;
+}
+
+function jsonStringTokenEnd(source: string, start: number): number | undefined {
+  if (source[start] !== "\"") return undefined;
+  let escaped = false;
+  for (let cursor = start + 1; cursor < source.length; cursor += 1) {
+    const character = source[cursor]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === "\"") return cursor + 1;
+  }
+  return undefined;
+}
+
+function jsonCompositeTokenEnd(source: string, start: number): number | undefined {
+  const first = source[start];
+  if (first !== "{" && first !== "[") return undefined;
+  const expectedClosers = [first === "{" ? "}" : "]"];
+  let cursor = start + 1;
+  while (cursor < source.length) {
+    const character = source[cursor]!;
+    if (character === "\"") {
+      const end = jsonStringTokenEnd(source, cursor);
+      if (end === undefined) return undefined;
+      cursor = end;
+      continue;
+    }
+    if (character === "{" || character === "[") {
+      expectedClosers.push(character === "{" ? "}" : "]");
+      cursor += 1;
+      continue;
+    }
+    if (character === "}" || character === "]") {
+      if (expectedClosers.at(-1) !== character) return undefined;
+      expectedClosers.pop();
+      cursor += 1;
+      if (expectedClosers.length === 0) return cursor;
+      continue;
+    }
+    cursor += 1;
+  }
+  return undefined;
+}
+
+function jsonValueTokenEnd(source: string, start: number): number | undefined {
+  if (source[start] === "\"") return jsonStringTokenEnd(source, start);
+  if (source[start] === "{" || source[start] === "[") {
+    return jsonCompositeTokenEnd(source, start);
+  }
+  let cursor = start;
+  while (cursor < source.length
+    && ![",", "}", " ", "\t", "\n", "\r"].includes(source[cursor]!)) cursor += 1;
+  return cursor > start ? cursor : undefined;
+}
+
+/** Recover only complete direct members from an otherwise unparseable JSON
+ * object. Nested lookalike keys never become direct members; duplicate direct
+ * keys remain ambiguous and cannot prove frozen semantics. */
+function recoverTopLevelJsonMembers(source: string): RecoveredTopLevelJsonMembers | undefined {
+  let cursor = skipJsonWhitespace(source, 0);
+  if (source[cursor] !== "{") return undefined;
+  cursor += 1;
+  const members = new Map<string, unknown>();
+  const duplicateKeys = new Set<string>();
+  while (true) {
+    cursor = skipJsonWhitespace(source, cursor);
+    if (cursor === source.length) return { members, duplicateKeys };
+    if (source[cursor] === "}") {
+      cursor = skipJsonWhitespace(source, cursor + 1);
+      return cursor === source.length ? { members, duplicateKeys } : undefined;
+    }
+
+    const keyEnd = jsonStringTokenEnd(source, cursor);
+    if (keyEnd === undefined) return undefined;
+    let key: unknown;
+    try {
+      key = JSON.parse(source.slice(cursor, keyEnd));
+    } catch {
+      return undefined;
+    }
+    if (typeof key !== "string") return undefined;
+    cursor = skipJsonWhitespace(source, keyEnd);
+    if (source[cursor] !== ":") return undefined;
+    cursor = skipJsonWhitespace(source, cursor + 1);
+
+    const valueEnd = jsonValueTokenEnd(source, cursor);
+    if (valueEnd === undefined) return undefined;
+    let parsedValue: unknown;
+    try {
+      parsedValue = JSON.parse(source.slice(cursor, valueEnd));
+    } catch {
+      return undefined;
+    }
+    if (members.has(key)) duplicateKeys.add(key);
+    else members.set(key, parsedValue);
+    cursor = skipJsonWhitespace(source, valueEnd);
+    if (cursor === source.length) return { members, duplicateKeys };
+    if (source[cursor] === ",") {
+      cursor += 1;
+      continue;
+    }
+    if (source[cursor] === "}") {
+      cursor = skipJsonWhitespace(source, cursor + 1);
+      return cursor === source.length ? { members, duplicateKeys } : undefined;
+    }
+    return undefined;
+  }
+}
+
+function recoveredRawSemanticMembers(value: unknown): RecoveredTopLevelJsonMembers | undefined {
+  if (!isRecord(value)
+    || value.kind !== "unparseableJson"
+    || value.truncated !== false
+    || typeof value.value !== "string") return undefined;
+  return recoverTopLevelJsonMembers(value.value);
+}
+
+function narrowToolDraft(
+  formId: KpFormId,
+  argumentsValue: unknown,
+): Record<string, unknown> {
+  if (isRecord(argumentsValue)) return structuredClone(argumentsValue);
+  if (typeof argumentsValue === "string") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(argumentsValue);
+    } catch {
+      throw new PrivateFormEnvelopeError({
+        formId,
+        draft: {},
+        rejectedRawArguments: boundedRejectedRawArguments(
+          argumentsValue,
+          "unparseableJson",
+        ),
+      }, ["draft:json-parse-failed"]);
+    }
+    if (isRecord(parsed)) return structuredClone(parsed);
+    throw new PrivateFormEnvelopeError({
+      formId,
+      draft: {},
+      rejectedRawArguments: boundedRejectedRawArguments(argumentsValue, "nonObjectJson"),
+    }, ["draft:object-required"]);
+  }
+  throw new PrivateFormEnvelopeError({
+    formId,
+    draft: {},
+    rejectedRawArguments: boundedRejectedRawArguments(
+      argumentsValue,
+      "invalidArgumentsType",
+    ),
+  }, ["draft:arguments-invalid"]);
+}
+
+function privateFormNarrowToolEnvelope(
   response: unknown,
   allowedForms: readonly KpFormId[],
 ): PrivateFormEnvelope {
-  let structured: Record<string, unknown>;
+  let toolCall: ReturnType<typeof extractSingleToolCall>;
   try {
-    structured = extractStructuredOutput(response, PRIVATE_FORM_PROPOSAL_TOOL_NAME);
+    toolCall = extractSingleToolCall(response);
   } catch {
-    throw new PrivateFormEnvelopeError(null, ["structured-output:invalid"]);
+    throw new PrivateFormEnvelopeError(null, ["structured-output:single-tool-required"]);
   }
-  const candidate = unwrapSingleEnvelope(structured);
-  const validation = validateKpFormModelEnvelope(allowedForms, candidate);
-  if (!validation.ok || typeof candidate.formId !== "string" || !isRecord(candidate.draft)) {
-    throw new PrivateFormEnvelopeError(candidate, validation.errors);
+  const formId = kpFormIdForToolName(toolCall.name);
+  if (formId === undefined || !allowedForms.includes(formId)) {
+    throw new PrivateFormEnvelopeError(
+      { toolName: toolCall.name },
+      ["tool:not-allowed"],
+    );
   }
-  return {
-    formId: candidate.formId as KpFormId,
-    draft: structuredClone(candidate.draft),
-  };
+  const draft = narrowToolDraft(formId, toolCall.arguments);
+  const validation = validateKpFormDraft(formId, draft);
+  if (!validation.ok) {
+    throw new PrivateFormEnvelopeError({ formId, draft }, validation.errors);
+  }
+  return { formId, draft };
+}
+
+function validateNarrowToolRepair(
+  selectedForm: KpFormId,
+  response: unknown,
+): PrivateFormEnvelope {
+  let toolCall: ReturnType<typeof extractSingleToolCall>;
+  try {
+    toolCall = extractSingleToolCall(response);
+  } catch {
+    throw new PrivateFormEnvelopeError(null, ["structured-output:single-tool-required"]);
+  }
+  if (toolCall.name !== kpFormToolName(selectedForm)) {
+    throw new PrivateFormEnvelopeError(
+      { toolName: toolCall.name },
+      ["repair:tool-switch-forbidden"],
+    );
+  }
+  const draft = narrowToolDraft(selectedForm, toolCall.arguments);
+  const validation = validateKpFormDraft(selectedForm, draft);
+  if (!validation.ok) {
+    throw new PrivateFormEnvelopeError({ formId: selectedForm, draft }, validation.errors);
+  }
+  return { formId: selectedForm, draft };
 }
 
 function trustedPlayerUtterance(input: unknown): string | undefined {
@@ -453,7 +638,8 @@ function materializationFormSemanticErrors(
   finiteReferences: FiniteReferenceCatalog,
 ): readonly string[] {
   if (draft.method !== "establishCharacterPremise"
-    && draft.method !== "materializeDynamicNpc") return [];
+    && draft.method !== "materializeDynamicNpc"
+    && draft.method !== "materializeItem") return [];
   const errors: string[] = [];
   const basisRefs = new Set(Array.isArray(draft.basisRefs)
     ? draft.basisRefs.filter((entry): entry is string => typeof entry === "string")
@@ -462,6 +648,26 @@ function materializationFormSemanticErrors(
   const value = parsedJsonRecord(draft.proposedFact);
   const cited = (reference: unknown): reference is string =>
     typeof reference === "string" && basisRefs.has(reference) && finiteRefs.has(reference);
+  if (draft.method === "materializeItem") {
+    if (draft.resolution !== "direct") {
+      errors.push("draft.resolution:item-materialization-direct-required");
+    }
+    if (value === undefined
+      || !exactObjectKeys(value, ["definitionRef", "quantity", "schema"])
+      || value.schema !== "zhuwei.item-materialization-draft/v1"
+      || value.definitionRef !== HEALING_POTION_ITEM_DEFINITION_ID
+      || !Number.isSafeInteger(value.quantity)
+      || Number(value.quantity) < 1
+      || Number(value.quantity) > 1_000_000) {
+      errors.push("draft.proposedFact:item-materialization-schema-invalid");
+    }
+    if (basisRefs.size < 2
+      || !Array.isArray(draft.basisRefs)
+      || basisRefs.size !== draft.basisRefs.length) {
+      errors.push("draft.basisRefs:item-materialization-basis-invalid");
+    }
+    return Object.freeze([...new Set(errors)].sort());
+  }
   if (draft.method === "establishCharacterPremise") {
     if (value === undefined
       || !exactObjectKeys(value, ["anchorRefs", "bindings", "policyRef", "predicate", "schema"])
@@ -600,7 +806,8 @@ function assertRepairSemantics(
   repairedForm: KpFormId,
   repairedDraft: Record<string, unknown>,
   expectedHash: string,
-  repairableFields: ReadonlySet<string> = new Set(),
+  repairErrors: readonly string[] = [],
+  rejectedRawArguments?: unknown,
 ): void {
   const previousSource = semanticFreezeSource(request, previousForm, previousDraft);
   if (stableStructuralHash(previousSource) !== expectedHash) {
@@ -609,11 +816,56 @@ function assertRepairSemantics(
   const previousSemantics = semanticDraftSource(previousForm, previousDraft);
   const repairedSemantics = semanticDraftSource(repairedForm, repairedDraft);
   if (previousForm === repairedForm) {
-    for (const [key, value] of Object.entries(previousSemantics)) {
-      if (repairableFields.has(key)) continue;
-      if (canonicalJson(value) !== canonicalJson(repairedSemantics[key])) {
+    const recoveredRawMembers = recoveredRawSemanticMembers(rejectedRawArguments);
+    const rawArgumentsProve = (key: string, value: unknown): boolean => {
+      if (recoveredRawMembers === undefined
+        || recoveredRawMembers.duplicateKeys.has(key)
+        || !recoveredRawMembers.members.has(key)) return false;
+      return canonicalJson(recoveredRawMembers.members.get(key)) === canonicalJson(value);
+    };
+    const semanticKeys = new Set([
+      ...Object.keys(previousSemantics),
+      ...Object.keys(repairedSemantics),
+    ]);
+    for (const key of semanticKeys) {
+      if (!Object.hasOwn(repairedSemantics, key)) {
         throw new PrivateFormEnvelopeError(repairedDraft, [`semantic-freeze:${key}:changed`]);
       }
+      if (!Object.hasOwn(previousSemantics, key)) {
+        // A malformed JSON string may enter repair, but a semantic value that
+        // was not parsed is accepted only when the complete bounded raw input
+        // proves that exact direct top-level key/value pair.
+        if (rawArgumentsProve(key, repairedSemantics[key])) continue;
+        throw new PrivateFormEnvelopeError(repairedDraft, [`semantic-freeze:${key}:unproven`]);
+      }
+      const value = previousSemantics[key];
+      if (canonicalJson(value) === canonicalJson(repairedSemantics[key])) continue;
+      if (key === "desiredResponse") {
+        const priorIntent = parsedJsonRecord(value);
+        const repairedIntent = parsedJsonRecord(repairedSemantics[key]);
+        const invalidEvidenceRefs = new Set(repairErrors.flatMap((error) => {
+          const match = /^draft\.desiredResponse\.evidenceRefs:(.+):not-authoritative$/u.exec(error);
+          return match === null ? [] : [match[1]];
+        }));
+        const onlyEvidenceErrors = invalidEvidenceRefs.size > 0
+          && repairErrors.filter((error) => error.startsWith("draft.desiredResponse"))
+            .every((error) => /^draft\.desiredResponse\.evidenceRefs:.+:not-authoritative$/u.test(error));
+        if (onlyEvidenceErrors
+          && priorIntent !== undefined
+          && repairedIntent !== undefined
+          && Array.isArray(priorIntent.evidenceRefs)) {
+          const expectedIntent = {
+            ...structuredClone(priorIntent),
+            evidenceRefs: priorIntent.evidenceRefs.filter((reference) =>
+              typeof reference === "string" && !invalidEvidenceRefs.has(reference)),
+          };
+          if (canonicalJson(expectedIntent) === canonicalJson(repairedIntent)) continue;
+        }
+      }
+      // A malformed or invalid typed object cannot be repaired by replacing
+      // the whole JSON field. NPC, goal, response mode, assertions, entities,
+      // and materialized facts remain byte-for-byte frozen.
+      throw new PrivateFormEnvelopeError(repairedDraft, [`semantic-freeze:${key}:changed`]);
     }
     return;
   }
@@ -730,22 +982,6 @@ function formReferenceErrors(
   return Object.freeze([...new Set(errors)].sort());
 }
 
-function validateRepairEnvelope(formId: KpFormId, value: unknown): PrivateFormEnvelope {
-  if (!isRecord(value)) throw new PrivateFormEnvelopeError(value, ["envelope:object-required"]);
-  const candidate = unwrapSingleEnvelope(value);
-  const errors: string[] = [];
-  for (const key of Object.keys(candidate)) {
-    if (key !== "formId" && key !== "draft") errors.push(`${key}:unknown-field`);
-  }
-  if (candidate.formId !== formId) errors.push("formId:repair-selection-changed");
-  const validation = validateKpFormDraft(formId, candidate.draft);
-  errors.push(...validation.errors);
-  if (errors.length > 0 || !isRecord(candidate.draft)) {
-    throw new PrivateFormEnvelopeError(candidate, errors);
-  }
-  return { formId, draft: structuredClone(candidate.draft) };
-}
-
 function mechanicalDiagnosticErrors(value: unknown): readonly string[] {
   const diagnostics = Array.isArray(value) ? value : [value];
   const result: string[] = [];
@@ -806,114 +1042,8 @@ function validateNarrationRequest(request: KpNarrationRequest): void {
   ) throw new ModelOutputValidationError();
 }
 
-function proposalWithoutRepairableProjectionRefs(
-  proposal: KpProposalDraft,
-): KpProposalDraft {
-  const copy = structuredClone(proposal);
-  copy.publicBasisRefs = [];
-  copy.privateBasisRefs = [];
-  for (const materialization of copy.dynamicMaterializations) {
-    materialization.causalBasisRefs = [];
-  }
-  for (const candidate of copy.hiddenRealityCandidateSet?.candidates ?? []) {
-    candidate.causalBasisRefs = [];
-  }
-  copy.npcActions = [];
-  return copy;
-}
-
-function assertProjectionRepairPreservesProposal(
-  rejectedProposal: KpProposalDraft,
-  repairedProposal: KpProposalDraft,
-  projection: unknown,
-): void {
-  if (
-    canonicalJson(proposalWithoutRepairableProjectionRefs(rejectedProposal))
-    !== canonicalJson(proposalWithoutRepairableProjectionRefs(repairedProposal))
-  ) {
-    throw new ModelOutputValidationError();
-  }
-
-  const available = collectStrings(projection);
-  const expectedPublicBasisRefs = rejectedProposal.publicBasisRefs.filter(
-    (reference) => available.has(reference),
-  );
-  const expectedPrivateBasisRefs = rejectedProposal.privateBasisRefs.filter(
-    (reference) => available.has(reference),
-  );
-  if (
-    canonicalJson(repairedProposal.publicBasisRefs) !== canonicalJson(expectedPublicBasisRefs)
-    || canonicalJson(repairedProposal.privateBasisRefs) !== canonicalJson(expectedPrivateBasisRefs)
-  ) {
-    throw new ModelOutputValidationError();
-  }
-
-  const causalReferences = projectionCanonicalFactRefs(projection);
-  for (let index = 0; index < rejectedProposal.dynamicMaterializations.length; index += 1) {
-    const expected = rejectedProposal.dynamicMaterializations[index].causalBasisRefs.filter(
-      (reference) => causalReferences.has(reference),
-    );
-    if (
-      canonicalJson(repairedProposal.dynamicMaterializations[index].causalBasisRefs)
-      !== canonicalJson(expected)
-    ) {
-      throw new ModelOutputValidationError();
-    }
-  }
-  const rejectedCandidates = rejectedProposal.hiddenRealityCandidateSet?.candidates ?? [];
-  const repairedCandidates = repairedProposal.hiddenRealityCandidateSet?.candidates ?? [];
-  for (let index = 0; index < rejectedCandidates.length; index += 1) {
-    const expected = rejectedCandidates[index].causalBasisRefs.filter(
-      (reference) => causalReferences.has(reference),
-    );
-    if (canonicalJson(repairedCandidates[index].causalBasisRefs) !== canonicalJson(expected)) {
-      throw new ModelOutputValidationError();
-    }
-  }
-
-  const expectedNpcActions = rejectedProposal.npcActions.filter((action) => {
-    const knowledgeRefs = projectionNpcKnowledgeRefs(projection, action.npcId);
-    return knowledgeRefs !== undefined
-      && action.knowledgeRefs.every((reference) => knowledgeRefs.has(reference));
-  });
-  if (canonicalJson(repairedProposal.npcActions) !== canonicalJson(expectedNpcActions)) {
-    throw new ModelOutputValidationError();
-  }
-}
-
-function normalizeProposalProjectionReferences(
-  proposal: KpProposalDraft,
-  projection: unknown,
-): KpProposalDraft {
-  const normalized = structuredClone(proposal);
-  const available = collectStrings(projection);
-  normalized.publicBasisRefs = proposal.publicBasisRefs.filter((reference) =>
-    available.has(reference));
-  normalized.privateBasisRefs = proposal.privateBasisRefs.filter((reference) =>
-    available.has(reference));
-
-  const causalReferences = projectionCanonicalFactRefs(projection);
-  for (const materialization of normalized.dynamicMaterializations) {
-    materialization.causalBasisRefs = materialization.causalBasisRefs.filter((reference) =>
-      causalReferences.has(reference));
-  }
-  for (const candidate of normalized.hiddenRealityCandidateSet?.candidates ?? []) {
-    candidate.causalBasisRefs = candidate.causalBasisRefs.filter((reference) =>
-      causalReferences.has(reference));
-  }
-
-  normalized.npcActions = proposal.npcActions.filter((action) => {
-    const knowledgeRefs = projectionNpcKnowledgeRefs(projection, action.npcId);
-    return knowledgeRefs !== undefined
-      && action.knowledgeRefs.every((reference) => knowledgeRefs.has(reference));
-  });
-
-  assertProjectionRepairPreservesProposal(proposal, normalized, projection);
-  return normalized;
-}
-
 /**
- * Creates the v2 KP boundary. It performs model I/O only; it owns no world state,
+ * Creates the current KP boundary. It performs model I/O only; it owns no world state,
  * mechanics, randomness, delivery history, or authority to commit a proposal.
  */
 export function createAuthoritativeKpAdapter(
@@ -1013,66 +1143,6 @@ export function createAuthoritativeKpAdapter(
     }
   }
 
-  function proposalDraftFromInvocation(invocation: InvocationSuccess): KpProposalDraft {
-    let structured: Record<string, unknown>;
-    try {
-      structured = extractStructuredOutput(invocation.response, PROPOSAL_TOOL_NAME);
-    } catch (error) {
-      throw permanentOutputError(error, invocation.receipt, "structuredOutput");
-    }
-    try {
-      const structuredKeys = Object.keys(structured);
-      const onlyValue = structuredKeys.length === 1
-        ? structured[structuredKeys[0]]
-        : undefined;
-      // Some Workers AI tool-call responses add one redundant provider
-      // envelope around otherwise valid arguments. The envelope name is not
-      // authoritative; the inner object still has to pass the exact same
-      // closed Proposal validator. Sibling fields and invalid inner objects
-      // therefore remain fail-closed.
-      const proposalCandidate = isRecord(onlyValue) ? onlyValue : structured;
-      return validateProposal(proposalCandidate);
-    } catch (error) {
-      throw permanentOutputError(error, invocation.receipt, "proposalSchema");
-    }
-  }
-
-  function narrationDraftFromInvocation(
-    invocation: InvocationSuccess,
-    projection: unknown,
-  ): ReturnType<typeof validateNarration> {
-    try {
-      const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
-      const structuredKeys = Object.keys(structured);
-      const onlyValue = structuredKeys.length === 1
-        ? structured[structuredKeys[0]]
-        : undefined;
-      const narrationCandidate = isRecord(onlyValue) ? onlyValue : structured;
-      return validateNarration(narrationCandidate, projection);
-    } catch (error) {
-      if (!(error instanceof ModelOutputValidationError)) throw error;
-      throw permanentOutputError(
-        error,
-        invocation.receipt,
-        error instanceof NarrationGroundingValidationError
-          ? "narrationGrounding"
-          : "narrationSchema",
-      );
-    }
-  }
-
-  function assertProjectionBoundProposal(
-    proposal: KpProposalDraft,
-    projection: unknown,
-    invocationReceipt: ModelInvocationReceipt,
-  ): void {
-    try {
-      assertProposalProjectionBound(proposal, projection);
-    } catch (error) {
-      throw permanentOutputError(error, invocationReceipt, "projectionBinding");
-    }
-  }
-
   function v3Failure(
     publicCode: string,
     invocationReceipt: ModelInvocationReceipt,
@@ -1095,7 +1165,9 @@ export function createAuthoritativeKpAdapter(
   }> {
     try {
       const prepared = options.prepareV3Context === undefined
-        ? { contextPack: buildV3ContextPack(request) }
+        ? { contextPack: buildV3ContextPack(request, {
+            includeDynamicAuthoritativeFacts: isSocialResolutionKpProfile(profile),
+          }) }
         : await options.prepareV3Context(request, allowedForms);
       const ordered = prepared.orderedFormIds;
       const exactOrder = Array.isArray(ordered)
@@ -1156,6 +1228,9 @@ export function createAuthoritativeKpAdapter(
       draft: structuredClone(trustedDraft),
       causalActionProgram,
       loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
+      finalSemanticHash: stableStructuralHash(
+        semanticFreezeSource(request, envelope.formId, trustedDraft),
+      ),
       semanticFreezeHash: freezeHash,
       repairUsed,
       proposalAttemptId: `${request.rootActionId}:kp:${request.attempt}`,
@@ -1168,6 +1243,7 @@ export function createAuthoritativeKpAdapter(
     originalForm: KpFormId;
     selectedForm: KpFormId;
     rejectedDraft: Record<string, unknown>;
+    rejectedRawArguments?: unknown;
     errors: readonly string[];
     finiteReferences: FiniteReferenceCatalog;
     semanticFreezeHash: string;
@@ -1203,21 +1279,19 @@ export function createAuthoritativeKpAdapter(
         originalForm: input.originalForm,
         selectedForm: input.selectedForm,
         rejectedDraft: input.rejectedDraft,
+        ...(input.rejectedRawArguments === undefined
+          ? {}
+          : { rejectedRawArguments: input.rejectedRawArguments }),
         errors: input.errors,
         finiteReferences: input.finiteReferences,
         semanticFreezeHash: input.semanticFreezeHash,
-        socialResolution: isSocialResolutionKpProfile(profile),
       }),
       remainingInvocationMs,
     );
     let repaired: PrivateFormEnvelope;
     let trustedRepaired: PrivateFormEnvelope;
     try {
-      const structured = extractStructuredOutput(
-        repairInvocation.response,
-        PRIVATE_FORM_PROPOSAL_TOOL_NAME,
-      );
-      repaired = validateRepairEnvelope(input.selectedForm, structured);
+      repaired = validateNarrowToolRepair(input.selectedForm, repairInvocation.response);
       trustedRepaired = withTrustedSocialUtterance(
         input.request,
         repaired,
@@ -1240,16 +1314,6 @@ export function createAuthoritativeKpAdapter(
           [...referenceErrors, ...socialErrors, ...materializationErrors],
         );
       }
-      const repairableFields = new Set<string>();
-      if (input.errors.some((error) => error.startsWith("draft.desiredResponse"))) {
-        repairableFields.add("desiredResponse");
-      }
-      if (input.errors.some((error) => error.startsWith("draft.npcResponse"))) {
-        repairableFields.add("npcResponse");
-      }
-      if (input.errors.some((error) => error.startsWith("draft.proposedFact"))) {
-        repairableFields.add("proposedFact");
-      }
       assertRepairSemantics(
         input.request,
         input.originalForm,
@@ -1257,7 +1321,8 @@ export function createAuthoritativeKpAdapter(
         input.selectedForm,
         trustedRepaired.draft,
         input.semanticFreezeHash,
-        repairableFields,
+        input.errors,
+        input.rejectedRawArguments,
       );
     } catch {
       throw v3Failure(
@@ -1275,8 +1340,10 @@ export function createAuthoritativeKpAdapter(
     );
   }
 
-  if (isV3AuthoritativeKpProfile(profile)) {
-    return {
+  if (!isV3AuthoritativeKpProfile(profile)) {
+    throw new TypeError("The current product accepts only the private narrow-tools KP profile.");
+  }
+  return {
       async propose(request) {
         return withInvocationReceipt(async () => {
           const rootActionId = typeof request?.rootActionId === "string"
@@ -1330,11 +1397,10 @@ export function createAuthoritativeKpAdapter(
               request,
               allowedForms: preparedContext.orderedForms,
               contextPack: preparedContext.contextPack,
-              socialResolution,
             }),
           );
           try {
-            const envelope = withTrustedSocialUtterance(request, privateFormEnvelope(
+            const envelope = withTrustedSocialUtterance(request, privateFormNarrowToolEnvelope(
               invocation.response,
               preparedContext.orderedForms,
             ), socialResolution);
@@ -1370,6 +1436,9 @@ export function createAuthoritativeKpAdapter(
             }
             emitInvocationReceipt(failedReceipt);
             const rejectedDraft = isRecord(candidate.draft) ? candidate.draft : {};
+            const rejectedRawArguments = isRecord(candidate.rejectedRawArguments)
+              ? candidate.rejectedRawArguments
+              : undefined;
             const candidateForm = candidate.formId as KpFormId;
             const semanticFreezeHash = stableStructuralHash(
               semanticFreezeSource(request, candidateForm, rejectedDraft),
@@ -1379,6 +1448,9 @@ export function createAuthoritativeKpAdapter(
               originalForm: candidateForm,
               selectedForm: candidateForm,
               rejectedDraft,
+              ...(rejectedRawArguments === undefined
+                ? {}
+                : { rejectedRawArguments }),
               errors: error.errors,
               finiteReferences,
               semanticFreezeHash,
@@ -1411,7 +1483,9 @@ export function createAuthoritativeKpAdapter(
               ACTOR_PLAN_DECISION_TOOL_NAME,
             );
             const candidate = unwrapSingleEnvelope(structured);
-            const decision = validateActorPlanDecisionOutput(candidate, request);
+            const decision = validateActorPlanDecisionOutput(candidate, request, {
+              npcEquipment: isSocialResolutionKpProfile(profile),
+            });
             emitInvocationReceipt(invocation.receipt);
             return decision;
           } catch (error) {
@@ -1473,7 +1547,7 @@ export function createAuthoritativeKpAdapter(
             );
             if (
               !(error instanceof NarrationGroundingValidationError)
-              || !isV3AuthoritativeKpProfile(profile)
+              || !isSocialResolutionKpProfile(profile)
             ) throw failed;
             const remainingInvocationMs = invocationTimeoutMs - Math.max(
               0,
@@ -1516,166 +1590,5 @@ export function createAuthoritativeKpAdapter(
           }
         });
       },
-    };
-  }
-
-  return {
-    async propose(request) {
-      return withInvocationReceipt(async () => {
-        const rootActionId = typeof request?.rootActionId === "string"
-          ? request.rootActionId
-          : "invalid";
-        const attempt = typeof request?.attempt === "number" ? request.attempt : 0;
-        try {
-          validateProposalRequest(request);
-        } catch {
-          throw permanentContractError(profile, "proposal", rootActionId, attempt, now);
-        }
-
-        let modelInput: Record<string, unknown>;
-        try {
-          modelInput = proposalModelInput(request);
-        } catch {
-          throw permanentContractError(profile, "proposal", request.rootActionId, request.attempt, now);
-        }
-        let invocation = await invoke(
-          "proposal",
-          request.rootActionId,
-          request.attempt,
-          modelInput,
-        );
-        let proposal: KpProposalDraft;
-        try {
-          proposal = proposalDraftFromInvocation(invocation);
-        } catch (error) {
-          if (
-            !(error instanceof AuthoritativeKpModelError)
-            || error.modelInvocationReceipt.failureStage !== "proposalSchema"
-          ) {
-            throw error;
-          }
-          let correctionInput: Record<string, unknown>;
-          try {
-            correctionInput = proposalSchemaCorrectionModelInput(request);
-          } catch {
-            throw permanentContractError(
-              profile,
-              "proposal",
-              request.rootActionId,
-              request.attempt,
-              now,
-            );
-          }
-          const remainingInvocationMs = invocationTimeoutMs - Math.max(
-            0,
-            now() - invocation.receipt.startedAt,
-          );
-          if (remainingInvocationMs < 1) throw error;
-          emitInvocationReceipt(error.modelInvocationReceipt);
-          invocation = await invoke(
-            "proposal",
-            request.rootActionId,
-            request.attempt,
-            correctionInput,
-            remainingInvocationMs,
-          );
-          proposal = proposalDraftFromInvocation(invocation);
-        }
-        let projectionBoundProposal: KpProposalDraft;
-        try {
-          projectionBoundProposal = normalizeProposalProjectionReferences(
-            proposal,
-            request.projection,
-          );
-        } catch (error) {
-          throw permanentOutputError(error, invocation.receipt, "projectionBinding");
-        }
-        assertProjectionBoundProposal(
-          projectionBoundProposal,
-          request.projection,
-          invocation.receipt,
-        );
-        return {
-          ...projectionBoundProposal,
-          proposalAttemptId: `${request.rootActionId}:kp:${request.attempt}`,
-          modelInvocationReceipt: invocation.receipt,
-        };
-      });
-    },
-
-    async narrate(request) {
-      return withInvocationReceipt(async () => {
-        const rootActionId = typeof request?.rootActionId === "string"
-          ? request.rootActionId
-          : "invalid";
-        const attempt = Number.isInteger(request?.attempt) ? request.attempt as number : 1;
-        try {
-          validateNarrationRequest(request);
-        } catch {
-          throw permanentContractError(profile, "narration", rootActionId, attempt, now);
-        }
-        const audience = audienceIdentity(request.projection);
-        let modelInput: Record<string, unknown>;
-        try {
-          modelInput = narrationModelInput(request);
-        } catch {
-          throw permanentContractError(profile, "narration", request.rootActionId, attempt, now);
-        }
-        let invocation = await invoke(
-          "narration",
-          request.rootActionId,
-          attempt,
-          modelInput,
-        );
-        let narration: ReturnType<typeof validateNarration>;
-        let finalInvocationReceipt = invocation.receipt;
-        try {
-          narration = narrationDraftFromInvocation(invocation, request.projection);
-        } catch (error) {
-          if (!(error instanceof AuthoritativeKpModelError) || error.code !== "modelPermanent") {
-            throw error;
-          }
-          let correctionInput: Record<string, unknown>;
-          try {
-            correctionInput = narrationSchemaCorrectionModelInput(request);
-          } catch {
-            throw permanentContractError(
-              profile,
-              "narration",
-              request.rootActionId,
-              attempt,
-              now,
-            );
-          }
-          const remainingInvocationMs = invocationTimeoutMs - Math.max(
-            0,
-            now() - invocation.receipt.startedAt,
-          );
-          if (remainingInvocationMs < 1) throw error;
-          emitInvocationReceipt(error.modelInvocationReceipt);
-          invocation = await invoke(
-            "narration",
-            request.rootActionId,
-            attempt,
-            correctionInput,
-            remainingInvocationMs,
-          );
-          finalInvocationReceipt = invocation.receipt;
-          try {
-            narration = narrationDraftFromInvocation(invocation, request.projection);
-          } catch (replacementError) {
-            // Invalid narration is an explicit delivery failure. A fabricated
-            // success would sever the body from the committed projection and
-            // hide the audience-specific retry state.
-            throw replacementError;
-          }
-        }
-        return {
-          ...narration,
-          audience,
-          modelInvocationReceipt: finalInvocationReceipt,
-        };
-      });
-    },
   };
 }
