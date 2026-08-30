@@ -137,6 +137,12 @@ export type PreparedAuthoritativeAction = {
   resolutionMode?: "kpProposal" | "authorityDirect";
   phase?: "dueActorPlan" | "playerIntent";
   dueActorPlan?: JsonObject;
+  /** Private Room-to-orchestrator continuation used only after a due NPC
+   * stage pauses for the controlling player's explicit roll gesture. */
+  resumedActionInput?: JsonObject;
+  /** Room-certified original actor context. A different player may be the one
+   * authorized to click a saving throw before this action can continue. */
+  resumedPrincipalContext?: TrustedPrincipalContext;
 };
 
 export type DeliveryAudienceBinding = {
@@ -243,11 +249,33 @@ export type ViewerNarrationRecovery = {
   state: "pending" | "rejected" | "retryableFailure";
 };
 
+/** One frozen, viewer-owned randomness request that is waiting only for the
+ * controlling player's explicit roll gesture. The browser never supplies
+ * faces or modifiers; it can only resume this exact Room-owned request. */
+export type ViewerPendingPlayerRoll = {
+  id: string;
+  characterId: string;
+  name: string;
+  kind: "check" | "save" | "attack" | "init" | "damage" | "death" | "heal";
+  ability: string;
+  skill?: string;
+  dc: number;
+  reason: string;
+  dice: string;
+  advantage?: boolean;
+  disadvantage?: boolean;
+};
+
 export type AuthoritativeRoomObservation = {
   readModel: unknown;
   transcript: ExperiencedTranscriptMessage[];
   delivery: ObserverDeliveryOutcome;
+  pendingPlayerRolls: ViewerPendingPlayerRoll[];
   narrationRecovery?: ViewerNarrationRecovery;
+  /** Server-adapter-only presentation hold. Every ref is already present in
+   * this viewer's readModel; it prevents an undelivered result from appearing
+   * as a detached clue before its grounded KP response. */
+  presentationHold?: { knowledgeRefs: string[] };
 };
 
 export type AuthorityCommitOutcome =
@@ -266,6 +294,10 @@ export type AuthorityCommitOutcome =
       receipt: PublicReceipt;
       pending: unknown;
       kpProjection?: unknown;
+    }
+  | {
+      kind: "awaitingPlayerRoll";
+      pendingPlayerRolls: ViewerPendingPlayerRoll[];
     }
   | {
       kind: "needsKp";
@@ -299,6 +331,7 @@ export type AuthoritativeInitializationOutcome =
       created: boolean;
       runtimeEpochId: string;
       genesisHash: string;
+      moduleRef: ProfileRef;
       runtimeProfiles: unknown;
       serviceCapabilities: unknown;
     }

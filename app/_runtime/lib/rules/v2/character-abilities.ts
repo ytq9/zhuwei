@@ -1,4 +1,4 @@
-import { itemById } from "../../dnd/gear";
+import { itemById, type GearItemResolver } from "../../dnd/gear";
 import { spellDefinition } from "../spell-catalog";
 import type { DiceFormula, SpellDefinition, SpellRange } from "../spell-model";
 import type { TacticalPosition } from "../tactical-projection";
@@ -297,9 +297,12 @@ function compileSpell(
   return compiled;
 }
 
-function compileWeapon(character: CharacterRecord): JsonRecord | undefined {
+export function compileEquippedWeaponAbility(
+  character: CharacterRecord,
+  resolveItem: GearItemResolver = itemById,
+): JsonRecord | undefined {
   const itemId = character.loadout?.equipped.main;
-  const item = itemById(itemId);
+  const item = resolveItem(itemId);
   if (item === undefined || item.wear !== "weapon" || !isNonEmptyString(item.damage)) return undefined;
   const damage = /^(\d+d\d+)\s*(.+)$/.exec(item.damage.trim());
   if (damage === null) return undefined;
@@ -362,7 +365,7 @@ export function compileStaticCharacterCombat(
 ): CompiledCharacterCombat {
   const build = isRecord(buildValue) ? buildValue : {};
   const definitions: Record<string, JsonRecord> = {};
-  const weapon = compileWeapon(character);
+  const weapon = compileEquippedWeaponAbility(character);
   if (weapon !== undefined) definitions[String(weapon.definitionId)] = weapon;
 
   const spellIds = [...new Set([

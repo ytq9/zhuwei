@@ -138,7 +138,11 @@ export function isNonEmptyString(value: unknown): value is string {
 export function isCharacterLoadout(value: unknown): value is CharacterLoadoutRecord {
   if (
     !isRecord(value)
-    || !hasExactKeys(value, ["armorClass", "backpack", "equipped", "speedFeet"])
+    || !hasOnlyKeys(
+      value,
+      ["armorClass", "backpack", "equipped", "speedFeet"],
+      ["mechanicalItems"],
+    )
     || !Number.isSafeInteger(value.armorClass)
     || Number(value.armorClass) < 1
     || Number(value.armorClass) > 99
@@ -148,15 +152,33 @@ export function isCharacterLoadout(value: unknown): value is CharacterLoadoutRec
     || !Object.entries(value.equipped).every(([slot, itemId]) =>
       isNonEmptyString(slot) && isNonEmptyString(itemId))
     || !Array.isArray(value.backpack)
+    || !(value.mechanicalItems === undefined || (isRecord(value.mechanicalItems)
+      && Object.entries(value.mechanicalItems).every(([itemId, item]) =>
+        isNonEmptyString(itemId)
+        && isRecord(item)
+        && hasExactKeys(item, ["definitionRef", "sourceKind", "status"])
+        && isNonEmptyString(item.definitionRef)
+        && ["standardGear", "npcMechanicalItemDefinition"].includes(String(item.sourceKind))
+        && ["usable", "broken"].includes(String(item.status)))))
   ) return false;
   const items = value.backpack;
-  return items.every((entry) => isRecord(entry)
+  const inventoryValid = items.every((entry) => isRecord(entry)
       && hasExactKeys(entry, ["itemId", "quantity"])
       && isNonEmptyString(entry.itemId)
       && Number.isSafeInteger(entry.quantity)
       && Number(entry.quantity) > 0)
     && items.every((entry, index) =>
       index === 0 || String(items[index - 1].itemId) < String(entry.itemId));
+  if (!inventoryValid || value.mechanicalItems === undefined) return inventoryValid;
+  const equippedIds = Object.values(value.equipped);
+  return Object.entries(value.mechanicalItems).every(([itemId, item]) => {
+    if (!isRecord(item)) return false;
+    const backpackEntry = items.find((entry) => entry.itemId === itemId);
+    const equippedCount = equippedIds.filter((equippedId) => equippedId === itemId).length;
+    return (backpackEntry === undefined ? 0 : 1) + equippedCount === 1
+      && (backpackEntry === undefined || backpackEntry.quantity === 1)
+      && !(item.status === "broken" && equippedCount > 0);
+  });
 }
 
 export function isSha256(value: unknown): value is Sha256Ref {
@@ -196,6 +218,71 @@ function recordsSatisfy(
 ): value is Record<string, JsonRecord> {
   return isRecord(value)
     && Object.entries(value).every(([key, entry]) => isRecord(entry) && predicate(entry, key));
+}
+
+function isConversationThreadRecord(value: JsonRecord, threadRef: string): boolean {
+  const claim = value.claimSemantics;
+  if (!isRecord(claim)
+    || !hasExactKeys(claim, [
+      "addressedThreadRef", "assertion", "desiredBehavior", "evidenceRefs", "influenceGoal",
+      "schema", "targetNpcRef", "topicFingerprint",
+    ])
+    || claim.schema !== "zhuwei.social-claim-semantics/v1"
+    || !["beBelieved", "deemphasize", "cooperate", "disclose", "permit", "deter", "other"]
+      .includes(String(claim.influenceGoal))
+    || !isNonEmptyString(claim.desiredBehavior)
+    || !isNonEmptyString(claim.targetNpcRef)
+    || !Array.isArray(claim.evidenceRefs)
+    || claim.evidenceRefs.length > 2
+    || !claim.evidenceRefs.every(isNonEmptyString)
+    || (claim.addressedThreadRef !== null && !isNonEmptyString(claim.addressedThreadRef))
+    || !isSha256(claim.topicFingerprint)) return false;
+  if (claim.assertion !== null) {
+    if (!isRecord(claim.assertion)
+      || !hasExactKeys(claim.assertion, ["object", "polarity", "predicate", "subjectRef"])
+      || !isNonEmptyString(claim.assertion.subjectRef)
+      || !isNonEmptyString(claim.assertion.predicate)
+      || !["affirm", "deny", "question"].includes(String(claim.assertion.polarity))
+      || !isRecord(claim.assertion.object)) return false;
+    const object = claim.assertion.object;
+    if (object.referenceKind === "existing") {
+      if (!hasExactKeys(object, ["ref", "referenceKind"]) || !isNonEmptyString(object.ref)) {
+        return false;
+      }
+    } else if (object.referenceKind !== "unresolvedLabel"
+      || !hasExactKeys(object, ["label", "referenceKind"])
+      || !isNonEmptyString(object.label)) return false;
+  }
+  return value.threadRef === threadRef
+    && [value.actorCharacterId, value.npcCharacterId, value.claimRef, value.sourceSceneId,
+      value.utterance, value.updatedByEventId].every(isNonEmptyString)
+    && value.actorCharacterId !== value.npcCharacterId
+    && claim.targetNpcRef === value.npcCharacterId
+    && value.claimKind === "sourceClaim"
+    && value.claimTruthStatus === "unresolved"
+    && ["direct", "check"].includes(String(value.resolution))
+    && ["active", "deemphasized", "dormant", "closed"].includes(String(value.status))
+    && (value.pendingInputId === null || isNonEmptyString(value.pendingInputId))
+    && isSha256(value.topicFingerprint)
+    && value.topicFingerprint === claim.topicFingerprint
+    && (value.planHash === undefined || isSha256(value.planHash))
+    && (value.positionFingerprint === undefined || isSha256(value.positionFingerprint))
+    && (value.responseClaimRef === undefined
+      || value.responseClaimRef === null
+      || isNonEmptyString(value.responseClaimRef))
+    && (value.responseMode === undefined
+      || value.responseMode === null
+      || ["reaction", "sourceBacked", "commitment"].includes(String(value.responseMode)))
+    && (value.responseReaction === undefined
+      || value.responseReaction === null
+      || ["acknowledge", "decline", "askClarification", "redirect", "silence"]
+        .includes(String(value.responseReaction)))
+    && (value.responseMinimumDegree === undefined
+      || ["limitedSuccess", "fullSuccess", "strongSuccess"]
+        .includes(String(value.responseMinimumDegree)))
+    && (value.responseSourceRefs === undefined
+      || (Array.isArray(value.responseSourceRefs)
+        && value.responseSourceRefs.every(isNonEmptyString)));
 }
 
 export function isAuthoritativeWorldState(value: unknown): value is AuthoritativeWorldState {
@@ -306,7 +393,11 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
   }
 
   if (!isRecord(value.campaignRuntime)
-    || !hasOnlyKeys(value.campaignRuntime, CAMPAIGN_RUNTIME_KEYS, ["adjudicationPrecedents"])
+    || !hasOnlyKeys(
+      value.campaignRuntime,
+      CAMPAIGN_RUNTIME_KEYS,
+      ["adjudicationPrecedents", "conversationThreads"],
+    )
     || !(value.campaignRuntime.campaign === null || isRecord(value.campaignRuntime.campaign))
     || !Array.isArray(value.campaignRuntime.unresolvedThreats)
     || !value.campaignRuntime.unresolvedThreats.every(isNonEmptyString)) {
@@ -316,7 +407,9 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
   const campaignCollections = CAMPAIGN_RUNTIME_KEYS.filter((key) => !["campaign", "unresolvedThreats"].includes(key));
   if (!campaignCollections.every((key) => isRecord(campaignRuntime[key]))
     || (campaignRuntime.adjudicationPrecedents !== undefined
-      && !isRecord(campaignRuntime.adjudicationPrecedents))) {
+      && !isRecord(campaignRuntime.adjudicationPrecedents))
+    || (campaignRuntime.conversationThreads !== undefined
+      && !recordsSatisfy(campaignRuntime.conversationThreads, isConversationThreadRecord))) {
     return false;
   }
 

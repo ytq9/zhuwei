@@ -1,3 +1,5 @@
+import { GEAR_SLOTS, type GearSlot } from "../dnd/gear";
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
@@ -22,6 +24,8 @@ export const ACTION_PLAN_OPERATIONS = [
   "resolveRest",
   "changeResource",
   "useItem",
+  "transferItem",
+  "changeNpcGear",
   "acquireArtifact",
   "useArtifact",
   "transferArtifact",
@@ -30,6 +34,11 @@ export const ACTION_PLAN_OPERATIONS = [
   "changeParty",
   "advanceCampaignLifecycle",
 ] as const;
+
+export const ACTION_PLAN_GEAR_ACTIONS = ["wear", "stow"] as const;
+export const ACTION_PLAN_GEAR_SLOTS: readonly GearSlot[] = Object.freeze(
+  GEAR_SLOTS.map(({ id }) => id),
+);
 
 export const ACTION_PLAN_COST_KINDS = [
   "consumeResource",
@@ -356,6 +365,26 @@ export type RetryFailedActionPlan =
       precedentRef: string;
     });
 
+export type TransferItemActionPlan = {
+  operation: "transferItem";
+  targetEntityRef: string;
+  itemRef: string;
+  amount: number;
+};
+
+export type ChangeNpcGearActionPlan =
+  | {
+      operation: "changeNpcGear";
+      gearAction: "wear";
+      slot: GearSlot;
+      itemRef: string;
+    }
+  | {
+      operation: "changeNpcGear";
+      gearAction: "stow";
+      slot: GearSlot;
+    };
+
 export type ReservedSemanticActionPlan = SemanticActionPlanFields & {
   operation: Exclude<
     ActionPlanOperation,
@@ -364,6 +393,8 @@ export type ReservedSemanticActionPlan = SemanticActionPlanFields & {
     | "resolveNoncombatSave"
     | "retryFailedAction"
     | "advanceFactionPlan"
+    | "transferItem"
+    | "changeNpcGear"
   >;
 };
 
@@ -375,6 +406,8 @@ export type NpcReservedSemanticActionPlan = SemanticActionPlanFields & {
     | "resolveNoncombatSave"
     | "retryFailedAction"
     | "resolveNoncombatContest"
+    | "transferItem"
+    | "changeNpcGear"
   >;
 };
 
@@ -382,6 +415,8 @@ export type NpcSemanticActionPlan =
   | ResolveDirectConsequencesActionPlan
   | ResolveNoncombatCheckActionPlan
   | Omit<ResolveNoncombatSaveActionPlan, "targetEntityRef">
+  | TransferItemActionPlan
+  | ChangeNpcGearActionPlan
   | NpcReservedSemanticActionPlan;
 
 export type SemanticActionPlan =
@@ -389,6 +424,7 @@ export type SemanticActionPlan =
   | ResolveNoncombatCheckActionPlan
   | ResolveNoncombatSaveActionPlan
   | RetryFailedActionPlan
+  | TransferItemActionPlan
   | ReservedSemanticActionPlan;
 
 export type ActorPlanActivityProposal = {

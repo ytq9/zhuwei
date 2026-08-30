@@ -67,6 +67,7 @@ export type RoomActionInput =
       concern: "rules" | "facts";
       explanation: string;
     }
+  | { kind: "roll"; submissionId: string; randomnessId: string }
   | { kind: "acknowledge"; deliveryId: string };
 
 export const ROOM_ACTION_STATES = [
@@ -105,6 +106,11 @@ type InternalRoomActionOutcome =
       readModel: unknown;
       pending: unknown;
     }
+  | {
+      kind: "awaitingPlayerRoll";
+      readModel: unknown;
+      pendingPlayerRolls: unknown[];
+    }
   | { kind: "needsKp"; receipt?: unknown; code?: string; retryAfter?: number }
   | { kind: "retryableFailure"; receipt?: unknown; code: string; retryAfter?: number }
   | { kind: "rejected"; receipt?: unknown; code: string; explanation: string }
@@ -128,6 +134,7 @@ export type RoomAuthorityCapability = {
   prepare(principal: unknown, input: RoomActionInput): Promise<unknown>;
   observe(principal: unknown, query?: unknown): Promise<unknown>;
   commit(principal: unknown, preparedActionId: string, rulesInput: UnknownRecord): Promise<unknown>;
+  resumePlayerRandomness?(principal: unknown, randomnessId: string): Promise<unknown>;
   acknowledge(principal: unknown, deliveryId: string): Promise<unknown>;
   deliveryPublicationStatus?(query: { publishCapability: unknown }): Promise<unknown>;
   beginDeliveryAudiencePublication?(query: {
@@ -321,6 +328,16 @@ function rebuildInput(input: unknown): RoomActionInput | InternalRoomActionOutco
       return rejectedValidation("重试缺少 submissionId 或 rootActionId。");
     }
     return { kind: "retry", submissionId, rootActionId };
+  }
+
+  if (input.kind === "roll") {
+    const submissionId = requiredString(input, "submissionId");
+    const randomnessId = requiredString(input, "randomnessId");
+    if (!submissionId || !randomnessId
+      || !hasOnlyKeys(input, ["kind", "randomnessId", "submissionId"], [])) {
+      return rejectedValidation("掷骰请求缺少 submissionId 或 randomnessId。");
+    }
+    return { kind: "roll", submissionId, randomnessId };
   }
 
   if (input.kind === "gear") {
@@ -663,6 +680,7 @@ function observedParts(observed: unknown): {
   readModel: unknown;
   delivery?: unknown;
   narrationRecovery?: unknown;
+  pendingPlayerRolls?: unknown[];
 } {
   if (isRecord(observed) && "readModel" in observed) {
     return {
@@ -670,6 +688,9 @@ function observedParts(observed: unknown): {
       ...(observed.delivery !== undefined ? { delivery: observed.delivery } : {}),
       ...(observed.narrationRecovery !== undefined
         ? { narrationRecovery: observed.narrationRecovery }
+        : {}),
+      ...(Array.isArray(observed.pendingPlayerRolls)
+        ? { pendingPlayerRolls: observed.pendingPlayerRolls }
         : {}),
     };
   }
@@ -710,6 +731,15 @@ async function observeOutcome(
         pending: projectedPendingInput(undefined, result.pending),
       };
     }
+    if (result.kind === "awaitingPlayerRoll") {
+      return {
+        kind: "awaitingPlayerRoll",
+        readModel: undefined,
+        pendingPlayerRolls: Array.isArray(result.pendingPlayerRolls)
+          ? result.pendingPlayerRolls
+          : [],
+      };
+    }
     if (result.kind === "committed" || result.kind === "concluded") {
       return {
         kind: result.kind,
@@ -719,7 +749,7 @@ async function observeOutcome(
     }
     return authorityFailure(error, result.receipt);
   }
-  const { readModel, delivery } = observedParts(observed);
+  const { readModel, delivery, pendingPlayerRolls } = observedParts(observed);
 
   if (result.kind === "awaitingInput") {
     return {
@@ -727,6 +757,14 @@ async function observeOutcome(
       receipt: result.receipt,
       readModel,
       pending: projectedPendingInput(readModel, result.pending),
+    };
+  }
+
+  if (result.kind === "awaitingPlayerRoll") {
+    return {
+      kind: "awaitingPlayerRoll",
+      readModel,
+      pendingPlayerRolls: pendingPlayerRolls ?? [],
     };
   }
 
@@ -1164,6 +1202,7 @@ function statefulOutcome(
     ? outcome.receipt
     : undefined;
   const action: RoomActionState = outcome.kind === "awaitingInput"
+    || outcome.kind === "awaitingPlayerRoll"
     ? "awaitingInput"
     : outcome.kind === "committed"
       ? receipt?.resolutionDisposition === "inWorldRefusal"
@@ -1374,6 +1413,23 @@ function preparedIdentifiers(prepared: UnknownRecord): {
   return preparedActionId && rootActionId ? { preparedActionId, rootActionId } : undefined;
 }
 
+function resumedPrincipalContext(value: unknown): UnknownRecord | undefined {
+  if (
+    !isRecord(value)
+    || !hasOnlyKeys(value, ["principal"], [])
+    || !isRecord(value.principal)
+    || !hasOnlyKeys(value.principal, ["id", "sessionVersion"], [])
+    || requiredString(value.principal, "id") === undefined
+    || !Number.isSafeInteger(value.principal.sessionVersion)
+  ) return undefined;
+  return {
+    principal: {
+      id: value.principal.id,
+      sessionVersion: Number(value.principal.sessionVersion),
+    },
+  };
+}
+
 /**
  * Coordinates one authenticated room action. It owns no clock, randomness, or state;
  * those capabilities remain inside the Room Authority and KP adapter boundaries.
@@ -1384,6 +1440,8 @@ async function handleRoomActionInternal(
 ): Promise<InternalRoomActionOutcome> {
   const rebuilt = rebuildInput(input);
   if (isRejectedValidation(rebuilt)) return rebuilt;
+  let activeInput = rebuilt;
+  let commitPrincipal = context.principal;
 
   if (rebuilt.kind === "acknowledge") {
     try {
@@ -1396,16 +1454,73 @@ async function handleRoomActionInternal(
     }
   }
 
-  let preparedResult: unknown;
-  try {
-    preparedResult = await context.authority.prepare(context.principal, rebuilt);
-  } catch (error) {
-    return authorityFailure(error);
-  }
-  if (!isRecord(preparedResult)) return authorityFailure(undefined);
-  let preparedValue: UnknownRecord = preparedResult;
 
-  const preparedFailure = publicFailure(preparedValue, rebuilt.kind);
+  let preparedValue: UnknownRecord | undefined;
+  if (rebuilt.kind === "roll") {
+    if (!context.authority.resumePlayerRandomness) {
+      return authorityFailure(undefined);
+    }
+    let resumed: unknown;
+    try {
+      resumed = await context.authority.resumePlayerRandomness(
+        context.principal,
+        rebuilt.randomnessId,
+      );
+    } catch (error) {
+      return authorityFailure(error);
+    }
+    if (!isRecord(resumed)) return authorityFailure(undefined);
+    const failure = publicFailure(resumed, rebuilt.kind);
+    if (failure !== undefined) return failure;
+    if (resumed.kind === "awaitingPlayerRoll" || resumed.kind === "awaitingInput") {
+      return observeOutcome(context, resumed);
+    }
+    if (resumed.kind === "committed" || resumed.kind === "concluded") {
+      const rootActionId = isRecord(resumed.receipt)
+        ? requiredString(resumed.receipt, "rootActionId")
+        : undefined;
+      if (rootActionId === undefined) return authorityFailure(undefined, resumed.receipt);
+      return resumed.deliveryPlan === undefined
+        ? observeOutcome(context, resumed)
+        : publishCommittedOutcome(
+            context,
+            { rootActionId },
+            resumed,
+          );
+    }
+    if (resumed.kind !== "continue" || !isRecord(resumed.prepared)) {
+      return authorityFailure(undefined, resumed.receipt);
+    }
+    const restored = rebuildInput(resumed.prepared.resumedActionInput);
+    if (
+      isRejectedValidation(restored)
+      || restored.kind !== "intent"
+    ) {
+      return authorityFailure(undefined, resumed.receipt);
+    }
+    activeInput = restored;
+    const restoredPrincipal = resumedPrincipalContext(
+      resumed.prepared.resumedPrincipalContext,
+    );
+    if (restoredPrincipal === undefined) {
+      return authorityFailure(undefined, resumed.receipt);
+    }
+    commitPrincipal = restoredPrincipal;
+    preparedValue = resumed.prepared;
+  }
+
+  if (preparedValue === undefined) {
+    let preparedResult: unknown;
+    try {
+      preparedResult = await context.authority.prepare(context.principal, activeInput);
+    } catch (error) {
+      return authorityFailure(error);
+    }
+    if (!isRecord(preparedResult)) return authorityFailure(undefined);
+    preparedValue = preparedResult;
+  }
+
+  const preparedFailure = publicFailure(preparedValue, activeInput.kind);
   if (preparedFailure) return preparedFailure;
   if (preparedValue.kind === "awaitingInput") {
     return observeOutcome(context, preparedValue);
@@ -1448,7 +1563,7 @@ async function handleRoomActionInternal(
     let committed: unknown;
     try {
       committed = await context.authority.commit(
-        context.principal,
+        commitPrincipal,
         dueIdentifiers.preparedActionId,
         { ...proposal, rootActionId: dueIdentifiers.rootActionId },
       );
@@ -1456,8 +1571,9 @@ async function handleRoomActionInternal(
       return authorityFailure(error, preparedValue.receipt);
     }
     if (!isRecord(committed)) return authorityFailure(undefined, preparedValue.receipt);
-    const failure = publicFailure(committed, rebuilt.kind);
+    const failure = publicFailure(committed, activeInput.kind);
     if (failure) return failure;
+    if (committed.kind === "awaitingPlayerRoll") return observeOutcome(context, committed);
     if (committed.kind !== "continue" || !isRecord(committed.prepared)) {
       return authorityFailure(undefined, committed.receipt ?? preparedValue.receipt);
     }
@@ -1469,33 +1585,33 @@ async function handleRoomActionInternal(
 
   if (
     (
-      rebuilt.kind === "answer"
-      || rebuilt.kind === "gear"
-      || rebuilt.kind === "environmentInteract"
-      || rebuilt.kind === "environmentAbility"
-      || rebuilt.kind === "movement"
-      || rebuilt.kind === "safetyPause"
-      || rebuilt.kind === "safetyAdjust"
+      activeInput.kind === "answer"
+      || activeInput.kind === "gear"
+      || activeInput.kind === "environmentInteract"
+      || activeInput.kind === "environmentAbility"
+      || activeInput.kind === "movement"
+      || activeInput.kind === "safetyPause"
+      || activeInput.kind === "safetyAdjust"
     )
     && preparedValue.resolutionMode === "authorityDirect"
   ) {
     let commitValue: unknown;
     try {
       commitValue = await context.authority.commit(
-        context.principal,
+        commitPrincipal,
         identifiers.preparedActionId,
         {
-          kind: rebuilt.kind === "answer"
+          kind: activeInput.kind === "answer"
             ? "authenticatedPendingAnswer"
-            : rebuilt.kind === "gear"
+            : activeInput.kind === "gear"
               ? "authenticatedGearAction"
-              : rebuilt.kind === "environmentInteract"
+              : activeInput.kind === "environmentInteract"
                 ? "authenticatedEnvironmentInteraction"
-              : rebuilt.kind === "environmentAbility"
+              : activeInput.kind === "environmentAbility"
                 ? "authenticatedEnvironmentAbility"
-              : rebuilt.kind === "movement"
+              : activeInput.kind === "movement"
                 ? "authenticatedMovement"
-              : rebuilt.kind === "safetyPause"
+              : activeInput.kind === "safetyPause"
                 ? "authenticatedSafetyPause"
                 : "authenticatedSafetyAdjustment",
           rootActionId: identifiers.rootActionId,
@@ -1505,11 +1621,13 @@ async function handleRoomActionInternal(
       return authorityFailure(error, preparedValue.receipt);
     }
     if (!isRecord(commitValue)) return authorityFailure(undefined, preparedValue.receipt);
-    const commitFailure = publicFailure(commitValue, rebuilt.kind);
+    const commitFailure = publicFailure(commitValue, activeInput.kind);
     if (commitFailure) return commitFailure;
-    if (commitValue.kind === "awaitingInput") return observeOutcome(context, commitValue);
+    if (commitValue.kind === "awaitingInput" || commitValue.kind === "awaitingPlayerRoll") {
+      return observeOutcome(context, commitValue);
+    }
     if (commitValue.kind === "committed" || commitValue.kind === "concluded") {
-      return rebuilt.kind === "safetyPause" || rebuilt.kind === "safetyAdjust"
+      return activeInput.kind === "safetyPause" || activeInput.kind === "safetyAdjust"
         ? observeOutcome(context, commitValue)
         : publishCommittedOutcome(context, preparedValue, commitValue);
     }
@@ -1525,7 +1643,7 @@ async function handleRoomActionInternal(
         ...(preparedValue.phase === undefined ? {} : { phase: preparedValue.phase }),
         preparedActionId: identifiers.preparedActionId,
         rootActionId: identifiers.rootActionId,
-        input: rebuilt,
+        input: activeInput,
         projection: preparedValue.kpProjection,
         attempt,
         ...(diagnostics !== undefined ? { diagnostics } : {}),
@@ -1544,7 +1662,7 @@ async function handleRoomActionInternal(
     let commitValue: unknown;
     try {
       commitValue = await context.authority.commit(
-        context.principal,
+        commitPrincipal,
         identifiers.preparedActionId,
         rulesInput,
       );
@@ -1563,9 +1681,9 @@ async function handleRoomActionInternal(
       continue;
     }
 
-    const commitFailure = publicFailure(commitValue, rebuilt.kind);
+    const commitFailure = publicFailure(commitValue, activeInput.kind);
     if (commitFailure) return commitFailure;
-    if (commitValue.kind === "awaitingInput") {
+    if (commitValue.kind === "awaitingInput" || commitValue.kind === "awaitingPlayerRoll") {
       return observeOutcome(context, commitValue);
     }
     if (commitValue.kind === "committed" || commitValue.kind === "concluded") {

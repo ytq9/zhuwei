@@ -159,6 +159,17 @@ export function withRoomAuthorityTelemetry(
         () => authority.commit(principal, preparedActionId, rulesInput),
       );
     },
+    ...(authority.resumePlayerRandomness === undefined
+      ? {}
+      : {
+          resumePlayerRandomness(principal: unknown, randomnessId: string) {
+            return measure(
+              "commit",
+              undefined,
+              () => authority.resumePlayerRandomness!(principal, randomnessId),
+            );
+          },
+        }),
     acknowledge(principal: unknown, deliveryId: string) {
       return measure("ack", undefined, () => authority.acknowledge(principal, deliveryId));
     },

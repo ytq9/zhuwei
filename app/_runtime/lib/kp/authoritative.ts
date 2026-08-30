@@ -1,6 +1,7 @@
 import {
   AUTHORITATIVE_KP_PROFILE,
   authoritativeKpProfileByBinding,
+  isSocialResolutionKpProfile,
   isV3AuthoritativeKpProfile,
   NARRATION_TOOL_NAME,
   PROPOSAL_TOOL_NAME,
@@ -22,6 +23,7 @@ import {
   type KpFormId,
 } from "./form-catalog";
 import {
+  bodyOnlyNarrationGroundingReplacementModelInput,
   bodyOnlyNarrationModelInput,
   validateBodyOnlyNarrationOutput,
 } from "./narration-v3";
@@ -271,6 +273,254 @@ function privateFormEnvelope(
   };
 }
 
+function trustedPlayerUtterance(input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  if (typeof input.text === "string" && input.text.trim().length > 0) return input.text;
+  if (typeof input.displayText === "string" && input.displayText.trim().length > 0) {
+    return input.displayText;
+  }
+  return isRecord(input.answer)
+    && typeof input.answer.text === "string"
+    && input.answer.text.trim().length > 0
+    ? input.answer.text
+    : undefined;
+}
+
+function withTrustedSocialUtterance(
+  request: KpProposalRequest,
+  envelope: PrivateFormEnvelope,
+  enabled: boolean,
+): PrivateFormEnvelope {
+  if (!enabled || envelope.formId !== "npc-exchange.v1") return envelope;
+  return {
+    ...envelope,
+    draft: {
+      ...envelope.draft,
+      utterance: trustedPlayerUtterance(request.input),
+    },
+  };
+}
+
+const SOCIAL_INTENT_GOALS = new Set([
+  "beBelieved", "deemphasize", "cooperate", "disclose", "permit", "deter", "other",
+]);
+const SOCIAL_ASSERTION_PREDICATES = new Set([
+  "isA", "affiliatedWith", "authorizedBy", "possesses", "knowsAbout",
+  "performed", "intends", "relatedTo", "locatedAt",
+]);
+
+function exactObjectKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
+}
+
+function parsedJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "string" || value.length > 3_000) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Pure model-boundary validation. Rules repeats all reference, knowledge and
+ * state checks; this earlier pass exists so one bounded Form repair can fix a
+ * malformed typed social draft instead of surfacing a generic Rules error. */
+function socialFormSemanticErrors(
+  draft: Record<string, unknown>,
+  finiteReferences: FiniteReferenceCatalog,
+): readonly string[] {
+  const errors: string[] = [];
+  const basisRefs = new Set(Array.isArray(draft.basisRefs)
+    ? draft.basisRefs.filter((entry): entry is string => typeof entry === "string")
+    : []);
+  const finiteRefs = new Set(finiteReferences.basisRefs);
+  const intent = parsedJsonRecord(draft.desiredResponse);
+  if (intent === undefined
+    || !exactObjectKeys(intent, [
+      "addressedThreadRef", "assertion", "desiredBehavior", "evidenceRefs", "influenceGoal",
+      "npcRef", "schema",
+    ])
+    || intent.schema !== "zhuwei.social-intent-draft/v1"
+    || typeof intent.npcRef !== "string"
+    || !basisRefs.has(intent.npcRef)
+    || !finiteRefs.has(intent.npcRef)
+    || typeof intent.influenceGoal !== "string"
+    || !SOCIAL_INTENT_GOALS.has(intent.influenceGoal)
+    || typeof intent.desiredBehavior !== "string"
+    || !intent.desiredBehavior.trim()
+    || intent.desiredBehavior.length > 500
+    || !Array.isArray(intent.evidenceRefs)
+    || intent.evidenceRefs.length > 2
+    || !intent.evidenceRefs.every((entry) => typeof entry === "string" && entry.length > 0)
+    || intent.evidenceRefs.length !== new Set(intent.evidenceRefs).size) {
+    errors.push("draft.desiredResponse:social-intent-schema-invalid");
+  } else {
+    if (intent.addressedThreadRef !== null
+      && (typeof intent.addressedThreadRef !== "string"
+        || !basisRefs.has(intent.addressedThreadRef)
+        || !finiteRefs.has(intent.addressedThreadRef)
+        || intent.influenceGoal !== "deemphasize")) {
+      errors.push("draft.desiredResponse.addressedThreadRef:invalid");
+    }
+    for (const ref of intent.evidenceRefs as string[]) {
+      if (!basisRefs.has(ref) || !finiteRefs.has(ref)) {
+        errors.push(`draft.desiredResponse.evidenceRefs:${ref}:not-authoritative`);
+      }
+    }
+    if (intent.assertion === null) {
+      if (intent.influenceGoal === "beBelieved" || intent.evidenceRefs.length > 0) {
+        errors.push("draft.desiredResponse.assertion:required-for-belief-or-evidence");
+      }
+    } else if (!isRecord(intent.assertion)
+      || !exactObjectKeys(intent.assertion, ["object", "polarity", "predicate", "subjectRef"])
+      || typeof intent.assertion.subjectRef !== "string"
+      || !finiteRefs.has(intent.assertion.subjectRef)
+      || typeof intent.assertion.predicate !== "string"
+      || !SOCIAL_ASSERTION_PREDICATES.has(intent.assertion.predicate)
+      || !["affirm", "deny", "question"].includes(String(intent.assertion.polarity))
+      || !isRecord(intent.assertion.object)) {
+      errors.push("draft.desiredResponse.assertion:invalid");
+    } else if (intent.assertion.object.referenceKind === "existing") {
+      const objectRef = intent.assertion.object.ref;
+      if (!exactObjectKeys(intent.assertion.object, ["ref", "referenceKind"])
+        || typeof objectRef !== "string"
+        || !basisRefs.has(objectRef)
+        || !finiteRefs.has(objectRef)) {
+        errors.push("draft.desiredResponse.assertion.object:existing-ref-invalid");
+      }
+    } else if (intent.assertion.object.referenceKind !== "unresolvedLabel"
+      || !exactObjectKeys(intent.assertion.object, ["label", "referenceKind"])
+      || typeof intent.assertion.object.label !== "string"
+      || !intent.assertion.object.label.trim()
+      || intent.assertion.object.label.length > 160) {
+      errors.push("draft.desiredResponse.assertion.object:unresolved-label-invalid");
+    }
+  }
+
+  const response = parsedJsonRecord(draft.npcResponse);
+  if (response === undefined
+    || response.schema !== "zhuwei.npc-response-draft/v1"
+    || typeof response.mode !== "string") {
+    errors.push("draft.npcResponse:npc-response-schema-invalid");
+  } else if (response.mode === "reaction") {
+    if (!exactObjectKeys(response, ["mode", "reaction", "schema"])
+      || !["acknowledge", "decline", "askClarification", "redirect", "silence"]
+        .includes(String(response.reaction))) {
+      errors.push("draft.npcResponse:reaction-invalid");
+    }
+  } else if (response.mode === "sourceBacked") {
+    if (!exactObjectKeys(response, ["mode", "schema", "sourceRefs"])
+      || !Array.isArray(response.sourceRefs)
+      || response.sourceRefs.length < 1
+      || response.sourceRefs.length > 4
+      || !response.sourceRefs.every((entry) =>
+        typeof entry === "string" && basisRefs.has(entry) && finiteRefs.has(entry))) {
+      errors.push("draft.npcResponse:source-backed-invalid");
+    }
+  } else if (response.mode === "commitment") {
+    if (!exactObjectKeys(response, ["mode", "schema", "scopeRefs", "speech"])
+      || typeof response.speech !== "string"
+      || !response.speech.trim()
+      || response.speech.length > 800
+      || !Array.isArray(response.scopeRefs)
+      || response.scopeRefs.length < 1
+      || response.scopeRefs.length > 4
+      || !response.scopeRefs.every((entry) =>
+        typeof entry === "string" && basisRefs.has(entry) && finiteRefs.has(entry))) {
+      errors.push("draft.npcResponse:commitment-invalid");
+    }
+  } else {
+    errors.push("draft.npcResponse:mode-invalid");
+  }
+  if (draft.resolution === "check" && intent !== undefined && response !== undefined) {
+    if (intent.influenceGoal === "disclose" && response.mode !== "sourceBacked") {
+      errors.push("draft.npcResponse:disclose-requires-source-backed");
+    }
+    if (["permit", "cooperate"].includes(String(intent.influenceGoal))
+      && response.mode !== "commitment") {
+      errors.push("draft.npcResponse:permit-or-cooperate-requires-commitment");
+    }
+  }
+  return Object.freeze([...new Set(errors)].sort());
+}
+
+function materializationFormSemanticErrors(
+  draft: Record<string, unknown>,
+  finiteReferences: FiniteReferenceCatalog,
+): readonly string[] {
+  if (draft.method !== "establishCharacterPremise"
+    && draft.method !== "materializeDynamicNpc") return [];
+  const errors: string[] = [];
+  const basisRefs = new Set(Array.isArray(draft.basisRefs)
+    ? draft.basisRefs.filter((entry): entry is string => typeof entry === "string")
+    : []);
+  const finiteRefs = new Set(finiteReferences.basisRefs);
+  const value = parsedJsonRecord(draft.proposedFact);
+  const cited = (reference: unknown): reference is string =>
+    typeof reference === "string" && basisRefs.has(reference) && finiteRefs.has(reference);
+  if (draft.method === "establishCharacterPremise") {
+    if (value === undefined
+      || !exactObjectKeys(value, ["anchorRefs", "bindings", "policyRef", "predicate", "schema"])
+      || value.schema !== "zhuwei.character-premise-draft/v2"
+      || !cited(value.policyRef)
+      || typeof value.predicate !== "string"
+      || !["arrivalPurpose", "priorKnowledge", "priorRelationship", "obligation", "affiliation", "identityBackground"].includes(value.predicate)
+      || !Array.isArray(value.anchorRefs)
+      || value.anchorRefs.length < 1
+      || value.anchorRefs.length > 4
+      || !value.anchorRefs.every(cited)
+      || !Array.isArray(value.bindings)
+      || value.bindings.length < 1
+      || value.bindings.length > 8) {
+      return ["draft.proposedFact:character-premise-schema-invalid"];
+    }
+    for (const binding of value.bindings) {
+      if (!isRecord(binding) || typeof binding.slotRef !== "string" || !binding.slotRef.trim()) {
+        errors.push("draft.proposedFact.bindings:slot-invalid");
+        continue;
+      }
+      if (binding.referenceKind === "existing") {
+        if (!exactObjectKeys(binding, ["ref", "referenceKind", "slotRef"])
+          || !cited(binding.ref)) errors.push("draft.proposedFact.bindings:existing-ref-invalid");
+        continue;
+      }
+      if (binding.referenceKind !== "openArchetype"
+        || !exactObjectKeys(binding, ["archetypeRef", "displayAlias", "referenceKind", "slotRef"])
+        || !cited(binding.archetypeRef)
+        || typeof binding.displayAlias !== "string"
+        || !binding.displayAlias.trim()
+        || binding.displayAlias.length > 120) {
+        errors.push("draft.proposedFact.bindings:open-archetype-invalid");
+      }
+    }
+    return Object.freeze([...new Set(errors)].sort());
+  }
+  if (value === undefined
+    || !exactObjectKeys(value, [
+      "definitionRef", "entityRef", "initialKnowledgeFactRefs", "sceneRef", "schema",
+      "sourceFactRefs",
+    ])
+    || value.schema !== "zhuwei.dynamic-npc-materialization-draft/v2"
+    || ![value.definitionRef, value.entityRef, value.sceneRef].every(cited)
+    || !Array.isArray(value.sourceFactRefs)
+    || value.sourceFactRefs.length < 1
+    || value.sourceFactRefs.length > 8
+    || !value.sourceFactRefs.every(cited)
+    || value.sourceFactRefs.length !== new Set(value.sourceFactRefs).size
+    || !Array.isArray(value.initialKnowledgeFactRefs)
+    || value.initialKnowledgeFactRefs.length > 8
+    || !value.initialKnowledgeFactRefs.every((reference) =>
+      cited(reference) && (value.sourceFactRefs as unknown[]).includes(reference))
+    || value.initialKnowledgeFactRefs.length !== new Set(value.initialKnowledgeFactRefs).size) {
+    errors.push("draft.proposedFact:dynamic-npc-materialization-schema-invalid");
+  }
+  return Object.freeze(errors);
+}
+
 const FORM_SEMANTIC_FIELDS: Readonly<Record<KpFormId, readonly string[]>> = Object.freeze({
   "clarification.v1": Object.freeze(["goal", "question", "choices"]),
   "observe.v1": Object.freeze(["goal", "method", "focus", "desiredInformation"]),
@@ -350,6 +600,7 @@ function assertRepairSemantics(
   repairedForm: KpFormId,
   repairedDraft: Record<string, unknown>,
   expectedHash: string,
+  repairableFields: ReadonlySet<string> = new Set(),
 ): void {
   const previousSource = semanticFreezeSource(request, previousForm, previousDraft);
   if (stableStructuralHash(previousSource) !== expectedHash) {
@@ -359,6 +610,7 @@ function assertRepairSemantics(
   const repairedSemantics = semanticDraftSource(repairedForm, repairedDraft);
   if (previousForm === repairedForm) {
     for (const [key, value] of Object.entries(previousSemantics)) {
+      if (repairableFields.has(key)) continue;
       if (canonicalJson(value) !== canonicalJson(repairedSemantics[key])) {
         throw new PrivateFormEnvelopeError(repairedDraft, [`semantic-freeze:${key}:changed`]);
       }
@@ -385,6 +637,7 @@ const BASIS_REFERENCE_KEYS = new Set([
   "geometryRef", "moduleRef", "eventRef", "truthConstraintRefs", "npcRef",
   "knowledgeRef", "knowledgeRefs", "planId", "planRefs", "pendingRefs", "activityRefs",
   "messageRef", "speakerRef", "fictionalTimeRef", "chapterId", "clueId", "receiptId",
+  "entityRef", "entityRefs", "threadRef", "threadRefs", "mechanicalDefinitionRef",
 ]);
 const ABILITY_REFERENCE_KEYS = new Set(["abilityRef", "abilityRefs", "dynamicDefinitionRefs"]);
 const RESOURCE_REFERENCE_KEYS = new Set(["resourceRef", "resourceRefs"]);
@@ -877,18 +1130,30 @@ export function createAuthoritativeKpAdapter(
     repairUsed: boolean,
     semanticFreezeHash?: string,
   ): V3AuthoritativeKpProposal {
+    const trustedDraft = envelope.formId === "npc-exchange.v1"
+      && isSocialResolutionKpProfile(profile)
+      ? {
+          ...envelope.draft,
+          utterance: trustedPlayerUtterance(request.input),
+        }
+      : envelope.draft;
+    if (envelope.formId === "npc-exchange.v1"
+      && isSocialResolutionKpProfile(profile)
+      && typeof trustedDraft.utterance !== "string") {
+      throw v3Failure("PROPOSAL_FORM_INVALID", invocationReceipt, "proposalSchema");
+    }
     let causalActionProgram;
     try {
-      causalActionProgram = compileKpFormDraft(envelope.formId, envelope.draft);
+      causalActionProgram = compileKpFormDraft(envelope.formId, trustedDraft);
     } catch {
       throw v3Failure("PROPOSAL_FORM_INVALID", invocationReceipt, "proposalSchema");
     }
     const freezeHash = semanticFreezeHash
-      ?? stableStructuralHash(semanticFreezeSource(request, envelope.formId, envelope.draft));
+      ?? stableStructuralHash(semanticFreezeSource(request, envelope.formId, trustedDraft));
     return {
       kind: "privateFormProposal",
       formId: envelope.formId,
-      draft: structuredClone(envelope.draft),
+      draft: structuredClone(trustedDraft),
       causalActionProgram,
       loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
       semanticFreezeHash: freezeHash,
@@ -941,27 +1206,58 @@ export function createAuthoritativeKpAdapter(
         errors: input.errors,
         finiteReferences: input.finiteReferences,
         semanticFreezeHash: input.semanticFreezeHash,
+        socialResolution: isSocialResolutionKpProfile(profile),
       }),
       remainingInvocationMs,
     );
     let repaired: PrivateFormEnvelope;
+    let trustedRepaired: PrivateFormEnvelope;
     try {
       const structured = extractStructuredOutput(
         repairInvocation.response,
         PRIVATE_FORM_PROPOSAL_TOOL_NAME,
       );
       repaired = validateRepairEnvelope(input.selectedForm, structured);
-      const referenceErrors = formReferenceErrors(repaired.draft, input.finiteReferences);
-      if (referenceErrors.length > 0) {
-        throw new PrivateFormEnvelopeError(repaired, referenceErrors);
+      trustedRepaired = withTrustedSocialUtterance(
+        input.request,
+        repaired,
+        isSocialResolutionKpProfile(profile),
+      );
+      const referenceErrors = formReferenceErrors(trustedRepaired.draft, input.finiteReferences);
+      const socialErrors = trustedRepaired.formId === "npc-exchange.v1"
+        && isSocialResolutionKpProfile(profile)
+        ? socialFormSemanticErrors(trustedRepaired.draft, input.finiteReferences)
+        : [];
+      const materializationErrors = trustedRepaired.formId === "materialization.v1"
+        && isSocialResolutionKpProfile(profile)
+        ? materializationFormSemanticErrors(trustedRepaired.draft, input.finiteReferences)
+        : [];
+      if (referenceErrors.length > 0
+        || socialErrors.length > 0
+        || materializationErrors.length > 0) {
+        throw new PrivateFormEnvelopeError(
+          trustedRepaired,
+          [...referenceErrors, ...socialErrors, ...materializationErrors],
+        );
+      }
+      const repairableFields = new Set<string>();
+      if (input.errors.some((error) => error.startsWith("draft.desiredResponse"))) {
+        repairableFields.add("desiredResponse");
+      }
+      if (input.errors.some((error) => error.startsWith("draft.npcResponse"))) {
+        repairableFields.add("npcResponse");
+      }
+      if (input.errors.some((error) => error.startsWith("draft.proposedFact"))) {
+        repairableFields.add("proposedFact");
       }
       assertRepairSemantics(
         input.request,
         input.originalForm,
         input.rejectedDraft,
         input.selectedForm,
-        repaired.draft,
+        trustedRepaired.draft,
         input.semanticFreezeHash,
+        repairableFields,
       );
     } catch {
       throw v3Failure(
@@ -972,7 +1268,7 @@ export function createAuthoritativeKpAdapter(
     }
     return buildV3Proposal(
       input.request,
-      repaired,
+      trustedRepaired,
       repairInvocation.receipt,
       true,
       input.semanticFreezeHash,
@@ -993,7 +1289,10 @@ export function createAuthoritativeKpAdapter(
             throw permanentContractError(profile, "proposal", rootActionId, attempt, now);
           }
 
-          const selected = selectAllowedKpForms(v3FormSelectionSignals(request));
+          const socialResolution = isSocialResolutionKpProfile(profile);
+          const selected = selectAllowedKpForms(v3FormSelectionSignals(request, {
+            socialResolution,
+          }));
           const preparedContext = await prepareV3Context(request, selected);
           const finiteReferences = finiteReferenceCatalog(preparedContext.contextPack);
 
@@ -1031,16 +1330,28 @@ export function createAuthoritativeKpAdapter(
               request,
               allowedForms: preparedContext.orderedForms,
               contextPack: preparedContext.contextPack,
+              socialResolution,
             }),
           );
           try {
-            const envelope = privateFormEnvelope(
+            const envelope = withTrustedSocialUtterance(request, privateFormEnvelope(
               invocation.response,
               preparedContext.orderedForms,
-            );
+            ), socialResolution);
             const referenceErrors = formReferenceErrors(envelope.draft, finiteReferences);
-            if (referenceErrors.length > 0) {
-              throw new PrivateFormEnvelopeError(envelope, referenceErrors);
+            const socialErrors = envelope.formId === "npc-exchange.v1" && socialResolution
+              ? socialFormSemanticErrors(envelope.draft, finiteReferences)
+              : [];
+            const materializationErrors = envelope.formId === "materialization.v1" && socialResolution
+              ? materializationFormSemanticErrors(envelope.draft, finiteReferences)
+              : [];
+            if (referenceErrors.length > 0
+              || socialErrors.length > 0
+              || materializationErrors.length > 0) {
+              throw new PrivateFormEnvelopeError(
+                envelope,
+                [...referenceErrors, ...socialErrors, ...materializationErrors],
+              );
             }
             return buildV3Proposal(request, envelope, invocation.receipt, false);
           } catch (error) {
@@ -1130,16 +1441,20 @@ export function createAuthoritativeKpAdapter(
           } catch {
             throw permanentContractError(profile, "narration", rootActionId, attempt, now);
           }
-          const invocation = await invoke(
+          let invocation = await invoke(
             "narration",
             request.rootActionId,
             attempt,
-            bodyOnlyNarrationModelInput(request),
+            bodyOnlyNarrationModelInput(request, {
+              socialResolution: isSocialResolutionKpProfile(profile),
+            }),
           );
           try {
             const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
             const candidate = unwrapSingleEnvelope(structured);
-            const narration = validateBodyOnlyNarrationOutput(candidate, request.projection);
+            const narration = validateBodyOnlyNarrationOutput(candidate, request.projection, {
+              socialResolution: isSocialResolutionKpProfile(profile),
+            });
             return {
               ...narration,
               audience: audienceIdentity(request.projection),
@@ -1147,7 +1462,7 @@ export function createAuthoritativeKpAdapter(
             };
           } catch (error) {
             if (!(error instanceof ModelOutputValidationError)) throw error;
-            throw v3Failure(
+            const failed = v3Failure(
               error instanceof NarrationGroundingValidationError
                 ? "NARRATION_GROUNDING_REJECTED"
                 : "NARRATION_BODY_INVALID",
@@ -1156,6 +1471,48 @@ export function createAuthoritativeKpAdapter(
                 ? "narrationGrounding"
                 : "narrationSchema",
             );
+            if (
+              !(error instanceof NarrationGroundingValidationError)
+              || !isV3AuthoritativeKpProfile(profile)
+            ) throw failed;
+            const remainingInvocationMs = invocationTimeoutMs - Math.max(
+              0,
+              now() - invocation.receipt.startedAt,
+            );
+            if (remainingInvocationMs < 1) throw failed;
+            emitInvocationReceipt(failed.modelInvocationReceipt);
+            invocation = await invoke(
+              "narration",
+              request.rootActionId,
+              attempt,
+              bodyOnlyNarrationGroundingReplacementModelInput(request, {
+                socialResolution: isSocialResolutionKpProfile(profile),
+              }),
+              remainingInvocationMs,
+            );
+            try {
+              const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
+              const candidate = unwrapSingleEnvelope(structured);
+              const narration = validateBodyOnlyNarrationOutput(candidate, request.projection, {
+                socialResolution: isSocialResolutionKpProfile(profile),
+              });
+              return {
+                ...narration,
+                audience: audienceIdentity(request.projection),
+                modelInvocationReceipt: invocation.receipt,
+              };
+            } catch (replacementError) {
+              if (!(replacementError instanceof ModelOutputValidationError)) throw replacementError;
+              throw v3Failure(
+                replacementError instanceof NarrationGroundingValidationError
+                  ? "NARRATION_GROUNDING_REJECTED"
+                  : "NARRATION_BODY_INVALID",
+                invocation.receipt,
+                replacementError instanceof NarrationGroundingValidationError
+                  ? "narrationGrounding"
+                  : "narrationSchema",
+              );
+            }
           }
         });
       },

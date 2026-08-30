@@ -242,6 +242,118 @@ test("a submitted local action renders before the Delivery it caused", async () 
   }
 });
 
+test("a new local action stays after committed history when the failed Delivery did not advance", async () => {
+  const [
+    { QueryClient, QueryClientProvider },
+    { compileSheet },
+    { PlayTable },
+    { act, create },
+  ] = await Promise.all([
+    import("@tanstack/react-query"),
+    import("../app/_runtime/lib/dnd/compute.ts"),
+    import("../app/_runtime/components/play-table.tsx"),
+    import("react-test-renderer"),
+  ]);
+  const snap = playTableSnapFixture(compileSheet);
+  snap.state.authoritative.inCombat = false;
+  delete snap.state.authoritative.tacticalProjection;
+  const oldDeliveryId = "delivery:opening:principal:alice";
+  const firstActionId = "action:receipt:first:character:alice";
+  snap.state.currentDeliveryId = oldDeliveryId;
+  snap.state.authoritative.narrationRecovery = {
+    kind: "available",
+    capability: "publish-capability:failed-delivery",
+    state: "rejected",
+  };
+  snap.messages = [{
+    id: oldDeliveryId,
+    user_id: null,
+    kind: "open",
+    name: "KP",
+    body: "你站在院子里。",
+    created_at: "",
+    clues: [],
+  }, {
+    id: firstActionId,
+    user_id: snap.me.userId,
+    kind: "say",
+    name: "阿莱莎",
+    body: "我先问候门边的人。",
+    created_at: "",
+    clues: [],
+  }];
+
+  const originalFetch = globalThis.fetch;
+  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  globalThis.fetch = async (_url, init) => {
+    const payload = JSON.parse(String(init?.body ?? "{}"));
+    const body = payload.command === "sendAction"
+      ? {
+          action: "committed",
+          narration: "retryableFailure",
+          retryable: true,
+          error: "KP 回复尚未送达。",
+        }
+      : { ok: false, error: "voice unavailable in component fixture" };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const client = new QueryClient();
+  const tree = createElement(
+    QueryClientProvider,
+    { client },
+    createElement(PlayTable, { code: "TACTIC", snap }),
+  );
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(tree);
+    });
+    assert.equal(renderer.root.findAll(
+      (node) => node.props["data-narration-recovery"] === "viewer",
+    ).length, 1, "the unresolved previous delivery starts visible");
+    await act(async () => {
+      renderer.root.findByType("textarea").props.onChange({
+        target: { value: "我接着说明自己的来意。" },
+      });
+    });
+    const sendButton = renderer.root.findByType("form").findAllByType("button").at(-1);
+    assert.ok(sendButton, "send button is missing");
+    await act(async () => {
+      sendButton.props.onClick();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const messageOrder = renderer.root.findAll(
+      (node) => node.type === "article" && typeof node.props["data-delivery-id"] === "string",
+    ).map((node) => node.props["data-delivery-id"]);
+    assert.equal(messageOrder.length, 3);
+    assert.equal(messageOrder[0], oldDeliveryId);
+    assert.equal(messageOrder[1], firstActionId);
+    assert.match(messageOrder[2], /^local-/u);
+    assert.equal(renderer.root.findAll(
+      (node) => node.props["data-narration-recovery"] === "viewer",
+    ).length, 0, "submitting a newer line clears the old delivery warning from view");
+  } finally {
+    if (renderer) {
+      await act(async () => {
+        renderer.unmount();
+      });
+    }
+    client.clear();
+    globalThis.fetch = originalFetch;
+    if (previousActEnvironment === undefined) {
+      delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    } else {
+      globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    }
+  }
+});
+
 test("a rejected action restores the draft and keeps a visible inline error", async () => {
   const [
     { QueryClient, QueryClientProvider },

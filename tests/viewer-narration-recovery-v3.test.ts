@@ -206,6 +206,123 @@ function currentBody(observation: JsonRecord) {
 }
 
 describe("V3 viewer-local narration recovery", () => {
+  it("withholds a newly committed clue until its grounded KP reply is delivered", async () => {
+    const roomId = "viewer-narration-recovery-v3-clue-presentation";
+    const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
+    const initialized = record(await authority.initializeAuthoritative({
+      roomId,
+      moduleId: "black-oak-will",
+      moduleVersion: "tactical-map-v1",
+      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      members: [{ principalId: ALICE.principal.id, role: "host" }],
+      characters: [character(ALICE_ID, ALICE.principal.id, "阿莱莎")],
+    }), "clue-presentation room initialization");
+    expect(initialized.created).toBe(true);
+
+    const prepared = record(await authority.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:viewer-recovery:clue-presentation",
+      text: "我仔细检查这枚印章的边缘。",
+    }), "clue-presentation action prepared");
+    const rootActionId = String(prepared.rootActionId);
+    const knowledgeRef = "knowledge:viewer-recovery:seal-scratch";
+    const factRef = "fact:viewer-recovery:seal-scratch";
+    const clueText = "印章边缘有一道新鲜划痕。";
+    const committed = record(await authority.commit(
+      ALICE,
+      String(prepared.preparedActionId),
+      directConsequencesProposal(rootActionId, {
+        proposalAttemptId: "proposal:viewer-recovery:clue-presentation",
+        goal: "检查印章边缘",
+        method: "近距离观察印章边缘",
+        dynamicMaterializations: [{
+          kind: "fact",
+          factRef,
+          causalBasisRefs: [],
+          visibilityPolicyRef: `visibility:knowledge-holder:${ALICE_ID}`,
+          definition: { conclusion: clueText },
+        }],
+        success: [{
+          kind: "acquireKnowledge",
+          knowledgeRef,
+          value: clueText,
+          definitionRef: factRef,
+        }],
+      }),
+    ), "clue-presentation action committed");
+    expect(committed.kind).toBe("committed");
+    const plan = record(committed.deliveryPlan, "clue-presentation delivery plan");
+    const alice = audience(plan, ALICE_ID);
+    const begun = record(await authority.beginDeliveryAudiencePublication({
+      publishCapability: plan.publishCapability,
+      audienceId: alice.audienceId,
+    }), "clue-presentation publication begin");
+    await expect(authority.failDeliveryAudiencePublication(
+      { publishCapability: plan.publishCapability },
+      {
+        audienceId: alice.audienceId,
+        deliveryGeneration: begun.deliveryGeneration,
+        errorCode: "NARRATION_GROUNDING_REJECTED",
+        state: "rejected",
+      },
+    )).resolves.toMatchObject({ kind: "rejected" });
+
+    const failedObservation = record(
+      await authority.observe(ALICE),
+      "clue-presentation failed observation",
+    );
+    expect(failedObservation.narrationRecovery).toMatchObject({
+      kind: "available",
+      state: "rejected",
+    });
+    expect(failedObservation.presentationHold).toEqual({ knowledgeRefs: [knowledgeRef] });
+    const failedTable = projectAuthoritativeTableObservation({
+      userId: ALICE.principal.id,
+      members: [ALICE.principal.id],
+      locationLabels: { yard: "院子" },
+      observation: failedObservation,
+    });
+    expect(failedTable.clues).toEqual([]);
+    expect(JSON.stringify(failedTable)).not.toContain("presentationHold");
+
+    const capability = String(record(
+      failedObservation.narrationRecovery,
+      "clue-presentation recovery",
+    ).capability);
+    await expect(handleViewerNarrationRecovery({
+      principal: ALICE,
+      authority,
+      kp: {
+        async propose() {
+          throw new Error("narration recovery must not repeat mechanics");
+        },
+        async narrate() {
+          return { body: "你确认印章边缘有一道新鲜划痕。" };
+        },
+      },
+    }, capability)).resolves.toMatchObject({
+      action: "committed",
+      narration: "published",
+    });
+
+    const recoveredObservation = record(
+      await authority.observe(ALICE),
+      "clue-presentation recovered observation",
+    );
+    expect(recoveredObservation).not.toHaveProperty("narrationRecovery");
+    expect(recoveredObservation).not.toHaveProperty("presentationHold");
+    const recoveredTable = projectAuthoritativeTableObservation({
+      userId: ALICE.principal.id,
+      members: [ALICE.principal.id],
+      locationLabels: { yard: "院子" },
+      observation: recoveredObservation,
+    });
+    expect(recoveredTable.clues).toEqual([expect.objectContaining({
+      id: knowledgeRef,
+      text: clueText,
+    })]);
+  });
+
   it("lets only the failed ViewerKey recover after eviction without repeating mechanics", async () => {
     const roomId = "viewer-narration-recovery-v3-primary";
     const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
@@ -260,7 +377,15 @@ describe("V3 viewer-local narration recovery", () => {
     });
     expect(record(aliceNarrationContext.actorAction, "Alice narration actor action"))
       .toHaveProperty("displayBody", "我确认院子里第 one 处刚刚发生的公开变化。");
+    expect(aliceNarrationContext.recentDialogue).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "player",
+        body: "我确认院子里第 one 处刚刚发生的公开变化。",
+      }),
+    ]));
     expect(JSON.stringify(bobNarrationContext.actorAction))
+      .not.toContain("我确认院子里第 one 处刚刚发生的公开变化。");
+    expect(JSON.stringify(bobNarrationContext.recentDialogue))
       .not.toContain("我确认院子里第 one 处刚刚发生的公开变化。");
     await publishAliceFailBob(authority, plan, "第一条回复");
     await expect(authority.prepare(ALICE, {

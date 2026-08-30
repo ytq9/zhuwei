@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { TacticalMap } from "@/components/tactical-map";
+import { InventoryPanel } from "@/components/inventory-panel";
 import type { Ability, CharacterSheet, SkillId } from "@/lib/dnd/types";
 import { ABILITIES, ABILITY_LABEL, SKILLS } from "@/lib/dnd/types";
 import { classById, raceById, spellById } from "@/lib/dnd/catalog";
@@ -11,18 +12,9 @@ import { ensureGear, skillBonus, spellcastingProfile } from "@/lib/dnd/compute";
 import { spellCardFacts } from "@/lib/dnd/spell-card";
 import { spellDefinition, spellMaxTargets } from "@/lib/rules/spell-catalog";
 import type { TacticalProjection } from "@/lib/rules/tactical-projection";
-import {
-  GEAR_SLOTS,
-  allowedSlots,
-  itemById,
-  packSummary,
-  slotLabel,
-  wornSummary,
-  type GearSlot,
-} from "@/lib/dnd/gear";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/client";
-import { adjustSafetyPresentation, resolveRoll, retryNarration, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import { adjustSafetyPresentation, resolveRoll, retryNarration, sendAction, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
 import {
   tableActionAccepted,
   type TableActionResponse,
@@ -149,6 +141,18 @@ type GroupRestOptions = {
   offeredAtFictionMicros: string;
 };
 
+type SocialResolutionOptions = {
+  npcCharacterId: string;
+  npcName: string;
+  goal: string;
+  method: string;
+  risk: string;
+  successOutcome: string;
+  failureOutcome: string;
+  dc: number;
+  retryGate: string[];
+};
+
 type AuthoritativeControlledCharacter = {
   characterId: string;
   name?: string;
@@ -193,6 +197,7 @@ type TablePendingInput = {
   | { kind: "advancementChoice"; options: AdvancementOptions }
   | { kind: "groupRestConsent"; options: GroupRestOptions }
   | { kind: "partyMoveConsent"; options?: undefined }
+  | { kind: "socialResolution"; options: SocialResolutionOptions }
   | {
       kind: "combatChoice";
       options?: undefined;
@@ -383,6 +388,12 @@ export function PlayTable({
   >([]);
   const safetyPresentation = snap.state.authoritative?.safetyPresentation;
   const viewerNarrationRecovery = snap.state.authoritative?.narrationRecovery;
+  // A newly submitted line supersedes the previous delivery problem in the
+  // conversation UI. If this new line also needs recovery, the refreshed
+  // authoritative snapshot will replace it with that newer recovery record.
+  const visibleViewerNarrationRecovery = localSays.length === 0
+    ? viewerNarrationRecovery
+    : undefined;
   const safetyPaused = safetyPresentation?.status === "paused";
   const visibleMessages = safetyPaused
     ? snap.messages.filter((message) => message.id !== snap.state.currentDeliveryId)
@@ -403,16 +414,18 @@ export function PlayTable({
     ? snap.state.currentDeliveryId
     : undefined;
   const conversationMessages = visibleCurrentDeliveryId
-    ? visibleMessages.flatMap((message) => {
-        if (message.id !== visibleCurrentDeliveryId) return [message];
-        const submittedBefore = localSays
-          .filter((local) => local.deliveryIdAtSubmission !== visibleCurrentDeliveryId)
-          .map(localMessage);
-        const submittedAfter = localSays
+    ? [
+        ...visibleMessages.flatMap((message) => {
+          if (message.id !== visibleCurrentDeliveryId) return [message];
+          const submittedBefore = localSays
+            .filter((local) => local.deliveryIdAtSubmission !== visibleCurrentDeliveryId)
+            .map(localMessage);
+          return [...submittedBefore, message];
+        }),
+        ...localSays
           .filter((local) => local.deliveryIdAtSubmission === visibleCurrentDeliveryId)
-          .map(localMessage);
-        return [...submittedBefore, message, ...submittedAfter];
-      })
+          .map(localMessage),
+      ]
     : [...visibleMessages, ...localSays.map(localMessage)];
   const currentPending = safetyPaused ? undefined : snap.state.pendingInputs?.[0];
   const advancementPending = currentPending?.kind === "advancementChoice"
@@ -425,6 +438,9 @@ export function PlayTable({
     ? currentPending
     : undefined;
   const playerChoicePending = currentPending?.kind === "playerChoice"
+    ? currentPending
+    : undefined;
+  const socialResolutionPending = currentPending?.kind === "socialResolution"
     ? currentPending
     : undefined;
   const combatPending = currentPending?.kind === "combatChoice"
@@ -460,7 +476,7 @@ export function PlayTable({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [snap.messages.length]);
+  }, [conversationMessages.length]);
 
   useEffect(() => {
     const kpKinds = new Set(["narrate", "refuse", "call_roll", "open"]);
@@ -532,13 +548,13 @@ export function PlayTable({
   }
 
   async function retryViewerNarration() {
-    if (sendingRef.current || viewerNarrationRecovery?.kind !== "available") return;
+    if (sendingRef.current || visibleViewerNarrationRecovery?.kind !== "available") return;
     sendingRef.current = true;
     setSending(true);
     setSubmissionError(null);
     try {
       const result = await retryNarration({
-        data: { code, capability: viewerNarrationRecovery.capability },
+        data: { code, capability: visibleViewerNarrationRecovery.capability },
       });
       if (result.action === "committed" && result.narration === "published") {
         clearRememberedSubmission();
@@ -930,7 +946,7 @@ export function PlayTable({
           ))}
           <div ref={endRef} />
         </div>
-        {viewerNarrationRecovery?.kind === "available" ? (
+        {visibleViewerNarrationRecovery?.kind === "available" ? (
           <div
             data-narration-recovery="viewer"
             role="alert"
@@ -938,7 +954,7 @@ export function PlayTable({
           >
             <p className="text-sm text-fg">行动已经结算，但这条 KP 回复尚未送达。</p>
             <p className="mt-1 text-xs text-subtle">
-              {publicNarrationRecoveryReason(viewerNarrationRecovery.state)}
+              {publicNarrationRecoveryReason(visibleViewerNarrationRecovery.state)}
             </p>
             <p className="mt-1 text-xs text-subtle">
               重试只恢复你自己的回复，不会重新裁定、掷骰或消耗资源。
@@ -955,7 +971,7 @@ export function PlayTable({
             </Button>
           </div>
         ) : null}
-        {viewerNarrationRecovery === undefined && recoverableSubmission?.lastError ? (
+        {visibleViewerNarrationRecovery === undefined && recoverableSubmission?.lastError ? (
           <div
             data-action-recovery="send-action"
             role="alert"
@@ -1120,6 +1136,61 @@ export function PlayTable({
                 ))}
               </div>
             ) : null}
+            {socialResolutionPending ? (
+              <div className="mt-3 space-y-3 rounded-xl border border-border bg-panel/40 p-3">
+                <div className="space-y-1 text-xs text-subtle">
+                  {typeof socialResolutionPending.options?.npcName === "string" ? (
+                    <p>对象：{socialResolutionPending.options.npcName}</p>
+                  ) : null}
+                  {typeof socialResolutionPending.options?.goal === "string" ? (
+                    <p>目标：{socialResolutionPending.options.goal}</p>
+                  ) : null}
+                  {typeof socialResolutionPending.options?.method === "string" ? (
+                    <p>做法：{socialResolutionPending.options.method}</p>
+                  ) : null}
+                  {typeof socialResolutionPending.options?.risk === "string" ? (
+                    <p>风险：{socialResolutionPending.options.risk}</p>
+                  ) : null}
+                  {typeof socialResolutionPending.options?.successOutcome === "string" ? (
+                    <p>成功时：{socialResolutionPending.options.successOutcome}</p>
+                  ) : null}
+                  {typeof socialResolutionPending.options?.failureOutcome === "string" ? (
+                    <p>失败时：{socialResolutionPending.options.failureOutcome}</p>
+                  ) : null}
+                  {typeof socialResolutionPending.options?.dc === "number" ? (
+                    <p>当前冻结边界：DC {socialResolutionPending.options.dc}；最终结果还会按差值分档。</p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    disabled={sending}
+                    onClick={() => void answerTypedPending({
+                      pendingInputId: socialResolutionPending.pendingInputId,
+                      answer: { choice: "press" },
+                      body: "我坚持这个做法，进行检定。",
+                      failureMessage: "没能确认这次社交检定",
+                    })}
+                  >
+                    坚持并掷骰
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={sending}
+                    onClick={() => void answerTypedPending({
+                      pendingInputId: socialResolutionPending.pendingInputId,
+                      answer: { choice: "acceptStatusQuo" },
+                      body: "我不进行检定，接受当前局面。",
+                      failureMessage: "没能接受当前局面",
+                    })}
+                  >
+                    不掷骰，接受现状
+                  </Button>
+                </div>
+                <p className="text-xs text-muted">也可以直接在下方输入新的说法；旧检定会在掷骰前失效，但已经说出口的话仍然存在。</p>
+              </div>
+            ) : null}
             {combatPending ? (
               <CombatChoicePanel
                 key={combatPending.pendingInputId}
@@ -1143,7 +1214,7 @@ export function PlayTable({
             ) : null}
           </div>
         ) : null}
-        {!safetyPaused && !advancementPending && !groupRestPending && !partyMovePending && !playerChoicePending && !combatPending ? <form
+        {!safetyPaused && pendingMine.length === 0 && !advancementPending && !groupRestPending && !partyMovePending && !playerChoicePending && !combatPending ? <form
           className="flex shrink-0 flex-wrap items-end gap-2 border-t border-border p-3"
           onSubmit={(e) => e.preventDefault()}
         >
@@ -2144,7 +2215,10 @@ function RollButton({
   combat: PublicCombat | null;
   ruleBoosts?: Array<"guidance" | "inspiration" | "lucky">;
 }) {
-  const boosts = ruleBoosts
+  const qc = useQueryClient();
+  const boosts = roll.authoritative
+    ? []
+    : ruleBoosts
     ? ruleBoosts.map((id) => ({
         id,
         fromUserId: roll.userId,
@@ -2195,6 +2269,7 @@ function RollButton({
               ABILITY_LABEL[roll.ability as keyof typeof ABILITY_LABEL] ??
               roll.ability);
   const alreadyGuide =
+    !roll.authoritative &&
     (roll.kind === "check" || roll.kind === "init" || !roll.kind) &&
     (ruleBoosts
       ? ruleBoosts.includes("guidance")
@@ -2247,7 +2322,8 @@ function RollButton({
             const res = await resolveRoll({
               data: { code, rollId: roll.id, boostIds },
             });
-            if (!res.ok) toast.error(res.error);
+            if (!tableActionAccepted(res)) toast.error(String(res.error ?? "没有完成这次掷骰"));
+            else void qc.invalidateQueries({ queryKey: ["table", code] });
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "骰子打滑了");
           } finally {
@@ -2255,7 +2331,7 @@ function RollButton({
           }
         }}
       >
-        {busy ? "掷出……" : `掷 ${label} DC ${roll.dc}`}
+        {busy ? "掷出……" : `掷 ${label}${roll.dc > 0 ? ` DC ${roll.dc}` : ""}`}
       </Button>
     </div>
   );
@@ -2731,20 +2807,12 @@ function CharacterDetail({
           </ul>
         </Fold>
       )}
-      <Fold title="身上" hint={wornSummary(live.equipped ?? {})}>
-        <GearSlots
-          sheet={live}
-          canEdit={canEdit}
-          code={code}
-        />
-      </Fold>
-      <Fold title="背包" hint={packSummary(live.backpack ?? [])}>
-        <Backpack
-          sheet={live}
-          canEdit={canEdit}
-          code={code}
-        />
-      </Fold>
+      <InventoryPanel
+        equipped={live.equipped ?? {}}
+        backpack={live.backpack ?? []}
+        canEdit={canEdit}
+        code={code}
+      />
       {(live.appearance || live.trait) && (
         <Fold title="角色" hint={live.appearance ? "外貌" : "展开"}>
           {live.appearance && (
@@ -3490,151 +3558,6 @@ function SpellLine({
         </div>
       )}
     </div>
-  );
-}
-
-function useGearAct(code: string, canEdit: boolean) {
-  const qc = useQueryClient();
-  const [busy, setBusy] = useState<string | null>(null);
-  async function act(
-    action: "wear" | "stow",
-    slot: GearSlot,
-    itemId?: string,
-  ) {
-    if (!canEdit || busy) return;
-    setBusy(`${action}-${slot}`);
-    try {
-      const res = await setGear({ data: { code, action, slot, itemId } });
-      if (!tableActionAccepted(res)) toast.error(String(res.error ?? "换装失败"));
-      else void qc.invalidateQueries({ queryKey: ["table", code] });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "换装失败");
-    } finally {
-      setBusy(null);
-    }
-  }
-  return { busy, act };
-}
-
-function GearSlots({
-  sheet,
-  canEdit,
-  code,
-}: {
-  sheet: CharacterSheet;
-  canEdit: boolean;
-  code: string;
-}) {
-  const { busy, act } = useGearAct(code, canEdit);
-  const [openSlot, setOpenSlot] = useState<string | null>(null);
-  const equipped = sheet.equipped ?? {};
-  return (
-    <ul className="grid gap-1.5">
-      {GEAR_SLOTS.map((s) => {
-        const it = itemById(equipped[s.id]);
-        const open = openSlot === s.id;
-        return (
-          <li key={s.id} className="rounded-[10px] border border-border bg-bg/40">
-            <button
-              type="button"
-              onClick={() => setOpenSlot(open ? null : s.id)}
-              className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left"
-            >
-              <span className="text-[11px] text-subtle">{s.label}</span>
-              <span className="text-xs">
-                {it ? it.name : <span className="text-subtle">空</span>}
-              </span>
-            </button>
-            {open && (
-              <div className="border-t border-border px-2.5 py-2">
-                {it ? (
-                  <>
-                    <p className="text-xs leading-relaxed text-muted">
-                      {it.damage ? `${it.damage}。` : ""}
-                      {it.text}
-                    </p>
-                    {canEdit && (
-                      <button
-                        type="button"
-                        className="mt-2 text-[11px] text-brass"
-                        disabled={Boolean(busy)}
-                        onClick={() => void act("stow", s.id)}
-                      >
-                        卸到背包
-                      </button>
-                    )}
-                  </>
-                ) : (
-                  <p className="text-xs text-subtle">这一格是空的。从背包里选一件穿上。</p>
-                )}
-              </div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function Backpack({
-  sheet,
-  canEdit,
-  code,
-}: {
-  sheet: CharacterSheet;
-  canEdit: boolean;
-  code: string;
-}) {
-  const { busy, act } = useGearAct(code, canEdit);
-  const [openId, setOpenId] = useState<string | null>(null);
-  const pack = sheet.backpack ?? [];
-  if (!pack.length) {
-    return <p className="text-xs text-subtle">背包是空的。</p>;
-  }
-  return (
-    <ul className="grid gap-1.5">
-      {pack.map((p) => {
-        const it = itemById(p.itemId);
-        const name = it?.name ?? p.itemId;
-        const open = openId === p.itemId;
-        const slots = it ? allowedSlots(it) : [];
-        return (
-          <li key={p.itemId} className="rounded-[10px] border border-border bg-bg/40">
-            <button
-              type="button"
-              onClick={() => setOpenId(open ? null : p.itemId)}
-              className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left"
-            >
-              <span className="text-xs">{name}</span>
-              <span className="text-[11px] text-subtle">×{p.qty}</span>
-            </button>
-            {open && (
-              <div className="border-t border-border px-2.5 py-2">
-                <p className="text-xs leading-relaxed text-muted">
-                  {it?.damage ? `${it.damage}。` : ""}
-                  {it?.text ?? "没有更细的说明。"}
-                </p>
-                {canEdit && slots.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {slots.map((slot) => (
-                      <button
-                        key={slot}
-                        type="button"
-                        className="rounded-full border border-border px-2 py-0.5 text-[11px] text-brass disabled:opacity-50"
-                        disabled={Boolean(busy)}
-                        onClick={() => void act("wear", slot, p.itemId)}
-                      >
-                        戴到{slotLabel(slot)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 

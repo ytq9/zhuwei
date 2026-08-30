@@ -90,6 +90,13 @@ export type AuthorityRandomnessBatchJournalRow = {
   status: "requestCommitted" | "candidateCommitted" | "finalized";
 };
 
+export type AuthorityRandomnessAuthorizationRow = {
+  prepared_action_id: string;
+  randomness_id: string;
+  principal_id: string;
+  character_id: string;
+};
+
 export type AuthorityProposalRecoveryRow = {
   prepared_action_id: string;
   proposal_hash: string;
@@ -319,6 +326,13 @@ export class AuthoritativeRoomStore {
           status IN ('requestCommitted', 'candidateCommitted', 'finalized')
         )
       );
+      CREATE TABLE IF NOT EXISTS authority_randomness_authorizations (
+        prepared_action_id TEXT NOT NULL,
+        randomness_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        PRIMARY KEY (prepared_action_id, randomness_id)
+      );
       CREATE TABLE IF NOT EXISTS authority_scope_versions (
         scope_id TEXT PRIMARY KEY,
         version INTEGER NOT NULL
@@ -522,6 +536,7 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_proposal_recovery)
         + (SELECT COUNT(*) FROM authority_randomness_journal)
         + (SELECT COUNT(*) FROM authority_randomness_batches)
+        + (SELECT COUNT(*) FROM authority_randomness_authorizations)
         + (SELECT COUNT(*) FROM authority_scope_versions)
         + (SELECT COUNT(*) FROM authority_receipts)
         + (SELECT COUNT(*) FROM authority_pending_inputs)
@@ -940,6 +955,18 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
+  awaitingRandomnessSubmissions(): AuthoritySubmissionRow[] {
+    return this.storage.sql.exec<AuthoritySubmissionRow>(`
+      SELECT submission_id, principal_id, payload_hash, input_kind,
+             root_action_id, prepared_action_id, character_id, scene_scope,
+             prepared_scope_version, status, proposal_hash, prepared_json,
+             continuation_json, result_json
+      FROM authority_submissions
+      WHERE status = 'awaitingRandomness'
+      ORDER BY prepared_action_id
+    `).toArray();
+  }
+
   actionStage(preparedActionId: string): AuthorityActionStageRow | undefined {
     return this.storage.sql.exec<AuthorityActionStageRow>(`
       SELECT prepared_action_id, submission_id, phase, target_id,
@@ -1206,6 +1233,41 @@ export class AuthoritativeRoomStore {
        WHERE prepared_action_id = ?`,
       JSON.stringify(candidates),
       preparedActionId,
+    );
+  }
+
+  randomnessAuthorizations(
+    preparedActionId: string,
+  ): AuthorityRandomnessAuthorizationRow[] {
+    return this.storage.sql.exec<AuthorityRandomnessAuthorizationRow>(`
+      SELECT prepared_action_id, randomness_id, principal_id, character_id
+      FROM authority_randomness_authorizations
+      WHERE prepared_action_id = ?
+      ORDER BY randomness_id
+    `, preparedActionId).toArray();
+  }
+
+  randomnessAuthorizationsByRandomnessId(
+    randomnessId: string,
+  ): AuthorityRandomnessAuthorizationRow[] {
+    return this.storage.sql.exec<AuthorityRandomnessAuthorizationRow>(`
+      SELECT prepared_action_id, randomness_id, principal_id, character_id
+      FROM authority_randomness_authorizations
+      WHERE randomness_id = ?
+      ORDER BY prepared_action_id
+    `, randomnessId).toArray();
+  }
+
+  authorizeRandomness(input: AuthorityRandomnessAuthorizationRow): void {
+    this.storage.sql.exec(
+      `INSERT INTO authority_randomness_authorizations (
+         prepared_action_id, randomness_id, principal_id, character_id
+       ) VALUES (?, ?, ?, ?)
+       ON CONFLICT(prepared_action_id, randomness_id) DO NOTHING`,
+      input.prepared_action_id,
+      input.randomness_id,
+      input.principal_id,
+      input.character_id,
     );
   }
 
@@ -2039,6 +2101,7 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_delivery_audiences;
       DELETE FROM authority_delivery_plans;
       DELETE FROM authority_pending_inputs;
+      DELETE FROM authority_randomness_authorizations;
       DELETE FROM authority_randomness_batches;
       DELETE FROM authority_randomness_journal;
       DELETE FROM authority_proposal_recovery;

@@ -44,6 +44,10 @@ import {
   stepCompoundActionPlan,
   storyWaitsForExplicitContinuation,
 } from "./compound-actions";
+import { stepCampaignWorld } from "./campaign-actions";
+import { stepCombatWorld } from "./combat-actions";
+import { stepMultiplayerWorld } from "./multiplayer-actions";
+import { isGearSlot } from "./character-gear";
 import {
   hasExactKeys,
   hashWorldState,
@@ -52,6 +56,15 @@ import {
   isRecord,
 } from "./validation";
 import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
+import { stepSocialCausalAction } from "./social-actions";
+import { characterTimelineId } from "./timeline";
+import { dynamicNpcSocialMechanics } from "./social-model";
+import {
+  DYNAMIC_NPC_DEFAULT_SOCIAL_ARCHETYPE_REF,
+  socialResolutionProfileEnabled,
+} from "../profiles/social-resolution";
+import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
+import type { GearSlot } from "../../dnd/gear";
 
 const CAUSAL_INPUT_KEYS = [
   "actionLanguageHash",
@@ -61,6 +74,7 @@ const CAUSAL_INPUT_KEYS = [
   "kind",
   "rootActionId",
 ] as const;
+const SOCIAL_CAUSAL_INPUT_KEYS = [...CAUSAL_INPUT_KEYS, "trustedUtterance"] as const;
 
 type Accumulator = {
   state: AuthoritativeWorldState;
@@ -94,6 +108,667 @@ function scalarNumber(value: CausalValue | undefined): number | undefined {
 
 function stringList(value: CausalValue | undefined): string[] {
   return Array.isArray(value) ? value.filter(isNonEmptyString) : [];
+}
+
+const CHARACTER_PREMISE_METHOD = "establishCharacterPremise" as const;
+const DYNAMIC_NPC_MATERIALIZATION_METHOD = "materializeDynamicNpc" as const;
+const NPC_MECHANICAL_ENCOUNTER_METHOD = "materializeNpcMechanicalEncounter" as const;
+const ITEM_TRANSFER_METHOD = "transferItem" as const;
+const NPC_GEAR_CHANGE_METHOD = "changeNpcGear" as const;
+const NPC_ITEM_STATE_CHANGE_METHOD = "changeNpcItemState" as const;
+const NPC_ITEM_STATE_CAUSE_SCHEMA = "zhuwei.npc-mechanical-item-state-cause/v1" as const;
+const CHARACTER_PREMISE_PREDICATES = [
+  "arrivalPurpose",
+  "priorKnowledge",
+  "priorRelationship",
+  "obligation",
+  "affiliation",
+  "identityBackground",
+] as const;
+const PREMISE_ENTITY_KINDS = [
+  "person",
+  "organization",
+  "place",
+  "object",
+  "event",
+  "task",
+] as const;
+
+function dynamicDefinitionKind(
+  entityKind: typeof PREMISE_ENTITY_KINDS[number],
+): "npc" | "organization" | "location" | "item" | "opportunity" {
+  if (entityKind === "person") return "npc";
+  if (entityKind === "organization") return "organization";
+  if (entityKind === "place") return "location";
+  if (entityKind === "object") return "item";
+  return "opportunity";
+}
+
+function premiseAssertionPredicate(relationKind: string):
+"affiliatedWith" | "intends" | "locatedAt" | "relatedTo" {
+  if (relationKind === "affiliatedWith") return "affiliatedWith";
+  if (relationKind === "boundFor" || relationKind === "seeksOrAssists") return "intends";
+  if (relationKind === "originatedFrom") return "locatedAt";
+  return "relatedTo";
+}
+
+type CharacterPremiseDraft = {
+  schema: "zhuwei.character-premise-draft/v2";
+  policyRef: string;
+  predicate: typeof CHARACTER_PREMISE_PREDICATES[number];
+  anchorRefs: string[];
+  bindings: Array<{
+    slotRef: string;
+    referenceKind: "existing";
+    ref: string;
+  } | {
+    slotRef: string;
+    referenceKind: "openArchetype";
+    archetypeRef: string;
+    displayAlias: string;
+  }>;
+};
+
+type DynamicNpcMaterializationDraft = {
+  schema: "zhuwei.dynamic-npc-materialization-draft/v2";
+  definitionRef: string;
+  entityRef: string;
+  sourceFactRefs: string[];
+  initialKnowledgeFactRefs: string[];
+  sceneRef: string;
+};
+
+type NpcMechanicalEncounterDraft = {
+  schema: "zhuwei.npc-mechanical-encounter-draft/v1";
+  encounterRef: string;
+  alliedEntityRefs: string[];
+  hostileEntityRefs: string[];
+  entries: JsonRecord[];
+};
+
+type ItemTransferDraft = {
+  schema: "zhuwei.item-transfer-draft/v1";
+  toCharacterRef: string;
+  itemRef: string;
+  quantity: number;
+};
+
+type NpcGearChangeDraft =
+  | {
+      schema: "zhuwei.npc-gear-change-draft/v1";
+      npcRef: string;
+      action: "wear";
+      slot: GearSlot;
+      itemRef: string;
+    }
+  | {
+      schema: "zhuwei.npc-gear-change-draft/v1";
+      npcRef: string;
+      action: "stow";
+      slot: GearSlot;
+    };
+
+type NpcItemStateChangeDraft = {
+  schema: "zhuwei.npc-item-state-change-draft/v1";
+  npcRef: string;
+  itemRef: string;
+  action: "break" | "repair" | "destroy" | "lose";
+  causeFactRef: string;
+};
+
+type NpcMechanicalCausalDraft =
+  | { kind: "none" }
+  | { kind: "invalid" }
+  | { kind: "encounter"; draft: NpcMechanicalEncounterDraft; step: LoweredCausalStep }
+  | { kind: "transfer"; draft: ItemTransferDraft; step: LoweredCausalStep }
+  | { kind: "gear"; draft: NpcGearChangeDraft; step: LoweredCausalStep }
+  | { kind: "itemState"; draft: NpcItemStateChangeDraft; step: LoweredCausalStep };
+
+type PremisePolicySlot = {
+  slotRef: string;
+  relationKind: string;
+  minimum: number;
+  maximum: number;
+  allowedExistingKinds: typeof PREMISE_ENTITY_KINDS[number][];
+  allowedOpenArchetypeRefs: string[];
+};
+
+type PremisePolicy = {
+  policyRef: string;
+  predicate: CharacterPremiseDraft["predicate"];
+  scope: "characterBackstory";
+  minimumBindings: number;
+  maximumBindings: number;
+  allowedAnchorRefs: string[];
+  slots: PremisePolicySlot[];
+  statementTemplateRef: string;
+};
+
+type PremiseArchetype = {
+  archetypeRef: string;
+  entityKind: typeof PREMISE_ENTITY_KINDS[number];
+  semanticCategory: string;
+  displayTemplateRef: string;
+  socialArchetypeRef?: string;
+};
+
+function boundedPremiseText(value: unknown, maximum: number): value is string {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.length <= maximum;
+}
+
+function characterPremiseDraft(step: LoweredCausalStep): CharacterPremiseDraft | undefined {
+  if (step.primitive !== "materializeOpenFact"
+    || step.arguments.method !== CHARACTER_PREMISE_METHOD
+    || step.arguments.resolution !== "direct") return undefined;
+  const serialized = scalarString(step.arguments.proposedFact);
+  if (serialized === undefined || serialized.length > 4_000) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(value)
+    || !hasExactKeys(value, ["anchorRefs", "bindings", "policyRef", "predicate", "schema"])
+    || value.schema !== "zhuwei.character-premise-draft/v2"
+    || !boundedPremiseText(value.policyRef, 240)
+    || !(CHARACTER_PREMISE_PREDICATES as readonly unknown[]).includes(value.predicate)
+    || !Array.isArray(value.anchorRefs)
+    || value.anchorRefs.length < 1
+    || value.anchorRefs.length > 4
+    || !value.anchorRefs.every((entry) => boundedPremiseText(entry, 240))
+    || new Set(value.anchorRefs).size !== value.anchorRefs.length
+    || !Array.isArray(value.bindings)
+    || value.bindings.length < 1
+    || value.bindings.length > 8) return undefined;
+  const bindings: CharacterPremiseDraft["bindings"] = [];
+  for (const candidate of value.bindings) {
+    if (!isRecord(candidate) || !boundedPremiseText(candidate.slotRef, 80)) return undefined;
+    if (candidate.referenceKind === "existing") {
+      if (!hasExactKeys(candidate, ["ref", "referenceKind", "slotRef"])
+        || !boundedPremiseText(candidate.ref, 240)) return undefined;
+      bindings.push({
+        slotRef: candidate.slotRef,
+        referenceKind: "existing",
+        ref: candidate.ref,
+      });
+      continue;
+    }
+    if (candidate.referenceKind !== "openArchetype"
+      || !hasExactKeys(candidate, ["archetypeRef", "displayAlias", "referenceKind", "slotRef"])
+      || !boundedPremiseText(candidate.archetypeRef, 240)
+      || !boundedPremiseText(candidate.displayAlias, 120)) return undefined;
+    bindings.push({
+      slotRef: candidate.slotRef,
+      referenceKind: "openArchetype",
+      archetypeRef: candidate.archetypeRef,
+      displayAlias: candidate.displayAlias,
+    });
+  }
+  return {
+    schema: "zhuwei.character-premise-draft/v2",
+    policyRef: value.policyRef as string,
+    predicate: value.predicate as CharacterPremiseDraft["predicate"],
+    anchorRefs: [...value.anchorRefs as string[]].sort(),
+    bindings,
+  };
+}
+
+function dynamicNpcMaterializationDraft(
+  step: LoweredCausalStep,
+): DynamicNpcMaterializationDraft | undefined {
+  if (step.primitive !== "materializeOpenFact"
+    || step.arguments.method !== DYNAMIC_NPC_MATERIALIZATION_METHOD
+    || step.arguments.resolution !== "direct") return undefined;
+  const serialized = scalarString(step.arguments.proposedFact);
+  if (serialized === undefined || serialized.length > 4_000) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      "definitionRef", "entityRef", "sceneRef", "schema", "sourceFactRefs",
+      "initialKnowledgeFactRefs",
+    ])
+    || value.schema !== "zhuwei.dynamic-npc-materialization-draft/v2"
+    || ![value.definitionRef, value.entityRef, value.sceneRef].every(isNonEmptyString)
+    || !Array.isArray(value.sourceFactRefs)
+    || value.sourceFactRefs.length < 1
+    || value.sourceFactRefs.length > 8
+    || !value.sourceFactRefs.every(isNonEmptyString)
+    || new Set(value.sourceFactRefs).size !== value.sourceFactRefs.length
+    || !Array.isArray(value.initialKnowledgeFactRefs)
+    || value.initialKnowledgeFactRefs.length > 8
+    || !value.initialKnowledgeFactRefs.every(isNonEmptyString)
+    || new Set(value.initialKnowledgeFactRefs).size !== value.initialKnowledgeFactRefs.length
+    || value.initialKnowledgeFactRefs.some((factRef) =>
+      !(value.sourceFactRefs as unknown[]).includes(factRef))) return undefined;
+  const sourceFactRefs = value.sourceFactRefs as string[];
+  const initialKnowledgeFactRefs = value.initialKnowledgeFactRefs as string[];
+  return {
+    schema: value.schema,
+    definitionRef: value.definitionRef as string,
+    entityRef: value.entityRef as string,
+    sourceFactRefs: [...sourceFactRefs].sort(),
+    initialKnowledgeFactRefs: [...initialKnowledgeFactRefs].sort(),
+    sceneRef: value.sceneRef as string,
+  };
+}
+
+function boundedReferenceList(
+  value: unknown,
+  maximum: number,
+): string[] | undefined {
+  return Array.isArray(value)
+    && value.length <= maximum
+    && value.every((entry) => isNonEmptyString(entry) && entry.length <= 240)
+    && value.length === new Set(value).size
+    ? [...value].sort()
+    : undefined;
+}
+
+function npcMechanicalCausalDraft(program: CausalActionProgram): NpcMechanicalCausalDraft {
+  if (program.formRef !== "materialization.v1") return { kind: "none" };
+  const step = lowerCausalActionProgram(program).steps[0];
+  if (step === undefined) return { kind: "none" };
+  const method = scalarString(step.arguments.method);
+  const serialized = scalarString(step.arguments.proposedFact);
+  let value: unknown;
+  try {
+    value = serialized === undefined || serialized.length > 16_000
+      ? undefined
+      : JSON.parse(serialized);
+  } catch {
+    value = undefined;
+  }
+  const schema = isRecord(value) && isNonEmptyString(value.schema) ? value.schema : undefined;
+  const reservedMethod = method === NPC_MECHANICAL_ENCOUNTER_METHOD
+    || method === ITEM_TRANSFER_METHOD
+    || method === NPC_GEAR_CHANGE_METHOD
+    || method === NPC_ITEM_STATE_CHANGE_METHOD;
+  const reservedSchema = schema === "zhuwei.npc-mechanical-encounter-draft/v1"
+    || schema === "zhuwei.item-transfer-draft/v1"
+    || schema === "zhuwei.npc-gear-change-draft/v1"
+    || schema === "zhuwei.npc-item-state-change-draft/v1";
+  if (!reservedMethod && !reservedSchema) return { kind: "none" };
+  if (step.primitive !== "materializeOpenFact"
+    || step.arguments.resolution !== "direct"
+    || !isRecord(value)) return { kind: "invalid" };
+
+  if (method === NPC_MECHANICAL_ENCOUNTER_METHOD
+    && schema === "zhuwei.npc-mechanical-encounter-draft/v1") {
+    if (!hasExactKeys(value, [
+      "alliedEntityRefs", "encounterRef", "entries", "hostileEntityRefs", "schema",
+    ])
+      || !isNonEmptyString(value.encounterRef)
+      || value.encounterRef.length > 240
+      || !Array.isArray(value.entries)
+      || value.entries.length < 1
+      || value.entries.length > 24
+      || !value.entries.every(isRecord)) return { kind: "invalid" };
+    const alliedEntityRefs = boundedReferenceList(value.alliedEntityRefs, 24);
+    const hostileEntityRefs = boundedReferenceList(value.hostileEntityRefs, 24);
+    const entryIds = value.entries.map((entry) => entry.entityId);
+    if (alliedEntityRefs === undefined
+      || hostileEntityRefs === undefined
+      || hostileEntityRefs.length === 0
+      || !entryIds.every(isNonEmptyString)
+      || entryIds.length !== new Set(entryIds).size
+      || entryIds.some((entityId) =>
+        alliedEntityRefs.includes(entityId) === hostileEntityRefs.includes(entityId))) {
+      return { kind: "invalid" };
+    }
+    return {
+      kind: "encounter",
+      step,
+      draft: {
+        schema,
+        encounterRef: value.encounterRef,
+        alliedEntityRefs,
+        hostileEntityRefs,
+        entries: structuredClone(value.entries) as JsonRecord[],
+      },
+    };
+  }
+
+  if (method === ITEM_TRANSFER_METHOD && schema === "zhuwei.item-transfer-draft/v1") {
+    if (!hasExactKeys(value, ["itemRef", "quantity", "schema", "toCharacterRef"])
+      || !isNonEmptyString(value.toCharacterRef)
+      || !isNonEmptyString(value.itemRef)
+      || !Number.isSafeInteger(value.quantity)
+      || Number(value.quantity) < 1
+      || Number(value.quantity) > 1_000_000) return { kind: "invalid" };
+    return {
+      kind: "transfer",
+      step,
+      draft: {
+        schema,
+        toCharacterRef: value.toCharacterRef,
+        itemRef: value.itemRef,
+        quantity: Number(value.quantity),
+      },
+    };
+  }
+
+  if (method === NPC_GEAR_CHANGE_METHOD
+    && schema === "zhuwei.npc-gear-change-draft/v1") {
+    if (!isNonEmptyString(value.npcRef) || !isGearSlot(value.slot)) return { kind: "invalid" };
+    if (value.action === "wear") {
+      if (!hasExactKeys(value, ["action", "itemRef", "npcRef", "schema", "slot"])
+        || !isNonEmptyString(value.itemRef)) return { kind: "invalid" };
+      return {
+        kind: "gear",
+        step,
+        draft: {
+          schema,
+          npcRef: value.npcRef,
+          action: "wear",
+          slot: value.slot,
+          itemRef: value.itemRef,
+        },
+      };
+    }
+    if (value.action !== "stow"
+      || !hasExactKeys(value, ["action", "npcRef", "schema", "slot"])) {
+      return { kind: "invalid" };
+    }
+    return {
+      kind: "gear",
+      step,
+      draft: {
+        schema,
+        npcRef: value.npcRef,
+        action: "stow",
+        slot: value.slot,
+      },
+    };
+  }
+
+  if (method === NPC_ITEM_STATE_CHANGE_METHOD
+    && schema === "zhuwei.npc-item-state-change-draft/v1"
+    && hasExactKeys(value, ["action", "causeFactRef", "itemRef", "npcRef", "schema"])
+    && isNonEmptyString(value.npcRef)
+    && isNonEmptyString(value.itemRef)
+    && isNonEmptyString(value.causeFactRef)
+    && ["break", "repair", "destroy", "lose"].includes(String(value.action))) {
+    return {
+      kind: "itemState",
+      step,
+      draft: {
+        schema,
+        npcRef: value.npcRef,
+        itemRef: value.itemRef,
+        action: value.action as NpcItemStateChangeDraft["action"],
+        causeFactRef: value.causeFactRef,
+      },
+    };
+  }
+
+  return { kind: "invalid" };
+}
+
+function npcItemStateCauseMatches(
+  fact: AuthoritativeWorldState["canonicalFacts"][string] | undefined,
+  draft: NpcItemStateChangeDraft,
+): boolean {
+  if (fact?.kind !== "npcMechanicalItemStateCause"
+    || fact.subjectRefs.length !== 2
+    || !fact.subjectRefs.includes(draft.npcRef)
+    || !fact.subjectRefs.includes(draft.itemRef)
+    || !isRecord(fact.value)
+    || !hasExactKeys(fact.value, ["action", "itemRef", "npcRef", "schema"])) return false;
+  return fact.value.schema === NPC_ITEM_STATE_CAUSE_SCHEMA
+    && fact.value.npcRef === draft.npcRef
+    && fact.value.itemRef === draft.itemRef
+    && fact.value.action === draft.action;
+}
+
+function moduleAuthorityValue(
+  state: AuthoritativeWorldState,
+  reference: string,
+  kind: string,
+  schema: string,
+): JsonRecord | undefined {
+  const fact = state.canonicalFacts[reference];
+  const campaign = state.campaignRuntime.campaign;
+  const campaignRef = isRecord(campaign) && isRecord(campaign.moduleRef)
+    ? campaign.moduleRef
+    : undefined;
+  const value = isRecord(fact?.value) ? fact.value : undefined;
+  const valueModuleRef = isRecord(value?.moduleRef) ? value.moduleRef : undefined;
+  return fact?.kind === kind
+    && fact.source === "moduleAnchor"
+    && fact.visibilityPolicyId === "visibility:room-authority-only"
+    && value?.schema === schema
+    && isNonEmptyString(campaignRef?.profileId)
+    && isNonEmptyString(campaignRef?.profileHash)
+    && isNonEmptyString(valueModuleRef?.profileId)
+    && isNonEmptyString(valueModuleRef?.profileHash)
+    && valueModuleRef?.profileId === campaignRef.profileId
+    && valueModuleRef?.profileHash === campaignRef.profileHash
+    ? value
+    : undefined;
+}
+
+function premisePolicy(state: AuthoritativeWorldState, reference: string): PremisePolicy | undefined {
+  const value = moduleAuthorityValue(
+    state,
+    reference,
+    "modulePremisePolicy",
+    "zhuwei.module-premise-policy/v1",
+  );
+  const policy = isRecord(value?.policy) ? value.policy : undefined;
+  if (policy === undefined
+    || !hasExactKeys(policy, [
+      "allowedAnchorRefs", "maximumBindings", "minimumBindings", "policyRef", "predicate",
+      "scope", "slots", "statementTemplateRef",
+    ])
+    || policy.policyRef !== reference
+    || !(CHARACTER_PREMISE_PREDICATES as readonly unknown[]).includes(policy.predicate)
+    || policy.scope !== "characterBackstory"
+    || !Number.isSafeInteger(policy.minimumBindings)
+    || !Number.isSafeInteger(policy.maximumBindings)
+    || Number(policy.minimumBindings) < 1
+    || Number(policy.maximumBindings) < Number(policy.minimumBindings)
+    || Number(policy.maximumBindings) > 8
+    || !Array.isArray(policy.allowedAnchorRefs)
+    || policy.allowedAnchorRefs.length < 1
+    || !policy.allowedAnchorRefs.every(isNonEmptyString)
+    || !Array.isArray(policy.slots)
+    || policy.slots.length < 1
+    || !isNonEmptyString(policy.statementTemplateRef)) return undefined;
+  const slots: PremisePolicySlot[] = [];
+  for (const candidate of policy.slots) {
+    if (!isRecord(candidate)
+      || !hasExactKeys(candidate, [
+        "allowedExistingKinds", "allowedOpenArchetypeRefs", "maximum", "minimum",
+        "relationKind", "slotRef",
+      ])
+      || ![candidate.slotRef, candidate.relationKind].every(isNonEmptyString)
+      || !Number.isSafeInteger(candidate.minimum)
+      || !Number.isSafeInteger(candidate.maximum)
+      || Number(candidate.minimum) < 0
+      || Number(candidate.maximum) < Number(candidate.minimum)
+      || Number(candidate.maximum) > 8
+      || !Array.isArray(candidate.allowedExistingKinds)
+      || !candidate.allowedExistingKinds.every((entry) =>
+        (PREMISE_ENTITY_KINDS as readonly unknown[]).includes(entry))
+      || !Array.isArray(candidate.allowedOpenArchetypeRefs)
+      || !candidate.allowedOpenArchetypeRefs.every(isNonEmptyString)) return undefined;
+    slots.push({
+      slotRef: candidate.slotRef as string,
+      relationKind: candidate.relationKind as string,
+      minimum: Number(candidate.minimum),
+      maximum: Number(candidate.maximum),
+      allowedExistingKinds: [...candidate.allowedExistingKinds] as PremisePolicySlot["allowedExistingKinds"],
+      allowedOpenArchetypeRefs: [...candidate.allowedOpenArchetypeRefs] as string[],
+    });
+  }
+  if (new Set(slots.map(({ slotRef }) => slotRef)).size !== slots.length) return undefined;
+  return {
+    policyRef: reference,
+    predicate: policy.predicate as PremisePolicy["predicate"],
+    scope: "characterBackstory",
+    minimumBindings: Number(policy.minimumBindings),
+    maximumBindings: Number(policy.maximumBindings),
+    allowedAnchorRefs: [...policy.allowedAnchorRefs] as string[],
+    slots,
+    statementTemplateRef: policy.statementTemplateRef as string,
+  };
+}
+
+function premiseArchetype(
+  state: AuthoritativeWorldState,
+  reference: string,
+): PremiseArchetype | undefined {
+  const value = moduleAuthorityValue(
+    state,
+    reference,
+    "modulePremiseArchetype",
+    "zhuwei.module-premise-archetype/v1",
+  );
+  const archetype = isRecord(value?.archetype) ? value.archetype : undefined;
+  if (archetype === undefined
+    || !["archetypeRef", "displayTemplateRef", "entityKind", "semanticCategory"]
+      .every((key) => Object.hasOwn(archetype, key))
+    || Object.keys(archetype).some((key) => ![
+      "archetypeRef", "displayTemplateRef", "entityKind", "semanticCategory", "socialArchetypeRef",
+    ].includes(key))
+    || archetype.archetypeRef !== reference
+    || !(PREMISE_ENTITY_KINDS as readonly unknown[]).includes(archetype.entityKind)
+    || ![archetype.semanticCategory, archetype.displayTemplateRef].every(isNonEmptyString)
+    || (archetype.socialArchetypeRef !== undefined
+      && (!isNonEmptyString(archetype.socialArchetypeRef)
+        || dynamicNpcSocialMechanics(archetype.socialArchetypeRef) === undefined))
+    || (archetype.entityKind === "person") !== isNonEmptyString(archetype.socialArchetypeRef)) {
+    return undefined;
+  }
+  return {
+    archetypeRef: reference,
+    entityKind: archetype.entityKind as PremiseArchetype["entityKind"],
+    semanticCategory: archetype.semanticCategory as string,
+    displayTemplateRef: archetype.displayTemplateRef as string,
+    ...(isNonEmptyString(archetype.socialArchetypeRef)
+      ? { socialArchetypeRef: archetype.socialArchetypeRef }
+      : {}),
+  };
+}
+
+function moduleAnchorAvailable(state: AuthoritativeWorldState, reference: string): boolean {
+  return moduleAuthorityValue(
+    state,
+    reference,
+    "moduleAnchor",
+    "zhuwei.module-anchor/v1",
+  ) !== undefined;
+}
+
+function premiseSourceAvailable(
+  state: AuthoritativeWorldState,
+  actor: CharacterRecord,
+  reference: string,
+): boolean {
+  const fact = state.canonicalFacts[reference];
+  return moduleAnchorAvailable(state, reference)
+    || premisePolicy(state, reference) !== undefined
+    || premiseArchetype(state, reference) !== undefined
+    || state.knowledge[actor.id]?.[reference] !== undefined
+    || (fact !== undefined && canonicalFactVisibleToCharacter(state, fact, actor));
+}
+
+function existingPremiseEntityKind(
+  state: AuthoritativeWorldState,
+  reference: string,
+): typeof PREMISE_ENTITY_KINDS[number] | undefined {
+  if (state.entities[reference] !== undefined) return "person";
+  if (state.scenes[reference] !== undefined) return "place";
+  const definition = state.campaignRuntime.definitions[reference];
+  const content = isRecord(definition?.content) ? definition.content : undefined;
+  if (content !== undefined
+    && (PREMISE_ENTITY_KINDS as readonly unknown[]).includes(content.entityKind)) {
+    return content.entityKind as typeof PREMISE_ENTITY_KINDS[number];
+  }
+  if (definition?.definitionKind === "npc") return "person";
+  if (definition?.definitionKind === "organization" || definition?.definitionKind === "faction") {
+    return "organization";
+  }
+  if (definition?.definitionKind === "location") return "place";
+  if (definition?.definitionKind === "item") return "object";
+  if (definition?.definitionKind === "opportunity") return "task";
+  return undefined;
+}
+
+function materializableDynamicNpcDefinition(
+  state: AuthoritativeWorldState,
+  definitionRef: string,
+  entityRef: string,
+  sourceFactRefs: readonly string[],
+): { name: string; socialArchetypeRef: string; sourceKind: "premise" | "generic" } | undefined {
+  const definition = state.campaignRuntime.definitions[definitionRef];
+  const content = isRecord(definition?.content) ? definition.content : undefined;
+  if (definition?.definitionKind !== "npc" || content === undefined || !isNonEmptyString(content.name)) {
+    return undefined;
+  }
+  const sourceFacts = sourceFactRefs.map((factRef) => state.canonicalFacts[factRef]);
+  const premiseBound = sourceFacts.some((fact) => {
+    const bindings = fact?.kind === "characterPremise"
+      && isRecord(fact.value)
+      && fact.value.schema === "zhuwei.character-premise/v2"
+      && Array.isArray(fact.value.bindings)
+      ? fact.value.bindings
+      : [];
+    return bindings.some((entry) => isRecord(entry)
+      && entry.referenceKind === "openArchetype"
+      && entry.entityRef === entityRef);
+  });
+  if (premiseBound
+    && content.schema === "zhuwei.dynamic-npc-definition/v1"
+    && content.entityId === entityRef
+    && isNonEmptyString(content.premiseArchetypeRef)
+    && premiseArchetype(state, content.premiseArchetypeRef) !== undefined
+    && isNonEmptyString(content.socialArchetypeRef)
+    && dynamicNpcSocialMechanics(content.socialArchetypeRef) !== undefined
+    && content.status === "definedOffstage") {
+    return {
+      name: content.name,
+      socialArchetypeRef: content.socialArchetypeRef,
+      sourceKind: "premise",
+    };
+  }
+  const genericBound = entityRef === definitionRef && sourceFacts.some((fact) =>
+    fact?.kind === "dynamic:npc"
+    && isRecord(fact.value)
+    && fact.value.definitionRef === definitionRef
+    && fact.value.kind === "npc");
+  return genericBound ? {
+    name: content.name,
+    socialArchetypeRef: DYNAMIC_NPC_DEFAULT_SOCIAL_ARCHETYPE_REF,
+    sourceKind: "generic",
+  } : undefined;
+}
+
+function premiseExistingEntityAvailable(
+  state: AuthoritativeWorldState,
+  actor: CharacterRecord,
+  reference: string,
+): boolean {
+  const entity = state.entities[reference];
+  const definition = state.campaignRuntime.definitions[reference];
+  return premiseSourceAvailable(state, actor, reference)
+    || (entity !== undefined && (entity.id === actor.id
+      || (entity.sceneId === actor.sceneId
+        && characterTimelineId(state, entity.id) !== undefined
+        && characterTimelineId(state, entity.id) === characterTimelineId(state, actor.id))))
+    || (reference === actor.sceneId && state.scenes[reference] !== undefined)
+    || (definition !== undefined
+      && (definition.visibilityPolicyRef === `visibility:knowledge-holder:${actor.id}`
+        || definition.visibilityPolicyRef === `visibility:character-controller:${actor.id}`
+        || state.knowledge[actor.id]?.[reference] !== undefined));
 }
 
 function checkResolution(step: LoweredCausalStep): "direct" | "check" | undefined {
@@ -330,6 +1005,344 @@ function appendBranchEffect(
   });
 }
 
+function existingCharacterPremise(
+  state: AuthoritativeWorldState,
+  actorId: string,
+  predicate: CharacterPremiseDraft["predicate"],
+) {
+  return Object.values(state.canonicalFacts).find((fact) =>
+    fact.kind === "characterPremise"
+    && fact.subjectRefs.length === 1
+    && fact.subjectRefs[0] === actorId
+    && isRecord(fact.value)
+    && fact.value.schema === "zhuwei.character-premise/v2"
+    && fact.value.characterId === actorId
+    && fact.value.predicate === predicate);
+}
+
+function appendCharacterPremise(
+  accumulator: Accumulator,
+  profiles: RuntimeProfileManifest,
+  rootActionId: string,
+  plan: CausalActionResolutionPlan,
+  step: LoweredCausalStep,
+  draft: CharacterPremiseDraft,
+): void {
+  const actor = accumulator.state.entities[plan.actorCharacterId]!;
+  const existing = existingCharacterPremise(accumulator.state, actor.id, draft.predicate);
+  const basisRefs = [...new Set(stringList(step.arguments.basisRefs))].sort();
+  const suffix = plan.programHash.slice("fnv1a64:".length);
+  const factRef = `fact:character-premise:${rootActionId}:${suffix}:${step.nodeRef}`;
+  let premiseValue: JsonRecord;
+  let committedFactRef: string;
+
+  if (existing !== undefined && isRecord(existing.value)) {
+    premiseValue = structuredClone(existing.value);
+    committedFactRef = existing.id;
+  } else {
+    const policy = premisePolicy(accumulator.state, draft.policyRef)!;
+    const bindings = draft.bindings.map((binding, index) => {
+      const slot = policy.slots.find((candidate) => candidate.slotRef === binding.slotRef)!;
+      if (binding.referenceKind === "existing") {
+        return {
+          slotRef: slot.slotRef,
+          relationKind: slot.relationKind,
+          referenceKind: "existing",
+          entityRef: binding.ref,
+          entityKind: existingPremiseEntityKind(accumulator.state, binding.ref)!,
+        };
+      }
+      const archetype = premiseArchetype(accumulator.state, binding.archetypeRef)!;
+      const entityRef = `premise-entity:${rootActionId}:${suffix}:${step.nodeRef}:${String(index + 1).padStart(2, "0")}`;
+      append(accumulator, profiles, {
+        rootActionId,
+        resolutionId: `resolution:${rootActionId}:causal:${step.nodeRef}`,
+        eventType: "DefinitionRegistered",
+        payload: {
+          definition: {
+            definitionId: entityRef,
+            definitionVersion: "1",
+            definitionKind: dynamicDefinitionKind(archetype.entityKind),
+            causalBasisRefs: basisRefs,
+            visibilityPolicyRef: `visibility:knowledge-holder:${actor.id}`,
+            definitionProfile: structuredClone(CAUSAL_ACTION_INTERPRETER_PROFILE),
+            actionLanguage: {
+              languageRef: plan.languageRef,
+              languageHash: plan.languageHash,
+              formRef: "materialization.v1",
+              formHash: (plan.program as unknown as CausalActionProgram).formHash,
+            },
+            content: archetype.entityKind === "person"
+              ? {
+                  schema: "zhuwei.dynamic-npc-definition/v1",
+                  entityId: entityRef,
+                  name: binding.displayAlias,
+                  displayAuthority: "aliasOnly",
+                  premiseArchetypeRef: archetype.archetypeRef,
+                  semanticCategory: archetype.semanticCategory,
+                  relationKind: slot.relationKind,
+                  socialArchetypeRef: archetype.socialArchetypeRef,
+                  sourceKind: "characterPremiseOpenBlank",
+                  status: "definedOffstage",
+                }
+              : {
+                  schema: "zhuwei.dynamic-open-definition/v1",
+                  entityRef,
+                  entityKind: archetype.entityKind,
+                  displayAlias: binding.displayAlias,
+                  displayAuthority: "aliasOnly",
+                  premiseArchetypeRef: archetype.archetypeRef,
+                  semanticCategory: archetype.semanticCategory,
+                  relationKind: slot.relationKind,
+                  sourceKind: "characterPremiseOpenBlank",
+                  status: "definedOffstage",
+                },
+          },
+        },
+        visibilityPolicyId: "visibility:room-authority-only",
+        secrecy: "internal",
+        reads: [`fact:${plan.programFactRef}`],
+        writes: [`definition:${entityRef}`, `receipt:${rootActionId}`],
+        creates: [`definition:${entityRef}`],
+      });
+      return {
+        slotRef: slot.slotRef,
+        relationKind: slot.relationKind,
+        referenceKind: "openArchetype",
+        entityRef,
+        entityKind: archetype.entityKind,
+        archetypeRef: archetype.archetypeRef,
+      };
+    });
+    premiseValue = {
+      schema: "zhuwei.character-premise/v2",
+      characterId: actor.id,
+      predicate: draft.predicate,
+      policyRef: draft.policyRef,
+      anchorRefs: [...draft.anchorRefs],
+      statementTemplateRef: policy.statementTemplateRef,
+      sourceRefs: basisRefs,
+      scope: "characterBackstory",
+      truthStatus: "canonical",
+      origin: draft.bindings.some((binding) => binding.referenceKind === "openArchetype")
+        ? "kpOpenBlankWithinModuleAnchor"
+        : "derivedFromEstablishedSources",
+      bindings,
+    };
+    committedFactRef = factRef;
+  }
+
+  append(accumulator, profiles, {
+    rootActionId,
+    resolutionId: `resolution:${rootActionId}:causal:${step.nodeRef}`,
+    eventType: "ImprovisedActionResolved",
+    payload: {
+      actorCharacterId: actor.id,
+      outcomeCode: existing === undefined
+        ? `character-premise-established:${draft.predicate}`
+        : `character-premise-recalled:${draft.predicate}`,
+      fact: existing === undefined
+        ? {
+            id: committedFactRef,
+            kind: "characterPremise",
+            subjectRefs: [actor.id],
+            value: premiseValue,
+            visibilityPolicyId: `visibility:knowledge-holder:${actor.id}`,
+            source: "dynamicMaterialization",
+          }
+        : null,
+    },
+    visibilityPolicyId: `visibility:character-controller:${actor.id}`,
+    secrecy: "private",
+    reads: [`entity:${actor.id}`, `fact:${plan.programFactRef}`],
+    writes: [`fact:${committedFactRef}`, `receipt:${rootActionId}`],
+    creates: existing === undefined ? [`fact:${committedFactRef}`] : [],
+  });
+  if (existing === undefined && Array.isArray(premiseValue.bindings)) {
+    premiseValue.bindings.filter(isRecord).forEach((binding, index) => {
+      if (!isNonEmptyString(binding.entityRef)
+        || !isNonEmptyString(binding.relationKind)) return;
+      const assertionFactRef = `fact:typed-premise-assertion:${rootActionId}:${suffix}:${step.nodeRef}:${String(index + 1).padStart(2, "0")}`;
+      append(accumulator, profiles, {
+        rootActionId,
+        resolutionId: `resolution:${rootActionId}:causal:${step.nodeRef}`,
+        eventType: "ImprovisedActionResolved",
+        payload: {
+          actorCharacterId: actor.id,
+          outcomeCode: "typed-premise-assertion-established",
+          fact: {
+            id: assertionFactRef,
+            kind: "typedAssertionFact",
+            subjectRefs: [actor.id, binding.entityRef],
+            value: {
+              schema: "zhuwei.typed-assertion-fact/v1",
+              sourcePremiseFactRef: committedFactRef,
+              relationKind: binding.relationKind,
+              assertion: {
+                subjectRef: actor.id,
+                predicate: premiseAssertionPredicate(binding.relationKind),
+                polarity: "affirm",
+                object: { referenceKind: "existing", ref: binding.entityRef },
+              },
+            },
+            visibilityPolicyId: `visibility:knowledge-holder:${actor.id}`,
+            source: "dynamicMaterialization",
+          },
+        },
+        visibilityPolicyId: `visibility:knowledge-holder:${actor.id}`,
+        secrecy: "private",
+        reads: [`fact:${committedFactRef}`, `entity-or-definition:${binding.entityRef}`],
+        writes: [`fact:${assertionFactRef}`, `receipt:${rootActionId}`],
+        creates: [`fact:${assertionFactRef}`],
+      });
+    });
+    premiseValue.bindings.filter(isRecord).forEach((binding, index) => {
+      if (binding.referenceKind !== "openArchetype"
+        || binding.entityKind !== "person"
+        || !isNonEmptyString(binding.entityRef)
+        || !isNonEmptyString(binding.slotRef)
+        || !isNonEmptyString(binding.relationKind)) return;
+      const grantRef = `fact:dynamic-entity-knowledge-grant:${rootActionId}:${suffix}:${step.nodeRef}:${String(index + 1).padStart(2, "0")}`;
+      const assertionFactRef = `fact:typed-premise-assertion:${rootActionId}:${suffix}:${step.nodeRef}:${String(index + 1).padStart(2, "0")}`;
+      append(accumulator, profiles, {
+        rootActionId,
+        resolutionId: `resolution:${rootActionId}:causal:${step.nodeRef}`,
+        eventType: "ImprovisedActionResolved",
+        payload: {
+          actorCharacterId: actor.id,
+          outcomeCode: "dynamic-entity-knowledge-grant-established",
+          fact: {
+            id: grantRef,
+            kind: "dynamicEntityKnowledgeGrant",
+            subjectRefs: [actor.id, binding.entityRef],
+            value: {
+              schema: "zhuwei.dynamic-entity-knowledge-grant/v1",
+              recipientEntityRef: binding.entityRef,
+              sourcePremiseFactRef: committedFactRef,
+              assertionFactRef,
+              characterRef: actor.id,
+              relationAtom: structuredClone(binding),
+            },
+            visibilityPolicyId: `visibility:knowledge-holder:${actor.id}`,
+            source: "dynamicMaterialization",
+          },
+        },
+        visibilityPolicyId: `visibility:knowledge-holder:${actor.id}`,
+        secrecy: "private",
+        reads: [`fact:${committedFactRef}`, `definition:${binding.entityRef}`],
+        writes: [`fact:${grantRef}`, `receipt:${rootActionId}`],
+        creates: [`fact:${grantRef}`],
+      });
+    });
+  }
+  const premiseAlreadyKnown = accumulator.state.knowledge[actor.id]?.[committedFactRef]
+    !== undefined;
+  if (!premiseAlreadyKnown) append(accumulator, profiles, {
+    rootActionId,
+    resolutionId: `resolution:${rootActionId}:causal:${step.nodeRef}`,
+    eventType: "KnowledgeAcquired",
+    payload: {
+      characterId: actor.id,
+      knowledgeRef: committedFactRef,
+      objectKind: "canonicalFact",
+      layer: "full",
+      content: premiseValue,
+      causeFactId: committedFactRef,
+      acquisition: {
+        sense: "characterPremiseRecall",
+        sceneId: plan.sourceSceneId,
+        method: CHARACTER_PREMISE_METHOD,
+      },
+      visibility: "private",
+    },
+    visibilityPolicyId: `visibility:knowledge-holder:${actor.id}`,
+    secrecy: "private",
+    reads: [`entity:${actor.id}`, `fact:${committedFactRef}`],
+    writes: [`knowledge:${actor.id}:${committedFactRef}`, `receipt:${rootActionId}`],
+    creates: [`knowledge:${actor.id}:${committedFactRef}`],
+  });
+}
+
+function appendDynamicNpcMaterialization(
+  accumulator: Accumulator,
+  profiles: RuntimeProfileManifest,
+  rootActionId: string,
+  plan: CausalActionResolutionPlan,
+  step: LoweredCausalStep,
+  draft: DynamicNpcMaterializationDraft,
+): void {
+  const binding = materializableDynamicNpcDefinition(
+    accumulator.state,
+    draft.definitionRef,
+    draft.entityRef,
+    draft.sourceFactRefs,
+  );
+  if (binding === undefined) throw new TypeError("dynamic NPC definition is unavailable");
+  const socialArchetypeRef = binding.socialArchetypeRef;
+  const socialMechanics = dynamicNpcSocialMechanics(socialArchetypeRef)!;
+  const sourceTimelineId = characterTimelineId(accumulator.state, plan.actorCharacterId)!;
+  append(accumulator, profiles, {
+    rootActionId,
+    resolutionId: `resolution:${rootActionId}:causal:${step.nodeRef}`,
+    eventType: "DynamicEntityMaterialized",
+    payload: {
+      definitionId: draft.definitionRef,
+      entityId: draft.entityRef,
+      entityKind: "npc",
+      sourceFactIds: [...draft.sourceFactRefs],
+      initialKnowledgeFactIds: [...draft.initialKnowledgeFactRefs],
+      sceneId: draft.sceneRef,
+      sourceTimelineId,
+      socialArchetypeRef,
+      socialMechanicsHash: canonicalSha256(socialMechanics),
+    },
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+    reads: [
+      `entity:${plan.actorCharacterId}`,
+      ...draft.sourceFactRefs.map((sourceFactRef) => `fact:${sourceFactRef}`),
+      `definition:${draft.definitionRef}`,
+      `scene:${draft.sceneRef}`,
+    ],
+    writes: [`entity:${draft.entityRef}`, `receipt:${rootActionId}`],
+    creates: [`entity:${draft.entityRef}`],
+  });
+  for (const grantFactRef of draft.initialKnowledgeFactRefs) {
+    const grantFact = accumulator.state.canonicalFacts[grantFactRef]!;
+    const grantValue = isRecord(grantFact.value) ? grantFact.value : {};
+    const assertionFactRef = grantValue.assertionFactRef as string;
+    const assertionFact = accumulator.state.canonicalFacts[assertionFactRef]!;
+    append(accumulator, profiles, {
+      rootActionId,
+      resolutionId: `resolution:${rootActionId}:causal:${step.nodeRef}`,
+      eventType: "KnowledgeAcquired",
+      payload: {
+        characterId: draft.entityRef,
+        knowledgeRef: assertionFactRef,
+        objectKind: "canonicalFact",
+        layer: "full",
+        content: structuredClone(assertionFact.value),
+        causeFactId: assertionFactRef,
+        acquisition: {
+          sense: "dynamicEntityMaterialization",
+          sceneId: draft.sceneRef,
+          method: DYNAMIC_NPC_MATERIALIZATION_METHOD,
+        },
+        visibility: "private",
+      },
+      visibilityPolicyId: `visibility:knowledge-holder:${draft.entityRef}`,
+      secrecy: "private",
+      reads: [
+        `entity:${draft.entityRef}`,
+        `fact:${grantFactRef}`,
+        `fact:${assertionFactRef}`,
+      ],
+      writes: [`knowledge:${draft.entityRef}:${assertionFactRef}`, `receipt:${rootActionId}`],
+      creates: [`knowledge:${draft.entityRef}:${assertionFactRef}`],
+    });
+  }
+}
+
 function appendDirectNode(
   accumulator: Accumulator,
   profiles: RuntimeProfileManifest,
@@ -338,6 +1351,27 @@ function appendDirectNode(
   step: LoweredCausalStep,
   branch: "success" | "failure",
 ): void {
+  const premise = socialResolutionProfileEnabled(profiles.extensions)
+    ? characterPremiseDraft(step)
+    : undefined;
+  const dynamicNpc = socialResolutionProfileEnabled(profiles.extensions)
+    ? dynamicNpcMaterializationDraft(step)
+    : undefined;
+  if (dynamicNpc !== undefined && branch === "success") {
+    appendDynamicNpcMaterialization(
+      accumulator,
+      profiles,
+      rootActionId,
+      plan,
+      step,
+      dynamicNpc,
+    );
+    return;
+  }
+  if (premise !== undefined && branch === "success") {
+    appendCharacterPremise(accumulator, profiles, rootActionId, plan, step, premise);
+    return;
+  }
   const materialization = step.primitive === "materializeOpenFact" && branch === "success";
   const factRef = `fact:v3-materialization:${rootActionId}:${plan.programHash.slice("fnv1a64:".length)}:${step.nodeRef}`;
   const description = scalarString(step.arguments.proposedFact);
@@ -537,7 +1571,10 @@ function settleProgram(
       || (step.primitive === "materializeOpenFact" && branch === "success")) {
       appendDirectNode(accumulator, profiles, rootActionId, plan, step, branch);
     }
-    appendBranchEffect(accumulator, profiles, rootActionId, plan, step, branch);
+    if (!(socialResolutionProfileEnabled(profiles.extensions)
+      && characterPremiseDraft(step) !== undefined)) {
+      appendBranchEffect(accumulator, profiles, rootActionId, plan, step, branch);
+    }
     if (!succeeded) appendMeaningfulFailure(accumulator, profiles, rootActionId, plan, step);
     nodeResults.push({
       nodeRef: step.nodeRef,
@@ -665,13 +1702,396 @@ function combat(
   };
 }
 
+function npcMechanicalCausalResult(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+  program: CausalActionProgram,
+  actor: CharacterRecord,
+  parsed: Exclude<NpcMechanicalCausalDraft, { kind: "none" | "invalid" }>,
+): StepResult {
+  if (!npcMechanicsProfileEnabled(profiles.extensions)) {
+    return rejected(
+      "unsupportedOperation",
+      "The pinned room profile does not enable NPC mechanical materialization.",
+    );
+  }
+  const rootActionId = input.rootActionId as string;
+  const durationMicros = causalActionDurationMicros(parsed.step);
+  if (durationMicros === undefined) {
+    return rejected("invalidRulesInput", "NPC mechanical materialization needs one canonical duration.");
+  }
+  const accumulator: Accumulator = { state, events: [] };
+  appendProgramFact(accumulator, profiles, rootActionId, actor, program);
+  if (!appendFrozenCosts(accumulator, profiles, rootActionId, actor, parsed.step)) {
+    return rejected("insufficientResource", "The frozen causal materialization cost is unavailable.");
+  }
+
+  let mechanical: StepResult | undefined;
+  let disposition: string;
+  if (parsed.kind === "encounter") {
+    const allies = [...new Set([actor.id, ...parsed.draft.alliedEntityRefs])].sort();
+    const hostiles = [...parsed.draft.hostileEntityRefs].sort();
+    if (hostiles.includes(actor.id)
+      || allies.some((entityId) => hostiles.includes(entityId))) {
+      return rejected("invalidRulesInput", "Encounter sides must be disjoint and keep the trusted actor allied.");
+    }
+    const participantEntityIds = [...new Set([...allies, ...hostiles])].sort();
+    mechanical = stepCombatWorld(profiles, accumulator.state, continueCompoundRoot({
+      kind: "startEncounter",
+      rootActionId,
+      proposalAttemptId: `proposal:${rootActionId}:causal`,
+      encounterId: parsed.draft.encounterRef,
+      sceneId: actor.sceneId,
+      participantEntityIds,
+      dynamicEntities: structuredClone(parsed.draft.entries),
+      initiativeGroups: participantEntityIds.map((entityId) => ({
+        entryId: `initiative:${parsed.draft.encounterRef}:${entityId}`,
+        combatantEntityIds: [entityId],
+      })),
+      hostilities: [
+        { fromEntityIds: allies, toEntityIds: hostiles },
+        { fromEntityIds: hostiles, toEntityIds: allies },
+      ],
+      battlefieldFactIds: [],
+      surprisedEntityIds: [],
+    }, rootActionId));
+    disposition = "npcMechanicalEncounterStarted";
+  } else if (parsed.kind === "transfer") {
+    mechanical = stepCampaignWorld(profiles, accumulator.state, continueCompoundRoot({
+      kind: "transferItem",
+      proposalId: rootActionId,
+      fromCharacterId: actor.id,
+      toCharacterId: parsed.draft.toCharacterRef,
+      itemId: parsed.draft.itemRef,
+      quantity: parsed.draft.quantity,
+      method: ITEM_TRANSFER_METHOD,
+    }, rootActionId));
+    disposition = "itemTransferred";
+  } else if (parsed.kind === "gear") {
+    const npc = accumulator.state.entities[parsed.draft.npcRef];
+    if (npc?.kind !== "npc"
+      || npc.tenureStatus !== "active"
+      || npc.sceneId !== actor.sceneId) {
+      return rejected("privateOrUnknownReference", "The NPC gear target is unavailable in this scene.");
+    }
+    mechanical = stepMultiplayerWorld(profiles, accumulator.state, continueCompoundRoot({
+      kind: "changeNpcGear",
+      rootActionId,
+      npcCharacterId: parsed.draft.npcRef,
+      action: parsed.draft.action,
+      slot: parsed.draft.slot,
+      ...(parsed.draft.action === "wear" ? { itemId: parsed.draft.itemRef } : {}),
+    }, rootActionId));
+    disposition = "npcGearChanged";
+  } else {
+    const npc = accumulator.state.entities[parsed.draft.npcRef];
+    if (npc?.kind !== "npc"
+      || npc.tenureStatus !== "active"
+      || npc.sceneId !== actor.sceneId) {
+      return rejected("privateOrUnknownReference", "The NPC item-state target is unavailable.");
+    }
+    mechanical = stepMultiplayerWorld(profiles, accumulator.state, continueCompoundRoot({
+      kind: "changeNpcItemState",
+      rootActionId,
+      npcCharacterId: parsed.draft.npcRef,
+      itemId: parsed.draft.itemRef,
+      action: parsed.draft.action,
+    }, rootActionId));
+    disposition = "npcMechanicalItemStateChanged";
+  }
+
+  if (mechanical === undefined) {
+    return rejected("invalidWorldState", "The registered NPC mechanical operation is unavailable.");
+  }
+  if (mechanical.kind === "rejected" || mechanical.kind === "initialized") return mechanical;
+  const mechanicalResult = {
+    kind: parsed.kind === "encounter" && mechanical.kind === "awaitingRandomness"
+      ? "causalActionProgramPending"
+      : "causalActionProgram",
+    languageRef: program.languageRef,
+    languageHash: program.languageHash,
+    programHash: program.semanticHash,
+    formRef: program.formRef,
+    succeeded: true,
+    disposition,
+  };
+  if (parsed.kind === "encounter") {
+    return {
+      ...mechanical,
+      events: [...accumulator.events, ...mechanical.events],
+      mechanicalResult,
+    } as StepResult;
+  }
+  if (mechanical.kind !== "committed") {
+    return rejected("invalidWorldState", "A direct inventory or gear operation did not commit atomically.");
+  }
+  accumulator.events.push(...mechanical.events);
+  accumulator.state = mechanical.state;
+  accumulator.receipt = mechanical.receipt;
+  accumulator.scopeProof = mechanical.scopeProof;
+  append(accumulator, profiles, {
+    rootActionId,
+    eventType: "FictionTimeAdvanced",
+    payload: {
+      durationMicros,
+      reason: programGoal([parsed.step]),
+    },
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+    reads: [`timeline:${accumulator.state.activeBranchId}`],
+    writes: [`timeline:${accumulator.state.activeBranchId}`, `receipt:${rootActionId}`],
+  });
+  return finished("committed", accumulator, { mechanicalResult });
+}
+
+function npcMechanicalBasisAvailable(
+  state: AuthoritativeWorldState,
+  actor: CharacterRecord,
+  parsed: Exclude<NpcMechanicalCausalDraft, { kind: "none" | "invalid" }>,
+): boolean {
+  const refs = [...new Set(stringList(parsed.step.arguments.basisRefs))];
+  if (refs.length === 0 || refs.length !== stringList(parsed.step.arguments.basisRefs).length) {
+    return false;
+  }
+  const requiredRefs = new Set<string>([actor.sceneId]);
+  const allowedRefs = new Set<string>([actor.id, actor.sceneId]);
+  const visibleFactRefs = Object.values(state.canonicalFacts)
+    .filter((fact) => canonicalFactVisibleToCharacter(state, fact, actor))
+    .map(({ id }) => id);
+  for (const factRef of visibleFactRefs) allowedRefs.add(factRef);
+
+  if (parsed.kind === "encounter") {
+    const entryIds = new Set(parsed.draft.entries.map((entry) => entry.entityId as string));
+    const localDefinitionRefs = new Set(parsed.draft.entries.flatMap((entry) => {
+      const mechanics = isRecord(entry.mechanics) ? entry.mechanics : undefined;
+      return mechanics?.kind === "bespokeDefinition"
+        && isRecord(mechanics.definition)
+        && isNonEmptyString(mechanics.definition.definitionId)
+        ? [mechanics.definition.definitionId]
+        : [];
+    }));
+    let createsNewEntity = false;
+    for (const entityId of [
+      ...parsed.draft.alliedEntityRefs,
+      ...parsed.draft.hostileEntityRefs,
+    ]) {
+      if (entityId === actor.id) continue;
+      const existing = state.entities[entityId] ?? state.combatRuntime.entities[entityId];
+      if (existing !== undefined) {
+        if (existing.sceneId !== actor.sceneId) return false;
+        requiredRefs.add(entityId);
+        allowedRefs.add(entityId);
+      } else if (!entryIds.has(entityId)) {
+        return false;
+      }
+    }
+    for (const entry of parsed.draft.entries) {
+      const entityId = entry.entityId as string;
+      const existing = state.entities[entityId] ?? state.combatRuntime.entities[entityId];
+      if (existing === undefined) {
+        createsNewEntity = true;
+      } else {
+        if (existing.sceneId !== actor.sceneId) return false;
+        requiredRefs.add(entityId);
+        allowedRefs.add(entityId);
+      }
+      const mechanics = isRecord(entry.mechanics) ? entry.mechanics : undefined;
+      if (mechanics?.kind === "templateRef" && isNonEmptyString(mechanics.definitionRef)) {
+        if (state.combatRuntime.definitions[mechanics.definitionRef] === undefined) {
+          if (!localDefinitionRefs.has(mechanics.definitionRef)) return false;
+        } else {
+          requiredRefs.add(mechanics.definitionRef);
+          allowedRefs.add(mechanics.definitionRef);
+        }
+      } else if (mechanics?.kind === "bespokeDefinition" && isRecord(mechanics.definition)) {
+        const causalBasisRefs = boundedReferenceList(mechanics.definition.causalBasisRefs, 24);
+        if (causalBasisRefs === undefined) return false;
+        for (const factRef of causalBasisRefs) {
+          if (!visibleFactRefs.includes(factRef)) return false;
+          requiredRefs.add(factRef);
+        }
+        const content = isRecord(mechanics.definition.content)
+          ? mechanics.definition.content
+          : undefined;
+        const itemDefinitionRefs = boundedReferenceList(content?.itemDefinitionRefs, 24);
+        if (itemDefinitionRefs === undefined) return false;
+        for (const itemDefinitionRef of itemDefinitionRefs) {
+          if (state.combatRuntime.definitions[itemDefinitionRef] === undefined) return false;
+          requiredRefs.add(itemDefinitionRef);
+          allowedRefs.add(itemDefinitionRef);
+        }
+        if (!Array.isArray(content?.itemDefinitions)
+          || !content.itemDefinitions.every(isRecord)) return false;
+        for (const itemDefinition of content.itemDefinitions) {
+          const itemBasisRefs = boundedReferenceList(itemDefinition.causalBasisRefs, 24);
+          if (itemBasisRefs === undefined) return false;
+          for (const factRef of itemBasisRefs) {
+            if (!visibleFactRefs.includes(factRef)) return false;
+            requiredRefs.add(factRef);
+          }
+        }
+      } else {
+        return false;
+      }
+    }
+    if (createsNewEntity && !refs.some((ref) => visibleFactRefs.includes(ref))) return false;
+  } else if (parsed.kind === "transfer") {
+    const target = state.entities[parsed.draft.toCharacterRef];
+    const item = actor.loadout?.backpack.find(({ itemId }) => itemId === parsed.draft.itemRef);
+    if (target === undefined
+      || target.tenureStatus !== "active"
+      || target.sceneId !== actor.sceneId
+      || item === undefined) return false;
+    requiredRefs.add(target.id);
+    requiredRefs.add(item.itemId);
+    allowedRefs.add(target.id);
+    allowedRefs.add(item.itemId);
+    const targetCombat = state.combatRuntime.entities[target.id];
+    if (isRecord(targetCombat) && isNonEmptyString(targetCombat.mechanicalDefinitionRef)) {
+      allowedRefs.add(targetCombat.mechanicalDefinitionRef);
+    }
+  } else {
+    const npc = state.entities[parsed.draft.npcRef];
+    const combat = state.combatRuntime.entities[parsed.draft.npcRef];
+    if (npc?.kind !== "npc"
+      || npc.tenureStatus !== "active"
+      || npc.sceneId !== actor.sceneId
+      || !isRecord(combat)
+      || !isNonEmptyString(combat.mechanicalDefinitionRef)) return false;
+    requiredRefs.add(npc.id);
+    allowedRefs.add(npc.id);
+    allowedRefs.add(combat.mechanicalDefinitionRef);
+    if (parsed.kind === "gear" && parsed.draft.action === "wear") {
+      const itemRef = parsed.draft.itemRef;
+      const item = npc.loadout?.backpack.find(({ itemId }) => itemId === itemRef);
+      if (item === undefined) return false;
+      requiredRefs.add(item.itemId);
+      allowedRefs.add(item.itemId);
+    } else if (parsed.kind === "itemState") {
+      const itemId = parsed.draft.itemRef;
+      const instance = npc.loadout?.mechanicalItems?.[itemId];
+      const cause = state.canonicalFacts[parsed.draft.causeFactRef];
+      if (instance === undefined
+        || !visibleFactRefs.includes(parsed.draft.causeFactRef)
+        || !npcItemStateCauseMatches(cause, parsed.draft)) return false;
+      requiredRefs.add(itemId);
+      requiredRefs.add(parsed.draft.causeFactRef);
+      allowedRefs.add(itemId);
+    }
+  }
+  return [...requiredRefs].every((reference) => refs.includes(reference))
+    && refs.every((reference) => allowedRefs.has(reference));
+}
+
 function materializationBasisAvailable(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   actor: CharacterRecord,
   program: CausalActionProgram,
 ): boolean {
   if (program.formRef !== "materialization.v1") return true;
-  const refs = stringList(program.nodes[0]?.arguments.basisRefs);
+  const lowered = lowerCausalActionProgram(program).steps[0];
+  if (lowered === undefined) return false;
+  const refs = [...new Set(stringList(lowered.arguments.basisRefs))];
+  const npcMechanical = npcMechanicalCausalDraft(program);
+  if (npcMechanical.kind === "invalid") return false;
+  if (npcMechanical.kind !== "none") {
+    return npcMechanicsProfileEnabled(profiles.extensions)
+      && npcMechanicalBasisAvailable(state, actor, npcMechanical);
+  }
+  const premise = socialResolutionProfileEnabled(profiles.extensions)
+    ? characterPremiseDraft(lowered)
+    : undefined;
+  const dynamicNpc = socialResolutionProfileEnabled(profiles.extensions)
+    ? dynamicNpcMaterializationDraft(lowered)
+    : undefined;
+  if (socialResolutionProfileEnabled(profiles.extensions)
+    && lowered.arguments.method === CHARACTER_PREMISE_METHOD
+    && premise === undefined) return false;
+  if (socialResolutionProfileEnabled(profiles.extensions)
+    && lowered.arguments.method === DYNAMIC_NPC_MATERIALIZATION_METHOD
+    && dynamicNpc === undefined) return false;
+  if (dynamicNpc !== undefined) {
+    const definition = state.campaignRuntime.definitions[dynamicNpc.definitionRef];
+    const content = isRecord(definition?.content) ? definition.content : undefined;
+    const sourceFacts = dynamicNpc.sourceFactRefs.map((factRef) => state.canonicalFacts[factRef]);
+    const definitionBinding = materializableDynamicNpcDefinition(
+      state,
+      dynamicNpc.definitionRef,
+      dynamicNpc.entityRef,
+      dynamicNpc.sourceFactRefs,
+    );
+    const initialKnowledgeAuthorized = dynamicNpc.initialKnowledgeFactRefs.every((factRef) => {
+      const fact = state.canonicalFacts[factRef];
+      const assertionFactRef = isRecord(fact?.value) ? fact.value.assertionFactRef : undefined;
+      const assertionFact = isNonEmptyString(assertionFactRef)
+        ? state.canonicalFacts[assertionFactRef]
+        : undefined;
+      return fact?.kind === "dynamicEntityKnowledgeGrant"
+        && isRecord(fact.value)
+        && fact.value.schema === "zhuwei.dynamic-entity-knowledge-grant/v1"
+        && fact.value.recipientEntityRef === dynamicNpc.entityRef
+        && assertionFact?.kind === "typedAssertionFact"
+        && isRecord(assertionFact.value)
+        && assertionFact.value.schema === "zhuwei.typed-assertion-fact/v1"
+        && assertionFact.value.sourcePremiseFactRef === fact.value.sourcePremiseFactRef;
+    });
+    return dynamicNpc.sceneRef === actor.sceneId
+      && state.scenes[dynamicNpc.sceneRef] !== undefined
+      && characterTimelineId(state, actor.id) !== undefined
+      && state.entities[dynamicNpc.entityRef] === undefined
+      && refs.includes(dynamicNpc.definitionRef)
+      && refs.includes(dynamicNpc.entityRef)
+      && refs.includes(dynamicNpc.sceneRef)
+      && dynamicNpc.sourceFactRefs.every((factRef) => refs.includes(factRef))
+      && sourceFacts.every((fact) => fact !== undefined)
+      && dynamicNpc.sourceFactRefs.every((factRef) =>
+        premiseSourceAvailable(state, actor, factRef))
+      && definitionBinding !== undefined
+      && initialKnowledgeAuthorized
+      && definition?.definitionKind === "npc"
+      && content !== undefined;
+  }
+  if (premise !== undefined) {
+    const policy = premisePolicy(state, premise.policyRef);
+    if (policy === undefined
+      || policy.predicate !== premise.predicate
+      || premise.bindings.length < policy.minimumBindings
+      || premise.bindings.length > policy.maximumBindings
+      || !refs.includes(premise.policyRef)
+      || premise.anchorRefs.some((anchorRef) =>
+        !refs.includes(anchorRef)
+        || !policy.allowedAnchorRefs.includes(anchorRef)
+        || !moduleAnchorAvailable(state, anchorRef))) return false;
+    const requiredRefs = new Set([premise.policyRef, ...premise.anchorRefs]);
+    for (const slot of policy.slots) {
+      const count = premise.bindings.filter((binding) => binding.slotRef === slot.slotRef).length;
+      if (count < slot.minimum || count > slot.maximum) return false;
+    }
+    for (const binding of premise.bindings) {
+      const slot = policy.slots.find((candidate) => candidate.slotRef === binding.slotRef);
+      if (slot === undefined) return false;
+      if (binding.referenceKind === "existing") {
+        const entityKind = existingPremiseEntityKind(state, binding.ref);
+        requiredRefs.add(binding.ref);
+        if (entityKind === undefined
+          || !slot.allowedExistingKinds.includes(entityKind)
+          || !premiseExistingEntityAvailable(state, actor, binding.ref)) return false;
+        continue;
+      }
+      const archetype = premiseArchetype(state, binding.archetypeRef);
+      requiredRefs.add(binding.archetypeRef);
+      if (archetype === undefined
+        || !slot.allowedOpenArchetypeRefs.includes(binding.archetypeRef)) return false;
+    }
+    if ([...requiredRefs].some((reference) => !refs.includes(reference))) return false;
+    const existing = existingCharacterPremise(state, actor.id, premise.predicate);
+    if (existing !== undefined && !refs.includes(existing.id)) return false;
+    return refs.every((reference) => requiredRefs.has(reference)
+      || reference === existing?.id
+      || premiseSourceAvailable(state, actor, reference));
+  }
   return refs.length > 0 && refs.every((reference) => {
     const fact = state.canonicalFacts[reference];
     return fact !== undefined && canonicalFactVisibleToCharacter(state, fact, actor);
@@ -780,7 +2200,9 @@ export function stepCausalActionProgram(
     return rejected("unsupportedOperation", "The pinned runtime manifest has no V3 causal action interpreter.");
   }
   if (
-    !hasExactKeys(input, CAUSAL_INPUT_KEYS)
+    !(hasExactKeys(input, CAUSAL_INPUT_KEYS)
+      || (socialResolutionProfileEnabled(profiles.extensions)
+        && hasExactKeys(input, SOCIAL_CAUSAL_INPUT_KEYS)))
     || !isNonEmptyString(input.rootActionId)
     || !isNonEmptyString(input.actorCharacterId)
     || (input.rootActionId in state.receipts
@@ -798,6 +2220,19 @@ export function stepCausalActionProgram(
     || input.actionLanguageHash !== program.languageHash
     || !validateExecutableCausalActionProgram(program)
   ) return rejected("invalidRulesInput", "The V3 causal action program has no legal executable semantics.");
+  if (socialResolutionProfileEnabled(profiles.extensions)
+    && program.formRef === "npc-exchange.v1") {
+    const utterance = program.nodes[0]?.arguments.utterance;
+    if (!isNonEmptyString(input.trustedUtterance)
+      || utterance !== input.trustedUtterance) {
+      return rejected(
+        "invalidRulesInput",
+        "The NPC exchange must preserve the authenticated player's exact spoken words.",
+      );
+    }
+  } else if (input.trustedUtterance !== undefined) {
+    return rejected("invalidRulesInput", "Trusted utterance binding is available only to V5 NPC exchange.");
+  }
   const actor = state.entities[input.actorCharacterId];
   if (actor?.kind !== "player" || actor.tenureStatus !== "active") {
     return rejected("privateOrUnknownReference", "The causal action actor is unavailable.");
@@ -808,12 +2243,37 @@ export function stepCausalActionProgram(
       "The current story is concluded; only an explicit epilogue choice or sequel may continue.",
     );
   }
-  if (!materializationBasisAvailable(state, actor, program)) {
+  const npcMechanicalDraft = npcMechanicalCausalDraft(program);
+  if (npcMechanicalDraft.kind === "invalid") {
+    return rejected("invalidRulesInput", "The NPC mechanical materialization draft is not canonical.");
+  }
+  if (npcMechanicalDraft.kind !== "none"
+    && !npcMechanicsProfileEnabled(profiles.extensions)) {
+    return rejected(
+      "unsupportedOperation",
+      "The pinned room profile does not enable NPC mechanical materialization.",
+    );
+  }
+  if (!materializationBasisAvailable(profiles, state, actor, program)) {
     return rejected(
       "privateOrUnknownReference",
       "The materialization basis is unavailable to the acting character.",
     );
   }
+
+  if (npcMechanicalDraft.kind !== "none") {
+    return npcMechanicalCausalResult(
+      profiles,
+      state,
+      input,
+      program,
+      actor,
+      npcMechanicalDraft,
+    );
+  }
+
+  const social = stepSocialCausalAction(profiles, state, input, program, actor);
+  if (social !== undefined) return social;
 
   const firstPrimitive = program.nodes[0].primitive;
   if (firstPrimitive === "requestClarification") return clarification(profiles, state, input, program);

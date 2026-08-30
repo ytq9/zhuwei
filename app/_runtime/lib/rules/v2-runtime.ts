@@ -9,6 +9,8 @@ import type {
 } from "./profiles/registry";
 import type { ProfileRef, RuntimeProfileManifest } from "./profiles/types";
 import { causalActionInterpreterEnabled } from "./profiles/causal-action-interpreter";
+import { itemById } from "../dnd/gear";
+import { canonicalSha256 } from "./profiles/canonical";
 import { environmentProfileEnabled } from "./profiles/environment";
 import { isCanonicalTacticalGeometry } from "./profiles/tactical-geometry";
 import {
@@ -53,6 +55,24 @@ import {
   isRuntimeGenesis,
 } from "./v2/validation";
 import { characterProficiencyFieldsMatchProfile } from "./v2/proficiency";
+import { socialResolutionProfileEnabled } from "./profiles/social-resolution";
+import { npcMechanicsProfileEnabled } from "./profiles/npc-mechanics";
+import {
+  isNpcSocialMechanics,
+  isSocialContinuationStateBinding,
+  isSocialRandomnessEventBinding,
+  isSocialResolutionPlan,
+} from "./v2/social-model";
+import {
+  isNpcMechanicalItemDefinition,
+  isNpcMechanicalTemplateDefinition,
+  NPC_MECHANICAL_ITEM_KIND,
+  NPC_MECHANICAL_TEMPLATE_KIND,
+  npcCoreCombatRuntimeMatches,
+  npcMechanicalDefinitionClosureValid,
+  npcMechanicalEntityMatchesTemplate,
+  npcMechanicalItemDefinitionClosureValid,
+} from "./v2/npc-mechanics";
 
 function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
   return left.profileId === right.profileId && left.profileHash === right.profileHash;
@@ -125,6 +145,160 @@ function stateCausalActionProfilesMatch(
     && causalPlans.every(isCausalActionResolutionPlan)
     && causalContinuations.every(([continuationId, continuation]) =>
       isCausalContinuationStateBinding(profiles, state, continuationId, continuation));
+}
+
+function stateSocialResolutionProfilesMatch(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+): boolean {
+  const markedContinuations = Object.entries(state.internalContinuations)
+    .filter(([, continuation]) => {
+      const plan = continuation.resolutionPlan as unknown;
+      return isRecord(plan) && plan.schema === "zhuwei.social-resolution-plan/v1";
+    });
+  const socialMechanics = Object.values(state.entities)
+    .filter((entity) => entity.socialMechanics !== undefined);
+  const characterPremises = Object.values(state.canonicalFacts)
+    .filter((fact) => fact.kind === "characterPremise");
+  const dynamicKnowledgeGrants = Object.values(state.canonicalFacts)
+    .filter((fact) => fact.kind === "dynamicEntityKnowledgeGrant");
+  const typedAssertionFacts = Object.values(state.canonicalFacts)
+    .filter((fact) => fact.kind === "typedAssertionFact");
+  const socialDefinitions = Object.values(state.campaignRuntime.definitions)
+    .filter((definition) => isRecord(definition.content)
+      && (definition.content.schema === "zhuwei.dynamic-npc-definition/v1"
+        || definition.content.sourceKind === "characterPremiseOpenBlank"));
+  const hasArtifacts = state.campaignRuntime.conversationThreads !== undefined
+    || markedContinuations.length > 0
+    || socialMechanics.length > 0
+    || characterPremises.length > 0
+    || dynamicKnowledgeGrants.length > 0
+    || typedAssertionFacts.length > 0
+    || socialDefinitions.length > 0;
+  if (!socialResolutionProfileEnabled(profiles.extensions)) return !hasArtifacts;
+  return state.campaignRuntime.conversationThreads !== undefined
+    && characterPremises.every((fact) =>
+      fact.source === "dynamicMaterialization"
+      && fact.subjectRefs.length === 1
+      && state.entities[fact.subjectRefs[0]]?.kind === "player"
+      && isRecord(fact.value)
+      && fact.value.schema === "zhuwei.character-premise/v2"
+      && typeof fact.value.policyRef === "string"
+      && Array.isArray(fact.value.anchorRefs)
+      && Array.isArray(fact.value.bindings))
+    && dynamicKnowledgeGrants.every((fact) =>
+      fact.source === "dynamicMaterialization"
+      && isRecord(fact.value)
+      && fact.value.schema === "zhuwei.dynamic-entity-knowledge-grant/v1"
+      && typeof fact.value.recipientEntityRef === "string"
+      && typeof fact.value.sourcePremiseFactRef === "string"
+      && state.canonicalFacts[fact.value.sourcePremiseFactRef]?.kind === "characterPremise")
+    && typedAssertionFacts.every((fact) =>
+      fact.source === "dynamicMaterialization"
+      && isRecord(fact.value)
+      && fact.value.schema === "zhuwei.typed-assertion-fact/v1"
+      && typeof fact.value.sourcePremiseFactRef === "string"
+      && state.canonicalFacts[fact.value.sourcePremiseFactRef]?.kind === "characterPremise")
+    && socialDefinitions.every((definition) =>
+      isRecord(definition.content)
+      && ((definition.content.schema === "zhuwei.dynamic-npc-definition/v1"
+        && definition.definitionKind === "npc"
+        && definition.content.entityId === definition.definitionId)
+        || (definition.content.schema === "zhuwei.dynamic-open-definition/v1"
+          && definition.content.entityRef === definition.definitionId)))
+    && socialMechanics.every((entity) =>
+      entity.kind === "npc" && isNpcSocialMechanics(entity.socialMechanics))
+    && markedContinuations.every(([continuationId, continuation]) =>
+      isSocialResolutionPlan(continuation.resolutionPlan)
+      && isSocialContinuationStateBinding(
+        profiles,
+        state,
+        continuationId,
+        continuation,
+      ));
+}
+
+function stateNpcMechanicsProfilesMatch(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+): boolean {
+  const campaignTemplates = Object.entries(state.campaignRuntime.definitions)
+    .filter(([, definition]) => definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND);
+  const combatTemplates = Object.entries(state.combatRuntime.definitions)
+    .filter(([, definition]) => definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND);
+  const campaignItems = Object.entries(state.campaignRuntime.definitions)
+    .filter(([, definition]) => definition.definitionKind === NPC_MECHANICAL_ITEM_KIND);
+  const combatItems = Object.entries(state.combatRuntime.definitions)
+    .filter(([, definition]) => definition.definitionKind === NPC_MECHANICAL_ITEM_KIND);
+  const mechanicalEntities = Object.values(state.combatRuntime.entities)
+    .filter((entity) => isRecord(entity) && typeof entity.mechanicalDefinitionRef === "string");
+  const hasMechanicalItemInstances = Object.values(state.entities)
+    .some((character) => character.loadout?.mechanicalItems !== undefined);
+  const hasArtifacts = campaignTemplates.length > 0
+    || combatTemplates.length > 0
+    || campaignItems.length > 0
+    || combatItems.length > 0
+    || mechanicalEntities.length > 0
+    || hasMechanicalItemInstances;
+  if (!npcMechanicsProfileEnabled(profiles.extensions)) return !hasArtifacts;
+  if (campaignTemplates.length !== combatTemplates.length
+    || campaignItems.length !== combatItems.length
+    || campaignTemplates.some(([definitionId, definition]) =>
+      !isNpcMechanicalTemplateDefinition(definition)
+      || state.combatRuntime.definitions[definitionId] === undefined
+      || canonicalSha256(state.combatRuntime.definitions[definitionId]) !== canonicalSha256(definition))
+    || combatTemplates.some(([, definition]) =>
+      !isNpcMechanicalTemplateDefinition(definition)
+      || !npcMechanicalDefinitionClosureValid(definition, state.combatRuntime.definitions))
+    || campaignItems.some(([definitionId, definition]) =>
+      !isNpcMechanicalItemDefinition(definition)
+      || state.combatRuntime.definitions[definitionId] === undefined
+      || canonicalSha256(state.combatRuntime.definitions[definitionId]) !== canonicalSha256(definition))
+    || combatItems.some(([, definition]) =>
+      !isNpcMechanicalItemDefinition(definition)
+      || !npcMechanicalItemDefinitionClosureValid(definition, state.combatRuntime.definitions))) {
+    return false;
+  }
+  const runtimeItemIds = new Set<string>();
+  const loadoutsValid = Object.values(state.entities).every((character) => {
+    const loadout = character.loadout;
+    if (loadout?.mechanicalItems === undefined) return true;
+    const equippedIds = Object.values(loadout.equipped);
+    return Object.entries(loadout.mechanicalItems).every(([itemId, item]) => {
+      if (runtimeItemIds.has(itemId)) return false;
+      runtimeItemIds.add(itemId);
+      const backpackEntry = loadout.backpack.find((entry) => entry.itemId === itemId);
+      const equippedCount = equippedIds.filter((equippedId) => equippedId === itemId).length;
+      const locationCount = (backpackEntry === undefined ? 0 : 1) + equippedCount;
+      return locationCount === 1
+        && (backpackEntry === undefined || backpackEntry.quantity === 1)
+        && !(item.status === "broken" && equippedCount > 0)
+        && (item.sourceKind === "standardGear"
+          ? (() => {
+              const standard = itemById(item.definitionRef);
+              return standard !== undefined
+                && standard.wear !== "pack"
+                && standard.wear !== "ammo";
+            })()
+          : isNpcMechanicalItemDefinition(
+              state.combatRuntime.definitions[item.definitionRef],
+            ));
+    });
+  });
+  return loadoutsValid && mechanicalEntities.every((entity) => {
+    const definitionRef = String(entity.mechanicalDefinitionRef);
+    const definition = state.combatRuntime.definitions[definitionRef];
+    const character = state.entities[String(entity.entityId)];
+    return isNpcMechanicalTemplateDefinition(definition)
+      && character !== undefined
+      && npcMechanicalEntityMatchesTemplate(
+        entity,
+        definition,
+        state.combatRuntime.definitions,
+        character,
+      )
+      && npcCoreCombatRuntimeMatches(character, entity);
+  });
 }
 
 function containsForbidden2024Semantics(value: unknown, seen = new WeakSet<object>()): boolean {
@@ -269,6 +443,18 @@ function replayWithRegistry(
         "Genesis V3 causal artifacts do not match the room manifest extensions.",
       );
     }
+    if (!stateSocialResolutionProfilesMatch(genesisProfileResolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "Genesis social artifacts do not match the room manifest extensions.",
+      );
+    }
+    if (!stateNpcMechanicsProfilesMatch(genesisProfileResolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "Genesis NPC mechanical artifacts do not match the room manifest extensions.",
+      );
+    }
   }
 
   for (const eventValue of eventsValue) {
@@ -280,6 +466,7 @@ function replayWithRegistry(
       return rejected("invalidEventEnvelope", validation.message);
     }
     const event = validation.event;
+    const eventPayload = event.payload as unknown;
     const eventProfileResolution = resolveRuntimeProfileManifest(registry, event.profiles);
     if (!eventProfileResolution.ok) {
       return rejected(
@@ -302,6 +489,23 @@ function replayWithRegistry(
       return rejected(
         "invalidEventEnvelope",
         "Causal randomness request does not match its frozen program, actor, or capability.",
+      );
+    }
+    if (
+      event.eventType === "RandomnessRequested"
+      && isRecord(eventPayload)
+      && isRecord(eventPayload.resolutionPlan)
+      && eventPayload.resolutionPlan.schema === "zhuwei.social-resolution-plan/v1"
+      && !isSocialRandomnessEventBinding(
+        eventProfileResolution.profiles,
+        state,
+        event.rootActionId,
+        eventPayload,
+      )
+    ) {
+      return rejected(
+        "invalidEventEnvelope",
+        "Social randomness request does not match its frozen offer, participants, or capability.",
       );
     }
     if (!isContinuousEvent(registry, event, state, genesisValue)) {
@@ -328,6 +532,18 @@ function replayWithRegistry(
         return rejected(
           "profileIntegrityMismatch",
           "Replayed V3 causal artifacts do not match the event manifest extensions.",
+        );
+      }
+      if (!stateSocialResolutionProfilesMatch(eventProfileResolution.profiles, next)) {
+        return rejected(
+          "profileIntegrityMismatch",
+          "Replayed social artifacts do not match the event manifest extensions.",
+        );
+      }
+      if (!stateNpcMechanicsProfilesMatch(eventProfileResolution.profiles, next)) {
+        return rejected(
+          "profileIntegrityMismatch",
+          "Replayed NPC mechanical artifacts do not match the event manifest extensions.",
         );
       }
       if (hashWorldState(next) !== event.stateHashAfter || eventHash(event) !== event.eventHash) {
@@ -411,6 +627,18 @@ function projectWithRegistry(
         "State V3 causal artifacts do not match the room manifest extensions.",
       );
     }
+    if (!stateSocialResolutionProfilesMatch(resolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "State social artifacts do not match the room manifest extensions.",
+      );
+    }
+    if (!stateNpcMechanicsProfilesMatch(resolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "State NPC mechanical artifacts do not match the room manifest extensions.",
+      );
+    }
   }
   return projectWorld(resolution.profiles, state, viewer, query);
 }
@@ -491,6 +719,18 @@ function stepWithRegistry(
     return rejected(
       "profileIntegrityMismatch",
       "State V3 causal artifacts do not match the room manifest extensions.",
+    );
+  }
+  if (!stateSocialResolutionProfilesMatch(resolution.profiles, state)) {
+    return rejected(
+      "profileIntegrityMismatch",
+      "State social artifacts do not match the room manifest extensions.",
+    );
+  }
+  if (!stateNpcMechanicsProfilesMatch(resolution.profiles, state)) {
+    return rejected(
+      "profileIntegrityMismatch",
+      "State NPC mechanical artifacts do not match the room manifest extensions.",
     );
   }
   return stepAuthoritativeWorld(resolution.profiles, state, input);

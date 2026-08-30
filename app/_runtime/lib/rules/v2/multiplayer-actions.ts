@@ -1,4 +1,9 @@
 import type { RuntimeProfileManifest } from "../profiles/types";
+import {
+  compileAbilityDefinition,
+  isRegisteredAbilityRecord,
+} from "../profiles/ability-compiler";
+import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import { createEventTransition, createScopeProof } from "./events";
 import type {
   AuthoritativeWorldState,
@@ -27,6 +32,11 @@ import {
   compileStaticCharacterCombat,
 } from "./character-abilities";
 import { changeCharacterGear, isGearSlot } from "./character-gear";
+import {
+  changeNpcMechanicalGear,
+  changeNpcMechanicalItemState,
+  isNpcMechanicalTemplateDefinition,
+} from "./npc-mechanics";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
 import { characterProficiencyFieldsMatchProfile } from "./proficiency";
 
@@ -470,6 +480,208 @@ function changeControlledCharacterGear(
     reads: [`entity:${character.id}`, `control:${character.id}`],
     writes: [`entity:${character.id}`, `combat-entity:${character.id}`],
   }]);
+}
+
+function changeNpcGear(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  const expectedKeys = input.action === "wear"
+    ? ["action", "itemId", "kind", "npcCharacterId", "rootActionId", "slot"]
+    : ["action", "kind", "npcCharacterId", "rootActionId", "slot"];
+  if (
+    !npcMechanicsProfileEnabled(profiles.extensions)
+    || !hasExactKeys(input, expectedKeys)
+    || (input.action !== "wear" && input.action !== "stow")
+    || !isNonEmptyString(input.npcCharacterId)
+    || !isNonEmptyString(input.rootActionId)
+    || !isGearSlot(input.slot)
+    || (input.action === "wear" && !isNonEmptyString(input.itemId))
+  ) return rejected("invalidRulesInput", "NPC gear action is not canonical.");
+  if (!compoundRootAvailable(state, input)) {
+    return rejected("duplicateRootAction", "NPC gear root action is already used.");
+  }
+
+  const character = state.entities[input.npcCharacterId];
+  const combatEntity = state.combatRuntime.entities[input.npcCharacterId];
+  const definition = isRecord(combatEntity)
+    && isNonEmptyString(combatEntity.mechanicalDefinitionRef)
+    ? state.combatRuntime.definitions[combatEntity.mechanicalDefinitionRef]
+    : undefined;
+  const activeEncounter = Object.values(state.combatRuntime.encounters).some((encounter) =>
+    encounter.status !== "concluded"
+    && Array.isArray(encounter.participantEntityIds)
+    && encounter.participantEntityIds.includes(input.npcCharacterId));
+  if (
+    character?.kind !== "npc"
+    || character.tenureStatus !== "active"
+    || !isRecord(combatEntity)
+    || !isNpcMechanicalTemplateDefinition(definition)
+  ) return rejected("privateOrUnknownReference", "NPC mechanics are unavailable.");
+  if (activeEncounter) {
+    return rejected("pendingInputUnresolved", "NPC gear cannot change during an active encounter.");
+  }
+
+  const transition = changeNpcMechanicalGear(
+    character,
+    definition,
+    state.combatRuntime.definitions,
+    input.action === "wear"
+      ? { action: "wear", slot: input.slot, itemId: input.itemId as string }
+      : { action: "stow", slot: input.slot },
+  );
+  if ("error" in transition) {
+    return rejected(
+      transition.error === "unchangedGear" ? "unchangedRetry" : "insufficientResource",
+      "The requested item cannot be moved from the NPC's authoritative loadout.",
+    );
+  }
+
+  const drafts: Draft[] = [];
+  const equipmentAbilityRefs = transition.equipmentAbilityRefs;
+  for (const equipmentDefinition of transition.equipmentDefinitions) {
+    const compiled = compileAbilityDefinition(equipmentDefinition);
+    if (!compiled.ok) {
+      return rejected(compiled.code, compiled.publicMessage, compiled.diagnostics.map((diagnostic) => ({
+        code: compiled.code,
+        message: diagnostic.reason,
+        path: diagnostic.path,
+        source: "SPEC 0013",
+        visibility: "public",
+      })));
+    }
+    const definitionId = String(equipmentDefinition.definitionId);
+    const prior = state.combatRuntime.definitions[definitionId];
+    if (prior !== undefined
+      && (!isRegisteredAbilityRecord(prior)
+        || prior.compiledHash !== compiled.artifact.compiledHash)) {
+      return rejected(
+        "invalidRulesInput",
+        "The NPC equipment ability conflicts with its frozen definition.",
+      );
+    }
+    if (prior === undefined) {
+      drafts.push({
+        eventType: "DefinitionRegistered",
+        payload: structuredClone(compiled.artifact),
+        creates: [`definition:${definitionId}`],
+        visibilityPolicyId: "visibility:room-authority-only",
+        secrecy: "internal",
+      });
+    }
+  }
+  drafts.push({
+    eventType: "NpcGearChanged",
+    payload: {
+      characterId: character.id,
+      action: input.action,
+      slot: input.slot,
+      itemId: transition.movedItemId,
+      armorClass: transition.loadout.armorClass,
+      equipmentAbilityRefs,
+    },
+    reads: [
+      `entity:${character.id}`,
+      `combat-entity:${character.id}`,
+      `definition:${String(combatEntity.mechanicalDefinitionRef)}`,
+    ],
+    writes: [`entity:${character.id}`, `combat-entity:${character.id}`],
+    visibilityPolicyId: isNonEmptyString(combatEntity.visibilityPolicyId)
+      ? combatEntity.visibilityPolicyId
+      : "visibility:scene-observers",
+  });
+  return sequence(profiles, state, input.rootActionId, drafts);
+}
+
+function changeNpcItemState(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!npcMechanicsProfileEnabled(profiles.extensions)
+    || !hasExactKeys(input, [
+      "action",
+      "itemId",
+      "kind",
+      "npcCharacterId",
+      "rootActionId",
+    ])
+    || !["break", "repair", "destroy", "lose"].includes(String(input.action))
+    || !isNonEmptyString(input.itemId)
+    || !isNonEmptyString(input.npcCharacterId)
+    || !isNonEmptyString(input.rootActionId)) {
+    return rejected("invalidRulesInput", "NPC mechanical item state action is not canonical.");
+  }
+  if (!compoundRootAvailable(state, input)) {
+    return rejected("duplicateRootAction", "NPC item-state root action is already used.");
+  }
+  const character = state.entities[input.npcCharacterId];
+  const combatEntity = state.combatRuntime.entities[input.npcCharacterId];
+  const definition = isRecord(combatEntity)
+    && isNonEmptyString(combatEntity.mechanicalDefinitionRef)
+    ? state.combatRuntime.definitions[combatEntity.mechanicalDefinitionRef]
+    : undefined;
+  if (character?.kind !== "npc"
+    || character.tenureStatus !== "active"
+    || !isRecord(combatEntity)
+    || !isNpcMechanicalTemplateDefinition(definition)) {
+    return rejected("privateOrUnknownReference", "NPC mechanics are unavailable.");
+  }
+  const transition = changeNpcMechanicalItemState(
+    character,
+    definition,
+    state.combatRuntime.definitions,
+    input.itemId,
+    input.action as "break" | "repair" | "destroy" | "lose",
+  );
+  if ("error" in transition) {
+    return rejected(
+      transition.error === "unchangedItemState" ? "unchangedRetry" : "privateOrUnknownReference",
+      "The referenced mechanical item cannot make that state transition.",
+    );
+  }
+  const drafts: Draft[] = [];
+  for (const equipmentDefinition of transition.equipmentDefinitions) {
+    const compiled = compileAbilityDefinition(equipmentDefinition);
+    if (!compiled.ok) return rejected(compiled.code, compiled.publicMessage);
+    const definitionId = String(equipmentDefinition.definitionId);
+    const prior = state.combatRuntime.definitions[definitionId];
+    if (prior !== undefined
+      && (!isRegisteredAbilityRecord(prior)
+        || prior.compiledHash !== compiled.artifact.compiledHash)) {
+      return rejected("invalidRulesInput", "Remaining equipment conflicts with its frozen mechanics.");
+    }
+    if (prior === undefined) {
+      drafts.push({
+        eventType: "DefinitionRegistered",
+        payload: structuredClone(compiled.artifact),
+        creates: [`definition:${definitionId}`],
+        visibilityPolicyId: "visibility:room-authority-only",
+        secrecy: "internal",
+      });
+    }
+  }
+  drafts.push({
+    eventType: "NpcMechanicalItemStateChanged",
+    payload: {
+      characterId: character.id,
+      itemId: input.itemId,
+      action: input.action as "break" | "repair" | "destroy" | "lose",
+      armorClass: transition.loadout.armorClass,
+      equipmentAbilityRefs: transition.equipmentAbilityRefs,
+    },
+    reads: [
+      `entity:${character.id}`,
+      `combat-entity:${character.id}`,
+      `definition:${String(combatEntity.mechanicalDefinitionRef)}`,
+    ],
+    writes: [`entity:${character.id}`, `combat-entity:${character.id}`],
+    visibilityPolicyId: isNonEmptyString(combatEntity.visibilityPolicyId)
+      ? combatEntity.visibilityPolicyId
+      : "visibility:scene-observers",
+  });
+  return sequence(profiles, state, input.rootActionId, drafts);
 }
 
 function removalDrafts(
@@ -1079,6 +1291,8 @@ export function stepMultiplayerWorld(
   if (input.kind !== "applyRoomAdministration") {
     switch (input.kind) {
       case "changeCharacterGear": return changeControlledCharacterGear(profiles, state, input);
+      case "changeNpcGear": return changeNpcGear(profiles, state, input);
+      case "changeNpcItemState": return changeNpcItemState(profiles, state, input);
       case "invitePartyMember": return invitePartyMember(profiles, state, input);
       case "answerPartyInvitation": return answerPartyInvitation(profiles, state, input);
       case "cancelPartyInvitation": return cancelPartyInvitation(profiles, state, input);

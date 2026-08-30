@@ -39,8 +39,9 @@ test("host can manage a hall table from one menu", async () => {
 });
 
 test("character sidebar omits redundant controls and wraps action copy", async () => {
-  const [playTable, catalog] = await Promise.all([
+  const [playTable, inventoryPanel, catalog] = await Promise.all([
     source("app/_runtime/components/play-table.tsx"),
+    source("app/_runtime/components/inventory-panel.tsx"),
     source("app/_runtime/lib/dnd/catalog.ts"),
   ]);
   const characterDetail = sliceBetween(
@@ -73,6 +74,7 @@ test("character sidebar omits redundant controls and wraps action copy", async (
   assert.doesNotMatch(playTable, /<p[^>]*>所在 ·/);
   assert.doesNotMatch(resourcePanel, /点火把/);
   assert.doesNotMatch(playTable, /点火把/);
+  assert.doesNotMatch(inventoryPanel, /点火把/);
   assert.doesNotMatch(playTable, /feat:\s*"torch"/);
   assert.match(
     playTable,

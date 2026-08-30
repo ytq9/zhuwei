@@ -47,6 +47,9 @@ function canonicalLoadout(
       .filter(({ qty }) => qty > 0)
       .sort((left, right) => left.itemId.localeCompare(right.itemId))
       .map(({ itemId, qty }) => ({ itemId, quantity: qty })),
+    ...(character.loadout?.mechanicalItems === undefined
+      ? {}
+      : { mechanicalItems: structuredClone(character.loadout.mechanicalItems) }),
   };
 }
 

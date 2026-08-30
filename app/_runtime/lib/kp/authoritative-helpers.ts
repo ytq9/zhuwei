@@ -28,6 +28,8 @@ import {
   ACTION_PLAN_CHECK_MODES,
   ACTION_PLAN_COST_KINDS,
   ACTION_PLAN_EFFECT_KINDS,
+  ACTION_PLAN_GEAR_ACTIONS,
+  ACTION_PLAN_GEAR_SLOTS,
   ACTION_PLAN_OPERATIONS,
   CAMPAIGN_LIFECYCLE_ACTIONS,
   NARRATION_AGENCY_CLAIM_KINDS,
@@ -85,6 +87,8 @@ const ACTION_PLAN_COST_KIND_SET = new Set<string>(ACTION_PLAN_COST_KINDS);
 const ACTION_PLAN_EFFECT_KIND_SET = new Set<string>(ACTION_PLAN_EFFECT_KINDS);
 const ACTION_PLAN_ABILITY_SET = new Set<string>(ACTION_PLAN_ABILITIES);
 const ACTION_PLAN_CHECK_MODE_SET = new Set<string>(ACTION_PLAN_CHECK_MODES);
+const ACTION_PLAN_GEAR_ACTION_SET = new Set<string>(ACTION_PLAN_GEAR_ACTIONS);
+const ACTION_PLAN_GEAR_SLOT_SET = new Set<string>(ACTION_PLAN_GEAR_SLOTS);
 const UNCERTAINTY_BEARING_OPERATIONS = new Set<string>([
   "resolveNoncombatCheck",
   "resolveNoncombatContest",
@@ -812,6 +816,43 @@ function semanticActionPlan(
   ) invalid();
   const strictResolution = strictResolutionActionPlan(value, actorKind);
   if (strictResolution !== undefined) return strictResolution;
+  if (value.operation === "transferItem") {
+    exactKeys(value, ["amount", "itemRef", "operation", "targetEntityRef"]);
+    const amount = value.amount;
+    if (!Number.isSafeInteger(amount) || Number(amount) < 1 || Number(amount) > 1_000_000) {
+      invalid();
+    }
+    return {
+      operation: "transferItem",
+      targetEntityRef: boundedString(value.targetEntityRef, 240),
+      itemRef: boundedString(value.itemRef, 240),
+      amount: Number(amount),
+    };
+  }
+  if (value.operation === "changeNpcGear") {
+    if (
+      actorKind !== "npc"
+      || typeof value.gearAction !== "string"
+      || !ACTION_PLAN_GEAR_ACTION_SET.has(value.gearAction)
+      || typeof value.slot !== "string"
+      || !ACTION_PLAN_GEAR_SLOT_SET.has(value.slot)
+    ) invalid();
+    if (value.gearAction === "wear") {
+      exactKeys(value, ["gearAction", "itemRef", "operation", "slot"]);
+      return {
+        operation: "changeNpcGear",
+        gearAction: "wear",
+        slot: value.slot as typeof ACTION_PLAN_GEAR_SLOTS[number],
+        itemRef: boundedString(value.itemRef, 240),
+      };
+    }
+    exactKeys(value, ["gearAction", "operation", "slot"]);
+    return {
+      operation: "changeNpcGear",
+      gearAction: "stow",
+      slot: value.slot as typeof ACTION_PLAN_GEAR_SLOTS[number],
+    };
+  }
   exactKeys(value, ACTION_PLAN_KEYS, ["operation"]);
   for (const abilityKey of ["ability", "opposedAbility", "saveAbility"] as const) {
     const ability = value[abilityKey];
@@ -1667,7 +1708,10 @@ export function validateBodyOnlyNarration(
   if (!isRecord(value)) invalid();
   exactKeys(value, ["body"]);
   const body = boundedString(value.body, 1_600);
-  assertNarrationTextGrounded(body, projection);
+  const groundingProjection = isRecord(projection)
+    ? (({ actorAction: _actorAction, ...withoutActorAction }) => withoutActorAction)(projection)
+    : projection;
+  assertNarrationTextGrounded(body, groundingProjection);
   return { body };
 }
 

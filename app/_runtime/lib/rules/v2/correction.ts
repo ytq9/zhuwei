@@ -386,6 +386,31 @@ export function correctionEffectsBefore(
       if (campaign !== undefined) effects.push(campaign);
       return effects;
     }
+    case "SocialResolutionOffered": {
+      const effects: CorrectionEffect[] = [{
+        kind: "restorePendingInputs",
+        before: structuredClone(state.pendingInputs) as unknown as JsonRecord,
+      }];
+      const thread = nonEmpty(payload.threadRef)
+        ? restoreCampaignEntry(state, "conversationThreads", payload.threadRef)
+        : undefined;
+      if (thread !== undefined) effects.push(thread);
+      return effects;
+    }
+    case "SocialResolutionDeclined":
+    case "SocialDirectResolved":
+    case "SocialCheckResolved": {
+      return [...new Set([payload.threadRef, payload.addressedThreadRef].filter(nonEmpty))]
+        .flatMap((threadRef) => {
+          const thread = restoreCampaignEntry(state, "conversationThreads", threadRef);
+          return thread === undefined ? [] : [thread];
+        });
+    }
+    case "PendingInputAnswered":
+      return [{
+        kind: "restorePendingInputs",
+        before: structuredClone(state.pendingInputs) as unknown as JsonRecord,
+      }];
     case "CharacterInferenceFormed":
       return nonEmpty(payload.characterId) && nonEmpty(payload.inferenceId)
         ? [restoreKnowledge(state, payload.characterId, payload.inferenceId)]
@@ -420,6 +445,15 @@ export function correctionEffectsBefore(
             restoreCombatRuntime(state),
           ]
         : [];
+    case "ItemTransferred": {
+      const characterIds = [payload.fromCharacterId, payload.toCharacterId]
+        .filter(nonEmpty)
+        .filter((characterId, index, all) => all.indexOf(characterId) === index);
+      return [
+        ...characterIds.map((characterId) => restoreCharacter(state, characterId)),
+        restoreCombatRuntime(state),
+      ];
+    }
     case "CharacterAdvanced": {
       const effects: CorrectionEffect[] = nonEmpty(payload.characterId)
         ? [restoreCharacter(state, payload.characterId)]
@@ -498,6 +532,11 @@ export function correctionEffectsBefore(
         .map((definitionId) => restoreDefinition(state, definitionId)));
       return effects;
     }
+    case "NpcGearChanged":
+    case "NpcMechanicalItemStateChanged":
+      return nonEmpty(payload.characterId)
+        ? [restoreCharacter(state, payload.characterId), restoreCombatRuntime(state)]
+        : [restoreCombatRuntime(state)];
     case "CharacterMoved": {
       if (!nonEmpty(payload.characterId)) return [];
       const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId)];
@@ -662,6 +701,18 @@ export function correctionEffectsBefore(
         ? [restoreCharacter(state, entity.entityId), restoreCombatRuntime(state)]
         : [restoreCombatRuntime(state)];
     }
+    case "DynamicEntityMaterialized": {
+      const effect = nonEmpty(payload.entityId)
+        ? restoreCharacter(state, payload.entityId)
+        : undefined;
+      return effect === undefined ? [] : [effect];
+    }
+    case "MeaningfulFailureCommitted": {
+      const effect = nonEmpty(payload.goalId)
+        ? restoreCampaignEntry(state, "meaningfulFailures", payload.goalId)
+        : undefined;
+      return effect === undefined ? [] : [effect];
+    }
     case "EncounterStarted":
     case "HostilityChanged":
     case "EnvironmentFeatureMaterialized":
@@ -744,6 +795,7 @@ function applyEffects(
         if (effect.before === null) {
           delete state.entities[effect.characterId];
           delete state.knowledge[effect.characterId];
+          delete state.multiplayerRuntime.characterTimelineIds[effect.characterId];
         } else {
           state.entities[effect.characterId] = structuredClone(effect.before as CharacterRecord);
         }

@@ -2,6 +2,8 @@ import { canonicalSha256 } from "../profiles/canonical";
 import { pathLengthMilliInches } from "../profiles/combat-geometry";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { projectRegisteredAbility } from "../profiles/ability-compiler";
+import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
+import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import {
   isTacticalProjection,
@@ -40,6 +42,12 @@ import {
 } from "./spatial-visibility";
 import { characterTimelineId } from "./timeline";
 import { projectRestRecoveryOptions } from "./character-rest";
+import {
+  isNpcMechanicalItemDefinition,
+  isNpcMechanicalTemplateDefinition,
+  NPC_MECHANICAL_ITEM_KIND,
+  NPC_MECHANICAL_TEMPLATE_KIND,
+} from "./npc-mechanics";
 import {
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
   canonicalFactVisibleToCharacter,
@@ -356,6 +364,56 @@ function safeFactionPlanFor(plan: JsonRecord, character: CharacterRecord): JsonR
   };
 }
 
+function safeConversationThreadFor(
+  thread: JsonRecord,
+  viewerKind: "player" | "npc",
+): JsonRecord {
+  const commonKeys = [
+    "threadRef",
+    "actorCharacterId",
+    "npcCharacterId",
+    "claimRef",
+    "responseClaimRef",
+    "claimKind",
+    "claimTruthStatus",
+    "topicFingerprint",
+    "resolution",
+    "sourceSceneId",
+    "evidenceRefs",
+    "status",
+    "degree",
+    "marginDegree",
+    "maximumInfluenceDegree",
+    "margin",
+    "immediateBehavior",
+    "relationshipScore",
+    "outcome",
+    "updatedByEventId",
+  ];
+  const projected = Object.fromEntries(commonKeys.flatMap((key) =>
+    thread[key] === undefined ? [] : [[key, structuredClone(thread[key])]]));
+  const semantics = isRecord(thread.claimSemantics) ? thread.claimSemantics : undefined;
+  if (viewerKind === "player") {
+    if (semantics !== undefined) projected.claimSemantics = structuredClone(semantics);
+    if (thread.goal !== undefined) projected.goal = structuredClone(thread.goal);
+    if (thread.method !== undefined) projected.method = structuredClone(thread.method);
+    return projected;
+  }
+  if (semantics !== undefined) {
+    projected.claimSemantics = Object.fromEntries([
+      "schema",
+      "targetNpcRef",
+      "addressedThreadRef",
+      "evidenceRefs",
+      "assertion",
+      "topicFingerprint",
+    ].flatMap((key) => semantics[key] === undefined
+      ? []
+      : [[key, structuredClone(semantics[key])]]));
+  }
+  return projected;
+}
+
 function safeReceipt(receipt: AuthoritativeWorldState["receipts"][string]): PublicReceipt {
   return {
     receiptId: receipt.receiptId,
@@ -510,6 +568,7 @@ function projectKpSpatialEvidence(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
 ): KpSpatialReadModel {
+  const includeNpcMechanics = npcMechanicsProfileEnabled(profiles.extensions);
   const scenes = Object.fromEntries(
     Object.entries(state.combatRuntime.scenes)
       .filter(([, scene]) => isNonEmptyString(scene.sceneId) && isRecord(scene.geometry))
@@ -527,7 +586,11 @@ function projectKpSpatialEvidence(
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([entityId, entity]) => [entityId, {
         id: entity.id as string,
+        ...(includeNpcMechanics && isNonEmptyString(entity.name) ? { name: entity.name } : {}),
         sceneId: entity.sceneId as string,
+        ...(includeNpcMechanics && isNonEmptyString(entity.mechanicalDefinitionRef)
+          ? { mechanicalDefinitionRef: entity.mechanicalDefinitionRef }
+          : {}),
         ...(entity.position === undefined ? {} : { position: structuredClone(entity.position) }),
         ...(entity.footprint === undefined ? {} : { footprint: structuredClone(entity.footprint) }),
         ...(isNonEmptyString(entity.visibilityPolicyId)
@@ -536,6 +599,32 @@ function projectKpSpatialEvidence(
         ...(isNonEmptyString(entity.visibilityFactId)
           ? { visibilityFactId: entity.visibilityFactId }
           : {}),
+      }]),
+  );
+  const npcMechanicalDefinitions = Object.fromEntries(
+    Object.entries(state.combatRuntime.definitions)
+      .filter(([, definition]) =>
+        definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
+        && isNpcMechanicalTemplateDefinition(definition))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([definitionRef, definition]) => [definitionRef, {
+        definitionRef,
+        revision: definition.revision,
+        rulesBasis: definition.rulesBasis,
+        content: structuredClone(definition.content),
+      }]),
+  );
+  const npcMechanicalItemDefinitions = Object.fromEntries(
+    Object.entries(state.combatRuntime.definitions)
+      .filter(([, definition]) =>
+        definition.definitionKind === NPC_MECHANICAL_ITEM_KIND
+        && isNpcMechanicalItemDefinition(definition))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([definitionRef, definition]) => [definitionRef, {
+        definitionRef,
+        revision: definition.revision,
+        rulesBasis: definition.rulesBasis,
+        content: structuredClone(definition.content),
       }]),
   );
   const base = {
@@ -548,6 +637,12 @@ function projectKpSpatialEvidence(
       ? {}
       : { adjudicationPrecedents: fullAdjudicationPrecedents(state) }),
     spatialEvidence: { scenes, entities },
+    ...(Object.keys(npcMechanicalDefinitions).length === 0
+      ? {}
+      : { npcMechanicalDefinitions }),
+    ...(Object.keys(npcMechanicalItemDefinitions).length === 0
+      ? {}
+      : { npcMechanicalItemDefinitions }),
   };
   return { ...base, projectionHash: canonicalSha256(base) } satisfies KpSpatialReadModel;
 }
@@ -808,7 +903,26 @@ function projectAuthoritative(
           && Array.isArray(pending.options?.choices)
           ? { choices: structuredClone(pending.options.choices) }
           : {}),
-        ...(pending.options === undefined || pending.kind === "playerChoice"
+        ...(pending.kind === "socialResolution" && isRecord(pending.options)
+          ? {
+              options: Object.fromEntries([
+                "npcCharacterId",
+                "npcName",
+                "goal",
+                "method",
+                "risk",
+                "successOutcome",
+                "failureOutcome",
+                "dc",
+                "retryGate",
+              ].flatMap((key) => pending.options?.[key] === undefined
+                ? []
+                : [[key, structuredClone(pending.options[key])]])),
+            }
+          : {}),
+        ...(pending.options === undefined
+          || pending.kind === "playerChoice"
+          || pending.kind === "socialResolution"
           ? {}
           : { options: structuredClone(pending.options) }),
         ...(invitation === undefined ? {} : {
@@ -1051,6 +1165,13 @@ function projectAuthoritative(
         ? {}
         : { lastLongRestCompletedAtMicros: character.lastLongRestCompletedAtMicros }),
       ...(character.loadout === undefined ? {} : { loadout: structuredClone(character.loadout) }),
+      ...(authorized.kind !== "npc" || character.socialMechanics === undefined
+        ? {}
+        : {
+            socialCapabilities: {
+              maximumInfluenceDegree: character.socialMechanics.maximumInfluenceDegree,
+            },
+          }),
       ...(controlledCombat === undefined ? {} : { combat: controlledCombat }),
     },
     abilityDefinitions: Object.fromEntries(
@@ -1136,6 +1257,15 @@ function projectAuthoritative(
         .filter((claim) => claim.speakerId === character.id
           || String(claim.claimId) in (state.knowledge[character.id] ?? {}))
         .map((entry) => structuredClone(entry)),
+      ...(state.campaignRuntime.conversationThreads === undefined
+        ? {}
+        : {
+            conversationThreads: Object.values(state.campaignRuntime.conversationThreads)
+              .filter((thread) => thread.actorCharacterId === character.id
+                || thread.npcCharacterId === character.id)
+              .map((thread) => safeConversationThreadFor(thread, authorized.kind))
+              .sort((left, right) => String(left.threadRef).localeCompare(String(right.threadRef))),
+          }),
       npcPlans: Object.values(state.campaignRuntime.npcPlans)
         .filter((plan) => authorized.kind === "npc" && plan.npcId === character.id)
         .map((entry) => structuredClone(entry)),
@@ -1237,6 +1367,7 @@ const ACTOR_DELTA_FIELDS = [
   "activities",
   "unresolvedThreats",
   "sourceClaims",
+  "conversationThreads",
   "stories",
   "epilogues",
   "entities",
@@ -1251,6 +1382,7 @@ const OBSERVER_DELTA_FIELDS = [
   "campaign",
   "chapters",
   "unresolvedThreats",
+  "conversationThreads",
   "stories",
   "entities",
   "encounters",
@@ -1557,9 +1689,21 @@ function verifiedCommittedRange(
 
   const first = events[0];
   const last = events[events.length - 1];
+  let receiptFrom: bigint;
+  let receiptTo: bigint;
+  let segmentFrom: bigint;
+  let segmentTo: bigint;
+  try {
+    receiptFrom = BigInt(receipt.eventRange.fromEventSeq);
+    receiptTo = BigInt(receipt.eventRange.toEventSeq);
+    segmentFrom = BigInt(first.eventSeq);
+    segmentTo = BigInt(last.eventSeq);
+  } catch {
+    return undefined;
+  }
   if (
-    receipt.eventRange.fromEventSeq !== first.eventSeq
-    || receipt.eventRange.toEventSeq !== last.eventSeq
+    receiptFrom > segmentFrom
+    || receiptTo < segmentTo
     || folded.version !== state.version
     || folded.lastEventId !== state.lastEventId
     || folded.eventHeadHash !== state.eventHeadHash
@@ -1570,7 +1714,13 @@ function verifiedCommittedRange(
     actorCharacterId: rangeValue.actorCharacterId,
     priorState: rangeValue.priorState,
     events,
-    receipt: safeReceipt(receipt),
+    receipt: {
+      ...safeReceipt(receipt),
+      eventRange: {
+        fromEventSeq: first.eventSeq,
+        toEventSeq: last.eventSeq,
+      },
+    },
   };
 }
 
@@ -1693,14 +1843,89 @@ function movementChanges(
   return changes;
 }
 
+function dynamicEntityChanges(
+  range: VerifiedCommittedRange,
+  state: AuthoritativeWorldState,
+  viewerCharacterId: string,
+): ObserverDeltaChange[] {
+  const viewerSceneId = state.entities[viewerCharacterId]?.sceneId;
+  const viewerTimelineId = characterTimelineId(state, viewerCharacterId);
+  if (viewerSceneId === undefined || viewerTimelineId === undefined) return [];
+  return range.events.flatMap((event) => {
+    if (event.eventType !== "DynamicEntityMaterialized") return [];
+    const payload = event.payload as EventPayloadByType["DynamicEntityMaterialized"];
+    const entity = state.entities[payload.entityId];
+    if (payload.sceneId !== viewerSceneId
+      || payload.sourceTimelineId !== viewerTimelineId
+      || entity?.kind !== "npc"
+      || entity.sceneId !== payload.sceneId
+      || characterTimelineId(state, entity.id) !== viewerTimelineId) return [];
+    return [{
+      kind: "dynamicEntityArrived",
+      entityId: payload.entityId,
+      entityKind: payload.entityKind,
+      name: entity.name,
+      sceneId: payload.sceneId,
+    }];
+  });
+}
+
 function actorEventChanges(
   range: VerifiedCommittedRange,
+  state: AuthoritativeWorldState,
   viewerCharacterId: string,
 ): ObserverDeltaChange[] {
   if (viewerCharacterId !== range.actorCharacterId) return [];
   const changes: ObserverDeltaChange[] = [];
   for (const event of range.events) {
     switch (event.eventType) {
+      case "ImprovisedActionResolved": {
+        const payload = event.payload as EventPayloadByType["ImprovisedActionResolved"];
+        const match = /^character-premise-(?:established|recalled):(.+)$/u.exec(
+          payload.outcomeCode,
+        );
+        if (payload.actorCharacterId !== viewerCharacterId || match === null) break;
+        const predicate = match[1];
+        const fact = payload.fact ?? Object.values(state.canonicalFacts).find((candidate) =>
+          candidate.kind === "characterPremise"
+          && candidate.subjectRefs.length === 1
+          && candidate.subjectRefs[0] === viewerCharacterId
+          && isRecord(candidate.value)
+          && candidate.value.predicate === predicate);
+        if (fact === undefined || !isRecord(fact.value)) break;
+        const bindings = Array.isArray(fact.value.bindings)
+          ? fact.value.bindings.filter(isRecord).map((binding) => {
+              const entityRef = typeof binding.entityRef === "string" ? binding.entityRef : "";
+              const entity = state.entities[entityRef];
+              const definition = state.campaignRuntime.definitions[entityRef];
+              const content = isRecord(definition?.content) ? definition.content : {};
+              const displayName = entity?.name
+                ?? state.scenes[entityRef]?.name
+                ?? (typeof content.name === "string" ? content.name : undefined)
+                ?? (typeof content.displayAlias === "string" ? content.displayAlias : undefined)
+                ?? entityRef;
+              return {
+                slotRef: binding.slotRef,
+                relationKind: binding.relationKind,
+                referenceKind: binding.referenceKind,
+                entityRef,
+                entityKind: binding.entityKind,
+                displayName,
+              };
+            })
+          : [];
+        changes.push({
+          kind: "characterPremiseResolved",
+          resolution: payload.fact === null ? "recalled" : "established",
+          factRef: fact.id,
+          predicate,
+          policyRef: fact.value.policyRef,
+          statementTemplateRef: fact.value.statementTemplateRef,
+          bindings,
+          sourceRefs: structuredClone(fact.value.sourceRefs),
+        });
+        break;
+      }
       case "FeasibilityRuled": {
         const payload = event.payload as EventPayloadByType["FeasibilityRuled"];
         if (payload.characterId !== viewerCharacterId) break;
@@ -1723,6 +1948,72 @@ function actorEventChanges(
           outcome: payload.succeeded ? "success" : "failure",
           selectedRoll: payload.selectedRoll,
           total: payload.total,
+          result: payload.outcome,
+        });
+        break;
+      }
+      case "SocialResolutionDeclined": {
+        const payload = event.payload as EventPayloadByType["SocialResolutionDeclined"];
+        if (payload.actorCharacterId !== viewerCharacterId) break;
+        changes.push({
+          kind: "socialResolutionChanged",
+          resolution: payload.reason === "reframed"
+            ? "reframed"
+            : payload.reason === "invalidated" ? "invalidated" : "statusQuo",
+          npcCharacterId: payload.npcCharacterId,
+          claimRef: payload.claimRef,
+          threadRef: payload.threadRef,
+          threadDisposition: payload.disposition,
+          relationshipChanged: false,
+          result: payload.outcome,
+        });
+        break;
+      }
+      case "SocialDirectResolved": {
+        const payload = event.payload as EventPayloadByType["SocialDirectResolved"];
+        if (payload.actorCharacterId !== viewerCharacterId) break;
+        changes.push({
+          kind: "socialResolutionChanged",
+          resolution: "direct",
+          npcCharacterId: payload.npcCharacterId,
+          claimRef: payload.claimRef,
+          responseClaimRef: payload.responseClaimRef,
+          responseMode: payload.responseMode,
+          responseReaction: payload.responseReaction,
+          addressedThreadRef: payload.addressedThreadRef,
+          threadRef: payload.threadRef,
+          threadDisposition: payload.threadDisposition,
+          relationshipChanged: false,
+          result: payload.outcome,
+        });
+        break;
+      }
+      case "SocialCheckResolved": {
+        const payload = event.payload as EventPayloadByType["SocialCheckResolved"];
+        if (payload.actorCharacterId !== viewerCharacterId) break;
+        changes.push({
+          kind: "socialResolutionChanged",
+          resolution: "check",
+          npcCharacterId: payload.npcCharacterId,
+          claimRef: payload.claimRef,
+          responseClaimRef: payload.responseClaimRef,
+          responseMode: payload.responseMode,
+          responseReaction: payload.responseReaction,
+          addressedThreadRef: payload.addressedThreadRef,
+          addressedThreadDisposition: payload.addressedThreadDisposition,
+          threadRef: payload.threadRef,
+          boundary: payload.boundary,
+          selectedRoll: payload.selectedRoll,
+          total: payload.total,
+          margin: payload.margin,
+          marginDegree: payload.marginDegree,
+          degree: payload.degree,
+          outcome: payload.succeeded ? "success" : "failure",
+          maximumInfluenceDegree: payload.maximumInfluenceDegree,
+          threadDisposition: payload.threadDisposition,
+          relationshipBefore: payload.relationshipBefore,
+          relationshipDelta: payload.relationshipDelta,
+          relationshipScore: payload.relationshipScore,
           result: payload.outcome,
         });
         break;
@@ -1767,6 +2058,93 @@ function actorEventChanges(
   return changes;
 }
 
+function socialObserverEventChanges(
+  range: VerifiedCommittedRange,
+  state: AuthoritativeWorldState,
+  viewerCharacterId: string,
+): ObserverDeltaChange[] {
+  const changes: ObserverDeltaChange[] = [];
+  for (const event of range.events) {
+    if (event.eventType === "SourceClaimCreated") {
+      const payload = event.payload as EventPayloadByType["SourceClaimCreated"];
+      if (!payload.claimId.startsWith("claim:social:")
+        && !payload.claimId.startsWith("claim:social-npc:")) continue;
+      const heard = payload.speakerId === viewerCharacterId
+        || range.events.some((candidate) => {
+          if (candidate.eventType !== "KnowledgeAcquired") return false;
+          const acquired = candidate.payload as EventPayloadByType["KnowledgeAcquired"];
+          return "medium" in acquired
+            && acquired.characterId === viewerCharacterId
+            && acquired.medium === "spokenConversation"
+            && acquired.items.some((item) => item.knowledgeRef === payload.claimId);
+        });
+      if (!heard) continue;
+      const thread = Object.values(state.campaignRuntime.conversationThreads ?? {})
+        .find((candidate) => candidate.claimRef === payload.claimId);
+      changes.push({
+        kind: "spokenClaimHeard",
+        speakerCharacterId: payload.speakerId,
+        speakerName: state.entities[payload.speakerId]?.name ?? payload.speakerId,
+        claimRef: payload.claimId,
+        truthStatus: "unresolved",
+        ...(thread?.claimSemantics.assertion === undefined
+          || thread.claimSemantics.assertion === null
+          ? {}
+          : {
+              assertion: structuredClone(thread?.claimSemantics.assertion),
+            }),
+        utterance: payload.semanticContent,
+      });
+      continue;
+    }
+    if (event.eventType === "SocialDirectResolved") {
+      const payload = event.payload as EventPayloadByType["SocialDirectResolved"];
+      const viewer = state.entities[viewerCharacterId];
+      const npc = state.entities[payload.npcCharacterId];
+      const observed = payload.responseClaimRef === null
+        ? payload.responseReaction === "silence"
+          && viewer !== undefined
+          && npc !== undefined
+          && viewer.sceneId === npc.sceneId
+          && characterTimelineId(state, viewer.id) !== undefined
+          && characterTimelineId(state, viewer.id) === characterTimelineId(state, npc.id)
+        : state.knowledge[viewerCharacterId]?.[payload.responseClaimRef] !== undefined;
+      if (!observed) continue;
+      changes.push({
+        kind: "socialBehaviorObserved",
+        npcCharacterId: payload.npcCharacterId,
+        claimRef: payload.claimRef,
+        responseClaimRef: payload.responseClaimRef,
+        responseMode: payload.responseMode,
+        responseReaction: payload.responseReaction,
+        addressedThreadRef: payload.addressedThreadRef,
+        threadDisposition: payload.threadDisposition,
+        immediateBehavior: payload.immediateBehavior,
+      });
+      continue;
+    }
+    if (event.eventType === "SocialCheckResolved") {
+      const payload = event.payload as EventPayloadByType["SocialCheckResolved"];
+      if (viewerCharacterId === range.actorCharacterId
+        || state.knowledge[viewerCharacterId]?.[payload.claimRef] !== undefined) {
+        changes.push({
+          kind: "socialBehaviorObserved",
+          npcCharacterId: payload.npcCharacterId,
+          claimRef: payload.claimRef,
+          responseClaimRef: payload.responseClaimRef,
+          responseMode: payload.responseMode,
+          responseReaction: payload.responseReaction,
+          addressedThreadRef: payload.addressedThreadRef,
+          addressedThreadDisposition: payload.addressedThreadDisposition,
+          threadDisposition: payload.threadDisposition,
+          immediateBehavior: payload.immediateBehavior,
+        });
+      }
+    }
+  }
+  return changes;
+}
+
 function observerCommittedDelta(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -1795,12 +2173,23 @@ function observerCommittedDelta(
 
   const correction = isCorrectionCommittedRange(range);
   const movement = correction ? [] : movementChanges(range, state, viewerCharacterId);
+  const dynamicEntities = correction ? [] : dynamicEntityChanges(range, state, viewerCharacterId);
   const fieldChanges = correction
     ? correctionProjectionFieldChanges(before, after, actor)
     : projectionFieldChanges(before, after, actor);
-  const eventChanges = actorEventChanges(range, viewerCharacterId);
+  const eventChanges = actorEventChanges(range, state, viewerCharacterId);
+  const socialChanges = socialResolutionProfileEnabled(profiles.extensions)
+    ? socialObserverEventChanges(range, state, viewerCharacterId)
+    : [];
   const correctionChanges = correction ? publicCorrectionChanges(range) : [];
-  const changes = [...correctionChanges, ...eventChanges, ...movement, ...fieldChanges];
+  const changes = [
+    ...correctionChanges,
+    ...eventChanges,
+    ...socialChanges,
+    ...dynamicEntities,
+    ...movement,
+    ...fieldChanges,
+  ];
   if (actor && changes.length === 0) {
     changes.push({ kind: "actionCommitted", status: range.receipt.status });
   }
@@ -1838,7 +2227,7 @@ function projectFormerActorCommittedResult(
     viewerCharacterId: range.actorCharacterId,
     receipt: range.receipt,
     changes: [
-      ...actorEventChanges(range, range.actorCharacterId),
+      ...actorEventChanges(range, state, range.actorCharacterId),
       {
         kind: "characterLifecycleChanged",
         characterId: range.actorCharacterId,

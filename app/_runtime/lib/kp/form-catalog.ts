@@ -74,6 +74,11 @@ type CatalogForm = Readonly<{
 
 export type ModelFormDescriptor = CatalogForm;
 
+export type KpFormModelOptions = Readonly<{
+  npcMechanics?: boolean;
+  socialResolution?: boolean;
+}>;
+
 const FORM_CATALOG: Readonly<Record<KpFormId, CatalogForm>> = Object.freeze({
   "clarification.v1": form(
     "clarification.v1",
@@ -269,8 +274,11 @@ export type FormSelectionSignals = Readonly<{
   mayNeedRefusal?: boolean;
   mayMaterialize?: boolean;
   mayUseEnvironment?: boolean;
+  mayUseNpcExchange?: boolean;
   preferredCount?: 3 | 4 | 5 | 6;
   serverSelectedForm?: KpFormId;
+  preferObservationForFree?: boolean;
+  preferMaterializationForFree?: boolean;
 }>;
 
 const DEFAULT_FORM_ORDER: readonly KpFormId[] = Object.freeze([
@@ -297,7 +305,17 @@ export function selectAllowedKpForms(signals: FormSelectionSignals): readonly Kp
     if (id !== undefined && id !== "compound.v1" && !ranked.includes(id)) ranked.push(id);
   };
 
+  // Unclassified prose is intentionally left to KP semantic selection. Keep
+  // observation first instead of pretending the server recognized an
+  // ordinary check from arbitrary wording.
+  if (signals.interaction === "free" && signals.preferObservationForFree === true) {
+    add("observe.v1");
+  }
   add(signals.serverSelectedForm);
+  if (signals.interaction === "free" && signals.preferMaterializationForFree === true) {
+    add("materialization.v1");
+  }
+  if (signals.mayUseNpcExchange === true) add("npc-exchange.v1");
   // V3 arbitrary prose must always retain the environmental form even when a
   // deterministic router can identify one likely non-environmental form.
   if (signals.mayUseEnvironment === true) add("environmental-stunt.v1");
@@ -320,9 +338,43 @@ export function selectAllowedKpForms(signals: FormSelectionSignals): readonly Kp
  * Returns only explicitly allowed descriptors. The private catalog and its
  * registration metadata never enter the model payload.
  */
-export function modelFormDescriptors(allowedForms: readonly KpFormId[]): readonly ModelFormDescriptor[] {
+export function modelFormDescriptors(
+  allowedForms: readonly KpFormId[],
+  options: KpFormModelOptions = {},
+): readonly ModelFormDescriptor[] {
   assertAllowedFormSet(allowedForms);
-  return Object.freeze(allowedForms.map((id) => FORM_CATALOG[id]));
+  return Object.freeze(allowedForms.map((id) => {
+    if (options.socialResolution !== true && options.npcMechanics !== true) {
+      return FORM_CATALOG[id];
+    }
+    if (id === "npc-exchange.v1") {
+      if (options.socialResolution !== true) return FORM_CATALOG[id];
+      return Object.freeze({
+        ...FORM_CATALOG[id],
+        purpose: "Resolve an exchange with one projected NPC. desiredResponse is a typed social-intent JSON string with explicit evidenceRefs; npcResponse is typed and source-checked against finite NPC knowledge; utterance is overwritten with authenticated player text.",
+      });
+    }
+    if (id === "materialization.v1") {
+      const purpose = [
+        FORM_CATALOG[id].purpose,
+        ...(options.socialResolution === true
+          ? ["Character-premise answers use the establishCharacterPremise method and a typed, source-cited premise JSON string."]
+          : []),
+        ...(options.npcMechanics === true
+          ? ["NPC encounters, item transfers, NPC gear changes, and established item-state changes use exact typed JSON drafts; Rules freezes intrinsic/item sources and derives all authoritative effects."]
+          : []),
+      ].join(" ");
+      return Object.freeze({
+        ...FORM_CATALOG[id],
+        purpose,
+      });
+    }
+    if (id !== "observe.v1" || options.socialResolution !== true) return FORM_CATALOG[id];
+    return Object.freeze({
+      ...FORM_CATALOG[id],
+      purpose: "Resolve perception, inspection, recall, or investigation. For direct resolution, desiredInformation is the concrete answer committed to the character; for a check, it names the question answered by the frozen success/failure consequences.",
+    });
+  }));
 }
 
 export type KpFormModelParameters = Readonly<{
@@ -333,11 +385,13 @@ export type KpFormModelParameters = Readonly<{
 /** Builds the strict tool parameters for only this RootAction's allowlist. */
 export function buildKpFormModelParameters(
   allowedForms: readonly KpFormId[],
+  options: KpFormModelOptions = {},
 ): KpFormModelParameters {
   assertAllowedFormSet(allowedForms);
   return Object.freeze({
     type: "object" as const,
-    oneOf: Object.freeze(allowedForms.map((formId) => modelBranchSchema(FORM_CATALOG[formId]))),
+    oneOf: Object.freeze(allowedForms.map((formId) =>
+      modelBranchSchema(FORM_CATALOG[formId], options))),
   });
 }
 
@@ -345,18 +399,27 @@ export function buildKpFormModelParameters(
  * permitted upgrade to compound) happens server-side before this function. */
 export function buildKpFormRepairParameters(
   formId: KpFormId,
+  options: KpFormModelOptions = {},
 ): KpFormModelParameters {
   if (!Object.hasOwn(FORM_CATALOG, formId)) throw new Error("KP_FORM_UNKNOWN");
   return Object.freeze({
     type: "object" as const,
-    oneOf: Object.freeze([modelBranchSchema(FORM_CATALOG[formId])]),
+    oneOf: Object.freeze([modelBranchSchema(FORM_CATALOG[formId], options)]),
   });
 }
 
-function modelBranchSchema(definition: CatalogForm): Readonly<Record<string, unknown>> {
+function modelBranchSchema(
+  definition: CatalogForm,
+  options: KpFormModelOptions,
+): Readonly<Record<string, unknown>> {
   const draftProperties: Record<string, unknown> = {};
   for (const field of [...definition.requiredFields, ...definition.optionalFields]) {
-    draftProperties[field] = modelFieldSchema(definition.fieldKinds[field]!);
+    const schema = modelFieldSchema(definition.fieldKinds[field]!);
+    draftProperties[field] = options.npcMechanics === true
+      && definition.id === "materialization.v1"
+      && field === "proposedFact"
+      ? Object.freeze({ ...schema, maxLength: 8_000 })
+      : schema;
   }
   return deepFreezeSchema({
     type: "object",

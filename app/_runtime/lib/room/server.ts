@@ -96,6 +96,7 @@ export function authoritativeCharacterId(userId: string): string {
 export async function initializeAuthoritativeRoom(input: {
   roomId: string;
   moduleId: string;
+  moduleVersion?: string;
   members: AuthoritativeMemberSeed[];
   characters: AuthoritativeCharacterSeed[];
   fixtureFacts?: unknown[];
@@ -104,6 +105,7 @@ export async function initializeAuthoritativeRoom(input: {
   return await roomStub(input.roomId).initializeAuthoritative({
     roomId: input.roomId,
     moduleId: input.moduleId,
+    ...(input.moduleVersion === undefined ? {} : { moduleVersion: input.moduleVersion }),
     members: input.members,
     characters: input.characters,
     ...(input.fixtureFacts === undefined ? {} : { fixtureFacts: input.fixtureFacts }),
@@ -446,7 +448,9 @@ export async function runAuthoritativeRoomCorrection(
     errorKind: input.errorKind,
     explanation: input.explanation,
   });
-  const receipt = outcome.receipt !== null && typeof outcome.receipt === "object"
+  const receipt = "receipt" in outcome
+    && outcome.receipt !== null
+    && typeof outcome.receipt === "object"
     ? outcome.receipt as Record<string, unknown>
     : undefined;
   console.info(JSON.stringify(buildRoomTelemetryEvent({
@@ -493,7 +497,9 @@ async function executeAuthoritativeRoomAction(input: {
       : { submissionId: input.action.submissionId }),
   });
   const outcome = await handleRoomAction({ principal, authority, kp }, input.action);
-  const receipt = outcome.receipt !== null && typeof outcome.receipt === "object"
+  const receipt = "receipt" in outcome
+    && outcome.receipt !== null
+    && typeof outcome.receipt === "object"
     ? outcome.receipt as Record<string, unknown>
     : undefined;
   console.info(JSON.stringify(buildRoomTelemetryEvent({

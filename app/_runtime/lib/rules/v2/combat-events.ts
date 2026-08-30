@@ -13,6 +13,8 @@ import {
   isRecord,
   isSha256,
 } from "./validation";
+import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
+import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import { endCharacterTenure } from "./character-lifecycle";
 import {
   isDefinitionRegisteredAbilityPayload,
@@ -22,6 +24,16 @@ import {
   analyzeCombatMovement,
   canonicalizeCombatPath,
 } from "../profiles/combat-geometry";
+import {
+  canPromoteNpcSpatialShell,
+  isNpcMechanicalItemDefinition,
+  isNpcMechanicalTemplateDefinition,
+  materializeNpcMechanicalLoadout,
+  NPC_MECHANICAL_ITEM_KIND,
+  NPC_MECHANICAL_TEMPLATE_KIND,
+  npcCoreMechanicsCompatible,
+  synchronizeCoreNpcCombatState,
+} from "./npc-mechanics";
 
 export const COMBAT_EVENT_TYPES = [
   "EntityMaterialized",
@@ -283,8 +295,39 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
   }
 }
 
-function setCoreNpc(state: AuthoritativeWorldState, entity: JsonRecord): void {
-  if (!isNonEmptyString(entity.entityId) || entity.entityKind !== "npc" || !isNonEmptyString(entity.name)) return;
+function combatNpcSocialMechanics(entity: JsonRecord): CharacterRecord["socialMechanics"] {
+  if (!isRecord(entity.stats)) return undefined;
+  const stats = entity.stats;
+  const abilities = ["str", "dex", "con", "int", "wis", "cha"] as const;
+  if (!abilities.every((ability) => /^(?:[1-9]|[12][0-9]|30)$/u.test(String(stats[ability])))) {
+    return undefined;
+  }
+  const abilityScores = Object.fromEntries(abilities.map((ability) => [
+    ability,
+    Number(stats[ability]),
+  ])) as Record<typeof abilities[number], number>;
+  const proficiencyBonus = Number(entity.proficiencyBonus);
+  if (!Number.isSafeInteger(proficiencyBonus) || proficiencyBonus < 0 || proficiencyBonus > 12) {
+    return undefined;
+  }
+  return {
+    abilityScores,
+    proficiencyBonus,
+    skillModifiers: { insight: Math.floor((abilityScores.wis - 10) / 2) },
+    initialTrust: 0,
+    authorityModifier: 0,
+    stakesSensitivity: 0,
+    maximumInfluenceDegree: "fullSuccess",
+  };
+}
+
+function setCoreNpc(
+  state: AuthoritativeWorldState,
+  entity: JsonRecord,
+  socialResolution: boolean,
+): void {
+  const entityKind = entity.entityKind ?? entity.kind;
+  if (!isNonEmptyString(entity.entityId) || entityKind !== "npc" || !isNonEmptyString(entity.name)) return;
   const sceneId = isNonEmptyString(entity.sceneId)
     ? entity.sceneId
     : Object.keys(state.combatRuntime.scenes).sort()[0];
@@ -297,11 +340,41 @@ function setCoreNpc(state: AuthoritativeWorldState, entity: JsonRecord): void {
       || established.name !== entity.name
       || established.sceneId !== sceneId
     ) throw new TypeError("combat NPC conflicts with established world identity");
+    if (isNonEmptyString(entity.mechanicalDefinitionRef)
+      && !npcCoreMechanicsCompatible(established, entity)) {
+      throw new TypeError("combat NPC mechanics conflict with established noncombat mechanics");
+    }
+    if (isNonEmptyString(entity.mechanicalDefinitionRef)) {
+      const definition = state.combatRuntime.definitions[entity.mechanicalDefinitionRef];
+      if (!isNpcMechanicalTemplateDefinition(definition)) {
+        throw new TypeError("combat NPC lacks its frozen mechanical template");
+      }
+      const loadout = materializeNpcMechanicalLoadout(
+        definition,
+        entity,
+        state.combatRuntime.definitions,
+        established.loadout,
+      );
+      if (loadout === undefined) throw new TypeError("combat NPC inventory cannot be materialized");
+      established.loadout = loadout;
+    }
+    if (socialResolution && established.socialMechanics === undefined) {
+      const socialMechanics = combatNpcSocialMechanics(entity);
+      if (socialMechanics === undefined) {
+        throw new TypeError("V5 combat NPC lacks derivable social mechanics");
+      }
+      established.socialMechanics = socialMechanics;
+    }
     state.knowledge[entity.entityId] ??= {};
+    synchronizeCoreNpcCombatState(state, entity);
     return;
   }
   const nextOrdinal = Object.values(state.entities)
     .reduce((maximum, entry) => Math.max(maximum, Number(entry.entityOrdinal)), 0) + 1;
+  const socialMechanics = socialResolution ? combatNpcSocialMechanics(entity) : undefined;
+  if (socialResolution && socialMechanics === undefined) {
+    throw new TypeError("V5 combat NPC lacks derivable social mechanics");
+  }
   state.entities[entity.entityId] = {
     id: entity.entityId,
     kind: "npc",
@@ -309,14 +382,30 @@ function setCoreNpc(state: AuthoritativeWorldState, entity: JsonRecord): void {
     sceneId,
     tenureStatus: "active",
     entityOrdinal: String(nextOrdinal),
+    ...(socialMechanics === undefined ? {} : { socialMechanics }),
   } satisfies CharacterRecord;
+  if (isNonEmptyString(entity.mechanicalDefinitionRef)) {
+    const definition = state.combatRuntime.definitions[entity.mechanicalDefinitionRef];
+    if (!isNpcMechanicalTemplateDefinition(definition)) {
+      throw new TypeError("combat NPC lacks its frozen mechanical template");
+    }
+    const loadout = materializeNpcMechanicalLoadout(
+      definition,
+      entity,
+      state.combatRuntime.definitions,
+    );
+    if (loadout === undefined) throw new TypeError("combat NPC inventory cannot be materialized");
+    state.entities[entity.entityId].loadout = loadout;
+  }
   state.knowledge[entity.entityId] = {};
+  synchronizeCoreNpcCombatState(state, entity);
 }
 
 function patchEntity(state: AuthoritativeWorldState, patch: unknown): void {
   if (!isRecord(patch) || !isNonEmptyString(patch.id)) throw new TypeError("combat entity patch is malformed");
   if (!(patch.id in state.combatRuntime.entities)) throw new TypeError("combat entity patch target is unavailable");
   state.combatRuntime.entities[patch.id] = structuredClone(patch);
+  synchronizeCoreNpcCombatState(state, patch);
 }
 
 function movementHostileEntityIds(encounter: JsonRecord, sourceEntityId: string): Set<string> {
@@ -450,17 +539,34 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     case "DefinitionRegistered": {
       const definition = payload.definition;
       if (!isRecord(definition) || !isNonEmptyString(definition.definitionId)
-        || definition.definitionId in runtime.definitions) throw new TypeError("combat definition already exists");
+        || definition.definitionId in runtime.definitions
+        || (definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
+          && !isNpcMechanicalTemplateDefinition(definition))
+        || (definition.definitionKind === NPC_MECHANICAL_ITEM_KIND
+          && !isNpcMechanicalItemDefinition(definition))) {
+        throw new TypeError("combat definition already exists or is malformed");
+      }
       runtime.definitions[definition.definitionId] = isDefinitionRegisteredAbilityPayload(payload)
         ? registeredAbilityRecord(payload)
         : structuredClone(definition);
       return true;
     }
     case "EntityMaterialized": {
-      if (!isRecord(payload.entity) || !isNonEmptyString(payload.entity.entityId)
-        || payload.entity.entityId in runtime.entities) throw new TypeError("combat entity already exists");
+      if (!isRecord(payload.entity) || !isNonEmptyString(payload.entity.entityId)) {
+        throw new TypeError("combat entity is malformed");
+      }
+      const prior = runtime.entities[payload.entity.entityId];
+      if (prior !== undefined
+        && (!npcMechanicsProfileEnabled(event.profiles.extensions)
+          || !canPromoteNpcSpatialShell(prior, payload.entity))) {
+        throw new TypeError("combat entity already exists");
+      }
       runtime.entities[payload.entity.entityId] = structuredClone(payload.entity);
-      setCoreNpc(state, payload.entity);
+      setCoreNpc(
+        state,
+        payload.entity,
+        socialResolutionProfileEnabled(event.profiles.extensions),
+      );
       return true;
     }
     case "EncounterStarted": {
@@ -636,11 +742,18 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
             || current - amount !== after
             || after < 0
           ) throw new TypeError("combat item cache does not match authoritative inventory");
-          if (after === 0) loadout.backpack.splice(loadout.backpack.indexOf(item), 1);
-          else item.quantity = after;
+          if (after === 0) {
+            loadout.backpack.splice(loadout.backpack.indexOf(item), 1);
+            if (loadout.equipped.ammo === itemId) delete loadout.equipped.ammo;
+          } else item.quantity = after;
         }
       }
-      resource.current = payload.resourceAfter;
+      if (resourceId.startsWith("item:") && payload.resourceAfter === "0") {
+        delete entity.resources[resourceId];
+      } else {
+        resource.current = payload.resourceAfter;
+      }
+      synchronizeCoreNpcCombatState(state, entity);
       return true;
     }
     case "HealingResolved": {
@@ -655,6 +768,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
         entity.lifeState = "alive";
         entity.deathSaves = { successes: 0, failures: 0 };
       }
+      synchronizeCoreNpcCombatState(state, entity);
       return true;
     }
     case "TemporaryHitPointsGranted": {

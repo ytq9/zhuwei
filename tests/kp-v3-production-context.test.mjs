@@ -48,6 +48,29 @@ test("arbitrary player ideas always keep the open environmental form available",
   }
 });
 
+test("unclassified questions keep observation and dynamic Form choices available to KP", async () => {
+  const profile = await authoritativeModuleProfile("black-oak-will");
+  for (const text of [
+    "这里怎么了，我知道些什么吗",
+    "去看看尸体",
+    "他怎么死的",
+  ]) {
+    const signals = v3FormSelectionSignals(proposalRequest(profile, text), {
+      socialResolution: true,
+    });
+    assert.equal(signals.interaction, "free", text);
+    assert.equal(signals.serverSelectedForm, undefined, text);
+    assert.deepEqual(selectAllowedKpForms(signals), [
+      "observe.v1",
+      "materialization.v1",
+      "npc-exchange.v1",
+      "environmental-stunt.v1",
+      "ordinary-check.v1",
+      "compound.v1",
+    ], text);
+  }
+});
+
 test("RequiredContext consumes the real observer projection and rejects incomplete authority", async (t) => {
   const profile = await authoritativeModuleProfile("black-oak-will");
   const request = proposalRequest(profile, "我借着半掩护观察酒窖另一侧。");

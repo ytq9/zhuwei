@@ -436,6 +436,9 @@ function storyBibleDocuments(profile: AuthoritativeModuleProfile): StaticDocumen
     body: {
       contentBoundary: profile.storyBible.contentBoundary,
       openBlanks: profile.storyBible.openBlanks,
+      ...(profile.storyBible.premiseCatalog === undefined
+        ? {}
+        : { premiseCatalog: profile.storyBible.premiseCatalog }),
       initialPressures: profile.storyBible.initialPressures,
       sequelSignals: profile.storyBible.sequelSignals,
     },

@@ -7,6 +7,8 @@ import type {
   JsonRecord,
 } from "./model";
 import { canonicalSha256 } from "../profiles/canonical";
+import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
+import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import {
   hasExactKeys,
   hasOnlyKeys,
@@ -18,6 +20,12 @@ import { applyMovement } from "./timeline";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
 import { changeCharacterGear, isGearSlot } from "./character-gear";
 import { compileCanonicalCharacterCombat } from "./character-abilities";
+import {
+  changeNpcMechanicalGear,
+  changeNpcMechanicalItemState,
+  isNpcMechanicalTemplateDefinition,
+  synchronizeCombatItemResources,
+} from "./npc-mechanics";
 
 export const MULTIPLAYER_EVENT_TYPES = [
   "MemberJoined",
@@ -28,6 +36,8 @@ export const MULTIPLAYER_EVENT_TYPES = [
   "SeatVacated",
   "CharacterControlGranted",
   "CharacterGearChanged",
+  "NpcGearChanged",
+  "NpcMechanicalItemStateChanged",
   "CharacterLoadoutSynchronized",
   "CharacterMechanicsSynchronized",
   "CharacterControlRevoked",
@@ -154,6 +164,38 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
         && Number.isSafeInteger(value.armorClass)
         && Number(value.armorClass) >= 1
         && Number(value.armorClass) <= 99;
+    case "NpcGearChanged":
+      return hasExactKeys(value, [
+        "action",
+        "armorClass",
+        "characterId",
+        "equipmentAbilityRefs",
+        "itemId",
+        "slot",
+      ])
+        && (value.action === "wear" || value.action === "stow")
+        && isNonEmptyString(value.characterId)
+        && isNonEmptyString(value.itemId)
+        && isGearSlot(value.slot)
+        && Number.isSafeInteger(value.armorClass)
+        && Number(value.armorClass) >= 1
+        && Number(value.armorClass) <= 99
+        && canonicalStrings(value.equipmentAbilityRefs);
+    case "NpcMechanicalItemStateChanged":
+      return hasExactKeys(value, [
+        "action",
+        "armorClass",
+        "characterId",
+        "equipmentAbilityRefs",
+        "itemId",
+      ])
+        && ["break", "repair", "destroy", "lose"].includes(String(value.action))
+        && isNonEmptyString(value.characterId)
+        && isNonEmptyString(value.itemId)
+        && Number.isSafeInteger(value.armorClass)
+        && Number(value.armorClass) >= 1
+        && Number(value.armorClass) <= 99
+        && canonicalStrings(value.equipmentAbilityRefs);
     case "CharacterLoadoutSynchronized":
       return hasExactKeys(value, ["characterId", "loadout"])
         && isNonEmptyString(value.characterId)
@@ -479,6 +521,111 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         };
         combatEntity.resources = resources;
       }
+      return true;
+    }
+    case "NpcGearChanged": {
+      const payload = event.payload as EventPayloadByType["NpcGearChanged"];
+      const target = state.entities[payload.characterId];
+      const combatEntity = state.combatRuntime.entities[payload.characterId];
+      const definition = isRecord(combatEntity)
+        && isNonEmptyString(combatEntity.mechanicalDefinitionRef)
+        ? state.combatRuntime.definitions[combatEntity.mechanicalDefinitionRef]
+        : undefined;
+      const activeEncounter = Object.values(state.combatRuntime.encounters).some((encounter) =>
+        encounter.status !== "concluded"
+        && Array.isArray(encounter.participantEntityIds)
+        && encounter.participantEntityIds.includes(payload.characterId));
+      if (!npcMechanicsProfileEnabled(event.profiles.extensions)
+        || target?.kind !== "npc"
+        || target.tenureStatus !== "active"
+        || !isRecord(combatEntity)
+        || !isNpcMechanicalTemplateDefinition(definition)
+        || !isGearSlot(payload.slot)
+        || activeEncounter) {
+        throw new TypeError("NPC gear cannot be changed");
+      }
+      const transition = changeNpcMechanicalGear(
+        target,
+        definition,
+        state.combatRuntime.definitions,
+        payload.action === "wear"
+          ? { action: "wear", slot: payload.slot, itemId: payload.itemId }
+          : { action: "stow", slot: payload.slot },
+      );
+      const expectedEquipmentAbilityRefs = "error" in transition
+        ? []
+        : transition.equipmentAbilityRefs;
+      if ("error" in transition
+        || transition.movedItemId !== payload.itemId
+        || transition.loadout.armorClass !== payload.armorClass
+        || canonicalSha256(expectedEquipmentAbilityRefs) !== canonicalSha256(payload.equipmentAbilityRefs)) {
+        throw new TypeError("NPC gear transition does not match its authoritative mechanics");
+      }
+      for (const equipmentDefinition of transition.equipmentDefinitions) {
+        const abilityRef = String(equipmentDefinition.definitionId);
+        const registered = state.combatRuntime.definitions[abilityRef];
+        if (!isRegisteredAbilityRecord(registered)
+          || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
+          throw new TypeError("NPC equipment ability is not frozen in the authoritative catalog");
+        }
+      }
+
+      const content = definition.content as JsonRecord;
+      const intrinsicAbilityRefs = content.intrinsicAbilityRefs as string[];
+      target.loadout = structuredClone(transition.loadout);
+      combatEntity.armorClass = String(transition.loadout.armorClass);
+      combatEntity.equipmentAbilityRefs = [...payload.equipmentAbilityRefs];
+      combatEntity.abilityRefs = [...new Set([
+        ...intrinsicAbilityRefs,
+        ...payload.equipmentAbilityRefs,
+      ])].sort();
+      synchronizeCombatItemResources(combatEntity, transition.loadout);
+      return true;
+    }
+    case "NpcMechanicalItemStateChanged": {
+      const payload = event.payload as EventPayloadByType["NpcMechanicalItemStateChanged"];
+      const target = state.entities[payload.characterId];
+      const combatEntity = state.combatRuntime.entities[payload.characterId];
+      const definition = isRecord(combatEntity)
+        && isNonEmptyString(combatEntity.mechanicalDefinitionRef)
+        ? state.combatRuntime.definitions[combatEntity.mechanicalDefinitionRef]
+        : undefined;
+      if (!npcMechanicsProfileEnabled(event.profiles.extensions)
+        || target?.kind !== "npc"
+        || target.tenureStatus !== "active"
+        || !isRecord(combatEntity)
+        || !isNpcMechanicalTemplateDefinition(definition)) {
+        throw new TypeError("NPC mechanical item state cannot be changed");
+      }
+      const transition = changeNpcMechanicalItemState(
+        target,
+        definition,
+        state.combatRuntime.definitions,
+        payload.itemId,
+        payload.action,
+      );
+      if ("error" in transition
+        || transition.loadout.armorClass !== payload.armorClass
+        || canonicalSha256(transition.equipmentAbilityRefs)
+          !== canonicalSha256(payload.equipmentAbilityRefs)) {
+        throw new TypeError("NPC mechanical item transition does not match authority state");
+      }
+      for (const equipmentDefinition of transition.equipmentDefinitions) {
+        const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
+        if (!isRegisteredAbilityRecord(registered)
+          || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
+          throw new TypeError("remaining NPC equipment ability is not frozen");
+        }
+      }
+      const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs as string[];
+      target.loadout = structuredClone(transition.loadout);
+      combatEntity.armorClass = String(transition.loadout.armorClass);
+      combatEntity.equipmentAbilityRefs = [...payload.equipmentAbilityRefs];
+      combatEntity.abilityRefs = [...new Set([
+        ...intrinsicAbilityRefs,
+        ...payload.equipmentAbilityRefs,
+      ])].sort();
+      synchronizeCombatItemResources(combatEntity, transition.loadout);
       return true;
     }
     case "CharacterLoadoutSynchronized": {

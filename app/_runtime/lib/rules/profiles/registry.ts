@@ -2,6 +2,7 @@ import {
   CURRENT_RUNTIME_PROFILE_MANIFEST,
   ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
   ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+  ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
   profileRegistryMatchesCanonicalDocuments,
 } from "./manifests";
@@ -234,6 +235,10 @@ export const PRODUCTION_RUNTIME_PROFILE_REGISTRY = createRuntimeProfileRegistry(
     },
     {
       manifest: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+      interpreterKind: "authoritative-v2",
+    },
+    {
+      manifest: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       interpreterKind: "authoritative-v2",
     },
   ],

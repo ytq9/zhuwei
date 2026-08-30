@@ -6,6 +6,7 @@ import {
 } from "../profiles/tactical-geometry";
 import type { TacticalPosition } from "../tactical-projection";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
+import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
 import {
   createEventTransition,
   createScopeProof,
@@ -60,6 +61,12 @@ import {
 } from "./character-abilities";
 import { experienceThresholdForLevel } from "./character-progression";
 import { characterProficiencyFieldsMatchProfile } from "./proficiency";
+import { isNpcSocialMechanics, socialUtteranceFingerprint } from "./social-model";
+import {
+  answerSocialResolution,
+  fulfillSocialResolutionRandomness,
+  supersedeSocialResolutionPending,
+} from "./social-actions";
 import {
   CANONICAL_SIGNED_INTEGER_PATTERN,
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
@@ -168,6 +175,7 @@ function validateInitializationCollections(
           "raceId",
           "resourceMaximums",
           "resources",
+          "socialMechanics",
           "spatialVisibilityFactId",
           "spatialVisibilityPolicyId",
           "subclassId",
@@ -213,6 +221,14 @@ function validateInitializationCollections(
         || (Number.isSafeInteger(character.proficiencyBonus)
           && Number(character.proficiencyBonus) >= 0
           && Number(character.proficiencyBonus) <= 12))
+      && (character.socialMechanics === undefined
+        || (character.kind === "npc"
+          && socialResolutionProfileEnabled(profiles.extensions)
+          && isNpcSocialMechanics(character.socialMechanics)
+          && isRecord(character.abilityScores)
+          && canonicalSha256(character.abilityScores)
+            === canonicalSha256(character.socialMechanics.abilityScores)
+          && character.proficiencyBonus === character.socialMechanics.proficiencyBonus))
       && (character.proficientSkills === undefined
         || (Array.isArray(character.proficientSkills)
           && character.proficientSkills.every(isNonEmptyString)
@@ -325,6 +341,7 @@ function buildInitialState(
     lastControllerSeatId?: string;
     lastLongRestCompletedAtMicros?: string;
     loadout?: CharacterRecord["loadout"];
+    socialMechanics?: CharacterRecord["socialMechanics"];
     characterBuild?: JsonRecord;
     spatialVisibilityPolicyId?: "visibility:scene-observers" | "visibility:hidden-until-evidence";
     spatialVisibilityFactId?: string;
@@ -575,6 +592,9 @@ function buildInitialState(
       stories: {},
       epilogues: {},
       inheritanceSources: {},
+      ...(socialResolutionProfileEnabled(profiles.extensions)
+        ? { conversationThreads: {} }
+        : {}),
     },
     combatRuntime: {
       story: { chapterId: "chapter:opening", status: "active", endingCandidates: [] },
@@ -1071,7 +1091,7 @@ function answerPendingInput(
   }
   if (
     pending === undefined
-    || (pending.kind !== "clarification" && pending.kind !== "playerChoice")
+    || !["clarification", "playerChoice", "socialResolution"].includes(pending.kind)
     || pending.rootActionId !== input.rootActionId
     || pending.controllerCharacterId !== input.controllerCharacterId
     || receipt?.status !== "awaitingInput"
@@ -1090,6 +1110,35 @@ function answerPendingInput(
       || !choices.some((choice) => choice.choiceId === answer.choiceId)
     ) {
       return rejected("invalidRulesInput", "The player choice answer is not one of the frozen candidates.");
+    }
+  }
+  if (pending.kind === "socialResolution"
+    && input.proposal.kind === "resolveCompoundActionPlan"
+    && isRecord(input.proposal.causalActionProgram)
+    && isRecord(pending.options)) {
+    const nodes = Array.isArray(input.proposal.causalActionProgram.nodes)
+      ? input.proposal.causalActionProgram.nodes.filter(isRecord)
+      : [];
+    const exchange = nodes.find((node) => node.primitive === "exchangeWithNpc");
+    const argumentsValue = isRecord(exchange?.arguments) ? exchange.arguments : undefined;
+    const utterance = isNonEmptyString(argumentsValue?.utterance)
+      ? argumentsValue.utterance
+      : undefined;
+    const replacementFingerprint = utterance === undefined
+      ? undefined
+      : socialUtteranceFingerprint(utterance);
+    if (!isNonEmptyString(pending.options.utteranceFingerprint)
+      || replacementFingerprint === undefined) {
+      return rejected(
+        "invalidRulesInput",
+        "The replacement social utterance is not bound to the frozen offer.",
+      );
+    }
+    if (replacementFingerprint === pending.options.utteranceFingerprint) {
+      return rejected(
+        "unchangedRetry",
+        "The replacement social utterance is identical to the still-frozen offer.",
+      );
     }
   }
   if (
@@ -1125,15 +1174,22 @@ function answerPendingInput(
     visibilityPolicyId: `visibility:character-controller:${actor.id}`,
     secrecy: "private",
   });
+  const socialSupersession = pending.kind === "socialResolution"
+    ? supersedeSocialResolutionPending(profiles, close.state, pending)
+    : undefined;
+  if (pending.kind === "socialResolution" && socialSupersession === undefined) {
+    return rejected("invalidWorldState", "The frozen social offer cannot be superseded.");
+  }
+  const continuedState = socialSupersession?.state ?? close.state;
   const continuedProposal = input.proposal.kind === "resolveCompoundActionPlan"
     ? continueCompoundRoot(structuredClone(input.proposal), pending.rootActionId)
     : undefined;
   const outcome = continuedProposal !== undefined
-    ? stepCausalActionProgram(profiles, close.state, continuedProposal)
-      ?? stepCompoundActionPlan(profiles, close.state, continuedProposal)
+    ? stepCausalActionProgram(profiles, continuedState, continuedProposal)
+      ?? stepCompoundActionPlan(profiles, continuedState, continuedProposal)
     : resolveImprovisedRuling(
         profiles,
-        close.state,
+        continuedState,
         pending.rootActionId,
         actor,
         input.proposal.ruling as JsonRecord,
@@ -1146,7 +1202,11 @@ function answerPendingInput(
   }
   return {
     ...outcome,
-    events: [close.event, ...outcome.events],
+    events: [
+      close.event,
+      ...(socialSupersession === undefined ? [] : [socialSupersession.event]),
+      ...outcome.events,
+    ],
   };
 }
 
@@ -1366,6 +1426,13 @@ function fulfillAuthoritativeRandomness(
     input.continuation.continuationId,
     input.rolls as number[],
   );
+  const social = fulfillSocialResolutionRandomness(
+    profiles,
+    state,
+    input.continuation.continuationId,
+    input.rolls as number[],
+  );
+  if (social !== undefined) return social;
   if (causal !== undefined) return causal;
   const compound = fulfillCompoundActionPlanRandomness(
     profiles,
@@ -1707,6 +1774,10 @@ export function stepAuthoritativeWorld(
     const multiplayerResult = stepMultiplayerWorld(profiles, stateValue, input);
     if (multiplayerResult !== undefined) {
       return multiplayerResult;
+    }
+    const socialAnswer = answerSocialResolution(profiles, stateValue, input);
+    if (socialAnswer !== undefined) {
+      return socialAnswer;
     }
     const causalResult = stepCausalActionProgram(profiles, stateValue, input);
     if (causalResult !== undefined) {

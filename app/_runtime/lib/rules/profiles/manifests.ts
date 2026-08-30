@@ -26,6 +26,14 @@ import {
   CHARACTER_PROFICIENCY_PROFILE,
   CHARACTER_PROFICIENCY_PROFILE_DOCUMENT,
 } from "./character-proficiency";
+import {
+  SOCIAL_RESOLUTION_PROFILE,
+  SOCIAL_RESOLUTION_PROFILE_DOCUMENT,
+} from "./social-resolution";
+import {
+  NPC_MECHANICS_PROFILE,
+  NPC_MECHANICS_PROFILE_DOCUMENT,
+} from "./npc-mechanics";
 
 export {
   TRIGGER_ORDERING_PROFILE,
@@ -49,6 +57,14 @@ export {
   CHARACTER_PROFICIENCY_PROFILE,
   CHARACTER_PROFICIENCY_PROFILE_DOCUMENT,
 } from "./character-proficiency";
+export {
+  SOCIAL_RESOLUTION_PROFILE,
+  SOCIAL_RESOLUTION_PROFILE_DOCUMENT,
+} from "./social-resolution";
+export {
+  NPC_MECHANICS_PROFILE,
+  NPC_MECHANICS_PROFILE_DOCUMENT,
+} from "./npc-mechanics";
 
 export const RULESET_PROFILE = {
   profileId: "dnd5e-2014-srd5.1-authoritative-v2",
@@ -122,6 +138,46 @@ export const ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE = {
   profileHash: "sha256:8d0df2563b1e9fca31b1ab7b1678683075fc013b5220ba7b32aa054861203685",
 } as const satisfies ProfileRef;
 
+const ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_ID =
+  "runtime-srd51-2014-authoritative-environment-v5" as const;
+
+export const ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileDocument = {
+  schema: "zhuwei.runtime-profile/v1",
+  profileKind: "runtimeManifest",
+  profileId: ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_ID,
+  semanticVersion: "5.0.0",
+  normativePayload: {
+    conformanceVersion: "1",
+    profileDispatch: "exact-id-and-hash",
+    compatibility: "authoritative-v2-plus-v4-social-resolution-v1-and-npc-mechanics-v1",
+    roomGeneration: "new-rooms-only-no-silent-existing-room-upgrade",
+    publicInterface: ["step", "project", "replay"],
+    ruleset: RULESET_PROFILE,
+    eventSchema: EVENT_SCHEMA_PROFILE,
+    abilityCompiler: ABILITY_COMPILER_PROFILE,
+    geometry: GEOMETRY_PROFILE,
+    triggerOrdering: TRIGGER_ORDERING_PROFILE,
+    fictionCombatTime: FICTION_COMBAT_TIME_PROFILE,
+    extensions: [
+      COMBAT_PROFILE,
+      DAMAGE_DEATH_PROFILE,
+      PRESENTATION_POLICY_PROFILE,
+      PROJECTION_POLICY_PROFILE,
+      INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+      CAUSAL_ACTION_INTERPRETER_PROFILE,
+      ENVIRONMENT_PROFILE,
+      CHARACTER_PROFICIENCY_PROFILE,
+      SOCIAL_RESOLUTION_PROFILE,
+      NPC_MECHANICS_PROFILE,
+    ],
+  },
+};
+
+export const ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE = Object.freeze({
+  profileId: ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_ID,
+  profileHash: "sha256:1f629b5475d4834f3eaac732720216cd05c5f08beb6ee553887c1562dd4537c7",
+}) satisfies ProfileRef;
+
 export const CURRENT_RUNTIME_PROFILE_MANIFEST = {
   manifest: MANIFEST_PROFILE,
   ruleset: RULESET_PROFILE,
@@ -183,6 +239,31 @@ export const ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST = {
     CAUSAL_ACTION_INTERPRETER_PROFILE,
     ENVIRONMENT_PROFILE,
     CHARACTER_PROFICIENCY_PROFILE,
+  ],
+} as const satisfies RuntimeProfileManifest;
+
+/** New-room-only social resolution generation. V3/V4 manifests deliberately
+ * omit SOCIAL_RESOLUTION_PROFILE and therefore keep their original exchange,
+ * pending-input, event, and replay semantics. */
+export const ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST = {
+  manifest: ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE,
+  ruleset: RULESET_PROFILE,
+  eventSchema: EVENT_SCHEMA_PROFILE,
+  abilityCompiler: ABILITY_COMPILER_PROFILE,
+  geometry: GEOMETRY_PROFILE,
+  triggerOrdering: TRIGGER_ORDERING_PROFILE,
+  fictionCombatTime: FICTION_COMBAT_TIME_PROFILE,
+  extensions: [
+    COMBAT_PROFILE,
+    DAMAGE_DEATH_PROFILE,
+    PRESENTATION_POLICY_PROFILE,
+    PROJECTION_POLICY_PROFILE,
+    INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
+    CAUSAL_ACTION_INTERPRETER_PROFILE,
+    ENVIRONMENT_PROFILE,
+    CHARACTER_PROFICIENCY_PROFILE,
+    SOCIAL_RESOLUTION_PROFILE,
+    NPC_MECHANICS_PROFILE,
   ],
 } as const satisfies RuntimeProfileManifest;
 
@@ -520,6 +601,10 @@ export const CANONICAL_PROFILE_DOCUMENTS = [
     document: ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
   },
   {
+    ref: ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE,
+    document: ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
+  },
+  {
     ref: LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE,
     document: LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
   },
@@ -545,6 +630,14 @@ export const CANONICAL_PROFILE_DOCUMENTS = [
   {
     ref: CHARACTER_PROFICIENCY_PROFILE,
     document: CHARACTER_PROFICIENCY_PROFILE_DOCUMENT,
+  },
+  {
+    ref: SOCIAL_RESOLUTION_PROFILE,
+    document: SOCIAL_RESOLUTION_PROFILE_DOCUMENT,
+  },
+  {
+    ref: NPC_MECHANICS_PROFILE,
+    document: NPC_MECHANICS_PROFILE_DOCUMENT,
   },
   { ref: ENVIRONMENT_PROFILE, document: ENVIRONMENT_PROFILE_DOCUMENT },
   { ref: LEGACY_ENVIRONMENT_PROFILE, document: LEGACY_ENVIRONMENT_PROFILE_DOCUMENT },

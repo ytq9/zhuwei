@@ -1,13 +1,17 @@
 import type { AuthoritativeKpProfile } from "../kp/authoritative-types";
 import {
   V3_AUTHORITATIVE_KP_PROFILES,
+  V5_KP_WORKFLOW_MANIFEST_JSON,
   hasExactV3KpWorkflowManifest,
+  isSocialResolutionKpProfile,
   isV3AuthoritativeKpProfile,
   runtimeManifestForExactV3KpWorkflow,
 } from "../kp/authoritative-policy";
 import { canonicalJson } from "../kp/authoritative-helpers";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../kp/model-registry";
 import type { AuthoritativeModuleRef } from "../module/authoritative";
+import { SOCIAL_RESOLUTION_MODULE_VERSION } from "../module/authoritative";
+import { pinnedModuleRef } from "../module/migration-registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 
 type UnknownRecord = Record<string, unknown>;
@@ -48,6 +52,18 @@ export function claimsV3RoomBinding(input: Readonly<{
       profile.modelProfileVersion === input.binding!.kp_model_profile))
     || input.binding?.kp_workflow_manifest != null
     || input.binding?.kp_context_planner_profile != null;
+}
+
+/** The persisted model policy and workflow are one generation binding. This
+ * prevents a newer prompt from driving an older Rules epoch (or vice versa). */
+export function hasExactV3KpGenerationBinding(
+  profile: AuthoritativeKpProfile,
+  workflowManifest: unknown,
+): boolean {
+  return isV3AuthoritativeKpProfile(profile)
+    && hasExactV3KpWorkflowManifest(workflowManifest)
+    && ((workflowManifest === V5_KP_WORKFLOW_MANIFEST_JSON)
+      === isSocialResolutionKpProfile(profile));
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -105,6 +121,13 @@ export function validateV3RoomBinding(input: Readonly<{
   if (!hasExactV3KpWorkflowManifest(input.binding.kp_workflow_manifest)) {
     return { kind: "invalid", violation: "workflow" };
   }
+  const socialGeneration = input.binding.kp_workflow_manifest === V5_KP_WORKFLOW_MANIFEST_JSON;
+  if (!hasExactV3KpGenerationBinding(
+    input.roomProfile,
+    input.binding.kp_workflow_manifest,
+  )) {
+    return { kind: "invalid", violation: "modelProfile" };
+  }
   const expectedRuntimeManifest = runtimeManifestForExactV3KpWorkflow(
     input.binding.kp_workflow_manifest,
   );
@@ -122,6 +145,15 @@ export function validateV3RoomBinding(input: Readonly<{
     || !isRecord(readModel?.campaign)
     || !exactJson(readModel.campaign.moduleRef, input.expectedModuleRef)
   ) {
+    return { kind: "invalid", violation: "module" };
+  }
+  const socialModuleRef = pinnedModuleRef(
+    input.binding.module_id,
+    SOCIAL_RESOLUTION_MODULE_VERSION,
+  );
+  const hasSocialModule = socialModuleRef !== undefined
+    && exactJson(input.expectedModuleRef, socialModuleRef);
+  if (socialGeneration !== hasSocialModule) {
     return { kind: "invalid", violation: "module" };
   }
   return { kind: "valid" };

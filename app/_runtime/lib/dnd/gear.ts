@@ -33,6 +33,8 @@ export type GearItem = {
   attune?: boolean;
 };
 
+export type GearItemResolver = (itemId: string | undefined | null) => GearItem | undefined;
+
 export const ITEMS: GearItem[] = [
   { id: "padded", name: "布甲", wear: "armor", armor: "light", acBase: 11, acDexCap: 99, text: "轻甲。AC＝11＋敏捷调整。潜行劣势。" },
   { id: "leather", name: "皮甲", wear: "armor", armor: "light", acBase: 11, acDexCap: 99, text: "轻甲。AC＝11＋敏捷调整。不潜行劣势。", aliases: ["皮甲"] },
@@ -224,10 +226,11 @@ export function wearItem(
   backpack: PackEntry[],
   itemId: string,
   slot: GearSlot,
+  resolveItem: GearItemResolver = itemById,
 ): { equipped: Equipped; backpack: PackEntry[]; error?: string } {
   const nextEq = { ...equipped };
   const nextPack = backpack.map((p) => ({ ...p }));
-  const item = itemById(itemId);
+  const item = resolveItem(itemId);
   if (!item) return { equipped, backpack, error: "没有这件东西" };
   if (item.wear === "ammo") {
     if (!nextPack.some((p) => p.itemId === itemId) && equipped.ammo !== itemId) {
@@ -254,11 +257,11 @@ export function wearItem(
     if (nextEq.off) addPack(nextPack, nextEq.off, 1);
     delete nextEq.off;
   }
-  if (slot === "off" && itemById(nextEq.main)?.twoHanded) {
+  if (slot === "off" && resolveItem(nextEq.main)?.twoHanded) {
     addPack(nextPack, nextEq.main!, 1);
     delete nextEq.main;
   }
-  if (item.armor === "shield" && slot === "off" && itemById(nextEq.main)?.twoHanded) {
+  if (item.armor === "shield" && slot === "off" && resolveItem(nextEq.main)?.twoHanded) {
     addPack(nextPack, nextEq.main!, 1);
     delete nextEq.main;
   }

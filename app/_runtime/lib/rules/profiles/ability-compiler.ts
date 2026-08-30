@@ -615,6 +615,34 @@ export function registeredAbilityRecord(payload: DefinitionRegisteredAbilityPayl
   };
 }
 
+/** Validates the frozen catalog representation without invoking the compiler. */
+export function isRegisteredAbilityRecord(value: unknown): value is JsonRecord {
+  if (!isRecord(value)
+    || !isRecord(value.mechanicGraph)
+    || typeof value.definitionHash !== "string"
+    || !isRecord(value.compilerProfile)
+    || typeof value.compiledHash !== "string"
+    || !Array.isArray(value.referenceClosure)) return false;
+  const metadataKeys = new Set([
+    "compiledHash",
+    "compilerProfile",
+    "definitionHash",
+    "mechanicGraph",
+    "referenceClosure",
+  ]);
+  const definition = Object.fromEntries(
+    Object.entries(value).filter(([key]) => !metadataKeys.has(key)),
+  );
+  return isDefinitionRegisteredAbilityPayload({
+    definition,
+    definitionHash: value.definitionHash,
+    compilerProfile: value.compilerProfile,
+    mechanicGraph: value.mechanicGraph,
+    compiledHash: value.compiledHash,
+    referenceClosure: value.referenceClosure,
+  });
+}
+
 /**
  * Reads one operation from the graph frozen in DefinitionRegistered. This
  * validates the complete artifact and never invokes the current compiler.
@@ -623,12 +651,7 @@ export function frozenRegisteredAbilityOperation(
   value: unknown,
   family: MechanicOpFamily,
 ): MechanicOp | undefined {
-  if (!isRecord(value)
-    || !isRecord(value.mechanicGraph)
-    || typeof value.definitionHash !== "string"
-    || !isRecord(value.compilerProfile)
-    || typeof value.compiledHash !== "string"
-    || !Array.isArray(value.referenceClosure)) return undefined;
+  if (!isRegisteredAbilityRecord(value)) return undefined;
   const metadataKeys = new Set([
     "compiledHash",
     "compilerProfile",

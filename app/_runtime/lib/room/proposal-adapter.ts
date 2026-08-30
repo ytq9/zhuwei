@@ -97,14 +97,17 @@ export function ownedEnvironmentAttackAbilityRef(
  * seam prevents a forged version/profile/key surface from entering recovery. */
 export function isCanonicalV3CausalRulesInput(value: unknown): value is JsonObject {
   if (!isRecord(value)
-    || Object.keys(value).sort().join(",")
-      !== "actionLanguageHash,actionPlanVersion,actorCharacterId,causalActionProgram,kind,rootActionId"
+    || ![
+      "actionLanguageHash,actionPlanVersion,actorCharacterId,causalActionProgram,kind,rootActionId",
+      "actionLanguageHash,actionPlanVersion,actorCharacterId,causalActionProgram,kind,rootActionId,trustedUtterance",
+    ].includes(Object.keys(value).sort().join(","))
     || value.kind !== "resolveCompoundActionPlan"
     || value.actionPlanVersion !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
     || value.actionLanguageHash !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash
     || !isNonEmptyString(value.actorCharacterId)
     || !isNonEmptyString(value.rootActionId)
-    || !isRecord(value.causalActionProgram)) return false;
+    || !isRecord(value.causalActionProgram)
+    || (value.trustedUtterance !== undefined && !isNonEmptyString(value.trustedUtterance))) return false;
   const validation = validateCausalActionProgram(value.causalActionProgram);
   return validation.ok
     && value.causalActionProgram.languageRef === value.actionPlanVersion

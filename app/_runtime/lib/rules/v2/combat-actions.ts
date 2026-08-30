@@ -3,9 +3,13 @@ import {
   type CausalActionProgram,
 } from "../../kp/causal-action-program";
 import { canonicalSha256 } from "../profiles/canonical";
-import { compileAbilityDefinition } from "../profiles/ability-compiler";
+import {
+  compileAbilityDefinition,
+  registeredAbilityRecord,
+} from "../profiles/ability-compiler";
 import { causalActionInterpreterEnabled } from "../profiles/causal-action-interpreter";
 import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
+import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import {
   buildCustomEnvironmentFeatureDefinition,
 } from "../profiles/environment-definition-builder";
@@ -78,6 +82,27 @@ import { resolveCombatDamage } from "./damage";
 import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
 import { characterTimelineId, sceneTimelineId } from "./timeline";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
+import {
+  canPromoteNpcSpatialShell,
+  canonicalNpcMechanicalItemWeaponBlueprint,
+  canonicalNpcMechanicalInitialState,
+  canonicalNpcMechanicalPoint,
+  instantiateNpcMechanicalEntity,
+  isNpcMechanicalItemDefinition,
+  npcMechanicalDefinitionClosureValid,
+  npcMechanicalEntityMatchesTemplate,
+  npcMechanicalItemDefinitionClosureValid,
+  npcEquipmentMechanics,
+  isNpcMechanicalTemplateDefinition,
+  isNpcSpatialShell,
+  materializeNpcMechanicalLoadout,
+  NPC_MECHANICAL_ITEM_KIND,
+  NPC_MECHANICAL_ITEM_SCHEMA,
+  NPC_MECHANICAL_TEMPLATE_KIND,
+  NPC_MECHANICAL_TEMPLATE_SCHEMA,
+  npcCoreMechanicsCompatible,
+  synchronizeCombatItemResources,
+} from "./npc-mechanics";
 import {
   controlledEnvironmentPlayer,
   currentTacticalFeature,
@@ -570,6 +595,621 @@ function canonicalDynamicCombatant(value: unknown): value is JsonRecord {
   return abilityIds.length === new Set(abilityIds).size;
 }
 
+const NPC_MECHANICAL_DEFINITION_KEYS = [
+  "causalBasisRefs",
+  "content",
+  "definitionId",
+  "definitionKind",
+  "revision",
+  "rulesBasis",
+  "visibilityPolicyRef",
+] as const;
+const NPC_MECHANICAL_CONTENT_REQUIRED_KEYS = [
+  "armorClass",
+  "armorClassModel",
+  "deathPolicy",
+  "footprint",
+  "hitPointsMaximum",
+  "initialLoadout",
+  "intrinsicAbilities",
+  "itemDefinitions",
+  "itemDefinitionRefs",
+  "label",
+  "proficiencyBonus",
+  "resourceMaximums",
+  "schema",
+  "speedInches",
+  "stats",
+] as const;
+const NPC_MECHANICAL_CONTENT_OPTIONAL_KEYS = [
+  "attacksPerAttackAction",
+  "damageDefenses",
+  "sizeCategory",
+  "spellcasting",
+] as const;
+
+function canonicalNpcMechanicalDefinitionInput(value: unknown): value is JsonRecord {
+  if (!isRecord(value)
+    || !hasExactKeys(value, NPC_MECHANICAL_DEFINITION_KEYS)
+    || !isNonEmptyString(value.definitionId)
+    || value.definitionKind !== NPC_MECHANICAL_TEMPLATE_KIND
+    || value.revision !== "1"
+    || !["srd5.1-2014", "zhuwei-product-ruling"].includes(String(value.rulesBasis))
+    || !Array.isArray(value.causalBasisRefs)
+    || value.causalBasisRefs.length > 40
+    || !value.causalBasisRefs.every(isNonEmptyString)
+    || value.causalBasisRefs.length !== new Set(value.causalBasisRefs).size
+    || !isNonEmptyString(value.visibilityPolicyRef)
+    || !isRecord(value.content)
+    || !hasOnlyKeys(
+      value.content,
+      NPC_MECHANICAL_CONTENT_REQUIRED_KEYS,
+      NPC_MECHANICAL_CONTENT_OPTIONAL_KEYS,
+    )) return false;
+  const content = value.content;
+  if (content.schema !== NPC_MECHANICAL_TEMPLATE_SCHEMA
+    || !isNonEmptyString(content.label)
+    || !isRecord(content.armorClassModel)
+    || !hasExactKeys(content.armorClassModel, ["baseArmorClass", "kind", "shieldBonus"])
+    || content.armorClassModel.kind !== "higherOfBaseAndEquipment"
+    || content.armorClassModel.baseArmorClass !== content.armorClass
+    || (content.armorClassModel.shieldBonus !== "0"
+      && content.armorClassModel.shieldBonus !== "2")
+    || !isRecord(content.resourceMaximums)
+    || Object.keys(content.resourceMaximums).length > 100
+    || !Object.entries(content.resourceMaximums).every(([resourceId, maximum]) =>
+      isNonEmptyString(resourceId) && canonicalIntegerString(maximum, 0, 1_000_000))
+    || !Array.isArray(content.intrinsicAbilities)
+    || content.intrinsicAbilities.length > 24
+    || !content.intrinsicAbilities.every(canonicalAbilityDefinition)
+    || !Array.isArray(content.itemDefinitions)
+    || content.itemDefinitions.length > 24
+    || !content.itemDefinitions.every(canonicalNpcMechanicalItemDefinitionInput)
+    || !Array.isArray(content.itemDefinitionRefs)
+    || content.itemDefinitionRefs.length > 24
+    || !content.itemDefinitionRefs.every(isNonEmptyString)
+    || content.itemDefinitionRefs.length !== new Set(content.itemDefinitionRefs).size
+    || !canonicalNpcMechanicalInitialLoadoutInput(content.initialLoadout)) {
+    return false;
+  }
+  const resources = Object.fromEntries(Object.entries(content.resourceMaximums).map(([resourceId, maximum]) => [
+    resourceId,
+    { current: maximum, maximum },
+  ]));
+  return canonicalDynamicCombatant({
+    entityId: "npc-mechanical-template:validation",
+    entityKind: "npc",
+    name: "NPC mechanical template validation",
+    position: { x: "0", y: "0", elevation: "0" },
+    footprint: content.footprint,
+    stats: content.stats,
+    proficiencyBonus: content.proficiencyBonus,
+    armorClass: content.armorClass,
+    hitPoints: {
+      current: content.hitPointsMaximum,
+      maximum: content.hitPointsMaximum,
+      temporary: "0",
+    },
+    speedInches: content.speedInches,
+    resources,
+    deathPolicy: content.deathPolicy,
+    abilities: content.intrinsicAbilities,
+    ...(content.attacksPerAttackAction === undefined
+      ? {}
+      : { attacksPerAttackAction: content.attacksPerAttackAction }),
+    ...(content.damageDefenses === undefined
+      ? {}
+      : { damageDefenses: content.damageDefenses }),
+    ...(content.sizeCategory === undefined ? {} : { sizeCategory: content.sizeCategory }),
+    ...(content.spellcasting === undefined ? {} : { spellcasting: content.spellcasting }),
+  });
+}
+
+function canonicalNpcMechanicalItemDefinitionInput(value: unknown): value is JsonRecord {
+  if (!isRecord(value)
+    || !hasExactKeys(value, NPC_MECHANICAL_DEFINITION_KEYS)
+    || !isNonEmptyString(value.definitionId)
+    || value.definitionKind !== NPC_MECHANICAL_ITEM_KIND
+    || value.revision !== "1"
+    || !["srd5.1-2014", "zhuwei-product-ruling"].includes(String(value.rulesBasis))
+    || !Array.isArray(value.causalBasisRefs)
+    || value.causalBasisRefs.length > 40
+    || !value.causalBasisRefs.every(isNonEmptyString)
+    || value.causalBasisRefs.length !== new Set(value.causalBasisRefs).size
+    || !isNonEmptyString(value.visibilityPolicyRef)
+    || !isRecord(value.content)
+    || !hasExactKeys(value.content, [
+      "abilities",
+      "armor",
+      "label",
+      "schema",
+      "twoHanded",
+      "wear",
+      "weapon",
+    ])) return false;
+  const content = value.content;
+  return content.schema === NPC_MECHANICAL_ITEM_SCHEMA
+    && isNonEmptyString(content.label)
+    && [
+      "head", "neck", "cloak", "armor", "hands", "belt", "boots",
+      "off", "ammo", "weapon", "ring", "pack",
+    ].includes(String(content.wear))
+    && typeof content.twoHanded === "boolean"
+    && (!content.twoHanded || content.wear === "weapon")
+    && Array.isArray(content.abilities)
+    && content.abilities.length <= 12
+    && content.abilities.every(canonicalAbilityDefinition)
+    && content.wear !== "ammo"
+    && canonicalNpcMechanicalItemWeaponBlueprint(content.weapon)
+    && (content.weapon === null || content.wear === "weapon")
+    && (content.armor === null || (isRecord(content.armor)
+      && hasExactKeys(content.armor, ["acBase", "acDexCap", "kind"])
+      && ["light", "medium", "heavy", "shield"].includes(String(content.armor.kind))
+      && (content.armor.kind === "shield"
+        ? content.armor.acBase === null
+          && content.armor.acDexCap === null
+          && content.wear === "off"
+        : canonicalIntegerString(content.armor.acBase, 1, 30)
+          && canonicalIntegerString(content.armor.acDexCap, 0, 99)
+          && content.wear === "armor")));
+}
+
+function canonicalNpcMechanicalInitialLoadoutInput(value: unknown): boolean {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ["entries"])
+    || !Array.isArray(value.entries)
+    || value.entries.length > 48) return false;
+  const entryIds = new Set<string>();
+  return value.entries.every((entry) => {
+    if (!isRecord(entry)
+      || !hasExactKeys(entry, ["entryId", "equippedSlot", "quantity", "source"])
+      || !isNonEmptyString(entry.entryId)
+      || entryIds.has(entry.entryId)
+      || !(entry.equippedSlot === null || [
+        "head", "neck", "cloak", "armor", "hands", "belt", "boots",
+        "ring1", "ring2", "main", "off", "ammo",
+      ].includes(String(entry.equippedSlot)))
+      || !Number.isSafeInteger(entry.quantity)
+      || Number(entry.quantity) < 1
+      || Number(entry.quantity) > 1_000_000
+      || !isRecord(entry.source)
+      || !hasExactKeys(entry.source, ["kind", "ref"])
+      || !["standardGear", "npcMechanicalItemDefinition"].includes(String(entry.source.kind))
+      || !isNonEmptyString(entry.source.ref)) return false;
+    entryIds.add(entry.entryId);
+    return true;
+  });
+}
+
+function canonicalNpcMechanicalDynamicEntity(value: unknown): value is JsonRecord {
+  if (!isRecord(value)
+    || !hasOnlyKeys(value, ["entityId", "mechanics", "name", "placement"], ["initialState"])
+    || !isNonEmptyString(value.entityId)
+    || !isNonEmptyString(value.name)
+    || !(value.placement === null
+      || (isRecord(value.placement)
+        && hasExactKeys(value.placement, ["position"])
+        && canonicalNpcMechanicalPoint(value.placement.position)))
+    || !canonicalNpcMechanicalInitialState(value.initialState)
+    || !isRecord(value.mechanics)) return false;
+  if (value.mechanics.kind === "templateRef") {
+    return hasExactKeys(value.mechanics, ["definitionRef", "kind"])
+      && isNonEmptyString(value.mechanics.definitionRef);
+  }
+  return value.mechanics.kind === "bespokeDefinition"
+    && hasExactKeys(value.mechanics, ["definition", "kind"])
+    && canonicalNpcMechanicalDefinitionInput(value.mechanics.definition);
+}
+
+function freezeNpcMechanicalDefinition(
+  definition: JsonRecord,
+  intrinsicAbilityRefs: string[],
+  itemDefinitionRefs: string[],
+): JsonRecord {
+  const content = definition.content as JsonRecord;
+  const frozen = {
+    definitionId: definition.definitionId,
+    revision: definition.revision,
+    definitionKind: definition.definitionKind,
+    rulesBasis: definition.rulesBasis,
+    causalBasisRefs: structuredClone(definition.causalBasisRefs),
+    visibilityPolicyRef: definition.visibilityPolicyRef,
+    content: {
+      schema: content.schema,
+      label: content.label,
+      stats: structuredClone(content.stats),
+      proficiencyBonus: content.proficiencyBonus,
+      armorClass: content.armorClass,
+      armorClassModel: structuredClone(content.armorClassModel),
+      hitPointsMaximum: content.hitPointsMaximum,
+      footprint: structuredClone(content.footprint),
+      speedInches: structuredClone(content.speedInches),
+      resourceMaximums: structuredClone(content.resourceMaximums),
+      deathPolicy: content.deathPolicy,
+      intrinsicAbilityRefs: [...intrinsicAbilityRefs].sort(),
+      itemDefinitionRefs: [...itemDefinitionRefs].sort(),
+      initialLoadout: structuredClone(content.initialLoadout),
+      ...(content.attacksPerAttackAction === undefined
+        ? {}
+        : { attacksPerAttackAction: content.attacksPerAttackAction }),
+      ...(content.damageDefenses === undefined
+        ? {}
+        : { damageDefenses: structuredClone(content.damageDefenses) }),
+      ...(content.sizeCategory === undefined ? {} : { sizeCategory: content.sizeCategory }),
+      ...(content.spellcasting === undefined
+        ? {}
+        : { spellcasting: structuredClone(content.spellcasting) }),
+    },
+  } satisfies JsonRecord;
+  if (!isNpcMechanicalTemplateDefinition(frozen)) {
+    throw new TypeError("validated NPC mechanical definition did not freeze canonically");
+  }
+  return frozen;
+}
+
+function freezeNpcMechanicalItemDefinition(
+  definition: JsonRecord,
+  abilityRefs: string[],
+): JsonRecord {
+  const content = definition.content as JsonRecord;
+  const frozen = {
+    definitionId: definition.definitionId,
+    revision: definition.revision,
+    definitionKind: definition.definitionKind,
+    rulesBasis: definition.rulesBasis,
+    causalBasisRefs: structuredClone(definition.causalBasisRefs),
+    visibilityPolicyRef: definition.visibilityPolicyRef,
+    content: {
+      schema: content.schema,
+      label: content.label,
+      wear: content.wear,
+      twoHanded: content.twoHanded,
+      armor: structuredClone(content.armor),
+      weapon: structuredClone(content.weapon),
+      abilityRefs: [...abilityRefs].sort(),
+    },
+  } satisfies JsonRecord;
+  if (!isNpcMechanicalItemDefinition(frozen)) {
+    throw new TypeError("validated NPC mechanical item did not freeze canonically");
+  }
+  return frozen;
+}
+
+type PreparedNpcMechanicalCombatants = {
+  drafts: Draft[];
+  dynamicEntityIds: string[];
+  entitiesById: Map<string, JsonRecord>;
+};
+
+function prepareNpcMechanicalCombatants(
+  state: AuthoritativeWorldState,
+  rawEntries: unknown[],
+  sceneId: string,
+): PreparedNpcMechanicalCombatants | StepResult {
+  if (rawEntries.length > 24 || !rawEntries.every(canonicalNpcMechanicalDynamicEntity)) {
+    return rejected("invalidRulesInput", "NPC mechanical materialization is malformed.");
+  }
+  const drafts: Draft[] = [];
+  const localTemplates = new Map<string, JsonRecord>();
+  const localItems = new Map<string, JsonRecord>();
+  const localAbilities = new Map<string, JsonRecord>();
+  for (const entry of rawEntries) {
+    const mechanics = entry.mechanics as JsonRecord;
+    if (mechanics.kind !== "bespokeDefinition") continue;
+    const definition = mechanics.definition as JsonRecord;
+    const definitionId = definition.definitionId as string;
+    if (definitionId in state.combatRuntime.definitions || localTemplates.has(definitionId)) {
+      return rejected(
+        "invalidRulesInput",
+        "A frozen NPC mechanical definition must be reused by reference, not submitted again.",
+      );
+    }
+    const content = definition.content as JsonRecord;
+    const intrinsicAbilityRefs: string[] = [];
+    const itemAbilityRefs = new Map<string, string[]>();
+    const submittedAbilityRefs = new Set<string>();
+    const abilitySources: Array<{ ability: JsonRecord; itemDefinitionId?: string }> = [
+      ...(content.intrinsicAbilities as JsonRecord[]).map((ability) => ({ ability })),
+      ...(content.itemDefinitions as JsonRecord[]).flatMap((itemDefinition) =>
+        ((itemDefinition.content as JsonRecord).abilities as JsonRecord[]).map((ability) => ({
+          ability,
+          itemDefinitionId: String(itemDefinition.definitionId),
+        }))),
+    ];
+    for (const { ability, itemDefinitionId } of abilitySources) {
+      const compiled = compileAbilityDefinition(ability);
+      if (!compiled.ok) {
+        return rejected(compiled.code, compiled.publicMessage, compiled.diagnostics.map((diagnostic) => ({
+          code: compiled.code,
+          message: diagnostic.reason,
+          path: diagnostic.path,
+          source: "SPEC 0013",
+          visibility: "public",
+        })));
+      }
+      const abilityRef = ability.definitionId as string;
+      if (submittedAbilityRefs.has(abilityRef)) {
+        return rejected(
+          "invalidRulesInput",
+          "Intrinsic and item-granted abilities must have distinct frozen ids.",
+        );
+      }
+      submittedAbilityRefs.add(abilityRef);
+      const existing = state.combatRuntime.definitions[abilityRef];
+      const local = localAbilities.get(abilityRef);
+      if ((existing !== undefined && existing.compiledHash !== compiled.artifact.compiledHash)
+        || (local !== undefined && local.compiledHash !== compiled.artifact.compiledHash)) {
+        return rejected(
+          "invalidRulesInput",
+          "An NPC template reuses an AbilityDefinition id with different mechanics.",
+        );
+      }
+      if (itemDefinitionId === undefined) {
+        intrinsicAbilityRefs.push(abilityRef);
+      } else {
+        const refs = itemAbilityRefs.get(itemDefinitionId) ?? [];
+        if (refs.includes(abilityRef)) {
+          return rejected(
+            "invalidRulesInput",
+            "An NPC mechanical item repeats an AbilityDefinition id.",
+          );
+        }
+        refs.push(abilityRef);
+        itemAbilityRefs.set(itemDefinitionId, refs);
+      }
+      if (existing === undefined && local === undefined) {
+        localAbilities.set(abilityRef, registeredAbilityRecord(compiled.artifact));
+        drafts.push({
+          eventType: "DefinitionRegistered",
+          payload: structuredClone(compiled.artifact),
+          visibilityPolicyId: "visibility:room-authority-only",
+          secrecy: "internal",
+        });
+      }
+    }
+    const itemDefinitionRefs: string[] = [...content.itemDefinitionRefs as string[]];
+    if (itemDefinitionRefs.some((itemDefinitionRef) =>
+      !isNpcMechanicalItemDefinition(state.combatRuntime.definitions[itemDefinitionRef]))) {
+      return rejected(
+        "privateOrUnknownReference",
+        "A referenced NPC mechanical item definition is unavailable.",
+      );
+    }
+    for (const rawItem of content.itemDefinitions as JsonRecord[]) {
+      const itemDefinitionId = String(rawItem.definitionId);
+      if (itemDefinitionId in state.combatRuntime.definitions
+        || localItems.has(itemDefinitionId)
+        || localTemplates.has(itemDefinitionId)
+        || itemDefinitionId === definitionId
+        || itemDefinitionRefs.includes(itemDefinitionId)) {
+        return rejected(
+          "invalidRulesInput",
+          "A frozen NPC mechanical item definition must have a new unique id.",
+        );
+      }
+      const frozenItem = freezeNpcMechanicalItemDefinition(
+        rawItem,
+        itemAbilityRefs.get(itemDefinitionId) ?? [],
+      );
+      const itemCatalog = {
+        ...state.combatRuntime.definitions,
+        ...Object.fromEntries(localAbilities),
+      };
+      if (!npcMechanicalItemDefinitionClosureValid(frozenItem, itemCatalog)) {
+        return rejected(
+          "privateOrUnknownReference",
+          "An NPC mechanical item has an unavailable ability dependency.",
+        );
+      }
+      itemDefinitionRefs.push(itemDefinitionId);
+      localItems.set(itemDefinitionId, frozenItem);
+      drafts.push({
+        eventType: "DefinitionRegistered",
+        payload: { definition: frozenItem },
+        visibilityPolicyId: "visibility:room-authority-only",
+        secrecy: "internal",
+      });
+    }
+    const frozen = freezeNpcMechanicalDefinition(
+      definition,
+      intrinsicAbilityRefs,
+      itemDefinitionRefs,
+    );
+    const availableDefinitions = {
+      ...state.combatRuntime.definitions,
+      ...Object.fromEntries(localAbilities),
+      ...Object.fromEntries(localItems),
+    };
+    if (!npcMechanicalDefinitionClosureValid(frozen, availableDefinitions)) {
+      return rejected(
+        "privateOrUnknownReference",
+        "An NPC mechanical definition has an unavailable ability or resource dependency.",
+      );
+    }
+    localTemplates.set(definitionId, frozen);
+    drafts.push({
+      eventType: "DefinitionRegistered",
+      payload: { definition: frozen },
+      visibilityPolicyId: "visibility:room-authority-only",
+      secrecy: "internal",
+    });
+  }
+
+  const dynamicEntityIds: string[] = [];
+  const entitiesById = new Map<string, JsonRecord>();
+  for (const entry of rawEntries) {
+    const entityId = entry.entityId as string;
+    if (entitiesById.has(entityId)) {
+      return rejected("invalidRulesInput", "NPC mechanical materialization repeats an entity id.");
+    }
+    const mechanics = entry.mechanics as JsonRecord;
+    const definition = mechanics.kind === "bespokeDefinition"
+      ? localTemplates.get(String((mechanics.definition as JsonRecord).definitionId))
+      : state.combatRuntime.definitions[String(mechanics.definitionRef)]
+        ?? localTemplates.get(String(mechanics.definitionRef));
+    if (!isNpcMechanicalTemplateDefinition(definition)) {
+      return rejected("privateOrUnknownReference", "The referenced NPC mechanical definition is unavailable.");
+    }
+    const establishedEntity = state.entities[entityId];
+    if (establishedEntity !== undefined && (
+      establishedEntity.kind !== "npc"
+      || establishedEntity.tenureStatus !== "active"
+      || establishedEntity.sceneId !== sceneId
+      || establishedEntity.name !== entry.name
+    )) {
+      return rejected(
+        "privateOrUnknownReference",
+        "A combat materialization cannot overwrite an established NPC identity or location.",
+      );
+    }
+    const shell = state.combatRuntime.entities[entityId];
+    if (shell !== undefined && !isNpcSpatialShell(shell)) {
+      return rejected("duplicateRootAction", "This NPC already has frozen combat mechanics.");
+    }
+    const placement = entry.placement;
+    if (placement === null && shell === undefined) {
+      return rejected("invalidRulesInput", "A new NPC instance requires an explicit frozen position.");
+    }
+    const position = placement === null
+      ? shell!.position as JsonRecord
+      : (placement as JsonRecord).position as JsonRecord;
+    const content = definition.content as JsonRecord;
+    const submittedInitialState = isRecord(entry.initialState)
+      ? structuredClone(entry.initialState)
+      : {};
+    const effectiveInitialState = structuredClone(submittedInitialState);
+    if (establishedEntity?.hitPoints !== undefined) {
+      if (establishedEntity.hitPoints.maximum !== Number(content.hitPointsMaximum)
+        || (submittedInitialState.hitPointsCurrent !== undefined
+          && Number(submittedInitialState.hitPointsCurrent) !== establishedEntity.hitPoints.current)) {
+        return rejected(
+          "invalidRulesInput",
+          "NPC hit points conflict with the established noncombat state.",
+        );
+      }
+      effectiveInitialState.hitPointsCurrent = String(establishedEntity.hitPoints.current);
+    }
+    const resourceMaximums = content.resourceMaximums as JsonRecord;
+    const submittedResources = isRecord(submittedInitialState.resourcesCurrent)
+      ? submittedInitialState.resourcesCurrent
+      : {};
+    const effectiveResources = { ...structuredClone(submittedResources) };
+    for (const [resourceId, maximum] of Object.entries(resourceMaximums)) {
+      const establishedCurrent = establishedEntity?.resources?.[resourceId];
+      const establishedMaximum = establishedEntity?.resourceMaximums?.[resourceId];
+      if ((establishedMaximum !== undefined && establishedMaximum !== Number(maximum))
+        || (establishedCurrent !== undefined && establishedCurrent > Number(maximum))
+        || (establishedCurrent !== undefined
+          && submittedResources[resourceId] !== undefined
+          && Number(submittedResources[resourceId]) !== establishedCurrent)) {
+        return rejected(
+          "invalidRulesInput",
+          "NPC resources conflict with the established noncombat state.",
+        );
+      }
+      if (establishedCurrent !== undefined) effectiveResources[resourceId] = String(establishedCurrent);
+    }
+    if (Object.keys(effectiveResources).length > 0) {
+      effectiveInitialState.resourcesCurrent = effectiveResources;
+    }
+    let availableDefinitions = {
+      ...state.combatRuntime.definitions,
+      ...Object.fromEntries(localAbilities),
+      ...Object.fromEntries(localItems),
+      ...Object.fromEntries(localTemplates),
+    };
+    const loadout = materializeNpcMechanicalLoadout(definition, {
+      entityId,
+      speedInches: content.speedInches,
+    }, availableDefinitions, establishedEntity?.loadout);
+    if (loadout === undefined) {
+      return rejected(
+        "invalidRulesInput",
+        "The established NPC inventory cannot be frozen into bounded mechanical instances.",
+      );
+    }
+    const validationCharacter = {
+      ...(establishedEntity ?? {
+        id: entityId,
+        kind: "npc",
+        name: entry.name as string,
+        sceneId,
+        tenureStatus: "active",
+        entityOrdinal: "1",
+      }),
+      abilityScores: Object.fromEntries(CREATURE_ABILITIES.map((ability) => [
+        ability,
+        Number((content.stats as JsonRecord)[ability]),
+      ])),
+      proficiencyBonus: Number(content.proficiencyBonus),
+      loadout,
+    } satisfies CharacterRecord;
+    const initialEquipment = npcEquipmentMechanics(validationCharacter, availableDefinitions);
+    for (const equipmentDefinition of initialEquipment.definitions) {
+      const compiled = compileAbilityDefinition(equipmentDefinition);
+      if (!compiled.ok) {
+        return rejected(compiled.code, compiled.publicMessage);
+      }
+      const abilityRef = String(equipmentDefinition.definitionId);
+      const existing = state.combatRuntime.definitions[abilityRef];
+      const local = localAbilities.get(abilityRef);
+      if ((existing !== undefined && existing.compiledHash !== compiled.artifact.compiledHash)
+        || (local !== undefined && local.compiledHash !== compiled.artifact.compiledHash)) {
+        return rejected(
+          "invalidRulesInput",
+          "Initial NPC equipment conflicts with a frozen AbilityDefinition.",
+        );
+      }
+      if (existing === undefined && local === undefined) {
+        localAbilities.set(abilityRef, registeredAbilityRecord(compiled.artifact));
+        drafts.push({
+          eventType: "DefinitionRegistered",
+          payload: structuredClone(compiled.artifact),
+          visibilityPolicyId: "visibility:room-authority-only",
+          secrecy: "internal",
+        });
+      }
+    }
+    availableDefinitions = {
+      ...availableDefinitions,
+      ...Object.fromEntries(localAbilities),
+    };
+    const entity = instantiateNpcMechanicalEntity({
+      definition,
+      catalog: availableDefinitions,
+      entityId,
+      name: entry.name as string,
+      sceneId,
+      position,
+      ...(Object.keys(effectiveInitialState).length === 0
+        ? {}
+        : { initialState: effectiveInitialState }),
+      loadout,
+      ...(shell === undefined ? {} : { shell }),
+    });
+    if (entity !== undefined) synchronizeCombatItemResources(entity, loadout);
+    if (entity === undefined
+      || !npcMechanicalDefinitionClosureValid(definition, availableDefinitions)
+      || !npcMechanicalEntityMatchesTemplate(
+        entity,
+        definition,
+        availableDefinitions,
+        validationCharacter,
+      )
+      || (shell !== undefined && !canPromoteNpcSpatialShell(shell, entity))
+      || (establishedEntity !== undefined && !npcCoreMechanicsCompatible(establishedEntity, entity))) {
+      return rejected(
+        "invalidRulesInput",
+        "NPC mechanics conflict with frozen identity, placement, or prior noncombat mechanics.",
+      );
+    }
+    dynamicEntityIds.push(entityId);
+    entitiesById.set(entityId, entity);
+    drafts.push({ eventType: "EntityMaterialized", payload: { entity } });
+  }
+  return { drafts, dynamicEntityIds, entitiesById };
+}
+
 function startEncounter(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -583,81 +1223,93 @@ function startEncounter(
   const sceneId = input.sceneId as string;
   if (!(sceneId in state.combatRuntime.scenes)) return rejected("privateOrUnknownReference", "Encounter scene is unavailable.");
 
-  const drafts: Draft[] = [];
-  const dynamicIds: string[] = [];
-  const dynamicAbilityIds = new Set<string>();
-  if ((input.dynamicEntities as unknown[]).length > 24) {
-    return rejected("invalidRulesInput", "Encounter has too many dynamic combatants.");
-  }
-  for (const raw of input.dynamicEntities as unknown[]) {
-    if (!canonicalDynamicCombatant(raw)) {
-      return rejected("invalidRulesInput", "Dynamic combatant is malformed.");
-    }
-    const dynamicEntityId = raw.entityId as string;
-    const dynamicEntityName = raw.name as string;
-    const dynamicAbilities = raw.abilities as JsonRecord[];
-    if (dynamicEntityId in state.combatRuntime.entities || dynamicIds.includes(dynamicEntityId)) {
-      return rejected("duplicateRootAction", "Dynamic combatant already exists.");
-    }
-    const establishedEntity = state.entities[dynamicEntityId];
-    if (establishedEntity !== undefined && (
-      establishedEntity.kind !== "npc"
-      || establishedEntity.tenureStatus !== "active"
-      || establishedEntity.sceneId !== sceneId
-      || establishedEntity.name !== dynamicEntityName
-    )) {
-      return rejected(
-        "privateOrUnknownReference",
-        "A combat materialization cannot overwrite an established NPC identity or location.",
-      );
-    }
-    dynamicIds.push(dynamicEntityId);
-    const abilityRefs: string[] = [];
-    for (const ability of dynamicAbilities) {
-      const definitionId = ability.definitionId as string;
-      if (definitionId in state.combatRuntime.definitions
-        || dynamicAbilityIds.has(definitionId)) {
-        return rejected("invalidRulesInput", "Dynamic AbilityDefinition already exists or is duplicated.");
-      }
-      abilityRefs.push(definitionId);
-      dynamicAbilityIds.add(definitionId);
-      const compiled = compileAbilityDefinition(ability);
-      if (!compiled.ok) {
-        return rejected(compiled.code, compiled.publicMessage, compiled.diagnostics.map((diagnostic) => ({
-          code: compiled.code,
-          message: diagnostic.reason,
-          path: diagnostic.path,
-          source: "SPEC 0013",
-          visibility: "public",
-        })));
-      }
-      drafts.push({
-        eventType: "DefinitionRegistered",
-        payload: structuredClone(compiled.artifact),
-        visibilityPolicyId: "visibility:room-authority-only",
-        secrecy: "internal",
-      });
-    }
-    const entityCore = Object.fromEntries(
-      Object.entries(raw).filter(([key]) => key !== "abilities"),
+  let drafts: Draft[] = [];
+  let dynamicIds: string[] = [];
+  const dynamicEntitiesById = new Map<string, JsonRecord>();
+  if (npcMechanicsProfileEnabled(profiles.extensions)) {
+    const prepared = prepareNpcMechanicalCombatants(
+      state,
+      input.dynamicEntities as unknown[],
+      sceneId,
     );
-    drafts.push({
-      eventType: "EntityMaterialized",
-      payload: {
-        entity: {
-          ...structuredClone(entityCore),
-          id: raw.entityId,
-          kind: "npc",
-          sceneId,
-          abilityRefs,
-          conditions: {},
-          concentration: null,
-          lifeState: "alive",
-          deathSaves: { successes: 0, failures: 0 },
-          movement: { spentMilliInches: "0" },
-        },
-      },
-    });
+    if ("kind" in prepared) return prepared;
+    drafts = prepared.drafts;
+    dynamicIds = prepared.dynamicEntityIds;
+    for (const [entityId, entity] of prepared.entitiesById) {
+      dynamicEntitiesById.set(entityId, entity);
+    }
+  } else {
+    const dynamicAbilityIds = new Set<string>();
+    if ((input.dynamicEntities as unknown[]).length > 24) {
+      return rejected("invalidRulesInput", "Encounter has too many dynamic combatants.");
+    }
+    for (const raw of input.dynamicEntities as unknown[]) {
+      if (!canonicalDynamicCombatant(raw)) {
+        return rejected("invalidRulesInput", "Dynamic combatant is malformed.");
+      }
+      const dynamicEntityId = raw.entityId as string;
+      const dynamicEntityName = raw.name as string;
+      const dynamicAbilities = raw.abilities as JsonRecord[];
+      if (dynamicEntityId in state.combatRuntime.entities || dynamicIds.includes(dynamicEntityId)) {
+        return rejected("duplicateRootAction", "Dynamic combatant already exists.");
+      }
+      const establishedEntity = state.entities[dynamicEntityId];
+      if (establishedEntity !== undefined && (
+        establishedEntity.kind !== "npc"
+        || establishedEntity.tenureStatus !== "active"
+        || establishedEntity.sceneId !== sceneId
+        || establishedEntity.name !== dynamicEntityName
+      )) {
+        return rejected(
+          "privateOrUnknownReference",
+          "A combat materialization cannot overwrite an established NPC identity or location.",
+        );
+      }
+      dynamicIds.push(dynamicEntityId);
+      const abilityRefs: string[] = [];
+      for (const ability of dynamicAbilities) {
+        const definitionId = ability.definitionId as string;
+        if (definitionId in state.combatRuntime.definitions
+          || dynamicAbilityIds.has(definitionId)) {
+          return rejected("invalidRulesInput", "Dynamic AbilityDefinition already exists or is duplicated.");
+        }
+        abilityRefs.push(definitionId);
+        dynamicAbilityIds.add(definitionId);
+        const compiled = compileAbilityDefinition(ability);
+        if (!compiled.ok) {
+          return rejected(compiled.code, compiled.publicMessage, compiled.diagnostics.map((diagnostic) => ({
+            code: compiled.code,
+            message: diagnostic.reason,
+            path: diagnostic.path,
+            source: "SPEC 0013",
+            visibility: "public",
+          })));
+        }
+        drafts.push({
+          eventType: "DefinitionRegistered",
+          payload: structuredClone(compiled.artifact),
+          visibilityPolicyId: "visibility:room-authority-only",
+          secrecy: "internal",
+        });
+      }
+      const entityCore = Object.fromEntries(
+        Object.entries(raw).filter(([key]) => key !== "abilities"),
+      );
+      const entity = {
+        ...structuredClone(entityCore),
+        id: raw.entityId,
+        kind: "npc",
+        sceneId,
+        abilityRefs,
+        conditions: {},
+        concentration: null,
+        lifeState: "alive",
+        deathSaves: { successes: 0, failures: 0 },
+        movement: { spentMilliInches: "0" },
+      } satisfies JsonRecord;
+      dynamicEntitiesById.set(dynamicEntityId, entity);
+      drafts.push({ eventType: "EntityMaterialized", payload: { entity } });
+    }
   }
 
   const requestedParticipantIds = input.participantEntityIds as unknown[];
@@ -671,7 +1323,7 @@ function startEncounter(
   ])];
   if (participantEntityIds.length < 2 || participantEntityIds.some((entityId) => {
     const entity = state.combatRuntime.entities[entityId]
-      ?? (input.dynamicEntities as JsonRecord[]).find((entry) => entry.entityId === entityId);
+      ?? dynamicEntitiesById.get(entityId);
     return entity === undefined || (isNonEmptyString(entity.sceneId) && entity.sceneId !== sceneId);
   })) {
     return rejected("privateOrUnknownReference", "Encounter participant is unavailable in this scene.");
@@ -750,8 +1402,7 @@ function startEncounter(
       return rejected("invalidRulesInput", "Initiative group is malformed.");
     }
     const firstId = group.combatantEntityIds[0] as string;
-    const rawDynamic = (input.dynamicEntities as JsonRecord[]).find((entry) => entry.entityId === firstId);
-    const entity = state.combatRuntime.entities[firstId] ?? rawDynamic;
+    const entity = state.combatRuntime.entities[firstId] ?? dynamicEntitiesById.get(firstId);
     if (entity === undefined) return rejected("privateOrUnknownReference", "Initiative combatant is unavailable.");
     const modifier = abilityModifier(entity, "dex");
     const purposeKey = group.combatantEntityIds.length === 1
@@ -1068,8 +1719,10 @@ function spendCosts(sourcePatch: JsonRecord, definition: JsonRecord): Array<{ re
     if (resourceId === undefined) return undefined;
     const record = resources[resourceId];
     if (!isRecord(record) || !Number.isSafeInteger(amount) || amount <= 0 || Number(record.current) < amount) return undefined;
-    record.current = String(Number(record.current) - amount);
-    spent.push({ resourceId, amount, after: String(record.current) });
+    const after = String(Number(record.current) - amount);
+    if (cost.kind === "item" && after === "0") delete resources[resourceId];
+    else record.current = after;
+    spent.push({ resourceId, amount, after });
   }
   return spent;
 }

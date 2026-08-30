@@ -6,7 +6,11 @@ import {
   AuthoritativeKpModelError,
   createAuthoritativeKpAdapter,
 } from "../app/_runtime/lib/kp/authoritative.ts";
-import { authoritativeKpProfileByBinding } from "../app/_runtime/lib/kp/authoritative-policy.ts";
+import {
+  V3_AUTHORITATIVE_KP_PROFILES,
+  authoritativeKpProfileByBinding,
+} from "../app/_runtime/lib/kp/authoritative-policy.ts";
+import { validateBodyOnlyNarrationOutput } from "../app/_runtime/lib/kp/narration-v3.ts";
 import {
   narrationProjection,
   normalizeRoomKpProposal,
@@ -1274,7 +1278,11 @@ test("narration rejects unsupported sensory extrapolations from tactical labels"
     "莉安站在你左前方。",
   ];
   const projection = {
-    viewer: { kind: "player", characterId: "character:alice" },
+    viewer: {
+      kind: "player",
+      viewerKey: "character:alice",
+      characterId: "character:alice",
+    },
     projectionHash: "projection:alice:wake-grounding",
     committedDelta: {
       schema: "zhuwei.observer-committed-delta/v1",
@@ -1428,6 +1436,185 @@ test("narration rejects unsupported sensory extrapolations from tactical labels"
   const result = await adapter.narrate({ ...request, projection: groundedProjection });
   assert.equal(result.body, groundedBody);
   assert.equal(ai.calls.length, 2 + unsupportedBodies.length * 2 + 2 + 2);
+});
+
+test("V3 replaces one grounding-only failure without carrying historical dialogue forward", async () => {
+  const profile = V3_AUTHORITATIVE_KP_PROFILES.find((candidate) =>
+    /private-forms-v1$/u.test(candidate.modelProfileVersion));
+  assert.ok(profile, "the historical V3 private-forms profile remains registered");
+  assert.match(profile.modelProfileVersion, /private-forms-v1$/u);
+  const projection = {
+    viewer: { kind: "player", characterId: "character:alice" },
+    projectionHash: "projection:v3:grounding-replacement",
+    actorAction: {
+      kind: "actorDisplay",
+      actorCharacterId: "character:alice",
+      displayBody: "我检查门闩。",
+    },
+    committedDelta: {
+      schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: "character:alice",
+      viewerCharacterId: "character:alice",
+      receipt: {
+        receiptId: "receipt:v3:grounding-replacement",
+        rootActionId: ROOT_ACTION_ID,
+        status: "committed",
+      },
+      changes: [{
+        kind: "projectionFieldChanged",
+        field: "knowledge",
+        before: [{ knowledgeRef: "knowledge:old", content: "你知道这是守灵夜。" }],
+        after: [
+          { knowledgeRef: "knowledge:old", content: "你知道这是守灵夜。" },
+          { knowledgeRef: "knowledge:current", content: "你检查了门闩，它仍然锁着。" },
+        ],
+      }],
+    },
+    narration: { pressure: "", opportunities: [] },
+    experiencedTranscript: {
+      schema: "zhuwei.experienced-transcript/v1",
+      sceneId: "scene:wake-hall",
+      messages: [{
+        kind: "kp",
+        speakerName: "KP",
+        body: "开场时，蜡烛在阴影里摇晃，空气里留着烛蜡味。",
+      }],
+    },
+  };
+  const rejectedBody = "蜡烛仍在阴影里摇晃，空气里仍有烛蜡味。";
+  const replacementBody = "你检查了门闩；现在要继续怎么做？";
+  const receipts = [];
+  const ai = scriptedAi([
+    officialToolResponse("submit_current_narration", { body: rejectedBody }),
+    officialToolResponse("submit_current_narration", { body: replacementBody }),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    profile,
+    now: monotonicClock(),
+    onInvocationReceipt(value) {
+      receipts.push(value);
+    },
+  });
+
+  const result = await adapter.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:v3:grounding-replacement", status: "committed" },
+    projection,
+  });
+
+  assert.equal(result.body, replacementBody);
+  assert.equal(ai.calls.length, 2);
+  const firstPayload = JSON.parse(ai.calls[0].input.messages[1].content);
+  const replacementPayload = JSON.parse(ai.calls[1].input.messages[1].content);
+  assert.equal(firstPayload.recentDialogue.length, 1);
+  assert.match(JSON.stringify(firstPayload.renderableClaims), /门闩，它仍然锁着/u);
+  assert.doesNotMatch(JSON.stringify(firstPayload.renderableClaims), /守灵夜/u);
+  assert.equal("recentDialogue" in replacementPayload, false);
+  assert.equal("actorAction" in replacementPayload, false);
+  assert.doesNotMatch(ai.calls[1].input.messages[1].content, new RegExp(rejectedBody));
+  assert.match(ai.calls[1].input.messages[0].content, /事实依据不足被丢弃/u);
+  assert.deepEqual(receipts.map(({ result: receiptResult }) => receiptResult), [
+    "modelPermanent",
+    "success",
+  ]);
+
+  const schemaInvalidAi = scriptedAi([
+    officialToolResponse("submit_current_narration", { body: replacementBody, extra: true }),
+  ]);
+  const schemaInvalidAdapter = createAuthoritativeKpAdapter({
+    ai: schemaInvalidAi,
+    profile,
+    now: monotonicClock(),
+  });
+  await assert.rejects(schemaInvalidAdapter.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:v3:grounding-replacement", status: "committed" },
+    projection,
+  }), (error) => error instanceof AuthoritativeKpModelError
+    && error.modelInvocationReceipt.failureStage === "narrationSchema");
+  assert.equal(schemaInvalidAi.calls.length, 1, "schema failures do not start a grounding retry");
+
+  const replacementRejectedAi = scriptedAi([
+    officialToolResponse("submit_current_narration", { body: rejectedBody }),
+    officialToolResponse("submit_current_narration", { body: rejectedBody }),
+  ]);
+  const replacementRejectedAdapter = createAuthoritativeKpAdapter({
+    ai: replacementRejectedAi,
+    profile,
+    now: monotonicClock(),
+  });
+  await assert.rejects(replacementRejectedAdapter.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:v3:grounding-replacement", status: "committed" },
+    projection,
+  }), (error) => error instanceof AuthoritativeKpModelError
+    && error.publicCode === "NARRATION_GROUNDING_REJECTED"
+    && error.modelInvocationReceipt.failureStage === "narrationGrounding");
+  assert.equal(replacementRejectedAi.calls.length, 2, "a rejected replacement never loops");
+
+  const timeoutAi = scriptedAi([() => new Promise(() => {})]);
+  const timeoutAdapter = createAuthoritativeKpAdapter({
+    ai: timeoutAi,
+    profile,
+    now: monotonicClock(),
+    invocationTimeoutMs: 5,
+  });
+  await assert.rejects(timeoutAdapter.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:v3:grounding-replacement", status: "committed" },
+    projection,
+  }), (error) => error instanceof AuthoritativeKpModelError
+    && error.code === "modelTransient");
+  assert.equal(timeoutAi.calls.length, 1, "provider timeouts do not start a grounding retry");
+});
+
+test("a player's actorAction is attributable dialogue, not evidence for a world fact", () => {
+  const projection = {
+    viewer: {
+      kind: "player",
+      viewerKey: "character:alice",
+      characterId: "character:alice",
+    },
+    projectionHash: "projection:v3:actor-claim-is-not-fact",
+    actorAction: {
+      kind: "actorDisplay",
+      actorCharacterId: "character:alice",
+      displayBody: "我指出长桌上铺着白布。",
+    },
+    committedDelta: {
+      schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: "character:alice",
+      viewerCharacterId: "character:alice",
+      receipt: {
+        receiptId: "receipt:v3:actor-claim-is-not-fact",
+        rootActionId: ROOT_ACTION_ID,
+        status: "committed",
+      },
+      changes: [{ kind: "actionCommitted" }],
+    },
+  };
+  assert.throws(
+    () => validateBodyOnlyNarrationOutput(
+      { body: "长桌上铺着白布。" },
+      projection,
+    ),
+    (error) => error?.name === "NarrationGroundingValidationError",
+  );
+  assert.deepEqual(validateBodyOnlyNarrationOutput(
+    { body: "你声称长桌上铺着白布。" },
+    {
+      ...projection,
+      committedDelta: {
+        ...projection.committedDelta,
+        changes: [{
+          kind: "projectionFieldChanged",
+          field: "knowledge",
+          current: [{ content: "长桌上铺着白布。" }],
+        }],
+      },
+    },
+  ), { body: "你声称长桌上铺着白布。" });
 });
 
 test("narration rejects unsolicited tactical distance readouts but allows an explicit distance question", async () => {

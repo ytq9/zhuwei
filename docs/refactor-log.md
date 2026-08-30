@@ -2040,3 +2040,74 @@
 - 远端前置：`wrangler.jsonc`、schema、migration、依赖与 lockfile 均无本次改动；既有 `DB` 复核为无 pending migration，脱敏 Profile reference gate 验证 6 条引用全部对应已注册的 authoritative-v2/environment-v4 manifest。只确认既有 Worker 含 `DEEPSEEK_API_KEY` Secret 名称，未读取或改写其值；localhost 不会继承该远端 Secret，需由用户在被 Git 忽略的本地 `.env` 单独配置。
 - 部署：干净临时 clone 精确检出 `25c05ec`；`npm ci` 按 lockfile 安装 511 个包，报告既有 12 项 audit 提示而未自动修改。首次命令因把未裁剪 genesis 证据放入环境变量而在本机以 `Argument list too long` / 126 退出，发生在 build 和远端写入前；改用同一 D1 查询中只保留 gate 实际验证的 room/epoch/Profile 字段后，唯一一次实际 `npm run cf:deploy` 成功。新 deployment `2c1f5d25-e1ab-4209-94e2-480f04193bdf` / Version `6de01858-453a-4c4a-a91c-415c74f7f3e8` 承接 100% 流量，`https://zhuwei.yinskyriver.workers.dev/` 公开入口返回 HTTP 200。
 - Git 与剩余限制：源码提交已以显式 refspec 非 force 推送到 `origin/cloudflare`，当时精确为 `25c05ec`；远端 `main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。本节 docs-only 事实提交将再以同一非 force refspec 推送并复核两个 ref。发布后只执行控制面与公开 HTTP 冒烟，没有创建生产账号/房间、提交行动、诱发故障或再次调用 DeepSeek；因此证明了新版本已上线，不另行声称外部 Provider 能力的新一轮验收。
+
+## KP 事实拒绝、线索呈现与对话顺序快修（2026-08-30）
+
+- 症状与根因：本地房间中玩家三次输入都已提交，被拒绝的是提交后 KP 正文；历史开场旁白只用于语气却被模型重用为当前事实，grounding 拒绝后又没有窄重写路径。Rules 已结算的 `KnowledgeAcquired` 随即被 Table 映射为线索，因而出现“无 KP 回复却先有线索”。前端在 Delivery id 未前进时又把新的本地行动插到旧 Delivery 之后、已持久的上一句之前，并一直呈现旧恢复警告。
+- 修改：V3 正文首次仅因事实依据不足被拒时，在同一总时限内自动重写一次；重写不带历史对话或被拒正文，也不把玩家 `actorAction` 里的世界断言当成既成事实。未被粗分类器识别的自由输入不再因缩到三张 Form 而失去观察/动态事实路径；它们统一将 `ordinary-check` / `environmental-stunt` / `observe` / `materialization` / `compound` 五种小型结构交给 KP 按语义选择，没有为“看看/怎么死”等复现措辞新增关键词特判。同时明示玩家话语不是 NPC 台词、死因或新物证的事实依据。Room 在叙述恢复期只标记本次未投递结果之后新增的 knowledge ref，Table 暂不展示对应线索；权威状态和 Receipt 不回滚，正文投递后线索正常出现。对话合并改为已持久历史在前、新行动在后；提交新句子后旧恢复警告立即从当前界面消失。
+- 定向验证：Node 组合目标 6/6（grounding 单次重写、玩家断言非事实、正常/失败 Delivery 对话顺序、Form 候选结构、三条真实话语的通用 Form 候选）退出 0；Worker 真实 Room 的“提交线索→正文拒绝→线索暂藏→恢复投递→线索显示” 1/1 退出 0；`npm run typecheck` 和 `git diff --check` 退出 0。本地 `127.0.0.1:3000` 保持运行并已热更新。
+- 剩余限制：本次按快修边界未设计通用的 NPC 台词分句级 knowledge-ref 标注；开放留白中的新事实仍由 KP 在当前 Context/Form 内决定。未运行全量门、浏览器全站 QA、真实外部模型探针；未提交、推送或部署。
+
+## V3 玩家亲自掷骰与 NPC 自动骰快修（2026-08-30）
+
+- 症状与根因：V3 Rules 虽已在骰前冻结角色属性、熟练、DC、优势/劣势和骰式，Room 却会立即生成玩家与 NPC 的全部骰面，Table 又固定丢弃权威待掷列表并拒绝权威掷骰按钮；因此玩家没有亲自触发自己的检定。另一个直接边界是同批攻击/豁免不能按“整条行动由谁发起”归属，否则会把玩家造成的 NPC 豁免或 NPC 对玩家的攻击错误交给玩家。
+- 修改：V3 Room 对每颗随机请求按实际掷骰者归属；玩家角色的属性/技能检定、攻击、伤害、先攻、豁免、死亡豁免与恢复骰先持久化为待掷，只向当前控制者投影按钮。按钮只授权该冻结请求，浏览器不能提供骰面、加值或改 DC，最终骰面仍由 DO 的加密随机源生成；NPC、环境和隐藏现实骰不显示按钮并由系统自动生成。多人或 due NPC 阶段中，玩家点击自己的豁免后以 Room 认证的原行动/原 principal 续接，不会把点击误作新行动或让代点者接管原行动。Table 现消费权威待掷投影并在点击后刷新。
+- 定向验证：`contest-room-randomness-v2` 的 V3 用例 1/1，证明点击前 0 次随机、非控制者不可点、玩家点击后 Room 生成玩家 17 与 NPC 6 两颗骰，并覆盖玩家/NPC 攻击与豁免归属对偶；`authoritative-action` 玩家点击续接 1/1，覆盖另一玩家负责豁免时仍以原 principal 提交原 intent；`authoritative-table-v2` 21/21；due ActorPlan 随机恢复 1/1；`npx tsc --noEmit` 退出 0。localhost 已热更新，`http://127.0.0.1:3000/` 返回 200。
+- 剩余限制：按开发期快修要求未跑全量门、build、浏览器全站 QA 或真实外部模型探针；未提交、推送或部署。旧非 V3 delivery profile 保留既有冻结回放语义。
+
+## V3 Narration 亲历对话形状快修（2026-08-30）
+
+- 症状与根因：Room 冻结的 `experiencedTranscript` 使用版本化 `{schema, sceneId, messages}`，body-only Narration 的 `recentDialogue` 适配器却只接受裸数组，导致真实 Viewer Narration Context 静默丢失全部亲历对话；首个违规点在 Narration 输入适配层。
+- 修改文件：`app/_runtime/lib/kp/narration-v3.ts`、`tests/authoritative-kp-adapter.test.mjs`、`tests/viewer-narration-recovery-v3.test.ts`。适配器现在读取 exact `zhuwei.experienced-transcript/v1.messages`，同时保留裸数组兼容；目标 Node fixture 改用生产形状，真实 Room 测试证明行动者收到自己的当前对话而其他 Viewer 不会收到该原文，grounding 替代仍不携带历史。
+- 定向检查：生产形状 RED 用例修复前退出 1（`recentDialogue 0 !== 1`），修复后目标用例 1/1；`npx tsx --test tests/authoritative-kp-adapter.test.mjs` 退出 0，27/27；`npx vitest run tests/viewer-narration-recovery-v3.test.ts` 退出 0，5/5。
+- 剩余限制：未运行全量门、typecheck、build、浏览器 QA 或真实外部模型探针；未提交、推送或部署。该修复只恢复逐 Viewer 的措辞连续性，不扩大 Narration 的事实依据或秘密可见范围。
+
+## V5 泛化角色前提与社交周旋（2026-08-30）
+
+- 症状与根因：角色来由和玩家自述仍可能经 KP 自由文本越过来源边界，已有 `dynamic:npc` / `dynamic:opportunity` 只完成定义登记而没有统一进入 NPC 运行态；社交检定又缺少 NPC 属性、关系、共同证据、差值分档和骰前退出/改口状态机。首个违规点分别是 Form→Rules 的无类型事实接缝、Definition→Entity 激活接缝、社交 Rules 计划，以及 Room 的玩家掷骰恢复边界；不是药剂师、信使、猎魔人或其他名称关键词缺失。
+- 修改文件：新增 `module/black-oak-will-social.ts`、`rules/profiles/social-resolution.ts`、`rules/v2/social-actions.ts`、`rules/v2/social-model.ts`，并修改 KP Form/Context/Narration、Module/Profile registry、Rules event/state/project/replay、Room/Authority/Table/UI 直接消费者。新房专用 V5 把前提固化为带 policy/archetype/source refs 的类型化事实，沿原有通用动态定义协议登记 NPC/机会，再用 `DynamicEntityMaterialized` 激活实体并只授予显式知识；玩家陈述保持 unresolved SourceClaim。社交边界由 NPC 洞悉/熟练、关系、双方共有类型化证据和利害共同派生，骰面相对最终边界按差值分档；玩家可坚持、接受现状或用自由文本降级/转开旧线程。玩家骰候选在 DO 持久化，支持崩溃、精确控制权转移和丢响应同 Receipt 恢复，不重提案、不重掷。V3/V4 manifest/hash/旧随机转移门保持原义。
+- 定向检查：`tests/social-resolution-v5.test.mjs` 退出 0，4/4（两组任意别名、既有 generic definition 激活、NPC/关系/证据/差值、接受现状与改口）；相关历史 KP/因果组合最终目标均通过。公共 action/table/delivery/context 组合首轮 54/58，修正一个 V3 `socialCapabilities:null` 兼容漂移及三个测试合同后复核为 57/58，仅剩候选顺序断言，目标 context 再跑 12/12。`tests/social-room-randomness-v5.test.ts` 首轮发现并修复 social pending answer 未进入直接 Rules 分支，第二轮仅修正旧控制者应被拒绝而非收到空列表的断言，最终 1/1；V4 combat transfer gate 1/1、V3 Viewer Narration recovery 5/5。`npm run typecheck` 与 `git diff --check` 退出 0。
+- 剩余限制：未运行全量测试、build、全项目 lint、浏览器 QA、真实 DeepSeek 长局或外部 RAG/免费模型探针；没有 migration、提交、推送或部署。能力只由 V5 新房选择，旧房不会静默升级；本轮也未新增或更换免费模型、向量库或静态 RAG 实现。
+
+## V5 动态 NPC 机械定义与装备一致性（2026-08-30）
+
+- 症状与根因：通用动态 NPC 可以形成叙事/社交实体，但首次进入战斗时仍需提交一次性平铺数值，既没有“KP 提议完整定义→Rules 校验冻结→多个实例复用”的稳定接缝，也没有让库存转交、NPC 换装和战斗能力按事件保持一致；V5 当前 Private Form 又无法容纳完整生物定义，KP 私有 Context 也缺少权威背包。首个违规点是 V5 Form/causal ingress 与 Rules 定义/实例边界，而不是缺少某个名称关键词或要求每个敌人预制模板。
+- 修改文件：新增 `rules/profiles/npc-mechanics.ts`、`rules/v2/npc-mechanics.ts`、`tests/npc-mechanical-definition-v5.test.mjs`；修改 V5 manifest/Profile registry、KP Form/提示/私有 Context、ability compiler、combat/campaign/multiplayer/compound/causal action 与对应 event/model/correction/projector/runtime invariant。新 Profile 允许 KP 为真正新类型提交一份闭合的 2014 生物与 AbilityDefinition，Rules 在先攻随机前校验、编译和冻结；普通同类个体复用 definition ref，已有 NPC 只允许一次保持身份/场景/位置及既有 HP/资源的机械化。HP、资源、位置、状态和装备保留为实例运行态；库存转交不自动装备，穿戴/收起仅从权威背包、冻结属性与 pinned 标准装备派生 AC/武器能力，保留固有能力且不会抹掉其他移动模式。V5 Private Form 使用三种 exact typed drafts，经 continued-root 进入同一 `step`；可信 actor、场景、实体、物品、模板和可见因果依据均由 Rules 闭合。玩家与同场 NPC 的 loadout 只进入 exact Profile 的 KP 私有 Context，V3/V4 不新增该字段。
+- 定向检查：`npx tsx --test tests/npc-mechanical-definition-v5.test.mjs` 退出 0，8/8；覆盖真实 `compileKpFormDraft→step→awaitingRandomness→权威续跑/replay`、V4 零事件隔离、共享模板/独立实例、旧 NPC 首次机械化、既有状态保存、非法重配与非法 AC model fail-closed，以及 causal 转交/换装后的库存、AC、固有/装备能力和移动模式。`npx tsx --test tests/kp-form-context-v3.test.mjs tests/social-resolution-v5.test.mjs` 退出 0，14/14；V4 Form 上限保持 2,000、V5 仅 materialization proposedFact 扩至 8,000，角色前提与社交相邻路径保持通过。Profile canonical registry 返回 `true`；`npm run typecheck` 与 `git diff --check` 退出 0。
+- 剩余限制：装备派生目前只覆盖 pinned 标准 gear catalog；首次模板中的 ability 视为固有能力，尚未为任意动态物品建立独立 ItemDefinition 来源关系；活跃 encounter 内的转交/换装因尚无行动经济协议而 fail-closed。未运行全量测试、build、lint、浏览器 QA 或真实 DeepSeek 探针；没有 migration、提交、推送或部署。
+
+## 代理合同的主 PRD 权威与实现取舍（2026-08-30）
+
+- 症状与根因：原 `AGENTS.md` 只在部分叙事主题中要求完整读取 `SPEC 0001`，同时把上游概括为规则与视觉权威，没有明确主 PRD、已裁定补充 SPEC、ADR、领域语言和实现证据之间的优先级；也缺少已确认的兼容清理、最小纵切、组件职责、依赖选择、长期架构和成熟交互模式原则。
+- 修改文件：`AGENTS.md`、`docs/refactor-log.md`。`SPEC 0001` 现被明确为主 PRD；其他已裁定 SPEC 默认不修改，只有用户明确需求与具体条款实质冲突并经用户确认后才能修改。文档读取路由同步改为主 PRD 优先、直接补充 SPEC 限定读取；新增八项实现取舍，并将无兼容层、fallback 或 migration 的清理规则限定为无持久化、公开或版本化消费者的未发布实现。
+- 定向检查：读取新增权威、实现取舍与文档路由全文，核对 `SPEC 0001`、规格索引、`CONTEXT.md` 与 ADR 0013 链接均存在；`git diff --check -- AGENTS.md docs/refactor-log.md` 退出 0。
+- 剩余限制：本次只修改代理合同与执行日志，没有修改任何 SPEC、ADR、源码、测试或运行时行为；未运行代码测试、Lint、typecheck、build、远端操作、部署或 Git push。
+
+## iOS Tailscale 本地预览常驻快修（2026-08-31）
+
+- 症状与根因：iPhone 打开 tailnet HTTPS 地址后长期白屏；Tailscale Serve 仍代理 `127.0.0.1:3000`，但 `vinext dev` 随代理临时终端回收而退出，端口无监听且本地请求直接连接失败。首个违规点是预览进程生命周期，不是页面渲染或产品源码。
+- 修改：未改产品源码；以用户级 transient systemd 单元 `zhuwei-ios-preview.service` 托管现有 `npm run dev`，保留 exact Tailscale Host 白名单并设置 `Restart=always` / `RestartSec=2s`。既有 tailnet-only HTTPS Serve 继续代理本机 3000 端口，没有开放公网端口、部署或远端 Worker 写入。
+- 定向检查：Tailscale Host 本地首页返回 HTTP 200 / `text/html`；受控终止 service 主进程后 `NRestarts=1` 且首页恢复 200；`tailscale serve status` 显示 tailnet-only HTTPS→`127.0.0.1:3000`，服务器到 `iphone172` ping 成功。相关命令均退出 0。
+- 剩余限制：该 transient user service 可跨代理回合并在异常退出后恢复，但主机重启后需要重新创建；未运行产品测试、build、全站浏览器 QA、部署或 Git push。
+
+## iOS 本地预览登录账号（2026-08-31）
+
+- 症状与根因：本地 D1 已有一个预览用户，但密码只保存 PBKDF2-SHA256 盐化摘要，没有可恢复或可安全转告的明文开发密码。
+- 修改：通过现役 `/api/auth/register` 真实注册路径在本地 D1 新建 `ios-preview-20260831@zhuwei.test`，未修改旧用户、认证实现、远端 D1 或生产 Worker；明文密码只在本次用户回执中交付，不写入仓库或日志。
+- 定向检查：注册返回 HTTP 201；同账号正确密码登录返回 200；错误密码对偶路径返回 401，命令均退出 0。
+- 剩余限制：该账号仅存在当前本地 Miniflare D1；未执行线上登录、部署、Git push 或其他产品测试。
+
+## V5 动态 NPC 独立物品来源与生命周期闭环（2026-08-31）
+
+- 症状与根因：上一轮已能冻结 NPC 模板并从标准装备派生能力，但模板固有能力与物品能力仍没有独立来源；标准装备转交沿用裸目录 id，多个同类物品会碰撞；首次机械化不会规范化既有装备，动态武器也没有携带者重绑定与耗尽重放闭环。物品损坏、遗失等变化还可由不相关的可见事实授权。首个违规点是 NPC 模板、物品定义、物品实例和当前 loadout 没有形成同一套 Rules 权威身份及生命周期。
+- 修改：在 `rules/v2/npc-mechanics.ts` 建立冻结的 NPC Template、独立 ItemDefinition、每个 NPC 唯一的 ItemInstance 和显式 loadout；初始装备及后来转入的标准装备均生成 canonical hash 身份，同类物品不再堆叠或共用 id。固有能力保留在模板，装备 AC/动作只由当前可用且已装备的实例派生；动态武器冻结骰式、伤害类型、使用属性与范围，Rules 按当前携带者属性重新编译。转交、穿戴、收起、损坏、修复、销毁、遗失与弹药耗尽会原子同步库存、槽位、资源、AC 和动作，并能逐事件重放；重甲不再错误叠加负敏捷。动态机械物品暂只允许在机械 NPC 间转移，进入玩家装备路径 fail-closed。KP 发起的物品状态变化必须引用与 NPC、物品及动作精确绑定的类型化原因事实，普通可见事实不能授权改状态。
+- 直接消费者：combat materialization/event fold、campaign transfer/use、causal action、runtime invariant、correction、projector、V5 私有 Context/Profile 与 KP Form 合同已同步；V3/V4 在缺少 exact Profile 时保持原行为。标准弹药继续使用 pinned 目录堆叠模型，动态 `wear:ammo` 定义被拒绝，最后一发消耗会同时清除 selector、背包数量和运行态资源。
+- 定向检查：`npx tsx --test tests/kp-form-context-v3.test.mjs tests/npc-mechanical-definition-v5.test.mjs` 退出 0，21/21；覆盖独立初始实例、两个同类盾牌转入、既有装备首次规范化、重甲负敏捷、动态武器跨 NPC 重绑定、损坏/修复/销毁/遗失、无关事实拒绝、类型化原因接受、标准弹药转交/使用归零和真实最后一发 combat replay。`npm run typecheck`、Profile canonical registry（NPC、V5 manifest 及全部注册文档均为 `true`）和 `git diff --check` 均退出 0。
+- 剩余限制：物品状态目前为可用/损坏/销毁/遗失，没有数值耐久或任意 charges；动态物品尚不能成为玩家机械装备，也不支持自定义动态弹药，只允许引用 pinned 标准弹药；KP 物品状态 Form 需要先存在类型化原因事实，通用战斗中的“直接攻击装备”尚未建立该事实。未运行全量测试、build、lint、浏览器 QA 或真实 DeepSeek 探针；没有 migration、提交、推送或部署。
+
+## 装备与背包前端职责收敛（2026-08-31）
+
+- 症状与根因：角色侧栏把装备与背包展示、静态目录解析和两套独立换装 busy 状态都堆在 `play-table.tsx`；未知装备会被误报为空，未知背包物品会暴露内部 ref，数量汇总又把箭矢、金币等所有单位称为“件”。首个违规点是库存展示组件仍把静态目录命中当成“物品存在”的事实，并分别创建可并发的换装控制器。
+- 修改：新增 `components/inventory-panel.tsx`，让身上与背包共用一个带同步 in-flight 门的换装控制器，成功后仍刷新 Room DO 投影；未知物品统一安全显示“物品资料不可用”，已装备但资料未知的物品仍可请求收纳，不再伪装成空槽或把内部 ref 当名称。汇总改为装备槽数量及“种类/总数量”，展开区补齐 `aria-expanded`、`aria-controls`、受标注 region、触控高度和明确处理中反馈；`play-table.tsx` 只负责装配该独立组件，没有新增使用、交易、丢弃按钮或客户端机械规则。同步调整直接源码消费者测试并新增库存展示定向测试。
+- 定向检查：`npx tsx --test tests/inventory-panel.test.mjs tests/authoritative-service-routing-v2.test.mjs tests/room-management-and-action-copy.test.mjs` 退出 0，9/9；覆盖未知物品安全显示、槽位/种类/总数汇总、展开可访问状态、共享单次提交门、权威换装刷新及不恢复“点火把”旧入口。`npm run typecheck` 与 `git diff --check` 均退出 0。
+- 剩余限制：公开投影仍只有旧 `itemId/quantity` 并在页面边界转换为 `qty`，尚不能展示动态定义、实例状态、charges、耐久或 Rules 投影的可用操作；本次按并行边界没有设计 DTO，也没有增加消费品行为。未运行全量测试、build、全项目 lint、浏览器 QA、部署或 Git push。

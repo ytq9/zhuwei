@@ -41,6 +41,9 @@ export type PendingRoll = {
     parts?: string[];
     effectNote?: string;
   };
+  /** V3 Room-owned roll: the click authorizes generation but supplies no face
+   * or optional legacy boost. */
+  authoritative?: true;
 };
 
 export type NpcRollReq = {

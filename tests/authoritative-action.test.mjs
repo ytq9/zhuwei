@@ -9,6 +9,11 @@ const TRUSTED_PRINCIPAL = Object.freeze({
   sessionVersion: 7,
 });
 
+const CLICKING_PRINCIPAL = Object.freeze({
+  id: "principal:bob",
+  sessionVersion: 3,
+});
+
 const INTENT = Object.freeze({
   kind: "intent",
   submissionId: "submission:open-door",
@@ -143,6 +148,7 @@ function scriptedValue(queue, boundary) {
 
 function createHarness({
   prepareResult = PREPARED,
+  resumeResults = [],
   proposals = [DIRECT_SUCCESS_PROPOSAL],
   commitResults = [COMMITTED_AUTHORITY_RESULT],
   narratives = [{
@@ -154,6 +160,7 @@ function createHarness({
   independentPublication = false,
 } = {}) {
   const trace = [];
+  const resumeQueue = [...resumeResults];
   const proposalQueue = [...proposals];
   const commitQueue = [...commitResults];
   const narrativeQueue = [...narratives];
@@ -189,6 +196,16 @@ function createHarness({
         authority.worldCommitCount += 1;
       }
       return result;
+    },
+
+    async resumePlayerRandomness(authenticatedContext, randomnessId) {
+      trace.push({
+        boundary: "authority",
+        operation: "resumePlayerRandomness",
+        principalId: trustedPrincipalId(authenticatedContext),
+        randomnessId,
+      });
+      return scriptedValue(resumeQueue, "authority.resumePlayerRandomness");
     },
 
     async publishDelivery(authenticatedContext, publication) {
@@ -428,6 +445,48 @@ test("direct success commits before narration and publishes only the observer pr
   assert.equal(narration.request.projection, ALICE_AUDIENCE_PROJECTION);
 });
 
+test("a player's roll gesture resumes the frozen intent after an NPC mechanical stage", async () => {
+  const rollInput = Object.freeze({
+    kind: "roll",
+    submissionId: "submission:roll-player-save",
+    randomnessId: "randomness:player-save",
+  });
+  const resumedPrepared = Object.freeze({
+    ...PREPARED,
+    phase: "playerIntent",
+    resumedActionInput: INTENT,
+    resumedPrincipalContext: { principal: TRUSTED_PRINCIPAL },
+  });
+  const harness = createHarness({
+    resumeResults: [{ kind: "continue", prepared: resumedPrepared }],
+  });
+
+  const outcome = await handleRoomAction({
+    ...harness.context,
+    principal: CLICKING_PRINCIPAL,
+  }, rollInput);
+
+  assert.equal(outcome.kind, "committed");
+  assert.deepEqual(operations(harness.trace), [
+    "authority.resumePlayerRandomness",
+    "kp.propose",
+    "authority.commit",
+    "kp.narrate",
+    "authority.publishDelivery",
+    "authority.observe",
+  ]);
+  assert.deepEqual(calls(harness.trace, "kp", "propose")[0].request.input, INTENT);
+  assert.equal(calls(harness.trace, "authority", "prepare").length, 0);
+  assert.equal(calls(harness.trace, "authority", "resumePlayerRandomness")[0].randomnessId,
+    rollInput.randomnessId);
+  assert.equal(
+    calls(harness.trace, "authority", "resumePlayerRandomness")[0].principalId,
+    CLICKING_PRINCIPAL.id,
+  );
+  assert.equal(calls(harness.trace, "authority", "commit")[0].principalId,
+    TRUSTED_PRINCIPAL.id);
+});
+
 test("an authenticated combat or consent answer bypasses KP proposal and preserves the player's exact choice", async () => {
   const answer = Object.freeze({ kind: "cancel" });
   const input = Object.freeze({
@@ -576,7 +635,11 @@ test("one audience failure does not turn another viewer's published response int
       ? { ...COMMITTED_AUTHORITY_RESULT, rootActionId: PREPARED.rootActionId, deliveryPlan }
       : PREPARED,
     commitResults: [{ ...COMMITTED_AUTHORITY_RESULT, deliveryPlan }],
-    narratives: [aliceNarration, new Error("Bob narration model timeout"), bobRetryNarration],
+    narratives: [
+      aliceNarration,
+      Object.assign(new Error("Bob narration model timeout"), { code: "modelTransient" }),
+      bobRetryNarration,
+    ],
     publicationResults: [
       { kind: "published", deliveryIds: [DELIVERY.deliveryId] },
       { kind: "published", deliveryIds: ["delivery:open-door:bob"] },

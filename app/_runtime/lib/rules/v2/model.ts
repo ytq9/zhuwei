@@ -96,6 +96,94 @@ export type CharacterLoadoutRecord = {
   speedFeet: number;
   equipped: Record<string, string>;
   backpack: Array<{ itemId: string; quantity: number }>;
+  /**
+   * Per-owner identities for non-stackable mechanical equipment.  Bare item
+   * ids in `equipped`/`backpack` remain the pinned standard-gear catalog for
+   * older rooms and ordinary player inventories.  Entries here make a
+   * template item an independent runtime object whose frozen source and
+   * condition survive transfer without turning the loadout into a second
+   * definition catalog.
+   */
+  mechanicalItems?: Record<string, {
+    sourceKind: "standardGear" | "npcMechanicalItemDefinition";
+    definitionRef: string;
+    status: "usable" | "broken";
+  }>;
+};
+
+export type SocialInfluenceDegree =
+  | "strongFailure"
+  | "failure"
+  | "limitedSuccess"
+  | "fullSuccess"
+  | "strongSuccess";
+
+export type SocialClaimSemantics = {
+  schema: "zhuwei.social-claim-semantics/v1";
+  targetNpcRef: string;
+  /** Existing active topic this utterance is trying to de-escalate. This is
+   * separate from the new offer/thread created for the current utterance. */
+  addressedThreadRef: string | null;
+  influenceGoal:
+    | "beBelieved"
+    | "deemphasize"
+    | "cooperate"
+    | "disclose"
+    | "permit"
+    | "deter"
+    | "other";
+  desiredBehavior: string;
+  /** Evidence explicitly offered with this claim. Merely appearing in the KP
+   * basis closure does not make a reference evidence for the social check. */
+  evidenceRefs: string[];
+  assertion: null | {
+    subjectRef: string;
+    predicate:
+      | "isA"
+      | "affiliatedWith"
+      | "authorizedBy"
+      | "possesses"
+      | "knowsAbout"
+      | "performed"
+      | "intends"
+      | "relatedTo"
+      | "locatedAt";
+    polarity: "affirm" | "deny" | "question";
+    object: {
+      referenceKind: "existing";
+      ref: string;
+    } | {
+      referenceKind: "unresolvedLabel";
+      label: string;
+    };
+  };
+  topicFingerprint: Sha256Ref;
+};
+
+export type NpcSocialMechanicsRecord = {
+  abilityScores: Record<"str" | "dex" | "con" | "int" | "wis" | "cha", number>;
+  proficiencyBonus: number;
+  skillModifiers: Record<string, number>;
+  initialTrust: number;
+  authorityModifier: number;
+  stakesSensitivity: number;
+  maximumInfluenceDegree: Extract<
+    SocialInfluenceDegree,
+    "limitedSuccess" | "fullSuccess" | "strongSuccess"
+  >;
+};
+
+export type SocialNpcResponse = {
+  mode: "reaction" | "sourceBacked" | "commitment";
+  reactionKind: "acknowledge" | "decline" | "askClarification" | "redirect" | "silence" | null;
+  minimumDegree: Extract<
+    SocialInfluenceDegree,
+    "limitedSuccess" | "fullSuccess" | "strongSuccess"
+  >;
+  speech: string;
+  /** Facts supporting a factual answer, or stable scope refs bounding a
+   * self-authored commitment. The response remains a SourceClaim either way. */
+  sourceRefs: string[];
 };
 
 export type CharacterRecord = {
@@ -124,6 +212,7 @@ export type CharacterRecord = {
   preparedSpellIds?: string[];
   featureIds?: string[];
   loadout?: CharacterLoadoutRecord;
+  socialMechanics?: NpcSocialMechanicsRecord;
   lastLongRestCompletedAtMicros?: string;
 };
 
@@ -268,7 +357,7 @@ export type SafetyPresentationRecord = {
 export type PendingInputRecord = {
   pendingInputId: string;
   kind: "clarification" | "playerChoice" | "advancementChoice" | "partyInvitation" | "partyMoveConsent"
-    | "groupRestConsent" | "combatChoice";
+    | "groupRestConsent" | "combatChoice" | "socialResolution";
   rootActionId: string;
   controllerCharacterId: string;
   question: string;
@@ -438,6 +527,42 @@ export type CausalActionResolutionPlan = {
   programFactRef: string;
 };
 
+export type SocialResolutionPlan = {
+  schema: "zhuwei.social-resolution-plan/v1";
+  rootActionId: string;
+  actorCharacterId: string;
+  npcCharacterId: string;
+  sourceSceneId: string;
+  programFactRef: string;
+  programHash: string;
+  program: JsonRecord;
+  nodeRef: string;
+  claimRef: string;
+  threadRef: string;
+  pendingInputId: string;
+  claimSemantics: SocialClaimSemantics;
+  successResponse: SocialNpcResponse;
+  durationMicros: string;
+  frozenCheck: FrozenCheck;
+  frozenBoundary: {
+    base: number;
+    npcInsightModifier: number;
+    authorityModifier: number;
+    relationshipModifier: number;
+    evidenceModifier: number;
+    stakesModifier: number;
+    finalDc: number;
+    mutuallyKnownEvidenceRefs: string[];
+  };
+  maximumInfluenceDegree: Extract<
+    SocialInfluenceDegree,
+    "limitedSuccess" | "fullSuccess" | "strongSuccess"
+  >;
+  retryGate: Array<
+    "methodChanged" | "factsChanged" | "positionChanged" | "situationAdvanced"
+  >;
+};
+
 export type ContestResolutionPlan = {
   schema: "zhuwei.contest-resolution-plan/v1";
   initiatorId: string;
@@ -478,6 +603,23 @@ export type AdjudicationPrecedentPayload = {
   runtimeManifestProfile: ProfileRef;
 };
 
+export type ConversationThreadRecord = JsonRecord & {
+  threadRef: string;
+  actorCharacterId: string;
+  npcCharacterId: string;
+  claimRef: string;
+  claimSemantics: SocialClaimSemantics;
+  topicFingerprint: Sha256Ref;
+  claimKind: "sourceClaim";
+  claimTruthStatus: "unresolved";
+  resolution: "direct" | "check";
+  sourceSceneId: string;
+  utterance: string;
+  status: "active" | "deemphasized" | "dormant" | "closed";
+  pendingInputId: string | null;
+  updatedByEventId: string;
+};
+
 export type CampaignRuntimeState = {
   campaign: JsonRecord | null;
   chapters: Record<string, JsonRecord>;
@@ -500,6 +642,7 @@ export type CampaignRuntimeState = {
   stories: Record<string, JsonRecord>;
   epilogues: Record<string, JsonRecord>;
   inheritanceSources: Record<string, JsonRecord>;
+  conversationThreads?: Record<string, ConversationThreadRecord>;
 };
 
 export type InheritanceAuthorization = {
@@ -543,7 +686,8 @@ export type InternalContinuationRecord = {
   continuation: AuthorityContinuation;
   rootActionId: string;
   request: RandomnessRequest;
-  resolutionPlan?: CompoundResolutionPlan | CausalActionResolutionPlan | ContestResolutionPlan | HiddenRealityResolutionPlan;
+  resolutionPlan?: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
+    | ContestResolutionPlan | HiddenRealityResolutionPlan;
 };
 
 export type AuthoritativeWorldState = {
@@ -793,6 +937,83 @@ export type EventPayloadByType = {
     question: string;
     choices: Array<{ choiceId: string; label: string; consequence: string }>;
   };
+  SocialResolutionOffered: {
+    actorCharacterId: string;
+    npcCharacterId: string;
+    pendingInputId: string;
+    claimRef: string;
+    threadRef: string;
+    question: string;
+    planHash: Sha256Ref;
+    plan: SocialResolutionPlan;
+  };
+  SocialResolutionDeclined: {
+    actorCharacterId: string;
+    npcCharacterId: string;
+    pendingInputId: string;
+    claimRef: string;
+    threadRef: string;
+    reason: "acceptedStatusQuo" | "reframed" | "invalidated";
+    disposition: "active" | "deemphasized" | "dormant" | "closed";
+    outcome: string;
+  };
+  SocialDirectResolved: {
+    actorCharacterId: string;
+    npcCharacterId: string;
+    claimRef: string;
+    responseClaimRef: string | null;
+    responseMode: SocialNpcResponse["mode"];
+    responseReaction: SocialNpcResponse["reactionKind"];
+    responseMinimumDegree: SocialNpcResponse["minimumDegree"];
+    sourceRefs: string[];
+    claimSemantics: SocialClaimSemantics;
+    addressedThreadRef: string | null;
+    threadRef: string;
+    immediateBehavior: string;
+    threadDisposition: "active" | "deemphasized" | "dormant" | "closed";
+    outcome: string;
+    planHash: Sha256Ref;
+    plan: SocialResolutionPlan;
+  };
+  SocialCheckResolved: {
+    actorCharacterId: string;
+    npcCharacterId: string;
+    claimRef: string;
+    addressedThreadRef: string | null;
+    addressedThreadDisposition: "active" | "deemphasized" | "dormant" | "closed" | null;
+    responseClaimRef: string | null;
+    responseReached: boolean;
+    responseMode: SocialNpcResponse["mode"] | null;
+    responseReaction: SocialNpcResponse["reactionKind"];
+    responseMinimumDegree: SocialNpcResponse["minimumDegree"];
+    responseSourceRefs: string[];
+    threadRef: string;
+    boundary: number;
+    selectedRoll: number;
+    total: number;
+    margin: number;
+    marginDegree: SocialInfluenceDegree;
+    degree: SocialInfluenceDegree;
+    succeeded: boolean;
+    maximumInfluenceDegree: SocialResolutionPlan["maximumInfluenceDegree"];
+    immediateBehavior: string;
+    threadDisposition: "active" | "deemphasized" | "dormant" | "closed";
+    relationshipBefore: number;
+    relationshipDelta: number;
+    relationshipScore: number;
+    outcome: string;
+  };
+  DynamicEntityMaterialized: {
+    definitionId: string;
+    entityId: string;
+    entityKind: "npc";
+    sourceFactIds: string[];
+    initialKnowledgeFactIds: string[];
+    sceneId: string;
+    sourceTimelineId: string;
+    socialArchetypeRef: string;
+    socialMechanicsHash: Sha256Ref;
+  };
   PendingInputAnswered: {
     actorCharacterId: string;
     pendingInputId: string;
@@ -841,6 +1062,21 @@ export type EventPayloadByType = {
     slot: string;
     itemId: string;
     armorClass: number;
+  };
+  NpcGearChanged: {
+    characterId: string;
+    action: "wear" | "stow";
+    slot: string;
+    itemId: string;
+    armorClass: number;
+    equipmentAbilityRefs: string[];
+  };
+  NpcMechanicalItemStateChanged: {
+    characterId: string;
+    itemId: string;
+    action: "break" | "repair" | "destroy" | "lose";
+    armorClass: number;
+    equipmentAbilityRefs: string[];
   };
   CharacterLoadoutSynchronized: { characterId: string; loadout: CharacterLoadoutRecord };
   CharacterMechanicsSynchronized: { characterId: string; combatEntity: JsonRecord; definitions: JsonRecord[] };
@@ -944,7 +1180,8 @@ export type EventPayloadByType = {
     continuation: AuthorityContinuation;
     purpose: RandomnessRequest["purpose"];
     formula: RandomnessRequest["diceExpression"];
-    resolutionPlan: CompoundResolutionPlan | CausalActionResolutionPlan | ContestResolutionPlan | HiddenRealityResolutionPlan;
+    resolutionPlan: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
+      | ContestResolutionPlan | HiddenRealityResolutionPlan;
   } | { resolution: JsonRecord };
   DiceRolled: {
     randomnessId: string;
@@ -1044,6 +1281,14 @@ export type EventPayloadByType = {
     quantity: number;
     remaining: number;
     purpose: string;
+  };
+  ItemTransferred: {
+    fromCharacterId: string;
+    toCharacterId: string;
+    itemId: string;
+    targetItemId: string;
+    quantity: number;
+    method: string;
   };
   ArtifactMaterialized: {
     artifactId: string;
@@ -1474,6 +1719,7 @@ export type SafeReadModel = {
     invitedCharacterId?: string;
     choiceKind?: string;
     choices?: Array<{ choiceId: string; label: string; consequence: string }>;
+    options?: JsonRecord;
     candidateEntityIds?: string[];
     candidateAbilityRefs?: string[];
     orderedEntityIds?: string[];
@@ -1504,6 +1750,7 @@ export type SafeReadModel = {
   activities?: JsonRecord[];
   unresolvedThreats?: string[];
   sourceClaims?: JsonRecord[];
+  conversationThreads?: JsonRecord[];
   npcPlans?: JsonRecord[];
   adjudicationPrecedents?: JsonRecord[];
   stories?: JsonRecord[];
@@ -1557,6 +1804,7 @@ export type KpSpatialReadModel = {
     subjectId: "kp";
   };
   adjudicationPrecedents?: JsonRecord[];
+  npcMechanicalDefinitions?: Record<string, JsonRecord>;
   spatialEvidence: {
     scenes: Record<string, {
       sceneId: string;
@@ -1564,7 +1812,9 @@ export type KpSpatialReadModel = {
     }>;
     entities: Record<string, {
       id: string;
+      name?: string;
       sceneId: string;
+      mechanicalDefinitionRef?: string;
       position?: unknown;
       footprint?: unknown;
       visibilityPolicyId?: string;

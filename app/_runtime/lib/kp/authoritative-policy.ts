@@ -8,12 +8,14 @@ import { KP_FORM_CATALOG_REGISTRATION } from "./form-catalog";
 import {
   ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
   ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+  ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
 } from "../rules/profiles/manifests";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
 import {
   ACTION_PLAN_ABILITIES,
   ACTION_PLAN_CHECK_MODES,
+  ACTION_PLAN_GEAR_SLOTS,
   ACTION_PLAN_OPERATIONS,
   CAMPAIGN_LIFECYCLE_ACTIONS,
   NARRATION_AGENCY_CLAIM_KINDS,
@@ -34,6 +36,11 @@ const V3_PRIVATE_FORM_KP_POLICY = Object.freeze({
   proposalSchemaVersion: "authoritative-kp-private-form-envelope-v1",
   actionPlanSchemaVersion: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
   narrationSchemaVersion: "authoritative-kp-body-only-narration-v1",
+});
+
+const V5_PRIVATE_FORM_KP_POLICY = Object.freeze({
+  ...V3_PRIVATE_FORM_KP_POLICY,
+  promptPolicyVersion: "authoritative-kp-private-form-context-policy-v2",
 });
 
 const V3_WORKFLOW_REGISTRATION = Object.freeze({
@@ -76,11 +83,28 @@ export const V4_KP_WORKFLOW_MANIFEST = Object.freeze({
  * so existing environment-v3 rooms replay under their original semantics. */
 export const V4_KP_WORKFLOW_MANIFEST_JSON = JSON.stringify(V4_KP_WORKFLOW_MANIFEST);
 
+const V5_WORKFLOW_REGISTRATION = Object.freeze({
+  ...V4_WORKFLOW_REGISTRATION,
+  workflowRef: "authoritative-kp-private-form-context-workflow-v3",
+  runtimeManifestRef: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileId,
+  runtimeManifestHash: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileHash,
+});
+
+export const V5_KP_WORKFLOW_MANIFEST = Object.freeze({
+  ...V5_WORKFLOW_REGISTRATION,
+  workflowHash: stableStructuralHash(V5_WORKFLOW_REGISTRATION),
+});
+
+/** Latest persisted binding, selected only for rooms created after this
+ * version is deployed. Exact V3/V4 strings remain replayable. */
+export const V5_KP_WORKFLOW_MANIFEST_JSON = JSON.stringify(V5_KP_WORKFLOW_MANIFEST);
+
 export function runtimeManifestForExactV3KpWorkflow(
   value: unknown,
 ): RuntimeProfileManifest | undefined {
   if (value === V3_KP_WORKFLOW_MANIFEST_JSON) return ENVIRONMENT_RUNTIME_PROFILE_MANIFEST;
   if (value === V4_KP_WORKFLOW_MANIFEST_JSON) return ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST;
+  if (value === V5_KP_WORKFLOW_MANIFEST_JSON) return ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
   return undefined;
 }
 
@@ -115,6 +139,20 @@ export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
   // Only rooms explicitly created with the workflow manifest below use the
   // private Form/Context/Body-only protocol. Existing bindings stay byte-for-
   // byte on their historical profile and ActionPlan semantics.
+  Object.freeze({
+    ...V5_PRIVATE_FORM_KP_POLICY,
+    provider: "deepseek" as const,
+    modelId: AUTHORITATIVE_KP_MODEL,
+    modelRevision: "deepseek-v4-flash-0731",
+    modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-forms-v2",
+  }),
+  Object.freeze({
+    ...V5_PRIVATE_FORM_KP_POLICY,
+    provider: "deepseek" as const,
+    modelId: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
+    modelRevision: "deepseek-v4-pro",
+    modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-forms-v2",
+  }),
   Object.freeze({
     ...V3_PRIVATE_FORM_KP_POLICY,
     provider: "deepseek" as const,
@@ -159,6 +197,13 @@ export function isV3AuthoritativeKpProfile(
   return profile.actionPlanSchemaVersion === CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
     && profile.proposalSchemaVersion === V3_PRIVATE_FORM_KP_POLICY.proposalSchemaVersion
     && profile.narrationSchemaVersion === "authoritative-kp-body-only-narration-v1";
+}
+
+export function isSocialResolutionKpProfile(
+  profile: AuthoritativeKpProfile,
+): boolean {
+  return profile.promptPolicyVersion === V5_PRIVATE_FORM_KP_POLICY.promptPolicyVersion
+    && isV3AuthoritativeKpProfile(profile);
 }
 
 export function authoritativeKpProfileByModelId(
@@ -521,11 +566,16 @@ const STRICT_RESOLUTION_OPERATIONS = new Set([
 ]);
 
 const playerReservedActionPlanOperations = ACTION_PLAN_OPERATIONS.filter((operation) =>
-  !STRICT_RESOLUTION_OPERATIONS.has(operation) && operation !== "advanceFactionPlan");
+  !STRICT_RESOLUTION_OPERATIONS.has(operation)
+  && operation !== "advanceFactionPlan"
+  && operation !== "transferItem"
+  && operation !== "changeNpcGear");
 const npcReservedActionPlanOperations = ACTION_PLAN_OPERATIONS.filter((operation) =>
   !STRICT_RESOLUTION_OPERATIONS.has(operation)
   && operation !== "resolveNoncombatContest"
-  && operation !== "advanceCampaignLifecycle");
+  && operation !== "advanceCampaignLifecycle"
+  && operation !== "transferItem"
+  && operation !== "changeNpcGear");
 
 const reservedActionPlanSchema = {
   type: "object",
@@ -801,6 +851,44 @@ const unchangedRetryFailedActionPlanSchema = {
   required: ["operation", "precedentRef"],
 };
 
+const transferItemActionPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: { const: "transferItem" },
+    targetEntityRef: { type: "string", minLength: 1, maxLength: 240 },
+    itemRef: { type: "string", minLength: 1, maxLength: 240 },
+    amount: { type: "integer", minimum: 1, maximum: 1_000_000 },
+  },
+  required: ["operation", "targetEntityRef", "itemRef", "amount"],
+};
+
+const changeNpcGearActionPlanSchema = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        operation: { const: "changeNpcGear" },
+        gearAction: { const: "wear" },
+        slot: { enum: [...ACTION_PLAN_GEAR_SLOTS] },
+        itemRef: { type: "string", minLength: 1, maxLength: 240 },
+      },
+      required: ["operation", "gearAction", "slot", "itemRef"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        operation: { const: "changeNpcGear" },
+        gearAction: { const: "stow" },
+        slot: { enum: [...ACTION_PLAN_GEAR_SLOTS] },
+      },
+      required: ["operation", "gearAction", "slot"],
+    },
+  ],
+};
+
 const actionPlanSchema = {
   anyOf: [
     { $ref: "#/$def/directConsequencesActionPlan" },
@@ -808,6 +896,7 @@ const actionPlanSchema = {
     { $ref: "#/$def/noncombatSaveActionPlan" },
     { $ref: "#/$def/unchangedRetryFailedActionPlan" },
     { $ref: "#/$def/retryFailedActionPlan" },
+    { $ref: "#/$def/transferItemActionPlan" },
     { $ref: "#/$def/playerReservedActionPlan" },
   ],
 };
@@ -833,6 +922,8 @@ const npcActionPlanSchema = {
     { $ref: "#/$def/directConsequencesActionPlan" },
     { $ref: "#/$def/noncombatCheckActionPlan" },
     { $ref: "#/$def/npcNoncombatSaveActionPlan" },
+    { $ref: "#/$def/transferItemActionPlan" },
+    { $ref: "#/$def/changeNpcGearActionPlan" },
     { $ref: "#/$def/npcReservedActionPlan" },
   ],
 };
@@ -846,6 +937,8 @@ const proposalSchemaDefinitions = {
   npcNoncombatSaveActionPlan: npcNoncombatSaveActionPlanSchema,
   unchangedRetryFailedActionPlan: unchangedRetryFailedActionPlanSchema,
   retryFailedActionPlan: retryFailedActionPlanSchema,
+  transferItemActionPlan: transferItemActionPlanSchema,
+  changeNpcGearActionPlan: changeNpcGearActionPlanSchema,
   playerReservedActionPlan: reservedActionPlanSchema,
   npcReservedActionPlan: npcReservedActionPlanSchema,
 };
@@ -1189,6 +1282,7 @@ const PROPOSAL_SYSTEM = `你是烛帷中承担叙事权威的真正 KP，不是�
 机械边界：你可以提出 DC、能力/技能、优势劣势依据、时间、资源成本、风险与有限结果范围，但不得提供 dice/faces/骰面、随机结果、WorldEvent、WorldState/state patch、作用域版本、Principal、可信 actor 或运行 Profile。Rules Module 拥有机械权威，Room Authority 拥有随机与提交权。不得在看到诊断后改变玩家目标；若已有骰前冻结内容或骰面，也不得借修订改判或重掷。
 
 mechanicalProposal 使用 authoritative-kp-action-plan-v1：必须是 schema 中 operation 枚举的一项及其闭合语义字段；frozenCosts、success、failure 也只能使用各自 kind 枚举和闭合字段，每个效果数组最多各有一个 moveEntity 和一个 changeHitPoints。不得添加未声明机械键、脚本、状态补丁或事件。开放世界定义只能放在 dynamicMaterializations[].definition，并仍不得携带 actor/principal/profile/state/events/dice/faces。NPC mechanicalProposal 也必须严格服从其独立 schema；NPC 不得替其他实体提交 save，也不得提交 retryFailedAction。缺少字段或组合不合法时必须按 schema 重做，不得自行伪造结果。
+普通物品交接必须使用 transferItem，并精确提交 operation、targetEntityRef、itemRef、amount；itemRef 必须逐字取自行动者投影的 controlledCharacter.loadout.backpack，targetEntityRef 必须是投影中同场的稳定实体 ref。交接只改变权威库存，不代表接收者已经装备或使用物品。NPC 自主换装只能放在该 NPC 的 npcActions[].mechanicalProposal 中，使用 changeNpcGear：wear 精确提交 operation、gearAction、slot、itemRef，stow 精确提交 operation、gearAction、slot；wear 的 itemRef 必须逐字取自该 npcViewer.controlledCharacter.loadout.backpack，slot 只能使用 schema 枚举。不得提交 AC、abilityRefs 或任何派生战斗数值，Rules 会从冻结的 NPC 机械定义和权威装备派生这些效果。v1 语义下，涉及该 NPC 的战斗尚未 concluded 时不得换装。
 当门后内容、身份或其他隐藏现实需要随机决定时，不得先用 dynamicMaterializations 直接宣告结果。必须提交一个完整 hiddenRealityCandidateSet：每项含唯一 candidateId、正整数 hiddenWeight、因果依据、visibility 与可执行 definition；不得遗漏未选候选。Rules 会在请求随机数前整组验证，任一候选非法时整组退回修订。
 重要即兴裁定可用 adjudicationPrecedent 形成可追溯先例：首次为 record；只有事实、做法或版本实质变化时才可用 supersede，并引用 KP 投影中的旧 precedentId 和逐项 materialDifferences。它只是同一 ActionPlan 的冻结注记，不是事件或状态补丁；不得在看到骰面后用它改写原裁定。
 没有待决玩家输入时必须提交一个 mechanicalProposal：无不确定性的叙事与时间后果用 resolveDirectConsequences；确定且有意义的失败用 commitMeaningfulFailure；原样重试用 retryFailedAction；missingPrerequisite/worldLawViolation 若不提交失败后果则用 rejectInfeasibleAction。只有 pendingInput 非 null 时 mechanicalProposal 才必须为 null。directSuccess 可在确实没有风险时令 risk=null；场景暂时没有压力时 pressure 可为空字符串。只有做法与事实均未改变、应由 Rules 依据既有先例拒绝的原样重试，retryFailedAction 才使用仅含 operation/precedentRef 的精确最小形状；只要重试可能执行，就必须同时完整冻结 ability、skill、dc、mode、duration、frozenCosts、success、failure。

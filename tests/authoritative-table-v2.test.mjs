@@ -36,7 +36,8 @@ test("new rooms pin authoritative profiles without creating legacy active state"
   assert.match(create, /authoritativeKpProfileByModelId\(model\)/);
   assert.match(create, /kp_model, kp_model_profile/);
   assert.match(create, /profile\.modelProfileVersion/);
-  assert.match(create, /V4_KP_WORKFLOW_MANIFEST_JSON/);
+  assert.match(create, /V5_KP_WORKFLOW_MANIFEST_JSON/);
+  assert.doesNotMatch(create, /V4_KP_WORKFLOW_MANIFEST_JSON/);
   assert.doesNotMatch(create, /game_states/);
 });
 
@@ -347,6 +348,17 @@ test("authoritative table reads only the viewer projection, experienced transcri
         },
         narrationHistory: ["omit-me"],
       },
+      pendingPlayerRolls: [{
+        id: "randomness:root:17:check",
+        characterId: "character:principal:alice",
+        name: "阿莱莎",
+        kind: "check",
+        ability: "int",
+        skill: "investigation",
+        dc: 12,
+        reason: "为「辨认粉笔记号」进行检定",
+        dice: "1d20",
+      }],
       delivery: {
         kind: "current",
         frame: {
@@ -434,6 +446,18 @@ test("authoritative table reads only the viewer projection, experienced transcri
     rootActionId: "root:combat-conclusion",
     question: "是否接受当前遭遇的收束方式？",
     choiceKind: "encounterConclusion",
+  }]);
+  assert.deepEqual(projected.pendingRolls, [{
+    id: "randomness:root:17:check",
+    userId: "principal:alice",
+    name: "阿莱莎",
+    kind: "check",
+    ability: "int",
+    skill: "investigation",
+    dc: 12,
+    reason: "为「辨认粉笔记号」进行检定",
+    dice: "1d20",
+    authoritative: true,
   }]);
   assert.deepEqual(projected.clues, [{
     id: "knowledge:chalk",
@@ -1364,11 +1388,14 @@ test("every authoritative table button returns before legacy state, dice, and me
   assert.match(resolve, /submissionId\?: string/);
   const resolveV2 = resolve.indexOf("roomInfo?.ruleset_version === AUTHORITATIVE_RULESET_VERSION");
   const resolveLegacy = resolve.indexOf("roomInfo?.ruleset_version === RULESET_VERSION", resolveV2 + 1);
-  assert.notEqual(resolveV2, -1, "resolveRoll authoritative rejection is missing");
+  assert.notEqual(resolveV2, -1, "resolveRoll authoritative branch is missing");
   assert.notEqual(resolveLegacy, -1, "resolveRoll legacy boundary is missing");
   const resolveBranch = resolve.slice(resolveV2, resolveLegacy);
-  assert.match(resolveBranch, /客户端不能提供骰面/);
-  assert.doesNotMatch(resolveBranch, /rollDie|runAuthoritativeRoomAction|game_states/);
+  assert.match(resolveBranch, /submitAuthoritativeTableAction/);
+  assert.match(resolveBranch, /kind: "roll"/);
+  assert.match(resolveBranch, /randomnessId: data\.rollId/);
+  assert.match(resolveBranch, /不接受客户端追加骰值或加值/);
+  assert.doesNotMatch(resolveBranch, /rollDie|game_states/);
 
   const model = exportedSection(server, "setRoomModel", "lockCharacter");
   const modelV2 = model.indexOf("AUTHORITATIVE_RULESET_VERSION");

@@ -9,6 +9,8 @@ import {
   isAbilityDefinitionCandidate,
 } from "../profiles/ability-compiler";
 import type { ProfileRef, RuntimeProfileManifest } from "../profiles/types";
+import { itemById } from "../../dnd/gear";
+import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import { resolveFixedDamage } from "./damage";
 import { createEventTransition, createScopeProof } from "./events";
 import type {
@@ -66,6 +68,11 @@ import {
   campaignContinuityManifest,
   type ChapterActivityTransition,
 } from "./campaign-continuity";
+import {
+  NPC_MECHANICAL_ITEM_KIND,
+  NPC_MECHANICAL_TEMPLATE_KIND,
+  transferredNpcMechanicalItemId,
+} from "./npc-mechanics";
 import {
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
   hasExactKeys,
@@ -572,7 +579,17 @@ function changeResource(profiles: RuntimeProfileManifest, state: AuthoritativeWo
   ) return rejected("invalidRulesInput", "Resource change parameters are unavailable.");
   const before = actor.resources?.[input.resourceId] ?? 0;
   const after = before + Number(input.delta);
-  if (after < 0) return rejected("insufficientResource", "Resource change would make the resource negative.");
+  const combatEntity = state.combatRuntime.entities[actor.id];
+  let combatPool: JsonRecord | undefined;
+  if (isRecord(combatEntity)
+    && isNonEmptyString(combatEntity.mechanicalDefinitionRef)
+    && isRecord(combatEntity.resources)) {
+    const candidate = combatEntity.resources[input.resourceId as string];
+    if (isRecord(candidate)) combatPool = candidate;
+  }
+  if (after < 0 || (combatPool !== undefined && after > Number(combatPool.maximum))) {
+    return rejected("insufficientResource", "Resource change would exceed its frozen bounds.");
+  }
   return sequence("committed", profiles, state, root, [{
     eventType: "ResourceChanged",
     payload: {
@@ -597,6 +614,7 @@ function useItem(profiles: RuntimeProfileManifest, state: AuthoritativeWorldStat
     root === undefined
     || actor === undefined
     || item === undefined
+    || actor.loadout?.mechanicalItems?.[String(input.itemId)] !== undefined
     || !isNonEmptyString(input.itemId)
     || !isNonEmptyString(input.purpose)
     || !Number.isSafeInteger(input.quantity)
@@ -612,6 +630,98 @@ function useItem(profiles: RuntimeProfileManifest, state: AuthoritativeWorldStat
       remaining: item.quantity - Number(input.quantity),
       purpose: input.purpose,
     },
+  }]);
+}
+
+function transferItem(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!npcMechanicsProfileEnabled(profiles.extensions)
+    || !hasExactKeys(input, [
+      "fromCharacterId",
+      "itemId",
+      "kind",
+      "method",
+      "proposalId",
+      "quantity",
+      "toCharacterId",
+    ])) return rejected("invalidRulesInput", "Item transfer input is not canonical.");
+  const root = rootAction(state, input);
+  const from = character(state, input.fromCharacterId);
+  const to = character(state, input.toCharacterId);
+  const sourceItem = from?.loadout?.backpack.find(({ itemId }) => itemId === input.itemId);
+  const sourceMechanicalItem = isNonEmptyString(input.itemId)
+    ? from?.loadout?.mechanicalItems?.[input.itemId]
+    : undefined;
+  const mechanicalNpcInvolved = [from, to].some((entry) => {
+    if (entry?.kind !== "npc") return false;
+    const combat = state.combatRuntime.entities[entry.id];
+    return isRecord(combat) && isNonEmptyString(combat.mechanicalDefinitionRef);
+  });
+  const targetCombat = to === undefined ? undefined : state.combatRuntime.entities[to.id];
+  const targetIsMechanicalNpc = to?.kind === "npc"
+    && isRecord(targetCombat)
+    && isNonEmptyString(targetCombat.mechanicalDefinitionRef);
+  const standardItem = isNonEmptyString(input.itemId) ? itemById(input.itemId) : undefined;
+  const instantiateStandardEquipment = sourceMechanicalItem === undefined
+    && targetIsMechanicalNpc
+    && standardItem !== undefined
+    && standardItem.wear !== "pack"
+    && standardItem.wear !== "ammo";
+  const targetItemId = instantiateStandardEquipment && root !== undefined
+    ? transferredNpcMechanicalItemId(to!.id, String(input.itemId), root)
+    : String(input.itemId);
+  const activeEncounter = [from?.id, to?.id].some((characterId) => characterId !== undefined
+    && Object.values(state.combatRuntime.encounters).some((encounter) =>
+      encounter.status !== "concluded"
+      && Array.isArray(encounter.participantEntityIds)
+      && encounter.participantEntityIds.includes(characterId)));
+  if (root === undefined
+    || from === undefined
+    || to === undefined
+    || from.id === to.id
+    || from.tenureStatus !== "active"
+    || to.tenureStatus !== "active"
+    || from.sceneId !== to.sceneId
+    || !isNonEmptyString(input.itemId)
+    || !isNonEmptyString(input.method)
+    || !Number.isSafeInteger(input.quantity)
+    || Number(input.quantity) <= 0
+    || sourceItem === undefined
+    || sourceItem.quantity < Number(input.quantity)
+    || to.loadout === undefined
+    || (sourceMechanicalItem !== undefined && !targetIsMechanicalNpc)
+    || (sourceMechanicalItem !== undefined && (
+      Number(input.quantity) !== 1
+      || sourceItem.quantity !== 1
+      || to.loadout.mechanicalItems?.[targetItemId] !== undefined
+    ))
+    || (instantiateStandardEquipment && (
+      Number(input.quantity) !== 1
+      || to.loadout.mechanicalItems?.[targetItemId] !== undefined
+      || to.loadout.backpack.some(({ itemId }) => itemId === targetItemId)
+      || Object.values(to.loadout.equipped).includes(targetItemId)
+    ))
+    || !mechanicalNpcInvolved
+    || activeEncounter) {
+    return rejected(
+      activeEncounter ? "pendingInputUnresolved" : "privateOrUnknownReference",
+      "The item cannot be transferred between these authoritative inventories.",
+    );
+  }
+  return sequence("committed", profiles, state, root, [{
+    eventType: "ItemTransferred",
+    payload: {
+      fromCharacterId: from.id,
+      toCharacterId: to.id,
+      itemId: input.itemId,
+      targetItemId,
+      quantity: Number(input.quantity),
+      method: input.method,
+    },
+    visibilityPolicyId: "visibility:scene-observers",
   }]);
 }
 
@@ -1728,6 +1838,13 @@ function registerDefinition(profiles: RuntimeProfileManifest, state: Authoritati
       visibilityPolicyId: "visibility:room-authority-only",
       secrecy: "internal",
     }]);
+  }
+  if (definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
+    || definition.definitionKind === NPC_MECHANICAL_ITEM_KIND) {
+    return rejected(
+      "unsupportedOperation",
+      "NPC mechanical templates must be frozen through encounter materialization.",
+    );
   }
   if (!["srd5.1-2014", "zhuwei-product-ruling"].includes(String(definition.rulesBasis))) {
     return rejected("unsupportedRulesBasis", "Dynamic definition requires an approved 2014 or product basis.");
@@ -3098,6 +3215,7 @@ export function stepCampaignWorld(
     case "resolveSavingThrow": return resolveSavingThrow(profiles, state, input);
     case "useResource": return useResource(profiles, state, input);
     case "changeResource": return changeResource(profiles, state, input);
+    case "transferItem": return transferItem(profiles, state, input);
     case "useItem": return useItem(profiles, state, input);
     case "acquireArtifact": return acquireArtifact(profiles, state, input);
     case "useArtifact": return useArtifact(profiles, state, input);

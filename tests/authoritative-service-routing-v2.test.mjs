@@ -54,13 +54,13 @@ test("authoritative membership and character changes commit Room authority befor
     /export const setGear[^]*callWithStableTableSubmission\("setGear"/,
     "gear transport must preserve one submission id across retries",
   );
-  const table = await source("app/_runtime/components/play-table.tsx");
-  const gearHookStart = table.indexOf("function useGearAct");
-  const gearHookEnd = table.indexOf("function GearSlots", gearHookStart);
+  const inventory = await source("app/_runtime/components/inventory-panel.tsx");
+  const gearHookStart = inventory.indexOf("function useGearActions");
+  const gearHookEnd = inventory.indexOf("function InventorySection", gearHookStart);
   assert.notEqual(gearHookStart, -1, "gear UI hook is missing");
   assert.notEqual(gearHookEnd, -1, "gear UI hook boundary is missing");
   assert.match(
-    table.slice(gearHookStart, gearHookEnd),
+    inventory.slice(gearHookStart, gearHookEnd),
     /invalidateQueries\(\{ queryKey: \["table", code\] \}\)/,
     "successful gear commits must refresh the DO-backed table projection",
   );

@@ -6,12 +6,21 @@ import type {
   JsonRecord,
   KnowledgeRecord,
 } from "./model";
+import { itemById } from "../../dnd/gear";
 import { endCharacterTenure } from "./character-lifecycle";
 import { actorPlanNpcIsAvailable, actorPlanPremiseIsAvailable } from "./actor-plans";
 import {
   isDefinitionRegisteredAbilityPayload,
   registeredAbilityRecord,
 } from "../profiles/ability-compiler";
+import {
+  isNpcMechanicalItemDefinition,
+  isNpcMechanicalTemplateDefinition,
+  NPC_MECHANICAL_ITEM_KIND,
+  NPC_MECHANICAL_TEMPLATE_KIND,
+  synchronizeCombatItemResources,
+  transferredNpcMechanicalItemId,
+} from "./npc-mechanics";
 import { MAX_EXPERIENCE_AWARD } from "./character-progression";
 import {
   campaignContinuityManifestForSchema,
@@ -39,6 +48,7 @@ export const CAMPAIGN_EVENT_TYPES = [
   "ResourceUsed",
   "ResourceChanged",
   "ItemUsed",
+  "ItemTransferred",
   "ArtifactMaterialized",
   "ArtifactAcquired",
   "ArtifactUsed",
@@ -91,6 +101,25 @@ export const CAMPAIGN_EVENT_TYPES = [
   "InheritanceTransferred",
 ] as const satisfies readonly EventType[];
 
+function synchronizeMechanicalNpcResource(
+  state: AuthoritativeWorldState,
+  characterId: string,
+  resourceId: string,
+  before: number,
+  after: number,
+): void {
+  const combatEntity = state.combatRuntime.entities[characterId];
+  if (!isRecord(combatEntity)
+    || !isNonEmptyString(combatEntity.mechanicalDefinitionRef)) return;
+  const pool = isRecord(combatEntity.resources)
+    ? combatEntity.resources[resourceId]
+    : undefined;
+  if (!isRecord(pool) || Number(pool.current) !== before) {
+    throw new TypeError("combat NPC resource cache mismatch");
+  }
+  pool.current = String(after);
+}
+
 type CampaignEventType = typeof CAMPAIGN_EVENT_TYPES[number];
 
 const PAYLOAD_KEYS: Record<CampaignEventType, readonly string[]> = {
@@ -140,6 +169,14 @@ const PAYLOAD_KEYS: Record<CampaignEventType, readonly string[]> = {
   ResourceUsed: ["amount", "characterId", "purpose", "resourceId"],
   ResourceChanged: ["after", "before", "characterId", "delta", "reason", "resourceId"],
   ItemUsed: ["characterId", "itemId", "purpose", "quantity", "remaining"],
+  ItemTransferred: [
+    "fromCharacterId",
+    "itemId",
+    "method",
+    "quantity",
+    "targetItemId",
+    "toCharacterId",
+  ],
   ArtifactMaterialized: [
     "artifactId",
     "definitionRef",
@@ -442,8 +479,14 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
   }
   const type = eventType as CampaignEventType;
   if (type === "DefinitionRegistered") {
-    return isDefinitionRegisteredAbilityPayload(value)
-      || (hasExactKeys(value, ["definition"]) && isRecord(value.definition));
+    if (isDefinitionRegisteredAbilityPayload(value)) return true;
+    if (!hasExactKeys(value, ["definition"]) || !isRecord(value.definition)) return false;
+    if (value.definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND) {
+      return isNpcMechanicalTemplateDefinition(value.definition);
+    }
+    return value.definition.definitionKind === NPC_MECHANICAL_ITEM_KIND
+      ? isNpcMechanicalItemDefinition(value.definition)
+      : true;
   }
   if (type === "NpcPlanFormed") return validNpcPlanFormed(value);
   if (!hasExactKeys(value, PAYLOAD_KEYS[type])) {
@@ -557,6 +600,17 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
       return allRequiredStrings(value, ["characterId", "itemId", "purpose"])
         && Number.isSafeInteger(value.quantity) && Number(value.quantity) > 0
         && Number.isSafeInteger(value.remaining) && Number(value.remaining) >= 0;
+    case "ItemTransferred":
+      return allRequiredStrings(value, [
+        "fromCharacterId",
+        "itemId",
+        "method",
+        "targetItemId",
+        "toCharacterId",
+      ])
+        && value.fromCharacterId !== value.toCharacterId
+        && Number.isSafeInteger(value.quantity)
+        && Number(value.quantity) > 0;
     case "ArtifactMaterialized":
       return allRequiredStrings(value, [
         "artifactId",
@@ -900,7 +954,15 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const payload = event.payload as EventPayloadByType["ResourceUsed"];
       const resources = state.entities[payload.characterId]?.resources;
       if (resources === undefined || (resources[payload.resourceId] ?? 0) < payload.amount) throw new TypeError("resource unavailable");
+      const before = resources[payload.resourceId];
       resources[payload.resourceId] -= payload.amount;
+      synchronizeMechanicalNpcResource(
+        state,
+        payload.characterId,
+        payload.resourceId,
+        before,
+        resources[payload.resourceId],
+      );
       return true;
     }
     case "ResourceChanged": {
@@ -910,11 +972,22 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         throw new TypeError("resource change precondition mismatch");
       }
       resources[payload.resourceId] = payload.after;
+      synchronizeMechanicalNpcResource(
+        state,
+        payload.characterId,
+        payload.resourceId,
+        payload.before,
+        payload.after,
+      );
       return true;
     }
     case "ItemUsed": {
       const payload = event.payload as EventPayloadByType["ItemUsed"];
       const backpack = state.entities[payload.characterId]?.loadout?.backpack;
+      if (state.entities[payload.characterId]?.loadout?.mechanicalItems?.[payload.itemId]
+        !== undefined) {
+        throw new TypeError("mechanical item instances require an explicit lifecycle transition");
+      }
       const item = backpack?.find((entry) => entry.itemId === payload.itemId);
       if (item === undefined || item.quantity - payload.quantity !== payload.remaining) {
         throw new TypeError("item quantity precondition mismatch");
@@ -932,10 +1005,116 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       ) throw new TypeError("combat item cache does not match authoritative inventory");
       if (payload.remaining === 0) {
         backpack!.splice(backpack!.indexOf(item), 1);
+        const loadout = state.entities[payload.characterId]!.loadout!;
+        if (loadout.equipped.ammo === payload.itemId) delete loadout.equipped.ammo;
       } else {
         item.quantity = payload.remaining;
       }
-      if (isRecord(combatItem)) combatItem.current = String(payload.remaining);
+      if (combatEntity !== undefined) {
+        synchronizeCombatItemResources(
+          combatEntity,
+          state.entities[payload.characterId]!.loadout!,
+        );
+      }
+      return true;
+    }
+    case "ItemTransferred": {
+      const payload = event.payload as EventPayloadByType["ItemTransferred"];
+      const from = state.entities[payload.fromCharacterId];
+      const to = state.entities[payload.toCharacterId];
+      const fromCombat = state.combatRuntime.entities[payload.fromCharacterId];
+      const toCombat = state.combatRuntime.entities[payload.toCharacterId];
+      const mechanicalNpcInvolved = (from?.kind === "npc"
+        && isRecord(fromCombat)
+        && isNonEmptyString(fromCombat.mechanicalDefinitionRef))
+        || (to?.kind === "npc"
+          && isRecord(toCombat)
+          && isNonEmptyString(toCombat.mechanicalDefinitionRef));
+      const activeEncounter = [from?.id, to?.id].some((characterId) => characterId !== undefined
+        && Object.values(state.combatRuntime.encounters).some((encounter) =>
+          encounter.status !== "concluded"
+          && Array.isArray(encounter.participantEntityIds)
+          && encounter.participantEntityIds.includes(characterId)));
+      if (from?.tenureStatus !== "active"
+        || to?.tenureStatus !== "active"
+        || from.sceneId !== to.sceneId
+        || from.loadout === undefined
+        || to.loadout === undefined
+        || !mechanicalNpcInvolved
+        || activeEncounter) {
+        throw new TypeError("item transfer participants are unavailable");
+      }
+      const sourceItem = from.loadout.backpack.find(({ itemId }) => itemId === payload.itemId);
+      if (sourceItem === undefined || sourceItem.quantity < payload.quantity) {
+        throw new TypeError("transferred item is unavailable");
+      }
+      const mechanicalItem = from.loadout.mechanicalItems?.[payload.itemId];
+      const standardItem = itemById(payload.itemId);
+      const instantiateStandardEquipment = mechanicalItem === undefined
+        && to.kind === "npc"
+        && isRecord(toCombat)
+        && isNonEmptyString(toCombat.mechanicalDefinitionRef)
+        && standardItem !== undefined
+        && standardItem.wear !== "pack"
+        && standardItem.wear !== "ammo";
+      const expectedTargetItemId = instantiateStandardEquipment
+        ? transferredNpcMechanicalItemId(
+            to.id,
+            payload.itemId,
+            event.rootActionId,
+          )
+        : payload.itemId;
+      if (payload.targetItemId !== expectedTargetItemId
+        || (mechanicalItem !== undefined && !(to.kind === "npc"
+          && isRecord(toCombat)
+          && isNonEmptyString(toCombat.mechanicalDefinitionRef)))) {
+        throw new TypeError("transferred item identity is not canonical");
+      }
+      if (mechanicalItem !== undefined && (
+        payload.quantity !== 1
+        || sourceItem.quantity !== 1
+        || to.loadout.mechanicalItems?.[payload.targetItemId] !== undefined
+      )) {
+        throw new TypeError("mechanical item instances cannot be stacked or duplicated");
+      }
+      if (instantiateStandardEquipment && (
+        payload.quantity !== 1
+        || to.loadout.mechanicalItems?.[payload.targetItemId] !== undefined
+        || to.loadout.backpack.some(({ itemId }) => itemId === payload.targetItemId)
+        || Object.values(to.loadout.equipped).includes(payload.targetItemId)
+      )) {
+        throw new TypeError("standard equipment must enter a mechanical NPC as one instance");
+      }
+      sourceItem.quantity -= payload.quantity;
+      if (sourceItem.quantity === 0) {
+        from.loadout.backpack.splice(from.loadout.backpack.indexOf(sourceItem), 1);
+        if (from.loadout.equipped.ammo === payload.itemId) delete from.loadout.equipped.ammo;
+      }
+      const targetItem = to.loadout.backpack.find(({ itemId }) =>
+        itemId === payload.targetItemId);
+      if (targetItem === undefined) {
+        to.loadout.backpack.push({ itemId: payload.targetItemId, quantity: payload.quantity });
+        to.loadout.backpack.sort((left, right) => left.itemId.localeCompare(right.itemId));
+      } else {
+        targetItem.quantity += payload.quantity;
+      }
+      if (mechanicalItem !== undefined) {
+        delete from.loadout.mechanicalItems![payload.itemId];
+        if (Object.keys(from.loadout.mechanicalItems!).length === 0) {
+          delete from.loadout.mechanicalItems;
+        }
+        to.loadout.mechanicalItems ??= {};
+        to.loadout.mechanicalItems[payload.targetItemId] = structuredClone(mechanicalItem);
+      } else if (instantiateStandardEquipment) {
+        to.loadout.mechanicalItems ??= {};
+        to.loadout.mechanicalItems[payload.targetItemId] = {
+          sourceKind: "standardGear",
+          definitionRef: payload.itemId,
+          status: "usable",
+        };
+      }
+      synchronizeCombatItemResources(fromCombat, from.loadout);
+      synchronizeCombatItemResources(toCombat, to.loadout);
       return true;
     }
     case "ArtifactMaterialized": {
@@ -1121,7 +1300,14 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "DefinitionRegistered": {
       const payload = event.payload as EventPayloadByType["DefinitionRegistered"];
       const definitionId = payload.definition.definitionId;
-      if (!isNonEmptyString(definitionId) || definitionId in runtime.definitions) throw new TypeError("definition already registered");
+      if (!isNonEmptyString(definitionId)
+        || definitionId in runtime.definitions
+        || (payload.definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
+          && !isNpcMechanicalTemplateDefinition(payload.definition))
+        || (payload.definition.definitionKind === NPC_MECHANICAL_ITEM_KIND
+          && !isNpcMechanicalItemDefinition(payload.definition))) {
+        throw new TypeError("definition already registered or malformed");
+      }
       runtime.definitions[definitionId] = isDefinitionRegisteredAbilityPayload(payload)
         ? registeredAbilityRecord(payload)
         : structuredClone(payload.definition);

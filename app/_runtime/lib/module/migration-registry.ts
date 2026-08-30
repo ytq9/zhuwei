@@ -7,7 +7,11 @@ export type PinnedModuleRef = {
   profileHash: PinnedSha256Ref;
 };
 
-export type PinnedModuleVersion = "legacy-anchor-v1" | "legacy-anchor-v2" | "tactical-map-v1";
+export type PinnedModuleVersion =
+  | "legacy-anchor-v1"
+  | "legacy-anchor-v2"
+  | "tactical-map-v1"
+  | "social-resolution-v1";
 
 export type PinnedModuleMigrationDescriptor = {
   moduleId: string;
@@ -32,6 +36,10 @@ const MODULE_REFS: Readonly<Record<string, PinnedModuleRef>> = Object.freeze({
   "black-oak-will@tactical-map-v1": Object.freeze({
     profileId: "module:black-oak-will:tactical-map-v1",
     profileHash: "sha256:df49e12260b590d339961c2a19b3ddc5f59741d2a8521d4d97dbf151d9177947",
+  }),
+  "black-oak-will@social-resolution-v1": Object.freeze({
+    profileId: "module:black-oak-will:social-resolution-v1",
+    profileHash: "sha256:2e95ddb63b114ef1fede4fa4f1894616fa8267c51be6c701d2d9f797ff09bdd0",
   }),
 });
 
@@ -143,7 +151,8 @@ export function pinnedModuleRef(
 export function isPinnedModuleVersion(value: string): value is PinnedModuleVersion {
   return value === "legacy-anchor-v1"
     || value === "legacy-anchor-v2"
-    || value === "tactical-map-v1";
+    || value === "tactical-map-v1"
+    || value === "social-resolution-v1";
 }
 
 export function pinnedModuleMigrationDescriptor(

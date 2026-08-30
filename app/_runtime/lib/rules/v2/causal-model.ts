@@ -385,6 +385,7 @@ export function isCausalProgramFactValue(value: unknown): boolean {
 }
 
 export function isCausalActionPlanMarker(value: unknown): boolean {
+  if (isRecord(value) && value.schema === "zhuwei.social-resolution-plan/v1") return false;
   return isRecord(value) && (
     value.schema === "zhuwei.causal-action-resolution-plan/v3"
     || value.languageRef === "causal-action-program-v3"

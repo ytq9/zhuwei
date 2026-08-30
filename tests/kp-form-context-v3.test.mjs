@@ -5,6 +5,7 @@ import {
   KP_FORM_CATALOG_REGISTRATION,
   KP_FORM_IDS,
   buildKpFormModelParameters,
+  buildKpFormRepairParameters,
   isForbiddenModelField,
   modelFormDescriptors,
   selectAllowedKpForms,
@@ -46,7 +47,10 @@ import {
   CONTEXT_PLANNER_ROLE_VALIDATION_SUITE_VERSION,
   CONTEXT_PLANNER_TOOL_NAME,
 } from "../app/_runtime/lib/kp/context-planner-policy.ts";
-import { privateFormProposalModelInput } from "../app/_runtime/lib/kp/private-form-policy.ts";
+import {
+  privateFormProposalModelInput,
+  privateFormRepairModelInput,
+} from "../app/_runtime/lib/kp/private-form-policy.ts";
 
 const EXACT_FORM_IDS = [
   "clarification.v1",
@@ -303,6 +307,138 @@ test("environment proposal policy asks KP for arbitrary content and an explicit 
   assert.match(policy, /area-hazard 才继续冻结触发、区域、豁免、伤害和残骸机械/u);
   assert.match(policy, /不得按玩家措辞、对象标签、能力名称或别名猜测机械引用/u);
   assert.doesNotMatch(policy, /吊灯|油桶/u);
+});
+
+test("private Form policy keeps player premise questions direct while preserving KP open-world authority", () => {
+  const input = privateFormProposalModelInput({
+    request: { rootActionId: "root:character-premise", attempt: 1 },
+    allowedForms: ["observe.v1", "materialization.v1", "compound.v1"],
+    contextPack: { required: { intent: { text: "我是来做什么的" } } },
+    socialResolution: true,
+  });
+  const policy = input.messages[0].content;
+  assert.match(policy, /你仍然拥有叙事权威/u);
+  assert.match(policy, /合理开放留白中，可以即时创作/u);
+  assert.match(policy, /不得替玩家决定当前目标、思想或情绪，也不得要求无意义检定/u);
+  assert.match(policy, /materialization\.v1 的 direct/u);
+  assert.match(policy, /method 精确填 establishCharacterPremise/u);
+  assert.match(policy, /zhuwei\.character-premise-draft\/v2/u);
+  assert.match(policy, /角色前提只是允许的来源之一，不是专用 NPC 通道/u);
+  assert.match(policy, /旧通用 dynamic:npc 定义/u);
+  assert.match(policy, /不按名称、职业、语言或任何示例关键词触发/u);
+});
+
+test("V5 private materialization expands only proposedFact and teaches the three typed NPC protocols", () => {
+  const allowedForms = ["observe.v1", "materialization.v1", "compound.v1"];
+  const v5Options = { npcMechanics: true, socialResolution: true };
+  const v4Parameters = buildKpFormModelParameters(allowedForms);
+  const explicitV4Parameters = buildKpFormModelParameters(allowedForms, {
+    npcMechanics: false,
+    socialResolution: false,
+  });
+  const v5Parameters = buildKpFormModelParameters(allowedForms, v5Options);
+  assert.deepEqual(explicitV4Parameters, v4Parameters);
+  assert.equal(proposedFactSchema(v4Parameters).maxLength, 2_000);
+  assert.equal(proposedFactSchema(v5Parameters).maxLength, 8_000);
+  const normalizedV5Parameters = structuredClone(v5Parameters);
+  proposedFactSchema(normalizedV5Parameters).maxLength = 2_000;
+  assert.deepEqual(
+    normalizedV5Parameters,
+    v4Parameters,
+    "no other V3/V4 tool field or text limit may drift",
+  );
+
+  const v4RepairParameters = buildKpFormRepairParameters("materialization.v1");
+  const v5RepairParameters = buildKpFormRepairParameters("materialization.v1", v5Options);
+  assert.equal(proposedFactSchema(v4RepairParameters).maxLength, 2_000);
+  assert.equal(proposedFactSchema(v5RepairParameters).maxLength, 8_000);
+  const normalizedV5Repair = structuredClone(v5RepairParameters);
+  proposedFactSchema(normalizedV5Repair).maxLength = 2_000;
+  assert.deepEqual(normalizedV5Repair, v4RepairParameters);
+
+  const descriptor = modelFormDescriptors(allowedForms, v5Options)
+    .find(({ id }) => id === "materialization.v1");
+  assert.match(descriptor.purpose, /exact typed JSON drafts/u);
+
+  const legacyProposal = privateFormProposalModelInput({
+    request: { rootActionId: "root:v4-materialization", attempt: 1 },
+    allowedForms,
+    contextPack: { required: {} },
+  });
+  assert.equal(legacyProposal.max_completion_tokens, 1_400);
+  assert.equal(
+    proposedFactSchema(legacyProposal.tools[0].function.parameters).maxLength,
+    2_000,
+  );
+  assert.doesNotMatch(
+    legacyProposal.messages[0].content,
+    /zhuwei\.npc-mechanical-encounter-draft\/v1/u,
+  );
+
+  const v5Proposal = privateFormProposalModelInput({
+    request: { rootActionId: "root:v5-materialization", attempt: 1 },
+    allowedForms,
+    contextPack: { required: {} },
+    socialResolution: true,
+  });
+  assert.equal(v5Proposal.max_completion_tokens, 4_000);
+  assert.equal(
+    proposedFactSchema(v5Proposal.tools[0].function.parameters).maxLength,
+    8_000,
+  );
+  const policy = v5Proposal.messages[0].content;
+  for (const method of [
+    "materializeNpcMechanicalEncounter",
+    "transferItem",
+    "changeNpcGear",
+    "changeNpcItemState",
+  ]) {
+    assert.match(policy, new RegExp(`method 精确填 ${method}`, "u"));
+  }
+  for (const schema of [
+    "zhuwei.npc-mechanical-encounter-draft/v1",
+    "zhuwei.item-transfer-draft/v1",
+    "zhuwei.npc-gear-change-draft/v1",
+    "zhuwei.npc-item-state-change-draft/v1",
+  ]) assert.match(policy, new RegExp(schema.replace("/", "\\/"), "u"));
+  assert.match(policy, /收到物品只改变双方权威背包，不会自动装备/u);
+  assert.match(policy, /不得提交 AC、abilityRefs/u);
+  assert.match(policy, /ammoRef:null/u);
+  assert.match(policy, /causeFactRef/u);
+  assert.match(policy, /zhuwei\.npc-mechanical-item-state-cause\/v1/u);
+  assert.match(policy, /encounter 尚未 concluded 时不得提交 transferItem/u);
+  assert.match(policy, /encounter 尚未 concluded 时不得提交 changeNpcGear/u);
+  assert.doesNotMatch(policy, /在 compound 的 dynamicMaterializations 中/u);
+
+  const v5Repair = privateFormRepairModelInput({
+    rootActionRef: "root:v5-materialization",
+    originalForm: "materialization.v1",
+    selectedForm: "materialization.v1",
+    rejectedDraft: VALID_FORM_DRAFTS["materialization.v1"],
+    errors: ["proposedFact:schema-invalid"],
+    finiteReferences: {
+      basisRefs: ["scene:working-warehouse"],
+      abilityRefs: [],
+      resourceRefs: [],
+      artifactRefs: [],
+    },
+    semanticFreezeHash: "fnv1a64:0000000000000000",
+    socialResolution: true,
+  });
+  assert.equal(v5Repair.max_completion_tokens, 4_000);
+  assert.equal(
+    proposedFactSchema(v5Repair.tools[0].function.parameters).maxLength,
+    8_000,
+  );
+  const repairPolicy = v5Repair.messages[0].content;
+  for (const schema of [
+    "zhuwei.npc-mechanical-encounter-draft/v1",
+    "zhuwei.item-transfer-draft/v1",
+    "zhuwei.npc-gear-change-draft/v1",
+    "zhuwei.npc-item-state-change-draft/v1",
+  ]) assert.match(repairPolicy, new RegExp(schema.replace("/", "\\/"), "u"));
+  assert.match(repairPolicy, /intrinsicAbilities、itemDefinitions、itemDefinitionRefs、initialLoadout/u);
+  assert.match(repairPolicy, /causeFactRef/u);
 });
 
 test("new action language compiles every form into a closed, stable, bounded DAG", () => {
@@ -672,6 +808,13 @@ test("role registry exposes only validated Planner profiles and all Planner fail
   assert.equal(invalid.receipt.failureCode, "PLANNER_OUTPUT_INVALID");
   assert.equal(invalid.pinnedPrimaryKpProfileRef, "kp:primary:pinned");
 });
+
+function proposedFactSchema(parameters) {
+  const branch = parameters.oneOf.find((candidate) =>
+    candidate.properties.formId.const === "materialization.v1");
+  assert.ok(branch, "materialization.v1 branch is required");
+  return branch.properties.draft.properties.proposedFact;
+}
 
 function recursiveKeys(value) {
   if (Array.isArray(value)) return value.flatMap(recursiveKeys);

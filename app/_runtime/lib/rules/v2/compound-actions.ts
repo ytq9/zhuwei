@@ -23,6 +23,7 @@ import { characterTimelineId, movementPlan } from "./timeline";
 import { stepCampaignWorld } from "./campaign-actions";
 import { stepCombatWorld } from "./combat-actions";
 import { stepMultiplayerWorld } from "./multiplayer-actions";
+import { isGearSlot } from "./character-gear";
 import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
 import {
   hasExactKeys,
@@ -35,6 +36,11 @@ import {
 import { isCompoundResolutionPlan } from "./compound-model";
 import { MAX_EXPERIENCE_AWARD } from "./character-progression";
 import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
+import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
+import {
+  NPC_MECHANICAL_TEMPLATE_KIND,
+  NPC_MECHANICAL_TEMPLATE_SCHEMA,
+} from "./npc-mechanics";
 import {
   savingThrowModifier as profiledSavingThrowModifier,
   skillCheckModifier,
@@ -1434,6 +1440,8 @@ const SEMANTIC_MECHANICAL_KEYS = [
   "frozenCosts",
   "hitDiceToSpend",
   "itemRef",
+  "gearAction",
+  "slot",
   "artifactRef",
   "artifactUse",
   "factionRef",
@@ -1616,6 +1624,157 @@ function npcCompoundRandomnessCommand(
   };
 }
 
+const NPC_MECHANICAL_INSTANCE_SCHEMA = "zhuwei.npc-mechanical-instance/v1" as const;
+
+function npcMechanicalTemplateContentFromFlat(value: JsonRecord): JsonRecord | undefined {
+  if (!isNonEmptyString(value.entityId)
+    || value.entityKind !== "npc"
+    || !isNonEmptyString(value.name)
+    || !isRecord(value.position)
+    || !isRecord(value.footprint)
+    || !isRecord(value.stats)
+    || !isNonEmptyString(value.proficiencyBonus)
+    || !isNonEmptyString(value.armorClass)
+    || !isRecord(value.hitPoints)
+    || !isNonEmptyString(value.hitPoints.maximum)
+    || !isRecord(value.speedInches)
+    || !isRecord(value.resources)
+    || !isNonEmptyString(value.deathPolicy)
+    || !Array.isArray(value.abilities)) return undefined;
+  const resourceMaximums: JsonRecord = {};
+  const resourcesCurrent: JsonRecord = {};
+  for (const [resourceId, pool] of Object.entries(value.resources)) {
+    if (!isRecord(pool) || !isNonEmptyString(pool.current) || !isNonEmptyString(pool.maximum)) {
+      return undefined;
+    }
+    resourceMaximums[resourceId] = pool.maximum;
+    resourcesCurrent[resourceId] = pool.current;
+  }
+  return {
+    template: {
+      schema: NPC_MECHANICAL_TEMPLATE_SCHEMA,
+      label: value.name,
+      stats: structuredClone(value.stats),
+      proficiencyBonus: value.proficiencyBonus,
+      armorClass: value.armorClass,
+      armorClassModel: {
+        kind: "higherOfBaseAndEquipment",
+        baseArmorClass: value.armorClass,
+        shieldBonus: "2",
+      },
+      hitPointsMaximum: value.hitPoints.maximum,
+      footprint: structuredClone(value.footprint),
+      speedInches: structuredClone(value.speedInches),
+      resourceMaximums,
+      deathPolicy: value.deathPolicy,
+      intrinsicAbilities: structuredClone(value.abilities),
+      itemDefinitions: [],
+      itemDefinitionRefs: [],
+      initialLoadout: { entries: [] },
+      ...(value.attacksPerAttackAction === undefined
+        ? {}
+        : { attacksPerAttackAction: value.attacksPerAttackAction }),
+      ...(value.damageDefenses === undefined
+        ? {}
+        : { damageDefenses: structuredClone(value.damageDefenses) }),
+      ...(value.sizeCategory === undefined ? {} : { sizeCategory: value.sizeCategory }),
+      ...(value.spellcasting === undefined
+        ? {}
+        : { spellcasting: structuredClone(value.spellcasting) }),
+    },
+    initialState: {
+      hitPointsCurrent: value.hitPoints.current,
+      temporaryHitPoints: value.hitPoints.temporary,
+      resourcesCurrent,
+    },
+  };
+}
+
+function npcMechanicalTemplateFingerprint(content: JsonRecord): string {
+  const intrinsicAbilities = Array.isArray(content.intrinsicAbilities)
+    ? content.intrinsicAbilities.map((ability) => isRecord(ability)
+      ? Object.fromEntries(Object.entries(ability).filter(([key]) => key !== "definitionId"))
+      : ability)
+    : [];
+  return canonicalSha256({ ...structuredClone(content), intrinsicAbilities });
+}
+
+function npcMechanicalCombatEntries(
+  materializations: DynamicMaterialization[],
+): JsonRecord[] | undefined {
+  const entries: JsonRecord[] = [];
+  const sharedTemplateByFingerprint = new Map<string, string>();
+  for (const materialization of materializations
+    .filter((entry) => entry.kind === "npc" || entry.kind === "enemy")) {
+    const definition = materialization.definition;
+    if (definition.schema === NPC_MECHANICAL_INSTANCE_SCHEMA) {
+      if (!hasOnlyKeys(definition, [
+        "entityId",
+        "entityKind",
+        "mechanicalDefinitionRef",
+        "name",
+        "position",
+        "schema",
+      ], ["initialState"])
+        || definition.entityKind !== "npc"
+        || ![
+          definition.entityId,
+          definition.mechanicalDefinitionRef,
+          definition.name,
+        ].every(isNonEmptyString)
+        || !isRecord(definition.position)
+        || !(definition.initialState === undefined || isRecord(definition.initialState))) {
+        return undefined;
+      }
+      entries.push({
+        entityId: definition.entityId,
+        name: definition.name,
+        placement: { position: structuredClone(definition.position) },
+        mechanics: {
+          kind: "templateRef",
+          definitionRef: definition.mechanicalDefinitionRef,
+        },
+        ...(definition.initialState === undefined
+          ? {}
+          : { initialState: structuredClone(definition.initialState) }),
+      });
+      continue;
+    }
+    const converted = npcMechanicalTemplateContentFromFlat(definition);
+    if (converted === undefined
+      || !isRecord(converted.template)
+      || !isRecord(converted.initialState)) return undefined;
+    const fingerprint = npcMechanicalTemplateFingerprint(converted.template);
+    const existingDefinitionRef = sharedTemplateByFingerprint.get(fingerprint);
+    const definitionRef = existingDefinitionRef
+      ?? `npc-mechanics:${materialization.factRef}:1`;
+    if (existingDefinitionRef === undefined) {
+      sharedTemplateByFingerprint.set(fingerprint, definitionRef);
+    }
+    entries.push({
+      entityId: definition.entityId,
+      name: definition.name,
+      placement: { position: structuredClone(definition.position) },
+      mechanics: existingDefinitionRef === undefined
+        ? {
+            kind: "bespokeDefinition",
+            definition: {
+              definitionId: definitionRef,
+              revision: "1",
+              definitionKind: NPC_MECHANICAL_TEMPLATE_KIND,
+              rulesBasis: "srd5.1-2014",
+              causalBasisRefs: [...materialization.causalBasisRefs],
+              visibilityPolicyRef: materialization.visibilityPolicyRef,
+              content: structuredClone(converted.template),
+            },
+          }
+        : { kind: "templateRef", definitionRef },
+      initialState: structuredClone(converted.initialState),
+    });
+  }
+  return entries;
+}
+
 function semanticCommand(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -1633,6 +1792,12 @@ function semanticCommand(
     return rejected("invalidRulesInput", "Semantic ActionPlan has an unknown or authority-owned field.");
   }
   const operation = mechanical.operation;
+  if (
+    operation !== "changeNpcGear"
+    && (Object.hasOwn(mechanical, "gearAction") || Object.hasOwn(mechanical, "slot"))
+  ) {
+    return rejected("invalidRulesInput", "Gear fields are reserved for the NPC gear operation.");
+  }
   const mode = (MODES as readonly unknown[]).includes(mechanical.mode) ? mechanical.mode : "normal";
   const actor = state.entities[actorCharacterId];
   const target = isNonEmptyString(mechanical.targetEntityRef)
@@ -1866,9 +2031,14 @@ function semanticCommand(
         input: { kind: "completeActivity", proposalId: rootActionId, activityId: mechanical.activityRef },
       };
     case "startCombat": {
-      const dynamicEntities = materializations
-        .filter((entry) => entry.kind === "npc" || entry.kind === "enemy")
-        .map((entry) => structuredClone(entry.definition));
+      const dynamicEntities = npcMechanicsProfileEnabled(profiles.extensions)
+        ? npcMechanicalCombatEntries(materializations)
+        : materializations
+          .filter((entry) => entry.kind === "npc" || entry.kind === "enemy")
+          .map((entry) => structuredClone(entry.definition));
+      if (dynamicEntities === undefined) {
+        return rejected("invalidRulesInput", "Combat NPC materialization lacks a complete frozen definition.");
+      }
       const dynamicEntityIds = new Set(dynamicEntities.flatMap((entry) =>
         isNonEmptyString(entry.entityId) ? [entry.entityId] : []));
       const alliedIds = [...new Set([actorCharacterId, ...members])];
@@ -2052,6 +2222,52 @@ function semanticCommand(
           purpose: goal,
         },
       };
+    case "transferItem":
+      if (
+        !hasExactKeys(mechanical, ["amount", "itemRef", "operation", "targetEntityRef"])
+        || !isNonEmptyString(mechanical.itemRef)
+        || !Number.isSafeInteger(mechanical.amount)
+        || Number(mechanical.amount) <= 0
+        || target === undefined
+        || target.id === actorCharacterId
+        || target.sceneId !== actor?.sceneId
+      ) return rejected("privateOrUnknownReference", "Item transfer references are unavailable.");
+      return {
+        module: "campaign",
+        input: {
+          kind: "transferItem",
+          proposalId: rootActionId,
+          fromCharacterId: actorCharacterId,
+          toCharacterId: target.id,
+          itemId: mechanical.itemRef,
+          quantity: Number(mechanical.amount),
+          method,
+        },
+      };
+    case "changeNpcGear": {
+      const wear = mechanical.gearAction === "wear";
+      if (
+        npcContext === undefined
+        || actor?.kind !== "npc"
+        || !isGearSlot(mechanical.slot)
+        || (wear
+          ? !hasExactKeys(mechanical, ["gearAction", "itemRef", "operation", "slot"])
+            || !isNonEmptyString(mechanical.itemRef)
+          : mechanical.gearAction !== "stow"
+            || !hasExactKeys(mechanical, ["gearAction", "operation", "slot"]))
+      ) return rejected("invalidRulesInput", "NPC gear action is not canonical.");
+      return {
+        module: "multiplayer",
+        input: {
+          kind: "changeNpcGear",
+          rootActionId,
+          npcCharacterId: actorCharacterId,
+          action: mechanical.gearAction,
+          slot: mechanical.slot,
+          ...(wear ? { itemId: mechanical.itemRef } : {}),
+        },
+      };
+    }
     case "acquireArtifact": {
       if (!hasExactKeys(mechanical, ["artifactRef", "operation"]) || !isNonEmptyString(mechanical.artifactRef)) {
         return rejected("privateOrUnknownReference", "Artifact reference is unavailable.");

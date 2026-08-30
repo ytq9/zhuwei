@@ -4,6 +4,12 @@ import {
   type CanonicalTacticalGeometry,
 } from "../rules/profiles/tactical-geometry";
 import { BLACK_OAK_TACTICAL_GEOMETRY_V1 } from "./black-oak-will-tactical";
+import {
+  BLACK_OAK_WILL_PREMISE_CATALOG_V1,
+  BLACK_OAK_WILL_SOCIAL_MECHANICS_V1,
+  type ModulePremiseCatalog,
+  type ModuleNpcSocialMechanics,
+} from "./black-oak-will-social";
 import { findModule } from "./index";
 import {
   isPinnedModuleVersion,
@@ -36,6 +42,7 @@ export type ModuleNpcAnchor = {
   initialKnowledge: string[];
   declaredUnknowns: string[];
   mechanicalAnchor: string;
+  socialMechanics?: ModuleNpcSocialMechanics;
   voice: string;
   exampleLines: string[];
   startSceneId: string;
@@ -82,6 +89,7 @@ export type AuthoritativeStoryBible = {
     }>;
   };
   importantNpcs: ModuleNpcAnchor[];
+  premiseCatalog?: ModulePremiseCatalog;
   openBlanks: string[];
   initialPressures: string[];
   sequelSignals: string[];
@@ -115,6 +123,7 @@ export type ModuleInitializationFixture = {
 };
 
 const CURRENT_MODULE_VERSION = "tactical-map-v1" as const;
+export const SOCIAL_RESOLUTION_MODULE_VERSION = "social-resolution-v1" as const;
 const ADAPTER_VERSION = "legacy-module-bible-adapter-v1" as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -169,11 +178,13 @@ function locationAnchor(
   chapterId: string,
   moduleVersion: AuthoritativeModuleVersion,
 ) {
-  const tacticalGeometry = moduleVersion === "tactical-map-v1"
+  const tacticalGeometry = (moduleVersion === "tactical-map-v1"
+    || moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION)
     && mod.id === "black-oak-will"
     ? BLACK_OAK_TACTICAL_GEOMETRY_V1[scene.id]
     : undefined;
-  if (moduleVersion === "tactical-map-v1"
+  if ((moduleVersion === "tactical-map-v1"
+    || moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION)
     && (tacticalGeometry === undefined || !isCanonicalTacticalGeometry(tacticalGeometry))) {
     throw new TypeError(`Tactical module scene lacks canonical geometry: ${mod.id}:${scene.id}`);
   }
@@ -199,23 +210,35 @@ function storyBible(
   mod: ModuleDef,
   moduleVersion: AuthoritativeModuleVersion,
 ): AuthoritativeStoryBible {
-  const importantNpcs = mod.npcs.map((npc) => ({
-    entityId: npcEntityId(mod, npc),
-    sourceNpcId: npc.id,
-    name: npc.name,
-    publicFace: npc.publicFace,
-    goal: npc.goal,
-    behavioralConstraints: {
-      hostileIf: npc.hostileIf,
-      canBePersuaded: npc.canBePersuaded,
-    },
-    initialKnowledge: [...npc.knows],
-    declaredUnknowns: [...npc.doesNotKnow],
-    mechanicalAnchor: npc.stats,
-    voice: npc.voice,
-    exampleLines: [...npc.lines],
-    startSceneId: npcStartScene(mod, npc),
-  }));
+  const importantNpcs = mod.npcs.map((npc) => {
+    const socialMechanics = moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION
+      && mod.id === "black-oak-will"
+      ? BLACK_OAK_WILL_SOCIAL_MECHANICS_V1[npc.id]
+      : undefined;
+    if (moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION && socialMechanics === undefined) {
+      throw new TypeError(`Social module NPC lacks structured mechanics: ${mod.id}:${npc.id}`);
+    }
+    return {
+      entityId: npcEntityId(mod, npc),
+      sourceNpcId: npc.id,
+      name: npc.name,
+      publicFace: npc.publicFace,
+      goal: npc.goal,
+      behavioralConstraints: {
+        hostileIf: npc.hostileIf,
+        canBePersuaded: npc.canBePersuaded,
+      },
+      initialKnowledge: [...npc.knows],
+      declaredUnknowns: [...npc.doesNotKnow],
+      mechanicalAnchor: npc.stats,
+      ...(socialMechanics === undefined
+        ? {}
+        : { socialMechanics: structuredClone(socialMechanics) }),
+      voice: npc.voice,
+      exampleLines: [...npc.lines],
+      startSceneId: npcStartScene(mod, npc),
+    };
+  });
   return {
     contentBoundary: {
       tone: mod.tone,
@@ -247,6 +270,9 @@ function storyBible(
       })),
     },
     importantNpcs,
+    ...(moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION && mod.id === "black-oak-will"
+      ? { premiseCatalog: structuredClone(BLACK_OAK_WILL_PREMISE_CATALOG_V1) }
+      : {}),
     openBlanks: [
       "未登记但因果合理的行动、通路、地点、人物、危险、物品与机会保持开放，由 KP 提案并经权威事务固化。",
       "世界中没有证据或因果要求的内容可以合法为空，不强制生成战斗、线索、奖励或幕后操纵者。",
@@ -437,4 +463,67 @@ export function moduleInitializationFixtures(
       sourceKind: "moduleAnchor" as const,
     })),
   );
+}
+
+export type ModuleAuthorityFactSeed = Readonly<{
+  id: string;
+  kind: "moduleAnchor" | "modulePremisePolicy" | "modulePremiseArchetype";
+  subjectRefs: readonly string[];
+  value: unknown;
+  visibilityPolicyId: "visibility:room-authority-only";
+  source: "moduleAnchor";
+}>;
+
+/** Trusted genesis catalog consumed by Rules during replay. Step never loads
+ * a mutable current module profile to interpret an existing room. */
+export function moduleAuthorityFactSeeds(
+  profile: AuthoritativeModuleProfile,
+): ModuleAuthorityFactSeed[] {
+  const catalog = profile.storyBible.premiseCatalog;
+  if (catalog === undefined) return [];
+  if (catalog.moduleProfileId !== profile.moduleRef.profileId) {
+    throw new TypeError("Module premise catalog is bound to a different profile.");
+  }
+  const moduleRef = structuredClone(profile.moduleRef);
+  const anchorKinds = new Map<string, "coreTruth" | "storyAnchors">([
+    [`${profile.moduleRef.profileId}:core-truth`, "coreTruth"],
+    [`${profile.moduleRef.profileId}:story-anchors`, "storyAnchors"],
+  ]);
+  const anchors = [...anchorKinds].map(([id, anchorKind]) => ({
+    id,
+    kind: "moduleAnchor" as const,
+    subjectRefs: [],
+    value: {
+      schema: "zhuwei.module-anchor/v1",
+      moduleRef,
+      anchorKind,
+    },
+    visibilityPolicyId: "visibility:room-authority-only" as const,
+    source: "moduleAnchor" as const,
+  }));
+  const policies = catalog.policies.map((policy) => ({
+    id: policy.policyRef,
+    kind: "modulePremisePolicy" as const,
+    subjectRefs: [],
+    value: {
+      schema: "zhuwei.module-premise-policy/v1",
+      moduleRef,
+      policy: structuredClone(policy),
+    },
+    visibilityPolicyId: "visibility:room-authority-only" as const,
+    source: "moduleAnchor" as const,
+  }));
+  const archetypes = catalog.archetypes.map((archetype) => ({
+    id: archetype.archetypeRef,
+    kind: "modulePremiseArchetype" as const,
+    subjectRefs: [],
+    value: {
+      schema: "zhuwei.module-premise-archetype/v1",
+      moduleRef,
+      archetype: structuredClone(archetype),
+    },
+    visibilityPolicyId: "visibility:room-authority-only" as const,
+    source: "moduleAnchor" as const,
+  }));
+  return [...anchors, ...policies, ...archetypes];
 }

@@ -14,6 +14,8 @@ import { applyWorldEffect } from "@/lib/dnd/world-items";
 import { classById, spellById } from "@/lib/dnd/catalog";
 import { d20, d4, eligibleBoosts, rollKind, type BoostId } from "@/lib/dnd/boosts";
 import { getModule, listModules } from "@/lib/module";
+import { SOCIAL_RESOLUTION_MODULE_VERSION } from "@/lib/module/authoritative";
+import { pinnedModuleRef } from "@/lib/module/migration-registry";
 import { publicNpc } from "@/lib/module/schema";
 import { interpretPlayerAction, narrateDecision } from "@/lib/rules/ai-adapter";
 import {
@@ -61,14 +63,17 @@ import {
   hasExactV3KpWorkflowManifest,
   isV3AuthoritativeKpProfile,
   runtimeManifestForExactV3KpWorkflow,
-  V4_KP_WORKFLOW_MANIFEST_JSON,
+  V5_KP_WORKFLOW_MANIFEST_JSON,
 } from "@/lib/kp/authoritative-policy";
 import { canonicalJson } from "@/lib/kp/authoritative-helpers";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "@/lib/kp/model-registry";
 import {
   CURRENT_RUNTIME_PROFILE_MANIFEST,
 } from "@/lib/rules/profiles/manifests";
-import { claimsV3RoomBinding } from "@/lib/room/v3-binding";
+import {
+  claimsV3RoomBinding,
+  hasExactV3KpGenerationBinding,
+} from "@/lib/room/v3-binding";
 import {
   AUTHORITATIVE_KP_MODEL,
   isAuthoritativeKpModel,
@@ -439,7 +444,7 @@ function authoritativeTableOutcome(
   };
   const actionState = typeof publicView.action === "string"
     ? publicView.action
-    : publicView.kind === "awaitingInput"
+    : publicView.kind === "awaitingInput" || publicView.kind === "awaitingPlayerRoll"
       ? "awaitingInput"
       : publicView.kind === "committed"
         ? "committed"
@@ -479,6 +484,7 @@ function authoritativeTableOutcome(
   if (
     outcome.kind === "committed" ||
     outcome.kind === "awaitingInput" ||
+    outcome.kind === "awaitingPlayerRoll" ||
     outcome.kind === "concluded"
   ) {
     const result = {
@@ -1440,7 +1446,7 @@ export const createRoom = createServerFn({ method: "POST" })
       values (
         ${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"},
         ${"black-oak-will"}, ${AUTHORITATIVE_RULESET_VERSION}, ${profile.modelId},
-        ${profile.modelProfileVersion}, ${V4_KP_WORKFLOW_MANIFEST_JSON},
+        ${profile.modelProfileVersion}, ${V5_KP_WORKFLOW_MANIFEST_JSON},
         ${DISABLED_CONTEXT_PLANNER_PROFILE_REF}, ${"lobby"}
       )
     `;
@@ -1748,7 +1754,7 @@ export const fetchTable = createServerFn({ method: "GET" })
           chapterName: chapter?.name ?? module.chapters[0]?.name ?? "第一章",
           sceneName: scene?.name ?? locationLabels[sceneId] ?? "开场",
           kpBusy: false,
-          pendingRolls: [],
+          pendingRolls: projected?.pendingRolls ?? [],
           pendingInputs: projected?.pendingInputs ?? [],
           clues: projected?.clues ?? [],
           npcs: projected?.npcs ?? [],
@@ -2453,6 +2459,7 @@ export const startGame = createServerFn({ method: "POST" })
       authoritativeProfile === undefined
       || !isV3AuthoritativeKpProfile(authoritativeProfile)
       || !hasExactV3KpWorkflowManifest(info.kp_workflow_manifest)
+      || !hasExactV3KpGenerationBinding(authoritativeProfile, info.kp_workflow_manifest)
       || info.kp_context_planner_profile !== DISABLED_CONTEXT_PLANNER_PROFILE_REF
     )) {
       return { ok: false as const, error: "本桌的 V3 工作流或 Context Planner Profile 已不可用" };
@@ -2509,6 +2516,9 @@ export const startGame = createServerFn({ method: "POST" })
       const initialized = await initializeAuthoritativeRoom({
         roomId: room.id,
         moduleId: info.module_id,
+        ...(info.kp_workflow_manifest === V5_KP_WORKFLOW_MANIFEST_JSON
+          ? { moduleVersion: SOCIAL_RESOLUTION_MODULE_VERSION }
+          : {}),
         members: seeds.members,
         characters: seeds.characters,
         ...(workflowRuntimeProfiles === undefined
@@ -2533,6 +2543,15 @@ export const startGame = createServerFn({ method: "POST" })
         || canonicalJson(initialized.runtimeProfiles) !== canonicalJson(expectedRuntimeProfiles)
       ) {
         return { ok: false as const, error: "权威房间已绑定到另一套运行时 Profile" };
+      }
+      const expectedSocialModuleRef = info.kp_workflow_manifest === V5_KP_WORKFLOW_MANIFEST_JSON
+        ? pinnedModuleRef(info.module_id, SOCIAL_RESOLUTION_MODULE_VERSION)
+        : undefined;
+      if (info.kp_workflow_manifest === V5_KP_WORKFLOW_MANIFEST_JSON
+        && (expectedSocialModuleRef === undefined
+          || !("moduleRef" in initialized)
+          || canonicalJson(initialized.moduleRef) !== canonicalJson(expectedSocialModuleRef))) {
+        return { ok: false as const, error: "权威房间已绑定到另一套模组 Profile" };
       }
       const runtimeEpochId = initialized
         && typeof initialized === "object"
@@ -3087,19 +3106,30 @@ export const resolveRoll = createServerFn({ method: "POST" })
         module_id: string;
         ruleset_version: string;
         kp_model: string;
+        kp_model_profile: string;
       }>`
-        select module_id, ruleset_version, kp_model
+        select module_id, ruleset_version, kp_model, kp_model_profile
         from rooms where id = ${room.id}
       `
     )[0];
     if (roomInfo?.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       const submissionId = authoritativeSubmissionId(data.submissionId);
       if (!submissionId) return { ok: false as const, error: "行动缺少可重试提交标识" };
-      return {
-        ok: false as const,
+      if (Array.isArray(data.boostIds) && data.boostIds.length > 0) {
+        return { ok: false as const, error: "权威检定不接受客户端追加骰值或加值" };
+      }
+      return submitAuthoritativeTableAction({
+        roomId: room.id,
+        userId: context.userId,
+        model: roomInfo.kp_model,
+        modelProfileVersion: roomInfo.kp_model_profile,
         submissionId,
-        error: "权威骰面只能由 Room Authority 在骰前冻结后生成；客户端不能提供骰面。",
-      };
+        action: {
+          kind: "roll",
+          submissionId,
+          randomnessId: data.rollId,
+        },
+      });
     }
     if (roomInfo?.ruleset_version !== RULESET_VERSION) {
       return { ok: false as const, error: "这间房的规则版本不可用" };

@@ -116,6 +116,81 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function pendingPlayerRolls(
+  value: unknown,
+  userId: string,
+  viewerCharacterId: string,
+) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 64) {
+    throw new TypeError("Authoritative pending-player-roll projection is invalid.");
+  }
+  const seen = new Set<string>();
+  return value.map((entry) => {
+    if (!isRecord(entry)) {
+      throw new TypeError("Authoritative pending-player-roll projection is invalid.");
+    }
+    const allowed = new Set([
+      "ability",
+      "advantage",
+      "characterId",
+      "dc",
+      "dice",
+      "disadvantage",
+      "id",
+      "kind",
+      "name",
+      "reason",
+      "skill",
+    ]);
+    const id = nonEmptyString(entry.id);
+    const characterId = nonEmptyString(entry.characterId);
+    const name = nonEmptyString(entry.name);
+    const ability = nonEmptyString(entry.ability);
+    const reason = nonEmptyString(entry.reason);
+    const dice = nonEmptyString(entry.dice);
+    const skill = entry.skill === undefined ? undefined : nonEmptyString(entry.skill);
+    const dc = finiteNumber(entry.dc);
+    const kind = ["check", "save", "attack", "init", "damage", "death", "heal"]
+      .includes(String(entry.kind))
+      ? entry.kind as "check" | "save" | "attack" | "init" | "damage" | "death" | "heal"
+      : undefined;
+    if (
+      Object.keys(entry).some((key) => !allowed.has(key))
+      || !id
+      || seen.has(id)
+      || characterId !== viewerCharacterId
+      || !name
+      || !ability
+      || !reason
+      || !dice
+      || !kind
+      || !Number.isSafeInteger(dc)
+      || dc! < 0
+      || dc! > 30
+      || (entry.skill !== undefined && skill === undefined)
+      || (entry.advantage !== undefined && typeof entry.advantage !== "boolean")
+      || (entry.disadvantage !== undefined && typeof entry.disadvantage !== "boolean")
+      || (entry.advantage === true && entry.disadvantage === true)
+    ) throw new TypeError("Authoritative pending-player-roll projection is invalid.");
+    seen.add(id);
+    return {
+      id,
+      userId,
+      name,
+      ability,
+      ...(skill === undefined ? {} : { skill }),
+      kind,
+      dc: dc!,
+      reason,
+      dice,
+      ...(entry.advantage === true ? { advantage: true } : {}),
+      ...(entry.disadvantage === true ? { disadvantage: true } : {}),
+      authoritative: true as const,
+    };
+  });
+}
+
 type ExperiencedTableMessage = {
   id: string;
   user_id: string | null;
@@ -414,6 +489,37 @@ function safeGroupRestOptions(value: unknown) {
     : undefined;
   return initiatorCharacterId && intendedDurationMicros && offeredAtFictionMicros && restKind
     ? { initiatorCharacterId, intendedDurationMicros, offeredAtFictionMicros, restKind }
+    : undefined;
+}
+
+function safeSocialResolutionOptions(value: unknown) {
+  if (!isRecord(value)) return undefined;
+  const npcCharacterId = nonEmptyString(value.npcCharacterId);
+  const npcName = nonEmptyString(value.npcName);
+  const goal = nonEmptyString(value.goal);
+  const method = nonEmptyString(value.method);
+  const risk = nonEmptyString(value.risk);
+  const successOutcome = nonEmptyString(value.successOutcome);
+  const failureOutcome = nonEmptyString(value.failureOutcome);
+  const dc = finiteNumber(value.dc);
+  const retryGate = Array.isArray(value.retryGate)
+    ? value.retryGate.map(nonEmptyString)
+    : undefined;
+  return npcCharacterId && npcName && goal && method && risk && successOutcome && failureOutcome
+    && Number.isSafeInteger(dc) && dc! >= 5 && dc! <= 30
+    && retryGate !== undefined
+    && retryGate.every((entry) => entry !== undefined)
+    ? {
+        npcCharacterId,
+        npcName,
+        goal,
+        method,
+        risk,
+        successOutcome,
+        failureOutcome,
+        dc: dc!,
+        retryGate: retryGate as string[],
+      }
     : undefined;
 }
 
@@ -809,6 +915,14 @@ export function projectAuthoritativeTableObservation(input: {
   const narrationRecovery = viewerNarrationRecovery(
     input.observation.narrationRecovery,
   );
+  const presentationHold = isRecord(input.observation.presentationHold)
+    ? input.observation.presentationHold
+    : undefined;
+  const withheldKnowledgeRefs = new Set(
+    Array.isArray(presentationHold?.knowledgeRefs)
+      ? presentationHold.knowledgeRefs.filter(nonEmptyString)
+      : [],
+  );
   const safetyPresentation = isRecord(readModel)
     ? safeSafetyPresentation(readModel.safetyPresentation)
     : undefined;
@@ -853,6 +967,7 @@ export function projectAuthoritativeTableObservation(input: {
       activities: [],
       inCombat: false,
       pendingInputs: [],
+      pendingRolls: [],
       receipts: [],
       clues: [],
       npcs: [],
@@ -917,6 +1032,7 @@ export function projectAuthoritativeTableObservation(input: {
         eligiblePredecessors,
       },
       pendingInputs: [],
+      pendingRolls: [],
       receipts: [],
       clues: [],
       npcs: [],
@@ -956,6 +1072,11 @@ export function projectAuthoritativeTableObservation(input: {
   ) {
     throw new TypeError("Authoritative projection does not belong to the trusted viewer.");
   }
+  const projectedPendingPlayerRolls = pendingPlayerRolls(
+    input.observation.pendingPlayerRolls,
+    input.userId,
+    viewerCharacterId,
+  );
 
   const sceneId = nonEmptyString(readModel.controlledCharacter.sceneId);
   const tacticalProjection = readModel.tacticalProjection === undefined
@@ -1050,7 +1171,7 @@ export function projectAuthoritativeTableObservation(input: {
         const id = nonEmptyString(entry.knowledgeRef);
         const objectKind = nonEmptyString(entry.objectKind);
         const content = publicKnowledgeText(entry.content);
-        if (!id || !objectKind || !content.text) return [];
+        if (!id || withheldKnowledgeRefs.has(id) || !objectKind || !content.text) return [];
         const layer = entry.layer === "full" ? ("full" as const) : ("talk" as const);
         return [{
           id,
@@ -1085,18 +1206,22 @@ export function projectAuthoritativeTableObservation(input: {
           || pending.kind === "advancementChoice"
           || pending.kind === "groupRestConsent"
           || pending.kind === "partyMoveConsent"
+          || pending.kind === "socialResolution"
           ? pending.kind
           : undefined;
         const options = kind === "advancementChoice"
           ? safeAdvancementOptions(pending.options)
           : kind === "groupRestConsent"
             ? safeGroupRestOptions(pending.options)
+            : kind === "socialResolution"
+              ? safeSocialResolutionOptions(pending.options)
             : undefined;
         const choices = kind === "playerChoice"
           ? safePlayerChoices(pending.choices)
           : undefined;
         return pendingInputId && rootActionId && question && kind
-          && (!["advancementChoice", "groupRestConsent"].includes(kind) || options !== undefined)
+          && (!["advancementChoice", "groupRestConsent", "socialResolution"].includes(kind)
+            || options !== undefined)
           && (kind !== "playerChoice" || choices !== undefined)
           ? [{
               pendingInputId,
@@ -1285,6 +1410,7 @@ export function projectAuthoritativeTableObservation(input: {
     inCombat,
     ...(safeFictionTime ? { fictionTime: safeFictionTime } : {}),
     pendingInputs,
+    pendingRolls: projectedPendingPlayerRolls,
     receipts,
     clues,
     npcs,

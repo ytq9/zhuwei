@@ -5,10 +5,13 @@ import { validateCausalActionProgram } from "../kp/causal-action-program";
 import { findModule } from "../module";
 import {
   authoritativeModuleProfile,
+  moduleAuthorityFactSeeds,
   moduleInitializationFixtures,
   moduleKpProjection,
+  SOCIAL_RESOLUTION_MODULE_VERSION,
   type AuthoritativeModuleProfile,
 } from "../module/authoritative";
+import { pinnedModuleRef } from "../module/migration-registry";
 import {
   legacyRulesAdapterFor,
   type LegacyInitialEntity,
@@ -48,6 +51,7 @@ import {
   INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
 } from "../rules/profiles/manifests";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
+import { socialResolutionProfileEnabled } from "../rules/profiles/social-resolution";
 import type { ProfileRef } from "../rules/profiles/types";
 import {
   TURN_TICKET_TTL_MS,
@@ -107,6 +111,7 @@ import type {
   PreparedAuthoritativeAction,
   PublicReceipt,
   TrustedPrincipalContext,
+  ViewerPendingPlayerRoll,
 } from "./authority-types";
 import {
   bindRoomModuleMigration,
@@ -801,6 +806,18 @@ function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord 
       && nonEmptyString(value.planId)
       && isJsonRecord(value.mechanicalProposal);
   }
+  if (value.kind === "answerSocialResolution") {
+    return hasExactJsonKeys(value, [
+      "choice",
+      "controllerCharacterId",
+      "kind",
+      "pendingInputId",
+      "rootActionId",
+    ])
+      && [value.controllerCharacterId, value.pendingInputId, value.rootActionId]
+        .every(nonEmptyString)
+      && ["press", "acceptStatusQuo"].includes(String(value.choice));
+  }
   if (value.kind !== "answerPendingInput") return false;
   if (value.proposal === undefined) return true;
   return isJsonRecord(value.proposal)
@@ -1479,6 +1496,33 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
   }
 
+  private viewerNarrationPresentationHold(
+    replay: AuthorityReplay,
+    viewer: PlayerViewer,
+    readModel: unknown,
+    narrationRecovery: unknown,
+  ): { knowledgeRefs: string[] } | undefined {
+    if (narrationRecovery === undefined || !isJsonRecord(readModel)) return undefined;
+    const knowledge = Array.isArray(readModel.knowledge)
+      ? readModel.knowledge.filter(isJsonRecord)
+      : [];
+    const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
+    const watermark = this.authorityStore.deliveryWatermark(viewerKey) ?? "0";
+    const eventPrefix = `event:${replay.state.runtimeEpochId}:`;
+    const knowledgeRefs = knowledge.flatMap((entry) => {
+      if (!nonEmptyString(entry.knowledgeRef)
+        || !nonEmptyString(entry.acquiredByEventId)
+        || !entry.acquiredByEventId.startsWith(eventPrefix)) return [];
+      const eventSeq = entry.acquiredByEventId.slice(eventPrefix.length);
+      return /^[0-9]+$/u.test(eventSeq) && compareEventSeq(eventSeq, watermark) > 0
+        ? [entry.knowledgeRef]
+        : [];
+    });
+    return knowledgeRefs.length === 0
+      ? undefined
+      : { knowledgeRefs: [...new Set(knowledgeRefs)].sort() };
+  }
+
   private experiencedTranscriptForViewer(
     viewer: PlayerViewer,
     state: AuthoritativeWorldState,
@@ -1603,6 +1647,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       ...(kpProjection.adjudicationPrecedents === undefined
         ? {}
         : { adjudicationPrecedents: kpProjection.adjudicationPrecedents }),
+      ...(kpProjection.npcMechanicalDefinitions === undefined
+        ? {}
+        : { npcMechanicalDefinitions: kpProjection.npcMechanicalDefinitions }),
       spatialEvidence: kpProjection.spatialEvidence as unknown as JsonObject,
       experiencedTranscript: this.experiencedTranscriptForViewer(
         actorViewer,
@@ -1908,10 +1955,22 @@ export class RoomDurableObject extends DurableObject<Env> {
         );
       }
       const genesis = parseJson<RuntimeGenesis>(existing.genesis_json);
+      const requestedModuleRef = input.moduleVersion === undefined
+        ? undefined
+        : pinnedModuleRef(input.moduleId, input.moduleVersion);
+      if (input.moduleVersion !== undefined
+        && (requestedModuleRef === undefined
+          || !exactProfileRef(genesis.moduleRef, requestedModuleRef))) {
+        return rejectedAuthority(
+          "roomAlreadyBound",
+          "The Durable Object is already bound to a different Module Profile.",
+        );
+      }
       return {
         created: false,
         runtimeEpochId: genesis.runtimeEpochId,
         genesisHash: genesis.genesisHash,
+        moduleRef: structuredClone(genesis.moduleRef),
         runtimeProfiles: parseJson(existing.profiles_json),
         serviceCapabilities,
       };
@@ -1974,7 +2033,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       ...moduleProfile.storyBible.importantNpcs.map((npc) => npc.startSceneId),
       ...moduleProfile.storyBible.storyAnchors.locations.map((location) => location.sceneId),
     ])].sort();
-    if (moduleProfile.moduleVersion === "tactical-map-v1"
+    if ((moduleProfile.moduleVersion === "tactical-map-v1"
+      || moduleProfile.moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION)
       && sceneIds.some((sceneId) => locationBySceneId.get(sceneId)?.tacticalGeometry === undefined)) {
       return rejectedAuthority(
         "invalidInitialization",
@@ -2028,6 +2088,13 @@ export class RoomDurableObject extends DurableObject<Env> {
             name: npc.name,
             sceneId: npc.startSceneId,
             tenureStatus: "active" as const,
+            ...(npc.socialMechanics === undefined
+              ? {}
+              : {
+                  abilityScores: structuredClone(npc.socialMechanics.abilityScores),
+                  proficiencyBonus: npc.socialMechanics.proficiencyBonus,
+                  socialMechanics: structuredClone(npc.socialMechanics),
+                }),
             spatialVisibilityPolicyId: "visibility:scene-observers" as const,
           }] as const),
         ])) as RulesCharacterSeed[]),
@@ -2039,7 +2106,14 @@ export class RoomDurableObject extends DurableObject<Env> {
           seatId: `seat:${character.controllerPrincipalId}`,
         }))
         .sort((left, right) => left.characterId.localeCompare(right.characterId)),
-      canonicalFacts: fixtures.canonicalFacts,
+      canonicalFacts: [
+        ...fixtures.canonicalFacts,
+        ...moduleAuthorityFactSeeds(moduleProfile).map((fact) => ({
+          ...fact,
+          subjectRefs: [...fact.subjectRefs],
+          value: structuredClone(fact.value),
+        })),
+      ],
       initialKnowledge: fixtures.initialKnowledge,
     });
     if (initialized.kind !== "initialized") {
@@ -2117,10 +2191,22 @@ export class RoomDurableObject extends DurableObject<Env> {
           );
         }
         const genesis = parseJson<RuntimeGenesis>(raced.genesis_json);
+        const requestedModuleRef = input.moduleVersion === undefined
+          ? undefined
+          : pinnedModuleRef(input.moduleId, input.moduleVersion);
+        if (input.moduleVersion !== undefined
+          && (requestedModuleRef === undefined
+            || !exactProfileRef(genesis.moduleRef, requestedModuleRef))) {
+          return rejectedAuthority(
+            "roomAlreadyBound",
+            "The Durable Object is already bound to a different Module Profile.",
+          );
+        }
         return {
           created: false,
           runtimeEpochId: genesis.runtimeEpochId,
           genesisHash: genesis.genesisHash,
+          moduleRef: structuredClone(genesis.moduleRef),
           runtimeProfiles: parseJson(raced.profiles_json),
           serviceCapabilities,
         };
@@ -2149,6 +2235,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         created: true,
         runtimeEpochId,
         genesisHash: initialized.genesis.genesisHash,
+        moduleRef: structuredClone(moduleProfile.moduleRef),
         runtimeProfiles: initialized.profiles,
         serviceCapabilities,
       };
@@ -2626,15 +2713,28 @@ export class RoomDurableObject extends DurableObject<Env> {
     }).filter((characterId) =>
       replay.state.characterControls[characterId]?.seatId
         !== stepped.state.characterControls[characterId]?.seatId);
+    const unsettledRandomness = hasUnsettledAuthoritativeRandomness(replay.state);
+    const pendingPlayerRollOwners = unsettledRandomness
+      ? this.authorityPendingPlayerRollOwnerIds(replay)
+      : new Set<string>();
+    const preservesPendingPlayerRoll = changedControlCharacterIds.length > 0
+      && unsettledRandomness
+      && changedControlCharacterIds.every((characterId) =>
+        pendingPlayerRollOwners.has(characterId));
     if (changedControlCharacterIds.length > 0
-      && hasUnsettledAuthoritativeRandomness(replay.state)) {
+      && unsettledRandomness
+      && !preservesPendingPlayerRoll) {
       return {
         kind: "retryableFailure" as const,
         code: "roomAdministrationRandomnessSettlementPending",
       };
     }
     const scopeId = "room:administration";
-    const changedControlSceneScopes = [...new Set(changedControlCharacterIds.flatMap(
+    // A control transfer for the exact pending player-roll owner changes who
+    // may authorize the gesture, not the frozen scene mechanics. Keeping that
+    // scene scope stable lets the new controller finish the same journaled
+    // request without re-proposal or re-roll.
+    const changedControlSceneScopes = preservesPendingPlayerRoll ? [] : [...new Set(changedControlCharacterIds.flatMap(
       (characterId) => [
         replay.state.entities[characterId]?.sceneId,
         stepped.state.entities[characterId]?.sceneId,
@@ -3089,6 +3189,24 @@ export class RoomDurableObject extends DurableObject<Env> {
       && actionInput.kind !== "safetyAdjust") {
       return presentationUnavailable();
     }
+    if (
+      !["safetyPause", "safetyAdjust"].includes(actionInput.kind)
+      && this.viewerPendingPlayerRolls(replay, authenticated).length > 0
+    ) {
+      return rejectedAuthority(
+        "pendingInputUnresolved",
+        "The authorized dice request must be resolved before another action can change the scene.",
+      );
+    }
+    if (actionInput.kind === "intent"
+      && Object.values(replay.state.pendingInputs).some((pending) =>
+        pending.kind === "socialResolution"
+        && authenticated.characterIds.includes(pending.controllerCharacterId))) {
+      return rejectedAuthority(
+        "pendingInputUnresolved",
+        "The open social offer must be pressed, accepted, or reframed through its pending answer.",
+      );
+    }
 
     let characterId: string;
     let rootActionId: string;
@@ -3143,6 +3261,13 @@ export class RoomDurableObject extends DurableObject<Env> {
           "partyInvitation",
           "partyMoveConsent",
         ].includes(String(pendingProjection.kind))) {
+          resolutionMode = "authorityDirect";
+        } else if (
+          pendingProjection.kind === "socialResolution"
+          && isJsonRecord(actionInput.answer)
+          && hasExactJsonKeys(actionInput.answer, ["choice"])
+          && ["press", "acceptStatusQuo"].includes(String(actionInput.answer.choice))
+        ) {
           resolutionMode = "authorityDirect";
         }
       } catch {
@@ -3758,6 +3883,28 @@ export class RoomDurableObject extends DurableObject<Env> {
           },
         };
       }
+      if (pendingProjection.kind === "socialResolution") {
+        if (
+          !hasExactJsonKeys(answer, ["choice"])
+          || !["press", "acceptStatusQuo"].includes(String(answer.choice))
+        ) {
+          return {
+            rejection: rejectedAuthority(
+              "invalidPendingResolution",
+              "Social resolution requires press or acceptStatusQuo.",
+            ),
+          };
+        }
+        return {
+          input: {
+            kind: "answerSocialResolution",
+            pendingInputId,
+            rootActionId: submission.root_action_id,
+            controllerCharacterId: submission.character_id,
+            choice: answer.choice,
+          },
+        };
+      }
       if (pendingProjection.kind === "groupRestConsent") {
         const options = isJsonRecord(pendingProjection.options)
           ? pendingProjection.options
@@ -4126,6 +4273,315 @@ export class RoomDurableObject extends DurableObject<Env> {
     return requestOffset === requests.length ? waves : undefined;
   }
 
+  private authorityPlayerRollGestureRequired(
+    profiles: RuntimeProfileManifest,
+    request?: JsonObject,
+    requestEvents?: EventEnvelope[],
+  ): boolean {
+    if (!socialResolutionProfileEnabled(profiles.extensions)) return false;
+    // A profile-only call asks whether the room exposes the capability. Once
+    // a concrete request is known, only the V5 social plan opts into a player
+    // gesture. Combat, saves, hidden reality, and legacy rooms keep their
+    // existing authority-generated randomness behavior.
+    if (request === undefined || requestEvents === undefined) return true;
+    return requestEvents.some((event) => {
+      if (event.eventType !== "RandomnessRequested") return false;
+      const payload = event.payload as unknown;
+      if (!isJsonRecord(payload)
+        || !isJsonRecord(payload.request)
+        || !isJsonRecord(payload.resolutionPlan)
+        || payload.resolutionPlan.schema !== "zhuwei.social-resolution-plan/v1") return false;
+      return payload.request.randomnessId === request.randomnessId
+        && payload.request.resolutionId === request.resolutionId;
+    });
+  }
+
+  private authorityRandomnessOperation(
+    request: JsonObject,
+    requestEvents: EventEnvelope[],
+  ): JsonObject | undefined {
+    for (let index = requestEvents.length - 1; index >= 0; index -= 1) {
+      const payload = requestEvents[index]?.payload as unknown;
+      if (!isJsonRecord(payload) || !isJsonRecord(payload.resolution)) continue;
+      const resolution = payload.resolution;
+      if (resolution.resolutionId !== request.resolutionId) continue;
+      const resolutionRequests = Array.isArray(resolution.randomnessRequests)
+        ? resolution.randomnessRequests.filter(isJsonRecord)
+        : [];
+      if (resolutionRequests.some((entry) => entry.randomnessId === request.randomnessId)) {
+        return isJsonRecord(resolution.operation)
+          ? resolution.operation
+          : undefined;
+      }
+    }
+    return undefined;
+  }
+
+  private authorityPlayerRollOwner(
+    state: AuthoritativeWorldState,
+    request: JsonObject,
+    requestEvents: EventEnvelope[],
+  ): string | undefined {
+    if (request.purpose === "hiddenRealitySelection") return undefined;
+    const player = (candidate: unknown): string | undefined =>
+      nonEmptyString(candidate)
+      && state.entities[candidate]?.kind === "player"
+      && state.entities[candidate]?.tenureStatus === "active"
+      && state.characterControls[candidate] !== undefined
+        ? candidate
+        : undefined;
+    if (nonEmptyString(request.actorCharacterId)) {
+      return player(request.actorCharacterId);
+    }
+
+    const frozen = isJsonRecord(request.frozenParameters)
+      ? request.frozenParameters
+      : {};
+    const operation = this.authorityRandomnessOperation(request, requestEvents) ?? {};
+    const purposeKey = nonEmptyString(request.purposeKey) ? request.purposeKey : "";
+    if (purposeKey.startsWith("initiative:")) {
+      const combatants = Array.isArray(frozen.combatantEntityIds)
+        ? frozen.combatantEntityIds
+        : [];
+      return player(combatants[0]);
+    }
+
+    const counterFrame = isJsonRecord(operation.counterFrame)
+      ? operation.counterFrame
+      : undefined;
+    if (purposeKey.startsWith("save:")
+      || purposeKey.startsWith("death-save:")
+      || purposeKey.startsWith("stable-recovery:")) {
+      const savingCharacterId = nonEmptyString(frozen.targetEntityId)
+        ? frozen.targetEntityId
+        : purposeKey.startsWith("save:concentration:")
+          && nonEmptyString(frozen.sourceEntityId)
+          ? frozen.sourceEntityId
+          : undefined;
+      return player(savingCharacterId);
+    }
+    if (purposeKey.startsWith("damage:environment-hazard:")) return undefined;
+
+    const rollingCharacterId = nonEmptyString(frozen.sourceEntityId)
+      ? frozen.sourceEntityId
+      : nonEmptyString(frozen.entityId)
+        ? frozen.entityId
+        : nonEmptyString(operation.sourceEntityId)
+          ? operation.sourceEntityId
+          : nonEmptyString(counterFrame?.sourceEntityId)
+            ? counterFrame.sourceEntityId
+            : undefined;
+    return player(rollingCharacterId);
+  }
+
+  private authorityViewerPendingRoll(
+    state: AuthoritativeWorldState,
+    request: AuthorityRandomnessJournalRequest,
+    requestEvents: EventEnvelope[],
+    characterId: string,
+  ): ViewerPendingPlayerRoll {
+    const value = request.request;
+    const frozen = isJsonRecord(value.frozenCheck)
+      ? value.frozenCheck
+      : isJsonRecord(value.frozenParameters) ? value.frozenParameters : {};
+    const purposeKey = nonEmptyString(value.purposeKey) ? value.purposeKey : "";
+    const kind: ViewerPendingPlayerRoll["kind"] = value.purpose === "savingThrow"
+      || purposeKey.startsWith("save:")
+      || purposeKey.startsWith("concentration:")
+      ? "save"
+      : value.purpose === "restHitDice"
+        || purposeKey.startsWith("stable-recovery:")
+        ? "heal"
+        : purposeKey.startsWith("attack:")
+          ? "attack"
+          : purposeKey.startsWith("initiative:")
+            ? "init"
+            : purposeKey.startsWith("damage:")
+              ? "damage"
+              : purposeKey.startsWith("death-save:")
+                ? "death"
+                : "check";
+    const abilityAliases: Record<string, string> = {
+      strength: "str",
+      dexterity: "dex",
+      constitution: "con",
+      intelligence: "int",
+      wisdom: "wis",
+      charisma: "cha",
+    };
+    const suppliedAbility = nonEmptyString(frozen.ability) ? frozen.ability : "str";
+    const ability = abilityAliases[suppliedAbility] ?? suppliedAbility;
+    const rawDc = typeof frozen.dc === "string" && /^[0-9]+$/u.test(frozen.dc)
+      ? Number(frozen.dc)
+      : Number.isSafeInteger(frozen.dc) ? Number(frozen.dc) : 0;
+    const reason = kind === "save"
+      ? "进行豁免检定"
+      : kind === "attack"
+        ? "进行攻击检定"
+        : kind === "init"
+          ? "进行先攻检定"
+          : kind === "damage"
+            ? "掷伤害骰"
+            : kind === "death"
+              ? "进行死亡豁免"
+              : kind === "heal"
+                ? "掷恢复骰"
+                : nonEmptyString(frozen.goal) ? `为「${frozen.goal}」进行检定` : "进行属性检定";
+    return {
+      id: request.randomnessId,
+      characterId,
+      name: state.entities[characterId]?.name ?? "你",
+      kind,
+      ability,
+      ...(nonEmptyString(frozen.skill) ? { skill: frozen.skill } : {}),
+      dc: rawDc,
+      reason,
+      dice: String(value.diceExpression),
+      ...(frozen.mode === "advantage" ? { advantage: true } : {}),
+      ...(frozen.mode === "disadvantage" ? { disadvantage: true } : {}),
+    };
+  }
+
+  private authorityRandomnessBatchKey(submission: AuthoritySubmissionRow): string {
+    const stage = this.authorityStore.actionStage(submission.prepared_action_id);
+    return stage?.status === "prepared"
+      ? stage.child_root_action_id
+      : submission.prepared_action_id;
+  }
+
+  private authorityResumedPlayerIntent(
+    submission: AuthoritySubmissionRow,
+  ): JsonObject | undefined {
+    if (submission.input_kind !== "intent" || submission.continuation_json === null) {
+      return undefined;
+    }
+    try {
+      const continuation = parseJson<JsonObject>(submission.continuation_json);
+      const originalInput = continuation.originalInput;
+      return isJsonRecord(originalInput)
+        && originalInput.kind === "intent"
+        && originalInput.submissionId === submission.submission_id
+        && nonEmptyString(originalInput.text)
+        ? structuredClone(originalInput)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private authorityResumedPrincipalContext(
+    state: AuthoritativeWorldState,
+    submission: AuthoritySubmissionRow,
+  ): TrustedPrincipalContext | undefined {
+    const sessionVersion = state.principals[submission.principal_id]?.sessionVersion;
+    return Number.isSafeInteger(sessionVersion)
+      ? {
+          principal: {
+            id: submission.principal_id,
+            sessionVersion: Number(sessionVersion),
+          },
+        }
+      : undefined;
+  }
+
+  private authorityActiveRandomnessRequests(input: {
+    batch: AuthorityRandomnessBatchJournalRow;
+  }): {
+    requests: AuthorityRandomnessJournalRequest[];
+    activeRequests: AuthorityRandomnessJournalRequest[];
+    requestEvents: EventEnvelope[];
+  } | undefined {
+    try {
+      const requests = parseJson<AuthorityRandomnessJournalRequest[]>(input.batch.requests_json);
+      const requestEvents = parseJson<EventEnvelope[]>(input.batch.request_events_json);
+      const fulfillment = parseJson<unknown>(input.batch.fulfillment_json);
+      if (!Array.isArray(requests) || !Array.isArray(requestEvents)) return undefined;
+      const waves = this.authorityRandomnessWaves(fulfillment, requests);
+      const activeWave = waves?.at(-1);
+      if (activeWave === undefined) return undefined;
+      return {
+        requests,
+        activeRequests: requests.slice(requests.length - activeWave.requestCount),
+        requestEvents,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private viewerPendingPlayerRolls(
+    replay: AuthorityReplay,
+    authenticated: AuthenticatedAuthorityViewer,
+  ): ViewerPendingPlayerRoll[] {
+    if (!this.authorityPlayerRollGestureRequired(replay.profiles)) return [];
+    const rolls: ViewerPendingPlayerRoll[] = [];
+    for (const submission of this.authorityStore.awaitingRandomnessSubmissions()) {
+      const batchKey = this.authorityRandomnessBatchKey(submission);
+      const batch = this.authorityStore.randomnessBatch(batchKey);
+      if (batch?.status !== "requestCommitted" && batch?.status !== "candidateCommitted") continue;
+      const active = this.authorityActiveRandomnessRequests({ batch });
+      if (active === undefined) continue;
+      for (const request of active.activeRequests) {
+        if (!this.authorityPlayerRollGestureRequired(
+          replay.profiles,
+          request.request,
+          active.requestEvents,
+        )) continue;
+        const characterId = this.authorityPlayerRollOwner(
+          replay.state,
+          request.request,
+          active.requestEvents,
+        );
+        if (characterId === undefined
+          || !authenticated.characterIds.includes(characterId)) continue;
+        rolls.push(this.authorityViewerPendingRoll(
+          replay.state,
+          request,
+          active.requestEvents,
+          characterId,
+        ));
+      }
+    }
+    return rolls.sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  private authorityPendingPlayerRollOwnerIds(replay: AuthorityReplay): Set<string> {
+    const owners = new Set<string>();
+    if (!this.authorityPlayerRollGestureRequired(replay.profiles)) return owners;
+    for (const submission of this.authorityStore.awaitingRandomnessSubmissions()) {
+      const batch = this.authorityStore.randomnessBatch(
+        this.authorityRandomnessBatchKey(submission),
+      );
+      if (batch?.status !== "requestCommitted" && batch?.status !== "candidateCommitted") continue;
+      const active = this.authorityActiveRandomnessRequests({ batch });
+      if (active === undefined) continue;
+      for (const request of active.activeRequests) {
+        if (!this.authorityPlayerRollGestureRequired(
+          replay.profiles,
+          request.request,
+          active.requestEvents,
+        )) continue;
+        const owner = this.authorityPlayerRollOwner(
+          replay.state,
+          request.request,
+          active.requestEvents,
+        );
+        if (owner !== undefined) owners.add(owner);
+      }
+    }
+    return owners;
+  }
+
+  private awaitingPlayerRollOutcome(
+    replay: AuthorityReplay,
+    authenticated: AuthenticatedAuthorityViewer,
+  ): Extract<AuthorityCommitOutcome, { kind: "awaitingPlayerRoll" }> {
+    return {
+      kind: "awaitingPlayerRoll",
+      pendingPlayerRolls: this.viewerPendingPlayerRolls(replay, authenticated),
+    };
+  }
+
   private authorityRandomnessCandidatesMatch(
     value: unknown,
     requests: AuthorityRandomnessJournalRequest[],
@@ -4407,6 +4863,148 @@ export class RoomDurableObject extends DurableObject<Env> {
     );
   }
 
+  async resumePlayerRandomness(
+    context: TrustedPrincipalContext,
+    randomnessId: string,
+  ): Promise<AuthorityCommitOutcome> {
+    if (this.authorityStore.roomDeletion() !== undefined) {
+      return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
+    }
+    if (!nonEmptyString(randomnessId)) {
+      return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
+    }
+    let replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    if (authenticated === undefined || !this.authorityPlayerRollGestureRequired(replay.profiles)) {
+      return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
+    }
+
+    // A lost HTTP response must not turn the player's explicit roll gesture
+    // into a second draw. The finalized journal remains the capability source;
+    // only the character's current trusted controller may recover its cached
+    // outcome, including after an exact control transfer.
+    for (const authorization of this.authorityStore
+      .randomnessAuthorizationsByRandomnessId(randomnessId)) {
+      const batch = this.authorityStore.randomnessBatch(authorization.prepared_action_id);
+      const submission = this.authorityStore.submissionByPrepared(
+        authorization.prepared_action_id,
+      );
+      const active = batch?.status === "finalized"
+        ? this.authorityActiveRandomnessRequests({ batch })
+        : undefined;
+      const request = active?.activeRequests.find((entry) =>
+        entry.randomnessId === randomnessId);
+      const currentOwner = request === undefined || active === undefined
+        ? undefined
+        : this.authorityPlayerRollOwner(
+            replay.state,
+            request.request,
+            active.requestEvents,
+          );
+      if (
+        batch?.status !== "finalized"
+        || submission?.result_json === null
+        || submission?.result_json === undefined
+        || request === undefined
+        || active === undefined
+        || !this.authorityPlayerRollGestureRequired(
+          replay.profiles,
+          request.request,
+          active.requestEvents,
+        )
+        || currentOwner === undefined
+        || authorization.character_id !== currentOwner
+        || !authenticated.characterIds.includes(currentOwner)
+      ) continue;
+      return parseJson<AuthorityCommitOutcome>(submission.result_json);
+    }
+
+    for (const submission of this.authorityStore.awaitingRandomnessSubmissions()) {
+      const batchKey = this.authorityRandomnessBatchKey(submission);
+      const batch = this.authorityStore.randomnessBatch(batchKey);
+      if (batch?.status !== "requestCommitted" && batch?.status !== "candidateCommitted") continue;
+      const active = this.authorityActiveRandomnessRequests({ batch });
+      const request = active?.activeRequests.find((entry) => entry.randomnessId === randomnessId);
+      if (active === undefined || request === undefined) continue;
+      if (!this.authorityPlayerRollGestureRequired(
+        replay.profiles,
+        request.request,
+        active.requestEvents,
+      )) {
+        return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
+      }
+      const ownerCharacterId = this.authorityPlayerRollOwner(
+        replay.state,
+        request.request,
+        active.requestEvents,
+      );
+      if (ownerCharacterId === undefined || !authenticated.characterIds.includes(ownerCharacterId)) {
+        return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
+      }
+
+      const authorized = this.authorityStore.transaction(() => {
+        replay = this.authoritativeReplay();
+        const currentViewer = this.authenticatedAuthorityViewer(context, replay.state);
+        const currentSubmission = this.authorityStore.submissionByPrepared(
+          submission.prepared_action_id,
+        );
+        const currentBatch = this.authorityStore.randomnessBatch(batchKey);
+        const currentActive = currentBatch?.status === "requestCommitted"
+          || currentBatch?.status === "candidateCommitted"
+          ? this.authorityActiveRandomnessRequests({ batch: currentBatch })
+          : undefined;
+        const currentRequest = currentActive?.activeRequests.find((entry) =>
+          entry.randomnessId === randomnessId);
+        const currentOwner = currentRequest === undefined || currentActive === undefined
+          ? undefined
+          : this.authorityPlayerRollOwner(
+              replay.state,
+              currentRequest.request,
+              currentActive.requestEvents,
+            );
+        if (
+          currentViewer === undefined
+          || currentSubmission?.status !== "awaitingRandomness"
+          || currentRequest === undefined
+          || currentActive === undefined
+          || !this.authorityPlayerRollGestureRequired(
+            replay.profiles,
+            currentRequest.request,
+            currentActive.requestEvents,
+          )
+          || currentOwner === undefined
+          || !currentViewer.characterIds.includes(currentOwner)
+        ) return false;
+        const existing = this.authorityStore.randomnessAuthorizations(batchKey)
+          .find((entry) => entry.randomness_id === randomnessId);
+        if (existing !== undefined) {
+          return existing.character_id === currentOwner;
+        }
+        this.authorityStore.authorizeRandomness({
+          prepared_action_id: batchKey,
+          randomness_id: randomnessId,
+          principal_id: currentViewer.principalId,
+          character_id: currentOwner,
+        });
+        return true;
+      });
+      if (!authorized) {
+        return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
+      }
+
+      const recovery = this.authorityStore.proposalRecovery(batchKey);
+      if (recovery === undefined) {
+        return { kind: "retryableFailure", code: "randomnessRecoveryInputMissing" };
+      }
+      return this.commitAuthoritative(
+        context,
+        submission.prepared_action_id,
+        { kind: "recovery", row: recovery },
+      );
+    }
+    return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
+  }
+
   private async commitDueActorPlan(
     context: TrustedPrincipalContext,
     preparedActionId: string,
@@ -4648,7 +5246,21 @@ export class RoomDurableObject extends DurableObject<Env> {
       kpProjection,
       resolutionMode: "kpProposal",
       phase: "playerIntent",
+      resumedActionInput: this.authorityResumedPlayerIntent(submission),
+      resumedPrincipalContext: this.authorityResumedPrincipalContext(
+        stepped.state,
+        submission,
+      ),
     };
+    if (
+      prepared.resumedActionInput === undefined
+      || prepared.resumedPrincipalContext === undefined
+    ) {
+      return rejectedAuthority(
+        "continuationUnavailable",
+        "The original player intent is unavailable after the due ActorPlan stage.",
+      );
+    }
     const outcome: AuthorityCommitOutcome = { kind: "continue", prepared };
     const nextScopeVersion = this.authorityStore.scopeVersion(submission.scene_scope) + 1;
     const receipt: PublicReceipt = {
@@ -4721,6 +5333,18 @@ export class RoomDurableObject extends DurableObject<Env> {
             "scopeConflict",
             "A relevant scene scope changed before the due ActorPlan committed.",
           ),
+          committedHere: false,
+        };
+      }
+      if (this.authorityStore.hasRandomnessSettlementInScene(
+        currentSubmission.scene_scope,
+        preparedActionId,
+      )) {
+        return {
+          outcome: {
+            kind: "retryableFailure" as const,
+            code: "sceneRandomnessSettlementInProgress",
+          },
           committedHere: false,
         };
       }
@@ -4841,7 +5465,21 @@ export class RoomDurableObject extends DurableObject<Env> {
       },
       resolutionMode: "kpProposal",
       phase: "playerIntent",
+      resumedActionInput: this.authorityResumedPlayerIntent(submission),
+      resumedPrincipalContext: this.authorityResumedPrincipalContext(
+        resolved.state,
+        submission,
+      ),
     };
+    if (
+      prepared.resumedActionInput === undefined
+      || prepared.resumedPrincipalContext === undefined
+    ) {
+      return rejectedAuthority(
+        "continuationUnavailable",
+        "The original player intent is unavailable after the due ActorPlan mechanics.",
+      );
+    }
     const outcome: AuthorityCommitOutcome = { kind: "continue", prepared };
     const persisted = this.authorityStore.transaction(() => {
       if (this.authorityStore.roomDeletion() !== undefined) {
@@ -4903,6 +5541,18 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
+      if (this.authorityStore.hasRandomnessSettlementInScene(
+        currentSubmission.scene_scope,
+        preparedActionId,
+      )) {
+        return {
+          outcome: {
+            kind: "retryableFailure" as const,
+            code: "sceneRandomnessSettlementInProgress",
+          },
+          committedHere: false,
+        };
+      }
       this.authorityStore.appendEvents(eventsToAppend);
       this.authorityStore.updateState(resolved.state);
       this.authorityStore.advanceScope(currentSubmission.scene_scope);
@@ -4945,7 +5595,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("unauthenticated", "The trusted principal session is unavailable.");
     }
     const submission = this.authorityStore.submissionByPrepared(preparedActionId);
-    if (submission === undefined || submission.principal_id !== authenticated.principalId) {
+    const transferredRandomnessRecovery = source.kind === "recovery"
+      && submission !== undefined
+      && authenticated.characterIds.includes(submission.character_id);
+    if (submission === undefined
+      || (submission.principal_id !== authenticated.principalId && !transferredRandomnessRecovery)) {
       return rejectedAuthority("preparedActionUnauthorized", "The prepared action is unavailable.");
     }
     if (!authenticated.characterIds.includes(submission.character_id)) {
@@ -5162,6 +5816,34 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
 
     let rulesInput = adapted.input;
+    if (source.kind === "proposal"
+      && socialResolutionProfileEnabled(replay.profiles.extensions)
+      && rulesInput.kind === "resolveCompoundActionPlan"
+      && isJsonRecord(rulesInput.causalActionProgram)
+      && rulesInput.causalActionProgram.formRef === "npc-exchange.v1") {
+      const continuation = submission.continuation_json === null
+        ? undefined
+        : parseJson<JsonObject>(submission.continuation_json);
+      const originalInput = isJsonRecord(continuation?.originalInput)
+        ? continuation.originalInput
+        : undefined;
+      const answer = isJsonRecord(continuation?.answer) ? continuation.answer : undefined;
+      const trustedUtterance = submission.input_kind === "intent"
+        ? originalInput?.text
+        : submission.input_kind === "answer"
+          ? continuation?.displayText ?? answer?.text
+          : undefined;
+      if (!nonEmptyString(trustedUtterance)) {
+        return rejectedAuthority(
+          "invalidMechanicalProposal",
+          "The social proposal is missing the authenticated player's exact utterance.",
+        );
+      }
+      rulesInput = {
+        ...rulesInput,
+        trustedUtterance,
+      };
+    }
     if (source.kind === "proposal" && submission.input_kind === "answer") {
       const continuation = submission.continuation_json === null
         ? undefined
@@ -5188,6 +5870,27 @@ export class RoomDurableObject extends DurableObject<Env> {
           pendingInputId: continuation.pendingInputId,
           responseId: submission.root_action_id,
           answer: structuredClone(continuation.answer),
+        };
+      } else if (rulesInput.kind === "answerSocialResolution") {
+        if (
+          !hasExactJsonKeys(continuation.answer, ["choice"])
+          || !["press", "acceptStatusQuo"].includes(String(continuation.answer.choice))
+          || rulesInput.choice !== continuation.answer.choice
+          || rulesInput.pendingInputId !== continuation.pendingInputId
+          || rulesInput.rootActionId !== submission.root_action_id
+          || rulesInput.controllerCharacterId !== submission.character_id
+        ) {
+          return rejectedAuthority(
+            "invalidPendingResolution",
+            "The social continuation must preserve the authenticated player's choice.",
+          );
+        }
+        rulesInput = {
+          kind: "answerSocialResolution",
+          pendingInputId: continuation.pendingInputId,
+          rootActionId: submission.root_action_id,
+          controllerCharacterId: submission.character_id,
+          choice: continuation.answer.choice,
         };
       } else if (rulesInput.kind === "answerGroupRestInvitation") {
         const answer = continuation.answer;
@@ -5320,9 +6023,12 @@ export class RoomDurableObject extends DurableObject<Env> {
           "unchangedRetry",
           "worldLawViolation",
         ].includes(first.rejection.code);
+        const socialPendingReframe = submission.input_kind === "answer"
+          && answeredPendingInputId !== undefined
+          && replay.state.pendingInputs[answeredPendingInputId]?.kind === "socialResolution";
         if (
           !isWorldRuling
-          && submission.input_kind === "intent"
+          && (submission.input_kind === "intent" || socialPendingReframe)
           && source.kind === "proposal"
         ) {
           return needsKp([{
@@ -5636,11 +6342,28 @@ export class RoomDurableObject extends DurableObject<Env> {
           journalRequests.slice(0, candidates.length),
         )) return { kind: "retryableFailure", code: "randomnessJournalIntegrityMismatch" };
 
+        const activeRequests = journalRequests.slice(completedRequestCount);
         if (candidates.length === completedRequestCount) {
+          if (this.authorityPlayerRollGestureRequired(replay.profiles)) {
+            const authorized = new Set(
+              this.authorityStore.randomnessAuthorizations(journalPreparedActionId)
+                .map((entry) => entry.randomness_id),
+            );
+            const waitingForPlayer = activeRequests.some((entry) =>
+              this.authorityPlayerRollGestureRequired(
+                replay.profiles,
+                entry.request,
+                requestEvents,
+              )
+              && this.authorityPlayerRollOwner(replay.state, entry.request, requestEvents) !== undefined
+              && !authorized.has(entry.randomnessId));
+            if (waitingForPlayer) {
+              return this.awaitingPlayerRollOutcome(replay, authenticated);
+            }
+          }
           if (this.authorityStore.roomDeletion() !== undefined) {
             return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
           }
-          const activeRequests = journalRequests.slice(completedRequestCount);
           const generated: AuthorityRandomnessCandidate[] = activeRequests.map((entry) => ({
             randomnessId: entry.randomnessId,
             faces: this.authorityDiceTerms(entry.request)!
@@ -5720,7 +6443,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           requestHash: entry.requestHash,
           frozenParametersHash: entry.frozenParametersHash,
         }));
-        const activeRequests = journalRequests.slice(completedRequestCount);
         const activeRandomness = randomness.slice(completedRequestCount);
         const fulfillment = activeWave.fulfillment;
         let fulfillmentInput: JsonObject;
@@ -6022,6 +6744,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       pending: JsonObject;
     }> = [];
     let deliveryPlan: DeliveryPlan | undefined;
+    let awaitingInputTranscriptAudiences: DeliveryAudienceBinding[] = [];
     const safetyDirect = submission.input_kind === "safetyPause"
       || submission.input_kind === "safetyAdjust";
     const continuation = submission.continuation_json === null
@@ -6046,7 +6769,11 @@ export class RoomDurableObject extends DurableObject<Env> {
     const actorName = nonEmptyString(resolvedActorName)
       ? resolvedActorName
       : nonEmptyString(priorActorName) ? priorActorName : "你";
-    const actorMessage: DeliveryPlan["actorMessage"] = safetyDirect || actorText === undefined
+    const socialMetaAnswer = submission.input_kind === "answer"
+      && ["press", "acceptStatusQuo"].includes(String(pendingAnswer?.choice));
+    const actorMessage: DeliveryPlan["actorMessage"] = safetyDirect
+      || socialMetaAnswer
+      || actorText === undefined
       ? undefined
       : {
           messageId: `action:${receipt.receiptId}:${submission.character_id}`,
@@ -6077,6 +6804,25 @@ export class RoomDurableObject extends DurableObject<Env> {
         controllerCharacterId: currentBinding.controllerCharacterId,
         controllerPrincipalId: currentBinding.controllerPrincipalId,
       };
+      if (actorMessage !== undefined
+        && socialResolutionProfileEnabled(replay.profiles.extensions)) {
+        const deliveryPriorState = this.authorityStateBeforeEventRange(replay, receiptEvents);
+        if (deliveryPriorState === undefined) {
+          return rejectedAuthority(
+            "projectionFailure",
+            "The social offer event range has no reconstructable pre-state.",
+          );
+        }
+        awaitingInputTranscriptAudiences = this.authorityAudienceBindings(
+          replay.profiles,
+          resolved.state,
+          submission.character_id,
+          receipt.receiptId,
+          deliveryPriorState,
+          receiptEvents,
+          actorMessage,
+        );
+      }
     } else if (!safetyDirect) {
       const deliveryPriorState = this.authorityStateBeforeEventRange(replay, receiptEvents);
       if (deliveryPriorState === undefined) {
@@ -6171,10 +6917,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       const current = this.authorityStore.submissionByPrepared(preparedActionId);
       const currentReplay = this.authoritativeReplay();
       const currentAuthenticated = this.authenticatedAuthorityViewer(context, currentReplay.state);
+      const currentTransferredRandomnessRecovery = usedRandomnessJournal
+        && source.kind === "recovery"
+        && current !== undefined
+        && currentAuthenticated?.characterIds.includes(current.character_id) === true;
       if (
         current === undefined
         || currentAuthenticated === undefined
-        || current.principal_id !== currentAuthenticated.principalId
+        || (current.principal_id !== currentAuthenticated.principalId
+          && !currentTransferredRandomnessRecovery)
         || !currentAuthenticated.characterIds.includes(current.character_id)
       ) {
         return {
@@ -6288,17 +7039,23 @@ export class RoomDurableObject extends DurableObject<Env> {
             receiptId: currentFrame.receiptId,
           });
         }
-        this.authorityStore.appendExperiencedMessage({
-          viewerKey: actorViewerKey,
-          messageId: actorMessage.messageId,
-          sceneIds: actorMessage.sceneIds,
-          kind: "player",
-          speakerCharacterId: actorMessage.characterId,
-          speakerName: actorMessage.name,
-          body: actorMessage.body,
-          sourceEventSeq: transcriptSourceEventSeq,
-          receiptId: receipt.receiptId,
-        });
+        const transcriptViewerKeys = new Set([actorViewerKey]);
+        for (const audience of awaitingInputTranscriptAudiences) {
+          transcriptViewerKeys.add(`${audience.principalId}\u001f${audience.characterId}`);
+        }
+        for (const viewerKey of transcriptViewerKeys) {
+          this.authorityStore.appendExperiencedMessage({
+            viewerKey,
+            messageId: actorMessage.messageId,
+            sceneIds: actorMessage.sceneIds,
+            kind: "player",
+            speakerCharacterId: actorMessage.characterId,
+            speakerName: actorMessage.name,
+            body: actorMessage.body,
+            sourceEventSeq: transcriptSourceEventSeq,
+            receiptId: receipt.receiptId,
+          });
+        }
       }
       for (const pendingMessage of pendingMessages) {
         this.authorityStore.appendExperiencedMessage({
@@ -7431,6 +8188,12 @@ export class RoomDurableObject extends DurableObject<Env> {
         const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
         const slot = this.authorityStore.deliverySlot(viewerKey);
         const narrationRecovery = this.viewerNarrationRecovery(replay, viewer);
+        const presentationHold = this.viewerNarrationPresentationHold(
+          replay,
+          viewer,
+          readModel,
+          narrationRecovery,
+        );
         return {
           readModel,
           transcript: this.experiencedObservationTranscript(viewerKey, latest.sceneId),
@@ -7451,7 +8214,9 @@ export class RoomDurableObject extends DurableObject<Env> {
                       };
                   return { kind: "current" as const, frame: observedFrame, body: frame.text };
                 })(),
+          pendingPlayerRolls: [],
           ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
+          ...(presentationHold === undefined ? {} : { presentationHold }),
         };
       }
       const formerRecovery = this.authenticatedFormerViewerNarrationRecovery(
@@ -7480,6 +8245,7 @@ export class RoomDurableObject extends DurableObject<Env> {
                 const frame = parseJson<DeliveryFrame>(slot.frame_json);
                 return { kind: "current" as const, frame, body: frame.text };
               })(),
+          pendingPlayerRolls: [],
           narrationRecovery,
         };
       }
@@ -7543,6 +8309,12 @@ export class RoomDurableObject extends DurableObject<Env> {
     const viewerKey = `${authenticated.principalId}\u001f${characterId}`;
     const slot = this.authorityStore.deliverySlot(viewerKey);
     const narrationRecovery = this.viewerNarrationRecovery(replay, viewer);
+    const presentationHold = this.viewerNarrationPresentationHold(
+      replay,
+      viewer,
+      readModel,
+      narrationRecovery,
+    );
     return {
       readModel,
       transcript: this.experiencedObservationTranscript(
@@ -7563,10 +8335,12 @@ export class RoomDurableObject extends DurableObject<Env> {
                     slot,
                     frame,
                   ),
-                };
+            };
             return { kind: "current" as const, frame: observedFrame, body: frame.text };
           })(),
+      pendingPlayerRolls: this.viewerPendingPlayerRolls(replay, authenticated),
       ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
+      ...(presentationHold === undefined ? {} : { presentationHold }),
     };
   }
 
