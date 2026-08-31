@@ -2141,3 +2141,9 @@
 - 连带检查：Due ActorPlan eviction 用例中两条 `ImprovisedActionResolved` 分别是 internal program-freeze 与 public terminal event，并非重试重复；测试改为比较重试前后完整事件流并分别断言各一次。Room retry 的旧“已提交动作仍返回 Receipt”及带 `agencyClaims` 旁白也按当前 ViewerKey recovery 与 exact `{body}` 合同更正；相同机械 proposal 的 commit 仍幂等返回同一结果，归档和骰面不变。生产 `app/` / `tools/` 的旧玩家 proposal 精确符号已清零，仅保留 `tools/check-modules.mjs` 的禁止回流门禁。
 - 定向证据：统一物品/背包 Node 组 11 文件 41/41；ActorPlan Room 13/13；Room retry 6/6；当前 KP/adapter/ability/telemetry/runtime/binding/causal 组中 49 个未受更正用例通过，runtime Profile 更正后 4/4，最终直接覆盖 53 个用例无剩余失败。`npm run module:check`、`npm run typecheck` 均退出 0；Profile registry 与 Form catalog canonical check 都为 `true`；`git diff --check` 退出 0。
 - 剩余限制：用户明确取消冻结门，因此未运行 `npm test`、全项目 Lint、production build 或浏览器全站 QA。`tests/helpers/authoritative-proposal.ts` 仍是明确标注退役的 test-only fixture，26 个当前行为旧 suite 尚未逐项迁移；代表性旧 contest suite 因生产正确拒绝该 helper 而 0/1，不能作为 0.4 证据，也不构成生产兼容层。本轮没有执行 migration、部署或远端资源写入；集成基线为 `90fbc44bdcc9230b070bd09d528c68e9ae805060`，提交与非强制 push 另记审计。
+
+## 0.4 统一物品版本提交与推送审计（2026-08-31）
+
+- 基线与集成：工作分支 `cloudflare`，本轮起点 `90fbc44bdcc9230b070bd09d528c68e9ae805060`；共享工作树中的前端库存、统一 Item、current-only transport、规格/hash 与定向测试修改逐文件保留，没有用另一 worktree 整树覆盖，也没有未解决冲突。
+- 提交与外部操作：代码/规格/测试提交为 `225c6b2`（`feat: unify item authority and current action ingress`）。推送前 `origin/cloudflare` 为 `ae3a41e65383da807cad02a519b80782f3004a9a`，确认未并发前移后执行非强制 `git push origin HEAD:refs/heads/cloudflare`，退出 0，远端前移至 `225c6b2`。
+- 边界：推送前确认 `origin/main` 仍为产品基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`；未修改或推送 `main`，未执行远端 migration、部署、远端资源创建或 grok.me 操作。用户明确取消冻结门，验证范围与已知 test-only 旧 fixture 限制见上一条执行记录。
