@@ -3,10 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
 import { roomServiceCapabilities } from "../app/_runtime/lib/room/archive";
-import {
-  directConsequencesProposal,
-  productionActionPlanProposal,
-} from "./helpers/authoritative-proposal";
+import { observationProposal } from "./helpers/authoritative-proposal";
 
 function roomId(label: string) {
   return `room:service-routing:${label}:${crypto.randomUUID()}`;
@@ -120,19 +117,12 @@ describe("authoritative-v2 production Room service routing", () => {
       principal: principal("principal:alice"),
       authority,
       kp: {
-        propose: async (request: Record<string, unknown>) => productionActionPlanProposal(
-          String(request.rootActionId),
-          {
-            operation: "changeParty",
-            partyAction: "inviteMember",
-            memberRefs: [characterId("principal:bob")],
-          },
-          {
-            goal: "邀请博林同行",
-            method: "由阿莱莎发出明确的同行邀请",
-          },
-        ),
-        narrate: async () => ({ text: "同行邀请已经提交。", agencyClaims: [] }),
+        propose: async () => ({
+          kind: "authenticatedPartyAction",
+          action: "inviteMember",
+          targetCharacterId: characterId("principal:bob"),
+        }),
+        narrate: async () => ({ body: "同行邀请已经提交。" }),
       },
     }, {
       kind: "intent",
@@ -153,8 +143,10 @@ describe("authoritative-v2 production Room service routing", () => {
       principal: principal("principal:bob"),
       authority,
       kp: {
-        propose: async () => ({ kind: "answerPartyInvitation", accept: true }),
-        narrate: async () => ({ text: "你接受了同行邀请。", agencyClaims: [] }),
+        propose: async () => {
+          throw new Error("authenticated party answer must not call KP");
+        },
+        narrate: async () => ({ body: "你接受了同行邀请。" }),
       },
     }, {
       kind: "answer",
@@ -193,9 +185,13 @@ describe("authoritative-v2 production Room service routing", () => {
       kp: {
         propose: async (request: Record<string, unknown>) => {
           proposedInput = request.input;
-          return directConsequencesProposal(String(request.rootActionId));
+          return observationProposal(String(request.rootActionId), {
+            goal: "检查门框上的旧划痕",
+            method: "仔细观察门框",
+            duration: { unit: "second", value: 1 },
+          });
         },
-        narrate: async () => ({ text: "行动已经按房间权威提交。", agencyClaims: [] }),
+        narrate: async () => ({ body: "行动已经按房间权威提交。" }),
       },
     }, {
       kind: "intent",

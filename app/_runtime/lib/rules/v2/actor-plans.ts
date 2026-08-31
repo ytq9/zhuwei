@@ -45,15 +45,80 @@ export function actorPlanPremiseScope(
   return undefined;
 }
 
+export function actorPlanResourcesAreAvailable(
+  state: AuthoritativeWorldState,
+  npcId: string,
+  factionRef: string | null,
+  resourceRefs: unknown,
+): resourceRefs is string[] {
+  const npc = state.entities[npcId];
+  if (
+    !actorPlanNpcIsAvailable(npc)
+    || !Array.isArray(resourceRefs)
+    || !resourceRefs.every(isNonEmptyString)
+    || resourceRefs.length !== new Set(resourceRefs).size
+  ) return false;
+
+  const availableResources = new Set(Object.keys(npc.resources ?? {}));
+  if (factionRef === null) {
+    return resourceRefs.every((reference) => availableResources.has(reference));
+  }
+
+  const faction = state.campaignRuntime.factions[factionRef];
+  const memberRefs = faction?.memberRefs;
+  const factionResourceRefs = faction?.resourceRefs;
+  if (
+    !Array.isArray(memberRefs)
+    || !memberRefs.every(isNonEmptyString)
+    || !memberRefs.includes(npcId)
+    || !Array.isArray(factionResourceRefs)
+    || !factionResourceRefs.every(isNonEmptyString)
+  ) return false;
+
+  availableResources.add(factionRef);
+  for (const reference of factionResourceRefs) availableResources.add(reference);
+  return resourceRefs.includes(factionRef)
+    && factionResourceRefs.every((reference) => resourceRefs.includes(reference))
+    && resourceRefs.every((reference) => availableResources.has(reference));
+}
+
+export function actorPlanResourceScopes(
+  state: AuthoritativeWorldState,
+  npcId: string,
+  factionRef: string | null,
+  resourceRefs: unknown,
+): string[] {
+  const npc = state.entities[npcId];
+  if (npc === undefined || !Array.isArray(resourceRefs) || !resourceRefs.every(isNonEmptyString)) {
+    return [];
+  }
+  const personalResourceRefs = new Set(Object.keys(npc.resources ?? {}));
+  const scopes = [
+    `entity:${npcId}`,
+    ...resourceRefs
+      .filter((reference) => personalResourceRefs.has(reference))
+      .map((reference) => `resource:${npcId}:${reference}`),
+  ];
+  if (factionRef !== null) {
+    const factionResourceRefs = state.campaignRuntime.factions[factionRef]?.resourceRefs;
+    scopes.push(`faction:${factionRef}`);
+    if (Array.isArray(factionResourceRefs) && factionResourceRefs.every(isNonEmptyString)) {
+      scopes.push(...factionResourceRefs.map((reference) => `faction-resource:${reference}`));
+    }
+  }
+  return [...new Set(scopes)].sort();
+}
+
 function planActivity(plan: JsonRecord): JsonRecord | undefined {
   return isRecord(plan.activity) ? plan.activity : undefined;
 }
 
-function planTriggerIsSatisfied(
+export function actorPlanTriggerIsAvailable(
   state: AuthoritativeWorldState,
   npcId: string,
-  trigger: JsonRecord,
+  trigger: unknown,
 ): boolean {
+  if (!isRecord(trigger)) return false;
   const heldKnowledge = Object.values(state.knowledge[npcId] ?? {});
   if (trigger.kind === "knowledgeAcquired" && isNonEmptyString(trigger.knowledgeRef)) {
     return trigger.knowledgeRef in (state.knowledge[npcId] ?? {});
@@ -119,7 +184,7 @@ function eligiblePlan(
       eligibleAtFictionMicros: plan.due.atFictionMicros,
     };
   }
-  if (isRecord(plan.trigger) && planTriggerIsSatisfied(state, npcId, plan.trigger)) {
+  if (actorPlanTriggerIsAvailable(state, npcId, plan.trigger)) {
     return {
       plan,
       npcId,

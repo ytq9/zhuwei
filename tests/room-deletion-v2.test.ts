@@ -5,7 +5,10 @@ import {
 } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { directConsequencesProposal } from "./helpers/authoritative-proposal";
+import {
+  compileKpFormDraft,
+  lowerCausalActionProgram,
+} from "../app/_runtime/lib/kp/causal-action-program";
 
 type DirectoryRow = {
   id: string;
@@ -107,6 +110,32 @@ function intent(submissionId: string) {
   };
 }
 
+function observeProposal(rootActionId: string) {
+  const formId = "observe.v1" as const;
+  const draft = {
+    goal: "确认门闩当前状态",
+    method: "直接观察门闩",
+    focus: "门闩",
+    desiredInformation: "门闩当前保持原位",
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  };
+  const causalActionProgram = compileKpFormDraft(formId, draft);
+  return {
+    kind: "privateFormProposal",
+    formId,
+    draft,
+    causalActionProgram,
+    loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
+    semanticFreezeHash: causalActionProgram.semanticHash,
+    repairUsed: false,
+    proposalAttemptId: `proposal:${rootActionId}:1`,
+    modelInvocationReceipt: { task: "proposal", result: "success" },
+    rootActionId,
+  };
+}
+
 describe("authoritative-v2 recoverable room deletion", () => {
   it("requires the canonical host and freezes action, administration, and archive writes until cancellation", async () => {
     const { authority, capabilities } = await authoritativeRoom("freeze");
@@ -133,7 +162,7 @@ describe("authoritative-v2 recoverable room deletion", () => {
     await expect(authority.commit(
       HOST,
       String(prepared.preparedActionId),
-      directConsequencesProposal(String(prepared.rootActionId)),
+      observeProposal(String(prepared.rootActionId)),
     )).resolves.toMatchObject({ kind: "rejected", code: "roomDeleting" });
     await expect(authority.applyRoomAdministration(capabilities.roomAdministration, {
       commandId: "admin:while-deleting",

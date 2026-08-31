@@ -2,10 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import {
-  directConsequencesProposal,
-  productionActionPlanProposal,
-} from "./helpers/authoritative-proposal";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -82,7 +79,7 @@ async function act(
         return proposal(String(record(value, "proposal request").rootActionId));
       },
       async narrate() {
-        return { body: "已提交的动态能力结果进入当前世界。", agencyClaims: [] };
+        return { body: "已提交的动态能力结果进入当前世界。" };
       },
     },
   }, {
@@ -142,16 +139,17 @@ describe("dynamic AbilityDefinition archive recovery", () => {
       source.authority,
       "submission:dynamic-ability:register",
       "我将聚神步的规则固化为世界中的能力定义。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
+      (rootActionId) => privateFormProposal(rootActionId, "materialization.v1", {
         goal: "固化并登记聚神步的机械定义",
-        method: "按已确认的消耗与时点登记能力",
-        dynamicMaterializations: [{
-          kind: "ability",
-          factRef: ABILITY_ID,
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:public",
+        method: "registerAbilityDefinition",
+        proposedFact: JSON.stringify({
+          schema: "zhuwei.ability-definition-draft/v1",
           definition,
-        }],
+        }),
+        basisRefs: ["wake"],
+        resolution: "direct",
+        durationUnit: "second",
+        durationValue: 1,
       }) as JsonRecord,
     );
     expect(registered.kind, JSON.stringify(registered)).toBe("committed");
@@ -199,13 +197,12 @@ describe("dynamic AbilityDefinition archive recovery", () => {
       authority,
       "submission:dynamic-ability:invoke",
       "我调用聚神步并支付一点专注。",
-      (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "invokeCombatAction",
-        abilityRef: ABILITY_ID,
-      }, {
-        kind: "directSuccess",
+      (rootActionId) => privateFormProposal(rootActionId, "combat-action.v1", {
         goal: "调用已经固化的聚神步",
         method: "支付一点专注并执行其冻结机械",
+        intendedOutcome: "完成一次聚神步调用",
+        combatApproach: "使用当前角色拥有的冻结能力",
+        abilityRef: ABILITY_ID,
       }) as JsonRecord,
     );
     const [sourceInvocation, restoredInvocation] = await Promise.all([

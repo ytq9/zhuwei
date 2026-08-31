@@ -15,7 +15,6 @@ import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
 } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 import {
-  DYNAMIC_NPC_DEFAULT_SOCIAL_ARCHETYPE_REF,
   DYNAMIC_NPC_SOCIAL_ARCHETYPES,
 } from "../app/_runtime/lib/rules/profiles/social-resolution.ts";
 import { socialRelationshipId } from "../app/_runtime/lib/rules/v2/social-model.ts";

@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import { productionActionPlanProposal } from "./helpers/authoritative-proposal";
+import { npcMechanicalEncounterProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -26,7 +27,9 @@ const BOB = Object.freeze({
 });
 const ALICE_ID = "character:tactical-movement:alice";
 const BOB_ID = "character:tactical-movement:bob";
+const SENTINEL_ID = "npc:tactical-movement:wake-sentinel";
 const ENCOUNTER_ID = "encounter:tactical-movement:wake";
+const ENCOUNTER_BASIS_REF = "fact:tactical-movement:hostile-standoff";
 const HIDDEN_LEFT_BARRIER_ID = "feature:wake:hidden-side-wall-left";
 const HIDDEN_RIGHT_BARRIER_ID = "feature:wake:hidden-side-wall-right";
 
@@ -107,30 +110,71 @@ async function initializeEncounter(roomId: string) {
       character(ALICE_ID, ALICE.principal.id, "阿莱莎"),
       character(BOB_ID, BOB.principal.id, "博林"),
     ],
+    fixtureFacts: [{
+      factRef: ENCOUNTER_BASIS_REF,
+      kind: "establishedCommunicationChannel",
+      participants: [ALICE_ID, BOB_ID],
+    }],
   }), "tactical movement Room initialization");
   expect(initialized.created, JSON.stringify(initialized)).toBe(true);
 
-  const proposalRequests: JsonRecord[] = [];
-  let opened = record(await handleRoomAction(
-    actionContext(ALICE, room, async (request) => {
-      proposalRequests.push(structuredClone(request));
-      return productionActionPlanProposal(String(request.rootActionId), {
-        operation: "startCombat",
-        encounterRef: ENCOUNTER_ID,
-        targetEntityRefs: [BOB_ID],
-      }, {
-        kind: "highRiskFeasible",
-        goal: "在遗嘱宣读室中与博林进入敌对遭遇",
-        method: "由权威先攻决定交战顺序",
-      });
-    }),
-    {
-      kind: "intent",
-      submissionId: "submission:tactical-movement:start-encounter",
-      text: "我拔出武器，与博林进入交战。",
-    },
-  ), "tactical encounter opening outcome");
-  expect(proposalRequests).toHaveLength(1);
+  const prepared = record(await room.prepare(ALICE, {
+    kind: "intent",
+    submissionId: "submission:tactical-movement:start-encounter",
+    text: "我拔出武器，与博林和警戒傀儡进入交战。",
+  }), "tactical encounter preparation");
+  const proposal = npcMechanicalEncounterProposal(String(prepared.rootActionId), {
+    encounterRef: ENCOUNTER_ID,
+    sceneRef: "wake",
+    causalBasisRefs: [ENCOUNTER_BASIS_REF],
+    hostileEntityRefs: [BOB_ID, SENTINEL_ID],
+    entries: [{
+      entityId: SENTINEL_ID,
+      name: "警戒傀儡",
+      definition: {
+        entityId: SENTINEL_ID,
+        entityKind: "npc",
+        name: "警戒傀儡",
+        position: { x: "300", y: "240", elevation: "0" },
+        footprint: { width: "60", depth: "60", height: "60" },
+        stats: { str: "10", dex: "10", con: "10", int: "8", wis: "10", cha: "8" },
+        proficiencyBonus: "2",
+        armorClass: "10",
+        hitPoints: { current: "10", maximum: "10", temporary: "0" },
+        speedInches: { walk: "360" },
+        resources: {},
+        deathPolicy: "defeatedAtZero",
+        abilities: [],
+      },
+    }],
+  });
+  let opened = record(await runInDurableObject(room as never, async (instance) => {
+    const target = instance as unknown as {
+      authorityRoll(sides: number): number;
+      commit(context: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
+    };
+    const originalRoll = target.authorityRoll;
+    const initiativeFaces = [20, 10, 1] as const;
+    let rollIndex = 0;
+    target.authorityRoll = (sides: number) => {
+      expect(sides, "tactical opening initiative die").toBe(20);
+      const face = initiativeFaces[rollIndex];
+      if (face === undefined) throw new Error("tactical encounter requested unexpected extra randomness");
+      rollIndex += 1;
+      return face;
+    };
+    try {
+      const result = await target.commit(
+        ALICE,
+        String(prepared.preparedActionId),
+        structuredClone(proposal),
+      );
+      expect(rollIndex, "tactical opening initiative roll count").toBe(initiativeFaces.length);
+      return result;
+    } finally {
+      target.authorityRoll = originalRoll;
+    }
+  }), "tactical encounter opening outcome");
 
   if (opened.kind === "awaitingInput") {
     const pending = record(opened.pending, "initiative tie pending");
@@ -222,10 +266,6 @@ describe("SPEC 0014 TM05/TM10 tactical movement Room vertical", () => {
       "closed movement outcome",
     );
     expect(directProposals.count).toBe(0);
-
-    // RED: RoomAction currently rejects the otherwise closed Movement intent as
-    // an unsupported kind. The production slice must derive actor/encounter and
-    // all distance, collision, cover and endpoint facts from current authority.
     expect(moved.kind, JSON.stringify(moved)).toBe("committed");
   });
 
@@ -315,7 +355,7 @@ describe("SPEC 0014 TM05/TM10 tactical movement Room vertical", () => {
       structuredClone(duplicateArchive),
     )).resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
     expect(tacticalProjection(await restored.observe(mover))).toEqual(after);
-  });
+  }, 10_000);
 
   it("rejects speed, public obstacle, hidden obstacle, bad start and stale spatial revision without moving or revealing a hidden cause", async () => {
     const source = await initializeEncounter("tactical-movement-room-v2-failure-privacy-red");

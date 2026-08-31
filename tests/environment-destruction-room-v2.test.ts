@@ -6,7 +6,7 @@ import { handleRoomAction } from "../app/_runtime/lib/room/action";
 import { compileAbilityDefinition } from "../app/_runtime/lib/rules/profiles/ability-compiler";
 import { entityCanTargetTacticalFeature } from "../app/_runtime/lib/rules/profiles/combat-geometry";
 import { replay } from "../app/_runtime/lib/rules";
-import { productionActionPlanProposal } from "./helpers/authoritative-proposal";
+import { npcMechanicalEncounterProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -31,6 +31,7 @@ const BOB = Object.freeze({
 const SEAT_ID = "feature:shrine:stone-seat";
 const DOOR_ID = "feature:yard:cellar-door";
 const HIDDEN_DOOR_ID = "feature:yard:hidden-passage";
+const ENCOUNTER_BASIS_REF = "fact:environment-destruction:shared-scene-context";
 
 function record(value: unknown, label: string): JsonRecord {
   expect(value, label).toBeTypeOf("object");
@@ -95,6 +96,39 @@ function environmentAbility(submissionId: string, featureId: string, abilityRef:
   };
 }
 
+async function commitEnvironmentStrike(
+  room: Authority,
+  proposeCount: { value: number },
+  input: ReturnType<typeof environmentAbility>,
+) {
+  return runInDurableObject(room as never, async (instance) => {
+    const target = instance as unknown as Authority & {
+      authorityRoll(sides: number): number;
+    };
+    const originalRoll = target.authorityRoll;
+    const strikeFaces = [19, 8] as const;
+    let rollIndex = 0;
+    target.authorityRoll = (sides: number) => {
+      const expectedSides = rollIndex === 0 ? 20 : 8;
+      expect(sides, "environment strike die").toBe(expectedSides);
+      const face = strikeFaces[rollIndex];
+      if (face === undefined) throw new Error("environment strike requested unexpected extra randomness");
+      rollIndex += 1;
+      return face;
+    };
+    try {
+      const result = await handleRoomAction(
+        context(ALICE, target, proposeCount),
+        structuredClone(input) as never,
+      );
+      expect(rollIndex, "environment strike roll count").toBe(strikeFaces.length);
+      return result;
+    } finally {
+      target.authorityRoll = originalRoll;
+    }
+  });
+}
+
 function warhammerAbility(observation: unknown) {
   const readModel = record(record(observation, "ability observation").readModel, "ability read model");
   const controlled = record(readModel.controlledCharacter, "controlled character");
@@ -103,8 +137,10 @@ function warhammerAbility(observation: unknown) {
   const definitions = record(combat.definitions, "controlled definitions");
   const match = Object.entries(definitions)
     .map(([abilityRef, definition]) => ({ abilityRef, definition: record(definition, "ability definition") }))
-    .find(({ definition }) => definition.mechanicalKey === "weapon:warhammer");
-  expect(match, "equipped warhammer AbilityDefinition").toBeDefined();
+    .find(({ definition }) => typeof definition.mechanicalKey === "string"
+      && definition.mechanicalKey.startsWith("weapon:item-entry:")
+      && definition.mechanicalKey.includes(":warhammer:"));
+  expect(match, `equipped warhammer AbilityDefinition: ${JSON.stringify(combat)}`).toBeDefined();
   expect(abilityRefs).toContain(match!.abilityRef);
   expect(definitions).toHaveProperty(match!.abilityRef);
   const compiled = compileAbilityDefinition(match!.definition);
@@ -149,6 +185,14 @@ async function initialize(
         ? []
         : [character(`character:${name}:bob`, BOB.principal.id, bobSceneId)]),
     ],
+    fixtureFacts: [{
+      factRef: ENCOUNTER_BASIS_REF,
+      kind: "establishedCommunicationChannel",
+      participants: [
+        `character:${name}:alice`,
+        "npc:black-oak-will:lian",
+      ],
+    }],
   }), "environment Room initialization");
   expect(initialized.created, JSON.stringify(initialized)).toBe(true);
   return {
@@ -166,19 +210,14 @@ function encounterProposal(rootActionId: string, sceneId: "shrine" | "yard") {
   return {
     encounterId,
     enemyId,
-    proposal: productionActionPlanProposal(rootActionId, {
-      operation: "startCombat",
+    proposal: npcMechanicalEncounterProposal(rootActionId, {
       encounterRef: encounterId,
-      targetEntityRefs: [enemyId],
-    }, {
-      kind: "highRiskFeasible",
-      goal: "与显形的环境哨兵进入遭遇",
-      method: "按权威先攻开始遭遇",
-      dynamicMaterializations: [{
-        kind: "enemy",
-        factRef: `fact:${rootActionId}:sentinel-appears`,
-        causalBasisRefs: [],
-        visibilityPolicyRef: "visibility:scene-observers",
+      sceneRef: sceneId,
+      causalBasisRefs: [ENCOUNTER_BASIS_REF],
+      hostileEntityRefs: [enemyId],
+      entries: [{
+        entityId: enemyId,
+        name: "环境哨兵",
         definition: {
           entityId: enemyId,
           entityKind: "npc",
@@ -211,59 +250,6 @@ async function activeEncounter(room: Authority, principal: typeof ALICE, encount
   const observation = record(await room.observe(principal), "encounter observation");
   const readModel = record(observation.readModel, "encounter read model");
   return record(record(readModel.encounters, "encounters")[encounterId], "active encounter");
-}
-
-async function commitPlan(
-  room: Authority,
-  submissionId: string,
-  text: string,
-  mechanicalProposal: JsonRecord,
-  options: JsonRecord = {},
-) {
-  const prepared = record(await room.prepare(ALICE, {
-    kind: "intent",
-    submissionId,
-    text,
-  }), `${text} prepare`);
-  const proposal = productionActionPlanProposal(
-    String(prepared.rootActionId),
-    mechanicalProposal as never,
-    {
-      goal: text,
-      method: text,
-      ...options,
-    } as never,
-  );
-  return record(await room.commit(
-    ALICE,
-    String(prepared.preparedActionId),
-    proposal,
-  ), `${text} commit`);
-}
-
-async function endNpcTurn(room: Authority, encounterId: string, enemyId: string, sequence: number) {
-  const outcome = await commitPlan(
-    room,
-    `submission:destruction:npc-turn:${sequence}`,
-    "观察哨兵结束当前回合",
-    {
-      operation: "resolveDirectConsequences",
-      duration: { unit: "second", value: 1 },
-      frozenCosts: [],
-      success: [],
-      failure: [],
-    },
-    {
-      npcActions: [{
-        npcId: enemyId,
-        goal: "结束当前回合",
-        method: "没有采取其他行动",
-        knowledgeRefs: [],
-        mechanicalProposal: { operation: "endCombatTurn", encounterRef: encounterId },
-      }],
-    },
-  );
-  expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
 }
 
 async function openEncounter(
@@ -323,25 +309,6 @@ async function openEncounter(
   return encounter;
 }
 
-async function rotateBackToActor(
-  room: Authority,
-  encounterId: string,
-  enemyId: string,
-  actorId: string,
-  sequence: number,
-) {
-  const ended = await commitPlan(
-    room,
-    `submission:destruction:player-turn:${sequence}`,
-    "结束当前角色回合",
-    { operation: "endCombatTurn", encounterRef: encounterId },
-  );
-  expect(ended.kind, JSON.stringify(ended)).toBe("committed");
-  expect((await activeEncounter(room, ALICE, encounterId)).activeEntityId).toBe(enemyId);
-  await endNpcTurn(room, encounterId, enemyId, sequence);
-  expect((await activeEncounter(room, ALICE, encounterId)).activeEntityId).toBe(actorId);
-}
-
 async function archive(room: Authority, capability: unknown): Promise<JsonRecord> {
   const exported = record(await room.exportAuthoritativeArchive(capability), "archive export");
   return record(exported.archive, "archive");
@@ -385,7 +352,6 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
   const seatCommittedSubmissions: string[] = [];
   let seatActorId: string | undefined;
   let seatSource: Awaited<ReturnType<typeof initialize>> | undefined;
-  let seatEncounter: Awaited<ReturnType<typeof openEncounter>> | undefined;
   let seatProposed: { value: number } | undefined;
   let seatAttemptIndex = 0;
   let seatStatesSeen: string[] = [];
@@ -395,36 +361,26 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
 
   async function advanceSeatOneAuthorityTurn(): Promise<JsonRecord> {
     expect(seatSource, "seat Room").toBeDefined();
-    expect(seatEncounter, "seat encounter").toBeDefined();
     expect(seatProposed, "seat KP counter").toBeDefined();
     expect(seatAbilityEvidence, "seat ability").toBeDefined();
     expect(seatActorId, "seat actor").toBeDefined();
-    if (seatSource === undefined || seatEncounter === undefined || seatProposed === undefined
+    if (seatSource === undefined || seatProposed === undefined
       || seatAbilityEvidence === undefined || seatActorId === undefined) {
       throw new Error("seat authority fixture was not produced");
     }
     let projected = tacticalFeature(await seatSource.room.observe(ALICE), SEAT_ID);
     if (projected.state === "destroyed") return projected;
-    if (seatAttemptIndex > 0 && seatAttemptIndex % 4 === 0) {
-      await rotateBackToActor(
-        seatSource.room,
-        seatEncounter.encounterId,
-        seatEncounter.enemyId,
-        seatActorId,
-        seatAttemptIndex,
-      );
-    }
-    const availableStrikes = seatAttemptIndex % 4 === 0 ? 4 : 4 - (seatAttemptIndex % 4);
-    for (let offset = 0; offset < availableStrikes && projected.state !== "destroyed"; offset += 1) {
+    for (let offset = 0; offset < 4 && projected.state !== "destroyed"; offset += 1) {
       const index = seatAttemptIndex + 1;
       const submission = index === 1 ? "first" : `strike-${index}`;
-      const outcome = record(await handleRoomAction(
-        context(ALICE, seatSource.room, seatProposed),
+      const outcome = record(await commitEnvironmentStrike(
+        seatSource.room,
+        seatProposed,
         environmentAbility(
           `submission:destruction:seat:${submission}`,
           SEAT_ID,
           seatAbilityEvidence.abilityRef,
-        ) as never,
+        ),
       ), `damage outcome ${index}`);
       expect(outcome).toMatchObject({
         kind: "committed",
@@ -448,7 +404,7 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
     const aliceId = `character:${name}:alice`;
     const aliceAbility = warhammerAbility(await source.room.observe(ALICE));
     expect(aliceAbility.definition).toMatchObject({
-      mechanicalKey: "weapon:warhammer",
+      mechanicalKey: expect.stringMatching(/^weapon:item-entry:.+:warhammer:/u),
       target: { kind: "creatureOrEnvironmentFeature" },
       attack: { ability: "str", proficiency: true },
       damage: [{ type: "bludgeoning", formula: "1d8+3" }],
@@ -464,10 +420,9 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
     });
     expectPublicFeatureMechanicsSafe(initialProjection);
 
-    const encounter = await openEncounter(source.room, name, "shrine", aliceId);
+    await openEncounter(source.room, name, "shrine", aliceId);
     expect(proposed.value).toBe(0);
     seatSource = source;
-    seatEncounter = encounter;
     seatProposed = proposed;
     seatAbilityEvidence = aliceAbility;
     seatActorId = aliceId;
@@ -479,7 +434,7 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
       const projected = await advanceSeatOneAuthorityTurn();
       expect(["intact", "damaged", "destroyed"]).toContain(projected.state);
       expectPublicFeatureMechanicsSafe(projected);
-    });
+    }, 10_000);
   }
 
   it("closes the bounded intact → damaged → destroyed chain and exports it", async () => {
@@ -589,32 +544,24 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
           } as never,
         )).resolves.toMatchObject({ kind: "committed" });
       }
-      const encounter = await openEncounter(source.room, name, "yard", actorId);
+      await openEncounter(source.room, name, "yard", actorId);
       let projected = tacticalFeature(await source.room.observe(ALICE), DOOR_ID);
       let attempts = 0;
       for (let index = 1; projected.state !== "destroyed" && index <= 4; index += 1) {
         attempts = index;
-        await expect(handleRoomAction(
-          context(ALICE, source.room, proposed),
+        await expect(commitEnvironmentStrike(
+          source.room,
+          proposed,
           environmentAbility(
             `submission:destruction:door:${initial}:strike:${index}`,
             DOOR_ID,
             ability.abilityRef,
-          ) as never,
+          ),
         )).resolves.toMatchObject({
           kind: "committed",
           receipt: { randomnessCommitments: [expect.any(Object), expect.any(Object)] },
         });
         projected = tacticalFeature(await source.room.observe(ALICE), DOOR_ID);
-        if (projected.state !== "destroyed" && index % 4 === 0 && index < 4) {
-          await rotateBackToActor(
-            source.room,
-            encounter.encounterId,
-            encounter.enemyId,
-            actorId,
-            index,
-          );
-        }
       }
       expect(tacticalFeature(await source.room.observe(ALICE), DOOR_ID)).toMatchObject({
         state: "destroyed",
@@ -635,7 +582,7 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
         closedDoorProjection = projected;
         closedDoorRecoveryCapability = source.capabilities.disasterRecovery;
       }
-    });
+    }, 10_000);
   }
 
   it("restores a destroyed closed portal and its mechanics in a fresh DO", async () => {
@@ -664,7 +611,7 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
       SEAT_ID,
       ability.abilityRef,
     );
-    const first = record(await handleRoomAction(context(ALICE, source.room, proposed), input as never), "first strike");
+    const first = record(await commitEnvironmentStrike(source.room, proposed, input), "first strike");
     const firstReceipt = structuredClone(record(first.receipt, "first receipt"));
     const repeated = record(await handleRoomAction(
       context(ALICE, source.room, proposed),

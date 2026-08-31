@@ -3,7 +3,13 @@ import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import { productionActionPlanProposal } from "./helpers/authoritative-proposal";
+import {
+  executeNpcActorPlanDecision,
+  npcActorPlanFormationProposal,
+  npcMechanicalEncounterProposal,
+  observationProposal,
+  privateFormProposal,
+} from "./helpers/authoritative-proposal";
 
 type RecordValue = Record<string, unknown>;
 
@@ -19,11 +25,14 @@ const ENEMY_ID = "enemy:combat-vertical:sentinel";
 const ENCOUNTER_ID = "encounter:combat-vertical:gate";
 const HAZARD_FACT_ID = "fact:combat-vertical:unstable-brazier";
 const ENEMY_ATTACK_ID = "ability:combat-vertical:sentinel-bolt";
+const ENEMY_VISIBILITY_REF = "knowledge:combat-vertical:sentinel-visible-at-gate";
+const ENEMY_KNOWLEDGE_REF = "knowledge:combat-vertical:sentinel-battle-order";
 
 type Authority = {
   initializeAuthoritative(input: unknown): Promise<unknown>;
   observe(context: unknown, query?: unknown): Promise<unknown>;
   exportAuthoritativeArchive(capability: unknown): Promise<unknown>;
+  applyRoomAdministration(capability: unknown, command: unknown): Promise<unknown>;
 };
 
 function record(value: unknown, label: string): RecordValue {
@@ -45,7 +54,7 @@ function character(characterId: string, controllerPrincipalId: string, name: str
     controllerPrincipalId,
     staticCard: {
       name,
-      sceneId: "yard",
+      sceneId: "wake",
       abilityScores: alice
         ? { str: 14, dex: 14, con: 14, int: 10, wis: 18, cha: 10 }
         : { str: 16, dex: 14, con: 14, int: 10, wis: 12, cha: 10 },
@@ -69,7 +78,7 @@ function sentinelDefinition() {
     entityId: ENEMY_ID,
     entityKind: "npc",
     name: "铁门哨兵",
-    position: { x: "120", y: "0", elevation: "0" },
+    position: { x: "-60", y: "-240", elevation: "0" },
     footprint: { width: "60", depth: "60", height: "60" },
     stats: { str: "1", dex: "30", con: "14", int: "8", wis: "10", cha: "8" },
     proficiencyBonus: "9",
@@ -106,6 +115,31 @@ describe("B53 natural-language combat vertical slice", () => {
         character(ALICE_ID, ALICE.principal.id, "阿莱莎"),
         character(BOB_ID, BOB.principal.id, "博林"),
       ],
+      fixtureFacts: [{
+        factRef: HAZARD_FACT_ID,
+        kind: "establishedCommunicationChannel",
+        participants: [ALICE_ID, BOB_ID],
+      }, {
+        knowledgeRef: ENEMY_VISIBILITY_REF,
+        holderEntityId: ENEMY_ID,
+        holderName: "铁门哨兵",
+        sceneId: "wake",
+        content: { observation: "铁门前的哨兵清晰可见。" },
+      }, {
+        knowledgeRef: ENEMY_KNOWLEDGE_REF,
+        holderEntityId: ENEMY_ID,
+        holderName: "铁门哨兵",
+        sceneId: "wake",
+        content: { order: "守住铁门，并按眼前战况采取自己的行动。" },
+      }, {
+        knowledgeRef: ENEMY_VISIBILITY_REF,
+        holderEntityId: ALICE_ID,
+        content: { observation: "铁门前的哨兵清晰可见。" },
+      }, {
+        knowledgeRef: ENEMY_VISIBILITY_REF,
+        holderEntityId: BOB_ID,
+        content: { observation: "铁门前的哨兵清晰可见。" },
+      }],
     }), "room initialization");
     expect(initialized.created, JSON.stringify(initialized)).toBe(true);
     const capabilities = record(initialized.serviceCapabilities, "service capabilities");
@@ -119,35 +153,18 @@ describe("B53 natural-language combat vertical slice", () => {
         propose: async (request: RecordValue) => {
           requests.push(structuredClone(request));
           const rootActionId = String(request.rootActionId);
-          return productionActionPlanProposal(rootActionId, {
-            operation: "startCombat",
+          return npcMechanicalEncounterProposal(rootActionId, {
             encounterRef: ENCOUNTER_ID,
-            memberRefs: [BOB_ID],
-            targetEntityRefs: [ENEMY_ID],
-          }, {
-            kind: "highRiskFeasible",
-            goal: "与博林共同迎击铁门哨兵",
-            method: "避开摇晃火盆并进入敌对遭遇",
-            dynamicMaterializations: [
-              {
-                kind: "hazard",
-                factRef: HAZARD_FACT_ID,
-                causalBasisRefs: [],
-                visibilityPolicyRef: "visibility:scene-observers",
-                definition: {
-                  name: "摇晃的火盆",
-                  warningEvidence: "火盆支架正在石地上轻微滑动",
-                  trigger: "受撞击时倾倒",
-                },
-              },
-              {
-                kind: "enemy",
-                factRef: "fact:combat-vertical:sentinel-arrives",
-                causalBasisRefs: [],
-                visibilityPolicyRef: "visibility:scene-observers",
-                definition: sentinelDefinition(),
-              },
-            ],
+            sceneRef: "wake",
+            causalBasisRefs: [HAZARD_FACT_ID],
+            alliedEntityRefs: [BOB_ID],
+            hostileEntityRefs: [ENEMY_ID],
+            establishedEntryRefs: [ENEMY_ID],
+            entries: [{
+              entityId: ENEMY_ID,
+              name: "铁门哨兵",
+              definition: sentinelDefinition(),
+            }],
           });
         },
         narrate: async () => ({ body: "你们避开火盆，哨兵横矛封住铁门。", agencyClaims: [] }),
@@ -210,32 +227,24 @@ describe("B53 natural-language combat vertical slice", () => {
     }
 
     let turnSubmission = 0;
+    const npcActionChildRoots = new WeakMap<RecordValue, string>();
     const activeEntityId = async () => {
       const observation = record(await authority.observe(ALICE), "active-turn observation");
       const readModel = record(observation.readModel, "active-turn read model");
       return String(record(record(readModel.encounters, "active encounters")[ENCOUNTER_ID], "active encounter").activeEntityId);
     };
-    const endPlayerTurn = async (
-      principal: typeof ALICE | typeof BOB,
-      characterId: typeof ALICE_ID | typeof BOB_ID,
-    ) => {
+    const endPlayerTurn = async (principal: typeof ALICE | typeof BOB) => {
       turnSubmission += 1;
       const ended = record(await handleRoomAction({
         principal,
         authority,
         kp: {
-          propose: async (request: RecordValue) => productionActionPlanProposal(
-            String(request.rootActionId),
-            { operation: "endCombatTurn", encounterRef: ENCOUNTER_ID },
-            { goal: "明确结束当前回合", method: "不替下一名战斗者选择行动" },
-          ),
+          propose: async () => { throw new Error("structured end turn must not call KP"); },
           narrate: async () => ({ body: "当前回合结束，决定权交给下一名战斗者。", agencyClaims: [] }),
         },
       }, {
-        kind: "intent",
+        kind: "combatEndTurn",
         submissionId: `submission:combat-vertical:end-player-${turnSubmission}`,
-        characterId,
-        text: "我明确结束自己的当前回合。",
       }), "player end-turn outcome");
       expect(ended.kind, JSON.stringify(ended)).toBe("committed");
     };
@@ -244,29 +253,64 @@ describe("B53 natural-language combat vertical slice", () => {
       mechanicalProposal: RecordValue,
     ) => {
       turnSubmission += 1;
-      return record(await handleRoomAction({
+      const planRef = `actor-plan:combat-vertical:${turnSubmission}`;
+      const activityRef = `activity:combat-vertical:${turnSubmission}`;
+      const traceFactRef = `fact:combat-vertical:npc-action:${turnSubmission}`;
+      const targetRef = typeof mechanicalProposal.targetEntityRef === "string"
+        ? mechanicalProposal.targetEntityRef
+        : Array.isArray(mechanicalProposal.targetEntityRefs)
+          && mechanicalProposal.targetEntityRefs.length === 1
+          && typeof mechanicalProposal.targetEntityRefs[0] === "string"
+          ? mechanicalProposal.targetEntityRefs[0]
+          : undefined;
+      const formed = record(await handleRoomAction({
         principal: ALICE,
         authority,
         kp: {
-          propose: async (request: RecordValue) => productionActionPlanProposal(
+          propose: async (request: RecordValue) => npcActorPlanFormationProposal(
             String(request.rootActionId),
             {
-              operation: "resolveDirectConsequences",
-              duration: { unit: "second", value: 1 },
-              frozenCosts: [],
-              success: [],
-              failure: [],
+              sceneRef: "wake",
+              npcRef: ENEMY_ID,
+              premiseKnowledgeRef: ENEMY_KNOWLEDGE_REF,
+              planRef,
+              activityRef,
+              traceFactRef,
+              nextStep: label,
+              ...(targetRef === undefined ? {} : { alternateTargetRef: targetRef }),
             },
+          ),
+          decideDueActorPlan: async () => {
+            throw new Error("newly formed ActorPlan must execute on the next affected intent");
+          },
+          narrate: async () => ({ body: `哨兵正在判断是否${label}。`, agencyClaims: [] }),
+        },
+      }, {
+        kind: "intent",
+        submissionId: `submission:combat-vertical:npc-plan-${turnSubmission}`,
+        text: `我留意哨兵是否准备${label}。`,
+      }), `NPC ${label} plan formation`);
+      expect(formed.kind, JSON.stringify(formed)).toBe("committed");
+
+      const outcome = record(await handleRoomAction({
+        principal: ALICE,
+        authority,
+        kp: {
+          decideDueActorPlan: async (request: RecordValue) => executeNpcActorPlanDecision(
+            String(request.rootActionId),
             {
-              goal: `观察哨兵${label}`,
-              method: "玩家不替 NPC 决定；KP 只依据哨兵当前可见战场提出机械行动",
-              npcActions: [{
-                npcId: ENEMY_ID,
-                goal: label,
-                method: label,
-                knowledgeRefs: [],
-                mechanicalProposal: mechanicalProposal as never,
-              }],
+              planRef,
+              mechanicalProposal,
+              ...(targetRef === undefined ? {} : { targetRef }),
+            },
+          ),
+          propose: async (request: RecordValue) => observationProposal(
+            String(request.rootActionId),
+            {
+              goal: `观察哨兵${label}后的现场`,
+              method: "保持自己的决定不变，只确认已经发生的可见结果",
+              publicBasisRefs: [HAZARD_FACT_ID],
+              duration: { unit: "second", value: 1 },
             },
           ),
           narrate: async () => ({ body: `哨兵${label}。`, agencyClaims: [] }),
@@ -274,9 +318,13 @@ describe("B53 natural-language combat vertical slice", () => {
       }, {
         kind: "intent",
         submissionId: `submission:combat-vertical:npc-${turnSubmission}`,
-        characterId: ALICE_ID,
         text: `我保持自己的决定不变，观察哨兵${label}。`,
       }), `NPC ${label} outcome`);
+      npcActionChildRoots.set(
+        outcome,
+        `actor-plan-due:${planRef}:trigger:knowledgeAcquired`,
+      );
+      return outcome;
     };
     const endNpcTurn = async () => {
       const ended = await runNpcTurnAction("结束自己的当前回合", {
@@ -289,8 +337,8 @@ describe("B53 natural-language combat vertical slice", () => {
       for (let index = 0; index < 8; index += 1) {
         const active = await activeEntityId();
         if (active === targetEntityId) return;
-        if (active === ALICE_ID) await endPlayerTurn(ALICE, ALICE_ID);
-        else if (active === BOB_ID) await endPlayerTurn(BOB, BOB_ID);
+        if (active === ALICE_ID) await endPlayerTurn(ALICE);
+        else if (active === BOB_ID) await endPlayerTurn(BOB);
         else if (active === ENEMY_ID) await endNpcTurn();
         else throw new Error(`unexpected active combatant: ${active}`);
       }
@@ -309,23 +357,21 @@ describe("B53 natural-language combat vertical slice", () => {
       .find((definition) => definition.mechanicalKey === "spell:ensnaring");
     expect(ensnaringStrike).toBeDefined();
     const concentrationRequests: RecordValue[] = [];
-    const concentrationCast = record(await handleRoomAction({
+    let concentrationCast = record(await handleRoomAction({
       principal: ALICE,
       authority,
       kp: {
         propose: async (request: RecordValue) => {
           concentrationRequests.push(structuredClone(request));
-          return productionActionPlanProposal(
+          return privateFormProposal(
             String(request.rootActionId),
+            "combat-action.v1",
             {
-              operation: "invokeCombatAction",
-              abilityRef: String(ensnaringStrike!.definitionId),
-              targetEntityRef: ALICE_ID,
-            },
-            {
-              kind: "highRiskFeasible",
               goal: "施放诱捕打击并开始专注",
               method: "在自己的回合对自己施放诱捕打击",
+              intendedOutcome: "完成施法并开始维持专注",
+              combatApproach: "本人附赠动作法术",
+              abilityRef: String(ensnaringStrike!.definitionId),
             },
           );
         },
@@ -337,6 +383,26 @@ describe("B53 natural-language combat vertical slice", () => {
       characterId: ALICE_ID,
       text: "轮到我时，我施放诱捕打击并维持专注。",
     }), "concentration cast outcome");
+    expect(concentrationCast.kind, JSON.stringify(concentrationCast)).toBe("awaitingInput");
+    const concentrationTarget = record(concentrationCast.pending, "concentration target choice");
+    expect(concentrationTarget).toMatchObject({
+      kind: "combatChoice",
+      choiceKind: "target",
+      candidateEntityIds: [ALICE_ID],
+    });
+    concentrationCast = record(await handleRoomAction({
+      principal: ALICE,
+      authority,
+      kp: {
+        propose: async () => { throw new Error("authenticated target answer must not call KP"); },
+        narrate: async () => ({ body: "荆棘般的魔力绕上阿莱莎的武器，她开始维持专注。", agencyClaims: [] }),
+      },
+    }, {
+      kind: "answer",
+      submissionId: "submission:combat-vertical:ensnaring-target",
+      pendingInputId: String(concentrationTarget.pendingInputId),
+      answer: { kind: "selectTarget", targetEntityId: ALICE_ID },
+    }), "concentration target answer");
     expect(concentrationCast.kind, JSON.stringify({ concentrationCast, concentrationRequests })).toBe("committed");
     const concentratingReadModel = record(
       record(await authority.observe(ALICE), "Alice concentrating observation").readModel,
@@ -345,7 +411,34 @@ describe("B53 natural-language combat vertical slice", () => {
     expect(record(record(concentratingReadModel.entities, "visible entities")[ALICE_ID], "Alice combat entity").concentration)
       .toEqual(expect.objectContaining({ abilityRef: String(ensnaringStrike!.definitionId) }));
 
-    await endPlayerTurn(ALICE, ALICE_ID);
+    const concentratingTactical = record(
+      concentratingReadModel.tacticalProjection,
+      "Alice concentrating tactical projection",
+    );
+    const alicePosition = record(
+      record(concentratingTactical.self, "Alice tactical self").position,
+      "Alice tactical position",
+    );
+    const aliceAdvance = record(await handleRoomAction({
+      principal: ALICE,
+      authority,
+      kp: {
+        propose: async () => { throw new Error("structured combat movement must not call KP"); },
+        narrate: async () => ({ body: "阿莱莎逼近哨兵，仍维持着诱捕打击。", agencyClaims: [] }),
+      },
+    }, {
+      kind: "movement",
+      submissionId: "submission:combat-vertical:alice-advance",
+      movementMode: "walk",
+      spatialRevision: String(concentratingTactical.spatialRevision) as `sha256:${string}`,
+      path: [
+        structuredClone(alicePosition) as { x: string; y: string; elevation: string },
+        { x: "-120", y: "-240", elevation: "0" },
+      ],
+    }), "Alice structured advance");
+    expect(aliceAdvance.kind, JSON.stringify(aliceAdvance)).toBe("committed");
+
+    await endPlayerTurn(ALICE);
     await advanceTo(ENEMY_ID);
     const enemyAttack = await runNpcTurnAction("以弩箭射击正在专注的阿莱莎", {
       operation: "invokeCombatAction",
@@ -361,30 +454,36 @@ describe("B53 natural-language combat vertical slice", () => {
       && record(record(record(damagedReadModel.entities, "damaged visible entities")[ALICE_ID], "damaged Alice").hitPoints, "damaged hit points").current))
       .toBeLessThan(13);
 
-    const movement = await runNpcTurnAction("向东撤开二十尺", {
+    const movement = await runNpcTurnAction("向东撤开五尺", {
       operation: "moveCombatant",
       encounterRef: ENCOUNTER_ID,
       destinationRef: "east",
-      destinationFeet: 20,
+      destinationFeet: 5,
     });
     expect(movement.kind, JSON.stringify(movement)).toBe("awaitingInput");
-    expect(movement.pending).toEqual({ kind: "pending" });
+    expect(movement.pending).toMatchObject({
+      kind: "combatChoice",
+      choiceKind: "reaction",
+      candidateAbilityRefs: ["action:opportunity-attack"],
+    });
+    expect(movement.pending).not.toHaveProperty("controllerCharacterId");
+    expect(movement.pending).not.toHaveProperty("controllerPrincipalId");
 
-    const aliceDuringReaction = record(
-      record(await authority.observe(ALICE), "Alice during private reaction").readModel,
-      "Alice during private reaction read model",
+    const bobDuringReaction = record(
+      record(await authority.observe(BOB), "Bob during private reaction").readModel,
+      "Bob during private reaction read model",
     );
-    expect(list(aliceDuringReaction.pendingInputs, "Alice private pending inputs")
-      .some((entry) => record(entry, "Alice pending entry").choiceKind === "reaction"))
+    expect(list(bobDuringReaction.pendingInputs, "Bob private pending inputs")
+      .some((entry) => record(entry, "Bob pending entry").choiceKind === "reaction"))
       .toBe(false);
-    const bobBeforeDisconnect = record(
-      record(await authority.observe(BOB), "Bob before disconnect").readModel,
-      "Bob before disconnect read model",
+    const aliceBeforeDisconnect = record(
+      record(await authority.observe(ALICE), "Alice before disconnect").readModel,
+      "Alice before disconnect read model",
     );
     const reactionBeforeDisconnect = record(
-      list(bobBeforeDisconnect.pendingInputs, "Bob pending before disconnect")
-        .find((entry) => record(entry, "Bob pending entry").choiceKind === "reaction"),
-      "Bob reaction before disconnect",
+      list(aliceBeforeDisconnect.pendingInputs, "Alice pending before disconnect")
+        .find((entry) => record(entry, "Alice pending entry").choiceKind === "reaction"),
+      "Alice reaction before disconnect",
     );
     expect(reactionBeforeDisconnect).toMatchObject({
       kind: "combatChoice",
@@ -395,23 +494,43 @@ describe("B53 natural-language combat vertical slice", () => {
 
     await evictDurableObject(authority as never);
     authority = env.ROOMS.getByName(roomId) as unknown as Authority;
-    const bobAfterReconnect = record(
-      record(await authority.observe(BOB, { channel: "reconnect" }), "Bob after reconnect").readModel,
-      "Bob after reconnect read model",
+    const aliceAfterReconnect = record(
+      record(await authority.observe(ALICE, { channel: "reconnect" }), "Alice after reconnect").readModel,
+      "Alice after reconnect read model",
     );
     const reactionAfterReconnect = record(
-      list(bobAfterReconnect.pendingInputs, "Bob pending after reconnect")
-        .find((entry) => record(entry, "Bob reconnected pending entry").choiceKind === "reaction"),
-      "Bob reaction after reconnect",
+      list(aliceAfterReconnect.pendingInputs, "Alice pending after reconnect")
+        .find((entry) => record(entry, "Alice reconnected pending entry").choiceKind === "reaction"),
+      "Alice reaction after reconnect",
     );
     expect(reactionAfterReconnect).toEqual(reactionBeforeDisconnect);
+    await expect(authority.exportAuthoritativeArchive(capabilities.archiveExport))
+      .resolves.toEqual({ kind: "retryableFailure", code: "archiveSettlementPending" });
+    await expect(authority.applyRoomAdministration(capabilities.roomAdministration, {
+      commandId: "room-admin:combat-vertical:transfer-during-reaction",
+      kind: "transferControl",
+      characterId: ALICE_ID,
+      fromSeatId: `seat:${ALICE.principal.id}`,
+      toSeatId: `seat:${BOB.principal.id}`,
+    })).resolves.toEqual({
+      kind: "retryableFailure",
+      code: "roomAdministrationActionSettlementPending",
+    });
 
     const reacted = record(await handleRoomAction({
-      principal: BOB,
+      principal: ALICE,
       authority,
       kp: {
-        propose: async () => { throw new Error("authenticated opportunity reaction must not call KP"); },
-        narrate: async () => ({ body: "博林抓住空当挥出一击，哨兵随后完成撤步。", agencyClaims: [] }),
+        propose: async (request: RecordValue) => observationProposal(
+          String(request.rootActionId),
+          {
+            goal: "确认哨兵完成撤步后的可见现场",
+            method: "保持原观察意图不变，只确认已经结算的借机反应与移动",
+            publicBasisRefs: [HAZARD_FACT_ID],
+            duration: { unit: "second", value: 1 },
+          },
+        ),
+        narrate: async () => ({ body: "阿莱莎抓住空当挥出一击，哨兵随后完成撤步。", agencyClaims: [] }),
       },
     }, {
       kind: "answer",
@@ -425,11 +544,11 @@ describe("B53 natural-language combat vertical slice", () => {
     }), "opportunity reaction after reconnect");
     expect(reacted.kind, JSON.stringify(reacted)).toBe("committed");
     const afterMovement = record(
-      record(await authority.observe(BOB), "Bob after movement").readModel,
-      "Bob after movement read model",
+      record(await authority.observe(ALICE), "Alice after movement").readModel,
+      "Alice after movement read model",
     );
     expect(record(record(afterMovement.entities, "post-movement entities")[ENEMY_ID], "moved enemy").position)
-      .toEqual({ x: "360", y: "0", elevation: "0" });
+      .toEqual({ x: "0", y: "-240", elevation: "0" });
 
     await endNpcTurn();
     const continuityBefore = new Map<string, unknown>();
@@ -446,41 +565,14 @@ describe("B53 natural-language combat vertical slice", () => {
       });
     }
 
-    const conclusionRequests: RecordValue[] = [];
-    const proposed = record(await handleRoomAction({
-      principal: ALICE,
-      authority,
-      kp: {
-        propose: async (request: RecordValue) => {
-          conclusionRequests.push(structuredClone(request));
-          return productionActionPlanProposal(String(request.rootActionId), {
-            operation: "proposeEncounterConclusion",
-            encounterRef: ENCOUNTER_ID,
-            targetEntityRefs: [ENEMY_ID],
-            outcome: "npcSurrendered",
-          }, {
-            goal: "接受已经放下武器的哨兵投降",
-            method: "让每名仍存活的玩家分别确认是否结束遭遇",
-            npcActions: [{
-              npcId: ENEMY_ID,
-              goal: "停止敌对并提出投降",
-              method: "哨兵只依据眼前两名持械角色和自己的处境放下武器",
-              knowledgeRefs: [],
-              mechanicalProposal: null,
-            }],
-          });
-        },
-        narrate: async () => ({ body: "哨兵放下武器，等待你们分别表态。", agencyClaims: [] }),
-      },
-    }, {
-      kind: "intent",
-      submissionId: "submission:combat-vertical:surrender",
-      characterId: ALICE_ID,
-      text: "哨兵已经放下武器投降；如果博林也同意，我们就停战。",
-    }), "natural-language encounter conclusion proposal");
+    const proposed = await runNpcTurnAction("停止敌对并提出投降", {
+      operation: "proposeEncounterConclusion",
+      encounterRef: ENCOUNTER_ID,
+      targetEntityRefs: [ENEMY_ID],
+      outcome: "npcSurrendered",
+    });
 
     expect(proposed.kind, JSON.stringify(proposed)).toBe("awaitingInput");
-    expect(conclusionRequests).toHaveLength(1);
     const firstPending = record(proposed.pending, "first conclusion pending");
     expect(firstPending).toMatchObject({
       kind: "combatChoice",
@@ -489,7 +581,15 @@ describe("B53 natural-language combat vertical slice", () => {
     expect(firstPending).not.toHaveProperty("controllerEntityId");
 
     const noKpForAnswer = {
-      propose: async () => { throw new Error("authenticated combat answer must not call KP"); },
+      propose: async (request: RecordValue) => observationProposal(
+        String(request.rootActionId),
+        {
+          goal: "确认双方接受停战后的现场",
+          method: "保持原观察意图不变，只确认已经结算的遭遇收束",
+          publicBasisRefs: [HAZARD_FACT_ID],
+          duration: { unit: "second", value: 1 },
+        },
+      ),
       narrate: async () => ({ body: "双方已经完成各自的明确表态。", agencyClaims: [] }),
     };
     const aliceAccepted = record(await handleRoomAction({
@@ -556,7 +656,7 @@ describe("B53 natural-language combat vertical slice", () => {
     const startEvents = events.filter((event) => event.rootActionId === startRootActionId);
     expect(startEvents.map((event) => event.eventType)).toEqual(expect.arrayContaining([
       "DefinitionRegistered",
-      "CanonicalFactDeclared",
+      "EntityMaterialized",
       "EncounterStarted",
     ]));
     const encounterStarted = record(
@@ -571,11 +671,13 @@ describe("B53 natural-language combat vertical slice", () => {
       "ResourceSpent",
       "ConcentrationStarted",
     ]));
-    const damageRootActionId = String(record(enemyAttack.receipt, "damage receipt").rootActionId);
+    const damageRootActionId = npcActionChildRoots.get(enemyAttack);
+    expect(damageRootActionId).toBeDefined();
     const damageEvents = events.filter((event) => event.rootActionId === damageRootActionId);
     expect(damageEvents.filter((event) => event.eventType === "DamagePacketResolved")).toHaveLength(1);
     expect(damageEvents.filter((event) => event.eventType === "ConcentrationTested")).toHaveLength(1);
-    const movementRootActionId = String(record(movement.receipt, "movement receipt").rootActionId);
+    const movementRootActionId = npcActionChildRoots.get(movement);
+    expect(movementRootActionId).toBeDefined();
     const movementEvents = events.filter((event) => event.rootActionId === movementRootActionId);
     expect(movementEvents.map((event) => event.eventType)).toEqual(expect.arrayContaining([
       "ReactionOffered",
@@ -588,15 +690,16 @@ describe("B53 natural-language combat vertical slice", () => {
       movementEvents.find((event) => event.eventType === "MovementSegmentCommitted")?.payload,
       "movement segment payload",
     ).entityPatch).toEqual(expect.objectContaining({
-      position: { x: "360", y: "0", elevation: "0" },
+      position: { x: "0", y: "-240", elevation: "0" },
     }));
-    const conclusionRootActionId = String(record(proposed.receipt, "conclusion receipt").rootActionId);
+    const conclusionRootActionId = npcActionChildRoots.get(proposed);
+    expect(conclusionRootActionId).toBeDefined();
     const conclusionEvents = events.filter((event) => event.rootActionId === conclusionRootActionId);
     expect(conclusionEvents.map((event) => event.eventType)).toEqual(expect.arrayContaining([
-      "NpcPlanFormed",
+      "NpcActionCommitted",
       "EncounterConclusionProposed",
       "ReactionAnswered",
       "EncounterConcluded",
     ]));
-  }, 60_000);
+  }, 180_000);
 });

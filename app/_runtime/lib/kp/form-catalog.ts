@@ -7,6 +7,10 @@
  */
 
 import { canonicalSha256 } from "../rules/profiles/canonical";
+import {
+  compoundCompositionModelSchema,
+  validateCompoundCompositionDraft,
+} from "./compound-composition";
 
 export const KP_FORM_IDS = Object.freeze([
   "clarification.v1",
@@ -60,6 +64,7 @@ type FieldKind =
   | "text"
   | "text-list"
   | "stage-list"
+  | "compound-composition"
   | "ability"
   | "skill"
   | "check-mode"
@@ -239,14 +244,17 @@ const FORM_CATALOG: Readonly<Record<KpFormId, CatalogForm>> = Object.freeze({
     "Describe a bounded causal sequence for an unforeseen or multi-stage action.",
     [
       "goal", "method", "stages", "intendedOutcome", "resolution", "durationUnit",
-      "durationValue",
+      "durationValue", "composition",
     ],
     [
       "basisRefs", "risk", "alternatives", "ability", "skill", "dc", "mode",
       "successConsequence", "failureConsequence", "resourceRef", "resourceAmount",
       "itemRef", "itemCount",
     ],
-    mechanicalFieldKinds(),
+    {
+      ...mechanicalFieldKinds(),
+      composition: "compound-composition",
+    },
   ),
 });
 
@@ -286,6 +294,7 @@ function mechanicalFieldKinds(): Readonly<Record<string, FieldKind>> {
 
 function fieldKind(field: string): FieldKind {
   if (field === "stages") return "stage-list";
+  if (field === "composition") return "compound-composition";
   if (["choices", "basisRefs", "alternatives", "contingencies"].includes(field)) return "text-list";
   return "text";
 }
@@ -570,6 +579,7 @@ function modelBranchSchema(
 }
 
 function modelFieldSchema(kind: FieldKind): Readonly<Record<string, unknown>> {
+  if (kind === "compound-composition") return compoundCompositionModelSchema();
   if (kind === "text") return Object.freeze({ type: "string", minLength: 1, maxLength: 2_000 });
   if (kind === "ability") return Object.freeze({ enum: ["str", "dex", "con", "int", "wis", "cha"] });
   if (kind === "skill") {
@@ -684,6 +694,7 @@ function modelFieldSchema(kind: FieldKind): Readonly<Record<string, unknown>> {
       items: { type: "string", minLength: 1, maxLength: 500 },
     }) as Readonly<Record<string, unknown>>;
   }
+  if (kind !== "stage-list") throw new Error("KP_FORM_FIELD_KIND_UNKNOWN");
   return deepFreezeSchema({
     type: "array",
     minItems: 1,
@@ -729,8 +740,8 @@ function deepFreezeSchema(value: unknown): unknown {
   return Object.freeze(frozen);
 }
 
-const KP_FORM_CATALOG_REF = "kp-private-form-catalog-v4" as const;
-const KP_FORM_CATALOG_VERSION = "kp-private-form-catalog-v4.0" as const;
+const KP_FORM_CATALOG_REF = "kp-private-form-catalog-v5" as const;
+const KP_FORM_CATALOG_VERSION = "kp-private-form-catalog-v5.0" as const;
 
 /**
  * Complete private catalog preimage. The document stays module-private so a
@@ -743,7 +754,7 @@ const KP_FORM_CATALOG_PROFILE_DOCUMENT = Object.freeze({
   catalogRef: KP_FORM_CATALOG_REF,
   catalogVersion: KP_FORM_CATALOG_VERSION,
   selectionContract: "server-allowlist-of-three-to-six-forms-including-compound",
-  validationContract: "closed-draft-schema-plus-resolution-cost-pair-and-environment-cross-field-validation",
+  validationContract: "closed-draft-schema-plus-resolution-cost-pair-environment-cross-field-and-bounded-compound-composition-validation",
   itemCostContract: "one-exact-item-entry-ref-paired-with-one-positive-count",
   forms: Object.freeze(KP_FORM_IDS.map((formId) => Object.freeze({
     formId,
@@ -756,7 +767,7 @@ const KP_FORM_CATALOG_PROFILE_DOCUMENT = Object.freeze({
 export const KP_FORM_CATALOG_REGISTRATION = Object.freeze({
   catalogRef: KP_FORM_CATALOG_REF,
   catalogVersion: KP_FORM_CATALOG_VERSION,
-  catalogHash: "sha256:4151291dcdc0744f45dc45a21945a3c1a0ba629811b6de874b8bb96be5898367",
+  catalogHash: "sha256:996c8b5221f8acb10e66c3cd4d3766d0a2a04d3910609aeee84f418d1c35212b",
   formCount: KP_FORM_IDS.length,
 });
 
@@ -783,7 +794,9 @@ export function assertAllowedFormSet(allowedForms: readonly KpFormId[]): void {
 const FORBIDDEN_MODEL_KEY_PARTS = Object.freeze([
   "actor",
   "principal",
+  "controller",
   "audience",
+  "visibility",
   "dice",
   "d20",
   "roll",
@@ -793,6 +806,7 @@ const FORBIDDEN_MODEL_KEY_PARTS = Object.freeze([
   "patch",
   "profile",
   "scope",
+  "root",
 ]);
 
 export function isForbiddenModelField(key: string): boolean {
@@ -1082,6 +1096,7 @@ function hasContent(value: unknown): boolean {
 }
 
 function matchesFieldKind(kind: FieldKind, value: unknown): boolean {
+  if (kind === "compound-composition") return validateCompoundCompositionDraft(value).ok;
   if (kind === "text") return typeof value === "string" && value.trim().length > 0;
   if (kind === "ability") return ["str", "dex", "con", "int", "wis", "cha"].includes(String(value));
   if (kind === "skill") {
@@ -1174,6 +1189,7 @@ function matchesFieldKind(kind: FieldKind, value: unknown): boolean {
     return Array.isArray(value) && value.length > 0
       && value.every((item) => typeof item === "string" && item.trim().length > 0);
   }
+  if (kind !== "stage-list") return false;
   return Array.isArray(value) && value.length > 0 && value.every((stage) => {
     if (!isPlainRecord(stage)) return false;
     const allowed = new Set([

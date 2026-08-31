@@ -2,8 +2,11 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import {
+  compileKpFormDraft,
+  lowerCausalActionProgram,
+} from "../app/_runtime/lib/kp/causal-action-program";
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import { directConsequencesProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -102,6 +105,32 @@ function noKp(label: string) {
   };
 }
 
+function observeProposal(rootActionId: string) {
+  const formId = "observe.v1" as const;
+  const draft = {
+    goal: "确认大厅当前状况",
+    method: "直接观察大厅",
+    focus: "大厅中可感知的变化",
+    desiredInformation: "大厅当前状况已经确认",
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  };
+  const causalActionProgram = compileKpFormDraft(formId, draft);
+  return {
+    kind: "privateFormProposal",
+    formId,
+    draft,
+    causalActionProgram,
+    loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
+    semanticFreezeHash: causalActionProgram.semanticHash,
+    repairUsed: false,
+    proposalAttemptId: `proposal:${rootActionId}:1`,
+    modelInvocationReceipt: { task: "proposal", result: "success" },
+    rootActionId,
+  };
+}
+
 describe("production safety pause authority path", () => {
   it("commits privately, freezes the world, survives eviction, and only the requester can adjust", async () => {
     const roomId = "safety-pause-room-v2-private-recovery";
@@ -113,13 +142,10 @@ describe("production safety pause authority path", () => {
       principal: ALICE,
       authority,
       kp: {
-        propose: async (request: JsonRecord) => directConsequencesProposal(
-          String(request.rootActionId),
-          { duration: { unit: "second", value: 1 } },
-        ),
+        propose: async (request: JsonRecord) =>
+          observeProposal(String(request.rootActionId)),
         narrate: async ({ audienceId }: JsonRecord) => ({
           body: `${SAFETY_INVALIDATED_BODY}:${String(audienceId)}`,
-          agencyClaims: [],
         }),
       },
     }, {
@@ -279,17 +305,14 @@ describe("production safety pause authority path", () => {
       principal: ALICE,
       authority,
       kp: {
-        propose: async (request: JsonRecord) => directConsequencesProposal(
-          String(request.rootActionId),
-          { duration: { unit: "second", value: 1 } },
-        ),
+        propose: async (request: JsonRecord) =>
+          observeProposal(String(request.rootActionId)),
         narrate: async () => {
           narrationCalls += 1;
           narrationStartedResolve();
           await narrationGate;
           return {
             body: "这段敏感正文绝不能在安全暂停后到达任何 Viewer。",
-            agencyClaims: [],
           };
         },
       },
@@ -313,7 +336,18 @@ describe("production safety pause authority path", () => {
 
     const original = record(await inFlightAction, "original in-flight outcome");
     expect(original.kind).toBe("committed");
-    expect(original.deliveryPending).toBe(true);
+    expect(original.deliveryPending).toBeUndefined();
+    expect(original.narration).toBe("notApplicable");
+    const invalidatedPublications = list(
+      original.audienceNarrations,
+      "invalidated audience publications",
+    ).map((entry) => record(entry, "invalidated audience publication"));
+    expect(invalidatedPublications).toEqual([
+      expect.objectContaining({
+        state: "retryableFailure",
+        errorCode: "NARRATION_PUBLICATION_FAILED",
+      }),
+    ]);
     expect(narrationCalls).toBeGreaterThan(0);
     for (const principal of [ALICE, BOB]) {
       const observed = await observation(authority, principal);

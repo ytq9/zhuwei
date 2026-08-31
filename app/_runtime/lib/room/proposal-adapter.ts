@@ -59,6 +59,34 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function isChapterActivityTransition(value: unknown): boolean {
+  return isRecord(value)
+    && Object.keys(value).sort().join(",") === "activityId,disposition"
+    && isNonEmptyString(value.activityId)
+    && ["continue", "summarize", "interrupt", "complete"].includes(String(value.disposition));
+}
+
+function isInheritanceAuthorizationDraft(value: unknown): boolean {
+  if (!isRecord(value)
+    || Object.keys(value).sort().join(",")
+      !== "authorizationId,kind,scope,sourceRef,targetRef"
+    || ![value.authorizationId, value.sourceRef, value.targetRef].every(isNonEmptyString)) {
+    return false;
+  }
+  const expectedScope = value.kind === "item"
+    ? "transferPossession"
+    : value.kind === "knowledge"
+      ? "acquireExactKnowledge"
+      : value.kind === "relationship"
+        ? "establishDerivedRelationship"
+        : value.kind === "debt"
+          ? "assumeDebtObligation"
+          : value.kind === "promise"
+            ? "assumePromiseObligation"
+            : undefined;
+  return expectedScope !== undefined && value.scope === expectedScope;
+}
+
 /** Resolves only a KP-submitted finite reference. Narrative text and labels
  * are intentionally absent from this authority seam. */
 export function ownedEnvironmentAttackAbilityRef(
@@ -232,27 +260,65 @@ export function normalizeRoomKpProposal(value: unknown): JsonObject | undefined 
         ? structuredClone(value) as JsonObject
         : undefined;
     }
-    if (value.action === "formNpcPlan") {
+    if (value.action === "grantMilestone") {
+      return exact("sourceFactIds")
+          && Array.isArray(value.sourceFactIds)
+          && value.sourceFactIds.length > 0
+          && value.sourceFactIds.every(isNonEmptyString)
+          && new Set(value.sourceFactIds).size === value.sourceFactIds.length
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    if (value.action === "establishInheritanceSource") {
+      return exact("inheritanceAuthorization", "inheritanceSourceKind", "publicClause")
+          && [
+            "will",
+            "explicitGift",
+            "recovery",
+            "publicRecord",
+            "organizationGrant",
+            "npcIntroduction",
+            "knowledgePropagation",
+          ].includes(String(value.inheritanceSourceKind))
+          && isNonEmptyString(value.publicClause)
+          && isInheritanceAuthorizationDraft(value.inheritanceAuthorization)
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    if (value.action === "transferInheritance") {
+      return exact("inheritanceAuthorizationRef", "inheritanceSourceFactRef")
+          && isNonEmptyString(value.inheritanceAuthorizationRef)
+          && isNonEmptyString(value.inheritanceSourceFactRef)
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    if (value.action === "recordEpilogueChoice") {
+      return exact("choice", "storyId")
+          && isNonEmptyString(value.choice)
+          && isNonEmptyString(value.storyId)
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    if (value.action === "startSequel") {
       return exact(
-        "activity",
-        "alternateTarget",
-        "due",
-        "goal",
-        "nextAction",
-        "npcId",
-        "planId",
-        "premiseRefs",
-        "resourceRefs",
-        "trace",
-        "trigger",
+        "activityTransitions",
+        "anchorFactIds",
+        "chapterId",
+        "priorStoryId",
+        "sceneQuestion",
+        "sequelStoryId",
       )
-          && [value.goal, value.nextAction, value.npcId, value.planId].every(isNonEmptyString)
-          && [value.premiseRefs, value.resourceRefs].every(Array.isArray)
-          && isRecord(value.activity)
-          && isRecord(value.alternateTarget)
-          && isRecord(value.trace)
-          && (value.due === null || isRecord(value.due))
-          && (value.trigger === null || isRecord(value.trigger))
+          && Array.isArray(value.activityTransitions)
+          && value.activityTransitions.every(isChapterActivityTransition)
+          && Array.isArray(value.anchorFactIds)
+          && value.anchorFactIds.every(isNonEmptyString)
+          && new Set(value.anchorFactIds).size === value.anchorFactIds.length
+          && [
+            value.chapterId,
+            value.priorStoryId,
+            value.sceneQuestion,
+            value.sequelStoryId,
+          ].every(isNonEmptyString)
         ? structuredClone(value) as JsonObject
         : undefined;
     }

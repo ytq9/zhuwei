@@ -27,7 +27,6 @@ export const ACTION_PLAN_OPERATIONS = [
   "useItem",
   "transferItem",
   "changeNpcGear",
-  "advanceFactionPlan",
   "changeKnowledge",
   "changeParty",
   "advanceCampaignLifecycle",
@@ -199,8 +198,6 @@ type NpcSemanticActionPlanFields = {
   itemRef?: string;
   itemActivityId?: "use";
   ownershipDisposition?: "retain" | "transfer";
-  factionRef?: string;
-  planRef?: string;
   knowledgeRef?: string;
   mediumFactRef?: string;
   recipientRefs?: string[];

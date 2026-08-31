@@ -395,8 +395,6 @@ const npcReservedActionPlanSchema = {
     itemRef: { type: "string", pattern: "^item-entry:.+", maxLength: 240 },
     itemActivityId: { const: "use" },
     ownershipDisposition: { enum: ["retain", "transfer"] },
-    factionRef: { type: "string", minLength: 1, maxLength: 240 },
-    planRef: { type: "string", minLength: 1, maxLength: 240 },
     knowledgeRef: { type: "string", minLength: 1, maxLength: 240 },
     mediumFactRef: { type: "string", minLength: 1, maxLength: 240 },
     recipientRefs: stringArray,

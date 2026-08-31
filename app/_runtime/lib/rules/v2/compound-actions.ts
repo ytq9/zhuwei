@@ -23,7 +23,7 @@ import { stepCampaignWorld } from "./campaign-actions";
 import { stepCombatWorld } from "./combat-actions";
 import { stepMultiplayerWorld } from "./multiplayer-actions";
 import { isGearSlot } from "./character-gear";
-import { continueCompoundRoot } from "./internal-compound";
+import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
 import {
   hasExactKeys,
   hasOnlyKeys,
@@ -48,6 +48,7 @@ import {
   actorPlanNpcIsAvailable,
   actorPlanPremiseIsAvailable,
   actorPlanPremiseScope,
+  actorPlanResourceScopes,
   dueActorPlanChildRoot,
   earliestEligibleDueActorPlan,
 } from "./actor-plans";
@@ -158,12 +159,20 @@ function result(
   drafts: Draft[],
   additions: JsonRecord = {},
 ): StepResult {
+  const createdScopes = new Set(drafts.flatMap((draft) => draft.creates ?? []));
+  const transactionScopeProof = createScopeProof(
+    source,
+    drafts.flatMap((draft) => draft.reads ?? [])
+      .filter((scope) => !createdScopes.has(scope)),
+    drafts.flatMap((draft) => draft.writes ?? [`receipt:${rootActionId}`])
+      .filter((scope) => !createdScopes.has(scope)),
+    [...createdScopes],
+  );
   let state = source;
   const events: EventEnvelope[] = [];
   let receipt: PublicReceipt | undefined;
-  let scopeProof: ScopeProof | undefined;
   for (const draft of drafts) {
-    scopeProof = createScopeProof(
+    const eventScopeProof = createScopeProof(
       state,
       draft.reads ?? [],
       draft.writes ?? [`receipt:${rootActionId}`],
@@ -174,7 +183,7 @@ function result(
       ...(draft.resolutionId === undefined ? {} : { resolutionId: draft.resolutionId }),
       eventType: draft.eventType,
       payload: draft.payload,
-      scopeProof,
+      scopeProof: eventScopeProof,
       visibilityPolicyId: draft.visibilityPolicyId ?? "visibility:public",
       secrecy: draft.secrecy ?? "public",
     });
@@ -188,8 +197,15 @@ function result(
     state,
     cache: state,
     stateHash: events[events.length - 1].stateHashAfter,
-    scopeProof: scopeProof!,
-    receipt: receipt!,
+    scopeProof: transactionScopeProof,
+    receipt: {
+      ...receipt!,
+      eventRange: {
+        fromEventSeq: events[0].eventSeq,
+        toEventSeq: events[events.length - 1].eventSeq,
+      },
+      scopeProofHash: transactionScopeProof.proofHash,
+    },
     ...additions,
   } as StepResult;
 }
@@ -611,8 +627,6 @@ const SEMANTIC_MECHANICAL_KEYS = [
   "ownershipDisposition",
   "gearAction",
   "slot",
-  "factionRef",
-  "planRef",
   "knowledgeRef",
   "inheritanceAuthorization",
   "inheritanceAuthorizationRef",
@@ -1478,40 +1492,6 @@ function semanticCommand(
         },
       };
     }
-    case "advanceFactionPlan": {
-      const frozenBasisRefs = canonicalStrings(mechanical.basisRefs);
-      const faction = isNonEmptyString(mechanical.factionRef)
-        ? state.campaignRuntime.factions[mechanical.factionRef]
-        : undefined;
-      const materializedFaction = materializations.find((entry) =>
-        entry.kind === "faction" && entry.definition.factionId === mechanical.factionRef);
-      const memberRefs = faction?.memberRefs ?? materializedFaction?.definition.memberRefs;
-      if (
-        !hasOnlyKeys(mechanical, ["basisRefs", "factionRef", "operation"], ["planRef"])
-        || npcContext === undefined
-        || !isNonEmptyString(mechanical.factionRef)
-        || !Array.isArray(memberRefs)
-        || !memberRefs.includes(actorCharacterId)
-        || frozenBasisRefs === undefined
-        || frozenBasisRefs.length === 0
-        || frozenBasisRefs.some((ref) =>
-          !npcContext.knowledgeRefs.includes(ref)
-          || !(ref in (state.knowledge[actorCharacterId] ?? {})))
-        || (mechanical.planRef !== undefined && mechanical.planRef !== npcContext.planId)
-      ) return rejected("npcKnowledgeInsufficient", "Faction plan exceeds the acting NPC's finite knowledge.");
-      return {
-        module: "campaign",
-        input: {
-          kind: "advanceFactionPlan",
-          proposalId: rootActionId,
-          factionId: mechanical.factionRef,
-          planId: npcContext.planId,
-          actingNpcId: actorCharacterId,
-          causeFactIds: frozenBasisRefs,
-          action: method,
-        },
-      };
-    }
     case "changeKnowledge":
       if (!isNonEmptyString(mechanical.knowledgeRef)) {
         return rejected("invalidRulesInput", "Knowledge operation needs a knowledge reference.");
@@ -1957,6 +1937,8 @@ function runSemanticCommand(
           },
           visibilityPolicyId: `visibility:npc:${plan.actorCharacterId}`,
           secrecy: "internal",
+          reads: [`resource:${plan.actorCharacterId}:${cost.resourceRef}`],
+          writes: [`resource:${plan.actorCharacterId}:${cost.resourceRef}`],
         });
       }
       if (cost.kind === "consumeItem") {
@@ -2029,16 +2011,13 @@ function runSemanticCommand(
       || !isNonEmptyString(resolutionId)
       || !isCompoundResolutionPlan(plan)
     ) return rejected("invalidWorldState", "Direct compound consequences are not canonical.");
-    const drafts = consequenceDrafts(
+    return resolveDirectCompoundConsequences(
+      profiles,
       state,
       rootActionId,
       resolutionId,
       plan,
-      true,
     );
-    return drafts === undefined
-      ? rejected("invalidRulesInput", "Direct compound consequences no longer form one legal transition.")
-      : result("committed", profiles, state, rootActionId, drafts);
   }
   const outcome = command.module === "campaign"
     ? stepCampaignWorld(profiles, state, marked)
@@ -2046,6 +2025,48 @@ function runSemanticCommand(
       ? stepCombatWorld(profiles, state, marked)
       : stepMultiplayerWorld(profiles, state, marked);
   return outcome ?? rejected("unsupportedOperation", "The registered semantic operation has no Rules implementation.");
+}
+
+/**
+ * Settles one Rules-internal, already-derived direct consequence plan. This is
+ * intentionally not an action-input handler: callers must derive actor,
+ * visibility, event payloads, and the typed plan before entering this seam.
+ */
+export function resolveDirectCompoundConsequences(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  resolutionId: string,
+  plan: CompoundResolutionPlan,
+): StepResult {
+  const actor = state.entities[plan.actorCharacterId];
+  if (
+    !isNonEmptyString(rootActionId)
+    || !isNonEmptyString(resolutionId)
+    || !isCompoundResolutionPlan(plan)
+    || actor === undefined
+    || actor.tenureStatus !== "active"
+    || actor.sceneId !== plan.sourceSceneId
+    || plan.frozenCosts.length !== 0
+    || plan.failureEffects.length !== 0
+    || !validateOutcomeEffects(
+      state,
+      plan.actorCharacterId,
+      plan.sourceSceneId,
+      new Set([plan.primaryFactRef]),
+      [],
+      plan.successEffects,
+    )
+  ) {
+    return rejected(
+      "invalidRulesInput",
+      "Direct compound consequences no longer form one legal transition.",
+    );
+  }
+  const drafts = consequenceDrafts(state, rootActionId, resolutionId, plan, true);
+  return drafts === undefined
+    ? rejected("invalidRulesInput", "Direct compound consequences no longer form one legal transition.")
+    : result("committed", profiles, state, rootActionId, drafts);
 }
 
 function resolveDueActorPlanMechanics(
@@ -2261,6 +2282,7 @@ function formTypedNpcActorPlan(
     "activity",
     "alternateTarget",
     "due",
+    "factionRef",
     "goal",
     "kind",
     "nextStep",
@@ -2275,6 +2297,11 @@ function formTypedNpcActorPlan(
 
   const rootActionId = isNonEmptyString(input.proposalId) ? input.proposalId : undefined;
   const npc = isNonEmptyString(input.npcId) ? state.entities[input.npcId] : undefined;
+  const factionRef = input.factionRef === null
+    ? null
+    : isNonEmptyString(input.factionRef)
+      ? input.factionRef
+      : undefined;
   const planId = isNonEmptyString(input.planId) ? input.planId : undefined;
   const goal = isNonEmptyString(input.goal) ? input.goal : undefined;
   const nextStep = isNonEmptyString(input.nextStep) ? input.nextStep : undefined;
@@ -2296,8 +2323,9 @@ function formTypedNpcActorPlan(
     : undefined;
   if (
     rootActionId === undefined
-    || rootActionId in state.receipts
+    || !isContinuedCompoundRoot(input, rootActionId)
     || !actorPlanNpcIsAvailable(npc)
+    || factionRef === undefined
     || planId === undefined
     || goal === undefined
     || nextStep === undefined
@@ -2334,21 +2362,34 @@ function formTypedNpcActorPlan(
       && !(alternateTargetRef in state.entities))
   ) return rejected("invalidRulesInput", "ActorPlan fields exceed the current finite plan contract.");
 
+  const faction = factionRef === null ? undefined : state.campaignRuntime.factions[factionRef];
+  const factionResourceRefs = Array.isArray(faction?.resourceRefs)
+    && faction.resourceRefs.every(isNonEmptyString)
+    ? faction.resourceRefs
+    : undefined;
   const availableResources = new Set(Object.keys(npc.resources ?? {}));
-  for (const faction of Object.values(state.campaignRuntime.factions)) {
-    if (!Array.isArray(faction.memberRefs) || !faction.memberRefs.includes(npc.id)) continue;
-    if (isNonEmptyString(faction.factionId)) availableResources.add(faction.factionId);
-    if (Array.isArray(faction.resourceRefs)) {
-      for (const reference of faction.resourceRefs) {
-        if (isNonEmptyString(reference)) availableResources.add(reference);
-      }
-    }
+  if (factionRef !== null && factionResourceRefs !== undefined) {
+    availableResources.add(factionRef);
+    for (const reference of factionResourceRefs) availableResources.add(reference);
   }
-  if (resourceRefs.some((reference) => !availableResources.has(reference))) {
+  if (
+    resourceRefs.some((reference) => !availableResources.has(reference))
+    || (factionRef !== null && (
+      faction === undefined
+      || !Array.isArray(faction.memberRefs)
+      || !faction.memberRefs.includes(npc.id)
+      || factionResourceRefs === undefined
+      || !resourceRefs.includes(factionRef)
+      || factionResourceRefs.some((reference) => !resourceRefs.includes(reference))
+    ))
+  ) {
     return rejected("privateOrUnknownReference", "ActorPlan resources are unavailable to the finite NPC.");
   }
 
   const timelineId = characterTimelineId(state, npc.id);
+  if (timelineId === undefined) {
+    return rejected("invalidWorldState", "The ActorPlan NPC timeline is unavailable.");
+  }
   let due: { kind: "fictionTime"; atFictionMicros: string } | null = null;
   if (input.due !== null) {
     if (
@@ -2357,7 +2398,6 @@ function formTypedNpcActorPlan(
       || input.due.kind !== "fictionTime"
       || typeof input.due.atFictionMicros !== "string"
       || !/^(0|[1-9][0-9]*)$/u.test(input.due.atFictionMicros)
-      || timelineId === undefined
       || (BigInt(state.fictionTimelines[timelineId].nowMicros)
         + BigInt(activity.intendedDurationMicros)).toString() !== input.due.atFictionMicros
     ) return rejected("invalidRulesInput", "ActorPlan due time is not bound to its Activity duration.");
@@ -2411,6 +2451,7 @@ function formTypedNpcActorPlan(
 
   const payload: EventPayloadByType["NpcPlanFormed"] = {
     npcId: npc.id,
+    factionRef,
     planId,
     actorKind: "npc",
     actorRef: npc.id,
@@ -2440,19 +2481,54 @@ function formTypedNpcActorPlan(
     chapterId,
     moduleRef: structuredClone(chapter.moduleRef),
   };
-  return result("committed", profiles, state, rootActionId, [{
+  const premiseScopes = premiseRefs.flatMap((reference) => {
+    const scope = actorPlanPremiseScope(state, npc.id, reference);
+    return scope === undefined ? [] : [scope];
+  });
+  const resourceScopes = actorPlanResourceScopes(state, npc.id, factionRef, resourceRefs);
+  const alternateTargetScope = alternateTargetRef in state.entities
+    ? `entity:${alternateTargetRef}`
+    : `scene:${alternateTargetRef}`;
+  const drafts: Draft[] = [{
     eventType: "NpcPlanFormed",
     payload,
     visibilityPolicyId: `visibility:npc:${npc.id}`,
     secrecy: "internal",
     reads: [...new Set([
-      ...premiseRefs.flatMap((reference) => {
-        const scope = actorPlanPremiseScope(state, npc.id, reference);
-        return scope === undefined ? [] : [scope];
-      }),
+      ...premiseScopes,
+      ...resourceScopes,
+      `chapter:${chapterId}`,
+      `timeline:${timelineId}`,
+      `activity:${activity.activityId as string}`,
+      `fact:${traceFactRef}`,
+      `definition:${traceFactRef}`,
+      alternateTargetScope,
     ])],
     creates: [`npc-plan:${planId}`],
-  }, {
+  }];
+  if (factionRef !== null) {
+    drafts.push({
+      eventType: "FactionPlanFormed",
+      payload: {
+        factionId: factionRef,
+        planId,
+        actingNpcId: npc.id,
+        premiseRefs,
+        resourceRefs,
+        revision: "1",
+        status: "scheduled",
+      },
+      visibilityPolicyId: `visibility:npc:${npc.id}`,
+      secrecy: "internal",
+      reads: [
+        `npc-plan:${planId}`,
+        ...premiseScopes,
+        ...resourceScopes,
+      ],
+      creates: [`faction-plan:${planId}`],
+    });
+  }
+  drafts.push({
     eventType: "ActivityStarted",
     payload: {
       activityId: activity.activityId as string,
@@ -2465,7 +2541,8 @@ function formTypedNpcActorPlan(
     secrecy: "internal",
     reads: [`npc-plan:${planId}`],
     creates: [`activity:${activity.activityId as string}`],
-  }]);
+  });
+  return result("committed", profiles, state, rootActionId, drafts);
 }
 
 export function stepActorPlanMechanics(
@@ -2527,6 +2604,8 @@ function consequenceDrafts(
           resolutionId,
           visibilityPolicyId: `visibility:character-controller:${effect.targetRef}`,
           secrecy: "private",
+          reads: [`resource:${effect.targetRef}:${effect.resourceRef}`],
+          writes: [`resource:${effect.targetRef}:${effect.resourceRef}`],
         });
         break;
       case "changeHitPoints": {
@@ -2650,6 +2729,23 @@ function consequenceDrafts(
           && activity.restKind === "long")
         .sort((left, right) => String(left.activityId).localeCompare(String(right.activityId)));
       for (const activity of interruptedLongRests) {
+        const groupRestPendingEntries = [
+          ...Object.values(state.pendingInputs),
+          ...Object.values(state.multiplayerRuntime.suspendedPendingInputs),
+        ].filter((pending) => isRecord(pending)
+          && pending.kind === "groupRestConsent"
+          && isNonEmptyString(pending.pendingInputId)
+          && isNonEmptyString(pending.rootActionId)
+          && isRecord(pending.options)
+          && pending.options.initiatorCharacterId === activity.characterId
+          && `activity:${pending.rootActionId}:${String(activity.characterId)}`
+            === activity.activityId);
+        const pendingScopes = [...new Set(groupRestPendingEntries
+          .map((pending) => `pending:${String(pending.pendingInputId)}`))].sort();
+        const awaitingReceiptScopes = [...new Set(groupRestPendingEntries
+          .flatMap((pending) => state.receipts[String(pending.rootActionId)]?.status === "awaitingInput"
+            ? [`receipt:${String(pending.rootActionId)}`]
+            : []))].sort();
         drafts.push({
           eventType: "ActivityInterrupted",
           payload: {
@@ -2662,8 +2758,16 @@ function consequenceDrafts(
           },
           resolutionId,
           visibilityPolicyId: "visibility:scene-observers",
-          reads: [`activity:${activity.activityId}`],
-          writes: [`activity:${activity.activityId}`],
+          reads: [
+            `activity:${activity.activityId}`,
+            ...pendingScopes,
+            ...awaitingReceiptScopes,
+          ],
+          writes: [
+            `activity:${activity.activityId}`,
+            ...pendingScopes,
+            ...awaitingReceiptScopes,
+          ],
         });
       }
     }

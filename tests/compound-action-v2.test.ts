@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { authoritativeModuleProfile } from "../app/_runtime/lib/module/authoritative";
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -59,79 +60,85 @@ describe("one compound authoritative action transaction", () => {
     const npc = moduleProfile.storyBible.importantNpcs.find((entry) => entry.initialKnowledge.length > 0);
     expect(npc).toBeDefined();
     const npcKnowledgeRef = `${npc!.entityId}:module-knowledge:01`;
-    const dynamicFactRef = "hazard:wake:loose-chandelier";
+    const dynamicFactRef = "fact:hazard:wake:loose-chandelier";
 
-    const proposal = {
-      kind: "checkRequired",
+    const draft = {
       goal: "在不惊动守灵人的情况下确认吊灯绳是否被人割过",
       method: "借烛台阴影观察绳结并用镜片检查切口",
-      publicBasisRefs: [],
-      privateBasisRefs: [],
-      estimatedFictionTime: { unit: "minute", value: 10 },
-      risk: {
-        warning: "靠近悬挂点可能让已经松动的吊灯摇晃。",
-        successConsequences: ["确认绳索切口的方向"],
-        failureConsequences: ["吊灯发出声响并让守灵人警觉"],
-        retryGate: ["methodChanged", "situationAdvanced"],
-      },
-      pendingInput: null,
-      dynamicMaterializations: [{
-        kind: "hazard",
-        factRef: dynamicFactRef,
-        causalBasisRefs: [],
-        visibilityPolicyRef: "visibility:public",
-        definition: {
-          name: "松动的吊灯",
-          warningEvidence: "吊链偶尔发出轻微摩擦声",
-          trigger: "施力或失败时摇晃",
-        },
-      }],
-      npcActions: [{
-        npcId: npc!.entityId,
-        goal: "依照自己已知的职责留意大厅异常",
-        method: "继续原有巡视，不预知玩家未暴露的打算",
-        knowledgeRefs: [npcKnowledgeRef],
-        mechanicalProposal: null,
-      }],
-      mechanicalProposal: {
-        operation: "resolveNoncombatCheck",
+      stages: [{
+        goal: "确认吊灯绳切口",
+        method: "观察绳结并检查切口方向",
+        intendedOutcome: "确认绳索是否被人为割断",
+        risk: "靠近悬挂点可能让已经松动的吊灯摇晃。",
+        resolution: "check",
         ability: "int",
         skill: "investigation",
         dc: 13,
         mode: "normal",
-        duration: { unit: "minute", value: 10 },
-        frozenCosts: [],
-        success: [{ kind: "acquireEvidence", evidenceRef: "evidence:chandelier-cut" }],
-        failure: [{ kind: "alertNpc", npcId: npc!.entityId }],
-      },
-      scene: {
-        question: "阿莱莎能否在不引起注意的情况下确认吊灯绳的切口？",
-        pressure: "守灵人仍在大厅来回照看烛台。",
-        opportunities: ["换一个角度观察", "请同伴制造合理的遮掩"],
-        conclusionCandidate: null,
-      },
-      proposalAttemptId: "proposal:compound:1",
-      modelInvocationReceipt: {
-        provider: "cloudflare-workers-ai",
-        modelId: "@cf/zai-org/glm-4.7-flash",
-        modelRevision: "cloudflare-managed",
-        modelProfileVersion: "authoritative-kp-profile-v1",
-        promptPolicyVersion: "authoritative-kp-prompt-policy-v1",
-        schemaVersion: "authoritative-kp-proposal-v1",
-        task: "proposal",
-        rootActionId: "assigned-by-room-action",
-        attempt: 1,
-        startedAt: 1,
-        endedAt: 2,
-        result: "success",
+        successConsequence: "切口方向被确认。",
+        failureConsequence: "吊链发出声响，观察未能完成。",
+      }],
+      intendedOutcome: "完成观察并让世界中的后续力量开始行动",
+      resolution: "direct",
+      durationUnit: "minute",
+      durationValue: 10,
+      composition: {
+        schema: "zhuwei.compound-composition-draft/v1",
+        before: [{
+          kind: "declareDynamicFact",
+          factRef: dynamicFactRef,
+          factKind: "hazard",
+          subjectRefs: ["wake"],
+          causalBasisRefs: ["wake"],
+          summary: "大厅上方的吊灯绳已经松动，并留有可检查的切口。",
+          disclosure: "public",
+        }, {
+          kind: "formActorPlan",
+          basisRefs: ["wake", npcKnowledgeRef],
+          draft: {
+            schema: "zhuwei.compound-actor-plan-draft/v1",
+            npcRef: npc!.entityId,
+            factionRef: null,
+            planRef: "npc-plan:compound:watch-hall",
+            goal: "依照自己已知的职责留意大厅异常",
+            premiseRefs: [npcKnowledgeRef],
+            nextStep: "继续原有巡视，不预知玩家未暴露的打算",
+            resourceRefs: [],
+            activity: {
+              activityRef: "activity:compound:npc-watch-hall",
+              activityKind: "watchHall",
+              intendedDurationMicros: "600000000",
+            },
+            schedule: { kind: "knowledgeAcquired", knowledgeRef: npcKnowledgeRef },
+            trace: {
+              factRef: "fact:compound:npc-watch-hall-result",
+              description: "守灵人按自己已经掌握的职责继续巡视大厅。",
+            },
+            alternate: {
+              referenceRef: "wake",
+              reason: "若当前观察点不再可用，就转向大厅其余区域。",
+            },
+          },
+        }, {
+          kind: "openSceneQuestion",
+          sceneQuestionRef: "scene-question:compound:chandelier-cut",
+          question: "阿莱莎能否在不引起注意的情况下确认吊灯绳的切口？",
+        }],
+        onSuccess: [],
+        onFailure: [],
       },
     };
     const outcome = record(await handleRoomAction({
       principal: ALICE,
       authority,
       kp: {
-        propose: async () => proposal,
-        narrate: async () => ({ body: "吊链轻响，但你的观察已经得到权威结算。", agencyClaims: [] }),
+        propose: async (request: JsonRecord) => privateFormProposal(
+          String(request.rootActionId),
+          "compound.v1",
+          draft,
+          "proposal:compound:1",
+        ),
+        narrate: async () => ({ body: "吊链轻响，但你的观察已经得到权威结算。" }),
       },
     }, {
       kind: "intent",
@@ -155,7 +162,9 @@ describe("one compound authoritative action transaction", () => {
     const eventTypes = actionEvents.map((event) => event.eventType);
     expect(eventTypes).toEqual(expect.arrayContaining([
       "DefinitionRegistered",
+      "CanonicalFactDeclared",
       "NpcPlanFormed",
+      "ActivityStarted",
       "SceneQuestionOpened",
       "RandomnessRequested",
       "ImprovisedCheckResolved",

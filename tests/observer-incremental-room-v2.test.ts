@@ -2,9 +2,6 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import { directConsequencesProposal } from "./helpers/authoritative-proposal";
-
 type JsonRecord = Record<string, unknown>;
 
 type RoomAuthority = {
@@ -210,34 +207,25 @@ describe("SPEC 0010 continuous observer increments at Room observe", () => {
 
     const before = record(await stub.observe(ALICE), "pre-lifecycle observation");
     const beforeRead = record(before.readModel, "pre-lifecycle read model");
-    const fatal = record(await handleRoomAction({
-      principal: ALICE,
-      authority: stub,
-      kp: {
-        async propose(request) {
-          return directConsequencesProposal(String(record(request, "fatal request").rootActionId), {
-            proposalAttemptId: "proposal:incremental:lifecycle:fatal",
-            goal: "结算已经冻结的致命冲击",
-            method: "承受致命冲击",
-            duration: { unit: "second", value: 1 },
-            success: [{
-              kind: "changeHitPoints",
-              targetRef: "character:incremental:lifecycle",
-              amount: -1,
-            }],
-          });
-        },
-        async narrate() {
-          return { body: "角色倒下，等待选择继任者。", agencyClaims: [] };
-        },
-      },
-    }, {
+    const retirement = record(await stub.prepare(ALICE, {
       kind: "intent",
       submissionId: "submission:incremental:lifecycle:fatal",
-      text: "结算已经冻结的致命冲击。",
-    }), "fatal outcome");
-    expect(fatal).toMatchObject({
-      kind: "committed",
+      text: "我明确结束当前角色任期，并等待选择继任者。",
+    }), "retirement prepare");
+    expect(retirement.kind).toBe("prepared");
+    const fatal = record(await stub.commit(
+      ALICE,
+      String(retirement.preparedActionId),
+      {
+        kind: "authenticatedCampaignAction",
+        action: "retireCharacter",
+        rootActionId: String(retirement.rootActionId),
+        continueAsNpc: false,
+        reason: "玩家明确结束当前角色任期",
+      },
+    ), "retirement outcome");
+    expect(fatal).toMatchObject({ kind: "committed" });
+    expect(await stub.observe(ALICE)).toMatchObject({
       readModel: {
         controlledCharacter: null,
         lifecycle: { kind: "successorRequired" },

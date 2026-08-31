@@ -50,6 +50,7 @@ import {
 import {
   fulfillCausalActionProgramRandomness,
   fulfillCausalActionProgramRandomnessBatch,
+  fulfillHiddenRealityRandomness,
   stepCausalActionProgram,
 } from "./causal-actions";
 import { continueCompoundRoot } from "./internal-compound";
@@ -1457,7 +1458,12 @@ function fulfillAuthoritativeRandomness(
     return rejected("privateOrUnknownReference", "The continuation reference is unavailable.");
   }
   if (stored.request.purpose === "hiddenRealitySelection") {
-    return rejected("invalidWorldState", "The retired hidden-reality continuation is unavailable.");
+    return fulfillHiddenRealityRandomness(
+      profiles,
+      state,
+      input.continuation.continuationId,
+      input.rolls as number[],
+    ) ?? rejected("invalidWorldState", "The frozen hidden-reality continuation is unavailable.");
   }
   const maximumFace = stored.request.purpose === "restHitDice"
     ? Number(stored.request.dice[0]?.sides)

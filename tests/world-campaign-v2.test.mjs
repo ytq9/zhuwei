@@ -7,9 +7,17 @@ import {
   replay,
   step,
 } from "../app/_runtime/lib/rules/index.ts";
+import { compileKpFormDraft } from "../app/_runtime/lib/kp/causal-action-program.ts";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 import { ITEM_SYSTEM_PROFILE } from "../app/_runtime/lib/rules/profiles/item-system.ts";
 import { createInitialItemEntry } from "../app/_runtime/lib/rules/v2/items.ts";
+import { dueActorPlanChildRoot } from "../app/_runtime/lib/rules/v2/actor-plans.ts";
+import { continueCompoundRoot } from "../app/_runtime/lib/rules/v2/internal-compound.ts";
+import {
+  applyCampaignEvent,
+  validateCampaignEventPayload,
+} from "../app/_runtime/lib/rules/v2/campaign-events.ts";
+import { correctionEffectsBefore } from "../app/_runtime/lib/rules/v2/correction.ts";
 
 const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
@@ -25,6 +33,7 @@ const CATALOG_REF = {
 
 const SEALED_LETTER_DEFINITION_ID = "item-definition:black-lantern:sealed-letter:1";
 const SEALED_LETTER_ENTRY_ID = "item-entry:black-lantern:sealed-letter:1";
+const WATCH_FACTION_RESOURCE_REF = "resource:faction:watch:night-patrol";
 
 function tacticalGeometry(sceneId) {
   return {
@@ -236,7 +245,7 @@ INITIAL_STATE.campaignRuntime.factions = {
     name: "巡夜人",
     goal: "封锁地窖",
     memberRefs: ["npc-warden"],
-    resourceRefs: [],
+    resourceRefs: [WATCH_FACTION_RESOURCE_REF],
     visibilityPolicyId: "visibility:public",
   },
 };
@@ -491,6 +500,170 @@ test("campaign genesis carries the exact current ModuleRef without normalization
   assertReplayed(current);
   assert.deepEqual(current.state.campaignRuntime.campaign.moduleRef, MODULE_REF);
   assert.deepEqual(current.state.campaignRuntime.chapters["chapter:one"].moduleRef, MODULE_REF);
+});
+
+test("replay rejects moduleless or differently pinned current campaign descriptors", () => {
+  const cases = [
+    {
+      name: "missing Campaign",
+      mutate(state) {
+        state.campaignRuntime.campaign = null;
+      },
+      code: "archiveIntegrityMismatch",
+    },
+    {
+      name: "moduleless current Chapter",
+      mutate(state) {
+        delete state.campaignRuntime.chapters["chapter:one"].moduleRef;
+      },
+      code: "archiveIntegrityMismatch",
+    },
+    {
+      name: "Campaign and Chapter pinned to a different module",
+      mutate(state) {
+        const otherModule = {
+          profileId: "module-world-campaign-other-v1",
+          profileHash: "sha256:ddf95fe9f30a3330e310fa35d502a2eecdd4785216f996260b1e6c03a9e44ae2",
+        };
+        state.campaignRuntime.campaign.moduleRef = otherModule;
+        state.campaignRuntime.chapters["chapter:one"].moduleRef = otherModule;
+      },
+      code: "archiveIntegrityMismatch",
+    },
+  ];
+
+  for (const fixture of cases) {
+    const initialState = structuredClone(INITIAL_STATE);
+    fixture.mutate(initialState);
+    const result = replay(signedGenesis(initialState), []);
+    assert.equal(result.kind, "rejected", fixture.name);
+    assert.equal(result.rejection.code, fixture.code, fixture.name);
+  }
+});
+
+test("internal scene item materialization creates and reuses one narrative definition without acquisition", () => {
+  const scenario = createScenario();
+  const before = scenario.state();
+  const definition = {
+    schema: "zhuwei.item-definition/v1",
+    definitionKind: "item",
+    definitionId: "item-definition:black-lantern:carved-token:1",
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    causalBasisRefs: ["fact:chapter-one-goal"],
+    visibilityPolicyRef: "visibility:public",
+    content: {
+      schema: "zhuwei.item-definition-content/v1",
+      label: "刻纹木牌",
+      description: "一块留在黑灯神龛地面的旧木牌。",
+      category: "object",
+      aliases: [],
+      tags: ["narrative-object"],
+      stackable: false,
+      equipment: null,
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
+    },
+  };
+  const internalCommand = (proposalId, entryId) => continueCompoundRoot({
+    kind: "materializeSceneItem",
+    proposalId,
+    definition: structuredClone(definition),
+    entryId,
+    sceneId: "shrine",
+    quantity: 1,
+  }, proposalId);
+
+  scenario.reject({
+    kind: "materializeSceneItem",
+    proposalId: "proposal:public-scene-item-bypass",
+    definition: structuredClone(definition),
+    entryId: "item-entry:black-lantern:public-bypass",
+    sceneId: "shrine",
+    quantity: 1,
+  }, "invalidRulesInput");
+
+  const firstEntryId = "item-entry:black-lantern:carved-token:1";
+  const first = scenario.run(internalCommand(
+    "proposal:internal-scene-item:first",
+    firstEntryId,
+  ), "committed");
+  assert.deepEqual(eventTypes(first), ["ItemDefinitionRegistered", "ItemMaterialized"]);
+  assert.ok(first.scopeProof.creates.includes(`item-definition:${definition.definitionId}`));
+  assert.ok(first.scopeProof.creates.includes(`item-entry:${firstEntryId}`));
+  const firstState = scenario.state();
+  assert.deepEqual(
+    firstState.campaignRuntime.itemSystem.entries[firstEntryId],
+    {
+      schema: "zhuwei.item-entry/v1",
+      entryId: firstEntryId,
+      definitionRef: definition.definitionId,
+      definitionRevision: "1",
+      disposition: "scene",
+      holderRef: null,
+      sceneRef: "shrine",
+      equippedSlot: null,
+      quantity: 1,
+      condition: "usable",
+      charges: null,
+      durability: null,
+      visibilityPolicyRef: "visibility:public",
+      ownership: { kind: "unowned", ownerRef: null },
+    },
+  );
+  assert.deepEqual(firstState.entities["pc-1"].loadout, before.entities["pc-1"].loadout);
+  assert.deepEqual(firstState.entities["pc-2"].loadout, before.entities["pc-2"].loadout);
+  assert.deepEqual(firstState.combatRuntime.definitions, before.combatRuntime.definitions);
+  assert.deepEqual(firstState.campaignRuntime.definitions, before.campaignRuntime.definitions);
+  assert.ok(!eventTypes(first).includes("ItemAcquired"));
+  assert.ok(!eventTypes(first).includes("DefinitionRegistered"));
+
+  const secondEntryId = "item-entry:black-lantern:carved-token:2";
+  const reused = scenario.run(internalCommand(
+    "proposal:internal-scene-item:reuse",
+    secondEntryId,
+  ), "committed");
+  assert.deepEqual(eventTypes(reused), ["ItemMaterialized"]);
+  assert.equal(
+    scenario.state().campaignRuntime.itemSystem.entries[secondEntryId].ownership.kind,
+    "unowned",
+  );
+
+  scenario.reject(internalCommand(
+    "proposal:internal-scene-item:duplicate-entry",
+    firstEntryId,
+  ), "privateOrUnknownReference");
+});
+
+test("ActorPlan correction captures every current NPC/faction record changed by lifecycle events", () => {
+  const replayed = replay(GENESIS, []);
+  assertReplayed(replayed);
+  const state = structuredClone(replayed.state);
+  state.campaignRuntime.npcPlans["plan:correction"] = { status: "scheduled" };
+  state.campaignRuntime.factionPlans["plan:correction"] = { status: "scheduled" };
+  const cases = [
+    ["NpcPlanFormed", ["npcPlans"]],
+    ["NpcActionCommitted", ["npcPlans"]],
+    ["FactionPlanFormed", ["factionPlans"]],
+    ["NpcPlanCancelled", ["factionPlans", "npcPlans"]],
+    ["NpcPlanRevised", ["factionPlans", "npcPlans"]],
+    ["FactionActionCommitted", ["factionPlans", "npcPlans"]],
+    ["FactionPlanAdvanced", ["factionPlans"]],
+  ];
+  for (const [eventType, expectedCollections] of cases) {
+    const effects = correctionEffectsBefore(state, {
+      eventType,
+      payload: { planId: "plan:correction" },
+    });
+    assert.deepEqual(
+      effects.map((effect) => effect.kind === "restoreCampaignEntry" && effect.collection).sort(),
+      expectedCollections,
+    );
+    assert.ok(effects.every((effect) =>
+      effect.kind === "restoreCampaignEntry" && effect.before.status === "scheduled"));
+  }
 });
 
 test("free rulings cover all feasibility outcomes, clarification, and pre-random freeze", () => {
@@ -1040,7 +1213,7 @@ test("facts and knowledge drive bounded NPC plans, meaningful failure, and a rea
     goal: "针对阿岚未分享的推断布置伏击",
     knowledgeRefs: ["inference:smuggling-cache"],
     nextAction: "封死阿岚尚未提到的入口",
-  }, "npcKnowledgeInsufficient");
+  }, "unsupportedOperation");
 
   scenario.reject({
     kind: "shareKnowledge",
@@ -1066,7 +1239,7 @@ test("facts and knowledge drive bounded NPC plans, meaningful failure, and a rea
   assertProjectionContains(scenario.view(BOB_VIEWER), "fact:powder-cache", "pc-1");
   assertProjectionContains(scenario.view(WARDEN_VIEWER), "inference:smuggling-cache", "pc-1");
 
-  const npcPlan = scenario.run({
+  scenario.reject({
     kind: "formNpcPlan",
     proposalId: "proposal:warden-secures-cellar",
     npcId: "npc-warden",
@@ -1074,10 +1247,9 @@ test("facts and knowledge drive bounded NPC plans, meaningful failure, and a rea
     goal: "阻止火药被点燃",
     knowledgeRefs: ["fact:powder-cache"],
     nextAction: "带领巡夜人隔绝火源",
-    resourceRefs: ["faction:watch"],
-  }, "committed");
-  assert.ok(eventTypes(npcPlan).includes("NpcPlanFormed"));
-  const factionAdvance = scenario.run({
+    resourceRefs: ["faction:watch", WATCH_FACTION_RESOURCE_REF],
+  }, "unsupportedOperation");
+  scenario.reject({
     kind: "advanceFactionPlan",
     proposalId: "proposal:watch-isolates-flame",
     factionId: "faction:watch",
@@ -1085,8 +1257,183 @@ test("facts and knowledge drive bounded NPC plans, meaningful failure, and a rea
     actingNpcId: "npc-warden",
     causeFactIds: ["fact:powder-cache"],
     action: "封锁明火并留下可见警戒线",
+  }, "unsupportedOperation");
+
+  const actorPlanFact = JSON.stringify({
+    schema: "zhuwei.actor-plan-draft/v1",
+    npcRef: "npc-warden",
+    factionRef: "faction:watch",
+    planId: "plan:secure-cellar",
+    goal: "阻止火药被点燃",
+    premiseRefs: ["fact:powder-cache"],
+    nextStep: "带领巡夜人隔绝火源",
+    resourceRefs: ["faction:watch", WATCH_FACTION_RESOURCE_REF],
+    activity: {
+      activityId: "activity:watch-secures-cellar",
+      activityKind: "factionOperation",
+      intendedDurationMicros: "1000000",
+    },
+    due: { kind: "activityCompletion" },
+    trigger: null,
+    trace: {
+      factRef: "fact:watch-fire-cordon",
+      description: "庭院通往地窖的路口出现巡夜人拉起的明火警戒线",
+      visibilityPolicyRef: "visibility:scene-observers",
+    },
+    alternateTarget: {
+      targetRef: "yard",
+      reason: "地窖入口不可用时，先封锁庭院中的火源通路",
+    },
+  });
+  const directActorPlan = JSON.parse(actorPlanFact);
+  scenario.reject({
+    kind: "formNpcActorPlan",
+    proposalId: "proposal:direct-actor-plan-bypass",
+    npcId: directActorPlan.npcRef,
+    factionRef: directActorPlan.factionRef,
+    planId: directActorPlan.planId,
+    goal: directActorPlan.goal,
+    premiseRefs: directActorPlan.premiseRefs,
+    nextStep: directActorPlan.nextStep,
+    resourceRefs: directActorPlan.resourceRefs,
+    activity: directActorPlan.activity,
+    due: null,
+    trigger: {
+      kind: "knowledgeAcquired",
+      knowledgeRef: "fact:powder-cache",
+    },
+    trace: directActorPlan.trace,
+    alternateTarget: directActorPlan.alternateTarget,
+  }, "invalidRulesInput");
+  const actorPlanProgram = compileKpFormDraft("materialization.v1", {
+    goal: "让守钥人依据已知火药证据组织巡夜人",
+    method: "formActorPlan",
+    proposedFact: actorPlanFact,
+    basisRefs: [
+      "yard",
+      "npc-warden",
+      "faction:watch",
+      WATCH_FACTION_RESOURCE_REF,
+      "fact:powder-cache",
+    ],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  });
+  const formedFactionPlan = scenario.run({
+    kind: "executeCausalActionProgram",
+    rootActionId: "root:form-current-faction-actor-plan",
+    actorCharacterId: "pc-2",
+    actionLanguageRef: actorPlanProgram.languageRef,
+    actionLanguageHash: actorPlanProgram.languageHash,
+    causalActionProgram: actorPlanProgram,
   }, "committed");
-  assert.ok(eventTypes(factionAdvance).includes("FactionPlanAdvanced"));
+  assert.ok(eventTypes(formedFactionPlan).includes("NpcPlanFormed"));
+  assert.ok(eventTypes(formedFactionPlan).includes("FactionPlanFormed"));
+  assert.deepEqual(eventOf(formedFactionPlan, "NpcPlanFormed").payload.resourceRefs, [
+    "faction:watch",
+    WATCH_FACTION_RESOURCE_REF,
+  ]);
+  assert.deepEqual(eventOf(formedFactionPlan, "FactionPlanFormed").payload.resourceRefs, [
+    "faction:watch",
+    WATCH_FACTION_RESOURCE_REF,
+  ]);
+  assert.ok(formedFactionPlan.scopeProof.reads.includes("faction:faction:watch"));
+  assert.ok(formedFactionPlan.scopeProof.reads.includes(
+    `faction-resource:${WATCH_FACTION_RESOURCE_REF}`,
+  ));
+  assert.ok(formedFactionPlan.scopeProof.creates.includes("npc-plan:plan:secure-cellar"));
+  assert.ok(formedFactionPlan.scopeProof.creates.includes("faction-plan:plan:secure-cellar"));
+  assert.ok(
+    formedFactionPlan.scopeProof.creates.includes("activity:activity:watch-secures-cellar"),
+    JSON.stringify(formedFactionPlan.scopeProof),
+  );
+
+  const frozenFactionPlan = scenario.state().campaignRuntime.npcPlans["plan:secure-cellar"];
+  const dueChildRoot = dueActorPlanChildRoot(frozenFactionPlan);
+  assert.equal(typeof dueChildRoot, "string");
+  const dueExecution = {
+    kind: "resolveDueActorPlan",
+    proposalId: dueChildRoot,
+    affectedCharacterId: "pc-2",
+    causedByRootActionId: "root:player-observes-faction-plan-due",
+    decision: "execute",
+    planId: "plan:secure-cellar",
+    mechanicalProposal: null,
+  };
+  const authorityLostState = scenario.state();
+  authorityLostState.campaignRuntime.factions["faction:watch"].memberRefs = [];
+  const authorityLost = step(PROFILES, authorityLostState, dueExecution);
+  assert.equal(authorityLost.kind, "rejected");
+  assert.equal(authorityLost.rejection.code, "invalidWorldState");
+
+  const beforeAdvance = scenario.state();
+  const deferred = step(PROFILES, beforeAdvance, {
+    ...dueExecution,
+    causedByRootActionId: "root:player-observes-faction-plan-deferred",
+    decision: "defer",
+    reason: "巡夜人仍在集结",
+    deferUntilFictionMicros: (
+      BigInt(frozenFactionPlan.due.atFictionMicros) + 2_000_000n
+    ).toString(),
+  });
+  assert.equal(deferred.kind, "committed");
+  assert.ok(
+    deferred.scopeProof.writes.includes("faction-plan:plan:secure-cellar"),
+  );
+  assert.ok(deferred.scopeProof.reads.includes("faction:faction:watch"));
+  assert.ok(deferred.scopeProof.reads.includes("knowledge:npc-warden:fact:powder-cache"));
+
+  const cancelled = step(PROFILES, beforeAdvance, {
+    ...dueExecution,
+    causedByRootActionId: "root:player-observes-faction-plan-cancelled",
+    decision: "cancel",
+    reason: "火药已经被安全转移",
+  });
+  assert.equal(cancelled.kind, "committed");
+  assert.ok(cancelled.scopeProof.writes.includes("npc-plan:plan:secure-cellar"));
+  assert.ok(cancelled.scopeProof.writes.includes("faction-plan:plan:secure-cellar"));
+  assert.ok(cancelled.scopeProof.writes.includes("activity:activity:watch-secures-cellar"));
+
+  const advancedFactionPlan = scenario.run(dueExecution, "committed");
+  assert.ok(eventTypes(advancedFactionPlan).includes("FactionActionCommitted"));
+  assert.ok(eventTypes(advancedFactionPlan).includes("FactionPlanAdvanced"));
+  assert.ok(advancedFactionPlan.scopeProof.reads.includes("faction:faction:watch"));
+  assert.ok(advancedFactionPlan.scopeProof.reads.includes(
+    `faction-resource:${WATCH_FACTION_RESOURCE_REF}`,
+  ));
+  assert.ok(advancedFactionPlan.scopeProof.reads.includes(
+    "knowledge:npc-warden:fact:powder-cache",
+  ));
+  assert.ok(advancedFactionPlan.scopeProof.writes.includes("npc-plan:plan:secure-cellar"));
+  assert.ok(advancedFactionPlan.scopeProof.writes.includes("faction-plan:plan:secure-cellar"));
+  assert.ok(advancedFactionPlan.scopeProof.writes.includes("activity:activity:watch-secures-cellar"));
+  const committedFactionAction = eventOf(advancedFactionPlan, "FactionActionCommitted");
+  const factionAdvance = eventOf(advancedFactionPlan, "FactionPlanAdvanced");
+  const foldState = structuredClone(beforeAdvance);
+  assert.equal(applyCampaignEvent(foldState, committedFactionAction), true);
+  assert.equal(validateCampaignEventPayload("FactionPlanAdvanced", {
+    ...factionAdvance.payload,
+    causeFactIds: [],
+  }), false);
+  assert.throws(
+    () => applyCampaignEvent(structuredClone(foldState), {
+      ...factionAdvance,
+      payload: {
+        ...factionAdvance.payload,
+        action: "伪造的势力行动",
+      },
+    }),
+    /faction plan advance precondition mismatch/,
+  );
+  assert.equal(
+    scenario.state().campaignRuntime.factionPlans["plan:secure-cellar"].status,
+    "advanced",
+  );
+  assert.equal(
+    scenario.state().campaignRuntime.factionPlans["plan:secure-cellar"].lastAdvance.action,
+    "带领巡夜人隔绝火源",
+  );
 
   const failureScenario = createScenario();
   failureScenario.run({
@@ -1199,7 +1546,12 @@ test("facts and knowledge drive bounded NPC plans, meaningful failure, and a rea
     chapterId: "chapter:two",
     anchorFactIds: ["fact:seal-resolved", "threat:powder-smugglers"],
     sceneQuestion: "谁在利用旧地窖走私火药？",
+    activityTransitions: [],
   }, "committed");
+  assert.deepEqual(
+    endingScenario.state().campaignRuntime.chapters["chapter:two"].moduleRef,
+    MODULE_REF,
+  );
   assertProjectionContains(
     endingScenario.view(ALICE_VIEWER),
     "story:seal",

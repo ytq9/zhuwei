@@ -276,8 +276,14 @@ export type CorrectionEffect =
   | { kind: "restoreCombatRuntime"; before: CombatRuntimeState }
   | { kind: "restoreDefinition"; definitionId: string; beforeCampaign: JsonRecord | null; beforeCombat: JsonRecord | null }
   | { kind: "restoreCampaignEntry"; collection: keyof CampaignRuntimeState; entryId: string; before: JsonRecord | null }
-  | { kind: "restoreCampaignDescriptor"; before: JsonRecord | null }
+  | { kind: "restoreCampaignDescriptor"; before: JsonRecord }
   | { kind: "restorePendingInputs"; before: JsonRecord }
+  | {
+      kind: "restoreGroupRestInterruption";
+      activePendingInputsBefore: JsonRecord;
+      suspendedPendingInputsBefore: JsonRecord;
+      receiptsBefore: JsonRecord;
+    }
   | {
       kind: "restoreTenureRuntime";
       characterId: string;
@@ -762,6 +768,7 @@ export type KnowledgeSharedPayload = {
 
 export type ActorPlanFormedPayload = {
   npcId: string;
+  factionRef: string | null;
   planId: string;
   goal: string;
   actorKind: "npc";

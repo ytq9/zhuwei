@@ -487,6 +487,12 @@ test("an explicit too-narrow diagnostic can upgrade an ordinary Form to compound
         basisRefs: [FACT_REF],
       },
     ],
+    composition: {
+      schema: "zhuwei.compound-composition-draft/v1",
+      before: [],
+      onSuccess: [],
+      onFailure: [],
+    },
     resolution: "direct",
     durationUnit: "minute",
     durationValue: 1,

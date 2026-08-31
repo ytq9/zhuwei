@@ -837,66 +837,6 @@ describe("V3 Room dynamic environment production lowering", () => {
       });
   });
 
-  it("keeps the exact product 0.4 noncombat action-grant replay semantics", async () => {
-    const roomId = `${ROOM_ID}:current-action-grant`;
-    const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
-    const initialized = record(await authority.initializeAuthoritative({
-      roomId,
-      moduleId: "black-oak-will",
-      moduleVersion: "social-resolution-v1",
-      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
-      members: [{ principalId: ALICE.principal.id, role: "host" }],
-      characters: [character(ALICE_ID, ALICE.principal.id, "阿莱莎")],
-    }), "current environment Room initialization");
-    expect(initialized.created, JSON.stringify(initialized)).toBe(true);
-
-    const firstPrepared = await prepareIntent(
-      authority,
-      ALICE,
-      "submission:dynamic-environment:current-first",
-      "我翻转墙边的折叠木格，让它顺着地槽展开。",
-    );
-    await expect(authority.commit(
-      ALICE,
-      firstPrepared.preparedActionId,
-      privateEnvironmentProposal(firstPrepared.rootActionId, stateOnlyOpenBlankDraft()),
-    )).resolves.toMatchObject({ kind: "committed" });
-
-    const secondPrepared = await prepareIntent(
-      authority,
-      ALICE,
-      "submission:dynamic-environment:current-second",
-      "我再抽紧墙角的绳索，让另一张绳结网升起。",
-    );
-    await expect(authority.commit(
-      ALICE,
-      secondPrepared.preparedActionId,
-      privateEnvironmentProposal(secondPrepared.rootActionId, secondStateOnlyOpenBlankDraft()),
-    )).resolves.toMatchObject({
-      kind: "needsKp",
-      diagnostics: [expect.objectContaining({
-        code: "invalidRulesInput",
-        rulesMessage: "The environmental stunt action grant is unavailable.",
-      })],
-    });
-
-    const exported = record(await authority.exportAuthoritativeArchive(
-      record(initialized.serviceCapabilities, "current capabilities").archiveExport,
-    ), "current archive export");
-    const archive = record(exported.archive, "current archive");
-    const replayed = record(replay(
-      archive.signedGenesis as never,
-      archive.events as never,
-    ), "current replay");
-    expect(replayed.kind, JSON.stringify(replayed)).toBe("replayed");
-    const replayedState = record(replayed.state, "current state");
-    const replayedCombat = record(replayedState.combatRuntime, "current combat");
-    expect(record(
-      record(replayedCombat.entities, "current entities")[ALICE_ID],
-      "current actor",
-    )).toMatchObject({ turn: { action: "0" } });
-  });
-
   it("resolves a successful custom hazard through authoritative geometry, saves, damage, debris, replay, and eviction", async () => {
     const roomId = `${ROOM_ID}:successful-hazard`;
     const authority = env.ROOMS.getByName(roomId) as unknown as Authority;

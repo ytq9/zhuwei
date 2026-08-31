@@ -124,10 +124,23 @@ export function isCorrectionEffect(value: unknown): value is CorrectionEffect {
         && (value.before === null || record(value.before));
     case "restoreCampaignDescriptor":
       return exact(value, ["before", "kind"])
-        && (value.before === null || record(value.before));
+        && record(value.before);
     case "restorePendingInputs":
       return exact(value, ["before", "kind"])
         && record(value.before);
+    case "restoreGroupRestInterruption":
+      return exact(value, [
+        "activePendingInputsBefore",
+        "kind",
+        "receiptsBefore",
+        "suspendedPendingInputsBefore",
+      ])
+        && record(value.activePendingInputsBefore)
+        && Object.values(value.activePendingInputsBefore).every(record)
+        && record(value.suspendedPendingInputsBefore)
+        && Object.values(value.suspendedPendingInputsBefore).every(record)
+        && record(value.receiptsBefore)
+        && Object.values(value.receiptsBefore).every(record);
     case "restoreTenureRuntime":
       return exact(value, [
         "characterId",
@@ -315,6 +328,45 @@ function restoreTenureRuntime(
     combatEntityBefore: state.combatRuntime.entities[characterId] === undefined
       ? null
       : structuredClone(state.combatRuntime.entities[characterId]),
+  };
+}
+
+function restoreGroupRestInterruption(
+  state: AuthoritativeWorldState,
+  activityId: string,
+): CorrectionEffect | undefined {
+  const activity = state.campaignRuntime.activities[activityId];
+  if (!record(activity) || !nonEmpty(activity.characterId)) return undefined;
+  const matchesActivity = (pending: unknown): pending is JsonRecord => record(pending)
+    && pending.kind === "groupRestConsent"
+    && nonEmpty(pending.rootActionId)
+    && record(pending.options)
+    && pending.options.initiatorCharacterId === activity.characterId
+    && `activity:${pending.rootActionId}:${activity.characterId}` === activityId;
+  const activePendingInputsBefore = Object.fromEntries(
+    Object.entries(state.pendingInputs)
+      .filter(([, pending]) => matchesActivity(pending))
+      .map(([pendingInputId, pending]) => [pendingInputId, structuredClone(pending)]),
+  );
+  const suspendedPendingInputsBefore = Object.fromEntries(
+    Object.entries(state.multiplayerRuntime.suspendedPendingInputs)
+      .filter(([, pending]) => matchesActivity(pending))
+      .map(([pendingInputId, pending]) => [pendingInputId, structuredClone(pending)]),
+  );
+  const rootActionIds = [...new Set([
+    ...Object.values(activePendingInputsBefore),
+    ...Object.values(suspendedPendingInputsBefore),
+  ].map((pending) => String(pending.rootActionId)))].sort();
+  if (rootActionIds.length === 0) return undefined;
+  const receiptsBefore = Object.fromEntries(rootActionIds.flatMap((rootActionId) => {
+    const receipt = state.receipts[rootActionId];
+    return receipt === undefined ? [] : [[rootActionId, structuredClone(receipt)]];
+  }));
+  return {
+    kind: "restoreGroupRestInterruption",
+    activePendingInputsBefore,
+    suspendedPendingInputsBefore,
+    receiptsBefore,
   };
 }
 
@@ -520,12 +572,18 @@ export function correctionEffectsBefore(
       return nonEmpty(payload.characterId) ? [restoreCharacter(state, payload.characterId)] : [];
     case "RestStarted":
     case "ActivityStarted":
-    case "ActivityInterrupted":
     case "ActivityCompleted": {
       const effect = nonEmpty(payload.activityId)
         ? restoreCampaignEntry(state, "activities", payload.activityId)
         : undefined;
       return effect === undefined ? [] : [effect];
+    }
+    case "ActivityInterrupted": {
+      if (!nonEmpty(payload.activityId)) return [];
+      const activity = restoreCampaignEntry(state, "activities", payload.activityId);
+      const groupRest = restoreGroupRestInterruption(state, payload.activityId);
+      return [activity, groupRest]
+        .filter((effect): effect is CorrectionEffect => effect !== undefined);
     }
     case "GroupRestOffered":
     case "GroupRestConsentRecorded":
@@ -663,11 +721,12 @@ export function correctionEffectsBefore(
       return effect === undefined ? [] : [effect];
     }
     case "ChapterStarted": {
+      if (state.campaignRuntime.campaign === null) {
+        throw new TypeError("current correction requires a Campaign descriptor");
+      }
       const effects: CorrectionEffect[] = [{
         kind: "restoreCampaignDescriptor",
-        before: state.campaignRuntime.campaign === null
-          ? null
-          : structuredClone(state.campaignRuntime.campaign),
+        before: structuredClone(state.campaignRuntime.campaign),
       }];
       const chapter = nonEmpty(payload.chapterId)
         ? restoreCampaignEntry(state, "chapters", payload.chapterId)
@@ -710,11 +769,27 @@ export function correctionEffectsBefore(
       return [effect, sceneEffect, factionEffect, restoreCombatRuntime(state)]
         .filter((entry): entry is CorrectionEffect => entry !== undefined);
     }
-    case "NpcPlanFormed": {
-      const effect = nonEmpty(payload.planId)
+    case "NpcPlanFormed":
+    case "NpcActionCommitted": {
+      const npcPlan = nonEmpty(payload.planId)
         ? restoreCampaignEntry(state, "npcPlans", payload.planId)
         : undefined;
-      return effect === undefined ? [] : [effect];
+      return npcPlan === undefined ? [] : [npcPlan];
+    }
+    case "FactionPlanFormed": {
+      const factionPlan = nonEmpty(payload.planId)
+        ? restoreCampaignEntry(state, "factionPlans", payload.planId)
+        : undefined;
+      return factionPlan === undefined ? [] : [factionPlan];
+    }
+    case "NpcPlanCancelled":
+    case "NpcPlanRevised":
+    case "FactionActionCommitted": {
+      if (!nonEmpty(payload.planId)) return [];
+      return [
+        restoreCampaignEntry(state, "npcPlans", payload.planId),
+        restoreCampaignEntry(state, "factionPlans", payload.planId),
+      ].filter((effect): effect is CorrectionEffect => effect !== undefined);
     }
     case "FactionPlanAdvanced": {
       const effect = nonEmpty(payload.planId)
@@ -748,6 +823,10 @@ export function correctionEffectsBefore(
         : undefined;
       return effect === undefined ? [] : [effect];
     }
+    case "DamagePacketResolved":
+      return nonEmpty(payload.targetEntityId)
+        ? [restoreCharacter(state, payload.targetEntityId), restoreCombatRuntime(state)]
+        : [restoreCombatRuntime(state)];
     case "EncounterStarted":
     case "HostilityChanged":
     case "EnvironmentFeatureMaterialized":
@@ -768,7 +847,6 @@ export function correctionEffectsBefore(
     case "ConcentrationStarted":
     case "ConcentrationEnded":
     case "DeathSaveResolved":
-    case "DamagePacketResolved":
     case "ReactionOffered":
     case "ReactionAnswered":
     case "CombatPendingOpened":
@@ -872,14 +950,43 @@ function applyEffects(
         break;
       }
       case "restoreCampaignDescriptor":
-        state.campaignRuntime.campaign = effect.before === null
-          ? null
-          : structuredClone(effect.before);
+        if (
+          state.campaignRuntime.campaign === null
+          || !record(state.campaignRuntime.campaign.moduleRef)
+          || !record(effect.before.moduleRef)
+          || state.campaignRuntime.campaign.moduleRef.profileId !== effect.before.moduleRef.profileId
+          || state.campaignRuntime.campaign.moduleRef.profileHash !== effect.before.moduleRef.profileHash
+        ) {
+          throw new TypeError("correction cannot change the Campaign Module binding");
+        }
+        state.campaignRuntime.campaign = structuredClone(effect.before);
         break;
       case "restorePendingInputs":
         state.pendingInputs = structuredClone(
           effect.before,
         ) as unknown as AuthoritativeWorldState["pendingInputs"];
+        break;
+      case "restoreGroupRestInterruption":
+        for (const [pendingInputId, pending] of Object.entries(
+          effect.activePendingInputsBefore,
+        )) {
+          state.pendingInputs[pendingInputId] = structuredClone(
+            pending,
+          ) as unknown as AuthoritativeWorldState["pendingInputs"][string];
+        }
+        for (const [pendingInputId, pending] of Object.entries(
+          effect.suspendedPendingInputsBefore,
+        )) {
+          if (!record(pending)) {
+            throw new TypeError("correction suspended group-rest input is malformed");
+          }
+          state.multiplayerRuntime.suspendedPendingInputs[pendingInputId] = structuredClone(pending);
+        }
+        for (const [rootActionId, receipt] of Object.entries(effect.receiptsBefore)) {
+          state.receipts[rootActionId] = structuredClone(
+            receipt,
+          ) as unknown as AuthoritativeWorldState["receipts"][string];
+        }
         break;
       case "restoreTenureRuntime": {
         state.pendingInputs = structuredClone(
@@ -1051,6 +1158,15 @@ function isAutomaticActionScaffoldingEffect(
       return effect.kind === "restoreCanonicalFact"
         && effect.factId === actionBasisFactId
         && effect.before === null;
+    case "ImprovisedActionResolved":
+      return effect.kind === "restoreCanonicalFact"
+        && effect.factId.startsWith(`fact:v3-causal-program:${targetRootActionId}:`)
+        && effect.before === null;
+    case "ActivityStarted":
+    case "ActivityCompleted":
+      return effect.kind === "restoreCampaignEntry"
+        && effect.collection === "activities"
+        && effect.entryId.startsWith(`activity:causal:${targetRootActionId}:`);
     case "SceneQuestionOpened":
       return effect.kind === "restoreCampaignEntry"
         && effect.collection === "sceneQuestions"

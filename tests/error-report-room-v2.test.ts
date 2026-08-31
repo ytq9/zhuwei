@@ -6,7 +6,7 @@ import {
   handleRoomCorrection,
   type RoomActionInput,
 } from "../app/_runtime/lib/room/action";
-import { directConsequencesProposal } from "./helpers/authoritative-proposal";
+import { observationProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -72,7 +72,7 @@ async function commitVisibleAction(
   const committed = record(await stub.commit(
     principal,
     String(prepared.preparedActionId),
-    directConsequencesProposal(String(prepared.rootActionId), {
+    observationProposal(String(prepared.rootActionId), {
       proposalAttemptId: `proposal:${submissionId}`,
       goal: "确认当前环境",
       method: "在自己的位置谨慎观察",
@@ -234,7 +234,7 @@ describe("SPEC 0011 restricted ErrorReport at the Room responsibility interface"
       authority: reacquired,
       kp: {
         async narrate() {
-          return { body: "更正已由可信服务提交。", agencyClaims: [] };
+          return { body: "更正已由可信服务提交。" };
         },
       },
     }, correctionCapability, {

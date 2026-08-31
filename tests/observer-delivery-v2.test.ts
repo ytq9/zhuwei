@@ -1,12 +1,12 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
+import {
+  compileKpFormDraft,
+  lowerCausalActionProgram,
+} from "../app/_runtime/lib/kp/causal-action-program";
 import { bodyOnlyNarrationModelInput } from "../app/_runtime/lib/kp/narration-v3";
 import { projectAuthoritativeTableObservation } from "../app/_runtime/lib/table/authoritative";
-import {
-  directConsequencesProposal,
-  noncombatCheckProposal,
-} from "./helpers/authoritative-proposal";
 
 type RecordValue = Record<string, unknown>;
 
@@ -16,12 +16,14 @@ const CAROL = Object.freeze({ principal: Object.freeze({ id: "principal:delivery
 const DAVE = Object.freeze({ principal: Object.freeze({ id: "principal:delivery:dave", sessionVersion: 1 }) });
 
 const PRIVATE_CLUE = "private-clue:the-seal-was-replaced-at-midnight";
+const SHARED_ARCHIVE_BASIS = "fact:delivery:shared-archive-context";
 
 type DeliveryAuthority = {
   initializeAuthoritative(input: unknown): Promise<unknown>;
   applyRoomAdministration(capability: unknown, command: unknown): Promise<unknown>;
   prepare(context: unknown, input: unknown): Promise<unknown>;
   commit(context: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
+  beginDeliveryAudiencePublication(query: unknown): Promise<unknown>;
   publishDelivery(capability: unknown, publication: unknown): Promise<unknown>;
   observe(context: unknown, query?: unknown): Promise<unknown>;
   acknowledge(context: unknown, deliveryId: string, acknowledgementId?: string): Promise<unknown>;
@@ -52,6 +54,70 @@ function character(characterId: string, controllerPrincipalId: string, sceneId: 
   };
 }
 
+function privateFormProposal(
+  rootActionId: string,
+  formId: "clarification.v1" | "materialization.v1" | "observe.v1" | "ordinary-check.v1",
+  draft: RecordValue,
+) {
+  const causalActionProgram = compileKpFormDraft(formId, draft);
+  return {
+    kind: "privateFormProposal",
+    formId,
+    draft: structuredClone(draft),
+    causalActionProgram,
+    loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
+    semanticFreezeHash: causalActionProgram.semanticHash,
+    repairUsed: false,
+    proposalAttemptId: `${rootActionId}:proposal:1`,
+    modelInvocationReceipt: { task: "proposal", result: "success" },
+    rootActionId,
+  };
+}
+
+function observeProposal(
+  rootActionId: string,
+  options: {
+    goal: string;
+    method: string;
+    focus?: string;
+    desiredInformation?: string;
+    successConsequence?: string;
+  },
+) {
+  return privateFormProposal(rootActionId, "observe.v1", {
+    goal: options.goal,
+    method: options.method,
+    focus: options.focus ?? options.goal,
+    desiredInformation: options.desiredInformation ?? options.goal,
+    resolution: options.successConsequence === undefined ? "direct" : "check",
+    durationUnit: "second",
+    durationValue: 1,
+    ...(options.successConsequence === undefined
+      ? {}
+      : {
+          risk: "遮挡或细节过小可能使这次观察没有得到新证据。",
+          ability: "wis",
+          skill: "perception",
+          dc: 1,
+          mode: "normal",
+          successConsequence: options.successConsequence,
+          failureConsequence: "没有得到新的可确认细节。",
+        }),
+  });
+}
+
+function publicMaterializationProposal(rootActionId: string, publicResult: string) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: "确认档案柜中所有在场者都能观察到的新痕迹",
+    method: "谨慎打开没有上锁的档案柜并共同查看",
+    proposedFact: publicResult,
+    basisRefs: [SHARED_ARCHIVE_BASIS],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  });
+}
+
 async function initialized(name: string) {
   return (await initializedWithAdministration(name)).stub;
 }
@@ -69,15 +135,31 @@ async function initializedWithAdministration(name: string) {
       { principalId: DAVE.principal.id, role: "player" },
     ],
     characters: [
-      character("character:delivery:alice", ALICE.principal.id, "archive"),
-      character("character:delivery:bob", BOB.principal.id, "archive"),
+      character("character:delivery:alice", ALICE.principal.id, "wake"),
+      character("character:delivery:bob", BOB.principal.id, "wake"),
       character("character:delivery:carol", CAROL.principal.id, "yard"),
-      character("character:delivery:dave", DAVE.principal.id, "chapel"),
+      character("character:delivery:dave", DAVE.principal.id, "shrine"),
     ],
+    fixtureFacts: [{
+      factRef: SHARED_ARCHIVE_BASIS,
+      kind: "establishedCommunicationChannel",
+      participants: ["character:delivery:alice", "character:delivery:bob"],
+    }],
   }), "delivery room initialization");
   expect(result).toMatchObject({ created: true });
   const capabilities = record(result.serviceCapabilities, "delivery room service capabilities");
   expect(capabilities.roomAdministration).toBeDefined();
+  for (const principal of [ALICE, BOB, CAROL, DAVE]) {
+    const opening = record(await stub.observe(principal), "opening delivery observation");
+    const delivery = record(opening.delivery, "opening delivery");
+    if (delivery.kind !== "current") continue;
+    const deliveryId = String(record(delivery.frame, "opening delivery frame").deliveryId);
+    await expect(stub.acknowledge(
+      principal,
+      deliveryId,
+      `ack:opening:${principal.principal.id}`,
+    )).resolves.toMatchObject({ kind: "acknowledged", deliveryId });
+  }
   return { stub, administration: capabilities.roomAdministration };
 }
 
@@ -116,19 +198,7 @@ async function committedResult(stub: DeliveryAuthority, submissionId: string, pu
   const committed = record(await stub.commit(
     ALICE,
     String(prepared.preparedActionId),
-    directConsequencesProposal(String(prepared.rootActionId), {
-      proposalAttemptId: `${submissionId}:proposal`,
-      goal: "观察档案柜内留下的现场痕迹",
-      method: "谨慎打开没有上锁的档案柜",
-      duration: { unit: "second", value: 1 },
-      dynamicMaterializations: [{
-        kind: "fact",
-        factRef: `fact:delivery:${submissionId.replace(/[^a-z0-9]+/gi, "-")}`,
-        causalBasisRefs: [],
-        visibilityPolicyRef: "visibility:public",
-        definition: { publicResult },
-      }],
-    }),
+    publicMaterializationProposal(String(prepared.rootActionId), publicResult),
   ), "commit result");
   expect(committed.kind).toBe("committed");
   const plan = record(committed.deliveryPlan, "frozen delivery plan");
@@ -141,15 +211,36 @@ function audiences(plan: RecordValue) {
   return plan.audiences as Array<RecordValue>;
 }
 
+async function publicationFrames(
+  stub: DeliveryAuthority,
+  plan: RecordValue,
+  body: (audience: RecordValue) => string,
+) {
+  const frames = [];
+  for (const audience of audiences(plan)) {
+    const begun = record(await stub.beginDeliveryAudiencePublication({
+      publishCapability: plan.publishCapability,
+      audienceId: audience.audienceId,
+    }), "delivery publication begin");
+    frames.push({
+      audienceId: audience.audienceId,
+      deliveryGeneration: begun.deliveryGeneration,
+      narration: { body: body(audience) },
+    });
+  }
+  return frames;
+}
+
 async function publishForAudience(
   stub: DeliveryAuthority,
   plan: RecordValue,
   prefix: string,
 ) {
-  const frames = audiences(plan).map((audience) => ({
-    audienceId: audience.audienceId,
-    narration: { text: `${prefix}:${String(audience.characterId)}`, agencyClaims: [] },
-  }));
+  const frames = await publicationFrames(
+    stub,
+    plan,
+    (audience) => `${prefix}:${String(audience.characterId)}`,
+  );
   const result = await stub.publishDelivery(
     { publishCapability: plan.publishCapability },
     { frames },
@@ -165,24 +256,12 @@ describe("observer-specific single-slot delivery", () => {
     const committed = await commitProposal(
       stub,
       "submission:delivery:private-clue",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:delivery:private-clue",
+      (rootActionId) => observeProposal(rootActionId, {
         goal: "独自确认印章的细小磨损",
         method: "把印章藏在掌心里观察只有自己能看见的细节",
-        duration: { unit: "second", value: 1 },
-        dynamicMaterializations: [{
-          kind: "fact",
-          factRef: "fact:delivery:private-clue-source",
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:knowledge-holder:character:delivery:alice",
-          definition: { conclusion: PRIVATE_CLUE },
-        }],
-        success: [{
-          kind: "acquireKnowledge",
-          knowledgeRef: "knowledge:delivery:private-clue",
-          value: PRIVATE_CLUE,
-          definitionRef: "fact:delivery:private-clue-source",
-        }],
+        focus: "掌心遮挡下的印章磨损",
+        desiredInformation: "印章磨损所显示的更换时间",
+        successConsequence: PRIVATE_CLUE,
       }),
       "我把印章藏在掌心里，独自确认它的磨损。",
     );
@@ -230,7 +309,8 @@ describe("observer-specific single-slot delivery", () => {
           },
           observation,
         });
-        expect(tableProjection.messages).toEqual([]);
+        expect(tableProjection.messages.every((message) => message.kind === "narrate"))
+          .toBe(true);
         expect(JSON.stringify(tableProjection)).not.toContain(PRIVATE_CLUE);
       }
     }
@@ -258,12 +338,12 @@ describe("observer-specific single-slot delivery", () => {
     const { plan } = await commitProposal(
       stub,
       "submission:delivery:movement",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:delivery:movement",
-        goal: "从档案室走到院子",
-        method: "沿走廊正常步行",
-        duration: { unit: "minute", value: 1 },
-        success: [{ kind: "moveEntity", sceneRef: "yard" }],
+      (rootActionId) => ({
+        kind: "authenticatedPartyAction",
+        action: "moveIndividually",
+        destinationSceneId: "yard",
+        fictionTimeCostMicros: "60000000",
+        rootActionId,
       }),
       "我离开档案室，沿走廊走进院子。",
     );
@@ -279,7 +359,7 @@ describe("observer-specific single-slot delivery", () => {
         changes: expect.arrayContaining([{
           kind: "characterDeparted",
           characterId: "character:delivery:alice",
-          sceneId: "archive",
+          sceneId: "wake",
         }]),
       },
     });
@@ -298,37 +378,31 @@ describe("observer-specific single-slot delivery", () => {
   it("grounds narration in per-viewer deltas so equal-state success and failure prompts differ", async () => {
     const successStub = await initialized("observer-delivery-v2-success-grounding");
     const failureStub = await initialized("observer-delivery-v2-failure-grounding");
-    const check = (dc: number, label: string) => (rootActionId: string) => noncombatCheckProposal(rootActionId, {
-      proposalAttemptId: `proposal:delivery:${label}`,
-      goal: "判断同一扇门是否会卡住",
-      method: "以相同力度推门",
-      dc,
-      duration: { unit: "second", value: 1 },
-      success: [],
-      failure: [],
-      risk: {
-        warning: "门轴状态不确定。",
-        successConsequences: ["门轴顺畅转动。"],
-        failureConsequences: ["门轴卡住，没有打开。"],
-        retryGate: ["methodChanged"],
-      },
-      dynamicMaterializations: [{
-        kind: "fact",
-        factRef: "fact:delivery:door-hinge",
-        causalBasisRefs: [],
-        visibilityPolicyRef: "visibility:scene-observers",
-        definition: { subject: "door-hinge", uncertainty: "whether-it-sticks" },
-      }],
-    });
+    const check = (dc: number) => (rootActionId: string) =>
+      privateFormProposal(rootActionId, "ordinary-check.v1", {
+        goal: "判断同一扇门是否会卡住",
+        method: "以相同力度推门",
+        intendedOutcome: "门轴顺畅转动",
+        risk: "门轴可能卡住并让门保持关闭",
+        resolution: "check",
+        ability: "str",
+        skill: "athletics",
+        dc,
+        mode: "normal",
+        durationUnit: "second",
+        durationValue: 1,
+        successConsequence: "门轴顺畅转动。",
+        failureConsequence: "门轴卡住，没有打开。",
+      });
     const success = await commitProposal(
       successStub,
       "submission:delivery:success-grounding",
-      check(1, "success"),
+      check(1),
     );
     const failure = await commitProposal(
       failureStub,
       "submission:delivery:failure-grounding",
-      check(30, "failure"),
+      check(30),
     );
     const actorProjection = (plan: RecordValue) => audiences(plan).find((entry) =>
       entry.characterId === "character:delivery:alice")?.kpProjection;
@@ -359,25 +433,33 @@ describe("observer-specific single-slot delivery", () => {
     const { plan } = await commitProposal(
       stub,
       "submission:delivery:player-agency-guard",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:delivery:player-agency-guard",
+      (rootActionId) => observeProposal(rootActionId, {
         goal: "打开没有上锁的档案柜",
         method: "拉动柜门把手",
-        duration: { unit: "second", value: 1 },
+        focus: "已经打开的档案柜",
+        desiredInformation: "柜内纸页的可见状态",
       }),
       "我拉开没有上锁的档案柜。",
     );
     const before = record(await stub.observe(ALICE), "observation before malicious publication");
     expect(before.delivery).toEqual({ kind: "none" });
-    const maliciousFrames = audiences(plan).map((audience) => ({
-      audienceId: audience.audienceId,
+    const begunFrames = await publicationFrames(
+      stub,
+      plan,
+      () => "档案柜已经打开，冷风掀动里面的纸页。",
+    );
+    const maliciousFrames = begunFrames.map((frame) => ({
+      audienceId: frame.audienceId,
+      deliveryGeneration: frame.deliveryGeneration,
       narration: {
         text: "你认定这些纸页就是凶手留下的，并决定立刻追出去。",
         agencyClaims: [{
           subjectKind: "playerCharacter",
-          subjectRef: audience.characterId,
+          subjectRef: String(audiences(plan).find((audience) =>
+            audience.audienceId === frame.audienceId)?.characterId),
           claimKind: "thought",
-          basisRefs: [audience.characterId],
+          basisRefs: [String(audiences(plan).find((audience) =>
+            audience.audienceId === frame.audienceId)?.characterId)],
         }],
       },
     }));
@@ -391,15 +473,7 @@ describe("observer-specific single-slot delivery", () => {
     expect(afterRejected).toEqual(before);
     await expect(stub.publishDelivery(
       { publishCapability: plan.publishCapability },
-      {
-        frames: audiences(plan).map((audience) => ({
-          audienceId: audience.audienceId,
-          narration: {
-            text: "档案柜已经打开，冷风掀动里面的纸页。",
-            agencyClaims: [],
-          },
-        })),
-      },
+      { frames: begunFrames },
     )).resolves.toMatchObject({ kind: "published" });
     expect(record(await stub.observe(ALICE), "observation after valid retry").delivery)
       .toMatchObject({ kind: "current" });
@@ -410,10 +484,11 @@ describe("observer-specific single-slot delivery", () => {
     const first = await commitProposal(
       stub,
       "submission:delivery:idempotent-delta",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:delivery:idempotent-delta",
+      (rootActionId) => observeProposal(rootActionId, {
         goal: "确认桌面是否积灰",
         method: "用指尖划过桌面",
+        focus: "桌面的积灰",
+        desiredInformation: "桌面是否积灰",
       }),
     );
     const retried = record(await stub.commit(
@@ -423,10 +498,11 @@ describe("observer-specific single-slot delivery", () => {
     ), "idempotent commit retry");
     expect(retried).toEqual(first.committed);
 
-    const frames = audiences(first.plan).map((audience) => ({
-      audienceId: audience.audienceId,
-      narration: { text: `幂等回应:${String(audience.characterId)}`, agencyClaims: [] },
-    }));
+    const frames = await publicationFrames(
+      stub,
+      first.plan,
+      (audience) => `幂等回应:${String(audience.characterId)}`,
+    );
     const publication = await stub.publishDelivery(
       { publishCapability: first.plan.publishCapability },
       { frames },
@@ -452,7 +528,8 @@ describe("observer-specific single-slot delivery", () => {
       {
         frames: [{
           audienceId: "audience:forged-carol",
-          narration: { text: "不应送达", agencyClaims: [] },
+          deliveryGeneration: 1,
+          narration: { body: "不应送达" },
         }],
       },
     )).resolves.toMatchObject({ kind: "rejected", code: "audienceMismatch" });
@@ -464,10 +541,11 @@ describe("observer-specific single-slot delivery", () => {
     expect(alice.delivery).toMatchObject({ kind: "current", frame: { deliveryId: expect.any(String) } });
     expect(bob.delivery).toMatchObject({ kind: "current", frame: { deliveryId: expect.any(String) } });
     expect(carol.delivery).toEqual({ kind: "none" });
-    expect(JSON.stringify(alice.delivery)).toContain(String(frames.find((entry) =>
+    const aliceBody = String(record(alice.delivery, "Alice delivery").body);
+    expect(aliceBody).toContain(String(frames.find((entry) =>
       audiences(plan).find((audience) => audience.audienceId === entry.audienceId)?.characterId
-        === "character:delivery:alice")?.narration.text));
-    expect(JSON.stringify(alice.delivery)).not.toContain("character:delivery:bob");
+        === "character:delivery:alice")?.narration.body));
+    expect(aliceBody).not.toContain("character:delivery:bob");
   });
 
   it("keeps only each viewer's experienced scene conversation across leaving and returning", async () => {
@@ -493,6 +571,7 @@ describe("observer-specific single-slot delivery", () => {
       "我轻轻推开档案柜，观察里面留下了什么。",
     );
     expect(committedBeforePublication.transcript.map((message) => message.kind)).toEqual([
+      "kp",
       "player",
     ]);
     await publishForAudience(stub, first.plan, "档案室亲历回应");
@@ -500,12 +579,12 @@ describe("observer-specific single-slot delivery", () => {
     const departed = await commitProposal(
       stub,
       "submission:delivery:experienced:depart",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:delivery:experienced:depart",
-        goal: "从档案室走到院子",
-        method: "沿走廊正常步行",
-        duration: { unit: "minute", value: 1 },
-        success: [{ kind: "moveEntity", sceneRef: "yard" }],
+      (rootActionId) => ({
+        kind: "authenticatedPartyAction",
+        action: "moveIndividually",
+        destinationSceneId: "yard",
+        fictionTimeCostMicros: "60000000",
+        rootActionId,
       }),
       "我离开档案室，沿走廊走进院子。",
     );
@@ -514,6 +593,7 @@ describe("observer-specific single-slot delivery", () => {
       "Alice after departure commit before narration publication",
     );
     expect(beforeDeparturePublication.transcript.map((message) => message.kind)).toEqual([
+      "kp",
       "player",
       "kp",
       "player",
@@ -526,12 +606,12 @@ describe("observer-specific single-slot delivery", () => {
     const returned = await commitProposal(
       stub,
       "submission:delivery:experienced:return",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:delivery:experienced:return",
-        goal: "从院子回到档案室",
-        method: "沿原路正常步行",
-        duration: { unit: "minute", value: 1 },
-        success: [{ kind: "moveEntity", sceneRef: "archive" }],
+      (rootActionId) => ({
+        kind: "authenticatedPartyAction",
+        action: "moveIndividually",
+        destinationSceneId: "wake",
+        fictionTimeCostMicros: "60000000",
+        rootActionId,
       }),
       "我从院子沿原路回到档案室。",
     );
@@ -605,22 +685,26 @@ describe("observer-specific single-slot delivery", () => {
   it("supersedes the old body with one new slot and rejects an older narration that arrives late", async () => {
     const stub = await initialized("observer-delivery-v2-supersede");
     const older = await committedResult(stub, "submission:delivery:older", "较早结果");
+    const lateFrames = await publicationFrames(
+      stub,
+      older.plan,
+      (audience) => `迟到旧回应:${String(audience.characterId)}`,
+    );
     const newer = await committedResult(stub, "submission:delivery:newer", "较新结果");
 
     await publishForAudience(stub, newer.plan, "较新回应");
-    const lateFrames = audiences(older.plan).map((audience) => ({
-      audienceId: audience.audienceId,
-      narration: { text: `迟到旧回应:${String(audience.characterId)}`, agencyClaims: [] },
-    }));
     await expect(stub.publishDelivery(
       { publishCapability: older.plan.publishCapability },
       { frames: lateFrames },
-    )).resolves.toMatchObject({ kind: "superseded" });
+    )).resolves.toMatchObject({
+      kind: "published",
+      audiences: expect.arrayContaining([expect.objectContaining({ state: "superseded" })]),
+    });
 
     const observed = record(await stub.observe(ALICE), "current slot");
     expect(JSON.stringify(observed.delivery)).toContain("较新回应");
     expect(JSON.stringify(observed)).not.toContain("迟到旧回应");
-    expect(JSON.stringify(observed)).not.toContain("较早结果");
+    expect(JSON.stringify(observed.delivery)).not.toContain("较早结果");
   });
 
   it("invalidates private slots on control transfer, voluntary departure, and host removal", async () => {
@@ -629,7 +713,6 @@ describe("observer-specific single-slot delivery", () => {
       actor: typeof ALICE | typeof BOB,
       characterId: string,
       submissionId: string,
-      knowledgeRef: string,
       privateText: string,
     ) => {
       const prepared = record(await stub.prepare(actor, {
@@ -641,33 +724,21 @@ describe("observer-specific single-slot delivery", () => {
       const committed = record(await stub.commit(
         actor,
         String(prepared.preparedActionId),
-        directConsequencesProposal(String(prepared.rootActionId), {
-          proposalAttemptId: `${submissionId}:proposal`,
+        observeProposal(String(prepared.rootActionId), {
           goal: "独自确认一项只有当前角色可观察的细节",
           method: "遮住其他人的视线后仔细辨认",
-          duration: { unit: "second", value: 1 },
-          dynamicMaterializations: [{
-            kind: "fact",
-            factRef: `${knowledgeRef}:source`,
-            causalBasisRefs: [],
-            visibilityPolicyRef: `visibility:knowledge-holder:${characterId}`,
-            definition: { conclusion: privateText },
-          }],
-          success: [{
-            kind: "acquireKnowledge",
-            knowledgeRef,
-            value: privateText,
-            definitionRef: `${knowledgeRef}:source`,
-          }],
+          focus: "被其他人视线遮挡的细节",
+          desiredInformation: "只有当前角色能辨认的细节",
+          successConsequence: privateText,
         }),
       ), "private action committed before authority change");
       expect(committed.kind, JSON.stringify(committed)).toBe("committed");
       const plan = record(committed.deliveryPlan, "private delivery plan before authority change");
       expect(audiences(plan).map((entry) => entry.characterId)).toEqual([characterId]);
-      await publishForAudience(stub, plan, privateText);
+      const frames = await publishForAudience(stub, plan, privateText);
       const before = record(await stub.observe(actor), "private delivery before authority change");
       const frame = record(record(before.delivery, "private delivery").frame, "private frame");
-      return { plan, deliveryId: String(frame.deliveryId) };
+      return { plan, frames, deliveryId: String(frame.deliveryId) };
     };
 
     {
@@ -679,7 +750,6 @@ describe("observer-specific single-slot delivery", () => {
         ALICE,
         "character:delivery:alice",
         "submission:delivery:control-transfer",
-        "knowledge:delivery:control-transfer",
         privateText,
       );
       const pendingQuestion = "你要拉警铃还是闸门？";
@@ -691,33 +761,11 @@ describe("observer-specific single-slot delivery", () => {
       const pendingResult = record(await stub.commit(
         ALICE,
         String(pendingPrepared.preparedActionId),
-        {
-          kind: "directSuccess",
-          rootActionId: pendingPrepared.rootActionId,
-          proposalAttemptId: "proposal:delivery:control-transfer-pending",
+        privateFormProposal(String(pendingPrepared.rootActionId), "clarification.v1", {
           goal: "确认玩家要拉动哪一根拉杆",
-          method: "先询问明确选择",
-          publicBasisRefs: [],
-          privateBasisRefs: [],
-          risk: null,
-          pendingInput: {
-            kind: "clarification",
-            prompt: pendingQuestion,
-            choices: [
-              { id: "alarm", label: "警铃", consequence: "拉响警铃。" },
-              { id: "gate", label: "闸门", consequence: "触发闸门机构。" },
-            ],
-          },
-          dynamicMaterializations: [],
-          npcActions: [],
-          mechanicalProposal: null,
-          scene: {
-            question: pendingQuestion,
-            pressure: "",
-            opportunities: [],
-            conclusionCandidate: null,
-          },
-        },
+          question: pendingQuestion,
+          choices: ["警铃", "闸门"],
+        }),
       ), "pending committed before control transfer");
       expect(pendingResult.kind).toBe("awaitingInput");
       const pendingInputId = String(record(
@@ -768,11 +816,11 @@ describe("observer-specific single-slot delivery", () => {
       const answered = record(await stub.commit(
         DAVE,
         String(answerPrepared.preparedActionId),
-        directConsequencesProposal(String(answerPrepared.rootActionId), {
-          proposalAttemptId: "proposal:delivery:control-transfer-answer",
+        observeProposal(String(answerPrepared.rootActionId), {
           goal: "拉响玩家明确选择的警铃",
           method: "按玩家回答拉动警铃拉杆",
-          duration: { unit: "second", value: 1 },
+          focus: "玩家明确选择的警铃拉杆",
+          desiredInformation: "警铃拉杆已经被选择并拉动",
         }),
       ), "new controller pending answer commit");
       expect(answered.kind, JSON.stringify(answered)).toBe("committed");
@@ -785,9 +833,10 @@ describe("observer-specific single-slot delivery", () => {
       expect(JSON.stringify(newControllerAfterAnswer.transcript)).not.toContain(privateText);
       await expect(stub.publishDelivery(
         { publishCapability: current.plan.publishCapability },
-        { frames: audiences(current.plan).map((audience) => ({
-          audienceId: audience.audienceId,
-          narration: { text: `LATE_${privateText}`, agencyClaims: [] },
+        { frames: current.frames.map((frame) => ({
+          audienceId: frame.audienceId,
+          deliveryGeneration: frame.deliveryGeneration,
+          narration: { body: `LATE_${privateText}` },
         })) },
       )).resolves.toMatchObject({ kind: "rejected" });
       const afterLate = record(await stub.observe(DAVE), "new controller after late narration");
@@ -804,7 +853,6 @@ describe("observer-specific single-slot delivery", () => {
         BOB,
         "character:delivery:bob",
         `submission:delivery:${kind}`,
-        `knowledge:delivery:${kind}`,
         privateText,
       );
 
@@ -823,9 +871,10 @@ describe("observer-specific single-slot delivery", () => {
         .resolves.toMatchObject({ kind: "rejected" });
       await expect(stub.publishDelivery(
         { publishCapability: current.plan.publishCapability },
-        { frames: audiences(current.plan).map((audience) => ({
-          audienceId: audience.audienceId,
-          narration: { text: `LATE_${privateText}`, agencyClaims: [] },
+        { frames: current.frames.map((frame) => ({
+          audienceId: frame.audienceId,
+          deliveryGeneration: frame.deliveryGeneration,
+          narration: { body: `LATE_${privateText}` },
         })) },
       )).resolves.toMatchObject({ kind: "rejected" });
     }

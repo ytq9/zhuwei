@@ -448,6 +448,15 @@ function playerProjection(world) {
   return projected;
 }
 
+function npcProjection(world, npcId) {
+  const projected = world.rulesRuntime.project(world.profiles, world.state, {
+    kind: "npc",
+    npcId,
+  });
+  assert.equal(projected.kind, "projected", JSON.stringify(projected));
+  return projected;
+}
+
 function eventWithPayload(event, payload) {
   const forged = structuredClone(event);
   forged.payload = structuredClone(payload);
@@ -1027,6 +1036,24 @@ test("falling chandelier resolves complete authority geometry, hidden death, deb
   );
   assert.equal(world.state.combatRuntime.entities[HIDDEN_ID].lifeState, "dead");
   assert.equal(world.state.entities[HIDDEN_ID].tenureStatus, "dead");
+  assert.deepEqual(world.state.entities[NEUTRAL_ID].hitPoints, {
+    current: 8,
+    maximum: 20,
+  });
+  assert.equal(world.state.combatRuntime.entities[NEUTRAL_ID].hitPoints.current, "8");
+  assert.deepEqual(npcProjection(world, NEUTRAL_ID).controlledCharacter.hitPoints, {
+    current: 8,
+    maximum: 20,
+  });
+  assert.deepEqual(world.state.entities[HIDDEN_ID].hitPoints, {
+    current: 0,
+    maximum: 5,
+  });
+  assert.equal(world.state.combatRuntime.entities[HIDDEN_ID].hitPoints.current, "0");
+  assert.deepEqual(npcProjection(world, HIDDEN_ID).controlledCharacter.hitPoints, {
+    current: 0,
+    maximum: 5,
+  });
   assert.equal(world.state.combatRuntime.entities[ALLY.characterId].conditions.prone, true);
   assert.equal(world.state.combatRuntime.entities[ALICE.characterId].lifeState, "alive");
   assert.equal(feature(world.state, CHANDELIER_ID).state, "debris");
@@ -1078,6 +1105,16 @@ test("falling chandelier resolves complete authority geometry, hidden death, deb
   assert.equal(feature(corrected.state, CHANDELIER_ID), undefined);
   assert.equal(feature(corrected.state, CRATE_ID).state, "intact");
   assert.equal(corrected.state.combatRuntime.entities[HIDDEN_ID].lifeState, "alive");
+  assert.deepEqual(corrected.state.entities[NEUTRAL_ID].hitPoints, {
+    current: 20,
+    maximum: 20,
+  });
+  assert.equal(corrected.state.combatRuntime.entities[NEUTRAL_ID].hitPoints, undefined);
+  assert.deepEqual(corrected.state.entities[HIDDEN_ID].hitPoints, {
+    current: 5,
+    maximum: 5,
+  });
+  assert.equal(corrected.state.combatRuntime.entities[HIDDEN_ID].hitPoints, undefined);
   const correctedEvents = [...world.events, ...corrected.events];
   const correctedReplay = world.rulesRuntime.replay(world.genesis, correctedEvents);
   assert.equal(correctedReplay.kind, "replayed", JSON.stringify(correctedReplay));

@@ -85,6 +85,13 @@
       "when": 1788020889709,
       "tag": "0011_low_leo",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788154350968,
+      "tag": "0012_soft_ghost_rider",
+      "breakpoints": true
     }
   ]
 }

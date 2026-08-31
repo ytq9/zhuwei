@@ -161,7 +161,7 @@ test("the current Ability Compiler and runtime manifest close over exact Item se
     retiredItemChargeKind: "reject",
   });
   assert.equal(canonicalSha256(ABILITY_COMPILER_PROFILE_DOCUMENT), ABILITY_COMPILER_PROFILE.profileHash);
-  assert.equal(ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT.semanticVersion, "5.4.0");
+  assert.equal(ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT.semanticVersion, "5.5.0");
   assert.deepEqual(
     ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT.normativePayload.abilityCompiler,
     ABILITY_COMPILER_PROFILE,

@@ -299,15 +299,27 @@ function safeFactionFor(faction: JsonRecord, character: CharacterRecord): JsonRe
 
 function safeFactionPlanFor(plan: JsonRecord, character: CharacterRecord): JsonRecord | undefined {
   if (character.kind !== "npc" || plan.actingNpcId !== character.id) return undefined;
+  const lastAdvance = isRecord(plan.lastAdvance) ? plan.lastAdvance : undefined;
   return {
     ...(isNonEmptyString(plan.factionId) ? { factionId: plan.factionId } : {}),
     ...(isNonEmptyString(plan.planId) ? { planId: plan.planId } : {}),
     actingNpcId: character.id,
-    causeFactIds: Array.isArray(plan.causeFactIds)
-      ? plan.causeFactIds.filter(isNonEmptyString).sort()
+    premiseRefs: Array.isArray(plan.premiseRefs)
+      ? plan.premiseRefs.filter(isNonEmptyString).sort()
       : [],
-    ...(isNonEmptyString(plan.action) ? { action: plan.action } : {}),
+    resourceRefs: Array.isArray(plan.resourceRefs)
+      ? plan.resourceRefs.filter(isNonEmptyString).sort()
+      : [],
+    ...(isNonEmptyString(plan.revision) ? { revision: plan.revision } : {}),
     ...(isNonEmptyString(plan.status) ? { status: plan.status } : {}),
+    ...(lastAdvance === undefined ? {} : {
+      lastAdvance: {
+        causeFactIds: Array.isArray(lastAdvance.causeFactIds)
+          ? lastAdvance.causeFactIds.filter(isNonEmptyString).sort()
+          : [],
+        ...(isNonEmptyString(lastAdvance.action) ? { action: lastAdvance.action } : {}),
+      },
+    }),
   };
 }
 

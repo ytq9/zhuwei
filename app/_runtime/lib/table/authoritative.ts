@@ -1028,8 +1028,17 @@ function safeButtonCommand(command: AuthoritativeButtonCommand): AuthoritativeBu
       const arcaneRecoverySlotLevels = command.arcaneRecoverySlotLevels === undefined
         ? undefined
         : [...command.arcaneRecoverySlotLevels].sort((left, right) => left - right);
+      if (command.hitDice !== undefined
+        && (!Number.isSafeInteger(command.hitDice)
+          || command.hitDice < 0
+          || command.hitDice > 20)) {
+        throw new TypeError("Hit-die spending must be a canonical 0-20 integer.");
+      }
       if (command.restKind === "long" && arcaneRecoverySlotLevels?.length) {
         throw new TypeError("Arcane Recovery choices are available only during a short rest.");
+      }
+      if (command.restKind === "long" && command.hitDice !== undefined && command.hitDice !== 0) {
+        throw new TypeError("Hit dice cannot be spent during a long rest.");
       }
       return {
         kind: command.kind,
@@ -1037,8 +1046,8 @@ function safeButtonCommand(command: AuthoritativeButtonCommand): AuthoritativeBu
         ...(command.mode === "personal" || command.mode === "group"
           ? { mode: command.mode }
           : {}),
-        ...(finiteNumber(command.hitDice) !== undefined
-          ? { hitDice: Math.max(0, Math.floor(command.hitDice!)) }
+        ...(command.hitDice !== undefined
+          ? { hitDice: command.hitDice }
           : {}),
         ...(arcaneRecoverySlotLevels === undefined
           ? {}
@@ -1138,8 +1147,36 @@ export function buildAuthoritativeButtonAction(input: {
   [key: string]: unknown;
 }) {
   const command = safeButtonCommand(input.command);
+  const submissionId = nonEmptyString(input.submissionId);
+  if (!submissionId) {
+    throw new TypeError("Authoritative actions require trusted transport identity.");
+  }
+  if (!input.pendingInputId) {
+    if (command.kind === "endTurn") {
+      return {
+        kind: "combatEndTurn" as const,
+        submissionId,
+      };
+    }
+    if (command.kind === "restNow") {
+      return {
+        kind: "restStart" as const,
+        submissionId,
+        restKind: command.restKind,
+        mode: command.mode ?? "personal",
+        hitDiceToSpend: command.hitDice ?? 0,
+        arcaneRecoverySlotLevels: command.arcaneRecoverySlotLevels ?? [],
+      };
+    }
+    if (command.kind === "cancelRest") {
+      return {
+        kind: "restInterrupt" as const,
+        submissionId,
+      };
+    }
+  }
   return buildAuthoritativeActionInput({
-    submissionId: input.submissionId,
+    submissionId,
     text: buttonIntentText(command),
     ...(input.pendingInputId
       ? { pendingInputId: input.pendingInputId, answer: command }

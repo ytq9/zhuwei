@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   directConsequencesProposal,
   noncombatCheckProposal,
+  privateFormProposal,
 } from "./helpers/authoritative-proposal";
 
 const AUTHORITATIVE_RULESET_ID = "dnd5e-2014-srd5.1-authoritative-v2";
@@ -129,6 +130,20 @@ function checkRequired(prepared: PreparedAction) {
   });
 }
 
+function clarificationProposal(
+  prepared: PreparedAction,
+  question: string,
+  choices: string[],
+  proposalAttemptId: string,
+) {
+  return privateFormProposal(prepared.rootActionId, "clarification.v1", {
+    goal: "明确玩家要操作的对象",
+    question,
+    choices,
+    reason: "现场存在两个不同且后果不同的可操作对象。",
+  }, proposalAttemptId);
+}
+
 function receiptOf(outcome: unknown): JsonRecord {
   const result = asRecord(outcome, "commit outcome");
   return asRecord(result.receipt, "public receipt");
@@ -171,7 +186,7 @@ describe("Room Authority authoritative-v2 public contract", () => {
       await stub.commit(ALICE, prepared.preparedActionId, directSuccess(prepared, "proposal:idempotent:1")),
       "commit outcome",
     );
-    expect(committed.kind).toBe("committed");
+    expect(committed.kind, JSON.stringify(committed)).toBe("committed");
     const originalReceipt = asRecord(committed.receipt, "public receipt");
 
     const completedRetry = asRecord(await stub.prepare(ALICE, structuredClone(action)), "retry");
@@ -370,44 +385,24 @@ describe("Room Authority authoritative-v2 public contract", () => {
       ALICE,
       intent("submission:pending", "character:alice", "我拉下那根拉杆。"),
     ));
-    const awaiting = asRecord(await stub.commit(ALICE, prepared.preparedActionId, {
-      kind: "directSuccess",
-      rootActionId: prepared.rootActionId,
-      proposalAttemptId: "proposal:pending:1",
-      goal: "拉下眼前的一根拉杆",
-      method: "伸手拉下玩家指向的拉杆",
-      publicBasisRefs: [],
-      privateBasisRefs: [],
-      risk: null,
-      pendingInput: {
-        kind: "playerChoice",
-        prompt: "你要拉左侧警铃拉杆，还是右侧闸门拉杆？",
-        choices: [
-          { id: "alarm", label: "左侧警铃", consequence: "警铃会被拉响。" },
-          { id: "gate", label: "右侧闸门", consequence: "闸门机构会被触发。" },
-        ],
-      },
-      dynamicMaterializations: [],
-      npcActions: [],
-      mechanicalProposal: null,
-      scene: {
-        question: "玩家究竟选择哪根拉杆？",
-        pressure: "",
-        opportunities: [],
-        conclusionCandidate: null,
-      },
-    }), "awaiting-input outcome");
+    const awaiting = asRecord(await stub.commit(
+      ALICE,
+      prepared.preparedActionId,
+      clarificationProposal(
+        prepared,
+        "你要拉左侧警铃拉杆，还是右侧闸门拉杆？",
+        ["左侧警铃会被拉响。", "右侧闸门机构会被触发。"],
+        "proposal:pending:1",
+      ),
+    ), "awaiting-input outcome");
     expect(awaiting.kind).toBe("awaitingInput");
     const receipt = asRecord(awaiting.receipt, "awaiting public receipt");
     const pending = asRecord(awaiting.pending, "pending input");
     expect(pending).toMatchObject({
       pendingInputId: expect.any(String),
-      kind: "playerChoice",
+      kind: "clarification",
       controllerPrincipalId: ALICE.principal.id,
-      choices: [
-        { choiceId: "alarm", label: "左侧警铃", consequence: "警铃会被拉响。" },
-        { choiceId: "gate", label: "右侧闸门", consequence: "闸门机构会被触发。" },
-      ],
+      question: "你要拉左侧警铃拉杆，还是右侧闸门拉杆？",
     });
 
     const restored = roomStub(roomName);
@@ -428,7 +423,7 @@ describe("Room Authority authoritative-v2 public contract", () => {
       kind: "answer",
       submissionId: "submission:pending:answer",
       pendingInputId: pending.pendingInputId,
-      answer: { choiceId: "gate" },
+      answer: { text: "右侧闸门拉杆" },
       displayText: "我选择右侧闸门拉杆。",
     }));
     expect(answer.rootActionId).toBe(prepared.rootActionId);
@@ -445,55 +440,33 @@ describe("Room Authority authoritative-v2 public contract", () => {
     );
   });
 
-  it("rejects a forged playerChoice candidate without closing the pending input", async () => {
+  it("rejects a forged pending reference without closing the real clarification", async () => {
     const stub = await authoritativeRoom("authority-v2-player-choice-forgery");
     const prepared = asPrepared(await stub.prepare(
       ALICE,
       intent("submission:player-choice", "character:alice", "我拉下其中一根拉杆。"),
     ));
-    const awaiting = asRecord(await stub.commit(ALICE, prepared.preparedActionId, {
-      kind: "directSuccess",
-      rootActionId: prepared.rootActionId,
-      proposalAttemptId: "proposal:player-choice:1",
-      goal: "选择一根拉杆",
-      method: "亲手拉下明确选择的拉杆",
-      publicBasisRefs: [],
-      privateBasisRefs: [],
-      risk: null,
-      pendingInput: {
-        kind: "playerChoice",
-        prompt: "你选择警铃还是闸门？",
-        choices: [
-          { id: "alarm", label: "警铃", consequence: "警铃会通知守卫。" },
-          { id: "gate", label: "闸门", consequence: "闸门会开始升起。" },
-        ],
-      },
-      dynamicMaterializations: [],
-      npcActions: [],
-      mechanicalProposal: null,
-      scene: {
-        question: "玩家明确选择哪根拉杆？",
-        pressure: "",
-        opportunities: [],
-        conclusionCandidate: null,
-      },
-    }), "player choice outcome");
-    const pending = asRecord(awaiting.pending, "player choice pending");
-    const forgedAnswer = asPrepared(await stub.prepare(ALICE, {
+    const awaiting = asRecord(await stub.commit(
+      ALICE,
+      prepared.preparedActionId,
+      clarificationProposal(
+        prepared,
+        "你选择警铃还是闸门？",
+        ["警铃会通知守卫。", "闸门会开始升起。"],
+        "proposal:clarification-reference:1",
+      ),
+    ), "clarification outcome");
+    const pending = asRecord(awaiting.pending, "clarification pending");
+    await expect(stub.prepare(ALICE, {
       kind: "answer",
       submissionId: "submission:player-choice:forged",
-      pendingInputId: pending.pendingInputId,
-      answer: { choiceId: "hidden-third-option" },
-    }));
-    await expect(stub.commit(
-      ALICE,
-      forgedAnswer.preparedActionId,
-      directSuccess(forgedAnswer, "proposal:player-choice:forged"),
-    )).resolves.toMatchObject({ kind: "rejected", code: "invalidRulesInput" });
+      pendingInputId: "pending-input:forged-reference",
+      answer: { text: "不存在的第三个装置" },
+    })).resolves.toMatchObject({ kind: "rejected", code: "pendingInputUnauthorized" });
     const observed = asRecord(await stub.observe(ALICE), "post-forgery observation");
     expect(asRecord(observed.readModel, "post-forgery read model").pendingInputs)
       .toEqual(expect.arrayContaining([
-        expect.objectContaining({ pendingInputId: pending.pendingInputId, kind: "playerChoice" }),
+        expect.objectContaining({ pendingInputId: pending.pendingInputId, kind: "clarification" }),
       ]));
   });
 

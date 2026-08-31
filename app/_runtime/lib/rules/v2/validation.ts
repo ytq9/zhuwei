@@ -265,6 +265,13 @@ function isConversationThreadRecord(value: JsonRecord, threadRef: string): boole
         && value.responseSourceRefs.every(isNonEmptyString)));
 }
 
+function exactProfileRef(left: unknown, right: unknown): boolean {
+  return isProfileRef(left)
+    && isProfileRef(right)
+    && left.profileId === right.profileId
+    && left.profileHash === right.profileHash;
+}
+
 export function isAuthoritativeWorldState(value: unknown): value is AuthoritativeWorldState {
   if (!isRecord(value) || !hasExactKeys(value, STATE_KEYS)) {
     return false;
@@ -378,7 +385,7 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
       CAMPAIGN_RUNTIME_KEYS,
       ["conversationThreads"],
     )
-    || !(value.campaignRuntime.campaign === null || isRecord(value.campaignRuntime.campaign))
+    || !isRecord(value.campaignRuntime.campaign)
     || !Array.isArray(value.campaignRuntime.unresolvedThreats)
     || !value.campaignRuntime.unresolvedThreats.every(isNonEmptyString)) {
     return false;
@@ -389,6 +396,31 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
     || (campaignRuntime.conversationThreads !== undefined
       && !recordsSatisfy(campaignRuntime.conversationThreads, isConversationThreadRecord))
     || !isItemSystemStateV1(campaignRuntime.itemSystem)) {
+    return false;
+  }
+  const campaign = campaignRuntime.campaign;
+  const chapters = campaignRuntime.chapters;
+  if (!isRecord(campaign) || !isRecord(chapters)) return false;
+  if (
+    !hasExactKeys(campaign, [
+      "advancementProfile",
+      "campaignId",
+      "currentChapterId",
+      "moduleRef",
+      "status",
+    ])
+    || !isNonEmptyString(campaign.campaignId)
+    || !isProfileRef(campaign.moduleRef)
+    || !isNonEmptyString(campaign.currentChapterId)
+    || !["milestone", "srdXp2014"].includes(String(campaign.advancementProfile))
+    || !["active", "concluded"].includes(String(campaign.status))
+    || !isRecord(chapters[campaign.currentChapterId])
+    || !Object.entries(chapters).every(([chapterId, chapter]) =>
+      isRecord(chapter)
+      && chapter.chapterId === chapterId
+      && ["active", "concluded"].includes(String(chapter.status))
+      && exactProfileRef(chapter.moduleRef, campaign.moduleRef))
+  ) {
     return false;
   }
 
@@ -444,7 +476,11 @@ export function isGenesisIntegrityValid(genesis: RuntimeGenesis): boolean {
         && genesis.initialState.runtimeEpochId === genesis.runtimeEpochId
         && genesis.initialState.version === "0"
         && genesis.initialState.eventHeadHash === genesis.initialStateHash
-        && genesis.initialState.lastEventId === null;
+        && genesis.initialState.lastEventId === null
+        && exactProfileRef(
+          genesis.initialState.campaignRuntime.campaign?.moduleRef,
+          genesis.moduleRef,
+        );
     }
     return true;
   } catch {

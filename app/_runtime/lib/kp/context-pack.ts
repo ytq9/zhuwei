@@ -40,6 +40,8 @@ export type RequiredContext = Readonly<{
      * omniscience and must never be filled from static Story Bible retrieval. */
     knowledge?: readonly ContextRecord[];
     plans?: readonly ContextRecord[];
+    factions?: readonly ContextRecord[];
+    factionPlans?: readonly ContextRecord[];
   }>[];
   temporal: Readonly<{
     pendingRefs: readonly string[];

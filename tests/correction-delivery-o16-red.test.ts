@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import { noncombatCheckProposal } from "./helpers/authoritative-proposal";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -12,6 +12,10 @@ type CorrectionDeliveryAuthority = {
   commit(context: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
   observe(context: unknown, query?: unknown): Promise<unknown>;
   acknowledge(context: unknown, deliveryId: string): Promise<unknown>;
+  beginDeliveryAudiencePublication(query: {
+    publishCapability: unknown;
+    audienceId: string;
+  }): Promise<unknown>;
   publishDelivery(capability: unknown, publication: unknown): Promise<unknown>;
   commitCorrection(capability: unknown, request: unknown): Promise<unknown>;
 };
@@ -86,8 +90,8 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
         { principalId: CAROL.principal.id, role: "player" },
       ],
       characters: [
-        character(ALICE_CHARACTER, ALICE.principal.id, "archive"),
-        character(BOB_CHARACTER, BOB.principal.id, "archive"),
+        character(ALICE_CHARACTER, ALICE.principal.id, "wake"),
+        character(BOB_CHARACTER, BOB.principal.id, "wake"),
         character(CAROL_CHARACTER, CAROL.principal.id, "yard"),
       ],
     }), "authoritative initialization");
@@ -97,42 +101,53 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
       "service capabilities",
     ).correction;
     expect(correctionCapability).toBeDefined();
+    for (const [viewer, label] of [
+      [ALICE, "Alice"],
+      [BOB, "Bob"],
+      [CAROL, "Carol"],
+    ] as const) {
+      const opening = record(
+        record(await authority.observe(viewer), `${label} opening observation`).delivery,
+        `${label} opening delivery`,
+      );
+      if (opening.kind === "none") continue;
+      expect(opening.kind).toBe("current");
+      const openingFrame = record(opening.frame, `${label} opening frame`);
+      await expect(authority.acknowledge(viewer, String(openingFrame.deliveryId)))
+        .resolves.toMatchObject({
+          kind: "acknowledged",
+          deliveryId: openingFrame.deliveryId,
+        });
+    }
 
     const original = record(await handleRoomAction({
       principal: ALICE,
       authority,
       kp: {
-        propose: async (request: JsonRecord) => noncombatCheckProposal(
+        propose: async (request: JsonRecord) => privateFormProposal(
           String(request.rootActionId),
+          "ordinary-check.v1",
           {
-            proposalAttemptId: "proposal:o16:wrong-branch:1",
             goal: "撞开内门并确认钟罩下的痕迹",
-            method: "用肩膀撞开内门，进入密室检查钟罩",
+            method: "用肩膀撞开内门后检查钟罩",
+            intendedOutcome: "撞开内门并确认钟罩下的秘密痕迹",
+            risk: "撞击会发出声响并消耗一点决心。",
+            resolution: "check",
+            ability: "str",
+            skill: "athletics",
             dc: 1,
-            duration: { unit: "second", value: 1 },
-            dynamicMaterializations: [{
-              kind: "location",
-              factRef: "fact:o16:secret-vault",
-              causalBasisRefs: [],
-              visibilityPolicyRef: "visibility:room-authority-only",
-              definition: { sceneId: "vault", name: "密室" },
-            }],
-            success: [
-              { kind: "moveEntity", sceneRef: "vault" },
-              { kind: "changeResource", resourceRef: "resolve", amount: -1 },
-              {
-                kind: "acquireKnowledge",
-                knowledgeRef: "knowledge:o16:wrong-branch-secret",
-                value: WRONG_BRANCH_SECRET,
-                definitionRef: "fact:o16:secret-vault",
-              },
-            ],
-            failure: [],
+            mode: "normal",
+            durationUnit: "second",
+            durationValue: 1,
+            successConsequence: WRONG_BRANCH_SECRET,
+            failureConsequence: "内门没有打开，撞击声传了出去。",
+            resourceRef: "resolve",
+            resourceAmount: 1,
           },
+          "proposal:o16:wrong-branch:1",
         ),
         narrate: async (request: JsonRecord) => ({
-          text: `${EXPERIENCED_OLD_BODY}:${String(request.audienceId)}`,
-          agencyClaims: [],
+          body: `${EXPERIENCED_OLD_BODY}:${String(request.audienceId)}`,
         }),
       },
     }, {
@@ -149,8 +164,10 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
     const beforeBob = record(await authority.observe(BOB), "Bob before correction");
     const beforeCarol = record(await authority.observe(CAROL), "Carol before correction");
     expect(JSON.stringify(beforeAlice.delivery)).toContain(EXPERIENCED_OLD_BODY);
-    expect(JSON.stringify(beforeBob.delivery)).toContain(EXPERIENCED_OLD_BODY);
+    expect(beforeBob.delivery).toEqual({ kind: "none" });
     expect(beforeCarol.delivery).toEqual({ kind: "none" });
+    expect(JSON.stringify(beforeBob.transcript)).not.toContain(EXPERIENCED_OLD_BODY);
+    expect(JSON.stringify(beforeCarol.transcript)).not.toContain(EXPERIENCED_OLD_BODY);
     expect(JSON.stringify(beforeAlice.readModel)).toContain(WRONG_BRANCH_SECRET);
     expect(JSON.stringify(beforeBob)).not.toContain(WRONG_BRANCH_SECRET);
     expect(JSON.stringify(beforeCarol)).not.toContain(WRONG_BRANCH_SECRET);
@@ -162,7 +179,7 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
         correctionId,
         receiptId: originalReceiptId,
         errorKind: "rulesMisapplication",
-        explanation: "该检定采用了错误规则，且已经改变位置、资源与私人知识。",
+        explanation: "该检定采用了错误规则，且已经消耗资源并形成私人知识。",
       },
     ), "causal correction outcome");
     expect(corrected).toMatchObject({
@@ -189,7 +206,7 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
       expect(JSON.stringify(observation)).not.toContain(WRONG_BRANCH_SECRET);
     }
     expect(JSON.stringify(invalidatedAlice.transcript)).toContain(EXPERIENCED_OLD_BODY);
-    expect(JSON.stringify(invalidatedBob.transcript)).toContain(EXPERIENCED_OLD_BODY);
+    expect(JSON.stringify(invalidatedBob.transcript)).not.toContain(EXPERIENCED_OLD_BODY);
     expect(JSON.stringify(invalidatedCarol.transcript)).not.toContain(EXPERIENCED_OLD_BODY);
     const correctedAliceReadModel = observationReadModel(
       invalidatedAlice,
@@ -199,10 +216,9 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
       .toBe("superseded");
     expect(correctedAliceReadModel.activeBranchId).toBe(corrected.activeBranchId);
 
-    // RED: commitCorrection currently stops after invalidating the old branch.
-    // O16 requires this same commit to freeze the replacement publication
-    // binding, so Room Action can narrate outside the transaction without
-    // recomputing Audience or visibility.
+    // The same correction commit freezes the replacement publication binding,
+    // so narration can happen outside the transaction without recomputing
+    // Audience or visibility.
     const replacementPlan = record(
       corrected.deliveryPlan,
       "replacement DeliveryPlan frozen by correction commit",
@@ -228,29 +244,41 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
       expect(kpProjection.activeBranchId)
         .toBe(corrected.activeBranchId);
       expect(JSON.stringify(kpProjection)).not.toContain(WRONG_BRANCH_SECRET);
-      expect(JSON.stringify(kpProjection.experiencedTranscript))
-        .toContain(EXPERIENCED_OLD_BODY);
-      const otherCharacterId = audience.characterId === ALICE_CHARACTER
-        ? BOB_CHARACTER
-        : ALICE_CHARACTER;
-      expect(JSON.stringify(kpProjection.experiencedTranscript))
-        .not.toContain(otherCharacterId);
+      const experiencedTranscript = JSON.stringify(kpProjection.experiencedTranscript);
+      if (audience.characterId === ALICE_CHARACTER) {
+        expect(experiencedTranscript).toContain(EXPERIENCED_OLD_BODY);
+        expect(experiencedTranscript).not.toContain(BOB_CHARACTER);
+      } else {
+        expect(experiencedTranscript).not.toContain(EXPERIENCED_OLD_BODY);
+        expect(experiencedTranscript).not.toContain(ALICE_CHARACTER);
+      }
       const currentProjection = { ...kpProjection };
       delete currentProjection.experiencedTranscript;
       expect(JSON.stringify(currentProjection)).not.toContain(EXPERIENCED_OLD_BODY);
     }
 
-    const replacementFrames = replacementAudiences.map((audience) => ({
-      audienceId: audience.audienceId,
-      narration: {
-        text: `${REPLACEMENT_BODY}:${String(audience.characterId)}`,
-        agencyClaims: [],
-      },
-    }));
-    await expect(authority.publishDelivery(
-      { publishCapability: replacementPlan.publishCapability },
-      { frames: replacementFrames },
-    )).resolves.toMatchObject({ kind: "published" });
+    for (const audience of replacementAudiences) {
+      const begun = record(await authority.beginDeliveryAudiencePublication({
+        publishCapability: replacementPlan.publishCapability,
+        audienceId: String(audience.audienceId),
+      }), `replacement publication begin for ${String(audience.characterId)}`);
+      expect(begun).toMatchObject({
+        kind: "pending",
+        deliveryGeneration: expect.any(Number),
+      });
+      await expect(authority.publishDelivery(
+        { publishCapability: replacementPlan.publishCapability },
+        {
+          frames: [{
+            audienceId: audience.audienceId,
+            deliveryGeneration: begun.deliveryGeneration,
+            narration: {
+              body: `${REPLACEMENT_BODY}:${String(audience.characterId)}`,
+            },
+          }],
+        },
+      )).resolves.toMatchObject({ kind: "published" });
+    }
 
     const afterAlice = record(await authority.observe(ALICE), "Alice replacement delivery");
     const afterBob = record(await authority.observe(BOB), "Bob replacement delivery");
@@ -274,7 +302,7 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
       expect(JSON.stringify(observation)).not.toContain(WRONG_BRANCH_SECRET);
     }
     expect(JSON.stringify(afterAlice.transcript)).toContain(EXPERIENCED_OLD_BODY);
-    expect(JSON.stringify(afterBob.transcript)).toContain(EXPERIENCED_OLD_BODY);
+    expect(JSON.stringify(afterBob.transcript)).not.toContain(EXPERIENCED_OLD_BODY);
     expect(JSON.stringify(afterCarol.transcript)).not.toContain(EXPERIENCED_OLD_BODY);
 
     for (const [viewer, observation, characterId] of [
@@ -289,10 +317,16 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
       const kpBodies = list(acknowledged.transcript, "acknowledged transcript")
         .map((entry) => record(entry, "acknowledged transcript entry"))
         .filter((entry) => entry.kind === "kp")
-        .map((entry) => String(entry.body));
-      expect(kpBodies).toHaveLength(2);
-      expect(kpBodies[0]).toContain(EXPERIENCED_OLD_BODY);
-      expect(kpBodies[1]).toBe(`${REPLACEMENT_BODY}:${characterId}`);
+        .map((entry) => String(entry.body))
+        .filter((body) => body.includes(EXPERIENCED_OLD_BODY)
+          || body.includes(REPLACEMENT_BODY));
+      if (characterId === ALICE_CHARACTER) {
+        expect(kpBodies).toHaveLength(2);
+        expect(kpBodies[0]).toContain(EXPERIENCED_OLD_BODY);
+        expect(kpBodies[1]).toBe(`${REPLACEMENT_BODY}:${characterId}`);
+      } else {
+        expect(kpBodies).toEqual([`${REPLACEMENT_BODY}:${characterId}`]);
+      }
     }
   });
 });

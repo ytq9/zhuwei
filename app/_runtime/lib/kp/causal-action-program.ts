@@ -4,6 +4,10 @@ import {
   type KpFormId,
   validateKpFormDraft,
 } from "./form-catalog";
+import {
+  canonicalCompoundCompositionJson,
+  parseCompoundCompositionJson,
+} from "./compound-composition";
 
 export const CAUSAL_PRIMITIVES = Object.freeze([
   "requestClarification",
@@ -191,7 +195,7 @@ const PRIMITIVE_ARGUMENT_KEYS: Readonly<Record<CausalPrimitive, readonly string[
     "skill", "dc", "mode", "successConsequence", "failureConsequence",
   ]),
   joinCausalBranches: Object.freeze([
-    "intendedOutcome", "risk", "alternatives", ...RESOLUTION_ARGUMENTS,
+    "intendedOutcome", "risk", "alternatives", ...RESOLUTION_ARGUMENTS, "compositionJson",
   ]),
 });
 
@@ -221,7 +225,9 @@ const PRIMITIVE_REQUIRED_ARGUMENT_KEYS: Readonly<Record<CausalPrimitive, readonl
     "goal", "method", "featureDescription", "intendedOutcome", "featureDisposition",
   ]),
   assessCausalStage: Object.freeze(["goal", "method", "intendedOutcome", "resolution"]),
-  joinCausalBranches: Object.freeze(["intendedOutcome", "resolution", "durationUnit", "durationValue"]),
+  joinCausalBranches: Object.freeze([
+    "intendedOutcome", "resolution", "durationUnit", "durationValue", "compositionJson",
+  ]),
 });
 
 const FORM_PRIMITIVE: Readonly<Partial<Record<KpFormId, CausalPrimitive>>> = Object.freeze({
@@ -239,7 +245,9 @@ const FORM_PRIMITIVE: Readonly<Partial<Record<KpFormId, CausalPrimitive>>> = Obj
 const FORBIDDEN_CAUSAL_KEYS = Object.freeze([
   "actor",
   "principal",
+  "controller",
   "audience",
+  "visibility",
   "dice",
   "d20",
   "roll",
@@ -247,14 +255,16 @@ const FORBIDDEN_CAUSAL_KEYS = Object.freeze([
   "state",
   "event",
   "patch",
+  "profile",
   "scope",
+  "root",
   "script",
 ]);
 
 const CAUSAL_ACTION_LANGUAGE_REGISTRATION = Object.freeze({
-  languageRef: "causal-action-program-v4",
-  languageVersion: "causal-action-program-v4.0",
-  primitiveArgumentSchemaVersion: "causal-primitive-arguments-v4.0",
+  languageRef: "causal-action-program-v5",
+  languageVersion: "causal-action-program-v5.0",
+  primitiveArgumentSchemaVersion: "causal-primitive-arguments-v5.0",
   formCatalogRef: KP_FORM_CATALOG_REGISTRATION.catalogRef,
   formCatalogHash: KP_FORM_CATALOG_REGISTRATION.catalogHash,
   maxNodes: 16,
@@ -326,11 +336,15 @@ function compileCompoundNodes(draft: Record<string, unknown>): CausalNode[] {
     ));
   }
   const joinId = `n${String(nodes.length + 1).padStart(2, "0")}`;
+  const joinArguments = {
+    ...pickCausalArguments(draft, PRIMITIVE_ARGUMENT_KEYS.joinCausalBranches),
+    compositionJson: canonicalCompoundCompositionJson(draft.composition),
+  } as const;
   nodes.push(causalNode(
     joinId,
     "joinCausalBranches",
     [nodes.at(-1)!.nodeId],
-    pickCausalArguments(draft, PRIMITIVE_ARGUMENT_KEYS.joinCausalBranches),
+    Object.freeze(joinArguments),
   ));
   return nodes;
 }
@@ -435,6 +449,10 @@ export function validateCausalActionProgram(program: unknown): CausalProgramVali
         if (!hasCausalContent(rawNode.arguments[requiredKey])) {
           errors.push(`nodes[${index}].arguments.${requiredKey}:required`);
         }
+      }
+      if (rawNode.primitive === "joinCausalBranches"
+        && parseCompoundCompositionJson(rawNode.arguments.compositionJson) === undefined) {
+        errors.push(`nodes[${index}].arguments.compositionJson:invalid`);
       }
       findForbiddenNestedKeys(rawNode.arguments, `nodes[${index}].arguments`, errors);
     }

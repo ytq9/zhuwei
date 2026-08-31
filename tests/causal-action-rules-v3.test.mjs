@@ -33,6 +33,59 @@ import { chandelierGeometry } from "./fixtures/chandelier-environment-v3.mjs";
 const ACTOR = "character:causal-v3:alice";
 const BOB = "character:causal-v3:bob";
 const WORKSHOP_BASIS = "fact:causal-v3:workshop-old-renovations";
+const EMPTY_COMPOUND_COMPOSITION = Object.freeze({
+  schema: "zhuwei.compound-composition-draft/v1",
+  before: Object.freeze([]),
+  onSuccess: Object.freeze([]),
+  onFailure: Object.freeze([]),
+});
+const WORKSHOP_PORTAL_REF = "feature:workshop:service-door";
+
+function causalTestGeometry() {
+  const geometry = chandelierGeometry();
+  geometry.obstacles = [...geometry.obstacles, {
+    featureId: WORKSHOP_PORTAL_REF,
+    kind: "portal",
+    label: "工坊侧门",
+    state: "closed",
+    polygon: [
+      { x: "120", y: "-60" },
+      { x: "120", y: "60" },
+      { x: "132", y: "60" },
+      { x: "132", y: "-60" },
+    ],
+    elevation: "0",
+    height: "96",
+    opaque: true,
+    impassable: true,
+    cover: "full",
+    propagation: "blocks",
+    terrain: "normal",
+    visibilityPolicyId: "visibility:scene-observers",
+    stateGraph: {
+      definitionId: "environment-state-graph:workshop:service-door",
+      states: [{
+        state: "closed",
+        opaque: true,
+        impassable: true,
+        cover: "full",
+        propagation: "blocks",
+        terrain: "normal",
+      }, {
+        state: "open",
+        opaque: false,
+        impassable: false,
+        cover: "none",
+        propagation: "passes",
+        terrain: "normal",
+      }],
+      transitions: [{ fromState: "closed", intent: "open", toState: "open" }, {
+        fromState: "open", intent: "close", toState: "closed",
+      }],
+    },
+  }].sort((left, right) => left.featureId.localeCompare(right.featureId));
+  return geometry;
+}
 
 function profileRef(profileId, digit) {
   return { profileId, profileHash: `sha256:${digit.repeat(64)}` };
@@ -52,8 +105,8 @@ function initialize(
     activeBranchId: "branch:main",
     fictionInstantMicros: "0",
     scenes: [
-      { id: "scene:workshop", name: "废弃工坊", geometry: chandelierGeometry() },
-      { id: "scene:annex", name: "工坊侧厅", geometry: chandelierGeometry() },
+      { id: "scene:workshop", name: "废弃工坊", geometry: causalTestGeometry() },
+      { id: "scene:annex", name: "工坊侧厅", geometry: causalTestGeometry() },
     ],
     principals: [
       { id: "principal:causal-v3:alice", sessionVersion: 1, role: "host" },
@@ -275,6 +328,7 @@ test("V3 compound program executes every direct/check stage, one frozen cost, an
       },
     ],
     intendedOutcome: "隔板被完全拉开，队伍可以通过",
+    composition: EMPTY_COMPOUND_COMPOSITION,
     risk: "最后的同步拉动若失败，隔板会重新落回卡槽",
     resolution: "check",
     ability: "str",
@@ -293,7 +347,7 @@ test("V3 compound program executes every direct/check stage, one frozen cost, an
   const normalized = normalizeRoomKpProposal(privateEnvelope("compound.v1", draft));
   assert.ok(normalized);
   assert.equal(normalized.kind, "executeCausalActionProgram");
-  assert.equal(normalized.actionLanguageRef, "causal-action-program-v4");
+  assert.equal(normalized.actionLanguageRef, "causal-action-program-v5");
   assert.equal("actorCharacterId" in normalized, false);
   assert.equal("rootActionId" in normalized, false);
   assert.equal("mechanicalProposal" in normalized, false);
@@ -379,6 +433,7 @@ test("a failed causal prerequisite skips its dependent closure without success e
       resolution: "direct",
     }],
     intendedOutcome: "隔板可以被推开",
+    composition: EMPTY_COMPOUND_COMPOSITION,
     resolution: "direct",
     durationUnit: "minute",
     durationValue: 1,
@@ -436,6 +491,129 @@ test("a failed causal prerequisite skips its dependent closure without success e
   ]);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
   assert.equal(rebuilt.head.stateHash, successful.stateHash);
+});
+
+test("compound composition commits a fact, player Activity, direct environment transition, and typed world effects", () => {
+  const room = initialize(undefined, "compound-composition-direct");
+  const rootActionId = "root:causal-v3:compound-composition:direct";
+  const activityRef = "activity:causal-v3:compound-research";
+  const activityFactRef = "fact:causal-v3:compound-research-basis";
+  const outcomeFactRef = "fact:causal-v3:compound-research-outcome";
+  const draft = {
+    goal: "封存样本、打开侧门并开始持续研究",
+    method: "按冻结顺序登记发现、启动研究、开门并支付材料",
+    stages: [{
+      goal: "完成现场交接",
+      method: "核对旧翻修记录后交接样本",
+      intendedOutcome: "样本进入持续研究流程",
+      resolution: "direct",
+    }],
+    intendedOutcome: "研究活动与工坊状态同步开始",
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 5,
+    composition: {
+      schema: "zhuwei.compound-composition-draft/v1",
+      before: [{
+        kind: "declareDynamicFact",
+        factRef: activityFactRef,
+        factKind: "researchSubject",
+        subjectRefs: ["scene:workshop"],
+        causalBasisRefs: [WORKSHOP_BASIS],
+        summary: "旧翻修痕迹中取得了一份可持续研究的样本。",
+        disclosure: "public",
+      }],
+      onSuccess: [{
+        kind: "startActivity",
+        activityRef,
+        activityKind: "fieldResearch",
+        intendedDurationMicros: "600000000",
+        primaryFactRef: activityFactRef,
+      }, {
+        kind: "transitionEnvironment",
+        featureRef: WORKSHOP_PORTAL_REF,
+        intent: "open",
+      }, {
+        kind: "applyWorldEffects",
+        basisRefs: ["scene:workshop"],
+        draft: {
+          schema: "zhuwei.world-consequence-draft/v1",
+          factRef: outcomeFactRef,
+          summary: "研究材料已经投入，工坊行动进入持续阶段。",
+          consequences: [{ kind: "spendResource", resourceRef: "resolve", amount: 1 }],
+        },
+      }],
+      onFailure: [],
+    },
+  };
+  const normalized = normalizeRoomKpProposal(privateEnvelope("compound.v1", draft));
+  assert.ok(normalized);
+  const committed = step(room.profiles, room.state, {
+    ...normalized,
+    rootActionId,
+    actorCharacterId: ACTOR,
+  });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  assert.equal(committed.state.canonicalFacts[activityFactRef]?.kind, "researchSubject");
+  assert.equal(committed.state.canonicalFacts[outcomeFactRef]?.kind, "worldConsequence");
+  assert.equal(committed.state.campaignRuntime.activities[activityRef]?.status, "active");
+  assert.equal(committed.state.entities[ACTOR].resources.resolve, 1);
+  const portal = committed.state.combatRuntime.scenes["scene:workshop"].geometry.obstacles
+    .find((feature) => feature.featureId === WORKSHOP_PORTAL_REF);
+  assert.equal(portal?.state, "open");
+  assert.equal(
+    committed.events.filter((event) => event.eventType === "FictionTimeAdvanced").length,
+    1,
+  );
+  const rebuilt = replay(room.genesis, committed.events);
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+});
+
+test("compound composition preflights the unchosen branch before requesting randomness", () => {
+  const room = initialize(undefined, "compound-composition-preflight");
+  const draft = {
+    goal: "检查侧门后决定是否开启",
+    method: "先检查门轴，再按结果处理",
+    stages: [{
+      goal: "检查侧门门轴",
+      method: "观察门轴磨损",
+      intendedOutcome: "确认侧门是否可安全开启",
+      risk: "错误判断会保留关闭状态",
+      resolution: "check",
+      ability: "int",
+      skill: "investigation",
+      dc: 12,
+      mode: "normal",
+      successConsequence: "门轴状态已经确认。",
+      failureConsequence: "门轴状态仍不明确。",
+    }],
+    intendedOutcome: "根据检查结果处理侧门",
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
+    composition: {
+      schema: "zhuwei.compound-composition-draft/v1",
+      before: [],
+      onSuccess: [],
+      onFailure: [{
+        kind: "transitionEnvironment",
+        featureRef: "feature:workshop:unknown-door",
+        intent: "open",
+      }],
+    },
+  };
+  const normalized = normalizeRoomKpProposal(privateEnvelope("compound.v1", draft));
+  assert.ok(normalized);
+  const beforeHash = hashWorldState(room.state);
+  const rejectedResult = step(room.profiles, room.state, {
+    ...normalized,
+    rootActionId: "root:causal-v3:compound-composition:invalid-branch",
+    actorCharacterId: ACTOR,
+  });
+  assert.equal(rejectedResult.kind, "rejected", JSON.stringify(rejectedResult));
+  assert.equal(Array.isArray(rejectedResult.events) ? rejectedResult.events.length : 0, 0);
+  assert.equal(hashWorldState(room.state), beforeHash);
 });
 
 test("V3 causal input fails closed under semantic-hash tampering", () => {
@@ -861,6 +1039,7 @@ test("Rules exhaustively rejects forged required scalars for every causal primit
     method: "依次执行",
     stages: [{ goal: "第一步", method: "操作", intendedOutcome: "完成第一步", resolution: "direct" }],
     intendedOutcome: "全部完成",
+    composition: EMPTY_COMPOUND_COMPOSITION,
     resolution: "direct",
     durationUnit: "minute",
     durationValue: 1,

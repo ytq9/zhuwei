@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-import { noncombatCheckProposal } from "./helpers/authoritative-proposal";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -69,29 +69,43 @@ function precedentProposal(
     adjudicationPrecedent: JsonRecord;
   },
 ) {
-  return {
-    ...noncombatCheckProposal(action.rootActionId, {
-      proposalAttemptId: `proposal:${action.rootActionId}:1`,
-      goal: "打开祠堂里被铁件卡住的旧门",
-      method: options.method,
+  const precedent = options.adjudicationPrecedent;
+  const supersededPrecedentId = precedent.kind === "supersede"
+    ? String(precedent.supersededPrecedentId)
+    : undefined;
+  return privateFormProposal(action.rootActionId, "materialization.v1", {
+    goal: "打开祠堂里被铁件卡住的旧门",
+    method: "recordAdjudicationPrecedent",
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.adjudication-precedent-draft/v1",
+      action: precedent.kind,
+      publicRuleBasis: precedent.publicRuleBasis,
       publicBasisRefs: [],
       privateBasisRefs: [SECRET_BASIS_REF],
-      ability: "str",
-      skill: "athletics",
-      dc: options.dc,
-      mode: "normal",
-      duration: { unit: "minute", value: 1 },
-      risk: {
-        warning: `按当前做法需要通过 DC ${options.dc} 的力量（运动）检定。`,
-        successConsequences: ["旧门被打开。"],
-        failureConsequences: ["旧门仍然关闭，尝试耗费一分钟。"],
-        retryGate: ["methodChanged", "materialAssistance"],
-      },
-      success: [],
-      failure: [],
+      applicabilityScope: precedent.applicabilityScope,
+      ...(supersededPrecedentId === undefined
+        ? {}
+        : {
+            supersededPrecedentId,
+            materialDifferences: precedent.materialDifferences,
+          }),
     }),
-    adjudicationPrecedent: options.adjudicationPrecedent,
-  };
+    basisRefs: [
+      "shrine",
+      SECRET_BASIS_REF,
+      ...(supersededPrecedentId === undefined ? [] : [supersededPrecedentId]),
+    ],
+    risk: `按当前做法需要通过 DC ${options.dc} 的力量（运动）检定。`,
+    resolution: "check",
+    ability: "str",
+    skill: "athletics",
+    dc: options.dc,
+    mode: "normal",
+    durationUnit: "minute",
+    durationValue: 1,
+    successConsequence: "旧门被打开。",
+    failureConsequence: "旧门仍然关闭，尝试耗费一分钟。",
+  }, `proposal:${action.rootActionId}:1`);
 }
 
 function precedentsFromPrepared(value: unknown): JsonRecord[] {

@@ -38,34 +38,12 @@ function prepared(value: unknown) {
   return outcome as RecordValue & { preparedActionId: string; rootActionId: string };
 }
 
-function proposal(rootActionId: string) {
+function milestoneProposal(rootActionId: string, sourceFactIds: string[]) {
   return {
-    kind: "directSuccess",
+    kind: "authenticatedCampaignAction",
+    action: "grantMilestone",
     rootActionId,
-    proposalAttemptId: `${rootActionId}:proposal:1`,
-    goal: "结算已完成章节的里程碑资格。",
-    method: "只打开玩家自己的成长选择。",
-    publicBasisRefs: [],
-    privateBasisRefs: [],
-    risk: {
-      warning: "成长选择仍归角色控制者。",
-      successConsequences: [],
-      failureConsequences: [],
-      retryGate: [],
-    },
-    pendingInput: null,
-    dynamicMaterializations: [],
-    npcActions: [],
-    mechanicalProposal: {
-      operation: "advanceCampaignLifecycle",
-      lifecycleAction: "grantMilestone",
-    },
-    scene: {
-      question: "成长后，这名角色如何继续？",
-      pressure: "章节后果仍然保留。",
-      opportunities: [],
-      conclusionCandidate: null,
-    },
+    sourceFactIds,
   };
 }
 
@@ -99,6 +77,8 @@ describe("authoritative advancement and D1 static-card boundary", () => {
   it("commits growth once across eviction even when the post-commit D1 mirror write fails", async () => {
     const roomId = "growth-d1-boundary-v2";
     const characterId = "character:growth-d1:alice";
+    const milestoneSourceFactId = "fact:growth-d1:chapter-result";
+    const witnessId = "npc:growth-d1:chapter-witness";
     const stub = env.ROOMS.getByName(roomId) as unknown as GrowthAuthority & DurableObjectStub;
     const initialStaticCard = {
       name: "成长边界角色",
@@ -127,6 +107,17 @@ describe("authoritative advancement and D1 static-card boundary", () => {
         controllerPrincipalId: ALICE.principal.id,
         staticCard: { ...initialStaticCard, hp: { current: 7, max: 18, temp: 0 } },
       }],
+      fixtureFacts: [{
+        knowledgeRef: "knowledge:growth-d1:witness-present",
+        holderEntityId: witnessId,
+        holderName: "章节见证人",
+        sceneId: "shrine",
+        content: { observation: "见证人确认了本章的最终结果。" },
+      }, {
+        factRef: milestoneSourceFactId,
+        kind: "establishedCommunicationChannel",
+        participants: [characterId, witnessId],
+      }],
     }), "growth room initialization");
     const capabilities = record(initialized.serviceCapabilities, "service capabilities");
 
@@ -139,7 +130,7 @@ describe("authoritative advancement and D1 static-card boundary", () => {
     const milestone = record(await stub.commit(
       ALICE,
       milestoneAction.preparedActionId,
-      proposal(milestoneAction.rootActionId),
+      milestoneProposal(milestoneAction.rootActionId, [milestoneSourceFactId]),
     ), "milestone outcome");
     expect(milestone.kind).toBe("awaitingInput");
     const pendingInputId = String(record(milestone.pending, "advancement pending").pendingInputId);

@@ -11,6 +11,14 @@ import {
   stableStructuralHash,
 } from "./causal-action-program";
 import {
+  canonicalCompoundCompositionJson,
+  parseCompoundCompositionJson,
+  validateCompoundCompositionDraft,
+  type CompoundCompositionDraft,
+  type CompoundCompositionOperation,
+  type CompoundWorldConsequence,
+} from "./compound-composition";
+import {
   KP_FORM_IDS,
   kpFormIdForToolName,
   kpFormToolName,
@@ -34,6 +42,7 @@ import {
   validateActorPlanDecisionOutput,
 } from "./actor-plan-policy";
 import { HEALING_POTION_ITEM_DEFINITION_ID } from "../rules/profiles/item-system";
+import { isCanonicalTacticalGeometry } from "../rules/profiles/tactical-geometry";
 import { buildV3ContextPack, v3FormSelectionSignals } from "./v3-context-runtime";
 import {
   ModelInvocationTimeoutError,
@@ -636,18 +645,268 @@ function materializationFormSemanticErrors(
   draft: Record<string, unknown>,
   finiteReferences: FiniteReferenceCatalog,
 ): readonly string[] {
-  if (draft.method !== "establishCharacterPremise"
-    && draft.method !== "materializeDynamicNpc"
-    && draft.method !== "formActorPlan"
-    && draft.method !== "materializeItem") return [];
   const errors: string[] = [];
   const basisRefs = new Set(Array.isArray(draft.basisRefs)
     ? draft.basisRefs.filter((entry): entry is string => typeof entry === "string")
     : []);
   const finiteRefs = new Set(finiteReferences.basisRefs);
   const value = parsedJsonRecord(draft.proposedFact);
+  const schema = typeof value?.schema === "string" ? value.schema : undefined;
+  if (draft.method !== "establishCharacterPremise"
+    && draft.method !== "materializeDynamicNpc"
+    && draft.method !== "formActorPlan"
+    && draft.method !== "materializeHiddenReality"
+    && draft.method !== "materializePassageAndMove"
+    && draft.method !== "resolveNoncombatContest"
+    && draft.method !== "recordAdjudicationPrecedent"
+    && draft.method !== "materializeItem"
+    && schema !== "zhuwei.campaign-lifecycle-draft/v1") return [];
   const cited = (reference: unknown): reference is string =>
     typeof reference === "string" && basisRefs.has(reference) && finiteRefs.has(reference);
+  if (draft.method === "materializePassageAndMove") {
+    if (draft.resolution !== "direct"
+      || value === undefined
+      || !exactObjectKeys(value, [
+        "destinationName",
+        "destinationSceneRef",
+        "geometry",
+        "locationRef",
+        "passageRef",
+        "schema",
+        "traversal",
+      ])
+      || value.schema !== "zhuwei.dynamic-passage-move-draft/v1"
+      || typeof value.locationRef !== "string"
+      || !value.locationRef.startsWith("location:")
+      || value.locationRef.length > 240
+      || typeof value.destinationSceneRef !== "string"
+      || !value.destinationSceneRef.startsWith("scene:")
+      || value.destinationSceneRef.length > 240
+      || typeof value.destinationName !== "string"
+      || !value.destinationName.trim()
+      || value.destinationName.length > 240
+      || typeof value.passageRef !== "string"
+      || !value.passageRef.startsWith("passage:")
+      || value.passageRef.length > 240
+      || typeof value.traversal !== "string"
+      || !value.traversal.trim()
+      || value.traversal.length > 800
+      || !isCanonicalTacticalGeometry(value.geometry)
+      || new Set([
+        value.locationRef,
+        value.destinationSceneRef,
+        value.passageRef,
+      ]).size !== 3) {
+      errors.push("draft.proposedFact:dynamic-passage-move-schema-invalid");
+    }
+    if (!Array.isArray(draft.basisRefs)
+      || draft.basisRefs.length < 1
+      || draft.basisRefs.length > 24
+      || draft.basisRefs.length !== basisRefs.size
+      || !draft.basisRefs.every((reference) =>
+        typeof reference === "string" && finiteRefs.has(reference))) {
+      errors.push("draft.basisRefs:dynamic-passage-move-basis-invalid");
+    }
+    return Object.freeze([...new Set(errors)].sort());
+  }
+  if (draft.method === "materializeHiddenReality") {
+    if (draft.resolution !== "direct"
+      || value === undefined
+      || !exactObjectKeys(value, ["candidateSetId", "candidates", "schema"])
+      || value.schema !== "zhuwei.hidden-reality-candidate-set-draft/v1"
+      || typeof value.candidateSetId !== "string"
+      || !value.candidateSetId.trim()
+      || !Array.isArray(value.candidates)
+      || value.candidates.length < 2
+      || value.candidates.length > 20) {
+      return ["draft.proposedFact:hidden-reality-schema-invalid"];
+    }
+    for (const candidate of value.candidates) {
+      if (!isRecord(candidate)
+        || !exactObjectKeys(candidate, [
+          "candidateId", "causalBasisRefs", "definition", "factRef", "hiddenWeight", "kind",
+          "visibilityPolicyRef",
+        ])
+        || typeof candidate.candidateId !== "string"
+        || !candidate.candidateId.trim()
+        || typeof candidate.factRef !== "string"
+        || !candidate.factRef.trim()
+        || !Number.isSafeInteger(candidate.hiddenWeight)
+        || Number(candidate.hiddenWeight) < 1
+        || Number(candidate.hiddenWeight) > 1_000_000
+        || !["fact", "location", "passage", "hazard", "opportunity"].includes(
+          String(candidate.kind),
+        )
+        || typeof candidate.visibilityPolicyRef !== "string"
+        || !candidate.visibilityPolicyRef.startsWith("visibility:")
+        || !isRecord(candidate.definition)
+        || !Array.isArray(candidate.causalBasisRefs)
+        || candidate.causalBasisRefs.length < 1
+        || candidate.causalBasisRefs.length > 24
+        || !candidate.causalBasisRefs.every(cited)
+        || candidate.causalBasisRefs.length !== new Set(candidate.causalBasisRefs).size) {
+        errors.push("draft.proposedFact:hidden-reality-candidate-invalid");
+      }
+    }
+    return Object.freeze([...new Set(errors)].sort());
+  }
+  if (draft.method === "resolveNoncombatContest") {
+    if (draft.resolution !== "direct"
+      || value === undefined
+      || !exactObjectKeys(value, [
+        "defenderAbility", "defenderRef", "defenderSkill", "initiatorAbility",
+        "initiatorSkill", "mode", "schema", "tieResult",
+      ])
+      || value.schema !== "zhuwei.noncombat-contest-draft/v1"
+      || !cited(value.defenderRef)
+      || ![value.initiatorAbility, value.defenderAbility].every((entry) =>
+        ["str", "dex", "con", "int", "wis", "cha"].includes(String(entry)))
+      || ![value.initiatorSkill, value.defenderSkill].every((entry) =>
+        entry === null || (typeof entry === "string" && entry.length > 0 && entry.length <= 120))
+      || !["normal", "advantage", "disadvantage"].includes(String(value.mode))
+      || value.tieResult !== "statusQuo") {
+      errors.push("draft.proposedFact:noncombat-contest-schema-invalid");
+    }
+    return Object.freeze(errors);
+  }
+  if (draft.method === "recordAdjudicationPrecedent") {
+    const commonValid = draft.resolution === "check"
+      && value !== undefined
+      && value.schema === "zhuwei.adjudication-precedent-draft/v1"
+      && (value.action === "record" || value.action === "supersede")
+      && Array.isArray(value.publicRuleBasis)
+      && value.publicRuleBasis.length > 0
+      && value.publicRuleBasis.every((entry) => typeof entry === "string" && entry.length > 0)
+      && Array.isArray(value.publicBasisRefs)
+      && value.publicBasisRefs.every(cited)
+      && Array.isArray(value.privateBasisRefs)
+      && value.privateBasisRefs.every(cited)
+      && isRecord(value.applicabilityScope)
+      && exactObjectKeys(value.applicabilityScope, ["kind", "ref"])
+      && ["scene", "campaign", "module", "room"].includes(
+        String(value.applicabilityScope.kind),
+      )
+      && cited(value.applicabilityScope.ref);
+    const actionValid = value?.action === "record"
+      ? exactObjectKeys(value, [
+          "action", "applicabilityScope", "privateBasisRefs", "publicBasisRefs",
+          "publicRuleBasis", "schema",
+        ])
+      : value?.action === "supersede"
+        && exactObjectKeys(value, [
+          "action", "applicabilityScope", "materialDifferences", "privateBasisRefs",
+          "publicBasisRefs", "publicRuleBasis", "schema", "supersededPrecedentId",
+        ])
+        && cited(value.supersededPrecedentId)
+        && Array.isArray(value.materialDifferences)
+        && value.materialDifferences.length > 0
+        && value.materialDifferences.every((entry) =>
+          typeof entry === "string" && entry.length > 0);
+    if (!commonValid || !actionValid) {
+      errors.push("draft.proposedFact:adjudication-precedent-schema-invalid");
+    }
+    return Object.freeze(errors);
+  }
+  if (schema === "zhuwei.campaign-lifecycle-draft/v1") {
+    if (value === undefined || typeof value.action !== "string") {
+      return ["draft.proposedFact:campaign-lifecycle-schema-invalid"];
+    }
+    const directRequired = value.action !== "retryFailedAction";
+    if ((directRequired && draft.resolution !== "direct")
+      || (!directRequired && draft.resolution !== "check")) {
+      errors.push("draft.resolution:campaign-lifecycle-resolution-invalid");
+    }
+    const uniqueCited = (candidate: unknown): candidate is string[] =>
+      Array.isArray(candidate)
+      && candidate.length <= 40
+      && candidate.every(cited)
+      && candidate.length === new Set(candidate).size;
+    if (value.action === "raiseEndingCandidate") {
+      if (!exactObjectKeys(value, [
+        "action", "basisRefs", "endingCandidateRef", "schema", "unresolvedRefs",
+      ])
+        || typeof value.endingCandidateRef !== "string"
+        || !value.endingCandidateRef.trim()
+        || !uniqueCited(value.basisRefs)
+        || value.basisRefs.length === 0
+        || !uniqueCited(value.unresolvedRefs)) {
+        errors.push("draft.proposedFact:ending-candidate-schema-invalid");
+      }
+    } else if (value.action === "concludeStory") {
+      if (!exactObjectKeys(value, [
+        "action", "consequenceRefs", "endingCandidateRef", "outcome", "schema", "storyRef",
+      ])
+        || !cited(value.endingCandidateRef)
+        || ![value.storyRef, value.outcome].every((entry) =>
+          typeof entry === "string" && entry.length > 0)
+        || !Array.isArray(value.consequenceRefs)
+        || value.consequenceRefs.length > 40
+        || !value.consequenceRefs.every((entry) =>
+          typeof entry === "string" && entry.length > 0)) {
+        errors.push("draft.proposedFact:story-conclusion-schema-invalid");
+      }
+    } else if (value.action === "transitionChapter") {
+      if (!exactObjectKeys(value, [
+        "action", "activityTransitions", "chapterRef", "sceneQuestion", "schema",
+        "storyAnchorRefs",
+      ])
+        || ![value.chapterRef, value.sceneQuestion].every((entry) =>
+          typeof entry === "string" && entry.length > 0)
+        || !uniqueCited(value.storyAnchorRefs)
+        || !Array.isArray(value.activityTransitions)
+        || value.activityTransitions.length > 40
+        || !value.activityTransitions.every((entry) => isRecord(entry)
+          && exactObjectKeys(entry, ["activityId", "disposition"])
+          && cited(entry.activityId)
+          && ["continue", "summarize", "interrupt", "complete"].includes(
+            String(entry.disposition),
+          ))) {
+        errors.push("draft.proposedFact:chapter-transition-schema-invalid");
+      }
+    } else if (value.action === "commitMeaningfulFailure") {
+      if (!exactObjectKeys(value, [
+        "action", "basisRefs", "consequenceRefs", "newOptions", "precedentRef", "schema",
+      ])
+        || typeof value.precedentRef !== "string"
+        || !value.precedentRef.trim()
+        || !uniqueCited(value.basisRefs)
+        || value.basisRefs.length === 0
+        || !Array.isArray(value.consequenceRefs)
+        || !value.consequenceRefs.every((entry) =>
+          typeof entry === "string" && entry.length > 0)
+        || !Array.isArray(value.newOptions)
+        || value.newOptions.length < 1
+        || value.newOptions.length > 12
+        || !value.newOptions.every((entry) => isRecord(entry)
+          && exactObjectKeys(entry, ["optionId", "summary"])
+          && cited(entry.optionId)
+          && typeof entry.summary === "string"
+          && entry.summary.length > 0)) {
+        errors.push("draft.proposedFact:meaningful-failure-schema-invalid");
+      }
+    } else if (value.action === "retryFailedAction") {
+      const changeKinds = [
+        "methodChanged", "factsChanged", "costAccepted", "positionChanged",
+        "materialAssistance", "situationAdvanced",
+      ];
+      if (!exactObjectKeys(value, [
+        "action", "changeKind", "evidenceRefs", "precedentRef", "schema",
+      ])
+        || typeof value.precedentRef !== "string"
+        || !value.precedentRef.trim()
+        || !(value.changeKind === null || changeKinds.includes(String(value.changeKind)))
+        || !uniqueCited(value.evidenceRefs)
+        || (value.changeKind === null && value.evidenceRefs.length !== 0)
+        || (value.changeKind !== null
+          && value.changeKind !== "methodChanged"
+          && value.evidenceRefs.length === 0)) {
+        errors.push("draft.proposedFact:failed-action-retry-schema-invalid");
+      }
+    } else {
+      errors.push("draft.proposedFact:campaign-lifecycle-action-invalid");
+    }
+    return Object.freeze([...new Set(errors)].sort());
+  }
   if (draft.method === "formActorPlan") {
     const uniqueCitedRefs = (candidate: unknown, minimum: number): candidate is string[] =>
       Array.isArray(candidate)
@@ -663,6 +922,7 @@ function materializationFormSemanticErrors(
         "activity",
         "alternateTarget",
         "due",
+        "factionRef",
         "goal",
         "nextStep",
         "npcRef",
@@ -675,6 +935,7 @@ function materializationFormSemanticErrors(
       ])
       || value.schema !== "zhuwei.actor-plan-draft/v1"
       || !cited(value.npcRef)
+      || !(value.factionRef === null || cited(value.factionRef))
       || typeof value.planId !== "string"
       || value.planId.length < 1
       || value.planId.length > 240
@@ -812,6 +1073,428 @@ function materializationFormSemanticErrors(
   return Object.freeze(errors);
 }
 
+type CompoundReferenceEnvironment = {
+  readonly finiteBasisRefs: ReadonlySet<string>;
+  readonly finiteResourceRefs: ReadonlySet<string>;
+  readonly identities: Set<string>;
+  readonly availableNewFacts: Set<string>;
+  readonly availableActorKnowledge: Set<string>;
+};
+
+function compoundCompositionValidationPath(error: string): string {
+  return error === "$"
+    ? "draft.composition"
+    : error.startsWith("$.") || error.startsWith("$[")
+      ? `draft.composition${error.slice(1)}`
+      : `draft.composition:${error}`;
+}
+
+function compoundReferenceAvailable(
+  environment: CompoundReferenceEnvironment,
+  reference: string,
+): boolean {
+  return environment.finiteBasisRefs.has(reference)
+    || environment.availableNewFacts.has(reference);
+}
+
+function compoundActorBasisAvailable(
+  environment: CompoundReferenceEnvironment,
+  reference: string,
+): boolean {
+  return compoundReferenceAvailable(environment, reference)
+    || environment.availableActorKnowledge.has(reference);
+}
+
+function requireCompoundReference(
+  environment: CompoundReferenceEnvironment,
+  reference: string,
+  path: string,
+  errors: string[],
+): void {
+  if (!compoundReferenceAvailable(environment, reference)) {
+    errors.push(`${path}:${reference}:not-authoritative`);
+  }
+}
+
+function requireCompoundActorBasisReferences(
+  environment: CompoundReferenceEnvironment,
+  references: readonly string[],
+  path: string,
+  errors: string[],
+): void {
+  for (const [index, reference] of references.entries()) {
+    if (!compoundActorBasisAvailable(environment, reference)) {
+      errors.push(`${path}[${index}]:${reference}:not-authoritative`);
+    }
+  }
+}
+
+function requireCompoundReferences(
+  environment: CompoundReferenceEnvironment,
+  references: readonly string[],
+  path: string,
+  errors: string[],
+): void {
+  for (const [index, reference] of references.entries()) {
+    requireCompoundReference(environment, reference, `${path}[${index}]`, errors);
+  }
+}
+
+function requireCompoundResourceReference(
+  environment: CompoundReferenceEnvironment,
+  reference: string,
+  path: string,
+  errors: string[],
+): void {
+  if (!environment.finiteResourceRefs.has(reference)) {
+    errors.push(`${path}:${reference}:not-authoritative`);
+  }
+}
+
+function declareCompoundIdentity(
+  environment: CompoundReferenceEnvironment,
+  reference: string,
+  path: string,
+  errors: string[],
+  availability: "identityOnly" | "fact" | "actorKnowledge",
+): void {
+  if (environment.finiteBasisRefs.has(reference)) {
+    errors.push(`${path}:${reference}:identity-already-authoritative`);
+    return;
+  }
+  if (environment.identities.has(reference)) {
+    errors.push(`${path}:${reference}:duplicate-identity`);
+    return;
+  }
+  environment.identities.add(reference);
+  if (availability === "fact") environment.availableNewFacts.add(reference);
+  if (availability === "actorKnowledge") {
+    environment.availableActorKnowledge.add(reference);
+  }
+}
+
+function validateCompoundWorldConsequenceReferences(
+  environment: CompoundReferenceEnvironment,
+  consequence: CompoundWorldConsequence,
+  path: string,
+  errors: string[],
+): void {
+  switch (consequence.kind) {
+    case "spendResource":
+      requireCompoundResourceReference(
+        environment,
+        consequence.resourceRef,
+        `${path}.resourceRef`,
+        errors,
+      );
+      return;
+    case "acquireKnowledge":
+      return;
+    case "updateRelationship":
+      requireCompoundReferences(
+        environment,
+        consequence.counterpartyRefs,
+        `${path}.counterpartyRefs`,
+        errors,
+      );
+      return;
+    case "recordPromise":
+    case "recordDebt":
+      requireCompoundReference(
+        environment,
+        consequence.counterpartyRef,
+        `${path}.counterpartyRef`,
+        errors,
+      );
+      return;
+  }
+}
+
+function declareCompoundWorldConsequenceIdentity(
+  environment: CompoundReferenceEnvironment,
+  consequence: CompoundWorldConsequence,
+  path: string,
+  errors: string[],
+): void {
+  switch (consequence.kind) {
+    case "spendResource":
+      return;
+    case "acquireKnowledge":
+      declareCompoundIdentity(
+        environment,
+        consequence.knowledgeRef,
+        `${path}.knowledgeRef`,
+        errors,
+        "actorKnowledge",
+      );
+      return;
+    case "updateRelationship":
+      declareCompoundIdentity(
+        environment,
+        consequence.relationshipRef,
+        `${path}.relationshipRef`,
+        errors,
+        "identityOnly",
+      );
+      return;
+    case "recordPromise":
+      declareCompoundIdentity(
+        environment,
+        consequence.promiseRef,
+        `${path}.promiseRef`,
+        errors,
+        "identityOnly",
+      );
+      return;
+    case "recordDebt":
+      declareCompoundIdentity(
+        environment,
+        consequence.debtRef,
+        `${path}.debtRef`,
+        errors,
+        "identityOnly",
+      );
+      return;
+  }
+}
+
+function validateCompoundOperationReferences(
+  environment: CompoundReferenceEnvironment,
+  operation: CompoundCompositionOperation,
+  path: string,
+  errors: string[],
+): void {
+  switch (operation.kind) {
+    case "declareDynamicFact":
+      requireCompoundReferences(
+        environment,
+        operation.subjectRefs,
+        `${path}.subjectRefs`,
+        errors,
+      );
+      requireCompoundActorBasisReferences(
+        environment,
+        operation.causalBasisRefs,
+        `${path}.causalBasisRefs`,
+        errors,
+      );
+      declareCompoundIdentity(
+        environment,
+        operation.factRef,
+        `${path}.factRef`,
+        errors,
+        "fact",
+      );
+      return;
+    case "formActorPlan": {
+      const actorPlan = operation.draft;
+      requireCompoundReferences(environment, operation.basisRefs, `${path}.basisRefs`, errors);
+      requireCompoundReference(environment, actorPlan.npcRef, `${path}.draft.npcRef`, errors);
+      if (actorPlan.factionRef !== null) {
+        requireCompoundReference(
+          environment,
+          actorPlan.factionRef,
+          `${path}.draft.factionRef`,
+          errors,
+        );
+      }
+      requireCompoundReferences(
+        environment,
+        actorPlan.premiseRefs,
+        `${path}.draft.premiseRefs`,
+        errors,
+      );
+      requireCompoundReferences(
+        environment,
+        actorPlan.resourceRefs,
+        `${path}.draft.resourceRefs`,
+        errors,
+      );
+      if (actorPlan.schedule.kind === "committedOccurrence") {
+        requireCompoundReference(
+          environment,
+          actorPlan.schedule.occurrenceRef,
+          `${path}.draft.schedule.occurrenceRef`,
+          errors,
+        );
+      } else if (actorPlan.schedule.kind === "knowledgeAcquired") {
+        requireCompoundReference(
+          environment,
+          actorPlan.schedule.knowledgeRef,
+          `${path}.draft.schedule.knowledgeRef`,
+          errors,
+        );
+      }
+      requireCompoundReference(
+        environment,
+        actorPlan.alternate.referenceRef,
+        `${path}.draft.alternate.referenceRef`,
+        errors,
+      );
+      declareCompoundIdentity(
+        environment,
+        actorPlan.planRef,
+        `${path}.draft.planRef`,
+        errors,
+        "identityOnly",
+      );
+      declareCompoundIdentity(
+        environment,
+        actorPlan.activity.activityRef,
+        `${path}.draft.activity.activityRef`,
+        errors,
+        "identityOnly",
+      );
+      declareCompoundIdentity(
+        environment,
+        actorPlan.trace.factRef,
+        `${path}.draft.trace.factRef`,
+        errors,
+        "identityOnly",
+      );
+      return;
+    }
+    case "openSceneQuestion":
+      declareCompoundIdentity(
+        environment,
+        operation.sceneQuestionRef,
+        `${path}.sceneQuestionRef`,
+        errors,
+        "identityOnly",
+      );
+      return;
+    case "startActivity":
+      requireCompoundReference(
+        environment,
+        operation.primaryFactRef,
+        `${path}.primaryFactRef`,
+        errors,
+      );
+      declareCompoundIdentity(
+        environment,
+        operation.activityRef,
+        `${path}.activityRef`,
+        errors,
+        "identityOnly",
+      );
+      return;
+    case "transitionEnvironment":
+      requireCompoundReference(
+        environment,
+        operation.featureRef,
+        `${path}.featureRef`,
+        errors,
+      );
+      return;
+    case "applyWorldEffects":
+      requireCompoundActorBasisReferences(
+        environment,
+        operation.basisRefs,
+        `${path}.basisRefs`,
+        errors,
+      );
+      operation.draft.consequences.forEach((consequence, index) =>
+        validateCompoundWorldConsequenceReferences(
+          environment,
+          consequence,
+          `${path}.draft.consequences[${index}]`,
+          errors,
+        ));
+      declareCompoundIdentity(
+        environment,
+        operation.draft.factRef,
+        `${path}.draft.factRef`,
+        errors,
+        "fact",
+      );
+      operation.draft.consequences.forEach((consequence, index) =>
+        declareCompoundWorldConsequenceIdentity(
+          environment,
+          consequence,
+          `${path}.draft.consequences[${index}]`,
+          errors,
+        ));
+      return;
+  }
+}
+
+function compoundReferenceEnvironment(
+  finiteReferences: FiniteReferenceCatalog,
+): CompoundReferenceEnvironment {
+  return {
+    finiteBasisRefs: new Set(finiteReferences.basisRefs),
+    finiteResourceRefs: new Set(finiteReferences.resourceRefs),
+    identities: new Set(),
+    availableNewFacts: new Set(),
+    availableActorKnowledge: new Set(),
+  };
+}
+
+function branchCompoundReferenceEnvironment(
+  source: CompoundReferenceEnvironment,
+): CompoundReferenceEnvironment {
+  return {
+    finiteBasisRefs: source.finiteBasisRefs,
+    finiteResourceRefs: source.finiteResourceRefs,
+    identities: new Set(source.identities),
+    availableNewFacts: new Set(source.availableNewFacts),
+    availableActorKnowledge: new Set(source.availableActorKnowledge),
+  };
+}
+
+function validateCompoundPhaseReferences(
+  environment: CompoundReferenceEnvironment,
+  operations: readonly CompoundCompositionOperation[],
+  phase: "before" | "onSuccess" | "onFailure",
+  errors: string[],
+): void {
+  operations.forEach((operation, index) =>
+    validateCompoundOperationReferences(
+      environment,
+      operation,
+      `draft.composition.${phase}[${index}]`,
+      errors,
+    ));
+}
+
+function compoundCompositionSemanticErrors(
+  draft: Record<string, unknown>,
+  finiteReferences: FiniteReferenceCatalog,
+): readonly string[] {
+  const validation = validateCompoundCompositionDraft(draft.composition);
+  if (!validation.ok) {
+    return Object.freeze(validation.errors.map(compoundCompositionValidationPath));
+  }
+  let composition: CompoundCompositionDraft | undefined;
+  try {
+    composition = parseCompoundCompositionJson(
+      canonicalCompoundCompositionJson(draft.composition),
+    );
+  } catch {
+    composition = undefined;
+  }
+  if (composition === undefined) {
+    return Object.freeze(["draft.composition:canonical-parse-failed"]);
+  }
+
+  const errors: string[] = [];
+  const before = compoundReferenceEnvironment(finiteReferences);
+  validateCompoundPhaseReferences(before, composition.before, "before", errors);
+  validateCompoundPhaseReferences(
+    branchCompoundReferenceEnvironment(before),
+    composition.onSuccess,
+    "onSuccess",
+    errors,
+  );
+  validateCompoundPhaseReferences(
+    branchCompoundReferenceEnvironment(before),
+    composition.onFailure,
+    "onFailure",
+    errors,
+  );
+  return Object.freeze([...new Set(errors)].sort());
+}
+
 const FORM_SEMANTIC_FIELDS: Readonly<Record<KpFormId, readonly string[]>> = Object.freeze({
   "clarification.v1": Object.freeze(["goal", "question", "choices"]),
   "observe.v1": Object.freeze(["goal", "method", "focus", "desiredInformation"]),
@@ -828,7 +1511,9 @@ const FORM_SEMANTIC_FIELDS: Readonly<Record<KpFormId, readonly string[]>> = Obje
   "environmental-stunt.v1": Object.freeze([
     "goal", "method", "featureDescription", "intendedOutcome", "featureDisposition",
   ]),
-  "compound.v1": Object.freeze(["goal", "method", "intendedOutcome", "stages"]),
+  "compound.v1": Object.freeze([
+    "goal", "method", "intendedOutcome", "stages", "composition",
+  ]),
 });
 
 function semanticDraftSource(
@@ -967,14 +1652,20 @@ function assertRepairSemantics(
 }
 
 const BASIS_REFERENCE_KEYS = new Set([
-  "ref", "sourceRef", "profileRef", "dependencyRefs", "structuralRefs",
+  "ref", "referenceRef", "sourceRef", "profileRef", "dependencyRefs", "structuralRefs",
   "submissionRef", "characterRef", "controllerRef", "controlProofRef", "sceneRef",
   "sceneId", "entityId", "characterId", "encounterId", "definitionId", "factRef",
-  "factRefs", "precedentId", "precedentRefs", "dynamicDefinitionRefs", "rulesRef",
-  "geometryRef", "moduleRef", "eventRef", "truthConstraintRefs", "npcRef",
+  "factRefs", "basisRef", "basisRefs", "primaryFactRef", "causalBasisRefs",
+  "causalParentIds", "subjectRef",
+  "subjectRefs", "precedentId", "precedentRefs", "dynamicDefinitionRefs", "rulesRef",
+  "geometryRef", "featureId", "featureRef", "moduleRef", "eventRef", "occurrenceRef",
+  "truthConstraintRefs", "npcRef",
   "knowledgeRef", "knowledgeRefs", "planId", "planRefs", "pendingRefs", "activityRefs",
-  "messageRef", "speakerRef", "fictionalTimeRef", "chapterId", "clueId", "receiptId",
-  "entityRef", "entityRefs", "threadRef", "threadRefs", "mechanicalDefinitionRef",
+  "planRef", "activityId", "activityRef", "premiseRef", "premiseRefs", "messageRef",
+  "speakerRef", "fictionalTimeRef", "chapterId", "clueId", "receiptId", "entityRef",
+  "entityRefs", "counterpartyRef", "counterpartyRefs", "relationshipId", "relationshipRef",
+  "promiseId", "promiseRef", "debtId", "debtRef", "sceneQuestionId", "sceneQuestionRef",
+  "threadRef", "threadRefs", "mechanicalDefinitionRef", "factionRef", "factionId",
 ]);
 const ABILITY_REFERENCE_KEYS = new Set(["abilityRef", "abilityRefs", "dynamicDefinitionRefs"]);
 const RESOURCE_REFERENCE_KEYS = new Set(["resourceRef", "resourceRefs"]);
@@ -1036,6 +1727,11 @@ function formReferenceErrors(
   };
   const errors: string[] = [];
   const visit = (value: unknown, key = "", path = "draft"): void => {
+    // The compound composition owns a phase-aware reference environment: a
+    // before-phase fact may be cited later, while mutually exclusive branches
+    // must never lend identities to one another. The generic field-name walk
+    // cannot represent that ordering and would reject legitimate new facts.
+    if (key === "composition" && path === "draft.composition") return;
     if (key === "basisRefs") {
       if (!Array.isArray(value)) {
         errors.push(`${path}:array-required`);
@@ -1391,12 +2087,16 @@ export function createAuthoritativeKpAdapter(
         && isSocialResolutionKpProfile(profile)
         ? materializationFormSemanticErrors(trustedRepaired.draft, input.finiteReferences)
         : [];
+      const compoundErrors = trustedRepaired.formId === "compound.v1"
+        ? compoundCompositionSemanticErrors(trustedRepaired.draft, input.finiteReferences)
+        : [];
       if (referenceErrors.length > 0
         || socialErrors.length > 0
-        || materializationErrors.length > 0) {
+        || materializationErrors.length > 0
+        || compoundErrors.length > 0) {
         throw new PrivateFormEnvelopeError(
           trustedRepaired,
-          [...referenceErrors, ...socialErrors, ...materializationErrors],
+          [...referenceErrors, ...socialErrors, ...materializationErrors, ...compoundErrors],
         );
       }
       assertRepairSemantics(
@@ -1496,12 +2196,16 @@ export function createAuthoritativeKpAdapter(
             const materializationErrors = envelope.formId === "materialization.v1" && socialResolution
               ? materializationFormSemanticErrors(envelope.draft, finiteReferences)
               : [];
+            const compoundErrors = envelope.formId === "compound.v1"
+              ? compoundCompositionSemanticErrors(envelope.draft, finiteReferences)
+              : [];
             if (referenceErrors.length > 0
               || socialErrors.length > 0
-              || materializationErrors.length > 0) {
+              || materializationErrors.length > 0
+              || compoundErrors.length > 0) {
               throw new PrivateFormEnvelopeError(
                 envelope,
-                [...referenceErrors, ...socialErrors, ...materializationErrors],
+                [...referenceErrors, ...socialErrors, ...materializationErrors, ...compoundErrors],
               );
             }
             return buildV3Proposal(request, envelope, invocation.receipt, false);

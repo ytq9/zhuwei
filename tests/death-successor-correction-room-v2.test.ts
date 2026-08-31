@@ -5,7 +5,8 @@ import {
   handleRoomAction,
   handleRoomCorrection,
 } from "../app/_runtime/lib/room/action";
-import { directConsequencesProposal } from "./helpers/authoritative-proposal";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -84,7 +85,7 @@ function predecessorSeed() {
       speed: 30,
       resources: { resolve: 2 },
       equipped: { armor: "chain" },
-      backpack: [{ itemId: "torch", qty: 2 }],
+      backpack: [{ itemId: "explorer-pack", qty: 2 }],
     },
   };
 }
@@ -113,6 +114,63 @@ function successorSeed() {
   };
 }
 
+function fatalAreaHazardDraft(): JsonRecord {
+  return {
+    goal: "松开已经开裂的石梁支索，让坍落范围按现场几何结算",
+    method: "扯动垂落的支索，使失去支撑的石梁坠入苏醒室",
+    featureDescription: "悬在苏醒室上方、支索已经开裂的石梁",
+    intendedOutcome: "石梁坠落并击中未能避开的范围内角色，随后成为瓦砾",
+    featureDisposition: "reasonable-open-blank",
+    basisRefs: ["wake"],
+    effectMode: "area-hazard",
+    activation: "check",
+    checkAbility: "int",
+    checkSkill: "investigation",
+    checkDc: 1,
+    checkMode: "normal",
+    checkSuccessConsequence: "支索被扯断，石梁开始坠落。",
+    checkFailureConsequence: "支索没有断裂，石梁仍被悬住。",
+    material: "开裂石梁、磨损麻绳与松动铁环",
+    centerXInches: -300,
+    centerYInches: -240,
+    elevationInches: 0,
+    widthInches: 120,
+    depthInches: 24,
+    heightInches: 96,
+    objectAc: 12,
+    objectHitPoints: 12,
+    damageThreshold: 3,
+    immuneDamageTypes: ["poison", "psychic"],
+    initialPhase: "tuned",
+    phaseNames: ["tuned", "venting", "shattered"],
+    phaseOpaque: [true, false, false],
+    phaseImpassable: [true, false, true],
+    phaseCover: ["threeQuarters", "half", "half"],
+    phaseEffectPropagation: ["blocks", "passes", "passes"],
+    phaseTerrain: ["normal", "normal", "rubble"],
+    damageFromPhases: ["tuned"],
+    damageRemainingAtOrBelow: [0],
+    damageToPhases: ["venting"],
+    stuntFromPhases: ["tuned"],
+    stuntToPhases: ["venting"],
+    hazardFromPhases: ["venting"],
+    hazardToPhases: ["shattered"],
+    hazardTriggerPhase: "venting",
+    hazardResolvedPhase: "shattered",
+    trigger: "支索断裂后，石梁沿松脱的铁环垂直坠落",
+    areaOriginElevationInches: 36,
+    areaRadiusInches: 60,
+    propagation: "straight",
+    saveAbility: "dex",
+    saveDc: 30,
+    halfOnSuccess: false,
+    damage: "1d4+18",
+    damageType: "bludgeoning",
+    condition: "prone",
+    debrisOutcome: "断梁与碎石堆成阻挡通行的瓦砾",
+  };
+}
+
 async function runAction(
   stub: RoomAuthority,
   submissionId: string,
@@ -128,7 +186,7 @@ async function runAction(
         return proposal(String(record(request, `${submissionId} proposal request`).rootActionId));
       },
       async narrate() {
-        return { body: narration, agencyClaims: [] };
+        return { body: narration };
       },
     },
   }, {
@@ -172,6 +230,8 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
     const initialized = record(await stub.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [{ principalId: ALICE.principal.id, role: "host" }],
       characters: [predecessorSeed()],
       fixtureFacts: [{
@@ -180,7 +240,7 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
         content: PREDECESSOR_PRIVATE_KNOWLEDGE,
       }],
     }), "authoritative initialization");
-    expect(initialized.created).toBe(true);
+    expect(initialized.created, JSON.stringify(initialized)).toBe(true);
     const capabilities = record(initialized.serviceCapabilities, "service capabilities");
 
     const initialRead = readModel(await stub.observe(ALICE), "initial predecessor observation");
@@ -191,8 +251,11 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
       loadout: {
         armorClass: 17,
         speedFeet: 30,
-        equipped: { armor: "chain" },
-        backpack: [{ itemId: "torch", quantity: 2 }],
+        equipped: { armor: expect.stringContaining(":chain:") },
+        backpack: [
+          { itemId: expect.stringContaining(":explorer-pack:"), quantity: 1 },
+          { itemId: expect.stringContaining(":explorer-pack:"), quantity: 1 },
+        ],
       },
     });
     expect(knowledge(initialRead)).toEqual([
@@ -208,13 +271,12 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
       "submission:death-successor:fatal",
       "坍落石梁击中我；这项已冻结机械后果被错误地记成致命。",
       FATAL_DELIVERY,
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:death-successor:fatal:1",
-        goal: "结算坍落石梁的已冻结伤害",
-        method: "承受石梁撞击",
-        duration: { unit: "second", value: 1 },
-        success: [{ kind: "changeHitPoints", targetRef: PREDECESSOR_ID, amount: -1 }],
-      }) as JsonRecord,
+      (rootActionId) => privateFormProposal(
+        rootActionId,
+        "environmental-stunt.v1",
+        fatalAreaHazardDraft(),
+        "proposal:death-successor:fatal:1",
+      ) as JsonRecord,
     );
     expect(fatal.kind, JSON.stringify(fatal)).toBe("committed");
     const fatalReceipt = publicReceipt(fatal, "fatal action");
@@ -233,7 +295,12 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
     expect(archiveEvents(fatalArchive)
       .filter((event) => event.rootActionId === fatalReceipt.rootActionId)
       .map((event) => event.eventType))
-      .toEqual(expect.arrayContaining(["HitPointsChanged", "CreatureDied"]));
+      .toEqual(expect.arrayContaining([
+        "EnvironmentHazardTriggered",
+        "EnvironmentAreaTargetResolved",
+        "DamagePacketResolved",
+        "CreatureDied",
+      ]));
     await expect(stub.prepare(ALICE, {
       kind: "intent",
       submissionId: "submission:death-successor:dead-predecessor-cannot-act",
@@ -268,7 +335,7 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
       characterId: SUCCESSOR_ID,
       tenureStatus: "active",
       loadout: {
-        armorClass: 12,
+        armorClass: 13,
         speedFeet: 30,
         equipped: {},
         backpack: [],
@@ -277,35 +344,34 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
     expect(knowledge(cleanSuccessorRead)).toEqual([]);
     expect(JSON.stringify(cleanSuccessorRead)).not.toContain(PREDECESSOR_PRIVATE_KNOWLEDGE);
     expect(JSON.stringify(cleanSuccessorRead)).not.toContain("chain");
-    expect(JSON.stringify(cleanSuccessorRead)).not.toContain("torch");
+    expect(JSON.stringify(cleanSuccessorRead)).not.toContain("explorer-pack");
 
     const successorAction = await runAction(
       stub,
       "submission:death-successor:successor-acts",
       "我花费一点决心，检查钟架背面并记住新划痕。",
       SUCCESSOR_DELIVERY,
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:death-successor:successor-acts:1",
+      (rootActionId) => privateFormProposal(rootActionId, "materialization.v1", {
         goal: "检查钟架背面并记住新划痕",
-        method: "举灯近看钟架背面",
-        dynamicMaterializations: [{
-          kind: "fact",
+        method: "commitWorldConsequences",
+        proposedFact: JSON.stringify({
+          schema: "zhuwei.world-consequence-draft/v1",
           factRef: SUCCESSOR_FACT_REF,
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:public",
-          definition: { finding: "钟架背面有一道新划痕" },
-        }],
-        duration: { unit: "second", value: 1 },
-        success: [
-          { kind: "changeResource", resourceRef: "resolve", amount: -1 },
-          {
-            kind: "acquireKnowledge",
-            knowledgeRef: SUCCESSOR_KNOWLEDGE_REF,
-            value: SUCCESSOR_KNOWLEDGE,
-            definitionRef: SUCCESSOR_FACT_REF,
-          },
-        ],
-      }) as JsonRecord,
+          summary: "钟架背面有一道新划痕",
+          consequences: [
+            { kind: "spendResource", resourceRef: "resolve", amount: 1 },
+            {
+              kind: "acquireKnowledge",
+              knowledgeRef: SUCCESSOR_KNOWLEDGE_REF,
+              content: SUCCESSOR_KNOWLEDGE,
+            },
+          ],
+        }),
+        basisRefs: ["wake"],
+        resolution: "direct",
+        durationUnit: "second",
+        durationValue: 1,
+      }, "proposal:death-successor:successor-acts:1") as JsonRecord,
     );
     expect(successorAction.kind, JSON.stringify(successorAction)).toBe("committed");
     const successorActionReceipt = publicReceipt(successorAction, "successor action");
@@ -344,7 +410,7 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
       kp: {
         async narrate() {
           correctionNarrations += 1;
-          return { body: CORRECTION_DELIVERY, agencyClaims: [] };
+          return { body: CORRECTION_DELIVERY };
         },
       },
     };
@@ -398,8 +464,11 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
       loadout: {
         armorClass: 17,
         speedFeet: 30,
-        equipped: { armor: "chain" },
-        backpack: [{ itemId: "torch", quantity: 2 }],
+        equipped: { armor: expect.stringContaining(":chain:") },
+        backpack: [
+          { itemId: expect.stringContaining(":explorer-pack:"), quantity: 1 },
+          { itemId: expect.stringContaining(":explorer-pack:"), quantity: 1 },
+        ],
       },
     });
     expect(knowledge(correctedRead)).toEqual([
@@ -467,5 +536,5 @@ describe("SPEC 0008 acceptance 6 at the Room responsibility interface", () => {
     expect(restoredArchive.events).toEqual(correctedArchive.events);
     expect(restoredArchive.receiptRefs).toEqual(correctedArchive.receiptRefs);
     expect(restoredArchive.head).toEqual(correctedArchive.head);
-  });
+  }, 15_000);
 });

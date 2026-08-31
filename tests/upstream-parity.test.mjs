@@ -20,7 +20,7 @@ const upstreamFiles = {
 
 const approvedProductDeltas = {
   // V5 统一物品把标准武器的封闭机械字段固化在既有装备目录中，展示文本不参与裁决。
-  "app/_runtime/lib/dnd/gear.ts": "da113f164cdc1bc5c96a37a21650e65908873243244e42d14c3b48a2fe53ea71",
+  "app/_runtime/lib/dnd/gear.ts": "6a7becaafe26e633f0784a425661e2c396e48042707547c389c093bd38e77282",
   // 通用规则 v2 的三级人物卡显示结构化目标、伤害、豁免与状态，并按职业/种族计算施法档案。
   "app/_runtime/components/character-wizard.tsx": "5424ae8c31fd871141e2f39a7d11973832803c7f8bf10aa9f8cc8bb7d3a0bceb",
   "app/_runtime/lib/dnd/compute.ts": "55a843abe678b42465b7b2b9a67ef5147710d734b8252d667f3c01789962bd83",
@@ -33,9 +33,9 @@ const approvedProductDeltas = {
   "app/_runtime/lib/kp/sanitize.ts": "1f7b576177bfe5c9f43033729216ff5ee2b04e5e4b462583842a1369d37e0ff2",
   // 通用规则 v2 的已批准结构化模组、唯一物件和 Portal 扩展。
   "app/_runtime/lib/module/index.ts": "bb074a5e76832ab9daaa18efed7c66f75d1be65133b861dcb4dd63de8f363343",
-  "app/_runtime/lib/module/black-oak-will.ts": "85d95f2d455ce6e2ac82c64197be5f2d0d7e8587930867d1a65fe4d1f10a9a63",
+  "app/_runtime/lib/module/black-oak-will.ts": "32655d143f226cef60672ffa0354ec2ed3b5bda3d9a277a263a878c89a1b3d2c",
   "app/_runtime/lib/module/schema.ts": "d3fd3ce6acaa00f2b4b1ab76001ef0d9dbdd33ae918d75e481bc954be2d0801a",
-  "app/_runtime/lib/module/writing.ts": "f28ead7af07049e8b14ad58264a38842ec55cb038cd2e3defff67fc2ecbad291",
+  "app/_runtime/lib/module/writing.ts": "5d1d0936e171b0399df764dcb17fcd9802bb8b254c818f6464a0c43eba1bef8a",
 };
 
 test("deterministic rules, module and character UI stay byte-identical to GitHub baseline", async () => {

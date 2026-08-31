@@ -55,6 +55,16 @@ export type RoomActionInput =
       spatialRevision: `sha256:${string}`;
       path: TacticalPosition[];
     }
+  | { kind: "combatEndTurn"; submissionId: string }
+  | {
+      kind: "restStart";
+      submissionId: string;
+      restKind: "short" | "long";
+      mode: "personal" | "group";
+      hitDiceToSpend: number;
+      arcaneRecoverySlotLevels: number[];
+    }
+  | { kind: "restInterrupt"; submissionId: string }
   | { kind: "safetyPause"; submissionId: string }
   | {
       kind: "safetyAdjust";
@@ -458,6 +468,62 @@ function rebuildInput(input: unknown): RoomActionInput | InternalRoomActionOutco
       spatialRevision: input.spatialRevision,
       path: structuredClone(input.path),
     };
+  }
+
+  if (input.kind === "combatEndTurn") {
+    const submissionId = requiredString(input, "submissionId");
+    if (!submissionId || !hasOnlyKeys(input, ["kind", "submissionId"], [])) {
+      return rejectedValidation("结束回合只接受 submissionId。");
+    }
+    return { kind: "combatEndTurn", submissionId };
+  }
+
+  if (input.kind === "restStart") {
+    const submissionId = requiredString(input, "submissionId");
+    const restKind = input.restKind;
+    const mode = input.mode;
+    const hitDiceToSpend = input.hitDiceToSpend;
+    const arcaneRecoverySlotLevels = input.arcaneRecoverySlotLevels;
+    if (
+      !submissionId
+      || (restKind !== "short" && restKind !== "long")
+      || (mode !== "personal" && mode !== "group")
+      || !Number.isSafeInteger(hitDiceToSpend)
+      || Number(hitDiceToSpend) < 0
+      || Number(hitDiceToSpend) > 20
+      || !Array.isArray(arcaneRecoverySlotLevels)
+      || arcaneRecoverySlotLevels.length > 20
+      || !arcaneRecoverySlotLevels.every((level) =>
+        Number.isSafeInteger(level) && Number(level) >= 1 && Number(level) <= 5)
+      || (restKind === "long"
+        && (Number(hitDiceToSpend) !== 0 || arcaneRecoverySlotLevels.length !== 0))
+      || !hasOnlyKeys(input, [
+        "arcaneRecoverySlotLevels",
+        "hitDiceToSpend",
+        "kind",
+        "mode",
+        "restKind",
+        "submissionId",
+      ], [])
+    ) return rejectedValidation("休整只接受规范的类型、范围、恢复选择与 submissionId。");
+    return {
+      kind: "restStart",
+      submissionId,
+      restKind,
+      mode,
+      hitDiceToSpend: Number(hitDiceToSpend),
+      arcaneRecoverySlotLevels: arcaneRecoverySlotLevels
+        .map(Number)
+        .sort((left, right) => left - right),
+    };
+  }
+
+  if (input.kind === "restInterrupt") {
+    const submissionId = requiredString(input, "submissionId");
+    if (!submissionId || !hasOnlyKeys(input, ["kind", "submissionId"], [])) {
+      return rejectedValidation("中断休整只接受 submissionId。");
+    }
+    return { kind: "restInterrupt", submissionId };
   }
 
   if (input.kind === "safetyPause") {
@@ -1435,18 +1501,51 @@ async function handleRoomActionInternal(
       return authorityFailure(undefined, resumed.receipt);
     }
     commitPrincipal = restoredPrincipal;
-    preparedValue = resumed.prepared;
   }
 
   if (preparedValue === undefined) {
     let preparedResult: unknown;
     try {
-      preparedResult = await context.authority.prepare(context.principal, activeInput);
+      preparedResult = await context.authority.prepare(commitPrincipal, activeInput);
     } catch (error) {
       return authorityFailure(error);
     }
     if (!isRecord(preparedResult)) return authorityFailure(undefined);
     preparedValue = preparedResult;
+  }
+
+  const resumedPrepared = preparedValue.kind === "continue" && isRecord(preparedValue.prepared)
+    ? preparedValue.prepared
+    : preparedValue.kind === "prepared"
+        && activeInput.kind === "retry"
+        && "resumedActionInput" in preparedValue
+        && "resumedPrincipalContext" in preparedValue
+      ? preparedValue
+      : undefined;
+  if (resumedPrepared !== undefined) {
+    const restored = rebuildInput(resumedPrepared.resumedActionInput);
+    const restoredPrincipal = resumedPrincipalContext(
+      resumedPrepared.resumedPrincipalContext,
+    );
+    if (
+      isRejectedValidation(restored)
+      || restored.kind !== "intent"
+      || restoredPrincipal === undefined
+    ) {
+      return authorityFailure(undefined, resumedPrepared.receipt);
+    }
+    activeInput = restored;
+    commitPrincipal = restoredPrincipal;
+    let refreshed: unknown;
+    try {
+      refreshed = await context.authority.prepare(commitPrincipal, activeInput);
+    } catch (error) {
+      return authorityFailure(error, resumedPrepared.receipt);
+    }
+    if (!isRecord(refreshed)) {
+      return authorityFailure(undefined, resumedPrepared.receipt);
+    }
+    preparedValue = refreshed;
   }
 
   const preparedFailure = publicFailure(preparedValue, activeInput.kind);
@@ -1500,14 +1599,48 @@ async function handleRoomActionInternal(
     if (!isRecord(committed)) return authorityFailure(undefined, preparedValue.receipt);
     const failure = publicFailure(committed, activeInput.kind);
     if (failure) return failure;
-    if (committed.kind === "awaitingPlayerRoll") return observeOutcome(context, committed);
+    if (committed.kind === "awaitingPlayerRoll" || committed.kind === "awaitingInput") {
+      return observeOutcome(context, committed);
+    }
     if (committed.kind !== "continue" || !isRecord(committed.prepared)) {
       return authorityFailure(undefined, committed.receipt ?? preparedValue.receipt);
     }
-    preparedValue = committed.prepared;
+    const restored = rebuildInput(committed.prepared.resumedActionInput);
+    const restoredPrincipal = resumedPrincipalContext(
+      committed.prepared.resumedPrincipalContext,
+    );
+    if (
+      isRejectedValidation(restored)
+      || restored.kind !== "intent"
+      || restoredPrincipal === undefined
+    ) {
+      return authorityFailure(undefined, committed.prepared.receipt ?? preparedValue.receipt);
+    }
+    activeInput = restored;
+    commitPrincipal = restoredPrincipal;
+    let refreshed: unknown;
+    try {
+      refreshed = await context.authority.prepare(commitPrincipal, activeInput);
+    } catch (error) {
+      return authorityFailure(error, committed.prepared.receipt ?? preparedValue.receipt);
+    }
+    if (!isRecord(refreshed)) {
+      return authorityFailure(undefined, committed.prepared.receipt ?? preparedValue.receipt);
+    }
+    const refreshedFailure = publicFailure(refreshed, activeInput.kind);
+    if (refreshedFailure) return refreshedFailure;
+    if (refreshed.kind === "awaitingInput" || refreshed.kind === "awaitingPlayerRoll") {
+      return observeOutcome(context, refreshed);
+    }
+    if (refreshed.kind === "committed" || refreshed.kind === "concluded") {
+      return refreshed.deliveryPlan === undefined
+        ? observeOutcome(context, refreshed)
+        : publishCommittedOutcome(context, refreshed, refreshed);
+    }
+    preparedValue = refreshed;
   }
 
-  const identifiers = preparedIdentifiers(preparedValue);
+  let identifiers = preparedIdentifiers(preparedValue);
   if (!identifiers) return authorityFailure(undefined, preparedValue.receipt);
 
   if (
@@ -1518,6 +1651,9 @@ async function handleRoomActionInternal(
       || activeInput.kind === "environmentInteract"
       || activeInput.kind === "environmentAbility"
       || activeInput.kind === "movement"
+      || activeInput.kind === "combatEndTurn"
+      || activeInput.kind === "restStart"
+      || activeInput.kind === "restInterrupt"
       || activeInput.kind === "safetyPause"
       || activeInput.kind === "safetyAdjust"
     )
@@ -1541,6 +1677,12 @@ async function handleRoomActionInternal(
                 ? "authenticatedEnvironmentAbility"
               : activeInput.kind === "movement"
                 ? "authenticatedMovement"
+              : activeInput.kind === "combatEndTurn"
+                ? "authenticatedCombatEndTurn"
+              : activeInput.kind === "restStart"
+                ? "authenticatedRestStart"
+              : activeInput.kind === "restInterrupt"
+                ? "authenticatedRestInterrupt"
               : activeInput.kind === "safetyPause"
                 ? "authenticatedSafetyPause"
                 : "authenticatedSafetyAdjustment",
@@ -1561,7 +1703,46 @@ async function handleRoomActionInternal(
         ? observeOutcome(context, commitValue)
         : publishCommittedOutcome(context, preparedValue, commitValue);
     }
-    return authorityFailure(undefined, commitValue.receipt ?? preparedValue.receipt);
+    if (commitValue.kind !== "continue" || !isRecord(commitValue.prepared)) {
+      return authorityFailure(undefined, commitValue.receipt ?? preparedValue.receipt);
+    }
+    const restored = rebuildInput(commitValue.prepared.resumedActionInput);
+    const restoredPrincipal = resumedPrincipalContext(
+      commitValue.prepared.resumedPrincipalContext,
+    );
+    if (
+      isRejectedValidation(restored)
+      || restored.kind !== "intent"
+      || restoredPrincipal === undefined
+    ) {
+      return authorityFailure(undefined, commitValue.prepared.receipt ?? preparedValue.receipt);
+    }
+    activeInput = restored;
+    commitPrincipal = restoredPrincipal;
+    let refreshed: unknown;
+    try {
+      refreshed = await context.authority.prepare(commitPrincipal, activeInput);
+    } catch (error) {
+      return authorityFailure(error, commitValue.prepared.receipt ?? preparedValue.receipt);
+    }
+    if (!isRecord(refreshed)) {
+      return authorityFailure(undefined, commitValue.prepared.receipt ?? preparedValue.receipt);
+    }
+    const refreshedFailure = publicFailure(refreshed, activeInput.kind);
+    if (refreshedFailure) return refreshedFailure;
+    if (refreshed.kind === "awaitingInput" || refreshed.kind === "awaitingPlayerRoll") {
+      return observeOutcome(context, refreshed);
+    }
+    if (refreshed.kind === "committed" || refreshed.kind === "concluded") {
+      return refreshed.deliveryPlan === undefined
+        ? observeOutcome(context, refreshed)
+        : publishCommittedOutcome(context, refreshed, refreshed);
+    }
+    preparedValue = refreshed;
+    identifiers = preparedIdentifiers(preparedValue);
+    if (!identifiers) {
+      return authorityFailure(undefined, commitValue.prepared.receipt ?? preparedValue.receipt);
+    }
   }
 
   let diagnostics: unknown;

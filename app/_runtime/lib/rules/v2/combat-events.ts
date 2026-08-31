@@ -16,6 +16,7 @@ import {
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import { canonicalSha256 } from "../profiles/canonical";
+import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { endCharacterTenure } from "./character-lifecycle";
 import {
   isDefinitionRegisteredAbilityPayload,
@@ -456,6 +457,64 @@ function patchEntity(state: AuthoritativeWorldState, patch: unknown): void {
   synchronizeCoreNpcCombatState(state, patch);
 }
 
+function coreHitPointSyncForCombatPatch(
+  state: AuthoritativeWorldState,
+  previousCombatEntity: JsonRecord,
+  combatEntity: JsonRecord,
+): { characterId: string; current: number } | undefined {
+  if (!isNonEmptyString(combatEntity.id)) return;
+  const character = state.entities[combatEntity.id];
+  if (character === undefined) return;
+  const hitPoints = combatEntity.hitPoints;
+  const current = isRecord(hitPoints) && canonicalUnsignedIntegerString(hitPoints.current)
+    ? Number(hitPoints.current)
+    : Number.NaN;
+  const maximum = isRecord(hitPoints) && canonicalUnsignedIntegerString(hitPoints.maximum)
+    ? Number(hitPoints.maximum)
+    : Number.NaN;
+  if (!Number.isSafeInteger(current)
+    || !Number.isSafeInteger(maximum)
+    || maximum <= 0
+    || current > maximum) {
+    throw new TypeError("combat damage patch hit points are malformed");
+  }
+  if (character.hitPoints === undefined) {
+    if (character.kind === "player") {
+      throw new TypeError("combat hit points conflict with the authoritative character");
+    }
+    return undefined;
+  }
+  if (!Number.isSafeInteger(character.hitPoints.current)
+    || !Number.isSafeInteger(character.hitPoints.maximum)
+    || character.hitPoints.maximum <= 0
+    || character.hitPoints.current < 0
+    || character.hitPoints.current > character.hitPoints.maximum
+    || character.hitPoints.maximum !== maximum
+    || current > character.hitPoints.current) {
+    throw new TypeError("combat hit points conflict with the authoritative character");
+  }
+  const previousHitPoints = previousCombatEntity.hitPoints;
+  if (previousHitPoints !== undefined) {
+    const previousCurrent = isRecord(previousHitPoints)
+      && canonicalUnsignedIntegerString(previousHitPoints.current)
+      ? Number(previousHitPoints.current)
+      : Number.NaN;
+    const previousMaximum = isRecord(previousHitPoints)
+      && canonicalUnsignedIntegerString(previousHitPoints.maximum)
+      ? Number(previousHitPoints.maximum)
+      : Number.NaN;
+    if (!Number.isSafeInteger(previousCurrent)
+      || !Number.isSafeInteger(previousMaximum)
+      || previousCurrent !== character.hitPoints.current
+      || previousMaximum !== character.hitPoints.maximum) {
+      throw new TypeError("combat hit-point cache conflicts with the authoritative character");
+    }
+  } else if (character.kind !== "npc") {
+    throw new TypeError("combat player hit-point cache is unavailable");
+  }
+  return { characterId: character.id, current };
+}
+
 function movementHostileEntityIds(encounter: JsonRecord, sourceEntityId: string): Set<string> {
   if (!Array.isArray(encounter.hostilities)) return new Set();
   return new Set(encounter.hostilities.flatMap((relation) =>
@@ -586,17 +645,35 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
   switch (event.eventType) {
     case "DefinitionRegistered": {
       const definition = payload.definition;
+      const locationContent = isRecord(definition)
+        && definition.definitionKind === "location"
+        && isRecord(definition.content)
+        ? definition.content
+        : undefined;
+      const dynamicGeometry = locationContent?.geometry;
       if (!isRecord(definition) || !isNonEmptyString(definition.definitionId)
         || definition.definitionId in runtime.definitions
         || (definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
           && !isNpcMechanicalTemplateDefinition(definition))
         || (definition.definitionKind === "item"
-          && !isItemDefinitionV1(definition))) {
+          && !isItemDefinitionV1(definition))
+        || (dynamicGeometry !== undefined
+          && (!hasExactKeys(locationContent!, ["geometry", "name", "sceneId"])
+            || !isNonEmptyString(locationContent!.sceneId)
+            || !isNonEmptyString(locationContent!.name)
+            || !isCanonicalTacticalGeometry(dynamicGeometry)
+            || locationContent!.sceneId in runtime.scenes))) {
         throw new TypeError("combat definition already exists or is malformed");
       }
       runtime.definitions[definition.definitionId] = isDefinitionRegisteredAbilityPayload(payload)
         ? registeredAbilityRecord(payload)
         : structuredClone(definition);
+      if (dynamicGeometry !== undefined) {
+        runtime.scenes[locationContent!.sceneId as string] = {
+          sceneId: locationContent!.sceneId,
+          geometry: structuredClone(dynamicGeometry),
+        };
+      }
       return true;
     }
     case "EntityMaterialized": {
@@ -827,7 +904,23 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
     }
     case "DamagePacketResolved": {
       if (!("targetPatch" in payload)) return false;
+      if (!isRecord(payload.targetPatch)
+        || payload.targetPatch.id !== payload.targetEntityId) {
+        throw new TypeError("damage packet target patch is malformed");
+      }
+      const previousCombatEntity = runtime.entities[String(payload.targetEntityId)];
+      if (!isRecord(previousCombatEntity)) {
+        throw new TypeError("damage packet target is unavailable");
+      }
+      const coreHitPointSync = coreHitPointSyncForCombatPatch(
+        state,
+        previousCombatEntity,
+        payload.targetPatch,
+      );
       patchEntity(state, payload.targetPatch);
+      if (coreHitPointSync !== undefined) {
+        state.entities[coreHitPointSync.characterId].hitPoints!.current = coreHitPointSync.current;
+      }
       return true;
     }
     // Campaign/world hazards own this canonical event. Returning false lets

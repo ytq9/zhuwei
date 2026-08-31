@@ -2,6 +2,10 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import {
+  compileKpFormDraft,
+  lowerCausalActionProgram,
+} from "../app/_runtime/lib/kp/causal-action-program";
 import { handleViewerNarrationRecovery } from "../app/_runtime/lib/room/action";
 import { bodyOnlyNarrationContext } from "../app/_runtime/lib/kp/narration-v3";
 import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
@@ -9,10 +13,6 @@ import {
   buildAuthoritativeTableState,
   projectAuthoritativeTableObservation,
 } from "../app/_runtime/lib/table/authoritative";
-import {
-  directConsequencesProposal,
-  productionActionPlanProposal,
-} from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -28,6 +28,7 @@ const CAROL = Object.freeze({
 const ALICE_ID = "character:viewer-recovery:alice";
 const BOB_ID = "character:viewer-recovery:bob";
 const BOB_SUCCESSOR_ID = "character:viewer-recovery:bob-successor";
+const SHARED_YARD_BASIS = "fact:viewer-recovery:shared-yard-context";
 
 type Authority = {
   initializeAuthoritative(input: unknown): Promise<unknown>;
@@ -90,6 +91,41 @@ function audience(plan: JsonRecord, characterId: string) {
   return match!;
 }
 
+function privateFormProposal(
+  rootActionId: string,
+  formId: "materialization.v1" | "observe.v1",
+  draft: JsonRecord,
+) {
+  const causalActionProgram = compileKpFormDraft(formId, draft);
+  return {
+    kind: "privateFormProposal",
+    formId,
+    draft: structuredClone(draft),
+    causalActionProgram,
+    loweredCausalProgram: lowerCausalActionProgram(causalActionProgram),
+    semanticFreezeHash: causalActionProgram.semanticHash,
+    repairUsed: false,
+    proposalAttemptId: `proposal:${rootActionId}:1`,
+    modelInvocationReceipt: { task: "proposal", result: "success" },
+    rootActionId,
+  };
+}
+
+function successfulKnowledgeRef(
+  rootActionId: string,
+  proposal: ReturnType<typeof privateFormProposal>,
+) {
+  const step = proposal.loweredCausalProgram.steps[0];
+  if (step === undefined) throw new Error("current private Form produced no causal step");
+  return [
+    "evidence:v3",
+    rootActionId,
+    proposal.causalActionProgram.semanticHash.slice("fnv1a64:".length),
+    step.nodeRef,
+    "success",
+  ].join(":");
+}
+
 async function commitVisibleChange(authority: Authority, suffix: string) {
   const prepared = record(await authority.prepare(ALICE, {
     kind: "intent",
@@ -101,18 +137,14 @@ async function commitVisibleChange(authority: Authority, suffix: string) {
   const committed = record(await authority.commit(
     ALICE,
     String(prepared.preparedActionId),
-    directConsequencesProposal(rootActionId, {
-      proposalAttemptId: `proposal:viewer-recovery:${suffix}`,
+    privateFormProposal(rootActionId, "materialization.v1", {
       goal: "确认一处所有在场角色都能看见的变化",
-      method: "直接观察当前院子",
-      duration: { unit: "second", value: 1 },
-      dynamicMaterializations: [{
-        kind: "fact",
-        factRef: `fact:viewer-recovery:${suffix}`,
-        causalBasisRefs: [],
-        visibilityPolicyRef: "visibility:public",
-        definition: { publicResult: `公开变化 ${suffix}` },
-      }],
+      method: "在院子里共同确认已经显现的公开变化",
+      proposedFact: `院子里的公开变化 ${suffix}`,
+      basisRefs: [SHARED_YARD_BASIS],
+      resolution: "direct",
+      durationUnit: "second",
+      durationValue: 1,
     }),
   ), "committed visible action");
   expect(committed.kind, JSON.stringify(committed)).toBe("committed");
@@ -130,15 +162,13 @@ async function commitBobRetirement(authority: Authority, suffix: string) {
   const committed = record(await authority.commit(
     BOB,
     String(prepared.preparedActionId),
-    productionActionPlanProposal(rootActionId, {
-      operation: "advanceCampaignLifecycle",
-      lifecycleAction: "retireCharacter",
+    {
+      kind: "authenticatedCampaignAction",
+      action: "retireCharacter",
+      rootActionId,
       continueAsNpc: false,
-    }, {
-      proposalAttemptId: `proposal:viewer-recovery:retire:${suffix}`,
-      goal: "按玩家明确选择让当前角色退役",
-      method: "结束当前角色任期并等待玩家创建继任角色",
-    }),
+      reason: "玩家明确选择结束当前角色任期并等待创建继任角色",
+    },
   ), "committed retirement action");
   expect(committed.kind, JSON.stringify(committed)).toBe("committed");
   return record(committed.deliveryPlan, "retirement delivery plan");
@@ -170,6 +200,25 @@ async function publishAliceFailBob(authority: Authority, plan: JsonRecord, suffi
     {
       audienceId: bob.audienceId,
       deliveryGeneration: bobBegin.deliveryGeneration,
+      errorCode: "NARRATION_PROVIDER_TIMEOUT",
+      state: "retryableFailure",
+    },
+  )).resolves.toMatchObject({ kind: "retryableFailure" });
+}
+
+async function failBobAudience(authority: Authority, plan: JsonRecord) {
+  expect((plan.audiences as unknown[]).map((entry) =>
+    record(entry, "retirement frozen audience").characterId)).toEqual([BOB_ID]);
+  const bob = audience(plan, BOB_ID);
+  const begun = record(await authority.beginDeliveryAudiencePublication({
+    publishCapability: plan.publishCapability,
+    audienceId: bob.audienceId,
+  }), "Bob retirement publication begin");
+  await expect(authority.failDeliveryAudiencePublication(
+    { publishCapability: plan.publishCapability },
+    {
+      audienceId: bob.audienceId,
+      deliveryGeneration: begun.deliveryGeneration,
       errorCode: "NARRATION_PROVIDER_TIMEOUT",
       state: "retryableFailure",
     },
@@ -225,30 +274,21 @@ describe("V3 viewer-local narration recovery", () => {
       text: "我仔细检查这枚印章的边缘。",
     }), "clue-presentation action prepared");
     const rootActionId = String(prepared.rootActionId);
-    const knowledgeRef = "knowledge:viewer-recovery:seal-scratch";
-    const factRef = "fact:viewer-recovery:seal-scratch";
     const clueText = "印章边缘有一道新鲜划痕。";
+    const clueProposal = privateFormProposal(rootActionId, "observe.v1", {
+      goal: "检查印章边缘",
+      method: "近距离观察印章边缘",
+      focus: "印章边缘的新鲜痕迹",
+      desiredInformation: clueText,
+      resolution: "direct",
+      durationUnit: "second",
+      durationValue: 1,
+    });
+    const knowledgeRef = successfulKnowledgeRef(rootActionId, clueProposal);
     const committed = record(await authority.commit(
       ALICE,
       String(prepared.preparedActionId),
-      directConsequencesProposal(rootActionId, {
-        proposalAttemptId: "proposal:viewer-recovery:clue-presentation",
-        goal: "检查印章边缘",
-        method: "近距离观察印章边缘",
-        dynamicMaterializations: [{
-          kind: "fact",
-          factRef,
-          causalBasisRefs: [],
-          visibilityPolicyRef: `visibility:knowledge-holder:${ALICE_ID}`,
-          definition: { conclusion: clueText },
-        }],
-        success: [{
-          kind: "acquireKnowledge",
-          knowledgeRef,
-          value: clueText,
-          definitionRef: factRef,
-        }],
-      }),
+      clueProposal,
     ), "clue-presentation action committed");
     expect(committed.kind).toBe("committed");
     const plan = record(committed.deliveryPlan, "clue-presentation delivery plan");
@@ -340,6 +380,11 @@ describe("V3 viewer-local narration recovery", () => {
         character(ALICE_ID, ALICE.principal.id, "阿莱莎"),
         character(BOB_ID, BOB.principal.id, "博林"),
       ],
+      fixtureFacts: [{
+        factRef: SHARED_YARD_BASIS,
+        kind: "establishedCommunicationChannel",
+        participants: [ALICE_ID, BOB_ID],
+      }],
     }), "V3 room initialization");
     expect(initialized.created).toBe(true);
 
@@ -511,7 +556,7 @@ describe("V3 viewer-local narration recovery", () => {
       seatId: `seat:${BOB.principal.id}`,
       characterId: BOB_ID,
     });
-    await publishAliceFailBob(authority, plan, "退役回复");
+    await failBobAudience(authority, plan);
     await evictDurableObject(authority as never);
 
     const observation = record(await authority.observe(BOB), "former-character observation");
@@ -620,7 +665,7 @@ describe("V3 viewer-local narration recovery", () => {
       "successor service capabilities",
     ).roomAdministration;
     const plan = await commitBobRetirement(authority, "successor");
-    await publishAliceFailBob(authority, plan, "继任前回复");
+    await failBobAudience(authority, plan);
     const before = record(await authority.observe(BOB), "former viewer before successor");
     const capability = String(record(
       before.narrationRecovery,
@@ -685,6 +730,11 @@ describe("V3 viewer-local narration recovery", () => {
         character(ALICE_ID, ALICE.principal.id, "阿莱莎"),
         character(BOB_ID, BOB.principal.id, "博林"),
       ],
+      fixtureFacts: [{
+        factRef: SHARED_YARD_BASIS,
+        kind: "establishedCommunicationChannel",
+        participants: [ALICE_ID, BOB_ID],
+      }],
     }), "control-transfer room initialization");
     const administration = record(
       initialized.serviceCapabilities,

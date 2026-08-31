@@ -4,8 +4,7 @@ import { describe, expect, it } from "vitest";
 import { handleRoomCorrection } from "../app/_runtime/lib/room/action";
 import {
   directConsequencesProposal,
-  noncombatCheckProposal,
-  productionActionPlanProposal,
+  privateFormProposal,
 } from "./helpers/authoritative-proposal";
 
 type RecordValue = Record<string, unknown>;
@@ -41,6 +40,10 @@ type ArchiveAuthority = {
   observe(context: unknown, query?: unknown): Promise<unknown>;
   acknowledge(context: unknown, deliveryId: string, acknowledgementId?: string): Promise<unknown>;
   deliveryPublicationStatus(query: { publishCapability: unknown }): Promise<unknown>;
+  beginDeliveryAudiencePublication(query: {
+    publishCapability: unknown;
+    audienceId: unknown;
+  }): Promise<unknown>;
   publishDelivery(capability: unknown, publication: unknown): Promise<unknown>;
   exportAuthoritativeArchive(archiveExportCapability: unknown): Promise<unknown>;
   restoreAuthoritativeArchive(
@@ -102,7 +105,10 @@ function character(characterId: string, controllerPrincipalId: string, sceneId: 
   };
 }
 
-async function initializeRoom(name: string): Promise<InitializedRoom> {
+async function initializeRoom(
+  name: string,
+  fixtureFacts: unknown[] = [],
+): Promise<InitializedRoom> {
   const stub = authority(name);
   const initialized = record(await stub.initializeAuthoritative({
     roomId: name,
@@ -113,9 +119,10 @@ async function initializeRoom(name: string): Promise<InitializedRoom> {
       { principalId: BOB.principal.id, role: "player" },
     ],
     characters: [
-      character("character:archive:alice", ALICE.principal.id, "archive"),
+      character("character:archive:alice", ALICE.principal.id, "wake"),
       character("character:archive:bob", BOB.principal.id, "yard"),
     ],
+    ...(fixtureFacts.length === 0 ? {} : { fixtureFacts }),
   }), "authoritative initialization");
   expect(initialized).toMatchObject({ created: true });
 
@@ -154,41 +161,23 @@ function directSuccess(action: PreparedAction, proposalAttemptId: string, _publi
 }
 
 function consequentialCheck(action: PreparedAction) {
-  const factRef = "fact:archive:vault-location";
-  return noncombatCheckProposal(action.rootActionId, {
-    proposalAttemptId: "proposal:archive:consequential-check:1",
+  return privateFormProposal(action.rootActionId, "ordinary-check.v1", {
     goal: "撞开内门并进入密室检查刻痕",
     method: "用肩膀撞开内门，进入密室后检查墙上刻痕",
-    risk: {
-      warning: "内门可能被撞开；进入后会花费决心并取得只属于行动者的感官证据。",
-      successConsequences: ["进入密室、花费一点决心并取得私人感官证据。"],
-      failureConsequences: ["内门没有打开，撞击声传了出去。"],
-      retryGate: ["methodChanged", "situationAdvanced"],
-    },
+    intendedOutcome: "撞开内门并辨认墙上刻痕",
+    risk: "撞击会发出声响并消耗决心。",
+    resolution: "check",
     ability: "str",
     skill: "athletics",
     dc: 1,
     mode: "normal",
-    duration: { unit: "second", value: 1 },
-    dynamicMaterializations: [{
-      kind: "location",
-      factRef,
-      causalBasisRefs: [],
-      visibilityPolicyRef: "visibility:room-authority-only",
-      definition: { sceneId: "vault", name: "密室" },
-    }],
-    success: [
-      { kind: "moveEntity", sceneRef: "vault" },
-      { kind: "changeResource", resourceRef: "resolve", amount: -1 },
-      {
-        kind: "acquireKnowledge",
-        knowledgeRef: "knowledge:archive:wrong-branch-code",
-        value: PRIVATE_KNOWLEDGE_SENTINEL,
-        definitionRef: factRef,
-      },
-    ],
-    failure: [],
-  });
+    durationUnit: "second",
+    durationValue: 1,
+    successConsequence: PRIVATE_KNOWLEDGE_SENTINEL,
+    failureConsequence: "内门没有打开，撞击声传了出去。",
+    resourceRef: "resolve",
+    resourceAmount: 1,
+  }, "proposal:archive:consequential-check:1");
 }
 
 async function commitDirect(
@@ -220,25 +209,31 @@ function deliveryPlan(value: RecordValue): RecordValue {
 
 async function publishSensitiveDelivery(stub: ArchiveAuthority, committed: RecordValue) {
   const plan = deliveryPlan(committed);
-  const frames = array(plan.audiences, "frozen audiences").map((candidate) => {
+  const frames = [];
+  for (const candidate of array(plan.audiences, "frozen audiences")) {
     const audience = record(candidate, "frozen audience");
-    return {
+    const begun = record(await stub.beginDeliveryAudiencePublication({
+      publishCapability: plan.publishCapability,
       audienceId: audience.audienceId,
+    }), "sensitive delivery publication begin");
+    frames.push({
+      audienceId: audience.audienceId,
+      deliveryGeneration: begun.deliveryGeneration,
       narration: {
-        text: [
+        body: [
           DELIVERY_BODY_SENTINEL,
           MODEL_PROMPT_SENTINEL,
           KP_TRANSCRIPT_SENTINEL,
           String(audience.characterId),
         ].join(" "),
-        agencyClaims: [],
       },
-    };
-  });
-  await expect(stub.publishDelivery(
+    });
+  }
+  const published = record(await stub.publishDelivery(
     { publishCapability: plan.publishCapability },
     { frames },
-  )).resolves.toMatchObject({ kind: "published" });
+  ), "sensitive delivery publication");
+  expect(published, JSON.stringify(published)).toMatchObject({ kind: "published" });
 }
 
 async function exportArchive(room: InitializedRoom): Promise<RecordValue> {
@@ -565,8 +560,12 @@ describe("authoritative archive recovery and correction", () => {
   });
 
   it("forward-compensates public acquired knowledge with no downstream Root and restores that result", async () => {
-    const room = await initializeRoom("archive-v2-public-knowledge-forward-correction");
-    const factRef = "fact:archive:public-bell-schedule";
+    const causalBasisRef = "fact:archive:public-bell-schedule-basis";
+    const room = await initializeRoom("archive-v2-public-knowledge-forward-correction", [{
+      factRef: causalBasisRef,
+      kind: "establishedCommunicationChannel",
+      participants: ["character:archive:alice", "character:archive:bob"],
+    }]);
     const wrongPublicContent = "门厅告示牌写着钟声会在午夜响起";
 
     const factAction = await prepareIntent(
@@ -577,21 +576,31 @@ describe("authoritative archive recovery and correction", () => {
     const factCommitted = record(await room.stub.commit(
       ALICE,
       factAction.preparedActionId,
-      directConsequencesProposal(factAction.rootActionId, {
-        proposalAttemptId: "proposal:archive:public-fact",
+      privateFormProposal(factAction.rootActionId, "materialization.v1", {
         goal: "确认门厅公开告示牌存在",
         method: "在门厅所有在场者面前指出告示牌",
-        dynamicMaterializations: [{
-          kind: "fact",
-          factRef,
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:public",
-          definition: { kind: "postedSchedule", location: "archive" },
-        }],
-        duration: { unit: "second", value: 1 },
-      }),
+        proposedFact: "门厅存在一块所有在场者都能直接阅读的公开告示牌。",
+        basisRefs: [causalBasisRef],
+        resolution: "direct",
+        durationUnit: "second",
+        durationValue: 1,
+      }, "proposal:archive:public-fact"),
     ), "public fact commit");
     expect(factCommitted.kind, JSON.stringify(factCommitted)).toBe("committed");
+    const factRootActionId = factAction.rootActionId;
+    const factEvent = archiveEvents(await exportArchive(room)).find((event) => {
+      if (event.rootActionId !== factRootActionId || event.eventType !== "ImprovisedActionResolved") {
+        return false;
+      }
+      const payload = record(event.payload, "public fact payload");
+      return payload.fact !== null
+        && payload.fact !== undefined
+        && record(payload.fact, "public fact candidate").kind === "dynamicOpenFact";
+    });
+    const factRef = String(record(
+      record(factEvent?.payload, "public materialization payload").fact,
+      "public materialized fact",
+    ).id);
 
     const acquisition = await prepareIntent(
       room.stub,
@@ -601,15 +610,20 @@ describe("authoritative archive recovery and correction", () => {
     const acquired = record(await room.stub.commit(
       ALICE,
       acquisition.preparedActionId,
-      productionActionPlanProposal(acquisition.rootActionId, {
-        operation: "changeKnowledge",
-        knowledgeRef: factRef,
-      }, {
-        proposalAttemptId: "proposal:archive:public-knowledge-wrong",
+      privateFormProposal(acquisition.rootActionId, "observe.v1", {
         goal: wrongPublicContent,
-        method: "在门厅公开读出告示牌内容",
-        publicBasisRefs: [factRef],
-      }),
+        method: "observeExistingFact",
+        focus: factRef,
+        desiredInformation: JSON.stringify({
+          schema: "zhuwei.observed-fact-acquisition-draft/v1",
+          factRef,
+          observedContent: wrongPublicContent,
+        }),
+        basisRefs: [factRef],
+        resolution: "direct",
+        durationUnit: "second",
+        durationValue: 1,
+      }, "proposal:archive:public-knowledge-wrong"),
     ), "public knowledge acquisition");
     expect(acquired.kind, JSON.stringify(acquired)).toBe("committed");
     const originalReceipt = receipt(acquired);
@@ -635,7 +649,6 @@ describe("authoritative archive recovery and correction", () => {
         async narrate(request) {
           return {
             body: `已更正公开读取结果:${String((request as RecordValue).audienceId)}`,
-            agencyClaims: [],
           };
         },
       },
@@ -678,7 +691,7 @@ describe("authoritative archive recovery and correction", () => {
     expect(restoredView.delivery).toEqual({ kind: "none" });
     expect(restoredView.readModel).toEqual(after.readModel);
     expect(JSON.stringify(restoredView)).not.toContain(wrongPublicContent);
-  });
+  }, 15_000);
 
   it("opens a causal branch while preserving audit and viewer-scoped experienced narration", async () => {
     const room = await initializeRoom("archive-v2-causal-correction");

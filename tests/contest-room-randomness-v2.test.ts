@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-import { productionActionPlanProposal } from "./helpers/authoritative-proposal";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type RecordValue = Record<string, unknown>;
 
@@ -68,18 +68,23 @@ describe("Room DO authoritative contest randomness", () => {
       characterId: "character:contest-room:alice",
       text: "我向守门人提出掰手腕，想公平较量力气。",
     }), "contest prepare");
-    const proposal = productionActionPlanProposal(String(prepared.rootActionId), {
-      operation: "resolveNoncombatContest",
-      ability: "str",
-      skill: "athletics",
-      opposedAbility: "str",
-      opposedSkill: "athletics",
-      targetEntityRef: "npc:gate-warden",
-      mode: "normal",
-    }, {
-      kind: "checkRequired",
+    const proposal = privateFormProposal(String(prepared.rootActionId), "materialization.v1", {
       goal: "与守门人公平掰手腕",
-      method: "双方以力量和运动技能正面对抗",
+      method: "resolveNoncombatContest",
+      proposedFact: JSON.stringify({
+        schema: "zhuwei.noncombat-contest-draft/v1",
+        defenderRef: "npc:gate-warden",
+        initiatorAbility: "str",
+        initiatorSkill: "athletics",
+        defenderAbility: "str",
+        defenderSkill: "athletics",
+        mode: "normal",
+        tieResult: "statusQuo",
+      }),
+      basisRefs: ["yard", "npc:gate-warden"],
+      resolution: "direct",
+      durationUnit: "minute",
+      durationValue: 1,
     });
 
     const committed = record(await stub.commit(

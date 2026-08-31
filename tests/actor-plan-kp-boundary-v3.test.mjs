@@ -12,6 +12,7 @@ import {
 } from "../app/_runtime/lib/kp/actor-plan-policy.ts";
 import { AUTHORITATIVE_KP_PROFILES } from "../app/_runtime/lib/kp/authoritative-policy.ts";
 import { handleRoomAction } from "../app/_runtime/lib/room/action.ts";
+import { normalizeRoomKpProposal } from "../app/_runtime/lib/room/proposal-adapter.ts";
 
 const ROOT_ACTION_ID = "root-action:due-plan-v3";
 const PREPARED_ACTION_ID = "prepared-action:due-plan-v3";
@@ -22,13 +23,14 @@ const RESOURCE_REF = "resource:due-plan-v3:iron-bar";
 const ALTERNATE_TARGET_REF = "scene:due-plan-v3:inner-gate";
 
 const ACTOR_PLAN = Object.freeze({
+  npcId: NPC_ID,
   planId: PLAN_ID,
   actorKind: "npc",
   actorRef: NPC_ID,
   decisionNpcId: NPC_ID,
+  factionRef: null,
   status: "scheduled",
   premiseRefs: Object.freeze([KNOWLEDGE_REF]),
-  knowledgeRefs: Object.freeze([KNOWLEDGE_REF]),
   resourceRefs: Object.freeze([RESOURCE_REF]),
   goal: "依照密令封住外院",
   nextStep: "把铁栓推入外院门槽",
@@ -48,6 +50,11 @@ const ACTOR_PLAN = Object.freeze({
   alternateTarget: Object.freeze({
     targetRef: ALTERNATE_TARGET_REF,
     reason: "外院门已失守时改守内门",
+  }),
+  chapterId: "chapter:due-plan-v3",
+  moduleRef: Object.freeze({
+    profileId: "module:black-oak-will:1.0.0",
+    profileHash: `sha256:${"0".repeat(64)}`,
   }),
 });
 
@@ -78,6 +85,33 @@ const DECISION_REQUEST = Object.freeze({
   dueActorPlan: ACTOR_PLAN,
   projection: NPC_PROJECTION,
   attempt: 1,
+});
+
+test("pre-0.4 authenticated formNpcPlan ingress is not a Room proposal", () => {
+  assert.equal(normalizeRoomKpProposal({
+    kind: "authenticatedCampaignAction",
+    action: "formNpcPlan",
+    rootActionId: ROOT_ACTION_ID,
+    npcId: NPC_ID,
+    planId: PLAN_ID,
+    goal: "旧入口形成计划",
+    nextAction: "旧别名下一步",
+    premiseRefs: [KNOWLEDGE_REF],
+    resourceRefs: [],
+    activity: {
+      activityId: "activity:legacy-form-npc-plan",
+      activityKind: "factionOperation",
+      intendedDurationMicros: "1000000",
+    },
+    due: { kind: "fictionTime", atFictionMicros: "1000000" },
+    trigger: null,
+    trace: {
+      factRef: "fact:legacy-form-npc-plan",
+      description: "旧入口痕迹",
+      visibilityPolicyRef: "visibility:scene-observers",
+    },
+    alternateTarget: { targetRef: ALTERNATE_TARGET_REF, reason: "旧入口备选" },
+  }), undefined);
 });
 
 function toolResponse(value) {
@@ -199,12 +233,23 @@ test("due ActorPlan schema and validator cover four exact lifecycle variants", (
     parameters.$def,
   );
   assert.equal(npcOperations.includes("advanceCampaignLifecycle"), false);
+  assert.equal(npcOperations.includes("advanceFactionPlan"), false);
   assert.throws(() => validateActorPlanDecisionOutput({
     decision: "execute",
     planId: PLAN_ID,
     mechanicalProposal: {
       operation: "advanceCampaignLifecycle",
       lifecycleAction: "concludeStory",
+    },
+  }, DECISION_REQUEST));
+  assert.throws(() => validateActorPlanDecisionOutput({
+    decision: "execute",
+    planId: PLAN_ID,
+    mechanicalProposal: {
+      operation: "advanceFactionPlan",
+      factionRef: "faction:forged",
+      planRef: PLAN_ID,
+      basisRefs: [KNOWLEDGE_REF],
     },
   }, DECISION_REQUEST));
 
@@ -317,16 +362,27 @@ test("invalid due ActorPlan model output fails closed without a Form repair", as
 
 test("Room Action prefers the dedicated due-plan method, then reprojects player intent", async () => {
   const trace = [];
+  const principal = { id: "principal:trusted", sessionVersion: 1 };
+  const actionInput = {
+    kind: "intent",
+    submissionId: "submission:due-plan-v3",
+    text: "我检查外院门。",
+  };
   const continuedPrepared = {
     kind: "prepared",
     phase: "playerIntent",
     preparedActionId: PREPARED_ACTION_ID,
     rootActionId: ROOT_ACTION_ID,
     kpProjection: { viewer: { kind: "kp" }, projectionHash: "projection:kp:after-due" },
+    resumedActionInput: actionInput,
+    resumedPrincipalContext: { principal },
   };
+  let prepareCount = 0;
   let commitCount = 0;
   const authority = {
     async prepare() {
+      prepareCount += 1;
+      if (prepareCount > 1) return continuedPrepared;
       return {
         kind: "prepared",
         phase: "dueActorPlan",
@@ -375,14 +431,10 @@ test("Room Action prefers the dedicated due-plan method, then reprojects player 
   };
 
   const outcome = await handleRoomAction({
-    principal: { id: "principal:trusted", sessionVersion: 1 },
+    principal,
     authority,
     kp,
-  }, {
-    kind: "intent",
-    submissionId: "submission:due-plan-v3",
-    text: "我检查外院门。",
-  });
+  }, actionInput);
 
   assert.equal(outcome.kind, "committed", JSON.stringify({ outcome, trace }));
   assert.deepEqual(trace.map(({ operation }) => operation), [

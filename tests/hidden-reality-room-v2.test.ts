@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { directConsequencesProposal } from "./helpers/authoritative-proposal";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type R = Record<string, unknown>;
 const ALICE = { principal: { id: "principal:hidden:alice", sessionVersion: 1 } };
@@ -28,10 +28,11 @@ describe("HiddenReality Room randomness recovery and privacy", () => {
     const prepared = record(await stub.prepare(ALICE, { kind: "intent", submissionId: "submission:hidden:1",
       characterId: "character:hidden:alice", text: "我打开门，确认门后的真实情况。" }));
     const rootActionId = String(prepared.rootActionId);
-    const proposal = directConsequencesProposal(rootActionId, {
-      goal: "打开门并确认门后的现实", method: "推门后观察",
-      dynamicMaterializations: [],
-      hiddenRealityCandidateSet: {
+    const proposal = privateFormProposal(rootActionId, "materialization.v1", {
+      goal: "打开门并确认门后的现实",
+      method: "materializeHiddenReality",
+      proposedFact: JSON.stringify({
+        schema: "zhuwei.hidden-reality-candidate-set-draft/v1",
         candidateSetId: "hidden-set:door:1",
         candidates: [
           { candidateId: "candidate:ash", hiddenWeight: 1, kind: "fact", factRef: "fact:hidden:ash-room",
@@ -39,7 +40,11 @@ describe("HiddenReality Room randomness recovery and privacy", () => {
           { candidateId: "candidate:bell", hiddenWeight: 1, kind: "fact", factRef: "fact:hidden:bell-room",
             causalBasisRefs: [], visibilityPolicyRef: "visibility:scene-observers", definition: { name: "悬铃密室" } },
         ],
-      },
+      }),
+      basisRefs: ["wake"],
+      resolution: "direct",
+      durationUnit: "second",
+      durationValue: 1,
     });
     await expect(runInDurableObject(stub as never, async (instance) => {
       const target = instance as unknown as { authorityRecoveryCheckpoint?: (name: string) => void;

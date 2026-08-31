@@ -73,6 +73,17 @@ function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
   return left.profileId === right.profileId && left.profileHash === right.profileHash;
 }
 
+function stateModuleMatchesGenesis(
+  state: AuthoritativeWorldState,
+  genesis: RuntimeGenesis,
+): boolean {
+  const ref = state.campaignRuntime.campaign?.moduleRef;
+  return isRecord(ref)
+    && typeof ref.profileId === "string"
+    && typeof ref.profileHash === "string"
+    && profilesMatch(ref as ProfileRef, genesis.moduleRef);
+}
+
 function stateProfileRejection(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -435,6 +446,12 @@ function replayWithRegistry(
       "The V5 genesis state is malformed or lacks its runtime manifest pin.",
     );
   }
+  if (!stateModuleMatchesGenesis(state, genesisValue)) {
+    return rejected(
+      "profileIntegrityMismatch",
+      "Genesis Campaign Module binding does not match roomGenesis.",
+    );
+  }
   if (isAuthoritativeWorldState(state)) {
     const mismatch = stateProfileRejection(genesisProfileResolution.profiles, state);
     if (mismatch !== undefined) {
@@ -537,6 +554,18 @@ function replayWithRegistry(
     }
     try {
       const next = foldEvent(state, event);
+      if (!isAuthoritativeWorldState(next)) {
+        return rejected(
+          "invalidWorldState",
+          "Replayed state left the current 0.4 authoritative schema.",
+        );
+      }
+      if (!stateModuleMatchesGenesis(next, genesisValue)) {
+        return rejected(
+          "profileIntegrityMismatch",
+          "Replayed Campaign Module binding diverged from roomGenesis.",
+        );
+      }
       if (!stateEnvironmentProfilesMatch(eventProfileResolution.profiles, next)) {
         return rejected(
           "profileIntegrityMismatch",

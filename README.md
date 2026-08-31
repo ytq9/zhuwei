@@ -6,7 +6,7 @@
 
 V3 表示产品与仓库架构代际，0.4 表示当前应用版本；两者都不把机械协议静默改名。0.4 是一次开发期重置：所有 0.4 以前的房间和可恢复房间归档都已明确退役，生产代码不再携带它们的 Adapter、fallback 或 migration。0.4 新房只接受精确的 `dnd5e-2014-srd5.1-authoritative-v2` Ruleset、`runtime-srd51-2014-authoritative-environment-v5` runtime manifest 及其完整 hash 闭包；名称中的 `v2`/`v5` 是独立协议版本轴，不改名为 0.4 或 V3。以后若要兼容旧版本，必须另作明确产品决定。
 
-当前 KP 闭包精确绑定 `authoritative-kp-private-form-narrow-tools-workflow-v2` 与 `causal-action-program-v4`：普通提案以 `executeCausalActionProgram` 和匹配的 `actionLanguageRef` 进入 Rules，多人管理只接受服务端生成的 `authenticatedPartyAction`；NPC 计划、退休和 Activity 只接受服务端生成且字段精确的 `authenticatedCampaignAction`。
+当前 KP 闭包精确绑定 `authoritative-kp-private-form-narrow-tools-workflow-v2` 与 `causal-action-program-v5`：普通提案以 `executeCausalActionProgram` 和匹配的 `actionLanguageRef` 进入 Rules，多人管理只接受服务端生成的 `authenticatedPartyAction`；NPC 计划、退休和 Activity 只接受服务端生成且字段精确的 `authenticatedCampaignAction`。
 
 ## 功能范围
 

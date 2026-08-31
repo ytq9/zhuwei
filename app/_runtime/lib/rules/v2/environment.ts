@@ -323,6 +323,97 @@ function transitionFor(
     : { toState: transition.toState, semantics };
 }
 
+function environmentTransitionResult(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  actorCharacterId: string,
+  featureId: string,
+  intent: PortalIntent,
+  authorityScope: string | undefined,
+): StepResult {
+  const actor = state.entities[actorCharacterId];
+  if (actor?.kind !== "player" || actor.tenureStatus !== "active") {
+    return rejected("privateOrUnknownReference", "The environment actor is unavailable.");
+  }
+  const feature = publicPortal(state, actorCharacterId, featureId);
+  if (feature === undefined) {
+    return rejected("privateOrUnknownReference", "The environment feature is unavailable.");
+  }
+  const transition = transitionFor(feature, intent);
+  if (transition === undefined) {
+    return rejected("worldLawViolation", "The requested environment transition is unavailable.");
+  }
+  const payload: EventPayloadByType["EnvironmentFeatureStateChanged"] = {
+    actorCharacterId,
+    sceneId: actor.sceneId,
+    featureId,
+    definitionId: feature.stateGraph!.definitionId,
+    intent,
+    fromState: feature.state,
+    toState: transition.toState,
+  };
+  const scopeProof = createScopeProof(
+    state,
+    [
+      authorityScope ?? `entity:${actorCharacterId}`,
+      `scene:${actor.sceneId}`,
+      `environment-definition:${feature.stateGraph!.definitionId}`,
+    ],
+    [`environment-feature:${featureId}`, `receipt:${rootActionId}`],
+    [],
+  );
+  const transitionResult = createEventTransition(state, profiles, {
+    rootActionId,
+    eventType: "EnvironmentFeatureStateChanged",
+    payload,
+    scopeProof,
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+  });
+  return {
+    kind: "committed",
+    events: [transitionResult.event],
+    state: transitionResult.state,
+    cache: transitionResult.state,
+    stateHash: transitionResult.event.stateHashAfter,
+    scopeProof,
+    receipt: transitionResult.receipt,
+    mechanicalResult: {
+      kind: "environmentFeatureStateChanged",
+      sceneId: actor.sceneId,
+      featureId,
+      fromState: feature.state,
+      toState: transition.toState,
+    },
+  };
+}
+
+/** Rules-internal direct transition for an already authenticated causal actor.
+ * The caller supplies no principal, viewer, audience, target list, or patch. */
+export function resolveCausalEnvironmentTransition(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  actorCharacterId: string,
+  featureId: string,
+  intent: PortalIntent,
+): StepResult {
+  if (![rootActionId, actorCharacterId, featureId].every(isNonEmptyString)
+    || (intent !== "open" && intent !== "close")) {
+    return rejected("invalidRulesInput", "The causal environment transition is not canonical.");
+  }
+  return environmentTransitionResult(
+    profiles,
+    state,
+    rootActionId,
+    actorCharacterId,
+    featureId,
+    intent,
+    undefined,
+  );
+}
+
 function interactEnvironmentFeature(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -349,60 +440,15 @@ function interactEnvironmentFeature(
   if (!controlledEnvironmentPlayer(state, input.controllerPrincipalId, input.actorCharacterId)) {
     return rejected("viewerUnauthorized", "The environment interaction controller is unavailable.");
   }
-  const actorCharacterId = input.actorCharacterId as string;
-  const featureId = input.featureId as string;
-  const feature = publicPortal(state, actorCharacterId, featureId);
-  if (feature === undefined) {
-    return rejected("privateOrUnknownReference", "The environment feature is unavailable.");
-  }
-  const transition = transitionFor(feature, input.intent as PortalIntent);
-  if (transition === undefined) {
-    return rejected("worldLawViolation", "The requested environment transition is unavailable.");
-  }
-  const actor = state.entities[actorCharacterId];
-  const payload: EventPayloadByType["EnvironmentFeatureStateChanged"] = {
-    actorCharacterId,
-    sceneId: actor.sceneId,
-    featureId,
-    definitionId: feature.stateGraph!.definitionId,
-    intent: input.intent as PortalIntent,
-    fromState: feature.state,
-    toState: transition.toState,
-  };
-  const scopeProof = createScopeProof(
+  return environmentTransitionResult(
+    profiles,
     state,
-    [
-      `control:${actorCharacterId}`,
-      `scene:${actor.sceneId}`,
-      `environment-definition:${feature.stateGraph!.definitionId}`,
-    ],
-    [`environment-feature:${featureId}`, `receipt:${input.rootActionId as string}`],
-    [],
+    input.rootActionId as string,
+    input.actorCharacterId as string,
+    input.featureId as string,
+    input.intent as PortalIntent,
+    `control:${input.actorCharacterId as string}`,
   );
-  const transitionResult = createEventTransition(state, profiles, {
-    rootActionId: input.rootActionId as string,
-    eventType: "EnvironmentFeatureStateChanged",
-    payload,
-    scopeProof,
-    visibilityPolicyId: "visibility:scene-observers",
-    secrecy: "public",
-  });
-  return {
-    kind: "committed",
-    events: [transitionResult.event],
-    state: transitionResult.state,
-    cache: transitionResult.state,
-    stateHash: transitionResult.event.stateHashAfter,
-    scopeProof,
-    receipt: transitionResult.receipt,
-    mechanicalResult: {
-      kind: "environmentFeatureStateChanged",
-      sceneId: actor.sceneId,
-      featureId,
-      fromState: feature.state,
-      toState: transition.toState,
-    },
-  };
 }
 
 export function stepEnvironmentWorld(

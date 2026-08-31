@@ -8,8 +8,15 @@ import type {
   KnowledgeRecord,
 } from "./model";
 import { canonicalSha256 } from "../profiles/canonical";
+import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { endCharacterTenure } from "./character-lifecycle";
-import { actorPlanNpcIsAvailable, actorPlanPremiseIsAvailable } from "./actor-plans";
+import {
+  actorPlanNpcIsAvailable,
+  actorPlanPremiseIsAvailable,
+  actorPlanResourcesAreAvailable,
+  actorPlanTriggerIsAvailable,
+} from "./actor-plans";
+import { characterTimelineId } from "./timeline";
 import {
   buildPlayerCombatEntity,
   compileCanonicalCharacterCombat,
@@ -261,6 +268,7 @@ const PAYLOAD_KEYS: Record<CampaignEventType, readonly string[]> = {
     "chapterId",
     "decisionNpcId",
     "due",
+    "factionRef",
     "goal",
     "moduleRef",
     "nextStep",
@@ -363,6 +371,7 @@ const ACTOR_PLAN_FORMED_KEYS = [
   "chapterId",
   "decisionNpcId",
   "due",
+  "factionRef",
   "goal",
   "moduleRef",
   "nextStep",
@@ -399,6 +408,7 @@ function validNpcPlanFormed(value: JsonRecord): boolean {
       "planId",
     ])
     || value.actorKind !== "npc"
+    || !(value.factionRef === null || isNonEmptyString(value.factionRef))
     || value.actorRef !== value.npcId
     || value.decisionNpcId !== value.npcId
     || value.revision !== "1"
@@ -609,6 +619,15 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
         && value.decision === "execute"
         && strings(value.resourceRefs)
         && value.resourceRefs.length > 0;
+    case "FactionPlanAdvanced":
+      return allRequiredStrings(value, [
+        "action",
+        "actingNpcId",
+        "factionId",
+        "planId",
+      ])
+        && strings(value.causeFactIds)
+        && value.causeFactIds.length > 0;
     case "ItemUsed":
       return allRequiredStrings(value, ["characterId", "entryId", "purpose"])
         && Number.isSafeInteger(value.quantityBefore) && Number(value.quantityBefore) > 0
@@ -1385,13 +1404,21 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || pending.controllerCharacterId !== payload.invitedCharacterId) {
         throw new TypeError("group rest answer does not match an invitation");
       }
-      const expectedRemaining = Object.values(state.pendingInputs)
-        .filter((entry) => entry.kind === "groupRestConsent"
-          && entry.rootActionId === event.rootActionId
-          && entry.pendingInputId !== payload.pendingInputId)
-        .map(({ pendingInputId }) => pendingInputId)
+      const expectedRemaining = [
+        ...Object.values(state.pendingInputs),
+        ...Object.values(state.multiplayerRuntime.suspendedPendingInputs),
+      ].filter((entry) => isRecord(entry)
+        && entry.kind === "groupRestConsent"
+        && entry.rootActionId === event.rootActionId
+        && entry.pendingInputId !== payload.pendingInputId
+        && isNonEmptyString(entry.pendingInputId)
+        && isNonEmptyString(entry.controllerCharacterId)
+        && isNonEmptyString(entry.question)
+        && (entry.options === undefined || isRecord(entry.options)))
+        .map(({ pendingInputId }) => String(pendingInputId))
         .sort();
-      if (JSON.stringify(expectedRemaining) !== JSON.stringify(payload.remainingPendingInputIds)) {
+      if (new Set(expectedRemaining).size !== expectedRemaining.length
+        || JSON.stringify(expectedRemaining) !== JSON.stringify(payload.remainingPendingInputIds)) {
         throw new TypeError("group rest remaining invitation set changed");
       }
       delete state.pendingInputs[payload.pendingInputId];
@@ -1424,6 +1451,42 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (activity?.status !== "active") throw new TypeError("activity is not active");
       activity.status = "interrupted";
       activity.interruptionCause = structuredClone(payload.cause);
+      const pendingGroupRests = [
+        ...Object.entries(state.pendingInputs).map(([pendingInputId, pending]) => ({
+          location: "active" as const,
+          pendingInputId,
+          pending,
+        })),
+        ...Object.entries(state.multiplayerRuntime.suspendedPendingInputs).map(
+          ([pendingInputId, pending]) => ({
+            location: "suspended" as const,
+            pendingInputId,
+            pending,
+          }),
+        ),
+      ].filter(({ pending }) => {
+        if (!isRecord(pending)
+          || pending.kind !== "groupRestConsent"
+          || !isNonEmptyString(pending.rootActionId)
+          || !isRecord(pending.options)
+          || pending.options.initiatorCharacterId !== activity.characterId) return false;
+        return `activity:${pending.rootActionId}:${String(activity.characterId)}` === payload.activityId;
+      });
+      const affectedRootActionIds = [...new Set(pendingGroupRests.map(({ pending }) =>
+        String(pending.rootActionId)))];
+      if (affectedRootActionIds.length > 1) {
+        throw new TypeError("group rest interruption matches more than one root action");
+      }
+      for (const { location, pendingInputId } of pendingGroupRests) {
+        if (location === "active") delete state.pendingInputs[pendingInputId];
+        else delete state.multiplayerRuntime.suspendedPendingInputs[pendingInputId];
+      }
+      const groupRestReceipt = affectedRootActionIds.length === 1
+        ? state.receipts[affectedRootActionIds[0]]
+        : undefined;
+      if (groupRestReceipt?.status === "awaitingInput") {
+        groupRestReceipt.status = "superseded";
+      }
       return true;
     }
     case "ActivityCompleted": {
@@ -1463,11 +1526,18 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         : structuredClone(payload.definition);
       if (payload.definition.definitionKind === "location") {
         const content = payload.definition.content;
-        // A generic location definition can remain lore-only.  A compound
-        // ActionPlan materializes a traversable scene only when it freezes the
-        // explicit sceneId/name pair before any movement consequence.
         if (isRecord(content) && isNonEmptyString(content.sceneId) && isNonEmptyString(content.name)) {
           const current = state.scenes[content.sceneId];
+          if (content.geometry !== undefined
+            && (!hasExactKeys(content, ["geometry", "name", "sceneId"])
+              || !isCanonicalTacticalGeometry(content.geometry)
+              || current !== undefined
+              || !isRecord(state.combatRuntime.scenes[content.sceneId])
+              || state.combatRuntime.scenes[content.sceneId].sceneId !== content.sceneId
+              || canonicalSha256(state.combatRuntime.scenes[content.sceneId].geometry)
+                !== canonicalSha256(content.geometry))) {
+            throw new TypeError("dynamic location tactical scene is malformed or already registered");
+          }
           if (current !== undefined && current.name !== content.name) {
             throw new TypeError("location definition conflicts with an existing scene");
           }
@@ -1548,7 +1618,10 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         payload.publicEvidence,
         [payload.factId],
         null,
-        fact.visibilityPolicyId === "visibility:public" ? "publiclyObservable" : "private",
+        fact.visibilityPolicyId === "visibility:public"
+          || fact.visibilityPolicyId === "visibility:scene-observers"
+          ? "publiclyObservable"
+          : "private",
       );
       return true;
     }
@@ -1671,12 +1744,49 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         throw new TypeError("NPC plan actor is unavailable");
       }
       const chapter = runtime.chapters[payload.chapterId];
+      const faction = payload.factionRef === null
+        ? undefined
+        : runtime.factions[payload.factionRef];
+      const factionResources = Array.isArray(faction?.resourceRefs)
+        && faction.resourceRefs.every(isNonEmptyString)
+        ? faction.resourceRefs
+        : undefined;
+      const availableResources = new Set(Object.keys(npc.resources ?? {}));
+      if (payload.factionRef !== null && factionResources !== undefined) {
+        availableResources.add(payload.factionRef);
+        for (const reference of factionResources) availableResources.add(reference);
+      }
+      const timelineId = characterTimelineId(state, npc.id);
+      const dueIsAvailable = payload.due === null
+        || (timelineId !== undefined
+          && (BigInt(state.fictionTimelines[timelineId].nowMicros)
+            + BigInt(payload.activity.intendedDurationMicros)).toString()
+            === payload.due.atFictionMicros);
+      const triggerIsAvailable = payload.trigger === null
+        || actorPlanTriggerIsAvailable(state, payload.npcId, payload.trigger);
       if (
         chapter?.status !== "active"
         || !isProfileRef(chapter.moduleRef)
         || chapter.moduleRef.profileId !== payload.moduleRef.profileId
         || chapter.moduleRef.profileHash !== payload.moduleRef.profileHash
         || payload.trace.factRef in state.canonicalFacts
+        || payload.trace.factRef in runtime.definitions
+        || payload.activity.activityId in runtime.activities
+        || Object.values(runtime.activities).some((activity) =>
+          activity.status === "active" && activity.characterId === payload.npcId)
+        || (!(payload.alternateTarget.targetRef in state.entities)
+          && !(payload.alternateTarget.targetRef in state.scenes))
+        || !dueIsAvailable
+        || !triggerIsAvailable
+        || (payload.factionRef !== null && (
+          faction === undefined
+          || !Array.isArray(faction.memberRefs)
+          || !faction.memberRefs.includes(payload.npcId)
+          || factionResources === undefined
+          || !payload.resourceRefs.includes(payload.factionRef)
+          || factionResources.some((reference) => !payload.resourceRefs.includes(reference))
+        ))
+        || payload.resourceRefs.some((reference) => !availableResources.has(reference))
         || payload.premiseRefs.some((reference) =>
           !actorPlanPremiseIsAvailable(state, payload.npcId, reference))
       ) throw new TypeError("ActorPlan version pin or trace template is unavailable");
@@ -1695,8 +1805,14 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (
         plan?.actorKind !== "npc"
         || plan.npcId !== payload.npcId
+        || plan.factionRef !== null
         || plan.status !== "scheduled"
         || plan.nextStep !== payload.nextStep
+        || !Array.isArray(plan.premiseRefs)
+        || plan.premiseRefs.some((reference) =>
+          !isNonEmptyString(reference)
+          || !actorPlanPremiseIsAvailable(state, payload.npcId, reference))
+        || !actorPlanResourcesAreAvailable(state, payload.npcId, null, plan.resourceRefs)
         || (!(payload.targetRef in state.entities) && !(payload.targetRef in state.scenes))
         || !isRecord(plan.trace)
         || plan.trace.factRef !== payload.traceFactRef
@@ -1751,6 +1867,27 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const activity = isRecord(plan?.activity) && isNonEmptyString(plan.activity.activityId)
         ? runtime.activities[plan.activity.activityId]
         : undefined;
+      const npc = state.entities[payload.npcId];
+      const factionRef = isNonEmptyString(plan?.factionRef) ? plan.factionRef : undefined;
+      const faction = factionRef === undefined ? undefined : runtime.factions[factionRef];
+      const factionResources = Array.isArray(faction?.resourceRefs)
+        && faction.resourceRefs.every(isNonEmptyString)
+        ? faction.resourceRefs
+        : undefined;
+      const availableResources = new Set(Object.keys(npc?.resources ?? {}));
+      if (factionRef !== undefined && factionResources !== undefined) {
+        availableResources.add(factionRef);
+        for (const reference of factionResources) availableResources.add(reference);
+      }
+      const timelineId = characterTimelineId(state, payload.npcId);
+      const dueIsAvailable = payload.due === null
+        || (timelineId !== undefined
+          && BigInt(payload.due.atFictionMicros)
+            > BigInt(state.fictionTimelines[timelineId].nowMicros));
+      const triggerIsAvailable = payload.trigger === null
+        || (actorPlanTriggerIsAvailable(state, payload.npcId, payload.trigger)
+          && (payload.trigger.kind !== "knowledgeAcquired"
+            || payload.premiseRefs.includes(payload.trigger.knowledgeRef)));
       if (
         plan?.actorKind !== "npc"
         || plan.npcId !== payload.npcId
@@ -1758,6 +1895,23 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || plan.revision !== payload.priorRevision
         || activity?.status !== "active"
         || payload.trace.factRef in state.canonicalFacts
+        || payload.trace.factRef in runtime.definitions
+        || (!(payload.alternateTarget.targetRef in state.entities)
+          && !(payload.alternateTarget.targetRef in state.scenes))
+        || !dueIsAvailable
+        || !triggerIsAvailable
+        || (factionRef !== undefined && (
+          faction === undefined
+          || !Array.isArray(faction.memberRefs)
+          || !faction.memberRefs.includes(payload.npcId)
+          || factionResources === undefined
+          || !payload.resourceRefs.includes(factionRef)
+          || factionResources.some((reference) => !payload.resourceRefs.includes(reference))
+        ))
+        || payload.resourceRefs.some((reference) =>
+          !availableResources.has(reference)
+          || !Array.isArray(plan.resourceRefs)
+          || !plan.resourceRefs.includes(reference))
         || payload.premiseRefs.some((reference) =>
           !actorPlanPremiseIsAvailable(state, payload.npcId, reference))
       ) throw new TypeError("due ActorPlan revision binding mismatch");
@@ -1779,10 +1933,26 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       });
       const factionPlan = runtime.factionPlans[payload.planId];
       if (factionPlan !== undefined) {
+        const faction = isNonEmptyString(factionPlan.factionId)
+          ? runtime.factions[factionPlan.factionId]
+          : undefined;
+        const factionResources = Array.isArray(faction?.resourceRefs)
+          && faction.resourceRefs.every(isNonEmptyString)
+          ? faction.resourceRefs
+          : undefined;
         if (
           factionPlan.actingNpcId !== payload.npcId
           || factionPlan.status !== "scheduled"
           || factionPlan.revision !== payload.priorRevision
+          || faction === undefined
+          || !Array.isArray(faction.memberRefs)
+          || !faction.memberRefs.includes(payload.npcId)
+          || factionResources === undefined
+          || !payload.resourceRefs.includes(factionPlan.factionId as string)
+          || factionResources.some((reference) => !payload.resourceRefs.includes(reference))
+          || payload.resourceRefs.some((reference) =>
+            !Array.isArray(factionPlan.resourceRefs)
+            || !factionPlan.resourceRefs.includes(reference))
         ) throw new TypeError("FactionPlan revision binding mismatch");
         Object.assign(factionPlan, {
           revision: payload.revision,
@@ -1802,16 +1972,26 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const payload = event.payload as EventPayloadByType["FactionPlanFormed"];
       const faction = runtime.factions[payload.factionId];
       const npcPlan = runtime.npcPlans[payload.planId];
+      const npc = state.entities[payload.actingNpcId];
       const memberRefs = Array.isArray(faction?.memberRefs) ? faction.memberRefs : [];
       const factionResources = Array.isArray(faction?.resourceRefs) ? faction.resourceRefs : [];
+      const availableResources = new Set([
+        ...Object.keys(npc?.resources ?? {}),
+        payload.factionId,
+        ...factionResources.filter(isNonEmptyString),
+      ]);
       if (
         runtime.factionPlans[payload.planId] !== undefined
         || faction === undefined
         || !memberRefs.includes(payload.actingNpcId)
         || npcPlan?.npcId !== payload.actingNpcId
+        || npcPlan.factionRef !== payload.factionId
         || npcPlan.status !== "scheduled"
+        || JSON.stringify(npcPlan.premiseRefs) !== JSON.stringify(payload.premiseRefs)
+        || JSON.stringify(npcPlan.resourceRefs) !== JSON.stringify(payload.resourceRefs)
         || !payload.resourceRefs.includes(payload.factionId)
         || factionResources.some((resourceRef) => !payload.resourceRefs.includes(resourceRef))
+        || payload.resourceRefs.some((resourceRef) => !availableResources.has(resourceRef))
         || payload.premiseRefs.some((reference) =>
           !actorPlanPremiseIsAvailable(state, payload.actingNpcId, reference))
       ) throw new TypeError("FactionPlan formation binding mismatch");
@@ -1830,16 +2010,31 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         : undefined;
       if (
         plan?.npcId !== payload.actingNpcId
+        || plan.factionRef !== payload.factionId
         || plan.status !== "scheduled"
         || plan.nextStep !== payload.nextStep
+        || !Array.isArray(plan.premiseRefs)
+        || plan.premiseRefs.some((reference) =>
+          !isNonEmptyString(reference)
+          || !actorPlanPremiseIsAvailable(state, payload.actingNpcId, reference))
         || !isRecord(plan.trace)
         || plan.trace.factRef !== payload.traceFactRef
         || factionPlan?.factionId !== payload.factionId
         || factionPlan.actingNpcId !== payload.actingNpcId
         || factionPlan.status !== "scheduled"
         || JSON.stringify(factionPlan.resourceRefs) !== JSON.stringify(payload.resourceRefs)
+        || JSON.stringify(plan.resourceRefs) !== JSON.stringify(payload.resourceRefs)
+        || !actorPlanResourcesAreAvailable(
+          state,
+          payload.actingNpcId,
+          payload.factionId,
+          payload.resourceRefs,
+        )
         || (!(payload.targetRef in state.entities) && !(payload.targetRef in state.scenes))
         || activity?.status !== "active"
+        || !isRecord(activity.completion)
+        || activity.completion.kind !== "actorPlan"
+        || activity.completion.planId !== payload.planId
       ) throw new TypeError("due FactionPlan execution binding mismatch");
       const resolution = {
         decision: payload.decision,
@@ -1856,18 +2051,33 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const payload = event.payload as EventPayloadByType["FactionPlanAdvanced"];
       const faction = runtime.factions[payload.factionId];
       const npcPlan = runtime.npcPlans[payload.planId];
-      const factionMemberRefs = strings(faction?.memberRefs) ? faction.memberRefs : [];
-      const planResourceRefs = strings(npcPlan?.resourceRefs) ? npcPlan.resourceRefs : [];
+      const factionPlan = runtime.factionPlans[payload.planId];
+      const planPremiseRefs = strings(npcPlan?.premiseRefs) ? npcPlan.premiseRefs : [];
       if (
-        runtime.factionPlans[payload.planId] !== undefined
-        || faction === undefined
-        || (!factionMemberRefs.includes(payload.actingNpcId)
-          && !planResourceRefs.includes(payload.factionId))
+        faction === undefined
+        || factionPlan?.factionId !== payload.factionId
+        || factionPlan.actingNpcId !== payload.actingNpcId
+        || factionPlan.status !== "resolved"
         || npcPlan?.npcId !== payload.actingNpcId
+        || npcPlan.factionRef !== payload.factionId
+        || npcPlan.status !== "resolved"
+        || npcPlan.nextStep !== payload.action
+        || !actorPlanResourcesAreAvailable(
+          state,
+          payload.actingNpcId,
+          payload.factionId,
+          npcPlan.resourceRefs,
+        )
+        || JSON.stringify(payload.causeFactIds) !== JSON.stringify(planPremiseRefs)
         || payload.causeFactIds.some((factId) =>
-          !(factId in (state.knowledge[payload.actingNpcId] ?? {})))
+          !actorPlanPremiseIsAvailable(state, payload.actingNpcId, factId))
       ) throw new TypeError("faction plan advance precondition mismatch");
-      runtime.factionPlans[payload.planId] = { ...structuredClone(payload), status: "advanced", advancedAtEventId: event.eventId };
+      runtime.factionPlans[payload.planId] = {
+        ...factionPlan,
+        status: "advanced",
+        lastAdvance: structuredClone(payload),
+        advancedAtEventId: event.eventId,
+      };
       return true;
     }
     case "SceneQuestionOpened": {
@@ -1913,15 +2123,21 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "SequelStarted": {
       const payload = event.payload as EventPayloadByType["SequelStarted"];
+      const campaignModuleRef = runtime.campaign?.moduleRef;
+      const chapter = runtime.chapters[payload.chapterId];
+      if (!isProfileRef(campaignModuleRef)
+        || runtime.stories[payload.priorStoryId]?.status !== "concluded"
+        || runtime.stories[payload.sequelStoryId] !== undefined
+        || chapter?.status !== "active"
+        || chapter.sceneQuestion !== payload.sceneQuestion
+        || JSON.stringify(chapter.storyAnchorRefs) !== JSON.stringify(payload.anchorFactIds)
+        || !isProfileRef(chapter.moduleRef)
+        || chapter.moduleRef.profileId !== campaignModuleRef.profileId
+        || chapter.moduleRef.profileHash !== campaignModuleRef.profileHash) {
+        throw new TypeError("sequel requires one newly transitioned Campaign chapter");
+      }
       runtime.stories[payload.sequelStoryId] = { ...structuredClone(payload), status: "active" };
-      runtime.chapters[payload.chapterId] = {
-        chapterId: payload.chapterId,
-        status: "active",
-        sceneQuestion: payload.sceneQuestion,
-        ...(runtime.campaign !== null && isProfileRef(runtime.campaign.moduleRef)
-          ? { moduleRef: structuredClone(runtime.campaign.moduleRef) }
-          : {}),
-      };
+      if (runtime.campaign !== null) runtime.campaign.currentChapterId = payload.chapterId;
       return true;
     }
     case "ExperienceAwarded": {

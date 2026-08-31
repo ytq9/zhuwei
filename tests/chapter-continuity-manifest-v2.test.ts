@@ -4,10 +4,7 @@ import { describe, expect, it } from "vitest";
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical";
 import { isCampaignContinuityManifest } from "../app/_runtime/lib/rules/v2/campaign-continuity";
-import {
-  noncombatCheckProposal,
-  productionActionPlanProposal,
-} from "./helpers/authoritative-proposal";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -58,7 +55,7 @@ async function runAction(
         return propose(String(record(request, "KP request").rootActionId));
       },
       async narrate() {
-        return { body: "本章的权威事实仍然连续。", agencyClaims: [] };
+        return { body: "本章的权威事实仍然连续。" };
       },
     },
   }, {
@@ -67,6 +64,114 @@ async function runAction(
     characterId: PLAYER_ID,
     text,
   } as never), `${submissionId} outcome`);
+}
+
+function factionDefinitionProposal(rootActionId: string) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: "依据守夜人的有限知识登记夜巡会",
+    method: "registerFactionDefinition",
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.faction-definition-draft/v1",
+      factionRef: FACTION_REF,
+      name: "夜巡会",
+      goal: "不惊动灵堂地封闭院门",
+      memberRefs: [NPC_ID],
+      resourceRefs: [RESOURCE_REF],
+      causalBasisRefs: [NPC_KNOWLEDGE_REF],
+    }),
+    basisRefs: ["wake", NPC_ID, NPC_KNOWLEDGE_REF],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  }) as unknown as JsonRecord;
+}
+
+function precedentProposal(rootActionId: string) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: "检查门轴是否能被徒手推开",
+    method: "recordAdjudicationPrecedent",
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.adjudication-precedent-draft/v1",
+      action: "record",
+      publicRuleBasis: ["SRD 5.1：力量（运动）检定可用于以蛮力突破障碍。"],
+      publicBasisRefs: [],
+      privateBasisRefs: [],
+      applicabilityScope: { kind: "scene", ref: "wake" },
+    }),
+    basisRefs: ["wake"],
+    risk: "门轴可能保持卡死。",
+    resolution: "check",
+    ability: "str",
+    skill: "athletics",
+    dc: 10,
+    mode: "normal",
+    successConsequence: "门轴可以被稳定推开。",
+    failureConsequence: "门轴仍然卡死。",
+    durationUnit: "second",
+    durationValue: 1,
+  }) as unknown as JsonRecord;
+}
+
+function factionActorPlanProposal(rootActionId: string) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: "让守夜人按有限知识形成封门计划",
+    method: "formActorPlan",
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.actor-plan-draft/v1",
+      npcRef: NPC_ID,
+      factionRef: FACTION_REF,
+      planId: PLAN_ID,
+      goal: "钟响后封闭院门",
+      premiseRefs: [NPC_KNOWLEDGE_REF],
+      nextStep: "用警戒绳封闭院门",
+      resourceRefs: [FACTION_REF, RESOURCE_REF],
+      activity: {
+        activityId: ACTIVITY_ID,
+        activityKind: "factionOperation",
+        intendedDurationMicros: "2000000",
+      },
+      due: { kind: "activityCompletion" },
+      trigger: null,
+      trace: {
+        factRef: "fact:continuity-manifest:warning-cord",
+        description: "院门前出现新拉起的警戒绳",
+        visibilityPolicyRef: "visibility:scene-observers",
+      },
+      alternateTarget: {
+        targetRef: "wake",
+        reason: "院门不可用时退守灵堂入口",
+      },
+    }),
+    basisRefs: [
+      "wake",
+      NPC_ID,
+      NPC_KNOWLEDGE_REF,
+      FACTION_REF,
+      RESOURCE_REF,
+    ],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  }) as unknown as JsonRecord;
+}
+
+function chapterTransitionProposal(rootActionId: string) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: "结束当前章并保持全部权威连续性",
+    method: "以当前事实、裁定和未到期计划作为下一章锚点",
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.campaign-lifecycle-draft/v1",
+      action: "transitionChapter",
+      chapterRef: "chapter:continuity-manifest:second",
+      storyAnchorRefs: [],
+      sceneQuestion: "下一章如何承接仍未到期的封门计划？",
+      activityTransitions: [{ activityId: ACTIVITY_ID, disposition: "continue" }],
+    }),
+    basisRefs: ["wake", ACTIVITY_ID],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  }) as unknown as JsonRecord;
 }
 
 describe("chapter continuity manifest responsibility", () => {
@@ -96,11 +201,8 @@ describe("chapter continuity manifest responsibility", () => {
       manifestHash: canonicalSha256(v2Core),
     })).toBe(true);
 
-    const {
-      actorPlanStates: _actorPlanStates,
-      factionPlanStates: _factionPlanStates,
-      ...v1Body
-    } = v2Core;
+    const v1Body = Object.fromEntries(Object.entries(v2Core).filter(([key]) =>
+      key !== "actorPlanStates" && key !== "factionPlanStates"));
     const v1Core = {
       ...v1Body,
       schema: "zhuwei.campaign-continuity-manifest/v1",
@@ -143,81 +245,23 @@ describe("chapter continuity manifest responsibility", () => {
       authority,
       "submission:continuity-manifest:precedent",
       "我按既定裁定检查门轴是否能被徒手推开。",
-      (rootActionId) => noncombatCheckProposal(rootActionId, {
-        goal: "检查门轴是否能被徒手推开",
-        method: "抵住门板后稳定发力",
-        ability: "str",
-        skill: "athletics",
-        dc: 10,
-        duration: { unit: "second", value: 1 },
-        adjudicationPrecedent: {
-          kind: "record",
-          publicRuleBasis: ["SRD 5.1：力量（运动）检定可用于以蛮力突破障碍。"],
-          applicabilityScope: { kind: "scene", ref: "wake" },
-        },
-        success: [],
-        failure: [],
-      }) as unknown as JsonRecord,
+      precedentProposal,
     );
     expect(precedent.kind, JSON.stringify(precedent)).toBe("committed");
+
+    const faction = await runAction(
+      authority,
+      "submission:continuity-manifest:faction",
+      "我确认守夜人与夜巡会正在按既有职责准备警戒绳。",
+      factionDefinitionProposal,
+    );
+    expect(faction.kind, JSON.stringify(faction)).toBe("committed");
 
     const formed = await runAction(
       authority,
       "submission:continuity-manifest:form",
       "我留意守夜人的例行准备。",
-      (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "resolveDirectConsequences",
-        duration: { unit: "second", value: 1 },
-        frozenCosts: [],
-        success: [],
-        failure: [],
-      }, {
-        goal: "让守夜人按有限知识形成封门计划",
-        method: "观察守夜人的例行准备而不替他作决定",
-        dynamicMaterializations: [{
-          kind: "faction",
-          factRef: FACTION_REF,
-          causalBasisRefs: [],
-          visibilityPolicyRef: `visibility:npc:${NPC_ID}`,
-          definition: {
-            factionId: FACTION_REF,
-            name: "夜巡会",
-            goal: "不惊动灵堂地封闭院门",
-            memberRefs: [NPC_ID],
-            resourceRefs: [RESOURCE_REF],
-          },
-        }],
-        npcActions: [{
-          npcId: NPC_ID,
-          goal: "钟响后封闭院门",
-          method: "使用夜巡会的警戒绳",
-          knowledgeRefs: [NPC_KNOWLEDGE_REF],
-          actorPlan: {
-            factionRef: FACTION_REF,
-            planId: PLAN_ID,
-            premiseRefs: [NPC_KNOWLEDGE_REF],
-            nextStep: "用警戒绳封闭院门",
-            resourceRefs: [FACTION_REF, RESOURCE_REF],
-            activity: {
-              activityId: ACTIVITY_ID,
-              activityKind: "factionOperation",
-              intendedDurationMicros: "2000000",
-            },
-            due: { kind: "fictionTime", atFictionMicros: "3000000" },
-            trigger: null,
-            trace: {
-              factRef: "fact:continuity-manifest:warning-cord",
-              description: "院门前出现新拉起的警戒绳",
-              visibilityPolicyRef: "visibility:scene-observers",
-            },
-            alternateTarget: {
-              targetRef: "wake",
-              reason: "院门不可用时退守灵堂入口",
-            },
-          },
-          mechanicalProposal: null,
-        }],
-      }) as unknown as JsonRecord,
+      factionActorPlanProposal,
     );
     expect(formed.kind, JSON.stringify(formed)).toBe("committed");
 
@@ -225,21 +269,7 @@ describe("chapter continuity manifest responsibility", () => {
       authority,
       "submission:continuity-manifest:transition",
       "我确认本章结果，并让守夜人的既定计划延续到下一章。",
-      (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "advanceCampaignLifecycle",
-        lifecycleAction: "transitionChapter",
-        chapterRef: "chapter:continuity-manifest:second",
-        activityTransitions: [{ activityId: ACTIVITY_ID, disposition: "continue" }],
-      }, {
-        goal: "结束当前章并保持全部权威连续性",
-        method: "以当前事实、裁定和未到期计划作为下一章锚点",
-        scene: {
-          question: "下一章如何承接仍未到期的封门计划？",
-          pressure: "钟声仍在逼近。",
-          opportunities: ["继续观察院门"],
-          conclusionCandidate: null,
-        },
-      }) as unknown as JsonRecord,
+      chapterTransitionProposal,
     );
     expect(transitioned.kind, JSON.stringify(transitioned)).toBe("committed");
 

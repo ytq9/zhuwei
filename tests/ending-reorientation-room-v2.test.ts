@@ -3,10 +3,7 @@ import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import {
-  directConsequencesProposal,
-  productionActionPlanProposal,
-} from "./helpers/authoritative-proposal";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -29,6 +26,8 @@ const ALICE = Object.freeze({
   }),
 });
 const ALICE_ID = "character:ending-reorientation:alice";
+const CURRENT_SCENE_REF = "wake";
+const MATERIALIZATION_BASIS_REF = "fact:ending:shared-wake-context";
 
 function record(value: unknown, label: string): JsonRecord {
   expect(value, label).toBeTypeOf("object");
@@ -46,7 +45,25 @@ function authority(roomId: string) {
   return env.ROOMS.getByName(roomId) as unknown as Authority;
 }
 
-async function initialize(roomId: string) {
+async function acknowledgeCurrentDelivery(
+  room: Authority,
+  value: unknown,
+  label: string,
+) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+  const delivery = (value as JsonRecord).delivery;
+  if (typeof delivery !== "object" || delivery === null || Array.isArray(delivery)) return;
+  const current = delivery as JsonRecord;
+  if (current.kind !== "current") return;
+  const frame = record(current.frame, `${label} delivery frame`);
+  const deliveryId = String(frame.deliveryId);
+  await expect(room.acknowledge(ALICE, deliveryId)).resolves.toMatchObject({
+    kind: "acknowledged",
+    deliveryId,
+  });
+}
+
+async function initialize(roomId: string, hitPointsCurrent = 20) {
   const room = authority(roomId);
   const initialized = record(await room.initializeAuthoritative({
     roomId,
@@ -61,7 +78,7 @@ async function initialize(roomId: string) {
         scores: { str: 12, dex: 12, con: 12, int: 14, wis: 12, cha: 10 },
         proficiency: 2,
         skills: ["investigation"],
-        hp: { current: 20, max: 20, temp: 0 },
+        hp: { current: hitPointsCurrent, max: 20, temp: 0 },
         ac: 12,
         speed: 30,
         resources: {},
@@ -69,8 +86,27 @@ async function initialize(roomId: string) {
         backpack: [],
       },
     }],
+    fixtureFacts: [
+      {
+        knowledgeRef: "knowledge:ending:lian-witnesses-shared-context",
+        holderEntityId: "npc:black-oak-will:lian",
+        holderName: "莉安·黑橡",
+        sceneId: CURRENT_SCENE_REF,
+        content: "莉安与阿莱莎正在同一个公开现场中。",
+      },
+      {
+        factRef: MATERIALIZATION_BASIS_REF,
+        kind: "establishedCommunicationChannel",
+        participants: [ALICE_ID, "npc:black-oak-will:lian"],
+      },
+    ],
   }), `${roomId} initialization`);
   expect(initialized.created).toBe(true);
+  await acknowledgeCurrentDelivery(
+    room,
+    await room.observe(ALICE),
+    `${roomId} opening`,
+  );
   return {
     authority: room,
     capabilities: record(initialized.serviceCapabilities, "service capabilities"),
@@ -84,7 +120,7 @@ async function act(
   proposal: (rootActionId: string, request: JsonRecord) => JsonRecord,
   narration = "权威世界只保留已经提交的结果，并把决定权交还玩家。",
 ) {
-  return record(await handleRoomAction({
+  const outcome = record(await handleRoomAction({
     principal: ALICE,
     authority: room,
     kp: {
@@ -93,7 +129,7 @@ async function act(
         return proposal(String(request.rootActionId), request);
       },
       async narrate() {
-        return { body: narration, agencyClaims: [] };
+        return { body: narration };
       },
     },
   }, {
@@ -101,6 +137,8 @@ async function act(
     submissionId,
     text,
   }), `${submissionId} outcome`);
+  await acknowledgeCurrentDelivery(room, outcome, submissionId);
+  return outcome;
 }
 
 function endingCandidateProposal(
@@ -108,22 +146,21 @@ function endingCandidateProposal(
   endingCandidateRef: string,
   basisRefs: string[],
 ) {
-  return productionActionPlanProposal(rootActionId, {
-    operation: "advanceCampaignLifecycle",
-    lifecycleAction: "raiseEndingCandidate",
-    endingCandidateRef,
-    basisRefs,
-    unresolvedRefs: [],
-  }, {
+  return privateFormProposal(rootActionId, "materialization.v1", {
     goal: "依据已经固化的冲突结果识别真实收束",
     method: "只引用现有事实提出结局候选",
-    scene: {
-      question: "当前故事是否已经真实收束？",
-      pressure: "",
-      opportunities: [],
-      conclusionCandidate: endingCandidateRef,
-    },
-  }) as JsonRecord;
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.campaign-lifecycle-draft/v1",
+      action: "raiseEndingCandidate",
+      endingCandidateRef,
+      basisRefs,
+      unresolvedRefs: [],
+    }),
+    basisRefs: [CURRENT_SCENE_REF, ...basisRefs],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  }) as unknown as JsonRecord;
 }
 
 function conclusionProposal(
@@ -135,20 +172,110 @@ function conclusionProposal(
     consequenceRefs: string[];
   },
 ) {
-  return productionActionPlanProposal(rootActionId, {
-    operation: "advanceCampaignLifecycle",
-    lifecycleAction: "concludeStory",
-    ...input,
-  }, {
+  return privateFormProposal(rootActionId, "materialization.v1", {
     goal: "提交当前故事的真实结局与长期后果",
     method: "保留已经发生的胜负、损失和持续后果",
-    scene: {
-      question: "这个故事怎样结束？",
-      pressure: "",
-      opportunities: [],
-      conclusionCandidate: input.endingCandidateRef,
-    },
-  }) as JsonRecord;
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.campaign-lifecycle-draft/v1",
+      action: "concludeStory",
+      ...input,
+    }),
+    basisRefs: [CURRENT_SCENE_REF, input.endingCandidateRef],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  }) as unknown as JsonRecord;
+}
+
+function materializedFactProposal(
+  rootActionId: string,
+  input: {
+    goal: string;
+    method: string;
+    fact: JsonRecord;
+    basisRefs?: string[];
+  },
+) {
+  const proposal = privateFormProposal(rootActionId, "materialization.v1", {
+    goal: input.goal,
+    method: input.method,
+    proposedFact: JSON.stringify(input.fact),
+    basisRefs: [MATERIALIZATION_BASIS_REF, ...(input.basisRefs ?? [])],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  });
+  const step = proposal.loweredCausalProgram.steps[0];
+  if (step === undefined) throw new Error("materialization Form produced no causal step");
+  return {
+    proposal: proposal as unknown as JsonRecord,
+    factRef: `fact:v3-materialization:${rootActionId}:${proposal.causalActionProgram.semanticHash.slice("fnv1a64:".length)}:${step.nodeRef}`,
+  };
+}
+
+function meaningfulFailureProposal(
+  rootActionId: string,
+  input: {
+    precedentRef: string;
+    basisRefs: string[];
+    consequenceRefs: string[];
+    newOptions: Array<{ optionId: string; summary: string }>;
+    goal: string;
+    method: string;
+    durationValue: number;
+  },
+) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: input.goal,
+    method: input.method,
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.campaign-lifecycle-draft/v1",
+      action: "commitMeaningfulFailure",
+      precedentRef: input.precedentRef,
+      basisRefs: input.basisRefs,
+      consequenceRefs: input.consequenceRefs,
+      newOptions: input.newOptions,
+    }),
+    basisRefs: [
+      CURRENT_SCENE_REF,
+      ...input.basisRefs,
+      ...input.newOptions.map(({ optionId }) => optionId),
+    ],
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: input.durationValue,
+  }) as unknown as JsonRecord;
+}
+
+function unchangedRetryProposal(
+  rootActionId: string,
+  input: {
+    precedentRef: string;
+    goal: string;
+    method: string;
+  },
+) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: input.goal,
+    method: input.method,
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.campaign-lifecycle-draft/v1",
+      action: "retryFailedAction",
+      precedentRef: input.precedentRef,
+      changeKind: null,
+      evidenceRefs: [],
+    }),
+    basisRefs: [CURRENT_SCENE_REF],
+    resolution: "check",
+    ability: "str",
+    skill: "athletics",
+    dc: 15,
+    mode: "normal",
+    successConsequence: "轮盘打开。",
+    failureConsequence: "轮盘仍然关闭。",
+    durationUnit: "minute",
+    durationValue: 1,
+  }) as unknown as JsonRecord;
 }
 
 async function exportArchive(room: Authority, capability: unknown) {
@@ -187,7 +314,7 @@ function story(read: JsonRecord, storyRef: string) {
 describe("SPEC 0009 ending and reorientation through the real Room interface", () => {
   it("keeps a victorious conclusion and its long-term consequences durable, without admitting a retroactive hidden villain", async () => {
     const room = await initialize("ending-room-victory-v2");
-    const victoryFact = "fact:ending:victory-seal-destroyed";
+    let victoryFact = "";
     const endingCandidateRef = "ending:victory-seal-destroyed";
     const storyRef = "story:ending:victory";
     const consequences = [
@@ -199,22 +326,21 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
       room.authority,
       "submission:ending:victory-fact",
       "我完成最后的仪式，亲眼确认封印核心已经彻底熄灭。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        goal: "确认核心冲突已经取得不可撤销的胜利",
-        method: "完成仪式并观察封印核心彻底熄灭",
-        dynamicMaterializations: [{
-          kind: "fact",
-          factRef: victoryFact,
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:scene-observers",
-          definition: {
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "确认核心冲突已经取得不可撤销的胜利",
+          method: "完成仪式并观察封印核心彻底熄灭",
+          fact: {
             result: "封印核心已被摧毁",
             permanence: "不会自行复原",
           },
-        }],
-      }) as JsonRecord,
+        });
+        victoryFact = materialization.factRef;
+        return materialization.proposal;
+      },
     );
     expect(victory.kind, JSON.stringify(victory)).toBe("committed");
+    expect(victoryFact).toMatch(/^fact:v3-materialization:.+:[^:]+$/u);
 
     const raised = await act(
       room.authority,
@@ -264,25 +390,24 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
       longTermConsequences: consequences,
     });
 
-    const retroactiveVillainRef = "fact:ending:retroactive-hidden-villain";
+    let retroactiveVillainRef = "";
     const retroactive = await act(
       restored,
       "submission:ending:retroactive-villain",
       "我不要求续篇；只停在已经取得的胜利与尾声。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        goal: "撤销刚刚取得的胜利并强行延长同一个故事",
-        method: "事后宣称另有从未固化的幕后黑手",
-        dynamicMaterializations: [{
-          kind: "fact",
-          factRef: retroactiveVillainRef,
-          causalBasisRefs: [victoryFact],
-          visibilityPolicyRef: "visibility:hidden-until-evidence",
-          definition: {
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "撤销刚刚取得的胜利并强行延长同一个故事",
+          method: "事后宣称另有从未固化的幕后黑手",
+          basisRefs: [victoryFact],
+          fact: {
             kind: "retroactiveHiddenVillain",
             claim: "真正的幕后黑手刚刚出现，原胜利无效",
           },
-        }],
-      }) as JsonRecord,
+        });
+        retroactiveVillainRef = materialization.factRef;
+        return materialization.proposal;
+      },
     );
     const afterRetroactive = await exportArchive(
       restored,
@@ -310,8 +435,11 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
   });
 
   it("concludes an irreversible failure without resetting its canonical loss", async () => {
-    const room = await initialize("ending-room-irreversible-failure-v2");
-    const lossFact = "fact:ending:relic-lost-in-molten-shaft";
+    // The burn predates this room epoch, so genesis is the single authority
+    // for its already-settled HP loss; conclusion and recovery must preserve it.
+    const room = await initialize("ending-room-irreversible-failure-v2", 7);
+    let lossFact = "";
+    let responseOptionRef = "";
     const failureGoal = "goal:ending:recover-relic";
     const endingCandidateRef = "ending:irreversible-relic-loss";
     const storyRef = "story:ending:irreversible-failure";
@@ -319,46 +447,58 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
     const loss = await act(
       room.authority,
       "submission:ending:irreversible-loss",
-      "熔井坍塌时遗物永远坠入岩浆，我也被灼伤。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        goal: "结算已经发生且不可逆的遗物损失与伤势",
-        method: "按坍塌和灼伤的既定结果提交后果",
-        dynamicMaterializations: [{
-          kind: "fact",
-          factRef: lossFact,
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:scene-observers",
-          definition: {
+      "熔井坍塌时遗物永远坠入岩浆。",
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "固化已经发生且不可逆的遗物损失",
+          method: "确认遗物坠入熔井并已经熔毁",
+          fact: {
             result: "遗物已在熔井中熔毁",
             recoverable: false,
           },
-        }],
-        success: [{ kind: "changeHitPoints", targetRef: ALICE_ID, amount: -13 }],
-      }) as JsonRecord,
+        });
+        lossFact = materialization.factRef;
+        return materialization.proposal;
+      },
     );
     expect(loss.kind, JSON.stringify(loss)).toBe("committed");
+
+    const responseOption = await act(
+      room.authority,
+      "submission:ending:loss-response-option",
+      "遗物已经无法找回；我仍可选择接受失败并处理伤势与关系后果。",
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "固化失败后已经存在的可行动应对",
+          method: "依据不可逆损失识别仍可采取的应对",
+          basisRefs: [lossFact],
+          fact: {
+            kind: "opportunity",
+            summary: "接受失败并处理伤势与关系后果",
+          },
+        });
+        responseOptionRef = materialization.factRef;
+        return materialization.proposal;
+      },
+    );
+    expect(responseOption.kind, JSON.stringify(responseOption)).toBe("committed");
 
     const failure = await act(
       room.authority,
       "submission:ending:meaningful-failure",
       "我承认原目标已经不可逆失败，并决定如何面对这个损失。",
-      (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "commitMeaningfulFailure",
+      (rootActionId) => meaningfulFailureProposal(rootActionId, {
         precedentRef: failureGoal,
-        duration: { unit: "minute", value: 10 },
         basisRefs: [lossFact],
         consequenceRefs: ["遗物永久熔毁", "灼伤保留到后续治疗"],
-        newOptions: [{ id: "accept-loss", summary: "接受失败并处理长期后果" }],
-      }, {
+        newOptions: [{
+          optionId: responseOptionRef,
+          summary: "接受失败并处理长期后果",
+        }],
         goal: "夺回已经熔毁的遗物",
         method: "在熔井凝固后继续徒手寻找同一件遗物",
-        scene: {
-          question: "失去遗物后，角色如何面对已经失败的目标？",
-          pressure: "遗物已经不可恢复。",
-          opportunities: ["接受失败并处理伤势与关系后果"],
-          conclusionCandidate: endingCandidateRef,
-        },
-      }) as JsonRecord,
+        durationValue: 10,
+      }),
     );
     expect(failure.kind, JSON.stringify(failure)).toBe("committed");
 
@@ -408,7 +548,7 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
 
   it("concludes only after the player explicitly abandons the current adventure", async () => {
     const room = await initialize("ending-room-explicit-abandonment-v2");
-    const abandonmentFact = "fact:ending:player-explicitly-abandoned-expedition";
+    let abandonmentFact = "";
     const endingCandidateRef = "ending:explicit-abandonment";
     const storyRef = "story:ending:abandoned-expedition";
 
@@ -416,19 +556,17 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
       room.authority,
       "submission:ending:explicit-abandonment",
       "我明确放弃追查这次远征，带着现有伤势和知识离开。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        goal: "记录玩家明确放弃当前冲突与冒险",
-        method: "由玩家本人声明停止追查并离开",
-        dynamicMaterializations: [{
-          kind: "fact",
-          factRef: abandonmentFact,
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:scene-observers",
-          definition: {
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "记录玩家明确放弃当前冲突与冒险",
+          method: "由玩家本人声明停止追查并离开",
+          fact: {
             decision: "明确放弃当前远征",
           },
-        }],
-      }) as JsonRecord,
+        });
+        abandonmentFact = materialization.factRef;
+        return materialization.proposal;
+      },
     );
     expect(abandoned.kind, JSON.stringify(abandoned)).toBe("committed");
 
@@ -461,7 +599,10 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
       conclusion: rootEvents(archive, concluded)
         .find((event) => event.eventType === "StoryConcluded")?.payload,
     }).toEqual({
-      abandonmentRootEvents: expect.arrayContaining(["CanonicalFactDeclared"]),
+      abandonmentRootEvents: expect.arrayContaining([
+        "DefinitionRegistered",
+        "ImprovisedActionResolved",
+      ]),
       conclusion: expect.objectContaining({
         storyId: storyRef,
         outcome: "playerAbandoned",
@@ -472,65 +613,65 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
 
   it("rejects the identical reroll and reorients a stuck player to an already-canonical opportunity", async () => {
     const room = await initialize("ending-room-reorientation-v2");
-    const opportunityRef = "opportunity:ending:known-drain-passage";
-    const failureBasisRef = "fact:ending:sealed-vault-wheel-broken";
+    let opportunityRef = "";
+    let failureBasisRef = "";
     const failureGoal = "goal:ending:open-sealed-vault";
     const failedMethod = "继续徒手转动已经熔断的同一个轮盘";
 
-    const setup = await act(
+    const opportunitySetup = await act(
       room.authority,
       "submission:ending:canonical-opportunity",
-      "我已经发现旧排水渠，同时确认正门轮盘已经熔断。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        goal: "固化已经发现的旁路机会和正门现状",
-        method: "观察排水渠入口并检查熔断轮盘",
-        dynamicMaterializations: [
-          {
+      "我已经发现旧排水渠仍然可以调查。",
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "固化已经发现的旁路机会",
+          method: "观察旧排水渠入口",
+          fact: {
             kind: "opportunity",
-            factRef: opportunityRef,
-            causalBasisRefs: [],
-            visibilityPolicyRef: "visibility:scene-observers",
-            definition: {
-              summary: "已发现的旧排水渠仍可调查",
-              cost: "需要绳索并接受绕行耗时",
-            },
+            summary: "已发现的旧排水渠仍可调查",
+            cost: "需要绳索并接受绕行耗时",
           },
-          {
-            kind: "fact",
-            factRef: failureBasisRef,
-            causalBasisRefs: [],
-            visibilityPolicyRef: "visibility:scene-observers",
-            definition: { result: "正门轮盘已经熔断，原路线关闭" },
-          },
-        ],
-      }) as JsonRecord,
+        });
+        opportunityRef = materialization.factRef;
+        return materialization.proposal;
+      },
     );
-    expect(setup.kind, JSON.stringify(setup)).toBe("committed");
+    expect(opportunitySetup.kind, JSON.stringify(opportunitySetup)).toBe("committed");
+
+    const failureBasisSetup = await act(
+      room.authority,
+      "submission:ending:sealed-wheel-fact",
+      "我确认正门轮盘已经熔断，原路线关闭。",
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "固化正门轮盘的当前状态",
+          method: "检查已经熔断的正门轮盘",
+          fact: {
+            result: "正门轮盘已经熔断，原路线关闭",
+          },
+        });
+        failureBasisRef = materialization.factRef;
+        return materialization.proposal;
+      },
+    );
+    expect(failureBasisSetup.kind, JSON.stringify(failureBasisSetup)).toBe("committed");
 
     const failure = await act(
       room.authority,
       "submission:ending:route-failure",
       "我徒手继续转动熔断轮盘，原路线仍然关闭。",
-      (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "commitMeaningfulFailure",
+      (rootActionId) => meaningfulFailureProposal(rootActionId, {
         precedentRef: failureGoal,
-        duration: { unit: "minute", value: 1 },
         basisRefs: [failureBasisRef],
         consequenceRefs: ["正门路线永久关闭"],
         newOptions: [{
-          id: opportunityRef,
+          optionId: opportunityRef,
           summary: "转向已经发现的旧排水渠",
         }],
-      }, {
         goal: "从正门打开密库",
         method: failedMethod,
-        scene: {
-          question: "正门路线失败后，玩家选择怎样的新应对？",
-          pressure: "正门已经不可再用。",
-          opportunities: [`调查已知机会 ${opportunityRef}`],
-          conclusionCandidate: null,
-        },
-      }) as JsonRecord,
+        durationValue: 1,
+      }),
     );
     expect(record(failure.receipt, "failure receipt")).toMatchObject({
       status: "committed",
@@ -542,28 +683,11 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
       room.authority,
       "submission:ending:identical-reroll",
       "我不改变任何条件，要求再掷一次同样的轮盘检定。",
-      (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "retryFailedAction",
+      (rootActionId) => unchangedRetryProposal(rootActionId, {
         precedentRef: failureGoal,
-        ability: "str",
-        skill: "athletics",
-        dc: 15,
-        mode: "normal",
-        duration: { unit: "minute", value: 1 },
-        frozenCosts: [],
-        success: [],
-        failure: [],
-      }, {
-        kind: "checkRequired",
         goal: "从正门打开密库",
         method: failedMethod,
-        risk: {
-          warning: "条件和做法完全未变。",
-          successConsequences: ["轮盘打开。"],
-          failureConsequences: ["轮盘仍然关闭。"],
-          retryGate: ["methodChanged", "situationAdvanced"],
-        },
-      }) as JsonRecord,
+      }),
     );
     expect(identicalRetry).toMatchObject({ kind: "rejected", code: "unchangedRetry" });
 
@@ -575,18 +699,16 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
       (rootActionId, request) => {
         preparedProjectionContainedOpportunity = JSON.stringify(request.projection)
           .includes(opportunityRef);
-        return directConsequencesProposal(rootActionId, {
+        return privateFormProposal(rootActionId, "observe.v1", {
           goal: "把玩家重新定向到已经固化的可行动机会",
           method: "重述正门失败，并指出已知旧排水渠仍可调查",
-          publicBasisRefs: [opportunityRef],
-          dynamicMaterializations: [],
-          scene: {
-            question: "玩家是否调查已经发现的旧排水渠，或提出其他方法？",
-            pressure: "正门路线已经关闭。",
-            opportunities: [`调查已知机会 ${opportunityRef}`],
-            conclusionCandidate: null,
-          },
-        }) as JsonRecord;
+          focus: "正门失败后的现有可行动路径",
+          desiredInformation: `正门已经关闭；已知机会 ${opportunityRef} 仍可调查。`,
+          basisRefs: [CURRENT_SCENE_REF, failureBasisRef, opportunityRef],
+          resolution: "direct",
+          durationUnit: "second",
+          durationValue: 1,
+        }) as unknown as JsonRecord;
       },
       `正门已经关闭；你已知道 ${opportunityRef} 仍可调查，也可以提出其他方法。`,
     );
@@ -595,8 +717,7 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
     const archive = await exportArchive(room.authority, room.capabilities.archiveExport);
     const reorientationEvents = rootEvents(archive, reoriented);
     const newlyInventedOpportunities = reorientationEvents
-      .filter((event) => event.eventType === "DefinitionRegistered")
-      .filter((event) => JSON.stringify(event.payload).includes('"definitionKind":"opportunity"'));
+      .filter((event) => event.eventType === "DefinitionRegistered");
     expect({
       preparedProjectionContainedOpportunity,
       reorientationUsedRandomness: reorientationEvents.some((event) =>

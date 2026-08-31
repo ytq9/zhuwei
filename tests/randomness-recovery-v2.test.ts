@@ -6,7 +6,7 @@ import { archiveSha256 } from "../app/_runtime/lib/room/archive";
 import {
   directConsequencesProposal,
   noncombatCheckProposal,
-  productionActionPlanProposal,
+  observationProposal,
 } from "./helpers/authoritative-proposal";
 
 type RecordValue = Record<string, unknown>;
@@ -196,11 +196,33 @@ async function initializedRestCapableRoom(suffix: string) {
   return { stub, archiveExport: capabilities.archiveExport };
 }
 
-async function commitSemanticIntent(
+async function commitRestStart(
+  stub: RandomnessAuthority,
+  submissionId: string,
+  hitDiceToSpend: number,
+) {
+  const prepared = record(await stub.prepare(ALICE, {
+    kind: "restStart",
+    submissionId,
+    restKind: "short",
+    mode: "personal",
+    hitDiceToSpend,
+    arcaneRecoverySlotLevels: [],
+  }), `${submissionId} prepare`);
+  expect(prepared.kind, JSON.stringify(prepared)).toBe("prepared");
+  const rootActionId = String(prepared.rootActionId);
+  return stub.commit(
+    ALICE,
+    String(prepared.preparedActionId),
+    { kind: "authenticatedRestStart", rootActionId },
+  );
+}
+
+async function commitObservationIntent(
   stub: RandomnessAuthority,
   submissionId: string,
   text: string,
-  mechanicalProposal: Parameters<typeof productionActionPlanProposal>[1],
+  duration: { unit: "second" | "hour"; value: number },
 ) {
   const prepared = record(await stub.prepare(ALICE, {
     kind: "intent",
@@ -213,9 +235,10 @@ async function commitSemanticIntent(
   return stub.commit(
     ALICE,
     String(prepared.preparedActionId),
-    productionActionPlanProposal(rootActionId, mechanicalProposal, {
+    observationProposal(rootActionId, {
       goal: text,
       method: text,
+      duration,
       proposalAttemptId: `${rootActionId}:proposal:1`,
     }),
   );
@@ -375,40 +398,22 @@ describe("Room DO authoritative randomness crash recovery", () => {
 
   it("rejects another persisted activity-due root slice substituted into this submission journal", async () => {
     const room = await initializedRestCapableRoom("tampered-cross-root-activity-due-slice");
-    await expect(commitSemanticIntent(
+    await expect(commitRestStart(
       room.stub,
       "submission:tampered-cross-root:rest-start",
-      "我短休一小时并花一枚生命骰。",
-      {
-        operation: "resolveRest",
-        restKind: "short",
-        hitDiceToSpend: 1,
-        arcaneRecoverySlotLevels: [],
-      },
+      1,
     )).resolves.toMatchObject({ kind: "committed" });
-    await expect(commitSemanticIntent(
+    await expect(commitObservationIntent(
       room.stub,
       "submission:tampered-cross-root:time-passage",
       "我保持休息，直到一小时过去。",
-      {
-        operation: "resolveDirectConsequences",
-        duration: { unit: "hour", value: 1 },
-        frozenCosts: [],
-        success: [],
-        failure: [],
-      },
+      { unit: "hour", value: 1 },
     )).resolves.toMatchObject({ kind: "committed" });
-    await expect(commitSemanticIntent(
+    await expect(commitObservationIntent(
       room.stub,
       "submission:tampered-cross-root:settle-rest",
       "一小时已过，我先结算休整。",
-      {
-        operation: "resolveDirectConsequences",
-        duration: { unit: "second", value: 1 },
-        frozenCosts: [],
-        success: [],
-        failure: [],
-      },
+      { unit: "second", value: 1 },
     )).resolves.toMatchObject({ kind: "committed" });
 
     const prepared = record(await room.stub.prepare(ALICE, {
@@ -470,28 +475,16 @@ describe("Room DO authoritative randomness crash recovery", () => {
 
   it("fails closed for an activity-due journal whose recovery predates root binding", async () => {
     const room = await initializedRestCapableRoom("legacy-unbound-activity-due");
-    await expect(commitSemanticIntent(
+    await expect(commitRestStart(
       room.stub,
       "submission:legacy-unbound-activity-due:rest-start",
-      "我短休一小时并花一枚生命骰。",
-      {
-        operation: "resolveRest",
-        restKind: "short",
-        hitDiceToSpend: 1,
-        arcaneRecoverySlotLevels: [],
-      },
+      1,
     )).resolves.toMatchObject({ kind: "committed" });
-    await expect(commitSemanticIntent(
+    await expect(commitObservationIntent(
       room.stub,
       "submission:legacy-unbound-activity-due:time-passage",
       "我保持休息，直到一小时过去。",
-      {
-        operation: "resolveDirectConsequences",
-        duration: { unit: "hour", value: 1 },
-        frozenCosts: [],
-        success: [],
-        failure: [],
-      },
+      { unit: "hour", value: 1 },
     )).resolves.toMatchObject({ kind: "committed" });
 
     const prepared = record(await room.stub.prepare(ALICE, {
@@ -702,15 +695,10 @@ describe("Room DO authoritative randomness crash recovery", () => {
       code: "sceneRandomnessSettlementInProgress",
     });
 
-    const beforeRecovery = record(await room.stub.exportAuthoritativeArchive(
-      room.archiveExport,
-    ), "pre-recovery archive export");
-    const beforeRecoveryEvents = list(
-      record(beforeRecovery.archive, "pre-recovery archive").events,
-      "pre-recovery events",
-    ).map((entry) => record(entry, "pre-recovery event"));
-    expect(beforeRecoveryEvents.filter((event) =>
-      event.rootActionId === blockedAction.rootActionId)).toHaveLength(0);
+    await expect(room.stub.exportAuthoritativeArchive(room.archiveExport)).resolves.toEqual({
+      kind: "retryableFailure",
+      code: "archiveSettlementPending",
+    });
 
     const recovered = record(await room.stub.commit(
       ALICE,
@@ -718,6 +706,15 @@ describe("Room DO authoritative randomness crash recovery", () => {
       structuredClone(room.proposal),
     ), "settlement owner recovery");
     expect(recovered.kind, JSON.stringify(recovered)).toBe("committed");
+    const afterRecovery = record(await room.stub.exportAuthoritativeArchive(
+      room.archiveExport,
+    ), "post-recovery archive export");
+    const afterRecoveryEvents = list(
+      record(afterRecovery.archive, "post-recovery archive").events,
+      "post-recovery events",
+    ).map((entry) => record(entry, "post-recovery event"));
+    expect(afterRecoveryEvents.filter((event) =>
+      event.rootActionId === blockedAction.rootActionId)).toHaveLength(0);
 
     const afterRelease = await preparedDirectAction(room.stub, "released-same-scene");
     await expect(room.stub.commit(
@@ -762,18 +759,24 @@ describe("Room DO authoritative randomness crash recovery", () => {
       code: "sceneRandomnessSettlementInProgress",
     });
 
-    const exported = record(await room.stub.exportAuthoritativeArchive(
-      room.archiveExport,
-    ), "request-lock archive export");
-    const events = list(record(exported.archive, "request-lock archive").events, "request-lock events")
-      .map((entry) => record(entry, "request-lock event"));
-    expect(events.filter((event) => event.rootActionId === contenderRootActionId)).toHaveLength(0);
+    await expect(room.stub.exportAuthoritativeArchive(room.archiveExport)).resolves.toEqual({
+      kind: "retryableFailure",
+      code: "archiveSettlementPending",
+    });
 
     await expect(room.stub.commit(
       ALICE,
       room.preparedActionId,
       structuredClone(room.proposal),
     )).resolves.toMatchObject({ kind: "committed" });
+    const exported = record(await room.stub.exportAuthoritativeArchive(
+      room.archiveExport,
+    ), "request-lock recovered archive export");
+    const events = list(
+      record(exported.archive, "request-lock recovered archive").events,
+      "request-lock recovered events",
+    ).map((entry) => record(entry, "request-lock recovered event"));
+    expect(events.filter((event) => event.rootActionId === contenderRootActionId)).toHaveLength(0);
   });
 
   it("does not extend a crashed random settlement lock to another scene", async () => {

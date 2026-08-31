@@ -28,7 +28,11 @@ const ALICE = Object.freeze({
 const BOB = Object.freeze({
   principal: Object.freeze({ id: "principal:actor-plan-due:bob", sessionVersion: 1 }),
 });
+const CAROL = Object.freeze({
+  principal: Object.freeze({ id: "principal:actor-plan-due:carol", sessionVersion: 1 }),
+});
 const PLAYER_CHARACTER_ID = "character:actor-plan-due:alice";
+const ACTIVITY_CHARACTER_ID = "character:actor-plan-due:carol";
 const NPC_ID = "npc:actor-plan-due:watcher";
 const NPC_KNOWLEDGE_REF = "knowledge:actor-plan-due:hidden-watch-order";
 const NPC_UNFROZEN_KNOWLEDGE_REF = "knowledge:actor-plan-due:unfrozen-watch-secret";
@@ -60,49 +64,87 @@ async function unexpectedDueActorPlan(): Promise<never> {
   throw new Error("this action must not reach a due ActorPlan decision");
 }
 
-function formationProposal(_rootActionId: string): JsonRecord {
-  return {
-    kind: "authenticatedCampaignAction",
-    action: "formNpcPlan",
-    npcId: NPC_ID,
+function formationProposal(rootActionId: string): JsonRecord {
+  return actorPlanFormationProposal(rootActionId, {
+    due: { kind: "activityCompletion" },
+    trigger: null,
+  });
+}
+
+function triggerFormationProposal(rootActionId: string): JsonRecord {
+  return actorPlanFormationProposal(rootActionId, {
+    due: null,
+    trigger: {
+      kind: "knowledgeAcquired",
+      knowledgeRef: NPC_KNOWLEDGE_REF,
+    },
+  });
+}
+
+function mechanicalFormationProposal(rootActionId: string): JsonRecord {
+  return formationProposal(rootActionId);
+}
+
+function actorPlanFormationProposal(
+  rootActionId: string,
+  schedule: {
+    due: { kind: "activityCompletion" } | null;
+    trigger: { kind: "knowledgeAcquired"; knowledgeRef: string } | null;
+  },
+  alternateTarget: { targetRef: string; reason: string } = {
+    targetRef: "wake",
+    reason: "院门已经不可用时，改为守住灵堂入口",
+  },
+): JsonRecord {
+  const proposedFact = JSON.stringify({
+    schema: "zhuwei.actor-plan-draft/v1",
+    npcRef: NPC_ID,
+    factionRef: null,
     planId: PLAN_ID,
     goal: "让守夜人依据自己的密令形成到期封门计划",
-    nextAction: "用警戒绳封闭院门",
     premiseRefs: [NPC_KNOWLEDGE_REF],
+    nextStep: "用警戒绳封闭院门",
     resourceRefs: [],
     activity: {
       activityId: ACTIVITY_ID,
       activityKind: "factionOperation",
       intendedDurationMicros: "1000000",
     },
-    due: { kind: "fictionTime", atFictionMicros: "1000000" },
-    trigger: null,
+    due: schedule.due,
+    trigger: schedule.trigger,
     trace: {
       factRef: TRACE_FACT_REF,
       description: "院门前出现一条新拉起的警戒绳",
       visibilityPolicyRef: "visibility:scene-observers",
     },
-    alternateTarget: {
-      targetRef: "wake",
-      reason: "院门已经不可用时，改为守住灵堂入口",
-    },
+    alternateTarget,
+  });
+  const draft = {
+    goal: "让守夜人形成一项有限知识计划",
+    method: "formActorPlan",
+    proposedFact,
+    basisRefs: [...new Set([
+      "wake",
+      NPC_ID,
+      NPC_KNOWLEDGE_REF,
+      alternateTarget.targetRef,
+    ])],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
   };
-}
-
-function triggerFormationProposal(rootActionId: string): JsonRecord {
-  const proposal = formationProposal(rootActionId);
+  const program = compileKpFormDraft("materialization.v1", draft);
   return {
-    ...proposal,
-    due: null,
-    trigger: {
-      kind: "knowledgeAcquired",
-      knowledgeRef: NPC_KNOWLEDGE_REF,
-    },
+    kind: "privateFormProposal",
+    formId: "materialization.v1",
+    draft,
+    causalActionProgram: program,
+    loweredCausalProgram: lowerCausalActionProgram(program),
+    semanticFreezeHash: program.semanticHash,
+    repairUsed: false,
+    proposalAttemptId: `proposal:${rootActionId}:form-actor-plan`,
+    modelInvocationReceipt: { task: "proposal", result: "success" },
   };
-}
-
-function mechanicalFormationProposal(rootActionId: string): JsonRecord {
-  return formationProposal(rootActionId);
 }
 
 function executeDuePlanDecision(rootActionId: string) {
@@ -216,7 +258,10 @@ function playerIntentProposal(rootActionId: string): JsonRecord {
   };
 }
 
-async function initializeRoom(roomId: string): Promise<{
+async function initializeRoom(
+  roomId: string,
+  options: { withActivityCharacter?: boolean } = {},
+): Promise<{
   authority: Authority;
   administrationCapability: unknown;
   archiveCapability: unknown;
@@ -229,6 +274,9 @@ async function initializeRoom(roomId: string): Promise<{
     members: [
       { principalId: ALICE.principal.id, role: "host" },
       { principalId: BOB.principal.id, role: "player" },
+      ...(options.withActivityCharacter
+        ? [{ principalId: CAROL.principal.id, role: "player" }]
+        : []),
     ],
     characters: [{
       characterId: PLAYER_CHARACTER_ID,
@@ -239,7 +287,18 @@ async function initializeRoom(roomId: string): Promise<{
         abilityScores: { str: 10, dex: 12, con: 12, int: 14, wis: 12, cha: 10 },
         proficiencyBonus: 2,
       },
-    }],
+    }, ...(options.withActivityCharacter
+      ? [{
+          characterId: ACTIVITY_CHARACTER_ID,
+          controllerPrincipalId: CAROL.principal.id,
+          staticCard: {
+            name: "卡萝",
+            sceneId: "wake",
+            abilityScores: { str: 10, dex: 12, con: 12, int: 12, wis: 12, cha: 10 },
+            proficiencyBonus: 2,
+          },
+        }]
+      : [])],
     fixtureFacts: [{
       knowledgeRef: NPC_KNOWLEDGE_REF,
       holderEntityId: NPC_ID,
@@ -348,7 +407,7 @@ async function retireMechanicalNpc(authority: Authority): Promise<void> {
 async function startPlayerActivity(authority: Authority): Promise<void> {
   const submissionId = "submission:actor-plan-due:start-player-activity";
   const outcome = record(await handleRoomAction({
-    principal: ALICE,
+    principal: CAROL,
     authority,
     kp: {
       decideDueActorPlan: unexpectedDueActorPlan,
@@ -404,26 +463,6 @@ async function formDuePlan(
     },
   ), "ActorPlan formation outcome");
   expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
-  if (formedProposal.due !== null) {
-    const elapsedInput = {
-      kind: "intent",
-      submissionId: `${submissionId}:elapsed`,
-      text: "我继续观察一秒。",
-    };
-    const prepared = record(
-      await authority.prepare(ALICE, elapsedInput),
-      "ActorPlan formation elapsed-time preparation",
-    );
-    const elapsed = record(await authority.commit(
-      ALICE,
-      String(prepared.preparedActionId),
-      {
-        ...playerIntentProposal(String(prepared.rootActionId)),
-        rootActionId: prepared.rootActionId,
-      },
-    ), "ActorPlan formation elapsed-time outcome");
-    expect(elapsed.kind, JSON.stringify(elapsed)).toBe("committed");
-  }
 }
 
 async function archiveEvents(authority: Authority, archiveCapability: unknown): Promise<JsonRecord[]> {
@@ -930,7 +969,9 @@ describe("due ActorPlan Room Action phase", () => {
 
   it("rejects unfrozen due-plan activities, knowledge, and recipients before lifecycle events", async () => {
     const roomId = "actor-plan-due-capability-guard-v2";
-    const { authority, archiveCapability } = await initializeRoom(roomId);
+    const { authority, archiveCapability } = await initializeRoom(roomId, {
+      withActivityCharacter: true,
+    });
     await startPlayerActivity(authority);
     await formDuePlan(
       authority,
@@ -1034,16 +1075,13 @@ describe("due ActorPlan Room Action phase", () => {
     await formDuePlan(
       authority,
       "submission:actor-plan-due:form:frozen-recipient",
-      (rootActionId) => {
-        const proposal = formationProposal(rootActionId);
-        return {
-          ...proposal,
-          alternateTarget: {
-            targetRef: PLAYER_CHARACTER_ID,
-            reason: "院门处的行动需要直接告知在场的阿莱莎",
-          },
-        };
-      },
+      (rootActionId) => actorPlanFormationProposal(rootActionId, {
+        due: { kind: "activityCompletion" },
+        trigger: null,
+      }, {
+        targetRef: PLAYER_CHARACTER_ID,
+        reason: "院门处的行动需要直接告知在场的阿莱莎",
+      }),
     );
 
     const submissionId = "submission:actor-plan-due:frozen-recipient";

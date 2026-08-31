@@ -1115,16 +1115,7 @@ test("authoritative table buttons become trusted semantic actions without client
   const cases = [
     [{ kind: "joinCombat" }, "我明确加入当前遭遇；先攻及其他随机结果由房间权威生成。"],
     [{ kind: "extraAttack", targetId: "npc:warden" }, "我使用战争祭司的附赠攻击，目标为 npc:warden。"],
-    [{ kind: "endTurn" }, "我明确结束自己当前的战斗回合。"],
     [{ kind: "leaveFight", leaveKind: "surrender" }, "我明确放下抵抗并投降。"],
-    [{
-      kind: "restNow",
-      restKind: "short",
-      mode: "personal",
-      hitDice: 2,
-      arcaneRecoverySlotLevels: [2, 1, 1],
-    }, "我进行个人短休，并选择在合法结算时花费 2 枚生命骰、以奥术恢复取回 1 环、1 环、2 环法术位。"],
-    [{ kind: "cancelRest" }, "我中断自己的休整；若当前是休整表决，则我明确拒绝。"],
     [{
       kind: "castSpell",
       spellId: "bless",
@@ -1156,6 +1147,38 @@ test("authoritative table buttons become trusted semantic actions without client
       text,
     });
   }
+
+  assert.deepEqual(buildAuthoritativeButtonAction({
+    ...base,
+    command: { kind: "endTurn" },
+  }), {
+    kind: "combatEndTurn",
+    submissionId: "submission:button",
+  });
+  assert.deepEqual(buildAuthoritativeButtonAction({
+    ...base,
+    command: {
+      kind: "restNow",
+      restKind: "short",
+      mode: "personal",
+      hitDice: 2,
+      arcaneRecoverySlotLevels: [2, 1, 1],
+    },
+  }), {
+    kind: "restStart",
+    submissionId: "submission:button",
+    restKind: "short",
+    mode: "personal",
+    hitDiceToSpend: 2,
+    arcaneRecoverySlotLevels: [1, 1, 2],
+  });
+  assert.deepEqual(buildAuthoritativeButtonAction({
+    ...base,
+    command: { kind: "cancelRest" },
+  }), {
+    kind: "restInterrupt",
+    submissionId: "submission:button",
+  });
 
   assert.deepEqual(buildAuthoritativeButtonAction({
     ...base,

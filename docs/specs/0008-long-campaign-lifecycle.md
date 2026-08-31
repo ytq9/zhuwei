@@ -144,7 +144,7 @@ Campaign 可从 genesis 与完整连续事件重建所有章节、任期、成�
 ### 12.1 当前实现证据（2026-08-31）
 
 - `tests/world-campaign-v2.test.mjs` 覆盖成长待决、章节切换连续性、死亡/退役、转 NPC、继任与 provenance 继承均可回放；同一文件验证 `raiseEndingCandidate → concludeStory → recordEpilogueChoice → startSequel` 使用真实旧后果和新的 Story/Chapter 边界。`srdXp2014` 从累计 XP 事件跨越多级阈值后逐级打开玩家选择，里程碑与 XP 档案互斥，错误 XP 奖励的更正同时恢复累计值并关闭对应待决输入。
-- `tests/world-campaign-v2.test.mjs` 还覆盖 `awardExperience` 的 1–1,000,000 正整数边界、`ExperienceAwarded → AdvancementAvailable`、`milestone | srdXp2014` genesis、结局候选、故事收束、玩家尾声与各自 Root Action。0.4 的服务端 ActorPlan 形成、退休与 Activity 入口使用字段精确的 `authenticatedCampaignAction`；其他待决选择继续使用其字段精确的当前 capability，不恢复旧 typed ActionPlan transport。
+- `tests/world-campaign-v2.test.mjs` 还覆盖 `awardExperience` 的 1–1,000,000 正整数边界、`ExperienceAwarded → AdvancementAvailable`、`milestone | srdXp2014` genesis、结局候选、故事收束、玩家尾声与各自 Root Action。0.4 的 ActorPlan 形成使用 `materialization.v1` 私有 Form 编译出的当前 causal action，退休与 Activity 使用字段精确的 `authenticatedCampaignAction`；其他待决选择继续使用其字段精确的当前 capability，不恢复旧 typed ActionPlan transport。
 - `tests/multiplayer-room-v2.test.ts` 与 `tests/observer-projection-v2.test.mjs` 覆盖成长/退休/继任从可信控制权进入 Room Authority，以及继任者不继承前任私人知识或旧投递。精确通过数以同一冻结源码的 `refactor-log.md` 为准。
 - SRD 2014 累计阈值由 `character-progression.ts` 固定为 1–20 级表；大额奖励不自动升级，`CharacterAdvanced` 后若累计值仍达到下一阈值，会以新 `AdvancementAvailable` 继续等待该玩家，直到资格耗尽或到达 20 级。
 

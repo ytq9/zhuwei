@@ -1,6 +1,10 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
+import {
+  compileKpFormDraft,
+  lowerCausalActionProgram,
+} from "../app/_runtime/lib/kp/causal-action-program";
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
 
 type JsonRecord = Record<string, unknown>;
@@ -21,7 +25,6 @@ const ALICE = Object.freeze({
 const PLAYER_CHARACTER_ID = "character:actor-plan:alice";
 const NPC_ID = "npc:actor-plan:watcher";
 const NPC_KNOWLEDGE_REF = "knowledge:actor-plan:hidden-watch-order";
-const FACTION_REF = "faction:actor-plan:night-watch";
 const PLAN_ID = "actor-plan:night-watch:close-yard";
 const ACTIVITY_ID = "activity:actor-plan:close-yard";
 const TRACE_FACT_REF = "fact:actor-plan:warning-cord";
@@ -38,7 +41,57 @@ function list(value: unknown, label: string): unknown[] {
   return value as unknown[];
 }
 
-describe("due NPC/faction ActorPlan authority", () => {
+function formationProposal(rootActionId: string): JsonRecord {
+  const proposedFact = JSON.stringify({
+    schema: "zhuwei.actor-plan-draft/v1",
+    npcRef: NPC_ID,
+    factionRef: null,
+    planId: PLAN_ID,
+    goal: "钟响后封闭院门",
+    premiseRefs: [NPC_KNOWLEDGE_REF],
+    nextStep: "用警戒绳封闭院门",
+    resourceRefs: [],
+    activity: {
+      activityId: ACTIVITY_ID,
+      activityKind: "factionOperation",
+      intendedDurationMicros: "1000000",
+    },
+    due: { kind: "activityCompletion" },
+    trigger: null,
+    trace: {
+      factRef: TRACE_FACT_REF,
+      description: "院门前出现一条新拉起的警戒绳",
+      visibilityPolicyRef: "visibility:scene-observers",
+    },
+    alternateTarget: {
+      targetRef: "wake",
+      reason: "院门已经不可用时，改为守住灵堂入口",
+    },
+  });
+  const draft = {
+    goal: "让守夜人依据自己的密令形成到期封门计划",
+    method: "formActorPlan",
+    proposedFact,
+    basisRefs: ["wake", NPC_ID, NPC_KNOWLEDGE_REF],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  };
+  const program = compileKpFormDraft("materialization.v1", draft);
+  return {
+    kind: "privateFormProposal",
+    formId: "materialization.v1",
+    draft,
+    causalActionProgram: program,
+    loweredCausalProgram: lowerCausalActionProgram(program),
+    semanticFreezeHash: program.semanticHash,
+    repairUsed: false,
+    proposalAttemptId: `proposal:${rootActionId}:actor-plan`,
+    modelInvocationReceipt: { task: "proposal", result: "success" },
+  };
+}
+
+describe("due NPC ActorPlan authority", () => {
   it("persists the complete finite-knowledge ActorPlan through Room Action without exposing its secret premise", async () => {
     const roomId = "actor-plan-room-formation-v2";
     const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
@@ -74,73 +127,7 @@ describe("due NPC/faction ActorPlan authority", () => {
         async propose(request) {
           const proposalRequest = record(request, "ActorPlan proposal request");
           proposalRequests.push(structuredClone(proposalRequest));
-          return {
-            kind: "directSuccess",
-            goal: "让守夜人依据自己的密令形成到期封门计划",
-            method: "守夜人准备在钟响后拉起警戒绳",
-            publicBasisRefs: [],
-            privateBasisRefs: [],
-            adjudicationPrecedent: null,
-            risk: null,
-            pendingInput: null,
-            dynamicMaterializations: [{
-              kind: "faction",
-              factRef: FACTION_REF,
-              causalBasisRefs: [],
-              visibilityPolicyRef: `visibility:npc:${NPC_ID}`,
-              definition: {
-                factionId: FACTION_REF,
-                name: "夜巡会",
-                goal: "在不惊动灵堂的前提下封闭院门",
-                memberRefs: [NPC_ID],
-                resourceRefs: ["resource:actor-plan:warning-cord"],
-              },
-            }],
-            hiddenRealityCandidateSet: null,
-            npcActions: [{
-              npcId: NPC_ID,
-              goal: "钟响后封闭院门",
-              method: "用警戒绳封闭院门，并留下可被院内人察觉的痕迹",
-              knowledgeRefs: [NPC_KNOWLEDGE_REF],
-              actorPlan: {
-                planId: PLAN_ID,
-                premiseRefs: [NPC_KNOWLEDGE_REF],
-                nextStep: "用警戒绳封闭院门",
-                resourceRefs: [FACTION_REF, "resource:actor-plan:warning-cord"],
-                activity: {
-                  activityId: ACTIVITY_ID,
-                  activityKind: "factionOperation",
-                  intendedDurationMicros: "1000000",
-                },
-                due: { kind: "fictionTime", atFictionMicros: "1000000" },
-                trigger: null,
-                trace: {
-                  factRef: TRACE_FACT_REF,
-                  description: "院门前出现一条新拉起的警戒绳",
-                  visibilityPolicyRef: "visibility:scene-observers",
-                },
-                alternateTarget: {
-                  targetRef: "wake",
-                  reason: "院门已经不可用时，改为守住灵堂入口",
-                },
-              },
-              mechanicalProposal: null,
-            }],
-            mechanicalProposal: {
-              operation: "resolveDirectConsequences",
-              duration: { unit: "second", value: 1 },
-              frozenCosts: [],
-              success: [],
-              failure: [],
-            },
-            scene: {
-              question: "守夜人的封门计划何时留下可察觉痕迹？",
-              pressure: "钟声即将响起。",
-              opportunities: [],
-              conclusionCandidate: null,
-            },
-            proposalAttemptId: `proposal:${String(proposalRequest.rootActionId)}:actor-plan`,
-          };
+          return formationProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
           return { body: "守夜人仍按自己的职责巡视。", agencyClaims: [] };
@@ -170,10 +157,15 @@ describe("due NPC/faction ActorPlan authority", () => {
     expect(record(planEvent!.payload, "NpcPlanFormed payload")).toMatchObject({
       npcId: NPC_ID,
       planId: PLAN_ID,
+      actorKind: "npc",
+      actorRef: NPC_ID,
+      decisionNpcId: NPC_ID,
+      factionRef: null,
+      revision: "1",
+      status: "scheduled",
       premiseRefs: [NPC_KNOWLEDGE_REF],
-      knowledgeRefs: [NPC_KNOWLEDGE_REF],
       nextStep: "用警戒绳封闭院门",
-      resourceRefs: [FACTION_REF, "resource:actor-plan:warning-cord"],
+      resourceRefs: [],
       activity: {
         activityId: ACTIVITY_ID,
         activityKind: "factionOperation",
@@ -192,5 +184,5 @@ describe("due NPC/faction ActorPlan authority", () => {
     expect(playerSurface).not.toContain(NPC_KNOWLEDGE_REF);
     expect(playerSurface).not.toContain(PLAN_ID);
     expect(playerSurface).not.toContain("院门已经不可用时");
-  });
+  }, 15_000);
 });

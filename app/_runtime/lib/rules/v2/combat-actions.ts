@@ -68,7 +68,6 @@ import type {
   EventType,
   JsonRecord,
   PublicReceipt,
-  ScopeProof,
   StepResult,
 } from "./model";
 import { rejected } from "./results";
@@ -137,6 +136,9 @@ type Draft = {
   resolutionId?: string;
   visibilityPolicyId?: string;
   secrecy?: EventEnvelope["secrecy"];
+  reads?: string[];
+  writes?: string[];
+  creates?: string[];
 };
 
 type DiceSpec = {
@@ -153,23 +155,33 @@ function sequence(
   drafts: Draft[],
   additions: JsonRecord = {},
 ): StepResult {
+  const createdScopes = new Set(drafts.flatMap((draft) => draft.creates ?? []));
+  const transactionScopeProof = createScopeProof(
+    source,
+    drafts.flatMap((draft) => draft.reads ?? ["combat:authoritative-state"])
+      .filter((scope) => !createdScopes.has(scope)),
+    drafts.flatMap((draft) => draft.writes ?? [
+      "combat:authoritative-state",
+      `receipt:${rootActionId}`,
+    ]).filter((scope) => !createdScopes.has(scope)),
+    [...createdScopes],
+  );
   let state = source;
   const events: EventEnvelope[] = [];
   let receipt: PublicReceipt | undefined;
-  let scopeProof: ScopeProof | undefined;
   for (const draft of drafts) {
-    scopeProof = createScopeProof(
+    const eventScopeProof = createScopeProof(
       state,
-      ["combat:authoritative-state"],
-      [`combat:authoritative-state`, `receipt:${rootActionId}`],
-      [],
+      draft.reads ?? ["combat:authoritative-state"],
+      draft.writes ?? ["combat:authoritative-state", `receipt:${rootActionId}`],
+      draft.creates ?? [],
     );
     const transition = createEventTransition(state, profiles, {
       rootActionId,
       ...(draft.resolutionId === undefined ? {} : { resolutionId: draft.resolutionId }),
       eventType: draft.eventType,
       payload: draft.payload,
-      scopeProof,
+      scopeProof: eventScopeProof,
       visibilityPolicyId: draft.visibilityPolicyId ?? "visibility:combat-observers",
       secrecy: draft.secrecy ?? "public",
     });
@@ -183,8 +195,15 @@ function sequence(
     state,
     cache: state,
     stateHash: events[events.length - 1].stateHashAfter,
-    scopeProof: scopeProof!,
-    receipt: receipt!,
+    scopeProof: transactionScopeProof,
+    receipt: {
+      ...receipt!,
+      eventRange: {
+        fromEventSeq: events[0].eventSeq,
+        toEventSeq: events[events.length - 1].eventSeq,
+      },
+      scopeProofHash: transactionScopeProof.proofHash,
+    },
     ...additions,
   } as StepResult;
 }
@@ -3488,6 +3507,8 @@ function invokeEnvironmentalStunt(
       },
       visibilityPolicyId: `visibility:character-controller:${actorCharacterId}`,
       secrecy: "private",
+      reads: [`resource:${actorCharacterId}:${resourceRef}`],
+      writes: [`resource:${actorCharacterId}:${resourceRef}`],
     };
   }
 

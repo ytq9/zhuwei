@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
 import {
-  directConsequencesProposal,
-  productionActionPlanProposal,
+  dynamicPassageMoveProposal,
+  privateFormProposal,
 } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
@@ -74,9 +74,47 @@ function character(characterId: string, name: string, sceneId: string, hp = 20) 
   };
 }
 
+function tacticalGeometry(featureId: string): JsonRecord {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "0", y: "0" },
+        { x: "1200", y: "0" },
+        { x: "1200", y: "1200" },
+        { x: "0", y: "1200" },
+      ],
+    },
+    spawnPoints: [{ x: "120", y: "120", elevation: "0" }],
+    obstacles: [{
+      featureId,
+      kind: "barrier",
+      label: "密档室北侧石墙",
+      state: "intact",
+      polygon: [
+        { x: "0", y: "1140" },
+        { x: "1200", y: "1140" },
+        { x: "1200", y: "1200" },
+        { x: "0", y: "1200" },
+      ],
+      elevation: "0",
+      height: "120",
+      opaque: true,
+      impassable: true,
+      cover: "full",
+      propagation: "blocks",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
 async function initialize(
   roomId: string,
   characters = [character(ALICE_ID, "阿莱莎", "wake")],
+  fixtureFacts: unknown[] = [],
 ) {
   const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
   const members = characters.map((entry, index) => ({
@@ -89,6 +127,7 @@ async function initialize(
     moduleVersion: "social-resolution-v1",
     members,
     characters,
+    ...(fixtureFacts.length === 0 ? {} : { fixtureFacts }),
   }), `${roomId} initialization`);
   expect(initialized.created).toBe(true);
   return {
@@ -135,6 +174,104 @@ async function act(
   }), `${submissionId} outcome`);
 }
 
+function currentItemMaterializationProposal(
+  rootActionId: string,
+  input: Readonly<{
+    action: "materializeInScene" | "materializeAndAcquire";
+    entryRef: string;
+    definitionRef: string;
+    name: string;
+    description: string;
+    sceneRef: string;
+    causalBasisRefs: string[];
+    goal: string;
+  }>,
+) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: input.goal,
+    method: "materializeNarrativeItem",
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.narrative-item-draft/v1",
+      action: input.action,
+      entryRef: input.entryRef,
+      definitionRef: input.definitionRef,
+      name: input.name,
+      description: input.description,
+      causalBasisRefs: input.causalBasisRefs,
+    }),
+    basisRefs: [input.sceneRef, ...input.causalBasisRefs],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  });
+}
+
+function sceneItemAcquisitionProposal(
+  rootActionId: string,
+  input: Readonly<{ goal: string; sceneRef: string; itemRef: string }>,
+) {
+  return privateFormProposal(rootActionId, "materialization.v1", {
+    goal: input.goal,
+    method: "acquireSceneItem",
+    proposedFact: JSON.stringify({
+      schema: "zhuwei.scene-item-acquisition-draft/v1",
+      itemRef: input.itemRef,
+    }),
+    basisRefs: [input.sceneRef, input.itemRef],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  });
+}
+
+function itemInformationObservationProposal(
+  rootActionId: string,
+  input: Readonly<{
+    goal: string;
+    sceneRef: string;
+    itemRef: string;
+    sourceRef: string;
+    information: JsonRecord;
+  }>,
+) {
+  return privateFormProposal(rootActionId, "observe.v1", {
+    goal: input.goal,
+    method: "observeItemInformation",
+    focus: input.itemRef,
+    desiredInformation: JSON.stringify({
+      schema: "zhuwei.item-information-observation-draft/v1",
+      itemRef: input.itemRef,
+      sourceRef: input.sourceRef,
+      information: structuredClone(input.information),
+    }),
+    basisRefs: [input.sceneRef, input.itemRef],
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  });
+}
+
+function consumeHeldItemProposal(rootActionId: string, itemEntryId: string) {
+  const goal = "烧毁作为实物的密封信";
+  return privateFormProposal(rootActionId, "compound.v1", {
+    goal,
+    method: "把信投入火盆直到只剩灰烬",
+    stages: [{
+      goal,
+      method: "把已经读完的信投入火盆",
+      intendedOutcome: "密封信成为灰烬，无法再次阅读或使用",
+      resolution: "direct",
+      basisRefs: [itemEntryId],
+    }],
+    intendedOutcome: "密封信成为灰烬，无法再次阅读或使用",
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+    itemRef: itemEntryId,
+    itemCount: 1,
+  });
+}
+
 function rootEvents(events: JsonRecord[], outcome: JsonRecord) {
   const rootActionId = String(record(outcome.receipt, "receipt").rootActionId);
   return events.filter((event) => event.rootActionId === rootActionId);
@@ -146,38 +283,23 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     const destinationSceneId = "scene:stage4:sealed-archive";
     const locationRef = "location:stage4:sealed-archive";
     const passageRef = "passage:stage4:wake-to-sealed-archive";
+    const geometry = tacticalGeometry("feature:stage4:sealed-archive:north-wall");
 
     const outcome = await act(
       room.authority,
       ALICE,
       "submission:stage4:dynamic-passage",
       "我沿着刚发现的旋梯进入此前无人登记的密档室。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        goal: "发现可通行的旋梯并立即进入密档室",
-        method: "确认台阶承重后沿旋梯下行",
-        duration: { unit: "minute", value: 1 },
-        dynamicMaterializations: [
-          {
-            kind: "location",
-            factRef: locationRef,
-            causalBasisRefs: [],
-            visibilityPolicyRef: "visibility:scene-observers",
-            definition: { sceneId: destinationSceneId, name: "封存档案室" },
-          },
-          {
-            kind: "passage",
-            factRef: passageRef,
-            causalBasisRefs: [],
-            visibilityPolicyRef: "visibility:scene-observers",
-            definition: {
-              passageId: passageRef,
-              fromSceneRef: "wake",
-              toSceneRef: destinationSceneId,
-              traversal: "石墙后的旋梯",
-            },
-          },
-        ],
-        success: [{ kind: "moveEntity", entityRef: ALICE_ID, sceneRef: destinationSceneId }],
+      (rootActionId) => dynamicPassageMoveProposal(rootActionId, {
+        sourceSceneRef: "wake",
+        locationRef,
+        destinationSceneRef: destinationSceneId,
+        destinationName: "封存档案室",
+        passageRef,
+        traversal: "石墙后的旋梯",
+        geometry,
+        durationUnit: "minute",
+        durationValue: 1,
       }) as JsonRecord,
     );
 
@@ -191,6 +313,13 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     expect(events.filter((event) => event.eventType === "DefinitionRegistered")
       .map((event) => record(record(event.payload, "definition payload").definition, "definition").definitionId))
       .toEqual(expect.arrayContaining([locationRef, passageRef]));
+    const locationDefinition = record(record(
+      events.find((event) => event.eventType === "DefinitionRegistered"
+        && record(record(event.payload, "definition payload").definition, "definition").definitionId
+          === locationRef)!.payload,
+      "location definition payload",
+    ).definition, "location definition");
+    expect(record(locationDefinition.content, "location content").geometry).toEqual(geometry);
     expect(record(
       record(events.find((event) => event.eventType === "CharacterMoved")!.payload, "movement payload"),
       "movement payload",
@@ -198,27 +327,62 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     expect(JSON.stringify(outcome.readModel)).toContain(destinationSceneId);
   });
 
+  it("rejects a dynamic movement destination that has no canonical tactical spawn", async () => {
+    const room = await initialize("stage4-world-dynamic-passage-no-spawn-v2");
+    const geometry = tacticalGeometry("feature:stage4:no-spawn:north-wall");
+    geometry.spawnPoints = [];
+
+    const outcome = await act(
+      room.authority,
+      ALICE,
+      "submission:stage4:dynamic-passage-no-spawn",
+      "我沿新发现的通道进入另一间密室。",
+      (rootActionId) => dynamicPassageMoveProposal(rootActionId, {
+        sourceSceneRef: "wake",
+        locationRef: "location:stage4:no-spawn",
+        destinationSceneRef: "scene:stage4:no-spawn",
+        destinationName: "无入口密室",
+        passageRef: "passage:stage4:wake-to-no-spawn",
+        traversal: "狭窄石道",
+        geometry,
+        durationUnit: "minute",
+        durationValue: 1,
+      }) as JsonRecord,
+    );
+
+    expect(outcome.kind, JSON.stringify(outcome)).toBe("needsKp");
+    const events = rootEvents(await archiveEvents(room.authority, room.archiveCapability), outcome);
+    expect(events.some((event) => [
+      "DefinitionRegistered",
+      "CanonicalFactDeclared",
+      "CharacterMoved",
+    ].includes(String(event.eventType)))).toBe(false);
+  });
+
   it("commits a legitimate empty-room result without forcing combat, clues, or rewards", async () => {
-    const room = await initialize("stage4-world-empty-room-v2");
+    const searchBasisRef = "fact:stage4:empty-side-room-search-coordination";
+    const room = await initialize(
+      "stage4-world-empty-room-v2",
+      [character(ALICE_ID, "阿莱莎", "wake")],
+      [{
+        factRef: searchBasisRef,
+        kind: "establishedCommunicationChannel",
+        participants: [ALICE_ID, "npc:black-oak-will:lian"],
+      }],
+    );
     const outcome = await act(
       room.authority,
       ALICE,
       "submission:stage4:empty-room",
       "我仔细查看这间闲置耳房。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
+      (rootActionId) => privateFormProposal(rootActionId, "materialization.v1", {
         goal: "确认耳房内是否有值得处理的事物",
         method: "依次检查地面、墙角和唯一一只空柜",
-        duration: { unit: "minute", value: 10 },
-        dynamicMaterializations: [{
-          kind: "fact",
-          factRef: "fact:stage4:empty-side-room",
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:scene-observers",
-          definition: {
-            finding: "房间确实空置，没有敌人、线索、宝物或可领取奖励",
-          },
-        }],
-        success: [],
+        proposedFact: "房间确实空置，没有敌人、线索、宝物或可领取奖励。",
+        basisRefs: [searchBasisRef],
+        resolution: "direct",
+        durationUnit: "minute",
+        durationValue: 10,
       }) as JsonRecord,
     );
 
@@ -227,20 +391,56 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     const eventTypes = events.map((event) => String(event.eventType));
     expect(eventTypes).toEqual(expect.arrayContaining([
       "DefinitionRegistered",
-      "CanonicalFactDeclared",
-      "FeasibilityRuled",
+      "ImprovisedActionResolved",
+      "FictionTimeAdvanced",
     ]));
-    expect(eventTypes.some((eventType) => [
+    const materializedFact = events
+      .filter((event) => event.eventType === "ImprovisedActionResolved")
+      .map((event) => record(event.payload, "empty-room resolution payload").fact)
+      .find((fact) => fact !== null && fact !== undefined
+        && record(fact, "empty-room fact candidate").kind === "dynamicOpenFact");
+    expect(record(record(materializedFact, "empty-room fact").value, "empty-room fact value"))
+      .toEqual({ description: "房间确实空置，没有敌人、线索、宝物或可领取奖励。" });
+    const knowledgeEvents = events.filter((event) => event.eventType === "KnowledgeAcquired");
+    expect(knowledgeEvents).toHaveLength(1);
+    const rootActionId = String(record(outcome.receipt, "empty-room receipt").rootActionId);
+    const knowledgePayload = record(knowledgeEvents[0]!.payload, "empty-room knowledge payload");
+    const causeFactId = String(knowledgePayload.causeFactId);
+    const causeFactPrefix = `fact:v3-causal-program:${rootActionId}:`;
+    expect(causeFactId.startsWith(causeFactPrefix)).toBe(true);
+    const programHashSuffix = causeFactId.slice(causeFactPrefix.length);
+    expect(knowledgePayload).toEqual({
+      characterId: ALICE_ID,
+      knowledgeRef: `evidence:v3:${rootActionId}:${programHashSuffix}:n01:success`,
+      objectKind: "sensoryEvidence",
+      layer: "full",
+      content: "房间确实空置，没有敌人、线索、宝物或可领取奖励。",
+      causeFactId,
+      acquisition: {
+        sense: "causalResolution",
+        sceneId: "wake",
+        method: "依次检查地面、墙角和唯一一只空柜",
+      },
+      visibility: "private",
+    });
+    expect(knowledgeEvents[0]).toMatchObject({
+      visibilityPolicyId: `visibility:knowledge-holder:${ALICE_ID}`,
+      secrecy: "private",
+    });
+    const forbiddenEventTypes = [
       "ItemDefinitionRegistered",
       "ItemMaterialized",
       "ItemAcquired",
-      "KnowledgeAcquired",
       "EncounterStarted",
       "InitiativeEstablished",
       "MilestoneGranted",
       "ExperienceAwarded",
+      "ResourceReserved",
+      "ResourceSpent",
+      "ResourceUsed",
       "ResourceChanged",
-    ].includes(eventType))).toBe(false);
+    ];
+    expect(eventTypes.filter((eventType) => forbiddenEventTypes.includes(eventType))).toEqual([]);
   });
 
   it("lets exactly one of two concurrent requests acquire one unique item entry", async () => {
@@ -255,16 +455,15 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
       ALICE,
       "submission:stage4:materialize-key",
       "我看见石台上只有一把黄铜钥匙。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
+      (rootActionId) => currentItemMaterializationProposal(rootActionId, {
+        action: "materializeInScene",
+        entryRef: itemEntryId,
+        definitionRef: itemDefinitionRef,
+        name: "唯一黄铜钥匙",
+        description: "石台上仅有的一把黄铜钥匙。",
+        sceneRef: "wake",
+        causalBasisRefs: [],
         goal: "确认石台上的唯一黄铜钥匙",
-        method: "仅观察它的位置，不拿取",
-        dynamicMaterializations: [{
-          kind: "item",
-          factRef: itemDefinitionRef,
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:scene-observers",
-          definition: { itemEntryId, name: "唯一黄铜钥匙", sceneRef: "wake" },
-        }],
       }) as JsonRecord,
     );
     expect(materialized.kind, JSON.stringify(materialized)).toBe("committed");
@@ -282,13 +481,10 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
             if (arrivals === 2) release();
             await bothProposalsReady;
             const request = record(value, `${suffix} proposal request`);
-            return productionActionPlanProposal(String(request.rootActionId), {
-              operation: "acquireItem",
-              itemRef: itemEntryId,
-              amount: 1,
-            }, {
+            return sceneItemAcquisitionProposal(String(request.rootActionId), {
               goal: "拿起石台上的唯一黄铜钥匙",
-              method: "伸手取走眼前唯一的一把钥匙",
+              sceneRef: "wake",
+              itemRef: itemEntryId,
             });
           },
           async narrate() {
@@ -318,6 +514,103 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     );
   });
 
+  it("uses the same item-information seam for sensory evidence on a non-document object", async () => {
+    const room = await initialize("stage4-world-item-sensory-evidence-v2", [
+      character(ALICE_ID, "阿莱莎", "wake"),
+    ]);
+    const itemEntryId = "item-entry:stage4:engraved-compass";
+    const sourceRef = "fact:item-information:stage4:engraved-compass-bearing";
+    const materialized = await act(
+      room.authority,
+      ALICE,
+      "submission:stage4:engraved-compass-materialize",
+      "我检查石台上的雕纹罗盘。",
+      (rootActionId) => currentItemMaterializationProposal(rootActionId, {
+        action: "materializeInScene",
+        entryRef: itemEntryId,
+        definitionRef: "item-definition:stage4:engraved-compass:1",
+        name: "雕纹罗盘",
+        description: "一只没有已登记机械效果的铜制罗盘。",
+        sceneRef: "wake",
+        causalBasisRefs: [],
+        goal: "确认石台上的雕纹罗盘",
+      }) as JsonRecord,
+    );
+    expect(materialized.kind, JSON.stringify(materialized)).toBe("committed");
+
+    for (const [suffix, invalidSourceRef] of [
+      ["foreign-namespace", "fact:hidden-world-state:engraved-compass"],
+      ["empty-stable-tail", "fact:item-information:"],
+    ] as const) {
+      const prepared = record(await room.authority.prepare(ALICE, {
+        kind: "intent",
+        submissionId: `submission:stage4:engraved-compass-invalid-source:${suffix}`,
+        text: "我观察罗盘，但这个来源引用不符合物件信息协议。",
+      }), "invalid item-information source prepare");
+      const rejected = record(await room.authority.commit(
+        ALICE,
+        String(prepared.preparedActionId),
+        itemInformationObservationProposal(String(prepared.rootActionId), {
+          goal: "观察罗盘呈现的方向证据",
+          sceneRef: "wake",
+          itemRef: itemEntryId,
+          sourceRef: invalidSourceRef,
+          information: {
+            kind: "sensoryEvidence",
+            sense: "visual",
+            content: "指针在无风的室内持续指向北侧封墙",
+          },
+        }),
+      ), "invalid item-information source outcome");
+      expect(rejected.kind).toBe("needsKp");
+      expect(JSON.stringify(rejected)).not.toContain(invalidSourceRef);
+    }
+
+    const privateDetail = "北侧封墙后的暗格刻有王室密记";
+    const observed = await act(
+      room.authority,
+      ALICE,
+      "submission:stage4:engraved-compass-observe",
+      "我观察罗盘指针与封墙之间的方向关系。",
+      (rootActionId) => itemInformationObservationProposal(rootActionId, {
+        goal: `观察罗盘直接呈现的方向证据：${privateDetail}`,
+        sceneRef: "wake",
+        itemRef: itemEntryId,
+        sourceRef,
+        information: {
+          kind: "sensoryEvidence",
+          sense: "visual",
+          content: "指针在无风的室内持续指向北侧封墙",
+        },
+      }) as JsonRecord,
+    );
+    expect(observed.kind, JSON.stringify(observed)).toBe("committed");
+    expect(JSON.stringify(observed.readModel)).toContain(sourceRef);
+    expect(JSON.stringify(observed.readModel)).toContain("北侧封墙");
+
+    const events = rootEvents(
+      await archiveEvents(room.authority, room.archiveCapability),
+      observed,
+    );
+    const sourceFacts = events.filter((event) =>
+      event.eventType === "ImprovisedActionResolved"
+      && record(event.payload, "item source payload").outcomeCode
+        === "item-information-source-frozen");
+    expect(sourceFacts).toHaveLength(1);
+    expect(record(sourceFacts[0].payload, "item source payload").fact).toMatchObject({
+      id: sourceRef,
+      kind: "itemInformationSource",
+      subjectRefs: [itemEntryId],
+    });
+    expect(events.filter((event) =>
+      event.eventType === "SensoryEvidenceAcquired"
+      && record(event.payload, "item evidence payload").factId === sourceRef)).toHaveLength(1);
+    const publicEvents = events.filter((event) => event.secrecy === "public");
+    expect(JSON.stringify(publicEvents)).not.toContain(privateDetail);
+    expect(publicEvents.find((event) => event.eventType === "FictionTimeAdvanced")?.payload)
+      .toMatchObject({ reason: "观察物件" });
+  });
+
   it("keeps two readers' knowledge after the letter is destroyed and never backfills an unread later arrival", async () => {
     const room = await initialize("stage4-world-destroyed-letter-knowledge-v2", [
       character(ALICE_ID, "阿莱莎", "wake"),
@@ -326,50 +619,74 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     ]);
     const itemEntryId = "item-entry:stage4:sealed-letter";
     const definitionRef = "item-definition:stage4:sealed-letter:1";
-    const knowledgeRef = "knowledge:stage4:letter-rendezvous";
+    const knowledgeRef = "fact:item-information:stage4:letter-rendezvous";
 
-    const acquired = await act(
+    const materialized = await act(
       room.authority,
       ALICE,
-      "submission:stage4:letter-acquire",
-      "我拿起桌上仅有的密封信。",
-      (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "acquireItem",
-        itemRef: itemEntryId,
-        amount: 1,
-      }, {
-        goal: "拿起桌上唯一的密封信",
-        method: "亲手取得信件",
-        dynamicMaterializations: [{
-          kind: "item",
-          factRef: definitionRef,
-          causalBasisRefs: [],
-          visibilityPolicyRef: "visibility:scene-observers",
-          definition: { itemEntryId, name: "密封信", sceneRef: "wake" },
-        }],
+      "submission:stage4:letter-materialize",
+      "我查看桌上仅有的密封信。",
+      (rootActionId) => currentItemMaterializationProposal(rootActionId, {
+        action: "materializeInScene",
+        entryRef: itemEntryId,
+        definitionRef,
+        name: "密封信",
+        description: "桌上仅有的一封密封信，封口完整。",
+        sceneRef: "wake",
+        causalBasisRefs: [],
+        goal: "确认桌上唯一的密封信",
       }) as JsonRecord,
     );
-    expect(acquired.kind, JSON.stringify(acquired)).toBe("committed");
+    expect(materialized.kind, JSON.stringify(materialized)).toBe("committed");
 
     for (const [principal, characterId, suffix] of [
       [ALICE, ALICE_ID, "alice"],
       [BOB, BOB_ID, "bob"],
     ] as const) {
+      if (suffix === "bob") {
+        const driftPrepared = record(await room.authority.prepare(BOB, {
+          kind: "intent",
+          submissionId: "submission:stage4:letter-read-drift",
+          text: "我读取同一封信，但不能改变它已经固化的正文。",
+        }), "Bob source-drift prepare");
+        const drift = record(await room.authority.commit(
+          BOB,
+          String(driftPrepared.preparedActionId),
+          itemInformationObservationProposal(String(driftPrepared.rootActionId), {
+            goal: "读取同一个已经固化的物件来源",
+            sceneRef: "wake",
+            itemRef: itemEntryId,
+            sourceRef: knowledgeRef,
+            information: {
+              kind: "sourceClaim",
+              semanticContent: "正午在王宫会面",
+              sourceBasis: "密封信正文",
+              motive: null,
+              formedAtFictionMicros: null,
+            },
+          }),
+        ), "Bob source-drift outcome");
+        expect(drift.kind).toBe("needsKp");
+        expect(JSON.stringify(drift)).not.toContain("午夜在旧渡口会面");
+        expect(JSON.stringify(drift)).not.toContain(knowledgeRef);
+      }
       const read = await act(
         room.authority,
         principal,
         `submission:stage4:letter-read:${suffix}`,
         "我亲自读完同一封信的会面时间与地点。",
-        (rootActionId) => directConsequencesProposal(rootActionId, {
+        (rootActionId) => itemInformationObservationProposal(rootActionId, {
           goal: "读懂信中约定的会面信息",
-          method: "在信件仍在现场时逐字阅读",
-          privateBasisRefs: [],
-          success: [{
-            kind: "acquireKnowledge",
-            knowledgeRef,
-            definitionRef,
-            value: "午夜在旧渡口会面",
-          }],
+          sceneRef: "wake",
+          itemRef: itemEntryId,
+          sourceRef: knowledgeRef,
+          information: {
+            kind: "sourceClaim",
+            semanticContent: "午夜在旧渡口会面",
+            sourceBasis: "密封信正文",
+            motive: null,
+            formedAtFictionMicros: null,
+          },
         }) as JsonRecord,
       );
       expect(read.kind, JSON.stringify(read)).toBe("committed");
@@ -377,19 +694,25 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
       expect(JSON.stringify(read.readModel)).toContain(characterId);
     }
 
+    const held = await act(
+      room.authority,
+      ALICE,
+      "submission:stage4:letter-acquire-after-reading",
+      "我拿起已经读完的密封信。",
+      (rootActionId) => sceneItemAcquisitionProposal(rootActionId, {
+        goal: "拿起已经读完的密封信",
+        sceneRef: "wake",
+        itemRef: itemEntryId,
+      }) as JsonRecord,
+    );
+    expect(held.kind, JSON.stringify(held)).toBe("committed");
+
     const destroyed = await act(
       room.authority,
       ALICE,
       "submission:stage4:letter-destroy",
       "我把已经读完的信投入火盆彻底烧毁。",
-      (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "useItem",
-        itemRef: itemEntryId,
-        itemActivityId: "use",
-      }, {
-        goal: "烧毁作为实物的密封信",
-        method: "把信投入火盆直到只剩灰烬",
-      }) as JsonRecord,
+      (rootActionId) => consumeHeldItemProposal(rootActionId, itemEntryId) as JsonRecord,
     );
     expect(destroyed.kind, JSON.stringify(destroyed)).toBe("committed");
 
@@ -398,14 +721,50 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
       CAROL,
       "submission:stage4:carol-arrives-after-letter",
       "我从庭院来到灵堂，但信已经烧毁。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        goal: "在信件烧毁之后来到灵堂",
-        method: "从庭院走入灵堂",
-        duration: { unit: "minute", value: 1 },
-        success: [{ kind: "moveEntity", entityRef: CAROL_ID, sceneRef: "wake" }],
-      }) as JsonRecord,
+      (rootActionId) => ({
+        kind: "authenticatedPartyAction",
+        action: "moveIndividually",
+        destinationSceneId: "wake",
+        fictionTimeCostMicros: "60000000",
+        rootActionId,
+      }),
     );
     expect(arrived.kind, JSON.stringify(arrived)).toBe("committed");
+    const arrivalEvents = rootEvents(
+      await archiveEvents(room.authority, room.archiveCapability),
+      arrived,
+    );
+    expect(arrivalEvents.filter((event) => event.eventType === "CharacterMoved"))
+      .toEqual([expect.objectContaining({
+        payload: expect.objectContaining({
+          characterId: CAROL_ID,
+          destinationSceneId: "wake",
+        }),
+      })]);
+
+    const unreadPrepared = record(await room.authority.prepare(CAROL, {
+      kind: "intent",
+      submissionId: "submission:stage4:carol-read-destroyed-letter",
+      text: "我尝试阅读那封已经烧毁的信。",
+    }), "Carol destroyed-letter prepare");
+    const unread = record(await room.authority.commit(
+      CAROL,
+      String(unreadPrepared.preparedActionId),
+      itemInformationObservationProposal(String(unreadPrepared.rootActionId), {
+        goal: "读取已经烧毁的物件来源",
+        sceneRef: "wake",
+        itemRef: itemEntryId,
+        sourceRef: knowledgeRef,
+        information: {
+          kind: "sourceClaim",
+          semanticContent: "午夜在旧渡口会面",
+          sourceBasis: "密封信正文",
+          motive: null,
+          formedAtFictionMicros: null,
+        },
+      }),
+    ), "Carol destroyed-letter outcome");
+    expect(unread.kind).toBe("needsKp");
 
     const [aliceView, bobView, carolView] = await Promise.all([
       room.authority.observe(ALICE),
@@ -427,7 +786,7 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
       event.eventType === "ItemUsed"
       && record(event.payload, "destroy payload").entryId === itemEntryId);
     expect(record(destroyedEvent!.payload, "destroyed item payload")).toMatchObject({
-      operation: "destroy",
+      purpose: "密封信成为灰烬，无法再次阅读或使用",
       quantityBefore: 1,
       quantityAfter: 0,
     });
@@ -492,11 +851,17 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
         async propose(value) {
           const request = record(value, "hazard proposal request");
           initialRootActionId = String(request.rootActionId);
-          return directConsequencesProposal(initialRootActionId, {
+          return privateFormProposal(initialRootActionId, "materialization.v1", {
             goal: "确认密封金库锁孔此前未定义的隐藏现实",
-            method: "把探针伸入锁孔取得直接证据",
-            dynamicMaterializations: [],
-            hiddenRealityCandidateSet: structuredClone(candidateSet),
+            method: "materializeHiddenReality",
+            proposedFact: JSON.stringify({
+              schema: "zhuwei.hidden-reality-candidate-set-draft/v1",
+              ...candidateSet,
+            }),
+            basisRefs: ["wake"],
+            resolution: "direct",
+            durationUnit: "second",
+            durationValue: 1,
           });
         },
         async narrate() {
@@ -511,19 +876,114 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     expect(interrupted).toMatchObject({ kind: "retryableFailure", code: "authorityTransient" });
     expect(checkpointFired).toBe(true);
 
-    const hpChanged = await act(
-      room.authority,
-      BOB,
-      "submission:stage4:bob-hp-change",
-      "我在庭院被坠落瓦片砸伤。",
-      (rootActionId) => directConsequencesProposal(rootActionId, {
-        goal: "结算庭院中已经发生的坠瓦伤害",
-        method: "按既定冲击扣除生命值",
-        success: [{ kind: "changeHitPoints", targetRef: BOB_ID, amount: -9 }],
-      }) as JsonRecord,
-    );
+    const bobBeforeHazard = record(await room.authority.observe(BOB), "Bob before yard hazard");
+    const bobReadModel = record(bobBeforeHazard.readModel, "Bob pre-hazard read model");
+    const bobTactical = record(bobReadModel.tacticalProjection, "Bob pre-hazard tactical projection");
+    const bobSelf = record(bobTactical.self, "Bob pre-hazard tactical self");
+    const bobPosition = record(bobSelf.position, "Bob pre-hazard position");
+    const centerXInches = Number(bobPosition.x);
+    const centerYInches = Number(bobPosition.y);
+    const elevationInches = Number(bobPosition.elevation);
+    expect(Number.isSafeInteger(centerXInches)).toBe(true);
+    expect(Number.isSafeInteger(centerYInches)).toBe(true);
+    expect(Number.isSafeInteger(elevationInches)).toBe(true);
+
+    const yardHazardDraft = {
+      goal: "让已经松脱的单片瓦沿垂直落点结算",
+      method: "坠瓦已经松脱并落入柏然脚下的小范围",
+      featureDescription: "庭院檐口上一片已经松脱的瓦",
+      intendedOutcome: "瓦片落下，只影响落点范围内未避开的角色，随后碎裂",
+      featureDisposition: "reasonable-open-blank",
+      basisRefs: ["yard"],
+      effectMode: "area-hazard",
+      activation: "direct",
+      material: "松脱瓦片与碎石",
+      centerXInches,
+      centerYInches,
+      elevationInches,
+      widthInches: 24,
+      depthInches: 24,
+      heightInches: 24,
+      objectAc: 10,
+      objectHitPoints: 1,
+      damageThreshold: 0,
+      immuneDamageTypes: ["poison", "psychic"],
+      initialPhase: "hanging",
+      phaseNames: ["hanging", "falling", "shattered"],
+      phaseOpaque: [false, false, false],
+      phaseImpassable: [false, false, false],
+      phaseCover: ["none", "none", "none"],
+      phaseEffectPropagation: ["passes", "passes", "passes"],
+      phaseTerrain: ["normal", "normal", "rubble"],
+      damageFromPhases: ["hanging"],
+      damageRemainingAtOrBelow: [0],
+      damageToPhases: ["falling"],
+      stuntFromPhases: ["hanging"],
+      stuntToPhases: ["falling"],
+      hazardFromPhases: ["falling"],
+      hazardToPhases: ["shattered"],
+      hazardTriggerPhase: "falling",
+      hazardResolvedPhase: "shattered",
+      trigger: "松脱瓦片垂直坠落",
+      areaOriginElevationInches: elevationInches + 36,
+      areaRadiusInches: 60,
+      propagation: "straight",
+      saveAbility: "dex",
+      saveDc: 30,
+      halfOnSuccess: false,
+      damage: "1d4+5",
+      damageType: "bludgeoning",
+      condition: "none",
+      debrisOutcome: "瓦片碎成不阻碍通行的小片",
+    };
+    const hpChanged = record(await runInDurableObject(room.authority as never, async (instance) => {
+      const target = instance as unknown as Authority & {
+        authorityRoll(sides: number): number;
+      };
+      const originalRoll = target.authorityRoll;
+      const rolls: number[] = [];
+      target.authorityRoll = (sides) => {
+        rolls.push(sides);
+        if (sides === 4) return 4;
+        if (sides === 20) return 1;
+        throw new Error(`yard hazard requested unexpected d${sides}`);
+      };
+      try {
+        const outcome = await act(
+          target,
+          BOB,
+          "submission:stage4:bob-hp-change",
+          "我在庭院被坠落瓦片砸伤。",
+          (rootActionId) => privateFormProposal(
+            rootActionId,
+            "environmental-stunt.v1",
+            yardHazardDraft,
+          ) as JsonRecord,
+        );
+        expect(rolls).toEqual([4, 20]);
+        return outcome;
+      } finally {
+        target.authorityRoll = originalRoll;
+      }
+    }), "yard hazard outcome");
     expect(hpChanged.kind, JSON.stringify(hpChanged)).toBe("committed");
-    expect(JSON.stringify(hpChanged.readModel)).toContain('"current":11');
+    const hpChangedReadModel = record(hpChanged.readModel, "Bob post-hazard read model");
+    expect(record(
+      hpChangedReadModel.controlledCharacter,
+      "Bob post-hazard controlled character",
+    ).hitPoints).toEqual({ current: 11, maximum: 20 });
+    const hpChangedEntities = record(hpChangedReadModel.entities, "Bob post-hazard entities");
+    expect(record(hpChangedEntities[BOB_ID], "Bob post-hazard entity").hitPoints)
+      .toEqual({ current: "11", maximum: "20", temporary: "0" });
+    const aliceAfterHazard = record(await room.authority.observe(ALICE), "Alice after yard hazard");
+    const aliceReadModel = record(aliceAfterHazard.readModel, "Alice post-hazard read model");
+    expect(record(
+      aliceReadModel.controlledCharacter,
+      "Alice post-hazard character",
+    ).hitPoints).toEqual({ current: 20, maximum: 20 });
+    const aliceEntities = record(aliceReadModel.entities, "Alice post-hazard entities");
+    expect(record(aliceEntities[ALICE_ID], "Alice post-hazard entity").hitPoints)
+      .toEqual({ current: "20", maximum: "20", temporary: "0" });
 
     let retryModelCalls = 0;
     const recovered = record(await handleRoomAction({
@@ -546,7 +1006,28 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     expect(recovered.kind, JSON.stringify(recovered)).toBe("committed");
     expect(retryModelCalls).toBe(0);
 
-    const events = (await archiveEvents(room.authority, room.archiveCapability))
+    const allEvents = await archiveEvents(room.authority, room.archiveCapability);
+    const hazardEvents = rootEvents(allEvents, hpChanged);
+    const targetResolutions = hazardEvents
+      .filter((event) => event.eventType === "EnvironmentAreaTargetResolved")
+      .map((event) => record(event.payload, "yard hazard target resolution"));
+    expect(targetResolutions).toEqual([expect.objectContaining({
+      targetEntityId: BOB_ID,
+      saveRolls: [1],
+      saveSucceeded: false,
+      rolledDamage: "9",
+      appliedDamage: "9",
+      statusApplied: "none",
+      targetPatch: expect.objectContaining({
+        hitPoints: { current: "11", maximum: "20", temporary: "0" },
+      }),
+    })]);
+    expect(hazardEvents
+      .filter((event) => event.eventType === "DamagePacketResolved")
+      .map((event) => record(event.payload, "yard hazard damage packet").targetEntityId))
+      .toEqual([BOB_ID]);
+
+    const events = allEvents
       .filter((event) => event.rootActionId === initialRootActionId);
     expect(events.filter((event) => event.eventType === "HiddenRealityCandidatesFrozen"))
       .toHaveLength(1);

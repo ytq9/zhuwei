@@ -8,6 +8,7 @@ import {
   type CausalValue,
   type LoweredCausalStep,
 } from "../../kp/causal-action-program";
+import { parseCompoundCompositionJson } from "../../kp/compound-composition";
 import { KP_FORM_IDS, validateKpFormDraft, type KpFormId } from "../../kp/form-catalog";
 import { canonicalSha256 } from "../profiles/canonical";
 import { CAUSAL_ACTION_INTERPRETER_PROFILE } from "../profiles/causal-action-interpreter";
@@ -241,7 +242,10 @@ export function validateExecutableCausalActionProgram(program: CausalActionProgr
         || !isNonEmptyString(node.arguments.intendedOutcome)
       )) return false;
       if (node.primitive === "joinCausalBranches"
-        && !isNonEmptyString(node.arguments.intendedOutcome)) return false;
+        && (!isNonEmptyString(node.arguments.intendedOutcome)
+          || parseCompoundCompositionJson(node.arguments.compositionJson) === undefined)) {
+        return false;
+      }
     }
     const isTerminal = index === program.nodes.length - 1;
     if ((program.formRef !== "compound.v1" || isTerminal) && !validDurationAndCosts(node)) return false;

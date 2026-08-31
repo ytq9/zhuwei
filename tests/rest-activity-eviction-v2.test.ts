@@ -2,6 +2,8 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import { observationProposal } from "./helpers/authoritative-proposal";
+
 type JsonRecord = Record<string, unknown>;
 
 const ALICE = Object.freeze({
@@ -43,38 +45,6 @@ function prepared(value: unknown): Prepared {
   return outcome as Prepared;
 }
 
-function proposal(
-  action: Prepared,
-  proposalAttemptId: string,
-  mechanicalProposal: JsonRecord,
-) {
-  return {
-    kind: "directSuccess",
-    rootActionId: action.rootActionId,
-    proposalAttemptId,
-    goal: "按已经明确的虚构行动推进休整。",
-    method: "只通过权威 Activity 记录开始、中断与完成。",
-    publicBasisRefs: [],
-    privateBasisRefs: [],
-    risk: {
-      warning: "只有连续满足冻结时长的休整才能恢复资源。",
-      successConsequences: [],
-      failureConsequences: [],
-      retryGate: [],
-    },
-    pendingInput: null,
-    dynamicMaterializations: [],
-    npcActions: [],
-    mechanicalProposal: structuredClone(mechanicalProposal),
-    scene: {
-      question: "休整是否继续？",
-      pressure: "世界内的中断会终止当前尝试。",
-      opportunities: [],
-      conclusionCandidate: null,
-    },
-  };
-}
-
 async function prepareIntent(
   authority: RestAuthority,
   submissionId: string,
@@ -89,20 +59,72 @@ async function prepareIntent(
   }));
 }
 
-async function commitIntent(
+async function commitObservation(
   authority: RestAuthority,
   submissionId: string,
   characterId: string,
   text: string,
-  mechanicalProposal: JsonRecord,
+  duration: { unit: "second" | "hour"; value: number },
 ) {
   const action = await prepareIntent(authority, submissionId, characterId, text);
+  const proposal = observationProposal(action.rootActionId, {
+    goal: text,
+    method: text,
+    duration,
+    proposalAttemptId: `${submissionId}:proposal:1`,
+  });
   const outcome = record(await authority.commit(
     ALICE,
     action.preparedActionId,
-    proposal(action, `${submissionId}:proposal:1`, mechanicalProposal),
+    proposal,
   ), `${submissionId} commit`);
-  return { action, outcome };
+  return { action, outcome, proposal };
+}
+
+async function commitRestStart(
+  authority: RestAuthority,
+  submissionId: string,
+  restKind: "short" | "long",
+  hitDiceToSpend = 0,
+) {
+  const action = prepared(await authority.prepare(ALICE, {
+    kind: "restStart",
+    submissionId,
+    restKind,
+    mode: "personal",
+    hitDiceToSpend,
+    arcaneRecoverySlotLevels: [],
+  }));
+  const proposal = {
+    kind: "authenticatedRestStart",
+    rootActionId: action.rootActionId,
+  };
+  const outcome = record(await authority.commit(
+    ALICE,
+    action.preparedActionId,
+    proposal,
+  ), `${submissionId} commit`);
+  return { action, outcome, proposal };
+}
+
+async function commitRestInterrupt(
+  authority: RestAuthority,
+  submissionId: string,
+) {
+  const action = prepared(await authority.prepare(ALICE, {
+    kind: "restInterrupt",
+    submissionId,
+  }));
+  const proposal = {
+    kind: "authenticatedRestInterrupt",
+    rootActionId: action.rootActionId,
+  };
+  const outcome = record(await authority.commit(
+    ALICE,
+    action.preparedActionId,
+    proposal,
+  ), `${submissionId} commit`);
+  return { action, outcome, proposal };
 }
 
 function readModel(observation: unknown): JsonRecord {
@@ -114,7 +136,7 @@ function controlledCharacter(observation: unknown): JsonRecord {
 }
 
 describe("long-rest Activity across Room DO eviction", () => {
-  it("interrupts a rebuilt long rest on one hour of travel before any recovery, then permits one restart", async () => {
+  it("interrupts a rebuilt long rest before recovery, then completes one restarted rest when due", async () => {
     const roomId = "rest-activity-eviction-v2";
     const characterId = "character:rest-eviction:alice";
     const authority = env.ROOMS.getByName(roomId) as unknown as RestAuthority & DurableObjectStub;
@@ -154,60 +176,39 @@ describe("long-rest Activity across Room DO eviction", () => {
     const archiveExport = record(initialized.serviceCapabilities, "service capabilities").archiveExport;
     const before = structuredClone(controlledCharacter(await authority.observe(ALICE)));
 
-    const first = await commitIntent(
+    const first = await commitRestStart(
       authority,
       "submission:rest-eviction:first-start",
-      characterId,
-      "我开始连续八小时长休。",
-      {
-        operation: "resolveRest",
-        restKind: "long",
-        hitDiceToSpend: 0,
-        arcaneRecoverySlotLevels: [],
-      },
+      "long",
     );
     expect(first.outcome.kind, JSON.stringify(first.outcome)).toBe("committed");
     const firstActivityId = `activity:${first.action.rootActionId}`;
 
     await evictDurableObject(authority as never);
 
-    const strenuousTravel = await commitIntent(
+    const interruption = await commitRestInterrupt(
       authority,
-      "submission:rest-eviction:strenuous-travel",
-      characterId,
-      "警报迫使我中断睡眠，连续赶路一小时到庭院。",
-      {
-        operation: "resolveDirectConsequences",
-        duration: { unit: "hour", value: 1 },
-        frozenCosts: [],
-        success: [{ kind: "moveEntity", sceneRef: "yard" }],
-        failure: [],
-      },
+      "submission:rest-eviction:interrupt",
     );
-    expect(strenuousTravel.outcome.kind, JSON.stringify(strenuousTravel.outcome)).toBe("committed");
+    expect(interruption.outcome.kind, JSON.stringify(interruption.outcome)).toBe("committed");
 
-    const afterTravel = readModel(await authority.observe(ALICE));
+    const afterInterruption = readModel(await authority.observe(ALICE));
     const interruptedActivity = record(
-      list(afterTravel.activities, "activities after strenuous travel")
-        .find((entry) => record(entry, "activity after strenuous travel").activityId === firstActivityId),
+      list(afterInterruption.activities, "activities after interruption")
+        .find((entry) => record(entry, "activity after interruption").activityId === firstActivityId),
       "rebuilt long-rest activity",
     );
-    const afterTravelCharacter = record(afterTravel.controlledCharacter, "character after strenuous travel");
-    expect(afterTravelCharacter.sceneId).toBe("yard");
-    expect(afterTravelCharacter.hitPoints).toEqual(before.hitPoints);
-    expect(afterTravelCharacter.resources).toEqual(before.resources);
+    const afterInterruptionCharacter = record(
+      afterInterruption.controlledCharacter,
+      "character after interruption",
+    );
+    expect(afterInterruptionCharacter.hitPoints).toEqual(before.hitPoints);
+    expect(afterInterruptionCharacter.resources).toEqual(before.resources);
 
-    const restarted = await commitIntent(
+    const restarted = await commitRestStart(
       authority,
       "submission:rest-eviction:restart",
-      characterId,
-      "局势安全后，我重新开始一段完整八小时长休。",
-      {
-        operation: "resolveRest",
-        restKind: "long",
-        hitDiceToSpend: 0,
-        arcaneRecoverySlotLevels: [],
-      },
+      "long",
     );
     expect({
       rebuiltActivityStatus: interruptedActivity.status,
@@ -218,19 +219,14 @@ describe("long-rest Activity across Room DO eviction", () => {
     });
     const restartedActivityId = `activity:${restarted.action.rootActionId}`;
 
-    await commitIntent(
+    const elapsed = await commitObservation(
       authority,
       "submission:rest-eviction:elapsed-after-restart",
       characterId,
       "保持休息，直到重新开始后的连续八小时完整经过。",
-      {
-        operation: "resolveDirectConsequences",
-        duration: { unit: "hour", value: 8 },
-        frozenCosts: [],
-        success: [],
-        failure: [],
-      },
+      { unit: "hour", value: 8 },
     );
+    expect(elapsed.outcome.kind, JSON.stringify(elapsed.outcome)).toBe("committed");
     await evictDurableObject(authority as never);
 
     const completion = await prepareIntent(
@@ -239,11 +235,12 @@ describe("long-rest Activity across Room DO eviction", () => {
       characterId,
       "结算重新开始后已满足条件的长休。",
     );
-    const completionProposal = proposal(
-      completion,
-      "submission:rest-eviction:complete-restarted:proposal:1",
-      { operation: "completeActivity", activityRef: restartedActivityId },
-    );
+    const completionProposal = observationProposal(completion.rootActionId, {
+      goal: "确认重新开始后的长休已经到期并结算恢复。",
+      method: "在当前地点确认休整结果。",
+      duration: { unit: "second", value: 1 },
+      proposalAttemptId: "submission:rest-eviction:complete-restarted:proposal:1",
+    });
     const completed = record(await authority.commit(
       ALICE,
       completion.preparedActionId,
@@ -274,6 +271,10 @@ describe("long-rest Activity across Room DO eviction", () => {
     const events = list(record(exported.archive, "authoritative archive").events, "archive events")
       .map((event) => record(event, "archive event"));
     expect(events.filter((event) => event.eventType === "ActivityInterrupted")).toHaveLength(1);
-    expect(events.filter((event) => event.eventType === "RestCompleted")).toHaveLength(1);
+    const restCompleted = events.filter((event) => event.eventType === "RestCompleted");
+    expect(restCompleted).toHaveLength(1);
+    expect(restCompleted[0].rootActionId).toBe(
+      `activity-due:${restartedActivityId}:28800000000`,
+    );
   });
 });

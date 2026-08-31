@@ -88,6 +88,22 @@ export type AuthoritativeActionInput =
       path: TacticalPosition[];
     }
   | {
+      kind: "combatEndTurn";
+      submissionId: string;
+    }
+  | {
+      kind: "restStart";
+      submissionId: string;
+      restKind: "short" | "long";
+      mode: "personal" | "group";
+      hitDiceToSpend: number;
+      arcaneRecoverySlotLevels: number[];
+    }
+  | {
+      kind: "restInterrupt";
+      submissionId: string;
+    }
+  | {
       kind: "safetyPause";
       submissionId: string;
     }

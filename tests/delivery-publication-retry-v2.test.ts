@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
 import {
-  directConsequencesProposal,
-  noncombatCheckProposal,
+  observationProposal,
+  privateFormProposal,
 } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
@@ -126,22 +126,22 @@ describe("delivery publication recovery", () => {
     const kp = {
       async propose(request: JsonRecord) {
         proposeCalls += 1;
-        return noncombatCheckProposal(String(request.rootActionId), {
-          proposalAttemptId: "proposal:delivery-retry:response-loss",
+        return privateFormProposal(String(request.rootActionId), "observe.v1", {
           goal: "撞开卡住的木门",
           method: "用肩膀撞门",
+          focus: "档案室里卡住的木门",
+          desiredInformation: "木门是否能被肩撞打开",
+          resolution: "check",
           ability: "str",
           skill: "athletics",
           dc: 12,
           mode: "normal",
-          duration: { unit: "second" as const, value: 1 },
-          risk: {
-            warning: "撞门可能成功，也可能只制造声响。",
-            successConsequences: ["木门被撞开。"],
-            failureConsequences: ["门没有打开，撞击声传了出去。"],
-            retryGate: ["methodChanged"],
-          },
-        });
+          durationUnit: "second",
+          durationValue: 1,
+          risk: "撞门可能成功，也可能只制造声响。",
+          successConsequence: "木门被撞开。",
+          failureConsequence: "门没有打开，撞击声传了出去。",
+        }, "proposal:delivery-retry:response-loss");
       },
       async narrate() {
         narrationCalls += 1;
@@ -198,7 +198,7 @@ describe("delivery publication recovery", () => {
         const newerCommitted = await authority.commit(
           ALICE,
           String(newerPrepared.preparedActionId),
-          directConsequencesProposal(String(newerPrepared.rootActionId), {
+          observationProposal(String(newerPrepared.rootActionId), {
             proposalAttemptId: "proposal:delivery-retry:newer-response",
             goal: "确认最新变化",
             method: "停下来观察",
@@ -236,7 +236,7 @@ describe("delivery publication recovery", () => {
       authority: supersedingAuthority,
       kp: {
         async propose(request: JsonRecord) {
-          return directConsequencesProposal(String(request.rootActionId), {
+          return observationProposal(String(request.rootActionId), {
             proposalAttemptId: "proposal:delivery-retry:superseded-response",
             goal: "观察档案柜痕迹",
             method: "仔细观察",

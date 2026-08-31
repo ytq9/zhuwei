@@ -9,7 +9,6 @@ import {
   SOCIAL_RESOLUTION_MODULE_VERSION,
   type AuthoritativeModuleProfile,
 } from "../module/authoritative";
-import { pinnedModuleRef } from "../module/registry";
 import {
   isTacticalPosition,
   isTacticalSpatialRevision,
@@ -293,6 +292,14 @@ type AuthoritativeMovementContext = {
   spatialRevision: `sha256:${string}`;
 };
 
+type AuthoritativeCombatTurnContext = {
+  encounterId: string;
+};
+
+type AuthoritativeRestContext = {
+  activityId: string;
+};
+
 const AUTHORITY_BRANCH_ID = "branch:main";
 const PRESENTATION_POLICY_VERSION = "observer-single-slot/v1";
 const BODY_ONLY_NARRATION_POLICY_VERSION = "kp-body-only-independent-audience/v1";
@@ -318,7 +325,7 @@ const AUTHORITATIVE_GEAR_SLOTS = new Set([
 
 class AuthorityArchiveSettlementPendingError extends Error {
   constructor() {
-    super("Authoritative randomness must settle before this head is recoverable.");
+    super("Authoritative in-flight work must settle before this head is recoverable.");
     this.name = "AuthorityArchiveSettlementPendingError";
   }
 }
@@ -662,6 +669,36 @@ function randomId(prefix: string): string {
 
 function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord {
   if (!isJsonRecord(value) || !nonEmptyString(value.kind)) return false;
+  if (value.kind === "endTurn") {
+    return hasExactJsonKeys(value, ["encounterId", "kind", "rootActionId", "sourceEntityId"])
+      && [value.encounterId, value.rootActionId, value.sourceEntityId].every(nonEmptyString);
+  }
+  if (value.kind === "startRest") {
+    return hasOnlyJsonKeys(value, [
+      "arcaneRecoverySlotLevels",
+      "characterId",
+      "hitDiceToSpend",
+      "kind",
+      "proposalId",
+      "restKind",
+    ], ["memberCharacterIds"])
+      && [value.characterId, value.proposalId].every(nonEmptyString)
+      && (value.restKind === "short" || value.restKind === "long")
+      && Number.isSafeInteger(value.hitDiceToSpend)
+      && Number(value.hitDiceToSpend) >= 0
+      && Array.isArray(value.arcaneRecoverySlotLevels)
+      && value.arcaneRecoverySlotLevels.every((level) =>
+        Number.isSafeInteger(level) && Number(level) >= 1 && Number(level) <= 5)
+      && (value.memberCharacterIds === undefined
+        || (Array.isArray(value.memberCharacterIds)
+          && value.memberCharacterIds.every(nonEmptyString)));
+  }
+  if (value.kind === "interruptActivity") {
+    return hasExactJsonKeys(value, ["activityId", "cause", "kind", "proposalId"])
+      && nonEmptyString(value.activityId)
+      && nonEmptyString(value.proposalId)
+      && isJsonRecord(value.cause);
+  }
   if (value.kind === "invokeEnvironmentalStunt") {
     if (!hasOnlyJsonKeys(value, [
       "actorCharacterId", "controllerPrincipalId", "featureId", "kind", "rootActionId",
@@ -1028,6 +1065,47 @@ export class RoomDurableObject extends DurableObject<Env> {
       .sort((left, right) => Number(right.entityOrdinal) - Number(left.entityOrdinal));
   }
 
+  private authoritativeInheritanceParties(
+    authenticated: AuthenticatedAuthorityViewer,
+    state: AuthoritativeWorldState,
+    successorCharacterId: string,
+  ): { predecessorCharacterId: string; successorCharacterId: string } | undefined {
+    const successor = state.entities[successorCharacterId];
+    const control = state.characterControls[successorCharacterId];
+    const seat = control === undefined ? undefined : state.seats[control.seatId];
+    if (
+      !authenticated.characterIds.includes(successorCharacterId)
+      || successor?.kind !== "player"
+      || successor.tenureStatus !== "active"
+      || control?.characterId !== successorCharacterId
+      || seat?.status !== "active"
+      || seat.principalId !== authenticated.principalId
+      || state.multiplayerRuntime.members[authenticated.principalId]?.status !== "active"
+    ) return undefined;
+
+    const predecessorIds = new Set(this.authorityStore.events().flatMap((event) => {
+      const payload: unknown = event.payload;
+      if (event.eventType !== "SuccessorIntroduced" || !isJsonRecord(payload)) return [];
+      const introduced = payload.successor;
+      return isJsonRecord(introduced)
+        && introduced.id === successorCharacterId
+        && payload.controllerSeatId === control.seatId
+        && nonEmptyString(payload.predecessorCharacterId)
+        ? [payload.predecessorCharacterId]
+        : [];
+    }));
+    if (predecessorIds.size !== 1) return undefined;
+    const predecessorCharacterId = [...predecessorIds][0];
+    const predecessor = state.entities[predecessorCharacterId];
+    if (
+      predecessor?.lastControllerSeatId !== control.seatId
+      || !["dead", "retired", "missing", "npcTransitioned"].includes(
+        String(predecessor?.tenureStatus),
+      )
+    ) return undefined;
+    return { predecessorCharacterId, successorCharacterId };
+  }
+
   private formerAuthorityPlayerViewer(
     authenticated: AuthenticatedAuthorityViewer,
     state: AuthoritativeWorldState,
@@ -1104,6 +1182,55 @@ export class RoomDurableObject extends DurableObject<Env> {
       encounterId: encounter.id,
       spatialRevision: tactical.spatialRevision,
     };
+  }
+
+  private authoritativeCombatTurnContext(
+    state: AuthoritativeWorldState,
+    characterId: string,
+  ): AuthoritativeCombatTurnContext | undefined {
+    const matches = Object.entries(state.combatRuntime.encounters)
+      .filter(([encounterId, encounter]) => {
+        if (
+          encounter.status === "concluded"
+          || encounter.encounterId !== encounterId
+          || !Array.isArray(encounter.turnOrderEntityIds)
+          || !Number.isSafeInteger(encounter.turnCursor)
+        ) return false;
+        const order = encounter.turnOrderEntityIds.filter(nonEmptyString);
+        return order[Number(encounter.turnCursor)] === characterId;
+      });
+    return matches.length === 1 ? { encounterId: matches[0][0] } : undefined;
+  }
+
+  private authoritativeGroupRestMemberIds(
+    state: AuthoritativeWorldState,
+    characterId: string,
+  ): string[] | undefined {
+    const matches = Object.values(state.multiplayerRuntime.partyGroups)
+      .filter((group) => group.status === "active"
+        && Array.isArray(group.memberCharacterIds)
+        && group.memberCharacterIds.includes(characterId));
+    if (matches.length !== 1) return undefined;
+    const memberCharacterIds = matches[0].memberCharacterIds;
+    if (!Array.isArray(memberCharacterIds)
+      || !memberCharacterIds.every(nonEmptyString)
+      || memberCharacterIds.length !== new Set(memberCharacterIds).size) return undefined;
+    const invitees = memberCharacterIds
+      .filter((candidate): candidate is string => nonEmptyString(candidate) && candidate !== characterId)
+      .sort((left, right) => left.localeCompare(right));
+    return invitees.length > 0 ? invitees : undefined;
+  }
+
+  private authoritativeActiveRestContext(
+    state: AuthoritativeWorldState,
+    characterId: string,
+  ): AuthoritativeRestContext | undefined {
+    const matches = Object.entries(state.campaignRuntime.activities)
+      .filter(([activityId, activity]) => activity.activityId === activityId
+        && activity.status === "active"
+        && activity.characterId === characterId
+        && (activity.restKind === "short" || activity.restKind === "long"));
+    return matches.length === 1 ? { activityId: matches[0][0] } : undefined;
   }
 
   /** Resolve an unfinished V3 narration solely from the current trusted
@@ -1502,7 +1629,10 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private async currentAuthoritativeArchive(): Promise<AuthoritativeRoomArchive> {
     const replay = this.authoritativeReplay();
-    if (hasUnsettledAuthoritativeRandomness(replay.state)) {
+    if (
+      hasUnsettledAuthoritativeRandomness(replay.state)
+      || this.authorityStore.hasSuspendedActionStage()
+    ) {
       throw new AuthorityArchiveSettlementPendingError();
     }
     const events = this.authorityStore.events();
@@ -1511,6 +1641,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const current = this.authoritativeReplay();
     if (
       hasUnsettledAuthoritativeRandomness(current.state)
+      || this.authorityStore.hasSuspendedActionStage()
       || current.replay.head.eventHash !== replay.replay.head.eventHash
       || current.replay.head.stateHash !== replay.replay.head.stateHash
     ) {
@@ -1599,9 +1730,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       const now = Date.now();
       if (error instanceof AuthorityArchiveSettlementPendingError) {
         // This head cannot become portable without another authoritative
-        // action settling the DO-local randomness journal. Keep the archive
-        // dirty but do not spin alarms; the settlement transaction marks it
-        // runnable again.
+        // action settling DO-local randomness or an in-flight ActorPlan
+        // continuation. Keep the archive dirty but do not spin alarms; the
+        // settlement transaction marks it runnable again.
         this.authorityStore.pauseArchiveUntilAuthorityChanges(now);
         await this.scheduleExpiryAlarm();
         return;
@@ -1716,6 +1847,15 @@ export class RoomDurableObject extends DurableObject<Env> {
     ) {
       return rejectedAuthority("invalidInitialization", "Room initialization is incomplete.");
     }
+    let moduleProfile: AuthoritativeModuleProfile;
+    try {
+      moduleProfile = await authoritativeModuleProfile(input.moduleId, input.moduleVersion);
+    } catch {
+      return rejectedAuthority(
+        "invalidInitialization",
+        "The authoritative Module Bible id or version is unavailable.",
+      );
+    }
     const existing = this.authorityStore.room();
     if (existing !== undefined) {
       if (existing.room_id !== input.roomId || existing.module_id !== input.moduleId) {
@@ -1724,13 +1864,16 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The Durable Object is already bound to a different authoritative room.",
         );
       }
-      const genesis = parseJson<RuntimeGenesis>(existing.genesis_json);
-      const requestedModuleRef = input.moduleVersion === undefined
-        ? undefined
-        : pinnedModuleRef(input.moduleId, input.moduleVersion);
-      if (input.moduleVersion !== undefined
-        && (requestedModuleRef === undefined
-          || !exactProfileRef(genesis.moduleRef, requestedModuleRef))) {
+      let replay: AuthorityReplay;
+      try {
+        replay = this.authoritativeReplay();
+      } catch {
+        return rejectedAuthority(
+          "roomAlreadyBound",
+          "The existing room is not a supported current 0.4 authority epoch.",
+        );
+      }
+      if (!exactProfileRef(replay.genesis.moduleRef, moduleProfile.moduleRef)) {
         return rejectedAuthority(
           "roomAlreadyBound",
           "The Durable Object is already bound to a different Module Profile.",
@@ -1738,10 +1881,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       return {
         created: false,
-        runtimeEpochId: genesis.runtimeEpochId,
-        genesisHash: genesis.genesisHash,
-        moduleRef: structuredClone(genesis.moduleRef),
-        runtimeProfiles: parseJson(existing.profiles_json),
+        runtimeEpochId: replay.genesis.runtimeEpochId,
+        genesisHash: replay.genesis.genesisHash,
+        moduleRef: structuredClone(replay.genesis.moduleRef),
+        runtimeProfiles: structuredClone(replay.profiles),
         serviceCapabilities,
       };
     }
@@ -1765,16 +1908,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority(
         "invalidInitialization",
         "Members, characters, controllers, and scenes must be unique trusted initialization records.",
-      );
-    }
-
-    let moduleProfile: AuthoritativeModuleProfile;
-    try {
-      moduleProfile = await authoritativeModuleProfile(input.moduleId, input.moduleVersion);
-    } catch {
-      return rejectedAuthority(
-        "invalidInitialization",
-        "The authoritative Module Bible id or version is unavailable.",
       );
     }
     const catalogHash = await authorityHash({
@@ -1959,13 +2092,16 @@ export class RoomDurableObject extends DurableObject<Env> {
             "The Durable Object is already bound to a different authoritative room.",
           );
         }
-        const genesis = parseJson<RuntimeGenesis>(raced.genesis_json);
-        const requestedModuleRef = input.moduleVersion === undefined
-          ? undefined
-          : pinnedModuleRef(input.moduleId, input.moduleVersion);
-        if (input.moduleVersion !== undefined
-          && (requestedModuleRef === undefined
-            || !exactProfileRef(genesis.moduleRef, requestedModuleRef))) {
+        let replay: AuthorityReplay;
+        try {
+          replay = this.authoritativeReplay();
+        } catch {
+          return rejectedAuthority(
+            "roomAlreadyBound",
+            "The existing authoritative room is not a valid current 0.4 room.",
+          );
+        }
+        if (!exactProfileRef(replay.genesis.moduleRef, moduleProfile.moduleRef)) {
           return rejectedAuthority(
             "roomAlreadyBound",
             "The Durable Object is already bound to a different Module Profile.",
@@ -1973,10 +2109,10 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
         return {
           created: false,
-          runtimeEpochId: genesis.runtimeEpochId,
-          genesisHash: genesis.genesisHash,
-          moduleRef: structuredClone(genesis.moduleRef),
-          runtimeProfiles: parseJson(raced.profiles_json),
+          runtimeEpochId: replay.genesis.runtimeEpochId,
+          genesisHash: replay.genesis.genesisHash,
+          moduleRef: structuredClone(replay.genesis.moduleRef),
+          runtimeProfiles: replay.profiles,
           serviceCapabilities,
         };
       }
@@ -2509,6 +2645,12 @@ export class RoomDurableObject extends DurableObject<Env> {
         stepped.state.entities[characterId]?.sceneId,
       ].filter(nonEmptyString).map((sceneId) => `scene:${sceneId}`),
     ))].sort();
+    if (this.authorityStore.hasSuspendedActionStageInScopes(changedControlSceneScopes)) {
+      return {
+        kind: "retryableFailure" as const,
+        code: "roomAdministrationActionSettlementPending",
+      };
+    }
     const administrationScopeVersions = Object.fromEntries(
       [scopeId, ...changedControlSceneScopes].map((changedScopeId) => [
         changedScopeId,
@@ -2643,6 +2785,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       const staged = this.authorityStore.actionStage(existing.prepared_action_id);
       if (existing.status === "prepared" && staged?.status === "committed") {
         return parseJson<PreparedAuthoritativeAction>(existing.prepared_json);
+      }
+      if (
+        existing.status === "prepared"
+        && staged?.status === "prepared"
+        && staged.proposal_hash !== null
+        && staged.result_json !== null
+      ) {
+        return parseJson<AuthorityCommitOutcome>(staged.result_json);
       }
       const recovery = this.authorityStore.proposalRecovery(
         staged?.status === "prepared"
@@ -2788,6 +2938,56 @@ export class RoomDurableObject extends DurableObject<Env> {
         spatialRevision: actionInput.spatialRevision,
         path: structuredClone(actionInput.path),
       };
+    } else if (actionInput.kind === "combatEndTurn") {
+      if (!hasExactJsonKeys(actionInput, ["kind", "submissionId"])) {
+        return rejectedAuthority("invalidActionInput", "Combat end turn accepts only submissionId.");
+      }
+      canonicalActionInput = {
+        kind: "combatEndTurn",
+        submissionId: actionInput.submissionId,
+      };
+    } else if (actionInput.kind === "restStart") {
+      const arcaneRecoverySlotLevels = actionInput.arcaneRecoverySlotLevels;
+      if (
+        !hasExactJsonKeys(actionInput, [
+          "arcaneRecoverySlotLevels",
+          "hitDiceToSpend",
+          "kind",
+          "mode",
+          "restKind",
+          "submissionId",
+        ])
+        || (actionInput.restKind !== "short" && actionInput.restKind !== "long")
+        || (actionInput.mode !== "personal" && actionInput.mode !== "group")
+        || !Number.isSafeInteger(actionInput.hitDiceToSpend)
+        || actionInput.hitDiceToSpend < 0
+        || actionInput.hitDiceToSpend > 20
+        || !Array.isArray(arcaneRecoverySlotLevels)
+        || arcaneRecoverySlotLevels.length > 20
+        || !arcaneRecoverySlotLevels.every((level) =>
+          Number.isSafeInteger(level) && level >= 1 && level <= 5)
+        || (actionInput.restKind === "long"
+          && (actionInput.hitDiceToSpend !== 0 || arcaneRecoverySlotLevels.length !== 0))
+      ) {
+        return rejectedAuthority("invalidActionInput", "A closed canonical rest selection is required.");
+      }
+      canonicalActionInput = {
+        kind: "restStart",
+        submissionId: actionInput.submissionId,
+        restKind: actionInput.restKind,
+        mode: actionInput.mode,
+        hitDiceToSpend: actionInput.hitDiceToSpend,
+        arcaneRecoverySlotLevels: [...arcaneRecoverySlotLevels]
+          .sort((left, right) => left - right),
+      };
+    } else if (actionInput.kind === "restInterrupt") {
+      if (!hasExactJsonKeys(actionInput, ["kind", "submissionId"])) {
+        return rejectedAuthority("invalidActionInput", "Rest interruption accepts only submissionId.");
+      }
+      canonicalActionInput = {
+        kind: "restInterrupt",
+        submissionId: actionInput.submissionId,
+      };
     } else if (actionInput.kind === "safetyPause") {
       if (!hasExactJsonKeys(actionInput, ["kind", "submissionId"])) {
         return rejectedAuthority("invalidActionInput", "Safety pause accepts no reason or free-form text.");
@@ -2865,6 +3065,14 @@ export class RoomDurableObject extends DurableObject<Env> {
         );
       }
       if (existing.status === "prepared") {
+        const staged = this.authorityStore.actionStage(existing.prepared_action_id);
+        if (
+          staged?.status === "prepared"
+          && staged.proposal_hash !== null
+          && staged.result_json !== null
+        ) {
+          return parseJson<AuthorityCommitOutcome>(staged.result_json);
+        }
         return parseJson<PreparedAuthoritativeAction>(existing.prepared_json);
       }
       if (existing.result_json !== null) return parseJson(existing.result_json);
@@ -3004,6 +3212,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       || actionInput.kind === "environmentInteract"
       || actionInput.kind === "environmentAbility"
       || actionInput.kind === "movement"
+      || actionInput.kind === "combatEndTurn"
+      || actionInput.kind === "restStart"
+      || actionInput.kind === "restInterrupt"
       || actionInput.kind === "safetyPause"
       || actionInput.kind === "safetyAdjust"
     ) {
@@ -3072,6 +3283,35 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The public tactical space changed before movement was prepared.",
         );
       }
+    }
+    const combatTurnContext = actionInput.kind === "combatEndTurn"
+      ? this.authoritativeCombatTurnContext(replay.state, characterId)
+      : undefined;
+    if (actionInput.kind === "combatEndTurn" && combatTurnContext === undefined) {
+      return rejectedAuthority(
+        "privateOrUnknownReference",
+        "The controlled character does not hold an authoritative combat turn.",
+      );
+    }
+    const groupRestMemberIds = actionInput.kind === "restStart" && actionInput.mode === "group"
+      ? this.authoritativeGroupRestMemberIds(replay.state, characterId)
+      : undefined;
+    if (actionInput.kind === "restStart"
+      && actionInput.mode === "group"
+      && groupRestMemberIds === undefined) {
+      return rejectedAuthority(
+        "privateOrUnknownReference",
+        "No eligible PartyGroup is available for a group rest.",
+      );
+    }
+    const activeRestContext = actionInput.kind === "restInterrupt"
+      ? this.authoritativeActiveRestContext(replay.state, characterId)
+      : undefined;
+    if (actionInput.kind === "restInterrupt" && activeRestContext === undefined) {
+      return rejectedAuthority(
+        "privateOrUnknownReference",
+        "The controlled character has no active rest to interrupt.",
+      );
     }
 
     const viewer = this.authorityPlayerViewer(authenticated, replay.state, characterId);
@@ -3207,6 +3447,32 @@ export class RoomDurableObject extends DurableObject<Env> {
                     movementMode: actionInput.movementMode,
                     spatialRevision: actionInput.spatialRevision,
                     path: structuredClone(actionInput.path),
+                  },
+                }
+            : actionInput.kind === "combatEndTurn"
+              ? {
+                  continuation: {
+                    encounterId: combatTurnContext!.encounterId,
+                  },
+                }
+            : actionInput.kind === "restStart"
+              ? {
+                  continuation: {
+                    restKind: actionInput.restKind,
+                    mode: actionInput.mode,
+                    hitDiceToSpend: actionInput.hitDiceToSpend,
+                    arcaneRecoverySlotLevels: structuredClone(
+                      actionInput.arcaneRecoverySlotLevels,
+                    ),
+                    ...(actionInput.mode === "group"
+                      ? { memberCharacterIds: structuredClone(groupRestMemberIds!) }
+                      : {}),
+                  },
+                }
+            : actionInput.kind === "restInterrupt"
+              ? {
+                  continuation: {
+                    activityId: activeRestContext!.activityId,
                   },
                 }
             : actionInput.kind === "safetyAdjust"
@@ -3481,6 +3747,144 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
       };
     }
+    if (
+      proposalValue.kind === "authenticatedCombatEndTurn"
+      && hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
+      && submission.input_kind === "combatEndTurn"
+      && submission.continuation_json !== null
+    ) {
+      const continuation = parseJson<JsonObject>(submission.continuation_json);
+      const combatTurnContext = this.authoritativeCombatTurnContext(
+        state,
+        submission.character_id,
+      );
+      if (
+        !hasExactJsonKeys(continuation, ["encounterId"])
+        || !nonEmptyString(continuation.encounterId)
+        || combatTurnContext?.encounterId !== continuation.encounterId
+      ) {
+        return {
+          rejection: rejectedAuthority(
+            "privateOrUnknownReference",
+            "The prepared combat turn is no longer available.",
+          ),
+        };
+      }
+      return {
+        input: {
+          kind: "endTurn",
+          rootActionId: submission.root_action_id,
+          encounterId: continuation.encounterId,
+          sourceEntityId: submission.character_id,
+        },
+      };
+    }
+    if (
+      proposalValue.kind === "authenticatedRestStart"
+      && hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
+      && submission.input_kind === "restStart"
+      && submission.continuation_json !== null
+    ) {
+      const continuation = parseJson<JsonObject>(submission.continuation_json);
+      const group = continuation.mode === "group";
+      const personal = continuation.mode === "personal";
+      const expectedKeys = group
+        ? [
+            "arcaneRecoverySlotLevels",
+            "hitDiceToSpend",
+            "memberCharacterIds",
+            "mode",
+            "restKind",
+          ]
+        : [
+            "arcaneRecoverySlotLevels",
+            "hitDiceToSpend",
+            "mode",
+            "restKind",
+          ];
+      const restKind = continuation.restKind === "short" || continuation.restKind === "long"
+        ? continuation.restKind
+        : undefined;
+      const arcaneRecoverySlotLevels = Array.isArray(continuation.arcaneRecoverySlotLevels)
+        ? continuation.arcaneRecoverySlotLevels
+        : undefined;
+      const memberCharacterIds = group
+        ? this.authoritativeGroupRestMemberIds(state, submission.character_id)
+        : undefined;
+      if (
+        (!group && !personal)
+        || !hasExactJsonKeys(continuation, expectedKeys)
+        || restKind === undefined
+        || !Number.isSafeInteger(continuation.hitDiceToSpend)
+        || Number(continuation.hitDiceToSpend) < 0
+        || Number(continuation.hitDiceToSpend) > 20
+        || arcaneRecoverySlotLevels === undefined
+        || arcaneRecoverySlotLevels.length > 20
+        || !arcaneRecoverySlotLevels.every((level) =>
+          Number.isSafeInteger(level) && Number(level) >= 1 && Number(level) <= 5)
+        || (restKind === "long"
+          && (Number(continuation.hitDiceToSpend) !== 0
+            || arcaneRecoverySlotLevels.length !== 0))
+        || (group && (
+          memberCharacterIds === undefined
+          || !Array.isArray(continuation.memberCharacterIds)
+          || JSON.stringify(memberCharacterIds) !== JSON.stringify(continuation.memberCharacterIds)
+        ))
+      ) {
+        return {
+          rejection: rejectedAuthority(
+            "privateOrUnknownReference",
+            "The prepared rest is no longer available.",
+          ),
+        };
+      }
+      return {
+        input: {
+          kind: "startRest",
+          proposalId: submission.root_action_id,
+          characterId: submission.character_id,
+          restKind,
+          hitDiceToSpend: Number(continuation.hitDiceToSpend),
+          arcaneRecoverySlotLevels: structuredClone(arcaneRecoverySlotLevels),
+          ...(group ? { memberCharacterIds: structuredClone(memberCharacterIds!) } : {}),
+        },
+      };
+    }
+    if (
+      proposalValue.kind === "authenticatedRestInterrupt"
+      && hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
+      && submission.input_kind === "restInterrupt"
+      && submission.continuation_json !== null
+    ) {
+      const continuation = parseJson<JsonObject>(submission.continuation_json);
+      const activeRestContext = this.authoritativeActiveRestContext(
+        state,
+        submission.character_id,
+      );
+      if (
+        !hasExactJsonKeys(continuation, ["activityId"])
+        || !nonEmptyString(continuation.activityId)
+        || activeRestContext?.activityId !== continuation.activityId
+      ) {
+        return {
+          rejection: rejectedAuthority(
+            "privateOrUnknownReference",
+            "The prepared rest is no longer active.",
+          ),
+        };
+      }
+      return {
+        input: {
+          kind: "interruptActivity",
+          proposalId: submission.root_action_id,
+          activityId: continuation.activityId,
+          cause: {
+            kind: "playerCancelledRest",
+            characterId: submission.character_id,
+          },
+        },
+      };
+    }
     const proposal = normalizeRoomKpProposal(proposalValue);
     if (proposal === undefined) {
       return {
@@ -3574,24 +3978,47 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
       }
       switch (proposal.action) {
-        case "formNpcPlan":
+        case "grantMilestone": {
+          const actorViewer = this.authorityPlayerViewer(
+            authenticated,
+            state,
+            submission.character_id,
+          );
+          const actorProjection = actorViewer === undefined
+            ? undefined
+            : projectAuthoritative(profiles, state, actorViewer);
+          const visibleFactIds = actorProjection?.kind === "projected"
+            && "visibleFacts" in actorProjection
+            ? new Set(actorProjection.visibleFacts.map((fact) => fact.id))
+            : new Set<string>();
+          const rawSourceFactIds = Array.isArray(proposal.sourceFactIds)
+            ? proposal.sourceFactIds
+            : [];
+          const sourceFactIds = rawSourceFactIds.filter(nonEmptyString);
+          const campaignId = state.campaignRuntime.campaign?.campaignId;
+          if (
+            !nonEmptyString(campaignId)
+            || sourceFactIds.length === 0
+            || sourceFactIds.length !== rawSourceFactIds.length
+            || sourceFactIds.some((factId) => !visibleFactIds.has(factId))
+          ) {
+            return {
+              rejection: rejectedAuthority(
+                "privateOrUnknownReference",
+                "The milestone source is unavailable to the acting character.",
+              ),
+            };
+          }
           return {
             input: {
-              kind: "formNpcActorPlan",
+              kind: "grantMilestone",
               proposalId: submission.root_action_id,
-              npcId: proposal.npcId,
-              planId: proposal.planId,
-              goal: proposal.goal,
-              nextStep: proposal.nextAction,
-              premiseRefs: structuredClone(proposal.premiseRefs),
-              resourceRefs: structuredClone(proposal.resourceRefs),
-              activity: structuredClone(proposal.activity),
-              due: structuredClone(proposal.due),
-              trigger: structuredClone(proposal.trigger),
-              trace: structuredClone(proposal.trace),
-              alternateTarget: structuredClone(proposal.alternateTarget),
+              campaignId,
+              characterId: submission.character_id,
+              sourceFactIds: [...sourceFactIds].sort(),
             },
           };
+        }
         case "retireCharacter":
           return {
             input: {
@@ -3602,6 +4029,70 @@ export class RoomDurableObject extends DurableObject<Env> {
               continueAsNpc: proposal.continueAsNpc,
             },
           };
+        case "establishInheritanceSource": {
+          const parties = this.authoritativeInheritanceParties(
+            authenticated,
+            state,
+            submission.character_id,
+          );
+          const authorization = isJsonRecord(proposal.inheritanceAuthorization)
+            ? proposal.inheritanceAuthorization
+            : undefined;
+          if (parties === undefined || authorization === undefined) {
+            return {
+              rejection: rejectedAuthority(
+                "privateOrUnknownReference",
+                "The current Seat has no exact predecessor-successor inheritance context.",
+              ),
+            };
+          }
+          return {
+            input: {
+              kind: "establishInheritanceSource",
+              proposalId: submission.root_action_id,
+              predecessorCharacterId: parties.predecessorCharacterId,
+              successorCharacterId: parties.successorCharacterId,
+              source: {
+                kind: proposal.inheritanceSourceKind,
+                publicClause: proposal.publicClause,
+                authorizations: [{
+                  authorizationId: authorization.authorizationId,
+                  subjectCharacterId: parties.predecessorCharacterId,
+                  kind: authorization.kind,
+                  sourceRef: authorization.sourceRef,
+                  targetCharacterId: parties.successorCharacterId,
+                  targetRef: authorization.targetRef,
+                  scope: authorization.scope,
+                }],
+              },
+            },
+          };
+        }
+        case "transferInheritance": {
+          const parties = this.authoritativeInheritanceParties(
+            authenticated,
+            state,
+            submission.character_id,
+          );
+          if (parties === undefined) {
+            return {
+              rejection: rejectedAuthority(
+                "privateOrUnknownReference",
+                "The current Seat has no exact predecessor-successor inheritance context.",
+              ),
+            };
+          }
+          return {
+            input: {
+              kind: "transferInheritance",
+              proposalId: submission.root_action_id,
+              predecessorCharacterId: parties.predecessorCharacterId,
+              successorCharacterId: parties.successorCharacterId,
+              sourceFactId: proposal.inheritanceSourceFactRef,
+              authorizationId: proposal.inheritanceAuthorizationRef,
+            },
+          };
+        }
         case "startActivity":
           return {
             input: {
@@ -3612,6 +4103,29 @@ export class RoomDurableObject extends DurableObject<Env> {
               activityKind: proposal.activityKind,
               intendedDurationMicros: proposal.intendedDurationMicros,
               completion: structuredClone(proposal.completion),
+            },
+          };
+        case "recordEpilogueChoice":
+          return {
+            input: {
+              kind: "recordEpilogueChoice",
+              proposalId: submission.root_action_id,
+              characterId: submission.character_id,
+              storyId: proposal.storyId,
+              choice: proposal.choice,
+            },
+          };
+        case "startSequel":
+          return {
+            input: {
+              kind: "startSequel",
+              proposalId: submission.root_action_id,
+              priorStoryId: proposal.priorStoryId,
+              sequelStoryId: proposal.sequelStoryId,
+              chapterId: proposal.chapterId,
+              anchorFactIds: structuredClone(proposal.anchorFactIds),
+              sceneQuestion: proposal.sceneQuestion,
+              activityTransitions: structuredClone(proposal.activityTransitions),
             },
           };
         default:
@@ -4561,27 +5075,23 @@ export class RoomDurableObject extends DurableObject<Env> {
     const requestRootActionId = first.rootActionId;
     const randomnessEvent = requestEvents.find((event) => event.eventType === "RandomnessRequested");
     if (randomnessEvent === undefined) return false;
-    const randomnessPayload = randomnessEvent.payload as JsonRecord;
-    const randomnessRequest = isJsonRecord(randomnessPayload?.request)
-      ? randomnessPayload.request
-      : undefined;
     const rootAllowed = initialRandomnessRootActionId === undefined
       ? requestRootActionId === rootActionId
       : requestRootActionId === initialRandomnessRootActionId;
     const oneRoot = !requestEvents.some((event) => event.rootActionId !== requestRootActionId);
-    const randomnessId = nonEmptyString(randomnessRequest?.randomnessId)
-      ? randomnessRequest.randomnessId
-      : undefined;
-    const requestBound = requestRootActionId === rootActionId
-      || (randomnessId !== undefined
-        && randomnessId.startsWith(`randomness:${requestRootActionId}:`));
-    if (!rootAllowed || !oneRoot || !requestBound) return false;
+    if (!rootAllowed || !oneRoot) return false;
     const eventRequests: JsonObject[] = [];
     for (const event of requestEvents) {
       if (event.eventType !== "RandomnessRequested") continue;
       const payload: unknown = event.payload;
       if (!isJsonRecord(payload)) return false;
       if (isJsonRecord(payload.request)) {
+        const randomnessId = nonEmptyString(payload.request.randomnessId)
+          ? payload.request.randomnessId
+          : undefined;
+        if (requestRootActionId !== rootActionId
+          && (randomnessId === undefined
+            || !randomnessId.startsWith(`randomness:${requestRootActionId}:`))) return false;
         eventRequests.push(payload.request);
         continue;
       }
@@ -4590,6 +5100,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         : undefined;
       if (
         resolution === undefined
+        || resolution.rootActionId !== requestRootActionId
         || !Array.isArray(resolution.randomnessRequests)
         || resolution.randomnessRequests.length === 0
         || !resolution.randomnessRequests.every(isJsonRecord)
@@ -4769,9 +5280,13 @@ export class RoomDurableObject extends DurableObject<Env> {
     for (const authorization of this.authorityStore
       .randomnessAuthorizationsByRandomnessId(randomnessId)) {
       const batch = this.authorityStore.randomnessBatch(authorization.prepared_action_id);
-      const submission = this.authorityStore.submissionByPrepared(
+      const directSubmission = this.authorityStore.submissionByPrepared(
         authorization.prepared_action_id,
       );
+      const dueStage = directSubmission === undefined
+        ? this.authorityStore.actionStageByChildRoot(authorization.prepared_action_id)
+        : undefined;
+      const cachedResultJson = directSubmission?.result_json ?? dueStage?.result_json;
       const active = batch?.status === "finalized"
         ? this.authorityActiveRandomnessRequests({ batch })
         : undefined;
@@ -4786,8 +5301,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           );
       if (
         batch?.status !== "finalized"
-        || submission?.result_json === null
-        || submission?.result_json === undefined
+        || cachedResultJson === null
+        || cachedResultJson === undefined
         || request === undefined
         || active === undefined
         || !this.authorityPlayerRollGestureRequired(
@@ -4799,7 +5314,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         || authorization.character_id !== currentOwner
         || !authenticated.characterIds.includes(currentOwner)
       ) continue;
-      return parseJson<AuthorityCommitOutcome>(submission.result_json);
+      return parseJson<AuthorityCommitOutcome>(cachedResultJson);
     }
 
     for (const submission of this.authorityStore.awaitingRandomnessSubmissions()) {
@@ -4931,6 +5446,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
     }
     if (stage.status === "committed" && stage.result_json !== null) {
+      const cached = parseJson<AuthorityCommitOutcome>(stage.result_json);
+      await this.resumeAuthoritativeD1Archive();
+      return cached;
+    }
+    if (
+      stage.status === "prepared"
+      && stage.proposal_hash === proposalHash
+      && stage.result_json !== null
+    ) {
       const cached = parseJson<AuthorityCommitOutcome>(stage.result_json);
       await this.resumeAuthoritativeD1Archive();
       return cached;
@@ -5246,6 +5770,225 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.authorityStore.markArchivePending(Date.now());
       return { outcome, committedHere: true };
     });
+    if (persisted.committedHere) await this.resumeAuthoritativeD1Archive();
+    return persisted.outcome;
+  }
+
+  private async suspendDueActorPlanMechanicalStage(input: {
+    context: TrustedPrincipalContext;
+    preparedActionId: string;
+    proposalHash: string;
+    journalPreparedActionId: string;
+    replay: AuthorityReplay;
+    submission: AuthoritySubmissionRow;
+    stage: AuthorityActionStageRow;
+    resolved: Extract<ReturnType<typeof stepAuthoritative>, { kind: "awaitingInput" }>;
+    eventsToAppend: EventEnvelope[];
+    receiptEvents: EventEnvelope[];
+    randomness: Array<{
+      randomnessId: string;
+      faces: number[];
+      requestHash: string;
+      frozenParametersHash: string;
+    }>;
+    usedRandomnessJournal: boolean;
+  }): Promise<AuthorityCommitOutcome> {
+    const {
+      context,
+      preparedActionId,
+      proposalHash,
+      journalPreparedActionId,
+      replay,
+      submission,
+      stage,
+      resolved,
+      eventsToAppend,
+      receiptEvents,
+      randomness,
+      usedRandomnessJournal,
+    } = input;
+    const plan = resolved.state.campaignRuntime.npcPlans[stage.target_id]
+      ?? replay.state.campaignRuntime.npcPlans[stage.target_id];
+    const npcId = nonEmptyString(plan?.npcId) ? plan.npcId : undefined;
+    const pendingBindings = authorityPendingBindings(
+      resolved.state,
+      stage.child_root_action_id,
+    );
+    const currentBinding = pendingBindings.find((entry) =>
+      entry.pendingInputId === resolved.pending.pendingInputId);
+    if (npcId === undefined || receiptEvents.length === 0 || currentBinding === undefined) {
+      return rejectedAuthority(
+        "invalidRulesResult",
+        "The due ActorPlan pending result has no canonical actor, controller, or event range.",
+      );
+    }
+    const nextReplay: AuthorityReplay = { ...replay, state: resolved.state };
+    const actorViewer = this.authorityViewerForCharacter(
+      resolved.state,
+      submission.character_id,
+    );
+    const moduleProfile = await this.pinnedAuthorityModule(nextReplay);
+    const projected = actorViewer === undefined || moduleProfile === undefined
+      ? undefined
+      : this.kpAuthorityProjection(
+          nextReplay,
+          actorViewer,
+          moduleKpProjection(moduleProfile) as unknown as JsonObject,
+        );
+    if (projected === undefined) {
+      return rejectedAuthority(
+        "projectionFailure",
+        "The player intent could not be reprojected while the due ActorPlan awaits input.",
+      );
+    }
+    const nextScopeVersion = this.authorityStore.scopeVersion(submission.scene_scope) + 1;
+    const receipt: PublicReceipt = {
+      receiptId: resolved.receipt.receiptId,
+      rootActionId: stage.child_root_action_id,
+      actorCharacterId: npcId,
+      status: "awaitingInput",
+      runtimeEpochId: resolved.state.runtimeEpochId,
+      activeBranchId: resolved.state.activeBranchId,
+      eventRange: {
+        first: receiptEvents[0].eventSeq,
+        last: receiptEvents[receiptEvents.length - 1].eventSeq,
+        from: Number(receiptEvents[0].eventSeq),
+        to: Number(receiptEvents[receiptEvents.length - 1].eventSeq),
+      },
+      scopeVersions: { [submission.scene_scope]: String(nextScopeVersion) },
+      randomnessCommitments: randomness.map((entry) => ({
+        randomnessId: entry.randomnessId,
+        requestHash: entry.requestHash,
+        frozenParametersHash: entry.frozenParametersHash,
+      })),
+      pendingInputId: currentBinding.pendingInputId,
+    };
+    const pending: JsonObject = {
+      ...resolved.pending,
+      ...currentBinding.pending,
+      controllerCharacterId: currentBinding.controllerCharacterId,
+      controllerPrincipalId: currentBinding.controllerPrincipalId,
+    };
+    const pendingMessageBody = pendingTranscriptBody(pending);
+    const pendingMessage = pendingMessageBody === undefined
+      ? undefined
+      : {
+          viewerKey: `${currentBinding.controllerPrincipalId}\u001f${currentBinding.controllerCharacterId}`,
+          messageId: `pending:${currentBinding.pendingInputId}:prompt`,
+          sceneIds: uniqueSceneIds([
+            replay.state.entities[currentBinding.controllerCharacterId]?.sceneId,
+            resolved.state.entities[currentBinding.controllerCharacterId]?.sceneId,
+          ]),
+          body: pendingMessageBody,
+        };
+    const outcome: AuthorityCommitOutcome = {
+      kind: "awaitingInput",
+      receipt,
+      pending,
+      kpProjection: {
+        ...projected,
+        mechanicalResult: {
+          kind: resolved.kind,
+          randomness: structuredClone(randomness),
+        },
+      },
+    };
+    const persisted = this.authorityStore.transaction(() => {
+      if (this.authorityStore.roomDeletion() !== undefined) {
+        return {
+          outcome: rejectedAuthority("roomDeleting", "The room is sealed for deletion."),
+          committedHere: false,
+        };
+      }
+      const currentSubmission = this.authorityStore.submissionByPrepared(preparedActionId);
+      const currentStage = this.authorityStore.actionStage(preparedActionId);
+      const currentAuthenticated = this.authenticatedAuthorityViewer(
+        context,
+        this.authoritativeReplay().state,
+      );
+      if (
+        currentSubmission === undefined
+        || currentStage === undefined
+        || currentAuthenticated === undefined
+        || currentSubmission.principal_id !== currentAuthenticated.principalId
+        || !currentAuthenticated.characterIds.includes(currentSubmission.character_id)
+      ) {
+        return {
+          outcome: rejectedAuthority(
+            "preparedActionUnauthorized",
+            "The due ActorPlan's affected character is no longer controlled by this principal.",
+          ),
+          committedHere: false,
+        };
+      }
+      if (
+        currentSubmission.status !== (usedRandomnessJournal ? "awaitingRandomness" : "prepared")
+        || currentStage.status !== "prepared"
+        || currentStage.child_root_action_id !== stage.child_root_action_id
+        || currentStage.target_id !== stage.target_id
+        || (currentStage.proposal_hash !== null
+          && currentStage.proposal_hash !== proposalHash)
+        || this.authorityStore.scopeVersion(currentSubmission.scene_scope)
+          !== currentSubmission.prepared_scope_version
+      ) {
+        return {
+          outcome: rejectedAuthority(
+            "scopeConflict",
+            "The due ActorPlan pending stage changed before it could be persisted.",
+          ),
+          committedHere: false,
+        };
+      }
+      if (this.authorityStore.hasRandomnessSettlementInScene(
+        currentSubmission.scene_scope,
+        preparedActionId,
+      )) {
+        return {
+          outcome: {
+            kind: "retryableFailure" as const,
+            code: "sceneRandomnessSettlementInProgress",
+          },
+          committedHere: false,
+        };
+      }
+      this.authorityStore.appendEvents(eventsToAppend);
+      this.authorityStore.updateState(resolved.state);
+      this.authorityStore.advanceScope(currentSubmission.scene_scope);
+      this.authorityStore.saveReceipt(receipt);
+      this.authorityStore.syncAuthorityIndex(resolved.state);
+      this.authorityStore.syncPendingAuthority(resolved.state);
+      if (pendingMessage !== undefined) {
+        this.authorityStore.appendExperiencedMessage({
+          viewerKey: pendingMessage.viewerKey,
+          messageId: pendingMessage.messageId,
+          sceneIds: pendingMessage.sceneIds,
+          kind: "kp",
+          speakerCharacterId: null,
+          speakerName: "KP",
+          body: pendingMessage.body,
+          sourceEventSeq: receiptEvents[receiptEvents.length - 1].eventSeq,
+          receiptId: receipt.receiptId,
+        });
+      }
+      if (usedRandomnessJournal) {
+        this.authorityStore.finalizeRandomnessBatch(journalPreparedActionId);
+      }
+      this.authorityStore.saveSuspendedActionStage(
+        preparedActionId,
+        proposalHash,
+        outcome,
+      );
+      this.authorityStore.advancePreparedSubmission({
+        preparedActionId,
+        preparedScopeVersion: nextScopeVersion,
+        prepared: parseJson<PreparedAuthoritativeAction>(currentSubmission.prepared_json),
+      });
+      this.authorityStore.markArchivePending(Date.now());
+      return { outcome, committedHere: true };
+    });
+    if (persisted.committedHere && usedRandomnessJournal) {
+      this.runAuthorityRecoveryCheckpoint("afterOutcomeCommitBeforeResponse");
+    }
     if (persisted.committedHere) await this.resumeAuthoritativeD1Archive();
     return persisted.outcome;
   }
@@ -5854,6 +6597,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       && submission.input_kind !== "environmentInteract"
       && submission.input_kind !== "environmentAbility"
       && submission.input_kind !== "movement"
+      && submission.input_kind !== "combatEndTurn"
+      && submission.input_kind !== "restStart"
+      && submission.input_kind !== "restInterrupt"
       && submission.input_kind !== "safetyPause"
       && submission.input_kind !== "safetyAdjust"
     ) {
@@ -6520,11 +7266,52 @@ export class RoomDurableObject extends DurableObject<Env> {
       return { kind: "retryableFailure", code: "incompleteAuthorityCommit" };
     }
     const resolved = final;
+    if (
+      resolved.kind === "awaitingInput"
+      && isJsonRecord(resolved.pending)
+      && resolved.pending.kind === "kpDecision"
+    ) {
+      if (usedRandomnessJournal) {
+        return {
+          kind: "retryableFailure",
+          code: "kpDecisionAfterRandomnessUnsupported",
+        };
+      }
+      return needsKp([{
+        code: "kpDecisionRequired",
+        publicPath: "该 NPC 或势力行动需要 KP 依据其有限知识作出明确选择。",
+        revisionHint: "使用待决输入给出的合法候选，补全 NPC 机械提案后以同一 rootActionId 重新提交。",
+        secrecy: "kp",
+        pending: structuredClone(resolved.pending),
+      }]);
+    }
     if (dueActorPlanStage) {
-      if (resolved.kind !== "committed" || actionStage === undefined) {
+      if (actionStage === undefined) {
         return rejectedAuthority(
           "invalidRulesResult",
-          "Due ActorPlan mechanics must settle before the player intent resumes.",
+          "Due ActorPlan mechanics lost their frozen child stage.",
+        );
+      }
+      if (resolved.kind === "awaitingInput") {
+        return this.suspendDueActorPlanMechanicalStage({
+          context,
+          preparedActionId,
+          proposalHash,
+          journalPreparedActionId,
+          replay,
+          submission,
+          stage: actionStage,
+          resolved,
+          eventsToAppend,
+          receiptEvents,
+          randomness,
+          usedRandomnessJournal,
+        });
+      }
+      if (resolved.kind !== "committed") {
+        return rejectedAuthority(
+          "invalidRulesResult",
+          "Due ActorPlan mechanics must settle or await one authenticated input.",
         );
       }
       return this.finishDueActorPlanMechanicalStage({
@@ -6542,53 +7329,99 @@ export class RoomDurableObject extends DurableObject<Env> {
         usedRandomnessJournal,
       });
     }
-    if (
-      resolved.kind === "awaitingInput"
-      && isJsonRecord(resolved.pending)
-      && resolved.pending.kind === "kpDecision"
-    ) {
-      if (usedRandomnessJournal) {
-        return {
-          kind: "retryableFailure",
-          code: "kpDecisionAfterRandomnessUnsupported",
+    let suspendedDue: {
+      stage: AuthorityActionStageRow;
+      parent: AuthoritySubmissionRow;
+      outcome: Extract<AuthorityCommitOutcome, { kind: "awaitingInput" }>;
+      proposalHash: string;
+    } | undefined;
+    if (answeredPendingInputId !== undefined) {
+      const linkedStage = this.authorityStore.actionStageByChildRoot(
+        submission.root_action_id,
+      );
+      if (linkedStage?.status === "prepared") {
+        const linkedParent = this.authorityStore.submissionByPrepared(
+          linkedStage.prepared_action_id,
+        );
+        let linkedOutcome: AuthorityCommitOutcome | undefined;
+        try {
+          linkedOutcome = linkedStage.result_json === null
+            ? undefined
+            : parseJson<AuthorityCommitOutcome>(linkedStage.result_json);
+        } catch {
+          linkedOutcome = undefined;
+        }
+        if (
+          linkedStage.proposal_hash === null
+          || linkedParent === undefined
+          || linkedParent.status !== "prepared"
+          || linkedParent.scene_scope !== submission.scene_scope
+          || linkedParent.prepared_scope_version !== submission.prepared_scope_version
+          || linkedOutcome?.kind !== "awaitingInput"
+          || !isJsonRecord(linkedOutcome.pending)
+          || linkedOutcome.pending.pendingInputId !== answeredPendingInputId
+          || linkedOutcome.receipt.rootActionId !== linkedStage.child_root_action_id
+        ) {
+          return { kind: "retryableFailure", code: "actorPlanPendingIntegrityMismatch" };
+        }
+        suspendedDue = {
+          stage: linkedStage,
+          parent: linkedParent,
+          outcome: linkedOutcome,
+          proposalHash: linkedStage.proposal_hash,
         };
       }
-      return needsKp([{
-          code: "kpDecisionRequired",
-          publicPath: "该 NPC 或势力行动需要 KP 依据其有限知识作出明确选择。",
-          revisionHint: "使用待决输入给出的合法候选，补全 NPC 机械提案后以同一 rootActionId 重新提交。",
-          secrecy: "kp",
-          pending: structuredClone(resolved.pending),
-      }]);
     }
     const status = resolved.kind === "awaitingInput"
       ? "awaitingInput" as const
       : resolved.kind === "concluded" || adapted.forceConcluded === true
         ? "concluded" as const
         : "committed" as const;
+    const lifecycleReceiptExtras = isJsonRecord(resolved.mechanicalResult)
+      && resolved.mechanicalResult.kind === "campaignLifecycle"
+      && resolved.mechanicalResult.action === "commitMeaningfulFailure"
+      && resolved.mechanicalResult.meaningfulFailure === true
+      && Array.isArray(resolved.mechanicalResult.newOptions)
+      && resolved.mechanicalResult.newOptions.every(isJsonRecord)
+      ? {
+          meaningfulFailure: true,
+          newOptions: structuredClone(resolved.mechanicalResult.newOptions),
+        }
+      : {};
     const nextScopeVersion = this.authorityStore.scopeVersion(submission.scene_scope) + 1;
+    const currentRandomnessCommitments = randomness.map((entry) => ({
+      randomnessId: entry.randomnessId,
+      requestHash: entry.requestHash,
+      frozenParametersHash: entry.frozenParametersHash,
+    }));
+    const randomnessCommitments = [...new Map([
+      ...(suspendedDue?.outcome.receipt.randomnessCommitments ?? []),
+      ...currentRandomnessCommitments,
+    ].map((entry) => [entry.randomnessId, entry])).values()];
+    const priorEventRange = suspendedDue?.outcome.receipt.eventRange;
     const receipt: PublicReceipt = {
       receiptId: resolved.receipt.receiptId,
       rootActionId: submission.root_action_id,
-      actorCharacterId: submission.character_id,
+      actorCharacterId: suspendedDue?.outcome.receipt.actorCharacterId
+        ?? submission.character_id,
       status,
       runtimeEpochId: resolved.state.runtimeEpochId,
       activeBranchId: resolved.state.activeBranchId,
-      eventRange: receiptEvents.length === 0
+      eventRange: receiptEvents.length === 0 && priorEventRange == null
         ? null
         : {
-            first: receiptEvents[0].eventSeq,
-            last: receiptEvents[receiptEvents.length - 1].eventSeq,
-            from: Number(receiptEvents[0].eventSeq),
-            to: Number(receiptEvents[receiptEvents.length - 1].eventSeq),
+            first: priorEventRange?.first ?? receiptEvents[0].eventSeq,
+            last: receiptEvents.at(-1)?.eventSeq ?? priorEventRange!.last,
+            from: Number(priorEventRange?.first ?? receiptEvents[0].eventSeq),
+            to: Number(receiptEvents.at(-1)?.eventSeq ?? priorEventRange!.last),
           },
       scopeVersions: { [submission.scene_scope]: String(nextScopeVersion) },
-      randomnessCommitments: randomness.map((entry) => ({
-        randomnessId: entry.randomnessId,
-        requestHash: entry.requestHash,
-        frozenParametersHash: entry.frozenParametersHash,
-      })),
+      randomnessCommitments,
+      ...(resolved.kind === "awaitingInput"
+        ? { pendingInputId: resolved.pending.pendingInputId }
+        : {}),
       ...(adapted.receiptExtras ?? {}),
+      ...lifecycleReceiptExtras,
     };
     const actorViewer = this.authorityViewerForCharacter(resolved.state, submission.character_id);
     const priorActorViewer = this.authorityViewerForCharacter(replay.state, submission.character_id);
@@ -6620,6 +7453,64 @@ export class RoomDurableObject extends DurableObject<Env> {
           : { resolution: structuredClone(resolved.mechanicalResult) }),
       },
     };
+
+    let resumedDuePrepared: PreparedAuthoritativeAction | undefined;
+    if (suspendedDue !== undefined && resolved.kind !== "awaitingInput") {
+      if (resolved.kind !== "committed") {
+        return rejectedAuthority(
+          "invalidRulesResult",
+          "The suspended due ActorPlan continuation did not settle canonically.",
+        );
+      }
+      const parentViewer = this.authorityViewerForCharacter(
+        resolved.state,
+        suspendedDue.parent.character_id,
+      );
+      const nextReplay: AuthorityReplay = { ...replay, state: resolved.state };
+      const moduleProfile = await this.pinnedAuthorityModule(nextReplay);
+      const parentProjection = parentViewer === undefined || moduleProfile === undefined
+        ? undefined
+        : this.kpAuthorityProjection(
+            nextReplay,
+            parentViewer,
+            moduleKpProjection(moduleProfile) as unknown as JsonObject,
+          );
+      const resumedActionInput = this.authorityResumedPlayerIntent(suspendedDue.parent);
+      const resumedPrincipal = this.authorityResumedPrincipalContext(
+        resolved.state,
+        suspendedDue.parent,
+      );
+      if (
+        parentProjection === undefined
+        || resumedActionInput === undefined
+        || resumedPrincipal === undefined
+      ) {
+        return rejectedAuthority(
+          "continuationUnavailable",
+          "The original player intent is unavailable after the pending ActorPlan mechanics.",
+        );
+      }
+      resumedDuePrepared = {
+        kind: "prepared",
+        preparedActionId: suspendedDue.parent.prepared_action_id,
+        rootActionId: suspendedDue.parent.root_action_id,
+        receipt,
+        kpProjection: {
+          ...parentProjection,
+          mechanicalResult: {
+            kind: resolved.kind,
+            randomness: structuredClone(randomness),
+            ...(resolved.mechanicalResult === undefined
+              ? {}
+              : { resolution: structuredClone(resolved.mechanicalResult) }),
+          },
+        },
+        resolutionMode: "kpProposal",
+        phase: "playerIntent",
+        resumedActionInput,
+        resumedPrincipalContext: resumedPrincipal,
+      };
+    }
 
     let pending: JsonObject | undefined;
     let pendingBindings: Array<{
@@ -6677,18 +7568,32 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
       const currentBinding = pendingBindings.find((entry) =>
         entry.pendingInputId === resolved.pending.pendingInputId);
-      if (currentBinding === undefined) {
+      const suspendedPending = currentBinding === undefined
+        ? resolved.state.multiplayerRuntime.suspendedPendingInputs[
+            resolved.pending.pendingInputId
+          ]
+        : undefined;
+      const suspendedGroupRest = isJsonRecord(suspendedPending)
+        && suspendedPending.kind === "groupRestConsent"
+        && suspendedPending.pendingInputId === resolved.pending.pendingInputId
+        && suspendedPending.rootActionId === submission.root_action_id;
+      if (currentBinding === undefined && !suspendedGroupRest) {
         return rejectedAuthority(
           "invalidRulesResult",
           "Rules returned a pending input without an active trusted controller.",
         );
       }
-      pending = {
-        ...resolved.pending,
-        ...currentBinding.pending,
-        controllerCharacterId: currentBinding.controllerCharacterId,
-        controllerPrincipalId: currentBinding.controllerPrincipalId,
-      };
+      pending = currentBinding === undefined
+        ? {
+            kind: "pending",
+            pendingInputId: resolved.pending.pendingInputId,
+          }
+        : {
+            ...resolved.pending,
+            ...currentBinding.pending,
+            controllerCharacterId: currentBinding.controllerCharacterId,
+            controllerPrincipalId: currentBinding.controllerPrincipalId,
+          };
       if (actorMessage !== undefined
         && socialResolutionProfileEnabled(replay.profiles.extensions)) {
         const deliveryPriorState = this.authorityStateBeforeEventRange(replay, receiptEvents);
@@ -6708,7 +7613,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           actorMessage,
         );
       }
-    } else if (!safetyDirect) {
+    } else if (!safetyDirect && suspendedDue === undefined) {
       const deliveryPriorState = this.authorityStateBeforeEventRange(replay, receiptEvents);
       if (deliveryPriorState === undefined) {
         return rejectedAuthority(
@@ -6783,6 +7688,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           pending: pending!,
           kpProjection,
         }
+      : resumedDuePrepared !== undefined
+        ? { kind: "continue", prepared: resumedDuePrepared }
       : {
           kind: status === "concluded" ? "concluded" : "committed",
           receipt,
@@ -6835,6 +7742,37 @@ export class RoomDurableObject extends DurableObject<Env> {
           outcome: parseJson<AuthorityCommitOutcome>(current.result_json),
           committedHere: false,
         };
+      }
+      let currentSuspendedParent: AuthoritySubmissionRow | undefined;
+      if (suspendedDue !== undefined) {
+        const currentSuspendedStage = this.authorityStore.actionStageByChildRoot(
+          current.root_action_id,
+        );
+        currentSuspendedParent = currentSuspendedStage === undefined
+          ? undefined
+          : this.authorityStore.submissionByPrepared(
+              currentSuspendedStage.prepared_action_id,
+            );
+        if (
+          currentSuspendedStage === undefined
+          || currentSuspendedParent === undefined
+          || currentSuspendedStage.status !== "prepared"
+          || currentSuspendedStage.prepared_action_id !== suspendedDue.stage.prepared_action_id
+          || currentSuspendedStage.submission_id !== currentSuspendedParent.submission_id
+          || currentSuspendedStage.proposal_hash !== suspendedDue.proposalHash
+          || currentSuspendedStage.result_json !== suspendedDue.stage.result_json
+          || currentSuspendedParent.status !== "prepared"
+          || currentSuspendedParent.scene_scope !== current.scene_scope
+          || currentSuspendedParent.prepared_scope_version !== current.prepared_scope_version
+        ) {
+          return {
+            outcome: {
+              kind: "retryableFailure" as const,
+              code: "actorPlanPendingIntegrityMismatch",
+            },
+            committedHere: false,
+          };
+        }
       }
       if (!safetyDirect && hasActiveSafetyPause(currentReplay.state)) {
         return {
@@ -6956,6 +7894,33 @@ export class RoomDurableObject extends DurableObject<Env> {
         );
       }
       if (usedRandomnessJournal) this.authorityStore.finalizeRandomnessBatch(preparedActionId);
+      if (suspendedDue !== undefined && currentSuspendedParent !== undefined) {
+        if (resolved.kind === "awaitingInput") {
+          this.authorityStore.saveSuspendedActionStage(
+            currentSuspendedParent.prepared_action_id,
+            suspendedDue.proposalHash,
+            outcome,
+          );
+          this.authorityStore.advancePreparedSubmission({
+            preparedActionId: currentSuspendedParent.prepared_action_id,
+            preparedScopeVersion: nextScopeVersion,
+            prepared: parseJson<PreparedAuthoritativeAction>(
+              currentSuspendedParent.prepared_json,
+            ),
+          });
+        } else if (resumedDuePrepared !== undefined) {
+          this.authorityStore.finishActionStage(
+            currentSuspendedParent.prepared_action_id,
+            suspendedDue.proposalHash,
+            outcome,
+          );
+          this.authorityStore.advancePreparedSubmission({
+            preparedActionId: currentSuspendedParent.prepared_action_id,
+            preparedScopeVersion: nextScopeVersion,
+            prepared: resumedDuePrepared,
+          });
+        }
+      }
       this.authorityStore.finishSubmission(preparedActionId, status, proposalHash, outcome);
       this.authorityStore.markArchivePending(Date.now());
       return { outcome, committedHere: true };
@@ -6964,6 +7929,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       persisted.outcome.kind === "committed"
       || persisted.outcome.kind === "concluded"
       || persisted.outcome.kind === "awaitingInput"
+      || persisted.outcome.kind === "continue"
     ) {
       if (persisted.committedHere && usedRandomnessJournal) {
         this.runAuthorityRecoveryCheckpoint("afterOutcomeCommitBeforeResponse");
@@ -7030,6 +7996,29 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const { archive, profiles, replay: replayed } = validation.value;
     const state = validation.value.state as AuthoritativeWorldState;
+    const restoredModuleMatch = /^module:(.+):([^:]+)$/u.exec(
+      archive.signedGenesis.moduleRef.profileId,
+    );
+    let restoredModuleProfile: AuthoritativeModuleProfile | undefined;
+    if (restoredModuleMatch !== null) {
+      try {
+        restoredModuleProfile = await authoritativeModuleProfile(
+          restoredModuleMatch[1],
+          restoredModuleMatch[2],
+        );
+      } catch {
+        restoredModuleProfile = undefined;
+      }
+    }
+    if (
+      restoredModuleProfile === undefined
+      || !exactProfileRef(archive.signedGenesis.moduleRef, restoredModuleProfile.moduleRef)
+    ) {
+      return rejectedAuthority(
+        "profileIntegrityMismatch",
+        "The archive Module Profile is not registered for current 0.4 recovery.",
+      );
+    }
     const recoveredReplay: AuthorityReplay = {
       profiles,
       genesis: archive.signedGenesis,
@@ -7114,12 +8103,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
       });
     }
-    const restoredProfileId = archive.signedGenesis.moduleRef.profileId;
-    const restoredVersionSeparator = restoredProfileId.lastIndexOf(":");
-    const restoredModuleId = restoredProfileId.startsWith("module:")
-      && restoredVersionSeparator > "module:".length
-      ? restoredProfileId.slice("module:".length, restoredVersionSeparator)
-      : restoredProfileId;
+    const restoredModuleId = restoredModuleProfile.moduleId;
 
     const restored = (() => {
       try {
@@ -7594,6 +8578,32 @@ export class RoomDurableObject extends DurableObject<Env> {
         "The delivery audience journal is unavailable.",
       );
     }
+    const publicationResult = () => {
+      const requestedAudiences = new Set(actualAudienceIds);
+      const audienceRows = this.authorityStore.deliveryAudiences(publishCapability);
+      return {
+        kind: "published" as const,
+        receiptId: plan.receiptId,
+        deliveryIds: audienceRows.flatMap((audience) => {
+          if (
+            !requestedAudiences.has(audience.audience_id)
+            || audience.status !== "published"
+            || audience.result_json === null
+          ) {
+            return [];
+          }
+          const result = parseJson<unknown>(audience.result_json);
+          return isJsonRecord(result) && nonEmptyString(result.deliveryId)
+            ? [result.deliveryId]
+            : [];
+        }),
+        audiences: audienceRows.map((audience) => ({
+          audienceId: audience.audience_id,
+          deliveryGeneration: audience.delivery_generation,
+          state: audience.status,
+        })),
+      };
+    };
 
     const preparedFrames: Array<{
       binding: DeliveryAudienceBinding;
@@ -7689,11 +8699,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       });
     }
     if (preparedFrames.length === 0) {
-      return {
-        kind: "published" as const,
-        receiptId: plan.receiptId,
-        deliveryIds: [],
-      };
+      return publicationResult();
     }
     return this.authorityStore.transaction(() => {
       if (this.authorityStore.roomDeletion() !== undefined) {
@@ -7703,7 +8709,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (currentPlan === undefined) {
         return rejectedAuthority("publishCapabilityInvalid", "The publish capability is unavailable.");
       }
-      const publishedFrames: DeliveryFrame[] = [];
       for (const { audienceId, attemptHash, viewer, frame } of preparedFrames) {
         const journal = this.authorityStore.deliveryAudience(publishCapability, audienceId);
         if (
@@ -7777,19 +8782,8 @@ export class RoomDurableObject extends DurableObject<Env> {
             deliveryGeneration: frame.deliveryGeneration,
           },
         });
-        publishedFrames.push(frame);
       }
-      const result = {
-        kind: "published" as const,
-        receiptId: plan.receiptId,
-        deliveryIds: publishedFrames.map((frame) => frame.deliveryId),
-        audiences: this.authorityStore.deliveryAudiences(publishCapability).map((audience) => ({
-          audienceId: audience.audience_id,
-          deliveryGeneration: audience.delivery_generation,
-          state: audience.status,
-        })),
-      };
-      return result;
+      return publicationResult();
     });
   }
 

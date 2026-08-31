@@ -990,6 +990,21 @@ test("F03 enforces exact 2014 short- and long-rest fictional-duration thresholds
     });
     assert.equal(accepted.result.kind, "committed");
     assert.equal(accepted.result.events.some(({ eventType }) => eventType === "RestStarted"), true);
+
+    const defaulted = apply(scenario(makeCampaignGenesis(`f03:${restKind}:defaulted`)), {
+      kind: "startRest",
+      proposalId: `proposal:f03:${restKind}:defaulted`,
+      characterId: "pc:alpha",
+      restKind,
+      hitDiceToSpend: 0,
+      arcaneRecoverySlotLevels: [],
+    });
+    assert.equal(defaulted.result.kind, "committed");
+    assert.equal(
+      defaulted.result.events.find(({ eventType }) => eventType === "RestStarted")
+        ?.payload.intendedDurationMicros,
+      exact,
+    );
   }
 });
 

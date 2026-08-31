@@ -204,6 +204,12 @@ const VALID_FORM_DRAFTS = Object.freeze({
       { goal: "掩盖行动", method: "在原位放置旧封条", intendedOutcome: "留下可解释痕迹", resolution: "direct" },
     ],
     intendedOutcome: "钟架被移动且短时间不引起怀疑",
+    composition: {
+      schema: "zhuwei.compound-composition-draft/v1",
+      before: [],
+      onSuccess: [],
+      onFailure: [],
+    },
     resolution: "direct",
     durationUnit: "minute",
     durationValue: 10,
@@ -247,8 +253,8 @@ test("private catalog has exactly ten forms and exposes only deterministic 3-6 a
         assert.equal(isForbiddenModelField(key), false, key);
       }
       assert.equal(recursiveKeys(parameters).includes("oneOf"), false);
-      assert.equal(recursiveKeys(parameters).includes("formId"), false);
-      assert.equal(recursiveKeys(parameters).includes("draft"), false);
+      assert.equal(Object.hasOwn(parameters.properties, "formId"), false);
+      assert.equal(Object.hasOwn(parameters.properties, "draft"), false);
       assert.equal(validateKpFormDraft(formId, VALID_FORM_DRAFTS[formId]).ok, true);
     }
     const notAllowed = EXACT_FORM_IDS.find((formId) => !first.includes(formId));
@@ -427,7 +433,7 @@ test("product 0.4 private materialization exposes only the current typed NPC and
 });
 
 test("new action language compiles every form into a closed, stable, bounded DAG", () => {
-  assert.equal(CAUSAL_ACTION_LANGUAGE_PROFILE.languageVersion, "causal-action-program-v4.0");
+  assert.equal(CAUSAL_ACTION_LANGUAGE_PROFILE.languageVersion, "causal-action-program-v5.0");
   assert.equal(Object.hasOwn(CAUSAL_ACTION_LANGUAGE_PROFILE, "legacyActionPlanVersion"), false);
   assert.equal(new Set(CAUSAL_PRIMITIVES).size, CAUSAL_PRIMITIVES.length);
 
@@ -446,6 +452,31 @@ test("new action language compiles every form into a closed, stable, bounded DAG
   assert.equal(stableStructuralHash({ b: 2, a: 1 }), stableStructuralHash({ a: 1, b: 2 }));
 
   const compound = compileKpFormDraft("compound.v1", VALID_FORM_DRAFTS["compound.v1"]);
+  assert.deepEqual(
+    JSON.parse(compound.nodes.at(-1).arguments.compositionJson),
+    VALID_FORM_DRAFTS["compound.v1"].composition,
+  );
+  const nestedAuthority = structuredClone(VALID_FORM_DRAFTS["compound.v1"]);
+  nestedAuthority.composition.before.push({
+    kind: "openSceneQuestion",
+    sceneQuestionRef: "scene-question:forbidden-audience",
+    question: "这项问题是否会被错误定向？",
+    audience: "principal:hidden",
+  });
+  assert.equal(validateKpFormDraft("compound.v1", nestedAuthority).ok, false);
+  const nonCanonicalComposition = rehashProgram(compound, {
+    nodes: compound.nodes.map((node, index) => index === compound.nodes.length - 1
+      ? {
+          ...node,
+          arguments: {
+            ...node.arguments,
+            compositionJson: JSON.stringify(VALID_FORM_DRAFTS["compound.v1"].composition),
+          },
+        }
+      : node),
+  });
+  assert.ok(validateCausalActionProgram(nonCanonicalComposition).errors.some((error) =>
+    error.includes("compositionJson:invalid")));
   const cycleNodes = compound.nodes.map((node, index) => index === 0
     ? { ...node, dependsOn: [compound.nodes.at(-1).nodeId] }
     : { ...node });

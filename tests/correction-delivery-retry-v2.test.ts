@@ -5,7 +5,7 @@ import {
   handleRoomAction,
   handleRoomCorrection,
 } from "../app/_runtime/lib/room/action";
-import { noncombatCheckProposal } from "./helpers/authoritative-proposal";
+import { privateFormProposal } from "./helpers/authoritative-proposal";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -24,6 +24,11 @@ type Authority = {
   acknowledge(context: unknown, deliveryId: string): Promise<unknown>;
   commitCorrection(capability: unknown, request: unknown): Promise<unknown>;
   deliveryPublicationStatus(query: { publishCapability: unknown }): Promise<unknown>;
+  beginDeliveryAudiencePublication(query: {
+    publishCapability: unknown;
+    audienceId: string;
+  }): Promise<unknown>;
+  failDeliveryAudiencePublication(capability: unknown, failure: unknown): Promise<unknown>;
   publishDelivery(capability: unknown, publication: unknown): Promise<unknown>;
   exportAuthoritativeArchive(capability: unknown): Promise<unknown>;
 };
@@ -46,7 +51,7 @@ function character(characterId: string, principalId: string) {
     controllerPrincipalId: principalId,
     staticCard: {
       name: characterId,
-      sceneId: "archive",
+      sceneId: "wake",
       abilityScores: { str: 14, dex: 12, con: 12, int: 10, wis: 10, cha: 10 },
       proficiencyBonus: 2,
       proficientSkills: ["athletics"],
@@ -65,7 +70,7 @@ async function eventSnapshot(authority: Authority, archiveExport: unknown) {
 
 describe("O15/O16 correction delivery recovery", () => {
   it("reuses one correction plan across model failure and a published response loss", async () => {
-    const roomId = "correction-delivery-retry-v2";
+    const roomId = `correction-delivery-retry-v2:${crypto.randomUUID()}`;
     const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
@@ -81,24 +86,42 @@ describe("O15/O16 correction delivery recovery", () => {
       ],
     }), "initialization");
     const capabilities = record(initialized.serviceCapabilities, "service capabilities");
+    for (const [viewer, label] of [[ALICE, "Alice"], [BOB, "Bob"]] as const) {
+      const opening = record(
+        record(await authority.observe(viewer), `${label} opening observation`).delivery,
+        `${label} opening delivery`,
+      );
+      expect(opening.kind).toBe("current");
+      const openingFrame = record(opening.frame, `${label} opening frame`);
+      await expect(authority.acknowledge(viewer, String(openingFrame.deliveryId)))
+        .resolves.toMatchObject({ kind: "acknowledged", deliveryId: openingFrame.deliveryId });
+    }
 
     const original = record(await handleRoomAction({
       principal: ALICE,
       authority,
       kp: {
         async propose(request) {
-          return noncombatCheckProposal(String(request.rootActionId), {
-            proposalAttemptId: "proposal:correction-retry:wrong-rule",
+          return privateFormProposal(String(request.rootActionId), "ordinary-check.v1", {
             goal: "强行推开沉重石门",
             method: "肩撞石门",
+            intendedOutcome: "沉重石门被推开",
+            risk: "错误裁定会消耗一点决心",
+            resolution: "check",
+            ability: "str",
+            skill: "athletics",
             dc: 1,
-            duration: { unit: "second", value: 1 },
-            success: [{ kind: "changeResource", resourceRef: "resolve", amount: -1 }],
-            failure: [],
-          });
+            mode: "normal",
+            durationUnit: "second",
+            durationValue: 1,
+            successConsequence: "石门被推开。",
+            failureConsequence: "石门没有打开，撞击声传了出去。",
+            resourceRef: "resolve",
+            resourceAmount: 1,
+          }, "proposal:correction-retry:wrong-rule");
         },
         async narrate(request) {
-          return { body: `旧分支:${String(request.audienceId)}`, agencyClaims: [] };
+          return { body: `旧分支:${String(request.audienceId)}` };
         },
       },
     }, {
@@ -106,7 +129,17 @@ describe("O15/O16 correction delivery recovery", () => {
       submissionId: "submission:correction-retry:wrong-rule",
       text: "我用肩膀撞开这扇石门。",
     }), "original outcome");
-    expect(original.kind).toBe("committed");
+    expect(original).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    const originalDelivery = record(
+      record(await authority.observe(ALICE), "Alice original observation").delivery,
+      "Alice original delivery",
+    );
+    expect(record(originalDelivery.frame, "Alice original frame").text)
+      .toContain("旧分支:");
     const originalReceipt = record(original.receipt, "original receipt");
     const correctionRequest = {
       correctionId: "correction:delivery-retry:1",
@@ -146,6 +179,12 @@ describe("O15/O16 correction delivery recovery", () => {
         authority.commitCorrection(capability, request),
       deliveryPublicationStatus: (query: { publishCapability: unknown }) =>
         authority.deliveryPublicationStatus(query),
+      beginDeliveryAudiencePublication: (query: {
+        publishCapability: unknown;
+        audienceId: string;
+      }) => authority.beginDeliveryAudiencePublication(query),
+      failDeliveryAudiencePublication: (capability: unknown, failure: unknown) =>
+        authority.failDeliveryAudiencePublication(capability, failure),
       async publishDelivery(capability: unknown, publication: unknown) {
         publicationCalls += 1;
         const published = await authority.publishDelivery(capability, publication);
@@ -163,13 +202,12 @@ describe("O15/O16 correction delivery recovery", () => {
           narrationCalls += 1;
           return {
             body: `更正后:${String(request.audienceId)}`,
-            agencyClaims: [],
           };
         },
       },
     }, capabilities.correction, correctionRequest), "response-lost correction retry");
     expect(responseLost).toMatchObject({ kind: "committed", deliveryPending: true });
-    expect(publicationCalls).toBe(1);
+    expect(publicationCalls).toBe(2);
     expect(narrationCalls).toBe(4);
     const aliceFrame = record(
       record(record(await authority.observe(ALICE), "Alice published correction").delivery, "delivery").frame,
@@ -186,7 +224,7 @@ describe("O15/O16 correction delivery recovery", () => {
     }, capabilities.correction, correctionRequest), "published correction recovery");
     expect(recovered.kind).toBe("committed");
     expect(recovered).not.toHaveProperty("deliveryPending");
-    expect(publicationCalls).toBe(1);
+    expect(publicationCalls).toBe(2);
     expect(narrationCalls).toBe(4);
     expect(record(
       record(record(await authority.observe(ALICE), "Alice recovered correction").delivery, "delivery").frame,

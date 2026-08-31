@@ -2147,3 +2147,24 @@
 - 基线与集成：工作分支 `cloudflare`，本轮起点 `90fbc44bdcc9230b070bd09d528c68e9ae805060`；共享工作树中的前端库存、统一 Item、current-only transport、规格/hash 与定向测试修改逐文件保留，没有用另一 worktree 整树覆盖，也没有未解决冲突。
 - 提交与外部操作：代码/规格/测试提交为 `225c6b2`（`feat: unify item authority and current action ingress`）。推送前 `origin/cloudflare` 为 `ae3a41e65383da807cad02a519b80782f3004a9a`，确认未并发前移后执行非强制 `git push origin HEAD:refs/heads/cloudflare`，退出 0，远端前移至 `225c6b2`。
 - 边界：推送前确认 `origin/main` 仍为产品基线 `29eb06dc009c983ad61b2d862454503e67a7f40a`；未修改或推送 `main`，未执行远端 migration、部署、远端资源创建或 grok.me 操作。用户明确取消冻结门，验证范围与已知 test-only 旧 fixture 限制见上一条执行记录。
+
+## 代理合同区分能力开发与 Bug 修复（2026-08-31）
+
+- 症状与根因：`AGENTS.md` 原先把所有普通开发任务默认路由为 Bug 快修，只有“最窄复现—最小修复—直接连带”一套完整闭环；当用户用具体实例说明一类新能力时，实例容易被误判为全部交付范围。首个违规点是任务路由和停止条件未区分能力开发与既有行为修复。
+- 修改：将开发期入口拆成能力开发、Bug 修复和混合任务三种路由，明确“能力 + 示例”中的能力才是交付对象；新增能力合同、变化维度、代表性验收矩阵、通用事实源和端到端闭包要求，保留最窄复现与最小修复仅约束 Bug 路径。同步区分两条路径的定向验证、文档读取、执行回执和并行边界。
+- 定向检查：核对任务路由、两个闭环、实现取舍、开发期验证、文档读取与执行日志条款之间无相反要求；`git diff --check -- AGENTS.md docs/refactor-log.md` 退出 0。
+- 剩余限制：本次只修改代理合同与执行日志，没有修改 SPEC、ADR、源码、测试或运行时行为；未运行代码测试、Lint、typecheck、build、远端操作、部署或 Git push。新路由的实际效果仍需在后续能力开发任务中以代表性样例观察。
+
+## KP Agent 系统与组合行动问题审计（2026-08-31）
+
+- 目标：把当前 KP Agent 的核心能力、支撑系统、主要复杂度热点，以及“扔石头探查门上陷阱”暴露的组合行动问题集中记录为探索性审计；该文档不升级为 SPEC/ADR，也不修改现有产品合同。
+- 修改：新增 `docs/kp-agent-system-audit.md`，区分已确认问题、静态代码推断和待裁定事项；记录隐藏现实固化、环境触发、观察/知识投影无法在现有单 Form/RootAction 中明确异构组合的核心缺口，并列出措辞敏感路由、普通道具权威层级、有限状态环境、候选公平性、DO/Rules 巨型文件、分散验证和 DTO 适配等问题。
+- 定向检查：只检查文档结构、相关 SPEC/源码链接、目标 diff 与 `git diff --check`；未运行代码测试。
+- 剩余限制：精确样例尚未经过真实模型与 Room/Rules 端到端探针；收敛方向和五项产品问题仍是建议，不构成实施授权；未修改源码、测试、SPEC 或 ADR，未执行 build、部署、migration 或 Git push。
+
+## 通用组合行动纵切与 0.4 发布前收口（2026-08-31）
+
+- 症状与根因：`compound.v1` 虽能升级过窄 Form，却没有一份可冻结、可回放的异构组合合同来同时表达动态事实、有限知识 NPC 计划、场景问题、Activity、环境转换和世界后果；实现因此容易退化为按信件、对象名或方法哨兵分派。首个违规点是 Form/compiler 到 Rules `step` 之间缺少通用 composition 事实，而不是某个“信件”案例缺少专用分支。ActorPlan 继续只表示 NPC/势力基于有限知识形成的未来意图与到期 Activity，不恢复为玩家行动 transport。
+- 修改：新增闭合的 `zhuwei.compound-composition-draft/v1`，以 `before`、`onSuccess`、`onFailure` 三相承载六类类型化 Operation；服务端冻结 canonical `compositionJson`，在随机前验证两个结果分支，提交时只执行命中分支。动态事实、ActorPlan、场景问题、玩家 Activity、环境开闭和世界后果全部复用现役 Rules/事件/投影/replay 事实源；世界后果与默认时间推进只记一次，模型不能提交 actor、Audience、骰面、事件或权威状态。同步 Form catalog、causal language、interpreter、runtime manifest 及 Proposal/workflow hash，并更新当前 SPEC 快照、README 与房间绑定断言；删除冲突的重复临时环境授权 fixture，修正 archive 压测 fixture 的场景容量而不降低生产不变量。
+- 连带检查与证据：`tests/kp-form-context-v3.test.mjs`、`private-form-repair-v3.test.mjs`、`causal-action-rules-v3.test.mjs` 首轮 40/41，唯一失败为拒绝结果事件数组的测试断言，修正后该命名用例 1/1；`tests/runtime-profiles-v2.test.mjs` 首轮 3/4，唯一失败为测试仍期待 manifest `5.4.0`，修正后该命名用例 1/1。`tests/compound-action-v2.test.ts` 1/1、`archive-do-resume-v2.test.ts` 5/5、`dynamic-environment-room-lowering-v3.test.ts` 5/5、`v3-room-binding-v3.test.mjs` 4/4 均退出 0；`npm run typecheck` 退出 0。覆盖空组合、六类代表操作、成功/失败隔离、未选分支预检拒绝、单次随机/时间、重放、权限字段注入拒绝、Room archive 恢复及 exact Profile 绑定。
+- 发布边界：用户要求只验证修改处并继续推送部署，因此不运行完整冻结门、全量 Node/Worker、Lint 或独立 production build；发布脚本自身的单次构建不计额外冻结门。`0012` 只清理已退役表和旧房间默认值，未获远端 migration 授权，本轮不会应用远端 D1，也不会修改 `main`、grok.me 或创建新 Worker/资源。提交、非强制 push、既有 Worker 部署和最小线上回执另记发布审计。

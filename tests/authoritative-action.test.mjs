@@ -464,6 +464,7 @@ test("a player's roll gesture resumes the frozen intent after an NPC mechanical 
   assert.equal(outcome.kind, "committed");
   assert.deepEqual(operations(harness.trace), [
     "authority.resumePlayerRandomness",
+    "authority.prepare",
     "kp.propose",
     "authority.commit",
     "authority.deliveryPublicationStatus",
@@ -473,7 +474,11 @@ test("a player's roll gesture resumes the frozen intent after an NPC mechanical 
     "authority.observe",
   ]);
   assert.deepEqual(calls(harness.trace, "kp", "propose")[0].request.input, INTENT);
-  assert.equal(calls(harness.trace, "authority", "prepare").length, 0);
+  assert.deepEqual(calls(harness.trace, "authority", "prepare")[0].input, INTENT);
+  assert.equal(
+    calls(harness.trace, "authority", "prepare")[0].principalId,
+    TRUSTED_PRINCIPAL.id,
+  );
   assert.equal(calls(harness.trace, "authority", "resumePlayerRandomness")[0].randomnessId,
     rollInput.randomnessId);
   assert.equal(
@@ -482,6 +487,90 @@ test("a player's roll gesture resumes the frozen intent after an NPC mechanical 
   );
   assert.equal(calls(harness.trace, "authority", "commit")[0].principalId,
     TRUSTED_PRINCIPAL.id);
+});
+
+test("a cached pending answer continuation re-prepares the exact original intent before KP", async () => {
+  const answerInput = Object.freeze({
+    kind: "answer",
+    submissionId: "submission:cached-actor-plan-answer",
+    pendingInputId: "pending:actor-plan:reaction",
+    answer: Object.freeze({ kind: "declineReaction" }),
+  });
+  const resumedPrepared = Object.freeze({
+    ...PREPARED,
+    phase: "playerIntent",
+    resumedActionInput: INTENT,
+    resumedPrincipalContext: { principal: TRUSTED_PRINCIPAL },
+  });
+  const harness = createHarness({
+    prepareResult: (_principal, input) => input.kind === "answer"
+      ? { kind: "continue", prepared: resumedPrepared }
+      : PREPARED,
+  });
+
+  const outcome = await handleRoomAction({
+    ...harness.context,
+    principal: CLICKING_PRINCIPAL,
+  }, answerInput);
+
+  assert.equal(outcome.kind, "committed");
+  assert.deepEqual(operations(harness.trace), [
+    "authority.prepare",
+    "authority.prepare",
+    "kp.propose",
+    "authority.commit",
+    "authority.deliveryPublicationStatus",
+    "authority.beginDeliveryAudiencePublication",
+    "kp.narrate",
+    "authority.publishDelivery",
+    "authority.observe",
+  ]);
+  const prepareCalls = calls(harness.trace, "authority", "prepare");
+  assert.equal(prepareCalls[0].principalId, CLICKING_PRINCIPAL.id);
+  assert.deepEqual(prepareCalls[0].input, answerInput);
+  assert.equal(prepareCalls[1].principalId, TRUSTED_PRINCIPAL.id);
+  assert.deepEqual(prepareCalls[1].input, INTENT);
+  assert.equal(calls(harness.trace, "kp", "propose")[0].request.input.kind, "intent");
+  assert.equal(calls(harness.trace, "authority", "commit")[0].principalId,
+    TRUSTED_PRINCIPAL.id);
+});
+
+test("an explicit retry of a settled due stage re-prepares the exact original intent before KP", async () => {
+  const retryInput = Object.freeze({
+    kind: "retry",
+    submissionId: INTENT.submissionId,
+    rootActionId: PREPARED.rootActionId,
+  });
+  const resumedPrepared = Object.freeze({
+    ...PREPARED,
+    phase: "playerIntent",
+    resumedActionInput: INTENT,
+    resumedPrincipalContext: { principal: TRUSTED_PRINCIPAL },
+  });
+  const harness = createHarness({
+    prepareResult: (_principal, input) => input.kind === "retry"
+      ? resumedPrepared
+      : PREPARED,
+  });
+
+  const outcome = await handleRoomAction(harness.context, retryInput);
+
+  assert.equal(outcome.kind, "committed");
+  assert.deepEqual(operations(harness.trace), [
+    "authority.prepare",
+    "authority.prepare",
+    "kp.propose",
+    "authority.commit",
+    "authority.deliveryPublicationStatus",
+    "authority.beginDeliveryAudiencePublication",
+    "kp.narrate",
+    "authority.publishDelivery",
+    "authority.observe",
+  ]);
+  const prepareCalls = calls(harness.trace, "authority", "prepare");
+  assert.deepEqual(prepareCalls[0].input, retryInput);
+  assert.deepEqual(prepareCalls[1].input, INTENT);
+  assert.deepEqual(calls(harness.trace, "kp", "propose")[0].request.input, INTENT);
 });
 
 test("an authenticated combat or consent answer bypasses KP proposal and preserves the player's exact choice", async () => {

@@ -128,7 +128,7 @@ export async function runAuthoritativeRoomAction(input: {
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
   const boundModuleProfile = binding === undefined
     ? undefined
-    : await projectedModuleProfile(binding.module_id, bindingObservation);
+    : await observedRoomModuleProfile(binding.module_id, bindingObservation);
   const v3Binding = validateV3RoomBinding({
     binding,
     roomProfile: profile,
@@ -170,7 +170,7 @@ export async function runAuthoritativeRoomAction(input: {
     ai: authoritativeKpModelBinding(profile),
     profile,
     prepareV3Context: async (request, allowedFormIds) => {
-      const exactModule = await projectedModuleProfile(binding.module_id, request.projection);
+      const exactModule = await kpProjectionModuleProfile(binding.module_id, request.projection);
       if (exactModule === undefined) {
         throw new Error("CONTEXT_INSUFFICIENT");
       }
@@ -314,30 +314,38 @@ function v3BindingRejection() {
   };
 }
 
-function moduleRefFromProjection(value: unknown) {
+function exactModuleRef(value: unknown) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const record = value as Record<string, unknown>;
-  const readModel = record.readModel !== null
-    && typeof record.readModel === "object"
-    && !Array.isArray(record.readModel)
-    ? record.readModel as Record<string, unknown>
-    : record;
-  const campaign = readModel.campaign !== null
-    && typeof readModel.campaign === "object"
-    && !Array.isArray(readModel.campaign)
-    ? readModel.campaign as Record<string, unknown>
-    : undefined;
-  const candidate = campaign?.moduleRef ?? readModel.moduleRef;
-  if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
-  const ref = candidate as Record<string, unknown>;
+  const ref = value as Record<string, unknown>;
   return typeof ref.profileId === "string"
     && /^sha256:[0-9a-f]{64}$/u.test(String(ref.profileHash))
     ? { profileId: ref.profileId, profileHash: String(ref.profileHash) }
     : undefined;
 }
 
-async function projectedModuleProfile(moduleId: string, projection: unknown) {
-  const ref = moduleRefFromProjection(projection);
+function moduleRefFromRoomObservation(value: unknown) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const readModel = record.readModel !== null
+    && typeof record.readModel === "object"
+    && !Array.isArray(record.readModel)
+    ? record.readModel as Record<string, unknown>
+    : undefined;
+  const campaign = readModel !== undefined
+    && readModel.campaign !== null
+    && typeof readModel.campaign === "object"
+    && !Array.isArray(readModel.campaign)
+    ? readModel.campaign as Record<string, unknown>
+    : undefined;
+  return exactModuleRef(campaign?.moduleRef);
+}
+
+function moduleRefFromKpProjection(value: unknown) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return exactModuleRef((value as Record<string, unknown>).moduleRef);
+}
+
+async function moduleProfileForRef(moduleId: string, ref: ReturnType<typeof exactModuleRef>) {
   const prefix = `module:${moduleId}:`;
   if (ref === undefined || !ref.profileId.startsWith(prefix)) return undefined;
   try {
@@ -348,8 +356,16 @@ async function projectedModuleProfile(moduleId: string, projection: unknown) {
   }
 }
 
+async function observedRoomModuleProfile(moduleId: string, observation: unknown) {
+  return moduleProfileForRef(moduleId, moduleRefFromRoomObservation(observation));
+}
+
+async function kpProjectionModuleProfile(moduleId: string, projection: unknown) {
+  return moduleProfileForRef(moduleId, moduleRefFromKpProjection(projection));
+}
+
 async function expectedModuleRef(moduleId: string, projection: unknown) {
-  return (await projectedModuleProfile(moduleId, projection))?.moduleRef;
+  return (await observedRoomModuleProfile(moduleId, projection))?.moduleRef;
 }
 
 /**

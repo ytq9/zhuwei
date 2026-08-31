@@ -197,6 +197,7 @@ function relevantDynamicAuthoritativeFacts(
   characterRef: string,
   actorVisibleFacts: readonly UnknownRecord[],
   actorKnowledge: readonly UnknownRecord[],
+  actorVisibleItems: readonly UnknownRecord[],
 ): ContextRecord[] {
   const facts = records(projection.dynamicAuthoritativeFacts)
     .filter((fact) => nonEmptyString(fact.id));
@@ -208,6 +209,10 @@ function relevantDynamicAuthoritativeFacts(
     if (firstString(entity, ["sceneId", "sceneRef"]) !== sceneRef) continue;
     const entityRef = firstString(entity, ["id", "entityId"]);
     if (entityRef !== undefined) scopeRefs.add(entityRef);
+  }
+  for (const item of actorVisibleItems) {
+    const itemRef = firstString(item, ["itemEntryId", "itemRef", "entryId", "id"]);
+    if (itemRef !== undefined) scopeRefs.add(itemRef);
   }
   const selected = new Set<string>();
   for (const fact of actorVisibleFacts) {
@@ -371,24 +376,84 @@ function boundedNpcKnowledge(value: unknown): ContextRecord[] {
 
 function boundedNpcPlans(value: unknown): ContextRecord[] {
   return records(value)
+    .filter((entry) =>
+      nonEmptyString(entry.planId)
+      && nonEmptyString(entry.goal)
+      && nonEmptyString(entry.nextStep)
+      && (entry.factionRef === null || nonEmptyString(entry.factionRef))
+      && ["scheduled", "resolved", "cancelled"].includes(String(entry.status))
+      && Array.isArray(entry.premiseRefs)
+      && Array.isArray(entry.resourceRefs)
+      && (entry.due === null || isRecord(entry.due))
+      && (entry.trigger === null || isRecord(entry.trigger)))
     .sort((left, right) => {
-      const priority = (entry: UnknownRecord) => entry.status === "scheduled" ? 0
-        : entry.status === "active" ? 1 : 2;
+      const priority = (entry: UnknownRecord) => entry.status === "scheduled" ? 0 : 1;
       const byStatus = priority(left) - priority(right);
-      return byStatus !== 0
-        ? byStatus
-        : String(right.dueAtMicros ?? "").localeCompare(String(left.dueAtMicros ?? ""));
+      if (byStatus !== 0) return byStatus;
+      const dueMicros = (entry: UnknownRecord): bigint =>
+        isRecord(entry.due)
+          && nonEmptyString(entry.due.atFictionMicros)
+          && /^(?:0|[1-9][0-9]*)$/u.test(entry.due.atFictionMicros)
+          ? BigInt(entry.due.atFictionMicros)
+          : -1n;
+      const leftDue = dueMicros(left);
+      const rightDue = dueMicros(right);
+      return leftDue === rightDue
+        ? String(left.planId).localeCompare(String(right.planId))
+        : leftDue < rightDue ? 1 : -1;
     })
     .slice(0, 8).map((entry) => contextRecord({
-    planId: firstString(entry, ["planId", "goalId", "id"]) ?? null,
+    planId: entry.planId,
+    factionRef: entry.factionRef,
     goal: entry.goal ?? null,
     nextStep: entry.nextStep ?? null,
     trigger: entry.trigger ?? null,
     status: entry.status ?? null,
-    dueAtMicros: entry.dueAtMicros ?? null,
+    due: entry.due ?? null,
     resourceRefs: strings(entry.resourceRefs).slice(0, 12),
-    knowledgeRefs: strings(entry.knowledgeRefs).slice(0, 12),
+    premiseRefs: strings(entry.premiseRefs).slice(0, 12),
   }));
+}
+
+function boundedNpcFactions(value: unknown, npcRef: string): ContextRecord[] {
+  return records(value)
+    .filter((entry) =>
+      nonEmptyString(entry.factionId)
+      && Array.isArray(entry.memberRefs)
+      && strings(entry.memberRefs).includes(npcRef)
+      && Array.isArray(entry.resourceRefs))
+    .sort((left, right) => String(left.factionId).localeCompare(String(right.factionId)))
+    .slice(0, 8)
+    .map((entry) => contextRecord({
+      factionId: entry.factionId,
+      name: entry.name ?? null,
+      goal: entry.goal ?? null,
+      memberRefs: strings(entry.memberRefs).slice(0, 24),
+      resourceRefs: strings(entry.resourceRefs).slice(0, 24),
+    }));
+}
+
+function boundedNpcFactionPlans(value: unknown, npcRef: string): ContextRecord[] {
+  return records(value)
+    .filter((entry) =>
+      nonEmptyString(entry.factionId)
+      && nonEmptyString(entry.planId)
+      && entry.actingNpcId === npcRef
+      && ["scheduled", "resolved", "cancelled", "advanced"].includes(String(entry.status))
+      && Array.isArray(entry.premiseRefs)
+      && Array.isArray(entry.resourceRefs))
+    .sort((left, right) => String(left.planId).localeCompare(String(right.planId)))
+    .slice(0, 8)
+    .map((entry) => contextRecord({
+      factionId: entry.factionId,
+      planId: entry.planId,
+      actingNpcId: entry.actingNpcId,
+      revision: entry.revision ?? null,
+      status: entry.status,
+      premiseRefs: strings(entry.premiseRefs).slice(0, 24),
+      resourceRefs: strings(entry.resourceRefs).slice(0, 24),
+      ...(isRecord(entry.lastAdvance) ? { lastAdvance: entry.lastAdvance } : {}),
+    }));
 }
 
 function relevantSocialThreads(
@@ -452,6 +517,8 @@ function relevantNpcViews(
       if (npcSceneRef !== sceneRef) return [];
       const knowledge = boundedNpcKnowledge(npcView.knowledge);
       const plans = boundedNpcPlans(npcView.npcPlans);
+      const factions = boundedNpcFactions(npcView.factions, npcRef);
+      const factionPlans = boundedNpcFactionPlans(npcView.factionPlans, npcRef);
       const socialCapabilities = isRecord(controlled.socialCapabilities)
         ? contextRecord({
             maximumInfluenceDegree: controlled.socialCapabilities.maximumInfluenceDegree ?? null,
@@ -475,6 +542,8 @@ function relevantNpcViews(
         ].filter((ref, index, all) => all.indexOf(ref) === index).sort(),
         knowledge,
         plans,
+        factions,
+        factionPlans,
       }];
     })
     .sort((left, right) => left.npcRef.localeCompare(right.npcRef));
@@ -572,12 +641,13 @@ export function requiredContextFromKpRequest(
   );
   const npcMechanicalContext = relevantNpcMechanicalContext(projection, sceneRef);
   const dynamicAuthoritativeFacts = options.includeDynamicAuthoritativeFacts === true
-    ? relevantDynamicAuthoritativeFacts(
+      ? relevantDynamicAuthoritativeFacts(
         projection,
         sceneRef,
         characterRef,
         visibleFacts,
         knowledge,
+        visibleItems,
       )
     : [];
 

@@ -92,6 +92,41 @@ test("RequiredContext consumes the real observer projection and rejects incomple
   assert.equal(JSON.stringify(required).includes("unavailable"), false);
   assert.equal(required.npcViews.length, 1);
 
+  const numericDueRequest = structuredClone(request);
+  numericDueRequest.projection.npcViewers["npc:black-oak-will:echo"].npcPlans.push(
+    {
+      planId: "plan:npc:echo:due-nine",
+      factionRef: null,
+      goal: "等待第九微秒",
+      nextStep: "在第九微秒继续",
+      trigger: null,
+      status: "scheduled",
+      due: { kind: "fictionTime", atFictionMicros: "9" },
+      resourceRefs: [],
+      premiseRefs: ["knowledge:npc:echo:heard-song"],
+    },
+    {
+      planId: "plan:npc:echo:due-ten",
+      factionRef: null,
+      goal: "等待第十微秒",
+      nextStep: "在第十微秒继续",
+      trigger: null,
+      status: "scheduled",
+      due: { kind: "fictionTime", atFictionMicros: "10" },
+      resourceRefs: [],
+      premiseRefs: ["knowledge:npc:echo:heard-song"],
+    },
+  );
+  const numericDueRequired = requiredContextFromKpRequest(numericDueRequest);
+  assert.deepEqual(
+    numericDueRequired.npcViews[0].plans.map((plan) => plan.planId),
+    [
+      "plan:npc:echo:finish-song",
+      "plan:npc:echo:due-ten",
+      "plan:npc:echo:due-nine",
+    ],
+  );
+
   const crossSceneNamedNpc = structuredClone(request);
   crossSceneNamedNpc.input.text = "我呼唤神龛回声（亡母的嗓音），并询问 npc:black-oak-will:echo 的计划。";
   crossSceneNamedNpc.projection.npcViewers["npc:black-oak-will:echo"]
@@ -136,6 +171,17 @@ test("only the V5 KP context receives the relevant hidden dynamic-fact causal cl
   const request = proposalRequest(profile, "我问回声：我为何来到这里？");
   const hiddenParent = "fact:hidden:invitation-origin";
   const hiddenCurrent = "fact:hidden:arrival-purpose";
+  const itemRef = "item-entry:cellar:engraved-compass";
+  const itemSource = "fact:item-information:cellar:engraved-compass-bearing";
+  request.projection.actorProjection.visibleItems = [{
+    itemEntryId: itemRef,
+    kind: "identified",
+    definitionRef: "item-definition:cellar:engraved-compass:1",
+    name: "雕纹罗盘",
+    disposition: "scene",
+    quantity: 1,
+    sceneRef: "cellar",
+  }];
   request.projection.dynamicAuthoritativeFacts = {
     [hiddenParent]: {
       id: hiddenParent,
@@ -164,6 +210,23 @@ test("only the V5 KP context receives the relevant hidden dynamic-fact causal cl
       causalParentIds: [],
       validFromEventSeq: "43",
     },
+    [itemSource]: {
+      id: itemSource,
+      kind: "itemInformationSource",
+      source: "observedEvent",
+      subjectRefs: [itemRef],
+      value: {
+        schema: "zhuwei.item-information-source/v1",
+        itemRef,
+        information: {
+          kind: "sensoryEvidence",
+          sense: "visual",
+          content: "罗盘指针持续指向北侧封墙",
+        },
+      },
+      causalParentIds: [],
+      validFromEventSeq: "44",
+    },
   };
 
   const historical = requiredContextFromKpRequest(request);
@@ -175,12 +238,15 @@ test("only the V5 KP context receives the relevant hidden dynamic-fact causal cl
   });
   assert.deepEqual(
     v5.sceneDynamics.dynamicAuthoritativeFacts.map((fact) => fact.id),
-    [hiddenParent, hiddenCurrent],
+    [hiddenParent, hiddenCurrent, itemSource],
   );
   assert.ok(v5.established.factRefs.includes(hiddenParent));
   assert.ok(v5.established.factRefs.includes(hiddenCurrent));
+  assert.ok(v5.established.factRefs.includes(itemSource));
+  assert.ok(JSON.stringify(v5).includes("罗盘指针持续指向北侧封墙"));
   assert.equal(JSON.stringify(v5).includes("不相关秘密"), false);
   assert.equal(JSON.stringify(request.projection.actorProjection).includes("寻找失踪的信使"), false);
+  assert.equal(JSON.stringify(request.projection.actorProjection).includes("北侧封墙"), false);
   assert.equal(JSON.stringify(v5.npcViews).includes("寻找失踪的信使"), false);
 });
 
@@ -287,13 +353,36 @@ test("real SQLite synchronization retrieves structure/aliases through D1 and reh
       }],
       plans: [{
         planId: "plan:npc:echo:finish-song",
+        factionRef: "faction:black-oak-will:echoes",
         goal: "诱使在场者应和",
         nextStep: "只复述刚才听见的音节",
-        trigger: "有人向回声说话",
-        status: "active",
-        dueAtMicros: "120000000",
-        resourceRefs: [],
-        knowledgeRefs: ["knowledge:npc:echo:heard-song"],
+        trigger: null,
+        status: "scheduled",
+        due: { kind: "fictionTime", atFictionMicros: "120000000" },
+        resourceRefs: [
+          "faction:black-oak-will:echoes",
+          "resource:black-oak-will:echoes:refrain",
+        ],
+        premiseRefs: ["knowledge:npc:echo:heard-song"],
+      }],
+      factions: [{
+        factionId: "faction:black-oak-will:echoes",
+        name: "黑橡回声",
+        goal: "让活人续唱亡者的歌",
+        memberRefs: ["npc:black-oak-will:echo"],
+        resourceRefs: ["resource:black-oak-will:echoes:refrain"],
+      }],
+      factionPlans: [{
+        factionId: "faction:black-oak-will:echoes",
+        planId: "plan:npc:echo:finish-song",
+        actingNpcId: "npc:black-oak-will:echo",
+        revision: "1",
+        status: "scheduled",
+        premiseRefs: ["knowledge:npc:echo:heard-song"],
+        resourceRefs: [
+          "faction:black-oak-will:echoes",
+          "resource:black-oak-will:echoes:refrain",
+        ],
       }],
     }]);
     assert.ok(result.contextPack.optional.items.some((item) =>
@@ -541,13 +630,36 @@ function proposalRequest(profile, text, overrides = {}) {
           }],
           npcPlans: [{
             planId: "plan:npc:echo:finish-song",
+            factionRef: "faction:black-oak-will:echoes",
             goal: "诱使在场者应和",
             nextStep: "只复述刚才听见的音节",
-            trigger: "有人向回声说话",
-            status: "active",
-            dueAtMicros: "120000000",
-            resourceRefs: [],
-            knowledgeRefs: ["knowledge:npc:echo:heard-song"],
+            trigger: null,
+            status: "scheduled",
+            due: { kind: "fictionTime", atFictionMicros: "120000000" },
+            resourceRefs: [
+              "faction:black-oak-will:echoes",
+              "resource:black-oak-will:echoes:refrain",
+            ],
+            premiseRefs: ["knowledge:npc:echo:heard-song"],
+          }],
+          factions: [{
+            factionId: "faction:black-oak-will:echoes",
+            name: "黑橡回声",
+            goal: "让活人续唱亡者的歌",
+            memberRefs: ["npc:black-oak-will:echo"],
+            resourceRefs: ["resource:black-oak-will:echoes:refrain"],
+          }],
+          factionPlans: [{
+            factionId: "faction:black-oak-will:echoes",
+            planId: "plan:npc:echo:finish-song",
+            actingNpcId: "npc:black-oak-will:echo",
+            revision: "1",
+            status: "scheduled",
+            premiseRefs: ["knowledge:npc:echo:heard-song"],
+            resourceRefs: [
+              "faction:black-oak-will:echoes",
+              "resource:black-oak-will:echoes:refrain",
+            ],
           }],
         },
       },
@@ -561,6 +673,7 @@ function proposalRequest(profile, text, overrides = {}) {
           sceneId: "cellar",
           hitPoints: { current: 9, maximum: 12 },
           resources: { action: 1, movementFeet: 30 },
+          inventory: { entries: [] },
         },
         visibleFacts: [{ id: "fact:cellar-barrels-visible", body: "酒桶在场。" }],
         knowledge: [{ id: "knowledge:current:alice", content: DYNAMIC_SENTINEL }],

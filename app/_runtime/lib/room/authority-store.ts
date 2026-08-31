@@ -926,6 +926,40 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
+  actionStageByChildRoot(childRootActionId: string): AuthorityActionStageRow | undefined {
+    return this.storage.sql.exec<AuthorityActionStageRow>(`
+      SELECT prepared_action_id, submission_id, phase, target_id,
+             child_root_action_id, status, proposal_hash, result_json
+      FROM authority_action_stages WHERE child_root_action_id = ?
+    `, childRootActionId).toArray()[0];
+  }
+
+  hasSuspendedActionStage(): boolean {
+    return this.storage.sql.exec<{ held: number }>(`
+      SELECT 1 AS held
+      FROM authority_action_stages
+      WHERE status = 'prepared'
+        AND result_json IS NOT NULL
+      LIMIT 1
+    `).toArray()[0] !== undefined;
+  }
+
+  hasSuspendedActionStageInScopes(sceneScopes: string[]): boolean {
+    const scopes = [...new Set(sceneScopes)].sort();
+    if (scopes.length === 0) return false;
+    const placeholders = scopes.map(() => "?").join(", ");
+    return this.storage.sql.exec<{ held: number }>(`
+      SELECT 1 AS held
+      FROM authority_action_stages stage
+      JOIN authority_submissions submission
+        ON submission.prepared_action_id = stage.prepared_action_id
+      WHERE stage.status = 'prepared'
+        AND stage.result_json IS NOT NULL
+        AND submission.scene_scope IN (${placeholders})
+      LIMIT 1
+    `, ...scopes).toArray()[0] !== undefined;
+  }
+
   insertActionStage(input: {
     preparedActionId: string;
     submissionId: string;
@@ -956,6 +990,7 @@ export class AuthoritativeRoomStore {
          JOIN authority_submissions submission
            ON submission.prepared_action_id = stage.prepared_action_id
          WHERE stage.status = 'prepared'
+           AND stage.result_json IS NULL
            AND submission.scene_scope IN (${placeholders})
        )`,
       ...scopes,
@@ -963,6 +998,7 @@ export class AuthoritativeRoomStore {
     this.storage.sql.exec(
       `DELETE FROM authority_action_stages
        WHERE status = 'prepared'
+         AND result_json IS NULL
          AND prepared_action_id IN (
            SELECT prepared_action_id
            FROM authority_submissions
@@ -984,6 +1020,24 @@ export class AuthoritativeRoomStore {
       proposalHash,
       JSON.stringify(result),
       preparedActionId,
+    );
+  }
+
+  saveSuspendedActionStage(
+    preparedActionId: string,
+    proposalHash: string,
+    result: unknown,
+  ): void {
+    this.storage.sql.exec(
+      `UPDATE authority_action_stages
+       SET proposal_hash = ?, result_json = ?
+       WHERE prepared_action_id = ?
+         AND status = 'prepared'
+         AND (proposal_hash IS NULL OR proposal_hash = ?)`,
+      proposalHash,
+      JSON.stringify(result),
+      preparedActionId,
+      proposalHash,
     );
   }
 
