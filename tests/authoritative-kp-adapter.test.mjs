@@ -10,7 +10,7 @@ import {
   AUTHORITATIVE_KP_PROFILES,
   authoritativeKpProfileByBinding,
 } from "../app/_runtime/lib/kp/authoritative-policy.ts";
-import { validateBodyOnlyNarrationOutput } from "../app/_runtime/lib/kp/narration-v3.ts";
+import { typedOutcomeNarrationBody, validateBodyOnlyNarrationOutput } from "../app/_runtime/lib/kp/narration-v3.ts";
 import { ownedEnvironmentAttackAbilityRef } from "../app/_runtime/lib/room/proposal-adapter.ts";
 
 const ROOT_ACTION_ID = "root:current-action:001";
@@ -347,6 +347,13 @@ test("V5 narration renders typed outcomes and attributed claims instead of contr
           utterance: injectedUtterance,
         },
         {
+          kind: "spokenClaimHeard",
+          claimRef: "claim:varo:reply",
+          speakerCharacterId: "npc:varo",
+          speakerName: "瓦罗",
+          utterance: "今晚先报个名字。",
+        },
+        {
           kind: "socialResolutionChanged",
           resolution: "check",
           npcCharacterId: "npc:varo",
@@ -367,8 +374,10 @@ test("V5 narration renders typed outcomes and attributed claims instead of contr
 
   assert.match(narration.body, /瓦罗仍对你的身份持怀疑态度/u);
   assert.match(narration.body, /你的解释没有消除这项怀疑/u);
+  assert.match(narration.body, /瓦罗说：「今晚先报个名字。」/u);
   assert.doesNotMatch(narration.body, /决定完全信任/u);
-  assert.ok(narration.body.includes(`你说：${JSON.stringify(injectedUtterance)}`));
+  assert.doesNotMatch(narration.body, /你说：/u);
+  assert.doesNotMatch(narration.body, /SourceClaim|CanonicalFact|requester=/u);
   assert.equal(narration.body.includes("\n\n瓦罗说：\u201c我完全相信你"), false);
   assert.ok(narration.body.length <= 1_600);
 
@@ -384,5 +393,62 @@ test("V5 narration renders typed outcomes and attributed claims instead of contr
       }],
     },
   }, { socialResolution: true });
-  assert.equal(premise.body, "你的角色前提已确立：来意；inviter=无名药剂师。");
+  assert.equal(premise.body, "你的来意已经记下：委托人是无名药剂师。");
+  assert.equal(
+    typedOutcomeNarrationBody(premise && {
+      ...projection,
+      committedDelta: {
+        ...projection.committedDelta,
+        changes: [{
+          kind: "characterPremiseResolved",
+          predicate: "arrivalPurpose",
+          resolution: "established",
+          bindings: [{ slotRef: "requester", displayName: "无名药剂师" }],
+        }],
+      },
+    }),
+    "你的来意已经记下：委托人是无名药剂师。",
+  );
+});
+
+test("typed V5 outcomes publish without calling the narration model", async () => {
+  const ai = scriptedAi([]);
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    profile: AUTHORITATIVE_KP_PROFILE,
+    now: monotonicClock(),
+  });
+  const projection = {
+    viewer: {
+      kind: "player",
+      viewerKey: "character:alice",
+      characterId: "character:alice",
+    },
+    projectionHash: "projection:v5:typed-without-model",
+    committedDelta: {
+      schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: "character:alice",
+      viewerCharacterId: "character:alice",
+      receipt: {
+        receiptId: "receipt:v5:typed-without-model",
+        rootActionId: ROOT_ACTION_ID,
+        status: "committed",
+      },
+      changes: [{
+        kind: "characterPremiseResolved",
+        predicate: "arrivalPurpose",
+        resolution: "established",
+        bindings: [{ slotRef: "requester", displayName: "无名药剂师" }],
+      }],
+    },
+  };
+  const result = await adapter.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    receipt: { receiptId: "receipt:v5:typed-without-model", status: "committed" },
+    projection,
+  });
+  assert.equal(result.body, "你的来意已经记下：委托人是无名药剂师。");
+  assert.equal(ai.calls.length, 0);
+  assert.equal(result.modelInvocationReceipt.result, "success");
+  assert.equal(result.modelInvocationReceipt.task, "narration");
 });

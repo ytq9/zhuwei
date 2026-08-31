@@ -526,6 +526,19 @@ export function PlayTable({
     );
   }, [snap.messages, snap.me.userId]);
 
+  useEffect(() => {
+    const submission = submissionRef.current;
+    if (submission?.lastError === undefined) return;
+    const currentId = snap.state.currentDeliveryId;
+    if (!currentId || currentId === submission.deliveryIdAtFirstSubmission) return;
+    const kpKinds = new Set(["narrate", "refuse", "call_roll", "open"]);
+    if (!snap.messages.some((message) => message.id === currentId && kpKinds.has(message.kind))) {
+      return;
+    }
+    clearRememberedSubmission();
+    setSubmissionError(null);
+  }, [snap.messages, snap.state.currentDeliveryId]);
+
   async function resumeWithSafetyAdjustment(
     presentationAdjustment: "fadeToBlack" | "reduceDetail" | "skipSensitiveContent",
   ) {
@@ -665,10 +678,6 @@ export function PlayTable({
         void qc.invalidateQueries({ queryKey: ["table", code] });
       }
     } catch (e) {
-      if (composerSubmission) {
-        setLocalSays((ls) => ls.filter((x) => x.id !== localId));
-        setText((draft) => draft || submission.payload.text);
-      }
       const message = e instanceof Error ? e.message : submission.failureMessage;
       rememberSubmission({ ...submission, lastError: message });
       setSubmissionError(message);

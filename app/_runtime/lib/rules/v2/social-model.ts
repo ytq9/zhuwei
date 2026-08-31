@@ -793,8 +793,8 @@ export function deriveSocialResolutionPlan(
       goal: directGoal,
       method: scalarString(step.arguments.method) ?? "直接交谈",
       risk: scalarString(step.arguments.risk) ?? "这次交谈没有需要随机决定的不确定性。",
-      successOutcome: "对方的原话只会作为 NPC 的 SourceClaim 记录，不会自动成为世界事实。",
-      failureOutcome: "对方的原话只会作为 NPC 的 SourceClaim 记录，不会自动成为世界事实。",
+      successOutcome: "对方回话了；那只是口头说法，不会自动变成已经确认的事实。",
+      failureOutcome: "对方回话了；那只是口头说法，不会自动变成已经确认的事实。",
       costs: [],
     };
     return {

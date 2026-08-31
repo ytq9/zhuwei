@@ -29,6 +29,7 @@ import {
 import {
   bodyOnlyNarrationGroundingReplacementModelInput,
   bodyOnlyNarrationModelInput,
+  typedOutcomeNarrationBody,
   validateBodyOnlyNarrationOutput,
 } from "./narration-v3";
 import {
@@ -2303,6 +2304,26 @@ export function createAuthoritativeKpAdapter(
             validateNarrationRequest(request);
           } catch {
             throw permanentContractError(profile, "narration", rootActionId, attempt, now);
+          }
+          if (isSocialResolutionKpProfile(profile)) {
+            const typedBody = typedOutcomeNarrationBody(request.projection);
+            if (typedBody !== undefined) {
+              const at = now();
+              return {
+                body: typedBody,
+                audience: audienceIdentity(request.projection),
+                modelInvocationReceipt: receipt(
+                  profile,
+                  "narration",
+                  rootActionId,
+                  attempt,
+                  at,
+                  at,
+                  "success",
+                  { responseHash: await responseHash({ body: typedBody }) },
+                ),
+              };
+            }
           }
           let invocation = await invoke(
             "narration",

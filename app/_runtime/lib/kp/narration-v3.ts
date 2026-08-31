@@ -40,7 +40,7 @@ const BODY_ONLY_NARRATION_SYSTEM = `你是烛帷 KP。你只叙述已经提交�
 
 清楚说明行动造成的可见变化，再呈现当前压力或机会，把决定权交还玩家。不得改判机械、补写新事实、泄露隐藏信息，或替玩家决定思想、情绪、台词与下一步。没有明确感官、空间、姿态、目光、声音、气味或陈设证据时省略；不得从坐标或机械标签扩写文学细节。故事已经真实收束时可以邀请尾声、续篇或结束，不得强行追加幕后黑手。
 
-只调用 submit_current_narration 一次，并且参数只能是 {"body":"非空正文"}。下一步提示若需要，写在 body 末句。不得输出 tts、decisionPrompt、引用、agency、Audience、Receipt 或任何元数据。`;
+只调用 submit_current_narration 一次，并且参数只能是 {"body":"非空正文"}。下一步提示若需要，写在 body 末句。不得输出 tts、decisionPrompt、引用、agency、Audience、Receipt 或任何元数据。正文必须是现代汉语跑团旁白，不得写出 SourceClaim、CanonicalFact、requester=、objective=、slotRef 或其他内部协议词。`;
 
 const BODY_ONLY_NARRATION_GROUNDING_REPLACEMENT_SYSTEM = `你是烛帷 KP。上一份正文已在投递前因事实依据不足被丢弃；不要复述、引用或修补它。
 这次只依据当前 Receipt、renderableClaims、pressure 与 opportunities，重新写一份完整回应。只有 renderableClaims 能支持本次结果、新的世界事实与 NPC 反应。如果其中有 checkResolved.result、contestResolved.result、privateInferenceFormed 或新获得的 knowledge，直接、具体地呈现该结果，不要重建场景或重新回答玩家原问题。
@@ -50,7 +50,7 @@ const BODY_ONLY_NARRATION_GROUNDING_REPLACEMENT_SYSTEM = `你是烛帷 KP。上�
 只调用 submit_current_narration 一次，并且参数只能是 {"body":"非空正文"}。不得输出任何元数据。`;
 
 const SOCIAL_SOURCE_ATTRIBUTION_POLICY = `
-SourceClaim 只证明某个 speaker 说过某句话，不证明其语义为真；必须用“某人说/自称/声称/认为”等明确归因呈现，绝不能改写成无主语的世界事实。CharacterInference 也只代表对应角色当前的判断。socialResolutionChanged 的 result 只描述立场、注意力或权限内的配合，不得据此宣称门、物品、身份、地点、人物或线索已经产生或改变。`;
+有来源的口头说法只证明某人说过这句话，不证明语义为真；必须用“某人说/自称/声称/认为”明确归因，绝不能改写成无主语的世界事实。角色推断也只代表对应角色当前的判断。社交结果只描述立场、注意力或权限内的配合，不得据此宣称门、物品、身份、地点、人物或线索已经产生或改变。正文里不得出现 SourceClaim、CanonicalFact 或其他内部类型名。`;
 
 function safeReceipt(value: unknown): JsonRecord {
   if (!isRecord(value)) return {};
@@ -267,6 +267,33 @@ const PREMISE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   priorRelationship: "既有关系",
 });
 
+const PREMISE_SLOT_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  requester: "委托人",
+  inviter: "委托人",
+  objective: "所求",
+  destination: "去处",
+  beneficiary: "受益人",
+  knownSubject: "已知对象",
+  counterparty: "对方",
+  obligee: "受诺人",
+  subject: "事由",
+  organization: "组织",
+  sponsor: "举荐人",
+  origin: "来处",
+  mentor: "师承",
+  formerAssociate: "旧识",
+});
+
+function attributedSpeech(speaker: string, utterance: string): string {
+  const safe = utterance
+    .replace(/[「」『』\u201c\u201d"]/gu, "")
+    .replace(/[\r\n]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 1_200);
+  return `${speaker}说：「${safe}」`;
+}
+
 function deterministicPremiseLine(change: JsonRecord): string | undefined {
   if (change.kind !== "characterPremiseResolved" || typeof change.predicate !== "string") {
     return undefined;
@@ -277,17 +304,16 @@ function deterministicPremiseLine(change: JsonRecord): string | undefined {
           ? binding.displayName.trim()
           : "";
         if (!displayName) return [];
-        const slotRef = typeof binding.slotRef === "string" && binding.slotRef.trim()
-          ? binding.slotRef.trim()
-          : "关联对象";
-        return [`${slotRef}=${displayName}`];
+        const slotRef = typeof binding.slotRef === "string" ? binding.slotRef.trim() : "";
+        const slot = slotRef ? PREMISE_SLOT_LABELS[slotRef] : undefined;
+        return [slot ? `${slot}是${displayName}` : displayName];
       })
     : [];
-  const label = PREMISE_LABELS[change.predicate] ?? change.predicate;
-  const resolution = change.resolution === "recalled" ? "确认" : "确立";
+  const label = PREMISE_LABELS[change.predicate] ?? "来历";
+  const resolution = change.resolution === "recalled" ? "确认" : "记下";
   return bindings.length === 0
-    ? `你的角色前提已${resolution}：${label}。`
-    : `你的角色前提已${resolution}：${label}；${bindings.join("，")}。`;
+    ? `你的${label}已经${resolution}。`
+    : `你的${label}已经${resolution}：${bindings.join("，")}。`;
 }
 
 /** Facts in these changes have already been validated and committed by Rules.
@@ -350,18 +376,17 @@ function deterministicV5Body(projection: JsonRecord): string | undefined {
 
 function deterministicSocialClaimLines(projection: JsonRecord): string[] {
   const delta = isRecord(projection.committedDelta) ? projection.committedDelta : {};
-  const changes = Array.isArray(delta.changes) ? delta.changes.filter(isRecord) : [];
-  const actorCharacterId = typeof delta.actorCharacterId === "string"
-    ? delta.actorCharacterId
+  const viewerCharacterId = typeof delta.viewerCharacterId === "string"
+    ? delta.viewerCharacterId
     : undefined;
-  const reactionByClaim = new Map(changes.flatMap((change) =>
+  const reactionByClaim = new Map(changesFrom(delta).flatMap((change) =>
     change.kind === "socialBehaviorObserved"
       && typeof change.responseClaimRef === "string"
       && typeof change.responseReaction === "string"
       ? [[change.responseClaimRef, change.responseReaction]]
       : []));
   const seen = new Set<string>();
-  return changes.flatMap((change) => {
+  return changesFrom(delta).flatMap((change) => {
     if (change.kind !== "spokenClaimHeard"
       || typeof change.claimRef !== "string"
       || seen.has(change.claimRef)
@@ -369,19 +394,25 @@ function deterministicSocialClaimLines(projection: JsonRecord): string[] {
       || typeof change.utterance !== "string"
       || !change.utterance.trim()) return [];
     seen.add(change.claimRef);
-    const speaker = change.speakerCharacterId === actorCharacterId
-      ? "你"
-      : typeof change.speakerName === "string" && change.speakerName.trim()
-        ? change.speakerName.trim().slice(0, 80)
-        : "对方";
+    if (change.speakerCharacterId === viewerCharacterId) return [];
+    const speaker = typeof change.speakerName === "string" && change.speakerName.trim()
+      ? change.speakerName.trim().slice(0, 80)
+      : "对方";
     if (reactionByClaim.get(change.claimRef) === "silence") {
       return [`${speaker}没有作答。`];
     }
-    const utterance = change.utterance.trim().slice(0, 1_200);
-    // JSON string quoting keeps embedded quotes and newlines inside a single
-    // attributed value instead of allowing player text to forge an NPC line.
-    return [`${speaker}说：${JSON.stringify(utterance)}`];
+    return [attributedSpeech(speaker, change.utterance.trim())];
   });
+}
+
+function changesFrom(delta: JsonRecord): JsonRecord[] {
+  return Array.isArray(delta.changes) ? delta.changes.filter(isRecord) : [];
+}
+
+/** Player-facing body compiled from already-committed typed outcomes. When this
+ * returns a string, the model must not be asked to paraphrase the same result. */
+export function typedOutcomeNarrationBody(projection: unknown): string | undefined {
+  return isRecord(projection) ? deterministicV5Body(projection) : undefined;
 }
 
 export function bodyOnlyNarrationModelInput(

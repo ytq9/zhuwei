@@ -331,7 +331,7 @@ function socialInferenceConclusion(
       : degree === "failure" ? "当前仍怀疑这项主张"
         : degree === "limitedSuccess" ? "愿意暂时不追究，但没有确认主张为真"
           : degree === "fullSuccess" ? "当前愿意依此采取有限行动"
-            : "当前高度信任这项主张，但它仍不是 CanonicalFact";
+            : "当前高度信任这项主张，但它仍不是已经确认的事实";
   }
   const topic = socialTopicLabel(claim);
   return degree === "strongFailure" ? `当前更不愿顺应${topic}`
@@ -468,12 +468,12 @@ export function stepSocialCausalAction(
         sourceRefs: [...response.sourceRefs],
         threadRef: plan.threadRef,
         immediateBehavior: responseClaimRef === null
-          ? "对方保持沉默，没有形成任何口头 SourceClaim。"
+          ? "对方保持沉默，没有回话。"
           : "对方作出了一个已明确归属于自己的口头回应。",
         threadDisposition,
         outcome: responseClaimRef === null
           ? "NPC 没有作答；这是一项可观察反应，不是说过的话。"
-          : "NPC 的回应已作为 SourceClaim 记录；它不是 CanonicalFact。",
+          : "对方说了话；那只是他的说法，不是已经确认的事实。",
         planHash: canonicalSha256(plan),
         plan: structuredClone(plan),
       },
@@ -499,7 +499,7 @@ export function stepSocialCausalAction(
         threadRef: plan.threadRef,
         outcome: responseClaimRef === null
           ? "NPC 没有作答；这是一项可观察反应，不是说过的话。"
-          : "NPC 的回应已作为 SourceClaim 记录；它不是 CanonicalFact。",
+          : "对方说了话；那只是他的说法，不是已经确认的事实。",
       },
     });
   }

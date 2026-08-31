@@ -2182,3 +2182,10 @@
 - 只读预检：`wrangler d1 migrations list zhuwei-dev --remote` 退出 0，唯一待执行项为 `0012_soft_ghost_rider.sql`；远端存在 `game_states`、`messages`、`room_event_archive`、`session_logs`、`rooms` 与现役 `authoritative_room_event_archive`，`rooms` 有 4 行。逐行复核 migration：删除四张退役表，复制并重建 `rooms`、更新当前 0.4 默认值并重建两个索引；它不会删除这 4 条房间目录行。
 - 执行与写读闭环：`CI=1 npx wrangler d1 migrations apply zhuwei-dev --remote` 退出 0，13 条命令原子应用成功。随后 migration 列表返回 `No migrations to apply`；从远端 `d1_migrations` 读回 id `13`、名称 `0012_soft_ghost_rider.sql`、应用时间 `2026-08-31 15:48:23`。`sqlite_master` 复核四张退役表均不存在，现役 archive、`rooms`、`idx_rooms_code` 与 `idx_rooms_host` 保留；`PRAGMA table_info('rooms')` 的 Ruleset、KP 模型/Profile 和 lobby 默认值与 migration 一致，房间目录仍为 4 行。
 - 线上与边界：migration 后 `https://zhuwei.yinskyriver.workers.dev/` 返回 HTTP 200，约 0.547 秒。未重新部署 Worker、未修改应用源码、未删除保留的房间目录行或现役权威归档、未创建新资源，也未触碰 `main` 或 grok.me；本轮外部变更仅为现有 D1 的已登记 `0012`。
+
+## KP 玩家可见正文协议词与提交误报（2026-09-01）
+
+- 症状与根因：玩家看到 `SourceClaim`、`CanonicalFact`、`requester=`、`你说："…"`、`角色前提已确立`，并且每次发言都出现「恢复 KP 回应」。首个违规点是 V5 已提交的类型化结果被确定性渲染成内部字段，同时 `narrate` 仍先调用模型再丢弃正文；模型超时或客户端中断后，前端把已提交行动当成失败。
+- 修改：玩家可见旁白改写为现代汉语（来意/委托人、NPC「」归因、不复读玩家自己的台词）；社交结果字符串去掉协议类型名；有类型化结果时不再调用叙述模型；提交超时不再撤回玩家气泡，若随后送达新 KP 回复则自动清掉恢复条。
+- 连带检查：原失败路径为类型化旁白与无模型叙述；直接相关正常路径为 grounding 替换仍走模型；最高风险为玩家台词夹带伪造 NPC 行不得进入正文。未改 SPEC、D1、`main` 或 `cloudflare` 既有提交。
+- 验证证据：`npx tsx --test tests/authoritative-kp-adapter.test.mjs`；`git diff --check`。未运行全量门、部署或远端 migration。
