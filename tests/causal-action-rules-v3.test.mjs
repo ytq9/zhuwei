@@ -616,6 +616,85 @@ test("compound composition preflights the unchosen branch before requesting rand
   assert.equal(hashWorldState(room.state), beforeHash);
 });
 
+test("compound ActorPlan rejects an NPC outside the acting character's scene", () => {
+  const room = initialize(undefined, "compound-actor-plan-remote-npc");
+  const remoteNpcState = structuredClone(room.state);
+  const knowledgeRef = "knowledge:causal-v3:remote-npc-duty";
+  remoteNpcState.entities[BOB].kind = "npc";
+  remoteNpcState.entities[BOB].sceneId = "scene:annex";
+  remoteNpcState.combatRuntime.entities[BOB].sceneId = "scene:annex";
+  remoteNpcState.knowledge[BOB] = {
+    [knowledgeRef]: {
+      characterId: BOB,
+      knowledgeRef,
+      objectKind: "sourceClaim",
+      layer: "full",
+      content: "柏舟只知道自己应留守工坊侧厅。",
+      visibility: "private",
+      acquiredByEventId: "event:causal-v3:remote-npc-duty",
+      acquiredAtFictionMicros: "0",
+      sourceCharacterId: null,
+      provenanceChain: [WORKSHOP_BASIS],
+    },
+  };
+  const draft = {
+    goal: "让侧厅守卫继续留守",
+    method: "依据守卫自己的职责形成后续计划",
+    stages: [{
+      goal: "形成留守计划",
+      method: "沿用守卫已知的职责",
+      intendedOutcome: "守卫继续留在侧厅",
+      resolution: "direct",
+    }],
+    intendedOutcome: "守卫继续留在侧厅",
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
+    composition: {
+      schema: "zhuwei.compound-composition-draft/v1",
+      before: [{
+        kind: "formActorPlan",
+        basisRefs: ["scene:workshop", knowledgeRef],
+        draft: {
+          schema: "zhuwei.compound-actor-plan-draft/v1",
+          npcRef: BOB,
+          factionRef: null,
+          planRef: "npc-plan:causal-v3:remote-npc-duty",
+          goal: "继续留守工坊侧厅",
+          premiseRefs: [knowledgeRef],
+          nextStep: "检查侧厅入口",
+          resourceRefs: [],
+          activity: {
+            activityRef: "activity:causal-v3:remote-npc-duty",
+            activityKind: "guardAnnex",
+            intendedDurationMicros: "60000000",
+          },
+          schedule: { kind: "activityCompletion" },
+          trace: {
+            factRef: "fact:causal-v3:remote-npc-duty",
+            description: "守卫继续检查侧厅入口。",
+          },
+          alternate: {
+            referenceRef: "scene:annex",
+            reason: "入口不可用时仍留在侧厅内。",
+          },
+        },
+      }],
+      onSuccess: [],
+      onFailure: [],
+    },
+  };
+  const normalized = normalizeRoomKpProposal(privateEnvelope("compound.v1", draft));
+  assert.ok(normalized);
+  const result = step(room.profiles, remoteNpcState, {
+    ...normalized,
+    rootActionId: "root:causal-v3:compound-actor-plan:remote-npc",
+    actorCharacterId: ACTOR,
+  });
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.rejection.code, "privateOrUnknownReference");
+});
+
 test("V3 causal input fails closed under semantic-hash tampering", () => {
   const room = initialize();
   const draft = {

@@ -2802,6 +2802,7 @@ function applyCompoundActorPlan(
 ): StepResult | undefined {
   const npc = accumulator.state.entities[operation.draft.npcRef];
   if (!actorPlanNpcIsAvailable(npc)
+    || npc.sceneId !== actor.sceneId
     || operation.basisRefs.some((reference) =>
       !compoundReferenceExists(accumulator.state, reference)
       && !actorPlanPremiseIsAvailable(accumulator.state, operation.draft.npcRef, reference))) {
