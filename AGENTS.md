@@ -1,6 +1,6 @@
 # 烛帷 Cloudflare Worker 代理合同
 
-本分支承载私有 GitHub 项目 `ytq9/zhuwei` 的 Cloudflare 产品 V3。产品基线为 `main` 提交 `29eb06dc009c983ad61b2d862454503e67a7f40a`；产品行为服从下述规格权威，GitHub 上游只作为当前用户决定与规格未覆盖部分的未扩展能力、中文文案、规则和视觉基线。只在 `cloudflare` 分支工作，保持远端 `main` 与 grok.me 部署不变。V3 是产品代际，不得把既有房间的版本化规则、事件或投影静默改名为 v3；具体边界见 `docs/adr/0013-v3-product-generation-and-repository-boundary.md`。
+本分支承载私有 GitHub 项目 `ytq9/zhuwei` 的 Cloudflare 产品 V3，当前开发版本为 `0.4.0`。产品基线为 `main` 提交 `29eb06dc009c983ad61b2d862454503e67a7f40a`；产品行为服从下述规格权威，GitHub 上游只作为当前用户决定与规格未覆盖部分的未扩展能力、中文文案、规则和视觉基线。只在 `cloudflare` 分支工作，保持远端 `main` 与 grok.me 部署不变。V3 是产品代际，0.4 是应用版本；规则、事件、投影、模组和 Profile 的 v1/v2/v5 等名称是独立协议轴，不得为统一观感改名。用户已明确放弃全部 0.4 以前的房间和可恢复房间归档；当前生产树不保留其 Adapter、fallback 或 migration，未来兼容必须另行裁定。具体边界见 `docs/adr/0013-v3-product-generation-and-repository-boundary.md`。
 
 ## 产品需求与规格权威
 
@@ -34,7 +34,7 @@
 
 ## 实现取舍
 
-1. 对尚未发布且没有持久化数据、公共接口、现役房间或可恢复归档引用的实现，替代路径闭合后在同一修改中删除过时入口、类型、测试和样式；不保留兼容层、fallback、双写，也不为无消费者的开发态代码编写 migration。此规则不授权破坏已裁定 SPEC、已发布版本化合同或现有数据。
+1. 对尚未发布且没有持久化数据、公共接口、现役房间或可恢复归档引用的实现，替代路径闭合后在同一修改中删除过时入口、类型、测试和样式；不保留兼容层、fallback、双写，也不为无消费者的开发态代码编写 migration。0.4 已获用户明确授权一次性退役所有更早开发房间及归档，因此旧实现和兼容路径属于本条的删除范围；该授权不外推为未来版本可自动破坏持久化合同或现有数据。
 2. 选择满足当前验收条件的最简单实现，不增加预防性抽象、无实际消费者的配置层或备用路径。
 3. 跨层新能力先完成一条贯穿真实输入、权限与状态、编排、持久化或外部依赖以及公开投影的最小端到端纵切，再逐步扩展；不得为了尚未完成的复杂度拆掉当前可运行路径，替代路径闭合后则删除旧路径。
 4. 前端组件按独立职责和变化原因拆分，展示组件不得实现机械规则、权限裁决或持久化事实；不按文件行数机械拆分组件。
@@ -65,9 +65,9 @@
 - 页面、API、当前规则与服务端实现位于 `app/`；部署运行时集中在 `app/_runtime/`。Worker 入口为 `worker/index.ts`；D1 位于 `db/` 与 `drizzle/`；现役开发/发布门位于 `tools/` 与 `cloudflare/`。旧平台源码只存在于已核验的私有归档分支，不回到 V3 工作树。
 - 平台迁移只替换 TanStack/Vercel Node、Better Auth/GPT Sites、PGLite/Postgres 和 Node API 接缝；目标仍是既有 Worker `zhuwei`、既有 D1 binding `DB` 和 `wrangler.jsonc`。Sites、Vercel、`.vercel/output`、新 Worker 与新持久化资源不属于交付路径。
 - 模块全局作用域只允许声明、纯常量和纯函数。随机数、fetch、数据库初始化、定时器、密钥读取后的副作用和其他 I/O 发生在请求处理期间。产物不得包含 Better Auth、PGlite、pg 或 Vercel 运行入口。
-- 产品代际是 V3，当前已发布的新房机械解释器仍是精确固定的 `dnd5e-2014-srd5.1-authoritative-v2`；两者不是同一个版本轴。机械规则只采用 SRD 5.1 / D&D 5e 2014，房间通过完整 runtime manifest 固定版本，禁止混入 2024/5.5e。
+- 产品代际是 V3，应用版本是 0.4.0；当前唯一注册的新房机械解释器仍是精确固定的 `dnd5e-2014-srd5.1-authoritative-v2`，唯一 runtime manifest 是 `runtime-srd51-2014-authoritative-environment-v5`。这些不是同一个版本轴。机械规则只采用 SRD 5.1 / D&D 5e 2014，房间通过完整 runtime manifest 固定版本，禁止混入 2024/5.5e。
 - 叙事由 LLM/KP 在故事锚点与固化事实内负责；机械由 `app/_runtime/lib/rules` 决定；活跃状态由每房间 SQLite Durable Object 原子保存；服务端从可信登录验证权限；秘密内容只留在 Worker。
-- 所有 v2 机械裁决穿过 `step(module, state, command)`，玩家快照穿过 `project(module, state, viewer)`。不得把 v2 状态另写回旧 D1 `game_states` 形成第二权威；`room_event_archive` 只追加可重建归档。
+- 所有当前机械裁决穿过 `step(module, state, command)`，玩家快照穿过 `project(module, state, viewer)`。不得把活跃状态另写回 D1 形成第二权威；旧 `game_states`、`messages`、`session_logs`、`room_event_archive` 已从 schema 删除。当前 `authoritative_*_archive` 只保存 0.4 新房的可重建追加归档；更早开发房间显式不支持，不为它们增加兼容层或重置 migration。
 - 独立 Worker 身份来源是 `auth_users` 与 `auth_sessions`。密码使用 Web Crypto PBKDF2-SHA256 与随机盐；会话 cookie 为 `HttpOnly`、`Secure`、`SameSite=Lax`，D1 只保存 token 摘要。`app/chatgpt-auth.ts` 从可信会话取得 user id；GPT Sites 身份头和开发假用户不是身份来源。所有写操作必须验证成员身份及本次涉及的房主、队长、地点与回合权限。
 - Google/X OAuth 仅在回调、客户端配置与 Secrets 全部存在并验证后启用。密钥只通过 Worker Secret 管理；未获用户明确确认时不创建远端资源、不执行远端 migration、不部署、不推送。
 

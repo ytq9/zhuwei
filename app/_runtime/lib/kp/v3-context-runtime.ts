@@ -84,23 +84,47 @@ function projectedLoadout(value: unknown): ContextRecord | undefined {
     if (itemRef === undefined || !Number.isSafeInteger(entry.quantity)) return [];
     return [contextRecord({ itemRef, quantity: entry.quantity })];
   });
-  const mechanicalItems = isRecord(value.mechanicalItems)
-    ? contextRecord(Object.fromEntries(Object.entries(value.mechanicalItems)
-        .filter((entry): entry is [string, UnknownRecord] => isRecord(entry[1]))
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([itemRef, item]) => [itemRef, contextRecord({
-          definitionRef: item.definitionRef ?? null,
-          sourceKind: item.sourceKind ?? null,
-          status: item.status ?? null,
-        })])))
-    : undefined;
   return contextRecord({
     armorClass: value.armorClass ?? null,
     speedFeet: value.speedFeet ?? null,
     equipped,
     backpack,
-    ...(mechanicalItems === undefined ? {} : { mechanicalItems }),
   });
+}
+
+function projectedInventory(value: unknown): ContextRecord | undefined {
+  if (!isRecord(value) || !Array.isArray(value.entries) || value.entries.length > 256) {
+    return undefined;
+  }
+  const entries = value.entries.flatMap((entry) => {
+    if (!isRecord(entry)
+      || !["identified", "opaque"].includes(String(entry.kind))
+      || !nonEmptyString(entry.entryId)
+      || !Number.isSafeInteger(entry.quantity)
+      || Number(entry.quantity) <= 0
+      || !["usable", "broken"].includes(String(entry.condition))
+      || !(entry.equippedSlot === null || nonEmptyString(entry.equippedSlot))) return [];
+    const shell = {
+      kind: entry.kind,
+      itemRef: entry.entryId,
+      quantity: entry.quantity,
+      condition: entry.condition,
+      equippedSlot: entry.equippedSlot,
+    };
+    if (entry.kind === "opaque") return [contextRecord(shell)];
+    return [contextRecord({
+      ...shell,
+      name: entry.name ?? null,
+      description: entry.description ?? null,
+      category: entry.category ?? null,
+      charges: entry.charges ?? null,
+      durability: entry.durability ?? null,
+      allowedSlots: entry.allowedSlots ?? [],
+      activities: entry.activities ?? [],
+    })];
+  });
+  if (entries.length !== value.entries.length) return undefined;
+  return contextRecord({ entries });
 }
 
 function dialogueFromProjection(value: unknown): ExperiencedDialogue[] {
@@ -149,6 +173,88 @@ function relevantSpatialEvidence(projection: UnknownRecord, sceneRef: string): C
   });
 }
 
+function collectReferenceStrings(value: unknown, output: Set<string>, depth = 0): void {
+  if (depth > 12 || output.size >= 512) return;
+  if (typeof value === "string") {
+    if (value.length > 0 && value.length <= 300) output.add(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectReferenceStrings(entry, output, depth + 1);
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const entry of Object.values(value)) collectReferenceStrings(entry, output, depth + 1);
+}
+
+/** Selects a bounded causal closure from the KP-only dynamic fact projection.
+ * Player and NPC projections never receive this field. Relevance is based on
+ * the current actor, scene, same-scene entities, and already projected fact or
+ * knowledge refs; display keywords are never capability gates. */
+function relevantDynamicAuthoritativeFacts(
+  projection: UnknownRecord,
+  sceneRef: string,
+  characterRef: string,
+  actorVisibleFacts: readonly UnknownRecord[],
+  actorKnowledge: readonly UnknownRecord[],
+): ContextRecord[] {
+  const facts = records(projection.dynamicAuthoritativeFacts)
+    .filter((fact) => nonEmptyString(fact.id));
+  if (facts.length === 0) return [];
+  const byRef = new Map(facts.map((fact) => [String(fact.id), fact]));
+  const scopeRefs = new Set<string>([sceneRef, characterRef]);
+  const spatial = isRecord(projection.spatialEvidence) ? projection.spatialEvidence : {};
+  for (const entity of records(spatial.entities)) {
+    if (firstString(entity, ["sceneId", "sceneRef"]) !== sceneRef) continue;
+    const entityRef = firstString(entity, ["id", "entityId"]);
+    if (entityRef !== undefined) scopeRefs.add(entityRef);
+  }
+  const selected = new Set<string>();
+  for (const fact of actorVisibleFacts) {
+    const ref = firstString(fact, ["id", "factRef"]);
+    if (ref !== undefined && byRef.has(ref)) selected.add(ref);
+  }
+  for (const entry of actorKnowledge) {
+    const ref = firstString(entry, ["knowledgeRef", "factRef", "id"]);
+    if (ref !== undefined && byRef.has(ref)) selected.add(ref);
+  }
+  for (const fact of facts) {
+    const subjects = strings(fact.subjectRefs);
+    const valueRefs = new Set<string>();
+    collectReferenceStrings(fact.value, valueRefs);
+    if (subjects.some((reference) => scopeRefs.has(reference))
+      || [...valueRefs].some((reference) => scopeRefs.has(reference))) {
+      selected.add(String(fact.id));
+    }
+  }
+  const queue = [...selected];
+  while (queue.length > 0 && selected.size <= 96) {
+    const fact = byRef.get(queue.shift()!);
+    for (const parentRef of strings(fact?.causalParentIds)) {
+      if (!byRef.has(parentRef) || selected.has(parentRef)) continue;
+      selected.add(parentRef);
+      queue.push(parentRef);
+    }
+  }
+  const ordinal = (fact: UnknownRecord): bigint => nonEmptyString(fact.validFromEventSeq)
+    && /^(?:0|[1-9][0-9]*)$/u.test(fact.validFromEventSeq)
+    ? BigInt(fact.validFromEventSeq)
+    : -1n;
+  return [...selected]
+    .flatMap((reference) => {
+      const fact = byRef.get(reference);
+      return fact === undefined ? [] : [fact];
+    })
+    .sort((left, right) => {
+      const byOrdinal = ordinal(left) === ordinal(right)
+        ? 0
+        : ordinal(left) < ordinal(right) ? -1 : 1;
+      return byOrdinal || String(left.id).localeCompare(String(right.id));
+    })
+    .slice(-96)
+    .map((fact) => contextRecord(fact));
+}
+
 function relevantNpcMechanicalContext(
   projection: UnknownRecord,
   sceneRef: string,
@@ -172,7 +278,7 @@ function relevantNpcMechanicalContext(
     .filter((entry) => firstString(entry, ["definitionRef", "definitionId", "id"]) !== undefined)
     .sort((left, right) => String(left.definitionRef ?? left.definitionId ?? left.id)
       .localeCompare(String(right.definitionRef ?? right.definitionId ?? right.id)));
-  const itemDefinitions = records(projection.npcMechanicalItemDefinitions)
+  const itemDefinitions = records(projection.itemDefinitions)
     .filter((entry) => firstString(entry, ["definitionRef", "definitionId", "id"]) !== undefined)
     .sort((left, right) => String(left.definitionRef ?? left.definitionId ?? left.id)
       .localeCompare(String(right.definitionRef ?? right.definitionId ?? right.id)));
@@ -352,12 +458,13 @@ function relevantNpcViews(
           })
         : undefined;
       const loadout = includeNpcMechanics ? projectedLoadout(controlled.loadout) : undefined;
+      const inventory = includeNpcMechanics ? projectedInventory(controlled.inventory) : undefined;
       return [{
         npcRef,
         ...(socialCapabilities === undefined ? {} : { socialCapabilities }),
         ...(loadout === undefined ? {} : { loadout }),
+        ...(inventory === undefined ? {} : { inventory }),
         knowledgeRefs: [
-          ...strings(npcView.knowledgeRefs),
           ...knowledge.flatMap((entry) => nonEmptyString(entry.knowledgeRef)
             ? [entry.knowledgeRef]
             : []),
@@ -387,7 +494,10 @@ function contentBoundaries(projection: UnknownRecord): string[] {
 
 /** Builds the non-retrievable authority layer. It intentionally excludes the
  * full Story Bible while retaining its shortest anchor/truth constraints. */
-export function requiredContextFromKpRequest(request: KpProposalRequest) {
+export function requiredContextFromKpRequest(
+  request: KpProposalRequest,
+  options: Readonly<{ includeDynamicAuthoritativeFacts?: boolean }> = {},
+) {
   if (!isRecord(request.projection)) throw new Error("CONTEXT_INSUFFICIENT");
   const projection = request.projection;
   const actorProjection = isRecord(projection.actorProjection)
@@ -424,7 +534,7 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
   const precedents = records(projection.adjudicationPrecedents ?? actorProjection.adjudicationPrecedents);
   const dynamicDefinitions = records(actorProjection.abilityDefinitions);
   const npcMechanicalDefinitions = records(projection.npcMechanicalDefinitions);
-  const npcMechanicalItemDefinitions = records(projection.npcMechanicalItemDefinitions);
+  const itemDefinitions = records(projection.itemDefinitions);
   const runtimeProfiles = isRecord(actorProjection.runtimeProfiles)
     ? actorProjection.runtimeProfiles
     : {};
@@ -432,6 +542,10 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
   const controlledLoadout = includeNpcMechanics
     ? projectedLoadout(controlled.loadout)
     : undefined;
+  const controlledInventory = projectedInventory(controlled.inventory);
+  const visibleItems = records(actorProjection.visibleItems)
+    .slice(0, 256)
+    .map(contextRecord);
   const rulesRef = runtimeBindingRef(runtimeProfiles.ruleset);
   const geometryRef = runtimeBindingRef(runtimeProfiles.geometry);
   const moduleRef = runtimeBindingRef(projection.moduleRef);
@@ -441,6 +555,7 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
     || tacticalPosition === undefined
     || !Array.isArray(publicStates)
     || !publicStates.every(nonEmptyString)
+    || controlledInventory === undefined
     || rulesRef === undefined
     || geometryRef === undefined
     || moduleRef === undefined
@@ -456,6 +571,15 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
     new Set(npcViews.map(({ npcRef }) => npcRef)),
   );
   const npcMechanicalContext = relevantNpcMechanicalContext(projection, sceneRef);
+  const dynamicAuthoritativeFacts = options.includeDynamicAuthoritativeFacts === true
+    ? relevantDynamicAuthoritativeFacts(
+        projection,
+        sceneRef,
+        characterRef,
+        visibleFacts,
+        knowledge,
+      )
+    : [];
 
   return createRequiredContext({
     intent: {
@@ -476,6 +600,12 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
       ...relevantSpatialEvidence(projection, sceneRef),
       visibleFacts,
       personalKnowledge: knowledge,
+      // Server-only dynamic truth continuity. This is deliberately distinct
+      // from player-visible facts and every NPC's finite-knowledge projection,
+      // and the field exists only under the V5 KP workflow binding.
+      ...(options.includeDynamicAuthoritativeFacts === true
+        ? { dynamicAuthoritativeFacts }
+        : {}),
       // Only participant-safe topic state enters KP context. Private strategy
       // fields such as desiredBehavior and evidence selection stay out, while
       // stable threadRef/npcRef let a free-text reframe address the exact old
@@ -489,6 +619,7 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
       // genesis catalog and never parses display names or professions.
       premiseCatalog: premiseCatalog(projection),
       ...(npcMechanicalContext === undefined ? {} : { npcMechanics: npcMechanicalContext }),
+      visibleItems,
     }),
     mechanics: {
       encounter: contextValue(encounter),
@@ -507,6 +638,7 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
       resources: contextValue(controlled.resources ?? controlledCombat.resources ?? {}),
       conditions: contextValue(publicStates),
       ...(controlledLoadout === undefined ? {} : { loadout: controlledLoadout }),
+      inventory: controlledInventory,
     },
     npcViews,
     temporal: {
@@ -518,7 +650,10 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
       factRefs: visibleFacts.flatMap((entry) => {
         const ref = firstString(entry, ["id", "factRef"]);
         return ref === undefined ? [] : [ref];
-      }),
+      }).concat(options.includeDynamicAuthoritativeFacts === true
+        ? dynamicAuthoritativeFacts.flatMap((entry) =>
+            nonEmptyString(entry.id) ? [entry.id] : [])
+        : []),
       precedentRefs: precedents.flatMap((entry) => {
         const ref = firstString(entry, ["precedentId", "id"]);
         return ref === undefined ? [] : [ref];
@@ -529,7 +664,7 @@ export function requiredContextFromKpRequest(request: KpProposalRequest) {
       }).concat(npcMechanicalDefinitions.flatMap((entry) => {
         const ref = firstString(entry, ["definitionRef", "definitionId", "id"]);
         return ref === undefined ? [] : [ref];
-      })).concat(npcMechanicalItemDefinitions.flatMap((entry) => {
+      })).concat(itemDefinitions.flatMap((entry) => {
         const ref = firstString(entry, ["definitionRef", "definitionId", "id"]);
         return ref === undefined ? [] : [ref];
       })),
@@ -621,6 +756,7 @@ export type V3ContextPackOptions = Readonly<{
   retrieved?: readonly RetrievedContextChunk[];
   optional?: readonly OptionalContextItem[];
   maxUnits?: number;
+  includeDynamicAuthoritativeFacts?: boolean;
 }>;
 
 export function buildV3ContextPack(
@@ -628,7 +764,9 @@ export function buildV3ContextPack(
   options: V3ContextPackOptions = {},
 ): ContextPack {
   return buildContextPack({
-    required: requiredContextFromKpRequest(request),
+    required: requiredContextFromKpRequest(request, {
+      includeDynamicAuthoritativeFacts: options.includeDynamicAuthoritativeFacts,
+    }),
     retrieved: options.retrieved ?? [],
     optional: options.optional ?? [],
     maxUnits: options.maxUnits ?? 64_000,

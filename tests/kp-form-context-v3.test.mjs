@@ -5,6 +5,8 @@ import {
   KP_FORM_CATALOG_REGISTRATION,
   KP_FORM_IDS,
   buildKpFormToolParameters,
+  canonicalKpFormCatalogHash,
+  formCatalogRegistrationMatchesCanonicalDocument,
   isForbiddenModelField,
   kpFormIdForToolName,
   kpFormToolName,
@@ -211,6 +213,11 @@ const VALID_FORM_DRAFTS = Object.freeze({
 test("private catalog has exactly ten forms and exposes only deterministic 3-6 allowlists", () => {
   assert.deepEqual(KP_FORM_IDS, EXACT_FORM_IDS);
   assert.equal(KP_FORM_CATALOG_REGISTRATION.formCount, 10);
+  assert.equal(
+    KP_FORM_CATALOG_REGISTRATION.catalogHash,
+    canonicalKpFormCatalogHash(),
+  );
+  assert.equal(formCatalogRegistrationMatchesCanonicalDocument(), true);
 
   const cases = [
     {},
@@ -375,11 +382,15 @@ test("product 0.4 private materialization exposes only the current typed NPC and
   assert.match(policy, /不得提交物品名称、说明、规则来源、能力、治疗骰式、目标、actor、entryId/u);
   assert.match(policy, /当前闭合 Form 不提交显式资源或物品成本/u);
   assert.match(policy, /不得提交 AC、abilityRefs/u);
-  assert.match(policy, /ammoRef:null/u);
+  assert.match(policy, /zhuwei\.item-definition\/v1/u);
+  assert.match(policy, /content\.equipment\.weapon/u);
+  assert.match(policy, /ammunitionDefinitionRef 必须为 null/u);
+  assert.match(policy, /自定义物品来源 kind 精确为 itemDefinition/u);
   assert.match(policy, /causeFactRef/u);
   assert.match(policy, /zhuwei\.npc-mechanical-item-state-cause\/v1/u);
   assert.match(policy, /encounter 尚未 concluded 时不得提交 transferItem/u);
   assert.match(policy, /encounter 尚未 concluded 时不得提交 changeNpcGear/u);
+  assert.match(policy, /当前协议不接受没有明确场景归属的 lose/u);
   assert.doesNotMatch(policy, /在 compound 的 dynamicMaterializations 中/u);
 
   const v5Repair = privateFormRepairModelInput({
@@ -392,7 +403,7 @@ test("product 0.4 private materialization exposes only the current typed NPC and
       basisRefs: ["scene:working-warehouse"],
       abilityRefs: [],
       resourceRefs: [],
-      artifactRefs: [],
+      itemRefs: [],
     },
     semanticFreezeHash: "fnv1a64:0000000000000000",
   });
@@ -410,15 +421,14 @@ test("product 0.4 private materialization exposes only the current typed NPC and
     "zhuwei.npc-item-state-change-draft/v1",
   ]) assert.match(repairPolicy, new RegExp(schema.replace("/", "\\/"), "u"));
   assert.match(repairPolicy, /intrinsicAbilities、itemDefinitions、itemDefinitionRefs、initialLoadout/u);
+  assert.match(repairPolicy, /itemDefinitions 必须直接使用 zhuwei\.item-definition\/v1/u);
   assert.match(repairPolicy, /definitionRef 精确为 item-definition:srd51:healing-potion:1/u);
   assert.match(repairPolicy, /causeFactRef/u);
 });
 
 test("new action language compiles every form into a closed, stable, bounded DAG", () => {
-  assert.notEqual(
-    CAUSAL_ACTION_LANGUAGE_PROFILE.languageVersion,
-    CAUSAL_ACTION_LANGUAGE_PROFILE.legacyActionPlanVersion,
-  );
+  assert.equal(CAUSAL_ACTION_LANGUAGE_PROFILE.languageVersion, "causal-action-program-v4.0");
+  assert.equal(Object.hasOwn(CAUSAL_ACTION_LANGUAGE_PROFILE, "legacyActionPlanVersion"), false);
   assert.equal(new Set(CAUSAL_PRIMITIVES).size, CAUSAL_PRIMITIVES.length);
 
   for (const formId of EXACT_FORM_IDS) {

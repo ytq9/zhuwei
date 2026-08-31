@@ -6,7 +6,11 @@ import {
   replay,
   step,
 } from "../app/_runtime/lib/rules/index.ts";
-import { validateProposal } from "../app/_runtime/lib/kp/authoritative-helpers.ts";
+import {
+  compileAbilityDefinition,
+  isDefinitionRegisteredAbilityPayload,
+} from "../app/_runtime/lib/rules/profiles/ability-compiler.ts";
+import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
 import { normalizeRoomKpProposal } from "../app/_runtime/lib/room/proposal-adapter.ts";
 
 const ALICE = {
@@ -21,6 +25,48 @@ function profileRef(profileId, digit) {
   return { profileId, profileHash: `sha256:${digit.repeat(64)}` };
 }
 
+function tacticalGeometry() {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "0", y: "0" },
+        { x: "900", y: "0" },
+        { x: "900", y: "600" },
+        { x: "0", y: "600" },
+      ],
+    },
+    spawnPoints: [
+      { x: "120", y: "180", elevation: "0" },
+      { x: "420", y: "180", elevation: "0" },
+      { x: "720", y: "180", elevation: "0" },
+    ],
+    obstacles: [{
+      featureId: "feature:ability-profile:hall-wall",
+      kind: "barrier",
+      label: "能力校验厅隔墙",
+      state: "intact",
+      polygon: [
+        { x: "300", y: "360" },
+        { x: "360", y: "360" },
+        { x: "360", y: "480" },
+        { x: "300", y: "480" },
+      ],
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
 function initialize(suffix) {
   const initialized = step(undefined, undefined, {
     kind: "initializeAuthoritativeWorld",
@@ -30,7 +76,11 @@ function initialize(suffix) {
     initialDefinitionCatalogRef: profileRef(`catalog:ability-profile:${suffix}`, "b"),
     activeBranchId: "branch:main",
     fictionInstantMicros: "0",
-    scenes: [{ id: "scene:ability-profile:hall", name: "能力校验厅" }],
+    scenes: [{
+      id: "scene:ability-profile:hall",
+      name: "能力校验厅",
+      geometry: tacticalGeometry(),
+    }],
     principals: [{ id: ALICE.principalId, sessionVersion: 1, role: "host" }],
     seats: [{
       id: ALICE.seatId,
@@ -141,6 +191,7 @@ test("A01 set-like tags and aliases produce one JCS definition and compiled hash
   const replayed = replay(firstWorld.genesis, first.events);
   assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
   const view = playerView(firstWorld, replayed.state);
+  assert.equal(view.kind, "projected", JSON.stringify(view));
   assert.equal(
     view.abilityDefinitions["ability:profile:storm-lance"].definitionHash,
     EXPECTED_STORM_LANCE_DEFINITION_HASH,
@@ -414,7 +465,134 @@ test("A09 caller-supplied MechanicOps fail at the Rules interface without privat
       },
       scene: { question: "接下来怎么办？", pressure: "", opportunities: [], conclusionCandidate: null },
     };
-    assert.throws(() => validateProposal(kpProposal));
     assert.equal(normalizeRoomKpProposal(kpProposal), undefined);
   }
+});
+
+test("A10 item costs require one exact item-entry authority in source and frozen Cost graphs", () => {
+  const base = {
+    definitionId: "ability:profile:a10:item-use",
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    activation: { kind: "useObject", actionGrant: "normalAction" },
+    healing: { formula: "2d4+2" },
+  };
+  for (const [suffix, cost] of [
+    ["generic-item", { kind: "item", resourceId: "item:healing-potion", amount: "1" }],
+    ["empty-entry", { kind: "item", resourceId: "item-entry:", amount: "1" }],
+    ["item-charge", { kind: "itemCharge", resourceId: "resource:wand-charge", amount: "1" }],
+  ]) {
+    const compiled = compileAbilityDefinition({
+      ...base,
+      definitionId: `ability:profile:a10:${suffix}`,
+      costs: [cost],
+    });
+    assert.equal(compiled.ok, false, JSON.stringify(compiled));
+    assert.equal(compiled.code, "invalidAbilityDefinition");
+  }
+
+  const explicit = compileAbilityDefinition({
+    ...base,
+    definitionId: "ability:profile:a10:explicit-item-cost",
+    resolution: [{
+      nodeId: "legacy-item-cost",
+      kind: "cost",
+      costKind: "item",
+      resourceId: "item:healing-potion",
+      amount: "1",
+    }],
+  });
+  assert.equal(explicit.ok, false, JSON.stringify(explicit));
+  assert.equal(explicit.code, "invalidAbilityDefinition");
+
+  const duplicate = compileAbilityDefinition({
+    ...base,
+    definitionId: "ability:profile:a10:duplicate-exact-item-cost",
+    costs: [
+      {
+        kind: "item",
+        resourceId: "item-entry:ability-profile:a10:potion",
+        amount: "1",
+      },
+      {
+        kind: "item",
+        resourceId: "item-entry:ability-profile:a10:potion",
+        amount: "1",
+      },
+    ],
+  });
+  assert.equal(duplicate.ok, false, JSON.stringify(duplicate));
+  assert.equal(duplicate.code, "invalidAbilityDefinition");
+
+  const exact = compileAbilityDefinition({
+    ...base,
+    costs: [{
+      kind: "item",
+      resourceId: "item-entry:ability-profile:a10:potion",
+      amount: "1",
+    }],
+  });
+  assert.equal(exact.ok, true, JSON.stringify(exact));
+  assert.equal(isDefinitionRegisteredAbilityPayload(exact.artifact), true);
+
+  const frozenLegacy = structuredClone(exact.artifact);
+  frozenLegacy.definition.costs[0].resourceId = "item:healing-potion";
+  const frozenCost = frozenLegacy.mechanicGraph.operations.find(({ family }) => family === "Cost");
+  assert.ok(frozenCost);
+  frozenCost.input.resourceId = "item:healing-potion";
+  frozenLegacy.definitionHash = canonicalSha256(frozenLegacy.definition);
+  const remappedIds = new Map(frozenLegacy.mechanicGraph.operations.map((operation) => [
+    operation.opId,
+    `op:${canonicalSha256({
+      definitionHash: frozenLegacy.definitionHash,
+      path: operation.sourcePath,
+    }).slice("sha256:".length)}`,
+  ]));
+  frozenLegacy.mechanicGraph.entryOpIds = frozenLegacy.mechanicGraph.entryOpIds
+    .map((opId) => remappedIds.get(opId));
+  frozenLegacy.mechanicGraph.operations = frozenLegacy.mechanicGraph.operations.map((operation) => ({
+    ...operation,
+    opId: remappedIds.get(operation.opId),
+    next: operation.next.map((opId) => remappedIds.get(opId)),
+  }));
+  frozenLegacy.referenceClosure = ["item:healing-potion"];
+  frozenLegacy.compiledHash = canonicalSha256({
+    compilerProfile: frozenLegacy.compilerProfile,
+    definitionHash: frozenLegacy.definitionHash,
+    mechanicGraph: frozenLegacy.mechanicGraph,
+  });
+  assert.equal(isDefinitionRegisteredAbilityPayload(frozenLegacy), false);
+});
+
+test("A11 unified item lifecycle compiles only to the Item MechanicOp family", () => {
+  const compiled = compileAbilityDefinition({
+    definitionId: "ability:profile:a11:item-lifecycle",
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    resolution: [{
+      nodeId: "damage-item",
+      kind: "item",
+      itemEntryId: "item-entry:ability-profile:a11:lantern",
+      transition: "damage",
+    }],
+  });
+  assert.equal(compiled.ok, true, JSON.stringify(compiled));
+  assert.deepEqual(
+    compiled.artifact.mechanicGraph.operations.map(({ family }) => family),
+    ["Item"],
+  );
+
+  const retiredArtifact = compileAbilityDefinition({
+    definitionId: "ability:profile:a11:retired-artifact",
+    revision: "1",
+    rulesBasis: "srd5.1-2014",
+    resolution: [{
+      nodeId: "retired-artifact",
+      kind: "artifact",
+      itemEntryId: "item-entry:ability-profile:a11:lantern",
+      transition: "damage",
+    }],
+  });
+  assert.equal(retiredArtifact.ok, false, JSON.stringify(retiredArtifact));
+  assert.equal(retiredArtifact.code, "unsupportedMechanicPrimitive");
 });

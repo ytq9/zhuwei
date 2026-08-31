@@ -1,12 +1,14 @@
 # SPEC 0003–0013 跨规格五项审查
 
 - 状态：**规格级交叉审查完成；实现与测试证据持续回填**
-- 审查日期：2026-08-27
+- 审查日期：2026-08-31（0.4 版本边界修订）
 - 冻结上位准则：`SPEC 0001`（内容与批准状态均不得修改）
 - 审查对象：`SPEC 0003`–`SPEC 0013`、`0002-disposition-matrix.md`、`decision-register.md`、`traceability-matrix.md`
 - 审查维度：跨规格矛盾、权限、秘密、版本、第二权威
 
 本文只记录已裁定规格之间的责任消解、实现护栏和测试映射，不新增产品原则，也不把验收设计、文件存在或静态检查冒充实现证据。标为“实际（有效/局部）”的结果均有 `refactor-log.md` 中的命令与退出码；标为“待实现”的测试只有经真实责任 Interface 执行、被测试运行器实际收集并留下对应源码状态的通过记录后，才可回填为有效证据。
+
+2026-08-31 用户明确确认 0.4 开发重置并放弃全部更早房间与可恢复房间归档。故本文所有“历史 Adapter 必须保留”“旧房必须回放/迁移”以及旧 runtime/model/workflow 并存的结论，在前 0.4 房间范围内由 `SPEC 0013` 的 0.4 修订与 DEC-045/046 窄取代，只保留审计意义。当前生产只接受 V5 runtime、workflow-v2 与 causal v4 的精确完整闭包；普通提案为 `executeCausalActionProgram` + exact `actionLanguageRef`，多人管理为 Room 生成的 `authenticatedPartyAction`，NPC 计划、退休与 Activity 为 Room 生成的精确 `authenticatedCampaignAction`。机械、权限、秘密、单一 Room/Rules 权威和未知输入 fail-closed 结论不变。
 
 ## 1. 审查基准
 
@@ -45,18 +47,18 @@
 | XR-02 | 控制权撤销/换席可能发生在 Audience 冻结后、帧发布或读取前；相同 principal 后来重新获得控制也不能恢复旧帧。 | **规格已消解**：`SPEC 0007` §2；`SPEC 0010` §§4.2、8.4、O12；DEC-012。Audience 在提交时一次性冻结，之后只能因撤权收窄，不能扩大。 | 控制权撤销与旧 ViewerKey 槽失效原子提交；发布、observe、ACK 均重新鉴权。新控制者只看角色当前结构化知识，不取得旧正文。 | **实际（局部）**：`tests/multiplayer-room-v2.test.ts` 8/8、`tests/observer-projection-v2.test.mjs` 5/5、`tests/observer-delivery-v2.test.ts` 4/4；最终 HTTP 换席/请离旁路仍待发布态回归。 |
 | XR-03 | `PendingInputReassigned` 与继任者零自动继承可能被误解为任何换席、死亡或退役后都能把旧选择交给新角色。 | **规格已消解**：`SPEC 0003` §5；`SPEC 0007` §2；`SPEC 0008` §§7–8；DEC-011。重分配只适用于语义仍属于同一世界主体且授权可转移的输入；继任角色是新实体。 | Pending Input 保存 owner kind、character/tenure、reassignability 与 continuation hash；死亡/退役的个人选择关闭或暂停，不能改 owner id 后继续。 | **实际（有效）**：`tests/multiplayer-room-v2.test.ts` 8/8、`tests/world-campaign-v2.test.mjs` 7/7 与 observer 5/5 覆盖 Pending 重绑、死亡/退役、继任默认零知识和 provenance 转移。 |
 | XR-04 | `SPEC 0004` 的 `startedAtFictionSeconds: number`、`SPEC 0005` 的 `acquiredAtFictionSeconds: number` 与 `SPEC 0007` 的“虚构秒”是概念占位；`SPEC 0013` 要求整数微秒和规范十进制字符串。 | **规格已消解**：`SPEC 0013` §§2.2、7 是精确 Time Profile，填充 0004/0005/0007 的时间占位。 | 权威事件和状态统一使用 `fictionInstantMicros` 规范字符串；秒只用于显示或输入换算，不能作为并行存储或浮点计算来源。 | **实际（局部）**：runtime 10/10、Rules/Room multiplayer 各 8/8 已覆盖微秒、Activity、分支时间/因果与现实等待不推进；完整并发战斗时间组合仍待。 |
-| XR-05 | `SPEC 0012` 定义了局部 `CombatProfile`，`SPEC 0013` 又定义完整 `RuntimeProfileManifest`；若两者分别持久化会产生两个版本事实。 | **规格已消解**：`SPEC 0013` 开头“与 0012 的关系”、§§1–3；RTP-D001。`CombatProfile` 只是完整 manifest 中战斗扩展引用的视图。 | Genesis、事件、Receipt 和归档只保存一个完整 manifest/hash 闭包；Encounter 复制引用用于局部完整性验证，不能选择或覆盖第二份 Profile。 | **实际（局部/有效）**：`tests/runtime-profiles-v2.test.mjs` 覆盖 P01–P08 的 manifest/历史 Adapter/fail-closed，`tests/combat-vertical-v2.test.ts` 已记录 1/1 贯通当前 manifest；冻结源码组合仍须重跑。 |
+| XR-05 | `SPEC 0012` 定义了局部 `CombatProfile`，`SPEC 0013` 又定义完整 `RuntimeProfileManifest`；若两者分别持久化会产生两个版本事实。 | **规格已消解**：`SPEC 0013` 开头“与 0012 的关系”、§§1–3；RTP-D001。`CombatProfile` 只是完整 manifest 中战斗扩展引用的视图。 | Genesis、事件、Receipt 和归档只保存一个完整 manifest/hash 闭包；Encounter 复制引用用于局部完整性验证，不能选择或覆盖第二份 Profile。 | **0.4 当前映射**：`tests/runtime-profiles-v2.test.mjs` 覆盖唯一 V5 manifest 的精确初始化/回放/投影和退役/unknown/错 hash fail-closed；历史 Adapter 场景已退出当前门。 |
 | XR-06 | `SPEC 0010` 要求 presentation/projection/delivery 三个策略版本进入房间 manifest，但 `SPEC 0013` 的首张固定表没有逐项列名。 | **规格已消解且实现清单已显式化**：`SPEC 0010` §11 是强制版本要求；`SPEC 0013` §2.1 的 `extensions` 是其正式容纳位置。 | 首个 conforming manifest 必须把三个策略各作为完整 `ProfileRef` 纳入 extensions/hash 闭包；缺任一项以 `invalidRuntimeManifest` 拒绝，不能使用部署默认值。 | **实际（有效）**：`tests/runtime-profiles-v2.test.mjs` 与 `tests/observer-projection-v2.test.mjs` 已记录联合绿色，覆盖策略缺失/错位/错 hash 与观察者投影；最终冻结门另计。 |
 | XR-07 | 普通 Worker/DO 实例重启必须恢复同一 DeliveryFrame；从 D1 事件归档灾难重建的新空 DO 又明确不能恢复旧叙述。 | **规格已消解**：`SPEC 0010` §§8.3、11；`SPEC 0011` §6。前者恢复同一 DO 持久槽，后者只重建结构化正史并把槽置空。 | 恢复入口显式区分 instance restart 与 authorized disaster rebuild；后者不得读取 Prompt、messages 或事件生成旧正文，只可基于新投影发布新 deliveryId。 | **实际（有效）**：observer delivery 4/4 覆盖普通重启同帧；记录的 `archive-correction-v2` 5/5 覆盖授权空 DO 灾难重建且不恢复 Delivery 正文。 |
-| XR-08 | 更正既要保留旧 Delivery 审计引用，又禁止恢复旧叙述；跨 Profile/epoch 的错误也不能用最新解释器修正。 | **规格已消解**：`SPEC 0003` §10；`SPEC 0005` §10；`SPEC 0010` §8.6；`SPEC 0011` §7；`SPEC 0013` §§3.4、12.4；DEC-013/015。 | 旧 Delivery 只保留非内容 tombstone/hash；更正上下文绑定受影响事件的精确 manifest。混合 epoch 无获批映射时拒绝，不把 latest Adapter 用于历史事件。 | **实际（有效）**：记录的 `tests/archive-correction-v2.test.ts` 5/5 覆盖篡改拒绝、前向补偿、正式后果触发因果分支、旧 Receipt/Delivery 审计与授权边界；冻结源码仍须重跑。 |
+| XR-08 | 更正既要保留同一 0.4 房间内的旧 Delivery 审计引用，又禁止恢复旧叙述；错误不能用未绑定解释器修正。 | **规格已消解**：`SPEC 0003` §10；`SPEC 0005` §10；`SPEC 0010` §8.6；`SPEC 0011` §7；`SPEC 0013` §§3.4、12.4；DEC-013/015/045。 | 当前房的旧 Delivery 只保留非内容 tombstone/hash；更正上下文绑定受影响事件的精确当前 manifest。前 0.4 或混合 epoch 输入拒绝，不用 current/latest 猜测。 | **实际（有效）**：记录的 `tests/archive-correction-v2.test.ts` 覆盖当前分支内篡改拒绝、前向补偿、旧 Receipt/Delivery 审计与授权边界；前 0.4 恢复不再是目标。 |
 | XR-09 | 非战斗致命危险需要伤害/0 HP/死亡机械，而 `SPEC 0012` 是纯战斗规格；若另写 hazard damage 会形成第二机械管线。 | **规格已消解**：`SPEC 0004` §9；`SPEC 0012` §§10–12；`SPEC 0013` §4.3 Damage/Recovery op；处置矩阵 B21/B43。战斗规格拥有机械语义，Encounter 不是调用该机械的必要条件。 | 同一个 Rules Implementation 的 DamagePacket、Effect、专注、0 HP 与死亡管线同时接受战斗和非战斗提案；二者都只从 `step` 进入。 | **实际（有效）**：`tests/world-campaign-v2.test.mjs` 7/7 与 `tests/combat-mechanics-v2.test.mjs` 4/4 共同证明非战斗危险复用同一伤害/死亡语义。 |
-| XR-10 | 多个 NPC 同时触发时，Trigger Profile 允许正确控制者排序，但 NPC 不得因同一 KP 模型而共享知识或获得自动战术。 | **规格已消解**：`SPEC 0006` §§4、7；`SPEC 0010` §7；`SPEC 0012` §7.3；`SPEC 0013` §6；DEC-008。Trigger 只冻结资格/顺序，NPC 意图仍逐 NPC Viewer 形成。 | 每个 NPC 决策调用只含该 NPC 投影；排序窗口不得夹带其他 NPC 的秘密知识，也不得生成新目标。失效项零成本关闭，不用最近/最低 HP 等默认。 | **实际（局部）**：module/NPC 4/4、Rules compound 18/18 与 production-validator 31/31 已覆盖逐 NPC 有限知识及无自动目标；完整多 NPC combat trigger 排序组合仍待。 |
+| XR-10 | 多个 NPC 同时触发时，Trigger Profile 允许正确控制者排序，但 NPC 不得因同一 KP 模型而共享知识或获得自动战术。 | **规格已消解**：`SPEC 0006` §§4、7；`SPEC 0010` §7；`SPEC 0012` §7.3；`SPEC 0013` §6；DEC-008。Trigger 只冻结资格/顺序，NPC 意图仍逐 NPC Viewer 形成。 | 每个 NPC 决策调用只含该 NPC 投影；排序窗口不得夹带其他 NPC 的秘密知识，也不得生成新目标。失效项零成本关闭，不用最近/最低 HP 等默认。 | **0.4 当前映射**：`tests/module-npc-v2.test.mjs`、`tests/actor-plan-kp-boundary-v3.test.mjs`、`tests/actor-plan-room-v2.test.ts`、`tests/actor-plan-due-room-v2.test.ts`、`tests/runtime-trigger-time-v2.test.mjs` 与 combat trigger 场景；当前组合通过数和完整多 NPC 同触发排序仍待。 |
 | XR-11 | `SPEC 0012` 把 B16 通用恢复列给 0003/0010/0011，处置矩阵还列 0007。 | **规格已消解**：这不是责任冲突。0003/0010/0011 拥有事务、单槽与故障恢复；0007 拥有 Principal、控制权、掉线不推进时间。处置矩阵记录完整跨层组合，0012 只排除战斗副本。 | B16 垂直测试必须组合四份规格，战斗包不得实现自己的身份、时钟或窗口恢复。 | **实际（有效）**：记录的 Room 迁移组合 41/41（authority/randomness/multiplayer/service routing/delivery/archive/retry）覆盖恢复与权限组合；冻结源码仍须最终重跑。 |
 | XR-12 | Profile/JCS/hash 需要构建期 golden 检查，但产品验收禁止绕过 `step/project/replay` 直接测试内部 fold/helper。 | **规格已消解**：`SPEC 0003` §2.1 与 `SPEC 0013` §§9、11。私有构建验证可证明目录完整性，但不能单独证明玩家行为。 | hash/Registry 校验器不从 Rules 包入口导出；P/A/G/T/F 行为向量仍经 Rules/Room 责任 Interface。静态检查只能作补充证据。 | **实际（有效/局部）**：P/A/G/T/F 已映射到 runtime/ability/combat/trigger-time/privacy 的公开 `step/project/replay` 场景，`module:check` 多次通过；生产源码冻结后的整组与结构门仍待。 |
-| XR-13 | 若 production validator 已严格，但 authoritative-v2 DO 仍接受 compact kinds 或从 SQLite 恢复任意 `rulesInput`，首次提交与重启会形成两套机械协议。 | **规格已消解并实现护栏**：`SPEC 0003` §§3、10；`SPEC 0011` §§6、8；DEC-018/022。只有完整 production draft/精确 Pending capability 可归一化，恢复只允许 ActionPlan v1/同版本待决续接。 | DO 删除 compact proposal 分支；normalizer 复用 `validateProposal`；恢复重新校验载荷 allowlist 与 hash；旧命令只能由精确 Legacy ruleset 命中。 | **实际（有效/结构补充）**：KP Adapter 7/7；记录的 Room 恢复迁移组合 16/16；`module:check` 已加入源码护栏，最终冻结 SHA 仍须重跑。 |
-| XR-14 | 非战斗豁免若只返回成功布尔，物品成本、HP/移动后果和职业熟练会分别落到 Room、技能系统或旁白。 | **规格已消解**：`SPEC 0004` §§3–6、9；`SPEC 0012` §§10–12；DEC-023。save 与 check 共用复合结算、统一 HP/伤害状态和 DO 骰源；修正来自 2014 class save proficiency。 | ActionPlan 骰前必须冻结 duration/cost/success/failure；continuation 不重复消费；客户端/KP 不能提交 modifier、骰面或 HP 结算。 | **实际（有效）**：Rules compound 18/18 覆盖物品成本、优势、当前六职业 save proficiency、成功/失败 HP/移动分支。 |
-| XR-15 | `changeParty` 若按可选字段猜测邀请/离队，会让协调器替玩家选择；若拆成六个 DO 命令则形成多人旁路。 | **规格已消解**：`SPEC 0007` §5；DEC-024。production ActionPlan 显式冻结六种 `partyAction`，再进入同一 multiplayer Rules Module。 | 每种变体精确验证成员/Pending/领导权/目的地/耗时；整队移动逐控制者同意，个人移动可原子离队。 | **实际（有效）**：Rules compound 18/18 覆盖全部六值；Rules/Room multiplayer 各 8/8 覆盖真实控制权与 Pending。 |
-| XR-16 | 管理/API 若只看到模型 ID 或字段形状，会把 authoritative-v2 错送 Legacy 服务；若读取 DO 活跃状态决定版本又会建立目录之外的路由副本。 | **规格已消解**：`SPEC 0013` §§1–3；DEC-015/025。D1 房间目录已有 `ruleset_version` 是精确 Adapter 选择事实，DO/事件仍是活跃状态权威。 | `getRoomManagement` 重新鉴权房主后返回 `ruleset_version`/`kp_model`；未知版本 fail closed，页面不解释 Profile payload 或事件。 | **实现已接线，冻结门待跑**：源码与 `tests/rendered-html.test.mjs` HTTP 断言已更新；最终 `npm test` 通过前不计完成门。 |
+| XR-13 | 若私有 Form validator 已严格，但 authoritative-v2 DO 仍接受 compact kinds 或从 SQLite 恢复任意 `rulesInput`，首次提交与重启会形成两套机械协议。 | **规格已消解并实现护栏**：`SPEC 0003` §§3、10；`SPEC 0011` §§6、8；DEC-045/046。只有当前 private Form/Causal program 或 Room 生成的精确 capability 可归一化。 | DO 删除 compact/旧 ActionPlan 分支；恢复重新校验五类载荷 allowlist、当前 binding 与 hash；退役命令直接拒绝。 | **0.4 当前映射**：KP Adapter 与 Room 恢复定向测试只覆盖当前协议；旧 compact/Legacy 恢复路径已删除。 |
+| XR-14 | 非战斗豁免若只返回成功布尔，物品成本、HP/移动后果和职业熟练会分别落到 Room、技能系统或旁白。 | **规格已消解**：`SPEC 0004` §§3–6、9；`SPEC 0012` §§10–12；DEC-023。save 与 check 共用复合结算、统一 HP/伤害状态和 DO 骰源；修正来自 2014 class save proficiency。 | causal v4 程序在骰前冻结 duration/cost/success/failure；continuation 不重复消费；客户端/KP 不能提交 modifier、骰面或 HP 结算。 | **0.4 当前映射**：`tests/causal-action-rules-v3.test.mjs`、`tests/item-materialization-causal-v5.test.mjs`、`tests/item-use-costs-v5.test.mjs`、`tests/combat-mechanics-v2.test.mjs` 与 Room randomness runner；当前组合通过数待回执。 |
+| XR-15 | `changeParty` 若按可选字段猜测邀请/离队，会让协调器替玩家选择；若拆成六个 DO 命令则形成多人旁路。 | **规格已消解**：`SPEC 0007` §5；DEC-024。当前 Room 以服务端生成的 `authenticatedPartyAction` 显式区分六种动作，再进入同一 multiplayer Rules Module。 | 每种变体精确验证成员/Pending/领导权/目的地/耗时；整队移动逐控制者同意，个人移动可原子离队。 | **0.4 当前映射**：`tests/rules-multiplayer-v2.test.mjs` 与 `tests/multiplayer-room-v2.test.ts` 明示覆盖 `authenticatedPartyAction`、真实控制权与 Pending；当前通过数待回执。 |
+| XR-16 | 管理/API 若只看到模型 ID 或字段形状，可能把退役房间送入当前服务；若读取 DO 活跃状态决定目录路由又会建立第二版本事实。 | **规格已消解**：`SPEC 0013` §§1–3；DEC-015/025/045。D1 `ruleset_version` 与当前完整 binding 共同做精确入口检查，DO/genesis 仍是活跃状态权威。 | 当前绑定才进入服务；迁移前仍可见的退役房间只返回退役提示，host 保留删除权限。未知版本 fail closed，页面不解释 Profile payload 或事件。 | **0.4 当前映射**：`interaction-contract`、`authoritative-service-routing`、`authoritative-table` 与删除测试覆盖当前路由和退役删除；实际结果以本轮回执为准。 |
 
 ## 3. 文档与测试映射差异
 
@@ -67,19 +69,25 @@
 | DOC-01 | `traceability-matrix.md` 的 C/D/G 仍写“替代战斗规格待裁定”，完成门也写 B 处置待回填。 | `SPEC 0012/0013` 和 `0002-disposition-matrix.md` 已正式裁定并完整分配 B01–B53。 | **文档待回填**：矩阵下次维护时引用 0012/0013 和本审查；在此之前这些旧句不能被解释为产品未裁定。 |
 | DOC-02 | 追踪矩阵 P10 仍写故障分类/SLO/免费额度预算“尚待规格化”。 | `SPEC 0011` §§1–3 已正式规格化；实现与生产遥测证据仍待实现。 | **文档待回填**：把“规格缺失”和“实现无证据”分开，不能因已有规格而宣称 SLO 已实现。 |
 | DOC-03 | 旧文档曾使用不存在的单文件战斗、timing 和 `.mjs` vertical 占位。 | **已回填**：战斗/Profile 的真实 runner 是 `tests/combat-mechanics-v2.test.mjs`、`tests/combat-hostility-v2.test.mjs`、`tests/combat-long-casting-v2.test.mjs`、`tests/runtime-trigger-time-v2.test.mjs`、`tests/privacy-bypass-v2.test.mjs` 与 `tests/combat-vertical-v2.test.ts`。 | 路径存在性检查必须失败于任何再次引入的占位路径；测试声明规模与已执行绿色分别记账。 |
-| DOC-04 | 旧文档曾并列不存在的 Room Action eval 与 `.mjs` canonical KP eval 占位。 | **已回填**：唯一 canonical 连续评测路径为 runner 实际收集的 `tests/kp-multiturn-eval.test.ts`；`SPEC 0011` §9 的 20+ 交互与 18/20 阈值仍是正式验收语义。 | 同一轨迹只计一次；脚本 fixture 不能替代真实 Workers AI。 |
+| DOC-04 | 旧文档曾并列不存在的 Room Action eval 与旧 production draft runner。 | **0.4 当前结论**：旧 runner 已退役；`SPEC 0011` §9 的 20+ 交互与 18/20 阈值仍是正式验收语义，但必须用当前窄工具/Form/Causal/Room 链重新建立。 | 同一轨迹只计一次；脚本 fixture 不能替代真实 Workers AI。 |
 | DOC-05 | `SPEC 0010` 头部只列 0001 为依赖，但正文实际与 0003/0005/0007/0008/0011 互相约束。 | `SPEC 0010` §§17–18、其他规格的上位/交叉审查以及 DEC-006/011/012/013 已建立正式关系。 | 索引与实现依赖图必须包含这些边；不能因头部元数据简写而独立实现投递。 |
 
 ### 3.1 审查后回填
 
-2026-08-27 已按上述正式来源回填 DOC-01–DOC-05：追踪矩阵现引用 `SPEC 0012/0013`、把可靠性明确区分为“规格已固定/实现待证”、使用 runner 实际收集的拆分战斗/Profile 路径；连续评测统一为 `tests/kp-multiturn-eval.test.ts` 和 20+ 交互；`SPEC 0010` 头部补齐协作规格。路径修正本身不代表冻结源码全量通过。
+2026-08-27 曾按当时来源回填 DOC-01–DOC-05；其中旧 production draft 连续评测自 0.4 current-only 修订起只作历史审计。当前 20+ 交互必须重建在窄工具/Form/Causal/Room 链上；路径修正本身不代表冻结源码全量通过。
 
-### 3.2 本轮生产语义回填
+### 3.2 2026-08-27 历史生产语义回填（不计 0.4 当前门）
 
-- DEC-018/DEC-020 的 production ActionPlan 已使用判别式 `resolveDirectConsequences` 与 `advanceCampaignLifecycle`；知识、关系、承诺、虚构时间、结局候选、故事收束、玩家尾声和续篇均映射到 `rules/v2` typed events，而不是 Room/叙述补丁。
+- DEC-018/DEC-020 的 production ActionPlan 属于退役历史；其长期领域语义仍由 `rules/v2` typed events 表达，但当前入口必须经 Causal program 或 Room 生成的精确 capability，不能恢复旧 transport。
 - DEC-021 固定 authoritative-v2 的 Arcane Recovery 为 `arcaneRecoverySlotLevels` 多槽选择；UI 只根据专属 Read Model 冻结合法选择，Rules/Room Authority 在短休 Activity 完成点验证和结算。旧 `arcane` scalar 只属于 Legacy Adapter。
-- DEC-022–025 进一步固定严格 production normalization/恢复 allowlist、复合非战斗 save、六种 typed partyAction 与房主管理版本读取。authoritative-v2 DO 已删除 compact proposal 可达分支；`resolveNoncombatSave` 冻结成本/后果并使用 2014 职业豁免熟练；`getRoomManagement` 显式返回目录规则版本。
-- 证据为 Rules compound 18/18、KP Adapter 7/7、production Room compound 1/1、world/campaign 7/7、Rules multiplayer 8/8、Room multiplayer 8/8、observer projection 5/5、authoritative table 10/10，以及记录的 Room 迁移组合 41/41。31 次评测逐轮通过 production `validateProposal` 与 projection-bound；这些结果不替代冻结源码全量/真实 Workers AI/迁移部署门。
+- DEC-022–025 的旧 normalization/ActionPlan 部分由 DEC-046 取代；六种 typed partyAction、2014 豁免熟练与房主管理版本读取等独立领域裁定继续有效。authoritative-v2 DO 已删除 compact/旧 proposal 可达分支。
+- 上述 Rules compound、旧 KP Adapter、production Room compound、31 次 production validator 与 Room 迁移组合数字只作历史审计；0.4 当前证据只由 current-only runner 的实际回执构成，不替代冻结源码全量、真实 Workers AI 或部署门。
+
+### 3.3 0.4 current-only 回填
+
+- 普通 KP 提案只以 `executeCausalActionProgram` 进入 Rules，且 envelope、program 与当前 workflow 中的 `actionLanguageRef` 必须都精确匹配 `causal-action-program-v4`；不再把历史 production ActionPlan 或 compound runner 当作当前实现。
+- 服务端多人管理使用 `authenticatedPartyAction`；NPC 计划、退休与 Activity 使用字段精确的 `authenticatedCampaignAction`。两类 capability 都由 Room 从可信状态生成，不接受模型或客户端自报权限，也不借用历史 ActionPlan 数字。
+- 当前测试映射按实际现存的 causal/world/item/combat/multiplayer/ActorPlan runner 建账：`tests/causal-action-rules-v3.test.mjs`、`tests/world-campaign-v2.test.mjs`、item V5、combat、Rules/Room multiplayer，以及 `tests/actor-plan-kp-boundary-v3.test.mjs`、`tests/actor-plan-room-v2.test.ts`、`tests/actor-plan-due-room-v2.test.ts`。本次文档修订不推算通过数。
 
 ## 4. 逐规格五项审查
 
@@ -87,17 +95,17 @@
 
 | 审查项 | 发现与结论 | 正式消解来源 | 实现护栏 | 测试映射 / 证据 |
 | --- | --- | --- | --- | --- |
-| 跨规格矛盾 | 通用事务与 0010 的提交后投递、0011 的恢复、0013 的精确 Profile 是抽象层与具体层关系；`observe` 不能因此成为第二 projector。 | 0003 §§1–3、11；0010 §§7、12；0011 §§6–7；0013 §§1–3；DEC-001/002/018/020/022。 | `observe` 只组合 `project` 输出与 DO 当前槽；Room Action 不解释事件、不计算可见性。 | **实际（有效）**：authoritative action 7/7、Rules compound 18/18、production compound 1/1、记录的 Room 迁移组合 41/41；最终冻结全量门另计。 |
+| 跨规格矛盾 | 通用事务与 0010 的提交后投递、0011 的恢复、0013 的精确 Profile 是抽象层与具体层关系；`observe` 不能因此成为第二 projector。 | 0003 §§1–3、11；0010 §§7、12；0011 §§6–7；0013 §§1–3；DEC-001/002/018/020/022。 | `observe` 只组合 `project` 输出与 DO 当前槽；Room Action 不解释事件、不计算可见性。 | **0.4 当前映射**：`tests/causal-action-rules-v3.test.mjs`、Room Authority/randomness/retry、observer/delivery 与 archive/correction runner 均经公开 seam；当前组合通过数和冻结全量门待回执。 |
 | 权限 | Principal 只来自认证上下文；玩家、KP/NPC、内部 continuation 与更正入口互不代用。 | 0003 §§2.2、3、5；0007 §1；DEC-003/008/013。 | 请求 schema 拒绝 principal/actor、骰面、事件、状态补丁和内部 capability；每次重试重新鉴权。 | **待实现**：伪造 actor、替答、普通 commit 调 correction 的拒绝测试。 |
 | 秘密 | Receipt、Pending、错误、候选与增量都必须经同一 `project`；缓存 Receipt 不能顺带返回旧私人投影。 | 0003 §§5、8、11；0010 §§7–10；DEC-006/012。 | 幂等结果缓存分离公共 Receipt 与每次重新投影；错误码按 Viewer 脱敏。 | **待实现**：`tests/observer-projection-v2.test.mjs`、`tests/privacy-bypass-v2.test.mjs`。 |
-| 版本 | `ruleset_version` 字符串不足以执行；完整 manifest、事件 schema、定义与 Profile hash 由 0013 填充。 | 0003 §§4、10；0013 §§1–3；DEC-015、RTP-D001。 | prepare/commit/replay 精确匹配完整 ProfileRef；未知或错 hash fail closed。 | **实际（有效）**：`tests/runtime-profiles-v2.test.mjs` 覆盖 P03–P08、错 hash/state pin、历史 replay 与显式 Legacy；冻结源码重跑仍待。 |
+| 版本 | `ruleset_version` 字符串不足以执行；完整 manifest、事件 schema、定义与 Profile hash 由 0013 填充。 | 0003 §§4、10；0013 §§1–3；DEC-015、RTP-D001。 | prepare/commit/replay 精确匹配完整 ProfileRef；未知或错 hash fail closed。 | **0.4 当前映射**：`tests/runtime-profiles-v2.test.mjs` 覆盖 V5 精确初始化/回放/投影、state pin 及 retired/unknown/错 hash fail-closed；当前通过数待回执。 |
 | 第二权威 | 两个深 Module 与 Room Authority seam 已明确；fold/applyEvents、随机、机械原语均是私有 Implementation。 | 0003 §2、§14；DEC-002/014/017/022。 | Rules 包入口只导出 `step/project/replay`；页面、D1、AI 和测试不能调用内部捷径；authoritative-v2 DO 无 compact proposal 分支。 | **实际（局部）**：`module:check` 多次通过且 KP Adapter 7/7/Room 41/41 经真实 seam；最终冻结 SHA 的结构门与全量行为测试仍须重跑。 |
 
 ### 4.2 SPEC 0004：KP 裁决与非战斗机械
 
 | 审查项 | 发现与结论 | 正式消解来源 | 实现护栏 | 测试映射 / 证据 |
 | --- | --- | --- | --- | --- |
-| 跨规格矛盾 | Activity 秒字段由 0013 微秒 Profile 精化；非战斗致命危险复用 0012/0013 伤害死亡机械，不另建 hazard engine。 | 0004 §§8–9；0012 §§10–12；0013 §§4.3、7；XR-04/XR-09/XR-14。 | Activity 与危险只是同一 Rules 输入种类；完成、save、伤害、资源与时间仍由一次 `step` 事件组提交。 | **实际（有效）**：world/campaign 7/7 与 Rules compound 18/18 覆盖可中断 Activity、统一伤害/死亡、typed direct consequences 及复合非战斗 save。 |
+| 跨规格矛盾 | Activity 秒字段由 0013 微秒 Profile 精化；非战斗致命危险复用 0012/0013 伤害死亡机械，不另建 hazard engine。 | 0004 §§8–9；0012 §§10–12；0013 §§4.3、7；XR-04/XR-09/XR-14。 | Activity 与危险只是同一 Rules 输入种类；完成、save、伤害、资源与时间仍由一次 `step` 事件组提交。 | **0.4 当前映射**：`tests/causal-action-rules-v3.test.mjs`、`tests/world-campaign-v2.test.mjs`、item V5 与 combat runner 覆盖相应 causal/Activity/资源/伤害入口；当前组合通过数待回执。 |
 | 权限 | KP 选择五类可行性和风险；Rules 验机械；玩家只回答自己的澄清、资源、休整和方法选择。 | 0004 §§2–4、6–8；0003 §5；DEC-003/021。 | 重大歧义先开指定玩家 Pending；Rules 不以剧情/强弱改判，KP 不替玩家选资源；短休上限、资格与奥术恢复预算由 Rules projector 产生，页面只消费候选。 | **实际（有效）**：Rules multiplayer 8/8、Room multiplayer 8/8、world/campaign 的 `restRecoveryOptions` projector 场景和 table 10/10 覆盖个人/整队休整、Arcane Recovery 选择与可信 Pending；浏览器发布态仍待。 |
 | 秘密 | 隐藏 DC、危险依据和先例秘密部分可留 KP Viewer，但可感知预兆、成本和失败局面必须诚实投影。 | 0004 §§3、9、11；0005 §§5–7；0010 §7。 | 提案分别保存公开与秘密依据引用；错误和候选统一 projector。 | **待实现**：C/G、`tests/observer-projection-v2.test.mjs`。 |
 | 版本 | 检定、休整、Activity、危险和裁定先例都绑定 Rules/Time/Ability Profile；旧事件不按新公式重算。 | 0004 §§3、7–11；0013 §§2、4、7。 | 先例指纹和动态定义保存 ProfileRef/hash；秒输入规范转微秒后提交。 | **实际（有效）**：A07、F03/F04/F08 与非战斗 replay 映射 `ability-profile-v2.test.mjs`、`runtime-trigger-time-v2.test.mjs`、`world-campaign-v2.test.mjs`。 |
@@ -117,17 +125,17 @@
 
 | 审查项 | 发现与结论 | 正式消解来源 | 实现护栏 | 测试映射 / 证据 |
 | --- | --- | --- | --- | --- |
-| 跨规格矛盾 | 0006 提出动态定义，0013 编译并注册，0012 只消费战斗能力；到期计划服从 0003/0007/0013 时间链。 | 0006 §§3、6–8；0003 §4；0012 §9；0013 §§4、7；DEC-007/008。 | 定义流程固定为 KP 提案 → Rules 编译诊断 → Room DO 原子注册/实体化；NPC 计划到期是独立根行动。 | **实际（局部/有效）**：module/NPC、Rules compound、production compound 与 production-validator 已覆盖动态定义/有限知识 NPC；A01–A09 另由 ability + combat A06 公开向量覆盖。真实模型仍待。 |
+| 跨规格矛盾 | 0006 提出动态定义，0013 编译并注册，0012 只消费战斗能力；到期计划服从 0003/0007/0013 时间链。 | 0006 §§3、6–8；0003 §4；0012 §9；0013 §§4、7；DEC-007/008。 | 定义流程固定为 KP 提案 → Rules 编译诊断 → Room DO 原子注册/实体化；NPC 计划到期是独立根行动。 | **0.4 当前映射**：module/NPC、NPC mechanical v5、causal v4 与三份 ActorPlan runner 覆盖动态定义、有限知识计划及到期处理；A01–A09 另由 ability + combat A06 映射。当前组合与真实模型仍待。 |
 | 权限 | KP 只控制 NPC/世界，且 NPC 决策只能依据该 NPC Viewer；玩家始终控制玩家角色。 | 0006 §§4–7；0007 §1；0010 §7；DEC-008。 | 每个 NPC 单独 project；AI Adapter 任务类型不能把 KP 全知投影传给 NPC 决策；无自动目标/pass。 | **待实现**：K、B23/B24/B31、XR-10。 |
 | 秘密 | Module truth、NPC/Faction 计划、错误倾向和未公开定义只在相应内部 Viewer；势力成员不自动共享知识。 | 0006 §§1、4–6；0005 §§7–9；0010 §§7、10。 | NPC/Faction knowledge 有来源传播；日志/错误不含计划、候选定义或秘密能力。 | **待实现**：无知识不反制/获知后反应对照、日志捕获。 |
-| 版本 | ModuleBible、module hash、动态定义/compiler 与 Legacy Adapter 均精确固定；章节可换兼容模块但不能改 Runtime manifest。 | 0006 §§2、9；0008 §§2–3；0013 §§2–3；DEC-007/015。 | 初始 moduleRef 与当前 Chapter module binding 分开；升级产生事件并验证 manifest 兼容，未知组合拒绝。 | **部分实现**：P05/P08 的旧 Adapter/历史解释已由 runtime Profile runner 验证；旧 DSL replay 与新章 `ModuleVersionMigrated` 组合仍待。 |
-| 第二权威 | 封闭 DSL、Prompt、目录、自动战术函数和 D1 `game_states` 都不能成为新规则裁决/状态路径。 | 0006 §§1、9、14；DEC-007/014。 | Legacy 分派先精确命中旧版本；新房自由行动不能先查 Interaction 白名单。 | **待实现**：A、B41、Legacy 隔离与无 D1 活跃写入检查。 |
+| 版本 | 0.4 的 ModuleBible、module hash 与动态定义/compiler 只绑定当前精确版本；旧房、旧模组 Adapter 与 migration 已按 DEC-045 退役。 | 0006 §§2、9；0008 §§2–3；0013 §§2–3；DEC-045。 | Genesis/Campaign 与每个 Chapter 固定同一当前 `moduleRef`；未知组合拒绝，不保留升级事件或兼容分派。 | **当前实现**：current-only Registry 与 canonical Module hash 已由 module/runtime Profile 定向 runner 验证。 |
+| 第二权威 | 封闭 DSL、Prompt、目录、自动战术函数和 D1 `game_states` 都不能成为新规则裁决/状态路径。 | 0006 §§1、9、14；DEC-007/014。 | 0.4 Registry 只精确命中当前 V5；自由行动不能先查 Interaction 白名单，退役输入直接 fail closed。 | **0.4 当前映射**：A/B41 的 causal v4、ActorPlan 与 module runner，加无 D1 活跃写入检查；当前组合回执仍待。 |
 
 ### 4.5 SPEC 0007：多人房间、控制权、虚构时间与聚光灯
 
 | 审查项 | 发现与结论 | 正式消解来源 | 实现护栏 | 测试映射 / 证据 |
 | --- | --- | --- | --- | --- |
-| 跨规格矛盾 | 并发用 0003 scopeProof；具体时间用 0013 微秒；控制转移不得转移 0010 Frame 或 0008 继任者选择。 | 0007 §§2、4、6–7；0010 §4.2；0013 §7；XR-02–XR-04/XR-15。 | scope 细分控制/知识/时间/投递；控制事件与 Pending/Frame 处置原子提交；事件序列不作为全局锁。 | **实际（有效）**：Rules/Room multiplayer 各 8/8、Rules compound 18/18 与记录的 Room 迁移组合覆盖控制转移、六种队伍语义、分支时间、O12/O17 核心边界；最终 HTTP 仍待。 |
+| 跨规格矛盾 | 并发用 0003 scopeProof；具体时间用 0013 微秒；控制转移不得转移 0010 Frame 或 0008 继任者选择。 | 0007 §§2、4、6–7；0010 §4.2；0013 §7；XR-02–XR-04/XR-15。 | scope 细分控制/知识/时间/投递；控制事件与 Pending/Frame 处置原子提交；事件序列不作为全局锁。 | **0.4 当前映射**：`tests/rules-multiplayer-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts` 与 observer runner 覆盖 `authenticatedPartyAction`、控制转移、队伍语义和分支时间；当前通过数及最终 HTTP 待回执。 |
 | 权限 | Seat、CharacterControl、Host、leader、KP 和成员身份相互独立；队长只能组织提案。 | 0007 §§1、5、9；DEC-004/009。 | 服务端从 auth_sessions 取 Principal；整队提案逐控制者同意，个人行动可原子离队。 | **待实现**：伪造身份、整队缺一人、个人离队/休整。 |
 | 秘密 | 分支未来、私人窗口、安全原因和其他角色知识不能因房主/队长/在线状态而公开。 | 0007 §§3、7、9–10；0010 §§4、10。 | 无权 Viewer 的响应形状与对象不存在不可区分；CausalFrontier 先验证再投影。 | **待实现**：M、`tests/privacy-bypass-v2.test.mjs`。 |
 | 版本 | 时间、聚光灯、控制权与因果 Profile 随 epoch 固定；Beat 不进入 Time Profile 机械。 | 0007 §§6–8；0013 §7；DEC-009/RTP-D005。 | Spotlight policy 与 Time Profile 分离引用；现实时间、ACK、TTL 永不转为 fictionInstant。 | **实际（有效）**：F01–F07 由 `runtime-trigger-time-v2.test.mjs`，Spotlight≤3 与现实等待护栏由 Rules/Room multiplayer 公开测试覆盖；冻结组合仍待。 |
@@ -140,18 +148,18 @@
 | 跨规格矛盾 | Story/Encounter 结束不等于 Chapter/Campaign 结束；继任者是新实体，不取得前任 Pending/Frame/知识。 | 0008 §§2–8；0009 §§8–9；0010 O17；0012 §13；DEC-010/011/020。 | Chapter transition 先结清必答/机械并保存连续性清单；Successor 使用新 entity/tenure/ViewerKey；控制结束后的 `successorRequired` 由可信 lifecycle Viewer 经同一 Rules projector 产生。 | **实际（有效）**：world/campaign、Room multiplayer 与 observer 覆盖章节、死亡/退役、统一 lifecycle 投影、继任及真实 sequel boundary。 |
 | 权限 | 成长选择、退役、继任与是否继续 Campaign 属于各玩家；转 NPC 需同意，此后才由 KP 控制。 | 0008 §§3、5–8；0006 §§4、7。 | 资格只开 Pending，不自动选职业/HP/继任；房主/KP不能代退休或转 NPC。 | **待实现**：成长重启一次、退役同意、继任选择越权。 |
 | 秘密 | 私人知识、旧叙述、关系和未分享线索不按账户继承；内容安全偏好可在玩家层持续。 | 0008 §§4、7；0010 §§5、6、O17；DEC-011/012。 | 每项继承必须有独立世界事件/来源；章节回顾只概括当前 Viewer 可见结构化事实。 | **待实现**：合法/非法继承矩阵、章节无聊天历史。 |
-| 版本 | Campaign 固定 AdvancementProfile 与版本链；Chapter module 必须兼容当前 Runtime manifest；旧章不重算。 | 0008 §§2、5、9；0006 §2；0013 §§2–3。 | 成长策略或 runtime epoch 变化必须显式迁移事件；静态卡同步不改变活跃版本。 | **部分实现**：`milestone | srdXp2014` genesis、累计阈值、Profile 互斥和 `ExperienceAwarded` replay/project/correction 已由 world 9/9 + compound 19/19 验证；module upgrade、P05/F08 与冻结源码组合仍待。 |
+| 版本 | Campaign 固定 AdvancementProfile 与版本链；Chapter module 必须兼容当前 Runtime manifest；已提交章节不重算。 | 0008 §§2、5、9；0006 §2；0013 §§2–3。 | 0.4 当前房只使用 V5 runtime；静态卡同步不能改变活跃版本，前 0.4 epoch 不迁移。 | **0.4 当前映射**：`tests/world-campaign-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts` 与 ActorPlan/lifecycle runner 覆盖成长、章节、退休、Activity 与继任入口；最终冻结组合未运行。 |
 | 第二权威 | D1 静态人物卡、章节 UI、回顾消息和模块目录不能保存第二份活跃成长/连续性。 | 0008 §§5、9、13；DEC-014。 | Room DO 事件可重建任期、成长和继承；D1 异步失败不回滚或替代 DO。 | **待实现**：D1 同步失败、归档重建后 campaign hash。 |
 
 ### 4.7 SPEC 0009：失败、节奏、收束与交互协议
 
 | 审查项 | 发现与结论 | 正式消解来源 | 实现护栏 | 测试映射 / 证据 |
 | --- | --- | --- | --- | --- |
-| 跨规格矛盾 | Scene、Encounter、Story、Chapter 与 Campaign 是不同结束层级；EndingPredicate 只提候选，玩家明确继续才开续篇。 | 0009 §§1、8–9；0008 §§2–3；0012 §13；DEC-003/010/020。 | 结束 input 由 `step` 验证未结机械；Story/Chapter/Campaign ID 不复用；不自动生成新敌人撤销结局。 | **实际（有效）**：Rules compound 18/18、world/campaign 7/7 与 production-validator 31/31 连续评测覆盖候选、收束、尾声和显式续篇。 |
-| 权限 | 玩家分别决定接受投降、继续追击、尾声和续篇；KP 决定 NPC/世界；安全暂停不需房主批准。 | 0009 §§8–10；0007 §9；0012 §13。 | 结局候选不能自动代答；私人安全请求停在稳定点且不变角色意图。 | **部分实现**：O 与 B29/B30 的拒绝/逐人接受、尾声/续篇已由 combat/world/compound/vertical 公开测试覆盖；生产安全暂停路径仍待最终验收。 |
+| 跨规格矛盾 | Scene、Encounter、Story、Chapter 与 Campaign 是不同结束层级；EndingPredicate 只提候选，玩家明确继续才开续篇。 | 0009 §§1、8–9；0008 §§2–3；0012 §13；DEC-003/010/020。 | 结束 input 由 `step` 验证未结机械；Story/Chapter/Campaign ID 不复用；不自动生成新敌人撤销结局。 | **0.4 当前映射**：`tests/causal-action-rules-v3.test.mjs` 与 `tests/world-campaign-v2.test.mjs` 覆盖 Rules 层候选、收束、尾声和显式续篇；可信 campaign capability 与当前组合回执仍待。 |
+| 权限 | 玩家分别决定接受投降、继续追击、尾声和续篇；KP 决定 NPC/世界；安全暂停不需房主批准。 | 0009 §§8–10；0007 §9；0012 §13。 | 结局候选不能自动代答；私人安全请求停在稳定点且不变角色意图。 | **0.4 当前映射**：O 与 B29/B30 映射 combat/world/causal v4/vertical runner；可信 `authenticatedCampaignAction` 与生产安全暂停路径尚未取得定向回执。 |
 | 秘密 | 叙述、失败代价、尾声和安全原因按 Viewer 隔离；模型重试不能跨 Viewer/branch 复用文本。 | 0009 §§6–7、10；0010 §§7–10。 | narration key 绑定 event range、branch、ViewerKey、projectionHash 和 policy；不保存历史。 | **待实现**：O15/O18、不同 Viewer 叙述隔离。 |
 | 版本 | 叙述政策、结局 Profile、章节和活动分支均固定；模型升级不改已提交事实。 | 0009 §§6、8–9、14；0010 §11；0011 §4；0013 §2 extensions。 | presentation/narration policy 进入 Profile 闭包；模型 Profile 独立审计并显式迁移。 | **待实现**：XR-06、模型切换不重做机械。 |
-| 第二权威 | SceneQuestion、EndingPredicate、UI、模型和势力调度器只能提出候选，不能直接改世界。 | 0009 §§1、5、8、14；0003 §1；DEC-020。 | 失败、势力推进、收束与续篇全经 `step` 和 DO commit；聊天文本不决定状态。 | **实际（局部）**：Rules compound 18/18、production compound 1/1、production-validator 31/31 连续评测；真实模型/线上收束仍待发布证据。 |
+| 第二权威 | SceneQuestion、EndingPredicate、UI、模型和势力调度器只能提出候选，不能直接改世界。 | 0009 §§1、5、8、14；0003 §1；DEC-020。 | 失败、势力推进、收束与续篇全经 `step` 和 DO commit；聊天文本不决定状态。 | **0.4 当前映射**：causal/world 与 ActorPlan runner 覆盖 Rules 候选和独立到期根；`authenticatedCampaignAction` 尚未完成定向回执，真实模型/线上收束仍待。 |
 
 ### 4.8 SPEC 0010：观察者专属呈现与当前回应投递
 
@@ -160,27 +168,27 @@
 | 跨规格矛盾 | 单槽需同时处理并发叙述、控制转移、继任、更正、普通重启与灾难重建；XR-01/02/07/08 给出唯一组合语义。 | 0010 §§4、8、11–12；0007 §2；0008 §7；0011 §§6–7；DEC-012/013。 | 槽按 ViewerKey 单一持久；发布拒绝过期绑定；撤权/更正原子失效；灾难重建不伪造旧帧。 | **待实现**：O07–O12、O15–O18。 |
 | 权限 | ViewerKey、Audience、ACK 和内部 publish capability 都不能由客户端自报；Audience 冻结不抵消后来撤权。 | 0010 §§3–4、8.4、12、17.2。 | AuthenticatedViewer 判别式由服务端构造；页面仅 observe/intent/answer/ACK。 | **待实现**：O01/O12/O14、伪造 Viewer/Audience/projectionHash。 |
 | 秘密 | 个人线索无限期私有；世界内分享范围冻结且不追溯；语音、错误、候选、日志、历史均无旁路。 | 0010 §§5–10、14–15；DEC-006/011/012。 | 一个内部 projector 服务所有领域内容，包括 `successorRequired` lifecycle 与 Rules 派生的恢复候选；telemetry 仅固定非内容白名单；ACK/覆盖删除正文。 | **实际（局部/有效）**：world/campaign、Room multiplayer 与 authoritative table 已覆盖新增统一读取；O01–O18 的错误、日志和线上媒体旁路仍按完成门单列。 |
-| 版本 | Frame 绑定 branch、projection hash 与呈现政策；三个呈现协议 ProfileRef 必须进入 0013 extensions。 | 0010 §§8、11、17.4；0013 §2.1；XR-06。 | manifest 缺呈现策略即拒绝；旧 projector 不静默扩大旧房可见性。当前 Projection Policy 为 1.2.0 / `sha256:9312f68960f1c53f79b5c95bfd8c95ab87aec903603796f455a6c1d2d4514d8c`，完整 manifest 为 `sha256:2f7af76e9a7262675210c18528ca9c6bead5c676aecc71113304eaf01f42dbe9`，canonical genesis golden 为 `sha256:7e858e340283252d67779ddb1ae773fb5ac5a98d3859fdcef467c58a34935355`。 | **实际（有效）**：P03–P05 + O15/O16 的 runtime Profile/observer 联合场景已记录绿色；冻结源码组合仍待。 |
+| 版本 | Frame 绑定 branch、projection hash 与呈现政策；三个呈现协议 ProfileRef 必须进入 0013 extensions。 | 0010 §§8、11、17.4；0013 §2.1；XR-06。 | manifest 缺呈现策略即拒绝；0.4 Projection Policy 是 `projection-observer-safe-v1` / `sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91`，唯一 V5 manifest 是 `sha256:31dee484a8dac893c87758ec5999aa65adbdd4fd571c8baea2e760bbba9fcbc9`；其余精确闭包以 `SPEC 0013` §2.1 为准，退役 projector/manifest 不进入 Registry。 | **0.4 当前映射**：runtime Profile 与 observer runner 覆盖精确绑定及 O15/O16 seam；当前通过数和冻结组合待回执。 |
 | 第二权威 | DeliveryFrame 非正史、不回放；`observe` 只组合 project 与槽；D1/客户端/语音不得保留历史。 | 0010 §§1、7–13、17.5；0003 §2。 | 无消息表、队列、localStorage 历史或媒体永久 URL；结构化知识与 Frame 分开。 | **待实现**：静态存储检查 + O09/O10/O18 行为测试。 |
 
 ### 4.9 SPEC 0011：可靠性、更正、可观测性与多轮评测
 
 | 审查项 | 发现与结论 | 正式消解来源 | 实现护栏 | 测试映射 / 证据 |
 | --- | --- | --- | --- | --- |
-| 跨规格矛盾 | instance restart 与 archive disaster rebuild 不同；旧 Delivery 审计只保留非内容引用；连续评测必须穿过 production validator。 | 0011 §§6–9；0010 §§8.3、11；XR-07/XR-08/XR-13；DOC-04。 | 恢复模式显式授权；Archive 不含 Frame；到期 Activity 的随机恢复须从冻结参数导出 canonical due root 并严格核对持久事件前缀；canonical 20+ eval 生成完整 draft 并逐轮执行 production validator/projection-bound。 | **实际（有效）**：记录的 Room 恢复迁移组合 16/16（含 archive/correction 5/5）、F04 与 production-validator 31/31 已通过；真实 Workers AI/冻结门另计。 |
+| 跨规格矛盾 | instance restart 与 archive disaster rebuild 不同；旧 Delivery 审计只保留非内容引用；连续评测必须穿过当前窄工具/Form validator。 | 0011 §§6–9；0010 §§8.3、11；XR-07/XR-08/XR-13；DOC-04。 | 恢复模式显式授权；Archive 不含 Frame；到期 Activity 的随机恢复须从冻结参数导出 canonical due root 并严格核对持久事件前缀；当前 20+ eval 必须逐轮执行 allowlist/tool/Form/compiler/projection-bound。 | **0.4 当前映射**：Room recovery 与 ActorPlan 的直接路径已有定向回执；20+ 当前评测、真实 Workers AI 与冻结门未运行。 |
 | 权限 | 普通玩家只能报告错误；更正、灾难恢复、内部随机 continuation 和 KP/NPC 重试均有独立 capability。 | 0011 §§1、6–8；0003 §§3、5、10；DEC-013。 | `commitCorrection`/restore 重新鉴权并由 DO 构造上下文；请求体不能提供状态或分支图。 | **待实现**：普通 commit 调 correction、未授权 restore、重试换载荷。 |
 | 秘密 | 错误、日志、ModelInvocationReceipt 与归档不得保存 Prompt、原文、私人叙述、候选或原始身份。 | 0011 §§1、4–7；0010 §10。 | telemetry schema 白名单 + 唯一 redactor；任何 console 只能接收 redacted record。 | **实际（局部）**：`tests/structured-telemetry-v2.test.mjs` 当前声明 7 项，已有 serializer/receipt 局部绿色；全部生产日志禁止字段扫描及线上日志仍待。 |
-| 版本 | 规则/事件/定义/Profile/分支由 0013 精确 manifest；模型与 Prompt policy 独立绑定并留脱敏调用 Receipt。 | 0011 §§4、6–7；0013 §§2–3；DEC-015/016。 | 模型升级不改 manifest 所解释的已提交事件；更正和重建按历史 Adapter，未知组合 fail closed。 | **部分实现**：P04–P08 与 archive hash/篡改拒绝已有 runtime/archive 公开证据；真实模型切换/额度失败仍待阶段 4/5。 |
-| 第二权威 | 日志、D1 archive、模型缓存、Delivery 缓存、SLO 监控与 fixture 都不能提交世界或重解释事件。 | 0011 §§2–9、12；DEC-014/017/022。 | Archive adapter 只幂等复制事件；fixture 仅位于 KP/熵/时钟/外故障 seam；恢复输入有版本 allowlist。 | **实际（有效/局部）**：四阶段随机恢复 4/4、archive/correction 5/5、production-validator 31/31；增量 D1 archive、真实模型与线上日志/配额仍待最终组合。 |
+| 版本 | 规则/事件/定义/Profile/分支由 0013 精确 manifest；模型与 Prompt policy 独立绑定并留脱敏调用 Receipt。 | 0011 §§4、6–7；0013 §§2–3；DEC-015/016/045。 | 模型升级不改 manifest 所解释的已提交事件；0.4 更正和重建只接受同房精确 V5 binding，前 0.4 与未知组合 fail closed。 | **部分映射**：P04–P08 与 archive hash/篡改拒绝有现存 runtime/archive runner；当前通过数、真实模型切换与额度失败仍待。 |
+| 第二权威 | 日志、D1 archive、模型缓存、Delivery 缓存、SLO 监控与 fixture 都不能提交世界或重解释事件。 | 0011 §§2–9、12；DEC-014/017/046。 | Archive adapter 只幂等复制事件；fixture 仅位于 KP/熵/时钟/外故障 seam；恢复输入有当前五类 allowlist。 | **0.4 当前映射**：当前 recovery/ActorPlan 定向路径证明相邻边界；增量 D1 archive、20+ 当前评测、真实模型与线上日志/配额仍待。 |
 
 ### 4.10 SPEC 0012：权威战斗机械
 
 | 审查项 | 发现与结论 | 正式消解来源 | 实现护栏 | 测试映射 / 证据 |
 | --- | --- | --- | --- | --- |
 | 跨规格矛盾 | CombatProfile 由 0013 manifest 填充；B16 通用恢复不在战斗；非战斗危险复用相同 damage/death；Encounter 结束不等于故事结束。 | 0012 §§1–2、10–13、15；0013 §§1–8；XR-05/XR-09/XR-11。 | 战斗只是 Rules Implementation；不要求进入 Encounter 才能调用通用伤害死亡原语；结束只产生相应事实/候选。 | **实际（局部/有效）**：`tests/combat-mechanics-v2.test.mjs`、`combat-hostility-v2.test.mjs`、`combat-long-casting-v2.test.mjs` 与 `combat-vertical-v2.test.ts` 已存在；日志已记录 B07、B38、伤害/死亡定向场景和 B53 垂直链绿色。冻结源码整组仍须重跑。 |
-| 权限 | 玩家选择自己的目标、路径、反应、非致命和平手；KP 只为有限知识 NPC/环境选择；Rules 只算强制结果。 | 0012 §§3、5–9、12–13、18.2；0006 §7；0007 §1。 | Combat input 不含 actor/principal；区域集合、触发资格和强制移动由 Rules，封闭选择开正确 Pending。 | **实际（局部/有效）**：B07–B15、B17–B22、B29/B30 与 B49 的玩家/NPC/私人 Pending 由 `combat-mechanics-v2.test.mjs`、`rules-compound-action-v2.test.mjs`、`runtime-trigger-time-v2.test.mjs` 和 `combat-vertical-v2.test.ts` 公开 seam 覆盖；最终 HTTP 越权回归仍待。 |
+| 权限 | 玩家选择自己的目标、路径、反应、非致命和平手；KP 只为有限知识 NPC/环境选择；Rules 只算强制结果。 | 0012 §§3、5–9、12–13、18.2；0006 §7；0007 §1。 | Combat input 不含 actor/principal；区域集合、触发资格和强制移动由 Rules，封闭选择开正确 Pending。 | **0.4 当前映射**：B07–B15、B17–B22、B29/B30 与 B49 分别映射 `tests/combat-mechanics-v2.test.mjs`、`causal-action-rules-v3.test.mjs`、`runtime-trigger-time-v2.test.mjs`、`combat-vertical-v2.test.ts` 与 ActorPlan runner；当前通过数及最终 HTTP 越权回归仍待。 |
 | 秘密 | 隐藏位置、实体、能力、deathPolicy、区域集合、反应和排序全部经 0010 projector；NPC Viewer 不得换 KP Viewer。 | 0012 §§3、7–8、12、18.3；0010 §§7、10。 | 战斗错误不区分隐藏目标不存在/无权；页面不保存战斗日志或自行算有效 AC。 | **实际（局部/有效）**：`tests/observer-projection-v2.test.mjs`、`privacy-bypass-v2.test.mjs` 与 `combat-vertical-v2.test.ts` 覆盖 G15 空间秘密、玩家私有反应及不同 Viewer 投影；生产 HTTP/日志/语音旁路仍待。 |
-| 版本 | 2014 语义、Geometry/Trigger/Time/Ability/DamageDeath 均由 0013 id+hash 固定；产品裁定不冒充 SRD。 | 0012 §2、§§4–12、18.4；0013 §§2、4–8；RTP-D001–D005。 | Encounter 只引用当前 epoch manifest；2024/5.5e 语义拒绝；旧房精确旧 Adapter。 | **实际（有效）**：B35–B40 与关联 P/A/G/T/F 由 `runtime-profiles-v2.test.mjs`、`ability-profile-v2.test.mjs`、`combat-mechanics-v2.test.mjs`、`runtime-trigger-time-v2.test.mjs` 验证；日志已记录当前 canonical hash 链和 Profile 组合绿色，冻结门另计。 |
+| 版本 | 2014 语义、Geometry/Trigger/Time/Ability/DamageDeath 均由 0013 id+hash 固定；产品裁定不冒充 SRD。 | 0012 §2、§§4–12、18.4；0013 §§2、4–8；RTP-D001–D005。 | Encounter 只引用当前 V5 manifest；2024/5.5e 与退役 Profile 输入均拒绝，不保留旧房 Adapter。 | **0.4 当前映射**：B35–B40 与关联 P/A/G/T/F 由 `tests/runtime-profiles-v2.test.mjs`、`ability-profile-v2.test.mjs`、`combat-mechanics-v2.test.mjs`、`runtime-trigger-time-v2.test.mjs` 映射；精确 hash 以 `SPEC 0013` §2.1 为准，当前组合回执仍待。 |
 | 第二权威 | 无 CombatCoordinator、战斗 DO、战斗骰源、战斗 projector、D1 镜像、客户端区域选人或平行 spell/damage engine。 | 0012 §§1、14、17–18；DEC-002/014。 | 包入口不导出 combat helper/MechanicOp/fold；Room Action 只交 Rules Input。 | **实际（局部/有效）**：`module:check` 已记录通过；当前随机/恢复/对抗组合 24/24、retry 3/3、archive resume 2/2、`tests/combat-vertical-v2.test.ts` 1/1，均走 Room DO→Rules→Viewer。生产源码尚未冻结。 |
 
 ### 4.11 SPEC 0013：版本化运行时 Profiles 与确定性 Conformance
@@ -190,7 +198,7 @@
 | 跨规格矛盾 | 本规格是 0004/0005/0007 时间占位和 0012 Profile 占位的精确填充；呈现策略必须经 extensions 补齐；构建测试不能替代行为验收。 | 0013 §§1–3、9、11–12；XR-04–XR-06/XR-12。 | 一个完整 manifest；规范微秒；Projection Policy 1.2.0 固定统一 lifecycle/恢复候选读取；到期 Activity 用可严格恢复的 canonical root；内部 validator 不导出，行为向量走公开 seam。 | **实际（有效）**：P01–P08 由 `tests/runtime-profiles-v2.test.mjs`，F01–F09 由 `tests/runtime-trigger-time-v2.test.mjs`，O15/O16 组合由 runtime + observer 公开 seam 覆盖；冻结 SHA 仍须整组重跑。 |
 | 权限 | 客户端、LLM、房主、队长和普通 Room Action 无权选择 manifest、上传 MechanicOp、覆盖区域集合或决定触发/时间。 | 0013 §§1、3–7、12.2；0003 §2.2。 | Genesis/epoch 由权威创建；只接受 AbilityRef/有权封闭参数；内部 continuation opaque。 | **实际（有效）**：A06/A09、G11/G15、T02/T06、F02 分别映射 `ability-profile-v2.test.mjs` + `combat-mechanics-v2.test.mjs`、`privacy-bypass-v2.test.mjs` 与 `runtime-trigger-time-v2.test.mjs`；玩家/KP 不能提供 MechanicOp、target set、时间或自动选择。 |
 | 秘密 | Profile 规范/hash 可公开，但实例坐标、隐藏屏障、定义、TriggerBatch 和未来到期仍是秘密领域数据。 | 0013 §§3、4、5.5–5.6、6、12.3；0010 §§7、10。 | 所有诊断带秘密级别并经 project；Registry/log 只记录 ProfileRef/hash/公开错误码。 | **实际（局部/有效）**：G15 在 `tests/privacy-bypass-v2.test.mjs`，T02/F07 在 `runtime-trigger-time-v2.test.mjs`，并与 observer projector 共用公开 seam；生产日志与 HTTP 旁路仍待阶段 5。 |
-| 版本 | ID+hash、JCS、SHA-256、Registry 精确匹配、旧 Adapter 保留和 unknown fail closed 构成唯一版本合同。 | 0013 §§1–3、8、12.4；DEC-015、RTP-D001。 | 同 ID 不同 hash 构建失败；禁止 latest/semver fallback；当前 projection/manifest/genesis 三元指纹精确匹配；部署前扫描活跃/归档引用。 | **实际（有效）**：P01–P08、A01/A02/A07 和 F08 分别由 `runtime-profiles-v2.test.mjs`、`ability-profile-v2.test.mjs`、`runtime-trigger-time-v2.test.mjs` 公开 `step/project/replay` 验证；部署前活跃/归档引用扫描仍待。 |
+| 版本 | ID+hash、JCS、SHA-256、Registry 精确匹配与 unknown/retired fail closed 构成 0.4 唯一版本合同；前 0.4 Adapter 不保留。 | 0013 §§0.4、1–3、8、12.4；DEC-015、DEC-045、RTP-D001。 | 同 ID 不同 hash 构建失败；禁止 latest/semver fallback；只注册当前 V5 manifest，退役输入明确拒绝；未来兼容须新决定。 | **0.4 当前映射**：P01–P08、A01/A02/A07 和 F08 继续由对应公开 `step/project/replay` runner 验证；旧 Adapter 回放与部署前旧引用扫描不再是当前门。 |
 | 第二权威 | Registry、Compiler、Geometry、Trigger、Time 和 hash helper 都是 Rules 私有 Implementation；D1 只复制引用/归档。 | 0013 §§1、4、11–12.5；0003 §2.1。 | Rules 包入口仍只有 `step/project/replay`；页面/AI/D1/测试不能计算坐标、顺序、倒计时或 compiled graph。 | **实际（局部/有效）**：`module:check` 与 A09/G11/T01/F02 的公开 Interface 测试已有记录；最终冻结源码的 `module:check`、`typecheck`、`lint`、`npm test` 仍未执行。 |
 
 ## 5. 组合验收切片
@@ -201,16 +209,16 @@
 | --- | --- | --- | --- |
 | CS-01 | 两个并发根行动先后提交但模型响应逆序；同一 Viewer 最终只保留因果更新的当前帧，旧发布无效。 | 0003、0007、0010、0011 | `tests/observer-delivery-v2.test.ts` |
 | CS-02 | Audience 内玩家断线并普通重启后恢复同 ID；D1 灾难重建则只有结构化状态和新帧，无旧正文。 | 0003、0010、0011、0013 | observer delivery + archive rebuild |
-| CS-03 | NPC A 不知道玩家计划、NPC B 知道；两者同时有反应时，排序稳定且 A 不借 B/KP 知识改变目标。 | 0005、0006、0010、0012、0013 | `tests/module-npc-v2.test.mjs` + `tests/runtime-trigger-time-v2.test.mjs` + `tests/rules-compound-action-v2.test.mjs` |
+| CS-03 | NPC A 不知道玩家计划、NPC B 知道；两者同时有反应时，排序稳定且 A 不借 B/KP 知识改变目标。 | 0005、0006、0010、0012、0013 | `tests/module-npc-v2.test.mjs` + `tests/actor-plan-kp-boundary-v3.test.mjs` + `tests/actor-plan-due-room-v2.test.ts` + `tests/runtime-trigger-time-v2.test.mjs` + combat trigger 场景 |
 | CS-04 | 两地并发 Activity 与一场 Encounter 使用同一微秒 Time Profile；现实掉线不推进，因果前沿前不泄漏他处到期。 | 0003、0004、0007、0011、0012、0013 | `tests/rules-multiplayer-v2.test.mjs` + `tests/multiplayer-room-v2.test.ts` + `tests/runtime-trigger-time-v2.test.mjs` |
 | CS-05 | 角色取得私人线索、跨章持续、死亡、建立继任者；继任者没有旧知识/帧，只经遗嘱或实际交流取得部分内容。 | 0005、0007、0008、0010、0011 | campaign + world knowledge + observer delivery |
 | CS-06 | 非战斗炸药危险经同一 Ability/Damage/Death 管线致死，随后建立继任者；无 hazard 或 campaign 第二机械路径。 | 0003、0004、0008、0012、0013 | noncombat + combat mechanics + campaign |
-| CS-07 | 动态强敌定义先被 Compiler 诊断，KP 依据 NPC Viewer 修订；合法高数值不削弱，注册后目录升级仍按旧图回放。 | 0003、0005、0006、0011、0012、0013 | `tests/ability-profile-v2.test.mjs` + `tests/module-npc-v2.test.mjs` + `tests/runtime-profiles-v2.test.mjs` |
+| CS-07 | 动态强敌定义先被 Compiler 诊断，KP 依据 NPC Viewer 修订；合法高数值不削弱，注册后即按当前 V5 中已冻结的定义图回放，不查询可变目录。 | 0003、0005、0006、0011、0012、0013 | `tests/ability-profile-v2.test.mjs` + `tests/module-npc-v2.test.mjs` + `tests/npc-mechanical-definition-v5.test.mjs` + ActorPlan runner + `tests/runtime-profiles-v2.test.mjs` |
 | CS-08 | 已 ACK 私人结果发生因果更正；旧正文不恢复，旧事件/骰面/Receipt 可审计，新分支按原 Profile 产生专属说明。 | 0003、0005、0010、0011、0013 | correction archive + observer delivery |
 | CS-09 | NPC 投降，部分玩家拒绝停止；Encounter 不自动结束。所有相关玩家接受后结束机械，但 Story/Chapter 只在后续明确事务收束。 | 0006、0007、0008、0009、0012 | `tests/combat-mechanics-v2.test.mjs` + `tests/combat-vertical-v2.test.ts` + `tests/world-campaign-v2.test.mjs` |
-| CS-10 | 20+ 连续意图/回答覆盖秘密、分头、动态危险、NPC 有限知识、失败、战斗、章节、模型失败和真实收束，并满足 18/20 与硬门。 | 0003–0013 | `tests/kp-multiturn-eval.test.ts` |
+| CS-10 | 20+ 连续意图/回答覆盖秘密、分头、动态危险、NPC 有限知识、失败、战斗、章节、模型失败和真实收束，并满足 18/20 与硬门。 | 0003–0013 | 当前窄工具/Form/Causal/Room 多轮 runner（待重建） |
 
-### 5.1 已回填的组合证据
+### 5.1 历史已回填的组合证据（不自动计入 0.4 当前门）
 
 - CS-02 **有效**：observer delivery 4/4 证明普通实例重启恢复同一当前帧；`archive-correction-v2` 5/5 证明授权空 DO 灾难重建只恢复结构化权威状态、不会恢复旧 Delivery 正文。
 - CS-04 **局部有效**：Rules multiplayer 8/8、Room multiplayer 8/8 已证明个人/整队休整、分地虚构时间、因果前沿与 Spotlight；“同时并发 Encounter”的完整组合仍待。
@@ -218,13 +226,13 @@
 - CS-06 **局部有效**：world/campaign 7/7 已通过非战斗危险共用伤害/死亡及后续继任；生产 Room 复合危险链仍待。
 - CS-08 **有效**：`archive-correction-v2` 5/5 已覆盖 ACK/失效 Delivery、旧 Receipt/骰面审计、前向补偿与正式后果触发因果分支，并保持 Viewer 秘密边界。
 - CS-09 **局部有效**：`tests/combat-mechanics-v2.test.mjs` 已覆盖任一存活玩家拒绝后 Encounter 保持活跃及全员接受，`tests/combat-vertical-v2.test.ts` 已记录 1/1 贯通自然语言投降、逐人同意、机械结束而故事仍活跃；线上真实 KP/HTTP 仍待。
-- CS-10 **数量、production validator 与脚本阈值有效**：`tests/kp-multiturn-eval.test.ts` 单场景 31/31，逐轮经过 `validateProposal` 与 projection-bound；真实 Workers AI 与线上 table/API 闭环仍待。
+- CS-10 **当前待证**：旧 production draft 的 31/31 只作历史审计；当前窄工具/Form/Causal/Room runner、真实 Workers AI 与线上 table/API 闭环均须重新验证。
 
 ## 6. 审查结论
 
 1. 未发现需要修改、缩小或绕过 `SPEC 0001` 才能解决的产品冲突。
 2. `SPEC 0003` 的通用事务、`SPEC 0010` 的单槽投递、`SPEC 0011` 的恢复/更正、`SPEC 0012` 的纯战斗机械与 `SPEC 0013` 的精确 Profile 可以组成同一条权威责任链；不得分别实现 Coordinator、投影、骰源、时间或状态副本。
 3. NPC 权限、虚构时间/并发、继任角色和恢复语义均已有正式消解来源；实现必须按本文组合护栏验证，不能只让各规格孤立单测变绿。
-4. DOC-01–DOC-05 所列五处过期或欠完整表述已按 §3.1 回填；§3.2 与 §5.1 只升级实际执行过的行为证据，并明确标注后续源码演进后的冻结重跑责任，没有因文档一致而升级其他场景。
+4. DOC-01–DOC-05 所列五处过期或欠完整表述已按 §3.1 回填；§3.2 与 §5.1 保存历史执行回执，§3.3 只建立 0.4 当前 runner 映射而不推算通过数，没有因文档一致而升级其他场景。
 5. `decision-register.md` 的证据已按当前实际命令逐项回填；仍写“待实现/局部”的条目不得被解释为整份规格或发布完成。
 6. 在 CS-01–CS-10、各规格 Interface 测试、全量验证、迁移与发布证据实际完成前，本审查不能用于宣告 Goal `COMPLETE`。

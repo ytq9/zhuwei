@@ -33,7 +33,7 @@ import {
   actorPlanDecisionModelInput,
   validateActorPlanDecisionOutput,
 } from "./actor-plan-policy";
-import { HEALING_POTION_ITEM_DEFINITION_ID } from "../rules/v2/items";
+import { HEALING_POTION_ITEM_DEFINITION_ID } from "../rules/profiles/item-system";
 import { buildV3ContextPack, v3FormSelectionSignals } from "./v3-context-runtime";
 import {
   ModelInvocationTimeoutError,
@@ -67,7 +67,6 @@ export type {
   AuthoritativeKpAdapter,
   AuthoritativeKpAdapterOptions,
   AuthoritativeKpProfile,
-  AuthoritativeKpProposal,
   DueActorPlanDecision,
   DueActorPlanDecisionRequest,
   V3AuthoritativeKpProposal,
@@ -639,6 +638,7 @@ function materializationFormSemanticErrors(
 ): readonly string[] {
   if (draft.method !== "establishCharacterPremise"
     && draft.method !== "materializeDynamicNpc"
+    && draft.method !== "formActorPlan"
     && draft.method !== "materializeItem") return [];
   const errors: string[] = [];
   const basisRefs = new Set(Array.isArray(draft.basisRefs)
@@ -648,6 +648,91 @@ function materializationFormSemanticErrors(
   const value = parsedJsonRecord(draft.proposedFact);
   const cited = (reference: unknown): reference is string =>
     typeof reference === "string" && basisRefs.has(reference) && finiteRefs.has(reference);
+  if (draft.method === "formActorPlan") {
+    const uniqueCitedRefs = (candidate: unknown, minimum: number): candidate is string[] =>
+      Array.isArray(candidate)
+      && candidate.length >= minimum
+      && candidate.length <= 40
+      && candidate.every(cited)
+      && candidate.length === new Set(candidate).size;
+    if (draft.resolution !== "direct") {
+      errors.push("draft.resolution:actor-plan-direct-required");
+    }
+    if (value === undefined
+      || !exactObjectKeys(value, [
+        "activity",
+        "alternateTarget",
+        "due",
+        "goal",
+        "nextStep",
+        "npcRef",
+        "planId",
+        "premiseRefs",
+        "resourceRefs",
+        "schema",
+        "trace",
+        "trigger",
+      ])
+      || value.schema !== "zhuwei.actor-plan-draft/v1"
+      || !cited(value.npcRef)
+      || typeof value.planId !== "string"
+      || value.planId.length < 1
+      || value.planId.length > 240
+      || typeof value.goal !== "string"
+      || value.goal.length < 1
+      || value.goal.length > 480
+      || !uniqueCitedRefs(value.premiseRefs, 1)
+      || typeof value.nextStep !== "string"
+      || value.nextStep.length < 1
+      || value.nextStep.length > 480
+      || !uniqueCitedRefs(value.resourceRefs, 0)
+      || !isRecord(value.activity)
+      || !exactObjectKeys(value.activity, ["activityId", "activityKind", "intendedDurationMicros"])
+      || typeof value.activity.activityId !== "string"
+      || value.activity.activityId.length < 1
+      || value.activity.activityId.length > 240
+      || typeof value.activity.activityKind !== "string"
+      || value.activity.activityKind.length < 1
+      || value.activity.activityKind.length > 120
+      || typeof value.activity.intendedDurationMicros !== "string"
+      || !/^[1-9][0-9]*$/u.test(value.activity.intendedDurationMicros)
+      || !isRecord(value.trace)
+      || !exactObjectKeys(value.trace, ["description", "factRef", "visibilityPolicyRef"])
+      || typeof value.trace.factRef !== "string"
+      || value.trace.factRef.length < 1
+      || value.trace.factRef.length > 240
+      || typeof value.trace.description !== "string"
+      || value.trace.description.length < 1
+      || value.trace.description.length > 480
+      || value.trace.visibilityPolicyRef !== "visibility:scene-observers"
+      || !isRecord(value.alternateTarget)
+      || !exactObjectKeys(value.alternateTarget, ["reason", "targetRef"])
+      || !cited(value.alternateTarget.targetRef)
+      || typeof value.alternateTarget.reason !== "string"
+      || value.alternateTarget.reason.length < 1
+      || value.alternateTarget.reason.length > 480) {
+      errors.push("draft.proposedFact:actor-plan-schema-invalid");
+      return Object.freeze([...new Set(errors)].sort());
+    }
+    const dueValid = value.due === null || (
+      isRecord(value.due)
+      && exactObjectKeys(value.due, ["kind"])
+      && value.due.kind === "activityCompletion"
+    );
+    const triggerValid = value.trigger === null || (
+      isRecord(value.trigger)
+      && ((value.trigger.kind === "knowledgeAcquired"
+        && exactObjectKeys(value.trigger, ["kind", "knowledgeRef"])
+        && cited(value.trigger.knowledgeRef))
+        || (value.trigger.kind === "committedEvent"
+          && exactObjectKeys(value.trigger, ["eventRef", "kind"])
+          && cited(value.trigger.eventRef)))
+    );
+    if (!dueValid || !triggerValid || ((value.due === null) === (value.trigger === null))) {
+      errors.push("draft.proposedFact:actor-plan-schedule-invalid");
+    }
+    return Object.freeze([...new Set(errors)].sort());
+  }
   if (draft.method === "materializeItem") {
     if (draft.resolution !== "direct") {
       errors.push("draft.resolution:item-materialization-direct-required");
@@ -893,13 +978,13 @@ const BASIS_REFERENCE_KEYS = new Set([
 ]);
 const ABILITY_REFERENCE_KEYS = new Set(["abilityRef", "abilityRefs", "dynamicDefinitionRefs"]);
 const RESOURCE_REFERENCE_KEYS = new Set(["resourceRef", "resourceRefs"]);
-const ARTIFACT_REFERENCE_KEYS = new Set(["artifactRef", "artifactRefs", "itemRef", "itemRefs"]);
+const ITEM_REFERENCE_KEYS = new Set(["itemRef", "itemRefs", "itemEntryId", "itemEntryIds"]);
 
 function finiteReferenceCatalog(contextPack: unknown): FiniteReferenceCatalog {
   const basisRefs = new Set<string>();
   const abilityRefs = new Set<string>();
   const resourceRefs = new Set<string>();
-  const artifactRefs = new Set<string>();
+  const itemRefs = new Set<string>();
   const add = (target: Set<string>, value: unknown): void => {
     if (typeof value === "string" && value.trim().length > 0 && value.length <= 300) {
       target.add(value);
@@ -914,7 +999,7 @@ function finiteReferenceCatalog(contextPack: unknown): FiniteReferenceCatalog {
         add(abilityRefs, value);
       }
       if (RESOURCE_REFERENCE_KEYS.has(key)) add(resourceRefs, value);
-      if (ARTIFACT_REFERENCE_KEYS.has(key)) add(artifactRefs, value);
+      if (ITEM_REFERENCE_KEYS.has(key)) add(itemRefs, value);
       return;
     }
     if (Array.isArray(value)) {
@@ -930,12 +1015,12 @@ function finiteReferenceCatalog(contextPack: unknown): FiniteReferenceCatalog {
     }
   };
   visit(contextPack);
-  for (const ref of [...abilityRefs, ...resourceRefs, ...artifactRefs]) basisRefs.add(ref);
+  for (const ref of [...abilityRefs, ...resourceRefs, ...itemRefs]) basisRefs.add(ref);
   return Object.freeze({
     basisRefs: Object.freeze([...basisRefs].sort().slice(0, 192)),
     abilityRefs: Object.freeze([...abilityRefs].sort().slice(0, 96)),
     resourceRefs: Object.freeze([...resourceRefs].sort().slice(0, 96)),
-    artifactRefs: Object.freeze([...artifactRefs].sort().slice(0, 96)),
+    itemRefs: Object.freeze([...itemRefs].sort().slice(0, 96)),
   });
 }
 
@@ -947,7 +1032,7 @@ function formReferenceErrors(
     basisRefs: new Set(finiteReferences.basisRefs),
     abilityRef: new Set(finiteReferences.abilityRefs),
     resourceRef: new Set(finiteReferences.resourceRefs),
-    artifactRef: new Set(finiteReferences.artifactRefs),
+    itemRef: new Set(finiteReferences.itemRefs),
   };
   const errors: string[] = [];
   const visit = (value: unknown, key = "", path = "draft"): void => {
@@ -963,7 +1048,7 @@ function formReferenceErrors(
       }
       return;
     }
-    if (key === "abilityRef" || key === "resourceRef" || key === "artifactRef") {
+    if (key === "abilityRef" || key === "resourceRef" || key === "itemRef") {
       if (typeof value !== "string" || !allowedByField[key].has(value)) {
         errors.push(`${path}:${typeof value === "string" ? value : "invalid"}:not-authoritative`);
       }

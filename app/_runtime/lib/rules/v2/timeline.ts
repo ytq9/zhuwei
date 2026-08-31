@@ -6,6 +6,7 @@ import type {
   JsonRecord,
 } from "./model";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
+import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
 
 export type MovementPlan = {
   sourceTimelineId: string;
@@ -238,6 +239,20 @@ export function applyMovement(
     const character = state.entities[characterId];
     if (character === undefined || characterTimelineId(state, characterId) !== plan.sourceTimelineId) {
       throw new TypeError("movement character left the frozen timeline");
+    }
+    const combatEntity = state.combatRuntime.entities[characterId];
+    if (combatEntity !== undefined) {
+      if (combatEntity.sceneId !== character.sceneId) {
+        throw new TypeError("movement character tactical scene is stale");
+      }
+      if (character.sceneId !== destinationSceneId) {
+        const spawn = allocateDynamicCombatantSpawn(state, destinationSceneId);
+        if (spawn.kind === "unavailable") {
+          throw new TypeError("movement destination has no available tactical spawn");
+        }
+        combatEntity.sceneId = destinationSceneId;
+        combatEntity.position = structuredClone(spawn.position);
+      }
     }
     character.sceneId = destinationSceneId;
     state.multiplayerRuntime.characterTimelineIds[characterId] = plan.destinationTimelineId;

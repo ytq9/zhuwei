@@ -8,10 +8,10 @@ import { roomCode, uid } from "@/lib/utils";
 import { compileSheet, ensureGear } from "@/lib/dnd/compute";
 import type { FeatId } from "@/lib/dnd/resources";
 import type { CharacterSheet, DraftSheet } from "@/lib/dnd/types";
-import { acFromGear, stowSlot, wearItem, type GearSlot } from "@/lib/dnd/gear";
+import { GEAR_SLOTS, type GearSlot } from "@/lib/dnd/gear";
 import { getModule, listModules } from "@/lib/module";
 import { SOCIAL_RESOLUTION_MODULE_VERSION } from "@/lib/module/authoritative";
-import { pinnedModuleRef } from "@/lib/module/migration-registry";
+import { pinnedModuleRef } from "@/lib/module/registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "@/lib/rules/ruleset";
 import type { RoomActionInput } from "@/lib/room/action";
 import {
@@ -1260,69 +1260,47 @@ export const setGear = createServerFn({ method: "POST" })
     }) => input,
   )
   .handler(async ({ context, data }) => {
+    const expectedKeys = data.action === "wear"
+      ? ["action", "code", "itemId", "slot", "submissionId"]
+      : ["action", "code", "slot", "submissionId"];
+    if (
+      !hasExactTableInputKeys(data, expectedKeys)
+      || typeof data.code !== "string"
+      || data.code.trim().length === 0
+      || !["wear", "stow"].includes(data.action)
+      || !GEAR_SLOTS.some(({ id }) => id === data.slot)
+      || (data.action === "wear"
+        && (typeof data.itemId !== "string"
+          || data.itemId.length === 0
+          || data.itemId.length > 300))
+    ) return { ok: false as const, error: "装备变更请求无效" };
     const room = await roomByCode(data.code);
     if (!room) return { ok: false as const, error: "找不到这间房" };
     await memberOf(room.id, context.userId);
     const sql = await getSql();
     const activeRules = await roomRuleset(sql, room.id);
-    if (activeRules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION) {
-      return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
-    }
     if (
-      activeRules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION
-      && activeRules.status === "play"
-    ) {
-      const submissionId = authoritativeSubmissionId(data.submissionId);
-      if (!submissionId) {
-        return { ok: false as const, error: "装备变更缺少可重试提交标识" };
-      }
-      return submitAuthoritativeTableAction({
-        roomId: room.id,
-        userId: context.userId,
-        model: activeRules.kp_model,
-        modelProfileVersion: activeRules.kp_model_profile,
+      activeRules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
+      || activeRules.status !== "play"
+    ) return { ok: false as const, error: "这间房不支持权威装备变更" };
+    const submissionId = authoritativeSubmissionId(data.submissionId);
+    if (!submissionId) {
+      return { ok: false as const, error: "装备变更缺少可重试提交标识" };
+    }
+    return submitAuthoritativeTableAction({
+      roomId: room.id,
+      userId: context.userId,
+      model: activeRules.kp_model,
+      modelProfileVersion: activeRules.kp_model_profile,
+      submissionId,
+      action: {
+        kind: "gear",
         submissionId,
-        action: {
-          kind: "gear",
-          submissionId,
-          action: data.action,
-          slot: data.slot,
-          ...(data.action === "wear" ? { itemId: data.itemId } : {}),
-        },
-      });
-    }
-    const row = (
-      await sql<{ sheet: unknown }>`
-        select sheet from characters
-        where room_id = ${room.id} and user_id = ${context.userId}
-      `
-    )[0];
-    if (!row) return { ok: false as const, error: "还没有人物卡" };
-    const sheet = ensureGear(asJson<CharacterSheet>(row.sheet, {} as CharacterSheet));
-    const equipped = sheet.equipped ?? {};
-    const backpack = sheet.backpack ?? [];
-    if (
-      (data.action === "wear" && equipped[data.slot] === data.itemId)
-      || (data.action === "stow" && equipped[data.slot] === undefined)
-    ) {
-      return { ok: true as const };
-    }
-    const next =
-      data.action === "stow"
-        ? stowSlot(equipped, backpack, data.slot)
-        : wearItem(equipped, backpack, data.itemId ?? "", data.slot);
-    if ("error" in next && next.error) {
-      return { ok: false as const, error: next.error };
-    }
-    sheet.equipped = next.equipped;
-    sheet.backpack = next.backpack;
-    sheet.ac = acFromGear(sheet.classId, sheet.scores, sheet.equipped);
-    await sql`
-      update characters
-      set sheet = ${JSON.stringify(sheet)}::jsonb, updated_at = now()
-      where room_id = ${room.id} and user_id = ${context.userId}
-    `;
-    return { ok: true as const };
+        action: data.action,
+        slot: data.slot,
+        ...(data.action === "wear" ? { itemId: data.itemId } : {}),
+      },
+    });
   });
 
 export const useInventoryItem = createServerFn({ method: "POST" })
@@ -1999,8 +1977,6 @@ export const restNow = createServerFn({ method: "POST" })
     mode?: "personal" | "group";
     hitDice?: number;
     arcaneRecoverySlotLevels?: number[];
-    /** Legacy Adapter shorthand; never used by authoritative-v2. */
-    arcane?: 0 | 1 | 2;
     submissionId?: string;
     pendingInputId?: string;
   }) => input)

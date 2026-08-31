@@ -1,13 +1,28 @@
-import { itemById, type GearItemResolver } from "../../dnd/gear";
+import type { GearItemResolver } from "../../dnd/gear";
 import { spellDefinition } from "../spell-catalog";
 import type { DiceFormula, SpellDefinition, SpellRange } from "../spell-model";
 import type { TacticalPosition } from "../tactical-projection";
+import {
+  compileAbilityDefinition,
+  isRegisteredAbilityRecord,
+  registeredAbilityRecord,
+  type CompiledAbilityArtifact,
+} from "../profiles/ability-compiler";
+import { canonicalSha256 } from "../profiles/canonical";
 import { characterProficiencyProfileEnabled } from "../profiles/character-proficiency";
 import type { RuntimeProfileManifest } from "../profiles/types";
 
 import type { CharacterRecord, JsonRecord } from "./model";
 import { isNonEmptyString, isRecord } from "./validation";
 import { attackActionsPerTurn } from "./character-progression";
+import {
+  itemEntryUseAbilityDefinition,
+  itemEntryResourceId,
+  itemUseBaseAbilityDefinition,
+  type ItemEntryV1,
+  type ItemSystemStateV1,
+} from "./items";
+import { itemEntryGearResolver } from "./item-transitions";
 
 export type CompiledCharacterCombat = {
   abilityRefs: string[];
@@ -15,12 +30,98 @@ export type CompiledCharacterCombat = {
   spellcasting?: JsonRecord;
 };
 
+export type PlayerAbilityCatalogPlan = {
+  compiled: CompiledCharacterCombat;
+  registrations: CompiledAbilityArtifact[];
+};
+
+export function frozenPlayerAbilityMatches(
+  expected: JsonRecord,
+  registered: unknown,
+): boolean {
+  if (isRegisteredAbilityRecord(registered)) {
+    return registered.definitionHash === (isRegisteredAbilityRecord(expected)
+      ? expected.definitionHash
+      : canonicalSha256(expected));
+  }
+  return isRecord(registered)
+    && !isRegisteredAbilityRecord(expected)
+    && canonicalSha256(registered) === canonicalSha256(expected);
+}
+
+/**
+ * Plans the exact DefinitionRegistered artifacts required by a player's next
+ * item-derived combat closure. An already-compiled record cannot be recreated
+ * from current code: it must already exist in the frozen room catalog.
+ */
+export function planPlayerAbilityCatalog(input: {
+  character: CharacterRecord;
+  itemSystem: ItemSystemStateV1;
+  catalog: Record<string, JsonRecord>;
+}): PlayerAbilityCatalogPlan | { error: string } {
+  const compiled = compileCanonicalCharacterCombat(
+    input.character,
+    input.itemSystem,
+    input.catalog,
+  );
+  const catalog = structuredClone(input.catalog);
+  const registrations: CompiledAbilityArtifact[] = [];
+  for (const [definitionId, definition] of Object.entries(compiled.definitions)
+    .sort(([left], [right]) => left.localeCompare(right))) {
+    const prior = catalog[definitionId];
+    if (prior !== undefined) {
+      if (!frozenPlayerAbilityMatches(definition, prior)) {
+        return { error: "playerAbilityDefinitionConflict" };
+      }
+      continue;
+    }
+    if (isRegisteredAbilityRecord(definition)) {
+      return { error: "playerAbilityRegistrationUnavailable" };
+    }
+    const compiledDefinition = compileAbilityDefinition(definition);
+    if (!compiledDefinition.ok) return { error: "playerAbilityDefinitionInvalid" };
+    registrations.push(compiledDefinition.artifact);
+    catalog[definitionId] = registeredAbilityRecord(compiledDefinition.artifact);
+  }
+  for (const abilityRef of compiled.abilityRefs) {
+    if (compiled.definitions[abilityRef] !== undefined) continue;
+    if (!isRegisteredAbilityRecord(catalog[abilityRef])) {
+      return { error: "portableItemAbilityUnavailable" };
+    }
+  }
+  return { compiled, registrations };
+}
+
+function usableHeldItemEntries(
+  itemSystem: ItemSystemStateV1,
+  characterId: string,
+): ItemEntryV1[] {
+  return Object.values(itemSystem.entries)
+    .filter((entry) => entry.disposition === "held"
+      && entry.holderRef === characterId
+      && entry.condition === "usable")
+    .sort((left, right) => left.entryId.localeCompare(right.entryId));
+}
+
+function heldAmmunitionResourceId(
+  itemSystem: ItemSystemStateV1,
+  character: CharacterRecord,
+  ammunitionDefinitionRef: string,
+): string | undefined {
+  const equippedEntryId = character.loadout?.equipped.ammo;
+  const matching = usableHeldItemEntries(itemSystem, character.id)
+    .filter((entry) => entry.definitionRef === ammunitionDefinitionRef);
+  const entry = matching.find(({ entryId }) => entryId === equippedEntryId) ?? matching[0];
+  return entry === undefined ? undefined : itemEntryResourceId(entry.entryId);
+}
+
 export function buildPlayerCombatEntity(
   profiles: RuntimeProfileManifest,
   character: CharacterRecord,
   compiled: CompiledCharacterCombat,
-  controllerPrincipalId?: string,
-  tacticalPosition?: TacticalPosition,
+  controllerPrincipalId: string | undefined,
+  tacticalPosition: TacticalPosition | undefined,
+  itemSystem: ItemSystemStateV1,
 ): JsonRecord {
   const dexterity = character.abilityScores?.dex ?? 10;
   const maximumHitPoints = character.hitPoints?.maximum ?? 1;
@@ -31,8 +132,8 @@ export function buildPlayerCombatEntity(
       maximum: String(character.resourceMaximums?.[resourceId] ?? current),
     }]),
   );
-  for (const entry of character.loadout?.backpack ?? []) {
-    resources[`item:${entry.itemId}`] = {
+  for (const entry of usableHeldItemEntries(itemSystem, character.id)) {
+    resources[itemEntryResourceId(entry.entryId)] = {
       current: String(entry.quantity),
       maximum: String(entry.quantity),
     };
@@ -299,45 +400,54 @@ function compileSpell(
 
 export function compileEquippedWeaponAbility(
   character: CharacterRecord,
-  resolveItem: GearItemResolver = itemById,
+  resolveItem: GearItemResolver,
+  slot: "main" | "off" = "main",
+  resolveAmmunitionResourceId?: (ammunitionItemRef: string) => string | undefined,
 ): JsonRecord | undefined {
-  const itemId = character.loadout?.equipped.main;
+  const itemId = character.loadout?.equipped[slot];
   const item = resolveItem(itemId);
-  if (item === undefined || item.wear !== "weapon" || !isNonEmptyString(item.damage)) return undefined;
-  const damage = /^(\d+d\d+)\s*(.+)$/.exec(item.damage.trim());
-  if (damage === null) return undefined;
-  const ranged = /远程|弹药/.test(item.text);
-  const finesse = /灵巧/.test(item.text);
+  const weapon = item?.weapon;
+  if (item === undefined || item.wear !== "weapon" || weapon === undefined) return undefined;
+  const ranged = weapon.rangeNormalInches !== undefined;
   const strength = abilityModifier(character.abilityScores?.str ?? 10);
   const dexterity = abilityModifier(character.abilityScores?.dex ?? 10);
-  const ability = ranged ? "dex" : finesse && dexterity > strength ? "dex" : "str";
+  const ability = weapon.attackAbility === "dex"
+    ? "dex"
+    : weapon.attackAbility === "finesse" && dexterity > strength ? "dex" : "str";
   const modifier = ability === "dex" ? dexterity : strength;
-  const ranges = /[（(](\d+)\/(\d+)[）)]/.exec(item.text);
-  const ammoId = item.id === "light-crossbow"
-    ? "bolt"
-    : ["shortbow", "longbow"].includes(item.id) ? "arrow" : undefined;
+  const slotIdentity = slot === "main" ? "" : ":off";
+  const ammunitionResourceId = weapon.ammunitionId === undefined
+    ? undefined
+    : resolveAmmunitionResourceId?.(weapon.ammunitionId);
+  if (weapon.ammunitionId !== undefined && ammunitionResourceId === undefined) return undefined;
+  const requiresSight = weapon.requiresSight ?? ranged;
   return {
-    definitionId: `ability:${character.id}:weapon:${item.id}:level:${character.level ?? 1}:modifier:${modifier}:proficiency:${character.proficiencyBonus ?? 0}`,
+    definitionId: `ability:${character.id}:weapon:${item.id}${slotIdentity}:level:${character.level ?? 1}:modifier:${modifier}:proficiency:${character.proficiencyBonus ?? 0}`,
     revision: "1",
     rulesBasis: "srd5.1-2014",
-    mechanicalKey: `weapon:${item.id}`,
+    mechanicalKey: `weapon:${item.id}${slotIdentity}`,
     activation: { kind: "attack", actionGrant: "attack" },
     target: ranged
       ? {
           kind: "creatureOrEnvironmentFeature",
           count: "1",
-          rangeNormalInches: String(Number(ranges?.[1] ?? 80) * 12),
-          rangeLongInches: String(Number(ranges?.[2] ?? 320) * 12),
-          requiresSight: true,
+          rangeNormalInches: weapon.rangeNormalInches,
+          rangeLongInches: weapon.rangeLongInches,
+          ...(requiresSight ? { requiresSight: true } : {}),
         }
-      : { kind: "creatureOrEnvironmentFeature", count: "1", reachInches: /触及/.test(item.text) ? "120" : "60" },
-    ...(ammoId === undefined ? {} : {
-      costs: [{ kind: "item", resourceId: `item:${ammoId}`, amount: "1" }],
+      : {
+          kind: "creatureOrEnvironmentFeature",
+          count: "1",
+          reachInches: weapon.reachInches ?? "60",
+          ...(requiresSight ? { requiresSight: true } : {}),
+        },
+    ...(ammunitionResourceId === undefined ? {} : {
+      costs: [{ kind: "item", resourceId: ammunitionResourceId, amount: "1" }],
     }),
     attack: { ability, proficiency: true },
     damage: [{
-      type: DAMAGE_TYPES[damage[2].trim()] ?? "bludgeoning",
-      formula: `${damage[1]}${signed(modifier)}`,
+      type: weapon.damageType,
+      formula: `${weapon.damageDice}${signed(modifier)}`,
     }],
   };
 }
@@ -362,11 +472,56 @@ export function combatResourceId(resourceId: string): string {
 export function compileStaticCharacterCombat(
   character: CharacterRecord,
   buildValue: unknown,
+  itemSystem: ItemSystemStateV1,
+  itemAbilityCatalog: Record<string, JsonRecord>,
 ): CompiledCharacterCombat {
   const build = isRecord(buildValue) ? buildValue : {};
   const definitions: Record<string, JsonRecord> = {};
-  const weapon = compileEquippedWeaponAbility(character);
+  const weapon = compileEquippedWeaponAbility(
+    character,
+    itemEntryGearResolver(itemSystem),
+    "main",
+    (ammunitionDefinitionRef) => heldAmmunitionResourceId(
+      itemSystem,
+      character,
+      ammunitionDefinitionRef,
+    ),
+  );
   if (weapon !== undefined) definitions[String(weapon.definitionId)] = weapon;
+
+  for (const entry of usableHeldItemEntries(itemSystem, character.id)) {
+    const itemDefinition = itemSystem.definitions[entry.definitionRef];
+    const use = itemDefinition?.content.use;
+    if (itemDefinition === undefined
+      || itemDefinition.revision !== entry.definitionRevision
+      || use === null
+      || entry.quantity < use.quantityCost
+      || (use.chargeCost > 0
+        && (entry.charges === null || entry.charges.current < use.chargeCost))
+      || (use.durabilityCost > 0
+        && (entry.durability === null || entry.durability.current < use.durabilityCost))) continue;
+    const baseAbility = itemUseBaseAbilityDefinition(itemDefinition, itemAbilityCatalog);
+    if (baseAbility === undefined) {
+      throw new TypeError("item use ability is not frozen in the current catalog");
+    }
+    const wrapped = itemEntryUseAbilityDefinition(itemDefinition, entry.entryId, baseAbility);
+    definitions[String(wrapped.definitionId)] = wrapped;
+  }
+
+  const portableEquippedAbilityRefs = [...new Set(
+    Object.values(character.loadout?.equipped ?? {}).flatMap((entryId) => {
+      const entry = itemSystem.entries[entryId];
+      const definition = entry === undefined
+        ? undefined
+        : itemSystem.definitions[entry.definitionRef];
+      return entry?.disposition === "held"
+        && entry.holderRef === character.id
+        && entry.condition === "usable"
+        && definition?.revision === entry.definitionRevision
+        ? definition.content.equippedAbilityRefs
+        : [];
+    }),
+  )].sort();
 
   const spellIds = [...new Set([
     ...canonicalStrings(build.cantrips),
@@ -426,7 +581,10 @@ export function compileStaticCharacterCombat(
     : abilityModifier(character.abilityScores?.[castingAbility] ?? 10);
   return {
     definitions,
-    abilityRefs: Object.keys(definitions).sort(),
+    abilityRefs: [...new Set([
+      ...Object.keys(definitions),
+      ...portableEquippedAbilityRefs,
+    ])].sort(),
     ...(castingAbility === undefined || castingModifier === undefined ? {} : {
       spellcasting: {
         ability: castingAbility,
@@ -439,6 +597,8 @@ export function compileStaticCharacterCombat(
 
 export function compileCanonicalCharacterCombat(
   character: CharacterRecord,
+  itemSystem: ItemSystemStateV1,
+  itemAbilityCatalog: Record<string, JsonRecord>,
 ): CompiledCharacterCombat {
   return compileStaticCharacterCombat(character, {
     ...(character.classId === undefined ? {} : { classId: character.classId }),
@@ -446,5 +606,5 @@ export function compileCanonicalCharacterCombat(
     cantrips: [...(character.cantripIds ?? [])],
     prepared: [...(character.preparedSpellIds ?? [])],
     features: [...(character.featureIds ?? [])],
-  });
+  }, itemSystem, itemAbilityCatalog);
 }

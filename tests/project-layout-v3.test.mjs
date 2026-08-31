@@ -9,7 +9,7 @@ const at = (...parts) => join(root, ...parts);
 
 test("V3 has one production tree and no archived platform entrypoints", () => {
   const packageJson = JSON.parse(readFileSync(at("package.json"), "utf8"));
-  assert.match(packageJson.version, /^0\.3\./u);
+  assert.equal(packageJson.version, "0.4.0");
 
   for (const path of [
     "src",
@@ -34,7 +34,6 @@ test("V3 has one production tree and no archived platform entrypoints", () => {
     "drizzle",
     "tests",
     "tools/check-modules.mjs",
-    "tools/check-runtime-profile-references.mts",
     "tools/live-kp-eval.mjs",
     "tools/run-live-kp-eval.mjs",
   ]) {

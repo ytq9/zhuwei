@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
+import { initialStandardGearEntryId } from "../app/_runtime/lib/rules/v2/item-transitions.ts";
 
 const ALICE = {
   principalId: "principal:rules-multi:alice",
@@ -18,6 +19,47 @@ function profileRef(profileId, digit) {
   return { profileId, profileHash: `sha256:${digit.repeat(64)}` };
 }
 
+function tacticalGeometry(sceneId) {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "0", y: "0" },
+        { x: "900", y: "0" },
+        { x: "900", y: "600" },
+        { x: "0", y: "600" },
+      ],
+    },
+    spawnPoints: [
+      { x: "120", y: "180", elevation: "0" },
+      { x: "720", y: "180", elevation: "0" },
+    ],
+    obstacles: [{
+      featureId: `feature:rules-multiplayer-v2:${sceneId}:wall`,
+      kind: "barrier",
+      label: "矮墙",
+      state: "intact",
+      polygon: [
+        { x: "300", y: "360" },
+        { x: "360", y: "360" },
+        { x: "360", y: "480" },
+        { x: "300", y: "480" },
+      ],
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
 function start() {
   const initialized = step(undefined, undefined, {
     kind: "initializeAuthoritativeWorld",
@@ -28,9 +70,9 @@ function start() {
     activeBranchId: "branch:main",
     fictionInstantMicros: "0",
     scenes: [
-      { id: "scene:shrine", name: "神龛" },
-      { id: "scene:yard", name: "庭院" },
-      { id: "scene:cellar", name: "地窖" },
+      { id: "scene:shrine", name: "神龛", geometry: tacticalGeometry("shrine") },
+      { id: "scene:yard", name: "庭院", geometry: tacticalGeometry("yard") },
+      { id: "scene:cellar", name: "地窖", geometry: tacticalGeometry("cellar") },
     ],
     principals: [{ id: ALICE.principalId, sessionVersion: 1, role: "host" }],
     seats: [{ id: ALICE.seatId, principalId: ALICE.principalId, status: "active" }],
@@ -151,7 +193,6 @@ test("service-authoritative membership, Seat, control, host, and pending revocat
     "MemberJoined",
     "SeatGranted",
     "CharacterControlGranted",
-    "CharacterMechanicsSynchronized",
   ]);
 
   const bobRead = project(scenario.profiles, scenario.state, viewer(BOB));
@@ -256,27 +297,34 @@ test("character materialization, semantic gear changes, and host departure stay 
       name: "鲍勃",
       sceneId: "scene:shrine",
       tenureStatus: "active",
+      classId: "fighter",
+      raceId: "human",
       level: 3,
       hitPoints: { current: 24, maximum: 24 },
       resources: { "resource:second-wind": 1 },
       abilityScores: { str: 16, dex: 12, con: 14, int: 10, wis: 13, cha: 8 },
       proficiencyBonus: 2,
       proficientSkills: ["athletics", "perception"],
+      expertiseSkills: [],
+      proficientSaves: ["str", "con"],
       loadout: {
         armorClass: 17,
         speedFeet: 30,
         equipped: { armor: "chain", main: "warhammer", off: "shield" },
-        backpack: [{ itemId: "torch", quantity: 10 }],
+        backpack: [{ itemId: "explorer-pack", quantity: 10 }],
       },
+      characterBuild: { classId: "fighter", raceId: "human", cantrips: [], prepared: [] },
     },
   }));
   scenario = materialized.scenario;
-  assert.deepEqual(materialized.result.events.map(({ eventType }) => eventType), [
-    "CharacterControlGranted",
-    "CharacterMechanicsSynchronized",
-  ]);
+  const materializedTypes = materialized.result.events.map(({ eventType }) => eventType);
+  assert.equal(materializedTypes[0], "CharacterControlGranted");
+  assert.equal(materializedTypes.includes("CharacterMechanicsSynchronized"), false);
+  assert.equal(materializedTypes.filter((eventType) => eventType === "ItemDefinitionRegistered").length, 4);
+  assert.equal(materializedTypes.filter((eventType) => eventType === "ItemMaterialized").length, 4);
+  assert.equal(materializedTypes.filter((eventType) => eventType === "ItemAcquired").length, 4);
   assert.equal(scenario.state.entities[BOB.characterId].abilityScores.str, 16);
-  assert.equal(scenario.state.entities[BOB.characterId].loadout.armorClass, 17);
+  assert.equal(scenario.state.entities[BOB.characterId].loadout.armorClass, 19);
 
   const stowed = commit(scenario, {
     kind: "changeCharacterGear",
@@ -288,12 +336,18 @@ test("character materialization, semantic gear changes, and host departure stay 
   });
   scenario = stowed.scenario;
   assert.deepEqual(stowed.result.events.map(({ eventType }) => eventType), [
+    "ActivityStarted",
+    "FictionTimeAdvanced",
+    "ActivityCompleted",
     "CharacterGearChanged",
   ]);
-  assert.equal(scenario.state.entities[BOB.characterId].loadout.armorClass, 16);
+  assert.equal(scenario.state.entities[BOB.characterId].loadout.armorClass, 17);
   assert.deepEqual(scenario.state.entities[BOB.characterId].loadout.backpack, [
-    { itemId: "shield", quantity: 1 },
-    { itemId: "torch", quantity: 10 },
+    {
+      itemId: initialStandardGearEntryId(BOB.characterId, "explorer-pack", "stack"),
+      quantity: 10,
+    },
+    { itemId: initialStandardGearEntryId(BOB.characterId, "shield", 1), quantity: 1 },
   ]);
   assert.equal(scenario.state.entities[BOB.characterId].hitPoints.current, 24);
   assert.equal(scenario.state.entities[BOB.characterId].resources["resource:second-wind"], 1);
@@ -805,10 +859,14 @@ test("world-medium propagation and co-located meeting explicitly join causal fro
   });
   scenario = met.scenario;
   assert.deepEqual(met.result.events.map(({ eventType }) => eventType), ["FictionTimelinesMet"]);
-  assert.equal(project(scenario.profiles, scenario.state, viewer(ALICE)).fictionTime.nowMicros, "125000000");
-  assert.equal(project(scenario.profiles, scenario.state, viewer(BOB)).fictionTime.nowMicros, "125000000");
+  const aliceRead = project(scenario.profiles, scenario.state, viewer(ALICE));
+  const bobRead = project(scenario.profiles, scenario.state, viewer(BOB));
+  assert.equal(aliceRead.kind, "projected", JSON.stringify(aliceRead));
+  assert.equal(bobRead.kind, "projected", JSON.stringify(bobRead));
+  assert.equal(aliceRead.fictionTime.nowMicros, "125000000");
+  assert.equal(bobRead.fictionTime.nowMicros, "125000000");
   assert.equal(
-    project(scenario.profiles, scenario.state, viewer(ALICE)).causalFrontier.eventHeadId,
+    aliceRead.causalFrontier.eventHeadId,
     met.result.events[0].eventId,
   );
 });

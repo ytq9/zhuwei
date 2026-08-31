@@ -38,9 +38,9 @@
 
 Room DO 串行原子提交同一房间事件，但通过 Rules `scopeProof` 允许无关作用域意图在同一审计序列中独立成功：
 
-- 同一实体、控制权、物件、空间、待决、关系、知识或时间因果冲突时整笔重提；
+- 同一实体、控制权、物品、空间、待决、关系、知识或时间因果冲突时整笔重提；
 - 不同地点、不同实体且没有共同因果依赖时，无关全局 `eventSeq` 变化不会使旧票据失效；
-- 客户端先到不获得额外世界权限；唯一物件、位置和跨地点事件由作用域/因果验证裁定；
+- 客户端先到不获得额外世界权限；不可堆叠物品、位置和跨地点事件由作用域/因果验证裁定；
 - 一个实体不能同时参与两个 Activity/Encounter 中互斥的行动。
 
 每个外部提交保留独立 `submissionId`；同一 Principal 也不能通过并发请求绕过一次性资源或待决窗口。
@@ -55,7 +55,7 @@ Room DO 串行原子提交同一房间事件，但通过 Rules `scopeProof` 允�
 - 跨地点重组要求角色实际到达兼容地点和因果时刻，不能仅改 UI 分组；
 - 队长只组织整队提案、管理公开队伍标签，不替任何成员回答私人窗口。
 
-production ActionPlan 的队伍语义必须显式选择六个 `partyAction` 之一：`inviteMember`、`cancelInvitation`、`leave`、`transferLeadership`、`proposeMove`、`moveIndividually`。Rules 分别验证目标成员、投影中的 Pending 引用、当前领导权、目的地、冻结耗时和逐控制者同意；Room/模型不得依据 `memberRefs` 是否为空猜测邀请或离队，也不得保留六条 DO compact 命令旁路。
+认证队伍写入口统一提交 `authenticatedPartyAction` 封套，并显式携带六个现行 Rules 命令之一：`invitePartyMember`、`cancelPartyInvitation`、`leavePartyGroup`、`transferPartyLeadership`、`proposePartyMove`、`moveIndividually`。Room 从可信 Principal、Seat 与 CharacterControl 派生行动者和作用域，不能接受客户端或模型伪造。Rules 分别验证目标成员、投影中的 Pending 引用、当前领导权、目的地、冻结耗时和逐控制者同意；不得保留 production ActionPlan 的 `operation=changeParty` / `partyAction` 传输、字段猜测或六条 DO compact 命令旁路。0.4 以前的队伍写入格式不再接受，也不提供 Adapter 或 fallback。
 
 ## 6. 虚构时间分支
 
@@ -102,7 +102,7 @@ KP 在自然决定点、危险显现、短场景完成或领先达到上限时�
 
 1. 请求体伪造 actor、替他人回答、被请离后重用票据和换席后读取旧私人回应均失败。
 2. 玩家断线于反应/澄清窗口，重启和重连后仍由原控制者回答；时间未推进。
-3. 不同地点无关意图都成功；争夺同一物件只有一个提交，失败方重新投影。
+3. 不同地点无关意图都成功；争夺同一不可堆叠物品只有一个提交，失败方重新投影。
 4. 整队移动缺一名成员确认不自动移动该成员；个人可原子离队移动/休整。
 5. 两条分支虚构时间不同，未来事件不会泄漏；会合后按因果前沿同步。
 6. 活跃玩家/队长/房主不能代答安静玩家；聚光灯在三 Beat 前切回而不改机械时间。
@@ -113,13 +113,14 @@ KP 在自然决定点、危险显现、短场景完成或领先达到上限时�
 
 - Principal/席位 Adapter：`app/chatgpt-auth.ts`、`app/_runtime/lib/table/server.ts`
 - Room Authority：`app/_runtime/lib/room/durable-object.ts`
-- 多人/时间 Implementation：`app/_runtime/lib/rules/v2/multiplayer-actions.ts`、`multiplayer-events.ts`、`compound-actions.ts`
+- 多人/时间 Implementation：`app/_runtime/lib/rules/v2/multiplayer-actions.ts`、`multiplayer-events.ts`
+- 认证队伍入口：`app/_runtime/lib/room/server.ts`
 - 聚光灯：`app/_runtime/lib/room/action.ts`
-- 验收：`tests/rules-compound-action-v2.test.mjs`、`tests/rules-multiplayer-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/observer-projection-v2.test.mjs`
+- 验收：`tests/rules-multiplayer-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/observer-projection-v2.test.mjs`
 
-### 12.1 当前实现证据（2026-08-26）
+### 12.1 历史实现证据与 0.4 验收目标
 
-- `tests/rules-compound-action-v2.test.mjs` 18/18 已通过，其中连续队伍场景把六个 typed `partyAction` 全部驱动到同一 `step/replay/project` seam，覆盖取消邀请、领导权转移、逐人同意整队移动、个人原子离队移动与普通离队。
+- 0.4 的目标验收是把六个 `authenticatedPartyAction` 命令全部驱动到同一 `step/replay/project` seam，覆盖取消邀请、领导权转移、逐人同意整队移动、个人原子离队移动与普通离队；旧 typed `partyAction` 测试不作为该协议的验证证据，替代入口闭合后须运行定向验证。
 - `tests/rules-multiplayer-v2.test.mjs` 8/8 与 `tests/multiplayer-room-v2.test.ts` 8/8 已通过，证明 service-only Seat/Control/host、Pending owner、分队、时间线/因果前沿与 Spotlight 的 Rules/Room 权威链；冻结源码的最终 HTTP/浏览器多人回归仍待全量/发布门。
 
 ## 13. 交叉审查

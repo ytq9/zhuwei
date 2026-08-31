@@ -23,7 +23,7 @@ import {
   requiredContextFromKpRequest,
   v3FormSelectionSignals,
 } from "../app/_runtime/lib/kp/v3-context-runtime.ts";
-import { ENVIRONMENT_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 
 const ALLOWED_FORMS = Object.freeze([
   "ordinary-check.v1",
@@ -65,7 +65,7 @@ test("unclassified questions keep observation and dynamic Form choices available
       "materialization.v1",
       "npc-exchange.v1",
       "environmental-stunt.v1",
-      "ordinary-check.v1",
+      "clarification.v1",
       "compound.v1",
     ], text);
   }
@@ -85,9 +85,9 @@ test("RequiredContext consumes the real observer projection and rejects incomple
     y: "120",
   });
   assert.deepEqual(required.mechanics.conditions, ["life:alive", "state:half-cover"]);
-  assert.equal(required.bindings.rulesRef, ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.ruleset.profileId);
-  assert.equal(required.bindings.geometryRef, ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.geometry.profileId);
-  assert.equal(required.bindings.eventRef, ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.eventSchema.profileId);
+  assert.equal(required.bindings.rulesRef, ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.ruleset.profileId);
+  assert.equal(required.bindings.geometryRef, ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.geometry.profileId);
+  assert.equal(required.bindings.eventRef, ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.eventSchema.profileId);
   assert.equal(required.bindings.moduleRef, profile.moduleRef.profileId);
   assert.equal(JSON.stringify(required).includes("unavailable"), false);
   assert.equal(required.npcViews.length, 1);
@@ -129,6 +129,59 @@ test("RequiredContext consumes the real observer projection and rejects incomple
       );
     });
   }
+});
+
+test("only the V5 KP context receives the relevant hidden dynamic-fact causal closure", async () => {
+  const profile = await authoritativeModuleProfile("black-oak-will");
+  const request = proposalRequest(profile, "我问回声：我为何来到这里？");
+  const hiddenParent = "fact:hidden:invitation-origin";
+  const hiddenCurrent = "fact:hidden:arrival-purpose";
+  request.projection.dynamicAuthoritativeFacts = {
+    [hiddenParent]: {
+      id: hiddenParent,
+      kind: "typedCharacterPremise",
+      source: "mechanicalResolution",
+      subjectRefs: ["organization:unseen-apothecary"],
+      value: { inviterRef: "organization:unseen-apothecary" },
+      causalParentIds: [],
+      validFromEventSeq: "41",
+    },
+    [hiddenCurrent]: {
+      id: hiddenCurrent,
+      kind: "typedCharacterPremise",
+      source: "mechanicalResolution",
+      subjectRefs: ["character:alice"],
+      value: { purpose: "寻找失踪的信使", sourceFactRef: hiddenParent },
+      causalParentIds: [hiddenParent],
+      validFromEventSeq: "42",
+    },
+    "fact:hidden:other-scene": {
+      id: "fact:hidden:other-scene",
+      kind: "worldState",
+      source: "mechanicalResolution",
+      subjectRefs: ["npc:remote"],
+      value: { sceneRef: "attic", detail: "不相关秘密" },
+      causalParentIds: [],
+      validFromEventSeq: "43",
+    },
+  };
+
+  const historical = requiredContextFromKpRequest(request);
+  assert.equal("dynamicAuthoritativeFacts" in historical.sceneDynamics, false);
+  assert.equal(JSON.stringify(historical).includes("寻找失踪的信使"), false);
+
+  const v5 = requiredContextFromKpRequest(request, {
+    includeDynamicAuthoritativeFacts: true,
+  });
+  assert.deepEqual(
+    v5.sceneDynamics.dynamicAuthoritativeFacts.map((fact) => fact.id),
+    [hiddenParent, hiddenCurrent],
+  );
+  assert.ok(v5.established.factRefs.includes(hiddenParent));
+  assert.ok(v5.established.factRefs.includes(hiddenCurrent));
+  assert.equal(JSON.stringify(v5).includes("不相关秘密"), false);
+  assert.equal(JSON.stringify(request.projection.actorProjection).includes("寻找失踪的信使"), false);
+  assert.equal(JSON.stringify(v5.npcViews).includes("寻找失踪的信使"), false);
 });
 
 test("production corpus deterministically covers all six static authority classes and rejects dynamic inputs", async () => {
@@ -516,7 +569,7 @@ function proposalRequest(profile, text, overrides = {}) {
         encounters: [],
         abilityDefinitions: [{ definitionId: "ability:current:alice:improvised-cover" }],
         fictionTime: { elapsedSeconds: 120 },
-        runtimeProfiles: structuredClone(ENVIRONMENT_RUNTIME_PROFILE_MANIFEST),
+        runtimeProfiles: structuredClone(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST),
         tacticalProjection: {
           schema: "zhuwei.tactical-projection/v1",
           scene: {

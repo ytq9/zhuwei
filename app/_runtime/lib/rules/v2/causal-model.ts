@@ -197,12 +197,11 @@ function validDurationAndCosts(node: CausalNode): boolean {
   const resourceAmount = scalarNumber(args.resourceAmount);
   if ((resourceRef === undefined) !== (resourceAmount === undefined)) return false;
   if (resourceAmount !== undefined && resourceAmount <= 0) return false;
-  const artifactRef = scalarString(args.artifactRef);
-  const artifactCount = scalarNumber(args.artifactCount);
-  if ((artifactRef === undefined) !== (artifactCount === undefined)) return false;
-  return artifactRef === undefined
-    || (artifactRef.startsWith("item:") && artifactRef.length > "item:".length
-      && artifactCount !== undefined && artifactCount > 0);
+  const itemRef = scalarString(args.itemRef);
+  const itemCount = scalarNumber(args.itemCount);
+  if ((itemRef === undefined) !== (itemCount === undefined)) return false;
+  return itemRef === undefined
+    || (itemCount !== undefined && itemCount > 0);
 }
 
 /** Rules-side semantic closure shared by first execution and frozen-plan
@@ -295,7 +294,7 @@ export function isCausalActionResolutionPlan(
       "schema",
       "sourceSceneId",
     ])
-    || value.schema !== "zhuwei.causal-action-resolution-plan/v3"
+    || value.schema !== "zhuwei.causal-action-resolution-plan/v4"
     || !isNonEmptyString(value.actorCharacterId)
     || !isNonEmptyString(value.sourceSceneId)
     || !isNonEmptyString(value.languageRef)
@@ -384,12 +383,13 @@ export function isCausalProgramFactValue(value: unknown): boolean {
   return true;
 }
 
-export function isCausalActionPlanMarker(value: unknown): boolean {
+export function isCurrentCausalResolutionMarker(value: unknown): boolean {
   if (isRecord(value) && value.schema === "zhuwei.social-resolution-plan/v1") return false;
   return isRecord(value) && (
-    value.schema === "zhuwei.causal-action-resolution-plan/v3"
-    || value.languageRef === "causal-action-program-v3"
-    || (isRecord(value.program) && value.program.languageRef === "causal-action-program-v3")
+    value.schema === "zhuwei.causal-action-resolution-plan/v4"
+    || value.languageRef === CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
+    || (isRecord(value.program)
+      && value.program.languageRef === CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef)
   );
 }
 

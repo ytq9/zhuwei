@@ -1,8 +1,4 @@
-import { validateNarrationAgencyClaims } from "../kp/authoritative-helpers";
-import {
-  DELIVERY_PROTOCOL_PROFILE,
-  INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
-} from "../rules/profiles/manifests";
+import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import type { ProfileRef } from "../rules/profiles/types";
 import {
   isTacticalPosition,
@@ -34,6 +30,11 @@ export type RoomActionInput =
       action: "wear" | "stow";
       slot: string;
       itemId?: string;
+    }
+  | {
+      kind: "itemActivity";
+      submissionId: string;
+      itemEntryId: string;
     }
   | {
       kind: "environmentInteract";
@@ -169,7 +170,7 @@ type DeliveryPublicationAuthority = Pick<
 
 export type KpAdapterCapability = {
   propose(request: UnknownRecord): Promise<unknown>;
-  decideDueActorPlan?(request: UnknownRecord): Promise<unknown>;
+  decideDueActorPlan(request: UnknownRecord): Promise<unknown>;
   narrate(request: UnknownRecord): Promise<unknown>;
 };
 
@@ -210,7 +211,7 @@ const MAX_ACTION_PHASE_TRANSITIONS = 2;
 type DeliveryAudience = {
   audienceId: string;
   projection: unknown;
-  principalId?: string;
+  principalId: string;
 };
 
 type DeliveryPlan = {
@@ -365,6 +366,17 @@ function rebuildInput(input: unknown): RoomActionInput | InternalRoomActionOutco
       slot,
       ...(itemId === undefined ? {} : { itemId }),
     };
+  }
+
+  if (input.kind === "itemActivity") {
+    const submissionId = requiredString(input, "submissionId");
+    const itemEntryId = requiredString(input, "itemEntryId");
+    if (
+      !submissionId
+      || !itemEntryId
+      || !hasOnlyKeys(input, ["itemEntryId", "kind", "submissionId"], [])
+    ) return rejectedValidation("物品使用只接受 itemEntryId 与 submissionId。");
+    return { kind: "itemActivity", submissionId, itemEntryId };
   }
 
   if (input.kind === "environmentInteract") {
@@ -800,23 +812,17 @@ function finalNeedsKp(result: UnknownRecord): InternalRoomActionOutcome {
 }
 
 function parseDeliveryPlan(value: unknown): DeliveryPlan | undefined {
-  if (!isRecord(value) || !("publishCapability" in value) || value.publishCapability == null) {
+  if (!isRecord(value) || requiredString(value, "publishCapability") === undefined) {
     return undefined;
   }
   if (!Array.isArray(value.audiences)) return undefined;
   const requestedProtocol = value.deliveryProtocol;
-  const deliveryProtocol = requestedProtocol === undefined
-    ? DELIVERY_PROTOCOL_PROFILE
-    : isRecord(requestedProtocol)
+  const deliveryProtocol = isRecord(requestedProtocol)
       && hasOnlyKeys(requestedProtocol, ["profileHash", "profileId"], [])
-      && (
-        (requestedProtocol.profileId === DELIVERY_PROTOCOL_PROFILE.profileId
-          && requestedProtocol.profileHash === DELIVERY_PROTOCOL_PROFILE.profileHash)
-        || (requestedProtocol.profileId === INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileId
-          && requestedProtocol.profileHash === INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileHash)
-      )
-      ? requestedProtocol as ProfileRef
-      : undefined;
+      && requestedProtocol.profileId === INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileId
+      && requestedProtocol.profileHash === INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileHash
+    ? requestedProtocol as ProfileRef
+    : undefined;
   if (deliveryProtocol === undefined) return undefined;
 
   const audienceIds = new Set<string>();
@@ -824,19 +830,23 @@ function parseDeliveryPlan(value: unknown): DeliveryPlan | undefined {
   for (const candidate of value.audiences) {
     if (!isRecord(candidate)) return undefined;
     const audienceId = requiredString(candidate, "audienceId");
-    const hasKpProjection = "kpProjection" in candidate;
-    const hasProjection = "projection" in candidate;
-    if (!audienceId || hasKpProjection === hasProjection || audienceIds.has(audienceId)) {
+    const principalId = requiredString(candidate, "principalId");
+    if (
+      !audienceId
+      || !principalId
+      || !("kpProjection" in candidate)
+      || "projection" in candidate
+      || audienceIds.has(audienceId)
+    ) {
       return undefined;
     }
-    const projection = hasKpProjection ? candidate.kpProjection : candidate.projection;
+    const projection = candidate.kpProjection;
     if (projection === undefined) return undefined;
     audienceIds.add(audienceId);
-    const principalId = optionalString(candidate, "principalId");
     audiences.push({
       audienceId,
       projection,
-      ...(principalId === undefined ? {} : { principalId }),
+      principalId,
     });
   }
 
@@ -845,24 +855,12 @@ function parseDeliveryPlan(value: unknown): DeliveryPlan | undefined {
 
 function publicationNarration(
   value: unknown,
-  projection: unknown,
   protocol: ProfileRef,
 ): UnknownRecord {
   if (!isRecord(value)) {
     throw Object.assign(new Error("KP narration is not publishable"), {
       publicCode: "NARRATION_BODY_INVALID",
     });
-  }
-  if (protocol.profileId === DELIVERY_PROTOCOL_PROFILE.profileId
-    && protocol.profileHash === DELIVERY_PROTOCOL_PROFILE.profileHash) {
-    const text = requiredString(value, "text") ?? requiredString(value, "body");
-    if (!text) {
-      throw Object.assign(new Error("KP narration has no current-response text"), {
-        publicCode: "NARRATION_BODY_INVALID",
-      });
-    }
-    const agencyClaims = validateNarrationAgencyClaims(value, projection);
-    return { text, agencyClaims };
   }
   if (protocol.profileId !== INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileId
     || protocol.profileHash !== INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileHash) {
@@ -928,50 +926,6 @@ function narrationFailure(error: unknown): {
         ? "NARRATION_PROVIDER_TIMEOUT"
         : "NARRATION_PUBLICATION_FAILED",
   };
-}
-
-async function legacyNarrateDeliveryPlan(
-  context: Pick<RoomActionContext, "authority" | "kp"> | RoomCorrectionContext,
-  prepared: UnknownRecord,
-  result: UnknownRecord,
-  audiences: DeliveryAudience[],
-): Promise<UnknownRecord[]> {
-  const frames: Array<UnknownRecord | undefined> = new Array(audiences.length);
-  let cursor = 0;
-  let failed = false;
-
-  const narrateNext = async () => {
-    while (cursor < audiences.length) {
-      const index = cursor;
-      cursor += 1;
-      const audience = audiences[index];
-      try {
-        const narration = await context.kp.narrate({
-          rootActionId: prepared.rootActionId,
-          receipt: result.receipt,
-          audienceId: audience.audienceId,
-          projection: audience.projection,
-        });
-        frames[index] = {
-          audienceId: audience.audienceId,
-          narration: publicationNarration(
-            narration,
-            audience.projection,
-            DELIVERY_PROTOCOL_PROFILE,
-          ),
-        };
-      } catch {
-        failed = true;
-      }
-    }
-  };
-
-  const workerCount = Math.min(MAX_NARRATION_CONCURRENCY, audiences.length);
-  await Promise.all(Array.from({ length: workerCount }, narrateNext));
-  if (failed || frames.some((frame) => frame === undefined)) {
-    throw new Error("One or more audience narrations could not be generated");
-  }
-  return frames as UnknownRecord[];
 }
 
 async function publishDeliveryPlan(
@@ -1046,30 +1000,6 @@ async function publishDeliveryPlan(
     throw new Error("Room Authority delivery capability is unavailable");
   }
 
-  if (deliveryPlan.deliveryProtocol.profileId === DELIVERY_PROTOCOL_PROFILE.profileId) {
-    const frames = await legacyNarrateDeliveryPlan(
-      context,
-      prepared,
-      result,
-      deliveryPlan.audiences,
-    );
-    const publicationResult = await context.authority.publishDelivery(
-      { publishCapability: deliveryPlan.publishCapability },
-      { frames },
-    );
-    if (
-      !isRecord(publicationResult)
-      || (publicationResult.kind !== "published" && publicationResult.kind !== "superseded")
-    ) throw new Error("Room Authority did not accept the delivery publication");
-    return {
-      state: "published",
-      audiences: deliveryPlan.audiences.map((audience) => ({
-        audienceId: audience.audienceId,
-        deliveryGeneration: 0,
-        state: publicationResult.kind as "published" | "superseded",
-      })),
-    };
-  }
   if (!context.authority.beginDeliveryAudiencePublication) {
     throw new Error("Independent audience publication capability is unavailable");
   }
@@ -1137,7 +1067,6 @@ async function publishDeliveryPlan(
               deliveryGeneration,
               narration: publicationNarration(
                 narration,
-                audience.projection,
                 deliveryPlan.deliveryProtocol,
               ),
             }],
@@ -1552,9 +1481,7 @@ async function handleRoomActionInternal(
         projection: preparedValue.kpProjection,
         attempt: 1 as const,
       };
-      proposal = typeof context.kp.decideDueActorPlan === "function"
-        ? await context.kp.decideDueActorPlan(dueRequest)
-        : await context.kp.propose({ phase: "dueActorPlan", ...dueRequest });
+      proposal = await context.kp.decideDueActorPlan(dueRequest);
     } catch (error) {
       return modelFailure(error, preparedValue.receipt);
     }
@@ -1587,6 +1514,7 @@ async function handleRoomActionInternal(
     (
       activeInput.kind === "answer"
       || activeInput.kind === "gear"
+      || activeInput.kind === "itemActivity"
       || activeInput.kind === "environmentInteract"
       || activeInput.kind === "environmentAbility"
       || activeInput.kind === "movement"
@@ -1605,6 +1533,8 @@ async function handleRoomActionInternal(
             ? "authenticatedPendingAnswer"
             : activeInput.kind === "gear"
               ? "authenticatedGearAction"
+              : activeInput.kind === "itemActivity"
+                ? "authenticatedItemActivity"
               : activeInput.kind === "environmentInteract"
                 ? "authenticatedEnvironmentInteraction"
               : activeInput.kind === "environmentAbility"
@@ -1762,7 +1692,7 @@ export async function handleViewerNarrationRecovery(
       projection: begunValue.projection,
       deliveryGeneration,
     });
-    const body = publicationNarration(narration, begunValue.projection, protocol).body;
+    const body = publicationNarration(narration, protocol).body;
     const published = await context.authority.publishViewerNarrationRecovery(
       context.principal,
       capability,
@@ -1816,8 +1746,8 @@ export async function handleViewerNarrationRecovery(
 }
 
 /** Public action result keeps mechanical commitment and narration delivery on
- * orthogonal axes. The legacy `kind` remains an internal compatibility tag;
- * callers must use `action` and `narration` for product behavior. */
+ * orthogonal axes. `kind` is an internal phase discriminant; callers use
+ * `action` and `narration` for product behavior. */
 export async function handleRoomAction(
   context: RoomActionContext,
   input: RoomActionInput,

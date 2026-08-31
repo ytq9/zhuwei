@@ -9,7 +9,6 @@ import type {
 } from "./profiles/registry";
 import type { ProfileRef, RuntimeProfileManifest } from "./profiles/types";
 import { causalActionInterpreterEnabled } from "./profiles/causal-action-interpreter";
-import { itemById } from "../dnd/gear";
 import { canonicalSha256 } from "./profiles/canonical";
 import { environmentProfileEnabled } from "./profiles/environment";
 import { isCanonicalTacticalGeometry } from "./profiles/tactical-geometry";
@@ -37,11 +36,9 @@ import type {
   StepResult,
 } from "./v2/model";
 import { projectWorld } from "./v2/projector";
-import { normalizeCampaignGenesis } from "./v2/campaign-normalization";
-import { normalizeCombatGenesis } from "./v2/combat-normalization";
 import { rejected } from "./v2/results";
 import {
-  isCausalActionPlanMarker,
+  isCurrentCausalResolutionMarker,
   isCausalProgramFactValue,
   isCausalActionResolutionPlan,
   isCausalContinuationStateBinding,
@@ -64,15 +61,13 @@ import {
   isSocialResolutionPlan,
 } from "./v2/social-model";
 import {
-  isNpcMechanicalItemDefinition,
   isNpcMechanicalTemplateDefinition,
-  NPC_MECHANICAL_ITEM_KIND,
   NPC_MECHANICAL_TEMPLATE_KIND,
   npcCoreCombatRuntimeMatches,
   npcMechanicalDefinitionClosureValid,
   npcMechanicalEntityMatchesTemplate,
-  npcMechanicalItemDefinitionClosureValid,
 } from "./v2/npc-mechanics";
+import { isItemSystemStateV1 } from "./v2/items";
 
 function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
   return left.profileId === right.profileId && left.profileHash === right.profileHash;
@@ -100,9 +95,8 @@ function stateEnvironmentProfilesMatch(
     if (!isRecord(geometry) || !Array.isArray(geometry.obstacles)) return false;
     const hasEnvironmentBinding = geometry.obstacles.some((feature) =>
       isRecord(feature) && feature.environment !== undefined);
-    // Historical rooms use the compact `{ unit, obstacles }` geometry shape.
-    // Preserve it byte-for-byte when it carries no V3 environment binding;
-    // only the new executable binding requires the closed canonical geometry.
+    // A scene without executable environment bindings may use the compact
+    // `{ unit, obstacles }` shape; executable bindings require full geometry.
     if (!hasEnvironmentBinding) return true;
     if (!isCanonicalTacticalGeometry(geometry)) return false;
     return geometry.obstacles.every((feature) => feature.environment === undefined
@@ -128,7 +122,7 @@ function stateCausalActionProfilesMatch(
 ): boolean {
   const causalContinuations = Object.entries(state.internalContinuations)
     .filter(([, continuation]) => continuation.resolutionPlan !== undefined
-      && isCausalActionPlanMarker(continuation.resolutionPlan));
+      && isCurrentCausalResolutionMarker(continuation.resolutionPlan));
   const causalPlans = causalContinuations
     .flatMap(([, continuation]) => continuation.resolutionPlan === undefined
       ? []
@@ -222,70 +216,32 @@ function stateNpcMechanicsProfilesMatch(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
 ): boolean {
+  const itemSystem = state.campaignRuntime.itemSystem;
+  const mechanicalCatalog = {
+    ...state.combatRuntime.definitions,
+    ...itemSystem.definitions,
+  };
   const campaignTemplates = Object.entries(state.campaignRuntime.definitions)
     .filter(([, definition]) => definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND);
   const combatTemplates = Object.entries(state.combatRuntime.definitions)
     .filter(([, definition]) => definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND);
-  const campaignItems = Object.entries(state.campaignRuntime.definitions)
-    .filter(([, definition]) => definition.definitionKind === NPC_MECHANICAL_ITEM_KIND);
-  const combatItems = Object.entries(state.combatRuntime.definitions)
-    .filter(([, definition]) => definition.definitionKind === NPC_MECHANICAL_ITEM_KIND);
   const mechanicalEntities = Object.values(state.combatRuntime.entities)
     .filter((entity) => isRecord(entity) && typeof entity.mechanicalDefinitionRef === "string");
-  const hasMechanicalItemInstances = Object.values(state.entities)
-    .some((character) => character.loadout?.mechanicalItems !== undefined);
   const hasArtifacts = campaignTemplates.length > 0
     || combatTemplates.length > 0
-    || campaignItems.length > 0
-    || combatItems.length > 0
-    || mechanicalEntities.length > 0
-    || hasMechanicalItemInstances;
+    || mechanicalEntities.length > 0;
   if (!npcMechanicsProfileEnabled(profiles.extensions)) return !hasArtifacts;
   if (campaignTemplates.length !== combatTemplates.length
-    || campaignItems.length !== combatItems.length
     || campaignTemplates.some(([definitionId, definition]) =>
       !isNpcMechanicalTemplateDefinition(definition)
       || state.combatRuntime.definitions[definitionId] === undefined
       || canonicalSha256(state.combatRuntime.definitions[definitionId]) !== canonicalSha256(definition))
     || combatTemplates.some(([, definition]) =>
       !isNpcMechanicalTemplateDefinition(definition)
-      || !npcMechanicalDefinitionClosureValid(definition, state.combatRuntime.definitions))
-    || campaignItems.some(([definitionId, definition]) =>
-      !isNpcMechanicalItemDefinition(definition)
-      || state.combatRuntime.definitions[definitionId] === undefined
-      || canonicalSha256(state.combatRuntime.definitions[definitionId]) !== canonicalSha256(definition))
-    || combatItems.some(([, definition]) =>
-      !isNpcMechanicalItemDefinition(definition)
-      || !npcMechanicalItemDefinitionClosureValid(definition, state.combatRuntime.definitions))) {
+      || !npcMechanicalDefinitionClosureValid(definition, mechanicalCatalog))) {
     return false;
   }
-  const runtimeItemIds = new Set<string>();
-  const loadoutsValid = Object.values(state.entities).every((character) => {
-    const loadout = character.loadout;
-    if (loadout?.mechanicalItems === undefined) return true;
-    const equippedIds = Object.values(loadout.equipped);
-    return Object.entries(loadout.mechanicalItems).every(([itemId, item]) => {
-      if (runtimeItemIds.has(itemId)) return false;
-      runtimeItemIds.add(itemId);
-      const backpackEntry = loadout.backpack.find((entry) => entry.itemId === itemId);
-      const equippedCount = equippedIds.filter((equippedId) => equippedId === itemId).length;
-      const locationCount = (backpackEntry === undefined ? 0 : 1) + equippedCount;
-      return locationCount === 1
-        && (backpackEntry === undefined || backpackEntry.quantity === 1)
-        && !(item.status === "broken" && equippedCount > 0)
-        && (item.sourceKind === "standardGear"
-          ? (() => {
-              const standard = itemById(item.definitionRef);
-              return standard !== undefined
-                && standard.wear !== "pack"
-                && standard.wear !== "ammo";
-            })()
-          : isNpcMechanicalItemDefinition(
-              state.combatRuntime.definitions[item.definitionRef],
-            ));
-    });
-  });
-  return loadoutsValid && mechanicalEntities.every((entity) => {
+  return mechanicalEntities.every((entity) => {
     const definitionRef = String(entity.mechanicalDefinitionRef);
     const definition = state.combatRuntime.definitions[definitionRef];
     const character = state.entities[String(entity.entityId)];
@@ -294,10 +250,80 @@ function stateNpcMechanicsProfilesMatch(
       && npcMechanicalEntityMatchesTemplate(
         entity,
         definition,
-        state.combatRuntime.definitions,
+        mechanicalCatalog,
         character,
+        itemSystem,
       )
       && npcCoreCombatRuntimeMatches(character, entity);
+  });
+}
+
+function stateItemSystemMatches(
+  state: AuthoritativeWorldState,
+): boolean {
+  const itemSystem = state.campaignRuntime.itemSystem;
+  if (!isItemSystemStateV1(itemSystem)) return false;
+
+  const loadoutLocations = new Map<string, {
+    holderRef: string;
+    equippedSlot: string | null;
+    quantity: number | null;
+  }>();
+  for (const character of Object.values(state.entities)) {
+    const loadout = character.loadout;
+    if (loadout === undefined) continue;
+    for (const [slot, entryId] of Object.entries(loadout.equipped)) {
+      const entry = itemSystem.entries[entryId];
+      if (loadoutLocations.has(entryId)
+        || entry === undefined
+        || entry.disposition !== "held"
+        || entry.holderRef !== character.id
+        || entry.equippedSlot !== slot
+        || entry.condition !== "usable") return false;
+      loadoutLocations.set(entryId, {
+        holderRef: character.id,
+        equippedSlot: slot,
+        quantity: null,
+      });
+    }
+    for (const backpackEntry of loadout.backpack) {
+      const entry = itemSystem.entries[backpackEntry.itemId];
+      if (entry === undefined
+        || entry.disposition !== "held"
+        || entry.holderRef !== character.id
+        || entry.quantity !== backpackEntry.quantity) return false;
+      const equippedLocation = loadoutLocations.get(backpackEntry.itemId);
+      if (equippedLocation !== undefined) {
+        if (equippedLocation.holderRef !== character.id
+          || equippedLocation.equippedSlot !== "ammo"
+          || entry.equippedSlot !== "ammo") return false;
+        loadoutLocations.set(backpackEntry.itemId, {
+          holderRef: character.id,
+          equippedSlot: "ammo",
+          quantity: backpackEntry.quantity,
+        });
+        continue;
+      }
+      if (entry.equippedSlot !== null) return false;
+      loadoutLocations.set(backpackEntry.itemId, {
+        holderRef: character.id,
+        equippedSlot: null,
+        quantity: backpackEntry.quantity,
+      });
+    }
+  }
+
+  return Object.values(itemSystem.entries).every((entry) => {
+    if (entry.disposition === "scene") {
+      return entry.sceneRef !== null && state.scenes[entry.sceneRef] !== undefined;
+    }
+    if (entry.disposition !== "held") return true;
+    if (entry.holderRef === null || state.entities[entry.holderRef] === undefined) return false;
+    const location = loadoutLocations.get(entry.entryId);
+    return location !== undefined
+      && location.holderRef === entry.holderRef
+      && location.equippedSlot === entry.equippedSlot
+      && (location.quantity === null || location.quantity === entry.quantity);
   });
 }
 
@@ -398,26 +424,15 @@ function replayWithRegistry(
 
   let state: JsonRecord;
   try {
-    const cloned = structuredClone(genesisValue.initialState);
-    state = normalizeCampaignGenesis(normalizeCombatGenesis(cloned, genesisValue), genesisValue);
+    state = structuredClone(genesisValue.initialState);
   } catch {
     return rejected("invalidGenesis", "roomGenesis initial state is not cloneable canonical data.");
   }
 
-  if (eventsValue.length > 0 && !isAuthoritativeWorldState(state)) {
-    return rejected(
-      "unsupportedEventSchema",
-      "Non-empty authoritative-v2 archives require a canonical v2 genesis state.",
-    );
-  }
-  if (
-    isRecord(state)
-    && state.schema === "zhuwei.authoritative-world-state/v2"
-    && !isAuthoritativeWorldState(state)
-  ) {
+  if (!isAuthoritativeWorldState(state)) {
     return rejected(
       "invalidWorldState",
-      "Authoritative-v2 genesis state is malformed or lacks its runtime manifest pin.",
+      "The V5 genesis state is malformed or lacks its runtime manifest pin.",
     );
   }
   if (isAuthoritativeWorldState(state)) {
@@ -449,6 +464,12 @@ function replayWithRegistry(
         "Genesis social artifacts do not match the room manifest extensions.",
       );
     }
+    if (!stateItemSystemMatches(state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "Genesis item state does not match the room manifest extensions.",
+      );
+    }
     if (!stateNpcMechanicsProfilesMatch(genesisProfileResolution.profiles, state)) {
       return rejected(
         "profileIntegrityMismatch",
@@ -478,7 +499,7 @@ function replayWithRegistry(
       event.eventType === "RandomnessRequested"
       && isRecord(event.payload)
       && "resolutionPlan" in event.payload
-      && isCausalActionPlanMarker(event.payload.resolutionPlan)
+      && isCurrentCausalResolutionMarker(event.payload.resolutionPlan)
       && !isCausalRandomnessEventBinding(
         eventProfileResolution.profiles,
         state,
@@ -538,6 +559,12 @@ function replayWithRegistry(
         return rejected(
           "profileIntegrityMismatch",
           "Replayed social artifacts do not match the event manifest extensions.",
+        );
+      }
+      if (!stateItemSystemMatches(next)) {
+        return rejected(
+          "profileIntegrityMismatch",
+          "Replayed item state does not match the event manifest extensions.",
         );
       }
       if (!stateNpcMechanicsProfilesMatch(eventProfileResolution.profiles, next)) {
@@ -633,6 +660,12 @@ function projectWithRegistry(
         "State social artifacts do not match the room manifest extensions.",
       );
     }
+    if (!stateItemSystemMatches(state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "State item records do not match the room manifest extensions.",
+      );
+    }
     if (!stateNpcMechanicsProfilesMatch(resolution.profiles, state)) {
       return rejected(
         "profileIntegrityMismatch",
@@ -663,12 +696,21 @@ function stepWithRegistry(
         initializationProfiles.rejection.message,
       );
     }
-    return initializeAuthoritativeWorld(
+    const initialized = initializeAuthoritativeWorld(
       initializationProfiles.profiles,
       undefined,
       state,
       input,
     );
+    if (initialized.kind !== "initialized") return initialized;
+    if (!isAuthoritativeWorldState(initialized.genesis.initialState)
+      || !stateItemSystemMatches(initialized.genesis.initialState)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "Initialized item state does not match the selected room manifest extensions.",
+      );
+    }
+    return initialized;
   }
   const resolution = resolveRuntimeProfileManifest(registry, profiles);
   if (!resolution.ok) {
@@ -725,6 +767,12 @@ function stepWithRegistry(
     return rejected(
       "profileIntegrityMismatch",
       "State social artifacts do not match the room manifest extensions.",
+    );
+  }
+  if (!stateItemSystemMatches(state)) {
+    return rejected(
+      "profileIntegrityMismatch",
+      "State item records do not match the room manifest extensions.",
     );
   }
   if (!stateNpcMechanicsProfilesMatch(resolution.profiles, state)) {

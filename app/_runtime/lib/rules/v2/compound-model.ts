@@ -10,6 +10,11 @@ import {
   isRecord,
 } from "./validation";
 
+/**
+ * Current Rules-internal outcome plan used by finite Due ActorPlan checks.
+ * This is not the retired production KP ActionPlan transport.
+ */
+
 function isDurationMicros(value: unknown): value is string {
   return typeof value === "string" && /^[1-9][0-9]*$/.test(value);
 }
@@ -29,9 +34,9 @@ export function isCompoundActionCost(value: unknown): value is CompoundActionCos
       && Number.isSafeInteger(value.amount)
       && Number(value.amount) > 0;
   }
-  if (value.kind === "consumeArtifact") {
-    return hasExactKeys(value, ["artifactRef", "count", "kind"])
-      && isNonEmptyString(value.artifactRef)
+  if (value.kind === "consumeItem") {
+    return hasExactKeys(value, ["count", "itemRef", "kind"])
+      && isNonEmptyString(value.itemRef)
       && Number.isSafeInteger(value.count)
       && Number(value.count) > 0;
   }

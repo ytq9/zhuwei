@@ -366,9 +366,9 @@ Planner、RAG、Embedding、Vectorize 和辅助模型分别故障注入时，安
 
 秘密泄漏、第二权威、模型/客户端骰面、客户端实际 target list、任意状态 patch、重复随机/资源/事件、自动换主 KP、骰后改判和叙述失败回滚已提交行动均必须为 0。
 
-既有 31 轮 KP 评测及全部硬门继续通过；新增至少一条长轨迹覆盖动态环境和逐受众 Narration 失败/恢复。确定性 fixture 必须走与生产相同的 Form、Context、validator、compiler、Room、Rules 和 projector seam，不能直接构造归一化成功结果。
+前一代 31 轮 KP 评测只作历史审计，不计入 0.4 当前证据。当前长轨迹必须覆盖动态环境和逐受众 Narration 失败/恢复；确定性 fixture 必须走与生产相同的窄工具 allowlist、Form、Context、validator、compiler、Room、Rules 和 projector seam，不能直接构造归一化成功结果。
 
-`npx vitest run tests/kp-v3-long-track-production-seams.test.ts` 已在当前新房 workflow-v2/environment-v4 上以 exit 0 定向通过 1/1（198.18 秒）：它经真实 Room 接口完成精确 31 次交互，即 15 次 Intent/RootAction/Proposal、15 次 ACK 和 1 次 Bob viewer-local Narration retry。每个 Intent 都经过生产 Form allowlist、三层 Context、validator、compiler、Room、Rules 与 projector；轨迹同时覆盖 `area-hazard` 对 2 个实体的完整 trigger/resolve/debris、KP 自定义竹骨声屏的 `state-only`（`hazard=null`、`areaEffect=null`）、Bob 独立恢复、无重复 Proposal/随机/资源，以及 archive→fresh DO 后 state/project hash 一致。连带的 Viewer recovery 与动态环境 Room 分别为 4/4 和 6/6。以上仍是本地定向证据，不替代真实 Provider、冻结全量或浏览器/发布门。
+前一代 workflow-v2/environment-v4 长轨迹曾以 exit 0 定向通过 1/1；它只保留历史审计意义，不能证明当前 0.4 V5/runtime、窄工具或物品闭包。当前长轨迹及其 Viewer recovery、动态环境、archive→fresh DO 组合必须在当前精确闭包上重新运行后才能计数。
 
 ## 14. D1、migration 与派生语料闭环
 
@@ -425,7 +425,7 @@ npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有
 
 本规格的 Form Catalog、Action Language、Context Pack、corpus/retrieval、Model Registry、Narration schema、publication protocol、Environment state graph 和相关 compiler 全部进入房间完整 runtime manifest。创建新房时固定精确 ID/hash，不接受 `latest`。
 
-0.4 当前只注册完整 `runtime-srd51-2014-authoritative-environment-v5`，并精确绑定 `authoritative-kp-private-form-narrow-tools-workflow-v1`、本规格的 private Form catalog、V5 NPC/物品/环境闭包与独立 Body-only Delivery。具体 runtime、event、module、Proposal protocol 和 workflow hash 以 `SPEC 0013` §2.1 的当前闭包为准；任一 ID/hash、planner、model profile 或 module 不一致都在模型调用前 fail closed。
+0.4 当前只注册完整 `runtime-srd51-2014-authoritative-environment-v5`，并精确绑定 `authoritative-kp-private-form-narrow-tools-workflow-v2`、本规格的 private Form catalog、V5 NPC/物品/环境闭包与独立 Body-only Delivery。具体 runtime、event、module、Proposal protocol 和 workflow hash 以 `SPEC 0013` §2.1 的当前闭包为准；任一 ID/hash、planner、model profile 或 module 不一致都在模型调用前 fail closed。
 
 历史 environment-v2/v3/v4、旧 `authoritative-kp-action-plan-v1`、旧 Outcome/Delivery Adapter 和旧房状态只保留文档/Git 审计意义，不进入 0.4 Registry 或回放。不得从旧 Prompt、Delivery、聊天、抽象距离或 D1 数据猜测当前 Form/Context/Environment 状态。未来若需要兼容或迁移，必须另写规格并取得用户授权，不能预留自动 fallback。
 
@@ -439,7 +439,7 @@ npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有
 | `SPEC 0003` §6、场景 5 | 默认最多两次自动修订 | 一次首 Proposal + 最多一次窄修订；耗尽后无第三次完整 Prompt | Rules 诊断、未提交稳定点和 `needsKp` 语义不变 |
 | `SPEC 0010` §§8、10–12 | 当前帧发布未区分逐受众 Narration 状态，且未固定模型 body-only schema | §7–8 的 `{body}`、服务器派生元数据、逐受众独立状态/重试优先 | Audience 提交冻结、projector、ViewerKey 亲历、ACK/覆盖、秘密与语音同正文边界不变 |
 | `SPEC 0011` §§1、3–5、8–10 | 1+2 修订预算、旧模型调用/日志与笼统故障分类 | §6 的 1+1、§9–10 角色化 Profile/实验门、§12 精确错误和更窄日志、§13 新指标 | 恢复、更正、D1 archive、无隐藏主 KP 切换和既有 31 轮硬门不变 |
-| `SPEC 0014` §§2–5、9、11–12 | 通用环境有限状态和破坏/区域验收 | §11 增补五类版本化机械结构、`environmental-stunt.v1`、显式效果模式与不绑定具体物件的通用动态纵切；后续用户裁定取消吊灯专项完成门 | Geometry/Tactical Projection/preview、客户端不提交 targets、地图 Adapter 与旧房隔离不变 |
+| `SPEC 0014` §§2–5、9、11–12 | 通用环境有限状态和破坏/区域验收 | §11 增补五类版本化机械结构、`environmental-stunt.v1`、显式效果模式与不绑定具体物件的通用动态纵切；后续用户裁定取消吊灯专项完成门 | Geometry/Tactical Projection/preview、客户端不提交 targets 与地图 Adapter 边界不变；前 0.4 房间按当前退役裁定拒绝 |
 
 若本表之外出现解释差异，优先保持 `SPEC 0001`、单一 Room/Rules/DO 权威和秘密边界；不能用本规格扩大模型、页面、D1 或辅助模型权限。
 
@@ -455,7 +455,7 @@ npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有
 | 模型角色/Profile | `app/_runtime/lib/kp/{model-registry,context-planner-policy}.ts` + `room/v3-binding.ts` | 主 KP 固定、Planner disabled/verified、无隐藏切换 | **已实现/定向证据**：角色/Profile 6/6；G3/G4 未达增益，生产绑定只接受 disabled，故无 Planner UI；真实候选验证未执行且不冒充产品证据 |
 | Body-only Narration/Grounding | `app/_runtime/lib/kp/narration-v3.ts` + Room Action/DO delivery | exact `{body}`、服务器元数据、显式拒绝 | **已实现/定向证据**：public action/table 21/21 与 Viewer recovery 4/4 覆盖公开裁剪、冻结投影、控制权变化和失败恢复；双视口公开 DTO Narration 重试前端路径通过且不重复 settlement，语音/TTS 仍未覆盖 |
 | 双状态/逐受众恢复 | Room Action/DO `action.ts`、`durable-object.ts`、Rules projector、table API/UI | Alice/Bob 独立、提交不回滚、冻结重试 | **已实现/定向证据**：同上 21/21 + 4/4；死亡/退役/transfer/revoke、继任拒绝、恢复态不读取当前世界与不重复机械有责任 seam 证据 |
-| 动态环境与人物熟练 | Rules v2/Geometry/Profile/Room/archive/replay + 环境编译器 + character-proficiency Profile | 任意 KP 内容、`state-only` / `area-hazard`、§11 通用动态场景；v4 Expertise/豁免熟练与旧 manifest 隔离 | **已实现/定向证据**：Profile/causal/compound 57/57、workflow/table 25/25、campaign 2/2、concentration 1/1、控制/继任 1/1、动态环境 Room 6/6；workflow-v2/v4 长轨迹 1/1；具体吊灯专项已取消，双视口公开 DTO 自定义环境前端入口已通过，SPEC 0014 完整战术地图仍未覆盖 |
+| 动态环境与人物熟练 | Rules v2/Geometry/Profile/Room/archive/replay + 环境编译器 + character-proficiency Profile | 任意 KP 内容、`state-only` / `area-hazard`、§11 通用动态场景；当前 V5 Expertise/豁免熟练与退役 manifest 隔离 | **0.4 当前映射**：当前 causal/environment 与 Room 定向 runner；旧 workflow-v2/environment-v4 的 57/57、25/25、6/6 和长轨迹 1/1 只作历史审计，不计当前完成数。具体吊灯专项已取消；SPEC 0014 完整战术地图仍未覆盖 |
 | Telemetry/错误 | `app/_runtime/lib/room/{action,telemetry}.ts` 与公开 API DTO | 十错误、白名单、故障注入 | **已实现/定向证据**：十个精确公开代码及阶段分类已有 V3 runner；G2 五类故障 5/5 安全回退；部署后 15 秒 exact-version error Tail 为 0，历史日志查询受 OAuth 403 限制，不能冒充完整生产日志证据 |
 | 实验/发布 | `tests/fixtures/kp-v3-gold.json` + `tools/run-kp-v3-eval.mjs`、live runner/provisioner、生产 seam 长轨迹、浏览器 QA、现有 deploy/smoke guard | §10、§13–15 | **发布事实已建立，质量边界保留**：远端 `0008–0011` 无 pending；源码 `4822d2b` 已部署为 Version `97291f34` / deployment `834c2b79` 100%；双视口前端视觉/DOM 五路径（页面数据全部为公开 DTO）10/10 且额外 Provider action 为 0；独立的唯一三交互实际穿过真实 HTTP/auth/Room/Provider 3/3、live verified，但原命令因 compact receipt evaluator 误判退出 1且未重跑；修复随 `9cc5e3c` 非 force 推送，`main` 未变。完整门依用户豁免未运行，完整 live Provider 指标仍由用户自测 |
 
@@ -475,4 +475,4 @@ npm run cf:deploy  # 唯一一次 production build，并部署已授权的现有
 10. 辅助模型只建议检索/结构，不决定 KP、Rules 或 Audience 权限；失败不自动换主 KP。
 11. 环境使用 KP 自定义的版本化有限状态，不是对象目录或通用物理；机械模式只能由 KP 显式选择，名称、关键词和对象族不得触发派发。
 12. `state-only` 不得伪造 Hazard/Area/区域 save/区域目标 damage；`area-hazard` 的实际区域集合只由 Rules 从完整 Geometry 计算。
-13. 新协议只进新 V3 房间；旧房无猜测迁移，旧 `environment-feature-fsm-2014-v2` 与新 v3 Profile/manifest 分别按原 hash 回放。
+13. 新协议只进入 0.4 V3 房间；前 0.4 房间与旧 `environment-feature-fsm-2014-v2` 已退役，不猜测迁移、不注册旧解释器，也不按当前代码回放。

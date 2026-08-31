@@ -30,15 +30,28 @@ import { isContinuedCompoundRoot } from "./internal-compound";
 import {
   buildPlayerCombatEntity,
   compileStaticCharacterCombat,
+  planPlayerAbilityCatalog,
 } from "./character-abilities";
-import { changeCharacterGear, isGearSlot } from "./character-gear";
+import { isGearSlot } from "./character-gear";
 import {
-  changeNpcMechanicalGear,
-  changeNpcMechanicalItemState,
-  isNpcMechanicalTemplateDefinition,
-} from "./npc-mechanics";
+  changeItemEquipment,
+  itemEquipmentTransitionDurationMicros,
+} from "./item-transitions";
+import {
+  planPlayerInitialItemImport,
+  playerInitialItemEventDrafts,
+} from "./player-item-system";
+import { isNpcMechanicalTemplateDefinition } from "./npc-mechanics";
+import {
+  changeNpcItemSystemEquipment,
+  changeNpcItemSystemLifecycle,
+} from "./npc-item-system";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
 import { characterProficiencyFieldsMatchProfile } from "./proficiency";
+import {
+  npcMechanicalItemStateCauseAvailable,
+  npcMechanicalItemStateCauseUseFactId,
+} from "./multiplayer-events";
 
 type Draft = {
   eventType: EventType;
@@ -235,6 +248,30 @@ export function canonicalControlledCharacter(
   };
 }
 
+function preparePlayerInitialItems(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  character: CharacterRecord,
+): {
+  character: CharacterRecord;
+  itemSystem: NonNullable<AuthoritativeWorldState["campaignRuntime"]["itemSystem"]>;
+  drafts: Draft[];
+} | undefined {
+  const itemSystem = state.campaignRuntime.itemSystem;
+  if (itemSystem === undefined) return undefined;
+  const plan = planPlayerInitialItemImport({
+    itemSystem,
+    character,
+    itemAbilityCatalog: state.combatRuntime.definitions,
+  });
+  if ("error" in plan) return undefined;
+  return {
+    character: plan.characterBeforeAcquisition,
+    itemSystem,
+    drafts: playerInitialItemEventDrafts(plan, character.id, character.sceneId),
+  };
+}
+
 function grantSeat(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -285,6 +322,16 @@ function grantSeat(
       && (!(character.sceneId in state.scenes)
         || (existingCharacter !== undefined && !restoringCharacter)))
   ) return rejected("invalidRulesInput", "Controlled character seed is unavailable.");
+  const preparedItems = character === undefined || restoringCharacter
+    ? undefined
+    : preparePlayerInitialItems(profiles, state, character);
+  if (character !== undefined && !restoringCharacter && preparedItems === undefined) {
+    return rejected(
+      "invalidRulesInput",
+      "Controlled character starting equipment is unavailable.",
+    );
+  }
+  const eventCharacter = preparedItems?.character ?? character;
   const principal = {
     id: command.principal.id,
     sessionVersion: Number(command.principal.sessionVersion),
@@ -304,23 +351,24 @@ function grantSeat(
     },
   ];
   if (character !== undefined) {
-    drafts.push({
-      eventType: "CharacterControlGranted",
-      payload: {
-        character: restoringCharacter ? null : character,
-        characterId: character.id,
-        seatId: command.seatId,
-      },
-      creates: restoringCharacter
-        ? [`control:${character.id}`]
-        : [`entity:${character.id}`, `control:${character.id}`],
-    });
-    if (!restoringCharacter) {
+    if (restoringCharacter) {
+      drafts.push({
+        eventType: "CharacterControlGranted",
+        payload: {
+          character: null,
+          characterId: character.id,
+          seatId: command.seatId,
+        },
+        creates: [`control:${character.id}`],
+      });
+    } else {
       const compiled = compileStaticCharacterCombat(
-        character,
+        eventCharacter!,
         isRecord(command.character) ? command.character.characterBuild : undefined,
+        preparedItems!.itemSystem,
+        state.combatRuntime.definitions,
       );
-      const spawn = allocateDynamicCombatantSpawn(state, character.sceneId);
+      const spawn = allocateDynamicCombatantSpawn(state, eventCharacter!.sceneId);
       if (spawn.kind === "unavailable") {
         return rejected(
           "spatialCapacityUnavailable",
@@ -329,21 +377,29 @@ function grantSeat(
       }
       const combatEntity = buildPlayerCombatEntity(
         profiles,
-        character,
+        eventCharacter!,
         compiled,
         principal.id,
-        spawn.kind === "allocated" ? spawn.position : undefined,
+        spawn.position,
+        preparedItems!.itemSystem,
       );
       drafts.push({
-        eventType: "CharacterMechanicsSynchronized",
+        eventType: "CharacterControlGranted",
         payload: {
+          character: eventCharacter!,
           characterId: character.id,
           combatEntity,
           definitions: Object.values(compiled.definitions)
             .sort((left, right) => String(left.definitionId).localeCompare(String(right.definitionId))),
+          seatId: command.seatId,
         },
-        creates: [`combat-entity:${character.id}`],
+        creates: [
+          `entity:${character.id}`,
+          `control:${character.id}`,
+          `combat-entity:${character.id}`,
+        ],
       });
+      drafts.push(...(preparedItems?.drafts ?? []));
     }
     if (restoringCharacter) {
       for (const suspended of Object.values(state.multiplayerRuntime.suspendedPendingInputs)
@@ -392,7 +448,20 @@ function materializeCharacter(
     || !(character.sceneId in state.scenes)
   ) return rejected("targetSeatUnavailable", "Character cannot be materialized for the target Seat.");
   const build = isRecord(command.character) ? command.character.characterBuild : undefined;
-  const compiled = compileStaticCharacterCombat(character, build);
+  const preparedItems = preparePlayerInitialItems(profiles, state, character);
+  if (preparedItems === undefined) {
+    return rejected(
+      "invalidRulesInput",
+      "Character starting equipment is unavailable.",
+    );
+  }
+  const eventCharacter = preparedItems.character;
+  const compiled = compileStaticCharacterCombat(
+    eventCharacter,
+    build,
+    preparedItems.itemSystem,
+    state.combatRuntime.definitions,
+  );
   const spawn = allocateDynamicCombatantSpawn(state, character.sceneId);
   if (spawn.kind === "unavailable") {
     return rejected(
@@ -402,27 +471,30 @@ function materializeCharacter(
   }
   const combatEntity = buildPlayerCombatEntity(
     profiles,
-    character,
+    eventCharacter,
     compiled,
     command.principalId as string,
-    spawn.kind === "allocated" ? spawn.position : undefined,
+    spawn.position,
+    preparedItems.itemSystem,
   );
   return sequence(profiles, state, rootActionId, [
     {
       eventType: "CharacterControlGranted",
-      payload: { character, characterId: character.id, seatId: command.seatId },
-      creates: [`entity:${character.id}`, `control:${character.id}`],
-    },
-    {
-      eventType: "CharacterMechanicsSynchronized",
       payload: {
+        character: eventCharacter,
         characterId: character.id,
         combatEntity,
         definitions: Object.values(compiled.definitions)
           .sort((left, right) => String(left.definitionId).localeCompare(String(right.definitionId))),
+        seatId: command.seatId,
       },
-      creates: [`combat-entity:${character.id}`],
+      creates: [
+        `entity:${character.id}`,
+        `control:${character.id}`,
+        `combat-entity:${character.id}`,
+      ],
     },
+    ...preparedItems.drafts,
   ]);
 }
 
@@ -456,30 +528,135 @@ function changeControlledCharacterGear(
     || seat.principalId !== input.controllerPrincipalId
     || state.multiplayerRuntime.members[input.controllerPrincipalId]?.status !== "active"
   ) return rejected("targetSeatUnavailable", "Character gear controller is unavailable.");
-  const transition = changeCharacterGear(
-    character,
-    input.action === "wear"
-      ? { action: "wear", slot: input.slot, itemId: input.itemId as string }
-      : { action: "stow", slot: input.slot },
-  );
+  const itemSystem = state.campaignRuntime.itemSystem;
+  if (itemSystem === undefined) {
+    return rejected("invalidWorldState", "The versioned item system is unavailable.");
+  }
+  if (Object.values(state.combatRuntime.encounters).some((encounter) =>
+    encounter.status !== "concluded"
+    && Array.isArray(encounter.participantEntityIds)
+    && encounter.participantEntityIds.includes(character.id))) {
+    return rejected(
+      "pendingInputUnresolved",
+      "Character gear cannot change during an active encounter.",
+    );
+  }
+  if (Object.values(state.campaignRuntime.activities).some((activity) =>
+    activity.status === "active" && activity.characterId === character.id)) {
+    return rejected(
+      "pendingInputUnresolved",
+      "The character is already committed to an active Activity.",
+    );
+  }
+  const transition = changeItemEquipment(
+        itemSystem,
+        {
+          holderRef: character.id,
+          classId: character.classId,
+          scores: {
+            dex: character.abilityScores?.dex ?? 10,
+            con: character.abilityScores?.con ?? 10,
+          },
+          speedFeet: character.loadout?.speedFeet ?? 30,
+        },
+        input.action === "wear"
+          ? { action: "wear", slot: input.slot, entryId: input.itemId as string }
+          : { action: "stow", slot: input.slot },
+      );
   if ("error" in transition) {
     return rejected(
       transition.error === "unchangedGear" ? "unchangedRetry" : "insufficientResource",
       "The requested item cannot be moved from the current authoritative loadout.",
     );
   }
-  return sequence(profiles, state, input.rootActionId, [{
+
+  const drafts: Draft[] = [];
+  if ("itemSystem" in transition) {
+    const durationMicros = itemEquipmentTransitionDurationMicros(
+      itemSystem!,
+      transition.itemSystem,
+      character.id,
+    );
+    if (durationMicros === undefined) {
+      return rejected("invalidWorldState", "The equipment timing transition is unavailable.");
+    }
+
+    const nextCharacter = {
+      ...structuredClone(character),
+      loadout: structuredClone(transition.loadout),
+    };
+    const plannedAbilities = planPlayerAbilityCatalog({
+      character: nextCharacter,
+      itemSystem: transition.itemSystem,
+      catalog: state.combatRuntime.definitions,
+    });
+    if ("error" in plannedAbilities) {
+      return rejected(
+        "invalidWorldState",
+        "The character equipment ability closure cannot be frozen.",
+      );
+    }
+    for (const artifact of plannedAbilities.registrations) {
+      const definitionId = String(artifact.definition.definitionId);
+      drafts.push({
+        eventType: "DefinitionRegistered",
+        payload: structuredClone(artifact),
+        creates: [`definition:${definitionId}`],
+        visibilityPolicyId: "visibility:room-authority-only",
+        secrecy: "internal",
+      });
+    }
+
+    const activityId = `activity:character-gear:${input.rootActionId}`;
+    drafts.unshift({
+      eventType: "ActivityStarted",
+      payload: {
+        activityId,
+        characterId: character.id,
+        activityKind: "characterGearChange",
+        intendedDurationMicros: durationMicros,
+        completion: {
+          kind: "characterGearChange",
+          action: input.action,
+          slot: input.slot,
+          itemEntryId: transition.movedEntryId,
+        },
+      },
+      reads: [`entity:${character.id}`],
+      writes: [`activity:${activityId}`],
+      creates: [`activity:${activityId}`],
+      visibilityPolicyId: "visibility:scene-observers",
+    }, {
+      eventType: "FictionTimeAdvanced",
+      payload: {
+        durationMicros,
+        reason: input.action === "wear" ? "角色穿戴装备" : "角色收起装备",
+      },
+      reads: [`activity:${activityId}`],
+      writes: [`activity:${activityId}`],
+      visibilityPolicyId: "visibility:scene-observers",
+    }, {
+      eventType: "ActivityCompleted",
+      payload: { activityId },
+      reads: [`activity:${activityId}`],
+      writes: [`activity:${activityId}`],
+      visibilityPolicyId: "visibility:scene-observers",
+    });
+  }
+
+  drafts.push({
     eventType: "CharacterGearChanged",
     payload: {
       characterId: character.id,
       action: input.action,
       slot: input.slot,
-      itemId: transition.movedItemId,
+      itemId: transition.movedEntryId,
       armorClass: transition.loadout.armorClass,
     },
     reads: [`entity:${character.id}`, `control:${character.id}`],
     writes: [`entity:${character.id}`, `combat-entity:${character.id}`],
-  }]);
+  });
+  return sequence(profiles, state, input.rootActionId, drafts);
 }
 
 function changeNpcGear(
@@ -522,25 +699,45 @@ function changeNpcGear(
   if (activeEncounter) {
     return rejected("pendingInputUnresolved", "NPC gear cannot change during an active encounter.");
   }
+  if (Object.values(state.campaignRuntime.activities).some((activity) =>
+    activity.status === "active" && activity.characterId === character.id)) {
+    return rejected(
+      "pendingInputUnresolved",
+      "The NPC is already committed to an active Activity.",
+    );
+  }
 
-  const transition = changeNpcMechanicalGear(
-    character,
-    definition,
-    state.combatRuntime.definitions,
-    input.action === "wear"
-      ? { action: "wear", slot: input.slot, itemId: input.itemId as string }
-      : { action: "stow", slot: input.slot },
-  );
+  const itemSystem = state.campaignRuntime.itemSystem;
+  if (itemSystem === undefined) {
+    return rejected("invalidWorldState", "The versioned item system is unavailable.");
+  }
+  const transition = changeNpcItemSystemEquipment(
+        itemSystem,
+        character,
+        definition,
+        input.action === "wear"
+          ? { action: "wear", slot: input.slot, entryId: input.itemId as string }
+          : { action: "stow", slot: input.slot },
+      );
   if ("error" in transition) {
     return rejected(
       transition.error === "unchangedGear" ? "unchangedRetry" : "insufficientResource",
       "The requested item cannot be moved from the NPC's authoritative loadout.",
     );
   }
+  const durationMicros = itemEquipmentTransitionDurationMicros(
+    itemSystem,
+    transition.itemSystem,
+    character.id,
+  );
+  if (durationMicros === undefined) {
+    return rejected("invalidWorldState", "The NPC equipment timing transition is unavailable.");
+  }
 
   const drafts: Draft[] = [];
-  const equipmentAbilityRefs = transition.equipmentAbilityRefs;
-  for (const equipmentDefinition of transition.equipmentDefinitions) {
+  const equipmentAbilityRefs = transition.equipment.refs;
+  const equipmentDefinitions = transition.equipment.definitions;
+  for (const equipmentDefinition of equipmentDefinitions) {
     const compiled = compileAbilityDefinition(equipmentDefinition);
     if (!compiled.ok) {
       return rejected(compiled.code, compiled.publicMessage, compiled.diagnostics.map((diagnostic) => ({
@@ -571,13 +768,48 @@ function changeNpcGear(
       });
     }
   }
+  const activityId = `activity:npc-gear:${input.rootActionId}`;
+  drafts.unshift({
+    eventType: "ActivityStarted",
+    payload: {
+      activityId,
+      characterId: character.id,
+      activityKind: "npcGearChange",
+      intendedDurationMicros: durationMicros,
+      completion: {
+        kind: "npcGearChange",
+        action: input.action,
+        slot: input.slot,
+        itemEntryId: transition.movedEntryId,
+      },
+    },
+    reads: [`entity:${character.id}`],
+    writes: [`activity:${activityId}`],
+    creates: [`activity:${activityId}`],
+    visibilityPolicyId: "visibility:scene-observers",
+  }, {
+    eventType: "FictionTimeAdvanced",
+    payload: {
+      durationMicros,
+      reason: input.action === "wear" ? "NPC 穿戴装备" : "NPC 收起装备",
+    },
+    reads: [`activity:${activityId}`],
+    writes: [`activity:${activityId}`],
+    visibilityPolicyId: "visibility:scene-observers",
+  }, {
+    eventType: "ActivityCompleted",
+    payload: { activityId },
+    reads: [`activity:${activityId}`],
+    writes: [`activity:${activityId}`],
+    visibilityPolicyId: "visibility:scene-observers",
+  });
   drafts.push({
     eventType: "NpcGearChanged",
     payload: {
       characterId: character.id,
       action: input.action,
       slot: input.slot,
-      itemId: transition.movedItemId,
+      itemId: transition.movedEntryId,
       armorClass: transition.loadout.armorClass,
       equipmentAbilityRefs,
     },
@@ -602,12 +834,16 @@ function changeNpcItemState(
   if (!npcMechanicsProfileEnabled(profiles.extensions)
     || !hasExactKeys(input, [
       "action",
+      "actorCharacterId",
+      "causeFactRef",
       "itemId",
       "kind",
       "npcCharacterId",
       "rootActionId",
     ])
-    || !["break", "repair", "destroy", "lose"].includes(String(input.action))
+    || !["break", "repair", "destroy"].includes(String(input.action))
+    || !isNonEmptyString(input.actorCharacterId)
+    || !isNonEmptyString(input.causeFactRef)
     || !isNonEmptyString(input.itemId)
     || !isNonEmptyString(input.npcCharacterId)
     || !isNonEmptyString(input.rootActionId)) {
@@ -628,13 +864,30 @@ function changeNpcItemState(
     || !isNpcMechanicalTemplateDefinition(definition)) {
     return rejected("privateOrUnknownReference", "NPC mechanics are unavailable.");
   }
-  const transition = changeNpcMechanicalItemState(
-    character,
-    definition,
-    state.combatRuntime.definitions,
-    input.itemId,
-    input.action as "break" | "repair" | "destroy" | "lose",
-  );
+  const causeInput = {
+    actorCharacterId: input.actorCharacterId,
+    npcCharacterId: input.npcCharacterId,
+    itemId: input.itemId,
+    action: input.action as "break" | "repair" | "destroy",
+    causeFactRef: input.causeFactRef,
+  };
+  if (!npcMechanicalItemStateCauseAvailable(state, causeInput)) {
+    return rejected(
+      "privateOrUnknownReference",
+      "The NPC item-state change lacks an available authoritative cause.",
+    );
+  }
+  const itemSystem = state.campaignRuntime.itemSystem;
+  if (itemSystem === undefined) {
+    return rejected("invalidWorldState", "The versioned item system is unavailable.");
+  }
+  const transition = changeNpcItemSystemLifecycle(
+        itemSystem,
+        character,
+        definition,
+        String(input.itemId),
+        input.action as "break" | "repair" | "destroy",
+      );
   if ("error" in transition) {
     return rejected(
       transition.error === "unchangedItemState" ? "unchangedRetry" : "privateOrUnknownReference",
@@ -642,7 +895,9 @@ function changeNpcItemState(
     );
   }
   const drafts: Draft[] = [];
-  for (const equipmentDefinition of transition.equipmentDefinitions) {
+  const equipmentDefinitions = transition.equipment.definitions;
+  const equipmentAbilityRefs = transition.equipment.refs;
+  for (const equipmentDefinition of equipmentDefinitions) {
     const compiled = compileAbilityDefinition(equipmentDefinition);
     if (!compiled.ok) return rejected(compiled.code, compiled.publicMessage);
     const definitionId = String(equipmentDefinition.definitionId);
@@ -665,18 +920,23 @@ function changeNpcItemState(
   drafts.push({
     eventType: "NpcMechanicalItemStateChanged",
     payload: {
+      actorCharacterId: input.actorCharacterId,
       characterId: character.id,
       itemId: input.itemId,
-      action: input.action as "break" | "repair" | "destroy" | "lose",
+      action: input.action as "break" | "repair" | "destroy",
+      causeFactRef: input.causeFactRef,
       armorClass: transition.loadout.armorClass,
-      equipmentAbilityRefs: transition.equipmentAbilityRefs,
+      equipmentAbilityRefs,
     },
     reads: [
+      `entity:${input.actorCharacterId}`,
       `entity:${character.id}`,
       `combat-entity:${character.id}`,
       `definition:${String(combatEntity.mechanicalDefinitionRef)}`,
+      `fact:${input.causeFactRef}`,
     ],
     writes: [`entity:${character.id}`, `combat-entity:${character.id}`],
+    creates: [`fact:${npcMechanicalItemStateCauseUseFactId(input.causeFactRef)}`],
     visibilityPolicyId: isNonEmptyString(combatEntity.visibilityPolicyId)
       ? combatEntity.visibilityPolicyId
       : "visibility:scene-observers",

@@ -1,4 +1,4 @@
-export type ModuleNpcSocialMechanics = Readonly<{
+export type ModuleNpcSocialProfile = Readonly<{
   /** Complete SRD ability block used by Rules; no request-time prose parsing. */
   abilityScores: Readonly<{
     str: number;
@@ -214,7 +214,7 @@ export const BLACK_OAK_WILL_PREMISE_CATALOG_V1 = Object.freeze({
  * source remains untouched and historical Module Profile hashes remain exact.
  */
 export const BLACK_OAK_WILL_SOCIAL_MECHANICS_V1:
-Readonly<Record<string, ModuleNpcSocialMechanics>> = Object.freeze({
+Readonly<Record<string, ModuleNpcSocialProfile>> = Object.freeze({
   lian: Object.freeze({
     abilityScores: Object.freeze({ str: 10, dex: 12, con: 10, int: 11, wis: 12, cha: 11 }),
     proficiencyBonus: 2,

@@ -421,7 +421,7 @@ test("typed finite references repair an invented combat ability without resendin
   assert.deepEqual(repairPayload.finiteReferences.abilityRefs, [ABILITY_REF]);
   assert.ok(repairPayload.finiteReferences.basisRefs.includes(FACT_REF));
   assert.deepEqual(repairPayload.finiteReferences.resourceRefs, ["resolve"]);
-  assert.deepEqual(repairPayload.finiteReferences.artifactRefs, []);
+  assert.deepEqual(repairPayload.finiteReferences.itemRefs, []);
   assert.equal(JSON.stringify(repairPayload).includes("invented-object-family"), false);
 });
 

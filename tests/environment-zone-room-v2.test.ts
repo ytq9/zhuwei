@@ -66,7 +66,7 @@ async function initializeTacticalRoom(roomId: string) {
   const initialized = record(await room.initializeAuthoritative({
     roomId,
     moduleId: "black-oak-will",
-    moduleVersion: "tactical-map-v1",
+    moduleVersion: "social-resolution-v1",
     members: [{ principalId: ALICE.principal.id, role: "host" }],
     characters: [{
       characterId: ALICE_ID,

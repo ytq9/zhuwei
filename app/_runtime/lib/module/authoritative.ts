@@ -8,19 +8,16 @@ import {
   BLACK_OAK_WILL_PREMISE_CATALOG_V1,
   BLACK_OAK_WILL_SOCIAL_MECHANICS_V1,
   type ModulePremiseCatalog,
-  type ModuleNpcSocialMechanics,
+  type ModuleNpcSocialProfile,
 } from "./black-oak-will-social";
 import { findModule } from "./index";
 import {
   isPinnedModuleVersion,
-  pinnedModuleMigrationDescriptor,
   pinnedModuleRef,
-  resolvePinnedModuleMigrationDescriptor,
-  type PinnedModuleMigrationDescriptor,
   type PinnedModuleRef,
   type PinnedModuleVersion,
   type PinnedSha256Ref,
-} from "./migration-registry";
+} from "./registry";
 import type { ModuleDef, NpcDef, SceneDef } from "./schema";
 
 type Sha256Ref = PinnedSha256Ref;
@@ -42,7 +39,7 @@ export type ModuleNpcAnchor = {
   initialKnowledge: string[];
   declaredUnknowns: string[];
   mechanicalAnchor: string;
-  socialMechanics?: ModuleNpcSocialMechanics;
+  socialMechanics?: ModuleNpcSocialProfile;
   voice: string;
   exampleLines: string[];
   startSceneId: string;
@@ -103,15 +100,7 @@ export type AuthoritativeModuleProfile = {
   title: string;
   tone: string;
   storyBible: AuthoritativeStoryBible;
-  legacyAdapter: {
-    adapterVersion: "legacy-module-bible-adapter-v1";
-    sourceRulesetVersion: string;
-    sourceWritingRevision: number;
-    mode: "storyAnchorsOnly";
-  };
 };
-
-export type AuthoritativeModuleMigration = PinnedModuleMigrationDescriptor;
 
 export type ModuleInitializationFixture = {
   knowledgeRef: string;
@@ -122,9 +111,8 @@ export type ModuleInitializationFixture = {
   sourceKind: "moduleAnchor";
 };
 
-const CURRENT_MODULE_VERSION = "tactical-map-v1" as const;
 export const SOCIAL_RESOLUTION_MODULE_VERSION = "social-resolution-v1" as const;
-const ADAPTER_VERSION = "legacy-module-bible-adapter-v1" as const;
+const CURRENT_MODULE_VERSION = SOCIAL_RESOLUTION_MODULE_VERSION;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -178,13 +166,11 @@ function locationAnchor(
   chapterId: string,
   moduleVersion: AuthoritativeModuleVersion,
 ) {
-  const tacticalGeometry = (moduleVersion === "tactical-map-v1"
-    || moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION)
+  const tacticalGeometry = moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION
     && mod.id === "black-oak-will"
     ? BLACK_OAK_TACTICAL_GEOMETRY_V1[scene.id]
     : undefined;
-  if ((moduleVersion === "tactical-map-v1"
-    || moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION)
+  if (moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION
     && (tacticalGeometry === undefined || !isCanonicalTacticalGeometry(tacticalGeometry))) {
     throw new TypeError(`Tactical module scene lacks canonical geometry: ${mod.id}:${scene.id}`);
   }
@@ -304,12 +290,6 @@ function unsignedProfile(
     title: mod.title,
     tone: mod.tone,
     storyBible: storyBible(mod, moduleVersion),
-    legacyAdapter: {
-      adapterVersion: ADAPTER_VERSION,
-      sourceRulesetVersion: mod.rulesetVersion,
-      sourceWritingRevision: mod.writingRevision,
-      mode: "storyAnchorsOnly",
-    },
   };
 }
 
@@ -322,7 +302,6 @@ function profilePayload(profile: AuthoritativeModuleProfile | ReturnType<typeof 
     title: profile.title,
     tone: profile.tone,
     storyBible: profile.storyBible,
-    legacyAdapter: profile.legacyAdapter,
   };
 }
 
@@ -363,69 +342,6 @@ export async function verifyAuthoritativeModuleProfile(
     || profile.moduleRef.profileHash !== registeredRef.profileHash
   ) return false;
   return await sha256(profilePayload(profile)) === registeredRef.profileHash;
-}
-
-function migrationPayload(
-  migration: AuthoritativeModuleMigration | Omit<AuthoritativeModuleMigration, "migrationRef"> & {
-    migrationRef: { profileId: string };
-  },
-) {
-  return {
-    moduleId: migration.moduleId,
-    fromModuleRef: migration.fromModuleRef,
-    toModuleRef: migration.toModuleRef,
-    compatibleRulesetVersion: migration.compatibleRulesetVersion,
-    migrationRef: { profileId: migration.migrationRef.profileId },
-    chapterBoundaryOnly: migration.chapterBoundaryOnly,
-    mappingPolicy: migration.mappingPolicy,
-    preservedState: migration.preservedState,
-  };
-}
-
-export async function authoritativeModuleMigration(
-  moduleId: string,
-  fromVersion: string,
-  toVersion: string,
-): Promise<AuthoritativeModuleMigration> {
-  const key = `${moduleId}@${fromVersion}->${toVersion}`;
-  const registered = pinnedModuleMigrationDescriptor(moduleId, fromVersion, toVersion);
-  if (registered === undefined) {
-    throw new Error(`Unapproved authoritative module migration: ${key}`);
-  }
-  const from = await authoritativeModuleProfile(moduleId, fromVersion);
-  const to = await authoritativeModuleProfile(moduleId, toVersion);
-  if (
-    canonicalJson(from.moduleRef) !== canonicalJson(registered.fromModuleRef)
-    || canonicalJson(to.moduleRef) !== canonicalJson(registered.toModuleRef)
-  ) throw new Error(`Authoritative module migration refs diverged from Registry: ${key}`);
-  const calculatedHash = await sha256(migrationPayload(registered));
-  if (calculatedHash !== registered.migrationRef.profileHash) {
-    throw new Error(
-      `Authoritative module migration changed without a new version: ${key}; calculated ${calculatedHash}`,
-    );
-  }
-  return registered;
-}
-
-export async function verifyAuthoritativeModuleMigration(
-  migration: AuthoritativeModuleMigration,
-): Promise<boolean> {
-  const registered = resolvePinnedModuleMigrationDescriptor(migration);
-  if (registered === undefined) return false;
-  const fromVersion = registered.fromModuleRef.profileId.split(":").at(-1);
-  const toVersion = registered.toModuleRef.profileId.split(":").at(-1);
-  if (fromVersion === undefined || toVersion === undefined) return false;
-  try {
-    const from = await authoritativeModuleProfile(registered.moduleId, fromVersion);
-    const to = await authoritativeModuleProfile(registered.moduleId, toVersion);
-    if (
-      canonicalJson(from.moduleRef) !== canonicalJson(registered.fromModuleRef)
-      || canonicalJson(to.moduleRef) !== canonicalJson(registered.toModuleRef)
-    ) return false;
-  } catch {
-    return false;
-  }
-  return await sha256(migrationPayload(registered)) === registered.migrationRef.profileHash;
 }
 
 export function moduleKpProjection(profile: AuthoritativeModuleProfile) {

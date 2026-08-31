@@ -4,25 +4,23 @@ import test from "node:test";
 import { entityOccupanciesOverlap } from "../app/_runtime/lib/rules/profiles/combat-geometry.ts";
 
 import {
-  authoritativeModuleMigration,
   authoritativeModuleProfile,
   moduleInitializationFixtures,
   moduleKpProjection,
   modulePublicCatalogEntry,
-  verifyAuthoritativeModuleMigration,
   verifyAuthoritativeModuleProfile,
 } from "../app/_runtime/lib/module/authoritative.ts";
 
 const MODULE_ID = "black-oak-will";
 
-test("keeps the legacy-v1 Module Bible byte-pinned and fails closed for unknown module versions", async () => {
-  const profile = await authoritativeModuleProfile(MODULE_ID, "legacy-anchor-v1");
+test("keeps product 0.4's single Module Bible byte-pinned and fails closed for retired versions", async () => {
+  const profile = await authoritativeModuleProfile(MODULE_ID, "social-resolution-v1");
   assert.equal(profile.moduleId, MODULE_ID);
-  assert.equal(profile.moduleVersion, "legacy-anchor-v1");
+  assert.equal(profile.moduleVersion, "social-resolution-v1");
   assert.equal(profile.compatibleRulesetVersion, "dnd5e-2014-srd5.1-authoritative-v2");
   assert.deepEqual(profile.moduleRef, {
-    profileId: "module:black-oak-will:legacy-anchor-v1",
-    profileHash: "sha256:198ad1c122a84abffc881cfb4b0c5f6bcb32cd2411acb07aceb33163694b37f9",
+    profileId: "module:black-oak-will:social-resolution-v1",
+    profileHash: "sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272",
   });
   assert.match(profile.moduleRef.profileHash, /^sha256:[0-9a-f]{64}$/);
   assert.equal(await verifyAuthoritativeModuleProfile(profile), true);
@@ -32,7 +30,7 @@ test("keeps the legacy-v1 Module Bible byte-pinned and fails closed for unknown 
     /unknown authoritative module/i,
   );
   await assert.rejects(
-    authoritativeModuleProfile("black-oak-will", "legacy-anchor-v999"),
+    authoritativeModuleProfile("black-oak-will", "retired-module-version"),
     /unknown authoritative module version/i,
   );
 
@@ -41,12 +39,12 @@ test("keeps the legacy-v1 Module Bible byte-pinned and fails closed for unknown 
   assert.equal(await verifyAuthoritativeModuleProfile(tampered), false);
 });
 
-test("defaults new rooms to the pinned tactical Module Bible with real geometry for every location", async () => {
+test("defaults product 0.4 rooms to the pinned social/tactical Module Bible with real geometry", async () => {
   const profile = await authoritativeModuleProfile(MODULE_ID);
-  assert.equal(profile.moduleVersion, "tactical-map-v1");
+  assert.equal(profile.moduleVersion, "social-resolution-v1");
   assert.deepEqual(profile.moduleRef, {
-    profileId: "module:black-oak-will:tactical-map-v1",
-    profileHash: "sha256:df49e12260b590d339961c2a19b3ddc5f59741d2a8521d4d97dbf151d9177947",
+    profileId: "module:black-oak-will:social-resolution-v1",
+    profileHash: "sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272",
   });
   assert.equal(await verifyAuthoritativeModuleProfile(profile), true);
   assert.equal(profile.storyBible.storyAnchors.locations.length, 8);
@@ -94,54 +92,7 @@ test("defaults new rooms to the pinned tactical Module Bible with real geometry 
   }
 });
 
-test("keeps two exact compatible module versions and only accepts the approved chapter migration", async () => {
-  const first = await authoritativeModuleProfile(MODULE_ID, "legacy-anchor-v1");
-  const second = await authoritativeModuleProfile(MODULE_ID, "legacy-anchor-v2");
-  assert.equal(second.moduleId, first.moduleId);
-  assert.equal(second.moduleVersion, "legacy-anchor-v2");
-  assert.equal(second.compatibleRulesetVersion, first.compatibleRulesetVersion);
-  assert.deepEqual(second.moduleRef, {
-    profileId: "module:black-oak-will:legacy-anchor-v2",
-    profileHash: "sha256:283e0b6dfd7bab0a27895e741b9b56a2c536ba02ef922d4a35ebe43227ce0a03",
-  });
-  assert.equal(await verifyAuthoritativeModuleProfile(second), true);
-
-  const migration = await authoritativeModuleMigration(
-    MODULE_ID,
-    first.moduleVersion,
-    second.moduleVersion,
-  );
-  assert.deepEqual(migration.fromModuleRef, first.moduleRef);
-  assert.deepEqual(migration.toModuleRef, second.moduleRef);
-  assert.equal(migration.chapterBoundaryOnly, true);
-  assert.equal(migration.mappingPolicy, "preserveAuthoritativeRoomState");
-  assert.deepEqual(migration.preservedState, [
-    "activities",
-    "artifacts",
-    "canonicalFacts",
-    "corrections",
-    "debts",
-    "dynamicDefinitions",
-    "factionPlans",
-    "knowledge",
-    "npcPlans",
-    "promises",
-    "relationships",
-    "threats",
-  ]);
-  assert.match(migration.migrationRef.profileHash, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(await verifyAuthoritativeModuleMigration(migration), true);
-
-  const tampered = structuredClone(migration);
-  tampered.toModuleRef.profileHash = `sha256:${"0".repeat(64)}`;
-  assert.equal(await verifyAuthoritativeModuleMigration(tampered), false);
-  await assert.rejects(
-    authoritativeModuleMigration(MODULE_ID, second.moduleVersion, first.moduleVersion),
-    /unapproved authoritative module migration/i,
-  );
-});
-
-test("adapts the legacy DSL into story anchors and open blanks, never an action whitelist", async () => {
+test("maps the upstream module DSL into story anchors and open blanks, never an action whitelist", async () => {
   const profile = await authoritativeModuleProfile(MODULE_ID);
   const bible = profile.storyBible;
 
@@ -153,9 +104,6 @@ test("adapts the legacy DSL into story anchors and open blanks, never an action 
   assert.ok(bible.openBlanks.length > 0);
   assert.ok(bible.initialPressures.length > 0);
   assert.ok(bible.sequelSignals.length >= 2);
-  assert.equal(profile.legacyAdapter.sourceRulesetVersion, "dnd5e-2014-srd5.1-v1");
-  assert.equal(profile.legacyAdapter.mode, "storyAnchorsOnly");
-
   const encoded = JSON.stringify(profile);
   for (const forbiddenKey of [
     '"interactions"',

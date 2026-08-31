@@ -6,6 +6,8 @@
  * catalog from becoming part of a model, page, or public API contract.
  */
 
+import { canonicalSha256 } from "../rules/profiles/canonical";
+
 export const KP_FORM_IDS = Object.freeze([
   "clarification.v1",
   "observe.v1",
@@ -53,13 +55,6 @@ export function kpFormIdForToolName(toolName: unknown): KpFormId | undefined {
   if (typeof toolName !== "string") return undefined;
   return KP_FORM_ID_BY_TOOL_NAME.get(toolName);
 }
-
-export const KP_FORM_CATALOG_REGISTRATION = Object.freeze({
-  catalogRef: "kp-private-form-catalog-v3",
-  catalogVersion: "kp-private-form-catalog-v3.4",
-  catalogHash: "sha256:807cd49e7e81a8f8a85231f0d39186ef737187ecc80b35403d83f0e20dd57869",
-  formCount: 10,
-});
 
 type FieldKind =
   | "text"
@@ -135,7 +130,7 @@ const FORM_CATALOG: Readonly<Record<KpFormId, CatalogForm>> = Object.freeze({
       "goal", "method", "intendedOutcome", "risk", "resolution", "ability", "skill", "dc", "mode",
       "durationUnit", "durationValue", "successConsequence", "failureConsequence",
     ],
-    ["basisRefs", "alternatives", "resourceRef", "resourceAmount", "artifactRef", "artifactCount"],
+    ["basisRefs", "alternatives", "resourceRef", "resourceAmount", "itemRef", "itemCount"],
     mechanicalFieldKinds(),
   ),
   "high-risk-action.v1": form(
@@ -145,7 +140,7 @@ const FORM_CATALOG: Readonly<Record<KpFormId, CatalogForm>> = Object.freeze({
       "goal", "method", "intendedOutcome", "risk", "stakes", "resolution", "ability", "skill", "dc", "mode",
       "durationUnit", "durationValue", "successConsequence", "failureConsequence",
     ],
-    ["basisRefs", "alternatives", "resourceRef", "resourceAmount", "artifactRef", "artifactCount"],
+    ["basisRefs", "alternatives", "resourceRef", "resourceAmount", "itemRef", "itemCount"],
     mechanicalFieldKinds(),
   ),
   "in-world-refusal.v1": form(
@@ -249,7 +244,7 @@ const FORM_CATALOG: Readonly<Record<KpFormId, CatalogForm>> = Object.freeze({
     [
       "basisRefs", "risk", "alternatives", "ability", "skill", "dc", "mode",
       "successConsequence", "failureConsequence", "resourceRef", "resourceAmount",
-      "artifactRef", "artifactCount",
+      "itemRef", "itemCount",
     ],
     mechanicalFieldKinds(),
   ),
@@ -285,7 +280,7 @@ function mechanicalFieldKinds(): Readonly<Record<string, FieldKind>> {
     durationUnit: "duration-unit",
     durationValue: "positive-integer",
     resourceAmount: "positive-integer",
-    artifactCount: "positive-integer",
+    itemCount: "positive-integer",
   });
 }
 
@@ -734,6 +729,46 @@ function deepFreezeSchema(value: unknown): unknown {
   return Object.freeze(frozen);
 }
 
+const KP_FORM_CATALOG_REF = "kp-private-form-catalog-v4" as const;
+const KP_FORM_CATALOG_VERSION = "kp-private-form-catalog-v4.0" as const;
+
+/**
+ * Complete private catalog preimage. The document stays module-private so a
+ * caller still cannot request the unfiltered catalog, while the registered
+ * hash remains independently checkable against every descriptor and tool
+ * parameter schema that the current catalog can expose.
+ */
+const KP_FORM_CATALOG_PROFILE_DOCUMENT = Object.freeze({
+  schema: "zhuwei.kp-form-catalog-profile/v1",
+  catalogRef: KP_FORM_CATALOG_REF,
+  catalogVersion: KP_FORM_CATALOG_VERSION,
+  selectionContract: "server-allowlist-of-three-to-six-forms-including-compound",
+  validationContract: "closed-draft-schema-plus-resolution-cost-pair-and-environment-cross-field-validation",
+  itemCostContract: "one-exact-item-entry-ref-paired-with-one-positive-count",
+  forms: Object.freeze(KP_FORM_IDS.map((formId) => Object.freeze({
+    formId,
+    toolName: KP_FORM_TOOL_NAMES[formId],
+    descriptor: FORM_CATALOG[formId],
+    parameters: buildKpFormToolParameters(formId),
+  }))),
+});
+
+export const KP_FORM_CATALOG_REGISTRATION = Object.freeze({
+  catalogRef: KP_FORM_CATALOG_REF,
+  catalogVersion: KP_FORM_CATALOG_VERSION,
+  catalogHash: "sha256:4151291dcdc0744f45dc45a21945a3c1a0ba629811b6de874b8bb96be5898367",
+  formCount: KP_FORM_IDS.length,
+});
+
+export function canonicalKpFormCatalogHash(): `sha256:${string}` {
+  return canonicalSha256(KP_FORM_CATALOG_PROFILE_DOCUMENT);
+}
+
+export function formCatalogRegistrationMatchesCanonicalDocument(): boolean {
+  return KP_FORM_CATALOG_REGISTRATION.catalogHash
+    === canonicalKpFormCatalogHash();
+}
+
 export function assertAllowedFormSet(allowedForms: readonly KpFormId[]): void {
   if (allowedForms.length < 3 || allowedForms.length > 6) {
     throw new Error("KP_FORM_ALLOWLIST_SIZE_INVALID");
@@ -822,7 +857,7 @@ export function validateKpFormDraft(formId: KpFormId, draft: unknown): FormDraft
   }
   for (const [refField, amountField] of [
     ["resourceRef", "resourceAmount"],
-    ["artifactRef", "artifactCount"],
+    ["itemRef", "itemCount"],
   ] as const) {
     if (Object.hasOwn(draft, refField) !== Object.hasOwn(draft, amountField)) {
       errors.push(`${refField}:${amountField}:pair-required`);

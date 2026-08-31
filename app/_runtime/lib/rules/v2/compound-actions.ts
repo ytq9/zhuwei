@@ -1,6 +1,5 @@
 import { canonicalSha256 } from "../profiles/canonical";
-import { compileAbilityDefinition } from "../profiles/ability-compiler";
-import type { ProfileRef, RuntimeProfileManifest } from "../profiles/types";
+import type { RuntimeProfileManifest } from "../profiles/types";
 import { createEventTransition, createScopeProof } from "./events";
 import type {
   AuthoritativeWorldState,
@@ -24,7 +23,7 @@ import { stepCampaignWorld } from "./campaign-actions";
 import { stepCombatWorld } from "./combat-actions";
 import { stepMultiplayerWorld } from "./multiplayer-actions";
 import { isGearSlot } from "./character-gear";
-import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
+import { continueCompoundRoot } from "./internal-compound";
 import {
   hasExactKeys,
   hasOnlyKeys,
@@ -53,11 +52,10 @@ import {
   earliestEligibleDueActorPlan,
 } from "./actor-plans";
 
-const ACTION_PLAN_VERSION = "authoritative-kp-action-plan-v1";
 const ABILITIES = ["str", "dex", "con", "int", "wis", "cha"] as const;
 const MODES = ["normal", "advantage", "disadvantage"] as const;
 const INHERITANCE_SCOPE_BY_KIND = {
-  artifact: "transferPossession",
+  item: "transferPossession",
   knowledge: "acquireExactKnowledge",
   relationship: "establishDerivedRelationship",
   debt: "assumeDebtObligation",
@@ -92,64 +90,6 @@ const MATERIALIZATION_KINDS = [
   "opportunity",
   "ability",
 ] as const;
-const RETRY_GATES = [
-  "methodChanged",
-  "factsChanged",
-  "costAccepted",
-  "positionChanged",
-  "materialAssistance",
-  "situationAdvanced",
-] as const;
-const UNCERTAINTY_BEARING_OPERATIONS = new Set([
-  "resolveNoncombatCheck",
-  "resolveNoncombatContest",
-  "resolveNoncombatSave",
-  "retryFailedAction",
-  "startCombat",
-  "invokeCombatAction",
-  "resolveReaction",
-]);
-function normalizeAuthorityKey(key: string): string {
-  return key.toLowerCase().replaceAll("_", "").replaceAll("-", "");
-}
-
-const FORBIDDEN_AUTHORITY_KEYS = new Set([
-  "actor",
-  "actorCharacterId",
-  "principal",
-  "principalId",
-  "profile",
-  "profiles",
-  "state",
-  "worldState",
-  "event",
-  "events",
-  "eventType",
-  "die",
-  "dice",
-  "face",
-  "faces",
-  "roll",
-  "rolls",
-  "mechanicOps",
-  "mechanicGraph",
-  "compiledGraph",
-  "compiledHash",
-  "compilerProfile",
-  "definitionHash",
-  "referenceClosure",
-  "opId",
-  "sourcePath",
-  "setPath",
-  "jsonPatch",
-  "script",
-  "callback",
-  "emit",
-  "eventPayload",
-  "function",
-  "sql",
-].map(normalizeAuthorityKey));
-
 type Draft = {
   eventType: EventType;
   payload: EventPayloadByType[EventType];
@@ -167,39 +107,6 @@ type DynamicMaterialization = {
   causalBasisRefs: string[];
   visibilityPolicyRef: string;
   definition: JsonRecord;
-};
-
-type NpcAction = {
-  npcId: string;
-  goal: string;
-  method: string;
-  knowledgeRefs: string[];
-  actorPlan?: {
-    factionRef?: string;
-    planId: string;
-    premiseRefs: string[];
-    nextStep: string;
-    resourceRefs: string[];
-    activity: {
-      activityId: string;
-      activityKind: string;
-      intendedDurationMicros: string;
-    };
-    due: { kind: "fictionTime"; atFictionMicros: string } | null;
-    trigger:
-      | { kind: "committedEvent"; eventRef: string }
-      | { kind: "knowledgeAcquired"; knowledgeRef: string }
-      | null;
-    trace: {
-      factRef: string;
-      description: string;
-      visibilityPolicyRef: string;
-    };
-    alternateTarget: { targetRef: string; reason: string };
-    chapterId: string;
-    moduleRef: ProfileRef;
-  };
-  mechanicalProposal: JsonRecord | null;
 };
 
 function canonicalStrings(value: unknown): string[] | undefined {
@@ -223,173 +130,6 @@ function canonicalFailureOptions(value: unknown): Array<{ optionId: string; summ
   }
   if (new Set(options.map(({ optionId }) => optionId)).size !== options.length) return undefined;
   return options.sort((left, right) => left.optionId.localeCompare(right.optionId));
-}
-
-function boundedCanonicalStrings(
-  value: unknown,
-  maximumItems: number,
-  maximumLength: number,
-): string[] | undefined {
-  const values = canonicalStrings(value);
-  return values !== undefined
-      && values.length <= maximumItems
-      && values.every((entry) => entry.length <= maximumLength)
-    ? values
-    : undefined;
-}
-
-function adjudicationPrecedentDraft(
-  profiles: RuntimeProfileManifest,
-  state: AuthoritativeWorldState,
-  input: JsonRecord,
-  risk: JsonRecord,
-  mechanical: JsonRecord,
-  publicBasisRefs: string[],
-  privateBasisRefs: string[],
-): Draft | StepResult | undefined {
-  const proposal = input.adjudicationPrecedent;
-  if (proposal === undefined || proposal === null) return undefined;
-  if (!isRecord(proposal) || !["record", "supersede"].includes(String(proposal.kind))) {
-    return rejected("invalidRulesInput", "Adjudication precedent annotation is not canonical.");
-  }
-  const supersede = proposal.kind === "supersede";
-  if (!hasExactKeys(
-    proposal,
-    supersede
-      ? [
-          "applicabilityScope",
-          "kind",
-          "materialDifferences",
-          "publicRuleBasis",
-          "supersededPrecedentId",
-        ]
-      : ["applicabilityScope", "kind", "publicRuleBasis"],
-  )) return rejected("invalidRulesInput", "Adjudication precedent fields are not canonical.");
-  if (
-    !isRecord(proposal.applicabilityScope)
-    || !hasExactKeys(proposal.applicabilityScope, ["kind", "ref"])
-    || !["scene", "campaign", "module", "room"].includes(String(proposal.applicabilityScope.kind))
-    || !isNonEmptyString(proposal.applicabilityScope.ref)
-  ) return rejected("invalidRulesInput", "Adjudication precedent scope is not canonical.");
-  const scope = {
-    kind: proposal.applicabilityScope.kind as string,
-    ref: proposal.applicabilityScope.ref as string,
-  };
-  if (
-    (scope.kind === "scene" && state.scenes[scope.ref] === undefined)
-    || (scope.kind === "room" && scope.ref !== state.roomId)
-    || (scope.kind === "campaign" && (
-      state.campaignRuntime.campaign === null
-      || state.campaignRuntime.campaign.campaignId !== scope.ref
-    ))
-  ) return rejected("privateOrUnknownReference", "Adjudication precedent scope is unavailable.");
-  const publicRuleBasis = boundedCanonicalStrings(proposal.publicRuleBasis, 12, 480);
-  if (publicRuleBasis === undefined || publicRuleBasis.length === 0) {
-    return rejected("invalidRulesInput", "Adjudication precedent requires public rule basis.");
-  }
-  const materialDifferences = supersede
-    ? boundedCanonicalStrings(proposal.materialDifferences, 12, 480)
-    : [];
-  if (supersede && (materialDifferences === undefined || materialDifferences.length === 0)) {
-    return rejected("invalidRulesInput", "Adjudication precedent supersession requires material differences.");
-  }
-  const duration = isRecord(mechanical.duration)
-      && hasExactKeys(mechanical.duration, ["unit", "value"])
-      && ["round", "second", "minute", "hour", "day"].includes(String(mechanical.duration.unit))
-      && Number.isSafeInteger(mechanical.duration.value)
-      && Number(mechanical.duration.value) > 0
-    ? {
-        unit: mechanical.duration.unit as string,
-        value: Number(mechanical.duration.value),
-      }
-    : null;
-  const mechanics = {
-    operation: mechanical.operation as string,
-    ability: isNonEmptyString(mechanical.ability)
-      ? mechanical.ability
-      : isNonEmptyString(mechanical.saveAbility) ? mechanical.saveAbility : null,
-    skill: mechanical.skill === null || isNonEmptyString(mechanical.skill)
-      ? mechanical.skill as string | null
-      : null,
-    dc: Number.isSafeInteger(mechanical.dc) ? Number(mechanical.dc) : null,
-    duration,
-    outcomeRange: {
-      success: structuredClone(risk.successConsequences as string[]),
-      failure: structuredClone(risk.failureConsequences as string[]),
-    },
-  };
-  const applicabilityScope = structuredClone(scope);
-  const common = {
-    precedentId: `precedent:${input.rootActionId as string}`,
-    canonicalContextFingerprint: canonicalSha256({
-      schema: "zhuwei.adjudication-precedent-context/v1",
-      feasibilityKind: input.feasibilityKind,
-      goal: input.goal,
-      method: input.method,
-      publicBasisRefs,
-      privateBasisRefs,
-      mechanics,
-      applicabilityScope,
-      rulesetProfile: profiles.ruleset,
-      runtimeManifestProfile: profiles.manifest,
-    }),
-    publicExplanation: risk.warning as string,
-    publicRuleBasis,
-    publicBasisRefs,
-    privateBasisRefs,
-    mechanics,
-    applicabilityScope,
-    rulesetProfile: structuredClone(profiles.ruleset),
-    runtimeManifestProfile: structuredClone(profiles.manifest),
-  };
-  const precedents = state.campaignRuntime.adjudicationPrecedents ?? {};
-  if (precedents[common.precedentId] !== undefined) {
-    return rejected("duplicateRootAction", "Adjudication precedent id already exists.");
-  }
-  if (!supersede) {
-    return {
-      eventType: "AdjudicationPrecedentRecorded",
-      payload: common,
-      visibilityPolicyId: "visibility:room-authority-only",
-      secrecy: "internal",
-      creates: [`adjudication-precedent:${common.precedentId}`],
-    };
-  }
-  const supersededPrecedentId = proposal.supersededPrecedentId;
-  const prior = isNonEmptyString(supersededPrecedentId)
-    ? precedents[supersededPrecedentId]
-    : undefined;
-  if (prior?.status !== "active") {
-    return rejected("privateOrUnknownReference", "The adjudication precedent to supersede is unavailable.");
-  }
-  if (prior.canonicalContextFingerprint === common.canonicalContextFingerprint) {
-    return rejected(
-      "invalidRulesInput",
-      "An unchanged adjudication context cannot supersede an existing precedent.",
-    );
-  }
-  return {
-    eventType: "AdjudicationPrecedentSuperseded",
-    payload: {
-      ...common,
-      supersededPrecedentId,
-      materialDifferences: materialDifferences!,
-    },
-    visibilityPolicyId: "visibility:room-authority-only",
-    secrecy: "internal",
-    reads: [`adjudication-precedent:${supersededPrecedentId}`],
-    writes: [`adjudication-precedent:${supersededPrecedentId}`],
-    creates: [`adjudication-precedent:${common.precedentId}`],
-  };
-}
-
-function containsAuthorityField(value: unknown, seen = new WeakSet<object>()): boolean {
-  if (value === null || typeof value !== "object") return false;
-  if (seen.has(value)) return true;
-  seen.add(value);
-  if (Array.isArray(value)) return value.some((entry) => containsAuthorityField(entry, seen));
-  return Object.entries(value as JsonRecord).some(([key, entry]) =>
-    FORBIDDEN_AUTHORITY_KEYS.has(normalizeAuthorityKey(key)) || containsAuthorityField(entry, seen));
 }
 
 function durationMicros(value: unknown): string | undefined {
@@ -454,363 +194,6 @@ function result(
   } as StepResult;
 }
 
-function normalizeMaterializations(
-  state: AuthoritativeWorldState,
-  value: unknown,
-): DynamicMaterialization[] | undefined {
-  if (!Array.isArray(value) || value.length > 12) return undefined;
-  const entries: DynamicMaterialization[] = [];
-  for (const item of value) {
-    if (
-      !isRecord(item)
-      || !hasExactKeys(item, ["causalBasisRefs", "definition", "factRef", "kind", "visibilityPolicyRef"])
-      || !(MATERIALIZATION_KINDS as readonly unknown[]).includes(item.kind)
-      || !isNonEmptyString(item.factRef)
-      || !isNonEmptyString(item.visibilityPolicyRef)
-      || !isRecord(item.definition)
-      || containsAuthorityField(item.definition)
-      || item.factRef in state.canonicalFacts
-      || item.factRef in state.campaignRuntime.definitions
-    ) return undefined;
-    if (
-      item.kind === "location"
-      && (
-        !isNonEmptyString(item.definition.sceneId)
-        || !isNonEmptyString(item.definition.name)
-      )
-    ) return undefined;
-    if (
-      item.kind === "item"
-      && (item.definition.artifactId !== undefined || item.definition.sceneRef !== undefined)
-      && (
-        !isNonEmptyString(item.definition.artifactId)
-        || !isNonEmptyString(item.definition.name)
-        || !isNonEmptyString(item.definition.sceneRef)
-        || item.definition.artifactId in state.campaignRuntime.artifacts
-      )
-    ) return undefined;
-    if (
-      item.kind === "ability"
-      && (
-        item.definition.definitionId !== item.factRef
-        || !compileAbilityDefinition(item.definition).ok
-      )
-    ) return undefined;
-    if (
-      item.kind === "faction"
-      && (
-        !isNonEmptyString(item.definition.factionId)
-        || item.definition.factionId !== item.factRef
-        || !isNonEmptyString(item.definition.name)
-        || !isNonEmptyString(item.definition.goal)
-        || canonicalStrings(item.definition.memberRefs) === undefined
-        || canonicalStrings(item.definition.resourceRefs) === undefined
-        || (item.definition.memberRefs as string[]).some((memberId) =>
-          state.entities[memberId]?.kind !== "npc"
-          || state.entities[memberId]?.tenureStatus !== "active")
-        || item.definition.factionId in state.campaignRuntime.factions
-      )
-    ) return undefined;
-    const causalBasisRefs = canonicalStrings(item.causalBasisRefs);
-    if (causalBasisRefs === undefined
-      || causalBasisRefs.some((factRef) => !(factRef in state.canonicalFacts))) return undefined;
-    entries.push({
-      kind: item.kind as DynamicMaterialization["kind"],
-      factRef: item.factRef,
-      causalBasisRefs,
-      visibilityPolicyRef: item.visibilityPolicyRef,
-      definition: structuredClone(item.definition),
-    });
-  }
-  const sceneIds = new Set([
-    ...Object.keys(state.scenes),
-    ...entries.flatMap((entry) =>
-      entry.kind === "location" && isNonEmptyString(entry.definition.sceneId)
-        ? [entry.definition.sceneId]
-        : []),
-  ]);
-  const artifactIds = entries.flatMap((entry) =>
-    entry.kind === "item" && isNonEmptyString(entry.definition.artifactId)
-      ? [entry.definition.artifactId]
-      : []);
-  const factionIds = entries.flatMap((entry) =>
-    entry.kind === "faction" && isNonEmptyString(entry.definition.factionId)
-      ? [entry.definition.factionId]
-      : []);
-  return new Set(entries.map(({ factRef }) => factRef)).size === entries.length
-    && new Set(artifactIds).size === artifactIds.length
-    && new Set(factionIds).size === factionIds.length
-    && entries.every((entry) =>
-      entry.kind !== "item"
-      || !isNonEmptyString(entry.definition.artifactId)
-      || sceneIds.has(entry.definition.sceneRef as string))
-    ? entries
-    : undefined;
-}
-
-function actorPlanResourceRefs(
-  state: AuthoritativeWorldState,
-  npcId: string,
-  materializations: DynamicMaterialization[],
-): Set<string> {
-  const available = new Set(Object.keys(state.entities[npcId]?.resources ?? {}));
-  const addFaction = (faction: JsonRecord) => {
-    if (!Array.isArray(faction.memberRefs) || !faction.memberRefs.includes(npcId)) return;
-    if (isNonEmptyString(faction.factionId)) available.add(faction.factionId);
-    if (Array.isArray(faction.resourceRefs)) {
-      for (const resourceRef of faction.resourceRefs) {
-        if (isNonEmptyString(resourceRef)) available.add(resourceRef);
-      }
-    }
-  };
-  for (const faction of Object.values(state.campaignRuntime.factions)) addFaction(faction);
-  for (const materialization of materializations) {
-    if (materialization.kind === "faction") addFaction(materialization.definition);
-  }
-  return available;
-}
-
-function normalizeActorPlan(
-  state: AuthoritativeWorldState,
-  npcId: string,
-  actionKnowledgeRefs: string[],
-  value: unknown,
-  materializations: DynamicMaterialization[],
-): NonNullable<NpcAction["actorPlan"]> | undefined {
-  if (
-    !isRecord(value)
-    || !hasOnlyKeys(value, [
-      "activity",
-      "alternateTarget",
-      "due",
-      "nextStep",
-      "planId",
-      "premiseRefs",
-      "resourceRefs",
-      "trace",
-      "trigger",
-    ], ["factionRef"])
-    || !isNonEmptyString(value.planId)
-    || value.planId.length > 240
-    || !isNonEmptyString(value.nextStep)
-    || value.nextStep.length > 480
-    || value.planId in state.campaignRuntime.npcPlans
-    || !isRecord(value.activity)
-    || !hasExactKeys(value.activity, ["activityId", "activityKind", "intendedDurationMicros"])
-    || !isNonEmptyString(value.activity.activityId)
-    || value.activity.activityId.length > 240
-    || !isNonEmptyString(value.activity.activityKind)
-    || value.activity.activityKind.length > 120
-    || typeof value.activity.intendedDurationMicros !== "string"
-    || !/^[1-9][0-9]*$/.test(value.activity.intendedDurationMicros)
-    || value.activity.intendedDurationMicros.length > 40
-    || value.activity.activityId in state.campaignRuntime.activities
-    || !isRecord(value.trace)
-    || !hasExactKeys(value.trace, ["description", "factRef", "visibilityPolicyRef"])
-    || !isNonEmptyString(value.trace.factRef)
-    || value.trace.factRef.length > 240
-    || !isNonEmptyString(value.trace.description)
-    || value.trace.description.length > 480
-    || !isNonEmptyString(value.trace.visibilityPolicyRef)
-    || value.trace.visibilityPolicyRef.length > 240
-    || value.trace.factRef in state.canonicalFacts
-    || value.trace.factRef in state.campaignRuntime.definitions
-    || materializations.some(({ factRef }) =>
-      factRef === (value.trace as JsonRecord).factRef)
-    || !isRecord(value.alternateTarget)
-    || !hasExactKeys(value.alternateTarget, ["reason", "targetRef"])
-    || !isNonEmptyString(value.alternateTarget.targetRef)
-    || value.alternateTarget.targetRef.length > 240
-    || !isNonEmptyString(value.alternateTarget.reason)
-    || value.alternateTarget.reason.length > 480
-  ) return undefined;
-
-  const heldKnowledge = state.knowledge[npcId] ?? {};
-  const premiseRefs = boundedCanonicalStrings(value.premiseRefs, 40, 240);
-  const resourceRefs = boundedCanonicalStrings(value.resourceRefs, 40, 240);
-  const availableResources = actorPlanResourceRefs(state, npcId, materializations);
-  const factionRef = value.factionRef === undefined
-    ? undefined
-    : isNonEmptyString(value.factionRef)
-      ? value.factionRef
-      : null;
-  const faction = typeof factionRef === "string"
-    ? state.campaignRuntime.factions[factionRef]
-      ?? materializations.find((entry) =>
-        entry.kind === "faction" && entry.definition.factionId === factionRef)?.definition
-    : undefined;
-  const materializedSceneIds = new Set(materializations.flatMap((entry) =>
-    entry.kind === "location" && isNonEmptyString(entry.definition.sceneId)
-      ? [entry.definition.sceneId]
-      : []));
-  if (
-    premiseRefs === undefined
-    || premiseRefs.length === 0
-    || premiseRefs.some((reference) => !actorPlanPremiseIsAvailable(state, npcId, reference))
-    || resourceRefs === undefined
-    || resourceRefs.some((reference) => !availableResources.has(reference))
-    || factionRef === null
-    || (typeof factionRef === "string"
-      && (
-        !isRecord(faction)
-        || !Array.isArray(faction.memberRefs)
-        || !faction.memberRefs.includes(npcId)
-        || !resourceRefs.includes(factionRef)
-        || !Array.isArray(faction.resourceRefs)
-        || faction.resourceRefs.some((reference) =>
-          !isNonEmptyString(reference) || !resourceRefs.includes(reference))
-      ))
-    || (!(value.alternateTarget.targetRef in state.scenes)
-      && !(value.alternateTarget.targetRef in state.entities)
-      && !materializedSceneIds.has(value.alternateTarget.targetRef))
-  ) return undefined;
-
-  let due: NonNullable<NpcAction["actorPlan"]>["due"] = null;
-  if (value.due !== null) {
-    if (
-      !isRecord(value.due)
-      || !hasExactKeys(value.due, ["atFictionMicros", "kind"])
-      || value.due.kind !== "fictionTime"
-      || typeof value.due.atFictionMicros !== "string"
-      || !/^(0|[1-9][0-9]*)$/.test(value.due.atFictionMicros)
-      || value.due.atFictionMicros.length > 40
-    ) return undefined;
-    const timelineId = characterTimelineId(state, npcId);
-    if (timelineId === undefined
-      || (BigInt(state.fictionTimelines[timelineId].nowMicros)
-        + BigInt(value.activity.intendedDurationMicros)).toString() !== value.due.atFictionMicros) {
-      return undefined;
-    }
-    due = { kind: "fictionTime", atFictionMicros: value.due.atFictionMicros };
-  }
-
-  let trigger: NonNullable<NpcAction["actorPlan"]>["trigger"] = null;
-  if (value.trigger !== null) {
-    if (!isRecord(value.trigger)) return undefined;
-    if (value.trigger.kind === "knowledgeAcquired"
-      && hasExactKeys(value.trigger, ["kind", "knowledgeRef"])
-      && isNonEmptyString(value.trigger.knowledgeRef)
-      && value.trigger.knowledgeRef in heldKnowledge) {
-      trigger = { kind: "knowledgeAcquired", knowledgeRef: value.trigger.knowledgeRef };
-    } else if (
-      value.trigger.kind === "committedEvent"
-      && hasExactKeys(value.trigger, ["eventRef", "kind"])
-      && isNonEmptyString(value.trigger.eventRef)
-      && Object.values(heldKnowledge).some((knowledge) =>
-        knowledge.acquiredByEventId === (value.trigger as JsonRecord).eventRef
-        || knowledge.provenanceChain.includes((value.trigger as JsonRecord).eventRef as string))
-    ) {
-      trigger = { kind: "committedEvent", eventRef: value.trigger.eventRef };
-    } else {
-      return undefined;
-    }
-  }
-  if ((due === null) === (trigger === null)) return undefined;
-
-  const campaign = state.campaignRuntime.campaign;
-  const chapterId = isNonEmptyString(campaign?.currentChapterId)
-    ? campaign.currentChapterId
-    : undefined;
-  const chapter = chapterId === undefined ? undefined : state.campaignRuntime.chapters[chapterId];
-  if (chapterId === undefined || chapter?.status !== "active" || !isProfileRef(chapter.moduleRef)) {
-    return undefined;
-  }
-  return {
-    ...(typeof factionRef === "string" ? { factionRef } : {}),
-    planId: value.planId,
-    premiseRefs,
-    nextStep: value.nextStep,
-    resourceRefs,
-    activity: {
-      activityId: value.activity.activityId,
-      activityKind: value.activity.activityKind,
-      intendedDurationMicros: value.activity.intendedDurationMicros,
-    },
-    due,
-    trigger,
-    trace: {
-      factRef: value.trace.factRef,
-      description: value.trace.description,
-      visibilityPolicyRef: value.trace.visibilityPolicyRef,
-    },
-    alternateTarget: {
-      targetRef: value.alternateTarget.targetRef,
-      reason: value.alternateTarget.reason,
-    },
-    chapterId,
-    moduleRef: structuredClone(chapter.moduleRef),
-  };
-}
-
-function normalizeNpcActions(
-  state: AuthoritativeWorldState,
-  value: unknown,
-  materializations: DynamicMaterialization[],
-): { actions?: NpcAction[]; rejection?: StepResult } {
-  if (!Array.isArray(value) || value.length > 12) {
-    return { rejection: rejected("invalidRulesInput", "NPC plans must be a bounded canonical array.") };
-  }
-  const actions: NpcAction[] = [];
-  for (const item of value) {
-    if (
-      !isRecord(item)
-      || !hasOnlyKeys(
-        item,
-        ["goal", "knowledgeRefs", "mechanicalProposal", "method", "npcId"],
-        ["actorPlan"],
-      )
-      || !isNonEmptyString(item.npcId)
-      || !isNonEmptyString(item.goal)
-      || !isNonEmptyString(item.method)
-    ) return { rejection: rejected("invalidRulesInput", "NPC plan has missing or additional fields.") };
-    const mechanicalProposal = item.mechanicalProposal === null
-      ? null
-      : isRecord(item.mechanicalProposal)
-        && isNonEmptyString(item.mechanicalProposal.operation)
-        && !containsAuthorityField(item.mechanicalProposal)
-        ? structuredClone(item.mechanicalProposal)
-        : undefined;
-    if (mechanicalProposal === undefined) {
-      return { rejection: rejected("invalidRulesInput", "NPC mechanics must be a semantic ActionPlan operation.") };
-    }
-    const knowledgeRefs = canonicalStrings(item.knowledgeRefs);
-    const npc = state.entities[item.npcId];
-    if (
-      !actorPlanNpcIsAvailable(npc)
-      || knowledgeRefs === undefined
-      || knowledgeRefs.some((knowledgeRef) => !(knowledgeRef in (state.knowledge[npc.id] ?? {})))
-    ) return { rejection: rejected("npcKnowledgeInsufficient", "NPC plan cites knowledge the NPC does not hold.") };
-    const actorPlan = item.actorPlan === undefined
-      ? undefined
-      : normalizeActorPlan(state, npc.id, knowledgeRefs, item.actorPlan, materializations);
-    if (item.actorPlan !== undefined && actorPlan === undefined) {
-      return { rejection: rejected("invalidRulesInput", "ActorPlan is not a canonical finite-knowledge plan.") };
-    }
-    actions.push({
-      npcId: npc.id,
-      goal: item.goal,
-      method: item.method,
-      knowledgeRefs,
-      ...(actorPlan === undefined ? {} : { actorPlan }),
-      mechanicalProposal,
-    });
-  }
-  if (new Set(actions.map(({ npcId }) => npcId)).size !== actions.length) {
-    return { rejection: rejected("invalidRulesInput", "A compound plan may form at most one plan per NPC.") };
-  }
-  const planIds = actions.flatMap(({ actorPlan }) => actorPlan === undefined ? [] : [actorPlan.planId]);
-  const activityIds = actions.flatMap(({ actorPlan }) =>
-    actorPlan === undefined ? [] : [actorPlan.activity.activityId]);
-  const traceFactRefs = actions.flatMap(({ actorPlan }) =>
-    actorPlan === undefined ? [] : [actorPlan.trace.factRef]);
-  if (
-    new Set(planIds).size !== planIds.length
-    || new Set(activityIds).size !== activityIds.length
-    || new Set(traceFactRefs).size !== traceFactRefs.length
-  ) return { rejection: rejected("invalidRulesInput", "ActorPlan identities must be unique per compound proposal.") };
-  return { actions };
-}
-
 function normalizeCosts(value: unknown): CompoundActionCost[] | undefined {
   if (!Array.isArray(value) || value.length > 24) return undefined;
   const costs: CompoundActionCost[] = [];
@@ -826,17 +209,15 @@ function normalizeCosts(value: unknown): CompoundActionCost[] | undefined {
       costs.push({ kind: "consumeResource", resourceRef: item.resourceRef, amount: Number(item.amount) });
       continue;
     }
-    if (item.kind === "consumeArtifact") {
+    if (item.kind === "consumeItem") {
       if (
-        !hasOnlyKeys(item, ["artifactRef", "kind"], ["count"])
-        || !isNonEmptyString(item.artifactRef)
-        || !item.artifactRef.startsWith("item:")
-        || item.artifactRef.length <= "item:".length
+        !hasOnlyKeys(item, ["itemRef", "kind"], ["count"])
+        || !isNonEmptyString(item.itemRef)
         || !(item.count === undefined || (Number.isSafeInteger(item.count) && Number(item.count) > 0))
       ) return undefined;
       costs.push({
-        kind: "consumeArtifact",
-        artifactRef: item.artifactRef,
+        kind: "consumeItem",
+        itemRef: item.itemRef,
         count: item.count === undefined ? 1 : Number(item.count),
       });
       continue;
@@ -1065,12 +446,6 @@ function savingThrowModifier(
   return base + (proficient ? actor.proficiencyBonus ?? 0 : 0);
 }
 
-function artifactItemId(artifactRef: string): string | undefined {
-  return artifactRef.startsWith("item:") && artifactRef.length > "item:".length
-    ? artifactRef.slice("item:".length)
-    : undefined;
-}
-
 function validateOutcomeEffects(
   state: AuthoritativeWorldState,
   actorCharacterId: string,
@@ -1081,8 +456,11 @@ function validateOutcomeEffects(
 ): boolean {
   const resourcesAfterCosts = { ...(state.entities[actorCharacterId].resources ?? {}) };
   const itemsAfterCosts = Object.fromEntries(
-    (state.entities[actorCharacterId].loadout?.backpack ?? [])
-      .map(({ itemId, quantity }) => [itemId, quantity]),
+    Object.values(state.campaignRuntime.itemSystem.entries)
+      .filter((entry) => entry.disposition === "held"
+        && entry.holderRef === actorCharacterId
+        && entry.condition === "usable")
+      .map((entry) => [entry.entryId, entry.quantity]),
   );
   for (const cost of costs) {
     if (cost.kind === "consumeResource") {
@@ -1090,12 +468,10 @@ function validateOutcomeEffects(
       if (available < cost.amount) return false;
       resourcesAfterCosts[cost.resourceRef] = available - cost.amount;
     }
-    if (cost.kind === "consumeArtifact") {
-      const itemId = artifactItemId(cost.artifactRef);
-      if (itemId === undefined) return false;
-      const available = Number(itemsAfterCosts[itemId] ?? 0);
+    if (cost.kind === "consumeItem") {
+      const available = Number(itemsAfterCosts[cost.itemRef] ?? 0);
       if (available < cost.count) return false;
-      itemsAfterCosts[itemId] = available - cost.count;
+      itemsAfterCosts[cost.itemRef] = available - cost.count;
     }
   }
   for (const effect of effects) {
@@ -1191,218 +567,9 @@ function checkRequest(
   };
 }
 
-function definitionRegisteredDraft(materialization: DynamicMaterialization): Draft {
-  let payload: EventPayloadByType["DefinitionRegistered"];
-  if (materialization.kind === "ability") {
-    const compiled = compileAbilityDefinition(materialization.definition);
-    if (!compiled.ok) {
-      throw new TypeError("validated dynamic AbilityDefinition did not compile");
-    }
-    payload = structuredClone(compiled.artifact);
-  } else {
-    payload = {
-      definition: {
-        definitionId: materialization.factRef,
-        definitionVersion: "1",
-        definitionKind: materialization.kind,
-        causalBasisRefs: materialization.causalBasisRefs,
-        visibilityPolicyRef: materialization.visibilityPolicyRef,
-        content: structuredClone(materialization.definition),
-      },
-    };
-  }
-  return {
-    eventType: "DefinitionRegistered",
-    payload,
-    visibilityPolicyId: "visibility:room-authority-only",
-    secrecy: "internal",
-    creates: [`definition:${materialization.factRef}`],
-  };
-}
-
-function commonStoryDrafts(
-  state: AuthoritativeWorldState,
-  rootActionId: string,
-  actor: { id: string; sceneId: string },
-  goal: string,
-  method: string,
-  feasibilityKind: string,
-  publicBasis: string,
-  scene: JsonRecord,
-  materializations: DynamicMaterialization[],
-  npcActions: NpcAction[],
-): Draft[] {
-  const drafts: Draft[] = [];
-  for (const materialization of materializations) {
-    drafts.push(definitionRegisteredDraft(materialization));
-    drafts.push({
-      eventType: "CanonicalFactDeclared",
-      payload: {
-        fact: {
-          id: materialization.factRef,
-          kind: `dynamic:${materialization.kind}`,
-          subjectRefs: [actor.id, actor.sceneId].sort(),
-          value: {
-            definitionRef: materialization.factRef,
-            kind: materialization.kind,
-          },
-          visibilityPolicyId: materialization.visibilityPolicyRef,
-          source: "dynamicMaterialization",
-          causalParentIds: materialization.causalBasisRefs,
-        },
-      },
-      visibilityPolicyId: materialization.visibilityPolicyRef,
-      secrecy: materialization.visibilityPolicyRef.startsWith("visibility:public") ? "public" : "internal",
-      creates: [`fact:${materialization.factRef}`],
-    });
-    if (materialization.kind === "item" && isNonEmptyString(materialization.definition.artifactId)) {
-      drafts.push({
-        eventType: "ArtifactMaterialized",
-        payload: {
-          artifactId: materialization.definition.artifactId as string,
-          definitionRef: materialization.factRef,
-          name: materialization.definition.name as string,
-          sceneId: materialization.definition.sceneRef as string,
-          status: "placed",
-          quantity: 1,
-          visibilityPolicyId: materialization.visibilityPolicyRef,
-        },
-        visibilityPolicyId: materialization.visibilityPolicyRef,
-        secrecy: materialization.visibilityPolicyRef.startsWith("visibility:public")
-          ? "public"
-          : "internal",
-        creates: [`artifact:${materialization.definition.artifactId as string}`],
-      });
-    }
-  }
-  for (const [index, npcAction] of npcActions.entries()) {
-    drafts.push(...npcPlanDrafts(state, rootActionId, index, npcAction));
-  }
-  const sceneQuestionId = `scene-question:${rootActionId}`;
-  drafts.push({
-    eventType: "SceneQuestionOpened",
-    payload: { sceneQuestionId, question: scene.question },
-    visibilityPolicyId: "visibility:scene-observers",
-    creates: [`scene-question:${sceneQuestionId}`],
-  });
-  drafts.push({
-    eventType: "FeasibilityRuled",
-    payload: {
-      characterId: actor.id,
-      goal,
-      method,
-      feasibilityKind,
-      publicBasis,
-    },
-    visibilityPolicyId: "visibility:scene-observers",
-  });
-  return drafts;
-}
-
-function npcPlanId(rootActionId: string, index: number, npcId: string): string {
-  return `npc-plan:${rootActionId}:${String(index + 1).padStart(2, "0")}:${npcId}`;
-}
-
-function npcActionPlanId(rootActionId: string, index: number, action: NpcAction): string {
-  return action.actorPlan?.planId ?? npcPlanId(rootActionId, index, action.npcId);
-}
-
-function npcPlanDrafts(
-  state: AuthoritativeWorldState,
-  rootActionId: string,
-  index: number,
-  action: NpcAction,
-): Draft[] {
-  const planId = npcActionPlanId(rootActionId, index, action);
-  const payload: EventPayloadByType["NpcPlanFormed"] = action.actorPlan === undefined
-    ? {
-        npcId: action.npcId,
-        planId,
-        goal: action.goal,
-        knowledgeRefs: action.knowledgeRefs,
-        nextAction: action.method,
-        resourceRefs: [],
-      }
-    : {
-        npcId: action.npcId,
-        planId,
-        actorKind: "npc",
-        actorRef: action.npcId,
-        decisionNpcId: action.npcId,
-        revision: "1",
-        status: "scheduled",
-        goal: action.goal,
-        premiseRefs: action.actorPlan.premiseRefs,
-        knowledgeRefs: action.knowledgeRefs,
-        nextStep: action.actorPlan.nextStep,
-        nextAction: action.actorPlan.nextStep,
-        resourceRefs: action.actorPlan.resourceRefs,
-        activity: structuredClone(action.actorPlan.activity),
-        due: structuredClone(action.actorPlan.due),
-        trigger: structuredClone(action.actorPlan.trigger),
-        trace: structuredClone(action.actorPlan.trace),
-        alternateTarget: structuredClone(action.actorPlan.alternateTarget),
-        chapterId: action.actorPlan.chapterId,
-        moduleRef: structuredClone(action.actorPlan.moduleRef),
-      };
-  const drafts: Draft[] = [{
-    eventType: "NpcPlanFormed",
-    payload,
-    visibilityPolicyId: `visibility:npc:${action.npcId}`,
-    secrecy: "internal",
-    reads: [...new Set([
-      ...action.knowledgeRefs.map((ref) => `knowledge:${action.npcId}:${ref}`),
-      ...(action.actorPlan?.premiseRefs ?? []).flatMap((ref) => {
-        const scope = actorPlanPremiseScope(state, action.npcId, ref);
-        return scope === undefined ? [] : [scope];
-      }),
-    ])],
-    creates: [`npc-plan:${planId}`],
-  }];
-  if (action.actorPlan?.factionRef !== undefined) {
-    drafts.push({
-      eventType: "FactionPlanFormed",
-      payload: {
-        factionId: action.actorPlan.factionRef,
-        planId,
-        actingNpcId: action.npcId,
-        premiseRefs: [...action.actorPlan.premiseRefs],
-        resourceRefs: [...action.actorPlan.resourceRefs],
-        revision: "1",
-        status: "scheduled",
-      },
-      visibilityPolicyId: `visibility:npc:${action.npcId}`,
-      secrecy: "internal",
-      reads: [
-        `npc-plan:${planId}`,
-        `faction:${action.actorPlan.factionRef}`,
-        ...action.actorPlan.resourceRefs.map((ref) => `faction-resource:${ref}`),
-      ],
-      creates: [`faction-plan:${planId}`],
-    });
-  }
-  if (action.actorPlan !== undefined) {
-    drafts.push({
-      eventType: "ActivityStarted",
-      payload: {
-        activityId: action.actorPlan.activity.activityId,
-        characterId: action.npcId,
-        activityKind: action.actorPlan.activity.activityKind,
-        intendedDurationMicros: action.actorPlan.activity.intendedDurationMicros,
-        completion: { kind: "actorPlan", planId },
-      },
-      visibilityPolicyId: `visibility:npc:${action.npcId}`,
-      secrecy: "internal",
-      reads: [`npc-plan:${planId}`],
-      creates: [`activity:${action.actorPlan.activity.activityId}`],
-    });
-  }
-  return drafts;
-}
-
 function mergeCompoundResult(prefix: StepResult, mechanical: StepResult): StepResult {
   if (prefix.kind === "rejected" || prefix.kind === "initialized" || prefix.kind === "awaitingRandomness") {
-    return rejected("invalidWorldState", "Compound story prefix did not commit canonically.");
+    return rejected("invalidWorldState", "ActorPlan lifecycle prefix did not commit canonically.");
   }
   if (mechanical.kind === "rejected" || mechanical.kind === "initialized") return mechanical;
   return {
@@ -1440,10 +607,10 @@ const SEMANTIC_MECHANICAL_KEYS = [
   "frozenCosts",
   "hitDiceToSpend",
   "itemRef",
+  "itemActivityId",
+  "ownershipDisposition",
   "gearAction",
   "slot",
-  "artifactRef",
-  "artifactUse",
   "factionRef",
   "planRef",
   "knowledgeRef",
@@ -1478,7 +645,6 @@ const SEMANTIC_MECHANICAL_KEYS = [
   "targetEntityRefs",
   "outcome",
   "unresolvedRefs",
-  "verifiedModuleMigration",
 ] as const;
 
 function npcCompoundRandomnessCommand(
@@ -1609,8 +775,8 @@ function npcCompoundRandomnessCommand(
     failureOutcome: failureEffects.map(({ kind }) => kind).join(";") || "NPC action fails with no additional effect.",
     costs: costs.map((cost) => cost.kind === "consumeResource"
       ? `resource:${cost.resourceRef}:${cost.amount}`
-      : cost.kind === "consumeArtifact"
-        ? `artifact:${cost.artifactRef}:${cost.count}`
+      : cost.kind === "consumeItem"
+        ? `item:${cost.itemRef}:${cost.count}`
         : `fictionTime:${cost.durationMicros}`).sort(),
   };
   return {
@@ -1789,7 +955,7 @@ function semanticCommand(
   npcContext?: { planId: string; knowledgeRefs: string[] },
 ): SemanticCommand | StepResult {
   if (!hasOnlyKeys(mechanical, ["operation"], SEMANTIC_MECHANICAL_KEYS.filter((key) => key !== "operation"))) {
-    return rejected("invalidRulesInput", "Semantic ActionPlan has an unknown or authority-owned field.");
+    return rejected("invalidRulesInput", "The mechanical proposal has an unknown or authority-owned field.");
   }
   const operation = mechanical.operation;
   if (
@@ -2207,27 +1373,68 @@ function semanticCommand(
           reason: goal,
         },
       };
-    case "useItem":
-      if (!isNonEmptyString(mechanical.itemRef)) return rejected("invalidRulesInput", "Item use needs an item reference.");
+    case "acquireItem": {
+      if (!hasExactKeys(mechanical, ["amount", "itemRef", "operation"])
+        || !isNonEmptyString(mechanical.itemRef)
+        || !Number.isSafeInteger(mechanical.amount)
+        || Number(mechanical.amount) <= 0) {
+        return rejected("invalidRulesInput", "Item acquisition needs an exact entry and quantity.");
+      }
+      const existing = state.campaignRuntime.itemSystem.entries[mechanical.itemRef];
+      const materialized = materializations.find((entry) =>
+        entry.kind === "item" && entry.definition.itemEntryId === mechanical.itemRef);
+      const sceneId = existing?.disposition === "scene" && isNonEmptyString(existing.sceneRef)
+        ? existing.sceneRef
+        : materialized === undefined
+          ? undefined
+          : materialized.definition.sceneRef;
+      const availableQuantity = existing?.disposition === "scene"
+        ? existing.quantity
+        : materialized === undefined
+          ? undefined
+          : 1;
+      if (sceneId !== actor?.sceneId || mechanical.amount !== availableQuantity) {
+        return rejected("privateOrUnknownReference", "Item reference is unavailable.");
+      }
       return {
         module: "campaign",
         input: {
-          kind: "useItem",
+          kind: "acquireItem",
           proposalId: rootActionId,
           characterId: actorCharacterId,
           itemId: mechanical.itemRef,
-          quantity: Number.isSafeInteger(mechanical.amount) && Number(mechanical.amount) > 0
-            ? Number(mechanical.amount)
-            : 1,
-          purpose: goal,
+        },
+      };
+    }
+    case "useItem":
+      if (!hasExactKeys(mechanical, ["itemActivityId", "itemRef", "operation"])
+        || !isNonEmptyString(mechanical.itemRef)
+        || mechanical.itemActivityId !== "use") {
+        return rejected("invalidRulesInput", "Item use needs one frozen item activity.");
+      }
+      return {
+        module: "combat",
+        input: {
+          kind: "invokeItemActivity",
+          rootActionId,
+          sourceEntityId: actorCharacterId,
+          itemEntryId: mechanical.itemRef,
+          parameters: { targetEntityId: actorCharacterId },
         },
       };
     case "transferItem":
       if (
-        !hasExactKeys(mechanical, ["amount", "itemRef", "operation", "targetEntityRef"])
+        !hasExactKeys(mechanical, [
+          "amount",
+          "itemRef",
+          "operation",
+          "ownershipDisposition",
+          "targetEntityRef",
+        ])
         || !isNonEmptyString(mechanical.itemRef)
         || !Number.isSafeInteger(mechanical.amount)
         || Number(mechanical.amount) <= 0
+        || !["retain", "transfer"].includes(String(mechanical.ownershipDisposition))
         || target === undefined
         || target.id === actorCharacterId
         || target.sceneId !== actor?.sceneId
@@ -2242,6 +1449,9 @@ function semanticCommand(
           itemId: mechanical.itemRef,
           quantity: Number(mechanical.amount),
           method,
+          ownershipDisposition: mechanical.ownershipDisposition === "transfer"
+            ? "transferToRecipient"
+            : "preserve",
         },
       };
     case "changeNpcGear": {
@@ -2268,69 +1478,6 @@ function semanticCommand(
         },
       };
     }
-    case "acquireArtifact": {
-      if (!hasExactKeys(mechanical, ["artifactRef", "operation"]) || !isNonEmptyString(mechanical.artifactRef)) {
-        return rejected("privateOrUnknownReference", "Artifact reference is unavailable.");
-      }
-      const existing = state.campaignRuntime.artifacts[mechanical.artifactRef];
-      const materialized = materializations.find((entry) =>
-        entry.kind === "item" && entry.definition.artifactId === mechanical.artifactRef);
-      const sceneId = existing?.status === "placed" && isNonEmptyString(existing.sceneId)
-        ? existing.sceneId
-        : materialized === undefined
-          ? undefined
-          : materialized.definition.sceneRef;
-      if (sceneId !== actor?.sceneId) {
-        return rejected("privateOrUnknownReference", "Artifact reference is unavailable.");
-      }
-      return {
-        module: "campaign",
-        input: {
-          kind: "acquireArtifact",
-          proposalId: rootActionId,
-          characterId: actorCharacterId,
-          artifactId: mechanical.artifactRef,
-        },
-      };
-    }
-    case "useArtifact":
-      if (
-        !hasExactKeys(mechanical, ["artifactRef", "artifactUse", "operation"])
-        || !isNonEmptyString(mechanical.artifactRef)
-        || !["retain", "consume", "destroy"].includes(String(mechanical.artifactUse))
-        || state.campaignRuntime.artifacts[mechanical.artifactRef]?.holderId !== actorCharacterId
-      ) return rejected("privateOrUnknownReference", "Artifact reference is unavailable.");
-      return {
-        module: "campaign",
-        input: {
-          kind: "useArtifact",
-          proposalId: rootActionId,
-          characterId: actorCharacterId,
-          artifactId: mechanical.artifactRef,
-          useMode: mechanical.artifactUse,
-          purpose: goal,
-        },
-      };
-    case "transferArtifact":
-      if (
-        !hasExactKeys(mechanical, ["artifactRef", "operation", "targetEntityRef"])
-        || !isNonEmptyString(mechanical.artifactRef)
-        || target === undefined
-        || target.id === actorCharacterId
-        || target.sceneId !== actor?.sceneId
-        || state.campaignRuntime.artifacts[mechanical.artifactRef]?.holderId !== actorCharacterId
-      ) return rejected("privateOrUnknownReference", "Artifact reference is unavailable.");
-      return {
-        module: "campaign",
-        input: {
-          kind: "transferArtifact",
-          proposalId: rootActionId,
-          artifactId: mechanical.artifactRef,
-          fromCharacterId: actorCharacterId,
-          toCharacterId: target.id,
-          method,
-        },
-      };
     case "advanceFactionPlan": {
       const frozenBasisRefs = canonicalStrings(mechanical.basisRefs);
       const faction = isNonEmptyString(mechanical.factionRef)
@@ -2556,9 +1703,7 @@ function semanticCommand(
             || fromChapterId === undefined
             || !isNonEmptyString(mechanical.chapterRef)
             || !(mechanical.activityTransitions === undefined
-              || Array.isArray(mechanical.activityTransitions))
-            || !(mechanical.verifiedModuleMigration === undefined
-              || isRecord(mechanical.verifiedModuleMigration))) {
+              || Array.isArray(mechanical.activityTransitions))) {
             return rejected("invalidRulesInput", "Atomic chapter transition needs current and next chapter references.");
           }
           const ordinal = String(Object.keys(state.campaignRuntime.chapters).length + 1);
@@ -2576,13 +1721,6 @@ function semanticCommand(
               storyAnchorRefs: [primaryFactRef],
               sceneQuestion,
               activityTransitions: structuredClone(mechanical.activityTransitions ?? []),
-              ...(mechanical.verifiedModuleMigration === undefined
-                ? {}
-                : {
-                    verifiedModuleMigration: structuredClone(
-                      mechanical.verifiedModuleMigration,
-                    ),
-                  }),
             },
           };
         }
@@ -2756,7 +1894,7 @@ function semanticCommand(
       }
     }
     default:
-      return rejected("unsupportedOperation", "The requested ActionPlan operation is not registered.");
+      return rejected("unsupportedOperation", "The requested semantic operation is not registered.");
   }
 }
 
@@ -2798,7 +1936,11 @@ function runSemanticCommand(
     }];
     const actor = state.entities[plan.actorCharacterId];
     const remainingItems = Object.fromEntries(
-      (actor?.loadout?.backpack ?? []).map(({ itemId, quantity }) => [itemId, quantity]),
+      Object.values(state.campaignRuntime.itemSystem.entries)
+        .filter((entry) => entry.disposition === "held"
+          && entry.holderRef === plan.actorCharacterId
+          && entry.condition === "usable")
+        .map((entry) => [entry.entryId, entry.quantity]),
     );
     for (const cost of plan.frozenCosts) {
       if (cost.kind === "consumeResource") {
@@ -2817,24 +1959,31 @@ function runSemanticCommand(
           secrecy: "internal",
         });
       }
-      if (cost.kind === "consumeArtifact") {
-        const itemId = artifactItemId(cost.artifactRef);
-        if (itemId === undefined || !Number.isSafeInteger(remainingItems[itemId])
-          || remainingItems[itemId] < cost.count) {
+      if (cost.kind === "consumeItem") {
+        const entryId = cost.itemRef;
+        const entry = state.campaignRuntime.itemSystem.entries[entryId];
+        if (!Number.isSafeInteger(remainingItems[entryId])
+          || remainingItems[entryId] < cost.count
+          || entry === undefined) {
           return rejected("insufficientResource", "NPC frozen item cost is no longer available.");
         }
-        remainingItems[itemId] -= cost.count;
+        const quantityBefore = remainingItems[entryId];
+        remainingItems[entryId] -= cost.count;
         drafts.push({
           eventType: "ItemUsed",
           payload: {
             characterId: plan.actorCharacterId,
-            itemId,
-            quantity: cost.count,
-            remaining: remainingItems[itemId],
+            entryId,
             purpose: plan.goal,
+            quantityBefore,
+            quantityAfter: remainingItems[entryId],
+            chargesBefore: entry.charges?.current ?? null,
+            chargesAfter: entry.charges?.current ?? null,
+            durabilityBefore: entry.durability?.current ?? null,
+            durabilityAfter: entry.durability?.current ?? null,
           },
-          visibilityPolicyId: `visibility:npc:${plan.actorCharacterId}`,
-          secrecy: "internal",
+          visibilityPolicyId: entry.visibilityPolicyRef,
+          secrecy: entry.visibilityPolicyRef.startsWith("visibility:public") ? "public" : "internal",
         });
       }
     }
@@ -2914,7 +2063,6 @@ function resolveDueActorPlanMechanics(
     : earliestEligibleDueActorPlan(state, affectedCharacterId);
   const plan = selected?.plan;
   const premiseRefs = canonicalStrings(plan?.premiseRefs);
-  const knowledgeRefs = canonicalStrings(plan?.knowledgeRefs);
   const resourceRefs = canonicalStrings(plan?.resourceRefs);
   const trace = isRecord(plan?.trace) ? plan.trace : undefined;
   const planActivity = isRecord(plan?.activity) ? plan.activity : undefined;
@@ -2929,7 +2077,6 @@ function resolveDueActorPlanMechanics(
     || premiseRefs.length === 0
     || premiseRefs.some((reference) =>
       !actorPlanPremiseIsAvailable(state, selected.npcId, reference))
-    || knowledgeRefs === undefined
     || resourceRefs === undefined
     || !isNonEmptyString(plan.goal)
     || !isNonEmptyString(plan.nextStep)
@@ -2954,15 +2101,14 @@ function resolveDueActorPlanMechanics(
     if (cost.kind === "consumeResource" && isNonEmptyString(cost.resourceRef)) {
       return [cost.resourceRef];
     }
-    if (cost.kind === "consumeArtifact" && isNonEmptyString(cost.artifactRef)) {
-      return [cost.artifactRef];
+    if (cost.kind === "consumeItem" && isNonEmptyString(cost.itemRef)) {
+      return [cost.itemRef];
     }
     return [];
   });
   const directResourceRefs = [
     mechanical.resourceRef,
     mechanical.itemRef,
-    mechanical.artifactRef,
   ].filter(isNonEmptyString);
   const recipients = mechanical.recipientRefs === undefined
     ? []
@@ -2982,6 +2128,8 @@ function resolveDueActorPlanMechanics(
   const activity = state.campaignRuntime.activities[planActivity.activityId];
   const activityOperation = mechanical.operation === "interruptActivity"
     || mechanical.operation === "completeActivity";
+  const knowledgeRefs = premiseRefs.filter((reference) =>
+    reference in (state.knowledge[selected.npcId] ?? {}));
   const allowedKnowledgeRefs = new Set([trace.factRef, ...knowledgeRefs]);
   if (
     mechanicalBasisRefs === undefined
@@ -3066,14 +2214,6 @@ export function storyWaitsForExplicitContinuation(state: AuthoritativeWorldState
     && !stories.some((entry) => entry.status === "active");
 }
 
-function isExplicitPostConclusionLifecycle(input: JsonRecord): boolean {
-  const mechanical = isRecord(input.mechanicalProposal)
-    ? input.mechanicalProposal
-    : undefined;
-  return mechanical?.operation === "advanceCampaignLifecycle"
-    && ["recordEpilogueChoice", "startSequel"].includes(String(mechanical.lifecycleAction));
-}
-
 function dueActorPlanOutcomeEffectsAreFrozen(
   mechanical: JsonRecord,
   allowedFactRefs: ReadonlySet<string>,
@@ -3111,710 +2251,231 @@ function dueActorPlanOutcomeEffectsAreFrozen(
   return true;
 }
 
-export function stepCompoundActionPlan(
+function formTypedNpcActorPlan(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
 ): StepResult | undefined {
-  const dueActorPlan = resolveDueActorPlanMechanics(profiles, state, input);
-  if (dueActorPlan !== undefined) return dueActorPlan;
-  if (input.kind !== "resolveCompoundActionPlan") return undefined;
-  const baseKeys = [
-    "actionPlanVersion",
-    "actorCharacterId",
-    "dynamicMaterializations",
-    "feasibilityKind",
+  if (input.kind !== "formNpcActorPlan" || input.activity === undefined) return undefined;
+  if (!hasExactKeys(input, [
+    "activity",
+    "alternateTarget",
+    "due",
     "goal",
     "kind",
-    "mechanicalProposal",
-    "method",
-    "npcActions",
-    "risk",
-    "rootActionId",
-    "scene",
-  ];
-  if (!hasOnlyKeys(input, baseKeys, [
-    "adjudicationPrecedent",
-    "hiddenRealityCandidateSet",
-    "privateBasisRefs",
-    "publicBasisRefs",
-  ])) {
-    return rejected("invalidRulesInput", "Compound ActionPlan has missing or additional fields.");
-  }
-  if (input.actionPlanVersion !== ACTION_PLAN_VERSION) {
-    return rejected("unsupportedOperation", "Compound ActionPlan version is not registered.");
-  }
-  if (
-    !isNonEmptyString(input.rootActionId)
-    || (input.rootActionId in state.receipts
-      && !isContinuedCompoundRoot(input, input.rootActionId))
-    || !isNonEmptyString(input.actorCharacterId)
-    || state.entities[input.actorCharacterId]?.kind !== "player"
-    || state.entities[input.actorCharacterId]?.tenureStatus !== "active"
-    || !isNonEmptyString(input.goal)
-    || !isNonEmptyString(input.method)
-    || ![
-      "directSuccess",
-      "checkRequired",
-      "highRiskFeasible",
-      "missingPrerequisite",
-      "worldLawViolation",
-    ].includes(String(input.feasibilityKind))
-  ) return rejected("privateOrUnknownReference", "Compound ActionPlan actor or root action is unavailable.");
+    "nextStep",
+    "npcId",
+    "planId",
+    "premiseRefs",
+    "proposalId",
+    "resourceRefs",
+    "trace",
+    "trigger",
+  ])) return rejected("invalidRulesInput", "ActorPlan formation input is not canonical.");
 
-  if (
-    storyWaitsForExplicitContinuation(state)
-    && !isExplicitPostConclusionLifecycle(input)
-  ) {
-    return rejected(
-      "missingPrerequisite",
-      "The current story is concluded; only an explicit epilogue choice or sequel may continue.",
-    );
-  }
-
-  if (input.hiddenRealityCandidateSet !== undefined) {
-    const set = input.hiddenRealityCandidateSet;
-    if (!isRecord(set)
-      || !hasExactKeys(set, ["candidateSetId", "candidates"])
-      || !isNonEmptyString(set.candidateSetId)
-      || !Array.isArray(set.candidates)
-      || set.candidates.length < 2
-      || set.candidates.length > 12
-      || !Array.isArray(input.dynamicMaterializations)
-      || input.dynamicMaterializations.length !== 0) {
-      return rejected("invalidRulesInput", "HiddenReality requires one complete candidate set and no direct substitute materialization.");
-    }
-    let totalWeight = 0;
-    const ids = new Set<string>();
-    const candidates: JsonRecord[] = [];
-    const { hiddenRealityCandidateSet: _hidden, ...actionPlan } = input;
-    for (const candidateValue of set.candidates) {
-      if (!isRecord(candidateValue)
-        || !hasExactKeys(candidateValue, [
-          "candidateId", "causalBasisRefs", "definition", "factRef", "hiddenWeight",
-          "kind", "visibilityPolicyRef",
-        ])
-        || !isNonEmptyString(candidateValue.candidateId)
-        || ids.has(candidateValue.candidateId)
-        || !Number.isSafeInteger(candidateValue.hiddenWeight)
-        || Number(candidateValue.hiddenWeight) <= 0) {
-        return rejected("invalidRulesInput", "HiddenReality candidate set is invalid as a whole.");
-      }
-      const materialization = {
-        kind: candidateValue.kind,
-        factRef: candidateValue.factRef,
-        causalBasisRefs: candidateValue.causalBasisRefs,
-        visibilityPolicyRef: candidateValue.visibilityPolicyRef,
-        definition: candidateValue.definition,
-      };
-      if (normalizeMaterializations(state, [materialization]) === undefined) {
-        return rejected("invalidRulesInput", "HiddenReality candidate set is invalid as a whole.");
-      }
-      const executable = stepCompoundActionPlan(profiles, state, {
-        ...structuredClone(actionPlan),
-        dynamicMaterializations: [structuredClone(materialization)],
-      });
-      if (executable === undefined || executable.kind === "rejected") {
-        return rejected("invalidRulesInput", "HiddenReality candidate set contains a non-executable definition.");
-      }
-      ids.add(candidateValue.candidateId);
-      totalWeight += Number(candidateValue.hiddenWeight);
-      candidates.push(structuredClone(candidateValue));
-    }
-    if (!Number.isSafeInteger(totalWeight) || totalWeight > 1_000_000) {
-      return rejected("invalidRulesInput", "HiddenReality candidate weights exceed the authoritative die bound.");
-    }
-    const frozenParameters = {
-      candidateSetId: set.candidateSetId,
-      candidates,
-    };
-    const requestCore = {
-      randomnessId: `randomness:${input.rootActionId}:hidden-reality`,
-      resolutionId: `resolution:${input.rootActionId}:hidden-reality`,
-      actorCharacterId: input.actorCharacterId,
-      purpose: "hiddenRealitySelection" as const,
-      purposeKey: `hidden-reality:${set.candidateSetId}`,
-      diceExpression: `1d${totalWeight}`,
-      dice: [{ count: "1", sides: String(totalWeight) }],
-      frozenParameters,
-    };
-    const request: RandomnessRequest = { ...requestCore, requestHash: canonicalSha256(requestCore) };
-    const resolutionPlan = {
-      kind: "hiddenRealitySelection",
-      candidateSetId: set.candidateSetId,
-      candidates,
-      actionPlan: structuredClone(actionPlan),
-    };
-    const continuation: AuthorityContinuation = {
-      kind: "roomAuthorityRandomness",
-      continuationId: `continuation:${request.resolutionId}`,
-      capability: canonicalSha256({ roomId: state.roomId, rootActionId: input.rootActionId, request, resolutionPlan }),
-    };
-    return result("awaitingRandomness", profiles, state, input.rootActionId as string, [{
-      eventType: "RandomnessRequested",
-      payload: { request, continuation, purpose: request.purpose, formula: request.diceExpression, resolutionPlan },
-      resolutionId: request.resolutionId,
-      visibilityPolicyId: "visibility:room-authority-only",
-      secrecy: "internal",
-      writes: [`continuation:${continuation.continuationId}`, `receipt:${input.rootActionId}`],
-      creates: [`continuation:${continuation.continuationId}`],
-    }], { randomnessRequest: request, continuation, randomnessRequests: [request], continuations: [continuation] });
-  }
-  const actor = state.entities[input.actorCharacterId];
-  const risk = input.risk === null
-    && ["directSuccess", "missingPrerequisite", "worldLawViolation"].includes(String(input.feasibilityKind))
-    ? {
-        warning: input.feasibilityKind === "directSuccess"
-          ? "The direct consequences have no unresolved success/failure uncertainty."
-          : "The declared method is not currently feasible under the frozen world facts.",
-        successConsequences: [],
-        failureConsequences: [],
-        retryGate: [],
-      }
-    : input.risk;
-  if (
-    !isRecord(risk)
-    || !hasExactKeys(risk, [
-      "failureConsequences",
-      "retryGate",
-      "successConsequences",
-      "warning",
-    ])
-    || !isNonEmptyString(risk.warning)
-  ) return rejected("invalidRulesInput", "Compound ActionPlan risk is not fully frozen.");
-  const successConsequences = canonicalStrings(risk.successConsequences);
-  const failureConsequences = canonicalStrings(risk.failureConsequences);
-  const retryGate = canonicalStrings(risk.retryGate);
-  if (
-    successConsequences === undefined
-    || failureConsequences === undefined
-    || retryGate === undefined
-    || retryGate.some((gate) => !(RETRY_GATES as readonly string[]).includes(gate))
-  ) return rejected("invalidRulesInput", "Compound ActionPlan risk has a non-canonical consequence or retry gate.");
-  const publicBasisRefs = boundedCanonicalStrings(input.publicBasisRefs ?? [], 40, 240);
-  const privateBasisRefs = boundedCanonicalStrings(input.privateBasisRefs ?? [], 40, 240);
-  if (publicBasisRefs === undefined || privateBasisRefs === undefined) {
-    return rejected("invalidRulesInput", "Compound ActionPlan basis references are not canonical.");
-  }
-
-  const materializations = normalizeMaterializations(state, input.dynamicMaterializations);
-  if (materializations === undefined) {
-    return rejected("invalidRulesInput", "Dynamic materialization is invalid or cites unavailable facts.");
-  }
-  if (materializations.length === 0) {
-    materializations.push({
-      kind: "fact",
-      factRef: `fact:action-basis:${input.rootActionId}`,
-      causalBasisRefs: [],
-      visibilityPolicyRef: "visibility:scene-observers",
-      definition: {
-        name: "权威行动依据",
-        goal: input.goal,
-        method: input.method,
-      },
-    });
-  }
-  const npcResult = normalizeNpcActions(state, input.npcActions, materializations);
-  if (npcResult.rejection !== undefined) return npcResult.rejection;
-  const npcActions = npcResult.actions!;
-  if (
-    !isRecord(input.scene)
-    || !hasExactKeys(input.scene, ["conclusionCandidate", "opportunities", "pressure", "question"])
-    || !isNonEmptyString(input.scene.question)
-    || typeof input.scene.pressure !== "string"
-    || !(input.scene.conclusionCandidate === null || isNonEmptyString(input.scene.conclusionCandidate))
-    || canonicalStrings(input.scene.opportunities) === undefined
-  ) return rejected("invalidRulesInput", "The compound scene framing is not canonical.");
-
-  if (!isRecord(input.mechanicalProposal) || !isNonEmptyString(input.mechanicalProposal.operation)) {
-    return rejected("invalidRulesInput", "Compound ActionPlan requires one semantic mechanical proposal.");
-  }
-  if (
-    (input.feasibilityKind === "directSuccess"
-      && UNCERTAINTY_BEARING_OPERATIONS.has(input.mechanicalProposal.operation))
-    || (input.feasibilityKind === "checkRequired"
-      && !UNCERTAINTY_BEARING_OPERATIONS.has(input.mechanicalProposal.operation))
-  ) {
-    return rejected(
-      "invalidRulesInput",
-      "The feasibility ruling contradicts the frozen mechanical operation.",
-    );
-  }
-  if (input.mechanicalProposal.operation === "rejectInfeasibleAction") {
-    if (!hasExactKeys(input.mechanicalProposal, ["operation"])) {
-      return rejected("invalidRulesInput", "An infeasible ruling cannot carry hidden mechanical effects.");
-    }
-    if (input.feasibilityKind === "missingPrerequisite") {
-      return rejected("missingPrerequisite", risk.warning as string);
-    }
-    if (input.feasibilityKind === "worldLawViolation") {
-      return rejected("worldLawViolation", risk.warning as string);
-    }
-    return rejected("invalidRulesInput", "Only an infeasible ruling may use rejectInfeasibleAction.");
-  }
-  const precedentResult = adjudicationPrecedentDraft(
-    profiles,
-    state,
-    input,
-    risk,
-    input.mechanicalProposal,
-    publicBasisRefs,
-    privateBasisRefs,
-  );
-  if (precedentResult !== undefined && "kind" in precedentResult) return precedentResult;
-  const precedentDraft = precedentResult;
-  const primaryFactRef = materializations[0].factRef;
-  const isRetryCheck = input.mechanicalProposal.operation === "retryFailedAction";
-  const isCompoundCheck = input.mechanicalProposal.operation === "resolveNoncombatCheck" || isRetryCheck;
-  const isCompoundSave = input.mechanicalProposal.operation === "resolveNoncombatSave";
-  if (!isCompoundCheck && !isCompoundSave) {
-    const playerCommand = semanticCommand(
-      profiles,
-      state,
-      input.rootActionId,
-      actor.id,
-      input.goal,
-      input.method,
-      primaryFactRef,
-      input.scene.question as string,
-      materializations,
-      input.mechanicalProposal,
-    );
-    if (!("module" in playerCommand)) return playerCommand;
-    const commands: SemanticCommand[] = [playerCommand];
-    for (const [index, npcAction] of npcActions.entries()) {
-      if (npcAction.mechanicalProposal === null) continue;
-      const npcCommand = semanticCommand(
-        profiles,
-        state,
-        input.rootActionId,
-        npcAction.npcId,
-        npcAction.goal,
-        npcAction.method,
-        primaryFactRef,
-        input.scene.question as string,
-        materializations,
-        npcAction.mechanicalProposal,
-        {
-          planId: npcActionPlanId(input.rootActionId, index, npcAction),
-          knowledgeRefs: npcAction.knowledgeRefs,
-        },
-      );
-      if (!("module" in npcCommand)) return npcCommand;
-      commands.push(npcCommand);
-    }
-    const common = commonStoryDrafts(
-      state,
-      input.rootActionId,
-      actor,
-      input.goal,
-      input.method,
-      input.feasibilityKind as string,
-      risk.warning as string,
-      input.scene,
-      materializations,
-      npcActions,
-    );
-    if (precedentDraft !== undefined) common.push(precedentDraft);
-    const prefix = result("committed", profiles, state, input.rootActionId, common);
-    if (prefix.kind === "rejected" || prefix.kind === "initialized") return prefix;
-    let aggregate: StepResult = prefix;
-    let currentState = prefix.state;
-    for (const [index, command] of commands.entries()) {
-      const mechanicalResult = runSemanticCommand(profiles, currentState, command);
-      if (mechanicalResult.kind === "rejected") return mechanicalResult;
-      if (mechanicalResult.kind === "initialized") {
-        return rejected("invalidWorldState", "A semantic command unexpectedly initialized a new world.");
-      }
-      aggregate = mergeCompoundResult(aggregate, mechanicalResult);
-      currentState = mechanicalResult.state;
-      if (
-        index < commands.length - 1
-        && mechanicalResult.kind !== "committed"
-      ) {
-        return rejected(
-          "pendingInputUnresolved",
-          "A compound plan cannot schedule another actor after unresolved input, randomness, or conclusion.",
-        );
-      }
-    }
-    return aggregate;
-  }
-  const mechanical = input.mechanicalProposal;
-  const retryPrecedentRef = isRetryCheck && isNonEmptyString(mechanical.precedentRef)
-    ? mechanical.precedentRef
+  const rootActionId = isNonEmptyString(input.proposalId) ? input.proposalId : undefined;
+  const npc = isNonEmptyString(input.npcId) ? state.entities[input.npcId] : undefined;
+  const planId = isNonEmptyString(input.planId) ? input.planId : undefined;
+  const goal = isNonEmptyString(input.goal) ? input.goal : undefined;
+  const nextStep = isNonEmptyString(input.nextStep) ? input.nextStep : undefined;
+  const premiseRefs = canonicalStrings(input.premiseRefs);
+  const resourceRefs = canonicalStrings(input.resourceRefs);
+  const activity = isRecord(input.activity) ? input.activity : undefined;
+  const trace = isRecord(input.trace) ? input.trace : undefined;
+  const traceFactRef = isNonEmptyString(trace?.factRef) ? trace.factRef : undefined;
+  const traceDescription = isNonEmptyString(trace?.description) ? trace.description : undefined;
+  const traceVisibilityPolicyRef = isNonEmptyString(trace?.visibilityPolicyRef)
+    ? trace.visibilityPolicyRef
     : undefined;
-  const retryFailure = retryPrecedentRef === undefined
-    ? undefined
-    : state.campaignRuntime.meaningfulFailures[retryPrecedentRef];
-  if (isRetryCheck && retryFailure === undefined) {
-    return rejected("privateOrUnknownReference", "The prior failed method is unavailable.");
-  }
-  const retryMethodChanged = isRetryCheck
-    && retryFailure?.methodFingerprint !== input.method;
+  const alternateTarget = isRecord(input.alternateTarget) ? input.alternateTarget : undefined;
+  const alternateTargetRef = isNonEmptyString(alternateTarget?.targetRef)
+    ? alternateTarget.targetRef
+    : undefined;
+  const alternateTargetReason = isNonEmptyString(alternateTarget?.reason)
+    ? alternateTarget.reason
+    : undefined;
   if (
-    isRetryCheck
-    && !retryMethodChanged
-    && state.campaignRuntime.retryChanges[retryPrecedentRef as string] === undefined
-  ) {
-    return rejected("unchangedRetry", "An unchanged failed method cannot be rerolled.");
-  }
-  const hasCanonicalFields = isCompoundCheck
-    ? hasExactKeys(mechanical, [
-        "ability",
-        "dc",
-        "duration",
-        "failure",
-        "frozenCosts",
-        "mode",
-        "operation",
-        ...(isRetryCheck ? ["precedentRef"] : []),
-        "skill",
-        "success",
-      ])
-    : hasOnlyKeys(mechanical, [
-        "dc",
-        "duration",
-        "failure",
-        "frozenCosts",
-        "mode",
-        "operation",
-        "saveAbility",
-        "success",
-      ], ["targetEntityRef"]);
-  if (!hasCanonicalFields) {
-    return rejected(
-      "invalidRulesInput",
-      `${String(mechanical.operation)} has missing or additional fields.`,
-    );
-  }
-  const checkAbility = (isCompoundSave ? mechanical.saveAbility : mechanical.ability) as unknown;
-  const checkSkill = isCompoundSave ? null : mechanical.skill;
-  const resolutionActor = isCompoundSave && isNonEmptyString(mechanical.targetEntityRef)
-    ? state.entities[mechanical.targetEntityRef]
-    : actor;
-  if (
-    !(ABILITIES as readonly unknown[]).includes(checkAbility)
-    || !(checkSkill === null || isNonEmptyString(checkSkill))
-    || !Number.isSafeInteger(mechanical.dc)
-    || Number(mechanical.dc) < 0
-    || Number(mechanical.dc) > 30
-    || !(MODES as readonly unknown[]).includes(mechanical.mode)
-    || resolutionActor === undefined
-    || resolutionActor.tenureStatus !== "active"
-    || resolutionActor.sceneId !== actor.sceneId
-  ) return rejected(
-    "invalidRulesInput",
-    `${String(mechanical.operation)} parameters are not canonical SRD 5.1 values.`,
-  );
-  const duration = durationMicros(mechanical.duration);
-  const costs = normalizeCosts(mechanical.frozenCosts);
-  const materializedSceneIds = new Set(materializations.flatMap((materialization) =>
-    materialization.kind === "location" && isNonEmptyString(materialization.definition.sceneId)
-      ? [materialization.definition.sceneId]
-      : []));
-  const successEffects = normalizeEffects(
-    state,
-    resolutionActor.id,
-    primaryFactRef,
-    materializedSceneIds,
-    mechanical.success,
-  );
-  const failureEffects = normalizeEffects(
-    state,
-    resolutionActor.id,
-    primaryFactRef,
-    materializedSceneIds,
-    mechanical.failure,
-  );
-  const modifier = isCompoundSave
-    ? savingThrowModifier(
-        profiles,
-        state,
-        resolutionActor.id,
-        checkAbility as typeof ABILITIES[number],
-      )
-    : abilityModifier(
-        profiles,
-        state,
-        resolutionActor.id,
-        checkAbility as typeof ABILITIES[number],
-        checkSkill as string | null,
-      );
-  if (
-    duration === undefined
-    || costs === undefined
-    || successEffects === undefined
-    || failureEffects === undefined
-    || modifier === undefined
-    || !validateOutcomeEffects(
-      state,
-      resolutionActor.id,
-      resolutionActor.sceneId,
-      new Set(materializations.map(({ factRef }) => factRef)),
-      costs,
-      successEffects,
-    )
-    || !validateOutcomeEffects(
-      state,
-      resolutionActor.id,
-      resolutionActor.sceneId,
-      new Set(materializations.map(({ factRef }) => factRef)),
-      costs,
-      failureEffects,
-    )
-  ) return rejected(
-    "invalidRulesInput",
-    `${String(mechanical.operation)} has an unavailable frozen cost or effect.`,
-  );
+    rootActionId === undefined
+    || rootActionId in state.receipts
+    || !actorPlanNpcIsAvailable(npc)
+    || planId === undefined
+    || goal === undefined
+    || nextStep === undefined
+    || [planId, goal, nextStep].some((value) => value.length > 480)
+    || premiseRefs === undefined
+    || premiseRefs.length === 0
+    || resourceRefs === undefined
+    || [premiseRefs, resourceRefs].some((refs) =>
+      refs.length > 40 || refs.some((reference) => reference.length > 240))
+    || premiseRefs.some((reference) => !actorPlanPremiseIsAvailable(state, npc.id, reference))
+    || planId in state.campaignRuntime.npcPlans
+    || activity === undefined
+    || !hasExactKeys(activity, ["activityId", "activityKind", "intendedDurationMicros"])
+    || !isNonEmptyString(activity.activityId)
+    || !isNonEmptyString(activity.activityKind)
+    || activity.activityKind === "stableRecovery2014"
+    || typeof activity.intendedDurationMicros !== "string"
+    || !/^[1-9][0-9]*$/u.test(activity.intendedDurationMicros)
+    || activity.activityId in state.campaignRuntime.activities
+    || Object.values(state.campaignRuntime.activities)
+      .some((entry) => entry.status === "active" && entry.characterId === npc.id)
+    || trace === undefined
+    || !hasExactKeys(trace, ["description", "factRef", "visibilityPolicyRef"])
+    || traceFactRef === undefined
+    || traceDescription === undefined
+    || traceVisibilityPolicyRef === undefined
+    || traceFactRef in state.canonicalFacts
+    || traceFactRef in state.campaignRuntime.definitions
+    || alternateTarget === undefined
+    || !hasExactKeys(alternateTarget, ["reason", "targetRef"])
+    || alternateTargetReason === undefined
+    || alternateTargetRef === undefined
+    || (!(alternateTargetRef in state.scenes)
+      && !(alternateTargetRef in state.entities))
+  ) return rejected("invalidRulesInput", "ActorPlan fields exceed the current finite plan contract.");
 
-  const plan: CompoundResolutionPlan = {
-    schema: "zhuwei.compound-resolution-plan/v1",
-    actorCharacterId: resolutionActor.id,
-    goal: input.goal,
-    method: input.method,
-    sourceSceneId: resolutionActor.sceneId,
-    durationMicros: duration,
-    primaryFactRef,
-    frozenCosts: costs,
-    successEffects,
-    failureEffects,
-  };
-  const frozenCheck: FrozenCheck = {
-    kind: isCompoundSave ? "savingThrow" : checkSkill === null ? "ability" : "skill",
-    ability: ({
-      str: "strength",
-      dex: "dexterity",
-      con: "constitution",
-      int: "intelligence",
-      wis: "wisdom",
-      cha: "charisma",
-    } as const)[checkAbility as typeof ABILITIES[number]],
-    skill: checkSkill as string | null,
-    dc: String(mechanical.dc),
-    modifier: String(modifier),
-    mode: mechanical.mode as FrozenCheck["mode"],
-    goal: input.goal,
-    method: input.method,
-    risk: risk.warning,
-    successOutcome: successConsequences.join("；") || "行动成功并产生已冻结后果。",
-    failureOutcome: failureConsequences.join("；") || "行动失败并产生已冻结后果。",
-    costs: costs.map((cost) => cost.kind === "consumeResource"
-      ? `resource:${cost.resourceRef}:${cost.amount}`
-      : cost.kind === "consumeArtifact"
-        ? `artifact:${cost.artifactRef}:${cost.count}`
-        : `fictionTime:${cost.durationMicros}`).sort(),
-  };
-  const drafts: Draft[] = [];
-  for (const materialization of materializations) {
-    drafts.push(definitionRegisteredDraft(materialization));
-    drafts.push({
-      eventType: "CanonicalFactDeclared",
-      payload: {
-        fact: {
-          id: materialization.factRef,
-          kind: `dynamic:${materialization.kind}`,
-          subjectRefs: [actor.id, actor.sceneId].sort(),
-          value: {
-            definitionRef: materialization.factRef,
-            kind: materialization.kind,
-          },
-          visibilityPolicyId: materialization.visibilityPolicyRef,
-          source: "dynamicMaterialization",
-          causalParentIds: materialization.causalBasisRefs,
-        },
-      },
-      visibilityPolicyId: materialization.visibilityPolicyRef,
-      secrecy: materialization.visibilityPolicyRef.startsWith("visibility:public") ? "public" : "internal",
-      creates: [`fact:${materialization.factRef}`],
-    });
-    if (materialization.kind === "item" && isNonEmptyString(materialization.definition.artifactId)) {
-      drafts.push({
-        eventType: "ArtifactMaterialized",
-        payload: {
-          artifactId: materialization.definition.artifactId as string,
-          definitionRef: materialization.factRef,
-          name: materialization.definition.name as string,
-          sceneId: materialization.definition.sceneRef as string,
-          status: "placed",
-          quantity: 1,
-          visibilityPolicyId: materialization.visibilityPolicyRef,
-        },
-        visibilityPolicyId: materialization.visibilityPolicyRef,
-        secrecy: materialization.visibilityPolicyRef.startsWith("visibility:public")
-          ? "public"
-          : "internal",
-        creates: [`artifact:${materialization.definition.artifactId as string}`],
-      });
-    }
-  }
-  for (const [index, npcAction] of npcActions.entries()) {
-    drafts.push(...npcPlanDrafts(state, input.rootActionId, index, npcAction));
-  }
-  const sceneQuestionId = `scene-question:${input.rootActionId}`;
-  drafts.push({
-    eventType: "SceneQuestionOpened",
-    payload: { sceneQuestionId, question: input.scene.question },
-    visibilityPolicyId: "visibility:scene-observers",
-    creates: [`scene-question:${sceneQuestionId}`],
-  });
-  drafts.push({
-    eventType: "FeasibilityRuled",
-    payload: {
-      characterId: actor.id,
-      goal: input.goal,
-      method: input.method,
-      feasibilityKind: input.feasibilityKind as string,
-      publicBasis: risk.warning,
-    },
-    visibilityPolicyId: "visibility:scene-observers",
-  });
-  if (precedentDraft !== undefined) drafts.push(precedentDraft);
-  drafts.push({
-    eventType: "CheckFrozen",
-    payload: {
-      characterId: resolutionActor.id,
-      checkKind: isCompoundSave ? "savingThrow" : checkSkill === null ? "ability" : "skill",
-      ability: checkAbility as string,
-      skill: checkSkill as string | null,
-      dc: Number(mechanical.dc),
-      mode: mechanical.mode as FrozenCheck["mode"],
-      success: { effects: structuredClone(successEffects), consequences: successConsequences },
-      failure: { effects: structuredClone(failureEffects), consequences: failureConsequences },
-    },
-    visibilityPolicyId: "visibility:room-authority-only",
-    secrecy: "internal",
-  });
-  if (isRetryCheck && retryMethodChanged) {
-    drafts.push({
-      eventType: "RetryConditionChanged",
-      payload: {
-        characterId: actor.id,
-        goalId: mechanical.precedentRef as string,
-        change: "methodChanged",
-        evidence: input.method as string,
-      },
-      visibilityPolicyId: `visibility:character-controller:${actor.id}`,
-      secrecy: "private",
-    });
-  }
-  const remainingItems = Object.fromEntries(
-    (resolutionActor.loadout?.backpack ?? []).map(({ itemId, quantity }) => [itemId, quantity]),
-  );
-  for (const cost of costs) {
-    if (cost.kind === "consumeResource") {
-      drafts.push({
-        eventType: "ResourceReserved",
-        payload: {
-          characterId: resolutionActor.id,
-          resourceId: cost.resourceRef,
-          amount: cost.amount,
-          purpose: input.goal,
-        },
-        visibilityPolicyId: `visibility:character-controller:${resolutionActor.id}`,
-        secrecy: "private",
-      });
-    }
-    if (cost.kind === "consumeArtifact") {
-      const itemId = artifactItemId(cost.artifactRef);
-      if (itemId === undefined || !Number.isSafeInteger(remainingItems[itemId])) {
-        return rejected("invalidRulesInput", "The frozen item cost is no longer canonical.");
+  const availableResources = new Set(Object.keys(npc.resources ?? {}));
+  for (const faction of Object.values(state.campaignRuntime.factions)) {
+    if (!Array.isArray(faction.memberRefs) || !faction.memberRefs.includes(npc.id)) continue;
+    if (isNonEmptyString(faction.factionId)) availableResources.add(faction.factionId);
+    if (Array.isArray(faction.resourceRefs)) {
+      for (const reference of faction.resourceRefs) {
+        if (isNonEmptyString(reference)) availableResources.add(reference);
       }
-      remainingItems[itemId] -= cost.count;
-      drafts.push({
-        eventType: "ItemUsed",
-        payload: {
-          characterId: resolutionActor.id,
-          itemId,
-          quantity: cost.count,
-          remaining: remainingItems[itemId],
-          purpose: input.goal,
-        },
-        visibilityPolicyId: `visibility:character-controller:${resolutionActor.id}`,
-        secrecy: "private",
-      });
     }
   }
-  const prefix = result("committed", profiles, state, input.rootActionId, drafts);
-  if (prefix.kind === "rejected" || prefix.kind === "initialized") return prefix;
-  let currentState = prefix.state;
-  const events = [...prefix.events];
-  const randomnessRequests: RandomnessRequest[] = [];
-  const continuations: AuthorityContinuation[] = [];
-  for (const [index, npcAction] of npcActions.entries()) {
-    if (npcAction.mechanicalProposal === null) continue;
-    const npcCommand = semanticCommand(
-      profiles,
-      currentState,
-      input.rootActionId,
-      npcAction.npcId,
-      npcAction.goal,
-      npcAction.method,
-      primaryFactRef,
-      input.scene.question as string,
-      materializations,
-      npcAction.mechanicalProposal,
-      {
-        planId: npcActionPlanId(input.rootActionId, index, npcAction),
-        knowledgeRefs: npcAction.knowledgeRefs,
-      },
-    );
-    if (!("module" in npcCommand)) return npcCommand;
-    const outcome = runSemanticCommand(profiles, currentState, npcCommand);
-    if (outcome.kind === "rejected") return outcome;
-    if (outcome.kind === "initialized" || outcome.kind === "awaitingInput" || outcome.kind === "concluded") {
-      return rejected(
-        "pendingInputUnresolved",
-        "A player check cannot coexist with an unresolved NPC choice or conclusion.",
-      );
-    }
-    if (outcome.kind === "awaitingRandomness") {
-      if (isNonEmptyString(outcome.resolutionId) || isNonEmptyString(outcome.continuationCapability)) {
-        return rejected(
-          "pendingInputUnresolved",
-          "Combat randomness cannot be mixed with a separate noncombat continuation batch.",
-        );
-      }
-      const requests = outcome.randomnessRequests
-        ?? (outcome.randomnessRequest === undefined ? [] : [outcome.randomnessRequest]);
-      const nextContinuations = outcome.continuations
-        ?? (outcome.continuation === undefined ? [] : [outcome.continuation]);
-      if (
-        requests.length === 0
-        || requests.length !== nextContinuations.length
-        || requests.some((entry) => !("actorCharacterId" in entry))
-      ) return rejected("invalidWorldState", "NPC continuation batch is not canonical.");
-      randomnessRequests.push(...requests as RandomnessRequest[]);
-      continuations.push(...nextContinuations);
-    }
-    events.push(...outcome.events);
-    currentState = outcome.state;
+  if (resourceRefs.some((reference) => !availableResources.has(reference))) {
+    return rejected("privateOrUnknownReference", "ActorPlan resources are unavailable to the finite NPC.");
   }
-  const authority = checkRequest(currentState, input.rootActionId, resolutionActor.id, frozenCheck, plan);
-  const primary = result("awaitingRandomness", profiles, currentState, input.rootActionId, [{
-    eventType: "RandomnessRequested",
-    payload: {
-      request: authority.request,
-      continuation: authority.continuation,
-      purpose: authority.request.purpose,
-      formula: authority.request.diceExpression,
-      resolutionPlan: plan,
+
+  const timelineId = characterTimelineId(state, npc.id);
+  let due: { kind: "fictionTime"; atFictionMicros: string } | null = null;
+  if (input.due !== null) {
+    if (
+      !isRecord(input.due)
+      || !hasExactKeys(input.due, ["atFictionMicros", "kind"])
+      || input.due.kind !== "fictionTime"
+      || typeof input.due.atFictionMicros !== "string"
+      || !/^(0|[1-9][0-9]*)$/u.test(input.due.atFictionMicros)
+      || timelineId === undefined
+      || (BigInt(state.fictionTimelines[timelineId].nowMicros)
+        + BigInt(activity.intendedDurationMicros)).toString() !== input.due.atFictionMicros
+    ) return rejected("invalidRulesInput", "ActorPlan due time is not bound to its Activity duration.");
+    due = { kind: "fictionTime", atFictionMicros: input.due.atFictionMicros };
+  }
+
+  let trigger: { kind: "committedEvent"; eventRef: string }
+    | { kind: "knowledgeAcquired"; knowledgeRef: string }
+    | null = null;
+  if (input.trigger !== null) {
+    if (!isRecord(input.trigger)) {
+      return rejected("invalidRulesInput", "ActorPlan trigger is not canonical.");
+    }
+    const triggerInput = input.trigger;
+    const knowledgeRef = isNonEmptyString(triggerInput.knowledgeRef)
+      ? triggerInput.knowledgeRef
+      : undefined;
+    const eventRef = isNonEmptyString(triggerInput.eventRef) ? triggerInput.eventRef : undefined;
+    if (
+      triggerInput.kind === "knowledgeAcquired"
+      && hasExactKeys(triggerInput, ["kind", "knowledgeRef"])
+      && knowledgeRef !== undefined
+      && premiseRefs.includes(knowledgeRef)
+      && knowledgeRef in (state.knowledge[npc.id] ?? {})
+    ) {
+      trigger = { kind: "knowledgeAcquired", knowledgeRef };
+    } else if (
+      triggerInput.kind === "committedEvent"
+      && hasExactKeys(triggerInput, ["eventRef", "kind"])
+      && eventRef !== undefined
+      && Object.values(state.knowledge[npc.id] ?? {}).some((knowledge) =>
+        knowledge.acquiredByEventId === eventRef
+        || knowledge.provenanceChain.includes(eventRef))
+    ) {
+      trigger = { kind: "committedEvent", eventRef };
+    } else {
+      return rejected("privateOrUnknownReference", "ActorPlan trigger is unavailable to the finite NPC.");
+    }
+  }
+  if ((due === null) === (trigger === null)) {
+    return rejected("invalidRulesInput", "ActorPlan requires exactly one due time or frozen trigger.");
+  }
+
+  const chapterId = isNonEmptyString(state.campaignRuntime.campaign?.currentChapterId)
+    ? state.campaignRuntime.campaign.currentChapterId
+    : undefined;
+  const chapter = chapterId === undefined ? undefined : state.campaignRuntime.chapters[chapterId];
+  if (chapterId === undefined || chapter?.status !== "active" || !isProfileRef(chapter.moduleRef)) {
+    return rejected("invalidWorldState", "ActorPlan requires the Room's active pinned chapter.");
+  }
+
+  const payload: EventPayloadByType["NpcPlanFormed"] = {
+    npcId: npc.id,
+    planId,
+    actorKind: "npc",
+    actorRef: npc.id,
+    decisionNpcId: npc.id,
+    revision: "1",
+    status: "scheduled",
+    goal,
+    premiseRefs,
+    nextStep,
+    resourceRefs,
+    activity: {
+      activityId: activity.activityId as string,
+      activityKind: activity.activityKind as string,
+      intendedDurationMicros: activity.intendedDurationMicros as string,
     },
-    resolutionId: authority.request.resolutionId,
-    visibilityPolicyId: "visibility:room-authority-only",
+    due,
+    trigger,
+    trace: {
+      factRef: traceFactRef,
+      description: traceDescription,
+      visibilityPolicyRef: traceVisibilityPolicyRef,
+    },
+    alternateTarget: {
+      targetRef: alternateTargetRef,
+      reason: alternateTargetReason,
+    },
+    chapterId,
+    moduleRef: structuredClone(chapter.moduleRef),
+  };
+  return result("committed", profiles, state, rootActionId, [{
+    eventType: "NpcPlanFormed",
+    payload,
+    visibilityPolicyId: `visibility:npc:${npc.id}`,
     secrecy: "internal",
-    writes: [`continuation:${authority.continuation.continuationId}`, `receipt:${input.rootActionId}`],
-    creates: [`continuation:${authority.continuation.continuationId}`],
-  }], {
-    randomnessRequest: authority.request,
-    continuation: authority.continuation,
-    randomnessRequests: [...randomnessRequests, authority.request],
-    continuations: [...continuations, authority.continuation],
-  });
-  if (primary.kind === "rejected" || primary.kind === "initialized") return primary;
-  return { ...primary, events: [...events, ...primary.events] };
+    reads: [...new Set([
+      ...premiseRefs.flatMap((reference) => {
+        const scope = actorPlanPremiseScope(state, npc.id, reference);
+        return scope === undefined ? [] : [scope];
+      }),
+    ])],
+    creates: [`npc-plan:${planId}`],
+  }, {
+    eventType: "ActivityStarted",
+    payload: {
+      activityId: activity.activityId as string,
+      characterId: npc.id,
+      activityKind: activity.activityKind as string,
+      intendedDurationMicros: activity.intendedDurationMicros as string,
+      completion: { kind: "actorPlan", planId },
+    },
+    visibilityPolicyId: `visibility:npc:${npc.id}`,
+    secrecy: "internal",
+    reads: [`npc-plan:${planId}`],
+    creates: [`activity:${activity.activityId as string}`],
+  }]);
 }
 
+export function stepActorPlanMechanics(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult | undefined {
+  return formTypedNpcActorPlan(profiles, state, input)
+    ?? resolveDueActorPlanMechanics(profiles, state, input);
+}
 function consequenceDrafts(
   state: AuthoritativeWorldState,
   rootActionId: string,
@@ -3920,21 +2581,6 @@ function consequenceDrafts(
           resolutionId,
           visibilityPolicyId: `visibility:knowledge-holder:${effect.npcId}`,
           secrecy: "private",
-        });
-        const planId = `npc-plan:alert:${rootActionId}:${effect.npcId}`;
-        drafts.push({
-          eventType: "NpcPlanFormed",
-          payload: {
-            npcId: effect.npcId,
-            planId,
-            goal: "响应已在世界内察觉的异常",
-            knowledgeRefs: [knowledgeRef],
-            nextAction: effect.status,
-            resourceRefs: [],
-          },
-          resolutionId,
-          visibilityPolicyId: `visibility:npc:${effect.npcId}`,
-          secrecy: "internal",
         });
         break;
       }
@@ -4063,7 +2709,7 @@ function consequenceDrafts(
   return drafts;
 }
 
-export function fulfillCompoundActionPlanRandomness(
+export function fulfillActorPlanRandomness(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   continuationId: string,
@@ -4071,64 +2717,17 @@ export function fulfillCompoundActionPlanRandomness(
 ): StepResult | undefined {
   const stored = state.internalContinuations[continuationId];
   if (stored?.resolutionPlan === undefined) return undefined;
-  if (stored.request.purpose === "hiddenRealitySelection") {
-    const planValue: unknown = stored.resolutionPlan;
-    if (!isRecord(planValue) || planValue.kind !== "hiddenRealitySelection" || !Array.isArray(planValue.candidates)
-      || planValue.candidates.length < 2 || !isRecord(planValue.actionPlan) || rolls.length !== 1) {
-      return rejected("invalidWorldState", "HiddenReality continuation is not canonical.");
-    }
-    const plan = planValue;
-    const candidates = plan.candidates as unknown[];
-    const actionPlan = plan.actionPlan as JsonRecord;
-    const face = rolls[0];
-    let cursor = 0;
-    let selected: JsonRecord | undefined;
-    for (const candidate of candidates) {
-      if (!isRecord(candidate) || !Number.isSafeInteger(candidate.hiddenWeight)) {
-        return rejected("invalidWorldState", "HiddenReality frozen candidates are invalid.");
-      }
-      cursor += Number(candidate.hiddenWeight);
-      if (selected === undefined && face <= cursor) selected = candidate;
-    }
-    if (face < 1 || face > cursor || selected === undefined) {
-      return rejected("invalidRulesInput", "HiddenReality authoritative face is outside the frozen weight range.");
-    }
-    const prefix = result("committed", profiles, state, stored.rootActionId, [
-      {
-        eventType: "DiceRolled",
-        payload: { randomnessId: stored.request.randomnessId, resolutionId: stored.request.resolutionId,
-          formula: stored.request.diceExpression, faces: [...rolls], selectedFace: face,
-          requestHash: canonicalSha256(stored.request), frozenParametersHash: canonicalSha256(stored.request.frozenParameters) },
-        resolutionId: stored.request.resolutionId, visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
-      },
-      {
-        eventType: "HiddenRealityCandidatesFrozen",
-        payload: { candidateSetId: plan.candidateSetId, candidates: structuredClone(candidates) as JsonRecord[] },
-        resolutionId: stored.request.resolutionId, visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
-      },
-      {
-        eventType: "HiddenRealityMaterialized",
-        payload: { candidateSetId: plan.candidateSetId, candidateId: selected.candidateId,
-          factRef: selected.factRef, selectedFace: face },
-        resolutionId: stored.request.resolutionId, visibilityPolicyId: selected.visibilityPolicyRef as string,
-      },
-    ]);
-    if (prefix.kind === "rejected" || prefix.kind === "initialized") return prefix;
-    const materialization = { kind: selected.kind, factRef: selected.factRef,
-      causalBasisRefs: selected.causalBasisRefs, visibilityPolicyRef: selected.visibilityPolicyRef,
-      definition: selected.definition };
-    const selectedResult = stepCompoundActionPlan(profiles, prefix.state,
-      continueCompoundRoot({ ...structuredClone(actionPlan), dynamicMaterializations: [materialization] }, stored.rootActionId));
-    if (selectedResult === undefined || selectedResult.kind === "rejected" || selectedResult.kind === "initialized") {
-      return selectedResult ?? rejected("invalidWorldState", "Frozen HiddenReality selection cannot resume.");
-    }
-    return { ...selectedResult, events: [...prefix.events, ...selectedResult.events] };
-  }
   if (!isCompoundResolutionPlan(stored.resolutionPlan)) {
-    return rejected("invalidWorldState", "Compound continuation is not a canonical frozen resolution plan.");
+    return undefined;
   }
-  if (stored.request.purpose === "restHitDice") {
-    return rejected("invalidWorldState", "A rest continuation cannot carry a compound check plan.");
+  if (!stored.rootActionId.startsWith("actor-plan-due:")) {
+    return rejected("invalidWorldState", "Only a current due ActorPlan may carry this resolution plan.");
+  }
+  if (
+    stored.request.purpose === "restHitDice"
+    || stored.request.purpose === "hiddenRealitySelection"
+  ) {
+    return rejected("invalidWorldState", "A due ActorPlan must resume a frozen d20 check.");
   }
   const expectedRollCount = stored.request.frozenCheck.mode === "normal" ? 1 : 2;
   if (rolls.length !== expectedRollCount) {
@@ -4149,7 +2748,7 @@ export function fulfillCompoundActionPlanRandomness(
     succeeded,
   );
   if (consequences === undefined) {
-    return rejected("invalidRulesInput", "Frozen compound consequences no longer form one legal transition.");
+    return rejected("invalidRulesInput", "Frozen ActorPlan consequences no longer form one legal transition.");
   }
   const drafts: Draft[] = [
     {

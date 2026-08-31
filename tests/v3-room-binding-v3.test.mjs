@@ -108,9 +108,9 @@ test("V3 correction and party binding accepts only the complete frozen workflow/
 test("current private-tool protocol and workflow hashes freeze the exact tool/runtime binding", () => {
   assert.equal(
     PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE.protocolHash,
-    "fnv1a64:8754253b2593e263",
+    "fnv1a64:bc78545dae1b00cd",
   );
-  assert.equal(PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST.workflowHash, "fnv1a64:076a3f9a1e2e2330");
+  assert.equal(PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST.workflowHash, "fnv1a64:11301995746661da");
   assert.equal(
     PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST.proposalProtocolRef,
     PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE.protocolRef,

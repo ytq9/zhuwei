@@ -2,7 +2,6 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import { productionActionPlanProposal } from "./helpers/authoritative-proposal";
 
 const ALICE = Object.freeze({
   principal: Object.freeze({ id: "principal:loadout-room:alice", sessionVersion: 1 }),
@@ -56,31 +55,13 @@ async function initialize(name: string) {
         speed: 30,
         equipped: { armor: "chain" },
         backpack: [
+          { itemId: "explorer-pack", qty: 2 },
           { itemId: "shield", qty: 1 },
-          { itemId: "torch", qty: 2 },
         ],
       },
     }],
   })).resolves.toMatchObject({ created: true });
   return authority;
-}
-
-async function consumeTorch(authority: AuthorityStub) {
-  const prepared = record(await authority.prepare(ALICE, {
-    kind: "intent",
-    submissionId: "submission:loadout-room:consume",
-    text: "我用一支火把点燃营火。",
-  }), "consume prepare");
-  const rootActionId = String(prepared.rootActionId);
-  await expect(authority.commit(
-    ALICE,
-    String(prepared.preparedActionId),
-    productionActionPlanProposal(rootActionId, {
-      operation: "useItem",
-      itemRef: "torch",
-      amount: 1,
-    }),
-  )).resolves.toMatchObject({ kind: "committed" });
 }
 
 function loadoutFromObservation(value: unknown) {
@@ -90,10 +71,37 @@ function loadoutFromObservation(value: unknown) {
   return record(character.loadout, "authoritative loadout");
 }
 
+function inventoryEntriesFromObservation(value: unknown): JsonRecord[] {
+  const observation = record(value, "observation");
+  const readModel = record(observation.readModel, "read model");
+  const character = record(readModel.controlledCharacter, "controlled character");
+  const inventory = record(character.inventory, "authoritative inventory");
+  expect(Array.isArray(inventory.entries)).toBe(true);
+  return inventory.entries as JsonRecord[];
+}
+
+function entryIdByName(entries: JsonRecord[], name: string): string {
+  const entry = entries.find((candidate) => candidate.kind === "identified" && candidate.name === name);
+  expect(entry, `inventory entry ${name}`).toBeDefined();
+  return String(entry!.entryId);
+}
+
+function entryIdsByName(entries: JsonRecord[], name: string): string[] {
+  return entries
+    .filter((candidate) => candidate.kind === "identified" && candidate.name === name)
+    .map((candidate) => String(candidate.entryId))
+    .sort();
+}
+
 describe("Room Action semantic gear authority", () => {
-  it("keeps consumed quantities while wear/stow uses normal prepare, commit, Receipt, and idempotency", async () => {
+  it("preserves nonstackable entries while wear/stow uses normal prepare, commit, Receipt, and idempotency", async () => {
     const authority = await initialize("loadout-room-v2-semantic");
-    await consumeTorch(authority);
+    const initialObservation = await authority.observe(ALICE);
+    const initialEntries = inventoryEntriesFromObservation(initialObservation);
+    const armorEntryId = entryIdByName(initialEntries, "链甲");
+    const shieldEntryId = entryIdByName(initialEntries, "盾牌");
+    const packEntryIds = entryIdsByName(initialEntries, "探险者套装");
+    expect(packEntryIds).toHaveLength(2);
     let proposed = 0;
     const context = {
       principal: ALICE,
@@ -111,7 +119,7 @@ describe("Room Action semantic gear authority", () => {
       submissionId: "submission:loadout-room:wear-shield",
       action: "wear" as const,
       slot: "off" as const,
-      itemId: "shield",
+      itemId: shieldEntryId,
     };
     const first = await handleRoomAction(context, action);
     expect(first).toMatchObject({ kind: "committed", receipt: { status: "committed" } });
@@ -126,13 +134,18 @@ describe("Room Action semantic gear authority", () => {
     expect(loadout).toEqual({
       armorClass: 19,
       speedFeet: 30,
-      equipped: { armor: "chain", off: "shield" },
-      backpack: [{ itemId: "torch", quantity: 1 }],
+      equipped: { armor: armorEntryId, off: shieldEntryId },
+      backpack: packEntryIds.map((itemId) => ({ itemId, quantity: 1 })),
     });
   });
 
   it("rejects an unauthorized principal and a client-supplied loadout snapshot", async () => {
     const authority = await initialize("loadout-room-v2-trusted-input");
+    const initialEntries = inventoryEntriesFromObservation(await authority.observe(ALICE));
+    const armorEntryId = entryIdByName(initialEntries, "链甲");
+    const shieldEntryId = entryIdByName(initialEntries, "盾牌");
+    const packEntryIds = entryIdsByName(initialEntries, "探险者套装");
+    expect(packEntryIds).toHaveLength(2);
     const kp = {
       propose: async () => {
         throw new Error("rejected gear inputs must never reach KP");
@@ -152,13 +165,13 @@ describe("Room Action semantic gear authority", () => {
       submissionId: "submission:loadout-room:forged-snapshot",
       action: "wear",
       slot: "off",
-      itemId: "shield",
+      itemId: shieldEntryId,
       characterId: "character:loadout-room:mallory",
       loadout: {
         armorClass: 99,
         speedFeet: 999,
-        equipped: { off: "shield" },
-        backpack: [{ itemId: "torch", quantity: 999 }],
+        equipped: { off: shieldEntryId },
+        backpack: [{ itemId: packEntryIds[0], quantity: 999 }],
       },
     } as never)).resolves.toMatchObject({ kind: "rejected", code: "validation" });
 
@@ -166,10 +179,10 @@ describe("Room Action semantic gear authority", () => {
     expect(loadout).toEqual({
       armorClass: 17,
       speedFeet: 30,
-      equipped: { armor: "chain" },
+      equipped: { armor: armorEntryId },
       backpack: [
-        { itemId: "shield", quantity: 1 },
-        { itemId: "torch", quantity: 2 },
+        ...packEntryIds.map((itemId) => ({ itemId, quantity: 1 })),
+        { itemId: shieldEntryId, quantity: 1 },
       ],
     });
   });

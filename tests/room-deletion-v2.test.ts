@@ -5,7 +5,6 @@ import {
 } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { RULESET_VERSION } from "../app/_runtime/lib/rules/ruleset";
 import { directConsequencesProposal } from "./helpers/authoritative-proposal";
 
 type DirectoryRow = {
@@ -22,7 +21,6 @@ type MutableDirectory = {
 
 type DeletionAuthority = DurableObjectStub & {
   initializeAuthoritative(input: unknown): Promise<Record<string, unknown>>;
-  initialize(input: unknown): Promise<unknown>;
   prepare(context: unknown, action: unknown): Promise<Record<string, unknown>>;
   commit(context: unknown, preparedActionId: string, proposal: unknown): Promise<Record<string, unknown>>;
   applyRoomAdministration(capability: unknown, command: unknown): Promise<Record<string, unknown>>;
@@ -160,19 +158,8 @@ describe("authoritative-v2 recoverable room deletion", () => {
     });
   });
 
-  it("finalizes only after D1 confirms absence and explicitly clears both authority and legacy rows", async () => {
+  it("finalizes only after D1 confirms absence and clears the authoritative room", async () => {
     const { roomId, authority, capabilities } = await authoritativeRoom("finalize");
-    await authority.initialize({
-      roomId,
-      moduleId: "black-oak-will",
-      rulesetVersion: RULESET_VERSION,
-      players: [{
-        id: "legacy:deletion-host",
-        kind: "player",
-        name: "旧规则房主",
-        sceneId: "wake",
-      }],
-    });
     const d1 = directory({ id: roomId, host_user_id: HOST.principal.id, status: "deleting" });
     await installDirectory(authority, d1);
     await authority.prepareDeletion(capabilities.roomDeletion, HOST);
@@ -205,17 +192,6 @@ describe("authoritative-v2 recoverable room deletion", () => {
         characterId: "character:deletion-recreated",
         controllerPrincipalId: HOST.principal.id,
         staticCard: { name: "重建角色", sceneId: "wake" },
-      }],
-    })).resolves.toMatchObject({ created: true });
-    await expect(authority.initialize({
-      roomId,
-      moduleId: "black-oak-will",
-      rulesetVersion: RULESET_VERSION,
-      players: [{
-        id: "legacy:recreated",
-        kind: "player",
-        name: "重建旧角色",
-        sceneId: "wake",
       }],
     })).resolves.toMatchObject({ created: true });
   });

@@ -3,11 +3,15 @@ import test from "node:test";
 
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
 import {
-  ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
 } from "../app/_runtime/lib/rules/profiles/manifests.ts";
+import { ITEM_SYSTEM_PROFILE } from "../app/_runtime/lib/rules/profiles/item-system.ts";
 import { buildV3ContextPack } from "../app/_runtime/lib/kp/v3-context-runtime.ts";
 import { compileKpFormDraft } from "../app/_runtime/lib/kp/causal-action-program.ts";
+import {
+  itemEntryResourceId,
+  standardGearDefinitionId,
+} from "../app/_runtime/lib/rules/v2/items.ts";
 
 const PLAYER = "character:npc-mechanics-v5:player";
 const PRINCIPAL = "principal:npc-mechanics-v5:player";
@@ -146,8 +150,8 @@ function initialize({
 function causalMaterializationInput(rootActionId, draft) {
   const program = compileKpFormDraft("materialization.v1", draft);
   return {
-    kind: "resolveCompoundActionPlan",
-    actionPlanVersion: program.languageRef,
+    kind: "executeCausalActionProgram",
+    actionLanguageRef: program.languageRef,
     actionLanguageHash: program.languageHash,
     causalActionProgram: program,
     rootActionId,
@@ -165,6 +169,64 @@ function appendAndReplay(scenario, outcome) {
     assert.fail(JSON.stringify({ rebuilt, firstRejectedPrefix, event: events[firstRejectedPrefix] }));
   }
   return { ...scenario, events, state: rebuilt.state };
+}
+
+function heldEntries(scenario, holderRef, definitionRef) {
+  const itemSystem = scenario.state.campaignRuntime.itemSystem;
+  assert.ok(itemSystem, "V5 must expose one authoritative item system");
+  return Object.values(itemSystem.entries)
+    .filter((entry) => entry.disposition === "held"
+      && entry.holderRef === holderRef
+      && (definitionRef === undefined || entry.definitionRef === definitionRef))
+    .sort((left, right) => left.entryId.localeCompare(right.entryId));
+}
+
+function heldStandardEntries(scenario, holderRef, standardItemId) {
+  return heldEntries(scenario, holderRef, standardGearDefinitionId(standardItemId));
+}
+
+function assertCompletedActivityBefore(outcome, resultingEventType) {
+  const eventTypes = outcome.events.map(({ eventType }) => eventType);
+  const ordered = [
+    "ActivityStarted",
+    "FictionTimeAdvanced",
+    "ActivityCompleted",
+    resultingEventType,
+  ];
+  const indexes = ordered.map((eventType) => eventTypes.indexOf(eventType));
+  assert.ok(indexes.every((index) => index >= 0), JSON.stringify({ eventTypes, ordered }));
+  assert.ok(indexes.every((index, position) => position === 0 || indexes[position - 1] < index),
+    JSON.stringify({ eventTypes, ordered }));
+}
+
+function declareNpcItemStateCause(scenario, {
+  factId,
+  npcRef,
+  itemRef,
+  action,
+  source = "mechanicalResolution",
+  causalParentIds = [],
+}) {
+  const declared = step(scenario.profiles, scenario.state, {
+    kind: "declareCanonicalFact",
+    proposalId: `root:declare:${factId}`,
+    fact: {
+      factId,
+      factKind: "npcMechanicalItemStateCause",
+      subjectRefs: [npcRef, itemRef].sort(),
+      value: {
+        schema: "zhuwei.npc-mechanical-item-state-cause/v1",
+        npcRef,
+        itemRef,
+        action,
+      },
+      source,
+      visibilityPolicy: "public",
+      causalParentIds,
+    },
+  });
+  assert.equal(declared.kind, "committed", JSON.stringify(declared));
+  return appendAndReplay(scenario, declared);
 }
 
 function settleRoomRandomness(scenario, waiting) {
@@ -314,7 +376,7 @@ function encounterInput(rootActionId, encounterId, dynamicEntities, npcIds) {
   };
 }
 
-test("a V5 private materialization Form starts one frozen NPC encounter while V4 stays isolated", () => {
+test("a V5 private materialization Form starts one frozen NPC encounter", () => {
   const rootActionId = "root:npc-mechanics-v5:causal-encounter";
   const encounterId = "encounter:npc-mechanics-v5:causal";
   const enemyId = "npc:npc-mechanics-v5:causal-warden";
@@ -372,13 +434,6 @@ test("a V5 private materialization Form starts one frozen NPC encounter while V4
   );
   assert.equal(opened.state.fictionTimelines["branch:main"].nowMicros, "0");
   settleRoomRandomness(v5, opened);
-
-  const v4 = initialize({ profiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST, withCausalBasis: true });
-  const beforeV4 = structuredClone(v4.state);
-  const isolated = step(v4.profiles, v4.state, input);
-  assert.equal(isolated.kind, "rejected", JSON.stringify(isolated));
-  assert.deepEqual(isolated.events ?? [], []);
-  assert.deepEqual(v4.state, beforeV4);
 });
 
 test("one bespoke NPC definition can back multiple independent runtime entities", () => {
@@ -482,123 +537,6 @@ test("one bespoke NPC definition can back multiple independent runtime entities"
     ],
   );
   assert.ok(contextPack.required.established.dynamicDefinitionRefs.includes(definitionId));
-});
-
-test("a KP compound combat proposal is lowered into a frozen NPC template before initiative", () => {
-  let scenario = initialize();
-  const rootActionId = "root:npc-mechanics-v5:compound";
-  const enemyId = "npc:npc-mechanics-v5:compound-sentinel";
-  const abilityId = "ability:npc-mechanics-v5:compound-sentinel:spear";
-  const factRef = "fact:npc-mechanics-v5:compound-sentinel";
-  const definition = templateDefinition("unused:compound-wrapper", abilityId);
-  const content = definition.content;
-  const proposed = step(scenario.profiles, scenario.state, {
-    kind: "resolveCompoundActionPlan",
-    actionPlanVersion: "authoritative-kp-action-plan-v1",
-    feasibilityKind: "checkRequired",
-    rootActionId,
-    actorCharacterId: PLAYER,
-    goal: "迎战突然现身的陌生哨兵",
-    method: "拔出武器并保持戒备",
-    risk: {
-      warning: "哨兵已经表现出明确敌意。",
-      successConsequences: ["进入战斗"],
-      failureConsequences: ["进入战斗"],
-      retryGate: ["situationAdvanced"],
-    },
-    dynamicMaterializations: [{
-      kind: "enemy",
-      factRef,
-      causalBasisRefs: [],
-      visibilityPolicyRef: "visibility:scene-observers",
-      definition: {
-        entityId: enemyId,
-        entityKind: "npc",
-        name: "陌生哨兵",
-        position: { x: "480", y: "180", elevation: "0" },
-        footprint: structuredClone(content.footprint),
-        stats: structuredClone(content.stats),
-        proficiencyBonus: content.proficiencyBonus,
-        armorClass: content.armorClass,
-        hitPoints: { current: "11", maximum: content.hitPointsMaximum, temporary: "0" },
-        speedInches: structuredClone(content.speedInches),
-        resources: { "resource:brace": { current: "1", maximum: "1" } },
-        deathPolicy: content.deathPolicy,
-        abilities: structuredClone(content.intrinsicAbilities),
-      },
-    }],
-    npcActions: [],
-    scene: {
-      question: "双方谁先行动？",
-      pressure: "敌意已经公开。",
-      opportunities: ["寻找掩护"],
-      conclusionCandidate: null,
-    },
-    mechanicalProposal: {
-      operation: "startCombat",
-      encounterRef: "encounter:npc-mechanics-v5:compound",
-      targetEntityRefs: [enemyId],
-    },
-  });
-  assert.equal(proposed.kind, "awaitingRandomness", JSON.stringify(proposed));
-  const mechanicalRef = `npc-mechanics:${factRef}:1`;
-  const registered = proposed.events.filter(({ eventType }) => eventType === "DefinitionRegistered");
-  assert.equal(
-    registered.filter(({ payload }) =>
-      payload.definition?.definitionKind === "npcMechanicalTemplate").length,
-    1,
-  );
-  assert.ok(
-    proposed.events.find(({ eventType }) => eventType === "EntityMaterialized")
-      .payload.entity.mechanicalDefinitionRef === mechanicalRef,
-  );
-  const firstRandomnessIndex = proposed.events.findIndex(({ eventType }) =>
-    eventType === "RandomnessRequested");
-  const templateIndex = proposed.events.findIndex(({ payload }) =>
-    payload.definition?.definitionId === mechanicalRef);
-  assert.ok(templateIndex >= 0 && templateIndex < firstRandomnessIndex);
-  scenario = appendAndReplay(scenario, proposed);
-  assert.equal(
-    scenario.state.combatRuntime.entities[enemyId].mechanicalDefinitionRef,
-    mechanicalRef,
-  );
-});
-
-test("the NPC mechanics fields do not alter the previous V4 KP projection or Context Pack", () => {
-  const scenario = initialize({ profiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST });
-  const playerProjection = project(scenario.profiles, scenario.state, {
-    kind: "player",
-    principalId: PRINCIPAL,
-    sessionVersion: 1,
-    seatId: SEAT,
-    characterId: PLAYER,
-  });
-  const kpProjection = project(scenario.profiles, scenario.state, {
-    kind: "kp",
-    capability: "internal:kp-spatial-evidence",
-  });
-  assert.equal(playerProjection.kind, "projected", JSON.stringify(playerProjection));
-  assert.equal(kpProjection.kind, "projected", JSON.stringify(kpProjection));
-  assert.equal(kpProjection.npcMechanicalDefinitions, undefined);
-  assert.equal(kpProjection.spatialEvidence.entities[PLAYER].name, undefined);
-  assert.equal(
-    kpProjection.spatialEvidence.entities[PLAYER].mechanicalDefinitionRef,
-    undefined,
-  );
-  const contextPack = buildV3ContextPack({
-    rootActionId: "root:npc-mechanics-v4:context",
-    preparedActionId: "prepared:npc-mechanics-v4:context",
-    attempt: 1,
-    input: { text: "观察庭院" },
-    projection: {
-      ...kpProjection,
-      actorProjection: playerProjection,
-      moduleRef: scenario.genesis.moduleRef,
-      npcViewers: {},
-    },
-  });
-  assert.equal(contextPack.required.sceneDynamics.npcMechanics, undefined);
-  assert.equal(contextPack.required.mechanics.loadout, undefined);
 });
 
 test("a spatial NPC shell is promoted once without relocation and then reused without respec", () => {
@@ -784,8 +722,8 @@ test("a first combat definition cannot contradict an NPC's frozen noncombat attr
           equippedSlot: "main",
           quantity: 1,
           source: {
-            kind: "npcMechanicalItemDefinition",
-            ref: "npc-item-definition:missing:1",
+            kind: "itemDefinition",
+            ref: "item-definition:missing:1",
           },
         }],
       },
@@ -808,6 +746,7 @@ test("a first combat definition cannot contradict an NPC's frozen noncombat attr
 
 test("NPC inventory transfer and semantic gear changes keep equipment mechanics authoritative", () => {
   let scenario = initialize({
+    withCausalBasis: true,
     playerBackpack: [
       { itemId: "longsword", quantity: 1 },
       { itemId: "shield", quantity: 2 },
@@ -836,6 +775,10 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
   );
   scenario = settleRoomRandomness(scenario, opened);
   scenario = concludeEncounter(scenario, encounterId, "npc-mechanics-v5:equipment");
+  const [playerLongsword] = heldStandardEntries(scenario, PLAYER, "longsword");
+  const playerShields = heldStandardEntries(scenario, PLAYER, "shield");
+  assert.ok(playerLongsword);
+  assert.equal(playerShields.length, 2);
 
   const transfer = (itemId, suffix, throughPrivateForm = false) => {
     const rootActionId = `root:npc-mechanics-v5:equipment:${suffix}`;
@@ -848,6 +791,7 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
             toCharacterRef: npcId,
             itemRef: itemId,
             quantity: 1,
+            ownershipDisposition: "preserve",
           }),
           basisRefs: [SCENE, npcId, itemId],
           resolution: "direct",
@@ -862,19 +806,21 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
           itemId,
           quantity: 1,
           method: "阿莱莎当面把装备交给院卫",
+          ownershipDisposition: "preserve",
         });
     assert.equal(outcome.kind, "committed", JSON.stringify(outcome));
     assert.equal(
       outcome.events.filter(({ eventType }) => eventType === "ItemTransferred").length,
       1,
     );
+    if (throughPrivateForm) assertCompletedActivityBefore(outcome, "ItemTransferred");
     const transferEvent = outcome.events.find(({ eventType }) =>
       eventType === "ItemTransferred");
     scenario = appendAndReplay(scenario, outcome);
     return transferEvent.payload.targetItemId;
   };
 
-  const shieldItemId = transfer("shield", "transfer-shield", true);
+  const shieldItemId = transfer(playerShields[0].entryId, "transfer-shield", true);
   let npc = scenario.state.entities[npcId];
   let combatNpc = scenario.state.combatRuntime.entities[npcId];
   assert.deepEqual(npc.loadout, {
@@ -882,13 +828,23 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
     speedFeet: 30,
     equipped: {},
     backpack: [{ itemId: shieldItemId, quantity: 1 }],
-    mechanicalItems: {
-      [shieldItemId]: { sourceKind: "standardGear", definitionRef: "shield", status: "usable" },
-    },
   });
+  assert.equal(
+    scenario.state.campaignRuntime.itemSystem.entries[shieldItemId].definitionRef,
+    standardGearDefinitionId("shield"),
+  );
   assert.equal(combatNpc.armorClass, "14", "inventory transfer does not auto-equip a shield");
   assert.deepEqual(combatNpc.abilityRefs, [intrinsicAbilityId]);
   assert.deepEqual(combatNpc.equipmentAbilityRefs, []);
+  assert.deepEqual(combatNpc.resources[itemEntryResourceId(shieldItemId)], {
+    current: "1",
+    maximum: "1",
+  });
+  assert.equal(
+    Object.keys(combatNpc.resources).some((resourceId) => resourceId.startsWith("item:")),
+    false,
+    "V5 combat item caches use only item-entry resource identities",
+  );
 
   const actorProjection = project(scenario.profiles, scenario.state, {
     kind: "player",
@@ -923,15 +879,15 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
     },
   });
   assert.deepEqual(inventoryContext.required.mechanics.loadout.backpack, [
-    { itemRef: "longsword", quantity: 1 },
-    { itemRef: "shield", quantity: 1 },
-  ]);
+    { itemRef: playerLongsword.entryId, quantity: 1 },
+    { itemRef: playerShields[1].entryId, quantity: 1 },
+  ].sort((left, right) => left.itemRef.localeCompare(right.itemRef)));
   assert.deepEqual(
     inventoryContext.required.npcViews.find(({ npcRef }) => npcRef === npcId).loadout.backpack,
     [{ itemRef: shieldItemId, quantity: 1 }],
   );
 
-  const longswordItemId = transfer("longsword", "transfer-longsword");
+  const longswordItemId = transfer(playerLongsword.entryId, "transfer-longsword");
   npc = scenario.state.entities[npcId];
   combatNpc = scenario.state.combatRuntime.entities[npcId];
   assert.deepEqual(npc.loadout.backpack, [
@@ -955,6 +911,60 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
   assert.deepEqual(missingItem.events ?? [], []);
   assert.deepEqual(scenario.state, beforeMissingItem);
 
+  const npcBusy = step(scenario.profiles, scenario.state, {
+    kind: "startActivity",
+    proposalId: "root:npc-mechanics-v5:equipment:npc-busy",
+    activityId: "activity:npc-mechanics-v5:equipment:npc-busy",
+    activityKind: "establishedNpcWork",
+    characterId: npcId,
+    intendedDurationMicros: "60000000",
+    completion: {
+      method: "完成既定值守",
+      primaryFactRef: YARD_BASIS,
+      sourceSceneId: SCENE,
+      success: [],
+      failure: [],
+    },
+  });
+  assert.equal(npcBusy.kind, "committed", JSON.stringify(npcBusy));
+  scenario = appendAndReplay(scenario, npcBusy);
+  const blockedByNpcActivity = step(scenario.profiles, scenario.state, {
+    kind: "changeNpcGear",
+    rootActionId: "root:npc-mechanics-v5:equipment:blocked-by-npc-activity",
+    npcCharacterId: npcId,
+    action: "wear",
+    slot: "off",
+    itemId: shieldItemId,
+  });
+  assert.equal(blockedByNpcActivity.kind, "rejected", JSON.stringify(blockedByNpcActivity));
+  assert.equal(blockedByNpcActivity.rejection.code, "pendingInputUnresolved");
+  const npcFreed = step(scenario.profiles, scenario.state, {
+    kind: "interruptActivity",
+    proposalId: "root:npc-mechanics-v5:equipment:npc-freed",
+    activityId: "activity:npc-mechanics-v5:equipment:npc-busy",
+    cause: { kind: "worldStateChanged" },
+  });
+  assert.equal(npcFreed.kind, "committed", JSON.stringify(npcFreed));
+  scenario = appendAndReplay(scenario, npcFreed);
+
+  const playerBusy = step(scenario.profiles, scenario.state, {
+    kind: "startActivity",
+    proposalId: "root:npc-mechanics-v5:equipment:player-busy",
+    activityId: "activity:npc-mechanics-v5:equipment:player-busy",
+    activityKind: "establishedPlayerWork",
+    characterId: PLAYER,
+    intendedDurationMicros: "60000000",
+    completion: {
+      method: "完成既定工作",
+      primaryFactRef: YARD_BASIS,
+      sourceSceneId: SCENE,
+      success: [],
+      failure: [],
+    },
+  });
+  assert.equal(playerBusy.kind, "committed", JSON.stringify(playerBusy));
+  scenario = appendAndReplay(scenario, playerBusy);
+
   const shieldWorn = step(scenario.profiles, scenario.state, causalMaterializationInput(
     "root:npc-mechanics-v5:equipment:wear-shield",
     {
@@ -970,16 +980,34 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
       basisRefs: [SCENE, npcId, shieldItemId],
       resolution: "direct",
       durationUnit: "second",
-      durationValue: 6,
+      durationValue: 1,
     },
   ));
   assert.equal(shieldWorn.kind, "committed", JSON.stringify(shieldWorn));
+  assertCompletedActivityBefore(shieldWorn, "NpcGearChanged");
+  const gearActivity = shieldWorn.events.find(({ eventType }) => eventType === "ActivityStarted");
+  assert.equal(gearActivity.payload.characterId, npcId);
+  assert.equal(gearActivity.payload.intendedDurationMicros, "6000000");
+  assert.equal(
+    shieldWorn.events.find(({ eventType }) => eventType === "FictionTimeAdvanced")
+      .payload.durationMicros,
+    "6000000",
+    "Rules derives shield timing instead of trusting the KP duration",
+  );
   assert.equal(
     shieldWorn.events.some(({ eventType }) => eventType === "DefinitionRegistered"),
     false,
     "a shield changes AC without inventing an attack ability",
   );
   scenario = appendAndReplay(scenario, shieldWorn);
+  const playerFreed = step(scenario.profiles, scenario.state, {
+    kind: "interruptActivity",
+    proposalId: "root:npc-mechanics-v5:equipment:player-freed",
+    activityId: "activity:npc-mechanics-v5:equipment:player-busy",
+    cause: { kind: "worldStateChanged" },
+  });
+  assert.equal(playerFreed.kind, "committed", JSON.stringify(playerFreed));
+  scenario = appendAndReplay(scenario, playerFreed);
   combatNpc = scenario.state.combatRuntime.entities[npcId];
   assert.equal(scenario.state.entities[npcId].loadout.armorClass, 16);
   assert.equal(combatNpc.armorClass, "16");
@@ -1001,7 +1029,7 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
   assert.ok(weaponGearEvent, JSON.stringify(weaponWorn));
   assert.equal(weaponGearEvent.payload.equipmentAbilityRefs.length, 1);
   const equipmentAbilityRef = weaponGearEvent.payload.equipmentAbilityRefs[0];
-  assert.match(equipmentAbilityRef, new RegExp(`^ability:${npcId}:weapon:longsword:`));
+  assert.ok(equipmentAbilityRef.startsWith(`ability:${npcId}:weapon:${longswordItemId}:`));
   assert.equal(
     weaponWorn.events.filter(({ eventType }) => eventType === "DefinitionRegistered").length,
     1,
@@ -1014,20 +1042,18 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
     speedFeet: 30,
     equipped: { main: longswordItemId, off: shieldItemId },
     backpack: [],
-    mechanicalItems: {
-      [longswordItemId]: {
-        sourceKind: "standardGear", definitionRef: "longsword", status: "usable",
-      },
-      [shieldItemId]: { sourceKind: "standardGear", definitionRef: "shield", status: "usable" },
-    },
   });
+  assert.equal(
+    scenario.state.campaignRuntime.itemSystem.entries[longswordItemId].definitionRef,
+    standardGearDefinitionId("longsword"),
+  );
   assert.equal(combatNpc.armorClass, "16");
   assert.deepEqual(combatNpc.equipmentAbilityRefs, [equipmentAbilityRef]);
   assert.ok(combatNpc.abilityRefs.includes(intrinsicAbilityId), "intrinsic template ability remains");
   assert.ok(combatNpc.abilityRefs.includes(equipmentAbilityRef), "equipped weapon ability is added");
   assert.equal(
     scenario.state.combatRuntime.definitions[equipmentAbilityRef].mechanicalKey,
-    "weapon:longsword",
+    `weapon:${longswordItemId}`,
   );
   assert.deepEqual(
     scenario.state.combatRuntime.definitions[equipmentAbilityRef].damage,
@@ -1069,11 +1095,11 @@ test("NPC inventory transfer and semantic gear changes keep equipment mechanics 
   assert.deepEqual(combatNpc.equipmentAbilityRefs, []);
   assert.deepEqual(combatNpc.abilityRefs, [intrinsicAbilityId]);
 
-  const secondShieldItemId = transfer("shield", "transfer-second-shield");
+  const secondShieldItemId = transfer(playerShields[1].entryId, "transfer-second-shield");
   assert.notEqual(secondShieldItemId, shieldItemId);
   assert.equal(
-    scenario.state.entities[npcId].loadout.mechanicalItems[secondShieldItemId].definitionRef,
-    "shield",
+    scenario.state.campaignRuntime.itemSystem.entries[secondShieldItemId].definitionRef,
+    standardGearDefinitionId("shield"),
   );
 });
 
@@ -1085,8 +1111,8 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
   const secondNpc = "npc:npc-mechanics-v5:loadout:b";
   const receiverNpc = "npc:npc-mechanics-v5:loadout:receiver";
   const intrinsicAbilityId = "ability:npc-mechanics-v5:loadout:claw";
-  const pikeDefinitionId = "npc-item-definition:npc-mechanics-v5:ember-pike:1";
-  const armorDefinitionId = "npc-item-definition:npc-mechanics-v5:guard-plate:1";
+  const pikeDefinitionId = "item-definition:npc-mechanics-v5:ember-pike:1";
+  const armorDefinitionId = "item-definition:npc-mechanics-v5:guard-plate:1";
   const intrinsicAbility = {
     definitionId: intrinsicAbilityId,
     revision: "1",
@@ -1098,45 +1124,70 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
     damage: [{ type: "slashing", formula: "1d4+2" }],
   };
   const itemDefinitions = [{
+    schema: "zhuwei.item-definition/v1",
     definitionId: pikeDefinitionId,
     revision: "1",
-    definitionKind: "npcMechanicalItem",
-    rulesBasis: "srd5.1-2014",
+    definitionKind: "item",
+    rulesBasis: {
+      kind: "zhuwei-product-ruling",
+      profileRef: ITEM_SYSTEM_PROFILE,
+    },
     causalBasisRefs: [],
     visibilityPolicyRef: "visibility:room-authority-only",
     content: {
-      schema: "zhuwei.npc-mechanical-item/v1",
+      schema: "zhuwei.item-definition-content/v1",
       label: "余烬长枪",
-      wear: "weapon",
-      twoHanded: false,
-      armor: null,
-      weapon: {
-        attackAbility: "str",
-        ammoRef: null,
-        damageDice: "1d8",
-        damageType: "piercing",
-        reachInches: "120",
-        rangeNormalInches: null,
-        rangeLongInches: null,
-        requiresSight: true,
+      description: "由余烬锻造的长枪。",
+      category: "weapon",
+      aliases: [],
+      tags: ["dynamic", "npc"],
+      stackable: false,
+      equipment: {
+        allowedSlots: ["main", "off"],
+        twoHanded: false,
+        armor: null,
+        weapon: {
+          attackAbility: "str",
+          ammunitionDefinitionRef: null,
+          damageDice: "1d8",
+          damageType: "piercing",
+          reachInches: "120",
+          rangeNormalInches: null,
+          rangeLongInches: null,
+          requiresSight: true,
+        },
       },
-      abilities: [],
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
     },
   }, {
+    schema: "zhuwei.item-definition/v1",
     definitionId: armorDefinitionId,
     revision: "1",
-    definitionKind: "npcMechanicalItem",
+    definitionKind: "item",
     rulesBasis: "srd5.1-2014",
     causalBasisRefs: [],
     visibilityPolicyRef: "visibility:room-authority-only",
     content: {
-      schema: "zhuwei.npc-mechanical-item/v1",
+      schema: "zhuwei.item-definition-content/v1",
       label: "守卫板甲",
-      wear: "armor",
-      twoHanded: false,
-      armor: { kind: "heavy", acBase: "16", acDexCap: "0" },
-      weapon: null,
-      abilities: [],
+      description: "余烬守卫使用的板甲。",
+      category: "armor",
+      aliases: [],
+      tags: ["dynamic", "npc"],
+      stackable: false,
+      equipment: {
+        allowedSlots: ["armor"],
+        twoHanded: false,
+        armor: { kind: "heavy", acBase: 16, acDexCap: 0 },
+        weapon: null,
+      },
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
     },
   }];
   const overrides = {
@@ -1148,13 +1199,13 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
           entryId: "primary-weapon",
           equippedSlot: "main",
           quantity: 1,
-          source: { kind: "npcMechanicalItemDefinition", ref: pikeDefinitionId },
+          source: { kind: "itemDefinition", ref: pikeDefinitionId },
         },
         {
           entryId: "worn-armor",
           equippedSlot: "armor",
           quantity: 1,
-          source: { kind: "npcMechanicalItemDefinition", ref: armorDefinitionId },
+          source: { kind: "itemDefinition", ref: armorDefinitionId },
         },
         {
           entryId: "shield",
@@ -1223,18 +1274,26 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
   scenario = settleRoomRandomness(scenario, opened);
 
   const equipmentAbilityByNpc = {};
+  const ammunitionEntryByNpc = {};
   for (const npcId of [firstNpc, secondNpc]) {
     const character = scenario.state.entities[npcId];
     const combat = scenario.state.combatRuntime.entities[npcId];
+    const ammunitionEntryId = character.loadout.equipped.ammo;
+    assert.ok(ammunitionEntryId);
+    ammunitionEntryByNpc[npcId] = ammunitionEntryId;
     assert.equal(character.loadout.armorClass, 18);
     assert.equal(combat.armorClass, "18");
-    assert.deepEqual(character.loadout.backpack, [{ itemId: "arrow", quantity: 20 }]);
-    assert.equal(combat.resources["item:arrow"].current, "20");
+    assert.deepEqual(character.loadout.backpack, [{ itemId: ammunitionEntryId, quantity: 20 }]);
+    assert.equal(
+      scenario.state.campaignRuntime.itemSystem.entries[ammunitionEntryId].definitionRef,
+      standardGearDefinitionId("arrow"),
+    );
+    assert.equal(combat.resources[itemEntryResourceId(ammunitionEntryId)].current, "20");
     assert.equal(combat.equipmentAbilityRefs.length, 1);
     equipmentAbilityByNpc[npcId] = combat.equipmentAbilityRefs[0];
-    assert.match(
+    assert.equal(
       combat.equipmentAbilityRefs[0],
-      new RegExp(`^ability:${npcId}:npc-item:${pikeDefinitionId}:modifier:2:proficiency:2$`),
+      `ability:${npcId}:weapon:${character.loadout.equipped.main}:level:1:modifier:2:proficiency:2`,
     );
     assert.deepEqual(
       scenario.state.combatRuntime.definitions[combat.equipmentAbilityRefs[0]].damage,
@@ -1247,10 +1306,23 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
   const firstPike = firstLoadout.equipped.main;
   const secondPike = secondLoadout.equipped.main;
   const firstArmor = firstLoadout.equipped.armor;
-  const firstShield = firstLoadout.equipped.off;
   assert.notEqual(firstPike, secondPike, "shared templates must mint independent runtime items");
-  assert.equal(firstLoadout.mechanicalItems[firstPike].definitionRef, pikeDefinitionId);
-  assert.equal(secondLoadout.mechanicalItems[secondPike].definitionRef, pikeDefinitionId);
+  const unifiedPikeDefinitionId = pikeDefinitionId;
+  assert.equal(
+    scenario.state.campaignRuntime.itemSystem.entries[firstPike].definitionRef,
+    unifiedPikeDefinitionId,
+  );
+  assert.equal(
+    scenario.state.campaignRuntime.itemSystem.entries[secondPike].definitionRef,
+    unifiedPikeDefinitionId,
+  );
+  assert.deepEqual(
+    scenario.state.campaignRuntime.itemSystem.definitions[unifiedPikeDefinitionId].rulesBasis,
+    {
+      kind: "zhuwei-product-ruling",
+      profileRef: ITEM_SYSTEM_PROFILE,
+    },
+  );
   const actorProjection = project(scenario.profiles, scenario.state, {
     kind: "player",
     principalId: PRINCIPAL,
@@ -1282,77 +1354,184 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
   });
   assert.ok(
     context.required.sceneDynamics.npcMechanics.itemDefinitions
-      .some(({ definitionRef }) => definitionRef === pikeDefinitionId),
+      .some(({ definitionId }) => definitionId === pikeDefinitionId),
   );
-  assert.equal(
-    context.required.npcViews.find(({ npcRef }) => npcRef === firstNpc)
-      .loadout.mechanicalItems[firstPike].status,
-    "usable",
-  );
+  const firstNpcContext = context.required.npcViews.find(({ npcRef }) => npcRef === firstNpc);
+  assert.equal(firstNpcContext.loadout.equipped.main, firstPike);
+  assert.equal(firstNpcContext.loadout.mechanicalItems, undefined);
+  assert.equal(scenario.state.campaignRuntime.itemSystem.entries[firstPike].condition, "usable");
+
+  const playerGearDuringEncounter = step(scenario.profiles, scenario.state, {
+    kind: "changeCharacterGear",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:player-gear-during-encounter",
+    controllerPrincipalId: PRINCIPAL,
+    actorCharacterId: PLAYER,
+    action: "wear",
+    slot: "main",
+    itemId: firstPike,
+  });
+  assert.equal(playerGearDuringEncounter.kind, "rejected", JSON.stringify(playerGearDuringEncounter));
+  assert.equal(playerGearDuringEncounter.rejection.code, "pendingInputUnresolved");
+  assert.deepEqual(playerGearDuringEncounter.events, []);
 
   scenario = concludeEncounter(scenario, encounterId, "npc-mechanics-v5:initial-loadout");
+  const firstAmmoEntryId = ammunitionEntryByNpc[firstNpc];
   const transferredAmmo = step(scenario.profiles, scenario.state, {
     kind: "transferItem",
     proposalId: "root:npc-mechanics-v5:initial-loadout:transfer-ammo",
     fromCharacterId: firstNpc,
     toCharacterId: receiverNpc,
-    itemId: "arrow",
+    itemId: firstAmmoEntryId,
     quantity: 20,
     method: "甲号余烬卫把整束箭交给接装卫",
+    ownershipDisposition: "preserve",
   });
   assert.equal(transferredAmmo.kind, "committed", JSON.stringify(transferredAmmo));
+  const receiverAmmoEntryId = transferredAmmo.events.find(({ eventType }) =>
+    eventType === "ItemTransferred").payload.targetItemId;
   scenario = appendAndReplay(scenario, transferredAmmo);
   assert.equal(scenario.state.entities[firstNpc].loadout.equipped.ammo, undefined);
-  assert.equal(scenario.state.combatRuntime.entities[firstNpc].resources["item:arrow"], undefined);
+  assert.equal(
+    scenario.state.combatRuntime.entities[firstNpc].resources[itemEntryResourceId(firstAmmoEntryId)],
+    undefined,
+  );
   const selectedAmmo = step(scenario.profiles, scenario.state, {
     kind: "changeNpcGear",
     rootActionId: "root:npc-mechanics-v5:initial-loadout:select-ammo",
     npcCharacterId: receiverNpc,
     action: "wear",
     slot: "ammo",
-    itemId: "arrow",
+    itemId: receiverAmmoEntryId,
   });
   assert.equal(selectedAmmo.kind, "committed", JSON.stringify(selectedAmmo));
   scenario = appendAndReplay(scenario, selectedAmmo);
-  const usedAmmo = step(scenario.profiles, scenario.state, {
-    kind: "useItem",
-    proposalId: "root:npc-mechanics-v5:initial-loadout:use-ammo",
-    characterId: receiverNpc,
-    itemId: "arrow",
-    quantity: 20,
-    purpose: "在战后靶场消耗整束箭",
-  });
-  assert.equal(usedAmmo.kind, "committed", JSON.stringify(usedAmmo));
-  scenario = appendAndReplay(scenario, usedAmmo);
-  assert.equal(scenario.state.entities[receiverNpc].loadout.equipped.ammo, undefined);
-  assert.equal(scenario.state.combatRuntime.entities[receiverNpc].resources["item:arrow"], undefined);
+  assert.equal(scenario.state.entities[receiverNpc].loadout.equipped.ammo, receiverAmmoEntryId);
+  assert.equal(
+    scenario.state.campaignRuntime.itemSystem.entries[receiverAmmoEntryId].holderRef,
+    receiverNpc,
+  );
+  assert.equal(
+    scenario.state.combatRuntime.entities[receiverNpc]
+      .resources[itemEntryResourceId(receiverAmmoEntryId)].current,
+    "20",
+  );
 
-  const broken = step(scenario.profiles, scenario.state, {
+  const missingCause = step(scenario.profiles, scenario.state, {
     kind: "changeNpcItemState",
-    rootActionId: "root:npc-mechanics-v5:initial-loadout:break-pike",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:break-pike:missing-cause",
     npcCharacterId: firstNpc,
     itemId: firstPike,
     action: "break",
+  });
+  assert.equal(missingCause.kind, "rejected", JSON.stringify(missingCause));
+  assert.deepEqual(missingCause.events ?? [], []);
+
+  const wrongObjectCauseRef = "fact:npc-mechanics-v5:initial-loadout:wrong-object-break";
+  scenario = declareNpcItemStateCause(scenario, {
+    factId: wrongObjectCauseRef,
+    npcRef: secondNpc,
+    itemRef: firstPike,
+    action: "break",
+  });
+  const wrongObject = step(scenario.profiles, scenario.state, {
+    kind: "changeNpcItemState",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:break-pike:wrong-object",
+    actorCharacterId: PLAYER,
+    npcCharacterId: firstNpc,
+    itemId: firstPike,
+    action: "break",
+    causeFactRef: wrongObjectCauseRef,
+  });
+  assert.equal(wrongObject.kind, "rejected", JSON.stringify(wrongObject));
+  assert.deepEqual(wrongObject.events ?? [], []);
+
+  const fakeObservedCauseRef = "fact:npc-mechanics-v5:initial-loadout:fake-observed-break";
+  scenario = declareNpcItemStateCause(scenario, {
+    factId: fakeObservedCauseRef,
+    npcRef: firstNpc,
+    itemRef: firstPike,
+    action: "break",
+    source: "observedEvent",
+  });
+  const fakeObserved = step(scenario.profiles, scenario.state, {
+    kind: "changeNpcItemState",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:break-pike:fake-observed",
+    actorCharacterId: PLAYER,
+    npcCharacterId: firstNpc,
+    itemId: firstPike,
+    action: "break",
+    causeFactRef: fakeObservedCauseRef,
+  });
+  assert.equal(fakeObserved.kind, "rejected", JSON.stringify(fakeObserved));
+  assert.deepEqual(fakeObserved.events ?? [], []);
+
+  const breakCauseRef = "fact:npc-mechanics-v5:initial-loadout:pike-broken";
+  scenario = declareNpcItemStateCause(scenario, {
+    factId: breakCauseRef,
+    npcRef: firstNpc,
+    itemRef: firstPike,
+    action: "break",
+    source: "observedEvent",
+    causalParentIds: [YARD_BASIS],
+  });
+  const broken = step(scenario.profiles, scenario.state, {
+    kind: "changeNpcItemState",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:break-pike",
+    actorCharacterId: PLAYER,
+    npcCharacterId: firstNpc,
+    itemId: firstPike,
+    action: "break",
+    causeFactRef: breakCauseRef,
   });
   assert.equal(broken.kind, "committed", JSON.stringify(broken));
   assert.equal(
     broken.events.filter(({ eventType }) => eventType === "NpcMechanicalItemStateChanged").length,
     1,
   );
+  assert.equal(
+    broken.events.find(({ eventType }) => eventType === "NpcMechanicalItemStateChanged")
+      .payload.causeFactRef,
+    breakCauseRef,
+  );
   scenario = appendAndReplay(scenario, broken);
   let firstCharacter = scenario.state.entities[firstNpc];
   let firstCombat = scenario.state.combatRuntime.entities[firstNpc];
   assert.equal(firstCharacter.loadout.equipped.main, undefined);
-  assert.equal(firstCharacter.loadout.mechanicalItems[firstPike].status, "broken");
+  assert.equal(
+    scenario.state.campaignRuntime.itemSystem.entries[firstPike].condition,
+    "broken",
+  );
   assert.deepEqual(firstCombat.equipmentAbilityRefs, []);
   assert.deepEqual(firstCombat.abilityRefs, [intrinsicAbilityId]);
 
+  const reusedCause = step(scenario.profiles, scenario.state, {
+    kind: "changeNpcItemState",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:break-pike:reuse-cause",
+    actorCharacterId: PLAYER,
+    npcCharacterId: firstNpc,
+    itemId: firstPike,
+    action: "break",
+    causeFactRef: breakCauseRef,
+  });
+  assert.equal(reusedCause.kind, "rejected", JSON.stringify(reusedCause));
+  assert.equal(reusedCause.rejection.code, "privateOrUnknownReference");
+  assert.deepEqual(reusedCause.events ?? [], []);
+
+  const repairCauseRef = "fact:npc-mechanics-v5:initial-loadout:pike-repaired";
+  scenario = declareNpcItemStateCause(scenario, {
+    factId: repairCauseRef,
+    npcRef: firstNpc,
+    itemRef: firstPike,
+    action: "repair",
+  });
   const repair = step(scenario.profiles, scenario.state, {
     kind: "changeNpcItemState",
     rootActionId: "root:npc-mechanics-v5:initial-loadout:repair-pike",
+    actorCharacterId: PLAYER,
     npcCharacterId: firstNpc,
     itemId: firstPike,
     action: "repair",
+    causeFactRef: repairCauseRef,
   });
   assert.equal(repair.kind, "committed", JSON.stringify(repair));
   scenario = appendAndReplay(scenario, repair);
@@ -1371,85 +1550,32 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
     [equipmentAbilityByNpc[firstNpc]],
   );
 
+  const destroyArmorCauseRef = "fact:npc-mechanics-v5:initial-loadout:armor-destroyed";
+  scenario = declareNpcItemStateCause(scenario, {
+    factId: destroyArmorCauseRef,
+    npcRef: firstNpc,
+    itemRef: firstArmor,
+    action: "destroy",
+  });
   const destroyedArmor = step(scenario.profiles, scenario.state, {
     kind: "changeNpcItemState",
     rootActionId: "root:npc-mechanics-v5:initial-loadout:destroy-armor",
+    actorCharacterId: PLAYER,
     npcCharacterId: firstNpc,
     itemId: firstArmor,
     action: "destroy",
+    causeFactRef: destroyArmorCauseRef,
   });
   assert.equal(destroyedArmor.kind, "committed", JSON.stringify(destroyedArmor));
   scenario = appendAndReplay(scenario, destroyedArmor);
   firstCharacter = scenario.state.entities[firstNpc];
   firstCombat = scenario.state.combatRuntime.entities[firstNpc];
-  assert.equal(firstCharacter.loadout.mechanicalItems[firstArmor], undefined);
+  assert.equal(
+    scenario.state.campaignRuntime.itemSystem.entries[firstArmor].disposition,
+    "destroyed",
+  );
   assert.equal(firstCharacter.loadout.armorClass, 16, "base AC plus the still-equipped shield remains");
   assert.equal(firstCombat.armorClass, "16");
-
-  const unrelatedLossCause = step(scenario.profiles, scenario.state, causalMaterializationInput(
-    "root:npc-mechanics-v5:initial-loadout:unrelated-loss-cause",
-    {
-      goal: "不能用无关场景事实宣称盾牌已经遗失",
-      method: "changeNpcItemState",
-      proposedFact: JSON.stringify({
-        schema: "zhuwei.npc-item-state-change-draft/v1",
-        npcRef: firstNpc,
-        itemRef: firstShield,
-        action: "lose",
-        causeFactRef: YARD_BASIS,
-      }),
-      basisRefs: [SCENE, firstNpc, firstShield, YARD_BASIS],
-      resolution: "direct",
-      durationUnit: "second",
-      durationValue: 1,
-    },
-  ));
-  assert.equal(unrelatedLossCause.kind, "rejected", JSON.stringify(unrelatedLossCause));
-  assert.deepEqual(unrelatedLossCause.events ?? [], []);
-
-  const shieldLossFactId = "fact:npc-mechanics-v5:initial-loadout:shield-lost";
-  const shieldLossCause = step(scenario.profiles, scenario.state, {
-    kind: "declareCanonicalFact",
-    proposalId: "root:npc-mechanics-v5:initial-loadout:shield-loss-cause",
-    fact: {
-      factId: shieldLossFactId,
-      factKind: "npcMechanicalItemStateCause",
-      subjectRefs: [firstNpc, firstShield],
-      value: {
-        schema: "zhuwei.npc-mechanical-item-state-cause/v1",
-        npcRef: firstNpc,
-        itemRef: firstShield,
-        action: "lose",
-      },
-      source: "observedEvent",
-      visibilityPolicy: "public",
-      causalParentIds: [],
-    },
-  });
-  assert.equal(shieldLossCause.kind, "committed", JSON.stringify(shieldLossCause));
-  scenario = appendAndReplay(scenario, shieldLossCause);
-  const lostShield = step(scenario.profiles, scenario.state, causalMaterializationInput(
-    "root:npc-mechanics-v5:initial-loadout:lose-shield",
-    {
-      goal: "记录余烬卫已经失去盾牌",
-      method: "changeNpcItemState",
-      proposedFact: JSON.stringify({
-        schema: "zhuwei.npc-item-state-change-draft/v1",
-        npcRef: firstNpc,
-        itemRef: firstShield,
-        action: "lose",
-        causeFactRef: shieldLossFactId,
-      }),
-      basisRefs: [SCENE, firstNpc, firstShield, shieldLossFactId],
-      resolution: "direct",
-      durationUnit: "second",
-      durationValue: 1,
-    },
-  ));
-  assert.equal(lostShield.kind, "committed", JSON.stringify(lostShield));
-  scenario = appendAndReplay(scenario, lostShield);
-  assert.equal(scenario.state.entities[firstNpc].loadout.armorClass, 14);
-  assert.equal(scenario.state.combatRuntime.entities[firstNpc].armorClass, "14");
 
   const stowed = step(scenario.profiles, scenario.state, {
     kind: "changeNpcGear",
@@ -1468,13 +1594,15 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
     itemId: firstPike,
     quantity: 1,
     method: "甲号余烬卫把长枪交给瘦弱的接装卫",
+    ownershipDisposition: "preserve",
   });
   assert.equal(transferred.kind, "committed", JSON.stringify(transferred));
   scenario = appendAndReplay(scenario, transferred);
-  assert.equal(scenario.state.entities[firstNpc].loadout.mechanicalItems?.[firstPike], undefined);
+  assert.equal(heldEntries(scenario, firstNpc, unifiedPikeDefinitionId).length, 0);
+  assert.equal(scenario.state.campaignRuntime.itemSystem.entries[firstPike].holderRef, receiverNpc);
   assert.equal(
-    scenario.state.entities[receiverNpc].loadout.mechanicalItems[firstPike].definitionRef,
-    pikeDefinitionId,
+    scenario.state.campaignRuntime.itemSystem.entries[firstPike].definitionRef,
+    unifiedPikeDefinitionId,
   );
   const receiverWears = step(scenario.profiles, scenario.state, {
     kind: "changeNpcGear",
@@ -1503,17 +1631,128 @@ test("frozen initial equipment is independently instantiated and its lifecycle d
   });
   assert.equal(receiverStows.kind, "committed", JSON.stringify(receiverStows));
   scenario = appendAndReplay(scenario, receiverStows);
-  const unsupportedPlayerTransfer = step(scenario.profiles, scenario.state, {
+  const playerTransfer = step(scenario.profiles, scenario.state, {
     kind: "transferItem",
     proposalId: "root:npc-mechanics-v5:initial-loadout:player-takes-pike",
     fromCharacterId: receiverNpc,
     toCharacterId: PLAYER,
     itemId: firstPike,
     quantity: 1,
-    method: "玩家尝试接过动态机械武器",
+    method: "玩家接过动态机械武器",
+    ownershipDisposition: "preserve",
   });
-  assert.equal(unsupportedPlayerTransfer.kind, "rejected", JSON.stringify(unsupportedPlayerTransfer));
-  assert.deepEqual(unsupportedPlayerTransfer.events ?? [], []);
+  assert.equal(playerTransfer.kind, "committed", JSON.stringify(playerTransfer));
+  assert.equal(
+    playerTransfer.events.find(({ eventType }) => eventType === "ItemTransferred")
+      .payload.targetItemId,
+    firstPike,
+    "a whole non-stackable item keeps its identity across holder kinds",
+  );
+  scenario = appendAndReplay(scenario, playerTransfer);
+  assert.equal(scenario.state.campaignRuntime.itemSystem.entries[firstPike].holderRef, PLAYER);
+  const playerInventoryAfterTransfer = project(scenario.profiles, scenario.state, {
+    kind: "player",
+    principalId: PRINCIPAL,
+    sessionVersion: 1,
+    seatId: SEAT,
+    characterId: PLAYER,
+  });
+  assert.equal(
+    playerInventoryAfterTransfer.kind,
+    "projected",
+    JSON.stringify(playerInventoryAfterTransfer),
+  );
+  assert.deepEqual(
+    playerInventoryAfterTransfer.controlledCharacter.inventory.entries.find(
+      ({ entryId }) => entryId === firstPike,
+    ),
+    {
+      kind: "opaque",
+      entryId: firstPike,
+      quantity: 1,
+      condition: "usable",
+      equippedSlot: null,
+    },
+    "the recipient sees possession without receiving room-authority-only item mechanics",
+  );
+  assert.doesNotMatch(
+    JSON.stringify(playerInventoryAfterTransfer.controlledCharacter.inventory),
+    /余烬长枪|item-definition:npc-mechanics-v5:ember-pike:1/,
+  );
+
+  const playerWears = step(scenario.profiles, scenario.state, {
+    kind: "changeCharacterGear",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:player-wears-pike",
+    controllerPrincipalId: PRINCIPAL,
+    actorCharacterId: PLAYER,
+    action: "wear",
+    slot: "main",
+    itemId: firstPike,
+  });
+  assert.equal(playerWears.kind, "committed", JSON.stringify(playerWears));
+  assert.deepEqual(playerWears.events.map(({ eventType }) => eventType), [
+    "ActivityStarted",
+    "FictionTimeAdvanced",
+    "ActivityCompleted",
+    "DefinitionRegistered",
+    "CharacterGearChanged",
+  ]);
+  assert.equal(playerWears.events[0].payload.intendedDurationMicros, "6000000");
+  scenario = appendAndReplay(scenario, playerWears);
+  const playerAbilityRef = scenario.state.combatRuntime.entities[PLAYER].abilityRefs
+    .find((abilityRef) => abilityRef.includes(`weapon:${firstPike}:`));
+  assert.ok(playerAbilityRef);
+  assert.deepEqual(
+    scenario.state.combatRuntime.definitions[playerAbilityRef].damage,
+    [{ type: "piercing", formula: "1d8+2" }],
+    "the same frozen weapon binds the receiving player's current Strength",
+  );
+
+  const playerStows = step(scenario.profiles, scenario.state, {
+    kind: "changeCharacterGear",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:player-stows-pike",
+    controllerPrincipalId: PRINCIPAL,
+    actorCharacterId: PLAYER,
+    action: "stow",
+    slot: "main",
+  });
+  assert.equal(playerStows.kind, "committed", JSON.stringify(playerStows));
+  scenario = appendAndReplay(scenario, playerStows);
+
+  const returned = step(scenario.profiles, scenario.state, {
+    kind: "transferItem",
+    proposalId: "root:npc-mechanics-v5:initial-loadout:player-returns-pike",
+    fromCharacterId: PLAYER,
+    toCharacterId: firstNpc,
+    itemId: firstPike,
+    quantity: 1,
+    method: "玩家把动态机械武器交还给甲号余烬卫",
+    ownershipDisposition: "preserve",
+  });
+  assert.equal(returned.kind, "committed", JSON.stringify(returned));
+  assert.equal(
+    returned.events.find(({ eventType }) => eventType === "ItemTransferred")
+      .payload.targetItemId,
+    firstPike,
+  );
+  scenario = appendAndReplay(scenario, returned);
+  assert.equal(scenario.state.campaignRuntime.itemSystem.entries[firstPike].holderRef, firstNpc);
+
+  const firstRewears = step(scenario.profiles, scenario.state, {
+    kind: "changeNpcGear",
+    rootActionId: "root:npc-mechanics-v5:initial-loadout:first-rewears-returned-pike",
+    npcCharacterId: firstNpc,
+    action: "wear",
+    slot: "main",
+    itemId: firstPike,
+  });
+  assert.equal(firstRewears.kind, "committed", JSON.stringify(firstRewears));
+  scenario = appendAndReplay(scenario, firstRewears);
+  assert.deepEqual(
+    scenario.state.combatRuntime.entities[firstNpc].equipmentAbilityRefs,
+    [equipmentAbilityByNpc[firstNpc]],
+    "returning the entry reuses the first NPC's already-frozen holder binding",
+  );
 });
 
 test("first mechanical materialization normalizes established NPC equipment and heavy armor AC", () => {
@@ -1552,24 +1791,43 @@ test("first mechanical materialization normalizes established NPC equipment and 
 
   const npc = scenario.state.entities[STATIC_NPC];
   const combat = scenario.state.combatRuntime.entities[STATIC_NPC];
+  const itemSystem = scenario.state.campaignRuntime.itemSystem;
+  const ammunitionEntryId = npc.loadout.equipped.ammo;
+  const armorEntryId = npc.loadout.equipped.armor;
+  const weaponEntryId = npc.loadout.equipped.main;
+  assert.ok(ammunitionEntryId);
+  assert.ok(armorEntryId);
+  assert.ok(weaponEntryId);
   assert.equal(npc.loadout.armorClass, 16, "heavy armor ignores a negative Dexterity modifier");
   assert.equal(combat.armorClass, "16");
   assert.equal(npc.loadout.speedFeet, 30, "the frozen template walk speed is the core view");
-  assert.equal(npc.loadout.equipped.ammo, "arrow");
-  assert.deepEqual(
-    npc.loadout.backpack.filter(({ itemId }) => itemId === "arrow"),
-    [{ itemId: "arrow", quantity: 2 }],
+  assert.equal(
+    itemSystem.entries[ammunitionEntryId].definitionRef,
+    standardGearDefinitionId("arrow"),
   );
-  const frozenStandardRefs = Object.values(npc.loadout.mechanicalItems)
+  assert.deepEqual(
+    npc.loadout.backpack.filter(({ itemId }) => itemId === ammunitionEntryId),
+    [{ itemId: ammunitionEntryId, quantity: 2 }],
+  );
+  const heldStandardItemEntries = heldEntries(scenario, STATIC_NPC);
+  const frozenStandardRefs = heldStandardItemEntries
     .map(({ definitionRef }) => definitionRef)
     .sort();
-  assert.deepEqual(frozenStandardRefs, ["chain", "longsword", "shield"]);
-  assert.notEqual(npc.loadout.equipped.armor, "chain");
-  assert.notEqual(npc.loadout.equipped.main, "longsword");
-  for (const [itemId, item] of Object.entries(npc.loadout.mechanicalItems)) {
-    const inPack = npc.loadout.backpack.some((entry) => entry.itemId === itemId);
-    const equipped = Object.values(npc.loadout.equipped).includes(itemId);
-    assert.equal(Number(inPack) + Number(equipped), 1, item.definitionRef);
+  assert.deepEqual(frozenStandardRefs, ["arrow", "chain", "longsword", "shield"]
+    .map(standardGearDefinitionId)
+    .sort());
+  assert.notEqual(armorEntryId, "chain");
+  assert.equal(itemSystem.entries[armorEntryId].definitionRef, standardGearDefinitionId("chain"));
+  assert.notEqual(weaponEntryId, "longsword");
+  assert.equal(
+    itemSystem.entries[weaponEntryId].definitionRef,
+    standardGearDefinitionId("longsword"),
+  );
+  for (const itemEntry of heldStandardItemEntries) {
+    const inPack = npc.loadout.backpack.some(({ itemId }) => itemId === itemEntry.entryId);
+    const equipped = Object.values(npc.loadout.equipped).includes(itemEntry.entryId);
+    assert.equal(inPack, itemEntry.equippedSlot === null || itemEntry.equippedSlot === "ammo");
+    assert.equal(equipped, itemEntry.equippedSlot !== null, itemEntry.definitionRef);
   }
 });
 
@@ -1577,31 +1835,42 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
   let scenario = initialize();
   const npcId = "npc:npc-mechanics-v5:ammo-warden";
   const encounterId = "encounter:npc-mechanics-v5:ammo";
-  const itemDefinitionId = "npc-item-definition:npc-mechanics-v5:ash-bow:1";
+  const itemDefinitionId = "item-definition:npc-mechanics-v5:ash-bow:1";
   const rangedItem = {
+    schema: "zhuwei.item-definition/v1",
     definitionId: itemDefinitionId,
     revision: "1",
-    definitionKind: "npcMechanicalItem",
+    definitionKind: "item",
     rulesBasis: "srd5.1-2014",
     causalBasisRefs: [],
     visibilityPolicyRef: "visibility:room-authority-only",
     content: {
-      schema: "zhuwei.npc-mechanical-item/v1",
+      schema: "zhuwei.item-definition-content/v1",
       label: "灰木弓",
-      wear: "weapon",
-      twoHanded: true,
-      armor: null,
-      weapon: {
-        attackAbility: "dex",
-        ammoRef: "arrow",
-        damageDice: "1d6",
-        damageType: "piercing",
-        reachInches: null,
-        rangeNormalInches: "1200",
-        rangeLongInches: "3600",
-        requiresSight: true,
+      description: "灰木制成的双手弓。",
+      category: "weapon",
+      aliases: [],
+      tags: ["dynamic", "npc"],
+      stackable: false,
+      equipment: {
+        allowedSlots: ["main"],
+        twoHanded: true,
+        armor: null,
+        weapon: {
+          attackAbility: "dex",
+          ammunitionDefinitionRef: standardGearDefinitionId("arrow"),
+          damageDice: "1d6",
+          damageType: "piercing",
+          reachInches: null,
+          rangeNormalInches: "1200",
+          rangeLongInches: "3600",
+          requiresSight: true,
+        },
       },
-      abilities: [],
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
     },
   };
   const rangedOverrides = {
@@ -1613,7 +1882,7 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
         entryId: "bow",
         equippedSlot: "main",
         quantity: 1,
-        source: { kind: "npcMechanicalItemDefinition", ref: itemDefinitionId },
+        source: { kind: "itemDefinition", ref: itemDefinitionId },
       }, {
         entryId: "one-arrow",
         equippedSlot: "ammo",
@@ -1624,8 +1893,8 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
   };
 
   const invalidItem = structuredClone(rangedItem);
-  invalidItem.definitionId = "npc-item-definition:npc-mechanics-v5:invalid-ammo:1";
-  invalidItem.content.weapon.ammoRef = "longsword";
+  invalidItem.definitionId = "item-definition:npc-mechanics-v5:invalid-ammo:1";
+  invalidItem.content.equipment.weapon.ammunitionDefinitionRef = standardGearDefinitionId("longsword");
   const invalid = step(scenario.profiles, scenario.state, encounterInput(
     "root:npc-mechanics-v5:invalid-ammo:start",
     "encounter:npc-mechanics-v5:invalid-ammo",
@@ -1644,7 +1913,7 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
             equippedSlot: "main",
             quantity: 1,
             source: {
-              kind: "npcMechanicalItemDefinition",
+              kind: "itemDefinition",
               ref: invalidItem.definitionId,
             },
           }],
@@ -1684,10 +1953,13 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
     scenario = appendAndReplay(scenario, ended);
   }
   assert.equal(scenario.state.combatRuntime.encounters[encounterId].activeEntityId, npcId);
+  const ammunitionEntryId = scenario.state.entities[npcId].loadout.equipped.ammo;
+  assert.ok(ammunitionEntryId);
+  const ammunitionResourceId = itemEntryResourceId(ammunitionEntryId);
   const abilityRef = scenario.state.combatRuntime.entities[npcId].equipmentAbilityRefs[0];
   assert.deepEqual(
     scenario.state.combatRuntime.definitions[abilityRef].costs,
-    [{ kind: "item", resourceId: "item:arrow", amount: "1" }],
+    [{ kind: "item", resourceId: ammunitionResourceId, amount: "1" }],
   );
   const fired = step(scenario.profiles, scenario.state, {
     kind: "invokeAbility",
@@ -1700,9 +1972,16 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
   scenario = settleRoomRandomness(scenario, fired);
   const npc = scenario.state.entities[npcId];
   const combat = scenario.state.combatRuntime.entities[npcId];
-  assert.equal(npc.loadout.backpack.some(({ itemId }) => itemId === "arrow"), false);
+  assert.equal(npc.loadout.backpack.some(({ itemId }) => itemId === ammunitionEntryId), false);
   assert.equal(npc.loadout.equipped.ammo, undefined);
-  assert.equal(combat.resources["item:arrow"], undefined);
+  const consumedAmmunition = scenario.state.campaignRuntime.itemSystem.entries[ammunitionEntryId];
+  assert.equal(consumedAmmunition.disposition, "consumed");
+  assert.equal(consumedAmmunition.holderRef, null);
+  assert.equal(consumedAmmunition.equippedSlot, null);
+  assert.equal(consumedAmmunition.quantity, 0);
+  assert.equal(combat.resources[ammunitionResourceId], undefined);
+  assert.equal(combat.equipmentAbilityRefs.includes(abilityRef), false);
+  assert.equal(combat.abilityRefs.includes(abilityRef), false);
 
   const empty = step(scenario.profiles, scenario.state, {
     kind: "invokeAbility",
@@ -1712,6 +1991,6 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
     parameters: { targetEntityId: PLAYER },
   });
   assert.equal(empty.kind, "rejected", JSON.stringify(empty));
-  assert.equal(empty.rejection.code, "insufficientResource");
+  assert.equal(empty.rejection.code, "privateOrUnknownReference");
   assert.deepEqual(empty.events ?? [], []);
 });

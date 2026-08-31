@@ -11,6 +11,13 @@ type JsonRecord = Record<string, unknown>;
 
 export const BODY_ONLY_NARRATION_SCHEMA_VERSION =
   "authoritative-kp-body-only-narration-v1" as const;
+export const V5_BODY_ONLY_NARRATION_SCHEMA_VERSION =
+  "authoritative-kp-body-only-narration-v2" as const;
+
+type BodyOnlyNarrationOptions = Readonly<{
+  /** Enabled only by the exact V5 workflow/profile binding. */
+  socialResolution?: boolean;
+}>;
 
 export const BODY_ONLY_NARRATION_TOOL = Object.freeze({
   type: "function",
@@ -74,10 +81,11 @@ function safeReceipt(value: unknown): JsonRecord {
   return safe;
 }
 
-function recentDialogue(value: unknown): JsonRecord[] {
+function recentDialogue(value: unknown, allowEnvelope: boolean): JsonRecord[] {
   const messages = Array.isArray(value)
     ? value
-    : isRecord(value)
+    : allowEnvelope
+      && isRecord(value)
       && value.schema === "zhuwei.experienced-transcript/v1"
       && Array.isArray(value.messages)
       ? value.messages
@@ -153,7 +161,7 @@ function currentProjectionIsSocial(projection: JsonRecord): boolean {
 
 function renderableClaims(
   value: unknown,
-  options: Readonly<{ socialResolution?: boolean }> = {},
+  options: BodyOnlyNarrationOptions = {},
 ): JsonRecord[] {
   const changes = Array.isArray(value) ? value.filter(isRecord).slice(0, 48) : [];
   return changes.flatMap((change) => {
@@ -193,7 +201,7 @@ function safeActorAction(
   projection: JsonRecord,
   delta: JsonRecord,
   rootActionId: string,
-  options: Readonly<{ socialResolution?: boolean }> = {},
+  options: BodyOnlyNarrationOptions = {},
 ): JsonRecord {
   const frozen = isRecord(projection.actorAction) ? projection.actorAction : {};
   const actorCharacterId = typeof delta.actorCharacterId === "string"
@@ -228,7 +236,7 @@ function safeActorAction(
  * model is allowed to see. */
 export function bodyOnlyNarrationContext(
   request: KpNarrationRequest,
-  options: Readonly<{ socialResolution?: boolean }> = {},
+  options: BodyOnlyNarrationOptions = {},
 ): JsonRecord {
   const projection = isRecord(request.projection) ? request.projection : {};
   const delta = isRecord(projection.committedDelta) ? projection.committedDelta : {};
@@ -246,8 +254,98 @@ export function bodyOnlyNarrationContext(
     opportunities: stringArray(narration.opportunities, 8),
     recentDialogue: currentSocialAction
       ? []
-      : recentDialogue(projection.experiencedTranscript),
+      : recentDialogue(projection.experiencedTranscript, options.socialResolution === true),
   };
+}
+
+const PREMISE_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  affiliation: "所属",
+  arrivalPurpose: "来意",
+  identityBackground: "身份背景",
+  obligation: "义务",
+  priorKnowledge: "既有认知",
+  priorRelationship: "既有关系",
+});
+
+function deterministicPremiseLine(change: JsonRecord): string | undefined {
+  if (change.kind !== "characterPremiseResolved" || typeof change.predicate !== "string") {
+    return undefined;
+  }
+  const bindings = Array.isArray(change.bindings)
+    ? change.bindings.filter(isRecord).flatMap((binding) => {
+        const displayName = typeof binding.displayName === "string"
+          ? binding.displayName.trim()
+          : "";
+        if (!displayName) return [];
+        const slotRef = typeof binding.slotRef === "string" && binding.slotRef.trim()
+          ? binding.slotRef.trim()
+          : "关联对象";
+        return [`${slotRef}=${displayName}`];
+      })
+    : [];
+  const label = PREMISE_LABELS[change.predicate] ?? change.predicate;
+  const resolution = change.resolution === "recalled" ? "确认" : "确立";
+  return bindings.length === 0
+    ? `你的角色前提已${resolution}：${label}。`
+    : `你的角色前提已${resolution}：${label}；${bindings.join("，")}。`;
+}
+
+/** Facts in these changes have already been validated and committed by Rules.
+ * V5 renders them verbatim or from closed fields instead of asking a model to
+ * paraphrase success, identity, trust, permission, or private inference. */
+function deterministicOutcomeLines(projection: JsonRecord): string[] {
+  const delta = isRecord(projection.committedDelta) ? projection.committedDelta : {};
+  const changes = Array.isArray(delta.changes) ? delta.changes.filter(isRecord) : [];
+  const lines: string[] = [];
+  const add = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    const normalized = value.trim();
+    if (normalized && !lines.includes(normalized)) lines.push(normalized);
+  };
+  for (const change of changes) {
+    if (["checkResolved", "contestResolved", "socialResolutionChanged"].includes(
+      String(change.kind),
+    )) {
+      add(change.result);
+      continue;
+    }
+    if (change.kind === "socialBehaviorObserved") {
+      add(change.immediateBehavior);
+      continue;
+    }
+    if (change.kind === "privateInferenceFormed") {
+      if (typeof change.conclusion === "string" && change.conclusion.trim()) {
+        add(`你形成了判断：${change.conclusion.trim()}。`);
+      }
+      continue;
+    }
+    add(deterministicPremiseLine(change));
+  }
+  return lines;
+}
+
+function takeSections(sections: readonly string[], maximum: number): string {
+  if (maximum <= 0) return "";
+  let body = "";
+  for (const section of sections) {
+    const normalized = section.trim();
+    if (!normalized) continue;
+    const separator = body ? "\n\n" : "";
+    const remaining = maximum - body.length - separator.length;
+    if (remaining <= 0) break;
+    body += `${separator}${normalized.slice(0, remaining)}`;
+  }
+  return body.trim();
+}
+
+function deterministicV5Body(projection: JsonRecord): string | undefined {
+  const outcomes = deterministicOutcomeLines(projection);
+  const claims = deterministicSocialClaimLines(projection);
+  if (outcomes.length === 0 && claims.length === 0) return undefined;
+  const outcomeBody = takeSections(outcomes, 1_600);
+  const claimBudget = Math.max(0, 1_600 - outcomeBody.length - (outcomeBody ? 2 : 0));
+  const claimBody = takeSections(claims, claimBudget);
+  return [claimBody, outcomeBody].filter(Boolean).join("\n\n").slice(0, 1_600);
 }
 
 function deterministicSocialClaimLines(projection: JsonRecord): string[] {
@@ -279,14 +377,16 @@ function deterministicSocialClaimLines(projection: JsonRecord): string[] {
     if (reactionByClaim.get(change.claimRef) === "silence") {
       return [`${speaker}没有作答。`];
     }
-    const utterance = change.utterance.trim().replace(/[\r\n]+/gu, " ");
-    return [`${speaker}说：“${utterance}”`];
+    const utterance = change.utterance.trim().slice(0, 1_200);
+    // JSON string quoting keeps embedded quotes and newlines inside a single
+    // attributed value instead of allowing player text to forge an NPC line.
+    return [`${speaker}说：${JSON.stringify(utterance)}`];
   });
 }
 
 export function bodyOnlyNarrationModelInput(
   request: KpNarrationRequest,
-  options: Readonly<{ socialResolution?: boolean }> = {},
+  options: BodyOnlyNarrationOptions = {},
 ): Record<string, unknown> {
   return {
     messages: [
@@ -310,7 +410,7 @@ export function bodyOnlyNarrationModelInput(
  * dialogue is intentionally absent because it controls voice, not facts. */
 export function bodyOnlyNarrationGroundingReplacementModelInput(
   request: KpNarrationRequest,
-  options: Readonly<{ socialResolution?: boolean }> = {},
+  options: BodyOnlyNarrationOptions = {},
 ): Record<string, unknown> {
   const {
     actorAction: _actorAction,
@@ -338,9 +438,20 @@ export function bodyOnlyNarrationGroundingReplacementModelInput(
 export function validateBodyOnlyNarrationOutput(
   value: unknown,
   projection: unknown,
-  options: Readonly<{ socialResolution?: boolean }> = {},
+  options: BodyOnlyNarrationOptions = {},
 ): { body: string } {
-  const result = validateBodyOnlyNarration(value, projection);
+  if (options.socialResolution === true && isRecord(projection)) {
+    const deterministic = deterministicV5Body(projection);
+    if (deterministic !== undefined) {
+      // Validate only the frozen tool contract. The model prose is discarded;
+      // no semantic claim from it can compete with the typed Rules result.
+      validateBodyOnlyNarration(value, projection, { skipGrounding: true });
+      return { body: deterministic };
+    }
+  }
+  const result = validateBodyOnlyNarration(value, projection, {
+    excludeActorActionFromGrounding: options.socialResolution === true,
+  });
   if (options.socialResolution !== true
     || !isRecord(projection)
     || !currentProjectionIsSocial(projection)) return result;
@@ -360,6 +471,6 @@ export function validateBodyOnlyNarrationOutput(
   }
   const attributedClaims = deterministicSocialClaimLines(projection);
   return {
-    body: [...attributedClaims, result.body].filter((entry) => entry.trim()).join("\n\n"),
+    body: takeSections([...attributedClaims, result.body], 1_600),
   };
 }

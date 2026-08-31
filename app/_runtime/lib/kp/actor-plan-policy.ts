@@ -1,19 +1,18 @@
 import {
-  AUTHORITATIVE_ACTION_PLAN_SCHEMA_DEFINITIONS,
-  AUTHORITATIVE_NPC_ACTION_PLAN_SCHEMA,
+  DUE_NPC_MECHANICAL_PROPOSAL_SCHEMA,
+  DUE_NPC_MECHANICAL_PROPOSAL_SCHEMA_DEFINITIONS,
 } from "./authoritative-policy";
 import {
   ModelOutputValidationError,
   canonicalJson,
   collectStrings,
   isRecord,
-  validateProposal,
+  validateNpcMechanicalProposal,
 } from "./authoritative-helpers";
 import type {
   DueActorPlanDecision,
   DueActorPlanDecisionRequest,
   DueActorPlanRevision,
-  NpcSemanticActionPlan,
 } from "./authoritative-types";
 
 export const ACTOR_PLAN_DECISION_TOOL_NAME = "submit_due_actor_plan_decision" as const;
@@ -137,75 +136,85 @@ const planIdSchema = {
   description: "逐字复制输入 actorPlan.planId。",
 };
 
-export const ACTOR_PLAN_DECISION_TOOL = Object.freeze({
-  type: "function",
-  function: {
-    name: ACTOR_PLAN_DECISION_TOOL_NAME,
-    description: "Resolve one due finite-knowledge NPC or faction ActorPlan.",
-    parameters: {
-      $def: AUTHORITATIVE_ACTION_PLAN_SCHEMA_DEFINITIONS,
-      anyOf: [
-        {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            decision: { const: "execute" },
-            planId: planIdSchema,
-            mechanicalProposal: {
-              anyOf: [{ type: "null" }, AUTHORITATIVE_NPC_ACTION_PLAN_SCHEMA],
+function actorPlanDecisionTool(
+  definitions: Record<string, unknown>,
+  npcActionPlan: Record<string, unknown>,
+) {
+  return Object.freeze({
+    type: "function",
+    function: {
+      name: ACTOR_PLAN_DECISION_TOOL_NAME,
+      description: "Resolve one due finite-knowledge NPC or faction ActorPlan.",
+      parameters: {
+        $def: definitions,
+        anyOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              decision: { const: "execute" },
+              planId: planIdSchema,
+              mechanicalProposal: {
+                anyOf: [{ type: "null" }, npcActionPlan],
+              },
+              targetRef: { type: "string", minLength: 1, maxLength: 240 },
             },
-            targetRef: { type: "string", minLength: 1, maxLength: 240 },
+            required: ["decision", "planId", "mechanicalProposal"],
           },
-          required: ["decision", "planId", "mechanicalProposal"],
-        },
-        {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            decision: { const: "revise" },
-            planId: planIdSchema,
-            mechanicalProposal: { type: "null" },
-            revision: revisionSchema,
-          },
-          required: ["decision", "planId", "mechanicalProposal", "revision"],
-        },
-        {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            decision: { const: "defer" },
-            planId: planIdSchema,
-            mechanicalProposal: { type: "null" },
-            reason: { type: "string", minLength: 1, maxLength: 480 },
-            deferUntilFictionMicros: {
-              type: "string",
-              pattern: "^(0|[1-9][0-9]*)$",
-              maxLength: 40,
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              decision: { const: "revise" },
+              planId: planIdSchema,
+              mechanicalProposal: { type: "null" },
+              revision: revisionSchema,
             },
+            required: ["decision", "planId", "mechanicalProposal", "revision"],
           },
-          required: [
-            "decision",
-            "planId",
-            "mechanicalProposal",
-            "reason",
-            "deferUntilFictionMicros",
-          ],
-        },
-        {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            decision: { const: "cancel" },
-            planId: planIdSchema,
-            mechanicalProposal: { type: "null" },
-            reason: { type: "string", minLength: 1, maxLength: 480 },
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              decision: { const: "defer" },
+              planId: planIdSchema,
+              mechanicalProposal: { type: "null" },
+              reason: { type: "string", minLength: 1, maxLength: 480 },
+              deferUntilFictionMicros: {
+                type: "string",
+                pattern: "^(0|[1-9][0-9]*)$",
+                maxLength: 40,
+              },
+            },
+            required: [
+              "decision",
+              "planId",
+              "mechanicalProposal",
+              "reason",
+              "deferUntilFictionMicros",
+            ],
           },
-          required: ["decision", "planId", "mechanicalProposal", "reason"],
-        },
-      ],
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              decision: { const: "cancel" },
+              planId: planIdSchema,
+              mechanicalProposal: { type: "null" },
+              reason: { type: "string", minLength: 1, maxLength: 480 },
+            },
+            required: ["decision", "planId", "mechanicalProposal", "reason"],
+          },
+        ],
+      },
     },
-  },
-});
+  });
+}
+
+export const ACTOR_PLAN_DECISION_TOOL = actorPlanDecisionTool(
+  DUE_NPC_MECHANICAL_PROPOSAL_SCHEMA_DEFINITIONS,
+  DUE_NPC_MECHANICAL_PROPOSAL_SCHEMA,
+);
 
 const ACTOR_PLAN_SYSTEM = `你是烛帷中一个独立的、仅在服务器内运行的到期 ActorPlan 决策边界。这里不是玩家行动提案，也不使用私有 Form、RequiredContext、检索或 Planner。
 
@@ -323,9 +332,7 @@ function actorPlanAndNpcViewer(request: DueActorPlanDecisionRequest): {
   const planId = boundedString(actorPlan.planId);
   const actorRef = typeof actorPlan.decisionNpcId === "string"
     ? actorPlan.decisionNpcId
-    : actorPlan.actorKind === "npc" && typeof actorPlan.actorRef === "string"
-      ? actorPlan.actorRef
-      : undefined;
+    : undefined;
   if (
     viewer?.kind !== "npc"
     || typeof viewer.subjectId !== "string"
@@ -366,42 +373,6 @@ export function actorPlanDecisionModelInput(
     temperature: 0.1,
     max_completion_tokens: 1_100,
   };
-}
-
-function validateNpcMechanicalProposal(value: unknown): NpcSemanticActionPlan | null {
-  const validated = validateProposal({
-    kind: "directSuccess",
-    goal: "到期 ActorPlan 的服务器内机械验证",
-    method: "执行已冻结的 NPC 下一步",
-    publicBasisRefs: [],
-    privateBasisRefs: [],
-    risk: null,
-    pendingInput: null,
-    dynamicMaterializations: [],
-    npcActions: [{
-      npcId: "npc:actor-plan-schema-validation",
-      goal: "验证到期计划机械",
-      method: "验证闭合 NPC ActionPlan",
-      knowledgeRefs: [],
-      mechanicalProposal: value,
-    }],
-    mechanicalProposal: {
-      operation: "resolveDirectConsequences",
-      duration: { unit: "second", value: 1 },
-      frozenCosts: [],
-      success: [],
-      failure: [],
-    },
-    scene: {
-      question: "到期计划如何改变世界？",
-      pressure: "",
-      opportunities: [],
-      conclusionCandidate: null,
-    },
-  });
-  const action = validated.npcActions[0];
-  if (action === undefined) invalid();
-  return action.mechanicalProposal;
 }
 
 function currentFictionMicros(projection: Record<string, unknown>): bigint {
@@ -504,6 +475,7 @@ function revision(
 export function validateActorPlanDecisionOutput(
   value: unknown,
   request: DueActorPlanDecisionRequest,
+  options: Readonly<{ npcEquipment?: boolean }> = {},
 ): DueActorPlanDecision {
   actorPlanAndNpcViewer(request);
   if (!isRecord(value)) invalid();
@@ -530,10 +502,14 @@ export function validateActorPlanDecisionOutput(
       ? actorPlan.alternateTarget.targetRef
       : undefined;
     if (targetRef !== undefined && targetRef !== frozenAlternate) invalid();
+    const mechanicalProposal = validateNpcMechanicalProposal(value.mechanicalProposal);
+    if (options.npcEquipment !== true
+      && mechanicalProposal !== null
+      && ["transferItem", "changeNpcGear"].includes(mechanicalProposal.operation)) invalid();
     return {
       ...base,
       decision: "execute",
-      mechanicalProposal: validateNpcMechanicalProposal(value.mechanicalProposal),
+      mechanicalProposal,
       ...(targetRef === undefined ? {} : { targetRef }),
     };
   }

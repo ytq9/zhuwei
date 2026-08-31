@@ -48,7 +48,7 @@ type CombatProfile = {
 - `geometry-2d-feet-2014-v1`；
 - `trigger-initiative-order-2014-v1`；
 - `combat-round-six-seconds-2014-v1`；
-- `ability-srd51-2014-v1`；
+- `ability-srd51-2014-v2`；
 - `damage-death-srd51-2014-v1`。
 
 事件必须保存所用 Profile/定义的稳定引用或哈希。`step`、`project` 和 `replay` 遇到规则集、事件 schema、Profile、编译器或定义哈希不匹配时必须显式拒绝，不能用部署时“最新”内容解释旧房间。
@@ -458,7 +458,7 @@ Encounter 结束不等于故事结束。它可以向 `SPEC 0009` 提供 Ending C
 | 条款 | 责任测试映射 | 当前定向证据 |
 | --- | --- | --- |
 | B07 | `tests/combat-hostility-v2.test.mjs` | 2/2；三阵营敌对候选、事件化停战及 `project/replay`。 |
-| B08–B10、B39 | `tests/combat-mechanics-v2.test.mjs`、`tests/rules-compound-action-v2.test.mjs`、`tests/privacy-bypass-v2.test.mjs` | Geometry 的范围/区域/移动/中断与隐藏空间安全错误已通过公开 `step/project/replay` 定向场景。 |
+| B08–B10、B39 | `tests/combat-mechanics-v2.test.mjs`、`tests/chandelier-environment-rules-v3.test.mjs`、`tests/privacy-bypass-v2.test.mjs` | Geometry 的范围/区域/移动/中断与隐藏空间安全错误已通过公开 `step/project/replay` 定向场景。 |
 | B11、B12、B17、B35–B37、B40 | `tests/combat-mechanics-v2.test.mjs` | grant、逐实体突袭、2014 Grapple/Shove、多目标结算与 2024 护栏纳入当前 45/45 组合。 |
 | B13–B15、B18–B22、B29–B30 | `tests/combat-mechanics-v2.test.mjs` | 私人反应、伤害/专注/死亡、非致命和全体存活玩家结束同意纳入同一 45/45 组合。 |
 | B38 | `tests/combat-long-casting-v2.test.mjs` | 8/8；长施法逐轮投入、中断、仪式与完成后反制。 |
@@ -498,7 +498,7 @@ Encounter 结束不等于故事结束。它可以向 `SPEC 0009` 提供 Ending C
 - 秘密与权限影响：隐藏位置只存在权威状态并经 0010 投影；候选/错误不泄漏坐标。
 - 迁移/可逆性：旧全员零距离/距离段房间留在 Legacy Profile；没有确定映射不迁移。新算法必须新 Profile/hash。
 - 验收场景：B08–B10、B39。
-- 测试证据：`tests/combat-mechanics-v2.test.mjs`、`tests/rules-compound-action-v2.test.mjs` 与 `tests/privacy-bypass-v2.test.mjs` 已从公开 Interface 建立 G01–G15/战斗空间定向证据；当前相关组合已记录通过，冻结全量门仍待执行。
+- 测试证据：`tests/combat-mechanics-v2.test.mjs`、`tests/chandelier-environment-rules-v3.test.mjs` 与 `tests/privacy-bypass-v2.test.mjs` 已从公开 Interface 建立 G01–G15/战斗空间定向证据；当前相关组合已记录通过，冻结全量门仍待执行。
 
 ### COM-D003：同时触发的确定排序
 
@@ -590,7 +590,7 @@ Encounter 结束不等于故事结束。它可以向 `SPEC 0009` 提供 Ending C
 
 - ruleset、事件 schema、Combat/Geometry/Trigger/Time/Ability/DamageDeath Profile 和动态定义全部哈希绑定。
 - 2014 护栏阻止 2024/5.5e 混入；产品裁定明确标注。
-- 旧房间、旧坐标和旧战斗事件由 Legacy Adapter/旧 Profile 回放，不静默迁移。
+- 前 0.4 房间、旧坐标和旧战斗事件直接拒绝进入当前解释器；不注册 Legacy Adapter，也不提供 migration 或 fallback。
 - 结论：相同事件流不会因新目录、几何或伤害算法得到新解释。
 
 ### 18.5 第二权威审查

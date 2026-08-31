@@ -1,22 +1,10 @@
-/** Explicit Legacy interpreter id retained for already-created rooms. */
-export const LEGACY_RULESET_VERSION = "dnd5e-2014-srd5.1-v1" as const;
-
-/** New rooms use the profile-pinned authoritative action runtime. */
+/** 0.4 rooms use the profile-pinned authoritative action runtime. */
 export const AUTHORITATIVE_RULESET_VERSION =
   "dnd5e-2014-srd5.1-authoritative-v2" as const;
 
 export const DEFAULT_RULESET_VERSION = AUTHORITATIVE_RULESET_VERSION;
-
-/**
- * Legacy engine compatibility alias. New orchestration must opt into
- * AUTHORITATIVE_RULESET_VERSION and may not feed v2 events to this engine.
- */
-export const RULESET_VERSION = LEGACY_RULESET_VERSION;
-
-export type RulesetVersion = typeof RULESET_VERSION;
-export type RuntimeRulesetVersion =
-  | typeof LEGACY_RULESET_VERSION
-  | typeof AUTHORITATIVE_RULESET_VERSION;
+export type RulesetVersion = typeof AUTHORITATIVE_RULESET_VERSION;
+export type RuntimeRulesetVersion = RulesetVersion;
 export type Ability = "str" | "dex" | "con" | "int" | "wis" | "cha";
 export type D20Mode = "normal" | "advantage" | "disadvantage";
 

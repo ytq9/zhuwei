@@ -197,7 +197,7 @@ describe("SPEC 0004 adjudication precedents", () => {
       },
       applicabilityScope: { kind: "scene", ref: "shrine" },
       rulesetProfile: { profileId: "dnd5e-2014-srd5.1-authoritative-v2" },
-      runtimeManifestProfile: { profileId: "runtime-srd51-2014-authoritative-v2" },
+      runtimeManifestProfile: { profileId: "runtime-srd51-2014-authoritative-environment-v5" },
     });
     const originalPrecedentId = String(fullOriginal[0].precedentId);
 

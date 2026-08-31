@@ -8,7 +8,7 @@ import {
 } from "./helpers/authoritative-proposal";
 
 const AUTHORITATIVE_RULESET_ID = "dnd5e-2014-srd5.1-authoritative-v2";
-const AUTHORITATIVE_MANIFEST_ID = "runtime-srd51-2014-authoritative-v2";
+const AUTHORITATIVE_MANIFEST_ID = "runtime-srd51-2014-authoritative-environment-v5";
 
 const ALICE = Object.freeze({
   principal: Object.freeze({ id: "principal:alice", sessionVersion: 1 }),

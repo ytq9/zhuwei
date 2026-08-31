@@ -65,20 +65,6 @@ export type AuthorityActionStageRow = {
   result_json: string | null;
 };
 
-export type AuthorityRandomnessJournalRow = {
-  prepared_action_id: string;
-  randomness_id: string;
-  proposal_hash: string;
-  request_hash: string;
-  frozen_parameters_hash: string;
-  request_json: string;
-  continuation_json: string;
-  request_events_json: string;
-  answered_pending_input_id: string | null;
-  candidate_faces_json: string | null;
-  status: "requestCommitted" | "candidateCommitted" | "finalized";
-};
-
 export type AuthorityRandomnessBatchJournalRow = {
   prepared_action_id: string;
   proposal_hash: string;
@@ -299,21 +285,6 @@ export class AuthoritativeRoomStore {
         recovery_hash TEXT NOT NULL,
         recovery_json TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS authority_randomness_journal (
-        prepared_action_id TEXT PRIMARY KEY,
-        randomness_id TEXT NOT NULL UNIQUE,
-        proposal_hash TEXT NOT NULL,
-        request_hash TEXT NOT NULL,
-        frozen_parameters_hash TEXT NOT NULL,
-        request_json TEXT NOT NULL,
-        continuation_json TEXT NOT NULL,
-        request_events_json TEXT NOT NULL,
-        answered_pending_input_id TEXT,
-        candidate_faces_json TEXT,
-        status TEXT NOT NULL CHECK (
-          status IN ('requestCommitted', 'candidateCommitted', 'finalized')
-        )
-      );
       CREATE TABLE IF NOT EXISTS authority_randomness_batches (
         prepared_action_id TEXT PRIMARY KEY,
         proposal_hash TEXT NOT NULL,
@@ -454,25 +425,6 @@ export class AuthoritativeRoomStore {
         prepared_at INTEGER NOT NULL
       );
     `);
-    const archiveProgressColumns = this.storage.sql.exec<{ name: string }>(
-      "PRAGMA table_info(authority_archive_progress)",
-    ).toArray();
-    if (!archiveProgressColumns.some((column) => column.name === "pending_since_at")) {
-      this.storage.sql.exec(
-        "ALTER TABLE authority_archive_progress ADD COLUMN pending_since_at INTEGER",
-      );
-    }
-    // A pre-migration pending generation started no later than its last durable
-    // progress update. Keep that conservative age instead of resetting its SLO
-    // clock merely because this object was reconstructed on newer code.
-    this.storage.sql.exec(`
-      UPDATE authority_archive_progress
-      SET pending_since_at = CASE
-        WHEN pending = 1 THEN COALESCE(pending_since_at, updated_at)
-        ELSE NULL
-      END
-      WHERE singleton = 1
-    `);
     const existing = this.storage.sql.exec<{
       room_id: string;
       genesis_json: string;
@@ -534,7 +486,6 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_submissions)
         + (SELECT COUNT(*) FROM authority_action_stages)
         + (SELECT COUNT(*) FROM authority_proposal_recovery)
-        + (SELECT COUNT(*) FROM authority_randomness_journal)
         + (SELECT COUNT(*) FROM authority_randomness_batches)
         + (SELECT COUNT(*) FROM authority_randomness_authorizations)
         + (SELECT COUNT(*) FROM authority_scope_versions)
@@ -1136,59 +1087,7 @@ export class AuthoritativeRoomStore {
     );
   }
 
-  randomnessJournal(preparedActionId: string): AuthorityRandomnessJournalRow | undefined {
-    return this.storage.sql.exec<AuthorityRandomnessJournalRow>(`
-      SELECT prepared_action_id, randomness_id, proposal_hash, request_hash,
-             frozen_parameters_hash, request_json, continuation_json,
-             request_events_json, answered_pending_input_id,
-             candidate_faces_json, status
-      FROM authority_randomness_journal WHERE prepared_action_id = ?
-    `, preparedActionId).toArray()[0];
-  }
-
   randomnessBatch(preparedActionId: string): AuthorityRandomnessBatchJournalRow | undefined {
-    const current = this.storage.sql.exec<AuthorityRandomnessBatchJournalRow>(`
-      SELECT prepared_action_id, proposal_hash, requests_json, fulfillment_json,
-             request_events_json, answered_pending_input_id,
-             candidates_json, status
-      FROM authority_randomness_batches WHERE prepared_action_id = ?
-    `, preparedActionId).toArray()[0];
-    if (current !== undefined) return current;
-
-    // A v2 object may have been evicted while the original one-request journal
-    // was in flight.  Promote that durable row losslessly on first access; the
-    // old table remains read-only migration evidence and can still be archived.
-    const legacy = this.randomnessJournal(preparedActionId);
-    if (legacy === undefined) return undefined;
-    const request = parseJson<unknown>(legacy.request_json);
-    const candidates = legacy.candidate_faces_json === null
-      ? null
-      : [{
-          randomnessId: legacy.randomness_id,
-          faces: parseJson<number[]>(legacy.candidate_faces_json),
-        }];
-    this.storage.sql.exec(
-      `INSERT OR IGNORE INTO authority_randomness_batches (
-         prepared_action_id, proposal_hash, requests_json, fulfillment_json,
-         request_events_json, answered_pending_input_id, candidates_json, status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      legacy.prepared_action_id,
-      legacy.proposal_hash,
-      JSON.stringify([{
-        randomnessId: legacy.randomness_id,
-        requestHash: legacy.request_hash,
-        frozenParametersHash: legacy.frozen_parameters_hash,
-        request,
-      }]),
-      JSON.stringify({
-        kind: "singleContinuation",
-        continuation: parseJson<unknown>(legacy.continuation_json),
-      }),
-      legacy.request_events_json,
-      legacy.answered_pending_input_id,
-      candidates === null ? null : JSON.stringify(candidates),
-      legacy.status,
-    );
     return this.storage.sql.exec<AuthorityRandomnessBatchJournalRow>(`
       SELECT prepared_action_id, proposal_hash, requests_json, fulfillment_json,
              request_events_json, answered_pending_input_id,
@@ -1294,58 +1193,6 @@ export class AuthoritativeRoomStore {
   finalizeRandomnessBatch(preparedActionId: string): void {
     this.storage.sql.exec(
       `UPDATE authority_randomness_batches SET status = 'finalized'
-       WHERE prepared_action_id = ?`,
-      preparedActionId,
-    );
-  }
-
-  saveRandomnessRequest(input: {
-    preparedActionId: string;
-    randomnessId: string;
-    proposalHash: string;
-    requestHash: string;
-    frozenParametersHash: string;
-    request: unknown;
-    continuation: unknown;
-    requestEvents: EventEnvelope[];
-    answeredPendingInputId?: string;
-  }): void {
-    this.storage.sql.exec(
-      `INSERT INTO authority_randomness_journal (
-         prepared_action_id, randomness_id, proposal_hash, request_hash,
-         frozen_parameters_hash, request_json, continuation_json,
-         request_events_json, answered_pending_input_id,
-         candidate_faces_json, status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'requestCommitted')`,
-      input.preparedActionId,
-      input.randomnessId,
-      input.proposalHash,
-      input.requestHash,
-      input.frozenParametersHash,
-      JSON.stringify(input.request),
-      JSON.stringify(input.continuation),
-      JSON.stringify(input.requestEvents),
-      input.answeredPendingInputId ?? null,
-    );
-  }
-
-  saveRandomnessCandidate(preparedActionId: string, faces: number[]): void {
-    this.storage.sql.exec(
-      `UPDATE authority_randomness_journal
-       SET candidate_faces_json = COALESCE(candidate_faces_json, ?),
-           status = CASE
-             WHEN status = 'requestCommitted' THEN 'candidateCommitted'
-             ELSE status
-           END
-       WHERE prepared_action_id = ?`,
-      JSON.stringify(faces),
-      preparedActionId,
-    );
-  }
-
-  finalizeRandomness(preparedActionId: string): void {
-    this.storage.sql.exec(
-      `UPDATE authority_randomness_journal SET status = 'finalized'
        WHERE prepared_action_id = ?`,
       preparedActionId,
     );
@@ -1595,29 +1442,18 @@ export class AuthoritativeRoomStore {
     `, viewerKeyPrefix).toArray();
   }
 
-  /** Backfills open plans created by the immediately preceding delivery
-   * protocol. Their frozen plan remains the source for viewer identity. */
+  /** Verifies that the product-0.4 publication journal was created atomically
+   * with its frozen plan. Missing or mismatched rows are integrity failures. */
   ensureDeliveryAudiences(plan: DeliveryPlan): AuthorityDeliveryAudienceRow[] {
-    let rows = this.deliveryAudiences(plan.publishCapability);
-    if (rows.length === plan.audiences.length) return rows;
-    if (rows.length !== 0) {
-      throw new Error("Delivery audience journal is only partially initialized.");
-    }
-    for (const audience of plan.audiences) {
-      this.storage.sql.exec(
-        `INSERT OR IGNORE INTO authority_delivery_audiences (
-           publish_capability, audience_id, viewer_key, projection_hash,
-           delivery_generation, status, attempt_hash, result_json, error_code
-         ) VALUES (?, ?, ?, ?, 0, 'pending', NULL, NULL, NULL)`,
-        plan.publishCapability,
-        audience.audienceId,
-        `${audience.principalId}\u001f${audience.characterId}`,
-        audience.projectionHash,
-      );
-    }
-    rows = this.deliveryAudiences(plan.publishCapability);
-    if (rows.length !== plan.audiences.length) {
-      throw new Error("Delivery audience journal could not be initialized.");
+    const rows = this.deliveryAudiences(plan.publishCapability);
+    const rowByAudienceId = new Map(rows.map((row) => [row.audience_id, row]));
+    if (rows.length !== plan.audiences.length || plan.audiences.some((audience) => {
+      const row = rowByAudienceId.get(audience.audienceId);
+      return row === undefined
+        || row.viewer_key !== `${audience.principalId}\u001f${audience.characterId}`
+        || row.projection_hash !== audience.projectionHash;
+    })) {
+      throw new Error("Delivery audience journal does not match its frozen plan.");
     }
     return rows;
   }
@@ -2103,7 +1939,6 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_pending_inputs;
       DELETE FROM authority_randomness_authorizations;
       DELETE FROM authority_randomness_batches;
-      DELETE FROM authority_randomness_journal;
       DELETE FROM authority_proposal_recovery;
       DELETE FROM authority_action_stages;
       DELETE FROM authority_submissions;

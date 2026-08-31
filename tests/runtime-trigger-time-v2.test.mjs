@@ -3,24 +3,10 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 import { createVersionedRulesRuntime } from "../app/_runtime/lib/rules/v2-runtime.ts";
 
-const PROFILES = Object.freeze({
-  manifest: { profileId: "runtime-srd51-2014-authoritative-v2", profileHash: "sha256:496da17f16d52cbe5dfa3e97facfa8ed7dcf3f4bbb7a882fc0e384d464898051" },
-  ruleset: { profileId: "dnd5e-2014-srd5.1-authoritative-v2", profileHash: "sha256:7651d58190da6bfb6241cabb41b07ef5cfee3266edf3c62b8af443d94daf4af0" },
-  eventSchema: { profileId: "room-world-events-v2", profileHash: "sha256:3f1d953752be8981f4f7862ba1a90d6f613d113ecfd2d18dfd983abf974a8a67" },
-  abilityCompiler: { profileId: "ability-srd51-2014-v1", profileHash: "sha256:561710d6ae32fc14f0ba22863e0d6cd92d12c6d32b8728a81608561a66b25ba3" },
-  geometry: { profileId: "geometry-2d-feet-2014-v1", profileHash: "sha256:59caa4e73c58dc20a92cd9b50370f2c9b275a9b57740c7dd1d519f78cb72611e" },
-  triggerOrdering: { profileId: "trigger-initiative-order-2014-v1", profileHash: "sha256:825ef8de6f962f01111c9ce325189c0d203ee71ab305149fd7b2b7485b6b8089" },
-  fictionCombatTime: { profileId: "combat-round-six-seconds-2014-v1", profileHash: "sha256:067eb4870fcee1cda2563c7633daac4c2b7249ecd53e0f9b1c986d3de8d12f08" },
-  extensions: [
-    { profileId: "combat-srd51-2014-v1", profileHash: "sha256:b9e12294db25409844e1ecd63d048e404b315ecfcd8c493cd6af5cb593e4acc6" },
-    { profileId: "damage-death-srd51-2014-v1", profileHash: "sha256:37dbf131c6325f2f07e3693ee8c3420372c8d7f9154a757dfafdc6f853537d7a" },
-    { profileId: "presentation-observer-specific-v1", profileHash: "sha256:86bfdfebe7062d90f87e4add65d1d109cb14dead7b3d758e452af76c13f7457c" },
-    { profileId: "projection-observer-safe-v1", profileHash: "sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91" },
-    { profileId: "delivery-single-current-frame-v1", profileHash: "sha256:cd0d684841bd43f621665dc538db35b81c25421d8b345e444681054bbc894d7e" },
-  ],
-});
+const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
 const SYNTHETIC_NEXT_PROFILES = Object.freeze({
   ...structuredClone(PROFILES),
@@ -83,30 +69,163 @@ function combatant(id, ordinal, kind = "npc", principalId) {
   };
 }
 
+function v5TacticalGeometry(sceneKey, spawnPoints) {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "-12000", y: "-12000" },
+        { x: "12000", y: "-12000" },
+        { x: "12000", y: "12000" },
+        { x: "-12000", y: "12000" },
+      ],
+    },
+    spawnPoints: spawnPoints.length === 0
+      ? [{ x: "0", y: "0", elevation: "0" }]
+      : structuredClone(spawnPoints),
+    obstacles: [{
+      featureId: `feature:runtime-trigger-time-v2:${sceneKey}:fixture-marker`,
+      kind: "barrier",
+      label: "时间与触发顺序测试场地标记",
+      state: "intact",
+      polygon: [
+        { x: "10000", y: "10000" },
+        { x: "10060", y: "10000" },
+        { x: "10060", y: "10060" },
+        { x: "10000", y: "10060" },
+      ],
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
+function worldStateHash(state) {
+  const domainState = { ...state };
+  delete domainState.eventHeadHash;
+  delete domainState.lastEventId;
+  return hash(domainState);
+}
+
+function recomputeGenesis(genesis) {
+  const initialStateHash = worldStateHash(genesis.initialState);
+  genesis.initialState.eventHeadHash = initialStateHash;
+  genesis.initialStateHash = initialStateHash;
+  const unsigned = structuredClone(genesis);
+  delete unsigned.genesisHash;
+  genesis.genesisHash = hash(unsigned);
+  return genesis;
+}
+
+function campaignCharacterSeed(entity) {
+  return {
+    id: entity.id,
+    kind: "player",
+    name: entity.name,
+    sceneId: entity.sceneId,
+    tenureStatus: "active",
+    classId: "fighter",
+    raceId: "human",
+    level: 1,
+    abilityScores: Object.fromEntries(Object.entries(entity.stats).map(
+      ([ability, score]) => [ability, Number(score)],
+    )),
+    proficiencyBonus: Number(entity.proficiencyBonus),
+    proficientSkills: [],
+    expertiseSkills: [],
+    proficientSaves: [],
+    cantripIds: [],
+    preparedSpellIds: [],
+    featureIds: [],
+    hitPoints: {
+      current: Number(entity.hitPoints.current),
+      maximum: Number(entity.hitPoints.maximum),
+    },
+    loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
+    characterBuild: { classId: "fighter", raceId: "human", cantrips: [], prepared: [] },
+  };
+}
+
 function makeGenesis(entities, suffix = "base") {
-  const initialState = {
+  const playerEntities = Object.values(entities)
+    .filter((entity) => entity.kind === "player")
+    .sort((left, right) => Number(left.entityOrdinal) - Number(right.entityOrdinal));
+  const geometry = v5TacticalGeometry(
+    "clock",
+    playerEntities.map(({ position }) => position),
+  );
+  const combatState = {
     version: "0",
     activeBranchId: "branch:main",
     fictionTimelines: { "branch:main": { branchId: "branch:main", nowMicros: "0" } },
     story: { chapterId: "chapter:clock", status: "active", endingCandidates: [] },
-    scenes: { "scene:clock": { sceneId: "scene:clock", geometry: { unit: "inch", obstacles: [], clearanceZones: [] } } },
+    scenes: { "scene:clock": { sceneId: "scene:clock", geometry } },
     entities,
     definitions: {},
     encounters: {},
     effects: {},
     pendingInputs: {},
   };
-  const unsigned = {
-    kind: "roomGenesis",
-    roomId: `room:trigger-time:${suffix}`,
-    runtimeEpochId: "epoch:trigger-time:v1",
-    profiles: PROFILES,
-    moduleRef: { profileId: "module:trigger-time", profileHash: hash({ module: "trigger-time" }) },
-    initialDefinitionCatalogRef: { profileId: "catalog:trigger-time", profileHash: hash({ definitions: [] }) },
-    initialState,
-    initialStateHash: hash(initialState),
+  const principalIds = [...new Set(playerEntities.map(({ controllerPrincipalId }) =>
+    String(controllerPrincipalId)))];
+  const moduleRef = {
+    profileId: "module:trigger-time",
+    profileHash: hash({ module: "trigger-time" }),
   };
-  return { ...unsigned, genesisHash: hash(unsigned) };
+  const initialDefinitionCatalogRef = {
+    profileId: "catalog:trigger-time",
+    profileHash: hash({ definitions: [] }),
+  };
+  const initialized = step(PROFILES, undefined, {
+    kind: "initializeAuthoritativeWorld",
+    roomId: `room:trigger-time:${suffix}`,
+    runtimeEpochId: `epoch:trigger-time:${suffix}`,
+    moduleRef,
+    initialDefinitionCatalogRef,
+    activeBranchId: "branch:main",
+    fictionInstantMicros: "0",
+    scenes: [{ id: "scene:clock", name: "时间测试场", geometry }],
+    principals: principalIds.map((id, index) => ({
+      id,
+      sessionVersion: 1,
+      role: index === 0 ? "host" : "player",
+    })),
+    seats: playerEntities.map((entity) => ({
+      id: `seat:${entity.id}`,
+      principalId: entity.controllerPrincipalId,
+      status: "active",
+    })),
+    characters: playerEntities.map(campaignCharacterSeed),
+    characterControls: playerEntities.map((entity) => ({
+      characterId: entity.id,
+      seatId: `seat:${entity.id}`,
+    })),
+    canonicalFacts: [],
+    initialKnowledge: [],
+  });
+  assert.equal(initialized.kind, "initialized", JSON.stringify(initialized));
+
+  const genesis = structuredClone(initialized.genesis);
+  genesis.initialState.combatRuntime = {
+    story: structuredClone(combatState.story),
+    scenes: structuredClone(combatState.scenes),
+    entities: structuredClone(combatState.entities),
+    definitions: structuredClone(combatState.definitions),
+    encounters: structuredClone(combatState.encounters),
+    effects: structuredClone(combatState.effects),
+    pendingInputs: structuredClone(combatState.pendingInputs),
+    randomnessResolutions: {},
+  };
+  return recomputeGenesis(genesis);
 }
 
 function initialWorld(genesis) {
@@ -125,6 +244,12 @@ function apply(current, input) {
   const rebuilt = replay(current.genesis, events);
   assert.equal(rebuilt?.kind, "replayed", JSON.stringify(rebuilt));
   return { current: { ...current, events, state: rebuilt.state }, result };
+}
+
+function read(state, viewer, query = { channel: "realtime" }) {
+  const result = project(PROFILES, state, viewer, query);
+  assert.equal(result?.kind, "projected", JSON.stringify(result));
+  return result.readModel ?? result;
 }
 
 function fulfill(current, waiting, facesByIndex = []) {
@@ -233,12 +358,12 @@ function makeReadyGenesis({
     ];
   }
   const genesis = makeGenesis(entities, suffix);
-  genesis.initialState.effects = effects;
-  genesis.initialState.encounters = {
+  genesis.initialState.combatRuntime.effects = effects;
+  genesis.initialState.combatRuntime.encounters = {
     "encounter:ready": {
       encounterId: "encounter:ready",
       sceneId: "scene:clock",
-      status: "active",
+      status: "starting",
       participantEntityIds: ids,
       initiativeGroups: ids.map((id) => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
       hostilities: [{ fromEntityIds: ["pc:a", "pc:b", "pc:c"], toEntityIds: ["npc:causal"] }],
@@ -252,11 +377,7 @@ function makeReadyGenesis({
       roundClosed: false,
     },
   };
-  genesis.initialStateHash = hash(genesis.initialState);
-  const unsigned = { ...genesis };
-  delete unsigned.genesisHash;
-  genesis.genesisHash = hash(unsigned);
-  return genesis;
+  return recomputeGenesis(genesis);
 }
 
 function openSeededReadyBatch(genesis, rootActionId = "root:ready:causal-turn") {
@@ -307,19 +428,15 @@ function makeSpellGenesis(entries, suffix) {
     spellEntity(id, ordinal, kind, abilities),
   ]));
   const genesis = makeGenesis(entities, suffix);
-  genesis.initialState.definitions = structuredClone(SPELL_DEFINITIONS);
-  genesis.initialStateHash = hash(genesis.initialState);
-  const unsigned = { ...genesis };
-  delete unsigned.genesisHash;
-  genesis.genesisHash = hash(unsigned);
-  return genesis;
+  genesis.initialState.combatRuntime.definitions = structuredClone(SPELL_DEFINITIONS);
+  return recomputeGenesis(genesis);
 }
 
 function makeSpellEncounterGenesis(entries, suffix, activeEntityId) {
   const genesis = makeSpellGenesis(entries, suffix);
   const ids = entries.map(({ id }) => id);
   for (const id of ids) {
-    genesis.initialState.entities[id].turn = {
+    genesis.initialState.combatRuntime.entities[id].turn = {
       action: id === activeEntityId ? "1" : "0",
       bonusAction: id === activeEntityId ? "1" : "0",
       reaction: "1",
@@ -327,11 +444,11 @@ function makeSpellEncounterGenesis(entries, suffix, activeEntityId) {
       leveledBonusActionSpell: false,
     };
   }
-  genesis.initialState.encounters = {
+  genesis.initialState.combatRuntime.encounters = {
     "encounter:spell-order": {
       encounterId: "encounter:spell-order",
       sceneId: "scene:clock",
-      status: "active",
+      status: "starting",
       participantEntityIds: ids,
       initiativeGroups: ids.map((id) => ({
         entryId: `initiative:${id}`,
@@ -355,11 +472,7 @@ function makeSpellEncounterGenesis(entries, suffix, activeEntityId) {
       roundClosed: false,
     },
   };
-  genesis.initialStateHash = hash(genesis.initialState);
-  const unsigned = { ...genesis };
-  delete unsigned.genesisHash;
-  genesis.genesisHash = hash(unsigned);
-  return genesis;
+  return recomputeGenesis(genesis);
 }
 
 function openSpellTrigger(genesis, rootActionId, sourceEntityId, targetEntityId) {
@@ -373,78 +486,109 @@ function openSpellTrigger(genesis, rootActionId, sourceEntityId, targetEntityId)
 }
 
 function makeCampaignGenesis(suffix) {
-  const initialState = {
-    version: "0",
+  const moduleRef = {
+    profileId: "module:campaign-time",
+    profileHash: hash({ module: "campaign-time" }),
+  };
+  const initialDefinitionCatalogRef = {
+    profileId: "catalog:campaign-time",
+    profileHash: hash({ definitions: [] }),
+  };
+  const initialized = step(PROFILES, undefined, {
+    kind: "initializeAuthoritativeWorld",
+    roomId: `room:campaign-time:${suffix}`,
+    runtimeEpochId: `epoch:campaign-time:${suffix}`,
+    moduleRef,
+    initialDefinitionCatalogRef,
     activeBranchId: "branch:main",
-    fictionTimelines: { "branch:main": { branchId: "branch:main", nowMicros: "0" } },
-    campaign: {
-      campaignId: "campaign:time",
-      advancementProfile: "milestone",
-      currentChapterId: "chapter:one",
-      status: "active",
-    },
-    chapters: {
-      "chapter:one": { chapterId: "chapter:one", ordinal: "1", status: "active", sceneQuestionId: "question:time" },
-    },
-    entities: {
-      "pc:alpha": {
+    fictionInstantMicros: "0",
+    scenes: [
+      {
+        id: "scene:alpha",
+        name: "Alpha 场景",
+        geometry: v5TacticalGeometry("alpha", [{ x: "0", y: "0", elevation: "0" }]),
+      },
+      {
+        id: "scene:beta",
+        name: "Beta 场景",
+        geometry: v5TacticalGeometry("beta", [
+          { x: "0", y: "0", elevation: "0" },
+          { x: "60", y: "0", elevation: "0" },
+        ]),
+      },
+    ],
+    principals: [
+      { id: "principal:alpha", sessionVersion: 1, role: "host" },
+      { id: "principal:beta", sessionVersion: 1, role: "player" },
+    ],
+    seats: [
+      { id: "seat:alpha", principalId: "principal:alpha", status: "active" },
+      { id: "seat:beta", principalId: "principal:beta", status: "active" },
+    ],
+    characters: [
+      {
         id: "pc:alpha",
         kind: "player",
         name: "Alpha",
-        controllerPrincipalId: "principal:alpha",
         sceneId: "scene:alpha",
         tenureStatus: "active",
         classId: "fighter",
+        raceId: "human",
         level: 3,
         hitPoints: { current: 10, maximum: 10 },
         resources: { focus: 1, hitDice: 0 },
         resourceMaximums: { focus: 1, hitDice: 3 },
         abilityScores: { str: 14, dex: 12, con: 12, int: 10, wis: 10, cha: 10 },
+        proficiencyBonus: 2,
+        proficientSkills: [],
+        expertiseSkills: [],
+        proficientSaves: [],
+        cantripIds: [],
+        preparedSpellIds: [],
+        featureIds: [],
+        loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
+        characterBuild: { classId: "fighter", raceId: "human", cantrips: [], prepared: [] },
       },
-      "pc:beta": {
+      {
         id: "pc:beta",
         kind: "player",
         name: "Beta",
-        controllerPrincipalId: "principal:beta",
         sceneId: "scene:beta",
         tenureStatus: "active",
         classId: "fighter",
+        raceId: "human",
         level: 3,
         hitPoints: { current: 10, maximum: 10 },
         resources: { focus: 1, hitDice: 0 },
         resourceMaximums: { focus: 1, hitDice: 3 },
         abilityScores: { str: 12, dex: 14, con: 12, int: 10, wis: 10, cha: 10 },
+        proficiencyBonus: 2,
+        proficientSkills: [],
+        expertiseSkills: [],
+        proficientSaves: [],
+        cantripIds: [],
+        preparedSpellIds: [],
+        featureIds: [],
+        loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
+        characterBuild: { classId: "fighter", raceId: "human", cantrips: [], prepared: [] },
       },
-    },
-    artifacts: {},
-    canonicalFacts: {
-      "fact:time-anchor": {
-        factId: "fact:time-anchor",
-        kind: "moduleAnchor",
-        subjectRefs: ["pc:alpha", "pc:beta"],
-        value: "The clock and both scenes are established.",
-        visibility: "public",
-      },
-    },
-    knowledge: { "pc:alpha": [], "pc:beta": [] },
-    relationships: {},
-    promises: {},
-    debts: {},
-    factions: {},
-    activities: {},
-    unresolvedThreats: [],
-  };
-  const unsigned = {
-    kind: "roomGenesis",
-    roomId: `room:campaign-time:${suffix}`,
-    runtimeEpochId: "epoch:campaign-time:v1",
-    profiles: PROFILES,
-    moduleRef: { profileId: "module:campaign-time", profileHash: hash({ module: "campaign-time" }) },
-    initialDefinitionCatalogRef: { profileId: "catalog:campaign-time", profileHash: hash({ definitions: [] }) },
-    initialState,
-    initialStateHash: hash(initialState),
-  };
-  return { ...unsigned, genesisHash: hash(unsigned) };
+    ],
+    characterControls: [
+      { characterId: "pc:alpha", seatId: "seat:alpha" },
+      { characterId: "pc:beta", seatId: "seat:beta" },
+    ],
+    canonicalFacts: [{
+      id: "fact:time-anchor",
+      kind: "moduleAnchor",
+      source: "moduleAnchor",
+      subjectRefs: ["pc:alpha", "pc:beta"],
+      value: "The clock and both scenes are established.",
+      visibilityPolicyId: "visibility:public",
+    }],
+    initialKnowledge: [],
+  });
+  assert.equal(initialized.kind, "initialized", JSON.stringify(initialized));
+  return structuredClone(initialized.genesis);
 }
 
 function advanceCampaignTime(current, characterId, micros, suffix) {
@@ -559,16 +703,20 @@ test("F01/F02 close a one-entry, four-entry, or shared-entry round by six second
       );
     }
 
-    const beforeDelay = project(PROFILES, current.state, {
+    const beforeDelay = read(current.state, {
       kind: "player",
       principalId,
+      sessionVersion: 1,
+      seatId: `seat:${characterId}`,
       characterId,
     }, { channel: "realtime" });
     const afterDelayReplay = replay(current.genesis, structuredClone(current.events));
     assert.equal(afterDelayReplay?.kind, "replayed");
-    const afterDelay = project(PROFILES, afterDelayReplay.state, {
+    const afterDelay = read(afterDelayReplay.state, {
       kind: "player",
       principalId,
+      sessionVersion: 1,
+      seatId: `seat:${characterId}`,
       characterId,
     }, { channel: "reconnect" });
     assert.deepEqual(afterDelay.fictionTime, beforeDelay.fictionTime);
@@ -651,11 +799,13 @@ test("T02 exposes same-controller noncommutative ordering only to that controlle
   assert.equal(opened.result.kind, "awaitingInput");
   assert.equal(opened.result.pending.choiceKind, "triggerOrder");
   assert.equal(opened.result.pending.orderedTriggerInstanceIds.length, 2);
-  const ownerView = project(PROFILES, opened.current.state, {
-    kind: "player", principalId: "principal:shared", characterId: "pc:a",
+  const ownerView = read(opened.current.state, {
+    kind: "player", principalId: "principal:shared", sessionVersion: 1,
+    seatId: "seat:pc:a", characterId: "pc:a",
   });
-  const outsiderView = project(PROFILES, opened.current.state, {
-    kind: "player", principalId: "principal:c", characterId: "pc:c",
+  const outsiderView = read(opened.current.state, {
+    kind: "player", principalId: "principal:c", sessionVersion: 1,
+    seatId: "seat:pc:c", characterId: "pc:c",
   });
   assert.equal(ownerView.pendingInputs[0].orderedTriggerInstanceIds.length, 2);
   assert.equal(outsiderView.pendingInputs.length, 0);
@@ -780,23 +930,20 @@ test("T07 orders simultaneous environment triggers by definition, source, and tr
     { id: "environment:z-source", ordinal: 2, kind: "environment", abilities: ["spell:a-counterspell"] },
     { id: "npc:first", ordinal: 3, kind: "npc", abilities: ["spell:test-counterspell"] },
   ], "t07-environment-tie");
-  genesis.initialState.definitions["spell:a-counterspell"] = {
+  genesis.initialState.combatRuntime.definitions["spell:a-counterspell"] = {
     ...structuredClone(SPELL_DEFINITIONS["spell:test-counterspell"]),
     definitionId: "spell:a-counterspell",
   };
-  genesis.initialState.definitions["spell:z-counterspell"] = {
+  genesis.initialState.combatRuntime.definitions["spell:z-counterspell"] = {
     ...structuredClone(SPELL_DEFINITIONS["spell:test-counterspell"]),
     definitionId: "spell:z-counterspell",
   };
   for (const id of ["environment:a-source", "environment:z-source"]) {
-    genesis.initialState.entities[id].resources = {
+    genesis.initialState.combatRuntime.entities[id].resources = {
       "spellSlot:3": { current: "3", maximum: "3" },
     };
   }
-  genesis.initialStateHash = hash(genesis.initialState);
-  const unsigned = { ...genesis };
-  delete unsigned.genesisHash;
-  genesis.genesisHash = hash(unsigned);
+  recomputeGenesis(genesis);
 
   let opened = openSpellTrigger(genesis, "root:t07:environment-tie", "pc:caster", "npc:first");
   const observed = [];
@@ -913,17 +1060,14 @@ test("F05 converts a future turn anchor when an Encounter ends mid-round and lat
     effectOrder: ["pc:b"],
     suffix: "f05",
   });
-  genesis.initialState.effects["effect:f05:remaining-round"] = {
+  genesis.initialState.combatRuntime.effects["effect:f05:remaining-round"] = {
     effectId: "effect:f05:remaining-round",
     kind: "testPhaseEffect",
     sourceEntityId: "npc:causal",
     targetEntityId: "npc:causal",
     expiresAt: { kind: "turnStart", entityId: "npc:causal" },
   };
-  genesis.initialStateHash = hash(genesis.initialState);
-  const unsigned = { ...genesis };
-  delete unsigned.genesisHash;
-  genesis.genesisHash = hash(unsigned);
+  recomputeGenesis(genesis);
   let concluded = concludeEncounter(scenario(genesis), "encounter:ready", "f05");
   assert.equal(concluded.result.kind, "committed", JSON.stringify(concluded.result));
   assert.equal(concluded.current.state.fictionTimelines["branch:main"].nowMicros, "6000000");
@@ -1013,14 +1157,11 @@ test("F06 settles same-microsecond residual phases by saved initiative, edge, an
   ];
   const run = (effectOrder, suffix) => {
     const genesis = makeReadyGenesis({ effectOrder: [], suffix });
-    genesis.initialState.effects = Object.fromEntries(effectOrder.map((index) => {
+    genesis.initialState.combatRuntime.effects = Object.fromEntries(effectOrder.map((index) => {
       const effect = effects[index];
       return [effect.effectId, structuredClone(effect)];
     }));
-    genesis.initialStateHash = hash(genesis.initialState);
-    const unsigned = { ...genesis };
-    delete unsigned.genesisHash;
-    genesis.genesisHash = hash(unsigned);
+    recomputeGenesis(genesis);
     let current = concludeEncounter(scenario(genesis), "encounter:ready", suffix).current;
     current = advanceCampaignTime(current, "pc:a", "1500000", `${suffix}:advance`).current;
     const settled = apply(current, {
@@ -1172,7 +1313,13 @@ test("F08 a new default Time/Trigger implementation replays the old pinned insta
   assert.deepEqual(afterDeployment.state, beforeDeployment.state);
   assert.deepEqual(afterDeployment.profiles, PROFILES);
 
-  const viewer = { kind: "player", principalId: "principal:b", characterId: "pc:b" };
+  const viewer = {
+    kind: "player",
+    principalId: "principal:b",
+    sessionVersion: 1,
+    seatId: "seat:pc:b",
+    characterId: "pc:b",
+  };
   assert.deepEqual(
     deployedRuntime.project(PROFILES, afterDeployment.state, viewer),
     oldRuntime.project(PROFILES, beforeDeployment.state, viewer),

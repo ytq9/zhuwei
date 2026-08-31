@@ -6,10 +6,7 @@ import {
 } from "@/lib/platform/server-fn";
 import { getSql } from "@/lib/db";
 import { observeAuthoritativeRoom } from "@/lib/room/server";
-import {
-  AUTHORITATIVE_RULESET_VERSION,
-  LEGACY_RULESET_VERSION,
-} from "@/lib/rules/ruleset";
+import { AUTHORITATIVE_RULESET_VERSION } from "@/lib/rules/ruleset";
 import { synthesizeCurrentDeliveryNarration } from "./current-delivery";
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -108,46 +105,5 @@ export const speakNarration = createServerFn({ method: "POST" })
       };
     }
 
-    if (room?.ruleset_version !== LEGACY_RULESET_VERSION) {
-      return narrationUnavailable();
-    }
-
-    // Legacy rooms retain their exact message-table presentation contract.
-    await assertMember(data.roomId, context.userId);
-    const rows = await sql<{ tts_text: string | null; body: string; kind: string }>`
-      select tts_text, body, kind from messages
-      where id = ${data.messageId} and room_id = ${data.roomId}
-    `;
-    const row = rows[0];
-    if (!row) return { ok: false as const, error: "没有这段旁白" };
-    if (
-      row.kind !== "narrate"
-      && row.kind !== "refuse"
-      && row.kind !== "call_roll"
-      && row.kind !== "open"
-    ) {
-      return { ok: false as const, error: "这段不必朗读" };
-    }
-    const text = (row.tts_text || row.body).slice(0, 800);
-    if (!text) return { ok: false as const, error: "空旁白" };
-
-    try {
-      const res = await env.AI.run(
-        "@cf/myshell-ai/melotts",
-        { prompt: text, lang: "zh" },
-        { returnRawResponse: true },
-      );
-      if (!res.ok) {
-        return { ok: false as const, error: `播报失败（${res.status}）` };
-      }
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.length === 0) {
-        return { ok: false as const, error: "播报没有生成音频" };
-      }
-      const contentType = res.headers.get("content-type")?.split(";")[0];
-      const mime = contentType?.startsWith("audio/") ? contentType : "audio/mpeg";
-      return { ok: true as const, b64: bytesToBase64(bytes), mime };
-    } catch {
-      return { ok: false as const, error: "语音播报失败，请再试一次" };
-    }
+    return narrationUnavailable();
   });

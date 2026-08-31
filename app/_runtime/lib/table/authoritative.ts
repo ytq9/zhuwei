@@ -404,6 +404,257 @@ const AUTHORITATIVE_GEAR_SLOTS = new Set([
   "ammo",
 ]);
 
+const AUTHORITATIVE_GEAR_SLOT_ORDER = [
+  "head",
+  "neck",
+  "cloak",
+  "armor",
+  "hands",
+  "belt",
+  "boots",
+  "ring1",
+  "ring2",
+  "main",
+  "off",
+  "ammo",
+] as const;
+
+const AUTHORITATIVE_ITEM_CATEGORIES = new Set([
+  "weapon",
+  "armor",
+  "shield",
+  "ammunition",
+  "consumable",
+  "tool",
+  "currency",
+  "equipment",
+  "object",
+]);
+
+const AUTHORITATIVE_ITEM_ACTIVITY_DISABLED_REASONS = new Set([
+  "itemBroken",
+  "insufficientQuantity",
+  "insufficientCharges",
+  "insufficientDurability",
+]);
+
+export type AuthoritativeInventoryActivity = {
+  activityId: "use";
+  label: "使用";
+  enabled: boolean;
+  disabledReason:
+    | "itemBroken"
+    | "insufficientQuantity"
+    | "insufficientCharges"
+    | "insufficientDurability"
+    | null;
+};
+
+type AuthoritativeInventoryEntryState = {
+  entryId: string;
+  quantity: number;
+  condition: "usable" | "broken";
+  equippedSlot: typeof AUTHORITATIVE_GEAR_SLOT_ORDER[number] | null;
+};
+
+export type AuthoritativeOpaqueInventoryEntry = AuthoritativeInventoryEntryState & {
+  kind: "opaque";
+};
+
+export type AuthoritativeIdentifiedInventoryEntry = AuthoritativeInventoryEntryState & {
+  kind: "identified";
+  name: string;
+  description: string;
+  category:
+    | "weapon"
+    | "armor"
+    | "shield"
+    | "ammunition"
+    | "consumable"
+    | "tool"
+    | "currency"
+    | "equipment"
+    | "object";
+  charges: { current: number; maximum: number } | null;
+  durability: { current: number; maximum: number } | null;
+  allowedSlots: Array<typeof AUTHORITATIVE_GEAR_SLOT_ORDER[number]>;
+  twoHanded: boolean;
+  publicDamageText: string | null;
+  activities: AuthoritativeInventoryActivity[];
+};
+
+export type AuthoritativeInventoryEntry =
+  | AuthoritativeOpaqueInventoryEntry
+  | AuthoritativeIdentifiedInventoryEntry;
+
+export type AuthoritativeInventory = {
+  entries: AuthoritativeInventoryEntry[];
+};
+
+function hasExactKeys(value: JsonRecord, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
+}
+
+function safeProjectedText(value: unknown, maximum: number): string | undefined {
+  const text = nonEmptyString(value);
+  return text !== undefined && text.length <= maximum && text.normalize("NFC") === text
+    ? text
+    : undefined;
+}
+
+function safeItemCounter(value: unknown): { current: number; maximum: number } | null | undefined {
+  if (value === null) return null;
+  if (!isRecord(value) || !hasExactKeys(value, ["current", "maximum"])) return undefined;
+  const current = finiteNumber(value.current);
+  const maximum = finiteNumber(value.maximum);
+  return Number.isSafeInteger(current)
+    && current! >= 0
+    && Number.isSafeInteger(maximum)
+    && maximum! > 0
+    && current! <= maximum!
+    && maximum! <= 1_000_000
+    ? { current: current!, maximum: maximum! }
+    : undefined;
+}
+
+function safeInventoryActivity(value: unknown): AuthoritativeInventoryActivity | undefined {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ["activityId", "disabledReason", "enabled", "label"])
+    || value.activityId !== "use"
+    || value.label !== "使用"
+    || typeof value.enabled !== "boolean") return undefined;
+  const disabledReason = value.disabledReason === null
+    ? null
+    : typeof value.disabledReason === "string"
+      && AUTHORITATIVE_ITEM_ACTIVITY_DISABLED_REASONS.has(value.disabledReason)
+      ? value.disabledReason as AuthoritativeInventoryActivity["disabledReason"]
+      : undefined;
+  if (disabledReason === undefined || value.enabled !== (disabledReason === null)) return undefined;
+  return {
+    activityId: "use",
+    label: "使用",
+    enabled: value.enabled,
+    disabledReason,
+  };
+}
+
+function safeInventoryEntryState(value: JsonRecord): AuthoritativeInventoryEntryState | undefined {
+  const entryId = safeProjectedText(value.entryId, 300);
+  const quantity = finiteNumber(value.quantity);
+  const condition = value.condition === "usable" || value.condition === "broken"
+    ? value.condition
+    : undefined;
+  const equippedSlot = value.equippedSlot === null
+    ? null
+    : typeof value.equippedSlot === "string" && AUTHORITATIVE_GEAR_SLOTS.has(value.equippedSlot)
+      ? value.equippedSlot as AuthoritativeInventoryEntryState["equippedSlot"]
+      : undefined;
+  return entryId !== undefined
+    && Number.isSafeInteger(quantity)
+    && quantity! > 0
+    && quantity! <= 1_000_000
+    && condition !== undefined
+    && equippedSlot !== undefined
+    ? { entryId, quantity: quantity!, condition, equippedSlot }
+    : undefined;
+}
+
+function safeInventoryEntry(value: unknown): AuthoritativeInventoryEntry | undefined {
+  if (!isRecord(value)) return undefined;
+  const state = safeInventoryEntryState(value);
+  if (state === undefined) return undefined;
+  if (value.kind === "opaque") {
+    return hasExactKeys(value, [
+      "condition",
+      "entryId",
+      "equippedSlot",
+      "kind",
+      "quantity",
+    ]) ? { kind: "opaque", ...state } : undefined;
+  }
+  if (value.kind !== "identified" || !hasExactKeys(value, [
+    "activities",
+    "allowedSlots",
+    "category",
+    "charges",
+    "condition",
+    "description",
+    "durability",
+    "entryId",
+    "equippedSlot",
+    "kind",
+    "name",
+    "publicDamageText",
+    "quantity",
+    "twoHanded",
+  ])) return undefined;
+  const name = safeProjectedText(value.name, 4_000);
+  const description = safeProjectedText(value.description, 4_000);
+  const category = typeof value.category === "string"
+    && AUTHORITATIVE_ITEM_CATEGORIES.has(value.category)
+    ? value.category as AuthoritativeIdentifiedInventoryEntry["category"]
+    : undefined;
+  const charges = safeItemCounter(value.charges);
+  const durability = safeItemCounter(value.durability);
+  const allowedSlots = Array.isArray(value.allowedSlots)
+    && value.allowedSlots.length <= AUTHORITATIVE_GEAR_SLOT_ORDER.length
+    && value.allowedSlots.every((slot) => typeof slot === "string" && AUTHORITATIVE_GEAR_SLOTS.has(slot))
+    && new Set(value.allowedSlots).size === value.allowedSlots.length
+    ? value.allowedSlots as AuthoritativeIdentifiedInventoryEntry["allowedSlots"]
+    : undefined;
+  const publicDamageText = value.publicDamageText === null
+    ? null
+    : safeProjectedText(value.publicDamageText, 4_000);
+  const activities = Array.isArray(value.activities) && value.activities.length <= 1
+    ? value.activities.map(safeInventoryActivity)
+    : undefined;
+  if (
+    name === undefined
+    || description === undefined
+    || category === undefined
+    || charges === undefined
+    || durability === undefined
+    || allowedSlots === undefined
+    || typeof value.twoHanded !== "boolean"
+    || publicDamageText === undefined
+    || activities === undefined
+    || activities.some((activity) => activity === undefined)
+    || (state.equippedSlot !== null && !allowedSlots.includes(state.equippedSlot))
+  ) return undefined;
+  return {
+    kind: "identified",
+    ...state,
+    name,
+    description,
+    category,
+    charges,
+    durability,
+    allowedSlots,
+    twoHanded: value.twoHanded,
+    publicDamageText,
+    activities: activities as AuthoritativeInventoryActivity[],
+  };
+}
+
+function safeInventory(value: unknown): AuthoritativeInventory | undefined {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ["entries"])
+    || !Array.isArray(value.entries)
+    || value.entries.length > 256) return undefined;
+  const entries = value.entries.map(safeInventoryEntry);
+  if (entries.some((entry) => entry === undefined)) return undefined;
+  const projectedEntries = entries as AuthoritativeInventoryEntry[];
+  if (
+    new Set(projectedEntries.map(({ entryId }) => entryId)).size !== projectedEntries.length
+    || new Set(projectedEntries.flatMap(({ equippedSlot }) => equippedSlot === null ? [] : [equippedSlot])).size
+      !== projectedEntries.filter(({ equippedSlot }) => equippedSlot !== null).length
+  ) return undefined;
+  return { entries: projectedEntries };
+}
+
 function safeCharacterLoadout(value: unknown) {
   if (!isRecord(value)) return undefined;
   const armorClass = finiteNumber(value.armorClass);
@@ -1117,6 +1368,12 @@ export function projectAuthoritativeTableObservation(input: {
   const classId = nonEmptyString(readModel.controlledCharacter.classId);
   const abilityScores = safeAbilityScores(readModel.controlledCharacter.abilityScores);
   const loadout = safeCharacterLoadout(readModel.controlledCharacter.loadout);
+  const inventory = readModel.controlledCharacter.inventory === undefined
+    ? undefined
+    : safeInventory(readModel.controlledCharacter.inventory);
+  if (readModel.controlledCharacter.inventory !== undefined && inventory === undefined) {
+    throw new TypeError("Authoritative inventory projection is invalid.");
+  }
   const level = finiteNumber(readModel.controlledCharacter.level);
   const experiencePoints = finiteNumber(readModel.controlledCharacter.experiencePoints);
   const restRecoveryOptions = safeRestRecoveryOptions(
@@ -1402,6 +1659,7 @@ export function projectAuthoritativeTableObservation(input: {
       ...(resourceMaximums ? { resourceMaximums } : {}),
       ...(abilityScores ? { abilityScores } : {}),
       ...(loadout ? { loadout } : {}),
+      ...(inventory ? { inventory } : {}),
       ...(restRecoveryOptions ? { restRecoveryOptions } : {}),
     },
     ...(safetyPresentation === undefined ? {} : { safetyPresentation }),

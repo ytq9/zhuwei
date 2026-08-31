@@ -353,7 +353,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     const initialized = record(await stub.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
+      moduleVersion: "social-resolution-v1",
       members: [
         { principalId: "principal:archive-telemetry:host", role: "host" },
         { principalId: removablePrincipalId, role: "player" },
@@ -449,70 +449,6 @@ describe("Room DO incremental D1 archive continuation", () => {
     );
   }, 60_000);
 
-  it("preserves the pending-age clock while upgrading a pre-telemetry DO cursor table", async () => {
-    const roomId = "archive-do-progress-upgrade-v2";
-    const stub = env.ROOMS.getByName(roomId) as unknown as HarnessAuthority & DurableObjectStub;
-    await stub.initializeAuthoritative({
-      roomId,
-      moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
-      members: [{ principalId: "principal:archive-progress-upgrade", role: "host" }],
-      characters: [{
-        characterId: "character:archive-progress-upgrade",
-        controllerPrincipalId: "principal:archive-progress-upgrade",
-        staticCard: { name: "旧游标迁移角色", sceneId: "yard" },
-      }],
-    });
-
-    const oldUpdatedAt = Date.now() - 321_000;
-    await runInDurableObject(stub as never, async (instance, state) => {
-      const target = instance as unknown as {
-        authorityStore: { deferArchive(nextAttemptAt: number, nowMs: number): void };
-      };
-      target.authorityStore.deferArchive(oldUpdatedAt, oldUpdatedAt);
-      state.storage.sql.exec(`
-        CREATE TABLE authority_archive_progress_legacy (
-          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-          room_id TEXT NOT NULL,
-          runtime_epoch_id TEXT NOT NULL,
-          progress_json TEXT NOT NULL,
-          pending INTEGER NOT NULL CHECK (pending IN (0, 1)),
-          generation INTEGER NOT NULL,
-          next_attempt_at INTEGER,
-          updated_at INTEGER NOT NULL,
-          UNIQUE(room_id, runtime_epoch_id)
-        );
-        INSERT INTO authority_archive_progress_legacy (
-          singleton, room_id, runtime_epoch_id, progress_json,
-          pending, generation, next_attempt_at, updated_at
-        )
-        SELECT singleton, room_id, runtime_epoch_id, progress_json,
-               pending, generation, next_attempt_at, updated_at
-        FROM authority_archive_progress;
-        DROP TABLE authority_archive_progress;
-        ALTER TABLE authority_archive_progress_legacy
-          RENAME TO authority_archive_progress;
-      `);
-      await state.storage.setAlarm(Date.now() + 60_000);
-    });
-
-    await evictDurableObject(stub as never);
-    const upgraded = await runInDurableObject(stub as never, async (instance, state) => {
-      const target = instance as unknown as {
-        authorityStore: { archiveProgress(): ArchiveProgressView | undefined };
-      };
-      const columns = state.storage.sql.exec<{ name: string }>(
-        "PRAGMA table_info(authority_archive_progress)",
-      ).toArray().map((column) => column.name);
-      return { columns, progress: target.authorityStore.archiveProgress() };
-    });
-    expect(upgraded.columns).toContain("pending_since_at");
-    expect(upgraded.progress).toMatchObject({
-      pending: true,
-      pendingSinceAt: oldUpdatedAt,
-    });
-  });
-
   it("rebuilds every DO event after D1 is cleared behind a caught-up cursor", async () => {
     const roomId = "archive-do-cleared-d1-rebuild-v2";
     const firstRemovedPrincipalId = "principal:archive-rebuild:first-removed";
@@ -521,7 +457,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     const initialized = record(await stub.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
+      moduleVersion: "social-resolution-v1",
       members: [
         { principalId: "principal:archive-rebuild:host", role: "host" },
         { principalId: firstRemovedPrincipalId, role: "player" },
@@ -600,7 +536,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     await stub.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
+      moduleVersion: "social-resolution-v1",
       members: [{ principalId: "principal:archive-generation", role: "host" }],
       characters: [{
         characterId: "character:archive-generation",
@@ -683,7 +619,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     const initialized = record(await stub.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
+      moduleVersion: "social-resolution-v1",
       members: [{ principalId, role: "host" }],
       characters: [{
         characterId,
@@ -754,7 +690,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     const initialized = record(await stub.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
+      moduleVersion: "social-resolution-v1",
       members: [...stablePrincipals, removablePrincipal],
       characters: [...stableCharacters, ...removableCharacters],
     }), "archive room initialization");
@@ -774,15 +710,6 @@ describe("Room DO incremental D1 archive continuation", () => {
     const archive = record(exported.archive, "archive");
     const eventCount = (archive.events as unknown[]).length;
     expect(eventCount).toBeGreaterThanOrEqual(85);
-
-    const legacyExpiry = Date.now() + 60_000;
-    await runInDurableObject(stub as never, async (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO ux_status (scope_id, phase, ticket_id, expires_at)
-         VALUES ('test:legacy-expiry', 'idle', 'test:ticket', ?)`,
-        legacyExpiry,
-      );
-    });
 
     const initialProgress = await installFakeArchiveDb(stub, undefined, true);
     expect(initialProgress?.progress).toMatchObject({
@@ -824,7 +751,7 @@ describe("Room DO incremental D1 archive continuation", () => {
     expect(completed.snapshot?.events).toHaveLength(eventCount);
     expect(completed.snapshot?.audits).toHaveLength(48);
     expect(completed.snapshot?.batchSizes.every((size) => size <= 40)).toBe(true);
-    expect(completed.alarm).toBe(legacyExpiry);
+    expect(completed.alarm).toBeNull();
 
     const persisted = JSON.stringify(completed.snapshot);
     expect(persisted).not.toMatch(/delivery:opening|publishCapability|narrationPolicyVersion/);

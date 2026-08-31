@@ -14,7 +14,7 @@ export type MechanicOpFamily =
   | "Recovery"
   | "Effect"
   | "Spatial"
-  | "Artifact"
+  | "Item"
   | "Resource"
   | "Entity"
   | "Encounter"
@@ -112,6 +112,136 @@ const MAX_TRIGGER_EDGES = 64;
 const MAX_DEPTH = 32;
 const MAX_DICE_TERMS = 32;
 const MAX_DICE_COUNT = 1_000;
+const ITEM_ENTRY_RESOURCE_PREFIX = "item-entry:";
+
+export function isExactItemEntryResourceId(value: unknown): value is string {
+  return typeof value === "string"
+    && value.startsWith(ITEM_ENTRY_RESOURCE_PREFIX)
+    && value.length > ITEM_ENTRY_RESOURCE_PREFIX.length;
+}
+
+type ItemCostAuthorityViolation = {
+  path: string;
+  reason: string;
+};
+
+function inspectItemCostAuthority(
+  value: unknown,
+  path: string,
+): ItemCostAuthorityViolation | undefined {
+  if (Array.isArray(value)) {
+    for (const [index, entry] of value.entries()) {
+      const violation = inspectItemCostAuthority(entry, `${path}/${index}`);
+      if (violation !== undefined) return violation;
+    }
+    return undefined;
+  }
+  if (!isRecord(value)) return undefined;
+
+  const declaredKinds = [value.kind, value.costKind, value.resourceKind]
+    .filter((entry): entry is string => typeof entry === "string");
+  if (declaredKinds.includes("itemCharge")) {
+    return { path, reason: "itemCharge has no unified item-entry authority" };
+  }
+
+  const resourceEntries = [
+    ["resourceId", value.resourceId],
+    ["resourceRef", value.resourceRef],
+  ] as const;
+  const resourceIds: Array<readonly [string, string]> = [];
+  for (const [key, resourceId] of resourceEntries) {
+    if (typeof resourceId === "string") resourceIds.push([key, resourceId]);
+  }
+  const genericItemResource = resourceIds.find(([, resourceId]) => resourceId.startsWith("item:"));
+  if (genericItemResource !== undefined) {
+    return {
+      path: `${path}/${genericItemResource[0]}`,
+      reason: "generic item resources are unavailable",
+    };
+  }
+
+  const itemCost = declaredKinds.includes("item");
+  const exactItemResources = resourceIds.filter(([, resourceId]) =>
+    isExactItemEntryResourceId(resourceId));
+  if (itemCost) {
+    const invalidResource = resourceIds.find(([, resourceId]) =>
+      !isExactItemEntryResourceId(resourceId));
+    if (resourceIds.length === 0 || invalidResource !== undefined) {
+      return {
+        path: invalidResource === undefined ? path : `${path}/${invalidResource[0]}`,
+        reason: "item costs require an exact item-entry resource",
+      };
+    }
+    const keys = Object.keys(value).sort().join(",");
+    const quantityOnly = keys === "amount,kind,resourceId";
+    const itemActivity = keys === "amount,chargeCost,durabilityCost,kind,resourceId";
+    const canonicalNonNegativeInteger = (entry: unknown) =>
+      typeof entry === "string"
+      && /^(?:0|[1-9][0-9]*)$/u.test(entry)
+      && Number.isSafeInteger(Number(entry));
+    if ((!quantityOnly && !itemActivity)
+      || !canonicalNonNegativeInteger(value.amount)
+      || (itemActivity
+        && (!canonicalNonNegativeInteger(value.chargeCost)
+          || !canonicalNonNegativeInteger(value.durabilityCost)))) {
+      return {
+        path,
+        reason: "item costs must use the closed exact-entry quantity/counter shape",
+      };
+    }
+  } else if (exactItemResources.length > 0) {
+    return {
+      path: `${path}/${exactItemResources[0][0]}`,
+      reason: "item-entry resources require item cost semantics",
+    };
+  }
+
+  for (const [key, entry] of Object.entries(value)) {
+    const violation = inspectItemCostAuthority(entry, `${path}/${key}`);
+    if (violation !== undefined) return violation;
+  }
+  return undefined;
+}
+
+function itemCostAuthorityViolation(
+  definition: JsonRecord,
+  operations: readonly MechanicOp[],
+): ItemCostAuthorityViolation | undefined {
+  if (Array.isArray(definition.costs)) {
+    const violation = inspectItemCostAuthority(definition.costs, "/costs");
+    if (violation !== undefined) return violation;
+    const itemResourceIds = new Set<string>();
+    for (const [index, cost] of definition.costs.entries()) {
+      if (!isRecord(cost)
+        || cost.kind !== "item"
+        || !isExactItemEntryResourceId(cost.resourceId)) continue;
+      if (itemResourceIds.has(cost.resourceId)) {
+        return {
+          path: `/costs/${index}/resourceId`,
+          reason: "an exact item-entry resource can be spent only once per ability",
+        };
+      }
+      itemResourceIds.add(cost.resourceId);
+    }
+  }
+  const operationItemResourceIds = new Set<string>();
+  for (const operation of operations) {
+    if (operation.family !== "Cost") continue;
+    const violation = inspectItemCostAuthority(operation.input, operation.sourcePath);
+    if (violation !== undefined) return violation;
+    const costKind = operation.input.kind ?? operation.input.costKind;
+    const resourceId = operation.input.resourceId ?? operation.input.resourceRef;
+    if (costKind !== "item" || !isExactItemEntryResourceId(resourceId)) continue;
+    if (operationItemResourceIds.has(resourceId)) {
+      return {
+        path: `${operation.sourcePath}/resourceId`,
+        reason: "an exact item-entry resource can be spent only once per ability",
+      };
+    }
+    operationItemResourceIds.add(resourceId);
+  }
+  return undefined;
+}
 
 function normalizedFieldName(key: string): string {
   return key.toLowerCase().replaceAll("_", "").replaceAll("-", "");
@@ -136,7 +266,7 @@ const FAMILY_BY_KIND: Readonly<Record<string, MechanicOpFamily>> = Object.freeze
   recovery: "Recovery",
   effect: "Effect",
   spatial: "Spatial",
-  artifact: "Artifact",
+  item: "Item",
   resource: "Resource",
   entity: "Entity",
   encounter: "Encounter",
@@ -502,6 +632,14 @@ export function compileAbilityDefinition(value: unknown): AbilityCompileResult {
     const definitionHash = canonicalSha256(definition);
     const explicit = explicitOperations(definition, definitionHash);
     const operations = explicit ?? derivedOperations(definition, definitionHash);
+    const itemCostViolation = itemCostAuthorityViolation(definition, operations);
+    if (itemCostViolation !== undefined) {
+      throw new CompileDiagnostic(
+        "invalidAbilityDefinition",
+        itemCostViolation.path,
+        itemCostViolation.reason,
+      );
+    }
     if (operations.length === 0) {
       throw new CompileDiagnostic("unsupportedMechanicPrimitive", "/", "definition has no executable mechanic");
     }
@@ -590,7 +728,8 @@ export function isDefinitionRegisteredAbilityPayload(
   const ids = new Set(operations.map(({ opId }) => opId));
   if (ids.size !== operations.length
     || !value.mechanicGraph.entryOpIds.every((opId) => ids.has(opId))
-    || operations.some(({ next }) => next.some((opId) => !ids.has(opId)))) return false;
+    || operations.some(({ next }) => next.some((opId) => !ids.has(opId)))
+    || itemCostAuthorityViolation(value.definition, operations) !== undefined) return false;
   try {
     assertAcyclic(operations);
   } catch {

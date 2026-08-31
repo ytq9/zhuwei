@@ -43,76 +43,21 @@ import {
 import { characterTimelineId } from "./timeline";
 import { projectRestRecoveryOptions } from "./character-rest";
 import {
-  isNpcMechanicalItemDefinition,
+  itemPolicyVisibleToViewer,
+  projectHeldInventory,
+} from "./item-projection";
+import type { ItemDefinitionV1, ItemEntryV1 } from "./items";
+import {
   isNpcMechanicalTemplateDefinition,
-  NPC_MECHANICAL_ITEM_KIND,
   NPC_MECHANICAL_TEMPLATE_KIND,
 } from "./npc-mechanics";
 import {
-  CANONICAL_UNSIGNED_INTEGER_PATTERN,
   canonicalFactVisibleToCharacter,
   isAuthoritativeWorldState,
   isNonEmptyString,
   isRecord,
   hashWorldState,
 } from "./validation";
-
-function legacyProjection(
-  profiles: RuntimeProfileManifest,
-  state: JsonRecord,
-  viewerValue: unknown,
-): ProjectionResult {
-  if (
-    !isRecord(viewerValue)
-    || viewerValue.kind !== "player"
-    || !isNonEmptyString(viewerValue.principalId)
-    || !isNonEmptyString(viewerValue.characterId)
-    || !isNonEmptyString(state.version)
-    || !isNonEmptyString(state.activeBranchId)
-    || !isRecord(state.entities)
-    || !isRecord(state.fictionTimelines)
-  ) {
-    return rejected("viewerUnauthorized", "Viewer authentication is unavailable.");
-  }
-  const character = state.entities[viewerValue.characterId];
-  const timeline = state.fictionTimelines[state.activeBranchId];
-  if (
-    !isRecord(character)
-    || character.id !== viewerValue.characterId
-    || character.kind !== "player"
-    || character.controllerPrincipalId !== viewerValue.principalId
-    || !isRecord(timeline)
-    || timeline.branchId !== state.activeBranchId
-    || typeof timeline.nowMicros !== "string"
-    || !CANONICAL_UNSIGNED_INTEGER_PATTERN.test(timeline.nowMicros)
-  ) {
-    return rejected("viewerUnauthorized", "Viewer authentication is unavailable.");
-  }
-  const base = {
-    kind: "projected" as const,
-    runtimeProfiles: structuredClone(profiles),
-    stateVersion: state.version,
-    activeBranchId: state.activeBranchId,
-    viewer: {
-      kind: "player" as const,
-      subjectId: viewerValue.characterId,
-      principalId: viewerValue.principalId,
-    },
-    controlledCharacter: {
-      characterId: viewerValue.characterId,
-      ...(typeof character.name === "string" ? { name: character.name } : {}),
-    },
-    fictionTime: {
-      branchId: state.activeBranchId,
-      nowMicros: timeline.nowMicros,
-    },
-    visibleFacts: [],
-    knowledge: [],
-    receipts: [],
-    pendingInputs: [],
-  };
-  return { ...base, projectionHash: canonicalSha256(base) };
-}
 
 type AuthorizedViewer = {
   kind: "player" | "npc";
@@ -245,40 +190,42 @@ function authorizeNpc(
     : undefined;
 }
 
-function safeArtifactFor(
+function safeVisibleItemFor(
   state: AuthoritativeWorldState,
-  artifact: JsonRecord,
+  entry: ItemEntryV1,
+  definition: ItemDefinitionV1,
   character: CharacterRecord,
 ): JsonRecord | undefined {
-  if (
-    !isNonEmptyString(artifact.artifactId)
-    || !isNonEmptyString(artifact.status)
-    || ["consumed", "destroyed"].includes(artifact.status)
-  ) return undefined;
-  const holderId = isNonEmptyString(artifact.holderId) ? artifact.holderId : undefined;
-  const sceneId = isNonEmptyString(artifact.sceneId) ? artifact.sceneId : undefined;
+  if (["consumed", "destroyed"].includes(entry.disposition)) return undefined;
+  const holderId = entry.disposition === "held" && entry.holderRef !== null
+    ? entry.holderRef
+    : undefined;
+  const sceneId = entry.disposition === "scene" && entry.sceneRef !== null
+    ? entry.sceneRef
+    : undefined;
   const holderSceneId = holderId === undefined ? undefined : state.entities[holderId]?.sceneId;
-  const policy = isNonEmptyString(artifact.visibilityPolicyId)
-    ? artifact.visibilityPolicyId
-    : "visibility:artifact-holder";
-  const visible = holderId === character.id
-    || policy.startsWith("visibility:public")
-    || policy === `visibility:npc:${character.id}`
-    || policy === `visibility:knowledge-holder:${character.id}`
-    || (policy === "visibility:hidden-until-evidence"
-      && isNonEmptyString(artifact.definitionRef)
-      && artifact.definitionRef in (state.knowledge[character.id] ?? {}))
-    || ((policy === "visibility:scene-observers" || policy === "visibility:channel-participants")
-      && (sceneId === character.sceneId || holderSceneId === character.sceneId));
-  if (!visible) return undefined;
+  const viewer = { kind: character.kind, characterId: character.id } as const;
+  const sameScene = sceneId === character.sceneId || holderSceneId === character.sceneId;
+  const heldByViewer = holderId === character.id;
+  if (!sameScene && !heldByViewer) return undefined;
+  const entryVisible = itemPolicyVisibleToViewer(entry.visibilityPolicyRef, viewer, entry)
+    && (entry.visibilityPolicyRef !== "visibility:scene-observers" || sameScene);
+  if (!entryVisible) return undefined;
+  const definitionVisible = itemPolicyVisibleToViewer(
+    definition.visibilityPolicyRef,
+    viewer,
+    entry,
+  ) && (definition.visibilityPolicyRef !== "visibility:scene-observers" || sameScene);
   return {
-    artifactId: artifact.artifactId,
-    ...(isNonEmptyString(artifact.definitionRef) ? { definitionRef: artifact.definitionRef } : {}),
-    ...(isNonEmptyString(artifact.name) ? { name: artifact.name } : {}),
-    status: artifact.status,
-    ...(Number.isSafeInteger(artifact.quantity) ? { quantity: artifact.quantity } : {}),
-    ...(holderId === undefined ? {} : { holderId }),
-    ...(sceneId === undefined ? {} : { sceneId }),
+    itemEntryId: entry.entryId,
+    kind: definitionVisible ? "identified" : "opaque",
+    ...(definitionVisible
+      ? { definitionRef: definition.definitionId, name: definition.content.label }
+      : {}),
+    disposition: entry.disposition,
+    quantity: entry.quantity,
+    ...(holderId === undefined ? {} : { holderRef: holderId }),
+    ...(sceneId === undefined ? {} : { sceneRef: sceneId }),
   };
 }
 
@@ -512,7 +459,7 @@ function observerSafeEncounter(
 }
 
 function fullAdjudicationPrecedents(state: AuthoritativeWorldState): JsonRecord[] {
-  return Object.values(state.campaignRuntime.adjudicationPrecedents ?? {})
+  return Object.values(state.campaignRuntime.adjudicationPrecedents)
     .filter(isRecord)
     .sort((left, right) => String(left.precedentId).localeCompare(String(right.precedentId)))
     .map((precedent) => structuredClone(precedent));
@@ -614,18 +561,17 @@ function projectKpSpatialEvidence(
         content: structuredClone(definition.content),
       }]),
   );
-  const npcMechanicalItemDefinitions = Object.fromEntries(
-    Object.entries(state.combatRuntime.definitions)
-      .filter(([, definition]) =>
-        definition.definitionKind === NPC_MECHANICAL_ITEM_KIND
-        && isNpcMechanicalItemDefinition(definition))
+  const itemDefinitions = Object.fromEntries(
+    Object.entries(state.campaignRuntime.itemSystem.definitions)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([definitionRef, definition]) => [definitionRef, {
-        definitionRef,
-        revision: definition.revision,
-        rulesBasis: definition.rulesBasis,
-        content: structuredClone(definition.content),
-      }]),
+      .map(([definitionRef, definition]) => [definitionRef, structuredClone(definition)]),
+  );
+  const dynamicAuthoritativeFacts = Object.fromEntries(
+    Object.entries(state.canonicalFacts)
+      .filter(([, fact]) => fact.source !== "moduleAnchor"
+        && fact.kind !== "npcMechanicalItemStateCauseConsumed")
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([factRef, fact]) => [factRef, structuredClone(fact)]),
   );
   const base = {
     kind: "projected" as const,
@@ -633,16 +579,17 @@ function projectKpSpatialEvidence(
     stateVersion: state.version,
     activeBranchId: state.activeBranchId,
     viewer: { kind: "kp" as const, subjectId: "kp" as const },
-    ...(state.campaignRuntime.adjudicationPrecedents === undefined
+    adjudicationPrecedents: fullAdjudicationPrecedents(state),
+    ...(Object.keys(dynamicAuthoritativeFacts).length === 0
       ? {}
-      : { adjudicationPrecedents: fullAdjudicationPrecedents(state) }),
+      : { dynamicAuthoritativeFacts }),
     spatialEvidence: { scenes, entities },
     ...(Object.keys(npcMechanicalDefinitions).length === 0
       ? {}
       : { npcMechanicalDefinitions }),
-    ...(Object.keys(npcMechanicalItemDefinitions).length === 0
+    ...(Object.keys(itemDefinitions).length === 0
       ? {}
-      : { npcMechanicalItemDefinitions }),
+      : { itemDefinitions }),
   };
   return { ...base, projectionHash: canonicalSha256(base) } satisfies KpSpatialReadModel;
 }
@@ -864,6 +811,10 @@ function projectAuthoritative(
   }
 
   const character = authorized.character;
+  const inventory = projectHeldInventory(state.campaignRuntime.itemSystem, {
+    kind: authorized.kind,
+    characterId: character.id,
+  });
   const timelineId = characterTimelineId(state, character.id) ?? state.activeBranchId;
   const timeline = state.fictionTimelines[timelineId];
   const visibleFacts = Object.values(state.canonicalFacts)
@@ -1078,12 +1029,7 @@ function projectAuthoritative(
     visibleCombatEntities,
     visibleEncounters,
   );
-  const moduleProfileId = isRecord(state.campaignRuntime.campaign)
-    && isRecord(state.campaignRuntime.campaign.moduleRef)
-    && isNonEmptyString(state.campaignRuntime.campaign.moduleRef.profileId)
-    ? state.campaignRuntime.campaign.moduleRef.profileId
-    : undefined;
-  if (moduleProfileId?.endsWith(":tactical-map-v1") && tacticalProjection === undefined) {
+  if (tacticalProjection === undefined) {
     return rejected("invalidWorldState", "The viewer tactical projection is unavailable.");
   }
   const controlledCombatEntity = state.combatRuntime.entities[character.id];
@@ -1109,9 +1055,7 @@ function projectAuthoritative(
           ? { spellcasting: structuredClone(controlledCombatEntity.spellcasting) }
           : {}),
       };
-  const adjudicationPrecedents = state.campaignRuntime.adjudicationPrecedents === undefined
-    ? undefined
-    : publicAdjudicationPrecedents(state, character.sceneId);
+  const adjudicationPrecedents = publicAdjudicationPrecedents(state, character.sceneId);
 
   const base = {
     kind: "projected" as const,
@@ -1165,6 +1109,7 @@ function projectAuthoritative(
         ? {}
         : { lastLongRestCompletedAtMicros: character.lastLongRestCompletedAtMicros }),
       ...(character.loadout === undefined ? {} : { loadout: structuredClone(character.loadout) }),
+      inventory,
       ...(authorized.kind !== "npc" || character.socialMechanics === undefined
         ? {}
         : {
@@ -1195,7 +1140,7 @@ function projectAuthoritative(
     knowledge,
     receipts,
     pendingInputs,
-    ...(adjudicationPrecedents === undefined ? {} : { adjudicationPrecedents }),
+    adjudicationPrecedents,
     ...(authorized.kind !== "player"
       || authorized.principalId === undefined
       || state.multiplayerRuntime.safetyPresentations[authorized.principalId] === undefined
@@ -1212,15 +1157,17 @@ function projectAuthoritative(
       .filter((activity) => activity.characterId === character.id)
       .map((entry) => structuredClone(entry)),
     ...(authorized.kind === "player" ? { roomMembers, partyGroups, spotlightLedger } : {}),
+    visibleItems: Object.values(state.campaignRuntime.itemSystem.entries)
+      .flatMap((entry) => {
+        const definition = state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
+        if (definition === undefined) return [];
+        const safe = safeVisibleItemFor(state, entry, definition, character);
+        return safe === undefined ? [] : [safe];
+      })
+      .sort((left, right) => String(left.itemEntryId).localeCompare(String(right.itemEntryId))),
     ...(state.campaignRuntime.campaign === null ? {} : {
       campaign: structuredClone(state.campaignRuntime.campaign),
       chapters: Object.values(state.campaignRuntime.chapters).map((entry) => structuredClone(entry)),
-      artifacts: Object.values(state.campaignRuntime.artifacts)
-        .flatMap((artifact) => {
-          const safe = safeArtifactFor(state, artifact, character);
-          return safe === undefined ? [] : [safe];
-        })
-        .sort((left, right) => String(left.artifactId).localeCompare(String(right.artifactId))),
       factions: Object.values(state.campaignRuntime.factions)
         .flatMap((faction) => {
           const safe = safeFactionFor(faction, character);
@@ -1357,7 +1304,7 @@ const ACTOR_DELTA_FIELDS = [
   "pendingInputs",
   "campaign",
   "chapters",
-  "artifacts",
+  "visibleItems",
   "factions",
   "factionPlans",
   "npcPlans",
@@ -2267,7 +2214,7 @@ export function projectWorld(
     return rejected("invalidWorldState", "Projection requires a canonical WorldState.");
   }
   if (!isAuthoritativeWorldState(state)) {
-    return legacyProjection(profiles, state, viewerValue);
+    return rejected("invalidWorldState", "Projection requires a canonical V5 WorldState.");
   }
   if (query?.dueActorPlanFor !== undefined) {
     return projectDueActorPlan(profiles, state, viewerValue, query);

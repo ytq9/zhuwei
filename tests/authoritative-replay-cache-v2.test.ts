@@ -22,7 +22,7 @@ describe("authoritative replay cache", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
+      moduleVersion: "social-resolution-v1",
       members: [
         { principalId: "principal:replay-cache:host", role: "host" },
         { principalId: "principal:replay-cache:observer", role: "observer" },

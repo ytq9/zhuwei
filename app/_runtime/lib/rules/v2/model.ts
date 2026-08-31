@@ -5,6 +5,12 @@ import type {
   Sha256Ref,
 } from "../profiles/types";
 import type { TacticalProjection } from "../tactical-projection";
+import type {
+  ItemDefinitionV1,
+  ItemEntryV1,
+  ItemOwnershipDisposition,
+  ItemSystemStateV1,
+} from "./items";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -96,19 +102,6 @@ export type CharacterLoadoutRecord = {
   speedFeet: number;
   equipped: Record<string, string>;
   backpack: Array<{ itemId: string; quantity: number }>;
-  /**
-   * Per-owner identities for non-stackable mechanical equipment.  Bare item
-   * ids in `equipped`/`backpack` remain the pinned standard-gear catalog for
-   * older rooms and ordinary player inventories.  Entries here make a
-   * template item an independent runtime object whose frozen source and
-   * condition survive transfer without turning the loadout into a second
-   * definition catalog.
-   */
-  mechanicalItems?: Record<string, {
-    sourceKind: "standardGear" | "npcMechanicalItemDefinition";
-    definitionRef: string;
-    status: "usable" | "broken";
-  }>;
 };
 
 export type SocialInfluenceDegree =
@@ -427,7 +420,7 @@ export type HiddenRealityResolutionPlan = {
 
 export type CompoundActionCost =
   | { kind: "consumeResource"; resourceRef: string; amount: number }
-  | { kind: "consumeArtifact"; artifactRef: string; count: number }
+  | { kind: "consumeItem"; itemRef: string; count: number }
   | { kind: "fictionTime"; durationMicros: string };
 
 export type CompoundActionEffect =
@@ -514,7 +507,7 @@ export type CompoundResolutionPlan = {
  * continuations. The complete program is retained so replay/recovery never
  * recompiles a model draft or consults a current adapter. */
 export type CausalActionResolutionPlan = {
-  schema: "zhuwei.causal-action-resolution-plan/v3";
+  schema: "zhuwei.causal-action-resolution-plan/v4";
   rootActionId: string;
   actorCharacterId: string;
   sourceSceneId: string;
@@ -623,7 +616,6 @@ export type ConversationThreadRecord = JsonRecord & {
 export type CampaignRuntimeState = {
   campaign: JsonRecord | null;
   chapters: Record<string, JsonRecord>;
-  artifacts: Record<string, JsonRecord>;
   relationships: Record<string, JsonRecord>;
   promises: Record<string, JsonRecord>;
   debts: Record<string, JsonRecord>;
@@ -635,7 +627,7 @@ export type CampaignRuntimeState = {
   npcPlans: Record<string, JsonRecord>;
   factionPlans: Record<string, JsonRecord>;
   meaningfulFailures: Record<string, JsonRecord>;
-  adjudicationPrecedents?: Record<string, JsonRecord>;
+  adjudicationPrecedents: Record<string, JsonRecord>;
   retryChanges: Record<string, JsonRecord>;
   sceneQuestions: Record<string, JsonRecord>;
   endingCandidates: Record<string, JsonRecord>;
@@ -643,12 +635,13 @@ export type CampaignRuntimeState = {
   epilogues: Record<string, JsonRecord>;
   inheritanceSources: Record<string, JsonRecord>;
   conversationThreads?: Record<string, ConversationThreadRecord>;
+  itemSystem: ItemSystemStateV1;
 };
 
 export type InheritanceAuthorization = {
   authorizationId: string;
   subjectCharacterId: string;
-  kind: "artifact" | "knowledge" | "relationship" | "debt" | "promise";
+  kind: "item" | "knowledge" | "relationship" | "debt" | "promise";
   sourceRef: string;
   targetCharacterId: string;
   targetRef: string;
@@ -767,16 +760,10 @@ export type KnowledgeSharedPayload = {
   };
 };
 
-export type LegacyNpcPlanFormedPayload = {
+export type ActorPlanFormedPayload = {
   npcId: string;
   planId: string;
   goal: string;
-  knowledgeRefs: string[];
-  nextAction: string;
-  resourceRefs: string[];
-};
-
-export type ActorPlanFormedPayload = LegacyNpcPlanFormedPayload & {
   actorKind: "npc";
   actorRef: string;
   decisionNpcId: string;
@@ -784,6 +771,7 @@ export type ActorPlanFormedPayload = LegacyNpcPlanFormedPayload & {
   status: "scheduled";
   premiseRefs: string[];
   nextStep: string;
+  resourceRefs: string[];
   activity: {
     activityId: string;
     activityKind: string;
@@ -1055,7 +1043,15 @@ export type EventPayloadByType = {
   SeatGranted: { seat: SeatRecord };
   SeatReactivated: { seatId: string; principalId: string };
   SeatVacated: { seatId: string; principalId: string; reason: string };
-  CharacterControlGranted: { character: CharacterRecord | null; characterId: string; seatId: string };
+  CharacterControlGranted:
+    | { character: null; characterId: string; seatId: string }
+    | {
+        character: CharacterRecord;
+        characterId: string;
+        seatId: string;
+        combatEntity: JsonRecord;
+        definitions: JsonRecord[];
+      };
   CharacterGearChanged: {
     characterId: string;
     action: "wear" | "stow";
@@ -1072,13 +1068,14 @@ export type EventPayloadByType = {
     equipmentAbilityRefs: string[];
   };
   NpcMechanicalItemStateChanged: {
+    actorCharacterId: string;
     characterId: string;
     itemId: string;
-    action: "break" | "repair" | "destroy" | "lose";
+    action: "break" | "repair" | "destroy";
+    causeFactRef: string;
     armorClass: number;
     equipmentAbilityRefs: string[];
   };
-  CharacterLoadoutSynchronized: { characterId: string; loadout: CharacterLoadoutRecord };
   CharacterMechanicsSynchronized: { characterId: string; combatEntity: JsonRecord; definitions: JsonRecord[] };
   CharacterControlRevoked: { characterId: string; seatId: string; reason: string };
   HostTransferred: { fromPrincipalId: string; toPrincipalId: string };
@@ -1238,6 +1235,8 @@ export type EventPayloadByType = {
     predecessorCharacterId: string;
     controllerSeatId: string;
     successor: CharacterRecord;
+    combatEntity: JsonRecord;
+    definitions: JsonRecord[];
     worldEntry?: string;
   };
   FeasibilityRuled: {
@@ -1277,10 +1276,25 @@ export type EventPayloadByType = {
   };
   ItemUsed: {
     characterId: string;
-    itemId: string;
-    quantity: number;
-    remaining: number;
+    entryId: string;
     purpose: string;
+    quantityBefore: number;
+    quantityAfter: number;
+    chargesBefore: number | null;
+    chargesAfter: number | null;
+    durabilityBefore: number | null;
+    durabilityAfter: number | null;
+  };
+  ItemDefinitionRegistered: {
+    definition: ItemDefinitionV1;
+  };
+  ItemMaterialized: {
+    entry: ItemEntryV1;
+  };
+  ItemAcquired: {
+    entryId: string;
+    characterId: string;
+    fromSceneId: string;
   };
   ItemTransferred: {
     fromCharacterId: string;
@@ -1289,33 +1303,8 @@ export type EventPayloadByType = {
     targetItemId: string;
     quantity: number;
     method: string;
+    ownershipDisposition: ItemOwnershipDisposition;
   };
-  ArtifactMaterialized: {
-    artifactId: string;
-    definitionRef: string;
-    name: string;
-    sceneId: string;
-    status: "placed";
-    quantity: number;
-    visibilityPolicyId: string;
-  };
-  ArtifactAcquired: {
-    artifactId: string;
-    characterId: string;
-    fromSceneId: string;
-    beforeStatus: "placed";
-    afterStatus: "held";
-    remainingQuantity: number;
-  };
-  ArtifactUsed: {
-    artifactId: string;
-    characterId: string;
-    purpose: string;
-    beforeStatus: "held";
-    afterStatus: "held" | "consumed" | "destroyed";
-    remainingQuantity: number;
-  };
-  ArtifactTransferred: { artifactId: string; fromCharacterId: string; toCharacterId: string; method: string };
   ActivityStarted: {
     activityId: string;
     characterId: string;
@@ -1386,7 +1375,7 @@ export type EventPayloadByType = {
   PromiseAssumed: { promiseId: string; sourcePromiseId: string; promisorId: string; promiseeId: string; content: string; condition: string; sourceFactId: string; authorizationId: string };
   DebtIncurred: { debtId: string; debtorId: string; creditorId: string; obligation: string; condition: string; basisFactIds: string[] };
   DebtAssumed: { debtId: string; sourceDebtId: string; debtorId: string; creditorId: string; obligation: string; condition: string; basisFactIds: string[]; sourceFactId: string; authorizationId: string };
-  NpcPlanFormed: LegacyNpcPlanFormedPayload | ActorPlanFormedPayload;
+  NpcPlanFormed: ActorPlanFormedPayload;
   NpcActionCommitted: {
     npcId: string;
     planId: string;
@@ -1473,12 +1462,6 @@ export type EventPayloadByType = {
   };
   ChapterConcluded: { campaignId: string; chapterId: string; reason: string; continuityPolicy: string };
   ChapterContinuityRecorded: { campaignId: string; fromChapterId: string; toChapterId: string; manifest: JsonRecord };
-  ModuleVersionMigrated: {
-    campaignId: string;
-    fromModuleRef: ProfileRef;
-    toModuleRef: ProfileRef;
-    migrationRef: ProfileRef;
-  };
   ChapterStarted: {
     campaignId: string;
     chapterId: string;
@@ -1546,7 +1529,7 @@ export type EventEnvelope<T extends EventType = EventType> = {
   rootActionId: string;
   resolutionId: string | null;
   eventType: T;
-  eventTypeVersion: "1";
+  eventTypeVersion: "1" | "2" | "3" | "4";
   fictionTimelineId: string;
   fictionInstantMicros: string;
   payload: EventPayloadByType[T];
@@ -1741,7 +1724,7 @@ export type SafeReadModel = {
   spotlightLedger?: Record<string, JsonRecord>;
   campaign?: JsonRecord | null;
   chapters?: JsonRecord[];
-  artifacts?: JsonRecord[];
+  visibleItems?: JsonRecord[];
   factions?: JsonRecord[];
   factionPlans?: JsonRecord[];
   relationships?: JsonRecord[];
@@ -1804,7 +1787,11 @@ export type KpSpatialReadModel = {
     subjectId: "kp";
   };
   adjudicationPrecedents?: JsonRecord[];
+  /** Complete KP-only dynamic fact authority. Room narrows this to the current
+   * scene/entity causal frontier before placing it in a model Context Pack. */
+  dynamicAuthoritativeFacts?: Record<string, CanonicalFactRecord>;
   npcMechanicalDefinitions?: Record<string, JsonRecord>;
+  itemDefinitions?: Record<string, JsonRecord>;
   spatialEvidence: {
     scenes: Record<string, {
       sceneId: string;

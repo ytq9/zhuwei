@@ -79,7 +79,7 @@ describe("SPEC 0010 O16 correction replacement delivery", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
+      moduleVersion: "social-resolution-v1",
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },

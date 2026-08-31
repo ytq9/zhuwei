@@ -6,8 +6,6 @@ import {
   compileEnvironmentFeature,
   ENVIRONMENT_PROFILE,
   ENVIRONMENT_PROFILE_DOCUMENT,
-  LEGACY_ENVIRONMENT_PROFILE,
-  LEGACY_ENVIRONMENT_PROFILE_DOCUMENT,
   environmentBindingMatchesFeature,
   environmentProfileEnabled,
   isCompiledEnvironmentBinding,
@@ -18,18 +16,23 @@ import {
   characterProficiencyProfileEnabled,
 } from "../app/_runtime/lib/rules/profiles/character-proficiency.ts";
 import {
-  CURRENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_RUNTIME_MANIFEST_PROFILE,
-  ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
-  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE,
-  ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
-  ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
-  LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE,
-  LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
-  LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+  ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE,
+  ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT,
+  ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   profileRegistryMatchesCanonicalDocuments,
+  V5_EVENT_SCHEMA_PROFILE,
+  V5_EVENT_SCHEMA_PROFILE_DOCUMENT,
 } from "../app/_runtime/lib/rules/profiles/manifests.ts";
+import {
+  STANDARD_GEAR_PROFILE,
+  STANDARD_GEAR_PROFILE_DOCUMENT,
+  standardGearCatalogForProfile,
+  standardGearResolverForProfile,
+} from "../app/_runtime/lib/rules/profiles/standard-gear.ts";
+import {
+  ITEM_SYSTEM_PROFILE,
+  ITEM_SYSTEM_PROFILE_DOCUMENT,
+} from "../app/_runtime/lib/rules/profiles/item-system.ts";
 import {
   PRODUCTION_RUNTIME_PROFILE_REGISTRY,
   resolveRuntimeProfileManifest,
@@ -39,6 +42,7 @@ import {
   buildPlayerCombatEntity,
   synchronizePlayerCombatEntity,
 } from "../app/_runtime/lib/rules/v2/character-abilities.ts";
+import { emptyItemSystemState } from "../app/_runtime/lib/rules/v2/items.ts";
 import {
   characterProficiencyFieldsMatchProfile,
   savingThrowModifier,
@@ -49,63 +53,95 @@ import {
   chandelierGeometry,
 } from "./fixtures/chandelier-environment-v3.mjs";
 
-test("new state-or-hazard Profile is pinned while the hazard-only v2 generation remains addressable", () => {
+const RETIRED_ENVIRONMENT_PROFILE = Object.freeze({
+  profileId: "environment-feature-fsm-2014-retired",
+  profileHash: `sha256:${"0".repeat(64)}`,
+});
+
+test("product 0.4 pins one exact V5 runtime closure", () => {
   assert.equal(canonicalSha256(ENVIRONMENT_PROFILE_DOCUMENT), ENVIRONMENT_PROFILE.profileHash);
-  assert.equal(
-    canonicalSha256(LEGACY_ENVIRONMENT_PROFILE_DOCUMENT),
-    LEGACY_ENVIRONMENT_PROFILE.profileHash,
-  );
-  assert.equal(
-    canonicalSha256(ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT),
-    ENVIRONMENT_RUNTIME_MANIFEST_PROFILE.profileHash,
-  );
-  assert.equal(
-    canonicalSha256(LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE_DOCUMENT),
-    LEGACY_ENVIRONMENT_RUNTIME_MANIFEST_PROFILE.profileHash,
-  );
   assert.equal(
     canonicalSha256(CHARACTER_PROFICIENCY_PROFILE_DOCUMENT),
     CHARACTER_PROFICIENCY_PROFILE.profileHash,
   );
   assert.equal(
-    canonicalSha256(ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE_DOCUMENT),
-    ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE.profileHash,
+    canonicalSha256(ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT),
+    ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE.profileHash,
   );
   assert.equal(profileRegistryMatchesCanonicalDocuments(), true);
   assert.equal(
     PRODUCTION_RUNTIME_PROFILE_REGISTRY.defaultManifest.manifest.profileId,
-    CURRENT_RUNTIME_PROFILE_MANIFEST.manifest.profileId,
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileId,
   );
   assert.equal(
     PRODUCTION_RUNTIME_PROFILE_REGISTRY.defaultManifest.manifest.profileHash,
-    CURRENT_RUNTIME_PROFILE_MANIFEST.manifest.profileHash,
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileHash,
   );
   assert.equal(
     resolveRuntimeProfileManifest(
       PRODUCTION_RUNTIME_PROFILE_REGISTRY,
-      ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     ).ok,
     true,
+  );
+  assert.equal(environmentProfileEnabled(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.extensions), true);
+  assert.equal(characterProficiencyProfileEnabled(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.extensions), true);
+  const retired = structuredClone(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
+  retired.manifest = {
+    profileId: "runtime-srd51-2014-authoritative-retired",
+    profileHash: `sha256:${"0".repeat(64)}`,
+  };
+  assert.equal(resolveRuntimeProfileManifest(PRODUCTION_RUNTIME_PROFILE_REGISTRY, retired).ok, false);
+});
+
+test("V5 pins exact event and standard-gear profiles with canonical version semantics", () => {
+  assert.equal(
+    canonicalSha256(V5_EVENT_SCHEMA_PROFILE_DOCUMENT),
+    V5_EVENT_SCHEMA_PROFILE.profileHash,
   );
   assert.equal(
-    resolveRuntimeProfileManifest(
-      PRODUCTION_RUNTIME_PROFILE_REGISTRY,
-      LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-    ).ok,
-    true,
+    canonicalSha256(STANDARD_GEAR_PROFILE_DOCUMENT),
+    STANDARD_GEAR_PROFILE.profileHash,
   );
   assert.equal(
-    resolveRuntimeProfileManifest(
-      PRODUCTION_RUNTIME_PROFILE_REGISTRY,
-      ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
-    ).ok,
-    true,
+    canonicalSha256(ITEM_SYSTEM_PROFILE_DOCUMENT),
+    ITEM_SYSTEM_PROFILE.profileHash,
   );
-  assert.equal(environmentProfileEnabled(CURRENT_RUNTIME_PROFILE_MANIFEST.extensions), false);
-  assert.equal(environmentProfileEnabled(ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.extensions), true);
-  assert.equal(characterProficiencyProfileEnabled(CURRENT_RUNTIME_PROFILE_MANIFEST.extensions), false);
-  assert.equal(characterProficiencyProfileEnabled(ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.extensions), false);
-  assert.equal(characterProficiencyProfileEnabled(ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST.extensions), true);
+  assert.equal(
+    canonicalSha256(ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT),
+    ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE.profileHash,
+  );
+  assert.deepEqual(
+    V5_EVENT_SCHEMA_PROFILE_DOCUMENT.normativePayload.eventTypeVersionOverrides,
+    { ItemUsed: "4", ResourceSpent: "2" },
+  );
+  assert.deepEqual(
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.eventSchema,
+    V5_EVENT_SCHEMA_PROFILE,
+  );
+  assert.ok(
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.extensions.some((profile) =>
+      profile.profileId === STANDARD_GEAR_PROFILE.profileId
+      && profile.profileHash === STANDARD_GEAR_PROFILE.profileHash),
+  );
+  assert.ok(
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.extensions.some((profile) =>
+      profile.profileId === ITEM_SYSTEM_PROFILE.profileId
+      && profile.profileHash === ITEM_SYSTEM_PROFILE.profileHash),
+  );
+  assert.equal(standardGearCatalogForProfile(STANDARD_GEAR_PROFILE)?.length, 58);
+  assert.deepEqual(standardGearResolverForProfile(STANDARD_GEAR_PROFILE)?.("longbow")?.weapon, {
+    attackAbility: "dex",
+    damageDice: "1d8",
+    damageType: "piercing",
+    rangeNormalInches: "1800",
+    rangeLongInches: "7200",
+    ammunitionId: "arrow",
+  });
+  assert.equal(standardGearCatalogForProfile({
+    profileId: STANDARD_GEAR_PROFILE.profileId,
+    profileHash: `sha256:${"0".repeat(64)}`,
+  }), undefined);
 });
 
 test("EnvironmentFeature compiles five bounded definitions into one canonical geometry binding", () => {
@@ -129,12 +165,12 @@ test("EnvironmentFeature compiles five bounded definitions into one canonical ge
   assert.equal(environmentBindingMatchesFeature(tacticalFeature.environment, tacticalFeature), true);
   assert.equal(isCanonicalTacticalGeometry(chandelierGeometry(tacticalFeature)), true);
   const forgedBinding = structuredClone(tacticalFeature.environment);
-  forgedBinding.profile = structuredClone(LEGACY_ENVIRONMENT_PROFILE);
+  forgedBinding.profile = structuredClone(RETIRED_ENVIRONMENT_PROFILE);
   assert.equal(isCompiledEnvironmentBinding(forgedBinding), false);
   const forgedGeometry = chandelierGeometry(tacticalFeature);
   forgedGeometry.obstacles.find((feature) =>
     feature.featureId === tacticalFeature.featureId).environment.profile =
-      structuredClone(LEGACY_ENVIRONMENT_PROFILE);
+      structuredClone(RETIRED_ENVIRONMENT_PROFILE);
   assert.equal(isCanonicalTacticalGeometry(forgedGeometry), false);
   assert.equal(
     compiled.artifact.featureDefinitionHash,
@@ -158,7 +194,7 @@ test("EnvironmentFeature compiles five bounded definitions into one canonical ge
   );
 });
 
-test("the exact v4 extension carries Expertise and saves into combat without field-presence dispatch", () => {
+test("the exact V5 extension carries Expertise and saves without field-presence dispatch", () => {
   const character = {
     id: "character:profile-v4",
     kind: "player",
@@ -173,40 +209,24 @@ test("the exact v4 extension carries Expertise and saves into combat without fie
     proficientSaves: ["con"],
   };
   const compiled = { abilityRefs: [], definitions: {} };
-  const historical = buildPlayerCombatEntity(
-    ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-    character,
-    compiled,
-  );
-  assert.equal(historical.expertiseSkills, undefined);
-  assert.equal(historical.proficientSaves, undefined);
-  assert.equal(skillCheckModifier(
-    ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-    historical,
-    "int",
-    "investigation",
-  ), 4);
-  assert.equal(savingThrowModifier(
-    ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-    historical,
-    "con",
-  ), 1);
-
   const current = buildPlayerCombatEntity(
-    ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     character,
     compiled,
+    undefined,
+    undefined,
+    emptyItemSystemState(),
   );
   assert.deepEqual(current.expertiseSkills, ["investigation"]);
   assert.deepEqual(current.proficientSaves, ["con"]);
   assert.equal(skillCheckModifier(
-    ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     current,
     "int",
     "investigation",
   ), 6);
   assert.equal(savingThrowModifier(
-    ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     current,
     "con",
   ), 3);
@@ -216,32 +236,18 @@ test("the exact v4 extension carries Expertise and saves into combat without fie
     ["investigation"],
   );
 
-  const forged = structuredClone(ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST);
+  const forged = structuredClone(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
   forged.extensions.find(({ profileId }) =>
     profileId === CHARACTER_PROFICIENCY_PROFILE.profileId).profileHash = `sha256:${"0".repeat(64)}`;
   assert.equal(characterProficiencyFieldsMatchProfile(forged, character), false);
   assert.equal(characterProficiencyFieldsMatchProfile(
-    ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     { ...character, expertiseSkills: ["perception"] },
   ), false);
   assert.equal(characterProficiencyFieldsMatchProfile(
-    ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     { ...character, proficientSaves: ["luck"] },
   ), false);
-});
-
-test("hazard-only v2 definitions still compile under their exact immutable Profile", () => {
-  const legacy = structuredClone(CHANDELIER_FEATURE_DEFINITION);
-  legacy.schema = "zhuwei.environment-feature/v1";
-  legacy.environmentProfile = structuredClone(LEGACY_ENVIRONMENT_PROFILE);
-  delete legacy.effectMode;
-  const compiled = compileEnvironmentFeature(legacy);
-  assert.equal(compiled.ok, true, JSON.stringify(compiled));
-  if (!compiled.ok) return;
-  assert.deepEqual(compiled.artifact.tacticalFeature.environment.profile, LEGACY_ENVIRONMENT_PROFILE);
-  const forgedBinding = structuredClone(compiled.artifact.tacticalFeature.environment);
-  forgedBinding.profile = structuredClone(ENVIRONMENT_PROFILE);
-  assert.equal(isCompiledEnvironmentBinding(forgedBinding), false);
 });
 
 test("compiler rejects unbounded authority, unsorted state graphs, and broken hazard references", () => {
@@ -272,7 +278,7 @@ test("compiler rejects unbounded authority, unsorted state graphs, and broken ha
   assert.equal(compileEnvironmentFeature(tooManyStates).ok, false);
 });
 
-test("V3 selectors are deterministic while the frozen legacy compiler remains byte-compatible", () => {
+test("V3 environment selectors reject ambiguous transitions deterministically", () => {
   const ambiguous = structuredClone(CHANDELIER_FEATURE_DEFINITION);
   ambiguous.stateGraph.transitions.push({
     fromState: "falling",
@@ -284,9 +290,4 @@ test("V3 selectors are deterministic while the frozen legacy compiler remains by
       .localeCompare(`${right.fromState}\u0000${right.trigger}\u0000${right.remainingDurabilityAtOrBelow ?? ""}\u0000${right.toState}`));
   assert.equal(compileEnvironmentFeature(ambiguous).ok, false);
 
-  const legacy = structuredClone(ambiguous);
-  legacy.schema = "zhuwei.environment-feature/v1";
-  legacy.environmentProfile = structuredClone(LEGACY_ENVIRONMENT_PROFILE);
-  delete legacy.effectMode;
-  assert.equal(compileEnvironmentFeature(legacy).ok, true);
 });

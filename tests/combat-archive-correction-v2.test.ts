@@ -98,7 +98,7 @@ async function initializeCombatRoom(name: string): Promise<CombatRoom> {
   const initialized = record(await stub.initializeAuthoritative({
     roomId: name,
     moduleId: "black-oak-will",
-    moduleVersion: "legacy-anchor-v1",
+    moduleVersion: "social-resolution-v1",
     members: [{ principalId: ALICE.principal.id, role: "host" }],
     characters: [{
       characterId: "character:combat-archive:alice",

@@ -117,7 +117,7 @@ async function initializedRoom(
   const initialized = record(await stub.initializeAuthoritative({
     roomId,
     moduleId: "black-oak-will",
-    moduleVersion: "legacy-anchor-v1",
+    moduleVersion: "social-resolution-v1",
     members: [
       { principalId: ALICE.principal.id, role: "host" },
       ...(options.transferSeat

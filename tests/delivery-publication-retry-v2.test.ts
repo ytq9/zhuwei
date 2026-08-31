@@ -23,6 +23,11 @@ type Authority = {
   commit(context: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
   publishDelivery(capability: unknown, publication: unknown): Promise<unknown>;
   deliveryPublicationStatus(query: { publishCapability: unknown }): Promise<unknown>;
+  beginDeliveryAudiencePublication(query: {
+    publishCapability: unknown;
+    audienceId: string;
+  }): Promise<unknown>;
+  failDeliveryAudiencePublication(capability: unknown, failure: unknown): Promise<unknown>;
   observe(context: unknown, query?: unknown): Promise<unknown>;
   acknowledge(context: unknown, deliveryId: string): Promise<unknown>;
   exportAuthoritativeArchive(capability: unknown): Promise<unknown>;
@@ -49,14 +54,14 @@ async function initialized(name: string) {
   const initialized = record(await authority.initializeAuthoritative({
     roomId: name,
     moduleId: "black-oak-will",
-    moduleVersion: "legacy-anchor-v1",
+    moduleVersion: "social-resolution-v1",
     members: [{ principalId: ALICE.principal.id, role: "host" }],
     characters: [{
       characterId: "character:delivery-retry:alice",
       controllerPrincipalId: ALICE.principal.id,
       staticCard: {
         name: "阿莱莎",
-        sceneId: "archive",
+        sceneId: "wake",
         abilityScores: { str: 14, dex: 12, con: 12, int: 10, wis: 10, cha: 10 },
         proficiencyBonus: 2,
         proficientSkills: ["athletics"],
@@ -65,26 +70,11 @@ async function initialized(name: string) {
     }],
   }), "room initialization");
   expect(initialized).toMatchObject({ created: true });
-  const capabilities = record(initialized.serviceCapabilities, "service capabilities");
-  return { authority, archiveExport: capabilities.archiveExport };
+  return { authority };
 }
 
 function deliveryPlan(value: unknown): JsonRecord {
   return record(record(value, "commit result").deliveryPlan, "delivery plan");
-}
-
-function frames(plan: JsonRecord, body: string) {
-  return list(plan.audiences, "delivery audiences").map((entry) => ({
-    audienceId: record(entry, "delivery audience").audienceId,
-    narration: { text: body, agencyClaims: [] },
-  }));
-}
-
-async function archive(authority: Authority, capability: unknown) {
-  return record(
-    record(await authority.exportAuthoritativeArchive(capability), "archive export").archive,
-    "archive",
-  );
 }
 
 function currentFrame(observation: unknown) {
@@ -94,9 +84,9 @@ function currentFrame(observation: unknown) {
 }
 
 describe("delivery publication recovery", () => {
-  it("queries persisted publication status before retrying a response-lost publication", async () => {
+  it("recognizes a persisted publication after response loss without repeating narration", async () => {
     const roomId = "delivery-publication-retry-v2-response-loss";
-    const { authority, archiveExport } = await initialized(roomId);
+    const { authority } = await initialized(roomId);
     let publicationCalls = 0;
     let publicationStatusCalls = 0;
     let loseFirstPublicationResponse = true;
@@ -112,6 +102,10 @@ describe("delivery publication recovery", () => {
         publicationStatusCalls += 1;
         return authority.deliveryPublicationStatus(query);
       },
+      beginDeliveryAudiencePublication: (query) =>
+        authority.beginDeliveryAudiencePublication(query),
+      failDeliveryAudiencePublication: (capability, failure) =>
+        authority.failDeliveryAudiencePublication(capability, failure),
       async publishDelivery(capability, publication) {
         publicationCalls += 1;
         const published = await authority.publishDelivery(capability, publication);
@@ -151,7 +145,7 @@ describe("delivery publication recovery", () => {
       },
       async narrate() {
         narrationCalls += 1;
-        return { body: LOST_RESPONSE_BODY, agencyClaims: [] };
+        return { body: LOST_RESPONSE_BODY };
       },
     };
 
@@ -160,40 +154,13 @@ describe("delivery publication recovery", () => {
       authority: responseLosingAuthority,
       kp,
     }, intent), "first response-lost outcome");
-    expect(first).toMatchObject({ kind: "committed", deliveryPending: true });
+    expect(first).toMatchObject({ kind: "committed", narration: "published" });
     expect(proposeCalls).toBe(1);
     expect(narrationCalls).toBe(1);
     expect(publicationCalls).toBe(1);
+    expect(publicationStatusCalls).toBe(1);
     const firstFrame = currentFrame(await authority.observe(ALICE));
     expect(firstFrame.text).toBe(LOST_RESPONSE_BODY);
-    const archiveAfterFirst = await archive(authority, archiveExport);
-
-    publicationStatusCalls = 0;
-    const receipt = record(first.receipt, "committed receipt");
-    const retried = record(await handleRoomAction({
-      principal: ALICE,
-      authority: responseLosingAuthority,
-      kp: {
-        async propose() {
-          throw new Error("retry must not ask KP to propose committed mechanics again");
-        },
-        async narrate() {
-          narrationCalls += 1;
-          throw new Error("retry must not narrate an already-published plan again");
-        },
-      },
-    }, {
-      kind: "retry",
-      submissionId: intent.submissionId,
-      rootActionId: String(receipt.rootActionId),
-    }), "publication retry outcome");
-
-    expect(publicationStatusCalls).toBe(1);
-    expect(publicationCalls).toBe(1);
-    expect(narrationCalls).toBe(1);
-    expect(retried.kind).toBe("committed");
-    expect(currentFrame(await authority.observe(ALICE))).toEqual(firstFrame);
-    expect(await archive(authority, archiveExport)).toEqual(archiveAfterFirst);
   });
 
   it("does not narrate or leak a plan that a newer current response superseded before narration", async () => {
@@ -202,6 +169,7 @@ describe("delivery publication recovery", () => {
     let publicationStatusCalls = 0;
     let oldNarrationCalls = 0;
     let injectNewerResponse = true;
+    let newerPublicationResult: unknown;
     const supersedingAuthority: Authority = {
       initializeAuthoritative: (input) => authority.initializeAuthoritative(input),
       prepare: (context, input) => authority.prepare(context, input),
@@ -209,6 +177,10 @@ describe("delivery publication recovery", () => {
       acknowledge: (context, deliveryId) => authority.acknowledge(context, deliveryId),
       publishDelivery: (capability, publication) => authority.publishDelivery(capability, publication),
       exportAuthoritativeArchive: (capability) => authority.exportAuthoritativeArchive(capability),
+      beginDeliveryAudiencePublication: (query) =>
+        authority.beginDeliveryAudiencePublication(query),
+      failDeliveryAudiencePublication: (capability, failure) =>
+        authority.failDeliveryAudiencePublication(capability, failure),
       async deliveryPublicationStatus(query) {
         publicationStatusCalls += 1;
         return authority.deliveryPublicationStatus(query);
@@ -234,10 +206,23 @@ describe("delivery publication recovery", () => {
           }),
         );
         const newerPlan = deliveryPlan(newerCommitted);
-        await expect(authority.publishDelivery(
+        const newerFrames = [];
+        for (const entry of list(newerPlan.audiences, "delivery audiences")) {
+          const audienceId = String(record(entry, "delivery audience").audienceId);
+          const begun = record(await authority.beginDeliveryAudiencePublication({
+            publishCapability: newerPlan.publishCapability,
+            audienceId,
+          }), "begun newer publication");
+          newerFrames.push({
+            audienceId,
+            deliveryGeneration: begun.deliveryGeneration,
+            narration: { body: CURRENT_BODY },
+          });
+        }
+        newerPublicationResult = await authority.publishDelivery(
           { publishCapability: newerPlan.publishCapability },
-          { frames: frames(newerPlan, CURRENT_BODY) },
-        )).resolves.toMatchObject({ kind: "published" });
+          { frames: newerFrames },
+        );
         return committed;
       },
     };
@@ -260,11 +245,13 @@ describe("delivery publication recovery", () => {
         },
         async narrate() {
           oldNarrationCalls += 1;
-          return { body: SUPERSEDED_BODY, agencyClaims: [] };
+          return { body: SUPERSEDED_BODY };
         },
       },
     }, intent), "superseded action outcome");
     expect(outcome.kind).toBe("committed");
+    const newerPublication = record(newerPublicationResult, "newer publication result");
+    expect(newerPublication.kind, JSON.stringify(newerPublication)).toBe("published");
     expect(oldNarrationCalls).toBe(0);
     expect(publicationStatusCalls).toBeGreaterThanOrEqual(1);
 
@@ -292,8 +279,8 @@ describe("delivery publication recovery", () => {
       rootActionId: String(receipt.rootActionId),
     }), "superseded retry outcome");
 
-    expect(retried.kind).toBe("committed");
-    expect(publicationStatusCalls).toBe(1);
+    expect(retried.kind).toBe("rejected");
+    expect(publicationStatusCalls).toBe(0);
     expect(oldNarrationCalls).toBe(0);
     expect(currentFrame(await authority.observe(ALICE))).toEqual(beforeRetryFrame);
     expect(JSON.stringify(await authority.observe(ALICE))).not.toContain(SUPERSEDED_BODY);

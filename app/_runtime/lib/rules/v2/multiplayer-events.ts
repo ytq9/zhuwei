@@ -10,6 +10,7 @@ import { canonicalSha256 } from "../profiles/canonical";
 import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import {
+  canonicalFactVisibleToCharacter,
   hasExactKeys,
   hasOnlyKeys,
   isCharacterLoadout,
@@ -18,14 +19,117 @@ import {
 } from "./validation";
 import { applyMovement } from "./timeline";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
-import { changeCharacterGear, isGearSlot } from "./character-gear";
+import { isGearSlot } from "./character-gear";
+import { changeItemEquipment } from "./item-transitions";
 import { compileCanonicalCharacterCombat } from "./character-abilities";
 import {
-  changeNpcMechanicalGear,
-  changeNpcMechanicalItemState,
   isNpcMechanicalTemplateDefinition,
   synchronizeCombatItemResources,
 } from "./npc-mechanics";
+import {
+  changeNpcItemSystemEquipment,
+  changeNpcItemSystemLifecycle,
+} from "./npc-item-system";
+
+const NPC_ITEM_STATE_CAUSE_SCHEMA = "zhuwei.npc-mechanical-item-state-cause/v1";
+const NPC_ITEM_STATE_CAUSE_CONSUMED_SCHEMA = "zhuwei.npc-mechanical-item-state-cause-consumed/v1";
+
+type NpcMechanicalItemStateCause = {
+  actorCharacterId: string;
+  npcCharacterId: string;
+  itemId: string;
+  action: "break" | "repair" | "destroy";
+  causeFactRef: string;
+};
+
+export function npcMechanicalItemStateCauseUseFactId(causeFactRef: string): string {
+  return `fact:npc-mechanical-item-state-cause-use:${canonicalSha256({
+    schema: NPC_ITEM_STATE_CAUSE_CONSUMED_SCHEMA,
+    causeFactRef,
+  })}`;
+}
+
+function frozenAbilityMatches(expected: JsonRecord, registered: unknown): boolean {
+  if (isRegisteredAbilityRecord(registered)) {
+    return registered.definitionHash === (isRegisteredAbilityRecord(expected)
+      ? expected.definitionHash
+      : canonicalSha256(expected));
+  }
+  return isRecord(registered)
+    && canonicalSha256(registered) === canonicalSha256(expected);
+}
+
+function npcMechanicalItemStateCauseMatches(
+  state: AuthoritativeWorldState,
+  input: NpcMechanicalItemStateCause,
+): boolean {
+  const actor = state.entities[input.actorCharacterId];
+  const npc = state.entities[input.npcCharacterId];
+  const fact = state.canonicalFacts[input.causeFactRef];
+  const expectedSubjects = [input.itemId, input.npcCharacterId].sort();
+  if (actor === undefined
+    || actor.tenureStatus !== "active"
+    || npc?.kind !== "npc"
+    || npc.tenureStatus !== "active"
+    || actor.sceneId !== npc.sceneId
+    || fact?.kind !== "npcMechanicalItemStateCause"
+    || !canonicalFactVisibleToCharacter(state, fact, actor)
+    || canonicalSha256(fact.subjectRefs) !== canonicalSha256(expectedSubjects)
+    || !isRecord(fact.value)
+    || !hasExactKeys(fact.value, ["action", "itemRef", "npcRef", "schema"])
+    || fact.value.schema !== NPC_ITEM_STATE_CAUSE_SCHEMA
+    || fact.value.npcRef !== input.npcCharacterId
+    || fact.value.itemRef !== input.itemId
+    || fact.value.action !== input.action
+    || !["mechanicalResolution", "observedEvent"].includes(fact.source)
+    || fact.causalParentIds.some((parentRef) =>
+      parentRef === fact.id || !(parentRef in state.canonicalFacts))) {
+    return false;
+  }
+  return fact.source !== "observedEvent" || fact.causalParentIds.length > 0;
+}
+
+export function npcMechanicalItemStateCauseAvailable(
+  state: AuthoritativeWorldState,
+  input: NpcMechanicalItemStateCause,
+): boolean {
+  return npcMechanicalItemStateCauseMatches(state, input)
+    && !(npcMechanicalItemStateCauseUseFactId(input.causeFactRef) in state.canonicalFacts);
+}
+
+function consumeNpcMechanicalItemStateCause(
+  state: AuthoritativeWorldState,
+  event: EventEnvelope,
+  input: NpcMechanicalItemStateCause,
+): void {
+  if (!npcMechanicalItemStateCauseAvailable(state, input)) {
+    throw new TypeError("NPC mechanical item-state cause is unavailable or already consumed");
+  }
+  const factId = npcMechanicalItemStateCauseUseFactId(input.causeFactRef);
+  state.canonicalFacts[factId] = {
+    id: factId,
+    kind: "npcMechanicalItemStateCauseConsumed",
+    subjectRefs: [...new Set([
+      input.actorCharacterId,
+      input.npcCharacterId,
+      input.itemId,
+      input.causeFactRef,
+    ])].sort(),
+    value: {
+      schema: NPC_ITEM_STATE_CAUSE_CONSUMED_SCHEMA,
+      actorCharacterId: input.actorCharacterId,
+      npcRef: input.npcCharacterId,
+      itemRef: input.itemId,
+      action: input.action,
+      causeFactRef: input.causeFactRef,
+    },
+    visibilityPolicyId: "visibility:room-authority-only",
+    source: "mechanicalResolution",
+    branchId: event.branchId,
+    validFromEventSeq: event.eventSeq,
+    causalParentIds: [input.causeFactRef],
+  };
+}
 
 export const MULTIPLAYER_EVENT_TYPES = [
   "MemberJoined",
@@ -38,7 +142,6 @@ export const MULTIPLAYER_EVENT_TYPES = [
   "CharacterGearChanged",
   "NpcGearChanged",
   "NpcMechanicalItemStateChanged",
-  "CharacterLoadoutSynchronized",
   "CharacterMechanicsSynchronized",
   "CharacterControlRevoked",
   "HostTransferred",
@@ -120,6 +223,23 @@ function character(value: unknown): value is CharacterRecord {
         isNonEmptyString(resourceId) && Number.isSafeInteger(maximum) && Number(maximum) >= 0)));
 }
 
+export function validCharacterMechanicsSnapshot(
+  characterId: unknown,
+  combatEntity: unknown,
+  definitions: unknown,
+): boolean {
+  return isNonEmptyString(characterId)
+    && isRecord(combatEntity)
+    && combatEntity.id === characterId
+    && combatEntity.entityId === characterId
+    && combatEntity.kind === "player"
+    && Array.isArray(definitions)
+    && definitions.every((definition) => isRecord(definition)
+      && isNonEmptyString(definition.definitionId)
+      && definition.rulesBasis === "srd5.1-2014")
+    && canonicalStrings(definitions.map((definition) => String(definition.definitionId)));
+}
+
 export function validateMultiplayerEventPayload(eventType: EventType, value: JsonRecord): boolean {
   switch (eventType) {
     case "MemberJoined":
@@ -150,11 +270,24 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
       return hasExactKeys(value, ["principalId", "reason", "seatId"])
         && [value.principalId, value.reason, value.seatId].every(isNonEmptyString);
     case "CharacterControlGranted":
-      return hasExactKeys(value, ["character", "characterId", "seatId"])
-        && isNonEmptyString(value.characterId)
-        && isNonEmptyString(value.seatId)
-        && (value.character === null || character(value.character))
-        && (value.character === null || value.character.id === value.characterId);
+      if (!isNonEmptyString(value.characterId) || !isNonEmptyString(value.seatId)) return false;
+      if (value.character === null) {
+        return hasExactKeys(value, ["character", "characterId", "seatId"]);
+      }
+      return hasExactKeys(value, [
+        "character",
+        "characterId",
+        "combatEntity",
+        "definitions",
+        "seatId",
+      ])
+        && character(value.character)
+        && value.character.id === value.characterId
+        && validCharacterMechanicsSnapshot(
+          value.characterId,
+          value.combatEntity,
+          value.definitions,
+        );
     case "CharacterGearChanged":
       return hasExactKeys(value, ["action", "armorClass", "characterId", "itemId", "slot"])
         && (value.action === "wear" || value.action === "stow")
@@ -184,34 +317,29 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
     case "NpcMechanicalItemStateChanged":
       return hasExactKeys(value, [
         "action",
+        "actorCharacterId",
         "armorClass",
+        "causeFactRef",
         "characterId",
         "equipmentAbilityRefs",
         "itemId",
       ])
-        && ["break", "repair", "destroy", "lose"].includes(String(value.action))
+        && ["break", "repair", "destroy"].includes(String(value.action))
+        && isNonEmptyString(value.actorCharacterId)
+        && isNonEmptyString(value.causeFactRef)
         && isNonEmptyString(value.characterId)
         && isNonEmptyString(value.itemId)
         && Number.isSafeInteger(value.armorClass)
         && Number(value.armorClass) >= 1
         && Number(value.armorClass) <= 99
         && canonicalStrings(value.equipmentAbilityRefs);
-    case "CharacterLoadoutSynchronized":
-      return hasExactKeys(value, ["characterId", "loadout"])
-        && isNonEmptyString(value.characterId)
-        && isCharacterLoadout(value.loadout);
     case "CharacterMechanicsSynchronized":
       return hasExactKeys(value, ["characterId", "combatEntity", "definitions"])
-        && isNonEmptyString(value.characterId)
-        && isRecord(value.combatEntity)
-        && value.combatEntity.id === value.characterId
-        && value.combatEntity.entityId === value.characterId
-        && value.combatEntity.kind === "player"
-        && Array.isArray(value.definitions)
-        && value.definitions.every((definition) => isRecord(definition)
-          && isNonEmptyString(definition.definitionId)
-          && definition.rulesBasis === "srd5.1-2014")
-        && canonicalStrings(value.definitions.map((definition) => String(definition.definitionId)));
+        && validCharacterMechanicsSnapshot(
+          value.characterId,
+          value.combatEntity,
+          value.definitions,
+        );
     case "CharacterControlRevoked":
       return hasExactKeys(value, ["characterId", "reason", "seatId"])
         && [value.characterId, value.reason, value.seatId].every(isNonEmptyString);
@@ -375,6 +503,31 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
   }
 }
 
+export function applyCharacterMechanicsSnapshot(
+  state: AuthoritativeWorldState,
+  characterId: string,
+  combatEntity: JsonRecord,
+  definitions: JsonRecord[],
+): void {
+  const characterState = state.entities[characterId];
+  if (characterState?.kind !== "player"
+    || characterState.tenureStatus !== "active"
+    || !validCharacterMechanicsSnapshot(characterId, combatEntity, definitions)) {
+    throw new TypeError("character mechanics cannot be synchronized");
+  }
+  for (const definition of definitions) {
+    const definitionId = String(definition.definitionId);
+    const prior = state.combatRuntime.definitions[definitionId];
+    if (prior !== undefined && canonicalSha256(prior) !== canonicalSha256(definition)) {
+      throw new TypeError("character ability definition conflicts with its pinned revision");
+    }
+  }
+  for (const definition of definitions) {
+    state.combatRuntime.definitions[String(definition.definitionId)] = structuredClone(definition);
+  }
+  state.combatRuntime.entities[characterId] = structuredClone(combatEntity);
+}
+
 export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   switch (event.eventType) {
     case "MemberJoined": {
@@ -438,6 +591,12 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         }
         state.entities[payload.character.id] = structuredClone(payload.character);
         state.knowledge[payload.character.id] = {};
+        applyCharacterMechanicsSnapshot(
+          state,
+          payload.characterId,
+          payload.combatEntity,
+          payload.definitions,
+        );
       }
       state.characterControls[payload.characterId] = {
         characterId: payload.characterId,
@@ -482,44 +641,64 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
       if (target?.kind !== "player" || target.tenureStatus !== "active" || !isGearSlot(payload.slot)) {
         throw new TypeError("character gear cannot be changed");
       }
-      const transition = changeCharacterGear(
-        target,
-        payload.action === "wear"
-          ? { action: "wear", slot: payload.slot, itemId: payload.itemId }
-          : { action: "stow", slot: payload.slot },
-      );
+      const itemSystem = state.campaignRuntime.itemSystem;
+      if (itemSystem === undefined) {
+        throw new TypeError("character item system is unavailable");
+      }
+      if (Object.values(state.combatRuntime.encounters).some((encounter) =>
+        encounter.status !== "concluded"
+        && Array.isArray(encounter.participantEntityIds)
+        && encounter.participantEntityIds.includes(target.id))) {
+        throw new TypeError("character gear cannot change during an active encounter");
+      }
+      const transition = changeItemEquipment(
+            itemSystem,
+            {
+              holderRef: target.id,
+              classId: target.classId,
+              scores: {
+                dex: target.abilityScores?.dex ?? 10,
+                con: target.abilityScores?.con ?? 10,
+              },
+              speedFeet: target.loadout?.speedFeet ?? 30,
+            },
+            payload.action === "wear"
+              ? { action: "wear", slot: payload.slot, entryId: payload.itemId }
+              : { action: "stow", slot: payload.slot },
+          );
+      const movedItemId = "error" in transition ? undefined : transition.movedEntryId;
       if (
         "error" in transition
-        || transition.movedItemId !== payload.itemId
+        || movedItemId !== payload.itemId
         || transition.loadout.armorClass !== payload.armorClass
       ) throw new TypeError("character gear transition does not match active loadout");
+      state.campaignRuntime.itemSystem = transition.itemSystem;
       target.loadout = structuredClone(transition.loadout);
 
-      const compiled = compileCanonicalCharacterCombat(target);
+      const compiled = compileCanonicalCharacterCombat(
+        target,
+        transition.itemSystem,
+        state.combatRuntime.definitions,
+      );
       for (const definition of Object.values(compiled.definitions)) {
         const definitionId = String(definition.definitionId);
         const prior = state.combatRuntime.definitions[definitionId];
-        if (prior !== undefined && canonicalSha256(prior) !== canonicalSha256(definition)) {
-          throw new TypeError("character ability definition conflicts with its pinned revision");
+        if (!frozenAbilityMatches(definition, prior)) {
+          throw new TypeError("character equipment ability is not frozen in the authoritative catalog");
         }
-        state.combatRuntime.definitions[definitionId] = structuredClone(definition);
+      }
+      for (const abilityRef of compiled.abilityRefs) {
+        if (compiled.definitions[abilityRef] !== undefined) continue;
+        if (!isRegisteredAbilityRecord(state.combatRuntime.definitions[abilityRef])) {
+          throw new TypeError("portable item ability is not frozen in the authoritative catalog");
+        }
       }
       const combatEntity = state.combatRuntime.entities[payload.characterId];
       if (combatEntity !== undefined) {
         combatEntity.armorClass = String(transition.loadout.armorClass);
         combatEntity.speedInches = { walk: String(transition.loadout.speedFeet * 12) };
         combatEntity.abilityRefs = [...compiled.abilityRefs];
-        const resources = isRecord(combatEntity.resources) ? combatEntity.resources : {};
-        const remaining = transition.loadout.backpack
-          .find(({ itemId }) => itemId === payload.itemId)?.quantity ?? 0;
-        const resourceId = `item:${payload.itemId}`;
-        const priorResource = isRecord(resources[resourceId]) ? resources[resourceId] : undefined;
-        const priorMaximum = Number(priorResource?.maximum ?? 0);
-        resources[resourceId] = {
-          current: String(remaining),
-          maximum: String(Math.max(remaining, Number.isSafeInteger(priorMaximum) ? priorMaximum : 0)),
-        };
-        combatEntity.resources = resources;
+        synchronizeCombatItemResources(combatEntity, transition.itemSystem);
       }
       return true;
     }
@@ -544,24 +723,28 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || activeEncounter) {
         throw new TypeError("NPC gear cannot be changed");
       }
-      const transition = changeNpcMechanicalGear(
-        target,
-        definition,
-        state.combatRuntime.definitions,
-        payload.action === "wear"
-          ? { action: "wear", slot: payload.slot, itemId: payload.itemId }
-          : { action: "stow", slot: payload.slot },
-      );
-      const expectedEquipmentAbilityRefs = "error" in transition
-        ? []
-        : transition.equipmentAbilityRefs;
+      const itemSystem = state.campaignRuntime.itemSystem;
+      if (itemSystem === undefined) {
+        throw new TypeError("NPC item system is unavailable");
+      }
+      const transition = changeNpcItemSystemEquipment(
+            itemSystem,
+            target,
+            definition,
+            payload.action === "wear"
+              ? { action: "wear", slot: payload.slot, entryId: payload.itemId }
+              : { action: "stow", slot: payload.slot },
+          );
+      const expectedEquipmentAbilityRefs = "error" in transition ? [] : transition.equipment.refs;
+      const movedItemId = "error" in transition ? undefined : transition.movedEntryId;
       if ("error" in transition
-        || transition.movedItemId !== payload.itemId
+        || movedItemId !== payload.itemId
         || transition.loadout.armorClass !== payload.armorClass
         || canonicalSha256(expectedEquipmentAbilityRefs) !== canonicalSha256(payload.equipmentAbilityRefs)) {
         throw new TypeError("NPC gear transition does not match its authoritative mechanics");
       }
-      for (const equipmentDefinition of transition.equipmentDefinitions) {
+      const equipmentDefinitions = transition.equipment.definitions;
+      for (const equipmentDefinition of equipmentDefinitions) {
         const abilityRef = String(equipmentDefinition.definitionId);
         const registered = state.combatRuntime.definitions[abilityRef];
         if (!isRegisteredAbilityRecord(registered)
@@ -572,6 +755,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
 
       const content = definition.content as JsonRecord;
       const intrinsicAbilityRefs = content.intrinsicAbilityRefs as string[];
+      state.campaignRuntime.itemSystem = transition.itemSystem;
       target.loadout = structuredClone(transition.loadout);
       combatEntity.armorClass = String(transition.loadout.armorClass);
       combatEntity.equipmentAbilityRefs = [...payload.equipmentAbilityRefs];
@@ -579,7 +763,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         ...intrinsicAbilityRefs,
         ...payload.equipmentAbilityRefs,
       ])].sort();
-      synchronizeCombatItemResources(combatEntity, transition.loadout);
+      synchronizeCombatItemResources(combatEntity, transition.itemSystem);
       return true;
     }
     case "NpcMechanicalItemStateChanged": {
@@ -597,20 +781,33 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || !isNpcMechanicalTemplateDefinition(definition)) {
         throw new TypeError("NPC mechanical item state cannot be changed");
       }
-      const transition = changeNpcMechanicalItemState(
-        target,
-        definition,
-        state.combatRuntime.definitions,
-        payload.itemId,
-        payload.action,
-      );
+      consumeNpcMechanicalItemStateCause(state, event, {
+        actorCharacterId: payload.actorCharacterId,
+        npcCharacterId: payload.characterId,
+        itemId: payload.itemId,
+        action: payload.action,
+        causeFactRef: payload.causeFactRef,
+      });
+      const itemSystem = state.campaignRuntime.itemSystem;
+      if (itemSystem === undefined) {
+        throw new TypeError("NPC item system is unavailable");
+      }
+      const transition = changeNpcItemSystemLifecycle(
+            itemSystem,
+            target,
+            definition,
+            payload.itemId,
+            payload.action,
+          );
+      const equipmentAbilityRefs = "error" in transition ? [] : transition.equipment.refs;
       if ("error" in transition
         || transition.loadout.armorClass !== payload.armorClass
-        || canonicalSha256(transition.equipmentAbilityRefs)
+        || canonicalSha256(equipmentAbilityRefs)
           !== canonicalSha256(payload.equipmentAbilityRefs)) {
         throw new TypeError("NPC mechanical item transition does not match authority state");
       }
-      for (const equipmentDefinition of transition.equipmentDefinitions) {
+      const equipmentDefinitions = transition.equipment.definitions;
+      for (const equipmentDefinition of equipmentDefinitions) {
         const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
         if (!isRegisteredAbilityRecord(registered)
           || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
@@ -618,6 +815,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         }
       }
       const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs as string[];
+      state.campaignRuntime.itemSystem = transition.itemSystem;
       target.loadout = structuredClone(transition.loadout);
       combatEntity.armorClass = String(transition.loadout.armorClass);
       combatEntity.equipmentAbilityRefs = [...payload.equipmentAbilityRefs];
@@ -625,35 +823,17 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         ...intrinsicAbilityRefs,
         ...payload.equipmentAbilityRefs,
       ])].sort();
-      synchronizeCombatItemResources(combatEntity, transition.loadout);
-      return true;
-    }
-    case "CharacterLoadoutSynchronized": {
-      const payload = event.payload as EventPayloadByType["CharacterLoadoutSynchronized"];
-      const target = state.entities[payload.characterId];
-      if (target?.kind !== "player" || target.tenureStatus !== "active") {
-        throw new TypeError("character loadout cannot be synchronized");
-      }
-      target.loadout = structuredClone(payload.loadout);
+      synchronizeCombatItemResources(combatEntity, transition.itemSystem);
       return true;
     }
     case "CharacterMechanicsSynchronized": {
       const payload = event.payload as EventPayloadByType["CharacterMechanicsSynchronized"];
-      const character = state.entities[payload.characterId];
-      if (character?.kind !== "player" || character.tenureStatus !== "active"
-        || payload.combatEntity.id !== payload.characterId
-        || payload.combatEntity.entityId !== payload.characterId) {
-        throw new TypeError("character mechanics cannot be synchronized");
-      }
-      for (const definition of payload.definitions) {
-        const definitionId = String(definition.definitionId);
-        const prior = state.combatRuntime.definitions[definitionId];
-        if (prior !== undefined && canonicalSha256(prior) !== canonicalSha256(definition)) {
-          throw new TypeError("character ability definition conflicts with its pinned revision");
-        }
-        state.combatRuntime.definitions[definitionId] = structuredClone(definition);
-      }
-      state.combatRuntime.entities[payload.characterId] = structuredClone(payload.combatEntity);
+      applyCharacterMechanicsSnapshot(
+        state,
+        payload.characterId,
+        payload.combatEntity,
+        payload.definitions,
+      );
       return true;
     }
     case "CharacterControlRevoked": {

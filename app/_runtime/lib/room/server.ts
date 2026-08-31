@@ -14,9 +14,8 @@ import {
 import { authoritativeKpModelBinding } from "../kp/provider";
 import { createV3ProductionContextPreparer } from "../kp/v3-production-context";
 import type {
+  DueActorPlanDecisionRequest,
   KpNarrationRequest,
-  KpProposalDraft,
-  SemanticActionPlan,
 } from "../kp/authoritative-types";
 import { authoritativeModuleProfile } from "../module/authoritative";
 import type { ProjectionQuery, RuntimeProfileManifest } from "../rules";
@@ -691,33 +690,33 @@ export type AuthoritativePartyAction =
   | { kind: "cancelInvitation" }
   | { kind: "answerInvitation"; accept: boolean }
   | { kind: "leave" }
-  | { kind: "transferLeadership"; targetPrincipalId: string };
+  | { kind: "transferLeadership"; targetPrincipalId: string }
+  | {
+      kind: "proposeMove";
+      destinationSceneId: string;
+      fictionTimeCostMicros: string;
+    }
+  | {
+      kind: "moveIndividually";
+      destinationSceneId: string;
+      fictionTimeCostMicros: string;
+    };
 
-function directPartyActionPlan(
-  goal: string,
-  method: string,
-  mechanicalProposal: SemanticActionPlan,
-): KpProposalDraft {
-  return {
-    kind: "directSuccess",
-    goal,
-    method,
-    publicBasisRefs: [],
-    privateBasisRefs: [],
-    adjudicationPrecedent: null,
-    risk: null,
-    pendingInput: null,
-    dynamicMaterializations: [],
-    npcActions: [],
-    mechanicalProposal,
-    scene: {
-      question: goal,
-      pressure: "",
-      opportunities: [],
-      conclusionCandidate: null,
-    },
-  };
-}
+type AuthenticatedPartyProposal =
+  | { kind: "authenticatedPartyAction"; action: "inviteMember"; targetCharacterId: string }
+  | { kind: "authenticatedPartyAction"; action: "cancelInvitation"; pendingInputId: string }
+  | { kind: "authenticatedPartyAction"; action: "leave" }
+  | {
+      kind: "authenticatedPartyAction";
+      action: "transferLeadership";
+      targetCharacterId: string;
+    }
+  | {
+      kind: "authenticatedPartyAction";
+      action: "proposeMove" | "moveIndividually";
+      destinationSceneId: string;
+      fictionTimeCostMicros: string;
+    };
 
 function projectedPendingInput(
   observation: unknown,
@@ -799,7 +798,7 @@ export async function runAuthoritativePartyAction(input: {
   }
   const profile = roomProfile;
   let action: RoomActionInput;
-  let proposal: KpProposalDraft | undefined;
+  let proposal: AuthenticatedPartyProposal | undefined;
   switch (input.action.kind) {
     case "invite": {
       const targetCharacterId = projectedActiveCharacterId(
@@ -818,15 +817,11 @@ export async function runAuthoritativePartyAction(input: {
         submissionId: input.submissionId,
         text: `我邀请 ${targetCharacterId} 同行。`,
       };
-      proposal = directPartyActionPlan(
-        `邀请 ${targetCharacterId} 同行`,
-        "由当前角色发出明确的同行邀请",
-        {
-          operation: "changeParty",
-          partyAction: "inviteMember",
-          memberRefs: [targetCharacterId],
-        },
-      );
+      proposal = {
+        kind: "authenticatedPartyAction",
+        action: "inviteMember",
+        targetCharacterId,
+      };
       break;
     }
     case "cancelInvitation": {
@@ -847,15 +842,11 @@ export async function runAuthoritativePartyAction(input: {
         submissionId: input.submissionId,
         text: "我取消自己尚未得到回应的同行邀请。",
       };
-      proposal = directPartyActionPlan(
-        "取消尚未得到回应的同行邀请",
-        "撤回由当前角色发出的待决邀请",
-        {
-          operation: "changeParty",
-          partyAction: "cancelInvitation",
-          pendingInputRef: pendingInputId,
-        },
-      );
+      proposal = {
+        kind: "authenticatedPartyAction",
+        action: "cancelInvitation",
+        pendingInputId,
+      };
       break;
     }
     case "answerInvitation": {
@@ -886,11 +877,7 @@ export async function runAuthoritativePartyAction(input: {
         submissionId: input.submissionId,
         text: "我明确离开当前同行队伍，之后独自行动。",
       };
-      proposal = directPartyActionPlan(
-        "离开当前同行队伍",
-        "当前角色明确选择独自行动",
-        { operation: "changeParty", partyAction: "leave" },
-      );
+      proposal = { kind: "authenticatedPartyAction", action: "leave" };
       break;
     case "transferLeadership": {
       const targetCharacterId = projectedActiveCharacterId(
@@ -909,15 +896,39 @@ export async function runAuthoritativePartyAction(input: {
         submissionId: input.submissionId,
         text: `我把同行队伍的组织权交给 ${targetCharacterId}。`,
       };
-      proposal = directPartyActionPlan(
-        `把同行队伍的组织权交给 ${targetCharacterId}`,
-        "当前队长明确转交组织权",
-        {
-          operation: "changeParty",
-          partyAction: "transferLeadership",
-          memberRefs: [targetCharacterId],
-        },
-      );
+      proposal = {
+        kind: "authenticatedPartyAction",
+        action: "transferLeadership",
+        targetCharacterId,
+      };
+      break;
+    }
+    case "proposeMove": {
+      action = {
+        kind: "intent",
+        submissionId: input.submissionId,
+        text: `我组织同行者一起前往 ${input.action.destinationSceneId}。`,
+      };
+      proposal = {
+        kind: "authenticatedPartyAction",
+        action: "proposeMove",
+        destinationSceneId: input.action.destinationSceneId,
+        fictionTimeCostMicros: input.action.fictionTimeCostMicros,
+      };
+      break;
+    }
+    case "moveIndividually": {
+      action = {
+        kind: "intent",
+        submissionId: input.submissionId,
+        text: `我独自前往 ${input.action.destinationSceneId}。`,
+      };
+      proposal = {
+        kind: "authenticatedPartyAction",
+        action: "moveIndividually",
+        destinationSceneId: input.action.destinationSceneId,
+        fictionTimeCostMicros: input.action.fictionTimeCostMicros,
+      };
       break;
     }
   }
@@ -943,6 +954,9 @@ export async function runAuthoritativePartyAction(input: {
       }
       return structuredClone(proposal);
     },
+    decideDueActorPlan: (request) => narration.decideDueActorPlan(
+      request as unknown as DueActorPlanDecisionRequest,
+    ),
     narrate: (request) => narration.narrate(request as unknown as KpNarrationRequest),
   });
 }

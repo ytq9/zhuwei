@@ -21,9 +21,7 @@
 
 ## 2. 模组版本
 
-房间 genesis 固定 `moduleId + moduleVersion + moduleContentHash`。动态事实属于房间事件，不回写静态模组。发布新版模组不会改变旧房间；显式章节升级必须使用获批迁移映射并产生事件，不能只改 D1 版本字段。
-
-同一 Campaign 可以跨章节引用多个兼容模组版本；章节切换协议见 SPEC 0008。故事锚点冲突时，必须在新章节开始前显式选择兼容包、世界内改写或更正，不静默覆盖正史。
+房间 genesis 固定 `moduleId + moduleVersion + moduleContentHash`。动态事实属于房间事件，不回写静态模组。0.4 只注册一个当前模组版本；章节沿用 Campaign 的精确 `moduleRef`，不接受迁移提案，不产生模组迁移事件，也不预留旧版本 Adapter。未来增加第二个模组版本前必须另行裁定现役房间的数据与协议边界。
 
 ## 3. 开放留白与动态实体
 
@@ -82,15 +80,9 @@ KP 可以选择攻击、保留反应、帮助、撤退、投降、谈判、误�
 
 高数值不是非法理由。定义一旦产生证据或机械作用即成为 Canonical Fact，不能按角色 HP、骰面或剧情需要替换。
 
-## 9. Legacy Adapter
+## 9. 0.4 当前模组输入边界
 
-现有封闭 DSL、预写 Interaction、旧 NPC Plan 和 D1 `game_states` 只用于：
-
-- 旧 `ruleset_version` 房间的确定性回放/继续；
-- 新房间 genesis 的 Story Anchor、初始事实或目录输入；
-- 迁移审计和兼容性测试。
-
-Legacy Adapter 必须位于明确版本分派后，不得在新规则中拒绝未登记行动、成为第二活跃状态、直接投影秘密或绕过 KP 标准循环。旧房间不会用新编译器重算；若无确定迁移映射则继续旧版本直至结束。
+当前静态模组源码只在构建当前唯一 `ModuleBible` 时提供 Story Anchor、初始事实和目录输入；这些源码字段不是运行时 Adapter、行动白名单或第二权威。0.4 以前的房间与模组版本已退役，生产树不保留其解释、继续、迁移或 fallback 路径。
 
 ## 10. 故事推动与收束接缝
 
@@ -100,7 +92,7 @@ NPC 投降/撤退、势力目标达成/失败和冲突停止可以产生 `Ending
 
 ## 11. 主要事件
 
-- `ModuleBound` / `ModuleVersionMigrated`
+- `ChapterStarted`（携带当前精确 `moduleRef`）
 - `DefinitionRegistered`
 - `DynamicEntityMaterialized` / `DynamicLocationMaterialized`
 - `NpcKnowledgeAcquired` / `NpcInferenceFormed`
@@ -117,22 +109,22 @@ NPC 投降/撤退、势力目标达成/失败和冲突停止可以产生 `Ending
 4. NPC 不知道玩家秘密计划时不作针对性反制；世界内获知后才可反应。
 5. NPC 模型失败或玩家断线不会自动攻击、pass、结束回合或推进时间。
 6. 到期势力计划先提交并改变情境；原玩家意图需要时重新澄清。
-7. 旧 DSL 房间仍由 Legacy Adapter 回放；新房间接受未登记合理行动且不写 D1 活跃状态。
+7. 0.4 以前的房间、模组版本和 DSL 解释路径稳定拒绝；当前房间接受未登记合理行动且不写 D1 活跃状态。
 8. NPC 投降后玩家仍决定是否停止追击，系统不替玩家接受。
 
 ## 13. 实现映射
 
-- 模组 schema/Adapter：`app/_runtime/lib/module/`
+- 模组 schema/当前 Registry：`app/_runtime/lib/module/`
 - 动态定义与编译：`app/_runtime/lib/rules/v2/model.ts`、`app/_runtime/lib/rules/v2/actions.ts`、`app/_runtime/lib/rules/v2/events.ts`
 - NPC/势力 Implementation：`app/_runtime/lib/rules/v2/multiplayer-model.ts`、`app/_runtime/lib/rules/v2/multiplayer-actions.ts`、`app/_runtime/lib/rules/v2/multiplayer-events.ts`
-- KP Adapter：`app/_runtime/lib/rules/ai-adapter.ts`
+- KP 私有 Form/Context：`app/_runtime/lib/kp/`
 - Room Action：`app/_runtime/lib/room/action.ts`
-- 验收：`tests/module-npc-v2.test.mjs`、`tests/kp-multiturn-eval.test.ts`
+- 验收：`tests/module-npc-v2.test.mjs`、当前 ActorPlan/NPC runner；20+ 当前多轮纵切待重建
 
 ## 14. 交叉审查
 
 - SPEC 0001：故事圣经、开放留白、动态创造、NPC 有限知识和非主线推动完整保留。
 - 权限：玩家只控制玩家角色；KP 只为 NPC/世界提案，机械仍由 Rules Module。
 - 秘密：KP/NPC Viewer 分离，计划、真相和未公开定义不进入客户端或日志。
-- 版本：模组、动态定义、编译器与 Legacy Adapter 显式固定。
+- 版本：当前唯一模组、动态定义与编译器显式固定；旧版本和 Adapter 不进入 0.4 production tree。
 - 第二权威：DSL、Prompt、D1 flags、自动战术函数和目录不能成为独立裁决或状态路径。

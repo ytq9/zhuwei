@@ -12,20 +12,20 @@ import type { CanonicalProfileDocument, ProfileRef } from "./types";
  * program through the historical ActionPlan v1 adapter.
  */
 export const CAUSAL_ACTION_INTERPRETER_PROFILE = {
-  profileId: "causal-action-interpreter-2014-v3",
-  profileHash: "sha256:4d291e26edc1ed7b1eeebe191999667295ea06c27a1677b4f7f0a96a459f9dee",
+  profileId: "causal-action-interpreter-2014-v4",
+  profileHash: "sha256:e9ec9883c0e9028ac98d1c19a0c0734420540fde9e5de137697cf5ba72bf3155",
 } as const satisfies ProfileRef;
 
 export const CAUSAL_ACTION_INTERPRETER_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "causalActionInterpreter",
   profileId: CAUSAL_ACTION_INTERPRETER_PROFILE.profileId,
-  semanticVersion: "3.0.0",
+  semanticVersion: "4.0.0",
   normativePayload: {
     conformanceVersion: "1",
     rulesBasis: "srd5.1-2014-plus-versioned-product-ruling",
-    inputKind: "resolveCompoundActionPlan",
-    actionPlanVersion: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
+    inputKind: "executeCausalActionProgram",
+    actionLanguageRef: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
     languageRef: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
     languageHash: CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash,
     formCatalogRef: CAUSAL_ACTION_LANGUAGE_PROFILE.formCatalogRef,
@@ -40,7 +40,7 @@ export const CAUSAL_ACTION_INTERPRETER_PROFILE_DOCUMENT: CanonicalProfileDocumen
     settlement: "all-check-results-required-and-atomically-applied-in-node-order",
     scope: "every-event-carries-state-bound-read-write-create-proof",
     replay: "typed-events-and-frozen-program-plan-only-no-model-or-reroll",
-    legacyIsolation: "authoritative-kp-action-plan-v1-remains-byte-for-byte-separate",
+    retiredInputs: "pre-0.4-action-plan-and-causal-language-references-reject-without-adapter",
   },
 };
 

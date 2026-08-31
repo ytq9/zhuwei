@@ -1,9 +1,5 @@
 import {
-  CURRENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
-  LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
   profileRegistryMatchesCanonicalDocuments,
 } from "./manifests";
 import type {
@@ -130,6 +126,10 @@ function manifestShape(value: unknown): RuntimeProfileManifest | undefined {
   return value as RuntimeProfileManifest;
 }
 
+export function isRuntimeProfileManifest(value: unknown): value is RuntimeProfileManifest {
+  return manifestShape(value) !== undefined;
+}
+
 function refsEqual(left: ProfileRef, right: ProfileRef): boolean {
   return left.profileId === right.profileId && left.profileHash === right.profileHash;
 }
@@ -222,27 +222,11 @@ export function createRuntimeProfileRegistry(config: {
 export const PRODUCTION_RUNTIME_PROFILE_REGISTRY = createRuntimeProfileRegistry({
   registrations: [
     {
-      manifest: CURRENT_RUNTIME_PROFILE_MANIFEST,
-      interpreterKind: "authoritative-v2",
-    },
-    {
-      manifest: LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-      interpreterKind: "authoritative-v2",
-    },
-    {
-      manifest: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-      interpreterKind: "authoritative-v2",
-    },
-    {
-      manifest: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
-      interpreterKind: "authoritative-v2",
-    },
-    {
       manifest: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       interpreterKind: "authoritative-v2",
     },
   ],
-  defaultManifest: CURRENT_RUNTIME_PROFILE_MANIFEST.manifest,
+  defaultManifest: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest,
   conformanceCheck: profileRegistryMatchesCanonicalDocuments,
 });
 

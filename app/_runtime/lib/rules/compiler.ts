@@ -4,7 +4,7 @@ import type {
   WorldDefinition,
   WorldPredicate,
 } from "./model";
-import { RULESET_VERSION } from "./ruleset";
+import { AUTHORITATIVE_RULESET_VERSION } from "./ruleset";
 
 export type WorldCompileContext = {
   sceneIds: string[];
@@ -32,12 +32,12 @@ export function worldDefinitionErrors(
   const clues = new Set(context.clueIds);
   const npcs = new Set(context.npcIds);
   const portals = new Map(world.portals.map((portal) => [portal.id, portal]));
-  const artifacts = new Map(world.artifacts.map((artifact) => [artifact.id, artifact]));
+  const items = new Map(world.items.map((item) => [item.id, item]));
   const plans = new Map(world.npcPlans.map((plan) => [plan.id, plan]));
   const revealedClues = new Set<string>();
 
-  if (world.rulesetVersion !== RULESET_VERSION) {
-    errors.push(`rulesetVersion 必须为 ${RULESET_VERSION}`);
+  if (world.rulesetVersion !== AUTHORITATIVE_RULESET_VERSION) {
+    errors.push(`rulesetVersion 必须为 ${AUTHORITATIVE_RULESET_VERSION}`);
   }
   if (!locations.has(world.initialSceneId)) {
     errors.push(`初始地点不存在：${world.initialSceneId}`);
@@ -55,7 +55,7 @@ export function worldDefinitionErrors(
     }
   };
   unique("Portal", world.portals.map((value) => value.id));
-  unique("Artifact", world.artifacts.map((value) => value.id));
+  unique("Item", world.items.map((value) => value.id));
   unique("Interaction", world.interactions.map((value) => value.id));
   unique("NPC Plan", world.npcPlans.map((value) => value.id));
   unique("ScheduledEvent", world.scheduledEvents.map((value) => value.id));
@@ -66,12 +66,12 @@ export function worldDefinitionErrors(
     if (!locations.has(portal.to)) errors.push(`${portal.id}: to 不是地点 ${portal.to}`);
     if (portal.from === portal.to) errors.push(`${portal.id}: 通道两端不能相同`);
   }
-  for (const artifact of world.artifacts) {
-    if (!locations.has(artifact.initialSceneId)) {
-      errors.push(`${artifact.id}: 初始地点不存在 ${artifact.initialSceneId}`);
+  for (const item of world.items) {
+    if (!locations.has(item.initialSceneId)) {
+      errors.push(`${item.id}: 初始地点不存在 ${item.initialSceneId}`);
     }
-    if (artifact.initialHolderId && !npcs.has(artifact.initialHolderId)) {
-      errors.push(`${artifact.id}: 初始持有 NPC 不存在 ${artifact.initialHolderId}`);
+    if (item.initialHolderId && !npcs.has(item.initialHolderId)) {
+      errors.push(`${item.id}: 初始持有 NPC 不存在 ${item.initialHolderId}`);
     }
   }
   for (const [npcId, knowledge] of Object.entries(world.npcInitialKnowledge ?? {})) {
@@ -104,12 +104,12 @@ export function worldDefinitionErrors(
       }
     }
     if (
-      (predicate.kind === "artifactAt" ||
-        predicate.kind === "artifactHeldByActor" ||
-        predicate.kind === "artifactHeldByEntity") &&
-      !artifacts.has(predicate.artifactId)
+      (predicate.kind === "itemAt" ||
+        predicate.kind === "itemHeldByActor" ||
+        predicate.kind === "itemHeldByEntity") &&
+      !items.has(predicate.itemId)
     ) {
-      errors.push(`${owner}: predicate 物件不存在 ${predicate.artifactId}`);
+      errors.push(`${owner}: predicate 物品不存在 ${predicate.itemId}`);
     }
     if (predicate.kind === "portalState" && !portals.has(predicate.portalId)) {
       errors.push(`${owner}: predicate 通道不存在 ${predicate.portalId}`);
@@ -122,7 +122,7 @@ export function worldDefinitionErrors(
     const effect = effectRefs(raw);
     if (
       ![
-        "transferArtifact",
+        "transferItem",
         "moveActor",
         "setPortalState",
         "revealClue",
@@ -135,8 +135,8 @@ export function worldDefinitionErrors(
       errors.push(`${owner}: 不允许的 5e effect ${(effect as { kind?: unknown }).kind ?? "unknown"}`);
       return;
     }
-    if (effect.kind === "transferArtifact" && !artifacts.has(effect.artifactId)) {
-      errors.push(`${owner}: effect 物件不存在 ${effect.artifactId}`);
+    if (effect.kind === "transferItem" && !items.has(effect.itemId)) {
+      errors.push(`${owner}: effect 物品不存在 ${effect.itemId}`);
     }
     if (effect.kind === "setPortalState" && !portals.has(effect.portalId)) {
       errors.push(`${owner}: effect 通道不存在 ${effect.portalId}`);
@@ -185,16 +185,16 @@ export function worldDefinitionErrors(
       }
     }
     for (const effect of interaction.success) {
-      if (effect.kind === "transferArtifact") {
+      if (effect.kind === "transferItem") {
         const guarded = (interaction.prerequisites ?? []).some((predicate) => {
           const current = predicate.kind === "not" ? predicate.predicate : predicate;
           return (
-            (current.kind === "artifactAt" || current.kind === "artifactHeldByEntity") &&
-            current.artifactId === effect.artifactId
+            (current.kind === "itemAt" || current.kind === "itemHeldByEntity") &&
+            current.itemId === effect.itemId
           );
         });
         if (!guarded) {
-          errors.push(`${interaction.id}: 唯一物品 ${effect.artifactId} 的转移缺少 artifactAt 生命周期前置条件`);
+          errors.push(`${interaction.id}: 唯一物品 ${effect.itemId} 的转移缺少 itemAt 生命周期前置条件`);
         }
       }
     }
@@ -266,8 +266,8 @@ export function worldDefinitionErrors(
     if (predicate.kind === "portalState" && !portals.has(predicate.portalId)) {
       errors.push(`${owner}: ending 通道不存在 ${predicate.portalId}`);
     }
-    if (predicate.kind === "artifactStatus" && !artifacts.has(predicate.artifactId)) {
-      errors.push(`${owner}: ending 物件不存在 ${predicate.artifactId}`);
+    if (predicate.kind === "itemStatus" && !items.has(predicate.itemId)) {
+      errors.push(`${owner}: ending 物品不存在 ${predicate.itemId}`);
     }
     if (predicate.kind === "entityAt") {
       if (!npcs.has(predicate.entityId)) {

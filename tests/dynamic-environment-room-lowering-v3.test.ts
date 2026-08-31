@@ -7,10 +7,7 @@ import {
   lowerCausalActionProgram,
 } from "../app/_runtime/lib/kp/causal-action-program";
 import { replay } from "../app/_runtime/lib/rules";
-import {
-  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
-} from "../app/_runtime/lib/rules/profiles/manifests";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -299,8 +296,8 @@ describe("V3 Room dynamic environment production lowering", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId: ROOM_ID,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },
@@ -695,8 +692,8 @@ describe("V3 Room dynamic environment production lowering", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [{ principalId: ALICE.principal.id, role: "host" }],
       characters: [character(ALICE_ID, ALICE.principal.id, "阿莱莎")],
     }), "state-only environment Room initialization");
@@ -840,23 +837,23 @@ describe("V3 Room dynamic environment production lowering", () => {
       });
   });
 
-  it("keeps the exact environment-v3 noncombat action-grant replay semantics", async () => {
-    const roomId = `${ROOM_ID}:historical-v3-action-grant`;
+  it("keeps the exact product 0.4 noncombat action-grant replay semantics", async () => {
+    const roomId = `${ROOM_ID}:current-action-grant`;
     const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [{ principalId: ALICE.principal.id, role: "host" }],
       characters: [character(ALICE_ID, ALICE.principal.id, "阿莱莎")],
-    }), "historical environment-v3 Room initialization");
+    }), "current environment Room initialization");
     expect(initialized.created, JSON.stringify(initialized)).toBe(true);
 
     const firstPrepared = await prepareIntent(
       authority,
       ALICE,
-      "submission:dynamic-environment:historical-v3-first",
+      "submission:dynamic-environment:current-first",
       "我翻转墙边的折叠木格，让它顺着地槽展开。",
     );
     await expect(authority.commit(
@@ -868,7 +865,7 @@ describe("V3 Room dynamic environment production lowering", () => {
     const secondPrepared = await prepareIntent(
       authority,
       ALICE,
-      "submission:dynamic-environment:historical-v3-second",
+      "submission:dynamic-environment:current-second",
       "我再抽紧墙角的绳索，让另一张绳结网升起。",
     );
     await expect(authority.commit(
@@ -884,19 +881,19 @@ describe("V3 Room dynamic environment production lowering", () => {
     });
 
     const exported = record(await authority.exportAuthoritativeArchive(
-      record(initialized.serviceCapabilities, "historical v3 capabilities").archiveExport,
-    ), "historical v3 archive export");
-    const archive = record(exported.archive, "historical v3 archive");
+      record(initialized.serviceCapabilities, "current capabilities").archiveExport,
+    ), "current archive export");
+    const archive = record(exported.archive, "current archive");
     const replayed = record(replay(
       archive.signedGenesis as never,
       archive.events as never,
-    ), "historical v3 replay");
+    ), "current replay");
     expect(replayed.kind, JSON.stringify(replayed)).toBe("replayed");
-    const replayedState = record(replayed.state, "historical v3 state");
-    const replayedCombat = record(replayedState.combatRuntime, "historical v3 combat");
+    const replayedState = record(replayed.state, "current state");
+    const replayedCombat = record(replayedState.combatRuntime, "current combat");
     expect(record(
-      record(replayedCombat.entities, "historical v3 entities")[ALICE_ID],
-      "historical v3 actor",
+      record(replayedCombat.entities, "current entities")[ALICE_ID],
+      "current actor",
     )).toMatchObject({ turn: { action: "0" } });
   });
 
@@ -906,8 +903,8 @@ describe("V3 Room dynamic environment production lowering", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },
@@ -1166,8 +1163,8 @@ describe("V3 Room dynamic environment production lowering", () => {
       const initialized = record(await authority.initializeAuthoritative({
         roomId,
         moduleId: "black-oak-will",
-        moduleVersion: "tactical-map-v1",
-        runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+        moduleVersion: "social-resolution-v1",
+        runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
         members: [{ principalId: ALICE.principal.id, role: "host" }],
         characters: [character(ALICE_ID, ALICE.principal.id, `阿莱莎-${level}`, level)],
       }), `level ${level} environment Room initialization`);
@@ -1235,8 +1232,8 @@ describe("V3 Room dynamic environment production lowering", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [{ principalId: ALICE.principal.id, role: "host" }],
       characters: [character(ALICE_ID, ALICE.principal.id, "阿莱莎")],
     }), "implicit durability-transition Room initialization");

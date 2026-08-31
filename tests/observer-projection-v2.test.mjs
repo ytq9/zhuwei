@@ -32,6 +32,48 @@ function profileRef(profileId, digit) {
   });
 }
 
+function tacticalGeometry(sceneId) {
+  return Object.freeze({
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: Object.freeze({
+      kind: "polygon",
+      points: Object.freeze([
+        Object.freeze({ x: "0", y: "0" }),
+        Object.freeze({ x: "900", y: "0" }),
+        Object.freeze({ x: "900", y: "600" }),
+        Object.freeze({ x: "0", y: "600" }),
+      ]),
+    }),
+    spawnPoints: Object.freeze([
+      Object.freeze({ x: "120", y: "120", elevation: "0" }),
+      Object.freeze({ x: "300", y: "120", elevation: "0" }),
+      Object.freeze({ x: "480", y: "120", elevation: "0" }),
+    ]),
+    obstacles: Object.freeze([Object.freeze({
+      featureId: `feature:observer-projection:${sceneId}:wall`,
+      kind: "barrier",
+      label: "档案馆矮墙",
+      state: "intact",
+      polygon: Object.freeze([
+        Object.freeze({ x: "360", y: "420" }),
+        Object.freeze({ x: "420", y: "420" }),
+        Object.freeze({ x: "420", y: "480" }),
+        Object.freeze({ x: "360", y: "480" }),
+      ]),
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    })]),
+    clearanceZones: Object.freeze([]),
+  });
+}
+
 // Room creation also goes through the public Rules responsibility seam. The
 // fixture deliberately supplies no Profile id/hash, state hash, event, die, or
 // mutable WorldState; Rules selects the deployed authoritative manifest and
@@ -45,8 +87,16 @@ const INITIALIZE_WORLD = Object.freeze({
   activeBranchId: "branch:main",
   fictionInstantMicros: "0",
   scenes: Object.freeze([
-    Object.freeze({ id: ARCHIVE_SCENE_ID, name: "旧档案馆" }),
-    Object.freeze({ id: COURTYARD_SCENE_ID, name: "庭院" }),
+    Object.freeze({
+      id: ARCHIVE_SCENE_ID,
+      name: "旧档案馆",
+      geometry: tacticalGeometry(ARCHIVE_SCENE_ID),
+    }),
+    Object.freeze({
+      id: COURTYARD_SCENE_ID,
+      name: "庭院",
+      geometry: tacticalGeometry(COURTYARD_SCENE_ID),
+    }),
   ]),
   principals: Object.freeze([
     Object.freeze({ id: ALICE_PRINCIPAL_ID, sessionVersion: 1 }),

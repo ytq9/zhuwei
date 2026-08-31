@@ -8,14 +8,22 @@ import { canonicalSha256 } from "../profiles/canonical";
 import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
 import {
   allowedSlots,
-  itemById,
-  stowSlot,
-  wearItem,
-  type GearItem,
-  type GearItemResolver,
+  ITEMS,
   type GearSlot,
 } from "../../dnd/gear";
-import { compileEquippedWeaponAbility } from "./character-abilities";
+import {
+  isItemDefinitionV1,
+  isItemSystemStateV1,
+  itemDefinitionFromStandardGear,
+  itemEntryResourceId,
+  type ItemDefinitionV1,
+  type ItemSystemStateV1,
+} from "./items";
+import { itemEntryGearResolver } from "./item-transitions";
+import {
+  deriveNpcItemSystemLoadout,
+  npcItemSystemEquipmentMechanics,
+} from "./npc-item-system";
 import {
   hasExactKeys,
   hasOnlyKeys,
@@ -25,20 +33,11 @@ import {
 
 export const NPC_MECHANICAL_TEMPLATE_KIND = "npcMechanicalTemplate" as const;
 export const NPC_MECHANICAL_TEMPLATE_SCHEMA = "zhuwei.npc-mechanical-template/v1" as const;
-export const NPC_MECHANICAL_ITEM_KIND = "npcMechanicalItem" as const;
-export const NPC_MECHANICAL_ITEM_SCHEMA = "zhuwei.npc-mechanical-item/v1" as const;
 
 const GEAR_SLOTS = [
   "head", "neck", "cloak", "armor", "hands", "belt", "boots",
   "ring1", "ring2", "main", "off", "ammo",
 ] as const satisfies readonly GearSlot[];
-const GEAR_WEAR = [
-  ...GEAR_SLOTS.filter((slot) => !["ring1", "ring2", "main"].includes(slot)),
-  "weapon",
-  "ring",
-  "pack",
-] as const;
-
 const ABILITIES = ["str", "dex", "con", "int", "wis", "cha"] as const;
 const DAMAGE_TYPES = [
   "acid",
@@ -143,95 +142,6 @@ function canonicalArmorClassModel(value: unknown): value is JsonRecord {
     && (value.shieldBonus === "0" || value.shieldBonus === "2");
 }
 
-function canonicalNpcMechanicalItemArmor(value: unknown): boolean {
-  if (value === null) return true;
-  return isRecord(value)
-    && hasExactKeys(value, ["acBase", "acDexCap", "kind"])
-    && ["light", "medium", "heavy", "shield"].includes(String(value.kind))
-    && (value.kind === "shield"
-      ? value.acBase === null && value.acDexCap === null
-      : canonicalIntegerString(value.acBase, 1, 30)
-        && canonicalIntegerString(value.acDexCap, 0, 99));
-}
-
-export function canonicalNpcMechanicalItemWeaponBlueprint(value: unknown): boolean {
-  if (value === null) return true;
-  if (!isRecord(value)
-    || !hasExactKeys(value, [
-      "attackAbility",
-      "ammoRef",
-      "damageDice",
-      "damageType",
-      "rangeLongInches",
-      "rangeNormalInches",
-      "reachInches",
-      "requiresSight",
-    ])
-    || !["str", "dex", "finesse"].includes(String(value.attackAbility))
-    || !(value.ammoRef === null || isNonEmptyString(value.ammoRef))
-    || typeof value.damageDice !== "string"
-    || !/^[1-9][0-9]{0,2}d(?:4|6|8|10|12|20)$/u.test(value.damageDice)
-    || !(DAMAGE_TYPES as readonly unknown[]).includes(value.damageType)
-    || typeof value.requiresSight !== "boolean") return false;
-  const melee = canonicalIntegerString(value.reachInches, 1, 100_000)
-    && value.rangeNormalInches === null
-    && value.rangeLongInches === null;
-  const ranged = value.reachInches === null
-    && canonicalIntegerString(value.rangeNormalInches, 1, 1_000_000)
-    && canonicalIntegerString(value.rangeLongInches, 1, 1_000_000)
-    && Number(value.rangeLongInches) >= Number(value.rangeNormalInches);
-  if (melee) return value.ammoRef === null;
-  return ranged && (value.ammoRef === null || itemById(String(value.ammoRef))?.wear === "ammo");
-}
-
-export function isNpcMechanicalItemDefinition(value: unknown): value is JsonRecord {
-  if (!isRecord(value)
-    || !hasExactKeys(value, [
-      "causalBasisRefs",
-      "content",
-      "definitionId",
-      "definitionKind",
-      "revision",
-      "rulesBasis",
-      "visibilityPolicyRef",
-    ])
-    || !isNonEmptyString(value.definitionId)
-    || value.definitionKind !== NPC_MECHANICAL_ITEM_KIND
-    || !canonicalIntegerString(value.revision, 1, 1_000_000)
-    || !["srd5.1-2014", "zhuwei-product-ruling"].includes(String(value.rulesBasis))
-    || !canonicalStringSet(value.causalBasisRefs, 40)
-    || !isNonEmptyString(value.visibilityPolicyRef)
-    || !isRecord(value.content)) return false;
-  const content = value.content;
-  if (!hasExactKeys(content, [
-    "abilityRefs",
-    "armor",
-    "label",
-    "schema",
-    "twoHanded",
-    "wear",
-    "weapon",
-  ])
-    || content.schema !== NPC_MECHANICAL_ITEM_SCHEMA
-    || !isNonEmptyString(content.label)
-    || !(GEAR_WEAR as readonly unknown[]).includes(content.wear)
-    || typeof content.twoHanded !== "boolean"
-    || (content.twoHanded && content.wear !== "weapon")
-    || !canonicalNpcMechanicalItemArmor(content.armor)
-    || !canonicalNpcMechanicalItemWeaponBlueprint(content.weapon)
-    || !canonicalStringSet(content.abilityRefs, 12)) return false;
-  // The current inventory authority models ammunition as a stack in the
-  // backpack plus an `ammo` selector.  Dynamic mechanical items are
-  // non-stackable instances, so accepting one as ammunition would give the
-  // same instance two ownership locations.
-  if (content.wear === "ammo") return false;
-  if (content.weapon !== null && content.wear !== "weapon") return false;
-  if (content.armor === null) return true;
-  return (content.armor as JsonRecord).kind === "shield"
-    ? content.wear === "off"
-    : content.wear === "armor";
-}
-
 function canonicalInitialLoadout(value: unknown): value is JsonRecord {
   if (!isRecord(value)
     || !hasExactKeys(value, ["entries"])
@@ -250,7 +160,7 @@ function canonicalInitialLoadout(value: unknown): value is JsonRecord {
       || Number(entry.quantity) > 1_000_000
       || !isRecord(entry.source)
       || !hasExactKeys(entry.source, ["kind", "ref"])
-      || !["standardGear", "npcMechanicalItemDefinition"].includes(String(entry.source.kind))
+      || !["standardGear", "itemDefinition"].includes(String(entry.source.kind))
       || !isNonEmptyString(entry.source.ref)) return false;
     entryIds.add(entry.entryId);
     return true;
@@ -392,7 +302,8 @@ export function npcCoreMechanicsCompatible(
   const coreMaximums = character.resourceMaximums ?? {};
   if (isRecord(entity.resources)) {
     for (const [resourceId, pool] of Object.entries(entity.resources)) {
-      if (resourceId.startsWith("item:")) continue;
+      if (resourceId.startsWith("item:")) return false;
+      if (resourceId.startsWith("item-entry:")) continue;
       if (!isRecord(pool)) return false;
       if (coreResources[resourceId] !== undefined
         && coreResources[resourceId] !== Number(pool.current)) return false;
@@ -415,9 +326,10 @@ export function npcCoreCombatRuntimeMatches(
   const coreResources = character.resources ?? {};
   const coreMaximums = character.resourceMaximums ?? {};
   return Object.entries(entity.resources).every(([resourceId, pool]) =>
-    resourceId.startsWith("item:") || (isRecord(pool)
-      && coreResources[resourceId] === Number(pool.current)
-      && coreMaximums[resourceId] === Number(pool.maximum)));
+    !resourceId.startsWith("item:")
+      && (resourceId.startsWith("item-entry:") || (isRecord(pool)
+        && coreResources[resourceId] === Number(pool.current)
+        && coreMaximums[resourceId] === Number(pool.maximum))));
 }
 
 export function npcMechanicalDefinitionClosureValid(
@@ -439,169 +351,92 @@ export function npcMechanicalDefinitionClosureValid(
   if (!(content.intrinsicAbilityRefs as string[]).every(abilityValid)
     || !itemDefinitionRefs.every((definitionRef) => {
       const item = catalog[definitionRef];
-      return isNpcMechanicalItemDefinition(item)
-        && (item.content as JsonRecord).abilityRefs instanceof Array
-        && ((item.content as JsonRecord).abilityRefs as string[]).every(abilityValid);
+      if (!isItemDefinitionV1(item) || item.definitionId !== definitionRef) return false;
+      const abilityRefs = [
+        ...item.content.equippedAbilityRefs,
+        ...(item.content.use === null ? [] : [item.content.use.abilityRef]),
+      ];
+      const ammunitionDefinitionRef = item.content.equipment?.weapon?.ammunitionDefinitionRef;
+      const ammunitionDefinition = ammunitionDefinitionRef === null
+        || ammunitionDefinitionRef === undefined
+        ? undefined
+        : itemDefinitionByRef(ammunitionDefinitionRef, catalog);
+      return abilityRefs.every(abilityValid)
+        && (ammunitionDefinitionRef === null
+          || ammunitionDefinitionRef === undefined
+          || ammunitionDefinition?.content.category === "ammunition");
     })) return false;
   const initialLoadout = content.initialLoadout as JsonRecord;
-  const equipped = new Map<string, GearItem>();
+  const equipped = new Map<GearSlot, ItemDefinitionV1>();
   const entriesValid = (initialLoadout.entries as JsonRecord[]).every((entry) => {
     const source = entry.source as JsonRecord;
-    const gear = source.kind === "standardGear"
-      ? itemById(String(source.ref))
-      : npcMechanicalItemGear(catalog[String(source.ref)], String(source.ref));
-    if (gear === undefined
-      || (source.kind === "npcMechanicalItemDefinition"
-        && !itemDefinitionRefs.includes(String(source.ref)))) return false;
-    const stackableStandard = source.kind === "standardGear"
-      && (gear.wear === "pack" || gear.wear === "ammo");
-    if ((!stackableStandard && entry.quantity !== 1)
-      || (source.kind === "npcMechanicalItemDefinition" && entry.quantity !== 1)) return false;
+    const item = source.kind === "standardGear"
+      ? standardItemDefinition(String(source.ref))
+      : itemDefinitionRefs.includes(String(source.ref))
+        ? catalog[String(source.ref)]
+        : undefined;
+    if (!isItemDefinitionV1(item)
+      || (!item.content.stackable && entry.quantity !== 1)) return false;
     if (entry.equippedSlot === null) return true;
     const slot = String(entry.equippedSlot) as GearSlot;
-    if (gear.wear === "ammo") {
-      if (slot !== "ammo") return false;
-      equipped.set(slot, gear);
-      return true;
-    }
-    if (entry.quantity !== 1) return false;
-    if (equipped.has(slot) || !allowedSlots(gear).includes(slot)) return false;
-    equipped.set(slot, gear);
+    if (item.content.equipment === null
+      || !item.content.equipment.allowedSlots.includes(slot)
+      || equipped.has(slot)) return false;
+    equipped.set(slot, item);
     return true;
   });
   return entriesValid
-    && !(equipped.get("main")?.twoHanded === true && equipped.has("off"));
+    && !(equipped.get("main")?.content.equipment?.twoHanded === true
+      && equipped.has("off"));
 }
 
-export function npcMechanicalItemDefinitionClosureValid(
+function standardItemDefinition(definitionRef: string): ItemDefinitionV1 | undefined {
+  for (const item of ITEMS) {
+    const definition = itemDefinitionFromStandardGear(item);
+    if (definition.definitionId === definitionRef || item.id === definitionRef) return definition;
+  }
+  return undefined;
+}
+
+function itemDefinitionByRef(
+  definitionRef: string,
+  catalog: Record<string, JsonRecord>,
+): ItemDefinitionV1 | undefined {
+  const definition = catalog[definitionRef];
+  return isItemDefinitionV1(definition) && definition.definitionId === definitionRef
+    ? definition
+    : standardItemDefinition(definitionRef);
+}
+
+export function itemDefinitionMechanicsClosureValid(
   definition: unknown,
   catalog: Record<string, JsonRecord>,
 ): boolean {
-  if (!isNpcMechanicalItemDefinition(definition)) return false;
-  return ((definition.content as JsonRecord).abilityRefs as string[]).every((abilityRef) =>
-    isRegisteredAbilityRecord(catalog[abilityRef]));
-}
-
-function npcMechanicalRuntimeItemId(
-  entityId: string,
-  source: "initial" | "established" | "transfer",
-  identity: JsonRecord,
-): string {
-  return `npc-item:${entityId}:${source}:${canonicalSha256(identity).slice("sha256:".length)}`;
-}
-
-export function transferredNpcMechanicalItemId(
-  toCharacterId: string,
-  sourceItemId: string,
-  rootActionId: string,
-): string {
-  return npcMechanicalRuntimeItemId(toCharacterId, "transfer", {
-    rootActionId,
-    sourceItemId,
-    toCharacterId,
-  });
-}
-
-function npcMechanicalItemGear(
-  definition: unknown,
-  itemId: string,
-): GearItem | undefined {
-  if (!isNpcMechanicalItemDefinition(definition)) return undefined;
-  const content = definition.content as JsonRecord;
-  const armor = isRecord(content.armor) ? content.armor : undefined;
-  return {
-    id: itemId,
-    name: String(content.label),
-    wear: content.wear as GearItem["wear"],
-    twoHanded: content.twoHanded === true,
-    ...(armor === undefined ? {} : {
-      armor: armor.kind as GearItem["armor"],
-      ...(armor.acBase === null ? {} : { acBase: Number(armor.acBase) }),
-      ...(armor.acDexCap === null ? {} : { acDexCap: Number(armor.acDexCap) }),
-    }),
-    text: "Frozen NPC mechanical item.",
-  };
-}
-
-function abilityModifier(score: number): number {
-  return Math.floor((score - 10) / 2);
-}
-
-function signed(value: number): string {
-  return value === 0 ? "" : value > 0 ? `+${value}` : String(value);
-}
-
-function compileNpcMechanicalItemWeaponAbility(
-  character: CharacterRecord,
-  definition: JsonRecord,
-): JsonRecord | undefined {
-  if (!isNpcMechanicalItemDefinition(definition)) return undefined;
-  const content = definition.content as JsonRecord;
-  if (!isRecord(content.weapon)) return undefined;
-  const weapon = content.weapon;
-  const strength = abilityModifier(character.abilityScores?.str ?? 10);
-  const dexterity = abilityModifier(character.abilityScores?.dex ?? 10);
-  const ability = weapon.attackAbility === "finesse"
-    ? (dexterity > strength ? "dex" : "str")
-    : String(weapon.attackAbility) as "str" | "dex";
-  const modifier = ability === "dex" ? dexterity : strength;
-  return {
-    definitionId: `ability:${character.id}:npc-item:${String(definition.definitionId)}:modifier:${modifier}:proficiency:${character.proficiencyBonus ?? 0}`,
-    revision: "1",
-    rulesBasis: "srd5.1-2014",
-    mechanicalKey: `npc-item-weapon:${String(definition.definitionId)}`,
-    activation: { kind: "attack", actionGrant: "attack" },
-    target: weapon.reachInches === null
-      ? {
-          kind: "creatureOrEnvironmentFeature",
-          count: "1",
-          rangeNormalInches: weapon.rangeNormalInches,
-          rangeLongInches: weapon.rangeLongInches,
-          requiresSight: weapon.requiresSight,
-        }
-      : {
-          kind: "creatureOrEnvironmentFeature",
-          count: "1",
-          reachInches: weapon.reachInches,
-          requiresSight: weapon.requiresSight,
-        },
-    attack: { ability, proficiency: true },
-    ...(weapon.ammoRef === null ? {} : {
-      costs: [{ kind: "item", resourceId: `item:${String(weapon.ammoRef)}`, amount: "1" }],
-    }),
-    damage: [{
-      type: weapon.damageType,
-      formula: `${String(weapon.damageDice)}${signed(modifier)}`,
-    }],
-  };
-}
-
-export function npcMechanicalItemResolver(
-  loadout: CharacterLoadoutRecord | undefined,
-  catalog: Record<string, JsonRecord>,
-): GearItemResolver {
-  return (itemId) => {
-    if (!isNonEmptyString(itemId)) return undefined;
-    const instance = loadout?.mechanicalItems?.[itemId];
-    if (instance === undefined) return itemById(itemId);
-    if (instance.status !== "usable") return undefined;
-    if (instance.sourceKind === "standardGear") {
-      const standard = itemById(instance.definitionRef);
-      return standard === undefined ? undefined : { ...standard, id: instance.definitionRef };
-    }
-    return npcMechanicalItemGear(catalog[instance.definitionRef], instance.definitionRef);
-  };
+  if (!isItemDefinitionV1(definition)) return false;
+  const abilityRefs = [
+    ...definition.content.equippedAbilityRefs,
+    ...(definition.content.use === null ? [] : [definition.content.use.abilityRef]),
+  ];
+  const ammunitionDefinitionRef = definition.content.equipment?.weapon?.ammunitionDefinitionRef;
+  const ammunitionDefinition = ammunitionDefinitionRef === null
+    || ammunitionDefinitionRef === undefined
+    ? undefined
+    : itemDefinitionByRef(ammunitionDefinitionRef, catalog);
+  return abilityRefs.every((abilityRef) => isRegisteredAbilityRecord(catalog[abilityRef]))
+    && (ammunitionDefinitionRef === null
+      || ammunitionDefinitionRef === undefined
+      || ammunitionDefinition?.content.category === "ammunition");
 }
 
 function npcMechanicalLoadoutEquipmentValid(
   loadout: CharacterLoadoutRecord,
-  catalog: Record<string, JsonRecord>,
+  itemSystem: ItemSystemStateV1,
 ): boolean {
-  const resolveItem = npcMechanicalItemResolver(loadout, catalog);
+  const resolveItem = itemEntryGearResolver(itemSystem);
   for (const [slotValue, itemId] of Object.entries(loadout.equipped)) {
     if (!(GEAR_SLOTS as readonly string[]).includes(slotValue)) return false;
     if (slotValue === "ammo") {
-      if (itemById(itemId)?.wear !== "ammo"
+      if (resolveItem(itemId)?.wear !== "ammo"
         || !loadout.backpack.some((entry) => entry.itemId === itemId)) return false;
       continue;
     }
@@ -612,53 +447,12 @@ function npcMechanicalLoadoutEquipmentValid(
     && loadout.equipped.off !== undefined);
 }
 
-export function npcEquipmentMechanics(
-  character: CharacterRecord,
-  catalog: Record<string, JsonRecord>,
-): { definitions: JsonRecord[]; refs: string[] } {
-  const definitions: JsonRecord[] = [];
-  const refs = new Set<string>();
-  const loadout = character.loadout;
-  const resolveItem = npcMechanicalItemResolver(loadout, catalog);
-  const standardWeapon = compileEquippedWeaponAbility(character, resolveItem);
-  const mainItemId = loadout?.equipped.main;
-  const mainInstance = mainItemId === undefined
-    ? undefined
-    : loadout?.mechanicalItems?.[mainItemId];
-  if (standardWeapon !== undefined
-    && (mainInstance === undefined || mainInstance.sourceKind === "standardGear")) {
-    definitions.push(standardWeapon);
-    refs.add(String(standardWeapon.definitionId));
-  }
-  if (mainInstance?.status === "usable"
-    && mainInstance.sourceKind === "npcMechanicalItemDefinition") {
-    const itemDefinition = catalog[mainInstance.definitionRef];
-    const itemWeapon = isRecord(itemDefinition)
-      ? compileNpcMechanicalItemWeaponAbility(character, itemDefinition)
-      : undefined;
-    if (itemWeapon !== undefined) {
-      definitions.push(itemWeapon);
-      refs.add(String(itemWeapon.definitionId));
-    }
-  }
-  for (const itemId of Object.values(loadout?.equipped ?? {})) {
-    const instance = loadout?.mechanicalItems?.[itemId];
-    if (instance?.status !== "usable"
-      || instance.sourceKind !== "npcMechanicalItemDefinition") continue;
-    const definition = catalog[instance.definitionRef];
-    if (!isNpcMechanicalItemDefinition(definition)) continue;
-    for (const abilityRef of (definition.content as JsonRecord).abilityRefs as string[]) {
-      refs.add(abilityRef);
-    }
-  }
-  return { definitions, refs: [...refs].sort() };
-}
-
 export function npcMechanicalEntityMatchesTemplate(
   entity: unknown,
   definition: unknown,
   catalog: Record<string, JsonRecord>,
-  character?: CharacterRecord,
+  character: CharacterRecord,
+  itemSystem: ItemSystemStateV1,
 ): boolean {
   if (!isRecord(entity)
     || !isNpcMechanicalTemplateDefinition(definition)
@@ -671,18 +465,13 @@ export function npcMechanicalEntityMatchesTemplate(
   const equipmentAbilityRefs = Array.isArray(entity.equipmentAbilityRefs)
     ? entity.equipmentAbilityRefs
     : undefined;
-  const effectiveCharacter = character ?? {
-    id: String(entity.entityId),
-    kind: "npc",
-    name: String(entity.name),
-    sceneId: String(entity.sceneId),
-    tenureStatus: "active",
-    entityOrdinal: "1",
-    abilityScores: numericAbilityScores(content.stats),
-    proficiencyBonus: Number(content.proficiencyBonus),
-    loadout: initialNpcMechanicalLoadout(definition, entity, catalog),
-  } satisfies CharacterRecord;
-  const equipment = npcEquipmentMechanics(effectiveCharacter, catalog);
+  const derived = deriveNpcItemSystemLoadout(itemSystem, character, definition);
+  if ("error" in derived) return false;
+  if (character.loadout !== undefined && !sameJson(character.loadout, derived.loadout)) {
+    return false;
+  }
+  const effectiveCharacter = { ...character, loadout: derived.loadout };
+  const equipment = npcItemSystemEquipmentMechanics(effectiveCharacter, itemSystem);
   const expectedEquipmentAbilityRefs = equipment.refs;
   const expectedAbilityRefs = [
     ...(content.intrinsicAbilityRefs as string[]),
@@ -691,13 +480,13 @@ export function npcMechanicalEntityMatchesTemplate(
   const derivedArmorClass = npcArmorClassForLoadout(
     definition,
     effectiveCharacter.loadout,
-    catalog,
+    itemSystem,
   );
   const expectedSpeedFeet = Math.max(1, Math.floor(Number(
     (content.speedInches as JsonRecord).walk ?? 360,
   ) / 12));
   if (effectiveCharacter.loadout === undefined
-    || !npcMechanicalLoadoutEquipmentValid(effectiveCharacter.loadout, catalog)
+    || !npcMechanicalLoadoutEquipmentValid(effectiveCharacter.loadout, itemSystem)
     || !sameJson(entity.stats, content.stats)
     || entity.proficiencyBonus !== content.proficiencyBonus
     || entity.armorClass !== String(derivedArmorClass)
@@ -721,16 +510,28 @@ export function npcMechanicalEntityMatchesTemplate(
     || entity.sizeCategory !== content.sizeCategory
     || !sameJson(entity.spellcasting, content.spellcasting)) return false;
   const maximums = content.resourceMaximums as JsonRecord;
+  if (Object.keys(entityResources).some((resourceId) => resourceId.startsWith("item:"))) {
+    return false;
+  }
   const mechanicalResources = Object.fromEntries(
-    Object.entries(entityResources).filter(([resourceId]) => !resourceId.startsWith("item:")),
+    Object.entries(entityResources).filter(([resourceId]) =>
+      !resourceId.startsWith("item-entry:")),
   );
   const itemResources = Object.fromEntries(
-    Object.entries(entityResources).filter(([resourceId]) => resourceId.startsWith("item:")),
+    Object.entries(entityResources).filter(([resourceId]) =>
+      resourceId.startsWith("item-entry:")),
   );
-  const backpack = effectiveCharacter.loadout?.backpack ?? [];
-  const itemResourcesMatch = Object.keys(itemResources).length === backpack.length
-    && backpack.every(({ itemId, quantity }) => {
-      const pool = itemResources[`item:${itemId}`];
+  const expectedItems = Object.values(itemSystem.entries)
+      .filter((entry) => entry.disposition === "held"
+        && entry.holderRef === effectiveCharacter.id
+        && entry.condition === "usable")
+      .map((entry) => ({
+        resourceId: itemEntryResourceId(entry.entryId),
+        quantity: entry.quantity,
+      }));
+  const itemResourcesMatch = Object.keys(itemResources).length === expectedItems.length
+    && expectedItems.every(({ resourceId, quantity }) => {
+      const pool = itemResources[resourceId];
       return isRecord(pool)
         && canonicalIntegerString(pool.current, 0, 1_000_000)
         && canonicalIntegerString(pool.maximum, 0, 1_000_000)
@@ -747,10 +548,10 @@ export function npcMechanicalEntityMatchesTemplate(
     });
 }
 
-export function npcArmorClassForLoadout(
+function npcArmorClassForLoadout(
   definition: JsonRecord,
-  loadout: CharacterLoadoutRecord | undefined,
-  catalog: Record<string, JsonRecord> = {},
+  loadout: CharacterLoadoutRecord,
+  itemSystem: ItemSystemStateV1,
 ): number {
   const content = npcMechanicalTemplateContent(definition);
   if (content === undefined || !canonicalArmorClassModel(content.armorClassModel)) {
@@ -758,8 +559,7 @@ export function npcArmorClassForLoadout(
   }
   const model = content.armorClassModel;
   const base = Number(model.baseArmorClass);
-  if (loadout === undefined) return base;
-  const resolveItem = npcMechanicalItemResolver(loadout, catalog);
+  const resolveItem = itemEntryGearResolver(itemSystem);
   const armor = resolveItem(loadout.equipped.armor);
   const dexterity = Math.floor((Number((content.stats as JsonRecord).dex) - 10) / 2);
   const wornArmor = armor?.armor !== undefined
@@ -769,187 +569,33 @@ export function npcArmorClassForLoadout(
       ? 0
       : Math.min(dexterity, armor.acDexCap ?? 0))
     : base;
-  const shield = resolveItem(loadout.equipped.off)?.armor === "shield"
-    ? Number(model.shieldBonus)
-    : 0;
+  const shield = resolveItem(loadout.equipped.off)?.armor === "shield" ? 2 : 0;
   return Math.max(base, wornArmor) + shield;
-}
-
-export function initialNpcMechanicalLoadout(
-  definition: JsonRecord,
-  entity: JsonRecord,
-  catalog: Record<string, JsonRecord> = {},
-): CharacterLoadoutRecord {
-  const walkInches = isRecord(entity.speedInches)
-    ? Number(entity.speedInches.walk)
-    : 360;
-  const content = npcMechanicalTemplateContent(definition);
-  if (content === undefined || !canonicalInitialLoadout(content.initialLoadout)) {
-    throw new TypeError("NPC initial loadout is unavailable");
-  }
-  const equipped: Record<string, string> = {};
-  const backpack: CharacterLoadoutRecord["backpack"] = [];
-  const mechanicalItems: NonNullable<CharacterLoadoutRecord["mechanicalItems"]> = {};
-  for (const rawEntry of (content.initialLoadout as JsonRecord).entries as JsonRecord[]) {
-    const source = rawEntry.source as JsonRecord;
-    const quantity = Number(rawEntry.quantity);
-    const standard = source.kind === "standardGear" ? itemById(String(source.ref)) : undefined;
-    if (standard !== undefined && (standard.wear === "pack" || standard.wear === "ammo")) {
-      const itemId = String(source.ref);
-      const existing = backpack.find((entry) => entry.itemId === itemId);
-      if (existing === undefined) backpack.push({ itemId, quantity });
-      else existing.quantity += quantity;
-      if (rawEntry.equippedSlot === "ammo") equipped.ammo = itemId;
-      continue;
-    }
-    const itemId = npcMechanicalRuntimeItemId(String(entity.entityId), "initial", {
-      entityId: String(entity.entityId),
-      entryId: String(rawEntry.entryId),
-    });
-    mechanicalItems[itemId] = {
-      sourceKind: source.kind as "standardGear" | "npcMechanicalItemDefinition",
-      definitionRef: String(source.ref),
-      status: "usable",
-    };
-    if (rawEntry.equippedSlot === null) {
-      backpack.push({ itemId, quantity: 1 });
-    } else {
-      equipped[String(rawEntry.equippedSlot)] = itemId;
-    }
-  }
-  backpack.sort((left, right) => left.itemId.localeCompare(right.itemId));
-  const provisional: CharacterLoadoutRecord = {
-    armorClass: Number((content.armorClassModel as JsonRecord).baseArmorClass),
-    speedFeet: Number.isSafeInteger(walkInches) && walkInches > 0
-      ? Math.max(1, Math.floor(walkInches / 12))
-      : 30,
-    equipped,
-    backpack,
-    ...(Object.keys(mechanicalItems).length === 0 ? {} : { mechanicalItems }),
-  };
-  return {
-    ...provisional,
-    armorClass: npcArmorClassForLoadout(definition, provisional, catalog),
-  };
-}
-
-/**
- * Freezes a pre-combat NPC inventory into the same per-instance ownership
- * model used by a template's initial loadout.  Standard pack items and
- * ammunition remain quantity based; every equippable standard item receives
- * a deterministic owner-scoped identity before the combat entity is emitted.
- */
-export function materializeNpcMechanicalLoadout(
-  definition: JsonRecord,
-  entity: JsonRecord,
-  catalog: Record<string, JsonRecord>,
-  current?: CharacterLoadoutRecord,
-): CharacterLoadoutRecord | undefined {
-  if (current === undefined) return initialNpcMechanicalLoadout(definition, entity, catalog);
-  const entityId = String(entity.entityId);
-  const content = npcMechanicalTemplateContent(definition);
-  if (!isNonEmptyString(entityId) || content === undefined) return undefined;
-  const equipped: Record<string, string> = {};
-  const backpack: CharacterLoadoutRecord["backpack"] = [];
-  const mechanicalItems: NonNullable<CharacterLoadoutRecord["mechanicalItems"]> =
-    structuredClone(current.mechanicalItems ?? {});
-  let newInstanceCount = 0;
-  const addStandardInstance = (
-    standardRef: string,
-    identity: JsonRecord,
-    destination: { kind: "equipped"; slot: string } | { kind: "backpack" },
-  ): boolean => {
-    newInstanceCount += 1;
-    if (newInstanceCount > 48) return false;
-    const itemId = npcMechanicalRuntimeItemId(entityId, "established", identity);
-    if (mechanicalItems[itemId] !== undefined) return false;
-    mechanicalItems[itemId] = {
-      sourceKind: "standardGear",
-      definitionRef: standardRef,
-      status: "usable",
-    };
-    if (destination.kind === "equipped") equipped[destination.slot] = itemId;
-    else backpack.push({ itemId, quantity: 1 });
-    return true;
-  };
-
-  for (const [slot, itemId] of Object.entries(current.equipped)
-    .sort(([left], [right]) => left.localeCompare(right))) {
-    if (slot === "ammo") {
-      if (itemById(itemId)?.wear !== "ammo") return undefined;
-      equipped[slot] = itemId;
-      continue;
-    }
-    if (current.mechanicalItems?.[itemId] !== undefined) {
-      equipped[slot] = itemId;
-      continue;
-    }
-    const standard = itemById(itemId);
-    if (standard === undefined || standard.wear === "pack" || standard.wear === "ammo") {
-      equipped[slot] = itemId;
-      continue;
-    }
-    if (!addStandardInstance(itemId, { entityId, itemId, location: "equipped", slot }, {
-      kind: "equipped",
-      slot,
-    })) return undefined;
-  }
-
-  for (const entry of current.backpack) {
-    if (current.mechanicalItems?.[entry.itemId] !== undefined) {
-      backpack.push(structuredClone(entry));
-      continue;
-    }
-    const standard = itemById(entry.itemId);
-    if (standard === undefined || standard.wear === "pack" || standard.wear === "ammo") {
-      backpack.push(structuredClone(entry));
-      continue;
-    }
-    if (entry.quantity > 48 || newInstanceCount + entry.quantity > 48) return undefined;
-    for (let index = 0; index < entry.quantity; index += 1) {
-      if (!addStandardInstance(entry.itemId, {
-        entityId,
-        index,
-        itemId: entry.itemId,
-        location: "backpack",
-      }, { kind: "backpack" })) return undefined;
-    }
-  }
-  backpack.sort((left, right) => left.itemId.localeCompare(right.itemId));
-  if (equipped.ammo !== undefined
-    && !backpack.some((entry) => entry.itemId === equipped.ammo)) {
-    delete equipped.ammo;
-  }
-  const walkInches = isRecord(content.speedInches)
-    ? Number(content.speedInches.walk)
-    : 360;
-  const provisional: CharacterLoadoutRecord = {
-    armorClass: current.armorClass,
-    speedFeet: Number.isSafeInteger(walkInches) && walkInches > 0
-      ? Math.max(1, Math.floor(walkInches / 12))
-      : 30,
-    equipped,
-    backpack,
-    ...(Object.keys(mechanicalItems).length === 0 ? {} : { mechanicalItems }),
-  };
-  if (!npcMechanicalLoadoutEquipmentValid(provisional, catalog)) return undefined;
-  return {
-    ...provisional,
-    armorClass: npcArmorClassForLoadout(definition, provisional, catalog),
-  };
 }
 
 export function synchronizeCombatItemResources(
   entity: JsonRecord | undefined,
-  loadout: CharacterLoadoutRecord,
+  itemSystem: ItemSystemStateV1,
 ): void {
   if (entity === undefined) return;
+  if (!isItemSystemStateV1(itemSystem)) {
+    throw new TypeError("combat item resources require the unified item system");
+  }
   const prior = isRecord(entity.resources) ? entity.resources : {};
+  if (Object.keys(prior).some((resourceId) => resourceId.startsWith("item:"))) {
+    throw new TypeError("non-entry item resource identities are unavailable");
+  }
   const resources: JsonRecord = Object.fromEntries(
-    Object.entries(prior).filter(([resourceId]) => !resourceId.startsWith("item:")),
+    Object.entries(prior).filter(([resourceId]) =>
+      !resourceId.startsWith("item-entry:")),
   );
-  for (const { itemId, quantity } of loadout.backpack) {
-    const resourceId = `item:${itemId}`;
+  const itemEntries = Object.values(itemSystem.entries)
+      .filter((entry) => entry.disposition === "held"
+        && entry.holderRef === entity.entityId
+        && entry.condition === "usable")
+      .map((entry) => ({ entryId: entry.entryId, quantity: entry.quantity }));
+  for (const { entryId, quantity } of itemEntries) {
+    const resourceId = itemEntryResourceId(entryId);
     const previous = isRecord(prior[resourceId]) ? prior[resourceId] : undefined;
     const previousMaximum = Number(previous?.maximum ?? 0);
     resources[resourceId] = {
@@ -963,135 +609,6 @@ export function synchronizeCombatItemResources(
   entity.resources = resources;
 }
 
-export function changeNpcMechanicalGear(
-  character: CharacterRecord,
-  definition: JsonRecord,
-  catalog: Record<string, JsonRecord>,
-  action: { action: "wear"; slot: GearSlot; itemId: string }
-    | { action: "stow"; slot: GearSlot },
-): {
-  loadout: CharacterLoadoutRecord;
-  movedItemId: string;
-  equipmentDefinitions: JsonRecord[];
-  equipmentAbilityRefs: string[];
-}
-  | { error: string } {
-  const current = character.loadout;
-  if (current === undefined) return { error: "characterLoadoutUnavailable" };
-  const equipped = { ...current.equipped };
-  const backpack = current.backpack.map(({ itemId, quantity }) => ({ itemId, qty: quantity }));
-  let movedItemId: string | undefined;
-  let next: { equipped: Record<string, string | undefined>; backpack: Array<{ itemId: string; qty: number }>; error?: string };
-  if (action.action === "stow") {
-    movedItemId = equipped[action.slot];
-    if (movedItemId === undefined) return { error: "unchangedGear" };
-    next = action.slot === "ammo"
-      ? {
-          equipped: Object.fromEntries(Object.entries(equipped)
-            .filter(([slot]) => slot !== "ammo")),
-          backpack,
-        }
-      : stowSlot(equipped, backpack, action.slot);
-  } else {
-    movedItemId = action.itemId;
-    if (equipped[action.slot] === action.itemId) return { error: "unchangedGear" };
-    next = wearItem(
-      equipped,
-      backpack,
-      action.itemId,
-      action.slot,
-      npcMechanicalItemResolver(current, catalog),
-    );
-    if (next.error !== undefined) return { error: next.error };
-  }
-  const canonicalEquipped = Object.fromEntries(
-    Object.entries(next.equipped)
-      .filter((entry): entry is [string, string] => typeof entry[1] === "string")
-      .sort(([left], [right]) => left.localeCompare(right)),
-  );
-  const provisional: CharacterLoadoutRecord = {
-    armorClass: current.armorClass,
-    speedFeet: current.speedFeet,
-    equipped: canonicalEquipped,
-    backpack: next.backpack
-      .filter(({ qty }) => qty > 0)
-      .sort((left, right) => left.itemId.localeCompare(right.itemId))
-      .map(({ itemId, qty }) => ({ itemId, quantity: qty })),
-    ...(current.mechanicalItems === undefined
-      ? {}
-      : { mechanicalItems: structuredClone(current.mechanicalItems) }),
-  };
-  const loadout = {
-    ...provisional,
-    armorClass: npcArmorClassForLoadout(definition, provisional, catalog),
-  };
-  const equipment = npcEquipmentMechanics({
-    ...structuredClone(character),
-    loadout,
-  }, catalog);
-  return {
-    loadout,
-    movedItemId,
-    equipmentDefinitions: equipment.definitions,
-    equipmentAbilityRefs: equipment.refs,
-  };
-}
-
-export function changeNpcMechanicalItemState(
-  character: CharacterRecord,
-  definition: JsonRecord,
-  catalog: Record<string, JsonRecord>,
-  itemId: string,
-  action: "break" | "repair" | "destroy" | "lose",
-): {
-  loadout: CharacterLoadoutRecord;
-  equipmentDefinitions: JsonRecord[];
-  equipmentAbilityRefs: string[];
-} | { error: string } {
-  const current = character.loadout;
-  const currentItem = current?.mechanicalItems?.[itemId];
-  if (current === undefined || currentItem === undefined) return { error: "mechanicalItemUnavailable" };
-  if ((action === "break" && currentItem.status !== "usable")
-    || (action === "repair" && currentItem.status !== "broken")) {
-    return { error: "unchangedItemState" };
-  }
-  const equipped = { ...current.equipped };
-  const backpack = current.backpack.map((entry) => ({ ...entry }));
-  const mechanicalItems = structuredClone(current.mechanicalItems!);
-  const equippedSlot = Object.entries(equipped).find(([, equippedId]) => equippedId === itemId)?.[0];
-  if (equippedSlot !== undefined) {
-    delete equipped[equippedSlot];
-    if (!backpack.some((entry) => entry.itemId === itemId)) {
-      backpack.push({ itemId, quantity: 1 });
-    }
-  }
-  if (action === "destroy" || action === "lose") {
-    delete mechanicalItems[itemId];
-    const backpackIndex = backpack.findIndex((entry) => entry.itemId === itemId);
-    if (backpackIndex >= 0) backpack.splice(backpackIndex, 1);
-  } else {
-    mechanicalItems[itemId].status = action === "break" ? "broken" : "usable";
-  }
-  backpack.sort((left, right) => left.itemId.localeCompare(right.itemId));
-  const provisional: CharacterLoadoutRecord = {
-    armorClass: current.armorClass,
-    speedFeet: current.speedFeet,
-    equipped: Object.fromEntries(Object.entries(equipped).sort(([left], [right]) => left.localeCompare(right))),
-    backpack,
-    ...(Object.keys(mechanicalItems).length === 0 ? {} : { mechanicalItems }),
-  };
-  const loadout = {
-    ...provisional,
-    armorClass: npcArmorClassForLoadout(definition, provisional, catalog),
-  };
-  const equipment = npcEquipmentMechanics({ ...structuredClone(character), loadout }, catalog);
-  return {
-    loadout,
-    equipmentDefinitions: equipment.definitions,
-    equipmentAbilityRefs: equipment.refs,
-  };
-}
-
 export function synchronizeCoreNpcCombatState(
   state: AuthoritativeWorldState,
   entity: JsonRecord,
@@ -1099,34 +616,58 @@ export function synchronizeCoreNpcCombatState(
   if (!isNonEmptyString(entity.mechanicalDefinitionRef)
     || !isNonEmptyString(entity.entityId)) return;
   const character = state.entities[entity.entityId];
-  if (character?.kind !== "npc" || !npcCoreMechanicsCompatible(character, entity)) {
+  if (character?.kind !== "npc") {
+    throw new TypeError("combat NPC mechanics conflict with its established world identity");
+  }
+  const synchronized = structuredClone(character);
+  if (isRecord(entity.hitPoints)
+    && canonicalIntegerString(entity.hitPoints.current, 0, 1_000_000)
+    && canonicalIntegerString(entity.hitPoints.maximum, 1, 1_000_000)) {
+    const maximum = Number(entity.hitPoints.maximum);
+    if (synchronized.hitPoints !== undefined
+      && synchronized.hitPoints.maximum !== maximum) {
+      throw new TypeError("combat NPC hit-point maximum conflicts with its established mechanics");
+    }
+    synchronized.hitPoints = {
+      current: Number(entity.hitPoints.current),
+      maximum,
+    };
+  }
+  if (isRecord(entity.resources)) {
+    const resources: Record<string, number> = { ...(synchronized.resources ?? {}) };
+    const resourceMaximums: Record<string, number> = {
+      ...(synchronized.resourceMaximums ?? {}),
+    };
+    for (const [resourceId, pool] of Object.entries(entity.resources)) {
+      if (resourceId.startsWith("item:")) {
+        throw new TypeError("non-entry item resource identities are unavailable");
+      }
+      if (resourceId.startsWith("item-entry:")) continue;
+      if (!isRecord(pool)
+        || !canonicalIntegerString(pool.current, 0, 1_000_000)
+        || !canonicalIntegerString(pool.maximum, 0, 1_000_000)) {
+        throw new TypeError("combat NPC resource pool is not canonical");
+      }
+      const maximum = Number(pool.maximum);
+      if (resourceMaximums[resourceId] !== undefined
+        && resourceMaximums[resourceId] !== maximum) {
+        throw new TypeError("combat NPC resource maximum conflicts with its established mechanics");
+      }
+      resources[resourceId] = Number(pool.current);
+      resourceMaximums[resourceId] = maximum;
+    }
+    synchronized.resources = resources;
+    synchronized.resourceMaximums = resourceMaximums;
+  }
+  if (!npcCoreMechanicsCompatible(synchronized, entity)) {
     throw new TypeError("combat NPC mechanics conflict with its established world identity");
   }
   const scores = numericAbilityScores(entity.stats)!;
   character.abilityScores = scores;
   character.proficiencyBonus = Number(entity.proficiencyBonus);
-  if (isRecord(entity.hitPoints)
-    && canonicalIntegerString(entity.hitPoints.current, 0, 1_000_000)
-    && canonicalIntegerString(entity.hitPoints.maximum, 1, 1_000_000)) {
-    character.hitPoints = {
-      current: Number(entity.hitPoints.current),
-      maximum: Number(entity.hitPoints.maximum),
-    };
-  }
-  if (isRecord(entity.resources)) {
-    const resources: Record<string, number> = { ...(character.resources ?? {}) };
-    const resourceMaximums: Record<string, number> = { ...(character.resourceMaximums ?? {}) };
-    for (const [resourceId, pool] of Object.entries(entity.resources)) {
-      if (resourceId.startsWith("item:")) continue;
-      if (!isRecord(pool)
-        || !canonicalIntegerString(pool.current, 0, 1_000_000)
-        || !canonicalIntegerString(pool.maximum, 0, 1_000_000)) continue;
-      resources[resourceId] = Number(pool.current);
-      resourceMaximums[resourceId] = Number(pool.maximum);
-    }
-    character.resources = resources;
-    character.resourceMaximums = resourceMaximums;
-  }
+  character.hitPoints = synchronized.hitPoints;
+  character.resources = synchronized.resources;
+  character.resourceMaximums = synchronized.resourceMaximums;
 }
 
 export function npcMechanicalTemplateContent(value: unknown): JsonRecord | undefined {
@@ -1153,12 +694,13 @@ export function canonicalNpcMechanicalInitialState(value: unknown): boolean {
 export function instantiateNpcMechanicalEntity(input: {
   definition: JsonRecord;
   catalog: Record<string, JsonRecord>;
+  itemSystem: ItemSystemStateV1;
   entityId: string;
   name: string;
   sceneId: string;
   position: JsonRecord;
   initialState?: JsonRecord;
-  loadout?: CharacterLoadoutRecord;
+  loadout: CharacterLoadoutRecord;
   shell?: JsonRecord;
 }): JsonRecord | undefined {
   const content = npcMechanicalTemplateContent(input.definition);
@@ -1187,10 +729,7 @@ export function instantiateNpcMechanicalEntity(input: {
     },
   ]));
   const shell = input.shell;
-  const loadout = input.loadout ?? initialNpcMechanicalLoadout(input.definition, {
-    entityId: input.entityId,
-    speedInches: content.speedInches,
-  }, input.catalog);
+  const loadout = input.loadout;
   const character = {
     id: input.entityId,
     kind: "npc",
@@ -1202,7 +741,7 @@ export function instantiateNpcMechanicalEntity(input: {
     proficiencyBonus: Number(content.proficiencyBonus),
     loadout,
   } satisfies CharacterRecord;
-  const equipment = npcEquipmentMechanics(character, input.catalog);
+  const equipment = npcItemSystemEquipmentMechanics(character, input.itemSystem);
   const entity: JsonRecord = {
     id: input.entityId,
     entityId: input.entityId,
@@ -1217,7 +756,11 @@ export function instantiateNpcMechanicalEntity(input: {
     mechanicalDefinitionRef: input.definition.definitionId,
     stats: structuredClone(content.stats),
     proficiencyBonus: content.proficiencyBonus,
-    armorClass: String(npcArmorClassForLoadout(input.definition, loadout, input.catalog)),
+    armorClass: String(npcArmorClassForLoadout(
+      input.definition,
+      loadout,
+      input.itemSystem,
+    )),
     hitPoints: {
       current: String(currentHitPoints),
       maximum: String(maximumHitPoints),

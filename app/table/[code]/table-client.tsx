@@ -11,12 +11,10 @@ import {
   kickMember,
   leaveTable,
   lockCharacter,
-  setRoomModel,
   startGame,
   joinRoom,
 } from "@/lib/table/client";
-import { LEGACY_KP_MODELS, kpModelById, type KpModelId } from "@/lib/kp/models";
-import { AUTHORITATIVE_RULESET_VERSION } from "@/lib/rules/ruleset";
+import { kpModelById } from "@/lib/kp/models";
 import { toast } from "sonner";
 import { classById, raceById } from "@/lib/dnd/catalog";
 import { LogoutButton } from "../../logout-button";
@@ -117,19 +115,6 @@ function Lobby({
   const qc = useQueryClient();
   const [kickId, setKickId] = useState<string | null>(null);
   const selectedModel = kpModelById(snap.room.kp_model);
-  const authoritativeModelIsPinned =
-    snap.room.ruleset_version === AUTHORITATIVE_RULESET_VERSION;
-  const chooseModel = useMutation({
-    mutationFn: (model: KpModelId) => setRoomModel({ data: { code, model } }),
-    onSuccess: (res) => {
-      if (!res.ok) toast.error(res.error);
-      else {
-        toast.success("本桌模型已保存");
-        void qc.invalidateQueries({ queryKey: ["table", code] });
-      }
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
   const start = useMutation({
     mutationFn: () => startGame({ data: code }),
     onSuccess: (res) => {
@@ -178,47 +163,16 @@ function Lobby({
         <p className="mt-1 text-xs text-muted">发给朋友，让他们从酒馆加入。</p>
         <div className="mt-6 border-t border-border pt-5">
           <p className="text-xs text-subtle">本次跑团模型</p>
-          {!authoritativeModelIsPinned && snap.me.is_host ? (
-            <div className="mt-3 grid gap-2" aria-label="选择本次跑团模型">
-              {LEGACY_KP_MODELS.map((option) => {
-                const selected = option.id === selectedModel?.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    aria-pressed={selected}
-                    disabled={chooseModel.isPending}
-                    className={`rounded-[14px] border px-3 py-3 text-left transition ${
-                      selected
-                        ? "border-brass bg-brass/10 text-fg"
-                        : "border-border text-muted hover:border-brass/60 hover:text-fg"
-                    } disabled:cursor-wait disabled:opacity-60`}
-                    onClick={() => {
-                      if (!selected) chooseModel.mutate(option.id);
-                    }}
-                  >
-                    <span className="block text-sm font-medium">{option.name}</span>
-                    <span className="mt-1 block text-xs leading-relaxed text-muted">
-                      {option.summary}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="mt-2 rounded-[14px] border border-border px-3 py-3">
-              <p className="text-sm text-fg">{selectedModel?.name ?? "历史兼容模型"}</p>
-              {selectedModel && (
-                <p className="mt-1 text-xs leading-relaxed text-muted">
-                  {selectedModel.summary}
-                </p>
-              )}
-            </div>
-          )}
+          <div className="mt-2 rounded-[14px] border border-border px-3 py-3">
+            <p className="text-sm text-fg">{selectedModel?.name ?? "模型不可用"}</p>
+            {selectedModel && (
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                {selectedModel.summary}
+              </p>
+            )}
+          </div>
           <p className="mt-2 text-xs text-subtle">
-            {authoritativeModelIsPinned
-              ? "模型在创建桌子时固定，开团后也不会中途切换。"
-              : "房主可在开团前更换；开始后整桌锁定，不会中途切换。"}
+            模型在创建桌子时固定，开团后也不会中途切换。
           </p>
         </div>
         <h3 className="mt-6 font-display">在座 {snap.members.length}/5</h3>
@@ -297,7 +251,7 @@ function Lobby({
         {snap.me.is_host && (
           <Button
             className="mt-6 w-full"
-            disabled={start.isPending || chooseModel.isPending}
+            disabled={start.isPending}
             onClick={() => start.mutate()}
           >
             {start.isPending ? "掀开帷幕……" : "开始守灵"}

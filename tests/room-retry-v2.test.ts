@@ -7,11 +7,7 @@ import {
   lowerCausalActionProgram,
 } from "../app/_runtime/lib/kp/causal-action-program";
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
-import { ENVIRONMENT_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
-import {
-  directConsequencesProposal,
-  noncombatCheckProposal,
-} from "./helpers/authoritative-proposal";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -44,7 +40,7 @@ function list(value: unknown, label: string): unknown[] {
 
 function privateFormProposal(
   rootActionId: string,
-  formId: "clarification.v1" | "ordinary-check.v1",
+  formId: "clarification.v1" | "observe.v1" | "ordinary-check.v1",
   draft: JsonRecord,
 ) {
   const causalActionProgram = compileKpFormDraft(formId, draft);
@@ -105,7 +101,7 @@ function v3Character(characterId: string) {
 }
 
 describe("authoritative Room explicit retry recovery", () => {
-  it("reauthenticates and resumes the same prepared action or committed Receipt without advancing state", async () => {
+  it("reauthenticates the same prepared action and rejects action retry after its Receipt commits", async () => {
     const roomId = "authoritative-v2-explicit-retry";
     const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
     await expect(authority.initializeAuthoritative({
@@ -165,11 +161,14 @@ describe("authoritative Room explicit retry recovery", () => {
     const committed = record(await authority.commit(
       ALICE,
       String(prepared.preparedActionId),
-      directConsequencesProposal(String(prepared.rootActionId), {
-        proposalAttemptId: "proposal:retry:recover:1",
+      privateFormProposal(String(prepared.rootActionId), "observe.v1", {
         goal: "确认门闩是否已经松开",
         method: "观察门闩的当前位置",
-        duration: { unit: "second", value: 1 },
+        focus: "门闩",
+        desiredInformation: "门闩是否已经松开",
+        resolution: "direct",
+        durationUnit: "second",
+        durationValue: 1,
       }),
     ), "commit after retry");
     expect(committed.kind).toBe("committed");
@@ -179,11 +178,18 @@ describe("authoritative Room explicit retry recovery", () => {
       await authority.prepare(ALICE, structuredClone(retry)),
       "completed retry",
     );
-    expect(completedRetry).toMatchObject({ kind: "committed" });
-    expect(completedRetry.receipt).toEqual(receipt);
+    expect(completedRetry).toMatchObject({
+      kind: "rejected",
+      code: "viewerNarrationRecoveryRequired",
+    });
+    expect(completedRetry).not.toHaveProperty("receipt");
     const afterCompletedRetry = record(await authority.observe(ALICE), "after completed retry");
-    expect(record(afterCompletedRetry.readModel, "completed retry read model").fictionTime)
+    const completedReadModel = record(afterCompletedRetry.readModel, "completed retry read model");
+    expect(completedReadModel.fictionTime)
       .toEqual(record(committed.kpProjection, "committed KP projection").fictionTime);
+    expect(list(completedReadModel.receipts, "completed receipts")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ receiptId: receipt.receiptId })]),
+    );
   });
 
   it("keeps the original prepared action after a model failure without advancing state", async () => {
@@ -273,22 +279,24 @@ describe("authoritative Room explicit retry recovery", () => {
       characterId: "character:retry:randomness",
       text: "我用肩膀撞开卡住的木门。",
     }), "randomness prepare");
-    const proposal = noncombatCheckProposal(String(prepared.rootActionId), {
-      proposalAttemptId: "proposal:retry:randomness:1",
+    const proposal = privateFormProposal(
+      String(prepared.rootActionId),
+      "ordinary-check.v1",
+      ordinaryCheckDraft({
       goal: "撞开卡住的木门",
       method: "用肩膀撞开卡住的木门",
-      risk: {
-        warning: "门可能被撞开，失败会耗时并发出声响。",
-        successConsequences: ["木门被撞开。"],
-        failureConsequences: ["木门没有打开，撞击声传了出去。"],
-        retryGate: ["methodChanged", "situationAdvanced"],
-      },
+      intendedOutcome: "木门被撞开",
+      risk: "失败会耗时并发出声响",
       ability: "str",
       skill: "athletics",
       dc: 10,
       mode: "normal",
-      duration: { unit: "second", value: 1 },
-    });
+      durationUnit: "second",
+      durationValue: 1,
+      successConsequence: "木门被撞开。",
+      failureConsequence: "木门没有打开，撞击声传了出去。",
+    }),
+    );
     const harnessStub = authority as never;
     await expect(runInDurableObject(harnessStub, async (instance) => {
       const target = instance as unknown as {
@@ -323,7 +331,6 @@ describe("authoritative Room explicit retry recovery", () => {
           narrationCalls += 1;
           return {
             body: "木门在撞击下猛然洞开，回声沿着院墙散去。",
-            agencyClaims: [],
           };
         },
       },
@@ -346,11 +353,12 @@ describe("authoritative Room explicit retry recovery", () => {
     );
 
     const recoveredAgain = await handleRoomAction(recoveryContext, structuredClone(retryInput));
-    expect(recoveredAgain.kind).toBe("committed");
+    expect(recoveredAgain).toMatchObject({
+      kind: "rejected",
+      code: "viewerNarrationRecoveryRequired",
+    });
     expect(proposalCalls).toBe(0);
     expect(narrationCalls).toBe(1);
-    expect(recoveredAgain.receipt).toEqual(recovered.receipt);
-    expect(recoveredAgain.delivery).toEqual(recovered.delivery);
     const repeatedObservation = record(await authority.observe(ALICE), "repeated recovery observation");
     expect(record(
       record(repeatedObservation.delivery, "repeated recovery delivery").frame,
@@ -364,12 +372,22 @@ describe("authoritative Room explicit retry recovery", () => {
       "archive after repeated recovery",
     )).toEqual(archiveAfterFirstRecovery);
 
-    const committed = record(await authority.prepare(ALICE, structuredClone(retryInput)), "recovered commit");
-    const repeated = record(await authority.prepare(ALICE, structuredClone(retryInput)), "repeated recovery");
-    expect(repeated.receipt).toEqual(committed.receipt);
-    const mechanics = record(record(committed.kpProjection, "recovery projection").mechanicalResult, "mechanics");
-    expect(record(record(repeated.kpProjection, "repeat projection").mechanicalResult, "repeat mechanics").randomness)
-      .toEqual(mechanics.randomness);
+    const cachedCommit = record(await authority.commit(
+      ALICE,
+      String(prepared.preparedActionId),
+      structuredClone(proposal),
+    ), "cached mechanical commit");
+    expect(cachedCommit).toMatchObject({ kind: "committed", receipt: recovered.receipt });
+    const mechanics = record(
+      record(cachedCommit.kpProjection, "cached recovery projection").mechanicalResult,
+      "cached mechanics",
+    );
+    const randomness = record(list(mechanics.randomness, "cached randomness")[0], "cached die");
+    const archivedDice = list(archiveAfterFirstRecovery.events, "recovery archive events")
+      .map((event) => record(event, "recovery archive event"))
+      .filter((event) => event.eventType === "DiceRolled");
+    expect(archivedDice).toHaveLength(1);
+    expect(record(archivedDice[0].payload, "archived die").faces).toEqual(randomness.faces);
   });
 
   it("recovers a V3 causal check after its request commit without replaying cost or accepting a changed program", async () => {
@@ -379,8 +397,8 @@ describe("authoritative Room explicit retry recovery", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [{ principalId: ALICE.principal.id, role: "host" }],
       characters: [v3Character(characterId)],
     }), "V3 causal recovery initialization");
@@ -498,8 +516,8 @@ describe("authoritative Room explicit retry recovery", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [{ principalId: ALICE.principal.id, role: "host" }],
       characters: [v3Character(characterId)],
     }), "V3 clarification recovery initialization");
@@ -624,11 +642,14 @@ describe("authoritative Room explicit retry recovery", () => {
       characterId: "character:retry:archive-alarm",
       text: "我确认门闩已经松开。",
     }), "archive alarm prepare");
-    const proposal = directConsequencesProposal(String(prepared.rootActionId), {
-      proposalAttemptId: "proposal:retry:archive-alarm:1",
+    const proposal = privateFormProposal(String(prepared.rootActionId), "observe.v1", {
       goal: "确认门闩是否松开",
       method: "观察门闩位置",
-      duration: { unit: "second", value: 1 },
+      focus: "门闩",
+      desiredInformation: "门闩是否已经松开",
+      resolution: "direct",
+      durationUnit: "second",
+      durationValue: 1,
     });
 
     const result = await runInDurableObject(authority as never, async (instance) => {

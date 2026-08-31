@@ -451,7 +451,7 @@
 - 理由：跨 DO/D1 不能原子双写，漂移会产生第二 HP/资源/装备真相；语义事件又能回放和更正。
 - 玩家可观察行为：穿戴、收纳、数量消耗、AC 与重连视图一致，幂等重试不重复消耗。
 - 秘密与权限影响：只有可信控制者可改变自己的装备；Viewer 只显示有权角色的活跃投影，D1 查询不泄漏房间状态。
-- 迁移/可逆性：旧房继续 Legacy；新房初始化后不再读旧 `game_states` 活跃装备。错误变更经 correction 恢复事件前 loadout。
+- 迁移/可逆性：0.4 之前的开发房间已退役；当前入口不读写旧 `game_states` 活跃装备，不保留 migration 或 fallback。错误变更经 correction 恢复事件前 loadout。
 - 验收场景：穿戴/收纳、战斗物品消耗、D1 漂移注入、归档恢复、更正及双 Viewer 版本一致。
 - 测试证据：Rules loadout、Room loadout 与 combat/table 组合已记录通过；最终冻结全量门仍须重跑。
 
@@ -710,3 +710,34 @@
 - 迁移/可逆性：`0011_low_leo.sql` 只增 checkpoint 表，SHA-256 `da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e`；旧无 checkpoint 归档在下一次完整 caught-up batch 回填，不修改旧 events/audits。发布阶段已在既有远端 `DB` 串行应用并与 `0008–0010` 一并复核无 pending。
 - 验收场景：80+ events 分页、最终原子 checkpoint、无回退/同序冲突、伪造 audit cursor 缺行拒绝、seq0/prefix replay、未结清多波随机拒绝、D1 reader→fresh DO、移除成员不复权、旧归档 backfill。
 - 测试证据：`archive-d1-batches-v2` 11/11（含旧 checkpoint 的 D1 前缀篡改、ahead event/genesis conflict 拒绝）；`archive-do-resume-v2 -t 'resumes 80'` 1/1（80+ events、48 audits、真实 reader→fresh DO、活跃索引），无当前受控 viewer 的 D1→fresh DO 1/1；相关 randomness settlement 定向 1/1；Wrangler local `0000–0011` 与 checkpoint 写读、SQLite `0010→0011` 写读均退出 0。远端 `0008–0011` 已成功应用且无 pending，临时 checkpoint 写读后已精确清理；完整门依用户豁免未运行。
+
+## DEC-045：0.4 开发重置退役全部更早房间与兼容路径
+
+- 决策 ID：DEC-045
+- 日期：2026-08-31
+- 问题：项目尚在开发阶段且用户不再需要已有房间时，0.4 是否继续携带历史 ruleset/runtime/model/workflow/module Adapter、旧 D1 状态表和房间迁移。
+- 来源类别：用户连续明确确认“放弃已有房间”“以后再考虑兼容旧版本”并把当前版本定义为 0.4；SPEC 0001 的机械公正、权限、秘密和单一权威仍为上位边界。
+- 关联 SPEC 0001：不改变 §§2–19 的叙事、机械、权限、秘密、连续性或更正责任；只移除对用户已放弃开发数据的恢复承诺。
+- 候选方案：保留所有历史 Adapter；只在 UI 隐藏旧房；尝试逐房 migration；执行一次开发重置并让 0.4 只支持当前完整闭包。
+- 最终选择：应用版本设为 `0.4.0`，产品代际仍为 V3。生产 Registry、模型目录、KP 工作流、模组引用、Room/API/UI 只接受当前精确组合：Ruleset `dnd5e-2014-srd5.1-authoritative-v2`、runtime `runtime-srd51-2014-authoritative-environment-v5`（`sha256:f8d69b21e9f4c41f406eb5270643e10350c5983dc09951810cb08ede583fa471`）、event schema `room-world-events-v2-npc-items-v1`（`sha256:98292f3f495251a5384ca52767c269f5b9587e7b4cbbde4b5ac18f16c0a47318`）、模组 `module:black-oak-will:social-resolution-v1`（`sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272`）和 V5 KP workflow（`fnv1a64:e18582267c58bc50`）。删除所有更早 Adapter、fallback、双写、旧设置入口和迁移分派；旧/未知绑定稳定拒绝。
+- 理由：开发数据已被用户明确放弃，继续维护多版本解释器会扩大错误路由、第二权威和测试面，却没有现役消费者。精确当前闭包仍保留版本完整性，且不把协议 v1/v2/v3/v5 误改名为 0.4/V3。
+- 玩家可观察行为：0.4 新房正常创建和游玩；仍出现在目录中的旧房明确显示已退役，房主可删除但不能进入或启动。系统不会自动迁移、恢复或清空这些旧数据。
+- 秘密与权限影响：旧房退役提示不公开秘密；删除仍需可信 host 权限。活跃状态继续只在每房 SQLite Durable Object，D1 的当前归档不是第二活跃权威。
+- 迁移/可逆性：不生成兼容、转换或重置 migration，不提供旧房数据级回滚或兼容层；Git 历史只用于源码审计。现有 D1 行保持原状并由当前路由拒绝，未来兼容或清理需要新决策与单独授权。
+- 验收场景：包版本精确 0.4.0；production Registry/模型/工作流/模组只有当前组合；旧绑定拒绝且不 fallback；旧设置/API/运行时表类型和测试删除；0.4 新房显式写入当前完整绑定；旧房目录只允许 host 删除；仓库不新增 0.4 重置 migration。
+- 测试证据：当前新房写入路径显式提交 ruleset/model/profile/workflow，退役房路由定向测试证明稳定拒绝且房主删除仍可用；Node/Worker 定向回归、类型检查与最终 diff 结果在本轮 refactor log 回填。未生成或执行 D1 migration，未清空远端数据；未运行全量测试、production build、部署或 push。
+
+## DEC-046：0.4 统一 Item 与当前私有 Form/capability 取代旧玩家 ActionPlan
+
+- 决策 ID：DEC-046
+- 日期：2026-08-31
+- 问题：在前 0.4 房间已全部退役后，物品、装备、NPC 持有物与 KP/Room 玩家行动是否继续保留并行事实源、旧 production ActionPlan transport 或恢复 fallback。
+- 来源类别：用户明确要求不保留向后兼容、过时实现直接删除，并授权更正与当前 0.4 实现冲突的已裁定条款；SPEC 0001 的 KP/Rules 分工、玩家能动性、机械公正、权限、秘密和单一权威继续优先。
+- 关联 SPEC 0001：§§2–19；A–N。不缩小自然语言行动、装备/资源、NPC、多人或长团行为，只收口当前输入和物品事实源。
+- 最终选择：物品定义与每个物品实例统一进入 V5 Item System；持有者、位置、装备槽、数量、condition、charges、durability、可见性和所有权只由全局 ItemEntry 事件状态决定。角色 loadout、NPC sidecar 和故事 artifact 不再是物品权威。玩家普通提案只经当前私有窄工具 → Form → `CausalActionProgram` → `executeCausalActionProgram`；多人管理只经 Room 生成的 exact `authenticatedPartyAction`；NPC 计划、退休与 Activity 只经 exact `authenticatedCampaignAction`。旧 `authoritative-kp-action-plan-v1`、`resolveCompoundActionPlan`、玩家 proposal validator/executor、恢复分支和纯旧多轮评测删除，不提供 adapter、fallback 或 migration。Due NPC ActorPlan 保留自己的内部领域模型和 Rules 后果执行器，它不是公开玩家 transport；仍借用旧 test helper 搭建当前行为的 runner 在迁移前不计 0.4 证据，也不得驱动生产兼容代码。
+- 理由：同一物品如果同时存在于角色装备、NPC 机械 sidecar 和目录描述中，会造成所有权、消耗、耐久与投影漂移；旧玩家 ActionPlan 与 current Form/Causal 并存也会形成第二套机械入口。当前闭包已有真实纵切，保留无消费者旧层只扩大恢复、权限与测试面。
+- 玩家可观察行为：背包与装备显示同一权威实例；可识别物品展示定义与可用操作，不可识别定义使用安全占位且不暴露内部 ID。装备、收起和使用共享单一提交状态；数量、charges、durability 与破损自动卸下来自权威投影。不存在伪造的交易、丢弃或旧“点火把”入口。
+- 秘密与权限影响：ItemEntry 可见性与 ItemDefinition 可见性独立；转移只按 Rules 更新目标实例的持有/所有权策略，不扩大定义知识。actor、root、party/campaign 权限均由 Room 从可信登录和当前状态绑定，模型和客户端不能自报。
+- 版本与取代：本决策在 0.4 current-only 范围内取代 DEC-018/022 的 production ActionPlan 输入与恢复选择，并取代 DEC-045 的旧 hash 快照；DEC-018/022 的独立领域事件语义、权限与机械裁定不因此失效。当前精确闭包为 runtime `sha256:31dee484a8dac893c87758ec5999aa65adbdd4fd571c8baea2e760bbba9fcbc9`、Ruleset `sha256:bc22610d7a75d9f14ec5a0f2905f3bebcd080d6b66acb180179b50ec42018c78`、event schema `sha256:1d1d82768da015c40fc15bf5303259ad8a64084aaa6c04637ba913be9d18686a`、Ability Compiler `sha256:08d7d7e27f001d16543a7fa3edb4328af4fb38be506b35938da169a1ad07eff5`、Item/Standard Gear/NPC `sha256:3617527d10a13c6df79475756851c8de72498307574ff2b1fa8be833e59bfb71` / `sha256:96be7de4760e9f0f0a9da46c795e96f65cae74e58efc2beb83e1c59e94b791b9` / `sha256:6e3ebb6456b8db2e909648378131a249050cfc33da31f2d3ed7f24a654693b88`、Causal Interpreter `sha256:e9ec9883c0e9028ac98d1c19a0c0734420540fde9e5de137697cf5ba72bf3155`、Form catalog `sha256:4151291dcdc0744f45dc45a21945a3c1a0ba629811b6de874b8bb96be5898367`、causal language `fnv1a64:3c726c21c3f7f12d`、proposal protocol `fnv1a64:bc78545dae1b00cd`、workflow `fnv1a64:11301995746661da`、module `sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272`。
+- 验收场景：物品 acquire/transfer/equip/stow/use/cost/break/repair/destroy/replay/project 使用同一定义与实例权威；NPC 与玩家无 sidecar；未知定义安全投影；并发 UI 只有一个 mutation；当前 Form/Causal、party/campaign capability 和五类 recovery 均 exact/fail-closed；旧 ActionPlan 可执行引用为零。
+- 验证边界：Item/NPC、ActorPlan、party/social、Room recovery、Profile/Form canonical 与 UI 的定向结果写入本轮 `refactor-log.md`。用户明确取消冻结门，因此不运行全量 Lint、`npm test` 或 production build；不生成/执行 migration，不部署。

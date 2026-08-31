@@ -1,6 +1,12 @@
 import { canonicalSha256 } from "../profiles/canonical";
+import {
+  ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
+  V5_EVENT_SCHEMA_PROFILE,
+} from "../profiles/manifests";
 import { causalActionInterpreterEnabled } from "../profiles/causal-action-interpreter";
 import { environmentProfileEnabled } from "../profiles/environment";
+import { itemSystemProfileEnabled } from "../profiles/item-system";
+import { isRuntimeProfileManifest } from "../profiles/registry";
 import {
   DYNAMIC_NPC_DEFAULT_SOCIAL_ARCHETYPE_REF,
   socialResolutionProfileEnabled,
@@ -40,9 +46,9 @@ import {
   dynamicNpcSocialMechanics,
 } from "./social-model";
 import {
-  NPC_MECHANICAL_ITEM_KIND,
   NPC_MECHANICAL_TEMPLATE_KIND,
 } from "./npc-mechanics";
+import { isItemDefinitionV1 } from "./items";
 import {
   CANONICAL_POSITIVE_INTEGER_PATTERN,
   CANONICAL_SIGNED_INTEGER_PATTERN,
@@ -76,8 +82,10 @@ import {
   validateCorrectionEffects,
 } from "./correction";
 import {
+  applyCharacterMechanicsSnapshot,
   applyMultiplayerEvent,
   MULTIPLAYER_EVENT_TYPES,
+  validCharacterMechanicsSnapshot,
   validateMultiplayerEventPayload,
 } from "./multiplayer-events";
 import {
@@ -223,7 +231,7 @@ function eventRequiresCausalActionProfile(eventType: EventType, payload: unknown
   if (eventType === "RandomnessRequested") {
     return isRecord(payload.resolutionPlan)
       && [
-        "zhuwei.causal-action-resolution-plan/v3",
+        "zhuwei.causal-action-resolution-plan/v4",
         "zhuwei.social-resolution-plan/v1",
       ].includes(String(payload.resolutionPlan.schema));
   }
@@ -269,12 +277,24 @@ function eventRequiresNpcMechanicsProfile(eventType: EventType, payload: unknown
   if (!isRecord(payload)) return false;
   if (eventType === "DefinitionRegistered") {
     return isRecord(payload.definition)
-      && (payload.definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
-        || payload.definition.definitionKind === NPC_MECHANICAL_ITEM_KIND);
+      && payload.definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND;
   }
   return eventType === "EntityMaterialized"
     && isRecord(payload.entity)
     && isNonEmptyString(payload.entity.mechanicalDefinitionRef);
+}
+
+function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown): boolean {
+  if ([
+    "ItemDefinitionRegistered",
+    "ItemMaterialized",
+    "ItemAcquired",
+    "ItemTransferred",
+    "ItemUsed",
+  ].includes(eventType)) return true;
+  return eventType === "DefinitionRegistered"
+    && isRecord(payload)
+    && isItemDefinitionV1(payload.definition);
 }
 
 function envelopeCausalActionProfileEnabled(profiles: JsonRecord): boolean {
@@ -305,6 +325,47 @@ function envelopeNpcMechanicsProfileEnabled(profiles: JsonRecord): boolean {
       && isNonEmptyString(extension.profileId)
       && isSha256(extension.profileHash))
     && npcMechanicsProfileEnabled(profiles.extensions);
+}
+
+function envelopeItemSystemProfileEnabled(profiles: JsonRecord): boolean {
+  return Array.isArray(profiles.extensions)
+    && profiles.extensions.every((extension): extension is ProfileRef =>
+      isRecord(extension)
+      && hasExactKeys(extension, ["profileHash", "profileId"])
+      && isNonEmptyString(extension.profileId)
+      && isSha256(extension.profileHash))
+    && itemSystemProfileEnabled(profiles.extensions);
+}
+
+function exactProfileRef(value: unknown, expected: ProfileRef): boolean {
+  return isRecord(value)
+    && hasExactKeys(value, ["profileHash", "profileId"])
+    && value.profileId === expected.profileId
+    && value.profileHash === expected.profileHash;
+}
+
+function knownRuntimeManifestClosureIsExact(profiles: JsonRecord): boolean {
+  if (!isRuntimeProfileManifest(profiles)) return false;
+  if (profiles.manifest.profileId !== ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileId) {
+    return true;
+  }
+  try {
+    return canonicalSha256(profiles) === canonicalSha256(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
+  } catch {
+    return false;
+  }
+}
+
+function expectedEventTypeVersion(
+  profiles: JsonRecord | RuntimeProfileManifest,
+  eventType: EventType,
+  payload: unknown,
+): "1" | "2" | "3" | "4" | undefined {
+  if (exactProfileRef(profiles.eventSchema, V5_EVENT_SCHEMA_PROFILE)) {
+    if (eventType === "ItemUsed") return "4";
+    return eventType === "ResourceSpent" ? "2" : "1";
+  }
+  return undefined;
 }
 
 const EVENT_TYPES = new Set<EventType>([
@@ -1051,10 +1112,21 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
         && isNonEmptyString(value.characterId)
         && isNonEmptyString(value.controllingSeatId);
     case "SuccessorIntroduced":
-      return hasOnlyKeys(value, ["controllerSeatId", "predecessorCharacterId", "successor"], ["worldEntry"])
+      return hasOnlyKeys(value, [
+        "combatEntity",
+        "controllerSeatId",
+        "definitions",
+        "predecessorCharacterId",
+        "successor",
+      ], ["worldEntry"])
         && isNonEmptyString(value.controllerSeatId)
         && isNonEmptyString(value.predecessorCharacterId)
-        && isCharacterRecord(value.successor);
+        && isCharacterRecord(value.successor)
+        && validCharacterMechanicsSnapshot(
+          value.successor.id,
+          value.combatEntity,
+          value.definitions,
+        );
     default:
       return validateEnvironmentEventPayload(eventType, value)
         || validateSafetyEventPayload(eventType, value)
@@ -2092,6 +2164,12 @@ export function foldEvent(
         explicitSkips: "0",
         sceneId: payload.successor.sceneId,
       };
+      applyCharacterMechanicsSnapshot(
+        state,
+        payload.successor.id,
+        payload.combatEntity,
+        payload.definitions,
+      );
       break;
     }
     default:
@@ -2178,7 +2256,11 @@ export function validateEventEnvelope(value: unknown): EventValidation {
     || !(value.resolutionId === null || isNonEmptyString(value.resolutionId))
     || typeof value.eventType !== "string"
     || !EVENT_TYPES.has(value.eventType as EventType)
-    || value.eventTypeVersion !== "1"
+    || value.eventTypeVersion !== expectedEventTypeVersion(
+      value.profiles,
+      value.eventType as EventType,
+      value.payload,
+    )
     || typeof value.fictionInstantMicros !== "string"
     || !CANONICAL_UNSIGNED_INTEGER_PATTERN.test(value.fictionInstantMicros)
     || !isNonEmptyString(value.fictionTimelineId)
@@ -2214,6 +2296,13 @@ export function validateEventEnvelope(value: unknown): EventValidation {
   if (eventRequiresNpcMechanicsProfile(value.eventType as EventType, value.payload)
     && !envelopeNpcMechanicsProfileEnabled(value.profiles)) {
     return { ok: false, message: "Event requires the pinned NPC mechanics Profile." };
+  }
+  if (eventRequiresItemSystemProfile(value.eventType as EventType, value.payload)
+    && !envelopeItemSystemProfileEnabled(value.profiles)) {
+    return { ok: false, message: "Event requires the pinned item system Profile." };
+  }
+  if (!knownRuntimeManifestClosureIsExact(value.profiles)) {
+    return { ok: false, message: "Event runtime manifest does not match its exact registered Profile closure." };
   }
   const event = value as EventEnvelope;
   try {
@@ -2279,12 +2368,24 @@ export function createEventTransition<T extends EventType>(
     && !npcMechanicsProfileEnabled(profiles.extensions)) {
     throw new TypeError("event transition requires the NPC mechanics Profile");
   }
+  if (eventRequiresItemSystemProfile(draft.eventType, draft.payload)
+    && !itemSystemProfileEnabled(profiles.extensions)) {
+    throw new TypeError("event transition requires the item system Profile");
+  }
+  const eventTypeVersion = expectedEventTypeVersion(
+    profiles,
+    draft.eventType,
+    draft.payload,
+  );
+  if (eventTypeVersion === undefined) {
+    throw new TypeError("event transition is unavailable under the pinned event schema Profile");
+  }
   const draftPayload = draft.payload as unknown;
   if (draft.eventType === "RandomnessRequested"
     && eventRequiresCausalActionProfile(draft.eventType, draftPayload)
     && isRecord(draftPayload)
     && isRecord(draftPayload.resolutionPlan)
-    && draftPayload.resolutionPlan.schema === "zhuwei.causal-action-resolution-plan/v3"
+    && draftPayload.resolutionPlan.schema === "zhuwei.causal-action-resolution-plan/v4"
     && !isCausalRandomnessEventBinding(profiles, source, draft.rootActionId, draftPayload)) {
     throw new TypeError("causal randomness request does not match its frozen program and actor");
   }
@@ -2316,7 +2417,7 @@ export function createEventTransition<T extends EventType>(
     rootActionId: draft.rootActionId,
     resolutionId: draft.resolutionId ?? null,
     eventType: draft.eventType,
-    eventTypeVersion: "1",
+    eventTypeVersion,
     fictionTimelineId,
     fictionInstantMicros: timeline.nowMicros,
     payload: structuredClone(draft.payload),

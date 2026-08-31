@@ -9,6 +9,7 @@ import type {
   RuntimeGenesis,
 } from "./model";
 import { isCorrectionRuntime } from "./correction";
+import { isItemSystemStateV1 } from "./items";
 import { isMultiplayerRuntime } from "./multiplayer-model";
 
 const GENESIS_KEYS = [
@@ -26,7 +27,7 @@ const GENESIS_KEYS = [
 const PROFILE_REF_KEYS = ["profileHash", "profileId"] as const;
 const CAMPAIGN_RUNTIME_KEYS = [
   "activities",
-  "artifacts",
+  "adjudicationPrecedents",
   "campaign",
   "chapters",
   "debts",
@@ -36,6 +37,7 @@ const CAMPAIGN_RUNTIME_KEYS = [
   "factionPlans",
   "factions",
   "inheritanceSources",
+  "itemSystem",
   "meaningfulFailures",
   "npcPlans",
   "promises",
@@ -138,11 +140,7 @@ export function isNonEmptyString(value: unknown): value is string {
 export function isCharacterLoadout(value: unknown): value is CharacterLoadoutRecord {
   if (
     !isRecord(value)
-    || !hasOnlyKeys(
-      value,
-      ["armorClass", "backpack", "equipped", "speedFeet"],
-      ["mechanicalItems"],
-    )
+    || !hasExactKeys(value, ["armorClass", "backpack", "equipped", "speedFeet"])
     || !Number.isSafeInteger(value.armorClass)
     || Number(value.armorClass) < 1
     || Number(value.armorClass) > 99
@@ -152,33 +150,15 @@ export function isCharacterLoadout(value: unknown): value is CharacterLoadoutRec
     || !Object.entries(value.equipped).every(([slot, itemId]) =>
       isNonEmptyString(slot) && isNonEmptyString(itemId))
     || !Array.isArray(value.backpack)
-    || !(value.mechanicalItems === undefined || (isRecord(value.mechanicalItems)
-      && Object.entries(value.mechanicalItems).every(([itemId, item]) =>
-        isNonEmptyString(itemId)
-        && isRecord(item)
-        && hasExactKeys(item, ["definitionRef", "sourceKind", "status"])
-        && isNonEmptyString(item.definitionRef)
-        && ["standardGear", "npcMechanicalItemDefinition"].includes(String(item.sourceKind))
-        && ["usable", "broken"].includes(String(item.status)))))
   ) return false;
   const items = value.backpack;
-  const inventoryValid = items.every((entry) => isRecord(entry)
+  return items.every((entry) => isRecord(entry)
       && hasExactKeys(entry, ["itemId", "quantity"])
       && isNonEmptyString(entry.itemId)
       && Number.isSafeInteger(entry.quantity)
       && Number(entry.quantity) > 0)
     && items.every((entry, index) =>
       index === 0 || String(items[index - 1].itemId) < String(entry.itemId));
-  if (!inventoryValid || value.mechanicalItems === undefined) return inventoryValid;
-  const equippedIds = Object.values(value.equipped);
-  return Object.entries(value.mechanicalItems).every(([itemId, item]) => {
-    if (!isRecord(item)) return false;
-    const backpackEntry = items.find((entry) => entry.itemId === itemId);
-    const equippedCount = equippedIds.filter((equippedId) => equippedId === itemId).length;
-    return (backpackEntry === undefined ? 0 : 1) + equippedCount === 1
-      && (backpackEntry === undefined || backpackEntry.quantity === 1)
-      && !(item.status === "broken" && equippedCount > 0);
-  });
 }
 
 export function isSha256(value: unknown): value is Sha256Ref {
@@ -396,7 +376,7 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
     || !hasOnlyKeys(
       value.campaignRuntime,
       CAMPAIGN_RUNTIME_KEYS,
-      ["adjudicationPrecedents", "conversationThreads"],
+      ["conversationThreads"],
     )
     || !(value.campaignRuntime.campaign === null || isRecord(value.campaignRuntime.campaign))
     || !Array.isArray(value.campaignRuntime.unresolvedThreats)
@@ -406,10 +386,9 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
   const campaignRuntime = value.campaignRuntime;
   const campaignCollections = CAMPAIGN_RUNTIME_KEYS.filter((key) => !["campaign", "unresolvedThreats"].includes(key));
   if (!campaignCollections.every((key) => isRecord(campaignRuntime[key]))
-    || (campaignRuntime.adjudicationPrecedents !== undefined
-      && !isRecord(campaignRuntime.adjudicationPrecedents))
     || (campaignRuntime.conversationThreads !== undefined
-      && !recordsSatisfy(campaignRuntime.conversationThreads, isConversationThreadRecord))) {
+      && !recordsSatisfy(campaignRuntime.conversationThreads, isConversationThreadRecord))
+    || !isItemSystemStateV1(campaignRuntime.itemSystem)) {
     return false;
   }
 

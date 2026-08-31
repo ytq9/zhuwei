@@ -362,7 +362,7 @@ function directThreadDisposition(response: SocialNpcResponse):
 }
 
 /** Specialized V5 branch for npc-exchange.v1. Returning undefined means the
- * exact runtime profile did not opt in; old rooms continue through v3.4. */
+ * exact current profile or Form does not own this operation. */
 export function stepSocialCausalAction(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,

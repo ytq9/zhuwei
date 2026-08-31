@@ -282,12 +282,6 @@ function publicPortal(
   actorCharacterId: string,
   featureId: string,
 ): CanonicalTacticalFeature | undefined {
-  const moduleRef = state.campaignRuntime.campaign?.moduleRef;
-  if (!isRecord(moduleRef)
-    || !isNonEmptyString(moduleRef.profileId)
-    || !moduleRef.profileId.endsWith(":tactical-map-v1")) {
-    return undefined;
-  }
   const feature = currentTacticalFeature(state, actorCharacterId, featureId);
   return feature?.kind === "portal"
     && (feature.visibilityPolicyId === "visibility:public"
@@ -302,10 +296,6 @@ export function publicDamageableFeature(
   actorCharacterId: string,
   featureId: string,
 ): CanonicalTacticalFeature | undefined {
-  const moduleRef = state.campaignRuntime.campaign?.moduleRef;
-  if (!isRecord(moduleRef)
-    || !isNonEmptyString(moduleRef.profileId)
-    || !moduleRef.profileId.endsWith(":tactical-map-v1")) return undefined;
   const feature = currentTacticalFeature(state, actorCharacterId, featureId);
   return (feature?.kind === "portal" || feature?.kind === "destructible")
     && feature.environment === undefined

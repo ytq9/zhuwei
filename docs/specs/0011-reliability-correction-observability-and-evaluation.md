@@ -3,7 +3,7 @@
 - 状态：**已裁定（本 Goal 授权）**
 - 裁定日期：2026-08-26
 - 上位规格：`SPEC 0001`、`SPEC 0003`、`SPEC 0010`
-- 平台：现有 Cloudflare Worker `zhuwei`、D1 `zhuwei-dev`、SQLite Room Durable Object、DeepSeek API；Workers AI binding `AI` 仅保留历史房间兼容与语音能力
+- 平台：现有 Cloudflare Worker `zhuwei`、D1 `zhuwei-dev`、SQLite Room Durable Object、DeepSeek API；Workers AI binding `AI` 只用于仍在当前产品范围内的语音能力
 - 补充裁定：2026-08-28 用户明确要求公开 KP 模型只保留 DeepSeek V4 Flash / Pro；本规格此前把 Workers AI 作为新房默认的条款由本次补充取代。
 - 取代范围：`SPEC 0002` 第 13、20–23、25 节及 B16、B27、B31–B33、B44–B46、B48、B50–B52 中的通用可靠性、恢复、更正、日志和评测条款
 
@@ -61,7 +61,7 @@ SLO 未达成时先报告真实分类与恢复条件；不得吞错、伪造成�
 - `observe` 读取当前快照索引和必要增量，不全表扫描；D1 归档按提交事件批量/幂等追加。
 - 达到已绑定 Provider 的额度、付费限制或容量错误时返回 `retryableFailure`；不自动切模型、启用其他 Provider 或弱化 KP 职责。
 
-新规则公开模型严格只有版本化的 `deepseek-v4-flash` 与 `deepseek-v4-pro` Profile，前者为默认。部署前必须确认现有 `DEEPSEEK_API_KEY` secret 及代表性真实调用；未配置、无权或余额不足时 fail closed，不能以隐藏候选替换。此前已经精确绑定 GLM/Gemma Workers AI Profile 的旧房间继续由服务端兼容解释，但这些 Profile 不进入公开模型目录，也不允许用于创建新房间。
+0.4 公开模型严格只有版本化的 `deepseek-v4-flash` 与 `deepseek-v4-pro` Profile，前者为默认。部署前必须确认现有 `DEEPSEEK_API_KEY` secret 及代表性真实调用；未配置、无权或余额不足时 fail closed，不能以隐藏候选替换。前 0.4 的 GLM/Gemma Workers AI Profile 和其房间已经退役，不进入公开模型目录、当前 Registry 或回放，也不保留服务端兼容解释器。
 
 DeepSeek 官方 [Chat Completions API](https://api-docs.deepseek.com/api/create-chat-completion/) 列出上述两个模型、tools 与 required tool choice；[错误码文档](https://api-docs.deepseek.com/quick_start/error_codes/) 区分余额不足、限流和服务端错误。公开资料只证明协议能力，不证明本账户余额、真实调用延迟或输出质量；这些仍须部署阶段以生产默认组合做一次有界真实调用确认。
 
@@ -102,7 +102,7 @@ Room DO 提交后产生待归档标记；Worker/D1 Adapter 幂等追加事件副
 
 D1 丢失可从 Room DO 重新导出；Room DO 活跃状态不得从 D1 `game_states`、messages 或 session logs 拼装。
 
-随机 continuation 的 Room SQLite 恢复记录同样不是通用 Rules 输入缓存：恢复前必须验证 proposal hash、recovery hash 与载荷 allowlist。authoritative-v2 只允许 ActionPlan v1，或可选内嵌同版本 ActionPlan 的 `answerPendingInput`；compact proposal、任意 Rules command、未知 ActionPlan 版本和多余字段必须返回稳定的完整性/恢复失败，不能借重启进入旧机械路径。
+随机 continuation 的 Room SQLite 恢复记录同样不是通用 Rules 输入缓存：恢复前必须验证 proposal hash、recovery hash、envelope 与载荷 allowlist。0.4 只允许当前 `executeCausalActionProgram`、精确 `invokeEnvironmentalStunt`、仅执行决定的 `resolveDueActorPlan` wrapper、精确 `answerSocialResolution`，以及 combat 或内嵌当前 Causal Program 的两种 `answerPendingInput`。其中 due ActorPlan wrapper 的机械提案在恢复 seam 只确认是结构化值，仍必须由后续 Rules 按冻结计划完整验证。compact proposal、任意 Rules command、旧 ActionPlan、未知形状和多余字段必须返回稳定的完整性/恢复失败，不能借重启进入退役机械路径。
 
 ## 7. 更正与审计
 
@@ -114,7 +114,7 @@ D1 丢失可从 Room DO 重新导出；Room DO 活跃状态不得从 D1 `game_st
 - 旧事件、旧骰面、旧 Receipt、旧 Delivery 审计引用保留；玩家界面不恢复旧旁白历史。
 - 输入未变可沿用原骰面；冻结输入变化才在新分支请求新 `randomnessId`。不喜欢结果不是更正理由。
 - 所有会改变战斗运行态的事件在 fold 前记录完整、确定性的 `combatRuntime` 恢复快照，至少覆盖遭遇建立、先攻、轮/回合、反应、战斗待决、结论、伤害/资源及战斗随机 continuation；更正按受影响事件逆序应用快照，并同步重建 Room 的待决鉴权索引，不能留下幽灵 encounter、候选或可回答的旧待决。
-- 更正不得改变房间的 runtime manifest pin。本 Goal 的 authoritative-v2 尚未首次正式发布，冻结发布源码时可以同步更新其待发布 manifest/hash；首次正式发布后，任何会改变 correction audit 或 replay state hash 的实现都必须发行新 manifest/interpreter 并永久保留旧解释器，禁止在原 pin 下静默替换。
+- 更正不得改变房间的 runtime manifest pin。本 Goal 的 authoritative-v2 尚未首次正式发布，冻结发布源码时可以同步更新其待发布 manifest/hash；首次正式发布后，任何会改变 correction audit 或 replay state hash 的实现都必须发行新 manifest/interpreter，禁止在原 pin 下静默替换。是否继续保留旧解释器取决于当时仍在使用的数据合同并须另行裁定，不能预先建立 fallback。
 
 公开说明包含错误、正确规则/事实、受影响结果和采取方式，同时隐藏无权知道的依据。
 
@@ -149,7 +149,7 @@ D1 丢失可从 Room DO 重新导出；Room DO 活跃状态不得从 D1 `game_st
 
 Fixture 只能在 KP/熵/时钟/外部故障 Adapter seam 控制输入；不得直接改 WorldState、事件、骰面、窗口或内部表。
 
-确定性 KP fixture 也必须生成完整 production draft，并逐轮调用与线上 Adapter 相同的 `validateProposal` 与 `assertProposalProjectionBound`；只构造已经归一化的 compact Room proposal 不计入本评测。它证明 schema、Viewer 依据和 Room Action 责任链，但仍不替代真实 DeepSeek 模型调用与线上 table/API 冒烟。
+确定性 KP fixture 也必须从本轮 3–6 个窄工具 allowlist 中生成一次且仅一次线上同形的工具调用及其 direct draft，逐轮通过当前 Form schema、引用/投影边界、确定性 `CausalActionProgram` 编译和 Room normalizer；只构造已经归一化的 Rules command 不计入本评测。它证明 schema、Viewer 依据和 Room Action 责任链，但仍不替代真实 DeepSeek 模型调用与线上 table/API 冒烟。
 
 ## 10. 验收场景
 
@@ -163,15 +163,15 @@ Fixture 只能在 KP/熵/时钟/外部故障 Adapter seam 控制输入；不得�
 ## 11. 实现映射
 
 - 故障/日志：`app/_runtime/lib/room/telemetry.ts`
-- 模型 Adapter：`app/_runtime/lib/rules/ai-adapter.ts`
+- 模型 Adapter：`app/_runtime/lib/kp/authoritative.ts` 与当前私有 Form policy
 - 归档/重建：`app/_runtime/lib/room/archive.ts`、`app/_runtime/lib/room/pending-bindings.ts`
 - 更正：`app/_runtime/lib/rules/v2/correction.ts` 与 `RoomDurableObject.commitCorrection`
-- 评测：`tests/kp-multiturn-eval.test.ts`、`tests/randomness-recovery-v2.test.ts`、`tests/archive-correction-v2.test.ts`、`tests/combat-archive-correction-v2.test.ts`
+- 当前评测入口：私有 Form/Causal、Room recovery、archive/correction 的直接 runner；退役 draft runner 不计 0.4 证据
 
 ### 11.1 当前实现映射（2026-08-26）
 
-- `app/_runtime/lib/room/proposal-adapter.ts` 复用 production `validateProposal`；`app/_runtime/lib/room/durable-object.ts` 在恢复分支重新执行 `isCanonicalAuthorityRecoveryInput`，`tools/check-modules.mjs` 禁止 compact DO 分支和未受限恢复输入。
-- `tests/kp-multiturn-eval.test.ts` 的 31 次连续交互已经迁移为完整 production proposal fixture，逐轮执行 `validateProposal` 与 projection-bound 检查；补齐 `resolveNoncombatSave` 冻结成本/后果及角色 canonical loadout/HP/class seed 后，当前源码 1/1 通过并达到全部硬门/评分阈值。它仍是受控模型 fixture，真实 DeepSeek/部署另行验收。
+- `app/_runtime/lib/room/proposal-adapter.ts` 只归一化当前私有 Form 或字段精确的 Room capability；`app/_runtime/lib/room/durable-object.ts` 在恢复分支重新执行 `isCanonicalAuthorityRecoveryInput`，`tools/check-modules.mjs` 禁止 compact/旧 ActionPlan DO 分支和未受限恢复输入。
+- 已退役的多轮 production draft fixture 不能作为当前 0.4 的 20+ 轮完成证据；新的评测必须逐轮从本轮 allowlist 选择一次窄工具调用，再经过 Form validator/compiler → Room/Rules 链。真实 DeepSeek/部署仍须另行验收。
 - `app/_runtime/lib/room/pending-bindings.ts` 是 live commit、归档恢复与更正后 SQL 索引同步的唯一待决枚举；`app/_runtime/lib/rules/v2/correction.ts` 以 fold 前完整 `combatRuntime` 快照恢复遭遇、先攻/回合、反应、战斗待决与结论。`tests/combat-archive-correction-v2.test.ts` 当前 3/3 通过，覆盖恢复后同候选、伪造拒绝、合法继续、遭遇/待决更正、旧待决失效及更正归档的新 DO 重建；冻结源码仍须重跑全量门。
 
 ## 12. 交叉审查

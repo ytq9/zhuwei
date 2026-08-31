@@ -1,16 +1,11 @@
-import {
-  resolvePinnedModuleMigrationDescriptor,
-  type PinnedModuleMigrationDescriptor,
-} from "../../module/migration-registry";
 import { canonicalSha256 } from "../profiles/canonical";
 import {
   compileAbilityDefinition,
   frozenRegisteredAbilityOperation,
   isAbilityDefinitionCandidate,
+  registeredAbilityRecord,
 } from "../profiles/ability-compiler";
-import type { ProfileRef, RuntimeProfileManifest } from "../profiles/types";
-import { itemById } from "../../dnd/gear";
-import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
+import type { RuntimeProfileManifest } from "../profiles/types";
 import { resolveFixedDamage } from "./damage";
 import { createEventTransition, createScopeProof } from "./events";
 import type {
@@ -33,6 +28,7 @@ import { needsKp, rejected } from "./results";
 import { canonicalControlledCharacter, partyDepartureEvents } from "./multiplayer-actions";
 import {
   buildPlayerCombatEntity,
+  planPlayerAbilityCatalog,
   compileStaticCharacterCombat,
   synchronizePlayerCombatEntity,
 } from "./character-abilities";
@@ -51,7 +47,7 @@ import {
   resolveRestRecovery,
   type RestRecoveryChoice,
 } from "./character-rest";
-import { isContinuedCompoundRoot } from "./internal-compound";
+import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
 import { characterTimelineId, completedActivityMovementPlan } from "./timeline";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
 import {
@@ -69,10 +65,25 @@ import {
   type ChapterActivityTransition,
 } from "./campaign-continuity";
 import {
-  NPC_MECHANICAL_ITEM_KIND,
   NPC_MECHANICAL_TEMPLATE_KIND,
-  transferredNpcMechanicalItemId,
 } from "./npc-mechanics";
+import {
+  createInitialItemEntry,
+  compileItemEntryUseAbility,
+  isItemDefinitionV1,
+  itemStackIdentity,
+  itemUseBaseAbilityDefinition,
+  type ItemOwnershipDisposition,
+} from "./items";
+import {
+  acquireItemQuantity,
+  deriveCharacterLoadoutFromItems,
+  transferItemQuantity,
+} from "./item-transitions";
+import {
+  planPlayerInitialItemImport,
+  playerInitialItemEventDrafts,
+} from "./player-item-system";
 import {
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
   hasExactKeys,
@@ -107,6 +118,53 @@ function character(state: AuthoritativeWorldState, id: unknown) {
     : undefined;
 }
 
+function characterWithItemSystemLoadout(
+  characterValue: NonNullable<ReturnType<typeof character>>,
+  itemSystem: NonNullable<AuthoritativeWorldState["campaignRuntime"]["itemSystem"]>,
+) {
+  const derived = deriveCharacterLoadoutFromItems(itemSystem, {
+    holderRef: characterValue.id,
+    ...(characterValue.classId === undefined ? {} : { classId: characterValue.classId }),
+    scores: {
+      dex: characterValue.abilityScores?.dex ?? 10,
+      con: characterValue.abilityScores?.con ?? 10,
+    },
+    speedFeet: characterValue.loadout?.speedFeet ?? 30,
+  });
+  return "error" in derived
+    ? undefined
+    : { ...structuredClone(characterValue), loadout: derived.loadout };
+}
+
+function appendPlayerAbilityRegistrations(
+  drafts: Draft[],
+  catalog: Record<string, JsonRecord>,
+  characterValue: NonNullable<ReturnType<typeof character>>,
+  itemSystem: NonNullable<AuthoritativeWorldState["campaignRuntime"]["itemSystem"]>,
+): string | undefined {
+  if (characterValue.kind !== "player") return undefined;
+  const nextCharacter = characterWithItemSystemLoadout(characterValue, itemSystem);
+  if (nextCharacter === undefined) return "playerItemLoadoutUnavailable";
+  const planned = planPlayerAbilityCatalog({
+    character: nextCharacter,
+    itemSystem,
+    catalog,
+  });
+  if ("error" in planned) return planned.error;
+  for (const artifact of planned.registrations) {
+    const definitionId = String(artifact.definition.definitionId);
+    drafts.push({
+      eventType: "DefinitionRegistered",
+      payload: structuredClone(artifact),
+      visibilityPolicyId: "visibility:room-authority-only",
+      secrecy: "internal",
+      creates: [`definition:${definitionId}`],
+    });
+    catalog[definitionId] = registeredAbilityRecord(artifact);
+  }
+  return undefined;
+}
+
 function canonicalStrings(value: unknown): string[] | undefined {
   if (!Array.isArray(value) || !value.every(isNonEmptyString) || value.length !== new Set(value).size) {
     return undefined;
@@ -114,25 +172,8 @@ function canonicalStrings(value: unknown): string[] | undefined {
   return [...value].sort();
 }
 
-function sameProfileRef(left: ProfileRef, right: ProfileRef): boolean {
-  return left.profileId === right.profileId && left.profileHash === right.profileHash;
-}
-
-function verifiedModuleMigration(
-  profiles: RuntimeProfileManifest,
-  currentModuleRef: ProfileRef,
-  value: unknown,
-): PinnedModuleMigrationDescriptor | undefined {
-  const registered = resolvePinnedModuleMigrationDescriptor(value);
-  return registered !== undefined
-    && registered.compatibleRulesetVersion === profiles.ruleset.profileId
-    && sameProfileRef(registered.fromModuleRef, currentModuleRef)
-    ? registered
-    : undefined;
-}
-
 const INHERITANCE_SCOPE_BY_KIND = {
-  artifact: "transferPossession",
+  item: "transferPossession",
   knowledge: "acquireExactKnowledge",
   relationship: "establishDerivedRelationship",
   debt: "assumeDebtObligation",
@@ -183,9 +224,10 @@ function inheritanceAuthorizationAvailable(
   authorization: InheritanceAuthorization,
 ): boolean {
   switch (authorization.kind) {
-    case "artifact":
+    case "item":
       return authorization.targetRef === authorization.sourceRef
-        && state.campaignRuntime.artifacts[authorization.sourceRef]?.holderId
+        && state.campaignRuntime.itemSystem.entries[authorization.sourceRef]?.disposition === "held"
+        && state.campaignRuntime.itemSystem.entries[authorization.sourceRef]?.holderRef
           === authorization.subjectCharacterId;
     case "knowledge":
       return state.knowledge[authorization.subjectCharacterId]?.[authorization.sourceRef] !== undefined
@@ -603,34 +645,202 @@ function changeResource(profiles: RuntimeProfileManifest, state: AuthoritativeWo
   }]);
 }
 
-function useItem(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
-  if (!hasExactKeys(input, ["characterId", "itemId", "kind", "proposalId", "purpose", "quantity"])) {
-    return rejected("invalidRulesInput", "Item use input is not canonical.");
+function materializeItem(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!hasExactKeys(input, [
+      "actorCharacterId",
+      "definition",
+      "entryId",
+      "kind",
+      "proposalId",
+      "quantity",
+      "sceneId",
+    ])) {
+    return rejected("invalidRulesInput", "Item materialization input is not canonical.");
   }
   const root = rootAction(state, input);
-  const actor = character(state, input.characterId);
-  const item = actor?.loadout?.backpack.find((entry) => entry.itemId === input.itemId);
-  if (
-    root === undefined
+  const actor = character(state, input.actorCharacterId);
+  const itemSystem = state.campaignRuntime.itemSystem;
+  const definition = input.definition;
+  if (root === undefined
     || actor === undefined
-    || item === undefined
-    || actor.loadout?.mechanicalItems?.[String(input.itemId)] !== undefined
-    || !isNonEmptyString(input.itemId)
-    || !isNonEmptyString(input.purpose)
+    || itemSystem === undefined
+    || !isNonEmptyString(input.entryId)
+    || !isNonEmptyString(input.sceneId)
+    || actor.sceneId !== input.sceneId
+    || state.scenes[input.sceneId] === undefined
     || !Number.isSafeInteger(input.quantity)
     || Number(input.quantity) <= 0
-    || item.quantity < Number(input.quantity)
-  ) return rejected("insufficientResource", "The requested item quantity is unavailable.");
-  return sequence("committed", profiles, state, root, [{
-    eventType: "ItemUsed",
-    payload: {
-      characterId: actor.id,
-      itemId: input.itemId,
+    || Number(input.quantity) > 1_000_000
+    || !isItemDefinitionV1(definition)
+    || definition.causalBasisRefs.some((factRef) => state.canonicalFacts[factRef] === undefined)
+    || itemSystem.entries[input.entryId] !== undefined) {
+    return rejected(
+      "privateOrUnknownReference",
+      "The item definition, scene, or entry identity is unavailable.",
+    );
+  }
+  const productRulesProfile = definition.rulesBasis === "srd5.1-2014"
+    ? undefined
+    : definition.rulesBasis.profileRef;
+  if (productRulesProfile !== undefined
+    && !profiles.extensions.some((extension) =>
+      extension.profileId === productRulesProfile.profileId
+      && extension.profileHash === productRulesProfile.profileHash)) {
+    return rejected("unsupportedRulesBasis", "The item definition cites an unavailable product ruling.");
+  }
+  if (!definition.content.stackable && input.quantity !== 1) {
+    return rejected(
+      "unsupportedOperation",
+      "A non-stackable item must materialize as one exact entry.",
+    );
+  }
+  const existingDefinition = itemSystem.definitions[definition.definitionId];
+  if (existingDefinition !== undefined
+    && canonicalSha256(existingDefinition) !== canonicalSha256(definition)) {
+    return rejected("invalidRulesInput", "The item definition identity is already frozen differently.");
+  }
+
+  let entry;
+  try {
+    entry = createInitialItemEntry(definition, {
+      entryId: input.entryId,
       quantity: Number(input.quantity),
-      remaining: item.quantity - Number(input.quantity),
-      purpose: input.purpose,
+      placement: { kind: "scene", sceneRef: input.sceneId },
+      ownership: { kind: "unowned", ownerRef: null },
+    });
+  } catch {
+    return rejected("invalidRulesInput", "The item entry does not match its frozen definition.");
+  }
+
+  const drafts: Draft[] = [];
+  const plannedAbilityCatalog = structuredClone(state.combatRuntime.definitions);
+  if (existingDefinition === undefined) {
+    drafts.push({
+      eventType: "ItemDefinitionRegistered",
+      payload: { definition: structuredClone(definition) },
+      visibilityPolicyId: definition.visibilityPolicyRef,
+      secrecy: definition.visibilityPolicyRef === "visibility:public" ? "public" : "internal",
+      creates: [`item-definition:${definition.definitionId}`],
+    });
+  }
+  if (definition.content.use !== null) {
+    const baseAbility = itemUseBaseAbilityDefinition(definition, plannedAbilityCatalog);
+    if (baseAbility === undefined) {
+      return rejected(
+        "unsupportedOperation",
+        "The item use ability is not frozen in the current catalog.",
+      );
+    }
+    let ability;
+    try {
+      ability = compileItemEntryUseAbility(definition, entry.entryId, baseAbility);
+    } catch {
+      return rejected("invalidAbilityDefinition", "The item use ability cannot be compiled.");
+    }
+    const abilityId = ability.definition.definitionId;
+    if (!isNonEmptyString(abilityId)
+      || state.campaignRuntime.definitions[abilityId] !== undefined
+      || state.combatRuntime.definitions[abilityId] !== undefined) {
+      return rejected("invalidRulesInput", "The item ability identity is already registered.");
+    }
+    drafts.push({
+      eventType: "DefinitionRegistered",
+      payload: structuredClone(ability),
+      visibilityPolicyId: "visibility:room-authority-only",
+      secrecy: "internal",
+      creates: [`definition:${abilityId}`],
+    });
+    plannedAbilityCatalog[abilityId] = registeredAbilityRecord(ability);
+  }
+  const beforeAcquisition = structuredClone(itemSystem);
+  beforeAcquisition.definitions[definition.definitionId] = structuredClone(definition);
+  beforeAcquisition.entries[entry.entryId] = structuredClone(entry);
+  const acquired = acquireItemQuantity(beforeAcquisition, {
+    entryId: entry.entryId,
+    holderRef: actor.id,
+    quantity: entry.quantity,
+  });
+  if ("error" in acquired) {
+    return rejected("invalidWorldState", "The materialized item cannot enter the actor inventory.");
+  }
+  const abilityPlanError = appendPlayerAbilityRegistrations(
+    drafts,
+    plannedAbilityCatalog,
+    actor,
+    acquired.itemSystem,
+  );
+  if (abilityPlanError !== undefined) {
+    return rejected(
+      "invalidWorldState",
+      "The acquired item ability closure cannot be frozen.",
+    );
+  }
+  drafts.push({
+    eventType: "ItemMaterialized",
+    payload: { entry },
+    visibilityPolicyId: entry.visibilityPolicyRef,
+    secrecy: entry.visibilityPolicyRef === "visibility:public" ? "public" : "internal",
+    reads: [`scene:${input.sceneId}`, `entity:${actor.id}`],
+    creates: [`item-entry:${entry.entryId}`],
+  }, {
+    eventType: "ItemAcquired",
+    payload: {
+      entryId: entry.entryId,
+      characterId: actor.id,
+      fromSceneId: input.sceneId,
     },
-  }]);
+    visibilityPolicyId: `visibility:character-controller:${actor.id}`,
+    secrecy: "private",
+    reads: [`item-entry:${entry.entryId}`, `entity:${actor.id}`],
+    writes: [`item-entry:${entry.entryId}`, `entity:${actor.id}`, `combat-entity:${actor.id}`],
+  });
+  return sequence("committed", profiles, state, root, drafts);
+}
+
+function itemTransferTargetEntryId(
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  entryId: string,
+  toCharacterId: string,
+  quantity: number,
+  ownershipDisposition: ItemOwnershipDisposition,
+): string | undefined {
+  const itemSystem = state.campaignRuntime.itemSystem;
+  const source = itemSystem?.entries[entryId];
+  const definition = source === undefined
+    ? undefined
+    : itemSystem?.definitions[source.definitionRef];
+  if (itemSystem === undefined || source === undefined || definition === undefined) return undefined;
+  if (!definition.content.stackable) {
+    return quantity === source.quantity ? source.entryId : undefined;
+  }
+  const targetOwnership = ownershipDisposition === "transferToRecipient"
+    ? { kind: "character" as const, ownerRef: toCharacterId }
+    : structuredClone(source.ownership);
+  const targetIdentity = itemStackIdentity({
+    ...structuredClone(source),
+    disposition: "held",
+    holderRef: toCharacterId,
+    sceneRef: null,
+    equippedSlot: null,
+    ownership: targetOwnership,
+    visibilityPolicyRef: `visibility:character-controller:${toCharacterId}`,
+  });
+  const targetStacks = Object.values(itemSystem.entries).filter((candidate) =>
+    candidate.entryId !== source.entryId
+    && candidate.disposition === "held"
+    && candidate.holderRef === toCharacterId
+    && candidate.definitionRef === source.definitionRef
+    && candidate.definitionRevision === source.definitionRevision
+    && itemStackIdentity(candidate) === targetIdentity);
+  if (targetStacks.length > 1) return undefined;
+  if (targetStacks.length === 1) return targetStacks[0].entryId;
+  if (quantity === source.quantity) return source.entryId;
+  return `item-entry:transfer:${canonicalSha256({ entryId, rootActionId, toCharacterId })}`;
 }
 
 function transferItem(
@@ -638,192 +848,202 @@ function transferItem(
   state: AuthoritativeWorldState,
   input: JsonRecord,
 ): StepResult {
-  if (!npcMechanicsProfileEnabled(profiles.extensions)
-    || !hasExactKeys(input, [
+  if (!hasExactKeys(input, [
       "fromCharacterId",
       "itemId",
       "kind",
       "method",
+      "ownershipDisposition",
       "proposalId",
       "quantity",
       "toCharacterId",
     ])) return rejected("invalidRulesInput", "Item transfer input is not canonical.");
-  const root = rootAction(state, input);
-  const from = character(state, input.fromCharacterId);
-  const to = character(state, input.toCharacterId);
-  const sourceItem = from?.loadout?.backpack.find(({ itemId }) => itemId === input.itemId);
-  const sourceMechanicalItem = isNonEmptyString(input.itemId)
-    ? from?.loadout?.mechanicalItems?.[input.itemId]
-    : undefined;
-  const mechanicalNpcInvolved = [from, to].some((entry) => {
-    if (entry?.kind !== "npc") return false;
-    const combat = state.combatRuntime.entities[entry.id];
-    return isRecord(combat) && isNonEmptyString(combat.mechanicalDefinitionRef);
-  });
-  const targetCombat = to === undefined ? undefined : state.combatRuntime.entities[to.id];
-  const targetIsMechanicalNpc = to?.kind === "npc"
-    && isRecord(targetCombat)
-    && isNonEmptyString(targetCombat.mechanicalDefinitionRef);
-  const standardItem = isNonEmptyString(input.itemId) ? itemById(input.itemId) : undefined;
-  const instantiateStandardEquipment = sourceMechanicalItem === undefined
-    && targetIsMechanicalNpc
-    && standardItem !== undefined
-    && standardItem.wear !== "pack"
-    && standardItem.wear !== "ammo";
-  const targetItemId = instantiateStandardEquipment && root !== undefined
-    ? transferredNpcMechanicalItemId(to!.id, String(input.itemId), root)
-    : String(input.itemId);
-  const activeEncounter = [from?.id, to?.id].some((characterId) => characterId !== undefined
-    && Object.values(state.combatRuntime.encounters).some((encounter) =>
-      encounter.status !== "concluded"
-      && Array.isArray(encounter.participantEntityIds)
-      && encounter.participantEntityIds.includes(characterId)));
-  if (root === undefined
-    || from === undefined
-    || to === undefined
-    || from.id === to.id
-    || from.tenureStatus !== "active"
-    || to.tenureStatus !== "active"
-    || from.sceneId !== to.sceneId
-    || !isNonEmptyString(input.itemId)
-    || !isNonEmptyString(input.method)
-    || !Number.isSafeInteger(input.quantity)
-    || Number(input.quantity) <= 0
-    || sourceItem === undefined
-    || sourceItem.quantity < Number(input.quantity)
-    || to.loadout === undefined
-    || (sourceMechanicalItem !== undefined && !targetIsMechanicalNpc)
-    || (sourceMechanicalItem !== undefined && (
-      Number(input.quantity) !== 1
-      || sourceItem.quantity !== 1
-      || to.loadout.mechanicalItems?.[targetItemId] !== undefined
-    ))
-    || (instantiateStandardEquipment && (
-      Number(input.quantity) !== 1
-      || to.loadout.mechanicalItems?.[targetItemId] !== undefined
-      || to.loadout.backpack.some(({ itemId }) => itemId === targetItemId)
-      || Object.values(to.loadout.equipped).includes(targetItemId)
-    ))
-    || !mechanicalNpcInvolved
-    || activeEncounter) {
-    return rejected(
-      activeEncounter ? "pendingInputUnresolved" : "privateOrUnknownReference",
-      "The item cannot be transferred between these authoritative inventories.",
+    const root = rootAction(state, input);
+    const from = character(state, input.fromCharacterId);
+    const to = character(state, input.toCharacterId);
+    const itemSystem = state.campaignRuntime.itemSystem;
+    const entry = isNonEmptyString(input.itemId)
+      ? itemSystem.entries[input.itemId]
+      : undefined;
+    const definition = entry === undefined
+      ? undefined
+      : itemSystem.definitions[entry.definitionRef];
+    const quantity = Number(input.quantity);
+    const activeEncounter = [from?.id, to?.id].some((characterId) => characterId !== undefined
+      && Object.values(state.combatRuntime.encounters).some((encounter) =>
+        encounter.status !== "concluded"
+        && Array.isArray(encounter.participantEntityIds)
+        && encounter.participantEntityIds.includes(characterId)));
+    if (root === undefined
+      || from === undefined
+      || to === undefined
+      || from.id === to.id
+      || from.sceneId !== to.sceneId
+      || from.loadout === undefined
+      || to.loadout === undefined
+      || !isNonEmptyString(input.itemId)
+      || !isNonEmptyString(input.method)
+      || !["preserve", "transferToRecipient"].includes(String(input.ownershipDisposition))
+      || !Number.isSafeInteger(input.quantity)
+      || quantity <= 0
+      || entry === undefined
+      || definition === undefined
+      || definition.revision !== entry.definitionRevision
+      || entry.disposition !== "held"
+      || entry.holderRef !== from.id
+      || (entry.equippedSlot !== null && entry.equippedSlot !== "ammo")
+      || activeEncounter) {
+      return rejected(
+        activeEncounter ? "pendingInputUnresolved" : "privateOrUnknownReference",
+        "The item cannot be transferred between these authoritative inventories.",
+      );
+    }
+    const ownershipDisposition = input.ownershipDisposition as ItemOwnershipDisposition;
+    const targetItemId = itemTransferTargetEntryId(
+      state,
+      root,
+      entry.entryId,
+      to.id,
+      quantity,
+      ownershipDisposition,
     );
-  }
-  return sequence("committed", profiles, state, root, [{
-    eventType: "ItemTransferred",
-    payload: {
-      fromCharacterId: from.id,
-      toCharacterId: to.id,
-      itemId: input.itemId,
-      targetItemId,
-      quantity: Number(input.quantity),
-      method: input.method,
-    },
-    visibilityPolicyId: "visibility:scene-observers",
-  }]);
+    if (targetItemId === undefined) {
+      return rejected("invalidWorldState", "The target inventory contains conflicting item stacks.");
+    }
+    const transition = transferItemQuantity(itemSystem, {
+      entryId: entry.entryId,
+      fromHolderRef: from.id,
+      toHolderRef: to.id,
+      quantity,
+      targetEntryId: targetItemId,
+      ownershipDisposition,
+    });
+    if ("error" in transition || transition.targetEntryId !== targetItemId) {
+      return rejected("privateOrUnknownReference", "The requested item quantity is unavailable.");
+    }
+    const drafts: Draft[] = [];
+    const plannedAbilityCatalog = structuredClone(state.combatRuntime.definitions);
+    if (definition.content.use !== null
+      && targetItemId !== entry.entryId
+      && itemSystem.entries[targetItemId] === undefined) {
+      const baseAbility = itemUseBaseAbilityDefinition(definition, plannedAbilityCatalog);
+      if (baseAbility === undefined) {
+        return rejected("invalidWorldState", "The transferred item use ability is not frozen.");
+      }
+      let targetAbility;
+      try {
+        targetAbility = compileItemEntryUseAbility(definition, targetItemId, baseAbility);
+      } catch {
+        return rejected("invalidAbilityDefinition", "The transferred item use ability cannot be compiled.");
+      }
+      const targetAbilityId = targetAbility.definition.definitionId;
+      if (!isNonEmptyString(targetAbilityId)
+        || state.campaignRuntime.definitions[targetAbilityId] !== undefined
+        || state.combatRuntime.definitions[targetAbilityId] !== undefined) {
+        return rejected("invalidRulesInput", "The transferred item ability identity is already registered.");
+      }
+      drafts.push({
+        eventType: "DefinitionRegistered",
+        payload: structuredClone(targetAbility),
+        visibilityPolicyId: "visibility:room-authority-only",
+        secrecy: "internal",
+        creates: [`definition:${targetAbilityId}`],
+      });
+      plannedAbilityCatalog[targetAbilityId] = registeredAbilityRecord(targetAbility);
+    }
+    for (const participant of [from, to].sort((left, right) => left.id.localeCompare(right.id))) {
+      const abilityPlanError = appendPlayerAbilityRegistrations(
+        drafts,
+        plannedAbilityCatalog,
+        participant,
+        transition.itemSystem,
+      );
+      if (abilityPlanError !== undefined) {
+        return rejected(
+          "invalidWorldState",
+          "The transferred item ability closure cannot be frozen.",
+        );
+      }
+    }
+    drafts.push({
+      eventType: "ItemTransferred",
+      payload: {
+        fromCharacterId: from.id,
+        toCharacterId: to.id,
+        itemId: entry.entryId,
+        targetItemId,
+        quantity,
+        method: input.method,
+        ownershipDisposition,
+      },
+      visibilityPolicyId: "visibility:scene-observers",
+      reads: [`item-entry:${entry.entryId}`, `entity:${from.id}`, `entity:${to.id}`],
+      writes: [
+        `item-entry:${entry.entryId}`,
+        `item-entry:${targetItemId}`,
+        `entity:${from.id}`,
+        `entity:${to.id}`,
+        `combat-entity:${from.id}`,
+        `combat-entity:${to.id}`,
+      ],
+    });
+    return sequence("committed", profiles, state, root, drafts);
 }
 
-function acquireArtifact(
+function acquireItem(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
 ): StepResult {
-  if (!hasExactKeys(input, ["artifactId", "characterId", "kind", "proposalId"])) {
-    return rejected("invalidRulesInput", "Artifact acquisition input is not canonical.");
+  if (!hasExactKeys(input, ["characterId", "itemId", "kind", "proposalId"])) {
+    return rejected("invalidRulesInput", "Item acquisition input is not canonical.");
   }
   const root = rootAction(state, input);
   const actor = character(state, input.characterId);
-  const artifact = isNonEmptyString(input.artifactId)
-    ? state.campaignRuntime.artifacts[input.artifactId]
+  const itemSystem = state.campaignRuntime.itemSystem;
+  const entry = isNonEmptyString(input.itemId)
+    ? itemSystem.entries[input.itemId]
     : undefined;
+  const definition = entry === undefined
+    ? undefined
+    : itemSystem.definitions[entry.definitionRef];
   if (
     root === undefined
     || actor === undefined
-    || artifact?.status !== "placed"
-    || artifact.quantity !== 1
-    || artifact.sceneId !== actor.sceneId
-  ) return rejected("privateOrUnknownReference", "Artifact reference is unavailable.");
-  return sequence("committed", profiles, state, root, [{
-    eventType: "ArtifactAcquired",
+    || actor.loadout === undefined
+    || entry?.disposition !== "scene"
+    || entry.sceneRef !== actor.sceneId
+    || definition?.revision !== entry.definitionRevision
+  ) return rejected("privateOrUnknownReference", "Item reference is unavailable.");
+  const transition = acquireItemQuantity(itemSystem, {
+    entryId: entry.entryId,
+    holderRef: actor.id,
+    quantity: entry.quantity,
+  });
+  if ("error" in transition) {
+    return rejected("privateOrUnknownReference", "Item reference is unavailable.");
+  }
+  const drafts: Draft[] = [];
+  const abilityError = appendPlayerAbilityRegistrations(
+    drafts,
+    structuredClone(state.combatRuntime.definitions),
+    actor,
+    transition.itemSystem,
+  );
+  if (abilityError !== undefined) {
+    return rejected("invalidWorldState", "The acquired item ability closure cannot be frozen.");
+  }
+  drafts.push({
+    eventType: "ItemAcquired",
     payload: {
-      artifactId: input.artifactId as string,
+      entryId: entry.entryId,
       characterId: actor.id,
       fromSceneId: actor.sceneId,
-      beforeStatus: "placed",
-      afterStatus: "held",
-      remainingQuantity: 1,
     },
-    visibilityPolicyId: isNonEmptyString(artifact.visibilityPolicyId)
-      ? artifact.visibilityPolicyId
-      : `visibility:character-controller:${actor.id}`,
-    secrecy: "private",
-  }]);
-}
-
-function useArtifact(
-  profiles: RuntimeProfileManifest,
-  state: AuthoritativeWorldState,
-  input: JsonRecord,
-): StepResult {
-  if (!hasExactKeys(input, ["artifactId", "characterId", "kind", "proposalId", "purpose", "useMode"])) {
-    return rejected("invalidRulesInput", "Artifact use input is not canonical.");
-  }
-  const root = rootAction(state, input);
-  const actor = character(state, input.characterId);
-  const artifact = isNonEmptyString(input.artifactId)
-    ? state.campaignRuntime.artifacts[input.artifactId]
-    : undefined;
-  if (
-    root === undefined
-    || actor === undefined
-    || artifact?.holderId !== actor.id
-    || artifact.status !== "held"
-    || artifact.quantity !== 1
-    || !isNonEmptyString(input.purpose)
-    || !["retain", "consume", "destroy"].includes(String(input.useMode))
-  ) return rejected("privateOrUnknownReference", "Artifact reference is unavailable.");
-  const afterStatus = input.useMode === "retain"
-    ? "held"
-    : input.useMode === "consume"
-      ? "consumed"
-      : "destroyed";
-  return sequence("committed", profiles, state, root, [{
-    eventType: "ArtifactUsed",
-    payload: {
-      artifactId: input.artifactId as string,
-      characterId: actor.id,
-      purpose: input.purpose,
-      beforeStatus: "held",
-      afterStatus,
-      remainingQuantity: afterStatus === "held" ? 1 : 0,
-    },
-    visibilityPolicyId: isNonEmptyString(artifact.visibilityPolicyId)
-      ? artifact.visibilityPolicyId
-      : `visibility:character-controller:${actor.id}`,
-    secrecy: "private",
-  }]);
-}
-
-function transferArtifact(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
-  if (!hasExactKeys(input, ["artifactId", "fromCharacterId", "kind", "method", "proposalId", "toCharacterId"])) return rejected("invalidRulesInput", "Artifact transfer input is not canonical.");
-  const root = rootAction(state, input);
-  const artifact = isNonEmptyString(input.artifactId) ? state.campaignRuntime.artifacts[input.artifactId] : undefined;
-  const from = character(state, input.fromCharacterId);
-  const to = character(state, input.toCharacterId);
-  if (
-    root === undefined
-    || from === undefined
-    || to === undefined
-    || from.id === to.id
-    || from.sceneId !== to.sceneId
-    || artifact?.holderId !== from.id
-    || artifact.status !== "held"
-    || (artifact.quantity ?? 1) !== 1
-    || !isNonEmptyString(input.method)
-  ) return rejected("privateOrUnknownReference", "Artifact reference is unavailable.");
-  return sequence("committed", profiles, state, root, [{ eventType: "ArtifactTransferred", payload: { artifactId: input.artifactId as string, fromCharacterId: input.fromCharacterId as string, toCharacterId: input.toCharacterId as string, method: input.method } }]);
+    visibilityPolicyId: entry.visibilityPolicyRef,
+    secrecy: entry.visibilityPolicyRef.startsWith("visibility:public") ? "public" : "private",
+  });
+  return sequence("committed", profiles, state, root, drafts);
 }
 
 function startRest(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
@@ -1295,20 +1515,6 @@ function activityCompletionDrafts(
           visibilityPolicyId: `visibility:knowledge-holder:${npc.id}`,
           secrecy: "private",
         });
-        const planId = `npc-plan:activity:${rootActionId}:${npc.id}`;
-        drafts.push({
-          eventType: "NpcPlanFormed",
-          payload: {
-            npcId: npc.id,
-            planId,
-            goal: "响应已经完成且被察觉的活动",
-            knowledgeRefs: [knowledgeRef],
-            nextAction: effect.status,
-            resourceRefs: [],
-          },
-          visibilityPolicyId: `visibility:npc:${npc.id}`,
-          secrecy: "internal",
-        });
         break;
       }
       case "moveEntity":
@@ -1427,6 +1633,8 @@ function restCompletionDrafts(
   const compiled = compileStaticCharacterCombat(
     recovered.character,
     characterBuildSnapshot(recovered.character),
+    state.campaignRuntime.itemSystem,
+    state.combatRuntime.definitions,
   );
   const control = state.characterControls[characterId];
   const seat = control === undefined ? undefined : state.seats[control.seatId];
@@ -1435,6 +1643,8 @@ function restCompletionDrafts(
     recovered.character,
     compiled,
     seat?.principalId ?? recovered.character.controllerPrincipalId,
+    undefined,
+    state.campaignRuntime.itemSystem,
   );
   const combatEntity = synchronizePlayerCombatEntity(
     state.combatRuntime.entities[characterId],
@@ -1839,8 +2049,7 @@ function registerDefinition(profiles: RuntimeProfileManifest, state: Authoritati
       secrecy: "internal",
     }]);
   }
-  if (definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
-    || definition.definitionKind === NPC_MECHANICAL_ITEM_KIND) {
+  if (definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND) {
     return rejected(
       "unsupportedOperation",
       "NPC mechanical templates must be frozen through encounter materialization.",
@@ -2040,49 +2249,6 @@ function shareCampaignKnowledge(profiles: RuntimeProfileManifest, state: Authori
     creates: refs.map((ref) => `knowledge:${recipientId}:${ref}`),
   }));
   return sequence("committed", profiles, state, root, drafts);
-}
-
-function formNpcPlan(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
-  if (!hasOnlyKeys(input, ["goal", "kind", "knowledgeRefs", "nextAction", "npcId", "planId", "proposalId"], ["resourceRefs"])) return rejected("invalidRulesInput", "NPC plan input is not canonical.");
-  const root = rootAction(state, input); const npc = character(state, input.npcId); const refs = canonicalStrings(input.knowledgeRefs); const resources = input.resourceRefs === undefined ? [] : canonicalStrings(input.resourceRefs);
-  if (root === undefined || npc?.kind !== "npc" || refs === undefined || resources === undefined || refs.some((ref) => !(ref in (state.knowledge[npc.id] ?? {})))) return rejected("npcKnowledgeInsufficient", "NPC plan exceeds the NPC's finite knowledge.");
-  if (![input.planId, input.goal, input.nextAction].every(isNonEmptyString)) return rejected("invalidRulesInput", "NPC plan fields are incomplete.");
-  return sequence("committed", profiles, state, root, [{ eventType: "NpcPlanFormed", payload: { npcId: npc.id, planId: input.planId as string, goal: input.goal as string, knowledgeRefs: refs, nextAction: input.nextAction as string, resourceRefs: resources }, visibilityPolicyId: "visibility:kp-internal", secrecy: "internal" }]);
-}
-
-function advanceFactionPlan(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
-  if (!hasExactKeys(input, ["actingNpcId", "action", "causeFactIds", "factionId", "kind", "planId", "proposalId"])) return rejected("invalidRulesInput", "Faction plan input is not canonical.");
-  const root = rootAction(state, input);
-  const causes = canonicalStrings(input.causeFactIds);
-  const faction = isNonEmptyString(input.factionId)
-    ? state.campaignRuntime.factions[input.factionId]
-    : undefined;
-  const plan = isNonEmptyString(input.planId)
-    ? state.campaignRuntime.npcPlans[input.planId]
-    : undefined;
-  const planKnowledgeRefs = canonicalStrings(plan?.knowledgeRefs);
-  const npc = character(state, input.actingNpcId);
-  const factionMemberRefs = canonicalStrings(faction?.memberRefs);
-  const planResourceRefs = canonicalStrings(plan?.resourceRefs);
-  const factionAuthorized = npc !== undefined
-    && (factionMemberRefs?.includes(npc.id) === true
-      || planResourceRefs?.includes(input.factionId as string) === true);
-  if (
-    root === undefined
-    || npc?.kind !== "npc"
-    || !isNonEmptyString(input.action)
-    || faction === undefined
-    || !factionAuthorized
-    || plan?.npcId !== npc.id
-    || (input.planId as string) in state.campaignRuntime.factionPlans
-    || causes === undefined
-    || causes.length === 0
-    || planKnowledgeRefs === undefined
-    || causes.some((ref) =>
-      !planKnowledgeRefs.includes(ref)
-      || !(ref in (state.knowledge[npc.id] ?? {})))
-  ) return rejected("npcKnowledgeInsufficient", "Faction plan lacks finite knowledge or resources.");
-  return sequence("committed", profiles, state, root, [{ eventType: "FactionPlanAdvanced", payload: { factionId: input.factionId as string, planId: input.planId as string, actingNpcId: input.actingNpcId as string, causeFactIds: causes, action: input.action as string }, visibilityPolicyId: "visibility:publicly-observable-consequence" }]);
 }
 
 function resolveDueActorPlan(
@@ -2638,6 +2804,8 @@ function recordAdvancementChoice(profiles: RuntimeProfileManifest, state: Author
   const compiled = compileStaticCharacterCombat(
     advanced.character,
     characterBuildSnapshot(advanced.character),
+    state.campaignRuntime.itemSystem,
+    state.combatRuntime.definitions,
   );
   const control = state.characterControls[actor.id];
   const seat = control === undefined ? undefined : state.seats[control.seatId];
@@ -2646,6 +2814,8 @@ function recordAdvancementChoice(profiles: RuntimeProfileManifest, state: Author
     advanced.character,
     compiled,
     seat?.principalId ?? actor.controllerPrincipalId,
+    undefined,
+    state.campaignRuntime.itemSystem,
   );
   const combatEntity = synchronizePlayerCombatEntity(
     state.combatRuntime.entities[actor.id],
@@ -2731,7 +2901,7 @@ function transitionChapter(
   state: AuthoritativeWorldState,
   input: JsonRecord,
 ): StepResult {
-  if (!hasOnlyKeys(input, [
+  if (!hasExactKeys(input, [
     "activityTransitions",
     "campaignId",
     "continuityPolicy",
@@ -2743,13 +2913,10 @@ function transitionChapter(
     "sceneQuestion",
     "storyAnchorRefs",
     "toChapterId",
-  ], ["verifiedModuleMigration"])) return rejected("invalidRulesInput", "Chapter transition is not canonical.");
+  ])) return rejected("invalidRulesInput", "Chapter transition is not canonical.");
   const root = rootAction(state, input);
   const anchors = canonicalStrings(input.storyAnchorRefs);
   const currentModuleRef = state.campaignRuntime.campaign?.moduleRef;
-  const migration = input.verifiedModuleMigration === undefined || !isProfileRef(currentModuleRef)
-    ? undefined
-    : verifiedModuleMigration(profiles, currentModuleRef, input.verifiedModuleMigration);
   if (root === undefined
     || ![
       input.campaignId,
@@ -2762,7 +2929,6 @@ function transitionChapter(
     || input.continuityPolicy !== "preserveAuthoritativeFacts"
     || state.campaignRuntime.campaign?.campaignId !== input.campaignId
     || !isProfileRef(currentModuleRef)
-    || (input.verifiedModuleMigration !== undefined && migration === undefined)
     || state.campaignRuntime.chapters[input.fromChapterId as string]?.status !== "active"
     || (input.toChapterId as string) in state.campaignRuntime.chapters
     || !CANONICAL_UNSIGNED_INTEGER_PATTERN.test(input.ordinal as string)
@@ -2844,7 +3010,6 @@ function transitionChapter(
     manifestState = simulated.state;
   }
   const manifest = campaignContinuityManifest(manifestState, transitions);
-  const nextModuleRef = migration?.toModuleRef ?? currentModuleRef;
   drafts.push(
     {
       eventType: "ChapterConcluded",
@@ -2866,19 +3031,6 @@ function transitionChapter(
       visibilityPolicyId: "visibility:room-authority-only",
       secrecy: "internal",
     },
-    ...(migration === undefined
-      ? []
-      : [{
-          eventType: "ModuleVersionMigrated" as const,
-          payload: {
-            campaignId: input.campaignId as string,
-            fromModuleRef: structuredClone(migration.fromModuleRef),
-            toModuleRef: structuredClone(migration.toModuleRef),
-            migrationRef: structuredClone(migration.migrationRef),
-          },
-          visibilityPolicyId: "visibility:room-authority-only",
-          secrecy: "internal" as const,
-        }]),
     {
       eventType: "ChapterStarted",
       payload: {
@@ -2887,7 +3039,7 @@ function transitionChapter(
         ordinal: input.ordinal,
         storyAnchorRefs: anchors,
         sceneQuestion: input.sceneQuestion as string,
-        moduleRef: structuredClone(nextModuleRef),
+        moduleRef: structuredClone(currentModuleRef),
       },
     },
   );
@@ -2933,7 +3085,22 @@ function introduceCampaignSuccessor(profiles: RuntimeProfileManifest, state: Aut
   const characterBuild = isRecord(input.successor.characterBuild)
     ? input.successor.characterBuild
     : characterBuildSnapshot(successor);
-  const compiled = compileStaticCharacterCombat(successor, characterBuild);
+  const itemSystem = state.campaignRuntime.itemSystem;
+  const itemImport = planPlayerInitialItemImport({
+    itemSystem,
+    character: successor,
+    itemAbilityCatalog: state.combatRuntime.definitions,
+  });
+  if ("error" in itemImport) {
+    return rejected("invalidRulesInput", "Successor starting equipment is unavailable.");
+  }
+  const eventSuccessor = itemImport.characterBeforeAcquisition;
+  const compiled = compileStaticCharacterCombat(
+    eventSuccessor,
+    characterBuild,
+    itemSystem,
+    state.combatRuntime.definitions,
+  );
   const spawn = allocateDynamicCombatantSpawn(state, successor.sceneId);
   if (spawn.kind === "unavailable") {
     return rejected(
@@ -2943,34 +3110,33 @@ function introduceCampaignSuccessor(profiles: RuntimeProfileManifest, state: Aut
   }
   const combatEntity = buildPlayerCombatEntity(
     profiles,
-    successor,
+    eventSuccessor,
     compiled,
     seat.principalId,
-    spawn.kind === "allocated" ? spawn.position : undefined,
+    spawn.position,
+    itemSystem,
   );
   return sequence("committed", profiles, state, root, [
     {
       eventType: "SuccessorIntroduced",
       payload: {
+        combatEntity,
         predecessorCharacterId: predecessor.id,
         controllerSeatId: seat.id,
-        successor,
-        worldEntry: input.worldEntry,
-      },
-      creates: [`entity:${successor.id}`, `control:${successor.id}`],
-    },
-    {
-      eventType: "CharacterMechanicsSynchronized",
-      payload: {
-        characterId: successor.id,
-        combatEntity,
         definitions: Object.values(compiled.definitions)
           .sort((left, right) => String(left.definitionId).localeCompare(String(right.definitionId))),
+        successor: eventSuccessor,
+        worldEntry: input.worldEntry,
       },
       visibilityPolicyId: `visibility:knowledge-holder:${successor.id}`,
       secrecy: "private",
-      creates: [`combat-entity:${successor.id}`],
+      creates: [
+        `entity:${successor.id}`,
+        `control:${successor.id}`,
+        `combat-entity:${successor.id}`,
+      ],
     },
+    ...playerInitialItemEventDrafts(itemImport, successor.id, successor.sceneId),
   ]);
 }
 
@@ -3067,24 +3233,67 @@ function transferInheritance(profiles: RuntimeProfileManifest, state: Authoritat
     visibilityPolicyId: "visibility:kp-internal",
     secrecy: "internal",
   };
-  if (authorization.kind === "artifact") {
+  if (authorization.kind === "item") {
     const predecessor = state.entities[authorization.subjectCharacterId];
     const successor = state.entities[authorization.targetCharacterId];
-    const artifact = state.campaignRuntime.artifacts[authorization.sourceRef];
+    const itemSystem = state.campaignRuntime.itemSystem;
+    const entry = itemSystem.entries[authorization.sourceRef];
     if (predecessor?.sceneId !== successor?.sceneId
-      || artifact?.status !== "held"
-      || (artifact.quantity ?? 1) !== 1) {
-      return rejected("inheritanceProvenanceRequired", "Inherited possession requires the authorized artifact to be physically available.");
+      || entry?.disposition !== "held"
+      || entry.holderRef !== predecessor?.id
+      || entry.quantity !== 1) {
+      return rejected("inheritanceProvenanceRequired", "Inherited possession requires the authorized item to be physically available.");
     }
-    return sequence("committed", profiles, state, root, [transfer, {
-      eventType: "ArtifactTransferred",
+    const targetEntryId = itemTransferTargetEntryId(
+      state,
+      root,
+      entry.entryId,
+      authorization.targetCharacterId,
+      1,
+      "preserve",
+    );
+    if (targetEntryId === undefined) {
+      return rejected("invalidWorldState", "The inherited item has conflicting target stacks.");
+    }
+    const transition = transferItemQuantity(itemSystem, {
+      entryId: entry.entryId,
+      fromHolderRef: authorization.subjectCharacterId,
+      toHolderRef: authorization.targetCharacterId,
+      quantity: 1,
+      targetEntryId,
+      ownershipDisposition: "preserve",
+    });
+    if ("error" in transition || transition.targetEntryId !== targetEntryId) {
+      return rejected("inheritanceProvenanceRequired", "Inherited possession is no longer transferable.");
+    }
+    const drafts: Draft[] = [transfer];
+    const catalog = structuredClone(state.combatRuntime.definitions);
+    for (const participant of [predecessor, successor]
+      .filter((value): value is NonNullable<typeof value> => value !== undefined)
+      .sort((left, right) => left.id.localeCompare(right.id))) {
+      if (appendPlayerAbilityRegistrations(
+        drafts,
+        catalog,
+        participant,
+        transition.itemSystem,
+      ) !== undefined) {
+        return rejected("invalidWorldState", "The inherited item ability closure cannot be frozen.");
+      }
+    }
+    drafts.push({
+      eventType: "ItemTransferred",
       payload: {
-        artifactId: authorization.sourceRef,
         fromCharacterId: authorization.subjectCharacterId,
         toCharacterId: authorization.targetCharacterId,
+        itemId: entry.entryId,
+        targetItemId: targetEntryId,
+        quantity: 1,
         method: `inheritance:${authorization.authorizationId}`,
+        ownershipDisposition: "preserve",
       },
-    }]);
+      visibilityPolicyId: "visibility:scene-observers",
+    });
+    return sequence("committed", profiles, state, root, drafts);
   }
   if (authorization.kind === "knowledge") {
     const knowledge = state.knowledge[authorization.subjectCharacterId]?.[authorization.sourceRef];
@@ -3215,11 +3424,9 @@ export function stepCampaignWorld(
     case "resolveSavingThrow": return resolveSavingThrow(profiles, state, input);
     case "useResource": return useResource(profiles, state, input);
     case "changeResource": return changeResource(profiles, state, input);
+    case "materializeItem": return materializeItem(profiles, state, input);
+    case "acquireItem": return acquireItem(profiles, state, input);
     case "transferItem": return transferItem(profiles, state, input);
-    case "useItem": return useItem(profiles, state, input);
-    case "acquireArtifact": return acquireArtifact(profiles, state, input);
-    case "useArtifact": return useArtifact(profiles, state, input);
-    case "transferArtifact": return transferArtifact(profiles, state, input);
     case "startRest": return startRest(profiles, state, input);
     case "answerGroupRestInvitation": return answerGroupRestInvitation(profiles, state, input);
     case "startActivity": return startActivity(profiles, state, input);
@@ -3234,8 +3441,6 @@ export function stepCampaignWorld(
     case "changeRelationship": return changeRelationship(profiles, state, input);
     case "makePromise": return makePromise(profiles, state, input);
     case "incurDebt": return incurDebt(profiles, state, input);
-    case "formNpcPlan": return formNpcPlan(profiles, state, input);
-    case "advanceFactionPlan": return advanceFactionPlan(profiles, state, input);
     case "resolveDueActorPlan": return resolveDueActorPlan(profiles, state, input);
     case "grantMilestone": return grantMilestone(profiles, state, input);
     case "awardExperience": return awardExperience(profiles, state, input);

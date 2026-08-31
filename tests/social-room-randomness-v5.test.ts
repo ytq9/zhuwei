@@ -261,6 +261,19 @@ describe("V5 Room social player-roll recovery", () => {
     );
     expect(list(record(list(mechanical.randomness, "recovered randomness")[0], "draw").faces, "faces"))
       .toEqual([11]);
+    const deliveryPlan = record(recovered.deliveryPlan, "transferred roll delivery plan");
+    const deliveryAudiences = list(deliveryPlan.audiences, "transferred roll audiences")
+      .map((entry, index) => record(entry, `transferred roll audience ${index}`));
+    expect(deliveryAudiences.length).toBeGreaterThan(0);
+    const actorAudience = deliveryAudiences.find((entry) => entry.characterId === ACTOR_ID);
+    expect(actorAudience).toBeDefined();
+    const actorDelta = record(
+      record(actorAudience?.kpProjection, "transferred actor narration projection").committedDelta,
+      "transferred actor committed delta",
+    );
+    expect(list(actorDelta.changes, "transferred actor delta changes")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "socialResolutionChanged" })]),
+    );
 
     const responseLostRetry = record(
       await authority.resumePlayerRandomness(BOB, randomnessId),
@@ -271,15 +284,170 @@ describe("V5 Room social player-roll recovery", () => {
     expect(record(responseLostRetry.kpProjection, "retry KP projection").mechanicalResult)
       .toEqual(mechanical);
 
+    const persistedEvents = await runInDurableObject(
+      authority as never,
+      async (_instance, state) => state.storage.sql.exec<{
+        event_seq: string;
+        event_json: string;
+      }>(`
+        SELECT event_seq, event_json FROM authority_events
+        ORDER BY length(event_seq), event_seq
+      `).toArray().map(({ event_seq, event_json }) => ({
+        eventSeq: event_seq,
+        eventType: String(record(JSON.parse(event_json), "archived event").eventType),
+      })),
+    );
+    const eventTypes = persistedEvents.map(({ eventType }) => eventType);
+    expect(eventTypes.filter((eventType) => eventType === "DiceRolled")).toHaveLength(1);
+    expect(eventTypes.filter((eventType) => eventType === "SocialCheckResolved"))
+      .toHaveLength(1);
+    const requestEvent = persistedEvents.find(({ eventType }) => eventType === "RandomnessRequested");
+    const transferEvent = persistedEvents.find(({ eventType }) =>
+      eventType === "CharacterControlTransferred");
+    expect(requestEvent).toBeDefined();
+    expect(transferEvent).toBeDefined();
+    const recoveredReceipt = record(recovered.receipt, "transferred roll receipt");
+    const recoveredRange = record(recoveredReceipt.eventRange, "transferred roll receipt range");
+    expect(BigInt(String(recoveredRange.first))).toBeGreaterThan(
+      BigInt(String(transferEvent?.eventSeq)),
+    );
+    expect(deliveryPlan.eventRange).toMatchObject({
+      first: recoveredRange.first,
+      last: recoveredRange.last,
+    });
+  }, 20_000);
+
+  it("rejects revocation and member removal while the original controller can still settle", async () => {
+    const roomId = "social-room-randomness-v5-destructive-administration";
+    const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
+    const initialized = record(await authority.initializeAuthoritative({
+      roomId,
+      moduleId: "black-oak-will",
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
+      members: [
+        { principalId: BOB.principal.id, role: "host" },
+        { principalId: ALICE.principal.id, role: "player" },
+      ],
+      characters: [{
+        characterId: ACTOR_ID,
+        controllerPrincipalId: ALICE.principal.id,
+        staticCard: {
+          name: "阿莱莎",
+          sceneId: "wake",
+          classId: "bard",
+          raceId: "human",
+          level: 3,
+          scores: { str: 10, dex: 12, con: 12, int: 12, wis: 10, cha: 16 },
+          proficiency: 2,
+          skills: ["persuasion"],
+          expertise: ["persuasion"],
+          hp: { current: 18, max: 18, temp: 0 },
+          ac: 13,
+          speed: 30,
+          equipped: { armor: "leather" },
+          backpack: [],
+        },
+      }],
+    }), "destructive administration room initialization");
+    expect(initialized.created, JSON.stringify(initialized)).toBe(true);
+    const capabilities = record(initialized.serviceCapabilities, "destructive administration capabilities");
+
+    const utterance = "我是无名巡回庭派来协助眼前事务的。";
+    const prepared = record(await authority.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:social-room-v5:destructive-claim",
+      text: utterance,
+    }), "destructive administration social prepare");
+    const offered = record(await authority.commit(
+      ALICE,
+      String(prepared.preparedActionId),
+      privateSocialProposal(String(prepared.rootActionId), utterance),
+    ), "destructive administration social offer");
+    const pending = record(offered.pending, "destructive administration social pending");
+    const pressPrepared = record(await authority.prepare(ALICE, {
+      kind: "answer",
+      submissionId: "submission:social-room-v5:destructive-press",
+      pendingInputId: String(pending.pendingInputId),
+      answer: { choice: "press" },
+      displayText: "坚持进行这次检定",
+    }), "destructive administration press prepare");
+    const awaitingRoll = record(await authority.commit(
+      ALICE,
+      String(pressPrepared.preparedActionId),
+      {
+        kind: "authenticatedPendingAnswer",
+        rootActionId: String(pressPrepared.rootActionId),
+      },
+    ), "destructive administration press commit");
+    expect(awaitingRoll.kind, JSON.stringify(awaitingRoll)).toBe("awaitingPlayerRoll");
+    const pendingRoll = record(
+      list(awaitingRoll.pendingPlayerRolls, "destructive administration pending rolls")[0],
+      "destructive administration pending roll",
+    );
+    const randomnessId = String(pendingRoll.id);
+
+    await expect(authority.applyRoomAdministration(
+      capabilities.roomAdministration,
+      {
+        commandId: "room-admin:social-v5:reject-revoke",
+        kind: "revokeControl",
+        characterId: ACTOR_ID,
+        seatId: `seat:${ALICE.principal.id}`,
+        reason: "attempted removal during pending roll",
+      },
+    )).resolves.toMatchObject({
+      kind: "retryableFailure",
+      code: "roomAdministrationRandomnessSettlementPending",
+    });
+    await expect(authority.applyRoomAdministration(
+      capabilities.roomAdministration,
+      {
+        commandId: "room-admin:social-v5:reject-member-removal",
+        kind: "removeMember",
+        principalId: ALICE.principal.id,
+        reason: "attempted removal during pending roll",
+      },
+    )).resolves.toMatchObject({
+      kind: "retryableFailure",
+      code: "roomAdministrationRandomnessSettlementPending",
+    });
+
+    const stillControlled = record(await authority.observe(ALICE), "original controller after rejections");
+    expect(list(stillControlled.pendingPlayerRolls, "original controller pending rolls"))
+      .toEqual([expect.objectContaining({ id: randomnessId, characterId: ACTOR_ID })]);
+
+    let draws = 0;
+    const settled = record(await runInDurableObject(authority as never, async (instance) => {
+      const target = instance as unknown as {
+        authorityRoll(sides: number): number;
+        resumePlayerRandomness(context: unknown, id: string): Promise<unknown>;
+      };
+      const originalRoll = target.authorityRoll;
+      target.authorityRoll = (sides) => {
+        expect(sides).toBe(20);
+        draws += 1;
+        return 12;
+      };
+      try {
+        return await target.resumePlayerRandomness(ALICE, randomnessId);
+      } finally {
+        target.authorityRoll = originalRoll;
+      }
+    }), "original controller settlement");
+    expect(settled.kind, JSON.stringify(settled)).toBe("committed");
+    expect(draws).toBe(1);
+
     const eventTypes = await runInDurableObject(
       authority as never,
       async (_instance, state) => state.storage.sql.exec<{ event_json: string }>(`
         SELECT event_json FROM authority_events
         ORDER BY length(event_seq), event_seq
       `).toArray().map(({ event_json }) =>
-        String(record(JSON.parse(event_json), "archived event").eventType)),
+        String(record(JSON.parse(event_json), "destructive administration event").eventType)),
     );
-    expect(eventTypes.filter((eventType) => eventType === "DiceRolled")).toHaveLength(1);
+    expect(eventTypes).not.toContain("CharacterControlRevoked");
+    expect(eventTypes).not.toContain("MemberRemoved");
     expect(eventTypes.filter((eventType) => eventType === "SocialCheckResolved"))
       .toHaveLength(1);
   }, 20_000);

@@ -18,6 +18,8 @@
 
 Campaign、Chapter、Character 与 CharacterTenure 是不同身份。归档重建和 Viewer 测试必须证明跨章节持续、死亡/退役终止控制以及继任的合法继承边界。
 
+0.4 当前房间只生成并接受 `zhuwei.campaign-continuity-manifest/v2`。更早开发态的 v1 清单随 0.4 前房间一并退役；当前运行时对其稳定拒绝，不保留重算、回放 Adapter 或 fallback。
+
 ## 验收场景
 
 1. 章节切换携带被明确标记为延续的伤势、物品、知识、关系、承诺和未决威胁，并保持事件与版本连续性。

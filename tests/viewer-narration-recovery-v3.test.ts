@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { handleViewerNarrationRecovery } from "../app/_runtime/lib/room/action";
 import { bodyOnlyNarrationContext } from "../app/_runtime/lib/kp/narration-v3";
-import { ENVIRONMENT_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
 import {
   buildAuthoritativeTableState,
   projectAuthoritativeTableObservation,
@@ -212,8 +212,8 @@ describe("V3 viewer-local narration recovery", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [{ principalId: ALICE.principal.id, role: "host" }],
       characters: [character(ALICE_ID, ALICE.principal.id, "阿莱莎")],
     }), "clue-presentation room initialization");
@@ -329,8 +329,8 @@ describe("V3 viewer-local narration recovery", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },
@@ -369,12 +369,12 @@ describe("V3 viewer-local narration recovery", () => {
       rootActionId: String(plan.rootActionId),
       receipt,
       projection: aliceFrozenProjection,
-    });
+    }, { socialResolution: true });
     const bobNarrationContext = bodyOnlyNarrationContext({
       rootActionId: String(plan.rootActionId),
       receipt,
       projection: bobFrozenProjection,
-    });
+    }, { socialResolution: true });
     expect(record(aliceNarrationContext.actorAction, "Alice narration actor action"))
       .toHaveProperty("displayBody", "我确认院子里第 one 处刚刚发生的公开变化。");
     expect(aliceNarrationContext.recentDialogue).toEqual(expect.arrayContaining([
@@ -492,8 +492,8 @@ describe("V3 viewer-local narration recovery", () => {
     await expect(authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },
@@ -604,8 +604,8 @@ describe("V3 viewer-local narration recovery", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },
@@ -674,8 +674,8 @@ describe("V3 viewer-local narration recovery", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "tactical-map-v1",
-      runtimeProfiles: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+      moduleVersion: "social-resolution-v1",
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },

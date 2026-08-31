@@ -1,8 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-import { validateNarrationAgencyClaims } from "../kp/authoritative-helpers";
 import { validateCausalActionProgram } from "../kp/causal-action-program";
-import { findModule } from "../module";
 import {
   authoritativeModuleProfile,
   moduleAuthorityFactSeeds,
@@ -11,14 +9,7 @@ import {
   SOCIAL_RESOLUTION_MODULE_VERSION,
   type AuthoritativeModuleProfile,
 } from "../module/authoritative";
-import { pinnedModuleRef } from "../module/migration-registry";
-import {
-  legacyRulesAdapterFor,
-  type LegacyInitialEntity,
-} from "../rules/legacy-adapter";
-import type { Command, Decision, WorldEvent, WorldState } from "../rules/model";
-import { RULESET_VERSION } from "../rules/ruleset";
-import { completeSpellCastRolls } from "../rules/spell-rolls";
+import { pinnedModuleRef } from "../module/registry";
 import {
   isTacticalPosition,
   isTacticalSpatialRevision,
@@ -46,37 +37,15 @@ import {
   compileEnvironmentFeature,
   ENVIRONMENT_PROFILE,
 } from "../rules/profiles/environment";
-import {
-  DELIVERY_PROTOCOL_PROFILE,
-  INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
-} from "../rules/profiles/manifests";
+import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
 import { socialResolutionProfileEnabled } from "../rules/profiles/social-resolution";
 import type { ProfileRef } from "../rules/profiles/types";
-import {
-  TURN_TICKET_TTL_MS,
-  UX_LEASE_TTL_MS,
-  advanceScopeVersions,
-  commandScopes,
-  scopeConflict,
-} from "./coordinator";
-import type {
-  CommitTurnInput,
-  CommitTurnResult,
-  InitializeRoomInput,
-  PrepareTurnInput,
-  RoomSnapshot,
-  StoredRoomEvent,
-  SynchronizePlayerLoadoutInput,
-  TurnTicket,
-  UpsertPlayerInput,
-} from "./types";
 import {
   AuthoritativeRoomStore,
   type AuthorityActionStageRow,
   type AuthorityDeliveryAudienceRow,
   type AuthorityDeliveryPlanRow,
-  type AuthorityDeliverySlotRow,
   type AuthorityRandomnessBatchJournalRow,
   type AuthorityProposalRecoveryRow,
   type AuthoritySubmissionRow,
@@ -114,7 +83,6 @@ import type {
   ViewerPendingPlayerRoll,
 } from "./authority-types";
 import {
-  bindRoomModuleMigration,
   isCanonicalV3CausalRulesInput,
   narrationProjection,
   normalizeRoomKpProposal,
@@ -124,14 +92,6 @@ import {
   roomPlayerProjection,
 } from "./proposal-adapter";
 import { authorityPendingBindings } from "./pending-bindings";
-
-type RoomRow = {
-  room_id: string;
-  module_id: string;
-  ruleset_version: string;
-  state_json: string;
-  scope_versions_json: string;
-};
 
 function exactProfileRef(value: unknown, expected: ProfileRef): value is ProfileRef {
   return isJsonRecord(value)
@@ -145,38 +105,15 @@ function deliveryProtocolForProfiles(profiles: RuntimeProfileManifest): ProfileR
     exactProfileRef(entry, INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE))) {
     return INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE;
   }
-  if (profiles.extensions.some((entry) => exactProfileRef(entry, DELIVERY_PROTOCOL_PROFILE))) {
-    return DELIVERY_PROTOCOL_PROFILE;
-  }
   throw new TypeError("The runtime manifest has no registered delivery protocol.");
 }
 
 function deliveryProtocolForPlan(plan: DeliveryPlan): ProfileRef | undefined {
-  if (plan.deliveryProtocol === undefined) return DELIVERY_PROTOCOL_PROFILE;
-  if (exactProfileRef(plan.deliveryProtocol, DELIVERY_PROTOCOL_PROFILE)) {
-    return DELIVERY_PROTOCOL_PROFILE;
-  }
   if (exactProfileRef(plan.deliveryProtocol, INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE)) {
     return INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE;
   }
   return undefined;
 }
-
-type TicketRow = {
-  id: string;
-  actor_id: string;
-  state_version: number;
-  scope_versions_json: string;
-  projection_json: string;
-  status: string;
-  expires_at: number;
-};
-
-type UnstampedWorldEvent = WorldEvent extends infer Event
-  ? Event extends WorldEvent
-    ? Omit<Event, "id" | "commandId" | "version" | "atSeconds">
-    : never
-  : never;
 
 function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
@@ -196,23 +133,6 @@ function pendingTranscriptBody(pending: unknown): string | undefined {
   return nonEmptyString(pending.question)
     ? pending.question
     : nonEmptyString(pending.prompt) ? pending.prompt : undefined;
-}
-
-function projectionTranscriptSceneIds(projection: unknown): string[] {
-  if (!isJsonRecord(projection)) return [];
-  const controlledCharacter = isJsonRecord(projection.controlledCharacter)
-    ? projection.controlledCharacter
-    : undefined;
-  const committedDelta = isJsonRecord(projection.committedDelta)
-    ? projection.committedDelta
-    : undefined;
-  const changes = Array.isArray(committedDelta?.changes)
-    ? committedDelta.changes.filter(isJsonRecord)
-    : [];
-  return uniqueSceneIds([
-    controlledCharacter?.sceneId,
-    ...changes.flatMap((change) => [change.sceneId, change.fromSceneId, change.toSceneId]),
-  ]);
 }
 
 function narrationPublicationMetadata(projection: unknown) {
@@ -267,15 +187,6 @@ function narrationPublicationMetadata(projection: unknown) {
             basisRefs: derivedEvidenceRefs,
           },
         ],
-  };
-}
-
-function staleDecision(commandId: string, message: string): Decision {
-  return {
-    kind: "rejected",
-    rejection: { code: "stale_state", message },
-    decisionId: `decision:${commandId}`,
-    commandId,
   };
 }
 
@@ -384,7 +295,6 @@ type AuthoritativeMovementContext = {
 
 const AUTHORITY_BRANCH_ID = "branch:main";
 const PRESENTATION_POLICY_VERSION = "observer-single-slot/v1";
-const NARRATION_POLICY_VERSION = "kp-current-response/v3";
 const BODY_ONLY_NARRATION_POLICY_VERSION = "kp-body-only-independent-audience/v1";
 const AUTHORITATIVE_ARCHIVE_RETRY_DELAY_MS = 1_000;
 const MAX_AUTHORITY_RANDOMNESS_WAVES = 64;
@@ -755,7 +665,7 @@ function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord 
   if (value.kind === "invokeEnvironmentalStunt") {
     if (!hasOnlyJsonKeys(value, [
       "actorCharacterId", "controllerPrincipalId", "featureId", "kind", "rootActionId",
-      "actionLanguageHash", "actionPlanVersion", "causalActionProgram",
+      "actionLanguageHash", "actionLanguageRef", "causalActionProgram",
     ], ["abilityRef", "activation", "materialization", "resourceCost"])
       || ![
         value.actorCharacterId,
@@ -766,12 +676,12 @@ function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord 
       || !isJsonRecord(value.activation)
       || !nonEmptyString(value.activation.kind)
       || !nonEmptyString(value.actionLanguageHash)
-      || !nonEmptyString(value.actionPlanVersion)
+      || !nonEmptyString(value.actionLanguageRef)
       || !isJsonRecord(value.causalActionProgram)
       || !validateCausalActionProgram(value.causalActionProgram).ok
       || value.causalActionProgram.formRef !== "environmental-stunt.v1"
       || value.actionLanguageHash !== value.causalActionProgram.languageHash
-      || value.actionPlanVersion !== value.causalActionProgram.languageRef) return false;
+      || value.actionLanguageRef !== value.causalActionProgram.languageRef) return false;
     if (value.activation.kind === "attack") {
       if (!hasExactJsonKeys(value.activation, ["kind"]) || !nonEmptyString(value.abilityRef)) {
         return false;
@@ -796,14 +706,27 @@ function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord 
     )) return false;
     return true;
   }
-  if (value.kind === "resolveCompoundActionPlan") {
-    return value.actionPlanVersion === "authoritative-kp-action-plan-v1"
-      || isCanonicalV3CausalRulesInput(value);
+  if (value.kind === "executeCausalActionProgram") {
+    return isCanonicalV3CausalRulesInput(value);
   }
   if (value.kind === "resolveDueActorPlan") {
-    return value.decision === "execute"
-      && nonEmptyString(value.proposalId)
-      && nonEmptyString(value.planId)
+    return hasOnlyJsonKeys(value, [
+      "affectedCharacterId",
+      "causedByRootActionId",
+      "decision",
+      "kind",
+      "mechanicalProposal",
+      "planId",
+      "proposalId",
+    ], ["targetRef"])
+      && value.decision === "execute"
+      && [
+        value.affectedCharacterId,
+        value.causedByRootActionId,
+        value.planId,
+        value.proposalId,
+      ].every(nonEmptyString)
+      && (value.targetRef === undefined || nonEmptyString(value.targetRef))
       && isJsonRecord(value.mechanicalProposal);
   }
   if (value.kind === "answerSocialResolution") {
@@ -819,11 +742,25 @@ function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord 
       && ["press", "acceptStatusQuo"].includes(String(value.choice));
   }
   if (value.kind !== "answerPendingInput") return false;
-  if (value.proposal === undefined) return true;
-  return isJsonRecord(value.proposal)
-    && value.proposal.kind === "resolveCompoundActionPlan"
-    && (value.proposal.actionPlanVersion === "authoritative-kp-action-plan-v1"
-      || isCanonicalV3CausalRulesInput(value.proposal));
+  if (value.proposal === undefined) {
+    return hasExactJsonKeys(value, ["answer", "kind", "pendingInputId", "responseId"])
+      && nonEmptyString(value.pendingInputId)
+      && nonEmptyString(value.responseId)
+      && isJsonRecord(value.answer);
+  }
+  return hasExactJsonKeys(value, [
+    "answer",
+    "controllerCharacterId",
+    "kind",
+    "pendingInputId",
+    "proposal",
+    "rootActionId",
+  ])
+    && [value.controllerCharacterId, value.pendingInputId, value.rootActionId].every(nonEmptyString)
+    && isJsonRecord(value.answer)
+    && isJsonRecord(value.proposal)
+    && value.proposal.kind === "executeCausalActionProgram"
+    && isCanonicalV3CausalRulesInput(value.proposal);
 }
 
 async function verifiedAuthorityCommitRecovery(
@@ -905,51 +842,6 @@ export class RoomDurableObject extends DurableObject<Env> {
     this.bindings = env;
     this.authorityStore = new AuthoritativeRoomStore(ctx.storage);
     ctx.blockConcurrencyWhile(async () => {
-      this.ctx.storage.sql.exec(`
-        CREATE TABLE IF NOT EXISTS room_state (
-          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-          room_id TEXT NOT NULL UNIQUE,
-          module_id TEXT NOT NULL,
-          ruleset_version TEXT NOT NULL,
-          state_json TEXT NOT NULL,
-          scope_versions_json TEXT NOT NULL,
-          updated_at INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS world_events (
-          version INTEGER PRIMARY KEY,
-          event_id TEXT NOT NULL UNIQUE,
-          command_id TEXT NOT NULL,
-          event_type TEXT NOT NULL,
-          fiction_seconds INTEGER NOT NULL,
-          event_json TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS world_events_command_idx
-          ON world_events(command_id, version);
-        CREATE TABLE IF NOT EXISTS commands (
-          command_id TEXT PRIMARY KEY,
-          result_json TEXT NOT NULL,
-          created_at INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS turn_tickets (
-          id TEXT PRIMARY KEY,
-          actor_id TEXT NOT NULL,
-          state_version INTEGER NOT NULL,
-          scope_versions_json TEXT NOT NULL,
-          projection_json TEXT NOT NULL,
-          status TEXT NOT NULL,
-          expires_at INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS turn_tickets_expiry_idx
-          ON turn_tickets(status, expires_at);
-        CREATE TABLE IF NOT EXISTS ux_status (
-          scope_id TEXT PRIMARY KEY,
-          phase TEXT NOT NULL,
-          ticket_id TEXT NOT NULL,
-          expires_at INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS ux_status_expiry_idx
-          ON ux_status(expires_at);
-      `);
       this.authorityStore.ensureSchema();
       // Alarm state is durable, but recomputing the minimum on construction
       // also repairs a crash between persisting an archive task and setAlarm.
@@ -957,85 +849,14 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
   }
 
-  private roomRow(): RoomRow {
-    const row = this.ctx.storage.sql
-      .exec<RoomRow>(
-        `SELECT room_id, module_id, ruleset_version, state_json, scope_versions_json
-         FROM room_state WHERE singleton = 1`,
-      )
-      .toArray()[0];
-    if (!row) throw new Error("房间尚未初始化");
-    return row;
-  }
-
-  private definition(moduleId: string) {
-    const mod = findModule(moduleId);
-    if (!mod) throw new Error(`未知模组：${moduleId}`);
-    return mod;
-  }
-
-  private cleanupExpired(nowMs: number) {
-    this.ctx.storage.sql.exec(
-      "UPDATE turn_tickets SET status = 'expired' WHERE status = 'open' AND expires_at <= ?",
-      nowMs,
-    );
-    this.ctx.storage.sql.exec("DELETE FROM ux_status WHERE expires_at <= ?", nowMs);
-  }
-
   private async scheduleExpiryAlarm() {
     if (this.authorityStore.roomDeletion() !== undefined) {
       await this.ctx.storage.setAlarm(Date.now() + ROOM_DELETION_RECONCILE_DELAY_MS);
       return;
     }
-    const row = this.ctx.storage.sql
-      .exec<{ expires_at: number | null }>(`
-        SELECT MIN(expires_at) AS expires_at FROM (
-          SELECT expires_at FROM turn_tickets WHERE status = 'open'
-          UNION ALL
-          SELECT expires_at FROM ux_status
-        )
-      `)
-      .toArray()[0];
-    const expiryAt = row?.expires_at ?? null;
     const archiveAt = this.authorityStore.archiveAlarmAt();
-    const nextAlarmAt = expiryAt === null
-      ? archiveAt
-      : archiveAt === null
-        ? expiryAt
-        : Math.min(expiryAt, archiveAt);
-    if (nextAlarmAt !== null) await this.ctx.storage.setAlarm(nextAlarmAt);
+    if (archiveAt !== null) await this.ctx.storage.setAlarm(archiveAt);
     else await this.ctx.storage.deleteAlarm();
-  }
-
-  private async archiveEvents(roomId: string, events: WorldEvent[]) {
-    if (this.authorityStore.roomDeletion() !== undefined) return;
-    const db = (this.bindings as unknown as { DB?: D1Database }).DB;
-    if (!db || !events.length) return;
-    await db.batch(
-      events.map((event) =>
-        db.prepare(
-          `INSERT OR IGNORE INTO room_event_archive (
-             room_id, version, event_id, command_id, event_type, fiction_seconds, event_json
-           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          roomId,
-          event.version,
-          event.id,
-          event.commandId,
-          event.type,
-          event.atSeconds,
-          JSON.stringify(event),
-        ),
-      ),
-    );
-  }
-
-  private async archiveAllRoomEvents() {
-    const row = this.roomRow();
-    await this.archiveEvents(
-      row.room_id,
-      this.getEvents().map((entry) => entry.event),
-    );
   }
 
   private authoritativeReplay(): AuthorityReplay {
@@ -1092,61 +913,6 @@ export class RoomDurableObject extends DurableObject<Env> {
     return reconstructed.kind === "replayed"
       ? reconstructed.state as AuthoritativeWorldState
       : undefined;
-  }
-
-  private authoritySceneIdAtEventSeq(
-    replay: AuthorityReplay,
-    characterId: string,
-    eventSeq: string,
-  ): string | undefined {
-    if (replay.replay.head.eventSeq === eventSeq) {
-      return replay.state.entities[characterId]?.sceneId;
-    }
-    let cursor: bigint;
-    try {
-      cursor = BigInt(eventSeq);
-    } catch {
-      return undefined;
-    }
-    const prefix = this.authorityStore.events()
-      .filter((event) => BigInt(event.eventSeq) <= cursor);
-    if (cursor > 0n && prefix[prefix.length - 1]?.eventSeq !== eventSeq) return undefined;
-    const reconstructed = replayAuthoritative(replay.genesis, prefix);
-    return reconstructed.kind === "replayed"
-      ? (reconstructed.state as AuthoritativeWorldState).entities[characterId]?.sceneId
-      : undefined;
-  }
-
-  private authorityDeliveryFrameSceneIds(
-    replay: AuthorityReplay,
-    characterId: string,
-    slot: AuthorityDeliverySlotRow,
-    frame: DeliveryFrame,
-  ): string[] {
-    if (frame.sceneIds?.length) return uniqueSceneIds(frame.sceneIds);
-    const receipt = this.authorityStore.receipt(frame.receiptId);
-    if (receipt?.eventRange !== null && receipt?.eventRange !== undefined) {
-      let priorEventSeq: string | undefined;
-      try {
-        const first = BigInt(receipt.eventRange.first);
-        priorEventSeq = first > 0n ? (first - 1n).toString() : "0";
-      } catch {
-        priorEventSeq = undefined;
-      }
-      const receiptSceneIds = uniqueSceneIds([
-        priorEventSeq === undefined
-          ? undefined
-          : this.authoritySceneIdAtEventSeq(replay, characterId, priorEventSeq),
-        this.authoritySceneIdAtEventSeq(replay, characterId, receipt.eventRange.last),
-      ]);
-      if (receiptSceneIds.length > 0) return receiptSceneIds;
-    }
-    const sourceSceneId = this.authoritySceneIdAtEventSeq(
-      replay,
-      characterId,
-      slot.source_event_seq,
-    );
-    return sourceSceneId === undefined ? [] : [sourceSceneId];
   }
 
   private authorityIncrementalProjectionQuery(
@@ -1553,9 +1319,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const slot = this.authorityStore.deliverySlot(viewerKey);
     if (slot !== undefined) {
       const frame = parseJson<DeliveryFrame>(slot.frame_json);
-      const sceneIds = frame.sceneIds?.length
-        ? [...frame.sceneIds]
-        : currentSceneId === undefined ? [] : [currentSceneId];
+      const sceneIds = uniqueSceneIds(frame.sceneIds);
       if (
         !seen.has(frame.deliveryId)
         && (currentSceneId === undefined || sceneIds.includes(currentSceneId))
@@ -1650,6 +1414,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       ...(kpProjection.npcMechanicalDefinitions === undefined
         ? {}
         : { npcMechanicalDefinitions: kpProjection.npcMechanicalDefinitions }),
+      ...(kpProjection.itemDefinitions === undefined
+        ? {}
+        : { itemDefinitions: kpProjection.itemDefinitions }),
+      ...(kpProjection.dynamicAuthoritativeFacts === undefined
+        ? {}
+        : { dynamicAuthoritativeFacts: kpProjection.dynamicAuthoritativeFacts }),
       spatialEvidence: kpProjection.spatialEvidence as unknown as JsonObject,
       experiencedTranscript: this.experiencedTranscriptForViewer(
         actorViewer,
@@ -2033,8 +1803,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       ...moduleProfile.storyBible.importantNpcs.map((npc) => npc.startSceneId),
       ...moduleProfile.storyBible.storyAnchors.locations.map((location) => location.sceneId),
     ])].sort();
-    if ((moduleProfile.moduleVersion === "tactical-map-v1"
-      || moduleProfile.moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION)
+    if (moduleProfile.moduleVersion === SOCIAL_RESOLUTION_MODULE_VERSION
       && sceneIds.some((sceneId) => locationBySceneId.get(sceneId)?.tacticalGeometry === undefined)) {
       return rejectedAuthority(
         "invalidInitialization",
@@ -2169,7 +1938,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             activeBranchId: initialState.activeBranchId,
             projectionHash: projection.projectionHash,
             presentationPolicyVersion: PRESENTATION_POLICY_VERSION,
-            narrationPolicyVersion: NARRATION_POLICY_VERSION,
+            narrationPolicyVersion: BODY_ONLY_NARRATION_POLICY_VERSION,
             payloadHash: openingPayloadHash,
             text: openingLocation.publicOpening,
             sceneIds: [openingLocation.sceneId],
@@ -2269,15 +2038,6 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private clearAllRoomRowsForDeletion(): void {
     this.ctx.storage.transactionSync(() => {
-      // Legacy tables are retained as empty schema for old ruleset replay, but
-      // no row from the deleted room may survive this terminal transition.
-      this.ctx.storage.sql.exec(`
-        DELETE FROM ux_status;
-        DELETE FROM turn_tickets;
-        DELETE FROM commands;
-        DELETE FROM world_events;
-        DELETE FROM room_state;
-      `);
       this.authorityStore.clearAllRowsForDeletion();
     });
   }
@@ -2717,13 +2477,22 @@ export class RoomDurableObject extends DurableObject<Env> {
     const pendingPlayerRollOwners = unsettledRandomness
       ? this.authorityPendingPlayerRollOwnerIds(replay)
       : new Set<string>();
-    const preservesPendingPlayerRoll = changedControlCharacterIds.length > 0
+    const transfersEveryPendingPlayerRoll = changedControlCharacterIds.length > 0
       && unsettledRandomness
-      && changedControlCharacterIds.every((characterId) =>
-        pendingPlayerRollOwners.has(characterId));
+      && pendingPlayerRollOwners.size === changedControlCharacterIds.length
+      && normalized.command.kind === "transferControl"
+      && changedControlCharacterIds.every((characterId) => {
+        if (!pendingPlayerRollOwners.has(characterId)) return false;
+        const nextControl = stepped.state.characterControls[characterId];
+        const nextSeat = nextControl === undefined
+          ? undefined
+          : stepped.state.seats[nextControl.seatId];
+        return nextSeat?.status === "active"
+          && stepped.state.multiplayerRuntime.members[nextSeat.principalId]?.status === "active";
+      });
     if (changedControlCharacterIds.length > 0
       && unsettledRandomness
-      && !preservesPendingPlayerRoll) {
+      && !transfersEveryPendingPlayerRoll) {
       return {
         kind: "retryableFailure" as const,
         code: "roomAdministrationRandomnessSettlementPending",
@@ -2734,7 +2503,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     // may authorize the gesture, not the frozen scene mechanics. Keeping that
     // scene scope stable lets the new controller finish the same journaled
     // request without re-proposal or re-roll.
-    const changedControlSceneScopes = preservesPendingPlayerRoll ? [] : [...new Set(changedControlCharacterIds.flatMap(
+    const changedControlSceneScopes = transfersEveryPendingPlayerRoll ? [] : [...new Set(changedControlCharacterIds.flatMap(
       (characterId) => [
         replay.state.entities[characterId]?.sceneId,
         stepped.state.entities[characterId]?.sceneId,
@@ -2813,12 +2582,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       this.authorityStore.syncAuthorityIndex(stepped.state);
       this.authorityStore.syncPendingAuthority(stepped.state);
-      if (!exactProfileRef(
-        deliveryProtocolForProfiles(replay.profiles),
-        INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
-      )) {
-        this.authorityStore.supersedeCharacterDeliveries(changedControlCharacterIds);
-      }
       this.authorityStore.saveAdministration({
         commandId: normalized.commandId,
         payloadHash,
@@ -2947,6 +2710,21 @@ export class RoomDurableObject extends DurableObject<Env> {
         action: actionInput.action,
         slot: actionInput.slot,
         ...(actionInput.action === "wear" ? { itemId: actionInput.itemId as string } : {}),
+      };
+    } else if (actionInput.kind === "itemActivity") {
+      if (
+        !hasExactJsonKeys(actionInput, ["itemEntryId", "kind", "submissionId"])
+        || !nonEmptyString(actionInput.itemEntryId)
+      ) {
+        return rejectedAuthority(
+          "invalidActionInput",
+          "A closed item-entry activity selection is required.",
+        );
+      }
+      canonicalActionInput = {
+        kind: "itemActivity",
+        submissionId: actionInput.submissionId,
+        itemEntryId: actionInput.itemEntryId,
       };
     } else if (actionInput.kind === "environmentInteract") {
       if (
@@ -3222,6 +3000,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       rootActionId = `root-action:${actionInput.submissionId}`;
     } else if (
       actionInput.kind === "gear"
+      || actionInput.kind === "itemActivity"
       || actionInput.kind === "environmentInteract"
       || actionInput.kind === "environmentAbility"
       || actionInput.kind === "movement"
@@ -3400,6 +3179,13 @@ export class RoomDurableObject extends DurableObject<Env> {
                   ...(actionInput.action === "wear" ? { itemId: actionInput.itemId } : {}),
                 },
               }
+            : actionInput.kind === "itemActivity"
+              ? {
+                  continuation: {
+                    itemEntryId: actionInput.itemEntryId,
+                    parameters: { targetEntityId: characterId },
+                  },
+                }
             : actionInput.kind === "environmentInteract"
               ? {
                   continuation: {
@@ -3561,6 +3347,41 @@ export class RoomDurableObject extends DurableObject<Env> {
       };
     }
     if (
+      isJsonRecord(proposalValue)
+      && proposalValue.kind === "authenticatedItemActivity"
+      && hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
+      && submission.input_kind === "itemActivity"
+      && submission.continuation_json !== null
+    ) {
+      const continuation = parseJson<JsonObject>(submission.continuation_json);
+      const itemEntryId = nonEmptyString(continuation.itemEntryId)
+        ? continuation.itemEntryId
+        : undefined;
+      if (
+        !hasExactJsonKeys(continuation, ["itemEntryId", "parameters"])
+        || itemEntryId === undefined
+        || !isJsonRecord(continuation.parameters)
+        || !hasExactJsonKeys(continuation.parameters, ["targetEntityId"])
+        || continuation.parameters.targetEntityId !== submission.character_id
+      ) {
+        return {
+          rejection: rejectedAuthority(
+            "invalidMechanicalProposal",
+            "The prepared item activity is unavailable.",
+          ),
+        };
+      }
+      return {
+        input: {
+          kind: "invokeItemActivity",
+          rootActionId: submission.root_action_id,
+          sourceEntityId: submission.character_id,
+          itemEntryId,
+          parameters: structuredClone(continuation.parameters),
+        },
+      };
+    }
+    if (
       proposalValue.kind === "authenticatedEnvironmentInteraction"
       && hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
       && submission.input_kind === "environmentInteract"
@@ -3660,7 +3481,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
       };
     }
-    let proposal = normalizeRoomKpProposal(proposalValue);
+    const proposal = normalizeRoomKpProposal(proposalValue);
     if (proposal === undefined) {
       return {
         rejection: rejectedAuthority(
@@ -3669,6 +3490,139 @@ export class RoomDurableObject extends DurableObject<Env> {
         ),
       };
     }
+    if (proposal.kind === "authenticatedPartyAction") {
+      if (submission.input_kind !== "intent") {
+        return {
+          rejection: rejectedAuthority(
+            "invalidMechanicalProposal",
+            "An authenticated party action must follow its prepared player intent.",
+          ),
+        };
+      }
+      switch (proposal.action) {
+        case "inviteMember":
+          return {
+            input: {
+              kind: "invitePartyMember",
+              rootActionId: submission.root_action_id,
+              inviterCharacterId: submission.character_id,
+              invitedCharacterId: proposal.targetCharacterId,
+            },
+          };
+        case "cancelInvitation":
+          return {
+            input: {
+              kind: "cancelPartyInvitation",
+              rootActionId: submission.root_action_id,
+              inviterCharacterId: submission.character_id,
+              pendingInputId: proposal.pendingInputId,
+            },
+          };
+        case "leave":
+          return {
+            input: {
+              kind: "leavePartyGroup",
+              rootActionId: submission.root_action_id,
+              characterId: submission.character_id,
+            },
+          };
+        case "transferLeadership":
+          return {
+            input: {
+              kind: "transferPartyLeadership",
+              rootActionId: submission.root_action_id,
+              fromCharacterId: submission.character_id,
+              toCharacterId: proposal.targetCharacterId,
+            },
+          };
+        case "proposeMove":
+          return {
+            input: {
+              kind: "proposePartyMove",
+              rootActionId: submission.root_action_id,
+              leaderCharacterId: submission.character_id,
+              destinationSceneId: proposal.destinationSceneId,
+              fictionTimeCostMicros: proposal.fictionTimeCostMicros,
+            },
+          };
+        case "moveIndividually":
+          return {
+            input: {
+              kind: "moveIndividually",
+              rootActionId: submission.root_action_id,
+              characterId: submission.character_id,
+              destinationSceneId: proposal.destinationSceneId,
+              fictionTimeCostMicros: proposal.fictionTimeCostMicros,
+            },
+          };
+        default:
+          return {
+            rejection: rejectedAuthority(
+              "invalidMechanicalProposal",
+              "The authenticated party action is unavailable.",
+            ),
+          };
+      }
+    }
+    if (proposal.kind === "authenticatedCampaignAction") {
+      if (submission.input_kind !== "intent") {
+        return {
+          rejection: rejectedAuthority(
+            "invalidMechanicalProposal",
+            "An authenticated campaign action must follow its prepared player intent.",
+          ),
+        };
+      }
+      switch (proposal.action) {
+        case "formNpcPlan":
+          return {
+            input: {
+              kind: "formNpcActorPlan",
+              proposalId: submission.root_action_id,
+              npcId: proposal.npcId,
+              planId: proposal.planId,
+              goal: proposal.goal,
+              nextStep: proposal.nextAction,
+              premiseRefs: structuredClone(proposal.premiseRefs),
+              resourceRefs: structuredClone(proposal.resourceRefs),
+              activity: structuredClone(proposal.activity),
+              due: structuredClone(proposal.due),
+              trigger: structuredClone(proposal.trigger),
+              trace: structuredClone(proposal.trace),
+              alternateTarget: structuredClone(proposal.alternateTarget),
+            },
+          };
+        case "retireCharacter":
+          return {
+            input: {
+              kind: "retireCharacter",
+              proposalId: submission.root_action_id,
+              characterId: submission.character_id,
+              reason: proposal.reason,
+              continueAsNpc: proposal.continueAsNpc,
+            },
+          };
+        case "startActivity":
+          return {
+            input: {
+              kind: "startActivity",
+              proposalId: submission.root_action_id,
+              characterId: submission.character_id,
+              activityId: proposal.activityId,
+              activityKind: proposal.activityKind,
+              intendedDurationMicros: proposal.intendedDurationMicros,
+              completion: structuredClone(proposal.completion),
+            },
+          };
+        default:
+          return {
+            rejection: rejectedAuthority(
+              "invalidMechanicalProposal",
+              "The authenticated campaign action is unavailable.",
+            ),
+          };
+      }
+    }
     if (proposal.kind === "resolveDynamicEnvironmentStunt") {
       if (
         (submission.input_kind !== "intent" && submission.input_kind !== "answer")
@@ -3676,7 +3630,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         || !nonEmptyString(proposal.formProgramHash)
         || !isJsonRecord(proposal.draft)
         || !isJsonRecord(proposal.causalActionProgram)
-        || !nonEmptyString(proposal.actionPlanVersion)
+        || !nonEmptyString(proposal.actionLanguageRef)
         || !nonEmptyString(proposal.actionLanguageHash)
         || proposal.formProgramHash !== proposal.causalActionProgram.semanticHash
       ) {
@@ -3801,7 +3755,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           controllerPrincipalId: submission.principal_id,
           actorCharacterId: submission.character_id,
           featureId,
-          actionPlanVersion: proposal.actionPlanVersion,
+          actionLanguageRef: proposal.actionLanguageRef,
           actionLanguageHash: proposal.actionLanguageHash,
           causalActionProgram: structuredClone(proposal.causalActionProgram),
           activation,
@@ -3820,20 +3774,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
       };
     }
-    const moduleMigrationBinding = await bindRoomModuleMigration(
-      proposal,
-      state.campaignRuntime.campaign?.moduleRef,
-      this.authorityStore.room()?.module_id ?? "",
-    );
-    if (moduleMigrationBinding.kind === "rejected") {
-      return {
-        rejection: rejectedAuthority(
-          "profileIntegrityMismatch",
-          "The requested chapter Module migration is not an exact approved Registry mapping.",
-        ),
-      };
-    }
-    proposal = moduleMigrationBinding.proposal;
     if (proposal.kind === "authenticatedPendingAnswer") {
       if (submission.input_kind !== "answer" || submission.continuation_json === null) {
         return {
@@ -4017,24 +3957,23 @@ export class RoomDurableObject extends DurableObject<Env> {
       };
     }
 
-    if (proposal.kind === "resolveCompoundActionPlan") {
-      if (submission.input_kind !== "intent" && submission.input_kind !== "answer") {
+    if (proposal.kind === "executeCausalActionProgram") {
+      const boundProposal = {
+        ...structuredClone(proposal),
+        rootActionId: submission.root_action_id,
+        actorCharacterId: submission.character_id,
+      };
+      if (
+        (submission.input_kind !== "intent" && submission.input_kind !== "answer")
+        || !isCanonicalV3CausalRulesInput(boundProposal)
+      ) {
         return {
           rejection: rejectedAuthority(
             "invalidMechanicalProposal",
-            "A compound ActionPlan must follow an authenticated player intent or pending answer.",
+            "A causal action program must follow an authenticated player intent or pending answer.",
           ),
         };
       }
-      const mechanicalProposal = isJsonRecord(proposal.mechanicalProposal)
-        ? proposal.mechanicalProposal
-        : undefined;
-      const newOptions = Array.isArray(mechanicalProposal?.newOptions)
-        ? mechanicalProposal.newOptions.filter(isJsonRecord).map((entry) => ({
-            optionId: entry.id,
-            summary: entry.summary,
-          }))
-        : [];
       const privateFormRef = isJsonRecord(proposalValue)
         && proposalValue.kind === "privateFormProposal"
         && nonEmptyString(proposalValue.formId)
@@ -4045,73 +3984,21 @@ export class RoomDurableObject extends DurableObject<Env> {
           && isJsonRecord(proposalValue.draft)
           && proposalValue.draft.featureDisposition === "explicitly-absent");
       return {
-        input: {
-          ...structuredClone(proposal),
-          rootActionId: submission.root_action_id,
-          actorCharacterId: submission.character_id,
-        },
-        ...(mechanicalProposal?.operation === "commitMeaningfulFailure" || inWorldRefusal
+        input: boundProposal,
+        ...(inWorldRefusal
           ? {
               receiptExtras: {
-                ...(mechanicalProposal?.operation === "commitMeaningfulFailure"
-                  ? { meaningfulFailure: true, newOptions }
-                  : {}),
-                ...(inWorldRefusal
-                  ? { resolutionDisposition: "inWorldRefusal" as const }
-                  : {}),
+                resolutionDisposition: "inWorldRefusal" as const,
               },
             }
           : {}),
       };
     }
 
-    if (proposal.kind === "clarification" || proposal.kind === "playerChoice") {
-      const proposedChoices = Array.isArray(proposal.choices) ? proposal.choices : [];
-      const playerChoices = proposal.kind === "playerChoice"
-        ? proposedChoices.filter(isJsonRecord)
-        : [];
-      if (
-        !nonEmptyString(proposal.prompt)
-        || (proposal.kind === "playerChoice" && (
-          playerChoices.length < 2
-          || playerChoices.length !== proposedChoices.length
-          || playerChoices.some((choice) => !hasExactJsonKeys(
-            choice,
-            ["choiceId", "consequence", "label"],
-          )
-            || !nonEmptyString(choice.choiceId)
-            || !nonEmptyString(choice.label)
-            || !nonEmptyString(choice.consequence))
-          || new Set(playerChoices.map((choice) => choice.choiceId)).size !== playerChoices.length
-        ))
-      ) {
-        return {
-          rejection: rejectedAuthority(
-            "invalidMechanicalProposal",
-            "Pending input requires canonical text and frozen player choices.",
-          ),
-        };
-      }
-      return {
-        input: {
-          kind: "resolveImprovisedAction",
-          rootActionId: submission.root_action_id,
-          actorCharacterId: submission.character_id,
-          ruling: {
-            kind: proposal.kind,
-            pendingInputId: `pending-input:${submission.root_action_id}`,
-            question: proposal.prompt,
-            ...(proposal.kind === "playerChoice"
-              ? { choices: structuredClone(playerChoices) }
-              : {}),
-          },
-        },
-      };
-    }
     return {
       rejection: rejectedAuthority(
         "invalidMechanicalProposal",
-        "Only a versioned compound ActionPlan or typed pending input may commit this action.",
+        "Only a current private Form, authenticated party action, or typed pending input may commit this action.",
       ),
     };
   }
@@ -4238,13 +4125,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     value: unknown,
     requests: AuthorityRandomnessJournalRequest[],
   ): AuthorityRandomnessWave[] | undefined {
-    if (!isJsonRecord(value) || value.kind !== "multiWave") {
-      return this.authorityRandomnessFulfillmentMatches(value, requests)
-        ? [{ requestCount: requests.length, fulfillment: structuredClone(value) }]
-        : undefined;
-    }
     if (
-      !hasExactJsonKeys(value, ["kind", "waves"])
+      !isJsonRecord(value)
+      || value.kind !== "multiWave"
+      || !hasExactJsonKeys(value, ["kind", "waves"])
       || !Array.isArray(value.waves)
       || value.waves.length === 0
       || value.waves.length > MAX_AUTHORITY_RANDOMNESS_WAVES
@@ -4281,8 +4165,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (!socialResolutionProfileEnabled(profiles.extensions)) return false;
     // A profile-only call asks whether the room exposes the capability. Once
     // a concrete request is known, only the V5 social plan opts into a player
-    // gesture. Combat, saves, hidden reality, and legacy rooms keep their
-    // existing authority-generated randomness behavior.
+    // gesture. Combat, saves, and hidden reality keep authority-generated
+    // randomness behavior.
     if (request === undefined || requestEvents === undefined) return true;
     return requestEvents.some((event) => {
       if (event.eventType !== "RandomnessRequested") return false;
@@ -4627,18 +4511,17 @@ export class RoomDurableObject extends DurableObject<Env> {
       const newerCandidates = newer.candidates_json === null
         ? []
         : parseJson<unknown[]>(newer.candidates_json);
-      const rawWaves = (serialized: string, requestCount: number): unknown[] | undefined => {
+      const rawWaves = (serialized: string): unknown[] | undefined => {
         const fulfillment = parseJson<unknown>(serialized);
-        if (!isJsonRecord(fulfillment) || fulfillment.kind !== "multiWave") {
-          return [{ requestCount, fulfillment }];
-        }
-        return hasExactJsonKeys(fulfillment, ["kind", "waves"])
+        return isJsonRecord(fulfillment)
+          && fulfillment.kind === "multiWave"
+          && hasExactJsonKeys(fulfillment, ["kind", "waves"])
           && Array.isArray(fulfillment.waves)
           ? fulfillment.waves
           : undefined;
       };
-      const staleWaves = rawWaves(stale.fulfillment_json, staleRequests.length);
-      const newerWaves = rawWaves(newer.fulfillment_json, newerRequests.length);
+      const staleWaves = rawWaves(stale.fulfillment_json);
+      const newerWaves = rawWaves(newer.fulfillment_json);
       const isPrefix = (prefix: unknown[], value: unknown[]) =>
         prefix.length <= value.length
         && prefix.every((entry, index) =>
@@ -5789,36 +5672,20 @@ export class RoomDurableObject extends DurableObject<Env> {
           return needsKp([{
             code: "invalidMechanicalProposal",
             publicPath: "KP 提案未形成可执行的版本化机械操作。",
-            revisionHint: "保留玩家目标与做法，按当前 ActionPlan schema 修订机械提案后重新提交。",
+            revisionHint: "保留玩家目标与做法，按当前私有 Form 或精确 typed command 修订后重新提交。",
             secrecy: "kp",
           }]);
         }
         return externalAdapted.rejection;
       }
-      const migrationRequiresStableGlobalHead = isJsonRecord(
-        externalAdapted.input.mechanicalProposal,
-      ) && externalAdapted.input.mechanicalProposal.verifiedModuleMigration !== undefined;
       adapted = externalAdapted;
-      // Registry verification can await Web Crypto. Re-read the authoritative
-      // head so a concurrent chapter change is detected by deterministic Rules
-      // validation rather than committing against the stale pre-verification state.
-      const currentReplay = this.authoritativeReplay();
-      if (
-        migrationRequiresStableGlobalHead
-        && currentReplay.replay.head.eventHash !== replay.replay.head.eventHash
-      ) {
-        return rejectedAuthority(
-          "scopeConflict",
-          "The authoritative global head changed during Module migration verification.",
-        );
-      }
-      replay = currentReplay;
+      replay = this.authoritativeReplay();
     }
 
     let rulesInput = adapted.input;
     if (source.kind === "proposal"
       && socialResolutionProfileEnabled(replay.profiles.extensions)
-      && rulesInput.kind === "resolveCompoundActionPlan"
+      && rulesInput.kind === "executeCausalActionProgram"
       && isJsonRecord(rulesInput.causalActionProgram)
       && rulesInput.causalActionProgram.formRef === "npc-exchange.v1") {
       const continuation = submission.continuation_json === null
@@ -5955,7 +5822,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             ruling: structuredClone(rulesInput.ruling),
           },
         };
-      } else if (rulesInput.kind === "resolveCompoundActionPlan") {
+      } else if (rulesInput.kind === "executeCausalActionProgram") {
         rulesInput = {
           kind: "answerPendingInput",
           pendingInputId: continuation.pendingInputId,
@@ -5983,6 +5850,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       source.kind === "proposal"
       && submission.input_kind !== "intent"
       && submission.input_kind !== "gear"
+      && submission.input_kind !== "itemActivity"
       && submission.input_kind !== "environmentInteract"
       && submission.input_kind !== "environmentAbility"
       && submission.input_kind !== "movement"
@@ -6034,7 +5902,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           return needsKp([{
             code: first.rejection.code,
             publicPath: "KP 提案未通过权威机械诊断。",
-            revisionHint: "依据 Rules 诊断修订完整 ActionPlan；不得改变玩家原始目标、提供骰面或提交状态补丁。",
+            revisionHint: "依据 Rules 诊断修订当前机械提案；不得改变玩家原始目标、提供骰面或提交状态补丁。",
             secrecy: "kp",
             rulesMessage: first.rejection.message,
           }]);
@@ -6624,7 +6492,24 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
         final = fulfilled;
         eventsToAppend = [...fulfilled.events];
-        receiptEvents = [...requestEvents, ...fulfilled.events];
+        const requestTail = requestEvents.at(-1);
+        const fulfillmentHead = fulfilled.events[0];
+        const requestAndFulfillmentAreContiguous = requestTail !== undefined
+          && fulfillmentHead !== undefined
+          && requestEvents.every((event) => event.rootActionId === fulfillmentHead.rootActionId)
+          && fulfilled.events.every((event) => event.rootActionId === fulfillmentHead.rootActionId)
+          && (BigInt(requestTail.eventSeq) + 1n).toString() === fulfillmentHead.eventSeq
+          && fulfillmentHead.previousEventHash === requestTail.eventHash
+          && fulfillmentHead.parentEventId === requestTail.eventId;
+        // Room administration may legitimately transfer a pending player-roll
+        // gesture between the request and fulfillment. A committed projection
+        // must receive one contiguous Rules segment, so in that case its
+        // pre-state starts after administration and its range contains only the
+        // fulfillment events; the append-only archive still retains the full
+        // request, administration, and fulfillment history.
+        receiptEvents = requestAndFulfillmentAreContiguous
+          ? [...requestEvents, ...fulfilled.events]
+          : [...fulfilled.events];
         answeredPendingInputId = randomnessBatch.answered_pending_input_id
           ?? answeredPendingInputId;
         break;
@@ -6671,7 +6556,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return needsKp([{
           code: "kpDecisionRequired",
           publicPath: "该 NPC 或势力行动需要 KP 依据其有限知识作出明确选择。",
-          revisionHint: "使用待决输入给出的合法候选，补全 NPC 机械提案后以同一 rootActionId 重新提交完整 ActionPlan。",
+          revisionHint: "使用待决输入给出的合法候选，补全 NPC 机械提案后以同一 rootActionId 重新提交。",
           secrecy: "kp",
           pending: structuredClone(resolved.pending),
       }]);
@@ -7025,12 +6910,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           this.authorityStore.appendExperiencedMessage({
             viewerKey: actorViewerKey,
             messageId: currentFrame.deliveryId,
-            sceneIds: this.authorityDeliveryFrameSceneIds(
-              replay,
-              actorMessage.characterId,
-              currentSlot,
-              currentFrame,
-            ),
+            sceneIds: uniqueSceneIds(currentFrame.sceneIds),
             kind: "kp",
             speakerCharacterId: null,
             speakerName: "KP",
@@ -7405,7 +7285,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       },
     );
     if (!isJsonRecord(published)) return narrationRecoveryUnavailable();
-    return published.kind === "published" || published.kind === "superseded"
+    return published.kind === "published"
       ? { kind: published.kind, receipt: structuredClone(recovery.receipt) }
       : published;
   }
@@ -7489,14 +7369,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The delivery plan names an unregistered publication protocol.",
         );
       }
-      if (deliveryProtocol.profileId === DELIVERY_PROTOCOL_PROFILE.profileId) {
-        const stale = plan.audiences.some((binding) => {
-          const viewerKey = `${binding.principalId}\u001f${binding.characterId}`;
-          const watermark = this.authorityStore.deliveryWatermark(viewerKey);
-          return watermark !== undefined && compareEventSeq(watermark, row.source_event_seq) > 0;
-        });
-        return stale ? { kind: "staleLegacyOpen" as const } : { kind: "open" as const };
-      }
       let audiences;
       try {
         audiences = this.authorityStore.ensureDeliveryAudiences(plan);
@@ -7535,13 +7407,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     };
 
     const observed = status();
-    if (observed.kind !== "staleOpen" && observed.kind !== "staleLegacyOpen") return observed;
+    if (observed.kind !== "staleOpen") return observed;
     return this.authorityStore.transaction(() => {
       const raced = status();
-      if (raced.kind === "staleLegacyOpen") {
-        this.authorityStore.supersedeOpenDeliveryPlan(publishCapability);
-        return { kind: "superseded" as const };
-      }
       if (raced.kind !== "staleOpen") return raced;
       for (const audienceId of raced.staleAudienceIds ?? []) {
         this.authorityStore.finishDeliveryAudience({
@@ -7674,199 +7542,6 @@ export class RoomDurableObject extends DurableObject<Env> {
     };
   }
 
-  private async publishLegacyDelivery(
-    row: AuthorityDeliveryPlanRow,
-    plan: DeliveryPlan,
-    publishCapability: string,
-    publication: JsonObject,
-  ) {
-    const frames = publication.frames;
-    if (!Array.isArray(frames)) {
-      return rejectedAuthority("invalidPublication", "Publication frames must be an array.");
-    }
-    const expectedAudienceIds = plan.audiences.map((entry) => entry.audienceId).sort();
-    const actualAudienceIds = frames
-      .map((entry) => isJsonRecord(entry) ? entry.audienceId : undefined)
-      .filter(nonEmptyString)
-      .sort();
-    if (
-      actualAudienceIds.length !== frames.length
-      || actualAudienceIds.length !== new Set(actualAudienceIds).size
-      || actualAudienceIds.length !== expectedAudienceIds.length
-      || actualAudienceIds.some((entry, index) => entry !== expectedAudienceIds[index])
-    ) {
-      return rejectedAuthority(
-        "audienceMismatch",
-        "Publication must match the audience snapshot frozen at commit.",
-      );
-    }
-    let publicationHash: string;
-    try {
-      publicationHash = await authorityHash(publication);
-    } catch {
-      return rejectedAuthority("invalidPublication", "Publication frames must be canonical JSON.");
-    }
-    if (row.publication_hash !== null) {
-      if (row.publication_hash !== publicationHash) {
-        return rejectedAuthority(
-          "idempotencyPayloadMismatch",
-          "The publish capability was already used with a different publication.",
-        );
-      }
-      return row.publication_result_json === null
-        ? { kind: row.status }
-        : parseJson(row.publication_result_json);
-    }
-
-    const preparedFrames: Array<{
-      binding: DeliveryAudienceBinding;
-      viewer: PlayerViewer;
-      frame: DeliveryFrame;
-    }> = [];
-    for (const frameValue of frames) {
-      if (
-        !isJsonRecord(frameValue)
-        || !nonEmptyString(frameValue.audienceId)
-        || !isJsonRecord(frameValue.narration)
-        || !nonEmptyString(frameValue.narration.text)
-      ) {
-        return rejectedAuthority("invalidPublication", "Each frozen audience requires one text frame.");
-      }
-      const binding = plan.audiences.find((entry) => entry.audienceId === frameValue.audienceId);
-      if (binding === undefined) {
-        return rejectedAuthority("audienceMismatch", "A frame addressed an audience outside the snapshot.");
-      }
-      if (Object.keys(frameValue.narration).some((key) =>
-        key !== "text" && key !== "agencyClaims")) {
-        return rejectedAuthority(
-          "invalidPublication",
-          "Narration frames must use the closed publication contract.",
-        );
-      }
-      try {
-        validateNarrationAgencyClaims(frameValue.narration, binding.kpProjection);
-      } catch {
-        return rejectedAuthority(
-          "invalidPublication",
-          "Narration agency claims are unavailable or violate the frozen audience projection.",
-        );
-      }
-      const viewer: PlayerViewer = {
-        kind: "player",
-        principalId: binding.principalId,
-        sessionVersion: binding.sessionVersion,
-        seatId: binding.seatId,
-        characterId: binding.characterId,
-      };
-      const text = frameValue.narration.text;
-      const payloadHash = await authorityHash({ text });
-      const sceneIds = binding.sceneIds?.length
-        ? [...binding.sceneIds]
-        : projectionTranscriptSceneIds(binding.kpProjection);
-      preparedFrames.push({
-        binding,
-        viewer,
-        frame: {
-          deliveryId: `delivery:${plan.receiptId}:${binding.characterId}`,
-          receiptId: plan.receiptId,
-          activeBranchId: plan.activeBranchId,
-          projectionHash: binding.projectionHash,
-          presentationPolicyVersion: PRESENTATION_POLICY_VERSION,
-          narrationPolicyVersion: NARRATION_POLICY_VERSION,
-          payloadHash,
-          text,
-          sceneIds,
-        },
-      });
-    }
-    const publicationReplay = this.authoritativeReplay();
-
-    return this.authorityStore.transaction(() => {
-      if (this.authorityStore.roomDeletion() !== undefined) {
-        return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
-      }
-      const currentPlan = this.authorityStore.deliveryPlan(publishCapability);
-      if (currentPlan === undefined) {
-        return rejectedAuthority("publishCapabilityInvalid", "The publish capability is unavailable.");
-      }
-      if (currentPlan.publication_hash !== null) {
-        if (currentPlan.publication_hash !== publicationHash) {
-          return rejectedAuthority(
-            "idempotencyPayloadMismatch",
-            "The publish capability was already used with a different publication.",
-          );
-        }
-        return currentPlan.publication_result_json === null
-          ? { kind: currentPlan.status }
-          : parseJson(currentPlan.publication_result_json);
-      }
-      const newerSlotExists = preparedFrames.some(({ viewer }) => {
-        const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
-        const watermark = this.authorityStore.deliveryWatermark(viewerKey);
-        return watermark !== undefined && compareEventSeq(watermark, row.source_event_seq) > 0;
-      });
-      if (newerSlotExists) {
-        const result = { kind: "superseded" as const, receiptId: plan.receiptId };
-        this.authorityStore.finishDeliveryPlan(
-          publishCapability,
-          publicationHash,
-          "superseded",
-          result,
-        );
-        return result;
-      }
-      for (const { viewer, frame } of preparedFrames) {
-        const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
-        const oldSlot = this.authorityStore.deliverySlot(viewerKey);
-        if (oldSlot !== undefined) {
-          const oldFrame = parseJson<DeliveryFrame>(oldSlot.frame_json);
-          this.authorityStore.appendExperiencedMessage({
-            viewerKey,
-            messageId: oldFrame.deliveryId,
-            sceneIds: this.authorityDeliveryFrameSceneIds(
-              publicationReplay,
-              viewer.characterId,
-              oldSlot,
-              oldFrame,
-            ),
-            kind: "kp",
-            speakerCharacterId: null,
-            speakerName: "KP",
-            body: oldFrame.text,
-            sourceEventSeq: oldSlot.source_event_seq,
-            receiptId: oldFrame.receiptId,
-          });
-          this.authorityStore.tombstoneDelivery(
-            oldSlot,
-            oldFrame.receiptId,
-            oldFrame.payloadHash,
-            "superseded",
-          );
-        }
-        this.authorityStore.replaceDeliverySlot({
-          viewerKey,
-          principalId: viewer.principalId,
-          characterId: viewer.characterId,
-          sourceEventSeq: row.source_event_seq,
-          frame,
-        });
-        this.authorityStore.advanceDeliveryWatermark(viewerKey, row.source_event_seq);
-      }
-      const result = {
-        kind: "published" as const,
-        receiptId: plan.receiptId,
-        deliveryIds: preparedFrames.map(({ frame }) => frame.deliveryId),
-      };
-      this.authorityStore.finishDeliveryPlan(
-        publishCapability,
-        publicationHash,
-        "published",
-        result,
-      );
-      return result;
-    });
-  }
-
   async publishDelivery(capability: unknown, publication: unknown) {
     if (this.authorityStore.roomDeletion() !== undefined) {
       return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
@@ -7891,9 +7566,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         "deliveryProtocolMismatch",
         "The delivery plan names an unregistered publication protocol.",
       );
-    }
-    if (deliveryProtocol.profileId === DELIVERY_PROTOCOL_PROFILE.profileId) {
-      return this.publishLegacyDelivery(row, plan, publishCapability, publication);
     }
     const frames = publication.frames;
     if (frames.length === 0) {
@@ -7937,10 +7609,12 @@ export class RoomDurableObject extends DurableObject<Env> {
         || !isJsonRecord(frameValue.narration)
         || !hasExactJsonKeys(frameValue.narration, ["body"])
         || !nonEmptyString(frameValue.narration.body)
+        || !Number.isSafeInteger(frameValue.deliveryGeneration)
+        || Number(frameValue.deliveryGeneration) < 1
       ) {
         return rejectedAuthority(
           "invalidPublication",
-          "Each audience frame accepts only one non-empty narration body.",
+          "Each audience frame requires one generation and one non-empty narration body.",
         );
       }
       const binding = plan.audiences.find((entry) => entry.audienceId === frameValue.audienceId);
@@ -7957,19 +7631,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The audience publication journal is unavailable.",
         );
       }
-      let deliveryGeneration = Number.isSafeInteger(frameValue.deliveryGeneration)
-        ? Number(frameValue.deliveryGeneration)
-        : journal.delivery_generation;
-      if (deliveryGeneration < 1) {
-        deliveryGeneration = this.authorityStore.beginDeliveryAudienceAttempt(
-          publishCapability,
-          binding.audienceId,
-        ) ?? 0;
-      }
-      if (deliveryGeneration < 1 || deliveryGeneration !== this.authorityStore.deliveryAudience(
-        publishCapability,
-        binding.audienceId,
-      )?.delivery_generation) {
+      const deliveryGeneration = Number(frameValue.deliveryGeneration);
+      if (deliveryGeneration !== journal.delivery_generation) {
         return rejectedAuthority(
           "deliveryGenerationMismatch",
           "The audience publication generation changed.",
@@ -8003,9 +7666,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         continue;
       }
       const payloadHash = await authorityHash({ text: body });
-      const sceneIds = binding.sceneIds?.length
-        ? [...binding.sceneIds]
-        : projectionTranscriptSceneIds(binding.kpProjection);
+      const sceneIds = uniqueSceneIds(binding.sceneIds);
       const derived = narrationPublicationMetadata(binding.kpProjection);
       preparedFrames.push({
         binding,
@@ -8034,8 +7695,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         deliveryIds: [],
       };
     }
-    const publicationReplay = this.authoritativeReplay();
-
     return this.authorityStore.transaction(() => {
       if (this.authorityStore.roomDeletion() !== undefined) {
         return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
@@ -8083,12 +7742,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           this.authorityStore.appendExperiencedMessage({
             viewerKey,
             messageId: oldFrame.deliveryId,
-            sceneIds: this.authorityDeliveryFrameSceneIds(
-              publicationReplay,
-              viewer.characterId,
-              oldSlot,
-              oldFrame,
-            ),
+            sceneIds: uniqueSceneIds(oldFrame.sceneIds),
             kind: "kp",
             speakerCharacterId: null,
             speakerName: "KP",
@@ -8201,18 +7855,7 @@ export class RoomDurableObject extends DurableObject<Env> {
               ? { kind: "none" }
               : (() => {
                   const frame = parseJson<DeliveryFrame>(slot.frame_json);
-                  const observedFrame = frame.sceneIds?.length
-                    ? frame
-                    : {
-                        ...frame,
-                        sceneIds: this.authorityDeliveryFrameSceneIds(
-                          replay,
-                          latest.id,
-                          slot,
-                          frame,
-                        ),
-                      };
-                  return { kind: "current" as const, frame: observedFrame, body: frame.text };
+                  return { kind: "current" as const, frame, body: frame.text };
                 })(),
           pendingPlayerRolls: [],
           ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
@@ -8325,18 +7968,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         ? { kind: "none" }
         : (() => {
             const frame = parseJson<DeliveryFrame>(slot.frame_json);
-            const observedFrame = frame.sceneIds?.length
-              ? frame
-              : {
-                  ...frame,
-                  sceneIds: this.authorityDeliveryFrameSceneIds(
-                    replay,
-                    characterId,
-                    slot,
-                    frame,
-                  ),
-            };
-            return { kind: "current" as const, frame: observedFrame, body: frame.text };
+            return { kind: "current" as const, frame, body: frame.text };
           })(),
       pendingPlayerRolls: this.viewerPendingPlayerRolls(replay, authenticated),
       ...(narrationRecovery === undefined ? {} : { narrationRecovery }),
@@ -8400,12 +8032,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.authorityStore.appendExperiencedMessage({
         viewerKey,
         messageId: frame.deliveryId,
-        sceneIds: this.authorityDeliveryFrameSceneIds(
-          replay,
-          characterId,
-          slot,
-          frame,
-        ),
+        sceneIds: uniqueSceneIds(frame.sceneIds),
         kind: "kp",
         speakerCharacterId: null,
         speakerName: "KP",
@@ -8597,12 +8224,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         this.authorityStore.appendExperiencedMessage({
           viewerKey: slot.viewer_key,
           messageId: frame.deliveryId,
-          sceneIds: this.authorityDeliveryFrameSceneIds(
-            replay,
-            slot.character_id,
-            slot,
-            frame,
-          ),
+          sceneIds: uniqueSceneIds(frame.sceneIds),
           kind: "kp",
           speakerCharacterId: null,
           speakerName: "KP",
@@ -8633,611 +8255,12 @@ export class RoomDurableObject extends DurableObject<Env> {
     return persisted;
   }
 
-  async initialize(input: InitializeRoomInput) {
-    const mod = this.definition(input.moduleId);
-    if (input.rulesetVersion !== RULESET_VERSION || mod.rulesetVersion !== RULESET_VERSION) {
-      throw new Error(`房间必须锁定 ${RULESET_VERSION}`);
-    }
-    const legacyRules = legacyRulesAdapterFor(input.rulesetVersion);
-    const result = this.ctx.storage.transactionSync(() => {
-      const existing = this.ctx.storage.sql
-        .exec<RoomRow>(
-          `SELECT room_id, module_id, ruleset_version, state_json, scope_versions_json
-           FROM room_state WHERE singleton = 1`,
-        )
-        .toArray()[0];
-      if (existing) {
-        if (
-          existing.room_id !== input.roomId ||
-          existing.module_id !== input.moduleId ||
-          existing.ruleset_version !== input.rulesetVersion
-        ) {
-          throw new Error("同一个 Room Durable Object 不能重新绑定到另一房间或规则集");
-        }
-        return { created: false, stateVersion: parseJson<WorldState>(existing.state_json).version };
-      }
-      const playerIds = new Set(input.players.map((entry) => entry.id));
-      const npcEntities: LegacyInitialEntity[] = mod.npcs
-        .filter((npc) => !playerIds.has(npc.id))
-        .map((npc) => {
-          const scene = mod.chapters
-            .flatMap((chapter) => chapter.scenes)
-            .find((candidate) => candidate.npcs.includes(npc.id));
-          const attack = /([+-]\d+)\s+(\d+)d(\d+)([+-]\d+)?/i.exec(npc.stats);
-          return {
-            id: npc.id,
-            kind: "npc",
-            name: npc.name,
-            ac: Number(/AC\s*(\d+)/i.exec(npc.stats)?.[1] ?? 10),
-            hp: {
-              current: Number(/HP\s*(\d+)/i.exec(npc.stats)?.[1] ?? 1),
-              max: Number(/HP\s*(\d+)/i.exec(npc.stats)?.[1] ?? 1),
-            },
-            abilityScores: {
-              str: 10,
-              dex: 10 + 2 * Number(/敏捷\s*\+?(-?\d+)/.exec(npc.stats)?.[1] ?? 0),
-              con: 10,
-              int: 10,
-              wis: 10,
-              cha: 10,
-            },
-            sceneId: mod.world.locationSceneIds.includes(scene?.id ?? "")
-              ? scene!.id
-              : mod.world.initialSceneId,
-            capabilities: [...(mod.world.npcCapabilities?.[npc.id] ?? [])],
-            attacks: [
-              {
-                id: "primary-attack",
-                name: "攻击",
-                attackBonus: Number(attack?.[1] ?? 2),
-                kind: "melee" as const,
-                reachFeet: 5,
-                damage: {
-                  count: Number(attack?.[2] ?? 1),
-                  sides: Number(attack?.[3] ?? 4),
-                  bonus: Number(attack?.[4] ?? 0),
-                  damageType: "physical",
-                },
-              },
-            ],
-          };
-        });
-      const state = legacyRules.initializeWorld(
-        mod.world,
-        [...input.players, ...npcEntities],
-        input.squads,
-      );
-      const now = Date.now();
-      this.ctx.storage.sql.exec(
-        `INSERT INTO room_state (
-           singleton, room_id, module_id, ruleset_version, state_json, scope_versions_json, updated_at
-         ) VALUES (1, ?, ?, ?, ?, ?, ?)`,
-        input.roomId,
-        input.moduleId,
-        input.rulesetVersion,
-        JSON.stringify(state),
-        "{}",
-        now,
-      );
-      return { created: true, stateVersion: state.version };
-    });
-    return result;
-  }
-
-  async upsertPlayer(input: UpsertPlayerInput) {
-    const result = this.ctx.storage.transactionSync(() => {
-      const row = this.roomRow();
-      const legacyRules = legacyRulesAdapterFor(row.ruleset_version);
-      const mod = this.definition(row.module_id);
-      const state = parseJson<WorldState>(row.state_json);
-      const existingEntity = state.entities[input.player.id];
-      if (existingEntity?.active !== false) {
-        return { created: false, rejoined: false, stateVersion: state.version };
-      }
-      if (existingEntity) {
-        const peers = Object.values(state.entities).filter(
-          (candidate) =>
-            candidate.active !== false && candidate.sceneId === existingEntity.sceneId,
-        );
-        const toSeconds = Math.max(
-          state.causalFrontierSeconds,
-          ...peers.map((candidate) => state.timelines[candidate.id]?.fictionSeconds ?? 0),
-        );
-        const toSpotlightBeat = Math.max(
-          0,
-          ...peers.map((candidate) => state.timelines[candidate.id]?.spotlightBeat ?? 0),
-        );
-        const commandId = `system:reseat:${input.player.id}:${crypto.randomUUID()}`;
-        const events: WorldEvent[] = [
-          {
-            type: "EntityRejoined",
-            entityId: input.player.id,
-            id: `${commandId}:1`,
-            commandId,
-            version: state.version + 1,
-            atSeconds: toSeconds,
-          },
-          {
-            type: "TimelinesSynchronized",
-            entityIds: [input.player.id],
-            toSeconds,
-            toSpotlightBeat,
-            id: `${commandId}:2`,
-            commandId,
-            version: state.version + 2,
-            atSeconds: toSeconds,
-          },
-        ];
-        const next = legacyRules.applyCommittedEvents(state, events);
-        const currentVersions = parseJson<Record<string, number>>(row.scope_versions_json);
-        const nextVersions = advanceScopeVersions(
-          currentVersions,
-          [`entity:${input.player.id}`, `scene:${existingEntity.sceneId}`],
-          next.version,
-        );
-        for (const event of events) {
-          this.ctx.storage.sql.exec(
-            `INSERT INTO world_events (
-               version, event_id, command_id, event_type, fiction_seconds, event_json
-             ) VALUES (?, ?, ?, ?, ?, ?)`,
-            event.version,
-            event.id,
-            event.commandId,
-            event.type,
-            event.atSeconds,
-            JSON.stringify(event),
-          );
-        }
-        this.ctx.storage.sql.exec(
-          `UPDATE room_state SET state_json = ?, scope_versions_json = ?, updated_at = ?
-           WHERE singleton = 1`,
-          JSON.stringify(next),
-          JSON.stringify(nextVersions),
-          Date.now(),
-        );
-        return { created: false, rejoined: true, stateVersion: next.version };
-      }
-      const seed = legacyRules.initializeWorld(mod.world, [{ ...input.player, kind: "player" }]);
-      const entity = seed.entities[input.player.id];
-      const sameSceneTimes = Object.values(state.entities)
-        .filter((candidate) => candidate.sceneId === entity.sceneId)
-        .map((candidate) => state.timelines[candidate.id]?.fictionSeconds ?? 0);
-      const sameSceneBeats = Object.values(state.entities)
-        .filter((candidate) => candidate.sceneId === entity.sceneId)
-        .map((candidate) => state.timelines[candidate.id]?.spotlightBeat ?? 0);
-      const timeline = {
-        spotlightBeat: Math.max(0, ...sameSceneBeats),
-        fictionSeconds: Math.max(state.causalFrontierSeconds, ...sameSceneTimes),
-        causalVersion: state.version,
-      };
-      const commandId = `system:seat:${input.player.id}:${crypto.randomUUID()}`;
-      const event: WorldEvent = {
-        type: "EntityJoined",
-        entity,
-        timeline,
-        id: `${commandId}:1`,
-        commandId,
-        version: state.version + 1,
-        atSeconds: timeline.fictionSeconds,
-      };
-      const next = legacyRules.applyCommittedEvents(state, [event]);
-      const scopes = [`entity:${entity.id}`, `scene:${entity.sceneId}`];
-      const currentVersions = parseJson<Record<string, number>>(row.scope_versions_json);
-      const nextVersions = advanceScopeVersions(currentVersions, scopes, next.version);
-      const now = Date.now();
-      this.ctx.storage.sql.exec(
-        `INSERT INTO world_events (
-           version, event_id, command_id, event_type, fiction_seconds, event_json
-         ) VALUES (?, ?, ?, ?, ?, ?)`,
-        event.version,
-        event.id,
-        event.commandId,
-        event.type,
-        event.atSeconds,
-        JSON.stringify(event),
-      );
-      this.ctx.storage.sql.exec(
-        `UPDATE room_state SET state_json = ?, scope_versions_json = ?, updated_at = ?
-         WHERE singleton = 1`,
-        JSON.stringify(next),
-        JSON.stringify(nextVersions),
-        now,
-      );
-      return { created: true, rejoined: false, stateVersion: next.version };
-    });
-    await this.archiveAllRoomEvents();
-    return result;
-  }
-
-  async departPlayer(playerId: string) {
-    const result = this.ctx.storage.transactionSync(() => {
-      const row = this.roomRow();
-      const legacyRules = legacyRulesAdapterFor(row.ruleset_version);
-      const state = parseJson<WorldState>(row.state_json);
-      const entity = state.entities[playerId];
-      if (!entity || entity.active === false) return { changed: false, stateVersion: state.version };
-      if (entity.kind !== "player") throw new Error("只能让玩家角色离席");
-      const commandId = `system:depart:${playerId}:${crypto.randomUUID()}`;
-      const event: WorldEvent = {
-        type: "EntityDeparted",
-        entityId: playerId,
-        id: `${commandId}:1`,
-        commandId,
-        version: state.version + 1,
-        atSeconds: state.timelines[playerId]?.fictionSeconds ?? 0,
-      };
-      const next = legacyRules.applyCommittedEvents(state, [event]);
-      const currentVersions = parseJson<Record<string, number>>(row.scope_versions_json);
-      const nextVersions = advanceScopeVersions(
-        currentVersions,
-        [`entity:${playerId}`, `scene:${entity.sceneId}`],
-        next.version,
-      );
-      this.ctx.storage.sql.exec(
-        `INSERT INTO world_events (
-           version, event_id, command_id, event_type, fiction_seconds, event_json
-         ) VALUES (?, ?, ?, ?, ?, ?)`,
-        event.version,
-        event.id,
-        event.commandId,
-        event.type,
-        event.atSeconds,
-        JSON.stringify(event),
-      );
-      this.ctx.storage.sql.exec(
-        `UPDATE room_state SET state_json = ?, scope_versions_json = ?, updated_at = ?
-         WHERE singleton = 1`,
-        JSON.stringify(next),
-        JSON.stringify(nextVersions),
-        Date.now(),
-      );
-      return { changed: true, stateVersion: next.version };
-    });
-    await this.archiveAllRoomEvents();
-    return result;
-  }
-
-  async synchronizePlayerLoadout(input: SynchronizePlayerLoadoutInput) {
-    const result = this.ctx.storage.transactionSync(() => {
-      const row = this.roomRow();
-      const legacyRules = legacyRulesAdapterFor(row.ruleset_version);
-      const state = parseJson<WorldState>(row.state_json);
-      const entity = state.entities[input.playerId];
-      if (!entity || entity.kind !== "player") {
-        return { ok: false as const, error: "玩家不在这个房间中", stateVersion: state.version };
-      }
-      if (!Number.isInteger(input.ac) || input.ac < 1 || input.ac > 40) {
-        return { ok: false as const, error: "护甲等级不合法", stateVersion: state.version };
-      }
-      const commandId = `system:loadout:${input.playerId}:${crypto.randomUUID()}`;
-      const eventBodies: UnstampedWorldEvent[] = [];
-      const combat = state.combats[entity.sceneId];
-      if (combat?.status === "active") {
-        const active = combat.order[combat.activeIndex];
-        const combatant = combat.order.find((entry) => entry.entityId === input.playerId);
-        if (!combatant || active?.entityId !== input.playerId) {
-          return {
-            ok: false as const,
-            error: "战斗中只能在自己的回合调整手持或穿戴物品",
-            stateVersion: state.version,
-          };
-        }
-        if (combatant.economy.objectInteraction === false) {
-          return {
-            ok: false as const,
-            error: "本回合的免费物件互动已经使用",
-            stateVersion: state.version,
-          };
-        }
-        eventBodies.push({
-          type: "CombatActionSpent",
-          sceneId: entity.sceneId,
-          entityId: input.playerId,
-          cost: "objectInteraction",
-        });
-      }
-      eventBodies.push({
-        type: "EntityLoadoutSynchronized",
-        entityId: input.playerId,
-        ac: input.ac,
-        attacks: structuredClone(input.attacks),
-        capabilities: [...new Set(input.capabilities)],
-        proficientSaves: input.proficientSaves,
-        creatureType: input.creatureType,
-        conditionImmunities: input.conditionImmunities,
-        spellLevels: input.spellLevels,
-        spellActionCosts: input.spellActionCosts,
-        spellcasting: input.spellcasting,
-      });
-      const events = eventBodies.map((body, index) => ({
-        ...body,
-        id: `${commandId}:${index + 1}`,
-        commandId,
-        version: state.version + index + 1,
-        atSeconds: state.timelines[input.playerId]?.fictionSeconds ?? 0,
-      })) as WorldEvent[];
-      const next = legacyRules.applyCommittedEvents(state, events);
-      const currentVersions = parseJson<Record<string, number>>(row.scope_versions_json);
-      const nextVersions = advanceScopeVersions(
-        currentVersions,
-        [`entity:${input.playerId}`, `scene:${entity.sceneId}`],
-        next.version,
-      );
-      const now = Date.now();
-      for (const event of events) {
-        this.ctx.storage.sql.exec(
-          `INSERT INTO world_events (
-             version, event_id, command_id, event_type, fiction_seconds, event_json
-           ) VALUES (?, ?, ?, ?, ?, ?)`,
-          event.version,
-          event.id,
-          event.commandId,
-          event.type,
-          event.atSeconds,
-          JSON.stringify(event),
-        );
-      }
-      this.ctx.storage.sql.exec(
-        `UPDATE room_state SET state_json = ?, scope_versions_json = ?, updated_at = ?
-         WHERE singleton = 1`,
-        JSON.stringify(next),
-        JSON.stringify(nextVersions),
-        now,
-      );
-      return { ok: true as const, stateVersion: next.version };
-    });
-    await this.archiveAllRoomEvents();
-    return result;
-  }
-
-  async prepareTurn(input: PrepareTurnInput): Promise<TurnTicket> {
-    const now = input.nowMs ?? Date.now();
-    const ticket = this.ctx.storage.transactionSync(() => {
-      this.cleanupExpired(now);
-      const row = this.roomRow();
-      const legacyRules = legacyRulesAdapterFor(row.ruleset_version);
-      const mod = this.definition(row.module_id);
-      const state = parseJson<WorldState>(row.state_json);
-      const actor = state.entities[input.actorId];
-      if (!actor || actor.active === false) throw new Error("行动者不在这个房间中");
-      const scopeVersions = parseJson<Record<string, number>>(row.scope_versions_json);
-      const ticket: TurnTicket = {
-        id: crypto.randomUUID(),
-        actorId: input.actorId,
-        stateVersion: state.version,
-        scopeVersions,
-        expiresAt: now + TURN_TICKET_TTL_MS,
-        projection: legacyRules.projectViewer(mod.world, state, input.actorId),
-      };
-      this.ctx.storage.sql.exec(
-        `INSERT INTO turn_tickets (
-           id, actor_id, state_version, scope_versions_json, projection_json, status, expires_at
-         ) VALUES (?, ?, ?, ?, ?, 'open', ?)`,
-        ticket.id,
-        ticket.actorId,
-        ticket.stateVersion,
-        JSON.stringify(ticket.scopeVersions),
-        JSON.stringify(ticket.projection),
-        ticket.expiresAt,
-      );
-      this.ctx.storage.sql.exec(
-        `INSERT INTO ux_status (scope_id, phase, ticket_id, expires_at)
-         VALUES (?, 'interpreting', ?, ?)
-         ON CONFLICT(scope_id) DO UPDATE SET
-           phase = excluded.phase,
-           ticket_id = excluded.ticket_id,
-           expires_at = excluded.expires_at`,
-        actor.sceneId,
-        ticket.id,
-        now + UX_LEASE_TTL_MS,
-      );
-      return ticket;
-    });
-    await this.scheduleExpiryAlarm();
-    return ticket;
-  }
-
-  async commitTurn(input: CommitTurnInput): Promise<CommitTurnResult> {
-    const now = input.nowMs ?? Date.now();
-    const result = this.ctx.storage.transactionSync((): CommitTurnResult => {
-      this.cleanupExpired(now);
-      const row = this.roomRow();
-      const legacyRules = legacyRulesAdapterFor(row.ruleset_version);
-      const existing = this.ctx.storage.sql
-        .exec<{ result_json: string }>("SELECT result_json FROM commands WHERE command_id = ?", input.command.id)
-        .toArray()[0];
-      if (existing) {
-        return { ...parseJson<CommitTurnResult>(existing.result_json), idempotent: true };
-      }
-      const mod = this.definition(row.module_id);
-      const state = parseJson<WorldState>(row.state_json);
-      const ticket = this.ctx.storage.sql
-        .exec<TicketRow>(
-          `SELECT id, actor_id, state_version, scope_versions_json, projection_json, status, expires_at
-           FROM turn_tickets WHERE id = ?`,
-          input.ticketId,
-        )
-        .toArray()[0];
-      if (!ticket || ticket.status !== "open" || ticket.expires_at <= now) {
-        return {
-          decision: staleDecision(input.command.id, "行动票据不存在或已经过期，请重新解释行动。"),
-          stateVersion: state.version,
-          idempotent: false,
-        };
-      }
-      if (ticket.actor_id !== input.command.actorId) {
-        this.ctx.storage.sql.exec("UPDATE turn_tickets SET status = 'rejected' WHERE id = ?", ticket.id);
-        return {
-          decision: staleDecision(input.command.id, "行动票据不属于该角色。"),
-          stateVersion: state.version,
-          idempotent: false,
-        };
-      }
-      const versionedCommand = {
-        ...input.command,
-        expectedVersion: state.version,
-      } as Command;
-      const authoritativeCommand = versionedCommand.kind === "castSpell"
-        ? completeSpellCastRolls(state, versionedCommand)
-        : versionedCommand;
-      const scopes = commandScopes(mod.world, state, authoritativeCommand);
-      const ticketVersions = parseJson<Record<string, number>>(ticket.scope_versions_json);
-      const currentVersions = parseJson<Record<string, number>>(row.scope_versions_json);
-      const conflict = scopeConflict(ticketVersions, currentVersions, scopes);
-      if (conflict) {
-        this.ctx.storage.sql.exec("UPDATE turn_tickets SET status = 'stale' WHERE id = ?", ticket.id);
-        this.ctx.storage.sql.exec("DELETE FROM ux_status WHERE ticket_id = ?", ticket.id);
-        return {
-          decision: staleDecision(input.command.id, `行动相关状态已经变化：${conflict}`),
-          stateVersion: state.version,
-          idempotent: false,
-          conflictedScope: conflict,
-        };
-      }
-      const decision = legacyRules.adjudicate(mod.world, state, authoritativeCommand);
-      const nextState = decision.kind === "rejected"
-        ? state
-        : legacyRules.applyCommittedEvents(state, decision.events);
-      if (decision.kind !== "rejected") {
-        for (const event of decision.events) {
-          this.ctx.storage.sql.exec(
-            `INSERT INTO world_events (
-               version, event_id, command_id, event_type, fiction_seconds, event_json
-             ) VALUES (?, ?, ?, ?, ?, ?)`,
-            event.version,
-            event.id,
-            event.commandId,
-            event.type,
-            event.atSeconds,
-            JSON.stringify(event),
-          );
-        }
-      }
-      const nextScopeVersions =
-        decision.kind === "rejected"
-          ? currentVersions
-          : advanceScopeVersions(currentVersions, scopes, nextState.version);
-      this.ctx.storage.sql.exec(
-        `UPDATE room_state
-         SET state_json = ?, scope_versions_json = ?, updated_at = ?
-         WHERE singleton = 1`,
-        JSON.stringify(nextState),
-        JSON.stringify(nextScopeVersions),
-        now,
-      );
-      const commitResult: CommitTurnResult = {
-        decision,
-        stateVersion: nextState.version,
-        projection: legacyRules.projectViewer(mod.world, nextState, input.command.actorId),
-        idempotent: false,
-      };
-      this.ctx.storage.sql.exec(
-        "INSERT INTO commands (command_id, result_json, created_at) VALUES (?, ?, ?)",
-        input.command.id,
-        JSON.stringify(commitResult),
-        now,
-      );
-      this.ctx.storage.sql.exec("UPDATE turn_tickets SET status = 'committed' WHERE id = ?", ticket.id);
-      const phase = decision.kind === "awaitingRoll" ? "awaitingRoll" : "narrating";
-      const actorScene = nextState.entities[input.command.actorId].sceneId;
-      this.ctx.storage.sql.exec(
-        `INSERT INTO ux_status (scope_id, phase, ticket_id, expires_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(scope_id) DO UPDATE SET
-           phase = excluded.phase,
-           ticket_id = excluded.ticket_id,
-           expires_at = excluded.expires_at`,
-        actorScene,
-        phase,
-        ticket.id,
-        now + UX_LEASE_TTL_MS,
-      );
-      return commitResult;
-    });
-    if (result.decision.kind !== "rejected") {
-      await this.archiveEvents(
-        this.roomRow().room_id,
-        result.decision.events,
-      );
-    }
-    await this.scheduleExpiryAlarm();
-    return result;
-  }
-
-  async finishNarration(ticketId: string) {
-    this.ctx.storage.transactionSync(() => {
-      this.ctx.storage.sql.exec("DELETE FROM ux_status WHERE ticket_id = ?", ticketId);
-    });
-    await this.scheduleExpiryAlarm();
-  }
-
-  async markInterpretationFailed(ticketId: string) {
-    this.ctx.storage.transactionSync(() => {
-      this.ctx.storage.sql.exec(
-        "UPDATE turn_tickets SET status = 'failed' WHERE id = ? AND status = 'open'",
-        ticketId,
-      );
-      this.ctx.storage.sql.exec("DELETE FROM ux_status WHERE ticket_id = ?", ticketId);
-    });
-    await this.scheduleExpiryAlarm();
-  }
-
-  getSnapshot(viewerId: string, nowMs = Date.now()): RoomSnapshot {
-    return this.ctx.storage.transactionSync(() => {
-      this.cleanupExpired(nowMs);
-      const row = this.roomRow();
-      const legacyRules = legacyRulesAdapterFor(row.ruleset_version);
-      const mod = this.definition(row.module_id);
-      const state = parseJson<WorldState>(row.state_json);
-      const ux = this.ctx.storage.sql
-        .exec<{ scope_id: string; phase: RoomSnapshot["ux"][number]["phase"]; expires_at: number }>(
-          "SELECT scope_id, phase, expires_at FROM ux_status WHERE expires_at > ? ORDER BY scope_id",
-          nowMs,
-        )
-        .toArray()
-        .map((entry) => ({ scopeId: entry.scope_id, phase: entry.phase, expiresAt: entry.expires_at }));
-      return {
-        roomId: row.room_id,
-        moduleId: row.module_id,
-        rulesetVersion: RULESET_VERSION,
-        projection: legacyRules.projectViewer(mod.world, state, viewerId),
-        ux,
-      };
-    });
-  }
-
-  getEvents(afterVersion = 0): StoredRoomEvent[] {
-    return this.ctx.storage.sql
-      .exec<{
-        version: number;
-        event_id: string;
-        command_id: string;
-        event_type: WorldEvent["type"];
-        fiction_seconds: number;
-        event_json: string;
-      }>(
-        `SELECT version, event_id, command_id, event_type, fiction_seconds, event_json
-         FROM world_events WHERE version > ? ORDER BY version`,
-        afterVersion,
-      )
-      .toArray()
-      .map((row) => ({
-        id: row.event_id,
-        commandId: row.command_id,
-        version: row.version,
-        atSeconds: row.fiction_seconds,
-        type: row.event_type,
-        event: parseJson<WorldEvent>(row.event_json),
-      }));
-  }
-
   async alarm() {
     if (this.authorityStore.roomDeletion() !== undefined) {
       await this.reconcilePreparedDeletion();
       return;
     }
     const now = Date.now();
-    this.ctx.storage.transactionSync(() => this.cleanupExpired(now));
     const archive = this.authorityStore.archiveProgress();
     if (
       archive?.pending

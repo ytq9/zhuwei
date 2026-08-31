@@ -5,6 +5,8 @@
 - 关联规格：SPEC 0001、SPEC 0003、SPEC 0005、SPEC 0006、SPEC 0010、SPEC 0011、SPEC 0013、SPEC 0014、SPEC 0015
 - 实现状态：生产映射、定向证据、远端 migration、既有 Worker 部署、双视口浏览器与 Git 推送已有事实证据；用户豁免的完整门未运行且不计通过，完整线上模型指标仍由用户自行测评
 
+> 0.4 修订说明（2026-08-31）：本 ADR 保留下述历史决策与发布审计；其中旧 ActionPlan、environment-v2/v3/v4、多代 Registry、旧房恢复和既往通过数不再是当前实现合同。0.4 当前边界以 ADR-0013、SPEC 0013/0015 与后续 DEC-046 为准：只注册 V5/runtime + workflow-v2 + causal-v4 精确闭包，前 0.4 输入直接拒绝且无 Adapter、migration 或 fallback。
+
 ## 背景
 
 现有生产提案把大量开放行动放进一个超级 Schema，并倾向为主 KP 提供较完整上下文。它能证明封闭机械入口，却带来三个新的产品风险：Schema 和 Prompt 成本随能力增长；静态规则/模组资料与活跃 Room 状态容易混成第二事实源；模型叙述失败又可能被模糊的单一成功状态或固定 fallback 掩盖。

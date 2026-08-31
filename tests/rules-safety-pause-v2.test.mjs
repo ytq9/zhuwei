@@ -18,6 +18,48 @@ function profileRef(profileId, digit) {
   return { profileId, profileHash: `sha256:${digit.repeat(64)}` };
 }
 
+function tacticalGeometry() {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "0", y: "0" },
+        { x: "900", y: "0" },
+        { x: "900", y: "600" },
+        { x: "0", y: "600" },
+      ],
+    },
+    spawnPoints: [
+      { x: "120", y: "180", elevation: "0" },
+      { x: "720", y: "180", elevation: "0" },
+      { x: "420", y: "120", elevation: "0" },
+    ],
+    obstacles: [{
+      featureId: "feature:rules-safety-pause-v2:hall-wall",
+      kind: "barrier",
+      label: "大厅侧墙",
+      state: "intact",
+      polygon: [
+        { x: "300", y: "360" },
+        { x: "360", y: "360" },
+        { x: "360", y: "480" },
+        { x: "300", y: "480" },
+      ],
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
 function viewer(person) {
   return {
     kind: "player",
@@ -49,7 +91,7 @@ function start() {
     initialDefinitionCatalogRef: profileRef("definitions:safety-pause-v2", "e"),
     activeBranchId: "branch:main",
     fictionInstantMicros: "60000000",
-    scenes: [{ id: "scene:hall", name: "大厅" }],
+    scenes: [{ id: "scene:hall", name: "大厅", geometry: tacticalGeometry() }],
     principals: [
       { id: ALICE.principalId, sessionVersion: 1, role: "host" },
       { id: BOB.principalId, sessionVersion: 1, role: "player" },

@@ -12,10 +12,8 @@ import { classById, raceById } from "@/lib/dnd/catalog";
 import {
   AUTHORITATIVE_KP_MODELS,
   DEFAULT_KP_MODEL,
-  LEGACY_KP_MODELS,
   kpModelById,
   type AuthoritativeKpModelId,
-  type KpModelId,
 } from "@/lib/kp/models";
 import { AUTHORITATIVE_RULESET_VERSION } from "@/lib/rules/ruleset";
 import {
@@ -24,7 +22,6 @@ import {
   getRoomManagement,
   joinRoom,
   listMyRooms,
-  setRoomModel,
   type RoomManagementResult,
 } from "@/lib/table/client";
 import { LogoutButton } from "../logout-button";
@@ -69,18 +66,6 @@ export function HallClient({
     onSuccess: (result) => {
       if (!result.ok) return toast.error(result.error);
       window.location.assign(`/table/${result.code}`);
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-  const choosingModel = useMutation({
-    mutationFn: ({ roomCode, model }: { roomCode: string; model: KpModelId }) =>
-      setRoomModel({ data: { code: roomCode, model } }),
-    onSuccess: (result, variables) => {
-      if (!result.ok) return toast.error(result.error);
-      toast.success("本桌模型已保存");
-      void queryClient.invalidateQueries({
-        queryKey: ["room-management", variables.roomCode],
-      });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -239,20 +224,18 @@ export function HallClient({
                         <section>
                           <div className="flex items-center justify-between gap-3">
                             <h3 className="text-sm font-medium">
-                              {managementData.room.ruleset_version === AUTHORITATIVE_RULESET_VERSION
-                                ? "AI 模型"
-                                : "选择 AI 模型"}
+                              AI 模型
                             </h3>
                             {managementData.room.ruleset_version === AUTHORITATIVE_RULESET_VERSION ? (
                               <span className="text-[11px] text-subtle">创建时已固定</span>
-                            ) : managementData.room.status !== "lobby" ? (
-                              <span className="text-[11px] text-subtle">开团后已锁定</span>
-                            ) : null}
+                            ) : (
+                              <span className="text-[11px] text-danger">0.4 前房间已退役</span>
+                            )}
                           </div>
                           {managementData.room.ruleset_version === AUTHORITATIVE_RULESET_VERSION ? (
                             <div className="mt-2 rounded-[12px] border border-brass bg-brass/10 px-3 py-3">
                               <p className="text-sm font-medium">
-                                {managedModel?.name ?? "历史兼容模型"}
+                                {managedModel?.name ?? "模型不可用"}
                               </p>
                               {managedModel && (
                                 <p className="mt-0.5 text-xs leading-relaxed text-muted">
@@ -261,38 +244,10 @@ export function HallClient({
                               )}
                             </div>
                           ) : (
-                            <div className="mt-2 grid gap-2">
-                              {LEGACY_KP_MODELS.map((option) => {
-                                const selected = option.id === managementData.room.kp_model;
-                                const pending = choosingModel.isPending
-                                  && choosingModel.variables?.roomCode === room.code;
-                                return (
-                                  <button
-                                    key={option.id}
-                                    type="button"
-                                    aria-pressed={selected}
-                                    disabled={
-                                      pending
-                                      || selected
-                                      || managementData.room.status !== "lobby"
-                                    }
-                                    className={`rounded-[12px] border px-3 py-2 text-left transition disabled:cursor-default ${
-                                      selected
-                                        ? "border-brass bg-brass/10 text-fg"
-                                        : "border-border text-muted hover:border-brass/60 hover:text-fg disabled:opacity-50"
-                                    }`}
-                                    onClick={() => choosingModel.mutate({
-                                      roomCode: room.code,
-                                      model: option.id,
-                                    })}
-                                  >
-                                    <span className="block text-sm font-medium">{option.name}</span>
-                                    <span className="mt-0.5 block text-xs leading-relaxed text-muted">
-                                      {option.summary}
-                                    </span>
-                                  </button>
-                                );
-                              })}
+                            <div className="mt-2 rounded-[12px] border border-danger/40 bg-danger/10 px-3 py-3">
+                              <p className="text-sm text-danger">
+                                该房间不再兼容；可以在下方直接删除。
+                              </p>
                             </div>
                           )}
                         </section>

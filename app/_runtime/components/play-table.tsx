@@ -24,6 +24,7 @@ import {
   changeArcaneRecoverySelection,
   publicNarrationRecoveryReason,
   type ArcaneRecoverySlotLevel,
+  type AuthoritativeInventory,
 } from "@/lib/table/authoritative";
 import type { PendingRoll } from "@/lib/kp/prompt";
 import type { PublicCombat } from "@/lib/kp/combat";
@@ -170,6 +171,7 @@ type AuthoritativeControlledCharacter = {
     equipped: Record<string, string>;
     backpack: Array<{ itemId: string; quantity: number }>;
   };
+  inventory?: AuthoritativeInventory;
   restRecoveryOptions?: {
     shortRest?: {
       hitDiceMaximumSpend?: number;
@@ -2808,8 +2810,7 @@ function CharacterDetail({
         </Fold>
       )}
       <InventoryPanel
-        equipped={live.equipped ?? {}}
-        backpack={live.backpack ?? []}
+        inventory={authoritativeCharacter?.inventory}
         canEdit={canEdit}
         code={code}
       />
@@ -2866,8 +2867,6 @@ function ResourcePanel({
   const [rest, setRest] = useState<null | "short" | "long">(null);
   const [dice, setDice] = useState(0);
   const [arcaneRecoverySlotLevels, setArcaneRecoverySlotLevels] = useState<number[]>([]);
-  // Legacy Adapter choice. authoritative-v2 uses arcaneRecoverySlotLevels only.
-  const [arcane, setArcane] = useState<0 | 1 | 2>(0);
   const hdLeft = authoritativeCharacter?.restRecoveryOptions?.shortRest?.hitDiceMaximumSpend
     ?? (authoritativeCharacter === undefined ? left(r.hitDice) : 0);
   const hitDieSides = authoritativeCharacter?.restRecoveryOptions?.shortRest?.hitDieSides
@@ -2929,18 +2928,6 @@ function ResourcePanel({
               onChange={setArcaneRecoverySlotLevels}
             />
           </div>
-        ) : sheet.classId === "wizard" && !r.arcaneRecovery ? (
-          <div className="mt-3">
-            <p className="text-xs font-medium">奥术恢复（每日一次）</p>
-            <div className="mt-1 flex gap-1.5">
-              {([0, 1, 2] as const).map((n) => (
-                <Button key={n} onClick={() => setArcane(n)}>
-                  {n === 0 ? "不用" : n === 1 ? "回一个一环" : "回一个二环"}
-                </Button>
-              ))}
-            </div>
-            <p className="mt-1 text-[11px] text-subtle">当前选：{arcane === 0 ? "不用" : arcane === 1 ? "一环" : "二环"}</p>
-          </div>
         ) : null}
         {inCombat && (
           <p className="mt-2 text-[11px] text-brass">战斗中不能休整。</p>
@@ -2956,9 +2943,7 @@ function ResourcePanel({
                     kind: "short",
                     mode: needVote ? "group" : "personal",
                     hitDice: dice,
-                    ...(authoritativeCharacter === undefined
-                      ? { arcane }
-                      : { arcaneRecoverySlotLevels }),
+                    arcaneRecoverySlotLevels,
                   },
                 }),
               )
@@ -2978,9 +2963,7 @@ function ResourcePanel({
                       kind: "short",
                       mode: "personal",
                       hitDice: dice,
-                      ...(authoritativeCharacter === undefined
-                        ? { arcane }
-                        : { arcaneRecoverySlotLevels }),
+                      arcaneRecoverySlotLevels,
                     },
                   }),
                 )
@@ -3099,11 +3082,9 @@ function ResourcePanel({
                         kind: restVote.kind,
                         mode: "group",
                         hitDice: restVote.kind === "short" ? dice : undefined,
-                        ...(restVote.kind !== "short"
-                          ? {}
-                          : authoritativeCharacter === undefined
-                            ? { arcane }
-                            : { arcaneRecoverySlotLevels }),
+                        ...(restVote.kind === "short"
+                          ? { arcaneRecoverySlotLevels }
+                          : {}),
                       },
                     }),
                   )
@@ -3144,7 +3125,6 @@ function ResourcePanel({
           <Button
             disabled={Boolean(busy)}
             onClick={() => {
-              setArcane(0);
               setArcaneRecoverySlotLevels([]);
               setRest("short");
             }}

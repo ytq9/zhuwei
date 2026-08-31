@@ -8,6 +8,12 @@ import type {
   SemanticActionPlan,
 } from "../../app/_runtime/lib/kp/authoritative-types";
 
+/**
+ * Retired test-only fixture for Room suites that still need conversion to the
+ * current private Form/capability ingress. Production no longer accepts this
+ * shape, and these suites are not 0.4 completion evidence until converted.
+ */
+
 export type ProductionProposalOptions = {
   kind?: KpProposalDraft["kind"];
   goal?: string;

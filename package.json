@@ -1,6 +1,6 @@
 {
   "name": "zhuwei-cloudflare-worker",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,7 +14,6 @@
     "test:unit": "tsx --test tests/**/*.test.mjs",
     "test:worker": "vitest run",
     "module:check": "tsx tools/check-modules.mjs",
-    "profile:reference-gate": "tsx tools/check-runtime-profile-references.mts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",

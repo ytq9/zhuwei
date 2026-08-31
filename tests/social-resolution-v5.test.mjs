@@ -232,34 +232,6 @@ async function establishAndMaterializePremiseNpc(suffix, personAlias, taskAlias)
   };
 }
 
-function legacyDirectPlan(rootActionId, dynamicMaterializations, success = []) {
-  return {
-    kind: "resolveCompoundActionPlan",
-    actionPlanVersion: "authoritative-kp-action-plan-v1",
-    rootActionId,
-    actorCharacterId: ACTOR,
-    feasibilityKind: "directSuccess",
-    goal: "固化当前因果允许的动态世界内容",
-    method: "沿既有通用动态定义协议登记",
-    risk: null,
-    dynamicMaterializations,
-    npcActions: [],
-    scene: {
-      question: "这些动态定义将如何进入后续场景？",
-      pressure: "",
-      opportunities: [],
-      conclusionCandidate: null,
-    },
-    mechanicalProposal: {
-      operation: "resolveDirectConsequences",
-      duration: { unit: "second", value: 1 },
-      frozenCosts: [],
-      success,
-      failure: [],
-    },
-  };
-}
-
 function socialDraft({
   npcRef,
   utterance,
@@ -345,59 +317,6 @@ test("typed character premises create arbitrary generic definitions and material
   }
 });
 
-test("pre-existing generic dynamic:npc and opportunity definitions remain the shared branch protocol", async () => {
-  let room = await initialize("existing-generic");
-  const npcRef = "dynamic:social-v5:amber-indexer";
-  const opportunityRef = "dynamic:social-v5:quiet-ledger";
-  const registered = step(room.profiles, room.state, legacyDirectPlan(
-    "root:social-v5:existing-generic:register",
-    [{
-      kind: "npc",
-      factRef: npcRef,
-      causalBasisRefs: [],
-      visibilityPolicyRef: "visibility:scene-observers",
-      definition: { name: "琥珀索引者", description: "在门槛厅等待核对一份旧索引。" },
-    }, {
-      kind: "opportunity",
-      factRef: opportunityRef,
-      causalBasisRefs: [],
-      visibilityPolicyRef: "visibility:scene-observers",
-      definition: { name: "静默账页", description: "一项可以继续追查的账页缺口。" },
-    }],
-  ));
-  assert.equal(registered.kind, "committed", JSON.stringify(registered));
-  room = appendAndReplay(room, registered);
-  assert.equal(room.state.campaignRuntime.definitions[npcRef].definitionKind, "npc");
-  assert.equal(room.state.campaignRuntime.definitions[opportunityRef].definitionKind, "opportunity");
-  assert.equal(room.state.canonicalFacts[npcRef].kind, "dynamic:npc");
-  assert.equal(room.state.canonicalFacts[opportunityRef].kind, "dynamic:opportunity");
-
-  const activation = step(room.profiles, room.state, causalInput("materialization.v1", {
-    goal: "让已登记人物进入当前场景",
-    method: "materializeDynamicNpc",
-    proposedFact: JSON.stringify({
-      schema: "zhuwei.dynamic-npc-materialization-draft/v2",
-      definitionRef: npcRef,
-      entityRef: npcRef,
-      sourceFactRefs: [npcRef],
-      initialKnowledgeFactRefs: [],
-      sceneRef: SCENE,
-    }),
-    basisRefs: [npcRef, SCENE],
-    resolution: "direct",
-    durationUnit: "minute",
-    durationValue: 1,
-  }, "root:social-v5:existing-generic:activate"));
-  assert.equal(activation.kind, "committed", JSON.stringify(activation));
-  room = appendAndReplay(room, activation);
-  assert.equal(room.state.entities[npcRef].name, "琥珀索引者");
-  assert.deepEqual(
-    room.state.entities[npcRef].socialMechanics,
-    DYNAMIC_NPC_SOCIAL_ARCHETYPES[DYNAMIC_NPC_DEFAULT_SOCIAL_ARCHETYPE_REF],
-  );
-  assert.equal(room.state.knowledge[npcRef][npcRef], undefined);
-});
-
 test("social boundaries combine NPC mechanics, relationship, evidence and the roll margin", async () => {
   const setup = await establishAndMaterializePremiseNpc(
     "boundary",
@@ -428,24 +347,34 @@ test("social boundaries combine NPC mechanics, relationship, evidence and the ro
   assert.equal(baselinePlan.frozenBoundary.stakesModifier, 3);
 
   const relationshipRef = socialRelationshipId(ACTOR, npcRef);
-  const relationFactRef = "fact:social-v5:boundary:prior-cooperation";
-  const relationship = step(room.profiles, room.state, legacyDirectPlan(
-    "root:social-v5:boundary:relationship",
-    [{
-      kind: "fact",
-      factRef: relationFactRef,
-      causalBasisRefs: [],
-      visibilityPolicyRef: "visibility:scene-observers",
-      definition: { name: "此前的可靠合作" },
-    }],
-    [{
-      kind: "updateRelationship",
-      relationshipRef,
-      recipientRefs: [npcRef],
-      value: "socialTrust:2",
-      definitionRef: relationFactRef,
-    }],
+  const relationBasis = step(room.profiles, room.state, causalInput(
+    "materialization.v1",
+    {
+      goal: "固化双方此前可靠合作的既有事实",
+      method: "沿角色已固化来由确认双方合作记录",
+      proposedFact: "双方此前有过一次可靠合作。",
+      basisRefs: [setup.premiseFact.id],
+      resolution: "direct",
+      durationUnit: "second",
+      durationValue: 1,
+    },
+    "root:social-v5:boundary:relationship-basis",
   ));
+  assert.equal(relationBasis.kind, "committed", JSON.stringify(relationBasis));
+  room = appendAndReplay(room, relationBasis);
+  const relationFact = Object.values(relationBasis.state.canonicalFacts).find((fact) =>
+    fact.kind === "dynamicOpenFact"
+    && fact.id.includes("root:social-v5:boundary:relationship-basis"));
+  assert.ok(relationFact);
+  const relationFactRef = relationFact.id;
+  const relationship = step(room.profiles, room.state, {
+    kind: "changeRelationship",
+    proposalId: "root:social-v5:boundary:relationship",
+    relationshipId: relationshipRef,
+    subjectIds: [ACTOR, npcRef],
+    change: "socialTrust:2",
+    basisFactIds: [relationFactRef],
+  });
   assert.equal(relationship.kind, "committed", JSON.stringify(relationship));
   room = appendAndReplay(room, relationship);
 

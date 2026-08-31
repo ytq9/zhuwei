@@ -56,27 +56,19 @@ const BOB_AUDIENCE_PROJECTION = Object.freeze({
   visibleResult: "Bob hears the distant hinge from the courtyard.",
 });
 
-const DELIVERY_PUBLISH_CAPABILITY = Object.freeze({
-  capabilityId: "delivery-capability:open-door:2",
-  opaqueProof: "room-authority-only",
-});
+const DELIVERY_PUBLISH_CAPABILITY = "delivery-capability:open-door:2";
 
 const DEFAULT_DELIVERY_PLAN = Object.freeze({
+  deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
   publishCapability: DELIVERY_PUBLISH_CAPABILITY,
   audiences: Object.freeze([
     Object.freeze({
       audienceId: "audience:alice",
-      projection: ALICE_AUDIENCE_PROJECTION,
+      principalId: TRUSTED_PRINCIPAL.id,
+      kpProjection: ALICE_AUDIENCE_PROJECTION,
     }),
   ]),
 });
-
-function independentDeliveryPlan(plan = DEFAULT_DELIVERY_PLAN) {
-  return Object.freeze({
-    ...plan,
-    deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
-  });
-}
 
 const COMMITTED_RECEIPT = Object.freeze({
   receiptId: "receipt:open-door",
@@ -153,11 +145,9 @@ function createHarness({
   commitResults = [COMMITTED_AUTHORITY_RESULT],
   narratives = [{
     body: DELIVERY.body,
-    agencyClaims: [],
   }],
   publicationResults = [{ kind: "published", deliveryIds: [DELIVERY.deliveryId] }],
   observed = OBSERVED_COMMITTED,
-  independentPublication = false,
 } = {}) {
   const trace = [];
   const resumeQueue = [...resumeResults];
@@ -217,7 +207,7 @@ function createHarness({
         publication,
       });
       const result = scriptedValue(publicationQueue, "authority.publishDelivery");
-      if (independentPublication && ["published", "superseded"].includes(result.kind)) {
+      if (["published", "superseded"].includes(result.kind)) {
         for (const frame of publication.frames ?? []) {
           const current = audiencePublications.get(frame.audienceId);
           audiencePublications.set(frame.audienceId, {
@@ -251,8 +241,7 @@ function createHarness({
     },
   };
 
-  if (independentPublication) {
-    Object.assign(authority, {
+  Object.assign(authority, {
       async deliveryPublicationStatus({ publishCapability }) {
         trace.push({
           boundary: "authority",
@@ -305,13 +294,16 @@ function createHarness({
         });
         return { kind: failure.state, ...failure };
       },
-    });
-  }
+  });
 
   const kp = {
     async propose(request) {
       trace.push({ boundary: "kp", operation: "propose", request });
       return scriptedValue(proposalQueue, "kp.propose");
+    },
+
+    async decideDueActorPlan() {
+      throw new Error("due ActorPlan decisions are not scripted by this harness");
     },
 
     async narrate(request) {
@@ -417,6 +409,8 @@ test("direct success commits before narration and publishes only the observer pr
     "authority.prepare",
     "kp.propose",
     "authority.commit",
+    "authority.deliveryPublicationStatus",
+    "authority.beginDeliveryAudiencePublication",
     "kp.narrate",
     "authority.publishDelivery",
     "authority.observe",
@@ -429,7 +423,7 @@ test("direct success commits before narration and publishes only the observer pr
     delivery: OBSERVED_COMMITTED.delivery,
     audienceNarrations: [{
       audienceId: "audience:alice",
-      deliveryGeneration: 0,
+      deliveryGeneration: 1,
       state: "published",
     }],
     action: "committed",
@@ -443,6 +437,7 @@ test("direct success commits before narration and publishes only the observer pr
   assert.equal(narration.request.rootActionId, PREPARED.rootActionId);
   assert.equal(narration.request.receipt, COMMITTED_RECEIPT);
   assert.equal(narration.request.projection, ALICE_AUDIENCE_PROJECTION);
+  assert.equal(narration.request.deliveryGeneration, 1);
 });
 
 test("a player's roll gesture resumes the frozen intent after an NPC mechanical stage", async () => {
@@ -471,6 +466,8 @@ test("a player's roll gesture resumes the frozen intent after an NPC mechanical 
     "authority.resumePlayerRandomness",
     "kp.propose",
     "authority.commit",
+    "authority.deliveryPublicationStatus",
+    "authority.beginDeliveryAudiencePublication",
     "kp.narrate",
     "authority.publishDelivery",
     "authority.observe",
@@ -509,6 +506,8 @@ test("an authenticated combat or consent answer bypasses KP proposal and preserv
   assert.deepEqual(operations(harness.trace), [
     "authority.prepare",
     "authority.commit",
+    "authority.deliveryPublicationStatus",
+    "authority.beginDeliveryAudiencePublication",
     "kp.narrate",
     "authority.publishDelivery",
     "authority.observe",
@@ -521,24 +520,59 @@ test("an authenticated combat or consent answer bypasses KP proposal and preserv
   assert.deepEqual(calls(harness.trace, "authority", "prepare")[0].input.answer, answer);
 });
 
+test("an item-entry activity bypasses KP mechanics and rejects client-supplied ability or target", async () => {
+  const input = Object.freeze({
+    kind: "itemActivity",
+    submissionId: "submission:drink-potion",
+    itemEntryId: "item-entry:potion:alice:1",
+  });
+  const harness = createHarness({
+    prepareResult: {
+      ...PREPARED,
+      resolutionMode: "authorityDirect",
+    },
+    proposals: [],
+  });
+
+  const outcome = await handleRoomAction(harness.context, input);
+
+  assert.equal(outcome.kind, "committed");
+  assert.equal(calls(harness.trace, "kp", "propose").length, 0);
+  assert.deepEqual(calls(harness.trace, "authority", "prepare")[0].input, input);
+  assert.deepEqual(calls(harness.trace, "authority", "commit")[0].rulesInput, {
+    kind: "authenticatedItemActivity",
+    rootActionId: PREPARED.rootActionId,
+  });
+
+  const forged = await handleRoomAction(harness.context, {
+    ...input,
+    submissionId: "submission:drink-potion-forged",
+    abilityRef: "ability:forged",
+    targetEntityId: "character:someone-else",
+  });
+  assert.match(forged.kind, /rejected/);
+  assert.equal(forged.code, "validation");
+});
+
 test("a committed delivery plan narrates each frozen audience projection and publishes with only the Room capability", async () => {
   const aliceNarration = Object.freeze({
     body: "门在你眼前打开，银钥匙落入视线。",
-    agencyClaims: Object.freeze([]),
   });
   const bobNarration = Object.freeze({
     body: "庭院那头传来一声遥远的门轴轻响。",
-    agencyClaims: Object.freeze([]),
   });
   const deliveryPlan = Object.freeze({
+    deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
     publishCapability: DELIVERY_PUBLISH_CAPABILITY,
     audiences: Object.freeze([
       Object.freeze({
         audienceId: "audience:alice",
-        projection: ALICE_AUDIENCE_PROJECTION,
+        principalId: TRUSTED_PRINCIPAL.id,
+        kpProjection: ALICE_AUDIENCE_PROJECTION,
       }),
       Object.freeze({
         audienceId: "audience:bob",
+        principalId: CLICKING_PRINCIPAL.id,
         kpProjection: BOB_AUDIENCE_PROJECTION,
       }),
     ]),
@@ -549,6 +583,10 @@ test("a committed delivery plan narrates each frozen audience projection and pub
       deliveryPlan,
     }],
     narratives: [aliceNarration, bobNarration],
+    publicationResults: [
+      { kind: "published", deliveryIds: [DELIVERY.deliveryId] },
+      { kind: "published", deliveryIds: ["delivery:open-door:bob"] },
+    ],
   });
 
   const forgedAudience = Object.freeze({
@@ -570,8 +608,12 @@ test("a committed delivery plan narrates each frozen audience projection and pub
     "authority.prepare",
     "kp.propose",
     "authority.commit",
+    "authority.deliveryPublicationStatus",
+    "authority.beginDeliveryAudiencePublication",
+    "authority.beginDeliveryAudiencePublication",
     "kp.narrate",
     "kp.narrate",
+    "authority.publishDelivery",
     "authority.publishDelivery",
     "authority.observe",
   ]);
@@ -584,36 +626,43 @@ test("a committed delivery plan narrates each frozen audience projection and pub
       receipt: COMMITTED_RECEIPT,
       audienceId: "audience:alice",
       projection: ALICE_AUDIENCE_PROJECTION,
+      deliveryGeneration: 1,
     },
     {
       rootActionId: PREPARED.rootActionId,
       receipt: COMMITTED_RECEIPT,
       audienceId: "audience:bob",
       projection: BOB_AUDIENCE_PROJECTION,
+      deliveryGeneration: 1,
     },
   ]);
   assert.ok(narrationCalls.every(({ request }) => request.audienceId !== forgedAudience.audienceId));
   assert.ok(!JSON.stringify(narrationCalls[0].request).includes(BOB_AUDIENCE_PROJECTION.projectionHash));
   assert.ok(!JSON.stringify(narrationCalls[1].request).includes(ALICE_AUDIENCE_PROJECTION.projectionHash));
 
-  const publicationCall = calls(harness.trace, "authority", "publishDelivery")[0];
-  assert.deepEqual(publicationCall.authorization, {
-    publishCapability: DELIVERY_PUBLISH_CAPABILITY,
-  });
-  assert.notEqual(publicationCall.authorization, TRUSTED_PRINCIPAL);
-  assert.equal(publicationCall.principalId, undefined);
-  assert.deepEqual(publicationCall.publication, {
-    frames: [
-      {
+  const publicationCalls = calls(harness.trace, "authority", "publishDelivery");
+  assert.equal(publicationCalls.length, 2);
+  assert.ok(publicationCalls.every(({ authorization, principalId }) => {
+    assert.deepEqual(authorization, { publishCapability: DELIVERY_PUBLISH_CAPABILITY });
+    assert.notEqual(authorization, TRUSTED_PRINCIPAL);
+    return principalId === undefined;
+  }));
+  assert.deepEqual(publicationCalls.map(({ publication }) => publication), [
+    {
+      frames: [{
         audienceId: "audience:alice",
-        narration: { text: aliceNarration.body, agencyClaims: aliceNarration.agencyClaims },
-      },
-      {
+        deliveryGeneration: 1,
+        narration: { body: aliceNarration.body },
+      }],
+    },
+    {
+      frames: [{
         audienceId: "audience:bob",
-        narration: { text: bobNarration.body, agencyClaims: bobNarration.agencyClaims },
-      },
-    ],
-  });
+        deliveryGeneration: 1,
+        narration: { body: bobNarration.body },
+      }],
+    },
+  ]);
 });
 
 test("one audience failure does not turn another viewer's published response into a retry", async () => {
@@ -623,11 +672,20 @@ test("one audience failure does not turn another viewer's published response int
   const bobRetryNarration = Object.freeze({
     body: "庭院里的鲍勃终于听见了远处门轴的轻响。",
   });
-  const deliveryPlan = independentDeliveryPlan({
+  const deliveryPlan = Object.freeze({
+    deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
     publishCapability: DELIVERY_PUBLISH_CAPABILITY,
     audiences: Object.freeze([
-      Object.freeze({ audienceId: "audience:alice", projection: ALICE_AUDIENCE_PROJECTION }),
-      Object.freeze({ audienceId: "audience:bob", projection: BOB_AUDIENCE_PROJECTION }),
+      Object.freeze({
+        audienceId: "audience:alice",
+        principalId: TRUSTED_PRINCIPAL.id,
+        kpProjection: ALICE_AUDIENCE_PROJECTION,
+      }),
+      Object.freeze({
+        audienceId: "audience:bob",
+        principalId: CLICKING_PRINCIPAL.id,
+        kpProjection: BOB_AUDIENCE_PROJECTION,
+      }),
     ]),
   });
   const harness = createHarness({
@@ -652,7 +710,6 @@ test("one audience failure does not turn another viewer's published response int
         body: aliceNarration.body,
       },
     },
-    independentPublication: true,
   });
 
   const outcome = await handleRoomAction(harness.context, INTENT);
@@ -700,7 +757,7 @@ test("a narration with fields beyond body is rejected before Room publication wi
   const harness = createHarness({
     commitResults: [{
       ...COMMITTED_AUTHORITY_RESULT,
-      deliveryPlan: independentDeliveryPlan(),
+      deliveryPlan: DEFAULT_DELIVERY_PLAN,
     }],
     narratives: [{
       body: maliciousText,
@@ -720,7 +777,6 @@ test("a narration with fields beyond body is rejected before Room publication wi
         state: "rejected",
       },
     },
-    independentPublication: true,
   });
 
   const outcome = await handleRoomAction(harness.context, INTENT);
@@ -753,10 +809,15 @@ test("a delivery-plan publication failure never rolls back or repeats the commit
   const aliceNarration = Object.freeze({
     body: "Alice sees only Alice's projection.",
   });
-  const deliveryPlan = independentDeliveryPlan({
+  const deliveryPlan = Object.freeze({
+    deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
     publishCapability: DELIVERY_PUBLISH_CAPABILITY,
     audiences: Object.freeze([
-      Object.freeze({ audienceId: "audience:alice", projection: ALICE_AUDIENCE_PROJECTION }),
+      Object.freeze({
+        audienceId: "audience:alice",
+        principalId: TRUSTED_PRINCIPAL.id,
+        kpProjection: ALICE_AUDIENCE_PROJECTION,
+      }),
     ]),
   });
   const harness = createHarness({
@@ -776,7 +837,6 @@ test("a delivery-plan publication failure never rolls back or repeats the commit
         state: "retryableFailure",
       },
     },
-    independentPublication: true,
   });
 
   const outcome = await handleRoomAction(harness.context, INTENT);
@@ -1025,6 +1085,8 @@ test("a mechanical diagnostic is revised by KP under the same root action", asyn
     "authority.commit",
     "kp.propose",
     "authority.commit",
+    "authority.deliveryPublicationStatus",
+    "authority.beginDeliveryAudiencePublication",
     "kp.narrate",
     "authority.publishDelivery",
     "authority.observe",
@@ -1183,7 +1245,7 @@ test("the current viewer receives exact provider and grounding narration failure
     const harness = createHarness({
       commitResults: [{
         ...COMMITTED_AUTHORITY_RESULT,
-        deliveryPlan: independentDeliveryPlan(),
+        deliveryPlan: DEFAULT_DELIVERY_PLAN,
       }],
       narratives: [error],
       observed: {
@@ -1195,7 +1257,6 @@ test("the current viewer receives exact provider and grounding narration failure
           state,
         },
       },
-      independentPublication: true,
     });
 
     const outcome = await handleRoomAction(harness.context, INTENT);

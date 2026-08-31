@@ -40,13 +40,11 @@ import type {
   StepResult,
 } from "./model";
 import { rejected } from "./results";
-import {
-  stepCompoundActionPlan,
-  storyWaitsForExplicitContinuation,
-} from "./compound-actions";
+import { stepActorPlanMechanics, storyWaitsForExplicitContinuation } from "./compound-actions";
 import { stepCampaignWorld } from "./campaign-actions";
 import { stepCombatWorld } from "./combat-actions";
 import { stepMultiplayerWorld } from "./multiplayer-actions";
+import { npcMechanicalItemStateCauseAvailable } from "./multiplayer-events";
 import { isGearSlot } from "./character-gear";
 import {
   hasExactKeys,
@@ -64,11 +62,15 @@ import {
   socialResolutionProfileEnabled,
 } from "../profiles/social-resolution";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
+import {
+  HEALING_POTION_ITEM_DEFINITION_ID,
+  healingPotionItemDefinition,
+} from "./items";
 import type { GearSlot } from "../../dnd/gear";
 
 const CAUSAL_INPUT_KEYS = [
   "actionLanguageHash",
-  "actionPlanVersion",
+  "actionLanguageRef",
   "actorCharacterId",
   "causalActionProgram",
   "kind",
@@ -112,11 +114,12 @@ function stringList(value: CausalValue | undefined): string[] {
 
 const CHARACTER_PREMISE_METHOD = "establishCharacterPremise" as const;
 const DYNAMIC_NPC_MATERIALIZATION_METHOD = "materializeDynamicNpc" as const;
+const ACTOR_PLAN_FORMATION_METHOD = "formActorPlan" as const;
 const NPC_MECHANICAL_ENCOUNTER_METHOD = "materializeNpcMechanicalEncounter" as const;
+const ITEM_MATERIALIZATION_METHOD = "materializeItem" as const;
 const ITEM_TRANSFER_METHOD = "transferItem" as const;
 const NPC_GEAR_CHANGE_METHOD = "changeNpcGear" as const;
 const NPC_ITEM_STATE_CHANGE_METHOD = "changeNpcItemState" as const;
-const NPC_ITEM_STATE_CAUSE_SCHEMA = "zhuwei.npc-mechanical-item-state-cause/v1" as const;
 const CHARACTER_PREMISE_PREDICATES = [
   "arrivalPurpose",
   "priorKnowledge",
@@ -178,6 +181,40 @@ type DynamicNpcMaterializationDraft = {
   sceneRef: string;
 };
 
+type ActorPlanMaterializationDraft = {
+  schema: "zhuwei.actor-plan-draft/v1";
+  npcRef: string;
+  planId: string;
+  goal: string;
+  premiseRefs: string[];
+  nextStep: string;
+  resourceRefs: string[];
+  activity: {
+    activityId: string;
+    activityKind: string;
+    intendedDurationMicros: string;
+  };
+  due: { kind: "activityCompletion" } | null;
+  trigger:
+    | { kind: "committedEvent"; eventRef: string }
+    | { kind: "knowledgeAcquired"; knowledgeRef: string }
+    | null;
+  trace: {
+    factRef: string;
+    description: string;
+    visibilityPolicyRef: "visibility:scene-observers";
+  };
+  alternateTarget: {
+    targetRef: string;
+    reason: string;
+  };
+};
+
+type ActorPlanCausalDraft =
+  | { kind: "none" }
+  | { kind: "invalid" }
+  | { kind: "actorPlan"; draft: ActorPlanMaterializationDraft; step: LoweredCausalStep };
+
 type NpcMechanicalEncounterDraft = {
   schema: "zhuwei.npc-mechanical-encounter-draft/v1";
   encounterRef: string;
@@ -191,7 +228,19 @@ type ItemTransferDraft = {
   toCharacterRef: string;
   itemRef: string;
   quantity: number;
+  ownershipDisposition: "preserve" | "transferToRecipient";
 };
+
+type ItemMaterializationDraft = {
+  schema: "zhuwei.item-materialization-draft/v1";
+  definitionRef: typeof HEALING_POTION_ITEM_DEFINITION_ID;
+  quantity: number;
+};
+
+type ItemMaterializationCausalDraft =
+  | { kind: "none" }
+  | { kind: "invalid" }
+  | { kind: "item"; draft: ItemMaterializationDraft; step: LoweredCausalStep };
 
 type NpcGearChangeDraft =
   | {
@@ -212,7 +261,7 @@ type NpcItemStateChangeDraft = {
   schema: "zhuwei.npc-item-state-change-draft/v1";
   npcRef: string;
   itemRef: string;
-  action: "break" | "repair" | "destroy" | "lose";
+  action: "break" | "repair" | "destroy";
   causeFactRef: string;
 };
 
@@ -372,6 +421,164 @@ function boundedReferenceList(
     : undefined;
 }
 
+function actorPlanCausalDraft(program: CausalActionProgram): ActorPlanCausalDraft {
+  if (program.formRef !== "materialization.v1") return { kind: "none" };
+  const step = lowerCausalActionProgram(program).steps[0];
+  if (step === undefined) return { kind: "none" };
+  const method = scalarString(step.arguments.method);
+  const serialized = scalarString(step.arguments.proposedFact);
+  let value: unknown;
+  try {
+    value = serialized === undefined || serialized.length > 4_000
+      ? undefined
+      : JSON.parse(serialized);
+  } catch {
+    value = undefined;
+  }
+  const schema = isRecord(value) && isNonEmptyString(value.schema) ? value.schema : undefined;
+  if (method !== ACTOR_PLAN_FORMATION_METHOD
+    && schema !== "zhuwei.actor-plan-draft/v1") return { kind: "none" };
+  if (step.primitive !== "materializeOpenFact"
+    || step.arguments.resolution !== "direct"
+    || method !== ACTOR_PLAN_FORMATION_METHOD
+    || !isRecord(value)
+    || !hasExactKeys(value, [
+      "activity",
+      "alternateTarget",
+      "due",
+      "goal",
+      "nextStep",
+      "npcRef",
+      "planId",
+      "premiseRefs",
+      "resourceRefs",
+      "schema",
+      "trace",
+      "trigger",
+    ])
+    || value.schema !== "zhuwei.actor-plan-draft/v1"
+    || ![value.npcRef, value.planId, value.goal, value.nextStep].every((entry) =>
+      isNonEmptyString(entry) && entry.length <= 480)
+    || !isRecord(value.activity)
+    || !hasExactKeys(value.activity, ["activityId", "activityKind", "intendedDurationMicros"])
+    || ![value.activity.activityId, value.activity.activityKind].every((entry) =>
+      isNonEmptyString(entry) && entry.length <= 240)
+    || typeof value.activity.intendedDurationMicros !== "string"
+    || !/^[1-9][0-9]*$/u.test(value.activity.intendedDurationMicros)
+    || !isRecord(value.trace)
+    || !hasExactKeys(value.trace, ["description", "factRef", "visibilityPolicyRef"])
+    || ![value.trace.factRef, value.trace.description].every((entry) =>
+      isNonEmptyString(entry) && entry.length <= 480)
+    || value.trace.visibilityPolicyRef !== "visibility:scene-observers"
+    || !isRecord(value.alternateTarget)
+    || !hasExactKeys(value.alternateTarget, ["reason", "targetRef"])
+    || ![value.alternateTarget.reason, value.alternateTarget.targetRef].every((entry) =>
+      isNonEmptyString(entry) && entry.length <= 480)) return { kind: "invalid" };
+
+  const premiseRefs = boundedReferenceList(value.premiseRefs, 40);
+  const resourceRefs = boundedReferenceList(value.resourceRefs, 40);
+  if (premiseRefs === undefined || premiseRefs.length === 0 || resourceRefs === undefined) {
+    return { kind: "invalid" };
+  }
+
+  const due = value.due === null
+    ? null
+    : isRecord(value.due)
+      && hasExactKeys(value.due, ["kind"])
+      && value.due.kind === "activityCompletion"
+      ? { kind: "activityCompletion" as const }
+      : undefined;
+  let trigger: ActorPlanMaterializationDraft["trigger"] | undefined;
+  if (value.trigger === null) {
+    trigger = null;
+  } else if (isRecord(value.trigger)
+    && value.trigger.kind === "knowledgeAcquired"
+    && hasExactKeys(value.trigger, ["kind", "knowledgeRef"])
+    && isNonEmptyString(value.trigger.knowledgeRef)
+    && value.trigger.knowledgeRef.length <= 240) {
+    trigger = { kind: "knowledgeAcquired", knowledgeRef: value.trigger.knowledgeRef };
+  } else if (isRecord(value.trigger)
+    && value.trigger.kind === "committedEvent"
+    && hasExactKeys(value.trigger, ["eventRef", "kind"])
+    && isNonEmptyString(value.trigger.eventRef)
+    && value.trigger.eventRef.length <= 240) {
+    trigger = { kind: "committedEvent", eventRef: value.trigger.eventRef };
+  }
+  if (due === undefined || trigger === undefined || ((due === null) === (trigger === null))) {
+    return { kind: "invalid" };
+  }
+
+  return {
+    kind: "actorPlan",
+    step,
+    draft: {
+      schema: "zhuwei.actor-plan-draft/v1",
+      npcRef: value.npcRef as string,
+      planId: value.planId as string,
+      goal: value.goal as string,
+      premiseRefs,
+      nextStep: value.nextStep as string,
+      resourceRefs,
+      activity: {
+        activityId: value.activity.activityId as string,
+        activityKind: value.activity.activityKind as string,
+        intendedDurationMicros: value.activity.intendedDurationMicros,
+      },
+      due,
+      trigger,
+      trace: {
+        factRef: value.trace.factRef as string,
+        description: value.trace.description as string,
+        visibilityPolicyRef: "visibility:scene-observers",
+      },
+      alternateTarget: {
+        targetRef: value.alternateTarget.targetRef as string,
+        reason: value.alternateTarget.reason as string,
+      },
+    },
+  };
+}
+
+function itemMaterializationCausalDraft(
+  program: CausalActionProgram,
+): ItemMaterializationCausalDraft {
+  if (program.formRef !== "materialization.v1") return { kind: "none" };
+  const step = lowerCausalActionProgram(program).steps[0];
+  if (step === undefined) return { kind: "none" };
+  const method = scalarString(step.arguments.method);
+  const serialized = scalarString(step.arguments.proposedFact);
+  let value: unknown;
+  try {
+    value = serialized === undefined || serialized.length > 1_000
+      ? undefined
+      : JSON.parse(serialized);
+  } catch {
+    value = undefined;
+  }
+  const schema = isRecord(value) && isNonEmptyString(value.schema) ? value.schema : undefined;
+  if (method !== ITEM_MATERIALIZATION_METHOD
+    && schema !== "zhuwei.item-materialization-draft/v1") return { kind: "none" };
+  if (step.primitive !== "materializeOpenFact"
+    || step.arguments.resolution !== "direct"
+    || method !== ITEM_MATERIALIZATION_METHOD
+    || !isRecord(value)
+    || !hasExactKeys(value, ["definitionRef", "quantity", "schema"])
+    || value.schema !== "zhuwei.item-materialization-draft/v1"
+    || value.definitionRef !== HEALING_POTION_ITEM_DEFINITION_ID
+    || !Number.isSafeInteger(value.quantity)
+    || Number(value.quantity) < 1
+    || Number(value.quantity) > 1_000_000) return { kind: "invalid" };
+  return {
+    kind: "item",
+    step,
+    draft: {
+      schema: value.schema,
+      definitionRef: value.definitionRef,
+      quantity: Number(value.quantity),
+    },
+  };
+}
+
 function npcMechanicalCausalDraft(program: CausalActionProgram): NpcMechanicalCausalDraft {
   if (program.formRef !== "materialization.v1") return { kind: "none" };
   const step = lowerCausalActionProgram(program).steps[0];
@@ -437,9 +644,16 @@ function npcMechanicalCausalDraft(program: CausalActionProgram): NpcMechanicalCa
   }
 
   if (method === ITEM_TRANSFER_METHOD && schema === "zhuwei.item-transfer-draft/v1") {
-    if (!hasExactKeys(value, ["itemRef", "quantity", "schema", "toCharacterRef"])
+    if (!hasExactKeys(value, [
+        "itemRef",
+        "ownershipDisposition",
+        "quantity",
+        "schema",
+        "toCharacterRef",
+      ])
       || !isNonEmptyString(value.toCharacterRef)
       || !isNonEmptyString(value.itemRef)
+      || !["preserve", "transferToRecipient"].includes(String(value.ownershipDisposition))
       || !Number.isSafeInteger(value.quantity)
       || Number(value.quantity) < 1
       || Number(value.quantity) > 1_000_000) return { kind: "invalid" };
@@ -451,6 +665,7 @@ function npcMechanicalCausalDraft(program: CausalActionProgram): NpcMechanicalCa
         toCharacterRef: value.toCharacterRef,
         itemRef: value.itemRef,
         quantity: Number(value.quantity),
+        ownershipDisposition: value.ownershipDisposition as ItemTransferDraft["ownershipDisposition"],
       },
     };
   }
@@ -495,7 +710,7 @@ function npcMechanicalCausalDraft(program: CausalActionProgram): NpcMechanicalCa
     && isNonEmptyString(value.npcRef)
     && isNonEmptyString(value.itemRef)
     && isNonEmptyString(value.causeFactRef)
-    && ["break", "repair", "destroy", "lose"].includes(String(value.action))) {
+    && ["break", "repair", "destroy"].includes(String(value.action))) {
     return {
       kind: "itemState",
       step,
@@ -510,22 +725,6 @@ function npcMechanicalCausalDraft(program: CausalActionProgram): NpcMechanicalCa
   }
 
   return { kind: "invalid" };
-}
-
-function npcItemStateCauseMatches(
-  fact: AuthoritativeWorldState["canonicalFacts"][string] | undefined,
-  draft: NpcItemStateChangeDraft,
-): boolean {
-  if (fact?.kind !== "npcMechanicalItemStateCause"
-    || fact.subjectRefs.length !== 2
-    || !fact.subjectRefs.includes(draft.npcRef)
-    || !fact.subjectRefs.includes(draft.itemRef)
-    || !isRecord(fact.value)
-    || !hasExactKeys(fact.value, ["action", "itemRef", "npcRef", "schema"])) return false;
-  return fact.value.schema === NPC_ITEM_STATE_CAUSE_SCHEMA
-    && fact.value.npcRef === draft.npcRef
-    && fact.value.itemRef === draft.itemRef
-    && fact.value.action === draft.action;
 }
 
 function moduleAuthorityValue(
@@ -870,7 +1069,7 @@ function planFor(
   const duration = causalActionDurationMicros(terminal);
   if (duration === undefined) return undefined;
   return {
-    schema: "zhuwei.causal-action-resolution-plan/v3",
+    schema: "zhuwei.causal-action-resolution-plan/v4",
     rootActionId,
     actorCharacterId: actor.id,
     sourceSceneId: actor.sceneId,
@@ -915,6 +1114,71 @@ function appendProgramFact(
   });
 }
 
+function actorHasActiveActivity(
+  state: AuthoritativeWorldState,
+  characterId: string,
+): boolean {
+  return Object.values(state.campaignRuntime.activities).some((activity) =>
+    activity.status === "active" && activity.characterId === characterId);
+}
+
+function appendCompletedCausalActivity(
+  accumulator: Accumulator,
+  profiles: RuntimeProfileManifest,
+  rootActionId: string,
+  actor: CharacterRecord,
+  step: LoweredCausalStep,
+  durationMicros: string,
+  activityKind: string,
+): void {
+  const activityId = `activity:causal:${rootActionId}:${step.nodeRef}`;
+  append(accumulator, profiles, {
+    rootActionId,
+    eventType: "ActivityStarted",
+    payload: {
+      activityId,
+      characterId: actor.id,
+      activityKind,
+      intendedDurationMicros: durationMicros,
+      completion: {
+        kind: "causalItemOperation",
+        nodeRef: step.nodeRef,
+        primitive: step.primitive,
+      },
+    },
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+    reads: [`entity:${actor.id}`],
+    writes: [`activity:${activityId}`, `receipt:${rootActionId}`],
+    creates: [`activity:${activityId}`],
+  });
+  append(accumulator, profiles, {
+    rootActionId,
+    eventType: "FictionTimeAdvanced",
+    payload: {
+      durationMicros,
+      reason: programGoal([step]),
+    },
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+    reads: [`activity:${activityId}`, `timeline:${accumulator.state.activeBranchId}`],
+    writes: [
+      `activity:${activityId}`,
+      `timeline:${accumulator.state.activeBranchId}`,
+      `receipt:${rootActionId}`,
+    ],
+  });
+  append(accumulator, profiles, {
+    rootActionId,
+    eventType: "ActivityCompleted",
+    payload: { activityId },
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+    reads: [`activity:${activityId}`],
+    writes: [`activity:${activityId}`, `receipt:${rootActionId}`],
+  });
+}
+
 function appendFrozenCosts(
   accumulator: Accumulator,
   profiles: RuntimeProfileManifest,
@@ -941,27 +1205,37 @@ function appendFrozenCosts(
       writes: [`resource:${actor.id}:${resourceRef}`, `receipt:${rootActionId}`],
     });
   }
-  const artifactRef = scalarString(terminal.arguments.artifactRef);
-  const artifactCount = scalarNumber(terminal.arguments.artifactCount);
-  if (artifactRef !== undefined && artifactCount !== undefined) {
-    const itemId = artifactRef.slice("item:".length);
-    const item = accumulator.state.entities[actor.id]?.loadout?.backpack
-      ?.find((entry) => entry.itemId === itemId);
-    if (item === undefined || item.quantity < artifactCount) return false;
+  const itemRef = scalarString(terminal.arguments.itemRef);
+  const itemCount = scalarNumber(terminal.arguments.itemCount);
+  if (itemRef !== undefined && itemCount !== undefined) {
+    const entry = accumulator.state.campaignRuntime.itemSystem.entries[itemRef];
+    if (entry?.disposition !== "held"
+      || entry.holderRef !== actor.id
+      || entry.condition !== "usable"
+      || entry.quantity < itemCount) return false;
     append(accumulator, profiles, {
       rootActionId,
       eventType: "ItemUsed",
       payload: {
         characterId: actor.id,
-        itemId,
-        quantity: artifactCount,
-        remaining: item.quantity - artifactCount,
+        entryId: entry.entryId,
         purpose: programGoal([terminal]),
+        quantityBefore: entry.quantity,
+        quantityAfter: entry.quantity - itemCount,
+        chargesBefore: entry.charges?.current ?? null,
+        chargesAfter: entry.charges?.current ?? null,
+        durabilityBefore: entry.durability?.current ?? null,
+        durabilityAfter: entry.durability?.current ?? null,
       },
-      visibilityPolicyId: `visibility:character-controller:${actor.id}`,
-      secrecy: "private",
-      reads: [`entity:${actor.id}`, `item:${actor.id}:${itemId}`],
-      writes: [`item:${actor.id}:${itemId}`, `receipt:${rootActionId}`],
+      visibilityPolicyId: entry.visibilityPolicyRef,
+      secrecy: entry.visibilityPolicyRef.startsWith("visibility:public") ? "public" : "private",
+      reads: [`entity:${actor.id}`, `item-entry:${entry.entryId}`],
+      writes: [
+        `entity:${actor.id}`,
+        `combat-entity:${actor.id}`,
+        `item-entry:${entry.entryId}`,
+        `receipt:${rootActionId}`,
+      ],
     });
   }
   return true;
@@ -1659,35 +1933,12 @@ function combat(
   const actor = state.entities[input.actorCharacterId as string]!;
   const accumulator: Accumulator = { state, events: [] };
   appendProgramFact(accumulator, profiles, rootActionId, actor, program);
-  const result = stepCompoundActionPlan(profiles, accumulator.state, continueCompoundRoot({
-    kind: "resolveCompoundActionPlan",
-    actionPlanVersion: "authoritative-kp-action-plan-v1",
-    rootActionId: input.rootActionId,
-    actorCharacterId: input.actorCharacterId,
-    feasibilityKind: "highRiskFeasible",
-    goal: args.goal,
-    method: args.method,
-    publicBasisRefs: stringList(args.basisRefs),
-    privateBasisRefs: [],
-    adjudicationPrecedent: null,
-    risk: {
-      warning: scalarString(args.risk) ?? "战斗行动将按已安装的 SRD 5.1 规则结算。",
-      successConsequences: [scalarString(args.intendedOutcome) ?? "战斗行动成功。"],
-      failureConsequences: [],
-      retryGate: ["methodChanged", "factsChanged", "costAccepted"],
-    },
-    dynamicMaterializations: [],
-    npcActions: [],
-    scene: {
-      question: scalarString(args.goal) ?? "这次战斗行动会如何改变局面？",
-      pressure: scalarString(args.risk) ?? "",
-      opportunities: stringList(args.contingencies),
-      conclusionCandidate: null,
-    },
-    mechanicalProposal: {
-      operation: "invokeCombatAction",
-      abilityRef: args.abilityRef,
-    },
+  const result = stepCombatWorld(profiles, accumulator.state, continueCompoundRoot({
+    kind: "invokeAbility",
+    rootActionId,
+    sourceEntityId: actor.id,
+    abilityRef: args.abilityRef,
+    parameters: {},
   }, rootActionId));
   if (result === undefined) {
     return rejected("invalidWorldState", "The causal combat primitive has no registered Rules operation.");
@@ -1700,6 +1951,168 @@ function combat(
     ...result,
     events: [...accumulator.events, ...result.events],
   };
+}
+
+function actorPlanCausalResult(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+  program: CausalActionProgram,
+  actor: CharacterRecord,
+  parsed: Extract<ActorPlanCausalDraft, { kind: "actorPlan" }>,
+): StepResult {
+  const rootActionId = input.rootActionId as string;
+  const durationMicros = causalActionDurationMicros(parsed.step);
+  if (durationMicros === undefined) {
+    return rejected("invalidRulesInput", "ActorPlan formation needs one canonical duration.");
+  }
+  if (actorHasActiveActivity(state, actor.id)) {
+    return rejected(
+      "pendingInputUnresolved",
+      "The character is already committed to an active Activity.",
+    );
+  }
+  const npcTimelineId = characterTimelineId(state, parsed.draft.npcRef);
+  const npcTimeline = npcTimelineId === undefined ? undefined : state.fictionTimelines[npcTimelineId];
+  if (npcTimeline === undefined) {
+    return rejected("privateOrUnknownReference", "The ActorPlan NPC timeline is unavailable.");
+  }
+  const due = parsed.draft.due === null
+    ? null
+    : {
+        kind: "fictionTime" as const,
+        atFictionMicros: (
+          BigInt(npcTimeline.nowMicros)
+          + BigInt(parsed.draft.activity.intendedDurationMicros)
+        ).toString(),
+      };
+  const accumulator: Accumulator = { state, events: [] };
+  appendProgramFact(accumulator, profiles, rootActionId, actor, program);
+  if (!appendFrozenCosts(accumulator, profiles, rootActionId, actor, parsed.step)) {
+    return rejected("insufficientResource", "The frozen ActorPlan formation cost is unavailable.");
+  }
+  const formed = stepActorPlanMechanics(profiles, accumulator.state, continueCompoundRoot({
+    kind: "formNpcActorPlan",
+    proposalId: rootActionId,
+    npcId: parsed.draft.npcRef,
+    planId: parsed.draft.planId,
+    goal: parsed.draft.goal,
+    premiseRefs: parsed.draft.premiseRefs,
+    nextStep: parsed.draft.nextStep,
+    resourceRefs: parsed.draft.resourceRefs,
+    activity: parsed.draft.activity,
+    due,
+    trigger: parsed.draft.trigger,
+    trace: parsed.draft.trace,
+    alternateTarget: parsed.draft.alternateTarget,
+  }, rootActionId));
+  if (formed === undefined) {
+    return rejected("invalidWorldState", "The current ActorPlan formation operation is unavailable.");
+  }
+  if (formed.kind === "rejected" || formed.kind === "initialized") return formed;
+  if (formed.kind !== "committed") {
+    return rejected("invalidWorldState", "ActorPlan formation did not commit atomically.");
+  }
+  accumulator.events.push(...formed.events);
+  accumulator.state = formed.state;
+  accumulator.receipt = formed.receipt;
+  accumulator.scopeProof = formed.scopeProof;
+  appendCompletedCausalActivity(
+    accumulator,
+    profiles,
+    rootActionId,
+    actor,
+    parsed.step,
+    durationMicros,
+    "actorPlanFormation",
+  );
+  return finished("committed", accumulator, {
+    mechanicalResult: {
+      kind: "causalActionProgram",
+      languageRef: program.languageRef,
+      languageHash: program.languageHash,
+      programHash: program.semanticHash,
+      formRef: program.formRef,
+      succeeded: true,
+      disposition: "actorPlanFormed",
+    },
+  });
+}
+
+function itemMaterializationCausalResult(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+  program: CausalActionProgram,
+  actor: CharacterRecord,
+  parsed: Extract<ItemMaterializationCausalDraft, { kind: "item" }>,
+): StepResult {
+  const rootActionId = input.rootActionId as string;
+  const durationMicros = causalActionDurationMicros(parsed.step);
+  if (durationMicros === undefined) {
+    return rejected("invalidRulesInput", "Item materialization needs one canonical duration.");
+  }
+  if (actorHasActiveActivity(state, actor.id)) {
+    return rejected(
+      "pendingInputUnresolved",
+      "The character is already committed to an active Activity.",
+    );
+  }
+  const accumulator: Accumulator = { state, events: [] };
+  appendProgramFact(accumulator, profiles, rootActionId, actor, program);
+  if (!appendFrozenCosts(accumulator, profiles, rootActionId, actor, parsed.step)) {
+    return rejected("insufficientResource", "The frozen item materialization cost is unavailable.");
+  }
+  appendCompletedCausalActivity(
+    accumulator,
+    profiles,
+    rootActionId,
+    actor,
+    parsed.step,
+    durationMicros,
+    "itemMaterialization",
+  );
+
+  const entryId = `item-entry:materialized:${canonicalSha256({
+    actorCharacterId: actor.id,
+    definitionRef: parsed.draft.definitionRef,
+    nodeRef: parsed.step.nodeRef,
+    rootActionId,
+  }).slice("sha256:".length)}`;
+  const mechanical = stepCampaignWorld(profiles, accumulator.state, continueCompoundRoot({
+    kind: "materializeItem",
+    proposalId: rootActionId,
+    actorCharacterId: actor.id,
+    definition: healingPotionItemDefinition(),
+    entryId,
+    quantity: parsed.draft.quantity,
+    sceneId: actor.sceneId,
+  }, rootActionId));
+  if (mechanical === undefined) {
+    return rejected(
+      "invalidWorldState",
+      "The item materialization primitive has no registered Rules operation.",
+    );
+  }
+  if (mechanical.kind === "rejected" || mechanical.kind === "initialized") return mechanical;
+  if (mechanical.kind !== "committed") {
+    return rejected("invalidWorldState", "Item materialization did not commit atomically.");
+  }
+  accumulator.events.push(...mechanical.events);
+  accumulator.state = mechanical.state;
+  accumulator.receipt = mechanical.receipt;
+  accumulator.scopeProof = mechanical.scopeProof;
+  return finished("committed", accumulator, {
+    mechanicalResult: {
+      kind: "causalActionProgram",
+      languageRef: program.languageRef,
+      languageHash: program.languageHash,
+      programHash: program.semanticHash,
+      formRef: program.formRef,
+      succeeded: true,
+      disposition: "itemMaterialized",
+    },
+  });
 }
 
 function npcMechanicalCausalResult(
@@ -1717,14 +2130,38 @@ function npcMechanicalCausalResult(
     );
   }
   const rootActionId = input.rootActionId as string;
-  const durationMicros = causalActionDurationMicros(parsed.step);
-  if (durationMicros === undefined) {
+  const durationMicros = parsed.kind === "gear"
+    ? undefined
+    : causalActionDurationMicros(parsed.step);
+  if (parsed.kind !== "gear" && durationMicros === undefined) {
     return rejected("invalidRulesInput", "NPC mechanical materialization needs one canonical duration.");
+  }
+  if (parsed.kind !== "encounter"
+    && parsed.kind !== "gear"
+    && actorHasActiveActivity(state, actor.id)) {
+    return rejected(
+      "pendingInputUnresolved",
+      "The character is already committed to an active Activity.",
+    );
   }
   const accumulator: Accumulator = { state, events: [] };
   appendProgramFact(accumulator, profiles, rootActionId, actor, program);
   if (!appendFrozenCosts(accumulator, profiles, rootActionId, actor, parsed.step)) {
     return rejected("insufficientResource", "The frozen causal materialization cost is unavailable.");
+  }
+
+  if (parsed.kind !== "encounter" && parsed.kind !== "gear") {
+    appendCompletedCausalActivity(
+      accumulator,
+      profiles,
+      rootActionId,
+      actor,
+      parsed.step,
+      durationMicros!,
+      parsed.kind === "transfer"
+        ? "itemTransfer"
+        : "npcItemLifecycleChange",
+    );
   }
 
   let mechanical: StepResult | undefined;
@@ -1766,6 +2203,7 @@ function npcMechanicalCausalResult(
       itemId: parsed.draft.itemRef,
       quantity: parsed.draft.quantity,
       method: ITEM_TRANSFER_METHOD,
+      ownershipDisposition: parsed.draft.ownershipDisposition,
     }, rootActionId));
     disposition = "itemTransferred";
   } else if (parsed.kind === "gear") {
@@ -1794,9 +2232,11 @@ function npcMechanicalCausalResult(
     mechanical = stepMultiplayerWorld(profiles, accumulator.state, continueCompoundRoot({
       kind: "changeNpcItemState",
       rootActionId,
+      actorCharacterId: actor.id,
       npcCharacterId: parsed.draft.npcRef,
       itemId: parsed.draft.itemRef,
       action: parsed.draft.action,
+      causeFactRef: parsed.draft.causeFactRef,
     }, rootActionId));
     disposition = "npcMechanicalItemStateChanged";
   }
@@ -1830,22 +2270,30 @@ function npcMechanicalCausalResult(
   accumulator.state = mechanical.state;
   accumulator.receipt = mechanical.receipt;
   accumulator.scopeProof = mechanical.scopeProof;
-  append(accumulator, profiles, {
-    rootActionId,
-    eventType: "FictionTimeAdvanced",
-    payload: {
-      durationMicros,
-      reason: programGoal([parsed.step]),
-    },
-    visibilityPolicyId: "visibility:scene-observers",
-    secrecy: "public",
-    reads: [`timeline:${accumulator.state.activeBranchId}`],
-    writes: [`timeline:${accumulator.state.activeBranchId}`, `receipt:${rootActionId}`],
-  });
   return finished("committed", accumulator, { mechanicalResult });
 }
 
+function itemMaterializationBasisAvailable(
+  state: AuthoritativeWorldState,
+  actor: CharacterRecord,
+  parsed: Extract<ItemMaterializationCausalDraft, { kind: "item" }>,
+): boolean {
+  const submittedRefs = stringList(parsed.step.arguments.basisRefs);
+  const refs = [...new Set(submittedRefs)];
+  if (refs.length !== submittedRefs.length
+    || refs.length < 2
+    || !refs.includes(actor.sceneId)
+    || state.scenes[actor.sceneId] === undefined
+    || state.campaignRuntime.itemSystem === undefined) return false;
+  const causalRefs = refs.filter((reference) => reference !== actor.sceneId);
+  return causalRefs.length > 0 && causalRefs.every((reference) => {
+    const fact = state.canonicalFacts[reference];
+    return fact !== undefined && canonicalFactVisibleToCharacter(state, fact, actor);
+  });
+}
+
 function npcMechanicalBasisAvailable(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   actor: CharacterRecord,
   parsed: Exclude<NpcMechanicalCausalDraft, { kind: "none" | "invalid" }>,
@@ -1970,11 +2418,18 @@ function npcMechanicalBasisAvailable(
       allowedRefs.add(item.itemId);
     } else if (parsed.kind === "itemState") {
       const itemId = parsed.draft.itemRef;
-      const instance = npc.loadout?.mechanicalItems?.[itemId];
-      const cause = state.canonicalFacts[parsed.draft.causeFactRef];
-      if (instance === undefined
+      const itemInstanceAvailable =
+        state.campaignRuntime.itemSystem.entries[itemId]?.disposition === "held"
+        && state.campaignRuntime.itemSystem.entries[itemId]?.holderRef === npc.id;
+      if (!itemInstanceAvailable
         || !visibleFactRefs.includes(parsed.draft.causeFactRef)
-        || !npcItemStateCauseMatches(cause, parsed.draft)) return false;
+        || !npcMechanicalItemStateCauseAvailable(state, {
+          actorCharacterId: actor.id,
+          npcCharacterId: parsed.draft.npcRef,
+          itemId: parsed.draft.itemRef,
+          action: parsed.draft.action,
+          causeFactRef: parsed.draft.causeFactRef,
+        })) return false;
       requiredRefs.add(itemId);
       requiredRefs.add(parsed.draft.causeFactRef);
       allowedRefs.add(itemId);
@@ -1982,6 +2437,35 @@ function npcMechanicalBasisAvailable(
   }
   return [...requiredRefs].every((reference) => refs.includes(reference))
     && refs.every((reference) => allowedRefs.has(reference));
+}
+
+function actorPlanBasisAvailable(
+  state: AuthoritativeWorldState,
+  actor: CharacterRecord,
+  parsed: Extract<ActorPlanCausalDraft, { kind: "actorPlan" }>,
+): boolean {
+  const submittedRefs = stringList(parsed.step.arguments.basisRefs);
+  const refs = [...new Set(submittedRefs)];
+  const npc = state.entities[parsed.draft.npcRef];
+  if (refs.length !== submittedRefs.length
+    || npc?.kind !== "npc"
+    || npc.tenureStatus !== "active"
+    || npc.sceneId !== actor.sceneId) return false;
+  const triggerRef = parsed.draft.trigger === null
+    ? undefined
+    : parsed.draft.trigger.kind === "knowledgeAcquired"
+      ? parsed.draft.trigger.knowledgeRef
+      : parsed.draft.trigger.eventRef;
+  const requiredRefs = new Set([
+    actor.sceneId,
+    parsed.draft.npcRef,
+    ...parsed.draft.premiseRefs,
+    ...parsed.draft.resourceRefs,
+    parsed.draft.alternateTarget.targetRef,
+    ...(triggerRef === undefined ? [] : [triggerRef]),
+  ]);
+  return [...requiredRefs].every((reference) => refs.includes(reference))
+    && refs.every((reference) => requiredRefs.has(reference));
 }
 
 function materializationBasisAvailable(
@@ -1994,11 +2478,21 @@ function materializationBasisAvailable(
   const lowered = lowerCausalActionProgram(program).steps[0];
   if (lowered === undefined) return false;
   const refs = [...new Set(stringList(lowered.arguments.basisRefs))];
+  const actorPlan = actorPlanCausalDraft(program);
+  if (actorPlan.kind === "invalid") return false;
+  if (actorPlan.kind === "actorPlan") {
+    return actorPlanBasisAvailable(state, actor, actorPlan);
+  }
+  const itemMaterialization = itemMaterializationCausalDraft(program);
+  if (itemMaterialization.kind === "invalid") return false;
+  if (itemMaterialization.kind === "item") {
+    return itemMaterializationBasisAvailable(state, actor, itemMaterialization);
+  }
   const npcMechanical = npcMechanicalCausalDraft(program);
   if (npcMechanical.kind === "invalid") return false;
   if (npcMechanical.kind !== "none") {
     return npcMechanicsProfileEnabled(profiles.extensions)
-      && npcMechanicalBasisAvailable(state, actor, npcMechanical);
+      && npcMechanicalBasisAvailable(profiles, state, actor, npcMechanical);
   }
   const premise = socialResolutionProfileEnabled(profiles.extensions)
     ? characterPremiseDraft(lowered)
@@ -2193,8 +2687,8 @@ export function stepCausalActionProgram(
   input: JsonRecord,
 ): StepResult | undefined {
   if (
-    input.kind !== "resolveCompoundActionPlan"
-    || input.actionPlanVersion !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
+    input.kind !== "executeCausalActionProgram"
+    || input.actionLanguageRef !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
   ) return undefined;
   if (!causalActionInterpreterEnabled(profiles.extensions)) {
     return rejected("unsupportedOperation", "The pinned runtime manifest has no V3 causal action interpreter.");
@@ -2216,7 +2710,7 @@ export function stepCausalActionProgram(
   }
   const program = input.causalActionProgram as unknown as CausalActionProgram;
   if (
-    input.actionPlanVersion !== program.languageRef
+    input.actionLanguageRef !== program.languageRef
     || input.actionLanguageHash !== program.languageHash
     || !validateExecutableCausalActionProgram(program)
   ) return rejected("invalidRulesInput", "The V3 causal action program has no legal executable semantics.");
@@ -2243,7 +2737,15 @@ export function stepCausalActionProgram(
       "The current story is concluded; only an explicit epilogue choice or sequel may continue.",
     );
   }
+  const actorPlanDraft = actorPlanCausalDraft(program);
   const npcMechanicalDraft = npcMechanicalCausalDraft(program);
+  const itemMaterializationDraft = itemMaterializationCausalDraft(program);
+  if (actorPlanDraft.kind === "invalid") {
+    return rejected("invalidRulesInput", "The ActorPlan materialization draft is not canonical.");
+  }
+  if (itemMaterializationDraft.kind === "invalid") {
+    return rejected("invalidRulesInput", "The item materialization draft is not canonical.");
+  }
   if (npcMechanicalDraft.kind === "invalid") {
     return rejected("invalidRulesInput", "The NPC mechanical materialization draft is not canonical.");
   }
@@ -2258,6 +2760,28 @@ export function stepCausalActionProgram(
     return rejected(
       "privateOrUnknownReference",
       "The materialization basis is unavailable to the acting character.",
+    );
+  }
+
+  if (actorPlanDraft.kind === "actorPlan") {
+    return actorPlanCausalResult(
+      profiles,
+      state,
+      input,
+      program,
+      actor,
+      actorPlanDraft,
+    );
+  }
+
+  if (itemMaterializationDraft.kind === "item") {
+    return itemMaterializationCausalResult(
+      profiles,
+      state,
+      input,
+      program,
+      actor,
+      itemMaterializationDraft,
     );
   }
 

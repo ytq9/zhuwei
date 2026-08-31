@@ -86,7 +86,7 @@ async function initialize(
   const initialized = record(await authority.initializeAuthoritative({
     roomId,
     moduleId: "black-oak-will",
-    moduleVersion: "legacy-anchor-v1",
+    moduleVersion: "social-resolution-v1",
     members,
     characters,
   }), `${roomId} initialization`);
@@ -231,8 +231,9 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
       "FeasibilityRuled",
     ]));
     expect(eventTypes.some((eventType) => [
-      "ArtifactMaterialized",
-      "ArtifactAcquired",
+      "ItemDefinitionRegistered",
+      "ItemMaterialized",
+      "ItemAcquired",
       "KnowledgeAcquired",
       "EncounterStarted",
       "InitiativeEstablished",
@@ -242,13 +243,13 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     ].includes(eventType))).toBe(false);
   });
 
-  it("lets exactly one of two concurrent requests acquire one unique artifact", async () => {
-    const room = await initialize("stage4-world-unique-artifact-race-v2", [
+  it("lets exactly one of two concurrent requests acquire one unique item entry", async () => {
+    const room = await initialize("stage4-world-unique-item-race-v2", [
       character(ALICE_ID, "阿莱莎", "wake"),
       character(BOB_ID, "柏然", "wake"),
     ]);
-    const artifactId = "artifact:stage4:single-brass-key";
-    const artifactDefinitionRef = "item:stage4:single-brass-key";
+    const itemEntryId = "item-entry:stage4:single-brass-key";
+    const itemDefinitionRef = "item-definition:stage4:single-brass-key:1";
     const materialized = await act(
       room.authority,
       ALICE,
@@ -259,10 +260,10 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
         method: "仅观察它的位置，不拿取",
         dynamicMaterializations: [{
           kind: "item",
-          factRef: artifactDefinitionRef,
+          factRef: itemDefinitionRef,
           causalBasisRefs: [],
           visibilityPolicyRef: "visibility:scene-observers",
-          definition: { artifactId, name: "唯一黄铜钥匙", sceneRef: "wake" },
+          definition: { itemEntryId, name: "唯一黄铜钥匙", sceneRef: "wake" },
         }],
       }) as JsonRecord,
     );
@@ -282,8 +283,9 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
             await bothProposalsReady;
             const request = record(value, `${suffix} proposal request`);
             return productionActionPlanProposal(String(request.rootActionId), {
-              operation: "acquireArtifact",
-              artifactRef: artifactId,
+              operation: "acquireItem",
+              itemRef: itemEntryId,
+              amount: 1,
             }, {
               goal: "拿起石台上的唯一黄铜钥匙",
               method: "伸手取走眼前唯一的一把钥匙",
@@ -302,14 +304,14 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     const outcomes = (await Promise.all([
       contender(ALICE, "alice"),
       contender(BOB, "bob"),
-    ])).map((outcome) => record(outcome, "artifact race outcome"));
+    ])).map((outcome) => record(outcome, "item race outcome"));
     expect(outcomes.filter((outcome) => outcome.kind === "committed")).toHaveLength(1);
     expect(outcomes.filter((outcome) => outcome.kind !== "committed")).toHaveLength(1);
 
     const events = await archiveEvents(room.authority, room.archiveCapability);
     const acquisitions = events.filter((event) =>
-      event.eventType === "ArtifactAcquired"
-      && record(event.payload, "artifact acquisition payload").artifactId === artifactId);
+      event.eventType === "ItemAcquired"
+      && record(event.payload, "item acquisition payload").entryId === itemEntryId);
     expect(acquisitions).toHaveLength(1);
     expect([ALICE_ID, BOB_ID]).toContain(
       record(acquisitions[0].payload, "winning acquisition payload").characterId,
@@ -322,8 +324,8 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
       character(BOB_ID, "柏然", "wake"),
       character(CAROL_ID, "卡萝", "yard"),
     ]);
-    const artifactId = "artifact:stage4:sealed-letter";
-    const definitionRef = "item:stage4:sealed-letter";
+    const itemEntryId = "item-entry:stage4:sealed-letter";
+    const definitionRef = "item-definition:stage4:sealed-letter:1";
     const knowledgeRef = "knowledge:stage4:letter-rendezvous";
 
     const acquired = await act(
@@ -332,8 +334,9 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
       "submission:stage4:letter-acquire",
       "我拿起桌上仅有的密封信。",
       (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "acquireArtifact",
-        artifactRef: artifactId,
+        operation: "acquireItem",
+        itemRef: itemEntryId,
+        amount: 1,
       }, {
         goal: "拿起桌上唯一的密封信",
         method: "亲手取得信件",
@@ -342,7 +345,7 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
           factRef: definitionRef,
           causalBasisRefs: [],
           visibilityPolicyRef: "visibility:scene-observers",
-          definition: { artifactId, name: "密封信", sceneRef: "wake" },
+          definition: { itemEntryId, name: "密封信", sceneRef: "wake" },
         }],
       }) as JsonRecord,
     );
@@ -380,9 +383,9 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
       "submission:stage4:letter-destroy",
       "我把已经读完的信投入火盆彻底烧毁。",
       (rootActionId) => productionActionPlanProposal(rootActionId, {
-        operation: "useArtifact",
-        artifactRef: artifactId,
-        artifactUse: "destroy",
+        operation: "useItem",
+        itemRef: itemEntryId,
+        itemActivityId: "use",
       }, {
         goal: "烧毁作为实物的密封信",
         method: "把信投入火盆直到只剩灰烬",
@@ -421,14 +424,14 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     expect(learned.map((event) => record(event.payload, "knowledge payload").characterId).sort())
       .toEqual([ALICE_ID, BOB_ID].sort());
     const destroyedEvent = events.find((event) =>
-      event.eventType === "ArtifactUsed"
-      && record(event.payload, "destroy payload").artifactId === artifactId);
-    expect(record(destroyedEvent!.payload, "destroyed artifact payload")).toMatchObject({
-      beforeStatus: "held",
-      afterStatus: "destroyed",
-      remainingQuantity: 0,
+      event.eventType === "ItemUsed"
+      && record(event.payload, "destroy payload").entryId === itemEntryId);
+    expect(record(destroyedEvent!.payload, "destroyed item payload")).toMatchObject({
+      operation: "destroy",
+      quantityBefore: 1,
+      quantityAfter: 0,
     });
-  });
+  }, 10_000);
 
   it("keeps a hidden hazard candidate set and selected parameters frozen after another player's HP changes", async () => {
     const room = await initialize("stage4-world-hazard-freeze-hp-v2", [

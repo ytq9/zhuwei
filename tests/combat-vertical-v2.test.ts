@@ -97,7 +97,7 @@ describe("B53 natural-language combat vertical slice", () => {
     const initialized = record(await authority.initializeAuthoritative({
       roomId,
       moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v1",
+      moduleVersion: "social-resolution-v1",
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },

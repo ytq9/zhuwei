@@ -341,26 +341,57 @@ test("authoritative HTTP poll, reconnect, ACK, and voice expose only the caller'
   assert.equal(playerStillCurrent.body.messages[0].id, playerDeliveryId);
   assert.equal(JSON.stringify(playerStillCurrent.body).includes(hostDeliveryId), false);
 
+  const invitationSubmissionId = `submission:http-private-pending:${crypto.randomUUID()}`;
   const invitation = await api(hostCookie, "inviteSquad", {
     code,
     targetUserId: playerPoll.body.me.userId,
-    submissionId: `submission:http-private-pending:${crypto.randomUUID()}`,
+    submissionId: invitationSubmissionId,
   });
   assert.equal(invitation.status, 200);
-  assert.equal(invitation.body.ok, true, JSON.stringify(invitation.body));
+  assert.deepEqual(Object.keys(invitation.body).sort(), [
+    "action",
+    "narration",
+    "outcome",
+    "submissionId",
+  ]);
+  assert.equal(invitation.body.submissionId, invitationSubmissionId);
+  assert.equal(invitation.body.action, "awaitingInput");
+  assert.equal(invitation.body.narration, "notApplicable");
   assert.equal(invitation.body.outcome.kind, "awaitingInput");
-  const projectedPending = invitation.body.outcome.readModel.pendingInputs.find(
-    (entry) => entry.pendingInputId === invitation.body.outcome.pending.pendingInputId,
-  );
-  assert.deepEqual(invitation.body.outcome.pending, projectedPending);
+  assert.deepEqual(Object.keys(invitation.body.outcome).sort(), ["kind", "receipt"]);
+  assert.deepEqual(Object.keys(invitation.body.outcome.receipt).sort(), [
+    "activeBranchId",
+    "receiptId",
+    "rootActionId",
+    "runtimeEpochId",
+    "status",
+  ]);
+  assert.equal(invitation.body.outcome.receipt.status, "awaitingInput");
   assert.doesNotMatch(
-    JSON.stringify(invitation.body.outcome.pending),
-    /controllerPrincipalId|internalCandidates|privateWindowState/,
+    JSON.stringify(invitation.body),
+    /controllerPrincipalId|internalCandidates|privateWindowState|pendingInputId|readModel/,
   );
   assert.equal(
     JSON.stringify(invitation.body).includes("PRIVATE_PENDING_CANDIDATE_SENTINEL"),
     false,
   );
+
+  const hostInvitationProjection = await api(hostCookie, "fetchTable", code);
+  const playerInvitationProjection = await api(playerCookie, "fetchTable", code);
+  for (const projection of [hostInvitationProjection, playerInvitationProjection]) {
+    assert.equal(projection.status, 200);
+    assert.equal(projection.body.ok, true, JSON.stringify(projection.body));
+    assert.deepEqual(projection.body.state.pendingInputs, []);
+    assert.deepEqual(projection.body.state.squadInvite, {
+      from: hostPoll.body.me.userId,
+      to: playerPoll.body.me.userId,
+      fromName: "守灯人",
+    });
+    assert.doesNotMatch(
+      JSON.stringify(projection.body.state),
+      /controllerPrincipalId|internalCandidates|privateWindowState/,
+    );
+  }
 
   await setLocalRoomRuleset(roomId, "unknown-future-ruleset-v999");
   const unknownRulesetVoice = await api(hostCookie, "speakNarration", {

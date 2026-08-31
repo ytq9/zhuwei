@@ -5,6 +5,7 @@ import {
 import { canonicalSha256 } from "../profiles/canonical";
 import {
   compileAbilityDefinition,
+  isExactItemEntryResourceId,
   registeredAbilityRecord,
 } from "../profiles/ability-compiler";
 import { causalActionInterpreterEnabled } from "../profiles/causal-action-interpreter";
@@ -25,7 +26,7 @@ import {
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import {
-  ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE,
+  ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE,
 } from "../profiles/manifests";
 import {
   COMBAT_ROUND_MICROS,
@@ -84,25 +85,25 @@ import { characterTimelineId, sceneTimelineId } from "./timeline";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
 import {
   canPromoteNpcSpatialShell,
-  canonicalNpcMechanicalItemWeaponBlueprint,
   canonicalNpcMechanicalInitialState,
   canonicalNpcMechanicalPoint,
   instantiateNpcMechanicalEntity,
-  isNpcMechanicalItemDefinition,
+  itemDefinitionMechanicsClosureValid,
   npcMechanicalDefinitionClosureValid,
   npcMechanicalEntityMatchesTemplate,
-  npcMechanicalItemDefinitionClosureValid,
-  npcEquipmentMechanics,
   isNpcMechanicalTemplateDefinition,
   isNpcSpatialShell,
-  materializeNpcMechanicalLoadout,
-  NPC_MECHANICAL_ITEM_KIND,
-  NPC_MECHANICAL_ITEM_SCHEMA,
   NPC_MECHANICAL_TEMPLATE_KIND,
   NPC_MECHANICAL_TEMPLATE_SCHEMA,
   npcCoreMechanicsCompatible,
   synchronizeCombatItemResources,
 } from "./npc-mechanics";
+import {
+  deriveNpcItemSystemLoadout,
+  npcItemSystemEquipmentMechanics,
+  planNpcInitialItemImport,
+  type NpcInitialItemImportPlan,
+} from "./npc-item-system";
 import {
   controlledEnvironmentPlayer,
   currentTacticalFeature,
@@ -118,6 +119,17 @@ import {
   causalProgramFactValue,
   validateSpecializedEnvironmentalCausalActionProgram,
 } from "./causal-model";
+import {
+  isItemDefinitionV1,
+  itemEntryUseAbilityId,
+  type ItemDefinitionV1,
+  type ItemSystemStateV1,
+} from "./items";
+import {
+  deriveCharacterLoadoutFromItems,
+  spendItemEntryCosts,
+} from "./item-transitions";
+import { compileCanonicalCharacterCombat } from "./character-abilities";
 
 type Draft = {
   eventType: EventType;
@@ -402,6 +414,7 @@ function targetsCreature(definition: JsonRecord): boolean {
 function canonicalCosts(value: unknown): boolean {
   if (value === undefined) return true;
   if (!Array.isArray(value) || value.length > 24) return false;
+  const itemResourceIds = new Set<string>();
   return value.every((cost) => {
     if (!isRecord(cost) || !isNonEmptyString(cost.kind)) return false;
     if (cost.kind === "spellSlot") {
@@ -409,7 +422,15 @@ function canonicalCosts(value: unknown): boolean {
         && canonicalIntegerString(cost.level, 1, 9)
         && canonicalIntegerString(cost.amount, 1, 100);
     }
-    return ["classResource", "item", "itemCharge"].includes(cost.kind)
+    if (cost.kind === "item") {
+      const canonical = hasExactKeys(cost, ["amount", "kind", "resourceId"])
+        && isExactItemEntryResourceId(cost.resourceId)
+        && canonicalIntegerString(cost.amount, 1, 100);
+      if (!canonical || itemResourceIds.has(cost.resourceId as string)) return false;
+      itemResourceIds.add(cost.resourceId as string);
+      return true;
+    }
+    return cost.kind === "classResource"
       && hasExactKeys(cost, ["amount", "kind", "resourceId"])
       && isNonEmptyString(cost.resourceId)
       && canonicalIntegerString(cost.amount, 1, 100);
@@ -664,7 +685,7 @@ function canonicalNpcMechanicalDefinitionInput(value: unknown): value is JsonRec
     || !content.intrinsicAbilities.every(canonicalAbilityDefinition)
     || !Array.isArray(content.itemDefinitions)
     || content.itemDefinitions.length > 24
-    || !content.itemDefinitions.every(canonicalNpcMechanicalItemDefinitionInput)
+    || !content.itemDefinitions.every(isItemDefinitionV1)
     || !Array.isArray(content.itemDefinitionRefs)
     || content.itemDefinitionRefs.length > 24
     || !content.itemDefinitionRefs.every(isNonEmptyString)
@@ -705,55 +726,6 @@ function canonicalNpcMechanicalDefinitionInput(value: unknown): value is JsonRec
   });
 }
 
-function canonicalNpcMechanicalItemDefinitionInput(value: unknown): value is JsonRecord {
-  if (!isRecord(value)
-    || !hasExactKeys(value, NPC_MECHANICAL_DEFINITION_KEYS)
-    || !isNonEmptyString(value.definitionId)
-    || value.definitionKind !== NPC_MECHANICAL_ITEM_KIND
-    || value.revision !== "1"
-    || !["srd5.1-2014", "zhuwei-product-ruling"].includes(String(value.rulesBasis))
-    || !Array.isArray(value.causalBasisRefs)
-    || value.causalBasisRefs.length > 40
-    || !value.causalBasisRefs.every(isNonEmptyString)
-    || value.causalBasisRefs.length !== new Set(value.causalBasisRefs).size
-    || !isNonEmptyString(value.visibilityPolicyRef)
-    || !isRecord(value.content)
-    || !hasExactKeys(value.content, [
-      "abilities",
-      "armor",
-      "label",
-      "schema",
-      "twoHanded",
-      "wear",
-      "weapon",
-    ])) return false;
-  const content = value.content;
-  return content.schema === NPC_MECHANICAL_ITEM_SCHEMA
-    && isNonEmptyString(content.label)
-    && [
-      "head", "neck", "cloak", "armor", "hands", "belt", "boots",
-      "off", "ammo", "weapon", "ring", "pack",
-    ].includes(String(content.wear))
-    && typeof content.twoHanded === "boolean"
-    && (!content.twoHanded || content.wear === "weapon")
-    && Array.isArray(content.abilities)
-    && content.abilities.length <= 12
-    && content.abilities.every(canonicalAbilityDefinition)
-    && content.wear !== "ammo"
-    && canonicalNpcMechanicalItemWeaponBlueprint(content.weapon)
-    && (content.weapon === null || content.wear === "weapon")
-    && (content.armor === null || (isRecord(content.armor)
-      && hasExactKeys(content.armor, ["acBase", "acDexCap", "kind"])
-      && ["light", "medium", "heavy", "shield"].includes(String(content.armor.kind))
-      && (content.armor.kind === "shield"
-        ? content.armor.acBase === null
-          && content.armor.acDexCap === null
-          && content.wear === "off"
-        : canonicalIntegerString(content.armor.acBase, 1, 30)
-          && canonicalIntegerString(content.armor.acDexCap, 0, 99)
-          && content.wear === "armor")));
-}
-
 function canonicalNpcMechanicalInitialLoadoutInput(value: unknown): boolean {
   if (!isRecord(value)
     || !hasExactKeys(value, ["entries"])
@@ -774,7 +746,7 @@ function canonicalNpcMechanicalInitialLoadoutInput(value: unknown): boolean {
       || Number(entry.quantity) > 1_000_000
       || !isRecord(entry.source)
       || !hasExactKeys(entry.source, ["kind", "ref"])
-      || !["standardGear", "npcMechanicalItemDefinition"].includes(String(entry.source.kind))
+      || !["standardGear", "itemDefinition"].includes(String(entry.source.kind))
       || !isNonEmptyString(entry.source.ref)) return false;
     entryIds.add(entry.entryId);
     return true;
@@ -847,34 +819,6 @@ function freezeNpcMechanicalDefinition(
   return frozen;
 }
 
-function freezeNpcMechanicalItemDefinition(
-  definition: JsonRecord,
-  abilityRefs: string[],
-): JsonRecord {
-  const content = definition.content as JsonRecord;
-  const frozen = {
-    definitionId: definition.definitionId,
-    revision: definition.revision,
-    definitionKind: definition.definitionKind,
-    rulesBasis: definition.rulesBasis,
-    causalBasisRefs: structuredClone(definition.causalBasisRefs),
-    visibilityPolicyRef: definition.visibilityPolicyRef,
-    content: {
-      schema: content.schema,
-      label: content.label,
-      wear: content.wear,
-      twoHanded: content.twoHanded,
-      armor: structuredClone(content.armor),
-      weapon: structuredClone(content.weapon),
-      abilityRefs: [...abilityRefs].sort(),
-    },
-  } satisfies JsonRecord;
-  if (!isNpcMechanicalItemDefinition(frozen)) {
-    throw new TypeError("validated NPC mechanical item did not freeze canonically");
-  }
-  return frozen;
-}
-
 type PreparedNpcMechanicalCombatants = {
   drafts: Draft[];
   dynamicEntityIds: string[];
@@ -882,6 +826,7 @@ type PreparedNpcMechanicalCombatants = {
 };
 
 function prepareNpcMechanicalCombatants(
+  profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   rawEntries: unknown[],
   sceneId: string,
@@ -890,8 +835,12 @@ function prepareNpcMechanicalCombatants(
     return rejected("invalidRulesInput", "NPC mechanical materialization is malformed.");
   }
   const drafts: Draft[] = [];
+  if (state.campaignRuntime.itemSystem === undefined) {
+    return rejected("invalidWorldState", "The versioned item system is unavailable.");
+  }
+  let stagedItemSystem = structuredClone(state.campaignRuntime.itemSystem);
   const localTemplates = new Map<string, JsonRecord>();
-  const localItems = new Map<string, JsonRecord>();
+  const localItems = new Map<string, ItemDefinitionV1>();
   const localAbilities = new Map<string, JsonRecord>();
   for (const entry of rawEntries) {
     const mechanics = entry.mechanics as JsonRecord;
@@ -906,17 +855,8 @@ function prepareNpcMechanicalCombatants(
     }
     const content = definition.content as JsonRecord;
     const intrinsicAbilityRefs: string[] = [];
-    const itemAbilityRefs = new Map<string, string[]>();
     const submittedAbilityRefs = new Set<string>();
-    const abilitySources: Array<{ ability: JsonRecord; itemDefinitionId?: string }> = [
-      ...(content.intrinsicAbilities as JsonRecord[]).map((ability) => ({ ability })),
-      ...(content.itemDefinitions as JsonRecord[]).flatMap((itemDefinition) =>
-        ((itemDefinition.content as JsonRecord).abilities as JsonRecord[]).map((ability) => ({
-          ability,
-          itemDefinitionId: String(itemDefinition.definitionId),
-        }))),
-    ];
-    for (const { ability, itemDefinitionId } of abilitySources) {
+    for (const ability of content.intrinsicAbilities as JsonRecord[]) {
       const compiled = compileAbilityDefinition(ability);
       if (!compiled.ok) {
         return rejected(compiled.code, compiled.publicMessage, compiled.diagnostics.map((diagnostic) => ({
@@ -944,19 +884,7 @@ function prepareNpcMechanicalCombatants(
           "An NPC template reuses an AbilityDefinition id with different mechanics.",
         );
       }
-      if (itemDefinitionId === undefined) {
-        intrinsicAbilityRefs.push(abilityRef);
-      } else {
-        const refs = itemAbilityRefs.get(itemDefinitionId) ?? [];
-        if (refs.includes(abilityRef)) {
-          return rejected(
-            "invalidRulesInput",
-            "An NPC mechanical item repeats an AbilityDefinition id.",
-          );
-        }
-        refs.push(abilityRef);
-        itemAbilityRefs.set(itemDefinitionId, refs);
-      }
+      intrinsicAbilityRefs.push(abilityRef);
       if (existing === undefined && local === undefined) {
         localAbilities.set(abilityRef, registeredAbilityRecord(compiled.artifact));
         drafts.push({
@@ -969,45 +897,51 @@ function prepareNpcMechanicalCombatants(
     }
     const itemDefinitionRefs: string[] = [...content.itemDefinitionRefs as string[]];
     if (itemDefinitionRefs.some((itemDefinitionRef) =>
-      !isNpcMechanicalItemDefinition(state.combatRuntime.definitions[itemDefinitionRef]))) {
+      !isItemDefinitionV1(stagedItemSystem.definitions[itemDefinitionRef]))) {
       return rejected(
         "privateOrUnknownReference",
-        "A referenced NPC mechanical item definition is unavailable.",
+        "A referenced item definition is unavailable from the unified item catalog.",
       );
     }
-    for (const rawItem of content.itemDefinitions as JsonRecord[]) {
+    const submittedItems: ItemDefinitionV1[] = [];
+    for (const rawItem of content.itemDefinitions as ItemDefinitionV1[]) {
       const itemDefinitionId = String(rawItem.definitionId);
-      if (itemDefinitionId in state.combatRuntime.definitions
+      if (itemDefinitionId in stagedItemSystem.definitions
+        || itemDefinitionId in state.combatRuntime.definitions
         || localItems.has(itemDefinitionId)
         || localTemplates.has(itemDefinitionId)
         || itemDefinitionId === definitionId
         || itemDefinitionRefs.includes(itemDefinitionId)) {
         return rejected(
           "invalidRulesInput",
-          "A frozen NPC mechanical item definition must have a new unique id.",
+          "A canonical item definition must have a new unique id.",
         );
       }
-      const frozenItem = freezeNpcMechanicalItemDefinition(
-        rawItem,
-        itemAbilityRefs.get(itemDefinitionId) ?? [],
-      );
-      const itemCatalog = {
-        ...state.combatRuntime.definitions,
-        ...Object.fromEntries(localAbilities),
-      };
-      if (!npcMechanicalItemDefinitionClosureValid(frozenItem, itemCatalog)) {
-        return rejected(
-          "privateOrUnknownReference",
-          "An NPC mechanical item has an unavailable ability dependency.",
-        );
-      }
+      const frozenItem = structuredClone(rawItem);
+      submittedItems.push(frozenItem);
       itemDefinitionRefs.push(itemDefinitionId);
       localItems.set(itemDefinitionId, frozenItem);
+    }
+    const itemCatalog = {
+      ...state.combatRuntime.definitions,
+      ...stagedItemSystem.definitions,
+      ...Object.fromEntries(localAbilities),
+      ...Object.fromEntries(localItems),
+    };
+    for (const frozenItem of submittedItems.sort((left, right) =>
+      left.definitionId.localeCompare(right.definitionId))) {
+      if (!itemDefinitionMechanicsClosureValid(frozenItem, itemCatalog)) {
+        return rejected(
+          "privateOrUnknownReference",
+          "An item definition has an unavailable ability or ammunition dependency.",
+        );
+      }
+      stagedItemSystem.definitions[frozenItem.definitionId] = structuredClone(frozenItem);
       drafts.push({
-        eventType: "DefinitionRegistered",
-        payload: { definition: frozenItem },
-        visibilityPolicyId: "visibility:room-authority-only",
-        secrecy: "internal",
+        eventType: "ItemDefinitionRegistered",
+        payload: { definition: structuredClone(frozenItem) },
+        visibilityPolicyId: frozenItem.visibilityPolicyRef,
+        secrecy: frozenItem.visibilityPolicyRef === "visibility:public" ? "public" : "internal",
       });
     }
     const frozen = freezeNpcMechanicalDefinition(
@@ -1017,6 +951,7 @@ function prepareNpcMechanicalCombatants(
     );
     const availableDefinitions = {
       ...state.combatRuntime.definitions,
+      ...stagedItemSystem.definitions,
       ...Object.fromEntries(localAbilities),
       ...Object.fromEntries(localItems),
     };
@@ -1114,21 +1049,12 @@ function prepareNpcMechanicalCombatants(
     }
     let availableDefinitions = {
       ...state.combatRuntime.definitions,
+      ...stagedItemSystem.definitions,
       ...Object.fromEntries(localAbilities),
       ...Object.fromEntries(localItems),
       ...Object.fromEntries(localTemplates),
     };
-    const loadout = materializeNpcMechanicalLoadout(definition, {
-      entityId,
-      speedInches: content.speedInches,
-    }, availableDefinitions, establishedEntity?.loadout);
-    if (loadout === undefined) {
-      return rejected(
-        "invalidRulesInput",
-        "The established NPC inventory cannot be frozen into bounded mechanical instances.",
-      );
-    }
-    const validationCharacter = {
+    const characterBasis = {
       ...(establishedEntity ?? {
         id: entityId,
         kind: "npc",
@@ -1142,9 +1068,72 @@ function prepareNpcMechanicalCombatants(
         Number((content.stats as JsonRecord)[ability]),
       ])),
       proficiencyBonus: Number(content.proficiencyBonus),
+    } satisfies CharacterRecord;
+    let loadout: CharacterRecord["loadout"];
+    let entityItemSystem = stagedItemSystem;
+    let importPlan: NpcInitialItemImportPlan | undefined;
+    if (stagedItemSystem === undefined) {
+      return rejected("invalidWorldState", "The versioned item system is unavailable.");
+    }
+      if (establishedEntity?.loadout === undefined) {
+        const planned = planNpcInitialItemImport({
+          itemSystem: stagedItemSystem,
+          character: characterBasis,
+          definition,
+          catalog: availableDefinitions,
+          sceneId,
+        });
+        if ("error" in planned) {
+          return rejected(
+            "invalidRulesInput",
+            "The NPC initial inventory cannot enter the versioned item system.",
+          );
+        }
+        importPlan = planned;
+        entityItemSystem = planned.itemSystemAfterMaterialization;
+        loadout = planned.loadoutBeforeAcquisition;
+        for (const itemDefinition of planned.definitions) {
+          drafts.push({
+            eventType: "ItemDefinitionRegistered",
+            payload: { definition: structuredClone(itemDefinition) },
+            visibilityPolicyId: itemDefinition.visibilityPolicyRef,
+            secrecy: itemDefinition.visibilityPolicyRef === "visibility:public"
+              ? "public"
+              : "internal",
+          });
+        }
+        for (const materialization of planned.materializations) {
+          drafts.push({
+            eventType: "ItemMaterialized",
+            payload: { entry: structuredClone(materialization.entry) },
+            visibilityPolicyId: materialization.entry.visibilityPolicyRef,
+            secrecy: materialization.entry.visibilityPolicyRef === "visibility:public"
+              ? "public"
+              : "internal",
+          });
+        }
+      } else {
+        const derived = deriveNpcItemSystemLoadout(
+          stagedItemSystem,
+          characterBasis,
+          definition,
+        );
+        if ("error" in derived) {
+          return rejected(
+            "invalidRulesInput",
+            "The established NPC inventory does not match the versioned item system.",
+          );
+        }
+        loadout = derived.loadout;
+    }
+    const validationCharacter = {
+      ...characterBasis,
       loadout,
     } satisfies CharacterRecord;
-    const initialEquipment = npcEquipmentMechanics(validationCharacter, availableDefinitions);
+    const initialEquipment = npcItemSystemEquipmentMechanics(
+      validationCharacter,
+      entityItemSystem,
+    );
     for (const equipmentDefinition of initialEquipment.definitions) {
       const compiled = compileAbilityDefinition(equipmentDefinition);
       if (!compiled.ok) {
@@ -1177,6 +1166,7 @@ function prepareNpcMechanicalCombatants(
     const entity = instantiateNpcMechanicalEntity({
       definition,
       catalog: availableDefinitions,
+      itemSystem: entityItemSystem,
       entityId,
       name: entry.name as string,
       sceneId,
@@ -1187,7 +1177,12 @@ function prepareNpcMechanicalCombatants(
       loadout,
       ...(shell === undefined ? {} : { shell }),
     });
-    if (entity !== undefined) synchronizeCombatItemResources(entity, loadout);
+    if (entity !== undefined) {
+      synchronizeCombatItemResources(
+        entity,
+        entityItemSystem,
+      );
+    }
     if (entity === undefined
       || !npcMechanicalDefinitionClosureValid(definition, availableDefinitions)
       || !npcMechanicalEntityMatchesTemplate(
@@ -1195,6 +1190,7 @@ function prepareNpcMechanicalCombatants(
         definition,
         availableDefinitions,
         validationCharacter,
+        entityItemSystem,
       )
       || (shell !== undefined && !canPromoteNpcSpatialShell(shell, entity))
       || (establishedEntity !== undefined && !npcCoreMechanicsCompatible(establishedEntity, entity))) {
@@ -1204,8 +1200,80 @@ function prepareNpcMechanicalCombatants(
       );
     }
     dynamicEntityIds.push(entityId);
-    entitiesById.set(entityId, entity);
     drafts.push({ eventType: "EntityMaterialized", payload: { entity } });
+    let finalEntity = entity;
+    if (importPlan !== undefined) {
+      for (const acquisition of importPlan.acquisitions) {
+        drafts.push({
+          eventType: "ItemAcquired",
+          payload: {
+            entryId: acquisition.sourceEntryId,
+            characterId: entityId,
+            fromSceneId: sceneId,
+          },
+          visibilityPolicyId: "visibility:room-authority-only",
+          secrecy: "internal",
+        });
+      }
+      for (const gearChange of importPlan.gearChanges) {
+        for (const equipmentDefinition of gearChange.equipment.definitions) {
+          const compiled = compileAbilityDefinition(equipmentDefinition);
+          if (!compiled.ok) return rejected(compiled.code, compiled.publicMessage);
+          const abilityRef = String(equipmentDefinition.definitionId);
+          const existing = state.combatRuntime.definitions[abilityRef];
+          const local = localAbilities.get(abilityRef);
+          if ((existing !== undefined && existing.compiledHash !== compiled.artifact.compiledHash)
+            || (local !== undefined && local.compiledHash !== compiled.artifact.compiledHash)) {
+            return rejected(
+              "invalidRulesInput",
+              "Initial NPC equipment conflicts with a frozen AbilityDefinition.",
+            );
+          }
+          if (existing === undefined && local === undefined) {
+            localAbilities.set(abilityRef, registeredAbilityRecord(compiled.artifact));
+            drafts.push({
+              eventType: "DefinitionRegistered",
+              payload: structuredClone(compiled.artifact),
+              visibilityPolicyId: "visibility:room-authority-only",
+              secrecy: "internal",
+            });
+          }
+        }
+        drafts.push({
+          eventType: "NpcGearChanged",
+          payload: {
+            characterId: entityId,
+            action: "wear",
+            slot: gearChange.slot,
+            itemId: gearChange.entryId,
+            armorClass: gearChange.armorClass,
+            equipmentAbilityRefs: gearChange.equipment.refs,
+          },
+          visibilityPolicyId: isNonEmptyString(entity.visibilityPolicyId)
+            ? entity.visibilityPolicyId
+            : "visibility:scene-observers",
+        });
+      }
+      stagedItemSystem = importPlan.finalItemSystem;
+      const finalEquipment = npcItemSystemEquipmentMechanics(
+        { ...validationCharacter, loadout: importPlan.finalLoadout },
+        importPlan.finalItemSystem,
+      );
+      finalEntity = {
+        ...structuredClone(entity),
+        armorClass: String(importPlan.finalLoadout.armorClass),
+        equipmentAbilityRefs: finalEquipment.refs,
+        abilityRefs: [...new Set([
+          ...(content.intrinsicAbilityRefs as string[]),
+          ...finalEquipment.refs,
+        ])].sort(),
+      };
+      synchronizeCombatItemResources(
+        finalEntity,
+        importPlan.finalItemSystem,
+      );
+    }
+    entitiesById.set(entityId, finalEntity);
   }
   return { drafts, dynamicEntityIds, entitiesById };
 }
@@ -1228,6 +1296,7 @@ function startEncounter(
   const dynamicEntitiesById = new Map<string, JsonRecord>();
   if (npcMechanicsProfileEnabled(profiles.extensions)) {
     const prepared = prepareNpcMechanicalCombatants(
+      profiles,
       state,
       input.dynamicEntities as unknown[],
       sceneId,
@@ -1706,11 +1775,174 @@ function consumeTurnGrant(
   return patch;
 }
 
-function spendCosts(sourcePatch: JsonRecord, definition: JsonRecord): Array<{ resourceId: string; amount: number; after: string }> | undefined {
+function authoritativeItemCostsAvailable(
+  state: AuthoritativeWorldState,
+  sourceEntityId: string,
+  resources: JsonRecord,
+  definition: JsonRecord,
+): boolean {
+  if (!Array.isArray(definition.costs)) return true;
+  const totals = new Map<string, {
+    quantityCost: number;
+    chargeCost: number;
+    durabilityCost: number;
+    itemActivity: boolean;
+  }>();
+  for (const cost of definition.costs) {
+    if (!isRecord(cost) || cost.kind === "itemCharge") return false;
+    const resourceId = cost.resourceId;
+    if (cost.kind !== "item") {
+      if (typeof resourceId === "string"
+        && (resourceId.startsWith("item:") || resourceId.startsWith("item-entry:"))) {
+        return false;
+      }
+      continue;
+    }
+    const quantityCost = Number(cost.amount);
+    const itemActivity = cost.chargeCost !== undefined || cost.durabilityCost !== undefined;
+    const chargeCost = itemActivity ? Number(cost.chargeCost) : 0;
+    const durabilityCost = itemActivity ? Number(cost.durabilityCost) : 0;
+    if (!isExactItemEntryResourceId(resourceId)
+      || !Number.isSafeInteger(quantityCost)
+      || quantityCost < 0
+      || !Number.isSafeInteger(chargeCost)
+      || chargeCost < 0
+      || !Number.isSafeInteger(durabilityCost)
+      || durabilityCost < 0
+      || (itemActivity
+        && (cost.chargeCost === undefined || cost.durabilityCost === undefined))) return false;
+    if (totals.has(resourceId)) return false;
+    totals.set(resourceId, { quantityCost, chargeCost, durabilityCost, itemActivity });
+  }
+
+  for (const [resourceId, costs] of totals) {
+    const entryId = resourceId;
+    const entry = state.campaignRuntime.itemSystem.entries[entryId];
+    const itemDefinition = entry === undefined
+      ? undefined
+      : state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
+    const cache = resources[resourceId];
+    if (entry === undefined
+      || itemDefinition === undefined
+      || itemDefinition.revision !== entry.definitionRevision
+      || entry.disposition !== "held"
+      || entry.holderRef !== sourceEntityId
+      || entry.condition !== "usable"
+      || !isRecord(cache)
+      || !canonicalIntegerString(cache.current, 0, 1_000_000)
+      || !canonicalIntegerString(cache.maximum, 0, 1_000_000)
+      || entry.quantity !== Number(cache.current)
+      || Number(cache.maximum) < Number(cache.current)
+      || costs.quantityCost > entry.quantity
+      || (costs.chargeCost > 0
+        && (entry.charges === null || costs.chargeCost > entry.charges.current))
+      || (costs.durabilityCost > 0
+        && (entry.durability === null || costs.durabilityCost > entry.durability.current))) return false;
+    if (costs.itemActivity) {
+      const use = itemDefinition.content.use;
+      if (use === null
+        || definition.definitionId !== itemEntryUseAbilityId(use.abilityRef, entry.entryId)
+        || use.quantityCost !== costs.quantityCost
+        || use.chargeCost !== costs.chargeCost
+        || use.durabilityCost !== costs.durabilityCost) return false;
+    } else if (itemDefinition.content.category !== "ammunition" || costs.quantityCost < 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+type SpentResourceCost = {
+  kind: "resource";
+  resourceId: string;
+  amount: number;
+  after: string;
+};
+
+type SpentItemCost = {
+  kind: "item";
+  resourceId: string;
+  amount: number;
+  chargeCost: number;
+  durabilityCost: number;
+  quantityBefore: number;
+  quantityAfter: number;
+  chargesBefore: number | null;
+  chargesAfter: number | null;
+  durabilityBefore: number | null;
+  durabilityAfter: number | null;
+};
+
+type SpentCost = SpentResourceCost | SpentItemCost;
+
+function synchronizeSourcePatchAfterItemCosts(
+  state: AuthoritativeWorldState,
+  sourceEntityId: string,
+  sourcePatch: JsonRecord,
+  itemSystem: ItemSystemStateV1,
+): boolean {
+  const character = state.entities[sourceEntityId];
+  if (character === undefined || character.loadout === undefined) return false;
+  if (character.kind === "player") {
+    const derived = deriveCharacterLoadoutFromItems(itemSystem, {
+      holderRef: character.id,
+      ...(character.classId === undefined ? {} : { classId: character.classId }),
+      scores: {
+        dex: character.abilityScores?.dex ?? 10,
+        con: character.abilityScores?.con ?? 10,
+      },
+      speedFeet: character.loadout.speedFeet,
+    });
+    if ("error" in derived) return false;
+    const compiled = compileCanonicalCharacterCombat(
+      { ...structuredClone(character), loadout: derived.loadout },
+      itemSystem,
+      state.combatRuntime.definitions,
+    );
+    sourcePatch.armorClass = String(derived.loadout.armorClass);
+    sourcePatch.abilityRefs = [...compiled.abilityRefs];
+  } else {
+    const mechanicalDefinitionRef = sourcePatch.mechanicalDefinitionRef;
+    const definition = isNonEmptyString(mechanicalDefinitionRef)
+      ? state.combatRuntime.definitions[mechanicalDefinitionRef]
+      : undefined;
+    if (!isNpcMechanicalTemplateDefinition(definition)) return false;
+    const derived = deriveNpcItemSystemLoadout(itemSystem, character, definition);
+    if ("error" in derived) return false;
+    const equipment = npcItemSystemEquipmentMechanics(
+      { ...structuredClone(character), loadout: derived.loadout },
+      itemSystem,
+    );
+    const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs;
+    if (!Array.isArray(intrinsicAbilityRefs) || !intrinsicAbilityRefs.every(isNonEmptyString)) {
+      return false;
+    }
+    sourcePatch.armorClass = String(derived.loadout.armorClass);
+    sourcePatch.equipmentAbilityRefs = [...equipment.refs];
+    sourcePatch.abilityRefs = [...new Set([
+      ...intrinsicAbilityRefs,
+      ...equipment.refs,
+    ])].sort();
+  }
+  synchronizeCombatItemResources(sourcePatch, itemSystem);
+  return true;
+}
+
+function spendCosts(
+  state: AuthoritativeWorldState,
+  sourceEntityId: string,
+  sourcePatch: JsonRecord,
+  definition: JsonRecord,
+): SpentCost[] | undefined {
   if (!Array.isArray(definition.costs)) return [];
   const resources = sourcePatch.resources;
   if (!isRecord(resources)) return undefined;
-  const spent: Array<{ resourceId: string; amount: number; after: string }> = [];
+  if (!authoritativeItemCostsAvailable(state, sourceEntityId, resources, definition)) {
+    return undefined;
+  }
+  const spent: SpentCost[] = [];
+  let workingItemSystem = state.campaignRuntime.itemSystem;
+  let spentItem = false;
   for (const cost of definition.costs) {
     if (!isRecord(cost)) return undefined;
     const resourceIdValue = cost.kind === "spellSlot" ? `spellSlot:${cost.level}` : cost.resourceId;
@@ -1718,13 +1950,151 @@ function spendCosts(sourcePatch: JsonRecord, definition: JsonRecord): Array<{ re
     const amount = Number(cost.amount);
     if (resourceId === undefined) return undefined;
     const record = resources[resourceId];
-    if (!isRecord(record) || !Number.isSafeInteger(amount) || amount <= 0 || Number(record.current) < amount) return undefined;
-    const after = String(Number(record.current) - amount);
-    if (cost.kind === "item" && after === "0") delete resources[resourceId];
-    else record.current = after;
-    spent.push({ resourceId, amount, after });
+    if (!isRecord(record) || !Number.isSafeInteger(amount)) return undefined;
+    if (cost.kind === "item") {
+      const entryId = resourceId;
+      const chargeCost = cost.chargeCost === undefined ? 0 : Number(cost.chargeCost);
+      const durabilityCost = cost.durabilityCost === undefined ? 0 : Number(cost.durabilityCost);
+      const transitioned = spendItemEntryCosts(workingItemSystem, {
+        entryId,
+        holderRef: sourceEntityId,
+        quantityCost: amount,
+        chargeCost,
+        durabilityCost,
+      });
+      if ("error" in transitioned) return undefined;
+      spentItem = true;
+      workingItemSystem = transitioned.itemSystem;
+      const nextEntry = workingItemSystem.entries[entryId];
+      if (nextEntry.disposition !== "held" || nextEntry.condition !== "usable") {
+        delete resources[resourceId];
+        if (isNonEmptyString(definition.definitionId)
+          && Array.isArray(sourcePatch.abilityRefs)) {
+          sourcePatch.abilityRefs = sourcePatch.abilityRefs
+            .filter((abilityRef) => abilityRef !== definition.definitionId);
+        }
+      } else {
+        record.current = String(nextEntry.quantity);
+      }
+      spent.push({
+        kind: "item",
+        resourceId,
+        amount,
+        chargeCost,
+        durabilityCost,
+        ...transitioned.snapshot,
+      });
+      continue;
+    }
+    if (amount <= 0 || Number(record.current) < amount) return undefined;
+    const before = String(record.current);
+    const after = String(Number(before) - amount);
+    record.current = after;
+    spent.push({ kind: "resource", resourceId, amount, after });
   }
+  if (spentItem
+    && !synchronizeSourcePatchAfterItemCosts(
+      state,
+      sourceEntityId,
+      sourcePatch,
+      workingItemSystem,
+    )) return undefined;
   return spent;
+}
+
+function spentCostDraft(
+  state: AuthoritativeWorldState,
+  sourceEntityId: string,
+  abilityRef: string,
+  rawCost: unknown,
+): Draft {
+  if (!isRecord(rawCost)) throw new TypeError("combat cost is malformed");
+  if (rawCost.kind === "item") {
+    if (!isNonEmptyString(rawCost.resourceId)
+      || !Number.isSafeInteger(rawCost.amount)
+      || Number(rawCost.amount) < 0
+      || !Number.isSafeInteger(rawCost.chargeCost)
+      || Number(rawCost.chargeCost) < 0
+      || !Number.isSafeInteger(rawCost.durabilityCost)
+      || Number(rawCost.durabilityCost) < 0) {
+      throw new TypeError("combat item cost is malformed");
+    }
+    const resourceId = rawCost.resourceId;
+    const amount = Number(rawCost.amount);
+    const chargeCost = Number(rawCost.chargeCost);
+    const durabilityCost = Number(rawCost.durabilityCost);
+    if (!isExactItemEntryResourceId(resourceId)) {
+      throw new TypeError("combat item cost is malformed");
+    }
+    const quantityBefore = Number(rawCost.quantityBefore);
+    const quantityAfter = Number(rawCost.quantityAfter);
+    const entryId = resourceId;
+    const entry = state.campaignRuntime.itemSystem.entries[entryId];
+    const definition = state.combatRuntime.definitions[abilityRef];
+    const authoritativeCost = Array.isArray(definition?.costs)
+      && definition.costs.some((cost) => isRecord(cost)
+        && cost.kind === "item"
+        && cost.resourceId === resourceId
+        && cost.amount === String(amount)
+        && (cost.chargeCost === undefined ? 0 : Number(cost.chargeCost)) === chargeCost
+        && (cost.durabilityCost === undefined ? 0 : Number(cost.durabilityCost)) === durabilityCost);
+    const transitioned = entry === undefined
+      ? undefined
+      : spendItemEntryCosts(state.campaignRuntime.itemSystem, {
+          entryId,
+          holderRef: sourceEntityId,
+          quantityCost: amount,
+          chargeCost,
+          durabilityCost,
+        });
+    const snapshot = transitioned === undefined || "error" in transitioned
+      ? undefined
+      : transitioned.snapshot;
+    if (definition?.definitionId !== abilityRef
+      || !authoritativeCost
+      || entry === undefined
+      || snapshot === undefined
+      || snapshot.quantityBefore !== quantityBefore
+      || snapshot.quantityAfter !== quantityAfter
+      || snapshot.chargesBefore !== rawCost.chargesBefore
+      || snapshot.chargesAfter !== rawCost.chargesAfter
+      || snapshot.durabilityBefore !== rawCost.durabilityBefore
+      || snapshot.durabilityAfter !== rawCost.durabilityAfter) {
+      throw new TypeError("combat item cost no longer matches exact authority");
+    }
+    return {
+      eventType: "ItemUsed",
+      payload: {
+        characterId: sourceEntityId,
+        entryId,
+        purpose: abilityRef,
+        quantityBefore,
+        quantityAfter,
+        chargesBefore: snapshot.chargesBefore,
+        chargesAfter: snapshot.chargesAfter,
+        durabilityBefore: snapshot.durabilityBefore,
+        durabilityAfter: snapshot.durabilityAfter,
+      },
+      visibilityPolicyId: entry.visibilityPolicyRef,
+      secrecy: entry.visibilityPolicyRef.startsWith("visibility:public") ? "public" : "private",
+    };
+  }
+  if (rawCost.kind !== "resource"
+    || !isNonEmptyString(rawCost.resourceId)
+    || !Number.isSafeInteger(rawCost.amount)
+    || Number(rawCost.amount) <= 0
+    || !canonicalIntegerString(rawCost.after, 0, 1_000_000)) {
+    throw new TypeError("combat resource cost kind is malformed");
+  }
+  return {
+    eventType: "ResourceSpent",
+    payload: {
+      entityId: sourceEntityId,
+      resourceId: rawCost.resourceId,
+      amount: String(rawCost.amount),
+      resourceAfter: rawCost.after,
+    },
+  };
 }
 
 function appendTransitions(prefix: StepResult, next: StepResult): StepResult {
@@ -1901,7 +2271,7 @@ function spendReactionSpell(
   source: JsonRecord,
   abilityRef: string,
   slotLevelValue: unknown,
-): { sourcePatch: JsonRecord; spent: { resourceId: string; amount: number; after: string }; definition: JsonRecord; slotLevel: number } | undefined {
+): { sourcePatch: JsonRecord; spent: SpentResourceCost; definition: JsonRecord; slotLevel: number } | undefined {
   const definition = state.combatRuntime.definitions[abilityRef];
   const slotLevel = Number(slotLevelValue);
   if (definition === undefined || activationKind(definition) !== "reactionSpell"
@@ -1921,7 +2291,7 @@ function spendReactionSpell(
   pool.current = String(Number(pool.current) - 1);
   return {
     sourcePatch,
-    spent: { resourceId, amount: 1, after: String(pool.current) },
+    spent: { kind: "resource", resourceId, amount: 1, after: String(pool.current) },
     definition,
     slotLevel,
   };
@@ -2132,12 +2502,10 @@ function directAbility(
   if (activation.kind !== "free") return undefined;
   const sourcePatch = consumeTurnGrant(source, definition, abilityRef);
   if (sourcePatch === undefined) return rejected("invalidRulesInput", "The action grant is unavailable.");
-  const spent = spendCosts(sourcePatch, definition);
+  const spent = spendCosts(state, entityId(source), sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
-  const drafts: Draft[] = spent.map((cost) => ({
-    eventType: "ResourceSpent",
-    payload: { entityId: entityId(source), resourceId: cost.resourceId, amount: cost.amount, resourceAfter: cost.after },
-  }));
+  const drafts: Draft[] = spent.map((cost) =>
+    spentCostDraft(state, entityId(source), abilityRef, cost));
   if (abilityRef === "ability:action-surge" || definition.mechanicalKey === "action-surge") {
     const turn = sourcePatch.turn as JsonRecord;
     turn.action = String(Number(turn.action ?? 0) + 1);
@@ -2200,7 +2568,7 @@ function beginMedicineStabilization(
   target: JsonRecord,
   definition: JsonRecord,
   sourcePatch: JsonRecord,
-  spent: JsonRecord[],
+  spent: SpentCost[],
 ): StepResult {
   if (target.lifeState === "dead"
     || target.deathPolicy !== "deathSaves"
@@ -2245,7 +2613,7 @@ function beginSpecialMeleeContest(
   definition: JsonRecord,
   parameters: JsonRecord,
   sourcePatch: JsonRecord,
-  spent: JsonRecord[],
+  spent: SpentCost[],
   options: { prefix?: Draft[]; reactionContext?: JsonRecord } = {},
 ): StepResult {
   const target = combatEntity(state, parameters.targetEntityId);
@@ -2302,6 +2670,7 @@ function isLongSpellcastingRequest(definition: JsonRecord, parameters: JsonRecor
 }
 
 function costsAvailableAtLongSpellStart(
+  state: AuthoritativeWorldState,
   source: JsonRecord,
   definition: JsonRecord,
   ritual: boolean,
@@ -2310,7 +2679,7 @@ function costsAvailableAtLongSpellStart(
   const costs = Array.isArray(definition.costs)
     ? definition.costs.filter((cost) => !ritual || !isRecord(cost) || cost.kind !== "spellSlot")
     : [];
-  return spendCosts(probe, { ...definition, costs }) !== undefined;
+  return spendCosts(state, entityId(source), probe, { ...definition, costs }) !== undefined;
 }
 
 function startLongSpellcasting(
@@ -2338,7 +2707,7 @@ function startLongSpellcasting(
     activity.status === "active" && activity.characterId === entityId(source))) {
     return rejected("invalidRulesInput", "The caster already has an active Activity.");
   }
-  if (!costsAvailableAtLongSpellStart(source, definition, ritual)) {
+  if (!costsAvailableAtLongSpellStart(state, source, definition, ritual)) {
     return rejected("insufficientResource", "Long-spell completion costs are unavailable.");
   }
   const sourcePatch = consumeTurnGrant(source, definition, abilityRef);
@@ -2499,6 +2868,18 @@ function invokeAbility(
     || (builtinDefinition === undefined && !abilityRefs(source).includes(abilityRef))) {
     return rejected("privateOrUnknownReference", "AbilityDefinition is unavailable.");
   }
+  const activation = definition.activation;
+  if (!isRecord(activation)) return rejected("invalidRulesInput", "Ability activation is malformed.");
+  const itemEntryUse = activation.kind === "useObject"
+    && Array.isArray(definition.costs)
+    && definition.costs.some((cost) => isRecord(cost)
+      && cost.kind === "item"
+      && isNonEmptyString(cost.resourceId)
+      && cost.resourceId.startsWith("item-entry:"));
+  if (itemEntryUse
+    && (source.lifeState !== "alive" || incapacitated(source))) {
+    return rejected("invalidRulesInput", "An incapacitated creature cannot use a held item.");
+  }
   if (activationKind(definition) === "reaction" || activationKind(definition) === "reactionSpell") {
     return rejected("invalidRulesInput", "A reaction ability can only be used from its frozen reaction window.");
   }
@@ -2531,8 +2912,6 @@ function invokeAbility(
   const direct = directAbility(profiles, state, root, source, abilityRef, definition);
   if (direct !== undefined) return direct;
 
-  const activation = definition.activation;
-  if (!isRecord(activation)) return rejected("invalidRulesInput", "Ability activation is malformed.");
   if (activation.kind === "actionSpell" && Number(activation.spellLevel) > 0
     && isRecord(source.turn)
     && (source.turn.bonusActionSpellCast === true || source.turn.leveledBonusActionSpell === true)) {
@@ -2540,13 +2919,62 @@ function invokeAbility(
   }
   if (activation.kind === "bonusActionSpell"
     && isRecord(source.turn)
-    && source.turn.leveledActionSpell === true) {
+      && source.turn.leveledActionSpell === true) {
     return rejected("bonusActionSpellRestriction2014", "A bonus-action spell cannot follow a leveled spell cast with an action on the same turn.");
   }
-  const sourcePatch = consumeTurnGrant(source, definition, abilityRef, input.parameters.actionGrant);
+  const noncombatItemUse = itemEntryUse && encounter === undefined;
+  if (noncombatItemUse && Object.values(state.campaignRuntime.activities).some((activity) =>
+    activity.status === "active" && activity.characterId === entityId(source))) {
+    return rejected("pendingInputUnresolved", "The character is already committed to an active Activity.");
+  }
+  const grantSource = noncombatItemUse
+    ? (() => {
+        const transient = structuredClone(source);
+        delete transient.turn;
+        return transient;
+      })()
+    : source;
+  const sourcePatch = consumeTurnGrant(
+    grantSource,
+    definition,
+    abilityRef,
+    input.parameters.actionGrant,
+  );
   if (sourcePatch === undefined) return rejected("invalidRulesInput", "The action grant is unavailable.");
-  const spent = spendCosts(sourcePatch, definition);
+  if (noncombatItemUse) delete sourcePatch.turn;
+  const spent = spendCosts(state, entityId(source), sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
+  const itemActivityPrefix: Draft[] = noncombatItemUse
+    ? [{
+        eventType: "ActivityStarted",
+        payload: {
+          activityId: `activity:item-use:${root}`,
+          characterId: entityId(source),
+          activityKind: "itemUseObject2014",
+          intendedDurationMicros: COMBAT_ROUND_MICROS.toString(),
+          completion: {
+            kind: "itemUseObject2014",
+            sourceEntityId: entityId(source),
+            abilityRef,
+          },
+        },
+        visibilityPolicyId: `visibility:character-controller:${entityId(source)}`,
+        secrecy: "private",
+      }, {
+        eventType: "FictionTimeAdvanced",
+        payload: {
+          durationMicros: COMBAT_ROUND_MICROS.toString(),
+          reason: "使用物品",
+        },
+        visibilityPolicyId: "visibility:scene-observers",
+        secrecy: "public",
+      }, {
+        eventType: "ActivityCompleted",
+        payload: { activityId: `activity:item-use:${root}` },
+        visibilityPolicyId: `visibility:character-controller:${entityId(source)}`,
+        secrecy: "private",
+      }]
+    : [];
 
   if (abilityRef === "action:shove" || abilityRef === "action:grapple") {
     return beginSpecialMeleeContest(
@@ -2589,7 +3017,7 @@ function invokeAbility(
       spent,
     }, [formulaSpec(`healing:${abilityRef}`, definition.healing.formula, {
       sourceEntityId: entityId(source), targetEntityId: input.parameters.targetEntityId, spent,
-    })]);
+    })], itemActivityPrefix);
   }
 
   if (isRecord(definition.temporaryHitPoints)
@@ -2605,7 +3033,7 @@ function invokeAbility(
       spent,
     }, [formulaSpec(`temporary-hit-points:${abilityRef}`, definition.temporaryHitPoints.formula, {
       sourceEntityId: entityId(source), targetEntityId: input.parameters.targetEntityId, spent,
-    })]);
+    })], itemActivityPrefix);
   }
 
   const specs: DiceSpec[] = [];
@@ -2771,6 +3199,39 @@ function invokeAbility(
   return awaitRandomness(profiles, state, root, operation, specs);
 }
 
+function invokeItemActivity(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!hasExactKeys(input, [
+      "itemEntryId",
+      "kind",
+      "parameters",
+      "rootActionId",
+      "sourceEntityId",
+    ])
+    || ![input.itemEntryId, input.rootActionId, input.sourceEntityId].every(isNonEmptyString)
+    || !isRecord(input.parameters)) {
+    return rejected("invalidRulesInput", "Item activity input is not canonical.");
+  }
+  const entry = state.campaignRuntime.itemSystem.entries[String(input.itemEntryId)];
+  const definition = entry === undefined
+    ? undefined
+    : state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
+  const use = definition?.content.use;
+  if (entry === undefined || use === null || use === undefined) {
+    return rejected("privateOrUnknownReference", "The selected item activity is unavailable.");
+  }
+  return invokeAbility(profiles, state, {
+    kind: "invokeAbility",
+    rootActionId: input.rootActionId,
+    sourceEntityId: input.sourceEntityId,
+    abilityRef: itemEntryUseAbilityId(use.abilityRef, entry.entryId),
+    parameters: structuredClone(input.parameters),
+  });
+}
+
 type EnvironmentalStuntActivation =
   | { kind: "attack" }
   | {
@@ -2810,9 +3271,9 @@ function environmentalStuntActivation(input: JsonRecord): EnvironmentalStuntActi
   return structuredClone(input.activation) as EnvironmentalStuntActivation;
 }
 
-function exactEnvironmentV4Manifest(profiles: RuntimeProfileManifest): boolean {
-  return profiles.manifest.profileId === ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE.profileId
-    && profiles.manifest.profileHash === ENVIRONMENT_V4_RUNTIME_MANIFEST_PROFILE.profileHash;
+function exactEnvironmentV5Manifest(profiles: RuntimeProfileManifest): boolean {
+  return profiles.manifest.profileId === ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE.profileId
+    && profiles.manifest.profileHash === ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE.profileHash;
 }
 
 function environmentalActionSourcePatch(
@@ -2823,7 +3284,7 @@ function environmentalActionSourcePatch(
   definition: JsonRecord,
   abilityRef: string,
 ): JsonRecord | undefined {
-  const transientNoncombatGrant = exactEnvironmentV4Manifest(profiles)
+  const transientNoncombatGrant = exactEnvironmentV5Manifest(profiles)
     && activeEncounter(state, sourceEntityId) === undefined;
   const grantSource = transientNoncombatGrant ? structuredClone(source) : source;
   if (transientNoncombatGrant) delete grantSource.turn;
@@ -2864,13 +3325,13 @@ function specializedEnvironmentProgram(
   input: JsonRecord,
 ): CausalActionProgram | undefined {
   if (!causalActionInterpreterEnabled(profiles.extensions)
-    || input.actionPlanVersion !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
+    || input.actionLanguageRef !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
     || input.actionLanguageHash !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash
     || !validateSpecializedEnvironmentalCausalActionProgram(input.causalActionProgram)) {
     return undefined;
   }
   const program = input.causalActionProgram;
-  return input.actionPlanVersion === program.languageRef
+  return input.actionLanguageRef === program.languageRef
     && input.actionLanguageHash === program.languageHash
     ? program
     : undefined;
@@ -2961,7 +3422,7 @@ function invokeEnvironmentalStunt(
     "kind",
     "rootActionId",
   ], [
-    "abilityRef", "actionLanguageHash", "actionPlanVersion", "activation",
+    "abilityRef", "actionLanguageHash", "actionLanguageRef", "activation",
     "causalActionProgram", "materialization", "resourceCost",
   ])
     || input.kind !== "invokeEnvironmentalStunt"
@@ -2990,27 +3451,18 @@ function invokeEnvironmentalStunt(
   if (actor === undefined || source === undefined || source.lifeState === "dead") {
     return rejected("privateOrUnknownReference", "The environmental stunt source is unavailable.");
   }
-  const v3Environment = environmentProfileEnabled(profiles.extensions, ENVIRONMENT_PROFILE);
-  const program = v3Environment ? specializedEnvironmentProgram(profiles, input) : undefined;
-  if ((v3Environment && program === undefined)
-    || (!v3Environment && [
-      input.actionLanguageHash,
-      input.actionPlanVersion,
-      input.causalActionProgram,
-    ].some((value) => value !== undefined))) {
+  const program = specializedEnvironmentProgram(profiles, input);
+  if (program === undefined) {
     return rejected("invalidRulesInput", "The environmental stunt causal program is unavailable.");
   }
-  if (program !== undefined && (
+  if (
     !environmentProgramBasisAvailable(state, actor, program, String(input.featureId))
     || !environmentProgramMatchesInvocation(program, input)
-  )) {
+  ) {
     return rejected(
       "privateOrUnknownReference",
       "The environmental stunt causal basis or frozen invocation is unavailable.",
     );
-  }
-  if (input.resourceCost !== undefined && !v3Environment) {
-    return rejected("invalidRulesInput", "This environment profile does not accept a resource cost.");
   }
   let resourceDraft: Draft | undefined;
   if (input.resourceCost !== undefined) {
@@ -3042,9 +3494,7 @@ function invokeEnvironmentalStunt(
   const existing = profiledEnvironmentFeature(state, actorCharacterId, String(input.featureId));
   const anyExisting = currentTacticalFeature(state, actorCharacterId, String(input.featureId));
   let feature = existing;
-  const prefix: Draft[] = program === undefined
-    ? []
-    : [environmentProgramMarkerDraft(actor, root, program)];
+  const prefix: Draft[] = [environmentProgramMarkerDraft(actor, root, program)];
   if (existing === undefined) {
     if (anyExisting !== undefined) {
       return rejected(
@@ -3073,26 +3523,21 @@ function invokeEnvironmentalStunt(
       || !hasExactKeys(input.materialization, ["featureDefinition"])) {
       return rejected("invalidRulesInput", "Environment materialization is not canonical.");
     }
-    if (v3Environment && program === undefined) {
-      return rejected("invalidRulesInput", "Environment materialization lacks its causal program.");
+    let expectedFeatureDefinition;
+    try {
+      expectedFeatureDefinition = buildCustomEnvironmentFeatureDefinition(
+        customEnvironmentDefinitionInputFromDraft({
+          draft: program.nodes[0]!.arguments,
+          featureId: String(input.featureId),
+          sceneId: actor.sceneId,
+        }),
+      );
+    } catch {
+      return rejected("invalidRulesInput", "Environment materialization does not match its causal program.");
     }
-    if (program !== undefined) {
-      let expectedFeatureDefinition;
-      try {
-        expectedFeatureDefinition = buildCustomEnvironmentFeatureDefinition(
-          customEnvironmentDefinitionInputFromDraft({
-            draft: program.nodes[0]!.arguments,
-            featureId: String(input.featureId),
-            sceneId: actor.sceneId,
-          }),
-        );
-      } catch {
-        return rejected("invalidRulesInput", "Environment materialization does not match its causal program.");
-      }
-      if (canonicalSha256(expectedFeatureDefinition)
-        !== canonicalSha256(input.materialization.featureDefinition)) {
-        return rejected("invalidRulesInput", "Environment materialization does not match its causal program.");
-      }
+    if (canonicalSha256(expectedFeatureDefinition)
+      !== canonicalSha256(input.materialization.featureDefinition)) {
+      return rejected("invalidRulesInput", "Environment materialization does not match its causal program.");
     }
     const compiledEnvironment = compileEnvironmentFeature(input.materialization.featureDefinition);
     if (!compiledEnvironment.ok
@@ -3114,10 +3559,8 @@ function invokeEnvironmentalStunt(
         featureDefinitionHash: materializedFeature.environment.featureDefinitionHash,
         compiledHash: materializedFeature.environment.compiledHash,
         feature: structuredClone(materializedFeature),
-        ...(program === undefined ? {} : {
-          causalProgramFactRef: causalProgramFactRef(root, program.semanticHash),
-          causalProgramHash: program.semanticHash,
-        }),
+        causalProgramFactRef: causalProgramFactRef(root, program.semanticHash),
+        causalProgramHash: program.semanticHash,
       },
       visibilityPolicyId: "visibility:room-authority-only",
       secrecy: "internal",
@@ -3128,9 +3571,7 @@ function invokeEnvironmentalStunt(
 
   if (feature === undefined
     || feature.environment === undefined
-    || feature.stateGraph === undefined
-    || (!v3Environment
-      && feature.state !== feature.environment.featureDefinition.initialState)) {
+    || feature.stateGraph === undefined) {
     return rejected("worldLawViolation", "The environmental stunt cannot trigger from this feature state.");
   }
   if (!environmentProfileEnabled(profiles.extensions, feature.environment.profile)) {
@@ -3302,7 +3743,7 @@ function invokeEnvironmentalStunt(
   if (sourcePatch === undefined) {
     return rejected("invalidRulesInput", "The environmental stunt action grant is unavailable.");
   }
-  const spent = spendCosts(sourcePatch, definition);
+  const spent = spendCosts(state, actorCharacterId, sourcePatch, definition);
   if (spent === undefined) {
     return rejected("insufficientResource", "The environmental stunt resource is unavailable.");
   }
@@ -3433,7 +3874,7 @@ function invokeEnvironmentAbility(
   if (sourcePatch === undefined) {
     return rejected("invalidRulesInput", "The attack action grant is unavailable.");
   }
-  const spent = spendCosts(sourcePatch, definition);
+  const spent = spendCosts(state, actorCharacterId, sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
 
   const graph = structuredClone(feature.stateGraph);
@@ -3615,7 +4056,7 @@ function resolveEnvironmentAbilityRandomness(
     fromState: operation.fromState,
     toState,
   };
-  const drafts = resourceAndInvocationDrafts(operation, mechanicalResult).map((draft) =>
+  const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult).map((draft) =>
     draft.eventType === "AbilityInvoked"
       ? {
           ...draft,
@@ -4165,7 +4606,11 @@ function resolveEnvironmentHazardRandomness(
   );
 }
 
-function resourceAndInvocationDrafts(operation: JsonRecord, mechanicalResult: JsonRecord): Draft[] {
+function resourceAndInvocationDrafts(
+  state: AuthoritativeWorldState,
+  operation: JsonRecord,
+  mechanicalResult: JsonRecord,
+): Draft[] {
   if (!isRecord(operation.sourcePatch) || !Array.isArray(operation.spent)
     || !isNonEmptyString(operation.sourceEntityId) || !isNonEmptyString(operation.abilityRef)) {
     throw new TypeError("combat resolution source is malformed");
@@ -4173,13 +4618,12 @@ function resourceAndInvocationDrafts(operation: JsonRecord, mechanicalResult: Js
   const drafts: Draft[] = [];
   if (operation.costsCommitted !== true) {
     for (const cost of operation.spent) {
-      if (!isRecord(cost)) throw new TypeError("combat resource cost is malformed");
-      drafts.push({ eventType: "ResourceSpent", payload: {
-        entityId: operation.sourceEntityId,
-        resourceId: cost.resourceId,
-        amount: cost.amount,
-        resourceAfter: cost.after,
-      } });
+      drafts.push(spentCostDraft(
+        state,
+        operation.sourceEntityId,
+        operation.abilityRef,
+        cost,
+      ));
     }
   }
   if (operation.invocationCommitted !== true) {
@@ -4383,7 +4827,7 @@ function resolveMedicineStabilization(
       succeeded,
     },
   };
-  const drafts = resourceAndInvocationDrafts(operation, mechanicalResult);
+  const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
   if (!succeeded) {
     return sequence(
       "committed",
@@ -4911,20 +5355,17 @@ function beginSpellFrame(
   state: AuthoritativeWorldState,
   frame: JsonRecord,
   sourcePatch: JsonRecord,
-  spent: Array<{ resourceId: string; amount: number; after: string }>,
+  spent: SpentCost[],
   prefix: Draft[] = [],
 ): StepResult {
   const drafts: Draft[] = [
     ...prefix,
-    ...spent.map((cost): Draft => ({
-      eventType: "ResourceSpent",
-      payload: {
-        entityId: frame.sourceEntityId,
-        resourceId: cost.resourceId,
-        amount: cost.amount,
-        resourceAfter: cost.after,
-      },
-    })),
+    ...spent.map((cost): Draft => spentCostDraft(
+      state,
+      String(frame.sourceEntityId),
+      String(frame.abilityRef),
+      cost,
+    )),
     {
       eventType: "SpellCastingStarted",
       payload: { cast: spellCastSummary(frame), sourcePatch: structuredClone(sourcePatch) },
@@ -5348,7 +5789,7 @@ function resolveCombatAbilityRandomness(
       winnerEntityId,
       tieWinnerEntityId: targetId,
     } };
-    const drafts = resourceAndInvocationDrafts(operation, mechanicalResult);
+    const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
     if (winnerEntityId === operation.sourceEntityId) {
       drafts.push({ eventType: "ConditionChanged", payload: {
         entityId: targetId,
@@ -5389,7 +5830,7 @@ function resolveCombatAbilityRandomness(
     const before = Number(target.hitPoints.current);
     const after = Math.min(Number(target.hitPoints.maximum), before + amount);
     const mechanicalResult = { healing: { rolled: amount, applied: after - before, before, after } };
-    const drafts = resourceAndInvocationDrafts(operation, mechanicalResult);
+    const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
     if (after > before) drafts.push(...interruptStableRecoveryDrafts(
       state,
       entityId(target),
@@ -5413,7 +5854,7 @@ function resolveCombatAbilityRandomness(
     const before = Number(target.hitPoints.temporary ?? 0);
     const after = Math.max(before, amount);
     const mechanicalResult = { temporaryHitPoints: { rolled: amount, before, after } };
-    const drafts = resourceAndInvocationDrafts(operation, mechanicalResult);
+    const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
     drafts.push({
       eventType: "TemporaryHitPointsGranted",
       payload: {
@@ -5436,7 +5877,7 @@ function resolveCombatAbilityRandomness(
   const definition = operation.definition;
   const targetIds = operation.targetEntityIds.filter(isNonEmptyString);
   const mechanicalResult = isRecord(operation.mechanical) ? structuredClone(operation.mechanical) : {};
-  const drafts = resourceAndInvocationDrafts(operation, mechanicalResult);
+  const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
   let attackHit = true;
   if (isRecord(mechanicalResult.attack)) {
     if (operation.attackAlreadyResolved === true) {
@@ -5977,7 +6418,7 @@ function readyAction(
   if (activationKind(definition) !== "actionSpell") {
     return rejected("invalidRulesInput", "Only a spell with a casting time of one action can be readied.");
   }
-  const spent = spendCosts(sourcePatch, definition);
+  const spent = spendCosts(state, entityId(source), sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "The readied spell slot is unavailable.");
   ready.spellAlreadyCast = true;
   const responseParameters = isRecord(input.response.parameters) ? input.response.parameters : {};
@@ -7662,14 +8103,16 @@ function combatInputTimelineId(
 }
 
 function longSpellCompletionCosts(
+  state: AuthoritativeWorldState,
+  sourceEntityId: string,
   sourcePatch: JsonRecord,
   definition: JsonRecord,
   ritual: boolean,
-): Array<{ resourceId: string; amount: number; after: string }> | undefined {
+): SpentCost[] | undefined {
   const costs = Array.isArray(definition.costs)
     ? definition.costs.filter((cost) => !ritual || !isRecord(cost) || cost.kind !== "spellSlot")
     : [];
-  return spendCosts(sourcePatch, { ...definition, costs });
+  return spendCosts(state, sourceEntityId, sourcePatch, { ...definition, costs });
 }
 
 function settleDueLongSpellBeforeInput(
@@ -7717,7 +8160,13 @@ function settleDueLongSpellBeforeInput(
   const sourcePatch = structuredClone(source);
   sourcePatch.concentration = null;
   const ritual = completion.ritual === true;
-  const spent = longSpellCompletionCosts(sourcePatch, completion.definition, ritual);
+  const spent = longSpellCompletionCosts(
+    state,
+    String(due.characterId),
+    sourcePatch,
+    completion.definition,
+    ritual,
+  );
   if (spent === undefined) {
     return rejected("insufficientResource", "Long-spell completion costs are unavailable.");
   }
@@ -7837,6 +8286,7 @@ export function stepCombatWorld(
     case "changeEncounterHostility": return changeEncounterHostility(profiles, state, input);
     case "authoritativeRandomness": return fulfillRandomness(profiles, state, input);
     case "invokeAbility": return invokeAbility(profiles, state, input);
+    case "invokeItemActivity": return invokeItemActivity(profiles, state, input);
     case "invokeEnvironmentAbility": return invokeEnvironmentAbility(profiles, state, input);
     case "invokeEnvironmentalStunt": return invokeEnvironmentalStunt(profiles, state, input);
     case "continueLongSpellcasting": return continueLongSpellcasting(profiles, state, input);

@@ -2,7 +2,7 @@ export const AUTHORITATIVE_KP_MODEL = "deepseek-v4-flash" as const;
 export const ALTERNATIVE_AUTHORITATIVE_KP_MODEL = "deepseek-v4-pro" as const;
 export const DEFAULT_KP_MODEL = AUTHORITATIVE_KP_MODEL;
 
-/** Public model catalog. Server-only compatibility profiles live in authoritative-policy.ts. */
+/** Product 0.4's complete public KP model catalog. */
 export const AUTHORITATIVE_KP_MODELS = [
   {
     id: AUTHORITATIVE_KP_MODEL,
@@ -18,12 +18,9 @@ export const AUTHORITATIVE_KP_MODELS = [
   },
 ] as const;
 
-// Legacy rooms use the same two public ids through their legacy adapter.
-export const LEGACY_KP_MODELS = AUTHORITATIVE_KP_MODELS;
 export const KP_MODELS = AUTHORITATIVE_KP_MODELS;
 
 export type AuthoritativeKpModelId = (typeof AUTHORITATIVE_KP_MODELS)[number]["id"];
-export type LegacyKpModelId = AuthoritativeKpModelId;
 export type KpModelId = AuthoritativeKpModelId;
 
 export function isKpModelId(value: unknown): value is KpModelId {
@@ -40,8 +37,4 @@ export function kpModelById(id: unknown) {
 
 export function isAuthoritativeKpModel(value: unknown): value is AuthoritativeKpModelId {
   return AUTHORITATIVE_KP_MODELS.some((model) => model.id === value);
-}
-
-export function isLegacyKpModel(value: unknown): value is LegacyKpModelId {
-  return LEGACY_KP_MODELS.some((model) => model.id === value);
 }

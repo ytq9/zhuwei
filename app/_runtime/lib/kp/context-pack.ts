@@ -26,11 +26,16 @@ export type RequiredContext = Readonly<{
     hp: ContextValue;
     resources: ContextValue;
     conditions: ContextValue;
+    loadout?: ContextValue;
+    inventory: ContextValue;
   }>;
   npcViews: readonly Readonly<{
     npcRef: string;
     knowledgeRefs: readonly string[];
     planRefs: readonly string[];
+    socialCapabilities?: ContextRecord;
+    loadout?: ContextRecord;
+    inventory?: ContextRecord;
     /** Bounded content from that NPC's own Rules projection. This is not KP
      * omniscience and must never be filled from static Story Bible retrieval. */
     knowledge?: readonly ContextRecord[];

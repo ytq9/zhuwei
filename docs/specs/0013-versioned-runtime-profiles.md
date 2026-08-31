@@ -75,7 +75,7 @@ type RuntimeProfileManifest = {
 | Runtime manifest | `runtime-srd51-2014-authoritative-environment-v5` | 固定 0.4 的全部 Profile 引用与扩展闭包 |
 | Ruleset | `dnd5e-2014-srd5.1-authoritative-v2` | 2014 规则语义、公共 Interface 与解释器选择 |
 | Event schema | `room-world-events-v2-npc-items-v1` | 事件 envelope、类型版本、完整性、NPC/物品与分支字段 |
-| Ability compiler | `ability-srd51-2014-v1` | `AbilityDefinition` 到受限 `MechanicOp` 图 |
+| Ability compiler | `ability-srd51-2014-v2` | `AbilityDefinition` 到受限 `MechanicOp` 图 |
 | Battlefield geometry | `geometry-2d-feet-2014-v1` | 二维水平空间、独立高度及全部空间算法 |
 | Trigger ordering | `trigger-initiative-order-2014-v1` | 同一因果点的合资格冻结与确定排序 |
 | Fiction/combat time | `combat-round-six-seconds-2014-v1` | 分支虚构时间、Activity、六秒轮与相位转换 |
@@ -84,7 +84,9 @@ type RuntimeProfileManifest = {
 
 `ruleset_version` 保存 Ruleset `profileId`，用于目录层 fail-closed 路由；它不是第二份版本事实。任何执行或回放仍必须取得完整 manifest 和所有 hash。
 
-0.4 当前完整 manifest hash 为 `sha256:93b7cb93e07a0311f181b2001214af4366b4e93fecfb7b2bf417a52e8d074b71`；事件 schema hash 为 `sha256:db98e3812f60c3818f162bdc9f1322bb7d0c75943a3bf724bcdf89d8b1fb52e2`；Projection Policy `projection-observer-safe-v1` hash 为 `sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91`；当前模组引用 `module:black-oak-will:social-resolution-v1` hash 为 `sha256:93c6ffe40f7db7e8661b189774dc8b5017a74434635c11d16a6336334622c618`。KP 工作流精确绑定 `authoritative-kp-private-form-narrow-tools-workflow-v1`，其 Proposal protocol hash 为 `fnv1a64:8754253b2593e263`、workflow hash 为 `fnv1a64:076a3f9a1e2e2330`。这些 v1/v2/v3/v5 名称分别描述协议自身，不等于产品 V3 或应用 0.4。
+0.4 当前完整 manifest hash 为 `sha256:31dee484a8dac893c87758ec5999aa65adbdd4fd571c8baea2e760bbba9fcbc9`；Ruleset hash 为 `sha256:bc22610d7a75d9f14ec5a0f2905f3bebcd080d6b66acb180179b50ec42018c78`；事件 schema hash 为 `sha256:1d1d82768da015c40fc15bf5303259ad8a64084aaa6c04637ba913be9d18686a`。Ability Compiler `ability-srd51-2014-v2` hash 为 `sha256:08d7d7e27f001d16543a7fa3edb4328af4fb38be506b35938da169a1ad07eff5`；Item System、Standard Gear 与 NPC Mechanical Definition 的 hash 分别为 `sha256:3617527d10a13c6df79475756851c8de72498307574ff2b1fa8be833e59bfb71`、`sha256:96be7de4760e9f0f0a9da46c795e96f65cae74e58efc2beb83e1c59e94b791b9`、`sha256:6e3ebb6456b8db2e909648378131a249050cfc33da31f2d3ed7f24a654693b88`；Causal Action Interpreter hash 为 `sha256:e9ec9883c0e9028ac98d1c19a0c0734420540fde9e5de137697cf5ba72bf3155`。
+
+KP 闭包精确绑定 Form catalog `kp-private-form-catalog-v4` / `sha256:4151291dcdc0744f45dc45a21945a3c1a0ba629811b6de874b8bb96be5898367`、Causal language `causal-action-program-v4` / `fnv1a64:3c726c21c3f7f12d`、Proposal protocol `authoritative-kp-private-form-narrow-tools-v2` / `fnv1a64:bc78545dae1b00cd` 与 workflow `authoritative-kp-private-form-narrow-tools-workflow-v2` / `fnv1a64:11301995746661da`。Projection Policy `projection-observer-safe-v1` hash 为 `sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91`；当前模组引用 `module:black-oak-will:social-resolution-v1` hash 为 `sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272`。这些 v1/v2/v4/v5 名称分别描述协议自身，不等于产品 V3 或应用 0.4。
 
 ### 2.2 规范化与哈希
 
@@ -115,7 +117,7 @@ Rules Module 内部 Registry 以完整 `(profileId, profileHash)` 查找 Adapter
 
 测试可以构造错误 ID/hash 证明精确拒绝，但不得把合成或退役 manifest 注入 production Registry。未来加入第二个 manifest 前，必须先明确裁定 0.4 房间的保留、迁移或退役策略；当前不预留兼容分支。
 
-0.4 重置 migration 会在实际执行时清空迁移前的房间目录、成员、角色和权威归档，因此当前部署不以迁移旧引用为前提。该 migration 尚未获得远端执行授权；源码中的退役决定不应被误报为远端数据已经删除。
+0.4 不提供旧房兼容或重置 migration，也不清空既有 D1 行。当前路由只接受精确的 0.4 完整绑定；仍存在的旧目录行显式退役并只允许房主删除，不能被新解释器打开。源码中的退役决定不得被误报为远端数据已经删除。
 
 ## 3. Genesis、事件与 EventSchema Profile
 
@@ -163,13 +165,13 @@ Genesis 创建后不可改写。Room DO 的缓存行可以另存当前 manifest 
 
 `replay` 先验证 genesis，再逐项验证连续 envelope、hash 链、ProfileRef、分支图和状态 hash。回放只折叠已提交事件，不执行编译器、不重新选目标、不重新计算 NPC 决策、不重新掷骰。
 
-前 0.4 房间不迁移，当前产品也不恢复它们；重置 migration 直接删除其目录与归档。若未来对 0.4 之后的某个版本批准确定性迁移，仍必须先新增明确产品决定，再用旧 Profile 可解释的 `RuntimeEpochMigrated` 关闭旧 epoch，并追加新 epoch genesis、迁移 ProfileRef、源/目标状态 hash、逐作用域映射与回滚说明。没有该决定与完整映射时显式拒绝，不能由新 Adapter 猜测解释旧事件。
+前 0.4 房间不迁移，当前产品也不恢复或自动删除它们；目录与归档可以保留在 D1，但不会进入当前解释器。若未来对 0.4 之后的某个版本批准确定性迁移，仍必须先新增明确产品决定，再用旧 Profile 可解释的 `RuntimeEpochMigrated` 关闭旧 epoch，并追加新 epoch genesis、迁移 ProfileRef、源/目标状态 hash、逐作用域映射与回滚说明。没有该决定与完整映射时显式拒绝，不能由新 Adapter 猜测解释旧事件。
 
 ## 4. AbilityDefinition 与受限 MechanicOp Compiler Profile
 
 ### 4.1 AbilityDefinition
 
-`ability-srd51-2014-v1` 统一编译武器、法术、职业特性、怪物动作、物件能力和环境危险。规范定义至少包含：
+`ability-srd51-2014-v2` 统一编译武器、法术、职业特性、怪物动作、物品能力和环境危险。规范定义至少包含：
 
 - 稳定 definition id、revision、来源和 `rulesBasis`；
 - 使用者/控制权要求、合法时点与 activation；
@@ -202,7 +204,7 @@ Genesis 创建后不可改写。Room DO 的缓存行可以另存当前 manifest 
 | Damage/Recovery | 伤害包、治疗、临时 HP、稳定和已定义死亡管线输入 | 直接改 HP 字段或跳过触发闭包 |
 | Effect | 建立/终止 Effect、专注、状态和重复豁免 | 任意 tag 脚本或未注册规则回调 |
 | Spatial | 路径移动、强制移动、传送、坠落和区域放置 | 调用者提交区域受影响者集合 |
-| Artifact/Resource | 取得、转移、消耗、损坏和恢复已定义对象 | 任意库存 patch 或 D1 同步作为提交 |
+| Item/Resource | 取得、转移、消耗、损坏和恢复已定义物品与资源 | 任意库存 patch 或 D1 同步作为提交 |
 | Entity/Encounter | 从已注册定义实体化、加入/离开遭遇、改变已提交敌对关系 | 自动创造战术目标或自动接受投降 |
 | Activity/Time | 开始、中断、完成 Activity 或建立到期任务 | 现实超时推进、未完成先落效果 |
 | Evidence/Knowledge | 引用已固化证据产生有来源知识事件 | 把角色推断提升为隐藏真相 |
@@ -502,7 +504,7 @@ Ruleset 与 Compiler conformance 必须同时拒绝：
 - 理由：版本名不能证明内容未漂移，latest 会静默改历史；完整闭包同时约束规则、事件、定义、空间、排序和时间。
 - 玩家可观察行为：0.4 新房稳定使用同一套距离、资源、骰面、窗口与到期规则；前 0.4 房间显示为已退役并可由房主删除，不能继续游玩或被换规则打开。
 - 秘密与权限影响：ProfileRef 可公开，规范目录不包含模组真相、Prompt 或私人状态；客户端不能选择房间解释器。
-- 迁移/可逆性：前 0.4 房间和归档由一次性重置 migration 删除，不提供数据级回滚；Git 历史仅保留源码审计。未来版本兼容需要新决定，不能原地覆盖当前 manifest。
+- 迁移/可逆性：前 0.4 房间和归档不转换、不恢复且不由本次修改删除；不提供兼容层或重置 migration。Git 历史仅保留源码审计；未来版本兼容或数据清理需要新决定，不能原地覆盖当前 manifest。
 - 验收场景：P01–P08、A07、F08、`SPEC 0002` B52。
 - 测试证据：`tests/runtime-profiles-v2.test.mjs` 已改为覆盖 0.4 精确初始化、回放、投影、错 hash/退役 manifest 拒绝、事件 envelope 完整性与 2024 护栏；实际通过数只在对应源码状态运行后回填。
 
@@ -513,13 +515,13 @@ Ruleset 与 Compiler conformance 必须同时拒绝：
 - 来源类别：Goal 动态定义/单一机械权威 + `SPEC 0001` §8 + `SPEC 0006/0012` + Agent 自主机械裁定。
 - 关联 `SPEC 0001`：§5 玩家行动、§7 骰前固化、§8 动态敌人/危险、§14 NPC 权限；验收 A、D、G、K。
 - 候选方案：任意脚本/状态 patch；只允许预写白名单；结构化 AbilityDefinition 编译为私有有限 op 图。
-- 最终选择：版本化 `ability-srd51-2014-v1`；调用者只交定义提案/AbilityRef，Compiler 生成并持久化受限图和 hash。
+- 最终选择：版本化 `ability-srd51-2014-v2`；调用者只交定义提案/AbilityRef，Compiler 生成并持久化受限图和 hash。
 - 理由：同时支持开放动态内容、确定回放和机械安全；不把 AbilityRef 退化成玩家行动白名单。
 - 玩家可观察行为：合理新能力可被验证和使用；非法项明确要求 KP 修订；系统不因危险强而自动削弱，也不替控制者选目标。
 - 秘密与权限影响：MechanicOp、隐藏定义和诊断细节只在 Rules/KP Viewer；普通调用者不能提交 op 或探测秘密候选。
 - 迁移/可逆性：前 0.4 DSL 不再进入产品；新增 op 家族必须新 Compiler/Ruleset/EventSchema，并先裁定当时现役房间策略。当前房已注册定义继续使用事件内图。
 - 验收场景：A01–A09、`SPEC 0002` B41–B43/B52、`SPEC 0012` B11–B22。
-- 测试证据：`tests/ability-profile-v2.test.mjs` 当前 8/8 覆盖 A01–A05/A07–A09 的 canonical 编译、诊断、冻结图与私有 op 拒绝；A06 的运行时多目标集合在 `tests/combat-mechanics-v2.test.mjs`，`tests/rules-compound-action-v2.test.mjs` 另补动态定义经 Room/Rules 使用的定向证据。冻结全量门仍待执行。
+- 测试证据：`tests/ability-profile-v2.test.mjs` 当前 10/10 覆盖 A01–A05/A07–A11 的 canonical 编译、诊断、冻结图、Item op 与旧 Artifact op 拒绝；A06 的运行时多目标集合在 `tests/combat-mechanics-v2.test.mjs`，`tests/causal-action-rules-v3.test.mjs` 另补动态定义经当前 Causal/Rules 入口使用的定向证据。冻结全量门仍待执行。
 
 ### RTP-D003：整数英寸二维+高度 Geometry
 
@@ -534,7 +536,7 @@ Ruleset 与 Compiler conformance 必须同时拒绝：
 - 秘密与权限影响：完整坐标、隐藏屏障和实际区域集合经 `project`；玩家错误不能证明隐藏目标或机关存在。
 - 迁移/可逆性：前 0.4 零距离/距离段状态不猜坐标并显式拒绝。改变精度、采样、欧氏或 voxel 算法必须新 Geometry hash，并先裁定当前房间策略。
 - 验收场景：G01–G15、`SPEC 0002/0012` B08–B10/B39。
-- 测试证据：`tests/combat-mechanics-v2.test.mjs`、`tests/rules-compound-action-v2.test.mjs` 与 `tests/privacy-bypass-v2.test.mjs` 已从公开 `step/project/replay` 建立 G01–G15 的范围、占位、区域、连续移动和 Viewer 安全错误证据；冻结全量门仍待执行。
+- 测试证据：`tests/combat-mechanics-v2.test.mjs`、`tests/chandelier-environment-rules-v3.test.mjs` 与 `tests/privacy-bypass-v2.test.mjs` 已从公开 `step/project/replay` 建立 G01–G15 的范围、占位、区域、连续移动和 Viewer 安全错误证据；冻结全量门仍待执行。
 
 ### RTP-D004：冻结全集后的确定 Trigger 排序
 
@@ -579,8 +581,8 @@ Ruleset 与 Compiler conformance 必须同时拒绝：
 | Fiction/combat time | `app/_runtime/lib/rules/profiles/fiction-time.ts`、`app/_runtime/lib/rules/v2/timeline.ts`、`app/_runtime/lib/rules/v2/campaign-actions.ts`、`app/_runtime/lib/rules/v2/combat-actions.ts` | F01–F09、Activity/canonical due root/分支/相位测试 |
 | Genesis、Receipt 与权威事件提交 | `app/_runtime/lib/room/durable-object.ts` | 原子固定 manifest、拒绝调用者覆盖、严格核对 canonical due-root randomness journal 后重启恢复 |
 | Room Action 与可信 Adapter | `app/_runtime/lib/room/action.ts`、`app/_runtime/lib/room/server.ts`、`app/_runtime/lib/table/server.ts#getRoomManagement` | 只提交 intent/answer/提案，不提交 Profile/op/骰面；房主管理 Read Model 显式返回目录 `ruleset_version`，服务端按精确版本路由而不按模型/字段猜测 |
-| D1 目录、当前归档与 0.4 重置 | `db/schema.ts`、`drizzle/0012_fluffy_hulk.sql`、`drizzle/0013_reset_pre_0_4_rooms.sql`、`drizzle/0014_private_form_tools.sql` | 删除旧状态表；迁移执行时清空前 0.4 房间/归档；最后固定窄工具模型 Profile 默认值；以后只保存当前可重建 ProfileRef/归档，不保存第二份活跃解释器状态 |
-| Interface 行为测试 | `tests/runtime-profiles-v2.test.mjs`、`tests/ability-profile-v2.test.mjs`、`tests/combat-mechanics-v2.test.mjs`、`tests/rules-compound-action-v2.test.mjs`、`tests/privacy-bypass-v2.test.mjs`、`tests/runtime-trigger-time-v2.test.mjs` | 本规格 P/A/G/T/F 全向量映射 |
+| D1 目录与当前归档边界 | `db/schema.ts`、`app/_runtime/lib/table/server.ts#createRoom` | schema 源不再声明旧状态表；不生成 0.4 重置 migration；新房显式写入当前 Ruleset、KP Profile 与 workflow；既有旧行显式拒绝且不保存第二份活跃解释器状态 |
+| Interface 行为测试 | `tests/runtime-profiles-v2.test.mjs`、`tests/ability-profile-v2.test.mjs`、`tests/combat-mechanics-v2.test.mjs`、`tests/causal-action-rules-v3.test.mjs`、`tests/chandelier-environment-rules-v3.test.mjs`、`tests/privacy-bypass-v2.test.mjs`、`tests/runtime-trigger-time-v2.test.mjs` | 本规格 P/A/G/T/F 全向量映射 |
 
 Rules 包入口仍只允许 `step/project/replay`。Profile Registry、Compiler、Geometry helpers、Trigger queue、fold、MechanicOp、时间换算和 hash 实现均是内部 Implementation，不成为第四条生产或测试路径。
 
@@ -643,5 +645,5 @@ Rules 包入口仍只允许 `step/project/replay`。Profile Registry、Compiler�
 - Time 的现实等待、六秒轮、Activity、分支因果和战斗相位转换确定且不自动替玩家行动；
 - 2014 护栏测试证明禁用的 2024/5.5e 行为全部被拒绝；
 - 包入口未导出 Profile helpers、Compiler、MechanicOp、Geometry、Trigger queue、fold/applyEvents 或生产骰源；
-- 0.4 重置 migration 经本地最小迁移与写入—读取闭环证明，远端未执行时不得写成远端数据已删除；
+- 0.4 新房的显式完整绑定经写入—读取闭环证明，旧行拒绝与房主删除分别验证；不得写成远端旧数据已迁移或删除；
 - 实现证据回填总追踪矩阵、决策登记和 refactor log；未运行项不得写成已验证。

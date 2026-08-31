@@ -10,7 +10,7 @@ import {
   ACTOR_PLAN_DECISION_TOOL_NAME,
   validateActorPlanDecisionOutput,
 } from "../app/_runtime/lib/kp/actor-plan-policy.ts";
-import { V3_AUTHORITATIVE_KP_PROFILES } from "../app/_runtime/lib/kp/authoritative-policy.ts";
+import { AUTHORITATIVE_KP_PROFILES } from "../app/_runtime/lib/kp/authoritative-policy.ts";
 import { handleRoomAction } from "../app/_runtime/lib/room/action.ts";
 
 const ROOT_ACTION_ID = "root-action:due-plan-v3";
@@ -85,7 +85,7 @@ function toolResponse(value) {
     id: "model-response:due-actor-plan-v3",
     object: "chat.completion",
     created: 1_788_000_000,
-    model: V3_AUTHORITATIVE_KP_PROFILES[0].modelId,
+    model: AUTHORITATIVE_KP_PROFILES[0].modelId,
     choices: [{
       index: 0,
       finish_reason: "tool_calls",
@@ -124,11 +124,23 @@ function executeDecision() {
   };
 }
 
+function schemaOperations(schema, definitions) {
+  if (schema.$ref) {
+    const name = schema.$ref.split("/").at(-1);
+    return schemaOperations(definitions[name], definitions);
+  }
+  if (Array.isArray(schema.anyOf)) {
+    return schema.anyOf.flatMap((variant) => schemaOperations(variant, definitions));
+  }
+  const operation = schema.properties?.operation;
+  return operation?.enum ?? (operation?.const === undefined ? [] : [operation.const]);
+}
+
 test("V3 due ActorPlan uses an isolated finite-NPC tool boundary without Form/Context", async () => {
   const calls = [];
   let contextPreparationCalls = 0;
   const adapter = createAuthoritativeKpAdapter({
-    profile: V3_AUTHORITATIVE_KP_PROFILES[0],
+    profile: AUTHORITATIVE_KP_PROFILES[0],
     prepareV3Context: async () => {
       contextPreparationCalls += 1;
       throw new Error("due ActorPlan must not prepare player Form context");
@@ -182,13 +194,19 @@ test("due ActorPlan schema and validator cover four exact lifecycle variants", (
   assert.ok(parameters.anyOf.every((variant) => variant.additionalProperties === false));
   const executeVariant = parameters.anyOf.find((variant) =>
     variant.properties.decision.const === "execute");
-  const proposalSchemas = executeVariant.properties.mechanicalProposal.anyOf[1].anyOf;
-  const npcOperations = proposalSchemas.flatMap((schemaRef) => {
-    const name = schemaRef.$ref.split("/").at(-1);
-    const operation = parameters.$def[name].properties.operation;
-    return operation.enum ?? [operation.const];
-  });
+  const npcOperations = schemaOperations(
+    executeVariant.properties.mechanicalProposal.anyOf[1],
+    parameters.$def,
+  );
   assert.equal(npcOperations.includes("advanceCampaignLifecycle"), false);
+  assert.throws(() => validateActorPlanDecisionOutput({
+    decision: "execute",
+    planId: PLAN_ID,
+    mechanicalProposal: {
+      operation: "advanceCampaignLifecycle",
+      lifecycleAction: "concludeStory",
+    },
+  }, DECISION_REQUEST));
 
   const cancel = validateActorPlanDecisionOutput({
     decision: "cancel",
@@ -273,7 +291,7 @@ test("due ActorPlan schema and validator cover four exact lifecycle variants", (
 test("invalid due ActorPlan model output fails closed without a Form repair", async () => {
   let calls = 0;
   const adapter = createAuthoritativeKpAdapter({
-    profile: V3_AUTHORITATIVE_KP_PROFILES[0],
+    profile: AUTHORITATIVE_KP_PROFILES[0],
     ai: {
       async run() {
         calls += 1;
@@ -391,84 +409,4 @@ test("Room Action prefers the dedicated due-plan method, then reprojects player 
     "proposalAttemptId",
     "rootActionId",
   ]);
-});
-
-test("Room Action retains the historical generic-propose fallback for test adapters", async () => {
-  const proposalRequests = [];
-  let commitCount = 0;
-  const authority = {
-    async prepare() {
-      return {
-        kind: "prepared",
-        phase: "dueActorPlan",
-        preparedActionId: PREPARED_ACTION_ID,
-        rootActionId: ROOT_ACTION_ID,
-        dueActorPlan: ACTOR_PLAN,
-        kpProjection: NPC_PROJECTION,
-      };
-    },
-    async commit() {
-      commitCount += 1;
-      return commitCount === 1
-        ? {
-            kind: "continue",
-            prepared: {
-              kind: "prepared",
-              phase: "playerIntent",
-              preparedActionId: PREPARED_ACTION_ID,
-              rootActionId: ROOT_ACTION_ID,
-              kpProjection: { viewer: { kind: "kp" } },
-            },
-          }
-        : {
-            kind: "committed",
-            receipt: { receiptId: "receipt:due-plan-v3:fallback", rootActionId: ROOT_ACTION_ID },
-          };
-    },
-    async observe() {
-      return { readModel: { projectionHash: "projection:player:fallback" } };
-    },
-    async acknowledge() {
-      throw new Error("not used");
-    },
-  };
-  const kp = {
-    async propose(request) {
-      proposalRequests.push(structuredClone(request));
-      return request.phase === "dueActorPlan"
-        ? {
-            kind: "actorPlanDecision",
-            decision: "execute",
-            planId: PLAN_ID,
-            mechanicalProposal: null,
-            proposalAttemptId: `${ROOT_ACTION_ID}:legacy-test-adapter`,
-          }
-        : {
-            kind: "directSuccess",
-            proposalAttemptId: `${ROOT_ACTION_ID}:kp:1`,
-            mechanicalProposal: null,
-          };
-    },
-    async narrate() {
-      throw new Error("no delivery plan");
-    },
-  };
-
-  const outcome = await handleRoomAction({
-    principal: { id: "principal:trusted", sessionVersion: 1 },
-    authority,
-    kp,
-  }, {
-    kind: "intent",
-    submissionId: "submission:due-plan-v3:fallback",
-    text: "我检查外院门。",
-  });
-
-  assert.equal(outcome.kind, "committed", JSON.stringify(outcome));
-  assert.deepEqual(proposalRequests.map(({ phase }) => phase ?? "playerIntent"), [
-    "dueActorPlan",
-    "playerIntent",
-  ]);
-  assert.equal("input" in proposalRequests[0], false);
-  assert.equal(proposalRequests[1].input.text, "我检查外院门。");
 });

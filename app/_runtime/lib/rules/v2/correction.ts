@@ -12,9 +12,8 @@ import type {
   JsonRecord,
   KnowledgeRecord,
 } from "./model";
-import { compileCanonicalCharacterCombat } from "./character-abilities";
-import { changeCharacterGear, isGearSlot } from "./character-gear";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
+import { npcMechanicalItemStateCauseUseFactId } from "./multiplayer-events";
 
 function record(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -266,14 +265,24 @@ function restoreCampaignEntry(
   collection: keyof AuthoritativeWorldState["campaignRuntime"],
   entryId: string,
 ): CorrectionEffect | undefined {
-  const entries = state.campaignRuntime[collection];
-  if (!record(entries)) return undefined;
+  const candidate = state.campaignRuntime[collection];
+  if (!record(candidate)) return undefined;
+  const entries = candidate as JsonRecord;
   return {
     kind: "restoreCampaignEntry",
     collection,
     entryId,
     before: entries[entryId] === undefined ? null : structuredClone(entries[entryId] as JsonRecord),
   };
+}
+
+function restoreItemSystemCollection(
+  state: AuthoritativeWorldState,
+  collection: "definitions" | "entries",
+): CorrectionEffect {
+  const effect = restoreCampaignEntry(state, "itemSystem", collection);
+  if (effect === undefined) throw new TypeError("authoritative item system is unavailable");
+  return effect;
 }
 
 function restoreTenureRuntime(
@@ -429,11 +438,32 @@ export function correctionEffectsBefore(
     case "ResourceReserved":
     case "ResourceUsed":
     case "ResourceChanged":
-    case "CharacterControlGranted":
-    case "CharacterLoadoutSynchronized":
     case "CharacterControlTransferred":
     case "ExperienceAwarded":
       return nonEmpty(payload.characterId) ? [restoreCharacter(state, payload.characterId)] : [];
+    case "CharacterControlGranted": {
+      if (!nonEmpty(payload.characterId)) return [];
+      const eventCharacter = record(payload.character) ? payload.character : undefined;
+      const currentCharacter = state.entities[payload.characterId];
+      const sceneId = nonEmpty(eventCharacter?.sceneId)
+        ? eventCharacter.sceneId
+        : currentCharacter?.sceneId;
+      const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId)];
+      if (nonEmpty(sceneId)) {
+        effects.push(restoreSuccessorRuntime(state, payload.characterId, sceneId));
+      }
+      if (eventCharacter !== undefined && Array.isArray(payload.definitions)) {
+        effects.push(
+          restoreCombatEntity(state, payload.characterId),
+          restoreCombatRuntime(state),
+          ...payload.definitions.flatMap((definition) =>
+            record(definition) && nonEmpty(definition.definitionId)
+              ? [restoreDefinition(state, definition.definitionId)]
+              : []),
+        );
+      }
+      return effects;
+    }
     case "HitPointsChanged":
       return nonEmpty(payload.characterId)
         ? [restoreCharacter(state, payload.characterId), restoreCombatRuntime(state)]
@@ -441,15 +471,32 @@ export function correctionEffectsBefore(
     case "ItemUsed":
       return nonEmpty(payload.characterId)
         ? [
+            restoreItemSystemCollection(state, "entries"),
             restoreCharacter(state, payload.characterId),
             restoreCombatRuntime(state),
           ]
         : [];
+    case "ItemDefinitionRegistered": {
+      return [restoreItemSystemCollection(state, "definitions")];
+    }
+    case "ItemMaterialized": {
+      return [restoreItemSystemCollection(state, "entries")];
+    }
+    case "ItemAcquired": {
+      const effects: CorrectionEffect[] = [];
+      effects.push(restoreItemSystemCollection(state, "entries"));
+      if (nonEmpty(payload.characterId)) {
+        effects.push(restoreCharacter(state, payload.characterId));
+      }
+      effects.push(restoreCombatRuntime(state));
+      return effects;
+    }
     case "ItemTransferred": {
       const characterIds = [payload.fromCharacterId, payload.toCharacterId]
         .filter(nonEmpty)
         .filter((characterId, index, all) => all.indexOf(characterId) === index);
       return [
+        restoreItemSystemCollection(state, "entries"),
         ...characterIds.map((characterId) => restoreCharacter(state, characterId)),
         restoreCombatRuntime(state),
       ];
@@ -506,37 +553,33 @@ export function correctionEffectsBefore(
       ];
     }
     case "CharacterGearChanged": {
-      if (!nonEmpty(payload.characterId) || !isGearSlot(payload.slot)) return [];
-      const effects: CorrectionEffect[] = [
+      if (!nonEmpty(payload.characterId)) return [];
+      return [
+        restoreItemSystemCollection(state, "entries"),
         restoreCharacter(state, payload.characterId),
         restoreCombatEntity(state, payload.characterId),
         restoreCombatRuntime(state),
       ];
-      const character = state.entities[payload.characterId];
-      if (character === undefined || (payload.action !== "wear" && payload.action !== "stow")) {
-        return effects;
-      }
-      const transition = changeCharacterGear(
-        character,
-        payload.action === "wear" && nonEmpty(payload.itemId)
-          ? { action: "wear", slot: payload.slot, itemId: payload.itemId }
-          : { action: "stow", slot: payload.slot },
-      );
-      if ("error" in transition) return effects;
-      const compiled = compileCanonicalCharacterCombat({
-        ...structuredClone(character),
-        loadout: transition.loadout,
-      });
-      effects.push(...Object.keys(compiled.definitions)
-        .sort()
-        .map((definitionId) => restoreDefinition(state, definitionId)));
+    }
+    case "NpcGearChanged": {
+      const effects: CorrectionEffect[] = [restoreItemSystemCollection(state, "entries")];
+      if (nonEmpty(payload.characterId)) effects.push(restoreCharacter(state, payload.characterId));
+      effects.push(restoreCombatRuntime(state));
       return effects;
     }
-    case "NpcGearChanged":
-    case "NpcMechanicalItemStateChanged":
-      return nonEmpty(payload.characterId)
-        ? [restoreCharacter(state, payload.characterId), restoreCombatRuntime(state)]
-        : [restoreCombatRuntime(state)];
+    case "NpcMechanicalItemStateChanged": {
+      const effects: CorrectionEffect[] = [restoreItemSystemCollection(state, "entries")];
+      if (nonEmpty(payload.characterId)) effects.push(restoreCharacter(state, payload.characterId));
+      effects.push(restoreCombatRuntime(state));
+      if (nonEmpty(payload.causeFactRef)) {
+        effects.push({
+          kind: "restoreCanonicalFact",
+          factId: npcMechanicalItemStateCauseUseFactId(payload.causeFactRef),
+          before: null,
+        });
+      }
+      return effects;
+    }
     case "CharacterMoved": {
       if (!nonEmpty(payload.characterId)) return [];
       const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId)];
@@ -561,18 +604,17 @@ export function correctionEffectsBefore(
         effects.push(
           restoreCharacter(state, successor.id),
           restoreSuccessorRuntime(state, successor.id, successor.sceneId),
+          restoreCombatEntity(state, successor.id),
+          restoreCombatRuntime(state),
+          ...(Array.isArray(payload.definitions)
+            ? payload.definitions.flatMap((definition) =>
+              record(definition) && nonEmpty(definition.definitionId)
+                ? [restoreDefinition(state, definition.definitionId)]
+                : [])
+            : []),
         );
       }
       return effects;
-    }
-    case "ArtifactMaterialized":
-    case "ArtifactAcquired":
-    case "ArtifactUsed":
-    case "ArtifactTransferred": {
-      const effect = nonEmpty(payload.artifactId)
-        ? restoreCampaignEntry(state, "artifacts", payload.artifactId)
-        : undefined;
-      return effect === undefined ? [] : [effect];
     }
     case "RelationshipChanged":
     case "RelationshipEstablished": {
@@ -620,13 +662,6 @@ export function correctionEffectsBefore(
         : undefined;
       return effect === undefined ? [] : [effect];
     }
-    case "ModuleVersionMigrated":
-      return [{
-        kind: "restoreCampaignDescriptor",
-        before: state.campaignRuntime.campaign === null
-          ? null
-          : structuredClone(state.campaignRuntime.campaign),
-      }];
     case "ChapterStarted": {
       const effects: CorrectionEffect[] = [{
         kind: "restoreCampaignDescriptor",
@@ -740,10 +775,15 @@ export function correctionEffectsBefore(
     case "CombatPendingClosed":
     case "EncounterConclusionProposed":
       return [restoreCombatRuntime(state)];
-    case "ResourceSpent":
-      return nonEmpty(payload.entityId)
-        ? [restoreCharacter(state, payload.entityId), restoreCombatRuntime(state)]
-        : [restoreCombatRuntime(state)];
+    case "ResourceSpent": {
+      const effects: CorrectionEffect[] = [];
+      if (nonEmpty(payload.resourceId) && payload.resourceId.startsWith("item-entry:")) {
+        effects.push(restoreItemSystemCollection(state, "entries"));
+      }
+      if (nonEmpty(payload.entityId)) effects.push(restoreCharacter(state, payload.entityId));
+      effects.push(restoreCombatRuntime(state));
+      return effects;
+    }
     default:
       return [];
   }
@@ -824,8 +864,9 @@ function applyEffects(
         else state.combatRuntime.definitions[effect.definitionId] = structuredClone(effect.beforeCombat);
         break;
       case "restoreCampaignEntry": {
-        const entries = state.campaignRuntime[effect.collection];
-        if (!record(entries)) throw new TypeError("correction campaign collection is unavailable");
+        const candidate = state.campaignRuntime[effect.collection];
+        if (!record(candidate)) throw new TypeError("correction campaign collection is unavailable");
+        const entries = candidate as JsonRecord;
         if (effect.before === null) delete entries[effect.entryId];
         else entries[effect.entryId] = structuredClone(effect.before);
         break;

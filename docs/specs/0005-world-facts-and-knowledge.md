@@ -164,7 +164,7 @@ type CharacterKnowledge = {
 3. 两个角色仅一人发现私密线索；另一人的快照、增量、错误、候选和重连均无该知识。
 4. 持有者销毁信件后仍保留已读知识；未读者无法从“物件曾存在”自动获得内容。
 5. NPC 只按自身知识采取行动，即使 KP Viewer 含玩家计划也不针对性反制。
-6. 动态敌人/危险定义固化后部署新目录，旧房间 replay 仍得到同一定义与事实。
+6. 动态敌人/危险定义固化后部署新目录，仍受支持且绑定该定义/Profile 的房间 replay 仍得到同一定义与事实；前 0.4 房间不进入当前解释器。
 7. 一个错误知识取得分别通过前向补偿和因果分支更正，旧历史保留且活动投影一致。
 8. 关系、承诺和债务跨章节持续并在符合因果时影响 NPC/势力计划。
 
@@ -174,13 +174,13 @@ type CharacterKnowledge = {
 - 事实/知识/分享 Implementation：`app/_runtime/lib/rules/v2/actions.ts`、`campaign-actions.ts`、`compound-actions.ts`
 - 唯一投影：`app/_runtime/lib/rules/v2/projector.ts`
 - Room DO 事件与分支：`app/_runtime/lib/room/durable-object.ts`
-- 验收：`tests/world-campaign-v2.test.mjs`、`tests/observer-projection-v2.test.mjs`、`tests/rules-compound-action-v2.test.mjs`、`tests/kp-multiturn-eval.test.ts`
+- 验收：`tests/world-campaign-v2.test.mjs`、`tests/stage4-world-campaign-vertical-v2.test.ts`、`tests/observer-projection-v2.test.mjs`、`tests/causal-action-rules-v3.test.mjs`；20+ 当前多轮纵切待用窄工具/Form/Causal/Room 链重建
 
-### 13.1 当前实现证据（2026-08-26）
+### 13.1 当前实现证据（2026-08-31）
 
-- `tests/world-campaign-v2.test.mjs` 7/7：感官证据、来源主张、角色推断、有限知识 NPC 计划和 `shareKnowledge` 通过世界媒介产生接收者取得事件；分享不移动物件、不复制旧叙述，并在投影中保留来源。
-- `tests/observer-projection-v2.test.mjs` 5/5：个人知识只给持有角色；异地角色在实时/统一查询投影中不可见；世界内分享后只获得结构化知识，控制转移/继任不会补回旧 Delivery 或未分享内容。
-- `tests/rules-compound-action-v2.test.mjs` 18/18：`resolveDirectConsequences` 可在同一 Root Action 产生 `KnowledgeAcquired`、`RelationshipChanged`、`PromiseMade` 和 `FictionTimeAdvanced`；伪知识依据或额外字段整笔拒绝。
+- `tests/world-campaign-v2.test.mjs` 覆盖感官证据、来源主张、角色推断、有限知识 NPC 计划和 `shareKnowledge` 通过世界媒介产生接收者取得事件；分享不移动物件、不复制旧叙述，并在投影中保留来源。
+- `tests/observer-projection-v2.test.mjs` 覆盖个人知识只给持有角色；异地角色在实时/统一查询投影中不可见；世界内分享后只获得结构化知识，控制转移/继任不会补回旧 Delivery 或未分享内容。
+- `tests/causal-action-rules-v3.test.mjs` 验证当前因果程序在同一 Root Action 内提交冻结后果与虚构时间，并对未知引用、额外权威字段和语义 hash 篡改整笔拒绝；`tests/stage4-world-campaign-vertical-v2.test.ts` 覆盖知识取得、物件销毁后知识保持及后来者不被追溯补授。
 
 ## 14. 交叉审查
 

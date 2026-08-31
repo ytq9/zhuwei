@@ -18,17 +18,15 @@ function exportedSection(server, name, nextName) {
 
 function authoritativeBranch(section, marker = "AUTHORITATIVE_RULESET_VERSION") {
   const start = section.indexOf(marker);
-  const legacy = section.indexOf("RULESET_VERSION", start + marker.length);
   assert.notEqual(start, -1, "authoritative branch is missing");
-  assert.notEqual(legacy, -1, "explicit Legacy boundary is missing");
-  return section.slice(start, legacy);
+  return section.slice(start);
 }
 
 test("authoritative membership and character changes commit Room authority before D1 directory writes", async () => {
   const server = await source("app/_runtime/lib/table/server.ts");
   const join = authoritativeBranch(exportedSection(server, "joinRoom", "fetchTable"));
   const lock = authoritativeBranch(exportedSection(server, "lockCharacter", "setGear"));
-  const gear = authoritativeBranch(exportedSection(server, "setGear", "startGame"));
+  const gear = exportedSection(server, "setGear", "useInventoryItem");
   const kick = authoritativeBranch(exportedSection(server, "kickMember", "leaveTable"));
   const leave = authoritativeBranch(exportedSection(server, "leaveTable", "inviteSquad"));
 
@@ -43,11 +41,7 @@ test("authoritative membership and character changes commit Room authority befor
   assert.match(gear, /submitAuthoritativeTableAction/);
   assert.match(gear, /kind:\s*"gear"/);
   assert.doesNotMatch(gear, /synchronizeAuthoritativeCharacterCard|update characters|select sheet|ensureGear|wearItem|stowSlot|acFromGear/);
-  const gearSection = exportedSection(server, "setGear", "startGame");
-  assert.ok(
-    gearSection.indexOf("activeRules?.ruleset_version === AUTHORITATIVE_RULESET_VERSION")
-      < gearSection.indexOf("select sheet from characters"),
-  );
+  assert.match(gear, /activeRules\?\.ruleset_version !== AUTHORITATIVE_RULESET_VERSION/);
   const client = await source("app/_runtime/lib/table/client.ts");
   assert.match(
     client,

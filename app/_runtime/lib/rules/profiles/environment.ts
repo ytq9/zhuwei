@@ -6,44 +6,6 @@ import type {
   Sha256Ref,
 } from "./types";
 
-/** Immutable first-generation hazard-only environment extension. */
-export const LEGACY_ENVIRONMENT_PROFILE = {
-  profileId: "environment-feature-fsm-2014-v2",
-  profileHash: "sha256:702b2559c821a52e1c7d6a137c6b261cec21d6cc513e3c0301b4b5ab007f7c87",
-} as const satisfies ProfileRef;
-
-export const LEGACY_ENVIRONMENT_PROFILE_DOCUMENT: CanonicalProfileDocument = {
-  schema: "zhuwei.runtime-profile/v1",
-  profileKind: "environmentMechanics",
-  profileId: LEGACY_ENVIRONMENT_PROFILE.profileId,
-  semanticVersion: "2.0.0",
-  normativePayload: {
-    conformanceVersion: "1",
-    rulesBasis: "srd5.1-2014-plus-versioned-product-ruling",
-    trustedPrimitive: "environmental-stunt.v2",
-    activationModes: ["attack", "check", "direct"],
-    checkAuthority: "server-freezes-ability-skill-dc-and-d20-mode-rules-resolves",
-    directAuthority: "server-freezes-trigger-no-precheck-area-randomness-remains-authoritative",
-    featureIdentity: "stable-scene-scoped-id-materialized-before-randomness",
-    stateModel: "bounded-finite-state-transitions-only",
-    targetAuthority: "rules-computes-complete-authoritative-geometry-set",
-    callerTargetLists: "forbidden",
-    observerProjection: "safe-geometry-only-no-definition-or-hidden-target-cardinality",
-    randomnessAuthority: "room-durable-object-only",
-    causality: "one-root-action-ordered-event-chain",
-    replay: "frozen-profile-and-definition-hashes-no-reroll",
-    eventNamespace: [
-      "EnvironmentFeatureMaterialized",
-      "EnvironmentStuntRefused",
-      "EnvironmentFeatureDamaged",
-      "EnvironmentHazardTriggered",
-      "EnvironmentAreaTargetResolved",
-      "EnvironmentAreaFeatureDamaged",
-      "EnvironmentFeatureStateChanged",
-    ],
-  },
-};
-
 /** New-room-only environment extension. Its mechanical mode is chosen by KP,
  * not inferred from object names, keywords, families, or player-facing types. */
 export const ENVIRONMENT_PROFILE = {
@@ -172,12 +134,6 @@ type EnvironmentFeatureCore = {
   stateGraph: EnvironmentStateGraph;
 };
 
-export type LegacyEnvironmentFeature = EnvironmentFeatureCore & {
-  schema: "zhuwei.environment-feature/v1";
-  hazard: TriggeredHazard;
-  areaEffect: AreaEffect;
-};
-
 export type EnvironmentEffectMode = "state-only" | "area-hazard";
 
 export type EnvironmentFeature = EnvironmentFeatureCore & {
@@ -187,12 +143,10 @@ export type EnvironmentFeature = EnvironmentFeatureCore & {
   areaEffect: AreaEffect | null;
 };
 
-export type AnyEnvironmentFeature = LegacyEnvironmentFeature | EnvironmentFeature;
-
 export type CompiledEnvironmentBinding = {
   schema: "zhuwei.environment-feature-binding/v1";
   profile: ProfileRef;
-  featureDefinition: AnyEnvironmentFeature;
+  featureDefinition: EnvironmentFeature;
   featureDefinitionHash: Sha256Ref;
   destructibleDefinitionHash: Sha256Ref;
   stateGraphHash: Sha256Ref;
@@ -241,7 +195,7 @@ export type CompiledEnvironmentTacticalFeature = {
       toState: string;
     }>;
   };
-  visibilityPolicyId: AnyEnvironmentFeature["visibilityPolicyId"];
+  visibilityPolicyId: EnvironmentFeature["visibilityPolicyId"];
   environment: CompiledEnvironmentBinding;
 };
 
@@ -323,10 +277,8 @@ function point(value: unknown): value is TacticalPoint2d {
 export function isEnvironmentProfileRef(value: unknown): value is ProfileRef {
   return record(value)
     && exact(value, ["profileHash", "profileId"])
-    && ((value.profileId === ENVIRONMENT_PROFILE.profileId
-        && value.profileHash === ENVIRONMENT_PROFILE.profileHash)
-      || (value.profileId === LEGACY_ENVIRONMENT_PROFILE.profileId
-        && value.profileHash === LEGACY_ENVIRONMENT_PROFILE.profileHash));
+    && value.profileId === ENVIRONMENT_PROFILE.profileId
+    && value.profileHash === ENVIRONMENT_PROFILE.profileHash;
 }
 
 function canonicalStrings(value: unknown, maximum: number): value is string[] {
@@ -490,56 +442,7 @@ function environmentFeatureCore(value: JsonRecord, expectedKeys: readonly string
     && destructible(value.destructible);
 }
 
-function legacyEnvironmentFeature(value: unknown): value is LegacyEnvironmentFeature {
-  if (!record(value)
-    || !environmentFeatureCore(value, [
-      "areaEffect",
-      "destructible",
-      "elevation",
-      "environmentProfile",
-      "featureId",
-      "hazard",
-      "height",
-      "initialState",
-      "kind",
-      "label",
-      "polygon",
-      "sceneId",
-      "schema",
-      "stateGraph",
-      "visibilityPolicyId",
-    ])
-    || value.schema !== "zhuwei.environment-feature/v1"
-    || !record(value.environmentProfile)
-    || value.environmentProfile.profileId !== LEGACY_ENVIRONMENT_PROFILE.profileId
-    || value.environmentProfile.profileHash !== LEGACY_ENVIRONMENT_PROFILE.profileHash
-    || !stateGraph(value.stateGraph, 3, 2)
-    || !hazard(value.hazard)
-    || !areaEffect(value.areaEffect)) return false;
-  const definition = value as unknown as LegacyEnvironmentFeature;
-  const stateIds = new Set(definition.stateGraph.states.map((entry) => entry.state));
-  const damageTransitions = definition.stateGraph.transitions.filter((entry) =>
-    entry.trigger === "damageAtOrBelow");
-  const hazardTransitions = definition.stateGraph.transitions.filter((entry) =>
-    entry.trigger === "hazardResolved");
-  const stuntTransitions = definition.stateGraph.transitions.filter((entry) =>
-    entry.trigger === "stuntSucceeded");
-  return stateIds.has(definition.initialState)
-    && definition.hazard.areaEffectRef === definition.areaEffect.definitionId
-    && stateIds.has(definition.hazard.trigger.state)
-    && stateIds.has(definition.hazard.resolvedState)
-    && (damageTransitions.some((entry) => entry.fromState === definition.initialState
-        && entry.toState === definition.hazard.trigger.state
-        && BigInt(entry.remainingDurabilityAtOrBelow ?? "0")
-          <= BigInt(definition.destructible.maximumDurability))
-      || stuntTransitions.some((entry) => entry.fromState === definition.initialState
-        && entry.toState === definition.hazard.trigger.state))
-    && hazardTransitions.some((entry) => entry.fromState === definition.hazard.trigger.state
-      && entry.toState === definition.hazard.resolvedState);
-}
-
-function environmentFeature(value: unknown): value is AnyEnvironmentFeature {
-  if (legacyEnvironmentFeature(value)) return true;
+function environmentFeature(value: unknown): value is EnvironmentFeature {
   if (!record(value)
     || !environmentFeatureCore(value, [
       "areaEffect",
@@ -597,14 +500,12 @@ function environmentFeature(value: unknown): value is AnyEnvironmentFeature {
 }
 
 export function environmentEffectMode(
-  definition: AnyEnvironmentFeature,
+  definition: EnvironmentFeature,
 ): EnvironmentEffectMode {
-  return definition.schema === "zhuwei.environment-feature/v1"
-    ? "area-hazard"
-    : definition.effectMode;
+  return definition.effectMode;
 }
 
-function tacticalCore(definition: AnyEnvironmentFeature) {
+function tacticalCore(definition: EnvironmentFeature) {
   const initial = definition.stateGraph.states.find((entry) =>
     entry.state === definition.initialState)!;
   const destructibleDefinition = definition.destructible;

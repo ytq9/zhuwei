@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
 
 type RecordValue = Record<string, unknown>;
 
@@ -139,7 +139,7 @@ async function initialize(
   const initialized = record(await stub.initializeAuthoritative({
     roomId: name,
     moduleId: "black-oak-will",
-    moduleVersion: "legacy-anchor-v1",
+    moduleVersion: "social-resolution-v1",
     members: input.members,
     characters: input.characters,
     ...(input.runtimeProfiles === undefined ? {} : { runtimeProfiles: input.runtimeProfiles }),
@@ -220,6 +220,41 @@ async function commitIntent(
   ), "multiplayer commit");
 }
 
+type AuthenticatedPartyProposal =
+  | { kind: "authenticatedPartyAction"; action: "inviteMember"; targetCharacterId: string }
+  | { kind: "authenticatedPartyAction"; action: "cancelInvitation"; pendingInputId: string }
+  | { kind: "authenticatedPartyAction"; action: "leave" }
+  | {
+      kind: "authenticatedPartyAction";
+      action: "transferLeadership";
+      targetCharacterId: string;
+    }
+  | {
+      kind: "authenticatedPartyAction";
+      action: "proposeMove" | "moveIndividually";
+      destinationSceneId: string;
+      fictionTimeCostMicros: string;
+    };
+
+async function commitAuthenticatedPartyAction(
+  stub: MultiplayerAuthority,
+  context: typeof ALICE | typeof BOB | typeof CHARLIE,
+  submissionId: string,
+  text: string,
+  proposal: AuthenticatedPartyProposal,
+) {
+  const action = prepared(await stub.prepare(context, {
+    kind: "intent",
+    submissionId,
+    text,
+  }));
+  return record(await stub.commit(
+    context,
+    action.preparedActionId,
+    { ...structuredClone(proposal), rootActionId: action.rootActionId },
+  ), "authenticated party commit");
+}
+
 async function answerPending(
   stub: MultiplayerAuthority,
   context: typeof ALICE | typeof BOB | typeof CHARLIE,
@@ -252,7 +287,7 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
         expertise: ["investigation"],
         proficientSaves: ["dex", "int"],
       })],
-      runtimeProfiles: ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
+      runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     });
     expect(readModel(await initialized.stub.observe(ALICE)).controlledCharacter).toMatchObject({
       characterId: predecessorId,
@@ -455,13 +490,12 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
         wizardCampaignCharacter(bobId, BOB.principal.id),
       ],
     });
-    const invitation = await commitIntent(
+    const invitation = await commitAuthenticatedPartyAction(
       initialized.stub,
       ALICE,
       "submission:group-rest:invite",
-      "forged:ignored",
       "我邀请鲍勃同行。",
-      { operation: "changeParty", partyAction: "inviteMember", memberRefs: [bobId] },
+      { kind: "authenticatedPartyAction", action: "inviteMember", targetCharacterId: bobId },
     );
     const partyPendingId = String(record(invitation.pending, "party pending").pendingInputId);
     await expect(answerPending(
@@ -594,13 +628,12 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
         wizardCampaignCharacter(bobId, BOB.principal.id),
       ],
     });
-    const invitation = await commitIntent(
+    const invitation = await commitAuthenticatedPartyAction(
       initialized.stub,
       ALICE,
       "submission:long-rest:invite",
-      "forged:ignored",
       "我邀请鲍勃同行。",
-      { operation: "changeParty", partyAction: "inviteMember", memberRefs: [bobId] },
+      { kind: "authenticatedPartyAction", action: "inviteMember", targetCharacterId: bobId },
     );
     await expect(answerPending(
       initialized.stub,
@@ -1330,7 +1363,8 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
   });
 
   it("requires every member's consent for atomic group movement and lets one character atomically leave", async () => {
-    const initialized = await initialize("multiplayer-v2-party-group", {
+    const roomName = "multiplayer-v2-party-group";
+    const initialized = await initialize(roomName, {
       members: [
         { principalId: ALICE.principal.id, role: "host" },
         { principalId: BOB.principal.id, role: "player" },
@@ -1341,16 +1375,30 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
       ],
     });
 
-    const invitation = await commitIntent(
+    const forged = prepared(await initialized.stub.prepare(ALICE, {
+      kind: "intent",
+      submissionId: "submission:multi:forged-party-shape",
+      text: "我邀请鲍勃同行。",
+    }));
+    await expect(initialized.stub.commit(ALICE, forged.preparedActionId, {
+      kind: "authenticatedPartyAction",
+      action: "inviteMember",
+      targetCharacterId: "character:multi:bob",
+      rootActionId: forged.rootActionId,
+      injected: true,
+    })).resolves.toMatchObject({ kind: "needsKp" });
+    expect(list(readModel(await initialized.stub.observe(ALICE)).partyGroups, "groups after invalid shape"))
+      .toEqual([]);
+
+    const invitation = await commitAuthenticatedPartyAction(
       initialized.stub,
       ALICE,
       "submission:multi:invite-bob",
-      "character:multi:alice",
       "我邀请鲍勃同行。",
       {
-        operation: "changeParty",
-        partyAction: "inviteMember",
-        memberRefs: ["character:multi:bob"],
+        kind: "authenticatedPartyAction",
+        action: "inviteMember",
+        targetCharacterId: "character:multi:bob",
       },
     );
     expect(invitation.kind).toBe("awaitingInput");
@@ -1367,25 +1415,31 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
         access: "controller",
       })]));
 
+    await expect(initialized.stub.prepare(ALICE, {
+      kind: "answer",
+      submissionId: "submission:multi:forged-party-answer",
+      pendingInputId: invitePendingId,
+      answer: { accept: true },
+    })).resolves.toMatchObject({ kind: "rejected", code: "pendingInputUnauthorized" });
+
     await expect(answerPending(
-      initialized.stub,
+      room(roomName),
       BOB,
       "submission:multi:accept-party",
       invitePendingId,
       { accept: true },
     )).resolves.toMatchObject({ kind: "committed" });
 
-    const moveProposal = await commitIntent(
+    const moveProposal = await commitAuthenticatedPartyAction(
       initialized.stub,
       ALICE,
       "submission:multi:group-move",
-      "character:multi:alice",
       "我组织同行者一起前往庭院。",
       {
-        operation: "changeParty",
-        partyAction: "proposeMove",
-        destinationRef: "yard",
-        duration: { unit: "minute", value: 1 },
+        kind: "authenticatedPartyAction",
+        action: "proposeMove",
+        destinationSceneId: "yard",
+        fictionTimeCostMicros: "60000000",
       },
     );
     expect(moveProposal.kind).toBe("awaitingInput");
@@ -1407,17 +1461,16 @@ describe("authoritative multiplayer room, group, time, and spotlight", () => {
     expect(record(readModel(await initialized.stub.observe(BOB)).controlledCharacter, "Bob after move").sceneId)
       .toBe("yard");
 
-    await expect(commitIntent(
+    await expect(commitAuthenticatedPartyAction(
       initialized.stub,
       BOB,
       "submission:multi:individual-move",
-      "character:multi:bob",
       "我独自进入地窖。",
       {
-        operation: "changeParty",
-        partyAction: "moveIndividually",
-        destinationRef: "cellar",
-        duration: { unit: "second", value: 30 },
+        kind: "authenticatedPartyAction",
+        action: "moveIndividually",
+        destinationSceneId: "cellar",
+        fictionTimeCostMicros: "30000000",
       },
     )).resolves.toMatchObject({ kind: "committed" });
     const aliceAfterSplit = readModel(await initialized.stub.observe(ALICE));

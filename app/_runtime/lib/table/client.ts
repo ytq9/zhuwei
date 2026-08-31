@@ -26,8 +26,6 @@ export type RestNowData = {
   hitDice?: number;
   /** authoritative-v2 only; the Room/Rules authority validates and settles it. */
   arcaneRecoverySlotLevels?: number[];
-  /** Legacy Adapter only. authoritative-v2 never converts this shorthand. */
-  arcane?: 0 | 1 | 2;
   submissionId?: string;
   pendingInputId?: string;
 };
@@ -85,7 +83,8 @@ export const fetchTable = ({ data }: Args) =>
   call<FetchTableResult>("fetchTable", data);
 export const lockCharacter = ({ data }: Args) => callWithStableTableSubmission("lockCharacter", data);
 export const setGear = ({ data }: Args) => callWithStableTableSubmission("setGear", data);
-export const setRoomModel = ({ data }: Args) => call<Result>("setRoomModel", data);
+export const useInventoryItem = ({ data }: Args) =>
+  callWithStableTableSubmission("useInventoryItem", data);
 export const startGame = ({ data }: Args) => call<Result>("startGame", data);
 export const sendAction = ({ data }: Args) =>
   callWithStableTableSubmission("sendAction", data);

@@ -107,7 +107,7 @@ async function initializeRoom(name: string): Promise<InitializedRoom> {
   const initialized = record(await stub.initializeAuthoritative({
     roomId: name,
     moduleId: "black-oak-will",
-    moduleVersion: "legacy-anchor-v1",
+    moduleVersion: "social-resolution-v1",
     members: [
       { principalId: ALICE.principal.id, role: "player" },
       { principalId: BOB.principal.id, role: "player" },

@@ -10,7 +10,7 @@ import { canonicalJson } from "../kp/authoritative-helpers";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "../kp/model-registry";
 import type { AuthoritativeModuleRef } from "../module/authoritative";
 import { SOCIAL_RESOLUTION_MODULE_VERSION } from "../module/authoritative";
-import { pinnedModuleRef } from "../module/migration-registry";
+import { pinnedModuleRef } from "../module/registry";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 
 type UnknownRecord = Record<string, unknown>;

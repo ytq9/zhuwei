@@ -10,10 +10,10 @@ export type ChapterActivityTransition = {
   disposition: "continue" | "summarize" | "interrupt" | "complete";
 };
 
-export type CampaignContinuityManifestV1 = {
-  schema: "zhuwei.campaign-continuity-manifest/v1";
+export type CampaignContinuityManifestV2 = {
+  schema: "zhuwei.campaign-continuity-manifest/v2";
   characterStates: HashedRef[];
-  artifactStates: HashedRef[];
+  itemStates: HashedRef[];
   knowledgeStates: HashedRef[];
   relationshipStates: HashedRef[];
   debtStates: HashedRef[];
@@ -27,22 +27,10 @@ export type CampaignContinuityManifestV1 = {
   causalFrontierStates: HashedRef[];
   unresolvedThreatRefs: string[];
   activityTransitions: ChapterActivityTransition[];
-  manifestHash: Sha256Ref;
-};
-
-export type CampaignContinuityManifestV2 = Omit<
-  CampaignContinuityManifestV1,
-  "schema" | "manifestHash"
-> & {
-  schema: "zhuwei.campaign-continuity-manifest/v2";
   actorPlanStates: HashedRef[];
   factionPlanStates: HashedRef[];
   manifestHash: Sha256Ref;
 };
-
-export type CampaignContinuityManifest =
-  | CampaignContinuityManifestV1
-  | CampaignContinuityManifestV2;
 
 function hashedRecords(prefix: string, records: Record<string, unknown>): HashedRef[] {
   return Object.keys(records).sort().map((id) => ({
@@ -62,15 +50,21 @@ function hashedCausalFrontiers(state: AuthoritativeWorldState): HashedRef[] {
   });
 }
 
-function withoutManifestHash<T extends CampaignContinuityManifest>(manifest: T): Omit<T, "manifestHash"> {
+function withoutManifestHash(
+  manifest: CampaignContinuityManifestV2,
+): Omit<CampaignContinuityManifestV2, "manifestHash"> {
   const { manifestHash: _manifestHash, ...core } = manifest;
-  return core as Omit<T, "manifestHash">;
+  return core;
 }
 
-function legacyContinuityManifest(
+export function campaignContinuityManifest(
   state: AuthoritativeWorldState,
   activityTransitions: ChapterActivityTransition[],
-): CampaignContinuityManifestV1 {
+): CampaignContinuityManifestV2 {
+  const adjudicationPrecedents = state.campaignRuntime.adjudicationPrecedents;
+  if (adjudicationPrecedents === undefined) {
+    throw new TypeError("current campaign state has no adjudication precedents collection");
+  }
   const knowledgeStates = Object.keys(state.knowledge).sort().flatMap((characterId) =>
     Object.keys(state.knowledge[characterId] ?? {}).sort().map((knowledgeRef) => ({
       ref: `knowledge:${characterId}:${knowledgeRef}`,
@@ -84,9 +78,9 @@ function legacyContinuityManifest(
     }),
   }));
   const core = {
-    schema: "zhuwei.campaign-continuity-manifest/v1" as const,
+    schema: "zhuwei.campaign-continuity-manifest/v2" as const,
     characterStates,
-    artifactStates: hashedRecords("artifact", state.campaignRuntime.artifacts),
+    itemStates: hashedRecords("item", state.campaignRuntime.itemSystem.entries),
     knowledgeStates,
     relationshipStates: hashedRecords("relationship", state.campaignRuntime.relationships),
     debtStates: hashedRecords("debt", state.campaignRuntime.debts),
@@ -96,10 +90,15 @@ function legacyContinuityManifest(
     definitionStates: [
       ...hashedRecords("campaign-definition", state.campaignRuntime.definitions),
       ...hashedRecords("combat-definition", state.combatRuntime.definitions),
+      ...hashedRecords("item-definition", state.campaignRuntime.itemSystem.definitions),
     ].sort((left, right) => left.ref.localeCompare(right.ref)),
     precedentStates: [
       ...hashedRecords("meaningful-failure", state.campaignRuntime.meaningfulFailures),
       ...hashedRecords("retry-change", state.campaignRuntime.retryChanges),
+      ...hashedRecords(
+        "adjudication-precedent",
+        adjudicationPrecedents,
+      ),
     ].sort((left, right) => left.ref.localeCompare(right.ref)),
     combatEffectStates: hashedRecords("combat-effect", state.combatRuntime.effects),
     fictionTimelineStates: hashedRecords("fiction-timeline", state.fictionTimelines),
@@ -110,41 +109,10 @@ function legacyContinuityManifest(
     activityTransitions: [...activityTransitions]
       .map((transition) => structuredClone(transition))
       .sort((left, right) => left.activityId.localeCompare(right.activityId)),
-  };
-  return { ...core, manifestHash: canonicalSha256(core) };
-}
-
-export function campaignContinuityManifest(
-  state: AuthoritativeWorldState,
-  activityTransitions: ChapterActivityTransition[],
-): CampaignContinuityManifestV2 {
-  const legacy = legacyContinuityManifest(state, activityTransitions);
-  const { schema: _legacySchema, manifestHash: _legacyHash, ...legacyCore } = legacy;
-  const core = {
-    ...legacyCore,
-    schema: "zhuwei.campaign-continuity-manifest/v2" as const,
-    precedentStates: [
-      ...legacy.precedentStates,
-      ...hashedRecords(
-        "adjudication-precedent",
-        state.campaignRuntime.adjudicationPrecedents ?? {},
-      ),
-    ].sort((left, right) => left.ref.localeCompare(right.ref)),
     actorPlanStates: hashedRecords("actor-plan", state.campaignRuntime.npcPlans),
     factionPlanStates: hashedRecords("faction-plan", state.campaignRuntime.factionPlans),
   };
   return { ...core, manifestHash: canonicalSha256(core) };
-}
-
-/** Historical v1 chapter events remain replayable under their pinned profile. */
-export function campaignContinuityManifestForSchema(
-  state: AuthoritativeWorldState,
-  activityTransitions: ChapterActivityTransition[],
-  schema: CampaignContinuityManifest["schema"],
-): CampaignContinuityManifest {
-  return schema === "zhuwei.campaign-continuity-manifest/v1"
-    ? legacyContinuityManifest(state, activityTransitions)
-    : campaignContinuityManifest(state, activityTransitions);
 }
 
 function hashedRefs(value: unknown): value is HashedRef[] {
@@ -155,12 +123,13 @@ function hashedRefs(value: unknown): value is HashedRef[] {
       && isSha256(entry.stateHash));
 }
 
-export function isCampaignContinuityManifest(value: unknown): value is CampaignContinuityManifest {
+export function isCampaignContinuityManifest(value: unknown): value is CampaignContinuityManifestV2 {
   if (!isRecord(value)) return false;
-  const v1Keys = [
+  const keys = [
     "activityStates",
     "activityTransitions",
-    "artifactStates",
+    "actorPlanStates",
+    "itemStates",
     "canonicalFactStates",
     "causalFrontierStates",
     "characterStates",
@@ -168,6 +137,7 @@ export function isCampaignContinuityManifest(value: unknown): value is CampaignC
     "debtStates",
     "definitionStates",
     "fictionTimelineStates",
+    "factionPlanStates",
     "knowledgeStates",
     "manifestHash",
     "precedentStates",
@@ -176,18 +146,12 @@ export function isCampaignContinuityManifest(value: unknown): value is CampaignC
     "schema",
     "unresolvedThreatRefs",
   ];
-  const isV1 = value.schema === "zhuwei.campaign-continuity-manifest/v1";
-  const isV2 = value.schema === "zhuwei.campaign-continuity-manifest/v2";
-  if ((!isV1 && !isV2)
-    || !hasExactKeys(value, isV1 ? v1Keys : [
-      ...v1Keys,
-      "actorPlanStates",
-      "factionPlanStates",
-    ])
+  if (value.schema !== "zhuwei.campaign-continuity-manifest/v2"
+    || !hasExactKeys(value, keys)
     || !isSha256(value.manifestHash)
     || ![
       value.activityStates,
-      value.artifactStates,
+      value.itemStates,
       value.canonicalFactStates,
       value.causalFrontierStates,
       value.characterStates,
@@ -199,7 +163,8 @@ export function isCampaignContinuityManifest(value: unknown): value is CampaignC
       value.precedentStates,
       value.promiseStates,
       value.relationshipStates,
-      ...(isV2 ? [value.actorPlanStates, value.factionPlanStates] : []),
+      value.actorPlanStates,
+      value.factionPlanStates,
     ].every(hashedRefs)
     || !Array.isArray(value.unresolvedThreatRefs)
     || !value.unresolvedThreatRefs.every(isNonEmptyString)
@@ -210,13 +175,13 @@ export function isCampaignContinuityManifest(value: unknown): value is CampaignC
       && ["continue", "summarize", "interrupt", "complete"].includes(String(transition.disposition)))) {
     return false;
   }
-  const manifest = value as unknown as CampaignContinuityManifest;
+  const manifest = value as unknown as CampaignContinuityManifestV2;
   return canonicalSha256(withoutManifestHash(manifest)) === manifest.manifestHash;
 }
 
 export function continuityManifestsEqual(
-  left: CampaignContinuityManifest,
-  right: CampaignContinuityManifest,
+  left: CampaignContinuityManifestV2,
+  right: CampaignContinuityManifestV2,
 ): boolean {
   return canonicalSha256(left) === canonicalSha256(right);
 }

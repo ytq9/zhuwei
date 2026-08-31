@@ -5,7 +5,7 @@
 - 产品：烛帷
 - 适用规则：D&D 5e 2014 / SRD 5.1
 - 上位规格：`SPEC 0001`、`SPEC 0003`、`SPEC 0005`、`SPEC 0007`、`SPEC 0010`、`SPEC 0012`、`SPEC 0013`
-- 范围：authoritative-v2 的场景几何、环境要素与有限状态、观察者专属战术投影/预览、地图输入、二维 Adapter、同源文字读数和 Legacy 隔离
+- 范围：authoritative-v2 的场景几何、环境要素与有限状态、观察者专属战术投影/预览、地图输入、二维 Adapter、同源文字读数和 0.4 当前版本边界
 
 ## 1. 继承关系与严格范围
 
@@ -28,7 +28,7 @@
 
 显示方格、缩放、像素和视觉舍入只属于 Adapter。默认可按 5 尺格吸附及呈现，但它们不得写回 WorldState、改变 Geometry 边界或替代整数英寸/有理数算法。
 
-新 authoritative-v2 scene 不允许用空 `obstacles`、合成一维距离或页面坐标冒充最终生产几何。无法从旧数据确知坐标时必须留在明确 Legacy Adapter，不能猜测迁移。
+0.4 authoritative-v2 scene 不允许用空 `obstacles`、合成一维距离或页面坐标冒充最终生产几何。无法从前 0.4 数据确知坐标时直接拒绝进入当前解释器；不猜测迁移，也不保留 Legacy Adapter。
 
 ### 2.2 Environment Feature
 
@@ -66,7 +66,7 @@ Rules 不从文本模拟物理，也不在看到骰面后让 KP 改写材质、�
 ```text
 地图手势或自然语言意图
 → 可信 Room Action Module
-→ KP 在专属投影内提出结构化 ActionPlan
+→ KP 在专属投影内填写私有 Form，并编译为版本化 CausalActionProgram
 → Rules step 诊断/请求权威随机/确定实际路径与集合
 → Room DO 原子提交 WorldEvent、Receipt、Pending 与 DeliveryPlan
 → project(viewer) 产生 Tactical Projection
@@ -181,12 +181,12 @@ preview 不公开隐藏目标数量、隐藏障碍或完整实际集合，不冻
 
 至少一个 Ability 创建可回放环境状态或持续 zone。它必须记录来源、geometry、开始、持续、到期/中断、专注或其他终止条件；刷新、断线、DO 驱逐和 replay 不能重复创建、漏到期或改变实际集合。
 
-## 10. Legacy、版本与迁移
+## 10. 0.4 版本与退役边界
 
-- `dnd5e-2014-srd5.1-v1` 继续由明确 Legacy Adapter 保持原一维/抽象行为。
-- 不从旧 distance、scene label、页面像素或空 obstacle 数组猜 authoritative-v2 坐标。
+- 0.4 只注册精确的当前 authoritative-v2 完整 runtime manifest；前 0.4 规则、场景与归档已经退役，不进入当前 Registry、回放或地图 Adapter。
+- 不从旧 distance、scene label、页面像素或空 obstacle 数组猜 authoritative-v2 坐标，也不提供兼容、fallback 或 migration。
 - authoritative-v2 genesis 固定 Geometry/Profile/TacticalProjection/EventSchema 的完整 ID/hash。
-- 更改坐标精度、碰撞、掩护、传播、采样、环境状态图或投影 schema 必须发布新 Profile/Adapter，并保留仍被活跃/可恢复房间引用的旧解释器。
+- 更改坐标精度、碰撞、掩护、传播、采样、环境状态图或投影 schema 必须发布新 Profile/Adapter；届时是否保留当前解释器取决于仍在使用的数据合同和新的明确裁定，不能预留含混回退。
 
 ## 11. 验收场景
 
@@ -212,7 +212,7 @@ preview 不公开隐藏目标数量、隐藏障碍或完整实际集合，不冻
 | 责任 | 唯一生产映射 | 验收映射 | 当前状态 |
 | --- | --- | --- | --- |
 | Geometry/Profile | `app/_runtime/lib/rules/profiles/combat-geometry.ts`、Rules v2 state/events/fold | G01–G15、场景 1/4/10 | 现有算法已有定向证据；真实 scene geometry/state/project vertical 待补 |
-| 环境定义/状态 | Rules Ability/Definition compiler、compound ActionPlan、campaign events | 场景 7–9/11 | 待实现/验证，禁止 UI patch |
+| 环境定义/状态 | Rules Ability/Definition compiler、CausalActionProgram、campaign events | 场景 7–9/11 | 待实现/验证，禁止 UI patch |
 | Tactical Projection/preview | Rules `project(viewer)`、Room observe | 场景 2/4/6/12 | 待实现/验证 |
 | 路径/区域提交 | Room Action、Rules `step`、Room DO randomness/continuation | 场景 5/6/10/11 | 机械 helper 有证据；生产 Room/页面纵切待补 |
 | Map/text Adapter | authoritative table Read Model、`play-table.tsx` | 场景 2–5/13 | 待实现/浏览器验证 |
@@ -225,5 +225,5 @@ preview 不公开隐藏目标数量、隐藏障碍或完整实际集合，不冻
 - **跨规格**：`SPEC 0013` 继续拥有数字 Geometry 算法，`SPEC 0012` 拥有战斗移动/区域机械，`SPEC 0005` 拥有事实/因果，`SPEC 0010` 拥有 Viewer 呈现；本规格只把环境状态和地图 Adapter 接入同一链。
 - **权限**：principal、控制角色、scene、turn/window 和 ability choice 都来自可信 Room 状态；地图请求体不能扩大控制权或自报 actor/targets。
 - **秘密**：完整 geometry/actual targets 只在 Rules/Internal；Player Projection、preview、错误、DOM、ARIA、日志和语音只含同一 Viewer 可知内容。
-- **版本**：geometry、environment definition/state graph、projection schema 与 event schema 都由 manifest pin；旧房不猜迁移。
+- **版本**：geometry、environment definition/state graph、projection schema 与 event schema 都由 manifest pin；前 0.4 房间不猜迁移且不进入当前解释器。
 - **第二权威**：地图和文字仅消费相同 Tactical Projection；所有变化仍只经 `step`/Room DO，所有观察/回放仍只经 `project/replay`。

@@ -41,7 +41,7 @@ Campaign genesis 固定：
 
 - 当前/最大 HP、伤势、疾病、诅咒、死亡/稳定、长期状态；
 - 法术位、生命骰、职业次数、弹药、充能和其他资源；
-- 唯一物件、普通资源、装备、位置、所有权与损毁；
+- 物品（含装备与消耗品）、普通资源、位置、所有权与损毁；
 - 角色知识、证据、来源主张和推断；
 - NPC/势力关系、声誉、债务、承诺、仇恨、帮助和背叛；
 - 未完成 Activity、到期计划、未决威胁、期限与因果前沿；
@@ -78,7 +78,7 @@ Campaign genesis 必须选择版本化 `AdvancementProfile`；首个新规则版
 
 死亡按机械事件确定；退役由控制玩家明确选择并经世界事实提交，KP/房主不能替玩家退休。角色可以在尾声后转为 NPC，但需要玩家同意并明确新的 KP 控制权；其知识和人格不会因此自动公开。
 
-死亡或退役角色仍是世界实体/历史人物，保留遗体/位置、物件、知识、关系、债务、承诺、伤势和影响，不从事件流删除。
+死亡或退役角色仍是世界实体/历史人物，保留遗体/位置、物品、知识、关系、债务、承诺、伤势和影响，不从事件流删除。
 
 ## 7. 继任角色
 
@@ -87,12 +87,12 @@ Campaign genesis 必须选择版本化 `AdvancementProfile`；首个新规则版
 默认不自动继承：
 
 - 私人知识、未分享线索、角色推断；
-- 物件、金币、装备、法术、资源和 attunement；
+- 物品（含装备与消耗品）、金币、法术和职业资源；
 - 关系、声誉、债务、承诺、职位和势力权限；
 - 旧角色的思想、动机、秘密或控制中的 NPC；
 - 未完成的个人 Activity 和反应窗口。
 
-合法继承只能来自已提交世界内链路：遗嘱、明确赠与、遗体/藏宝地点的实际取得、公开档案、共同组织授予、NPC 介绍、已传播知识或可感知的公共声誉。每项为新角色产生独立 `ArtifactTransferred`、`KnowledgeAcquired`、`RelationshipEstablished`、`DebtAssumed` 或 `PromiseAssumed` 事件，并保留来源。
+合法继承只能来自已提交世界内链路：遗嘱、明确赠与、遗体/藏宝地点的实际取得、公开档案、共同组织授予、NPC 介绍、已传播知识或可感知的公共声誉。每项为新角色产生独立 `ItemTransferred`、`KnowledgeAcquired`、`RelationshipEstablished`、`DebtAssumed` 或 `PromiseAssumed` 事件，并保留来源。
 
 玩家层面的内容安全偏好、账户身份和桌内参与权不是角色知识，可以随 Seat 持续；它们不得被投影成继任角色“知道旧角色秘密”。
 
@@ -106,9 +106,9 @@ Campaign genesis 必须选择版本化 `AdvancementProfile`；首个新规则版
 
 ## 9. Campaign 归档与恢复
 
-Campaign 可从 genesis 与完整连续事件重建所有章节、任期、成长和连续性。D1 目录保存当前摘要与静态人物卡，`room_event_archive` 保存可重建副本；二者不参与活跃裁决。
+Campaign 可从 genesis 与完整连续事件重建所有章节、任期、成长和连续性。D1 目录保存当前摘要与静态人物卡，`authoritative_room_genesis_archive`、`authoritative_room_event_archive`、`authoritative_projection_audit_archive` 与 settled checkpoint 只保存 0.4 当前房间的可重建副本；它们都不参与活跃裁决。
 
-归档/关闭 Campaign 前必须记录结束状态和恢复 Profile。恢复旧 Campaign 使用其固定解释器/Profile；部署新版不升级旧历史。
+归档/关闭 0.4 Campaign 前必须记录结束状态和完整 runtime manifest。恢复仍受支持的 Campaign 只能使用其固定解释器/Profile；前 0.4 Campaign 已退役且不进入当前恢复路径。未来版本是否继续保留 0.4 解释器须依据当时仍在使用的数据合同另行裁定，不能在本规格中预设兼容或静默升级。
 
 ## 10. 主要事件
 
@@ -126,8 +126,8 @@ Campaign 可从 genesis 与完整连续事件重建所有章节、任期、成�
 
 1. 一个角色获得资格后由玩家选择成长，跨 Worker 重启只增长一次；D1 写失败不回滚 DO。
 2. 章节切换保留物品、伤势、知识、关系、债务、承诺和未决威胁；合法 downtime 只结算已冻结效果。
-3. 角色死亡后遗体/物件留在世界，玩家建立继任者；继任者默认不知道私人线索、没有旧装备和关系。
-4. 继任者通过遗嘱、实际取得和 NPC 介绍合法获得部分物件/知识/关系，每项有独立来源事件。
+3. 角色死亡后遗体/物品留在世界，玩家建立继任者；继任者默认不知道私人线索、没有旧装备和关系。
+4. 继任者通过遗嘱、实际取得和 NPC 介绍合法获得部分物品/知识/关系，每项有独立来源事件。
 5. 角色自愿退役并在玩家同意后转 NPC；后续行动由 KP 依据其有限知识控制。
 6. 错误死亡导致继任者行动后被更正，系统打开因果分支而非删除旧事件。
 7. 多章 Campaign 收束后玩家可选择尾声或明确新冒险；系统不暗加幕后黑手撤销胜利。
@@ -136,16 +136,16 @@ Campaign 可从 genesis 与完整连续事件重建所有章节、任期、成�
 
 - Campaign/Chapter/任期模型：`app/_runtime/lib/rules/v2/campaign-actions.ts`、`campaign-events.ts`、`character-lifecycle.ts`
 - 成长/Profile：`app/_runtime/lib/rules/v2/character-progression.ts` 与 `app/_runtime/lib/rules/profiles/`
-- 生产生命周期 ActionPlan：`app/_runtime/lib/rules/v2/compound-model.ts`、`compound-actions.ts`
+- 生产生命周期 Rules 命令：`app/_runtime/lib/rules/v2/campaign-actions.ts`；可信 Room capability 位于 `app/_runtime/lib/room/proposal-adapter.ts`、`durable-object.ts`
 - Room Action：`app/_runtime/lib/room/action.ts`
 - 静态卡同步：`app/_runtime/lib/table/server.ts`
-- 验收：`tests/world-campaign-v2.test.mjs`、`tests/rules-compound-action-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/observer-projection-v2.test.mjs`
+- 验收：`tests/world-campaign-v2.test.mjs`、`tests/causal-action-rules-v3.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/observer-projection-v2.test.mjs`
 
-### 12.1 当前实现证据（2026-08-26）
+### 12.1 当前实现证据（2026-08-31）
 
-- `tests/world-campaign-v2.test.mjs` 9/9：成长待决、章节切换连续性、死亡/退役、转 NPC、继任与 provenance 继承均可回放；同一文件验证 `raiseEndingCandidate → concludeStory → recordEpilogueChoice → startSequel` 使用真实旧后果和新的 Story/Chapter 边界。`srdXp2014` 从累计 XP 事件跨越多级阈值后逐级打开玩家选择，里程碑与 XP 档案互斥，错误 XP 奖励的更正同时恢复累计值并关闭对应待决输入。
-- `tests/rules-compound-action-v2.test.mjs` 19/19：`advanceCampaignLifecycle` 已注册为生产 typed ActionPlan；`awardExperience` 使用 1–1,000,000 的正整数边界，经 `ExperienceAwarded → AdvancementAvailable` 进入同一 Rules 事务并投影累计 XP；默认 genesis 固定 `milestone`，显式 genesis 可固定 `srdXp2014`。结局候选、故事收束、玩家尾声及各自 Root Action 仍保持原有证据。
-- `tests/multiplayer-room-v2.test.ts` 8/8 与 `tests/observer-projection-v2.test.mjs` 5/5：成长/退休/继任从可信控制权进入 Room Authority；继任者不继承前任私人知识或旧投递。
+- `tests/world-campaign-v2.test.mjs` 覆盖成长待决、章节切换连续性、死亡/退役、转 NPC、继任与 provenance 继承均可回放；同一文件验证 `raiseEndingCandidate → concludeStory → recordEpilogueChoice → startSequel` 使用真实旧后果和新的 Story/Chapter 边界。`srdXp2014` 从累计 XP 事件跨越多级阈值后逐级打开玩家选择，里程碑与 XP 档案互斥，错误 XP 奖励的更正同时恢复累计值并关闭对应待决输入。
+- `tests/world-campaign-v2.test.mjs` 还覆盖 `awardExperience` 的 1–1,000,000 正整数边界、`ExperienceAwarded → AdvancementAvailable`、`milestone | srdXp2014` genesis、结局候选、故事收束、玩家尾声与各自 Root Action。0.4 的服务端 ActorPlan 形成、退休与 Activity 入口使用字段精确的 `authenticatedCampaignAction`；其他待决选择继续使用其字段精确的当前 capability，不恢复旧 typed ActionPlan transport。
+- `tests/multiplayer-room-v2.test.ts` 与 `tests/observer-projection-v2.test.mjs` 覆盖成长/退休/继任从可信控制权进入 Room Authority，以及继任者不继承前任私人知识或旧投递。精确通过数以同一冻结源码的 `refactor-log.md` 为准。
 - SRD 2014 累计阈值由 `character-progression.ts` 固定为 1–20 级表；大额奖励不自动升级，`CharacterAdvanced` 后若累计值仍达到下一阈值，会以新 `AdvancementAvailable` 继续等待该玩家，直到资格耗尽或到达 20 级。
 
 ## 13. 交叉审查

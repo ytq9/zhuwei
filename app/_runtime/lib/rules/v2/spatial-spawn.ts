@@ -4,7 +4,6 @@ import type { AuthoritativeWorldState } from "./model";
 import { isRecord } from "./validation";
 
 export type DynamicCombatantSpawn =
-  | { kind: "legacy" }
   | { kind: "allocated"; position: TacticalPosition }
   | { kind: "unavailable" };
 
@@ -21,23 +20,17 @@ function occupiedPositionKey(value: unknown): string | undefined {
 }
 
 /**
- * The sole allocator for a combatant introduced after genesis. Tactical rooms
- * can only use their pinned scene spawn list; legacy rooms retain the historical
- * ordinal placement in buildPlayerCombatEntity.
+ * The sole allocator for a combatant introduced after genesis. 0.4 rooms can
+ * only use their pinned scene spawn list.
  */
 export function allocateDynamicCombatantSpawn(
   state: AuthoritativeWorldState,
   sceneId: string,
 ): DynamicCombatantSpawn {
-  const campaign = state.campaignRuntime.campaign;
-  const tacticalRoom = isRecord(campaign)
-    && isRecord(campaign.moduleRef)
-    && typeof campaign.moduleRef.profileId === "string"
-    && campaign.moduleRef.profileId.endsWith(":tactical-map-v1");
   const scene = state.combatRuntime.scenes[sceneId];
   const geometry = isRecord(scene) ? scene.geometry : undefined;
   if (!isCanonicalTacticalGeometry(geometry)) {
-    return tacticalRoom ? { kind: "unavailable" } : { kind: "legacy" };
+    return { kind: "unavailable" };
   }
 
   const occupied = new Set(

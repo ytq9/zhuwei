@@ -32,10 +32,10 @@ import {
   retryNarration,
   sendAction,
   setGear,
-  setRoomModel,
   startGame,
   useFeature,
   useHitDie,
+  useInventoryItem,
 } from "../../_runtime/lib/table/server";
 import {
   speakNarration,
@@ -78,12 +78,12 @@ const commands: Record<string, Callable> = Object.assign(Object.create(null), {
   retryNarration,
   sendAction,
   setGear,
-  setRoomModel,
   speakNarration,
   startGame,
   transcribeAudio,
   useFeature,
   useHitDie,
+  useInventoryItem,
 });
 
 function preventDomainResponseCaching(response: Response): Response {

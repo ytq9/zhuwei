@@ -21,7 +21,6 @@ import {
   assertStructuredProductionLogging,
 } from "../tools/check-modules.mjs";
 import {
-  invokeProfileReferenceGate,
   verifyCurrentDeployment,
   verifyDeployGuard,
 } from "../cloudflare/verify-deploy-config.mjs";
@@ -48,22 +47,11 @@ function deployInputs() {
       join(repoRoot, "docs/specs/0001-llm-kp-responsibility-contract.md"),
       "utf8",
     ),
-    packageJson: JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")),
-    gateSource: readFileSync(
-      join(repoRoot, "tools/check-runtime-profile-references.mts"),
-      "utf8",
-    ),
     branch: "cloudflare",
     status: "",
     head: "a".repeat(40),
     deploySourceSha: undefined,
     requireSourceProof: false,
-    profileGate: {
-      invoked: true,
-      evidenceProvided: false,
-      result: { ok: true, referencedManifestRefs: [], roomCount: 0 },
-    },
-    requireProfileEvidence: false,
   };
 }
 
@@ -270,16 +258,12 @@ test("deploy guard accepts only clean cloudflare HEAD with matching evidence", (
       ok: true,
       branch: "cloudflare",
       sourceSha: "a".repeat(40),
-      profileRoomCount: 0,
-      referencedManifestRefs: [],
     },
   );
   assert.doesNotThrow(() => verifyDeployGuard({
     ...valid,
     deploySourceSha: valid.head,
     requireSourceProof: true,
-    requireProfileEvidence: true,
-    profileGate: { ...valid.profileGate, evidenceProvided: true },
   }));
 
   const rejected = [
@@ -290,25 +274,13 @@ test("deploy guard accepts only clean cloudflare HEAD with matching evidence", (
     [{ status: " M wrangler.jsonc" }, /clean tracked and untracked worktree/],
     [{ deploySourceSha: "b".repeat(40) }, /exactly match git HEAD/],
     [{ requireSourceProof: true }, /DEPLOY_SOURCE_SHA is required/],
-    [{
-      requireProfileEvidence: true,
-      deploySourceSha: valid.head,
-      requireSourceProof: true,
-    }, /PROFILE_REFERENCE_GATE_JSON is required/],
-    [{
-      profileGate: {
-        invoked: true,
-        evidenceProvided: true,
-        result: { ok: false, code: "missingProfile", referencedManifestRefs: [], roomCount: 1 },
-      },
-    }, /profile reference gate rejected deploy/],
   ];
   for (const [change, message] of rejected) {
     assert.throws(() => verifyDeployGuard({ ...valid, ...change }), message);
   }
 });
 
-test("deploy guard rejects main-entry/resource drift and an unavailable profile gate", () => {
+test("deploy guard rejects main-entry and resource drift", () => {
   const valid = deployInputs();
   assert.throws(
     () => verifyDeployGuard({
@@ -324,35 +296,13 @@ test("deploy guard rejects main-entry/resource drift and an unavailable profile 
     }),
     /new top-level deployment\/resource surface/,
   );
-  assert.throws(
-    () => verifyDeployGuard({
-      ...valid,
-      packageJson: {
-        ...valid.packageJson,
-        scripts: { ...valid.packageJson.scripts, "profile:reference-gate": "echo skipped" },
-      },
-    }),
-    /must remain wired/,
-  );
-  assert.throws(
-    () => verifyDeployGuard({
-      ...valid,
-      profileGate: { ...valid.profileGate, invoked: false },
-    }),
-    /must invoke/,
-  );
 });
 
-test("current deploy verification invokes the profile gate and inspects Git locally", (t) => {
+test("current deploy verification inspects Git locally", (t) => {
   const root = fixture(t, {
     "wrangler.jsonc": readFileSync(join(repoRoot, "wrangler.jsonc"), "utf8"),
     "docs/specs/0001-llm-kp-responsibility-contract.md": readFileSync(
       join(repoRoot, "docs/specs/0001-llm-kp-responsibility-contract.md"),
-      "utf8",
-    ),
-    "package.json": readFileSync(join(repoRoot, "package.json"), "utf8"),
-    "tools/check-runtime-profile-references.mts": readFileSync(
-      join(repoRoot, "tools/check-runtime-profile-references.mts"),
       "utf8",
     ),
   });
@@ -363,22 +313,9 @@ test("current deploy verification invokes the profile gate and inspects Git loca
     ["-c", "user.name=Guard Test", "-c", "user.email=guard@example.invalid", "commit", "-qm", "fixture"],
     { cwd: root },
   );
-  let invocation;
   const result = verifyCurrentDeployment({
     root,
     environment: {},
-    profileGateRunner: (receivedRoot, input) => {
-      invocation = { receivedRoot, input };
-      return { ok: true, referencedManifestRefs: [], roomCount: 0 };
-    },
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(invocation, { receivedRoot: root, input: "[]" });
-});
-
-test("real profile reference gate executable accepts a bounded empty D1 snapshot", () => {
-  assert.deepEqual(
-    invokeProfileReferenceGate(repoRoot, "[]"),
-    { ok: true, referencedManifestRefs: [], roomCount: 0 },
-  );
 });

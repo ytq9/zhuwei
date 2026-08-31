@@ -23,12 +23,10 @@ export const ACTION_PLAN_OPERATIONS = [
   "resolveReaction",
   "resolveRest",
   "changeResource",
+  "acquireItem",
   "useItem",
   "transferItem",
   "changeNpcGear",
-  "acquireArtifact",
-  "useArtifact",
-  "transferArtifact",
   "advanceFactionPlan",
   "changeKnowledge",
   "changeParty",
@@ -42,7 +40,7 @@ export const ACTION_PLAN_GEAR_SLOTS: readonly GearSlot[] = Object.freeze(
 
 export const ACTION_PLAN_COST_KINDS = [
   "consumeResource",
-  "consumeArtifact",
+  "consumeItem",
   "fictionTime",
 ] as const;
 
@@ -61,40 +59,9 @@ export const ACTION_PLAN_EFFECT_KINDS = [
 
 export const ACTION_PLAN_ABILITIES = ["str", "dex", "con", "int", "wis", "cha"] as const;
 export const ACTION_PLAN_CHECK_MODES = ["normal", "advantage", "disadvantage"] as const;
-export const CAMPAIGN_LIFECYCLE_ACTIONS = [
-  "grantMilestone",
-  "awardExperience",
-  "concludeChapter",
-  "startChapter",
-  "transitionChapter",
-  "retireCharacter",
-  "establishInheritanceSource",
-  "transferInheritance",
-  "raiseEndingCandidate",
-  "concludeStory",
-  "recordEpilogueChoice",
-  "startSequel",
-] as const;
-
 export type ActionPlanOperation = typeof ACTION_PLAN_OPERATIONS[number];
-export type ActionPlanCostKind = typeof ACTION_PLAN_COST_KINDS[number];
-export type ActionPlanEffectKind = typeof ACTION_PLAN_EFFECT_KINDS[number];
 export type ActionPlanAbility = typeof ACTION_PLAN_ABILITIES[number];
 export type ActionPlanCheckMode = typeof ACTION_PLAN_CHECK_MODES[number];
-export type CampaignLifecycleAction = typeof CAMPAIGN_LIFECYCLE_ACTIONS[number];
-
-export type InheritanceAuthorizationProposal = {
-  authorizationId: string;
-  kind: "artifact" | "knowledge" | "relationship" | "debt" | "promise";
-  sourceRef: string;
-  targetRef: string;
-  scope:
-    | "transferPossession"
-    | "acquireExactKnowledge"
-    | "establishDerivedRelationship"
-    | "assumeDebtObligation"
-    | "assumePromiseObligation";
-};
 
 export type ModelInvocationResult =
   | "success"
@@ -140,44 +107,10 @@ export type FictionDuration = {
   value: number;
 };
 
-export type ProposalRisk = {
-  warning: string;
-  successConsequences: string[];
-  failureConsequences: string[];
-  retryGate: Array<
-    | "methodChanged"
-    | "factsChanged"
-    | "costAccepted"
-    | "positionChanged"
-    | "materialAssistance"
-    | "situationAdvanced"
-  >;
-};
-
-export type ProposalPendingInput = {
-  kind: "clarification" | "playerChoice";
-  prompt: string;
-  choices: Array<{ id: string; label: string; consequence: string }>;
-};
-
 export type AdjudicationPrecedentScope = {
   kind: "scene" | "campaign" | "module" | "room";
   ref: string;
 };
-
-export type AdjudicationPrecedentProposal =
-  | {
-      kind: "record";
-      publicRuleBasis: string[];
-      applicabilityScope: AdjudicationPrecedentScope;
-    }
-  | {
-      kind: "supersede";
-      supersededPrecedentId: string;
-      materialDifferences: string[];
-      publicRuleBasis: string[];
-      applicabilityScope: AdjudicationPrecedentScope;
-    };
 
 export type DynamicMaterialization = {
   kind: "fact" | "location" | "passage" | "npc" | "enemy" | "item" | "faction" | "hazard" | "opportunity" | "ability";
@@ -188,7 +121,7 @@ export type DynamicMaterialization = {
 };
 
 export type ActionPlanCost =
-  | { kind: "consumeArtifact"; artifactRef: string; count?: number }
+  | { kind: "consumeItem"; itemRef: string; count?: number }
   | { kind: "consumeResource"; resourceRef: string; amount: number }
   | { kind: "fictionTime"; duration: FictionDuration };
 
@@ -233,22 +166,7 @@ export type MeaningfulFailureOption = {
   summary: string;
 };
 
-export type ModuleMigrationProposal = {
-  fromModuleRef: {
-    profileId: string;
-    profileHash: string;
-  };
-  toModuleRef: {
-    profileId: string;
-    profileHash: string;
-  };
-  migrationRef: {
-    profileId: string;
-    profileHash: string;
-  };
-};
-
-type SemanticActionPlanFields = {
+type NpcSemanticActionPlanFields = {
   ability?: ActionPlanAbility;
   skill?: string | null;
   opposedAbility?: ActionPlanAbility;
@@ -269,7 +187,6 @@ type SemanticActionPlanFields = {
     activityId: string;
     disposition: "continue" | "summarize" | "interrupt" | "complete";
   }>;
-  moduleMigration?: ModuleMigrationProposal;
   abilityRef?: string;
   reactionRef?: string;
   destinationRef?: string;
@@ -280,8 +197,8 @@ type SemanticActionPlanFields = {
   resourceRef?: string;
   amount?: number;
   itemRef?: string;
-  artifactRef?: string;
-  artifactUse?: "retain" | "consume" | "destroy";
+  itemActivityId?: "use";
+  ownershipDisposition?: "retain" | "transfer";
   factionRef?: string;
   planRef?: string;
   knowledgeRef?: string;
@@ -297,26 +214,7 @@ type SemanticActionPlanFields = {
     | "moveIndividually";
   pendingInputRef?: string;
   memberRefs?: string[];
-  campaignRef?: string;
-  chapterRef?: string;
-  lifecycleAction?: CampaignLifecycleAction;
-  inheritanceSourceKind?:
-    | "will"
-    | "explicitGift"
-    | "recovery"
-    | "publicRecord"
-    | "organizationGrant"
-    | "npcIntroduction"
-    | "knowledgePropagation";
-  inheritanceSourceFactRef?: string;
-  inheritanceAuthorizationRef?: string;
-  inheritanceAuthorization?: InheritanceAuthorizationProposal;
   publicClause?: string;
-  experienceAmount?: number;
-  continueAsNpc?: boolean;
-  endingCandidateRef?: string;
-  storyRef?: string;
-  sequelStoryRef?: string;
   outcome?: string;
   choice?: string;
   precedentRef?: string;
@@ -355,21 +253,24 @@ export type ResolveNoncombatSaveActionPlan = Omit<FrozenCheckActionPlanFields, "
   targetEntityRef?: string;
 };
 
-export type RetryFailedActionPlan =
-  | {
-      operation: "retryFailedAction";
-      precedentRef: string;
-    }
-  | (FrozenCheckActionPlanFields & {
-      operation: "retryFailedAction";
-      precedentRef: string;
-    });
-
 export type TransferItemActionPlan = {
   operation: "transferItem";
   targetEntityRef: string;
   itemRef: string;
   amount: number;
+  ownershipDisposition: "retain" | "transfer";
+};
+
+export type AcquireItemActionPlan = {
+  operation: "acquireItem";
+  itemRef: string;
+  amount: number;
+};
+
+export type UseItemActionPlan = {
+  operation: "useItem";
+  itemRef: string;
+  itemActivityId: "use";
 };
 
 export type ChangeNpcGearActionPlan =
@@ -385,20 +286,7 @@ export type ChangeNpcGearActionPlan =
       slot: GearSlot;
     };
 
-export type ReservedSemanticActionPlan = SemanticActionPlanFields & {
-  operation: Exclude<
-    ActionPlanOperation,
-    | "resolveDirectConsequences"
-    | "resolveNoncombatCheck"
-    | "resolveNoncombatSave"
-    | "retryFailedAction"
-    | "advanceFactionPlan"
-    | "transferItem"
-    | "changeNpcGear"
-  >;
-};
-
-export type NpcReservedSemanticActionPlan = SemanticActionPlanFields & {
+export type NpcReservedSemanticActionPlan = NpcSemanticActionPlanFields & {
   operation: Exclude<
     ActionPlanOperation,
     | "resolveDirectConsequences"
@@ -406,6 +294,9 @@ export type NpcReservedSemanticActionPlan = SemanticActionPlanFields & {
     | "resolveNoncombatSave"
     | "retryFailedAction"
     | "resolveNoncombatContest"
+    | "advanceCampaignLifecycle"
+    | "acquireItem"
+    | "useItem"
     | "transferItem"
     | "changeNpcGear"
   >;
@@ -415,23 +306,11 @@ export type NpcSemanticActionPlan =
   | ResolveDirectConsequencesActionPlan
   | ResolveNoncombatCheckActionPlan
   | Omit<ResolveNoncombatSaveActionPlan, "targetEntityRef">
+  | AcquireItemActionPlan
+  | UseItemActionPlan
   | TransferItemActionPlan
   | ChangeNpcGearActionPlan
   | NpcReservedSemanticActionPlan;
-
-export type SemanticActionPlan =
-  | ResolveDirectConsequencesActionPlan
-  | ResolveNoncombatCheckActionPlan
-  | ResolveNoncombatSaveActionPlan
-  | RetryFailedActionPlan
-  | TransferItemActionPlan
-  | ReservedSemanticActionPlan;
-
-export type ActorPlanActivityProposal = {
-  activityId: string;
-  activityKind: string;
-  intendedDurationMicros: string;
-};
 
 export type ActorPlanDueProposal = {
   kind: "fictionTime";
@@ -453,70 +332,6 @@ export type ActorPlanAlternateTargetProposal = {
   reason: string;
 };
 
-/**
- * One finite-knowledge NPC/Faction plan proposed by KP. Module/chapter pins,
- * actor identity, revision, and lifecycle status are deliberately absent:
- * Rules derives those authority fields from the committed Room state.
- */
-export type ActorPlanProposal = {
-  factionRef?: string;
-  planId: string;
-  premiseRefs: string[];
-  nextStep: string;
-  resourceRefs: string[];
-  activity: ActorPlanActivityProposal;
-  due: ActorPlanDueProposal | null;
-  trigger: ActorPlanTriggerProposal | null;
-  trace: ActorPlanTraceProposal;
-  alternateTarget: ActorPlanAlternateTargetProposal;
-};
-
-export type NpcActionProposal = {
-  npcId: string;
-  goal: string;
-  method: string;
-  knowledgeRefs: string[];
-  actorPlan?: ActorPlanProposal;
-  mechanicalProposal: NpcSemanticActionPlan | null;
-};
-
-export type SceneProposal = {
-  question: string;
-  pressure: string;
-  opportunities: string[];
-  conclusionCandidate: string | null;
-};
-
-export type KpProposalDraft = {
-  kind:
-    | "directSuccess"
-    | "checkRequired"
-    | "highRiskFeasible"
-    | "missingPrerequisite"
-    | "worldLawViolation";
-  goal: string;
-  method: string;
-  publicBasisRefs: string[];
-  privateBasisRefs: string[];
-  adjudicationPrecedent: AdjudicationPrecedentProposal | null;
-  estimatedFictionTime?: FictionDuration;
-  risk: ProposalRisk | null;
-  pendingInput: ProposalPendingInput | null;
-  dynamicMaterializations: DynamicMaterialization[];
-  hiddenRealityCandidateSet?: {
-    candidateSetId: string;
-    candidates: Array<DynamicMaterialization & { candidateId: string; hiddenWeight: number }>;
-  } | null;
-  npcActions: NpcActionProposal[];
-  mechanicalProposal: SemanticActionPlan | null;
-  scene: SceneProposal;
-};
-
-export type AuthoritativeKpProposal = KpProposalDraft & {
-  proposalAttemptId: string;
-  modelInvocationReceipt: ModelInvocationReceipt;
-};
-
 /** New-room-only private Form envelope. It is server-side data and is never a
  * player/API input surface. Room normalization verifies and lowers it before
  * the existing Rules `step` boundary. */
@@ -526,6 +341,9 @@ export type V3AuthoritativeKpProposal = {
   draft: Record<string, unknown>;
   causalActionProgram: unknown;
   loweredCausalProgram: unknown;
+  /** Hash of the final typed semantics after the sole narrow repair. */
+  finalSemanticHash?: string;
+  /** Hash of the original player-bound semantic intent before repair. */
   semanticFreezeHash: string;
   repairUsed: boolean;
   proposalAttemptId: string;
@@ -665,7 +483,7 @@ export type AuthoritativeKpProfile = Readonly<{
   modelProfileVersion: string;
   promptPolicyVersion: string;
   proposalSchemaVersion: string;
-  actionPlanSchemaVersion: string;
+  actionLanguageVersion: string;
   narrationSchemaVersion: string;
 }>;
 
@@ -697,9 +515,7 @@ export type AuthoritativeKpAdapterOptions = {
 };
 
 export type AuthoritativeKpAdapter = {
-  propose(request: KpProposalRequest): Promise<AuthoritativeKpProposal | V3AuthoritativeKpProposal>;
-  /** Present on V3 production adapters. Optional so historical/test adapters
-   * keep their exact generic-proposal behavior. */
-  decideDueActorPlan?(request: DueActorPlanDecisionRequest): Promise<DueActorPlanDecision>;
+  propose(request: KpProposalRequest): Promise<V3AuthoritativeKpProposal>;
+  decideDueActorPlan(request: DueActorPlanDecisionRequest): Promise<DueActorPlanDecision>;
   narrate(request: KpNarrationRequest): Promise<CurrentNarration | BodyOnlyCurrentNarration>;
 };

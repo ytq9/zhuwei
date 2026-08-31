@@ -143,13 +143,13 @@ KP 不得为延长内容追加幕后黑手、撤销胜利、让牺牲无意义�
 - 场景/失败/结局模型：`app/_runtime/lib/rules/v2/campaign-actions.ts`、`campaign-events.ts`、`compound-actions.ts`
 - Room Action/KP 循环：`app/_runtime/lib/room/action.ts`
 - Read Model/UI：`app/_runtime/components/play-table.tsx`
-- 验收：`tests/world-campaign-v2.test.mjs`、`tests/rules-compound-action-v2.test.mjs`、`tests/compound-action-v2.test.ts`、`tests/kp-multiturn-eval.test.ts`
+- 当前 Rules 验收：`tests/world-campaign-v2.test.mjs`、`tests/causal-action-rules-v3.test.mjs`；20+ Room/KP 纵切待以当前私有窄工具/Form/Causal 协议重建
 
-### 13.1 当前实现证据（2026-08-26）
+### 13.1 当前实现证据（2026-08-31）
 
-- `tests/world-campaign-v2.test.mjs` 7/7：`MeaningfulFailureCommitted` 改变路线/时间/势力并提供新选择，原样重试以 `unchangedRetry` 拒绝，实质改变方法/成本后才允许新裁决；同一文件验证结局候选、真实收束、玩家尾声与显式续篇。
-- `tests/rules-compound-action-v2.test.mjs` 18/18：生产 ActionPlan 用 `resolveDirectConsequences` 提交 typed consequences，用 `advanceCampaignLifecycle` 提交结局/尾声，并以 `commitMeaningfulFailure` / `retryFailedAction` 固定有意义失败与原样重试门；不得由叙述、UI 或 Room 拼装状态。
-- `tests/kp-multiturn-eval.test.ts` 的单场景 31/31 连续意图/待决回答已通过，覆盖有意义失败、NPC/势力推进、聚光灯、真实收束和尾声；它是确定性系统评测，不替代真实 Workers AI 与线上冒烟。
+- `tests/world-campaign-v2.test.mjs` 覆盖 `MeaningfulFailureCommitted` 改变路线/时间/势力并提供新选择，原样重试以 `unchangedRetry` 拒绝，实质改变方法/成本后才允许新裁决；同一文件验证结局候选、真实收束、玩家尾声与显式续篇。
+- `tests/world-campaign-v2.test.mjs` 从当前 Rules 命令提交有意义失败、改变重试条件、结局、尾声与显式续篇；`tests/causal-action-rules-v3.test.mjs` 证明普通 KP 提案经 `CausalActionProgram` 冻结并提交分支后果。叙述、UI 与 Room 都不能拼装状态，也不保留旧 ActionPlan transport。
+- 退役 production draft fixture 已不作为 0.4 证据；新的 runner 必须以 20+ 连续意图/待决回答覆盖有意义失败、NPC/势力推进、聚光灯、真实收束和尾声，并把同一源码的精确结果写入 `refactor-log.md`。即使通过，也不替代真实 DeepSeek 与线上冒烟。
 
 ## 14. 交叉审查
 

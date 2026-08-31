@@ -1,29 +1,34 @@
 import type {
   AuthoritativeWorldState,
+  CharacterRecord,
   EventEnvelope,
   EventPayloadByType,
   EventType,
   JsonRecord,
   KnowledgeRecord,
 } from "./model";
-import { itemById } from "../../dnd/gear";
+import { canonicalSha256 } from "../profiles/canonical";
 import { endCharacterTenure } from "./character-lifecycle";
 import { actorPlanNpcIsAvailable, actorPlanPremiseIsAvailable } from "./actor-plans";
 import {
+  buildPlayerCombatEntity,
+  compileCanonicalCharacterCombat,
+  frozenPlayerAbilityMatches,
+  synchronizePlayerCombatEntity,
+} from "./character-abilities";
+import {
   isDefinitionRegisteredAbilityPayload,
+  isRegisteredAbilityRecord,
   registeredAbilityRecord,
 } from "../profiles/ability-compiler";
 import {
-  isNpcMechanicalItemDefinition,
   isNpcMechanicalTemplateDefinition,
-  NPC_MECHANICAL_ITEM_KIND,
   NPC_MECHANICAL_TEMPLATE_KIND,
   synchronizeCombatItemResources,
-  transferredNpcMechanicalItemId,
 } from "./npc-mechanics";
 import { MAX_EXPERIENCE_AWARD } from "./character-progression";
 import {
-  campaignContinuityManifestForSchema,
+  campaignContinuityManifest,
   continuityManifestsEqual,
   isCampaignContinuityManifest,
 } from "./campaign-continuity";
@@ -34,6 +39,23 @@ import {
   isRecord,
   isSha256,
 } from "./validation";
+import {
+  acquireItemQuantity,
+  deriveCharacterLoadoutFromItems,
+  spendItemEntryCosts,
+  transferItemQuantity,
+} from "./item-transitions";
+import {
+  isItemDefinitionV1,
+  isItemEntryV1,
+  isItemSystemStateV1,
+  itemEntryMatchesDefinition,
+  type ItemSystemStateV1,
+} from "./items";
+import {
+  deriveNpcItemSystemLoadout,
+  npcItemSystemEquipmentMechanics,
+} from "./npc-item-system";
 
 export const CAMPAIGN_EVENT_TYPES = [
   "FeasibilityRuled",
@@ -48,11 +70,10 @@ export const CAMPAIGN_EVENT_TYPES = [
   "ResourceUsed",
   "ResourceChanged",
   "ItemUsed",
+  "ItemDefinitionRegistered",
+  "ItemMaterialized",
+  "ItemAcquired",
   "ItemTransferred",
-  "ArtifactMaterialized",
-  "ArtifactAcquired",
-  "ArtifactUsed",
-  "ArtifactTransferred",
   "ActivityStarted",
   "RestStarted",
   "GroupRestOffered",
@@ -95,7 +116,6 @@ export const CAMPAIGN_EVENT_TYPES = [
   "CharacterAdvanced",
   "ChapterConcluded",
   "ChapterContinuityRecorded",
-  "ModuleVersionMigrated",
   "ChapterStarted",
   "InheritanceSourceEstablished",
   "InheritanceTransferred",
@@ -168,41 +188,29 @@ const PAYLOAD_KEYS: Record<CampaignEventType, readonly string[]> = {
   SaveFrozen: ["ability", "dc", "failure", "sourceDefinitionId", "success", "targetId"],
   ResourceUsed: ["amount", "characterId", "purpose", "resourceId"],
   ResourceChanged: ["after", "before", "characterId", "delta", "reason", "resourceId"],
-  ItemUsed: ["characterId", "itemId", "purpose", "quantity", "remaining"],
+  ItemUsed: [
+    "characterId",
+    "chargesAfter",
+    "chargesBefore",
+    "durabilityAfter",
+    "durabilityBefore",
+    "entryId",
+    "purpose",
+    "quantityAfter",
+    "quantityBefore",
+  ],
+  ItemDefinitionRegistered: ["definition"],
+  ItemMaterialized: ["entry"],
+  ItemAcquired: ["characterId", "entryId", "fromSceneId"],
   ItemTransferred: [
     "fromCharacterId",
     "itemId",
     "method",
+    "ownershipDisposition",
     "quantity",
     "targetItemId",
     "toCharacterId",
   ],
-  ArtifactMaterialized: [
-    "artifactId",
-    "definitionRef",
-    "name",
-    "quantity",
-    "sceneId",
-    "status",
-    "visibilityPolicyId",
-  ],
-  ArtifactAcquired: [
-    "afterStatus",
-    "artifactId",
-    "beforeStatus",
-    "characterId",
-    "fromSceneId",
-    "remainingQuantity",
-  ],
-  ArtifactUsed: [
-    "afterStatus",
-    "artifactId",
-    "beforeStatus",
-    "characterId",
-    "purpose",
-    "remainingQuantity",
-  ],
-  ArtifactTransferred: ["artifactId", "fromCharacterId", "method", "toCharacterId"],
   ActivityStarted: ["activityId", "activityKind", "characterId", "completion", "intendedDurationMicros"],
   RestStarted: ["activityId", "characterId", "intendedDurationMicros", "recoveryChoice", "restKind"],
   GroupRestOffered: [
@@ -245,7 +253,26 @@ const PAYLOAD_KEYS: Record<CampaignEventType, readonly string[]> = {
   PromiseAssumed: ["authorizationId", "condition", "content", "promiseeId", "promiseId", "promisorId", "sourceFactId", "sourcePromiseId"],
   DebtIncurred: ["basisFactIds", "condition", "creditorId", "debtId", "debtorId", "obligation"],
   DebtAssumed: ["authorizationId", "basisFactIds", "condition", "creditorId", "debtId", "debtorId", "obligation", "sourceDebtId", "sourceFactId"],
-  NpcPlanFormed: ["goal", "knowledgeRefs", "nextAction", "npcId", "planId", "resourceRefs"],
+  NpcPlanFormed: [
+    "activity",
+    "actorKind",
+    "actorRef",
+    "alternateTarget",
+    "chapterId",
+    "decisionNpcId",
+    "due",
+    "goal",
+    "moduleRef",
+    "nextStep",
+    "npcId",
+    "planId",
+    "premiseRefs",
+    "resourceRefs",
+    "revision",
+    "status",
+    "trace",
+    "trigger",
+  ],
   NpcActionCommitted: [
     "causedByRootActionId",
     "decision",
@@ -312,7 +339,6 @@ const PAYLOAD_KEYS: Record<CampaignEventType, readonly string[]> = {
   CharacterAdvanced: ["characterId", "choice", "pendingInputId", "resultingCharacter"],
   ChapterConcluded: ["campaignId", "chapterId", "continuityPolicy", "reason"],
   ChapterContinuityRecorded: ["campaignId", "fromChapterId", "manifest", "toChapterId"],
-  ModuleVersionMigrated: ["campaignId", "fromModuleRef", "migrationRef", "toModuleRef"],
   ChapterStarted: ["campaignId", "chapterId", "moduleRef", "ordinal", "sceneQuestion", "storyAnchorRefs"],
   InheritanceSourceEstablished: ["factId", "predecessorCharacterId", "source", "successorCharacterId"],
   InheritanceTransferred: [
@@ -338,9 +364,7 @@ const ACTOR_PLAN_FORMED_KEYS = [
   "decisionNpcId",
   "due",
   "goal",
-  "knowledgeRefs",
   "moduleRef",
-  "nextAction",
   "nextStep",
   "npcId",
   "planId",
@@ -363,12 +387,6 @@ function allRequiredStrings(value: JsonRecord, keys: readonly string[]): boolean
 }
 
 function validNpcPlanFormed(value: JsonRecord): boolean {
-  const legacyKeys = PAYLOAD_KEYS.NpcPlanFormed;
-  if (hasExactKeys(value, legacyKeys)) {
-    return allRequiredStrings(value, ["goal", "nextAction", "npcId", "planId"])
-      && strings(value.knowledgeRefs)
-      && strings(value.resourceRefs);
-  }
   if (
     !hasExactKeys(value, ACTOR_PLAN_FORMED_KEYS)
     || !allRequiredStrings(value, [
@@ -376,7 +394,6 @@ function validNpcPlanFormed(value: JsonRecord): boolean {
       "chapterId",
       "decisionNpcId",
       "goal",
-      "nextAction",
       "nextStep",
       "npcId",
       "planId",
@@ -386,8 +403,6 @@ function validNpcPlanFormed(value: JsonRecord): boolean {
     || value.decisionNpcId !== value.npcId
     || value.revision !== "1"
     || value.status !== "scheduled"
-    || value.nextAction !== value.nextStep
-    || !strings(value.knowledgeRefs)
     || !strings(value.premiseRefs)
     || value.premiseRefs.length === 0
     || !strings(value.resourceRefs)
@@ -421,7 +436,7 @@ function validNpcPlanFormed(value: JsonRecord): boolean {
       || (hasExactKeys(value.trigger, ["kind", "knowledgeRef"])
         && value.trigger.kind === "knowledgeAcquired"
         && isNonEmptyString(value.trigger.knowledgeRef)
-        && value.knowledgeRefs.includes(value.trigger.knowledgeRef))
+        && value.premiseRefs.includes(value.trigger.knowledgeRef))
     )
   );
   return dueValid && triggerValid && ((value.due === null) !== (value.trigger === null));
@@ -484,9 +499,7 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
     if (value.definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND) {
       return isNpcMechanicalTemplateDefinition(value.definition);
     }
-    return value.definition.definitionKind === NPC_MECHANICAL_ITEM_KIND
-      ? isNpcMechanicalItemDefinition(value.definition)
-      : true;
+    return value.definition.definitionKind !== "item";
   }
   if (type === "NpcPlanFormed") return validNpcPlanFormed(value);
   if (!hasExactKeys(value, PAYLOAD_KEYS[type])) {
@@ -597,40 +610,39 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
         && strings(value.resourceRefs)
         && value.resourceRefs.length > 0;
     case "ItemUsed":
-      return allRequiredStrings(value, ["characterId", "itemId", "purpose"])
-        && Number.isSafeInteger(value.quantity) && Number(value.quantity) > 0
-        && Number.isSafeInteger(value.remaining) && Number(value.remaining) >= 0;
+      return allRequiredStrings(value, ["characterId", "entryId", "purpose"])
+        && Number.isSafeInteger(value.quantityBefore) && Number(value.quantityBefore) > 0
+        && Number.isSafeInteger(value.quantityAfter) && Number(value.quantityAfter) >= 0
+        && Number(value.quantityAfter) <= Number(value.quantityBefore)
+        && [
+          [value.chargesBefore, value.chargesAfter],
+          [value.durabilityBefore, value.durabilityAfter],
+        ].every(([before, after]) => before === null
+          ? after === null
+          : Number.isSafeInteger(before)
+            && Number(before) >= 0
+            && Number.isSafeInteger(after)
+            && Number(after) >= 0
+            && Number(after) <= Number(before));
+    case "ItemDefinitionRegistered":
+      return isItemDefinitionV1(value.definition);
+    case "ItemMaterialized":
+      return isItemEntryV1(value.entry);
+    case "ItemAcquired":
+      return allRequiredStrings(value, ["characterId", "entryId", "fromSceneId"]);
     case "ItemTransferred":
       return allRequiredStrings(value, [
         "fromCharacterId",
         "itemId",
         "method",
+        "ownershipDisposition",
         "targetItemId",
         "toCharacterId",
       ])
         && value.fromCharacterId !== value.toCharacterId
+        && ["preserve", "transferToRecipient"].includes(String(value.ownershipDisposition))
         && Number.isSafeInteger(value.quantity)
         && Number(value.quantity) > 0;
-    case "ArtifactMaterialized":
-      return allRequiredStrings(value, [
-        "artifactId",
-        "definitionRef",
-        "name",
-        "sceneId",
-        "visibilityPolicyId",
-      ])
-        && value.status === "placed"
-        && value.quantity === 1;
-    case "ArtifactAcquired":
-      return allRequiredStrings(value, ["artifactId", "characterId", "fromSceneId"])
-        && value.beforeStatus === "placed"
-        && value.afterStatus === "held"
-        && value.remainingQuantity === 1;
-    case "ArtifactUsed":
-      return allRequiredStrings(value, ["artifactId", "characterId", "purpose"])
-        && value.beforeStatus === "held"
-        && ["held", "consumed", "destroyed"].includes(String(value.afterStatus))
-        && value.remainingQuantity === (value.afterStatus === "held" ? 1 : 0);
     case "CheckFrozen":
       return allRequiredStrings(value, ["characterId", "checkKind", "ability", "mode"])
         && (value.skill === null || isNonEmptyString(value.skill))
@@ -735,13 +747,6 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
     case "ChapterContinuityRecorded":
       return allRequiredStrings(value, ["campaignId", "fromChapterId", "toChapterId"])
         && isCampaignContinuityManifest(value.manifest);
-    case "ModuleVersionMigrated":
-      return isNonEmptyString(value.campaignId)
-        && isProfileRef(value.fromModuleRef)
-        && isProfileRef(value.toModuleRef)
-        && isProfileRef(value.migrationRef)
-        && (value.fromModuleRef.profileId !== value.toModuleRef.profileId
-          || value.fromModuleRef.profileHash !== value.toModuleRef.profileHash);
     case "ChapterStarted":
       return allRequiredStrings(value, ["campaignId", "chapterId", "ordinal", "sceneQuestion"])
         && isProfileRef(value.moduleRef)
@@ -873,6 +878,38 @@ function consumedInheritanceAuthorization(
     : undefined;
 }
 
+function itemTransferUsesConsumedInheritanceAuthorization(
+  state: AuthoritativeWorldState,
+  event: EventEnvelope,
+  payload: EventPayloadByType["ItemTransferred"],
+): boolean {
+  const methodPrefix = "inheritance:";
+  if (!payload.method.startsWith(methodPrefix)) return false;
+  const authorizationId = payload.method.slice(methodPrefix.length);
+  const priorReceipt = state.receipts[event.rootActionId];
+  if (!isNonEmptyString(authorizationId)
+    || priorReceipt?.branchId !== event.branchId
+    || BigInt(priorReceipt.eventRange.toEventSeq) + 1n !== BigInt(event.eventSeq)) {
+    return false;
+  }
+  return Object.values(state.campaignRuntime.inheritanceSources).some((source) => {
+    const body = isRecord(source?.source) ? source.source : undefined;
+    const authorizations = Array.isArray(body?.authorizations) ? body.authorizations : [];
+    const consumed = Array.isArray(source?.consumedAuthorizationIds)
+      ? source.consumedAuthorizationIds
+      : [];
+    return consumed.includes(authorizationId)
+      && authorizations.some((candidate) => isRecord(candidate)
+        && candidate.authorizationId === authorizationId
+        && candidate.kind === "item"
+        && candidate.scope === "transferPossession"
+        && candidate.sourceRef === payload.itemId
+        && candidate.targetRef === payload.itemId
+        && candidate.subjectCharacterId === payload.fromCharacterId
+        && candidate.targetCharacterId === payload.toCharacterId);
+  });
+}
+
 function setKnowledge(
   state: AuthoritativeWorldState,
   event: EventEnvelope,
@@ -898,13 +935,136 @@ function setKnowledge(
   };
 }
 
+function itemLoadoutBasis(character: CharacterRecord) {
+  if (character.loadout === undefined) {
+    throw new TypeError("item holder has no loadout cache");
+  }
+  return {
+    holderRef: character.id,
+    ...(character.classId === undefined ? {} : { classId: character.classId }),
+    scores: {
+      dex: character.abilityScores?.dex ?? 10,
+      con: character.abilityScores?.con ?? 10,
+    },
+    speedFeet: character.loadout.speedFeet,
+  };
+}
+
+function synchronizePlayerItemCombat(
+  state: AuthoritativeWorldState,
+  event: EventEnvelope,
+  character: CharacterRecord,
+  itemSystem: ItemSystemStateV1,
+): void {
+  if (character.kind !== "player") {
+    throw new TypeError("item-system NPC combat synchronization is unavailable");
+  }
+  const compiled = compileCanonicalCharacterCombat(
+    character,
+    itemSystem,
+    state.combatRuntime.definitions,
+  );
+  for (const [definitionId, definition] of Object.entries(compiled.definitions)) {
+    const prior = state.combatRuntime.definitions[definitionId];
+    if (!frozenPlayerAbilityMatches(definition, prior)) {
+      throw new TypeError("item ability is not frozen in the authoritative catalog");
+    }
+  }
+  for (const abilityRef of compiled.abilityRefs) {
+    if (compiled.definitions[abilityRef] !== undefined) continue;
+    if (!isRegisteredAbilityRecord(state.combatRuntime.definitions[abilityRef])) {
+      throw new TypeError("portable item ability is not frozen in the authoritative catalog");
+    }
+  }
+  const control = state.characterControls[character.id];
+  const controllerPrincipalId = control === undefined
+    ? undefined
+    : state.seats[control.seatId]?.principalId;
+  const initial = buildPlayerCombatEntity(
+    event.profiles,
+    character,
+    compiled,
+    controllerPrincipalId,
+    undefined,
+    itemSystem,
+  );
+  state.combatRuntime.entities[character.id] = synchronizePlayerCombatEntity(
+    state.combatRuntime.entities[character.id],
+    initial,
+  );
+}
+
+function mechanicalNpcDefinition(
+  state: AuthoritativeWorldState,
+  character: CharacterRecord,
+): JsonRecord | undefined {
+  if (character.kind !== "npc") return undefined;
+  const combatEntity = state.combatRuntime.entities[character.id];
+  if (!isRecord(combatEntity) || !isNonEmptyString(combatEntity.mechanicalDefinitionRef)) {
+    return undefined;
+  }
+  const definition = state.combatRuntime.definitions[combatEntity.mechanicalDefinitionRef];
+  return isNpcMechanicalTemplateDefinition(definition) ? definition : undefined;
+}
+
+function deriveItemHolderLoadout(
+  state: AuthoritativeWorldState,
+  character: CharacterRecord,
+  itemSystem: ItemSystemStateV1,
+): CharacterRecord["loadout"] {
+  const npcDefinition = mechanicalNpcDefinition(state, character);
+  if (npcDefinition !== undefined) {
+    const derived = deriveNpcItemSystemLoadout(itemSystem, character, npcDefinition);
+    if ("error" in derived) {
+      throw new TypeError(`NPC item loadout derivation failed: ${derived.error}`);
+    }
+    return derived.loadout;
+  }
+  const derived = deriveCharacterLoadoutFromItems(itemSystem, itemLoadoutBasis(character));
+  if ("error" in derived) {
+    throw new TypeError(`item loadout derivation failed: ${derived.error}`);
+  }
+  return character.kind === "npc" && character.loadout !== undefined
+    ? { ...derived.loadout, armorClass: character.loadout.armorClass }
+    : derived.loadout;
+}
+
+function synchronizeNpcItemCombat(
+  state: AuthoritativeWorldState,
+  character: CharacterRecord,
+  itemSystem: ItemSystemStateV1,
+): void {
+  const definition = mechanicalNpcDefinition(state, character);
+  const combatEntity = state.combatRuntime.entities[character.id];
+  if (definition === undefined || !isRecord(combatEntity) || character.loadout === undefined) return;
+  const equipment = npcItemSystemEquipmentMechanics(
+    character,
+    itemSystem,
+  );
+  for (const equipmentDefinition of equipment.definitions) {
+    const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
+    if (!isRegisteredAbilityRecord(registered)
+      || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
+      throw new TypeError("NPC item ability is not frozen in the authoritative catalog");
+    }
+  }
+  const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs as string[];
+  combatEntity.armorClass = String(character.loadout.armorClass);
+  combatEntity.equipmentAbilityRefs = equipment.refs;
+  combatEntity.abilityRefs = [...new Set([
+    ...intrinsicAbilityRefs,
+    ...equipment.refs,
+  ])].sort();
+  synchronizeCombatItemResources(combatEntity, itemSystem);
+}
+
 /** Applies one closed campaign event; returns false for core event types. */
 export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   const runtime = state.campaignRuntime;
   switch (event.eventType) {
     case "AdjudicationPrecedentRecorded": {
       const payload = event.payload as EventPayloadByType["AdjudicationPrecedentRecorded"];
-      const precedents = runtime.adjudicationPrecedents ??= {};
+      const precedents = runtime.adjudicationPrecedents;
       if (precedents[payload.precedentId] !== undefined) {
         throw new TypeError("adjudication precedent already exists");
       }
@@ -918,7 +1078,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "AdjudicationPrecedentSuperseded": {
       const payload = event.payload as EventPayloadByType["AdjudicationPrecedentSuperseded"];
-      const precedents = runtime.adjudicationPrecedents ??= {};
+      const precedents = runtime.adjudicationPrecedents;
       const prior = precedents[payload.supersededPrecedentId];
       if (
         prior?.status !== "active"
@@ -981,216 +1141,207 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       );
       return true;
     }
+    case "ItemDefinitionRegistered": {
+      const payload = event.payload as EventPayloadByType["ItemDefinitionRegistered"];
+      const itemSystem = runtime.itemSystem;
+      const definition = payload.definition;
+      const productRulesProfile = definition.rulesBasis === "srd5.1-2014"
+        ? undefined
+        : definition.rulesBasis.profileRef;
+      if (!isItemDefinitionV1(definition)
+        || itemSystem.definitions[definition.definitionId] !== undefined
+        || definition.causalBasisRefs.some((factRef) => state.canonicalFacts[factRef] === undefined)
+        || (productRulesProfile !== undefined
+          && !event.profiles.extensions.some((extension) =>
+            extension.profileId === productRulesProfile.profileId
+            && extension.profileHash === productRulesProfile.profileHash))) {
+        throw new TypeError("item definition is unavailable or already registered");
+      }
+      const nextItemSystem = structuredClone(itemSystem);
+      nextItemSystem.definitions[definition.definitionId] = structuredClone(definition);
+      if (!isItemSystemStateV1(nextItemSystem)) {
+        throw new TypeError("registered item definition would invalidate the item system");
+      }
+      runtime.itemSystem = nextItemSystem;
+      return true;
+    }
+    case "ItemMaterialized": {
+      const payload = event.payload as EventPayloadByType["ItemMaterialized"];
+      const itemSystem = runtime.itemSystem;
+      const entry = payload.entry;
+      const definition = itemSystem.definitions[entry.definitionRef];
+      if (!isItemEntryV1(entry)
+        || itemSystem.entries[entry.entryId] !== undefined
+        || !itemEntryMatchesDefinition(entry, definition)
+        || entry.disposition !== "scene"
+        || entry.sceneRef === null
+        || state.scenes[entry.sceneRef] === undefined) {
+        throw new TypeError("materialized item does not match a registered scene definition");
+      }
+      const nextItemSystem = structuredClone(itemSystem);
+      nextItemSystem.entries[entry.entryId] = structuredClone(entry);
+      if (!isItemSystemStateV1(nextItemSystem)) {
+        throw new TypeError("materialized item would invalidate the item system");
+      }
+      runtime.itemSystem = nextItemSystem;
+      return true;
+    }
+    case "ItemAcquired": {
+      const payload = event.payload as EventPayloadByType["ItemAcquired"];
+      const itemSystem = runtime.itemSystem;
+      const holder = state.entities[payload.characterId];
+      const entry = itemSystem.entries[payload.entryId];
+      if (holder?.tenureStatus !== "active"
+        || holder.loadout === undefined
+        || entry?.disposition !== "scene"
+        || entry.sceneRef !== payload.fromSceneId
+        || holder.sceneId !== payload.fromSceneId
+        || state.scenes[payload.fromSceneId] === undefined) {
+        throw new TypeError("item acquisition precondition mismatch");
+      }
+      const transition = acquireItemQuantity(itemSystem, {
+        entryId: entry.entryId,
+        holderRef: holder.id,
+        quantity: entry.quantity,
+      });
+      if ("error" in transition) {
+        throw new TypeError(`item acquisition transition failed: ${transition.error}`);
+      }
+      const loadout = deriveItemHolderLoadout(state, holder, transition.itemSystem);
+      runtime.itemSystem = transition.itemSystem;
+      holder.loadout = loadout;
+      if (holder.kind === "player") {
+        synchronizePlayerItemCombat(state, event, holder, transition.itemSystem);
+      } else {
+        synchronizeNpcItemCombat(state, holder, transition.itemSystem);
+      }
+      return true;
+    }
     case "ItemUsed": {
       const payload = event.payload as EventPayloadByType["ItemUsed"];
-      const backpack = state.entities[payload.characterId]?.loadout?.backpack;
-      if (state.entities[payload.characterId]?.loadout?.mechanicalItems?.[payload.itemId]
-        !== undefined) {
-        throw new TypeError("mechanical item instances require an explicit lifecycle transition");
-      }
-      const item = backpack?.find((entry) => entry.itemId === payload.itemId);
-      if (item === undefined || item.quantity - payload.quantity !== payload.remaining) {
-        throw new TypeError("item quantity precondition mismatch");
-      }
-      const combatEntity = state.combatRuntime.entities[payload.characterId];
-      const combatResources = combatEntity !== undefined && isRecord(combatEntity.resources)
-        ? combatEntity.resources
-        : undefined;
-      const combatItem = combatResources === undefined
+      const holder = state.entities[payload.characterId];
+      const itemSystem = runtime.itemSystem;
+      const entry = itemSystem.entries[payload.entryId];
+      const definition = entry === undefined
         ? undefined
-        : combatResources[`item:${payload.itemId}`];
-      if (
-        combatEntity !== undefined
-        && (!isRecord(combatItem) || Number(combatItem.current) !== item.quantity)
-      ) throw new TypeError("combat item cache does not match authoritative inventory");
-      if (payload.remaining === 0) {
-        backpack!.splice(backpack!.indexOf(item), 1);
-        const loadout = state.entities[payload.characterId]!.loadout!;
-        if (loadout.equipped.ammo === payload.itemId) delete loadout.equipped.ammo;
-      } else {
-        item.quantity = payload.remaining;
+        : itemSystem.definitions[entry.definitionRef];
+      if (holder?.tenureStatus !== "active"
+        || holder.loadout === undefined
+        || entry?.disposition !== "held"
+        || entry.holderRef !== holder.id
+        || entry.condition !== "usable"
+        || entry.quantity !== payload.quantityBefore
+        || definition?.revision !== entry.definitionRevision) {
+        throw new TypeError("item use precondition mismatch");
       }
-      if (combatEntity !== undefined) {
-        synchronizeCombatItemResources(
-          combatEntity,
-          state.entities[payload.characterId]!.loadout!,
-        );
+      const transitioned = spendItemEntryCosts(itemSystem, {
+        entryId: entry.entryId,
+        holderRef: holder.id,
+        quantityCost: payload.quantityBefore - payload.quantityAfter,
+        chargeCost: payload.chargesBefore === null || payload.chargesAfter === null
+          ? 0
+          : payload.chargesBefore - payload.chargesAfter,
+        durabilityCost: payload.durabilityBefore === null || payload.durabilityAfter === null
+          ? 0
+          : payload.durabilityBefore - payload.durabilityAfter,
+      });
+      if ("error" in transitioned) {
+        throw new TypeError(`item use transition failed: ${transitioned.error}`);
+      }
+      const nextItemSystem = transitioned.itemSystem;
+      const nextEntry = nextItemSystem.entries[entry.entryId];
+      const snapshot = transitioned.snapshot;
+      if (!isItemSystemStateV1(nextItemSystem)
+        || !itemEntryMatchesDefinition(nextEntry, definition)
+        || (payload.quantityAfter === 0
+          ? nextEntry.disposition !== "consumed"
+          : nextEntry.disposition !== "held")
+        || nextEntry.quantity !== payload.quantityAfter
+        || snapshot.quantityBefore !== payload.quantityBefore
+        || snapshot.quantityAfter !== payload.quantityAfter
+        || snapshot.chargesBefore !== payload.chargesBefore
+        || snapshot.chargesAfter !== payload.chargesAfter
+        || snapshot.durabilityBefore !== payload.durabilityBefore
+        || snapshot.durabilityAfter !== payload.durabilityAfter) {
+        throw new TypeError("item use would invalidate authoritative inventory");
+      }
+      const loadout = deriveItemHolderLoadout(state, holder, nextItemSystem);
+      runtime.itemSystem = nextItemSystem;
+      holder.loadout = loadout;
+      if (holder.kind === "player") {
+        synchronizePlayerItemCombat(state, event, holder, nextItemSystem);
+      } else {
+        synchronizeNpcItemCombat(state, holder, nextItemSystem);
       }
       return true;
     }
     case "ItemTransferred": {
       const payload = event.payload as EventPayloadByType["ItemTransferred"];
-      const from = state.entities[payload.fromCharacterId];
-      const to = state.entities[payload.toCharacterId];
-      const fromCombat = state.combatRuntime.entities[payload.fromCharacterId];
-      const toCombat = state.combatRuntime.entities[payload.toCharacterId];
-      const mechanicalNpcInvolved = (from?.kind === "npc"
-        && isRecord(fromCombat)
-        && isNonEmptyString(fromCombat.mechanicalDefinitionRef))
-        || (to?.kind === "npc"
-          && isRecord(toCombat)
-          && isNonEmptyString(toCombat.mechanicalDefinitionRef));
-      const activeEncounter = [from?.id, to?.id].some((characterId) => characterId !== undefined
-        && Object.values(state.combatRuntime.encounters).some((encounter) =>
-          encounter.status !== "concluded"
-          && Array.isArray(encounter.participantEntityIds)
-          && encounter.participantEntityIds.includes(characterId)));
-      if (from?.tenureStatus !== "active"
-        || to?.tenureStatus !== "active"
-        || from.sceneId !== to.sceneId
-        || from.loadout === undefined
-        || to.loadout === undefined
-        || !mechanicalNpcInvolved
-        || activeEncounter) {
-        throw new TypeError("item transfer participants are unavailable");
-      }
-      const sourceItem = from.loadout.backpack.find(({ itemId }) => itemId === payload.itemId);
-      if (sourceItem === undefined || sourceItem.quantity < payload.quantity) {
-        throw new TypeError("transferred item is unavailable");
-      }
-      const mechanicalItem = from.loadout.mechanicalItems?.[payload.itemId];
-      const standardItem = itemById(payload.itemId);
-      const instantiateStandardEquipment = mechanicalItem === undefined
-        && to.kind === "npc"
-        && isRecord(toCombat)
-        && isNonEmptyString(toCombat.mechanicalDefinitionRef)
-        && standardItem !== undefined
-        && standardItem.wear !== "pack"
-        && standardItem.wear !== "ammo";
-      const expectedTargetItemId = instantiateStandardEquipment
-        ? transferredNpcMechanicalItemId(
-            to.id,
-            payload.itemId,
-            event.rootActionId,
-          )
-        : payload.itemId;
-      if (payload.targetItemId !== expectedTargetItemId
-        || (mechanicalItem !== undefined && !(to.kind === "npc"
-          && isRecord(toCombat)
-          && isNonEmptyString(toCombat.mechanicalDefinitionRef)))) {
-        throw new TypeError("transferred item identity is not canonical");
-      }
-      if (mechanicalItem !== undefined && (
-        payload.quantity !== 1
-        || sourceItem.quantity !== 1
-        || to.loadout.mechanicalItems?.[payload.targetItemId] !== undefined
-      )) {
-        throw new TypeError("mechanical item instances cannot be stacked or duplicated");
-      }
-      if (instantiateStandardEquipment && (
-        payload.quantity !== 1
-        || to.loadout.mechanicalItems?.[payload.targetItemId] !== undefined
-        || to.loadout.backpack.some(({ itemId }) => itemId === payload.targetItemId)
-        || Object.values(to.loadout.equipped).includes(payload.targetItemId)
-      )) {
-        throw new TypeError("standard equipment must enter a mechanical NPC as one instance");
-      }
-      sourceItem.quantity -= payload.quantity;
-      if (sourceItem.quantity === 0) {
-        from.loadout.backpack.splice(from.loadout.backpack.indexOf(sourceItem), 1);
-        if (from.loadout.equipped.ammo === payload.itemId) delete from.loadout.equipped.ammo;
-      }
-      const targetItem = to.loadout.backpack.find(({ itemId }) =>
-        itemId === payload.targetItemId);
-      if (targetItem === undefined) {
-        to.loadout.backpack.push({ itemId: payload.targetItemId, quantity: payload.quantity });
-        to.loadout.backpack.sort((left, right) => left.itemId.localeCompare(right.itemId));
-      } else {
-        targetItem.quantity += payload.quantity;
-      }
-      if (mechanicalItem !== undefined) {
-        delete from.loadout.mechanicalItems![payload.itemId];
-        if (Object.keys(from.loadout.mechanicalItems!).length === 0) {
-          delete from.loadout.mechanicalItems;
+        const itemSystem = runtime.itemSystem;
+        const from = state.entities[payload.fromCharacterId];
+        const to = state.entities[payload.toCharacterId];
+        const inheritanceTransfer = itemTransferUsesConsumedInheritanceAuthorization(
+          state,
+          event,
+          payload,
+        );
+        const sourceEntry = itemSystem.entries[payload.itemId];
+        const sourceDefinition = sourceEntry === undefined
+          ? undefined
+          : itemSystem.definitions[sourceEntry.definitionRef];
+        const activeEncounter = [from?.id, to?.id].some((characterId) =>
+          characterId !== undefined
+          && Object.values(state.combatRuntime.encounters).some((encounter) =>
+            encounter.status !== "concluded"
+            && Array.isArray(encounter.participantEntityIds)
+            && encounter.participantEntityIds.includes(characterId)));
+        if ((from?.tenureStatus !== "active"
+            && !(from?.tenureStatus === "retired" && inheritanceTransfer))
+          || to?.tenureStatus !== "active"
+          || from.id === to.id
+          || from.sceneId !== to.sceneId
+          || from.loadout === undefined
+          || to.loadout === undefined
+          || sourceEntry?.disposition !== "held"
+          || sourceEntry.holderRef !== from.id
+          || sourceDefinition?.revision !== sourceEntry.definitionRevision
+          || (sourceEntry.equippedSlot !== null && sourceEntry.equippedSlot !== "ammo")
+          || activeEncounter) {
+          throw new TypeError("item transfer participants or entry are unavailable");
         }
-        to.loadout.mechanicalItems ??= {};
-        to.loadout.mechanicalItems[payload.targetItemId] = structuredClone(mechanicalItem);
-      } else if (instantiateStandardEquipment) {
-        to.loadout.mechanicalItems ??= {};
-        to.loadout.mechanicalItems[payload.targetItemId] = {
-          sourceKind: "standardGear",
-          definitionRef: payload.itemId,
-          status: "usable",
-        };
-      }
-      synchronizeCombatItemResources(fromCombat, from.loadout);
-      synchronizeCombatItemResources(toCombat, to.loadout);
-      return true;
-    }
-    case "ArtifactMaterialized": {
-      const payload = event.payload as EventPayloadByType["ArtifactMaterialized"];
-      const definition = runtime.definitions[payload.definitionRef];
-      if (
-        runtime.artifacts[payload.artifactId] !== undefined
-        || definition?.definitionKind !== "item"
-        || !isRecord(definition.content)
-        || definition.content.artifactId !== payload.artifactId
-        || definition.content.name !== payload.name
-        || definition.content.sceneRef !== payload.sceneId
-        || !(payload.sceneId in state.scenes)
-      ) throw new TypeError("materialized artifact definition is unavailable");
-      runtime.artifacts[payload.artifactId] = {
-        artifactId: payload.artifactId,
-        definitionRef: payload.definitionRef,
-        name: payload.name,
-        status: payload.status,
-        quantity: payload.quantity,
-        sceneId: payload.sceneId,
-        visibilityPolicyId: payload.visibilityPolicyId,
-        materializedByEventId: event.eventId,
-      };
-      return true;
-    }
-    case "ArtifactAcquired": {
-      const payload = event.payload as EventPayloadByType["ArtifactAcquired"];
-      const artifact = runtime.artifacts[payload.artifactId];
-      const holder = state.entities[payload.characterId];
-      if (
-        artifact?.status !== payload.beforeStatus
-        || artifact.quantity !== payload.remainingQuantity
-        || artifact.sceneId !== payload.fromSceneId
-        || holder?.tenureStatus !== "active"
-        || holder.sceneId !== payload.fromSceneId
-      ) throw new TypeError("artifact acquisition precondition mismatch");
-      artifact.status = payload.afterStatus;
-      artifact.holderId = payload.characterId;
-      artifact.acquiredByEventId = event.eventId;
-      delete artifact.sceneId;
-      return true;
-    }
-    case "ArtifactUsed": {
-      const payload = event.payload as EventPayloadByType["ArtifactUsed"];
-      const artifact = runtime.artifacts[payload.artifactId];
-      if (
-        artifact?.holderId !== payload.characterId
-        || artifact.status !== payload.beforeStatus
-        || artifact.quantity !== 1
-      ) throw new TypeError("artifact use precondition mismatch");
-      artifact.status = payload.afterStatus;
-      artifact.quantity = payload.remainingQuantity;
-      if (payload.afterStatus !== "held") delete artifact.holderId;
-      return true;
+        const transition = transferItemQuantity(itemSystem, {
+          entryId: payload.itemId,
+          fromHolderRef: from.id,
+          toHolderRef: to.id,
+          quantity: payload.quantity,
+          targetEntryId: payload.targetItemId,
+          ownershipDisposition: payload.ownershipDisposition,
+        });
+        if ("error" in transition || transition.targetEntryId !== payload.targetItemId) {
+          throw new TypeError("item transfer transition does not match its frozen identity");
+        }
+        const fromLoadout = deriveItemHolderLoadout(state, from, transition.itemSystem);
+        const toLoadout = deriveItemHolderLoadout(state, to, transition.itemSystem);
+        runtime.itemSystem = transition.itemSystem;
+        from.loadout = fromLoadout;
+        to.loadout = toLoadout;
+        if (from.kind === "player") {
+          synchronizePlayerItemCombat(state, event, from, transition.itemSystem);
+        } else {
+          synchronizeNpcItemCombat(state, from, transition.itemSystem);
+        }
+        if (to.kind === "player") {
+          synchronizePlayerItemCombat(state, event, to, transition.itemSystem);
+        } else {
+          synchronizeNpcItemCombat(state, to, transition.itemSystem);
+        }
+        return true;
     }
     case "FictionTimeAdvanced": {
       const payload = event.payload as EventPayloadByType["FictionTimeAdvanced"];
       const timeline = state.fictionTimelines[event.fictionTimelineId];
       if (timeline === undefined) throw new TypeError("fiction timeline is unavailable");
       timeline.nowMicros = (BigInt(timeline.nowMicros) + BigInt(payload.durationMicros)).toString();
-      return true;
-    }
-    case "ArtifactTransferred": {
-      const payload = event.payload as EventPayloadByType["ArtifactTransferred"];
-      const artifact = runtime.artifacts[payload.artifactId];
-      const from = state.entities[payload.fromCharacterId];
-      const to = state.entities[payload.toCharacterId];
-      if (
-        artifact?.holderId !== payload.fromCharacterId
-        || artifact.status !== "held"
-        || (artifact.quantity ?? 1) !== 1
-        || from?.sceneId !== to?.sceneId
-      ) throw new TypeError("artifact holder mismatch");
-      artifact.holderId = payload.toCharacterId;
-      artifact.status = "held";
       return true;
     }
     case "RestStarted": {
@@ -1304,8 +1455,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || definitionId in runtime.definitions
         || (payload.definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
           && !isNpcMechanicalTemplateDefinition(payload.definition))
-        || (payload.definition.definitionKind === NPC_MECHANICAL_ITEM_KIND
-          && !isNpcMechanicalItemDefinition(payload.definition))) {
+        || payload.definition.definitionKind === "item") {
         throw new TypeError("definition already registered or malformed");
       }
       runtime.definitions[definitionId] = isDefinitionRegisteredAbilityPayload(payload)
@@ -1520,22 +1670,16 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (!actorPlanNpcIsAvailable(npc)) {
         throw new TypeError("NPC plan actor is unavailable");
       }
-      if (payload.knowledgeRefs.some((knowledgeRef) =>
-        !(knowledgeRef in (state.knowledge[payload.npcId] ?? {})))) {
-        throw new TypeError("NPC plan cites unavailable knowledge");
-      }
-      if ("actorKind" in payload) {
-        const chapter = runtime.chapters[payload.chapterId];
-        if (
-          chapter?.status !== "active"
-          || !isProfileRef(chapter.moduleRef)
-          || chapter.moduleRef.profileId !== payload.moduleRef.profileId
-          || chapter.moduleRef.profileHash !== payload.moduleRef.profileHash
-          || payload.trace.factRef in state.canonicalFacts
-          || payload.premiseRefs.some((reference) =>
-            !actorPlanPremiseIsAvailable(state, payload.npcId, reference))
-        ) throw new TypeError("ActorPlan version pin or trace template is unavailable");
-      }
+      const chapter = runtime.chapters[payload.chapterId];
+      if (
+        chapter?.status !== "active"
+        || !isProfileRef(chapter.moduleRef)
+        || chapter.moduleRef.profileId !== payload.moduleRef.profileId
+        || chapter.moduleRef.profileHash !== payload.moduleRef.profileHash
+        || payload.trace.factRef in state.canonicalFacts
+        || payload.premiseRefs.some((reference) =>
+          !actorPlanPremiseIsAvailable(state, payload.npcId, reference))
+      ) throw new TypeError("ActorPlan version pin or trace template is unavailable");
       runtime.npcPlans[payload.planId] = {
         ...structuredClone(payload),
         formedAtEventId: event.eventId,
@@ -1621,7 +1765,6 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         revision: payload.revision,
         premiseRefs: [...payload.premiseRefs],
         nextStep: payload.nextStep,
-        nextAction: payload.nextStep,
         resourceRefs: [...payload.resourceRefs],
         due: structuredClone(payload.due),
         trigger: structuredClone(payload.trigger),
@@ -1845,11 +1988,7 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         throw new TypeError("chapter continuity manifest is malformed");
       }
       const chapter = runtime.chapters[payload.fromChapterId];
-      const expected = campaignContinuityManifestForSchema(
-        state,
-        payload.manifest.activityTransitions,
-        payload.manifest.schema,
-      );
+      const expected = campaignContinuityManifest(state, payload.manifest.activityTransitions);
       if (runtime.campaign?.campaignId !== payload.campaignId
         || chapter?.status !== "concluded"
         || payload.toChapterId in runtime.chapters
@@ -1858,20 +1997,6 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       }
       chapter.continuityManifestHash = payload.manifest.manifestHash;
       chapter.nextChapterId = payload.toChapterId;
-      return true;
-    }
-    case "ModuleVersionMigrated": {
-      const payload = event.payload as EventPayloadByType["ModuleVersionMigrated"];
-      const campaignModuleRef = runtime.campaign?.moduleRef;
-      if (
-        runtime.campaign?.campaignId !== payload.campaignId
-        || !isProfileRef(campaignModuleRef)
-        || campaignModuleRef.profileId !== payload.fromModuleRef.profileId
-        || campaignModuleRef.profileHash !== payload.fromModuleRef.profileHash
-        || (payload.fromModuleRef.profileId === payload.toModuleRef.profileId
-          && payload.fromModuleRef.profileHash === payload.toModuleRef.profileHash)
-      ) throw new TypeError("module migration does not match the current Campaign binding");
-      runtime.campaign.moduleRef = structuredClone(payload.toModuleRef);
       return true;
     }
     case "ChapterStarted": {

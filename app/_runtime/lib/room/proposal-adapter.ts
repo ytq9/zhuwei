@@ -1,4 +1,4 @@
-import { canonicalJson, collectStrings, validateProposal } from "../kp/authoritative-helpers";
+import { canonicalJson, collectStrings } from "../kp/authoritative-helpers";
 import {
   CAUSAL_ACTION_LANGUAGE_PROFILE,
   compileKpFormDraft,
@@ -11,10 +11,6 @@ import {
   validateKpFormDraft,
   type KpFormId,
 } from "../kp/form-catalog";
-import {
-  authoritativeModuleMigration,
-  verifyAuthoritativeModuleMigration,
-} from "../module/authoritative";
 import { compileAbilityDefinition } from "../rules/profiles/ability-compiler";
 import { ENVIRONMENT_PROFILE } from "../rules/profiles/environment";
 import type { AuthoritativeWorldState } from "../rules";
@@ -98,11 +94,11 @@ export function ownedEnvironmentAttackAbilityRef(
 export function isCanonicalV3CausalRulesInput(value: unknown): value is JsonObject {
   if (!isRecord(value)
     || ![
-      "actionLanguageHash,actionPlanVersion,actorCharacterId,causalActionProgram,kind,rootActionId",
-      "actionLanguageHash,actionPlanVersion,actorCharacterId,causalActionProgram,kind,rootActionId,trustedUtterance",
+      "actionLanguageHash,actionLanguageRef,actorCharacterId,causalActionProgram,kind,rootActionId",
+      "actionLanguageHash,actionLanguageRef,actorCharacterId,causalActionProgram,kind,rootActionId,trustedUtterance",
     ].includes(Object.keys(value).sort().join(","))
-    || value.kind !== "resolveCompoundActionPlan"
-    || value.actionPlanVersion !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
+    || value.kind !== "executeCausalActionProgram"
+    || value.actionLanguageRef !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
     || value.actionLanguageHash !== CAUSAL_ACTION_LANGUAGE_PROFILE.languageHash
     || !isNonEmptyString(value.actorCharacterId)
     || !isNonEmptyString(value.rootActionId)
@@ -110,33 +106,14 @@ export function isCanonicalV3CausalRulesInput(value: unknown): value is JsonObje
     || (value.trustedUtterance !== undefined && !isNonEmptyString(value.trustedUtterance))) return false;
   const validation = validateCausalActionProgram(value.causalActionProgram);
   return validation.ok
-    && value.causalActionProgram.languageRef === value.actionPlanVersion
+    && value.causalActionProgram.languageRef === value.actionLanguageRef
     && value.causalActionProgram.languageHash === value.actionLanguageHash;
 }
-
-function isProfileRef(value: unknown): value is { profileId: string; profileHash: string } {
-  return isRecord(value)
-    && Object.keys(value).sort().join(",") === "profileHash,profileId"
-    && isNonEmptyString(value.profileId)
-    && typeof value.profileHash === "string"
-    && /^sha256:[0-9a-f]{64}$/.test(value.profileHash);
-}
-
-function sameProfileRef(
-  left: { profileId: string; profileHash: string },
-  right: { profileId: string; profileHash: string },
-): boolean {
-  return left.profileId === right.profileId && left.profileHash === right.profileHash;
-}
-
-export type RoomModuleMigrationBinding =
-  | { kind: "bound"; proposal: JsonObject }
-  | { kind: "rejected" };
 
 function normalizePrivateFormKpProposal(value: Record<string, unknown>): JsonObject | undefined {
   const allowedKeys = new Set([
     "kind", "formId", "draft", "causalActionProgram", "loweredCausalProgram",
-    "semanticFreezeHash", "repairUsed", "proposalAttemptId", "modelInvocationReceipt",
+    "finalSemanticHash", "semanticFreezeHash", "repairUsed", "proposalAttemptId", "modelInvocationReceipt",
     "rootActionId",
   ]);
   if (
@@ -150,6 +127,9 @@ function normalizePrivateFormKpProposal(value: Record<string, unknown>): JsonObj
     || !isRecord(value.loweredCausalProgram)
     || typeof value.semanticFreezeHash !== "string"
     || !/^fnv1a64:[0-9a-f]{16}$/u.test(value.semanticFreezeHash)
+    || (value.finalSemanticHash !== undefined
+      && (typeof value.finalSemanticHash !== "string"
+        || !/^fnv1a64:[0-9a-f]{16}$/u.test(value.finalSemanticHash)))
     || typeof value.repairUsed !== "boolean"
     || !isNonEmptyString(value.proposalAttemptId)
     || !isRecord(value.modelInvocationReceipt)
@@ -176,7 +156,7 @@ function normalizePrivateFormKpProposal(value: Record<string, unknown>): JsonObj
     return {
       kind: "resolveDynamicEnvironmentStunt",
       environmentProgramVersion: ENVIRONMENT_PROFILE.profileId,
-      actionPlanVersion: program.languageRef,
+      actionLanguageRef: program.languageRef,
       actionLanguageHash: program.languageHash,
       formProgramHash: program.semanticHash,
       causalActionProgram: structuredClone(program) as unknown as JsonObject,
@@ -188,87 +168,96 @@ function normalizePrivateFormKpProposal(value: Record<string, unknown>): JsonObj
   // semantic validation and transition derived from the complete frozen
   // causal program; V3 is never relabelled as the historical ActionPlan v1.
   return {
-    kind: "resolveCompoundActionPlan",
-    actionPlanVersion: program.languageRef,
+    kind: "executeCausalActionProgram",
+    actionLanguageRef: program.languageRef,
     actionLanguageHash: program.languageHash,
     causalActionProgram: structuredClone(program) as unknown as JsonObject,
   };
 }
 
 /**
- * Replaces the three caller-visible migration refs with the exact Registry
- * record. A caller-provided hash is only a lookup claim: it never becomes the
- * Rules authority unless this adapter independently resolves and verifies the
- * pinned mapping against the Room's current Campaign binding.
- */
-export async function bindRoomModuleMigration(
-  proposal: JsonObject,
-  currentModuleRefValue: unknown,
-  moduleId: string,
-): Promise<RoomModuleMigrationBinding> {
-  const mechanical = isRecord(proposal.mechanicalProposal)
-    ? proposal.mechanicalProposal
-    : undefined;
-  if (mechanical === undefined || mechanical.moduleMigration === undefined) {
-    return { kind: "bound", proposal };
-  }
-  const request = mechanical.moduleMigration;
-  if (
-    mechanical.operation !== "advanceCampaignLifecycle"
-    || mechanical.lifecycleAction !== "transitionChapter"
-    || !isRecord(request)
-    || Object.keys(request).sort().join(",") !== "fromModuleRef,migrationRef,toModuleRef"
-    || !isProfileRef(request.fromModuleRef)
-    || !isProfileRef(request.toModuleRef)
-    || !isProfileRef(request.migrationRef)
-    || !isProfileRef(currentModuleRefValue)
-    || !sameProfileRef(request.fromModuleRef, currentModuleRefValue)
-  ) return { kind: "rejected" };
-
-  const prefix = `module:${moduleId}:`;
-  if (
-    !request.fromModuleRef.profileId.startsWith(prefix)
-    || !request.toModuleRef.profileId.startsWith(prefix)
-  ) return { kind: "rejected" };
-  const fromVersion = request.fromModuleRef.profileId.slice(prefix.length);
-  const toVersion = request.toModuleRef.profileId.slice(prefix.length);
-  if (fromVersion.length === 0 || toVersion.length === 0 || fromVersion === toVersion) {
-    return { kind: "rejected" };
-  }
-
-  try {
-    const registered = await authoritativeModuleMigration(moduleId, fromVersion, toVersion);
-    if (
-      !await verifyAuthoritativeModuleMigration(registered)
-      || !sameProfileRef(request.fromModuleRef, registered.fromModuleRef)
-      || !sameProfileRef(request.toModuleRef, registered.toModuleRef)
-      || !sameProfileRef(request.migrationRef, registered.migrationRef)
-    ) return { kind: "rejected" };
-    const { moduleMigration: _untrustedMigration, ...mechanicalWithoutRequest } = mechanical;
-    return {
-      kind: "bound",
-      proposal: {
-        ...structuredClone(proposal),
-        mechanicalProposal: {
-          ...structuredClone(mechanicalWithoutRequest),
-          verifiedModuleMigration: structuredClone(registered),
-        },
-      },
-    };
-  } catch {
-    return { kind: "rejected" };
-  }
-}
-
-/**
- * Accepts one complete production KP draft envelope, or the exact
- * Room-generated capability for an authenticated pending answer.  Model
- * receipts and caller-supplied authority fields never cross this seam; the
- * Room adds the trusted actor/root immediately before Rules `step`.
+ * Accepts one current private-Form envelope or an exact Room-generated
+ * authenticated capability. Model receipts and caller-supplied authority
+ * fields never cross this seam; Room adds the trusted actor/root immediately
+ * before Rules `step`.
  */
 export function normalizeRoomKpProposal(value: unknown): JsonObject | undefined {
   if (!isRecord(value) || !isNonEmptyString(value.kind)) return undefined;
   if (value.kind === "privateFormProposal") return normalizePrivateFormKpProposal(value);
+  if (value.kind === "authenticatedPartyAction") {
+    const exact = (...keys: string[]) =>
+      Object.keys(value).sort().join(",") === [...keys, "action", "kind", "rootActionId"].sort().join(",");
+    if (!isNonEmptyString(value.rootActionId)) return undefined;
+    if (value.action === "inviteMember" || value.action === "transferLeadership") {
+      return exact("targetCharacterId") && isNonEmptyString(value.targetCharacterId)
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    if (value.action === "cancelInvitation") {
+      return exact("pendingInputId") && isNonEmptyString(value.pendingInputId)
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    if (value.action === "leave") {
+      return exact() ? structuredClone(value) as JsonObject : undefined;
+    }
+    if (value.action === "proposeMove" || value.action === "moveIndividually") {
+      return exact("destinationSceneId", "fictionTimeCostMicros")
+          && isNonEmptyString(value.destinationSceneId)
+          && typeof value.fictionTimeCostMicros === "string"
+          && /^[1-9][0-9]*$/u.test(value.fictionTimeCostMicros)
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    return undefined;
+  }
+  if (value.kind === "authenticatedCampaignAction") {
+    const exact = (...keys: string[]) =>
+      Object.keys(value).sort().join(",") === [...keys, "action", "kind", "rootActionId"].sort().join(",");
+    if (!isNonEmptyString(value.rootActionId)) return undefined;
+    if (value.action === "retireCharacter") {
+      return exact("continueAsNpc", "reason")
+          && typeof value.continueAsNpc === "boolean"
+          && isNonEmptyString(value.reason)
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    if (value.action === "startActivity") {
+      return exact("activityId", "activityKind", "completion", "intendedDurationMicros")
+          && isNonEmptyString(value.activityId)
+          && isNonEmptyString(value.activityKind)
+          && isRecord(value.completion)
+          && typeof value.intendedDurationMicros === "string"
+          && /^[1-9][0-9]*$/u.test(value.intendedDurationMicros)
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    if (value.action === "formNpcPlan") {
+      return exact(
+        "activity",
+        "alternateTarget",
+        "due",
+        "goal",
+        "nextAction",
+        "npcId",
+        "planId",
+        "premiseRefs",
+        "resourceRefs",
+        "trace",
+        "trigger",
+      )
+          && [value.goal, value.nextAction, value.npcId, value.planId].every(isNonEmptyString)
+          && [value.premiseRefs, value.resourceRefs].every(Array.isArray)
+          && isRecord(value.activity)
+          && isRecord(value.alternateTarget)
+          && isRecord(value.trace)
+          && (value.due === null || isRecord(value.due))
+          && (value.trigger === null || isRecord(value.trigger))
+        ? structuredClone(value) as JsonObject
+        : undefined;
+    }
+    return undefined;
+  }
   if (value.kind === "authenticatedPendingAnswer") {
     const keys = Object.keys(value).sort();
     return keys.length === 2
@@ -279,55 +268,7 @@ export function normalizeRoomKpProposal(value: unknown): JsonObject | undefined 
       : undefined;
   }
 
-  const {
-    rootActionId: _rootActionId,
-    proposalAttemptId: _proposalAttemptId,
-    modelInvocationReceipt: _modelInvocationReceipt,
-    ...draftValue
-  } = value;
-  let draft;
-  try {
-    draft = validateProposal(draftValue);
-  } catch {
-    return undefined;
-  }
-
-  const pending = draft.pendingInput;
-  if (pending !== null) {
-    return {
-      kind: pending.kind,
-      prompt: pending.prompt,
-      choices: pending.choices.map((choice) => ({
-        choiceId: choice.id,
-        label: choice.label,
-        ...(pending.kind === "playerChoice" ? { consequence: choice.consequence } : {}),
-      })),
-      ...(isNonEmptyString(value.proposalAttemptId)
-        ? { proposalAttemptId: value.proposalAttemptId }
-        : {}),
-    };
-  }
-
-  const mechanical = draft.mechanicalProposal;
-  if (mechanical === null) return undefined;
-  return {
-    kind: "resolveCompoundActionPlan",
-    actionPlanVersion: "authoritative-kp-action-plan-v1",
-    feasibilityKind: draft.kind,
-    goal: draft.goal,
-    method: draft.method,
-    publicBasisRefs: structuredClone(draft.publicBasisRefs),
-    privateBasisRefs: structuredClone(draft.privateBasisRefs),
-    adjudicationPrecedent: structuredClone(draft.adjudicationPrecedent),
-    risk: structuredClone(draft.risk),
-    dynamicMaterializations: structuredClone(draft.dynamicMaterializations),
-    ...(draft.hiddenRealityCandidateSet == null
-      ? {}
-      : { hiddenRealityCandidateSet: structuredClone(draft.hiddenRealityCandidateSet) }),
-    npcActions: structuredClone(draft.npcActions),
-    scene: structuredClone(draft.scene),
-    mechanicalProposal: structuredClone(mechanical),
-  };
+  return undefined;
 }
 
 function fixtureNpcName(npcId: string): string {

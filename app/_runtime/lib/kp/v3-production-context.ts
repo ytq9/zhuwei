@@ -103,6 +103,8 @@ export type V3ProductionContextPreparerOptions = V3ProductionCorpusOptions & Rea
   pinnedPrimaryKpProfileRef: string;
   plannerAdapter?: ContextPlannerAdapter;
   allowKpOnly: boolean;
+  /** V5-only private dynamic truth continuity; historical workflows omit it. */
+  includeDynamicAuthoritativeFacts?: boolean;
   maxUnits?: number;
   retrievalLimit?: number;
 }>;
@@ -235,7 +237,9 @@ export function createV3ProductionContextPreparer(
       const allowedFormIds = checkedFormIds(rawAllowedFormIds);
       // This is the non-degradable authority boundary. An insufficient Room
       // projection still fails explicitly before Planner or retrieval runs.
-      const required = requiredContextFromKpRequest(request);
+      const required = requiredContextFromKpRequest(request, {
+        includeDynamicAuthoritativeFacts: options.includeDynamicAuthoritativeFacts,
+      });
       const querySeed = v3StaticQuerySeed(request);
       const plannerRun = await runContextPlanner({
         registry: options.registry,

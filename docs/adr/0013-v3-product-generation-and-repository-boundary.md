@@ -2,6 +2,7 @@
 
 - 状态：已接受（项目主管裁定）
 - 日期：2026-08-28
+- 0.4 修订：2026-08-31（用户明确确认放弃既有房间）
 - 关联：SPEC 0001、ADR 0006、ADR 0008、ADR 0010
 
 ## 背景
@@ -14,9 +15,11 @@
 
 ### 1. 产品代际与规则版本分离
 
-`package.json` 的 `0.3.x` 和文档中的“V3”表示产品与仓库架构代际。它不自动改变 D&D 规则语义，也不重写任何既有事件。
+`package.json` 的 `0.4.0` 表示当前应用开发版本，文档中的“V3”表示产品与仓库架构代际。两者都不自动改变 D&D 规则语义，也不要求重命名协议 ID。
 
-现有 `dnd5e-2014-srd5.1-authoritative-v2`、事件 schema、投影版本、模组版本和 Profile hash 保持精确不变。未来任何持久化规则、事件、投影、模组或 Profile 语义变化，都必须新增完整 manifest 及相应 Adapter；只有解释语义变化时才新增 interpreter。旧解释器必须保留到所有引用它的活跃房间与可恢复归档均已迁移或依法退役。
+0.4 新房仍精确使用 `dnd5e-2014-srd5.1-authoritative-v2`，并绑定 `runtime-srd51-2014-authoritative-environment-v5` 及其完整事件、投影、模组和扩展 hash 闭包。名称中的 `v2`、`v5` 等是独立协议版本轴，不改名为 0.4 或 V3。
+
+用户已明确确认这是开发阶段并放弃全部 0.4 以前的房间和可恢复房间归档。因此，0.4 生产 Registry 只保留当前完整 manifest；旧 ruleset/runtime/model/workflow/module Adapter、fallback、双写及房间 migration 全部删除。未知或旧引用只能稳定拒绝，不能由当前解释器猜测执行。此前“保留旧 Adapter 直到逐房迁移”的条款在前 0.4 房间范围内由本修订窄取代；未来是否兼容 0.4 之后的版本必须另行裁定。
 
 V3 不复制第二套 `app`、不新建 `src-v3`，也不为了目录观感把稳定的 `rules/v2` 改名。它沿用两个深 Module：Room Action 负责意图、KP 提案与提交编排；Rules 只公开 `step / project / replay`。SPEC 0001 继续是 KP 行为最高产品准则。
 
@@ -58,16 +61,19 @@ V3 主树只保留以下职责：
 
 重复克隆、旧源码仓库、诊断产物和已收口 worktree 只在远端 ref、提交数和独立取回校验一致后移入 macOS 废纸篓。旧 Sites 仓库的 `.wrangler` 含本地房间、角色、消息与秘密状态，不能上传 GitHub；它随原目录留在废纸篓的可恢复副本中，除非用户以后明确要求永久销毁。
 
+0.4 的 `db/schema.ts` 不再声明旧 `game_states`、`messages`、`session_logs` 与 `room_event_archive`，但本次开发重置不生成或执行 D1 migration，也不清空现有目录与归档。旧房只由当前路由按精确绑定显式拒绝，房主仍可删除目录行；新房写入时显式固定当前 Ruleset、KP Profile 与 workflow，不依赖旧数据库默认值。
+
 ## 后果
 
-- “V3”有单一、可机器检查的产品含义，同时不会破坏 v1/v2 房间回放。
+- “V3”与“0.4”各有单一含义，均不混入规则/Profile 协议命名。
 - 代理和开发者不再需要判断两套应用入口哪套有效，旧平台依赖也不会被误带入构建。
-- Git 历史承担旧实现恢复职责；工作树只承担当前产品职责。
-- 将来若删除任何旧 ruleset interpreter，必须先用远端 Room/D1 Profile 引用门证明零引用，并建立获批准的迁移或退役记录。
+- Git 历史承担旧源码审计职责；0.4 工作树只承担当前房间职责，不承诺从历史源码恢复旧房间数据。
+- 当前 Registry、路由、模型目录、工作流与 UI 都只有 0.4 路径；旧引用显式拒绝而不 fallback。
+- 以后增加新版本时，是否保留 0.4 Adapter、提供 migration 或再次退役数据，必须由新的明确决定处理。
 
 ## 验收
 
-1. 包版本属于 `0.3.x`，README 和本 ADR明确区分产品 V3 与规则 `authoritative-v2`。
+1. 包版本为 `0.4.0`，README 和本 ADR 明确区分产品 V3、应用 0.4 与规则/runtime 协议 ID。
 2. V3 主树不存在已裁定的旧入口；四个现役工具位于 `tools/`，所有调用与文档引用已迁移。
-3. `module:check`、Profile 引用门、类型、Lint、Node/Worker 测试和 production build 不依赖已删除路径。
+3. 定向 Profile/Room/删除测试与类型检查不依赖已删除路径或新增 migration；完整 Lint、全量测试和 production build 仍服从发布阶段授权。
 4. 三个远端归档 ref 可由独立仓库取回并匹配上述 SHA；远端 `main` 始终保持 `29eb06dc009c983ad61b2d862454503e67a7f40a`。

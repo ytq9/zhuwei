@@ -2,9 +2,11 @@
 
 朋友围坐，你开口，骰子落地。帷幕后，烛火未灭。
 
-烛帷是中文多人 D&D 5e 网页跑团：2–5 名玩家围坐一桌，创建角色，由 LLM/KP 主持开放世界冒险。本 `cloudflare` 分支是产品 **V3** 的唯一工作树，运行在现有 Cloudflare Worker `zhuwei`；远端 `main` 固定在 `29eb06dc009c983ad61b2d862454503e67a7f40a`，不会影响 grok.me MVP。
+烛帷是中文多人 D&D 5e 网页跑团：2–5 名玩家围坐一桌，创建角色，由 LLM/KP 主持开放世界冒险。本 `cloudflare` 分支是产品 **V3** 的唯一工作树，当前开发版本为 **0.4.0**，运行目标仍是现有 Cloudflare Worker `zhuwei`；远端 `main` 固定在 `29eb06dc009c983ad61b2d862454503e67a7f40a`，不会影响 grok.me MVP。
 
-V3 表示产品与仓库架构代际，不等于把持久化协议改名。现有房间仍由其 genesis 固定的 `dnd5e-2014-srd5.1-authoritative-v2` 或明确 Legacy Adapter 解释；任何持久化规则、事件、投影、模组或 Profile 语义变化都必须新增完整 runtime manifest 和相应 Adapter，解释语义变化还必须新增 interpreter。
+V3 表示产品与仓库架构代际，0.4 表示当前应用版本；两者都不把机械协议静默改名。0.4 是一次开发期重置：所有 0.4 以前的房间和可恢复房间归档都已明确退役，生产代码不再携带它们的 Adapter、fallback 或 migration。0.4 新房只接受精确的 `dnd5e-2014-srd5.1-authoritative-v2` Ruleset、`runtime-srd51-2014-authoritative-environment-v5` runtime manifest 及其完整 hash 闭包；名称中的 `v2`/`v5` 是独立协议版本轴，不改名为 0.4 或 V3。以后若要兼容旧版本，必须另作明确产品决定。
+
+当前 KP 闭包精确绑定 `authoritative-kp-private-form-narrow-tools-workflow-v2` 与 `causal-action-program-v4`：普通提案以 `executeCausalActionProgram` 和匹配的 `actionLanguageRef` 进入 Rules，多人管理只接受服务端生成的 `authenticatedPartyAction`；NPC 计划、退休和 Activity 只接受服务端生成且字段精确的 `authenticatedCampaignAction`。
 
 ## 功能范围
 
@@ -28,7 +30,7 @@ V3 表示产品与仓库架构代际，不等于把持久化协议改名。现�
 - 模块/Profile 门与有界评测：`tools/`
 - 唯一部署配置：`wrangler.jsonc`
 
-TanStack/Grok、PGLite/Postgres、Sites/Vercel 的旧入口已从 V3 工作树移除，由私有 GitHub archive 分支保存。生产依赖中没有 Better Auth、PGLite、Postgres 驱动、Sites 插件或 Vercel 产物。目录裁定、归档 SHA 和恢复门见 [ADR 0013](docs/adr/0013-v3-product-generation-and-repository-boundary.md)。
+TanStack/Grok、PGLite/Postgres、Sites/Vercel 的旧入口已从 V3 工作树移除，由私有 GitHub archive 分支保存。生产依赖中没有 Better Auth、PGLite、Postgres 驱动、Sites 插件或 Vercel 产物。0.4 不提供旧房 migration，也不清空远端 D1；旧目录行只会被当前路由显式拒绝，房主仍可删除。新房在写入时固定当前 Ruleset、KP Profile 与完整 workflow，不依赖数据库默认值。目录与 0.4 边界见 [ADR 0013](docs/adr/0013-v3-product-generation-and-repository-boundary.md)。
 
 ## 本地验证
 

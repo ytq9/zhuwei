@@ -19,14 +19,13 @@ import {
   ACTION_PLAN_CHECK_MODES,
   ACTION_PLAN_GEAR_SLOTS,
   ACTION_PLAN_OPERATIONS,
-  CAMPAIGN_LIFECYCLE_ACTIONS,
   type AuthoritativeKpProfile,
 } from "./authoritative-types";
 
 const PRIVATE_FORM_NARROW_TOOLS_KP_POLICY = Object.freeze({
-  promptPolicyVersion: "authoritative-kp-private-form-narrow-tools-policy-v1",
-  proposalSchemaVersion: "authoritative-kp-private-form-narrow-tools-v1",
-  actionPlanSchemaVersion: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
+  promptPolicyVersion: "authoritative-kp-private-form-narrow-tools-policy-v2",
+  proposalSchemaVersion: "authoritative-kp-private-form-narrow-tools-v2",
+  actionLanguageVersion: CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef,
   narrationSchemaVersion: "authoritative-kp-body-only-narration-v2",
 });
 
@@ -50,7 +49,7 @@ export const PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE = Object.freeze({
 });
 
 const PRIVATE_TOOLS_WORKFLOW_REGISTRATION = Object.freeze({
-  workflowRef: "authoritative-kp-private-form-narrow-tools-workflow-v1",
+  workflowRef: "authoritative-kp-private-form-narrow-tools-workflow-v2",
   formCatalogRef: KP_FORM_CATALOG_REGISTRATION.catalogRef,
   formCatalogHash: KP_FORM_CATALOG_REGISTRATION.catalogHash,
   proposalProtocolRef: PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE.protocolRef,
@@ -96,14 +95,14 @@ export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
     provider: "deepseek" as const,
     modelId: AUTHORITATIVE_KP_MODEL,
     modelRevision: "deepseek-v4-flash-0731",
-    modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v1",
+    modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
   }),
   Object.freeze({
     ...PRIVATE_FORM_NARROW_TOOLS_KP_POLICY,
     provider: "deepseek" as const,
     modelId: ALTERNATIVE_AUTHORITATIVE_KP_MODEL,
     modelRevision: "deepseek-v4-pro",
-    modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v1",
+    modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v2",
   }),
 ] satisfies readonly AuthoritativeKpProfile[]);
 
@@ -112,7 +111,7 @@ export const AUTHORITATIVE_KP_PROFILE = AUTHORITATIVE_KP_PROFILES[0];
 export function isV3AuthoritativeKpProfile(
   profile: AuthoritativeKpProfile,
 ): boolean {
-  return profile.actionPlanSchemaVersion === CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
+  return profile.actionLanguageVersion === CAUSAL_ACTION_LANGUAGE_PROFILE.languageRef
     && profile.proposalSchemaVersion
       === PRIVATE_FORM_NARROW_TOOLS_KP_POLICY.proposalSchemaVersion
     && profile.narrationSchemaVersion
@@ -152,21 +151,6 @@ const stringArray = {
   maxItems: 40,
 };
 
-const projectionBasisRefArray = {
-  ...stringArray,
-  description: "每一项都必须从本次输入 kpProjection 中已有的字符串值逐字复制；不得填写 JSON 路径、字段名、标签、释义或新造 ID。没有稳定依据时提交空数组 []。",
-};
-
-const causalBasisRefArray = {
-  ...stringArray,
-  description: "每一项都必须从本次输入 kpProjection 中已固化事实条目的 id 字符串值逐字复制；不得引用本次新建的 dynamicMaterializations[].factRef，不得填写 JSON 路径、字段名、释义或新造 ID。没有已固化因果依据时提交空数组 []。",
-};
-
-const npcKnowledgeRefArray = {
-  ...stringArray,
-  description: "每一项都必须从 npcId 对应的 kpProjection.npcViewers 条目中已有的字符串值逐字复制；不得借用 KP 全知信息、JSON 路径、释义或新造 ID。没有可引用知识时提交空数组 []。",
-};
-
 const fictionDurationSchema = {
   type: "object",
   additionalProperties: false,
@@ -175,140 +159,6 @@ const fictionDurationSchema = {
     value: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
   },
   required: ["unit", "value"],
-};
-
-const riskSchema = {
-  anyOf: [
-    { type: "null" },
-    {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        warning: { type: "string", minLength: 1, maxLength: 480 },
-        successConsequences: stringArray,
-        failureConsequences: stringArray,
-        retryGate: {
-          type: "array",
-          uniqueItems: true,
-          maxItems: 6,
-          items: {
-            enum: [
-              "methodChanged",
-              "factsChanged",
-              "costAccepted",
-              "positionChanged",
-              "materialAssistance",
-              "situationAdvanced",
-            ],
-          },
-        },
-      },
-      required: ["warning", "successConsequences", "failureConsequences", "retryGate"],
-    },
-  ],
-};
-
-const pendingInputSchema = {
-  anyOf: [
-    { type: "null" },
-    {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        kind: { enum: ["clarification", "playerChoice"] },
-        prompt: { type: "string", minLength: 1, maxLength: 480 },
-        choices: {
-          type: "array",
-          maxItems: 12,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              id: { type: "string", minLength: 1, maxLength: 120 },
-              label: { type: "string", minLength: 1, maxLength: 160 },
-              consequence: { type: "string", minLength: 1, maxLength: 320 },
-            },
-            required: ["id", "label", "consequence"],
-          },
-        },
-      },
-      required: ["kind", "prompt", "choices"],
-    },
-  ],
-};
-
-const precedentScopeSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    kind: { enum: ["scene", "campaign", "module", "room"] },
-    ref: { type: "string", minLength: 1, maxLength: 240 },
-  },
-  required: ["kind", "ref"],
-};
-
-const adjudicationPrecedentSchema = {
-  anyOf: [
-    { type: "null" },
-    {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        kind: { const: "record" },
-        publicRuleBasis: {
-          type: "array",
-          minItems: 1,
-          maxItems: 12,
-          uniqueItems: true,
-          items: { type: "string", minLength: 1, maxLength: 480 },
-        },
-        applicabilityScope: precedentScopeSchema,
-      },
-      required: ["kind", "publicRuleBasis", "applicabilityScope"],
-    },
-    {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        kind: { const: "supersede" },
-        supersededPrecedentId: {
-          type: "string",
-          minLength: 1,
-          maxLength: 240,
-          description: "必须从本次输入 kpProjection 中已有的旧 precedentId 字符串值逐字复制。",
-        },
-        materialDifferences: {
-          type: "array",
-          minItems: 1,
-          maxItems: 12,
-          uniqueItems: true,
-          items: { type: "string", minLength: 1, maxLength: 480 },
-        },
-        publicRuleBasis: {
-          type: "array",
-          minItems: 1,
-          maxItems: 12,
-          uniqueItems: true,
-          items: { type: "string", minLength: 1, maxLength: 480 },
-        },
-        applicabilityScope: precedentScopeSchema,
-      },
-      required: [
-        "kind",
-        "supersededPrecedentId",
-        "materialDifferences",
-        "publicRuleBasis",
-        "applicabilityScope",
-      ],
-    },
-  ],
-};
-
-const openWorldDefinition = {
-  type: "object",
-  maxProperties: 80,
-  additionalProperties: true,
-  description: "Open-world fiction definition only; authority, state, event, profile, dice, and face keys are forbidden by the protocol validator.",
 };
 
 const actionPlanCostSchema = {
@@ -327,11 +177,11 @@ const actionPlanCostSchema = {
       type: "object",
       additionalProperties: false,
       properties: {
-        kind: { const: "consumeArtifact" },
-        artifactRef: { type: "string", pattern: "^item:.+", maxLength: 240 },
+        kind: { const: "consumeItem" },
+        itemRef: { type: "string", pattern: "^item-entry:.+", maxLength: 240 },
         count: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
       },
-      required: ["kind", "artifactRef"],
+      required: ["kind", "itemRef"],
     },
     {
       type: "object",
@@ -486,23 +336,20 @@ const STRICT_RESOLUTION_OPERATIONS = new Set([
   "retryFailedAction",
 ]);
 
-const playerReservedActionPlanOperations = ACTION_PLAN_OPERATIONS.filter((operation) =>
-  !STRICT_RESOLUTION_OPERATIONS.has(operation)
-  && operation !== "advanceFactionPlan"
-  && operation !== "transferItem"
-  && operation !== "changeNpcGear");
 const npcReservedActionPlanOperations = ACTION_PLAN_OPERATIONS.filter((operation) =>
   !STRICT_RESOLUTION_OPERATIONS.has(operation)
   && operation !== "resolveNoncombatContest"
   && operation !== "advanceCampaignLifecycle"
+  && operation !== "acquireItem"
+  && operation !== "useItem"
   && operation !== "transferItem"
   && operation !== "changeNpcGear");
 
-const reservedActionPlanSchema = {
+const npcReservedActionPlanSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    operation: { enum: playerReservedActionPlanOperations },
+    operation: { enum: npcReservedActionPlanOperations },
     ability: { enum: [...ACTION_PLAN_ABILITIES] },
     skill: { anyOf: [{ type: "null" }, { type: "string", minLength: 1, maxLength: 120 }] },
     opposedAbility: { enum: [...ACTION_PLAN_ABILITIES] },
@@ -532,40 +379,6 @@ const reservedActionPlanSchema = {
         required: ["activityId", "disposition"],
       },
     },
-    moduleMigration: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        fromModuleRef: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            profileId: { type: "string", minLength: 1, maxLength: 240 },
-            profileHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-          },
-          required: ["profileId", "profileHash"],
-        },
-        toModuleRef: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            profileId: { type: "string", minLength: 1, maxLength: 240 },
-            profileHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-          },
-          required: ["profileId", "profileHash"],
-        },
-        migrationRef: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            profileId: { type: "string", minLength: 1, maxLength: 240 },
-            profileHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-          },
-          required: ["profileId", "profileHash"],
-        },
-      },
-      required: ["fromModuleRef", "toModuleRef", "migrationRef"],
-    },
     abilityRef: { type: "string", minLength: 1, maxLength: 240 },
     reactionRef: { type: "string", minLength: 1, maxLength: 240 },
     destinationRef: { type: "string", minLength: 1, maxLength: 240 },
@@ -579,9 +392,9 @@ const reservedActionPlanSchema = {
     },
     resourceRef: { type: "string", minLength: 1, maxLength: 240 },
     amount: { type: "number" },
-    itemRef: { type: "string", minLength: 1, maxLength: 240 },
-    artifactRef: { type: "string", minLength: 1, maxLength: 240 },
-    artifactUse: { enum: ["retain", "consume", "destroy"] },
+    itemRef: { type: "string", pattern: "^item-entry:.+", maxLength: 240 },
+    itemActivityId: { const: "use" },
+    ownershipDisposition: { enum: ["retain", "transfer"] },
     factionRef: { type: "string", minLength: 1, maxLength: 240 },
     planRef: { type: "string", minLength: 1, maxLength: 240 },
     knowledgeRef: { type: "string", minLength: 1, maxLength: 240 },
@@ -600,47 +413,6 @@ const reservedActionPlanSchema = {
     },
     pendingInputRef: { type: "string", minLength: 1, maxLength: 240 },
     memberRefs: stringArray,
-    campaignRef: { type: "string", minLength: 1, maxLength: 240 },
-    chapterRef: { type: "string", minLength: 1, maxLength: 240 },
-    inheritanceAuthorization: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        authorizationId: { type: "string", minLength: 1, maxLength: 240 },
-        kind: { enum: ["artifact", "knowledge", "relationship", "debt", "promise"] },
-        sourceRef: { type: "string", minLength: 1, maxLength: 240 },
-        targetRef: { type: "string", minLength: 1, maxLength: 240 },
-        scope: {
-          enum: [
-            "transferPossession",
-            "acquireExactKnowledge",
-            "establishDerivedRelationship",
-            "assumeDebtObligation",
-            "assumePromiseObligation",
-          ],
-        },
-      },
-      required: ["authorizationId", "kind", "sourceRef", "targetRef", "scope"],
-    },
-    inheritanceAuthorizationRef: { type: "string", minLength: 1, maxLength: 240 },
-    inheritanceSourceFactRef: { type: "string", minLength: 1, maxLength: 240 },
-    inheritanceSourceKind: {
-      enum: [
-        "will",
-        "explicitGift",
-        "recovery",
-        "publicRecord",
-        "organizationGrant",
-        "npcIntroduction",
-        "knowledgePropagation",
-      ],
-    },
-    lifecycleAction: { enum: CAMPAIGN_LIFECYCLE_ACTIONS },
-    experienceAmount: { type: "integer", minimum: 1, maximum: 1_000_000 },
-    continueAsNpc: { type: "boolean" },
-    endingCandidateRef: { type: "string", minLength: 1, maxLength: 240 },
-    storyRef: { type: "string", minLength: 1, maxLength: 240 },
-    sequelStoryRef: { type: "string", minLength: 1, maxLength: 240 },
     outcome: { type: "string", minLength: 1, maxLength: 480 },
     choice: { type: "string", minLength: 1, maxLength: 480 },
     precedentRef: { type: "string", minLength: 1, maxLength: 240 },
@@ -663,14 +435,6 @@ const reservedActionPlanSchema = {
     consequenceRefs: stringArray,
   },
   required: ["operation"],
-};
-
-const npcReservedActionPlanSchema = {
-  ...reservedActionPlanSchema,
-  properties: {
-    ...reservedActionPlanSchema.properties,
-    operation: { enum: npcReservedActionPlanOperations },
-  },
 };
 
 const compoundOutcomeArraySchema = {
@@ -725,7 +489,7 @@ const noncombatCheckActionPlanSchema = {
   ],
 };
 
-const noncombatSaveActionPlanSchema = {
+const npcNoncombatSaveActionPlanSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -737,7 +501,6 @@ const noncombatSaveActionPlanSchema = {
     frozenCosts: compoundCostArraySchema,
     success: compoundOutcomeArraySchema,
     failure: compoundOutcomeArraySchema,
-    targetEntityRef: { type: "string", minLength: 1, maxLength: 240 },
   },
   required: [
     "operation",
@@ -751,25 +514,26 @@ const noncombatSaveActionPlanSchema = {
   ],
 };
 
-const retryFailedActionPlanSchema = {
+const acquireItemActionPlanSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    ...noncombatCheckActionPlanSchema.properties,
-    operation: { const: "retryFailedAction" },
-    precedentRef: { type: "string", minLength: 1, maxLength: 240 },
+    operation: { const: "acquireItem" },
+    itemRef: { type: "string", pattern: "^item-entry:.+", maxLength: 240 },
+    amount: { type: "integer", minimum: 1, maximum: 1_000_000 },
   },
-  required: [...noncombatCheckActionPlanSchema.required, "precedentRef"],
+  required: ["operation", "itemRef", "amount"],
 };
 
-const unchangedRetryFailedActionPlanSchema = {
+const useItemActionPlanSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    operation: { const: "retryFailedAction" },
-    precedentRef: { type: "string", minLength: 1, maxLength: 240 },
+    operation: { const: "useItem" },
+    itemRef: { type: "string", pattern: "^item-entry:.+", maxLength: 240 },
+    itemActivityId: { const: "use" },
   },
-  required: ["operation", "precedentRef"],
+  required: ["operation", "itemRef", "itemActivityId"],
 };
 
 const transferItemActionPlanSchema = {
@@ -778,10 +542,17 @@ const transferItemActionPlanSchema = {
   properties: {
     operation: { const: "transferItem" },
     targetEntityRef: { type: "string", minLength: 1, maxLength: 240 },
-    itemRef: { type: "string", minLength: 1, maxLength: 240 },
+    itemRef: { type: "string", pattern: "^item-entry:.+", maxLength: 240 },
     amount: { type: "integer", minimum: 1, maximum: 1_000_000 },
+    ownershipDisposition: { enum: ["retain", "transfer"] },
   },
-  required: ["operation", "targetEntityRef", "itemRef", "amount"],
+  required: [
+    "operation",
+    "targetEntityRef",
+    "itemRef",
+    "amount",
+    "ownershipDisposition",
+  ],
 };
 
 const changeNpcGearActionPlanSchema = {
@@ -793,7 +564,7 @@ const changeNpcGearActionPlanSchema = {
         operation: { const: "changeNpcGear" },
         gearAction: { const: "wear" },
         slot: { enum: [...ACTION_PLAN_GEAR_SLOTS] },
-        itemRef: { type: "string", minLength: 1, maxLength: 240 },
+        itemRef: { type: "string", pattern: "^item-entry:.+", maxLength: 240 },
       },
       required: ["operation", "gearAction", "slot", "itemRef"],
     },
@@ -810,64 +581,36 @@ const changeNpcGearActionPlanSchema = {
   ],
 };
 
-const actionPlanSchema = {
-  anyOf: [
-    { $ref: "#/$def/directConsequencesActionPlan" },
-    { $ref: "#/$def/noncombatCheckActionPlan" },
-    { $ref: "#/$def/noncombatSaveActionPlan" },
-    { $ref: "#/$def/unchangedRetryFailedActionPlan" },
-    { $ref: "#/$def/retryFailedActionPlan" },
-    { $ref: "#/$def/transferItemActionPlan" },
-    { $ref: "#/$def/playerReservedActionPlan" },
-  ],
-};
-
-const npcNoncombatSaveActionPlanSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    operation: { const: "resolveNoncombatSave" },
-    saveAbility: { enum: [...ACTION_PLAN_ABILITIES] },
-    dc: { type: "integer", minimum: 0, maximum: 30 },
-    mode: { enum: [...ACTION_PLAN_CHECK_MODES] },
-    duration: fictionDurationSchema,
-    frozenCosts: compoundCostArraySchema,
-    success: compoundOutcomeArraySchema,
-    failure: compoundOutcomeArraySchema,
-  },
-  required: noncombatSaveActionPlanSchema.required,
-};
-
 const npcActionPlanSchema = {
   anyOf: [
     { $ref: "#/$def/directConsequencesActionPlan" },
     { $ref: "#/$def/noncombatCheckActionPlan" },
     { $ref: "#/$def/npcNoncombatSaveActionPlan" },
+    { $ref: "#/$def/acquireItemActionPlan" },
+    { $ref: "#/$def/useItemActionPlan" },
     { $ref: "#/$def/transferItemActionPlan" },
     { $ref: "#/$def/changeNpcGearActionPlan" },
     { $ref: "#/$def/npcReservedActionPlan" },
   ],
 };
 
-const proposalSchemaDefinitions = {
+const npcMechanicalProposalSchemaDefinitions = {
   actionPlanCost: actionPlanCostSchema,
   actionPlanEffect: actionPlanEffectSchema,
   directConsequencesActionPlan: directConsequencesActionPlanSchema,
   noncombatCheckActionPlan: noncombatCheckActionPlanSchema,
-  noncombatSaveActionPlan: noncombatSaveActionPlanSchema,
   npcNoncombatSaveActionPlan: npcNoncombatSaveActionPlanSchema,
-  unchangedRetryFailedActionPlan: unchangedRetryFailedActionPlanSchema,
-  retryFailedActionPlan: retryFailedActionPlanSchema,
+  acquireItemActionPlan: acquireItemActionPlanSchema,
+  useItemActionPlan: useItemActionPlanSchema,
   transferItemActionPlan: transferItemActionPlanSchema,
   changeNpcGearActionPlan: changeNpcGearActionPlanSchema,
-  playerReservedActionPlan: reservedActionPlanSchema,
   npcReservedActionPlan: npcReservedActionPlanSchema,
 };
 
 /** Shared closed schema source for the server-private due ActorPlan boundary.
  * Keeping this on the same definitions as ordinary NPC mechanics prevents a
  * second, looser mechanical proposal dialect. */
-export const AUTHORITATIVE_NPC_ACTION_PLAN_SCHEMA = Object.freeze(npcActionPlanSchema);
-export const AUTHORITATIVE_ACTION_PLAN_SCHEMA_DEFINITIONS = Object.freeze(
-  proposalSchemaDefinitions,
+export const DUE_NPC_MECHANICAL_PROPOSAL_SCHEMA = Object.freeze(npcActionPlanSchema);
+export const DUE_NPC_MECHANICAL_PROPOSAL_SCHEMA_DEFINITIONS = Object.freeze(
+  npcMechanicalProposalSchemaDefinitions,
 );

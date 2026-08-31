@@ -15,9 +15,11 @@ import {
 } from "./validation";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
 import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
+import { canonicalSha256 } from "../profiles/canonical";
 import { endCharacterTenure } from "./character-lifecycle";
 import {
   isDefinitionRegisteredAbilityPayload,
+  isRegisteredAbilityRecord,
   registeredAbilityRecord,
 } from "../profiles/ability-compiler";
 import {
@@ -26,14 +28,17 @@ import {
 } from "../profiles/combat-geometry";
 import {
   canPromoteNpcSpatialShell,
-  isNpcMechanicalItemDefinition,
   isNpcMechanicalTemplateDefinition,
-  materializeNpcMechanicalLoadout,
-  NPC_MECHANICAL_ITEM_KIND,
   NPC_MECHANICAL_TEMPLATE_KIND,
   npcCoreMechanicsCompatible,
+  synchronizeCombatItemResources,
   synchronizeCoreNpcCombatState,
 } from "./npc-mechanics";
+import { isItemDefinitionV1 } from "./items";
+import {
+  deriveNpcItemSystemLoadout,
+  npcItemSystemEquipmentMechanics,
+} from "./npc-item-system";
 
 export const COMBAT_EVENT_TYPES = [
   "EntityMaterialized",
@@ -257,8 +262,12 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
       && isRecord(value.mechanicalResult) && isRecord(value.sourcePatch);
     case "MovementSegmentCommitted": return canonicalMovementSegmentPayload(value);
     case "ConditionChanged": return isNonEmptyString(value.entityId) && isRecord(value.conditions);
-    case "ResourceSpent": return [value.entityId, value.resourceId, value.resourceAfter].every(isNonEmptyString)
-      && Number.isSafeInteger(value.amount);
+    case "ResourceSpent": return [value.entityId, value.resourceId].every(isNonEmptyString)
+      && !String(value.resourceId).startsWith("item:")
+      && !String(value.resourceId).startsWith("item-entry:")
+      && canonicalUnsignedIntegerString(value.amount)
+      && value.amount !== "0"
+      && canonicalUnsignedIntegerString(value.resourceAfter);
     case "HealingResolved": return isNonEmptyString(value.entityId)
       && [value.before, value.after].every((entry) => typeof entry === "string");
     case "TemporaryHitPointsGranted": return [value.entityId, value.sourceDefinitionId].every(isNonEmptyString)
@@ -349,14 +358,11 @@ function setCoreNpc(
       if (!isNpcMechanicalTemplateDefinition(definition)) {
         throw new TypeError("combat NPC lacks its frozen mechanical template");
       }
-      const loadout = materializeNpcMechanicalLoadout(
-        definition,
-        entity,
-        state.combatRuntime.definitions,
-        established.loadout,
-      );
-      if (loadout === undefined) throw new TypeError("combat NPC inventory cannot be materialized");
-      established.loadout = loadout;
+      const itemSystem = state.campaignRuntime.itemSystem;
+      if (itemSystem === undefined) throw new TypeError("combat NPC item system is unavailable");
+      const derived = deriveNpcItemSystemLoadout(itemSystem, established, definition);
+      if ("error" in derived) throw new TypeError("combat NPC inventory cannot be derived");
+      established.loadout = derived.loadout;
     }
     if (socialResolution && established.socialMechanics === undefined) {
       const socialMechanics = combatNpcSocialMechanics(entity);
@@ -389,16 +395,58 @@ function setCoreNpc(
     if (!isNpcMechanicalTemplateDefinition(definition)) {
       throw new TypeError("combat NPC lacks its frozen mechanical template");
     }
-    const loadout = materializeNpcMechanicalLoadout(
+    const itemSystem = state.campaignRuntime.itemSystem;
+    if (itemSystem === undefined) throw new TypeError("combat NPC item system is unavailable");
+    const derived = deriveNpcItemSystemLoadout(
+      itemSystem,
+      state.entities[entity.entityId],
       definition,
-      entity,
-      state.combatRuntime.definitions,
     );
-    if (loadout === undefined) throw new TypeError("combat NPC inventory cannot be materialized");
-    state.entities[entity.entityId].loadout = loadout;
+    if ("error" in derived) throw new TypeError("combat NPC inventory cannot be derived");
+    state.entities[entity.entityId].loadout = derived.loadout;
   }
   state.knowledge[entity.entityId] = {};
   synchronizeCoreNpcCombatState(state, entity);
+}
+
+function synchronizeNpcItemSystemCombatCache(
+  state: AuthoritativeWorldState,
+  entityId: string,
+): void {
+  const character = state.entities[entityId];
+  const combatEntity = state.combatRuntime.entities[entityId];
+  const itemSystem = state.campaignRuntime.itemSystem;
+  if (character?.kind !== "npc"
+    || !isRecord(combatEntity)
+    || !isNonEmptyString(combatEntity.mechanicalDefinitionRef)) return;
+  const definition = state.combatRuntime.definitions[combatEntity.mechanicalDefinitionRef];
+  if (itemSystem === undefined || !isNpcMechanicalTemplateDefinition(definition)) {
+    throw new TypeError("combat NPC item system mechanics are unavailable");
+  }
+  const derived = deriveNpcItemSystemLoadout(itemSystem, character, definition);
+  if ("error" in derived) {
+    throw new TypeError(`combat NPC item loadout cannot be derived: ${derived.error}`);
+  }
+  character.loadout = derived.loadout;
+  const equipment = npcItemSystemEquipmentMechanics(
+    character,
+    itemSystem,
+  );
+  for (const equipmentDefinition of equipment.definitions) {
+    const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
+    if (!isRegisteredAbilityRecord(registered)
+      || registered.definitionHash !== canonicalSha256(equipmentDefinition)) {
+      throw new TypeError("combat NPC item ability is not frozen in the authoritative catalog");
+    }
+  }
+  const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs as string[];
+  combatEntity.armorClass = String(derived.loadout.armorClass);
+  combatEntity.equipmentAbilityRefs = [...equipment.refs];
+  combatEntity.abilityRefs = [...new Set([
+    ...intrinsicAbilityRefs,
+    ...equipment.refs,
+  ])].sort();
+  synchronizeCombatItemResources(combatEntity, itemSystem);
 }
 
 function patchEntity(state: AuthoritativeWorldState, patch: unknown): void {
@@ -542,8 +590,8 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
         || definition.definitionId in runtime.definitions
         || (definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
           && !isNpcMechanicalTemplateDefinition(definition))
-        || (definition.definitionKind === NPC_MECHANICAL_ITEM_KIND
-          && !isNpcMechanicalItemDefinition(definition))) {
+        || (definition.definitionKind === "item"
+          && !isItemDefinitionV1(definition))) {
         throw new TypeError("combat definition already exists or is malformed");
       }
       runtime.definitions[definition.definitionId] = isDefinitionRegisteredAbilityPayload(payload)
@@ -710,7 +758,11 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       }
       return true;
     }
-    case "AbilityInvoked": patchEntity(state, payload.sourcePatch); return true;
+    case "AbilityInvoked": {
+      patchEntity(state, payload.sourcePatch);
+      synchronizeNpcItemSystemCombatCache(state, String(payload.sourceEntityId));
+      return true;
+    }
     case "MovementSegmentCommitted": applyMovementSegment(state, payload); return true;
     case "ConditionChanged": {
       const entity = runtime.entities[String(payload.entityId)];
@@ -719,46 +771,40 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       return true;
     }
     case "ResourceSpent": {
-      const entity = runtime.entities[String(payload.entityId)];
-      if (entity === undefined || !isRecord(entity.resources) || !isRecord(entity.resources[String(payload.resourceId)])) throw new TypeError("resource unavailable");
       const resourceId = String(payload.resourceId);
+      if (resourceId.startsWith("item:") || resourceId.startsWith("item-entry:")) {
+        throw new TypeError("item costs must use ItemUsed");
+      }
+      const entity = runtime.entities[String(payload.entityId)];
+      if (entity === undefined || !isRecord(entity.resources) || !isRecord(entity.resources[resourceId])) throw new TypeError("resource unavailable");
       const resource = entity.resources[resourceId] as JsonRecord;
-      if (resourceId.startsWith("item:")) {
-        const itemId = resourceId.slice("item:".length);
-        const loadout = state.entities[String(payload.entityId)]?.loadout;
-        if (loadout !== undefined) {
-          const current = Number(resource.current);
-          const after = Number(payload.resourceAfter);
-          const amount = Number(payload.amount);
-          const item = loadout.backpack.find((entry) => entry.itemId === itemId);
-          if (
-            itemId.length === 0
-            || item === undefined
-            || !Number.isSafeInteger(current)
-            || !Number.isSafeInteger(after)
-            || !Number.isSafeInteger(amount)
-            || amount <= 0
-            || item.quantity !== current
-            || current - amount !== after
-            || after < 0
-          ) throw new TypeError("combat item cache does not match authoritative inventory");
-          if (after === 0) {
-            loadout.backpack.splice(loadout.backpack.indexOf(item), 1);
-            if (loadout.equipped.ammo === itemId) delete loadout.equipped.ammo;
-          } else item.quantity = after;
-        }
-      }
-      if (resourceId.startsWith("item:") && payload.resourceAfter === "0") {
-        delete entity.resources[resourceId];
-      } else {
-        resource.current = payload.resourceAfter;
-      }
+      resource.current = payload.resourceAfter;
       synchronizeCoreNpcCombatState(state, entity);
       return true;
     }
     case "HealingResolved": {
       const entity = runtime.entities[String(payload.entityId)];
       if (entity === undefined || !isRecord(entity.hitPoints)) throw new TypeError("healing target unavailable");
+      const coreCharacter = state.entities[String(payload.entityId)];
+      if (coreCharacter?.kind === "player") {
+        const before = Number(payload.before);
+        const after = Number(payload.after);
+        const combatBefore = Number(entity.hitPoints.current);
+        const combatMaximum = Number(entity.hitPoints.maximum);
+        if (coreCharacter.hitPoints === undefined
+          || !Number.isSafeInteger(before)
+          || !Number.isSafeInteger(after)
+          || !Number.isSafeInteger(combatBefore)
+          || !Number.isSafeInteger(combatMaximum)
+          || before !== combatBefore
+          || coreCharacter.hitPoints.current !== before
+          || coreCharacter.hitPoints.maximum !== combatMaximum
+          || after < before
+          || after > combatMaximum) {
+          throw new TypeError("player healing event does not match authoritative hit points");
+        }
+        coreCharacter.hitPoints.current = after;
+      }
       entity.hitPoints.current = payload.after;
       if (Number(payload.after) > 0) {
         const conditions = { ...(isRecord(entity.conditions) ? entity.conditions : {}) };

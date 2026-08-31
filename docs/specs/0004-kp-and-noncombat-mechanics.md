@@ -49,7 +49,7 @@ DC 只反映行动和当前情境。准备可以真实降低 DC、给予优势�
 - 对抗检定双方各有权威随机请求；平手维持现状，除非具体 2014 规则另有明文。
 - 豁免由已经存在的效果或危险要求，不能以“玩家想尝试”为由替代能力检定；自然 1/20 不自动决定普通检定或豁免。
 - 非战斗豁免与检定共用同一个版本化复合结算计划：骰前冻结能力、DC、优势/劣势、耗时、物品/资源成本与成功/失败 typed effects，骰后只应用命中的分支。豁免修正来自角色职业在当前 2014 Profile 中登记的 saving-throw proficiencies，不读取技能熟练，也不由 KP/客户端提交最终 modifier。
-- 首个 authoritative Profile 对当前产品支持职业固定为：fighter/barbarian `str+con`、rogue `dex+int`、wizard `int+wis`、cleric `wis+cha`、ranger `str+dex`。新增职业或变更映射必须发布新 Profile/ruleset，不能静默重算旧房事件。
+- 首个 authoritative Profile 对当前产品支持职业固定为：fighter/barbarian `str+con`、rogue `dex+int`、wizard `int+wis`、cleric `wis+cha`、ranger `str+dex`。新增职业或变更映射必须发布新 Profile/ruleset；届时是否保留当前解释器由仍在使用的数据合同和新的明确裁定决定，不能静默重算任何受支持房间的事件。
 - 被动值用于持续、明显或无需主动掷骰的察觉/知识情境；已有明显证据直接提供，不为拖延而要求检定。
 - 协助必须有具体做法、能力与位置依据；不满足者不能只喊“帮助”获得优势。
 
@@ -61,13 +61,13 @@ DC 只反映行动和当前情境。准备可以真实降低 DC、给予优势�
 
 ## 6. 物品与资源
 
-- 每个唯一物件具有稳定 ID、定义版本、位置/持有者、数量/耐久、所有权主张和可见性。
+- 每个权威物品条目具有稳定 ID；不可堆叠物品每件使用独立条目，只有定义明确允许且状态同质的物品才能按数量堆叠。条目保存定义版本、位置/持有者、数量/耐久、所有权主张和可见性。
 - 取得、使用、消耗、装备、交易、掉落、抢夺、毁坏和修复都通过 `step` 产生事件。
 - 普通堆叠资源具有稳定资源种类和数量；扣除与效果同一原子提交，失败重试不重复扣除。
 - 作为检定/豁免冻结成本的物品或资源在权威随机请求事务中只扣一次；随机 continuation 只提交骰面和对应后果，不重复发出消费事件。HP、位置、知识与状态后果继续复用同一 Rules 事件/状态管线。
 - KP 可动态提出普通或魔法物品；机械定义先验证并固化。过强不是机械非法，系统不得自动降级、回收或按等级替换。
-- 物件毁坏不撤销角色已经获得的知识；知识分享也不移动物件。
-- 页面、D1 人物卡和旧库存只作静态/Legacy 输入；新规则活跃持有状态以 Room DO 为准。
+- 物品毁坏不撤销角色已经获得的知识；知识分享也不移动物品。
+- 页面只展示 Room DO 的权威物品投影；D1 人物卡和 0.4 以前的旧库存不作为当前输入，不保留物品 Adapter、fallback 或第二持有权威。
 
 ## 7. 休整
 
@@ -134,7 +134,8 @@ type Activity = {
 - `CheckFrozen` / `ContestFrozen` / `SaveFrozen`
 - `RandomnessRequested` / `DiceRolled`
 - `CheckResolved`
-- `ArtifactTransferred` / `ArtifactConsumed` / `ArtifactDestroyed`
+- `ItemDefinitionRegistered` / `ItemMaterialized` / `ItemAcquired` / `ItemTransferred` / `ItemUsed`
+- `NpcMechanicalItemStateChanged`
 - `ResourceReserved` / `ResourceSpent` / `ResourceReleased`
 - `ActivityStarted` / `ActivityInterrupted` / `ActivityCompleted`
 - `RestStarted` / `RestInterrupted` / `RestCompleted`
@@ -150,26 +151,28 @@ type Activity = {
 3. 同一目标在失败后原样重试被拒；换工具、接受时间或改变位置后产生有依据的新裁定。
 4. 聪明准备真实降低 DC/给优势/直接成功，不能只改叙述。
 5. 对抗、豁免和信息检定均使用权威骰面；自然 20 不把不可能行动变可能。
-6. 两个并发取得同一唯一物件的行动只有一个提交；另一方得到基于新投影的诚实结果。
+6. 两个并发取得同一不可堆叠物品的行动只有一个提交；另一方得到基于新投影的诚实结果。
 7. 个人短休、整队休整、长休中断和 Worker 重启均保持正确 Activity 与资源。
 8. 动态致命危险先固化迹象与机械，再结算可能死亡；不会按 HP 调整。
 
 ## 14. 实现映射
 
-- 提案与事件模型：`app/_runtime/lib/rules/v2/model.ts`、`compound-model.ts`、`campaign-events.ts`
+- 提案与事件模型：`app/_runtime/lib/kp/causal-action-program.ts`、`app/_runtime/lib/rules/v2/model.ts`、`compound-model.ts`、`campaign-events.ts`
 - 规则 Interface：`app/_runtime/lib/rules/index.ts`
-- 非战斗/失败 Implementation：`app/_runtime/lib/rules/v2/compound-actions.ts`、`campaign-actions.ts`、`damage.ts`
+- 非战斗/失败 Implementation：`app/_runtime/lib/rules/v2/causal-actions.ts`、`campaign-actions.ts`、`compound-actions.ts`、`damage.ts`
+- 物品权威：`app/_runtime/lib/rules/v2/items.ts`、`item-transitions.ts`、`campaign-events.ts`
 - Activity/休整：`app/_runtime/lib/rules/v2/campaign-actions.ts`、`campaign-events.ts`、`character-rest.ts`
 - Room Action 编排：`app/_runtime/lib/room/action.ts`
 - 休整选择与 UI Adapter：`app/_runtime/lib/table/authoritative.ts`、`table/client.ts`、`table/server.ts`、`app/_runtime/components/play-table.tsx`
-- 验收：`tests/world-campaign-v2.test.mjs`、`tests/rules-compound-action-v2.test.mjs`、`tests/rules-multiplayer-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/authoritative-table-v2.test.mjs`、`tests/authoritative-action.test.mjs`
+- 验收：`tests/causal-action-rules-v3.test.mjs`、`tests/world-campaign-v2.test.mjs`、`tests/item-use-costs-v5.test.mjs`、`tests/item-materialization-causal-v5.test.mjs`、`tests/rules-multiplayer-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/authoritative-table-v2.test.mjs`、`tests/authoritative-action.test.mjs`
 
-### 14.1 当前实现证据（2026-08-26）
+### 14.1 当前实现证据（2026-08-31）
 
-- `tests/world-campaign-v2.test.mjs` 7/7：五类可行性、骰前冻结、非战斗资源/物件、可中断 Activity、统一伤害/死亡、有意义失败与 2014 短/长休均经 `step/replay/project`；休整完成前不落地恢复。
-- `tests/rules-compound-action-v2.test.mjs` 18/18：生产 typed ActionPlan 的直接后果、Activity、休整、知识、六种队伍动作与其他语义复用同一事务；`resolveNoncombatSave` 覆盖冻结物品成本、2014 职业豁免熟练、优势骰、成功/失败的 HP/移动分支，纯等待只推进分支虚构时间而不制造通用事实。
-- `tests/rules-multiplayer-v2.test.mjs` 8/8 与 `tests/multiplayer-room-v2.test.ts` 8/8：个人休整可原子离队、整队休整逐控制者自愿同意、现实掉线不代答；Room DO 拥有短休随机和恢复完成点。
-- `tests/authoritative-table-v2.test.mjs` 10/10：authoritative-v2 用 `arcaneRecoverySlotLevels` 冻结玩家选择。UI 按 `ceil(level / 2)`、每日资源与 1–5 环当前/最大缺口展示可重复的多槽选择；页面不结算。Rules/Room 测试证明非空选择只用于短休，且完成 Activity 后才恢复。
+- `tests/causal-action-rules-v3.test.mjs` 覆盖当前 `CausalActionProgram` 的直接/检定阶段、骰前冻结成本、成功/失败分支、同 Root continuation、语义 hash 篡改拒绝与 replay；它不注册或恢复旧 ActionPlan transport。
+- `tests/world-campaign-v2.test.mjs` 覆盖五类可行性、非战斗豁免、资源、可中断 Activity、统一伤害/死亡、有意义失败与 2014 短/长休，均从公开 `step/replay/project` 建立状态；休整完成前不落地恢复。
+- `tests/item-use-costs-v5.test.mjs` 与 `tests/item-materialization-causal-v5.test.mjs` 覆盖 canonical 物品定义/条目、显式堆叠、使用成本、物品固化与转移的权威主链及转换不变量。
+- `tests/rules-multiplayer-v2.test.mjs` 与 `tests/multiplayer-room-v2.test.ts` 覆盖个人休整原子离队、整队休整逐控制者自愿同意、现实掉线不代答，以及 Room DO 拥有短休随机和恢复完成点。
+- `tests/authoritative-table-v2.test.mjs` 覆盖 authoritative-v2 以 `arcaneRecoverySlotLevels` 冻结玩家选择。UI 按 `ceil(level / 2)`、每日资源与 1–5 环当前/最大缺口展示可重复的多槽选择；页面不结算。Rules/Room 测试证明非空选择只用于短休，且完成 Activity 后才恢复。精确通过数以同一冻结源码的 `refactor-log.md` 为准。
 
 ## 15. 交叉审查
 

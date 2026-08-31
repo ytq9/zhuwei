@@ -6,7 +6,7 @@ import {
   appendAuthoritativeArchiveToD1,
 } from "../app/_runtime/lib/room/archive.ts";
 import { step, replay } from "../app/_runtime/lib/rules/index.ts";
-import { CURRENT_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 import {
   createEventTransition,
   createScopeProof,
@@ -17,7 +17,7 @@ const sha = (number) => `sha256:${number.toString(16).padStart(64, "0")}`;
 function archiveWith(eventCount, audienceCount) {
   const roomId = "room:incremental-archive";
   const runtimeEpochId = "epoch:incremental-archive";
-  const initialized = step(CURRENT_RUNTIME_PROFILE_MANIFEST, undefined, {
+  const initialized = step(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST, undefined, {
     kind: "initializeAuthoritativeWorld",
     roomId,
     runtimeEpochId,

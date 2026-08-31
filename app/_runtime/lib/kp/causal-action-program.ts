@@ -23,23 +23,6 @@ export type CausalPrimitive = (typeof CAUSAL_PRIMITIVES)[number];
 export type CausalScalar = string | number | boolean | null;
 export type CausalValue = CausalScalar | readonly CausalScalar[];
 
-const CAUSAL_ACTION_LANGUAGE_REGISTRATION = Object.freeze({
-  languageRef: "causal-action-program-v3",
-  languageVersion: "causal-action-program-v3.4",
-  primitiveArgumentSchemaVersion: "causal-primitive-arguments-v3.4",
-  formCatalogRef: KP_FORM_CATALOG_REGISTRATION.catalogRef,
-  formCatalogHash: KP_FORM_CATALOG_REGISTRATION.catalogHash,
-  legacyActionPlanVersion: "authoritative-kp-action-plan-v1",
-  maxNodes: 16,
-  maxDepth: 8,
-  primitiveVocabulary: CAUSAL_PRIMITIVES,
-});
-
-export const CAUSAL_ACTION_LANGUAGE_PROFILE = Object.freeze({
-  ...CAUSAL_ACTION_LANGUAGE_REGISTRATION,
-  languageHash: stableStructuralHash(CAUSAL_ACTION_LANGUAGE_REGISTRATION),
-});
-
 export type CausalNode = Readonly<{
   nodeId: string;
   primitive: CausalPrimitive;
@@ -77,7 +60,7 @@ const NODE_KEYS = Object.freeze(["nodeId", "primitive", "dependsOn", "arguments"
 const RESOLUTION_ARGUMENTS = Object.freeze([
   "resolution", "ability", "skill", "dc", "mode", "durationUnit", "durationValue",
   "successConsequence", "failureConsequence", "resourceRef", "resourceAmount",
-  "artifactRef", "artifactCount",
+  "itemRef", "itemCount",
 ]);
 
 const PRIMITIVE_ARGUMENT_KEYS: Readonly<Record<CausalPrimitive, readonly string[]>> = Object.freeze({
@@ -267,6 +250,26 @@ const FORBIDDEN_CAUSAL_KEYS = Object.freeze([
   "scope",
   "script",
 ]);
+
+const CAUSAL_ACTION_LANGUAGE_REGISTRATION = Object.freeze({
+  languageRef: "causal-action-program-v4",
+  languageVersion: "causal-action-program-v4.0",
+  primitiveArgumentSchemaVersion: "causal-primitive-arguments-v4.0",
+  formCatalogRef: KP_FORM_CATALOG_REGISTRATION.catalogRef,
+  formCatalogHash: KP_FORM_CATALOG_REGISTRATION.catalogHash,
+  maxNodes: 16,
+  maxDepth: 8,
+  primitiveVocabulary: CAUSAL_PRIMITIVES,
+  primitiveArgumentKeys: PRIMITIVE_ARGUMENT_KEYS,
+  primitiveRequiredArgumentKeys: PRIMITIVE_REQUIRED_ARGUMENT_KEYS,
+  formPrimitiveMapping: FORM_PRIMITIVE,
+  forbiddenArgumentKeyParts: FORBIDDEN_CAUSAL_KEYS,
+});
+
+export const CAUSAL_ACTION_LANGUAGE_PROFILE = Object.freeze({
+  ...CAUSAL_ACTION_LANGUAGE_REGISTRATION,
+  languageHash: stableStructuralHash(CAUSAL_ACTION_LANGUAGE_REGISTRATION),
+});
 
 /** Compiles a validated model form into a server-owned, bounded causal graph. */
 export function compileKpFormDraft(formRef: KpFormId, draft: unknown): CausalActionProgram {

@@ -3,23 +3,9 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 
-const PROFILES = Object.freeze({
-  manifest: { profileId: "runtime-srd51-2014-authoritative-v2", profileHash: "sha256:496da17f16d52cbe5dfa3e97facfa8ed7dcf3f4bbb7a882fc0e384d464898051" },
-  ruleset: { profileId: "dnd5e-2014-srd5.1-authoritative-v2", profileHash: "sha256:7651d58190da6bfb6241cabb41b07ef5cfee3266edf3c62b8af443d94daf4af0" },
-  eventSchema: { profileId: "room-world-events-v2", profileHash: "sha256:3f1d953752be8981f4f7862ba1a90d6f613d113ecfd2d18dfd983abf974a8a67" },
-  abilityCompiler: { profileId: "ability-srd51-2014-v1", profileHash: "sha256:561710d6ae32fc14f0ba22863e0d6cd92d12c6d32b8728a81608561a66b25ba3" },
-  geometry: { profileId: "geometry-2d-feet-2014-v1", profileHash: "sha256:59caa4e73c58dc20a92cd9b50370f2c9b275a9b57740c7dd1d519f78cb72611e" },
-  triggerOrdering: { profileId: "trigger-initiative-order-2014-v1", profileHash: "sha256:825ef8de6f962f01111c9ce325189c0d203ee71ab305149fd7b2b7485b6b8089" },
-  fictionCombatTime: { profileId: "combat-round-six-seconds-2014-v1", profileHash: "sha256:067eb4870fcee1cda2563c7633daac4c2b7249ecd53e0f9b1c986d3de8d12f08" },
-  extensions: [
-    { profileId: "combat-srd51-2014-v1", profileHash: "sha256:b9e12294db25409844e1ecd63d048e404b315ecfcd8c493cd6af5cb593e4acc6" },
-    { profileId: "damage-death-srd51-2014-v1", profileHash: "sha256:37dbf131c6325f2f07e3693ee8c3420372c8d7f9154a757dfafdc6f853537d7a" },
-    { profileId: "presentation-observer-specific-v1", profileHash: "sha256:86bfdfebe7062d90f87e4add65d1d109cb14dead7b3d758e452af76c13f7457c" },
-    { profileId: "projection-observer-safe-v1", profileHash: "sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91" },
-    { profileId: "delivery-single-current-frame-v1", profileHash: "sha256:cd0d684841bd43f621665dc538db35b81c25421d8b345e444681054bbc894d7e" },
-  ],
-});
+const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -57,6 +43,83 @@ function combatant(id, ordinal, kind, controllerPrincipalId) {
     movement: { spentMilliInches: "0" },
     deathPolicy: kind === "player" ? "deathSaves" : "deadAtZero",
     turn: { action: "0", bonusAction: "0", reaction: "1", attacksRemaining: "0", leveledBonusActionSpell: false },
+  };
+}
+
+function v5TacticalGeometry() {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "-1200", y: "-1200" },
+        { x: "1200", y: "-1200" },
+        { x: "1200", y: "1200" },
+        { x: "-1200", y: "1200" },
+      ],
+    },
+    spawnPoints: [
+      { x: "0", y: "0", elevation: "0" },
+      { x: "120", y: "0", elevation: "0" },
+    ],
+    obstacles: [{
+      featureId: "feature:combat-long-casting-v2:fixture-marker",
+      kind: "barrier",
+      label: "长施法测试场地标记",
+      state: "intact",
+      polygon: [
+        { x: "1000", y: "1000" },
+        { x: "1060", y: "1000" },
+        { x: "1060", y: "1060" },
+        { x: "1000", y: "1060" },
+      ],
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
+function worldStateHash(state) {
+  const domainState = { ...state };
+  delete domainState.eventHeadHash;
+  delete domainState.lastEventId;
+  return hash(domainState);
+}
+
+function casterSeed(entity) {
+  return {
+    id: entity.id,
+    kind: "player",
+    name: entity.name,
+    sceneId: entity.sceneId,
+    tenureStatus: "active",
+    classId: "wizard",
+    raceId: "human",
+    level: 1,
+    abilityScores: Object.fromEntries(Object.entries(entity.stats).map(
+      ([ability, score]) => [ability, Number(score)],
+    )),
+    proficiencyBonus: Number(entity.proficiencyBonus),
+    proficientSkills: [],
+    expertiseSkills: [],
+    proficientSaves: [],
+    cantripIds: [],
+    preparedSpellIds: [],
+    featureIds: [],
+    hitPoints: {
+      current: Number(entity.hitPoints.current),
+      maximum: Number(entity.hitPoints.maximum),
+    },
+    loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
+    characterBuild: { classId: "wizard", raceId: "human", cantrips: [], prepared: [] },
   };
 }
 
@@ -108,19 +171,19 @@ function makeGenesis({ encounter = true, casterHitPoints = 20, counterspeller = 
       effect: { kind: "counterspell", rangeInches: "720" },
     },
   };
-  const initialState = {
+  const combatState = {
     version: "0",
     activeBranchId: "branch:main",
     fictionTimelines: { "branch:main": { branchId: "branch:main", nowMicros: "0" } },
     story: { chapterId: "chapter:ritual", status: "active", endingCandidates: [] },
-    scenes: { "scene:ritual": { sceneId: "scene:ritual", geometry: { unit: "inch", obstacles: [], clearanceZones: [] } } },
+    scenes: { "scene:ritual": { sceneId: "scene:ritual", geometry: v5TacticalGeometry() } },
     entities: { "pc:caster": caster, "npc:attacker": attacker },
     definitions,
     encounters: encounter ? {
       "encounter:ritual": {
         encounterId: "encounter:ritual",
         sceneId: "scene:ritual",
-        status: "active",
+        status: "starting",
         participantEntityIds: ["pc:caster", "npc:attacker"],
         initiativeGroups: [
           { entryId: "initiative:caster", combatantEntityIds: ["pc:caster"] },
@@ -146,16 +209,53 @@ function makeGenesis({ encounter = true, casterHitPoints = 20, counterspeller = 
     effects: {},
     pendingInputs: {},
   };
-  const unsigned = {
-    kind: "roomGenesis",
-    roomId: `room:long-casting:${encounter ? "combat" : "ritual"}`,
-    runtimeEpochId: "epoch:long-casting:v1",
-    profiles: PROFILES,
-    moduleRef: { profileId: "module:long-casting", profileHash: hash({ module: "long-casting" }) },
-    initialDefinitionCatalogRef: { profileId: "catalog:long-casting", profileHash: hash({ definitions: Object.keys(definitions) }) },
-    initialState,
-    initialStateHash: hash(initialState),
+  const roomId = `room:long-casting:${encounter ? "combat" : "ritual"}`;
+  const runtimeEpochId = "epoch:long-casting:v1";
+  const moduleRef = {
+    profileId: "module:long-casting",
+    profileHash: hash({ module: "long-casting" }),
   };
+  const initialDefinitionCatalogRef = {
+    profileId: "catalog:long-casting",
+    profileHash: hash({ definitions: Object.keys(definitions) }),
+  };
+  const initialized = step(PROFILES, undefined, {
+    kind: "initializeAuthoritativeWorld",
+    roomId,
+    runtimeEpochId,
+    moduleRef,
+    initialDefinitionCatalogRef,
+    activeBranchId: "branch:main",
+    fictionInstantMicros: "0",
+    scenes: [{ id: "scene:ritual", name: "仪式场", geometry: v5TacticalGeometry() }],
+    principals: [{ id: "principal:caster", sessionVersion: 1, role: "host" }],
+    seats: [{ id: "seat:caster", principalId: "principal:caster", status: "active" }],
+    characters: [casterSeed(caster)],
+    characterControls: [{ characterId: "pc:caster", seatId: "seat:caster" }],
+    canonicalFacts: [],
+    initialKnowledge: [],
+  });
+  assert.equal(initialized.kind, "initialized", JSON.stringify(initialized));
+
+  const initialState = structuredClone(initialized.genesis.initialState);
+  initialState.combatRuntime = {
+    story: structuredClone(combatState.story),
+    scenes: structuredClone(combatState.scenes),
+    entities: structuredClone(combatState.entities),
+    definitions: structuredClone(combatState.definitions),
+    encounters: structuredClone(combatState.encounters),
+    effects: structuredClone(combatState.effects),
+    pendingInputs: structuredClone(combatState.pendingInputs),
+    randomnessResolutions: {},
+  };
+  const initialStateHash = worldStateHash(initialState);
+  initialState.eventHeadHash = initialStateHash;
+  const unsigned = {
+    ...structuredClone(initialized.genesis),
+    initialState,
+    initialStateHash,
+  };
+  delete unsigned.genesisHash;
   return { ...unsigned, genesisHash: hash(unsigned) };
 }
 
@@ -193,11 +293,15 @@ function fulfill(current, waiting, faceForPurpose) {
 }
 
 function casterView(current) {
-  return project(PROFILES, current.state, {
+  const result = project(PROFILES, current.state, {
     kind: "player",
     principalId: "principal:caster",
+    sessionVersion: 1,
+    seatId: "seat:caster",
     characterId: "pc:caster",
   });
+  assert.equal(result?.kind, "projected", JSON.stringify(result));
+  return result.readModel ?? result;
 }
 
 function startLongCast(current, { ritual = false, suffix = "normal" } = {}) {

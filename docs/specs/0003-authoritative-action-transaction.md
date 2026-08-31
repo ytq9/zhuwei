@@ -89,7 +89,9 @@ commitCorrection(correctionAuthority, request): CorrectionOutcome
 
 Room DO 是活跃 `WorldState`、连续事件、作用域版本、幂等 Receipt、根行动、待决输入、当前 Delivery Frame 和内部 continuation capability 的唯一权威。D1 只保存身份、房间目录、静态人物卡、模组/规则版本与可重建事件归档。
 
-authoritative-v2 的提案边界不提供迁移期 compact 命令兼容：Room 只把经 production `validateProposal` 完整验证的 draft 归一化为版本化 `resolveCompoundActionPlan`，或接受 Room 自己签发、字段精确的待决回答 capability。DO 不按 `kind` 猜测 `resolveImprovisedAction`、`startEncounter`、组队、失败或收束等旧命令。随机结算恢复时还必须重新验证持久 `rulesInput` 的 allowlist：只接受 ActionPlan v1，或可选内嵌同版本 ActionPlan 的 `answerPendingInput`；未知形状、版本或完整性 hash 一律停止恢复，不调用 Rules。
+0.4 authoritative-v2 的提案边界不提供 compact 命令或旧 ActionPlan 兼容。普通 KP 提案必须是经当前私有 Form schema 验证、确定性编译并绑定当前 Action Language 的 `executeCausalActionProgram`；专用环境动作、认证队伍/战役动作和待决回答只接受 Room 生成的字段精确 capability。DO 不按 `kind` 猜测旧命令，也不把任意 Rules command 当成已认证提案。
+
+随机结算恢复还必须重新验证持久 `rulesInput` 和 recovery envelope 的 hash 及 exact allowlist。当前只允许：当前 `executeCausalActionProgram`；绑定同一 Causal Program 的精确 `invokeEnvironmentalStunt`；仅执行决定的 `resolveDueActorPlan` wrapper（其机械提案仍由后续 Rules 完整验证）；字段精确的 `answerSocialResolution`；以及 combat answer 或内嵌当前 Causal Program 的两种精确 `answerPendingInput`。未知形状、额外字段、旧 ActionPlan 或完整性 hash 不符一律停止恢复，不调用 Rules。
 
 ## 4. 根行动与状态机
 
@@ -207,21 +209,21 @@ ID 语义分离：
 ## 14. 实现映射
 
 - Rules Module Interface：`app/_runtime/lib/rules/index.ts`
-- Rules Module Implementation：`app/_runtime/lib/rules/v2/`；生产复合语义位于 `compound-model.ts`、`compound-actions.ts` 与 `internal-compound.ts`，包入口不得导出 fold、applyEvents 或生产骰源
-- 生产 KP ActionPlan schema/解析：`app/_runtime/lib/kp/authoritative-types.ts`、`authoritative-helpers.ts`、`authoritative.ts`
-- production draft 严格归一化与初始化 fixture：`app/_runtime/lib/room/proposal-adapter.ts`
+- Rules Module Implementation：`app/_runtime/lib/rules/v2/`；当前普通提案解释位于 `causal-actions.ts`，战役、战斗、多人和 ActorPlan 机械分别由其单一职责模块处理；`compound-model.ts` 只保留内部冻结结算值，不是旧生产 ActionPlan transport。包入口不得导出 fold、applyEvents 或生产骰源
+- 生产 KP 私有 Form schema/编译：`app/_runtime/lib/kp/form-catalog.ts`、`private-form-policy.ts`、`causal-action-program.ts`、`authoritative.ts`
+- 当前 Form 与 Room capability 的严格归一化及初始化 fixture：`app/_runtime/lib/room/proposal-adapter.ts`
 - Room Authority：`app/_runtime/lib/room/durable-object.ts`
 - Room Action Module：`app/_runtime/lib/room/action.ts`
 - 服务端可信身份 Adapter：`app/_runtime/lib/room/server.ts` 与 `app/chatgpt-auth.ts`
 - 页面/API Adapter：`app/_runtime/lib/table/server.ts` 与 `app/_runtime/components/play-table.tsx`
-- 行为测试：`tests/authoritative-action.test.mjs`、`tests/room-authority-v2.test.ts`、`tests/rules-compound-action-v2.test.mjs`、`tests/compound-action-v2.test.ts`、`tests/kp-multiturn-eval.test.ts`
+- 行为测试：`tests/kp-form-context-v3.test.mjs`、`tests/authoritative-kp-adapter.test.mjs`、`tests/causal-action-rules-v3.test.mjs`、`tests/world-campaign-v2.test.mjs`、`tests/rules-multiplayer-v2.test.mjs`、`tests/multiplayer-room-v2.test.ts`、`tests/item-materialization-causal-v5.test.mjs`、`tests/randomness-recovery-v2.test.ts`、`tests/room-retry-v2.test.ts`
 
-### 14.1 当前实现证据（2026-08-26）
+### 14.1 当前实现证据（2026-08-31）
 
-- `tests/authoritative-kp-adapter.test.mjs` 7/7：生产 schema/Room normalizer 只接受版本化封闭 operation、完整 production draft 或精确待决 capability；compact proposal、未知 operation、额外机械字段、骰面与 authority/state/event/profile 注入均 fail closed。
-- `tests/rules-compound-action-v2.test.mjs` 18/18：`resolveDirectConsequences`、`advanceCampaignLifecycle`、`resolveNoncombatSave`、Activity、休整、知识、资源、物品、六种 typed partyAction 和战斗等语义均进入同一 Rules `step`；动态定义、NPC 计划、场景问题、零到多随机与 typed consequences 共用一个 Root Action，任一非法子项零事件。
-- `tests/compound-action-v2.test.ts` 1/1：真实 production KP draft 经 Room Action、Room Authority 与两次 DO 随机后，动态事实、有限知识 NPC 计划、场景问题和两份机械结果在同一 Root Action 原子提交；归档不保存 raw intent。
-- `tools/check-modules.mjs` 已增加 authoritative-v2 DO 无 compact proposal 分支、随机恢复只接受版本化 ActionPlan/待决回答的结构护栏；最终冻结 SHA 的 `npm run module:check` 仍须在发布前全量门重跑。
+- `tests/kp-form-context-v3.test.mjs` 与 `tests/authoritative-kp-adapter.test.mjs` 覆盖当前私有 Form、Causal Program 编译、语言/Profile 绑定、Room normalizer 和 authority 字段注入拒绝；模型或客户端不能提交 actor、root、骰面、事件或状态补丁。
+- `tests/causal-action-rules-v3.test.mjs` 覆盖当前因果程序的直接/检定阶段、冻结成本、分支、同 Root continuation、篡改拒绝和 replay；世界/休整/失败、队伍与物品的直接切片分别由 `world-campaign-v2`、multiplayer 和 Item V5 runner 覆盖。
+- 当前测试尚未重新证明退役 `compound-action-v2.test.ts` 曾表达的“动态事实、NPC 计划、场景问题与多份机械结果在同一 Root Action”完整纵切；该旧 draft runner 不计 0.4 证据，缺口必须由当前 Form/Causal 协议的真实 Room 纵切补齐，不能借旧测试绿色推断。
+- `tools/check-modules.mjs` 保持 authoritative-v2 无 compact/旧 ActionPlan 分支，并要求恢复输入经过 current exact allowlist；最终冻结源码仍须运行 `npm run module:check`。
 - 上述是局部冻结源码的行为证据；最终全量门、真实模型、迁移、部署与线上冒烟仍须以 `refactor-log.md` 后续记录为准。
 
 ## 15. 交叉审查结论
@@ -229,5 +231,5 @@ ID 语义分离：
 - 与 SPEC 0001：保留玩家意图、KP 叙事、规则机械与权威状态四权分离；无缩小。
 - 权限：Principal 永不来自请求体；玩家/NPC/更正/内部 continuation 权限分离。
 - 秘密：所有外发数据经 `project`；原始事件和 KP Viewer 不离开可信服务端。
-- 版本：新行为只由新 `ruleset_version` 启用；旧房间显式 Legacy 回放。
+- 版本：0.4 行为只由精确的当前 ruleset/runtime 完整绑定启用；前 0.4 房间显式退役并拒绝，不注册 Legacy 回放或兼容分派。
 - 第二权威：D1、页面、模型、Adapter 和测试均不能提交状态、掷骰或独立投影。

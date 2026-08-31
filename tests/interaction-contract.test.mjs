@@ -134,12 +134,12 @@ test("pins one host-selected KP profile when the room is created", async () => {
     [
       {
         modelId: "deepseek-v4-flash",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v1",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
         provider: "deepseek",
       },
       {
         modelId: "deepseek-v4-pro",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v1",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v2",
         provider: "deepseek",
       },
     ],

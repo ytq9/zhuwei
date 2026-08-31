@@ -54,7 +54,7 @@ test("authoritative room deletion marks D1 first, restores on failure, and final
   assert.match(roomServer, /trustedRoomPrincipal\(input\.userId\)/);
 });
 
-test("terminal deletion explicitly covers every Room DO application table without deleteAll", async () => {
+test("terminal deletion explicitly covers every current Room DO application table without deleteAll", async () => {
   const durable = await source("app/_runtime/lib/room/durable-object.ts");
   const store = await source("app/_runtime/lib/room/authority-store.ts");
   const deletion = section(
@@ -64,23 +64,20 @@ test("terminal deletion explicitly covers every Room DO application table withou
   ) + section(store, "clearAllRowsForDeletion()", "\n  }\n}");
 
   const expectedTables = [
-    "room_state",
-    "world_events",
-    "commands",
-    "turn_tickets",
-    "ux_status",
     "authority_rooms",
     "authority_members",
     "authority_characters",
     "authority_events",
     "authority_submissions",
     "authority_proposal_recovery",
-    "authority_randomness_journal",
+    "authority_randomness_authorizations",
     "authority_randomness_batches",
+    "authority_action_stages",
     "authority_scope_versions",
     "authority_receipts",
     "authority_pending_inputs",
     "authority_delivery_plans",
+    "authority_delivery_audiences",
     "authority_delivery_slots",
     "authority_experienced_messages",
     "authority_delivery_watermarks",

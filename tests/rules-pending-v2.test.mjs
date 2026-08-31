@@ -16,6 +16,47 @@ function profileRef(profileId, digit) {
   };
 }
 
+function tacticalGeometry() {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "0", y: "0" },
+        { x: "900", y: "0" },
+        { x: "900", y: "600" },
+        { x: "0", y: "600" },
+      ],
+    },
+    spawnPoints: [
+      { x: "120", y: "180", elevation: "0" },
+      { x: "720", y: "180", elevation: "0" },
+    ],
+    obstacles: [{
+      featureId: "feature:rules-pending-v2:gatehouse-wall",
+      kind: "barrier",
+      label: "门楼侧墙",
+      state: "intact",
+      polygon: [
+        { x: "300", y: "360" },
+        { x: "360", y: "360" },
+        { x: "360", y: "480" },
+        { x: "300", y: "480" },
+      ],
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
 function initialize() {
   const initialized = step(undefined, undefined, {
     kind: "initializeAuthoritativeWorld",
@@ -25,7 +66,7 @@ function initialize() {
     initialDefinitionCatalogRef: profileRef("definitions:rules-pending-v2", "c"),
     activeBranchId: "branch:main",
     fictionInstantMicros: "0",
-    scenes: [{ id: "scene:gatehouse", name: "门楼" }],
+    scenes: [{ id: "scene:gatehouse", name: "门楼", geometry: tacticalGeometry() }],
     principals: [
       { id: "principal:pending:alice", sessionVersion: 1 },
       { id: "principal:pending:bob", sessionVersion: 1 },

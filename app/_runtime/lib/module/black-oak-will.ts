@@ -2,7 +2,7 @@ import type { ModuleDef } from "./schema";
 import type { Ability } from "../rules/ruleset";
 import type { InteractionDefinition } from "../rules/model";
 import { WRITING_REVISION } from "./writing";
-import { RULESET_VERSION } from "../rules/ruleset";
+import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 
 function clueDiscovery(input: {
   clueId: string;
@@ -67,9 +67,9 @@ const CLUE_DISCOVERIES: InteractionDefinition[] = [
 export const BLACK_OAK_WILL: ModuleDef = {
   id: "black-oak-will",
   title: "黑橡居酒屋的第三份遗嘱",
-  rulesetVersion: RULESET_VERSION,
+  rulesetVersion: AUTHORITATIVE_RULESET_VERSION,
   world: {
-    rulesetVersion: RULESET_VERSION,
+    rulesetVersion: AUTHORITATIVE_RULESET_VERSION,
     initialSceneId: "wake",
     locationSceneIds: ["wake", "wills", "yard", "private-lian", "cellar", "shrine"],
     portals: [
@@ -109,16 +109,16 @@ export const BLACK_OAK_WILL: ModuleDef = {
         traversalTime: { unit: "minute", value: 2 },
       },
     ],
-    artifacts: [
+    items: [
       {
-        id: "artifact-third-will",
+        id: "item-third-will",
         name: "第三份遗嘱",
         initialSceneId: "shrine",
         aliases: ["遗嘱", "羊皮纸", "纸片"],
         initialVisibility: "hidden",
       },
       {
-        id: "artifact-cellar-key",
+        id: "item-cellar-key",
         name: "酒窖铁钥",
         initialSceneId: "wake",
         initialHolderId: "varo",
@@ -126,14 +126,14 @@ export const BLACK_OAK_WILL: ModuleDef = {
         initialVisibility: "hidden",
       },
       {
-        id: "artifact-cellar-torch",
+        id: "item-cellar-torch",
         name: "备用火把",
         initialSceneId: "cellar",
         aliases: ["火把", "照明物"],
         initialVisibility: "hidden",
       },
       {
-        id: "artifact-cellar-crowbar",
+        id: "item-cellar-crowbar",
         name: "旧撬棍",
         initialSceneId: "cellar",
         aliases: ["撬棍", "撬门工具"],
@@ -145,12 +145,12 @@ export const BLACK_OAK_WILL: ModuleDef = {
         id: "request-cellar-key-wake",
         name: "请瓦罗交出酒窖铁钥",
         sceneId: "wake",
-        targetId: "artifact-cellar-key",
+        targetId: "item-cellar-key",
         aliases: ["瓦罗", "铁钥匙", "酒窖钥匙", "钥匙"],
         verbs: ["问", "请求", "索要", "说服", "交出"],
         prerequisites: [
           { kind: "entityAt", entityId: "varo", sceneId: "wake" },
-          { kind: "artifactHeldByEntity", artifactId: "artifact-cellar-key", entityId: "varo" },
+          { kind: "itemHeldByEntity", itemId: "item-cellar-key", entityId: "varo" },
         ],
         resolution: {
           kind: "check",
@@ -160,7 +160,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
           reason: "让瓦罗相信把酒窖铁钥交给你比继续隐瞒更安全。",
         },
         success: [
-          { kind: "transferArtifact", artifactId: "artifact-cellar-key", to: "actor" },
+          { kind: "transferItem", itemId: "item-cellar-key", to: "actor" },
         ],
         duration: { unit: "minute", value: 1 },
         spotlightBeats: 1,
@@ -169,12 +169,12 @@ export const BLACK_OAK_WILL: ModuleDef = {
         id: "request-cellar-key-yard",
         name: "在后院请瓦罗交出酒窖铁钥",
         sceneId: "yard",
-        targetId: "artifact-cellar-key",
+        targetId: "item-cellar-key",
         aliases: ["瓦罗", "铁钥匙", "酒窖钥匙", "钥匙"],
         verbs: ["问", "请求", "索要", "说服", "交出"],
         prerequisites: [
           { kind: "entityAt", entityId: "varo", sceneId: "yard" },
-          { kind: "artifactHeldByEntity", artifactId: "artifact-cellar-key", entityId: "varo" },
+          { kind: "itemHeldByEntity", itemId: "item-cellar-key", entityId: "varo" },
         ],
         resolution: {
           kind: "check",
@@ -184,7 +184,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
           reason: "当面迫使瓦罗把酒窖铁钥交给能够处理门后危险的人。",
         },
         success: [
-          { kind: "transferArtifact", artifactId: "artifact-cellar-key", to: "actor" },
+          { kind: "transferItem", itemId: "item-cellar-key", to: "actor" },
         ],
         duration: { unit: "minute", value: 1 },
         spotlightBeats: 1,
@@ -218,7 +218,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
         targetId: "yard-cellar",
         prerequisites: [
           { kind: "portalState", portalId: "yard-cellar", state: "locked" },
-          { kind: "artifactHeldByActor", artifactId: "artifact-cellar-key" },
+          { kind: "itemHeldByActor", itemId: "item-cellar-key" },
         ],
         resolution: { kind: "automatic" },
         success: [{ kind: "setPortalState", portalId: "yard-cellar", state: "open" }],
@@ -229,11 +229,11 @@ export const BLACK_OAK_WILL: ModuleDef = {
         id: "retrieve-third-will",
         name: "从石座夹层取出第三份遗嘱",
         sceneId: "shrine",
-        targetId: "artifact-third-will",
+        targetId: "item-third-will",
         aliases: ["第三份遗嘱", "遗嘱", "羊皮纸", "纸片", "夹层"],
         verbs: ["倒", "取", "抽", "撬", "夹", "拍"],
         prerequisites: [
-          { kind: "artifactAt", artifactId: "artifact-third-will", sceneId: "shrine" },
+          { kind: "itemAt", itemId: "item-third-will", sceneId: "shrine" },
         ],
         resolution: {
           kind: "check",
@@ -243,7 +243,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
           reason: "在不撕裂脆纸的情况下把遗嘱取出。",
         },
         success: [
-          { kind: "transferArtifact", artifactId: "artifact-third-will", to: "actor" },
+          { kind: "transferItem", itemId: "item-third-will", to: "actor" },
           { kind: "revealClue", clueId: "c-third-will", layer: "full" },
         ],
         failure: [{ kind: "revealClue", clueId: "c-third-will", layer: "hint" }],
@@ -275,7 +275,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
         aliases: ["石座", "夹层", "羊皮", "纸边"],
         verbs: ["摸", "看", "搜", "检查"],
         prerequisites: [
-          { kind: "artifactAt", artifactId: "artifact-third-will", sceneId: "shrine" },
+          { kind: "itemAt", itemId: "item-third-will", sceneId: "shrine" },
         ],
         resolution: { kind: "automatic" },
         success: [{ kind: "revealClue", clueId: "c-third-will", layer: "hint" }],
@@ -286,11 +286,11 @@ export const BLACK_OAK_WILL: ModuleDef = {
         id: "retrieve-cellar-torch",
         name: "从酒桶后找出备用火把",
         sceneId: "cellar",
-        targetId: "artifact-cellar-torch",
+        targetId: "item-cellar-torch",
         aliases: ["备用火把", "火把", "照明物"],
         verbs: ["找", "搜", "取", "拿"],
         prerequisites: [
-          { kind: "artifactAt", artifactId: "artifact-cellar-torch", sceneId: "cellar" },
+          { kind: "itemAt", itemId: "item-cellar-torch", sceneId: "cellar" },
         ],
         resolution: {
           kind: "check",
@@ -300,7 +300,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
           reason: "在堆叠的旧酒桶后找到还能使用的备用火把。",
         },
         success: [
-          { kind: "transferArtifact", artifactId: "artifact-cellar-torch", to: "actor" },
+          { kind: "transferItem", itemId: "item-cellar-torch", to: "actor" },
         ],
         duration: { unit: "minute", value: 1 },
         spotlightBeats: 1,
@@ -309,11 +309,11 @@ export const BLACK_OAK_WILL: ModuleDef = {
         id: "retrieve-cellar-crowbar",
         name: "从杂物堆找出旧撬棍",
         sceneId: "cellar",
-        targetId: "artifact-cellar-crowbar",
+        targetId: "item-cellar-crowbar",
         aliases: ["旧撬棍", "撬棍", "撬门工具"],
         verbs: ["找", "搜", "取", "拿"],
         prerequisites: [
-          { kind: "artifactAt", artifactId: "artifact-cellar-crowbar", sceneId: "cellar" },
+          { kind: "itemAt", itemId: "item-cellar-crowbar", sceneId: "cellar" },
         ],
         resolution: {
           kind: "check",
@@ -323,7 +323,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
           reason: "从酒窖杂物里辨认并取出可用的旧撬棍。",
         },
         success: [
-          { kind: "transferArtifact", artifactId: "artifact-cellar-crowbar", to: "actor" },
+          { kind: "transferItem", itemId: "item-cellar-crowbar", to: "actor" },
         ],
         duration: { unit: "minute", value: 1 },
         spotlightBeats: 1,
@@ -402,7 +402,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
         name: "遵照第三份遗嘱",
         outcome: "success",
         when: [
-          { kind: "artifactStatus", artifactId: "artifact-third-will", status: "held" },
+          { kind: "itemStatus", itemId: "item-third-will", status: "held" },
           { kind: "flagEquals", flag: "stone-seat-destroyed", value: true },
         ],
         publicText: "第三份遗嘱已经取出，石座也被彻底毁坏。",
@@ -412,7 +412,7 @@ export const BLACK_OAK_WILL: ModuleDef = {
         name: "把门再钉死",
         outcome: "mixed",
         when: [
-          { kind: "artifactStatus", artifactId: "artifact-third-will", status: "held" },
+          { kind: "itemStatus", itemId: "item-third-will", status: "held" },
           { kind: "portalState", portalId: "yard-cellar", state: "locked" },
           { kind: "flagEquals", flag: "cellar-resealed", value: true },
         ],

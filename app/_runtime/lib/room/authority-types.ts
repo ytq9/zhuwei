@@ -64,6 +64,11 @@ export type AuthoritativeActionInput =
       itemId?: string;
     }
   | {
+      kind: "itemActivity";
+      submissionId: string;
+      itemEntryId: string;
+    }
+  | {
       kind: "environmentInteract";
       submissionId: string;
       featureId: string;
@@ -151,8 +156,8 @@ export type DeliveryAudienceBinding = {
   sessionVersion: number;
   seatId: string;
   characterId: string;
-  /** Frozen observer locations for this result. Optional for pre-deployment open plans. */
-  sceneIds?: string[];
+  /** Frozen observer locations for this product-0.4 result. */
+  sceneIds: string[];
   projectionHash: string;
   kpProjection: unknown;
 };
@@ -194,9 +199,8 @@ export type ExperiencedTranscriptMessageInput =
   & { viewerKey: string };
 
 export type DeliveryPlan = {
-  /** Frozen publication interpreter. Plans persisted before this field existed
-   * are historical DELIVERY_PROTOCOL_PROFILE plans by genesis contract. */
-  deliveryProtocol?: ProfileRef;
+  /** Exact publication interpreter pinned by the product-0.4 genesis. */
+  deliveryProtocol: ProfileRef;
   publishCapability: string;
   rootActionId: string;
   receiptId: string;
@@ -221,7 +225,7 @@ export type DeliveryFrame = {
   narrationPolicyVersion: string;
   payloadHash: string;
   text: string;
-  sceneIds?: string[];
+  sceneIds: string[];
   derivedEvidenceRefs?: string[];
   derivedAgencyClaims?: Array<{
     subjectKind: "playerCharacter" | "npc" | "world";

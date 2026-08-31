@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 
 const SCENE_ID = "scene:hidden-gallery";
 const ALICE_ID = "character:alice";
@@ -11,58 +12,7 @@ const HIDDEN_ENTITY_ID = "npc:hidden-stalker";
 const WALL_TARGET_ID = "npc:wall-target";
 const HIDDEN_WALL_ID = "terrain:hidden-wall";
 
-const PROFILES = Object.freeze({
-  manifest: {
-    profileId: "runtime-srd51-2014-authoritative-v2",
-    profileHash: "sha256:496da17f16d52cbe5dfa3e97facfa8ed7dcf3f4bbb7a882fc0e384d464898051",
-  },
-  ruleset: {
-    profileId: "dnd5e-2014-srd5.1-authoritative-v2",
-    profileHash: "sha256:7651d58190da6bfb6241cabb41b07ef5cfee3266edf3c62b8af443d94daf4af0",
-  },
-  eventSchema: {
-    profileId: "room-world-events-v2",
-    profileHash: "sha256:3f1d953752be8981f4f7862ba1a90d6f613d113ecfd2d18dfd983abf974a8a67",
-  },
-  abilityCompiler: {
-    profileId: "ability-srd51-2014-v1",
-    profileHash: "sha256:561710d6ae32fc14f0ba22863e0d6cd92d12c6d32b8728a81608561a66b25ba3",
-  },
-  geometry: {
-    profileId: "geometry-2d-feet-2014-v1",
-    profileHash: "sha256:59caa4e73c58dc20a92cd9b50370f2c9b275a9b57740c7dd1d519f78cb72611e",
-  },
-  triggerOrdering: {
-    profileId: "trigger-initiative-order-2014-v1",
-    profileHash: "sha256:825ef8de6f962f01111c9ce325189c0d203ee71ab305149fd7b2b7485b6b8089",
-  },
-  fictionCombatTime: {
-    profileId: "combat-round-six-seconds-2014-v1",
-    profileHash: "sha256:067eb4870fcee1cda2563c7633daac4c2b7249ecd53e0f9b1c986d3de8d12f08",
-  },
-  extensions: [
-    {
-      profileId: "combat-srd51-2014-v1",
-      profileHash: "sha256:b9e12294db25409844e1ecd63d048e404b315ecfcd8c493cd6af5cb593e4acc6",
-    },
-    {
-      profileId: "damage-death-srd51-2014-v1",
-      profileHash: "sha256:37dbf131c6325f2f07e3693ee8c3420372c8d7f9154a757dfafdc6f853537d7a",
-    },
-    {
-      profileId: "presentation-observer-specific-v1",
-      profileHash: "sha256:86bfdfebe7062d90f87e4add65d1d109cb14dead7b3d758e452af76c13f7457c",
-    },
-    {
-      profileId: "projection-observer-safe-v1",
-      profileHash: "sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91",
-    },
-    {
-      profileId: "delivery-single-current-frame-v1",
-      profileHash: "sha256:cd0d684841bd43f621665dc538db35b81c25421d8b345e444681054bbc894d7e",
-    },
-  ],
-});
+const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -90,7 +40,7 @@ const INITIAL_DEFINITIONS = Object.freeze({
   }),
 });
 
-const INITIAL_STATE = Object.freeze({
+const INITIAL_COMBAT_STATE = Object.freeze({
   version: "0",
   activeBranchId: "branch:main",
   fictionTimelines: Object.freeze({
@@ -101,10 +51,29 @@ const INITIAL_STATE = Object.freeze({
     [SCENE_ID]: Object.freeze({
       sceneId: SCENE_ID,
       geometry: Object.freeze({
+        schema: "zhuwei.tactical-geometry/v1",
         unit: "inch",
+        boundary: Object.freeze({
+          kind: "polygon",
+          points: Object.freeze([
+            Object.freeze({ x: "-240", y: "-240" }),
+            Object.freeze({ x: "840", y: "-240" }),
+            Object.freeze({ x: "840", y: "240" }),
+            Object.freeze({ x: "-240", y: "240" }),
+          ]),
+        }),
+        spawnPoints: Object.freeze([
+          Object.freeze({ x: "0", y: "0", elevation: "0" }),
+          Object.freeze({ x: "-120", y: "0", elevation: "0" }),
+          Object.freeze({ x: "120", y: "0", elevation: "0" }),
+          Object.freeze({ x: "600", y: "0", elevation: "0" }),
+        ]),
         obstacles: Object.freeze([
           Object.freeze({
-            obstacleId: HIDDEN_WALL_ID,
+            featureId: HIDDEN_WALL_ID,
+            kind: "barrier",
+            label: "隐匿墙体",
+            state: "intact",
             polygon: Object.freeze([
               Object.freeze({ x: "480", y: "-60" }),
               Object.freeze({ x: "482", y: "-60" }),
@@ -115,9 +84,13 @@ const INITIAL_STATE = Object.freeze({
             height: "120",
             opaque: true,
             impassable: true,
-            visibilityPolicyId: "visibility:kp-internal",
+            cover: "full",
+            propagation: "blocks",
+            terrain: "normal",
+            visibilityPolicyId: "visibility:hidden-until-evidence",
           }),
         ]),
+        clearanceZones: Object.freeze([]),
       }),
     }),
   }),
@@ -191,24 +164,90 @@ const CATALOG_REF = Object.freeze({
   profileId: "catalog:hidden-gallery-v1",
   profileHash: fixtureHash(INITIAL_DEFINITIONS),
 });
-const UNSIGNED_GENESIS = Object.freeze({
-  kind: "roomGenesis",
+
+const initializedWorld = step(PROFILES, undefined, {
+  kind: "initializeAuthoritativeWorld",
   roomId: "room:privacy-bypass-v2",
   runtimeEpochId: "epoch:privacy-bypass-v2:1",
-  profiles: PROFILES,
   moduleRef: MODULE_REF,
   initialDefinitionCatalogRef: CATALOG_REF,
-  initialState: INITIAL_STATE,
-  initialStateHash: fixtureHash(INITIAL_STATE),
+  activeBranchId: "branch:main",
+  fictionInstantMicros: "0",
+  scenes: [{
+    id: SCENE_ID,
+    name: "隐秘画廊",
+    geometry: INITIAL_COMBAT_STATE.scenes[SCENE_ID].geometry,
+  }],
+  principals: [{ id: "principal:alice", sessionVersion: 1, role: "host" }],
+  seats: [{ id: "seat:alice", principalId: "principal:alice", status: "active" }],
+  characters: [
+    {
+      id: ALICE_ID,
+      kind: "player",
+      name: "爱丽丝",
+      sceneId: SCENE_ID,
+      tenureStatus: "active",
+      classId: "fighter",
+      raceId: "human",
+      level: 1,
+      hitPoints: { current: 12, maximum: 12 },
+      abilityScores: { str: 10, dex: 16, con: 10, int: 10, wis: 10, cha: 10 },
+      proficiencyBonus: 2,
+      proficientSkills: [],
+      expertiseSkills: [],
+      proficientSaves: [],
+      featureIds: [],
+      loadout: { armorClass: 14, speedFeet: 30, equipped: {}, backpack: [] },
+      characterBuild: { classId: "fighter", raceId: "human", cantrips: [], prepared: [] },
+    },
+    ...[
+      [SCOUT_ID, "斥候"],
+      [HIDDEN_ENTITY_ID, "隐匿追猎者"],
+      [WALL_TARGET_ID, "墙后守卫"],
+    ].map(([id, name]) => ({
+      id,
+      kind: "npc",
+      name,
+      sceneId: SCENE_ID,
+      tenureStatus: "active",
+      hitPoints: { current: 9, maximum: 9 },
+      abilityScores: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+      proficiencyBonus: 2,
+    })),
+  ],
+  characterControls: [{ characterId: ALICE_ID, seatId: "seat:alice" }],
+  canonicalFacts: [],
+  initialKnowledge: [],
 });
-const GENESIS = Object.freeze({
-  ...UNSIGNED_GENESIS,
-  genesisHash: fixtureHash(UNSIGNED_GENESIS),
-});
+assert.equal(initializedWorld.kind, "initialized", JSON.stringify(initializedWorld));
+
+const INITIAL_STATE = structuredClone(initializedWorld.genesis.initialState);
+INITIAL_STATE.combatRuntime = {
+  story: structuredClone(INITIAL_COMBAT_STATE.story),
+  scenes: structuredClone(INITIAL_COMBAT_STATE.scenes),
+  entities: structuredClone(INITIAL_COMBAT_STATE.entities),
+  definitions: structuredClone(INITIAL_COMBAT_STATE.definitions),
+  encounters: structuredClone(INITIAL_COMBAT_STATE.encounters),
+  effects: structuredClone(INITIAL_COMBAT_STATE.effects),
+  pendingInputs: structuredClone(INITIAL_COMBAT_STATE.pendingInputs),
+  randomnessResolutions: {},
+};
+const initialStateHashSource = { ...INITIAL_STATE };
+delete initialStateHashSource.eventHeadHash;
+delete initialStateHashSource.lastEventId;
+const initialStateHash = fixtureHash(initialStateHashSource);
+INITIAL_STATE.eventHeadHash = initialStateHash;
+const UNSIGNED_GENESIS = structuredClone(initializedWorld.genesis);
+delete UNSIGNED_GENESIS.genesisHash;
+UNSIGNED_GENESIS.initialState = INITIAL_STATE;
+UNSIGNED_GENESIS.initialStateHash = initialStateHash;
+const GENESIS = Object.freeze({ ...UNSIGNED_GENESIS, genesisHash: fixtureHash(UNSIGNED_GENESIS) });
 
 const ALICE_VIEWER = Object.freeze({
   kind: "player",
   principalId: "principal:alice",
+  sessionVersion: 1,
+  seatId: "seat:alice",
   characterId: ALICE_ID,
 });
 const SCOUT_VIEWER = Object.freeze({
@@ -257,6 +296,7 @@ test("Geometry G15 keeps hidden spatial truth service-only and makes guessed tar
   assert.deepEqual(kp.viewer, { kind: "kp", subjectId: "kp" });
   assert.deepEqual(kp.spatialEvidence.entities[HIDDEN_ENTITY_ID], {
     id: HIDDEN_ENTITY_ID,
+    name: "隐匿追猎者",
     sceneId: SCENE_ID,
     position: { x: "120", y: "0", elevation: "0" },
     footprint: { width: "60", depth: "60", height: "60" },
@@ -264,9 +304,9 @@ test("Geometry G15 keeps hidden spatial truth service-only and makes guessed tar
   });
   assert.deepEqual(
     kp.spatialEvidence.scenes[SCENE_ID].geometry.obstacles[0],
-    INITIAL_STATE.scenes[SCENE_ID].geometry.obstacles[0],
+    INITIAL_COMBAT_STATE.scenes[SCENE_ID].geometry.obstacles[0],
   );
-  assert.ok(!encoded(kp).includes("隐匿追猎者"), "KP spatial evidence must not include narrative identity");
+  assert.ok(encoded(kp).includes("隐匿追猎者"), "authorized KP evidence keeps the exact hidden NPC identity");
   assert.ok(!encoded(kp).includes("ability:alice-bolt"), "KP spatial evidence must not include mechanics");
   assert.deepEqual(
     project(PROFILES, replayedAgain, KP_SPATIAL_VIEWER, { channel: "reconnect" }),

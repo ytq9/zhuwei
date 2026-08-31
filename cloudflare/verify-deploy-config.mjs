@@ -111,48 +111,9 @@ export function assertDeploymentGitState({
   assert.equal(deploySourceSha, head, "DEPLOY_SOURCE_SHA must exactly match git HEAD");
 }
 
-export function assertProfileReferenceGateContract({ packageJson, gateSource }) {
-  assert.equal(
-    packageJson.scripts?.["profile:reference-gate"],
-    "tsx tools/check-runtime-profile-references.mts",
-    "profile:reference-gate script must remain wired to the frozen profile reference checker",
-  );
-  assert.match(
-    gateSource,
-    /runtimeProfileReferenceRowsFromD1/,
-    "profile reference gate must parse D1 reference rows",
-  );
-  assert.match(
-    gateSource,
-    /evaluateRuntimeProfileReferenceGate/,
-    "profile reference gate must evaluate frozen runtime profile references",
-  );
-}
-
-export function assertProfileReferenceGateResult({
-  result,
-  invoked,
-  evidenceProvided,
-  requireEvidence,
-}) {
-  assert.equal(invoked, true, "deploy guard must invoke the profile reference gate");
-  if (requireEvidence) {
-    assert.equal(
-      evidenceProvided,
-      true,
-      "PROFILE_REFERENCE_GATE_JSON is required in CI and cf:deploy lifecycle runs",
-    );
-  }
-  assert.equal(result?.ok, true, `profile reference gate rejected deploy: ${result?.code ?? "unknown"}`);
-  assert.ok(Array.isArray(result.referencedManifestRefs), "profile reference gate result is malformed");
-  assert.ok(Number.isSafeInteger(result.roomCount) && result.roomCount >= 0, "profile reference gate roomCount is malformed");
-}
-
 export function verifyDeployGuard({
   config,
   frozenSpec,
-  packageJson,
-  gateSource,
   branch,
   status,
   head,
@@ -160,8 +121,6 @@ export function verifyDeployGuard({
   requireSourceProof,
   ciSourceBranch,
   ciBaseBranch,
-  profileGate,
-  requireProfileEvidence,
 }) {
   assertStaticDeployConfiguration({ config, frozenSpec });
   assertDeploymentGitState({
@@ -173,72 +132,28 @@ export function verifyDeployGuard({
     ciSourceBranch,
     ciBaseBranch,
   });
-  assertProfileReferenceGateContract({ packageJson, gateSource });
-  assertProfileReferenceGateResult({
-    result: profileGate.result,
-    invoked: profileGate.invoked,
-    evidenceProvided: profileGate.evidenceProvided,
-    requireEvidence: requireProfileEvidence,
-  });
   return {
     ok: true,
     branch,
     sourceSha: head,
-    profileRoomCount: profileGate.result.roomCount,
-    referencedManifestRefs: profileGate.result.referencedManifestRefs,
   };
-}
-
-export function invokeProfileReferenceGate(root, input) {
-  const result = spawnSync(
-    "npx",
-    ["--no-install", "tsx", "tools/check-runtime-profile-references.mts"],
-    {
-      cwd: root,
-      encoding: "utf8",
-      input,
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout.trim());
-  } catch {
-    parsed = undefined;
-  }
-  assert.equal(
-    result.status,
-    0,
-    `profile reference gate invocation failed: ${parsed?.code ?? (result.stderr.trim() || "invalid output")}`,
-  );
-  assert.ok(parsed && typeof parsed === "object", "profile reference gate returned invalid JSON");
-  return parsed;
 }
 
 export function verifyCurrentDeployment({
   root = defaultRepoRoot,
   environment = process.env,
-  profileGateRunner = invokeProfileReferenceGate,
 } = {}) {
   const configPath = join(root, "wrangler.jsonc");
   const specPath = join(root, "docs/specs/0001-llm-kp-responsibility-contract.md");
-  const packagePath = join(root, "package.json");
-  const gatePath = join(root, "tools/check-runtime-profile-references.mts");
-  for (const path of [configPath, specPath, packagePath, gatePath]) {
+  for (const path of [configPath, specPath]) {
     assert.ok(existsSync(path), `required deploy guard input is missing: ${path}`);
   }
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   const frozenSpec = readFileSync(specPath, "utf8");
-  const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
-  const gateSource = readFileSync(gatePath, "utf8");
   const isCi = environmentFlag(environment.CI);
   const isDeployLifecycle = environment.npm_lifecycle_event === "cf:deploy"
     || environment.npm_lifecycle_event === "deploy"
     || /(?:^|\s)wrangler\s+deploy(?:\s|$)/.test(environment.npm_lifecycle_script ?? "");
-  const requireEvidence = isCi || isDeployLifecycle;
-  const profileEvidence = environment.PROFILE_REFERENCE_GATE_JSON;
-  const profileInput = profileEvidence?.trim() ? profileEvidence : "[]";
-  const profileResult = profileGateRunner(root, profileInput);
   const localBranch = git(root, ["branch", "--show-current"]);
   const ciSourceBranch = isCi
     ? environment.GITHUB_HEAD_REF ?? environment.GITHUB_REF_NAME ?? environment.DEPLOY_SOURCE_BRANCH ?? ""
@@ -248,21 +163,13 @@ export function verifyCurrentDeployment({
   return verifyDeployGuard({
     config,
     frozenSpec,
-    packageJson,
-    gateSource,
     branch,
     status: git(root, ["status", "--porcelain", "--untracked-files=all"]),
     head: git(root, ["rev-parse", "HEAD"]),
     deploySourceSha: environment.DEPLOY_SOURCE_SHA,
-    requireSourceProof: requireEvidence,
+    requireSourceProof: isCi || isDeployLifecycle,
     ciSourceBranch,
     ciBaseBranch: isCi ? environment.GITHUB_BASE_REF : undefined,
-    profileGate: {
-      invoked: true,
-      evidenceProvided: Boolean(profileEvidence?.trim()),
-      result: profileResult,
-    },
-    requireProfileEvidence: requireEvidence,
   });
 }
 

@@ -5,20 +5,17 @@ import { compileKpFormDraft } from "../app/_runtime/lib/kp/causal-action-program
 import {
   compileEnvironmentFeature,
   ENVIRONMENT_PROFILE,
-  LEGACY_ENVIRONMENT_PROFILE,
 } from "../app/_runtime/lib/rules/profiles/environment.ts";
 import {
   buildCustomEnvironmentFeatureDefinition,
 } from "../app/_runtime/lib/rules/profiles/environment-definition-builder.ts";
 import { customEnvironmentDefinitionInputFromDraft } from "../app/_runtime/lib/rules/profiles/environment-form-lowering.ts";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
-import {
-  CURRENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-  LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-} from "../app/_runtime/lib/rules/profiles/manifests.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 import { createVersionedRulesRuntime } from "../app/_runtime/lib/rules/v2-runtime.ts";
 import { eventHash, validateEventEnvelope } from "../app/_runtime/lib/rules/v2/events.ts";
+import { initialStandardGearEntryId } from "../app/_runtime/lib/rules/v2/item-transitions.ts";
+import { itemEntryResourceId } from "../app/_runtime/lib/rules/v2/items.ts";
 import { hashWorldState } from "../app/_runtime/lib/rules/v2/validation.ts";
 import {
   CHANDELIER_FEATURE_DEFINITION,
@@ -42,37 +39,18 @@ const ALLY = Object.freeze({
 const ENEMY_ID = "npc:enemy";
 const HIDDEN_ID = "npc:hidden";
 const NEUTRAL_ID = "npc:neutral";
+const RETIRED_ENVIRONMENT_PROFILE = Object.freeze({
+  profileId: "environment-feature-fsm-2014-retired",
+  profileHash: `sha256:${"0".repeat(64)}`,
+});
 
 const runtime = createVersionedRulesRuntime({
   registrations: [{
-    manifest: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+    manifest: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     interpreterKind: "authoritative-v2",
   }],
-  defaultManifest: ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.manifest,
+  defaultManifest: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest,
 });
-const legacyRuntime = createVersionedRulesRuntime({
-  registrations: [{
-    manifest: CURRENT_RUNTIME_PROFILE_MANIFEST,
-    interpreterKind: "authoritative-v2",
-  }],
-  defaultManifest: CURRENT_RUNTIME_PROFILE_MANIFEST.manifest,
-});
-const legacyEnvironmentRuntime = createVersionedRulesRuntime({
-  registrations: [{
-    manifest: LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-    interpreterKind: "authoritative-v2",
-  }],
-  defaultManifest: LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST.manifest,
-});
-
-function legacyChandelierDefinition() {
-  const definition = structuredClone(CHANDELIER_FEATURE_DEFINITION);
-  definition.schema = "zhuwei.environment-feature/v1";
-  definition.environmentProfile = structuredClone(LEGACY_ENVIRONMENT_PROFILE);
-  delete definition.effectMode;
-  return definition;
-}
-
 function stateOnlyThreePhaseDefinition() {
   const definition = structuredClone(CUSTOM_SCENERY_WALL_FEATURE_DEFINITION);
   definition.featureId = "feature:gallery:three-phase-screen";
@@ -253,15 +231,22 @@ function initialize({
   assert.equal(initialized.kind, "initialized", JSON.stringify(initialized));
   const replayed = rulesRuntime.replay(initialized.genesis, []);
   assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
+  const longbowEntryId = initialStandardGearEntryId(ALICE.characterId, "longbow", 1);
   const longbow = Object.values(replayed.state.combatRuntime.definitions)
-    .find((definition) => definition.mechanicalKey === "weapon:longbow");
+    .find((definition) => definition.mechanicalKey === `weapon:${longbowEntryId}`);
   assert.ok(longbow, "longbow definition");
+  const arrowEntryId = initialStandardGearEntryId(ALICE.characterId, "arrow", "stack");
+  assert.equal(
+    replayed.state.campaignRuntime.itemSystem.entries[arrowEntryId]?.holderRef,
+    ALICE.characterId,
+  );
   return {
     genesis: initialized.genesis,
     profiles: initialized.profiles,
     state: replayed.state,
     events: [],
     abilityRef: longbow.definitionId,
+    arrowEntryId,
     featureId: compiled.artifact.tacticalFeature.featureId,
     rulesRuntime,
   };
@@ -373,7 +358,7 @@ function stuntInput(world, rootActionId, options = {}) {
     }
     const program = compileKpFormDraft("environmental-stunt.v1", draft);
     causalBinding = {
-      actionPlanVersion: program.languageRef,
+      actionLanguageRef: program.languageRef,
       actionLanguageHash: program.languageHash,
       causalActionProgram: program,
     };
@@ -402,10 +387,10 @@ function explicitAbsenceInput(rootActionId) {
     featureDisposition: "explicitly-absent",
   });
   return {
-    kind: "resolveCompoundActionPlan",
+    kind: "executeCausalActionProgram",
     rootActionId,
     actorCharacterId: ALICE.characterId,
-    actionPlanVersion: program.languageRef,
+    actionLanguageRef: program.languageRef,
     actionLanguageHash: program.languageHash,
     causalActionProgram: program,
   };
@@ -529,81 +514,7 @@ function installMultiThresholdCrate(world, targetGeneration = "unprofiled") {
   return crate;
 }
 
-test("environment bindings and materialization events reject both cross-generation directions", () => {
-  const legacyDefinition = legacyChandelierDefinition();
-  const v3Blank = initialize();
-  const v2Blank = initialize({
-    featureDefinition: legacyDefinition,
-    rulesRuntime: legacyEnvironmentRuntime,
-  });
-  const v3Materialized = v3Blank.rulesRuntime.step(
-    v3Blank.profiles,
-    v3Blank.state,
-    stuntInput(v3Blank, "root:environment:cross-v3", {
-      materialization: { featureDefinition: CHANDELIER_FEATURE_DEFINITION },
-    }),
-  );
-  const v2Materialized = v2Blank.rulesRuntime.step(
-    v2Blank.profiles,
-    v2Blank.state,
-    stuntInput(v2Blank, "root:environment:cross-v2", {
-      materialization: { featureDefinition: legacyDefinition },
-    }),
-  );
-  assert.equal(v3Materialized.kind, "awaitingRandomness", JSON.stringify(v3Materialized));
-  assert.equal(v2Materialized.kind, "awaitingRandomness", JSON.stringify(v2Materialized));
-  const v3Event = v3Materialized.events.find((event) =>
-    event.eventType === "EnvironmentFeatureMaterialized");
-  const v2Event = v2Materialized.events.find((event) =>
-    event.eventType === "EnvironmentFeatureMaterialized");
-  assert.ok(v3Event);
-  assert.ok(v2Event);
-
-  for (const [target, donor, world] of [
-    [v3Event, v2Event, v3Blank],
-    [v2Event, v3Event, v2Blank],
-  ]) {
-    const forged = eventWithPayload(target, donor.payload);
-    assert.equal(validateEventEnvelope(forged).ok, false);
-    const replayed = world.rulesRuntime.replay(world.genesis, [forged]);
-    assert.equal(replayed.kind, "rejected", JSON.stringify(replayed));
-    assert.equal(replayed.rejection.code, "invalidEventEnvelope");
-  }
-
-  const v3Existing = initialize({ existingChandelier: true });
-  const v2Existing = initialize({
-    existingChandelier: true,
-    featureDefinition: legacyDefinition,
-    rulesRuntime: legacyEnvironmentRuntime,
-  });
-  const v3Compiled = compileEnvironmentFeature(CHANDELIER_FEATURE_DEFINITION);
-  const v2Compiled = compileEnvironmentFeature(legacyDefinition);
-  assert.equal(v3Compiled.ok, true);
-  assert.equal(v2Compiled.ok, true);
-  if (!v3Compiled.ok || !v2Compiled.ok) return;
-  for (const [world, donorFeature] of [
-    [v3Existing, v2Compiled.artifact.tacticalFeature],
-    [v2Existing, v3Compiled.artifact.tacticalFeature],
-  ]) {
-    const replayed = world.rulesRuntime.replay(
-      genesisWithEnvironmentFeature(world.genesis, donorFeature),
-      [],
-    );
-    assert.equal(replayed.kind, "rejected", JSON.stringify(replayed));
-    assert.equal(replayed.rejection.code, "profileIntegrityMismatch");
-  }
-});
-
 test("existing features reuse stable ids; blank features materialize before randomness; absence resolves in world", () => {
-  const legacy = initialize({ rulesRuntime: legacyRuntime });
-  const unsupported = legacy.rulesRuntime.step(
-    legacy.profiles,
-    legacy.state,
-    stuntInput(legacy, "root:environment:legacy-profile"),
-  );
-  assert.equal(unsupported.kind, "rejected");
-  assert.equal(unsupported.rejection.code, "unsupportedProfile");
-
   const existing = initialize({ existingChandelier: true });
   const reused = existing.rulesRuntime.step(
     existing.profiles,
@@ -640,10 +551,10 @@ test("existing features reuse stable ids; blank features materialize before rand
   assert.ok(materializedProjection.tacticalProjection.knownFeatures
     .some(({ id }) => id === CHANDELIER_ID));
   assert.ok(!JSON.stringify(materializedProjection).includes("featureDefinitionHash"));
-  const forgedLegacyEvent = structuredClone(materialized.events[1]);
-  forgedLegacyEvent.profiles = structuredClone(CURRENT_RUNTIME_PROFILE_MANIFEST);
-  forgedLegacyEvent.eventHash = eventHash(forgedLegacyEvent);
-  assert.equal(validateEventEnvelope(forgedLegacyEvent).ok, false);
+  const forgedProfileEvent = structuredClone(materialized.events[1]);
+  forgedProfileEvent.profiles.manifest.profileHash = `sha256:${"0".repeat(64)}`;
+  forgedProfileEvent.eventHash = eventHash(forgedProfileEvent);
+  assert.equal(validateEventEnvelope(forgedProfileEvent).ok, false);
   const forgedCausalLink = eventWithPayload(materialized.events[1], {
     ...materialized.events[1].payload,
     causalProgramHash: "fnv1a64:0000000000000000",
@@ -710,10 +621,14 @@ test("miss and hit below durability threshold consume the frozen action branch w
   assert.equal(feature(missed.state, CHANDELIER_ID).state, "suspended");
   assert.equal(feature(missed.state, CHANDELIER_ID).durability.current, "10");
   assert.ok(missed.events.some(({ eventType }) => eventType === "AbilityInvoked"));
-  assert.ok(missed.events.some(({ eventType }) => eventType === "ResourceSpent"));
+  assert.ok(missed.events.some(({ eventType }) => eventType === "ItemUsed"));
   assert.ok(!missed.events.some(({ eventType }) => eventType === "EnvironmentHazardTriggered"));
-  assert.equal(missed.state.combatRuntime.entities[ALICE.characterId].turn.action, "0");
-  assert.equal(missed.state.combatRuntime.entities[ALICE.characterId].resources["item:arrow"].current, "19");
+  assert.equal(missed.state.combatRuntime.entities[ALICE.characterId].turn, undefined);
+  assert.equal(
+    missed.state.combatRuntime.entities[ALICE.characterId]
+      .resources[itemEntryResourceId(missWorld.arrowEntryId)].current,
+    "19",
+  );
   assert.equal(missed.state.entities[ALICE.characterId].loadout.backpack[0].quantity, 19);
 
   const damagedWorld = initialize({ existingChandelier: true });
@@ -781,9 +696,8 @@ test("only V3 supports resource-priced successor-state environmental stunts", ()
   assert.equal(first.state.entities[ALICE.characterId].resources.resolve, 1);
   assert.equal(first.events.filter((event) => event.eventType === "ResourceReserved").length, 1);
 
-  const nextEligibleTurn = structuredClone(first.state);
-  nextEligibleTurn.combatRuntime.entities[ALICE.characterId].turn.action = "1";
-  const second = world.rulesRuntime.step(world.profiles, nextEligibleTurn, stuntInput(
+  assert.equal(first.state.combatRuntime.entities[ALICE.characterId].turn, undefined);
+  const second = world.rulesRuntime.step(world.profiles, first.state, stuntInput(
     world,
     "root:environment:three-phase:second",
     {
@@ -819,54 +733,6 @@ test("only V3 supports resource-priced successor-state environmental stunts", ()
   assert.equal(insufficient.events.length, 0);
   assert.equal(insufficientWorld.state.entities[ALICE.characterId].resources.resolve, 2);
 
-  const legacyDefinition = legacyChandelierDefinition();
-  legacyDefinition.stateGraph.transitions.push({
-    fromState: "debris",
-    trigger: "stuntSucceeded",
-    toState: "falling",
-  });
-  legacyDefinition.stateGraph.transitions.sort((left, right) =>
-    `${left.fromState}\u0000${left.trigger}\u0000${left.remainingDurabilityAtOrBelow ?? ""}\u0000${left.toState}`
-      .localeCompare(`${right.fromState}\u0000${right.trigger}\u0000${right.remainingDurabilityAtOrBelow ?? ""}\u0000${right.toState}`));
-  const legacyWorld = initialize({
-    existingChandelier: true,
-    featureDefinition: legacyDefinition,
-    rulesRuntime: legacyEnvironmentRuntime,
-  });
-  const legacyCost = legacyWorld.rulesRuntime.step(
-    legacyWorld.profiles,
-    legacyWorld.state,
-    stuntInput(legacyWorld, "root:environment:legacy-resource", {
-      activation: { kind: "direct" },
-      resourceCost: { resourceRef: "resolve", amount: 1 },
-    }),
-  );
-  assert.equal(legacyCost.kind, "rejected", JSON.stringify(legacyCost));
-  assert.equal(legacyCost.rejection.code, "invalidRulesInput");
-  assert.equal(legacyCost.events.length, 0);
-  assert.equal(legacyWorld.state.entities[ALICE.characterId].resources.resolve, 2);
-
-  const legacyAttack = legacyWorld.rulesRuntime.step(
-    legacyWorld.profiles,
-    legacyWorld.state,
-    stuntInput(legacyWorld, "root:environment:legacy-to-debris"),
-  );
-  const legacyHazard = fulfill(legacyWorld, legacyAttack, (purpose) =>
-    purpose.startsWith("attack:environment:") ? 20 : 8);
-  const legacyResolved = fulfill(legacyWorld, legacyHazard, (purpose, count) =>
-    purpose.startsWith("damage:environment-hazard:")
-      ? Array(count).fill(1)
-      : Array(count).fill(20));
-  assert.equal(legacyResolved.kind, "committed", JSON.stringify(legacyResolved));
-  assert.equal(feature(legacyResolved.state, legacyDefinition.featureId).state, "debris");
-  const legacySuccessor = legacyWorld.rulesRuntime.step(
-    legacyWorld.profiles,
-    legacyResolved.state,
-    stuntInput(legacyWorld, "root:environment:legacy-successor", { activation: { kind: "direct" } }),
-  );
-  assert.equal(legacySuccessor.kind, "rejected", JSON.stringify(legacySuccessor));
-  assert.equal(legacySuccessor.rejection.code, "worldLawViolation");
-  assert.equal(legacySuccessor.events.length, 0);
 });
 
 test("KP-authored non-chandelier scenery supports attack, check, and direct activation without caller targets or rerolls", () => {
@@ -965,7 +831,7 @@ test("KP-authored non-chandelier scenery supports attack, check, and direct acti
   });
   assert.equal(feature(failedCheck.state, CUSTOM_SCENERY_WALL_ID).state, "braced");
   assert.equal(feature(failedCheck.state, CUSTOM_SCENERY_WALL_ID).durability.current, "8");
-  assert.equal(failedCheck.state.combatRuntime.entities[ALICE.characterId].turn.action, "0");
+  assert.equal(failedCheck.state.combatRuntime.entities[ALICE.characterId].turn, undefined);
   assert.ok(!failedCheckWorld.events.some(({ eventType }) =>
     eventType === "EnvironmentHazardTriggered"));
   const failedCheckReplay = failedCheckWorld.rulesRuntime.replay(
@@ -1109,7 +975,7 @@ test("falling chandelier resolves complete authority geometry, hidden death, deb
     "EnvironmentFeatureMaterialized",
     "RandomnessRequested",
   ]);
-  assert.ok(eventTypes.includes("ResourceSpent"));
+  assert.ok(eventTypes.includes("ItemUsed"));
   assert.ok(eventTypes.includes("AbilityInvoked"));
   assert.ok(eventTypes.includes("EnvironmentFeatureDamaged"));
   assert.ok(eventTypes.includes("EnvironmentHazardTriggered"));
@@ -1121,7 +987,7 @@ test("falling chandelier resolves complete authority geometry, hidden death, deb
   const hazard = world.events.find(({ eventType }) => eventType === "EnvironmentHazardTriggered");
   assert.ok(hazard);
   const forgedHazard = structuredClone(hazard);
-  forgedHazard.payload.environmentProfile = structuredClone(LEGACY_ENVIRONMENT_PROFILE);
+  forgedHazard.payload.environmentProfile = structuredClone(RETIRED_ENVIRONMENT_PROFILE);
   forgedHazard.payloadHash = canonicalSha256(forgedHazard.payload);
   forgedHazard.eventHash = eventHash(forgedHazard);
   assert.equal(validateEventEnvelope(forgedHazard).ok, false);

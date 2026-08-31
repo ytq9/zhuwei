@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -10,12 +11,7 @@ import {
 import { normalizeRoomKpProposal } from "../app/_runtime/lib/room/proposal-adapter.ts";
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
-import {
-  CURRENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-  ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
-  LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-} from "../app/_runtime/lib/rules/profiles/manifests.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 import {
   CAUSAL_ACTION_INTERPRETER_PROFILE,
 } from "../app/_runtime/lib/rules/profiles/causal-action-interpreter.ts";
@@ -23,6 +19,7 @@ import {
   eventHash,
   validateEventEnvelope,
 } from "../app/_runtime/lib/rules/v2/events.ts";
+import { initialStandardGearEntryId } from "../app/_runtime/lib/rules/v2/item-transitions.ts";
 import {
   isCausalActionResolutionPlan,
   validateExecutableCausalActionProgram,
@@ -31,6 +28,7 @@ import {
   hashWorldState,
   unsignedGenesis,
 } from "../app/_runtime/lib/rules/v2/validation.ts";
+import { chandelierGeometry } from "./fixtures/chandelier-environment-v3.mjs";
 
 const ACTOR = "character:causal-v3:alice";
 const BOB = "character:causal-v3:bob";
@@ -41,7 +39,7 @@ function profileRef(profileId, digit) {
 }
 
 function initialize(
-  profiles = ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
+  profiles = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   suffix = "environment",
   actorOverrides = {},
 ) {
@@ -54,8 +52,8 @@ function initialize(
     activeBranchId: "branch:main",
     fictionInstantMicros: "0",
     scenes: [
-      { id: "scene:workshop", name: "废弃工坊" },
-      { id: "scene:annex", name: "工坊侧厅" },
+      { id: "scene:workshop", name: "废弃工坊", geometry: chandelierGeometry() },
+      { id: "scene:annex", name: "工坊侧厅", geometry: chandelierGeometry() },
     ],
     principals: [
       { id: "principal:causal-v3:alice", sessionVersion: 1, role: "host" },
@@ -126,7 +124,17 @@ function initialize(
   assert.equal(initialized.kind, "initialized", JSON.stringify(initialized));
   const rebuilt = replay(initialized.genesis, []);
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
-  return { genesis: initialized.genesis, profiles: initialized.profiles, state: rebuilt.state };
+  const crowbarEntryId = initialStandardGearEntryId(ACTOR, "crowbar", 1);
+  assert.equal(
+    rebuilt.state.campaignRuntime.itemSystem.entries[crowbarEntryId]?.holderRef,
+    ACTOR,
+  );
+  return {
+    genesis: initialized.genesis,
+    profiles: initialized.profiles,
+    state: rebuilt.state,
+    crowbarEntryId,
+  };
 }
 
 function observationInput(rootActionId, overrides = {}) {
@@ -279,13 +287,13 @@ test("V3 compound program executes every direct/check stage, one frozen cost, an
     failureConsequence: "隔板重新落回卡槽，但前两阶段留下的结果仍然成立。",
     resourceRef: "resolve",
     resourceAmount: 1,
-    artifactRef: "item:crowbar",
-    artifactCount: 1,
+    itemRef: room.crowbarEntryId,
+    itemCount: 1,
   };
   const normalized = normalizeRoomKpProposal(privateEnvelope("compound.v1", draft));
   assert.ok(normalized);
-  assert.equal(normalized.kind, "resolveCompoundActionPlan");
-  assert.equal(normalized.actionPlanVersion, "causal-action-program-v3");
+  assert.equal(normalized.kind, "executeCausalActionProgram");
+  assert.equal(normalized.actionLanguageRef, "causal-action-program-v4");
   assert.equal("actorCharacterId" in normalized, false);
   assert.equal("rootActionId" in normalized, false);
   assert.equal("mechanicalProposal" in normalized, false);
@@ -430,7 +438,7 @@ test("a failed causal prerequisite skips its dependent closure without success e
   assert.equal(rebuilt.head.stateHash, successful.stateHash);
 });
 
-test("V3 causal input fails closed under legacy manifest and semantic-hash tampering", () => {
+test("V3 causal input fails closed under semantic-hash tampering", () => {
   const room = initialize();
   const draft = {
     goal: "检查门轴",
@@ -454,11 +462,6 @@ test("V3 causal input fails closed under legacy manifest and semantic-hash tampe
     rootActionId: "root:causal-v3:tamper",
     actorCharacterId: ACTOR,
   };
-  const legacyRoom = initialize(CURRENT_RUNTIME_PROFILE_MANIFEST, "legacy");
-  const legacy = step(legacyRoom.profiles, legacyRoom.state, input);
-  assert.equal(legacy.kind, "rejected");
-  assert.equal(legacy.rejection.code, "unsupportedOperation");
-
   const tampered = structuredClone(input);
   tampered.causalActionProgram.nodes[0].arguments.dc = 30;
   const rejected = step(room.profiles, room.state, tampered);
@@ -544,47 +547,28 @@ test("causal continuations and events are isolated to the exact V3 profile", () 
   assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
   const requestEvent = pending.events.find((event) => event.eventType === "RandomnessRequested");
   assert.ok(requestEvent);
-  for (const legacyProfiles of [
-    CURRENT_RUNTIME_PROFILE_MANIFEST,
-    LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-  ]) {
-    const legacyEvent = structuredClone(requestEvent);
-    legacyEvent.profiles = structuredClone(legacyProfiles);
-    legacyEvent.eventHash = eventHash(legacyEvent);
-    const validation = validateEventEnvelope(legacyEvent);
-    assert.equal(validation.ok, false);
+  const retiredProfiles = structuredClone(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
+  retiredProfiles.manifest.profileHash = `sha256:${"0".repeat(64)}`;
+  const retiredEvent = structuredClone(requestEvent);
+  retiredEvent.profiles = retiredProfiles;
+  retiredEvent.eventHash = eventHash(retiredEvent);
+  assert.equal(validateEventEnvelope(retiredEvent).ok, false);
 
-    const legacyGenesis = structuredClone(room.genesis);
-    legacyGenesis.profiles = structuredClone(legacyProfiles);
-    legacyGenesis.initialState.runtimeManifestRef = structuredClone(legacyProfiles.manifest);
-    legacyGenesis.initialState.internalContinuations = structuredClone(
-      pending.state.internalContinuations,
-    );
-    legacyGenesis.initialStateHash = hashWorldState(legacyGenesis.initialState);
-    legacyGenesis.initialState.eventHeadHash = legacyGenesis.initialStateHash;
-    legacyGenesis.genesisHash = canonicalSha256(unsignedGenesis(legacyGenesis));
-    const rebuilt = replay(legacyGenesis, []);
-    assert.equal(rebuilt.kind, "rejected");
-    assert.equal(rebuilt.rejection.code, "profileIntegrityMismatch");
-  }
+  const retiredGenesis = structuredClone(room.genesis);
+  retiredGenesis.profiles = retiredProfiles;
+  retiredGenesis.initialState.runtimeManifestRef = structuredClone(retiredProfiles.manifest);
+  retiredGenesis.initialState.internalContinuations = structuredClone(
+    pending.state.internalContinuations,
+  );
+  retiredGenesis.initialStateHash = hashWorldState(retiredGenesis.initialState);
+  retiredGenesis.initialState.eventHeadHash = retiredGenesis.initialStateHash;
+  retiredGenesis.genesisHash = canonicalSha256(unsignedGenesis(retiredGenesis));
+  const rebuilt = replay(retiredGenesis, []);
+  assert.equal(rebuilt.kind, "rejected");
+  assert.equal(rebuilt.rejection.code, "profileIntegrityMismatch");
 });
 
-test("every causal root carries the exact V3 marker and fails closed under either legacy manifest", async (t) => {
-  const legacyRooms = [
-    [
-      "current-v2",
-      CURRENT_RUNTIME_PROFILE_MANIFEST,
-      initialize(CURRENT_RUNTIME_PROFILE_MANIFEST, "profile-matrix-current-v2"),
-    ],
-    [
-      "legacy-environment-v2",
-      LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-      initialize(
-        LEGACY_ENVIRONMENT_RUNTIME_PROFILE_MANIFEST,
-        "profile-matrix-legacy-environment-v2",
-      ),
-    ],
-  ];
+test("every causal root carries the exact V3 marker and rejects a mismatched Profile hash", async (t) => {
   const cases = [
     {
       label: "ordinary-direct",
@@ -698,29 +682,31 @@ test("every causal root carries the exact V3 marker and fails closed under eithe
       assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
       assert.equal(rebuilt.head.stateHash, outcome.stateHash);
 
-      for (const [legacyLabel, legacyProfiles, legacyRoom] of legacyRooms) {
-        const rebound = structuredClone(marker);
-        rebound.profiles = structuredClone(legacyProfiles);
-        rebound.eventHash = eventHash(rebound);
-        const reboundValidation = validateEventEnvelope(rebound);
-        assert.equal(
-          reboundValidation.ok,
-          false,
-          `${rootCase.label}/${legacyLabel} event validation must fail closed`,
-        );
-        assert.equal(
-          reboundValidation.message,
-          "Event requires the pinned V3 causal action interpreter Profile.",
-        );
-        const reboundReplay = replay(room.genesis, [rebound]);
-        assert.equal(reboundReplay.kind, "rejected");
-        assert.equal(reboundReplay.rejection.code, "invalidEventEnvelope");
+      const rebound = structuredClone(marker);
+      const reboundProfile = rebound.profiles.extensions.find(({ profileId }) =>
+        profileId === CAUSAL_ACTION_INTERPRETER_PROFILE.profileId);
+      assert.ok(reboundProfile);
+      reboundProfile.profileHash = `sha256:${"0".repeat(64)}`;
+      rebound.eventHash = eventHash(rebound);
+      const reboundValidation = validateEventEnvelope(rebound);
+      assert.equal(reboundValidation.ok, false, `${rootCase.label} must fail closed`);
+      assert.equal(
+        reboundValidation.message,
+        "Event requires the pinned V3 causal action interpreter Profile.",
+      );
+      const reboundReplay = replay(room.genesis, [rebound]);
+      assert.equal(reboundReplay.kind, "rejected");
+      assert.equal(reboundReplay.rejection.code, "invalidEventEnvelope");
 
-        const injectedGenesis = injectCausalMarkerIntoGenesis(legacyRoom.genesis, marker);
-        const injectedReplay = replay(injectedGenesis, []);
-        assert.equal(injectedReplay.kind, "rejected");
-        assert.equal(injectedReplay.rejection.code, "profileIntegrityMismatch");
-      }
+      const injectedGenesis = injectCausalMarkerIntoGenesis(room.genesis, marker);
+      const injectedProfile = injectedGenesis.profiles.extensions.find(({ profileId }) =>
+        profileId === CAUSAL_ACTION_INTERPRETER_PROFILE.profileId);
+      assert.ok(injectedProfile);
+      injectedProfile.profileHash = `sha256:${"0".repeat(64)}`;
+      injectedGenesis.genesisHash = canonicalSha256(unsignedGenesis(injectedGenesis));
+      const injectedReplay = replay(injectedGenesis, []);
+      assert.equal(injectedReplay.kind, "rejected");
+      assert.equal(injectedReplay.rejection.code, "profileIntegrityMismatch");
     });
   }
 });
@@ -856,7 +842,7 @@ test("Rules exhaustively rejects forged required scalars for every causal primit
       `${formId} must reject a forged ${forgedKey} scalar`,
     );
     assert.equal(isCausalActionResolutionPlan({
-      schema: "zhuwei.causal-action-resolution-plan/v3",
+      schema: "zhuwei.causal-action-resolution-plan/v4",
       rootActionId: `root:forged:${formId}`,
       actorCharacterId: ACTOR,
       sourceSceneId: "scene:workshop",
@@ -900,32 +886,16 @@ test("canonical animal and sleight skill ids apply the actor proficiency bonus",
   }
 });
 
-test("only environment-v4 grants Expertise while environment-v3 replay remains one PB", () => {
-  const historical = initialize(ENVIRONMENT_RUNTIME_PROFILE_MANIFEST, "expertise-v3");
-  const historicalPending = step(
-    historical.profiles,
-    historical.state,
-    observationInput("root:causal-v3:expertise-historical"),
-  );
-  assert.equal(historicalPending.kind, "awaitingRandomness", JSON.stringify(historicalPending));
-  assert.equal(historicalPending.randomnessRequest.frozenCheck.modifier, "5");
-  const historicalReplay = replay(historical.genesis, historicalPending.events);
-  assert.equal(historicalReplay.kind, "replayed", JSON.stringify(historicalReplay));
-  assert.equal(
-    historicalReplay.state.internalContinuations[historicalPending.continuation.continuationId]
-      .request.frozenCheck.modifier,
-    "5",
-  );
-
+test("V5 grants Expertise and preserves its frozen modifier through replay", () => {
   const current = initialize(
-    ENVIRONMENT_V4_RUNTIME_PROFILE_MANIFEST,
-    "expertise-v4",
+    ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
+    "expertise-v5",
     { expertiseSkills: ["investigation"], proficientSaves: ["str", "con"] },
   );
   const pending = step(
     current.profiles,
     current.state,
-    observationInput("root:causal-v4:expertise"),
+    observationInput("root:causal-v5:expertise"),
   );
   assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
   assert.equal(pending.randomnessRequest.frozenCheck.modifier, "7");
@@ -936,11 +906,6 @@ test("only environment-v4 grants Expertise while environment-v3 replay remains o
       .request.frozenCheck.modifier,
     "7",
   );
-
-  const rejected = initialize.bind(null, ENVIRONMENT_RUNTIME_PROFILE_MANIFEST, "expertise-v3-forged", {
-    expertiseSkills: ["investigation"],
-  });
-  assert.throws(rejected, /initialized/);
 });
 
 test("checked materialization requires a real visible basis and commits a registered safe fact only on success", () => {
@@ -995,11 +960,7 @@ test("checked materialization requires a real visible basis and commits a regist
   const registered = completed.state.campaignRuntime.definitions[materialized.id];
   assert.equal(registered.definitionKind, "materializedOpenFact");
   assert.deepEqual(registered.causalBasisRefs, [WORKSHOP_BASIS]);
-  assert.deepEqual(registered.definitionProfile, {
-    profileId: "causal-action-interpreter-2014-v3",
-    profileHash: room.profiles.extensions.find((profile) =>
-      profile.profileId === "causal-action-interpreter-2014-v3").profileHash,
-  });
+  assert.deepEqual(registered.definitionProfile, CAUSAL_ACTION_INTERPRETER_PROFILE);
   const privateProgramFact = Object.values(completed.state.canonicalFacts).find((fact) =>
     fact.kind === "causalActionProgram" && fact.id.includes(rootActionId));
   assert.ok(privateProgramFact);
@@ -1116,6 +1077,31 @@ test("causal combat cannot invoke another character's installed ability", () => 
   });
   assert.equal(owned.kind, "awaitingInput", JSON.stringify(owned));
   assert.equal(owned.pending.kind, "playerChoice");
+  assert.equal(owned.pending.choiceKind, "target");
+  assert.ok(Array.isArray(owned.pending.candidateEntityIds));
+  assert.ok(owned.pending.candidateEntityIds.length > 0);
+  const marker = causalMarkerEvent(owned, "owned causal combat");
+  const markerIndex = owned.events.indexOf(marker);
+  const pendingIndex = owned.events.findIndex(({ eventType }) => eventType === "CombatPendingOpened");
+  assert.ok(markerIndex >= 0 && pendingIndex > markerIndex);
+  assert.equal(
+    owned.events.filter(({ eventType }) => eventType === "CombatPendingOpened").length,
+    1,
+  );
+});
+
+test("causal combat invokes current combat Rules without synthesizing ActionPlan v1", () => {
+  const source = readFileSync(new URL(
+    "../app/_runtime/lib/rules/v2/causal-actions.ts",
+    import.meta.url,
+  ), "utf8");
+  const start = source.indexOf("function combat(");
+  const end = source.indexOf("\nfunction itemMaterializationCausalResult(", start);
+  assert.ok(start >= 0 && end > start);
+  const combatSource = source.slice(start, end);
+  assert.match(combatSource, /stepCombatWorld\(/u);
+  assert.match(combatSource, /kind: "invokeAbility"/u);
+  assert.doesNotMatch(combatSource, /authoritative-kp-action-plan-v1|stepCompoundActionPlan/u);
 });
 
 test("a concluded story rejects ordinary causal forms while lifecycle continuation stays explicit", () => {

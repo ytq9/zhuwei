@@ -323,17 +323,5 @@ describe("SPEC 0014 Room portal finite-state vertical", () => {
     });
     expect(proposed.value).toBe(0);
 
-    const legacy = authority("environment-portal-room-v2-legacy");
-    await expect(legacy.initializeAuthoritative({
-      roomId: "environment-portal-room-v2-legacy",
-      moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v2",
-      members: [{ principalId: ALICE.principal.id, role: "host" }],
-      characters: [character("character:portal-room:legacy", ALICE.principal.id, "yard")],
-    })).resolves.toMatchObject({ created: true });
-    await expect(handleRoomAction(
-      context(ALICE, legacy, proposed),
-      portalAction("submission:portal-room:legacy", "open") as never,
-    )).resolves.toEqual(unknown);
   });
 });

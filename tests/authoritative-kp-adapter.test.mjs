@@ -80,20 +80,20 @@ test("product 0.4 exposes only the two current DeepSeek private-form profiles", 
     [
       {
         modelId: "deepseek-v4-flash",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v1",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2",
       },
       {
         modelId: "deepseek-v4-pro",
-        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v1",
+        modelProfileVersion: "authoritative-kp-deepseek-v4-pro-private-tools-v2",
       },
     ],
   );
   assert.equal(
     authoritativeKpProfileByBinding(
       "deepseek-v4-pro",
-      "authoritative-kp-deepseek-v4-pro-private-tools-v1",
+      "authoritative-kp-deepseek-v4-pro-private-tools-v2",
     )?.promptPolicyVersion,
-    "authoritative-kp-private-form-narrow-tools-policy-v1",
+    "authoritative-kp-private-form-narrow-tools-policy-v2",
   );
   assert.equal(
     authoritativeKpProfileByBinding(
@@ -108,7 +108,7 @@ test("a mismatched current model/profile pair is rejected before invocation", ()
   const ai = scriptedAi([]);
   const alternative = authoritativeKpProfileByBinding(
     "deepseek-v4-pro",
-    "authoritative-kp-deepseek-v4-pro-private-tools-v1",
+    "authoritative-kp-deepseek-v4-pro-private-tools-v2",
   );
   assert.ok(alternative);
   assert.throws(
@@ -177,7 +177,7 @@ test("environment attacks require one exact owned finite reference and never ins
 
 test("V5 replaces one grounding-only failure without carrying historical dialogue forward", async () => {
   const profile = AUTHORITATIVE_KP_PROFILES.find((candidate) =>
-    candidate.modelProfileVersion === "authoritative-kp-deepseek-v4-flash-private-tools-v1");
+    candidate.modelProfileVersion === "authoritative-kp-deepseek-v4-flash-private-tools-v2");
   assert.ok(profile);
   const projection = {
     viewer: { kind: "player", characterId: "character:alice" },

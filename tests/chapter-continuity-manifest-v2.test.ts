@@ -70,6 +70,47 @@ async function runAction(
 }
 
 describe("chapter continuity manifest responsibility", () => {
+  it("accepts the current v2 shape and rejects the retired v1 shape", () => {
+    const v2Core = {
+      schema: "zhuwei.campaign-continuity-manifest/v2",
+      characterStates: [],
+      itemStates: [],
+      knowledgeStates: [],
+      relationshipStates: [],
+      debtStates: [],
+      promiseStates: [],
+      activityStates: [],
+      canonicalFactStates: [],
+      definitionStates: [],
+      precedentStates: [],
+      combatEffectStates: [],
+      fictionTimelineStates: [],
+      causalFrontierStates: [],
+      unresolvedThreatRefs: [],
+      activityTransitions: [],
+      actorPlanStates: [],
+      factionPlanStates: [],
+    };
+    expect(isCampaignContinuityManifest({
+      ...v2Core,
+      manifestHash: canonicalSha256(v2Core),
+    })).toBe(true);
+
+    const {
+      actorPlanStates: _actorPlanStates,
+      factionPlanStates: _factionPlanStates,
+      ...v1Body
+    } = v2Core;
+    const v1Core = {
+      ...v1Body,
+      schema: "zhuwei.campaign-continuity-manifest/v1",
+    };
+    expect(isCampaignContinuityManifest({
+      ...v1Core,
+      manifestHash: canonicalSha256(v1Core),
+    })).toBe(false);
+  });
+
   it("pins adjudication precedent plus pending NPC/faction plans across a real Room chapter transition", async () => {
     const roomId = "chapter-continuity-manifest-v2";
     const authority = env.ROOMS.getByName(roomId) as unknown as Authority;
@@ -215,6 +256,7 @@ describe("chapter continuity manifest responsibility", () => {
     const continuity = events.find((event) => event.eventType === "ChapterContinuityRecorded");
     const manifest = record(record(continuity?.payload, "continuity payload").manifest, "manifest");
     expect(manifest.schema).toBe("zhuwei.campaign-continuity-manifest/v2");
+    expect(isCampaignContinuityManifest(manifest)).toBe(true);
     expect(list(manifest.precedentStates, "precedent state").some((entry) =>
       String(entry.ref).startsWith("adjudication-precedent:"))).toBe(true);
     expect(list(manifest.actorPlanStates, "actor plan state")).toEqual(expect.arrayContaining([
@@ -227,19 +269,5 @@ describe("chapter continuity manifest responsibility", () => {
       expect.objectContaining({ ref: `activity:${ACTIVITY_ID}` }),
     ]));
 
-    const v2WithoutPlans = { ...manifest };
-    delete v2WithoutPlans.actorPlanStates;
-    delete v2WithoutPlans.factionPlanStates;
-    delete v2WithoutPlans.manifestHash;
-    const legacyCore = {
-      ...v2WithoutPlans,
-      schema: "zhuwei.campaign-continuity-manifest/v1",
-      precedentStates: list(manifest.precedentStates, "v2 precedent state")
-        .filter((entry) => !String(entry.ref).startsWith("adjudication-precedent:")),
-    };
-    expect(isCampaignContinuityManifest({
-      ...legacyCore,
-      manifestHash: canonicalSha256(legacyCore),
-    })).toBe(true);
   });
 });

@@ -1,27 +1,16 @@
 import type {
-  AdjudicationPrecedentProposal,
-  ActorPlanProposal,
   ActionPlanAbility,
   ActionPlanCheckMode,
   ActionPlanCost,
   ActionPlanEffect,
   ActionPlanOperation,
   CurrentNarrationDraft,
-  DynamicMaterialization,
   FictionDuration,
   JsonObject,
   JsonValue,
-  InheritanceAuthorizationProposal,
-  KpProposalDraft,
-  ModuleMigrationProposal,
   ModelInvocationResult,
   NarrationAgencyClaim,
-  NpcActionProposal,
   NpcSemanticActionPlan,
-  ProposalPendingInput,
-  ProposalRisk,
-  SceneProposal,
-  SemanticActionPlan,
 } from "./authoritative-types";
 import {
   ACTION_PLAN_ABILITIES,
@@ -31,57 +20,13 @@ import {
   ACTION_PLAN_GEAR_ACTIONS,
   ACTION_PLAN_GEAR_SLOTS,
   ACTION_PLAN_OPERATIONS,
-  CAMPAIGN_LIFECYCLE_ACTIONS,
   NARRATION_AGENCY_CLAIM_KINDS,
   NARRATION_AGENCY_SUBJECT_KINDS,
 } from "./authoritative-types";
 
 type UnknownRecord = Record<string, unknown>;
 
-const FEASIBILITY_KINDS = new Set([
-  "directSuccess",
-  "checkRequired",
-  "highRiskFeasible",
-  "missingPrerequisite",
-  "worldLawViolation",
-]);
 const DURATION_UNITS = new Set(["round", "second", "minute", "hour", "day"]);
-const RETRY_GATES = new Set([
-  "methodChanged",
-  "factsChanged",
-  "costAccepted",
-  "positionChanged",
-  "materialAssistance",
-  "situationAdvanced",
-]);
-const MATERIALIZATION_KINDS = new Set([
-  "fact",
-  "location",
-  "passage",
-  "npc",
-  "enemy",
-  "item",
-  "faction",
-  "hazard",
-  "opportunity",
-  "ability",
-]);
-const INHERITANCE_SOURCE_KINDS = new Set([
-  "will",
-  "explicitGift",
-  "recovery",
-  "publicRecord",
-  "organizationGrant",
-  "npcIntroduction",
-  "knowledgePropagation",
-]);
-const INHERITANCE_SCOPE_BY_KIND = {
-  artifact: "transferPossession",
-  knowledge: "acquireExactKnowledge",
-  relationship: "establishDerivedRelationship",
-  debt: "assumeDebtObligation",
-  promise: "assumePromiseObligation",
-} as const;
 const ACTION_PLAN_OPERATION_SET = new Set<string>(ACTION_PLAN_OPERATIONS);
 const ACTION_PLAN_COST_KIND_SET = new Set<string>(ACTION_PLAN_COST_KINDS);
 const ACTION_PLAN_EFFECT_KIND_SET = new Set<string>(ACTION_PLAN_EFFECT_KINDS);
@@ -89,79 +34,11 @@ const ACTION_PLAN_ABILITY_SET = new Set<string>(ACTION_PLAN_ABILITIES);
 const ACTION_PLAN_CHECK_MODE_SET = new Set<string>(ACTION_PLAN_CHECK_MODES);
 const ACTION_PLAN_GEAR_ACTION_SET = new Set<string>(ACTION_PLAN_GEAR_ACTIONS);
 const ACTION_PLAN_GEAR_SLOT_SET = new Set<string>(ACTION_PLAN_GEAR_SLOTS);
-const UNCERTAINTY_BEARING_OPERATIONS = new Set<string>([
-  "resolveNoncombatCheck",
+const NPC_FORBIDDEN_OPERATIONS = new Set<string>([
   "resolveNoncombatContest",
-  "resolveNoncombatSave",
   "retryFailedAction",
-  "startCombat",
-  "invokeCombatAction",
-  "resolveReaction",
+  "advanceCampaignLifecycle",
 ]);
-function normalizeMechanicalKey(key: string): string {
-  return key.toLowerCase().replaceAll("_", "").replaceAll("-", "");
-}
-
-const FORBIDDEN_MECHANICAL_KEYS = new Set([
-  "principal_id",
-  "principal",
-  "principalId",
-  "actor_id",
-  "actor",
-  "actorId",
-  "state",
-  "worldState",
-  "state_patch",
-  "statePatch",
-  "worldStatePatch",
-  "world_state",
-  "world_state_patch",
-  "event",
-  "events",
-  "eventLog",
-  "event_log",
-  "expectedRevision",
-  "scopeVersion",
-  "scopeVersions",
-  "ruleset_version",
-  "rulesetVersion",
-  "profile_id",
-  "profile",
-  "profileId",
-  "dice",
-  "die",
-  "face",
-  "faces",
-  "randomnessResult",
-  "dieFace",
-  "dieFaces",
-  "d20Roll",
-  "d20Rolls",
-  "initiativeRolls",
-  "damageRolls",
-  "automaticPass",
-  "autoPass",
-  "autoTarget",
-  "targetSelector",
-  "mechanicOps",
-  "mechanicGraph",
-  "compiledGraph",
-  "compiledHash",
-  "compilerProfile",
-  "definitionHash",
-  "referenceClosure",
-  "opId",
-  "sourcePath",
-  "setPath",
-  "jsonPatch",
-  "script",
-  "callback",
-  "emit",
-  "eventPayload",
-  "function",
-  "sql",
-].map(normalizeMechanicalKey));
-
 export class ModelOutputValidationError extends Error {
   constructor() {
     super("模型返回的结构化结果不符合权威 KP 协议。");
@@ -270,123 +147,6 @@ function optionalFictionDuration(value: unknown): FictionDuration | undefined {
   return value as FictionDuration;
 }
 
-function proposalRisk(value: unknown): ProposalRisk | null {
-  if (value === null) return null;
-  if (!isRecord(value)) invalid();
-  exactKeys(value, ["warning", "successConsequences", "failureConsequences", "retryGate"]);
-  const retryGate = stringArray(value.retryGate, 6, 40);
-  if (retryGate.some((entry) => !RETRY_GATES.has(entry))) invalid();
-  return {
-    warning: boundedString(value.warning, 480),
-    successConsequences: stringArray(value.successConsequences),
-    failureConsequences: stringArray(value.failureConsequences),
-    retryGate: retryGate as ProposalRisk["retryGate"],
-  };
-}
-
-function proposalPendingInput(value: unknown): ProposalPendingInput | null {
-  if (value === null) return null;
-  if (!isRecord(value)) invalid();
-  exactKeys(value, ["kind", "prompt", "choices"]);
-  if (value.kind !== "clarification" && value.kind !== "playerChoice") invalid();
-  if (!Array.isArray(value.choices) || value.choices.length > 12) invalid();
-  const choices = value.choices.map((choice) => {
-    if (!isRecord(choice)) invalid();
-    exactKeys(choice, ["id", "label", "consequence"]);
-    return {
-      id: boundedString(choice.id, 120),
-      label: boundedString(choice.label, 160),
-      consequence: boundedString(choice.consequence, 320),
-    };
-  });
-  if (value.kind === "playerChoice" && choices.length < 2) invalid();
-  return {
-    kind: value.kind,
-    prompt: boundedString(value.prompt, 480),
-    choices,
-  };
-}
-
-function adjudicationPrecedent(value: unknown): AdjudicationPrecedentProposal | null {
-  if (value === undefined || value === null) return null;
-  if (!isRecord(value)) invalid();
-  if (value.kind !== "record" && value.kind !== "supersede") invalid();
-  const supersede = value.kind === "supersede";
-  exactKeys(
-    value,
-    supersede
-      ? [
-          "applicabilityScope",
-          "kind",
-          "materialDifferences",
-          "publicRuleBasis",
-          "supersededPrecedentId",
-        ]
-      : ["applicabilityScope", "kind", "publicRuleBasis"],
-  );
-  if (!isRecord(value.applicabilityScope)) invalid();
-  exactKeys(value.applicabilityScope, ["kind", "ref"]);
-  if (!["scene", "campaign", "module", "room"].includes(String(value.applicabilityScope.kind))) {
-    invalid();
-  }
-  const publicRuleBasis = stringArray(value.publicRuleBasis, 12, 480);
-  if (publicRuleBasis.length === 0) invalid();
-  const common = {
-    publicRuleBasis,
-    applicabilityScope: {
-      kind: value.applicabilityScope.kind as AdjudicationPrecedentProposal["applicabilityScope"]["kind"],
-      ref: boundedString(value.applicabilityScope.ref, 240),
-    },
-  };
-  if (!supersede) return { kind: "record", ...common };
-  const materialDifferences = stringArray(value.materialDifferences, 12, 480);
-  if (materialDifferences.length === 0) invalid();
-  return {
-    kind: "supersede",
-    supersededPrecedentId: boundedString(value.supersededPrecedentId, 240),
-    materialDifferences,
-    ...common,
-  };
-}
-
-function jsonObject(value: unknown, path: string, seen = new WeakSet<object>(), depth = 0): JsonObject {
-  if (!isRecord(value) || depth > 40) invalid();
-  if (seen.has(value)) invalid();
-  seen.add(value);
-  const result: JsonObject = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (FORBIDDEN_MECHANICAL_KEYS.has(normalizeMechanicalKey(key))) invalid();
-    if (item === null || typeof item === "string" || typeof item === "boolean") {
-      result[key] = item;
-      continue;
-    }
-    if (typeof item === "number") {
-      if (!Number.isFinite(item)) invalid();
-      result[key] = item;
-      continue;
-    }
-    if (Array.isArray(item)) {
-      if (item.length > 100) invalid();
-      result[key] = item.map((entry, index) => {
-        if (isRecord(entry)) return jsonObject(entry, `${path}.${key}[${index}]`, seen, depth + 1);
-        if (Array.isArray(entry)) invalid();
-        if (entry === null || typeof entry === "string" || typeof entry === "boolean") return entry;
-        if (typeof entry === "number" && Number.isFinite(entry)) return entry;
-        invalid();
-      });
-      continue;
-    }
-    if (isRecord(item)) {
-      result[key] = jsonObject(item, `${path}.${key}`, seen, depth + 1);
-      continue;
-    }
-    invalid();
-  }
-  seen.delete(value);
-  void path;
-  return result;
-}
-
 function optionalStringField(
   record: UnknownRecord,
   key: string,
@@ -451,18 +211,21 @@ function actionPlanCost(value: unknown): ActionPlanCost {
         amount: amount!,
       };
     }
-    case "consumeArtifact": {
-      exactKeys(value, ["artifactRef", "count", "kind"], ["artifactRef", "kind"]);
-      const artifactRef = boundedString(value.artifactRef, 240);
+    case "consumeItem": {
+      exactKeys(value, ["count", "itemRef", "kind"], ["itemRef", "kind"]);
+      const itemRef = boundedString(value.itemRef, 240);
       const count = optionalFiniteNumber(value, "count", {
         integer: true,
         minimum: 1,
         maximum: Number.MAX_SAFE_INTEGER,
       });
-      if (!artifactRef.startsWith("item:") || artifactRef.length === "item:".length) invalid();
+      if (
+        !itemRef.startsWith("item-entry:")
+        || itemRef.length === "item-entry:".length
+      ) invalid();
       return {
-        kind: "consumeArtifact",
-        artifactRef,
+        kind: "consumeItem",
+        itemRef,
         ...(count === undefined ? {} : { count }),
       };
     }
@@ -627,7 +390,6 @@ const ACTION_PLAN_KEYS = [
   "encounterRef",
   "activityRef",
   "activityTransitions",
-  "moduleMigration",
   "abilityRef",
   "reactionRef",
   "destinationRef",
@@ -638,8 +400,8 @@ const ACTION_PLAN_KEYS = [
   "resourceRef",
   "amount",
   "itemRef",
-  "artifactRef",
-  "artifactUse",
+  "itemActivityId",
+  "ownershipDisposition",
   "factionRef",
   "planRef",
   "knowledgeRef",
@@ -649,18 +411,6 @@ const ACTION_PLAN_KEYS = [
   "partyAction",
   "pendingInputRef",
   "memberRefs",
-  "campaignRef",
-  "chapterRef",
-  "inheritanceAuthorization",
-  "inheritanceAuthorizationRef",
-  "inheritanceSourceFactRef",
-  "inheritanceSourceKind",
-  "lifecycleAction",
-  "experienceAmount",
-  "continueAsNpc",
-  "endingCandidateRef",
-  "storyRef",
-  "sequelStoryRef",
   "outcome",
   "choice",
   "precedentRef",
@@ -692,8 +442,7 @@ function actionPlanEffects(value: unknown): ActionPlanEffect[] {
 
 function strictResolutionActionPlan(
   value: UnknownRecord,
-  actorKind: "player" | "npc",
-): SemanticActionPlan | undefined {
+): NpcSemanticActionPlan | undefined {
   if (value.operation === "resolveDirectConsequences") {
     exactKeys(value, ["duration", "failure", "frozenCosts", "operation", "success"]);
     if (!Array.isArray(value.frozenCosts) || value.frozenCosts.length !== 0) invalid();
@@ -710,23 +459,9 @@ function strictResolutionActionPlan(
   if (
     value.operation !== "resolveNoncombatCheck"
     && value.operation !== "resolveNoncombatSave"
-    && value.operation !== "retryFailedAction"
   ) return undefined;
 
   const savingThrow = value.operation === "resolveNoncombatSave";
-  const retry = value.operation === "retryFailedAction";
-  if (retry && actorKind === "npc") invalid();
-  if (
-    retry
-    && Object.keys(value).length === 2
-    && "operation" in value
-    && "precedentRef" in value
-  ) {
-    return {
-      operation: "retryFailedAction",
-      precedentRef: boundedString(value.precedentRef, 240),
-    };
-  }
   const required = savingThrow
     ? [
         "dc",
@@ -746,15 +481,10 @@ function strictResolutionActionPlan(
         "frozenCosts",
         "mode",
         "operation",
-        ...(retry ? ["precedentRef"] : []),
         "skill",
         "success",
       ];
-  exactKeys(
-    value,
-    savingThrow && actorKind === "player" ? [...required, "targetEntityRef"] : required,
-    required,
-  );
+  exactKeys(value, required);
   if (
     !Number.isSafeInteger(value.dc)
     || Number(value.dc) < 0
@@ -772,26 +502,15 @@ function strictResolutionActionPlan(
   };
   if (savingThrow) {
     if (typeof value.saveAbility !== "string" || !ACTION_PLAN_ABILITY_SET.has(value.saveAbility)) invalid();
-    const targetEntityRef = optionalStringField(value, "targetEntityRef");
     return {
       operation: "resolveNoncombatSave",
       saveAbility: value.saveAbility as ActionPlanAbility,
       ...common,
-      ...(targetEntityRef === undefined ? {} : { targetEntityRef }),
     };
   }
   if (typeof value.ability !== "string" || !ACTION_PLAN_ABILITY_SET.has(value.ability)) invalid();
   const skill = optionalNullableStringField(value, "skill");
   if (skill === undefined) invalid();
-  if (retry) {
-    return {
-      operation: "retryFailedAction",
-      ability: value.ability as ActionPlanAbility,
-      skill,
-      precedentRef: boundedString(value.precedentRef, 240),
-      ...common,
-    };
-  }
   return {
     operation: "resolveNoncombatCheck",
     ability: value.ability as ActionPlanAbility,
@@ -800,50 +519,73 @@ function strictResolutionActionPlan(
   };
 }
 
-function semanticActionPlan(value: unknown, actorKind: "npc"): NpcSemanticActionPlan;
-function semanticActionPlan(value: unknown, actorKind?: "player"): SemanticActionPlan;
-function semanticActionPlan(
-  value: unknown,
-  actorKind: "player" | "npc" = "player",
-): SemanticActionPlan | NpcSemanticActionPlan {
+function npcSemanticActionPlan(value: unknown): NpcSemanticActionPlan {
   if (!isRecord(value)) invalid();
-  if (typeof value.operation !== "string" || !ACTION_PLAN_OPERATION_SET.has(value.operation)) {
+  if (
+    typeof value.operation !== "string"
+    || !ACTION_PLAN_OPERATION_SET.has(value.operation)
+    || NPC_FORBIDDEN_OPERATIONS.has(value.operation)
+  ) {
     invalid();
   }
-  if (
-    (actorKind === "player" && value.operation === "advanceFactionPlan")
-    || (actorKind === "npc" && value.operation === "resolveNoncombatContest")
-  ) invalid();
-  const strictResolution = strictResolutionActionPlan(value, actorKind);
+  const strictResolution = strictResolutionActionPlan(value);
   if (strictResolution !== undefined) return strictResolution;
+  if (value.operation === "acquireItem") {
+    exactKeys(value, ["amount", "itemRef", "operation"]);
+    if (!Number.isSafeInteger(value.amount)
+      || Number(value.amount) < 1
+      || Number(value.amount) > 1_000_000) invalid();
+    const itemRef = boundedString(value.itemRef, 240);
+    if (!itemRef.startsWith("item-entry:")) invalid();
+    return { operation: "acquireItem", itemRef, amount: Number(value.amount) };
+  }
+  if (value.operation === "useItem") {
+    exactKeys(value, ["itemActivityId", "itemRef", "operation"]);
+    const itemRef = boundedString(value.itemRef, 240);
+    if (!itemRef.startsWith("item-entry:") || value.itemActivityId !== "use") invalid();
+    return { operation: "useItem", itemRef, itemActivityId: "use" };
+  }
   if (value.operation === "transferItem") {
-    exactKeys(value, ["amount", "itemRef", "operation", "targetEntityRef"]);
+    exactKeys(value, [
+      "amount",
+      "itemRef",
+      "operation",
+      "ownershipDisposition",
+      "targetEntityRef",
+    ]);
     const amount = value.amount;
     if (!Number.isSafeInteger(amount) || Number(amount) < 1 || Number(amount) > 1_000_000) {
       invalid();
     }
+    const itemRef = boundedString(value.itemRef, 240);
+    if (!itemRef.startsWith("item-entry:")) invalid();
     return {
       operation: "transferItem",
       targetEntityRef: boundedString(value.targetEntityRef, 240),
-      itemRef: boundedString(value.itemRef, 240),
+      itemRef,
       amount: Number(amount),
+      ownershipDisposition: value.ownershipDisposition === "retain"
+        || value.ownershipDisposition === "transfer"
+        ? value.ownershipDisposition
+        : invalid(),
     };
   }
   if (value.operation === "changeNpcGear") {
     if (
-      actorKind !== "npc"
-      || typeof value.gearAction !== "string"
+      typeof value.gearAction !== "string"
       || !ACTION_PLAN_GEAR_ACTION_SET.has(value.gearAction)
       || typeof value.slot !== "string"
       || !ACTION_PLAN_GEAR_SLOT_SET.has(value.slot)
     ) invalid();
     if (value.gearAction === "wear") {
       exactKeys(value, ["gearAction", "itemRef", "operation", "slot"]);
+      const itemRef = boundedString(value.itemRef, 240);
+      if (!itemRef.startsWith("item-entry:")) invalid();
       return {
         operation: "changeNpcGear",
         gearAction: "wear",
         slot: value.slot as typeof ACTION_PLAN_GEAR_SLOTS[number],
-        itemRef: boundedString(value.itemRef, 240),
+        itemRef,
       };
     }
     exactKeys(value, ["gearAction", "operation", "slot"]);
@@ -869,10 +611,6 @@ function semanticActionPlan(
   if (value.restKind !== undefined && value.restKind !== "short" && value.restKind !== "long") {
     invalid();
   }
-  if (
-    value.artifactUse !== undefined
-    && !["retain", "consume", "destroy"].includes(String(value.artifactUse))
-  ) invalid();
   if (value.hitDiceToSpend !== undefined
     && (!Number.isSafeInteger(value.hitDiceToSpend) || Number(value.hitDiceToSpend) < 0)) invalid();
   if (value.arcaneRecoverySlotLevels !== undefined
@@ -880,16 +618,6 @@ function semanticActionPlan(
       || value.arcaneRecoverySlotLevels.length > 20
       || !value.arcaneRecoverySlotLevels.every((level) =>
         Number.isSafeInteger(level) && Number(level) >= 1 && Number(level) <= 5))) invalid();
-  if (value.continueAsNpc !== undefined && typeof value.continueAsNpc !== "boolean") invalid();
-  if (value.lifecycleAction !== undefined
-    && !(CAMPAIGN_LIFECYCLE_ACTIONS as readonly unknown[]).includes(value.lifecycleAction)) invalid();
-  if (value.inheritanceSourceKind !== undefined
-    && (typeof value.inheritanceSourceKind !== "string"
-      || !INHERITANCE_SOURCE_KINDS.has(value.inheritanceSourceKind))) invalid();
-  if (value.experienceAmount !== undefined
-    && (!Number.isSafeInteger(value.experienceAmount)
-      || Number(value.experienceAmount) < 1
-      || Number(value.experienceAmount) > 1_000_000)) invalid();
   if (
     value.partyAction !== undefined
     && ![
@@ -924,8 +652,8 @@ function semanticActionPlan(
     "destinationRef",
     "resourceRef",
     "itemRef",
-    "artifactRef",
-    "artifactUse",
+    "itemActivityId",
+    "ownershipDisposition",
     "factionRef",
     "planRef",
     "knowledgeRef",
@@ -933,15 +661,6 @@ function semanticActionPlan(
     "partyRef",
     "partyAction",
     "pendingInputRef",
-    "campaignRef",
-    "chapterRef",
-    "inheritanceAuthorizationRef",
-    "inheritanceSourceFactRef",
-    "inheritanceSourceKind",
-    "lifecycleAction",
-    "endingCandidateRef",
-    "storyRef",
-    "sequelStoryRef",
     "outcome",
     "choice",
     "precedentRef",
@@ -952,7 +671,7 @@ function semanticActionPlan(
       const field = optionalStringField(
         value,
         key,
-        key === "lifecycleAction" ? 120 : key === "outcome" || key === "choice" ? 480 : 240,
+        key === "outcome" || key === "choice" ? 480 : 240,
       );
       return field === undefined ? [] : [[key, field]];
     }),
@@ -984,43 +703,6 @@ function semanticActionPlan(
         })
       : invalid()
     : undefined;
-  const moduleMigration = "moduleMigration" in value
-    ? (() => {
-        const entry = value.moduleMigration;
-        if (!isRecord(entry)) invalid();
-        exactKeys(entry, ["fromModuleRef", "migrationRef", "toModuleRef"]);
-        const profileRef = (candidate: unknown): ModuleMigrationProposal["fromModuleRef"] => {
-          if (!isRecord(candidate)) invalid();
-          exactKeys(candidate, ["profileHash", "profileId"]);
-          const profileId = boundedString(candidate.profileId, 240);
-          const profileHash = boundedString(candidate.profileHash, 80);
-          if (!/^sha256:[0-9a-f]{64}$/.test(profileHash)) invalid();
-          return { profileId, profileHash };
-        };
-        return {
-          fromModuleRef: profileRef(entry.fromModuleRef),
-          toModuleRef: profileRef(entry.toModuleRef),
-          migrationRef: profileRef(entry.migrationRef),
-        };
-      })()
-    : undefined;
-  const inheritanceAuthorization = "inheritanceAuthorization" in value
-    ? (() => {
-        const entry = value.inheritanceAuthorization;
-        if (!isRecord(entry)) invalid();
-        exactKeys(entry, ["authorizationId", "kind", "scope", "sourceRef", "targetRef"]);
-        const kind = boundedString(entry.kind, 32) as InheritanceAuthorizationProposal["kind"];
-        if (!Object.hasOwn(INHERITANCE_SCOPE_BY_KIND, kind)
-          || INHERITANCE_SCOPE_BY_KIND[kind] !== entry.scope) invalid();
-        return {
-          authorizationId: boundedString(entry.authorizationId, 240),
-          kind,
-          sourceRef: boundedString(entry.sourceRef, 240),
-          targetRef: boundedString(entry.targetRef, 240),
-          scope: entry.scope as InheritanceAuthorizationProposal["scope"],
-        };
-      })()
-    : undefined;
   const targetEntityRefs = optionalStringArrayField(value, "targetEntityRefs");
   const recipientRefs = optionalStringArrayField(value, "recipientRefs");
   const memberRefs = optionalStringArrayField(value, "memberRefs");
@@ -1030,7 +712,6 @@ function semanticActionPlan(
   const dc = optionalFiniteNumber(value, "dc");
   const destinationFeet = optionalFiniteNumber(value, "destinationFeet");
   const amount = optionalFiniteNumber(value, "amount");
-  const experienceAmount = optionalFiniteNumber(value, "experienceAmount");
   return {
     operation: value.operation as ActionPlanOperation,
     ...(value.ability !== undefined ? { ability: value.ability as ActionPlanAbility } : {}),
@@ -1057,7 +738,6 @@ function semanticActionPlan(
       ? {}
       : { arcaneRecoverySlotLevels: value.arcaneRecoverySlotLevels.map(Number).sort((left, right) => left - right) }),
     ...(amount !== undefined ? { amount } : {}),
-    ...(experienceAmount !== undefined ? { experienceAmount } : {}),
     ...(recipientRefs !== undefined ? { recipientRefs } : {}),
     ...(memberRefs !== undefined ? { memberRefs } : {}),
     ...(basisRefs !== undefined ? { basisRefs } : {}),
@@ -1065,344 +745,14 @@ function semanticActionPlan(
     ...(consequenceRefs !== undefined ? { consequenceRefs } : {}),
     ...(newOptions !== undefined ? { newOptions } : {}),
     ...(activityTransitions !== undefined ? { activityTransitions } : {}),
-    ...(moduleMigration !== undefined ? { moduleMigration } : {}),
-    ...(inheritanceAuthorization !== undefined ? { inheritanceAuthorization } : {}),
-    ...(value.continueAsNpc === undefined ? {} : { continueAsNpc: value.continueAsNpc }),
-  } as SemanticActionPlan | NpcSemanticActionPlan;
+  } as NpcSemanticActionPlan;
 }
 
-function nullableActionPlan(value: unknown, actorKind: "npc"): NpcSemanticActionPlan | null;
-function nullableActionPlan(value: unknown, actorKind?: "player"): SemanticActionPlan | null;
-function nullableActionPlan(
+/** Closed validator for the server-private Due NPC ActorPlan boundary. */
+export function validateNpcMechanicalProposal(
   value: unknown,
-  actorKind: "player" | "npc" = "player",
-): SemanticActionPlan | NpcSemanticActionPlan | null {
-  if (value === null) return null;
-  return actorKind === "npc"
-    ? semanticActionPlan(value, "npc")
-    : semanticActionPlan(value, "player");
-}
-
-function dynamicMaterializations(value: unknown): DynamicMaterialization[] {
-  if (!Array.isArray(value) || value.length > 12) invalid();
-  return value.map((entry, index) => {
-    if (!isRecord(entry)) invalid();
-    exactKeys(entry, ["kind", "factRef", "causalBasisRefs", "visibilityPolicyRef", "definition"]);
-    if (typeof entry.kind !== "string" || !MATERIALIZATION_KINDS.has(entry.kind)) invalid();
-    return {
-      kind: entry.kind as DynamicMaterialization["kind"],
-      factRef: boundedString(entry.factRef, 160),
-      causalBasisRefs: stringArray(entry.causalBasisRefs),
-      visibilityPolicyRef: boundedString(entry.visibilityPolicyRef, 160),
-      definition: jsonObject(entry.definition, `dynamicMaterializations[${index}].definition`),
-    };
-  });
-}
-
-function hiddenRealityCandidateSet(value: unknown): KpProposalDraft["hiddenRealityCandidateSet"] {
-  if (value === undefined || value === null) return null;
-  if (!isRecord(value)) invalid();
-  exactKeys(value, ["candidateSetId", "candidates"]);
-  if (!Array.isArray(value.candidates) || value.candidates.length < 2 || value.candidates.length > 12) invalid();
-  const candidates = value.candidates.map((entry) => {
-    if (!isRecord(entry)) invalid();
-    exactKeys(entry, ["candidateId", "hiddenWeight", "kind", "factRef", "causalBasisRefs", "visibilityPolicyRef", "definition"]);
-    if (!Number.isSafeInteger(entry.hiddenWeight) || Number(entry.hiddenWeight) <= 0) invalid();
-    const [materialization] = dynamicMaterializations([{
-      kind: entry.kind, factRef: entry.factRef, causalBasisRefs: entry.causalBasisRefs,
-      visibilityPolicyRef: entry.visibilityPolicyRef, definition: entry.definition,
-    }]);
-    return { ...materialization, candidateId: boundedString(entry.candidateId, 160), hiddenWeight: Number(entry.hiddenWeight) };
-  });
-  if (new Set(candidates.map((candidate) => candidate.candidateId)).size !== candidates.length) invalid();
-  return { candidateSetId: boundedString(value.candidateSetId, 160), candidates };
-}
-
-function actorPlan(value: unknown, knowledgeRefs: string[]): ActorPlanProposal {
-  if (!isRecord(value)) invalid();
-  exactKeys(value, [
-    "activity",
-    "alternateTarget",
-    "due",
-    "factionRef",
-    "nextStep",
-    "planId",
-    "premiseRefs",
-    "resourceRefs",
-    "trace",
-    "trigger",
-  ], [
-    "activity",
-    "alternateTarget",
-    "due",
-    "nextStep",
-    "planId",
-    "premiseRefs",
-    "resourceRefs",
-    "trace",
-    "trigger",
-  ]);
-  const premiseRefs = stringArray(value.premiseRefs, 40, 240);
-  if (premiseRefs.length === 0 || premiseRefs.some((reference) => !knowledgeRefs.includes(reference))) {
-    invalid();
-  }
-  if (!isRecord(value.activity)) invalid();
-  exactKeys(value.activity, ["activityId", "activityKind", "intendedDurationMicros"]);
-  const intendedDurationMicros = boundedString(value.activity.intendedDurationMicros, 40);
-  if (!/^[1-9][0-9]*$/.test(intendedDurationMicros)) invalid();
-
-  let due: ActorPlanProposal["due"] = null;
-  if (value.due !== null) {
-    if (!isRecord(value.due)) invalid();
-    exactKeys(value.due, ["atFictionMicros", "kind"]);
-    if (value.due.kind !== "fictionTime") invalid();
-    const atFictionMicros = boundedString(value.due.atFictionMicros, 40);
-    if (!/^(0|[1-9][0-9]*)$/.test(atFictionMicros)) invalid();
-    due = { kind: "fictionTime", atFictionMicros };
-  }
-
-  let trigger: ActorPlanProposal["trigger"] = null;
-  if (value.trigger !== null) {
-    if (!isRecord(value.trigger) || typeof value.trigger.kind !== "string") invalid();
-    if (value.trigger.kind === "committedEvent") {
-      exactKeys(value.trigger, ["eventRef", "kind"]);
-      trigger = { kind: "committedEvent", eventRef: boundedString(value.trigger.eventRef, 240) };
-    } else if (value.trigger.kind === "knowledgeAcquired") {
-      exactKeys(value.trigger, ["kind", "knowledgeRef"]);
-      const knowledgeRef = boundedString(value.trigger.knowledgeRef, 240);
-      if (!knowledgeRefs.includes(knowledgeRef)) invalid();
-      trigger = { kind: "knowledgeAcquired", knowledgeRef };
-    } else {
-      invalid();
-    }
-  }
-  if ((due === null) === (trigger === null)) invalid();
-
-  if (!isRecord(value.trace)) invalid();
-  exactKeys(value.trace, ["description", "factRef", "visibilityPolicyRef"]);
-  if (!isRecord(value.alternateTarget)) invalid();
-  exactKeys(value.alternateTarget, ["reason", "targetRef"]);
-  return {
-    ...(value.factionRef === undefined
-      ? {}
-      : { factionRef: boundedString(value.factionRef, 240) }),
-    planId: boundedString(value.planId, 240),
-    premiseRefs,
-    nextStep: boundedString(value.nextStep, 480),
-    resourceRefs: stringArray(value.resourceRefs, 40, 240),
-    activity: {
-      activityId: boundedString(value.activity.activityId, 240),
-      activityKind: boundedString(value.activity.activityKind, 120),
-      intendedDurationMicros,
-    },
-    due,
-    trigger,
-    trace: {
-      factRef: boundedString(value.trace.factRef, 240),
-      description: boundedString(value.trace.description, 480),
-      visibilityPolicyRef: boundedString(value.trace.visibilityPolicyRef, 240),
-    },
-    alternateTarget: {
-      targetRef: boundedString(value.alternateTarget.targetRef, 240),
-      reason: boundedString(value.alternateTarget.reason, 480),
-    },
-  };
-}
-
-function npcActions(value: unknown): NpcActionProposal[] {
-  if (!Array.isArray(value) || value.length > 12) invalid();
-  return value.map((entry) => {
-    if (!isRecord(entry)) invalid();
-    exactKeys(
-      entry,
-      ["actorPlan", "goal", "knowledgeRefs", "mechanicalProposal", "method", "npcId"],
-      ["goal", "knowledgeRefs", "mechanicalProposal", "method", "npcId"],
-    );
-    const knowledgeRefs = stringArray(entry.knowledgeRefs);
-    return {
-      npcId: boundedString(entry.npcId, 160),
-      goal: boundedString(entry.goal, 480),
-      method: boundedString(entry.method, 480),
-      knowledgeRefs,
-      ...(entry.actorPlan === undefined ? {} : { actorPlan: actorPlan(entry.actorPlan, knowledgeRefs) }),
-      mechanicalProposal: nullableActionPlan(entry.mechanicalProposal, "npc"),
-    };
-  });
-}
-
-function sceneProposal(value: unknown): SceneProposal {
-  if (!isRecord(value)) invalid();
-  exactKeys(value, ["question", "pressure", "opportunities", "conclusionCandidate"]);
-  if (value.conclusionCandidate !== null && typeof value.conclusionCandidate !== "string") invalid();
-  return {
-    question: boundedString(value.question, 480),
-    pressure: boundedString(value.pressure, 480, true),
-    opportunities: stringArray(value.opportunities),
-    conclusionCandidate:
-      value.conclusionCandidate === null ? null : boundedString(value.conclusionCandidate, 320),
-  };
-}
-
-export function validateProposal(value: unknown): KpProposalDraft {
-  if (!isRecord(value)) invalid();
-  exactKeys(
-    value,
-    [
-      "kind",
-      "goal",
-      "method",
-      "publicBasisRefs",
-      "privateBasisRefs",
-      "adjudicationPrecedent",
-      "estimatedFictionTime",
-      "risk",
-      "pendingInput",
-      "dynamicMaterializations",
-      "hiddenRealityCandidateSet",
-      "npcActions",
-      "mechanicalProposal",
-      "scene",
-    ],
-    [
-      "kind",
-      "goal",
-      "method",
-      "publicBasisRefs",
-      "privateBasisRefs",
-      "risk",
-      "pendingInput",
-      "dynamicMaterializations",
-      "npcActions",
-      "mechanicalProposal",
-      "scene",
-    ],
-  );
-  if (typeof value.kind !== "string" || !FEASIBILITY_KINDS.has(value.kind)) invalid();
-  const risk = proposalRisk(value.risk);
-  const pendingInput = proposalPendingInput(value.pendingInput);
-  const precedent = adjudicationPrecedent(value.adjudicationPrecedent);
-  const mechanicalProposal = nullableActionPlan(value.mechanicalProposal);
-  if ((value.kind === "checkRequired" || value.kind === "highRiskFeasible") && (!risk || !mechanicalProposal)) {
-    invalid();
-  }
-  if ((pendingInput === null) === (mechanicalProposal === null)) invalid();
-  if (precedent !== null && mechanicalProposal === null) invalid();
-  if (
-    (value.kind === "missingPrerequisite" || value.kind === "worldLawViolation")
-    && mechanicalProposal
-    && !(value.kind === "missingPrerequisite"
-      && mechanicalProposal.operation === "commitMeaningfulFailure")
-    && mechanicalProposal.operation !== "rejectInfeasibleAction"
-  ) {
-    invalid();
-  }
-  if (
-    mechanicalProposal?.operation === "rejectInfeasibleAction"
-    && value.kind !== "missingPrerequisite"
-    && value.kind !== "worldLawViolation"
-  ) invalid();
-  if (
-    mechanicalProposal !== null
-    && ((value.kind === "directSuccess"
-      && UNCERTAINTY_BEARING_OPERATIONS.has(mechanicalProposal.operation))
-      || (value.kind === "checkRequired"
-        && !UNCERTAINTY_BEARING_OPERATIONS.has(mechanicalProposal.operation)))
-  ) invalid();
-  return {
-    kind: value.kind as KpProposalDraft["kind"],
-    goal: boundedString(value.goal, 480),
-    method: boundedString(value.method, 480),
-    publicBasisRefs: stringArray(value.publicBasisRefs),
-    privateBasisRefs: stringArray(value.privateBasisRefs),
-    adjudicationPrecedent: precedent,
-    ...(value.estimatedFictionTime !== undefined
-      ? { estimatedFictionTime: optionalFictionDuration(value.estimatedFictionTime) }
-      : {}),
-    risk,
-    pendingInput,
-    dynamicMaterializations: dynamicMaterializations(value.dynamicMaterializations),
-    hiddenRealityCandidateSet: hiddenRealityCandidateSet(value.hiddenRealityCandidateSet),
-    npcActions: npcActions(value.npcActions),
-    mechanicalProposal,
-    scene: sceneProposal(value.scene),
-  };
-}
-
-function addCanonicalFactRefs(value: unknown, output: Set<string>): void {
-  if (!Array.isArray(value)) return;
-  for (const entry of value) {
-    if (typeof entry === "string" && entry.length > 0) {
-      output.add(entry);
-      continue;
-    }
-    if (!isRecord(entry)) continue;
-    const factRef = typeof entry.id === "string"
-      ? entry.id
-      : typeof entry.factId === "string"
-        ? entry.factId
-        : undefined;
-    if (factRef !== undefined && factRef.length > 0) output.add(factRef);
-  }
-}
-
-export function projectionCanonicalFactRefs(projection: unknown): Set<string> {
-  const output = new Set<string>();
-  if (!isRecord(projection)) return output;
-  addCanonicalFactRefs(projection.canonicalFacts, output);
-  addCanonicalFactRefs(projection.visibleFacts, output);
-  if (isRecord(projection.actorProjection)) {
-    addCanonicalFactRefs(projection.actorProjection.visibleFacts, output);
-  }
-  return output;
-}
-
-export function projectionNpcKnowledgeRefs(
-  projection: unknown,
-  npcId: string,
-): Set<string> | undefined {
-  const projectionRecord = isRecord(projection) ? projection : {};
-  const npcViewerMap = isRecord(projectionRecord.npcViewers)
-    ? projectionRecord.npcViewers
-    : undefined;
-  const legacyNpcViewers = Array.isArray(projectionRecord.npcViewers)
-    ? projectionRecord.npcViewers.filter(isRecord)
-    : [];
-  const keyedProjection = npcViewerMap?.[npcId];
-  const npcProjection = isRecord(keyedProjection)
-    ? keyedProjection
-    : legacyNpcViewers.find((candidate) => {
-        const viewer = isRecord(candidate.viewer) ? candidate.viewer : candidate;
-        return viewer.npcId === npcId || viewer.id === npcId;
-      });
-  return npcProjection === undefined ? undefined : collectStrings(npcProjection);
-}
-
-export function assertProposalProjectionBound(
-  proposal: KpProposalDraft,
-  projection: unknown,
-): void {
-  const available = collectStrings(projection);
-  const causalReferences = projectionCanonicalFactRefs(projection);
-  if (
-    [...proposal.publicBasisRefs, ...proposal.privateBasisRefs].some(
-      (reference) => !available.has(reference),
-    ) ||
-    (proposal.adjudicationPrecedent?.kind === "supersede"
-      && !available.has(proposal.adjudicationPrecedent.supersededPrecedentId)) ||
-    proposal.dynamicMaterializations.some((materialization) =>
-      materialization.causalBasisRefs.some((reference) => !causalReferences.has(reference))
-    ) || proposal.hiddenRealityCandidateSet?.candidates.some((candidate) =>
-      candidate.causalBasisRefs.some((reference) => !causalReferences.has(reference))
-    )
-  ) {
-    invalid();
-  }
-
-  for (const action of proposal.npcActions) {
-    const npcKnowledge = projectionNpcKnowledgeRefs(projection, action.npcId);
-    if (npcKnowledge === undefined) invalid();
-    if (action.knowledgeRefs.some((reference) => !npcKnowledge.has(reference))) invalid();
-  }
+): NpcSemanticActionPlan | null {
+  return value === null ? null : npcSemanticActionPlan(value);
 }
 
 const NARRATION_AGENCY_SUBJECT_KIND_SET = new Set<string>(NARRATION_AGENCY_SUBJECT_KINDS);

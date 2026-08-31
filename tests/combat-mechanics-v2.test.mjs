@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
 
 const ROOM_ID = "room:combat-mechanics-v2";
 const ENCOUNTER_ID = "encounter:burning-mill";
@@ -11,61 +12,7 @@ const BOB_ID = "character:bob";
 const BRUTE_ID = "enemy:ash-brute";
 const SENTINEL_ID = "enemy:cinder-sentinel";
 
-// Canonical ProfileRefs are public SPEC 0013 conformance literals. Tests do
-// not obtain them from Registry helpers and ordinary Rules inputs never carry
-// ProfileRefs, authority identities, events, or rolled faces.
-const PROFILES = Object.freeze({
-  manifest: {
-    profileId: "runtime-srd51-2014-authoritative-v2",
-    profileHash: "sha256:496da17f16d52cbe5dfa3e97facfa8ed7dcf3f4bbb7a882fc0e384d464898051",
-  },
-  ruleset: {
-    profileId: "dnd5e-2014-srd5.1-authoritative-v2",
-    profileHash: "sha256:7651d58190da6bfb6241cabb41b07ef5cfee3266edf3c62b8af443d94daf4af0",
-  },
-  eventSchema: {
-    profileId: "room-world-events-v2",
-    profileHash: "sha256:3f1d953752be8981f4f7862ba1a90d6f613d113ecfd2d18dfd983abf974a8a67",
-  },
-  abilityCompiler: {
-    profileId: "ability-srd51-2014-v1",
-    profileHash: "sha256:561710d6ae32fc14f0ba22863e0d6cd92d12c6d32b8728a81608561a66b25ba3",
-  },
-  geometry: {
-    profileId: "geometry-2d-feet-2014-v1",
-    profileHash: "sha256:59caa4e73c58dc20a92cd9b50370f2c9b275a9b57740c7dd1d519f78cb72611e",
-  },
-  triggerOrdering: {
-    profileId: "trigger-initiative-order-2014-v1",
-    profileHash: "sha256:825ef8de6f962f01111c9ce325189c0d203ee71ab305149fd7b2b7485b6b8089",
-  },
-  fictionCombatTime: {
-    profileId: "combat-round-six-seconds-2014-v1",
-    profileHash: "sha256:067eb4870fcee1cda2563c7633daac4c2b7249ecd53e0f9b1c986d3de8d12f08",
-  },
-  extensions: [
-    {
-      profileId: "combat-srd51-2014-v1",
-      profileHash: "sha256:b9e12294db25409844e1ecd63d048e404b315ecfcd8c493cd6af5cb593e4acc6",
-    },
-    {
-      profileId: "damage-death-srd51-2014-v1",
-      profileHash: "sha256:37dbf131c6325f2f07e3693ee8c3420372c8d7f9154a757dfafdc6f853537d7a",
-    },
-    {
-      profileId: "presentation-observer-specific-v1",
-      profileHash: "sha256:86bfdfebe7062d90f87e4add65d1d109cb14dead7b3d758e452af76c13f7457c",
-    },
-    {
-      profileId: "projection-observer-safe-v1",
-      profileHash: "sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91",
-    },
-    {
-      profileId: "delivery-single-current-frame-v1",
-      profileHash: "sha256:cd0d684841bd43f621665dc538db35b81c25421d8b345e444681054bbc894d7e",
-    },
-  ],
-});
+const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -109,7 +56,7 @@ const INITIAL_DEFINITIONS = Object.freeze({
     rulesBasis: "srd5.1-2014",
     activation: { kind: "attack", actionGrant: "attack" },
     target: { kind: "creature", count: "1", reachInches: "60", requiresSight: true },
-    costs: [{ kind: "itemCharge", resourceId: "resource:resonant-blade", amount: "1" }],
+    costs: [{ kind: "classResource", resourceId: "resource:resonant-blade", amount: "1" }],
     attack: { ability: "str", proficiency: true },
     damage: [
       { type: "slashing", formula: "1d8+3" },
@@ -218,12 +165,12 @@ const INITIAL_DEFINITIONS = Object.freeze({
     target: { kind: "area", shape: { kind: "sphere", radiusInches: "300", propagation: "aroundCorners", spreadBudgetInches: "300" } },
     damage: [{ type: "force", formula: "1d4" }],
   },
-  "item:healing-potion": {
-    definitionId: "item:healing-potion",
+  "ability:restorative-touch": {
+    definitionId: "ability:restorative-touch",
     revision: "1",
     rulesBasis: "srd5.1-2014",
-    activation: { kind: "useObject", actionGrant: "normalAction" },
-    costs: [{ kind: "item", resourceId: "item:healing-potion", amount: "1" }],
+    activation: { kind: "action" },
+    target: { kind: "creature", count: "1", reachInches: "60" },
     healing: { formula: "2d4+2" },
   },
   "spell:hex": {
@@ -426,7 +373,6 @@ const INITIAL_STATE = Object.freeze({
       resources: {
         "resource:action-surge": { current: "1", maximum: "1" },
         "resource:resonant-blade": { current: "1", maximum: "1" },
-        "item:healing-potion": { current: "1", maximum: "1" },
       },
       abilityRefs: [
         "ability:alice-longbow",
@@ -443,8 +389,8 @@ const INITIAL_STATE = Object.freeze({
         "ability:geometry-sphere-240",
         "ability:geometry-straight-spread",
         "ability:geometry-around-corners",
+        "ability:restorative-touch",
         "ability:alice-unknown-activation",
-        "item:healing-potion",
       ],
       deathPolicy: "deathSaves",
     },
@@ -500,30 +446,207 @@ const CATALOG_REF = Object.freeze({
   profileId: "catalog:burning-mill-v1",
   profileHash: fixtureHash(INITIAL_DEFINITIONS),
 });
-const INITIAL_STATE_HASH = fixtureHash(INITIAL_STATE);
-const UNSIGNED_GENESIS = Object.freeze({
-  kind: "roomGenesis",
-  roomId: ROOM_ID,
-  runtimeEpochId: "epoch:combat-mechanics-v2:1",
-  profiles: PROFILES,
-  moduleRef: MODULE_REF,
-  initialDefinitionCatalogRef: CATALOG_REF,
-  initialState: INITIAL_STATE,
-  initialStateHash: INITIAL_STATE_HASH,
-});
-const ROOM_GENESIS = Object.freeze({
-  ...UNSIGNED_GENESIS,
-  genesisHash: fixtureHash(UNSIGNED_GENESIS),
-});
 
-function geometryGenesis(initialState, suffix) {
+function v5TacticalGeometry() {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "-12000", y: "-12000" },
+        { x: "12000", y: "-12000" },
+        { x: "12000", y: "12000" },
+        { x: "-12000", y: "12000" },
+      ],
+    },
+    spawnPoints: [
+      { x: "0", y: "0", elevation: "0" },
+      { x: "60", y: "60", elevation: "0" },
+    ],
+    obstacles: [{
+      featureId: "feature:combat-mechanics-v2:fixture-boundary-marker",
+      kind: "barrier",
+      label: "测试场地边界标记",
+      state: "intact",
+      polygon: [
+        { x: "10000", y: "10000" },
+        { x: "10060", y: "10000" },
+        { x: "10060", y: "10060" },
+        { x: "10000", y: "10060" },
+      ],
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
+function v5CharacterSeed({ id, name, classId, abilityScores, hitPoints }) {
+  return {
+    id,
+    kind: "player",
+    name,
+    sceneId: "scene:burning-mill-yard",
+    tenureStatus: "active",
+    classId,
+    raceId: "human",
+    level: 3,
+    abilityScores,
+    proficiencyBonus: 2,
+    proficientSkills: [],
+    expertiseSkills: [],
+    proficientSaves: [],
+    cantripIds: [],
+    preparedSpellIds: [],
+    featureIds: [],
+    hitPoints,
+    loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
+    characterBuild: { classId, raceId: "human", cantrips: [], prepared: [] },
+  };
+}
+
+function v5WorldStateHash(state) {
+  const domainState = { ...state };
+  delete domainState.eventHeadHash;
+  delete domainState.lastEventId;
+  return fixtureHash(domainState);
+}
+
+function v5CombatGeometry(geometry) {
+  const canonical = v5TacticalGeometry();
+  const converted = (geometry.obstacles ?? []).map((obstacle, index) => {
+    if (obstacle.featureId !== undefined) return structuredClone(obstacle);
+    const featureId = String(obstacle.obstacleId ?? `feature:legacy-combat-fixture:${index}`);
+    return {
+      featureId,
+      kind: "barrier",
+      label: featureId,
+      state: "intact",
+      polygon: structuredClone(obstacle.polygon),
+      elevation: String(obstacle.elevation),
+      height: String(obstacle.height),
+      opaque: obstacle.opaque === true,
+      impassable: obstacle.impassable === true,
+      cover: obstacle.opaque === true ? "full" : "none",
+      propagation: obstacle.opaque === true ? "blocks" : "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    };
+  });
+  const marker = canonical.obstacles[0];
+  if (!converted.some(({ featureId }) => featureId === marker.featureId)) converted.push(marker);
+  return {
+    ...canonical,
+    obstacles: converted.sort((left, right) => left.featureId.localeCompare(right.featureId)),
+  };
+}
+
+function v5Genesis(combatState, suffix, { preserveClearanceZones = false } = {}) {
+  const runtimeEpochId = `epoch:combat-mechanics-v2:${suffix}`;
+  const aliceCombat = combatState.entities[ALICE_ID];
+  const bobCombat = combatState.entities[BOB_ID];
+  const initialized = step(PROFILES, undefined, {
+    kind: "initializeAuthoritativeWorld",
+    roomId: ROOM_ID,
+    runtimeEpochId,
+    moduleRef: MODULE_REF,
+    initialDefinitionCatalogRef: CATALOG_REF,
+    activeBranchId: "branch:main",
+    fictionInstantMicros: "0",
+    scenes: [{ id: "scene:burning-mill-yard", name: "旧磨坊庭院", geometry: v5TacticalGeometry() }],
+    principals: [
+      { id: "principal:alice", sessionVersion: 1, role: "host" },
+      { id: "principal:bob", sessionVersion: 1, role: "player" },
+    ],
+    seats: [
+      { id: "seat:alice", principalId: "principal:alice", status: "active" },
+      { id: "seat:bob", principalId: "principal:bob", status: "active" },
+    ],
+    characters: [
+      v5CharacterSeed({
+        id: ALICE_ID,
+        name: "爱丽丝",
+        classId: "fighter",
+        abilityScores: Object.fromEntries(Object.entries(aliceCombat.stats).map(
+          ([ability, score]) => [ability, Number(score)],
+        )),
+        hitPoints: {
+          current: Number(aliceCombat.hitPoints.current),
+          maximum: Number(aliceCombat.hitPoints.maximum),
+        },
+      }),
+      v5CharacterSeed({
+        id: BOB_ID,
+        name: "鲍勃",
+        classId: "wizard",
+        abilityScores: Object.fromEntries(Object.entries(bobCombat.stats).map(
+          ([ability, score]) => [ability, Number(score)],
+        )),
+        hitPoints: {
+          current: Number(bobCombat.hitPoints.current),
+          maximum: Number(bobCombat.hitPoints.maximum),
+        },
+      }),
+    ],
+    characterControls: [
+      { characterId: ALICE_ID, seatId: "seat:alice" },
+      { characterId: BOB_ID, seatId: "seat:bob" },
+    ],
+    canonicalFacts: [],
+    initialKnowledge: [],
+  });
+  assert.equal(initialized.kind, "initialized", JSON.stringify(initialized));
+
+  const initialState = structuredClone(initialized.genesis.initialState);
+  assert.equal(
+    initialState.campaignRuntime.itemSystem.schema,
+    "zhuwei.item-system-state/v1",
+    "every V5 combat fixture carries the unified item authority",
+  );
+  const combatScenes = Object.fromEntries(Object.entries(combatState.scenes).map(
+    ([sceneId, scene]) => [sceneId, {
+      ...structuredClone(scene),
+      geometry: preserveClearanceZones
+        ? structuredClone(scene.geometry)
+        : v5CombatGeometry(scene.geometry),
+    }],
+  ));
+  initialState.combatRuntime = {
+    story: structuredClone(combatState.story),
+    scenes: combatScenes,
+    entities: structuredClone(combatState.entities),
+    definitions: structuredClone(combatState.definitions),
+    encounters: structuredClone(combatState.encounters),
+    effects: structuredClone(combatState.effects),
+    pendingInputs: structuredClone(combatState.pendingInputs),
+    randomnessResolutions: structuredClone(combatState.randomnessResolutions ?? {}),
+  };
+  const initialStateHash = v5WorldStateHash(initialState);
+  initialState.eventHeadHash = initialStateHash;
   const unsigned = {
-    ...UNSIGNED_GENESIS,
-    runtimeEpochId: `epoch:combat-mechanics-v2:${suffix}`,
+    kind: "roomGenesis",
+    roomId: ROOM_ID,
+    runtimeEpochId,
+    profiles: PROFILES,
+    moduleRef: MODULE_REF,
+    initialDefinitionCatalogRef: CATALOG_REF,
     initialState,
-    initialStateHash: fixtureHash(initialState),
+    initialStateHash,
   };
   return Object.freeze({ ...unsigned, genesisHash: fixtureHash(unsigned) });
+}
+
+const ROOM_GENESIS = v5Genesis(INITIAL_STATE, "1");
+
+function geometryGenesis(initialState, suffix, options) {
+  return v5Genesis(initialState, suffix, options);
 }
 
 function coverSampleBlockers(count, { opaque = true } = {}) {
@@ -577,8 +700,20 @@ function coverSampleBlockers(count, { opaque = true } = {}) {
   });
 }
 
-const ALICE_VIEWER = Object.freeze({ kind: "player", principalId: "principal:alice", characterId: ALICE_ID });
-const BOB_VIEWER = Object.freeze({ kind: "player", principalId: "principal:bob", characterId: BOB_ID });
+const ALICE_VIEWER = Object.freeze({
+  kind: "player",
+  principalId: "principal:alice",
+  sessionVersion: 1,
+  seatId: "seat:alice",
+  characterId: ALICE_ID,
+});
+const BOB_VIEWER = Object.freeze({
+  kind: "player",
+  principalId: "principal:bob",
+  sessionVersion: 1,
+  seatId: "seat:bob",
+  characterId: BOB_ID,
+});
 const SENTINEL_VIEWER = Object.freeze({
   kind: "npc",
   npcId: SENTINEL_ID,
@@ -596,59 +731,105 @@ const START_DYNAMIC_ENCOUNTER = Object.freeze({
   dynamicEntities: [
     {
       entityId: BRUTE_ID,
-      entityKind: "npc",
       name: "灰烬暴徒",
-      position: { x: "60", y: "0", elevation: "0" },
-      footprint: { width: "60", depth: "60", height: "60" },
-      stats: { str: "18", dex: "12", con: "16", int: "8", wis: "10", cha: "8" },
-      proficiencyBonus: "2",
-      armorClass: "14",
-      hitPoints: { current: "30", maximum: "30", temporary: "0" },
-      speedInches: { walk: "360" },
-      deathPolicy: "deadAtZero",
-      damageDefenses: { resistant: ["slashing"], immune: ["poison"], vulnerable: ["thunder"] },
-      abilities: [
-        {
-          definitionId: "ability:ash-brute-maul",
+      placement: { position: { x: "60", y: "0", elevation: "0" } },
+      mechanics: {
+        kind: "bespokeDefinition",
+        definition: {
+          definitionId: "npc-template:ash-brute",
           revision: "1",
+          definitionKind: "npcMechanicalTemplate",
           rulesBasis: "srd5.1-2014",
-          activation: { kind: "attack", actionGrant: "attack" },
-          target: { kind: "creature", count: "1", reachInches: "60" },
-          attack: { ability: "str", proficiency: true },
-          damage: [{ type: "bludgeoning", formula: "2d6+4" }],
+          causalBasisRefs: ["module:burning-mill-v1"],
+          visibilityPolicyRef: "visibility:scene-observers",
+          content: {
+            schema: "zhuwei.npc-mechanical-template/v1",
+            label: "灰烬暴徒",
+            footprint: { width: "60", depth: "60", height: "60" },
+            stats: { str: "18", dex: "12", con: "16", int: "8", wis: "10", cha: "8" },
+            proficiencyBonus: "2",
+            armorClass: "14",
+            armorClassModel: {
+              kind: "higherOfBaseAndEquipment",
+              baseArmorClass: "14",
+              shieldBonus: "0",
+            },
+            hitPointsMaximum: "30",
+            speedInches: { walk: "360" },
+            resourceMaximums: {},
+            deathPolicy: "deadAtZero",
+            damageDefenses: { resistant: ["slashing"], immune: ["poison"], vulnerable: ["thunder"] },
+            intrinsicAbilities: [
+              {
+                definitionId: "ability:ash-brute-maul",
+                revision: "1",
+                rulesBasis: "srd5.1-2014",
+                activation: { kind: "attack", actionGrant: "attack" },
+                target: { kind: "creature", count: "1", reachInches: "60" },
+                attack: { ability: "str", proficiency: true },
+                damage: [{ type: "bludgeoning", formula: "2d6+4" }],
+              },
+              {
+                definitionId: "ability:ash-brute-cinder-burst",
+                revision: "1",
+                rulesBasis: "srd5.1-2014",
+                activation: { kind: "action" },
+                target: { kind: "area", shape: { kind: "sphere", radiusInches: "120", propagation: "straight" } },
+                save: { ability: "dex", dc: "13", halfOnSuccess: true },
+                damage: [{ type: "fire", formula: "2d6", sharedAcrossTargets: true }],
+              },
+            ],
+            itemDefinitions: [],
+            itemDefinitionRefs: [],
+            initialLoadout: { entries: [] },
+          },
         },
-        {
-          definitionId: "ability:ash-brute-cinder-burst",
-          revision: "1",
-          rulesBasis: "srd5.1-2014",
-          activation: { kind: "action" },
-          target: { kind: "area", shape: { kind: "sphere", radiusInches: "120", propagation: "straight" } },
-          save: { ability: "dex", dc: "13", halfOnSuccess: true },
-          damage: [{ type: "fire", formula: "2d6", sharedAcrossTargets: true }],
-        },
-      ],
+      },
     },
     {
       entityId: SENTINEL_ID,
-      entityKind: "npc",
       name: "余烬哨兵",
-      position: { x: "180", y: "0", elevation: "0" },
-      footprint: { width: "60", depth: "60", height: "60" },
-      stats: { str: "12", dex: "12", con: "14", int: "10", wis: "12", cha: "8" },
-      proficiencyBonus: "2",
-      armorClass: "15",
-      hitPoints: { current: "22", maximum: "22", temporary: "0" },
-      speedInches: { walk: "360" },
-      deathPolicy: "deadAtZero",
-      abilities: [{
-        definitionId: "ability:cinder-sentinel-bolt",
-        revision: "1",
-        rulesBasis: "srd5.1-2014",
-        activation: { kind: "attack", actionGrant: "attack" },
-        target: { kind: "creature", count: "1", rangeNormalInches: "720" },
-        attack: { ability: "dex", proficiency: true },
-        damage: [{ type: "piercing", formula: "1d8+1" }],
-      }],
+      placement: { position: { x: "180", y: "0", elevation: "0" } },
+      mechanics: {
+        kind: "bespokeDefinition",
+        definition: {
+          definitionId: "npc-template:cinder-sentinel",
+          revision: "1",
+          definitionKind: "npcMechanicalTemplate",
+          rulesBasis: "srd5.1-2014",
+          causalBasisRefs: ["module:burning-mill-v1"],
+          visibilityPolicyRef: "visibility:scene-observers",
+          content: {
+            schema: "zhuwei.npc-mechanical-template/v1",
+            label: "余烬哨兵",
+            footprint: { width: "60", depth: "60", height: "60" },
+            stats: { str: "12", dex: "12", con: "14", int: "10", wis: "12", cha: "8" },
+            proficiencyBonus: "2",
+            armorClass: "15",
+            armorClassModel: {
+              kind: "higherOfBaseAndEquipment",
+              baseArmorClass: "15",
+              shieldBonus: "0",
+            },
+            hitPointsMaximum: "22",
+            speedInches: { walk: "360" },
+            resourceMaximums: {},
+            deathPolicy: "deadAtZero",
+            intrinsicAbilities: [{
+              definitionId: "ability:cinder-sentinel-bolt",
+              revision: "1",
+              rulesBasis: "srd5.1-2014",
+              activation: { kind: "attack", actionGrant: "attack" },
+              target: { kind: "creature", count: "1", rangeNormalInches: "720" },
+              attack: { ability: "dex", proficiency: true },
+              damage: [{ type: "piercing", formula: "1d8+1" }],
+            }],
+            itemDefinitions: [],
+            itemDefinitionRefs: [],
+            initialLoadout: { entries: [] },
+          },
+        },
+      },
     },
   ],
   initiativeGroups: [
@@ -884,11 +1065,11 @@ test("Geometry measures creature footprints instead of treating combatants as po
   }));
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
   const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-  brute.position = { x: "90", y: "0", elevation: "0" };
-  brute.footprint = { width: "120", depth: "120", height: "120" };
+  brute.placement.position = { x: "90", y: "0", elevation: "0" };
+  brute.mechanics.definition.content.footprint = { width: "120", depth: "120", height: "120" };
   const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-  sentinel.position = { x: "360", y: "0", elevation: "0" };
-  sentinel.footprint = { width: "120", depth: "120", height: "120" };
+  sentinel.placement.position = { x: "360", y: "0", elevation: "0" };
+  sentinel.mechanics.definition.content.footprint = { width: "120", depth: "120", height: "120" };
 
   let { scenario } = openEncounterWithInput(authority, encounterInput);
   const melee = requireKind(drive(scenario, {
@@ -920,10 +1101,10 @@ test("Geometry measures creature footprints instead of treating combatants as po
 test("Geometry G02 accepts five-foot reach when two Medium occupancy boundaries touch", () => {
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
     x: "60", y: "0", elevation: "0",
   };
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = {
     x: "360", y: "0", elevation: "0",
   };
   const { scenario } = openEncounterWithInput(authority, encounterInput);
@@ -943,10 +1124,10 @@ test("Geometry G02 accepts five-foot reach when two Medium occupancy boundaries 
 
 test("Geometry G03 measures a full Medium-space gap as 120 inches", () => {
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
     x: "120", y: "0", elevation: "0",
   };
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = {
     x: "360", y: "0", elevation: "0",
   };
 
@@ -982,10 +1163,10 @@ test("Geometry G03 measures a full Medium-space gap as 120 inches", () => {
 test("Geometry G04 includes a 60-inch vertical core gap in three-dimensional range", () => {
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
     x: "0", y: "0", elevation: "60",
   };
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = {
     x: "360", y: "0", elevation: "0",
   };
   const { scenario } = openEncounterWithInput(authority, encounterInput);
@@ -1002,10 +1183,10 @@ test("Geometry G04 includes a 60-inch vertical core gap in three-dimensional ran
 test("Geometry G05 uses Euclidean range for diagonal core gaps", () => {
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
     x: "120", y: "120", elevation: "0",
   };
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = {
     x: "360", y: "0", elevation: "0",
   };
   const { scenario } = openEncounterWithInput(authority, encounterInput);
@@ -1025,10 +1206,10 @@ test("Geometry G06 includes exact point and entity boundaries but excludes one i
   for (const [offset, expectedKind] of [["-120", "committed"], ["-121", "rejected"]]) {
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
       x: offset, y: "0", elevation: "0",
     };
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = {
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = {
       x: "360", y: "0", elevation: "0",
     };
     const { scenario } = openEncounterWithInput(authority, encounterInput);
@@ -1046,10 +1227,10 @@ test("Geometry G06 includes exact point and entity boundaries but excludes one i
   for (const [offset, expectedKind] of [["-120", "committed"], ["-121", "rejected"]]) {
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
       x: "360", y: "0", elevation: "0",
     };
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = {
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = {
       x: "420", y: "0", elevation: "0",
     };
     const { scenario } = openEncounterWithInput(authority, encounterInput);
@@ -1155,10 +1336,15 @@ test("Geometry applies one-size squeezing cost and Dex-save disadvantage, while 
   }));
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
   const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-  brute.position = { x: "60", y: "240", elevation: "0" };
+  brute.placement.position = { x: "60", y: "240", elevation: "0" };
   const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-  sentinel.position = { x: "360", y: "240", elevation: "0" };
-  let { scenario } = openEncounterWithInput(authority, encounterInput);
+  sentinel.placement.position = { x: "360", y: "240", elevation: "0" };
+  const clearanceGenesis = geometryGenesis(
+    structuredClone(INITIAL_STATE),
+    "g09-clearance-profile",
+    { preserveClearanceZones: true },
+  );
+  let { scenario } = openEncounterWithInput(authority, encounterInput, clearanceGenesis);
 
   const tooNarrow = requireKind(drive(scenario, {
     kind: "moveCombatant",
@@ -1188,7 +1374,7 @@ test("Geometry applies one-size squeezing cost and Dex-save disadvantage, while 
   scenario = squeezed.scenario;
   const movement = eventsOfType(squeezed.events, "MovementSegmentCommitted")[0];
   assert.equal(movement.payload.distanceMilliInches, "300000");
-  assert.equal(combatEntity(read(scenario, ALICE_VIEWER), ALICE_ID).conditions.squeezing, true);
+  assert.equal(scenario.state.combatRuntime.entities[ALICE_ID].conditions.squeezing, true);
 
   const ranged = requireKind(drive(scenario, {
     kind: "invokeAbility",
@@ -1243,10 +1429,10 @@ test("Geometry G10 applies the fixed 31/32/48/64 hard-cover thresholds and caps 
     const genesis = geometryGenesis(initialState, `g10-hard-${hardSamples}`);
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
     const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-    brute.position = { x: "0", y: "4000", elevation: "0" };
+    brute.placement.position = { x: "0", y: "4000", elevation: "0" };
     const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-    sentinel.position = { x: "2000", y: "0", elevation: "0" };
-    sentinel.footprint = { width: "400", depth: "400", height: "400" };
+    sentinel.placement.position = { x: "2000", y: "0", elevation: "0" };
+    sentinel.mechanics.definition.content.footprint = { width: "400", depth: "400", height: "400" };
     const { scenario } = openEncounterWithInput(authority, encounterInput, genesis);
     const shot = drive(scenario, {
       kind: "invokeAbility",
@@ -1277,12 +1463,12 @@ test("Geometry G10 applies the fixed 31/32/48/64 hard-cover thresholds and caps 
   for (const entity of coverSampleBlockers(64, { opaque: false })) initialState.entities[entity.id] = entity;
   const genesis = geometryGenesis(initialState, "g10-soft-64");
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
     x: "0", y: "4000", elevation: "0",
   };
   const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-  sentinel.position = { x: "2000", y: "0", elevation: "0" };
-  sentinel.footprint = { width: "400", depth: "400", height: "400" };
+  sentinel.placement.position = { x: "2000", y: "0", elevation: "0" };
+  sentinel.mechanics.definition.content.footprint = { width: "400", depth: "400", height: "400" };
   const { scenario } = openEncounterWithInput(authority, encounterInput, genesis);
   const softOnly = requireKind(drive(scenario, {
     kind: "invokeAbility",
@@ -1298,8 +1484,8 @@ test("Geometry treats ally and two-size hostile traversal as difficult, but bloc
   {
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = { x: "-300", y: "0", elevation: "0" };
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = { x: "300", y: "0", elevation: "0" };
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = { x: "-300", y: "0", elevation: "0" };
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = { x: "300", y: "0", elevation: "0" };
     const { scenario } = openEncounterWithInput(authority, encounterInput);
     const throughAlly = requireKind(drive(scenario, {
       kind: "moveCombatant",
@@ -1321,7 +1507,7 @@ test("Geometry treats ally and two-size hostile traversal as difficult, but bloc
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
     const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-    brute.position = { x: "0", y: "-120", elevation: "0" };
+    brute.placement.position = { x: "0", y: "-120", elevation: "0" };
     const { scenario } = openEncounterWithInput(authority, encounterInput);
     const blocked = requireKind(drive(scenario, {
       kind: "moveCombatant",
@@ -1341,9 +1527,9 @@ test("Geometry treats ally and two-size hostile traversal as difficult, but bloc
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
     const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-    brute.position = { x: "0", y: "-120", elevation: "0" };
-    brute.footprint = { width: "30", depth: "30", height: "30" };
-    brute.sizeCategory = "tiny";
+    brute.placement.position = { x: "0", y: "-120", elevation: "0" };
+    brute.mechanics.definition.content.footprint = { width: "30", depth: "30", height: "30" };
+    brute.mechanics.definition.content.sizeCategory = "tiny";
     const { scenario } = openEncounterWithInput(authority, encounterInput);
     const throughTinyHostile = requireKind(drive(scenario, {
       kind: "moveCombatant",
@@ -1365,9 +1551,9 @@ test("Geometry blocks swept hostile occupancy even when the mover center misses 
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
   const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-  brute.position = { x: "59", y: "-120", elevation: "0" };
+  brute.placement.position = { x: "59", y: "-120", elevation: "0" };
   const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-  sentinel.position = { x: "360", y: "0", elevation: "0" };
+  sentinel.placement.position = { x: "360", y: "0", elevation: "0" };
   const { scenario } = openEncounterWithInput(authority, encounterInput);
 
   const blocked = requireKind(drive(scenario, {
@@ -1395,12 +1581,12 @@ test("Geometry G11 includes a 20-foot sphere boundary sample, excludes one inch 
     initialState.scenes[MODULE_FIXTURE.sceneId].geometry.obstacles = [];
     const genesis = geometryGenesis(initialState, `g11-sphere-${centerX}`);
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
       x: "600", y: "600", elevation: "0",
     };
     const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-    sentinel.position = { x: centerX, y: "3", elevation: "-1" };
-    sentinel.footprint = { width: "8", depth: "8", height: "8" };
+    sentinel.placement.position = { x: centerX, y: "3", elevation: "-1" };
+    sentinel.mechanics.definition.content.footprint = { width: "8", depth: "8", height: "8" };
     const { scenario } = openEncounterWithInput(authority, encounterInput, genesis);
 
     const forged = requireKind(drive(scenario, {
@@ -1443,11 +1629,11 @@ test("Geometry computes all five closed area shapes and rejects caller-authored 
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
     const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-    brute.position = { x: "-111", y: "0", elevation: "0" };
-    brute.footprint = { width: "56", depth: "56", height: "60" };
+    brute.placement.position = { x: "-111", y: "0", elevation: "0" };
+    brute.mechanics.definition.content.footprint = { width: "56", depth: "56", height: "60" };
     const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-    sentinel.position = { x: "0", y: "-111", elevation: "0" };
-    sentinel.footprint = { width: "56", depth: "56", height: "60" };
+    sentinel.placement.position = { x: "0", y: "-111", elevation: "0" };
+    sentinel.mechanics.definition.content.footprint = { width: "56", depth: "56", height: "60" };
     const { scenario } = openEncounterWithInput(authority, encounterInput);
     const parameters = {
       areaOrigin: { x: "0", y: "0", elevation: "0" },
@@ -1524,11 +1710,11 @@ test("Geometry G12 freezes a wall-blocked origin atomically before exposing its 
 test("Geometry G13 keeps straight, around-corner, and sealed propagation stable under obstacle-order perturbation", () => {
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
   const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-  brute.position = { x: "120", y: "-150", elevation: "0" };
-  brute.footprint = { width: "2", depth: "2", height: "60" };
+  brute.placement.position = { x: "120", y: "-150", elevation: "0" };
+  brute.mechanics.definition.content.footprint = { width: "2", depth: "2", height: "60" };
   const sentinel = encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-  sentinel.position = { x: "180", y: "-120", elevation: "0" };
-  sentinel.footprint = { width: "2", depth: "2", height: "60" };
+  sentinel.placement.position = { x: "180", y: "-120", elevation: "0" };
+  sentinel.mechanics.definition.content.footprint = { width: "2", depth: "2", height: "60" };
 
   {
     const authority = new DeterministicRoomAuthority(commonInitiativeEntropy());
@@ -1664,13 +1850,14 @@ function commonInitiativeEntropy(extra = {}) {
 function reactionEncounterInput() {
   const input = structuredClone(START_DYNAMIC_ENCOUNTER);
   const sentinel = input.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID);
-  sentinel.spellcasting = { ability: "int", spellAttackBonus: "4", spellSaveDc: "12" };
-  sentinel.resources = {
-    "spellSlot:1": { current: "1", maximum: "1" },
-    "spellSlot:3": { current: "1", maximum: "1" },
-    "spellSlot:4": { current: "1", maximum: "1" },
+  const sentinelContent = sentinel.mechanics.definition.content;
+  sentinelContent.spellcasting = { ability: "int", spellAttackBonus: "4", spellSaveDc: "12" };
+  sentinelContent.resourceMaximums = {
+    "spellSlot:1": "1",
+    "spellSlot:3": "1",
+    "spellSlot:4": "1",
   };
-  sentinel.abilities.push(
+  sentinelContent.intrinsicAbilities.push(
     {
       definitionId: "spell:cinder-sentinel-magic-missile",
       revision: "1",
@@ -1721,11 +1908,11 @@ test("dynamic combat definitions fail closed before they can solidify invalid me
   const invalidDefinitions = [
     {
       label: "ability score above the SRD 2014 creature bound",
-      mutate(entity) { entity.stats.dex = "100"; },
+      mutate(entity) { entity.mechanics.definition.content.stats.dex = "100"; },
     },
     {
       label: "current hit points above maximum",
-      mutate(entity) { entity.hitPoints.current = "31"; },
+      mutate(entity) { entity.initialState = { hitPointsCurrent: "31" }; },
     },
     {
       label: "authority-owned die faces hidden in the materialization",
@@ -1733,11 +1920,15 @@ test("dynamic combat definitions fail closed before they can solidify invalid me
     },
     {
       label: "non-canonical damage formula",
-      mutate(entity) { entity.abilities[0].damage[0].formula = "999999999d20"; },
+      mutate(entity) {
+        entity.mechanics.definition.content.intrinsicAbilities[0].damage[0].formula = "999999999d20";
+      },
     },
     {
       label: "unsupported attack ability",
-      mutate(entity) { entity.abilities[0].attack.ability = "luck"; },
+      mutate(entity) {
+        entity.mechanics.definition.content.intrinsicAbilities[0].attack.ability = "luck";
+      },
     },
   ];
 
@@ -1768,8 +1959,8 @@ test("dynamic combat definitions fail closed before they can solidify invalid me
     {
       label: "ability definition id reused by two dynamic creatures",
       mutate(input) {
-        input.dynamicEntities[1].abilities[0].definitionId =
-          input.dynamicEntities[0].abilities[0].definitionId;
+        input.dynamicEntities[1].mechanics.definition.content.intrinsicAbilities[0].definitionId =
+          input.dynamicEntities[0].mechanics.definition.content.intrinsicAbilities[0].definitionId;
       },
     },
   ];
@@ -1876,13 +2067,13 @@ test("dynamic encounter solidification, 2014 initiative tie, and one Geometry pr
   assertIncludesEventTypes(area.events, ["AbilityInvoked", "DamagePacketResolved"]);
 });
 
-test("action economy derives advantage/disadvantage and atomically spends spell, item, and class resources through damage and concentration", () => {
+test("action economy derives advantage/disadvantage and atomically spends spell and class resources through damage and concentration", () => {
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
     "check:shove:character:alice": [14],
     "check:shove:enemy:ash-brute": [9],
     "attack:alice-resonant-blade": [16],
     "damage:alice-resonant-blade": [4, 3, 2],
-    "healing:item:healing-potion": [2, 3],
+    "healing:ability:restorative-touch": [2, 3],
     "attack:spell:fire-bolt": [17, 5],
     "damage:spell:fire-bolt": [6],
     "save:cinder-burst:character:alice": [7],
@@ -1931,15 +2122,14 @@ test("action economy derives advantage/disadvantage and atomically spends spell,
   }, authority), "committed").scenario;
   scenario = requireKind(drive(scenario, {
     kind: "invokeAbility",
-    rootActionId: "root:alice-drinks-potion",
+    rootActionId: "root:alice-restorative-touch",
     sourceEntityId: ALICE_ID,
-    abilityRef: "item:healing-potion",
+    abilityRef: "ability:restorative-touch",
     parameters: { targetEntityId: ALICE_ID },
   }, authority), "committed").scenario;
   let alice = combatEntity(read(scenario, ALICE_VIEWER), ALICE_ID);
   assert.equal(alice.resources["resource:action-surge"].current, "0");
   assert.equal(alice.resources["resource:resonant-blade"].current, "0");
-  assert.equal(alice.resources["item:healing-potion"].current, "0");
   assert.equal(alice.hitPoints.current, "16");
 
   scenario = requireKind(drive(scenario, {
@@ -2031,10 +2221,10 @@ test("B11 Extra Attack permits attack-move-retarget-attack but never turns one r
       "damage:alice-longbow": [3, 4],
     }));
     const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
       x: "-60", y: "0", elevation: "0",
     };
-    encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = {
+    encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = {
       x: "0", y: "180", elevation: "0",
     };
     let { scenario } = openEncounterWithInput(authority, encounterInput);
@@ -2415,7 +2605,7 @@ test("movement after a reaction is not precommitted and an incapacitating reacti
   }));
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
   const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-  brute.hitPoints = { current: "1", maximum: "1", temporary: "0" };
+  brute.mechanics.definition.content.hitPointsMaximum = "1";
   let { scenario } = openEncounterWithInput(authority, encounterInput);
   scenario = requireKind(drive(scenario, {
     kind: "endTurn",
@@ -2464,10 +2654,10 @@ test("Geometry G14 commits only a passed movement prefix when a readied grapple 
     "check:grapple:enemy:ash-brute": [0],
   }));
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID).placement.position = {
     x: "0", y: "0", elevation: "0",
   };
-  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).position = {
+  encounterInput.dynamicEntities.find(({ entityId }) => entityId === SENTINEL_ID).placement.position = {
     x: "360", y: "0", elevation: "0",
   };
   const initialState = structuredClone(INITIAL_STATE);
@@ -3558,7 +3748,7 @@ test("B19/B21 temporary hit points absorb damage without reviving or removing st
 test("B22 melee knock-out choice precedes massive damage and remains controller-private", () => {
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
   const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-  brute.hitPoints = { current: "5", maximum: "5", temporary: "0" };
+  brute.mechanics.definition.content.hitPointsMaximum = "5";
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
     "attack:alice-resonant-blade": [16],
     "damage:alice-resonant-blade": [4, 3, 2],
@@ -3634,8 +3824,8 @@ test("B22 melee knock-out choice precedes massive damage and remains controller-
 test("B22 an important NPC death-save policy is frozen before damage and survives a lethal-choice drop to zero", () => {
   const encounterInput = structuredClone(START_DYNAMIC_ENCOUNTER);
   const brute = encounterInput.dynamicEntities.find(({ entityId }) => entityId === BRUTE_ID);
-  brute.hitPoints = { current: "5", maximum: "30", temporary: "0" };
-  brute.deathPolicy = "deathSaves";
+  brute.initialState = { hitPointsCurrent: "5" };
+  brute.mechanics.definition.content.deathPolicy = "deathSaves";
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
     "attack:alice-resonant-blade": [16],
     "damage:alice-resonant-blade": [4, 3, 2],
@@ -3813,13 +4003,12 @@ test("B21 healing or later damage explicitly interrupts a stable creature's pend
   initialState.entities[ALICE_ID].deathSaves = { successes: 0, failures: 0 };
   initialState.entities[BOB_ID].proficientSkills = ["medicine"];
   initialState.entities[BOB_ID].position = { x: "0", y: "60", elevation: "0" };
-  initialState.entities[BOB_ID].resources["item:healing-potion"] = { current: "1", maximum: "1" };
-  initialState.entities[BOB_ID].abilityRefs.push("item:healing-potion");
+  initialState.entities[BOB_ID].abilityRefs.push("ability:restorative-touch");
   const genesis = geometryGenesis(initialState, "b21-stable-recovery-interruption");
   const authority = new DeterministicRoomAuthority(commonInitiativeEntropy({
     [`check:medicine:${BOB_ID}`]: [7],
     [`stable-recovery:${ALICE_ID}`]: [3],
-    "healing:item:healing-potion": [1, 1],
+    "healing:ability:restorative-touch": [1, 1],
     "attack:ability:ash-brute-maul": [17],
     "damage:ability:ash-brute-maul": [1, 1],
   }));
@@ -3855,7 +4044,7 @@ test("B21 healing or later damage explicitly interrupts a stable creature's pend
     kind: "invokeAbility",
     rootActionId: "root:b21-healing-interrupts-recovery",
     sourceEntityId: BOB_ID,
-    abilityRef: "item:healing-potion",
+    abilityRef: "ability:restorative-touch",
     parameters: { targetEntityId: ALICE_ID },
   }, authority), "committed");
   assertIncludesEventTypes(healed.events, ["ActivityInterrupted", "HealingResolved"]);

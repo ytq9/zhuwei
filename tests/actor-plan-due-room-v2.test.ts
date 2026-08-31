@@ -2,7 +2,12 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import {
+  compileKpFormDraft,
+  lowerCausalActionProgram,
+} from "../app/_runtime/lib/kp/causal-action-program";
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -29,7 +34,7 @@ const NPC_KNOWLEDGE_REF = "knowledge:actor-plan-due:hidden-watch-order";
 const NPC_UNFROZEN_KNOWLEDGE_REF = "knowledge:actor-plan-due:unfrozen-watch-secret";
 const PLAYER_PRIVATE_REF = "knowledge:actor-plan-due:player-private-route";
 const PLAYER_ACTIVITY_ID = "activity:actor-plan-due:player-investigation";
-const FACTION_REF = "faction:actor-plan-due:night-watch";
+const ACTIVITY_BASIS_REF = "fact:actor-plan-due:shared-wake";
 const PLAN_ID = "actor-plan:due:night-watch:close-yard";
 const ACTIVITY_ID = "activity:actor-plan-due:close-yard";
 const TRACE_FACT_REF = "fact:actor-plan-due:warning-cord";
@@ -51,92 +56,53 @@ function inputOf(request: JsonRecord): JsonRecord {
   return record(request.input, "KP request input");
 }
 
-function formationProposal(rootActionId: string) {
+async function unexpectedDueActorPlan(): Promise<never> {
+  throw new Error("this action must not reach a due ActorPlan decision");
+}
+
+function formationProposal(_rootActionId: string): JsonRecord {
   return {
-    kind: "directSuccess",
+    kind: "authenticatedCampaignAction",
+    action: "formNpcPlan",
+    npcId: NPC_ID,
+    planId: PLAN_ID,
     goal: "让守夜人依据自己的密令形成到期封门计划",
-    method: "守夜人准备在钟响后拉起警戒绳",
-    publicBasisRefs: [],
-    privateBasisRefs: [],
-    adjudicationPrecedent: null,
-    risk: null,
-    pendingInput: null,
-    dynamicMaterializations: [{
-      kind: "faction",
-      factRef: FACTION_REF,
-      causalBasisRefs: [],
-      visibilityPolicyRef: `visibility:npc:${NPC_ID}`,
-      definition: {
-        factionId: FACTION_REF,
-        name: "夜巡会",
-        goal: "在不惊动灵堂的前提下封闭院门",
-        memberRefs: [NPC_ID],
-        resourceRefs: ["resource:actor-plan-due:warning-cord"],
-      },
-    }],
-    hiddenRealityCandidateSet: null,
-    npcActions: [{
-      npcId: NPC_ID,
-      goal: "钟响后封闭院门",
-      method: "用警戒绳封闭院门，并留下可被院内人察觉的痕迹",
-      knowledgeRefs: [NPC_KNOWLEDGE_REF],
-      actorPlan: {
-        planId: PLAN_ID,
-        premiseRefs: [NPC_KNOWLEDGE_REF],
-        nextStep: "用警戒绳封闭院门",
-        resourceRefs: [FACTION_REF, "resource:actor-plan-due:warning-cord"],
-        activity: {
-          activityId: ACTIVITY_ID,
-          activityKind: "factionOperation",
-          intendedDurationMicros: "1000000",
-        },
-        due: { kind: "fictionTime", atFictionMicros: "1000000" },
-        trigger: null,
-        trace: {
-          factRef: TRACE_FACT_REF,
-          description: "院门前出现一条新拉起的警戒绳",
-          visibilityPolicyRef: "visibility:scene-observers",
-        },
-        alternateTarget: {
-          targetRef: "wake",
-          reason: "院门已经不可用时，改为守住灵堂入口",
-        },
-      },
-      mechanicalProposal: null,
-    }],
-    mechanicalProposal: {
-      operation: "resolveDirectConsequences",
-      duration: { unit: "second", value: 1 },
-      frozenCosts: [],
-      success: [],
-      failure: [],
+    nextAction: "用警戒绳封闭院门",
+    premiseRefs: [NPC_KNOWLEDGE_REF],
+    resourceRefs: [],
+    activity: {
+      activityId: ACTIVITY_ID,
+      activityKind: "factionOperation",
+      intendedDurationMicros: "1000000",
     },
-    scene: {
-      question: "守夜人的封门计划何时留下可察觉痕迹？",
-      pressure: "钟声即将响起。",
-      opportunities: [],
-      conclusionCandidate: null,
+    due: { kind: "fictionTime", atFictionMicros: "1000000" },
+    trigger: null,
+    trace: {
+      factRef: TRACE_FACT_REF,
+      description: "院门前出现一条新拉起的警戒绳",
+      visibilityPolicyRef: "visibility:scene-observers",
     },
-    proposalAttemptId: `proposal:${rootActionId}:form-actor-plan`,
+    alternateTarget: {
+      targetRef: "wake",
+      reason: "院门已经不可用时，改为守住灵堂入口",
+    },
   };
 }
 
-function triggerFormationProposal(rootActionId: string) {
+function triggerFormationProposal(rootActionId: string): JsonRecord {
   const proposal = formationProposal(rootActionId);
-  const actorPlan = proposal.npcActions[0].actorPlan;
-  actorPlan.due = null;
-  actorPlan.trigger = {
-    kind: "knowledgeAcquired" as const,
-    knowledgeRef: NPC_KNOWLEDGE_REF,
+  return {
+    ...proposal,
+    due: null,
+    trigger: {
+      kind: "knowledgeAcquired",
+      knowledgeRef: NPC_KNOWLEDGE_REF,
+    },
   };
-  return proposal;
 }
 
-function mechanicalFormationProposal(rootActionId: string) {
-  const proposal = formationProposal(rootActionId);
-  proposal.dynamicMaterializations = [];
-  proposal.npcActions[0].actorPlan.resourceRefs = [];
-  return proposal;
+function mechanicalFormationProposal(rootActionId: string): JsonRecord {
+  return formationProposal(rootActionId);
 }
 
 function executeDuePlanDecision(rootActionId: string) {
@@ -201,7 +167,7 @@ function reviseDuePlanDecision(rootActionId: string) {
       reason: "院门已经由城防接管，改守灵堂入口",
       premiseRefs: [NPC_KNOWLEDGE_REF],
       nextStep: "在灵堂入口拉起警戒绳",
-      resourceRefs: [FACTION_REF, "resource:actor-plan-due:warning-cord"],
+      resourceRefs: [],
       due: { kind: "fictionTime", atFictionMicros: "2000000" },
       trigger: null,
       trace: {
@@ -226,33 +192,27 @@ function executeAlternateDuePlanDecision(rootActionId: string) {
   };
 }
 
-function playerIntentProposal(rootActionId: string) {
-  return {
-    kind: "directSuccess",
+function playerIntentProposal(rootActionId: string): JsonRecord {
+  const draft = {
     goal: "从灵堂走向院门",
     method: "沿着同一场景中的石径走向院门",
-    publicBasisRefs: [],
-    privateBasisRefs: [],
-    adjudicationPrecedent: null,
-    risk: null,
-    pendingInput: null,
-    dynamicMaterializations: [],
-    hiddenRealityCandidateSet: null,
-    npcActions: [],
-    mechanicalProposal: {
-      operation: "resolveDirectConsequences",
-      duration: { unit: "second", value: 1 },
-      frozenCosts: [],
-      success: [],
-      failure: [],
-    },
-    scene: {
-      question: "新出现的警戒绳如何改变玩家前往院门的方式？",
-      pressure: "院门处已经出现可观察的新阻碍。",
-      opportunities: ["查看警戒绳", "询问守夜人"],
-      conclusionCandidate: null,
-    },
+    focus: "院门方向刚出现的变化",
+    desiredInformation: "前往院门的路径现在是否仍然通畅",
+    resolution: "direct",
+    durationUnit: "second",
+    durationValue: 1,
+  };
+  const program = compileKpFormDraft("observe.v1", draft);
+  return {
+    kind: "privateFormProposal",
+    formId: "observe.v1",
+    draft,
+    causalActionProgram: program,
+    loweredCausalProgram: lowerCausalActionProgram(program),
+    semanticFreezeHash: program.semanticHash,
+    repairUsed: false,
     proposalAttemptId: `proposal:${rootActionId}:player-intent`,
+    modelInvocationReceipt: { provider: "test", requestId: `request:${rootActionId}` },
   };
 }
 
@@ -265,6 +225,7 @@ async function initializeRoom(roomId: string): Promise<{
   const initialized = record(await authority.initializeAuthoritative({
     roomId,
     moduleId: "black-oak-will",
+    runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     members: [
       { principalId: ALICE.principal.id, role: "host" },
       { principalId: BOB.principal.id, role: "player" },
@@ -293,6 +254,10 @@ async function initializeRoom(roomId: string): Promise<{
       knowledgeRef: PLAYER_PRIVATE_REF,
       holderEntityId: PLAYER_CHARACTER_ID,
       content: "只有阿莱莎知道：她准备从侧门秘密离开。",
+    }, {
+      factRef: ACTIVITY_BASIS_REF,
+      kind: "establishedCommunicationChannel",
+      participants: [PLAYER_CHARACTER_ID, NPC_ID],
     }],
   }), "due ActorPlan room initialization");
   const capabilities = record(initialized.serviceCapabilities, "service capabilities");
@@ -311,6 +276,7 @@ async function initializeMechanicalRoom(roomId: string): Promise<{
   const initialized = record(await authority.initializeAuthoritative({
     roomId,
     moduleId: "black-oak-will",
+    runtimeProfiles: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
     members: [
       { principalId: ALICE.principal.id, role: "host" },
       { principalId: BOB.principal.id, role: "player" },
@@ -343,6 +309,10 @@ async function initializeMechanicalRoom(roomId: string): Promise<{
       knowledgeRef: PLAYER_PRIVATE_REF,
       holderEntityId: PLAYER_CHARACTER_ID,
       content: "只有阿莱莎知道：她准备从侧门秘密离开。",
+    }, {
+      factRef: ACTIVITY_BASIS_REF,
+      kind: "establishedCommunicationChannel",
+      participants: [PLAYER_CHARACTER_ID, NPC_ID],
     }],
   }), "mechanical ActorPlan room initialization");
   const capabilities = record(initialized.serviceCapabilities, "mechanical service capabilities");
@@ -354,38 +324,13 @@ async function retireMechanicalNpc(authority: Authority): Promise<void> {
     principal: BOB,
     authority,
     kp: {
-      async propose(request) {
-        const rootActionId = String(record(request, "retirement proposal request").rootActionId);
+      decideDueActorPlan: unexpectedDueActorPlan,
+      async propose() {
         return {
-          kind: "directSuccess",
-          goal: "守夜人退席后继续作为 NPC 履行自己的职责",
-          method: "守夜人明确交还玩家控制权并留在故事中",
-          publicBasisRefs: [],
-          privateBasisRefs: [],
-          adjudicationPrecedent: null,
-          risk: null,
-          pendingInput: null,
-          dynamicMaterializations: [{
-            kind: "fact",
-            factRef: "fact:actor-plan-due:watcher-retirement-consent",
-            causalBasisRefs: [],
-            visibilityPolicyRef: "visibility:scene-observers",
-            definition: { name: "守夜人自愿退席并继续留在故事中" },
-          }],
-          hiddenRealityCandidateSet: null,
-          npcActions: [],
-          mechanicalProposal: {
-            operation: "advanceCampaignLifecycle",
-            lifecycleAction: "retireCharacter",
-            continueAsNpc: true,
-          },
-          scene: {
-            question: "守夜人退席后如何继续履行职责？",
-            pressure: "院门仍需要有人照看。",
-            opportunities: [],
-            conclusionCandidate: null,
-          },
-          proposalAttemptId: `proposal:${rootActionId}:retire-watcher`,
+          kind: "authenticatedCampaignAction",
+          action: "retireCharacter",
+          reason: "守夜人明确交还玩家控制权并继续留在故事中",
+          continueAsNpc: true,
         };
       },
       async narrate() {
@@ -406,34 +351,21 @@ async function startPlayerActivity(authority: Authority): Promise<void> {
     principal: ALICE,
     authority,
     kp: {
-      async propose(request) {
-        const rootActionId = String(record(request, "player Activity request").rootActionId);
+      decideDueActorPlan: unexpectedDueActorPlan,
+      async propose() {
         return {
-          kind: "directSuccess",
-          goal: "持续调查院墙上的旧刻痕",
-          method: "阿莱莎独自拓印并核对每一道刻痕",
-          publicBasisRefs: [],
-          privateBasisRefs: [],
-          adjudicationPrecedent: null,
-          risk: null,
-          pendingInput: null,
-          dynamicMaterializations: [],
-          hiddenRealityCandidateSet: null,
-          npcActions: [],
-          mechanicalProposal: {
-            operation: "startActivity",
-            activityRef: PLAYER_ACTIVITY_ID,
-            duration: { unit: "hour", value: 1 },
+          kind: "authenticatedCampaignAction",
+          action: "startActivity",
+          activityId: PLAYER_ACTIVITY_ID,
+          activityKind: "investigation",
+          intendedDurationMicros: "3600000000",
+          completion: {
+            method: "阿莱莎独自拓印并核对每一道刻痕",
+            primaryFactRef: ACTIVITY_BASIS_REF,
+            sourceSceneId: "wake",
             success: [],
             failure: [],
           },
-          scene: {
-            question: "旧刻痕会揭示什么？",
-            pressure: "这项调查需要持续一小时。",
-            opportunities: [],
-            conclusionCandidate: null,
-          },
-          proposalAttemptId: `proposal:${rootActionId}:start-player-activity`,
         };
       },
       async narrate() {
@@ -453,24 +385,45 @@ async function formDuePlan(
   submissionId: string,
   proposalForRoot: (rootActionId: string) => ReturnType<typeof formationProposal> = formationProposal,
 ): Promise<void> {
-  const outcome = record(await handleRoomAction({
-    principal: ALICE,
-    authority,
-    kp: {
-      async propose(request) {
-        const proposalRequest = record(request, "formation proposal request");
-        return proposalForRoot(String(proposalRequest.rootActionId));
-      },
-      async narrate() {
-        return { body: "守夜人仍按自己的职责巡视。", agencyClaims: [] };
-      },
-    },
-  }, {
+  const formationInput = {
     kind: "intent",
     submissionId,
     text: "我在灵堂里观察守夜人的例行巡视。",
-  } as never), "ActorPlan formation outcome");
+  };
+  const preparedFormation = record(
+    await authority.prepare(ALICE, formationInput),
+    "ActorPlan formation preparation",
+  );
+  const formedProposal = proposalForRoot(String(preparedFormation.rootActionId));
+  const outcome = record(await authority.commit(
+    ALICE,
+    String(preparedFormation.preparedActionId),
+    {
+      ...formedProposal,
+      rootActionId: preparedFormation.rootActionId,
+    },
+  ), "ActorPlan formation outcome");
   expect(outcome.kind, JSON.stringify(outcome)).toBe("committed");
+  if (formedProposal.due !== null) {
+    const elapsedInput = {
+      kind: "intent",
+      submissionId: `${submissionId}:elapsed`,
+      text: "我继续观察一秒。",
+    };
+    const prepared = record(
+      await authority.prepare(ALICE, elapsedInput),
+      "ActorPlan formation elapsed-time preparation",
+    );
+    const elapsed = record(await authority.commit(
+      ALICE,
+      String(prepared.preparedActionId),
+      {
+        ...playerIntentProposal(String(prepared.rootActionId)),
+        rootActionId: prepared.rootActionId,
+      },
+    ), "ActorPlan formation elapsed-time outcome");
+    expect(elapsed.kind, JSON.stringify(elapsed)).toBe("committed");
+  }
 }
 
 async function archiveEvents(authority: Authority, archiveCapability: unknown): Promise<JsonRecord[]> {
@@ -489,18 +442,23 @@ describe("due ActorPlan Room Action phase", () => {
     await formDuePlan(authority, "submission:actor-plan-due:form:execute");
 
     const proposalRequests: JsonRecord[] = [];
+    const requestPhases: string[] = [];
     const dueSubmissionId = "submission:actor-plan-due:execute";
     const outcome = record(await handleRoomAction({
       principal: ALICE,
       authority,
       kp: {
+        async decideDueActorPlan(request) {
+          requestPhases.push("dueActorPlan");
+          const decisionRequest = structuredClone(record(request, "due decision request"));
+          proposalRequests.push(decisionRequest);
+          return executeDuePlanDecision(String(decisionRequest.rootActionId));
+        },
         async propose(request) {
           const proposalRequest = structuredClone(record(request, "due proposal request"));
+          requestPhases.push("playerIntent");
           proposalRequests.push(proposalRequest);
-          const rootActionId = String(proposalRequest.rootActionId);
-          return proposalRequest.phase === "dueActorPlan"
-            ? executeDuePlanDecision(rootActionId)
-            : playerIntentProposal(rootActionId);
+          return playerIntentProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
           return { body: "钟声落下，院门前已经横起警戒绳。", agencyClaims: [] };
@@ -514,7 +472,7 @@ describe("due ActorPlan Room Action phase", () => {
 
     expect(proposalRequests, "due plan must be decided before the player intent is proposed")
       .toHaveLength(2);
-    expect(proposalRequests.map((request) => request.phase ?? "playerIntent")).toEqual([
+    expect(requestPhases).toEqual([
       "dueActorPlan",
       "playerIntent",
     ]);
@@ -574,9 +532,9 @@ describe("due ActorPlan Room Action phase", () => {
       && record(event.payload, "due ActivityCompleted payload").activityId === ACTIVITY_ID
     );
     const playerEventIndex = events.findIndex((event) => {
-      if (event.eventType !== "FeasibilityRuled") return false;
+      if (event.eventType !== "ImprovisedActionResolved") return false;
       return event.rootActionId === receipt.rootActionId
-        && record(event.payload, "player feasibility payload").characterId === PLAYER_CHARACTER_ID;
+        && record(event.payload, "player causal payload").actorCharacterId === PLAYER_CHARACTER_ID;
     });
     expect(npcActionIndex, "the due NPC action must retain explicit outer-root causality")
       .toBeGreaterThanOrEqual(0);
@@ -598,11 +556,11 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        async decideDueActorPlan() {
+          throw Object.assign(new Error("due ActorPlan model unavailable"), { retryAfter: 3 });
+        },
         async propose(request) {
           const proposalRequest = record(request, "failing due proposal request");
-          if (proposalRequest.phase === "dueActorPlan") {
-            throw Object.assign(new Error("due ActorPlan model unavailable"), { retryAfter: 3 });
-          }
           return playerIntentProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
@@ -625,7 +583,7 @@ describe("due ActorPlan Room Action phase", () => {
     const tail = after.slice(before.length);
     expect(tail).toEqual([]);
     expect(JSON.stringify(tail)).not.toMatch(
-      /Attack|Pass|TurnEnded|ActivityCompleted|FictionTimeAdvanced|FeasibilityRuled|NpcActionCommitted/,
+      /Attack|Pass|TurnEnded|ActivityCompleted|FictionTimeAdvanced|ImprovisedActionResolved|NpcActionCommitted/,
     );
   });
 
@@ -639,13 +597,15 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        async decideDueActorPlan(request) {
+          phases.push("dueActorPlan");
+          const decisionRequest = record(request, "cancel due decision request");
+          return cancelDuePlanDecision(String(decisionRequest.rootActionId));
+        },
         async propose(request) {
           const proposalRequest = record(request, "cancel due proposal request");
-          phases.push(String(proposalRequest.phase ?? "playerIntent"));
-          const rootActionId = String(proposalRequest.rootActionId);
-          return proposalRequest.phase === "dueActorPlan"
-            ? cancelDuePlanDecision(rootActionId)
-            : playerIntentProposal(rootActionId);
+          phases.push("playerIntent");
+          return playerIntentProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
           return { body: "城防已经接管院门，守夜人收起了警戒绳。", agencyClaims: [] };
@@ -669,7 +629,7 @@ describe("due ActorPlan Room Action phase", () => {
       && record(event.payload, "cancelled Activity payload").activityId === ACTIVITY_ID
     );
     const playerIndex = events.findIndex((event) =>
-      event.eventType === "FeasibilityRuled"
+      event.eventType === "ImprovisedActionResolved"
       && event.rootActionId === `root-action:${submissionId}`
     );
     expect(cancellationIndex).toBeGreaterThanOrEqual(0);
@@ -727,13 +687,15 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        async decideDueActorPlan(request) {
+          firstPhases.push("dueActorPlan");
+          const decisionRequest = record(request, "defer decision request");
+          return deferDuePlanDecision(String(decisionRequest.rootActionId), "3000000");
+        },
         async propose(request) {
           const proposalRequest = record(request, "defer proposal request");
-          firstPhases.push(String(proposalRequest.phase ?? "playerIntent"));
-          const rootActionId = String(proposalRequest.rootActionId);
-          return proposalRequest.phase === "dueActorPlan"
-            ? deferDuePlanDecision(rootActionId, "3000000")
-            : playerIntentProposal(rootActionId);
+          firstPhases.push("playerIntent");
+          return playerIntentProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
           return { body: "守夜人决定再等一会儿。", agencyClaims: [] };
@@ -752,6 +714,7 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        decideDueActorPlan: unexpectedDueActorPlan,
         async propose(request) {
           const proposalRequest = record(request, "before deferred due request");
           beforeDuePhases.push(String(proposalRequest.phase ?? "playerIntent"));
@@ -774,13 +737,15 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        async decideDueActorPlan(request) {
+          atDuePhases.push("dueActorPlan");
+          const decisionRequest = record(request, "at deferred due decision request");
+          return cancelDuePlanDecision(String(decisionRequest.rootActionId));
+        },
         async propose(request) {
           const proposalRequest = record(request, "at deferred due request");
-          atDuePhases.push(String(proposalRequest.phase ?? "playerIntent"));
-          const rootActionId = String(proposalRequest.rootActionId);
-          return proposalRequest.phase === "dueActorPlan"
-            ? cancelDuePlanDecision(rootActionId)
-            : playerIntentProposal(rootActionId);
+          atDuePhases.push("playerIntent");
+          return playerIntentProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
           return { body: "约定时刻已经抵达。", agencyClaims: [] };
@@ -821,12 +786,13 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        async decideDueActorPlan(request) {
+          const decisionRequest = record(request, "revision decision request");
+          return reviseDuePlanDecision(String(decisionRequest.rootActionId));
+        },
         async propose(request) {
           const proposalRequest = record(request, "revision proposal request");
-          const rootActionId = String(proposalRequest.rootActionId);
-          return proposalRequest.phase === "dueActorPlan"
-            ? reviseDuePlanDecision(rootActionId)
-            : playerIntentProposal(rootActionId);
+          return playerIntentProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
           return { body: "守夜人把计划改为守住灵堂入口。", agencyClaims: [] };
@@ -844,13 +810,15 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        async decideDueActorPlan(request) {
+          phases.push("dueActorPlan");
+          const decisionRequest = record(request, "alternate execution decision request");
+          return executeAlternateDuePlanDecision(String(decisionRequest.rootActionId));
+        },
         async propose(request) {
           const proposalRequest = record(request, "alternate execution request");
-          phases.push(String(proposalRequest.phase ?? "playerIntent"));
-          const rootActionId = String(proposalRequest.rootActionId);
-          return proposalRequest.phase === "dueActorPlan"
-            ? executeAlternateDuePlanDecision(rootActionId)
-            : playerIntentProposal(rootActionId);
+          phases.push("playerIntent");
+          return playerIntentProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
           return { body: "守夜人在灵堂入口拉起警戒绳。", agencyClaims: [] };
@@ -902,6 +870,7 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        decideDueActorPlan: unexpectedDueActorPlan,
         async propose(request) {
           return triggerFormationProposal(String(record(request, "trigger formation request").rootActionId));
         },
@@ -922,13 +891,15 @@ describe("due ActorPlan Room Action phase", () => {
       principal: ALICE,
       authority,
       kp: {
+        async decideDueActorPlan(request) {
+          phases.push("dueActorPlan");
+          const decisionRequest = record(request, "trigger execution decision request");
+          return executeDuePlanDecision(String(decisionRequest.rootActionId));
+        },
         async propose(request) {
           const proposalRequest = record(request, "trigger execution request");
-          phases.push(String(proposalRequest.phase ?? "playerIntent"));
-          const rootActionId = String(proposalRequest.rootActionId);
-          return proposalRequest.phase === "dueActorPlan"
-            ? executeDuePlanDecision(rootActionId)
-            : playerIntentProposal(rootActionId);
+          phases.push("playerIntent");
+          return playerIntentProposal(String(proposalRequest.rootActionId));
         },
         async narrate() {
           return { body: "守夜人按已经获得的密令拉起警戒绳。", agencyClaims: [] };
@@ -1065,11 +1036,13 @@ describe("due ActorPlan Room Action phase", () => {
       "submission:actor-plan-due:form:frozen-recipient",
       (rootActionId) => {
         const proposal = formationProposal(rootActionId);
-        proposal.npcActions[0].actorPlan.alternateTarget = {
-          targetRef: PLAYER_CHARACTER_ID,
-          reason: "院门处的行动需要直接告知在场的阿莱莎",
+        return {
+          ...proposal,
+          alternateTarget: {
+            targetRef: PLAYER_CHARACTER_ID,
+            reason: "院门处的行动需要直接告知在场的阿莱莎",
+          },
         };
-        return proposal;
       },
     );
 
@@ -1162,6 +1135,7 @@ describe("due ActorPlan Room Action phase", () => {
       "committed player intent after recovery",
     );
     expect(committed.kind, JSON.stringify(committed)).toBe("committed");
+    const eventsBeforeRetry = await archiveEvents(authority, archiveCapability);
 
     await evictDurableObject(authority as never);
     authority = env.ROOMS.getByName(roomId) as unknown as Authority;
@@ -1172,6 +1146,7 @@ describe("due ActorPlan Room Action phase", () => {
     expect(retried).toEqual(committed);
 
     const events = await archiveEvents(authority, archiveCapability);
+    expect(events).toEqual(eventsBeforeRetry);
     expect(events.filter((event) =>
       event.eventType === "NpcActionCommitted"
       && record(event.payload, "eviction NpcAction payload").planId === PLAN_ID
@@ -1186,8 +1161,16 @@ describe("due ActorPlan Room Action phase", () => {
       && record(event.payload, "eviction Activity payload").activityId === ACTIVITY_ID
     )).toHaveLength(1);
     expect(events.filter((event) =>
-      event.eventType === "FeasibilityRuled"
+      event.eventType === "ImprovisedActionResolved"
       && event.rootActionId === `root-action:${submissionId}`
+      && record(event.payload, "eviction causal freeze payload").outcomeCode
+        === "causal-program-frozen"
+    )).toHaveLength(1);
+    expect(events.filter((event) =>
+      event.eventType === "ImprovisedActionResolved"
+      && event.rootActionId === `root-action:${submissionId}`
+      && record(event.payload, "eviction causal terminal payload").outcomeCode
+        === "causal-node:n01:success"
     )).toHaveLength(1);
   });
 
@@ -1380,7 +1363,7 @@ describe("due ActorPlan Room Action phase", () => {
     );
     expect(dice.faces).toEqual(recoveredRandomness.faces);
     const playerEventIndex = events.findIndex((event) =>
-      event.eventType === "FeasibilityRuled"
+      event.eventType === "ImprovisedActionResolved"
       && event.rootActionId === `root-action:${submissionId}`
     );
     expect(events.indexOf(childEvents.find((event) => event.eventType === "ImprovisedCheckResolved")!))

@@ -6,19 +6,20 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   GEAR_SLOTS,
-  allowedSlots,
-  itemById,
   slotLabel,
-  type Equipped,
   type GearSlot,
-  type PackEntry,
 } from "@/lib/dnd/gear";
-import { setGear } from "@/lib/table/client";
+import { setGear, useInventoryItem } from "@/lib/table/client";
+import type {
+  AuthoritativeInventory,
+  AuthoritativeInventoryActivity,
+  AuthoritativeInventoryEntry,
+  AuthoritativeIdentifiedInventoryEntry,
+} from "@/lib/table/authoritative";
 import { tableActionAccepted } from "@/lib/table/authoritative-client";
 
 type InventoryPanelProps = {
-  equipped: Equipped;
-  backpack: PackEntry[];
+  inventory?: AuthoritativeInventory;
   canEdit: boolean;
   code: string;
 };
@@ -26,25 +27,14 @@ type InventoryPanelProps = {
 type GearActionController = {
   busyKey: string | null;
   act(action: "wear" | "stow", slot: GearSlot, itemId?: string): Promise<void>;
+  use(itemEntryId: string): Promise<void>;
 };
 
 const UNAVAILABLE_ITEM_LABEL = "物品资料不可用";
+const OPAQUE_ITEM_LABEL = "未辨明物品";
 
-export function inventoryWornSummary(equipped: Equipped) {
-  const labels = GEAR_SLOTS.flatMap((slot) => {
-    const itemId = equipped[slot.id];
-    if (!itemId) return [];
-    return [itemById(itemId)?.name ?? UNAVAILABLE_ITEM_LABEL];
-  });
-  return labels.length > 0
-    ? `${labels.length} 个槽位 · ${labels.join("、")}`
-    : "未装备";
-}
-
-export function inventoryPackSummary(backpack: PackEntry[]) {
-  if (backpack.length === 0) return "空";
-  const total = backpack.reduce((sum, entry) => sum + entry.qty, 0);
-  return `${backpack.length} 种 · 共 ${total} 个`;
+function inventoryEntryLabel(entry: AuthoritativeInventoryEntry): string {
+  return entry.kind === "identified" ? entry.name : OPAQUE_ITEM_LABEL;
 }
 
 function useGearActions(code: string, canEdit: boolean): GearActionController {
@@ -76,7 +66,27 @@ function useGearActions(code: string, canEdit: boolean): GearActionController {
     }
   }
 
-  return { busyKey, act };
+  async function use(itemEntryId: string) {
+    if (!canEdit || inFlight.current) return;
+    const actionKey = `use:${itemEntryId}`;
+    inFlight.current = true;
+    setBusyKey(actionKey);
+    try {
+      const result = await useInventoryItem({ data: { code, itemEntryId } });
+      if (!tableActionAccepted(result)) {
+        toast.error(String(result.error ?? "使用物品失败"));
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ["table", code] });
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "使用物品失败");
+    } finally {
+      inFlight.current = false;
+      setBusyKey(null);
+    }
+  }
+
+  return { busyKey, act, use };
 }
 
 function InventorySection({
@@ -121,26 +131,163 @@ function InventorySection({
   );
 }
 
-function GearSlots({
-  equipped,
+const INVENTORY_ACTIVITY_DISABLED_COPY: Record<
+  NonNullable<AuthoritativeInventoryActivity["disabledReason"]>,
+  string
+> = {
+  itemBroken: "物品已损坏",
+  insufficientQuantity: "数量不足",
+  insufficientCharges: "充能不足",
+  insufficientDurability: "耐久不足",
+};
+
+export function inventoryWornSummary(inventory: AuthoritativeInventory) {
+  const entriesBySlot = new Map(
+    inventory.entries.flatMap((entry) => entry.equippedSlot === null
+      ? []
+      : [[entry.equippedSlot, entry] as const]),
+  );
+  const labels = GEAR_SLOTS.flatMap(({ id }) => {
+    const entry = entriesBySlot.get(id);
+    return entry === undefined ? [] : [inventoryEntryLabel(entry)];
+  });
+  return labels.length > 0
+    ? `${labels.length} 个槽位 · ${labels.join("、")}`
+    : "未装备";
+}
+
+export function inventoryPackSummary(inventory: AuthoritativeInventory) {
+  const entries = inventory.entries.filter(({ equippedSlot }) => equippedSlot === null);
+  if (entries.length === 0) return "空";
+  const total = entries.reduce((sum, entry) => sum + entry.quantity, 0);
+  return `${entries.length} 种 · 共 ${total} 个`;
+}
+
+function AuthoritativeItemFacts({ entry }: { entry: AuthoritativeIdentifiedInventoryEntry }) {
+  const counters = [
+    entry.charges === null
+      ? null
+      : `充能 ${entry.charges.current}/${entry.charges.maximum}`,
+    entry.durability === null
+      ? null
+      : `耐久 ${entry.durability.current}/${entry.durability.maximum}`,
+    entry.condition === "broken" ? "已损坏" : null,
+  ].filter((fact): fact is string => fact !== null);
+  return (
+    <>
+      <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted [overflow-wrap:anywhere]">
+        {entry.publicDamageText ? `${entry.publicDamageText}。` : ""}{entry.description}
+      </p>
+      {counters.length > 0 ? (
+        <p className="mt-1 text-[11px] text-subtle">{counters.join(" · ")}</p>
+      ) : null}
+    </>
+  );
+}
+
+function OpaqueItemState({ entry }: { entry: AuthoritativeInventoryEntry & { kind: "opaque" } }) {
+  const placement = entry.equippedSlot === null ? "背包" : slotLabel(entry.equippedSlot);
+  const condition = entry.condition === "broken" ? "已损坏" : "可用";
+  return (
+    <p className="text-[11px] text-subtle">
+      数量 {entry.quantity} · 槽位 {placement} · 状态 {condition}
+    </p>
+  );
+}
+
+function AuthoritativeItemControls({
+  entry,
+  canEdit,
+  actions,
+  stowSlot,
+}: {
+  entry: AuthoritativeIdentifiedInventoryEntry;
+  canEdit: boolean;
+  actions: GearActionController;
+  stowSlot?: GearSlot;
+}) {
+  if (!canEdit) return null;
+  const useActivity = entry.activities.find(({ activityId }) => activityId === "use");
+  const useKey = `use:${entry.entryId}`;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5" aria-busy={actions.busyKey !== null}>
+      {useActivity ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="brass"
+          className="min-h-11"
+          disabled={actions.busyKey !== null || !useActivity.enabled}
+          title={useActivity.disabledReason === null
+            ? undefined
+            : INVENTORY_ACTIVITY_DISABLED_COPY[useActivity.disabledReason]}
+          onClick={() => void actions.use(entry.entryId)}
+        >
+          {actions.busyKey === useKey
+            ? "使用中……"
+            : useActivity.disabledReason === null
+              ? useActivity.label
+              : INVENTORY_ACTIVITY_DISABLED_COPY[useActivity.disabledReason]}
+        </Button>
+      ) : null}
+      {stowSlot === undefined
+        ? entry.allowedSlots.map((slot) => {
+            const actionKey = `wear:${slot}:${entry.entryId}`;
+            return (
+              <Button
+                key={slot}
+                type="button"
+                size="sm"
+                variant="brass"
+                className="min-h-11"
+                disabled={actions.busyKey !== null}
+                onClick={() => void actions.act("wear", slot, entry.entryId)}
+              >
+                {actions.busyKey === actionKey
+                  ? "装备中……"
+                  : `装备到${slotLabel(slot)}`}
+              </Button>
+            );
+          })
+        : (
+            <Button
+              type="button"
+              size="sm"
+              variant="brass"
+              className="min-h-11"
+              disabled={actions.busyKey !== null}
+              onClick={() => void actions.act("stow", stowSlot)}
+            >
+              {actions.busyKey === `stow:${stowSlot}:` ? "收纳中……" : "卸到背包"}
+            </Button>
+          )}
+    </div>
+  );
+}
+
+function AuthoritativeGearSlots({
+  inventory,
   canEdit,
   actions,
 }: {
-  equipped: Equipped;
+  inventory: AuthoritativeInventory;
   canEdit: boolean;
   actions: GearActionController;
 }) {
   const [openSlot, setOpenSlot] = useState<GearSlot | null>(null);
   const id = useId();
+  const entriesBySlot = new Map(
+    inventory.entries.flatMap((entry) => entry.equippedSlot === null
+      ? []
+      : [[entry.equippedSlot, entry] as const]),
+  );
   return (
     <ul className="grid gap-1.5">
       {GEAR_SLOTS.map((slot) => {
-        const itemId = equipped[slot.id];
-        const item = itemById(itemId);
+        const entry = entriesBySlot.get(slot.id);
         const open = openSlot === slot.id;
         const triggerId = `${id}-${slot.id}-trigger`;
         const panelId = `${id}-${slot.id}-panel`;
-        const actionKey = `stow:${slot.id}:`;
         return (
           <li key={slot.id} className="rounded-[10px] border border-border bg-bg/40">
             <button
@@ -152,10 +299,10 @@ function GearSlots({
               className="flex min-h-11 w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left"
             >
               <span className="text-[11px] text-subtle">{slot.label}</span>
-              <span className="text-xs">
-                {itemId
-                  ? item?.name ?? UNAVAILABLE_ITEM_LABEL
-                  : <span className="text-subtle">空</span>}
+              <span className="min-w-0 break-words text-right text-xs [overflow-wrap:anywhere]">
+                {entry === undefined
+                  ? <span className="text-subtle">空</span>
+                  : <>{inventoryEntryLabel(entry)}{entry.quantity > 1 ? ` ×${entry.quantity}` : ""}</>}
               </span>
             </button>
             {open ? (
@@ -165,28 +312,38 @@ function GearSlots({
                 aria-labelledby={triggerId}
                 className="border-t border-border px-2.5 py-2"
               >
-                {itemId ? (
-                  <>
-                    <p className="text-xs leading-relaxed text-muted">
-                      {item
-                        ? `${item.damage ? `${item.damage}。` : ""}${item.text}`
-                        : "这件物品的公开资料暂不可用。"}
-                    </p>
-                    {canEdit ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="brass"
-                        className="mt-2 min-h-11"
-                        disabled={actions.busyKey !== null}
-                        onClick={() => void actions.act("stow", slot.id)}
-                      >
-                        {actions.busyKey === actionKey ? "收纳中……" : "卸到背包"}
-                      </Button>
-                    ) : null}
-                  </>
-                ) : (
+                {entry === undefined ? (
                   <p className="text-xs text-subtle">这一格是空的。从背包里选一件装备。</p>
+                ) : (
+                  entry.kind === "opaque" ? (
+                    <>
+                      <OpaqueItemState entry={entry} />
+                      {canEdit ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5" aria-busy={actions.busyKey !== null}>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="brass"
+                            className="min-h-11"
+                            disabled={actions.busyKey !== null}
+                            onClick={() => void actions.act("stow", slot.id)}
+                          >
+                            {actions.busyKey === `stow:${slot.id}:` ? "收纳中……" : "卸到背包"}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <AuthoritativeItemFacts entry={entry} />
+                      <AuthoritativeItemControls
+                        entry={entry}
+                        canEdit={canEdit}
+                        actions={actions}
+                        stowSlot={slot.id}
+                      />
+                    </>
+                  )
                 )}
               </div>
             ) : null}
@@ -197,41 +354,41 @@ function GearSlots({
   );
 }
 
-function Backpack({
-  backpack,
+function AuthoritativeBackpack({
+  inventory,
   canEdit,
   actions,
 }: {
-  backpack: PackEntry[];
+  inventory: AuthoritativeInventory;
   canEdit: boolean;
   actions: GearActionController;
 }) {
   const [openEntry, setOpenEntry] = useState<string | null>(null);
   const id = useId();
-  if (backpack.length === 0) {
+  const entries = inventory.entries.filter(({ equippedSlot }) => equippedSlot === null);
+  if (entries.length === 0) {
     return <p className="text-xs text-subtle">背包是空的。</p>;
   }
   return (
     <ul className="grid gap-1.5">
-      {backpack.map((entry, index) => {
-        const item = itemById(entry.itemId);
-        const entryKey = `${entry.itemId}:${index}`;
-        const open = openEntry === entryKey;
-        const slots = item ? allowedSlots(item) : [];
+      {entries.map((entry, index) => {
+        const open = openEntry === entry.entryId;
         const triggerId = `${id}-${index}-trigger`;
         const panelId = `${id}-${index}-panel`;
         return (
-          <li key={entryKey} className="rounded-[10px] border border-border bg-bg/40">
+          <li key={entry.entryId} className="rounded-[10px] border border-border bg-bg/40">
             <button
               id={triggerId}
               type="button"
               aria-controls={panelId}
               aria-expanded={open}
-              onClick={() => setOpenEntry(open ? null : entryKey)}
+              onClick={() => setOpenEntry(open ? null : entry.entryId)}
               className="flex min-h-11 w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left"
             >
-              <span className="text-xs">{item?.name ?? UNAVAILABLE_ITEM_LABEL}</span>
-              <span className="text-[11px] text-subtle">×{entry.qty}</span>
+              <span className="min-w-0 break-words text-xs [overflow-wrap:anywhere]">
+                {inventoryEntryLabel(entry)}
+              </span>
+              <span className="shrink-0 text-[11px] text-subtle">×{entry.quantity}</span>
             </button>
             {open ? (
               <div
@@ -240,33 +397,18 @@ function Backpack({
                 aria-labelledby={triggerId}
                 className="border-t border-border px-2.5 py-2"
               >
-                <p className="text-xs leading-relaxed text-muted">
-                  {item
-                    ? `${item.damage ? `${item.damage}。` : ""}${item.text}`
-                    : "这件物品的公开资料暂不可用。"}
-                </p>
-                {canEdit && slots.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {slots.map((slot) => {
-                      const actionKey = `wear:${slot}:${entry.itemId}`;
-                      return (
-                        <Button
-                          key={slot}
-                          type="button"
-                          size="sm"
-                          variant="brass"
-                          className="min-h-11"
-                          disabled={actions.busyKey !== null}
-                          onClick={() => void actions.act("wear", slot, entry.itemId)}
-                        >
-                          {actions.busyKey === actionKey
-                            ? "装备中……"
-                            : `装备到${slotLabel(slot)}`}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                ) : null}
+                {entry.kind === "opaque" ? (
+                  <OpaqueItemState entry={entry} />
+                ) : (
+                  <>
+                    <AuthoritativeItemFacts entry={entry} />
+                    <AuthoritativeItemControls
+                      entry={entry}
+                      canEdit={canEdit}
+                      actions={actions}
+                    />
+                  </>
+                )}
               </div>
             ) : null}
           </li>
@@ -277,19 +419,31 @@ function Backpack({
 }
 
 export function InventoryPanel({
-  equipped,
-  backpack,
+  inventory,
   canEdit,
   code,
 }: InventoryPanelProps) {
   const actions = useGearActions(code, canEdit);
+  if (inventory === undefined) return (
+    <div className="rounded-[12px] border border-border px-2.5 py-3 text-xs text-subtle">
+      {UNAVAILABLE_ITEM_LABEL}
+    </div>
+  );
   return (
     <>
-      <InventorySection title="身上" hint={inventoryWornSummary(equipped)}>
-        <GearSlots equipped={equipped} canEdit={canEdit} actions={actions} />
+      <InventorySection title="身上" hint={inventoryWornSummary(inventory)}>
+        <AuthoritativeGearSlots
+          inventory={inventory}
+          canEdit={canEdit}
+          actions={actions}
+        />
       </InventorySection>
-      <InventorySection title="背包" hint={inventoryPackSummary(backpack)}>
-        <Backpack backpack={backpack} canEdit={canEdit} actions={actions} />
+      <InventorySection title="背包" hint={inventoryPackSummary(inventory)}>
+        <AuthoritativeBackpack
+          inventory={inventory}
+          canEdit={canEdit}
+          actions={actions}
+        />
       </InventorySection>
     </>
   );

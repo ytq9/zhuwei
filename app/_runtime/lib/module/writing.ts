@@ -30,8 +30,8 @@ export const WRITING_RULES = `烛帷模组合同 修订 ${WRITING_REVISION}
 10. 每人有声口。NPC 必须有 voice（用词、礼貌、态度、语速）和至少两句 lines（他会这么说，须是完整、可理解的话）。引号里去掉名字也要听得出是谁。禁止全员同一套黑话或同一套残句。每次回复只让一名主要发言者把话说完；没做事的人不要写。
 11. 短团结束留 2 个续章钩，不当必须主线。
 12. 旁白是现场 KP 口述，不是诗歌、预告片或谜语。禁止每段用固定小动作扫视全场收尾。
-13. 所有持久事实必须写进 world：地点只经 Portal 相连；唯一实物是 Artifact；可改变事实的动作是 Interaction；NPC 主动行为是 NPC Plan；期限是 ScheduledEvent；收束条件是 Ending。triggers 和自然语言段落只能说明写作意图，不能直接改位置、物品、线索、资源或剧情旗标。
-14. Artifact 与线索知识分开：取走、交出或毁掉纸张不会抹掉已知内容；唯一实物的所有转移 Interaction 必须以 artifactAt 前置条件守住生命周期，不能靠 KP 记住“已经拿过”。
+13. 所有持久事实必须写进 world：地点只经 Portal 相连；唯一实物是 Item；可改变事实的动作是 Interaction；NPC 主动行为是 NPC Plan；期限是 ScheduledEvent；收束条件是 Ending。triggers 和自然语言段落只能说明写作意图，不能直接改位置、物品、线索、资源或剧情旗标。
+14. Item 与线索知识分开：取走、交出或毁掉纸张不会抹掉已知内容；唯一实物的所有转移 Interaction 必须以 itemAt 前置条件守住生命周期，不能靠 KP 记住“已经拿过”。
 15. 每个场景登记的 clue 都必须有同地点结构化 revealClue 入口：免费动作给 hint/talk 层，检定成功才给 full 层。AI 只能在这些候选 ID 中解释行动，不能自造第二张纸、通道或线索。
 16. 时间必须写 Duration。拍只填 spotlightBeats，不能代替轮、分钟、小时、短休或长休；NPC 截止时间写 ScheduledEvent.atSeconds。Interaction 与 NPC Plan 会成为 Activity，只有 ActivityCompleted 后才落效果；中途事件打断时不得提前给物品、线索或旗标。
 17. 机械效果只用 RuleEffect 的封闭种类并锁定 rulesetVersion。不得在模组内夹带 2024/5.5e 条文、自由状态补丁、truth、secret 或玩家不可见答案。
@@ -70,7 +70,7 @@ KP 必须在免费层说完后立刻停下来让玩家掷。双轨内容只供�
 8. failures：物理失败 vs 信息失败分开写
 9. banned
 10. sequelHooks：至少 2 条
-11. world：rulesetVersion、locationSceneIds、portals、artifacts、interactions、npcInitialKnowledge、npcCapabilities、npcPlans、scheduledEvents、endings
+11. world：rulesetVersion、locationSceneIds、portals、items、interactions、npcInitialKnowledge、npcCapabilities、npcPlans、scheduledEvents、endings
 
 # 检定标尺（3 级桌）
 - 一眼能做的事：不骰
@@ -87,7 +87,7 @@ KP 必须在免费层说完后立刻停下来让玩家掷。双轨内容只供�
 - [ ] 每个 NPC 有 voice 和至少两句完整 lines
 - [ ] banned 含：不检定墙、不点名收尾、不失败锁死
 - [ ] 每个持久地点经 Portal 可达；不存在用场景文案绕过锁门的跳转
-- [ ] 每件唯一实物只有一个 Artifact id，所有领取方式都有 artifactAt 生命周期前置条件
+- [ ] 每件唯一实物只有一个 Item id，所有领取方式都有 itemAt 生命周期前置条件
 - [ ] 每条场景线索有同地点 revealClue Interaction，物件持有与知识层级没有混写
 - [ ] NPC 主动行为只引用已声明 Plan、知识、能力、资源和 FictionTime
 - [ ] 每个结局有结构化 when；未达成前 publicText 不进入玩家投影

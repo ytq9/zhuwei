@@ -13,7 +13,6 @@ const secondAuthorityFileAllowlist = new Set([
   "app/_runtime/lib/room/durable-object.ts",
   "app/_runtime/lib/room/server.ts",
   "app/_runtime/lib/rules/index.ts",
-  "app/_runtime/lib/rules/legacy-adapter.ts",
   "app/_runtime/lib/table/server.ts",
 ]);
 const secondAuthorityExportAllowlist = new Map([
@@ -464,7 +463,7 @@ export function assertImportBoundaries(root) {
       const normalizedWithExtension = resolveImportPath(root, file, specifier);
       const normalized = normalizedWithExtension.replace(/\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/, "");
       const importerIsRulesImplementation = relativePath.startsWith("app/_runtime/lib/rules/");
-      if (legacyEnginePathPattern.test(normalizedWithExtension) && relativePath !== "app/_runtime/lib/rules/legacy-adapter.ts") {
+      if (legacyEnginePathPattern.test(normalizedWithExtension)) {
         violations.push(`${relativePath}: legacy rules engine import '${specifier}'`);
       }
       if (
@@ -696,33 +695,58 @@ function assertExactTableRulesetRouting(root) {
     assert.notEqual(end, -1, `${nextName} table service boundary is missing`);
     return table.slice(start, end);
   };
+  assert.doesNotMatch(table, /\bRULESET_VERSION\b/, "the retired ruleset alias must not return");
+  assert.doesNotMatch(
+    table,
+    /\b(?:runRulesV2Action|commitRulesV2Direct|settleNpcCombatTurns|runKpTurn|narrateDecision)\b|\b(?:game_states|session_logs)\b|\b(?:from|into|update)\s+messages\b/i,
+    "the table service must not retain a pre-0.4 execution or persistence path",
+  );
+
   const cases = [
-    ["fetchTable", "setRoomModel", "info.ruleset_version !== RULESET_VERSION", "const messages ="],
-    ["setRoomModel", "lockCharacter", "current.ruleset_version !== RULESET_VERSION", "update rooms set kp_model"],
-    ["startGame", "sendAction", "info.ruleset_version !== RULESET_VERSION", "const where:"],
-    ["sendAction", "acknowledgeDelivery", "info.ruleset_version !== RULESET_VERSION", "let sheet = ensureGear"],
-    ["resolveRoll", "joinCombat", "roomInfo?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["joinCombat", "extraAttack", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["extraAttack", "endTurn", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["endTurn", "leaveFight", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["leaveFight", "resolveReact", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["resolveReact", "restNow", "rules?.ruleset_version !== RULESET_VERSION", "const st = ("],
-    ["restNow", "cancelRest", "rules?.ruleset_version !== RULESET_VERSION", "const pc = ("],
-    ["cancelRest", "castSpell", "rules?.ruleset_version !== RULESET_VERSION", "const pc = ("],
-    ["castSpell", "useFeature", "rules?.ruleset_version !== RULESET_VERSION", "const row = ("],
-    ["useFeature", "useHitDie", "rules?.ruleset_version !== RULESET_VERSION", "const row = ("],
-    ["useHitDie", "kickMember", "rules?.ruleset_version !== RULESET_VERSION", "const row = ("],
+    ["fetchTable", "lockCharacter"],
+    ["lockCharacter", "setGear"],
+    ["setGear", "useInventoryItem"],
+    ["useInventoryItem", "startGame"],
+    ["startGame", "sendAction"],
+    ["sendAction", "retryNarration"],
+    ["acknowledgeDelivery", "resolveRoll"],
+    ["resolveRoll", "joinCombat"],
+    ["joinCombat", "extraAttack"],
+    ["extraAttack", "endTurn"],
+    ["endTurn", "leaveFight"],
+    ["leaveFight", "resolveReact"],
+    ["resolveReact", "restNow"],
+    ["restNow", "cancelRest"],
+    ["cancelRest", "castSpell"],
+    ["castSpell", "useFeature"],
+    ["useFeature", "useHitDie"],
+    ["useHitDie", "kickMember"],
+    ["kickMember", "leaveTable"],
+    ["leaveTable", "inviteSquad"],
+    ["inviteSquad", "cancelSquadInvite"],
+    ["cancelSquadInvite", "answerSquad"],
+    ["answerSquad", "leaveSquadNow"],
+    ["leaveSquadNow", "passCaptain"],
+    ["passCaptain", "approveSquadQueue"],
   ];
 
-  for (const [name, nextName, gateText, legacyBoundaryText] of cases) {
+  for (const [name, nextName] of cases) {
     const section = exportedSection(name, nextName);
-    const authoritative = section.indexOf("AUTHORITATIVE_RULESET_VERSION");
-    const gate = section.indexOf(gateText, authoritative);
-    const legacyBoundary = section.indexOf(legacyBoundaryText, authoritative);
-    assert.notEqual(authoritative, -1, `${name} is missing authoritative-v2 routing`);
-    assert.notEqual(legacyBoundary, -1, `${name} is missing an auditable legacy boundary`);
-    assert.ok(gate > authoritative && gate < legacyBoundary, `${name} must fail closed on exact ruleset_version before legacy logic`);
-    assert.match(section.slice(gate, legacyBoundary), /return\s*\{\s*ok:\s*false as const/, `${name} must explicitly reject unknown ruleset_version`);
+    assert.match(
+      section,
+      /AUTHORITATIVE_RULESET_VERSION/,
+      `${name} must route only through the exact current ruleset`,
+    );
+    assert.doesNotMatch(
+      section,
+      /\bRULESET_VERSION\b/,
+      `${name} retains the retired ruleset alias`,
+    );
+    assert.doesNotMatch(
+      section,
+      /\b(?:game_states|session_logs)\b|\b(?:from|into|update)\s+messages\b/i,
+      `${name} retains a pre-0.4 fallback`,
+    );
   }
 }
 
@@ -740,8 +764,24 @@ function assertTypedRoomProposalBoundary(root) {
   const reachableLegacyBranches = legacyProposalKinds.filter((kind) =>
     room.includes(`proposal.kind === "${kind}"`) || room.includes(`proposal.kind !== "${kind}"`));
   assert.deepEqual(reachableLegacyBranches, [], `authoritative-v2 Room retains compact proposal branches: ${reachableLegacyBranches.join(", ")}`);
-  assert.match(adapter, /validateProposal\(draftValue\)/, "Room proposal adapter must reuse the production KpProposalDraft validator");
-  assert.match(room, /isCanonicalAuthorityRecoveryInput\(recovery\.rulesInput\)/, "random continuation recovery must remain a versioned ActionPlan/pending-answer input");
+  assert.doesNotMatch(adapter, /validateProposal\(/, "Room proposal adapter retains the retired production KpProposalDraft validator");
+  for (const currentKind of [
+    "privateFormProposal",
+    "authenticatedPartyAction",
+    "authenticatedCampaignAction",
+    "authenticatedPendingAnswer",
+  ]) {
+    assert.match(
+      adapter,
+      new RegExp(`value\\.kind === ["']${currentKind}["']`),
+      `Room proposal adapter must retain the current ${currentKind} boundary`,
+    );
+  }
+  assert.match(
+    room,
+    /isCanonicalAuthorityRecoveryInput\(recovery\.rulesInput\)/,
+    "random continuation recovery must remain an exact current CausalActionProgram, specialized command, or pending-answer input",
+  );
 }
 
 function assertSingleViewerProjector(root) {

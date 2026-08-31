@@ -85,27 +85,6 @@
       "when": 1788020889709,
       "tag": "0011_low_leo",
       "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "6",
-      "when": 1788123338911,
-      "tag": "0012_fluffy_hulk",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "6",
-      "when": 1788123372806,
-      "tag": "0013_reset_pre_0_4_rooms",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "6",
-      "when": 1788123450282,
-      "tag": "0014_private_form_tools",
-      "breakpoints": true
     }
   ]
 }

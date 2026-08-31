@@ -7,59 +7,11 @@ import {
   replay,
   step,
 } from "../app/_runtime/lib/rules/index.ts";
+import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests.ts";
+import { ITEM_SYSTEM_PROFILE } from "../app/_runtime/lib/rules/profiles/item-system.ts";
+import { createInitialItemEntry } from "../app/_runtime/lib/rules/v2/items.ts";
 
-const PROFILES = {
-  manifest: {
-    profileId: "runtime-srd51-2014-authoritative-v2",
-    profileHash: "sha256:496da17f16d52cbe5dfa3e97facfa8ed7dcf3f4bbb7a882fc0e384d464898051",
-  },
-  ruleset: {
-    profileId: "dnd5e-2014-srd5.1-authoritative-v2",
-    profileHash: "sha256:7651d58190da6bfb6241cabb41b07ef5cfee3266edf3c62b8af443d94daf4af0",
-  },
-  eventSchema: {
-    profileId: "room-world-events-v2",
-    profileHash: "sha256:3f1d953752be8981f4f7862ba1a90d6f613d113ecfd2d18dfd983abf974a8a67",
-  },
-  abilityCompiler: {
-    profileId: "ability-srd51-2014-v1",
-    profileHash: "sha256:561710d6ae32fc14f0ba22863e0d6cd92d12c6d32b8728a81608561a66b25ba3",
-  },
-  geometry: {
-    profileId: "geometry-2d-feet-2014-v1",
-    profileHash: "sha256:59caa4e73c58dc20a92cd9b50370f2c9b275a9b57740c7dd1d519f78cb72611e",
-  },
-  triggerOrdering: {
-    profileId: "trigger-initiative-order-2014-v1",
-    profileHash: "sha256:825ef8de6f962f01111c9ce325189c0d203ee71ab305149fd7b2b7485b6b8089",
-  },
-  fictionCombatTime: {
-    profileId: "combat-round-six-seconds-2014-v1",
-    profileHash: "sha256:067eb4870fcee1cda2563c7633daac4c2b7249ecd53e0f9b1c986d3de8d12f08",
-  },
-  extensions: [
-    {
-      profileId: "combat-srd51-2014-v1",
-      profileHash: "sha256:b9e12294db25409844e1ecd63d048e404b315ecfcd8c493cd6af5cb593e4acc6",
-    },
-    {
-      profileId: "damage-death-srd51-2014-v1",
-      profileHash: "sha256:37dbf131c6325f2f07e3693ee8c3420372c8d7f9154a757dfafdc6f853537d7a",
-    },
-    {
-      profileId: "presentation-observer-specific-v1",
-      profileHash: "sha256:86bfdfebe7062d90f87e4add65d1d109cb14dead7b3d758e452af76c13f7457c",
-    },
-    {
-      profileId: "projection-observer-safe-v1",
-      profileHash: "sha256:972b82b84594386abc2a988a98afb94e5ec925ee1819bc53cd677c722edf8b91",
-    },
-    {
-      profileId: "delivery-single-current-frame-v1",
-      profileHash: "sha256:cd0d684841bd43f621665dc538db35b81c25421d8b345e444681054bbc894d7e",
-    },
-  ],
-};
+const PROFILES = ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST;
 
 const MODULE_REF = {
   profileId: "module-world-campaign-acceptance-v1",
@@ -71,32 +23,79 @@ const CATALOG_REF = {
   profileHash: "sha256:428d0ccad153abcc8e42c6f19b3de8d6d925b666513386a247be7f6c5eff20bb",
 };
 
-const INITIAL_STATE = {
-  version: "0",
-  activeBranchId: "root",
-  fictionTimelines: {
-    root: { branchId: "root", nowMicros: "0" },
-  },
-  campaign: {
-    campaignId: "campaign:black-lantern",
-    advancementProfile: "milestone",
-    currentChapterId: "chapter:one",
-    status: "active",
-  },
-  chapters: {
-    "chapter:one": {
-      chapterId: "chapter:one",
-      ordinal: "1",
-      status: "active",
-      sceneQuestionId: "scene-question:vault",
+const SEALED_LETTER_DEFINITION_ID = "item-definition:black-lantern:sealed-letter:1";
+const SEALED_LETTER_ENTRY_ID = "item-entry:black-lantern:sealed-letter:1";
+
+function tacticalGeometry(sceneId) {
+  return {
+    schema: "zhuwei.tactical-geometry/v1",
+    unit: "inch",
+    boundary: {
+      kind: "polygon",
+      points: [
+        { x: "0", y: "0" },
+        { x: "1200", y: "0" },
+        { x: "1200", y: "800" },
+        { x: "0", y: "800" },
+      ],
     },
-  },
-  entities: {
-    "pc-1": {
+    spawnPoints: [
+      { x: "120", y: "160", elevation: "0" },
+      { x: "300", y: "160", elevation: "0" },
+      { x: "480", y: "160", elevation: "0" },
+      { x: "660", y: "160", elevation: "0" },
+      { x: "840", y: "160", elevation: "0" },
+      { x: "1020", y: "160", elevation: "0" },
+    ],
+    obstacles: [{
+      featureId: `feature:world-campaign:${sceneId}:wall`,
+      kind: "barrier",
+      label: "低矮隔墙",
+      state: "intact",
+      polygon: [
+        { x: "420", y: "460" },
+        { x: "480", y: "460" },
+        { x: "480", y: "580" },
+        { x: "420", y: "580" },
+      ],
+      elevation: "0",
+      height: "60",
+      opaque: false,
+      impassable: true,
+      cover: "half",
+      propagation: "passes",
+      terrain: "normal",
+      visibilityPolicyId: "visibility:scene-observers",
+    }],
+    clearanceZones: [],
+  };
+}
+
+const initializedWorld = step(PROFILES, undefined, {
+  kind: "initializeAuthoritativeWorld",
+  roomId: "world-campaign-acceptance-room",
+  runtimeEpochId: "epoch:world-campaign-v5:1",
+  moduleRef: MODULE_REF,
+  initialDefinitionCatalogRef: CATALOG_REF,
+  activeBranchId: "branch:main",
+  fictionInstantMicros: "0",
+  scenes: [
+    { id: "shrine", name: "黑灯神龛", geometry: tacticalGeometry("shrine") },
+    { id: "yard", name: "守钥庭院", geometry: tacticalGeometry("yard") },
+  ],
+  principals: [
+    { id: "principal-1", sessionVersion: 1, role: "host" },
+    { id: "principal-2", sessionVersion: 1, role: "player" },
+  ],
+  seats: [
+    { id: "seat:auto:principal-1", principalId: "principal-1", status: "active" },
+    { id: "seat:auto:principal-2", principalId: "principal-2", status: "active" },
+  ],
+  characters: [
+    {
       id: "pc-1",
       kind: "player",
       name: "阿岚",
-      controllerPrincipalId: "principal-1",
       sceneId: "shrine",
       classId: "rogue",
       raceId: "human",
@@ -104,98 +103,181 @@ const INITIAL_STATE = {
       level: 3,
       hitPoints: { current: 7, maximum: 18 },
       resources: { resolve: 1, hitDice: 2 },
+      resourceMaximums: { resolve: 1, hitDice: 3 },
       abilityScores: { str: 10, dex: 16, con: 12, int: 12, wis: 12, cha: 10 },
       proficiencyBonus: 2,
+      proficientSkills: ["acrobatics", "stealth"],
+      expertiseSkills: [],
+      proficientSaves: ["dex", "int"],
       featureIds: ["feature:cunning-action", "feature:sneak-attack"],
       tenureStatus: "active",
+      loadout: { armorClass: 13, speedFeet: 30, equipped: {}, backpack: [] },
+      characterBuild: { classId: "rogue", raceId: "human", cantrips: [], prepared: [] },
     },
-    "pc-2": {
+    {
       id: "pc-2",
       kind: "player",
       name: "柏舟",
-      controllerPrincipalId: "principal-2",
       sceneId: "yard",
+      classId: "fighter",
+      raceId: "human",
       level: 3,
       hitPoints: { current: 16, maximum: 16 },
       resources: { resolve: 1, hitDice: 2 },
+      resourceMaximums: { resolve: 1, hitDice: 3 },
+      abilityScores: { str: 14, dex: 12, con: 12, int: 10, wis: 14, cha: 10 },
+      proficiencyBonus: 2,
+      proficientSkills: ["athletics"],
+      expertiseSkills: [],
+      proficientSaves: ["con", "str"],
+      featureIds: [],
       tenureStatus: "active",
+      loadout: { armorClass: 11, speedFeet: 30, equipped: {}, backpack: [] },
+      characterBuild: { classId: "fighter", raceId: "human", cantrips: [], prepared: [] },
     },
-    "npc-warden": {
+    {
       id: "npc-warden",
       kind: "npc",
       name: "守钥人",
       sceneId: "yard",
+      tenureStatus: "active",
       hitPoints: { current: 12, maximum: 12 },
+      abilityScores: { str: 12, dex: 12, con: 12, int: 10, wis: 14, cha: 10 },
+      proficiencyBonus: 2,
     },
-  },
-  artifacts: {
-    "artifact:sealed-letter": {
-      artifactId: "artifact:sealed-letter",
-      holderId: "pc-1",
-      status: "held",
-    },
-  },
-  canonicalFacts: {
-    "fact:unbreakable-arch": {
-      factId: "fact:unbreakable-arch",
+  ],
+  characterControls: [
+    { characterId: "pc-1", seatId: "seat:auto:principal-1" },
+    { characterId: "pc-2", seatId: "seat:auto:principal-2" },
+  ],
+  canonicalFacts: [
+    {
+      id: "fact:unbreakable-arch",
       kind: "materialLimit",
+      source: "moduleAnchor",
+      subjectRefs: ["shrine"],
       value: "徒手无法破坏黑石拱门",
-      visibility: "public",
+      visibilityPolicyId: "visibility:public",
     },
-    "fact:chapter-one-goal": {
-      factId: "fact:chapter-one-goal",
+    {
+      id: "fact:chapter-one-goal",
       kind: "chapterOutcome",
+      source: "moduleAnchor",
+      subjectRefs: ["chapter:one"],
       value: "封印已经解除",
-      visibility: "public",
+      visibilityPolicyId: "visibility:public",
     },
-    "fact:party-speaking-stones": {
-      factId: "fact:party-speaking-stones",
+    {
+      id: "fact:party-speaking-stones",
       kind: "establishedCommunicationChannel",
+      source: "moduleAnchor",
       subjectRefs: ["npc-warden", "pc-1", "pc-2"],
       value: "三枚配对传声石仍保持连接",
-      visibility: "participants",
+      visibilityPolicyId: "visibility:channel-participants",
     },
-  },
-  knowledge: {
-    "pc-1": [{
-      knowledgeId: "knowledge:private-sigil",
-      value: "银叶印记对应旧王室密道",
-      visibility: "private",
-      provenance: ["fact:chapter-one-goal"],
-    }],
-    "pc-2": [],
-    "npc-warden": [],
-  },
-  relationships: {
-    "relationship:warden-alan": {
-      relationshipId: "relationship:warden-alan",
-      subjectIds: ["npc-warden", "pc-1"],
-      value: "守钥人信任阿岚",
-      visibility: "participants",
-    },
-  },
-  promises: {
-    "promise:return-key": {
-      promiseId: "promise:return-key",
-      promisorId: "pc-1",
-      promiseeId: "npc-warden",
-      content: "下一章归还铜钥匙",
-      condition: "进入下一章后",
-      status: "active",
-    },
-  },
-  debts: {},
-  factions: {
-    "faction:watch": {
-      factionId: "faction:watch",
-      goal: "封锁地窖",
-      resources: ["两名巡夜人"],
-      knowledgeRefs: [],
-    },
-  },
-  activities: {},
-  unresolvedThreats: ["threat:powder-smugglers"],
+  ],
+  initialKnowledge: [{
+    characterId: "pc-1",
+    knowledgeRef: "knowledge:private-sigil",
+    kind: "canonicalFact",
+    layer: "full",
+    content: "银叶印记对应旧王室密道",
+    visibility: "private",
+    provenanceChain: ["fact:chapter-one-goal"],
+  }],
+});
+assert.equal(initializedWorld.kind, "initialized", JSON.stringify(initializedWorld));
+
+const INITIAL_STATE = structuredClone(initializedWorld.genesis.initialState);
+INITIAL_STATE.campaignRuntime.campaign = {
+  campaignId: "campaign:black-lantern",
+  moduleRef: structuredClone(MODULE_REF),
+  advancementProfile: "milestone",
+  currentChapterId: "chapter:one",
+  status: "active",
 };
+INITIAL_STATE.campaignRuntime.chapters = {
+  "chapter:one": {
+    chapterId: "chapter:one",
+    ordinal: "1",
+    status: "active",
+    moduleRef: structuredClone(MODULE_REF),
+    storyAnchorRefs: ["fact:chapter-one-goal"],
+    sceneQuestion: "金库封印会如何改变守钥人的命运？",
+  },
+};
+INITIAL_STATE.combatRuntime.story = {
+  chapterId: "chapter:one",
+  status: "active",
+  endingCandidates: [],
+};
+INITIAL_STATE.campaignRuntime.relationships = {
+  "relationship:warden-alan": {
+    relationshipId: "relationship:warden-alan",
+    subjectIds: ["npc-warden", "pc-1"],
+    value: "守钥人信任阿岚",
+    visibility: "participants",
+    basisFactIds: ["fact:chapter-one-goal"],
+  },
+};
+INITIAL_STATE.campaignRuntime.promises = {
+  "promise:return-key": {
+    promiseId: "promise:return-key",
+    promisorId: "pc-1",
+    promiseeId: "npc-warden",
+    content: "下一章归还铜钥匙",
+    condition: "进入下一章后",
+    status: "active",
+  },
+};
+INITIAL_STATE.campaignRuntime.factions = {
+  "faction:watch": {
+    factionId: "faction:watch",
+    name: "巡夜人",
+    goal: "封锁地窖",
+    memberRefs: ["npc-warden"],
+    resourceRefs: [],
+    visibilityPolicyId: "visibility:public",
+  },
+};
+INITIAL_STATE.campaignRuntime.unresolvedThreats = ["threat:powder-smugglers"];
+
+const sealedLetterDefinition = {
+  schema: "zhuwei.item-definition/v1",
+  definitionKind: "item",
+  definitionId: SEALED_LETTER_DEFINITION_ID,
+  revision: "1",
+  rulesBasis: { kind: "zhuwei-product-ruling", profileRef: ITEM_SYSTEM_PROFILE },
+  causalBasisRefs: ["fact:chapter-one-goal"],
+  visibilityPolicyRef: "visibility:public",
+  content: {
+    schema: "zhuwei.item-definition-content/v1",
+    label: "密封信",
+    description: "一封由阿岚保管、可交付或销毁的密封信。",
+    category: "object",
+    aliases: [],
+    tags: [],
+    stackable: false,
+    equipment: null,
+    equippedAbilityRefs: [],
+    use: null,
+    chargesMaximum: null,
+    durabilityMaximum: null,
+  },
+};
+const sealedLetterEntry = createInitialItemEntry(sealedLetterDefinition, {
+  entryId: SEALED_LETTER_ENTRY_ID,
+  quantity: 1,
+  placement: { kind: "held", holderRef: "pc-1", equippedSlot: null },
+  ownership: { kind: "character", ownerRef: "pc-1" },
+  visibilityPolicyRef: "visibility:character-controller:pc-1",
+});
+INITIAL_STATE.campaignRuntime.itemSystem.definitions[SEALED_LETTER_DEFINITION_ID] =
+  sealedLetterDefinition;
+INITIAL_STATE.campaignRuntime.itemSystem.entries[SEALED_LETTER_ENTRY_ID] = sealedLetterEntry;
+INITIAL_STATE.entities["pc-1"].loadout.backpack = [
+  { itemId: SEALED_LETTER_ENTRY_ID, quantity: 1 },
+];
 
 // This signs only the immutable genesis fixture. Product hashes and event folding
 // remain the responsibility of replay; no test action can call this helper.
@@ -212,11 +294,19 @@ function fixtureHash(value) {
   return `sha256:${createHash("sha256").update(canonicalFixture(value)).digest("hex")}`;
 }
 
-const INITIAL_STATE_HASH = fixtureHash(INITIAL_STATE);
+function fixtureStateHash(state) {
+  const domainState = { ...state };
+  delete domainState.eventHeadHash;
+  delete domainState.lastEventId;
+  return fixtureHash(domainState);
+}
+
+const INITIAL_STATE_HASH = fixtureStateHash(INITIAL_STATE);
+INITIAL_STATE.eventHeadHash = INITIAL_STATE_HASH;
 const UNSIGNED_GENESIS = {
   kind: "roomGenesis",
   roomId: "world-campaign-acceptance-room",
-  runtimeEpochId: "epoch:authoritative-v2",
+  runtimeEpochId: "epoch:world-campaign-v5:1",
   profiles: PROFILES,
   moduleRef: MODULE_REF,
   initialDefinitionCatalogRef: CATALOG_REF,
@@ -229,10 +319,12 @@ const GENESIS = {
 };
 
 function signedGenesis(initialState) {
-  const initialStateHash = fixtureHash(initialState);
+  const signedInitialState = structuredClone(initialState);
+  const initialStateHash = fixtureStateHash(signedInitialState);
+  signedInitialState.eventHeadHash = initialStateHash;
   const unsigned = {
     ...UNSIGNED_GENESIS,
-    initialState,
+    initialState: signedInitialState,
     initialStateHash,
   };
   return {
@@ -241,8 +333,20 @@ function signedGenesis(initialState) {
   };
 }
 
-const ALICE_VIEWER = { kind: "player", principalId: "principal-1", characterId: "pc-1" };
-const BOB_VIEWER = { kind: "player", principalId: "principal-2", characterId: "pc-2" };
+const ALICE_VIEWER = {
+  kind: "player",
+  principalId: "principal-1",
+  sessionVersion: 1,
+  seatId: "seat:auto:principal-1",
+  characterId: "pc-1",
+};
+const BOB_VIEWER = {
+  kind: "player",
+  principalId: "principal-2",
+  sessionVersion: 1,
+  seatId: "seat:auto:principal-2",
+  characterId: "pc-2",
+};
 const WARDEN_VIEWER = { kind: "npc", npcId: "npc-warden" };
 
 const FORBIDDEN_ACTION_KEYS = new Set([
@@ -382,22 +486,11 @@ function assertProjectionOmits(view, ...needles) {
   }
 }
 
-test("campaign genesis normalization only backfills a missing chapter ModuleRef and rejects a conflicting binding", () => {
-  const backfilled = replay(GENESIS, []);
-  assertReplayed(backfilled);
-  assert.deepEqual(backfilled.state.campaignRuntime.campaign.moduleRef, MODULE_REF);
-  assert.deepEqual(backfilled.state.campaignRuntime.chapters["chapter:one"].moduleRef, MODULE_REF);
-
-  const conflictingState = structuredClone(INITIAL_STATE);
-  conflictingState.campaign.moduleRef = structuredClone(MODULE_REF);
-  conflictingState.chapters["chapter:one"].moduleRef = {
-    profileId: "module:attacker:conflicting-genesis-v1",
-    profileHash: `sha256:${"c".repeat(64)}`,
-  };
-  const conflicting = replay(signedGenesis(conflictingState), []);
-  assert.equal(conflicting.kind, "rejected", JSON.stringify(conflicting));
-  assert.equal(conflicting.rejection.code, "invalidGenesis");
-  assert.deepEqual(conflicting.events, []);
+test("campaign genesis carries the exact current ModuleRef without normalization", () => {
+  const current = replay(GENESIS, []);
+  assertReplayed(current);
+  assert.deepEqual(current.state.campaignRuntime.campaign.moduleRef, MODULE_REF);
+  assert.deepEqual(current.state.campaignRuntime.chapters["chapter:one"].moduleRef, MODULE_REF);
 });
 
 test("free rulings cover all feasibility outcomes, clarification, and pre-random freeze", () => {
@@ -531,7 +624,7 @@ test("free rulings cover all feasibility outcomes, clarification, and pre-random
   );
 });
 
-test("noncombat mechanics share resources, artifacts, interruptible Activity, and damage/death", () => {
+test("noncombat mechanics share resources, unified items, interruptible Activity, and damage/death", () => {
   const contest = createScenario().run({
     kind: "resolveContest",
     proposalId: "proposal:arm-wrestle",
@@ -574,13 +667,23 @@ test("noncombat mechanics share resources, artifacts, interruptible Activity, an
     fictionTimeCostMicros: "1000000",
   }, "committed");
   scenario.run({
-    kind: "transferArtifact",
+    kind: "transferItem",
     proposalId: "proposal:hand-letter-to-bob",
-    artifactId: "artifact:sealed-letter",
     fromCharacterId: "pc-1",
     toCharacterId: "pc-2",
+    itemId: SEALED_LETTER_ENTRY_ID,
+    quantity: 1,
     method: "当面交付",
+    ownershipDisposition: "preserve",
   }, "committed");
+  assert.equal(
+    scenario.state().campaignRuntime.itemSystem.entries[SEALED_LETTER_ENTRY_ID].holderRef,
+    "pc-2",
+  );
+  assert.equal(
+    scenario.state().campaignRuntime.itemSystem.entries[SEALED_LETTER_ENTRY_ID].definitionRef,
+    SEALED_LETTER_DEFINITION_ID,
+  );
   const rest = scenario.run({
     kind: "startRest",
     proposalId: "proposal:start-short-rest",
@@ -590,7 +693,8 @@ test("noncombat mechanics share resources, artifacts, interruptible Activity, an
   }, "committed");
   const restEvent = eventOf(rest, "RestStarted");
   const duringRest = scenario.view(ALICE_VIEWER);
-  assertProjectionContains(duringRest, '"resolve":0', "active", restEvent.payload.activityId);
+  assert.equal(duringRest.controlledCharacter.resources.resolve, 0);
+  assertProjectionContains(duringRest, "active", restEvent.payload.activityId);
 
   const interrupted = scenario.run({
     kind: "interruptActivity",
@@ -600,9 +704,10 @@ test("noncombat mechanics share resources, artifacts, interruptible Activity, an
   }, "committed");
   assert.ok(eventTypes(interrupted).includes("ActivityInterrupted"));
   const afterInterruption = scenario.view(ALICE_VIEWER);
-  assertProjectionContains(afterInterruption, '"resolve":0', "interrupted");
-  assertProjectionOmits(afterInterruption, '"resolve":1', "RestCompleted");
-  assertProjectionContains(scenario.view(BOB_VIEWER), "artifact:sealed-letter");
+  assert.equal(afterInterruption.controlledCharacter.resources.resolve, 0);
+  assertProjectionContains(afterInterruption, "interrupted");
+  assertProjectionOmits(afterInterruption, "RestCompleted");
+  assertProjectionContains(scenario.view(BOB_VIEWER), SEALED_LETTER_ENTRY_ID, "密封信");
 
   const definition = scenario.run({
     kind: "registerDynamicDefinition",
@@ -661,15 +766,19 @@ test("noncombat mechanics share resources, artifacts, interruptible Activity, an
 test("2014 rests wait for fictional time and resolve recovery through Room-owned randomness", () => {
   function restGenesis(character, suffix) {
     const initialState = structuredClone(INITIAL_STATE);
+    const roomId = `world-campaign-rest-${suffix}`;
+    initialState.roomId = roomId;
     initialState.entities["pc-1"] = {
       ...structuredClone(initialState.entities["pc-1"]),
       ...structuredClone(character),
     };
+    const initialStateHash = fixtureStateHash(initialState);
+    initialState.eventHeadHash = initialStateHash;
     const unsigned = {
       ...UNSIGNED_GENESIS,
-      roomId: `world-campaign-rest-${suffix}`,
+      roomId,
       initialState,
-      initialStateHash: fixtureHash(initialState),
+      initialStateHash,
     };
     return { ...unsigned, genesisHash: fixtureHash(unsigned) };
   }
@@ -1174,8 +1283,10 @@ test("growth and chapter transition preserve continuity while a successor inheri
     "ChapterContinuityRecorded",
   ).payload.manifest;
   assert.ok(continuityManifest.characterStates.some(({ ref }) => ref === "character:pc-1"));
-  assert.ok(continuityManifest.artifactStates.some(({ ref }) =>
-    ref === "artifact:artifact:sealed-letter"));
+  assert.ok(continuityManifest.itemStates.some(({ ref }) =>
+    ref === `item:${SEALED_LETTER_ENTRY_ID}`));
+  assert.ok(continuityManifest.definitionStates.some(({ ref }) =>
+    ref === `item-definition:${SEALED_LETTER_DEFINITION_ID}`));
   assert.ok(continuityManifest.knowledgeStates.some(({ ref }) =>
     ref === "knowledge:pc-1:knowledge:private-sigil"));
   assert.ok(continuityManifest.relationshipStates.some(({ ref }) =>
@@ -1190,7 +1301,7 @@ test("growth and chapter transition preserve continuity while a successor inheri
     chapterTwoView,
     '"level":4',
     '"current":7',
-    "artifact:sealed-letter",
+    SEALED_LETTER_ENTRY_ID,
     "knowledge:private-sigil",
     "relationship:warden-alan",
     "debt:replace-vault-door",
@@ -1235,7 +1346,7 @@ test("growth and chapter transition preserve continuity while a successor inheri
     worldEntry: "受守钥人邀请来到庭院",
   }, "committed");
   assert.ok(eventTypes(successor).includes("SuccessorIntroduced"));
-  assert.ok(eventTypes(successor).includes("CharacterMechanicsSynchronized"));
+  assert.ok(!eventTypes(successor).includes("CharacterMechanicsSynchronized"));
   assert.equal(scenario.state().characterControls["pc-3"].seatId, "seat:auto:principal-1");
   assert.ok(scenario.state().combatRuntime.entities["pc-3"]);
   const successorViewer = {
@@ -1249,7 +1360,7 @@ test("growth and chapter transition preserve continuity while a successor inheri
   assertProjectionOmits(
     initialSuccessorView,
     "knowledge:private-sigil",
-    "artifact:sealed-letter",
+    SEALED_LETTER_ENTRY_ID,
     "relationship:warden-alan",
     "debt:replace-vault-door",
     "promise:return-key",
@@ -1284,10 +1395,10 @@ test("growth and chapter transition preserve continuity while a successor inheri
         {
           authorizationId: "inheritance-authorization:sealed-letter",
           subjectCharacterId: "pc-1",
-          kind: "artifact",
-          sourceRef: "artifact:sealed-letter",
+          kind: "item",
+          sourceRef: SEALED_LETTER_ENTRY_ID,
           targetCharacterId: "pc-3",
-          targetRef: "artifact:sealed-letter",
+          targetRef: SEALED_LETTER_ENTRY_ID,
           scope: "transferPossession",
         },
         {
@@ -1338,23 +1449,27 @@ test("growth and chapter transition preserve continuity while a successor inheri
     inheritanceSourceFactId,
     "将信件和其中记载的银叶印记含义交给苍岚",
   );
-  const artifactInherited = scenario.run({
+  const itemInherited = scenario.run({
     kind: "transferInheritance",
-    proposalId: "proposal:provenance-bound-artifact-inheritance",
+    proposalId: "proposal:provenance-bound-item-inheritance",
     predecessorCharacterId: "pc-1",
     successorCharacterId: "pc-3",
     sourceFactId: inheritanceSourceFactId,
     authorizationId: "inheritance-authorization:sealed-letter",
   }, "committed");
-  assert.ok(eventTypes(artifactInherited).includes("InheritanceTransferred"));
-  assert.ok(eventTypes(artifactInherited).includes("ArtifactTransferred"));
-  const artifactOnlyView = scenario.view(successorViewer);
-  assertProjectionContains(artifactOnlyView, "artifact:sealed-letter");
-  assertProjectionOmits(artifactOnlyView, "knowledge:private-sigil");
+  assert.ok(eventTypes(itemInherited).includes("InheritanceTransferred"));
+  assert.ok(eventTypes(itemInherited).includes("ItemTransferred"));
+  assert.equal(
+    scenario.state().campaignRuntime.itemSystem.entries[SEALED_LETTER_ENTRY_ID].holderRef,
+    "pc-3",
+  );
+  const itemOnlyView = scenario.view(successorViewer);
+  assertProjectionContains(itemOnlyView, SEALED_LETTER_ENTRY_ID, "密封信");
+  assertProjectionOmits(itemOnlyView, "knowledge:private-sigil");
 
   scenario.reject({
     kind: "transferInheritance",
-    proposalId: "proposal:cannot-reuse-artifact-authorization",
+    proposalId: "proposal:cannot-reuse-item-authorization",
     predecessorCharacterId: "pc-1",
     successorCharacterId: "pc-3",
     sourceFactId: inheritanceSourceFactId,
@@ -1401,7 +1516,7 @@ test("growth and chapter transition preserve continuity while a successor inheri
   const inheritedView = scenario.view(successorViewer);
   assertProjectionContains(
     inheritedView,
-    "artifact:sealed-letter",
+    SEALED_LETTER_ENTRY_ID,
     "knowledge:private-sigil",
     "relationship:warden-cang",
     "debt:cang-replaces-vault-door",
@@ -1613,7 +1728,7 @@ test("correcting an invalid chapter transition restores the prior active chapter
 
 test("SRD XP awards cross thresholds through staged player choices while milestone grants stay profile-bound", () => {
   const initialState = structuredClone(INITIAL_STATE);
-  initialState.campaign.advancementProfile = "srdXp2014";
+  initialState.campaignRuntime.campaign.advancementProfile = "srdXp2014";
   initialState.entities["pc-1"].experiencePoints = 900;
   const scenario = createScenario(signedGenesis(initialState));
 
@@ -1697,7 +1812,7 @@ test("SRD XP awards cross thresholds through staged player choices while milesto
 
 test("correcting an XP award restores the cumulative total and removes its pending advancement", () => {
   const initialState = structuredClone(INITIAL_STATE);
-  initialState.campaign.advancementProfile = "srdXp2014";
+  initialState.campaignRuntime.campaign.advancementProfile = "srdXp2014";
   initialState.entities["pc-1"].experiencePoints = 900;
   const scenario = createScenario(signedGenesis(initialState));
   const awarded = scenario.run({

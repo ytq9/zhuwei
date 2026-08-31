@@ -7,6 +7,7 @@ import {
 import type { TacticalPosition } from "../tactical-projection";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
+import { standardGearResolverForProfile } from "../profiles/standard-gear";
 import {
   createEventTransition,
   createScopeProof,
@@ -43,8 +44,8 @@ import { correctionPlan, emptyCorrectionRuntime } from "./correction";
 import { emptyMultiplayerRuntime, initialMultiplayerFictionTimelines } from "./multiplayer-model";
 import { stepMultiplayerWorld } from "./multiplayer-actions";
 import {
-  fulfillCompoundActionPlanRandomness,
-  stepCompoundActionPlan,
+  fulfillActorPlanRandomness,
+  stepActorPlanMechanics,
 } from "./compound-actions";
 import {
   fulfillCausalActionProgramRandomness,
@@ -60,6 +61,11 @@ import {
   compileStaticCharacterCombat,
 } from "./character-abilities";
 import { experienceThresholdForLevel } from "./character-progression";
+import {
+  deriveCharacterLoadoutFromItems,
+  mergeInitialStandardLoadout,
+} from "./item-transitions";
+import { emptyItemSystemState } from "./items";
 import { characterProficiencyFieldsMatchProfile } from "./proficiency";
 import { isNpcSocialMechanics, socialUtteranceFingerprint } from "./social-model";
 import {
@@ -442,6 +448,45 @@ function buildInitialState(
     return undefined;
   }
 
+  let itemSystem = emptyItemSystemState();
+  {
+    const standardGearResolver = profiles.extensions
+      .map((profile) => standardGearResolverForProfile(profile))
+      .find((resolver) => resolver !== undefined);
+    if (standardGearResolver === undefined) return undefined;
+
+    for (const character of Object.values(entities)) {
+      const loadout = character.loadout;
+      if (loadout === undefined) continue;
+      const initialItemIds = [
+        ...Object.values(loadout.equipped),
+        ...loadout.backpack.map((entry) => entry.itemId),
+      ];
+      if (initialItemIds.some((itemId) => standardGearResolver(itemId) === undefined)) {
+        return undefined;
+      }
+      const merged = mergeInitialStandardLoadout(itemSystem, character.id, loadout);
+      if ("error" in merged) return undefined;
+      itemSystem = merged.itemSystem;
+    }
+
+    for (const character of Object.values(entities)) {
+      const initialLoadout = character.loadout;
+      if (initialLoadout === undefined) continue;
+      const derived = deriveCharacterLoadoutFromItems(itemSystem, {
+        holderRef: character.id,
+        ...(character.classId === undefined ? {} : { classId: character.classId }),
+        scores: {
+          dex: character.abilityScores?.dex ?? 10,
+          con: character.abilityScores?.con ?? 10,
+        },
+        speedFeet: initialLoadout.speedFeet,
+      });
+      if ("error" in derived) return undefined;
+      character.loadout = derived.loadout;
+    }
+  }
+
   const characterControls = Object.fromEntries(
     [...controlInputs]
       .sort((left, right) => left.characterId.localeCompare(right.characterId))
@@ -504,7 +549,12 @@ function buildInitialState(
     tacticalPositionByCharacter.set(character.id, structuredClone(tacticalPosition));
   }
   for (const character of Object.values(entities).filter((entry) => entry.kind === "player")) {
-    const compiled = compileStaticCharacterCombat(character, characterBuilds[character.id]);
+    const compiled = compileStaticCharacterCombat(
+      character,
+      characterBuilds[character.id],
+      itemSystem,
+      combatDefinitions,
+    );
     for (const [definitionId, definition] of Object.entries(compiled.definitions)) {
       const existing = combatDefinitions[definitionId];
       if (existing !== undefined && canonicalSha256(existing) !== canonicalSha256(definition)) {
@@ -521,6 +571,7 @@ function buildInitialState(
       compiled,
       seat?.principalId,
       tacticalPosition,
+      itemSystem,
     );
   }
   for (const character of Object.values(entities).filter((entry) => entry.kind === "npc")) {
@@ -574,7 +625,6 @@ function buildInitialState(
           sceneQuestion: "这一章将如何改变角色与世界？",
         },
       },
-      artifacts: {},
       relationships: {},
       promises: {},
       debts: {},
@@ -586,6 +636,7 @@ function buildInitialState(
       npcPlans: {},
       factionPlans: {},
       meaningfulFailures: {},
+      adjudicationPrecedents: {},
       retryChanges: {},
       sceneQuestions: {},
       endingCandidates: {},
@@ -595,6 +646,7 @@ function buildInitialState(
       ...(socialResolutionProfileEnabled(profiles.extensions)
         ? { conversationThreads: {} }
         : {}),
+      itemSystem,
     },
     combatRuntime: {
       story: { chapterId: "chapter:opening", status: "active", endingCandidates: [] },
@@ -1052,7 +1104,7 @@ function answerPendingInput(
       (hasExactKeys(input.proposal, ["kind", "ruling"])
         && input.proposal.kind === "resolveImprovisedAction"
         && isRecord(input.proposal.ruling))
-      || input.proposal.kind === "resolveCompoundActionPlan"
+      || input.proposal.kind === "executeCausalActionProgram"
       || (input.proposal.kind === "recordAdvancementChoice"
         && hasExactKeys(input.proposal, [
           "characterId",
@@ -1113,7 +1165,7 @@ function answerPendingInput(
     }
   }
   if (pending.kind === "socialResolution"
-    && input.proposal.kind === "resolveCompoundActionPlan"
+    && input.proposal.kind === "executeCausalActionProgram"
     && isRecord(input.proposal.causalActionProgram)
     && isRecord(pending.options)) {
     const nodes = Array.isArray(input.proposal.causalActionProgram.nodes)
@@ -1181,12 +1233,11 @@ function answerPendingInput(
     return rejected("invalidWorldState", "The frozen social offer cannot be superseded.");
   }
   const continuedState = socialSupersession?.state ?? close.state;
-  const continuedProposal = input.proposal.kind === "resolveCompoundActionPlan"
+  const continuedProposal = input.proposal.kind === "executeCausalActionProgram"
     ? continueCompoundRoot(structuredClone(input.proposal), pending.rootActionId)
     : undefined;
   const outcome = continuedProposal !== undefined
     ? stepCausalActionProgram(profiles, continuedState, continuedProposal)
-      ?? stepCompoundActionPlan(profiles, continuedState, continuedProposal)
     : resolveImprovisedRuling(
         profiles,
         continuedState,
@@ -1405,7 +1456,10 @@ function fulfillAuthoritativeRandomness(
   ) {
     return rejected("privateOrUnknownReference", "The continuation reference is unavailable.");
   }
-  const maximumFace = stored.request.purpose === "restHitDice" || stored.request.purpose === "hiddenRealitySelection"
+  if (stored.request.purpose === "hiddenRealitySelection") {
+    return rejected("invalidWorldState", "The retired hidden-reality continuation is unavailable.");
+  }
+  const maximumFace = stored.request.purpose === "restHitDice"
     ? Number(stored.request.dice[0]?.sides)
     : 20;
   if (!(input.rolls as number[]).every((roll) => roll <= maximumFace)) {
@@ -1434,16 +1488,13 @@ function fulfillAuthoritativeRandomness(
   );
   if (social !== undefined) return social;
   if (causal !== undefined) return causal;
-  const compound = fulfillCompoundActionPlanRandomness(
+  const actorPlan = fulfillActorPlanRandomness(
     profiles,
     state,
     input.continuation.continuationId,
     input.rolls as number[],
   );
-  if (compound !== undefined) return compound;
-  if (stored.request.purpose === "hiddenRealitySelection") {
-    return rejected("invalidWorldState", "The frozen HiddenReality continuation could not be resumed.");
-  }
+  if (actorPlan !== undefined) return actorPlan;
   const expectedRollCount = stored.request.frozenCheck.mode === "normal" ? 1 : 2;
   if (input.rolls.length !== expectedRollCount) {
     return rejected("invalidRulesInput", "The authoritative roll count does not match the frozen request.");
@@ -1535,11 +1586,13 @@ function fulfillAuthoritativeRandomnessBatch(
       || !value.rolls.every((roll) => Number.isInteger(roll) && roll >= 1 && roll <= 1_000_000)
     ) return [];
     const stored = state.internalContinuations[value.continuation.continuationId];
-    if (stored === undefined || stored.continuation.capability !== value.continuation.capability) return [];
-    const expected = stored.request.purpose === "restHitDice" || stored.request.purpose === "hiddenRealitySelection"
+    if (stored === undefined
+      || stored.continuation.capability !== value.continuation.capability
+      || stored.request.purpose === "hiddenRealitySelection") return [];
+    const expected = stored.request.purpose === "restHitDice"
       ? Number(stored.request.dice[0]?.count)
       : stored.request.frozenCheck.mode === "normal" ? 1 : 2;
-    const maximumFace = stored.request.purpose === "restHitDice" || stored.request.purpose === "hiddenRealitySelection"
+    const maximumFace = stored.request.purpose === "restHitDice"
       ? Number(stored.request.dice[0]?.sides)
       : 20;
     if (value.rolls.length !== expected || !value.rolls.every((roll) => Number(roll) <= maximumFace)) return [];
@@ -1783,9 +1836,9 @@ export function stepAuthoritativeWorld(
     if (causalResult !== undefined) {
       return causalResult;
     }
-    const compoundResult = stepCompoundActionPlan(profiles, stateValue, input);
-    if (compoundResult !== undefined) {
-      return compoundResult;
+    const actorPlanResult = stepActorPlanMechanics(profiles, stateValue, input);
+    if (actorPlanResult !== undefined) {
+      return actorPlanResult;
     }
     const combatResult = stepCombatWorld(profiles, stateValue, input);
     if (combatResult !== undefined) {

@@ -732,19 +732,6 @@ describe.sequential("SPEC 0014 Room destructible environment vertical", () => {
       narration: "notApplicable",
     });
 
-    const legacy = authority("environment-destruction-room-v2-legacy");
-    await expect(legacy.initializeAuthoritative({
-      roomId: "environment-destruction-room-v2-legacy",
-      moduleId: "black-oak-will",
-      moduleVersion: "legacy-anchor-v2",
-      members: [{ principalId: ALICE.principal.id, role: "host" }],
-      characters: [character("character:destruction-room:legacy", ALICE.principal.id, "yard")],
-    })).resolves.toMatchObject({ created: true });
-    const legacyAbility = warhammerAbility(await legacy.observe(ALICE));
-    await expect(handleRoomAction(
-      context(ALICE, legacy, proposed),
-      environmentAbility("submission:destruction:legacy", DOOR_ID, legacyAbility.abilityRef) as never,
-    )).resolves.toEqual(unknown);
     expect(proposed.value).toBe(0);
   });
 });
