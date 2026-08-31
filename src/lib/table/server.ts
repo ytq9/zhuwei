@@ -12,7 +12,7 @@ import { d20, d4, eligibleBoosts, rollKind, type BoostId } from "@/lib/dnd/boost
 import { getModule, listModules } from "@/lib/module";
 import { publicNpc } from "@/lib/module/schema";
 import type { PendingRoll } from "@/lib/kp/prompt";
-import { readClueLayer, runKpTurn, KP_BUSY_MSG } from "@/lib/kp/engine";
+import { readClueLayer, runKpTurn, KP_BUSY_MSG, hangingSayForUser } from "@/lib/kp/engine";
 import { openingStances } from "@/lib/kp/stance";
 import { placeOf, readWhere } from "@/lib/kp/where";
 import { publicClocks, readClocks, readRestHold, restRemain, REST_BEATS, clockOf } from "@/lib/kp/clock";
@@ -618,6 +618,7 @@ export const fetchTable = createServerFn({ method: "GET" })
         chapterName: chapter?.name ?? "第一章",
         sceneName: sceneHere?.name ?? scene?.name ?? "开场",
         kpBusy: isPlaceBusy(flags, myPlace),
+        hangingSay: await hangingSayForUser(room.id, context.userId, myPlace),
         pendingRolls: asJson<PendingRoll[]>(st?.pending_rolls, []),
         clues,
         npcs,
@@ -965,6 +966,20 @@ export const sendAction = createServerFn({ method: "POST" })
       flagsSay?.scene_id ?? "wake",
     );
     const sayId = uid("msg");
+    const hanging = await hangingSayForUser(room.id, context.userId, sayPlace);
+    if (hanging && hanging.body.trim() === text) {
+      const kp = await runKpTurn({
+        roomId: room.id,
+        actorUserId: context.userId,
+        actorName: name,
+        action: hanging.body,
+        kind: "action",
+        consumeSayId: hanging.id,
+      });
+      if (kp.ok) return { ok: true as const };
+      if (kp.error === KP_BUSY_MSG) return { ok: true as const, waiting: true as const };
+      return { ok: false as const, error: kp.error, kept: true as const };
+    }
     await sql`
       insert into messages (id, room_id, user_id, kind, name, body, meta)
       values (
@@ -972,22 +987,61 @@ export const sendAction = createServerFn({ method: "POST" })
         ${JSON.stringify({ place: sayPlace })}::jsonb
       )
     `;
-    let lastErr = KP_BUSY_MSG;
-    for (let i = 0; i < 8; i++) {
-      const kp = await runKpTurn({
-        roomId: room.id,
-        actorUserId: context.userId,
-        actorName: name,
-        action: text,
-        kind: "action",
-        consumeSayId: sayId,
-      });
-      if (kp.ok) return { ok: true as const };
-      lastErr = kp.error;
-      if (kp.error !== KP_BUSY_MSG) return { ok: false as const, error: kp.error };
-      await new Promise((r) => setTimeout(r, 700));
+    const kp = await runKpTurn({
+      roomId: room.id,
+      actorUserId: context.userId,
+      actorName: name,
+      action: text,
+      kind: "action",
+      consumeSayId: sayId,
+    });
+    if (kp.ok) return { ok: true as const };
+    if (kp.error === KP_BUSY_MSG) return { ok: true as const, waiting: true as const };
+    return { ok: false as const, error: kp.error, kept: true as const };
+  });
+
+export const resumeKp = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string; sayId?: string }) => input)
+  .handler(async ({ context, data }) => {
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    const me = await memberOf(room.id, context.userId);
+    const sql = await getSql();
+    const flagsRow = (
+      await sql<{ npc_flags: unknown; scene_id: string }>`
+        select npc_flags, scene_id from game_states where room_id = ${room.id}
+      `
+    )[0];
+    const place = placeOf(
+      readWhere(asJson<Record<string, unknown>>(flagsRow?.npc_flags, {})),
+      context.userId,
+      flagsRow?.scene_id ?? "wake",
+    );
+    const hanging = await hangingSayForUser(room.id, context.userId, place);
+    if (!hanging) return { ok: true as const };
+    if (data.sayId && hanging.id !== data.sayId) {
+      return { ok: false as const, error: "桌上已有更新的一句，请用那一句" };
     }
-    return { ok: false as const, error: lastErr };
+    const pc = (
+      await sql<{ sheet: unknown }>`
+        select sheet from characters
+        where room_id = ${room.id} and user_id = ${context.userId}
+      `
+    )[0];
+    const sheet = asJson<CharacterSheet>(pc?.sheet, {} as CharacterSheet);
+    const name = sheet.name || me.nickname || hanging.name || "冒险者";
+    const kp = await runKpTurn({
+      roomId: room.id,
+      actorUserId: context.userId,
+      actorName: name,
+      action: hanging.body,
+      kind: "action",
+      consumeSayId: hanging.id,
+    });
+    if (kp.ok) return { ok: true as const };
+    if (kp.error === KP_BUSY_MSG) return { ok: true as const, waiting: true as const };
+    return { ok: false as const, error: kp.error };
   });
 
 export const resolveRoll = createServerFn({ method: "POST" })
