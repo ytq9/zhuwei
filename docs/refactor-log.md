@@ -2175,3 +2175,10 @@
 - 部署与处置：`DEPLOY_SOURCE_SHA=1fa33f0… npm run cf:deploy` 首次退出 0，产生 Version `23fbf3d4-841b-41ea-8a22-fab7d8b7c490`；因上述权限缺口在初次部署后才返回，该版本立即由修复部署取代。`DEPLOY_SOURCE_SHA=411357b… npm run cf:deploy` 退出 0，既有 Worker `zhuwei` 的最终 Version 为 `b0ff1fc6-419b-4335-9552-40d80ca4e8ce`；`wrangler deployments status` 退出 0，并确认该 Version 承接 100% 流量。两次命令中的 build 都是部署脚本必经步骤，没有另跑完整冻结门。
 - 最小线上回执：`https://zhuwei.yinskyriver.workers.dev/` 返回 HTTP 200，耗时约 0.366 秒；没有执行真实外部模型探针、浏览器整站 QA 或扩大线上状态写入。两个隔离本地 D1 临时目录已清理。
 - 远端边界与未覆盖范围：最终代码 push 后 `origin/cloudflare` 精确为 `411357b14c21963f15572e28a939017f0160bf22`，`origin/main` 仍为 `29eb06dc009c983ad61b2d862454503e67a7f40a`；未修改 grok.me、未创建 Worker/D1/其他资源，也未执行 `0012` 远端 migration。按用户要求未运行 `npm test`、完整 Node/Worker、全项目 Lint 或完整冻结门；发布结论只由上一条列出的定向证据、部署脚本构建、控制面 100% 流量和首页冒烟支持。
+
+## 远端 D1 `0012` 更新审计（2026-08-31）
+
+- 授权与目标：用户在获知 D1 migration 会改变远端数据库结构并可能删除旧数据后明确要求“更新”；目标解析为现有 `wrangler.jsonc` 的 `DB` binding，即账号 `7aca31eae821510ea477022b0c0e0e91` 下数据库 `zhuwei-dev` / `f5a448fd-4224-4e52-bafb-a84cb190b618`。执行前 `cloudflare` 工作树干净，HEAD 与 `origin/cloudflare` 均为 `a68ba8415a754ecd115546deb688301ae620a9a4`，`origin/main` 为 `29eb06dc009c983ad61b2d862454503e67a7f40a`。
+- 只读预检：`wrangler d1 migrations list zhuwei-dev --remote` 退出 0，唯一待执行项为 `0012_soft_ghost_rider.sql`；远端存在 `game_states`、`messages`、`room_event_archive`、`session_logs`、`rooms` 与现役 `authoritative_room_event_archive`，`rooms` 有 4 行。逐行复核 migration：删除四张退役表，复制并重建 `rooms`、更新当前 0.4 默认值并重建两个索引；它不会删除这 4 条房间目录行。
+- 执行与写读闭环：`CI=1 npx wrangler d1 migrations apply zhuwei-dev --remote` 退出 0，13 条命令原子应用成功。随后 migration 列表返回 `No migrations to apply`；从远端 `d1_migrations` 读回 id `13`、名称 `0012_soft_ghost_rider.sql`、应用时间 `2026-08-31 15:48:23`。`sqlite_master` 复核四张退役表均不存在，现役 archive、`rooms`、`idx_rooms_code` 与 `idx_rooms_host` 保留；`PRAGMA table_info('rooms')` 的 Ruleset、KP 模型/Profile 和 lobby 默认值与 migration 一致，房间目录仍为 4 行。
+- 线上与边界：migration 后 `https://zhuwei.yinskyriver.workers.dev/` 返回 HTTP 200，约 0.547 秒。未重新部署 Worker、未修改应用源码、未删除保留的房间目录行或现役权威归档、未创建新资源，也未触碰 `main` 或 grok.me；本轮外部变更仅为现有 D1 的已登记 `0012`。
