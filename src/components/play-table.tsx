@@ -17,11 +17,12 @@ import {
 } from "@/lib/dnd/gear";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/server";
-import { resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/server";
+import { resolveRoll, sendAction, setGear, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember, resumeKp } from "@/lib/table/server";
 import type { PendingRoll } from "@/lib/kp/prompt";
 import type { PublicCombat } from "@/lib/kp/combat";
 import { eligibleBoosts } from "@/lib/dnd/boosts";
 import { ensureResources, left, listStocks, type StockItem } from "@/lib/dnd/resources";
+import { stripMetaTalk, isMetaHeavy } from "@/lib/kp/sanitize";
 import { toast } from "sonner";
 import { Mic, Send, ScrollText, UserRound, MapPinned, Users } from "lucide-react";
 
@@ -44,6 +45,7 @@ export type TableSnap = {
     chapterName: string;
     sceneName: string;
     kpBusy: boolean;
+    hangingSay?: { id: string; body: string; name: string } | null;
     pendingRolls: PendingRoll[];
     clues: {
       id: string;
@@ -103,6 +105,7 @@ export function PlayTable({
   const chunksRef = useRef<BlobPart[]>([]);
   const composingRef = useRef(false);
   const sendingRef = useRef(false);
+  const [recovering, setRecovering] = useState(false);
   const [localSays, setLocalSays] = useState<
     { id: string; body: string; name: string }[]
   >([]);
@@ -162,20 +165,35 @@ export function PlayTable({
     try {
       const res = await sendAction({ data: { code, text: body } });
       if (!res.ok) {
-        setLocalSays((ls) => ls.filter((x) => x.id !== localId));
-        setText((t) => (t ? t : body));
         toast.error(res.error);
+        if (!("kept" in res && res.kept)) {
+          setLocalSays((ls) => ls.filter((x) => x.id !== localId));
+          setText((t) => (t ? t : body));
+        }
       } else if ("queued" in res && res.queued) {
         setLocalSays((ls) => ls.filter((x) => x.id !== localId));
         toast.message("已入队内缓冲。队长本拍内未批准就会消失。");
       }
-    } catch (e) {
-      setLocalSays((ls) => ls.filter((x) => x.id !== localId));
-      setText((t) => (t ? t : body));
-      toast.error(e instanceof Error ? e.message : "没能送出");
+    } catch {
+      toast.message("这一拍还在写。桌上那句话还在，不必再发一遍。");
     } finally {
       sendingRef.current = false;
       setSending(false);
+    }
+  }
+
+  async function recoverLast() {
+    if (recovering) return;
+    setRecovering(true);
+    try {
+      const res = await resumeKp({
+        data: { code, sayId: snap.state.hangingSay?.id },
+      });
+      if (!res.ok) toast.error(res.error);
+    } catch (e) {
+      toast.message("KP 还在写，稍等片刻。");
+    } finally {
+      setRecovering(false);
     }
   }
 
@@ -321,6 +339,23 @@ export function PlayTable({
             squads={snap.state.squads ?? []}
           />
         )}
+        {snap.state.hangingSay && !snap.state.kpBusy && !sending ? (
+          <div className="shrink-0 border-t border-danger/40 bg-elevated px-5 py-3">
+            <p className="text-sm text-fg">KP 这一拍还没写完。</p>
+            <p className="mt-1 text-xs text-muted">
+              刚才那句话还在桌上，再请一次不会当成新的行动。
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className="mt-3"
+              disabled={recovering}
+              onClick={() => void recoverLast()}
+            >
+              {recovering ? "正在落笔……" : "请 KP 再写一遍"}
+            </Button>
+          </div>
+        ) : null}
         <form
           className="flex shrink-0 items-end gap-2 border-t border-border p-3"
           onSubmit={(e) => e.preventDefault()}
@@ -779,7 +814,10 @@ function MessageBubble({
           m.kind === "roll" && "font-mono text-xs",
         )}
       >
-        {m.body}
+        {kp
+          ? stripMetaTalk(m.body) ||
+            (isMetaHeavy(m.body) ? "现场还在。还可以问、看、或动手。" : m.body)
+          : m.body}
       </div>
       {m.clues && m.clues.length > 0 && (
         <ul className="mt-2 grid gap-1.5">

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * Vite 8.2 + Rolldown 1.2.2+ emits Nitro SSR chunks that re-export
- * `ssr_exports` without declaring it. Node then 500s every request with:
- *   Export 'ssr_exports' is not defined in module
- * See tanstack/router#8031. Patch emitted server ESM after `vite build`.
+ * Vite 8.2 + Rolldown emits Nitro SSR chunks that:
+ *   1. re-export `ssr_exports` without declaring it
+ *   2. make ssr.mjs <-> ssr2.mjs a cycle on export name `c`
+ *      (ssr2 wants `c` = __exportAll, ssr.mjs re-imports `c` = server_exports)
+ * Node then 500s with `__exportAll$1 is not a function`.
  */
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -35,7 +36,7 @@ function isUndeclared(src) {
   return /export\s*\{[^}]*\bssr_exports\b/.test(src);
 }
 
-function patch(src) {
+function patchSsrExports(src) {
   if (!isUndeclared(src)) return null;
   const alias = /\b(?:var|let|const)\s+server_exports\b/.test(src)
     ? "server_exports"
@@ -51,21 +52,40 @@ function patch(src) {
   return insert + src;
 }
 
+function patchExportAllCycle(file, src) {
+  if (/[/\\]ssr\.mjs$/.test(file)) return null;
+  if (!src.includes("__exportAll")) return null;
+  const next = src.replace(
+    /import\s*\{\s*c\s+as\s+(__exportAll(?:\$\d+)?)\s*\}\s*from\s*["']\.\/ssr\.mjs["']\s*;/g,
+    `import { r as $1 } from "../_runtime.mjs";`,
+  );
+  return next === src ? null : next;
+}
+
 let fixed = 0;
 let leftover = [];
 for (const root of ROOTS) {
   const files = await walk(join(process.cwd(), root));
   for (const file of files) {
-    const src = await readFile(file, "utf8");
-    const next = patch(src);
-    if (next) {
-      await writeFile(file, next);
+    let src = await readFile(file, "utf8");
+    let changed = false;
+    const a = patchSsrExports(src);
+    if (a) {
+      src = a;
+      changed = true;
+    }
+    const b = patchExportAllCycle(file, src);
+    if (b) {
+      src = b;
+      changed = true;
+    }
+    if (changed) {
+      await writeFile(file, src);
       console.log("[fix-ssr-exports]", file);
       fixed += 1;
     }
-    const checkSrc = next ?? src;
-    if (isUndeclared(checkSrc)) leftover.push(file);
-    if (file.endsWith(".mjs") && checkSrc.includes("ssr_exports")) {
+    if (isUndeclared(src)) leftover.push(file);
+    if (file.endsWith(".mjs") && src.includes("ssr_exports")) {
       const r = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
       if (r.status !== 0) leftover.push(file + " (syntax)");
     }

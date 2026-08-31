@@ -16,12 +16,21 @@ export type KpSpeech = {
   npcRolls: NpcRollReq[];
   spendPatch: { userId: string; action?: boolean; bonus?: boolean; reaction?: boolean } | null;
   combat: unknown;
+  metaStripped?: boolean;
 };
 
 const SPEECH_CAP = 560;
 
 const ROLLCALL =
   /(莉安.{0,16}(铜钥|攥)|奈斯.{0,16}(风帽|低着头)|瓦罗.{0,12}(清嗓|袖口|清了清嗓))/;
+
+const META_TOKEN =
+  /SourceClaim|CanonicalFact|ClaimedFact|wherePatch|secretPatch|stancePatch|revealClues|npcFlags|clueId|userId|JSON\s*对象|提交标识|待决状态|角色前提|书证|口述主张/i;
+
+const META_LINE =
+  /SourceClaim|CanonicalFact|ClaimedFact|requester\s*=|objective\s*=|wherePatch|secretPatch|stancePatch|userId\s*=|hat\s*=|clueId\s*=|角色前提|已作为\s*|不是\s*Canonical|明确归属于|提交标识|待决状态|JSON\s*对象|书证层|口头主张|已确认了你的说法/i;
+
+const ECHO_YOU_SAID = /^\s*(你说|玩家说|行动者说)\s*[:：]/;
 
 /** 砍掉段末点名全场的调度句。 */
 export function stripStatusRollcall(text: string) {
@@ -37,6 +46,55 @@ export function stripStatusRollcall(text: string) {
   return text;
 }
 
+/** 去掉模型泄漏的协议句、回声「你说：」。 */
+export function stripMetaTalk(text: string) {
+  const paras = text.split(/\n{2,}/);
+  const keptParas: string[] = [];
+  for (const para of paras) {
+    const sentences = para
+      .split(/(?<=[。！？…\n])/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const ok = sentences.filter((s) => {
+      if (ECHO_YOU_SAID.test(s)) return false;
+      if (META_LINE.test(s)) return false;
+      if (/^[A-Za-z][A-Za-z0-9_]*\s*=/.test(s) && s.length < 120) return false;
+      if (/^(NPC|KP)\s*的回应/.test(s)) return false;
+      return true;
+    });
+    const joined = ok.join("").trim();
+    if (joined) keptParas.push(joined);
+  }
+  return keptParas.join("\n\n").trim();
+}
+
+export function isMetaHeavy(text: string) {
+  const t = text.replace(/\s+/g, "");
+  if (!t) return true;
+  if (META_TOKEN.test(text)) return true;
+  if (ECHO_YOU_SAID.test(text.trim())) return true;
+  if (/角色前提已/.test(text) && /来意/.test(text)) return true;
+  if (/requester\s*=/.test(text) || /objective\s*=/.test(text)) return true;
+  return false;
+}
+
+export function naturalFallback(actorName: string, action: string) {
+  const a = action.replace(/\s+/g, "");
+  if (/我知道|知道些什么|我了解什么|我掌握/.test(a)) {
+    return "你是受暮烛镇一位老熟人的口信赶来的：黑橡居酒屋的老板赫斯·黑橡死了，今晚守灵。老朋友叫什么由你自己定。此刻大厅点着蜡烛，遗体停在拼起的长桌上，莉安坐在炉边，瓦罗按着一份盖印的文件，奈斯站在楼梯阴影里。";
+  }
+  if (/谁叫我|谁让我来|谁找我|为什么在这|我为什么来|谁请我/.test(a)) {
+    return "镇上的消息传到你耳朵里——一位老熟人请你来一趟。赫斯死了，今晚是守灵。老朋友的名字你还没说出口，那就先别编。大厅里这三个人都看得到你。";
+  }
+  if (
+    /^(lian|莉安).{0,8}(你好|嗨|哈喽|hello|hi)/i.test(a) ||
+    /^(你好|嗨).{0,6}(莉安|lian)/i.test(a)
+  ) {
+    return `莉安抬眼看了${actorName}一眼，手里还握着那枚铜钥。「你们哪位？今晚是守灵，先报个名字。」`;
+  }
+  return "现场还在。他们听见了。还可以问、看、或动手。";
+}
+
 export function parseKpSafe(raw: string): KpSpeech {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
@@ -45,8 +103,14 @@ export function parseKpSafe(raw: string): KpSpeech {
   try {
     v = JSON.parse(json) as Partial<KpSpeech>;
   } catch {
-    const speech = stripRepeat(raw.replace(/```json|```/g, "").trim()).slice(0, SPEECH_CAP);
-    return fallbackSpeech(speech || "请再说一次你要做什么。");
+    const speech = stripRepeat(
+      stripMetaTalk(raw.replace(/```json|```/g, "").trim()),
+    ).slice(0, SPEECH_CAP);
+    const metaStripped = isMetaHeavy(raw) || !speech;
+    return fallbackSpeech(
+      speech || "请再说一次你要做什么。",
+      metaStripped,
+    );
   }
   const hat =
     v.hat === "refuse" ||
@@ -55,8 +119,15 @@ export function parseKpSafe(raw: string): KpSpeech {
     v.hat === "oppose"
       ? v.hat
       : "narrate";
-  const speech = stripStatusRollcall(stripRepeat(String(v.speech ?? "").trim())).slice(0, SPEECH_CAP);
-  const tts = stripStatusRollcall(stripRepeat(String(v.tts ?? speech).trim())).slice(0, 320);
+  const rawSpeech = String(v.speech ?? "").trim();
+  const rawTts = String(v.tts ?? "").trim();
+  const speech = stripStatusRollcall(
+    stripRepeat(stripMetaTalk(rawSpeech)),
+  ).slice(0, SPEECH_CAP);
+  const tts = stripStatusRollcall(
+    stripRepeat(stripMetaTalk(rawTts || speech)),
+  ).slice(0, 320);
+  const metaStripped = isMetaHeavy(rawSpeech) || isMetaHeavy(raw);
   return {
     hat,
     speech: speech || "现场暂时安静。你们还可以问、看、或动手。",
@@ -81,6 +152,7 @@ export function parseKpSafe(raw: string): KpSpeech {
         ? (v.spendPatch as KpSpeech["spendPatch"])
         : null,
     combat: v.combat ?? null,
+    metaStripped,
   };
 }
 
@@ -118,7 +190,7 @@ export function tooLike(a: string, b: string) {
   return hit >= 6;
 }
 
-function fallbackSpeech(speech: string): KpSpeech {
+function fallbackSpeech(speech: string, metaStripped = false): KpSpeech {
   return {
     hat: "narrate",
     speech,
@@ -135,6 +207,7 @@ function fallbackSpeech(speech: string): KpSpeech {
     npcRolls: [],
     spendPatch: null,
     combat: null,
+    metaStripped,
   };
 }
 

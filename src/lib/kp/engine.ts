@@ -11,6 +11,8 @@ import {
   readMemory,
   tooLike,
   writeMemory,
+  isMetaHeavy,
+  naturalFallback,
   type KpSpeech,
 } from "./sanitize";
 import { applyStancePatch, openingStances, readStances } from "./stance";
@@ -53,28 +55,43 @@ export type { KpSpeech, PendingRoll };
 async function chatJson(messages: { role: "system" | "user"; content: string }[]) {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) return { ok: false as const, error: "AI 暂不可用" };
-  const res = await fetch("https://api.x.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "grok-4.5",
-      temperature: 0.7,
-      max_tokens: 1200,
-      response_format: { type: "json_object" },
-      messages,
-    }),
-  });
-  if (!res.ok) {
-    return { ok: false as const, error: `KP 无法应答（${res.status}）` };
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 28_000);
+  try {
+    const res = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: ac.signal,
+      body: JSON.stringify({
+        model: "grok-4.5",
+        temperature: 0.55,
+        max_tokens: 900,
+        response_format: { type: "json_object" },
+        messages,
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false as const, error: `KP 无法应答（${res.status}）` };
+    }
+    const body = (await res.json()) as {
+      choices: { message: { content: string } }[];
+    };
+    const text = body.choices[0]?.message.content ?? "";
+    return { ok: true as const, data: parseKpSafe(text) };
+  } catch (err) {
+    const msg =
+      err instanceof Error && err.name === "AbortError"
+        ? "KP 这一拍写得太慢"
+        : err instanceof Error
+          ? err.message
+          : "KP 无法应答";
+    return { ok: false as const, error: msg };
+  } finally {
+    clearTimeout(timer);
   }
-  const body = (await res.json()) as {
-    choices: { message: { content: string } }[];
-  };
-  const text = body.choices[0]?.message.content ?? "";
-  return { ok: true as const, data: parseKpSafe(text) };
 }
 
 type StateRow = {
@@ -228,6 +245,16 @@ async function listOpenSays(
   return out;
 }
 
+export async function hangingSayForUser(
+  roomId: string,
+  userId: string,
+  place?: string,
+) {
+  const sql = await getSql();
+  const open = await listOpenSays(sql, roomId, place);
+  return open.filter((s) => s.userId === userId).at(-1) ?? null;
+}
+
 function formatSameBeat(
   says: OpenSay[],
   fallback: { name: string; action: string; userId: string },
@@ -312,7 +339,7 @@ export async function runKpTurn(opts: {
           placeOf(where0, c.user_id, st.scene_id) === actorPlace,
       );
       if (othersHere) {
-        await new Promise((r) => setTimeout(r, 900));
+        await new Promise((r) => setTimeout(r, 400));
       }
     }
     const openSays =
@@ -403,20 +430,34 @@ export async function runKpTurn(opts: {
         `;
         if (opts.consumeSayId) await markConsumed(sql, opts.consumeSayId);
         await unlockPlaceNow();
-        return out;
+        return { ok: true as const, fallback: true as const };
       }
 
       data = out.data;
-      if (memory.lastSpeeches.some((s) => tooLike(s, data.speech))) {
+      const needRewrite =
+        Boolean(data.metaStripped) ||
+        isMetaHeavy(data.speech) ||
+        memory.lastSpeeches.some((s) => tooLike(s, data.speech));
+      if (needRewrite) {
         const retry = await chatJson([
           ...messages,
           {
             role: "user",
             content:
-              "上一版与近期内容重复。保留本轮事实和行动结果，用自然、完整、直接的中文重新表达。不要增加新的氛围意象，不使用器物代指人物或动作，确保玩家能立刻理解发生了什么以及 NPC 的意思。只要 JSON。",
+              "上一版把内部协议写进了旁白，或与近期内容重复。那是给程序看的，玩家看不见。把同一拍改写成现场 KP 的完整中文：发生了什么、谁说了什么。打招呼就让 NPC 用人话应答。问「我知道什么/谁叫我来」就用开场公开层当面回答。不要 SourceClaim、CanonicalFact、requester=、角色前提、你说：。只要 JSON。",
           },
         ]);
         if (retry.ok) data = retry.data;
+      }
+      if (isMetaHeavy(data.speech) || data.speech.replace(/\s+/g, "").length < 8) {
+        const human = naturalFallback(opts.actorName, beat.action || opts.action);
+        data = {
+          ...data,
+          hat: data.hat === "call_roll" || data.hat === "oppose" ? data.hat : "narrate",
+          speech: human,
+          tts: human.slice(0, 180),
+          metaStripped: false,
+        };
       }
     }
 

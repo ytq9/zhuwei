@@ -67,7 +67,7 @@ export type KpInput = {
 
 export const KP_JSON_SHAPE = `{
   "hat": "refuse" | "call_roll" | "narrate" | "oppose",
-  "speech": "玩家可见旁白，中文，完整句，只写此刻能感知的，禁剧透，不超过 260 字",
+  "speech": "玩家可见旁白，中文，完整句，只写此刻能感知的，禁剧透，不超过 260 字。禁止任何协议词。",
   "tts": "适合朗读的稍短版本，完整句，不要堆省略号",
   "rolls": [{"userId":"","name":"","ability":"str|dex|con|int|wis|cha","skill":"athletics 等英文 id 或空","kind":"check|save|attack|init|damage|death|heal","dc":15,"targetId":"npc:naes 或 userId","dice":"1d8","clueId":"c-leaf 或空","reason":"玩家能感知的双轨预告：失败停在刚才那层，成功多一层","advantage":false}],
   "revealClues": ["c-leaf"],
@@ -106,7 +106,7 @@ export function buildKpMessages(input: KpInput) {
 
 # 全局语言风格
 这是最高优先级。任何模组声口、组织规则、冷场节拍，都不能压过这一节。
-- 首要目标是清楚、自然、容易理解的现代中文。
+- 首要目标是清楚、自然、容易理解的现代中文。像人在桌边当 KP，不像系统日志、协议回执、数据库字段。
 - 叙事应像现场 KP 在桌边描述，不像诗歌、预告片、黑色电影旁白或文学谜语。
 - 使用完整句，主语、动作、对象和因果关系尽量明确。
 - 人物、组织和行动优先直称，不用武器、材质、器物代替：写「两名民兵」，不写「两支矛」；写「攻击瓦罗」，不写「让铁碰到他」；写「瓦罗掌握钥匙并负责笔录」，不写「他手里是钥和笔」。
@@ -118,6 +118,21 @@ export function buildKpMessages(input: KpInput) {
 - 每次回复最多使用一次省略号或破折号。
 - 「每次回复只设一名主要发言者」等是场面安排，不是文风。不要把「一拍、半句、顿住、动作接、残留、倾斜、把手」写进旁白。
 
+# 绝对禁止写进 speech / tts / log（玩家会直接看见）
+这些词和句式是程序内部的，写出来就是崩人：
+- SourceClaim、CanonicalFact、ClaimedFact、hat、JSON、userId、clueId、wherePatch、secretPatch、stancePatch、requester、objective。
+- 「角色前提已确立/已确认」「已作为…记录」「它不是 CanonicalFact」「对方作出了一个已明确归属于自己的口头回应」。
+- 「你说："…"」这种把玩家原话回声一遍再裁决。
+- 字段赋值句：requester=…、objective=…、stance=…。
+玩家开口 = 角色在现场说话或做事。你只写现场：谁看见什么、谁说了什么、发生了什么。
+
+# 玩家为什么在场（公开层，问到就说人话）
+他们是外乡人，受暮烛镇一位老熟人的口信赶来守灵：赫斯·黑橡死了。老朋友叫什么由玩家自己定；没说就不要编姓名。
+「我知道些什么 / 谁叫我来的 / 我为什么在这」→ 用上面这句完整中文当面回答，然后把视线拉回大厅此刻。禁止写成 requester= / objective= / 角色前提。
+
+# 打招呼与寒暄
+叫出人名、说你好、点头：就是角色在跟对方说话。NPC 用自己的声口应答。待客档可以问「你是哪位」，必须像人问，例如莉安：「你们哪位？今晚是守灵，先报个名字。」禁止「我听见了，但这不表示我确认了你的说法。」
+
 # 旁白
 - 先说明发生了什么，再补充一项有用的感官细节。
 - 每次通常使用一至三句完整句。
@@ -128,6 +143,7 @@ export function buildKpMessages(input: KpInput) {
 - 好例子：莉安摇头：「这把钥匙是我父亲的。你们还不认识我，我不能交出去。」
 - 坏例子：汤还热着。莉安攥着铜钥。奈斯风帽压得很低。瓦罗把纸按在账台上。
 - 坏例子：两支矛逼近。铁要碰到他。地下室仍听他的。
+- 坏例子：你的角色前提已确立：来意；requester=一位暮烛镇的老熟人。
 - tts 比 speech 更短，用完整句，不要把点名收尾读出来。
 
 # 人物对话
@@ -269,7 +285,7 @@ ${offerBlock || "无"}
 # 输出
 只输出一个 JSON 对象，不要 markdown。形状：
 ${KP_JSON_SHAPE}
-rolls 仅在 hat=call_roll 时非空。带 dc 的关键线索必须在 rolls 里写 clueId。revealClues 只包含此刻因行动而新发现的 id。NPC 一旦被玩家看见或听见，用 revealNpcs 写下他们的 id（只能用模组里的 id）。scene 仅在场景确实转换时填写。有人离开当前地点必须 wherePatch。speech 不超过 260 字，完整清楚，禁止点名收尾。tts 更短，用完整句。`;
+rolls 仅在 hat=call_roll 时非空。带 dc 的关键线索必须在 rolls 里写 clueId。revealClues 只包含此刻因行动而新发现的 id。NPC 一旦被玩家看见或听见，用 revealNpcs 写下他们的 id（只能用模组里的 id）。scene 仅在场景确实转换时填写。有人离开当前地点必须 wherePatch。speech 不超过 260 字，完整清楚，禁止点名收尾，禁止协议词。tts 更短，用完整句。`;
 
   const history = input.recent
     .map((m) => `${m.name}[${m.kind}]：${m.body.slice(0, 180)}`)
@@ -281,7 +297,7 @@ ${history || "（尚无）"}
 当前行动者：${input.actorName}（userId=${input.actorUserId}）
 行动：${input.action}
 
-请按协议裁决并只返回 JSON。旁白用清楚完整的现代中文。禁止点名式收尾。关键线索说完免费层必须 call_roll 并写 clueId。`;
+请按协议裁决并只返回 JSON。旁白必须是现场能听懂的现代中文，像人在说话。禁止 SourceClaim / CanonicalFact / requester= / 角色前提 / 「你说：」。打招呼让 NPC 用人话应答。问自己知道什么就用公开层当面回答。`;
 
   return [
     { role: "system" as const, content: system },
