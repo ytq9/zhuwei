@@ -751,7 +751,12 @@ function assertExactTableRulesetRouting(root) {
 }
 
 function assertTypedRoomProposalBoundary(root) {
-  const room = readSource(join(root, "app/_runtime/lib/room/durable-object.ts"));
+  const durable = readSource(join(root, "app/_runtime/lib/room/durable-object.ts"));
+  const environmentLowering = readSource(join(
+    root,
+    "app/_runtime/lib/room/environment-proposal-lowering.ts",
+  ));
+  const roomProposalSources = `${durable}\n${environmentLowering}`;
   const adapter = readSource(join(root, "app/_runtime/lib/room/proposal-adapter.ts"));
   const legacyProposalKinds = [
     "resolveImprovisedAction", "resolveContest", "startEncounter", "requestClarification",
@@ -762,7 +767,8 @@ function assertTypedRoomProposalBoundary(root) {
     "concludeStory", "recordEpilogueChoice",
   ];
   const reachableLegacyBranches = legacyProposalKinds.filter((kind) =>
-    room.includes(`proposal.kind === "${kind}"`) || room.includes(`proposal.kind !== "${kind}"`));
+    roomProposalSources.includes(`proposal.kind === "${kind}"`)
+      || roomProposalSources.includes(`proposal.kind !== "${kind}"`));
   assert.deepEqual(reachableLegacyBranches, [], `authoritative-v2 Room retains compact proposal branches: ${reachableLegacyBranches.join(", ")}`);
   assert.doesNotMatch(adapter, /validateProposal\(/, "Room proposal adapter retains the retired production KpProposalDraft validator");
   for (const currentKind of [
@@ -778,14 +784,17 @@ function assertTypedRoomProposalBoundary(root) {
     );
   }
   assert.match(
-    room,
+    durable,
     /isCanonicalAuthorityRecoveryInput\(recovery\.rulesInput\)/,
     "random continuation recovery must remain an exact current CausalActionProgram, specialized command, or pending-answer input",
   );
 }
 
 function assertSingleViewerProjector(root) {
-  const room = readSource(join(root, "app/_runtime/lib/room/durable-object.ts"));
+  const room = [
+    "app/_runtime/lib/room/durable-object.ts",
+    "app/_runtime/lib/room/environment-proposal-lowering.ts",
+  ].map((relativePath) => readSource(join(root, relativePath))).join("\n");
   assert.doesNotMatch(room, /projectionHash:\s*canonicalSha256/, "Room must not generate Viewer projectionHash outside Rules project");
   assert.doesNotMatch(room, /const lifecycleBase/, "successor lifecycle observations must reuse Rules project");
 }
@@ -801,6 +810,7 @@ function assertAuthoritativeOuterBoundaries(root) {
     "app/_runtime/lib/kp/authoritative-types.ts",
     "app/_runtime/lib/room/action.ts",
     "app/_runtime/lib/room/archive.ts",
+    "app/_runtime/lib/room/environment-proposal-lowering.ts",
     "app/_runtime/lib/room/proposal-adapter.ts",
     "app/_runtime/lib/room/server.ts",
     "app/_runtime/lib/table/authoritative.ts",
