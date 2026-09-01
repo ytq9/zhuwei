@@ -2190,3 +2190,17 @@
 - 实现与直接消费者：`table-client.tsx` 增加初始与延迟同步状态；`play-table.tsx` 增加统一工作指示器、常态上下文条和按需桌边册，并补齐 `aria-busy`、status/dialog/tab 语义。更新房间动作文案测试并新增真实组件交互测试；测试用 Provider key 仅写入权限为 600 的本地 `.dev.vars`，`.gitignore` 明确排除该文件。
 - 定向检查：`npx tsx --test tests/play-table-workspace-ui.test.mjs tests/room-management-and-action-copy.test.mjs` 退出 0，4/4；`npm run typecheck` 与 `git diff --check` 均退出 0。浏览器定向 QA 覆盖 1440×900 与 375×812，无横向溢出，抽屉四栏可用；一次真实行动提交约 5.9 秒内持续显示等待卡，随后既有 Provider proposal repair 失败进入现役恢复界面，因此只证明加载反馈链路，不声称 Provider 行动成功。
 - 未覆盖范围：没有修改四栏内容本身、机械规则、服务端接口或 Provider 恢复策略；未运行全量测试、Lint、production build 或全站浏览器 QA，也未执行远端 migration、部署、提交、Git push 或任何远端配置写入。
+
+## KP 自然回应与社交线索投影修复（2026-09-01）
+
+- 症状与根因：角色前提回应直接暴露 `requester/objective` 槽位，普通寒暄复读玩家原话并显示 `SourceClaim/CanonicalFact` 审计摘要；同一社交行动写入的每句 `sourceClaim` 知识又被 Table 无差别映射为线索卡。首个违规点分别是 `narration-v3.ts` 的确定性 V5 渲染直接透传协议字段，以及 `authoritative.ts` 的 knowledge→clues 投影没有区分普通社交逐字记录与可持续查看的个人线索。
+- 修改与连带：前提按六类已注册 predicate/slot 生成自然中文且不回显标识符；社交回应只渲染本轮 `responseClaimRef` 指向的 NPC 台词或一次自然沉默，不复读玩家气泡，不渲染 direct 社交审计结果，并把控制字符、换行和嵌套中文引号收进单一服务端归因段。线索投影仅排除 `claim:social:` / `claim:social-npc:` 的普通对话 SourceClaim；感官证据及非社交文献/传闻 SourceClaim 仍保留，底层角色知识与亲历记录未删除。
+- 验证证据：`npx tsx --test tests/authoritative-kp-adapter.test.mjs tests/authoritative-table-v2.test.mjs` 修复前退出 1，稳定捕获协议泄漏和两张多余寒暄线索卡；修复后退出 0，26/26。补充另一类前提、自然沉默、非行动者 Viewer 与换行伪造边界后，`npx tsx --test tests/authoritative-kp-adapter.test.mjs` 退出 0，6/6；`npx vitest run tests/viewer-narration-recovery-v3.test.ts` 退出 0，5/5；`git diff --check` 退出 0。
+- 未覆盖范围：截图中的偶发 `needsKp` 只能确认发生于 Rules diagnostic 后的提案修订耗尽；现有本地 Room journal 为空，旧 observability 数据不含对应 code，无法建立与该次截图同一故障的 RED，因此未放宽 Rules、增加无界重试、吞错、fallback 或自动换模型。后续需要一次不含玩家正文/Prompt/秘密引用的 `formId + repairUsed + diagnostic code/path` 有界证据；未运行全量测试、typecheck、build、Lint、浏览器 QA、真实模型探针、部署或 Git push。
+
+## 代理合同解耦产品不变量与当前架构（2026-09-01）
+
+- 目标与合同：让代理继续严格保护产品行为、安全、单一状态权威和持久化语义，同时把 Cloudflare 资源拓扑、Room DO、`step / project / replay`、目录、表名、认证算法与具体 Profile 区分为可取代架构基线或信息性实现导航；当前基线阻碍用户明确能力时允许内部演进，实质改变产品、数据兼容、安全、远端资源或成本时仍先取得确认。
+- 代表性边界：现役 Worker/D1/DO 与两个深 Module 默认不变；路径、schema、KDF 和 Registry 值改从仓库事实源读取；新 Worker 或持久化资源不再被永久排除，但创建或接入仍要求影响说明、用户授权和 ADR。最高风险的第二裁决路径、秘密泄漏、未授权远端写入及持久化标识原地改义继续作为硬拒绝。
+- 修改与直接消费者：`AGENTS.md` 将规格权威补充为“只冻结明示行为”，重写“产品与权威边界”为产品不变量、可取代架构基线、信息性实现导航三层，并明确 ADR 取代、实现型测试同步和现役 Rules Interface 更换流程；`docs/refactor-log.md` 仅追加本记录。没有修改 SPEC、ADR、源码、测试或运行时行为。
+- 定向检查与未覆盖范围：核对主 SPEC、ADR 0013、`CONTEXT.md`、D1 schema 和 Wrangler 配置引用均存在，`git diff --check -- AGENTS.md docs/refactor-log.md` 退出 0。纯代理文档修改未运行代码测试、typecheck、Lint、build 或浏览器 QA；未执行远端 migration、部署、资源创建、提交或 Git push。现有实现型测试仍描述当前基线，只有未来实际取代相应 ADR 时才随直接消费者调整。
