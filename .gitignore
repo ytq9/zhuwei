@@ -10,6 +10,7 @@
 # Drizzle snapshots are part of the migration source of truth.  Without them
 # `db:generate` treats the whole existing database as a new migration.
 /.env*
+/.dev.vars*
 /outputs
 /work
 *.pem

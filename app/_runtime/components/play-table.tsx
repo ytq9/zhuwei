@@ -32,7 +32,21 @@ import type { KpModelId } from "@/lib/kp/models";
 import { eligibleBoosts } from "@/lib/dnd/boosts";
 import { ensureResources, left, listStocks, type StockItem } from "@/lib/dnd/resources";
 import { toast } from "sonner";
-import { Mic, Send, ScrollText, UserRound, MapPinned, Users } from "lucide-react";
+import {
+  BookOpenText,
+  CircleDot,
+  HeartPulse,
+  LoaderCircle,
+  MapPin,
+  MapPinned,
+  Mic,
+  ScrollText,
+  Send,
+  Shield,
+  UserRound,
+  Users,
+  X,
+} from "lucide-react";
 
 export type TableMessage = {
   id: string;
@@ -354,11 +368,14 @@ export type TableSnap = {
 export function PlayTable({
   code,
   snap,
+  syncing = false,
 }: {
   code: string;
   snap: TableSnap;
+  syncing?: boolean;
 }) {
   const [tab, setTab] = useState<"sheet" | "npcs" | "clues" | "log">("sheet");
+  const [journalOpen, setJournalOpen] = useState(false);
   const draftStorageKey = `zhuwei-draft-${snap.me.userId}-${code}`;
   const actionRecoveryStorageKey = `zhuwei:v2-action-recovery:${snap.me.userId}:${code}`;
   const [text, setText] = useState(() => {
@@ -478,7 +495,16 @@ export function PlayTable({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [conversationMessages.length]);
+  }, [conversationMessages.length, sending, snap.state.kpBusy, syncing, rec]);
+
+  useEffect(() => {
+    if (!journalOpen || typeof window === "undefined") return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setJournalOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [journalOpen]);
 
   useEffect(() => {
     const kpKinds = new Set(["narrate", "refuse", "call_roll", "open"]);
@@ -868,16 +894,49 @@ export function PlayTable({
     tacticalMapInCombat ? "combat" : "exploration",
     tacticalProjection?.scene.id ?? "unknown",
   ].join(":");
+  const mySheet = snap.characters.find((character) => character.userId === snap.me.userId)?.sheet;
+  const controlledCharacter = snap.state.authoritative?.controlledCharacter;
+  const currentHitPoints = controlledCharacter?.hitPoints?.current ?? mySheet?.hp.current;
+  const maximumHitPoints = controlledCharacter?.hitPoints?.maximum ?? mySheet?.hp.max;
+  const armorClass = controlledCharacter?.loadout?.armorClass
+    ?? snap.state.ruleProjection?.viewer.ac
+    ?? mySheet?.ac;
+  const currentPlace = snap.state.placeNames?.[snap.me.userId]
+    ?? tacticalProjection?.scene.name
+    ?? snap.state.sceneName;
+  const workKind = sending
+    ? "action" as const
+    : snap.state.kpBusy
+      ? "kp" as const
+      : rec === "stt"
+        ? "speech" as const
+        : syncing
+          ? "sync" as const
+          : null;
+  const momentLabel = workKind
+    ? workKind === "speech"
+      ? "正在整理语音"
+      : workKind === "sync"
+        ? "正在同步桌面"
+        : "KP 正在处理"
+    : currentPending
+      ? "待你决定"
+      : pendingMine.length > 0
+        ? "轮到你掷骰"
+        : tacticalMapInCombat
+          ? "战斗进行中"
+          : snap.state.partySplit
+            ? "分头行动中"
+            : "等待你的行动";
 
   return (
-    <div className="grid min-h-0 min-w-0 w-full flex-1 grid-rows-[minmax(0,1fr)_minmax(13.5rem,38dvh)] gap-4 overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(17.5rem,22rem)] lg:grid-rows-1">
-      <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-border bg-surface">
+    <div className="relative flex min-h-0 min-w-0 w-full flex-1 overflow-hidden">
+      <section className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden rounded-[28px] border border-border bg-surface">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
           <div>
             <p className="font-display text-lg">{snap.module.title}</p>
             <p className="text-xs text-subtle">
               {snap.state.chapterName} · {snap.state.sceneName}
-              {snap.state.kpBusy ? " · KP 正在落笔" : ""}
             </p>
             {snap.state.ruleProjection ? (
               <p className="mt-0.5 text-[11px] text-subtle">
@@ -906,6 +965,61 @@ export function PlayTable({
               离开这一桌
             </button>
           </div>
+        </div>
+        <div
+          data-table-context-bar
+          className="flex shrink-0 items-center gap-2 border-b border-border bg-bg/35 px-3 py-2 sm:px-5"
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none]">
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]",
+                workKind
+                  ? "border-brass/50 bg-brass/10 text-brass"
+                  : currentPending || pendingMine.length > 0
+                    ? "border-brass/40 text-brass"
+                    : "border-border text-muted",
+              )}
+            >
+              {workKind ? (
+                <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />
+              ) : (
+                <CircleDot className="size-3" aria-hidden="true" />
+              )}
+              {momentLabel}
+            </span>
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted">
+              <MapPin className="size-3.5 text-brass" aria-hidden="true" />
+              {currentPlace}
+            </span>
+            {currentHitPoints !== undefined && maximumHitPoints !== undefined ? (
+              <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted sm:inline-flex">
+                <HeartPulse className="size-3.5 text-brass" aria-hidden="true" />
+                生命 <span className="tabular-nums text-fg">{currentHitPoints}/{maximumHitPoints}</span>
+              </span>
+            ) : null}
+            {armorClass !== undefined ? (
+              <span className="hidden shrink-0 items-center gap-1 text-[11px] text-muted sm:inline-flex">
+                <Shield className="size-3.5 text-brass" aria-hidden="true" />
+                护甲 <span className="tabular-nums text-fg">{armorClass}</span>
+              </span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            data-table-journal-trigger
+            aria-haspopup="dialog"
+            aria-controls="table-journal"
+            aria-expanded={journalOpen}
+            className="inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-fg transition hover:border-brass/60 hover:bg-elevated"
+            onClick={() => setJournalOpen(true)}
+          >
+            <BookOpenText className="size-3.5 text-brass" aria-hidden="true" />
+            <span>桌边册</span>
+            <span className="hidden text-[10px] text-subtle sm:inline">
+              在场 {snap.state.npcs.length} · 线索 {snap.state.clues.length}
+            </span>
+          </button>
         </div>
         <LocationHistoryBar
           threads={snap.locationThreads}
@@ -938,7 +1052,11 @@ export function PlayTable({
             />
           </div>
         ) : null}
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        <div
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
+          aria-busy={workKind !== null}
+          data-table-conversation
+        >
           {conversationMessages.map((m) => (
             <MessageBubble
               key={m.id}
@@ -946,6 +1064,7 @@ export function PlayTable({
               mine={m.user_id === snap.me.userId}
             />
           ))}
+          {workKind ? <TableWorkIndicator kind={workKind} /> : null}
           <div ref={endRef} />
         </div>
         {visibleViewerNarrationRecovery?.kind === "available" ? (
@@ -1218,6 +1337,7 @@ export function PlayTable({
         ) : null}
         {!safetyPaused && pendingMine.length === 0 && !advancementPending && !groupRestPending && !partyMovePending && !playerChoicePending && !combatPending ? <form
           className="flex shrink-0 flex-wrap items-end gap-2 border-t border-border p-3"
+          aria-busy={sending || rec === "stt"}
           onSubmit={(e) => e.preventDefault()}
         >
           <button
@@ -1252,7 +1372,9 @@ export function PlayTable({
               composingRef.current = false;
             }}
             placeholder={
-              rec === "rec"
+              sending
+                ? "行动已送出；结果出现前，可以先想想下一步。"
+                : rec === "rec"
                 ? "正在听……松手后写入输入框"
                 : rec === "stt"
                   ? "正在转写……"
@@ -1277,10 +1399,15 @@ export function PlayTable({
           <Button
             type="button"
             size="icon"
+            aria-label={sending ? "正在发送行动" : "发送行动"}
             disabled={sending || !text.trim()}
             onClick={() => void submit()}
           >
-            <Send className="size-4" />
+            {sending ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Send className="size-4" />
+            )}
           </Button>
           {submissionError ? (
             <p
@@ -1294,33 +1421,164 @@ export function PlayTable({
           ) : null}
         </form> : null}
       </section>
+      {journalOpen ? (
+        <TableJournal
+          code={code}
+          snap={snap}
+          tab={tab}
+          onTabChange={setTab}
+          onClose={() => setJournalOpen(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
 
-      <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[28px] border border-border bg-surface">
-        <div className="flex border-b border-border">
-          {(
-            [
-              ["sheet", UserRound, "人物"],
-              ["npcs", Users, "在场"],
-              ["clues", MapPinned, "线索"],
-              ["log", ScrollText, "日志"],
-            ] as const
-          ).map(([id, Icon, label]) => (
+type TableWorkKind = "action" | "kp" | "sync" | "speech";
+
+function TableWorkIndicator({ kind }: { kind: TableWorkKind }) {
+  const copy = {
+    action: {
+      title: "行动已送出，正在等待 KP",
+      detail: "系统正在理解意图、核对规则并更新世界状态。",
+    },
+    kp: {
+      title: "KP 正在处理桌上的行动",
+      detail: "结果准备好后会直接出现在这段对话里。",
+    },
+    sync: {
+      title: "正在同步桌面",
+      detail: "正在取得最新场景与人物状态，已提交的行动不会重复执行。",
+    },
+    speech: {
+      title: "正在整理你的语音",
+      detail: "转写完成后会放回输入框，由你确认再送出。",
+    },
+  }[kind];
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-table-loading={kind}
+      className="max-w-[42rem] rounded-[16px] border border-brass/35 bg-brass/[0.07] px-4 py-3"
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full border border-brass/30 bg-bg/50 text-brass"
+          aria-hidden="true"
+        >
+          <LoaderCircle className="size-4 animate-spin" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-fg">{copy.title}</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">{copy.detail}</p>
+          <span className="mt-2 flex gap-1" aria-hidden="true">
+            <span className="size-1.5 animate-pulse rounded-full bg-brass" />
+            <span className="size-1.5 animate-pulse rounded-full bg-brass [animation-delay:160ms]" />
+            <span className="size-1.5 animate-pulse rounded-full bg-brass [animation-delay:320ms]" />
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type TableJournalTab = "sheet" | "npcs" | "clues" | "log";
+
+function TableJournal({
+  code,
+  snap,
+  tab,
+  onTabChange,
+  onClose,
+}: {
+  code: string;
+  snap: TableSnap;
+  tab: TableJournalTab;
+  onTabChange: (tab: TableJournalTab) => void;
+  onClose: () => void;
+}) {
+  const tabs = [
+    ["sheet", UserRound, "人物", snap.characters.length],
+    ["npcs", Users, "在场", snap.state.npcs.length],
+    ["clues", MapPinned, "线索", snap.state.clues.length],
+    ["log", ScrollText, "日志", snap.logs.length],
+  ] as const;
+  const activeLabel = tabs.find(([id]) => id === tab)?.[2] ?? "桌边册";
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="关闭桌边册"
+        tabIndex={-1}
+        className="fixed inset-0 z-40 cursor-default bg-bg/75 backdrop-blur-[2px]"
+        onClick={onClose}
+      />
+      <aside
+        id="table-journal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="table-journal-title"
+        data-table-journal
+        className="fixed inset-x-2 bottom-2 top-2 z-50 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[24px] border border-border-strong bg-surface shadow-2xl sm:inset-x-auto sm:right-3 sm:w-[min(32rem,calc(100vw-1.5rem))]"
+      >
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-5">
+          <div>
+            <p id="table-journal-title" className="font-display text-lg text-fg">桌边册</p>
+            <p className="mt-0.5 text-xs text-subtle">
+              需要时再翻开 · 当前查看{activeLabel}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            autoFocus
+            aria-label="收起桌边册"
+            className="size-9 shrink-0"
+            onClick={onClose}
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        </header>
+        <div
+          role="tablist"
+          aria-label="桌边册栏目"
+          className="flex shrink-0 overflow-x-auto border-b border-border px-2"
+        >
+          {tabs.map(([id, Icon, label, count]) => (
             <button
               key={id}
+              id={`table-journal-tab-${id}`}
               type="button"
-              onClick={() => setTab(id)}
+              role="tab"
+              aria-selected={tab === id}
+              aria-controls={`table-journal-panel-${id}`}
+              tabIndex={tab === id ? 0 : -1}
+              onClick={() => onTabChange(id)}
               className={cn(
-                "flex flex-1 items-center justify-center gap-1 py-3 text-xs sm:text-sm",
-                tab === id ? "text-fg" : "text-subtle hover:text-muted",
+                "flex min-w-20 flex-1 items-center justify-center gap-1.5 border-b-2 px-2 py-3 text-xs transition sm:text-sm",
+                tab === id
+                  ? "border-brass text-fg"
+                  : "border-transparent text-subtle hover:text-muted",
               )}
             >
-              <Icon className="size-4" />
+              <Icon className="size-4" aria-hidden="true" />
               {label}
+              <span className="text-[10px] tabular-nums text-subtle">{count}</span>
             </button>
           ))}
         </div>
-        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 [overflow-wrap:anywhere]">
-          {tab === "sheet" && (
+        <div
+          id={`table-journal-panel-${tab}`}
+          role="tabpanel"
+          aria-labelledby={`table-journal-tab-${tab}`}
+          className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-5"
+        >
+          {tab === "sheet" ? (
             <SheetView
               party={snap.characters}
               meId={snap.me.userId}
@@ -1338,13 +1596,13 @@ export function PlayTable({
               ruleProjection={snap.state.ruleProjection}
               authoritative={snap.state.authoritative}
             />
-          )}
-          {tab === "npcs" && <NpcBoard npcs={snap.state.npcs} />}
-          {tab === "clues" && <ClueBoard clues={snap.state.clues} />}
-          {tab === "log" && <LogView logs={snap.logs} party={snap.characters} />}
+          ) : null}
+          {tab === "npcs" ? <NpcBoard npcs={snap.state.npcs} /> : null}
+          {tab === "clues" ? <ClueBoard clues={snap.state.clues} /> : null}
+          {tab === "log" ? <LogView logs={snap.logs} party={snap.characters} /> : null}
         </div>
       </aside>
-    </div>
+    </>
   );
 }
 
@@ -2088,7 +2346,7 @@ function MessageBubble({
   return (
     <article
       data-delivery-id={m.id}
-      className={cn("max-w-[42rem]", mine && "ml-auto", kp && "mx-0 w-full max-w-none")}
+      className={cn("max-w-[42rem]", mine && "ml-auto", kp && "mx-0 w-full max-w-[52rem]")}
     >
       <p className="mb-1 text-[11px] tracking-wide text-subtle">
         {m.kind === "roll" ? m.name : kp ? "KP" : m.name}

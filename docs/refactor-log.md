@@ -2182,3 +2182,11 @@
 - 只读预检：`wrangler d1 migrations list zhuwei-dev --remote` 退出 0，唯一待执行项为 `0012_soft_ghost_rider.sql`；远端存在 `game_states`、`messages`、`room_event_archive`、`session_logs`、`rooms` 与现役 `authoritative_room_event_archive`，`rooms` 有 4 行。逐行复核 migration：删除四张退役表，复制并重建 `rooms`、更新当前 0.4 默认值并重建两个索引；它不会删除这 4 条房间目录行。
 - 执行与写读闭环：`CI=1 npx wrangler d1 migrations apply zhuwei-dev --remote` 退出 0，13 条命令原子应用成功。随后 migration 列表返回 `No migrations to apply`；从远端 `d1_migrations` 读回 id `13`、名称 `0012_soft_ghost_rider.sql`、应用时间 `2026-08-31 15:48:23`。`sqlite_master` 复核四张退役表均不存在，现役 archive、`rooms`、`idx_rooms_code` 与 `idx_rooms_host` 保留；`PRAGMA table_info('rooms')` 的 Ruleset、KP 模型/Profile 和 lobby 默认值与 migration 一致，房间目录仍为 4 行。
 - 线上与边界：migration 后 `https://zhuwei.yinskyriver.workers.dev/` 返回 HTTP 200，约 0.547 秒。未重新部署 Worker、未修改应用源码、未删除保留的房间目录行或现役权威归档、未创建新资源，也未触碰 `main` 或 grok.me；本轮外部变更仅为现有 D1 的已登记 `0012`。
+
+## 游戏桌加载反馈与按需桌边册（2026-09-01）
+
+- 目标与能力合同：让玩家在首次进桌、较慢后台同步、提交行动、KP 处理和语音转写期间都能看见与真实状态一致的进行中反馈；桌面常态优先保留对话，并显示当前阶段、地点及玩家生命/护甲，人物、在场、线索和日志改为按需查看。反馈不改变行动提交、机械裁决、权限或持久化事实。
+- 代表性矩阵：冷启动显示“正在点亮桌面”；后台同步超过 700ms 才显示原位同步反馈，避免短请求闪烁；玩家行动等待与同步状态均在对话末尾出现可访问状态卡。桌边册默认关闭，四栏可在抽屉内切换并通过按钮、遮罩或 Escape 关闭；桌面宽屏限制 KP 正文行长，375px 手机布局隐藏次要生命/护甲摘要且无横向溢出。
+- 实现与直接消费者：`table-client.tsx` 增加初始与延迟同步状态；`play-table.tsx` 增加统一工作指示器、常态上下文条和按需桌边册，并补齐 `aria-busy`、status/dialog/tab 语义。更新房间动作文案测试并新增真实组件交互测试；测试用 Provider key 仅写入权限为 600 的本地 `.dev.vars`，`.gitignore` 明确排除该文件。
+- 定向检查：`npx tsx --test tests/play-table-workspace-ui.test.mjs tests/room-management-and-action-copy.test.mjs` 退出 0，4/4；`npm run typecheck` 与 `git diff --check` 均退出 0。浏览器定向 QA 覆盖 1440×900 与 375×812，无横向溢出，抽屉四栏可用；一次真实行动提交约 5.9 秒内持续显示等待卡，随后既有 Provider proposal repair 失败进入现役恢复界面，因此只证明加载反馈链路，不声称 Provider 行动成功。
+- 未覆盖范围：没有修改四栏内容本身、机械规则、服务端接口或 Provider 恢复策略；未运行全量测试、Lint、production build 或全站浏览器 QA，也未执行远端 migration、部署、提交、Git push 或任何远端配置写入。

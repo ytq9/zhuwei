@@ -38,7 +38,7 @@ test("host can manage a hall table from one menu", async () => {
   assert.match(route, /getRoomManagement,/);
 });
 
-test("character sidebar omits redundant controls and wraps action copy", async () => {
+test("on-demand table journal omits redundant controls and wraps action copy", async () => {
   const [playTable, inventoryPanel, catalog] = await Promise.all([
     source("app/_runtime/components/play-table.tsx"),
     source("app/_runtime/components/inventory-panel.tsx"),
@@ -78,11 +78,19 @@ test("character sidebar omits redundant controls and wraps action copy", async (
   assert.doesNotMatch(playTable, /feat:\s*"torch"/);
   assert.match(
     playTable,
-    /<aside className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-\[28px\]/,
+    /data-table-journal-trigger/,
   );
   assert.match(
     playTable,
-    /className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 \[overflow-wrap:anywhere\]"/,
+    /data-table-journal/,
+  );
+  assert.match(
+    playTable,
+    /role="dialog"/,
+  );
+  assert.match(
+    playTable,
+    /min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 \[overflow-wrap:anywhere\]/,
   );
   assert.match(fold, /min-w-0 max-w-full overflow-hidden/);
   assert.match(fold, /border-t border-border px-2\.5 py-2 min-w-0/);

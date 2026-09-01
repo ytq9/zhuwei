@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { CharacterWizard } from "@/components/character-wizard";
@@ -27,6 +27,7 @@ export function TableClient({ code, userName }: { code: string; userName: string
     placeholderData: (prev) => prev,
   });
   const data = q.data;
+  const showSlowSync = useDelayedFlag(q.isFetching && !q.isLoading, 700);
   const lockToViewport =
     data?.ok === true &&
     data.room.status === "play" &&
@@ -64,7 +65,24 @@ export function TableClient({ code, userName }: { code: string; userName: string
           </p>
         )}
         {q.isLoading && !data && (
-          <p className="m-auto text-muted">正在掀开帷幕……</p>
+          <section
+            role="status"
+            aria-live="polite"
+            data-table-initial-loading
+            className="m-auto grid max-w-sm justify-items-center gap-4 px-6 text-center"
+          >
+            <span className="relative grid size-14 place-items-center" aria-hidden="true">
+              <span className="absolute size-11 animate-ping rounded-full border border-brass/30" />
+              <span className="absolute size-8 rounded-full bg-brass/10" />
+              <span className="size-3 animate-pulse rounded-full bg-brass shadow-[0_0_24px_rgba(176,137,104,0.75)]" />
+            </span>
+            <div>
+              <p className="font-display text-xl text-fg">正在点亮桌面</p>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                读取你的人物、当前场景，以及你有权看到的内容……
+              </p>
+            </div>
+          </section>
         )}
         {data && !data.ok && "left" in data && data.left && (
           <LeftTable code={code} />
@@ -95,13 +113,28 @@ export function TableClient({ code, userName }: { code: string; userName: string
                 />
               </div>
             ) : (
-              <PlayTable code={code} snap={data} />
+              <PlayTable code={code} snap={data} syncing={showSlowSync} />
             )}
           </>
         )}
       </div>
     </main>
   );
+}
+
+function useDelayedFlag(active: boolean, delayMs: number) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!active) {
+      setVisible(false);
+      return;
+    }
+    const timeout = window.setTimeout(() => setVisible(true), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [active, delayMs]);
+
+  return visible;
 }
 
 function Lobby({
