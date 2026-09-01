@@ -70,6 +70,7 @@ type RecoverableSendAction = {
   source: "composer" | "pending";
   fingerprint: string;
   payload: SendActionPayload;
+  recoveryMode: "transportUnknown" | "confirmedNotCommitted";
   localId?: string;
   deliveryIdAtFirstSubmission?: string;
   failureMessage: string;
@@ -107,6 +108,9 @@ function restoredSendAction(
       source,
       fingerprint,
       failureMessage,
+      recoveryMode: parsed.recoveryMode === "confirmedNotCommitted"
+        ? "confirmedNotCommitted"
+        : "transportUnknown",
       payload: {
         code,
         text: payload.text,
@@ -613,7 +617,11 @@ export function PlayTable({
 
   async function submitRememberedAction(submission: RecoverableSendAction) {
     if (sendingRef.current) return;
-    rememberSubmission(submission);
+    const inFlightSubmission: RecoverableSendAction = {
+      ...submission,
+      recoveryMode: "transportUnknown",
+    };
+    rememberSubmission(inFlightSubmission);
     sendingRef.current = true;
     setSending(true);
     setSubmissionError(null);
@@ -642,11 +650,12 @@ export function PlayTable({
       const stableSubmission = returnedSubmissionId
         && returnedSubmissionId !== submission.payload.submissionId
         ? {
-            ...submission,
+            ...inFlightSubmission,
             payload: { ...submission.payload, submissionId: returnedSubmissionId },
           }
-        : submission;
+        : inFlightSubmission;
       const explicitAction = typeof res.action === "string" ? res.action : undefined;
+      const confirmedNotCommitted = explicitAction === "notCommitted";
       const actionCommitted = explicitAction === "committed"
         || explicitAction === "resolvedInWorld"
         || explicitAction === "concluded"
@@ -666,6 +675,9 @@ export function PlayTable({
         } else if (res.retryable === true || actionCommitted) {
           rememberSubmission({
             ...stableSubmission,
+            recoveryMode: confirmedNotCommitted
+              ? "confirmedNotCommitted"
+              : "transportUnknown",
             ...(actionCommitted || stableSubmission.committed === true
               ? { committed: true as const }
               : {}),
@@ -696,7 +708,7 @@ export function PlayTable({
         setText((draft) => draft || submission.payload.text);
       }
       const message = e instanceof Error ? e.message : submission.failureMessage;
-      rememberSubmission({ ...submission, lastError: message });
+      rememberSubmission({ ...inFlightSubmission, lastError: message });
       setSubmissionError(message);
       toast.error(message);
     } finally {
@@ -712,16 +724,20 @@ export function PlayTable({
     if (existing !== null) {
       if (existing.source === "composer" && existing.fingerprint === body) {
         await submitRememberedAction(existing);
-      } else {
-        requireRecoveryFirst();
+        return;
       }
-      return;
+      if (existing.recoveryMode === "transportUnknown") {
+        requireRecoveryFirst();
+        return;
+      }
+      clearRememberedSubmission();
     }
     const pendingInputId = snap.state.pendingInputs?.[0]?.pendingInputId;
     const submissionId = crypto.randomUUID();
     const submission: RecoverableSendAction = {
       source: "composer",
       fingerprint: body,
+      recoveryMode: "transportUnknown",
       payload: {
         code,
         text: body,
@@ -750,15 +766,19 @@ export function PlayTable({
     if (existing !== null) {
       if (existing.source === "pending" && existing.fingerprint === fingerprint) {
         await submitRememberedAction(existing);
-      } else {
-        requireRecoveryFirst();
+        return;
       }
-      return;
+      if (existing.recoveryMode === "transportUnknown") {
+        requireRecoveryFirst();
+        return;
+      }
+      clearRememberedSubmission();
     }
     const submissionId = crypto.randomUUID();
     const submission: RecoverableSendAction = {
       source: "pending",
       fingerprint,
+      recoveryMode: "transportUnknown",
       payload: {
         code,
         text: body,
@@ -779,8 +799,11 @@ export function PlayTable({
   }) {
     if (!groupRestPending || sendingRef.current) return;
     if (submissionRef.current !== null) {
-      requireRecoveryFirst();
-      return;
+      if (submissionRef.current.recoveryMode === "transportUnknown") {
+        requireRecoveryFirst();
+        return;
+      }
+      clearRememberedSubmission();
     }
     sendingRef.current = true;
     setSending(true);
@@ -823,15 +846,19 @@ export function PlayTable({
     if (existing !== null) {
       if (existing.source === "pending" && existing.fingerprint === fingerprint) {
         await submitRememberedAction(existing);
-      } else {
-        requireRecoveryFirst();
+        return;
       }
-      return;
+      if (existing.recoveryMode === "transportUnknown") {
+        requireRecoveryFirst();
+        return;
+      }
+      clearRememberedSubmission();
     }
     const submissionId = crypto.randomUUID();
     const submission: RecoverableSendAction = {
       source: "pending",
       fingerprint,
+      recoveryMode: "transportUnknown",
       payload: {
         code,
         text: input.body,
@@ -1105,10 +1132,14 @@ export function PlayTable({
             <p className="text-sm text-fg">
               {recoverableSubmission.committed
                 ? "行动已经提交，KP 回应尚未送达。"
-                : "上次提交的结果还没有确认。"}
+                : recoverableSubmission.recoveryMode === "confirmedNotCommitted"
+                  ? "这项行动没有提交到世界。"
+                  : "上次提交的结果还没有确认。"}
             </p>
             <p className="mt-1 text-xs text-subtle">
-              将原样使用同一个提交标识恢复，不会按当前待决状态创建新行动。
+              {recoverableSubmission.recoveryMode === "confirmedNotCommitted"
+                ? "可以原样重试，也可以修改输入或直接发送新的行动。"
+                : "将原样使用同一个提交标识恢复，不会按当前待决状态创建新行动。"}
             </p>
             <p className="mt-1 text-xs text-danger">{recoverableSubmission.lastError}</p>
             <Button
@@ -1119,7 +1150,11 @@ export function PlayTable({
               disabled={sending}
               onClick={() => void submitRememberedAction(recoverableSubmission)}
             >
-              {sending ? "恢复中……" : "恢复 KP 回应"}
+              {sending
+                ? "恢复中……"
+                : recoverableSubmission.recoveryMode === "confirmedNotCommitted"
+                  ? "重试原行动"
+                  : "恢复 KP 回应"}
             </Button>
           </div>
         ) : null}

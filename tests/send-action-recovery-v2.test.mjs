@@ -333,6 +333,110 @@ test("a transport exception retains the exact action until a terminal retry", as
   }
 });
 
+test("a confirmed needsKp failure keeps retry optional and lets a new player line send", async () => {
+  const storage = memoryStorage();
+  const restoreStorage = installSessionStorage(storage);
+  const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  const originalFetch = globalThis.fetch;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(String(init?.body ?? "{}"));
+    if (request.command !== "sendAction") {
+      return new Response(JSON.stringify({ ok: false, error: "unexpected command" }));
+    }
+    calls.push(request.data);
+    const response = calls.length <= 2
+      ? {
+          outcomeKind: "needsKp",
+          action: "notCommitted",
+          narration: "notApplicable",
+          retryable: true,
+          code: "PROPOSAL_REPAIR_EXHAUSTED",
+          error: "KP 需要重新裁定这项行动，请稍后用同一行动重试",
+        }
+      : { action: "committed", narration: "published" };
+    return new Response(JSON.stringify(response), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  let renderer;
+  let client;
+  try {
+    const [
+      { QueryClient, QueryClientProvider },
+      { compileSheet },
+      { PlayTable },
+      { act, create },
+    ] = await Promise.all([
+      import("@tanstack/react-query"),
+      import("../app/_runtime/lib/dnd/compute.ts"),
+      import("../app/_runtime/components/play-table.tsx"),
+      import("react-test-renderer"),
+    ]);
+    client = new QueryClient();
+    const snap = playableSnap(compileSheet);
+    await act(async () => {
+      renderer = create(createElement(
+        QueryClientProvider,
+        { client },
+        createElement(PlayTable, { code: "TACTIC", snap }),
+      ));
+    });
+    await act(async () => {
+      renderer.root.findByType("textarea").props.onChange({
+        target: { value: "我知道些什么吗？" },
+      });
+    });
+    await act(async () => {
+      renderer.root.findByType("form").findAllByType("button").at(-1).props.onClick();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    assert.equal(calls.length, 1);
+    renderer.root.findByProps({ "data-action-recovery": "send-action" });
+    assert.match(JSON.stringify(renderer.toJSON()), /没有提交到世界/);
+    await act(async () => {
+      renderer.root.findByProps({ "data-action-recovery-submit": true }).props.onClick();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].submissionId, calls[0].submissionId);
+    await act(async () => {
+      renderer.root.findByType("textarea").props.onChange({
+        target: { value: "我转而环顾四周。" },
+      });
+    });
+    await act(async () => {
+      renderer.root.findByType("form").findAllByType("button").at(-1).props.onClick();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    assert.equal(calls.length, 3, "a confirmed non-commit must not lock the composer");
+    assert.equal(calls[2].text, "我转而环顾四周。");
+    assert.notEqual(calls[2].submissionId, calls[0].submissionId);
+    assert.equal(
+      storage.getItem("zhuwei:v2-action-recovery:principal:alice:TACTIC"),
+      null,
+    );
+  } finally {
+    if (renderer) {
+      const { act } = await import("react-test-renderer");
+      await act(async () => renderer.unmount());
+    }
+    client?.clear();
+    globalThis.fetch = originalFetch;
+    restoreStorage();
+    if (previousActEnvironment === undefined) {
+      delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+    } else {
+      globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    }
+  }
+});
+
 test("stable transport cache wins over a freshly requested id until a terminal result", async () => {
   const { callWithStableSubmission } = await import(
     "../app/_runtime/lib/table/authoritative-client.ts"
@@ -377,4 +481,34 @@ test("stable transport cache wins over a freshly requested id until a terminal r
     client,
     /export const sendAction[^]*callWithStableTableSubmission\("sendAction", data\)/,
   );
+});
+
+test("an explicit notCommitted response releases the transport cache for an abandoned action", async () => {
+  const { callWithStableSubmission } = await import(
+    "../app/_runtime/lib/table/authoritative-client.ts"
+  );
+  const storage = memoryStorage();
+  const ids = [];
+  const data = { code: "TACTIC", text: "我知道些什么吗？" };
+
+  await callWithStableSubmission({
+    command: "sendAction",
+    data: { ...data, submissionId: "submission:needs-kp" },
+    storage,
+    invoke: async (payload) => {
+      ids.push(payload.submissionId);
+      return { action: "notCommitted", retryable: true };
+    },
+  });
+  await callWithStableSubmission({
+    command: "sendAction",
+    data: { ...data, submissionId: "submission:new-root" },
+    storage,
+    invoke: async (payload) => {
+      ids.push(payload.submissionId);
+      return { action: "committed" };
+    },
+  });
+
+  assert.deepEqual(ids, ["submission:needs-kp", "submission:new-root"]);
 });

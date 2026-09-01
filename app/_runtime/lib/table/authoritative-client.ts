@@ -119,7 +119,8 @@ export async function callWithStableSubmission<
 
   const result = await input.invoke({ ...payload, submissionId });
   const v3Terminal = result.ok === undefined && (
-    result.action === "awaitingInput"
+    result.action === "notCommitted"
+    || result.action === "awaitingInput"
     || result.action === "committed"
     || result.action === "resolvedInWorld"
     || result.action === "concluded"

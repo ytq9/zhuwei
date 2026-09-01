@@ -2225,6 +2225,13 @@
 - 连带检查与证据：`npx tsx --test tests/play-table-workspace-ui.test.mjs` 退出 0，2/2；覆盖正常行动提示、行动与同步并发优先级、同步仅位于顶栏及对话区不 busy。`git diff --check` 另行在最终源码状态检查。
 - 未覆盖范围：未修改首次加载和同步失败警告，没有改变服务端、行动幂等或 Room 状态；未运行全量测试、typecheck、Lint、build、浏览器全站 QA、部署或 Git push。
 
+## `needsKp` 未提交后交流解锁（2026-09-01）
+
+- 症状与根因：玩家行动在 KP Proposal 修订耗尽后返回 `action:notCommitted + needsKp`，页面却把它和“运输中断、是否已提交未知”共用一个强制恢复锁；新文本与旧 fingerprint 不同时直接被拦截，连第二次 HTTP 都没有发出，刷新后还会从 sessionStorage 恢复该锁。精确组件 RED 为 4/5，同样的第二句发送仅观察到 1 次请求。
+- 修改与直接消费者：`play-table.tsx` 将恢复记录区分为 `transportUnknown` 与 `confirmedNotCommitted`；前者仍强制使用原 submission，后者保留“重试原行动”但允许玩家改说别的并建立新 submission，同时把误导性的“结果还没有确认”改为“这项行动没有提交到世界”。`authoritative-client.ts` 在收到明确 `notCommitted` 响应时释放该 fingerprint 的运输缓存，但异常抛出时仍保留原 ID。
+- 连带检查与证据：`npx tsx --test tests/send-action-recovery-v2.test.mjs` 在最终源码状态退出 0，6/6；同组玩家情景证明 `needsKp` 原句重试仍复用原 ID、改成新句会真正发送且使用新 ID，并保留运输中断必须原样恢复的对偶路径。
+- 未覆盖范围：截图对应的某次 `needsKp` 只能确认为未提交 Proposal；现有脱敏遥测没有 `formId + repairUsed + Rules diagnostic code/path`，因此不宣称已判定是 schema、引用还是机械字段失败，也没有放宽 Rules、增加无界重试或伪造成功。现有开场钩子已审查；“玩家初始知识”是另一个需要新 Module Profile 版本与知识投影验收的能力，不作为本次锁死 Bug 的文案 fallback。
+
 ## 桌面同步提示修复快速推送与部署（2026-09-01）
 
 - 授权与源码：用户明确要求“快速开发部署推送”，并确认不纳入随后出现的其他更新。本轮修复提交为 `1ef4c1bd8aa6a65a8c0242bd6e2267b144ca3205`；`npx tsx --test tests/play-table-workspace-ui.test.mjs` 在该源码状态退出 0（2/2），`git diff --cached --check` 退出 0，按快速开发授权未追加 typecheck、Lint 或完整回归。
