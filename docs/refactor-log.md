@@ -2204,3 +2204,9 @@
 - 代表性边界：现役 Worker/D1/DO 与两个深 Module 默认不变；路径、schema、KDF 和 Registry 值改从仓库事实源读取；新 Worker 或持久化资源不再被永久排除，但创建或接入仍要求影响说明、用户授权和 ADR。最高风险的第二裁决路径、秘密泄漏、未授权远端写入及持久化标识原地改义继续作为硬拒绝。
 - 修改与直接消费者：`AGENTS.md` 将规格权威补充为“只冻结明示行为”，重写“产品与权威边界”为产品不变量、可取代架构基线、信息性实现导航三层，并明确 ADR 取代、实现型测试同步和现役 Rules Interface 更换流程；`docs/refactor-log.md` 仅追加本记录。没有修改 SPEC、ADR、源码、测试或运行时行为。
 - 定向检查与未覆盖范围：核对主 SPEC、ADR 0013、`CONTEXT.md`、D1 schema 和 Wrangler 配置引用均存在，`git diff --check -- AGENTS.md docs/refactor-log.md` 退出 0。纯代理文档修改未运行代码测试、typecheck、Lint、build 或浏览器 QA；未执行远端 migration、部署、资源创建、提交或 Git push。现有实现型测试仍描述当前基线，只有未来实际取代相应 ADR 时才随直接消费者调整。
+
+## 当前开发状态同步至 GitHub `cloudflare`（2026-09-01）
+
+- 授权与远端基线：用户明确要求同步当前状态，并在获知 GitHub `main` 已由外部提交从产品基线 `29eb06d` 前移后再次确认“只推送 `cloudflare`”。推送前远端 `cloudflare` 为 `bb19e7c9bcdd3a195e8846d67b46d4bbb0123589`，远端 `main` 为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`；本轮不修改或回退 `main`。
+- 提交与验证：同步包含既有本地提交 `2029f8d`（游戏桌加载反馈与桌边册）、新提交 `08448cc`（自然社交回应与线索投影）和 `d14ec66`（代理合同区分产品不变量与架构基线）。最终源码状态上 `npx tsx --test tests/authoritative-kp-adapter.test.mjs tests/authoritative-table-v2.test.mjs` 退出 0，26/26；`npx vitest run tests/viewer-narration-recovery-v3.test.ts` 退出 0，5/5；`git diff --check` 退出 0。
+- 外部操作与边界：执行非强制 `git push origin HEAD:refs/heads/cloudflare`，退出 0，远端 `cloudflare` 从 `bb19e7c` 前移至 `d14ec66`。本轮没有修改或推送 `main`，没有执行 Worker 部署、远端 D1 migration、Secret/资源变更、真实模型探针或 grok.me 操作；本条同步审计随后作为说明性文档提交到同一分支。
