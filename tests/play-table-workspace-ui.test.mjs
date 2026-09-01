@@ -21,6 +21,7 @@ test("the table exposes honest initial and delayed sync loading states", async (
   assert.match(client, /data-table-initial-loading/);
   assert.match(client, /正在点亮桌面/);
   assert.match(client, /你有权看到的内容/);
+  assert.match(client, /refetchInterval: 3000/);
   assert.match(client, /useDelayedFlag\(q\.isFetching && !q\.isLoading, 700\)/);
   assert.match(client, /<PlayTable code=\{code\} snap=\{data\} syncing=\{showSlowSync\}/);
 });
@@ -116,6 +117,14 @@ test("the play surface shows useful context, loads in place, and opens four deta
       renderer.root.findByProps({ "data-table-conversation": true }).props["aria-busy"],
       true,
     );
+    await act(async () => {
+      renderer.update(tree(snap, true));
+    });
+    assert.match(
+      renderedText(renderer.root.findByProps({ "data-table-top-status": "action" })),
+      /KP 正在处理/,
+    );
+    assert.equal(renderer.root.findAllByProps({ "data-table-loading": "action" }).length, 1);
 
     releaseAction(new Response(JSON.stringify({ ok: true, action: "committed" }), {
       status: 200,
@@ -126,11 +135,14 @@ test("the play surface shows useful context, loads in place, and opens four deta
     });
     assert.equal(renderer.root.findAllByProps({ "data-table-loading": "action" }).length, 0);
 
-    await act(async () => {
-      renderer.update(tree(snap, true));
-    });
-    const syncLoading = renderer.root.findByProps({ "data-table-loading": "sync" });
-    assert.match(renderedText(syncLoading), /正在同步桌面/);
+    assert.equal(renderer.root.findAllByProps({ "data-table-loading": "sync" }).length, 0);
+    const syncStatus = renderer.root.findByProps({ "data-table-context-bar": true })
+      .findByProps({ "data-table-top-status": "sync" });
+    assert.match(renderedText(syncStatus), /正在同步桌面/);
+    assert.equal(
+      renderer.root.findByProps({ "data-table-conversation": true }).props["aria-busy"],
+      false,
+    );
   } finally {
     if (renderer) {
       const { act } = await import("react-test-renderer");

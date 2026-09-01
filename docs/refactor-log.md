@@ -2210,3 +2210,17 @@
 - 授权与远端基线：用户明确要求同步当前状态，并在获知 GitHub `main` 已由外部提交从产品基线 `29eb06d` 前移后再次确认“只推送 `cloudflare`”。推送前远端 `cloudflare` 为 `bb19e7c9bcdd3a195e8846d67b46d4bbb0123589`，远端 `main` 为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`；本轮不修改或回退 `main`。
 - 提交与验证：同步包含既有本地提交 `2029f8d`（游戏桌加载反馈与桌边册）、新提交 `08448cc`（自然社交回应与线索投影）和 `d14ec66`（代理合同区分产品不变量与架构基线）。最终源码状态上 `npx tsx --test tests/authoritative-kp-adapter.test.mjs tests/authoritative-table-v2.test.mjs` 退出 0，26/26；`npx vitest run tests/viewer-narration-recovery-v3.test.ts` 退出 0，5/5；`git diff --check` 退出 0。
 - 外部操作与边界：执行非强制 `git push origin HEAD:refs/heads/cloudflare`，退出 0，远端 `cloudflare` 从 `bb19e7c` 前移至 `d14ec66`。本轮没有修改或推送 `main`，没有执行 Worker 部署、远端 D1 migration、Secret/资源变更、真实模型探针或 grok.me 操作；本条同步审计随后作为说明性文档提交到同一分支。
+
+## 快速开发模式部署（2026-09-01）
+
+- 授权与源码：用户明确要求“快速开发模式不测试进行部署”，因此本轮豁免 typecheck、Lint、Node/Worker 测试、完整回归和独立预部署 build；部署源码为已推送且工作树干净的 `cloudflare` 提交 `84bf7353a299b2417c2cc178e2bde9f32806ca15`。部署脚本内唯一 production build 属于生成 Worker/静态资产的必需步骤，不记为测试门。
+- 只读预检：Wrangler `4.125.0` 的 OAuth 会话属于账号 `7aca31eae821510ea477022b0c0e0e91`；部署守卫确认目标仍为既有 Worker `zhuwei`、入口 `worker/index.ts`、D1 `DB/zhuwei-dev/f5a448fd-4224-4e52-bafb-a84cb190b618`、SQLite Durable Object `ROOMS/RoomDurableObject`、Workers AI `AI` 与静态资产 `ASSETS`。部署前版本为 `b0ff1fc6-419b-4335-9552-40d80ca4e8ce`，远端 D1 migration 列表返回 `No migrations to apply`。
+- 部署与控制面：`DEPLOY_SOURCE_SHA=84bf7353a299b2417c2cc178e2bde9f32806ca15 npm run cf:deploy` 退出 0，配置守卫和 production build 通过，既有 Worker 生成 Version `fa013755-6202-4209-a32c-17a534f954d0`；`npx wrangler deployments status` 退出 0，确认该版本承接 100% 流量。
+- 冒烟与边界：终端 HTTPS 冒烟在到达 Worker 前发生 TCP 超时，限定 5 秒重试退出 28 / HTTP `000`；按发布规则改用一个独立浏览器通道复核，首页成功加载 `https://zhuwei.yinskyriver.workers.dev/`，标题为“烛帷｜AI 主持的多人 D&D 跑团”，并读到产品主标题。本轮没有调用真实模型，不声明外部 AI 能力已验证；没有执行 migration、Secret/资源变更、Git push、修改 `main` 或 grok.me 操作。
+
+## 桌面后台同步提示防跳动（2026-09-01）
+
+- 症状与根因：桌面每 1.6 秒后台刷新；单次请求超过 700ms 时，`syncing` 被复用为对话工作状态，在消息末尾插入大卡片并触发平滑滚动，因偶发延迟而短暂跳动。最短组件 RED 同时捕获大卡片仍存在和轮询仍为 1.6 秒，退出 1（0/2）。
+- 修改：后台轮询改为 3 秒；慢同步只在桌面顶栏的轻量状态胶囊显示，不再令对话区进入 busy、插入同步卡或触发滚动。行动、KP 和语音仍使用原对话工作提示，且与同步同时发生时优先显示真实前台工作。
+- 连带检查与证据：`npx tsx --test tests/play-table-workspace-ui.test.mjs` 退出 0，2/2；覆盖正常行动提示、行动与同步并发优先级、同步仅位于顶栏及对话区不 busy。`git diff --check` 另行在最终源码状态检查。
+- 未覆盖范围：未修改首次加载和同步失败警告，没有改变服务端、行动幂等或 Room 状态；未运行全量测试、typecheck、Lint、build、浏览器全站 QA、部署或 Git push。

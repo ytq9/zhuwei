@@ -495,7 +495,7 @@ export function PlayTable({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [conversationMessages.length, sending, snap.state.kpBusy, syncing, rec]);
+  }, [conversationMessages.length, sending, snap.state.kpBusy, rec]);
 
   useEffect(() => {
     if (!journalOpen || typeof window === "undefined") return;
@@ -904,19 +904,19 @@ export function PlayTable({
   const currentPlace = snap.state.placeNames?.[snap.me.userId]
     ?? tacticalProjection?.scene.name
     ?? snap.state.sceneName;
-  const workKind = sending
+  const conversationWorkKind: TableWorkKind | null = sending
     ? "action" as const
     : snap.state.kpBusy
       ? "kp" as const
       : rec === "stt"
         ? "speech" as const
-        : syncing
-          ? "sync" as const
-          : null;
-  const momentLabel = workKind
-    ? workKind === "speech"
+        : null;
+  const topStatusKind: TableTopStatusKind | null = conversationWorkKind
+    ?? (syncing ? "sync" : null);
+  const momentLabel = topStatusKind
+    ? topStatusKind === "speech"
       ? "正在整理语音"
-      : workKind === "sync"
+      : topStatusKind === "sync"
         ? "正在同步桌面"
         : "KP 正在处理"
     : currentPending
@@ -972,16 +972,20 @@ export function PlayTable({
         >
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none]">
             <span
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              data-table-top-status={topStatusKind ?? "idle"}
               className={cn(
                 "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]",
-                workKind
+                topStatusKind
                   ? "border-brass/50 bg-brass/10 text-brass"
                   : currentPending || pendingMine.length > 0
                     ? "border-brass/40 text-brass"
                     : "border-border text-muted",
               )}
             >
-              {workKind ? (
+              {topStatusKind ? (
                 <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />
               ) : (
                 <CircleDot className="size-3" aria-hidden="true" />
@@ -1054,7 +1058,7 @@ export function PlayTable({
         ) : null}
         <div
           className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
-          aria-busy={workKind !== null}
+          aria-busy={conversationWorkKind !== null}
           data-table-conversation
         >
           {conversationMessages.map((m) => (
@@ -1064,7 +1068,7 @@ export function PlayTable({
               mine={m.user_id === snap.me.userId}
             />
           ))}
-          {workKind ? <TableWorkIndicator kind={workKind} /> : null}
+          {conversationWorkKind ? <TableWorkIndicator kind={conversationWorkKind} /> : null}
           <div ref={endRef} />
         </div>
         {visibleViewerNarrationRecovery?.kind === "available" ? (
@@ -1434,7 +1438,8 @@ export function PlayTable({
   );
 }
 
-type TableWorkKind = "action" | "kp" | "sync" | "speech";
+type TableWorkKind = "action" | "kp" | "speech";
+type TableTopStatusKind = TableWorkKind | "sync";
 
 function TableWorkIndicator({ kind }: { kind: TableWorkKind }) {
   const copy = {
@@ -1445,10 +1450,6 @@ function TableWorkIndicator({ kind }: { kind: TableWorkKind }) {
     kp: {
       title: "KP 正在处理桌上的行动",
       detail: "结果准备好后会直接出现在这段对话里。",
-    },
-    sync: {
-      title: "正在同步桌面",
-      detail: "正在取得最新场景与人物状态，已提交的行动不会重复执行。",
     },
     speech: {
       title: "正在整理你的语音",

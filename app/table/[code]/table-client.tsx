@@ -23,7 +23,7 @@ export function TableClient({ code, userName }: { code: string; userName: string
   const q = useQuery({
     queryKey: ["table", code],
     queryFn: () => fetchTable({ data: code }),
-    refetchInterval: 1600,
+    refetchInterval: 3000,
     placeholderData: (prev) => prev,
   });
   const data = q.data;
