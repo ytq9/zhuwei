@@ -2238,3 +2238,10 @@
 - 推送：执行非强制 `git push origin HEAD:refs/heads/cloudflare`，退出 0，远端 `cloudflare` 从 `84bf7353a299b2417c2cc178e2bde9f32806ca15` 前移至 `1ef4c1bd8aa6a65a8c0242bd6e2267b144ca3205`；远端 `main` 保持 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，未修改或推送。
 - 部署与控制面：原工作区在提交后出现不属于本轮的 `tests/send-action-recovery-v2.test.mjs` 未提交修改，部署守卫按预期拒绝且未产生版本；随后从已推送提交建立临时干净 `cloudflare` 检出，`DEPLOY_SOURCE_SHA=1ef4c1bd8aa6a65a8c0242bd6e2267b144ca3205 npm run cf:deploy` 退出 0，配置守卫和唯一 production build 通过，既有 Worker `zhuwei` 生成版本 `aec929b5-0f0e-448f-abf1-f4ccb0dc1937`。`npx wrangler deployments status` 退出 0，确认该版本承接 100% 流量；原工作区的后续修改未被纳入、覆盖或丢弃。
 - 冒烟与边界：终端 HTTPS 冒烟限定 10 秒后在到达 Worker 前超时，退出 28 / HTTP `000`；改用一个独立浏览器通道复核一次，线上首页成功加载，标题为“烛帷｜AI 主持的多人 D&D 跑团”，主标题为“帷幕后，烛火未灭”。本轮没有调用真实模型，不声明外部 AI 行为已验证；没有执行 D1 migration、Secret/资源变更、修改 `main` 或 grok.me 操作。本条审计随后作为说明性文档提交推送，不改变已部署源码。
+
+## `needsKp` 解锁快速推送与部署（2026-09-01）
+
+- 授权与源码：用户明确要求“快速开发形式推送部署”；修复提交为 `487ea0a3e0adbc06215ba27c428ef7c2ab4487dd`。`npx tsx --test tests/send-action-recovery-v2.test.mjs` 退出 0（6/6），`git diff --cached --check` 退出 0；按快速开发授权未追加 typecheck、Lint 或完整回归，部署脚本内唯一 production build 保留。
+- 推送与远端边界：非强制 `git push origin HEAD:refs/heads/cloudflare` 退出 0，远端 `cloudflare` 从 `e0f2a7220806209d0235488760a68a56a5687cac` 前移至修复提交；远端 `main` 在推送前后均为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，未修改或推送。既有 D1 `zhuwei-dev` 返回 `No migrations to apply`，未执行 migration、Secret 或资源变更。
+- 部署与控制面：从已推送提交建立独立干净 `cloudflare` 检出，`DEPLOY_SOURCE_SHA=487ea0a3e0adbc06215ba27c428ef7c2ab4487dd npm run cf:deploy` 退出 0，配置守卫及 production build 通过，既有 Worker `zhuwei` 生成版本 `c0a06ce0-95c7-4233-81c6-bf98c2a54ec4`；`npx wrangler deployments status` 退出 0，确认该版本承接 100% 流量。原工作区的 Archify 调研未纳入源码提交或部署。
+- 冒烟与边界：终端 HTTPS 冒烟限定 15 秒后在到达 Worker 前超时，退出 28 / HTTP `000`；换用独立浏览器通道后首页成功加载，标题为“烛帷｜AI 主持的多人 D&D 跑团”，主标题为“帷幕后，烛火未灭”，页面未捕获 Console error。本轮未进入登录房间或调用真实模型，因此只声明部署与公开入口正常，不声明线上 `needsKp` 外部模型路径已经实测恢复。
