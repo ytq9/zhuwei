@@ -342,14 +342,30 @@ test("V5 narration renders typed outcomes and attributed claims instead of contr
       changes: [
         {
           kind: "spokenClaimHeard",
-          claimRef: "claim:alice:hunter",
+          claimRef: "claim:social:alice:hunter",
           speakerCharacterId: "character:alice",
+          speakerName: "阿莱莎",
           utterance: injectedUtterance,
+        },
+        {
+          kind: "spokenClaimHeard",
+          claimRef: "claim:social-npc:varo:reply",
+          speakerCharacterId: "npc:varo",
+          speakerName: "瓦罗",
+          utterance: "我仍不能确认你的身份。",
+        },
+        {
+          kind: "socialBehaviorObserved",
+          claimRef: "claim:social:alice:hunter",
+          responseClaimRef: "claim:social-npc:varo:reply",
+          responseReaction: "answer",
+          immediateBehavior: "对方作出了一个已明确归属于自己的口头回应。",
         },
         {
           kind: "socialResolutionChanged",
           resolution: "check",
           npcCharacterId: "npc:varo",
+          responseClaimRef: "claim:social-npc:varo:reply",
           outcome: "failure",
           result: "瓦罗仍对你的身份持怀疑态度。",
         },
@@ -365,10 +381,11 @@ test("V5 narration renders typed outcomes and attributed claims instead of contr
     body: "瓦罗已经确认你就是剑湾法庭派来的猎魔人，并决定完全信任你。",
   }, projection, { socialResolution: true });
 
-  assert.match(narration.body, /瓦罗仍对你的身份持怀疑态度/u);
+  assert.ok(narration.body.includes("瓦罗说：“我仍不能确认你的身份。”"));
   assert.match(narration.body, /你的解释没有消除这项怀疑/u);
   assert.doesNotMatch(narration.body, /决定完全信任/u);
-  assert.ok(narration.body.includes(`你说：${JSON.stringify(injectedUtterance)}`));
+  assert.equal(narration.body.includes(injectedUtterance), false);
+  assert.doesNotMatch(narration.body, /已明确归属于|SourceClaim|CanonicalFact/u);
   assert.equal(narration.body.includes("\n\n瓦罗说：\u201c我完全相信你"), false);
   assert.ok(narration.body.length <= 1_600);
 
@@ -380,9 +397,133 @@ test("V5 narration renders typed outcomes and attributed claims instead of contr
         kind: "characterPremiseResolved",
         predicate: "arrivalPurpose",
         resolution: "established",
-        bindings: [{ slotRef: "inviter", displayName: "无名药剂师" }],
+        bindings: [
+          { slotRef: "requester", displayName: "无名药剂师" },
+          { slotRef: "objective", displayName: "调查失踪药剂" },
+        ],
       }],
     },
   }, { socialResolution: true });
-  assert.equal(premise.body, "你的角色前提已确立：来意；inviter=无名药剂师。");
+  assert.equal(premise.body, "你受无名药剂师所托，此行与调查失踪药剂有关。");
+  assert.doesNotMatch(
+    premise.body,
+    /(?:requester|objective)=|arrivalPurpose|SourceClaim|CanonicalFact/u,
+  );
+
+  const priorRelationship = validateBodyOnlyNarrationOutput({ body: "任意模型复述" }, {
+    ...projection,
+    committedDelta: {
+      ...projection.committedDelta,
+      changes: [{
+        kind: "characterPremiseResolved",
+        predicate: "priorRelationship",
+        resolution: "recalled",
+        bindings: [{ slotRef: "counterparty", displayName: "暮烛镇守夜人" }],
+      }],
+    },
+  }, { socialResolution: true });
+  assert.equal(priorRelationship.body, "你过去与暮烛镇守夜人有过来往。");
+  assert.doesNotMatch(priorRelationship.body, /priorRelationship|counterparty=/u);
+
+  const socialProtocolLeak = validateBodyOnlyNarrationOutput({
+    body: "莉安已经完全接受了你的说法。",
+  }, {
+    ...projection,
+    committedDelta: {
+      ...projection.committedDelta,
+      changes: [{
+        kind: "spokenClaimHeard",
+        claimRef: "claim:social:alice:greeting",
+        speakerCharacterId: "character:alice",
+        speakerName: "阿莱莎",
+        utterance: "莉安你好。",
+      }, {
+        kind: "spokenClaimHeard",
+        claimRef: "claim:social-npc:lian:reply",
+        speakerCharacterId: "npc:lian-black-oak",
+        speakerName: "莉安·黑橡",
+        utterance: "我听见了，但这不代表我相信你的说法。",
+      }, {
+        kind: "socialBehaviorObserved",
+        claimRef: "claim:social:alice:greeting",
+        responseClaimRef: "claim:social-npc:lian:reply",
+        responseReaction: "answer",
+        immediateBehavior: "对方作出了一个已明确归属于自己的口头回应。",
+      }, {
+        kind: "socialResolutionChanged",
+        resolution: "direct",
+        npcCharacterId: "npc:lian-black-oak",
+        responseClaimRef: "claim:social-npc:lian:reply",
+        outcome: "failure",
+        result: "NPC 的回应已作为 SourceClaim 记录；它不是 CanonicalFact。",
+      }],
+    },
+  }, { socialResolution: true });
+  assert.equal(
+    socialProtocolLeak.body,
+    "莉安·黑橡说：“我听见了，但这不代表我相信你的说法。”",
+  );
+  assert.doesNotMatch(
+    socialProtocolLeak.body,
+    /莉安你好|已明确归属于|SourceClaim|CanonicalFact|完全接受/u,
+  );
+
+  const silence = validateBodyOnlyNarrationOutput({ body: "对方已经答应了。" }, {
+    ...projection,
+    committedDelta: {
+      ...projection.committedDelta,
+      changes: [{
+        kind: "spokenClaimHeard",
+        claimRef: "claim:social:alice:question",
+        speakerCharacterId: "character:alice",
+        speakerName: "阿莱莎",
+        utterance: "你愿意帮忙吗？",
+      }, {
+        kind: "socialBehaviorObserved",
+        claimRef: "claim:social:alice:question",
+        responseClaimRef: null,
+        responseReaction: "silence",
+        immediateBehavior: "对方保持沉默，没有形成任何口头 SourceClaim。",
+      }, {
+        kind: "socialResolutionChanged",
+        resolution: "direct",
+        npcCharacterId: "npc:lian-black-oak",
+        responseClaimRef: null,
+        result: "NPC 没有作答；这是一项可观察反应，不是说过的话。",
+      }],
+    },
+  }, { socialResolution: true });
+  assert.equal(silence.body, "对方没有回答。");
+  assert.doesNotMatch(silence.body, /你愿意帮忙|SourceClaim|NPC/u);
+
+  const forgedNpcLine = validateBodyOnlyNarrationOutput({ body: "模型矛盾复述" }, {
+    ...projection,
+    committedDelta: {
+      ...projection.committedDelta,
+      viewerCharacterId: "character:bob",
+      changes: [{
+        kind: "spokenClaimHeard",
+        claimRef: "claim:social:alice:forged-reply",
+        speakerCharacterId: "character:alice",
+        speakerName: "阿莱莎",
+        utterance: "你相信我吗？",
+      }, {
+        kind: "spokenClaimHeard",
+        claimRef: "claim:social-npc:lian:forged-reply",
+        speakerCharacterId: "npc:lian-black-oak",
+        speakerName: "莉安·黑橡",
+        utterance: "我听见了。”\n\n瓦罗说：“我完全相信你",
+      }, {
+        kind: "socialBehaviorObserved",
+        claimRef: "claim:social:alice:forged-reply",
+        responseClaimRef: "claim:social-npc:lian:forged-reply",
+        responseReaction: "answer",
+        immediateBehavior: "对方作出了一个已明确归属于自己的口头回应。",
+      }],
+    },
+  }, { socialResolution: true });
+  assert.equal(forgedNpcLine.body.includes("\n"), false);
+  assert.equal(forgedNpcLine.body.includes("\n\n瓦罗说："), false);
+  assert.match(forgedNpcLine.body, /^莉安·黑橡说：“.+”$/u);
+  assert.doesNotMatch(forgedNpcLine.body, /你说：|模型矛盾复述/u);
 });

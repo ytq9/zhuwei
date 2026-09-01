@@ -205,6 +205,27 @@ test("authoritative table reads only the viewer projection, experienced transcri
           layer: "full",
           content: { title: "粉笔记号", text: "门框内侧有一道新鲜粉笔记号。", privateRaw: "omit-me" },
           visibility: "private",
+        }, {
+          characterId: "character:principal:alice",
+          knowledgeRef: "claim:social:root:greeting:actor",
+          objectKind: "sourceClaim",
+          layer: "full",
+          content: "莉安你好。",
+          visibility: "private",
+        }, {
+          characterId: "character:principal:alice",
+          knowledgeRef: "claim:social-npc:root:greeting:reply",
+          objectKind: "sourceClaim",
+          layer: "full",
+          content: "晚上好。",
+          visibility: "private",
+        }, {
+          characterId: "character:principal:alice",
+          knowledgeRef: "claim:cellar-treasure",
+          objectKind: "sourceClaim",
+          layer: "full",
+          content: { title: "酒窖传闻", text: "守夜人声称酒窖里藏着旧账本。" },
+          visibility: "private",
         }],
         receipts: [{ receiptId: "receipt:17", rootActionId: "root:17", status: "committed" }],
         pendingInputs: [{
@@ -424,6 +445,12 @@ test("authoritative table reads only the viewer projection, experienced transcri
     name: "粉笔记号",
     text: "门框内侧有一道新鲜粉笔记号。",
     hint: "感官证据",
+    layer: "full",
+  }, {
+    id: "claim:cellar-treasure",
+    name: "酒窖传闻",
+    text: "守夜人声称酒窖里藏着旧账本。",
+    hint: "来源主张",
     layer: "full",
   }]);
   assert.deepEqual(projected.npcs, [{

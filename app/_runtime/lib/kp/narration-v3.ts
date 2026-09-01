@@ -258,59 +258,126 @@ export function bodyOnlyNarrationContext(
   };
 }
 
-const PREMISE_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  affiliation: "所属",
-  arrivalPurpose: "来意",
-  identityBackground: "身份背景",
-  obligation: "义务",
-  priorKnowledge: "既有认知",
-  priorRelationship: "既有关系",
-});
+function safeInlineText(value: unknown, maximum: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.normalize("NFC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, maximum);
+  return normalized || undefined;
+}
+
+function naturalList(values: readonly string[]): string {
+  if (values.length <= 1) return values[0] ?? "";
+  return `${values.slice(0, -1).join("、")}和${values.at(-1)}`;
+}
+
+function premiseBindings(change: JsonRecord): ReadonlyMap<string, string[]> {
+  const bindings = new Map<string, string[]>();
+  if (!Array.isArray(change.bindings)) return bindings;
+  for (const binding of change.bindings) {
+    if (!isRecord(binding) || typeof binding.slotRef !== "string") continue;
+    const displayName = safeInlineText(binding.displayName, 120);
+    if (displayName === undefined) continue;
+    const current = bindings.get(binding.slotRef) ?? [];
+    if (!current.includes(displayName)) current.push(displayName);
+    bindings.set(binding.slotRef, current);
+  }
+  return bindings;
+}
 
 function deterministicPremiseLine(change: JsonRecord): string | undefined {
   if (change.kind !== "characterPremiseResolved" || typeof change.predicate !== "string") {
     return undefined;
   }
-  const bindings = Array.isArray(change.bindings)
-    ? change.bindings.filter(isRecord).flatMap((binding) => {
-        const displayName = typeof binding.displayName === "string"
-          ? binding.displayName.trim()
-          : "";
-        if (!displayName) return [];
-        const slotRef = typeof binding.slotRef === "string" && binding.slotRef.trim()
-          ? binding.slotRef.trim()
-          : "关联对象";
-        return [`${slotRef}=${displayName}`];
-      })
-    : [];
-  const label = PREMISE_LABELS[change.predicate] ?? change.predicate;
-  const resolution = change.resolution === "recalled" ? "确认" : "确立";
-  return bindings.length === 0
-    ? `你的角色前提已${resolution}：${label}。`
-    : `你的角色前提已${resolution}：${label}；${bindings.join("，")}。`;
+  const bindings = premiseBindings(change);
+  const names = (slotRef: string): string => naturalList(bindings.get(slotRef) ?? []);
+  const sentence = (...clauses: Array<string | undefined>): string | undefined => {
+    const present = clauses.filter((clause): clause is string => clause !== undefined);
+    return present.length === 0 ? undefined : `${present.join("，")}。`;
+  };
+  switch (change.predicate) {
+    case "arrivalPurpose": {
+      const requester = names("requester");
+      const objective = names("objective");
+      const destination = names("destination");
+      const beneficiary = names("beneficiary");
+      return sentence(
+        requester ? `你受${requester}所托` : undefined,
+        objective ? `此行与${objective}有关` : undefined,
+        destination ? `目的地是${destination}` : undefined,
+        beneficiary ? `也是为了${beneficiary}` : undefined,
+      );
+    }
+    case "priorKnowledge": {
+      const knownSubject = names("knownSubject");
+      return knownSubject ? `你此前就知道${knownSubject}。` : undefined;
+    }
+    case "priorRelationship": {
+      const counterparty = names("counterparty");
+      return counterparty ? `你过去与${counterparty}有过来往。` : undefined;
+    }
+    case "obligation": {
+      const obligee = names("obligee");
+      const subject = names("subject");
+      if (obligee && subject) return `你对${obligee}负有一项与${subject}有关的义务。`;
+      if (obligee) return `你对${obligee}负有义务。`;
+      return subject ? `你负有一项与${subject}有关的义务。` : undefined;
+    }
+    case "affiliation": {
+      const organization = names("organization");
+      const sponsor = names("sponsor");
+      return sentence(
+        organization ? `你隶属于${organization}` : undefined,
+        sponsor ? `由${sponsor}引荐` : undefined,
+      );
+    }
+    case "identityBackground": {
+      const origin = names("origin");
+      const mentor = names("mentor");
+      const formerAssociate = names("formerAssociate");
+      return sentence(
+        origin ? `你来自${origin}` : undefined,
+        mentor ? `曾受${mentor}指点` : undefined,
+        formerAssociate ? `过去与${formerAssociate}共事` : undefined,
+      );
+    }
+    default:
+      return undefined;
+  }
 }
 
 /** Facts in these changes have already been validated and committed by Rules.
- * V5 renders them verbatim or from closed fields instead of asking a model to
- * paraphrase success, identity, trust, permission, or private inference. */
+ * V5 renders only their closed public fields instead of asking a model to
+ * reinterpret success, identity, trust, permission, or private inference. */
 function deterministicOutcomeLines(projection: JsonRecord): string[] {
   const delta = isRecord(projection.committedDelta) ? projection.committedDelta : {};
   const changes = Array.isArray(delta.changes) ? delta.changes.filter(isRecord) : [];
   const lines: string[] = [];
   const add = (value: unknown): void => {
-    if (typeof value !== "string") return;
-    const normalized = value.trim();
+    const normalized = safeInlineText(value, 1_200);
     if (normalized && !lines.includes(normalized)) lines.push(normalized);
   };
   for (const change of changes) {
-    if (["checkResolved", "contestResolved", "socialResolutionChanged"].includes(
-      String(change.kind),
-    )) {
+    if (["checkResolved", "contestResolved"].includes(String(change.kind))) {
       add(change.result);
       continue;
     }
+    if (change.kind === "socialResolutionChanged") {
+      if (change.resolution === "reframed") {
+        add("你改换了说法，之前那次检定已经取消。");
+      } else if (change.resolution !== "direct") {
+        add(change.result);
+      }
+      continue;
+    }
     if (change.kind === "socialBehaviorObserved") {
-      add(change.immediateBehavior);
+      if (change.responseReaction === "silence" && change.responseClaimRef === null) {
+        add("对方没有回答。");
+      } else if (typeof change.responseClaimRef !== "string") {
+        add(change.immediateBehavior);
+      }
       continue;
     }
     if (change.kind === "privateInferenceFormed") {
@@ -354,33 +421,37 @@ function deterministicSocialClaimLines(projection: JsonRecord): string[] {
   const actorCharacterId = typeof delta.actorCharacterId === "string"
     ? delta.actorCharacterId
     : undefined;
-  const reactionByClaim = new Map(changes.flatMap((change) =>
-    change.kind === "socialBehaviorObserved"
+  const viewerCharacterId = typeof delta.viewerCharacterId === "string"
+    ? delta.viewerCharacterId
+    : undefined;
+  const responseClaimRefs = new Set(changes.flatMap((change) =>
+    (change.kind === "socialBehaviorObserved" || change.kind === "socialResolutionChanged")
       && typeof change.responseClaimRef === "string"
-      && typeof change.responseReaction === "string"
-      ? [[change.responseClaimRef, change.responseReaction]]
+      ? [change.responseClaimRef]
       : []));
   const seen = new Set<string>();
   return changes.flatMap((change) => {
     if (change.kind !== "spokenClaimHeard"
       || typeof change.claimRef !== "string"
+      || !responseClaimRefs.has(change.claimRef)
       || seen.has(change.claimRef)
       || typeof change.speakerCharacterId !== "string"
-      || typeof change.utterance !== "string"
-      || !change.utterance.trim()) return [];
+      || change.speakerCharacterId === actorCharacterId) return [];
+    const utterance = safeInlineText(change.utterance, 1_200);
+    if (utterance === undefined) return [];
     seen.add(change.claimRef);
-    const speaker = change.speakerCharacterId === actorCharacterId
+    const safeSpeakerName = safeInlineText(change.speakerName, 80)
+      ?.replace(/[:："“”]+/gu, "")
+      .trim();
+    const speaker = change.speakerCharacterId === viewerCharacterId
       ? "你"
-      : typeof change.speakerName === "string" && change.speakerName.trim()
-        ? change.speakerName.trim().slice(0, 80)
+      : safeSpeakerName
+        ? safeSpeakerName
         : "对方";
-    if (reactionByClaim.get(change.claimRef) === "silence") {
-      return [`${speaker}没有作答。`];
-    }
-    const utterance = change.utterance.trim().slice(0, 1_200);
-    // JSON string quoting keeps embedded quotes and newlines inside a single
-    // attributed value instead of allowing player text to forge an NPC line.
-    return [`${speaker}说：${JSON.stringify(utterance)}`];
+    // The server owns both delimiters and the paragraph boundary. Embedded
+    // delimiters are reduced to ordinary quotes so one claim cannot forge a
+    // second attributed speaker line.
+    return [`${speaker}说：“${utterance.replace(/[“”]/gu, "\"")}”`];
   });
 }
 

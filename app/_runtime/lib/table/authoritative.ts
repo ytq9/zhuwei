@@ -853,6 +853,14 @@ function knowledgeHint(objectKind: string) {
   }
 }
 
+function isOrdinarySocialTranscriptClaim(knowledgeRef: string, objectKind: string): boolean {
+  // Spoken turns remain authoritative character knowledge and transcript
+  // history; they are not automatically promoted into persistent clue cards.
+  return objectKind === "sourceClaim"
+    && (knowledgeRef.startsWith("claim:social:")
+      || knowledgeRef.startsWith("claim:social-npc:"));
+}
+
 export function buildAuthoritativeCharacterSeed(input: {
   characterId: string;
   controllerPrincipalId: string;
@@ -1465,7 +1473,11 @@ export function projectAuthoritativeTableObservation(input: {
         const id = nonEmptyString(entry.knowledgeRef);
         const objectKind = nonEmptyString(entry.objectKind);
         const content = publicKnowledgeText(entry.content);
-        if (!id || withheldKnowledgeRefs.has(id) || !objectKind || !content.text) return [];
+        if (!id
+          || withheldKnowledgeRefs.has(id)
+          || !objectKind
+          || !content.text
+          || isOrdinarySocialTranscriptClaim(id, objectKind)) return [];
         const layer = entry.layer === "full" ? ("full" as const) : ("talk" as const);
         return [{
           id,
