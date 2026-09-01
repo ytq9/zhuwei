@@ -2224,3 +2224,10 @@
 - 修改：后台轮询改为 3 秒；慢同步只在桌面顶栏的轻量状态胶囊显示，不再令对话区进入 busy、插入同步卡或触发滚动。行动、KP 和语音仍使用原对话工作提示，且与同步同时发生时优先显示真实前台工作。
 - 连带检查与证据：`npx tsx --test tests/play-table-workspace-ui.test.mjs` 退出 0，2/2；覆盖正常行动提示、行动与同步并发优先级、同步仅位于顶栏及对话区不 busy。`git diff --check` 另行在最终源码状态检查。
 - 未覆盖范围：未修改首次加载和同步失败警告，没有改变服务端、行动幂等或 Room 状态；未运行全量测试、typecheck、Lint、build、浏览器全站 QA、部署或 Git push。
+
+## 桌面同步提示修复快速推送与部署（2026-09-01）
+
+- 授权与源码：用户明确要求“快速开发部署推送”，并确认不纳入随后出现的其他更新。本轮修复提交为 `1ef4c1bd8aa6a65a8c0242bd6e2267b144ca3205`；`npx tsx --test tests/play-table-workspace-ui.test.mjs` 在该源码状态退出 0（2/2），`git diff --cached --check` 退出 0，按快速开发授权未追加 typecheck、Lint 或完整回归。
+- 推送：执行非强制 `git push origin HEAD:refs/heads/cloudflare`，退出 0，远端 `cloudflare` 从 `84bf7353a299b2417c2cc178e2bde9f32806ca15` 前移至 `1ef4c1bd8aa6a65a8c0242bd6e2267b144ca3205`；远端 `main` 保持 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，未修改或推送。
+- 部署与控制面：原工作区在提交后出现不属于本轮的 `tests/send-action-recovery-v2.test.mjs` 未提交修改，部署守卫按预期拒绝且未产生版本；随后从已推送提交建立临时干净 `cloudflare` 检出，`DEPLOY_SOURCE_SHA=1ef4c1bd8aa6a65a8c0242bd6e2267b144ca3205 npm run cf:deploy` 退出 0，配置守卫和唯一 production build 通过，既有 Worker `zhuwei` 生成版本 `aec929b5-0f0e-448f-abf1-f4ccb0dc1937`。`npx wrangler deployments status` 退出 0，确认该版本承接 100% 流量；原工作区的后续修改未被纳入、覆盖或丢弃。
+- 冒烟与边界：终端 HTTPS 冒烟限定 10 秒后在到达 Worker 前超时，退出 28 / HTTP `000`；改用一个独立浏览器通道复核一次，线上首页成功加载，标题为“烛帷｜AI 主持的多人 D&D 跑团”，主标题为“帷幕后，烛火未灭”。本轮没有调用真实模型，不声明外部 AI 行为已验证；没有执行 D1 migration、Secret/资源变更、修改 `main` 或 grok.me 操作。本条审计随后作为说明性文档提交推送，不改变已部署源码。
