@@ -3,6 +3,11 @@ import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   V5_EVENT_SCHEMA_PROFILE,
 } from "../profiles/manifests";
+import {
+  VNEXT_STAGE3_EVENT_SCHEMA_PROFILE,
+  VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST,
+  worldInteractionProfileEnabled,
+} from "../profiles/vnext-world-interaction";
 import { causalActionInterpreterEnabled } from "../profiles/causal-action-interpreter";
 import { environmentProfileEnabled } from "../profiles/environment";
 import { itemSystemProfileEnabled } from "../profiles/item-system";
@@ -15,6 +20,7 @@ import { npcMechanicsProfileEnabled } from "../profiles/npc-mechanics";
 import type { ProfileRef, RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import type {
   AuthoritativeWorldState,
+  AuthorityContinuation,
   CanonicalFactRecord,
   CharacterRecord,
   EventEnvelope,
@@ -111,6 +117,17 @@ import {
   ENVIRONMENT_EVENT_TYPES,
   validateEnvironmentEventPayload,
 } from "./environment";
+import {
+  isSemanticDefinitionRevisedPayload,
+  isWorldInteractionResolutionPlan,
+  isWorldInteractionResolvedPayload,
+  type AppliedWorldInteractionEffect,
+  worldInteractionPlanHash,
+} from "./world-interaction-model";
+import {
+  semanticDefinitionSnapshot,
+  type StoredSemanticDefinition,
+} from "./semantic-definitions";
 
 const EVENT_KEYS = [
   "branchId",
@@ -297,6 +314,15 @@ function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown):
     && isItemDefinitionV1(payload.definition);
 }
 
+function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unknown): boolean {
+  return eventType === "SemanticDefinitionRevised"
+    || eventType === "WorldInteractionResolved"
+    || (eventType === "RandomnessRequested"
+      && isRecord(payload)
+      && isRecord(payload.resolutionPlan)
+      && payload.resolutionPlan.schema === "zhuwei.world-interaction-resolution-plan/v1");
+}
+
 function envelopeCausalActionProfileEnabled(profiles: JsonRecord): boolean {
   return Array.isArray(profiles.extensions)
     && profiles.extensions.every((extension): extension is ProfileRef =>
@@ -337,6 +363,16 @@ function envelopeItemSystemProfileEnabled(profiles: JsonRecord): boolean {
     && itemSystemProfileEnabled(profiles.extensions);
 }
 
+function envelopeWorldInteractionProfileEnabled(profiles: JsonRecord): boolean {
+  return Array.isArray(profiles.extensions)
+    && profiles.extensions.every((extension): extension is ProfileRef =>
+      isRecord(extension)
+      && hasExactKeys(extension, ["profileHash", "profileId"])
+      && isNonEmptyString(extension.profileId)
+      && isSha256(extension.profileHash))
+    && worldInteractionProfileEnabled(profiles.extensions);
+}
+
 function exactProfileRef(value: unknown, expected: ProfileRef): boolean {
   return isRecord(value)
     && hasExactKeys(value, ["profileHash", "profileId"])
@@ -346,11 +382,14 @@ function exactProfileRef(value: unknown, expected: ProfileRef): boolean {
 
 function knownRuntimeManifestClosureIsExact(profiles: JsonRecord): boolean {
   if (!isRuntimeProfileManifest(profiles)) return false;
-  if (profiles.manifest.profileId !== ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileId) {
-    return true;
-  }
   try {
-    return canonicalSha256(profiles) === canonicalSha256(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
+    if (profiles.manifest.profileId === ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST.manifest.profileId) {
+      return canonicalSha256(profiles) === canonicalSha256(ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
+    }
+    if (profiles.manifest.profileId === VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST.manifest.profileId) {
+      return canonicalSha256(profiles) === canonicalSha256(VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST);
+    }
+    return false;
   } catch {
     return false;
   }
@@ -365,10 +404,16 @@ function expectedEventTypeVersion(
     if (eventType === "ItemUsed") return "4";
     return eventType === "ResourceSpent" ? "2" : "1";
   }
+  if (exactProfileRef(profiles.eventSchema, VNEXT_STAGE3_EVENT_SCHEMA_PROFILE)) {
+    if (eventType === "ItemUsed") return "4";
+    return eventType === "ResourceSpent" ? "2" : "1";
+  }
   return undefined;
 }
 
 const EVENT_TYPES = new Set<EventType>([
+  "SemanticDefinitionRevised",
+  "WorldInteractionResolved",
   "ImprovisedActionResolved",
   "ClarificationRequested",
   "PlayerChoiceRequested",
@@ -514,7 +559,9 @@ function isRandomnessRequest(value: unknown): value is RandomnessRequest {
     && isNonEmptyString(value.randomnessId)
     && isNonEmptyString(value.resolutionId)
     && isNonEmptyString(value.actorCharacterId)
-    && ["improvisedCheck", "abilityCheck", "contestCheck", "savingThrow"].includes(String(value.purpose))
+    && [
+      "improvisedCheck", "abilityCheck", "contestCheck", "savingThrow", "worldInteractionCheck",
+    ].includes(String(value.purpose))
     && ["1d20", "2d20kh1", "2d20kl1"].includes(String(value.diceExpression))
     && isFrozenCheck(value.frozenCheck);
 }
@@ -529,12 +576,44 @@ function isHiddenRealityResolutionPlan(value: unknown): boolean {
     && isRecord(value.actionPlan);
 }
 
-function isAuthorityContinuation(value: unknown): boolean {
+function isAuthorityContinuation(value: unknown): value is AuthorityContinuation {
   return isRecord(value)
     && hasExactKeys(value, ["capability", "continuationId", "kind"])
     && value.kind === "roomAuthorityRandomness"
     && isNonEmptyString(value.continuationId)
     && isSha256(value.capability);
+}
+
+function isWorldInteractionRandomnessEventBinding(
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  value: unknown,
+): boolean {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ["continuation", "formula", "purpose", "request", "resolutionPlan"])
+    || !isWorldInteractionResolutionPlan(value.resolutionPlan)
+    || !isRandomnessRequest(value.request)
+    || value.request.purpose !== "worldInteractionCheck"
+    || value.purpose !== value.request.purpose
+    || value.formula !== value.request.diceExpression
+    || value.request.actorCharacterId !== value.resolutionPlan.actorCharacterId
+    || value.request.resolutionId !== value.resolutionPlan.resolutionId
+    || !isRecord(value.resolutionPlan.ruling)
+    || value.resolutionPlan.ruling.kind !== "check"
+    || value.request.randomnessId !== value.resolutionPlan.ruling.randomnessId
+    || canonicalSha256(value.request.frozenCheck)
+      !== canonicalSha256(value.resolutionPlan.ruling.check)
+    || !isAuthorityContinuation(value.continuation)
+    || value.continuation.continuationId !== `continuation:${value.request.resolutionId}`) return false;
+  return value.continuation.capability === canonicalSha256({
+    kind: "roomAuthorityRandomness",
+    roomId: state.roomId,
+    runtimeEpochId: state.runtimeEpochId,
+    stateHash: hashWorldState(state),
+    rootActionId,
+    request: value.request,
+    resolutionPlanHash: worldInteractionPlanHash(value.resolutionPlan),
+  });
 }
 
 function isContestResolutionPlan(value: unknown): boolean {
@@ -574,6 +653,8 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
       "raceId",
       "resourceMaximums",
       "resources",
+      "semanticDefinitionRef",
+      "semanticDefinitionRevision",
       "socialMechanics",
       "subclassId",
     ])
@@ -590,6 +671,8 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
         && Number.isSafeInteger(value.experiencePoints)
         && Number(value.experiencePoints) >= 0))
     && [value.classId, value.raceId, value.subclassId, value.controllerPrincipalId, value.lastControllerSeatId]
+      .every((entry) => entry === undefined || isNonEmptyString(entry))
+    && [value.semanticDefinitionRef, value.semanticDefinitionRevision]
       .every((entry) => entry === undefined || isNonEmptyString(entry))
     && (value.lastLongRestCompletedAtMicros === undefined
       || (typeof value.lastLongRestCompletedAtMicros === "string"
@@ -618,6 +701,10 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     return false;
   }
   switch (eventType) {
+    case "SemanticDefinitionRevised":
+      return isSemanticDefinitionRevisedPayload(value);
+    case "WorldInteractionResolved":
+      return isWorldInteractionResolvedPayload(value);
     case "ImprovisedActionResolved":
       return hasExactKeys(value, ["actorCharacterId", "fact", "outcomeCode"])
         && isNonEmptyString(value.actorCharacterId)
@@ -984,7 +1071,8 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
             || isCausalActionResolutionPlan(value.resolutionPlan)
             || isSocialResolutionPlan(value.resolutionPlan)
             || isContestResolutionPlan(value.resolutionPlan)
-            || isHiddenRealityResolutionPlan(value.resolutionPlan));
+            || isHiddenRealityResolutionPlan(value.resolutionPlan)
+            || isWorldInteractionResolutionPlan(value.resolutionPlan));
       }
       return hasExactKeys(value, ["continuation", "formula", "purpose", "request"])
         && isRandomnessRequest(value.request)
@@ -1490,6 +1578,98 @@ function typedAssertionFactMatchesState(
   });
 }
 
+type AppliedWorldInteractionDamage = Extract<
+  AppliedWorldInteractionEffect,
+  { kind: "damage" }
+>;
+
+function worldInteractionDamageEffectsWereCommitted(
+  state: AuthoritativeWorldState,
+  event: EventEnvelope<"WorldInteractionResolved">,
+  effects: readonly AppliedWorldInteractionDamage[],
+): boolean {
+  const audits = Object.values(state.correctionRuntime.audit)
+    .filter((entry) => entry.rootActionId === event.rootActionId
+      && entry.branchId === event.branchId);
+  const packets = audits.filter((entry) => entry.eventType === "DamagePacketResolved");
+  const hitPointChanges = audits.filter((entry) => entry.eventType === "HitPointsChanged");
+  const deaths = audits.filter((entry) => entry.eventType === "CreatureDied");
+  if (packets.length !== effects.length
+    || hitPointChanges.length !== effects.length
+    || deaths.length !== effects.filter((effect) => effect.died).length) return false;
+
+  const usedAuditRefs = new Set<string>();
+  const lastEffectByTarget = new Map<string, AppliedWorldInteractionDamage>();
+  let previousEffectEventSeq = 0n;
+  for (const effect of effects) {
+    const target = state.entities[effect.targetRef];
+    const previousForTarget = lastEffectByTarget.get(effect.targetRef);
+    if (target?.hitPoints === undefined
+      || effect.hpBefore <= 0
+      || Math.max(0, effect.hpBefore - effect.amount) !== effect.hpAfter
+      || effect.died !== (effect.hpAfter === 0)
+      || (previousForTarget !== undefined && previousForTarget.hpAfter !== effect.hpBefore)) {
+      return false;
+    }
+    const packet = matchingAudit(packets, usedAuditRefs, previousEffectEventSeq, canonicalSha256({
+      targetId: effect.targetRef,
+      amount: effect.amount,
+      damageType: effect.damageType,
+      sourceDefinitionId: effect.sourceDefinitionRef,
+    }));
+    if (packet === undefined) return false;
+    usedAuditRefs.add(packet.eventId);
+    const hitPointChange = matchingAudit(
+      hitPointChanges,
+      usedAuditRefs,
+      BigInt(packet.eventSeq),
+      canonicalSha256({
+        characterId: effect.targetRef,
+        before: effect.hpBefore,
+        after: effect.hpAfter,
+        maximum: target.hitPoints.maximum,
+        causeId: effect.sourceDefinitionRef,
+      }),
+    );
+    if (hitPointChange === undefined) return false;
+    usedAuditRefs.add(hitPointChange.eventId);
+    let finalEventSeq = BigInt(hitPointChange.eventSeq);
+    if (effect.died) {
+      const death = matchingAudit(
+        deaths,
+        usedAuditRefs,
+        finalEventSeq,
+        canonicalSha256({
+          characterId: effect.targetRef,
+          causeId: effect.sourceDefinitionRef,
+        }),
+      );
+      if (death === undefined) return false;
+      usedAuditRefs.add(death.eventId);
+      finalEventSeq = BigInt(death.eventSeq);
+    }
+    previousEffectEventSeq = finalEventSeq;
+    lastEffectByTarget.set(effect.targetRef, effect);
+  }
+
+  return [...lastEffectByTarget].every(([targetRef, effect]) => {
+    const target = state.entities[targetRef];
+    return target?.hitPoints?.current === effect.hpAfter
+      && (effect.died ? target.tenureStatus === "dead" : target.tenureStatus === "active");
+  });
+}
+
+function matchingAudit(
+  audits: readonly AuthoritativeWorldState["correctionRuntime"]["audit"][string][],
+  usedAuditRefs: ReadonlySet<string>,
+  afterEventSeq: bigint,
+  payloadHash: Sha256Ref,
+): AuthoritativeWorldState["correctionRuntime"]["audit"][string] | undefined {
+  return audits.find((entry) => !usedAuditRefs.has(entry.eventId)
+    && BigInt(entry.eventSeq) > afterEventSeq
+    && entry.payloadHash === payloadHash);
+}
+
 /** Private fold: callers can only exercise it through step/replay. */
 export function foldEvent(
   source: AuthoritativeWorldState,
@@ -1500,6 +1680,102 @@ export function foldEvent(
   const state = structuredClone(source);
 
   switch (event.eventType) {
+    case "SemanticDefinitionRevised": {
+      const payload = event.payload as EventPayloadByType["SemanticDefinitionRevised"];
+      if (!(payload.actorCharacterId in state.entities)) {
+        throw new TypeError("semantic definition revision actor does not exist");
+      }
+      const current = state.campaignRuntime.definitions[payload.definitionRef];
+      const currentSnapshot = semanticDefinitionSnapshot(current);
+      const nextSnapshot = semanticDefinitionSnapshot(payload.nextDefinition);
+      if (currentSnapshot === undefined
+        || nextSnapshot === undefined
+        || !isRecord(current)
+        || current.semanticKind !== payload.semanticKind
+        || currentSnapshot.revision !== payload.baseRevision
+        || currentSnapshot.definitionHash !== payload.baseHash
+        || current.templateRef !== payload.templateRef
+        || current.templateHash !== payload.templateHash
+        || nextSnapshot.revision !== (BigInt(payload.baseRevision) + 1n).toString()
+        || payload.nextDefinition.visibilityPolicyRef !== current.visibilityPolicyRef) {
+        throw new TypeError("semantic definition revision does not continue its exact base");
+      }
+      state.campaignRuntime.definitions[payload.definitionRef] =
+        structuredClone(payload.nextDefinition) as JsonRecord;
+      if (payload.semanticKind === "npc") {
+        const content = payload.nextDefinition.content;
+        const links = isRecord(content.links) ? content.links : undefined;
+        const entityRef = links?.entityRef;
+        const entity = isNonEmptyString(entityRef) ? state.entities[entityRef] : undefined;
+        if (entity?.kind !== "npc") {
+          throw new TypeError("NPC semantic definition does not bind an authoritative NPC");
+        }
+        entity.semanticDefinitionRef = payload.definitionRef;
+        entity.semanticDefinitionRevision = payload.nextDefinition.revision;
+      }
+      break;
+    }
+    case "WorldInteractionResolved": {
+      const payload = event.payload as EventPayloadByType["WorldInteractionResolved"];
+      const actor = state.entities[payload.actorCharacterId];
+      const damageEffects = payload.appliedEffects.filter(
+        (effect): effect is AppliedWorldInteractionDamage => effect.kind === "damage",
+      );
+      const damageEffectsWereCommitted = worldInteractionDamageEffectsWereCommitted(
+        state,
+        event as EventEnvelope<"WorldInteractionResolved">,
+        damageEffects,
+      );
+      if (!damageEffectsWereCommitted) {
+        throw new TypeError("world interaction damage effects were not committed by this root action");
+      }
+      const actorDiedFromThisResolution = actor?.tenureStatus === "dead"
+        && actor.hitPoints?.current === 0
+        && damageEffectsWereCommitted
+        && damageEffects.some((effect) =>
+          effect.targetRef === payload.actorCharacterId
+          && effect.hpBefore > 0
+          && effect.hpAfter === 0
+          && effect.died
+          && Math.max(0, effect.hpBefore - effect.amount) === effect.hpAfter);
+      if (actor === undefined
+        || actor.sceneId !== payload.sceneRef
+        || (actor.tenureStatus !== "active" && !actorDiedFromThisResolution)) {
+        throw new TypeError("world interaction actor is unavailable from its frozen scene");
+      }
+      if (payload.rulingKind === "check") {
+        const continuationId = `continuation:${payload.resolutionId}`;
+        const stored = state.internalContinuations[continuationId];
+        if (stored === undefined
+          || !isWorldInteractionResolutionPlan(stored.resolutionPlan)
+          || worldInteractionPlanHash(stored.resolutionPlan) !== payload.planHash
+          || stored.request.purpose !== "worldInteractionCheck") {
+          throw new TypeError("world interaction continuation does not exist");
+        }
+        delete state.internalContinuations[continuationId];
+      }
+      for (const effect of payload.appliedEffects) {
+        if (effect.kind === "definitionRevision" || effect.kind === "relationTransition") {
+          const definition = state.campaignRuntime.definitions[effect.definitionRef];
+          if (!isRecord(definition)
+            || definition.revision !== effect.toRevision
+            || (effect.kind === "relationTransition"
+              && (!isRecord(definition.content)
+                || definition.content.state !== effect.toState))) {
+            throw new TypeError("world interaction definition effect was not committed");
+          }
+        } else if (effect.kind === "itemCost") {
+          const entry = state.campaignRuntime.itemSystem.entries[effect.entryRef];
+          if (entry === undefined
+            || entry.quantity !== effect.quantityAfter
+            || (entry.charges?.current ?? null) !== effect.chargesAfter
+            || (entry.durability?.current ?? null) !== effect.durabilityAfter) {
+            throw new TypeError("world interaction item cost was not committed");
+          }
+        }
+      }
+      break;
+    }
     case "ImprovisedActionResolved": {
       const payload = event.payload as EventPayloadByType["ImprovisedActionResolved"];
       if (!(payload.actorCharacterId in state.entities)) {
@@ -1975,6 +2251,11 @@ export function foldEvent(
         state.combatRuntime.randomnessResolutions[String(resolution.resolutionId)] = structuredClone(resolution);
         break;
       }
+      if ("resolutionPlan" in payload
+        && isWorldInteractionResolutionPlan(payload.resolutionPlan)
+        && !isWorldInteractionRandomnessEventBinding(state, event.rootActionId, payload)) {
+        throw new TypeError("world interaction randomness request is not bound to its frozen plan");
+      }
       state.internalContinuations[payload.continuation.continuationId] = {
         continuation: structuredClone(payload.continuation),
         rootActionId: event.rootActionId,
@@ -2301,6 +2582,10 @@ export function validateEventEnvelope(value: unknown): EventValidation {
     && !envelopeItemSystemProfileEnabled(value.profiles)) {
     return { ok: false, message: "Event requires the pinned item system Profile." };
   }
+  if (eventRequiresWorldInteractionProfile(value.eventType as EventType, value.payload)
+    && !envelopeWorldInteractionProfileEnabled(value.profiles)) {
+    return { ok: false, message: "Event requires the pinned world-interaction Profile." };
+  }
   if (!knownRuntimeManifestClosureIsExact(value.profiles)) {
     return { ok: false, message: "Event runtime manifest does not match its exact registered Profile closure." };
   }
@@ -2371,6 +2656,10 @@ export function createEventTransition<T extends EventType>(
   if (eventRequiresItemSystemProfile(draft.eventType, draft.payload)
     && !itemSystemProfileEnabled(profiles.extensions)) {
     throw new TypeError("event transition requires the item system Profile");
+  }
+  if (eventRequiresWorldInteractionProfile(draft.eventType, draft.payload)
+    && !worldInteractionProfileEnabled(profiles.extensions)) {
+    throw new TypeError("event transition requires the world-interaction Profile");
   }
   const eventTypeVersion = expectedEventTypeVersion(
     profiles,

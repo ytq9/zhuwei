@@ -1703,12 +1703,15 @@ function legalCreatureCandidates(
     });
 }
 
-function activeEncounter(state: AuthoritativeWorldState, sourceId: string): JsonRecord | undefined {
+export function activeEncounter(
+  state: AuthoritativeWorldState,
+  sourceId: string,
+): JsonRecord | undefined {
   return Object.values(state.combatRuntime.encounters).find((encounter) => encounter.status !== "concluded"
     && Array.isArray(encounter.participantEntityIds) && encounter.participantEntityIds.includes(sourceId));
 }
 
-function currentGroupAllows(encounter: JsonRecord, sourceId: string): boolean {
+export function currentGroupAllows(encounter: JsonRecord, sourceId: string): boolean {
   return encounter.activeEntityId === sourceId;
 }
 
@@ -1724,7 +1727,7 @@ function hasteActionAllows(definition: JsonRecord, abilityRef: string): boolean 
     || ["dash", "disengage", "hide", "use-object"].includes(String(definition.mechanicalKey));
 }
 
-function consumeTurnGrant(
+export function consumeTurnGrant(
   source: JsonRecord,
   definition: JsonRecord,
   abilityRef: string,

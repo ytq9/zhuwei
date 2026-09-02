@@ -68,6 +68,10 @@ import {
   npcMechanicalEntityMatchesTemplate,
 } from "./v2/npc-mechanics";
 import { isItemSystemStateV1 } from "./v2/items";
+import { worldInteractionProfileEnabled } from "./profiles/vnext-world-interaction";
+import { isStoredSemanticDefinition } from "./v2/semantic-definitions";
+import { isWorldInteractionResolutionPlan } from "./v2/world-interaction-model";
+import { isWorldInteractionContinuationStateBinding } from "./v2/world-interactions";
 
 function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
   return left.profileId === right.profileId && left.profileHash === right.profileHash;
@@ -267,6 +271,22 @@ function stateNpcMechanicsProfilesMatch(
       )
       && npcCoreCombatRuntimeMatches(character, entity);
   });
+}
+
+function stateWorldInteractionProfilesMatch(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+): boolean {
+  const semanticDefinitions = Object.values(state.campaignRuntime.definitions)
+    .filter((definition) => isRecord(definition)
+      && definition.schema === "zhuwei.semantic-definition/vnext-1");
+  const continuations = Object.entries(state.internalContinuations)
+    .filter(([, continuation]) => isWorldInteractionResolutionPlan(continuation.resolutionPlan));
+  const hasArtifacts = semanticDefinitions.length > 0 || continuations.length > 0;
+  if (!worldInteractionProfileEnabled(profiles.extensions)) return !hasArtifacts;
+  return semanticDefinitions.every(isStoredSemanticDefinition)
+    && continuations.every(([continuationId]) =>
+      isWorldInteractionContinuationStateBinding(state, continuationId));
 }
 
 function stateItemSystemMatches(
@@ -493,6 +513,12 @@ function replayWithRegistry(
         "Genesis NPC mechanical artifacts do not match the room manifest extensions.",
       );
     }
+    if (!stateWorldInteractionProfilesMatch(genesisProfileResolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "Genesis semantic definitions or world interactions do not match the room manifest extensions.",
+      );
+    }
   }
 
   for (const eventValue of eventsValue) {
@@ -602,6 +628,12 @@ function replayWithRegistry(
           "Replayed NPC mechanical artifacts do not match the event manifest extensions.",
         );
       }
+      if (!stateWorldInteractionProfilesMatch(eventProfileResolution.profiles, next)) {
+        return rejected(
+          "profileIntegrityMismatch",
+          "Replayed semantic definitions or world interactions do not match the event manifest extensions.",
+        );
+      }
       if (hashWorldState(next) !== event.stateHashAfter || eventHash(event) !== event.eventHash) {
         return rejected(
           "archiveIntegrityMismatch",
@@ -699,6 +731,12 @@ function projectWithRegistry(
       return rejected(
         "profileIntegrityMismatch",
         "State NPC mechanical artifacts do not match the room manifest extensions.",
+      );
+    }
+    if (!stateWorldInteractionProfilesMatch(resolution.profiles, state)) {
+      return rejected(
+        "profileIntegrityMismatch",
+        "State semantic definitions or world interactions do not match the room manifest extensions.",
       );
     }
   }
@@ -808,6 +846,12 @@ function stepWithRegistry(
     return rejected(
       "profileIntegrityMismatch",
       "State NPC mechanical artifacts do not match the room manifest extensions.",
+    );
+  }
+  if (!stateWorldInteractionProfilesMatch(resolution.profiles, state)) {
+    return rejected(
+      "profileIntegrityMismatch",
+      "State semantic definitions or world interactions do not match the room manifest extensions.",
     );
   }
   return stepAuthoritativeWorld(resolution.profiles, state, input);

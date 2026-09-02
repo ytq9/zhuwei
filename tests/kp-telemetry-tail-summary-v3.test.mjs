@@ -6,28 +6,51 @@ import { createKpTelemetryTailAggregator } from "../tools/summarize-kp-telemetry
 test("tail aggregation emits only bounded KPI distributions and classifications", () => {
   const aggregate = createKpTelemetryTailAggregator("G2");
   for (const event of [
-    model("root-a", "proposal", 1, "success", 120, 4000, 300),
-    model("root-b", "proposal", 1, "modelPermanent", 200, 4100, 200, "proposalSchema"),
-    model("root-b", "proposal", 2, "success", 180, 1200, 160),
-    model("root-a", "narration", 1, "success", 90, 900, 120),
+    model("root-a", "proposal", "initialProposal", 1, "success", 120, 4000, 300),
+    model("root-b", "proposal", "initialProposal", 1, "modelPermanent", 200, 4100, 200, "proposalSchema"),
+    model("root-b", "proposal", "semanticRepair", 2, "success", 180, 1200, 160),
+    model("root-c", "proposal", "initialProposal", 1, "success", 130, 3900, 280),
+    model("root-c", "proposal", "clarificationContinuation", 1, "success", 110, 3600, 250),
+    model("root-d", "proposal", "actorPlan", 1, "success", 115, 3500, 240),
+    model("root-d", "proposal", "initialProposal", 1, "success", 125, 3800, 260),
+    model("root-e", "proposal", "proposalRetry", 1, "success", 105, 3300, 230),
+    model("root-a", "narration", "initialNarration", 1, "modelPermanent", 90, 900, 120, "narrationGrounding"),
+    model("root-a", "narration", "narrationGroundingRepair", 1, "success", 80, 700, 100),
+    model("root-b", "narration", "narrationRecovery", 1, "modelPermanent", 85, 800, 110, "narrationGrounding"),
+    model("root-b", "narration", "narrationRecoveryGroundingRepair", 1, "success", 75, 650, 90),
     context(false, false),
     context(false, true),
   ]) aggregate.ingestTailEnvelope(envelope(event));
 
   const report = aggregate.report();
   assert.equal(report.label, "G2");
-  assert.equal(report.capture.modelEvents, 4);
+  assert.equal(report.schemaVersion, "zhuwei-kp-tail-aggregate/v2");
+  assert.equal(report.capture.modelEvents, 12);
   assert.equal(report.capture.contextEvents, 2);
-  assert.equal(report.proposal.invocations, 3);
-  assert.equal(report.proposal.rootActions, 2);
-  assert.equal(report.proposal.callsPerRootAction, 1.5);
-  assert.deepEqual(report.proposal.firstAttemptSuccess, {
-    numerator: 1,
-    denominator: 2,
-    rate: 0.5,
-    wilson95: report.proposal.firstAttemptSuccess.wilson95,
+  assert.deepEqual(report.invocationsByPurpose, {
+    actorPlan: 1,
+    clarificationContinuation: 1,
+    initialNarration: 1,
+    initialProposal: 4,
+    narrationGroundingRepair: 1,
+    narrationRecovery: 1,
+    narrationRecoveryGroundingRepair: 1,
+    proposalRetry: 1,
+    semanticRepair: 1,
   });
-  assert.equal(report.proposal.repairedRootActions.numerator, 1);
+  assert.equal(report.proposal.invocations, 8);
+  assert.equal(report.proposal.rootActions, 5);
+  assert.equal(report.proposal.callsPerRootAction, 1.6);
+  assert.deepEqual(report.proposal.initialFirstPassSuccess, {
+    numerator: 3,
+    denominator: 4,
+    rate: 0.75,
+    wilson95: report.proposal.initialFirstPassSuccess.wilson95,
+  });
+  assert.equal(report.proposal.repairRate.numerator, 1);
+  assert.equal(report.proposal.repairRate.denominator, 4);
+  assert.equal(report.proposal.clarificationContinuationRate.numerator, 1);
+  assert.equal(report.proposal.clarificationContinuationRate.denominator, 4);
   assert.equal(report.proposal.inputTokens.p95, 4100);
   assert.equal(report.narration.inputTokens.p95, 900);
   assert.equal(report.context.fallback.numerator, 1);
@@ -45,12 +68,23 @@ function envelope(event) {
   };
 }
 
-function model(rootActionHash, task, attempt, result, durationMs, inputTokens, outputTokens, errorCode) {
+function model(
+  rootActionHash,
+  task,
+  invocationPurpose,
+  attempt,
+  result,
+  durationMs,
+  inputTokens,
+  outputTokens,
+  errorCode,
+) {
   return {
     schemaVersion: "zhuwei.room-telemetry/v1",
     eventName: "room.model.invocation.completed",
     rootActionHash,
     modelTask: task,
+    modelInvocationPurpose: invocationPurpose,
     modelAttempt: attempt,
     modelResult: result,
     durationMs,

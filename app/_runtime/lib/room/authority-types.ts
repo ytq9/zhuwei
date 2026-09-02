@@ -1,6 +1,7 @@
 import type { TacticalPosition } from "../rules/tactical-projection";
 import type { RuntimeProfileManifest } from "../rules";
 import type { ProfileRef } from "../rules/profiles/types";
+import type { VNextRequiredContext } from "../kp/vnext/required-context";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -32,6 +33,14 @@ export type InitializeAuthoritativeRoomInput = {
   members: AuthoritativeMemberSeed[];
   characters: AuthoritativeCharacterSeed[];
   fixtureFacts?: unknown[];
+  /** Isolated vNext seed. Room validates only its JSON container; Rules owns
+   * the closed StoredSemanticDefinition/ItemDefinition/ItemEntry contracts. */
+  vNextSeed?: {
+    semanticDefinitions: JsonObject[];
+    itemDefinitions: JsonObject[];
+    itemEntries: JsonObject[];
+    entityDefinitionBindings: JsonObject[];
+  };
   /** Exact registered manifest selected only when a new room epoch is born. */
   runtimeProfiles?: RuntimeProfileManifest;
 };
@@ -155,6 +164,10 @@ export type PreparedAuthoritativeAction = {
   rootActionId: string;
   receipt?: PublicReceipt;
   kpProjection: unknown;
+  /** Immutable vNext epistemic snapshot. Its prepare-phase binding.readSet is
+   * intentionally empty; Proposal lowering persists the actual transaction
+   * read set inside the server-private Rules plan/continuation. */
+  requiredContext?: VNextRequiredContext;
   resolutionMode?: "kpProposal" | "authorityDirect";
   phase?: "dueActorPlan" | "playerIntent";
   dueActorPlan?: JsonObject;

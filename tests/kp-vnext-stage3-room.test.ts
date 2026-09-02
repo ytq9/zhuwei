@@ -1,0 +1,1799 @@
+import { env } from "cloudflare:workers";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
+
+import {
+  handleRoomAction,
+  handleViewerNarrationRecovery,
+  type RoomActionInput,
+} from "../app/_runtime/lib/room/action";
+import {
+  VNEXT_KP_PROPOSAL_SCHEMA,
+  VNEXT_MATERIALIZATION_FORM_ID,
+  VNEXT_WORLD_INTERACTION_FORM_ID,
+  validateVNextCoarseFormProposal,
+} from "../app/_runtime/lib/kp/vnext/proposals";
+import type { VNextRequiredContext } from "../app/_runtime/lib/kp/vnext/required-context";
+import {
+  WORLD_INTERACTION_PROFILE,
+} from "../app/_runtime/lib/rules/profiles/vnext-world-interaction";
+import {
+  createDefinitionSnapshot,
+  isStoredSemanticDefinition,
+  semanticDefinitionSnapshot,
+  storedSemanticDefinition,
+  type SemanticDefinitionKind,
+  type StoredSemanticDefinition,
+} from "../app/_runtime/lib/rules/v2/semantic-definitions";
+import { isItemDefinitionV1 } from "../app/_runtime/lib/rules/v2/items";
+
+type JsonRecord = Record<string, unknown>;
+
+type Authority = {
+  initializeAuthoritative(input: unknown): Promise<unknown>;
+  prepare(principal: unknown, input: unknown): Promise<unknown>;
+  commit(principal: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
+  observe(principal: unknown, query?: unknown): Promise<unknown>;
+  acknowledge(principal: unknown, deliveryId: string): Promise<unknown>;
+  deliveryPublicationStatus(query: unknown): Promise<unknown>;
+  beginDeliveryAudiencePublication(query: unknown): Promise<unknown>;
+  failDeliveryAudiencePublication(authorization: unknown, failure: unknown): Promise<unknown>;
+  publishDelivery(authorization: unknown, publication: unknown): Promise<unknown>;
+  beginViewerNarrationRecovery(principal: unknown, capability: string): Promise<unknown>;
+  publishViewerNarrationRecovery(
+    principal: unknown,
+    capability: string,
+    publication: unknown,
+  ): Promise<unknown>;
+  failViewerNarrationRecovery(
+    principal: unknown,
+    capability: string,
+    failure: unknown,
+  ): Promise<unknown>;
+};
+
+type RoomInternals = Authority & {
+  authorityRoll(sides: number): number;
+  authoritativeReplay(): {
+    state: JsonRecord;
+    replay: JsonRecord;
+  };
+  authorityStore: {
+    events(): JsonRecord[];
+  };
+};
+
+type ActionCounters = {
+  prepare: number;
+  commit: number;
+  beginPublication: number;
+  publishDelivery: number;
+  failedPublication: number;
+  rolls: number;
+};
+
+type KpCounters = {
+  propose: number;
+  narrate: number;
+  decideDueActorPlan: number;
+};
+
+type PreparedCapture = {
+  latest?: JsonRecord;
+  all: JsonRecord[];
+};
+
+const ALICE = Object.freeze({
+  principal: Object.freeze({ id: "principal:stage3:alice", sessionVersion: 1 }),
+});
+const BOB = Object.freeze({
+  principal: Object.freeze({ id: "principal:stage3:bob", sessionVersion: 1 }),
+});
+const ALICE_ID = "character:stage3:alice";
+const BOB_ID = "character:stage3:bob";
+const LIAN_ID = "npc:black-oak-will:lian";
+const SCENE_REF = "wake";
+
+const NPC_DEFINITION_REF = "definition:stage3:npc:lian";
+const NPC_KNOWLEDGE_REF = "knowledge:stage3:lian-saw-returned-ledger";
+const PLAYER_SECRET_CANARY = "PLAYER-SECRET-CANARY-NPC-MUST-NOT-KNOW";
+const NPC_SUMMARY_CANARY = "AUTHORITY-ONLY-NPC-SUMMARY-CANARY";
+
+const PISTOL_DEFINITION_REF = "item-definition:stage3:pistol:1";
+const AMMO_DEFINITION_REF = "item-definition:stage3:pistol-ammunition:1";
+const STONE_DEFINITION_REF = "item-definition:stage3:testing-stone:1";
+const FIRE_SOURCE_DEFINITION_REF = "item-definition:stage3:steady-fire-source:1";
+const LIAN_LEDGER_DEFINITION_REF = "item-definition:stage3:lian-ledger:1";
+const PISTOL_ENTRY_REF = "item-entry:stage3:pistol";
+const AMMO_ENTRY_REF = "item-entry:stage3:pistol-ammunition";
+const STONE_ENTRY_REF = "item-entry:stage3:testing-stone";
+const FIRE_SOURCE_ENTRY_REF = "item-entry:stage3:steady-fire-source";
+const LIAN_LEDGER_ENTRY_REF = "item-entry:stage3:lian-ledger";
+const SCENE_LEDGER_ENTRY_REF = "item-entry:stage3:scene-ledger";
+
+const CHAIN_REF = "feature:stage3:chandelier-chain";
+const CHANDELIER_REF = "feature:stage3:chandelier";
+const IMPACT_ZONE_REF = "zone:stage3:falling-impact";
+const CHAIN_SUPPORT_REF = "relation:stage3:chain-supports-chandelier";
+const HIDDEN_TARGET_RELATION_CANARY = "relation:stage3:HIDDEN-TARGET-CANARY";
+
+const ROPE_REF = "feature:stage3:hemp-rope";
+const WEIGHT_REF = "feature:stage3:suspended-weight";
+const ROPE_SUPPORT_REF = "relation:stage3:rope-supports-weight";
+
+const PRESSURE_PLATE_REF = "feature:stage3:pressure-plate";
+const TRAP_MECHANISM_REF = "feature:stage3:hidden-trap-mechanism";
+const HIDDEN_TRIGGER_RELATION_CANARY = "relation:stage3:HIDDEN-TRIGGER-CANARY";
+const TRAP_SENSORY_EVIDENCE = "石头落下时压板下沉，墙缝传来一声清楚的机括轻响。";
+
+function record(value: unknown, label: string): JsonRecord {
+  expect(value, label).toBeTypeOf("object");
+  expect(value, label).not.toBeNull();
+  expect(Array.isArray(value), label).toBe(false);
+  return value as JsonRecord;
+}
+
+function list(value: unknown, label: string): unknown[] {
+  expect(Array.isArray(value), label).toBe(true);
+  return value as unknown[];
+}
+
+function vnextRoom(name: string): Authority {
+  return env.VNEXT_ROOMS.getByName(name) as unknown as Authority;
+}
+
+function semanticDefinition(
+  semanticKind: SemanticDefinitionKind,
+  definitionRef: string,
+  visibilityPolicyRef: string,
+  content: JsonRecord,
+): StoredSemanticDefinition {
+  const snapshot = createDefinitionSnapshot(definitionRef, "1", content);
+  return storedSemanticDefinition(semanticKind, visibilityPolicyRef, snapshot, {
+    templateRef: definitionRef,
+    templateHash: snapshot.definitionHash,
+  });
+}
+
+function sceneFeature(
+  definitionRef: string,
+  input: {
+    label: string;
+    description: string;
+    materialDescription?: string;
+    mechanicDefinitionRefs?: string[];
+    observableState: string;
+    affordances: string[];
+    visibilityPolicyRef?: string;
+  },
+): StoredSemanticDefinition {
+  return semanticDefinition(
+    "sceneFeature",
+    definitionRef,
+    input.visibilityPolicyRef ?? "visibility:scene-observers",
+    {
+      sceneRef: SCENE_REF,
+      label: input.label,
+      description: input.description,
+      ...(input.materialDescription === undefined
+        ? {}
+        : { materialDescription: input.materialDescription }),
+      ...(input.mechanicDefinitionRefs === undefined
+        ? {}
+        : { mechanicDefinitionRefs: [...input.mechanicDefinitionRefs].sort() }),
+      observableState: input.observableState,
+      affordances: [...input.affordances],
+    },
+  );
+}
+
+function relation(
+  definitionRef: string,
+  kind: "supports" | "attachedTo" | "contains" | "blocks" | "triggers",
+  subjectRef: string,
+  objectRef: string,
+  visibilityPolicyRef = "visibility:scene-observers",
+): StoredSemanticDefinition {
+  return semanticDefinition("worldRelation", definitionRef, visibilityPolicyRef, {
+    relationRef: definitionRef,
+    kind,
+    subjectRef,
+    objectRef,
+    state: "active",
+  });
+}
+
+function itemDefinitions(): JsonRecord[] {
+  return [{
+    schema: "zhuwei.item-definition/v1",
+    definitionKind: "item",
+    definitionId: PISTOL_DEFINITION_REF,
+    revision: "1",
+    rulesBasis: { kind: "zhuwei-product-ruling", profileRef: WORLD_INTERACTION_PROFILE },
+    causalBasisRefs: [],
+    visibilityPolicyRef: `visibility:character-controller:${ALICE_ID}`,
+    content: {
+      schema: "zhuwei.item-definition-content/v1",
+      label: "燧发手枪",
+      description: "一把可用的单手燧发手枪。",
+      category: "weapon",
+      aliases: [],
+      tags: ["firearm", "stage3"],
+      stackable: false,
+      equipment: {
+        allowedSlots: ["main"],
+        twoHanded: false,
+        armor: null,
+        weapon: {
+          attackAbility: "dex",
+          ammunitionDefinitionRef: AMMO_DEFINITION_REF,
+          damageDice: "1d10",
+          damageType: "piercing",
+          reachInches: null,
+          rangeNormalInches: "1200",
+          rangeLongInches: "3600",
+          requiresSight: true,
+        },
+      },
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
+    },
+  }, {
+    schema: "zhuwei.item-definition/v1",
+    definitionKind: "item",
+    definitionId: LIAN_LEDGER_DEFINITION_REF,
+    revision: "1",
+    rulesBasis: { kind: "zhuwei-product-ruling", profileRef: WORLD_INTERACTION_PROFILE },
+    causalBasisRefs: [],
+    visibilityPolicyRef: "visibility:scene-observers",
+    content: {
+      schema: "zhuwei.item-definition-content/v1",
+      label: "归还的账册",
+      description: "莉安正在核对的旧账册，封面带着新近归还留下的泥痕。",
+      category: "object",
+      aliases: [],
+      tags: ["ledger", "stage3"],
+      stackable: false,
+      equipment: null,
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
+    },
+  }, {
+    schema: "zhuwei.item-definition/v1",
+    definitionKind: "item",
+    definitionId: FIRE_SOURCE_DEFINITION_REF,
+    revision: "1",
+    rulesBasis: { kind: "zhuwei-product-ruling", profileRef: WORLD_INTERACTION_PROFILE },
+    causalBasisRefs: [],
+    visibilityPolicyRef: `visibility:character-controller:${ALICE_ID}`,
+    content: {
+      schema: "zhuwei.item-definition-content/v1",
+      label: "稳定燃烧的火把",
+      description: "一支已经点燃、火焰稳定且当前可用的普通火把。",
+      category: "tool",
+      aliases: [],
+      tags: ["fire-source", "stage3"],
+      stackable: false,
+      equipment: null,
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
+    },
+  }, {
+    schema: "zhuwei.item-definition/v1",
+    definitionKind: "item",
+    definitionId: AMMO_DEFINITION_REF,
+    revision: "1",
+    rulesBasis: { kind: "zhuwei-product-ruling", profileRef: WORLD_INTERACTION_PROFILE },
+    causalBasisRefs: [],
+    visibilityPolicyRef: `visibility:character-controller:${ALICE_ID}`,
+    content: {
+      schema: "zhuwei.item-definition-content/v1",
+      label: "手枪弹药",
+      description: "与燧发手枪配套的弹丸与火药。",
+      category: "ammunition",
+      aliases: [],
+      tags: ["ammunition", "stage3"],
+      stackable: true,
+      equipment: {
+        allowedSlots: ["ammo"],
+        twoHanded: false,
+        armor: null,
+        weapon: null,
+      },
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
+    },
+  }, {
+    schema: "zhuwei.item-definition/v1",
+    definitionKind: "item",
+    definitionId: STONE_DEFINITION_REF,
+    revision: "1",
+    rulesBasis: { kind: "zhuwei-product-ruling", profileRef: WORLD_INTERACTION_PROFILE },
+    causalBasisRefs: [],
+    visibilityPolicyRef: `visibility:character-controller:${ALICE_ID}`,
+    content: {
+      schema: "zhuwei.item-definition-content/v1",
+      label: "测试用石块",
+      description: "一块拳头大小、可以投掷的普通石头。",
+      category: "object",
+      aliases: [],
+      tags: ["stage3", "testing"],
+      stackable: false,
+      equipment: null,
+      equippedAbilityRefs: [],
+      use: null,
+      chargesMaximum: null,
+      durabilityMaximum: null,
+    },
+  }];
+}
+
+function worldSeed(): {
+  vNextSeed: JsonRecord;
+  initialNpcDefinition: StoredSemanticDefinition;
+} {
+  const npc = semanticDefinition(
+    "npc",
+    NPC_DEFINITION_REF,
+    "visibility:scene-observers",
+    {
+      label: "莉安·黑橡",
+      description: "她认出了新归还的账册，但仍保持警惕。",
+      links: { entityRef: LIAN_ID },
+      semantics: {
+        attitude: "警惕而克制",
+        goals: [{ goalRef: "goal:stage3:protect-home", description: "守住房屋与家人留下的秘密。" }],
+        plans: [{ planRef: "plan:stage3:inspect-ledger", description: "核对账册上的新痕迹。" }],
+      },
+      privateNotes: PLAYER_SECRET_CANARY,
+    },
+  );
+  const semanticDefinitions: StoredSemanticDefinition[] = [
+    npc,
+    sceneFeature(CHAIN_REF, {
+      label: "吊灯铁链",
+      description: "一条把吊灯固定在横梁上的旧铁链。",
+      materialDescription: "D&D 5e 世界中的普通锻铁，链环已有锈迹。",
+      mechanicDefinitionRefs: ["feature:wake:hearth"],
+      observableState: "仍在承重",
+      affordances: ["可以瞄准链环", "可以近距离检查"],
+    }),
+    sceneFeature(CHANDELIER_REF, {
+      label: "悬挂吊灯",
+      description: "沉重吊灯悬在房间中央。",
+      materialDescription: "木制灯架包有普通铁件。",
+      mechanicDefinitionRefs: ["feature:wake:hearth"],
+      observableState: "悬挂在半空",
+      affordances: ["可以观察下方区域"],
+    }),
+    sceneFeature(IMPACT_ZONE_REF, {
+      label: "吊物下方区域",
+      description: "吊灯或重物一旦坠落就会覆盖的地面区域。",
+      observableState: "有人站在下方",
+      affordances: ["可以离开坠落区域"],
+    }),
+    relation(CHAIN_SUPPORT_REF, "supports", CHAIN_REF, CHANDELIER_REF),
+    relation(
+      HIDDEN_TARGET_RELATION_CANARY,
+      "contains",
+      IMPACT_ZONE_REF,
+      BOB_ID,
+      "visibility:room-authority-only",
+    ),
+    sceneFeature(ROPE_REF, {
+      label: "干燥麻绳",
+      description: "一条绷紧的麻绳吊着沉重石块。",
+      materialDescription: "D&D 5e 世界中的普通干燥麻绳。",
+      observableState: "绷紧并承重",
+      affordances: ["可以点燃", "可以切断"],
+    }),
+    sceneFeature(WEIGHT_REF, {
+      label: "悬挂重物",
+      description: "一块沉重石块悬在麻绳下方。",
+      materialDescription: "普通石材。",
+      observableState: "悬挂在半空",
+      affordances: ["可以让其坠落"],
+    }),
+    relation(ROPE_SUPPORT_REF, "supports", ROPE_REF, WEIGHT_REF),
+    sceneFeature(PRESSURE_PLATE_REF, {
+      label: "覆尘压板",
+      description: "地面有一块边缘留着细缝的石板。",
+      materialDescription: "普通石材表面覆有薄尘。",
+      observableState: "尚未被压下",
+      affordances: ["可以隔着距离施加重量", "可以检查边缘"],
+    }),
+    sceneFeature(TRAP_MECHANISM_REF, {
+      label: "隐藏机关",
+      description: "压板下方连接着未公开的机关。",
+      observableState: "待触发",
+      affordances: ["可以被压板触发"],
+      visibilityPolicyRef: "visibility:room-authority-only",
+    }),
+    relation(
+      HIDDEN_TRIGGER_RELATION_CANARY,
+      "triggers",
+      PRESSURE_PLATE_REF,
+      TRAP_MECHANISM_REF,
+      "visibility:room-authority-only",
+    ),
+  ];
+  return {
+    initialNpcDefinition: npc,
+    vNextSeed: {
+      semanticDefinitions,
+      itemDefinitions: itemDefinitions(),
+      itemEntries: [{
+        definitionRef: PISTOL_DEFINITION_REF,
+        entry: {
+          entryId: PISTOL_ENTRY_REF,
+          quantity: 1,
+          placement: { kind: "held", holderRef: ALICE_ID, equippedSlot: "main" },
+          ownership: { kind: "character", ownerRef: ALICE_ID },
+          visibilityPolicyRef: `visibility:character-controller:${ALICE_ID}`,
+        },
+      }, {
+        definitionRef: AMMO_DEFINITION_REF,
+        entry: {
+          entryId: AMMO_ENTRY_REF,
+          quantity: 8,
+          placement: { kind: "held", holderRef: ALICE_ID, equippedSlot: "ammo" },
+          ownership: { kind: "character", ownerRef: ALICE_ID },
+          visibilityPolicyRef: `visibility:character-controller:${ALICE_ID}`,
+        },
+      }, {
+        definitionRef: FIRE_SOURCE_DEFINITION_REF,
+        entry: {
+          entryId: FIRE_SOURCE_ENTRY_REF,
+          quantity: 1,
+          placement: { kind: "held", holderRef: ALICE_ID, equippedSlot: null },
+          ownership: { kind: "character", ownerRef: ALICE_ID },
+          visibilityPolicyRef: `visibility:character-controller:${ALICE_ID}`,
+        },
+      }, {
+        definitionRef: LIAN_LEDGER_DEFINITION_REF,
+        entry: {
+          entryId: LIAN_LEDGER_ENTRY_REF,
+          quantity: 1,
+          placement: { kind: "held", holderRef: LIAN_ID, equippedSlot: null },
+          ownership: { kind: "character", ownerRef: LIAN_ID },
+          visibilityPolicyRef: "visibility:scene-observers",
+        },
+      }, {
+        definitionRef: LIAN_LEDGER_DEFINITION_REF,
+        entry: {
+          entryId: SCENE_LEDGER_ENTRY_REF,
+          quantity: 1,
+          placement: { kind: "scene", sceneRef: SCENE_REF },
+          ownership: { kind: "unowned", ownerRef: null },
+          visibilityPolicyRef: "visibility:scene-observers",
+        },
+      }, {
+        definitionRef: STONE_DEFINITION_REF,
+        entry: {
+          entryId: STONE_ENTRY_REF,
+          quantity: 1,
+          placement: { kind: "held", holderRef: ALICE_ID, equippedSlot: null },
+          ownership: { kind: "character", ownerRef: ALICE_ID },
+          visibilityPolicyRef: `visibility:character-controller:${ALICE_ID}`,
+        },
+      }],
+      entityDefinitionBindings: [{ entityRef: LIAN_ID, definitionRef: NPC_DEFINITION_REF }],
+    },
+  };
+}
+
+function character(characterId: string, principalId: string, name: string, dexterity: number) {
+  return {
+    characterId,
+    controllerPrincipalId: principalId,
+    staticCard: {
+      name,
+      sceneId: SCENE_REF,
+      level: 3,
+      classId: "fighter",
+      raceId: "human",
+      subclassId: "champion",
+      scores: { str: 12, dex: dexterity, con: 12, int: 10, wis: 12, cha: 10 },
+      proficiency: 2,
+      skills: ["perception"],
+      hp: { current: 20, max: 20, temp: 0 },
+      ac: 13,
+      speed: 30,
+      equipped: {},
+      backpack: [],
+    },
+  };
+}
+
+async function initializeRoom(name: string) {
+  const authority = vnextRoom(name);
+  const seed = worldSeed();
+  const semanticDefinitions = seed.vNextSeed.semanticDefinitions as unknown[];
+  const seededItemDefinitions = seed.vNextSeed.itemDefinitions as unknown[];
+  expect(semanticDefinitions.every(isStoredSemanticDefinition), "semantic seed conformance").toBe(true);
+  expect(seededItemDefinitions.every(isItemDefinitionV1), "item seed conformance").toBe(true);
+  const initializationInput = {
+    roomId: name,
+    moduleId: "black-oak-will",
+    members: [
+      { principalId: ALICE.principal.id, role: "host" },
+      { principalId: BOB.principal.id, role: "player" },
+    ],
+    characters: [
+      character(ALICE_ID, ALICE.principal.id, "阿莱莎", 16),
+      character(BOB_ID, BOB.principal.id, "站在吊物下方的对手", 12),
+    ],
+    fixtureFacts: [{
+      knowledgeRef: NPC_KNOWLEDGE_REF,
+      holderEntityId: LIAN_ID,
+      holderName: "莉安·黑橡",
+      sceneId: SCENE_REF,
+      content: {
+        kind: "observedReturnedLedger",
+        statement: "莉安亲眼看见阿莱莎归还了父亲的账册。",
+      },
+    }, {
+      knowledgeRef: "knowledge:stage3:alice-private",
+      holderEntityId: ALICE_ID,
+      content: PLAYER_SECRET_CANARY,
+    }],
+    vNextSeed: seed.vNextSeed,
+  };
+  const initialized = record(await authority.initializeAuthoritative(initializationInput), `${name} initialization`);
+  expect(initialized, JSON.stringify(initialized)).toMatchObject({ created: true });
+  return { authority, seed };
+}
+
+function emptyActionCounters(): ActionCounters {
+  return {
+    prepare: 0,
+    commit: 0,
+    beginPublication: 0,
+    publishDelivery: 0,
+    failedPublication: 0,
+    rolls: 0,
+  };
+}
+
+function instrumentAuthority(
+  target: Authority,
+  counters: ActionCounters,
+  prepared: PreparedCapture,
+): Authority {
+  return {
+    initializeAuthoritative: (input) => target.initializeAuthoritative(input),
+    async prepare(principal, input) {
+      counters.prepare += 1;
+      const result = await target.prepare(principal, input);
+      if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+        const snapshot = structuredClone(result) as JsonRecord;
+        if (snapshot.kind === "prepared") {
+          prepared.latest = snapshot;
+          prepared.all.push(snapshot);
+        }
+      }
+      return result;
+    },
+    async commit(principal, preparedActionId, proposal) {
+      counters.commit += 1;
+      return target.commit(principal, preparedActionId, proposal);
+    },
+    observe: (principal, query) => target.observe(principal, query),
+    acknowledge: (principal, deliveryId) => target.acknowledge(principal, deliveryId),
+    deliveryPublicationStatus: (query) => target.deliveryPublicationStatus(query),
+    async beginDeliveryAudiencePublication(query) {
+      counters.beginPublication += 1;
+      return target.beginDeliveryAudiencePublication(query);
+    },
+    async failDeliveryAudiencePublication(authorization, failure) {
+      counters.failedPublication += 1;
+      return target.failDeliveryAudiencePublication(authorization, failure);
+    },
+    async publishDelivery(authorization, publication) {
+      counters.publishDelivery += 1;
+      return target.publishDelivery(authorization, publication);
+    },
+    beginViewerNarrationRecovery: (principal, capability) =>
+      target.beginViewerNarrationRecovery(principal, capability),
+    publishViewerNarrationRecovery: (principal, capability, publication) =>
+      target.publishViewerNarrationRecovery(principal, capability, publication),
+    failViewerNarrationRecovery: (principal, capability, failure) =>
+      target.failViewerNarrationRecovery(principal, capability, failure),
+  };
+}
+
+function requiredContext(request: JsonRecord): VNextRequiredContext {
+  const context = record(request.requiredContext, "frozen RequiredContext");
+  expect(context.schema).toBe("zhuwei.adjudication-context/vnext-1");
+  return context as unknown as VNextRequiredContext;
+}
+
+function contextEntry(context: VNextRequiredContext, entryRef: string): JsonRecord {
+  const entry = context.entries.find((candidate) => candidate.entryRef === entryRef);
+  expect(entry, `RequiredContext entry ${entryRef}`).toBeDefined();
+  expect(entry?.kind, `RequiredContext entry ${entryRef}`).toBe("known");
+  return record((entry as { value?: unknown }).value, `RequiredContext value ${entryRef}`);
+}
+
+function pistolAbility(context: VNextRequiredContext): string {
+  const abilityRef = context.references.domains.abilityRefs.find((candidate) => {
+    const entry = context.entries.find(({ entryRef }) => entryRef === candidate);
+    return entry?.kind === "known"
+      && typeof (entry.value as JsonRecord).mechanicalKey === "string"
+      && String((entry.value as JsonRecord).mechanicalKey).includes(PISTOL_ENTRY_REF);
+  });
+  expect(abilityRef, "pistol AbilityDefinition selected from RequiredContext").toBeDefined();
+  const definition = contextEntry(context, abilityRef!);
+  expect(definition).toMatchObject({
+    activation: { kind: "attack" },
+    target: { kind: "creatureOrEnvironmentFeature" },
+    costs: [{ kind: "item", resourceId: AMMO_ENTRY_REF, amount: "1" }],
+  });
+  return abilityRef!;
+}
+
+type ProposalBuilder = (request: JsonRecord) => JsonRecord;
+
+class DeterministicKp {
+  readonly counters: KpCounters = { propose: 0, narrate: 0, decideDueActorPlan: 0 };
+  readonly proposalRequests: JsonRecord[] = [];
+  readonly narrationRequests: JsonRecord[] = [];
+  private failedViewer = false;
+
+  constructor(
+    private readonly buildProposal: ProposalBuilder,
+    private readonly prepared: PreparedCapture,
+    private readonly failViewerKeyOnce?: string,
+  ) {}
+
+  async propose(requestValue: JsonRecord) {
+    this.counters.propose += 1;
+    const request = structuredClone(requestValue);
+    this.proposalRequests.push(request);
+    const frozen = requiredContext(request);
+    expect(request).not.toHaveProperty("input");
+    expect(request).not.toHaveProperty("projection");
+    const preparedContext = record(this.prepared.latest?.requiredContext, "prepared RequiredContext");
+    expect(frozen).toEqual(preparedContext);
+    expect(frozen.binding.preparedActionId).toBe(request.preparedActionId);
+    expect(frozen.binding.rootActionId).toBe(request.rootActionId);
+    const proposal = this.buildProposal(request);
+    const validation = validateVNextCoarseFormProposal(proposal);
+    expect(validation, JSON.stringify(validation)).toMatchObject({ kind: "accepted" });
+    return proposal;
+  }
+
+  async decideDueActorPlan() {
+    this.counters.decideDueActorPlan += 1;
+    throw new Error("stage-three fixture must not use a second NPC mechanics path");
+  }
+
+  async narrate(requestValue: JsonRecord) {
+    this.counters.narrate += 1;
+    const request = structuredClone(requestValue);
+    this.narrationRequests.push(request);
+    expect(request).not.toHaveProperty("projection");
+    expect(request).not.toHaveProperty("worldState");
+    expect(request).not.toHaveProperty("committedDelta");
+    expect(request).not.toHaveProperty("audienceId");
+    expect(Object.keys(request).sort()).toEqual([
+      "deliveryGeneration",
+      "receipt",
+      "renderableClaims",
+      "rootActionId",
+      "viewerKey",
+    ].sort());
+    const claims = record(request.renderableClaims, "FrozenRenderableClaims narration input");
+    expect(claims).toMatchObject({
+      schema: "zhuwei.renderable-claims/vnext-1",
+      receiptId: record(request.receipt, "narration Receipt").receiptId,
+      rootActionId: request.rootActionId,
+      viewerKey: request.viewerKey,
+      projectionHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      claimsHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      claims: expect.any(Array),
+    });
+    const serialized = JSON.stringify(request);
+    expect(serialized).not.toContain(HIDDEN_TARGET_RELATION_CANARY);
+    expect(serialized).not.toContain(HIDDEN_TRIGGER_RELATION_CANARY);
+    expect(serialized).not.toContain(PLAYER_SECRET_CANARY);
+    expect(serialized).not.toContain(NPC_SUMMARY_CANARY);
+
+    if (!this.failedViewer
+      && this.failViewerKeyOnce !== undefined
+      && request.viewerKey === this.failViewerKeyOnce) {
+      this.failedViewer = true;
+      throw Object.assign(new Error("deterministic narration timeout"), {
+        code: "modelTransient",
+      });
+    }
+    const body = { body: `已依据 ${String(claims.claimsHash)} 冻结材料叙述。` };
+    return body;
+  }
+}
+
+function npcRevisionProposal(
+  request: JsonRecord,
+  overrides: { staleBase?: StoredSemanticDefinition } = {},
+): JsonRecord {
+  const context = requiredContext(request);
+  const stored = contextEntry(context, NPC_DEFINITION_REF) as unknown as StoredSemanticDefinition;
+  const snapshot = semanticDefinitionSnapshot(stored);
+  expect(snapshot, "current NPC semantic snapshot").toBeDefined();
+  const selected = overrides.staleBase === undefined
+    ? stored
+    : overrides.staleBase;
+  return {
+    schema: VNEXT_KP_PROPOSAL_SCHEMA,
+    kind: "vnextCoarseFormProposal",
+    formId: VNEXT_MATERIALIZATION_FORM_ID,
+    proposalRef: `proposal:npc-revision:${String(request.rootActionId)}`,
+    contextHash: context.binding.contextHash,
+    basisRefs: [NPC_KNOWLEDGE_REF],
+    proposal: {
+      kind: "reviseSemanticDefinition",
+      definitionRef: NPC_DEFINITION_REF,
+      semanticKind: "npc",
+      npcRef: LIAN_ID,
+      baseRevision: selected.revision,
+      baseHash: selected.definitionHash,
+      templateRef: selected.templateRef,
+      templateHash: selected.templateHash,
+      operations: [{
+        kind: "set",
+        path: ["semantics", "attitude"],
+        value: "确认账册后愿意谨慎协助",
+      }],
+      summary: NPC_SUMMARY_CANARY,
+    },
+  };
+}
+
+type WorldProposalConfig = {
+  proposalRef: string;
+  targetRefs: string[];
+  directTargetRefs: string[];
+  instrumentRefs: string[];
+  ability: "pistol" | null;
+  intent: string;
+  method: string;
+  dc?: number;
+  successEffects: JsonRecord[];
+  failureEffects?: JsonRecord[];
+  successEvidence: string;
+  failureEvidence: string;
+  evidenceSubjectRef: string;
+  sensoryBasisRefs?: string[];
+  basisRefs: string[];
+  pressure: string;
+  opportunity: string;
+};
+
+function worldInteractionProposal(request: JsonRecord, config: WorldProposalConfig): JsonRecord {
+  const context = requiredContext(request);
+  const abilityRef = config.ability === "pistol" ? pistolAbility(context) : null;
+  const adjudication = config.dc === undefined
+    ? {
+        kind: "directSuccess",
+        risk: "已根据冻结对象语义判断该做法可以直接产生所述结果。",
+        successOutcome: "互动产生预先固化的成功后果。",
+        failureOutcome: "没有失败分支。",
+      }
+    : {
+        kind: "check",
+        checkKind: "attack",
+        ability: "dex",
+        skill: null,
+        dc: config.dc,
+        mode: "normal",
+        risk: "会消耗一次弹药；命中才会改变支撑关系。",
+        successOutcome: "支撑关系结束，吊物按已存在区域结算。",
+        failureOutcome: "弹药仍消耗，但支撑关系和吊物状态保持不变。",
+      };
+  const branch = (
+    name: "success" | "failure",
+    effects: JsonRecord[],
+    evidence: string,
+  ) => ({
+    outcomeCode: `outcome:stage3:${config.proposalRef}:${name}`,
+    summary: name === "success" ? "冻结成功分支已经结算。" : "冻结失败分支已经结算。",
+    effects,
+    sensoryEvidence: [{
+      observerRef: ALICE_ID,
+      subjectRef: config.evidenceSubjectRef,
+      sense: "sight",
+      evidence,
+      basisRefs: config.sensoryBasisRefs ?? [config.evidenceSubjectRef],
+    }],
+    pressures: [{
+      description: config.pressure,
+      sourceRef: config.evidenceSubjectRef,
+      basisRefs: [SCENE_REF],
+    }],
+    opportunities: [{
+      description: config.opportunity,
+      targetRef: config.evidenceSubjectRef,
+      actionHint: "玩家仍可选择其他自然语言做法。",
+      basisRefs: [config.evidenceSubjectRef],
+    }],
+  });
+  return {
+    schema: VNEXT_KP_PROPOSAL_SCHEMA,
+    kind: "vnextCoarseFormProposal",
+    formId: VNEXT_WORLD_INTERACTION_FORM_ID,
+    proposalRef: config.proposalRef,
+    contextHash: context.binding.contextHash,
+    basisRefs: [...config.basisRefs],
+    proposal: {
+      kind: "worldInteraction",
+      sceneRef: SCENE_REF,
+      targetRefs: [...config.targetRefs],
+      directTargetRefs: [...config.directTargetRefs],
+      instrumentRefs: [...config.instrumentRefs],
+      abilityRef,
+      intent: config.intent,
+      method: config.method,
+      adjudication,
+      branches: {
+        success: branch("success", config.successEffects, config.successEvidence),
+        failure: branch("failure", config.failureEffects ?? [], config.failureEvidence),
+      },
+    },
+  };
+}
+
+function gunProposal(request: JsonRecord, dc: number): JsonRecord {
+  return worldInteractionProposal(request, {
+    proposalRef: `proposal:stage3:gun:${String(request.rootActionId)}`,
+    targetRefs: [CHAIN_REF, CHANDELIER_REF],
+    directTargetRefs: [CHAIN_REF],
+    instrumentRefs: [PISTOL_ENTRY_REF],
+    ability: "pistol",
+    intent: "打断吊灯的支撑，使它砸向下方区域。",
+    method: "使用已持有的燧发手枪瞄准可见铁链。",
+    dc,
+    basisRefs: [SCENE_REF, CHAIN_REF, CHANDELIER_REF, CHAIN_SUPPORT_REF],
+    successEffects: [{
+      kind: "relationTransition",
+      relationRef: CHAIN_SUPPORT_REF,
+      toState: "ended",
+    }, {
+      kind: "definitionRevision",
+      definitionRef: CHANDELIER_REF,
+      operations: [{ kind: "set", path: ["observableState"], value: "已坠落并形成残骸" }],
+      summary: "吊灯不再悬挂。",
+    }, {
+      kind: "registeredHazard",
+      sourceDefinitionRef: CHANDELIER_REF,
+      zoneRef: IMPACT_ZONE_REF,
+      damageProfileRef: "world-damage:falling-object:moderate",
+    }],
+    successEvidence: "枪响后铁链断开，吊灯砸落在地。",
+    failureEvidence: "枪响后铁链仍然承重，吊灯只轻微晃动。",
+    evidenceSubjectRef: CHANDELIER_REF,
+    pressure: "枪声已经在房间内造成明显动静。",
+    opportunity: "坠落区域与残骸形成了新的可互动局面。",
+  });
+}
+
+function ropeProposal(request: JsonRecord): JsonRecord {
+  return worldInteractionProposal(request, {
+    proposalRef: `proposal:stage3:rope:${String(request.rootActionId)}`,
+    targetRefs: [ROPE_REF, WEIGHT_REF],
+    directTargetRefs: [ROPE_REF],
+    instrumentRefs: [FIRE_SOURCE_ENTRY_REF],
+    ability: null,
+    intent: "烧断麻绳使重物坠落。",
+    method: "用稳定火源持续灼烧已知为干燥麻绳的承重点。",
+    basisRefs: [
+      SCENE_REF,
+      FIRE_SOURCE_ENTRY_REF,
+      ROPE_REF,
+      WEIGHT_REF,
+      ROPE_SUPPORT_REF,
+    ],
+    successEffects: [{
+      kind: "relationTransition",
+      relationRef: ROPE_SUPPORT_REF,
+      toState: "ended",
+    }, {
+      kind: "definitionRevision",
+      definitionRef: WEIGHT_REF,
+      operations: [{ kind: "set", path: ["observableState"], value: "已经坠落在地" }],
+      summary: "重物已经坠落。",
+    }, {
+      kind: "registeredHazard",
+      sourceDefinitionRef: WEIGHT_REF,
+      zoneRef: IMPACT_ZONE_REF,
+      damageProfileRef: "world-damage:falling-object:moderate",
+    }],
+    successEvidence: "麻绳焦黑断裂，重物随即坠地。",
+    failureEvidence: "麻绳表面焦黑但仍未断裂。",
+    evidenceSubjectRef: ROPE_REF,
+    pressure: "燃烧产生的烟味正在扩散。",
+    opportunity: "断裂后的绳端和坠落重物都可以继续利用。",
+  });
+}
+
+function trapProbeProposal(request: JsonRecord): JsonRecord {
+  return worldInteractionProposal(request, {
+    proposalRef: `proposal:stage3:trap-probe:${String(request.rootActionId)}`,
+    targetRefs: [PRESSURE_PLATE_REF],
+    directTargetRefs: [PRESSURE_PLATE_REF],
+    instrumentRefs: [STONE_ENTRY_REF],
+    ability: null,
+    intent: "隔着距离用石头测试压板是否会触发机关。",
+    method: "把拳头大小的石头投到覆尘压板上，并观察具体感官证据。",
+    basisRefs: [
+      SCENE_REF,
+      PRESSURE_PLATE_REF,
+      STONE_ENTRY_REF,
+      HIDDEN_TRIGGER_RELATION_CANARY,
+    ],
+    sensoryBasisRefs: [PRESSURE_PLATE_REF, HIDDEN_TRIGGER_RELATION_CANARY],
+    successEffects: [{
+      kind: "definitionRevision",
+      definitionRef: PRESSURE_PLATE_REF,
+      operations: [{ kind: "set", path: ["observableState"], value: "被石头压下后又缓慢复位" }],
+      summary: "压板发生了可见位移。",
+    }],
+    successEvidence: TRAP_SENSORY_EVIDENCE,
+    failureEvidence: "石头落下后压板没有出现可见位移，也没有听见机括声。",
+    evidenceSubjectRef: PRESSURE_PLATE_REF,
+    pressure: "压板是否连接危险装置仍需依据后续证据判断。",
+    opportunity: "角色可以继续检查墙缝声响的来源。",
+  });
+}
+
+function intent(submissionId: string, text: string): RoomActionInput {
+  return { kind: "intent", submissionId, text };
+}
+
+async function runAction(input: {
+  authority: Authority;
+  principal: typeof ALICE | typeof BOB;
+  action: RoomActionInput;
+  kp: DeterministicKp;
+  counters: ActionCounters;
+  prepared: PreparedCapture;
+  rolls?: number[];
+}) {
+  return runInDurableObject(input.authority as never, async (instance) => {
+    const target = instance as unknown as RoomInternals;
+    const originalRoll = target.authorityRoll;
+    const faces = [...(input.rolls ?? [])];
+    let rollIndex = 0;
+    target.authorityRoll = (sides: number) => {
+      expect(sides, "vNext Room authority die").toBe(20);
+      const face = faces[rollIndex];
+      expect(face, "unexpected additional vNext authority randomness").toBeDefined();
+      rollIndex += 1;
+      input.counters.rolls += 1;
+      return face!;
+    };
+    try {
+      const outcome = await handleRoomAction({
+        principal: input.principal,
+        authority: instrumentAuthority(target, input.counters, input.prepared),
+        kp: input.kp,
+      }, structuredClone(input.action));
+      expect(
+        rollIndex,
+        `frozen authority roll count for ${JSON.stringify(outcome)}`,
+      ).toBe(faces.length);
+      return outcome;
+    } finally {
+      target.authorityRoll = originalRoll;
+    }
+  });
+}
+
+async function roomSnapshot(authority: Authority): Promise<{
+  state: JsonRecord;
+  events: JsonRecord[];
+}> {
+  return runInDurableObject(authority as never, async (instance) => {
+    const target = instance as unknown as RoomInternals;
+    return {
+      state: structuredClone(target.authoritativeReplay().state),
+      events: structuredClone(target.authorityStore.events()),
+    };
+  });
+}
+
+function campaignRuntime(state: JsonRecord): JsonRecord {
+  return record(state.campaignRuntime, "campaign runtime");
+}
+
+function definitions(state: JsonRecord): JsonRecord {
+  return record(campaignRuntime(state).definitions, "semantic definition catalog");
+}
+
+function itemEntries(state: JsonRecord): JsonRecord {
+  return record(record(campaignRuntime(state).itemSystem, "item system").entries, "item entries");
+}
+
+function entities(state: JsonRecord): JsonRecord {
+  return record(state.entities, "entities");
+}
+
+function eventPayload(event: JsonRecord): JsonRecord {
+  return record(event.payload, `${String(event.eventType)} payload`);
+}
+
+function eventsOf(snapshot: { events: JsonRecord[] }, eventType: string): JsonRecord[] {
+  return snapshot.events.filter((event) => event.eventType === eventType);
+}
+
+function narrationForViewer(kp: DeterministicKp, viewerKey: string): JsonRecord[] {
+  return kp.narrationRequests.filter((request) => request.viewerKey === viewerKey);
+}
+
+function claimKinds(request: JsonRecord): string[] {
+  const claims = list(
+    record(request.renderableClaims, "renderable claims").claims,
+    "renderable claim list",
+  );
+  return claims.map((claim) => String(record(claim, "renderable claim").kind));
+}
+
+describe("vNext stage-three Room verticals", () => {
+  it("runs an existing dynamic NPC sparse revision through frozen context, Rules, claims, narration, replay, and fail-closed stale input", async () => {
+    const { authority, seed } = await initializeRoom("kp-vnext-stage3-room-npc");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp((request) => npcRevisionProposal(request), prepared);
+    const action = intent(
+      "submission:stage3:npc-revision",
+      "莉安看过归还的账册后，重新考虑她对我们的态度和下一步安排。",
+    );
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action,
+      kp,
+      counters,
+      prepared,
+    }), "NPC sparse revision outcome");
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+      receipt: { rootActionId: expect.any(String), receiptId: expect.any(String) },
+    });
+    expect(kp.counters).toMatchObject({ propose: 1, decideDueActorPlan: 0 });
+    expect(counters.rolls).toBe(0);
+
+    const request = kp.proposalRequests[0];
+    const context = requiredContext(request);
+    expect(context.intent.text).toBe(action.text);
+    const lianKnowledge = context.references.citations.npcKnowledge
+      .find(({ npcRef }) => npcRef === LIAN_ID);
+    expect(lianKnowledge, "Lian receives her complete finite knowledge slice").toBeDefined();
+    expect(lianKnowledge?.refs).toEqual(expect.arrayContaining([NPC_KNOWLEDGE_REF]));
+    expect(lianKnowledge?.refs).not.toContain("knowledge:stage3:alice-private");
+    expect(JSON.stringify(context)).toContain("莉安亲眼看见阿莱莎归还了父亲的账册");
+    expect(contextEntry(context, LIAN_LEDGER_ENTRY_REF)).toMatchObject({
+      entryId: LIAN_LEDGER_ENTRY_REF,
+      holderRef: LIAN_ID,
+      quantity: 1,
+      condition: "usable",
+    });
+    expect(contextEntry(context, LIAN_LEDGER_DEFINITION_REF)).toMatchObject({
+      content: { label: "归还的账册" },
+    });
+    expect(contextEntry(context, SCENE_LEDGER_ENTRY_REF)).toMatchObject({
+      entryId: SCENE_LEDGER_ENTRY_REF,
+      holderRef: null,
+      sceneRef: SCENE_REF,
+      quantity: 1,
+      condition: "usable",
+    });
+    expect(context.references.domains.itemRefs).toEqual(expect.arrayContaining([
+      LIAN_LEDGER_ENTRY_REF,
+      SCENE_LEDGER_ENTRY_REF,
+      LIAN_LEDGER_DEFINITION_REF,
+      PISTOL_ENTRY_REF,
+    ]));
+    expect(pistolAbility(context)).toMatch(/^ability:/u);
+    expect(context.binding.readSet).toEqual([]);
+    expect(context.entries.map(({ entryRef }) => entryRef)).toEqual(expect.arrayContaining([
+      ALICE_ID,
+      LIAN_ID,
+      NPC_DEFINITION_REF,
+      `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}`,
+    ]));
+
+    const snapshot = await roomSnapshot(authority);
+    const currentNpc = record(definitions(snapshot.state)[NPC_DEFINITION_REF], "revised NPC definition");
+    expect(currentNpc).toMatchObject({
+      schema: "zhuwei.semantic-definition/vnext-1",
+      definitionId: NPC_DEFINITION_REF,
+      revision: "2",
+      templateRef: NPC_DEFINITION_REF,
+      templateHash: seed.initialNpcDefinition.templateHash,
+      content: {
+        label: "莉安·黑橡",
+        description: "她认出了新归还的账册，但仍保持警惕。",
+        links: { entityRef: LIAN_ID },
+        semantics: {
+          attitude: "确认账册后愿意谨慎协助",
+          goals: [{
+            goalRef: "goal:stage3:protect-home",
+            description: "守住房屋与家人留下的秘密。",
+          }],
+          plans: [{
+            planRef: "plan:stage3:inspect-ledger",
+            description: "核对账册上的新痕迹。",
+          }],
+        },
+        privateNotes: PLAYER_SECRET_CANARY,
+      },
+    });
+    const revisionEvents = eventsOf(snapshot, "SemanticDefinitionRevised");
+    expect(revisionEvents).toHaveLength(1);
+    const revisionPayload = eventPayload(revisionEvents[0]);
+    expect(revisionPayload).toMatchObject({
+      definitionRef: NPC_DEFINITION_REF,
+      baseRevision: "1",
+      baseHash: seed.initialNpcDefinition.definitionHash,
+      nextDefinition: { definitionId: NPC_DEFINITION_REF, revision: "2" },
+    });
+    expect(revisionPayload).not.toHaveProperty("operations");
+    expect(revisionPayload).not.toHaveProperty("patch");
+    expect(JSON.stringify(revisionPayload)).not.toContain("JSON Patch");
+
+    const actorNarrations = narrationForViewer(kp, `${ALICE.principal.id}\u001f${ALICE_ID}`);
+    expect(actorNarrations).toHaveLength(1);
+    expect(claimKinds(actorNarrations[0])).toEqual(expect.arrayContaining([
+      "definitionRevised",
+      "actionCommitted",
+    ]));
+    expect(claimKinds(actorNarrations[0])).not.toEqual(["actionCommitted"]);
+    expect(JSON.stringify(actorNarrations[0])).not.toContain(NPC_SUMMARY_CANARY);
+    expect(JSON.stringify(actorNarrations[0])).not.toContain(PLAYER_SECRET_CANARY);
+
+    const beforeRejected = await roomSnapshot(authority);
+    const narrationCountBefore = kp.counters.narrate;
+    const proposalCountBefore = kp.counters.propose;
+    const stalePrepared: PreparedCapture = { all: [] };
+    const staleKp = new DeterministicKp(
+      (requestValue) => npcRevisionProposal(requestValue, {
+        staleBase: seed.initialNpcDefinition,
+      }),
+      stalePrepared,
+    );
+    const staleOutcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:npc-stale-base",
+        "基于过期人物定义继续修改莉安。",
+      ),
+      kp: staleKp,
+      counters,
+      prepared: stalePrepared,
+    }), "stale NPC sparse revision outcome");
+    expect(staleOutcome).toMatchObject({
+      kind: "rejected",
+      action: "notCommitted",
+      narration: "notApplicable",
+      code: "DEFINITION_CONFLICT",
+    });
+    expect(staleKp.counters).toMatchObject({ propose: 1, narrate: 0 });
+    expect(kp.counters.narrate).toBe(narrationCountBefore);
+    expect(kp.counters.propose).toBe(proposalCountBefore);
+    const afterRejected = await roomSnapshot(authority);
+    expect(afterRejected.events).toEqual(beforeRejected.events);
+    expect(definitions(afterRejected.state)[NPC_DEFINITION_REF]).toEqual(currentNpc);
+
+    await evictDurableObject(authority as never);
+    const afterEviction = await roomSnapshot(authority);
+    expect(definitions(afterEviction.state)[NPC_DEFINITION_REF]).toEqual(currentNpc);
+    expect(afterEviction.events).toEqual(beforeRejected.events);
+  });
+
+  it("runs natural-language gun versus chandelier with frozen costs, hazard damage, claims-only narration recovery, and idempotency across eviction", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-gun-success");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const actorViewerKey = `${ALICE.principal.id}\u001f${ALICE_ID}`;
+    const kp = new DeterministicKp(
+      (request) => gunProposal(request, 1),
+      prepared,
+      actorViewerKey,
+    );
+    const action = intent(
+      "submission:stage3:gun-success",
+      "我用枪打断吊灯的支撑，让它砸向下面的敌人。",
+    );
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action,
+      kp,
+      counters,
+      prepared,
+      rolls: [7],
+    }), "gun/chandelier outcome");
+    expect(outcome).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "retryableFailure",
+      receipt: { rootActionId: expect.any(String), receiptId: expect.any(String) },
+    });
+    expect(kp.counters).toMatchObject({ propose: 1, decideDueActorPlan: 0 });
+    expect(counters.rolls).toBe(1);
+
+    const proposalRequest = kp.proposalRequests[0];
+    const context = requiredContext(proposalRequest);
+    const scene = contextEntry(context, SCENE_REF);
+    expect(record(scene.combatScene, "RequiredContext combat scene")).toHaveProperty("geometry");
+    expect(contextEntry(context, CHAIN_REF)).toMatchObject({
+      content: {
+        materialDescription: expect.stringContaining("普通锻铁"),
+        observableState: "仍在承重",
+      },
+    });
+    expect(contextEntry(context, CHAIN_SUPPORT_REF)).toMatchObject({
+      content: { kind: "supports", subjectRef: CHAIN_REF, objectRef: CHANDELIER_REF },
+    });
+    expect(contextEntry(context, AMMO_ENTRY_REF)).toMatchObject({
+      entryId: AMMO_ENTRY_REF,
+      quantity: 8,
+      holderRef: ALICE_ID,
+    });
+    expect(contextEntry(context, "continuity:adjudicationPrecedents")).toEqual({});
+    const abilityRef = pistolAbility(context);
+    expect(context.binding.readSet).toEqual([]);
+    expect(context.entries.map(({ entryRef }) => entryRef)).toEqual(expect.arrayContaining([
+      ALICE_ID,
+      BOB_ID,
+      SCENE_REF,
+      CHAIN_REF,
+      CHANDELIER_REF,
+      CHAIN_SUPPORT_REF,
+      HIDDEN_TARGET_RELATION_CANARY,
+      PISTOL_ENTRY_REF,
+      AMMO_ENTRY_REF,
+      abilityRef,
+    ]));
+
+    const committed = await roomSnapshot(authority);
+    const ammo = record(itemEntries(committed.state)[AMMO_ENTRY_REF], "post-shot ammunition");
+    expect(ammo.quantity).toBe(7);
+    const support = record(definitions(committed.state)[CHAIN_SUPPORT_REF], "ended chain support");
+    expect(support).toMatchObject({ revision: "2", content: { state: "ended" } });
+    expect(definitions(committed.state)[CHANDELIER_REF]).toMatchObject({
+      revision: "2",
+      content: { observableState: "已坠落并形成残骸" },
+    });
+    expect(entities(committed.state)[BOB_ID]).toMatchObject({
+      hitPoints: { current: 14, maximum: 20 },
+    });
+    expect(eventsOf(committed, "ItemUsed")).toHaveLength(1);
+    expect(eventsOf(committed, "RandomnessRequested")).toHaveLength(1);
+    expect(eventsOf(committed, "DiceRolled")).toHaveLength(1);
+    expect(eventsOf(committed, "AbilityInvoked")).toHaveLength(1);
+    expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
+    expect(eventsOf(committed, "DamagePacketResolved")).toHaveLength(1);
+    expect(eventPayload(eventsOf(committed, "AbilityInvoked")[0])).toMatchObject({
+      sourceEntityId: ALICE_ID,
+      abilityRef,
+      mechanicalResult: { targetRefs: [CHAIN_REF] },
+    });
+    const randomness = eventPayload(eventsOf(committed, "RandomnessRequested")[0]);
+    const resolutionPlan = record(randomness.resolutionPlan, "world-interaction resolution plan");
+    expect(resolutionPlan).toMatchObject({
+      targetRefs: [CHAIN_REF, CHANDELIER_REF].sort(),
+      directTargetRefs: [CHAIN_REF],
+      ruling: { kind: "check", resolutionKind: "attack" },
+    });
+    const planReadSet = list(resolutionPlan.readSet, "world-interaction plan read set")
+      .map((entry) => record(entry, "world-interaction read binding"));
+    const planReadRefs = planReadSet.map((entry) => String(entry.ref));
+    expect(planReadRefs).toEqual(expect.arrayContaining([
+      ALICE_ID,
+      BOB_ID,
+      SCENE_REF,
+      CHAIN_REF,
+      CHANDELIER_REF,
+      IMPACT_ZONE_REF,
+      CHAIN_SUPPORT_REF,
+      HIDDEN_TARGET_RELATION_CANARY,
+      PISTOL_ENTRY_REF,
+      AMMO_ENTRY_REF,
+      abilityRef,
+    ]));
+    expect(planReadRefs.filter((ref) => [
+      FIRE_SOURCE_ENTRY_REF,
+      ROPE_REF,
+      PRESSURE_PLATE_REF,
+      NPC_DEFINITION_REF,
+    ].includes(ref))).toEqual([]);
+    expect(planReadRefs.length).toBeLessThan(
+      context.entries.filter(({ kind }) => kind === "known").length,
+    );
+    expect(planReadSet.every((entry) => typeof entry.revisionOrHash === "string"
+      && String(entry.revisionOrHash).length > 0)).toBe(true);
+    const resolved = eventPayload(eventsOf(committed, "WorldInteractionResolved")[0]);
+    expect(resolved).toMatchObject({
+      abilityRef,
+      branch: "success",
+      rulingKind: "check",
+      directTargetRefs: [CHAIN_REF],
+      check: { resolutionKind: "attack", selectedRoll: 7, dc: 1, succeeded: true },
+      appliedEffects: expect.arrayContaining([
+        expect.objectContaining({ kind: "itemCost", entryRef: AMMO_ENTRY_REF, quantityAfter: 7 }),
+        expect.objectContaining({ kind: "relationTransition", relationRef: CHAIN_SUPPORT_REF }),
+        expect.objectContaining({ kind: "damage", targetRef: BOB_ID, amount: 6 }),
+      ]),
+    });
+
+    const failedNarration = narrationForViewer(kp, actorViewerKey)[0];
+    expect(failedNarration).toBeDefined();
+    expect(claimKinds(failedNarration)).toEqual(expect.arrayContaining([
+      "abilityEffectApplied",
+      "mechanicalOutcome",
+      "inventoryOutcome",
+      "relationChanged",
+      "sceneFeature",
+      "sensoryEvidence",
+      "pressure",
+      "opportunity",
+      "actionCommitted",
+    ]));
+    expect(JSON.stringify(failedNarration)).not.toContain(HIDDEN_TARGET_RELATION_CANARY);
+
+    const observation = record(await authority.observe(ALICE), "failed narration observation");
+    const recovery = record(observation.narrationRecovery, "narration recovery capability");
+    expect(recovery).toMatchObject({
+      kind: "available",
+      state: "retryableFailure",
+      capability: expect.any(String),
+    });
+    const mechanicalSnapshot = await roomSnapshot(authority);
+    const proposalCountBeforeRecovery = kp.counters.propose;
+    const rollCountBeforeRecovery = counters.rolls;
+    const recovered = record(await handleViewerNarrationRecovery({
+      principal: ALICE,
+      authority: instrumentAuthority(authority, counters, prepared),
+      kp,
+    }, String(recovery.capability)), "claims-only narration recovery outcome");
+    expect(recovered).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    expect(kp.counters.propose).toBe(proposalCountBeforeRecovery);
+    expect(counters.rolls).toBe(rollCountBeforeRecovery);
+    const actorNarrations = narrationForViewer(kp, actorViewerKey);
+    expect(actorNarrations).toHaveLength(2);
+    expect(actorNarrations[1]).not.toHaveProperty("audienceId");
+    expect(actorNarrations[1].receipt).toEqual(actorNarrations[0].receipt);
+    expect(actorNarrations[1].renderableClaims).toEqual(actorNarrations[0].renderableClaims);
+    const firstClaims = record(actorNarrations[0].renderableClaims, "first frozen claims");
+    const retryClaims = record(actorNarrations[1].renderableClaims, "retry frozen claims");
+    expect(retryClaims.claimsHash).toBe(firstClaims.claimsHash);
+    expect(retryClaims.projectionHash).toBe(firstClaims.projectionHash);
+    expect(retryClaims.claims).toEqual(firstClaims.claims);
+    expect(await roomSnapshot(authority)).toEqual(mechanicalSnapshot);
+
+    const stableCounts = {
+      proposals: kp.counters.propose,
+      narrations: kp.counters.narrate,
+      rolls: counters.rolls,
+      publication: counters.publishDelivery,
+    };
+    const responseLostRetry = record(await runAction({
+      authority,
+      principal: ALICE,
+      action,
+      kp,
+      counters,
+      prepared,
+    }), "response-lost idempotent retry");
+    expect(responseLostRetry.receipt).toEqual(outcome.receipt);
+    expect(kp.counters.propose).toBe(stableCounts.proposals);
+    expect(kp.counters.narrate).toBe(stableCounts.narrations);
+    expect(counters.rolls).toBe(stableCounts.rolls);
+    expect(counters.publishDelivery).toBe(stableCounts.publication);
+    expect(await roomSnapshot(authority)).toEqual(mechanicalSnapshot);
+
+    await evictDurableObject(authority as never);
+    const evictionRetry = record(await runAction({
+      authority,
+      principal: ALICE,
+      action,
+      kp,
+      counters,
+      prepared,
+    }), "post-eviction idempotent retry");
+    expect(evictionRetry.receipt).toEqual(outcome.receipt);
+    expect(kp.counters.propose).toBe(stableCounts.proposals);
+    expect(kp.counters.narrate).toBe(stableCounts.narrations);
+    expect(counters.rolls).toBe(stableCounts.rolls);
+    expect(counters.publishDelivery).toBe(stableCounts.publication);
+    expect(await roomSnapshot(authority)).toEqual(mechanicalSnapshot);
+  });
+
+  it("honestly settles a non-natural DC 40 gun failure by consuming frozen ammunition without breaking the support or applying damage", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-gun-failure");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp((request) => gunProposal(request, 40), prepared);
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:gun-failure",
+        "我用枪打断吊灯的支撑，让它砸向下面的敌人。",
+      ),
+      kp,
+      counters,
+      prepared,
+      rolls: [19],
+    }), "DC 40 gun failure outcome");
+    expect(outcome).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    const snapshot = await roomSnapshot(authority);
+    expect(itemEntries(snapshot.state)[AMMO_ENTRY_REF]).toMatchObject({ quantity: 7 });
+    expect(definitions(snapshot.state)[CHAIN_SUPPORT_REF]).toMatchObject({
+      revision: "1",
+      content: { state: "active" },
+    });
+    expect(definitions(snapshot.state)[CHANDELIER_REF]).toMatchObject({
+      revision: "1",
+      content: { observableState: "悬挂在半空" },
+    });
+    expect(entities(snapshot.state)[BOB_ID]).toMatchObject({
+      hitPoints: { current: 20, maximum: 20 },
+    });
+    expect(eventsOf(snapshot, "ItemUsed")).toHaveLength(1);
+    expect(eventsOf(snapshot, "SemanticDefinitionRevised")).toHaveLength(0);
+    expect(eventsOf(snapshot, "DamagePacketResolved")).toHaveLength(0);
+    const resolved = eventPayload(eventsOf(snapshot, "WorldInteractionResolved")[0]);
+    expect(resolved).toMatchObject({
+      branch: "failure",
+      check: { resolutionKind: "attack", selectedRoll: 19, dc: 40, succeeded: false },
+      appliedEffects: [expect.objectContaining({
+        kind: "itemCost",
+        entryRef: AMMO_ENTRY_REF,
+        quantityBefore: 8,
+        quantityAfter: 7,
+      })],
+    });
+    const actorNarration = narrationForViewer(
+      kp,
+      `${ALICE.principal.id}\u001f${ALICE_ID}`,
+    )[0];
+    expect(claimKinds(actorNarration)).toEqual(expect.arrayContaining([
+      "mechanicalOutcome",
+      "inventoryOutcome",
+      "sensoryEvidence",
+      "pressure",
+      "opportunity",
+      "actionCommitted",
+    ]));
+    expect(claimKinds(actorNarration)).not.toContain("relationChanged");
+    expect(JSON.stringify(actorNarration)).not.toContain(HIDDEN_TARGET_RELATION_CANARY);
+  });
+
+  it("preserves D&D 5e attack natural-20 success and natural-1 failure across the Room authority seam", async () => {
+    const naturalTwenty = await initializeRoom("kp-vnext-stage3-room-attack-natural-20");
+    const twentyCounters = emptyActionCounters();
+    const twentyPrepared: PreparedCapture = { all: [] };
+    const twentyKp = new DeterministicKp(
+      (request) => gunProposal(request, 40),
+      twentyPrepared,
+    );
+    const twentyOutcome = record(await runAction({
+      authority: naturalTwenty.authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:attack-natural-20",
+        "我瞄准支撑物发起攻击，让悬挂物落入下方区域。",
+      ),
+      kp: twentyKp,
+      counters: twentyCounters,
+      prepared: twentyPrepared,
+      rolls: [20],
+    }), "natural-20 attack outcome");
+    expect(twentyOutcome).toMatchObject({ kind: "committed", action: "committed" });
+    const afterTwenty = await roomSnapshot(naturalTwenty.authority);
+    expect(eventPayload(eventsOf(afterTwenty, "WorldInteractionResolved")[0])).toMatchObject({
+      branch: "success",
+      check: {
+        resolutionKind: "attack",
+        selectedRoll: 20,
+        dc: 40,
+        succeeded: true,
+      },
+    });
+    expect(definitions(afterTwenty.state)[CHAIN_SUPPORT_REF]).toMatchObject({
+      revision: "2",
+      content: { state: "ended" },
+    });
+
+    const naturalOne = await initializeRoom("kp-vnext-stage3-room-attack-natural-1");
+    const oneCounters = emptyActionCounters();
+    const onePrepared: PreparedCapture = { all: [] };
+    const oneKp = new DeterministicKp(
+      (request) => gunProposal(request, 1),
+      onePrepared,
+    );
+    const oneOutcome = record(await runAction({
+      authority: naturalOne.authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:attack-natural-1",
+        "我瞄准支撑物发起攻击，让悬挂物落入下方区域。",
+      ),
+      kp: oneKp,
+      counters: oneCounters,
+      prepared: onePrepared,
+      rolls: [1],
+    }), "natural-1 attack outcome");
+    expect(oneOutcome).toMatchObject({ kind: "committed", action: "committed" });
+    const afterOne = await roomSnapshot(naturalOne.authority);
+    expect(eventPayload(eventsOf(afterOne, "WorldInteractionResolved")[0])).toMatchObject({
+      branch: "failure",
+      check: {
+        resolutionKind: "attack",
+        selectedRoll: 1,
+        dc: 1,
+        succeeded: false,
+      },
+    });
+    expect(definitions(afterOne.state)[CHAIN_SUPPORT_REF]).toMatchObject({
+      revision: "1",
+      content: { state: "active" },
+    });
+    expect(itemEntries(afterOne.state)[AMMO_ENTRY_REF]).toMatchObject({ quantity: 7 });
+  });
+
+  it("reuses the same world-interaction path for burning a rope and keeps a stone trap inquiry separate from concrete evidence and hidden trigger facts", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-generic-interactions");
+    const counters = emptyActionCounters();
+
+    const ropePrepared: PreparedCapture = { all: [] };
+    const ropeKp = new DeterministicKp((request) => ropeProposal(request), ropePrepared);
+    const ropeOutcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:burn-rope",
+        "我用稳定火源烧断绳索，让下面的重物坠落。",
+      ),
+      kp: ropeKp,
+      counters,
+      prepared: ropePrepared,
+    }), "burn-rope interaction outcome");
+    expect(ropeOutcome, JSON.stringify(ropeOutcome)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    const ropeProposalValue = record(ropeKp.proposalRequests[0], "rope proposal request");
+    const ropeContext = requiredContext(ropeProposalValue);
+    expect(contextEntry(ropeContext, FIRE_SOURCE_ENTRY_REF)).toMatchObject({
+      entryId: FIRE_SOURCE_ENTRY_REF,
+      holderRef: ALICE_ID,
+      quantity: 1,
+      condition: "usable",
+    });
+    expect(contextEntry(ropeContext, FIRE_SOURCE_DEFINITION_REF)).toMatchObject({
+      content: {
+        label: "稳定燃烧的火把",
+        description: expect.stringContaining("火焰稳定且当前可用"),
+      },
+    });
+    expect(ropeContext.binding.readSet).toEqual([]);
+    expect(ropeContext.entries.map(({ entryRef }) => entryRef)).toEqual(expect.arrayContaining([
+      FIRE_SOURCE_ENTRY_REF,
+      FIRE_SOURCE_DEFINITION_REF,
+      ROPE_REF,
+      WEIGHT_REF,
+      ROPE_SUPPORT_REF,
+    ]));
+    const ropeReturnedProposal = ropeProposal(ropeProposalValue);
+    expect(ropeReturnedProposal).toMatchObject({
+      formId: VNEXT_WORLD_INTERACTION_FORM_ID,
+      proposal: {
+        kind: "worldInteraction",
+        abilityRef: null,
+        directTargetRefs: [ROPE_REF],
+        instrumentRefs: [FIRE_SOURCE_ENTRY_REF],
+      },
+    });
+    expect(JSON.stringify(ropeReturnedProposal)).not.toMatch(/nodeId|dependsOn|compound/iu);
+
+    const afterRope = await roomSnapshot(authority);
+    expect(definitions(afterRope.state)[ROPE_SUPPORT_REF]).toMatchObject({
+      revision: "2",
+      content: { state: "ended" },
+    });
+    expect(definitions(afterRope.state)[WEIGHT_REF]).toMatchObject({
+      revision: "2",
+      content: { observableState: "已经坠落在地" },
+    });
+    expect(entities(afterRope.state)[BOB_ID]).toMatchObject({
+      hitPoints: { current: 14, maximum: 20 },
+    });
+    expect(eventsOf(afterRope, "WorldInteractionResolved")).toHaveLength(1);
+    expect(eventPayload(eventsOf(afterRope, "WorldInteractionResolved")[0])).toMatchObject({
+      rulingKind: "directSuccess",
+      branch: "success",
+      instrumentRefs: [FIRE_SOURCE_ENTRY_REF],
+      basisRefs: expect.arrayContaining([
+        FIRE_SOURCE_ENTRY_REF,
+        ROPE_REF,
+        WEIGHT_REF,
+        ROPE_SUPPORT_REF,
+      ]),
+      appliedEffects: expect.arrayContaining([
+        expect.objectContaining({ kind: "relationTransition", relationRef: ROPE_SUPPORT_REF }),
+        expect.objectContaining({ kind: "damage", targetRef: BOB_ID, amount: 6 }),
+      ]),
+    });
+
+    const trapPrepared: PreparedCapture = { all: [] };
+    const trapKp = new DeterministicKp((request) => trapProbeProposal(request), trapPrepared);
+    const inquiry = "我把石头扔到压板上，看看机关是否会触发。";
+    const trapOutcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent("submission:stage3:trap-probe", inquiry),
+      kp: trapKp,
+      counters,
+      prepared: trapPrepared,
+    }), "stone trap-probe outcome");
+    expect(trapOutcome).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    const trapContext = requiredContext(trapKp.proposalRequests[0]);
+    expect(trapContext.intent.text).toBe(inquiry);
+    expect(contextEntry(trapContext, STONE_ENTRY_REF)).toMatchObject({
+      entryId: STONE_ENTRY_REF,
+      holderRef: ALICE_ID,
+      quantity: 1,
+    });
+    expect(contextEntry(trapContext, PRESSURE_PLATE_REF)).toMatchObject({
+      content: {
+        materialDescription: expect.stringContaining("普通石材"),
+        observableState: "尚未被压下",
+      },
+    });
+    expect(contextEntry(trapContext, HIDDEN_TRIGGER_RELATION_CANARY)).toMatchObject({
+      visibilityPolicyRef: "visibility:room-authority-only",
+      content: {
+        kind: "triggers",
+        subjectRef: PRESSURE_PLATE_REF,
+        objectRef: TRAP_MECHANISM_REF,
+      },
+    });
+    expect(JSON.stringify(trapContext)).toContain(HIDDEN_TRIGGER_RELATION_CANARY);
+    expect(trapContext.binding.readSet).toEqual([]);
+    expect(trapContext.entries.map(({ entryRef }) => entryRef)).toEqual(expect.arrayContaining([
+      STONE_ENTRY_REF,
+      PRESSURE_PLATE_REF,
+      HIDDEN_TRIGGER_RELATION_CANARY,
+    ]));
+    const trapReturnedProposal = trapProbeProposal(trapKp.proposalRequests[0]);
+    expect(trapReturnedProposal).toMatchObject({
+      formId: VNEXT_WORLD_INTERACTION_FORM_ID,
+      proposal: {
+        kind: "worldInteraction",
+        instrumentRefs: [STONE_ENTRY_REF],
+        targetRefs: [PRESSURE_PLATE_REF],
+        directTargetRefs: [PRESSURE_PLATE_REF],
+      },
+    });
+    expect(JSON.stringify(trapReturnedProposal)).not.toMatch(/nodeId|dependsOn|compound/iu);
+
+    const afterTrap = await roomSnapshot(authority);
+    expect(definitions(afterTrap.state)[PRESSURE_PLATE_REF]).toMatchObject({
+      revision: "2",
+      content: { observableState: "被石头压下后又缓慢复位" },
+    });
+    expect(definitions(afterTrap.state)[HIDDEN_TRIGGER_RELATION_CANARY]).toMatchObject({
+      revision: "1",
+      content: { state: "active" },
+    });
+    expect(itemEntries(afterTrap.state)[STONE_ENTRY_REF]).toMatchObject({ quantity: 1 });
+    expect(eventsOf(afterTrap, "WorldInteractionResolved")).toHaveLength(2);
+    const aliceKnowledge = record(
+      record(afterTrap.state.knowledge, "authoritative knowledge")[ALICE_ID],
+      "Alice authoritative knowledge",
+    );
+    const acquiredEvidence = Object.values(aliceKnowledge)
+      .map((entry) => record(entry, "Alice knowledge record"))
+      .find((entry) => entry.objectKind === "sensoryEvidence"
+        && JSON.stringify(entry.content).includes(TRAP_SENSORY_EVIDENCE));
+    expect(acquiredEvidence, "committed sensory evidence becomes character knowledge").toBeDefined();
+    expect(JSON.stringify(acquiredEvidence)).not.toContain(HIDDEN_TRIGGER_RELATION_CANARY);
+    expect(JSON.stringify(acquiredEvidence)).not.toContain(TRAP_MECHANISM_REF);
+    const acquiredKnowledgeRef = String(acquiredEvidence?.knowledgeRef);
+    const followUpPrepared = record(await authority.prepare(ALICE, intent(
+      "submission:stage3:trap-follow-up-context",
+      "我根据刚才听见的机括声，继续判断墙缝后有什么。",
+    )), "trap evidence follow-up prepare");
+    expect(followUpPrepared).toMatchObject({ kind: "prepared" });
+    const followUpContext = requiredContext(followUpPrepared);
+    const collectedEvidence = followUpContext.entries.find((entry) => entry.kind === "known"
+      && JSON.stringify(entry.value).includes(TRAP_SENSORY_EVIDENCE));
+    expect(collectedEvidence, "next RequiredContext collects committed sensory knowledge")
+      .toBeDefined();
+    expect(String(collectedEvidence?.entryRef)).toContain(acquiredKnowledgeRef);
+    const trapResolution = eventPayload(eventsOf(afterTrap, "WorldInteractionResolved")[1]);
+    expect(trapResolution).toMatchObject({
+      instrumentRefs: [STONE_ENTRY_REF],
+      targetRefs: [PRESSURE_PLATE_REF],
+      directTargetRefs: [PRESSURE_PLATE_REF],
+      basisRefs: expect.arrayContaining([
+        STONE_ENTRY_REF,
+        PRESSURE_PLATE_REF,
+        HIDDEN_TRIGGER_RELATION_CANARY,
+      ]),
+      sensoryEvidence: [expect.objectContaining({
+        basisRefs: expect.arrayContaining([
+          PRESSURE_PLATE_REF,
+          HIDDEN_TRIGGER_RELATION_CANARY,
+        ]),
+      })],
+    });
+    const trapNarration = narrationForViewer(
+      trapKp,
+      `${ALICE.principal.id}\u001f${ALICE_ID}`,
+    )[0];
+    const trapClaims = list(
+      record(trapNarration.renderableClaims, "trap renderable claims").claims,
+      "trap claim list",
+    ).map((claim) => record(claim, "trap claim"));
+    const evidence = trapClaims.find((claim) => claim.kind === "sensoryEvidence");
+    expect(evidence).toMatchObject({
+      evidence: TRAP_SENSORY_EVIDENCE,
+    });
+    expect(String(evidence?.evidence)).not.toContain("是否");
+    expect(JSON.stringify(trapNarration)).not.toContain(inquiry);
+    expect(JSON.stringify(trapNarration)).not.toContain(HIDDEN_TRIGGER_RELATION_CANARY);
+    expect(JSON.stringify(trapNarration)).not.toContain(TRAP_MECHANISM_REF);
+
+    expect(ropeReturnedProposal.formId).toBe(trapReturnedProposal.formId);
+    expect(claimKinds(narrationForViewer(
+      ropeKp,
+      `${ALICE.principal.id}\u001f${ALICE_ID}`,
+    )[0])).toEqual(expect.arrayContaining([
+      "relationChanged",
+      "mechanicalOutcome",
+      "sensoryEvidence",
+      "pressure",
+      "opportunity",
+      "actionCommitted",
+    ]));
+    expect(claimKinds(trapNarration)).toEqual(expect.arrayContaining([
+      "mechanicalOutcome",
+      "sensoryEvidence",
+      "pressure",
+      "opportunity",
+      "actionCommitted",
+    ]));
+    expect(eventsOf(afterTrap, "WorldInteractionResolved").every((event) =>
+      event.eventType === "WorldInteractionResolved")).toBe(true);
+  });
+});

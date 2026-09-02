@@ -9,6 +9,8 @@
 - 0.4 修订：2026-08-31 用户明确放弃全部更早房间；本规格只用于 0.4 当前 V5 Profile/manifest，旧 Adapter/迁移/恢复条款由 `SPEC 0013` 的 0.4 修订窄取代
 - 适用边界：只用于启用本规格当前完整 Profile/manifest 的 **0.4 新房**；退役绑定显式拒绝，不静默重命名或重解释
 
+> 2026-09-01 后续裁定：未来 Profile 的粗粒度 Form、RequiredContext `epistemic/readSet`、稀疏语义定义、服务器私有复合计划、Rules 有限原语与 Typed Claims 服从 [SPEC 0016](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)。SPEC 0016 只窄取代本规格的旧 Form Catalog、`environmental-stunt`/详细材料阈值与 model-visible compound/DAG，并深化 RequiredContext 和 Claims 交接；本规格的 V5 解释、RAG、1+1、body-only、双状态、逐受众恢复与历史发布事实继续有效。当前不因此切换生产或删除 V5。
+
 ## 1. 目的、权威顺序与不变 Interface
 
 本规格把玩家自然语言意图送入“私有小表 Proposal → 三层 Context Pack → 静态 RAG → 封闭因果程序 → Rules → Room DO → 逐受众 Body-only Narration”管线。它降低超级 Schema 和完整上下文的成本，但不把 KP 降为命令翻译器，不缩小 `SPEC 0001` 赋予 KP 的开放世界创作、可行性、风险、DC、NPC、失败、节奏和叙事裁决权。

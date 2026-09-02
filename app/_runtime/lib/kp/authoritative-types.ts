@@ -68,6 +68,37 @@ export type ModelInvocationResult =
   | "modelPermanent"
   | "quotaExhausted";
 
+export const MODEL_INVOCATION_PURPOSES = [
+  "initialProposal",
+  "semanticRepair",
+  "clarificationContinuation",
+  "proposalRetry",
+  "randomnessContinuation",
+  "actorPlan",
+  "initialNarration",
+  "narrationGroundingRepair",
+  "narrationRecovery",
+  "narrationRecoveryGroundingRepair",
+] as const;
+
+export type ModelInvocationPurpose = typeof MODEL_INVOCATION_PURPOSES[number];
+
+export const KP_PROPOSAL_REQUEST_PURPOSES = [
+  "initialProposal",
+  "clarificationContinuation",
+  "proposalRetry",
+  "randomnessContinuation",
+] as const;
+
+export type KpProposalRequestPurpose = typeof KP_PROPOSAL_REQUEST_PURPOSES[number];
+
+export const KP_NARRATION_REQUEST_PURPOSES = [
+  "initialNarration",
+  "narrationRecovery",
+] as const;
+
+export type KpNarrationRequestPurpose = typeof KP_NARRATION_REQUEST_PURPOSES[number];
+
 export const MODEL_INVOCATION_FAILURE_STAGES = [
   "structuredOutput",
   "proposalSchema",
@@ -89,6 +120,7 @@ export type ModelInvocationReceipt = {
   promptPolicyVersion: string;
   schemaVersion: string;
   task: "proposal" | "narration";
+  invocationPurpose: ModelInvocationPurpose;
   rootActionId: string;
   attempt: number;
   startedAt: number;
@@ -350,6 +382,9 @@ export type V3AuthoritativeKpProposal = {
 export type KpProposalRequest = {
   preparedActionId: string;
   rootActionId: string;
+  /** Trusted Room-orchestration purpose for the non-repair entry call. The
+   * adapter owns semantic-repair and ActorPlan purpose assignment. */
+  proposalPurpose?: KpProposalRequestPurpose;
   input: unknown;
   projection: unknown;
   attempt: number;
@@ -415,6 +450,9 @@ export type DueActorPlanDecision = DueActorPlanDecisionBase & (
 
 export type KpNarrationRequest = {
   rootActionId: string;
+  /** Trusted Room-orchestration purpose for the first narration call. The
+   * adapter owns grounding-repair purpose assignment. */
+  narrationPurpose?: KpNarrationRequestPurpose;
   receipt: unknown;
   projection: unknown;
   attempt?: number;

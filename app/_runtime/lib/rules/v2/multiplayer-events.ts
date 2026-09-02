@@ -191,6 +191,8 @@ function character(value: unknown): value is CharacterRecord {
       "raceId",
       "resourceMaximums",
       "resources",
+      "semanticDefinitionRef",
+      "semanticDefinitionRevision",
       "subclassId",
     ])
     && isNonEmptyString(value.id)
@@ -202,6 +204,8 @@ function character(value: unknown): value is CharacterRecord {
     && /^[1-9][0-9]*$/.test(value.entityOrdinal)
     && (value.loadout === undefined || isCharacterLoadout(value.loadout))
     && [value.classId, value.raceId, value.subclassId, value.lastControllerSeatId]
+      .every((entry) => entry === undefined || isNonEmptyString(entry))
+    && [value.semanticDefinitionRef, value.semanticDefinitionRevision]
       .every((entry) => entry === undefined || isNonEmptyString(entry))
     && (value.lastLongRestCompletedAtMicros === undefined
       || (typeof value.lastLongRestCompletedAtMicros === "string"

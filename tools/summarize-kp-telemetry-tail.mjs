@@ -4,6 +4,18 @@ import readline from "node:readline";
 const TELEMETRY_SCHEMA = "zhuwei.room-telemetry/v1";
 const MODEL_EVENT = "room.model.invocation.completed";
 const CONTEXT_EVENT = "kp.context.prepared";
+const MODEL_INVOCATION_PURPOSES = new Set([
+  "initialProposal",
+  "semanticRepair",
+  "clarificationContinuation",
+  "proposalRetry",
+  "randomnessContinuation",
+  "actorPlan",
+  "initialNarration",
+  "narrationGroundingRepair",
+  "narrationRecovery",
+  "narrationRecoveryGroundingRepair",
+]);
 
 export function createKpTelemetryTailAggregator(label = "capture") {
   const normalizedLabel = /^[A-Za-z0-9_-]{1,40}$/u.test(label) ? label : "capture";
@@ -40,6 +52,9 @@ function safeModelEvent(event) {
     task: event.modelTask === "proposal" || event.modelTask === "narration"
       ? event.modelTask
       : "unknown",
+    purpose: MODEL_INVOCATION_PURPOSES.has(event.modelInvocationPurpose)
+      ? event.modelInvocationPurpose
+      : "unknown",
     attempt: integer(event.modelAttempt),
     result: text(event.modelResult) ?? "unknown",
     errorCode: text(event.errorCode),
@@ -66,18 +81,21 @@ function safeContextEvent(event) {
 function summarize(label, modelEvents, contextEvents) {
   const proposals = modelEvents.filter((event) => event.task === "proposal");
   const narrations = modelEvents.filter((event) => event.task === "narration");
+  const rootedProposals = proposals.filter((event) => event.rootActionHash !== undefined);
   const roots = new Map();
-  for (const event of proposals) {
-    if (event.rootActionHash === undefined) continue;
+  for (const event of rootedProposals) {
     const list = roots.get(event.rootActionHash) ?? [];
     list.push(event);
     roots.set(event.rootActionHash, list);
   }
-  const firstAttempts = [...roots.values()].map((events) =>
-    events.find((event) => event.attempt === 1)).filter(Boolean);
-  const firstSuccesses = firstAttempts.filter((event) => event.result === "success").length;
-  const repairedRoots = [...roots.values()].filter((events) =>
-    events.some((event) => event.attempt === 2 && event.result === "success")).length;
+  const initialProposals = proposals.filter((event) => event.purpose === "initialProposal");
+  const initialSuccesses = initialProposals.filter((event) => event.result === "success").length;
+  const initialRoots = [...roots.values()].filter((events) =>
+    events.some((event) => event.purpose === "initialProposal"));
+  const repairedRoots = initialRoots.filter((events) =>
+    events.some((event) => event.purpose === "semanticRepair")).length;
+  const clarificationContinuationRoots = initialRoots.filter((events) =>
+    events.some((event) => event.purpose === "clarificationContinuation")).length;
   const proposalFailures = proposals.filter((event) => event.result !== "success");
   const narrationFailures = narrations.filter((event) => event.result !== "success");
   const contextFallbacks = contextEvents.filter((event) =>
@@ -88,7 +106,7 @@ function summarize(label, modelEvents, contextEvents) {
     event.modelProfileVersion ?? "unknown",
   ].join("@"));
   return Object.freeze({
-    schemaVersion: "zhuwei-kp-tail-aggregate/v1",
+    schemaVersion: "zhuwei-kp-tail-aggregate/v2",
     label,
     capture: Object.freeze({
       rawPayloadRetained: false,
@@ -98,12 +116,17 @@ function summarize(label, modelEvents, contextEvents) {
       contextEvents: contextEvents.length,
     }),
     modelBindings,
+    invocationsByPurpose: countBy(modelEvents, (event) => event.purpose),
     proposal: Object.freeze({
       invocations: proposals.length,
       rootActions: roots.size,
-      callsPerRootAction: roots.size === 0 ? null : proposals.length / roots.size,
-      firstAttemptSuccess: ratio(firstSuccesses, firstAttempts.length),
-      repairedRootActions: ratio(repairedRoots, roots.size),
+      callsPerRootAction: roots.size === 0 ? null : rootedProposals.length / roots.size,
+      initialFirstPassSuccess: ratio(initialSuccesses, initialProposals.length),
+      repairRate: ratio(repairedRoots, initialRoots.length),
+      clarificationContinuationRate: ratio(
+        clarificationContinuationRoots,
+        initialRoots.length,
+      ),
       results: countBy(proposals, (event) => event.result),
       failures: countBy(proposalFailures, (event) => event.errorCode ?? event.result),
       durationMs: distribution(proposals.map((event) => event.durationMs)),

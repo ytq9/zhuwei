@@ -433,6 +433,10 @@ test("direct success commits before narration and publishes only the observer pr
   const commit = calls(harness.trace, "authority", "commit")[0];
   assert.equal(commit.preparedActionId, PREPARED.preparedActionId);
   assert.equal(commit.rulesInput.rootActionId, PREPARED.rootActionId);
+  assert.equal(
+    calls(harness.trace, "kp", "propose")[0].request.proposalPurpose,
+    "initialProposal",
+  );
   const narration = calls(harness.trace, "kp", "narrate")[0];
   assert.equal(narration.request.rootActionId, PREPARED.rootActionId);
   assert.equal(narration.request.receipt, COMMITTED_RECEIPT);
@@ -474,6 +478,10 @@ test("a player's roll gesture resumes the frozen intent after an NPC mechanical 
     "authority.observe",
   ]);
   assert.deepEqual(calls(harness.trace, "kp", "propose")[0].request.input, INTENT);
+  assert.equal(
+    calls(harness.trace, "kp", "propose")[0].request.proposalPurpose,
+    "randomnessContinuation",
+  );
   assert.deepEqual(calls(harness.trace, "authority", "prepare")[0].input, INTENT);
   assert.equal(
     calls(harness.trace, "authority", "prepare")[0].principalId,
@@ -531,6 +539,10 @@ test("a cached pending answer continuation re-prepares the exact original intent
   assert.equal(prepareCalls[1].principalId, TRUSTED_PRINCIPAL.id);
   assert.deepEqual(prepareCalls[1].input, INTENT);
   assert.equal(calls(harness.trace, "kp", "propose")[0].request.input.kind, "intent");
+  assert.equal(
+    calls(harness.trace, "kp", "propose")[0].request.proposalPurpose,
+    "clarificationContinuation",
+  );
   assert.equal(calls(harness.trace, "authority", "commit")[0].principalId,
     TRUSTED_PRINCIPAL.id);
 });
@@ -571,6 +583,10 @@ test("an explicit retry of a settled due stage re-prepares the exact original in
   assert.deepEqual(prepareCalls[0].input, retryInput);
   assert.deepEqual(prepareCalls[1].input, INTENT);
   assert.deepEqual(calls(harness.trace, "kp", "propose")[0].request.input, INTENT);
+  assert.equal(
+    calls(harness.trace, "kp", "propose")[0].request.proposalPurpose,
+    "proposalRetry",
+  );
 });
 
 test("an authenticated combat or consent answer bypasses KP proposal and preserves the player's exact choice", async () => {

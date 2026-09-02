@@ -5,7 +5,7 @@
 - 适用分支：`cloudflare`
 - 当前开发版本：`0.4.0`（产品代际 V3）
 - 冻结产品准则：`SPEC 0001`（已批准、产品行为冻结）
-- 覆盖范围：原十个产品板块 P1–P10、战术地图板块 P11、私有 Form/Context/RAG/叙述与动态环境板块 P12，以及 `SPEC 0001` 验收场景 A–O
+- 覆盖范围：原十个产品板块 P1–P10、战术地图板块 P11、V5 私有 Form/Context/RAG/叙述板块 P12、下一代粗粒度 Form/冻结 Context/Typed Claims 板块 P13，以及 `SPEC 0001` 验收场景 A–O
 
 本矩阵把产品来源追踪到玩家可观察行为、权威事件/状态、观察者专属投影、责任 Interface、测试文件与完成门证据。规格中的“验收场景”或本表中的“计划测试”都不等于测试已实现或已通过；只有通过真实责任 Interface 执行并留下命令、退出码和结果的测试，才能回填为有效证据。
 
@@ -111,7 +111,23 @@
 | KR15 D1 migration/本地闭环 | `db/schema.ts` → `0008`/`0009` corpus + `0010` scrub + `0011` settled archive checkpoint → local/remote D1/corpus/archive restore | corpus/context + `archive-d1-batches-v2` + `archive-do-resume-v2` + 远端 migration/写读清理 | **已实现/定向本地与远端证据**：corpus fresh/upgrade/MATCH/rebuild 14/14；Wrangler local `0000–0011`、SQLite `0010→0011` checkpoint 写读通过；归档 11/11、两条 D1 reader→fresh DO 各 1/1。远端 `0008`–`0011` 全部成功且无 pending，`0011` 临时 room/checkpoint 写读后精确删除为 0，4/4 可恢复引用均命中受支持 manifest |
 | KR16 浏览器/发布/远端 | 375/1440 QA + 完整门 + 既有 deploy/smoke/cleanup/push guard | 五路径 10/10；D1/deploy/traffic/smoke/cleanup/refs 实际回执 | **本轮发布已完成/有限证据，非完整线上质量门**：远端 migration、既有 Worker 部署和 100% 流量、两视口五路径、三交互 3/3 live verified、房间/会话/账号清理及非 force push 均有回执；生产 runtime SHA 为 `4822d2b…`，最终 evaluator-only 交付 SHA 为 `9cc5e3c…`，main 未变。完整门由用户豁免，三交互原 exit 1 的 compact-receipt 误判限制与历史日志 403 均保留；完整 Provider 指标由用户自行测评 |
 
-## 2. 十二个产品板块追踪
+### 1.6 `SPEC 0016` 粗粒度 Form、冻结 Context 与 Typed Claims 完成标准映射
+
+以下全部是下一代目标。阶段三代表性纵切已经建立独立开发期回执，但完整 Form 家族与生产采用仍在实现中；当前 V5 或 `feature/kp-form-graph-v6` 的既有结果都不是新合同的通过证据。实际测试必须从所列责任 Interface 验证；源码扫描只作为 opaque-ID 行为测试的补充，不能替代真实链路。
+
+| 向量 | 唯一责任 | 计划验收 | 当前状态与证据边界 |
+| --- | --- | --- | --- |
+| FC01 粗粒度 Catalog/Profile | 新 Form Catalog/Profile；Room Action 仍是唯一外层 Module | Form 只按 clarification/refusal、observe、social、materialization、world interaction、inventory、objective、story、combat 的权威/生命周期划分；ordinary/high-risk 是共用 Ruling；没有动作名专项 Form | **阶段三切片部分实现**：隔离 Profile 当前只执行纵切所需的 materialization/revision 与 `world-interaction`；生产 V5 Catalog 不改，其余 Form 仍待，feature 的十五原子 Form 不计通过 |
+| FC02 冻结 epistemic/read set | Room prepare + Rules `project` + RequiredContext builder | actor/Ability/scene/NPC/item/continuity/precedent 的最小充分正文进入授权 context；`epistemicRefs` 与实际 `readSetRefs` 分离；版本/作用域冲突 fail closed；同 submission 复用快照 | **阶段三切片已验证**：完整授权正文、同场实体/Ability/持有及场景物品、语义关系、知识、连续性与先例进入快照；Viewer evidence 与 authority basis 保持分离，直接目标只能取冻结 Viewer 可操作集合，隐藏因果仍可进入精确 read set；相关变化冲突、无关变化不冲突 |
+| FC03 稀疏定义与关系 | semantic definition synthesis + Rules definition/relation events | simple `materialDescription`、有限 state/affordance/relation；exact base/template hash 合成不可变 next definition；patch 不入 state；无详细材料物理必填 | **阶段三切片已验证**：NPC 稀疏修订及 sceneFeature/worldRelation 变更使用 complete next definition；`entity / itemEntry / sceneFeature` 是当前互动唯一空间角色，非空间事实或缺少场景绑定不能冒充目标；旧 revision replay、过期 hash/机械字段/任意 patch 拒绝，无材料阈值引擎 |
+| FC04 KP/Rules 权威分工 | KP Proposal validator + Rules `step` + Room random | KP 冻结五类可行性、DC、风险和因果；Rules 验证权限/机械并选择权威随机分支；拒绝模型骰面、最终伤害、targets、事件、JSON Patch、自由 worldEffects | **阶段三切片已验证**：KP 提交 DC/风险/分支语义，服务器派生 modifier/cost/read set；Rules 重算 Ability/熟练/范围/行动 grant/成本并解析 targets/amount，权威随机前零成本；完整五类 Ruling 在其余 Form 仍待 |
+| FC05 私有 ProposalBundle | server-derived bundle/InteractionPlan → Rules `step` | 多粗粒度子提案只产生一个 RootAction/Receipt；依赖从 produces/consumes、生命周期和 outcome binding 导出；模型不能提交 compound、nodeId、dependsOn 或 DAG；非法整束无部分提交 | **阶段三单合同切片已验证**：`world-interaction` 的多项效果由服务器 lowering 为一个 plan/RootAction/Receipt，模型无 node/DAG；lowering 与 Rules 均拒绝借该计划改写 NPC、Item/continuity 或跨场景事实。跨多个合法粗粒度合同的完整 ProposalBundle 仍待 |
+| FC06 有限 Rules 原语 | versioned Rules manifest/interpreter | Ability/check/cost、fact/knowledge、definition/relation/state、inventory、objective/story、Activity/time 与已注册 Hazard/Geometry 形成封闭原语；新增机械必须新 manifest | **阶段三子集已验证**：Ability/check/item cost、当前场景 sceneFeature/relation、fact/knowledge 与注册 Hazard/Geometry 闭合；relation 两端、definition revision、Hazard source/zone 均重验当前场景空间角色，旧自由 damage effect、跨场景及跨 Form 写入被拒绝，plan 无最终 targets/amount。其余 inventory/objective/story/Activity 纵切仍待 |
+| FC07 Typed Claims/Narration | `project(viewer, committedRange)` → FrozenRenderableClaims → body-only Narration | Claim 覆盖真实机械、能力效果、具体证据、场景事实、source/inference、continuity、pressure/opportunity；authority refs 永不外发，隐藏 relation claim 整体丢弃；重试复用 claimsHash 且不读新状态/delta | **阶段三切片已验证**：Claims vocabulary conformance、能力/机械/场景/证据/压力/机会、隐藏关系裁剪及冻结重试通过；隐藏 relation/区域目标可供 Rules 结算，但无权 Viewer 的 Claim payload、basis、数量和 Narration 不暴露这些因果。完整其余 Form 的事件覆盖仍待 |
+| FC08 纵切一：动态 NPC 稀疏修订 | 真实 NPC/KP context → materialization/semantic revision → Rules/Room/project/Claims | 已有动态 NPC 以 exact base/template 修订；有限知识、能力/物品引用、并发冲突、不可变 replay、Viewer-safe Claims 与 Narration 冻结重试全部通过 | **阶段三完成**：`tests/kp-vnext-stage3-room.test.ts` 覆盖真实入口、有限知识、稀疏合成、过期 base 拒绝、Room 提交、Claims/Narration、驱逐与 replay |
+| FC09 纵切二：用枪打吊灯 | natural-language Intent → world interaction → bundle → Rules/Room/project/Claims | 枪械/弹药、简单材料、supports/attachedTo、Geometry、KP 骰前判断、Rules 权威随机/targets/伤害/残骸、幂等/replay/秘密/Claims 闭环；烧绳索为同路通用样例，扔石头试陷阱为观察边界样例 | **阶段三完成**：Room 纵切覆盖成功/失败、成本、关系/Hazard/伤害、知识、隐藏裁剪、重试/驱逐；结构不同样例复用同 Form，opaque-ID Rules 测试进一步证明直接目标 Viewer 可操作、隐藏或 foreign 目标不可直选、跨场景/跨 Form 效果拒绝，而隐藏关系和真实区域目标仍由 Rules 同路解析且 Viewer-safe |
+
+## 2. 十三个产品板块追踪
 
 | ID | 来源 | 用户可观察行为 | 权威事件 / 状态 | Viewer 投影 | 责任 Interface | 计划 / 实际测试文件 | 完成门证据 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -127,6 +143,7 @@
 | P10 可靠性、纠错、可观测性与评测 | Goal §三.9、§五、§六；`SPEC 0003` §§7–11；`SPEC 0005` §13；`SPEC 0011`；`SPEC 0013` | 同一请求可靠重试且不重复后果；模型/网络/Worker 故障停在稳定点；重启或归档重建后权威状态一致；更正公开且可审计；性能/成本在免费额度预算内；日志不含秘密；多轮 KP 行为达到阈值 | 故障分类、SLO/预算、幂等键与 Receipt、随机承诺及 canonical due-root journal、连续事件/哈希、版本清单、settled archive checkpoint、活动分支/更正、白名单 telemetry、评测记录 | 玩家只见稳定公开失败、重试、当前状态和有权知道的更正；运维只见脱敏关联 ID、分类、耗时桶、版本与哈希 | Room Action；Room Authority；Rules `replay/project`；D1 checkpoint reader/恢复 capability；telemetry；eval runner | **0.4 当前映射**：`tests/randomness-recovery-v2.test.ts`、`room-retry-v2.test.ts`、`archive-d1-batches-v2.test.mjs`、`archive-do-resume-v2.test.ts`、ActorPlan recovery、viewer recovery 与 telemetry runner | **部分满足**：当前 V5/causal v5 的冻结门和线上指标仍待；此前 workflow-v2/env-v4 部署、D1、页面与三交互结果只保留在 §1.1 历史发布账本 |
 | P11 权威战术空间与二维地图 | 用户追加 Goal 产品决定/完成标准；`SPEC 0014`；ADR-0012；协作 `SPEC 0003/0005/0010/0012/0013` | 玩家在简单二维图和同源文字读数中看到自身、可见单位、已知障碍/门/地形/持续区/占位/高度/掩护，提交有序路径或区域原点/方向；隐藏实体/障碍不从 preview/DOM/错误泄漏；地图不可用仍可操作 | scene geometry、实体 position/footprint/elevation/height、EnvironmentDefinition/State、portal/destructible/terrain/zone、实际通过路径、Ability/Effect、内部全目标集合、版本/Profile/branch 与连续 WorldEvent | `TacticalProjection` 由 `project(viewer)` 生成并同时供地图、文字、ARIA、preview；只含 Viewer 已知子集，GM geometry/实际隐藏 targets 留在 Rules/Internal | 地图/自然语言 → Room Action → Rules `step` → Room DO 原子提交/权威随机 → `project/replay`；preview 作为同一 projector query；页面只作 Adapter | **0.4 当前映射**：Geometry G01–G15、`tests/chandelier-environment-rules-v3.test.mjs`、`dynamic-environment-room-lowering-v3.test.ts` 及环境/战术 Room runner | **局部实现映射，当前回执/浏览器/最终门待**：V5 环境 FSM、破坏/区域、隐藏 target 裁剪、Room/replay 与恢复均有现存入口；完整 Tactical Projection/preview 成对页面、路径/区域输入及最终门仍待 |
 | P12 私有 Proposal、Context/RAG、逐受众叙述与动态环境 | 用户本 Goal；`SPEC 0015`；ADR-0014；DEC-036–046 | 玩家仍只说自然语言；复杂行动不因小表受限；已提交行动在 KP 回复失败时保留；逐观察者独立 body；任意环境想法由 KP 自定义且不按对象名/archetype 派发 | Form/Context/Causal program、RootAction/Receipt、双状态、Audience、`state-only|area-hazard`、exact runtime V5/workflow-v2/causal v5/character-proficiency；D1 FTS/checkpoint 仅派生/灾备 | Required/NPC Viewer 经 `project`；Narration 只用冻结 claims；隐藏 targets 只留内部；退役 env/workflow 不进入当前解释 | Room Action → Form/Context/retrieval/compiler → `executeCausalActionProgram` + exact `actionLanguageRef` → Rules `step` → Room DO → `project` → body publish；D1 只静态索引/settled archive | **0.4 当前映射**：KR01–KR16 的现存 Profile/Form/causal/environment/viewer/archive runner，以及 item/combat/multiplayer/ActorPlan 纵切；party/campaign capability 已接入，不从历史部署数字推算当前通过数 | **部分满足**：current-only 绑定与 fail-closed 入口已映射；当前冻结门、浏览器与完整 Provider 质量仍待实际回执 |
+| P13 粗粒度 Form、冻结裁决上下文与类型化主张 | 用户 2026-09-01 明确裁定；`SPEC 0016`；ADR-0015；DEC-047 | 玩家仍只说自然语言；开放互动不因动作/对象没有专表而失败；KP 能依据最小充分上下文公正判断；提交后回应具体覆盖真实机械、感官事实、压力和机会且不补事实 | 粗粒度 Form、Frozen RequiredContext、epistemic/read-set refs、Sparse Semantic Definition/Relation、server-private ProposalBundle、有限 Rules primitives、Authority/Viewer Typed Claims、claimsHash | KP/NPC/Viewer 分别使用其授权 context；direct target 服从 Viewer 可操作性与类型化空间角色，隐藏 authority 因果仍可供 Rules 使用；Viewer Claim 只留获 grant 的 basis，隐藏 relation claim 整体裁剪；Narration 只收 Receipt + ViewerKey + FrozenRenderableClaims | authenticated Intent → Room prepare/context → coarse Form(s) → server bundle → Rules `step` → Room DO → `project(viewer, committedRange)` → body-only Narration；`replay` 同源 | **实际阶段三证据**：Node 24/24、Room 5/5；NPC 与通用 world-interaction 两条纵切，opaque-ID 覆盖直接目标、空间角色、跨场景/跨 Form 拒绝及隐藏因果 Viewer-safe | **阶段三代表性纵切完成、P13 整体仍部分实现**：V5 生产不变；其余 Form、完整跨合同 Bundle、Provider/浏览器、生产采用与发布仍待，feature 原型和 V5 历史不能抵扣 |
 
 ## 3. `SPEC 0001` A–O 验收追踪
 
@@ -152,7 +169,7 @@
 
 ## 4. Legacy 与无效替代证据
 
-以下负例只帮助理解旧实现为何不构成证据；其中若有文件已删除，路径和行号也仅作历史审计定位。0.4 不保留 Legacy Adapter 套件，任何旧绿色结果都不能抵扣 P1–P12 或 A–O。
+以下负例只帮助理解旧实现为何不构成证据；其中若有文件已删除，路径和行号也仅作历史审计定位。0.4 不保留 Legacy Adapter 套件，任何旧绿色结果都不能抵扣 P1–P13 或 A–O。
 
 | 现有证据 | 静态位置 | 不计入原因 |
 | --- | --- | --- |
@@ -166,7 +183,7 @@
 | `tests/interaction-contract.test.mjs` | 7–9、19–55（及同类断言） | 读取源码并匹配字符串/导出；能发现代码表面漂移，不能证明产品运行行为、权限或秘密边界 |
 | `tests/upstream-parity.test.mjs` | 40–53 | 文件哈希能证明选定文件未漂移，不能证明开房、建卡、语音、线索、资源、分头、休整、战斗等用户路径无回归 |
 
-可保留的局部候选证据：`tests/rendered-html.test.mjs` 55–169 从实际 Worker HTTP 路径验证匿名 401、邮箱会话、开房、错误密码和登出撤销；176 行以后还有部分房主权限场景。它仍未进入新 Room Action/Rules/Viewer 事务，所以只可在相同源码状态实际运行通过后计入身份与房间管理回归，不能证明任何 P1–P12 核心玩法行完成。
+可保留的局部候选证据：`tests/rendered-html.test.mjs` 55–169 从实际 Worker HTTP 路径验证匿名 401、邮箱会话、开房、错误密码和登出撤销；176 行以后还有部分房主权限场景。它仍未进入新 Room Action/Rules/Viewer 事务，所以只可在相同源码状态实际运行通过后计入身份与房间管理回归，不能证明任何 P1–P13 核心玩法行完成。
 
 ## 5. 测试运行器与当前证据门
 
@@ -191,7 +208,7 @@
 | 完成门 | 所需证据 | 当前状态（2026-08-30 证据更新时） |
 | --- | --- | --- |
 | `SPEC 0001` 不变 | 冻结文件内容/状态与基线哈希或 diff 核对 | **当前切片已核对**：SHA-256 仍为 `b420123d45959b88f4ede6753ab6e38aa7b5307e2834f0303c72d6d6eaa323be`，目标文件 diff 为空；最终冻结 SHA 前仍须再核对一次 |
-| 十二板块与 A–O 无未归属项 | 本矩阵 P1–P12、TM01–TM14、KR01–KR16 和 A–O 每行均有来源、状态、投影、Interface 与测试映射 | **结构映射已列出**：当前 0.4 runner 映射与历史 P12 发布账本已分开。仍标注待办的可信 campaign capability、完整 Tactical Projection/preview/路径/成对 Viewer/ARIA、无障碍与 TM14 完整门继续阻塞全矩阵完成声明 |
+| 十三板块与 A–O 无未归属项 | 本矩阵 P1–P13、TM01–TM14、KR01–KR16、FC01–FC09 和 A–O 每行均有来源、状态、投影、Interface 与测试映射 | **结构映射已列出**：当前 V5 runner/历史 P12 发布账本与 P13 阶段三开发期回执已分账。P13 其余 Form、完整 Tactical Projection/preview/路径/成对 Viewer/ARIA、无障碍与 TM14 完整门继续阻塞全矩阵完成声明 |
 | `SPEC 0002` B01–B53 有明确处置 | 单独的逐条处置记录、替代规格交叉审查与实现映射 | **规格与公开测试映射已建立**：`0002-disposition-matrix.md` 逐条处置，本矩阵 §1.2 无编号缺口地映射生产责任与真实 runner；冻结全量/线上门仍须按实际结果清零 |
 | 单一权威事务/机械/投影/回放 | 架构检查 + A–O/各规格行为测试，且无外部 fold/骰子/D1 第二状态 | **部分映射**：Rules、Room Action、Room Authority、causal v5、multiplayer、ActorPlan、randomness/recovery、archive/correction、observer 与 B53 vertical 均有现存公开 seam；最终 current-only 生产接线仍须冻结门证明 |
 | 长团、继任与个人知识 | P7、P9、O17 的跨章节、死亡/退役/继任、合法继承测试 | **部分映射**：`tests/world-campaign-v2.test.mjs`、`multiplayer-room-v2.test.ts`、ActorPlan、observer 与结构化灾难重建/更正 runner 覆盖相应责任；campaign capability 已接入，冻结源码/部署组合未运行 |
@@ -201,7 +218,8 @@
 | 未涉及上游能力无回归 | 开房、席位、建卡、语音、线索、装备、职业资源、分头、组队、休整、战斗的真实用户路径 | **局部映射**：authoritative table、Room multiplayer、opening、item V5 与 combat runner 均存在；Legacy Room 回执不计 0.4，仍缺冻结源码上的完整用户路径/浏览器回归 |
 | 战术地图 TM01–TM14 | SPEC 0014 场景 1–14、真实 Room/archive/replay、Viewer indistinguishability、地图/文字/ARIA、375px/1440px、最终冻结门 | **部分满足，仍阻塞**：环境 FSM、破坏/区域目标、自遮挡、隐藏裁剪、Room/replay 与 D1 reader→fresh DO 已有定向证据；本轮两视口五路径只验证 P12 页面状态，不覆盖完整 Tactical Projection/preview、路径/区域输入、地图/文字同源、成对 Viewer、ARIA/无障碍和最终门 |
 | Form/Context/RAG/Narration KR01–KR16 | 十 Form、三层 Context、静态重读、1+1、body-only、双状态、逐受众、模型角色/G0–G5、十错误、120 gold、D1/浏览器/发布 | **0.4 当前实现映射与历史发布分账**：当前只认 runtime V5/workflow-v2/causal v5，现存 Form/causal/environment/viewer/archive runner 可作定向入口；旧 env-v4 的远端 D1、Worker、页面和三交互事实只作审计。current-only 完整质量门仍未满足 |
+| 粗粒度 Form/Context/Claims FC01–FC09 | 新 Catalog/Profile、epistemic/read set、稀疏定义合成、服务器 bundle、有限 Rules 原语、Typed Claims 及两条阶段三纵切 | **阶段三代表性纵切已完成，整体仍部分实现**：Node 24/24、Room 5/5 与 typecheck/diff-check 构成开发期证据；新增闭包覆盖直接目标 Viewer 可操作性、类型化空间角色、跨场景/跨 Form 拒绝和隐藏因果 Viewer-safe；其余 Form、完整跨合同 Bundle、生产 Registry/Provider/浏览器仍待，且不授权生产切换 |
 | 本地验证命令 | `module:check`、`typecheck`、`lint`、`test:unit`、`test:worker`、`git diff --check` 的源码 SHA、命令、退出码；部署 build 只由 `cf:deploy` 执行一次 | **完整门未满足（用户豁免）**：实际需要的类型、目标 Lint、Node/Worker 因果切片与 diff-check 有回执，部署 build 成功一次；未重跑完整 `module:check`、全量 Lint、unit/Worker 或第二次 build，不能写成通过 |
 | 迁移、部署、冒烟、日志、推送 | 必要迁移状态与闭环、Cloudflare version/流量/URL/冒烟/日志、`DEPLOY_SOURCE_SHA`、`DELIVERY_SHA`、远端 `cloudflare` SHA、远端 `main` 前后 SHA | **历史发布审计，不计当前 0.4 门**：远端 `0008`–`0011`、部署源码 `4822d2b…`、Version `97291f34…` / deployment `834c2b79…`、页面与三交互等事实保留在 §1.1；当前 V5/causal v5 源码没有由这些旧回执自动获得部署或完成状态 |
 
-历史 P12/KR16 有限发布事实已保留审计，但当前 0.4 V5/causal v5/capability 组合须重新取得实际证据；在该证据、TM01–TM14 的剩余战术/无障碍范围与完整门完成前，本矩阵不得用于宣告全产品 `COMPLETE`。
+历史 P12/KR16 有限发布事实已保留审计，P13 阶段三代表性纵切也已单独建立开发期回执；但当前 V5 组合、P13 其余 Form、TM01–TM14 的剩余战术/无障碍范围与完整门仍未完成，本矩阵不得用于宣告全产品 `COMPLETE`。

@@ -33,6 +33,7 @@ const AREA_LABEL: Record<string, string> = {
 const TARGET_LABEL: Record<string, string> = {
   self: "自身",
   creature: "生物",
+  "creature-or-object": "生物或物体",
   "willing-creature": "自愿生物",
   humanoid: "类人生物",
   "living-creature": "活着的生物",

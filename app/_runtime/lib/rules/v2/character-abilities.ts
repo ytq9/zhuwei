@@ -318,7 +318,9 @@ function spellTarget(definition: SpellDefinition): JsonRecord | undefined {
   }
   if (definition.targets.max !== 1) return undefined;
   return {
-    kind: "creature",
+    kind: definition.targets.filter === "creature-or-object"
+      ? "creatureOrEnvironmentFeature"
+      : "creature",
     count: "1",
     ...(definition.targets.filter === "self" ? { selfOnly: true } : {}),
     ...(definition.range.kind === "touch"
@@ -566,7 +568,7 @@ export function compileStaticCharacterCombat(
     revision: "1",
     rulesBasis: "srd5.1-2014",
     activation: { kind: "attack", actionGrant: "attack" },
-    target: { kind: "creature", count: "1", reachInches: "60" },
+    target: { kind: "creatureOrEnvironmentFeature", count: "1", reachInches: "60" },
     attack: { ability: "str", proficiency: true },
     mechanicalKey: "improvised-strike",
     damage: [{ type: "bludgeoning", formula: `1d4${signed(strengthModifier)}` }],

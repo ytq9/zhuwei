@@ -5,12 +5,18 @@ import type {
   Sha256Ref,
 } from "../profiles/types";
 import type { TacticalProjection } from "../tactical-projection";
+import type { FrozenRenderableClaims } from "./claims";
 import type {
   ItemDefinitionV1,
   ItemEntryV1,
   ItemOwnershipDisposition,
   ItemSystemStateV1,
 } from "./items";
+import type {
+  SemanticDefinitionRevisedPayload,
+  WorldInteractionResolutionPlan,
+  WorldInteractionResolvedPayload,
+} from "./world-interaction-model";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -206,6 +212,8 @@ export type CharacterRecord = {
   featureIds?: string[];
   loadout?: CharacterLoadoutRecord;
   socialMechanics?: NpcSocialMechanicsRecord;
+  semanticDefinitionRef?: string;
+  semanticDefinitionRevision?: string;
   lastLongRestCompletedAtMicros?: string;
 };
 
@@ -386,7 +394,8 @@ export type CheckRandomnessRequest = {
   randomnessId: string;
   resolutionId: string;
   actorCharacterId: string;
-  purpose: "improvisedCheck" | "abilityCheck" | "contestCheck" | "savingThrow";
+  purpose: "improvisedCheck" | "abilityCheck" | "contestCheck" | "savingThrow"
+    | "worldInteractionCheck";
   diceExpression: "1d20" | "2d20kh1" | "2d20kl1";
   frozenCheck: FrozenCheck;
 };
@@ -686,7 +695,7 @@ export type InternalContinuationRecord = {
   rootActionId: string;
   request: RandomnessRequest;
   resolutionPlan?: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
-    | ContestResolutionPlan | HiddenRealityResolutionPlan;
+    | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan;
 };
 
 export type AuthoritativeWorldState = {
@@ -803,6 +812,8 @@ export type ActorPlanFormedPayload = {
 };
 
 export type EventPayloadByType = {
+  SemanticDefinitionRevised: SemanticDefinitionRevisedPayload;
+  WorldInteractionResolved: WorldInteractionResolvedPayload;
   EnvironmentFeatureMaterialized: {
     actorCharacterId: string;
     sceneId: string;
@@ -1185,7 +1196,7 @@ export type EventPayloadByType = {
     purpose: RandomnessRequest["purpose"];
     formula: RandomnessRequest["diceExpression"];
     resolutionPlan: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
-      | ContestResolutionPlan | HiddenRealityResolutionPlan;
+      | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan;
   } | { resolution: JsonRecord };
   DiceRolled: {
     randomnessId: string;
@@ -1750,6 +1761,7 @@ export type SafeReadModel = {
   story?: JsonRecord;
   tacticalProjection?: TacticalProjection;
   committedDelta?: ObserverCommittedDelta;
+  renderableClaims?: FrozenRenderableClaims;
 };
 
 export type LifecycleReadModel = {

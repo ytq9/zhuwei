@@ -58,6 +58,10 @@ import {
   retryAfterFrom,
   usageFrom,
 } from "./authoritative-helpers";
+import {
+  KP_NARRATION_REQUEST_PURPOSES,
+  KP_PROPOSAL_REQUEST_PURPOSES,
+} from "./authoritative-types";
 import type {
   AuthoritativeKpAdapter,
   AuthoritativeKpAdapterOptions,
@@ -65,8 +69,11 @@ import type {
   DueActorPlanDecisionRequest,
   V3AuthoritativeKpProposal,
   KpNarrationRequest,
+  KpNarrationRequestPurpose,
   KpProposalRequest,
+  KpProposalRequestPurpose,
   ModelInvocationFailureStage,
+  ModelInvocationPurpose,
   ModelInvocationReceipt,
   ModelInvocationResult,
 } from "./authoritative-types";
@@ -81,7 +88,10 @@ export type {
   V3AuthoritativeKpProposal,
   CurrentNarration,
   KpNarrationRequest,
+  KpNarrationRequestPurpose,
   KpProposalRequest,
+  KpProposalRequestPurpose,
+  ModelInvocationPurpose,
   ModelInvocationReceipt,
   ModelInvocationResult,
   AuthoritativeModelBinding,
@@ -90,6 +100,38 @@ export type {
 const DEFAULT_INVOCATION_TIMEOUT_MS = 45_000;
 
 type InvocationTask = "proposal" | "narration";
+
+const KP_PROPOSAL_REQUEST_PURPOSE_SET = new Set<string>(KP_PROPOSAL_REQUEST_PURPOSES);
+const KP_NARRATION_REQUEST_PURPOSE_SET = new Set<string>(KP_NARRATION_REQUEST_PURPOSES);
+
+function isKpProposalRequestPurpose(value: unknown): value is KpProposalRequestPurpose {
+  return typeof value === "string" && KP_PROPOSAL_REQUEST_PURPOSE_SET.has(value);
+}
+
+function isKpNarrationRequestPurpose(value: unknown): value is KpNarrationRequestPurpose {
+  return typeof value === "string" && KP_NARRATION_REQUEST_PURPOSE_SET.has(value);
+}
+
+function proposalInvocationPurpose(request: KpProposalRequest): ModelInvocationPurpose {
+  if (request?.attempt === 2) return "semanticRepair";
+  return isKpProposalRequestPurpose(request?.proposalPurpose)
+    ? request.proposalPurpose
+    : "initialProposal";
+}
+
+function narrationInvocationPurpose(request: KpNarrationRequest): KpNarrationRequestPurpose {
+  return isKpNarrationRequestPurpose(request?.narrationPurpose)
+    ? request.narrationPurpose
+    : "initialNarration";
+}
+
+function narrationGroundingRepairPurpose(
+  purpose: KpNarrationRequestPurpose,
+): ModelInvocationPurpose {
+  return purpose === "narrationRecovery"
+    ? "narrationRecoveryGroundingRepair"
+    : "narrationGroundingRepair";
+}
 
 type InvocationSuccess = {
   response: unknown;
@@ -147,6 +189,7 @@ function receipt(
   task: InvocationTask,
   rootActionId: string,
   attempt: number,
+  invocationPurpose: ModelInvocationPurpose,
   startedAt: number,
   endedAt: number,
   result: ModelInvocationResult,
@@ -160,6 +203,7 @@ function receipt(
     promptPolicyVersion: profile.promptPolicyVersion,
     schemaVersion: schemaVersion(profile, task),
     task,
+    invocationPurpose,
     rootActionId,
     attempt,
     startedAt,
@@ -174,12 +218,22 @@ function permanentContractError(
   task: InvocationTask,
   rootActionId: string,
   attempt: number,
+  invocationPurpose: ModelInvocationPurpose,
   now: () => number,
 ): AuthoritativeKpModelError {
   const at = now();
   return new AuthoritativeKpModelError(
     "modelPermanent",
-    receipt(profile, task, rootActionId, attempt, at, at, "modelPermanent"),
+    receipt(
+      profile,
+      task,
+      rootActionId,
+      attempt,
+      invocationPurpose,
+      at,
+      at,
+      "modelPermanent",
+    ),
   );
 }
 
@@ -189,6 +243,10 @@ function validateV3ProposalRequest(request: KpProposalRequest): void {
   if (!Number.isInteger(request.attempt) || request.attempt < 1 || request.attempt > 2) {
     throw new ModelOutputValidationError();
   }
+  if (
+    request.proposalPurpose !== undefined
+    && !isKpProposalRequestPurpose(request.proposalPurpose)
+  ) throw new ModelOutputValidationError();
   if (!isRecord(request.input) || !isRecord(request.projection)) {
     throw new ModelOutputValidationError();
   }
@@ -1801,6 +1859,10 @@ function priorPrivateProposal(value: unknown): V3AuthoritativeKpProposal | undef
 
 function validateNarrationRequest(request: KpNarrationRequest): void {
   requiredString(request.rootActionId);
+  if (
+    request.narrationPurpose !== undefined
+    && !isKpNarrationRequestPurpose(request.narrationPurpose)
+  ) throw new ModelOutputValidationError();
   if (!isRecord(request.receipt)) throw new ModelOutputValidationError();
   const status = request.receipt.status ?? request.receipt.kind;
   if (status !== "committed" && status !== "concluded") throw new ModelOutputValidationError();
@@ -1861,6 +1923,7 @@ export function createAuthoritativeKpAdapter(
     task: InvocationTask,
     rootActionId: string,
     attempt: number,
+    invocationPurpose: ModelInvocationPurpose,
     input: Record<string, unknown>,
     timeoutBudgetMs = invocationTimeoutMs,
   ): Promise<InvocationSuccess> {
@@ -1883,17 +1946,36 @@ export function createAuthoritativeKpAdapter(
       const endedAt = now();
       return {
         response,
-        receipt: receipt(profile, task, rootActionId, attempt, startedAt, endedAt, "success", {
-          ...usageFrom(response),
-          responseHash: await responseHash(response),
-        }),
+        receipt: receipt(
+          profile,
+          task,
+          rootActionId,
+          attempt,
+          invocationPurpose,
+          startedAt,
+          endedAt,
+          "success",
+          {
+            ...usageFrom(response),
+            responseHash: await responseHash(response),
+          },
+        ),
       };
     } catch (error) {
       const endedAt = now();
       const result = classifyModelError(error);
       throw new AuthoritativeKpModelError(
         result,
-        receipt(profile, task, rootActionId, attempt, startedAt, endedAt, result),
+        receipt(
+          profile,
+          task,
+          rootActionId,
+          attempt,
+          invocationPurpose,
+          startedAt,
+          endedAt,
+          result,
+        ),
         retryAfterFrom(error),
       );
     } finally {
@@ -1970,7 +2052,16 @@ export function createAuthoritativeKpAdapter(
       const at = now();
       throw v3Failure(
         "CONTEXT_INSUFFICIENT",
-        receipt(profile, "proposal", request.rootActionId, request.attempt, at, at, "modelPermanent"),
+        receipt(
+          profile,
+          "proposal",
+          request.rootActionId,
+          request.attempt,
+          proposalInvocationPurpose(request),
+          at,
+          at,
+          "modelPermanent",
+        ),
         "contextPack",
       );
     }
@@ -2038,7 +2129,16 @@ export function createAuthoritativeKpAdapter(
       const at = now();
       throw v3Failure(
         "PROPOSAL_REPAIR_EXHAUSTED",
-        receipt(profile, "proposal", input.request.rootActionId, 2, at, at, "modelPermanent"),
+        receipt(
+          profile,
+          "proposal",
+          input.request.rootActionId,
+          2,
+          "semanticRepair",
+          at,
+          at,
+          "modelPermanent",
+        ),
         "proposalSchema",
       );
     }
@@ -2047,7 +2147,16 @@ export function createAuthoritativeKpAdapter(
       const at = now();
       throw v3Failure(
         "PROPOSAL_REPAIR_EXHAUSTED",
-        receipt(profile, "proposal", input.request.rootActionId, 2, at, at, "modelPermanent"),
+        receipt(
+          profile,
+          "proposal",
+          input.request.rootActionId,
+          2,
+          "semanticRepair",
+          at,
+          at,
+          "modelPermanent",
+        ),
         "proposalSchema",
       );
     }
@@ -2055,6 +2164,7 @@ export function createAuthoritativeKpAdapter(
       "proposal",
       input.request.rootActionId,
       2,
+      "semanticRepair",
       privateFormRepairModelInput({
         rootActionRef: input.request.rootActionId,
         originalForm: input.originalForm,
@@ -2138,7 +2248,14 @@ export function createAuthoritativeKpAdapter(
           try {
             validateV3ProposalRequest(request);
           } catch {
-            throw permanentContractError(profile, "proposal", rootActionId, attempt, now);
+            throw permanentContractError(
+              profile,
+              "proposal",
+              rootActionId,
+              attempt,
+              proposalInvocationPurpose(request),
+              now,
+            );
           }
 
           const socialResolution = isSocialResolutionKpProfile(profile);
@@ -2154,7 +2271,16 @@ export function createAuthoritativeKpAdapter(
               const at = now();
               throw v3Failure(
                 "PROPOSAL_REPAIR_EXHAUSTED",
-                receipt(profile, "proposal", request.rootActionId, 2, at, at, "modelPermanent"),
+                receipt(
+                  profile,
+                  "proposal",
+                  request.rootActionId,
+                  2,
+                  "semanticRepair",
+                  at,
+                  at,
+                  "modelPermanent",
+                ),
                 "proposalSchema",
               );
             }
@@ -2178,6 +2304,7 @@ export function createAuthoritativeKpAdapter(
             "proposal",
             request.rootActionId,
             1,
+            proposalInvocationPurpose(request),
             privateFormProposalModelInput({
               request,
               allowedForms: preparedContext.orderedForms,
@@ -2258,12 +2385,20 @@ export function createAuthoritativeKpAdapter(
           try {
             modelInput = actorPlanDecisionModelInput(request);
           } catch {
-            throw permanentContractError(profile, "proposal", rootActionId, 1, now);
+            throw permanentContractError(
+              profile,
+              "proposal",
+              rootActionId,
+              1,
+              "actorPlan",
+              now,
+            );
           }
           const invocation = await invoke(
             "proposal",
             request.rootActionId,
             1,
+            "actorPlan",
             modelInput,
           );
           try {
@@ -2299,15 +2434,24 @@ export function createAuthoritativeKpAdapter(
             ? request.rootActionId
             : "invalid";
           const attempt = Number.isInteger(request?.attempt) ? request.attempt as number : 1;
+          const initialPurpose = narrationInvocationPurpose(request);
           try {
             validateNarrationRequest(request);
           } catch {
-            throw permanentContractError(profile, "narration", rootActionId, attempt, now);
+            throw permanentContractError(
+              profile,
+              "narration",
+              rootActionId,
+              attempt,
+              initialPurpose,
+              now,
+            );
           }
           let invocation = await invoke(
             "narration",
             request.rootActionId,
             attempt,
+            initialPurpose,
             bodyOnlyNarrationModelInput(request, {
               socialResolution: isSocialResolutionKpProfile(profile),
             }),
@@ -2348,6 +2492,7 @@ export function createAuthoritativeKpAdapter(
               "narration",
               request.rootActionId,
               attempt,
+              narrationGroundingRepairPurpose(initialPurpose),
               bodyOnlyNarrationGroundingReplacementModelInput(request, {
                 socialResolution: isSocialResolutionKpProfile(profile),
               }),

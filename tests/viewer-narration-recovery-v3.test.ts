@@ -491,7 +491,10 @@ describe("V3 viewer-local narration recovery", () => {
         async narrate(request) {
           narrationCalls += 1;
           expect(request).not.toHaveProperty("audienceId");
-          expect(request).toMatchObject({ deliveryGeneration: 2 });
+          expect(request).toMatchObject({
+            deliveryGeneration: 2,
+            narrationPurpose: "narrationRecovery",
+          });
           expect(record(
             record(request.projection, "recovery projection").actorAction,
             "recovery actor action",

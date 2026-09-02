@@ -384,7 +384,7 @@ describe("V3 31-interaction production-seam long track", () => {
       supportedRoles: ["primary-kp", "narration"],
       validationSuiteVersion: "authoritative-kp-v3-role-validation-v1",
       validationStatus: "passed",
-      structuredOutputMode: "strict-tool",
+      structuredOutputMode: "tool",
       contextWindowTokens: 64_000,
       latencyTier: "standard",
       costTier: "standard",

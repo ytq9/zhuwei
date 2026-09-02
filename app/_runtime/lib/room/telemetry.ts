@@ -1,7 +1,9 @@
 import { canonicalSha256 } from "../rules/profiles/canonical";
 import {
   MODEL_INVOCATION_FAILURE_STAGES,
+  MODEL_INVOCATION_PURPOSES,
   type ModelInvocationFailureStage,
+  type ModelInvocationPurpose,
 } from "../kp/authoritative-types";
 
 type UnknownRecord = Record<string, unknown>;
@@ -43,6 +45,7 @@ export type RoomTelemetryEvent = {
   promptPolicyVersion: string | undefined;
   modelSchemaVersion: string | undefined;
   modelTask: "proposal" | "narration" | undefined;
+  modelInvocationPurpose: ModelInvocationPurpose | undefined;
   modelAttempt: number | undefined;
   modelStartedAt: number | undefined;
   modelEndedAt: number | undefined;
@@ -165,6 +168,16 @@ function nonNegativeInteger(value: unknown): number | undefined {
 
 function modelTask(value: unknown): RoomTelemetryEvent["modelTask"] {
   return value === "proposal" || value === "narration" ? value : undefined;
+}
+
+const MODEL_INVOCATION_PURPOSE_SET = new Set<string>(MODEL_INVOCATION_PURPOSES);
+
+function modelInvocationPurpose(
+  value: unknown,
+): RoomTelemetryEvent["modelInvocationPurpose"] {
+  return typeof value === "string" && MODEL_INVOCATION_PURPOSE_SET.has(value)
+    ? value as ModelInvocationPurpose
+    : undefined;
 }
 
 function modelResult(value: unknown): RoomTelemetryEvent["modelResult"] {
@@ -307,6 +320,7 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     promptPolicyVersion: stringValue(model?.promptPolicyVersion),
     modelSchemaVersion: stringValue(model?.schemaVersion),
     modelTask: modelTask(model?.task),
+    modelInvocationPurpose: modelInvocationPurpose(model?.invocationPurpose),
     modelAttempt: nonNegativeInteger(model?.attempt),
     modelStartedAt: nonNegativeInteger(model?.startedAt),
     modelEndedAt: nonNegativeInteger(model?.endedAt),

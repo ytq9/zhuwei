@@ -741,3 +741,36 @@
 - 版本与取代：本决策在 0.4 current-only 范围内取代 DEC-018/022 的 production ActionPlan 输入与恢复选择，并取代 DEC-045 的旧 hash 快照；DEC-018/022 的独立领域事件语义、权限与机械裁定不因此失效。当前精确闭包为 runtime `sha256:4ee31c57284246b9bb634ab127a11b4ca1a2e2f30fd4d0fc102621c5096e72e3`、Ruleset `sha256:bc22610d7a75d9f14ec5a0f2905f3bebcd080d6b66acb180179b50ec42018c78`、event schema `sha256:1d1d82768da015c40fc15bf5303259ad8a64084aaa6c04637ba913be9d18686a`、Ability Compiler `sha256:08d7d7e27f001d16543a7fa3edb4328af4fb38be506b35938da169a1ad07eff5`、Item/Standard Gear/NPC `sha256:3617527d10a13c6df79475756851c8de72498307574ff2b1fa8be833e59bfb71` / `sha256:96be7de4760e9f0f0a9da46c795e96f65cae74e58efc2beb83e1c59e94b791b9` / `sha256:6e3ebb6456b8db2e909648378131a249050cfc33da31f2d3ed7f24a654693b88`、Causal Interpreter `sha256:d92dfdbfd68f4aadb38441d45bdd449baa478b099d81dc7b04a5a58edb90f52f`、Form catalog `sha256:996c8b5221f8acb10e66c3cd4d3766d0a2a04d3910609aeee84f418d1c35212b`、causal language `fnv1a64:9b3fb1371759dd5e`、proposal protocol `fnv1a64:9afffc8be976225a`、workflow `fnv1a64:e3abe4c1ff669b12`、module `sha256:e04a553deb9808df6dc614e813fa503c6ff659cae2570e738969ac0e70fbc272`。
 - 验收场景：物品 acquire/transfer/equip/stow/use/cost/break/repair/destroy/replay/project 使用同一定义与实例权威；NPC 与玩家无 sidecar；未知定义安全投影；并发 UI 只有一个 mutation；当前 Form/Causal、party/campaign capability 和五类 recovery 均 exact/fail-closed；旧 ActionPlan 可执行引用为零。
 - 验证边界：Item/NPC、ActorPlan、party/social、Room recovery、Profile/Form canonical 与 UI 的定向结果写入本轮 `refactor-log.md`。用户明确取消冻结门，因此不运行全量 Lint、`npm test` 或 production build；不生成/执行 migration，不部署。
+
+## DEC-047：未来行动合同采用粗粒度 Form、冻结读取集与 Typed Claims
+
+- 决策 ID：DEC-047
+- 日期：2026-09-01
+- 问题：V5 窄 Form/compound 与 `feature/kp-form-graph-v6` 的十五原子 Form/DAG 是否适合作为开放自然语言行动的最终架构；环境互动是否应依赖详细材料阈值；提交结果如何为旁白提供充分且安全的事实材料。
+- 来源类别：用户明确要求分析 feature 分支，并裁定“不一味细分表”，改用 Form 权威/事务边界、稀疏对象语义、KP 判断、Rules 有限原语和投影后材料合同；`SPEC 0001` 继续为最高产品权威。
+- 关联 SPEC 0001：§§2–9、11–14、16–19；A、B、D–K、N、O。不修改玩家意图、KP 叙事权威、Rules 机械权威或 Room 正史写权。
+- 候选方案：继续十窄 Form + compound；直接合并十五原子 Form Graph；对象自由标签 + LLM 直接填最终结果；详细材料/物理引擎；按事务边界的粗粒度 Form + 冻结 Context/read set + 稀疏定义 + 服务器私有 bundle + 有限 Rules 原语 + Typed Claims。
+- 最终选择：未来模型可见 Form 只按 clarification/refusal、observe、social、materialization、world interaction、inventory、objective、story 和 combat 的权限/生命周期划分；普通/高风险是共用 Ruling。`compound` 和模型 `nodeId/dependsOn/DAG` 均不保留，复合行动由服务器从类型化引用和 outcome binding 导出私有 ProposalBundle/InteractionPlan。RequiredContext 显式区分 `epistemicRefs` 与实际 `readSetRefs`；已有动态定义以 exact base/template hash 接受稀疏修订并由服务器合成完整不可变 next definition。KP 决定可行性/DC/因果，Rules 只执行有限原语和 Room 随机。`project(viewer, committedRange)` 生成带 Viewer grant 的 FrozenRenderableClaims，是 Narration 唯一事实材料。
+- 理由：Form 数量应随权威边界而不是动作组合增长；模型图把 compound 复杂性换了位置。冻结认知/读取集补齐当前 projector 信息被 Context 丢弃的问题；稀疏语义足够让 KP 公正判断而无需模拟现实；Typed Claims 在不放宽 Grounding 的前提下解决提交后材料缺失。
+- 玩家可观察行为：玩家继续只说自然语言；“用枪打吊灯”“烧断绳索”“扔石头试陷阱”不因缺少动作模板被拒绝。提交后回应能具体说明真实机械、可感知场景、压力和机会；NPC 声称、角色推断与世界真相保持区分，Narration 失败重试不改世界。
+- 秘密与权限影响：KP Context、NPC Context 和 Viewer Claims 分别按 capability/projector 构造；玩家 `directTargetRefs` 必须属于冻结 Viewer evidence，并解析为当前场景中 Viewer 可操作的 `entity / itemEntry / sceneFeature` 空间角色。内部 `targetRefs/basisRefs` 与 Claim authority basis 仍可引用隐藏关系、区域目标和 KP-only 因果供 Rules 使用，但 Viewer 只取得获 grant 的 refs，隐藏 relation claim 整体丢弃。模型、RAG、页面和 Narration 都不能扩大 Audience 或直接目标。
+- 版本与取代：只对 `SPEC 0016` 的未来完整 Profile 窄取代 `SPEC 0015` 的旧 Catalog、`environmental-stunt`/详细材料阈值和 compound DAG 目标；0015 的 RAG、1+1、body-only、双状态、逐受众恢复和 V5 历史事实不变。DEC-036/041 继续解释当前 V5，待未来 Profile 明确采用时才由本决策取代其目标架构。`feature/kp-form-graph-v6` 只作原型证据，不进入当前 Registry。
+- 实施顺序：阶段一只做无行为变化的大文件拆分与 seam 提取；阶段二实现 vNext conformance；阶段三只完成已有动态 NPC 稀疏语义修订和“用枪打吊灯”两条真实纵切。烧绳索与扔石头试陷阱只作通用/边界样例。
+- 验收场景：FC01–FC09；两条阶段三纵切必须穿过真实 RequiredContext → coarse Form → server bundle → Rules `step` → Room DO → `project(viewer, committedRange)` → Typed Claims/Narration seam，并覆盖幂等、replay、read-set 冲突、直接目标 Viewer 可操作性、类型化空间角色、跨场景/跨 Form 拒绝，以及隐藏关系/区域因果可由 Rules 使用但不向无权 Viewer 泄漏。
+- 验证边界：阶段三代表性纵切与上述泛化闭包已有独立开发期回执；当前证据为 vNext Node 四文件 24/24、Room 纵切 5/5 和 typecheck，不能外推为完整 Form 家族、生产 Registry、真实 Provider/浏览器或发布通过。`feature/kp-form-graph-v6` 源码、既有 V5 测试和样例名称扫描均不单独计为新能力证据；本轮不切生产、不删 V5、不 migration、不部署、不 push。
+
+## DEC-048：五态 Availability、Prospective 引用与真实 Strict Provider 收口
+
+- 决策 ID：DEC-048
+- 日期：2026-09-02
+- 问题：RequiredContext 如何区分未检索到、权威不存在、开放留白和真实歧义；同一 ProposalBundle 新建对象后如何安全立即引用；真实 Provider 约束输出应在何时验证。
+- 来源类别：用户确认 Claude/GPT 交叉审查后的修正方案，并要求以 `SPEC 0001` 的完整 KP Agent 为目标继续实施；现有五态类型、单合同阶段三纵切、可见性解释器、Provider Adapter 与遥测代码的直接核对。
+- 关联 SPEC 0001：§§2–9、12–14、16–19；A、B、D–K、N、O。不改变 KP 对存在性、可行性、DC、风险和叙事因果的判断权，也不扩大 Rules、Room 或 Narration 权威。
+- 候选方案：新增 `sceneObjectCoverage`；检索零命中一律视为开放留白；复数 `sceneFeature` 无限抽取实例；对未提交 overlay 运行完整 projector；只靠 Registry 宣称 strict；完成 Bundle consumer 后再验证 Provider；五态 Availability + 局部否定事实 + 行动相关候选等价 + Rules 内部 prospective 候选状态 + 候选 schema 先行的真实 Provider 探针。
+- 最终选择：复用 `known/knownAbsent/openBlank/ambiguous/unavailable`，不新增覆盖标记。`knownAbsent` 只来自带 scope/revision/basis 的权威否定；`openBlank` 需要版本化开放留白授权并保留 KP 决定存在或不存在的权力；多候选先判定本次行动是否可互换，只有重大差异才澄清。Bundle 新事实用局部 handle 和服务器 prospective ref；Rules `step` 复用正式 reducer 与唯一空间/可见性解释器在分支候选状态中预检，不新增 speculative projector。顺序固定为“权威合同 → 可丢弃最小 strict Bundle schema → 真实 Provider dialect handshake → schema 冻结 → 完整 consumer”。
+- 理由：检索命中不是世界事实，场景覆盖标记会重复五态并侵占 KP 对开放留白的裁定；完整 speculative projector 计算了候选世界不需要的正式 Viewer/Claims 语义并扩大泄密面；先做最小 schema 才能真实测试 constrained decoding，而探针前移能避免 Provider dialect 不兼容扩散到 Bundle、repair、lowering 和 Room 集成。
+- 玩家可观察行为：已有对象可直接使用；合理开放留白可以同一根行动创建并使用对象；KP 也可以固化“这里没有”且后续保持一致；四个本次行动等价的对象不会触发无意义澄清，重大差异才询问。Context/Provider 技术故障不会伪装成世界内不存在或拒绝。
+- 秘密与权限影响：prospective ref 不进入冻结 `viewerEvidenceRefs`；候选状态不产生 Projection、Claims、Audience、Receipt 或公开事件。隐藏候选和秘密差异不进入 clarification 选项；所有可达分支在随机前 fail closed 预检，最终提交后才按正式 `project(viewer, committedRange)` 发布。
+- 版本与取代：深化 DEC-047 与 `SPEC 0016` 的 RequiredContext/Bundle/Provider 完成门，不修改当前 V5 ID/hash 或既有阶段三回执。最终新 Profile 完整替代后按用户既有退役裁定删除 V5 Adapter/fallback，不为旧房新增 migration 或双写；阶段三收口本身不切生产。
+- 验收场景：已有对象 `known`；权威局部否定 `knownAbsent`；开放留白分别固化存在/不存在；等价候选确定性选定；重大差异 clarification；截断/冲突 fail closed；同束 materialize+consume；跨场景、隐藏、重复 producer 或条件不支配在随机前零事件拒绝；一次窄 correction 后整束重验；真实 Provider 正例/负例 handshake；逐 Viewer Claims、幂等与 replay。
+- 验证边界：本决策先冻结合同。阶段三收口实现、真实 Provider 调用及其命令、退出码、延迟、调用数和错误率必须在后续执行日志回填；不得用既有 V5 遥测或确定性 Adapter 结果冒充完成证据。

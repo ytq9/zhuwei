@@ -28,6 +28,7 @@ import {
   type RuntimeProfileManifest,
   type SafeReadModel,
 } from "../rules";
+import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { compileEnvironmentFeature } from "../rules/profiles/environment";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
@@ -84,6 +85,18 @@ import {
   roomPlayerProjection,
 } from "./proposal-adapter";
 import { authorityPendingBindings } from "./pending-bindings";
+import type {
+  RoomVNextAdjudicationBridge,
+  RoomVNextProposalLoweringResult,
+  RoomVNextReadSetPhase,
+} from "./vnext-adjudication-bridge";
+import { requiredContextMatchesPreparedAction } from "./vnext-adjudication-bridge";
+
+const PRODUCTION_RULES_RUNTIME: VersionedRulesRuntime = Object.freeze({
+  project: projectAuthoritative,
+  replay: replayAuthoritative,
+  step: stepAuthoritative,
+});
 
 function exactProfileRef(value: unknown, expected: ProfileRef): value is ProfileRef {
   return isJsonRecord(value)
@@ -822,21 +835,93 @@ function compareEventSeq(left: string, right: string): number {
 export class RoomDurableObject extends DurableObject<Env> {
   private readonly bindings: Env;
   private readonly authorityStore: AuthoritativeRoomStore;
+  private readonly rulesRuntime: VersionedRulesRuntime;
+  private readonly vnextAdjudicationBridge: RoomVNextAdjudicationBridge | undefined;
   private authorityArchiveDatabaseOverride: D1Database | undefined;
   private authorityDeletionDatabaseOverride: D1Database | undefined;
   private authorityArchiveFlight: Promise<void> | undefined;
   private authoritativeReplayCache: AuthorityReplayCache | undefined;
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(
+    ctx: DurableObjectState,
+    env: Env,
+    rulesRuntime: VersionedRulesRuntime = PRODUCTION_RULES_RUNTIME,
+    vnextAdjudicationBridge?: RoomVNextAdjudicationBridge,
+  ) {
     super(ctx, env);
     this.bindings = env;
     this.authorityStore = new AuthoritativeRoomStore(ctx.storage);
+    this.rulesRuntime = rulesRuntime;
+    this.vnextAdjudicationBridge = vnextAdjudicationBridge;
     ctx.blockConcurrencyWhile(async () => {
       this.authorityStore.ensureSchema();
       // Alarm state is durable, but recomputing the minimum on construction
       // also repairs a crash between persisting an archive task and setAlarm.
       await this.scheduleExpiryAlarm();
     });
+  }
+
+  private preparedActionSnapshot(
+    submission: AuthoritySubmissionRow,
+  ): PreparedAuthoritativeAction | undefined {
+    try {
+      const prepared = parseJson<PreparedAuthoritativeAction>(submission.prepared_json);
+      return prepared.kind === "prepared"
+        && prepared.preparedActionId === submission.prepared_action_id
+        && prepared.rootActionId === submission.root_action_id
+        ? prepared
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private validatePreparedReadSet(
+    submission: AuthoritySubmissionRow,
+    replay: AuthorityReplay,
+    phase: RoomVNextReadSetPhase,
+    rulesInput: JsonObject,
+  ): Extract<AuthorityCommitOutcome, { kind: "rejected" }> | undefined {
+    if (this.vnextAdjudicationBridge === undefined) return undefined;
+    const prepared = this.preparedActionSnapshot(submission);
+    if (prepared === undefined) {
+      return rejectedAuthority(
+        "requiredContextIntegrityMismatch",
+        "The frozen adjudication context is unavailable.",
+      );
+    }
+    if (prepared.requiredContext === undefined) return undefined;
+    try {
+      if (
+        prepared.requiredContext.binding.preparedActionId !== submission.prepared_action_id
+        || prepared.requiredContext.binding.rootActionId !== submission.root_action_id
+        || prepared.requiredContext.binding.roomEpochRef !== replay.state.runtimeEpochId
+      ) {
+        return rejectedAuthority(
+          "requiredContextIntegrityMismatch",
+          "The frozen adjudication context no longer matches its prepared action.",
+        );
+      }
+      const validation = this.vnextAdjudicationBridge.validateReadSet({
+        phase,
+        requiredContext: prepared.requiredContext,
+        rulesInput,
+        profiles: replay.profiles,
+        state: replay.state,
+        replayHead: replay.replay.head,
+      });
+      return validation.kind === "valid"
+        ? undefined
+        : rejectedAuthority(
+            "readSetConflict",
+            "A fact used by the frozen adjudication changed after this action was prepared.",
+          );
+    } catch {
+      return rejectedAuthority(
+        "requiredContextIntegrityMismatch",
+        "The frozen adjudication context could not be revalidated.",
+      );
+    }
   }
 
   private async scheduleExpiryAlarm() {
@@ -871,7 +956,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return structuredClone(this.authoritativeReplayCache.value);
     }
     const genesis = parseJson<RuntimeGenesis>(room.genesis_json);
-    const replayed = replayAuthoritative(genesis, this.authorityStore.events());
+    const replayed = this.rulesRuntime.replay(genesis, this.authorityStore.events());
     if (replayed.kind !== "replayed") {
       throw new Error(`authoritative-v2 replay rejected: ${replayed.rejection.code}`);
     }
@@ -899,7 +984,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const prefix = this.authorityStore.events()
       .filter((event) => BigInt(event.eventSeq) < BigInt(first.eventSeq));
-    const reconstructed = replayAuthoritative(replay.genesis, prefix);
+    const reconstructed = this.rulesRuntime.replay(replay.genesis, prefix);
     return reconstructed.kind === "replayed"
       ? reconstructed.state as AuthoritativeWorldState
       : undefined;
@@ -932,7 +1017,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       cursor > 0n
       && prefix[prefix.length - 1]?.eventSeq !== sinceEventSeq
     ) return "invalid";
-    const reconstructed = replayAuthoritative(replay.genesis, prefix);
+    const reconstructed = this.rulesRuntime.replay(replay.genesis, prefix);
     if (
       reconstructed.kind !== "replayed"
       || reconstructed.head.eventSeq !== sinceEventSeq
@@ -1106,7 +1191,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     viewer: PlayerViewer,
     query?: ProjectionQuery,
   ): JsonObject | undefined {
-    const projection = projectAuthoritative(replay.profiles, replay.state, viewer, query);
+    const projection = this.rulesRuntime.project(replay.profiles, replay.state, viewer, query);
     return projection.kind === "rejected" ? undefined : projection as unknown as JsonObject;
   }
 
@@ -1467,7 +1552,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       kind: "kp",
       capability: "internal:kp-spatial-evidence",
     };
-    const kpProjection = projectAuthoritative(replay.profiles, replay.state, kpViewer);
+    const kpProjection = this.rulesRuntime.project(replay.profiles, replay.state, kpViewer);
     if (kpProjection.kind === "rejected" || !("spatialEvidence" in kpProjection)) return undefined;
     const npcViewers: Record<string, JsonObject> = {};
     for (const npc of Object.values(replay.state.entities)
@@ -1479,13 +1564,18 @@ export class RoomDurableObject extends DurableObject<Env> {
         purpose: "kpDecision",
         capability: "internal:npc-limited-knowledge",
       };
-      const projection = projectAuthoritative(replay.profiles, replay.state, viewer);
+      const projection = this.rulesRuntime.project(replay.profiles, replay.state, viewer);
       if (projection.kind === "rejected") return undefined;
       npcViewers[npc.id] = projection as unknown as JsonObject;
     }
     return {
       ...moduleProjection,
-      viewer: { kind: "kp" },
+      kind: kpProjection.kind,
+      runtimeProfiles: structuredClone(kpProjection.runtimeProfiles),
+      stateVersion: kpProjection.stateVersion,
+      activeBranchId: kpProjection.activeBranchId,
+      projectionHash: kpProjection.projectionHash,
+      viewer: structuredClone(kpProjection.viewer),
       actorProjection: roomPlayerProjection(actorProjection, actorViewer.characterId),
       npcViewers,
       ...(kpProjection.adjudicationPrecedents === undefined
@@ -1569,7 +1659,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       .sort((left, right) => left.id.localeCompare(right.id))) {
       const viewer = this.authorityViewerForCharacter(replay.state, character.id);
       if (viewer === undefined) continue;
-      const projection = projectAuthoritative(replay.profiles, replay.state, viewer);
+      const projection = this.rulesRuntime.project(replay.profiles, replay.state, viewer);
       if (!isObserverProjection(projection)) continue;
       audits.push({
         eventSeq: replay.replay.head.eventSeq,
@@ -1800,6 +1890,44 @@ export class RoomDurableObject extends DurableObject<Env> {
     ) {
       return rejectedAuthority("invalidInitialization", "Room initialization is incomplete.");
     }
+    const hasVNextSeed = Object.hasOwn(input, "vNextSeed");
+    const vNextSeed = input.vNextSeed;
+    if (
+      hasVNextSeed
+      && (
+        this.vnextAdjudicationBridge === undefined
+        || !isJsonRecord(vNextSeed)
+        || !hasExactJsonKeys(vNextSeed, [
+          "entityDefinitionBindings",
+          "itemDefinitions",
+          "itemEntries",
+          "semanticDefinitions",
+        ])
+        || !Array.isArray(vNextSeed.semanticDefinitions)
+        || !vNextSeed.semanticDefinitions.every(isJsonRecord)
+        || !Array.isArray(vNextSeed.itemDefinitions)
+        || !vNextSeed.itemDefinitions.every(isJsonRecord)
+        || !Array.isArray(vNextSeed.itemEntries)
+        || !vNextSeed.itemEntries.every(isJsonRecord)
+        || !Array.isArray(vNextSeed.entityDefinitionBindings)
+        || !vNextSeed.entityDefinitionBindings.every(isJsonRecord)
+      )
+    ) {
+      return rejectedAuthority(
+        "invalidInitialization",
+        "The isolated vNext seed is unavailable or is not a closed JSON container.",
+      );
+    }
+    if (vNextSeed !== undefined) {
+      try {
+        await authorityHash(vNextSeed);
+      } catch {
+        return rejectedAuthority(
+          "invalidInitialization",
+          "The isolated vNext seed must contain canonical JSON values.",
+        );
+      }
+    }
     let moduleProfile: AuthoritativeModuleProfile;
     try {
       moduleProfile = await authoritativeModuleProfile(input.moduleId, input.moduleVersion);
@@ -1906,7 +2034,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           : { geometry: structuredClone(location.tacticalGeometry) }),
       };
     });
-    const initialized = stepAuthoritative(input.runtimeProfiles, undefined, {
+    const initialized = this.rulesRuntime.step(input.runtimeProfiles, undefined, {
       kind: "initializeAuthoritativeWorld",
       roomId: input.roomId,
       runtimeEpochId,
@@ -1970,13 +2098,14 @@ export class RoomDurableObject extends DurableObject<Env> {
         })),
       ],
       initialKnowledge: fixtures.initialKnowledge,
+      ...(vNextSeed === undefined ? {} : { vNextSeed: structuredClone(vNextSeed) }),
     });
     if (initialized.kind !== "initialized") {
       return initialized.kind === "rejected"
         ? rejectedAuthority(initialized.rejection.code, initialized.rejection.message)
         : rejectedAuthority("invalidRulesResult", "Rules did not return an initialization result.");
     }
-    const replayed = replayAuthoritative(initialized.genesis, []);
+    const replayed = this.rulesRuntime.replay(initialized.genesis, []);
     if (replayed.kind !== "replayed") {
       return rejectedAuthority(replayed.rejection.code, replayed.rejection.message);
     }
@@ -2001,7 +2130,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         .sort((left, right) => left.characterId.localeCompare(right.characterId))) {
         const viewer = this.authorityViewerForCharacter(initialState, character.characterId);
         if (viewer === undefined) continue;
-        const projection = projectAuthoritative(initialized.profiles, initialState, viewer);
+        const projection = this.rulesRuntime.project(initialized.profiles, initialState, viewer);
         if (projection.kind === "rejected") {
           return rejectedAuthority(
             projection.rejection.code,
@@ -2506,7 +2635,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const replay = this.authoritativeReplay();
     const normalized = this.normalizeRoomAdministrationCommand(commandValue, replay.profiles);
     if ("rejection" in normalized) return normalized.rejection;
-    const stepped = stepAuthoritative(
+    const stepped = this.rulesRuntime.step(
       replay.profiles,
       replay.state,
       normalized.directRulesInput ?? {
@@ -3273,7 +3402,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     let dueActorPlanChildRootActionId: string | undefined;
     let dueActorPlanProjection: JsonObject | undefined;
     if (actionInput.kind === "intent") {
-      const dueProjection = projectAuthoritative(
+      const dueProjection = this.rulesRuntime.project(
         replay.profiles,
         replay.state,
         { kind: "kp", capability: "internal:kp-spatial-evidence" },
@@ -3309,11 +3438,59 @@ export class RoomDurableObject extends DurableObject<Env> {
     const sceneScope = actionInput.kind === "safetyPause" || actionInput.kind === "safetyAdjust"
       ? "room:safety-presentation"
       : `scene:${character.sceneId}`;
+    const preparedActionId = `prepared-action:${actionInput.submissionId}`;
+    let requiredContext: PreparedAuthoritativeAction["requiredContext"];
+    if (this.vnextAdjudicationBridge !== undefined) {
+      let contextResult: ReturnType<RoomVNextAdjudicationBridge["prepareRequiredContext"]>;
+      try {
+        contextResult = this.vnextAdjudicationBridge.prepareRequiredContext({
+          actionInput: structuredClone(canonicalActionInput) as AuthoritativeActionInput,
+          preparedActionId,
+          rootActionId,
+          actorCharacterId: characterId,
+          profiles: replay.profiles,
+          state: replay.state,
+          replayHead: replay.replay.head,
+          kpProjection,
+        });
+      } catch {
+        return rejectedAuthority(
+          "requiredContextUnavailable",
+          "The required adjudication context could not be frozen.",
+        );
+      }
+      if (contextResult.kind === "rejected") {
+        return rejectedAuthority(contextResult.code, contextResult.explanation);
+      }
+      if (contextResult.kind === "accepted") {
+        if (!requiredContextMatchesPreparedAction(contextResult.requiredContext, {
+          preparedActionId,
+          rootActionId,
+          roomEpochRef: replay.state.runtimeEpochId,
+          baseEventSeq: replay.replay.head.eventSeq,
+        })) {
+          return rejectedAuthority(
+            "requiredContextIntegrityMismatch",
+            "The frozen adjudication context has an invalid authority binding.",
+          );
+        }
+        try {
+          await authorityHash(contextResult.requiredContext);
+        } catch {
+          return rejectedAuthority(
+            "requiredContextIntegrityMismatch",
+            "The frozen adjudication context is not canonical JSON.",
+          );
+        }
+        requiredContext = structuredClone(contextResult.requiredContext);
+      }
+    }
     const prepared: PreparedAuthoritativeAction = {
       kind: "prepared",
-      preparedActionId: `prepared-action:${actionInput.submissionId}`,
+      preparedActionId,
       rootActionId,
       kpProjection,
+      ...(requiredContext === undefined ? {} : { requiredContext }),
       resolutionMode,
       ...(actionInput.kind === "intent"
         ? dueActorPlan === undefined
@@ -3838,6 +4015,46 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
       };
     }
+    const prepared = this.preparedActionSnapshot(submission);
+    if (
+      this.vnextAdjudicationBridge?.lowerProposal !== undefined
+      && prepared?.requiredContext !== undefined
+    ) {
+      let lowered: RoomVNextProposalLoweringResult;
+      try {
+        lowered = this.vnextAdjudicationBridge.lowerProposal({
+          proposal: proposalValue,
+          preparedActionId: submission.prepared_action_id,
+          rootActionId: submission.root_action_id,
+          actorCharacterId: submission.character_id,
+          principalId: submission.principal_id,
+          requiredContext: prepared.requiredContext,
+          profiles,
+          state,
+        });
+      } catch {
+        return {
+          rejection: rejectedAuthority(
+            "invalidMechanicalProposal",
+            "The vNext proposal could not be lowered into a Rules operation.",
+          ),
+        };
+      }
+      if (lowered.kind === "rejected") {
+        return { rejection: rejectedAuthority(lowered.code, lowered.explanation) };
+      }
+      if (lowered.kind === "accepted") {
+        return {
+          input: structuredClone(lowered.input),
+          ...(lowered.receiptExtras === undefined
+            ? {}
+            : { receiptExtras: structuredClone(lowered.receiptExtras) }),
+          ...(lowered.forceConcluded === undefined
+            ? {}
+            : { forceConcluded: lowered.forceConcluded }),
+        };
+      }
+    }
     const proposal = normalizeRoomKpProposal(proposalValue);
     if (proposal === undefined) {
       return {
@@ -3939,7 +4156,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           );
           const actorProjection = actorViewer === undefined
             ? undefined
-            : projectAuthoritative(profiles, state, actorViewer);
+            : this.rulesRuntime.project(profiles, state, actorViewer);
           const visibleFactIds = actorProjection?.kind === "projected"
             && "visibleFacts" in actorProjection
             ? new Set(actorProjection.visibleFacts.map((fact) => fact.id))
@@ -4994,7 +5211,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           ? this.authorityViewerForCharacter(priorState, character.id)
           : undefined);
       if (viewer === undefined) continue;
-      const projection = projectAuthoritative(profiles, state, viewer, {
+      const projection = this.rulesRuntime.project(profiles, state, viewer, {
         committedRange: {
           receiptId,
           actorCharacterId,
@@ -5003,10 +5220,16 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
       });
       if (!isObserverProjection(projection)) continue;
-      if (projection.committedDelta === undefined
-        || projection.committedDelta.changes.length === 0) continue;
+      const projectionRecord = projection as unknown as JsonObject;
+      const claims = isJsonRecord(projectionRecord.renderableClaims)
+        && Array.isArray(projectionRecord.renderableClaims.claims)
+        ? projectionRecord.renderableClaims.claims
+        : [];
+      const hasCommittedDelta = projection.committedDelta !== undefined
+        && projection.committedDelta.changes.length > 0;
+      if (!hasCommittedDelta && claims.length === 0) continue;
       const projectedForNarration = narrationProjection(
-        projection as unknown as JsonObject,
+        projectionRecord,
         character.id,
         receiptId,
         state.entities,
@@ -5417,7 +5640,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       });
     }
 
-    const dueProjection = projectAuthoritative(
+    const dueProjection = this.rulesRuntime.project(
       replay.profiles,
       replay.state,
       { kind: "kp", capability: "internal:kp-spatial-evidence" },
@@ -5442,7 +5665,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         input: rulesInput,
       });
     }
-    const stepped = stepAuthoritative(replay.profiles, replay.state, rulesInput);
+    const stepped = this.rulesRuntime.step(replay.profiles, replay.state, rulesInput);
     if (stepped.kind === "rejected") {
       return rejectedAuthority(stepped.rejection.code, stepped.rejection.message);
     }
@@ -6055,6 +6278,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
     }
     const actionStage = this.authorityStore.actionStage(preparedActionId);
+    const usesVNextTransactionReadSet = this.preparedActionSnapshot(submission)
+      ?.requiredContext !== undefined;
 
     let proposalHash: string;
     let adapted: {
@@ -6192,13 +6417,14 @@ export class RoomDurableObject extends DurableObject<Env> {
         return { kind: "retryableFailure", code: "proposalRecoveryIntegrityMismatch" };
       }
     }
-    if (this.authorityStore.scopeVersion(submission.scene_scope) !== submission.prepared_scope_version) {
+    if (!usesVNextTransactionReadSet
+      && this.authorityStore.scopeVersion(submission.scene_scope)
+        !== submission.prepared_scope_version) {
       return rejectedAuthority(
         "scopeConflict",
         "A relevant scene scope changed after this action was prepared.",
       );
     }
-
     const needsKp = (diagnostics: JsonObject[]): Extract<AuthorityCommitOutcome, { kind: "needsKp" }> => ({
       kind: "needsKp",
       receipt: {
@@ -6440,7 +6666,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       frozenParametersHash: string;
     }> = [];
     if (randomnessBatch === undefined) {
-      const first = stepAuthoritative(replay.profiles, replay.state, rulesInput);
+      const readSetConflict = this.validatePreparedReadSet(
+        submission,
+        replay,
+        "beforeFirstRulesStep",
+        rulesInput,
+      );
+      if (readSetConflict !== undefined) return readSetConflict;
+      const first = this.rulesRuntime.step(replay.profiles, replay.state, rulesInput);
       if (first.kind === "needsKp") {
         return needsKp(first.diagnostics.map((diagnostic) => ({
           code: diagnostic.code,
@@ -6584,7 +6817,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           if (
             current === undefined
             || current.status !== "prepared"
-            || this.authorityStore.scopeVersion(current.scene_scope) !== current.prepared_scope_version
+            || (!usesVNextTransactionReadSet
+              && this.authorityStore.scopeVersion(current.scene_scope)
+                !== current.prepared_scope_version)
           ) {
             return {
               kind: "outcome" as const,
@@ -6647,7 +6882,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           if (
             current === undefined
             || current.status !== "prepared"
-            || this.authorityStore.scopeVersion(current.scene_scope) !== current.prepared_scope_version
+            || (!usesVNextTransactionReadSet
+              && this.authorityStore.scopeVersion(current.scene_scope)
+                !== current.prepared_scope_version)
           ) {
             return {
               kind: "outcome" as const,
@@ -6668,6 +6905,15 @@ export class RoomDurableObject extends DurableObject<Env> {
                 code: "sceneRandomnessSettlementInProgress",
               },
             };
+          }
+          const readSetConflict = this.validatePreparedReadSet(
+            current,
+            this.authoritativeReplay(),
+            "beforeFirstRulesStep",
+            rulesInput,
+          );
+          if (readSetConflict !== undefined) {
+            return { kind: "outcome" as const, outcome: readSetConflict };
           }
           this.authorityStore.appendEvents(first.events);
           this.authorityStore.updateState(first.state);
@@ -6798,6 +7044,13 @@ export class RoomDurableObject extends DurableObject<Env> {
           if (this.authorityStore.roomDeletion() !== undefined) {
             return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
           }
+          const readSetConflict = this.validatePreparedReadSet(
+            submission,
+            replay,
+            "beforeRandomnessWave",
+            rulesInput,
+          );
+          if (readSetConflict !== undefined) return readSetConflict;
           const generated: AuthorityRandomnessCandidate[] = activeRequests.map((entry) => ({
             randomnessId: entry.randomnessId,
             faces: this.authorityDiceTerms(entry.request)!
@@ -6831,8 +7084,9 @@ export class RoomDurableObject extends DurableObject<Env> {
               current === undefined
               || current.status !== "awaitingRandomness"
               || current.proposal_hash !== proposalHash
-              || this.authorityStore.scopeVersion(current.scene_scope)
-                !== current.prepared_scope_version
+              || (!usesVNextTransactionReadSet
+                && this.authorityStore.scopeVersion(current.scene_scope)
+                  !== current.prepared_scope_version)
               || racedBatch === undefined
               || racedBatch.proposal_hash !== proposalHash
               || racedBatch.requests_json !== randomnessBatch!.requests_json
@@ -6915,7 +7169,14 @@ export class RoomDurableObject extends DurableObject<Env> {
             })),
           };
         }
-        const fulfilled = stepAuthoritative(replay.profiles, replay.state, fulfillmentInput);
+        const readSetConflict = this.validatePreparedReadSet(
+          submission,
+          replay,
+          "beforeRandomnessWave",
+          rulesInput,
+        );
+        if (readSetConflict !== undefined) return readSetConflict;
+        const fulfilled = this.rulesRuntime.step(replay.profiles, replay.state, fulfillmentInput);
         if (fulfilled.kind === "needsKp") {
           return needsKp(fulfilled.diagnostics.map((diagnostic) => ({
             code: diagnostic.code,
@@ -7015,8 +7276,9 @@ export class RoomDurableObject extends DurableObject<Env> {
               current === undefined
               || current.status !== "awaitingRandomness"
               || current.proposal_hash !== proposalHash
-              || this.authorityStore.scopeVersion(current.scene_scope)
-                !== current.prepared_scope_version
+              || (!usesVNextTransactionReadSet
+                && this.authorityStore.scopeVersion(current.scene_scope)
+                  !== current.prepared_scope_version)
               || racedBatch === undefined
               || racedBatch.proposal_hash !== proposalHash
               || racedBatch.requests_json !== randomnessBatch!.requests_json
@@ -7032,6 +7294,15 @@ export class RoomDurableObject extends DurableObject<Env> {
                   code: "randomnessJournalIntegrityMismatch",
                 },
               };
+            }
+            const readSetConflict = this.validatePreparedReadSet(
+              current,
+              this.authoritativeReplay(),
+              "beforeRandomnessWave",
+              rulesInput,
+            );
+            if (readSetConflict !== undefined) {
+              return { kind: "outcome" as const, outcome: readSetConflict };
             }
             this.authorityStore.appendEvents(fulfilled.events);
             this.authorityStore.updateState(fulfilled.state);
@@ -7246,10 +7517,10 @@ export class RoomDurableObject extends DurableObject<Env> {
     const actorViewer = this.authorityViewerForCharacter(resolved.state, submission.character_id);
     const priorActorViewer = this.authorityViewerForCharacter(replay.state, submission.character_id);
     const actorProjection = actorViewer !== undefined
-      ? projectAuthoritative(replay.profiles, resolved.state, actorViewer)
+      ? this.rulesRuntime.project(replay.profiles, resolved.state, actorViewer)
       : priorActorViewer === undefined
         ? undefined
-        : projectAuthoritative(replay.profiles, replay.state, priorActorViewer);
+        : this.rulesRuntime.project(replay.profiles, replay.state, priorActorViewer);
     if (actorProjection === undefined || actorProjection.kind === "rejected") {
       return rejectedAuthority("projectionFailure", "The committed actor projection is unavailable.");
     }
@@ -7563,6 +7834,15 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
+      const readSetConflict = this.validatePreparedReadSet(
+        current,
+        currentReplay,
+        "beforeFinalCommit",
+        rulesInput,
+      );
+      if (readSetConflict !== undefined) {
+        return { outcome: readSetConflict, committedHere: false };
+      }
       let currentSuspendedParent: AuthoritySubmissionRow | undefined;
       if (suspendedDue !== undefined) {
         const currentSuspendedStage = this.authorityStore.actionStageByChildRoot(
@@ -7602,7 +7882,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       if (
         current.status !== (usedRandomnessJournal ? "awaitingRandomness" : "prepared")
-        || this.authorityStore.scopeVersion(current.scene_scope) !== current.prepared_scope_version
+        || (!usesVNextTransactionReadSet
+          && this.authorityStore.scopeVersion(current.scene_scope)
+            !== current.prepared_scope_version)
       ) {
         return {
           outcome: rejectedAuthority(
@@ -8640,7 +8922,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (projectionQuery === "invalid") {
           return { kind: "retryableFailure", code: "projectionIntegrity" };
         }
-        const readModel = projectAuthoritative(
+        const readModel = this.rulesRuntime.project(
           replay.profiles,
           replay.state,
           viewer,
@@ -8738,7 +9020,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (projectionQuery === "invalid") {
       return { kind: "retryableFailure", code: "projectionIntegrity" };
     }
-    const projected = projectAuthoritative(
+    const projected = this.rulesRuntime.project(
       replay.profiles,
       replay.state,
       viewer,
@@ -8925,7 +9207,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
     }
     const actorCharacterId = targetReceipt.actorCharacterId;
-    const corrected = stepAuthoritative(replay.profiles, replay.state, {
+    const corrected = this.rulesRuntime.step(replay.profiles, replay.state, {
       kind: "applyServiceCorrection",
       actorCharacterId,
       correctionAuthority: {

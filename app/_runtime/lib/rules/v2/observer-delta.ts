@@ -1,5 +1,6 @@
 import { canonicalSha256 } from "../profiles/canonical";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
+import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type {
   AuthoritativeWorldState,
@@ -20,6 +21,12 @@ import type {
   SafeReadModel,
 } from "./model";
 import { eventHash, foldEvent, validateEventEnvelope } from "./events";
+import {
+  deriveAuthorityClaimsFromCommittedRange,
+  projectRenderableClaims,
+  type FrozenAuthorityClaims,
+  type FrozenRenderableClaims,
+} from "./claims";
 import { rejected } from "./results";
 import { characterTimelineId } from "./timeline";
 import {
@@ -362,8 +369,9 @@ function verifiedCommittedRange(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   query: ProjectionQuery | undefined,
-): VerifiedCommittedRange | undefined {
+): VerifiedCommittedRange | "invalid" | undefined {
   const rangeValue = isRecord(query) ? query.committedRange : undefined;
+  if (rangeValue === undefined) return undefined;
   if (
     !isRecord(rangeValue)
     || !isNonEmptyString(rangeValue.receiptId)
@@ -371,21 +379,21 @@ function verifiedCommittedRange(
     || !isAuthoritativeWorldState(rangeValue.priorState)
     || !Array.isArray(rangeValue.events)
     || rangeValue.events.length === 0
-  ) return undefined;
+  ) return "invalid";
 
   const receipt = Object.values(state.receipts)
     .find((candidate) => candidate.receiptId === rangeValue.receiptId);
   if (
     receipt === undefined
     || !receipt.subjectCharacterIds.includes(rangeValue.actorCharacterId)
-  ) return undefined;
+  ) return "invalid";
 
   let folded = structuredClone(rangeValue.priorState);
   const events: EventEnvelope[] = [];
   try {
     for (const eventValue of rangeValue.events) {
       const validation = validateEventEnvelope(eventValue);
-      if (!validation.ok) return undefined;
+      if (!validation.ok) return "invalid";
       const event = validation.event;
       const expectedSeq = (BigInt(folded.version) + 1n).toString();
       if (
@@ -398,17 +406,17 @@ function verifiedCommittedRange(
         || event.stateBeforeHash !== hashWorldState(folded)
         || event.profiles.manifest.profileId !== profiles.manifest.profileId
         || event.profiles.manifest.profileHash !== profiles.manifest.profileHash
-      ) return undefined;
+      ) return "invalid";
       const next = foldEvent(folded, event);
       if (
         hashWorldState(next) !== event.stateHashAfter
         || eventHash(event) !== event.eventHash
-      ) return undefined;
+      ) return "invalid";
       folded = next;
       events.push(event);
     }
   } catch {
-    return undefined;
+    return "invalid";
   }
 
   const first = events[0];
@@ -423,16 +431,18 @@ function verifiedCommittedRange(
     segmentFrom = BigInt(first.eventSeq);
     segmentTo = BigInt(last.eventSeq);
   } catch {
-    return undefined;
+    return "invalid";
   }
+  const vnext = worldInteractionProfileEnabled(profiles.extensions);
   if (
-    receiptFrom > segmentFrom
-    || receiptTo < segmentTo
+    (vnext
+      ? receiptFrom !== segmentFrom || receiptTo !== segmentTo
+      : receiptFrom > segmentFrom || receiptTo < segmentTo)
     || folded.version !== state.version
     || folded.lastEventId !== state.lastEventId
     || folded.eventHeadHash !== state.eventHeadHash
     || hashWorldState(folded) !== hashWorldState(state)
-  ) return undefined;
+  ) return "invalid";
 
   return {
     actorCharacterId: rangeValue.actorCharacterId,
@@ -869,15 +879,241 @@ function socialObserverEventChanges(
   return changes;
 }
 
+function observerRenderableClaims(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  viewerValue: PlayerViewer | NpcViewer | unknown,
+  after: SafeReadModel,
+  range: VerifiedCommittedRange | undefined,
+  projectCurrent: CurrentProjectionProjector,
+): FrozenRenderableClaims | "invalid" | undefined {
+  if (range === undefined || !worldInteractionProfileEnabled(profiles.extensions)) return undefined;
+  const beforeValue = projectCurrent(profiles, range.priorState, viewerValue);
+  const before = beforeValue.kind === "rejected"
+    || isKpSpatialReadModel(beforeValue)
+    || isLifecycleReadModel(beforeValue)
+    ? undefined
+    : beforeValue;
+  let authorityClaims: FrozenAuthorityClaims;
+  try {
+    authorityClaims = deriveAuthorityClaimsFromCommittedRange({
+      receipt: range.receipt,
+      actorCharacterId: range.actorCharacterId,
+      priorState: range.priorState,
+      state,
+      events: range.events,
+    });
+  } catch {
+    return "invalid";
+  }
+  const refs = viewerClaimRefs(
+    state,
+    range,
+    viewerValue,
+    before,
+    after,
+    authorityClaims,
+  );
+  let projected: FrozenRenderableClaims;
+  try {
+    projected = projectRenderableClaims(authorityClaims, {
+      viewerKey: viewerClaimKey(viewerValue, after.viewer.subjectId),
+      refs,
+      projectionHash: after.projectionHash,
+    });
+  } catch {
+    return "invalid";
+  }
+  return projected.claims.length === 0 ? undefined : projected;
+}
+
+function viewerClaimKey(
+  viewerValue: PlayerViewer | NpcViewer | unknown,
+  viewerCharacterId: string,
+): string {
+  if (isRecord(viewerValue)
+    && viewerValue.kind === "player"
+    && isNonEmptyString(viewerValue.principalId)) {
+    return `${viewerValue.principalId}\u001f${viewerCharacterId}`;
+  }
+  return `npc:${viewerCharacterId}`;
+}
+
+function viewerClaimRefs(
+  state: AuthoritativeWorldState,
+  range: VerifiedCommittedRange,
+  viewerValue: PlayerViewer | NpcViewer | unknown,
+  before: SafeReadModel | undefined,
+  after: SafeReadModel,
+  authorityClaims: FrozenAuthorityClaims,
+): string[] {
+  const viewerCharacterId = after.viewer.subjectId;
+  const refs = new Set<string>([viewerCharacterId, range.receipt.receiptId]);
+  collectProjectedRefs(before, refs);
+  collectProjectedRefs(after, refs);
+
+  for (const event of range.events) {
+    if (!visibilityPolicyVisibleToViewer(
+      event.visibilityPolicyId,
+      event.payload,
+      state,
+      range,
+      viewerValue,
+      viewerCharacterId,
+    )) continue;
+    refs.add(event.visibilityPolicyId);
+    refs.add(event.eventId);
+  }
+
+  for (const [definitionRef, definition] of Object.entries(state.campaignRuntime.definitions)) {
+    if (!isRecord(definition) || definition.schema !== "zhuwei.semantic-definition/vnext-1") continue;
+    const policyRef = isNonEmptyString(definition.visibilityPolicyRef)
+      ? definition.visibilityPolicyRef
+      : undefined;
+    if (policyRef === undefined || !visibilityPolicyVisibleToViewer(
+      policyRef,
+      definition.content,
+      state,
+      range,
+      viewerValue,
+      viewerCharacterId,
+    )) continue;
+    refs.add(policyRef);
+    refs.add(definitionRef);
+    if (isNonEmptyString(definition.definitionId)) refs.add(definition.definitionId);
+    collectReferenceFields(definition.content, refs);
+  }
+
+  for (const claim of authorityClaims.claims) {
+    if (claim.visibility.kind !== "grants") continue;
+    for (const policyRef of claim.visibility.allOf) {
+      if (refs.has(policyRef)) continue;
+      if (visibilityPolicyVisibleToViewer(
+        policyRef,
+        undefined,
+        state,
+        range,
+        viewerValue,
+        viewerCharacterId,
+      )) refs.add(policyRef);
+    }
+  }
+  return [...refs].sort();
+}
+
+function collectProjectedRefs(value: unknown, refs: Set<string>): void {
+  if (value === undefined) return;
+  const seen = new WeakSet<object>();
+  const visit = (candidate: unknown, field = ""): void => {
+    if (candidate === null || candidate === undefined) return;
+    if (typeof candidate === "string") {
+      if (referenceField(field) || candidate.includes(":")) refs.add(candidate);
+      return;
+    }
+    if (typeof candidate !== "object") return;
+    if (seen.has(candidate as object)) return;
+    seen.add(candidate as object);
+    if (Array.isArray(candidate)) {
+      for (const entry of candidate) visit(entry, field);
+      return;
+    }
+    for (const [key, nested] of Object.entries(candidate as Record<string, unknown>)) {
+      if (key.includes(":")) refs.add(key);
+      visit(nested, key);
+    }
+  };
+  visit(value);
+}
+
+function collectReferenceFields(value: unknown, refs: Set<string>): void {
+  if (value === null || value === undefined) return;
+  if (Array.isArray(value)) {
+    for (const entry of value) collectReferenceFields(entry, refs);
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [field, nested] of Object.entries(value)) {
+    if (typeof nested === "string" && referenceField(field)) refs.add(nested);
+    if (Array.isArray(nested) && referenceField(field)) {
+      for (const entry of nested) if (isNonEmptyString(entry)) refs.add(entry);
+    }
+    collectReferenceFields(nested, refs);
+  }
+}
+
+function referenceField(field: string): boolean {
+  return field === "id"
+    || field.endsWith("Id")
+    || field.endsWith("Ids")
+    || field.endsWith("Ref")
+    || field.endsWith("Refs");
+}
+
+function visibilityPolicyVisibleToViewer(
+  policyRef: string,
+  subject: unknown,
+  state: AuthoritativeWorldState,
+  range: VerifiedCommittedRange,
+  viewerValue: PlayerViewer | NpcViewer | unknown,
+  viewerCharacterId: string,
+): boolean {
+  if (policyRef === "visibility:public" || policyRef.startsWith("visibility:public:")) return true;
+  if (policyRef === `visibility:character-controller:${viewerCharacterId}`
+    || policyRef === `visibility:knowledge-holder:${viewerCharacterId}`
+    || policyRef === `visibility:npc:${viewerCharacterId}`) return true;
+  if (isRecord(viewerValue)
+    && isNonEmptyString(viewerValue.principalId)
+    && policyRef === `visibility:principal:${viewerValue.principalId}`) return true;
+
+  const viewerPriorSceneId = range.priorState.entities[viewerCharacterId]?.sceneId;
+  const viewerCurrentSceneId = state.entities[viewerCharacterId]?.sceneId;
+  const actorPriorSceneId = range.priorState.entities[range.actorCharacterId]?.sceneId;
+  const actorCurrentSceneId = state.entities[range.actorCharacterId]?.sceneId;
+  const coPresent = viewerCharacterId === range.actorCharacterId
+    || (viewerPriorSceneId !== undefined && viewerPriorSceneId === actorPriorSceneId)
+    || (viewerCurrentSceneId !== undefined && viewerCurrentSceneId === actorCurrentSceneId);
+  if (policyRef === "visibility:scene-observers"
+    || policyRef === "visibility:combat-observers") {
+    if (!coPresent) return false;
+    if (!isRecord(subject)) return true;
+    const sceneRef = isNonEmptyString(subject.sceneRef)
+      ? subject.sceneRef
+      : isNonEmptyString(subject.sceneId) ? subject.sceneId : undefined;
+    return sceneRef === undefined
+      || sceneRef === viewerPriorSceneId
+      || sceneRef === viewerCurrentSceneId;
+  }
+
+  if (policyRef === "visibility:relationship-participants") {
+    return isRecord(subject)
+      && Array.isArray(subject.subjectIds)
+      && subject.subjectIds.includes(viewerCharacterId);
+  }
+  if (policyRef === "visibility:promise-participants") {
+    return isRecord(subject)
+      && (subject.promisorId === viewerCharacterId || subject.promiseeId === viewerCharacterId);
+  }
+  if (policyRef === "visibility:debt-participants") {
+    return isRecord(subject)
+      && (subject.debtorId === viewerCharacterId || subject.creditorId === viewerCharacterId);
+  }
+  if (policyRef === "visibility:party-group") {
+    return Object.values(state.multiplayerRuntime.partyGroups).some((group) =>
+      group.status === "active"
+      && Array.isArray(group.memberCharacterIds)
+      && group.memberCharacterIds.includes(viewerCharacterId));
+  }
+  return false;
+}
+
 function observerCommittedDelta(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   viewerValue: PlayerViewer | NpcViewer | unknown,
   after: SafeReadModel,
-  query: ProjectionQuery | undefined,
+  range: VerifiedCommittedRange | undefined,
   projectCurrent: CurrentProjectionProjector,
 ): ObserverCommittedDelta | undefined {
-  const range = verifiedCommittedRange(profiles, state, query);
   if (range === undefined) return undefined;
   const viewerCharacterId = after.viewer.subjectId;
   const actor = viewerCharacterId === range.actorCharacterId;
@@ -932,10 +1168,9 @@ function projectFormerActorCommittedResult(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   viewerValue: PlayerViewer | NpcViewer | unknown,
-  query: ProjectionQuery | undefined,
+  range: VerifiedCommittedRange | undefined,
   projectCurrent: CurrentProjectionProjector,
 ): SafeReadModel | undefined {
-  const range = verifiedCommittedRange(profiles, state, query);
   if (range === undefined || !isRecord(viewerValue) || viewerValue.kind !== "player") {
     return undefined;
   }
@@ -990,14 +1225,32 @@ export function applyObserverRangeProjection(
   projected: CurrentProjection,
   projectCurrent: CurrentProjectionProjector,
 ): ProjectionResult {
+  const rangeStatus = verifiedCommittedRange(profiles, state, query);
+  const committedRange = rangeStatus === "invalid" ? undefined : rangeStatus;
+  const vnextClaims = worldInteractionProfileEnabled(profiles.extensions);
   if (projected.kind === "rejected") {
     return projectFormerActorCommittedResult(
       profiles,
       state,
       viewerValue,
-      query,
+      committedRange,
       projectCurrent,
     ) ?? projected;
+  }
+  if (vnextClaims && rangeStatus === "invalid") {
+    return rejected(
+      "projectionIntegrity",
+      "The committed event range is incomplete or does not match its authoritative Receipt and hashes.",
+    );
+  }
+  if (vnextClaims
+    && isRecord(query)
+    && query.committedRange !== undefined
+    && query.incrementalRange !== undefined) {
+    return rejected(
+      "projectionIntegrity",
+      "A committed Claim projection cannot also request an observer increment.",
+    );
   }
   if (isLifecycleReadModel(projected)) {
     const incrementalDelta = lifecycleIncrementalDelta(
@@ -1050,14 +1303,32 @@ export function applyObserverRangeProjection(
     state,
     viewerValue,
     projected,
-    query,
+    committedRange,
     projectCurrent,
   );
-  if (committedDelta === undefined) return projected;
+  const renderableClaims = observerRenderableClaims(
+    profiles,
+    state,
+    viewerValue,
+    projected,
+    committedRange,
+    projectCurrent,
+  );
+  if (renderableClaims === "invalid") {
+    return rejected(
+      "projectionIntegrity",
+      "The committed event range could not produce canonical Viewer Claims.",
+    );
+  }
+  if (committedDelta === undefined && renderableClaims === undefined) return projected;
   const { projectionHash: _projectionHash, ...hashable } = projected;
+  const additions = {
+    ...(committedDelta === undefined ? {} : { committedDelta }),
+    ...(renderableClaims === undefined ? {} : { renderableClaims }),
+  };
   return {
     ...projected,
-    committedDelta,
-    projectionHash: canonicalSha256({ ...hashable, committedDelta }),
+    ...additions,
+    projectionHash: canonicalSha256({ ...hashable, ...additions }),
   };
 }

@@ -1,5 +1,6 @@
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import type { ProfileRef } from "../rules/profiles/types";
+import type { KpProposalRequestPurpose } from "../kp/authoritative-types";
 import {
   isTacticalPosition,
   isTacticalSpatialRevision,
@@ -1118,13 +1119,25 @@ async function publishDeliveryPlan(
           };
           continue;
         }
-        const narration = await context.kp.narrate({
-          rootActionId: prepared.rootActionId,
-          receipt: result.receipt,
-          audienceId: audience.audienceId,
-          projection: audience.projection,
-          deliveryGeneration,
-        });
+        const vNextClaims = isRecord(audience.projection)
+          && isRecord(audience.projection.renderableClaims)
+          ? audience.projection.renderableClaims
+          : undefined;
+        const narration = await context.kp.narrate(vNextClaims === undefined
+          ? {
+              rootActionId: prepared.rootActionId,
+              receipt: result.receipt,
+              audienceId: audience.audienceId,
+              projection: audience.projection,
+              deliveryGeneration,
+            }
+          : {
+              rootActionId: prepared.rootActionId,
+              receipt: result.receipt,
+              viewerKey: vNextClaims.viewerKey,
+              renderableClaims: vNextClaims,
+              deliveryGeneration,
+            });
         const publicationResult = await context.authority.publishDelivery!(
           { publishCapability: deliveryPlan.publishCapability },
           {
@@ -1437,6 +1450,7 @@ async function handleRoomActionInternal(
   if (isRejectedValidation(rebuilt)) return rebuilt;
   let activeInput = rebuilt;
   let commitPrincipal = context.principal;
+  let proposalPurpose: KpProposalRequestPurpose = "initialProposal";
 
   if (rebuilt.kind === "acknowledge") {
     try {
@@ -1501,6 +1515,7 @@ async function handleRoomActionInternal(
       return authorityFailure(undefined, resumed.receipt);
     }
     commitPrincipal = restoredPrincipal;
+    proposalPurpose = "randomnessContinuation";
   }
 
   if (preparedValue === undefined) {
@@ -1523,6 +1538,7 @@ async function handleRoomActionInternal(
       ? preparedValue
       : undefined;
   if (resumedPrepared !== undefined) {
+    const resumedInputKind = activeInput.kind;
     const restored = rebuildInput(resumedPrepared.resumedActionInput);
     const restoredPrincipal = resumedPrincipalContext(
       resumedPrepared.resumedPrincipalContext,
@@ -1536,6 +1552,11 @@ async function handleRoomActionInternal(
     }
     activeInput = restored;
     commitPrincipal = restoredPrincipal;
+    if (resumedInputKind === "answer") {
+      proposalPurpose = "clarificationContinuation";
+    } else if (resumedInputKind === "retry") {
+      proposalPurpose = "proposalRetry";
+    }
     let refreshed: unknown;
     try {
       refreshed = await context.authority.prepare(commitPrincipal, activeInput);
@@ -1706,6 +1727,7 @@ async function handleRoomActionInternal(
     if (commitValue.kind !== "continue" || !isRecord(commitValue.prepared)) {
       return authorityFailure(undefined, commitValue.receipt ?? preparedValue.receipt);
     }
+    const continuedInputKind = activeInput.kind;
     const restored = rebuildInput(commitValue.prepared.resumedActionInput);
     const restoredPrincipal = resumedPrincipalContext(
       commitValue.prepared.resumedPrincipalContext,
@@ -1719,6 +1741,9 @@ async function handleRoomActionInternal(
     }
     activeInput = restored;
     commitPrincipal = restoredPrincipal;
+    if (continuedInputKind === "answer") {
+      proposalPurpose = "clarificationContinuation";
+    }
     let refreshed: unknown;
     try {
       refreshed = await context.authority.prepare(commitPrincipal, activeInput);
@@ -1750,16 +1775,28 @@ async function handleRoomActionInternal(
   for (let attempt = 1; attempt <= MAX_PROPOSAL_ATTEMPTS; attempt += 1) {
     let proposal: unknown;
     try {
-      proposal = await context.kp.propose({
-        ...(preparedValue.phase === undefined ? {} : { phase: preparedValue.phase }),
-        preparedActionId: identifiers.preparedActionId,
-        rootActionId: identifiers.rootActionId,
-        input: activeInput,
-        projection: preparedValue.kpProjection,
+      const retryMetadata = {
         attempt,
+        proposalPurpose,
         ...(diagnostics !== undefined ? { diagnostics } : {}),
         ...(priorProposal === undefined ? {} : { priorProposal }),
-      });
+      };
+      proposal = await context.kp.propose(preparedValue.requiredContext === undefined
+        ? {
+            ...(preparedValue.phase === undefined ? {} : { phase: preparedValue.phase }),
+            preparedActionId: identifiers.preparedActionId,
+            rootActionId: identifiers.rootActionId,
+            input: activeInput,
+            projection: preparedValue.kpProjection,
+            ...retryMetadata,
+          }
+        : {
+            ...(preparedValue.phase === undefined ? {} : { phase: preparedValue.phase }),
+            preparedActionId: identifiers.preparedActionId,
+            rootActionId: identifiers.rootActionId,
+            requiredContext: preparedValue.requiredContext,
+            ...retryMetadata,
+          });
     } catch (error) {
       return modelFailure(error, preparedValue.receipt);
     }
@@ -1867,12 +1904,25 @@ export async function handleViewerNarrationRecovery(
 
   let failure: ReturnType<typeof narrationFailure> | undefined;
   try {
-    const narration = await context.kp.narrate({
-      rootActionId,
-      receipt: begunValue.receipt,
-      projection: begunValue.projection,
-      deliveryGeneration,
-    });
+    const recoveryClaims = isRecord(begunValue.projection)
+      && isRecord(begunValue.projection.renderableClaims)
+      ? begunValue.projection.renderableClaims
+      : undefined;
+    const narration = await context.kp.narrate(recoveryClaims === undefined
+      ? {
+          rootActionId,
+          narrationPurpose: "narrationRecovery",
+          receipt: begunValue.receipt,
+          projection: begunValue.projection,
+          deliveryGeneration,
+        }
+      : {
+          rootActionId,
+          receipt: begunValue.receipt,
+          viewerKey: recoveryClaims.viewerKey,
+          renderableClaims: recoveryClaims,
+          deliveryGeneration,
+        });
     const body = publicationNarration(narration, protocol).body;
     const published = await context.authority.publishViewerNarrationRecovery(
       context.principal,

@@ -24,6 +24,7 @@ const ALLOWED_OUTPUT_KEYS = Object.freeze([
   "modelAttempt",
   "modelEndedAt",
   "modelInputTokens",
+  "modelInvocationPurpose",
   "modelOutputTokens",
   "modelProfileVersion",
   "modelProvider",
@@ -101,6 +102,7 @@ const BASE_INPUT = Object.freeze({
     promptPolicyVersion: "authoritative-kp-private-form-narrow-tools-policy-v2",
     schemaVersion: "authoritative-kp-private-form-narrow-tools-v2",
     task: "proposal",
+    invocationPurpose: "semanticRepair",
     attempt: 2,
     startedAt: 1_777_000_000_000,
     endedAt: 1_777_000_045_123,
@@ -231,6 +233,7 @@ test("structured telemetry emits only the fixed non-content whitelist and recurs
   assert.equal(event.promptPolicyVersion, BASE_INPUT.model.promptPolicyVersion);
   assert.equal(event.modelSchemaVersion, BASE_INPUT.model.schemaVersion);
   assert.equal(event.modelTask, BASE_INPUT.model.task);
+  assert.equal(event.modelInvocationPurpose, BASE_INPUT.model.invocationPurpose);
   assert.equal(event.modelAttempt, BASE_INPUT.model.attempt);
   assert.equal(event.modelStartedAt, BASE_INPUT.model.startedAt);
   assert.equal(event.modelEndedAt, BASE_INPUT.model.endedAt);
@@ -282,6 +285,7 @@ test("model invocation receipts become one complete redacted evidence event", as
     promptPolicyVersion: "authoritative-kp-policy/v1",
     schemaVersion: "authoritative-kp-proposal/v1",
     task: "proposal",
+    invocationPurpose: "initialProposal",
     rootActionId: "root:private-model-action",
     attempt: 1,
     startedAt: 1_777_100_000_000,
@@ -306,6 +310,7 @@ test("model invocation receipts become one complete redacted evidence event", as
   assert.equal(event.severity, "error");
   assert.equal(event.modelId, receipt.modelId);
   assert.equal(event.modelTask, "proposal");
+  assert.equal(event.modelInvocationPurpose, "initialProposal");
   assert.equal(event.modelResult, "modelPermanent");
   assert.equal(event.failureClass, "modelPermanent");
   assert.equal(event.errorCode, "proposalSchema");
@@ -333,6 +338,17 @@ test("model invocation receipts become one complete redacted evidence event", as
     assert.equal(stageEvent.failureClass, "modelPermanent");
     assert.equal(stageEvent.errorCode, failureStage);
   }
+
+  const invalidPurpose = telemetry.buildModelInvocationTelemetryEvent({
+    roomId: "room:model-stage",
+    principalId: "principal:model-stage",
+    receipt: {
+      ...receipt,
+      invocationPurpose: SENSITIVE.prompt,
+    },
+  });
+  assert.equal(invalidPurpose.modelInvocationPurpose, undefined);
+  assert.equal(JSON.stringify(invalidPurpose).includes(SENSITIVE.prompt), false);
 });
 
 test("client-controlled request ids are never emitted as log content", async () => {

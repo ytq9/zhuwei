@@ -15,6 +15,10 @@ import {
   parseContextPlannerModelResponse,
   type ContextPlannerModelRequest,
 } from "./context-planner-policy";
+import {
+  DEEPSEEK_STRICT_TOOL_ENDPOINT_PROTOCOL,
+  DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT,
+} from "./deepseek-strict-tool";
 import { assertAllowedFormSet, type KpFormId } from "./form-catalog";
 
 export const MODEL_ROLES = Object.freeze([
@@ -25,7 +29,7 @@ export const MODEL_ROLES = Object.freeze([
 ] as const);
 
 export type ModelRole = (typeof MODEL_ROLES)[number];
-export type StructuredOutputMode = "strict-tool" | "strict-json-schema" | "none";
+export type StructuredOutputMode = "tool" | "strict-tool" | "strict-json-schema" | "none";
 export type ModelLatencyTier = "local" | "low" | "standard" | "high";
 export type ModelCostTier = "free" | "low" | "standard" | "high";
 
@@ -63,6 +67,28 @@ export type ContextPlannerRoleValidationEvidence = Readonly<{
   evidenceHash: string;
 }>;
 
+export type StrictToolProviderValidationEvidence = Readonly<{
+  evidenceVersion: "kp-strict-tool-provider-evidence-v1";
+  executionMode: "live-provider" | "offline-fixture";
+  profileBindingHash: string;
+  provider: string;
+  modelId: string;
+  modelRevision: string;
+  endpointProtocol: string;
+  schemaDialect: string;
+  promptHash: string;
+  schemaHash: string;
+  parserHash: string;
+  validationSuiteHash: string;
+  validatedAt: string;
+  caseCount: number;
+  liveProviderCalls: number;
+  successfulStrictToolCalls: number;
+  invalidSchemaRejections: number;
+  invalidSchemaRejectedBeforeGeneration: boolean;
+  evidenceHash: string;
+}>;
+
 export type ModelProfileRegistration = Readonly<{
   profileRef: string;
   provider: string;
@@ -76,6 +102,7 @@ export type ModelProfileRegistration = Readonly<{
   latencyTier: ModelLatencyTier;
   costTier: ModelCostTier;
   roleValidation?: ContextPlannerRoleValidationEvidence;
+  strictToolValidation?: StrictToolProviderValidationEvidence;
   profileHash?: string;
 }>;
 
@@ -97,7 +124,7 @@ export const DEEPSEEK_V4_FLASH_CONTEXT_PLANNER_CANDIDATE = Object.freeze({
   supportedRoles: Object.freeze(["context-planner"] as const),
   validationSuiteVersion: CONTEXT_PLANNER_ROLE_VALIDATION_SUITE_VERSION,
   validationStatus: "pending" as const,
-  structuredOutputMode: "strict-tool" as const,
+  structuredOutputMode: "tool" as const,
   contextWindowTokens: 32_000,
   latencyTier: "low" as const,
   costTier: "low" as const,
@@ -162,6 +189,87 @@ export function createContextPlannerRoleValidationEvidence(input: Readonly<{
   });
 }
 
+type StrictToolProfileBinding = Pick<
+  ModelProfileRegistration,
+  | "profileRef"
+  | "provider"
+  | "modelId"
+  | "modelRevision"
+  | "supportedRoles"
+  | "validationSuiteVersion"
+  | "structuredOutputMode"
+>;
+
+type StrictToolContractBinding = Readonly<{
+  endpointProtocol: string;
+  schemaDialect: string;
+  promptHash: string;
+  schemaHash: string;
+  parserHash: string;
+  validationSuiteHash: string;
+}>;
+
+export function strictToolProfileBindingHash(
+  profile: StrictToolProfileBinding,
+  contract: StrictToolContractBinding,
+): string {
+  return stableStructuralHash({
+    profileRef: profile.profileRef,
+    provider: profile.provider,
+    modelId: profile.modelId,
+    modelRevision: profile.modelRevision,
+    supportedRoles: [...new Set(profile.supportedRoles)].sort(),
+    validationSuiteVersion: profile.validationSuiteVersion,
+    structuredOutputMode: profile.structuredOutputMode,
+    ...contract,
+  });
+}
+
+export function createStrictToolProviderValidationEvidence(input: Readonly<{
+  profile: StrictToolProfileBinding;
+  executionMode: StrictToolProviderValidationEvidence["executionMode"];
+  endpointProtocol?: string;
+  schemaDialect?: string;
+  promptHash: string;
+  schemaHash: string;
+  parserHash: string;
+  validationSuiteHash: string;
+  validatedAt: string;
+  caseCount: number;
+  liveProviderCalls: number;
+  successfulStrictToolCalls: number;
+  invalidSchemaRejections: number;
+  invalidSchemaRejectedBeforeGeneration: boolean;
+}>): StrictToolProviderValidationEvidence {
+  const contract = {
+    endpointProtocol: input.endpointProtocol ?? DEEPSEEK_STRICT_TOOL_ENDPOINT_PROTOCOL,
+    schemaDialect: input.schemaDialect ?? DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT,
+    promptHash: input.promptHash,
+    schemaHash: input.schemaHash,
+    parserHash: input.parserHash,
+    validationSuiteHash: input.validationSuiteHash,
+  };
+  const source = {
+    evidenceVersion: "kp-strict-tool-provider-evidence-v1" as const,
+    executionMode: input.executionMode,
+    profileBindingHash: strictToolProfileBindingHash(input.profile, contract),
+    provider: input.profile.provider,
+    modelId: input.profile.modelId,
+    modelRevision: input.profile.modelRevision,
+    ...contract,
+    validatedAt: input.validatedAt,
+    caseCount: input.caseCount,
+    liveProviderCalls: input.liveProviderCalls,
+    successfulStrictToolCalls: input.successfulStrictToolCalls,
+    invalidSchemaRejections: input.invalidSchemaRejections,
+    invalidSchemaRejectedBeforeGeneration: input.invalidSchemaRejectedBeforeGeneration,
+  };
+  return Object.freeze({
+    ...source,
+    evidenceHash: stableStructuralHash(source),
+  });
+}
+
 export function createModelProfileRegistry(
   profiles: readonly ModelProfileRegistration[],
 ): ModelProfileRegistry {
@@ -181,6 +289,9 @@ export function createModelProfileRegistry(
               gates: Object.freeze({ ...profile.roleValidation.gates }),
             }),
           }),
+      ...(profile.strictToolValidation === undefined
+        ? {}
+        : { strictToolValidation: Object.freeze({ ...profile.strictToolValidation }) }),
     };
     delete registeredSource.profileHash;
     byRef[profile.profileRef] = Object.freeze({
@@ -246,7 +357,25 @@ function validateModelProfile(profile: ModelProfileRegistration): void {
   if (!Number.isInteger(profile.contextWindowTokens) || profile.contextWindowTokens <= 0) {
     throw new Error("MODEL_PROFILE_CONTEXT_INVALID");
   }
+  if (!["tool", "strict-tool", "strict-json-schema", "none"].includes(
+    profile.structuredOutputMode,
+  )) {
+    throw new Error("MODEL_PROFILE_STRUCTURED_OUTPUT_MODE_INVALID");
+  }
   if (profile.profileHash !== undefined) throw new Error("MODEL_PROFILE_HASH_SERVER_DERIVED");
+  if (profile.structuredOutputMode === "strict-tool") {
+    if (profile.strictToolValidation === undefined) {
+      throw new Error("MODEL_PROFILE_STRICT_TOOL_EVIDENCE_REQUIRED");
+    }
+    if (!strictToolEvidenceIsBound(profile, profile.strictToolValidation)) {
+      throw new Error("MODEL_PROFILE_STRICT_TOOL_EVIDENCE_INVALID");
+    }
+    if (!strictToolEvidencePasses(profile, profile.strictToolValidation)) {
+      throw new Error("MODEL_PROFILE_STRICT_TOOL_LIVE_EVIDENCE_REQUIRED");
+    }
+  } else if (profile.strictToolValidation !== undefined) {
+    throw new Error("MODEL_PROFILE_STRICT_TOOL_EVIDENCE_UNEXPECTED");
+  }
   if (profile.roleValidation !== undefined
     && !contextPlannerEvidenceIsBound(profile, profile.roleValidation)) {
     throw new Error("MODEL_PROFILE_VALIDATION_EVIDENCE_INVALID");
@@ -258,11 +387,84 @@ function validateModelProfile(profile: ModelProfileRegistration): void {
   }
 }
 
+function strictToolEvidencePasses(
+  profile: ModelProfileRegistration,
+  evidence: StrictToolProviderValidationEvidence,
+): boolean {
+  return strictToolEvidenceIsBound(profile, evidence)
+    && evidence.executionMode === "live-provider"
+    && Number.isInteger(evidence.caseCount)
+    && evidence.caseCount >= 3
+    && Number.isInteger(evidence.liveProviderCalls)
+    && evidence.liveProviderCalls >= evidence.caseCount
+    && Number.isInteger(evidence.successfulStrictToolCalls)
+    && evidence.successfulStrictToolCalls >= 2
+    && Number.isInteger(evidence.invalidSchemaRejections)
+    && evidence.invalidSchemaRejections >= 1
+    && evidence.successfulStrictToolCalls + evidence.invalidSchemaRejections <= evidence.caseCount
+    && evidence.invalidSchemaRejectedBeforeGeneration === true;
+}
+
+function strictToolEvidenceIsBound(
+  profile: ModelProfileRegistration,
+  evidence: StrictToolProviderValidationEvidence,
+): boolean {
+  const contract = {
+    endpointProtocol: evidence.endpointProtocol,
+    schemaDialect: evidence.schemaDialect,
+    promptHash: evidence.promptHash,
+    schemaHash: evidence.schemaHash,
+    parserHash: evidence.parserHash,
+    validationSuiteHash: evidence.validationSuiteHash,
+  };
+  const source = {
+    evidenceVersion: evidence.evidenceVersion,
+    executionMode: evidence.executionMode,
+    profileBindingHash: evidence.profileBindingHash,
+    provider: evidence.provider,
+    modelId: evidence.modelId,
+    modelRevision: evidence.modelRevision,
+    ...contract,
+    validatedAt: evidence.validatedAt,
+    caseCount: evidence.caseCount,
+    liveProviderCalls: evidence.liveProviderCalls,
+    successfulStrictToolCalls: evidence.successfulStrictToolCalls,
+    invalidSchemaRejections: evidence.invalidSchemaRejections,
+    invalidSchemaRejectedBeforeGeneration: evidence.invalidSchemaRejectedBeforeGeneration,
+  };
+  return evidence.evidenceVersion === "kp-strict-tool-provider-evidence-v1"
+    && profile.structuredOutputMode === "strict-tool"
+    && profile.provider === "deepseek"
+    && evidence.provider === profile.provider
+    && evidence.modelId === profile.modelId
+    && evidence.modelRevision === profile.modelRevision
+    && evidence.endpointProtocol === DEEPSEEK_STRICT_TOOL_ENDPOINT_PROTOCOL
+    && evidence.schemaDialect === DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT
+    && evidence.profileBindingHash === strictToolProfileBindingHash(profile, contract)
+    && [
+      evidence.promptHash,
+      evidence.schemaHash,
+      evidence.parserHash,
+      evidence.validationSuiteHash,
+    ].every(validEvidenceHash)
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(evidence.validatedAt)
+    && evidence.evidenceHash === stableStructuralHash(source);
+}
+
+function validEvidenceHash(value: string): boolean {
+  return /^(?:fnv1a64:[0-9a-f]{16}|sha256:[0-9a-f]{64})$/u.test(value);
+}
+
 function modelProfilePassesRoleValidation(
   profile: ModelProfileRegistration,
   role: ModelRole,
 ): boolean {
   if (profile.validationStatus !== "passed" || !profile.supportedRoles.includes(role)) {
+    return false;
+  }
+  if (profile.structuredOutputMode === "strict-tool"
+    && (profile.strictToolValidation === undefined
+      || !strictToolEvidencePasses(profile, profile.strictToolValidation))) {
     return false;
   }
   return role !== "context-planner"

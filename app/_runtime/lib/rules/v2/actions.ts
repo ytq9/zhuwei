@@ -7,6 +7,7 @@ import {
 import type { TacticalPosition } from "../tactical-projection";
 import type { RuntimeProfileManifest, Sha256Ref } from "../profiles/types";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
+import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import { standardGearResolverForProfile } from "../profiles/standard-gear";
 import {
   createEventTransition,
@@ -66,7 +67,18 @@ import {
   deriveCharacterLoadoutFromItems,
   mergeInitialStandardLoadout,
 } from "./item-transitions";
-import { emptyItemSystemState } from "./items";
+import {
+  createInitialItemEntry,
+  emptyItemSystemState,
+  isItemDefinitionV1,
+  isItemSystemStateV1,
+  type InitialItemEntryInput,
+  type ItemDefinitionV1,
+} from "./items";
+import {
+  isStoredSemanticDefinition,
+  type StoredSemanticDefinition,
+} from "./semantic-definitions";
 import { characterProficiencyFieldsMatchProfile } from "./proficiency";
 import { isNpcSocialMechanics, socialUtteranceFingerprint } from "./social-model";
 import {
@@ -74,6 +86,10 @@ import {
   fulfillSocialResolutionRandomness,
   supersedeSocialResolutionPending,
 } from "./social-actions";
+import {
+  fulfillVNextWorldInteractionRandomness,
+  stepVNextWorldInteraction,
+} from "./world-interactions";
 import {
   CANONICAL_SIGNED_INTEGER_PATTERN,
   CANONICAL_UNSIGNED_INTEGER_PATTERN,
@@ -106,7 +122,7 @@ const INITIALIZE_KEYS = [
   "seats",
 ] as const;
 
-const OPTIONAL_INITIALIZE_KEYS = ["advancementProfile"] as const;
+const OPTIONAL_INITIALIZE_KEYS = ["advancementProfile", "vNextSeed"] as const;
 
 function uniqueById(entries: JsonRecord[]): boolean {
   return new Set(entries.map(({ id }) => id)).size === entries.length;
@@ -299,6 +315,110 @@ function validateInitializationCollections(
     && uniqueById(facts);
 }
 
+type VNextSeed = {
+  semanticDefinitions: StoredSemanticDefinition[];
+  itemDefinitions: ItemDefinitionV1[];
+  itemEntries: Array<{
+    definitionRef: string;
+    entry: InitialItemEntryInput;
+  }>;
+  entityDefinitionBindings: Array<{
+    entityRef: string;
+    definitionRef: string;
+  }>;
+};
+
+function vNextSeedValue(
+  input: JsonRecord,
+  profiles: RuntimeProfileManifest,
+): VNextSeed | undefined | null {
+  if (input.vNextSeed === undefined) return undefined;
+  if (!worldInteractionProfileEnabled(profiles.extensions)
+    || !isRecord(input.vNextSeed)
+    || !hasExactKeys(input.vNextSeed, [
+      "entityDefinitionBindings", "itemDefinitions", "itemEntries", "semanticDefinitions",
+    ])) return null;
+  const seed = input.vNextSeed;
+  if (!Array.isArray(seed.semanticDefinitions)
+    || !seed.semanticDefinitions.every(isStoredSemanticDefinition)
+    || !Array.isArray(seed.itemDefinitions)
+    || !seed.itemDefinitions.every(isItemDefinitionV1)
+    || !Array.isArray(seed.itemEntries)
+    || !seed.itemEntries.every((value) => isRecord(value)
+      && hasExactKeys(value, ["definitionRef", "entry"])
+      && isNonEmptyString(value.definitionRef)
+      && isRecord(value.entry)
+      && hasOnlyKeys(value.entry, ["entryId", "ownership", "placement", "quantity"], [
+        "visibilityPolicyRef",
+      ]))
+    || !Array.isArray(seed.entityDefinitionBindings)
+    || !seed.entityDefinitionBindings.every((value) => isRecord(value)
+      && hasExactKeys(value, ["definitionRef", "entityRef"])
+      && isNonEmptyString(value.definitionRef)
+      && isNonEmptyString(value.entityRef))) return null;
+  const semanticDefinitions = seed.semanticDefinitions as StoredSemanticDefinition[];
+  const itemDefinitions = seed.itemDefinitions as ItemDefinitionV1[];
+  const itemEntries = seed.itemEntries as VNextSeed["itemEntries"];
+  const bindings = seed.entityDefinitionBindings as VNextSeed["entityDefinitionBindings"];
+  if (new Set(semanticDefinitions.map(({ definitionId }) => definitionId)).size
+      !== semanticDefinitions.length
+    || new Set(itemDefinitions.map(({ definitionId }) => definitionId)).size
+      !== itemDefinitions.length
+    || new Set(itemEntries.map(({ entry }) => entry.entryId)).size !== itemEntries.length
+    || new Set(bindings.map(({ entityRef }) => entityRef)).size !== bindings.length) return null;
+  return {
+    semanticDefinitions: structuredClone(semanticDefinitions),
+    itemDefinitions: structuredClone(itemDefinitions),
+    itemEntries: structuredClone(itemEntries),
+    entityDefinitionBindings: structuredClone(bindings),
+  };
+}
+
+function semanticSeedCatalog(
+  seed: VNextSeed | undefined,
+  entities: Record<string, CharacterRecord>,
+): Record<string, JsonRecord> | undefined {
+  if (seed === undefined) return {};
+  const catalog = Object.fromEntries(seed.semanticDefinitions
+    .map((definition) => [definition.definitionId, structuredClone(definition)]));
+  for (const definition of seed.semanticDefinitions) {
+    const template = catalog[definition.templateRef];
+    const selfTemplate = definition.templateRef === definition.definitionId
+      && definition.templateHash === definition.definitionHash;
+    if (!selfTemplate
+      && (!isStoredSemanticDefinition(template)
+        || template.definitionHash !== definition.templateHash)) return undefined;
+  }
+  for (const binding of seed.entityDefinitionBindings) {
+    const entity = entities[binding.entityRef];
+    const definition = catalog[binding.definitionRef];
+    if (entity === undefined
+      || !isStoredSemanticDefinition(definition)
+      || definition.semanticKind !== "npc"
+      || entity.kind !== "npc"
+      || !isRecord(definition.content.links)
+      || definition.content.links.entityRef !== entity.id) return undefined;
+    entity.semanticDefinitionRef = definition.definitionId;
+    entity.semanticDefinitionRevision = definition.revision;
+  }
+  for (const definition of seed.semanticDefinitions.filter(({ semanticKind }) => semanticKind === "npc")) {
+    if (!isRecord(definition.content.links)
+      || !isNonEmptyString(definition.content.links.entityRef)
+      || entities[definition.content.links.entityRef]?.kind !== "npc"
+      || entities[definition.content.links.entityRef]?.semanticDefinitionRef !== definition.definitionId) {
+      return undefined;
+    }
+  }
+  return catalog;
+}
+
+function stateEntityUnavailable(
+  entities: Record<string, CharacterRecord>,
+  entityRef: string | null,
+): boolean {
+  return entityRef === null || entities[entityRef] === undefined;
+}
+
 function buildInitialState(
   input: JsonRecord,
   profiles: RuntimeProfileManifest,
@@ -306,6 +426,8 @@ function buildInitialState(
   if (!validateInitializationCollections(input, profiles)) {
     return undefined;
   }
+  const vNextSeed = vNextSeedValue(input, profiles);
+  if (vNextSeed === null) return undefined;
   const sceneInputs = input.scenes as Array<{
     id: string;
     name: string;
@@ -433,6 +555,9 @@ function buildInitialState(
   });
   }));
 
+  const semanticDefinitions = semanticSeedCatalog(vNextSeed, entities);
+  if (semanticDefinitions === undefined) return undefined;
+
   if (
     seatInputs.some((seat) => !(seat.principalId in principals))
     || characterInputs.some((character) => !(character.sceneId in scenes))
@@ -471,9 +596,42 @@ function buildInitialState(
       itemSystem = merged.itemSystem;
     }
 
+    if (vNextSeed !== undefined) {
+      const factIds = new Set(factInputs.map(({ id }) => id));
+      for (const definition of vNextSeed.itemDefinitions) {
+        const rulesBasis = definition.rulesBasis;
+        if (itemSystem.definitions[definition.definitionId] !== undefined
+          || definition.causalBasisRefs.some((ref) => !factIds.has(ref))
+          || (typeof rulesBasis !== "string"
+            && !profiles.extensions.some((extension) =>
+              extension.profileId === rulesBasis.profileRef.profileId
+              && extension.profileHash === rulesBasis.profileRef.profileHash))) return undefined;
+        itemSystem.definitions[definition.definitionId] = structuredClone(definition);
+      }
+      for (const seeded of vNextSeed.itemEntries) {
+        const definition = itemSystem.definitions[seeded.definitionRef];
+        if (definition === undefined) return undefined;
+        let entry;
+        try {
+          entry = createInitialItemEntry(definition, seeded.entry);
+        } catch {
+          return undefined;
+        }
+        if (itemSystem.entries[entry.entryId] !== undefined
+          || (entry.disposition === "held" && stateEntityUnavailable(entities, entry.holderRef))
+          || (entry.disposition === "scene" && !sceneInputs.some(({ id }) => id === entry.sceneRef))) {
+          return undefined;
+        }
+        itemSystem.entries[entry.entryId] = entry;
+      }
+      if (!isItemSystemStateV1(itemSystem)) return undefined;
+    }
+
     for (const character of Object.values(entities)) {
       const initialLoadout = character.loadout;
-      if (initialLoadout === undefined) continue;
+      const hasHeldItems = Object.values(itemSystem.entries).some((entry) =>
+        entry.disposition === "held" && entry.holderRef === character.id);
+      if (initialLoadout === undefined && !hasHeldItems) continue;
       const derived = deriveCharacterLoadoutFromItems(itemSystem, {
         holderRef: character.id,
         ...(character.classId === undefined ? {} : { classId: character.classId }),
@@ -481,7 +639,7 @@ function buildInitialState(
           dex: character.abilityScores?.dex ?? 10,
           con: character.abilityScores?.con ?? 10,
         },
-        speedFeet: initialLoadout.speedFeet,
+        speedFeet: initialLoadout?.speedFeet ?? 30,
       });
       if ("error" in derived) return undefined;
       character.loadout = derived.loadout;
@@ -632,7 +790,7 @@ function buildInitialState(
       factions: {},
       activities: {},
       unresolvedThreats: [],
-      definitions: {},
+      definitions: semanticDefinitions,
       sourceClaims: {},
       npcPlans: {},
       factionPlans: {},
@@ -1471,6 +1629,13 @@ function fulfillAuthoritativeRandomness(
   if (!(input.rolls as number[]).every((roll) => roll <= maximumFace)) {
     return rejected("invalidRulesInput", "The authoritative face exceeds the frozen die.");
   }
+  const worldInteraction = fulfillVNextWorldInteractionRandomness(
+    profiles,
+    state,
+    input.continuation.continuationId,
+    input.rolls as number[],
+  );
+  if (worldInteraction !== undefined) return worldInteraction;
   const rest = fulfillRestRandomness(
     profiles,
     state,
@@ -1825,6 +1990,10 @@ export function stepAuthoritativeWorld(
     const environmentResult = stepEnvironmentWorld(profiles, stateValue, input);
     if (environmentResult !== undefined) {
       return environmentResult;
+    }
+    const vNextWorldInteractionResult = stepVNextWorldInteraction(profiles, stateValue, input);
+    if (vNextWorldInteractionResult !== undefined) {
+      return vNextWorldInteractionResult;
     }
     const dueActivityResult = settleDueActivityBeforeInput(profiles, stateValue, input);
     if (dueActivityResult !== undefined) {

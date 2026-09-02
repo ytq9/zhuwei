@@ -1,12 +1,12 @@
 # 烛帷规格索引与交叉审查
 
 - 索引状态：**持续维护**
-- 审查日期：2026-08-31
+- 审查日期：2026-09-02
 - 适用分支：`cloudflare`
 - 当前开发版本：`0.4.0`（产品代际仍为 V3）
 - 规则边界：D&D 5e 2014 / SRD 5.1；禁止 D&D 2024/5.5e 混入
 
-本目录的产品权威起点是冻结的 `SPEC 0001`。`SPEC 0003–0013` 是既有 Goal 明确授权的产品与技术裁定，`SPEC 0014` 是用户批准的二维战术地图合同，`SPEC 0015` 是 2026-08-29 用户明确授权的私有 Form、Context Pack/RAG、body-only Narration、双状态与动态环境合同。SPEC 0015 已有实现、定向检查、远端 migration、既有 Worker 部署、双视口浏览器与 Git 推送事实，但“已裁定/已部署”仍不表示用户豁免而未运行的完整门或完整线上模型指标已经通过。任何后续规格都不能修改、缩小或绕过 `SPEC 0001`。
+本目录的产品权威起点是冻结的 `SPEC 0001`。`SPEC 0003–0013` 是既有 Goal 明确授权的产品与技术裁定，`SPEC 0014` 是用户批准的二维战术地图合同，`SPEC 0015` 是 2026-08-29 用户明确授权的私有 Form、Context Pack/RAG、body-only Narration、双状态与动态环境合同。`SPEC 0016` 于 2026-09-01 进一步把未来目标收口为“按事务边界的粗粒度 Form + 冻结 epistemic/read set + 稀疏语义定义 + KP 判断 + Rules 有限原语 + Typed Claims”，并窄取代 `SPEC 0015` 的旧 Form Catalog、model-visible compound/DAG 与详细材料阈值；它不修改 `SPEC 0001`，也不自动切换当前 V5 生产。SPEC 0015 已有的实现与发布事实继续按历史边界保留，但“已裁定/已部署”仍不表示被豁免的完整门或完整线上模型指标已经通过。
 
 2026-08-31，用户明确确认开发期 0.4 重置：放弃全部 0.4 以前的房间及可恢复房间归档，当前代码不保留其 Adapter、fallback 或 migration。该决定只取代各 SPEC/ADR 中要求保留、迁移或恢复前 0.4 房间的条款；机械、权限、秘密、单一权威与 fail-closed 合同不变。精确取代清单和当前 Profile 闭包见 [SPEC 0013 的 0.4 修订](./0013-versioned-runtime-profiles.md#04-开发重置的取代范围)。下文中关于历史 Adapter/旧房回放的旧证据只保留审计意义，不再是当前 0.4 验收目标。
 
@@ -15,8 +15,9 @@
 - [冻结产品准则：SPEC 0001](./0001-llm-kp-responsibility-contract.md)
 - [原 SPEC 0002 的 B01–B53 逐项处置](./0002-disposition-matrix.md)
 - [本 Goal 自主裁定登记册](./decision-register.md)
-- [十二板块、专项向量与 SPEC 0001 A–O 追踪矩阵](./traceability-matrix.md)
+- [十三板块、专项向量与 SPEC 0001 A–O 追踪矩阵](./traceability-matrix.md)
 - [ADR-0014：私有提案、派生检索与发布边界](../adr/0014-private-proposal-derived-retrieval-and-publication-boundary.md)
+- [ADR-0015：粗粒度 Form、冻结上下文与类型化主张](../adr/0015-coarse-forms-frozen-context-and-typed-claims.md)
 - [执行、命令与证据日志](../refactor-log.md)
 
 ## 规格清单
@@ -25,7 +26,7 @@
 | --- | --- | --- | --- |
 | [0001：LLM/KP 职责与叙事权威](./0001-llm-kp-responsibility-contract.md) | **已批准，产品行为冻结** | 固定玩家意图、KP 叙事、Rules 机械与权威状态的权力分配；定义开放世界、公正、知识、NPC、失败、聚光灯、连续性、更正、收束及 A–O 验收 | 事实优先级仅次于用户在本 Goal 的明确决定；不依赖后续规格，后续规格全部服从它 |
 | [0002：权威战斗框架](./0002-authoritative-combat-framework.md) | **已被替代，未曾批准** | 只作为原始草案与迁移证据保留，不是新规则实现依据 | 上位仅为 0001；通用责任与纯战斗机械已拆往 0003–0013；逐条结果见 [处置矩阵](./0002-disposition-matrix.md) |
-| [0003：权威行动事务与深 Module Interface](./0003-authoritative-action-transaction.md) | **已裁定（本 Goal 授权）** | 定义 Room Action Module、Rules Module `step/project/replay`、Room Authority、根行动、待决、权威随机、幂等、作用域版本、恢复、回放、更正与统一 Outcome | 上位：0001；是 0004–0015 共用的事务、提交、投影与回放底座；新房公开双状态和 1+1 修订由 0015 窄取代 |
+| [0003：权威行动事务与深 Module Interface](./0003-authoritative-action-transaction.md) | **已裁定（本 Goal 授权）** | 定义 Room Action Module、Rules Module `step/project/replay`、Room Authority、根行动、待决、权威随机、幂等、作用域版本、恢复、回放、更正与统一 Outcome | 上位：0001；是 0004–0016 共用的事务、提交、投影与回放底座；公开双状态和 1+1 修订由 0015 窄取代，未来上下文/主张 seam 由 0016 深化 |
 | [0004：KP 裁决与非战斗机械](./0004-kp-and-noncombat-mechanics.md) | **已裁定（本 Goal 授权）** | 五类可行性、检定/对抗/豁免、物品、资源、休整、Activity、非战斗危险、骰前冻结与裁定先例 | 上位：0001、0003；事实/知识交给 0005，战斗机械交给 0012，版本化定义交给 0013 |
 | [0005：世界事实、因果与角色知识](./0005-world-facts-and-knowledge.md) | **已裁定（本 Goal 授权）** | `CanonicalFact`、`WorldEvent`、来源/因果/可见性、隐藏现实、证据/主张/推断、知识传播、关系/承诺/债务、分支与更正 | 上位：0001、0003、0004；观察者交付由 0010，可靠更正/归档由 0011 |
 | [0006：模组、动态实体、NPC 与势力协议](./0006-module-npc-and-faction-protocol.md) | **已裁定；旧房保留段由 0013 的 0.4 修订窄取代** | 故事圣经、核心真相、开放留白、动态定义、NPC 有限知识、NPC/势力计划与当前模组版本 | 上位：0001、0003、0005；控制权/时间依赖 0007，NPC 战斗提案进入 0012 而不另建战术权威 |
@@ -37,7 +38,8 @@
 | [0012：权威战斗机械](./0012-authoritative-combat-mechanics.md) | **已裁定（本 Goal 授权）** | 仅定义 Encounter、空间、先攻/突袭、轮/回合/行动授予、移动/反应、能力/施法、效果/伤害/专注、0 HP/死亡及非歼灭结束；战斗只是 Rules Module 内部实现 | 上位：0001、0003、0006–0011；Profile/确定排序/几何与能力定义引用 0013；不得出现 CombatCoordinator 或战斗专属状态/骰源/projector |
 | [0013：版本化运行时 Profiles 与确定性 Conformance](./0013-versioned-runtime-profiles.md) | **已裁定；0.4 开发重置修订已确认** | 固定当前 Ruleset/EventSchema、AbilityDefinition 与受限 MechanicOp 编译器、BattlefieldGeometry、TriggerOrdering、Fiction/Combat Time 等 Profile 及 hash/conformance/fail-closed 规则 | 上位：0001、0003–0007、0010–0012；0.4 只注册当前 V5 runtime 闭包，前 0.4 房间/归档退役且无兼容承诺 |
 | [0014：观察者战术地图、权威环境与空间意图](./0014-observer-tactical-map-and-environment.md) | **已裁定（用户 Goal 明确批准）** | 把真实 scene geometry、环境有限状态、移动/区域地图意图、秘密安全 Tactical Projection/preview、二维地图和同源文字读数接入唯一事务 | 上位：0001、0003、0005、0007、0010、0012、0013；不重写 Geometry 算法，不建立 UI/GM 第二空间 |
-| [0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境](./0015-private-form-context-rag-and-narration.md) | **已裁定；旧 Profile 保留段由 0013 的 0.4 修订窄取代** | 定义十 Form、三层 Context、静态 D1 FTS/权威重读、一次窄修订、CausalActionProgram、body-only Narration、action/narration 双状态、模型角色/实验门，以及由 KP 任意定义、显式 `state-only` / `area-hazard` 且不按对象名派发的动态环境 | `SPEC 0001` 最高；复用 0003 Room/Rules/DO、0010 Viewer/Audience、0013 Profile、0014 Geometry；0.4 只保留当前 V5 工作流/runtime 组合，完整门未运行且完整线上指标仍待用户自测 |
+| [0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境](./0015-private-form-context-rag-and-narration.md) | **已裁定；V5 历史/当前实现边界保留，未来目标部分由 0016 窄取代** | 定义 V5 十 Form、三层 Context、静态 D1 FTS/权威重读、一次窄修订、CausalActionProgram、body-only Narration、双状态与逐受众恢复；旧 Catalog、compound 和详细动态环境模型只解释 V5 | `SPEC 0001` 最高；复用 0003 Room/Rules/DO、0010 Viewer/Audience、0013 Profile、0014 Geometry；未来粗粒度 Form、RequiredContext 和 Typed Claims 服从 0016，当前 V5 不因此自动切换 |
+| [0016：粗粒度 Form、冻结裁决上下文与类型化主张](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) | **已裁定；阶段三代表性纵切已完成，未切生产** | 以权威/事务边界定义粗粒度 Form；冻结 `epistemicRefs/readSetRefs`；以类型化空间角色区分 Viewer 可操作直接目标与 KP-only 因果；由 KP 判断可行性、Rules 执行有限原语；以 Typed Claims 作为提交后唯一叙述材料 | `SPEC 0001` 最高；复用 0003/0010 的 Room/Viewer、0013 的版本/Profile、0014 的 Geometry 和 0015 未被取代的 RAG/1+1/body-only/双状态；阶段三完成动态 NPC 修订与通用 `world-interaction`，并拒绝跨场景及越过 NPC/Item/continuity Form 的写入；其余 Form 纵切仍待，当前不删 V5、不部署 |
 
 ## 当前实现证据索引（2026-08-31）
 
@@ -52,8 +54,9 @@
 | 精确版本管理读取 | `table/server.ts#getRoomManagement` | 源码与 `tests/rendered-html.test.mjs` 的 HTTP 验收断言已接入 | 房主 Read Model 返回 `ruleset_version`/`kp_model`，普通成员拒绝；冻结源码 Node/Worker 发布门尚未执行，故不计最终门 |
 | `SPEC 0014` 战术空间与二维地图 | 当前 V5 Geometry/Environment Profile + Builder/Rules/Room + 待完成的 Tactical Projection/preview 与 `play-table.tsx` Adapter | 当前 runner 映射为 Geometry G01–G15、`tests/chandelier-environment-rules-v3.test.mjs`、`tests/dynamic-environment-room-lowering-v3.test.ts` 及环境 Room 测试；不沿用 env-v4 长轨迹作为 0.4 当前证据 | **部分实现，仍阻塞**：环境 FSM、破坏/区域、隐藏 target、archive→fresh DO 与 replay 有定向映射；当前源码回执、完整地图/preview、路径输入和双视口仍待 |
 | `SPEC 0015` Form/Context/RAG/Narration/双状态/动态环境 | `kp/{form-catalog,context-pack,v3-context-runtime,static-retrieval,static-corpus,private-form-policy,causal-action-program,model-registry,context-planner-policy,narration-v3}.ts` + `room/v3-binding.ts` + 既有 Room/Rules/Geometry/DO/D1/UI；0.4 精确绑定 V5 runtime、workflow-v2 与 causal v5 | 0.4 当前映射为 `tests/runtime-profiles-v2.test.mjs`、`tests/kp-form-context-v3.test.mjs`、`tests/causal-action-rules-v3.test.mjs`、`tests/dynamic-environment-room-lowering-v3.test.ts`、`tests/viewer-narration-recovery-v3.test.ts` 及当前 item/ActorPlan runner；不从旧 workflow/env 组合推算通过数 | **当前实现与历史发布分账**：0.4 只认精确 `executeCausalActionProgram`/`actionLanguageRef`、Room 生成的 party/campaign capability 与 V5 闭包。此前 workflow-v2/env-v4 的定向、部署和线上数字仅作发布审计，不证明当前 0.4 源码门 |
+| `SPEC 0016` 粗粒度 Form/冻结 Context/稀疏定义/Typed Claims | 隔离 vNext Stage3 Profile 接入 Room prepare/commit、Rules `step/project/replay` 与 Claims-only Narration；生产 Registry 仍为 V5 | `tests/kp-vnext-core.test.mjs`、`kp-vnext-claims.test.mjs`、`kp-vnext-world-interaction-rules.test.mjs`、`kp-vnext-hazard-actor-death-fold.test.mjs` 共 24/24；`kp-vnext-stage3-room.test.ts` 5/5；typecheck/diff-check 见执行日志 | **阶段三代表性纵切已完成、未切生产**：NPC 稀疏修订和通用 `world-interaction` 已闭环；opaque-ID 行为覆盖 Viewer 可操作直接目标、类型化空间角色、跨场景/跨 Form 拒绝，以及隐藏因果可由 Rules 使用但不进入无权 Claims。烧绳/试压板仍只验证泛化与观察边界；其余粗粒度 Form、生产采用、V5 删除、migration、部署与发布仍待 |
 
-当前相关自主裁定为 DEC-035–046；其中 DEC-018/022 的 production ActionPlan/normalization 仅作历史审计，并由 DEC-046 在 0.4 current-only 范围内取代。
+当前相关自主裁定为 DEC-035–047；其中 DEC-018/022 的 production ActionPlan/normalization 仅作历史审计，并由 DEC-046 在 0.4 current-only 范围内取代；DEC-047 冻结未来目标但不改变当前生产 Registry。
 
 ## 五项交叉审查摘要
 
@@ -61,16 +64,16 @@
 
 | 审查项 | 规格层结论 | 仍待实现 / 验证的证据 |
 | --- | --- | --- |
-| 跨规格矛盾 | 未发现需要修改 `SPEC 0001` 的规格冲突。0003 统一事务，0010 统一 Viewer/Audience，0013 固定 Profile，0014 拥有 Geometry/地图；0015 只给新房增加私有 Proposal/Context/RAG/逐受众叙述和 KP 自定义动态环境。0.4 只注册 V5 runtime，并精确绑定 workflow-v2、causal v5 与 character-proficiency；产品 V3 不等于 ruleset v3，检索命中不等于世界事实 | 旧 workflow/env 组合与既往部署只作历史审计；当前实现以 causal/world/item/combat/multiplayer/ActorPlan runner 映射，完整门与 SPEC 0014 完整地图仍待实际回执 |
-| 权限 | principal 只能来自可信会话；Seat/CharacterControl 决定玩家控制权；玩家只决定自己的角色；Form/Planner/RAG/LLM 不接收或决定 actor、Audience、骰面、事件、实际 targets；NPC Context 重新按有限知识投影；发布 capability 按 ViewerKey 冻结 | Form 禁止字段、Planner allowlist/fallback、Context projection、逐受众 capability 与 0015 浏览器秘密扫描已有定向证据；完整 HTTP 越权回归和完整门仍未运行 |
-| 秘密 | 世界事实只保存一份，知识按角色取得；动态 Room 状态不入 RAG；静态 ref 按 hash/Profile/权限重读；Narration 只收逐受众投影；Audience 提交时冻结；日志只走固定白名单；地图/DOM/TTS/错误/历史无旁路 | 静态 corpus 动态输入拒绝、权威重读、body-only/Viewer recovery、隐藏环境目标与十错误分类已有定向证据；0015 双视口 DOM/ARIA/网络扫描 10/10，短 error Tail 为 0；语音/TTS 与完整历史日志仍待 |
-| 版本 | 房间 genesis 固定 ruleset/event/module/definition/projection 以及 Form/Action Language/Context/corpus/retrieval/model/narration/publication/environment/character-proficiency Profile 的精确 ID/hash；未知组合 fail closed；产品 V3 与机械版本轴分离，前 0.4 房间不猜迁移 | 0.4 只接受 `runtime-srd51-2014-authoritative-environment-v5`、`authoritative-kp-private-form-narrow-tools-workflow-v2` 与 `causal-action-program-v5` 的精确闭包；hash 以 `SPEC 0013` §2.1 为准，旧 workflow/env compile/replay 只作历史审计 |
-| 第二权威 | Rules 外部只有 `step/project/replay`；Room DO 保存活跃世界、事件、Receipt、随机、Audience 与发布状态；Form/compiler 只产 Rules Input，D1 FTS/缓存/日志/页面只作派生 Adapter；D1 checkpoint 只标记可重放灾备 prefix；`state-only` 无区域目标，`area-hazard` targets 只由 Rules 计算 | Causal interpreter、D1 静态性/重建、checkpoint reader→fresh DO、动态环境 Room/replay 和 Narration 不回滚已有定向证据；module guard 冻结重跑、页面无 GM payload 与线上检查仍待 |
+| 跨规格矛盾 | 未发现需要修改 `SPEC 0001` 的冲突。0003 统一事务，0010 统一 Viewer/Audience，0013 固定 Profile，0014 拥有 Geometry；0015 保留当前 V5 与 RAG/发布语义，0016 只窄取代未来 Catalog、compound/环境模型并深化 Context/Claims seam | 阶段三两条代表性纵切已经取得开发期证据；当前生产仍以 V5 causal/world/item/combat/multiplayer/ActorPlan runner 映射。其余 Form、完整地图与最终门尚未取得证据 |
+| 权限 | principal 仍来自可信会话；Form/LLM 不决定 actor、Audience、骰面、事件或 targets。0016 额外区分 KP 获准知道的 epistemic refs 与实际裁决 read set，NPC 继续按自身 Viewer；Claims 只输出获 grant 的 viewer refs | 阶段三已验证精确 read-set 冲突、NPC 知识隔离、隐藏 relation 整项裁剪与 FrozenRenderableClaims 重试；其余 Form 和真实 Provider/浏览器路径仍待 |
+| 秘密 | 世界事实仍只有一份；动态 Room 状态不入静态 RAG；authority refs 可在 KP-only Claim basis 中使用但永不外发，Narration 只收目标 Viewer 冻结 Claims | 阶段三已验证隐藏 definition/relation/target 不进入无权 Claims 或 Narration，并验证恢复复用冻结材料；DOM、语音与生产 Provider 仍未覆盖 |
+| 版本 | 当前 V5 genesis/Profile/hash 不变；0016 的 Catalog、Context、Definition、Relation、Bundle、Rules primitive 与 Claim vocabulary 必须发布新完整 manifest，未知组合 fail closed | 隔离 vNext Stage3 manifest/conformance 已建立但未进入生产 Registry；不迁移房间，完整 Catalog/Profile 仍待后续审查 |
+| 第二权威 | Rules 外部仍只有 `step/project/replay`；Room DO 保存活跃状态和提交。Sparse revision 由服务器合成完整 next definition，模型 patch 不入 state；ProposalBundle/InteractionPlan/Claims 都是私有派生 Implementation | 阶段三已证明无 model DAG、JSON Patch、自由 damage/targets、committed-delta Narration 或第二随机路径；完整多合同 ProposalBundle 仍待，且阶段三不授权生产切换 |
 
 ## 审查结论与证据状态
 
-1. 规格体系已经把 0002 的通用责任与纯战斗机械分配到 0003–0013，以 0014 固定战术空间/地图合同，并以 0015 新增私有 Proposal/Context/RAG/叙述双状态与动态环境；0015 §17 只窄取代明示冲突，不修改 0001 或旧房解释器。B01–B53 的每项处置仍以 [0002 逐项处置矩阵](./0002-disposition-matrix.md) 为准。
+1. 规格体系已经把 0002 的通用责任与纯战斗机械分配到 0003–0013，以 0014 固定战术空间/地图合同，以 0015 建立 V5 私有 Proposal/Context/RAG/叙述双状态，并由 0016 为未来 Profile 窄取代 Catalog、compound/DAG 和详细材料阈值；两次取代都不修改 0001。B01–B53 的每项处置仍以 [0002 逐项处置矩阵](./0002-disposition-matrix.md) 为准。
 2. 自主产品/技术选择及其来源、玩家行为、权限/秘密、迁移和验收场景记录在 [决策登记册](./decision-register.md) 以及各规格的内嵌决策章节；状态“已裁定（本 Goal 授权）”不等于测试通过。
-3. [总追踪矩阵](./traceability-matrix.md) 已为 P1–P12、A–O、B01–B53、P/A/G/T/F、TM01–TM14 与 KR01–KR16 标出责任 Interface、测试路径和完成门；KR01–KR16 均已有实现、定向或本轮有限线上证据，P12/KR16 的有限发布已完成。完整 Tactical Projection/preview/路径/成对 Viewer/ARIA、无障碍以及被用户豁免的完整门仍按矩阵保留，不能被这些局部证据抵扣。
+3. [总追踪矩阵](./traceability-matrix.md) 已为 P1–P13、A–O、B01–B53、P/A/G/T/F、TM01–TM14、KR01–KR16 与 FC01–FC09 标出责任 Interface、测试路径和完成门。KR/P12 保留 V5 实现与历史发布账本；FC/P13 的阶段三代表性纵切已有独立回执，但完整 Form 家族仍在实现中，不能借 feature 原型或 V5 证据抵扣。
 4. 本索引只把已有实际命令/退出码的测试和已发生的远端事实写成证据；远端 D1 `0008–0011`、双视口五路径、既有 Worker 部署和非 force `cloudflare` 推送已经回填。完整门依用户豁免未运行；唯一三交互虽实际 3/3 live verified，原命令仍因已修复但未生产重跑的 evaluator 误判退出 1，不能写成绿色。
-5. 当前不能把上述发布事实扩张为完整线上质量 `COMPLETE`：Provider tokenizer/延迟/调用率/首次合法率等完整指标由用户后续测评，语音/TTS、完整战术地图和完整历史日志也仍按各自规格保留未覆盖；远端 `main` 已证明保持基线不变。
+5. 当前不能把上述 V5 发布事实或阶段三开发期绿色扩张为完整线上质量 `COMPLETE`。Provider 指标、语音/TTS、完整战术地图、完整历史日志及其余 Form 纵切仍未覆盖；0016 当前明确不切生产、不删 V5、不 migration、不部署或发布。

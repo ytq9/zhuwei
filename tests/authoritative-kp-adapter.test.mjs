@@ -253,6 +253,10 @@ test("V5 replaces one grounding-only failure without carrying historical dialogu
     "modelPermanent",
     "success",
   ]);
+  assert.deepEqual(receipts.map(({ invocationPurpose }) => invocationPurpose), [
+    "initialNarration",
+    "narrationGroundingRepair",
+  ]);
 
   const schemaInvalidAi = scriptedAi([
     officialToolResponse("submit_current_narration", { body: replacementBody, extra: true }),

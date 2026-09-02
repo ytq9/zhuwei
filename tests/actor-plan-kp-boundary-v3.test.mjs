@@ -355,6 +355,7 @@ test("invalid due ActorPlan model output fails closed without a Form repair", as
     assert.ok(error instanceof AuthoritativeKpModelError);
     assert.equal(error.code, "modelPermanent");
     assert.equal(error.modelInvocationReceipt.failureStage, "proposalSchema");
+    assert.equal(error.modelInvocationReceipt.invocationPurpose, "actorPlan");
     return true;
   });
   assert.equal(calls, 1);

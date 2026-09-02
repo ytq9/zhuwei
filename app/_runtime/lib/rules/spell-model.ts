@@ -29,6 +29,7 @@ export type SpellDuration =
 export type SpellTargetFilter =
   | "self"
   | "creature"
+  | "creature-or-object"
   | "willing-creature"
   | "humanoid"
   | "living-creature"

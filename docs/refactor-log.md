@@ -2239,9 +2239,46 @@
 - 部署与控制面：原工作区在提交后出现不属于本轮的 `tests/send-action-recovery-v2.test.mjs` 未提交修改，部署守卫按预期拒绝且未产生版本；随后从已推送提交建立临时干净 `cloudflare` 检出，`DEPLOY_SOURCE_SHA=1ef4c1bd8aa6a65a8c0242bd6e2267b144ca3205 npm run cf:deploy` 退出 0，配置守卫和唯一 production build 通过，既有 Worker `zhuwei` 生成版本 `aec929b5-0f0e-448f-abf1-f4ccb0dc1937`。`npx wrangler deployments status` 退出 0，确认该版本承接 100% 流量；原工作区的后续修改未被纳入、覆盖或丢弃。
 - 冒烟与边界：终端 HTTPS 冒烟限定 10 秒后在到达 Worker 前超时，退出 28 / HTTP `000`；改用一个独立浏览器通道复核一次，线上首页成功加载，标题为“烛帷｜AI 主持的多人 D&D 跑团”，主标题为“帷幕后，烛火未灭”。本轮没有调用真实模型，不声明外部 AI 行为已验证；没有执行 D1 migration、Secret/资源变更、修改 `main` 或 grok.me 操作。本条审计随后作为说明性文档提交推送，不改变已部署源码。
 
+## Archify 结构化 JSON 编译链调研（2026-09-01）
+
+- 目标与调研合同：确认近期热门 `tt-a1i/archify` 怎样让外部 Agent 把自然语言问题编译为 Typed JSON IR，以及该 IR 如何经确定性校验、修复和渲染成为自包含交互式 HTML。所有本体实现判断固定到官方仓库提交 `199360cc6687a7857b54dd188d4922b09e466a4b`，优先使用 Skill、Schema、CLI、renderer、template 与官方 benchmark 一手证据。
+- 修改与结论：新增 `docs/research/archify-structured-json-pipeline.md`。报告证明 Archify 本体不调用模型 Provider 或 `response_format`；外部 Agent 按 `SKILL.md` 只读一个 mode schema、common schema 与一个同型示例，先写候选文件，再由 AJV strict validator、跨集合/几何/artifact 门和结构化 repair receipt 驱动有界局部修复，最终由代码生成 inline SVG 并注入统一 Viewer template。官方当前 verifier 下仅 8/15 first-pass usable，因此没有把可靠性归因于 Prompt 文案。
+- 定向检查：逐段复核 Prompt、Schema、validator、CLI validate/deliver、Architecture renderer、HTML template 和 ordinary-model benchmark 引用；本体源码链接均使用固定 40 位提交，另一个同名 WebUI 的消歧引用也固定提交。对报告和当前执行日志运行隔离临时索引的 `git diff --cached --check`，退出 0。
+- 未覆盖范围：未运行真实模型生成、HTML 浏览器交互或外部 WebUI；没有修改产品源码、SPEC、ADR、依赖、测试或配置，也未运行代码测试、typecheck、Lint、build、部署、migration、Git commit 或 push。工作区中既有的游戏桌、客户端与测试修改属于其他任务，本调研未触碰。
+
 ## `needsKp` 解锁快速推送与部署（2026-09-01）
 
 - 授权与源码：用户明确要求“快速开发形式推送部署”；修复提交为 `487ea0a3e0adbc06215ba27c428ef7c2ab4487dd`。`npx tsx --test tests/send-action-recovery-v2.test.mjs` 退出 0（6/6），`git diff --cached --check` 退出 0；按快速开发授权未追加 typecheck、Lint 或完整回归，部署脚本内唯一 production build 保留。
 - 推送与远端边界：非强制 `git push origin HEAD:refs/heads/cloudflare` 退出 0，远端 `cloudflare` 从 `e0f2a7220806209d0235488760a68a56a5687cac` 前移至修复提交；远端 `main` 在推送前后均为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，未修改或推送。既有 D1 `zhuwei-dev` 返回 `No migrations to apply`，未执行 migration、Secret 或资源变更。
 - 部署与控制面：从已推送提交建立独立干净 `cloudflare` 检出，`DEPLOY_SOURCE_SHA=487ea0a3e0adbc06215ba27c428ef7c2ab4487dd npm run cf:deploy` 退出 0，配置守卫及 production build 通过，既有 Worker `zhuwei` 生成版本 `c0a06ce0-95c7-4233-81c6-bf98c2a54ec4`；`npx wrangler deployments status` 退出 0，确认该版本承接 100% 流量。原工作区的 Archify 调研未纳入源码提交或部署。
 - 冒烟与边界：终端 HTTPS 冒烟限定 15 秒后在到达 Worker 前超时，退出 28 / HTTP `000`；换用独立浏览器通道后首页成功加载，标题为“烛帷｜AI 主持的多人 D&D 跑团”，主标题为“帷幕后，烛火未灭”，页面未捕获 Console error。本轮未进入登录房间或调用真实模型，因此只声明部署与公开入口正常，不声明线上 `needsKp` 外部模型路径已经实测恢复。
+
+## Rules / Projector / Room 大文件职责拆分（2026-09-01）
+
+- 目标与合同：在不改变产品行为、协议标识、Profile/hash、持久化或现役 `step / project / replay` Interface 的前提下，按职责与变化原因建立三条可独立开发的内部接缝；Draft 解码不读取世界状态或生成事件，Observer 区间投影不反向依赖基础 projector，动态环境 lowering 不拥有随机、存储或提交权。
+- 代表性矩阵：Causal 覆盖 direct/check/compound、物品 materialization、NPC 机械定义与 campaign 生命周期；Observer 覆盖 committed/incremental、生命周期、隐私拒绝与 Room delivery；动态环境覆盖复用既有特征、开放留白、攻击/检定/直接激活及无效或不可见引用。所有样例继续通过原 Rules 与 Room 权威路径，不增加名称特判或第二裁决入口。
+- 实现与直接消费者：`causal-actions.ts` 把类型化 Draft、严格 parser 和纯校验 helper 移至 `causal-action-drafts.ts`；`projector.ts` 把 committed/incremental/lifecycle range overlay 移至 `observer-delta.ts`，以基础 projector 回调重建 prior projection；`durable-object.ts` 把动态环境 Proposal lowering 移至 `environment-proposal-lowering.ts`，可信身份、事务和提交仍留在 Room Authority，并同步扩展 `tools/check-modules.mjs` 的静态边界覆盖。三个隔离提交依次为 `783f111`、`639a796`、`6b1a858`。
+- 验证证据：合并后的同一源码状态上，六个 Node 目标文件退出 0（60/60），三个 Worker/Vitest 目标文件退出 0（18/18）；`npm run typecheck`、`npm run module:check`、提交范围与工作树 `git diff --check` 均退出 0。最终行数为 `causal-actions.ts` 5,065、`projector.ts` 1,303、`durable-object.ts` 9,091；新增职责模块分别为 1,999、1,063、244 行。
+- 未覆盖范围：本轮没有实现 `world-interaction.v1`、类型化环境属性/关系、动态 Item/NPC/Objective 或 `renderableClaims`，也没有继续机械拆分 `model.ts`、`events.ts`、projector 当前快照或 Room 其他领域分支。未运行全量 `npm test`、全项目 Lint、production build、浏览器 QA、真实模型探针、部署、migration 或 Git push。
+
+## vNext 阶段三开放互动泛化闭包（2026-09-02）
+
+- 目标与能力合同：任意获得认证的玩家可以用自然语言提出开放式环境行动；KP 基于冻结 RequiredContext 判断可行性、DC、风险与世界因果，Rules 只执行有限机械并由 Room DO 原子提交。玩家直接目标必须是当前场景中 Viewer 可操作的类型化空间对象；完整 `targetRefs/basisRefs` 仍可保留获授权的隐藏因果供 Rules 结算，但无权 Viewer 与 Narration 不得取得这些引用。`world-interaction` 只拥有当前场景环境对象/关系的事务边界，不能改写 NPC、Item、Objective/Story/continuity 或 foreign-scene 事实。
+- 代表性矩阵：可见且同场的 opaque `entity / itemEntry / sceneFeature` 可作为直接目标；隐藏语义对象、隐藏 Tactical Feature、非空间 semantic kind、缺场景绑定和 foreign-scene 对象均在随机与成本前拒绝。当前场景 sceneFeature revision、同场关系及注册 Hazard 正常执行；NPC definition revision、跨场景 relation/definition/Hazard source/zone 拒绝。隐藏 contains/relation 与真实区域目标仍由 Rules 解析，且 Viewer Claims、basis、数量和 Narration 不泄漏；结构不同的环境互动样例与 opaque ID 共用同一通用路径，没有动作、对象、材料词或测试数值分派。
+- 实现与直接消费者：能力由 `authority-bindings.ts` 的类型化空间/可见性解释、`required-context-runtime.ts` 的 Viewer/authority 引用分离、`proposals.ts` 的早期 lowering、`world-interaction-mechanics.ts` 与 `world-interactions.ts` 的 Rules 最终重验共同闭合；直接消费者仍是 vNext Room prepare/commit bridge、Rules `step/project/replay`、Typed Claims 与 Claims-only Narration。同步更新 `docs/specs/0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md` §14、`docs/specs/README.md`、`docs/specs/traceability-matrix.md` 和 DEC-047 的实现证据与边界；未修改 `docs/research`。
+- 定向检查：`npx tsx --test tests/kp-vnext-core.test.mjs tests/kp-vnext-claims.test.mjs tests/kp-vnext-world-interaction-rules.test.mjs tests/kp-vnext-hazard-actor-death-fold.test.mjs` 退出 0，24/24；`npx vitest run tests/kp-vnext-stage3-room.test.ts` 退出 0，5/5；`npm run typecheck` 与目标文档 `git diff --check` 均退出 0。
+- 未覆盖范围：阶段三只证明动态 NPC 修订与通用 `world-interaction` 两条代表性纵切及上述泛化/安全边界。clarification、in-world refusal、独立 observe/social、完整 materialization create、inventory/objective/story/combat、跨合同完整 ProposalBundle、持续燃烧 Activity、完整地图/浏览器/真实 Provider、生产 Registry 采用、V5 删除、migration、部署与 Git push 均未执行；未运行 `npm test`、全项目 Lint、production build 或完整回归。
+
+## vNext Claims-only Narration recovery 合同边界修复（2026-09-02）
+
+- 症状与根因：阶段三自然语言枪击纵切已完成机械提交，但 Claims-only Narration recovery 返回 `committed + retryableFailure + NARRATION_PUBLICATION_FAILED`。首个违规点在 `handleViewerNarrationRecovery`：冻结 `renderableClaims` 的请求仍附带旧投影恢复专用的 `narrationPurpose`，严格 KP fixture 因多出一个字段拒绝；不是重复 Rules、随机数或 Room 状态提交。
+- 修改与直接消费者：`app/_runtime/lib/room/action.ts` 仅从 Claims-only recovery 请求移除 `narrationPurpose`，保持无 Claims 的旧 projection recovery 分支不变；`tests/kp-vnext-stage3-room.test.ts` 删除本轮临时调试输出，既有严格键集合断言继续锁定该请求合同。机械提交、冻结 Claims、Room publication 与幂等/eviction 路径未旁路或重写。
+- 定向检查：`npx vitest run tests/kp-vnext-stage3-room.test.ts` 退出 0（5/5）；vNext Node 目标集合退出 0（77/77），同次 strict-tool Provider 合同目标退出 0（6/6，合计 83/83）；`npm run typecheck` 与 `git diff --check` 均退出 0。未发现 `DEBUG` 调试残留。
+- 未覆盖范围：未运行 `npm test`、全项目 Lint、production build、浏览器 QA、真实 Provider/生产 Registry 探针、migration、部署、Git commit 或 push；完整阶段三范围之外的 clarification、in-world refusal、其他 Form 纵切和生产采用仍未验证。
+
+## vNext 阶段三收口暂停检查点（2026-09-03）
+
+- 目标与边界：按用户决定停止继续扩展阶段三，将当前成果保存为可编译的开发检查点；不把它标记为阶段三完成或生产可采用。已停止 ProposalBundle、Rules prospective/refusal 与 RequiredContext 审查三条并发实现，不继续集成 Claude `96341f2`、补 Room 纵切或执行真实 Provider 调用。
+- 当前成果：保留冻结 RequiredContext/五态骨架、动态 NPC 稀疏修订、通用 `world-interaction`、Typed Claims/Narration 代表性纵切，以及当前 ProposalBundle 的五类 Ruling、clarification/refusal terminal 合同和 prospective 依赖校验。仅补齐被中止增量遗留的 TypeScript 类型/局部校验 helper，使工作树恢复可编译；没有借收尾继续实现 materialization create、refusal Rules 事件、multi-entry 原子 lowering 或 Room 消费端。
+- 定向检查：推送候选源码状态下 `npm run typecheck` 退出 0；全部现有 vNext Node 目标与本地 strict-tool Provider 合同目标退出 0（89/89）；`npx vitest run tests/kp-vnext-stage3-room.test.ts` 退出 0（5/5）；`git diff --cached --check` 退出 0。推送前另将 `obligation-closure.ts` 中作为元组分隔符的字面 NUL 改为源码转义 `\u0000`，运行值不变且文件恢复为 UTF-8 文本。缺少独立 `kp-vnext-context-availability.test.mjs`，因此不把 Claude Availability 返工作为已集成或已验收成果。
+- 后续任务：分别完成（1）RequiredContext 返工选择性集成与权限/selector/read-set 审计，（2）Bundle strict schema、一次窄修复及真实 DeepSeek handshake，（3）Rules materialization create、prospective preflight 与 typed refusal 原子事件，（4）Room Pending/Receipt/Claims/恢复端到端接线并删除旧 vNext 双入口，（5）阶段三纵切矩阵与 SPEC 0001 §21 生产采用门。未运行完整测试、Lint、build、浏览器 QA、真实 Provider、migration 或部署。

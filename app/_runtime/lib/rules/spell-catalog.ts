@@ -84,7 +84,7 @@ export const SPELL_DEFINITIONS = {
   },
   "fire-bolt": {
     id: "fire-bolt", level: 0, actionCost: "action", castingSeconds: 6,
-    range: feet(120), targets: targets("creature", 1, { requiresSight: true }), duration: instant,
+    range: feet(120), targets: targets("creature-or-object", 1, { requiresSight: true }), duration: instant,
     resolution: attack("ranged", dice(1, 10), "fire"),
   },
   "ray-frost": {

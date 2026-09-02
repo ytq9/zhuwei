@@ -1453,7 +1453,7 @@ function evaluationModelRegistry() {
       supportedRoles: ["primary-kp"],
       validationSuiteVersion: "kp-v3-structural-eval-v1",
       validationStatus: "passed",
-      structuredOutputMode: "strict-tool",
+      structuredOutputMode: "tool",
       contextWindowTokens: 128_000,
       latencyTier: "local",
       costTier: "free",
