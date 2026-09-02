@@ -2282,3 +2282,9 @@
 - 当前成果：保留冻结 RequiredContext/五态骨架、动态 NPC 稀疏修订、通用 `world-interaction`、Typed Claims/Narration 代表性纵切，以及当前 ProposalBundle 的五类 Ruling、clarification/refusal terminal 合同和 prospective 依赖校验。仅补齐被中止增量遗留的 TypeScript 类型/局部校验 helper，使工作树恢复可编译；没有借收尾继续实现 materialization create、refusal Rules 事件、multi-entry 原子 lowering 或 Room 消费端。
 - 定向检查：推送候选源码状态下 `npm run typecheck` 退出 0；全部现有 vNext Node 目标与本地 strict-tool Provider 合同目标退出 0（89/89）；`npx vitest run tests/kp-vnext-stage3-room.test.ts` 退出 0（5/5）；`git diff --cached --check` 退出 0。推送前另将 `obligation-closure.ts` 中作为元组分隔符的字面 NUL 改为源码转义 `\u0000`，运行值不变且文件恢复为 UTF-8 文本。缺少独立 `kp-vnext-context-availability.test.mjs`，因此不把 Claude Availability 返工作为已集成或已验收成果。
 - 后续任务：分别完成（1）RequiredContext 返工选择性集成与权限/selector/read-set 审计，（2）Bundle strict schema、一次窄修复及真实 DeepSeek handshake，（3）Rules materialization create、prospective preflight 与 typed refusal 原子事件，（4）Room Pending/Receipt/Claims/恢复端到端接线并删除旧 vNext 双入口，（5）阶段三纵切矩阵与 SPEC 0001 §21 生产采用门。未运行完整测试、Lint、build、浏览器 QA、真实 Provider、migration 或部署。
+
+## vNext 阶段三检查点 feature 推送（2026-09-03）
+
+- 分支策略与基线：为避免把未完成收口写入生产基线或覆盖既有稳定快照，新建 `feature/kp-agent-vnext-stage3-checkpoint`；它基于本地 `cloudflare` 的三个职责拆分提交并包含 ProposalBundle 提交 `cb7038f`，检查点源码提交为 `dde61465fe38b26e2f69d31a4d998f14fa154eb8`。既有 `feature/kp-coarse-forms-vnext-stage3` 保持 `0ec8c4eae5862af1c3a43aef86a17889e17955e7`。
+- 推送与远端边界：执行非强制 `git push -u origin feature/kp-agent-vnext-stage3-checkpoint`，退出 0；远端新分支指向 `dde61465fe38b26e2f69d31a4d998f14fa154eb8`。推送后只读复核 `origin/cloudflare` 仍为 `0569b517ee0e101e32c38897812821a76d755aa6`，`origin/main` 仍为推送前已经存在的 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，均未修改。
+- 验证与排除：推送源码的 `npm run typecheck`、89/89 vNext/strict-tool Node 目标、5/5 Room Worker 目标与 staged diff 检查均已通过；这是未完成能力的开发检查点，不是生产冻结或发布。独立未跟踪的 `docs/research/archify-structured-json-pipeline.md` 未纳入提交；未运行完整回归、Lint、build、真实 Provider、migration、部署或外部资源写入。
