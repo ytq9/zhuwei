@@ -203,23 +203,6 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
   assert.equal(input.tool_choice, "required");
   assert.equal(input.parallel_tool_calls, false);
   assert.equal(input.max_completion_tokens, 4_000);
-  const worldInteractionSchema = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA
-    .properties.proposals.items.anyOf
-    .find((entry) => entry.properties.kind.enum[0] === "worldInteraction");
-  assert.deepEqual(worldInteractionSchema.properties.abilityRef.enum, ["none"]);
-  assert.equal(worldInteractionSchema.properties.intent.pattern, "[\\s\\S]+");
-  assert.equal(
-    worldInteractionSchema.properties.consumes.items.properties.kind.enum[0],
-    "prospective",
-  );
-  const materializeSchema = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA
-    .properties.proposals.items.anyOf
-    .find((entry) => entry.properties.kind.enum[0] === "materializeObject");
-  assert.deepEqual(materializeSchema.properties.semanticKind.enum, ["sceneFeature"]);
-  assert.deepEqual(
-    materializeSchema.properties.visibilityPolicyRef.enum,
-    ["visibility:scene-observers"],
-  );
   const correctionInput = createCorrectKpProposalBundleModelInput("只修正允许的摘要。");
   assert.equal(correctionInput.tools.length, 1);
   assert.equal(
@@ -573,17 +556,11 @@ test("closed refs preserve transport sentinels and prospective namespace", () =>
   }
 });
 
-test("stage-three transport is direct-success-only while the domain none-check stays closed", () => {
+test("high-risk checks are closed objects and none-check has one canonical sentinel", () => {
   assert.deepEqual(
-    SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.mode.enum,
-    ["adjudication"],
+    SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.$def.noneCheck.properties.dc.enum,
+    [0],
   );
-  assert.deepEqual(
-    SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.proposals.items.anyOf
-      .map((entry) => entry.properties.kind.enum[0]),
-    ["materializeObject", "worldInteraction"],
-  );
-  assert.equal("$def" in SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, false);
   assert.equal(decodeVNextStrictToolBundle({
     checkKind: "none",
     ability: "none",

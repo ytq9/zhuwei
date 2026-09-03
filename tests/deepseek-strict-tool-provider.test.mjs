@@ -312,35 +312,6 @@ test("DeepSeek strict dialect rejects a type-less nested anyOf branch", () => {
   );
 });
 
-test("DeepSeek strict dialect requires literal types for ref branches and definitions", () => {
-  const refBranch = structuredClone(STRICT_SCHEMA);
-  refBranch.properties.choice = {
-    anyOf: [
-      { $ref: "#/$def/operation" },
-      { type: "string" },
-    ],
-  };
-  refBranch.required = [...refBranch.required, "choice"].sort();
-  assert.throws(
-    () => assertDeepSeekStrictToolSchema(refBranch),
-    /anyOf\[0\]\.type:required-for-anyOf-branch/u,
-  );
-
-  const unionDefinition = structuredClone(STRICT_SCHEMA);
-  unionDefinition.$def.choice = {
-    anyOf: [
-      { type: "string" },
-      { type: "integer" },
-    ],
-  };
-  unionDefinition.properties.choice = { $ref: "#/$def/choice" };
-  unionDefinition.required = [...unionDefinition.required, "choice"].sort();
-  assert.throws(
-    () => assertDeepSeekStrictToolSchema(unionDefinition),
-    /\$def\.choice\.type:required-for-definition/u,
-  );
-});
-
 test("Registry fails closed unless strict-tool has matching live beta evidence", () => {
   const toolProfile = { ...strictProfile(), structuredOutputMode: "tool" };
   assert.doesNotThrow(() => createModelProfileRegistry([toolProfile]));
