@@ -326,7 +326,13 @@ test("missing prerequisite and world-law violation lower to traceable in-world r
       proposal: { kind: "inWorldRefusal", intent: "尝试不可能的行动。", method: "徒手尝试。" },
       feasibility,
     }));
-    const result = lower(value, [BASIS, "item-definition:required-tool"]);
+    // The refusal commits as a public event, so the cited prerequisite has to
+    // be something this Viewer can already see.
+    const result = lower(
+      value,
+      [BASIS, "item-definition:required-tool"],
+      { viewerRefs: ["item-definition:required-tool"] },
+    );
     assert.equal(result.kind, "accepted", JSON.stringify(result));
     assert.equal(result.command.kind, "inWorldRefusal");
     assert.equal(result.command.ruling.kind, feasibility);
@@ -335,6 +341,28 @@ test("missing prerequisite and world-law violation lower to traceable in-world r
     assert.equal(JSON.stringify(result.command).includes("randomness"), false);
     assert.equal(JSON.stringify(result.command).includes("effects"), false);
   }
+});
+
+test("in-world refusal rejects a prerequisite ref the Viewer cannot see", () => {
+  // Authority-read-bound is not the same as player-visible. A prerequisite
+  // naming a fact the actor has no evidence for would otherwise ride into the
+  // public, scene-observer-visible refusal payload.
+  const value = bundle(entry({
+    formId: VNEXT_IN_WORLD_REFUSAL_FORM_ID,
+    proposal: { kind: "inWorldRefusal", intent: "尝试不可能的行动。", method: "徒手尝试。" },
+    feasibility: "missingPrerequisite",
+  }));
+  const result = lower(
+    value,
+    [BASIS, "item-definition:required-tool"],
+    { viewerRefs: [] },
+  );
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.code, "PROPOSAL_REFERENCE_INVALID");
+  assert.deepEqual(
+    result.issues,
+    ["refusal:prerequisite-not-viewer-visible:item-definition:required-tool"],
+  );
 });
 
 test("prospective references require one producer and an outcome-dominating condition", () => {

@@ -17,6 +17,7 @@ import {
 import {
   requiredContextAuthorityRefs,
   requiredContextReadRefs,
+  requiredContextViewerRefs,
 } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
 import {
@@ -482,6 +483,23 @@ function lowerSingleEntry(
     }
     const costValidation = validateAttemptCosts(input, entry.ruling.attemptCosts);
     if (costValidation.length > 0) return rejected("COST_INVALID", costValidation);
+    // A refusal is committed as a public, scene-observer-visible event, and
+    // its prerequisites travel in that payload. Being authority-read-bound is
+    // not enough to put a ref in front of players: a `knowledge` prerequisite
+    // may well cite a fact the actor cannot see. Only refs this Viewer could
+    // already cite may appear, and an invisible one fails the ruling closed
+    // rather than being quietly dropped -- the description stays player-facing
+    // text either way, so the KP can re-state the prerequisite without it.
+    const viewerRefs = requiredContextViewerRefs(input.requiredContext);
+    const hiddenPrerequisites = entry.ruling.prerequisites
+      .flatMap(({ ref }) => (ref === null ? [] : [ref]))
+      .filter((ref) => !viewerRefs.has(ref));
+    if (hiddenPrerequisites.length > 0) {
+      return rejected(
+        "PROPOSAL_REFERENCE_INVALID",
+        hiddenPrerequisites.map((ref) => `refusal:prerequisite-not-viewer-visible:${ref}`),
+      );
+    }
     return acceptedCommand({
       kind: "inWorldRefusal",
       rootActionId: input.rootActionId,
