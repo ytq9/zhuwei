@@ -13,6 +13,8 @@ import type {
   ItemSystemStateV1,
 } from "./items";
 import type {
+  AtomicWorldInteractionStepsPlan,
+  AtomicWorldInteractionStepsResolvedPayload,
   SemanticDefinitionRevisedPayload,
   WorldInteractionFeasibilityRuledPayload,
   WorldInteractionResolutionPlan,
@@ -273,6 +275,8 @@ export type PublicReceipt = {
 export type StoredReceipt = PublicReceipt & {
   inputHash: Sha256Ref;
   subjectCharacterIds: string[];
+  /** Authority-private settlement ledger for one atomic ProposalBundle. */
+  proposalBundleSettlement?: AtomicWorldInteractionStepsResolvedPayload;
 };
 
 export type CorrectionEffect =
@@ -697,7 +701,8 @@ export type InternalContinuationRecord = {
   rootActionId: string;
   request: RandomnessRequest;
   resolutionPlan?: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
-    | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan;
+    | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan
+    | AtomicWorldInteractionStepsPlan;
 };
 
 export type AuthoritativeWorldState = {
@@ -814,6 +819,7 @@ export type ActorPlanFormedPayload = {
 };
 
 export type EventPayloadByType = {
+  AtomicWorldInteractionStepsResolved: AtomicWorldInteractionStepsResolvedPayload;
   SemanticDefinitionRevised: SemanticDefinitionRevisedPayload;
   SemanticDefinitionMaterialized: SemanticDefinitionMaterializedPayload;
   WorldInteractionResolved: WorldInteractionResolvedPayload;
@@ -1200,7 +1206,8 @@ export type EventPayloadByType = {
     purpose: RandomnessRequest["purpose"];
     formula: RandomnessRequest["diceExpression"];
     resolutionPlan: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
-      | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan;
+      | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan
+      | AtomicWorldInteractionStepsPlan;
   } | { resolution: JsonRecord };
   DiceRolled: {
     randomnessId: string;

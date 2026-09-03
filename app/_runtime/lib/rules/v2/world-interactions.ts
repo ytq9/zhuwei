@@ -2,11 +2,13 @@ import { canonicalSha256 } from "../profiles/canonical";
 import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import {
+  createCandidateEventTransition,
   createEventTransition,
   createScopeProof,
 } from "./events";
 import {
   authorityReadSetMatches,
+  authorityRevisionOrHash,
   authorityRefBoundToScene,
   authoritySpatialRefVisibleTo,
 } from "./authority-bindings";
@@ -49,11 +51,22 @@ import {
   isRecord,
   isSha256,
 } from "./validation";
+import { spatialVisibilityPolicyKind } from "./spatial-visibility";
 import {
+  ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA,
+  atomicWorldInteractionCheckPlan,
+  atomicWorldInteractionStepsPlanHash,
+  isAtomicWorldInteractionStepsPlan,
   isSemanticDefinitionRevisionPlan,
   isWorldInteractionFeasibilityRulingPlan,
   isWorldInteractionResolutionPlan,
   type AppliedWorldInteractionEffect,
+  type AtomicWorldInteractionOutcomeBinding,
+  type AtomicWorldInteractionProducedReference,
+  type AtomicWorldInteractionReference,
+  type AtomicWorldInteractionRulesInput,
+  type AtomicWorldInteractionStep,
+  type AtomicWorldInteractionStepsPlan,
   type SemanticDefinitionRevisionPlan,
   type WorldInteractionBranch,
   type WorldInteractionCost,
@@ -80,10 +93,32 @@ const NPC_SEMANTIC_ALLOWLIST: readonly SemanticFieldPolicy[] = Object.freeze([
 ]);
 
 type TransitionAccumulator = {
+  source?: AuthoritativeWorldState;
   state: AuthoritativeWorldState;
   events: EventEnvelope[];
   scopeProof?: ScopeProof;
+  candidate?: boolean;
+  transactionReads?: Set<string>;
+  transactionWrites?: Set<string>;
+  transactionCreates?: Set<string>;
+  transactionCreatedAuthorityRefs?: Set<string>;
 };
+
+/**
+ * Shared by the four single-step vNext world-interaction/semantic functions
+ * below so an atomic multi-step commit (see `applyAtomicWorldInteractionSteps`)
+ * can thread every step through one `TransitionAccumulator` -- one shared
+ * mutable `{state, events}` pair -- instead of each step settling its own
+ * isolated transition. `accumulator`, when supplied, replaces the function's
+ * own fresh accumulator so its events/state land in the caller's shared one.
+ * `skipDuplicateCheck` lets the second and later steps of one atomic
+ * RootAction proceed past the "this RootAction already has a Receipt" guard,
+ * which would otherwise fire the moment the first step's Receipt exists.
+ */
+type AtomicStepOptions = Readonly<{
+  accumulator?: TransitionAccumulator;
+  skipDuplicateCheck?: boolean;
+}>;
 
 export function stepVNextWorldInteraction(
   profiles: RuntimeProfileManifest,
@@ -93,7 +128,8 @@ export function stepVNextWorldInteraction(
   if (input.kind !== "reviseSemanticDefinition"
     && input.kind !== "resolveWorldInteraction"
     && input.kind !== "materializeSemanticDefinition"
-    && input.kind !== "ruleWorldInteractionFeasibility") {
+    && input.kind !== "ruleWorldInteractionFeasibility"
+    && input.kind !== "applyAtomicWorldInteractionSteps") {
     return undefined;
   }
   if (!worldInteractionProfileEnabled(profiles.extensions)) {
@@ -111,6 +147,9 @@ export function stepVNextWorldInteraction(
   if (input.kind === "ruleWorldInteractionFeasibility") {
     return ruleWorldInteractionFeasibility(profiles, state, input);
   }
+  if (input.kind === "applyAtomicWorldInteractionSteps") {
+    return applyAtomicWorldInteractionSteps(profiles, state, input);
+  }
   return resolveWorldInteraction(profiles, state, input);
 }
 
@@ -121,13 +160,40 @@ export function fulfillVNextWorldInteractionRandomness(
   rolls: readonly number[],
 ): StepResult | undefined {
   const stored = state.internalContinuations[continuationId];
-  if (stored === undefined || !isWorldInteractionResolutionPlan(stored.resolutionPlan)) {
-    return undefined;
-  }
+  if (stored === undefined) return undefined;
   if (!worldInteractionProfileEnabled(profiles.extensions)) {
     return rejected("unsupportedOperation", "The frozen world interaction Profile is unavailable.");
   }
-  const plan = stored.resolutionPlan;
+  if (isAtomicWorldInteractionStepsPlan(stored.resolutionPlan)) {
+    return fulfillAtomicWorldInteractionRandomness(
+      profiles,
+      state,
+      continuationId,
+      rolls,
+      stored.resolutionPlan,
+    );
+  }
+  if (!isWorldInteractionResolutionPlan(stored.resolutionPlan)) return undefined;
+  return settleCheckedWorldInteraction(
+    profiles,
+    transitionAccumulator(state),
+    continuationId,
+    rolls,
+    stored.resolutionPlan,
+  );
+}
+
+function settleCheckedWorldInteraction(
+  profiles: RuntimeProfileManifest,
+  accumulator: TransitionAccumulator,
+  continuationId: string,
+  rolls: readonly number[],
+  plan: WorldInteractionResolutionPlan,
+): StepResult {
+  const stored = accumulator.state.internalContinuations[continuationId];
+  if (stored === undefined) {
+    return rejected("invalidWorldState", "The world interaction continuation is unavailable.");
+  }
   if (stored.request.purpose !== "worldInteractionCheck"
     || plan.ruling.kind !== "check"
     || stored.request.actorCharacterId !== plan.actorCharacterId
@@ -141,7 +207,7 @@ export function fulfillVNextWorldInteractionRandomness(
     || !rolls.every((roll) => Number.isSafeInteger(roll) && roll >= 1 && roll <= 20)) {
     return rejected("invalidRulesInput", "The world interaction roll does not match its frozen d20 request.");
   }
-  if (!authorityReadSetMatches(state, plan.readSet)) {
+  if (!authorityReadSetMatches(accumulator.state, plan.readSet)) {
     return rejected("causalFrontierConflict", "The world interaction read set changed before settlement.");
   }
   const selectedRoll = plan.ruling.check.mode === "advantage"
@@ -156,12 +222,11 @@ export function fulfillVNextWorldInteractionRandomness(
     : total >= Number(plan.ruling.check.dc);
   const branchName = succeeded ? "success" : "failure";
   const branch = plan.branches[branchName];
-  const planValidation = validatePlanAgainstState(profiles, state, plan.actorCharacterId, plan);
+  const planValidation = validatePlanAgainstState(profiles, accumulator.state, plan.actorCharacterId, plan);
   if (planValidation !== undefined) return planValidation;
-  const validation = validateBranchAgainstState(state, plan, branch);
+  const validation = validateBranchAgainstState(accumulator.state, plan, branch);
   if (validation !== undefined) return validation;
 
-  const accumulator: TransitionAccumulator = { state, events: [] };
   appendTransition(accumulator, profiles, stored.rootActionId, {
     eventType: "DiceRolled",
     resolutionId: stored.request.resolutionId,
@@ -207,6 +272,7 @@ function reviseSemanticDefinition(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
+  options?: AtomicStepOptions,
 ): StepResult {
   if (!hasExactKeys(input, ["actorCharacterId", "kind", "plan", "rootActionId"])
     || !isNonEmptyString(input.rootActionId)
@@ -214,10 +280,11 @@ function reviseSemanticDefinition(
     || !isSemanticDefinitionRevisionPlan(input.plan)) {
     return rejected("invalidRulesInput", "Semantic definition revision input is not canonical.");
   }
-  if (input.rootActionId in state.receipts) {
+  const accumulator: TransitionAccumulator = options?.accumulator ?? { state, events: [] };
+  if (!options?.skipDuplicateCheck && input.rootActionId in accumulator.state.receipts) {
     return rejected("duplicateRootAction", "The semantic revision RootAction already has a Receipt.");
   }
-  const actor = state.entities[input.actorCharacterId];
+  const actor = accumulator.state.entities[input.actorCharacterId];
   const plan = input.plan;
   if (actor?.tenureStatus !== "active") {
     return rejected("privateOrUnknownReference", "The semantic revision actor is unavailable.");
@@ -228,10 +295,10 @@ function reviseSemanticDefinition(
       "Stage-three sparse semantic revision is currently closed to NPC semantics.",
     );
   }
-  if (!authorityReadSetMatches(state, plan.readSet)) {
+  if (!authorityReadSetMatches(accumulator.state, plan.readSet)) {
     return rejected("causalFrontierConflict", "The semantic revision read set changed after prepare.");
   }
-  const currentValue = state.campaignRuntime.definitions[plan.definitionRef];
+  const currentValue = accumulator.state.campaignRuntime.definitions[plan.definitionRef];
   if (!isStoredSemanticDefinition(currentValue)
     || currentValue.semanticKind !== plan.semanticKind
     || currentValue.revision !== plan.baseRevision
@@ -241,10 +308,10 @@ function reviseSemanticDefinition(
     return rejected("causalFrontierConflict", "The semantic revision base or template binding changed.");
   }
   const npcRef = npcEntityRef(currentValue);
-  if (npcRef === undefined || state.entities[npcRef]?.kind !== "npc") {
+  if (npcRef === undefined || accumulator.state.entities[npcRef]?.kind !== "npc") {
     return rejected("privateOrUnknownReference", "The semantic definition is not bound to an NPC.");
   }
-  if (!plan.basisRefs.every((ref) => npcMayUseBasis(state, npcRef, ref))) {
+  if (!plan.basisRefs.every((ref) => npcMayUseBasis(accumulator.state, npcRef, ref))) {
     return rejected("npcKnowledgeInsufficient", "The NPC revision cites a fact outside that NPC's knowledge.");
   }
   const base = semanticDefinitionSnapshot(currentValue)!;
@@ -267,35 +334,30 @@ function reviseSemanticDefinition(
     composed.snapshot,
     { templateRef: currentValue.templateRef, templateHash: currentValue.templateHash },
   );
-  const scopeProof = createScopeProof(
-    state,
-    canonicalRefs([
+  appendTransition(accumulator, profiles, input.rootActionId, {
+    eventType: "SemanticDefinitionRevised",
+    payload: revisionPayload(input.actorCharacterId, plan, nextDefinition),
+    reads: canonicalRefs([
       `entity:${input.actorCharacterId}`,
       `entity:${npcRef}`,
       `definition:${plan.definitionRef}:${plan.baseRevision}`,
       `template:${plan.templateRef}:${plan.templateHash}`,
       ...plan.basisRefs,
     ]),
-    [`definition:${plan.definitionRef}:${nextDefinition.revision}`, `entity:${npcRef}`,
+    writes: [`definition:${plan.definitionRef}:${nextDefinition.revision}`, `entity:${npcRef}`,
       `receipt:${input.rootActionId}`],
-    [],
-  );
-  const transition = createEventTransition(state, profiles, {
-    rootActionId: input.rootActionId,
-    eventType: "SemanticDefinitionRevised",
-    payload: revisionPayload(input.actorCharacterId, plan, nextDefinition),
-    scopeProof,
     visibilityPolicyId: currentValue.visibilityPolicyRef,
     secrecy: currentValue.visibilityPolicyRef === "visibility:public" ? "public" : "private",
   });
+  const finalEvent = accumulator.events.at(-1)!;
   return {
     kind: "committed",
-    events: [transition.event],
-    state: transition.state,
-    cache: transition.state,
-    stateHash: transition.event.stateHashAfter,
-    scopeProof,
-    receipt: transition.receipt,
+    events: accumulator.events,
+    state: accumulator.state,
+    cache: accumulator.state,
+    stateHash: finalEvent.stateHashAfter,
+    scopeProof: accumulator.scopeProof!,
+    receipt: accumulator.state.receipts[input.rootActionId]!,
     mechanicalResult: {
       kind: "semanticDefinitionRevision",
       definitionRef: plan.definitionRef,
@@ -325,6 +387,7 @@ function materializeSemanticDefinition(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
+  options?: AtomicStepOptions,
 ): StepResult {
   if (!hasExactKeys(input, ["actorCharacterId", "kind", "plan", "rootActionId"])
     || !isNonEmptyString(input.rootActionId)
@@ -332,36 +395,44 @@ function materializeSemanticDefinition(
     || !isSemanticDefinitionMaterializationPlan(input.plan)) {
     return rejected("invalidRulesInput", "Semantic definition materialization input is not canonical.");
   }
-  if (input.rootActionId in state.receipts) {
+  const accumulator: TransitionAccumulator = options?.accumulator ?? { state, events: [] };
+  if (!options?.skipDuplicateCheck && input.rootActionId in accumulator.state.receipts) {
     return rejected("duplicateRootAction", "The semantic materialization RootAction already has a Receipt.");
   }
-  const actor = state.entities[input.actorCharacterId];
+  const actor = accumulator.state.entities[input.actorCharacterId];
   if (actor?.tenureStatus !== "active") {
     return rejected("privateOrUnknownReference", "The semantic materialization actor is unavailable.");
   }
   const plan = input.plan;
-  if (!authorityReadSetMatches(state, plan.readSet)) {
+  if (!authorityReadSetMatches(accumulator.state, plan.readSet)) {
     return rejected("causalFrontierConflict", "The semantic materialization read set changed after prepare.");
   }
+  if (![...plan.basisRefs, ...plan.sourceRefs]
+    .every((ref) => authorityRefExists(accumulator.state, ref))) {
+    return rejected(
+      "privateOrUnknownReference",
+      "The semantic materialization cites an unavailable authority ref.",
+    );
+  }
+  const visibilityKind = spatialVisibilityPolicyKind(plan.visibilityPolicyRef);
+  if (visibilityKind === undefined
+    || (plan.semanticKind === "sceneFeature"
+      && (!isNonEmptyString(plan.content.sceneRef)
+        || accumulator.state.scenes[plan.content.sceneRef] === undefined))
+    || (visibilityKind === "hiddenUntilEvidence"
+      && !isNonEmptyString(plan.content.visibilityFactId))) {
+    return rejected(
+      "privateOrUnknownReference",
+      "The semantic materialization visibility policy or spatial binding is unsupported.",
+    );
+  }
   const materialized = materializedSemanticDefinition(input.rootActionId, plan);
-  if (state.campaignRuntime.definitions[materialized.definitionRef] !== undefined) {
+  if (accumulator.state.campaignRuntime.definitions[materialized.definitionRef] !== undefined) {
     return rejected(
       "causalFrontierConflict",
       "DEFINITION_CONFLICT: the materialized semantic definition ref already exists.",
     );
   }
-  const scopeProof = createScopeProof(
-    state,
-    canonicalRefs([
-      `entity:${input.actorCharacterId}`,
-      ...plan.readSet.map((binding) => binding.ref),
-      ...plan.basisRefs,
-      ...plan.sourceRefs,
-    ]),
-    [`definition:${materialized.definitionRef}:${materialized.definition.revision}`,
-      `receipt:${input.rootActionId}`],
-    [`definition:${materialized.definitionRef}:${materialized.definition.revision}`],
-  );
   const payload: SemanticDefinitionMaterializedPayload = {
     actorCharacterId: input.actorCharacterId,
     bundleHash: plan.bundleHash,
@@ -376,22 +447,31 @@ function materializeSemanticDefinition(
     summary: plan.summary,
     definition: materialized.definition,
   };
-  const transition = createEventTransition(state, profiles, {
-    rootActionId: input.rootActionId,
+  accumulator.transactionCreatedAuthorityRefs?.add(materialized.definitionRef);
+  appendTransition(accumulator, profiles, input.rootActionId, {
     eventType: "SemanticDefinitionMaterialized",
     payload,
-    scopeProof,
+    reads: canonicalRefs([
+      `entity:${input.actorCharacterId}`,
+      ...plan.readSet.map((binding) => binding.ref),
+      ...plan.basisRefs,
+      ...plan.sourceRefs,
+    ]),
+    writes: [`definition:${materialized.definitionRef}:${materialized.definition.revision}`,
+      `receipt:${input.rootActionId}`],
+    creates: [`definition:${materialized.definitionRef}:${materialized.definition.revision}`],
     visibilityPolicyId: plan.visibilityPolicyRef,
     secrecy: plan.visibilityPolicyRef === "visibility:public" ? "public" : "private",
   });
+  const finalEvent = accumulator.events.at(-1)!;
   return {
     kind: "committed",
-    events: [transition.event],
-    state: transition.state,
-    cache: transition.state,
-    stateHash: transition.event.stateHashAfter,
-    scopeProof,
-    receipt: transition.receipt,
+    events: accumulator.events,
+    state: accumulator.state,
+    cache: accumulator.state,
+    stateHash: finalEvent.stateHashAfter,
+    scopeProof: accumulator.scopeProof!,
+    receipt: accumulator.state.receipts[input.rootActionId]!,
     mechanicalResult: {
       kind: "semanticDefinitionMaterialization",
       prospectiveRef: materialized.prospectiveRef,
@@ -406,6 +486,7 @@ function resolveWorldInteraction(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
+  options?: AtomicStepOptions,
 ): StepResult {
   if (!hasExactKeys(input, ["actorCharacterId", "kind", "plan", "rootActionId"])
     || !isNonEmptyString(input.rootActionId)
@@ -413,18 +494,18 @@ function resolveWorldInteraction(
     || !isWorldInteractionResolutionPlan(input.plan)) {
     return rejected("invalidRulesInput", "World interaction input is not canonical.");
   }
-  if (input.rootActionId in state.receipts) {
+  const accumulator: TransitionAccumulator = options?.accumulator ?? { state, events: [] };
+  if (!options?.skipDuplicateCheck && input.rootActionId in accumulator.state.receipts) {
     return rejected("duplicateRootAction", "The world interaction RootAction already has a Receipt.");
   }
   const plan = input.plan;
-  const validation = validatePlanAgainstState(profiles, state, input.actorCharacterId, plan);
+  const validation = validatePlanAgainstState(profiles, accumulator.state, input.actorCharacterId, plan);
   if (validation !== undefined) return validation;
-  const successValidation = validateBranchAgainstState(state, plan, plan.branches.success);
+  const successValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.success);
   if (successValidation !== undefined) return successValidation;
-  const failureValidation = validateBranchAgainstState(state, plan, plan.branches.failure);
+  const failureValidation = validateBranchAgainstState(accumulator.state, plan, plan.branches.failure);
   if (failureValidation !== undefined) return failureValidation;
 
-  const accumulator: TransitionAccumulator = { state, events: [] };
   if (plan.ruling.kind === "directSuccess") {
     appendAbilityInvocation(accumulator, profiles, input.rootActionId, plan);
     const costEffects = applyItemCosts(
@@ -528,6 +609,7 @@ function ruleWorldInteractionFeasibility(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
   input: JsonRecord,
+  options?: AtomicStepOptions,
 ): StepResult {
   if (!hasExactKeys(input, ["actorCharacterId", "kind", "plan", "rootActionId"])
     || !isNonEmptyString(input.rootActionId)
@@ -535,7 +617,8 @@ function ruleWorldInteractionFeasibility(
     || !isWorldInteractionFeasibilityRulingPlan(input.plan)) {
     return rejected("invalidRulesInput", "World interaction feasibility ruling input is not canonical.");
   }
-  if (input.rootActionId in state.receipts) {
+  const accumulator: TransitionAccumulator = options?.accumulator ?? { state, events: [] };
+  if (!options?.skipDuplicateCheck && input.rootActionId in accumulator.state.receipts) {
     return rejected("duplicateRootAction", "The world interaction feasibility RootAction already has a Receipt.");
   }
   const plan = input.plan;
@@ -545,12 +628,11 @@ function ruleWorldInteractionFeasibility(
       "The feasibility ruling actor binding does not match the RootAction actor.",
     );
   }
-  const actor = state.entities[input.actorCharacterId];
+  const actor = accumulator.state.entities[input.actorCharacterId];
   if (actor?.tenureStatus !== "active") {
     return rejected("privateOrUnknownReference", "The world interaction feasibility actor is unavailable.");
   }
 
-  const accumulator: TransitionAccumulator = { state, events: [] };
   const costEffects = applyItemCosts(
     accumulator,
     profiles,
@@ -598,6 +680,734 @@ function ruleWorldInteractionFeasibility(
       appliedCosts,
     },
   };
+}
+
+const MAX_ATOMIC_STEPS = 16;
+const PROSPECTIVE_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const MATERIALIZATION_FORM_ID = "materialization.vnext-1";
+const WORLD_INTERACTION_FORM_ID = "world-interaction.vnext-1";
+
+type ProspectiveBinding = Readonly<{
+  definitionRef: string;
+  revisionOrHash: string;
+  producerProposalRef: string;
+  outcomeBinding: AtomicWorldInteractionOutcomeBinding;
+}>;
+
+type AtomicCompileResult = Readonly<
+  | { kind: "accepted"; plan: AtomicWorldInteractionStepsPlan }
+  | { kind: "rejected"; result: ReturnType<typeof rejected> }
+>;
+
+type AtomicExecutionResult = Readonly<
+  | {
+      kind: "accepted";
+      accumulator: TransitionAccumulator;
+      ledger: readonly Readonly<{
+        proposalRef: string;
+        outcomeBinding: AtomicWorldInteractionOutcomeBinding;
+        status: "applied" | "skipped";
+      }>[];
+    }
+  | { kind: "rejected"; result: StepResult }
+>;
+
+/** One server-private Rules input owns the complete ordered Bundle. It is
+ * normalized first, then every reachable outcome is executed on a
+ * discardable formal-reducer state before any live effect or random request.
+ */
+function applyAtomicWorldInteractionSteps(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (isNonEmptyString(input.rootActionId) && input.rootActionId in state.receipts) {
+    return rejected("duplicateRootAction", "The atomic world-interaction RootAction already has a Receipt.");
+  }
+  const compiled = compileAtomicWorldInteractionPlan(input);
+  if (compiled.kind === "rejected") return compiled.result;
+  const plan = compiled.plan;
+  const actor = state.entities[plan.actorCharacterId];
+  if (actor?.tenureStatus !== "active") {
+    return rejected("privateOrUnknownReference", "The atomic world-interaction actor is unavailable.");
+  }
+  const preflight = preflightAtomicWorldInteractionPlan(profiles, state, plan);
+  if (preflight !== undefined) return preflight;
+
+  const checkPlan = atomicWorldInteractionCheckPlan(plan);
+  if (checkPlan !== undefined) {
+    return requestAtomicWorldInteractionRandomness(profiles, state, plan, checkPlan);
+  }
+  const executed = executeAtomicWorldInteractionBranch(
+    profiles,
+    transactionAccumulator(state),
+    plan,
+    "success",
+    undefined,
+  );
+  if (executed.kind === "rejected") return executed.result;
+  return finalizeAtomicWorldInteractionExecution(plan, "success", executed);
+}
+
+function compileAtomicWorldInteractionPlan(input: JsonRecord): AtomicCompileResult {
+  if (!hasExactKeys(input, [
+    "actorCharacterId", "bundleHash", "contextHash", "kind", "rootActionId", "sharedRuling", "steps",
+  ])
+    || input.kind !== "applyAtomicWorldInteractionSteps"
+    || !isNonEmptyString(input.rootActionId)
+    || !isNonEmptyString(input.actorCharacterId)
+    || !isSha256(input.bundleHash)
+    || !isSha256(input.contextHash)
+    || (input.sharedRuling !== "directSuccess" && input.sharedRuling !== "check")
+    || !Array.isArray(input.steps)
+    || input.steps.length < 2
+    || input.steps.length > MAX_ATOMIC_STEPS) {
+    return atomicCompileRejected("Atomic world-interaction step input is not canonical.");
+  }
+
+  const checkProposalRefs = input.steps.flatMap((raw) =>
+    isRecord(raw)
+      && isNonEmptyString(raw.proposalRef)
+      && isRecord(raw.rulesInput)
+      && raw.rulesInput.kind === "resolveWorldInteraction"
+      && isRecord(raw.rulesInput.plan)
+      && isRecord(raw.rulesInput.plan.ruling)
+      && raw.rulesInput.plan.ruling.kind === "check"
+      ? [raw.proposalRef]
+      : []);
+  if ((input.sharedRuling === "check" && checkProposalRefs.length !== 1)
+    || (input.sharedRuling === "directSuccess" && checkProposalRefs.length !== 0)) {
+    return atomicCompileRejected("An atomic Bundle must contain exactly one shared mechanical check.");
+  }
+  const sharedCheckProposalRef = checkProposalRefs[0];
+
+  const seenProposalRefs = new Set<string>();
+  const bindings = new Map<string, ProspectiveBinding>();
+  const normalizedSteps: AtomicWorldInteractionStep[] = [];
+  for (const raw of input.steps) {
+    if (!isRecord(raw)
+      || !hasExactKeys(raw, [
+        "consumes", "dependsOn", "formId", "outcomeBinding", "produces", "proposalRef",
+        "rulesInput", "ruling",
+      ])
+      || (raw.formId !== MATERIALIZATION_FORM_ID && raw.formId !== WORLD_INTERACTION_FORM_ID)
+      || !isNonEmptyString(raw.proposalRef)
+      || seenProposalRefs.has(raw.proposalRef)
+      || raw.ruling !== input.sharedRuling
+      || !isOutcomeBinding(raw.outcomeBinding)
+      || !isAtomicReferences(raw.consumes)
+      || !isAtomicProducedReferences(raw.produces)
+      || !Array.isArray(raw.dependsOn)
+      || new Set(raw.dependsOn).size !== raw.dependsOn.length
+      || !raw.dependsOn.every((dependency): dependency is string =>
+        typeof dependency === "string" && seenProposalRefs.has(dependency))
+      || !isRecord(raw.rulesInput)) {
+      return atomicCompileRejected("An atomic Bundle step is not canonical or is out of dependency order.");
+    }
+
+    const prospectiveConsumes = raw.consumes
+      .filter((entry): entry is Extract<AtomicWorldInteractionReference, { kind: "prospective" }> =>
+        entry.kind === "prospective");
+    const expectedDependencies = new Set<string>();
+    for (const consume of prospectiveConsumes) {
+      const producer = bindings.get(consume.handle);
+      if (producer === undefined) {
+        return atomicCompileRejected(`An atomic step consumes an unproduced handle: ${consume.handle}`);
+      }
+      if (!(producer.outcomeBinding === "always"
+        || producer.outcomeBinding === raw.outcomeBinding)) {
+        return atomicCompileRejected(`A prospective producer does not dominate its consumer: ${consume.handle}`);
+      }
+      expectedDependencies.add(producer.producerProposalRef);
+    }
+    if (sharedCheckProposalRef !== undefined
+      && raw.outcomeBinding !== "always"
+      && raw.proposalRef !== sharedCheckProposalRef) {
+      expectedDependencies.add(sharedCheckProposalRef);
+    }
+    if (expectedDependencies.size !== raw.dependsOn.length
+      || raw.dependsOn.some((dependency) => !expectedDependencies.has(dependency))) {
+      return atomicCompileRejected("The server-derived atomic dependencies do not match typed consumes.");
+    }
+
+    const resolved = resolveAtomicRulesInput(
+      raw.rulesInput,
+      bindings,
+      new Set(prospectiveConsumes.map(({ handle }) => handle)),
+    );
+    if (resolved.kind === "rejected") return resolved;
+    const rulesInput = resolved.rulesInput;
+    if (!atomicRulesInputMatchesStep(
+      rulesInput,
+      String(input.rootActionId),
+      String(input.actorCharacterId),
+      String(input.bundleHash),
+      String(input.contextHash),
+      raw.formId,
+    )) {
+      return atomicCompileRejected("An atomic step does not match its frozen Form, actor, or context.");
+    }
+
+    const produces = raw.produces.map((produced) => ({ ...produced }));
+    if (rulesInput.kind === "materializeSemanticDefinition") {
+      if (produces.length !== 1
+        || produces[0]?.handle !== rulesInput.plan.handle
+        || produces[0]?.kind !== "semanticDefinition"
+        || produces[0]?.outcomeBinding !== raw.outcomeBinding
+        || bindings.has(rulesInput.plan.handle)) {
+        return atomicCompileRejected("A materialization step must be the unique typed producer of its handle.");
+      }
+      const materialized = materializedSemanticDefinition(String(input.rootActionId), rulesInput.plan);
+      bindings.set(rulesInput.plan.handle, {
+        definitionRef: materialized.definitionRef,
+        revisionOrHash: materialized.definition.definitionHash,
+        producerProposalRef: raw.proposalRef,
+        outcomeBinding: raw.outcomeBinding,
+      });
+    } else if (produces.length !== 0) {
+      return atomicCompileRejected("Only semantic materialization can produce a prospective reference here.");
+    }
+
+    normalizedSteps.push({
+      formId: raw.formId,
+      proposalRef: raw.proposalRef,
+      ruling: input.sharedRuling,
+      rulesInput,
+      dependsOn: [...raw.dependsOn],
+      consumes: raw.consumes.map((reference) => ({ ...reference })),
+      produces,
+      outcomeBinding: raw.outcomeBinding,
+    });
+    seenProposalRefs.add(raw.proposalRef);
+  }
+
+  const plan: AtomicWorldInteractionStepsPlan = {
+    schema: ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA,
+    rootActionId: String(input.rootActionId),
+    actorCharacterId: String(input.actorCharacterId),
+    bundleHash: input.bundleHash,
+    contextHash: input.contextHash,
+    sharedRuling: input.sharedRuling,
+    steps: normalizedSteps,
+  };
+  if (!isAtomicWorldInteractionStepsPlan(plan)) {
+    return atomicCompileRejected(
+      "The atomic Bundle does not contain exactly one shared check, or its producer graph is invalid.",
+    );
+  }
+  return { kind: "accepted", plan };
+}
+
+function resolveAtomicRulesInput(
+  raw: JsonRecord,
+  bindings: ReadonlyMap<string, ProspectiveBinding>,
+  declaredHandles: ReadonlySet<string>,
+): Readonly<{ kind: "accepted"; rulesInput: AtomicWorldInteractionRulesInput }>
+  | Extract<AtomicCompileResult, { kind: "rejected" }> {
+  if (!hasExactKeys(raw, ["actorCharacterId", "kind", "plan", "rootActionId"])
+    || !isRecord(raw.plan)) {
+    return atomicCompileRejected("An atomic child Rules input is not canonical.");
+  }
+  const prospectiveAuthorityRefs = new Set(
+    [...bindings.values()].map((binding) => binding.definitionRef),
+  );
+  if (!Array.isArray(raw.plan.readSet)
+    || raw.plan.readSet.some((entry) => isRecord(entry)
+      && typeof entry.ref === "string"
+      && (PROSPECTIVE_HANDLE_PATTERN.test(entry.ref)
+        || prospectiveAuthorityRefs.has(entry.ref)))) {
+    return atomicCompileRejected("Prospective references cannot masquerade as an initial read-set member.");
+  }
+  const usedHandles = new Set<string>();
+  let unresolvedHandle: string | undefined;
+  const transformed = substituteTypedReferences(raw.plan, undefined, (handle) => {
+    const binding = bindings.get(handle);
+    if (binding === undefined) {
+      unresolvedHandle ??= handle;
+      return undefined;
+    }
+    usedHandles.add(handle);
+    return binding.definitionRef;
+  }) as JsonRecord;
+  if (unresolvedHandle !== undefined) {
+    return atomicCompileRejected(`An atomic step references an unproduced handle: ${unresolvedHandle}`);
+  }
+  const forbiddenProspectiveField = remainingProspectiveAuthorityField(transformed);
+  if (forbiddenProspectiveField !== undefined) {
+    return atomicCompileRejected(
+      `A prospective handle cannot occupy the authority field ${forbiddenProspectiveField}.`,
+    );
+  }
+  if (usedHandles.size !== declaredHandles.size
+    || [...declaredHandles].some((handle) => !usedHandles.has(handle))) {
+    return atomicCompileRejected("Typed prospective consumes do not match the step's actual reference fields.");
+  }
+  if (!Array.isArray(transformed.readSet)) {
+    return atomicCompileRejected("An atomic child read set is not canonical.");
+  }
+  const readSetByRef = new Map<string, { ref: string; revisionOrHash: string }>();
+  for (const entry of transformed.readSet) {
+    if (!isRecord(entry)
+      || !hasExactKeys(entry, ["ref", "revisionOrHash"])
+      || !isNonEmptyString(entry.ref)
+      || !isNonEmptyString(entry.revisionOrHash)) {
+      return atomicCompileRejected("An atomic child read set is not canonical.");
+    }
+    const prior = readSetByRef.get(entry.ref);
+    if (prior !== undefined && prior.revisionOrHash !== entry.revisionOrHash) {
+      return atomicCompileRejected("An atomic child read set binds one ref to two versions.");
+    }
+    readSetByRef.set(entry.ref, { ref: entry.ref, revisionOrHash: entry.revisionOrHash });
+  }
+  for (const handle of usedHandles) {
+    const binding = bindings.get(handle)!;
+    readSetByRef.set(binding.definitionRef, {
+      ref: binding.definitionRef,
+      revisionOrHash: binding.revisionOrHash,
+    });
+  }
+  transformed.readSet = [...readSetByRef.values()].sort((left, right) =>
+    left.ref < right.ref ? -1 : left.ref > right.ref ? 1 : 0);
+  return {
+    kind: "accepted",
+    rulesInput: { ...raw, plan: transformed } as AtomicWorldInteractionRulesInput,
+  };
+}
+
+const TYPED_SCALAR_REF_FIELDS = new Set([
+  "abilityRef", "definitionRef", "entityRef", "entryRef", "factRef", "goalRef", "npcRef",
+  "objectRef", "observerRef", "planRef", "relationRef", "sceneRef", "sourceDefinitionRef",
+  "sourceRef", "subjectRef", "targetRef", "zoneRef",
+]);
+const TYPED_REF_ARRAY_FIELDS = new Set([
+  "basisRefs", "causalBasisRefs", "costs", "directTargetRefs", "instrumentRefs",
+  "mechanicDefinitionRefs", "sourceRefs", "targetRefs",
+]);
+
+/** A local handle that survives substitution in an authority-shaped field is
+ * either an undeclared consumption or an attempt to choose an id, policy, or
+ * template that only the server may bind. Narrative strings remain opaque. */
+function remainingProspectiveAuthorityField(
+  value: unknown,
+  field?: string,
+): string | undefined {
+  if (typeof value === "string") {
+    return field !== undefined
+      && PROSPECTIVE_HANDLE_PATTERN.test(value)
+      && (field === "ref"
+        || field.endsWith("Ref")
+        || field.endsWith("Refs")
+        || field.endsWith("Id")
+        || field.endsWith("Ids"))
+      ? field
+      : undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = remainingProspectiveAuthorityField(entry, field);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!isRecord(value)) return undefined;
+  for (const [key, child] of Object.entries(value)) {
+    const found = remainingProspectiveAuthorityField(child, key);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** Only schema-defined reference slots are substituted. Narrative text is
+ * deliberately opaque even if it happens to equal a prospective handle. */
+function substituteTypedReferences(
+  value: unknown,
+  field: string | undefined,
+  resolve: (handle: string) => string | undefined,
+): unknown {
+  if (typeof value === "string") {
+    const typedSlot = field !== undefined
+      && (TYPED_SCALAR_REF_FIELDS.has(field) || TYPED_REF_ARRAY_FIELDS.has(field));
+    return typedSlot && PROSPECTIVE_HANDLE_PATTERN.test(value)
+      ? resolve(value) ?? value
+      : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => substituteTypedReferences(entry, field, resolve));
+  }
+  if (!isRecord(value)) return value;
+  const result: JsonRecord = {};
+  for (const [key, child] of Object.entries(value)) {
+    result[key] = substituteTypedReferences(child, key, resolve);
+  }
+  return result;
+}
+
+function atomicRulesInputMatchesStep(
+  input: AtomicWorldInteractionRulesInput,
+  rootActionId: string,
+  actorCharacterId: string,
+  bundleHash: string,
+  contextHash: string,
+  formId: string,
+): boolean {
+  if (input.rootActionId !== rootActionId
+    || input.actorCharacterId !== actorCharacterId
+    || input.plan.contextHash !== contextHash) return false;
+  if (input.kind === "materializeSemanticDefinition") {
+    return formId === MATERIALIZATION_FORM_ID
+      && input.plan.bundleHash === bundleHash
+      && isSemanticDefinitionMaterializationPlan(input.plan);
+  }
+  if (input.kind === "reviseSemanticDefinition") {
+    return formId === MATERIALIZATION_FORM_ID && isSemanticDefinitionRevisionPlan(input.plan);
+  }
+  return formId === WORLD_INTERACTION_FORM_ID && isWorldInteractionResolutionPlan(input.plan);
+}
+
+function preflightAtomicWorldInteractionPlan(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  plan: AtomicWorldInteractionStepsPlan,
+): StepResult | undefined {
+  const checkPlan = atomicWorldInteractionCheckPlan(plan);
+  const branches: readonly ("success" | "failure")[] = checkPlan === undefined
+    ? ["success"]
+    : (["success", "failure"] as const).filter((branch) =>
+        representativeRolls(checkPlan, branch) !== undefined);
+  for (const branch of branches) {
+    const rolls = checkPlan === undefined ? undefined : representativeRolls(checkPlan, branch);
+    const executed = executeAtomicWorldInteractionBranch(
+      profiles,
+      transactionAccumulator(state, true),
+      plan,
+      branch,
+      rolls,
+    );
+    if (executed.kind === "rejected") return executed.result;
+  }
+  return undefined;
+}
+
+function executeAtomicWorldInteractionBranch(
+  profiles: RuntimeProfileManifest,
+  accumulator: TransitionAccumulator,
+  plan: AtomicWorldInteractionStepsPlan,
+  branch: "success" | "failure",
+  rolls: readonly number[] | undefined,
+): AtomicExecutionResult {
+  const ledger: Array<{
+    proposalRef: string;
+    outcomeBinding: AtomicWorldInteractionOutcomeBinding;
+    status: "applied" | "skipped";
+  }> = [];
+  for (const step of plan.steps) {
+    const applies = step.outcomeBinding === "always"
+      || (step.outcomeBinding === "onSuccess" ? branch === "success" : branch === "failure");
+    if (!applies) {
+      ledger.push({
+        proposalRef: step.proposalRef,
+        outcomeBinding: step.outcomeBinding,
+        status: "skipped",
+      });
+      continue;
+    }
+    let result: StepResult;
+    if (step.rulesInput.kind === "resolveWorldInteraction"
+      && step.rulesInput.plan.ruling.kind === "check") {
+      if (rolls === undefined) {
+        return { kind: "rejected", result: rejected("invalidRulesInput", "Atomic check rolls are unavailable.") };
+      }
+      const continuationId = `continuation:${step.rulesInput.plan.resolutionId}`;
+      if (!(continuationId in accumulator.state.internalContinuations)) {
+        const opened = resolveWorldInteraction(
+          profiles,
+          accumulator.state,
+          step.rulesInput,
+          { accumulator, skipDuplicateCheck: true },
+        );
+        if (opened.kind !== "awaitingRandomness") {
+          return { kind: "rejected", result: opened };
+        }
+      }
+      result = settleCheckedWorldInteraction(
+        profiles,
+        accumulator,
+        continuationId,
+        rolls,
+        step.rulesInput.plan,
+      );
+    } else {
+      result = applyAtomicStep(profiles, accumulator, step.rulesInput);
+    }
+    if (result.kind !== "committed") return { kind: "rejected", result };
+    ledger.push({
+      proposalRef: step.proposalRef,
+      outcomeBinding: step.outcomeBinding,
+      status: "applied",
+    });
+  }
+  appendTransition(accumulator, profiles, plan.rootActionId, {
+    eventType: "AtomicWorldInteractionStepsResolved",
+    payload: {
+      actorCharacterId: plan.actorCharacterId,
+      branch,
+      checkResolutionId: atomicWorldInteractionCheckPlan(plan)?.resolutionId ?? null,
+      steps: ledger,
+    },
+    reads: [`entity:${plan.actorCharacterId}`],
+    writes: [`receipt:${plan.rootActionId}`],
+    visibilityPolicyId: "visibility:room-authority-only",
+    secrecy: "internal",
+  });
+  return { kind: "accepted", accumulator, ledger };
+}
+
+function applyAtomicStep(
+  profiles: RuntimeProfileManifest,
+  accumulator: TransitionAccumulator,
+  rulesInput: AtomicWorldInteractionRulesInput,
+): StepResult {
+  const options: AtomicStepOptions = { accumulator, skipDuplicateCheck: true };
+  if (rulesInput.kind === "materializeSemanticDefinition") {
+    return materializeSemanticDefinition(profiles, accumulator.state, rulesInput, options);
+  }
+  if (rulesInput.kind === "reviseSemanticDefinition") {
+    return reviseSemanticDefinition(profiles, accumulator.state, rulesInput, options);
+  }
+  return resolveWorldInteraction(profiles, accumulator.state, rulesInput, options);
+}
+
+function requestAtomicWorldInteractionRandomness(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  plan: AtomicWorldInteractionStepsPlan,
+  checkPlan: WorldInteractionResolutionPlan,
+): StepResult {
+  if (checkPlan.ruling.kind !== "check") {
+    return rejected("invalidRulesInput", "The atomic randomness plan has no shared check.");
+  }
+  const request = randomnessRequestForWorldInteraction(checkPlan);
+  const continuation: AuthorityContinuation = {
+    kind: "roomAuthorityRandomness",
+    continuationId: `continuation:${checkPlan.resolutionId}`,
+    capability: canonicalSha256({
+      kind: "roomAuthorityRandomness",
+      roomId: state.roomId,
+      runtimeEpochId: state.runtimeEpochId,
+      stateHash: hashWorldState(state),
+      rootActionId: plan.rootActionId,
+      request,
+      resolutionPlanHash: atomicWorldInteractionStepsPlanHash(plan),
+    }),
+  };
+  if (continuation.continuationId in state.internalContinuations) {
+    return rejected("invalidRulesInput", "The atomic world-interaction check already has a continuation.");
+  }
+  const accumulator = transactionAccumulator(state);
+  appendTransition(accumulator, profiles, plan.rootActionId, {
+    eventType: "RandomnessRequested",
+    resolutionId: checkPlan.resolutionId,
+    payload: {
+      request,
+      continuation,
+      purpose: request.purpose,
+      formula: request.diceExpression,
+      resolutionPlan: plan,
+    },
+    reads: canonicalRefs(plan.steps.flatMap((step) =>
+      step.rulesInput.plan.readSet.map(({ ref }) => ref)
+        .filter((ref) => authorityRevisionOrHash(state, ref) !== null))),
+    writes: [`continuation:${continuation.continuationId}`, `receipt:${plan.rootActionId}`],
+    creates: [`continuation:${continuation.continuationId}`],
+    visibilityPolicyId: "visibility:room-authority-only",
+    secrecy: "internal",
+  });
+  return {
+    kind: "awaitingRandomness",
+    events: accumulator.events,
+    state: accumulator.state,
+    cache: accumulator.state,
+    stateHash: accumulator.events.at(-1)!.stateHashAfter,
+    scopeProof: transactionScopeProof(accumulator),
+    receipt: accumulator.state.receipts[plan.rootActionId]!,
+    randomnessRequest: request,
+    continuation,
+    mechanicalResult: {
+      kind: "atomicWorldInteractionAwaitingRandomness",
+      proposalCount: plan.steps.length,
+    },
+  };
+}
+
+function fulfillAtomicWorldInteractionRandomness(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  continuationId: string,
+  rolls: readonly number[],
+  plan: AtomicWorldInteractionStepsPlan,
+): StepResult {
+  const checkPlan = atomicWorldInteractionCheckPlan(plan);
+  const stored = state.internalContinuations[continuationId];
+  if (checkPlan === undefined
+    || checkPlan.ruling.kind !== "check"
+    || stored === undefined
+    || stored.rootActionId !== plan.rootActionId
+    || continuationId !== `continuation:${checkPlan.resolutionId}`
+    || stored.request.purpose !== "worldInteractionCheck"
+    || stored.request.actorCharacterId !== checkPlan.actorCharacterId
+    || stored.request.resolutionId !== checkPlan.resolutionId
+    || stored.request.randomnessId !== checkPlan.ruling.randomnessId
+    || canonicalSha256(stored.request.frozenCheck) !== canonicalSha256(checkPlan.ruling.check)) {
+    return rejected("invalidWorldState", "The atomic continuation changed its frozen shared check.");
+  }
+  const outcome = worldInteractionRollOutcome(checkPlan, rolls);
+  if (outcome === undefined) {
+    return rejected("invalidRulesInput", "The atomic world-interaction roll does not match its frozen request.");
+  }
+  const preflight = executeAtomicWorldInteractionBranch(
+    profiles,
+    transactionAccumulator(state, true),
+    plan,
+    outcome.branch,
+    rolls,
+  );
+  if (preflight.kind === "rejected") return preflight.result;
+  const executed = executeAtomicWorldInteractionBranch(
+    profiles,
+    transactionAccumulator(state),
+    plan,
+    outcome.branch,
+    rolls,
+  );
+  if (executed.kind === "rejected") return executed.result;
+  return finalizeAtomicWorldInteractionExecution(plan, outcome.branch, executed);
+}
+
+function finalizeAtomicWorldInteractionExecution(
+  plan: AtomicWorldInteractionStepsPlan,
+  branch: "success" | "failure",
+  executed: Extract<AtomicExecutionResult, { kind: "accepted" }>,
+): StepResult {
+  const { accumulator, ledger } = executed;
+  const scopeProof = transactionScopeProof(accumulator);
+  const storedReceipt = accumulator.state.receipts[plan.rootActionId]!;
+  return {
+    kind: "committed",
+    events: accumulator.events,
+    state: accumulator.state,
+    cache: accumulator.state,
+    stateHash: accumulator.events.at(-1)!.stateHashAfter,
+    scopeProof,
+    receipt: {
+      receiptId: storedReceipt.receiptId,
+      rootActionId: storedReceipt.rootActionId,
+      status: storedReceipt.status,
+      branchId: storedReceipt.branchId,
+      eventRange: { ...storedReceipt.eventRange },
+      rulesetVersion: storedReceipt.rulesetVersion,
+      eventSchemaVersion: storedReceipt.eventSchemaVersion,
+      scopeProofHash: scopeProof.proofHash,
+    },
+    mechanicalResult: {
+      kind: "atomicWorldInteractionSteps",
+      branch,
+      steps: ledger,
+    },
+  };
+}
+
+function randomnessRequestForWorldInteraction(plan: WorldInteractionResolutionPlan): RandomnessRequest {
+  if (plan.ruling.kind !== "check") {
+    throw new TypeError("world interaction randomness requires a check ruling");
+  }
+  return {
+    randomnessId: plan.ruling.randomnessId,
+    resolutionId: plan.resolutionId,
+    actorCharacterId: plan.actorCharacterId,
+    purpose: "worldInteractionCheck",
+    diceExpression: plan.ruling.check.mode === "normal"
+      ? "1d20"
+      : plan.ruling.check.mode === "advantage" ? "2d20kh1" : "2d20kl1",
+    frozenCheck: structuredClone(plan.ruling.check),
+  };
+}
+
+function worldInteractionRollOutcome(
+  plan: WorldInteractionResolutionPlan,
+  rolls: readonly number[],
+): Readonly<{ branch: "success" | "failure"; selectedRoll: number }> | undefined {
+  if (plan.ruling.kind !== "check") return undefined;
+  const expected = plan.ruling.check.mode === "normal" ? 1 : 2;
+  if (rolls.length !== expected
+    || !rolls.every((roll) => Number.isSafeInteger(roll) && roll >= 1 && roll <= 20)) return undefined;
+  const selectedRoll = plan.ruling.check.mode === "advantage"
+    ? Math.max(...rolls)
+    : plan.ruling.check.mode === "disadvantage" ? Math.min(...rolls) : rolls[0]!;
+  const total = selectedRoll + Number(plan.ruling.check.modifier);
+  const succeeded = plan.ruling.resolutionKind === "attack"
+    ? selectedRoll === 20 || (selectedRoll !== 1 && total >= Number(plan.ruling.check.dc))
+    : total >= Number(plan.ruling.check.dc);
+  return { branch: succeeded ? "success" : "failure", selectedRoll };
+}
+
+function representativeRolls(
+  plan: WorldInteractionResolutionPlan,
+  branch: "success" | "failure",
+): readonly number[] | undefined {
+  if (plan.ruling.kind !== "check") return undefined;
+  for (let face = 1; face <= 20; face += 1) {
+    const rolls = plan.ruling.check.mode === "normal" ? [face] : [face, face];
+    if (worldInteractionRollOutcome(plan, rolls)?.branch === branch) return rolls;
+  }
+  return undefined;
+}
+
+function isOutcomeBinding(value: unknown): value is AtomicWorldInteractionOutcomeBinding {
+  return value === "always" || value === "onSuccess" || value === "onFailure";
+}
+
+function isAtomicReferences(value: unknown): value is readonly AtomicWorldInteractionReference[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  const identities = new Set<string>();
+  return value.every((entry) => {
+    if (!isRecord(entry)) return false;
+    const identity = entry.kind === "existing"
+      && hasExactKeys(entry, ["kind", "ref"])
+      && isNonEmptyString(entry.ref)
+      && !PROSPECTIVE_HANDLE_PATTERN.test(entry.ref)
+      ? `existing:${entry.ref}`
+      : entry.kind === "prospective"
+        && hasExactKeys(entry, ["handle", "kind"])
+        && typeof entry.handle === "string"
+        && PROSPECTIVE_HANDLE_PATTERN.test(entry.handle)
+        ? `prospective:${entry.handle}`
+        : undefined;
+    if (identity === undefined || identities.has(identity)) return false;
+    identities.add(identity);
+    return true;
+  });
+}
+
+function isAtomicProducedReferences(
+  value: unknown,
+): value is readonly AtomicWorldInteractionProducedReference[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  const handles = new Set<string>();
+  return value.every((entry) => {
+    if (!isRecord(entry)
+      || !hasExactKeys(entry, ["handle", "kind", "outcomeBinding"])
+      || typeof entry.handle !== "string"
+      || !PROSPECTIVE_HANDLE_PATTERN.test(entry.handle)
+      || handles.has(entry.handle)
+      || !["semanticDefinition", "canonicalFact", "relation", "itemEntry"].includes(String(entry.kind))
+      || !isOutcomeBinding(entry.outcomeBinding)) return false;
+    handles.add(entry.handle);
+    return true;
+  });
+}
+
+function atomicCompileRejected(message: string): Extract<AtomicCompileResult, { kind: "rejected" }> {
+  return { kind: "rejected", result: rejected("invalidRulesInput", message) };
 }
 
 function validatePlanAgainstState(
@@ -1292,6 +2102,40 @@ function sensoryEvidenceFactId(
   }).slice("sha256:".length, "sha256:".length + 32)}`;
 }
 
+function transitionAccumulator(state: AuthoritativeWorldState): TransitionAccumulator {
+  return { state, events: [] };
+}
+
+function transactionAccumulator(
+  state: AuthoritativeWorldState,
+  candidate = false,
+): TransitionAccumulator {
+  return {
+    source: state,
+    state,
+    events: [],
+    candidate,
+    transactionReads: new Set(),
+    transactionWrites: new Set(),
+    transactionCreates: new Set(),
+    transactionCreatedAuthorityRefs: new Set(),
+  };
+}
+
+function transactionScopeProof(accumulator: TransitionAccumulator): ScopeProof {
+  const source = accumulator.source ?? accumulator.state;
+  const creates = accumulator.transactionCreates ?? new Set<string>();
+  const createdAuthorityRefs = accumulator.transactionCreatedAuthorityRefs ?? new Set<string>();
+  const existedBeforeTransaction = (ref: string): boolean =>
+    !creates.has(ref) && !createdAuthorityRefs.has(ref);
+  return createScopeProof(
+    source,
+    [...(accumulator.transactionReads ?? [])].filter(existedBeforeTransaction),
+    [...(accumulator.transactionWrites ?? [])].filter(existedBeforeTransaction),
+    [...creates],
+  );
+}
+
 function appendTransition<T extends keyof EventPayloadByType>(
   accumulator: TransitionAccumulator,
   profiles: RuntimeProfileManifest,
@@ -1307,13 +2151,18 @@ function appendTransition<T extends keyof EventPayloadByType>(
     secrecy?: EventEnvelope["secrecy"];
   },
 ): void {
+  draft.reads.forEach((ref) => accumulator.transactionReads?.add(ref));
+  draft.writes.forEach((ref) => accumulator.transactionWrites?.add(ref));
+  (draft.creates ?? []).forEach((ref) => accumulator.transactionCreates?.add(ref));
   const scopeProof = createScopeProof(
     accumulator.state,
     canonicalRefs(draft.reads),
     canonicalRefs(draft.writes),
     canonicalRefs(draft.creates ?? []),
   );
-  const transition = createEventTransition(accumulator.state, profiles, {
+  const transition = (accumulator.candidate === true
+    ? createCandidateEventTransition
+    : createEventTransition)(accumulator.state, profiles, {
     rootActionId,
     ...(draft.resolutionId === undefined ? {} : { resolutionId: draft.resolutionId }),
     eventType: draft.eventType,
@@ -1397,9 +2246,18 @@ export function isWorldInteractionContinuationStateBinding(
   continuationId: string,
 ): boolean {
   const stored = state.internalContinuations[continuationId];
-  if (stored === undefined || !isWorldInteractionResolutionPlan(stored.resolutionPlan)) return false;
-  const plan = stored.resolutionPlan;
+  if (stored === undefined) return false;
+  const atomicPlan = isAtomicWorldInteractionStepsPlan(stored.resolutionPlan)
+    ? stored.resolutionPlan
+    : undefined;
+  const plan = isWorldInteractionResolutionPlan(stored.resolutionPlan)
+    ? stored.resolutionPlan
+    : atomicPlan !== undefined
+      ? atomicWorldInteractionCheckPlan(atomicPlan)
+      : undefined;
+  if (plan === undefined) return false;
   return stored.rootActionId in state.receipts
+    && (atomicPlan === undefined || atomicPlan.rootActionId === stored.rootActionId)
     && stored.request.purpose === "worldInteractionCheck"
     && stored.request.actorCharacterId === plan.actorCharacterId
     && stored.request.resolutionId === plan.resolutionId

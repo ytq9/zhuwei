@@ -507,8 +507,9 @@ test("atomic multi-step lowering orders steps by the produces/consumes graph and
   });
   // Listed consumer-first in the bundle to prove real reordering, not
   // input-order passthrough.
+  const value = bundle(consumerEntry, producerEntry);
   const result = lower(
-    bundle(consumerEntry, producerEntry),
+    value,
     [BASIS, "scene:bundle", ACTOR],
     // Only the actual direct target is Viewer-addressable; the rest of the
     // authority slice stays invisible so the direct-target gate still applies.
@@ -516,6 +517,9 @@ test("atomic multi-step lowering orders steps by the produces/consumes graph and
   );
   assert.equal(result.kind, "accepted", JSON.stringify(result));
   assert.equal(result.command.kind, "atomicRulesSteps");
+  assert.equal(result.command.bundleHash, canonicalHash(value));
+  assert.equal(result.command.contextHash, CONTEXT_HASH);
+  assert.equal(result.command.sharedRuling, "directSuccess");
   assert.equal(result.command.steps.length, 2);
   assert.deepEqual(
     result.command.steps.map(({ proposalRef }) => proposalRef),
@@ -526,7 +530,18 @@ test("atomic multi-step lowering orders steps by the produces/consumes graph and
   assert.equal(result.command.steps[0].ruling, "directSuccess");
   assert.equal(result.command.steps[1].ruling, "directSuccess");
   assert.equal(result.command.steps[0].outcomeBinding, "onSuccess");
+  assert.deepEqual(result.command.steps[0].produces, producerEntry.produces);
+  assert.deepEqual(result.command.steps[1].consumes, consumerEntry.consumes);
   assert.ok(result.command.steps.every(({ rulesInput }) => rulesInput.kind === "resolveWorldInteraction"));
+});
+
+test("atomic multi-step lowering requires one canonical shared ruling", () => {
+  const direct = entry({ proposalRef: "proposal:direct", feasibility: "directSuccess" });
+  const checked = entry({ proposalRef: "proposal:checked", feasibility: "check" });
+  const result = lower(bundle(direct, checked));
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.code, "BUNDLE_DEPENDENCY_INVALID");
+  assert.deepEqual(result.issues, ["bundle:shared-ruling-mismatch"]);
 });
 test("atomic multi-step lowering rejects mixing executable entries with clarification or refusal", () => {
   const executable = entry({ proposalRef: "proposal:exec", feasibility: "directSuccess" });
@@ -541,7 +556,8 @@ test("atomic multi-step lowering rejects mixing executable entries with clarific
     [BASIS, "scene:bundle", "feature:bundle-target", "item-definition:required-tool"],
   );
   assert.equal(result.kind, "rejected", JSON.stringify(result));
-  assert.equal(result.code, "BUNDLE_LOWERING_UNSUPPORTED");
+  assert.equal(result.code, "BUNDLE_DEPENDENCY_INVALID");
+  assert.deepEqual(result.issues, ["bundle:shared-ruling-mismatch"]);
 
   const clarificationEntry = entry({
     proposalRef: "proposal:clarify",
@@ -558,12 +574,14 @@ test("atomic multi-step lowering rejects mixing executable entries with clarific
     },
     feasibility: "check",
   });
-  const withClarification = lower(bundle(executable, clarificationEntry));
+  const checkedExecutable = entry({ proposalRef: "proposal:checked-exec", feasibility: "check" });
+  const withClarification = lower(bundle(checkedExecutable, clarificationEntry));
   assert.equal(withClarification.kind, "rejected", JSON.stringify(withClarification));
   assert.equal(withClarification.code, "BUNDLE_LOWERING_UNSUPPORTED");
 
   const highRiskEntry = entry({ proposalRef: "proposal:risky", feasibility: "highRisk" });
-  const withHighRisk = lower(bundle(executable, highRiskEntry));
+  const secondHighRiskEntry = entry({ proposalRef: "proposal:risky-two", feasibility: "highRisk" });
+  const withHighRisk = lower(bundle(highRiskEntry, secondHighRiskEntry));
   assert.equal(withHighRisk.kind, "rejected", JSON.stringify(withHighRisk));
   assert.equal(withHighRisk.code, "BUNDLE_LOWERING_UNSUPPORTED");
 });
@@ -574,7 +592,7 @@ test("atomic multi-step lowering rejects an unproduced consumed handle before bu
     consumes: [{ kind: "prospective", handle: "prospective:missing" }],
     feasibility: "directSuccess",
   });
-  const other = entry({ proposalRef: "proposal:other", feasibility: "check" });
+  const other = entry({ proposalRef: "proposal:other", feasibility: "directSuccess" });
   const result = lower(bundle(consumerOnly, other));
   assert.equal(result.kind, "rejected", JSON.stringify(result));
   assert.equal(result.code, "BUNDLE_DEPENDENCY_INVALID");

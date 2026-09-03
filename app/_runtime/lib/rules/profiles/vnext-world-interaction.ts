@@ -75,7 +75,10 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
     defaultEventTypeVersion: "1",
     additions: Object.freeze([
+      "AtomicWorldInteractionStepsResolved",
+      "SemanticDefinitionMaterialized",
       "SemanticDefinitionRevised",
+      "WorldInteractionFeasibilityRuled",
       "WorldInteractionResolved",
     ]),
     replay: "complete-next-definitions-and-typed-results-only",

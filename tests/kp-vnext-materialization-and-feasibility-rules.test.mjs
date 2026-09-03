@@ -8,6 +8,10 @@ import {
 } from "../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts";
 import { createVersionedRulesRuntime } from "../app/_runtime/lib/rules/v2-runtime.ts";
 import { authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
+import {
+  eventHash,
+  validateEventEnvelope,
+} from "../app/_runtime/lib/rules/v2/events.ts";
 import { stepVNextWorldInteraction } from "../app/_runtime/lib/rules/v2/world-interactions.ts";
 import {
   materializedSemanticDefinitionRef,
@@ -15,7 +19,10 @@ import {
   createDefinitionSnapshot,
   storedSemanticDefinition,
 } from "../app/_runtime/lib/rules/v2/semantic-definitions.ts";
-import { bundleCommandToRoomLowering } from "../app/_runtime/lib/kp/vnext/room-bridge.ts";
+import {
+  bundleCommandToRoomLowering,
+  VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE,
+} from "../app/_runtime/lib/kp/vnext/room-bridge.ts";
 
 const ACTOR = "character:mf1";
 const SCENE = "scene:mf2";
@@ -258,6 +265,24 @@ test("materializeSemanticDefinition rejects a stale read set", () => {
   assert.equal(result.rejection.code, "causalFrontierConflict");
 });
 
+test("materializeSemanticDefinition rejects a visibility policy unknown to the spatial projector", () => {
+  const world = initialize();
+  const { rootActionId, plan } = materializationPlan(world.state, {
+    rootActionId: "root:materialize-unknown-visibility",
+    visibilityPolicyRef: "visibility:made-up-never-visible",
+  });
+  const result = runtime.step(world.profiles, world.state, {
+    kind: "materializeSemanticDefinition",
+    rootActionId,
+    actorCharacterId: ACTOR,
+    plan,
+  });
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.rejection.code, "privateOrUnknownReference");
+  assert.equal(world.state.receipts[rootActionId], undefined);
+  assert.equal(Object.keys(world.state.campaignRuntime.definitions).length, 0);
+});
+
 test("materializeSemanticDefinition records the authorising context hash verbatim", () => {
   // Rules holds no RequiredContext and so cannot re-derive this hash. It is
   // verified against the frozen context at Proposal lowering time; Rules
@@ -343,6 +368,411 @@ test("materializeSemanticDefinition still refuses a sparse definition carrying a
   });
   assert.equal(result.kind, "rejected", JSON.stringify(result));
   assert.equal(result.rejection.code, "invalidRulesInput");
+});
+
+function atomicSceneFeatureInput(state, overrides = {}) {
+  const rootActionId = overrides.rootActionId ?? "root:atomic-materialize-use";
+  const bundleHash = overrides.bundleHash ?? canonicalSha256({ bundle: "atomic-materialize-use" });
+  const contextHash = overrides.contextHash ?? canonicalSha256({ context: "atomic-materialize-use" });
+  const handle = overrides.handle ?? "prospective:atomic-scene-feature";
+  const existingReadSet = [ACTOR, SCENE].sort().map((ref) => {
+    const revisionOrHash = authorityRevisionOrHash(state, ref);
+    assert.notEqual(revisionOrHash, null, `missing authority binding for ${ref}`);
+    return { ref, revisionOrHash };
+  });
+  const producerPlan = materializationPlan(state, {
+    rootActionId,
+    bundleHash,
+    contextHash,
+    handle,
+    semanticKind: "sceneFeature",
+    readSet: structuredClone(existingReadSet),
+    content: {
+      sceneRef: SCENE,
+      label: "新出现的壁龛",
+      description: "墙面上露出一个可检查的浅壁龛。",
+      observableState: "open",
+      affordances: ["inspect"],
+    },
+  }).plan;
+  const interactionPlan = {
+    schema: "zhuwei.world-interaction-resolution-plan/v1",
+    resolutionId: "resolution:atomic-materialize-use",
+    interactionRef: "interaction:atomic-materialize-use",
+    actorCharacterId: ACTOR,
+    sceneRef: SCENE,
+    abilityRef: null,
+    contextHash,
+    readSet: structuredClone(existingReadSet),
+    targetRefs: [handle],
+    directTargetRefs: [handle],
+    instrumentRefs: [],
+    basisRefs: [handle],
+    intent: "检查新出现的壁龛。",
+    method: "靠近后查看。",
+    ruling: { kind: "directSuccess" },
+    costs: [],
+    branches: {
+      success: {
+        outcomeCode: "outcome:atomic-inspected",
+        summary: "角色检查了壁龛。",
+        effects: [],
+        sensoryEvidence: [],
+        pressures: [],
+        opportunities: [],
+      },
+      failure: {
+        outcomeCode: "outcome:atomic-not-inspected",
+        summary: "角色没有检查到壁龛。",
+        effects: [],
+        sensoryEvidence: [],
+        pressures: [],
+        opportunities: [],
+      },
+    },
+  };
+  return {
+    kind: "applyAtomicWorldInteractionSteps",
+    rootActionId,
+    actorCharacterId: ACTOR,
+    bundleHash,
+    contextHash,
+    sharedRuling: "directSuccess",
+    steps: [{
+      formId: "materialization.vnext-1",
+      proposalRef: "proposal:atomic-producer",
+      ruling: "directSuccess",
+      rulesInput: {
+        kind: "materializeSemanticDefinition",
+        rootActionId,
+        actorCharacterId: ACTOR,
+        plan: producerPlan,
+      },
+      dependsOn: [],
+      consumes: [],
+      produces: [{
+        handle,
+        kind: "semanticDefinition",
+        outcomeBinding: "always",
+      }],
+      outcomeBinding: "always",
+    }, {
+      formId: "world-interaction.vnext-1",
+      proposalRef: "proposal:atomic-consumer",
+      ruling: "directSuccess",
+      rulesInput: {
+        kind: "resolveWorldInteraction",
+        rootActionId,
+        actorCharacterId: ACTOR,
+        plan: interactionPlan,
+      },
+      dependsOn: ["proposal:atomic-producer"],
+      consumes: [{ kind: "prospective", handle }],
+      produces: [],
+      outcomeBinding: "always",
+    }],
+  };
+}
+
+function atomicCheckedBranchInput(state, overrides = {}) {
+  const input = atomicSceneFeatureInput(state, {
+    rootActionId: overrides.rootActionId ?? "root:atomic-checked-branches",
+    bundleHash: overrides.bundleHash
+      ?? canonicalSha256({ bundle: "atomic-checked-branches" }),
+    contextHash: overrides.contextHash
+      ?? canonicalSha256({ context: "atomic-checked-branches" }),
+    handle: overrides.handle ?? "prospective:atomic-checked-target",
+  });
+  const { rootActionId, bundleHash, contextHash } = input;
+  const existingReadSet = structuredClone(input.steps[0].rulesInput.plan.readSet);
+  const successHandle = "prospective:atomic-success-feature";
+  const failureHandle = "prospective:atomic-failure-feature";
+  input.sharedRuling = "check";
+  input.steps.forEach((step) => { step.ruling = "check"; });
+  input.steps[1].rulesInput.plan.ruling = {
+    kind: "check",
+    resolutionKind: "abilityCheck",
+    randomnessId: "randomness:atomic-shared-check",
+    check: {
+      kind: "ability",
+      ability: "strength",
+      skill: null,
+      dc: "10",
+      modifier: "0",
+      mode: "normal",
+      costs: [],
+      goal: "检查刚出现的场景对象。",
+      method: "直接检查。",
+      risk: "可能没有找到有用的信息。",
+      successOutcome: "检查成功。",
+      failureOutcome: "检查失败。",
+    },
+  };
+  const branchMaterialization = (handle, outcomeBinding, label) => {
+    const plan = materializationPlan(state, {
+      rootActionId,
+      bundleHash,
+      contextHash,
+      handle,
+      semanticKind: "sceneFeature",
+      readSet: structuredClone(existingReadSet),
+      content: {
+        sceneRef: SCENE,
+        label,
+        description: `${label}只在对应共享检定结果中出现。`,
+        observableState: "present",
+        affordances: ["inspect"],
+      },
+      summary: `${label}已固化。`,
+    }).plan;
+    return {
+      formId: "materialization.vnext-1",
+      proposalRef: `proposal:${outcomeBinding}`,
+      ruling: "check",
+      rulesInput: {
+        kind: "materializeSemanticDefinition",
+        rootActionId,
+        actorCharacterId: ACTOR,
+        plan,
+      },
+      dependsOn: ["proposal:atomic-consumer"],
+      consumes: [],
+      produces: [{ handle, kind: "semanticDefinition", outcomeBinding }],
+      outcomeBinding,
+    };
+  };
+  input.steps.push(
+    branchMaterialization(successHandle, "onSuccess", "成功痕迹"),
+    branchMaterialization(failureHandle, "onFailure", "失败痕迹"),
+  );
+  return { input, successHandle, failureHandle };
+}
+
+test("applyAtomicWorldInteractionSteps materializes and consumes one prospective ref atomically", () => {
+  const world = initialize();
+  const input = atomicSceneFeatureInput(world.state);
+  const committed = runtime.step(world.profiles, world.state, input);
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  const prospectiveRef = normalizedProspectiveRef(
+    input.rootActionId,
+    input.bundleHash,
+    input.steps[0].produces[0].handle,
+  );
+  const definitionRef = materializedSemanticDefinitionRef(
+    input.rootActionId,
+    input.bundleHash,
+    prospectiveRef,
+  );
+  assert.ok(committed.state.campaignRuntime.definitions[definitionRef]);
+  const resolved = committed.events.find((event) => event.eventType === "WorldInteractionResolved");
+  assert.ok(resolved, JSON.stringify(committed.events));
+  assert.deepEqual(resolved.payload.targetRefs, [definitionRef]);
+  assert.deepEqual(resolved.payload.directTargetRefs, [definitionRef]);
+  assert.ok(committed.events.every((event) => event.rootActionId === input.rootActionId));
+  assert.equal(Object.keys(committed.state.receipts).filter((ref) => ref === input.rootActionId).length, 1);
+  const settlement = committed.events.at(-1);
+  assert.equal(settlement.eventType, "AtomicWorldInteractionStepsResolved");
+  assert.deepEqual(settlement.payload.steps.map(({ proposalRef, status }) => ({ proposalRef, status })), [
+    { proposalRef: "proposal:atomic-producer", status: "applied" },
+    { proposalRef: "proposal:atomic-consumer", status: "applied" },
+  ]);
+  assert.equal(committed.scopeProof.reads.includes(definitionRef), false);
+  assert.equal("proposalBundleSettlement" in committed.receipt, false);
+  assert.equal("inputHash" in committed.receipt, false);
+  assert.equal("subjectCharacterIds" in committed.receipt, false);
+  assert.deepEqual(
+    committed.state.receipts[input.rootActionId].proposalBundleSettlement.steps
+      .map(({ proposalRef, status }) => ({ proposalRef, status })),
+    settlement.payload.steps.map(({ proposalRef, status }) => ({ proposalRef, status })),
+  );
+
+  const replayed = runtime.replay(world.genesis, committed.events);
+  assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
+  assert.equal(replayed.head.stateHash, committed.stateHash);
+  assert.deepEqual(replayed.state.campaignRuntime.definitions[definitionRef],
+    committed.state.campaignRuntime.definitions[definitionRef]);
+  assert.deepEqual(
+    replayed.state.receipts[input.rootActionId].proposalBundleSettlement,
+    committed.state.receipts[input.rootActionId].proposalBundleSettlement,
+  );
+});
+
+test("atomic prospective substitution changes typed refs but leaves identical narrative text opaque", () => {
+  const world = initialize();
+  const input = atomicSceneFeatureInput(world.state, {
+    rootActionId: "root:atomic-typed-substitution",
+  });
+  const handle = input.steps[0].produces[0].handle;
+  input.steps[0].rulesInput.plan.summary = handle;
+  input.steps[1].rulesInput.plan.intent = handle;
+  input.steps[1].rulesInput.plan.branches.success.summary = handle;
+  const committed = runtime.step(world.profiles, world.state, input);
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  const materialized = committed.events.find((event) =>
+    event.eventType === "SemanticDefinitionMaterialized");
+  const resolved = committed.events.find((event) => event.eventType === "WorldInteractionResolved");
+  assert.equal(materialized.payload.summary, handle);
+  assert.equal(resolved.payload.summary, handle);
+  assert.notEqual(resolved.payload.targetRefs[0], handle);
+});
+
+test("atomic Bundle rejects a prospective handle in a server-bound template field", () => {
+  const world = initialize();
+  const input = atomicSceneFeatureInput(world.state, {
+    rootActionId: "root:atomic-template-handle",
+  });
+  input.steps[0].rulesInput.plan.templateRef = input.steps[0].produces[0].handle;
+  const result = runtime.step(world.profiles, world.state, input);
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.rejection.code, "invalidRulesInput");
+  assert.equal(world.state.receipts[input.rootActionId], undefined);
+  assert.equal(Object.keys(world.state.campaignRuntime.definitions).length, 0);
+});
+
+test("atomic Bundle rejects an unproduced typed handle before any transition", () => {
+  const world = initialize();
+  const input = atomicSceneFeatureInput(world.state, {
+    rootActionId: "root:atomic-unproduced",
+  });
+  const missing = "prospective:atomic-missing";
+  input.steps[1].consumes = [{ kind: "prospective", handle: missing }];
+  input.steps[1].rulesInput.plan.targetRefs = [missing];
+  input.steps[1].rulesInput.plan.directTargetRefs = [missing];
+  input.steps[1].rulesInput.plan.basisRefs = [missing];
+  const result = runtime.step(world.profiles, world.state, input);
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.rejection.code, "invalidRulesInput");
+  assert.equal(world.state.receipts[input.rootActionId], undefined);
+  assert.equal(Object.keys(world.state.campaignRuntime.definitions).length, 0);
+});
+
+test("atomic Bundle rejects a derived prospective authority ref in an initial read set", () => {
+  const world = initialize();
+  const input = atomicSceneFeatureInput(world.state, {
+    rootActionId: "root:atomic-derived-ref-read-set",
+  });
+  const handle = input.steps[0].produces[0].handle;
+  const prospectiveRef = normalizedProspectiveRef(
+    input.rootActionId,
+    input.bundleHash,
+    handle,
+  );
+  const definitionRef = materializedSemanticDefinitionRef(
+    input.rootActionId,
+    input.bundleHash,
+    prospectiveRef,
+  );
+  input.steps[1].rulesInput.plan.readSet.push({
+    ref: definitionRef,
+    revisionOrHash: `sha256:${"9".repeat(64)}`,
+  });
+  const result = runtime.step(world.profiles, world.state, input);
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.rejection.code, "invalidRulesInput");
+  assert.equal(world.state.receipts[input.rootActionId], undefined);
+  assert.equal(Object.keys(world.state.campaignRuntime.definitions).length, 0);
+});
+
+test("atomic shared check preflights every reachable branch before requesting randomness", () => {
+  const world = initialize();
+  const { input } = atomicCheckedBranchInput(world.state, {
+    rootActionId: "root:atomic-invalid-failure-preflight",
+  });
+  input.steps[1].rulesInput.plan.branches.failure.pressures = [{
+    description: "这个失败分支引用了不存在的权威来源。",
+    sourceRef: "semantic:atomic-missing-source",
+    visibilityPolicyRef: "visibility:scene-observers",
+    basisRefs: [ACTOR],
+  }];
+  const result = runtime.step(world.profiles, world.state, input);
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.rejection.code, "privateOrUnknownReference", JSON.stringify(result));
+  assert.equal(world.state.receipts[input.rootActionId], undefined);
+  assert.equal(Object.keys(world.state.internalContinuations).length, 0);
+  assert.equal(Object.keys(world.state.campaignRuntime.definitions).length, 0);
+});
+
+test("atomic outcome-bound steps cannot precede their shared mechanical check", () => {
+  const world = initialize();
+  const { input } = atomicCheckedBranchInput(world.state, {
+    rootActionId: "root:atomic-conditional-before-check",
+  });
+  const conditional = input.steps.splice(2, 1)[0];
+  input.steps.splice(1, 0, conditional);
+  const result = runtime.step(world.profiles, world.state, input);
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.rejection.code, "invalidRulesInput");
+  assert.equal(world.state.receipts[input.rootActionId], undefined);
+  assert.equal(Object.keys(world.state.internalContinuations).length, 0);
+});
+
+test("one shared check settles success/failure bindings atomically and replays", () => {
+  for (const [expectedBranch, roll] of [["success", 20], ["failure", 1]]) {
+    const world = initialize();
+    const { input, successHandle, failureHandle } = atomicCheckedBranchInput(world.state, {
+      rootActionId: `root:atomic-shared-${expectedBranch}`,
+      bundleHash: canonicalSha256({ bundle: `atomic-shared-${expectedBranch}` }),
+      contextHash: canonicalSha256({ context: `atomic-shared-${expectedBranch}` }),
+    });
+    const pending = runtime.step(world.profiles, world.state, input);
+    assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
+    assert.deepEqual(pending.events.map(({ eventType }) => eventType), ["RandomnessRequested"]);
+    assert.equal(Object.keys(pending.state.campaignRuntime.definitions).length, 0);
+
+    const committed = runtime.step(world.profiles, pending.state, {
+      kind: "fulfillAuthoritativeRandomness",
+      continuation: pending.continuation,
+      rolls: [roll],
+    });
+    assert.equal(committed.kind, "committed", JSON.stringify(committed));
+    assert.equal(committed.mechanicalResult.branch, expectedBranch);
+    const statusByProposal = Object.fromEntries(
+      committed.mechanicalResult.steps.map(({ proposalRef, status }) => [proposalRef, status]),
+    );
+    assert.equal(statusByProposal["proposal:onSuccess"],
+      expectedBranch === "success" ? "applied" : "skipped");
+    assert.equal(statusByProposal["proposal:onFailure"],
+      expectedBranch === "failure" ? "applied" : "skipped");
+
+    const definitionRef = (handle) => materializedSemanticDefinitionRef(
+      input.rootActionId,
+      input.bundleHash,
+      normalizedProspectiveRef(input.rootActionId, input.bundleHash, handle),
+    );
+    assert.equal(Boolean(committed.state.campaignRuntime.definitions[definitionRef(successHandle)]),
+      expectedBranch === "success");
+    assert.equal(Boolean(committed.state.campaignRuntime.definitions[definitionRef(failureHandle)]),
+      expectedBranch === "failure");
+    const settlement = committed.events.at(-1);
+    assert.equal(settlement.eventType, "AtomicWorldInteractionStepsResolved");
+    assert.equal(settlement.payload.branch, expectedBranch);
+    assert.ok(committed.events.every(({ rootActionId }) => rootActionId === input.rootActionId));
+
+    const replayed = runtime.replay(world.genesis, [...pending.events, ...committed.events]);
+    assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
+    assert.equal(replayed.head.stateHash, committed.stateHash);
+  }
+});
+
+test("atomic settlement replay rejects a ledger that contradicts its branch binding", () => {
+  const world = initialize();
+  const input = atomicSceneFeatureInput(world.state, {
+    rootActionId: "root:atomic-invalid-settlement-ledger",
+  });
+  const committed = runtime.step(world.profiles, world.state, input);
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  const tamperedEvents = structuredClone(committed.events);
+  const settlement = tamperedEvents.at(-1);
+  assert.equal(settlement.eventType, "AtomicWorldInteractionStepsResolved");
+  settlement.payload.steps[0].status = "skipped";
+  settlement.payloadHash = canonicalSha256(settlement.payload);
+  settlement.eventHash = eventHash(settlement);
+  assert.deepEqual(validateEventEnvelope(settlement), {
+    ok: false,
+    message: "Event payload does not match its closed event type schema.",
+  });
+  const replayed = runtime.replay(world.genesis, tamperedEvents);
+  assert.equal(replayed.kind, "rejected", JSON.stringify(replayed));
 });
 
 function feasibilityPlan(overrides = {}) {
@@ -518,15 +948,24 @@ test("bundleCommandToRoomLowering fails an in-world refusal closed when an attem
   assert.equal(result.code, "BUNDLE_LOWERING_UNSUPPORTED");
 });
 
-test("bundleCommandToRoomLowering still fails atomicRulesSteps and highRiskConfirmed closed", () => {
+test("bundleCommandToRoomLowering emits one atomic Rules input and keeps highRisk closed", () => {
+  const world = initialize();
+  const expectedInput = atomicSceneFeatureInput(world.state, {
+    rootActionId: "root:bridge-atomic",
+  });
   const atomic = bundleCommandToRoomLowering({
     kind: "atomicRulesSteps",
-    rootActionId: "root:bridge-atomic",
-    actorCharacterId: ACTOR,
-    steps: [],
+    rootActionId: expectedInput.rootActionId,
+    actorCharacterId: expectedInput.actorCharacterId,
+    bundleHash: expectedInput.bundleHash,
+    contextHash: expectedInput.contextHash,
+    sharedRuling: expectedInput.sharedRuling,
+    steps: expectedInput.steps,
   });
-  assert.equal(atomic.kind, "rejected", JSON.stringify(atomic));
-  assert.equal(atomic.code, "BUNDLE_LOWERING_UNSUPPORTED");
+  assert.equal(atomic.kind, "accepted", JSON.stringify(atomic));
+  assert.deepEqual(atomic.input, expectedInput);
+  const committed = runtime.step(world.profiles, world.state, atomic.input);
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
 
   const highRisk = bundleCommandToRoomLowering({
     kind: "highRiskConfirmed",
@@ -548,4 +987,69 @@ test("bundleCommandToRoomLowering still fails atomicRulesSteps and highRiskConfi
   });
   assert.equal(highRisk.kind, "rejected", JSON.stringify(highRisk));
   assert.equal(highRisk.code, "BUNDLE_LOWERING_UNSUPPORTED");
+});
+
+function bridgeReadSetValidation(world, rulesInput) {
+  const profiles = [
+    world.profiles.manifest,
+    world.profiles.ruleset,
+    world.profiles.eventSchema,
+    world.profiles.abilityCompiler,
+    world.profiles.geometry,
+    world.profiles.triggerOrdering,
+    world.profiles.fictionCombatTime,
+    ...world.profiles.extensions,
+  ].map(({ profileId, profileHash }) => ({ profileRef: profileId, profileHash }));
+  return VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE.validateReadSet({
+    phase: "beforeFirstRulesStep",
+    requiredContext: { binding: { profiles } },
+    rulesInput,
+    profiles: world.profiles,
+    state: world.state,
+    replayHead: { eventSeq: world.state.version, stateHash: canonicalSha256(world.state) },
+  });
+}
+
+test("Room validates the union of atomic child read sets and rejects conflicting/prospective members", () => {
+  const world = initialize();
+  const valid = atomicSceneFeatureInput(world.state, {
+    rootActionId: "root:bridge-read-set",
+  });
+  assert.deepEqual(bridgeReadSetValidation(world, valid), { kind: "valid" });
+
+  const conflicting = structuredClone(valid);
+  conflicting.steps[1].rulesInput.plan.readSet[0].revisionOrHash = "revision:conflict";
+  assert.deepEqual(bridgeReadSetValidation(world, conflicting), {
+    kind: "conflict",
+    changedRefs: [],
+  });
+
+  const prospective = structuredClone(valid);
+  prospective.steps[1].rulesInput.plan.readSet[0] = {
+    ref: "prospective:not-an-initial-read",
+    revisionOrHash: "revision:1",
+  };
+  assert.deepEqual(bridgeReadSetValidation(world, prospective), {
+    kind: "conflict",
+    changedRefs: [],
+  });
+});
+
+test("Room treats a canonical player-choice opening as a zero-world-read Pending transition", () => {
+  const world = initialize();
+  const result = bridgeReadSetValidation(world, {
+    kind: "resolveImprovisedAction",
+    rootActionId: "root:bridge-choice",
+    actorCharacterId: ACTOR,
+    ruling: {
+      kind: "playerChoice",
+      pendingInputId: "pending:bridge-choice",
+      question: "选择哪一种明确做法？",
+      choices: [
+        { choiceId: "a", label: "做法 A", consequence: "承担 A 的公开后果。" },
+        { choiceId: "b", label: "做法 B", consequence: "承担 B 的公开后果。" },
+      ],
+    },
+  });
+  assert.deepEqual(result, { kind: "valid" });
 });

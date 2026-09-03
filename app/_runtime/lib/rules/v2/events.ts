@@ -118,6 +118,10 @@ import {
   validateEnvironmentEventPayload,
 } from "./environment";
 import {
+  atomicWorldInteractionCheckPlan,
+  atomicWorldInteractionStepsPlanHash,
+  isAtomicWorldInteractionStepsPlan,
+  isAtomicWorldInteractionStepsResolvedPayload,
   isSemanticDefinitionRevisedPayload,
   isWorldInteractionFeasibilityRuledPayload,
   isWorldInteractionResolutionPlan,
@@ -317,14 +321,18 @@ function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown):
 }
 
 function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unknown): boolean {
-  return eventType === "SemanticDefinitionRevised"
+  return eventType === "AtomicWorldInteractionStepsResolved"
+    || eventType === "SemanticDefinitionRevised"
     || eventType === "SemanticDefinitionMaterialized"
     || eventType === "WorldInteractionResolved"
     || eventType === "WorldInteractionFeasibilityRuled"
     || (eventType === "RandomnessRequested"
       && isRecord(payload)
       && isRecord(payload.resolutionPlan)
-      && payload.resolutionPlan.schema === "zhuwei.world-interaction-resolution-plan/v1");
+      && [
+        "zhuwei.world-interaction-resolution-plan/v1",
+        "zhuwei.atomic-world-interaction-steps-plan/v1",
+      ].includes(String(payload.resolutionPlan.schema)));
 }
 
 function envelopeCausalActionProfileEnabled(profiles: JsonRecord): boolean {
@@ -416,6 +424,7 @@ function expectedEventTypeVersion(
 }
 
 const EVENT_TYPES = new Set<EventType>([
+  "AtomicWorldInteractionStepsResolved",
   "SemanticDefinitionRevised",
   "SemanticDefinitionMaterialized",
   "WorldInteractionResolved",
@@ -597,20 +606,32 @@ function isWorldInteractionRandomnessEventBinding(
 ): boolean {
   if (!isRecord(value)
     || !hasExactKeys(value, ["continuation", "formula", "purpose", "request", "resolutionPlan"])
-    || !isWorldInteractionResolutionPlan(value.resolutionPlan)
     || !isRandomnessRequest(value.request)
     || value.request.purpose !== "worldInteractionCheck"
     || value.purpose !== value.request.purpose
     || value.formula !== value.request.diceExpression
-    || value.request.actorCharacterId !== value.resolutionPlan.actorCharacterId
-    || value.request.resolutionId !== value.resolutionPlan.resolutionId
-    || !isRecord(value.resolutionPlan.ruling)
-    || value.resolutionPlan.ruling.kind !== "check"
-    || value.request.randomnessId !== value.resolutionPlan.ruling.randomnessId
-    || canonicalSha256(value.request.frozenCheck)
-      !== canonicalSha256(value.resolutionPlan.ruling.check)
     || !isAuthorityContinuation(value.continuation)
     || value.continuation.continuationId !== `continuation:${value.request.resolutionId}`) return false;
+  const resolutionPlan = isWorldInteractionResolutionPlan(value.resolutionPlan)
+    ? value.resolutionPlan
+    : isAtomicWorldInteractionStepsPlan(value.resolutionPlan)
+      ? atomicWorldInteractionCheckPlan(value.resolutionPlan)
+      : undefined;
+  if (resolutionPlan === undefined
+    || (isAtomicWorldInteractionStepsPlan(value.resolutionPlan)
+      && value.resolutionPlan.rootActionId !== rootActionId)
+    || resolutionPlan.ruling.kind !== "check"
+    || value.request.actorCharacterId !== resolutionPlan.actorCharacterId
+    || value.request.resolutionId !== resolutionPlan.resolutionId
+    || value.request.randomnessId !== resolutionPlan.ruling.randomnessId
+    || canonicalSha256(value.request.frozenCheck)
+      !== canonicalSha256(resolutionPlan.ruling.check)) return false;
+  const resolutionPlanHash = isAtomicWorldInteractionStepsPlan(value.resolutionPlan)
+    ? atomicWorldInteractionStepsPlanHash(value.resolutionPlan)
+    : isWorldInteractionResolutionPlan(value.resolutionPlan)
+      ? worldInteractionPlanHash(value.resolutionPlan)
+      : undefined;
+  if (resolutionPlanHash === undefined) return false;
   return value.continuation.capability === canonicalSha256({
     kind: "roomAuthorityRandomness",
     roomId: state.roomId,
@@ -618,7 +639,7 @@ function isWorldInteractionRandomnessEventBinding(
     stateHash: hashWorldState(state),
     rootActionId,
     request: value.request,
-    resolutionPlanHash: worldInteractionPlanHash(value.resolutionPlan),
+    resolutionPlanHash,
   });
 }
 
@@ -707,6 +728,8 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     return false;
   }
   switch (eventType) {
+    case "AtomicWorldInteractionStepsResolved":
+      return isAtomicWorldInteractionStepsResolvedPayload(value);
     case "SemanticDefinitionRevised":
       return isSemanticDefinitionRevisedPayload(value);
     case "SemanticDefinitionMaterialized":
@@ -1082,7 +1105,8 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
             || isSocialResolutionPlan(value.resolutionPlan)
             || isContestResolutionPlan(value.resolutionPlan)
             || isHiddenRealityResolutionPlan(value.resolutionPlan)
-            || isWorldInteractionResolutionPlan(value.resolutionPlan));
+            || isWorldInteractionResolutionPlan(value.resolutionPlan)
+            || isAtomicWorldInteractionStepsPlan(value.resolutionPlan));
       }
       return hasExactKeys(value, ["continuation", "formula", "purpose", "request"])
         && isRandomnessRequest(value.request)
@@ -1685,11 +1709,30 @@ export function foldEvent(
   source: AuthoritativeWorldState,
   event: EventEnvelope,
 ): AuthoritativeWorldState {
+  return foldEventInternal(source, event, false);
+}
+
+/** The candidate mode uses the exact same domain reducer but deliberately
+ * omits Receipt and spotlight publication. Its state and temporary events
+ * never cross Rules.step; they exist only to prove a whole atomic branch
+ * before the first authoritative random or committed effect. */
+function foldEventInternal(
+  source: AuthoritativeWorldState,
+  event: EventEnvelope,
+  candidate: boolean,
+): AuthoritativeWorldState {
   const correctionEffects = correctionEffectsBefore(source, event);
   const firstEventForRoot = !(event.rootActionId in source.receipts);
   const state = structuredClone(source);
 
   switch (event.eventType) {
+    case "AtomicWorldInteractionStepsResolved": {
+      const payload = event.payload as EventPayloadByType["AtomicWorldInteractionStepsResolved"];
+      if (!(payload.actorCharacterId in state.entities)) {
+        throw new TypeError("atomic world-interaction actor does not exist");
+      }
+      break;
+    }
     case "SemanticDefinitionRevised": {
       const payload = event.payload as EventPayloadByType["SemanticDefinitionRevised"];
       if (!(payload.actorCharacterId in state.entities)) {
@@ -1788,9 +1831,16 @@ export function foldEvent(
       if (payload.rulingKind === "check") {
         const continuationId = `continuation:${payload.resolutionId}`;
         const stored = state.internalContinuations[continuationId];
+        const continuedPlan = stored === undefined
+          ? undefined
+          : isWorldInteractionResolutionPlan(stored.resolutionPlan)
+            ? stored.resolutionPlan
+            : isAtomicWorldInteractionStepsPlan(stored.resolutionPlan)
+              ? atomicWorldInteractionCheckPlan(stored.resolutionPlan)
+              : undefined;
         if (stored === undefined
-          || !isWorldInteractionResolutionPlan(stored.resolutionPlan)
-          || worldInteractionPlanHash(stored.resolutionPlan) !== payload.planHash
+          || continuedPlan === undefined
+          || worldInteractionPlanHash(continuedPlan) !== payload.planHash
           || stored.request.purpose !== "worldInteractionCheck") {
           throw new TypeError("world interaction continuation does not exist");
         }
@@ -2294,7 +2344,8 @@ export function foldEvent(
         break;
       }
       if ("resolutionPlan" in payload
-        && isWorldInteractionResolutionPlan(payload.resolutionPlan)
+        && (isWorldInteractionResolutionPlan(payload.resolutionPlan)
+          || isAtomicWorldInteractionStepsPlan(payload.resolutionPlan))
         && !isWorldInteractionRandomnessEventBinding(state, event.rootActionId, payload)) {
         throw new TypeError("world interaction randomness request is not bound to its frozen plan");
       }
@@ -2519,28 +2570,39 @@ export function foldEvent(
       }
   }
 
-  const priorReceipt = state.receipts[event.rootActionId];
-  const receipt = publicReceipt(event);
-  if (
-    priorReceipt !== undefined
-    && (
-      priorReceipt.branchId === receipt.branchId
-      || event.eventType === "BranchActivated"
-    )
-  ) {
-    receipt.eventRange.fromEventSeq = priorReceipt.eventRange.fromEventSeq;
+  if (!candidate) {
+    const priorReceipt = state.receipts[event.rootActionId];
+    const receipt = publicReceipt(event);
+    if (
+      priorReceipt !== undefined
+      && (
+        priorReceipt.branchId === receipt.branchId
+        || event.eventType === "BranchActivated"
+      )
+    ) {
+      receipt.eventRange.fromEventSeq = priorReceipt.eventRange.fromEventSeq;
+    }
+    state.receipts[event.rootActionId] = {
+      ...receipt,
+      inputHash: priorReceipt?.inputHash ?? event.payloadHash,
+      subjectCharacterIds: [...new Set([
+        ...(priorReceipt?.subjectCharacterIds ?? []),
+        ...eventSubjects(event),
+      ])].sort(),
+      ...(event.eventType === "AtomicWorldInteractionStepsResolved"
+        ? {
+            proposalBundleSettlement: structuredClone(
+              event.payload as EventPayloadByType["AtomicWorldInteractionStepsResolved"],
+            ),
+          }
+        : priorReceipt?.proposalBundleSettlement === undefined
+          ? {}
+          : { proposalBundleSettlement: priorReceipt.proposalBundleSettlement }),
+    };
   }
-  state.receipts[event.rootActionId] = {
-    ...receipt,
-    inputHash: priorReceipt?.inputHash ?? event.payloadHash,
-    subjectCharacterIds: [...new Set([
-      ...(priorReceipt?.subjectCharacterIds ?? []),
-      ...eventSubjects(event),
-    ])].sort(),
-  };
   recordCorrectionAudit(state, event, correctionEffects);
   recordCausalFrontier(state, event);
-  recordSpotlightDecision(state, event, firstEventForRoot);
+  if (!candidate) recordSpotlightDecision(state, event, firstEventForRoot);
   state.version = event.eventSeq;
   state.eventHeadHash = event.eventHash;
   state.lastEventId = event.eventId;
@@ -2668,11 +2730,12 @@ export type TransitionDraft<T extends EventType> = {
   secrecy: EventEnvelope["secrecy"];
 };
 
-export function createEventTransition<T extends EventType>(
+function buildEventTransition<T extends EventType>(
   source: AuthoritativeWorldState,
   profiles: RuntimeProfileManifest,
   draft: TransitionDraft<T>,
-): { event: EventEnvelope<T>; state: AuthoritativeWorldState; receipt: PublicReceipt } {
+  candidate: boolean,
+): { event: EventEnvelope<T>; state: AuthoritativeWorldState } {
   if (!isAuthoritativeWorldState(source)) {
     throw new TypeError("event transition requires an authoritative v2 state");
   }
@@ -2762,7 +2825,7 @@ export function createEventTransition<T extends EventType>(
     eventHash: ZERO_HASH,
   } as EventEnvelope<T>;
 
-  const provisionalState = foldEvent(source, provisional as EventEnvelope);
+  const provisionalState = foldEventInternal(source, provisional as EventEnvelope, candidate);
   provisional.stateHashAfter = hashWorldState(provisionalState);
   provisional.eventHash = eventHash(provisional as EventEnvelope);
   provisionalState.eventHeadHash = provisional.eventHash;
@@ -2770,8 +2833,29 @@ export function createEventTransition<T extends EventType>(
   return {
     event: provisional,
     state: provisionalState,
-    receipt: publicReceipt(provisional as EventEnvelope),
   };
+}
+
+export function createEventTransition<T extends EventType>(
+  source: AuthoritativeWorldState,
+  profiles: RuntimeProfileManifest,
+  draft: TransitionDraft<T>,
+): { event: EventEnvelope<T>; state: AuthoritativeWorldState; receipt: PublicReceipt } {
+  const transition = buildEventTransition(source, profiles, draft, false);
+  return {
+    ...transition,
+    receipt: publicReceipt(transition.event as EventEnvelope),
+  };
+}
+
+/** Formal reducer transition for Rules-local branch preflight. The event and
+ * state are discardable and no Receipt or spotlight publication is created. */
+export function createCandidateEventTransition<T extends EventType>(
+  source: AuthoritativeWorldState,
+  profiles: RuntimeProfileManifest,
+  draft: TransitionDraft<T>,
+): { event: EventEnvelope<T>; state: AuthoritativeWorldState } {
+  return buildEventTransition(source, profiles, draft, true);
 }
 
 export function createEventSequence(

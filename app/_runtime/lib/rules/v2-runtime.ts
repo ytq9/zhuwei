@@ -70,7 +70,10 @@ import {
 import { isItemSystemStateV1 } from "./v2/items";
 import { worldInteractionProfileEnabled } from "./profiles/vnext-world-interaction";
 import { isStoredSemanticDefinition } from "./v2/semantic-definitions";
-import { isWorldInteractionResolutionPlan } from "./v2/world-interaction-model";
+import {
+  isAtomicWorldInteractionStepsPlan,
+  isWorldInteractionResolutionPlan,
+} from "./v2/world-interaction-model";
 import { isWorldInteractionContinuationStateBinding } from "./v2/world-interactions";
 
 function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
@@ -281,7 +284,9 @@ function stateWorldInteractionProfilesMatch(
     .filter((definition) => isRecord(definition)
       && definition.schema === "zhuwei.semantic-definition/vnext-1");
   const continuations = Object.entries(state.internalContinuations)
-    .filter(([, continuation]) => isWorldInteractionResolutionPlan(continuation.resolutionPlan));
+    .filter(([, continuation]) =>
+      isWorldInteractionResolutionPlan(continuation.resolutionPlan)
+      || isAtomicWorldInteractionStepsPlan(continuation.resolutionPlan));
   const hasArtifacts = semanticDefinitions.length > 0 || continuations.length > 0;
   if (!worldInteractionProfileEnabled(profiles.extensions)) return !hasArtifacts;
   return semanticDefinitions.every(isStoredSemanticDefinition)

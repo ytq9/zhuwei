@@ -2,7 +2,9 @@ import { canonicalSha256 } from "../profiles/canonical";
 import type { Sha256Ref } from "../profiles/types";
 import type { FrozenCheck, JsonRecord } from "./model";
 import {
+  isSemanticDefinitionMaterializationPlan,
   isStoredSemanticDefinition,
+  type SemanticDefinitionMaterializationPlan,
   type SemanticDefinitionKind,
   type SemanticDefinitionOperation,
   type StoredSemanticDefinition,
@@ -18,6 +20,8 @@ export const WORLD_INTERACTION_RESOLUTION_PLAN_SCHEMA =
   "zhuwei.world-interaction-resolution-plan/v1" as const;
 export const WORLD_INTERACTION_FEASIBILITY_RULING_PLAN_SCHEMA =
   "zhuwei.world-interaction-feasibility-ruling-plan/v1" as const;
+export const ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA =
+  "zhuwei.atomic-world-interaction-steps-plan/v1" as const;
 
 export type VersionedAuthorityBinding = Readonly<{
   ref: string;
@@ -141,6 +145,74 @@ export type WorldInteractionResolutionPlan = Readonly<{
     success: WorldInteractionBranch;
     failure: WorldInteractionBranch;
   }>;
+}>;
+
+export type AtomicWorldInteractionOutcomeBinding = "always" | "onSuccess" | "onFailure";
+
+export type AtomicWorldInteractionReference = Readonly<
+  | { kind: "existing"; ref: string }
+  | { kind: "prospective"; handle: string }
+>;
+
+export type AtomicWorldInteractionProducedReference = Readonly<{
+  handle: string;
+  kind: "semanticDefinition" | "canonicalFact" | "relation" | "itemEntry";
+  outcomeBinding: AtomicWorldInteractionOutcomeBinding;
+}>;
+
+export type AtomicWorldInteractionRulesInput = Readonly<
+  | {
+      kind: "materializeSemanticDefinition";
+      rootActionId: string;
+      actorCharacterId: string;
+      plan: SemanticDefinitionMaterializationPlan;
+    }
+  | {
+      kind: "reviseSemanticDefinition";
+      rootActionId: string;
+      actorCharacterId: string;
+      plan: SemanticDefinitionRevisionPlan;
+    }
+  | {
+      kind: "resolveWorldInteraction";
+      rootActionId: string;
+      actorCharacterId: string;
+      plan: WorldInteractionResolutionPlan;
+    }
+>;
+
+export type AtomicWorldInteractionStep = Readonly<{
+  formId: "materialization.vnext-1" | "world-interaction.vnext-1";
+  proposalRef: string;
+  ruling: "directSuccess" | "check";
+  rulesInput: AtomicWorldInteractionRulesInput;
+  dependsOn: readonly string[];
+  consumes: readonly AtomicWorldInteractionReference[];
+  produces: readonly AtomicWorldInteractionProducedReference[];
+  outcomeBinding: AtomicWorldInteractionOutcomeBinding;
+}>;
+
+/** Frozen, server-normalized plan persisted only in the Room authority
+ * continuation while a single shared check is waiting for Room randomness. */
+export type AtomicWorldInteractionStepsPlan = Readonly<{
+  schema: typeof ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA;
+  rootActionId: string;
+  actorCharacterId: string;
+  bundleHash: Sha256Ref;
+  contextHash: Sha256Ref;
+  sharedRuling: "directSuccess" | "check";
+  steps: readonly AtomicWorldInteractionStep[];
+}>;
+
+export type AtomicWorldInteractionStepsResolvedPayload = Readonly<{
+  actorCharacterId: string;
+  branch: "success" | "failure";
+  checkResolutionId: string | null;
+  steps: readonly Readonly<{
+    proposalRef: string;
+    outcomeBinding: AtomicWorldInteractionOutcomeBinding;
+    status: "applied" | "skipped";
+  }>[];
 }>;
 
 /**
@@ -351,6 +423,232 @@ export function isWorldInteractionResolutionPlan(
     || !isBranch(value.branches.success)
     || !isBranch(value.branches.failure)) return false;
   return true;
+}
+
+export function isAtomicWorldInteractionStepsPlan(
+  value: unknown,
+): value is AtomicWorldInteractionStepsPlan {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      "actorCharacterId", "bundleHash", "contextHash", "rootActionId", "schema", "sharedRuling", "steps",
+    ])
+    || value.schema !== ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA
+    || !isRef(value.rootActionId)
+    || !isRef(value.actorCharacterId)
+    || !isSha256(value.bundleHash)
+    || !isSha256(value.contextHash)
+    || (value.sharedRuling !== "directSuccess" && value.sharedRuling !== "check")
+    || !Array.isArray(value.steps)
+    || value.steps.length < 2
+    || value.steps.length > 16) return false;
+
+  const checkProposalRefs = value.steps.flatMap((step) =>
+    isRecord(step)
+      && typeof step.proposalRef === "string"
+      && isRecord(step.rulesInput)
+      && step.rulesInput.kind === "resolveWorldInteraction"
+      && isRecord(step.rulesInput.plan)
+      && isRecord(step.rulesInput.plan.ruling)
+      && step.rulesInput.plan.ruling.kind === "check"
+      ? [step.proposalRef]
+      : []);
+  if ((value.sharedRuling === "check" && checkProposalRefs.length !== 1)
+    || (value.sharedRuling === "directSuccess" && checkProposalRefs.length !== 0)) return false;
+  const sharedCheckProposalRef = checkProposalRefs[0];
+
+  const seen = new Set<string>();
+  const producerByHandle = new Map<string, {
+    proposalRef: string;
+    outcomeBinding: AtomicWorldInteractionOutcomeBinding;
+  }>();
+  let checkedWorldInteractions = 0;
+  for (const step of value.steps) {
+    if (!isRecord(step)
+      || !hasExactKeys(step, [
+        "consumes", "dependsOn", "formId", "outcomeBinding", "produces", "proposalRef",
+        "rulesInput", "ruling",
+      ])
+      || (step.formId !== "materialization.vnext-1"
+        && step.formId !== "world-interaction.vnext-1")
+      || !isRef(step.proposalRef)
+      || seen.has(step.proposalRef)
+      || step.ruling !== value.sharedRuling
+      || !isAtomicOutcomeBinding(step.outcomeBinding)
+      || !isAtomicConsumes(step.consumes)
+      || !isAtomicProduces(step.produces)
+      || !Array.isArray(step.dependsOn)
+      || new Set(step.dependsOn).size !== step.dependsOn.length
+      || !step.dependsOn.every((dependency) => typeof dependency === "string" && seen.has(dependency))
+      || !isAtomicRulesInput(
+        step.rulesInput,
+        value.rootActionId,
+        value.actorCharacterId,
+        step.formId,
+      )) return false;
+    const rulesInput = step.rulesInput as AtomicWorldInteractionRulesInput;
+    const plan = rulesInput.plan;
+    if (plan.contextHash !== value.contextHash) return false;
+    if (rulesInput.kind === "materializeSemanticDefinition") {
+      if (rulesInput.plan.bundleHash !== value.bundleHash
+        || step.produces.length !== 1
+        || step.produces[0]?.handle !== rulesInput.plan.handle
+        || step.produces[0]?.kind !== "semanticDefinition"
+        || step.produces[0]?.outcomeBinding !== step.outcomeBinding) return false;
+    } else if (step.produces.length !== 0) {
+      return false;
+    }
+    for (const produced of step.produces) {
+      if (producerByHandle.has(produced.handle)) return false;
+      producerByHandle.set(produced.handle, {
+        proposalRef: step.proposalRef,
+        outcomeBinding: produced.outcomeBinding,
+      });
+    }
+    if (rulesInput.kind === "resolveWorldInteraction"
+      && rulesInput.plan.ruling.kind === "check") {
+      checkedWorldInteractions += 1;
+      if (step.outcomeBinding !== "always") return false;
+    }
+    seen.add(step.proposalRef);
+  }
+  for (const step of value.steps) {
+    const expectedDependencies = new Set<string>();
+    for (const consumed of step.consumes) {
+      if (consumed.kind !== "prospective") continue;
+      const producer = producerByHandle.get(consumed.handle);
+      if (producer === undefined
+        || !(producer.outcomeBinding === "always"
+          || producer.outcomeBinding === step.outcomeBinding)) return false;
+      expectedDependencies.add(producer.proposalRef);
+    }
+    if (sharedCheckProposalRef !== undefined
+      && step.outcomeBinding !== "always"
+      && step.proposalRef !== sharedCheckProposalRef) {
+      expectedDependencies.add(sharedCheckProposalRef);
+    }
+    if (expectedDependencies.size !== step.dependsOn.length
+      || step.dependsOn.some((dependency: string) => !expectedDependencies.has(dependency))) return false;
+  }
+  return value.sharedRuling === "check"
+    ? checkedWorldInteractions === 1
+    : checkedWorldInteractions === 0;
+}
+
+export function atomicWorldInteractionStepsPlanHash(
+  plan: AtomicWorldInteractionStepsPlan,
+): Sha256Ref {
+  if (!isAtomicWorldInteractionStepsPlan(plan)) {
+    throw new TypeError("atomic world-interaction steps plan is not canonical");
+  }
+  return canonicalSha256(plan);
+}
+
+export function atomicWorldInteractionCheckPlan(
+  plan: AtomicWorldInteractionStepsPlan,
+): WorldInteractionResolutionPlan | undefined {
+  for (const step of plan.steps) {
+    if (step.rulesInput.kind === "resolveWorldInteraction"
+      && step.rulesInput.plan.ruling.kind === "check") return step.rulesInput.plan;
+  }
+  return undefined;
+}
+
+export function isAtomicWorldInteractionStepsResolvedPayload(
+  value: unknown,
+): value is AtomicWorldInteractionStepsResolvedPayload {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ["actorCharacterId", "branch", "checkResolutionId", "steps"])
+    || !isRef(value.actorCharacterId)
+    || (value.branch !== "success" && value.branch !== "failure")
+    || !(value.checkResolutionId === null || isRef(value.checkResolutionId))
+    || !Array.isArray(value.steps)
+    || value.steps.length < 2
+    || value.steps.length > 16) return false;
+  const refs = new Set<string>();
+  return value.steps.every((step) => {
+    if (!isRecord(step)
+      || !hasExactKeys(step, ["outcomeBinding", "proposalRef", "status"])
+      || !isRef(step.proposalRef)
+      || refs.has(step.proposalRef)
+      || !isAtomicOutcomeBinding(step.outcomeBinding)
+      || (step.status !== "applied" && step.status !== "skipped")) return false;
+    const shouldApply = step.outcomeBinding === "always"
+      || (step.outcomeBinding === "onSuccess"
+        ? value.branch === "success"
+        : value.branch === "failure");
+    if (step.status !== (shouldApply ? "applied" : "skipped")) return false;
+    refs.add(step.proposalRef);
+    return true;
+  }) && (value.branch !== "failure" || value.checkResolutionId !== null);
+}
+
+function isAtomicRulesInput(
+  value: unknown,
+  rootActionId: string,
+  actorCharacterId: string,
+  formId: "materialization.vnext-1" | "world-interaction.vnext-1",
+): value is AtomicWorldInteractionRulesInput {
+  if (!isRecord(value)
+    || !hasExactKeys(value, ["actorCharacterId", "kind", "plan", "rootActionId"])
+    || value.rootActionId !== rootActionId
+    || value.actorCharacterId !== actorCharacterId) return false;
+  if (value.kind === "materializeSemanticDefinition") {
+    return formId === "materialization.vnext-1"
+      && isSemanticDefinitionMaterializationPlan(value.plan);
+  }
+  if (value.kind === "reviseSemanticDefinition") {
+    return formId === "materialization.vnext-1"
+      && isSemanticDefinitionRevisionPlan(value.plan);
+  }
+  return value.kind === "resolveWorldInteraction"
+    && formId === "world-interaction.vnext-1"
+    && isWorldInteractionResolutionPlan(value.plan);
+}
+
+function isAtomicOutcomeBinding(value: unknown): value is AtomicWorldInteractionOutcomeBinding {
+  return value === "always" || value === "onSuccess" || value === "onFailure";
+}
+
+const ATOMIC_PROSPECTIVE_HANDLE = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+function isAtomicConsumes(value: unknown): value is readonly AtomicWorldInteractionReference[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  const identities = new Set<string>();
+  return value.every((entry) => {
+    if (!isRecord(entry)) return false;
+    const identity = entry.kind === "existing"
+      && hasExactKeys(entry, ["kind", "ref"])
+      && isRef(entry.ref)
+      && !ATOMIC_PROSPECTIVE_HANDLE.test(entry.ref)
+      ? `existing:${entry.ref}`
+      : entry.kind === "prospective"
+        && hasExactKeys(entry, ["handle", "kind"])
+        && typeof entry.handle === "string"
+        && ATOMIC_PROSPECTIVE_HANDLE.test(entry.handle)
+        ? `prospective:${entry.handle}`
+        : undefined;
+    if (identity === undefined || identities.has(identity)) return false;
+    identities.add(identity);
+    return true;
+  });
+}
+
+function isAtomicProduces(
+  value: unknown,
+): value is readonly AtomicWorldInteractionProducedReference[] {
+  if (!Array.isArray(value) || value.length > 64) return false;
+  const handles = new Set<string>();
+  return value.every((entry) => {
+    if (!isRecord(entry)
+      || !hasExactKeys(entry, ["handle", "kind", "outcomeBinding"])
+      || typeof entry.handle !== "string"
+      || !ATOMIC_PROSPECTIVE_HANDLE.test(entry.handle)
+      || handles.has(entry.handle)
+      || !["semanticDefinition", "canonicalFact", "relation", "itemEntry"].includes(String(entry.kind))
+      || !isAtomicOutcomeBinding(entry.outcomeBinding)) return false;
+    handles.add(entry.handle);
+    return true;
+  });
 }
 
 export function worldInteractionPlanHash(plan: WorldInteractionResolutionPlan): Sha256Ref {

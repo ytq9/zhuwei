@@ -104,18 +104,19 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
         || !profilesMatchContext(input.profiles, input.requiredContext.binding.profiles)) {
         return Object.freeze({ kind: "conflict", changedRefs: Object.freeze([]) });
       }
+      // Opening a private player choice has no world read set. Its actor,
+      // controller and root binding are revalidated by Rules when the
+      // PendingInput is created; test this before the plan extractor because
+      // this input intentionally has no `plan.readSet` field.
+      if (isPlayerChoicePendingInput(input.rulesInput)) {
+        return Object.freeze({ kind: "valid" });
+      }
       const transactionReadSet = loweredTransactionReadSet(input.rulesInput);
       if (transactionReadSet === undefined) {
         return Object.freeze({ kind: "conflict", changedRefs: Object.freeze([]) });
       }
       if (transactionReadSet.length === 0) {
-        // A player-choice pending transition reads only the authenticated
-        // actor/root binding, which Rules revalidates before opening the
-        // private PendingInput. It has no world read set, randomness, or cost
-        // to settle at this phase.
-        return isPlayerChoicePendingInput(input.rulesInput)
-          ? Object.freeze({ kind: "valid" })
-          : Object.freeze({ kind: "conflict", changedRefs: Object.freeze([]) });
+        return Object.freeze({ kind: "conflict", changedRefs: Object.freeze([]) });
       }
       const validation = validateVNextTransactionReadSet(transactionReadSet, input.state);
       return validation.kind === "valid"
@@ -216,14 +217,26 @@ export function bundleCommandToRoomLowering(
     });
   }
   if (command.kind === "atomicRulesSteps") {
-    // An ordered multi-Form set must become exactly one Rules transaction and
-    // one Receipt. Executing the steps one at a time here would produce
-    // partial world state and multiple Receipts, so this stays closed until
-    // the atomic Rules/Room consumer exists.
     return Object.freeze({
-      kind: "rejected",
-      code: "BUNDLE_LOWERING_UNSUPPORTED",
-      explanation: "The pinned vNext Rules profile has no atomic multi-step consumer yet.",
+      kind: "accepted",
+      input: {
+        kind: "applyAtomicWorldInteractionSteps",
+        rootActionId: command.rootActionId,
+        actorCharacterId: command.actorCharacterId,
+        bundleHash: command.bundleHash,
+        contextHash: command.contextHash,
+        sharedRuling: command.sharedRuling,
+        steps: command.steps.map((step) => ({
+          formId: step.formId,
+          proposalRef: step.proposalRef,
+          ruling: step.ruling,
+          rulesInput: structuredClone(step.rulesInput),
+          dependsOn: [...step.dependsOn],
+          consumes: step.consumes.map((reference) => ({ ...reference })),
+          produces: step.produces.map((reference) => ({ ...reference })),
+          outcomeBinding: step.outcomeBinding,
+        })),
+      },
     });
   }
   if (command.kind === "inWorldRefusal") {
@@ -333,7 +346,31 @@ function isKpProjection(value: unknown): value is KpSpatialReadModel {
 function loweredTransactionReadSet(
   rulesInput: Readonly<Record<string, unknown>>,
 ): readonly Readonly<{ ref: string; revisionOrHash: string }>[] | undefined {
-  if ((rulesInput.kind !== "reviseSemanticDefinition"
+  if (rulesInput.kind === "applyAtomicWorldInteractionSteps") {
+    if (!Array.isArray(rulesInput.steps) || rulesInput.steps.length < 2) return undefined;
+    const merged = new Map<string, string>();
+    for (const step of rulesInput.steps) {
+      if (!isPlainRecord(step)
+        || !isPlainRecord(step.rulesInput)
+        || !["materializeSemanticDefinition", "reviseSemanticDefinition", "resolveWorldInteraction"]
+          .includes(String(step.rulesInput.kind))) return undefined;
+      const childReadSet = loweredTransactionReadSet(step.rulesInput);
+      if (childReadSet === undefined || childReadSet.length === 0) return undefined;
+      for (const { ref, revisionOrHash } of childReadSet) {
+        // Prospective handles are not current authority reads. Rules derives
+        // and validates their committed refs only inside a branch candidate.
+        if (ref.startsWith("prospective:")) return undefined;
+        const prior = merged.get(ref);
+        if (prior !== undefined && prior !== revisionOrHash) return undefined;
+        merged.set(ref, revisionOrHash);
+      }
+    }
+    return [...merged.entries()]
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([ref, revisionOrHash]) => ({ ref, revisionOrHash }));
+  }
+  if ((rulesInput.kind !== "materializeSemanticDefinition"
+      && rulesInput.kind !== "reviseSemanticDefinition"
       && rulesInput.kind !== "resolveWorldInteraction")
     || !isPlainRecord(rulesInput.plan)
     || !Array.isArray(rulesInput.plan.readSet)) return undefined;
@@ -341,6 +378,7 @@ function loweredTransactionReadSet(
   if (!readSet.every((entry) => isPlainRecord(entry)
     && typeof entry.ref === "string"
     && entry.ref.length > 0
+    && !entry.ref.startsWith("prospective:")
     && typeof entry.revisionOrHash === "string"
     && entry.revisionOrHash.length > 0)) return undefined;
   return readSet as readonly Readonly<{ ref: string; revisionOrHash: string }>[];

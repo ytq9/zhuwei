@@ -293,12 +293,20 @@ export type VNextProposalBundleCommand =
       kind: "atomicRulesSteps";
       rootActionId: string;
       actorCharacterId: string;
+      /** Hash of the canonical model-authored Bundle before server lowering. */
+      bundleHash: string;
+      /** Frozen RequiredContext hash shared by every lowered child plan. */
+      contextHash: string;
+      /** Every entry is bound to this one frozen adjudication result. */
+      sharedRuling: "directSuccess" | "check";
       steps: readonly Readonly<{
         formId: typeof VNEXT_MATERIALIZATION_FORM_ID | typeof VNEXT_WORLD_INTERACTION_FORM_ID;
         proposalRef: string;
         ruling: "directSuccess" | "check";
         rulesInput: JsonRecord;
         dependsOn: readonly string[];
+        consumes: readonly VNextBundleReference[];
+        produces: readonly VNextBundleProducedReference[];
         outcomeBinding: VNextOutcomeBinding;
       }>[];
     }>;
@@ -369,6 +377,12 @@ export function validateVNextProposalBundle(
     const entries = value.proposals.map((entry) => validateEntry(entry));
     const refs = entries.map((entry) => entry.proposalRef);
     if (new Set(refs).size !== refs.length) throw new TypeError("bundle:proposal-ref-duplicate");
+    if (entries.length > 1) {
+      const sharedRulingHash = canonicalHash(entries[0]!.ruling);
+      if (entries.some((entry) => canonicalHash(entry.ruling) !== sharedRulingHash)) {
+        throw new TypeError("bundle:shared-ruling-mismatch");
+      }
+    }
 
     const producers = new Map<string, VNextBundleProducedReference>();
     for (const entry of entries) {
@@ -551,6 +565,11 @@ function lowerAtomicMultiStep(
   input: VNextProposalBundleLoweringInput,
   entries: readonly VNextProposalBundleEntry[],
 ): VNextProposalBundleLoweringResult {
+  const sharedRuling = entries[0]?.ruling;
+  if (sharedRuling === undefined
+    || entries.some((entry) => canonicalHash(entry.ruling) !== canonicalHash(sharedRuling))) {
+    return rejected("BUNDLE_DEPENDENCY_INVALID", ["bundle:shared-ruling-mismatch"]);
+  }
   for (const entry of entries) {
     if (entry.ruling.kind !== "directSuccess" && entry.ruling.kind !== "check") {
       return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:atomic-step-ruling-unsupported"]);
@@ -589,6 +608,8 @@ function lowerAtomicMultiStep(
       ruling: entry.ruling.kind as "directSuccess" | "check",
       rulesInput: lowered.rulesInput,
       dependsOn,
+      consumes: entry.consumes.map((reference) => ({ ...reference })),
+      produces: entry.produces.map((reference) => ({ ...reference })),
       outcomeBinding: entry.outcomeBinding,
     });
   }
@@ -597,6 +618,13 @@ function lowerAtomicMultiStep(
     kind: "atomicRulesSteps",
     rootActionId: input.rootActionId,
     actorCharacterId: input.actorCharacterId,
+    bundleHash: canonicalHash({
+      schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+      kind: "proposalBundle",
+      proposals: entries,
+    }),
+    contextHash: input.requiredContext.binding.contextHash,
+    sharedRuling: sharedRuling.kind as "directSuccess" | "check",
     steps: Object.freeze(steps),
   });
 }
@@ -839,9 +867,10 @@ function topologicalOrderOfEntries(
   edges: ReadonlyMap<string, readonly string[]>;
 }> {
   const byProposalRef = new Map(entries.map((entry) => [entry.proposalRef, entry]));
+  const sharedCheckProposalRef = sharedCheckEntryRef(entries);
   const edges = new Map<string, readonly string[]>();
   for (const entry of entries) {
-    const dependencies = entry.consumes
+    const dependencies = new Set(entry.consumes
       .filter((consume): consume is Extract<VNextBundleReference, { kind: "prospective" }> =>
         consume.kind === "prospective")
       .map((consume) => {
@@ -851,8 +880,13 @@ function topologicalOrderOfEntries(
           candidate.produces.some((produced) => produced.handle === producer.handle));
         if (producerEntry === undefined) throw new TypeError("bundle:prospective-producer-unbound");
         return producerEntry.proposalRef;
-      });
-    edges.set(entry.proposalRef, dependencies);
+      }));
+    if (sharedCheckProposalRef !== undefined
+      && entry.outcomeBinding !== "always"
+      && entry.proposalRef !== sharedCheckProposalRef) {
+      dependencies.add(sharedCheckProposalRef);
+    }
+    edges.set(entry.proposalRef, [...dependencies].sort(compareCodeUnits));
   }
 
   const visiting = new Set<string>();
@@ -872,6 +906,21 @@ function topologicalOrderOfEntries(
     ordered: order.map((proposalRef) => byProposalRef.get(proposalRef)!),
     edges,
   });
+}
+
+/** The one shared check is an implicit server-side predecessor of every
+ * onSuccess/onFailure step. This keeps outcome-dependent continuity changes
+ * after the mechanical result without exposing a model-authored DAG. */
+function sharedCheckEntryRef(
+  entries: readonly VNextProposalBundleEntry[],
+): string | undefined {
+  if (entries.length < 2 || entries[0]?.ruling.kind !== "check") return undefined;
+  const candidates = entries.filter((entry) =>
+    entry.formId === VNEXT_WORLD_INTERACTION_FORM_ID);
+  if (candidates.length !== 1 || candidates[0]!.outcomeBinding !== "always") {
+    throw new TypeError("bundle:shared-check-entry-invalid");
+  }
+  return candidates[0]!.proposalRef;
 }
 
 function isProduces(value: unknown): value is readonly VNextBundleProducedReference[] {
@@ -1303,5 +1352,6 @@ function issue(error: unknown): string {
 function isDependencyIssue(message: string): boolean {
   return message.startsWith("bundle:prospective-")
     || message.startsWith("bundle:prospective-condition-")
-    || message === "bundle:dependency-cycle";
+    || message === "bundle:dependency-cycle"
+    || message === "bundle:shared-ruling-mismatch";
 }
