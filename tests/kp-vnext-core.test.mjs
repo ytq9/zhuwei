@@ -5,6 +5,10 @@ import {
   buildRequiredContext,
 } from "../app/_runtime/lib/kp/vnext/index.ts";
 import {
+  requiredContextAuthorityRefs,
+  requiredContextViewerRefs,
+} from "../app/_runtime/lib/kp/vnext/required-context-runtime.ts";
+import {
   composeDefinition,
   createDefinitionSnapshot,
 } from "../app/_runtime/lib/rules/v2/semantic-definitions.ts";
@@ -144,6 +148,31 @@ test("vNext RequiredContext preserves and canonically hashes the complete episte
   const third = buildRequiredContext(revised);
   assert.equal(third.kind, "accepted", JSON.stringify(third));
   assert.notEqual(third.context.binding.contextHash, first.context.binding.contextHash);
+});
+
+test("requiredContextViewerRefs never carries an authority-only ref that requiredContextAuthorityRefs permits", () => {
+  const built = buildRequiredContext(requiredContextInput());
+  assert.equal(built.kind, "accepted", JSON.stringify(built));
+  const viewerRefs = requiredContextViewerRefs(built.context);
+  const authorityRefs = requiredContextAuthorityRefs(built.context);
+
+  // fact:hidden-support is authority-only in this fixture: it grounds the
+  // ruling without ever being safe to show a player-facing Viewer.
+  assert.equal(authorityRefs.has("fact:hidden-support"), true);
+  assert.equal(viewerRefs.has("fact:hidden-support"), false);
+
+  // fact:hall is genuinely player-visible, so it belongs in both sets.
+  assert.equal(authorityRefs.has("fact:hall"), true);
+  assert.equal(viewerRefs.has("fact:hall"), true);
+
+  // binding:internal is not citable by anyone; it must not leak into either
+  // ref set that gates what a proposal may name.
+  assert.equal(authorityRefs.has("binding:internal"), false);
+  assert.equal(viewerRefs.has("binding:internal"), false);
+
+  // Every ref the Viewer may cite is also one the KP may cite -- the Viewer
+  // set is a subset of the authority set, never the other way around.
+  for (const ref of viewerRefs) assert.equal(authorityRefs.has(ref), true, ref);
 });
 
 test("vNext RequiredContext rejects premature transaction reads, critical unavailable input, unclassified entries, and overflow", () => {

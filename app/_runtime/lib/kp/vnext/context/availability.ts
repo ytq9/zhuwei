@@ -201,8 +201,30 @@ function parseSelector(value: unknown): AbsenceSelector | undefined {
   return undefined;
 }
 
+/**
+ * Field-wise equality over the closed selector union.
+ *
+ * `parseSelector` always builds its side in a fixed key order, but the
+ * requirement side comes from the caller unnormalized: a `JSON.stringify`
+ * comparison would call two semantically identical selectors unequal purely
+ * because their keys were written in a different order, and silently drop a
+ * valid absence record as a result.
+ */
 function sameSelector(left: AbsenceSelector, right: AbsenceSelector): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (left.kind !== right.kind) return false;
+  switch (left.kind) {
+    case "exactRef":
+      return left.ref === (right as Extract<AbsenceSelector, { kind: "exactRef" }>).ref;
+    case "semanticKind":
+      return left.semanticKind
+        === (right as Extract<AbsenceSelector, { kind: "semanticKind" }>).semanticKind;
+    case "templateRef":
+      return left.templateRef
+        === (right as Extract<AbsenceSelector, { kind: "templateRef" }>).templateRef;
+    case "templateFamily":
+      return left.templateFamily
+        === (right as Extract<AbsenceSelector, { kind: "templateFamily" }>).templateFamily;
+  }
 }
 
 function matchingAuthorization(

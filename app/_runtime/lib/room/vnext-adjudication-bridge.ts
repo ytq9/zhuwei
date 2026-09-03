@@ -121,13 +121,12 @@ export function requiredContextMatchesPreparedAction(
     && binding.baseEventSeq === expected.baseEventSeq
     && typeof binding.contextHash === "string"
     && binding.contextHash.length > 0
+    // The frozen context's own binding.readSet is always empty by
+    // construction (required-context.ts rejects a non-empty one at build
+    // time): the transaction read set is re-resolved from Proposal lowering
+    // into the server-private Rules plan/continuation, never from this
+    // epistemic slice. So this is a shape check, not a content check -- there
+    // is never an element for it to inspect.
     && Array.isArray(binding.readSet)
-    && binding.readSet.length === 0
-    && binding.readSet.every((entry) =>
-      entry !== null
-      && typeof entry === "object"
-      && typeof entry.ref === "string"
-      && entry.ref.length > 0
-      && typeof entry.revisionOrHash === "string"
-      && entry.revisionOrHash.length > 0);
+    && binding.readSet.length === 0;
 }
