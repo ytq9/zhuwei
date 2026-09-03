@@ -119,12 +119,14 @@ import {
 } from "./environment";
 import {
   isSemanticDefinitionRevisedPayload,
+  isWorldInteractionFeasibilityRuledPayload,
   isWorldInteractionResolutionPlan,
   isWorldInteractionResolvedPayload,
   type AppliedWorldInteractionEffect,
   worldInteractionPlanHash,
 } from "./world-interaction-model";
 import {
+  isSemanticDefinitionMaterializedPayload,
   semanticDefinitionSnapshot,
   type StoredSemanticDefinition,
 } from "./semantic-definitions";
@@ -316,7 +318,9 @@ function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown):
 
 function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unknown): boolean {
   return eventType === "SemanticDefinitionRevised"
+    || eventType === "SemanticDefinitionMaterialized"
     || eventType === "WorldInteractionResolved"
+    || eventType === "WorldInteractionFeasibilityRuled"
     || (eventType === "RandomnessRequested"
       && isRecord(payload)
       && isRecord(payload.resolutionPlan)
@@ -413,7 +417,9 @@ function expectedEventTypeVersion(
 
 const EVENT_TYPES = new Set<EventType>([
   "SemanticDefinitionRevised",
+  "SemanticDefinitionMaterialized",
   "WorldInteractionResolved",
+  "WorldInteractionFeasibilityRuled",
   "ImprovisedActionResolved",
   "ClarificationRequested",
   "PlayerChoiceRequested",
@@ -703,8 +709,12 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
   switch (eventType) {
     case "SemanticDefinitionRevised":
       return isSemanticDefinitionRevisedPayload(value);
+    case "SemanticDefinitionMaterialized":
+      return isSemanticDefinitionMaterializedPayload(value);
     case "WorldInteractionResolved":
       return isWorldInteractionResolvedPayload(value);
+    case "WorldInteractionFeasibilityRuled":
+      return isWorldInteractionFeasibilityRuledPayload(value);
     case "ImprovisedActionResolved":
       return hasExactKeys(value, ["actorCharacterId", "fact", "outcomeCode"])
         && isNonEmptyString(value.actorCharacterId)
@@ -1712,6 +1722,38 @@ export function foldEvent(
         }
         entity.semanticDefinitionRef = payload.definitionRef;
         entity.semanticDefinitionRevision = payload.nextDefinition.revision;
+      }
+      break;
+    }
+    case "SemanticDefinitionMaterialized": {
+      const payload = event.payload as EventPayloadByType["SemanticDefinitionMaterialized"];
+      if (!(payload.actorCharacterId in state.entities)) {
+        throw new TypeError("semantic definition materialization actor does not exist");
+      }
+      if (state.campaignRuntime.definitions[payload.definitionRef] !== undefined) {
+        throw new TypeError("semantic definition materialization ref already exists");
+      }
+      const snapshot = semanticDefinitionSnapshot(payload.definition);
+      if (snapshot === undefined || snapshot.revision !== "1") {
+        throw new TypeError("semantic definition materialization payload is not canonical");
+      }
+      state.campaignRuntime.definitions[payload.definitionRef] =
+        structuredClone(payload.definition) as JsonRecord;
+      break;
+    }
+    case "WorldInteractionFeasibilityRuled": {
+      const payload = event.payload as EventPayloadByType["WorldInteractionFeasibilityRuled"];
+      if (!(payload.actorCharacterId in state.entities)) {
+        throw new TypeError("world interaction feasibility actor does not exist");
+      }
+      for (const effect of payload.appliedCosts) {
+        const entry = state.campaignRuntime.itemSystem.entries[effect.entryRef];
+        if (entry === undefined
+          || entry.quantity !== effect.quantityAfter
+          || (entry.charges?.current ?? null) !== effect.chargesAfter
+          || (entry.durability?.current ?? null) !== effect.durabilityAfter) {
+          throw new TypeError("world interaction feasibility item cost was not committed");
+        }
       }
       break;
     }

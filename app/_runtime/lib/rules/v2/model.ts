@@ -14,9 +14,11 @@ import type {
 } from "./items";
 import type {
   SemanticDefinitionRevisedPayload,
+  WorldInteractionFeasibilityRuledPayload,
   WorldInteractionResolutionPlan,
   WorldInteractionResolvedPayload,
 } from "./world-interaction-model";
+import type { SemanticDefinitionMaterializedPayload } from "./semantic-definitions";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -813,7 +815,9 @@ export type ActorPlanFormedPayload = {
 
 export type EventPayloadByType = {
   SemanticDefinitionRevised: SemanticDefinitionRevisedPayload;
+  SemanticDefinitionMaterialized: SemanticDefinitionMaterializedPayload;
   WorldInteractionResolved: WorldInteractionResolvedPayload;
+  WorldInteractionFeasibilityRuled: WorldInteractionFeasibilityRuledPayload;
   EnvironmentFeatureMaterialized: {
     actorCharacterId: string;
     sceneId: string;

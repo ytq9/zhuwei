@@ -33,9 +33,13 @@ import { WORLD_DAMAGE_PROFILE_REGISTRY } from "../profiles/world-interaction-reg
 import {
   composeDefinition,
   createDefinitionSnapshot,
+  isSemanticDefinitionMaterializationPlan,
   isStoredSemanticDefinition,
+  materializationContextHash,
+  materializedSemanticDefinition,
   semanticDefinitionSnapshot,
   storedSemanticDefinition,
+  type SemanticDefinitionMaterializedPayload,
   type SemanticFieldPolicy,
   type StoredSemanticDefinition,
 } from "./semantic-definitions";
@@ -48,12 +52,15 @@ import {
 } from "./validation";
 import {
   isSemanticDefinitionRevisionPlan,
+  isWorldInteractionFeasibilityRulingPlan,
   isWorldInteractionResolutionPlan,
   type AppliedWorldInteractionEffect,
   type SemanticDefinitionRevisionPlan,
   type WorldInteractionBranch,
   type WorldInteractionCost,
   type WorldInteractionEffect,
+  type WorldInteractionFeasibilityRuledPayload,
+  type WorldInteractionFeasibilityRulingPlan,
   type WorldInteractionRegisteredHazardEffect,
   type WorldInteractionResolutionPlan,
   worldInteractionPlanHash,
@@ -84,7 +91,10 @@ export function stepVNextWorldInteraction(
   state: AuthoritativeWorldState,
   input: JsonRecord,
 ): StepResult | undefined {
-  if (input.kind !== "reviseSemanticDefinition" && input.kind !== "resolveWorldInteraction") {
+  if (input.kind !== "reviseSemanticDefinition"
+    && input.kind !== "resolveWorldInteraction"
+    && input.kind !== "materializeSemanticDefinition"
+    && input.kind !== "ruleWorldInteractionFeasibility") {
     return undefined;
   }
   if (!worldInteractionProfileEnabled(profiles.extensions)) {
@@ -95,6 +105,12 @@ export function stepVNextWorldInteraction(
   }
   if (input.kind === "reviseSemanticDefinition") {
     return reviseSemanticDefinition(profiles, state, input);
+  }
+  if (input.kind === "materializeSemanticDefinition") {
+    return materializeSemanticDefinition(profiles, state, input);
+  }
+  if (input.kind === "ruleWorldInteractionFeasibility") {
+    return ruleWorldInteractionFeasibility(profiles, state, input);
   }
   return resolveWorldInteraction(profiles, state, input);
 }
@@ -165,7 +181,9 @@ export function fulfillVNextWorldInteractionRandomness(
     secrecy: "internal",
   });
   appendAbilityInvocation(accumulator, profiles, stored.rootActionId, plan);
-  const appliedEffects = applyItemCosts(accumulator, profiles, stored.rootActionId, plan);
+  const appliedEffects = applyItemCosts(
+    accumulator, profiles, stored.rootActionId, plan.actorCharacterId, plan.costs, plan.interactionRef,
+  );
   if (!Array.isArray(appliedEffects)) return appliedEffects;
   const branchEffects = applyBranchEffects(
     accumulator,
@@ -289,6 +307,101 @@ function reviseSemanticDefinition(
   };
 }
 
+/**
+ * Creates a brand-new sparse semantic definition. Unlike revision, there is
+ * no prior authoritative version to bind against: the plan's own frozen
+ * readSet plus its contextHash (independently recomputed here, never merely
+ * trusted) are what stand in for that base binding, and the derived
+ * definitionRef must not already exist -- creating over one is a
+ * DEFINITION_CONFLICT, never a silent overwrite.
+ */
+function materializeSemanticDefinition(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!hasExactKeys(input, ["actorCharacterId", "kind", "plan", "rootActionId"])
+    || !isNonEmptyString(input.rootActionId)
+    || !isNonEmptyString(input.actorCharacterId)
+    || !isSemanticDefinitionMaterializationPlan(input.plan)) {
+    return rejected("invalidRulesInput", "Semantic definition materialization input is not canonical.");
+  }
+  if (input.rootActionId in state.receipts) {
+    return rejected("duplicateRootAction", "The semantic materialization RootAction already has a Receipt.");
+  }
+  const actor = state.entities[input.actorCharacterId];
+  if (actor?.tenureStatus !== "active") {
+    return rejected("privateOrUnknownReference", "The semantic materialization actor is unavailable.");
+  }
+  const plan = input.plan;
+  if (!authorityReadSetMatches(state, plan.readSet)) {
+    return rejected("causalFrontierConflict", "The semantic materialization read set changed after prepare.");
+  }
+  if (plan.contextHash !== materializationContextHash(input.rootActionId, plan.bundleHash, plan.readSet)) {
+    return rejected(
+      "causalFrontierConflict",
+      "The semantic materialization context hash does not match its frozen read set.",
+    );
+  }
+  const materialized = materializedSemanticDefinition(input.rootActionId, plan);
+  if (state.campaignRuntime.definitions[materialized.definitionRef] !== undefined) {
+    return rejected(
+      "causalFrontierConflict",
+      "DEFINITION_CONFLICT: the materialized semantic definition ref already exists.",
+    );
+  }
+  const scopeProof = createScopeProof(
+    state,
+    canonicalRefs([
+      `entity:${input.actorCharacterId}`,
+      ...plan.readSet.map((binding) => binding.ref),
+      ...plan.basisRefs,
+      ...plan.sourceRefs,
+    ]),
+    [`definition:${materialized.definitionRef}:${materialized.definition.revision}`,
+      `receipt:${input.rootActionId}`],
+    [`definition:${materialized.definitionRef}:${materialized.definition.revision}`],
+  );
+  const payload: SemanticDefinitionMaterializedPayload = {
+    actorCharacterId: input.actorCharacterId,
+    bundleHash: plan.bundleHash,
+    prospectiveRef: materialized.prospectiveRef,
+    definitionRef: materialized.definitionRef,
+    semanticKind: plan.semanticKind,
+    templateRef: plan.templateRef,
+    templateHash: plan.templateHash,
+    contextHash: plan.contextHash,
+    basisRefs: [...plan.basisRefs],
+    sourceRefs: [...plan.sourceRefs],
+    summary: plan.summary,
+    definition: materialized.definition,
+  };
+  const transition = createEventTransition(state, profiles, {
+    rootActionId: input.rootActionId,
+    eventType: "SemanticDefinitionMaterialized",
+    payload,
+    scopeProof,
+    visibilityPolicyId: plan.visibilityPolicyRef,
+    secrecy: plan.visibilityPolicyRef === "visibility:public" ? "public" : "private",
+  });
+  return {
+    kind: "committed",
+    events: [transition.event],
+    state: transition.state,
+    cache: transition.state,
+    stateHash: transition.event.stateHashAfter,
+    scopeProof,
+    receipt: transition.receipt,
+    mechanicalResult: {
+      kind: "semanticDefinitionMaterialization",
+      prospectiveRef: materialized.prospectiveRef,
+      definitionRef: materialized.definitionRef,
+      semanticKind: plan.semanticKind,
+      revision: materialized.definition.revision,
+    },
+  };
+}
+
 function resolveWorldInteraction(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -314,7 +427,9 @@ function resolveWorldInteraction(
   const accumulator: TransitionAccumulator = { state, events: [] };
   if (plan.ruling.kind === "directSuccess") {
     appendAbilityInvocation(accumulator, profiles, input.rootActionId, plan);
-    const costEffects = applyItemCosts(accumulator, profiles, input.rootActionId, plan);
+    const costEffects = applyItemCosts(
+      accumulator, profiles, input.rootActionId, plan.actorCharacterId, plan.costs, plan.interactionRef,
+    );
     if (!Array.isArray(costEffects)) return costEffects;
     const branchEffects = applyBranchEffects(
       accumulator,
@@ -397,6 +512,91 @@ function resolveWorldInteraction(
         interactionRef: plan.interactionRef,
         costEffects: [],
       },
+  };
+}
+
+/**
+ * The world itself declined the action -- a missing prerequisite or a
+ * world-law violation -- which is a first-class mechanical outcome, not an
+ * error. Any attempt costs that were really spent still apply through the
+ * ordinary item-cost transition path. `plan.basisRefs` is authority-only: it
+ * feeds only this event's read scope and is never copied into the committed
+ * payload, so a player can never receive an authority-only basis ref through
+ * this outcome.
+ */
+function ruleWorldInteractionFeasibility(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!hasExactKeys(input, ["actorCharacterId", "kind", "plan", "rootActionId"])
+    || !isNonEmptyString(input.rootActionId)
+    || !isNonEmptyString(input.actorCharacterId)
+    || !isWorldInteractionFeasibilityRulingPlan(input.plan)) {
+    return rejected("invalidRulesInput", "World interaction feasibility ruling input is not canonical.");
+  }
+  if (input.rootActionId in state.receipts) {
+    return rejected("duplicateRootAction", "The world interaction feasibility RootAction already has a Receipt.");
+  }
+  const plan = input.plan;
+  if (plan.actorCharacterId !== input.actorCharacterId) {
+    return rejected(
+      "invalidRulesInput",
+      "The feasibility ruling actor binding does not match the RootAction actor.",
+    );
+  }
+  const actor = state.entities[input.actorCharacterId];
+  if (actor?.tenureStatus !== "active") {
+    return rejected("privateOrUnknownReference", "The world interaction feasibility actor is unavailable.");
+  }
+
+  const accumulator: TransitionAccumulator = { state, events: [] };
+  const costEffects = applyItemCosts(
+    accumulator,
+    profiles,
+    input.rootActionId,
+    input.actorCharacterId,
+    plan.costs,
+    `worldInteractionFeasibility:${plan.rulingKind}`,
+  );
+  if (!Array.isArray(costEffects)) return costEffects;
+  const appliedCosts = costEffects.filter(
+    (effect): effect is Extract<AppliedWorldInteractionEffect, { kind: "itemCost" }> =>
+      effect.kind === "itemCost",
+  );
+
+  const payload: WorldInteractionFeasibilityRuledPayload = {
+    actorCharacterId: input.actorCharacterId,
+    intent: plan.intent,
+    method: plan.method,
+    rulingKind: plan.rulingKind,
+    publicBasis: plan.publicBasis,
+    prerequisites: plan.prerequisites,
+    nextActions: plan.nextActions,
+    appliedCosts,
+  };
+  appendTransition(accumulator, profiles, input.rootActionId, {
+    eventType: "WorldInteractionFeasibilityRuled",
+    payload,
+    reads: canonicalRefs([`entity:${input.actorCharacterId}`, ...plan.basisRefs]),
+    writes: [`receipt:${input.rootActionId}`],
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+  });
+  const finalEvent = accumulator.events.at(-1)!;
+  return {
+    kind: "committed",
+    events: accumulator.events,
+    state: accumulator.state,
+    cache: accumulator.state,
+    stateHash: finalEvent.stateHashAfter,
+    scopeProof: accumulator.scopeProof!,
+    receipt: accumulator.state.receipts[input.rootActionId]!,
+    mechanicalResult: {
+      kind: "worldInteractionFeasibilityRuled",
+      rulingKind: plan.rulingKind,
+      appliedCosts,
+    },
   };
 }
 
@@ -733,15 +933,24 @@ function appendAbilityInvocation(
   });
 }
 
+/**
+ * The one item-cost transition path for the vNext world-interaction family.
+ * Every consumer that must charge a frozen item cost -- an executed
+ * interaction or a refused one whose attempt still spent something -- goes
+ * through this, so there is exactly one place that ever mutates an item
+ * entry for these costs.
+ */
 function applyItemCosts(
   accumulator: TransitionAccumulator,
   profiles: RuntimeProfileManifest,
   rootActionId: string,
-  plan: WorldInteractionResolutionPlan,
+  actorCharacterId: string,
+  costs: readonly WorldInteractionCost[],
+  purpose: string,
 ): AppliedWorldInteractionEffect[] | ReturnType<typeof rejected> {
   const applied: AppliedWorldInteractionEffect[] = [];
-  for (const cost of plan.costs) {
-    if (costUnavailable(accumulator.state, plan.actorCharacterId, cost)) {
+  for (const cost of costs) {
+    if (costUnavailable(accumulator.state, actorCharacterId, cost)) {
       return rejected("insufficientResource", "A frozen world interaction item cost is unavailable.");
     }
     const entry = accumulator.state.campaignRuntime.itemSystem.entries[cost.entryRef]!;
@@ -754,9 +963,9 @@ function applyItemCosts(
     appendTransition(accumulator, profiles, rootActionId, {
       eventType: "ItemUsed",
       payload: {
-        characterId: plan.actorCharacterId,
+        characterId: actorCharacterId,
         entryId: cost.entryRef,
-        purpose: plan.interactionRef,
+        purpose,
         quantityBefore,
         quantityAfter,
         chargesBefore,
@@ -764,8 +973,8 @@ function applyItemCosts(
         durabilityBefore,
         durabilityAfter,
       },
-      reads: [`entity:${plan.actorCharacterId}`, `item-entry:${cost.entryRef}`],
-      writes: [`item-entry:${cost.entryRef}`, `entity:${plan.actorCharacterId}`, `receipt:${rootActionId}`],
+      reads: [`entity:${actorCharacterId}`, `item-entry:${cost.entryRef}`],
+      writes: [`item-entry:${cost.entryRef}`, `entity:${actorCharacterId}`, `receipt:${rootActionId}`],
       visibilityPolicyId: entry.visibilityPolicyRef,
       secrecy: "private",
     });

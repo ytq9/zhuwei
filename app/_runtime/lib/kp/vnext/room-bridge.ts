@@ -17,6 +17,7 @@ import {
 import {
   lowerVNextProposalBundle,
   VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  type VNextAttemptCost,
   type VNextProposalBundleCommand,
 } from "./proposal-bundle";
 
@@ -179,7 +180,10 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
     },
   });
 
-function bundleCommandToRoomLowering(
+/** Exported for direct unit coverage of the one non-atomic per-command
+ * lowering surface; every accepted proposal still enters the same Rules.step
+ * and Room transaction through the bridge above. */
+export function bundleCommandToRoomLowering(
   command: VNextProposalBundleCommand,
 ): RoomVNextProposalLoweringResult {
   if (command.kind === "rulesStep") {
@@ -223,13 +227,51 @@ function bundleCommandToRoomLowering(
     });
   }
   if (command.kind === "inWorldRefusal") {
-    // Refusal has no Rules primitive in the stage-three bridge until the
-    // profile-gated typed refusal input is installed. Never encode it as a
-    // direct success or silently discard attempt costs.
+    // The world declining an action is a first-class mechanical outcome, not
+    // an error -- it lowers to the typed feasibility-ruling Rules input.
+    // Attempt costs are lowered only when Rules already has a transition
+    // path for their kind (currently: item costs only); a cost kind Rules
+    // cannot yet apply must fail the whole lowering closed rather than be
+    // silently dropped, since a real spent cost must never vanish.
+    const costs = lowerAttemptCosts(command.ruling.attemptCosts);
+    if (costs === undefined) {
+      return Object.freeze({
+        kind: "rejected",
+        code: "BUNDLE_LOWERING_UNSUPPORTED",
+        explanation: "The pinned vNext Rules profile has no transition for one of the attempt costs.",
+      });
+    }
     return Object.freeze({
-      kind: "rejected",
-      code: "BUNDLE_LOWERING_UNSUPPORTED",
-      explanation: "The pinned vNext Rules profile has no typed in-world refusal consumer yet.",
+      kind: "accepted",
+      input: {
+        kind: "ruleWorldInteractionFeasibility",
+        rootActionId: command.rootActionId,
+        actorCharacterId: command.actorCharacterId,
+        plan: {
+          schema: "zhuwei.world-interaction-feasibility-ruling-plan/v1",
+          actorCharacterId: command.actorCharacterId,
+          intent: command.intent,
+          method: command.method,
+          rulingKind: command.ruling.kind,
+          publicBasis: command.ruling.publicBasis,
+          prerequisites: command.ruling.prerequisites.map((prerequisite) => ({
+            kind: prerequisite.kind,
+            ref: prerequisite.ref,
+            description: prerequisite.description,
+          })),
+          nextActions: command.ruling.nextActions.map((nextAction) => ({
+            description: nextAction.description,
+          })),
+          costs,
+          // Authority-only: the KP's own citation plus every nextAction's
+          // basisRefs fold in here so Rules can bind its read scope to them.
+          // None of this reaches the committed payload -- see the plan type.
+          basisRefs: [...new Set([
+            ...command.basisRefs,
+            ...command.ruling.nextActions.flatMap((nextAction) => nextAction.basisRefs),
+          ])].sort(),
+        },
+      },
     });
   }
   // A confirmed high-risk ruling must not ask the player to confirm again.
@@ -240,6 +282,41 @@ function bundleCommandToRoomLowering(
     code: "BUNDLE_LOWERING_UNSUPPORTED",
     explanation: "The pinned vNext Rules profile has no confirmed high-risk consumer yet.",
   });
+}
+
+/**
+ * Rules currently has exactly one attempt-cost transition path: the item-cost
+ * path world-interaction already uses. A `fictionTime` or `resource` attempt
+ * cost has no Rules consumer yet, so its presence fails the whole lowering
+ * closed -- it must never be silently dropped, because it was really spent.
+ */
+function lowerAttemptCosts(
+  costs: readonly VNextAttemptCost[],
+): readonly Readonly<{
+  kind: "item";
+  entryRef: string;
+  quantity: number;
+  charges: number;
+  durability: number;
+}>[] | undefined {
+  const lowered: Readonly<{
+    kind: "item";
+    entryRef: string;
+    quantity: number;
+    charges: number;
+    durability: number;
+  }>[] = [];
+  for (const cost of costs) {
+    if (cost.kind !== "item") return undefined;
+    lowered.push({
+      kind: "item",
+      entryRef: cost.entryRef,
+      quantity: cost.quantity,
+      charges: cost.charges,
+      durability: cost.durability,
+    });
+  }
+  return lowered;
 }
 
 function isKpProjection(value: unknown): value is KpSpatialReadModel {

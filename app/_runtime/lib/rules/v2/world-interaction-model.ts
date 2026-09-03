@@ -16,6 +16,8 @@ export const SEMANTIC_DEFINITION_REVISION_PLAN_SCHEMA =
   "zhuwei.semantic-definition-revision-plan/v1" as const;
 export const WORLD_INTERACTION_RESOLUTION_PLAN_SCHEMA =
   "zhuwei.world-interaction-resolution-plan/v1" as const;
+export const WORLD_INTERACTION_FEASIBILITY_RULING_PLAN_SCHEMA =
+  "zhuwei.world-interaction-feasibility-ruling-plan/v1" as const;
 
 export type VersionedAuthorityBinding = Readonly<{
   ref: string;
@@ -139,6 +141,55 @@ export type WorldInteractionResolutionPlan = Readonly<{
     success: WorldInteractionBranch;
     failure: WorldInteractionBranch;
   }>;
+}>;
+
+/**
+ * A refusal cites what is missing/violated in plain terms, never the private
+ * evidentiary basis for the ruling: `ref` is a target the player can act on
+ * (a tool, a door), not a canonical-fact citation.
+ */
+export type WorldInteractionFeasibilityPrerequisite = Readonly<{
+  kind: "tool" | "knowledge" | "position" | "permission" | "condition";
+  ref: string | null;
+  description: string;
+}>;
+
+/** Player-visible next-action hint. Its KP-authored basisRefs are folded into
+ * the plan's own authority-only basisRefs at Room-bridge lowering time and
+ * never travel any further -- this shape has no basisRefs field to leak. */
+export type WorldInteractionFeasibilityNextAction = Readonly<{
+  description: string;
+}>;
+
+/**
+ * Server-frozen ruling that the world declined an action. This is not an
+ * error: it is a first-class mechanical outcome, and any attempt costs that
+ * were actually spent while trying still apply through the ordinary item-cost
+ * transition path. `basisRefs` is authority-only and is carried only for the
+ * commit's read scope -- it is never copied into the committed payload.
+ */
+export type WorldInteractionFeasibilityRulingPlan = Readonly<{
+  schema: typeof WORLD_INTERACTION_FEASIBILITY_RULING_PLAN_SCHEMA;
+  actorCharacterId: string;
+  intent: string;
+  method: string;
+  rulingKind: "missingPrerequisite" | "worldLawViolation";
+  publicBasis: string;
+  prerequisites: readonly WorldInteractionFeasibilityPrerequisite[];
+  nextActions: readonly WorldInteractionFeasibilityNextAction[];
+  costs: readonly WorldInteractionCost[];
+  basisRefs: readonly string[];
+}>;
+
+export type WorldInteractionFeasibilityRuledPayload = Readonly<{
+  actorCharacterId: string;
+  intent: string;
+  method: string;
+  rulingKind: "missingPrerequisite" | "worldLawViolation";
+  publicBasis: string;
+  prerequisites: readonly WorldInteractionFeasibilityPrerequisite[];
+  nextActions: readonly WorldInteractionFeasibilityNextAction[];
+  appliedCosts: readonly Extract<AppliedWorldInteractionEffect, { kind: "itemCost" }>[];
 }>;
 
 export type AppliedWorldInteractionEffect =
@@ -332,6 +383,76 @@ export function isSemanticDefinitionRevisedPayload(
     && value.nextDefinition.semanticKind === value.semanticKind
     && value.nextDefinition.templateRef === value.templateRef
     && value.nextDefinition.templateHash === value.templateHash;
+}
+
+function isFeasibilityPrerequisite(
+  value: unknown,
+): value is WorldInteractionFeasibilityPrerequisite {
+  return isRecord(value)
+    && hasExactKeys(value, ["description", "kind", "ref"])
+    && ["tool", "knowledge", "position", "permission", "condition"].includes(String(value.kind))
+    && (value.ref === null || isRef(value.ref))
+    && isText(value.description);
+}
+
+function isFeasibilityNextAction(
+  value: unknown,
+): value is WorldInteractionFeasibilityNextAction {
+  return isRecord(value)
+    && hasExactKeys(value, ["description"])
+    && isText(value.description);
+}
+
+export function isWorldInteractionFeasibilityRulingPlan(
+  value: unknown,
+): value is WorldInteractionFeasibilityRulingPlan {
+  return isRecord(value)
+    && hasExactKeys(value, [
+      "actorCharacterId", "basisRefs", "costs", "intent", "method", "nextActions",
+      "prerequisites", "publicBasis", "rulingKind", "schema",
+    ])
+    && value.schema === WORLD_INTERACTION_FEASIBILITY_RULING_PLAN_SCHEMA
+    && isRef(value.actorCharacterId)
+    && isText(value.intent)
+    && isText(value.method)
+    && (value.rulingKind === "missingPrerequisite" || value.rulingKind === "worldLawViolation")
+    && isText(value.publicBasis)
+    && Array.isArray(value.prerequisites)
+    && value.prerequisites.length <= 8
+    && value.prerequisites.every(isFeasibilityPrerequisite)
+    && Array.isArray(value.nextActions)
+    && value.nextActions.length <= 8
+    && value.nextActions.every(isFeasibilityNextAction)
+    && Array.isArray(value.costs)
+    && value.costs.length <= 16
+    && value.costs.every(isCost)
+    && new Set(value.costs.map((cost) => isRecord(cost) ? cost.entryRef : undefined)).size
+      === value.costs.length
+    && isCanonicalRefSet(value.basisRefs);
+}
+
+export function isWorldInteractionFeasibilityRuledPayload(
+  value: unknown,
+): value is WorldInteractionFeasibilityRuledPayload {
+  return isRecord(value)
+    && hasExactKeys(value, [
+      "actorCharacterId", "appliedCosts", "intent", "method", "nextActions",
+      "prerequisites", "publicBasis", "rulingKind",
+    ])
+    && isRef(value.actorCharacterId)
+    && isText(value.intent)
+    && isText(value.method)
+    && (value.rulingKind === "missingPrerequisite" || value.rulingKind === "worldLawViolation")
+    && isText(value.publicBasis)
+    && Array.isArray(value.prerequisites)
+    && value.prerequisites.length <= 8
+    && value.prerequisites.every(isFeasibilityPrerequisite)
+    && Array.isArray(value.nextActions)
+    && value.nextActions.length <= 8
+    && value.nextActions.every(isFeasibilityNextAction)
+    && Array.isArray(value.appliedCosts)
+    && value.appliedCosts.length <= 16
+    && value.appliedCosts.every((effect) => isAppliedEffect(effect) && effect.kind === "itemCost");
 }
 
 export function isWorldInteractionResolvedPayload(
@@ -545,7 +666,7 @@ function isOpportunity(value: unknown): value is WorldInteractionOpportunity {
     && isCanonicalRefSet(value.basisRefs, 1);
 }
 
-function isCost(value: unknown): value is WorldInteractionCost {
+export function isCost(value: unknown): value is WorldInteractionCost {
   return isRecord(value)
     && hasExactKeys(value, ["charges", "durability", "entryRef", "kind", "quantity"])
     && value.kind === "item"

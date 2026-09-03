@@ -167,6 +167,59 @@ export function materializedSemanticDefinition(
   return Object.freeze({ prospectiveRef, definitionRef, definition });
 }
 
+/**
+ * Deterministic binding between a materialization plan's frozen read set and
+ * the RootAction/bundle identity that produced it. Rules recomputes this
+ * independently at commit time, so a bundle cannot pair a valid-looking
+ * contextHash with a readSet it was not actually derived from -- the same
+ * kind of tamper the readSet-staleness check alone would not catch, since a
+ * stale readSet and a swapped-in readSet are both merely "some readSet".
+ */
+export function materializationContextHash(
+  rootActionId: string,
+  bundleHash: string,
+  readSet: readonly Readonly<{ ref: string; revisionOrHash: string }>[],
+): string {
+  assertRef(rootActionId, "rootActionId");
+  assertSha256(bundleHash, "bundleHash");
+  return canonicalHash({
+    schema: VNEXT_SEMANTIC_DEFINITION_MATERIALIZATION_PLAN_SCHEMA,
+    rootActionId,
+    bundleHash,
+    readSet,
+  });
+}
+
+export function isSemanticDefinitionMaterializedPayload(
+  value: unknown,
+): value is SemanticDefinitionMaterializedPayload {
+  if (!isPlainRecord(value)
+    || !hasExactKeys(value, [
+      "actorCharacterId", "basisRefs", "bundleHash", "contextHash", "definition", "definitionRef",
+      "prospectiveRef", "semanticKind", "sourceRefs", "summary", "templateHash", "templateRef",
+    ])
+    || !isRef(value.actorCharacterId)
+    || !isSha256(value.bundleHash)
+    || typeof value.prospectiveRef !== "string"
+    || !/^prospective:[0-9a-f]{32}$/u.test(value.prospectiveRef)
+    || typeof value.definitionRef !== "string"
+    || !/^definition:materialized:[0-9a-f]{32}$/u.test(value.definitionRef)
+    || !SEMANTIC_KINDS.has(value.semanticKind as SemanticDefinitionKind)
+    || !isRef(value.templateRef)
+    || !isSha256(value.templateHash)
+    || !isSha256(value.contextHash)
+    || !isCanonicalRefSet(value.basisRefs)
+    || !isCanonicalRefSet(value.sourceRefs)
+    || !isText(value.summary)
+    || !isStoredSemanticDefinition(value.definition)) return false;
+  const definition = value.definition;
+  return definition.definitionId === value.definitionRef
+    && definition.semanticKind === value.semanticKind
+    && definition.templateRef === value.templateRef
+    && definition.templateHash === value.templateHash
+    && definition.revision === "1";
+}
+
 export function isSemanticDefinitionMaterializationPlan(
   value: unknown,
 ): value is SemanticDefinitionMaterializationPlan {
