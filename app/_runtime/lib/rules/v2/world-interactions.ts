@@ -161,25 +161,35 @@ export function fulfillVNextWorldInteractionRandomness(
 ): StepResult | undefined {
   const stored = state.internalContinuations[continuationId];
   if (stored === undefined) return undefined;
+  const plan = stored.resolutionPlan;
+  // Ownership is decided before the Profile gate. A continuation belonging to
+  // the legacy causal path is not this handler's to reject: returning
+  // undefined is how it declines so the V3 handler can settle it. Gating on
+  // the Profile first rejected every foreign continuation whenever the vNext
+  // extension was disabled, which is a rejection this handler has no standing
+  // to make.
+  if (!isAtomicWorldInteractionStepsPlan(plan) && !isWorldInteractionResolutionPlan(plan)) {
+    return undefined;
+  }
   if (!worldInteractionProfileEnabled(profiles.extensions)) {
     return rejected("unsupportedOperation", "The frozen world interaction Profile is unavailable.");
   }
-  if (isAtomicWorldInteractionStepsPlan(stored.resolutionPlan)) {
+  if (isAtomicWorldInteractionStepsPlan(plan)) {
     return fulfillAtomicWorldInteractionRandomness(
       profiles,
       state,
       continuationId,
       rolls,
-      stored.resolutionPlan,
+      plan,
     );
   }
-  if (!isWorldInteractionResolutionPlan(stored.resolutionPlan)) return undefined;
+  if (!isWorldInteractionResolutionPlan(plan)) return undefined;
   return settleCheckedWorldInteraction(
     profiles,
     transitionAccumulator(state),
     continuationId,
     rolls,
-    stored.resolutionPlan,
+    plan,
   );
 }
 
