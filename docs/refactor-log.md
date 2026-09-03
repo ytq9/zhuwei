@@ -2303,3 +2303,10 @@
 - 修改与连带检查：Room DO 用共享恢复入口复用原 Proposal 与骰面，并通过 Rules 导出的原子 world-interaction 编译判定作为单一事实源；随机日志后的投影失败标为可重试，非随机投影失败仍是硬拒绝。Room Action 以 Receipt root 绑定恢复后直接提交结果并沿 delivery root 发布叙事。检查覆盖原失败路径在 DO 驱逐后以同一原始意图完成、Proposal/骰面不变且无重复随机，以及自然 20/1 正常路径与非随机失败对偶路径。
 - 验证证据：`npx vitest run tests/kp-vnext-stage3-room.test.ts` 退出 0（7/7）；包含 Room Action/Provider/Claims/Rules 的六个 Node 目标文件命令退出 0（102/102）；共享类型与公共签名变化后的 `npm run typecheck`、`git diff --check` 均退出 0。
 - 未覆盖范围：没有改变随机算法、跨请求权威状态或幂等合同，也没有为测试引入生产旁路；未运行完整回归、Lint、build、外部 Provider、migration、部署或 Git push。
+
+## vNext 阶段三续作 feature 救援推送（2026-09-03）
+
+- 授权、基线与目标：Claude 停止工作后，用户明确要求把其当前成果推送到 `cloudflare` 之外的 feature 分支。协调代理核对本地主成果为干净分支 `feature/kp-agent-vnext-stage3-continue`，交接说明提交为 `05e7497a2c89fb00213cf5b124a912e334386440`，相对 `cloudflare@0569b517ee0e101e32c38897812821a76d755aa6` 领先 23 个提交；远端同名分支在操作前不存在。
+- 取舍与未集成工作：`.claude/worktrees/t3-bundle` 的两项未提交修改时间早于主成果，四个新增测试名称及对应行为已由主分支 `11cf36b` 的更完整实现覆盖，因此未把该旧工作树反向覆盖到主成果，也未清理或丢弃其文件。顶层 `cloudflare` 工作树中的 KP 测试治理改动属于更早的独立任务，保持未提交原状；其他验证 worktree 同样未修改。
+- 推送与远端边界：`git push -u origin HEAD:refs/heads/feature/kp-agent-vnext-stage3-continue` 退出 0，以非强制方式创建远端 feature ref 并指向 `05e7497a2c89fb00213cf5b124a912e334386440`。随后只读复核 `origin/cloudflare` 仍为 `0569b517ee0e101e32c38897812821a76d755aa6`，`origin/main` 仍为操作前已存在的 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`；本条说明性审计提交随后只前移同一 feature ref。
+- 验证与未覆盖范围：推送对象是交接文档已明确标注“不是阶段三完成、不可生产采用”的开发检查点；沿用该文档记录的定向证据，不把保存动作扩张成完整回归或发布资格。本次未运行新的代码测试、全量 Node/Worker、Lint、build、浏览器、真实 Provider、migration 或部署，也未修改 Secret、Cloudflare 资源、`cloudflare`、`main` 或 grok.me。

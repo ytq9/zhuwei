@@ -4,9 +4,9 @@
 本文档描述接手时的真实状态、已核实的结论、以及剩余任务。所有数字都是在本机实跑得到的，不是转述。
 
 - 分支：`feature/kp-agent-vnext-stage3-continue`
-- HEAD：`951c013`（合并提交），工作树干净
+- 功能合并 HEAD：`951c013`；交接说明提交：`05e7497`
 - 工作目录：`/home/ubuntu/workspace/zhuwei/.claude/worktrees/stage3-cont`
-- **未推送**：`origin` 上最新仍是 `0b4c7ad`，本轮全部成果只存在于本机本地分支
+- **已救援推送**：用户在 Claude 停止工作后于 2026-09-03 明确授权，远端同名 feature 分支已从本地交接说明提交 `05e7497` 创建；只更新该 feature ref，未修改 `cloudflare` 或 `main`。
 
 ---
 
