@@ -14,6 +14,9 @@ import {
 } from "../app/_runtime/lib/kp/vnext/narration.ts";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
 
+// Test level: T1 — exercises deterministic Claims derivation and Viewer
+// projection without Room persistence or model I/O.
+
 const RECEIPT = Object.freeze({
   receiptId: "receipt:conversation:1",
   rootActionId: "root:conversation:1",
@@ -322,6 +325,7 @@ test("an NPC source claim remains attributed and does not publish the hidden wor
   const projected = projectRenderableClaims(authorityClaims, {
     viewerKey: "character:alice",
     refs: ["npc:keeper", "event:keeper-spoke"],
+    displayNames: { "npc:keeper": "守门人" },
   });
 
   assert.equal(projected.viewerKey, "character:alice");
@@ -330,8 +334,10 @@ test("an NPC source claim remains attributed and does not publish the hidden wor
     claimRef: "claim:keeper:door",
     kind: "sourceClaim",
     speakerRef: "npc:keeper",
+    speakerName: "守门人",
     statement: "门后没有守卫。",
     basisRefs: ["event:keeper-spoke"],
+    narrationFacts: ["守门人声称：门后没有守卫"],
   });
   assert.doesNotMatch(JSON.stringify(projected), /two-guards|两名守卫/u);
   assert.match(projected.claimsHash, /^sha256:[0-9a-f]{64}$/u);
@@ -444,6 +450,9 @@ test("FrozenRenderableClaims rejects recomputed envelopes with unknown fields", 
   nestedCanary.claims[0].state = "closed";
   nestedCanary.claims[0].unknownNestedMeaning = "PRIVATE_NESTED";
   assert.equal(frozenRenderableClaimsConform(rehash(nestedCanary)), false);
+  const narrationCanary = structuredClone(projected);
+  narrationCanary.claims[0].narrationFacts = ["伪造的新事实。"];
+  assert.equal(frozenRenderableClaimsConform(rehash(narrationCanary)), false);
 });
 
 test("authority-only summaries, pressures, opportunities, and actual targets cannot perturb Viewer Claims", () => {
@@ -633,6 +642,10 @@ test("ability effects are rendered from typed semantics rather than an ability-n
       "event:claim:guidance:observed",
       "event:claim:invented:observed",
     ],
+    displayNames: {
+      "ability:guidance": "神导术",
+      "ability:invented-fortune": "旅途好运",
+    },
   };
   const projected = projectRenderableClaims(deriveAuthorityClaims({
     receiptId: "receipt:ability-effects",
@@ -683,6 +696,38 @@ test("ability effects are rendered from typed semantics rather than an ability-n
       },
     },
   ]);
+});
+
+test("Viewer labels cannot be copied from Authority material or from an ungranted ref", () => {
+  const authorityClaims = deriveAuthorityClaims({
+    receiptId: "receipt:viewer-label-boundary",
+    rootActionId: "root:viewer-label-boundary",
+    materials: [{
+      claimRef: "claim:viewer-label-boundary",
+      kind: "abilityEffectApplied",
+      abilityRef: "ability:hidden-label",
+      abilityName: "PRIVATE_AUTHORITY_ABILITY_NAME",
+      sourceRef: "character:alice",
+      targetRefs: ["character:alice"],
+      effect: { summary: "该效果已经生效。" },
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }],
+  });
+  const grants = {
+    viewerKey: "character:alice",
+    refs: ["ability:hidden-label", "character:alice"],
+  };
+  const projected = projectRenderableClaims(authorityClaims, grants);
+  assert.equal(projected.claims[0].abilityName, "该能力");
+  assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_AUTHORITY_ABILITY_NAME/u);
+  assert.throws(
+    () => projectRenderableClaims(authorityClaims, {
+      ...grants,
+      displayNames: { "ability:not-granted": "伪造名称" },
+    }),
+    /VIEWER_DISPLAY_NAME_INVALID/u,
+  );
 });
 
 test("narration retry reuses the exact Receipt-bound Viewer material after world state changes", () => {
@@ -791,7 +836,7 @@ test("the Viewer claim contract projects every supported typed material through 
       claimRef: "claim:inference",
       kind: "characterInference",
       characterRef: "character:alice",
-      inference: "爱丽丝认为守卫有所隐瞒。",
+      inference: "守卫有所隐瞒。",
       basis: basis("inference"),
       visibility: publicVisibility,
     },
@@ -894,6 +939,11 @@ test("the Viewer claim contract projects every supported typed material through 
       "story:gray-gate",
       ...materials.map(({ claimRef }) => `viewer:basis:${claimRef.slice("claim:".length)}`),
     ],
+    displayNames: {
+      "ability:ward": "守护",
+      "npc:keeper": "守门人",
+      "character:alice": "爱丽丝",
+    },
   };
   const projected = projectRenderableClaims(deriveAuthorityClaims({
     receiptId: "receipt:all-claim-kinds",

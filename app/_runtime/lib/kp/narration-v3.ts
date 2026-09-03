@@ -55,12 +55,12 @@ const BODY_ONLY_NARRATION_GROUNDING_REPLACEMENT_SYSTEM = `你是烛帷 KP。上�
 const FROZEN_CLAIMS_NARRATION_SYSTEM = `你是烛帷 KP。你只叙述当前 Receipt 已提交且该观察者可见的结果。
 输入严格只有 Receipt 与 renderableClaims；renderableClaims 是本次所有新事实、机械结果、感官证据、压力与机会的唯一依据。不得补写其中没有的动作、结果、世界事实、NPC 反应、感官或空间细节，也不得替玩家决定思想、情绪、台词或下一步。
 
-把相关 Claims 整合成一段自然、具体且不重复的中文回应，然后把决定权交还玩家。事实句应保留 Claim 中文 payload 的原词或近似原词，不要用文学性同义改写。Claims 已经按观察者投影，不要解释协议、哈希、引用或内部字段。sourceClaim 必须写成“对方声称……”一类有来源的陈述；characterInference 必须写成“你判断……”或“该角色推测……”一类有角色归属的判断；都不得改写成无来源的世界事实。压力与机会只能来自相应 kind 的 Claim。只有 actionCommitted 而没有其他结果时，只确认其可观察行动，不宣称目标已经实现。末句若交还决定权，使用“你接下来怎么做？”这类单纯提问。
+每项 Claim 的 narrationFacts 是已冻结的观察者安全原子事实。对所有实质 Claim，正文必须逐项使用全部 narrationFacts，保留其原词；不得只写能力名、来源或其中一项而省略剩余效果。sourceClaim 与 characterInference 已在 narrationFacts 中绑定该 Viewer 可公开的来源称谓，必须原样保留，不得替换为“传闻”、“有人”或无来源事实。Claims 已经按观察者投影，不要解释协议、哈希、引用或内部字段。只有 actionCommitted 而没有其他结果时，只确认其 narrationFacts，不宣称目标已经实现。末句若交还决定权，使用“你接下来怎么做？”这类单纯提问。
 
 只调用 submit_current_narration 一次，并且参数只能是 {"body":"非空正文"}。不得输出任何元数据。`;
 
 const FROZEN_CLAIMS_GROUNDING_REPLACEMENT_SYSTEM = `你是烛帷 KP。上一份正文因超出冻结 Claims 的事实依据而被丢弃；不要复述或修补它。
-只根据当前 Receipt 与 renderableClaims 重写完整回应。每个事实分句直接复用一个 Claim 中文 payload 的原词；不得做文学性同义改写，也不得加入 Claims 未明示的动作、结果、世界事实、NPC 反应、感官、空间、思想、情绪、台词或下一步。sourceClaim 使用“对方声称……”格式，characterInference 使用“你判断……”或“该角色推测……”格式。末句如需交还决定权，只写“你接下来怎么做？”。
+只根据当前 Receipt 与 renderableClaims 重写完整回应。对所有实质 Claim，每个事实分句直接复用其全部 narrationFacts 的原词；不得做文学性同义改写，也不得加入 Claims 未明示的动作、结果、世界事实、NPC 反应、感官、空间、思想、情绪、台词或下一步。sourceClaim 与 characterInference 的 Viewer-safe 来源称谓已在 narrationFacts 中冻结，不得泛化或替换。末句如需交还决定权，只写“你接下来怎么做？”。
 
 只调用 submit_current_narration 一次，并且参数只能是 {"body":"非空正文"}。不得输出任何元数据。`;
 
@@ -576,115 +576,43 @@ export function validateFrozenClaimsNarrationOutput(
   return result;
 }
 
-type FrozenClaimTextEvidence = Readonly<{
-  claimRef: string;
+type FrozenNarrationFact = Readonly<{
+  factRef: string;
   kind: string;
-  texts: readonly string[];
+  text: string;
 }>;
 
 const CLAIM_SENTENCE_BOUNDARY = /[。！？!?；;\n]+/u;
 const CLAIM_COMPOUND_BOUNDARY = /(?:[，,、]+|并且|而且|与此同时|随后|然后|但是|不过|却|并|且|同时|又|从而|所以|因此|因而|导致|迫使|令|让)/u;
-const INTERNAL_REFERENCE_ASSERTION = /(?:sha256|claim|event|receipt|root|character|npc|feature|scene|definition|relation|visibility|prospective|item-entry|objective|story):/iu;
+const INTERNAL_REFERENCE_ASSERTION = /[a-z][a-z0-9-]{1,63}:[a-z0-9][a-z0-9._:/-]*/iu;
 const PLAYER_AGENCY_ASSERTION = /你(?:已经|正在|随后|然后|立刻|马上|最终|必须|不得|应该|将要|会)?(?:感到|觉得|认为|相信|怀疑|意识到|想起|决定|选择|打算|准备|想要|愿意|害怕|恐惧|愤怒|悲伤|高兴|说|回答|承诺|发誓|转身|冲|跑|逃|攻击|挥动|进入|离开|追赶|躲藏)/u;
-const SOURCE_ATTRIBUTION = /^(?:(?:据(?:对方|该人物|此人|该消息来源|消息来源|该文献|文献|该记录|记录|传闻)(?:所说|所称|所述|记载))|(?:对方|有人|消息来源|文献|记录|传闻|该人物|此人)(?:明确)?(?:说|声称|表示|写道|记载|提到|宣称|自称|断言|认为))/u;
-const INFERENCE_ATTRIBUTION = /^(?:你|该角色|此人|有人)(?:判断|推测|认为|觉得|怀疑|估计|得出|意识到)/u;
 
-function frozenClaimTextEvidence(claim: unknown): FrozenClaimTextEvidence | undefined {
-  if (!isRecord(claim) || typeof claim.kind !== "string") return undefined;
-  const texts: unknown[] = [];
-  switch (claim.kind) {
-    case "mechanicalOutcome": {
-      texts.push(claim.summary);
-      const check = isRecord(claim.check) ? claim.check : undefined;
-      if (check !== undefined) {
-        if (check.kind === "attack") {
-          texts.push(check.result === "success" ? "攻击命中" : "攻击未命中");
-        } else {
-          texts.push(check.result === "success" ? "检定成功" : "检定失败");
-        }
-        if (typeof check.total === "number") texts.push(`检定总值为 ${check.total}`);
-        if (typeof check.dc === "number") texts.push(`难度为 ${check.dc}`);
-      }
-      break;
-    }
-    case "definitionRevised":
-    case "objectiveContinuity":
-    case "storyContinuity":
-    case "actionCommitted":
-      texts.push(claim.summary);
-      break;
-    case "abilityEffectApplied": {
-      if (typeof claim.abilityName === "string") texts.push(`能力 ${claim.abilityName}`);
-      if (isRecord(claim.effect)) {
-        texts.push(claim.effect.summary);
-        if (typeof claim.abilityName === "string" && typeof claim.effect.summary === "string") {
-          texts.push(`${claim.abilityName}：${claim.effect.summary}`);
-        }
-        if (typeof claim.effect.bonusDice === "string") {
-          texts.push(`额外骰为 ${claim.effect.bonusDice}`);
-        }
-        if (typeof claim.effect.duration === "string") {
-          texts.push(`持续时间为 ${claim.effect.duration}`);
-        }
-        if (claim.effect.concentration === true) texts.push("需要专注");
-      }
-      break;
-    }
-    case "sensoryEvidence":
-      texts.push(claim.evidence);
-      break;
-    case "sourceClaim":
-      texts.push(claim.statement);
-      break;
-    case "characterInference":
-      texts.push(claim.inference);
-      break;
-    case "sceneFeature":
-      texts.push(claim.description, claim.state, claim.interactionHint);
-      break;
-    case "relationChanged":
-      texts.push(claim.description);
-      break;
-    case "inventoryOutcome":
-      texts.push(claim.summary);
-      for (const [field, label] of [
-        ["quantity", "数量"],
-        ["charges", "充能次数"],
-        ["durability", "耐久"],
-      ] as const) {
-        const transition = isRecord(claim[field]) ? claim[field] : undefined;
-        if (typeof transition?.before === "number" && typeof transition.after === "number") {
-          texts.push(`${label}由 ${transition.before} 变为 ${transition.after}`);
-        }
-      }
-      if (typeof claim.state === "string") texts.push(`物品状态为 ${claim.state}`);
-      break;
-    case "pressure":
-      texts.push(claim.description);
-      break;
-    case "opportunity":
-      texts.push(claim.description, claim.actionHint);
-      break;
-    default:
-      return undefined;
+function frozenClaimFacts(claim: unknown): readonly FrozenNarrationFact[] {
+  if (!isRecord(claim)
+    || typeof claim.claimRef !== "string"
+    || typeof claim.kind !== "string"
+    || !Array.isArray(claim.narrationFacts)) return [];
+  const claimRef = claim.claimRef;
+  const kind = claim.kind;
+  const facts = claim.narrationFacts.filter((fact): fact is string =>
+    typeof fact === "string" && normalizeGroundingText(fact).length >= 1);
+  if (facts.length !== claim.narrationFacts.length || new Set(facts).size !== facts.length) {
+    return [];
   }
-  const normalizedTexts = [...new Set(texts.filter((text): text is string =>
-    typeof text === "string" && normalizeGroundingText(text).length >= 1))];
-  return normalizedTexts.length === 0 || typeof claim.claimRef !== "string"
-    ? undefined
-    : { claimRef: claim.claimRef, kind: claim.kind, texts: normalizedTexts };
+  return facts.map((text, index) => ({
+    factRef: `${claimRef}\u001f${index}`,
+    kind,
+    text,
+  }));
 }
 
 function normalizeGroundingText(value: string): string {
-  return (value.normalize("NFKC").toLowerCase().match(/\p{Script=Han}+|[a-z0-9]+/gu) ?? [])
+  return (value.normalize("NFKC").toLowerCase().match(/[\p{L}\p{M}\p{N}\p{S}]+/gu) ?? [])
     .join("");
 }
 
 function narrationFactCore(value: string): string {
   let text = value.trim().replace(/^[“”"'「」『』（）()\s]+|[“”"'「」『』（）()\s]+$/gu, "");
-  text = text.replace(/^(?:据(?:对方|该人物|此人|该消息来源|消息来源|该文献|文献|该记录|记录|传闻)(?:所说|所称|所述|记载)|(?:对方|有人|消息来源|文献|记录|传闻|该人物|此人)(?:明确)?(?:说|声称|表示|写道|记载|提到|宣称|自称|断言|认为))[：:，,\s]*/u, "");
-  text = text.replace(/^(?:你|该角色|此人|有人)(?:判断|推测|认为|觉得|怀疑|估计|得出(?:了)?(?:结论)?|意识到)[：:\s]*/u, "");
-  text = text.replace(/^(?:你)?(?:清楚地)?(?:看见|看到|听见|听到|闻到|察觉到|发现)[：:，,\s]*/u, "");
   text = text.replace(/^(?:结果|事实|情况)(?:是|为)[：:\s]*/u, "");
   return normalizeGroundingText(text);
 }
@@ -717,18 +645,19 @@ function assertFrozenClaimsNarrationGrounded(
   request: FrozenClaimsNarrationRequest,
 ): void {
   if (INTERNAL_REFERENCE_ASSERTION.test(body)) throw new NarrationGroundingValidationError();
-  const evidence = request.renderableClaims.claims
-    .map(frozenClaimTextEvidence)
-    .filter((entry): entry is FrozenClaimTextEvidence => entry !== undefined);
+  const factsByClaim = request.renderableClaims.claims.map(frozenClaimFacts);
+  if (factsByClaim.some((facts) => facts.length === 0)) {
+    throw new NarrationGroundingValidationError();
+  }
+  const evidence = factsByClaim.flat();
   const clauses = body.split(CLAIM_SENTENCE_BOUNDARY).map((clause) => clause.trim()).filter(Boolean);
   if (clauses.length === 0) throw new NarrationGroundingValidationError();
-  const renderedClaimRefs = new Set<string>();
+  const renderedFactRefs = new Set<string>();
 
   const validateClause = (clause: string, maySplit: boolean): void => {
     if (isDecisionReturnClause(clause)) return;
     if (PLAYER_AGENCY_ASSERTION.test(clause)) throw new NarrationGroundingValidationError();
-    const matching = evidence.filter((entry) =>
-      entry.texts.some((text) => claimTextSupportsClause(clause, text)));
+    const matching = evidence.filter((entry) => claimTextSupportsClause(clause, entry.text));
     if (matching.length === 0) {
       const parts = maySplit
         ? clause.split(CLAIM_COMPOUND_BOUNDARY).map((part) => part.trim()).filter(Boolean)
@@ -737,23 +666,14 @@ function assertFrozenClaimsNarrationGrounded(
       for (const part of parts) validateClause(part, false);
       return;
     }
-
-    const sourceOnly = matching.every(({ kind }) => kind === "sourceClaim");
-    if (sourceOnly && !SOURCE_ATTRIBUTION.test(clause.trim())) {
-      throw new NarrationGroundingValidationError();
-    }
-    const inferenceOnly = matching.every(({ kind }) => kind === "characterInference");
-    if (inferenceOnly && !INFERENCE_ATTRIBUTION.test(clause.trim())) {
-      throw new NarrationGroundingValidationError();
-    }
-    for (const entry of matching) renderedClaimRefs.add(entry.claimRef);
+    for (const entry of matching) renderedFactRefs.add(entry.factRef);
   };
 
   for (const clause of clauses) validateClause(clause, true);
 
-  const substantiveClaims = evidence.filter(({ kind }) => kind !== "actionCommitted");
-  const requiredClaims = substantiveClaims.length > 0 ? substantiveClaims : evidence;
-  if (requiredClaims.some(({ claimRef }) => !renderedClaimRefs.has(claimRef))) {
+  const substantiveFacts = evidence.filter(({ kind }) => kind !== "actionCommitted");
+  const requiredFacts = substantiveFacts.length > 0 ? substantiveFacts : evidence;
+  if (requiredFacts.some(({ factRef }) => !renderedFactRefs.has(factRef))) {
     throw new NarrationGroundingValidationError();
   }
 }

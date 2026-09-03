@@ -918,11 +918,13 @@ function observerRenderableClaims(
     after,
     authorityClaims,
   );
+  const displayNames = viewerClaimDisplayNames(before, after, new Set(refs));
   let projected: FrozenRenderableClaims;
   try {
     projected = projectRenderableClaims(authorityClaims, {
       viewerKey: viewerClaimKey(viewerValue, after.viewer.subjectId),
       refs,
+      displayNames,
       projectionHash: after.projectionHash,
     });
   } catch {
@@ -988,7 +990,6 @@ function viewerClaimRefs(
     refs.add(policyRef);
     refs.add(definitionRef);
     if (isNonEmptyString(definition.definitionId)) refs.add(definition.definitionId);
-    collectReferenceFields(definition.content, refs);
   }
 
   for (const claim of authorityClaims.claims) {
@@ -1008,52 +1009,246 @@ function viewerClaimRefs(
   return [...refs].sort();
 }
 
-function collectProjectedRefs(value: unknown, refs: Set<string>): void {
-  if (value === undefined) return;
-  const seen = new WeakSet<object>();
-  const visit = (candidate: unknown, field = ""): void => {
-    if (candidate === null || candidate === undefined) return;
-    if (typeof candidate === "string") {
-      if (referenceField(field) || candidate.includes(":")) refs.add(candidate);
-      return;
-    }
-    if (typeof candidate !== "object") return;
-    if (seen.has(candidate as object)) return;
-    seen.add(candidate as object);
-    if (Array.isArray(candidate)) {
-      for (const entry of candidate) visit(entry, field);
-      return;
-    }
-    for (const [key, nested] of Object.entries(candidate as Record<string, unknown>)) {
-      if (key.includes(":")) refs.add(key);
-      visit(nested, key);
-    }
+const PROJECTED_DISPLAY_REFERENCE = /[a-z][a-z0-9-]{1,63}:[a-z0-9][a-z0-9._:/-]*/iu;
+
+function viewerClaimDisplayNames(
+  before: SafeReadModel | undefined,
+  after: SafeReadModel,
+  grants: ReadonlySet<string>,
+): Readonly<Record<string, string>> {
+  const result: Record<string, string> = {};
+  const add = (ref: unknown, name: unknown): void => {
+    if (!isNonEmptyString(ref)
+      || !grants.has(ref)
+      || !isNonEmptyString(name)
+      || name.trim() !== name
+      || PROJECTED_DISPLAY_REFERENCE.test(name)) return;
+    result[ref] = name;
   };
-  visit(value);
-}
-
-function collectReferenceFields(value: unknown, refs: Set<string>): void {
-  if (value === null || value === undefined) return;
-  if (Array.isArray(value)) {
-    for (const entry of value) collectReferenceFields(entry, refs);
-    return;
-  }
-  if (!isRecord(value)) return;
-  for (const [field, nested] of Object.entries(value)) {
-    if (typeof nested === "string" && referenceField(field)) refs.add(nested);
-    if (Array.isArray(nested) && referenceField(field)) {
-      for (const entry of nested) if (isNonEmptyString(entry)) refs.add(entry);
+  const collect = (projection: SafeReadModel | undefined): void => {
+    if (projection === undefined) return;
+    add(projection.controlledCharacter.characterId, projection.controlledCharacter.name);
+    if (isRecord(projection.abilityDefinitions)) {
+      for (const [ref, definition] of Object.entries(projection.abilityDefinitions)) {
+        if (!isRecord(definition)) continue;
+        add(ref, definition.name ?? definition.label ?? definition.displayName);
+      }
     }
-    collectReferenceFields(nested, refs);
+    if (Array.isArray(projection.visibleItems)) {
+      for (const item of projection.visibleItems) {
+        if (!isRecord(item)) continue;
+        add(item.itemEntryId, item.name);
+        add(item.definitionRef, item.name);
+      }
+    }
+    if (isRecord(projection.entities)) {
+      for (const [ref, entity] of Object.entries(projection.entities)) {
+        if (isRecord(entity)) add(ref, entity.name ?? entity.label ?? entity.displayName);
+      }
+    }
+    const tactical = projection.tacticalProjection;
+    if (tactical === undefined) return;
+    add(tactical.scene.id, tactical.scene.name);
+    add(tactical.self.id, tactical.self.name);
+    for (const entity of tactical.visibleEntities) add(entity.id, entity.name);
+    for (const feature of tactical.knownFeatures) add(feature.id, feature.label);
+    for (const zone of tactical.knownZones) add(zone.id, zone.label);
+  };
+  collect(before);
+  collect(after);
+  return Object.fromEntries(Object.entries(result).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0));
+}
+
+function addProjectedRef(refs: Set<string>, value: unknown): void {
+  if (isNonEmptyString(value)) refs.add(value);
+}
+
+function addProjectedRefs(refs: Set<string>, value: unknown): void {
+  if (!Array.isArray(value)) return;
+  for (const entry of value) addProjectedRef(refs, entry);
+}
+
+function collectProjectedRecordRefs(
+  refs: Set<string>,
+  value: unknown,
+  scalarFields: readonly string[],
+  arrayFields: readonly string[] = [],
+): void {
+  if (!isRecord(value)) return;
+  for (const field of scalarFields) addProjectedRef(refs, value[field]);
+  for (const field of arrayFields) addProjectedRefs(refs, value[field]);
+}
+
+function collectProjectedRecordListRefs(
+  refs: Set<string>,
+  value: unknown,
+  scalarFields: readonly string[],
+  arrayFields: readonly string[] = [],
+): void {
+  if (!Array.isArray(value)) return;
+  for (const entry of value) collectProjectedRecordRefs(refs, entry, scalarFields, arrayFields);
+}
+
+function collectProjectedRecordMapRefs(
+  refs: Set<string>,
+  value: unknown,
+  scalarFields: readonly string[] = [],
+  arrayFields: readonly string[] = [],
+): void {
+  if (!isRecord(value)) return;
+  for (const [key, entry] of Object.entries(value)) {
+    addProjectedRef(refs, key);
+    collectProjectedRecordRefs(refs, entry, scalarFields, arrayFields);
   }
 }
 
-function referenceField(field: string): boolean {
-  return field === "id"
-    || field.endsWith("Id")
-    || field.endsWith("Ids")
-    || field.endsWith("Ref")
-    || field.endsWith("Refs");
+/** Collect only references from closed, path-specific fields emitted by the
+ * SafeReadModel projector. Generic JsonRecord payloads, free text and
+ * visibility-policy labels never mint a Claim grant. */
+function collectProjectedRefs(value: SafeReadModel | undefined, refs: Set<string>): void {
+  if (value === undefined) return;
+  addProjectedRef(refs, value.viewer.subjectId);
+  collectProjectedRecordRefs(
+    refs,
+    value.controlledCharacter,
+    ["characterId", "sceneId"],
+    ["featureIds"],
+  );
+  if (isRecord(value.controlledCharacter.resources)) {
+    for (const ref of Object.keys(value.controlledCharacter.resources)) addProjectedRef(refs, ref);
+  }
+  collectProjectedRecordMapRefs(refs, value.abilityDefinitions);
+  collectProjectedRecordListRefs(
+    refs,
+    value.visibleFacts,
+    ["id"],
+    ["subjectRefs", "causalParentIds"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.knowledge,
+    ["characterId", "knowledgeRef", "acquiredByEventId", "sourceCharacterId"],
+    ["provenanceChain"],
+  );
+  collectProjectedRecordListRefs(refs, value.receipts, ["receiptId", "rootActionId"]);
+  collectProjectedRecordListRefs(
+    refs,
+    value.pendingInputs,
+    [
+      "pendingInputId", "rootActionId", "inviterCharacterId", "invitedCharacterId",
+      "targetEntityId",
+    ],
+    ["candidateEntityIds", "candidateAbilityRefs", "orderedEntityIds"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.partyGroups,
+    ["groupId", "leaderCharacterId"],
+    ["memberCharacterIds"],
+  );
+  collectProjectedRecordMapRefs(refs, value.spotlightLedger, ["characterId"]);
+  collectProjectedRecordListRefs(
+    refs,
+    value.visibleItems,
+    ["itemEntryId", "definitionRef", "holderRef", "sceneRef"],
+  );
+  collectProjectedRecordRefs(refs, value.campaign, ["campaignId"]);
+  collectProjectedRecordListRefs(
+    refs,
+    value.chapters,
+    ["chapterId", "sceneQuestionId", "storyId"],
+    ["participantRefs", "anchorFactIds", "answerFactIds"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.factions,
+    ["factionId", "definitionRef"],
+    ["memberRefs", "resourceRefs"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.factionPlans,
+    ["planId", "factionId", "actingNpcId"],
+    ["premiseRefs", "resourceRefs"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.relationships,
+    ["relationshipId", "sourceFactId"],
+    ["subjectIds", "basisFactIds"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.promises,
+    ["promiseId", "promisorId", "promiseeId", "sourceFactId"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.debts,
+    ["debtId", "debtorId", "creditorId", "sourceFactId"],
+    ["basisFactIds"],
+  );
+  collectProjectedRecordListRefs(refs, value.activities, ["activityId", "characterId"]);
+  collectProjectedRecordListRefs(
+    refs,
+    value.sourceClaims,
+    ["claimId", "speakerId", "sourceFactId"],
+    ["evidenceRefs"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.conversationThreads,
+    [
+      "threadRef", "actorCharacterId", "npcCharacterId", "claimRef",
+      "responseClaimRef", "sourceSceneId",
+    ],
+    ["evidenceRefs"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.stories,
+    ["storyId", "characterId"],
+    ["characterRefs", "anchorFactIds"],
+  );
+  collectProjectedRecordListRefs(
+    refs,
+    value.epilogues,
+    ["epilogueId", "storyId", "characterId"],
+  );
+  collectProjectedRecordMapRefs(
+    refs,
+    value.entities,
+    ["id", "sceneId", "mechanicalDefinitionRef"],
+    ["abilityRefs"],
+  );
+  collectProjectedRecordMapRefs(
+    refs,
+    value.encounters,
+    ["id", "sceneId", "activeEntityId"],
+    ["participantEntityIds"],
+  );
+
+  const tactical = value.tacticalProjection;
+  if (tactical !== undefined) {
+    addProjectedRef(refs, tactical.scene.id);
+    addProjectedRef(refs, tactical.self.id);
+    for (const entity of tactical.visibleEntities) addProjectedRef(refs, entity.id);
+    for (const feature of tactical.knownFeatures) addProjectedRef(refs, feature.id);
+    for (const zone of tactical.knownZones) {
+      addProjectedRef(refs, zone.id);
+      addProjectedRef(refs, zone.sourceRef);
+    }
+    if (tactical.encounter !== null) {
+      addProjectedRef(refs, tactical.encounter.id);
+      addProjectedRef(refs, tactical.encounter.activeEntityId);
+      addProjectedRefs(refs, tactical.encounter.participantEntityIds);
+    }
+    if (tactical.preview !== null) {
+      addProjectedRefs(refs, tactical.preview.knownFriendlyEntityIds);
+      addProjectedRefs(refs, tactical.preview.knownBlockerFeatureIds);
+    }
+  }
 }
 
 function visibilityPolicyVisibleToViewer(

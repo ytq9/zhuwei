@@ -209,6 +209,9 @@ function initialize(options = {}) {
     mechanicDefinitionRefs: ["feature:q-a-near"],
     observableState: "ready",
     affordances: ["interact"],
+    ...(options.embeddedGrantCanary === true
+      ? { secretTargetRef: HIDDEN_SOURCE }
+      : {}),
   });
   const zone = semanticDefinition("sceneFeature", ZONE, {
     sceneRef: SCENE,
@@ -776,6 +779,70 @@ test("opaque IDs resolve registered hazard targets and damage through step/proje
   assert.equal(rebuilt.head.stateHash, committed.stateHash);
   assert.equal(rebuilt.state.entities[ACTOR].hitPoints.current, 14);
   assert.equal(rebuilt.state.entities[TARGET].hitPoints.current, 14);
+});
+
+// Test level: T2 — crosses Rules step, committed events and the real Viewer
+// projector to prove that visible semantic/free-text content cannot mint another grant.
+test("visible raw content cannot grant a hidden Claim payload reference", () => {
+  const initialized = initialize({ embeddedGrantCanary: true });
+  const seeded = runtime.step(initialized.profiles, initialized.state, {
+    kind: "createSourceClaim",
+    proposalId: "root:q:viewer-grant-source",
+    speakerId: ACTOR,
+    claimId: "claim:q:viewer-grant-source",
+    semanticContent: "这段已知主张不授予任何对象权限。",
+    sourceBasis: HIDDEN_SOURCE,
+    motive: "记录授权边界",
+    formedAtFictionMicros: "0",
+  });
+  assert.equal(seeded.kind, "committed", JSON.stringify(seeded));
+  const world = { ...initialized, state: seeded.state };
+  const plan = bindPlanReadSet(world.state, interactionPlan(world.state), [HIDDEN_SOURCE]);
+  plan.basisRefs = [HIDDEN_SOURCE, SOURCE].sort();
+  plan.branches.success.pressures = [{
+    description: "PRIVATE-GRANT-CANARY",
+    sourceRef: HIDDEN_SOURCE,
+    visibilityPolicyRef: "visibility:scene-observers",
+    basisRefs: [SOURCE],
+  }];
+
+  const pending = runtime.step(world.profiles, world.state, {
+    kind: "resolveWorldInteraction",
+    rootActionId: "root:q:viewer-grant-canary",
+    actorCharacterId: ACTOR,
+    plan,
+  });
+  assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
+  const committed = runtime.step(world.profiles, pending.state, {
+    kind: "fulfillAuthoritativeRandomness",
+    continuation: pending.continuation,
+    rolls: [20],
+  });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  const events = [...pending.events, ...committed.events];
+  const projected = runtime.project(world.profiles, committed.state, {
+    kind: "player",
+    principalId: "principal:q1",
+    sessionVersion: 1,
+    seatId: "seat:q1",
+    characterId: ACTOR,
+  }, {
+    channel: "realtime",
+    committedRange: {
+      receiptId: committed.receipt.receiptId,
+      actorCharacterId: ACTOR,
+      priorState: world.state,
+      events,
+    },
+  });
+
+  assert.equal(projected.kind, "projected", JSON.stringify(projected));
+  assert.ok(projected.renderableClaims, "committed range must freeze Viewer Claims");
+  assert.equal(
+    JSON.stringify(projected.renderableClaims).includes("PRIVATE-GRANT-CANARY"),
+    false,
+  );
+  assert.equal(JSON.stringify(projected.renderableClaims).includes(HIDDEN_SOURCE), false);
 });
 
 test("direct mechanical targets cannot borrow Geometry from causal objects or be rejected by incidental objects", () => {

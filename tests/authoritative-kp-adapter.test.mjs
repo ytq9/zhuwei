@@ -403,7 +403,8 @@ test("vNext narration rejects unclaimed facts, retries once, and reuses the exac
   assert.equal(exhaustedAi.calls.length, 2);
 });
 
-test("vNext Claims grounding preserves attribution and rejects player agency", () => {
+// Test level: T1 — exercises the frozen Claims grounding validator without model I/O.
+test("vNext Claims grounding binds source and inference attribution and rejects player agency", () => {
   const viewerKey = "principal:alice\u001fcharacter:alice";
   const receipt = {
     receiptId: "receipt:vnext:attribution",
@@ -448,6 +449,10 @@ test("vNext Claims grounding preserves attribution and rejects player agency", (
     viewerKey,
     projectionHash: sha256("9"),
     refs: ["npc:keeper", "character:alice"],
+    displayNames: {
+      "npc:keeper": "守门人",
+      "character:alice": "爱丽丝",
+    },
   });
   const request = {
     rootActionId: ROOT_ACTION_ID,
@@ -458,13 +463,15 @@ test("vNext Claims grounding preserves attribution and rejects player agency", (
   };
 
   assert.deepEqual(validateFrozenClaimsNarrationOutput({
-    body: "检定成功。检定总值为18。难度为15。对方声称钥匙在楼上。你判断守卫有所隐瞒。行动已经提交。你接下来怎么做？",
+    body: "检定成功。检定总值为18。难度为15。守门人声称钥匙在楼上。爱丽丝判断守卫有所隐瞒。行动已经提交。你接下来怎么做？",
   }, request), {
-    body: "检定成功。检定总值为18。难度为15。对方声称钥匙在楼上。你判断守卫有所隐瞒。行动已经提交。你接下来怎么做？",
+    body: "检定成功。检定总值为18。难度为15。守门人声称钥匙在楼上。爱丽丝判断守卫有所隐瞒。行动已经提交。你接下来怎么做？",
   });
   for (const body of [
     "钥匙在楼上。",
+    "传闻声称钥匙在楼上。你判断守卫有所隐瞒。检定成功。检定总值为18。难度为15。",
     "守卫有所隐瞒。",
+    "守门人声称钥匙在楼上。有人认为守卫有所隐瞒。检定成功。检定总值为18。难度为15。",
     "行动已经提交。你决定冲进去。",
     "国王已经死亡。",
     "检定成功，你必须逃跑。对方声称钥匙在楼上。你判断守卫有所隐瞒。",
@@ -478,6 +485,45 @@ test("vNext Claims grounding preserves attribution and rejects player agency", (
       body,
     );
   }
+});
+
+test("vNext Claims grounding atomizes multi-sentence source material with attribution", () => {
+  const viewerKey = "principal:alice\u001fcharacter:alice";
+  const receipt = {
+    receiptId: "receipt:vnext:multi-sentence-source",
+    rootActionId: ROOT_ACTION_ID,
+    status: "committed",
+  };
+  const renderableClaims = projectRenderableClaims(deriveAuthorityClaims({
+    receiptId: receipt.receiptId,
+    rootActionId: receipt.rootActionId,
+    materials: [{
+      claimRef: "claim:vnext:multi-sentence-source",
+      kind: "sourceClaim",
+      speakerRef: "npc:keeper",
+      statement: "第一句。第二句。",
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }],
+  }), {
+    viewerKey,
+    projectionHash: sha256("8"),
+    refs: ["npc:keeper"],
+    displayNames: { "npc:keeper": "守门人" },
+  });
+  assert.deepEqual(renderableClaims.claims[0].narrationFacts, [
+    "守门人声称：第一句",
+    "守门人声称：第二句",
+  ]);
+  const request = {
+    rootActionId: ROOT_ACTION_ID,
+    narrationInputMode: "frozenRenderableClaims-vnext-1",
+    receipt,
+    viewerKey,
+    renderableClaims,
+  };
+  const body = "守门人声称：第一句。守门人声称：第二句。";
+  assert.deepEqual(validateFrozenClaimsNarrationOutput({ body }, request), { body });
 });
 
 test("vNext Claims grounding accepts exact short payloads and rejects suffix hitchhiking", () => {
@@ -515,9 +561,13 @@ test("vNext Claims grounding accepts exact short payloads and rejects suffix hit
     body: "门开了。",
   });
   for (const body of [
+    "你发现门开。",
+    "你听见门开。",
     "门开着火。",
     "门开爆炸。",
     "门开了，国王死了。",
+    "门开 Король умер。",
+    "门开 انفجر القصر。",
   ]) {
     assert.throws(
       () => validateFrozenClaimsNarrationOutput({ body }, request),
@@ -525,6 +575,55 @@ test("vNext Claims grounding accepts exact short payloads and rejects suffix hit
       body,
     );
   }
+});
+
+test("vNext Claims grounding covers every public ability-effect payload fact", () => {
+  const viewerKey = "principal:alice\u001fcharacter:alice";
+  const receipt = {
+    receiptId: "receipt:vnext:complete-effect",
+    rootActionId: ROOT_ACTION_ID,
+    status: "committed",
+  };
+  const renderableClaims = projectRenderableClaims(deriveAuthorityClaims({
+    receiptId: receipt.receiptId,
+    rootActionId: receipt.rootActionId,
+    materials: [{
+      claimRef: "claim:vnext:complete-effect",
+      kind: "abilityEffectApplied",
+      abilityRef: "ability:guidance",
+      abilityName: "神导术",
+      sourceRef: "character:cleric",
+      targetRefs: ["character:alice"],
+      effect: {
+        summary: "目标下一次属性检定获得额外加值。",
+        appliesTo: "下一次属性检定",
+        bonusDice: "1d4",
+        duration: "最多一分钟",
+        concentration: true,
+      },
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }],
+  }), {
+    viewerKey,
+    projectionHash: sha256("b"),
+    refs: ["ability:guidance", "character:cleric", "character:alice"],
+    displayNames: { "ability:guidance": "神导术" },
+  });
+  const request = {
+    rootActionId: ROOT_ACTION_ID,
+    narrationInputMode: "frozenRenderableClaims-vnext-1",
+    receipt,
+    viewerKey,
+    renderableClaims,
+  };
+
+  assert.throws(
+    () => validateFrozenClaimsNarrationOutput({ body: "能力神导术。" }, request),
+    (error) => error?.name === "NarrationGroundingValidationError",
+  );
+  const body = "能力神导术。目标下一次属性检定获得额外加值。作用对象为下一次属性检定。额外骰为1d4。持续时间为最多一分钟。需要专注。";
+  assert.deepEqual(validateFrozenClaimsNarrationOutput({ body }, request), { body });
 });
 
 test("a player's actorAction is attributable dialogue, not evidence for a world fact", () => {

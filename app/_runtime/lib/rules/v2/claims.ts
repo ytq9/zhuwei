@@ -190,6 +190,9 @@ export type FrozenAuthorityClaims = Readonly<{
 export type ViewerClaimGrants = Readonly<{
   viewerKey: string;
   refs: readonly string[];
+  /** Display labels copied only from the already-built Viewer projection.
+   * Authority state labels must never be supplied here. */
+  displayNames?: Readonly<Record<string, string>>;
   /** The Viewer-safe projection used to decide these grants. Production
    * callers must pass it; pure conformance callers receive a deterministic
    * synthetic binding derived only from the Viewer grant set. */
@@ -199,14 +202,21 @@ export type ViewerClaimGrants = Readonly<{
 type RenderableClaimBase = Readonly<{
   claimRef: string;
   basisRefs: readonly string[];
+  /** Complete Viewer-safe atomic facts that Narration must render. They are
+   * derived here, never accepted in an Authority Claim or from the model. */
+  narrationFacts: readonly string[];
 }>;
 
 export type RenderableClaim =
   | (RenderableClaimBase & Omit<MechanicalOutcomeClaimMaterial, keyof ClaimMaterialBase>)
   | (RenderableClaimBase & Omit<AbilityEffectAppliedClaimMaterial, keyof ClaimMaterialBase>)
   | (RenderableClaimBase & Omit<SensoryEvidenceClaimMaterial, keyof ClaimMaterialBase>)
-  | (RenderableClaimBase & Omit<SourceClaimMaterial, keyof ClaimMaterialBase>)
-  | (RenderableClaimBase & Omit<CharacterInferenceClaimMaterial, keyof ClaimMaterialBase>)
+  | (RenderableClaimBase & Omit<SourceClaimMaterial, keyof ClaimMaterialBase> & Readonly<{
+      speakerName: string;
+    }>)
+  | (RenderableClaimBase & Omit<CharacterInferenceClaimMaterial, keyof ClaimMaterialBase> & Readonly<{
+      characterName: string;
+    }>)
   | (RenderableClaimBase & Omit<SceneFeatureClaimMaterial, keyof ClaimMaterialBase>)
   | (RenderableClaimBase & Omit<RelationChangedClaimMaterial, keyof ClaimMaterialBase>)
   | (RenderableClaimBase & Omit<DefinitionRevisedClaimMaterial, keyof ClaimMaterialBase>)
@@ -425,7 +435,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
           kind: "mechanicalOutcome",
           targetRefs: [targetRef],
           outcomeCode: "hitPointsChanged",
-          summary: `${targetRef} 的生命值由 ${before} 变为 ${after}。`,
+          summary: `目标的生命值由 ${before} 变为 ${after}。`,
         });
         break;
       }
@@ -437,7 +447,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
           kind: "mechanicalOutcome",
           targetRefs: [targetRef],
           outcomeCode: "died",
-          summary: `${targetRef} 已经死亡。`,
+          summary: "目标已经死亡。",
         });
         break;
       }
@@ -454,8 +464,8 @@ export function deriveAuthorityClaimsFromCommittedRange(
           actorRef,
           outcomeCode: "resourceChanged",
           summary: after === undefined
-            ? `${resourceRef} 已经消耗。`
-            : `${resourceRef} 的剩余数量为 ${after}。`,
+            ? "该资源已经消耗。"
+            : `该资源的剩余数量为 ${after}。`,
         });
         break;
       }
@@ -742,12 +752,7 @@ function semanticDefinitionRevisionClaims(
       subjectRef,
       objectRef,
       change,
-      description: relationTransitionSummary(
-        relationKind,
-        subjectRef,
-        objectRef,
-        change,
-      ),
+      description: relationTransitionSummary(relationKind, change),
     }];
   }
 
@@ -872,6 +877,7 @@ function worldInteractionClaims(
       const amount = finiteNumber(value.amount);
       const damageType = stringField(value, "damageType");
       if (targetRef === undefined || amount === undefined || damageType === undefined) return;
+      const damageName = viewerSafeDisplayText(damageType, "未标注类型的");
       claims.push({
         ...eventClaimBase(
           event,
@@ -885,8 +891,8 @@ function worldInteractionClaims(
         targetRefs: [targetRef],
         outcomeCode: value.died === true ? "died" : "damageApplied",
         summary: value.died === true
-          ? `${targetRef} 承受 ${amount} 点 ${damageType}伤害并死亡。`
-          : `${targetRef} 承受 ${amount} 点 ${damageType}伤害。`,
+          ? `目标承受 ${amount} 点 ${damageName}伤害并死亡。`
+          : `目标承受 ${amount} 点 ${damageName}伤害。`,
       });
     }
     // relationTransition and definitionRevision are summaries of the exact
@@ -1034,7 +1040,7 @@ function inventoryEventClaim(
     kind: "inventoryOutcome",
     itemRef,
     change,
-    summary: inventorySummary(eventType, itemRef, payload),
+    summary: inventorySummary(eventType, payload),
     ...(characterRefs.length === 0 ? {} : { characterRefs }),
     ...(quantityBefore === undefined || quantityAfter === undefined
       ? {}
@@ -1063,7 +1069,7 @@ function objectiveEventClaim(
   const summary = stringField(payload, "question")
     ?? stringField(payload, "reason")
     ?? stringField(payload, "sceneQuestion")
-    ?? `${objectiveRef} 已${transition === "opened" ? "开启" : "完成"}。`;
+    ?? `该目标已${transition === "opened" ? "开启" : "完成"}。`;
   return {
     ...eventClaimBase(event, `objective:${objectiveRef}`, stringRefs(payload.answerFactIds)),
     kind: "objectiveContinuity",
@@ -1088,7 +1094,7 @@ function storyEventClaim(
   const summary = stringField(payload, "outcome")
     ?? stringField(payload, "choice")
     ?? stringField(payload, "sceneQuestion")
-    ?? `${storyRef} 的故事连续性已经更新。`;
+    ?? "该故事的连续性已经更新。";
   const characterRef = stringField(payload, "characterId");
   return {
     ...eventClaimBase(event, `story:${storyRef}`, stringRefs(payload.anchorFactIds)),
@@ -1181,18 +1187,18 @@ function abilityDefinition(
   return candidates.find(isRecord);
 }
 
-function abilityDisplayName(definition: JsonRecord | undefined, abilityRef: string): string {
+function abilityDisplayName(definition: JsonRecord | undefined, _abilityRef: string): string {
   if (definition !== undefined) {
     const content = isRecord(definition.content) ? definition.content : undefined;
     const direct = firstStringField(definition, ["name", "label", "displayName"])
       ?? (content === undefined
         ? undefined
         : firstStringField(content, ["name", "label", "displayName"]));
-    if (direct !== undefined) return direct;
+    if (direct !== undefined) return viewerSafeDisplayText(direct, "该能力");
     const sourceName = firstStringField(definition, ["sourceSpellId", "mechanicalKey"]);
-    if (sourceName !== undefined) return sourceName;
+    if (sourceName !== undefined) return viewerSafeDisplayText(sourceName, "该能力");
   }
-  return abilityRef;
+  return "该能力";
 }
 
 function abilityEffectDescription(
@@ -1281,7 +1287,7 @@ function semanticSceneDescription(content: JsonRecord): string | undefined {
 
 function semanticRevisionSummary(
   semanticKind: DefinitionRevisedClaimMaterial["definitionKind"],
-  definitionRef: string,
+  _definitionRef: string,
   priorContent: JsonRecord | undefined,
   nextContent: JsonRecord,
 ): string {
@@ -1289,9 +1295,9 @@ function semanticRevisionSummary(
     ? undefined
     : isRecord(priorContent.semantics) ? priorContent.semantics : priorContent;
   const nextSemantics = isRecord(nextContent.semantics) ? nextContent.semantics : nextContent;
-  const label = firstStringField(nextSemantics, ["name", "label"])
+  const label = viewerSafeDisplayText(firstStringField(nextSemantics, ["name", "label"])
     ?? firstStringField(nextContent, ["name", "label"])
-    ?? definitionRef;
+    ?? "该定义", "该定义");
   const scalarFields = [
     ["attitude", "态度"],
     ["description", "描述"],
@@ -1304,7 +1310,12 @@ function semanticRevisionSummary(
   for (const [field, labelText] of scalarFields) {
     const before = priorSemantics === undefined ? undefined : stringField(priorSemantics, field);
     const after = stringField(nextSemantics, field);
-    if (after !== undefined && after !== before) return `${label} 的${labelText}变为：${after}。`;
+    if (after !== undefined && after !== before) {
+      const safeAfter = viewerSafeDisplayText(after, "");
+      return safeAfter.length === 0
+        ? `${label}的${labelText}已更新。`
+        : `${label}的${labelText}变为：${safeAfter}。`;
+    }
   }
   for (const [field, labelText] of [
     ["goals", "目标"],
@@ -1314,38 +1325,36 @@ function semanticRevisionSummary(
     const before = priorSemantics?.[field];
     const after = nextSemantics[field];
     if (after !== undefined && canonicalSha256(after) !== canonicalSha256(before ?? null)) {
-      return `${label} 的${labelText}已更新。`;
+      return `${label}的${labelText}已更新。`;
     }
   }
   return semanticKind === "npc"
-    ? `${label} 的可见人物定义已更新。`
-    : `${label} 的可见定义已更新。`;
+    ? `${label}的可见人物定义已更新。`
+    : `${label}的可见定义已更新。`;
 }
 
 function semanticMaterializationSummary(
   semanticKind: DefinitionRevisedClaimMaterial["definitionKind"],
-  definitionRef: string,
+  _definitionRef: string,
   content: JsonRecord,
 ): string {
   const semantics = isRecord(content.semantics) ? content.semantics : undefined;
-  const label = firstStringField(content, ["name", "label"])
+  const label = viewerSafeDisplayText(firstStringField(content, ["name", "label"])
     ?? (semantics === undefined ? undefined : firstStringField(semantics, ["name", "label"]))
-    ?? definitionRef;
+    ?? "该定义", "该定义");
   return semanticKind === "sceneFeature"
-    ? `${label} 已成为可引用的场景事物。`
+    ? `${label}已成为可引用的场景事物。`
     : semanticKind === "worldFact"
-      ? `${label} 已成为已固化的世界事实。`
-      : `${label} 已成为已固化的世界定义。`;
+      ? `${label}已成为已固化的世界事实。`
+      : `${label}已成为已固化的世界定义。`;
 }
 
 function relationTransitionSummary(
   relationKind: string,
-  subjectRef: string,
-  objectRef: string,
   change: RelationChangedClaimMaterial["change"],
 ): string {
   const transition = change === "began" ? "建立" : change === "ended" ? "结束" : "更新";
-  return `${subjectRef} 与 ${objectRef} 的 ${relationKind} 关系已${transition}。`;
+  return `两个相关对象的 ${relationKind} 关系已${transition}。`;
 }
 
 function semanticSceneState(content: JsonRecord): string | undefined {
@@ -1371,14 +1380,19 @@ function semanticInteractionHint(content: JsonRecord): string | undefined {
   return affordances.length === 0 ? undefined : [...new Set(affordances)].join("；");
 }
 
-function inventorySummary(eventType: string, itemRef: string, payload: JsonRecord): string {
-  if (eventType === "ItemMaterialized") return `${itemRef} 已实例化。`;
-  if (eventType === "ItemAcquired") return `${stringField(payload, "characterId") ?? "角色"} 获得了 ${itemRef}。`;
+function inventorySummary(
+  eventType: string,
+  payload: JsonRecord,
+): string {
+  if (eventType === "ItemMaterialized") return "该物品已实例化。";
+  if (eventType === "ItemAcquired") {
+    return "角色获得了该物品。";
+  }
   if (eventType === "ItemTransferred") {
-    return `${itemRef} 已从 ${stringField(payload, "fromCharacterId") ?? "原持有者"} 转交给 ${stringField(payload, "toCharacterId") ?? "新持有者"}。`;
+    return "该物品已从原持有者转交给新持有者。";
   }
   const after = finiteNumber(payload.quantityAfter);
-  return after === undefined ? `${itemRef} 已使用。` : `${itemRef} 已使用，剩余 ${after}。`;
+  return after === undefined ? "该物品已使用。" : `该物品已使用，剩余 ${after}。`;
 }
 
 function validateClaimCommittedRange(range: VerifiedClaimCommittedRange): void {
@@ -1471,6 +1485,14 @@ function canonicalSense(value: unknown): SensoryEvidenceClaimMaterial["sense"] {
     : "special";
 }
 
+const AUTHORITY_REFERENCE_IN_TEXT = /[a-z][a-z0-9-]{1,63}:[a-z0-9][a-z0-9._:/-]*/iu;
+
+function viewerSafeDisplayText(value: unknown, fallback: string): string {
+  return isNonEmptyString(value) && !AUTHORITY_REFERENCE_IN_TEXT.test(value)
+    ? value
+    : fallback;
+}
+
 function isSemanticDefinitionKind(
   value: unknown,
 ): value is DefinitionRevisedClaimMaterial["definitionKind"] {
@@ -1483,6 +1505,27 @@ function isSemanticDefinitionKind(
 
 function isPublicVisibility(value: string): boolean {
   return value === "visibility:public" || value.startsWith("visibility:public:");
+}
+
+function normalizedViewerDisplayNames(
+  value: ViewerClaimGrants["displayNames"],
+  visibleRefs: ReadonlySet<string>,
+): ReadonlyMap<string, string> {
+  if (value === undefined) return new Map();
+  if (!isRecord(value)) throw new TypeError("VIEWER_DISPLAY_NAMES_INVALID");
+  const entries = Object.entries(value).sort(([left], [right]) => compareRefs(left, right));
+  const result = new Map<string, string>();
+  for (const [ref, name] of entries) {
+    requireRef(ref, "viewerDisplayName");
+    if (!visibleRefs.has(ref)
+      || !isNonEmptyString(name)
+      || name.trim() !== name
+      || AUTHORITY_REFERENCE_IN_TEXT.test(name)) {
+      throw new TypeError("VIEWER_DISPLAY_NAME_INVALID");
+    }
+    result.set(ref, name);
+  }
+  return result;
 }
 
 /**
@@ -1499,15 +1542,17 @@ export function projectRenderableClaims(
   if (!Array.isArray(grants.refs)) throw new TypeError("VIEWER_GRANTS_ARRAY_REQUIRED");
   const normalizedGrantRefs = uniqueSortedRefs(grants.refs, "viewerGrant");
   const visibleRefs = new Set(normalizedGrantRefs);
+  const displayNames = normalizedViewerDisplayNames(grants.displayNames, visibleRefs);
   const projectionHash = grants.projectionHash ?? canonicalSha256({
     schema: "zhuwei.synthetic-viewer-claim-grants/vnext-1",
     viewerKey: grants.viewerKey,
     refs: normalizedGrantRefs,
+    displayNames: Object.fromEntries(displayNames),
   });
   if (!isSha256(projectionHash)) throw new TypeError("VIEWER_PROJECTION_HASH_INVALID");
   const claims = authorityClaims.claims.flatMap((claim) => {
     if (!claimIsVisible(claim, visibleRefs) || !payloadRefsAreVisible(claim, visibleRefs)) return [];
-    return [renderableClaim(claim, visibleRefs)];
+    return [renderableClaim(claim, visibleRefs, displayNames)];
   });
   const core = {
     schema: RENDERABLE_CLAIMS_SCHEMA,
@@ -1569,6 +1614,7 @@ function hasClosedKeys(
 function claimPayloadHasClosedShape(
   value: Record<string, unknown>,
   baseKeys: readonly string[],
+  renderable = false,
 ): boolean {
   const required = (...keys: string[]) => [...baseKeys, ...keys];
   switch (value.kind) {
@@ -1587,9 +1633,17 @@ function claimPayloadHasClosedShape(
     case "sensoryEvidence":
       return hasClosedKeys(value, required("observerRef", "sense", "evidence"), ["subjectRef"]);
     case "sourceClaim":
-      return hasClosedKeys(value, required("speakerRef", "statement"));
+      return hasClosedKeys(value, required(
+        "speakerRef",
+        "statement",
+        ...(renderable ? ["speakerName"] : []),
+      ));
     case "characterInference":
-      return hasClosedKeys(value, required("characterRef", "inference"));
+      return hasClosedKeys(value, required(
+        "characterRef",
+        "inference",
+        ...(renderable ? ["characterName"] : []),
+      ));
     case "sceneFeature":
       return hasClosedKeys(value, required("featureRef", "description"), [
         "state", "interactionHint",
@@ -1797,22 +1851,50 @@ function validateMaterialPayload(material: ClaimMaterial): void {
 
 function renderableClaimConform(value: unknown): boolean {
   if (!isRecord(value)
-    || !claimPayloadHasClosedShape(value, ["claimRef", "kind", "basisRefs"])
+    || !claimPayloadHasClosedShape(
+      value,
+      ["claimRef", "kind", "basisRefs", "narrationFacts"],
+      true,
+    )
     || !isNonEmptyString(value.claimRef)
     || !Array.isArray(value.basisRefs)
     || !value.basisRefs.every(isNonEmptyString)
+    || !Array.isArray(value.narrationFacts)
+    || value.narrationFacts.length === 0
+    || !value.narrationFacts.every(isNonEmptyString)
+    || value.narrationFacts.length !== new Set(value.narrationFacts).size
     || value.basis !== undefined
     || value.visibility !== undefined
     || value.authorityRefs !== undefined
     || !CLAIM_KINDS.has(value.kind as ClaimMaterial["kind"])) return false;
   try {
-    const { basisRefs: _basisRefs, ...content } = value;
-    cloneAndValidateMaterial({
+    const { basisRefs: _basisRefs, narrationFacts: _narrationFacts, ...content } = value;
+    const displayNames = new Map<string, string>();
+    if (value.kind === "abilityEffectApplied") {
+      if (!isNonEmptyString(value.abilityRef)
+        || !isNonEmptyString(value.abilityName)
+        || AUTHORITY_REFERENCE_IN_TEXT.test(value.abilityName)) return false;
+      displayNames.set(value.abilityRef, value.abilityName);
+    } else if (value.kind === "sourceClaim") {
+      if (!isNonEmptyString(value.speakerRef)
+        || !isNonEmptyString(value.speakerName)
+        || AUTHORITY_REFERENCE_IN_TEXT.test(value.speakerName)) return false;
+      displayNames.set(value.speakerRef, value.speakerName);
+      delete content.speakerName;
+    } else if (value.kind === "characterInference") {
+      if (!isNonEmptyString(value.characterRef)
+        || !isNonEmptyString(value.characterName)
+        || AUTHORITY_REFERENCE_IN_TEXT.test(value.characterName)) return false;
+      displayNames.set(value.characterRef, value.characterName);
+      delete content.characterName;
+    }
+    const material = cloneAndValidateMaterial({
       ...content,
       basis: { authorityRefs: [], viewerRefs: [] },
       visibility: { kind: "public" },
     } as unknown as ClaimMaterial);
-    return true;
+    return JSON.stringify(value.narrationFacts)
+      === JSON.stringify(narrationFactsForClaim(material, displayNames));
   } catch {
     return false;
   }
@@ -1884,13 +1966,116 @@ function requiredPayloadRefs(claim: ClaimMaterial): readonly string[] {
 function renderableClaim(
   claim: ClaimMaterial,
   grants: ReadonlySet<string>,
+  displayNames: ReadonlyMap<string, string>,
 ): RenderableClaim {
   const basisRefs = uniqueSortedRefs(
     claim.basis.viewerRefs.filter((ref) => grants.has(ref)),
     "renderableBasis",
   );
   const { basis: _basis, visibility: _visibility, ...content } = claim;
-  return deepFreeze({ ...structuredClone(content), basisRefs }) as RenderableClaim;
+  const projectedContent = claim.kind === "abilityEffectApplied"
+    ? {
+        ...content,
+        abilityName: displayNames.get(claim.abilityRef) ?? "该能力",
+      }
+    : claim.kind === "sourceClaim"
+    ? {
+        ...content,
+        speakerName: displayNames.get(claim.speakerRef) ?? "该消息来源",
+      }
+    : claim.kind === "characterInference"
+      ? {
+          ...content,
+          characterName: displayNames.get(claim.characterRef) ?? "该角色",
+        }
+      : content;
+  return deepFreeze({
+    ...structuredClone(projectedContent),
+    basisRefs,
+    narrationFacts: narrationFactsForClaim(claim, displayNames),
+  }) as RenderableClaim;
+}
+
+function narrationFactsForClaim(
+  claim: ClaimMaterial,
+  displayNames: ReadonlyMap<string, string> = new Map(),
+): readonly string[] {
+  const facts: string[] = [];
+  const add = (value: string | undefined, prefix = ""): void => {
+    if (!isNonEmptyString(value)) return;
+    for (const segment of value.split(/[。！？!?；;\n]+/u).map((entry) => entry.trim())) {
+      if (segment.length > 0) facts.push(`${prefix}${segment}`);
+    }
+  };
+  switch (claim.kind) {
+    case "mechanicalOutcome":
+      add(claim.summary);
+      if (claim.check !== undefined) {
+        add(claim.check.kind === "attack"
+          ? claim.check.result === "success" ? "攻击命中" : "攻击未命中"
+          : claim.check.result === "success" ? "检定成功" : "检定失败");
+        if (claim.check.total !== undefined) add(`检定总值为 ${claim.check.total}`);
+        if (claim.check.dc !== undefined) add(`难度为 ${claim.check.dc}`);
+      }
+      break;
+    case "abilityEffectApplied":
+      add(`能力 ${displayNames.get(claim.abilityRef) ?? "该能力"}`);
+      add(claim.effect.summary);
+      if (claim.effect.appliesTo !== undefined) add(`作用对象为 ${claim.effect.appliesTo}`);
+      if (claim.effect.bonusDice !== undefined) add(`额外骰为 ${claim.effect.bonusDice}`);
+      if (claim.effect.duration !== undefined) add(`持续时间为 ${claim.effect.duration}`);
+      if (claim.effect.concentration === true) add("需要专注");
+      break;
+    case "sensoryEvidence":
+      add(claim.evidence);
+      break;
+    case "sourceClaim":
+      add(claim.statement, `${displayNames.get(claim.speakerRef) ?? "该消息来源"}声称：`);
+      break;
+    case "characterInference":
+      add(claim.inference, `${displayNames.get(claim.characterRef) ?? "该角色"}判断：`);
+      break;
+    case "sceneFeature":
+      add(claim.description);
+      if (claim.state !== undefined) add(`状态为 ${claim.state}`);
+      if (claim.interactionHint !== undefined) add(`可互动方式为 ${claim.interactionHint}`);
+      break;
+    case "relationChanged":
+      add(claim.description);
+      break;
+    case "definitionRevised":
+    case "objectiveContinuity":
+    case "storyContinuity":
+    case "actionCommitted":
+      add(claim.summary);
+      break;
+    case "inventoryOutcome":
+      add(claim.summary);
+      for (const [field, label] of [
+        ["quantity", "数量"],
+        ["charges", "充能次数"],
+        ["durability", "耐久"],
+      ] as const) {
+        const transition = claim[field];
+        if (transition !== undefined) {
+          add(`${label}由 ${String(transition.before)} 变为 ${String(transition.after)}`);
+        }
+      }
+      if (claim.state !== undefined) add(`物品状态为 ${claim.state}`);
+      break;
+    case "pressure":
+      add(claim.description);
+      break;
+    case "opportunity":
+      add(claim.description);
+      if (claim.actionHint !== undefined) add(`可采取的行动为 ${claim.actionHint}`);
+      break;
+  }
+  const canonical = uniqueText(facts);
+  if (canonical.length === 0 || canonical.some((fact) => AUTHORITY_REFERENCE_IN_TEXT.test(fact))) {
+    throw new TypeError("VIEWER_NARRATION_FACT_INVALID");
+  }
+  return Object.freeze(canonical);
 }
 
 function uniqueSortedRefs(values: readonly unknown[], label: string): string[] {
