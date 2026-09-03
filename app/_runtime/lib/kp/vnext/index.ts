@@ -184,6 +184,7 @@ export {
   VNEXT_IN_WORLD_REFUSAL_FORM_ID,
   VNEXT_PROPOSAL_BUNDLE_INTEGRATION_SEAMS,
   VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  type VNextAtomicRulesStep,
   type VNextAttemptCost,
   type VNextBundleFormId,
   type VNextBundleFormProposal,

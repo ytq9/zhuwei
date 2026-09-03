@@ -211,6 +211,17 @@ function bundleCommandToRoomLowering(
       },
     });
   }
+  if (command.kind === "atomicRulesSteps") {
+    // An ordered multi-Form set must become exactly one Rules transaction and
+    // one Receipt. Executing the steps one at a time here would produce
+    // partial world state and multiple Receipts, so this stays closed until
+    // the atomic Rules/Room consumer exists.
+    return Object.freeze({
+      kind: "rejected",
+      code: "BUNDLE_LOWERING_UNSUPPORTED",
+      explanation: "The pinned vNext Rules profile has no atomic multi-step consumer yet.",
+    });
+  }
   if (command.kind === "inWorldRefusal") {
     // Refusal has no Rules primitive in the stage-three bridge until the
     // profile-gated typed refusal input is installed. Never encode it as a

@@ -276,7 +276,35 @@ export type VNextProposalBundleCommand =
       ruling: VNextHighRiskRuling;
       basisRefs: readonly string[];
       confirmationId: string;
+    }>
+  | Readonly<{
+      /**
+       * One atomic multi-Form execution derived from a bundle whose entries
+       * form a produces/consumes dependency graph. `steps` is ordered so
+       * every dependency precedes its dependents; each steps dependsOn
+       * repeats that ordering by proposalRef. This command carries the
+       * whole set for exactly one Rules transaction and one Receipt -- the
+       * Room/Rules consumer that turns it into that single transaction is a
+       * separate integration seam (task 4: bundleCommandToRoomLowering in
+       * room-bridge.ts) and must validate every step before committing any
+       * of them.
+       */
+      kind: "atomicRulesSteps";
+      rootActionId: string;
+      actorCharacterId: string;
+      steps: readonly Readonly<{
+        formId: typeof VNEXT_MATERIALIZATION_FORM_ID | typeof VNEXT_WORLD_INTERACTION_FORM_ID;
+        proposalRef: string;
+        ruling: "directSuccess" | "check";
+        rulesInput: JsonRecord;
+        dependsOn: readonly string[];
+        outcomeBinding: VNextOutcomeBinding;
+      }>[];
     }>;
+
+/** One entry of atomicRulesSteps.steps on VNextProposalBundleCommand. */
+export type VNextAtomicRulesStep =
+  Extract<VNextProposalBundleCommand, { kind: "atomicRulesSteps" }>["steps"][number];
 
 export type VNextHighRiskConfirmation = Readonly<{
   kind: "highRiskConfirmation";
@@ -320,6 +348,7 @@ export const VNEXT_PROPOSAL_BUNDLE_INTEGRATION_SEAMS = Object.freeze([
   "pendingClarification must become a private PendingInput through the existing Rules/Room pending-input seam.",
   "inWorldRefusal must become a FeasibilityRuled plus optional validated attempt-cost transition through Rules step.",
   "highRiskConfirmed needs a dedicated high-risk confirmation/Rules primitive before execution.",
+  "atomicRulesSteps.steps is the ordered atomic multi-Form execution; Room/Rules must turn it into exactly one Rules transaction and one Receipt (task 4 seam).",
   "After commit, the existing project(viewer, committedRange) to FrozenRenderableClaims seam owns narration.",
 ] as const);
 
@@ -382,7 +411,9 @@ export function validateVNextProposalBundle(
 /**
  * Lowers only commands for which an existing consumer is known.  A pending
  * or refusal result is still a successful semantic lowering, but is returned
- * as a typed command and never as an invented Rules input.
+ * as a typed command and never as an invented Rules input.  A bundle of more
+ * than one entry lowers only when every entry is independently executable;
+ * see lowerAtomicMultiStep for the ordering and dependency rules.
  */
 export function lowerVNextProposalBundle(
   input: VNextProposalBundleLoweringInput,
@@ -409,77 +440,147 @@ export function lowerVNextProposalBundle(
       }
     }
 
-    if (entries.length !== 1) {
-      // The schema and dependency validator are ready for a larger atomic
-      // consumer, but returning a list of Rules inputs would invite partial
-      // execution and multiple Receipts. Keep this seam fail closed.
-      return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:atomic-consumer-required"]);
-    }
-
-    const entry = entries[0]!;
-    if (entry.ruling.kind === "highRisk") {
-      const confirmation = trustedHighRiskConfirmation(input, entry);
-      if (confirmation === undefined) {
-        return acceptedCommand(pendingClarificationCommand(input, entry));
-      }
-      return acceptedCommand({
-        kind: "highRiskConfirmed",
-        rootActionId: input.rootActionId,
-        actorCharacterId: input.actorCharacterId,
-        proposalRef: entry.proposalRef,
-        formId: entry.formId,
-        ruling: entry.ruling,
-        basisRefs: [...entry.basisRefs],
-        confirmationId: confirmation.confirmationId,
-      });
-    }
-    if (entry.ruling.kind === "missingPrerequisite"
-      || entry.ruling.kind === "worldLawViolation") {
-      if (entry.formId !== VNEXT_IN_WORLD_REFUSAL_FORM_ID
-        || entry.proposal.kind !== "inWorldRefusal") {
-        return rejected("PROPOSAL_BUNDLE_INVALID", ["bundle:world-ruling-requires-refusal-form"]);
-      }
-      const costValidation = validateAttemptCosts(input, entry.ruling.attemptCosts);
-      if (costValidation.length > 0) return rejected("COST_INVALID", costValidation);
-      return acceptedCommand({
-        kind: "inWorldRefusal",
-        rootActionId: input.rootActionId,
-        actorCharacterId: input.actorCharacterId,
-        proposalRef: entry.proposalRef,
-        formId: VNEXT_IN_WORLD_REFUSAL_FORM_ID,
-        intent: entry.proposal.intent,
-        method: entry.proposal.method,
-        ruling: entry.ruling,
-        basisRefs: [...entry.basisRefs],
-      });
-    }
-    if (entry.formId === VNEXT_CLARIFICATION_FORM_ID) {
-      if (entry.proposal.kind !== "clarification") {
-        return rejected("PROPOSAL_BUNDLE_INVALID", ["bundle:clarification-payload-mismatch"]);
-      }
-      return acceptedCommand(pendingClarificationCommand(input, entry));
-    }
-    if (entry.formId !== VNEXT_MATERIALIZATION_FORM_ID
-      && entry.formId !== VNEXT_WORLD_INTERACTION_FORM_ID) {
-      return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:form-consumer-unavailable"]);
-    }
-    if (entry.ruling.kind !== "directSuccess" && entry.ruling.kind !== "check") {
-      return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:ruling-consumer-unavailable"]);
-    }
-    const rulesInput = lowerExecutableEntry(input, entry);
-    if (rulesInput.kind === "rejected") return rulesInput;
-    return acceptedCommand({
-      kind: "rulesStep",
-      rootActionId: input.rootActionId,
-      actorCharacterId: input.actorCharacterId,
-      formId: entry.formId,
-      proposalRef: entry.proposalRef,
-      ruling: entry.ruling.kind,
-      rulesInput: rulesInput.rulesInput,
-    });
+    return entries.length === 1
+      ? lowerSingleEntry(input, entries[0]!)
+      : lowerAtomicMultiStep(input, entries);
   } catch {
     return rejected("PROPOSAL_BUNDLE_INVALID", ["bundle:lowering-input-invalid"]);
   }
+}
+
+/** Lowers the single-entry bundle shape; unchanged in behaviour except for
+ * the accepted-cost gate now applied on the highRisk path (see below). */
+function lowerSingleEntry(
+  input: VNextProposalBundleLoweringInput,
+  entry: VNextProposalBundleEntry,
+): VNextProposalBundleLoweringResult {
+  if (entry.ruling.kind === "highRisk") {
+    const confirmation = trustedHighRiskConfirmation(input, entry);
+    if (confirmation === undefined) {
+      return acceptedCommand(pendingClarificationCommand(input, entry));
+    }
+    // A confirmed high-risk ruling still spends real item/resource costs;
+    // it must pass the same availability gate as an in-world refusal.
+    const costValidation = validateAttemptCosts(input, entry.ruling.acceptedCosts);
+    if (costValidation.length > 0) return rejected("COST_INVALID", costValidation);
+    return acceptedCommand({
+      kind: "highRiskConfirmed",
+      rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId,
+      proposalRef: entry.proposalRef,
+      formId: entry.formId,
+      ruling: entry.ruling,
+      basisRefs: [...entry.basisRefs],
+      confirmationId: confirmation.confirmationId,
+    });
+  }
+  if (entry.ruling.kind === "missingPrerequisite"
+    || entry.ruling.kind === "worldLawViolation") {
+    if (entry.formId !== VNEXT_IN_WORLD_REFUSAL_FORM_ID
+      || entry.proposal.kind !== "inWorldRefusal") {
+      return rejected("PROPOSAL_BUNDLE_INVALID", ["bundle:world-ruling-requires-refusal-form"]);
+    }
+    const costValidation = validateAttemptCosts(input, entry.ruling.attemptCosts);
+    if (costValidation.length > 0) return rejected("COST_INVALID", costValidation);
+    return acceptedCommand({
+      kind: "inWorldRefusal",
+      rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId,
+      proposalRef: entry.proposalRef,
+      formId: VNEXT_IN_WORLD_REFUSAL_FORM_ID,
+      intent: entry.proposal.intent,
+      method: entry.proposal.method,
+      ruling: entry.ruling,
+      basisRefs: [...entry.basisRefs],
+    });
+  }
+  if (entry.formId === VNEXT_CLARIFICATION_FORM_ID) {
+    if (entry.proposal.kind !== "clarification") {
+      return rejected("PROPOSAL_BUNDLE_INVALID", ["bundle:clarification-payload-mismatch"]);
+    }
+    return acceptedCommand(pendingClarificationCommand(input, entry));
+  }
+  if (entry.formId !== VNEXT_MATERIALIZATION_FORM_ID
+    && entry.formId !== VNEXT_WORLD_INTERACTION_FORM_ID) {
+    return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:form-consumer-unavailable"]);
+  }
+  if (entry.ruling.kind !== "directSuccess" && entry.ruling.kind !== "check") {
+    return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:ruling-consumer-unavailable"]);
+  }
+  const rulesInput = lowerExecutableEntry(input, entry);
+  if (rulesInput.kind === "rejected") return rulesInput;
+  return acceptedCommand({
+    kind: "rulesStep",
+    rootActionId: input.rootActionId,
+    actorCharacterId: input.actorCharacterId,
+    formId: entry.formId,
+    proposalRef: entry.proposalRef,
+    ruling: entry.ruling.kind,
+    rulesInput: rulesInput.rulesInput,
+  });
+}
+
+/**
+ * Lowers a bundle of two or more entries to one ordered, atomic Rules step
+ * set.  Every entry must independently be an executable directSuccess or
+ * check ruling against a materialization or world-interaction Form; a
+ * clarification, in-world refusal, or high-risk entry cannot be mixed into
+ * this path because none of them can synchronously produce a Rules input
+ * here.  Steps are ordered by the same produces/consumes dependency graph
+ * assertAcyclicDependencies already proves acyclic during validation.
+ */
+function lowerAtomicMultiStep(
+  input: VNextProposalBundleLoweringInput,
+  entries: readonly VNextProposalBundleEntry[],
+): VNextProposalBundleLoweringResult {
+  for (const entry of entries) {
+    if (entry.ruling.kind !== "directSuccess" && entry.ruling.kind !== "check") {
+      return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:atomic-step-ruling-unsupported"]);
+    }
+    if (entry.formId !== VNEXT_MATERIALIZATION_FORM_ID
+      && entry.formId !== VNEXT_WORLD_INTERACTION_FORM_ID) {
+      return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:atomic-step-form-unsupported"]);
+    }
+  }
+
+  const producers = new Map<string, VNextBundleProducedReference>();
+  for (const entry of entries) {
+    for (const produced of entry.produces) producers.set(produced.handle, produced);
+  }
+
+  let graph: ReturnType<typeof topologicalOrderOfEntries>;
+  try {
+    graph = topologicalOrderOfEntries(entries, producers);
+  } catch {
+    // validateVNextProposalBundle already proved this exact bundle acyclic
+    // and fully bound; this can only mean the lowering input diverged from
+    // the validated bundle it was derived from.
+    return rejected("BUNDLE_DEPENDENCY_INVALID", ["bundle:dependency-cycle"]);
+  }
+
+  const steps: VNextAtomicRulesStep[] = [];
+  for (const entry of graph.ordered) {
+    const lowered = lowerExecutableEntry(input, entry);
+    if (lowered.kind === "rejected") return lowered;
+    const dependsOn = [
+      ...new Set(graph.edges.get(entry.proposalRef) ?? []),
+    ].sort(compareCodeUnits);
+    steps.push({
+      formId: entry.formId as typeof VNEXT_MATERIALIZATION_FORM_ID | typeof VNEXT_WORLD_INTERACTION_FORM_ID,
+      proposalRef: entry.proposalRef,
+      ruling: entry.ruling.kind as "directSuccess" | "check",
+      rulesInput: lowered.rulesInput,
+      dependsOn,
+      outcomeBinding: entry.outcomeBinding,
+    });
+  }
+
+  return acceptedCommand({
+    kind: "atomicRulesSteps",
+    rootActionId: input.rootActionId,
+    actorCharacterId: input.actorCharacterId,
+    steps: Object.freeze(steps),
+  });
 }
 
 function validateEntry(value: unknown): VNextProposalBundleEntry {
@@ -703,6 +804,22 @@ function assertAcyclicDependencies(
   entries: readonly VNextProposalBundleEntry[],
   producers: ReadonlyMap<string, VNextBundleProducedReference>,
 ): void {
+  topologicalOrderOfEntries(entries, producers);
+}
+
+/**
+ * Same dependency graph and cycle detection as assertAcyclicDependencies,
+ * but returns entries ordered so each dependency precedes its dependents.
+ * Used by the atomic multi-step lowering path; assertAcyclicDependencies
+ * above is a thin wrapper so the two never drift apart.
+ */
+function topologicalOrderOfEntries(
+  entries: readonly VNextProposalBundleEntry[],
+  producers: ReadonlyMap<string, VNextBundleProducedReference>,
+): Readonly<{
+  ordered: readonly VNextProposalBundleEntry[];
+  edges: ReadonlyMap<string, readonly string[]>;
+}> {
   const byProposalRef = new Map(entries.map((entry) => [entry.proposalRef, entry]));
   const edges = new Map<string, readonly string[]>();
   for (const entry of entries) {
@@ -722,6 +839,7 @@ function assertAcyclicDependencies(
 
   const visiting = new Set<string>();
   const visited = new Set<string>();
+  const order: string[] = [];
   const visit = (proposalRef: string): void => {
     if (visiting.has(proposalRef)) throw new TypeError("bundle:dependency-cycle");
     if (visited.has(proposalRef)) return;
@@ -729,8 +847,13 @@ function assertAcyclicDependencies(
     for (const dependency of edges.get(proposalRef) ?? []) visit(dependency);
     visiting.delete(proposalRef);
     visited.add(proposalRef);
+    order.push(proposalRef);
   };
   for (const proposalRef of byProposalRef.keys()) visit(proposalRef);
+  return Object.freeze({
+    ordered: order.map((proposalRef) => byProposalRef.get(proposalRef)!),
+    edges,
+  });
 }
 
 function isProduces(value: unknown): value is readonly VNextBundleProducedReference[] {

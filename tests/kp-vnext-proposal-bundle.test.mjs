@@ -46,6 +46,16 @@ function worldProposal(overrides = {}) {
   };
 }
 
+function worldState() {
+  return {
+    entities: { [ACTOR]: { id: ACTOR, kind: "player", sceneId: "scene:bundle" } },
+    campaignRuntime: { itemSystem: { entries: {} }, definitions: {} },
+    combatRuntime: { definitions: {}, entities: {} },
+    canonicalFacts: {},
+    knowledge: {},
+  };
+}
+
 function ruling(kind) {
   if (kind === "directSuccess") {
     return {
@@ -130,7 +140,7 @@ function bundle(...entries) {
   };
 }
 
-function contextFor(refs = [BASIS, "scene:bundle", "feature:bundle-target"]) {
+function contextFor(refs = [BASIS, "scene:bundle", "feature:bundle-target"], viewerRefs = []) {
   const uniqueRefs = [...new Set(refs)];
   return {
     schema: "zhuwei.adjudication-context/vnext-1",
@@ -147,7 +157,7 @@ function contextFor(refs = [BASIS, "scene:bundle", "feature:bundle-target"]) {
     })),
     references: {
       citations: {
-        viewerEvidenceRefs: [],
+        viewerEvidenceRefs: [...new Set(viewerRefs)],
         authorityBasisRefs: uniqueRefs,
         npcKnowledge: [],
         nonCitableRefs: [],
@@ -173,13 +183,14 @@ function contextFor(refs = [BASIS, "scene:bundle", "feature:bundle-target"]) {
 }
 
 function lower(value, refs = [BASIS, "scene:bundle", "feature:bundle-target"], extra = {}) {
+  const { viewerRefs = [], ...rest } = extra;
   return lowerVNextProposalBundle({
     value,
-    requiredContext: contextFor(refs),
+    requiredContext: contextFor(refs, viewerRefs),
     state: {},
     rootActionId: ROOT_ACTION,
     actorCharacterId: ACTOR,
-    ...extra,
+    ...rest,
   });
 }
 
@@ -419,4 +430,125 @@ test("trusted high-risk confirmation is bound to the frozen ruling and context",
   assert.equal(result.kind, "accepted", JSON.stringify(result));
   assert.equal(result.command.kind, "highRiskConfirmed");
   assert.equal(result.command.confirmationId, "confirmation:bundle");
+});
+
+test("highRisk confirmed lowering rejects accepted costs the actor cannot actually pay", () => {
+  const costRef = "item-entry:missing-tool";
+  const value = bundle(entry({
+    feasibility: {
+      ...ruling("highRisk"),
+      acceptedCosts: [{ kind: "item", entryRef: costRef, quantity: 1, charges: 0, durability: 0 }],
+    },
+  }));
+  const frozenRuling = value.proposals[0].ruling;
+  const result = lower(
+    value,
+    [BASIS, "scene:bundle", "feature:bundle-target", costRef],
+    {
+      state: { campaignRuntime: { itemSystem: { entries: {} } }, entities: {} },
+      highRiskConfirmation: {
+        kind: "highRiskConfirmation",
+        confirmationId: "confirmation:bundle-cost",
+        rootActionId: ROOT_ACTION,
+        contextHash: CONTEXT_HASH,
+        proposalRef: value.proposals[0].proposalRef,
+        rulingHash: canonicalHash(frozenRuling),
+      },
+    },
+  );
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.code, "COST_INVALID");
+  assert.deepEqual(result.issues, [`cost:item-unavailable:${costRef}`]);
+});
+
+test("atomic multi-step lowering orders steps by the produces/consumes graph and records dependsOn", () => {
+  const selfTargeting = worldProposal({ targetRefs: [ACTOR], directTargetRefs: [ACTOR] });
+  const producerEntry = entry({
+    proposalRef: "proposal:step-a",
+    proposal: selfTargeting,
+    produces: [{ handle: "prospective:new-fact", kind: "canonicalFact", outcomeBinding: "onSuccess" }],
+    outcomeBinding: "onSuccess",
+    feasibility: "directSuccess",
+  });
+  const consumerEntry = entry({
+    proposalRef: "proposal:step-b",
+    proposal: selfTargeting,
+    consumes: [{ kind: "prospective", handle: "prospective:new-fact" }],
+    outcomeBinding: "onSuccess",
+    feasibility: "directSuccess",
+  });
+  // Listed consumer-first in the bundle to prove real reordering, not
+  // input-order passthrough.
+  const result = lower(
+    bundle(consumerEntry, producerEntry),
+    [BASIS, "scene:bundle", ACTOR],
+    // Only the actual direct target is Viewer-addressable; the rest of the
+    // authority slice stays invisible so the direct-target gate still applies.
+    { state: worldState(), viewerRefs: [ACTOR] },
+  );
+  assert.equal(result.kind, "accepted", JSON.stringify(result));
+  assert.equal(result.command.kind, "atomicRulesSteps");
+  assert.equal(result.command.steps.length, 2);
+  assert.deepEqual(
+    result.command.steps.map(({ proposalRef }) => proposalRef),
+    ["proposal:step-a", "proposal:step-b"],
+  );
+  assert.deepEqual(result.command.steps[0].dependsOn, []);
+  assert.deepEqual(result.command.steps[1].dependsOn, ["proposal:step-a"]);
+  assert.equal(result.command.steps[0].ruling, "directSuccess");
+  assert.equal(result.command.steps[1].ruling, "directSuccess");
+  assert.equal(result.command.steps[0].outcomeBinding, "onSuccess");
+  assert.ok(result.command.steps.every(({ rulesInput }) => rulesInput.kind === "resolveWorldInteraction"));
+});
+test("atomic multi-step lowering rejects mixing executable entries with clarification or refusal", () => {
+  const executable = entry({ proposalRef: "proposal:exec", feasibility: "directSuccess" });
+  const refusalEntry = entry({
+    proposalRef: "proposal:refusal",
+    formId: VNEXT_IN_WORLD_REFUSAL_FORM_ID,
+    proposal: { kind: "inWorldRefusal", intent: "尝试不可能的行动。", method: "徒手尝试。" },
+    feasibility: "missingPrerequisite",
+  });
+  const result = lower(
+    bundle(executable, refusalEntry),
+    [BASIS, "scene:bundle", "feature:bundle-target", "item-definition:required-tool"],
+  );
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.code, "BUNDLE_LOWERING_UNSUPPORTED");
+
+  const clarificationEntry = entry({
+    proposalRef: "proposal:clarify",
+    formId: VNEXT_CLARIFICATION_FORM_ID,
+    proposal: {
+      kind: "clarification",
+      intent: "处理可能造成重大后果的目标。",
+      method: "采用一种尚待确认的做法。",
+      question: "你要选择哪一种目标？",
+      choices: [
+        { choiceId: "a", label: "A", publicRisk: "风险 A。", basisRefs: [BASIS] },
+        { choiceId: "b", label: "B", publicRisk: "风险 B。", basisRefs: [BASIS] },
+      ],
+    },
+    feasibility: "check",
+  });
+  const withClarification = lower(bundle(executable, clarificationEntry));
+  assert.equal(withClarification.kind, "rejected", JSON.stringify(withClarification));
+  assert.equal(withClarification.code, "BUNDLE_LOWERING_UNSUPPORTED");
+
+  const highRiskEntry = entry({ proposalRef: "proposal:risky", feasibility: "highRisk" });
+  const withHighRisk = lower(bundle(executable, highRiskEntry));
+  assert.equal(withHighRisk.kind, "rejected", JSON.stringify(withHighRisk));
+  assert.equal(withHighRisk.code, "BUNDLE_LOWERING_UNSUPPORTED");
+});
+
+test("atomic multi-step lowering rejects an unproduced consumed handle before building any step", () => {
+  const consumerOnly = entry({
+    proposalRef: "proposal:consumer-only",
+    consumes: [{ kind: "prospective", handle: "prospective:missing" }],
+    feasibility: "directSuccess",
+  });
+  const other = entry({ proposalRef: "proposal:other", feasibility: "check" });
+  const result = lower(bundle(consumerOnly, other));
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.code, "BUNDLE_DEPENDENCY_INVALID");
+  assert.deepEqual(result.issues, ["bundle:prospective-consumer-unbound:prospective:missing"]);
 });
