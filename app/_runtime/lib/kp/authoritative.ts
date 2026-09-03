@@ -29,7 +29,10 @@ import {
 import {
   bodyOnlyNarrationGroundingReplacementModelInput,
   bodyOnlyNarrationModelInput,
+  frozenClaimsNarrationGroundingReplacementModelInput,
+  frozenClaimsNarrationModelInput,
   validateBodyOnlyNarrationOutput,
+  validateFrozenClaimsNarrationOutput,
 } from "./narration-v3";
 import {
   privateFormProposalModelInput,
@@ -43,6 +46,7 @@ import {
 } from "./actor-plan-policy";
 import { HEALING_POTION_ITEM_DEFINITION_ID } from "../rules/profiles/item-system";
 import { isCanonicalTacticalGeometry } from "../rules/profiles/tactical-geometry";
+import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import { buildV3ContextPack, v3FormSelectionSignals } from "./v3-context-runtime";
 import {
   ModelInvocationTimeoutError,
@@ -67,6 +71,7 @@ import type {
   AuthoritativeKpAdapterOptions,
   AuthoritativeKpProfile,
   DueActorPlanDecisionRequest,
+  FrozenClaimsNarrationRequest,
   V3AuthoritativeKpProposal,
   KpNarrationRequest,
   KpNarrationRequestPurpose,
@@ -1866,6 +1871,22 @@ function validateNarrationRequest(request: KpNarrationRequest): void {
   if (!isRecord(request.receipt)) throw new ModelOutputValidationError();
   const status = request.receipt.status ?? request.receipt.kind;
   if (status !== "committed" && status !== "concluded") throw new ModelOutputValidationError();
+  if (request.narrationInputMode === "frozenRenderableClaims-vnext-1") {
+    const receiptId = requiredString(request.receipt.receiptId);
+    if (
+      !requiredString(request.viewerKey)
+      || requiredString(request.receipt.rootActionId) !== request.rootActionId
+      || !frozenRenderableClaimsConform(request.renderableClaims)
+      || request.renderableClaims.claims.length === 0
+      || request.renderableClaims.viewerKey !== request.viewerKey
+      || request.renderableClaims.rootActionId !== request.rootActionId
+      || request.renderableClaims.receiptId !== receiptId
+    ) throw new ModelOutputValidationError();
+    return;
+  }
+  if (request.narrationInputMode !== "observerProjection-v1") {
+    throw new ModelOutputValidationError();
+  }
   const audience = audienceIdentity(request.projection);
   if (!isRecord(request.projection) || !isRecord(request.projection.committedDelta)) {
     throw new ModelOutputValidationError();
@@ -2452,19 +2473,29 @@ export function createAuthoritativeKpAdapter(
             request.rootActionId,
             attempt,
             initialPurpose,
-            bodyOnlyNarrationModelInput(request, {
-              socialResolution: isSocialResolutionKpProfile(profile),
-            }),
+            request.narrationInputMode === "frozenRenderableClaims-vnext-1"
+              ? frozenClaimsNarrationModelInput(request)
+              : bodyOnlyNarrationModelInput(request, {
+                  socialResolution: isSocialResolutionKpProfile(profile),
+                }),
           );
           try {
             const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
             const candidate = unwrapSingleEnvelope(structured);
-            const narration = validateBodyOnlyNarrationOutput(candidate, request.projection, {
-              socialResolution: isSocialResolutionKpProfile(profile),
-            });
+            const narration = request.narrationInputMode
+                === "frozenRenderableClaims-vnext-1"
+              ? validateFrozenClaimsNarrationOutput(candidate, request)
+              : validateBodyOnlyNarrationOutput(candidate, request.projection, {
+                  socialResolution: isSocialResolutionKpProfile(profile),
+                });
             return {
               ...narration,
-              audience: audienceIdentity(request.projection),
+              audience: request.narrationInputMode === "frozenRenderableClaims-vnext-1"
+                ? {
+                    viewerKey: request.viewerKey,
+                    projectionHash: request.renderableClaims.projectionHash,
+                  }
+                : audienceIdentity(request.projection),
               modelInvocationReceipt: invocation.receipt,
             };
           } catch (error) {
@@ -2480,7 +2511,8 @@ export function createAuthoritativeKpAdapter(
             );
             if (
               !(error instanceof NarrationGroundingValidationError)
-              || !isSocialResolutionKpProfile(profile)
+              || (request.narrationInputMode !== "frozenRenderableClaims-vnext-1"
+                && !isSocialResolutionKpProfile(profile))
             ) throw failed;
             const remainingInvocationMs = invocationTimeoutMs - Math.max(
               0,
@@ -2493,20 +2525,31 @@ export function createAuthoritativeKpAdapter(
               request.rootActionId,
               attempt,
               narrationGroundingRepairPurpose(initialPurpose),
-              bodyOnlyNarrationGroundingReplacementModelInput(request, {
-                socialResolution: isSocialResolutionKpProfile(profile),
-              }),
+              request.narrationInputMode === "frozenRenderableClaims-vnext-1"
+                ? frozenClaimsNarrationGroundingReplacementModelInput(request)
+                : bodyOnlyNarrationGroundingReplacementModelInput(request, {
+                    socialResolution: isSocialResolutionKpProfile(profile),
+                  }),
               remainingInvocationMs,
             );
             try {
               const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
               const candidate = unwrapSingleEnvelope(structured);
-              const narration = validateBodyOnlyNarrationOutput(candidate, request.projection, {
-                socialResolution: isSocialResolutionKpProfile(profile),
-              });
+              const narration = request.narrationInputMode
+                  === "frozenRenderableClaims-vnext-1"
+                ? validateFrozenClaimsNarrationOutput(candidate, request)
+                : validateBodyOnlyNarrationOutput(candidate, request.projection, {
+                    socialResolution: isSocialResolutionKpProfile(profile),
+                  });
               return {
                 ...narration,
-                audience: audienceIdentity(request.projection),
+                audience: request.narrationInputMode
+                    === "frozenRenderableClaims-vnext-1"
+                  ? {
+                      viewerKey: request.viewerKey,
+                      projectionHash: request.renderableClaims.projectionHash,
+                    }
+                  : audienceIdentity(request.projection),
                 modelInvocationReceipt: invocation.receipt,
               };
             } catch (replacementError) {

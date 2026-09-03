@@ -237,6 +237,64 @@ export type VerifiedClaimCommittedRange = Readonly<{
   events: readonly EventEnvelope[];
 }>;
 
+const VNEXT_CLAIMS_ROOT_EVENT_TYPES = new Set([
+  "AtomicWorldInteractionStepsResolved",
+  "SemanticDefinitionMaterialized",
+  "SemanticDefinitionRevised",
+  "WorldInteractionFeasibilityRuled",
+  "WorldInteractionResolved",
+]);
+
+const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
+  "SemanticDefinitionMaterialized",
+  "SemanticDefinitionRevised",
+  "WorldInteractionFeasibilityRuled",
+  "WorldInteractionResolved",
+  "AbilityInvoked",
+  "ImprovisedCheckResolved",
+  "ContestResolved",
+  "DamagePacketResolved",
+  "HitPointsChanged",
+  "CreatureDied",
+  "ResourceSpent",
+  "ResourceChanged",
+  "ResourceUsed",
+  "SensoryEvidenceAcquired",
+  "SourceClaimCreated",
+  "CharacterInferenceFormed",
+  "ItemUsed",
+  "ItemAcquired",
+  "ItemTransferred",
+  "ItemMaterialized",
+  "SceneQuestionOpened",
+  "SceneQuestionAnswered",
+  "ChapterStarted",
+  "ChapterConcluded",
+  "StoryConcluded",
+  "EpilogueChoiceRecorded",
+  "SequelStarted",
+]);
+
+const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
+  "AtomicWorldInteractionStepsResolved",
+  "CanonicalFactDeclared",
+  "DiceRolled",
+  "RandomnessRequested",
+]);
+
+/**
+ * Stage-three is an isolated mixed manifest: its two new vertical slices use
+ * FrozenRenderableClaims while inherited product-0.4 actions keep their
+ * existing observer-projection contract. Routing is based on an explicit
+ * committed event family, never on whether Claims happened to build or fail.
+ */
+export function committedRangeUsesFrozenRenderableClaims(
+  events: readonly Readonly<{ eventType: unknown }>[],
+): boolean {
+  return events.some(({ eventType }) =>
+    typeof eventType === "string" && VNEXT_CLAIMS_ROOT_EVENT_TYPES.has(eventType));
+}
+
 /**
  * Pure event/projection-material seam. Callers provide already typed facts;
  * this function snapshots them before any Viewer-specific permission trimming.
@@ -273,19 +331,27 @@ export function deriveAuthorityClaimsFromCommittedRange(
 ): FrozenAuthorityClaims {
   validateClaimCommittedRange(range);
   const materials: ClaimMaterial[] = [];
+  const requireClosedVNextCoverage = committedRangeUsesFrozenRenderableClaims(range.events);
   const hasDedicatedSensoryEvidence = range.events.some((event) =>
     event.eventType === "SensoryEvidenceAcquired");
 
   for (const event of range.events) {
     const payload = recordOrEmpty(event.payload);
     const eventType = String(event.eventType);
+    const materialCountBeforeEvent = materials.length;
     switch (eventType) {
+      case "SemanticDefinitionMaterialized":
+        materials.push(...semanticDefinitionMaterializationClaims(event, payload));
+        break;
       case "SemanticDefinitionRevised":
         materials.push(...semanticDefinitionRevisionClaims(
           event,
           payload,
           range,
         ));
+        break;
+      case "WorldInteractionFeasibilityRuled":
+        materials.push(...worldInteractionFeasibilityClaims(event, payload, range));
         break;
       case "WorldInteractionResolved":
         materials.push(...worldInteractionClaims(
@@ -456,7 +522,25 @@ export function deriveAuthorityClaimsFromCommittedRange(
         if (claim !== undefined) materials.push(claim);
         break;
       }
+      case "AtomicWorldInteractionStepsResolved":
+        // The settlement ledger is authority-private. Its child events own
+        // every fact that may become a Viewer claim.
+        break;
     }
+    if (requireClosedVNextCoverage) {
+      if (VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
+        && materials.length === materialCountBeforeEvent) {
+        throw new TypeError(`VNEXT_CLAIM_EVENT_UNMAPPED:${eventType}`);
+      }
+      if (!VNEXT_DIRECT_CLAIM_EVENT_TYPES.has(eventType)
+        && !VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES.has(eventType)) {
+        throw new TypeError(`VNEXT_CLAIM_EVENT_UNKNOWN:${eventType}`);
+      }
+    }
+  }
+
+  if (requireClosedVNextCoverage && materials.length === 0) {
+    throw new TypeError("VNEXT_CLAIMS_INSUFFICIENT");
   }
 
   materials.push({
@@ -483,6 +567,121 @@ export function deriveAuthorityClaimsFromCommittedRange(
     rootActionId: range.receipt.rootActionId,
     materials: deduplicateMaterials(materials),
   });
+}
+
+function semanticDefinitionMaterializationClaims(
+  event: EventEnvelope,
+  payload: JsonRecord,
+): ClaimMaterial[] {
+  const definitionRef = stringField(payload, "definitionRef");
+  const semanticKind = stringField(payload, "semanticKind");
+  const definition = isRecord(payload.definition) ? payload.definition : undefined;
+  const content = definition !== undefined && isRecord(definition.content)
+    ? definition.content
+    : undefined;
+  const visibilityPolicyRef = definition === undefined
+    ? event.visibilityPolicyId
+    : stringField(definition, "visibilityPolicyRef") ?? event.visibilityPolicyId;
+  if (definitionRef === undefined
+    || !isSemanticDefinitionKind(semanticKind)
+    || definition === undefined
+    || content === undefined
+    || stringField(definition, "definitionId") !== definitionRef
+    || stringField(definition, "semanticKind") !== semanticKind) return [];
+
+  const base = eventClaimBaseWithSeparatedBasis(event, `definition:${definitionRef}`, {
+    authorityRefs: [
+      definitionRef,
+      stringField(definition, "definitionHash"),
+      stringField(payload, "bundleHash"),
+      stringField(payload, "prospectiveRef"),
+      stringField(payload, "contextHash"),
+      stringField(payload, "templateRef"),
+      stringField(payload, "templateHash"),
+      ...stringRefs(payload.basisRefs),
+      ...stringRefs(payload.sourceRefs),
+    ],
+    viewerRefs: [definitionRef],
+    materialVisibilityPolicyRef: visibilityPolicyRef,
+  });
+  const summary = semanticMaterializationSummary(semanticKind, definitionRef, content);
+  const claims: ClaimMaterial[] = [{
+    ...base,
+    kind: "definitionRevised",
+    definitionRef,
+    definitionKind: semanticKind,
+    summary,
+  }];
+  if (semanticKind !== "sceneFeature") return claims;
+  const description = semanticSceneDescription(content) ?? summary;
+  const state = semanticSceneState(content);
+  const interactionHint = semanticInteractionHint(content);
+  claims.push({
+    ...eventClaimBaseWithSeparatedBasis(event, `scene-feature:${definitionRef}`, {
+      authorityRefs: [
+        definitionRef,
+        stringField(definition, "definitionHash"),
+        stringField(payload, "bundleHash"),
+        stringField(payload, "prospectiveRef"),
+        stringField(payload, "contextHash"),
+        stringField(payload, "templateRef"),
+        stringField(payload, "templateHash"),
+        ...stringRefs(payload.basisRefs),
+        ...stringRefs(payload.sourceRefs),
+      ],
+      viewerRefs: [definitionRef],
+      materialVisibilityPolicyRef: visibilityPolicyRef,
+    }),
+    kind: "sceneFeature",
+    featureRef: definitionRef,
+    description,
+    ...(state === undefined ? {} : { state }),
+    ...(interactionHint === undefined ? {} : { interactionHint }),
+  });
+  return claims;
+}
+
+function worldInteractionFeasibilityClaims(
+  event: EventEnvelope,
+  payload: JsonRecord,
+  range: VerifiedClaimCommittedRange,
+): ClaimMaterial[] {
+  const actorRef = stringField(payload, "actorCharacterId") ?? range.actorCharacterId;
+  const rulingKind = stringField(payload, "rulingKind");
+  const publicBasis = stringField(payload, "publicBasis");
+  if (publicBasis === undefined
+    || (rulingKind !== "missingPrerequisite" && rulingKind !== "worldLawViolation")) {
+    return [];
+  }
+  const prerequisiteDescriptions = Array.isArray(payload.prerequisites)
+    ? payload.prerequisites.flatMap((entry) => isRecord(entry)
+      ? [stringField(entry, "description")].filter(isNonEmptyString)
+      : [])
+    : [];
+  const summary = uniqueText([publicBasis, ...prerequisiteDescriptions]).join("；");
+  const claims: ClaimMaterial[] = [{
+    ...eventClaimBaseWithSeparatedBasis(event, "feasibility", {
+      viewerRefs: [],
+    }),
+    kind: "mechanicalOutcome",
+    actorRef,
+    outcomeCode: rulingKind,
+    summary,
+  }];
+  const nextActions = Array.isArray(payload.nextActions) ? payload.nextActions : [];
+  nextActions.forEach((entry, index) => {
+    if (!isRecord(entry)) return;
+    const description = stringField(entry, "description");
+    if (description === undefined) return;
+    claims.push({
+      ...eventClaimBaseWithSeparatedBasis(event, `feasibility-opportunity:${index}`, {
+        viewerRefs: [],
+      }),
+      kind: "opportunity",
+      description,
+    });
+  });
+  return claims;
 }
 
 function semanticDefinitionRevisionClaims(
@@ -909,21 +1108,41 @@ function eventClaimBase(
   inheritEnvelopeVisibility = true,
   requireBasisGrants = false,
 ): ClaimMaterialBase {
+  return eventClaimBaseWithSeparatedBasis(event, suffix, {
+    authorityRefs: basisRefs,
+    viewerRefs: basisRefs,
+    materialVisibilityPolicyRef,
+    inheritEnvelopeVisibility,
+    requiredViewerRefs: requireBasisGrants ? basisRefs : [],
+  });
+}
+
+function eventClaimBaseWithSeparatedBasis(
+  event: EventEnvelope,
+  suffix: string,
+  options: Readonly<{
+    authorityRefs?: readonly (string | undefined)[];
+    viewerRefs?: readonly (string | undefined)[];
+    materialVisibilityPolicyRef?: string;
+    inheritEnvelopeVisibility?: boolean;
+    requiredViewerRefs?: readonly (string | undefined)[];
+  }>,
+): ClaimMaterialBase {
   const authorityRefs = uniqueDefinedRefs([
     event.eventId,
     event.rootActionId,
     event.scopeProofHash,
-    ...basisRefs,
+    ...(options.authorityRefs ?? []),
   ]);
-  const viewerRefs = uniqueDefinedRefs([event.eventId, ...basisRefs]);
+  const viewerRefs = uniqueDefinedRefs([event.eventId, ...(options.viewerRefs ?? [])]);
   return {
     claimRef: claimRefForEvent(event, suffix),
     basis: { authorityRefs, viewerRefs },
     visibility: visibilityForEvent(
       event,
-      materialVisibilityPolicyRef,
-      inheritEnvelopeVisibility,
-      requireBasisGrants ? basisRefs : [],
+      options.materialVisibilityPolicyRef,
+      options.inheritEnvelopeVisibility ?? true,
+      options.requiredViewerRefs ?? [],
     ),
   };
 }
@@ -1101,6 +1320,22 @@ function semanticRevisionSummary(
   return semanticKind === "npc"
     ? `${label} 的可见人物定义已更新。`
     : `${label} 的可见定义已更新。`;
+}
+
+function semanticMaterializationSummary(
+  semanticKind: DefinitionRevisedClaimMaterial["definitionKind"],
+  definitionRef: string,
+  content: JsonRecord,
+): string {
+  const semantics = isRecord(content.semantics) ? content.semantics : undefined;
+  const label = firstStringField(content, ["name", "label"])
+    ?? (semantics === undefined ? undefined : firstStringField(semantics, ["name", "label"]))
+    ?? definitionRef;
+  return semanticKind === "sceneFeature"
+    ? `${label} 已成为可引用的场景事物。`
+    : semanticKind === "worldFact"
+      ? `${label} 已成为已固化的世界事实。`
+      : `${label} 已成为已固化的世界定义。`;
 }
 
 function relationTransitionSummary(
@@ -1290,13 +1525,22 @@ export function projectRenderableClaims(
 
 export function frozenRenderableClaimsConform(value: unknown): value is FrozenRenderableClaims {
   if (!isRecord(value)
+    || !hasClosedKeys(value, [
+      "schema",
+      "receiptId",
+      "rootActionId",
+      "viewerKey",
+      "projectionHash",
+      "claims",
+      "claimsHash",
+    ])
     || value.schema !== RENDERABLE_CLAIMS_SCHEMA
-    || typeof value.receiptId !== "string"
-    || typeof value.rootActionId !== "string"
-    || typeof value.viewerKey !== "string"
+    || !isNonEmptyString(value.receiptId)
+    || !isNonEmptyString(value.rootActionId)
+    || !isNonEmptyString(value.viewerKey)
     || !isSha256(value.projectionHash)
     || !Array.isArray(value.claims)
-    || typeof value.claimsHash !== "string"
+    || !isSha256(value.claimsHash)
     || !value.claims.every(renderableClaimConform)
     || value.claims.length !== new Set(value.claims.map((claim) =>
       isRecord(claim) ? claim.claimRef : undefined)).size) return false;
@@ -1311,10 +1555,84 @@ export function frozenRenderableClaimsConform(value: unknown): value is FrozenRe
   return value.claimsHash === canonicalSha256(core);
 }
 
+function hasClosedKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean {
+  const keys = Object.keys(value);
+  const allowed = new Set([...required, ...optional]);
+  return required.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+    && keys.every((key) => allowed.has(key));
+}
+
+function claimPayloadHasClosedShape(
+  value: Record<string, unknown>,
+  baseKeys: readonly string[],
+): boolean {
+  const required = (...keys: string[]) => [...baseKeys, ...keys];
+  switch (value.kind) {
+    case "mechanicalOutcome":
+      return hasClosedKeys(value, required("summary"), [
+        "outcomeCode", "actorRef", "targetRefs", "check",
+      ]) && (value.check === undefined || (isRecord(value.check)
+        && hasClosedKeys(value.check, ["kind", "result"], ["total", "dc"])));
+    case "abilityEffectApplied":
+      return hasClosedKeys(value, required(
+        "abilityRef", "abilityName", "sourceRef", "targetRefs", "effect",
+      )) && isRecord(value.effect)
+        && hasClosedKeys(value.effect, ["summary"], [
+          "appliesTo", "bonusDice", "duration", "concentration",
+        ]);
+    case "sensoryEvidence":
+      return hasClosedKeys(value, required("observerRef", "sense", "evidence"), ["subjectRef"]);
+    case "sourceClaim":
+      return hasClosedKeys(value, required("speakerRef", "statement"));
+    case "characterInference":
+      return hasClosedKeys(value, required("characterRef", "inference"));
+    case "sceneFeature":
+      return hasClosedKeys(value, required("featureRef", "description"), [
+        "state", "interactionHint",
+      ]);
+    case "relationChanged":
+      return hasClosedKeys(value, required(
+        "relationRef", "relationKind", "subjectRef", "objectRef", "change", "description",
+      ));
+    case "definitionRevised":
+      return hasClosedKeys(value, required("definitionRef", "definitionKind", "summary"));
+    case "inventoryOutcome":
+      return hasClosedKeys(value, required("itemRef", "change", "summary"), [
+        "characterRefs", "quantity", "charges", "durability", "state",
+      ]) && ["quantity", "charges", "durability"].every((field) =>
+        value[field] === undefined
+        || (isRecord(value[field]) && hasClosedKeys(value[field], ["before", "after"])));
+    case "objectiveContinuity":
+      return hasClosedKeys(value, required("objectiveRef", "transition", "summary"), [
+        "participantRefs",
+      ]);
+    case "storyContinuity":
+      return hasClosedKeys(value, required("storyRef", "transition", "summary"), [
+        "characterRefs",
+      ]);
+    case "pressure":
+      return hasClosedKeys(value, required("description"), ["sourceRef"]);
+    case "opportunity":
+      return hasClosedKeys(value, required("description"), ["targetRef", "actionHint"]);
+    case "actionCommitted":
+      return hasClosedKeys(value, required("actorRef", "status", "summary"));
+    default:
+      return false;
+  }
+}
+
 function cloneAndValidateMaterial(material: ClaimMaterial): ClaimMaterial {
-  if (!isRecord(material)) throw new TypeError("CLAIM_MATERIAL_OBJECT_REQUIRED");
+  if (!isRecord(material)
+    || !claimPayloadHasClosedShape(material, ["claimRef", "kind", "basis", "visibility"])) {
+    throw new TypeError("CLAIM_MATERIAL_OBJECT_REQUIRED");
+  }
   requireRef(material.claimRef, "claimRef");
   if (!isRecord(material.basis)
+    || !hasClosedKeys(material.basis, ["authorityRefs", "viewerRefs"])
     || !Array.isArray(material.basis.authorityRefs)
     || !Array.isArray(material.basis.viewerRefs)) {
     throw new TypeError("CLAIM_BASIS_INVALID");
@@ -1322,6 +1640,11 @@ function cloneAndValidateMaterial(material: ClaimMaterial): ClaimMaterial {
   uniqueSortedRefs(material.basis.authorityRefs, "authorityBasis");
   uniqueSortedRefs(material.basis.viewerRefs, "viewerBasis");
   if (!isRecord(material.visibility)
+    || !hasClosedKeys(
+      material.visibility,
+      ["kind"],
+      material.visibility.kind === "grants" ? ["allOf"] : [],
+    )
     || (material.visibility.kind !== "public" && material.visibility.kind !== "grants")) {
     throw new TypeError("CLAIM_VISIBILITY_INVALID");
   }
@@ -1349,6 +1672,7 @@ function validateMaterialPayload(material: ClaimMaterial): void {
   switch (material.kind) {
     case "mechanicalOutcome":
       requireText(material.summary, "mechanicalSummary");
+      if (material.outcomeCode !== undefined) requireText(material.outcomeCode, "outcomeCode");
       optionalRef(material.actorRef, "mechanicalActor");
       optionalRefs(material.targetRefs, "mechanicalTarget");
       if (material.check !== undefined
@@ -1367,10 +1691,23 @@ function validateMaterialPayload(material: ClaimMaterial): void {
       optionalRefs(material.targetRefs, "abilityTarget", true);
       if (!isRecord(material.effect)) throw new TypeError("ABILITY_EFFECT_INVALID");
       requireText(material.effect.summary, "abilityEffectSummary");
+      for (const [field, value] of [
+        ["abilityEffectAppliesTo", material.effect.appliesTo],
+        ["abilityEffectBonusDice", material.effect.bonusDice],
+        ["abilityEffectDuration", material.effect.duration],
+      ] as const) {
+        if (value !== undefined) requireText(value, field);
+      }
+      if (material.effect.concentration !== undefined
+        && typeof material.effect.concentration !== "boolean") {
+        throw new TypeError("ABILITY_EFFECT_CONCENTRATION_INVALID");
+      }
       return;
     case "sensoryEvidence":
       requireRef(material.observerRef, "sensoryObserver");
       optionalRef(material.subjectRef, "sensorySubject");
+      if (!["sight", "hearing", "smell", "touch", "taste", "special"]
+        .includes(material.sense)) throw new TypeError("SENSORY_SENSE_INVALID");
       requireText(material.evidence, "sensoryEvidence");
       return;
     case "sourceClaim":
@@ -1384,29 +1721,59 @@ function validateMaterialPayload(material: ClaimMaterial): void {
     case "sceneFeature":
       requireRef(material.featureRef, "sceneFeature");
       requireText(material.description, "sceneFeatureDescription");
+      if (material.state !== undefined) requireText(material.state, "sceneFeatureState");
+      if (material.interactionHint !== undefined) {
+        requireText(material.interactionHint, "sceneFeatureInteractionHint");
+      }
       return;
     case "relationChanged":
       [material.relationRef, material.subjectRef, material.objectRef]
         .forEach((ref) => requireRef(ref, "relation"));
       requireText(material.relationKind, "relationKind");
+      if (!["began", "ended", "updated"].includes(material.change)) {
+        throw new TypeError("RELATION_CHANGE_INVALID");
+      }
       requireText(material.description, "relationDescription");
       return;
     case "definitionRevised":
       requireRef(material.definitionRef, "definition");
+      if (!["npc", "item", "worldFact", "sceneFeature", "worldRelation"]
+        .includes(material.definitionKind)) throw new TypeError("DEFINITION_KIND_INVALID");
       requireText(material.summary, "definitionSummary");
       return;
     case "inventoryOutcome":
       requireRef(material.itemRef, "inventoryItem");
+      if (![
+        "materialized", "acquired", "transferred", "used", "consumed", "damaged",
+        "repaired", "destroyed", "updated",
+      ].includes(material.change)) throw new TypeError("INVENTORY_CHANGE_INVALID");
       optionalRefs(material.characterRefs, "inventoryCharacter");
       requireText(material.summary, "inventorySummary");
+      if (material.quantity !== undefined
+        && (!Number.isFinite(material.quantity.before)
+          || !Number.isFinite(material.quantity.after))) {
+        throw new TypeError("INVENTORY_QUANTITY_INVALID");
+      }
+      for (const transition of [material.charges, material.durability]) {
+        if (transition !== undefined
+          && (![transition.before, transition.after]
+            .every((entry) => entry === null || Number.isFinite(entry)))) {
+          throw new TypeError("INVENTORY_TRANSITION_INVALID");
+        }
+      }
+      if (material.state !== undefined) requireText(material.state, "inventoryState");
       return;
     case "objectiveContinuity":
       requireRef(material.objectiveRef, "objective");
+      if (!["opened", "advanced", "failed", "abandoned", "completed", "updated"]
+        .includes(material.transition)) throw new TypeError("OBJECTIVE_TRANSITION_INVALID");
       optionalRefs(material.participantRefs, "objectiveParticipant");
       requireText(material.summary, "objectiveSummary");
       return;
     case "storyContinuity":
       requireRef(material.storyRef, "story");
+      if (!["candidate", "concluded", "epilogue", "sequel", "updated"]
+        .includes(material.transition)) throw new TypeError("STORY_TRANSITION_INVALID");
       optionalRefs(material.characterRefs, "storyCharacter");
       requireText(material.summary, "storySummary");
       return;
@@ -1417,9 +1784,12 @@ function validateMaterialPayload(material: ClaimMaterial): void {
     case "opportunity":
       optionalRef(material.targetRef, "opportunityTarget");
       requireText(material.description, "opportunityDescription");
+      if (material.actionHint !== undefined) requireText(material.actionHint, "opportunityActionHint");
       return;
     case "actionCommitted":
       requireRef(material.actorRef, "actionActor");
+      if (!["committed", "awaitingInput", "awaitingRandomness", "concluded", "superseded"]
+        .includes(material.status)) throw new TypeError("ACTION_STATUS_INVALID");
       requireText(material.summary, "actionSummary");
       return;
   }
@@ -1427,6 +1797,7 @@ function validateMaterialPayload(material: ClaimMaterial): void {
 
 function renderableClaimConform(value: unknown): boolean {
   if (!isRecord(value)
+    || !claimPayloadHasClosedShape(value, ["claimRef", "kind", "basisRefs"])
     || !isNonEmptyString(value.claimRef)
     || !Array.isArray(value.basisRefs)
     || !value.basisRefs.every(isNonEmptyString)

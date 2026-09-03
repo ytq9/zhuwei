@@ -2,14 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  committedRangeUsesFrozenRenderableClaims,
   deriveAuthorityClaims,
   deriveAuthorityClaimsFromCommittedRange,
+  frozenRenderableClaimsConform,
   projectRenderableClaims,
 } from "../app/_runtime/lib/rules/v2/claims.ts";
 import {
   buildFrozenNarrationMaterial,
   reuseFrozenNarrationMaterialForRetry,
 } from "../app/_runtime/lib/kp/vnext/narration.ts";
+import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
 
 const RECEIPT = Object.freeze({
   receiptId: "receipt:conversation:1",
@@ -25,6 +28,20 @@ const RECEIPT = Object.freeze({
 function sha256(digit) {
   return `sha256:${digit.repeat(64).slice(0, 64)}`;
 }
+
+test("the mixed stage-three manifest routes only explicit vNext event families to Claims", () => {
+  assert.equal(committedRangeUsesFrozenRenderableClaims([
+    { eventType: "RandomnessRequested" },
+    { eventType: "WorldInteractionResolved" },
+  ]), true);
+  assert.equal(committedRangeUsesFrozenRenderableClaims([
+    { eventType: "SocialDirectResolved" },
+  ]), false);
+  assert.equal(committedRangeUsesFrozenRenderableClaims([
+    { eventType: "CorrectionApplied" },
+    { eventType: "BranchActivated" },
+  ]), false);
+});
 
 function worldInteractionRange({
   appliedEffects = [],
@@ -102,6 +119,168 @@ function worldInteractionRange({
     priorState: structuredClone(state),
     state,
     events: [event],
+  };
+}
+
+function materializationRange({
+  visibilityPolicyId = "visibility:public",
+  withSettlement = false,
+} = {}) {
+  const definitionRef = "definition:materialized:11111111111111111111111111111111";
+  const rootActionId = "root:materialization-claims";
+  const receipt = {
+    ...RECEIPT,
+    receiptId: "receipt:materialization-claims",
+    rootActionId,
+    eventRange: { fromEventSeq: "21", toEventSeq: withSettlement ? "22" : "21" },
+  };
+  const definition = {
+    schema: "zhuwei.semantic-definition/vnext-1",
+    definitionKind: "semantic",
+    semanticKind: "sceneFeature",
+    definitionId: definitionRef,
+    revision: "1",
+    definitionHash: sha256("4"),
+    templateRef: "template:scene-feature",
+    templateHash: sha256("5"),
+    visibilityPolicyRef: visibilityPolicyId,
+    content: {
+      sceneRef: "scene:atrium",
+      visibilityFactId: visibilityPolicyId === "visibility:hidden-until-evidence"
+        ? "fact:hidden-alcove"
+        : null,
+      label: "浅壁龛",
+      description: "墙面上显露出一个浅壁龛。",
+      observableState: "open",
+      affordances: ["inspect"],
+      mechanicDefinitionRefs: [],
+      privateNotes: "CANARY_PRIVATE_DEFINITION",
+    },
+  };
+  const priorState = {
+    roomId: "room:materialization-claims",
+    runtimeEpochId: "epoch:materialization-claims",
+    campaignRuntime: { definitions: {} },
+    combatRuntime: { definitions: {} },
+  };
+  const state = {
+    ...structuredClone(priorState),
+    campaignRuntime: { definitions: { [definitionRef]: definition } },
+  };
+  const materialized = {
+    eventId: "event:materialization-claims:21",
+    eventSeq: "21",
+    eventType: "SemanticDefinitionMaterialized",
+    rootActionId,
+    roomId: state.roomId,
+    runtimeEpochId: state.runtimeEpochId,
+    scopeProofHash: sha256("6"),
+    visibilityPolicyId,
+    secrecy: visibilityPolicyId === "visibility:public" ? "public" : "private",
+    payload: {
+      actorCharacterId: "character:alice",
+      bundleHash: sha256("7"),
+      prospectiveRef: "prospective:22222222222222222222222222222222",
+      definitionRef,
+      semanticKind: "sceneFeature",
+      templateRef: definition.templateRef,
+      templateHash: definition.templateHash,
+      contextHash: sha256("8"),
+      basisRefs: ["fact:CANARY_PRIVATE_BASIS"],
+      sourceRefs: ["source:CANARY_PRIVATE_SOURCE"],
+      summary: "CANARY_MODEL_SUMMARY",
+      definition,
+    },
+  };
+  const events = [materialized];
+  if (withSettlement) {
+    events.push({
+      eventId: "event:materialization-claims:22",
+      eventSeq: "22",
+      eventType: "AtomicWorldInteractionStepsResolved",
+      rootActionId,
+      roomId: state.roomId,
+      runtimeEpochId: state.runtimeEpochId,
+      scopeProofHash: sha256("9"),
+      visibilityPolicyId: "visibility:room-authority-only",
+      secrecy: "internal",
+      payload: {
+        proposalRef: "proposal:CANARY_PRIVATE_SETTLEMENT",
+        checkResolutionId: "check:CANARY_PRIVATE_SETTLEMENT",
+      },
+    });
+  }
+  return {
+    receipt,
+    actorCharacterId: "character:alice",
+    priorState,
+    state,
+    events,
+  };
+}
+
+function feasibilityRange() {
+  const rootActionId = "root:feasibility-claims";
+  const receipt = {
+    ...RECEIPT,
+    receiptId: "receipt:feasibility-claims",
+    rootActionId,
+    eventRange: { fromEventSeq: "31", toEventSeq: "32" },
+  };
+  const state = {
+    roomId: "room:feasibility-claims",
+    runtimeEpochId: "epoch:feasibility-claims",
+    campaignRuntime: { definitions: {} },
+    combatRuntime: { definitions: {} },
+  };
+  const envelope = (eventSeq, eventType, payload) => ({
+    eventId: `event:feasibility-claims:${eventSeq}`,
+    eventSeq,
+    eventType,
+    rootActionId,
+    roomId: state.roomId,
+    runtimeEpochId: state.runtimeEpochId,
+    scopeProofHash: sha256(eventSeq === "31" ? "a" : "b"),
+    visibilityPolicyId: "visibility:scene-observers",
+    secrecy: "public",
+    payload,
+  });
+  return {
+    receipt,
+    actorCharacterId: "character:alice",
+    priorState: structuredClone(state),
+    state,
+    events: [
+      envelope("31", "ItemUsed", {
+        entryId: "item-entry:lockpick",
+        characterId: "character:alice",
+        quantityBefore: 2,
+        quantityAfter: 1,
+        chargesBefore: null,
+        chargesAfter: null,
+        durabilityBefore: null,
+        durabilityAfter: null,
+      }),
+      envelope("32", "WorldInteractionFeasibilityRuled", {
+        actorCharacterId: "character:alice",
+        intent: "CANARY_PRIVATE_INTENT",
+        method: "CANARY_PRIVATE_METHOD",
+        rulingKind: "missingPrerequisite",
+        publicBasis: "门锁需要另一把钥匙。",
+        prerequisites: [{
+          kind: "tool",
+          ref: "item-entry:CANARY_PRIVATE_KEY",
+          description: "需要匹配这把门锁的钥匙。",
+        }],
+        nextActions: [{ description: "去守门人处询问钥匙。" }],
+        appliedCosts: [{
+          kind: "itemCost",
+          entryRef: "item-entry:lockpick",
+          quantityBefore: 2,
+          quantityAfter: 1,
+        }],
+      }),
+    ],
   };
 }
 
@@ -214,6 +393,59 @@ test("a hidden relation cannot affect either the Viewer payload or its frozen ha
   assert.doesNotMatch(JSON.stringify(withHiddenRelation), /secret-latch|hidden-vault|暗扣|密库门/u);
 });
 
+test("FrozenRenderableClaims rejects recomputed envelopes with unknown fields", () => {
+  const projected = projectRenderableClaims(deriveAuthorityClaims({
+    receiptId: "receipt:closed-renderable-claims",
+    rootActionId: "root:closed-renderable-claims",
+    materials: [{
+      claimRef: "claim:closed-renderable-claims",
+      kind: "sceneFeature",
+      featureRef: "feature:closed-door",
+      description: "门已经关闭。",
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }],
+  }), {
+    viewerKey: "character:alice",
+    projectionHash: sha256("f"),
+    refs: ["feature:closed-door"],
+  });
+  const rehash = (candidate) => {
+    const {
+      schema,
+      receiptId,
+      rootActionId,
+      viewerKey,
+      projectionHash,
+      claims,
+    } = candidate;
+    return {
+      ...candidate,
+      claimsHash: canonicalSha256({
+        schema,
+        receiptId,
+        rootActionId,
+        viewerKey,
+        projectionHash,
+        claims,
+      }),
+    };
+  };
+
+  assert.equal(frozenRenderableClaimsConform(projected), true);
+  assert.equal(frozenRenderableClaimsConform(rehash({
+    ...structuredClone(projected),
+    privateCanary: "TOP_LEVEL_PRIVATE",
+  })), false);
+  const claimCanary = structuredClone(projected);
+  claimCanary.claims[0].privateCanary = "CLAIM_PRIVATE";
+  assert.equal(frozenRenderableClaimsConform(rehash(claimCanary)), false);
+  const nestedCanary = structuredClone(projected);
+  nestedCanary.claims[0].state = "closed";
+  nestedCanary.claims[0].unknownNestedMeaning = "PRIVATE_NESTED";
+  assert.equal(frozenRenderableClaimsConform(rehash(nestedCanary)), false);
+});
+
 test("authority-only summaries, pressures, opportunities, and actual targets cannot perturb Viewer Claims", () => {
   const hiddenTargetEffect = {
     kind: "damage",
@@ -260,6 +492,111 @@ test("authority-only summaries, pressures, opportunities, and actual targets can
     "actionCommitted",
   ]);
   assert.equal(withAuthorityCanaries.claims[0].check.kind, "attack");
+});
+
+test("materialization claims come from the committed definition and ignore the private settlement ledger", () => {
+  const grants = {
+    viewerKey: "principal:alice\u001fcharacter:alice",
+    projectionHash: sha256("c"),
+    refs: [
+      "character:alice",
+      "receipt:materialization-claims",
+      "visibility:character-controller:character:alice",
+      "definition:materialized:11111111111111111111111111111111",
+      "event:materialization-claims:21",
+    ],
+  };
+  const withoutSettlement = projectRenderableClaims(
+    deriveAuthorityClaimsFromCommittedRange(materializationRange()),
+    grants,
+  );
+  const withSettlement = projectRenderableClaims(
+    deriveAuthorityClaimsFromCommittedRange(materializationRange({ withSettlement: true })),
+    grants,
+  );
+  assert.deepEqual(withSettlement, withoutSettlement);
+  assert.deepEqual(withSettlement.claims.map(({ kind }) => kind), [
+    "definitionRevised",
+    "sceneFeature",
+    "actionCommitted",
+  ]);
+  assert.match(withSettlement.claims[0].summary, /浅壁龛/u);
+  assert.equal(withSettlement.claims[1].state, "open");
+  assert.equal(withSettlement.claims[1].interactionHint, "inspect");
+  assert.doesNotMatch(
+    JSON.stringify(withSettlement),
+    /CANARY|prospective:|template:|bundleHash|contextHash/u,
+  );
+});
+
+test("a vNext range cannot degrade to actionCommitted when a result event is unmapped", () => {
+  const atomicOnly = materializationRange({ withSettlement: true });
+  atomicOnly.events = atomicOnly.events.filter(({ eventType }) =>
+    eventType === "AtomicWorldInteractionStepsResolved");
+  atomicOnly.receipt.eventRange = { fromEventSeq: "22", toEventSeq: "22" };
+  assert.throws(
+    () => deriveAuthorityClaimsFromCommittedRange(atomicOnly),
+    /VNEXT_CLAIMS_INSUFFICIENT/u,
+  );
+
+  const unknownSibling = materializationRange();
+  unknownSibling.events.push({
+    ...structuredClone(unknownSibling.events[0]),
+    eventId: "event:materialization-claims:22",
+    eventSeq: "22",
+    eventType: "FutureNarratableResult",
+  });
+  unknownSibling.receipt.eventRange = { fromEventSeq: "21", toEventSeq: "22" };
+  assert.throws(
+    () => deriveAuthorityClaimsFromCommittedRange(unknownSibling),
+    /VNEXT_CLAIM_EVENT_UNKNOWN:FutureNarratableResult/u,
+  );
+});
+
+test("hidden materialization produces a valid empty Viewer claim snapshot", () => {
+  const projected = projectRenderableClaims(
+    deriveAuthorityClaimsFromCommittedRange(materializationRange({
+      visibilityPolicyId: "visibility:hidden-until-evidence",
+    })),
+    {
+      viewerKey: "principal:bob\u001fcharacter:bob",
+      projectionHash: sha256("d"),
+      refs: [],
+    },
+  );
+  assert.deepEqual(projected.claims, []);
+  assert.equal(frozenRenderableClaimsConform(projected), true);
+  assert.match(projected.claimsHash, /^sha256:[0-9a-f]{64}$/u);
+});
+
+test("world refusal claims expose the public reason and next actions without duplicating attempt costs", () => {
+  const projected = projectRenderableClaims(
+    deriveAuthorityClaimsFromCommittedRange(feasibilityRange()),
+    {
+      viewerKey: "principal:alice\u001fcharacter:alice",
+      projectionHash: sha256("e"),
+      refs: [
+        "character:alice",
+        "receipt:feasibility-claims",
+        "item-entry:lockpick",
+        "visibility:character-controller:character:alice",
+        "visibility:scene-observers",
+        "event:feasibility-claims:31",
+        "event:feasibility-claims:32",
+      ],
+    },
+  );
+  assert.deepEqual(projected.claims.map(({ kind }) => kind), [
+    "inventoryOutcome",
+    "mechanicalOutcome",
+    "opportunity",
+    "actionCommitted",
+  ]);
+  assert.equal(projected.claims.filter(({ kind }) => kind === "inventoryOutcome").length, 1);
+  assert.equal(projected.claims[1].outcomeCode, "missingPrerequisite");
+  assert.match(projected.claims[1].summary, /门锁需要另一把钥匙.*需要匹配/u);
+  assert.equal(projected.claims[2].description, "去守门人处询问钥匙。");
+  assert.doesNotMatch(JSON.stringify(projected), /CANARY|PRIVATE_KEY|PRIVATE_INTENT|PRIVATE_METHOD/u);
 });
 
 test("ability effects are rendered from typed semantics rather than an ability-name special case", () => {

@@ -2288,3 +2288,18 @@
 - 分支策略与基线：为避免把未完成收口写入生产基线或覆盖既有稳定快照，新建 `feature/kp-agent-vnext-stage3-checkpoint`；它基于本地 `cloudflare` 的三个职责拆分提交并包含 ProposalBundle 提交 `cb7038f`，检查点源码提交为 `dde61465fe38b26e2f69d31a4d998f14fa154eb8`。既有 `feature/kp-coarse-forms-vnext-stage3` 保持 `0ec8c4eae5862af1c3a43aef86a17889e17955e7`。
 - 推送与远端边界：执行非强制 `git push -u origin feature/kp-agent-vnext-stage3-checkpoint`，退出 0；远端新分支指向 `dde61465fe38b26e2f69d31a4d998f14fa154eb8`。推送后只读复核 `origin/cloudflare` 仍为 `0569b517ee0e101e32c38897812821a76d755aa6`，`origin/main` 仍为推送前已经存在的 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，均未修改。
 - 验证与排除：推送源码的 `npm run typecheck`、89/89 vNext/strict-tool Node 目标、5/5 Room Worker 目标与 staged diff 检查均已通过；这是未完成能力的开发检查点，不是生产冻结或发布。独立未跟踪的 `docs/research/archify-structured-json-pipeline.md` 未纳入提交；未运行完整回归、Lint、build、真实 Provider、migration、部署或外部资源写入。
+
+## vNext ProposalBundle、Claims 与严格 Provider 合同收口（2026-09-03）
+
+- 目标与能力合同：KP 首次调用必须返回可由本地确定性校验闭合的完整 ProposalBundle；需要澄清时，每个公开选项冻结一个完整、非递归且引用空间隔离的继续分支，玩家选择后不再调用 KP。Provider 只允许在持久化 repair ticket 之后执行一次窄修复；权威提交后的叙事只能消费 Viewer 对应的冻结 Typed Claims，不得从隐藏状态或旧投影补写事实。
+- 代表性矩阵：同一通用路径覆盖单项环境互动、结构不同的 materialize 后消费原子 Bundle、clarification 全兄弟分支与全局 16 项预算、高风险选项的公开风险绑定，以及重复 JSON member、未知引用、依赖错误和 attribution/agency 不一致的拒绝；另覆盖首次候选无效后一次局部 correction 成功与再次无效终止。没有按动作名称、对象名称或测试值分派。
+- 实现与直接消费者：`kp/vnext` 增加 strict Bundle/continuation validator、canonical JSON、correction ticket 与 Provider 编排，Registry/握手定义按 submit/correct 两份合同分别绑定 schema hash；Rules Claims/observer delta、KP authoritative adapter 与 Room publication 统一收紧 frozen Claims 和 result-event 映射，直接消费者仍为现役 Room Action、Rules `step/project/replay` 与 Claims-only Narration。候选模型保持 `validationStatus: pending`，没有接入生产 Registry。
+- 验证证据：最终源码状态上六个 Node 目标文件命令退出 0（102/102），`npx vitest run tests/kp-vnext-stage3-room.test.ts` 退出 0（7/7），`npm run typecheck` 与 `git diff --check` 均退出 0。
+- 未覆盖范围：当前环境没有 `DEEPSEEK_API_KEY`，因此没有运行会决定 Provider 方言冻结的四次真实握手；按 SPEC 0016 的采用门，完整 clarification Room/Rules 消费端与生产模型切换尚未实施。未运行全量测试、Lint、build、浏览器 QA、migration、部署或 Git push。
+
+## vNext 随机落账后 Claims 投影失败恢复（2026-09-03）
+
+- 症状与根因：随机行动已经持久化 `RandomnessRequested` 与固定骰面后，若 Claims 投影失败，首次响应正确地未提交最终事件，但同一原始意图重试无法恢复。首个违规点是权威恢复输入识别只覆盖旧形状，未识别 vNext materialize/revise/world-interaction；恢复成功后，Room publication 又只从 prepare 响应取 rootActionId，无法接受恢复函数直接返回的 committed Receipt。
+- 修改与连带检查：Room DO 用共享恢复入口复用原 Proposal 与骰面，并通过 Rules 导出的原子 world-interaction 编译判定作为单一事实源；随机日志后的投影失败标为可重试，非随机投影失败仍是硬拒绝。Room Action 以 Receipt root 绑定恢复后直接提交结果并沿 delivery root 发布叙事。检查覆盖原失败路径在 DO 驱逐后以同一原始意图完成、Proposal/骰面不变且无重复随机，以及自然 20/1 正常路径与非随机失败对偶路径。
+- 验证证据：`npx vitest run tests/kp-vnext-stage3-room.test.ts` 退出 0（7/7）；包含 Room Action/Provider/Claims/Rules 的六个 Node 目标文件命令退出 0（102/102）；共享类型与公共签名变化后的 `npm run typecheck`、`git diff --check` 均退出 0。
+- 未覆盖范围：没有改变随机算法、跨请求权威状态或幂等合同，也没有为测试引入生产旁路；未运行完整回归、Lint、build、外部 Provider、migration、部署或 Git push。

@@ -25,6 +25,7 @@ import {
 } from "../app/_runtime/lib/kp/vnext/room-bridge.ts";
 
 const ACTOR = "character:mf1";
+const OBSERVER = "character:mf-observer";
 const SCENE = "scene:mf2";
 const ITEM_DEFINITION_REF = "item-definition:mf-torch";
 const ITEM_ENTRY_REF = "item-entry:mf-torch-1";
@@ -72,7 +73,10 @@ function tacticalGeometry() {
         { x: "0", y: "200" },
       ],
     },
-    spawnPoints: [{ x: "10", y: "10", elevation: "0" }],
+    spawnPoints: [
+      { x: "10", y: "10", elevation: "0" },
+      { x: "30", y: "10", elevation: "0" },
+    ],
     obstacles: [{
       featureId: "feature:mf-wall",
       kind: "barrier",
@@ -123,7 +127,8 @@ function itemDefinition() {
   };
 }
 
-function initialize(extraDefinitions = []) {
+function initialize(extraDefinitions = [], options = {}) {
+  const withObserver = options.withObserver === true;
   const initialized = runtime.step(undefined, undefined, {
     kind: "initializeAuthoritativeWorld",
     roomId: "room:mf",
@@ -133,12 +138,27 @@ function initialize(extraDefinitions = []) {
     activeBranchId: "branch:mf",
     fictionInstantMicros: "0",
     scenes: [{ id: SCENE, name: "MF", geometry: tacticalGeometry() }],
-    principals: [{ id: "principal:mf1", sessionVersion: 1, role: "host" }],
-    seats: [{ id: "seat:mf1", principalId: "principal:mf1", status: "active" }],
-    characters: [player(ACTOR)],
-    characterControls: [{ characterId: ACTOR, seatId: "seat:mf1" }],
+    principals: [
+      { id: "principal:mf1", sessionVersion: 1, role: "host" },
+      ...(withObserver
+        ? [{ id: "principal:mf-observer", sessionVersion: 1, role: "player" }]
+        : []),
+    ],
+    seats: [
+      { id: "seat:mf1", principalId: "principal:mf1", status: "active" },
+      ...(withObserver
+        ? [{ id: "seat:mf-observer", principalId: "principal:mf-observer", status: "active" }]
+        : []),
+    ],
+    characters: [player(ACTOR), ...(withObserver ? [player(OBSERVER)] : [])],
+    characterControls: [
+      { characterId: ACTOR, seatId: "seat:mf1" },
+      ...(withObserver
+        ? [{ characterId: OBSERVER, seatId: "seat:mf-observer" }]
+        : []),
+    ],
     canonicalFacts: [],
-    initialKnowledge: [],
+    initialKnowledge: options.initialKnowledge ?? [],
     vNextSeed: {
       semanticDefinitions: extraDefinitions,
       itemDefinitions: [itemDefinition()],
@@ -248,6 +268,67 @@ test("materializeSemanticDefinition commits a new sparse definition and replays 
     rebuilt.state.campaignRuntime.definitions[expectedDefinitionRef],
     stored,
   );
+});
+
+test("hidden materialization becomes a Viewer Claim only after its evidence grant", () => {
+  const visibilityFactId = "knowledge:hidden-alcove-seen";
+  const projectForObserver = (initialKnowledge) => {
+    const world = initialize([], { withObserver: true, initialKnowledge });
+    const { rootActionId, plan } = materializationPlan(world.state, {
+      rootActionId: "root:hidden-materialization-claims",
+      semanticKind: "sceneFeature",
+      visibilityPolicyRef: "visibility:hidden-until-evidence",
+      content: {
+        sceneRef: SCENE,
+        visibilityFactId,
+        label: "浅壁龛",
+        description: "墙面上显露出一个浅壁龛。",
+        observableState: "open",
+        affordances: ["inspect"],
+      },
+    });
+    const committed = runtime.step(world.profiles, world.state, {
+      kind: "materializeSemanticDefinition",
+      rootActionId,
+      actorCharacterId: ACTOR,
+      plan,
+    });
+    assert.equal(committed.kind, "committed", JSON.stringify(committed));
+    const projected = runtime.project(committed.profiles ?? world.profiles, committed.state, {
+      kind: "player",
+      principalId: "principal:mf-observer",
+      sessionVersion: 1,
+      seatId: "seat:mf-observer",
+      characterId: OBSERVER,
+    }, {
+      channel: "realtime",
+      committedRange: {
+        receiptId: committed.receipt.receiptId,
+        actorCharacterId: ACTOR,
+        priorState: world.state,
+        events: committed.events,
+      },
+    });
+    assert.equal(projected.kind, "projected", JSON.stringify(projected));
+    assert.ok(projected.renderableClaims, "vNext projection must freeze even an empty Claim set");
+    return projected.renderableClaims.claims;
+  };
+
+  assert.deepEqual(projectForObserver([]), []);
+  const unlocked = projectForObserver([{
+    characterId: OBSERVER,
+    knowledgeRef: visibilityFactId,
+    kind: "canonicalFact",
+    layer: "full",
+    content: "观察者已经发现墙上的浅壁龛。",
+    visibility: "private",
+    provenanceChain: [visibilityFactId],
+  }]);
+  assert.deepEqual(unlocked.map(({ kind }) => kind), [
+    "definitionRevised",
+    "sceneFeature",
+  ]);
+  assert.match(unlocked[1].description, /浅壁龛/u);
 });
 
 test("materializeSemanticDefinition rejects a stale read set", () => {

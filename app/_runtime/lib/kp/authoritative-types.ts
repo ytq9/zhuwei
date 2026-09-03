@@ -1,4 +1,5 @@
 import { GEAR_SLOTS, type GearSlot } from "../dnd/gear";
+import type { FrozenRenderableClaims } from "../rules/authority-read";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -448,15 +449,33 @@ export type DueActorPlanDecision = DueActorPlanDecisionBase & (
     }
 );
 
-export type KpNarrationRequest = {
+type KpNarrationRequestBase = {
   rootActionId: string;
   /** Trusted Room-orchestration purpose for the first narration call. The
    * adapter owns grounding-repair purpose assignment. */
   narrationPurpose?: KpNarrationRequestPurpose;
   receipt: unknown;
-  projection: unknown;
   attempt?: number;
+  deliveryGeneration?: number;
 };
+
+export type ObserverProjectionNarrationRequest = KpNarrationRequestBase & {
+  narrationInputMode: "observerProjection-v1";
+  projection: unknown;
+  viewerKey?: never;
+  renderableClaims?: never;
+};
+
+export type FrozenClaimsNarrationRequest = KpNarrationRequestBase & {
+  narrationInputMode: "frozenRenderableClaims-vnext-1";
+  viewerKey: string;
+  renderableClaims: FrozenRenderableClaims;
+  projection?: never;
+};
+
+export type KpNarrationRequest =
+  | ObserverProjectionNarrationRequest
+  | FrozenClaimsNarrationRequest;
 
 export const NARRATION_AGENCY_SUBJECT_KINDS = [
   "playerCharacter",

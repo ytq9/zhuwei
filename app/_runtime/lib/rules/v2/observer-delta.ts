@@ -22,12 +22,14 @@ import type {
 } from "./model";
 import { eventHash, foldEvent, validateEventEnvelope } from "./events";
 import {
+  committedRangeUsesFrozenRenderableClaims,
   deriveAuthorityClaimsFromCommittedRange,
   projectRenderableClaims,
   type FrozenAuthorityClaims,
   type FrozenRenderableClaims,
 } from "./claims";
 import { rejected } from "./results";
+import { spatialRecordVisibleTo } from "./spatial-visibility";
 import { characterTimelineId } from "./timeline";
 import {
   hashWorldState,
@@ -887,7 +889,9 @@ function observerRenderableClaims(
   range: VerifiedCommittedRange | undefined,
   projectCurrent: CurrentProjectionProjector,
 ): FrozenRenderableClaims | "invalid" | undefined {
-  if (range === undefined || !worldInteractionProfileEnabled(profiles.extensions)) return undefined;
+  if (range === undefined
+    || !worldInteractionProfileEnabled(profiles.extensions)
+    || !committedRangeUsesFrozenRenderableClaims(range.events)) return undefined;
   const beforeValue = projectCurrent(profiles, range.priorState, viewerValue);
   const before = beforeValue.kind === "rejected"
     || isKpSpatialReadModel(beforeValue)
@@ -924,7 +928,10 @@ function observerRenderableClaims(
   } catch {
     return "invalid";
   }
-  return projected.claims.length === 0 ? undefined : projected;
+  // A verified vNext projection with no visible facts is still a frozen
+  // Claims result. `undefined` is reserved for profiles/ranges that do not
+  // use the vNext Claims seam at all.
+  return projected;
 }
 
 function viewerClaimKey(
@@ -1064,6 +1071,20 @@ function visibilityPolicyVisibleToViewer(
   if (isRecord(viewerValue)
     && isNonEmptyString(viewerValue.principalId)
     && policyRef === `visibility:principal:${viewerValue.principalId}`) return true;
+
+  if (policyRef === "visibility:hidden-until-evidence") {
+    const eventDefinition = isRecord(subject) && isRecord(subject.definition)
+      ? subject.definition
+      : undefined;
+    const visibilitySubject = eventDefinition !== undefined && isRecord(eventDefinition.content)
+      ? eventDefinition.content
+      : isRecord(subject) ? subject : undefined;
+    return visibilitySubject !== undefined && spatialRecordVisibleTo(
+      state,
+      { ...visibilitySubject, visibilityPolicyId: policyRef },
+      viewerCharacterId,
+    );
+  }
 
   const viewerPriorSceneId = range.priorState.entities[viewerCharacterId]?.sceneId;
   const viewerCurrentSceneId = state.entities[viewerCharacterId]?.sceneId;

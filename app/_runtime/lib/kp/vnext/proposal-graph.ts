@@ -3,6 +3,7 @@ import {
   compareCodeUnits,
   deepFreeze,
 } from "./canonical-json";
+import { normalizedProspectiveRef } from "../../rules/authority-read";
 import type {
   VNextAdjudicationBundle,
   VNextBundleFormId,
@@ -41,6 +42,19 @@ export function validateVNextProposalBundleDependencies(
   const edges = new Map<number, number[]>();
   entries.forEach((entry, index) => {
     const dependencies: number[] = [];
+    const declared = new Set(entry.consumes.flatMap((consume) =>
+      consume.kind === "prospective" ? [consume.handle] : []));
+    const referenced = new Set(prospectiveHandles(entry));
+    for (const handle of referenced) {
+      if (!declared.has(handle)) {
+        issues.push(`bundle:prospective-consumer-not-declared:${handle}`);
+      }
+    }
+    for (const handle of declared) {
+      if (!referenced.has(handle)) {
+        issues.push(`bundle:prospective-consume-unused:${handle}`);
+      }
+    }
     for (const consume of entry.consumes) {
       if (consume.kind !== "prospective") continue;
       const producer = producers.get(consume.handle);
@@ -71,8 +85,25 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
   actorCharacterId: string;
   contextHash: string;
   readSet: readonly Readonly<{ ref: string; revisionOrHash: string }>[];
+  /** Required for a Bundle nested under a clarification choice. */
+  derivationScope?: string;
 }>): BundleGraphResult {
   const bundleHash = canonicalHash(input.bundle);
+  if (input.derivationScope !== undefined
+    && (input.derivationScope.length < 1
+      || input.derivationScope.length > 500
+      || input.derivationScope.trim() !== input.derivationScope
+      || input.derivationScope.normalize("NFC") !== input.derivationScope)) {
+    return rejected(["bundle:derivation-scope-invalid"]);
+  }
+  const derivationScope = input.derivationScope ?? null;
+  const referenceNamespaceHash = derivationScope === null
+    ? bundleHash
+    : canonicalHash({
+        schema: "zhuwei.kp-proposal-reference-namespace/vnext-1",
+        bundleHash,
+        derivationScope,
+      });
   const entries = input.bundle.proposals;
   const producerByHandle = new Map<string, {
     entry: VNextProposalBundleEntry;
@@ -94,8 +125,18 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
   const entryRefs = entries.map((entry, ordinal) => ({
     entry,
     ordinal,
-    entryRef: deriveEntryRef(input.rootActionId, input.contextHash, ordinal, entry.kind),
+    entryRef: deriveEntryRef(
+      input.rootActionId,
+      input.contextHash,
+      referenceNamespaceHash,
+      ordinal,
+      entry.kind,
+    ),
   }));
+  const sharedCheckEntryRef = sharedCheckOwner(input.bundle, entryRefs);
+  if (sharedCheckEntryRef === "invalid") {
+    return rejected(["bundle:shared-check-world-interaction-required"]);
+  }
   const edges = new Map<string, string[]>();
   for (const current of entryRefs) {
     const dependencies: string[] = [];
@@ -105,9 +146,15 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
           consume.kind === "prospective")
         .map((consume) => consume.handle),
     );
-    for (const handle of prospectiveHandles(current.entry)) {
+    const referencedProspective = new Set(prospectiveHandles(current.entry));
+    for (const handle of referencedProspective) {
       if (!declaredProspective.has(handle)) {
         issues.push(`bundle:prospective-consumer-not-declared:${handle}`);
+      }
+    }
+    for (const handle of declaredProspective) {
+      if (!referencedProspective.has(handle)) {
+        issues.push(`bundle:prospective-consume-unused:${handle}`);
       }
     }
     for (const consume of current.entry.consumes) {
@@ -127,6 +174,11 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
         dependencies.push(producerRef);
       }
     }
+    if (sharedCheckEntryRef !== null
+      && current.entry.outcomeBinding !== "always"
+      && current.entryRef !== sharedCheckEntryRef) {
+      dependencies.push(sharedCheckEntryRef);
+    }
     edges.set(current.entryRef, [...new Set(dependencies)].sort(compareCodeUnits));
   }
 
@@ -142,18 +194,14 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
     outcomeBinding: entry.outcomeBinding,
     consumes: entry.consumes.map((consume) => consume.kind === "existing"
       ? { kind: "existing" as const, ref: consume.ref }
-      : {
-          kind: "prospective" as const,
-          handle: consume.handle,
-          ref: prospectiveRef(
-            input.rootActionId,
-            bundleHash,
-            consume.handle,
-          ),
-        }),
+      : { kind: "prospective" as const, handle: consume.handle }),
     produces: entry.produces.map((produced) => ({
       handle: produced.handle,
-      prospectiveRef: prospectiveRef(input.rootActionId, bundleHash, produced.handle),
+      prospectiveRef: prospectiveRef(
+        input.rootActionId,
+        referenceNamespaceHash,
+        produced.handle,
+      ),
       kind: produced.kind,
       outcomeBinding: produced.outcomeBinding,
     })),
@@ -164,12 +212,15 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
     plan: deepFreeze({
       schema: VNEXT_PROPOSAL_BUNDLE_PLAN_SCHEMA,
       bundleHash,
+      derivationScope,
+      referenceNamespaceHash,
       rootActionId: input.rootActionId,
       actorCharacterId: input.actorCharacterId,
       contextHash: input.contextHash,
       readSet: input.readSet.map((entry) => ({ ...entry })),
       entries: derivedEntries,
       executionOrder,
+      sharedCheckEntryRef,
       adjudication: input.bundle.adjudication,
     }),
   });
@@ -202,6 +253,7 @@ export function formIdForKind(
 export function deriveEntryRef(
   rootActionId: string,
   contextHash: string,
+  referenceNamespaceHash: string,
   ordinal: number,
   kind: VNextProposalBundleEntry["kind"],
 ): string {
@@ -209,6 +261,7 @@ export function deriveEntryRef(
     schema: VNEXT_PROPOSAL_BUNDLE_PLAN_SCHEMA,
     rootActionId,
     contextHash,
+    referenceNamespaceHash,
     ordinal,
     kind,
   }).slice("sha256:".length, "sha256:".length + 32);
@@ -220,13 +273,24 @@ export function prospectiveRef(
   bundleHash: string,
   handle: string,
 ): string {
-  const digest = canonicalHash({
-    schema: VNEXT_PROPOSAL_BUNDLE_PLAN_SCHEMA,
-    rootActionId,
-    bundleHash,
-    handle,
-  }).slice("sha256:".length, "sha256:".length + 32);
-  return `prospective:${digest}`;
+  return normalizedProspectiveRef(rootActionId, bundleHash, handle);
+}
+
+function sharedCheckOwner(
+  bundle: VNextAdjudicationBundle,
+  entries: readonly Readonly<{
+    entry: VNextProposalBundleEntry;
+    entryRef: string;
+  }>[],
+): string | null | "invalid" {
+  const requiresCheck = bundle.adjudication.kind === "check"
+    || (bundle.adjudication.kind === "highRisk" && bundle.adjudication.check !== null);
+  if (!requiresCheck) return null;
+  const interactions = entries.filter(({ entry }) => entry.kind === "worldInteraction");
+  if (interactions.length !== 1 || interactions[0]?.entry.outcomeBinding !== "always") {
+    return "invalid";
+  }
+  return interactions[0].entryRef;
 }
 
 function prospectiveHandles(entry: VNextProposalBundleEntry): readonly string[] {
@@ -238,24 +302,67 @@ function prospectiveHandles(entry: VNextProposalBundleEntry): readonly string[] 
       for (const child of Object.values(value as Record<string, unknown>)) collect(child);
     }
   };
+  collect(entry.basisRefs);
   // The `consumes` list itself is authoritative and is not scanned as a
-  // payload; scan only fields in which a prospective handle can be acted on.
+  // payload; scan only schema-defined reference slots. Narrative text remains
+  // opaque even when it is byte-identical to a local handle.
   if (entry.kind === "worldInteraction") {
     collect(entry.sceneRef);
     collect(entry.targetRefs);
     collect(entry.directTargetRefs);
     collect(entry.instrumentRefs);
     collect(entry.abilityRef);
-    collect(entry.branches);
+    for (const branch of [entry.branches.success, entry.branches.failure]) {
+      if (branch === null) continue;
+      for (const effect of branch.effects) {
+        if (effect.kind === "relationTransition") collect(effect.relationRef);
+        else if (effect.kind === "definitionRevision") {
+          collect(effect.definitionRef);
+          for (const operation of effect.operations) {
+            if (operation.kind === "removeByRef") collect(operation.ref);
+            else if (operation.kind === "upsertByRef") {
+              collect("goalRef" in operation.entry
+                ? operation.entry.goalRef
+                : operation.entry.planRef);
+            }
+          }
+        } else {
+          collect(effect.sourceDefinitionRef);
+          collect(effect.zoneRef);
+        }
+      }
+      for (const evidence of branch.sensoryEvidence) {
+        collect(evidence.observerRef);
+        collect(evidence.subjectRef);
+        collect(evidence.basisRefs);
+      }
+      for (const pressure of branch.pressures) {
+        collect(pressure.sourceRef);
+        collect(pressure.basisRefs);
+      }
+      for (const opportunity of branch.opportunities) {
+        collect(opportunity.targetRef);
+        collect(opportunity.basisRefs);
+      }
+    }
   } else if (entry.kind === "reviseSemanticDefinition") {
     collect(entry.definitionRef);
     collect(entry.npcRef);
     collect(entry.templateRef);
-    collect(entry.operations);
+    for (const operation of entry.operations) {
+      if (operation.kind === "removeByRef") collect(operation.ref);
+      else if (operation.kind === "upsertByRef") {
+        collect("goalRef" in operation.entry
+          ? operation.entry.goalRef
+          : operation.entry.planRef);
+      }
+    }
   } else {
-    collect(entry.definition);
     collect(entry.templateRef);
     collect(entry.visibilityPolicyRef);
+    collect(entry.definition.sceneRef);
+    collect(entry.definition.visibilityFactId);
+    collect(entry.definition.mechanicDefinitionRefs);
   }
   return [...new Set(refs)].sort(compareCodeUnits);
 }

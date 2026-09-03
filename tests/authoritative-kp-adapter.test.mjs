@@ -10,10 +10,21 @@ import {
   AUTHORITATIVE_KP_PROFILES,
   authoritativeKpProfileByBinding,
 } from "../app/_runtime/lib/kp/authoritative-policy.ts";
-import { validateBodyOnlyNarrationOutput } from "../app/_runtime/lib/kp/narration-v3.ts";
+import {
+  validateBodyOnlyNarrationOutput,
+  validateFrozenClaimsNarrationOutput,
+} from "../app/_runtime/lib/kp/narration-v3.ts";
+import {
+  deriveAuthorityClaims,
+  projectRenderableClaims,
+} from "../app/_runtime/lib/rules/v2/claims.ts";
 import { ownedEnvironmentAttackAbilityRef } from "../app/_runtime/lib/room/proposal-adapter.ts";
 
 const ROOT_ACTION_ID = "root:current-action:001";
+
+function sha256(digit) {
+  return `sha256:${digit.repeat(64).slice(0, 64)}`;
+}
 
 function officialToolResponse(name, value, usage = {}) {
   return {
@@ -235,6 +246,7 @@ test("V5 replaces one grounding-only failure without carrying historical dialogu
 
   const result = await adapter.narrate({
     rootActionId: ROOT_ACTION_ID,
+    narrationInputMode: "observerProjection-v1",
     receipt: { receiptId: "receipt:v5:grounding-replacement", status: "committed" },
     projection,
   });
@@ -268,11 +280,251 @@ test("V5 replaces one grounding-only failure without carrying historical dialogu
   });
   await assert.rejects(schemaInvalidAdapter.narrate({
     rootActionId: ROOT_ACTION_ID,
+    narrationInputMode: "observerProjection-v1",
     receipt: { receiptId: "receipt:v5:grounding-replacement", status: "committed" },
     projection,
   }), (error) => error instanceof AuthoritativeKpModelError
     && error.modelInvocationReceipt.failureStage === "narrationSchema");
   assert.equal(schemaInvalidAi.calls.length, 1);
+});
+
+test("vNext narration rejects unclaimed facts, retries once, and reuses the exact FrozenRenderableClaims", async () => {
+  const viewerKey = "principal:alice\u001fcharacter:alice";
+  const receipt = {
+    receiptId: "receipt:vnext:door-opened",
+    rootActionId: ROOT_ACTION_ID,
+    status: "committed",
+  };
+  const renderableClaims = projectRenderableClaims(deriveAuthorityClaims({
+    receiptId: receipt.receiptId,
+    rootActionId: receipt.rootActionId,
+    materials: [{
+      claimRef: "claim:vnext:door-opened",
+      kind: "mechanicalOutcome",
+      actorRef: "character:alice",
+      targetRefs: ["feature:door"],
+      outcomeCode: "opened",
+      summary: "门已经打开。",
+      basis: {
+        authorityRefs: ["event:vnext:door-opened"],
+        viewerRefs: ["event:vnext:door-opened"],
+      },
+      visibility: { kind: "public" },
+    }],
+  }), {
+    viewerKey,
+    projectionHash: sha256("8"),
+    refs: [
+      "character:alice",
+      "feature:door",
+      "event:vnext:door-opened",
+    ],
+  });
+  const receipts = [];
+  const ai = scriptedAi([
+    officialToolResponse("submit_current_narration", { body: "国王已经死亡，莉安背叛了你。" }),
+    officialToolResponse("submit_current_narration", { body: "门已经打开。" }),
+  ]);
+  const adapter = createAuthoritativeKpAdapter({
+    ai,
+    now: monotonicClock(),
+    onInvocationReceipt(value) {
+      receipts.push(value);
+    },
+  });
+
+  const result = await adapter.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    narrationInputMode: "frozenRenderableClaims-vnext-1",
+    receipt,
+    viewerKey,
+    renderableClaims,
+    deliveryGeneration: 1,
+  });
+
+  assert.equal(result.body, "门已经打开。");
+  assert.deepEqual(result.audience, {
+    viewerKey,
+    projectionHash: renderableClaims.projectionHash,
+  });
+  assert.equal(ai.calls.length, 2);
+  const payload = JSON.parse(ai.calls[0].input.messages[1].content);
+  const replacementPayload = JSON.parse(ai.calls[1].input.messages[1].content);
+  assert.deepEqual(Object.keys(payload).sort(), [
+    "receipt",
+    "renderableClaims",
+    "viewerKey",
+  ]);
+  assert.deepEqual(payload.renderableClaims, renderableClaims);
+  assert.deepEqual(replacementPayload, payload);
+  assert.equal("committedDelta" in payload, false);
+  assert.equal("projection" in payload, false);
+  assert.deepEqual(receipts.map(({ result: receiptResult }) => receiptResult), [
+    "modelPermanent",
+    "success",
+  ]);
+  assert.deepEqual(receipts.map(({ invocationPurpose }) => invocationPurpose), [
+    "initialNarration",
+    "narrationGroundingRepair",
+  ]);
+
+  const mismatchedAi = scriptedAi([]);
+  const mismatched = createAuthoritativeKpAdapter({
+    ai: mismatchedAi,
+    now: monotonicClock(),
+  });
+  await assert.rejects(mismatched.narrate({
+    rootActionId: "root:vnext:mismatch",
+    narrationInputMode: "frozenRenderableClaims-vnext-1",
+    receipt,
+    viewerKey,
+    renderableClaims,
+    deliveryGeneration: 1,
+  }), AuthoritativeKpModelError);
+  assert.equal(mismatchedAi.calls.length, 0);
+
+  const exhaustedAi = scriptedAi([
+    officialToolResponse("submit_current_narration", { body: "国王已经死亡。" }),
+    officialToolResponse("submit_current_narration", { body: "莉安背叛了你。" }),
+  ]);
+  const exhausted = createAuthoritativeKpAdapter({
+    ai: exhaustedAi,
+    now: monotonicClock(),
+  });
+  await assert.rejects(exhausted.narrate({
+    rootActionId: ROOT_ACTION_ID,
+    narrationInputMode: "frozenRenderableClaims-vnext-1",
+    receipt,
+    viewerKey,
+    renderableClaims,
+    deliveryGeneration: 1,
+  }), (error) => error instanceof AuthoritativeKpModelError
+    && error.modelInvocationReceipt.failureStage === "narrationGrounding");
+  assert.equal(exhaustedAi.calls.length, 2);
+});
+
+test("vNext Claims grounding preserves attribution and rejects player agency", () => {
+  const viewerKey = "principal:alice\u001fcharacter:alice";
+  const receipt = {
+    receiptId: "receipt:vnext:attribution",
+    rootActionId: ROOT_ACTION_ID,
+    status: "committed",
+  };
+  const renderableClaims = projectRenderableClaims(deriveAuthorityClaims({
+    receiptId: receipt.receiptId,
+    rootActionId: receipt.rootActionId,
+    materials: [{
+      claimRef: "claim:vnext:check",
+      kind: "mechanicalOutcome",
+      actorRef: "character:alice",
+      summary: "检定成功。",
+      check: { kind: "abilityCheck", result: "success", total: 18, dc: 15 },
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }, {
+      claimRef: "claim:vnext:source",
+      kind: "sourceClaim",
+      speakerRef: "npc:keeper",
+      statement: "钥匙在楼上。",
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }, {
+      claimRef: "claim:vnext:inference",
+      kind: "characterInference",
+      characterRef: "character:alice",
+      inference: "守卫有所隐瞒。",
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }, {
+      claimRef: "claim:vnext:committed",
+      kind: "actionCommitted",
+      actorRef: "character:alice",
+      status: "committed",
+      summary: "行动已经提交。",
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }],
+  }), {
+    viewerKey,
+    projectionHash: sha256("9"),
+    refs: ["npc:keeper", "character:alice"],
+  });
+  const request = {
+    rootActionId: ROOT_ACTION_ID,
+    narrationInputMode: "frozenRenderableClaims-vnext-1",
+    receipt,
+    viewerKey,
+    renderableClaims,
+  };
+
+  assert.deepEqual(validateFrozenClaimsNarrationOutput({
+    body: "检定成功。检定总值为18。难度为15。对方声称钥匙在楼上。你判断守卫有所隐瞒。行动已经提交。你接下来怎么做？",
+  }, request), {
+    body: "检定成功。检定总值为18。难度为15。对方声称钥匙在楼上。你判断守卫有所隐瞒。行动已经提交。你接下来怎么做？",
+  });
+  for (const body of [
+    "钥匙在楼上。",
+    "守卫有所隐瞒。",
+    "行动已经提交。你决定冲进去。",
+    "国王已经死亡。",
+    "检定成功，你必须逃跑。对方声称钥匙在楼上。你判断守卫有所隐瞒。",
+    "检定成功并爆炸。对方声称钥匙在楼上。你判断守卫有所隐瞒。",
+    "行动已经提交。你接下来怎么做？",
+    "你接下来怎么做？",
+  ]) {
+    assert.throws(
+      () => validateFrozenClaimsNarrationOutput({ body }, request),
+      (error) => error?.name === "NarrationGroundingValidationError",
+      body,
+    );
+  }
+});
+
+test("vNext Claims grounding accepts exact short payloads and rejects suffix hitchhiking", () => {
+  const viewerKey = "principal:alice\u001fcharacter:alice";
+  const receipt = {
+    receiptId: "receipt:vnext:short-claim",
+    rootActionId: ROOT_ACTION_ID,
+    status: "committed",
+  };
+  const renderableClaims = projectRenderableClaims(deriveAuthorityClaims({
+    receiptId: receipt.receiptId,
+    rootActionId: receipt.rootActionId,
+    materials: [{
+      claimRef: "claim:vnext:short-door",
+      kind: "sceneFeature",
+      featureRef: "feature:door",
+      description: "门开",
+      basis: { authorityRefs: [], viewerRefs: [] },
+      visibility: { kind: "public" },
+    }],
+  }), {
+    viewerKey,
+    projectionHash: sha256("a"),
+    refs: ["feature:door"],
+  });
+  const request = {
+    rootActionId: ROOT_ACTION_ID,
+    narrationInputMode: "frozenRenderableClaims-vnext-1",
+    receipt,
+    viewerKey,
+    renderableClaims,
+  };
+
+  assert.deepEqual(validateFrozenClaimsNarrationOutput({ body: "门开了。" }, request), {
+    body: "门开了。",
+  });
+  for (const body of [
+    "门开着火。",
+    "门开爆炸。",
+    "门开了，国王死了。",
+  ]) {
+    assert.throws(
+      () => validateFrozenClaimsNarrationOutput({ body }, request),
+      (error) => error?.name === "NarrationGroundingValidationError",
+      body,
+    );
+  }
 });
 
 test("a player's actorAction is attributable dialogue, not evidence for a world fact", () => {

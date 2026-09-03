@@ -898,6 +898,14 @@ function compileAtomicWorldInteractionPlan(input: JsonRecord): AtomicCompileResu
   return { kind: "accepted", plan };
 }
 
+/** Validates the persisted raw Rules input through the same compiler used by
+ * execution, including prospective-reference resolution and child bindings. */
+export function isCanonicalAtomicWorldInteractionStepsInput(
+  value: unknown,
+): value is JsonRecord {
+  return isRecord(value) && compileAtomicWorldInteractionPlan(value).kind === "accepted";
+}
+
 function resolveAtomicRulesInput(
   raw: JsonRecord,
   bindings: ReadonlyMap<string, ProspectiveBinding>,

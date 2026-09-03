@@ -1,5 +1,6 @@
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import type { ProfileRef } from "../rules/profiles/types";
+import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import type { KpProposalRequestPurpose } from "../kp/authoritative-types";
 import {
   isTacticalPosition,
@@ -223,11 +224,20 @@ type DeliveryAudience = {
   audienceId: string;
   projection: unknown;
   principalId: string;
+  narrationInputMode: NarrationInputMode;
+  viewerKey?: string;
+  renderableClaims?: UnknownRecord;
 };
+
+type NarrationInputMode =
+  | "observerProjection-v1"
+  | "frozenRenderableClaims-vnext-1";
 
 type DeliveryPlan = {
   deliveryProtocol: ProfileRef;
   publishCapability: unknown;
+  rootActionId: string;
+  receiptId: string;
   audiences: DeliveryAudience[];
 };
 
@@ -894,30 +904,75 @@ function parseDeliveryPlan(value: unknown): DeliveryPlan | undefined {
 
   const audienceIds = new Set<string>();
   const audiences: DeliveryAudience[] = [];
+  const planRootActionId = requiredString(value, "rootActionId");
+  const planReceiptId = requiredString(value, "receiptId");
+  if (planRootActionId === undefined || planReceiptId === undefined) return undefined;
   for (const candidate of value.audiences) {
     if (!isRecord(candidate)) return undefined;
     const audienceId = requiredString(candidate, "audienceId");
     const principalId = requiredString(candidate, "principalId");
+    if (!("kpProjection" in candidate) || candidate.kpProjection === undefined) {
+      return undefined;
+    }
+    const projection = candidate.kpProjection;
+    const requestedNarrationInputMode = candidate.narrationInputMode;
+    const narrationInputMode: NarrationInputMode | undefined =
+      requestedNarrationInputMode === "observerProjection-v1"
+          || requestedNarrationInputMode === "frozenRenderableClaims-vnext-1"
+        ? requestedNarrationInputMode
+        : !("narrationInputMode" in candidate)
+            && isRecord(projection)
+            && !("renderableClaims" in projection)
+          // Product-0.4 V5 outcomes persisted before the discriminator are
+          // the only accepted implicit shape. New Room plans always name it.
+          ? "observerProjection-v1"
+          : undefined;
     if (
       !audienceId
       || !principalId
-      || !("kpProjection" in candidate)
+      || narrationInputMode === undefined
       || "projection" in candidate
       || audienceIds.has(audienceId)
     ) {
       return undefined;
     }
-    const projection = candidate.kpProjection;
-    if (projection === undefined) return undefined;
+    let viewerKey: string | undefined;
+    let renderableClaims: UnknownRecord | undefined;
+    if (narrationInputMode === "frozenRenderableClaims-vnext-1") {
+      const characterId = requiredString(candidate, "characterId");
+      const projectionHash = requiredString(candidate, "projectionHash");
+      const claims = isRecord(projection) ? projection.renderableClaims : undefined;
+      viewerKey = characterId === undefined
+        ? undefined
+        : `${principalId}\u001f${characterId}`;
+      if (
+        viewerKey === undefined
+        || !frozenRenderableClaimsConform(claims)
+        || projectionHash !== claims.projectionHash
+        || claims.viewerKey !== viewerKey
+        || claims.rootActionId !== planRootActionId
+        || claims.receiptId !== planReceiptId
+      ) return undefined;
+      renderableClaims = claims;
+    }
     audienceIds.add(audienceId);
     audiences.push({
       audienceId,
       projection,
       principalId,
+      narrationInputMode,
+      ...(viewerKey === undefined ? {} : { viewerKey }),
+      ...(renderableClaims === undefined ? {} : { renderableClaims }),
     });
   }
 
-  return { deliveryProtocol, publishCapability: value.publishCapability, audiences };
+  return {
+    deliveryProtocol,
+    publishCapability: value.publishCapability,
+    rootActionId: planRootActionId,
+    receiptId: planReceiptId,
+    audiences,
+  };
 }
 
 function publicationNarration(
@@ -1002,6 +1057,19 @@ async function publishDeliveryPlan(
 ): Promise<DeliveryPublicationResult> {
   const deliveryPlan = parseDeliveryPlan(result.deliveryPlan);
   if (!deliveryPlan) throw new Error("Room Authority returned an invalid delivery plan");
+  const resultReceiptId = isRecord(result.receipt)
+    ? requiredString(result.receipt, "receiptId")
+    : undefined;
+  const resultRootActionId = isRecord(result.receipt)
+    ? requiredString(result.receipt, "rootActionId")
+    : undefined;
+  const preparedRootActionId = requiredString(prepared, "rootActionId")
+    ?? (prepared === result ? resultRootActionId : undefined);
+  if (
+    deliveryPlan.rootActionId !== preparedRootActionId
+    || deliveryPlan.rootActionId !== resultRootActionId
+    || deliveryPlan.receiptId !== resultReceiptId
+  ) throw new Error("Room Authority returned a mismatched delivery plan");
   let publicationStatus: UnknownRecord | undefined;
   if (context.authority.deliveryPublicationStatus) {
     const observedStatus = await context.authority.deliveryPublicationStatus({
@@ -1119,25 +1187,25 @@ async function publishDeliveryPlan(
           };
           continue;
         }
-        const vNextClaims = isRecord(audience.projection)
-          && isRecord(audience.projection.renderableClaims)
-          ? audience.projection.renderableClaims
-          : undefined;
-        const narration = await context.kp.narrate(vNextClaims === undefined
-          ? {
-              rootActionId: prepared.rootActionId,
+        const narration = await context.kp.narrate(
+          audience.narrationInputMode === "observerProjection-v1"
+            ? {
+              rootActionId: deliveryPlan.rootActionId,
+              narrationInputMode: audience.narrationInputMode,
               receipt: result.receipt,
               audienceId: audience.audienceId,
               projection: audience.projection,
               deliveryGeneration,
             }
-          : {
-              rootActionId: prepared.rootActionId,
+            : {
+              rootActionId: deliveryPlan.rootActionId,
+              narrationInputMode: audience.narrationInputMode,
               receipt: result.receipt,
-              viewerKey: vNextClaims.viewerKey,
-              renderableClaims: vNextClaims,
+              viewerKey: audience.viewerKey,
+              renderableClaims: audience.renderableClaims,
               deliveryGeneration,
-            });
+            },
+        );
         const publicationResult = await context.authority.publishDelivery!(
           { publishCapability: deliveryPlan.publishCapability },
           {
@@ -1893,36 +1961,57 @@ export async function handleViewerNarrationRecovery(
       === INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE.profileHash
     ? INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE
     : undefined;
+  const requestedNarrationInputMode = begunValue.narrationInputMode;
+  const narrationInputMode: NarrationInputMode | undefined =
+    requestedNarrationInputMode === "observerProjection-v1"
+        || requestedNarrationInputMode === "frozenRenderableClaims-vnext-1"
+      ? requestedNarrationInputMode
+      : undefined;
+  const receiptId = isRecord(begunValue.receipt)
+    ? requiredString(begunValue.receipt, "receiptId")
+    : undefined;
+  const recoveryClaims = begunValue.renderableClaims;
+  const recoveryViewerKey = requiredString(begunValue, "viewerKey");
+  const legacyProjectionValid = narrationInputMode === "observerProjection-v1"
+    && begunValue.projection !== undefined;
+  const vNextClaimsValid = narrationInputMode === "frozenRenderableClaims-vnext-1"
+    && recoveryViewerKey !== undefined
+    && frozenRenderableClaimsConform(recoveryClaims)
+    && recoveryClaims.viewerKey === recoveryViewerKey
+    && recoveryClaims.rootActionId === rootActionId
+    && recoveryClaims.receiptId === receiptId;
   if (
     begunValue.kind !== "pending"
     || rootActionId === undefined
     || deliveryGeneration < 1
     || !isRecord(begunValue.receipt)
-    || begunValue.projection === undefined
+    || narrationInputMode === undefined
+    || (!legacyProjectionValid && !vNextClaimsValid)
     || protocol === undefined
   ) return statefulOutcome(authorityFailure(undefined, begunValue.receipt));
 
   let failure: ReturnType<typeof narrationFailure> | undefined;
   try {
-    const recoveryClaims = isRecord(begunValue.projection)
-      && isRecord(begunValue.projection.renderableClaims)
-      ? begunValue.projection.renderableClaims
-      : undefined;
-    const narration = await context.kp.narrate(recoveryClaims === undefined
-      ? {
+    const narration = await context.kp.narrate(
+      narrationInputMode === "observerProjection-v1"
+        ? {
           rootActionId,
+          narrationInputMode,
           narrationPurpose: "narrationRecovery",
           receipt: begunValue.receipt,
           projection: begunValue.projection,
           deliveryGeneration,
         }
-      : {
+        : {
           rootActionId,
+          narrationInputMode,
+          narrationPurpose: "narrationRecovery",
           receipt: begunValue.receipt,
-          viewerKey: recoveryClaims.viewerKey,
+          viewerKey: recoveryViewerKey,
           renderableClaims: recoveryClaims,
           deliveryGeneration,
-        });
+        },
+    );
     const body = publicationNarration(narration, protocol).body;
     const published = await context.authority.publishViewerNarrationRecovery(
       context.principal,

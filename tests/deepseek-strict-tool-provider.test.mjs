@@ -53,6 +53,13 @@ const STRICT_SCHEMA = Object.freeze({
   }),
 });
 
+const CORRECTION_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({ summary: Object.freeze({ type: "string" }) }),
+  required: Object.freeze(["summary"]),
+  additionalProperties: false,
+});
+
 function strictModelInput(schema = STRICT_SCHEMA) {
   return {
     messages: [{ role: "user", content: "裁定开放式世界互动" }],
@@ -68,6 +75,18 @@ function strictModelInput(schema = STRICT_SCHEMA) {
     tool_choice: "required",
     parallel_tool_calls: false,
     max_completion_tokens: 1_200,
+  };
+}
+
+function strictCorrectionModelInput() {
+  const input = strictModelInput(CORRECTION_SCHEMA);
+  return {
+    ...input,
+    messages: [{ role: "user", content: "只修正摘要" }],
+    tools: [{
+      ...input.tools[0],
+      function: { ...input.tools[0].function, name: "correct_proposal_bundle" },
+    }],
   };
 }
 
@@ -92,14 +111,26 @@ function evidenceFor(profile, overrides = {}) {
   return createStrictToolProviderValidationEvidence({
     profile,
     executionMode: "live-provider",
-    promptHash: stableStructuralHash({ prompt: "vnext-proposal-bundle-v1" }),
-    schemaHash: stableStructuralHash(STRICT_SCHEMA),
-    parserHash: stableStructuralHash({ parser: "vnext-proposal-bundle-v1" }),
+    contracts: [{
+      contractId: "submit-proposal-bundle",
+      toolName: "submit_proposal_bundle",
+      promptHash: stableStructuralHash({ prompt: "vnext-proposal-bundle-v2" }),
+      schemaHash: stableStructuralHash(STRICT_SCHEMA),
+      parserHash: stableStructuralHash({ parser: "vnext-proposal-bundle-v2" }),
+      caseIds: ["world-interaction-only", "materialize-then-interact"],
+    }, {
+      contractId: "correct-proposal-bundle",
+      toolName: "correct_proposal_bundle",
+      promptHash: stableStructuralHash({ prompt: "vnext-proposal-correction-v1" }),
+      schemaHash: stableStructuralHash(CORRECTION_SCHEMA),
+      parserHash: stableStructuralHash({ parser: "vnext-proposal-bundle-v2" }),
+      caseIds: ["summary-only-correction"],
+    }],
     validationSuiteHash: stableStructuralHash({ suite: "strict-tool-handshake-v1" }),
     validatedAt: "2026-09-02T00:00:00.000Z",
-    caseCount: 3,
-    liveProviderCalls: 3,
-    successfulStrictToolCalls: 2,
+    caseCount: 4,
+    liveProviderCalls: 4,
+    successfulStrictToolCalls: 3,
     invalidSchemaRejections: 1,
     invalidSchemaRejectedBeforeGeneration: true,
     ...overrides,
@@ -125,6 +156,22 @@ function toolResponse(argumentsValue = {
   };
 }
 
+function correctionToolResponse(summary = "检查完成。") {
+  return {
+    choices: [{
+      message: {
+        tool_calls: [{
+          type: "function",
+          function: {
+            name: "correct_proposal_bundle",
+            arguments: JSON.stringify({ summary }),
+          },
+        }],
+      },
+    }],
+  };
+}
+
 function parseToolResponse(response, expectedKinds) {
   const calls = response?.choices?.[0]?.message?.tool_calls;
   assert.equal(calls?.length, 1);
@@ -132,6 +179,15 @@ function parseToolResponse(response, expectedKinds) {
   const parsed = JSON.parse(calls[0].function.arguments);
   assert.equal(parsed.bundleKind, "proposal-bundle");
   assert.deepEqual(parsed.operations.map((entry) => entry.kind), expectedKinds);
+  return parsed;
+}
+
+function parseCorrectionToolResponse(response) {
+  const calls = response?.choices?.[0]?.message?.tool_calls;
+  assert.equal(calls?.length, 1);
+  assert.equal(calls[0]?.function?.name, "correct_proposal_bundle");
+  const parsed = JSON.parse(calls[0].function.arguments);
+  assert.equal(parsed.summary, "检查完成。");
   return parsed;
 }
 
@@ -275,7 +331,9 @@ test("Registry fails closed unless strict-tool has matching live beta evidence",
       ...profile,
       strictToolValidation: {
         ...validBeforeTamper,
-        promptHash: stableStructuralHash({ prompt: "tampered" }),
+        contracts: validBeforeTamper.contracts.map((contract, index) => index === 0
+          ? { ...contract, promptHash: stableStructuralHash({ prompt: "tampered" }) }
+          : contract),
       },
     }]),
     /STRICT_TOOL_EVIDENCE_INVALID/u,
@@ -312,17 +370,26 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
   const calls = [];
   const definition = {
     profile,
-    promptHash: stableStructuralHash({ prompt: "vnext-proposal-bundle-v1" }),
-    parserHash: stableStructuralHash({ parser: "vnext-proposal-bundle-v1" }),
+    contracts: [{
+      contractId: "submit-proposal-bundle",
+      promptHash: stableStructuralHash({ prompt: "vnext-proposal-bundle-v2" }),
+      parserHash: stableStructuralHash({ parser: "vnext-proposal-bundle-v2" }),
+    }, {
+      contractId: "correct-proposal-bundle",
+      promptHash: stableStructuralHash({ prompt: "vnext-proposal-correction-v1" }),
+      parserHash: stableStructuralHash({ parser: "vnext-proposal-bundle-v2" }),
+    }],
     positiveCases: [
       {
         caseId: "world-interaction-only",
+        contractId: "submit-proposal-bundle",
         capability: "world-interaction",
         modelInput: strictModelInput(),
         parse: (response) => parseToolResponse(response, ["world-interaction"]),
       },
       {
         caseId: "materialize-then-interact",
+        contractId: "submit-proposal-bundle",
         capability: "materialization+world-interaction",
         modelInput: {
           ...strictModelInput(),
@@ -332,6 +399,13 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
           "materialization",
           "world-interaction",
         ]),
+      },
+      {
+        caseId: "summary-only-correction",
+        contractId: "correct-proposal-bundle",
+        capability: "proposal-summary-correction",
+        modelInput: strictCorrectionModelInput(),
+        parse: parseCorrectionToolResponse,
       },
     ],
     invalidSchemaCase: {
@@ -345,6 +419,9 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
     validatedAt: "2026-09-02T00:00:00.000Z",
     invoke: async (model, input, { signal }) => {
       calls.push({ kind: "positive", model, input, signal });
+      if (input.tools[0].function.name === "correct_proposal_bundle") {
+        return correctionToolResponse();
+      }
       return input.messages[0].content.includes("椅子")
         ? toolResponse({
             bundleKind: "proposal-bundle",
@@ -363,13 +440,14 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
 
   assert.equal(report.status, "passed");
   assert.equal(report.registrationAccepted, true);
-  assert.equal(report.liveProviderCalls, 3);
-  assert.equal(report.positiveCases.length, 2);
+  assert.equal(report.liveProviderCalls, 4);
+  assert.equal(report.positiveCases.length, 3);
   assert.ok(report.positiveCases.every((entry) => entry.passed));
   assert.equal(report.invalidSchemaCase.rejectedBeforeGeneration, true);
-  assert.equal(report.evidence.successfulStrictToolCalls, 2);
+  assert.equal(report.evidence.successfulStrictToolCalls, 3);
   assert.equal(report.evidence.invalidSchemaRejections, 1);
-  assert.equal(calls.length, 3);
+  assert.equal(report.evidence.contracts.length, 2);
+  assert.equal(calls.length, 4);
   assert.ok(calls.every((entry) => entry.signal instanceof AbortSignal));
   assert.equal(JSON.stringify(report).includes("抓起场景中的椅子"), false);
 });

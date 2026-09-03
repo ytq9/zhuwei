@@ -61,10 +61,13 @@ const DELIVERY_PUBLISH_CAPABILITY = "delivery-capability:open-door:2";
 const DEFAULT_DELIVERY_PLAN = Object.freeze({
   deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
   publishCapability: DELIVERY_PUBLISH_CAPABILITY,
+  rootActionId: PREPARED.rootActionId,
+  receiptId: "receipt:open-door",
   audiences: Object.freeze([
     Object.freeze({
       audienceId: "audience:alice",
       principalId: TRUSTED_PRINCIPAL.id,
+      narrationInputMode: "observerProjection-v1",
       kpProjection: ALICE_AUDIENCE_PROJECTION,
     }),
   ]),
@@ -669,15 +672,19 @@ test("a committed delivery plan narrates each frozen audience projection and pub
   const deliveryPlan = Object.freeze({
     deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
     publishCapability: DELIVERY_PUBLISH_CAPABILITY,
+    rootActionId: PREPARED.rootActionId,
+    receiptId: COMMITTED_RECEIPT.receiptId,
     audiences: Object.freeze([
       Object.freeze({
         audienceId: "audience:alice",
         principalId: TRUSTED_PRINCIPAL.id,
+        narrationInputMode: "observerProjection-v1",
         kpProjection: ALICE_AUDIENCE_PROJECTION,
       }),
       Object.freeze({
         audienceId: "audience:bob",
         principalId: CLICKING_PRINCIPAL.id,
+        narrationInputMode: "observerProjection-v1",
         kpProjection: BOB_AUDIENCE_PROJECTION,
       }),
     ]),
@@ -728,6 +735,7 @@ test("a committed delivery plan narrates each frozen audience projection and pub
   assert.deepEqual(narrationCalls.map(({ request }) => request), [
     {
       rootActionId: PREPARED.rootActionId,
+      narrationInputMode: "observerProjection-v1",
       receipt: COMMITTED_RECEIPT,
       audienceId: "audience:alice",
       projection: ALICE_AUDIENCE_PROJECTION,
@@ -735,6 +743,7 @@ test("a committed delivery plan narrates each frozen audience projection and pub
     },
     {
       rootActionId: PREPARED.rootActionId,
+      narrationInputMode: "observerProjection-v1",
       receipt: COMMITTED_RECEIPT,
       audienceId: "audience:bob",
       projection: BOB_AUDIENCE_PROJECTION,
@@ -770,7 +779,7 @@ test("a committed delivery plan narrates each frozen audience projection and pub
   ]);
 });
 
-test("one audience failure does not turn another viewer's published response into a retry", async () => {
+test("a persisted V5 plan without input modes keeps one audience failure isolated", async () => {
   const aliceNarration = Object.freeze({
     body: "门在爱丽丝面前打开，银钥匙落入她的视线。",
   });
@@ -780,6 +789,8 @@ test("one audience failure does not turn another viewer's published response int
   const deliveryPlan = Object.freeze({
     deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
     publishCapability: DELIVERY_PUBLISH_CAPABILITY,
+    rootActionId: PREPARED.rootActionId,
+    receiptId: COMMITTED_RECEIPT.receiptId,
     audiences: Object.freeze([
       Object.freeze({
         audienceId: "audience:alice",
@@ -917,10 +928,13 @@ test("a delivery-plan publication failure never rolls back or repeats the commit
   const deliveryPlan = Object.freeze({
     deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
     publishCapability: DELIVERY_PUBLISH_CAPABILITY,
+    rootActionId: PREPARED.rootActionId,
+    receiptId: COMMITTED_RECEIPT.receiptId,
     audiences: Object.freeze([
       Object.freeze({
         audienceId: "audience:alice",
         principalId: TRUSTED_PRINCIPAL.id,
+        narrationInputMode: "observerProjection-v1",
         kpProjection: ALICE_AUDIENCE_PROJECTION,
       }),
     ]),

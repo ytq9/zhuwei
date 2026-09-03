@@ -67,8 +67,17 @@ export type ContextPlannerRoleValidationEvidence = Readonly<{
   evidenceHash: string;
 }>;
 
+export type StrictToolContractValidationEvidence = Readonly<{
+  contractId: string;
+  toolName: string;
+  promptHash: string;
+  schemaHash: string;
+  parserHash: string;
+  caseIds: readonly string[];
+}>;
+
 export type StrictToolProviderValidationEvidence = Readonly<{
-  evidenceVersion: "kp-strict-tool-provider-evidence-v1";
+  evidenceVersion: "kp-strict-tool-provider-evidence-v2";
   executionMode: "live-provider" | "offline-fixture";
   profileBindingHash: string;
   provider: string;
@@ -79,6 +88,7 @@ export type StrictToolProviderValidationEvidence = Readonly<{
   promptHash: string;
   schemaHash: string;
   parserHash: string;
+  contracts: readonly StrictToolContractValidationEvidence[];
   validationSuiteHash: string;
   validatedAt: string;
   caseCount: number;
@@ -125,6 +135,22 @@ export const DEEPSEEK_V4_FLASH_CONTEXT_PLANNER_CANDIDATE = Object.freeze({
   validationSuiteVersion: CONTEXT_PLANNER_ROLE_VALIDATION_SUITE_VERSION,
   validationStatus: "pending" as const,
   structuredOutputMode: "tool" as const,
+  contextWindowTokens: 32_000,
+  latencyTier: "low" as const,
+  costTier: "low" as const,
+}) satisfies ModelProfileRegistration;
+
+/** Candidate only: live strict-tool evidence is required before registration
+ * or any Room ingress can select this Profile. */
+export const DEEPSEEK_V4_FLASH_VNEXT2_STRICT_TOOL_CANDIDATE = Object.freeze({
+  profileRef: "primary-kp:deepseek-v4-flash:vnext2-strict:v1",
+  provider: "deepseek",
+  modelId: "deepseek-v4-flash",
+  modelRevision: "deepseek-v4-flash-0731",
+  supportedRoles: Object.freeze(["primary-kp"] as const),
+  validationSuiteVersion: "kp-vnext2-strict-tool-handshake-v2",
+  validationStatus: "pending" as const,
+  structuredOutputMode: "strict-tool" as const,
   contextWindowTokens: 32_000,
   latencyTier: "low" as const,
   costTier: "low" as const,
@@ -206,6 +232,7 @@ type StrictToolContractBinding = Readonly<{
   promptHash: string;
   schemaHash: string;
   parserHash: string;
+  contracts: readonly StrictToolContractValidationEvidence[];
   validationSuiteHash: string;
 }>;
 
@@ -230,9 +257,7 @@ export function createStrictToolProviderValidationEvidence(input: Readonly<{
   executionMode: StrictToolProviderValidationEvidence["executionMode"];
   endpointProtocol?: string;
   schemaDialect?: string;
-  promptHash: string;
-  schemaHash: string;
-  parserHash: string;
+  contracts: readonly StrictToolContractValidationEvidence[];
   validationSuiteHash: string;
   validatedAt: string;
   caseCount: number;
@@ -241,16 +266,18 @@ export function createStrictToolProviderValidationEvidence(input: Readonly<{
   invalidSchemaRejections: number;
   invalidSchemaRejectedBeforeGeneration: boolean;
 }>): StrictToolProviderValidationEvidence {
+  const contracts = normalizeStrictToolContracts(input.contracts);
   const contract = {
     endpointProtocol: input.endpointProtocol ?? DEEPSEEK_STRICT_TOOL_ENDPOINT_PROTOCOL,
     schemaDialect: input.schemaDialect ?? DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT,
-    promptHash: input.promptHash,
-    schemaHash: input.schemaHash,
-    parserHash: input.parserHash,
+    promptHash: strictToolContractAggregateHash(contracts, "promptHash"),
+    schemaHash: strictToolContractAggregateHash(contracts, "schemaHash"),
+    parserHash: strictToolContractAggregateHash(contracts, "parserHash"),
+    contracts,
     validationSuiteHash: input.validationSuiteHash,
   };
   const source = {
-    evidenceVersion: "kp-strict-tool-provider-evidence-v1" as const,
+    evidenceVersion: "kp-strict-tool-provider-evidence-v2" as const,
     executionMode: input.executionMode,
     profileBindingHash: strictToolProfileBindingHash(input.profile, contract),
     provider: input.profile.provider,
@@ -291,7 +318,16 @@ export function createModelProfileRegistry(
           }),
       ...(profile.strictToolValidation === undefined
         ? {}
-        : { strictToolValidation: Object.freeze({ ...profile.strictToolValidation }) }),
+        : {
+            strictToolValidation: Object.freeze({
+              ...profile.strictToolValidation,
+              contracts: Object.freeze(profile.strictToolValidation.contracts.map((contract) =>
+                Object.freeze({
+                  ...contract,
+                  caseIds: Object.freeze([...contract.caseIds]),
+                }))),
+            }),
+          }),
     };
     delete registeredSource.profileHash;
     byRef[profile.profileRef] = Object.freeze({
@@ -394,11 +430,11 @@ function strictToolEvidencePasses(
   return strictToolEvidenceIsBound(profile, evidence)
     && evidence.executionMode === "live-provider"
     && Number.isInteger(evidence.caseCount)
-    && evidence.caseCount >= 3
+    && evidence.caseCount >= 4
     && Number.isInteger(evidence.liveProviderCalls)
     && evidence.liveProviderCalls >= evidence.caseCount
     && Number.isInteger(evidence.successfulStrictToolCalls)
-    && evidence.successfulStrictToolCalls >= 2
+    && evidence.successfulStrictToolCalls >= 3
     && Number.isInteger(evidence.invalidSchemaRejections)
     && evidence.invalidSchemaRejections >= 1
     && evidence.successfulStrictToolCalls + evidence.invalidSchemaRejections <= evidence.caseCount
@@ -415,6 +451,7 @@ function strictToolEvidenceIsBound(
     promptHash: evidence.promptHash,
     schemaHash: evidence.schemaHash,
     parserHash: evidence.parserHash,
+    contracts: evidence.contracts,
     validationSuiteHash: evidence.validationSuiteHash,
   };
   const source = {
@@ -432,7 +469,7 @@ function strictToolEvidenceIsBound(
     invalidSchemaRejections: evidence.invalidSchemaRejections,
     invalidSchemaRejectedBeforeGeneration: evidence.invalidSchemaRejectedBeforeGeneration,
   };
-  return evidence.evidenceVersion === "kp-strict-tool-provider-evidence-v1"
+  return evidence.evidenceVersion === "kp-strict-tool-provider-evidence-v2"
     && profile.structuredOutputMode === "strict-tool"
     && profile.provider === "deepseek"
     && evidence.provider === profile.provider
@@ -440,6 +477,10 @@ function strictToolEvidenceIsBound(
     && evidence.modelRevision === profile.modelRevision
     && evidence.endpointProtocol === DEEPSEEK_STRICT_TOOL_ENDPOINT_PROTOCOL
     && evidence.schemaDialect === DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT
+    && strictToolContractsConform(evidence.contracts)
+    && evidence.promptHash === strictToolContractAggregateHash(evidence.contracts, "promptHash")
+    && evidence.schemaHash === strictToolContractAggregateHash(evidence.contracts, "schemaHash")
+    && evidence.parserHash === strictToolContractAggregateHash(evidence.contracts, "parserHash")
     && evidence.profileBindingHash === strictToolProfileBindingHash(profile, contract)
     && [
       evidence.promptHash,
@@ -449,6 +490,70 @@ function strictToolEvidenceIsBound(
     ].every(validEvidenceHash)
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(evidence.validatedAt)
     && evidence.evidenceHash === stableStructuralHash(source);
+}
+
+function normalizeStrictToolContracts(
+  contracts: readonly StrictToolContractValidationEvidence[],
+): readonly StrictToolContractValidationEvidence[] {
+  if (!strictToolContractsConform(contracts)) {
+    throw new TypeError("STRICT_TOOL_CONTRACT_EVIDENCE_INVALID");
+  }
+  return Object.freeze([...contracts]
+    .sort((left, right) => left.contractId.localeCompare(right.contractId))
+    .map((contract) => Object.freeze({
+      ...contract,
+      caseIds: Object.freeze([...contract.caseIds].sort()),
+    })));
+}
+
+function strictToolContractsConform(
+  value: unknown,
+): value is readonly StrictToolContractValidationEvidence[] {
+  if (!Array.isArray(value) || value.length < 2) return false;
+  const contractIds = new Set<string>();
+  const toolNames = new Set<string>();
+  const allCaseIds = new Set<string>();
+  return value.every((contract) => {
+    if (contract === null || typeof contract !== "object" || Array.isArray(contract)) return false;
+    const record = contract as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    const expected = [
+      "caseIds", "contractId", "parserHash", "promptHash", "schemaHash", "toolName",
+    ];
+    if (keys.length !== expected.length
+      || !keys.every((key, index) => key === expected[index])
+      || typeof record.contractId !== "string"
+      || record.contractId.trim().length === 0
+      || contractIds.has(record.contractId)
+      || typeof record.toolName !== "string"
+      || record.toolName.trim().length === 0
+      || toolNames.has(record.toolName)
+      || ![record.promptHash, record.schemaHash, record.parserHash]
+        .every((hash) => typeof hash === "string" && validEvidenceHash(hash))
+      || !Array.isArray(record.caseIds)
+      || record.caseIds.length < 1) return false;
+    const localCaseIds = new Set<string>();
+    for (const caseId of record.caseIds) {
+      if (typeof caseId !== "string"
+        || caseId.trim().length === 0
+        || localCaseIds.has(caseId)
+        || allCaseIds.has(caseId)) return false;
+      localCaseIds.add(caseId);
+    }
+    contractIds.add(record.contractId);
+    toolNames.add(record.toolName);
+    for (const caseId of localCaseIds) allCaseIds.add(caseId);
+    return true;
+  });
+}
+
+function strictToolContractAggregateHash(
+  contracts: readonly StrictToolContractValidationEvidence[],
+  field: "promptHash" | "schemaHash" | "parserHash",
+): string {
+  return stableStructuralHash([...contracts]
+    .sort((left, right) => left.contractId.localeCompare(right.contractId))
+    .map((contract) => ({ contractId: contract.contractId, [field]: contract[field] })));
 }
 
 function validEvidenceHash(value: string): boolean {

@@ -17,6 +17,7 @@ import type { VNextRequiredContext } from "../app/_runtime/lib/kp/vnext/required
 import {
   WORLD_INTERACTION_PROFILE,
 } from "../app/_runtime/lib/rules/profiles/vnext-world-interaction";
+import type { VersionedRulesRuntime } from "../app/_runtime/lib/rules/v2-runtime";
 import {
   createDefinitionSnapshot,
   isStoredSemanticDefinition,
@@ -54,6 +55,7 @@ type Authority = {
 
 type RoomInternals = Authority & {
   authorityRoll(sides: number): number;
+  rulesRuntime: VersionedRulesRuntime;
   authoritativeReplay(): {
     state: JsonRecord;
     replay: JsonRecord;
@@ -686,11 +688,14 @@ class DeterministicKp {
     expect(request).not.toHaveProperty("audienceId");
     expect(Object.keys(request).sort()).toEqual([
       "deliveryGeneration",
+      "narrationInputMode",
+      ...(request.narrationPurpose === undefined ? [] : ["narrationPurpose"]),
       "receipt",
       "renderableClaims",
       "rootActionId",
       "viewerKey",
     ].sort());
+    expect(request.narrationInputMode).toBe("frozenRenderableClaims-vnext-1");
     const claims = record(request.renderableClaims, "FrozenRenderableClaims narration input");
     expect(claims).toMatchObject({
       schema: "zhuwei.renderable-claims/vnext-1",
@@ -965,10 +970,25 @@ async function runAction(input: {
   counters: ActionCounters;
   prepared: PreparedCapture;
   rolls?: number[];
+  transformCommittedProjection?: (
+    projection: ReturnType<VersionedRulesRuntime["project"]>,
+  ) => ReturnType<VersionedRulesRuntime["project"]>;
 }) {
   return runInDurableObject(input.authority as never, async (instance) => {
     const target = instance as unknown as RoomInternals;
     const originalRoll = target.authorityRoll;
+    const originalRulesRuntime = target.rulesRuntime;
+    if (input.transformCommittedProjection !== undefined) {
+      target.rulesRuntime = {
+        ...originalRulesRuntime,
+        project: (profiles, state, viewer, query) => {
+          const projection = originalRulesRuntime.project(profiles, state, viewer, query);
+          return query?.committedRange === undefined
+            ? projection
+            : input.transformCommittedProjection!(projection);
+        },
+      };
+    }
     const faces = [...(input.rolls ?? [])];
     let rollIndex = 0;
     target.authorityRoll = (sides: number) => {
@@ -992,6 +1012,7 @@ async function runAction(input: {
       return outcome;
     } finally {
       target.authorityRoll = originalRoll;
+      target.rulesRuntime = originalRulesRuntime;
     }
   });
 }
@@ -1202,6 +1223,120 @@ describe("vNext stage-three Room verticals", () => {
     expect(afterEviction.events).toEqual(beforeRejected.events);
   });
 
+  it("rejects a vNext commit before persistence when its committed-range projection has no frozen Claims", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-missing-claims");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp((request) => ropeProposal(request), prepared);
+    const before = await roomSnapshot(authority);
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:missing-claims",
+        "我用稳定火源烧断麻绳，让悬挂的重物落下。",
+      ),
+      kp,
+      counters,
+      prepared,
+      transformCommittedProjection(projection) {
+        const withoutClaims = structuredClone(
+          record(projection, "committed-range observer projection"),
+        );
+        delete withoutClaims.renderableClaims;
+        return withoutClaims as ReturnType<VersionedRulesRuntime["project"]>;
+      },
+    }), "missing Claims outcome");
+
+    expect(outcome).toMatchObject({
+      kind: "rejected",
+      code: "projectionFailure",
+      action: "notCommitted",
+      narration: "notApplicable",
+    });
+    expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
+    expect(counters).toMatchObject({ rolls: 0, publishDelivery: 0 });
+    expect(await roomSnapshot(authority)).toEqual(before);
+  });
+
+  it("retries a post-randomness Claims projection failure with the frozen proposal and die face", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-random-claims-retry");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp((request) => gunProposal(request, 1), prepared);
+    const action = intent(
+      "submission:stage3:random-claims-retry",
+      "我用枪打断吊灯的支撑，让它砸向下面的敌人。",
+    );
+
+    const failed = record(await runAction({
+      authority,
+      principal: ALICE,
+      action,
+      kp,
+      counters,
+      prepared,
+      rolls: [7],
+      transformCommittedProjection(projection) {
+        const withoutClaims = structuredClone(
+          record(projection, "random committed-range observer projection"),
+        );
+        delete withoutClaims.renderableClaims;
+        return withoutClaims as ReturnType<VersionedRulesRuntime["project"]>;
+      },
+    }), "post-randomness Claims projection failure");
+    expect(failed).toMatchObject({
+      kind: "retryableFailure",
+      code: "projectionFailure",
+      action: "notCommitted",
+      narration: "notApplicable",
+    });
+    expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
+    expect(counters).toMatchObject({ rolls: 1, publishDelivery: 0 });
+
+    const journaled = await roomSnapshot(authority);
+    expect(eventsOf(journaled, "RandomnessRequested")).toHaveLength(1);
+    expect(eventsOf(journaled, "DiceRolled")).toHaveLength(0);
+    expect(eventsOf(journaled, "WorldInteractionResolved")).toHaveLength(0);
+    expect(eventsOf(journaled, "ItemUsed")).toHaveLength(0);
+    expect(itemEntries(journaled.state)[AMMO_ENTRY_REF]).toMatchObject({ quantity: 8 });
+    expect(entities(journaled.state)[BOB_ID]).toMatchObject({
+      hitPoints: { current: 20, maximum: 20 },
+    });
+
+    await evictDurableObject(authority as never);
+    const recovered = record(await runAction({
+      authority,
+      principal: ALICE,
+      action,
+      kp,
+      counters,
+      prepared,
+    }), "same-intent randomness recovery");
+    expect(recovered, JSON.stringify(recovered)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    expect(kp.counters.propose).toBe(1);
+    expect(counters.rolls).toBe(1);
+
+    const committed = await roomSnapshot(authority);
+    expect(eventsOf(committed, "RandomnessRequested")).toHaveLength(1);
+    expect(eventsOf(committed, "DiceRolled")).toHaveLength(1);
+    expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
+    expect(eventsOf(committed, "ItemUsed")).toHaveLength(1);
+    expect(itemEntries(committed.state)[AMMO_ENTRY_REF]).toMatchObject({ quantity: 7 });
+    expect(entities(committed.state)[BOB_ID]).toMatchObject({
+      hitPoints: { current: 14, maximum: 20 },
+    });
+    expect(eventPayload(eventsOf(committed, "WorldInteractionResolved")[0])).toMatchObject({
+      branch: "success",
+      check: { selectedRoll: 7, succeeded: true },
+    });
+  });
+
   it("runs natural-language gun versus chandelier with frozen costs, hazard damage, claims-only narration recovery, and idempotency across eviction", async () => {
     const { authority } = await initializeRoom("kp-vnext-stage3-room-gun-success");
     const counters = emptyActionCounters();
@@ -1380,6 +1515,7 @@ describe("vNext stage-three Room verticals", () => {
     const actorNarrations = narrationForViewer(kp, actorViewerKey);
     expect(actorNarrations).toHaveLength(2);
     expect(actorNarrations[1]).not.toHaveProperty("audienceId");
+    expect(actorNarrations[1].narrationPurpose).toBe("narrationRecovery");
     expect(actorNarrations[1].receipt).toEqual(actorNarrations[0].receipt);
     expect(actorNarrations[1].renderableClaims).toEqual(actorNarrations[0].renderableClaims);
     const firstClaims = record(actorNarrations[0].renderableClaims, "first frozen claims");

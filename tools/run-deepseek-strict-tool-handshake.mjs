@@ -18,11 +18,12 @@ import {
 } from "../app/_runtime/lib/kp/model-registry.ts";
 
 export const DEEPSEEK_STRICT_TOOL_HANDSHAKE_REPORT_SCHEMA =
-  "kp-deepseek-strict-tool-handshake-report-v1";
+  "kp-deepseek-strict-tool-handshake-report-v2";
 
 export const DEEPSEEK_STRICT_TOOL_HANDSHAKE_CAPABILITIES = Object.freeze([
   "world-interaction",
   "materialization+world-interaction",
+  "proposal-summary-correction",
 ]);
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -43,7 +44,7 @@ export async function runDeepSeekStrictToolHandshake(options) {
     throw new TypeError("STRICT_TOOL_HANDSHAKE_EXECUTION_MODE_INVALID");
   }
 
-  const schemaHash = sharedSchemaHash(definition.positiveCases);
+  const contracts = contractEvidenceFor(definition);
   const invalidSchemaIssues = invalidSchemaCaseIssues(definition.invalidSchemaCase);
   if (invalidSchemaIssues.length === 0) {
     throw new TypeError("STRICT_TOOL_HANDSHAKE_NEGATIVE_SCHEMA_MUST_BE_LOCALLY_INVALID");
@@ -52,8 +53,10 @@ export async function runDeepSeekStrictToolHandshake(options) {
     reportSchema: DEEPSEEK_STRICT_TOOL_HANDSHAKE_REPORT_SCHEMA,
     endpointProtocol: DEEPSEEK_STRICT_TOOL_ENDPOINT_PROTOCOL,
     schemaDialect: DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT,
+    contracts,
     positives: definition.positiveCases.map((entry) => ({
       caseId: entry.caseId,
+      contractId: entry.contractId,
       capability: entry.capability,
       modelInputHash: stableStructuralHash(entry.modelInput),
     })),
@@ -78,6 +81,7 @@ export async function runDeepSeekStrictToolHandshake(options) {
       await validationCase.parse(response);
       positiveResults.push(Object.freeze({
         caseId: validationCase.caseId,
+        contractId: validationCase.contractId,
         capability: validationCase.capability,
         passed: true,
         failureCode: null,
@@ -85,6 +89,7 @@ export async function runDeepSeekStrictToolHandshake(options) {
     } catch (error) {
       positiveResults.push(Object.freeze({
         caseId: validationCase.caseId,
+        contractId: validationCase.contractId,
         capability: validationCase.capability,
         passed: false,
         failureCode: classifyHandshakeFailure(error),
@@ -130,9 +135,7 @@ export async function runDeepSeekStrictToolHandshake(options) {
     ? createStrictToolProviderValidationEvidence({
         profile: definition.profile,
         executionMode,
-        promptHash: definition.promptHash,
-        schemaHash,
-        parserHash: definition.parserHash,
+        contracts,
         validationSuiteHash,
         validatedAt: options.validatedAt ?? new Date().toISOString(),
         caseCount: positiveResults.length + 1,
@@ -165,9 +168,10 @@ export async function runDeepSeekStrictToolHandshake(options) {
       modelRevision: definition.profile.modelRevision,
     }),
     contractHashes: Object.freeze({
-      promptHash: definition.promptHash,
-      schemaHash,
-      parserHash: definition.parserHash,
+      promptHash: aggregateContractHash(contracts, "promptHash"),
+      schemaHash: aggregateContractHash(contracts, "schemaHash"),
+      parserHash: aggregateContractHash(contracts, "parserHash"),
+      contracts,
       validationSuiteHash,
     }),
     liveProviderCalls: executionMode === "live-provider" ? liveProviderCalls : 0,
@@ -221,8 +225,20 @@ function validateDefinition(value) {
       throw new TypeError("STRICT_TOOL_HANDSHAKE_PROFILE_INVALID");
     }
   }
-  if (!validHash(value.promptHash) || !validHash(value.parserHash)) {
-    throw new TypeError("STRICT_TOOL_HANDSHAKE_CONTRACT_HASH_INVALID");
+  if (!Array.isArray(value.contracts) || value.contracts.length < 2) {
+    throw new TypeError("STRICT_TOOL_HANDSHAKE_CONTRACTS_REQUIRED");
+  }
+  const contracts = new Map();
+  for (const contract of value.contracts) {
+    if (!isRecord(contract)
+      || typeof contract.contractId !== "string"
+      || contract.contractId.trim().length === 0
+      || contracts.has(contract.contractId)
+      || !validHash(contract.promptHash)
+      || !validHash(contract.parserHash)) {
+      throw new TypeError("STRICT_TOOL_HANDSHAKE_CONTRACT_HASH_INVALID");
+    }
+    contracts.set(contract.contractId, contract);
   }
   if (!Array.isArray(value.positiveCases) || value.positiveCases.length < 2) {
     throw new TypeError("STRICT_TOOL_HANDSHAKE_POSITIVE_CASES_REQUIRED");
@@ -237,11 +253,18 @@ function validateDefinition(value) {
       || typeof entry.caseId !== "string"
       || entry.caseId.trim().length === 0
       || caseIds.has(entry.caseId)
+      || typeof entry.contractId !== "string"
+      || !contracts.has(entry.contractId)
       || !isRecord(entry.modelInput)
       || typeof entry.parse !== "function") {
       throw new TypeError("STRICT_TOOL_HANDSHAKE_POSITIVE_CASE_INVALID");
     }
     caseIds.add(entry.caseId);
+  }
+  for (const contractId of contracts.keys()) {
+    if (!value.positiveCases.some((entry) => entry.contractId === contractId)) {
+      throw new TypeError("STRICT_TOOL_HANDSHAKE_CONTRACT_CASE_REQUIRED");
+    }
   }
   if (!isRecord(value.invalidSchemaCase)
     || typeof value.invalidSchemaCase.caseId !== "string"
@@ -253,19 +276,42 @@ function validateDefinition(value) {
   return value;
 }
 
-function sharedSchemaHash(positiveCases) {
-  const hashes = positiveCases.map((entry) => {
-    assertDeepSeekStrictToolModelInput(entry.modelInput);
-    const tools = entry.modelInput.tools;
-    if (!Array.isArray(tools) || tools.length !== 1 || !isRecord(tools[0]?.function)) {
-      throw new TypeError("STRICT_TOOL_HANDSHAKE_SINGLE_SCHEMA_REQUIRED");
-    }
-    return stableStructuralHash(tools[0].function.parameters);
-  });
-  if (new Set(hashes).size !== 1) {
-    throw new TypeError("STRICT_TOOL_HANDSHAKE_SCHEMA_MISMATCH");
-  }
-  return hashes[0];
+function contractEvidenceFor(definition) {
+  return Object.freeze([...definition.contracts]
+    .sort((left, right) => left.contractId.localeCompare(right.contractId))
+    .map((contract) => {
+      const cases = definition.positiveCases.filter((entry) =>
+        entry.contractId === contract.contractId);
+      const schemas = new Set();
+      const toolNames = new Set();
+      for (const entry of cases) {
+        assertDeepSeekStrictToolModelInput(entry.modelInput);
+        const tools = entry.modelInput.tools;
+        if (!Array.isArray(tools) || tools.length !== 1 || !isRecord(tools[0]?.function)) {
+          throw new TypeError("STRICT_TOOL_HANDSHAKE_SINGLE_SCHEMA_REQUIRED");
+        }
+        schemas.add(stableStructuralHash(tools[0].function.parameters));
+        toolNames.add(tools[0].function.name);
+      }
+      if (schemas.size !== 1 || toolNames.size !== 1) {
+        throw new TypeError("STRICT_TOOL_HANDSHAKE_CONTRACT_SCHEMA_MISMATCH");
+      }
+      return Object.freeze({
+        contractId: contract.contractId,
+        toolName: [...toolNames][0],
+        promptHash: contract.promptHash,
+        schemaHash: [...schemas][0],
+        parserHash: contract.parserHash,
+        caseIds: Object.freeze(cases.map((entry) => entry.caseId).sort()),
+      });
+    }));
+}
+
+function aggregateContractHash(contracts, field) {
+  return stableStructuralHash(contracts.map((contract) => ({
+    contractId: contract.contractId,
+    [field]: contract[field],
+  })));
 }
 
 function invalidSchemaCaseIssues(validationCase) {

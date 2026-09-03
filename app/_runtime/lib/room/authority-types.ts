@@ -179,6 +179,10 @@ export type PreparedAuthoritativeAction = {
   resumedPrincipalContext?: TrustedPrincipalContext;
 };
 
+export type NarrationInputMode =
+  | "observerProjection-v1"
+  | "frozenRenderableClaims-vnext-1";
+
 export type DeliveryAudienceBinding = {
   audienceId: string;
   principalId: string;
@@ -188,6 +192,8 @@ export type DeliveryAudienceBinding = {
   /** Frozen observer locations for this product-0.4 result. */
   sceneIds: string[];
   projectionHash: string;
+  /** Every product-0.4 plan pins its narration material protocol explicitly. */
+  narrationInputMode: NarrationInputMode;
   kpProjection: unknown;
 };
 

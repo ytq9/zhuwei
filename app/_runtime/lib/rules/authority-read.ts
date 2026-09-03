@@ -30,6 +30,7 @@ export {
   composeDefinition,
   createDefinitionSnapshot,
   isStoredSemanticDefinition,
+  normalizedProspectiveRef,
   semanticDefinitionSnapshot,
   storedSemanticDefinition,
   type DefinitionSnapshot,
@@ -42,6 +43,7 @@ export {
 export { canonicalFactVisibleToCharacter } from "./v2/validation";
 export { itemEntryResourceId } from "./v2/items";
 export {
+  committedRangeUsesFrozenRenderableClaims,
   frozenRenderableClaimsConform,
   type FrozenRenderableClaims,
 } from "./v2/claims";
