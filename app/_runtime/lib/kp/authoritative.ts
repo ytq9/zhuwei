@@ -2122,6 +2122,110 @@ export function createAuthoritativeKpAdapter(
     }
   }
 
+  /**
+   * Player-facing names for the semantics a Form freezes, used only to ask
+   * the player for the one thing the first draft never stated.
+   */
+  const SEMANTIC_FIELD_PROMPTS: Readonly<Record<string, string>> = Object.freeze({
+    goal: "你想达成什么",
+    method: "你具体打算怎么做",
+    focus: "你想查看或回忆的具体对象",
+    desiredInformation: "你想知道的具体是什么",
+    intendedOutcome: "你希望的结果是什么",
+    stakes: "失败会付出什么代价",
+    utterance: "你想说的原话",
+    desiredResponse: "你希望对方作何反应",
+    proposedFact: "你想确立的具体事物",
+    combatApproach: "你打算用什么方式攻击",
+    featureDescription: "你想利用的环境细节",
+    featureDisposition: "那个环境物件现在是什么状态",
+    reason: "你不这么做的理由",
+    alternatives: "你打算改做什么",
+    question: "你想问的问题",
+    choices: "可供选择的选项",
+  });
+
+  /**
+   * The semantics a repair supplied that were never frozen, when that is the
+   * *complete* reason the repair was rejected.
+   *
+   * Every Form lists its semantic fields as required, so a first draft that
+   * validated always froze all of them. `unproven` therefore means the first
+   * attempt produced no readable draft at all — unparseable tool arguments,
+   * say — and the in-attempt schema repair then wrote semantics the bounded
+   * raw text cannot attribute to the player. That is not the model
+   * overwriting frozen intent, which is `:changed` and stays terminal; it is
+   * the server having nothing to check the new semantics against. It cannot
+   * invent the answer, so it asks the player rather than dropping the action.
+   */
+  function omittedSemanticKeys(error: unknown): readonly string[] {
+    if (!(error instanceof PrivateFormEnvelopeError)) return [];
+    const errors = error.errors;
+    if (!Array.isArray(errors) || errors.length === 0) return [];
+    const keys: string[] = [];
+    for (const entry of errors) {
+      const match = typeof entry === "string"
+        ? /^semantic-freeze:(.+):unproven$/u.exec(entry)
+        : null;
+      if (match === null) return [];
+      keys.push(match[1]!);
+    }
+    return Object.freeze([...new Set(keys)].sort());
+  }
+
+  /**
+   * Turns an omitted-semantics repair failure into one bounded question.
+   *
+   * This costs no model call, so it stays inside the two-invocation budget
+   * SPEC 0015 6.1 freezes: the server writes the clarification itself from
+   * the player's own frozen goal and the names of the missing fields, and
+   * `requestClarification` lowers it to the existing `awaitingInput` path.
+   * A clarification continuation is never converted again, so an answer that
+   * still leaves a field unstated fails normally instead of looping.
+   */
+  function clarificationForOmittedSemantics(
+    request: KpProposalRequest,
+    rejectedDraft: unknown,
+    omitted: readonly string[],
+    invocationReceipt: ModelInvocationReceipt,
+  ): V3AuthoritativeKpProposal {
+    const prior = isRecord(rejectedDraft) ? rejectedDraft : {};
+    // The rejected draft is usually empty here, so the player's own submitted
+    // text is the best frozen statement of intent available. Both sources are
+    // the player's; nothing is authored on their behalf.
+    const playerText = trustedPlayerUtterance(request.input);
+    const goal = typeof prior.goal === "string" && prior.goal.trim().length > 0
+      ? prior.goal
+      : playerText !== undefined && playerText.trim().length > 0
+        ? playerText
+        : "继续这项行动";
+    const asked = omitted.map((key) => SEMANTIC_FIELD_PROMPTS[key] ?? key);
+    return buildV3Proposal(
+      request,
+      {
+        formId: "clarification.v1",
+        draft: {
+          goal,
+          // Deliberately not phrased as "you left something out": the player
+          // stated their intent, and it was this side that failed to turn it
+          // into a readable draft. The question names what still has to be
+          // pinned down without blaming them for it.
+          // `assertRepairSemantics` throws on the first unprovable key, so
+          // this is usually one aspect; the phrasing reads correctly either
+          // way rather than assuming a plural.
+          question: `为了裁定这项行动，请再具体说明：${asked.join("；")}。`,
+          // `choices` is required by the Form but never reaches the player:
+          // `ClarificationRequested` carries only the question and the client
+          // renders a free-text answer. Naming the same aspects keeps the
+          // value truthful instead of inventing options nobody will see.
+          choices: asked,
+        },
+      },
+      invocationReceipt,
+      true,
+    );
+  }
+
   function buildV3Proposal(
     request: KpProposalRequest,
     envelope: PrivateFormEnvelope,
@@ -2279,7 +2383,17 @@ export function createAuthoritativeKpAdapter(
         input.errors,
         input.rejectedRawArguments,
       );
-    } catch {
+    } catch (error) {
+      const omitted = omittedSemanticKeys(error);
+      if (omitted.length > 0
+        && input.request.proposalPurpose !== "clarificationContinuation") {
+        return clarificationForOmittedSemantics(
+          input.request,
+          input.rejectedDraft,
+          omitted,
+          repairInvocation.receipt,
+        );
+      }
       throw v3Failure(
         "PROPOSAL_REPAIR_EXHAUSTED",
         repairInvocation.receipt,
