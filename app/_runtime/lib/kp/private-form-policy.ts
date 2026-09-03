@@ -5,6 +5,10 @@ import {
   modelFormDescriptors,
   type KpFormId,
 } from "./form-catalog";
+import {
+  buildKpFormStrictToolParameters,
+  type KpStructuredOutputMode,
+} from "./form-strict-tool";
 import type { KpProposalRequest } from "./authoritative-types";
 import { HEALING_POTION_ITEM_DEFINITION_ID } from "../rules/profiles/item-system";
 
@@ -81,13 +85,34 @@ const ACTOR_PLAN_FORM_REPAIR_CONTRACT = `当 selectedForm 是 materialization.v1
 const CURRENT_WORLD_FORM_REPAIR_CONTRACT = `当 selectedForm 是 observe.v1 且 method 为 observeExistingFact 时，resolution 必须为 direct，focus 与唯一 basisRefs 项必须是同一个现有可见 fact ref，desiredInformation 只能修成 {"schema":"zhuwei.observed-fact-acquisition-draft/v1","factRef":"同一个 fact ref","observedContent":"由该 fact 支持的有界读取结果"}，不能补可见性或取得者。当 method 为 observeItemInformation 时，resolution 必须为 direct，focus 必须是同一个现有 itemRef，basisRefs 必须精确为当前 sceneRef 与 itemRef，desiredInformation 只能修成 zhuwei.item-information-observation-draft/v1 的 schema、itemRef、sourceRef、information 四个字段；information 只能是 sensoryEvidence 的 kind/sense/content，或 sourceClaim 的 kind/semanticContent/sourceBasis/motive/formedAtFictionMicros，未知的后三项保持 null，不能补 actor、holder、Audience、visibility、知识层级、事件或状态，也不能把 consumed、destroyed、异地或他人持有的物件修成可接触。当 selectedForm 是 materialization.v1 时，materializeHiddenReality 只能修成 zhuwei.hidden-reality-candidate-set-draft/v1 的完整候选集，不能补选中项或骰面；materializePassageAndMove 只能修成只含 schema、locationRef、destinationSceneRef、destinationName、passageRef、traversal、geometry 的 zhuwei.dynamic-passage-move-draft/v1；geometry 必须是非空 spawnPoints、非空真实 obstacles 和 polygon boundary 的 zhuwei.tactical-geometry/v1，不能补空障碍或一维占位。必须保留当前 sceneRef 在 basisRefs，不能增加 actor、sourceSceneRef、characterRef、到达时刻或队伍裁决；commitWorldConsequences 只能修成只含 schema、factRef、summary、consequences 的 zhuwei.world-consequence-draft/v1，consequences 只能使用 spendResource/acquireKnowledge/updateRelationship/recordPromise/recordDebt 的各自闭合字段，basisRefs 必须保留 scene、所有同场 counterparty 与真正可见的因果事实，不得补 actor、targetRef、Audience、visibility、event、state、通用 effects 或补丁；registerAbilityDefinition 只能修成只含 schema、definition 的 zhuwei.ability-definition-draft/v1，basisRefs 只能保留 scene 与 definition.causalBasisRefs，不能补 artifact/graph/hash/compilerProfile/MechanicOp、actor、event 或 state；registerFactionDefinition 只能修成 zhuwei.faction-definition-draft/v1 的七个闭合字段，basisRefs 必须保留 scene、全部同场 active NPC memberRefs 和成员知识/actor 可见 causalBasisRefs，不能补 definition、visibility 或权威字段；resolveNoncombatContest 只能修成 zhuwei.noncombat-contest-draft/v1，双方引用与 scene 必须保留在 basisRefs；recordAdjudicationPrecedent 只能修成 zhuwei.adjudication-precedent-draft/v1，record/supersede 的闭合字段、公开/私有依据与 scope ref 必须保留。proposedFact.schema 为 zhuwei.campaign-lifecycle-draft/v1 时，只能在 raiseEndingCandidate、concludeStory、transitionChapter、commitMeaningfulFailure、retryFailedAction 的对应闭合字段内修复；不得增加 actor、Campaign/current Chapter/ordinal、continuityPolicy、状态、事件或骰面。retryFailedAction 的 changeKind=null 必须保持 evidenceRefs=[]，不能把原样重试伪装修成条件变化；非 methodChanged 的变化必须保留至少一个已有 evidence ref。`;
 const ITEM_INFORMATION_REPAIR_SECRECY_CONTRACT = `修复 observeItemInformation 时，goal 只能描述公开可观察的动作，不得复述 information 中的秘密正文；sourceRef 必须保持 fact:item-information: 命名空间。`;
 
-function narrowProposalTool(formId: KpFormId) {
+/**
+ * `strict-tool` is a different transport, not a label on the same request:
+ * the provider only enforces the schema when the definition carries
+ * `strict: true` and the parameters are in its beta dialect. Both halves are
+ * emitted together so a profile can never claim strict output while sending
+ * an unconstrained tool.
+ */
+function narrowProposalTool(
+  formId: KpFormId,
+  structuredOutputMode: KpStructuredOutputMode,
+) {
+  if (structuredOutputMode !== "strict-tool") {
+    return Object.freeze({
+      type: "function",
+      function: {
+        name: kpFormToolName(formId),
+        description: `Fill the allowed ${formId} private KP proposal form.`,
+        parameters: buildKpFormToolParameters(formId),
+      },
+    });
+  }
   return Object.freeze({
     type: "function",
     function: {
       name: kpFormToolName(formId),
       description: `Fill the allowed ${formId} private KP proposal form.`,
-      parameters: buildKpFormToolParameters(formId),
+      strict: true,
+      parameters: buildKpFormStrictToolParameters(formId),
     },
   });
 }
@@ -96,7 +121,16 @@ export function privateFormProposalModelInput(input: Readonly<{
   request: KpProposalRequest;
   allowedForms: readonly KpFormId[];
   contextPack: unknown;
+  structuredOutputMode?: KpStructuredOutputMode;
 }>): Record<string, unknown> {
+  const structuredOutputMode = input.structuredOutputMode ?? "tool";
+  // The Form is selected by which tool the model calls, so the initial call
+  // offers several. DeepSeek's strict beta carries exactly one function per
+  // request, and a request that quietly dropped the other Forms would change
+  // the selection protocol SPEC 0015 6.1 freezes. Refuse instead.
+  if (structuredOutputMode === "strict-tool" && input.allowedForms.length !== 1) {
+    throw new Error("KP_STRICT_TOOL_FORM_SELECTION_UNSUPPORTED");
+  }
   return {
     messages: [
       {
@@ -113,7 +147,8 @@ export function privateFormProposalModelInput(input: Readonly<{
         }),
       },
     ],
-    tools: input.allowedForms.map(narrowProposalTool),
+    tools: input.allowedForms.map((formId) =>
+      narrowProposalTool(formId, structuredOutputMode)),
     tool_choice: "required",
     parallel_tool_calls: false,
     temperature: 0.2,
@@ -130,6 +165,7 @@ export function privateFormRepairModelInput(input: Readonly<{
   errors: readonly string[];
   finiteReferences: FiniteReferenceCatalog;
   semanticFreezeHash: string;
+  structuredOutputMode?: KpStructuredOutputMode;
 }>): Record<string, unknown> {
   return {
     messages: [
@@ -158,7 +194,7 @@ export function privateFormRepairModelInput(input: Readonly<{
         }),
       },
     ],
-    tools: [narrowProposalTool(input.selectedForm)],
+    tools: [narrowProposalTool(input.selectedForm, input.structuredOutputMode ?? "tool")],
     tool_choice: "required",
     parallel_tool_calls: false,
     temperature: 0,

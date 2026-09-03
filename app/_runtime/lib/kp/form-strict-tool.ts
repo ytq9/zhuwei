@@ -25,6 +25,17 @@ import {
  */
 export const KP_STRICT_TOOL_OMITTED_SENTINEL = "__none__" as const;
 
+/**
+ * How a KP request asks the provider to constrain its own output. `tool`
+ * sends an ordinary function definition and enforces the schema locally
+ * after generation; `strict-tool` sends the beta dialect with `strict: true`
+ * and is enforced by the provider before a token is emitted. The mode belongs
+ * to the profile, and the transport, tool definition and parameter schema all
+ * have to agree with it — a request that declares one and sends the other is
+ * the failure this type exists to prevent.
+ */
+export type KpStructuredOutputMode = "tool" | "strict-tool";
+
 const NUMBER_KEYWORDS = [
   "const",
   "default",
