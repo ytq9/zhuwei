@@ -13,14 +13,14 @@ import {
 } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 
 export const VNEXT2_STRICT_TOOL_PROMPT_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-handshake-prompts-v2",
+  version: "kp-vnext2-proposal-handshake-prompts-v3",
   common: [
     "只调用 submit_kp_proposal_bundle 一次。",
     "只使用题面给出的冻结引用或本束 prospective handle。",
     "不得生成 rootActionId、角色 authority id、骰面、modifier、Receipt、事件或执行 DAG。",
+    "当前候选填写面只允许 mode=adjudication、directSuccess、terminal none，以及 materializeObject/worldInteraction。",
     "directSuccess 的 branches.failure 必须使用 {kind:'none'} sentinel。",
     "directSuccess 下每个 proposal 的 outcomeBinding 都必须是 always。",
-    "若返回 clarification，每个 choice 必须包含完整、非递归的 adjudication/inWorldRefusal continuation 或 cancel；后续选择不会再次调用 KP。",
   ],
   correction: [
     "只调用 correct_kp_proposal_bundle 一次。",
@@ -46,7 +46,7 @@ Provider dialect handshake；allowedPaths 只有 ["proposals",0,"branches","succ
 返回恰好一个 change，path 必须逐段相同，value 使用“检查完成。”。`;
 
 const INVALID_SCHEMA = structuredClone(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function.parameters);
-INVALID_SCHEMA.properties.proposals.minItems = 1;
+INVALID_SCHEMA.additionalProperties = true;
 
 function invalidSchemaModelInput() {
   const input = createSubmitKpProposalBundleModelInput("invalid-schema-pre-generation-probe");
@@ -153,7 +153,7 @@ export const strictToolHandshakeDefinition = Object.freeze({
     parse: assertSummaryCorrection,
   }]),
   invalidSchemaCase: Object.freeze({
-    caseId: "provider-rejects-unsupported-min-items",
+    caseId: "provider-rejects-open-root-object",
     modelInput: invalidSchemaModelInput(),
   }),
 });
