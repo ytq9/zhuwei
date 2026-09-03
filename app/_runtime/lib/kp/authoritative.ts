@@ -3,8 +3,14 @@ import {
   authoritativeKpProfileByBinding,
   isSocialResolutionKpProfile,
   isV3AuthoritativeKpProfile,
+  kpStructuredOutputMode,
   NARRATION_TOOL_NAME,
 } from "./authoritative-policy";
+import {
+  decodeKpFormStrictDraft,
+  strictDraftSentinelMisuse,
+  type KpStructuredOutputMode,
+} from "./form-strict-tool";
 import {
   compileKpFormDraft,
   lowerCausalActionProgram,
@@ -444,11 +450,37 @@ function recoveredRawSemanticMembers(value: unknown): RecoveredTopLevelJsonMembe
   return recoverTopLevelJsonMembers(value.value);
 }
 
+/**
+ * A strict draft carries every property, using the omitted sentinel wherever
+ * the field does not apply, so it has to be decoded back to the ordinary
+ * shape before anything downstream sees it: `validateKpFormDraft` rejects a
+ * check field that is merely present on a `direct` draft, and the semantic
+ * freeze hashes the draft as written. Decoding here keeps every later stage —
+ * validation, freeze, Rules — unaware of which transport produced the draft.
+ */
+function decodeStrictDraft(
+  formId: KpFormId,
+  parsed: Record<string, unknown>,
+): Record<string, unknown> {
+  // A sentinel standing where a value belongs (an array element, say) is not
+  // an omitted field and must not be silently dropped.
+  const misuse = strictDraftSentinelMisuse(parsed);
+  if (misuse.length > 0) {
+    throw new PrivateFormEnvelopeError({ formId, draft: parsed }, misuse);
+  }
+  return decodeKpFormStrictDraft(parsed) as Record<string, unknown>;
+}
+
 function narrowToolDraft(
   formId: KpFormId,
   argumentsValue: unknown,
+  structuredOutputMode: KpStructuredOutputMode = "tool",
 ): Record<string, unknown> {
-  if (isRecord(argumentsValue)) return structuredClone(argumentsValue);
+  const decode = (parsed: Record<string, unknown>): Record<string, unknown> =>
+    structuredOutputMode === "strict-tool"
+      ? decodeStrictDraft(formId, structuredClone(parsed))
+      : structuredClone(parsed);
+  if (isRecord(argumentsValue)) return decode(argumentsValue);
   if (typeof argumentsValue === "string") {
     let parsed: unknown;
     try {
@@ -463,7 +495,7 @@ function narrowToolDraft(
         ),
       }, ["draft:json-parse-failed"]);
     }
-    if (isRecord(parsed)) return structuredClone(parsed);
+    if (isRecord(parsed)) return decode(parsed);
     throw new PrivateFormEnvelopeError({
       formId,
       draft: {},
@@ -483,6 +515,7 @@ function narrowToolDraft(
 function privateFormNarrowToolEnvelope(
   response: unknown,
   allowedForms: readonly KpFormId[],
+  structuredOutputMode: KpStructuredOutputMode = "tool",
 ): PrivateFormEnvelope {
   let toolCall: ReturnType<typeof extractSingleToolCall>;
   try {
@@ -497,7 +530,7 @@ function privateFormNarrowToolEnvelope(
       ["tool:not-allowed"],
     );
   }
-  const draft = narrowToolDraft(formId, toolCall.arguments);
+  const draft = narrowToolDraft(formId, toolCall.arguments, structuredOutputMode);
   const validation = validateKpFormDraft(formId, draft);
   if (!validation.ok) {
     throw new PrivateFormEnvelopeError({ formId, draft }, validation.errors);
@@ -508,6 +541,7 @@ function privateFormNarrowToolEnvelope(
 function validateNarrowToolRepair(
   selectedForm: KpFormId,
   response: unknown,
+  structuredOutputMode: KpStructuredOutputMode = "tool",
 ): PrivateFormEnvelope {
   let toolCall: ReturnType<typeof extractSingleToolCall>;
   try {
@@ -521,7 +555,7 @@ function validateNarrowToolRepair(
       ["repair:tool-switch-forbidden"],
     );
   }
-  const draft = narrowToolDraft(selectedForm, toolCall.arguments);
+  const draft = narrowToolDraft(selectedForm, toolCall.arguments, structuredOutputMode);
   const validation = validateKpFormDraft(selectedForm, draft);
   if (!validation.ok) {
     throw new PrivateFormEnvelopeError({ formId: selectedForm, draft }, validation.errors);
@@ -2197,13 +2231,18 @@ export function createAuthoritativeKpAdapter(
         errors: input.errors,
         finiteReferences: input.finiteReferences,
         semanticFreezeHash: input.semanticFreezeHash,
+        structuredOutputMode: kpStructuredOutputMode(profile),
       }),
       remainingInvocationMs,
     );
     let repaired: PrivateFormEnvelope;
     let trustedRepaired: PrivateFormEnvelope;
     try {
-      repaired = validateNarrowToolRepair(input.selectedForm, repairInvocation.response);
+      repaired = validateNarrowToolRepair(
+        input.selectedForm,
+        repairInvocation.response,
+        kpStructuredOutputMode(profile),
+      );
       trustedRepaired = withTrustedSocialUtterance(
         input.request,
         repaired,
@@ -2330,12 +2369,14 @@ export function createAuthoritativeKpAdapter(
               request,
               allowedForms: preparedContext.orderedForms,
               contextPack: preparedContext.contextPack,
+              structuredOutputMode: kpStructuredOutputMode(profile),
             }),
           );
           try {
             const envelope = withTrustedSocialUtterance(request, privateFormNarrowToolEnvelope(
               invocation.response,
               preparedContext.orderedForms,
+              kpStructuredOutputMode(profile),
             ), socialResolution);
             const referenceErrors = formReferenceErrors(envelope.draft, finiteReferences);
             const socialErrors = envelope.formId === "npc-exchange.v1" && socialResolution
