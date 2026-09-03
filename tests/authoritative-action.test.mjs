@@ -1237,13 +1237,21 @@ test("two illegal proposals return needsKp without narration, delivery, or a hal
 
   const outcome = await handleRoomAction(harness.context, INTENT);
 
-  assert.deepEqual(outcome, {
+  // The internal outcome additionally carries the Form, the repair state and
+  // the raw Rules diagnostics for telemetry. This block is Room-internal: the
+  // table layer projects a fixed key allowlist, so it never reaches a client
+  // (asserted in kp-proposal-failure-telemetry-v3), and it is desensitized
+  // into a closed vocabulary before it is logged.
+  const { proposal, ...publicOutcome } = outcome;
+  assert.deepEqual(publicOutcome, {
     kind: "needsKp",
     receipt: secondDiagnostic.receipt,
     code: "PROPOSAL_REPAIR_EXHAUSTED",
     action: "notCommitted",
     narration: "notApplicable",
   });
+  assert.equal(proposal.repairUsed, undefined);
+  assert.deepEqual(proposal.diagnostics, secondDiagnostic.diagnostics);
   assert.deepEqual(operations(harness.trace), [
     "authority.prepare",
     "kp.propose",

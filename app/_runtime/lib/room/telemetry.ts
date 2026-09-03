@@ -1,5 +1,9 @@
 import { canonicalSha256 } from "../rules/profiles/canonical";
 import {
+  kpProposalFailureTelemetry,
+  type KpDiagnosticField,
+} from "../kp/diagnostic-telemetry";
+import {
   MODEL_INVOCATION_FAILURE_STAGES,
   MODEL_INVOCATION_PURPOSES,
   type ModelInvocationFailureStage,
@@ -75,6 +79,14 @@ export type RoomTelemetryEvent = {
   retrievalStatus: "selected" | "fallback" | undefined;
   retrievalFallbackUsed: boolean | undefined;
   retrievalHitCountBucket: string | undefined;
+  // Which Form was being filled, whether the one narrow repair had already
+  // been spent, and which fields broke which rules. Without these a failed
+  // proposal is only ever "the repair was exhausted", and the most frequent
+  // cause cannot be named from production data. Every value here comes from a
+  // closed server-owned vocabulary; see `kp/diagnostic-telemetry`.
+  proposalFormId: string | undefined;
+  proposalRepairUsed: boolean | undefined;
+  proposalDiagnosticFields: readonly KpDiagnosticField[] | undefined;
 };
 
 const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]>> = {
@@ -132,6 +144,29 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   projectionBinding: ["modelPermanent", "projectionBinding"],
   seatInactive: ["authentication", "authenticationRequired"],
 } as const;
+
+/**
+ * Transient failures are the only ones an unchanged resubmission can clear.
+ * A `modelPermanent` failure such as `PROPOSAL_REPAIR_EXHAUSTED` is a
+ * structural rejection of this exact draft, so offering "retry the same
+ * action" walks the player back into the identical failure. Callers that
+ * shape player-facing recovery derive it from this table rather than
+ * restating the classification.
+ */
+export function roomFailureClassForCode(value: unknown): RoomFailureClass | undefined {
+  if (typeof value !== "string") return undefined;
+  return FAILURE_CODES[value]?.[0];
+}
+
+export function failureCodeIsRetryable(value: unknown): boolean {
+  const failureClass = roomFailureClassForCode(value);
+  // Only a structural rejection of this exact submission survives an
+  // unchanged retry. Transient provider, quota, authority, archive,
+  // projection and correction failures are all cleared by resubmitting the
+  // same action, and an unclassified code keeps that existing affordance
+  // rather than silently losing its recovery path.
+  return failureClass !== "modelPermanent" && failureClass !== "mechanicalDiagnostic";
+}
 
 const MODEL_FAILURE_STAGE_SET = new Set<string>(MODEL_INVOCATION_FAILURE_STAGES);
 
@@ -297,6 +332,7 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
   const planner = record(context?.planner);
   const retrieval = record(context?.retrieval);
   const classification = failure(source?.failure);
+  const proposal = record(source?.proposal);
 
   return {
     schemaVersion: "zhuwei.room-telemetry/v1",
@@ -358,6 +394,38 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
       : undefined,
     retrievalFallbackUsed: booleanValue(retrieval?.fallbackUsed),
     retrievalHitCountBucket: stringValue(retrieval?.hitCountBucket),
+    ...proposalFailureFields(proposal),
+  };
+}
+
+/**
+ * A proposal block is optional: most telemetry events are not a failed
+ * proposal, and those keep all three fields undefined rather than carrying
+ * empty rows.
+ */
+function proposalFailureFields(proposal: UnknownRecord | undefined): Readonly<{
+  proposalFormId: string | undefined;
+  proposalRepairUsed: boolean | undefined;
+  proposalDiagnosticFields: readonly KpDiagnosticField[] | undefined;
+}> {
+  if (proposal === undefined) {
+    return {
+      proposalFormId: undefined,
+      proposalRepairUsed: undefined,
+      proposalDiagnosticFields: undefined,
+    };
+  }
+  const desensitized = kpProposalFailureTelemetry({
+    formId: proposal.formId,
+    repairUsed: proposal.repairUsed,
+    diagnostics: proposal.diagnostics,
+  });
+  return {
+    proposalFormId: desensitized.proposalFormId,
+    proposalRepairUsed: desensitized.repairUsed,
+    proposalDiagnosticFields: desensitized.diagnosticFields.length === 0
+      ? undefined
+      : desensitized.diagnosticFields,
   };
 }
 

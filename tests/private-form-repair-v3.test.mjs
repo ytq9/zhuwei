@@ -522,3 +522,59 @@ test("an explicit too-narrow diagnostic can upgrade an ordinary Form to compound
   assert.equal(repairPayload.selectedForm, "compound.v1");
   assert.equal(calls.length, 2);
 });
+
+test("an unreadable first draft becomes one question instead of a dropped action", async () => {
+  const calls = [];
+  // The real trigger: the first tool call's arguments do not parse, so no
+  // draft is frozen. The in-attempt schema repair then writes semantics the
+  // server has nothing to check against, which is `semantic-freeze:*:unproven`.
+  const malformed = toolResponse({ formId: "ordinary-check.v1", draft: {} }, 1);
+  malformed.choices[0].message.tool_calls[0].function.arguments = "{\"goal\": \"确认阳台";
+
+  const adapter = adapterWithResponses([
+    malformed,
+    toolResponse({ formId: "ordinary-check.v1", draft: ordinaryDraft() }, 2),
+  ], calls);
+
+  const proposal = await adapter.propose(request());
+
+  // The action survives as the one bounded question the existing
+  // `requestClarification` path already knows how to await.
+  assert.equal(proposal.formId, "clarification.v1");
+  assert.equal(proposal.causalActionProgram.nodes[0].primitive, "requestClarification");
+  assert.match(proposal.draft.question, /请再具体说明/u);
+  // `assertRepairSemantics` reports the first unprovable semantic, so the
+  // question names that aspect in the player's own terms.
+  assert.match(proposal.draft.question, /你想达成什么/u);
+  assert.deepEqual(proposal.draft.choices, ["你想达成什么"]);
+  // The question does not blame the player for an omission they did not make.
+  assert.doesNotMatch(proposal.draft.question, /漏|忘记|没有说/u);
+  // The goal comes from the player's own submitted text, not from the model.
+  assert.equal(proposal.draft.goal, request().input.text);
+  // Two model calls, exactly what SPEC 0015 §6.1 allows; the question is free.
+  assert.equal(calls.length, 2);
+});
+
+test("a repair that overwrites frozen intent stays terminal instead of becoming a question", async () => {
+  const calls = [];
+  const adapter = adapterWithResponses([
+    toolResponse({ formId: "ordinary-check.v1", draft: ordinaryDraft() }, 1),
+    toolResponse({
+      formId: "ordinary-check.v1",
+      draft: ordinaryDraft({ goal: "改成完全不同的目标" }),
+    }, 2),
+  ], calls);
+
+  const first = await adapter.propose(request());
+  await assert.rejects(
+    adapter.propose({
+      ...request(),
+      attempt: 2,
+      diagnostics: { errors: ["dc:type-invalid"] },
+      priorProposal: first,
+    }),
+    (error) => error instanceof AuthoritativeKpModelError,
+    "a changed semantic is the violation the freeze exists for",
+  );
+  assert.equal(calls.length, 2);
+});

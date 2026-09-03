@@ -46,6 +46,9 @@ const ALLOWED_OUTPUT_KEYS = Object.freeze([
   "replayIntegrity",
   "requestId",
   "retrievalFallbackUsed",
+  "proposalDiagnosticFields",
+  "proposalFormId",
+  "proposalRepairUsed",
   "retrievalHitCountBucket",
   "retrievalMode",
   "retrievalStatus",
@@ -246,6 +249,11 @@ test("structured telemetry emits only the fixed non-content whitelist and recurs
   assert.equal(event.replayIntegrity, "verified");
   assert.equal(event.correctionIntegrity, "notApplicable");
   assert.equal(event.retryCount, 2);
+  // The base input is not a failed proposal, so the three proposal fields
+  // stay absent rather than logging empty rows.
+  assert.equal(event.proposalFormId, undefined);
+  assert.equal(event.proposalRepairUsed, undefined);
+  assert.equal(event.proposalDiagnosticFields, undefined);
 
   assertRedactedHash(event.roomHash, BASE_INPUT.correlation.roomId, "roomHash");
   assertRedactedHash(event.principalHash, BASE_INPUT.correlation.principalId, "principalHash");

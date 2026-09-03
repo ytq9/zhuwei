@@ -9,6 +9,7 @@ import {
   KP_FORM_TOOL_NAMES,
   buildKpFormToolParameters,
 } from "./form-catalog";
+import type { KpStructuredOutputMode } from "./form-strict-tool";
 import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
   INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
@@ -107,6 +108,24 @@ export const AUTHORITATIVE_KP_PROFILES = Object.freeze([
 ] satisfies readonly AuthoritativeKpProfile[]);
 
 export const AUTHORITATIVE_KP_PROFILE = AUTHORITATIVE_KP_PROFILES[0];
+
+/**
+ * Structured-output mode per KP profile.
+ *
+ * `AuthoritativeKpProfile` deliberately carries only the identity and version
+ * fields that go into a Receipt, so the transport decision lives beside the
+ * profiles instead of inside them. The default is `tool`: the mode is opt-in
+ * by `modelProfileVersion`, so adding a profile can never silently promise
+ * strict output the request does not actually send.
+ */
+const KP_STRUCTURED_OUTPUT_MODES: Readonly<Record<string, KpStructuredOutputMode>> =
+  Object.freeze({});
+
+export function kpStructuredOutputMode(
+  profile: Pick<AuthoritativeKpProfile, "modelProfileVersion">,
+): KpStructuredOutputMode {
+  return KP_STRUCTURED_OUTPUT_MODES[profile.modelProfileVersion] ?? "tool";
+}
 
 export function isV3AuthoritativeKpProfile(
   profile: AuthoritativeKpProfile,

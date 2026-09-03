@@ -1,7 +1,13 @@
 import { env } from "cloudflare:workers";
 
-import { createDeepSeekAuthoritativeBinding } from "./deepseek";
-import { authoritativeKpProfileByModelId } from "./authoritative-policy";
+import {
+  createDeepSeekAuthoritativeBinding,
+  createDeepSeekStrictToolBinding,
+} from "./deepseek";
+import {
+  authoritativeKpProfileByModelId,
+  kpStructuredOutputMode,
+} from "./authoritative-policy";
 import type {
   AuthoritativeKpProfile,
   AuthoritativeModelBinding,
@@ -20,7 +26,14 @@ export function authoritativeKpModelBinding(
   profile: AuthoritativeKpProfile,
 ): AuthoritativeModelBinding {
   if (profile.provider === "deepseek") {
-    return createDeepSeekAuthoritativeBinding({ apiKey: deepSeekApiKey() ?? "" });
+    const apiKey = deepSeekApiKey() ?? "";
+    // A profile that declares strict output has to reach the beta endpoint
+    // that enforces it. Selecting the transport from anything other than the
+    // profile is how a registry can claim `strict-tool` while the request on
+    // the wire carries an unconstrained tool.
+    return kpStructuredOutputMode(profile) === "strict-tool"
+      ? createDeepSeekStrictToolBinding({ apiKey })
+      : createDeepSeekAuthoritativeBinding({ apiKey });
   }
   const ai = (env as typeof env & { AI?: Ai }).AI;
   if (!ai) {
