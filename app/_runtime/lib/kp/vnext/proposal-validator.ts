@@ -6,7 +6,7 @@ import {
 } from "./canonical-json";
 import { validateVNextProposalBundleDependencies } from "./proposal-graph";
 import {
-  VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   type VNextAttemptCost,
   type VNextBundleProducedReference,
   type VNextBundleReference,
@@ -52,7 +52,7 @@ export function validateVNextProposalBundle(
       || !exactKeys(value, [
         "adjudication", "basisRefs", "kind", "mode", "proposals", "schema", "terminal",
       ])
-      || value.schema !== VNEXT_PROPOSAL_BUNDLE_SCHEMA
+      || value.schema !== VNEXT2_PROPOSAL_BUNDLE_SCHEMA
       || value.kind !== "proposalBundle"
       || (value.mode !== "adjudication" && value.mode !== "terminal")
       || !isExistingRefArray(value.basisRefs)) {
@@ -75,7 +75,7 @@ export function validateVNextProposalBundle(
         return rejected("BUNDLE_DEPENDENCY_INVALID", dependencyIssues);
       }
       bundle = canonicalClone({
-        schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+        schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
         kind: "proposalBundle",
         mode: "adjudication",
         basisRefs: value.basisRefs,
@@ -91,7 +91,7 @@ export function validateVNextProposalBundle(
         invalid("bundle:terminal-shape-invalid");
       }
       bundle = canonicalClone({
-        schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+        schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
         kind: "proposalBundle",
         mode: "terminal",
         basisRefs: value.basisRefs,

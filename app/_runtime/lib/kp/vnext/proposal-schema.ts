@@ -9,7 +9,7 @@ import type { JsonRecord } from "./canonical-json";
  * Form ids.  No model-authored node id, RootAction, authority id, or DAG is
  * part of this type.
  */
-export const VNEXT_PROPOSAL_BUNDLE_SCHEMA =
+export const VNEXT2_PROPOSAL_BUNDLE_SCHEMA =
   "zhuwei.kp-proposal-bundle/vnext-2" as const;
 
 export const VNEXT_PROPOSAL_BUNDLE_PLAN_SCHEMA =
@@ -297,7 +297,7 @@ export type VNextProposalBundleEntry =
   | VNextWorldInteractionEntry;
 
 export type VNextAdjudicationBundle = Readonly<{
-  schema: typeof VNEXT_PROPOSAL_BUNDLE_SCHEMA;
+  schema: typeof VNEXT2_PROPOSAL_BUNDLE_SCHEMA;
   kind: "proposalBundle";
   mode: "adjudication";
   basisRefs: readonly string[];
@@ -308,7 +308,7 @@ export type VNextAdjudicationBundle = Readonly<{
 }>;
 
 export type VNextTerminalBundle = Readonly<{
-  schema: typeof VNEXT_PROPOSAL_BUNDLE_SCHEMA;
+  schema: typeof VNEXT2_PROPOSAL_BUNDLE_SCHEMA;
   kind: "proposalBundle";
   mode: "terminal";
   basisRefs: readonly string[];
@@ -366,7 +366,7 @@ export type VNextProposalBundleCommand =
       kind: "rulesStep";
       rootActionId: string;
       actorCharacterId: string;
-      formId: typeof VNEXT_MATERIALIZATION_FORM_ID | typeof VNEXT_WORLD_INTERACTION_FORM_ID | typeof VNEXT_PROPOSAL_BUNDLE_SCHEMA;
+      formId: typeof VNEXT_MATERIALIZATION_FORM_ID | typeof VNEXT_WORLD_INTERACTION_FORM_ID | typeof VNEXT2_PROPOSAL_BUNDLE_SCHEMA;
       proposalRef: string;
       ruling: "directSuccess" | "check";
       rulesInput: JsonRecord;
@@ -402,7 +402,7 @@ export type VNextProposalBundleCommand =
       rootActionId: string;
       actorCharacterId: string;
       proposalRef: string;
-      formId: typeof VNEXT_PROPOSAL_BUNDLE_SCHEMA;
+      formId: typeof VNEXT2_PROPOSAL_BUNDLE_SCHEMA;
       ruling: VNextHighRiskRuling;
       basisRefs: readonly string[];
       confirmationId: string;

@@ -15,7 +15,7 @@ import {
   CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
   createCorrectKpProposalBundleModelInput,
   createSubmitKpProposalBundleModelInput,
@@ -33,7 +33,7 @@ import { validateVNextProposalBundle } from "./proposal-validator";
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   version: "kp-vnext2-proposal-parser-v4",
   toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  bundleSchema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  bundleSchema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   correctionToolName: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   correctionSchema: CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
   sentinelVersion: "none-v1",
@@ -129,7 +129,7 @@ export function parseSubmitKpProposalBundleCandidateArguments(
   try {
     draft = canonicalClone({
       ...decoded,
-      schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+      schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
       kind: "proposalBundle",
     }) as JsonRecord;
   } catch {

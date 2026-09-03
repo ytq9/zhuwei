@@ -36,7 +36,7 @@ import {
  * RootAction, actor, profile and context binding; none of those authority
  * identifiers are accepted from the model here.
  */
-export const VNEXT_PROPOSAL_BUNDLE_SCHEMA =
+export const VNEXT1_PROPOSAL_BUNDLE_SCHEMA =
   "zhuwei.kp-proposal-bundle/vnext-1" as const;
 export const VNEXT_CLARIFICATION_FORM_ID = "clarification.vnext-1" as const;
 export const VNEXT_IN_WORLD_REFUSAL_FORM_ID = "in-world-refusal.vnext-1" as const;
@@ -245,7 +245,7 @@ export type VNextProposalBundleEntry = VNextBundleEntryBase & Readonly<{
 }>;
 
 export type VNextProposalBundle = Readonly<{
-  schema: typeof VNEXT_PROPOSAL_BUNDLE_SCHEMA;
+  schema: typeof VNEXT1_PROPOSAL_BUNDLE_SCHEMA;
   kind: "proposalBundle";
   proposals: readonly VNextProposalBundleEntry[];
 }>;
@@ -398,7 +398,7 @@ export function validateVNextProposalBundle(
   try {
     if (!isPlainRecord(value)
       || !exactKeys(value, ["schema", "kind", "proposals"])
-      || value.schema !== VNEXT_PROPOSAL_BUNDLE_SCHEMA
+      || value.schema !== VNEXT1_PROPOSAL_BUNDLE_SCHEMA
       || value.kind !== "proposalBundle"
       || !Array.isArray(value.proposals)
       || value.proposals.length === 0
@@ -439,7 +439,7 @@ export function validateVNextProposalBundle(
     assertAcyclicDependencies(entries, producers);
 
     const normalized = canonicalClone({
-      schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+      schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
       kind: "proposalBundle",
       proposals: entries,
     }) as VNextProposalBundle;
@@ -502,7 +502,7 @@ export function lowerVNextProposalBundle(
       return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:prospective-ref-requires-atomic-bundle"]);
     }
     const bundleHash = canonicalHash({
-      schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+      schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
       kind: "proposalBundle",
       proposals: entries,
     });
@@ -1313,7 +1313,13 @@ function trustedHighRiskConfirmation(
   return confirmation as VNextHighRiskConfirmation;
 }
 
-function validateAttemptCosts(
+/**
+ * Exported so the vnext-2 Room-bridge lowering can reuse the exact same
+ * item/resource availability gate instead of re-deriving it. Behaviour is
+ * unchanged; this is an added export, not a rewrite -- see
+ * proposal-bundle-lowering.ts.
+ */
+export function validateAttemptCosts(
   input: VNextProposalBundleLoweringInput,
   costs: readonly VNextAttemptCost[],
 ): readonly string[] {

@@ -23,7 +23,7 @@ import {
   SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
-  VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   createCorrectKpProposalBundleModelInput,
   createSubmitKpProposalBundleModelInput,
   decodeVNextStrictToolBundle,
@@ -231,7 +231,7 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
 
 test("strict parser injects the vNext-2 envelope and decodes none sentinels", () => {
   const bundle = parseSubmitKpProposalBundleResponse(toolResponse(worldInteractionArguments()));
-  assert.equal(bundle.schema, VNEXT_PROPOSAL_BUNDLE_SCHEMA);
+  assert.equal(bundle.schema, VNEXT2_PROPOSAL_BUNDLE_SCHEMA);
   assert.equal(bundle.kind, "proposalBundle");
   assert.equal(bundle.mode, "adjudication");
   assert.equal(bundle.terminal, null);
@@ -342,7 +342,7 @@ test("clarification choice scope prevents identical frozen branches from sharing
     assert.equal(continuation.kind, "adjudication");
     return deriveVNextProposalBundlePlan({
       bundle: {
-        schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+        schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
         kind: "proposalBundle",
         mode: "adjudication",
         basisRefs: [...terminalBundle.basisRefs, ...choice.basisRefs, ...continuation.basisRefs],
@@ -400,7 +400,7 @@ test("shared check structurally dominates outcome-bound entries", () => {
   const decoded = decodeVNextStrictToolBundle(argumentsValue);
   const validation = validateVNextProposalBundle({
     ...decoded,
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
   });
   assert.equal(validation.kind, "accepted", JSON.stringify(validation));

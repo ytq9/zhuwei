@@ -6,7 +6,7 @@ import {
   validateVNextProposalBundle,
   VNEXT_CLARIFICATION_FORM_ID,
   VNEXT_IN_WORLD_REFUSAL_FORM_ID,
-  VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
 } from "../app/_runtime/lib/kp/vnext/proposal-bundle.ts";
 import { VNEXT_WORLD_INTERACTION_FORM_ID } from "../app/_runtime/lib/kp/vnext/proposals.ts";
 import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
@@ -134,7 +134,7 @@ function entry({
 
 function bundle(...entries) {
   return {
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     proposals: entries,
   };

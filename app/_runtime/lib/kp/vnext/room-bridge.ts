@@ -12,10 +12,15 @@ import { freezeAdjudicationContext } from "./context";
 import { validateVNextTransactionReadSet } from "./required-context-runtime";
 import {
   lowerVNextProposalBundle,
-  VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
   type VNextAttemptCost,
   type VNextProposalBundleCommand,
 } from "./proposal-bundle";
+import {
+  lowerVNext2ProposalBundle,
+  type VNext2ProposalBundleCommand,
+} from "./proposal-bundle-lowering";
+import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from "./proposal-schema";
 
 /**
  * Hard ceiling on the frozen artifact, in canonical units (UTF-8 bytes / 4).
@@ -136,7 +141,7 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
       // model-authored Form field, so verify it above and remove it before the
       // strict Form envelope validator/lowerer.
       const { rootActionId: _trustedRoomBinding, ...formProposal } = input.proposal;
-      if (formProposal.schema === VNEXT_PROPOSAL_BUNDLE_SCHEMA) {
+      if (formProposal.schema === VNEXT1_PROPOSAL_BUNDLE_SCHEMA) {
         const lowered = lowerVNextProposalBundle({
           value: formProposal,
           requiredContext: input.requiredContext,
@@ -152,6 +157,23 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
           });
         }
         return bundleCommandToRoomLowering(lowered.command);
+      }
+      if (formProposal.schema === VNEXT2_PROPOSAL_BUNDLE_SCHEMA) {
+        const lowered = lowerVNext2ProposalBundle({
+          value: formProposal,
+          requiredContext: input.requiredContext,
+          state: input.state,
+          rootActionId: input.rootActionId,
+          actorCharacterId: input.actorCharacterId,
+        });
+        if (lowered.kind === "rejected") {
+          return Object.freeze({
+            kind: "rejected",
+            code: lowered.code,
+            explanation: "The KP proposal bundle could not be verified against its frozen context.",
+          });
+        }
+        return vnext2CommandToRoomLowering(lowered.command);
       }
       return Object.freeze({
         kind: "rejected",
@@ -274,6 +296,85 @@ export function bundleCommandToRoomLowering(
     kind: "rejected",
     code: "BUNDLE_LOWERING_UNSUPPORTED",
     explanation: "The pinned vNext Rules profile has no confirmed high-risk consumer yet.",
+  });
+}
+
+/**
+ * vnext-2 counterpart of bundleCommandToRoomLowering above. Only three
+ * command kinds exist for vnext-2 in this pass (see
+ * proposal-bundle-lowering.ts): a `rulesStep` forwards its rulesInput
+ * verbatim -- this is also how a whole atomic multi-entry Bundle reaches
+ * Room, since its rulesInput.kind is `applyAtomicWorldInteractionSteps`,
+ * the exact same Rules primitive the vnext-1 `atomicRulesSteps` command
+ * lowers to just above. `pendingClarification` and `inWorldRefusal` are
+ * unchanged in shape from vnext-1 and lower the same way.
+ */
+export function vnext2CommandToRoomLowering(
+  command: VNext2ProposalBundleCommand,
+): RoomVNextProposalLoweringResult {
+  if (command.kind === "rulesStep") {
+    return Object.freeze({
+      kind: "accepted",
+      input: structuredClone(command.rulesInput),
+    });
+  }
+  if (command.kind === "pendingClarification") {
+    return Object.freeze({
+      kind: "accepted",
+      input: {
+        kind: "resolveImprovisedAction",
+        rootActionId: command.rootActionId,
+        actorCharacterId: command.actorCharacterId,
+        ruling: {
+          kind: "playerChoice",
+          pendingInputId: command.pendingInputId,
+          question: command.question,
+          choices: command.choices.map((choice) => ({
+            choiceId: choice.choiceId,
+            label: choice.label,
+            consequence: choice.publicRisk,
+          })),
+        },
+      },
+    });
+  }
+  // kind === "inWorldRefusal"
+  const costs = lowerAttemptCosts(command.ruling.attemptCosts);
+  if (costs === undefined) {
+    return Object.freeze({
+      kind: "rejected",
+      code: "BUNDLE_LOWERING_UNSUPPORTED",
+      explanation: "The pinned vNext Rules profile has no transition for one of the attempt costs.",
+    });
+  }
+  return Object.freeze({
+    kind: "accepted",
+    input: {
+      kind: "ruleWorldInteractionFeasibility",
+      rootActionId: command.rootActionId,
+      actorCharacterId: command.actorCharacterId,
+      plan: {
+        schema: "zhuwei.world-interaction-feasibility-ruling-plan/v1",
+        actorCharacterId: command.actorCharacterId,
+        intent: command.intent,
+        method: command.method,
+        rulingKind: command.ruling.kind,
+        publicBasis: command.ruling.publicBasis,
+        prerequisites: command.ruling.prerequisites.map((prerequisite) => ({
+          kind: prerequisite.kind,
+          ref: prerequisite.ref,
+          description: prerequisite.description,
+        })),
+        nextActions: command.ruling.nextActions.map((nextAction) => ({
+          description: nextAction.description,
+        })),
+        costs,
+        basisRefs: [...new Set([
+          ...command.basisRefs,
+          ...command.ruling.nextActions.flatMap((nextAction) => nextAction.basisRefs),
+        ])].sort(),
+      },
+    },
   });
 }
 

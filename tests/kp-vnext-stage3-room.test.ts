@@ -12,9 +12,19 @@ import {
   VNEXT_WORLD_INTERACTION_FORM_ID,
 } from "../app/_runtime/lib/kp/vnext/proposals";
 import {
-  VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
   validateVNextProposalBundle,
 } from "../app/_runtime/lib/kp/vnext/proposal-bundle";
+import {
+  VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+  VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
+} from "../app/_runtime/lib/kp/vnext/proposal-schema";
+import { validateVNextProposalBundle as validateVNext2ProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-validator";
+import {
+  applyVNextProposalBundleCorrection,
+  repairableVNextProposalBundlePaths,
+} from "../app/_runtime/lib/kp/vnext/proposal-correction";
+import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json";
 import type { VNextRequiredContext } from "../app/_runtime/lib/kp/vnext/required-context";
 import {
   WORLD_INTERACTION_PROFILE,
@@ -629,7 +639,7 @@ function contextEntry(context: VNextRequiredContext, entryRef: string): JsonReco
 
 function singleProposalBundleEntry(value: JsonRecord): JsonRecord {
   expect(value).toMatchObject({
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
   });
   const entries = list(value.proposals, "proposal bundle entries");
@@ -752,7 +762,7 @@ function npcRevisionProposal(
     ? stored
     : overrides.staleBase;
   return {
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     proposals: [{
       formId: VNEXT_MATERIALIZATION_FORM_ID,
@@ -870,7 +880,7 @@ function worldInteractionProposal(request: JsonRecord, config: WorldProposalConf
     }],
   });
   return {
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     proposals: [{
       formId: VNEXT_WORLD_INTERACTION_FORM_ID,
@@ -1089,7 +1099,7 @@ function inspectAlcoveProposal(request: JsonRecord, handle: string): JsonRecord 
 /** materialize + interact, atomically: goal 1's representative vertical. */
 function materializeAndInspectAlcoveProposal(request: JsonRecord): JsonRecord {
   return {
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     proposals: [
       materializeAlcoveProposal(request),
@@ -1104,7 +1114,7 @@ function materializeAndInspectAlcoveProposal(request: JsonRecord): JsonRecord {
  * its atomic partner cannot attach to it. */
 function materializeAndInspectBrokenGraphProposal(request: JsonRecord): JsonRecord {
   return {
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     proposals: [
       materializeAlcoveProposal(request),
@@ -1117,7 +1127,7 @@ function materializeAndInspectBrokenGraphProposal(request: JsonRecord): JsonReco
  * not itself the reason the broken-graph Bundle above fails to commit. */
 function materializeAlcoveAloneProposal(request: JsonRecord): JsonRecord {
   return {
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     proposals: [materializeAlcoveProposal(request)],
   };
@@ -1133,13 +1143,141 @@ function invalidSemanticKindAlcoveProposal(request: JsonRecord): JsonRecord {
   const materialize = record(bundle.proposals[0], "materialize entry");
   const proposal = record(materialize.proposal, "materialize proposal payload");
   return {
-    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    schema: VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     proposals: [
       { ...materialize, proposal: { ...proposal, semanticKind: "npc" } },
       bundle.proposals[1],
     ],
   };
+}
+
+// -- vnext-2 ProposalBundle fixtures (proposal-schema.ts contract) --------
+// Entries carry no model-authored proposalRef/formId/ruling: the server
+// derives entryRefs and formIds (proposal-graph.ts) and the whole Bundle
+// shares one adjudication. Kept deliberately parallel to the vnext-1 ALCOVE_*
+// fixtures just above so the two contracts' equivalent scenarios stay easy
+// to compare.
+
+const ALCOVE_HANDLE_V2 = "prospective:stage3-new-alcove-v2";
+const ALCOVE_UNPRODUCED_HANDLE_V2 = "prospective:stage3-unproduced-handle-v2";
+
+const ALCOVE_SHARED_RULING_V2: JsonRecord = Object.freeze({
+  kind: "directSuccess",
+  risk: "让一个先前没被注意到的壁龛显形并靠近查看，不会带来额外风险。",
+  successOutcome: "壁龛作为新的场景对象被固化，角色随即查看了它的内部。",
+});
+
+function materializeAlcoveEntryV2(
+  overrides: { produces?: JsonRecord[]; summary?: string } = {},
+): JsonRecord {
+  return {
+    kind: "materializeObject",
+    basisRefs: [SCENE_REF],
+    consumes: [],
+    produces: overrides.produces ?? [
+      { handle: ALCOVE_HANDLE_V2, kind: "semanticDefinition", outcomeBinding: "always" },
+    ],
+    outcomeBinding: "always",
+    semanticKind: "sceneFeature",
+    templateRef: "template:stage3:alcove-v2",
+    templateHash: `sha256:${"7".repeat(64)}`,
+    visibilityPolicyRef: "visibility:scene-observers",
+    definition: {
+      sceneRef: SCENE_REF,
+      visibilityFactId: null,
+      label: "新出现的壁龛(v2)",
+      description: "墙面上露出一个先前没有被注意到的浅壁龛。",
+      observableState: "刚刚露出",
+      affordances: ["可以靠近查看"],
+      mechanicDefinitionRefs: [],
+    },
+    summary: overrides.summary ?? "根据角色仔细检查墙面，固化出一个新的可互动壁龛。",
+  };
+}
+
+function inspectAlcoveEntryV2(handle: string): JsonRecord {
+  const branch = (name: "success") => ({
+    outcomeCode: `outcome:stage3:inspect-alcove-v2:${name}`,
+    summary: "角色查看了新出现的壁龛内部。",
+    effects: [],
+    sensoryEvidence: [{
+      observerRef: ALICE_ID,
+      subjectRef: null,
+      sense: "sight",
+      evidence: "壁龛内壁干净，没有藏着别的东西。",
+      basisRefs: [SCENE_REF],
+    }],
+    pressures: [],
+    opportunities: [],
+  });
+  return {
+    kind: "worldInteraction",
+    basisRefs: [SCENE_REF],
+    consumes: [{ kind: "prospective", handle }],
+    produces: [],
+    outcomeBinding: "always",
+    sceneRef: SCENE_REF,
+    targetRefs: [handle],
+    directTargetRefs: [handle],
+    instrumentRefs: [],
+    abilityRef: null,
+    intent: "靠近查看墙面新出现的浅壁龛。",
+    method: "伸手探查壁龛内部。",
+    branches: { success: branch("success"), failure: null },
+  };
+}
+
+function adjudicationBundleV2(proposals: JsonRecord[]): JsonRecord {
+  return {
+    schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    mode: "adjudication",
+    basisRefs: [SCENE_REF],
+    adjudication: ALCOVE_SHARED_RULING_V2,
+    terminal: null,
+    proposals,
+  };
+}
+
+/** materialize + interact, atomically, vnext-2 shape: goal 1's vertical. */
+function materializeAndInspectAlcoveBundleV2(): JsonRecord {
+  return adjudicationBundleV2([
+    materializeAlcoveEntryV2(),
+    inspectAlcoveEntryV2(ALCOVE_HANDLE_V2),
+  ]);
+}
+
+/** Same two entries, but the interact entry consumes a handle nothing in the
+ * Bundle produces -- a broken produces/consumes graph. */
+function materializeAndInspectBrokenGraphBundleV2(): JsonRecord {
+  return adjudicationBundleV2([
+    materializeAlcoveEntryV2(),
+    inspectAlcoveEntryV2(ALCOVE_UNPRODUCED_HANDLE_V2),
+  ]);
+}
+
+/** The same materialize entry submitted alone. */
+function materializeAlcoveAloneBundleV2(): JsonRecord {
+  return adjudicationBundleV2([materializeAlcoveEntryV2()]);
+}
+
+/** Violates the frozen materializeObject contract (semanticKind is only ever
+ * "sceneFeature" or "worldFact") -- used for the invalid-schema-fails-closed
+ * case. Rejected by proposal-validator.ts's validateVNextProposalBundle
+ * before lowerVNext2ProposalBundle ever reaches Rules. */
+function invalidSemanticKindAlcoveBundleV2(): JsonRecord {
+  const bundle = materializeAndInspectAlcoveBundleV2() as { proposals: [JsonRecord, JsonRecord] };
+  const [materialize, inspect] = bundle.proposals;
+  return adjudicationBundleV2([{ ...materialize, semanticKind: "npc" }, inspect]);
+}
+
+/** An intentionally empty `summary` -- the one repairable field
+ * proposal-correction.ts's allowlist recognizes for a materializeObject
+ * entry -- so the KP's first draft fails local validation and must be
+ * corrected exactly once before Room ever sees a propose() call. */
+function draftAlcoveAloneBundleV2WithBadSummary(): JsonRecord {
+  return adjudicationBundleV2([materializeAlcoveEntryV2({ summary: "" })]);
 }
 
 function intent(submissionId: string, text: string): RoomActionInput {
@@ -2401,6 +2539,249 @@ describe("vNext stage-three Room verticals", () => {
       counters,
       prepared,
     }), "invalid materializeObject schema outcome");
+
+    expect(outcome).toMatchObject({
+      kind: "rejected",
+      code: "PROPOSAL_BUNDLE_INVALID",
+      action: "notCommitted",
+      narration: "notApplicable",
+    });
+    expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
+    expect(counters.rolls).toBe(0);
+    expect(await roomSnapshot(authority)).toEqual(before);
+  });
+
+  // -- vnext-2 ProposalBundle bridged to the real Room path ---------------
+  // Proves deliverable B/C: the schema id-`vnext-2` contract
+  // (proposal-schema.ts/proposal-graph.ts/proposal-validator.ts) now lowers
+  // through room-bridge.ts into the exact same Rules primitives as vnext-1,
+  // not only at the unit level.
+
+  it("lowers a vnext-2 Bundle: materializes a new scene object and interacts with it through its prospective handle as one atomic Rules transaction, never partially", async () => {
+    const { authority } = await initializeRoom("kp-vnext2-stage3-room-materialize-interact");
+    const before = await roomSnapshot(authority);
+
+    // Sub-case 1: a broken produces/consumes graph must commit nothing at
+    // all, not even the otherwise independently-valid materialize step.
+    {
+      const counters = emptyActionCounters();
+      const prepared: PreparedCapture = { all: [] };
+      const kp = new DeterministicKp(
+        () => materializeAndInspectBrokenGraphBundleV2(),
+        prepared,
+        undefined,
+        false,
+      );
+      const outcome = record(await runAction({
+        authority,
+        principal: ALICE,
+        action: intent(
+          "submission:stage3:vnext2-materialize-interact-broken-graph",
+          "角色仔细检查墙面，发现一个新壁龛并靠近查看内部。",
+        ),
+        kp,
+        counters,
+        prepared,
+      }), "vnext-2 broken produces/consumes graph outcome");
+      expect(outcome).toMatchObject({
+        kind: "rejected",
+        code: "BUNDLE_DEPENDENCY_INVALID",
+        action: "notCommitted",
+        narration: "notApplicable",
+      });
+      expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
+      expect(counters.rolls).toBe(0);
+      expect(await roomSnapshot(authority)).toEqual(before);
+    }
+
+    // Sub-case 2: the real vertical. A correctly-linked two-entry vnext-2
+    // Bundle commits as one Rules transaction with one Receipt, and the
+    // interact step addresses the brand-new object purely through its
+    // bundle-local prospective handle.
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(
+      () => materializeAndInspectAlcoveBundleV2(),
+      prepared,
+      undefined,
+      false,
+    );
+    const action = intent(
+      "submission:stage3:vnext2-materialize-interact",
+      "角色仔细检查墙面，发现一个新壁龛并靠近查看内部。",
+    );
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action,
+      kp,
+      counters,
+      prepared,
+    }), "vnext-2 materialize + interact outcome");
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+      receipt: { rootActionId: expect.any(String), receiptId: expect.any(String) },
+    });
+    expect(kp.counters).toMatchObject({ propose: 1 });
+    expect(counters.rolls).toBe(0);
+
+    const committed = await roomSnapshot(authority);
+    expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(1);
+    expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
+    const settlementEvents = eventsOf(committed, "AtomicWorldInteractionStepsResolved");
+    expect(settlementEvents).toHaveLength(1);
+    const mapStep = (raw: unknown) => {
+      const step = record(raw, "atomic settlement step");
+      return { proposalRef: String(step.proposalRef), status: String(step.status) };
+    };
+    const settlementSteps = list(
+      eventPayload(settlementEvents[0]).steps,
+      "atomic settlement steps",
+    ).map(mapStep);
+    expect(settlementSteps.map((step) => step.status)).toEqual(["applied", "applied"]);
+
+    // ONE Receipt covers the whole atomic transaction.
+    const rootActionId = String(record(outcome.receipt, "committed receipt").rootActionId);
+    const receiptRecord = record(
+      record(committed.state.receipts, "state receipts")[rootActionId],
+      "the one Receipt for this RootAction",
+    );
+    const receiptSettlementSteps = list(
+      record(receiptRecord.proposalBundleSettlement, "Receipt bundle settlement").steps,
+      "Receipt settlement steps",
+    ).map(mapStep);
+    expect(receiptSettlementSteps).toEqual(settlementSteps);
+
+    const materializedPayload = eventPayload(eventsOf(committed, "SemanticDefinitionMaterialized")[0]);
+    const resolvedPayload = eventPayload(eventsOf(committed, "WorldInteractionResolved")[0]);
+    const alcoveRef = String(materializedPayload.definitionRef);
+    // The interaction step never saw the raw handle by the time its event
+    // was built -- Rules substituted it for the real definitionRef first.
+    expect(resolvedPayload.targetRefs).toEqual([alcoveRef]);
+    expect(resolvedPayload.directTargetRefs).toEqual([alcoveRef]);
+    expect(alcoveRef).not.toContain("prospective:");
+    expect(definitions(committed.state)[alcoveRef]).toMatchObject({
+      semanticKind: "sceneFeature",
+      content: {
+        sceneRef: SCENE_REF,
+        label: "新出现的壁龛(v2)",
+        observableState: "刚刚露出",
+      },
+    });
+
+    const narration = narrationForViewer(kp, `${ALICE.principal.id}${ALICE_ID}`)[0];
+    expect(narration).toBeDefined();
+    expect(claimKinds(narration)).toEqual(expect.arrayContaining([
+      "definitionRevised",
+      "sceneFeature",
+      "mechanicalOutcome",
+      "actionCommitted",
+    ]));
+    // Authority-only values (bundleHash/prospectiveRef/contextHash and the
+    // raw handle itself) must never reach a player-visible Claim/Narration.
+    expect(JSON.stringify(narration)).not.toContain("prospective:");
+
+    // Replay determinism: evicting and reconstructing the Durable Object
+    // from genesis+events alone must reproduce byte-identical state and an
+    // identical state hash.
+    const stateHashBeforeEviction = await roomStateHash(authority);
+    await evictDurableObject(authority as never);
+    const afterEviction = await roomSnapshot(authority);
+    expect(afterEviction).toEqual(committed);
+    expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+  });
+
+  it("commits a vnext-2 materialized object after the KP applies exactly one internal correction before ever proposing to the Room", async () => {
+    const { authority } = await initializeRoom("kp-vnext2-stage3-room-materialize-correction");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    let correctionsApplied = 0;
+    const kp = new DeterministicKp((request) => {
+      // Mirrors proposal-correction.ts/proposal-provider.ts's real
+      // summary-only correction round trip: the first candidate Bundle
+      // fails local validation (an empty summary), exactly one repair pass
+      // fixes it, and Room's kp.propose() is called only once with the
+      // final, already-corrected Bundle -- Room cannot tell a corrected
+      // Bundle apart from one that needed no correction. This is the exact
+      // round trip the vnext-1/vnext-2 disconnect was blocking: vnext-2 is
+      // the only contract `correct_kp_proposal_bundle` was ever built for.
+      const context = requiredContext(request);
+      const draft = draftAlcoveAloneBundleV2WithBadSummary();
+      const draftValidation = validateVNext2ProposalBundle(draft);
+      expect(draftValidation.kind, "the uncorrected vnext-2 draft must itself be invalid").toBe("rejected");
+      const allowedPaths = repairableVNextProposalBundlePaths(draft);
+      expect(allowedPaths.length, "exactly one repairable field").toBe(1);
+      const correction = {
+        schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
+        baseBundleHash: canonicalHash(draft),
+        contextHash: context.binding.contextHash,
+        attempt: 1 as const,
+        changes: [{ path: allowedPaths[0]!, value: "根据角色仔细检查墙面，固化出一个新的可互动壁龛。" }],
+      };
+      const corrected = applyVNextProposalBundleCorrection({
+        bundle: draft,
+        correction,
+        requiredContext: context,
+        allowedPaths,
+      });
+      expect(corrected.kind, JSON.stringify(corrected)).toBe("accepted");
+      correctionsApplied += 1;
+      return (corrected as { bundle: JsonRecord }).bundle;
+    }, prepared, undefined, false);
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:vnext2-materialize-correction",
+        "角色仔细检查墙面，发现一个新壁龛。",
+      ),
+      kp,
+      counters,
+      prepared,
+    }), "vnext-2 corrected materialize outcome");
+
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    // Room saw exactly one propose() call; the correction happened entirely
+    // upstream of it -- proving the correction round trip now reaches a real
+    // commit through the Room seam, not only through the offline unit tests.
+    expect(kp.counters).toMatchObject({ propose: 1 });
+    expect(correctionsApplied).toBe(1);
+    expect(counters.rolls).toBe(0);
+
+    const committed = await roomSnapshot(authority);
+    expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(1);
+  });
+
+  it("rejects an invalid vnext-2 Bundle before Rules, randomness, cost, or persistence", async () => {
+    const { authority } = await initializeRoom("kp-vnext2-stage3-room-materialize-invalid-schema");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(
+      () => invalidSemanticKindAlcoveBundleV2(),
+      prepared,
+      undefined,
+      false,
+    );
+    const before = await roomSnapshot(authority);
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:vnext2-materialize-invalid-schema",
+        "角色仔细检查墙面，发现一个新壁龛并靠近查看内部。",
+      ),
+      kp,
+      counters,
+      prepared,
+    }), "invalid vnext-2 materializeObject schema outcome");
 
     expect(outcome).toMatchObject({
       kind: "rejected",
