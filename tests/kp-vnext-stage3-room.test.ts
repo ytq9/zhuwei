@@ -1001,6 +1001,147 @@ function trapProbeProposal(request: JsonRecord): JsonRecord {
   });
 }
 
+const ALCOVE_HANDLE = "prospective:stage3-new-alcove";
+const ALCOVE_UNPRODUCED_HANDLE = "prospective:stage3-unproduced-handle";
+
+// Both entries of an atomic Bundle must share byte-identical rulings
+// (validateVNextProposalBundle/lowerAtomicMultiStep compare their canonical
+// hash), so the materialize and interact proposals below reuse this same
+// object rather than each writing out their own risk/outcome text.
+const ALCOVE_SHARED_RULING: JsonRecord = Object.freeze({
+  kind: "directSuccess",
+  risk: "让一个先前没被注意到的壁龛显形并靠近查看，不会带来额外风险。",
+  successOutcome: "壁龛作为新的场景对象被固化，角色随即查看了它的内部。",
+  failureOutcome: "不会产生新的场景对象，也不会发生查看。",
+});
+
+function materializeAlcoveProposal(
+  request: JsonRecord,
+  overrides: { produces?: JsonRecord[] } = {},
+): JsonRecord {
+  return {
+    formId: VNEXT_MATERIALIZATION_FORM_ID,
+    proposalRef: `proposal:stage3:materialize-alcove:${String(request.rootActionId)}`,
+    basisRefs: [SCENE_REF],
+    consumes: [],
+    produces: overrides.produces ?? [
+      { handle: ALCOVE_HANDLE, kind: "semanticDefinition", outcomeBinding: "always" },
+    ],
+    outcomeBinding: "always",
+    ruling: ALCOVE_SHARED_RULING,
+    proposal: {
+      kind: "materializeObject",
+      semanticKind: "sceneFeature",
+      templateRef: "template:stage3:alcove",
+      templateHash: `sha256:${"7".repeat(64)}`,
+      visibilityPolicyRef: "visibility:scene-observers",
+      definition: {
+        sceneRef: SCENE_REF,
+        visibilityFactId: null,
+        label: "新出现的壁龛",
+        description: "墙面上露出一个先前没有被注意到的浅壁龛。",
+        observableState: "刚刚露出",
+        affordances: ["可以靠近查看"],
+        mechanicDefinitionRefs: [],
+      },
+      summary: "根据角色仔细检查墙面，固化出一个新的可互动壁龛。",
+    },
+  };
+}
+
+function inspectAlcoveProposal(request: JsonRecord, handle: string): JsonRecord {
+  const branch = (name: "success" | "failure") => ({
+    outcomeCode: `outcome:stage3:inspect-alcove:${name}`,
+    summary: name === "success" ? "角色查看了新出现的壁龛内部。" : "没有发生什么特别的事。",
+    effects: [],
+    sensoryEvidence: [{
+      observerRef: ALICE_ID,
+      subjectRef: null,
+      sense: "sight",
+      evidence: "壁龛内壁干净，没有藏着别的东西。",
+      basisRefs: [SCENE_REF],
+    }],
+    pressures: [],
+    opportunities: [],
+  });
+  return {
+    formId: VNEXT_WORLD_INTERACTION_FORM_ID,
+    proposalRef: `proposal:stage3:inspect-alcove:${String(request.rootActionId)}`,
+    basisRefs: [SCENE_REF],
+    consumes: [{ kind: "prospective", handle }],
+    produces: [],
+    outcomeBinding: "always",
+    ruling: ALCOVE_SHARED_RULING,
+    proposal: {
+      kind: "worldInteraction",
+      sceneRef: SCENE_REF,
+      targetRefs: [handle],
+      directTargetRefs: [handle],
+      instrumentRefs: [],
+      abilityRef: null,
+      intent: "靠近查看墙面新出现的浅壁龛。",
+      method: "伸手探查壁龛内部。",
+      branches: { success: branch("success"), failure: branch("failure") },
+    },
+  };
+}
+
+/** materialize + interact, atomically: goal 1's representative vertical. */
+function materializeAndInspectAlcoveProposal(request: JsonRecord): JsonRecord {
+  return {
+    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    proposals: [
+      materializeAlcoveProposal(request),
+      inspectAlcoveProposal(request, ALCOVE_HANDLE),
+    ],
+  };
+}
+
+/** Same two Forms, but the interact entry consumes a handle nothing in the
+ * Bundle produces -- a broken produces/consumes graph, used to prove that an
+ * otherwise independently-valid materialize step never commits alone when
+ * its atomic partner cannot attach to it. */
+function materializeAndInspectBrokenGraphProposal(request: JsonRecord): JsonRecord {
+  return {
+    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    proposals: [
+      materializeAlcoveProposal(request),
+      inspectAlcoveProposal(request, ALCOVE_UNPRODUCED_HANDLE),
+    ],
+  };
+}
+
+/** The same materialize entry submitted alone, to independently prove it is
+ * not itself the reason the broken-graph Bundle above fails to commit. */
+function materializeAlcoveAloneProposal(request: JsonRecord): JsonRecord {
+  return {
+    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    proposals: [materializeAlcoveProposal(request)],
+  };
+}
+
+/** Violates the frozen materializeObject contract (semanticKind is only ever
+ * "sceneFeature" or "worldFact") -- used for the invalid-schema-fails-closed
+ * case. Rejected by validateVNextProposalBundle before Rules ever sees it. */
+function invalidSemanticKindAlcoveProposal(request: JsonRecord): JsonRecord {
+  const bundle = materializeAndInspectAlcoveProposal(request) as {
+    proposals: [JsonRecord, JsonRecord];
+  };
+  const materialize = record(bundle.proposals[0], "materialize entry");
+  const proposal = record(materialize.proposal, "materialize proposal payload");
+  return {
+    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    proposals: [
+      { ...materialize, proposal: { ...proposal, semanticKind: "npc" } },
+      bundle.proposals[1],
+    ],
+  };
+}
+
 function intent(submissionId: string, text: string): RoomActionInput {
   return { kind: "intent", submissionId, text };
 }
@@ -1070,6 +1211,15 @@ async function roomSnapshot(authority: Authority): Promise<{
       state: structuredClone(target.authoritativeReplay().state),
       events: structuredClone(target.authorityStore.events()),
     };
+  });
+}
+
+async function roomStateHash(authority: Authority): Promise<string> {
+  return runInDurableObject(authority as never, async (instance) => {
+    const target = instance as unknown as RoomInternals;
+    const replay = record(target.authoritativeReplay().replay, "authoritative replay result");
+    const head = record(replay.head, "authoritative replay head");
+    return String(head.stateHash);
   });
 }
 
@@ -2013,5 +2163,253 @@ describe("vNext stage-three Room verticals", () => {
     ]));
     expect(eventsOf(afterTrap, "WorldInteractionResolved").every((event) =>
       event.eventType === "WorldInteractionResolved")).toBe(true);
+  });
+
+  it("materializes a new scene object and interacts with it through its prospective handle as one atomic Rules transaction, never partially", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-materialize-interact");
+    const before = await roomSnapshot(authority);
+
+    // Sub-case 1: a broken produces/consumes graph -- the interact entry
+    // consumes a handle nothing in the Bundle produces -- must commit
+    // nothing at all, not even the otherwise independently-valid
+    // materialize step. If the atomic transaction were not truly atomic,
+    // a naive per-entry executor could have committed the materialize step
+    // before ever reaching the broken interact step.
+    {
+      const counters = emptyActionCounters();
+      const prepared: PreparedCapture = { all: [] };
+      const kp = new DeterministicKp(
+        (request) => materializeAndInspectBrokenGraphProposal(request),
+        prepared,
+        undefined,
+        false,
+      );
+      const outcome = record(await runAction({
+        authority,
+        principal: ALICE,
+        action: intent(
+          "submission:stage3:materialize-interact-broken-graph",
+          "角色仔细检查墙面，发现一个新壁龛并靠近查看内部。",
+        ),
+        kp,
+        counters,
+        prepared,
+      }), "broken produces/consumes graph outcome");
+      expect(outcome).toMatchObject({
+        kind: "rejected",
+        code: "BUNDLE_DEPENDENCY_INVALID",
+        action: "notCommitted",
+        narration: "notApplicable",
+      });
+      expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
+      expect(counters.rolls).toBe(0);
+      expect(await roomSnapshot(authority)).toEqual(before);
+    }
+
+    // Sub-case 2: the exact same materialize entry, submitted alone in a
+    // separate Room, independently commits -- proving sub-case 1's
+    // rejection came from the broken graph and not from anything wrong
+    // with the materialize step by itself. A separate Room keeps this
+    // commit out of sub-case 3's event-count assertions below.
+    {
+      const { authority: aloneAuthority } = await initializeRoom(
+        "kp-vnext-stage3-room-materialize-alone",
+      );
+      const counters = emptyActionCounters();
+      const prepared: PreparedCapture = { all: [] };
+      const kp = new DeterministicKp((request) => materializeAlcoveAloneProposal(request), prepared);
+      const outcome = record(await runAction({
+        authority: aloneAuthority,
+        principal: ALICE,
+        action: intent(
+          "submission:stage3:materialize-alone",
+          "角色仔细检查墙面，发现一个新壁龛。",
+        ),
+        kp,
+        counters,
+        prepared,
+      }), "standalone materialize outcome");
+      expect(outcome).toMatchObject({ kind: "committed", action: "committed", narration: "published" });
+      expect(counters.rolls).toBe(0);
+      const aloneSnapshot = await roomSnapshot(aloneAuthority);
+      expect(eventsOf(aloneSnapshot, "SemanticDefinitionMaterialized")).toHaveLength(1);
+    }
+
+    // Sub-case 3: the real vertical. A correctly-linked two-entry Bundle
+    // commits as one Rules transaction with one Receipt, and the interact
+    // step addresses the brand-new object purely through its bundle-local
+    // prospective handle -- the KP never names, and Room never accepts, the
+    // definitionRef itself.
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp((request) => materializeAndInspectAlcoveProposal(request), prepared);
+    const action = intent(
+      "submission:stage3:materialize-interact",
+      "角色仔细检查墙面，发现一个新壁龛并靠近查看内部。",
+    );
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action,
+      kp,
+      counters,
+      prepared,
+    }), "materialize + interact outcome");
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+      receipt: { rootActionId: expect.any(String), receiptId: expect.any(String) },
+    });
+    expect(kp.counters).toMatchObject({ propose: 1 });
+    expect(counters.rolls).toBe(0);
+
+    const committed = await roomSnapshot(authority);
+    expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(1);
+    expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
+    const settlementEvents = eventsOf(committed, "AtomicWorldInteractionStepsResolved");
+    expect(settlementEvents).toHaveLength(1);
+    const mapStep = (raw: unknown) => {
+      const step = record(raw, "atomic settlement step");
+      return { proposalRef: String(step.proposalRef), status: String(step.status) };
+    };
+    const settlementSteps = list(
+      eventPayload(settlementEvents[0]).steps,
+      "atomic settlement steps",
+    ).map(mapStep);
+    expect(settlementSteps.map((step) => step.status)).toEqual(["applied", "applied"]);
+
+    // ONE Receipt covers the whole atomic transaction: the Receipt this
+    // Room action returned already records both steps as applied.
+    const rootActionId = String(record(outcome.receipt, "committed receipt").rootActionId);
+    const receiptRecord = record(
+      record(committed.state.receipts, "state receipts")[rootActionId],
+      "the one Receipt for this RootAction",
+    );
+    const receiptSettlementSteps = list(
+      record(receiptRecord.proposalBundleSettlement, "Receipt bundle settlement").steps,
+      "Receipt settlement steps",
+    ).map(mapStep);
+    expect(receiptSettlementSteps).toEqual(settlementSteps);
+
+    const materializedPayload = eventPayload(eventsOf(committed, "SemanticDefinitionMaterialized")[0]);
+    const resolvedPayload = eventPayload(eventsOf(committed, "WorldInteractionResolved")[0]);
+    const alcoveRef = String(materializedPayload.definitionRef);
+    // The interaction step never saw the raw handle by the time its event
+    // was built -- Rules substituted it for the real definitionRef first.
+    expect(resolvedPayload.targetRefs).toEqual([alcoveRef]);
+    expect(resolvedPayload.directTargetRefs).toEqual([alcoveRef]);
+    expect(alcoveRef).not.toContain("prospective:");
+    expect(definitions(committed.state)[alcoveRef]).toMatchObject({
+      semanticKind: "sceneFeature",
+      content: {
+        sceneRef: SCENE_REF,
+        label: "新出现的壁龛",
+        observableState: "刚刚露出",
+      },
+    });
+
+    const narration = narrationForViewer(kp, `${ALICE.principal.id}${ALICE_ID}`)[0];
+    expect(narration).toBeDefined();
+    expect(claimKinds(narration)).toEqual(expect.arrayContaining([
+      "definitionRevised",
+      "sceneFeature",
+      "mechanicalOutcome",
+      "actionCommitted",
+    ]));
+    // Authority-only refs (bundleHash/prospectiveRef/contextHash and the raw
+    // handle itself) must never reach a player-visible Claim or Narration.
+    expect(JSON.stringify(narration)).not.toContain("prospective:");
+
+    // Replay determinism: evicting and reconstructing the Durable Object
+    // from genesis+events alone must reproduce byte-identical state and an
+    // identical state hash.
+    const stateHashBeforeEviction = await roomStateHash(authority);
+    await evictDurableObject(authority as never);
+    const afterEviction = await roomSnapshot(authority);
+    expect(afterEviction).toEqual(committed);
+    expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+  });
+
+  it("commits a materialized object after the KP applies exactly one internal correction before ever proposing to the Room", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-materialize-correction");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    let correctionsApplied = 0;
+    const kp = new DeterministicKp((request) => {
+      // Mirrors what the strict-tool provider's own correction round trip
+      // (proposal-correction.ts/proposal-provider.ts, already covered by
+      // deepseek-strict-tool-provider.test.mjs) does upstream of Room: the
+      // first candidate Bundle violates the frozen contract, exactly one
+      // repair pass fixes it, and Room's kp.propose() is called only once
+      // with the final, already-corrected Bundle -- Room cannot tell a
+      // corrected Bundle apart from one that needed no correction.
+      const draftBundle = invalidSemanticKindAlcoveProposal(request);
+      const draftValidation = validateVNextProposalBundle(draftBundle);
+      expect(draftValidation.kind, "the uncorrected draft must itself be invalid").toBe("rejected");
+      correctionsApplied += 1;
+      return materializeAlcoveAloneProposal(request);
+    }, prepared);
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:materialize-correction",
+        "角色仔细检查墙面，发现一个新壁龛。",
+      ),
+      kp,
+      counters,
+      prepared,
+    }), "corrected materialize outcome");
+
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    // Room saw exactly one propose() call; the correction happened entirely
+    // upstream of it.
+    expect(kp.counters).toMatchObject({ propose: 1 });
+    expect(correctionsApplied).toBe(1);
+    expect(counters.rolls).toBe(0);
+
+    const committed = await roomSnapshot(authority);
+    expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(1);
+  });
+
+  it("rejects a materializeObject entry that violates the frozen semanticKind contract before Rules, randomness, or persistence", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-materialize-invalid-schema");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(
+      (request) => invalidSemanticKindAlcoveProposal(request),
+      prepared,
+      undefined,
+      false,
+    );
+    const before = await roomSnapshot(authority);
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:materialize-invalid-schema",
+        "角色仔细检查墙面，发现一个新壁龛并靠近查看内部。",
+      ),
+      kp,
+      counters,
+      prepared,
+    }), "invalid materializeObject schema outcome");
+
+    expect(outcome).toMatchObject({
+      kind: "rejected",
+      code: "PROPOSAL_BUNDLE_INVALID",
+      action: "notCommitted",
+      narration: "notApplicable",
+    });
+    expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
+    expect(counters.rolls).toBe(0);
+    expect(await roomSnapshot(authority)).toEqual(before);
   });
 });

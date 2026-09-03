@@ -368,6 +368,14 @@ function npcMayUseBasis(
       || definition.visibilityPolicyRef === "visibility:scene-observers");
 }
 
+/** A bundle-local materialization handle, e.g. "prospective:abc123". Rules
+ * substitutes these into the real definitionRef it derives when the atomic
+ * multi-step compiler runs; here they are never a live authority ref, so the
+ * authority/visibility/read-set checks below must not judge them as if they
+ * were one -- Rules' own atomic compiler is the final gate for a handle that
+ * was never actually produced or declared (see world-interactions.ts). */
+const PROSPECTIVE_HANDLE_PATTERN = /^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
 function lowerWorldInteraction(
   envelope: VNextWorldInteractionProposal,
   input: Parameters<typeof lowerVNextCoarseFormProposal>[0],
@@ -384,19 +392,21 @@ function lowerWorldInteraction(
     ...proposal.directTargetRefs,
     ...proposal.instrumentRefs,
     ...(proposal.abilityRef === null ? [] : [proposal.abilityRef]),
-  ];
+  ].filter((ref) => !PROSPECTIVE_HANDLE_PATTERN.test(ref));
   if (selectedRefs.some((ref) => !authorityRefs.has(ref))) {
     return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:selected-ref-not-authorized"]);
   }
   const viewerRefs = requiredContextViewerRefs(input.requiredContext);
-  if (proposal.directTargetRefs.some((ref) =>
-    !viewerRefs.has(ref)
-    || !authoritySpatialRefVisibleTo(
-      input.state,
-      ref,
-      proposal.sceneRef,
-      input.actorCharacterId,
-    ))) {
+  if (proposal.directTargetRefs
+    .filter((ref) => !PROSPECTIVE_HANDLE_PATTERN.test(ref))
+    .some((ref) =>
+      !viewerRefs.has(ref)
+      || !authoritySpatialRefVisibleTo(
+        input.state,
+        ref,
+        proposal.sceneRef,
+        input.actorCharacterId,
+      ))) {
     return rejected(
       "PROPOSAL_REFERENCE_INVALID",
       ["world-interaction:direct-target-not-addressable"],
@@ -468,7 +478,11 @@ function lowerWorldInteraction(
     ...costs.map(({ entryRef }) => entryRef),
     ...success.dependencyRefs,
     ...failure.dependencyRefs,
-  ]);
+    // A prospective handle names something this same atomic Bundle is about
+    // to create; it cannot be a pre-existing read-set binding, and Rules
+    // derives the transaction's committed read set for it separately (see
+    // loweredTransactionReadSet in room-bridge.ts).
+  ].filter((ref) => !PROSPECTIVE_HANDLE_PATTERN.test(ref)));
   const planReadSet = selectPlanReadSet(input.requiredContext, dependencyRefs);
   if (planReadSet.kind === "rejected") return planReadSet;
   const interactionHash = canonicalHash({
@@ -968,7 +982,10 @@ function branchBasisRefs(branches: VNextWorldInteractionProposal["proposal"]["br
   ]);
 }
 
-function selectPlanReadSet(
+/** Exported so proposal-bundle.ts can build a materializeObject Rules plan's
+ * readSet from the same frozen RequiredContext bindings, without duplicating
+ * this lookup. */
+export function selectPlanReadSet(
   context: VNextRequiredContext,
   dependencyRefs: readonly string[],
   npcRef?: string,

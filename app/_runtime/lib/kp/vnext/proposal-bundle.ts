@@ -8,6 +8,7 @@ import {
 } from "./canonical-json";
 import {
   lowerVNextCoarseFormProposal,
+  selectPlanReadSet,
   VNEXT_KP_PROPOSAL_SCHEMA,
   VNEXT_MATERIALIZATION_FORM_ID,
   VNEXT_WORLD_INTERACTION_FORM_ID,
@@ -178,6 +179,35 @@ export type VNextBundleSemanticRevisionProposal = Readonly<{
   summary: string;
 }>;
 
+/**
+ * Creates a new scene object from a sparse semantic source, exactly like
+ * VNextBundleSemanticRevisionProposal creates no mechanical state. Rules
+ * derives the committed definitionRef and the bundle-local `produces` handle
+ * this entry declares is how the rest of the Bundle may address it before it
+ * exists -- see the `prospective:` handle convention on VNextBundleReference.
+ */
+export type VNextBundleMaterializedObjectDefinition = Readonly<{
+  /** Required for sceneFeature; must be null for worldFact. */
+  sceneRef: string | null;
+  /** Required only by hidden-until-evidence visibility. */
+  visibilityFactId: string | null;
+  label: string;
+  description: string;
+  observableState: string;
+  affordances: readonly string[];
+  mechanicDefinitionRefs: readonly string[];
+}>;
+
+export type VNextBundleMaterializeObjectProposal = Readonly<{
+  kind: "materializeObject";
+  semanticKind: "sceneFeature" | "worldFact";
+  templateRef: string;
+  templateHash: string;
+  visibilityPolicyRef: string;
+  definition: VNextBundleMaterializedObjectDefinition;
+  summary: string;
+}>;
+
 export type VNextBundleWorldInteractionProposal = Readonly<{
   kind: "worldInteraction";
   sceneRef: string;
@@ -197,6 +227,7 @@ export type VNextBundleFormProposal =
   | VNextClarificationProposal
   | VNextInWorldRefusalProposal
   | VNextBundleSemanticRevisionProposal
+  | VNextBundleMaterializeObjectProposal
   | VNextBundleWorldInteractionProposal;
 
 type VNextBundleEntryBase = Readonly<{
@@ -446,7 +477,13 @@ export function lowerVNextProposalBundle(
     const authorityRefs = requiredContextAuthorityRefs(input.requiredContext);
     const readRefs = requiredContextReadRefs(input.requiredContext);
     for (const entry of entries) {
-      const refs = entryRefs(entry);
+      // A `prospective:` handle names something this same Bundle is about to
+      // materialize, never a pre-existing authority ref; it cannot appear in
+      // RequiredContext and so is exempt from both checks below. Whether the
+      // handle actually has a producer in this Bundle is validated above by
+      // validateVNextProposalBundle and, defensively, by Rules' own atomic
+      // compiler -- never by this authority/read-set gate.
+      const refs = entryRefs(entry).filter((ref) => !isLocalHandle(ref));
       if (refs.some((ref) => !authorityRefs.has(ref))) {
         return rejected("PROPOSAL_REFERENCE_INVALID", ["bundle:ref-not-authorized"]);
       }
@@ -454,10 +491,25 @@ export function lowerVNextProposalBundle(
         return rejected("PROPOSAL_REFERENCE_INVALID", ["bundle:ref-not-read-bound"]);
       }
     }
+    // A lone worldInteraction can never legitimately reference a prospective
+    // handle: nothing in a one-entry bundle could ever have produced it, so
+    // this closes the single-entry path off from the atomic-only convention
+    // before it ever reaches Rules.
+    if (entries.length === 1
+      && entries[0]!.proposal.kind === "worldInteraction"
+      && [...entries[0]!.proposal.targetRefs, ...entries[0]!.proposal.directTargetRefs]
+        .some((ref) => isLocalHandle(ref))) {
+      return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:prospective-ref-requires-atomic-bundle"]);
+    }
+    const bundleHash = canonicalHash({
+      schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+      kind: "proposalBundle",
+      proposals: entries,
+    });
 
     return entries.length === 1
-      ? lowerSingleEntry(input, entries[0]!)
-      : lowerAtomicMultiStep(input, entries);
+      ? lowerSingleEntry(input, entries[0]!, bundleHash)
+      : lowerAtomicMultiStep(input, entries, bundleHash);
   } catch {
     return rejected("PROPOSAL_BUNDLE_INVALID", ["bundle:lowering-input-invalid"]);
   }
@@ -468,6 +520,7 @@ export function lowerVNextProposalBundle(
 function lowerSingleEntry(
   input: VNextProposalBundleLoweringInput,
   entry: VNextProposalBundleEntry,
+  bundleHash: string,
 ): VNextProposalBundleLoweringResult {
   if (entry.ruling.kind === "highRisk") {
     const confirmation = trustedHighRiskConfirmation(input, entry);
@@ -539,7 +592,7 @@ function lowerSingleEntry(
   if (entry.ruling.kind !== "directSuccess" && entry.ruling.kind !== "check") {
     return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle:ruling-consumer-unavailable"]);
   }
-  const rulesInput = lowerExecutableEntry(input, entry);
+  const rulesInput = lowerExecutableEntry(input, entry, bundleHash);
   if (rulesInput.kind === "rejected") return rulesInput;
   return acceptedCommand({
     kind: "rulesStep",
@@ -564,6 +617,7 @@ function lowerSingleEntry(
 function lowerAtomicMultiStep(
   input: VNextProposalBundleLoweringInput,
   entries: readonly VNextProposalBundleEntry[],
+  bundleHash: string,
 ): VNextProposalBundleLoweringResult {
   const sharedRuling = entries[0]?.ruling;
   if (sharedRuling === undefined
@@ -597,7 +651,7 @@ function lowerAtomicMultiStep(
 
   const steps: VNextAtomicRulesStep[] = [];
   for (const entry of graph.ordered) {
-    const lowered = lowerExecutableEntry(input, entry);
+    const lowered = lowerExecutableEntry(input, entry, bundleHash);
     if (lowered.kind === "rejected") return lowered;
     const dependsOn = [
       ...new Set(graph.edges.get(entry.proposalRef) ?? []),
@@ -618,11 +672,7 @@ function lowerAtomicMultiStep(
     kind: "atomicRulesSteps",
     rootActionId: input.rootActionId,
     actorCharacterId: input.actorCharacterId,
-    bundleHash: canonicalHash({
-      schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
-      kind: "proposalBundle",
-      proposals: entries,
-    }),
+    bundleHash,
     contextHash: input.requiredContext.binding.contextHash,
     sharedRuling: sharedRuling.kind as "directSuccess" | "check",
     steps: Object.freeze(steps),
@@ -681,12 +731,23 @@ function isFormProposal(
       && isBoundedText(proposal.method, 4_000);
   }
   if (formId === VNEXT_MATERIALIZATION_FORM_ID) {
-    return ruling.kind !== "missingPrerequisite"
-      && ruling.kind !== "worldLawViolation"
-      && exactKeys(proposal, [
-        "baseHash", "baseRevision", "definitionRef", "kind", "npcRef", "operations",
-        "summary", "templateHash", "templateRef", "semanticKind",
+    if (ruling.kind === "missingPrerequisite" || ruling.kind === "worldLawViolation") return false;
+    if (proposal.kind === "materializeObject") {
+      return exactKeys(proposal, [
+        "definition", "kind", "semanticKind", "summary", "templateHash", "templateRef",
+        "visibilityPolicyRef",
       ])
+        && (proposal.semanticKind === "sceneFeature" || proposal.semanticKind === "worldFact")
+        && isRef(proposal.templateRef)
+        && isRef(proposal.templateHash)
+        && isRef(proposal.visibilityPolicyRef)
+        && isBoundedText(proposal.summary, 2_000)
+        && isMaterializedObjectDefinition(proposal.definition, proposal.semanticKind);
+    }
+    return exactKeys(proposal, [
+      "baseHash", "baseRevision", "definitionRef", "kind", "npcRef", "operations",
+      "summary", "templateHash", "templateRef", "semanticKind",
+    ])
       && proposal.kind === "reviseSemanticDefinition"
       && proposal.semanticKind === "npc"
       && [proposal.definitionRef, proposal.npcRef, proposal.baseRevision, proposal.baseHash,
@@ -703,8 +764,12 @@ function isFormProposal(
     ])
     && proposal.kind === "worldInteraction"
     && isRef(proposal.sceneRef)
-    && isRefArray(proposal.targetRefs, 1)
-    && isRefArray(proposal.directTargetRefs, 1)
+    // A target may be a bundle-local `prospective:` handle produced earlier
+    // in the same atomic Bundle (see VNextBundleMaterializeObjectProposal);
+    // lowerSingleEntry rejects one outside that context, since nothing could
+    // ever have produced it there.
+    && isRefOrHandleArray(proposal.targetRefs, 1)
+    && isRefOrHandleArray(proposal.directTargetRefs, 1)
     && isRefSubset(proposal.directTargetRefs, proposal.targetRefs)
     && isRefArray(proposal.instrumentRefs)
     && (proposal.abilityRef === null || isRef(proposal.abilityRef))
@@ -1041,6 +1106,7 @@ function isOpportunity(
 function lowerExecutableEntry(
   input: VNextProposalBundleLoweringInput,
   entry: VNextProposalBundleEntry,
+  bundleHash: string,
 ): VNextProposalLoweringResult {
   if (entry.ruling.kind !== "directSuccess" && entry.ruling.kind !== "check") {
     return {
@@ -1048,6 +1114,14 @@ function lowerExecutableEntry(
       code: "PROPOSAL_FORM_INVALID",
       issues: ["bundle:executable-ruling-required"],
     };
+  }
+  // materializeObject creates a definition that does not exist yet, so it
+  // cannot be revalidated against an existing stored definition the way
+  // reviseSemanticDefinition and worldInteraction are below; it is lowered
+  // directly to a materializeSemanticDefinition Rules input instead of
+  // through the shared coarse-form envelope.
+  if (entry.proposal.kind === "materializeObject") {
+    return lowerMaterializeObjectEntry(input, entry, entry.proposal, bundleHash);
   }
   const oldEnvelope = {
     schema: VNEXT_KP_PROPOSAL_SCHEMA,
@@ -1071,6 +1145,80 @@ function lowerExecutableEntry(
     actorCharacterId: input.actorCharacterId,
   });
   return lowered;
+}
+
+/**
+ * Lowers a materializeObject entry to a materializeSemanticDefinition Rules
+ * input. The entry's one `produces` reference supplies the bundle-local
+ * handle; Rules alone derives the committed definitionRef from it (see
+ * normalizedProspectiveRef/materializedSemanticDefinitionRef in
+ * semantic-definitions.ts) -- this lowering never invents or guesses it.
+ */
+function lowerMaterializeObjectEntry(
+  input: VNextProposalBundleLoweringInput,
+  entry: VNextProposalBundleEntry,
+  proposal: VNextBundleMaterializeObjectProposal,
+  bundleHash: string,
+): VNextProposalLoweringResult {
+  const produced = entry.produces;
+  if (produced.length !== 1 || produced[0]?.kind !== "semanticDefinition") {
+    return {
+      kind: "rejected",
+      code: "PROPOSAL_FORM_INVALID",
+      issues: ["bundle:materialize-object-requires-one-produced-handle"],
+    };
+  }
+  const handle = produced[0].handle;
+  const dependencyRefs = [
+    input.actorCharacterId,
+    ...entry.basisRefs,
+    ...(proposal.definition.sceneRef === null ? [] : [proposal.definition.sceneRef]),
+    ...(proposal.definition.visibilityFactId === null ? [] : [proposal.definition.visibilityFactId]),
+    ...proposal.definition.mechanicDefinitionRefs,
+  ];
+  const planReadSet = selectPlanReadSet(input.requiredContext, dependencyRefs);
+  if (planReadSet.kind === "rejected") return planReadSet;
+  const content: JsonRecord = proposal.semanticKind === "sceneFeature"
+    ? {
+        sceneRef: proposal.definition.sceneRef,
+        label: proposal.definition.label,
+        description: proposal.definition.description,
+        ...(proposal.definition.mechanicDefinitionRefs.length > 0
+          ? { mechanicDefinitionRefs: [...proposal.definition.mechanicDefinitionRefs].sort() }
+          : {}),
+        observableState: proposal.definition.observableState,
+        affordances: [...proposal.definition.affordances],
+      }
+    : {
+        label: proposal.definition.label,
+        description: proposal.definition.description,
+        ...(proposal.definition.visibilityFactId === null
+          ? {}
+          : { visibilityFactId: proposal.definition.visibilityFactId }),
+      };
+  return {
+    kind: "accepted",
+    rulesInput: {
+      kind: "materializeSemanticDefinition",
+      rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId,
+      plan: {
+        schema: "zhuwei.semantic-definition-materialization-plan/vnext-1",
+        bundleHash,
+        handle,
+        semanticKind: proposal.semanticKind,
+        templateRef: proposal.templateRef,
+        templateHash: proposal.templateHash,
+        visibilityPolicyRef: proposal.visibilityPolicyRef,
+        contextHash: input.requiredContext.binding.contextHash,
+        readSet: planReadSet.readSet,
+        basisRefs: [...entry.basisRefs],
+        sourceRefs: [],
+        content,
+        summary: proposal.summary,
+      },
+    },
+  };
 }
 
 function toWorldAdjudication(
@@ -1210,14 +1358,28 @@ function entryRefs(entry: VNextProposalBundleEntry): readonly string[] {
       ]
     : entry.proposal.kind === "reviseSemanticDefinition"
       ? [entry.proposal.definitionRef, entry.proposal.npcRef, entry.proposal.templateRef]
-      : entry.proposal.kind === "inWorldRefusal"
-        ? entry.ruling.kind === "missingPrerequisite" || entry.ruling.kind === "worldLawViolation"
-          ? [
-              ...entry.ruling.prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref]),
-              ...entry.ruling.nextActions.flatMap(({ basisRefs }) => [...basisRefs]),
-            ]
-          : []
-        : entry.proposal.choices.flatMap(({ basisRefs }) => [...basisRefs]);
+      : entry.proposal.kind === "materializeObject"
+        // templateRef/templateHash are opaque KP-chosen provenance tags for a
+        // definition that does not exist yet; unlike reviseSemanticDefinition
+        // they name no existing authority ref and so are never checked here.
+        // Rules is the final authority on this proposal's own new definition.
+        ? [
+            ...(entry.proposal.definition.sceneRef === null
+              ? []
+              : [entry.proposal.definition.sceneRef]),
+            ...(entry.proposal.definition.visibilityFactId === null
+              ? []
+              : [entry.proposal.definition.visibilityFactId]),
+            ...entry.proposal.definition.mechanicDefinitionRefs,
+          ]
+        : entry.proposal.kind === "inWorldRefusal"
+          ? entry.ruling.kind === "missingPrerequisite" || entry.ruling.kind === "worldLawViolation"
+            ? [
+                ...entry.ruling.prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref]),
+                ...entry.ruling.nextActions.flatMap(({ basisRefs }) => [...basisRefs]),
+              ]
+            : []
+          : entry.proposal.choices.flatMap(({ basisRefs }) => [...basisRefs]);
   return [...new Set([
     ...entry.basisRefs,
     ...entry.consumes.flatMap((consume) => consume.kind === "existing" ? [consume.ref] : []),
@@ -1304,6 +1466,45 @@ function isRefArray(value: unknown, minimum = 0): value is readonly string[] {
     && value.length <= MAX_REFS
     && value.every(isRef)
     && new Set(value).size === value.length;
+}
+
+/** Either an authority ref or a bundle-local `prospective:` handle. Used
+ * only for the world-interaction target fields, which must be able to
+ * address an object this same atomic Bundle is about to materialize. */
+function isRefOrHandle(value: unknown): value is string {
+  return isRef(value) || isLocalHandle(value);
+}
+
+function isRefOrHandleArray(value: unknown, minimum = 0): value is readonly string[] {
+  return Array.isArray(value)
+    && value.length >= minimum
+    && value.length <= MAX_REFS
+    && value.every(isRefOrHandle)
+    && new Set(value).size === value.length;
+}
+
+function isTextArray(value: unknown, maximum: number, itemMaximum: number): boolean {
+  return Array.isArray(value)
+    && value.length <= maximum
+    && value.every((entry) => isBoundedText(entry, itemMaximum));
+}
+
+function isMaterializedObjectDefinition(
+  value: unknown,
+  semanticKind: "sceneFeature" | "worldFact",
+): value is VNextBundleMaterializedObjectDefinition {
+  return isPlainRecord(value)
+    && exactKeys(value, [
+      "affordances", "description", "label", "mechanicDefinitionRefs", "observableState",
+      "sceneRef", "visibilityFactId",
+    ])
+    && (semanticKind === "sceneFeature" ? isRef(value.sceneRef) : value.sceneRef === null)
+    && (value.visibilityFactId === null || isRef(value.visibilityFactId))
+    && isBoundedText(value.label, 300)
+    && isBoundedText(value.description, 4_000)
+    && isBoundedText(value.observableState, 2_000)
+    && isTextArray(value.affordances, 16, 300)
+    && isRefArray(value.mechanicDefinitionRefs);
 }
 
 function isRefSubset(subset: unknown, superset: unknown): boolean {
