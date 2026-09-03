@@ -23,6 +23,8 @@ import {
   runDeepSeekStrictToolHandshake,
 } from "../tools/run-deepseek-strict-tool-handshake.mjs";
 
+// Test level: T1 — validates the local DeepSeek strict-tool transport contract before I/O.
+
 const STRICT_SCHEMA = Object.freeze({
   type: "object",
   properties: Object.freeze({
@@ -286,6 +288,27 @@ test("DeepSeek strict dialect accepts documented $def refs and rejects unresolve
   assert.throws(
     () => assertDeepSeekStrictToolSchema(standardDefs),
     /unsupported-keyword|local-def-required/u,
+  );
+});
+
+test("DeepSeek strict dialect rejects a type-less nested anyOf branch", () => {
+  const directUnion = structuredClone(STRICT_SCHEMA);
+  directUnion.properties.choice = {
+    anyOf: [{ type: "string" }, { type: "integer" }],
+  };
+  directUnion.required = [...directUnion.required, "choice"].sort();
+  assert.doesNotThrow(() => assertDeepSeekStrictToolSchema(directUnion));
+
+  const nestedUnion = structuredClone(directUnion);
+  nestedUnion.properties.choice = {
+    anyOf: [
+      { anyOf: [{ type: "string" }, { type: "integer" }] },
+      { type: "boolean" },
+    ],
+  };
+  assert.throws(
+    () => assertDeepSeekStrictToolSchema(nestedUnion),
+    /anyOf\[0\]\.type:required-for-anyOf-branch/u,
   );
 });
 

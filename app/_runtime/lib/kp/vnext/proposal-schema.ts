@@ -631,9 +631,12 @@ function makeStrictBundleSchema(): Record<string, unknown> {
     dc: { type: "integer" },
     mode: { type: "string", enum: ["normal", "advantage", "disadvantage"] },
   });
-  const ruling = {
-    anyOf: [ref("directSuccessRuling"), ref("checkRuling"), ref("highRiskRuling")],
-  };
+  const rulingAlternatives = [
+    ref("directSuccessRuling"),
+    ref("checkRuling"),
+    ref("highRiskRuling"),
+  ];
+  const ruling = { anyOf: rulingAlternatives };
   const effects = { type: "array", items: { anyOf: [
     ref("relationEffect"), ref("definitionEffect"), ref("hazardEffect"),
   ] } };
@@ -649,7 +652,7 @@ function makeStrictBundleSchema(): Record<string, unknown> {
   const schema: Record<string, unknown> = object({
     mode: { type: "string", enum: ["adjudication", "terminal"] },
     basisRefs: refArray,
-    adjudication: { anyOf: [ruling, ref("noneRuling")] },
+    adjudication: { anyOf: [...rulingAlternatives, ref("noneRuling")] },
     terminal: { anyOf: [ref("clarificationTerminal"), ref("refusalTerminal"), ref("noneTerminal")] },
     proposals: { type: "array", items: operation },
   });

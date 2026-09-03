@@ -114,6 +114,11 @@ function validateSchemaNode(
     }
     optionalDescription(value, path);
     value.anyOf.forEach((candidate, index) => {
+      if (isRecord(candidate)
+        && typeof candidate.type !== "string"
+        && typeof candidate.$ref !== "string") {
+        invalid(`${path}.anyOf[${index}].type:required-for-anyOf-branch`);
+      }
       validateSchemaNode(candidate, `${path}.anyOf[${index}]`, depth + 1, state);
     });
     return;
