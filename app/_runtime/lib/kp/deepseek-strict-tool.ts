@@ -5,7 +5,7 @@ export const DEEPSEEK_STRICT_TOOL_ENDPOINT_PROTOCOL =
   "deepseek-chat-completions-beta-strict-tool-v1" as const;
 
 export const DEEPSEEK_STRICT_TOOL_SCHEMA_DIALECT =
-  "deepseek-strict-tool-beta-2026-09-02" as const;
+  "deepseek-strict-tool-beta-2026-09-03" as const;
 
 export type DeepSeekStrictToolSchema = Record<string, unknown>;
 
@@ -89,11 +89,15 @@ function validateSchemaNode(
   depth: number,
   state: ValidationState,
   root = false,
+  definition = false,
 ): void {
   if (depth > MAX_SCHEMA_DEPTH) invalid(`${path}:depth-exceeded`);
   state.nodes += 1;
   if (state.nodes > MAX_SCHEMA_NODES) invalid(`${path}:node-budget-exceeded`);
   if (!isRecord(value)) invalid(`${path}:object-required`);
+  if (definition && typeof value.type !== "string") {
+    invalid(`${path}.type:required-for-definition`);
+  }
 
   if (typeof value.$ref === "string") {
     exactKeys(value, REF_KEYS, path);
@@ -115,8 +119,7 @@ function validateSchemaNode(
     optionalDescription(value, path);
     value.anyOf.forEach((candidate, index) => {
       if (isRecord(candidate)
-        && typeof candidate.type !== "string"
-        && typeof candidate.$ref !== "string") {
+        && typeof candidate.type !== "string") {
         invalid(`${path}.anyOf[${index}].type:required-for-anyOf-branch`);
       }
       validateSchemaNode(candidate, `${path}.anyOf[${index}]`, depth + 1, state);
@@ -216,7 +219,7 @@ function validateObjectSchema(
   }
   if (isRecord(value.$def)) {
     for (const [name, schema] of Object.entries(value.$def)) {
-      validateSchemaNode(schema, `${path}.$def.${name}`, depth + 1, state);
+      validateSchemaNode(schema, `${path}.$def.${name}`, depth + 1, state, false, true);
     }
   }
 }

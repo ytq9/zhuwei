@@ -148,7 +148,7 @@ export const DEEPSEEK_V4_FLASH_VNEXT2_STRICT_TOOL_CANDIDATE = Object.freeze({
   modelId: "deepseek-v4-flash",
   modelRevision: "deepseek-v4-flash-0731",
   supportedRoles: Object.freeze(["primary-kp"] as const),
-  validationSuiteVersion: "kp-vnext2-strict-tool-handshake-v2",
+  validationSuiteVersion: "kp-vnext2-strict-tool-handshake-v3",
   validationStatus: "pending" as const,
   structuredOutputMode: "strict-tool" as const,
   contextWindowTokens: 32_000,

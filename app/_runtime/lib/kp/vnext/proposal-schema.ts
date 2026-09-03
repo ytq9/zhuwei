@@ -498,10 +498,13 @@ export type VNextProposalBundleCorrectionResult =
     }>;
 
 /**
- * DeepSeek's beta strict dialect accepts only closed objects, local `$def`
- * references, bounded `anyOf`, and all-properties-required objects.  The
- * schema uses the string sentinel `"none"` where the domain type is nullable;
- * `decodeVNextStrictToolBundle` normalizes those sentinels before validation.
+ * The live-gated stage-three transport deliberately exposes only the
+ * direct-success world-interaction and materialize-then-interact slice. The
+ * domain parser and validator remain broader, but a later transport expansion
+ * must earn new Provider evidence before a Room can select it. Every `anyOf`
+ * branch declares a literal type because DeepSeek's strict beta rejects a
+ * `$ref` used directly as a branch. The string sentinel `"none"` represents
+ * nullable domain values and is normalized before local validation.
  */
 export const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = makeStrictBundleSchema();
 
@@ -598,127 +601,173 @@ export function createCorrectKpProposalBundleModelInput(
 }
 
 function makeStrictBundleSchema(): Record<string, unknown> {
-  const ref = (name: string) => ({ $ref: `#/$def/${name}` });
   const object = (properties: Record<string, unknown>) => ({
     type: "object",
     properties,
     required: Object.keys(properties).sort(),
     additionalProperties: false,
   });
-  const text = { type: "string" };
-  const refText = { type: "string", pattern: "^(?!none$)[^\\s]+$" };
+  const text = { type: "string", pattern: "[\\s\\S]+" };
+  const refText = { type: "string", pattern: "^\\S+$" };
   const refArray = { type: "array", items: refText };
   const noneText = { type: "string", enum: ["none"] };
-  const nullableRef = { anyOf: [refText, noneText] };
-  const nullableText = {
-    anyOf: [{ type: "string", pattern: "^(?!none$)[\\s\\S]+$" }, noneText],
-  };
-  const outcome = { type: "string", enum: ["always", "onSuccess", "onFailure"] };
-  const reference = {
-    anyOf: [ref("existingReference"), ref("prospectiveReference")],
-  };
-  const produced = object({ handle: text, kind: {
-    type: "string",
-    enum: ["semanticDefinition"],
-  }, outcomeBinding: outcome });
-  const cost = {
-    anyOf: [ref("fictionTimeCost"), ref("itemCost"), ref("resourceCost")],
-  };
-  const check = object({
-    checkKind: { type: "string", enum: ["abilityCheck", "attack"] },
-    ability: { type: "string", enum: ["str", "dex", "con", "int", "wis", "cha"] },
-    skill: nullableRef,
-    dc: { type: "integer" },
-    mode: { type: "string", enum: ["normal", "advantage", "disadvantage"] },
+  const nullableRef = { ...refText };
+  const nullableText = { ...text };
+  const outcome = { type: "string", enum: ["always"] };
+  const reference = object({
+    kind: { type: "string", enum: ["prospective"] },
+    handle: refText,
   });
-  const rulingAlternatives = [
-    ref("directSuccessRuling"),
-    ref("checkRuling"),
-    ref("highRiskRuling"),
-  ];
-  const ruling = { anyOf: rulingAlternatives };
-  const effects = { type: "array", items: { anyOf: [
-    ref("relationEffect"), ref("definitionEffect"), ref("hazardEffect"),
-  ] } };
+  const produced = object({
+    handle: text,
+    kind: { type: "string", enum: ["semanticDefinition"] },
+    outcomeBinding: outcome,
+  });
+  const semanticOperation = {
+    anyOf: [
+      object({
+        kind: { type: "string", enum: ["set"] },
+        path: refArray,
+        value: {
+          anyOf: [
+            text,
+            { type: "number" },
+            { type: "boolean" },
+            { type: "array", items: text },
+          ],
+        },
+      }),
+      object({
+        kind: { type: "string", enum: ["upsertByRef"] },
+        path: refArray,
+        entry: object({ goalRef: refText, description: text }),
+      }),
+      object({
+        kind: { type: "string", enum: ["upsertByRef"] },
+        path: refArray,
+        entry: object({ planRef: refText, description: text }),
+      }),
+      object({
+        kind: { type: "string", enum: ["removeByRef"] },
+        path: refArray,
+        ref: refText,
+      }),
+    ],
+  };
+  const effects = {
+    type: "array",
+    items: {
+      anyOf: [
+        object({
+          kind: { type: "string", enum: ["relationTransition"] },
+          relationRef: refText,
+          toState: { type: "string", enum: ["active", "ended"] },
+        }),
+        object({
+          kind: { type: "string", enum: ["definitionRevision"] },
+          definitionRef: refText,
+          operations: { type: "array", items: semanticOperation },
+          summary: text,
+        }),
+        object({
+          kind: { type: "string", enum: ["registeredHazard"] },
+          sourceDefinitionRef: refText,
+          zoneRef: refText,
+          damageProfileRef: {
+            type: "string",
+            enum: ["world-damage:falling-object:moderate"],
+          },
+        }),
+      ],
+    },
+  };
+  const sensoryEvidence = object({
+    observerRef: refText,
+    subjectRef: nullableRef,
+    sense: {
+      type: "string",
+      enum: ["sight", "hearing", "smell", "touch", "taste", "special"],
+    },
+    evidence: text,
+    basisRefs: refArray,
+  });
+  const pressure = object({
+    description: text,
+    sourceRef: nullableRef,
+    basisRefs: refArray,
+  });
+  const opportunity = object({
+    description: text,
+    targetRef: nullableRef,
+    actionHint: nullableText,
+    basisRefs: refArray,
+  });
   const branch = object({
     outcomeCode: refText,
     summary: text,
     effects,
-    sensoryEvidence: { type: "array", items: ref("sensoryEvidence") },
-    pressures: { type: "array", items: ref("pressure") },
-    opportunities: { type: "array", items: ref("opportunity") },
+    sensoryEvidence: { type: "array", items: sensoryEvidence },
+    pressures: { type: "array", items: pressure },
+    opportunities: { type: "array", items: opportunity },
   });
-  const operation = { anyOf: [ref("materializeObject"), ref("reviseSemanticDefinition"), ref("worldInteraction")] };
-  const schema: Record<string, unknown> = object({
-    mode: { type: "string", enum: ["adjudication", "terminal"] },
+  const noneBranch = object({ kind: { type: "string", enum: ["none"] } });
+  const materializedDefinition = object({
+    sceneRef: refText,
+    visibilityFactId: noneText,
+    label: text,
+    description: text,
+    observableState: text,
+    affordances: { type: "array", items: text },
+    mechanicDefinitionRefs: refArray,
+  });
+  const materializeObject = object({
+    kind: { type: "string", enum: ["materializeObject"] },
     basisRefs: refArray,
-    adjudication: { anyOf: [...rulingAlternatives, ref("noneRuling")] },
-    terminal: { anyOf: [ref("clarificationTerminal"), ref("refusalTerminal"), ref("noneTerminal")] },
-    proposals: { type: "array", items: operation },
+    consumes: { type: "array", items: reference },
+    produces: { type: "array", items: produced },
+    outcomeBinding: outcome,
+    semanticKind: { type: "string", enum: ["sceneFeature"] },
+    templateRef: refText,
+    templateHash: { type: "string" },
+    visibilityPolicyRef: {
+      type: "string",
+      enum: ["visibility:scene-observers"],
+    },
+    definition: materializedDefinition,
+    summary: text,
   });
-  schema.$def = {
-    existingReference: object({ kind: { type: "string", enum: ["existing"] }, ref: refText }),
-    prospectiveReference: object({ kind: { type: "string", enum: ["prospective"] }, handle: text }),
-    fictionTimeCost: object({ kind: { type: "string", enum: ["fictionTime"] }, durationMicros: { type: "string", pattern: "^[1-9][0-9]*$" } }),
-    itemCost: object({ kind: { type: "string", enum: ["item"] }, entryRef: refText, quantity: { type: "integer" }, charges: { type: "integer" }, durability: { type: "integer" } }),
-    resourceCost: object({ kind: { type: "string", enum: ["resource"] }, resourceId: refText, amount: { type: "integer" } }),
-    directSuccessRuling: object({ kind: { type: "string", enum: ["directSuccess"] }, risk: text, successOutcome: text }),
-    checkRuling: object({ kind: { type: "string", enum: ["check"] }, ...check.properties, risk: text, successOutcome: text, failureOutcome: text }),
-    highRiskRuling: object({ kind: { type: "string", enum: ["highRisk"] }, risk: text, confirmationQuestion: text, successOutcome: text, failureOutcome: text, check: { anyOf: [check, ref("noneCheck")] }, acceptedCosts: { type: "array", items: cost } }),
-    noneRuling: object({ kind: { type: "string", enum: ["none"] } }),
-    noneCheck: object({ checkKind: { type: "string", enum: ["none"] }, ability: noneText, skill: noneText, dc: { type: "integer", enum: [0] }, mode: { type: "string", enum: ["normal"] } }),
-    relationEffect: object({ kind: { type: "string", enum: ["relationTransition"] }, relationRef: refText, toState: { type: "string", enum: ["active", "ended"] } }),
-    definitionEffect: object({ kind: { type: "string", enum: ["definitionRevision"] }, definitionRef: refText, operations: { type: "array", items: ref("semanticOperation") }, summary: text }),
-    hazardEffect: object({ kind: { type: "string", enum: ["registeredHazard"] }, sourceDefinitionRef: refText, zoneRef: refText, damageProfileRef: { type: "string", enum: ["world-damage:falling-object:moderate"] } }),
-    sensoryEvidence: object({ observerRef: refText, subjectRef: nullableRef, sense: { type: "string", enum: ["sight", "hearing", "smell", "touch", "taste", "special"] }, evidence: text, basisRefs: refArray }),
-    pressure: object({ description: text, sourceRef: nullableRef, basisRefs: refArray }),
-    opportunity: object({ description: text, targetRef: nullableRef, actionHint: nullableText, basisRefs: refArray }),
-    semanticOperation: { anyOf: [ref("setOperation"), ref("upsertGoalOperation"), ref("upsertPlanOperation"), ref("removeByRefOperation")] },
-    setOperation: object({ kind: { type: "string", enum: ["set"] }, path: refArray, value: { anyOf: [text, { type: "number" }, { type: "boolean" }, { type: "array", items: text }] } }),
-    upsertGoalOperation: object({ kind: { type: "string", enum: ["upsertByRef"] }, path: refArray, entry: object({ goalRef: refText, description: text }) }),
-    upsertPlanOperation: object({ kind: { type: "string", enum: ["upsertByRef"] }, path: refArray, entry: object({ planRef: refText, description: text }) }),
-    removeByRefOperation: object({ kind: { type: "string", enum: ["removeByRef"] }, path: refArray, ref: refText }),
-    clarificationTerminal: object({ kind: { type: "string", enum: ["clarification"] }, intent: text, method: text, question: text, choices: { type: "array", items: ref("choice") } }),
-    refusalTerminal: object({ kind: { type: "string", enum: ["inWorldRefusal"] }, intent: text, method: text, ruling: ref("refusalRuling") }),
-    noneTerminal: object({ kind: { type: "string", enum: ["none"] } }),
-    refusalRuling: { anyOf: [ref("missingPrerequisite"), ref("worldLawViolation")] },
-    missingPrerequisite: object({ kind: { type: "string", enum: ["missingPrerequisite"] }, publicBasis: text, prerequisites: { type: "array", items: ref("prerequisite") }, nextActions: { type: "array", items: ref("nextAction") }, attemptCosts: { type: "array", items: cost } }),
-    worldLawViolation: object({ kind: { type: "string", enum: ["worldLawViolation"] }, publicBasis: text, prerequisites: { type: "array", items: ref("prerequisite") }, nextActions: { type: "array", items: ref("nextAction") }, attemptCosts: { type: "array", items: cost } }),
-    prerequisite: object({ kind: { type: "string", enum: ["tool", "knowledge", "position", "permission", "condition"] }, ref: nullableRef, description: text }),
-    nextAction: object({ description: text, basisRefs: refArray }),
-    clarificationContinuation: { anyOf: [
-      ref("clarificationAdjudicationContinuation"),
-      ref("clarificationRefusalContinuation"),
-      ref("cancelContinuation"),
-    ] },
-    clarificationAdjudicationContinuation: object({
-      kind: { type: "string", enum: ["adjudication"] },
-      basisRefs: refArray,
-      adjudication: ruling,
-      proposals: { type: "array", items: operation },
+  const worldInteraction = object({
+    kind: { type: "string", enum: ["worldInteraction"] },
+    basisRefs: refArray,
+    consumes: { type: "array", items: reference },
+    produces: { type: "array", items: produced },
+    outcomeBinding: outcome,
+    sceneRef: refText,
+    targetRefs: refArray,
+    directTargetRefs: refArray,
+    instrumentRefs: refArray,
+    abilityRef: noneText,
+    intent: text,
+    method: text,
+    branches: object({
+      success: branch,
+      failure: { anyOf: [branch, noneBranch] },
     }),
-    clarificationRefusalContinuation: object({
-      kind: { type: "string", enum: ["inWorldRefusal"] },
-      basisRefs: refArray,
-      intent: text,
-      method: text,
-      ruling: ref("refusalRuling"),
+  });
+  return object({
+    mode: { type: "string", enum: ["adjudication"] },
+    basisRefs: refArray,
+    adjudication: object({
+      kind: { type: "string", enum: ["directSuccess"] },
+      risk: text,
+      successOutcome: text,
     }),
-    cancelContinuation: object({ kind: { type: "string", enum: ["cancel"] } }),
-    choice: object({
-      choiceId: text,
-      label: text,
-      publicRisk: text,
-      basisRefs: refArray,
-      continuation: ref("clarificationContinuation"),
-    }),
-    materializeObject: object({ kind: { type: "string", enum: ["materializeObject"] }, basisRefs: refArray, consumes: { type: "array", items: reference }, produces: { type: "array", items: produced }, outcomeBinding: outcome, semanticKind: { type: "string", enum: ["sceneFeature", "worldFact"] }, templateRef: refText, templateHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, visibilityPolicyRef: { type: "string", enum: ["visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence"] }, definition: ref("materializedDefinition"), summary: text }),
-    materializedDefinition: object({ sceneRef: nullableRef, visibilityFactId: nullableRef, label: text, description: text, observableState: text, affordances: { type: "array", items: text }, mechanicDefinitionRefs: refArray }),
-    reviseSemanticDefinition: object({ kind: { type: "string", enum: ["reviseSemanticDefinition"] }, basisRefs: refArray, consumes: { type: "array", items: reference }, produces: { type: "array", items: produced }, outcomeBinding: outcome, definitionRef: refText, semanticKind: { type: "string", enum: ["npc"] }, npcRef: refText, baseRevision: refText, baseHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, templateRef: refText, templateHash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" }, operations: { type: "array", items: ref("semanticOperation") }, summary: text }),
-    noneBranch: object({ kind: { type: "string", enum: ["none"] } }),
-    worldInteraction: object({ kind: { type: "string", enum: ["worldInteraction"] }, basisRefs: refArray, consumes: { type: "array", items: reference }, produces: { type: "array", items: produced }, outcomeBinding: outcome, sceneRef: refText, targetRefs: refArray, directTargetRefs: refArray, instrumentRefs: refArray, abilityRef: nullableRef, intent: text, method: text, branches: object({ success: branch, failure: { anyOf: [branch, ref("noneBranch")] } }) }),
-  };
-  return schema;
+    terminal: object({ kind: { type: "string", enum: ["none"] } }),
+    proposals: {
+      type: "array",
+      items: { anyOf: [materializeObject, worldInteraction] },
+    },
+  });
 }
 
 /** Convert strict-tool `none` sentinels to domain nulls. */
