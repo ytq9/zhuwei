@@ -11,10 +11,6 @@ import { isPlainRecord } from "./canonical-json";
 import { freezeAdjudicationContext } from "./context";
 import { validateVNextTransactionReadSet } from "./required-context-runtime";
 import {
-  lowerVNextCoarseFormProposal,
-  VNEXT_KP_PROPOSAL_SCHEMA,
-} from "./proposals";
-import {
   lowerVNextProposalBundle,
   VNEXT_PROPOSAL_BUNDLE_SCHEMA,
   type VNextAttemptCost,
@@ -157,27 +153,11 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
         }
         return bundleCommandToRoomLowering(lowered.command);
       }
-      if (formProposal.schema !== VNEXT_KP_PROPOSAL_SCHEMA) {
-        return Object.freeze({
-          kind: "rejected",
-          code: "PROPOSAL_FORM_INVALID",
-          explanation: "The KP proposal does not match the frozen vNext Form contract.",
-        });
-      }
-      const lowered = lowerVNextCoarseFormProposal({
-        value: formProposal,
-        requiredContext: input.requiredContext,
-        state: input.state,
-        rootActionId: input.rootActionId,
-        actorCharacterId: input.actorCharacterId,
+      return Object.freeze({
+        kind: "rejected",
+        code: "PROPOSAL_FORM_INVALID",
+        explanation: "The KP proposal does not match the frozen vNext Bundle contract.",
       });
-      return lowered.kind === "accepted"
-        ? Object.freeze({ kind: "accepted", input: lowered.rulesInput })
-        : Object.freeze({
-            kind: "rejected",
-            code: lowered.code,
-            explanation: "The KP proposal could not be verified against its frozen context.",
-          });
     },
   });
 

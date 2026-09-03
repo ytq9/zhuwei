@@ -8,11 +8,13 @@ import {
   type RoomActionInput,
 } from "../app/_runtime/lib/room/action";
 import {
-  VNEXT_KP_PROPOSAL_SCHEMA,
   VNEXT_MATERIALIZATION_FORM_ID,
   VNEXT_WORLD_INTERACTION_FORM_ID,
-  validateVNextCoarseFormProposal,
 } from "../app/_runtime/lib/kp/vnext/proposals";
+import {
+  VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+  validateVNextProposalBundle,
+} from "../app/_runtime/lib/kp/vnext/proposal-bundle";
 import type { VNextRequiredContext } from "../app/_runtime/lib/kp/vnext/required-context";
 import {
   WORLD_INTERACTION_PROFILE,
@@ -625,6 +627,16 @@ function contextEntry(context: VNextRequiredContext, entryRef: string): JsonReco
   return record((entry as { value?: unknown }).value, `RequiredContext value ${entryRef}`);
 }
 
+function singleProposalBundleEntry(value: JsonRecord): JsonRecord {
+  expect(value).toMatchObject({
+    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+  });
+  const entries = list(value.proposals, "proposal bundle entries");
+  expect(entries).toHaveLength(1);
+  return record(entries[0], "single proposal bundle entry");
+}
+
 function pistolAbility(context: VNextRequiredContext): string {
   const abilityRef = context.references.domains.abilityRefs.find((candidate) => {
     const entry = context.entries.find(({ entryRef }) => entryRef === candidate);
@@ -654,6 +666,7 @@ class DeterministicKp {
     private readonly buildProposal: ProposalBuilder,
     private readonly prepared: PreparedCapture,
     private readonly failViewerKeyOnce?: string,
+    private readonly validateFixtureProposal = true,
   ) {}
 
   async propose(requestValue: JsonRecord) {
@@ -668,8 +681,10 @@ class DeterministicKp {
     expect(frozen.binding.preparedActionId).toBe(request.preparedActionId);
     expect(frozen.binding.rootActionId).toBe(request.rootActionId);
     const proposal = this.buildProposal(request);
-    const validation = validateVNextCoarseFormProposal(proposal);
-    expect(validation, JSON.stringify(validation)).toMatchObject({ kind: "accepted" });
+    if (this.validateFixtureProposal) {
+      const validation = validateVNextProposalBundle(proposal);
+      expect(validation, JSON.stringify(validation)).toMatchObject({ kind: "accepted" });
+    }
     return proposal;
   }
 
@@ -737,28 +752,52 @@ function npcRevisionProposal(
     ? stored
     : overrides.staleBase;
   return {
-    schema: VNEXT_KP_PROPOSAL_SCHEMA,
+    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    proposals: [{
+      formId: VNEXT_MATERIALIZATION_FORM_ID,
+      proposalRef: `proposal:npc-revision:${String(request.rootActionId)}`,
+      basisRefs: [NPC_KNOWLEDGE_REF],
+      consumes: [],
+      produces: [],
+      outcomeBinding: "always",
+      ruling: {
+        kind: "directSuccess",
+        risk: "本次修订只改变已允许的 NPC 语义字段。",
+        successOutcome: "NPC 的新定义版本将被原子提交。",
+        failureOutcome: "不产生定义修订。",
+      },
+      proposal: {
+        kind: "reviseSemanticDefinition",
+        definitionRef: NPC_DEFINITION_REF,
+        semanticKind: "npc",
+        npcRef: LIAN_ID,
+        baseRevision: selected.revision,
+        baseHash: selected.definitionHash,
+        templateRef: selected.templateRef,
+        templateHash: selected.templateHash,
+        operations: [{
+          kind: "set",
+          path: ["semantics", "attitude"],
+          value: "确认账册后愿意谨慎协助",
+        }],
+        summary: NPC_SUMMARY_CANARY,
+      },
+    }],
+  };
+}
+
+function retiredCoarseNpcRevisionProposal(request: JsonRecord): JsonRecord {
+  const context = requiredContext(request);
+  const entry = singleProposalBundleEntry(npcRevisionProposal(request));
+  return {
+    schema: "zhuwei.kp-coarse-form-proposal/vnext-1",
     kind: "vnextCoarseFormProposal",
-    formId: VNEXT_MATERIALIZATION_FORM_ID,
-    proposalRef: `proposal:npc-revision:${String(request.rootActionId)}`,
+    formId: entry.formId,
+    proposalRef: entry.proposalRef,
     contextHash: context.binding.contextHash,
-    basisRefs: [NPC_KNOWLEDGE_REF],
-    proposal: {
-      kind: "reviseSemanticDefinition",
-      definitionRef: NPC_DEFINITION_REF,
-      semanticKind: "npc",
-      npcRef: LIAN_ID,
-      baseRevision: selected.revision,
-      baseHash: selected.definitionHash,
-      templateRef: selected.templateRef,
-      templateHash: selected.templateHash,
-      operations: [{
-        kind: "set",
-        path: ["semantics", "attitude"],
-        value: "确认账册后愿意谨慎协助",
-      }],
-      summary: NPC_SUMMARY_CANARY,
-    },
+    basisRefs: entry.basisRefs,
+    proposal: entry.proposal,
   };
 }
 
@@ -785,7 +824,7 @@ type WorldProposalConfig = {
 function worldInteractionProposal(request: JsonRecord, config: WorldProposalConfig): JsonRecord {
   const context = requiredContext(request);
   const abilityRef = config.ability === "pistol" ? pistolAbility(context) : null;
-  const adjudication = config.dc === undefined
+  const ruling = config.dc === undefined
     ? {
         kind: "directSuccess",
         risk: "已根据冻结对象语义判断该做法可以直接产生所述结果。",
@@ -831,27 +870,31 @@ function worldInteractionProposal(request: JsonRecord, config: WorldProposalConf
     }],
   });
   return {
-    schema: VNEXT_KP_PROPOSAL_SCHEMA,
-    kind: "vnextCoarseFormProposal",
-    formId: VNEXT_WORLD_INTERACTION_FORM_ID,
-    proposalRef: config.proposalRef,
-    contextHash: context.binding.contextHash,
-    basisRefs: [...config.basisRefs],
-    proposal: {
-      kind: "worldInteraction",
-      sceneRef: SCENE_REF,
-      targetRefs: [...config.targetRefs],
-      directTargetRefs: [...config.directTargetRefs],
-      instrumentRefs: [...config.instrumentRefs],
-      abilityRef,
-      intent: config.intent,
-      method: config.method,
-      adjudication,
-      branches: {
-        success: branch("success", config.successEffects, config.successEvidence),
-        failure: branch("failure", config.failureEffects ?? [], config.failureEvidence),
+    schema: VNEXT_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    proposals: [{
+      formId: VNEXT_WORLD_INTERACTION_FORM_ID,
+      proposalRef: config.proposalRef,
+      basisRefs: [...config.basisRefs],
+      consumes: [],
+      produces: [],
+      outcomeBinding: "always",
+      ruling,
+      proposal: {
+        kind: "worldInteraction",
+        sceneRef: SCENE_REF,
+        targetRefs: [...config.targetRefs],
+        directTargetRefs: [...config.directTargetRefs],
+        instrumentRefs: [...config.instrumentRefs],
+        abilityRef,
+        intent: config.intent,
+        method: config.method,
+        branches: {
+          success: branch("success", config.successEffects, config.successEvidence),
+          failure: branch("failure", config.failureEffects ?? [], config.failureEvidence),
+        },
       },
-    },
+    }],
   };
 }
 
@@ -1066,7 +1109,44 @@ function claimKinds(request: JsonRecord): string[] {
   return claims.map((claim) => String(record(claim, "renderable claim").kind));
 }
 
+// Test level: T2 — these cases cross the real local Room API, identity,
+// Durable Object transaction, Rules, projection and recovery seams.
 describe("vNext stage-three Room verticals", () => {
+  it("rejects the retired coarse-form envelope before Rules or persistence", async () => {
+    const { authority } = await initializeRoom("kp-vnext-stage3-room-retired-coarse-envelope");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(
+      (request) => retiredCoarseNpcRevisionProposal(request),
+      prepared,
+      undefined,
+      false,
+    );
+    const before = await roomSnapshot(authority);
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:retired-coarse-envelope",
+        "莉安根据账册重新考虑她的态度。",
+      ),
+      kp,
+      counters,
+      prepared,
+    }), "retired coarse-form envelope outcome");
+
+    expect(outcome).toMatchObject({
+      kind: "rejected",
+      code: "PROPOSAL_FORM_INVALID",
+      action: "notCommitted",
+      narration: "notApplicable",
+    });
+    expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
+    expect(counters.rolls).toBe(0);
+    expect(await roomSnapshot(authority)).toEqual(before);
+  });
+
   it("runs an existing dynamic NPC sparse revision through frozen context, Rules, claims, narration, replay, and fail-closed stale input", async () => {
     const { authority, seed } = await initializeRoom("kp-vnext-stage3-room-npc");
     const counters = emptyActionCounters();
@@ -1745,7 +1825,7 @@ describe("vNext stage-three Room verticals", () => {
       WEIGHT_REF,
       ROPE_SUPPORT_REF,
     ]));
-    const ropeReturnedProposal = ropeProposal(ropeProposalValue);
+    const ropeReturnedProposal = singleProposalBundleEntry(ropeProposal(ropeProposalValue));
     expect(ropeReturnedProposal).toMatchObject({
       formId: VNEXT_WORLD_INTERACTION_FORM_ID,
       proposal: {
@@ -1830,7 +1910,9 @@ describe("vNext stage-three Room verticals", () => {
       PRESSURE_PLATE_REF,
       HIDDEN_TRIGGER_RELATION_CANARY,
     ]));
-    const trapReturnedProposal = trapProbeProposal(trapKp.proposalRequests[0]);
+    const trapReturnedProposal = singleProposalBundleEntry(
+      trapProbeProposal(trapKp.proposalRequests[0]),
+    );
     expect(trapReturnedProposal).toMatchObject({
       formId: VNEXT_WORLD_INTERACTION_FORM_ID,
       proposal: {
