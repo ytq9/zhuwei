@@ -35,7 +35,6 @@ import {
   createDefinitionSnapshot,
   isSemanticDefinitionMaterializationPlan,
   isStoredSemanticDefinition,
-  materializationContextHash,
   materializedSemanticDefinition,
   semanticDefinitionSnapshot,
   storedSemanticDefinition,
@@ -309,11 +308,18 @@ function reviseSemanticDefinition(
 
 /**
  * Creates a brand-new sparse semantic definition. Unlike revision, there is
- * no prior authoritative version to bind against: the plan's own frozen
- * readSet plus its contextHash (independently recomputed here, never merely
- * trusted) are what stand in for that base binding, and the derived
- * definitionRef must not already exist -- creating over one is a
- * DEFINITION_CONFLICT, never a silent overwrite.
+ * no prior authoritative version to bind against, so the plan's frozen
+ * readSet carries that weight: it must still match current authority state,
+ * and the derived definitionRef must not already exist -- creating over one
+ * is a DEFINITION_CONFLICT, never a silent overwrite.
+ *
+ * `plan.contextHash` is the frozen RequiredContext binding hash, checked
+ * against the adjudication context at Proposal lowering time and carried
+ * here only so the committed event records which context authorised it.
+ * Rules cannot re-derive it (it has no RequiredContext) and must not invent
+ * a substitute computed from the plan's own fields -- that would be
+ * self-satisfying, and would reject the KP-side lowering, which sets this to
+ * the binding hash exactly as the semantic revision path does.
  */
 function materializeSemanticDefinition(
   profiles: RuntimeProfileManifest,
@@ -336,12 +342,6 @@ function materializeSemanticDefinition(
   const plan = input.plan;
   if (!authorityReadSetMatches(state, plan.readSet)) {
     return rejected("causalFrontierConflict", "The semantic materialization read set changed after prepare.");
-  }
-  if (plan.contextHash !== materializationContextHash(input.rootActionId, plan.bundleHash, plan.readSet)) {
-    return rejected(
-      "causalFrontierConflict",
-      "The semantic materialization context hash does not match its frozen read set.",
-    );
   }
   const materialized = materializedSemanticDefinition(input.rootActionId, plan);
   if (state.campaignRuntime.definitions[materialized.definitionRef] !== undefined) {

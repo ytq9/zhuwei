@@ -167,29 +167,6 @@ export function materializedSemanticDefinition(
   return Object.freeze({ prospectiveRef, definitionRef, definition });
 }
 
-/**
- * Deterministic binding between a materialization plan's frozen read set and
- * the RootAction/bundle identity that produced it. Rules recomputes this
- * independently at commit time, so a bundle cannot pair a valid-looking
- * contextHash with a readSet it was not actually derived from -- the same
- * kind of tamper the readSet-staleness check alone would not catch, since a
- * stale readSet and a swapped-in readSet are both merely "some readSet".
- */
-export function materializationContextHash(
-  rootActionId: string,
-  bundleHash: string,
-  readSet: readonly Readonly<{ ref: string; revisionOrHash: string }>[],
-): string {
-  assertRef(rootActionId, "rootActionId");
-  assertSha256(bundleHash, "bundleHash");
-  return canonicalHash({
-    schema: VNEXT_SEMANTIC_DEFINITION_MATERIALIZATION_PLAN_SCHEMA,
-    rootActionId,
-    bundleHash,
-    readSet,
-  });
-}
-
 export function isSemanticDefinitionMaterializedPayload(
   value: unknown,
 ): value is SemanticDefinitionMaterializedPayload {

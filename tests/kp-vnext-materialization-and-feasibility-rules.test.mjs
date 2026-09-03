@@ -10,7 +10,6 @@ import { createVersionedRulesRuntime } from "../app/_runtime/lib/rules/v2-runtim
 import { authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { stepVNextWorldInteraction } from "../app/_runtime/lib/rules/v2/world-interactions.ts";
 import {
-  materializationContextHash,
   materializedSemanticDefinitionRef,
   normalizedProspectiveRef,
   createDefinitionSnapshot,
@@ -166,8 +165,8 @@ function materializationPlan(state, overrides = {}) {
   const bundleHash = overrides.bundleHash ?? canonicalSha256({ bundle: "mf-bundle" });
   const handle = overrides.handle ?? "prospective:mf-handle";
   const readSet = overrides.readSet ?? actorReadSet(state);
-  const contextHash = overrides.contextHash
-    ?? materializationContextHash(rootActionId, bundleHash, readSet);
+  // The frozen RequiredContext binding hash, as Proposal lowering supplies it.
+  const contextHash = overrides.contextHash ?? `sha256:${"c".repeat(64)}`;
   return {
     rootActionId,
     plan: {
@@ -259,20 +258,26 @@ test("materializeSemanticDefinition rejects a stale read set", () => {
   assert.equal(result.rejection.code, "causalFrontierConflict");
 });
 
-test("materializeSemanticDefinition rejects a context hash that does not match the frozen read set", () => {
+test("materializeSemanticDefinition records the authorising context hash verbatim", () => {
+  // Rules holds no RequiredContext and so cannot re-derive this hash. It is
+  // verified against the frozen context at Proposal lowering time; Rules
+  // carries it into the committed event so the audit trail records which
+  // adjudication context authorised the creation. Recomputing it from the
+  // plan's own fields would be self-satisfying, and would reject the KP-side
+  // lowering, which supplies the binding hash like the revision path does.
   const world = initialize();
+  const authorisingHash = `sha256:${"7".repeat(64)}`;
   const { rootActionId, plan } = materializationPlan(world.state, {
-    contextHash: `sha256:${"7".repeat(64)}`,
+    contextHash: authorisingHash,
   });
-  const result = runtime.step(world.profiles, world.state, {
+  const committed = runtime.step(world.profiles, world.state, {
     kind: "materializeSemanticDefinition",
     rootActionId,
     actorCharacterId: ACTOR,
     plan,
   });
-  assert.equal(result.kind, "rejected", JSON.stringify(result));
-  assert.equal(result.rejection.code, "causalFrontierConflict");
-  assert.match(result.rejection.message, /context hash/u);
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  assert.equal(committed.events[0].payload.contextHash, authorisingHash);
 });
 
 test("materializeSemanticDefinition refuses to create over an existing definition ref", () => {
