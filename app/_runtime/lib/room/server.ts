@@ -517,6 +517,11 @@ async function executeAuthoritativeRoomAction(input: {
       : outcome.kind === "needsKp"
         ? { code: "mechanicalDiagnostic" }
         : undefined,
+    // Present only when a proposal failed. The builder reduces it to a closed
+    // vocabulary of Form ids, field paths and diagnostic codes, so the field
+    // that actually broke is recorded without any world reference or model
+    // text reaching the log.
+    proposal: "proposal" in outcome ? outcome.proposal : undefined,
     measurements: {
       operationKind: "roomAuthority",
       durationMs: Date.now() - startedAt,

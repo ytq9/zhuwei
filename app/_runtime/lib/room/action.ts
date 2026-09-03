@@ -878,12 +878,29 @@ function isMechanicalDiagnostic(result: UnknownRecord): boolean {
     (result.kind === "needsKp" && hasDiagnostics(result));
 }
 
-function finalNeedsKp(result: UnknownRecord): InternalRoomActionOutcome {
+/**
+ * Carries the Form, the repair state and the raw Rules diagnostics alongside
+ * the public failure so telemetry can say *what* failed, not only that the
+ * repair ran out. The block is internal: the table layer projects a fixed key
+ * allowlist, and `buildRoomTelemetryEvent` desensitizes the diagnostics into
+ * a closed vocabulary before any of it is logged.
+ */
+function finalNeedsKp(
+  result: UnknownRecord,
+  proposal?: UnknownRecord,
+): InternalRoomActionOutcome {
   const outcome: UnknownRecord = {
     kind: "needsKp",
     receipt: result.receipt,
     code: "PROPOSAL_REPAIR_EXHAUSTED",
   };
+  if (proposal !== undefined) {
+    outcome.proposal = {
+      formId: proposal.formId,
+      repairUsed: proposal.repairUsed,
+      diagnostics: result.diagnostics,
+    };
+  }
   copyOptionalRetryAfter(result, outcome);
   return outcome as InternalRoomActionOutcome;
 }
@@ -1891,7 +1908,7 @@ async function handleRoomActionInternal(
       if (
         attempt === MAX_PROPOSAL_ATTEMPTS
         || proposal.repairUsed === true
-      ) return finalNeedsKp(commitValue);
+      ) return finalNeedsKp(commitValue, proposal);
       diagnostics = commitValue.diagnostics;
       priorProposal = structuredClone(proposal);
       continue;

@@ -1,5 +1,9 @@
 import { canonicalSha256 } from "../rules/profiles/canonical";
 import {
+  kpProposalFailureTelemetry,
+  type KpDiagnosticField,
+} from "../kp/diagnostic-telemetry";
+import {
   MODEL_INVOCATION_FAILURE_STAGES,
   MODEL_INVOCATION_PURPOSES,
   type ModelInvocationFailureStage,
@@ -75,6 +79,14 @@ export type RoomTelemetryEvent = {
   retrievalStatus: "selected" | "fallback" | undefined;
   retrievalFallbackUsed: boolean | undefined;
   retrievalHitCountBucket: string | undefined;
+  // Which Form was being filled, whether the one narrow repair had already
+  // been spent, and which fields broke which rules. Without these a failed
+  // proposal is only ever "the repair was exhausted", and the most frequent
+  // cause cannot be named from production data. Every value here comes from a
+  // closed server-owned vocabulary; see `kp/diagnostic-telemetry`.
+  proposalFormId: string | undefined;
+  proposalRepairUsed: boolean | undefined;
+  proposalDiagnosticFields: readonly KpDiagnosticField[] | undefined;
 };
 
 const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]>> = {
@@ -320,6 +332,7 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
   const planner = record(context?.planner);
   const retrieval = record(context?.retrieval);
   const classification = failure(source?.failure);
+  const proposal = record(source?.proposal);
 
   return {
     schemaVersion: "zhuwei.room-telemetry/v1",
@@ -381,6 +394,38 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
       : undefined,
     retrievalFallbackUsed: booleanValue(retrieval?.fallbackUsed),
     retrievalHitCountBucket: stringValue(retrieval?.hitCountBucket),
+    ...proposalFailureFields(proposal),
+  };
+}
+
+/**
+ * A proposal block is optional: most telemetry events are not a failed
+ * proposal, and those keep all three fields undefined rather than carrying
+ * empty rows.
+ */
+function proposalFailureFields(proposal: UnknownRecord | undefined): Readonly<{
+  proposalFormId: string | undefined;
+  proposalRepairUsed: boolean | undefined;
+  proposalDiagnosticFields: readonly KpDiagnosticField[] | undefined;
+}> {
+  if (proposal === undefined) {
+    return {
+      proposalFormId: undefined,
+      proposalRepairUsed: undefined,
+      proposalDiagnosticFields: undefined,
+    };
+  }
+  const desensitized = kpProposalFailureTelemetry({
+    formId: proposal.formId,
+    repairUsed: proposal.repairUsed,
+    diagnostics: proposal.diagnostics,
+  });
+  return {
+    proposalFormId: desensitized.proposalFormId,
+    proposalRepairUsed: desensitized.repairUsed,
+    proposalDiagnosticFields: desensitized.diagnosticFields.length === 0
+      ? undefined
+      : desensitized.diagnosticFields,
   };
 }
 
