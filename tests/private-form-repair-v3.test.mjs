@@ -523,7 +523,8 @@ test("an explicit too-narrow diagnostic can upgrade an ordinary Form to compound
   assert.equal(calls.length, 2);
 });
 
-test("an unreadable first draft becomes one question instead of a dropped action", async () => {
+// Test level: T1 — exercises the deterministic repair provenance boundary.
+test("an unreadable first draft fails closed instead of accepting repaired semantics", async () => {
   const calls = [];
   // The real trigger: the first tool call's arguments do not parse, so no
   // draft is frozen. The in-attempt schema repair then writes semantics the
@@ -536,22 +537,12 @@ test("an unreadable first draft becomes one question instead of a dropped action
     toolResponse({ formId: "ordinary-check.v1", draft: ordinaryDraft() }, 2),
   ], calls);
 
-  const proposal = await adapter.propose(request());
-
-  // The action survives as the one bounded question the existing
-  // `requestClarification` path already knows how to await.
-  assert.equal(proposal.formId, "clarification.v1");
-  assert.equal(proposal.causalActionProgram.nodes[0].primitive, "requestClarification");
-  assert.match(proposal.draft.question, /请再具体说明/u);
-  // `assertRepairSemantics` reports the first unprovable semantic, so the
-  // question names that aspect in the player's own terms.
-  assert.match(proposal.draft.question, /你想达成什么/u);
-  assert.deepEqual(proposal.draft.choices, ["你想达成什么"]);
-  // The question does not blame the player for an omission they did not make.
-  assert.doesNotMatch(proposal.draft.question, /漏|忘记|没有说/u);
-  // The goal comes from the player's own submitted text, not from the model.
-  assert.equal(proposal.draft.goal, request().input.text);
-  // Two model calls, exactly what SPEC 0015 §6.1 allows; the question is free.
+  await assert.rejects(adapter.propose(request()), (error) => {
+    assert.ok(error instanceof AuthoritativeKpModelError);
+    assert.equal(error.publicCode, "PROPOSAL_REPAIR_EXHAUSTED");
+    return true;
+  });
+  // Repair still consumes at most the two invocations SPEC 0015 §6.1 allows.
   assert.equal(calls.length, 2);
 });
 

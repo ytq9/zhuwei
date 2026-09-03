@@ -14,6 +14,8 @@ import {
   kpFormIdForToolName,
   kpFormToolName,
 } from "../app/_runtime/lib/kp/form-catalog.ts";
+
+// Test level: T1 — exercises the deterministic Form decode, repair, and semantic-freeze contract.
 const PROFILE = AUTHORITATIVE_KP_PROFILE;
 
 function response(toolName, argumentsValue, index = 1) {
@@ -285,18 +287,22 @@ test("unparseable arguments can repair syntax only when raw values prove every s
 
 test("nested raw members cannot prove repaired top-level semantics", async () => {
   const draft = ordinaryDraft();
-  const nestedRawArguments = `{"junk":${JSON.stringify(draft)}`;
-  const calls = [];
-  const adapter = adapterWithResponses([
-    response(kpFormToolName("ordinary-check.v1"), nestedRawArguments, 1),
-    response(kpFormToolName("ordinary-check.v1"), draft, 2),
-  ], calls);
-  await assert.rejects(adapter.propose(request()), (error) => {
-    assert.ok(error instanceof AuthoritativeKpModelError);
-    assert.equal(error.publicCode, "PROPOSAL_REPAIR_EXHAUSTED");
-    return true;
-  });
-  assert.equal(calls.length, 2);
+  for (const nestedRawArguments of [
+    `{"junk":${JSON.stringify(draft)}`,
+    `{"goal":${JSON.stringify(draft)}`,
+  ]) {
+    const calls = [];
+    const adapter = adapterWithResponses([
+      response(kpFormToolName("ordinary-check.v1"), nestedRawArguments, 1),
+      response(kpFormToolName("ordinary-check.v1"), draft, 2),
+    ], calls);
+    await assert.rejects(adapter.propose(request()), (error) => {
+      assert.ok(error instanceof AuthoritativeKpModelError);
+      assert.equal(error.publicCode, "PROPOSAL_REPAIR_EXHAUSTED");
+      return true;
+    });
+    assert.equal(calls.length, 2);
+  }
 });
 
 test("duplicate raw members cannot prove frozen semantics even when values match", async () => {
@@ -318,7 +324,7 @@ test("duplicate raw members cannot prove frozen semantics even when values match
   assert.equal(calls.length, 2);
 });
 
-test("unproven malformed or missing semantics cannot become a fresh proposal during repair", async () => {
+test("truncated raw semantics fail closed while a true omission asks for clarification", async () => {
   const malformedGoal = `{"goal":"${"甲".repeat(5_000)}`;
   const malformedCalls = [];
   const malformed = adapterWithResponses([
@@ -342,11 +348,10 @@ test("unproven malformed or missing semantics cannot become a fresh proposal dur
     response(kpFormToolName("ordinary-check.v1"), missingGoal, 1),
     response(kpFormToolName("ordinary-check.v1"), ordinaryDraft(), 2),
   ], missingCalls);
-  await assert.rejects(missing.propose(request()), (error) => {
-    assert.ok(error instanceof AuthoritativeKpModelError);
-    assert.equal(error.publicCode, "PROPOSAL_REPAIR_EXHAUSTED");
-    return true;
-  });
+  const clarification = await missing.propose(request());
+  assert.equal(clarification.formId, "clarification.v1");
+  assert.equal(clarification.causalActionProgram.nodes[0].primitive, "requestClarification");
+  assert.match(clarification.draft.question, /你想达成什么/u);
   assert.equal(missingCalls.length, 2);
 });
 

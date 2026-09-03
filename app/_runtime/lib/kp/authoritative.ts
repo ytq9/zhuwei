@@ -2150,13 +2150,11 @@ export function createAuthoritativeKpAdapter(
    * *complete* reason the repair was rejected.
    *
    * Every Form lists its semantic fields as required, so a first draft that
-   * validated always froze all of them. `unproven` therefore means the first
-   * attempt produced no readable draft at all — unparseable tool arguments,
-   * say — and the in-attempt schema repair then wrote semantics the bounded
-   * raw text cannot attribute to the player. That is not the model
-   * overwriting frozen intent, which is `:changed` and stays terminal; it is
-   * the server having nothing to check the new semantics against. It cannot
-   * invent the answer, so it asks the player rather than dropping the action.
+   * validated always froze all of them. `unproven` can represent a genuine
+   * omission, but it also represents invalid raw arguments. The caller checks
+   * that provenance separately: only a parsed object with an exact missing
+   * field becomes a question; all unparseable or non-object raw input stays
+   * terminal because it cannot prove which top-level fields were omitted.
    */
   function omittedSemanticKeys(error: unknown): readonly string[] {
     if (!(error instanceof PrivateFormEnvelopeError)) return [];
@@ -2386,7 +2384,8 @@ export function createAuthoritativeKpAdapter(
     } catch (error) {
       const omitted = omittedSemanticKeys(error);
       if (omitted.length > 0
-        && input.request.proposalPurpose !== "clarificationContinuation") {
+        && input.request.proposalPurpose !== "clarificationContinuation"
+        && input.rejectedRawArguments === undefined) {
         return clarificationForOmittedSemantics(
           input.request,
           input.rejectedDraft,
