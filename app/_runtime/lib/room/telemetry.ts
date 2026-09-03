@@ -133,6 +133,29 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   seatInactive: ["authentication", "authenticationRequired"],
 } as const;
 
+/**
+ * Transient failures are the only ones an unchanged resubmission can clear.
+ * A `modelPermanent` failure such as `PROPOSAL_REPAIR_EXHAUSTED` is a
+ * structural rejection of this exact draft, so offering "retry the same
+ * action" walks the player back into the identical failure. Callers that
+ * shape player-facing recovery derive it from this table rather than
+ * restating the classification.
+ */
+export function roomFailureClassForCode(value: unknown): RoomFailureClass | undefined {
+  if (typeof value !== "string") return undefined;
+  return FAILURE_CODES[value]?.[0];
+}
+
+export function failureCodeIsRetryable(value: unknown): boolean {
+  const failureClass = roomFailureClassForCode(value);
+  // Only a structural rejection of this exact submission survives an
+  // unchanged retry. Transient provider, quota, authority, archive,
+  // projection and correction failures are all cleared by resubmitting the
+  // same action, and an unclassified code keeps that existing affordance
+  // rather than silently losing its recovery path.
+  return failureClass !== "modelPermanent" && failureClass !== "mechanicalDiagnostic";
+}
+
 const MODEL_FAILURE_STAGE_SET = new Set<string>(MODEL_INVOCATION_FAILURE_STAGES);
 
 function modelFailureStage(value: unknown): ModelInvocationFailureStage | undefined {

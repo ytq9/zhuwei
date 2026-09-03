@@ -5,11 +5,13 @@ import test from "node:test";
 import ts from "typescript";
 
 import {
+  publicAuthoritativeOutcomeError,
   publicNarrationFailureReason,
   publicNarrationRecoveryReason,
   publicV3FailureCode,
   V3_PUBLIC_FAILURE_CODES,
 } from "../app/_runtime/lib/table/authoritative.ts";
+import { failureCodeIsRetryable } from "../app/_runtime/lib/room/telemetry.ts";
 
 async function tableOutcomeMapper() {
   const server = await readFile(
@@ -31,11 +33,13 @@ async function tableOutcomeMapper() {
     "publicAuthoritativeOutcomeError",
     "publicV3FailureCode",
     "publicNarrationFailureReason",
+    "failureCodeIsRetryable",
     `${compiled}\nreturn authoritativeTableOutcome;`,
   )(
     () => "暂时无法完成这次行动",
     publicV3FailureCode,
     publicNarrationFailureReason,
+    failureCodeIsRetryable,
   );
 }
 
@@ -282,6 +286,62 @@ test("a V3 success exposes only the public outcome allowlist and never Audience 
     outcomeKind: "committed",
   });
   assert.equal(JSON.stringify(mapped).includes("audience:bob-secret"), false);
+});
+
+test("a permanently failed proposal asks for a different action, not the same one", () => {
+  for (const code of ["PROPOSAL_REPAIR_EXHAUSTED", "PROPOSAL_RULES_DIAGNOSTIC"]) {
+    const message = publicAuthoritativeOutcomeError({ kind: "needsKp", code });
+    assert.match(message, /未提交/u, code);
+    assert.doesNotMatch(message, /用同一行动重试/u, code);
+    assert.equal(failureCodeIsRetryable(code), false, code);
+  }
+
+  // An unclassified `needsKp` keeps the existing retry affordance: narrowing
+  // retryability must not strip recovery from codes this fix did not target.
+  assert.equal(failureCodeIsRetryable(undefined), true);
+  assert.equal(failureCodeIsRetryable("correctionRequired"), true);
+  assert.equal(failureCodeIsRetryable("projectionFailure"), true);
+
+  // Transient upstream faults keep the "retry the same action" instruction.
+  for (const code of ["modelTransient", "authorityTransient", "quotaExhausted"]) {
+    assert.match(
+      publicAuthoritativeOutcomeError({ kind: "retryableFailure", code }),
+      /用同一行动重试/u,
+      code,
+    );
+  }
+});
+
+test("uncommitted failures advertise retry only when an identical resubmission can clear them", async () => {
+  const mapOutcome = await tableOutcomeMapper();
+  const uncommitted = (kind, code) => mapOutcome(`submission:${code}`, {
+    kind,
+    code,
+    receipt: { receiptId: `receipt:${code}` },
+    action: "notCommitted",
+    narration: "notApplicable",
+  }, false);
+
+  // A structural rejection of this exact draft is not cleared by sending the
+  // same draft again; advertising retry walks the player back into it.
+  for (const code of ["PROPOSAL_REPAIR_EXHAUSTED", "PROPOSAL_RULES_DIAGNOSTIC"]) {
+    const mapped = uncommitted("needsKp", code);
+    assert.equal(mapped.retryable, false, code);
+    assert.equal(mapped.ok, false, code);
+  }
+
+  // Transient upstream faults keep the unchanged-resubmission affordance.
+  const transient = uncommitted("retryableFailure", "PROPOSAL_PROVIDER_TIMEOUT");
+  assert.equal(transient.retryable, true);
+
+  // A code this fix did not classify keeps the retry it has today.
+  const unclassified = mapOutcome("submission:unknown", {
+    kind: "needsKp",
+    receipt: { receiptId: "receipt:unknown" },
+    action: "notCommitted",
+    narration: "notApplicable",
+  }, false);
+  assert.equal(unclassified.retryable, true);
 });
 
 test("V3 error DTOs expose all and only the ten stable public pipeline codes", async () => {

@@ -65,7 +65,7 @@ import {
   synchronizeAuthoritativeGrowthStaticCard,
   synchronizeGrowthAfterAuthoritativeOutcome,
 } from "@/lib/table/authoritative-growth";
-import { buildRoomTelemetryEvent } from "@/lib/room/telemetry";
+import { buildRoomTelemetryEvent, failureCodeIsRetryable } from "@/lib/room/telemetry";
 import type { LeaveKind } from "@/lib/kp/combat";
 
 function asJson<T>(v: unknown, fallback: T): T {
@@ -448,13 +448,19 @@ function authoritativeTableOutcome(
       ...(failureCode === undefined ? {} : { code: failureCode }),
     };
   }
+  // Retryability is a property of the failure class, not of the branch that
+  // produced it. `PROPOSAL_REPAIR_EXHAUSTED` is `modelPermanent` in the same
+  // table telemetry reads, so an unchanged resubmission only re-runs the
+  // structural rejection and makes one failure look like many.
   const result = {
     ok: false as const,
     submissionId,
     outcomeKind: outcome.kind,
     action: actionState,
     narration: narrationState,
-    retryable: true as const,
+    retryable: failureCodeIsRetryable(
+      "code" in outcome ? outcome.code : undefined,
+    ),
     error: publicAuthoritativeOutcomeError(outcome),
   };
   if (!v3) return result;

@@ -1,4 +1,5 @@
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
+import { failureCodeIsRetryable } from "../room/telemetry";
 import { classById } from "../dnd/catalog";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
@@ -64,6 +65,22 @@ export function publicAuthoritativeOutcomeError(outcome: {
   kind: string;
   code?: unknown;
 }): string {
+  // `needsKp` covers both a structural rejection of this exact draft and a
+  // transient upstream fault, and only the second is cleared by resubmitting
+  // the same text. Telling a player to retry an exhausted repair sends them
+  // back into the identical failure, so the permanent codes ask for a
+  // different action instead of a repeat of this one.
+  if (outcome.code === "PROPOSAL_REPAIR_EXHAUSTED") {
+    return "KP 没能把这项行动整理成可以裁定的形式，行动未提交。"
+      + "原样重试会得到同样的结果；请换一种说法，或补一句你具体想怎么做";
+  }
+  if (outcome.code === "PROPOSAL_RULES_DIAGNOSTIC") {
+    return "这项行动在规则上还不成立，行动未提交。"
+      + "请调整做法或目标后再试，原样重试不会改变结果";
+  }
+  if (outcome.kind === "needsKp" && !failureCodeIsRetryable(outcome.code)) {
+    return "KP 没能裁定这项行动，行动未提交；请换一种说法后再试";
+  }
   if (outcome.kind === "needsKp") {
     return "KP 需要重新裁定这项行动，请稍后用同一行动重试";
   }
