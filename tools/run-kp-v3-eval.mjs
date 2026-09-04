@@ -1004,6 +1004,15 @@ function goldDraft(goldCase) {
         resolution: "direct",
         durationUnit: "round",
         durationValue: 1,
+        // `composition` is required on compound.v1. The gold draft measures
+        // routing and reference recall, not composition content, so it carries
+        // the minimal composition the validator accepts.
+        composition: {
+          schema: "zhuwei.compound-composition-draft/v1",
+          before: [],
+          onSuccess: [],
+          onFailure: [],
+        },
         basisRefs,
       };
     default:

@@ -159,7 +159,21 @@ const OPERATION_KEYS = Object.freeze({
 } as const);
 
 /** Complete closed JSON Schema exposed only as the compound Form field. */
-export function compoundCompositionModelSchema(): Readonly<Record<string, unknown>> {
+/**
+ * Builds the composition sub-schema the model fills.
+ *
+ * `strict` selects the DeepSeek strict-tool encoding of the same contract.
+ * The ordinary encoding declares every union field as the empty schema and
+ * carries the real constraint in `allOf` + `if`/`then`; the strict dialect has
+ * no conditional keyword and rejects an untyped property, so there the union
+ * becomes an `anyOf` over closed branch objects. Both encodings are generated
+ * from the one branch table below, so a branch can never exist in one dialect
+ * and be missing from the other.
+ */
+export function compoundCompositionModelSchema(
+  options: Readonly<{ strict?: boolean }> = {},
+): Readonly<Record<string, unknown>> {
+  const strict = options.strict === true;
   const ref = (maximum = 240): Record<string, unknown> => ({
     type: "string", minLength: 1, maxLength: maximum, pattern: "^(?=.*\\S).+$",
   });
@@ -187,6 +201,18 @@ export function compoundCompositionModelSchema(): Readonly<Record<string, unknow
     properties: Record<string, unknown>;
     required: readonly string[];
   }>[]): Record<string, unknown> => {
+    if (strict) {
+      // Each branch is closed and fully typed, and declares `type: "object"`,
+      // which the dialect requires of every `anyOf` alternative. Optionality
+      // stays expressed through `required`: the strict-tool converter wraps a
+      // non-required property in the omitted sentinel rather than dropping it.
+      return {
+        anyOf: branches.map((branch) => closed(
+          { kind: { type: "string", enum: [branch.kind] }, ...branch.properties },
+          ["kind", ...branch.required],
+        )),
+      };
+    }
     const allFieldNames = [...new Set(branches.flatMap(({ properties }) =>
       Object.keys(properties)))].sort();
     return {

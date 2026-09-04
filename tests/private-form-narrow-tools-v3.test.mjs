@@ -147,6 +147,15 @@ function compoundDraft() {
     resolution: "direct",
     durationUnit: "minute",
     durationValue: 1,
+    // `composition` is a required compound field. This fixture exercises the
+    // ordinary-to-compound upgrade routing, not composition content, so it
+    // carries the minimal composition the validator accepts.
+    composition: {
+      schema: "zhuwei.compound-composition-draft/v1",
+      before: [],
+      onSuccess: [],
+      onFailure: [],
+    },
   };
 }
 
@@ -188,9 +197,17 @@ test("narrow profile exposes one direct-argument tool per allowed Form with a bi
     assert.equal(kpFormIdForToolName(kpFormToolName(formId)), formId);
     const parameters = buildKpFormToolParameters(formId);
     const keys = recursiveKeys(parameters);
+    // `oneOf` is a shape rule and applies at every depth.
     assert.equal(keys.includes("oneOf"), false, formId);
-    assert.equal(keys.includes("formId"), false, formId);
-    assert.equal(keys.includes("draft"), false, formId);
+    // The envelope this profile removed was a *top-level* `{formId, draft}`
+    // wrapper, so the guard belongs on the tool's own properties. A nested
+    // field may legitimately be called `draft`: a compound `formActorPlan`
+    // operation carries the NPC's actor-plan draft under exactly that name,
+    // and scanning recursively for the key confused that domain field with
+    // the wrapper.
+    const topLevel = Object.keys(parameters.properties ?? {});
+    assert.equal(topLevel.includes("formId"), false, formId);
+    assert.equal(topLevel.includes("draft"), false, formId);
   }
   assert.equal(kpFormIdForToolName("submit_kp_invented_v1"), undefined);
 
@@ -208,9 +225,12 @@ test("narrow profile exposes one direct-argument tool per allowed Form with a bi
   );
   for (const tool of input.tools) {
     const keys = recursiveKeys(tool.function.parameters);
-    assert.equal(keys.includes("oneOf"), false);
-    assert.equal(keys.includes("formId"), false);
-    assert.equal(keys.includes("draft"), false);
+    assert.equal(keys.includes("oneOf"), false, tool.function.name);
+    // Same top-level rule as above: the removed envelope was a wrapper, not a
+    // ban on the field name at any depth.
+    const topLevel = Object.keys(tool.function.parameters.properties ?? {});
+    assert.equal(topLevel.includes("formId"), false, tool.function.name);
+    assert.equal(topLevel.includes("draft"), false, tool.function.name);
   }
   assert.equal(input.parallel_tool_calls, false);
   assert.equal(input.tool_choice, "required");

@@ -8,6 +8,7 @@ import {
 } from "../app/_runtime/lib/kp/form-catalog.ts";
 import {
   KP_STRICT_TOOL_CAPABLE_FORMS,
+  KP_STRICT_TOOL_NULL_SENTINEL,
   KP_STRICT_TOOL_OMITTED_SENTINEL,
   KP_STRICT_TOOL_UNSUPPORTED_FORMS,
   buildKpFormStrictToolParameters,
@@ -21,6 +22,13 @@ import {
 
 /** Fills a node with a value the schema accepts, so drafts stay synthetic. */
 function sampleForSchema(schema) {
+  // A union reaches here from the strict encoding of a discriminated union.
+  // The sentinel alternatives are what the decoder removes, so a sample that
+  // is meant to survive decoding has to come from a real branch.
+  if (Array.isArray(schema.anyOf)) {
+    const real = schema.anyOf.filter((branch) => !isSentinelSchema(branch));
+    return sampleForSchema(real[0] ?? schema.anyOf[0]);
+  }
   if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
   if (schema.type === "object") {
     const value = {};
@@ -35,6 +43,15 @@ function sampleForSchema(schema) {
   }
   if (schema.type === "boolean") return true;
   return "x";
+}
+
+function isSentinelSchema(branch) {
+  return branch !== null
+    && typeof branch === "object"
+    && Array.isArray(branch.enum)
+    && branch.enum.length === 1
+    && (branch.enum[0] === KP_STRICT_TOOL_OMITTED_SENTINEL
+      || branch.enum[0] === KP_STRICT_TOOL_NULL_SENTINEL);
 }
 
 /**
@@ -108,8 +125,21 @@ test("decoding a strict draft reproduces exactly the ordinary draft shape", () =
   }
 });
 
+/**
+ * For every Form except `compound.v1` the strict encoding differs from the
+ * ordinary one only by the sentinel on optional fields, so the same sample
+ * walked through both must come out identical. `compound.v1` is excluded
+ * because its encodings are deliberately not structurally parallel: the
+ * ordinary one flattens a discriminated union into one object carrying every
+ * branch's field names, which is not a draft any branch could legally produce,
+ * while the strict one is an `anyOf` over closed branches. Sampling the two
+ * cannot agree, and the meaningful round trip is asserted separately below.
+ */
+const STRUCTURALLY_PARALLEL_FORMS = KP_STRICT_TOOL_CAPABLE_FORMS
+  .filter((formId) => formId !== "compound.v1");
+
 test("a decoded strict draft validates identically to an ordinary draft", () => {
-  for (const formId of KP_STRICT_TOOL_CAPABLE_FORMS) {
+  for (const formId of STRUCTURALLY_PARALLEL_FORMS) {
     const ordinary = buildKpFormToolParameters(formId);
     const strict = buildKpFormStrictToolParameters(formId);
 
@@ -133,7 +163,7 @@ test("a decoded strict draft validates identically to an ordinary draft", () => 
 });
 
 test("the sentinel never survives into a field the local validator can see", () => {
-  for (const formId of KP_STRICT_TOOL_CAPABLE_FORMS) {
+  for (const formId of STRUCTURALLY_PARALLEL_FORMS) {
     const ordinary = buildKpFormToolParameters(formId);
     const strict = buildKpFormStrictToolParameters(formId);
     const decoded = decodeKpFormStrictDraft(strictSample(strict, ordinary));
@@ -185,4 +215,70 @@ test("the ordinary tool schema is unchanged so the catalog hash stays stable", (
       assert.notDeepEqual(parameters, buildKpFormStrictToolParameters(formId), formId);
     }
   }
+});
+
+/**
+ * The round trip `compound.v1` is excluded from above, asserted directly.
+ * A compound draft is branch-shaped in both dialects -- only the *schema*
+ * differs -- so a strict draft is the same draft with the sentinel standing in
+ * for the optional top-level fields, and decoding must return exactly the
+ * draft written by hand.
+ */
+test("a strict compound draft decodes to the ordinary compound draft", () => {
+  const direct = {
+    goal: "撬开压住链条的石板",
+    method: "先固定撬棍再逐段发力",
+    stages: [{
+      goal: "固定撬棍",
+      method: "把撬棍卡进石板缝隙",
+      intendedOutcome: "撬棍不会滑脱",
+      resolution: "direct",
+    }],
+    intendedOutcome: "石板被撬开",
+    resolution: "direct",
+    durationUnit: "minute",
+    durationValue: 1,
+    composition: {
+      schema: "zhuwei.compound-composition-draft/v1",
+      before: [],
+      onSuccess: [],
+      onFailure: [],
+    },
+  };
+
+  const ordinary = buildKpFormToolParameters("compound.v1");
+  const required = new Set(ordinary.required ?? []);
+  const strict = {};
+  for (const key of Object.keys(ordinary.properties ?? {})) {
+    strict[key] = required.has(key) ? direct[key] : KP_STRICT_TOOL_OMITTED_SENTINEL;
+  }
+  // Every property is present in a strict draft, including the optional ones.
+  assert.equal(
+    Object.keys(strict).length,
+    Object.keys(ordinary.properties ?? {}).length,
+  );
+  assert.ok(Object.keys(strict).length > Object.keys(direct).length);
+
+  const decoded = decodeKpFormStrictDraft(strict);
+  assert.deepEqual(decoded, direct);
+  assert.doesNotMatch(JSON.stringify(decoded), /__none__/u);
+  assert.deepEqual(
+    validateKpFormDraft("compound.v1", decoded),
+    validateKpFormDraft("compound.v1", direct),
+  );
+  assert.equal(validateKpFormDraft("compound.v1", direct).errors.length, 0);
+});
+
+test("the null sentinel decodes to a null value and keeps its key", () => {
+  const decoded = decodeKpFormStrictDraft({
+    npcRef: "npc:1",
+    factionRef: KP_STRICT_TOOL_NULL_SENTINEL,
+    note: KP_STRICT_TOOL_OMITTED_SENTINEL,
+  });
+  // `null` is a value an actor plan really carries, and `validateActorPlan`
+  // checks the key set exactly, so the key must survive where an omitted
+  // field's key is removed.
+  assert.deepEqual(decoded, { npcRef: "npc:1", factionRef: null });
+  assert.equal("factionRef" in decoded, true);
+  assert.equal("note" in decoded, false);
 });

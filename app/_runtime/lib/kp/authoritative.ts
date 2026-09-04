@@ -3,7 +3,7 @@ import {
   authoritativeKpProfileByBinding,
   isSocialResolutionKpProfile,
   isV3AuthoritativeKpProfile,
-  kpStructuredOutputMode,
+  kpCallStructuredOutputMode,
   NARRATION_TOOL_NAME,
 } from "./authoritative-policy";
 import {
@@ -2333,7 +2333,8 @@ export function createAuthoritativeKpAdapter(
         errors: input.errors,
         finiteReferences: input.finiteReferences,
         semanticFreezeHash: input.semanticFreezeHash,
-        structuredOutputMode: kpStructuredOutputMode(profile),
+        // The repair carries the single Form the server already chose.
+        structuredOutputMode: kpCallStructuredOutputMode(profile, 1),
       }),
       remainingInvocationMs,
     );
@@ -2343,7 +2344,8 @@ export function createAuthoritativeKpAdapter(
       repaired = validateNarrowToolRepair(
         input.selectedForm,
         repairInvocation.response,
-        kpStructuredOutputMode(profile),
+        // Decode with the mode the repair request was actually sent in.
+        kpCallStructuredOutputMode(profile, 1),
       );
       trustedRepaired = withTrustedSocialUtterance(
         input.request,
@@ -2482,14 +2484,18 @@ export function createAuthoritativeKpAdapter(
               request,
               allowedForms: preparedContext.orderedForms,
               contextPack: preparedContext.contextPack,
-              structuredOutputMode: kpStructuredOutputMode(profile),
+              structuredOutputMode: kpCallStructuredOutputMode(
+                profile,
+                preparedContext.orderedForms.length,
+              ),
             }),
           );
           try {
             const envelope = withTrustedSocialUtterance(request, privateFormNarrowToolEnvelope(
               invocation.response,
               preparedContext.orderedForms,
-              kpStructuredOutputMode(profile),
+              // Decode with the mode the request was actually sent in.
+              kpCallStructuredOutputMode(profile, preparedContext.orderedForms.length),
             ), socialResolution);
             const referenceErrors = formReferenceErrors(envelope.draft, finiteReferences);
             const socialErrors = envelope.formId === "npc-exchange.v1" && socialResolution

@@ -119,12 +119,40 @@ export const AUTHORITATIVE_KP_PROFILE = AUTHORITATIVE_KP_PROFILES[0];
  * strict output the request does not actually send.
  */
 const KP_STRUCTURED_OUTPUT_MODES: Readonly<Record<string, KpStructuredOutputMode>> =
-  Object.freeze({});
+  Object.freeze({
+    // Both private-tools profiles offer the identical Form surface, and every
+    // Form in it now has a faithful strict encoding, so both opt in together.
+    // Enabling only the primary would let a fallback to the pro tier drop
+    // silently back to an unenforced schema on exactly the retry that matters.
+    "authoritative-kp-deepseek-v4-flash-private-tools-v2": "strict-tool",
+    "authoritative-kp-deepseek-v4-pro-private-tools-v2": "strict-tool",
+  });
 
 export function kpStructuredOutputMode(
   profile: Pick<AuthoritativeKpProfile, "modelProfileVersion">,
 ): KpStructuredOutputMode {
   return KP_STRUCTURED_OUTPUT_MODES[profile.modelProfileVersion] ?? "tool";
+}
+
+/**
+ * The mode one call may actually use.
+ *
+ * A Form is selected by which tool the model calls, and DeepSeek's strict beta
+ * carries exactly one function per request, so a strict selection call could
+ * only exist by dropping Forms the server allowed -- which would change the
+ * selection protocol SPEC 0015 6.1 freezes. The profile's opt-in therefore
+ * applies to a call that already carries one chosen Form, and the selection
+ * call keeps the ordinary transport regardless of the profile.
+ *
+ * In practice that means the repair is strict: it is also the last call before
+ * PROPOSAL_REPAIR_EXHAUSTED, so it is the one where an unenforced schema ends
+ * the player's action instead of merely costing a retry.
+ */
+export function kpCallStructuredOutputMode(
+  profile: Pick<AuthoritativeKpProfile, "modelProfileVersion">,
+  allowedFormCount: number,
+): KpStructuredOutputMode {
+  return allowedFormCount === 1 ? kpStructuredOutputMode(profile) : "tool";
 }
 
 export function isV3AuthoritativeKpProfile(

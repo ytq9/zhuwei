@@ -1,3 +1,4 @@
+import { compoundCompositionModelSchema } from "./compound-composition";
 import {
   KP_FORM_IDS,
   buildKpFormToolParameters,
@@ -24,6 +25,16 @@ import {
  * deliberate "no skill" indistinguishable.
  */
 export const KP_STRICT_TOOL_OMITTED_SENTINEL = "__none__" as const;
+
+/**
+ * The strict dialect has no `null` type, but `null` is a real domain value in
+ * one place: an actor plan's `factionRef` is a required key whose `null` means
+ * "no faction", and `validateActorPlan` checks the key set exactly. Reusing the
+ * omitted sentinel there would delete a required key and fail validation, so a
+ * second literal carries the null through and the decoder restores it as a
+ * value rather than removing the field.
+ */
+export const KP_STRICT_TOOL_NULL_SENTINEL = "__null__" as const;
 
 /**
  * How a KP request asks the provider to constrain its own output. `tool`
@@ -79,6 +90,19 @@ function omittedSentinelSchema(): SchemaRecord {
   };
 }
 
+function nullSentinelSchema(): SchemaRecord {
+  return {
+    type: "string",
+    enum: [KP_STRICT_TOOL_NULL_SENTINEL],
+    description:
+      `字段在本次草稿中确实为空时精确填写 "${KP_STRICT_TOOL_NULL_SENTINEL}"，它是一个取值，不是省略。`,
+  };
+}
+
+function isNullTypeSchema(value: unknown): boolean {
+  return isRecord(value) && value.type === "null";
+}
+
 /**
  * Wraps an optional field so the model can always emit the key. The wrapper
  * carries only `anyOf` and `description`; the dialect rejects any sibling.
@@ -94,11 +118,36 @@ function optionalSchema(schema: SchemaRecord): SchemaRecord {
 function convertNode(node: unknown, path: string): SchemaRecord {
   if (!isRecord(node)) throw new Error(`KP_STRICT_TOOL_NODE_INVALID:${path}`);
 
+  if (Array.isArray(node.anyOf)) {
+    // Two shapes reach here: the composition branch table's strict encoding,
+    // and the catalog's nullable reference. `null` is not a dialect type, so a
+    // null alternative becomes the null sentinel; every other alternative is
+    // converted and therefore declares its own literal type, which the dialect
+    // requires of each branch.
+    const typed = node.anyOf.filter((branch) => !isNullTypeSchema(branch));
+    if (typed.length === 0) throw new Error(`KP_STRICT_TOOL_UNION_EMPTY:${path}`);
+    const converted = typed.map((branch, index) =>
+      convertNode(branch, `${path}.anyOf[${index}]`));
+    const members = typed.length === node.anyOf.length
+      ? converted
+      : [...converted, nullSentinelSchema()];
+    const union: SchemaRecord = members.length === 1
+      ? { ...members[0]! }
+      : { anyOf: members };
+    if (typeof node.description === "string") union.description = node.description;
+    return union;
+  }
+
   const result: SchemaRecord = {};
   if (typeof node.description === "string") result.description = node.description;
 
   const declaredType = typeof node.type === "string" ? node.type : undefined;
-  const members = Array.isArray(node.enum) ? node.enum : undefined;
+  // `const` is normalized to a one-member `enum`: the dialect accepts `enum`
+  // for every scalar type but `const` only for numbers, and a single-member
+  // enum carries the identical constraint.
+  const members = Array.isArray(node.enum)
+    ? node.enum
+    : "const" in node ? [node.const] : undefined;
   const type = declaredType ?? (members === undefined ? undefined : enumType(members));
   if (type === undefined) throw new Error(`KP_STRICT_TOOL_TYPE_UNKNOWN:${path}`);
   result.type = type;
@@ -151,18 +200,23 @@ function convertNode(node: unknown, path: string): SchemaRecord {
 }
 
 /**
- * `compound.v1` composes a discriminated union whose non-discriminant fields
- * are declared as the empty schema, with every real constraint carried in
- * `allOf` + `if`/`then` per branch. The strict dialect has no conditional
- * keyword, so the only faithful strict encoding is an `anyOf` over closed
- * branch objects, which has to be built from the branch table rather than
- * recovered from the flattened output. Until that exists, the Form is
- * excluded by name: emitting it with untyped properties would hand the model
- * a *looser* contract while claiming to be strict.
+ * Forms with no faithful strict encoding.
+ *
+ * `compound.v1` used to sit here: it composes discriminated unions whose
+ * non-discriminant fields are declared as the empty schema, with every real
+ * constraint carried in `allOf` + `if`/`then` per branch, and the strict
+ * dialect has neither a conditional keyword nor a place for an untyped
+ * property. Emitting that as-is would have handed the model a *looser*
+ * contract while claiming to be strict. It is supported now because
+ * `compoundCompositionModelSchema` can emit the same branch table as an
+ * `anyOf` over closed branch objects, which `strictSourceParameters` swaps in
+ * below.
+ *
+ * The list stays because the exclusion is a real mechanism: a Form whose
+ * ordinary encoding cannot be converted faithfully belongs here rather than in
+ * a strict request that overstates what the provider is enforcing.
  */
-export const KP_STRICT_TOOL_UNSUPPORTED_FORMS: readonly KpFormId[] = Object.freeze([
-  "compound.v1",
-]);
+export const KP_STRICT_TOOL_UNSUPPORTED_FORMS: readonly KpFormId[] = Object.freeze([]);
 
 export const KP_STRICT_TOOL_CAPABLE_FORMS: readonly KpFormId[] = Object.freeze(
   KP_FORM_IDS.filter((formId) => !KP_STRICT_TOOL_UNSUPPORTED_FORMS.includes(formId)),
@@ -183,7 +237,28 @@ export function buildKpFormStrictToolParameters(
   if (!kpFormSupportsStrictTool(formId)) {
     throw new Error(`KP_STRICT_TOOL_FORM_UNSUPPORTED:${formId}`);
   }
-  return convertNode(buildKpFormToolParameters(formId), "$");
+  return convertNode(strictSourceParameters(formId), "$");
+}
+
+/**
+ * The ordinary catalog output, with the one sub-schema whose ordinary encoding
+ * cannot be converted swapped for its strict twin.
+ * `compoundCompositionModelSchema` builds both encodings from the same branch
+ * table, so this swaps the dialect and never the accepted contract. The
+ * ordinary builder itself is left untouched, which keeps the registered
+ * catalog hash and every non-strict request byte-identical.
+ */
+function strictSourceParameters(formId: KpFormId): SchemaRecord {
+  const parameters = structuredClone(
+    buildKpFormToolParameters(formId),
+  ) as SchemaRecord;
+  if (formId !== "compound.v1") return parameters;
+  const properties = isRecord(parameters.properties) ? parameters.properties : undefined;
+  if (properties === undefined || !isRecord(properties.composition)) {
+    throw new Error("KP_STRICT_TOOL_COMPOSITION_MISSING:$.properties.composition");
+  }
+  properties.composition = compoundCompositionModelSchema({ strict: true }) as SchemaRecord;
+  return parameters;
 }
 
 /** True for a value the model used to say "this field does not apply". */
@@ -203,7 +278,10 @@ export function decodeKpFormStrictDraft(value: unknown): unknown {
   const decoded: SchemaRecord = {};
   for (const [key, child] of Object.entries(value)) {
     if (isOmitted(child)) continue;
-    decoded[key] = decodeKpFormStrictDraft(child);
+    // The null sentinel is a value, not an omission: the key survives.
+    decoded[key] = child === KP_STRICT_TOOL_NULL_SENTINEL
+      ? null
+      : decodeKpFormStrictDraft(child);
   }
   return decoded;
 }

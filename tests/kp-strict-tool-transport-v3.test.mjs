@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   AUTHORITATIVE_KP_PROFILES,
+  kpCallStructuredOutputMode,
   kpStructuredOutputMode,
 } from "../app/_runtime/lib/kp/authoritative-policy.ts";
 import {
@@ -11,7 +12,10 @@ import {
 } from "../app/_runtime/lib/kp/private-form-policy.ts";
 import {
   KP_STRICT_TOOL_CAPABLE_FORMS,
+  KP_STRICT_TOOL_UNSUPPORTED_FORMS,
+  kpFormSupportsStrictTool,
 } from "../app/_runtime/lib/kp/form-strict-tool.ts";
+import { KP_FORM_IDS } from "../app/_runtime/lib/kp/form-catalog.ts";
 import {
   assertDeepSeekStrictToolModelInput,
 } from "../app/_runtime/lib/kp/deepseek.ts";
@@ -36,13 +40,30 @@ function repairInput(selectedForm, structuredOutputMode) {
   });
 }
 
-test("every shipped KP profile still uses the ordinary tool transport", () => {
-  // Strict output is opt-in per `modelProfileVersion`. Until a profile opts
-  // in, production must be byte-identical to what it sends today.
+test("the Form selection call keeps the ordinary transport on every profile", () => {
+  // Strict output is opt-in per `modelProfileVersion`, and the shipped
+  // profiles have opted in. The opt-in may never reach the selection call:
+  // the Form is chosen by which tool the model calls, strict beta carries one
+  // function per request, and dropping the other Forms would change the
+  // selection protocol SPEC 0015 6.1 freezes. So the selection call must stay
+  // byte-identical to what production sends today, while the repair -- the
+  // last call before PROPOSAL_REPAIR_EXHAUSTED -- becomes provider-enforced.
   for (const profile of AUTHORITATIVE_KP_PROFILES) {
-    assert.equal(kpStructuredOutputMode(profile), "tool", profile.modelProfileVersion);
+    assert.equal(kpStructuredOutputMode(profile), "strict-tool", profile.modelProfileVersion);
+    assert.equal(
+      kpCallStructuredOutputMode(profile, 3),
+      "tool",
+      profile.modelProfileVersion,
+    );
+    assert.equal(
+      kpCallStructuredOutputMode(profile, 1),
+      "strict-tool",
+      profile.modelProfileVersion,
+    );
   }
+  // An unknown profile has not opted in and stays ordinary on every call.
   assert.equal(kpStructuredOutputMode({ modelProfileVersion: "unknown" }), "tool");
+  assert.equal(kpCallStructuredOutputMode({ modelProfileVersion: "unknown" }, 1), "tool");
 });
 
 test("the ordinary transport never declares strict output", () => {
@@ -111,10 +132,22 @@ test("the narrow repair is the call strict output can actually constrain", () =>
   assert.doesNotThrow(() => assertDeepSeekStrictToolModelInput(strict));
 
   // `compound.v1` is reachable as a repair target through the ordinary
-  // upgrade path, and has no strict encoding, so it must fail loudly.
-  assert.throws(
-    () => repairInput("compound.v1", "strict-tool"),
-    /KP_STRICT_TOOL_FORM_UNSUPPORTED/u,
-  );
+  // upgrade path. It used to have no strict encoding and had to fail loudly
+  // here; it now has one, built as an `anyOf` over closed branch objects, so
+  // the repair that ends in PROPOSAL_REPAIR_EXHAUSTED is constrained for a
+  // compound upgrade too.
+  const compound = repairInput("compound.v1", "strict-tool");
+  assert.equal(compound.tools.length, 1);
+  assert.equal(compound.tools[0].function.strict, true);
+  assert.doesNotThrow(() => assertDeepSeekStrictToolModelInput(compound));
   assert.doesNotThrow(() => repairInput("compound.v1"));
+
+  // The escape hatch that made compound fail loudly is still the mechanism:
+  // a Form with no faithful strict encoding belongs on this list rather than
+  // in a strict request that overstates what the provider enforces. It is
+  // empty today, so adding a member stays a deliberate, visible act.
+  assert.deepEqual([...KP_STRICT_TOOL_UNSUPPORTED_FORMS], []);
+  for (const formId of KP_FORM_IDS) {
+    assert.equal(kpFormSupportsStrictTool(formId), true, formId);
+  }
 });

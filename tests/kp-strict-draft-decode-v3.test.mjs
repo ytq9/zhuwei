@@ -54,9 +54,14 @@ test("the adapter decodes strict drafts before anything downstream sees them", a
   );
 
   // The transport that builds the request and the decode that reads the
-  // response must both come from the profile, never be assumed.
-  const modeReads = source.match(/kpStructuredOutputMode\(profile\)/gu) ?? [];
+  // response must both come from the profile, never be assumed. The read goes
+  // through the per-call helper because the profile's opt-in cannot reach a
+  // multi-Form selection call: strict beta carries one function per request.
+  const modeReads = source.match(/kpCallStructuredOutputMode\(\s*profile,/gu) ?? [];
   assert.equal(modeReads.length, 4, "request and response paths both read the profile mode");
+  // A bare profile read would skip the call-shape decision and could send a
+  // strict selection call, so none may remain in the adapter.
+  assert.equal((source.match(/kpStructuredOutputMode\(profile\)/gu) ?? []).length, 0);
 });
 
 test("a strict draft and its ordinary twin validate identically end to end", () => {
