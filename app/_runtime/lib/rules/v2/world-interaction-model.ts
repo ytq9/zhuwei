@@ -51,6 +51,23 @@ export type WorldInteractionCost = Readonly<{
   durability: number;
 }>;
 
+/**
+ * What an attempt really spent before the world declined it.
+ *
+ * This is a wider union than `WorldInteractionCost` on purpose. An executed
+ * interaction's costs must reconcile byte-for-byte against its frozen Ability,
+ * and an Ability only ever freezes item costs -- so that path must never see a
+ * shape it cannot reconcile. A refused attempt is the opposite case: it spends
+ * whatever the trying itself burned, which is usually the minutes, sometimes a
+ * charge of something, and sometimes the slot that was already committed
+ * before the world said no. Two types rather than one is what keeps the
+ * reconciled path unable to represent the unreconcilable.
+ */
+export type WorldInteractionAttemptCost =
+  | WorldInteractionCost
+  | Readonly<{ kind: "fictionTime"; durationMicros: string }>
+  | Readonly<{ kind: "resource"; resourceId: string; amount: number }>;
+
 export type WorldInteractionRelationEffect = Readonly<{
   kind: "relationTransition";
   relationRef: string;
@@ -236,8 +253,9 @@ export type WorldInteractionFeasibilityNextAction = Readonly<{
 /**
  * Server-frozen ruling that the world declined an action. This is not an
  * error: it is a first-class mechanical outcome, and any attempt costs that
- * were actually spent while trying still apply through the ordinary item-cost
- * transition path. `basisRefs` is authority-only and is carried only for the
+ * were actually spent while trying still apply through the ordinary
+ * attempt-cost transition path. `basisRefs` is authority-only and is carried
+ * only for the
  * commit's read scope -- it is never copied into the committed payload.
  */
 export type WorldInteractionFeasibilityRulingPlan = Readonly<{
@@ -249,7 +267,7 @@ export type WorldInteractionFeasibilityRulingPlan = Readonly<{
   publicBasis: string;
   prerequisites: readonly WorldInteractionFeasibilityPrerequisite[];
   nextActions: readonly WorldInteractionFeasibilityNextAction[];
-  costs: readonly WorldInteractionCost[];
+  costs: readonly WorldInteractionAttemptCost[];
   basisRefs: readonly string[];
 }>;
 
@@ -261,7 +279,10 @@ export type WorldInteractionFeasibilityRuledPayload = Readonly<{
   publicBasis: string;
   prerequisites: readonly WorldInteractionFeasibilityPrerequisite[];
   nextActions: readonly WorldInteractionFeasibilityNextAction[];
-  appliedCosts: readonly Extract<AppliedWorldInteractionEffect, { kind: "itemCost" }>[];
+  appliedCosts: readonly Extract<
+    AppliedWorldInteractionEffect,
+    { kind: "itemCost" | "fictionTimeCost" | "resourceCost" }
+  >[];
 }>;
 
 export type AppliedWorldInteractionEffect =
@@ -299,6 +320,19 @@ export type AppliedWorldInteractionEffect =
       chargesAfter: number | null;
       durabilityBefore: number | null;
       durabilityAfter: number | null;
+    }>
+  | Readonly<{
+      kind: "fictionTimeCost";
+      durationMicros: string;
+      /** Carried so replay can check the clock really moved, the way an item
+       * cost is checked against the entry it left behind. */
+      nowMicrosAfter: string;
+    }>
+  | Readonly<{
+      kind: "resourceCost";
+      resourceId: string;
+      amountBefore: number;
+      amountAfter: number;
     }>
   | Readonly<{
       kind: "damage";
@@ -723,9 +757,8 @@ export function isWorldInteractionFeasibilityRulingPlan(
     && value.nextActions.every(isFeasibilityNextAction)
     && Array.isArray(value.costs)
     && value.costs.length <= 16
-    && value.costs.every(isCost)
-    && new Set(value.costs.map((cost) => isRecord(cost) ? cost.entryRef : undefined)).size
-      === value.costs.length
+    && value.costs.every(isAttemptCost)
+    && new Set(value.costs.map(attemptCostIdentity)).size === value.costs.length
     && isCanonicalRefSet(value.basisRefs);
 }
 
@@ -750,7 +783,10 @@ export function isWorldInteractionFeasibilityRuledPayload(
     && value.nextActions.every(isFeasibilityNextAction)
     && Array.isArray(value.appliedCosts)
     && value.appliedCosts.length <= 16
-    && value.appliedCosts.every((effect) => isAppliedEffect(effect) && effect.kind === "itemCost");
+    && value.appliedCosts.every((effect) => isAppliedEffect(effect)
+      && (effect.kind === "itemCost"
+        || effect.kind === "fictionTimeCost"
+        || effect.kind === "resourceCost"));
 }
 
 export function isWorldInteractionResolvedPayload(
@@ -836,6 +872,19 @@ function isAppliedEffect(value: unknown): value is AppliedWorldInteractionEffect
       && [value.quantityBefore, value.quantityAfter].every(isNonnegativeInteger)
       && nullableCountersValid(value.chargesBefore, value.chargesAfter)
       && nullableCountersValid(value.durabilityBefore, value.durabilityAfter);
+  }
+  if (value.kind === "fictionTimeCost") {
+    return hasExactKeys(value, ["durationMicros", "kind", "nowMicrosAfter"])
+      && typeof value.durationMicros === "string"
+      && /^[1-9][0-9]*$/.test(value.durationMicros)
+      && typeof value.nowMicrosAfter === "string"
+      && /^(0|[1-9][0-9]*)$/.test(value.nowMicrosAfter);
+  }
+  if (value.kind === "resourceCost") {
+    return hasExactKeys(value, ["amountAfter", "amountBefore", "kind", "resourceId"])
+      && isRef(value.resourceId)
+      && [value.amountBefore, value.amountAfter].every(isNonnegativeInteger)
+      && Number(value.amountAfter) < Number(value.amountBefore);
   }
   if (value.kind === "damage") {
     return hasExactKeys(value, [
@@ -962,6 +1011,33 @@ function isOpportunity(value: unknown): value is WorldInteractionOpportunity {
     && (value.actionHint === null || isText(value.actionHint))
     && isRef(value.visibilityPolicyRef)
     && isCanonicalRefSet(value.basisRefs, 1);
+}
+
+export function isAttemptCost(value: unknown): value is WorldInteractionAttemptCost {
+  if (!isRecord(value)) return false;
+  if (value.kind === "item") return isCost(value);
+  if (value.kind === "fictionTime") {
+    return hasExactKeys(value, ["durationMicros", "kind"])
+      && typeof value.durationMicros === "string"
+      && /^[1-9][0-9]*$/.test(value.durationMicros);
+  }
+  return value.kind === "resource"
+    && hasExactKeys(value, ["amount", "kind", "resourceId"])
+    && isRef(value.resourceId)
+    && isPositiveInteger(value.amount);
+}
+
+/**
+ * One cost per thing spent. Splitting a single spend across two entries would
+ * let the same minutes or the same slot be charged twice while each entry
+ * looked legal on its own, so the identity is the thing, not the entry.
+ */
+export function attemptCostIdentity(cost: WorldInteractionAttemptCost): string {
+  return cost.kind === "item"
+    ? `item:${cost.entryRef}`
+    : cost.kind === "resource"
+      ? `resource:${cost.resourceId}`
+      : "fictionTime";
 }
 
 export function isCost(value: unknown): value is WorldInteractionCost {

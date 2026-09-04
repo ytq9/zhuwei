@@ -1267,25 +1267,43 @@ test("a refusal cannot carry a check, which is what scenario B forbids", () => {
   }
 });
 
-test("the wire offers only the attempt cost the server can actually spend", () => {
+test("the wire offers every attempt cost the server can spend, each closed to its own fields", () => {
   const refusal = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.terminal.anyOf.find((branch) =>
     branch.properties?.kind?.enum?.[0] === "inWorldRefusal");
-  const cost = refusal.properties.ruling.properties.attemptCosts.items;
-  // The domain also models fictionTime and resource costs, but
-  // `lowerAttemptCosts` accepts only items. Offering the other two would be a
-  // shape the model can write and the server can only ever refuse.
-  assert.deepEqual(cost.properties.kind.enum, ["item"]);
+  const variants = refusal.properties.ruling.properties.attemptCosts.items.anyOf;
+  // Rules has a transition for each of these kinds now, so the wire offers
+  // each. A refusal that cost the actor ten minutes can say so instead of
+  // being priced at nothing because `item` was the only word available.
+  assert.deepEqual(
+    variants.map((variant) => variant.properties.kind.enum[0]),
+    ["item", "fictionTime", "resource"],
+  );
+  // Per-variant fields rather than one shape with optional ones: an item cost
+  // can never arrive carrying a duration, and a time cost can never arrive
+  // carrying an entry.
+  assert.deepEqual(
+    variants.map((variant) => variant.required),
+    [
+      ["charges", "durability", "entryRef", "kind", "quantity"],
+      ["durationMicros", "kind"],
+      ["amount", "kind", "resourceId"],
+    ],
+  );
 
-  const withCost = refusalWireBundle();
-  withCost.terminal.ruling.attemptCosts = [
-    { kind: "item", entryRef: "item-entry:hall:torch", quantity: 0, charges: 1, durability: 0 },
-  ];
-  const result = validateVNextProposalBundle({
-    schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
-    kind: "proposalBundle",
-    ...decodeVNextStrictToolBundle(withCost),
-  });
-  assert.equal(result.kind, "accepted", JSON.stringify(result));
+  for (const attemptCosts of [
+    [{ kind: "item", entryRef: "item-entry:hall:torch", quantity: 0, charges: 1, durability: 0 }],
+    [{ kind: "fictionTime", durationMicros: "600000000" }],
+    [{ kind: "resource", resourceId: "spellSlot:1", amount: 1 }],
+  ]) {
+    const withCost = refusalWireBundle();
+    withCost.terminal.ruling.attemptCosts = attemptCosts;
+    const result = validateVNextProposalBundle({
+      schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+      kind: "proposalBundle",
+      ...decodeVNextStrictToolBundle(withCost),
+    });
+    assert.equal(result.kind, "accepted", JSON.stringify({ attemptCosts, result }));
+  }
 });
 
 /**

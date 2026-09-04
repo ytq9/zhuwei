@@ -818,17 +818,36 @@ function makeStrictBundleSchema(): Record<string, unknown> {
   // (`lowerTerminal`) and the Rules feasibility seam -- so this only unpins
   // the transport.
   //
-  // `attemptCosts` deliberately exposes the `item` shape alone. The domain
-  // also models `fictionTime` and `resource`, but `lowerAttemptCosts` accepts
-  // only items, so offering the other two would hand the model a shape the
-  // server could never execute.
-  const attemptCost = object({
-    kind: { type: "string", enum: ["item"] },
-    entryRef: refText,
-    quantity: { type: "integer", minimum: 0 },
-    charges: { type: "integer", minimum: 0 },
-    durability: { type: "integer", minimum: 0 },
-  });
+  /**
+   * All three attempt-cost kinds, as closed variants rather than one shape
+   * with optional fields.
+   *
+   * A refusal that costs nothing is the cheap answer, and the wire used to
+   * make it the only answer: `item` was the sole kind offered, so a KP that
+   * wanted to charge the ten minutes the attempt burned had no way to say so.
+   * Rules now has a transition for each kind, and each variant lists exactly
+   * the fields its kind uses, so an item cost can never arrive carrying a
+   * duration and a time cost can never arrive carrying an entry.
+   */
+  const attemptCostVariants = [
+    object({
+      kind: { type: "string", enum: ["item"] },
+      entryRef: refText,
+      quantity: { type: "integer", minimum: 0 },
+      charges: { type: "integer", minimum: 0 },
+      durability: { type: "integer", minimum: 0 },
+    }),
+    object({
+      kind: { type: "string", enum: ["fictionTime"] },
+      durationMicros: { type: "string", pattern: "^[1-9][0-9]*$" },
+    }),
+    object({
+      kind: { type: "string", enum: ["resource"] },
+      resourceId: refText,
+      amount: { type: "integer", minimum: 1 },
+    }),
+  ];
+  const attemptCost = { anyOf: attemptCostVariants };
   const prerequisite = object({
     kind: {
       type: "string",

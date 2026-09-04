@@ -245,9 +245,9 @@ export function bundleCommandToRoomLowering(
     // The world declining an action is a first-class mechanical outcome, not
     // an error -- it lowers to the typed feasibility-ruling Rules input.
     // Attempt costs are lowered only when Rules already has a transition
-    // path for their kind (currently: item costs only); a cost kind Rules
-    // cannot yet apply must fail the whole lowering closed rather than be
-    // silently dropped, since a real spent cost must never vanish.
+    // path for their kind; a cost kind Rules cannot yet apply must fail the
+    // whole lowering closed rather than be silently dropped, since a real
+    // spent cost must never vanish.
     const costs = lowerAttemptCosts(command.ruling.attemptCosts);
     if (costs === undefined) {
       return Object.freeze({
@@ -384,31 +384,49 @@ export function vnext2CommandToRoomLowering(
  * cost has no Rules consumer yet, so its presence fails the whole lowering
  * closed -- it must never be silently dropped, because it was really spent.
  */
+type LoweredAttemptCost =
+  | Readonly<{
+      kind: "item";
+      entryRef: string;
+      quantity: number;
+      charges: number;
+      durability: number;
+    }>
+  | Readonly<{ kind: "fictionTime"; durationMicros: string }>
+  | Readonly<{ kind: "resource"; resourceId: string; amount: number }>;
+
+/**
+ * Every attempt-cost kind the domain models now has a Rules transition, so
+ * this no longer narrows the union -- it re-emits it in the Rules shape. The
+ * function survives the widening because the contract it enforces is the one
+ * that matters: a cost Rules could not apply must fail the whole lowering
+ * closed rather than be dropped, and a future fourth kind will land here as
+ * `undefined` instead of silently vanishing.
+ */
 function lowerAttemptCosts(
   costs: readonly VNextAttemptCost[],
-): readonly Readonly<{
-  kind: "item";
-  entryRef: string;
-  quantity: number;
-  charges: number;
-  durability: number;
-}>[] | undefined {
-  const lowered: Readonly<{
-    kind: "item";
-    entryRef: string;
-    quantity: number;
-    charges: number;
-    durability: number;
-  }>[] = [];
+): readonly LoweredAttemptCost[] | undefined {
+  const lowered: LoweredAttemptCost[] = [];
   for (const cost of costs) {
-    if (cost.kind !== "item") return undefined;
-    lowered.push({
-      kind: "item",
-      entryRef: cost.entryRef,
-      quantity: cost.quantity,
-      charges: cost.charges,
-      durability: cost.durability,
-    });
+    if (cost.kind === "item") {
+      lowered.push({
+        kind: "item",
+        entryRef: cost.entryRef,
+        quantity: cost.quantity,
+        charges: cost.charges,
+        durability: cost.durability,
+      });
+      continue;
+    }
+    if (cost.kind === "fictionTime") {
+      lowered.push({ kind: "fictionTime", durationMicros: cost.durationMicros });
+      continue;
+    }
+    if (cost.kind === "resource") {
+      lowered.push({ kind: "resource", resourceId: cost.resourceId, amount: cost.amount });
+      continue;
+    }
+    return undefined;
   }
   return lowered;
 }

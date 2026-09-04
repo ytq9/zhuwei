@@ -39,7 +39,7 @@ const runtime = createVersionedRulesRuntime({
   defaultManifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST.manifest,
 });
 
-function player(id) {
+function player(id, resources = {}) {
   return {
     id,
     kind: "player",
@@ -52,8 +52,8 @@ function player(id) {
     abilityScores: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
     proficiencyBonus: 2,
     proficientSkills: [],
-    resources: {},
-    resourceMaximums: {},
+    resources: { ...resources },
+    resourceMaximums: { ...resources },
     hitPoints: { current: 20, maximum: 20 },
     loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
     characterBuild: { classId: "fighter", raceId: "human", cantrips: [], prepared: [] },
@@ -150,7 +150,10 @@ function initialize(extraDefinitions = [], options = {}) {
         ? [{ id: "seat:mf-observer", principalId: "principal:mf-observer", status: "active" }]
         : []),
     ],
-    characters: [player(ACTOR), ...(withObserver ? [player(OBSERVER)] : [])],
+    characters: [
+      player(ACTOR, options.actorResources ?? {}),
+      ...(withObserver ? [player(OBSERVER)] : []),
+    ],
     characterControls: [
       { characterId: ACTOR, seatId: "seat:mf1" },
       ...(withObserver
@@ -934,6 +937,124 @@ test("ruleWorldInteractionFeasibility applies a real attempt cost through the it
   assert.equal(rebuilt.state.campaignRuntime.itemSystem.entries[ITEM_ENTRY_REF].quantity, 2);
 });
 
+test("ruleWorldInteractionFeasibility spends the fiction time an attempt really burned", () => {
+  // A refusal used to be free whatever it cost, because `item` was the only
+  // attempt cost the wire and Rules had a word for. Ten minutes spent failing
+  // to force a door is a real change to the world and now settles as one.
+  const world = initialize();
+  const plan = feasibilityPlan({
+    costs: [{ kind: "fictionTime", durationMicros: "600000000" }],
+  });
+  const committed = runtime.step(world.profiles, world.state, {
+    kind: "ruleWorldInteractionFeasibility",
+    rootActionId: "root:feasibility-time-cost",
+    actorCharacterId: ACTOR,
+    plan,
+  });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  const advanced = committed.events.find((event) => event.eventType === "FictionTimeAdvanced");
+  assert.ok(advanced, JSON.stringify(committed.events.map((event) => event.eventType)));
+  assert.equal(advanced.payload.durationMicros, "600000000");
+  assert.equal(committed.state.fictionTimelines[advanced.fictionTimelineId].nowMicros, "600000000");
+  const ruled = committed.events.find((event) =>
+    event.eventType === "WorldInteractionFeasibilityRuled");
+  assert.deepEqual(ruled.payload.appliedCosts, [
+    { kind: "fictionTimeCost", durationMicros: "600000000", nowMicrosAfter: "600000000" },
+  ]);
+
+  const rebuilt = runtime.replay(world.genesis, committed.events);
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.equal(
+    rebuilt.state.fictionTimelines[advanced.fictionTimelineId].nowMicros,
+    "600000000",
+  );
+});
+
+test("ruleWorldInteractionFeasibility spends a resource the attempt had already committed", () => {
+  const world = initialize([], { actorResources: { "spellSlot:1": 1 } });
+  const plan = feasibilityPlan({
+    rulingKind: "worldLawViolation",
+    costs: [{ kind: "resource", resourceId: "spellSlot:1", amount: 1 }],
+  });
+  const committed = runtime.step(world.profiles, world.state, {
+    kind: "ruleWorldInteractionFeasibility",
+    rootActionId: "root:feasibility-resource-cost",
+    actorCharacterId: ACTOR,
+    plan,
+  });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  const used = committed.events.find((event) => event.eventType === "ResourceUsed");
+  assert.ok(used, JSON.stringify(committed.events.map((event) => event.eventType)));
+  assert.equal(used.payload.resourceId, "spellSlot:1");
+  assert.equal(used.payload.amount, 1);
+  assert.equal(committed.state.entities[ACTOR].resources["spellSlot:1"], 0);
+  const ruled = committed.events.find((event) =>
+    event.eventType === "WorldInteractionFeasibilityRuled");
+  assert.deepEqual(ruled.payload.appliedCosts, [
+    { kind: "resourceCost", resourceId: "spellSlot:1", amountBefore: 1, amountAfter: 0 },
+  ]);
+
+  const rebuilt = runtime.replay(world.genesis, committed.events);
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+  assert.equal(rebuilt.state.entities[ACTOR].resources["spellSlot:1"], 0);
+});
+
+test("ruleWorldInteractionFeasibility refuses a resource cost the actor cannot pay", () => {
+  // The fold throws on an unaffordable spend, so this has to be caught while
+  // ruling: an actor who cannot pay produces a rejection, never a crash.
+  const world = initialize();
+  const result = runtime.step(world.profiles, world.state, {
+    kind: "ruleWorldInteractionFeasibility",
+    rootActionId: "root:feasibility-resource-missing",
+    actorCharacterId: ACTOR,
+    plan: feasibilityPlan({
+      costs: [{ kind: "resource", resourceId: "spellSlot:1", amount: 1 }],
+    }),
+  });
+  assert.equal(result.kind, "rejected", JSON.stringify(result));
+  assert.equal(result.rejection.code, "insufficientResource");
+});
+
+test("mixed attempt costs settle in the order the ruling declared them", () => {
+  // Item costs go through the one item transition a cost at a time precisely
+  // so that a mixed list keeps its declared order in the event stream.
+  const world = initialize([], { actorResources: { "spellSlot:1": 1 } });
+  const committed = runtime.step(world.profiles, world.state, {
+    kind: "ruleWorldInteractionFeasibility",
+    rootActionId: "root:feasibility-mixed-costs",
+    actorCharacterId: ACTOR,
+    plan: feasibilityPlan({
+      rulingKind: "worldLawViolation",
+      costs: [
+        { kind: "fictionTime", durationMicros: "60000000" },
+        { kind: "item", entryRef: ITEM_ENTRY_REF, quantity: 1, charges: 0, durability: 0 },
+        { kind: "resource", resourceId: "spellSlot:1", amount: 1 },
+      ],
+    }),
+  });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  assert.deepEqual(
+    committed.events.map((event) => event.eventType),
+    [
+      "FictionTimeAdvanced",
+      "ItemUsed",
+      "ResourceUsed",
+      "WorldInteractionFeasibilityRuled",
+    ],
+  );
+  const ruled = committed.events.at(-1);
+  assert.deepEqual(
+    ruled.payload.appliedCosts.map((cost) => cost.kind),
+    ["fictionTimeCost", "itemCost", "resourceCost"],
+  );
+
+  const rebuilt = runtime.replay(world.genesis, committed.events);
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+  assert.equal(rebuilt.head.stateHash, committed.stateHash);
+});
+
 test("ruleWorldInteractionFeasibility rejects an attempt cost that is not actually available", () => {
   const world = initialize();
   const plan = feasibilityPlan({
@@ -1020,9 +1141,30 @@ test("bundleCommandToRoomLowering lowers an item attempt cost from an in-world r
   ]);
 });
 
-test("bundleCommandToRoomLowering fails an in-world refusal closed when an attempt cost has no Rules transition", () => {
+test("bundleCommandToRoomLowering carries every attempt cost kind Rules can spend", () => {
   const command = refusalCommand({
-    attemptCosts: [{ kind: "resource", resourceId: "resource:mf-unsupported", amount: 1 }],
+    attemptCosts: [
+      { kind: "fictionTime", durationMicros: "600000000" },
+      { kind: "item", entryRef: ITEM_ENTRY_REF, quantity: 1, charges: 0, durability: 0 },
+      { kind: "resource", resourceId: "spellSlot:1", amount: 1 },
+    ],
+  });
+  const result = bundleCommandToRoomLowering(command);
+  assert.equal(result.kind, "accepted", JSON.stringify(result));
+  assert.deepEqual(result.input.plan.costs, [
+    { kind: "fictionTime", durationMicros: "600000000" },
+    { kind: "item", entryRef: ITEM_ENTRY_REF, quantity: 1, charges: 0, durability: 0 },
+    { kind: "resource", resourceId: "spellSlot:1", amount: 1 },
+  ]);
+});
+
+test("bundleCommandToRoomLowering fails an in-world refusal closed when an attempt cost has no Rules transition", () => {
+  // Every kind the domain models has a Rules transition today, so what this
+  // still guards is the next one added: an unrecognised cost has to fail the
+  // whole lowering, because a cost that is quietly dropped is one the fiction
+  // charged the player and the world never took.
+  const command = refusalCommand({
+    attemptCosts: [{ kind: "standing", factionRef: "faction:mf", amount: 1 }],
   });
   const result = bundleCommandToRoomLowering(command);
   assert.equal(result.kind, "rejected", JSON.stringify(result));

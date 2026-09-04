@@ -69,6 +69,7 @@ import {
   type AtomicWorldInteractionStepsPlan,
   type SemanticDefinitionRevisionPlan,
   type WorldInteractionBranch,
+  type WorldInteractionAttemptCost,
   type WorldInteractionCost,
   type WorldInteractionEffect,
   type WorldInteractionFeasibilityRuledPayload,
@@ -610,7 +611,7 @@ function resolveWorldInteraction(
  * The world itself declined the action -- a missing prerequisite or a
  * world-law violation -- which is a first-class mechanical outcome, not an
  * error. Any attempt costs that were really spent still apply through the
- * ordinary item-cost transition path. `plan.basisRefs` is authority-only: it
+ * ordinary attempt-cost transition path. `plan.basisRefs` is authority-only: it
  * feeds only this event's read scope and is never copied into the committed
  * payload, so a player can never receive an authority-only basis ref through
  * this outcome.
@@ -643,7 +644,7 @@ function ruleWorldInteractionFeasibility(
     return rejected("privateOrUnknownReference", "The world interaction feasibility actor is unavailable.");
   }
 
-  const costEffects = applyItemCosts(
+  const costEffects = applyAttemptCosts(
     accumulator,
     profiles,
     input.rootActionId,
@@ -653,8 +654,13 @@ function ruleWorldInteractionFeasibility(
   );
   if (!Array.isArray(costEffects)) return costEffects;
   const appliedCosts = costEffects.filter(
-    (effect): effect is Extract<AppliedWorldInteractionEffect, { kind: "itemCost" }> =>
-      effect.kind === "itemCost",
+    (effect): effect is Extract<
+      AppliedWorldInteractionEffect,
+      { kind: "itemCost" | "fictionTimeCost" | "resourceCost" }
+    > =>
+      effect.kind === "itemCost"
+      || effect.kind === "fictionTimeCost"
+      || effect.kind === "resourceCost",
   );
 
   const payload: WorldInteractionFeasibilityRuledPayload = {
@@ -1815,6 +1821,89 @@ function applyItemCosts(
       chargesAfter,
       durabilityBefore,
       durabilityAfter,
+    });
+  }
+  return applied;
+}
+
+/**
+ * Charges what an attempt really spent before the world declined it.
+ *
+ * Item costs still go through the single item transition above, one at a time,
+ * so the events keep the order the ruling declared and there remains exactly
+ * one place that mutates an item entry. The other two kinds ride transitions
+ * that already existed for the rest of the world -- time advances, a resource
+ * is spent -- and the resource is checked here rather than left to the fold,
+ * which throws: a spend the actor cannot afford is a refusal to make, not a
+ * crash to raise.
+ */
+function applyAttemptCosts(
+  accumulator: TransitionAccumulator,
+  profiles: RuntimeProfileManifest,
+  rootActionId: string,
+  actorCharacterId: string,
+  costs: readonly WorldInteractionAttemptCost[],
+  purpose: string,
+): AppliedWorldInteractionEffect[] | ReturnType<typeof rejected> {
+  const applied: AppliedWorldInteractionEffect[] = [];
+  for (const cost of costs) {
+    if (cost.kind === "item") {
+      const itemApplied = applyItemCosts(
+        accumulator, profiles, rootActionId, actorCharacterId, [cost], purpose,
+      );
+      if (!Array.isArray(itemApplied)) return itemApplied;
+      applied.push(...itemApplied);
+      continue;
+    }
+    if (cost.kind === "fictionTime") {
+      appendTransition(accumulator, profiles, rootActionId, {
+        eventType: "FictionTimeAdvanced",
+        payload: { durationMicros: cost.durationMicros, reason: purpose },
+        reads: [`entity:${actorCharacterId}`],
+        writes: [`receipt:${rootActionId}`],
+        visibilityPolicyId: "visibility:scene-observers",
+        secrecy: "public",
+      });
+      const advanced = accumulator.events.at(-1)!;
+      const timeline = accumulator.state.fictionTimelines[advanced.fictionTimelineId];
+      if (timeline === undefined) {
+        return rejected(
+          "invalidRulesInput",
+          "The attempt cost advanced a fiction timeline that does not exist.",
+        );
+      }
+      applied.push({
+        kind: "fictionTimeCost",
+        durationMicros: cost.durationMicros,
+        nowMicrosAfter: timeline.nowMicros,
+      });
+      continue;
+    }
+    const available = accumulator.state.entities[actorCharacterId]?.resources?.[cost.resourceId];
+    if (available === undefined || available < cost.amount) {
+      return rejected(
+        "insufficientResource",
+        "A frozen world interaction attempt cost is unavailable.",
+      );
+    }
+    appendTransition(accumulator, profiles, rootActionId, {
+      eventType: "ResourceUsed",
+      payload: {
+        characterId: actorCharacterId,
+        resourceId: cost.resourceId,
+        amount: cost.amount,
+        purpose,
+      },
+      reads: [`entity:${actorCharacterId}`],
+      writes: [`entity:${actorCharacterId}`, `receipt:${rootActionId}`],
+      visibilityPolicyId: `visibility:character-controller:${actorCharacterId}`,
+      secrecy: "private",
+    });
+    applied.push({
+      kind: "resourceCost",
+      resourceId: cost.resourceId,
+      amountBefore: available,
+      amountAfter: available - cost.amount,
     });
   }
   return applied;

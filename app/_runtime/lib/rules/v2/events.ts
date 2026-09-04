@@ -1789,7 +1789,25 @@ function foldEventInternal(
       if (!(payload.actorCharacterId in state.entities)) {
         throw new TypeError("world interaction feasibility actor does not exist");
       }
+      // Each applied cost is checked against the state its own transition
+      // left behind: this summary event never spends anything itself, so a
+      // ruling that claims a cost no earlier event actually paid must not
+      // replay.
       for (const effect of payload.appliedCosts) {
+        if (effect.kind === "fictionTimeCost") {
+          const timeline = state.fictionTimelines[event.fictionTimelineId];
+          if (timeline === undefined || timeline.nowMicros !== effect.nowMicrosAfter) {
+            throw new TypeError("world interaction feasibility fiction time cost was not committed");
+          }
+          continue;
+        }
+        if (effect.kind === "resourceCost") {
+          const resources = state.entities[payload.actorCharacterId]?.resources;
+          if (resources === undefined || (resources[effect.resourceId] ?? 0) !== effect.amountAfter) {
+            throw new TypeError("world interaction feasibility resource cost was not committed");
+          }
+          continue;
+        }
         const entry = state.campaignRuntime.itemSystem.entries[effect.entryRef];
         if (entry === undefined
           || entry.quantity !== effect.quantityAfter
