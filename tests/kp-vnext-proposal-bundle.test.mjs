@@ -234,7 +234,7 @@ test("Proposal Bundle closed validator rejects authority, dice, and model-DAG fi
         kind: "registeredHazard",
         sourceDefinitionRef: "semantic:source",
         zoneRef: "semantic:zone",
-        damageProfileRef: "world-damage:not-registered",
+        damage: { kind: "profile", damageProfileRef: "world-damage:not-registered" },
       }];
     }],
     ["relation effect", (value) => {

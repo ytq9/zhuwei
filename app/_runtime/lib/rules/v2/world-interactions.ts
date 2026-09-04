@@ -32,6 +32,7 @@ import {
   type WorldInteractionAbilityAuthority,
 } from "./world-interaction-mechanics";
 import { WORLD_DAMAGE_PROFILE_REGISTRY } from "../profiles/world-interaction-registry";
+import { isEnvironmentHazardDefinition } from "./environment-hazards";
 import {
   composeDefinition,
   createDefinitionSnapshot,
@@ -1552,15 +1553,51 @@ function abilityAuthorityForPlan(
     : rejected(resolved.code, resolved.message);
 }
 
+/**
+ * The damage a hazard effect settles for, from whichever side froze it.
+ *
+ * An authored hazard has to have frozen the very zone this effect names: the
+ * effect says where the danger goes off and the definition says what it covers,
+ * and a hazard whose own frozen area is somewhere else is not the danger being
+ * triggered. A rolled formula is refused rather than approximated, because
+ * settling it needs a die this path does not have -- and a hazard quietly
+ * downgraded to a flat number would be the kernel revising a frozen ruling.
+ */
+function hazardDamage(
+  state: AuthoritativeWorldState,
+  effect: WorldInteractionRegisteredHazardEffect,
+): Readonly<{ targetResolver: string; amount: number; damageType: string }> | undefined {
+  if (effect.damage.kind === "profile") {
+    const profile = WORLD_DAMAGE_PROFILE_REGISTRY[effect.damage.damageProfileRef];
+    return profile === undefined ? undefined : Object.freeze({ ...profile });
+  }
+  const definition = state.campaignRuntime.definitions[effect.damage.hazardDefinitionRef];
+  if (!isEnvironmentHazardDefinition(definition)) return undefined;
+  const content = definition.content as Record<string, unknown>;
+  const area = content.area;
+  const damage = content.damage;
+  if (!isRecord(area)
+    || area.kind !== "zone"
+    || area.ref !== effect.zoneRef
+    || !isRecord(damage)
+    || damage.kind !== "fixed") return undefined;
+  return Object.freeze({
+    targetResolver: "active-contains-relation",
+    amount: Number(damage.amount),
+    damageType: String(damage.damageType),
+  });
+}
+
 function registeredHazardTargets(
   state: AuthoritativeWorldState,
   sceneRef: string,
   effect: WorldInteractionRegisteredHazardEffect,
 ): readonly Readonly<{ targetRef: string; relationRefs: readonly string[] }>[] | undefined {
-  const profile = WORLD_DAMAGE_PROFILE_REGISTRY[effect.damageProfileRef];
+  const profile = hazardDamage(state, effect);
   const source = state.campaignRuntime.definitions[effect.sourceDefinitionRef];
   const zone = state.campaignRuntime.definitions[effect.zoneRef];
-  if (profile.targetResolver !== "active-contains-relation"
+  if (profile === undefined
+    || profile.targetResolver !== "active-contains-relation"
     || !isStoredSemanticDefinition(source)
     || !isStoredSemanticDefinition(zone)
     || !authorityRefBoundToScene(state, effect.sourceDefinitionRef, sceneRef)
@@ -1919,9 +1956,9 @@ function applyBranchEffects(
   const applied: AppliedWorldInteractionEffect[] = [];
   for (const effect of branch.effects) {
     if (effect.kind === "registeredHazard") {
-      const profile = WORLD_DAMAGE_PROFILE_REGISTRY[effect.damageProfileRef];
+      const profile = hazardDamage(accumulator.state, effect);
       const targets = registeredHazardTargets(accumulator.state, plan.sceneRef, effect);
-      if (targets === undefined) {
+      if (profile === undefined || targets === undefined) {
         throw new TypeError("registered world-interaction hazard changed after preflight");
       }
       for (const target of targets) {

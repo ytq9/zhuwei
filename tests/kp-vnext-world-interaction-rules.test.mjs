@@ -413,7 +413,7 @@ function interactionPlan(state, modifier = "5") {
           kind: "registeredHazard",
           sourceDefinitionRef: SOURCE,
           zoneRef: ZONE,
-          damageProfileRef: "world-damage:falling-object:moderate",
+          damage: { kind: "profile", damageProfileRef: "world-damage:falling-object:moderate" },
         }],
         sensoryEvidence: [],
         pressures: [],
@@ -671,7 +671,7 @@ test("opaque IDs resolve registered hazard targets and damage through step/proje
   const plan = interactionPlan(world.state);
   const effect = plan.branches.success.effects[0];
   assert.deepEqual(Object.keys(effect).sort(), [
-    "damageProfileRef",
+    "damage",
     "kind",
     "sourceDefinitionRef",
     "zoneRef",
@@ -1010,6 +1010,127 @@ test("proposal lowering fails closed for malformed authority inputs", () => {
   }
 });
 
+function authoredHazardDefinition(overrides = {}) {
+  return {
+    definitionId: overrides.definitionId ?? "hazard:vnext:collapsing-gallery",
+    revision: "1",
+    definitionKind: "environmentHazard",
+    rulesBasis: "srd5.1-2014",
+    visibilityPolicyRef: "visibility:hidden-until-evidence",
+    causalBasisRefs: [],
+    content: {
+      schema: "zhuwei.environment-hazard-definition/v1",
+      label: "回廊塌落",
+      trigger: { kind: "enterZone", ref: ZONE },
+      perceptibleSigns: ["承重柱上的新裂纹"],
+      disableMethods: ["先加固承重柱再通过"],
+      resolution: { kind: "save", ability: "dex", dc: "15", onSuccess: "half" },
+      area: { kind: "zone", ref: ZONE },
+      damage: { kind: "fixed", amount: "9", damageType: "bludgeoning" },
+      conditions: [],
+      environmentalConsequences: ["回廊被碎石堵死"],
+      durationMicros: "0",
+      ...(overrides.content ?? {}),
+    },
+  };
+}
+
+function registerAuthoredHazard(world, definition, rootActionId) {
+  const registered = runtime.step(world.profiles, world.state, {
+    kind: "registerDynamicDefinition",
+    proposalId: rootActionId,
+    definition,
+  });
+  assert.equal(registered.kind, "committed", JSON.stringify(registered));
+  return registered;
+}
+
+test("a branch settles a hazard the KP froze this session, not only one the runtime shipped", () => {
+  // SPEC 0001 section 8 lets the KP invent the danger; section 10 says it only
+  // takes effect once frozen. The frozen definition supplies the numbers and
+  // the interaction's own check decides whether the branch carrying it runs,
+  // so authoring a danger needs no settlement machinery of its own.
+  const world = initialize();
+  const registered = registerAuthoredHazard(
+    world,
+    authoredHazardDefinition(),
+    "root:q:register-authored-hazard",
+  );
+  const plan = interactionPlan(registered.state);
+  plan.branches.success.effects = [{
+    kind: "registeredHazard",
+    sourceDefinitionRef: SOURCE,
+    zoneRef: ZONE,
+    damage: { kind: "authored", hazardDefinitionRef: "hazard:vnext:collapsing-gallery" },
+  }];
+
+  const pending = runtime.step(registered.profiles ?? world.profiles, registered.state, {
+    kind: "resolveWorldInteraction",
+    rootActionId: "root:q:authored-hazard",
+    actorCharacterId: ACTOR,
+    plan,
+  });
+  assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
+  const committed = runtime.step(world.profiles, pending.state, {
+    kind: "fulfillAuthoritativeRandomness",
+    continuation: pending.continuation,
+    rolls: [20],
+  });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  // Nine, the amount the KP froze -- not the six the shipped profile carries.
+  assert.deepEqual(
+    committed.mechanicalResult.appliedEffects
+      .filter(({ kind }) => kind === "damage")
+      .map(({ amount, damageType }) => ({ amount, damageType })),
+    [
+      { amount: 9, damageType: "bludgeoning" },
+      { amount: 9, damageType: "bludgeoning" },
+    ],
+  );
+  assert.equal(committed.state.entities[TARGET].hitPoints.current, 11);
+
+  const rebuilt = runtime.replay(
+    world.genesis,
+    [...registered.events, ...pending.events, ...committed.events],
+  );
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+});
+
+test("a branch cannot cite a hazard the KP has not frozen, or one frozen for another zone", () => {
+  const world = initialize();
+  const elsewhere = registerAuthoredHazard(
+    world,
+    authoredHazardDefinition({
+      definitionId: "hazard:vnext:elsewhere",
+      content: { area: { kind: "zone", ref: SOURCE } },
+    }),
+    "root:q:register-elsewhere",
+  );
+  for (const [label, hazardDefinitionRef, state] of [
+    // Section 10: a danger takes effect only once it has been frozen.
+    ["never frozen", "hazard:vnext:never-frozen", world.state],
+    // The effect names where the danger goes off and the definition names what
+    // it covers; a hazard frozen for another zone is not this danger.
+    ["frozen elsewhere", "hazard:vnext:elsewhere", elsewhere.state],
+  ]) {
+    const plan = interactionPlan(state);
+    plan.branches.success.effects = [{
+      kind: "registeredHazard",
+      sourceDefinitionRef: SOURCE,
+      zoneRef: ZONE,
+      damage: { kind: "authored", hazardDefinitionRef },
+    }];
+    const result = runtime.step(world.profiles, state, {
+      kind: "resolveWorldInteraction",
+      rootActionId: `root:q:authored-hazard:${hazardDefinitionRef}`,
+      actorCharacterId: ACTOR,
+      plan,
+    });
+    assert.equal(result.kind, "rejected", `${label}: ${JSON.stringify(result)}`);
+    assert.equal(state.entities[TARGET].hitPoints.current, 20, label);
+  }
+});
+
 test("registered hazards reject foreign or non-spatial sources before randomness", () => {
   const world = initialize();
   for (const sourceRef of [FOREIGN_SOURCE, WRONG_ROLE_SOURCE, UNBOUND_SOURCE]) {
@@ -1018,7 +1139,7 @@ test("registered hazards reject foreign or non-spatial sources before randomness
       kind: "registeredHazard",
       sourceDefinitionRef: sourceRef,
       zoneRef: sourceRef,
-      damageProfileRef: "world-damage:falling-object:moderate",
+      damage: { kind: "profile", damageProfileRef: "world-damage:falling-object:moderate" },
     }];
     const result = runtime.step(world.profiles, world.state, {
       kind: "resolveWorldInteraction",

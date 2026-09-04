@@ -89,6 +89,10 @@ const SCENARIOS = [
         file: "tests/npc-mechanical-definition-v5.test.mjs",
         name: "extreme but structurally valid NPC mechanics commit — the kernel reports danger and never scales it down",
       },
+      {
+        file: "tests/world-campaign-v2.test.mjs",
+        name: "SPEC 0001 8: a hazard is never refused for being too dangerous",
+      },
     ],
     judgement: "危险是否符合世界逻辑由模型判断",
     probePending:
@@ -150,8 +154,9 @@ const SCENARIOS = [
       "『不追加第二层机关』约束的是 KP 的作者判断，不是内核："
       + "一个地牢本来就可以有两个陷阱，内核去拦截反而是错的。",
     probePending:
-      "vnext-2 的 wire 还不能表达危害的作者化（Phase 3），"
-      + "这一半目前无法用探针衡量。",
+      "wire 现在能表达 KP 自己冻结的危害，传输面不再是障碍；"
+      + "剩下的只是题面本身尚未构造——需要一道『危害已经结算完毕』"
+      + "且追加第二层机关与不追加同样自然的处境。",
   },
   {
     id: "H",

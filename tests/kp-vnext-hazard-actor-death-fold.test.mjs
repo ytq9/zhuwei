@@ -239,7 +239,7 @@ function interactionPlan(state) {
           kind: "registeredHazard",
           sourceDefinitionRef: SOURCE,
           zoneRef: ZONE,
-          damageProfileRef: "world-damage:falling-object:moderate",
+          damage: { kind: "profile", damageProfileRef: "world-damage:falling-object:moderate" },
         }],
         sensoryEvidence: [],
         pressures: [],

@@ -1064,10 +1064,26 @@ function isWorldEffect(value: unknown): value is VNextWorldInteractionBranchProp
       && isBoundedText(value.summary, 2_000);
   }
   return value.kind === "registeredHazard"
-    && exactKeys(value, ["damageProfileRef", "kind", "sourceDefinitionRef", "zoneRef"])
+    && exactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
     && isRef(value.sourceDefinitionRef)
     && isRef(value.zoneRef)
-    && isWorldDamageProfileRef(value.damageProfileRef);
+    && isHazardDamage(value.damage);
+}
+
+/**
+ * A hazard's damage comes either from a danger the runtime ships or from one
+ * the KP froze during play under SPEC 0001 section 8. One closed choice, never
+ * both, and never a shape with the other side's field left optional.
+ */
+function isHazardDamage(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  if (value.kind === "profile") {
+    return exactKeys(value, ["damageProfileRef", "kind"])
+      && isWorldDamageProfileRef(value.damageProfileRef);
+  }
+  return value.kind === "authored"
+    && exactKeys(value, ["hazardDefinitionRef", "kind"])
+    && isRef(value.hazardDefinitionRef);
 }
 
 function isSensoryEvidence(

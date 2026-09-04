@@ -68,7 +68,9 @@ export type VNextWorldSemanticEffect = Readonly<
       kind: "registeredHazard";
       sourceDefinitionRef: string;
       zoneRef: string;
-      damageProfileRef: "world-damage:falling-object:moderate";
+      damage:
+        | { kind: "profile"; damageProfileRef: "world-damage:falling-object:moderate" }
+        | { kind: "authored"; hazardDefinitionRef: string };
     }
 >;
 
@@ -693,9 +695,24 @@ function makeStrictBundleSchema(): Record<string, unknown> {
           kind: { type: "string", enum: ["registeredHazard"] },
           sourceDefinitionRef: refText,
           zoneRef: refText,
-          damageProfileRef: {
-            type: "string",
-            enum: ["world-damage:falling-object:moderate"],
+          // The danger the runtime ships, or one the KP froze this session
+          // under SPEC 0001 section 8. Two closed variants rather than one
+          // shape with both fields optional, so an effect can never name a
+          // profile and a definition at once.
+          damage: {
+            anyOf: [
+              object({
+                kind: { type: "string", enum: ["profile"] },
+                damageProfileRef: {
+                  type: "string",
+                  enum: ["world-damage:falling-object:moderate"],
+                },
+              }),
+              object({
+                kind: { type: "string", enum: ["authored"] },
+                hazardDefinitionRef: refText,
+              }),
+            ],
           },
         }),
       ],

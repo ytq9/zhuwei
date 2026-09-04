@@ -16,6 +16,7 @@ import {
   type WorldDamageProfileRef,
 } from "../../rules/profiles/world-interaction-registry";
 import { combatAttackBonus } from "../../rules/profiles/attack-resolution";
+import { isEnvironmentHazardDefinition } from "../../rules/v2/environment-hazards";
 import {
   canonicalClone,
   canonicalHash,
@@ -114,7 +115,9 @@ export type VNextWorldSemanticEffect =
       kind: "registeredHazard";
       sourceDefinitionRef: string;
       zoneRef: string;
-      damageProfileRef: WorldDamageProfileRef;
+      damage:
+        | Readonly<{ kind: "profile"; damageProfileRef: WorldDamageProfileRef }>
+        | Readonly<{ kind: "authored"; hazardDefinitionRef: string }>;
     }>;
 
 export type VNextWorldInteractionBranchProposal = Readonly<{
@@ -644,7 +647,14 @@ function lowerBranch(
       continue;
     }
     const hazardDependencies = authorityZoneDependencies(state, effect.zoneRef, sceneRef);
-    if (!isWorldDamageProfileRef(effect.damageProfileRef)
+    // An authored hazard has to already be frozen: SPEC 0001 section 10 says a
+    // danger takes effect only once the fact exists or has been frozen under
+    // section 7, so a branch cannot cite a hazard the KP has not yet settled.
+    if (!(effect.damage.kind === "profile"
+      ? isWorldDamageProfileRef(effect.damage.damageProfileRef)
+      : isEnvironmentHazardDefinition(
+        state.campaignRuntime.definitions[effect.damage.hazardDefinitionRef],
+      ))
       || !authorityRefBoundToScene(state, effect.sourceDefinitionRef, sceneRef)
       || !authorityRefBoundToScene(state, effect.zoneRef, sceneRef)) {
       return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:registered-hazard-unavailable"]);
@@ -652,6 +662,7 @@ function lowerBranch(
     dependencyRefs.push(
       effect.sourceDefinitionRef,
       effect.zoneRef,
+      ...(effect.damage.kind === "authored" ? [effect.damage.hazardDefinitionRef] : []),
       ...hazardDependencies.flatMap(({ relationRef, targetRef }) => [relationRef, targetRef]),
     );
     effects.push(structuredClone(effect));
@@ -940,10 +951,26 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
       && isBoundedText(value.summary, 2_000);
   }
   return value.kind === "registeredHazard"
-    && exactKeys(value, ["kind", "sourceDefinitionRef", "zoneRef", "damageProfileRef"])
+    && exactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
     && isRef(value.sourceDefinitionRef)
     && isRef(value.zoneRef)
-    && isWorldDamageProfileRef(value.damageProfileRef);
+    && isHazardDamage(value.damage);
+}
+
+/**
+ * A hazard's damage comes either from a danger the runtime ships or from one
+ * the KP froze during play under SPEC 0001 section 8. One closed choice, never
+ * both, and never a shape with the other side's field left optional.
+ */
+function isHazardDamage(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  if (value.kind === "profile") {
+    return exactKeys(value, ["damageProfileRef", "kind"])
+      && isWorldDamageProfileRef(value.damageProfileRef);
+  }
+  return value.kind === "authored"
+    && exactKeys(value, ["hazardDefinitionRef", "kind"])
+    && isRef(value.hazardDefinitionRef);
 }
 
 function isSensoryEvidence(value: unknown): boolean {

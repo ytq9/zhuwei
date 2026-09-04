@@ -89,11 +89,27 @@ export type WorldInteractionDefinitionEffect = Readonly<{
 /** The plan retains only a registered mechanic request. Rules resolves the
  * actual targets and numeric effect from authoritative relations/Geometry at
  * settlement; neither the KP nor Room lowering may freeze those results. */
+/**
+ * Where a hazard's damage comes from.
+ *
+ * A profile is a danger the runtime ships and owns. An authored one is a
+ * danger the KP froze during play under SPEC 0001 section 8, which is the case
+ * the specification actually describes: dangers invented at the table rather
+ * than drawn from a catalogue the runtime shipped in advance.
+ * They are one closed choice inside one effect rather than two effect kinds,
+ * because the mechanism is identical and only the provenance of the numbers
+ * differs; a hazard can never name both and leave the settlement to pick.
+ */
+export type WorldInteractionHazardDamageSource = Readonly<
+  | { kind: "profile"; damageProfileRef: WorldDamageProfileRef }
+  | { kind: "authored"; hazardDefinitionRef: string }
+>;
+
 export type WorldInteractionRegisteredHazardEffect = Readonly<{
   kind: "registeredHazard";
   sourceDefinitionRef: string;
   zoneRef: string;
-  damageProfileRef: WorldDamageProfileRef;
+  damage: WorldInteractionHazardDamageSource;
 }>;
 
 export type WorldInteractionEffect =
@@ -954,9 +970,9 @@ function isBranch(value: unknown): value is WorldInteractionBranch {
 function isEffect(value: unknown): value is WorldInteractionEffect {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "registeredHazard") {
-    return hasExactKeys(value, ["damageProfileRef", "kind", "sourceDefinitionRef", "zoneRef"])
+    return hasExactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
       && [value.sourceDefinitionRef, value.zoneRef].every(isRef)
-      && isWorldDamageProfileRef(value.damageProfileRef);
+      && isHazardDamageSource(value.damage);
   }
   if (value.kind === "definitionRevision") {
     return hasExactKeys(value, ["kind", "nextDefinition", "summary"])
@@ -1038,6 +1054,17 @@ export function attemptCostIdentity(cost: WorldInteractionAttemptCost): string {
     : cost.kind === "resource"
       ? `resource:${cost.resourceId}`
       : "fictionTime";
+}
+
+function isHazardDamageSource(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.kind === "profile") {
+    return hasExactKeys(value, ["damageProfileRef", "kind"])
+      && isWorldDamageProfileRef(value.damageProfileRef);
+  }
+  return value.kind === "authored"
+    && hasExactKeys(value, ["hazardDefinitionRef", "kind"])
+    && isRef(value.hazardDefinitionRef);
 }
 
 export function isCost(value: unknown): value is WorldInteractionCost {

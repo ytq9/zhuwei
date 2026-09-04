@@ -2390,3 +2390,19 @@
 - 代表性矩阵与定向验证：`tests/world-campaign-v2.test.mjs` 新增两例——九项逐一删除各得一次 `invalidRulesInput`，`perceptibleSigns`/`disableMethods` 置空数组同样被拒；以及“绝不因过于危险而拒绝”，把豁免 DC 30、`100d100+1000`、半径 100,000 同时顶格的危害原样注册并断言冻结内容逐字段一致。反转自检：把 `perceptibleSigns` 的最小长度由 1 放宽为 0，该用例立刻转红，证明规则承重，随后还原。`npx tsx --test tests/world-campaign-v2.test.mjs` 退出 0（22/22，20→22）；`npm run typecheck` 退出 0；`npx eslint` 该文件退出 0。
 
 - 未覆盖范围（本阶段有意止步）：按本契约书写的危害**尚不能被触发**。§8 要求“致命危险必须通过规则结算”，而 `resolution` 无论豁免还是攻击都需要一次投骰；内核的非战斗豁免路径 `savingThrow` 只冻结豁免并请求权威随机，其 `SaveFrozen` 的 success/failure 记录 fold 从不执行，通用随机结算只产出 `ImprovisedCheckResolved` 的成败与叙述结果、不施加机械效果，而 `randomness()` 的续跑描述符只带身份、没有承载“结算后施加何种伤害”的位置。因此让危害按豁免结算需要新增续跑种类或改动权威随机的结算路径——那是回执、作用域证明与重放最吃安全性的地方，另立增量再做，本次不半途改动。同理 vNext 的 wire 仍只能引用那条写死的注册表 profile，KP 可达的危害作者化路径未打通，SPEC 0001 G 的判断探针仍无法构造。未运行完整 Node/Worker 套件、浏览器 QA、migration、部署，未修改 Secret、Cloudflare 资源、`main` 或 grok.me。
+
+## vNext 危害伤害改由 KP 冻结的定义供给（2026-09-04）
+
+- 目标与能力合同：让 vNext 的危害效果结算 KP 自己冻结的危害，而不只是运行时预置的那一条。此前 `registeredHazard` 的 `damageProfileRef` 在 wire 上被钉死为唯一字面值 `world-damage:falling-object:moderate`，而 `WORLD_DAMAGE_PROFILE_REGISTRY` 全表只有这一条（落物 6 点钝击），因此 SPEC 0001 §8 的“KP 可以动态创造陷阱和环境危险”在 vNext 里只能表现为“一次中等落物”。本次把伤害来源改成效果内部的闭合二选一：`{kind:"profile"}` 取运行时预置，`{kind:"authored"}` 取 KP 按上一条目立下的 `zhuwei.environment-hazard-definition/v1` 冻结定义。
+
+- 关键判断：不新增第四种危害概念。内核已有三套互不相通的危害机制，再加一个 `authoredHazard` 效果种类只会变成四套。伤害来源与目标解析是同一套机制，差别只在数值的出处，所以做成同一效果内部的闭合 union，而不是两个效果种类，也不是一个带两个可选字段的形状——后者会允许同时指名 profile 与定义，把选择权留给结算。保留注册表也使 `WORLD_INTERACTION_PROFILE` 文档与 `VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST` 的哈希不变。
+
+- 结算不需要新机制：危害不自己掷豁免。在 vNext 里检定由整束的共享裁定结算、效果挂在选中的分支上，因此“KP 冻结危险 → 交互的检定决定分支是否执行 → 分支施加冻结的伤害”这条链完全复用既有路径。这纠正了本会话早先的判断（以为必须新增续跑种类或改动权威随机结算路径）。作者化危害要求其冻结的 `area` 恰好是效果指名的那个 zone：效果说危险在哪里发作、定义说它覆盖什么，冻结在别处的危害不是正在被触发的这一个。`damage.kind==="roll"` 目前失败关闭而不是近似成一个平均值——把冻结的骰式悄悄降级为定值就是内核在改写已冻结的裁决。
+
+- 修改文件与直接消费者：`rules/v2/world-interaction-model.ts` 新增 `WorldInteractionHazardDamageSource` 与其校验；`rules/v2/world-interactions.ts` 新增共享的 `hazardDamage()`，`registeredHazardTargets` 与 `applyBranchEffects` 两个消费点都经它取值；`kp/vnext/proposal-schema.ts`（领域类型与 wire 两个闭合变体）、`proposal-bundle.ts`、`proposal-validator.ts`、`proposals.ts`（vnext-1 类型、校验与引用检查）同步放宽，其中引用检查要求作者化危害必须已经冻结并把它计入 dependencyRefs。
+
+- 代表性矩阵：`tests/kp-vnext-world-interaction-rules.test.mjs` 新增两例——KP 注册一处 9 点钝击的塌落危害后，交互的检定成功即施加 9 点（而不是预置 profile 的 6 点），目标由 20 掉到 11，且注册、待随机与结算三段事件合并后完整重放；以及引用未冻结的危害、或引用为另一个 zone 冻结的危害，均在结算前被拒且目标血量不变。既有 7 处 `damageProfileRef` 夹具同步改为闭合变体，`kp-vnext-world-interaction-rules` 的键集断言由 `damageProfileRef` 改为 `damage`。验收登记表更正一条已经过期的记述：G 的未探针原因原写“wire 还不能表达危害的作者化”，现已不成立，改为“传输面不再是障碍，剩下的只是题面尚未构造”；C 增加“绝不因过于危险而拒绝”这条覆盖。
+
+- 定向验证与退出码：`npx tsx --test` 七个目标文件退出 0，125/125；`npx vitest run tests/kp-vnext-stage3-room.test.ts --testTimeout=120000` 退出 0（18/18）；`npx tsx --test tests/spec-0001-acceptance.test.mjs` 退出 0（4/4）；`npm run typecheck` 退出 0。`npx eslint` 三个改动测试文件报 1 条错误，为 `tests/kp-vnext-stage3-room.test.ts:1540` 未使用夹具 `materializeAlcoveAloneBundleV2`，上一条日志已记为既有问题，本次未修。过程中被 `world-interaction production mechanics contain no fixture-name or material dispatch` 守卫拦下一次：我在注释里直接引用了 SPEC 原文中的“陷阱”二字，而该守卫禁止生产机械源码出现材质或夹具名，改为转述后通过——这条守卫按预期生效。
+
+- 未覆盖范围：`damage.kind==="roll"` 的危害仍失败关闭，需要一次投骰；SPEC §8 的 `resolution`（攻击或豁免）目前由交互自身的检定代行，危害定义里冻结的 DC 与 onSuccess 尚未被结算读取，二者的一致性还没有强制；`conditions` 与 `environmentalConsequences` 已被冻结但尚未施加。`triggerHazard` 这条 v3 路径仍读旧的能力形状，三套危害机制未合并。KP 可达性仍未打通：`registerDynamicDefinition` 的两处降级仍只注册 compound fact 与势力/能力定义，模型还没有表单可以冻结一处危害。未运行完整 Node/Worker 套件、浏览器 QA、migration、部署，未修改 Secret、Cloudflare 资源、`main` 或 grok.me。

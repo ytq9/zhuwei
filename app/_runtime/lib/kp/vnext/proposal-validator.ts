@@ -521,10 +521,26 @@ function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
       && isText(value.summary, 2_000);
   }
   return value.kind === "registeredHazard"
-    && exactKeys(value, ["damageProfileRef", "kind", "sourceDefinitionRef", "zoneRef"])
+    && exactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
     && isTypedRef(value.sourceDefinitionRef)
     && isTypedRef(value.zoneRef)
-    && value.damageProfileRef === "world-damage:falling-object:moderate";
+    && isHazardDamage(value.damage);
+}
+
+/**
+ * A hazard's damage comes either from a danger the runtime ships or from one
+ * the KP froze during play under SPEC 0001 section 8. One closed choice, never
+ * both, and never a shape with the other side's field left optional.
+ */
+function isHazardDamage(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false;
+  if (value.kind === "profile") {
+    return exactKeys(value, ["damageProfileRef", "kind"])
+      && value.damageProfileRef === "world-damage:falling-object:moderate";
+  }
+  return value.kind === "authored"
+    && exactKeys(value, ["hazardDefinitionRef", "kind"])
+    && isTypedRef(value.hazardDefinitionRef);
 }
 
 function isConsumes(value: unknown): value is readonly VNextBundleReference[] {
