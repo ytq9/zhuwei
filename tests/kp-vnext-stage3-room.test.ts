@@ -2906,6 +2906,17 @@ describe("vNext stage-three Room verticals", () => {
     expect(kp.counters).toMatchObject({ propose: 1 });
     expect(counters.rolls).toBe(0);
 
+    // SPEC 0001 acceptance scenario A: the alcove is in no seed and no
+    // Interaction was ever registered for inspecting one. The action still
+    // commits, which is exactly what that scenario forbids refusing on.
+    // Scenario H rides the same case: a bounded action with no real risk is
+    // described as succeeding, and the roll counter above stays at zero.
+    const labelsBefore = Object.values(definitions(before.state))
+      .map((definition) => String(
+        record(record(definition, "definition").content, "content").label,
+      ));
+    expect(labelsBefore).not.toContain("新出现的壁龛(v2)");
+
     const committed = await roomSnapshot(authority);
     expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(1);
     expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
