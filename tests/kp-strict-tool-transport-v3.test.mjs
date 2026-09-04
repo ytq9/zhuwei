@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -10,6 +11,9 @@ import {
   privateFormProposalModelInput,
   privateFormRepairModelInput,
 } from "../app/_runtime/lib/kp/private-form-policy.ts";
+import {
+  kpRequestDeclaresStrictTool,
+} from "../app/_runtime/lib/kp/authoritative-policy.ts";
 import {
   KP_STRICT_TOOL_CAPABLE_FORMS,
   KP_STRICT_TOOL_UNSUPPORTED_FORMS,
@@ -150,4 +154,70 @@ test("the narrow repair is the call strict output can actually constrain", () =>
   for (const formId of KP_FORM_IDS) {
     assert.equal(kpFormSupportsStrictTool(formId), true, formId);
   }
+});
+
+/**
+ * The transport is chosen per request, and this is the seam that decides it.
+ *
+ * Every other test in this suite stubs the provider binding, so a transport
+ * selected from the profile alone looked correct everywhere while sending the
+ * multi-Form selection call to the strict beta endpoint, which refuses it
+ * before dispatch. That is a total KP outage -- every action, not only the
+ * ones that would have used the strict repair -- so the decision is asserted
+ * here against the two request shapes production actually builds.
+ */
+test("the transport follows the request, so an opted-in profile still sends the selection call ordinarily", () => {
+  const allowedForms = ["ordinary-check.v1", "observe.v1", "compound.v1"];
+  const proposal = privateFormProposalModelInput({
+    request: {
+      rootActionId: "action:1",
+      attempt: 1,
+      intent: "我谨慎通过石门。",
+      finiteReferences,
+    },
+    allowedForms,
+    contextPack: { pack: "x" },
+    // The selection call is ordinary even on an opted-in profile: the Form is
+    // chosen by which tool the model calls and strict beta carries one.
+    structuredOutputMode: "tool",
+  });
+  assert.equal(proposal.tools.length, allowedForms.length);
+  assert.equal(
+    kpRequestDeclaresStrictTool(proposal),
+    false,
+    "a multi-tool selection call must not be routed to the strict endpoint",
+  );
+
+  const repair = repairInput("compound.v1", "strict-tool");
+  assert.equal(repair.tools.length, 1);
+  assert.equal(
+    kpRequestDeclaresStrictTool(repair),
+    true,
+    "a strict repair must reach the endpoint that enforces it",
+  );
+
+  // The ordinary repair declares nothing and must not be sent to the beta
+  // endpoint claiming that it does.
+  assert.equal(kpRequestDeclaresStrictTool(repairInput("compound.v1")), false);
+  assert.equal(kpRequestDeclaresStrictTool({}), false);
+  assert.equal(kpRequestDeclaresStrictTool(null), false);
+});
+
+test("the provider binding routes by request, never by the profile alone", async () => {
+  // `provider.ts` imports `cloudflare:workers`, so the wiring is asserted on
+  // the source. The pure decision above is only a guarantee if the binding
+  // actually consults it: selecting the endpoint from the profile alone is
+  // exactly what took every KP action down, and it passed every test in this
+  // repository because they all stub the binding.
+  const source = await readFile(
+    new URL("../app/_runtime/lib/kp/provider.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /kpRequestDeclaresStrictTool\(input\)/u);
+  // The profile still gates whether strict is possible at all, but it must
+  // never be the last word on which endpoint one request reaches.
+  assert.doesNotMatch(
+    source,
+    /return\s+kpStructuredOutputMode\(profile\)\s*===\s*"strict-tool"\s*\n?\s*\?/u,
+  );
 });

@@ -148,6 +148,32 @@ export function kpStructuredOutputMode(
  * PROPOSAL_REPAIR_EXHAUSTED, so it is the one where an unenforced schema ends
  * the player's action instead of merely costing a retry.
  */
+/**
+ * The transport one already-built request must travel on.
+ *
+ * Strict output is a property of the individual call, not of the profile: the
+ * selection call carries several Forms and cannot be strict, while the repair
+ * carries one and is. So the endpoint cannot be chosen from the profile alone
+ * -- doing that sends the multi-Form selection call to the beta endpoint,
+ * where it is refused before it is ever dispatched.
+ *
+ * Deriving it from the request keeps the guarantee the profile-level choice
+ * was protecting, and strengthens it: a tool that declares `strict` must reach
+ * the endpoint that enforces it, and a request that declares nothing must not
+ * be sent there claiming it does. Neither can drift from what is on the wire.
+ */
+export function kpRequestDeclaresStrictTool(input: unknown): boolean {
+  if (typeof input !== "object" || input === null) return false;
+  const tools = (input as { tools?: unknown }).tools;
+  if (!Array.isArray(tools) || tools.length !== 1) return false;
+  const tool = tools[0];
+  if (typeof tool !== "object" || tool === null) return false;
+  const fn = (tool as { function?: unknown }).function;
+  return typeof fn === "object"
+    && fn !== null
+    && (fn as { strict?: unknown }).strict === true;
+}
+
 export function kpCallStructuredOutputMode(
   profile: Pick<AuthoritativeKpProfile, "modelProfileVersion">,
   allowedFormCount: number,

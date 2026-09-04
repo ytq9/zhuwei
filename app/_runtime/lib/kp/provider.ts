@@ -6,6 +6,7 @@ import {
 } from "./deepseek";
 import {
   authoritativeKpProfileByModelId,
+  kpRequestDeclaresStrictTool,
   kpStructuredOutputMode,
 } from "./authoritative-policy";
 import type {
@@ -27,13 +28,24 @@ export function authoritativeKpModelBinding(
 ): AuthoritativeModelBinding {
   if (profile.provider === "deepseek") {
     const apiKey = deepSeekApiKey() ?? "";
-    // A profile that declares strict output has to reach the beta endpoint
-    // that enforces it. Selecting the transport from anything other than the
-    // profile is how a registry can claim `strict-tool` while the request on
-    // the wire carries an unconstrained tool.
-    return kpStructuredOutputMode(profile) === "strict-tool"
-      ? createDeepSeekStrictToolBinding({ apiKey })
-      : createDeepSeekAuthoritativeBinding({ apiKey });
+    const ordinary = createDeepSeekAuthoritativeBinding({ apiKey });
+    // A profile that has not opted in never reaches the beta endpoint.
+    if (kpStructuredOutputMode(profile) !== "strict-tool") return ordinary;
+    // A profile that has opted in still sends two shapes of request: the Form
+    // selection call carries several tools and cannot be strict, and the
+    // repair carries the one chosen Form and is. Routing both to the beta
+    // endpoint refuses the selection call before it is dispatched, so the
+    // transport follows the request that is actually being sent -- a tool
+    // declaring `strict` reaches the endpoint that enforces it, and a request
+    // declaring nothing is not sent there claiming it does.
+    const strict = createDeepSeekStrictToolBinding({ apiKey });
+    return {
+      run(model, input, options) {
+        return kpRequestDeclaresStrictTool(input)
+          ? strict.run(model, input, options)
+          : ordinary.run(model, input, options);
+      },
+    };
   }
   const ai = (env as typeof env & { AI?: Ai }).AI;
   if (!ai) {
