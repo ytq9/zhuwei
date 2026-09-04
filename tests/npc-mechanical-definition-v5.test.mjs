@@ -1994,3 +1994,66 @@ test("custom ranged weapons accept only pinned ammunition and replay the last sh
   assert.equal(empty.rejection.code, "privateOrUnknownReference");
   assert.deepEqual(empty.events ?? [], []);
 });
+
+// SPEC 0001 scenario C/D's mechanical half: a KP can freeze an NPC template far
+// beyond the party's level as long as it is structurally valid. A rejection
+// here would mean the kernel is second-guessing magnitude instead of structure.
+test("extreme but structurally valid NPC mechanics commit — the kernel reports danger and never scales it down", () => {
+  let scenario = initialize();
+  const encounterId = "encounter:npc-mechanics-v5:apex-threat";
+  const enemyId = "npc:npc-mechanics-v5:apex-threat";
+  const definitionId = "npc-mechanics:apex-threat:1";
+  const abilityId = "ability:npc-mechanics:apex-threat:cataclysm";
+  const enemy = bespokeEntity({
+    entityId: enemyId,
+    name: "远超队伍能力的灾厄造物",
+    definitionId,
+    abilityId,
+    position: { x: "480", y: "180", elevation: "0" },
+    overrides: {
+      stats: { str: "30", dex: "30", con: "30", int: "30", wis: "30", cha: "30" },
+      armorClass: "30",
+      intrinsicAbilities: [{
+        definitionId: abilityId,
+        revision: "1",
+        rulesBasis: "srd5.1-2014",
+        mechanicalKey: "apex-cataclysm",
+        activation: { kind: "attack", actionGrant: "attack" },
+        target: { kind: "creature", count: "1", reachInches: "60", requiresSight: true },
+        attack: { ability: "str", proficiency: true },
+        damage: [{ type: "force", formula: "100d100+1000" }],
+      }],
+    },
+  });
+  // hitPointsMaximum and proficiencyBonus have no override hook on
+  // templateDefinition(); push them to the validator's own ceilings directly,
+  // mirroring the mutate-then-step pattern used above.
+  enemy.mechanics.definition.content.hitPointsMaximum = "1000000";
+  enemy.mechanics.definition.content.proficiencyBonus = "9";
+
+  const opened = step(
+    scenario.profiles,
+    scenario.state,
+    encounterInput(
+      "root:npc-mechanics-v5:apex-threat",
+      encounterId,
+      [enemy],
+      [enemyId],
+    ),
+  );
+  assert.equal(opened.kind, "awaitingRandomness", JSON.stringify(opened));
+  scenario = settleRoomRandomness(scenario, opened);
+
+  const runtime = scenario.state.combatRuntime.entities[enemyId];
+  assert.equal(runtime.mechanicalDefinitionRef, definitionId);
+  assert.equal(runtime.armorClass, "30");
+  assert.equal(runtime.hitPoints.maximum, "1000000");
+  assert.equal(runtime.proficiencyBonus, "9");
+  assert.deepEqual(
+    runtime.stats,
+    { str: "30", dex: "30", con: "30", int: "30", wis: "30", cha: "30" },
+  );
+  const abilityRef = scenario.state.combatRuntime.definitions[abilityId];
+  assert.ok(abilityRef, "the extreme-damage intrinsic ability must have frozen alongside the NPC");
+  assert.equal(scenario.state.combatRuntime.encounters[encounterId].status, "starting");
+});

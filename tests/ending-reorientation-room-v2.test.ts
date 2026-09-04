@@ -735,6 +735,92 @@ describe("SPEC 0009 ending and reorientation through the real Room interface", (
     });
   });
 
+  it("refuses a meaningful failure that changes nothing in the world", async () => {
+    // SPEC 0001 21.I asks a failure to change the world proportionately and to
+    // open a new situation. The new options were already required; an empty
+    // consequence list was not, so a failure could commit having spent fiction
+    // time and moved nothing. Both halves are required now, and the contrast
+    // below shows the refusal is about the empty delta rather than the fixture.
+    const room = await initialize("ending-room-empty-failure-delta-v2");
+    const failureGoal = "goal:ending:empty-delta";
+    let opportunityRef = "";
+    let basisRef = "";
+
+    const opportunitySetup = await act(
+      room.authority,
+      "submission:ending:empty-delta-opportunity",
+      "我已经发现侧墙的检修口仍然可以调查。",
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "固化已经发现的旁路机会",
+          method: "观察侧墙检修口",
+          fact: {
+            kind: "opportunity",
+            summary: "已发现的侧墙检修口仍可调查",
+            cost: "需要撬棍并接受噪音",
+          },
+        });
+        opportunityRef = materialization.factRef;
+        return materialization.proposal;
+      },
+    );
+    expect(opportunitySetup.kind, JSON.stringify(opportunitySetup)).toBe("committed");
+
+    const basisSetup = await act(
+      room.authority,
+      "submission:ending:empty-delta-basis",
+      "我确认主锁芯已经卡死，这条路线失败了。",
+      (rootActionId) => {
+        const materialization = materializedFactProposal(rootActionId, {
+          goal: "固化主锁芯的当前状态",
+          method: "检查卡死的主锁芯",
+          fact: { result: "主锁芯已经卡死" },
+        });
+        basisRef = materialization.factRef;
+        return materialization.proposal;
+      },
+    );
+    expect(basisSetup.kind, JSON.stringify(basisSetup)).toBe("committed");
+
+    const emptyDelta = await act(
+      room.authority,
+      "submission:ending:empty-delta-failure",
+      "我承认这次失败了，但世界没有任何变化。",
+      (rootActionId) => meaningfulFailureProposal(rootActionId, {
+        precedentRef: failureGoal,
+        basisRefs: [basisRef],
+        consequenceRefs: [],
+        newOptions: [{ optionId: opportunityRef, summary: "转向侧墙检修口" }],
+        goal: "撬开主锁芯",
+        method: "继续徒手扳动已经卡死的同一个锁芯",
+        durationValue: 1,
+      }),
+    );
+    // An unrepairable draft comes back as needsKp rather than committing: the
+    // player keeps the turn and can restate the failure with a real cost,
+    // which is the recovery this refusal is only worth having because of.
+    expect(emptyDelta.kind, JSON.stringify(emptyDelta)).toBe("needsKp");
+
+    const realDelta = await act(
+      room.authority,
+      "submission:ending:real-delta-failure",
+      "我承认这次失败了，主锁芯彻底报废，只能改走别处。",
+      (rootActionId) => meaningfulFailureProposal(rootActionId, {
+        precedentRef: failureGoal,
+        basisRefs: [basisRef],
+        consequenceRefs: ["主锁芯彻底报废，正面路线永久关闭"],
+        newOptions: [{ optionId: opportunityRef, summary: "转向侧墙检修口" }],
+        goal: "撬开主锁芯",
+        method: "继续徒手扳动已经卡死的同一个锁芯",
+        durationValue: 1,
+      }),
+    );
+    expect(record(realDelta.receipt, "real delta receipt")).toMatchObject({
+      status: "committed",
+      meaningfulFailure: true,
+    });
+  });
+
   it("advances neither fiction time nor punishment during real-world wait and DO eviction alone", async () => {
     const roomId = "ending-room-real-wait-eviction-v2";
     const room = await initialize(roomId);

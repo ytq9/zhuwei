@@ -13,14 +13,26 @@ import test from "node:test";
  * proves those assertions still exist, and a scenario with no assertion has to
  * say so out loud instead of passing quietly.
  *
- * `covers` therefore means "a test asserts this today", and `pending` means
- * "no test asserts this yet, and here is what is missing". Adding coverage is
- * a matter of moving an entry from one field to the other.
+ * Each scenario is read as two halves, because they fail in different ways
+ * and are fixed by different work.
  *
- * Several scenarios also carry a MODEL JUDGEMENT half that no deterministic
- * fixture can settle -- whether a DC was honestly chosen, whether a roll was
- * worth asking for. Those halves are recorded here and belong in the KP
- * evaluation suite, not in this file.
+ * The MECHANICAL half is what the system enforces whatever the model says.
+ * `covers` names the tests that assert it; `pending` says what is missing
+ * when nothing does. That is the half the three counts below measure.
+ *
+ * The JUDGEMENT half is what only a ruling can settle -- whether a DC was
+ * honestly chosen, whether a roll was worth asking for. No schema polices it,
+ * so `judgement` states it and either `probe` names the behaviour probe that
+ * measures it or `probePending` says why none exists yet. Exactly one, so a
+ * judgement half is never silently unaccounted for.
+ *
+ * Two scenarios are worth reading twice, because their open half sounds like
+ * a missing guard and is not one. G's second layer of trap and M's spotlight
+ * switch take the KP as their subject, not the kernel: a dungeon may hold two
+ * traps, and where a decision point falls is a reading of the fiction.
+ * Enforcing either in code would reject correct content, so neither is a gap
+ * this file can close, and calling them gaps would send the next reader to
+ * write a guard that should not exist.
  */
 const SPEC_PATH = new URL(
   "../docs/specs/0001-llm-kp-responsibility-contract.md",
@@ -38,6 +50,9 @@ const SCENARIOS = [
       },
     ],
     judgement: "方法是否『合理』由模型判断",
+    probePending:
+      "探针目前只覆盖 B 与 H。A 需要一道『模组未登记但合理』与"
+      + "『模组未登记且不合理』难以混淆的题面，尚未构造。",
   },
   {
     id: "B",
@@ -57,6 +72,10 @@ const SCENARIOS = [
       },
     ],
     judgement: "『确实不可行』与『只是很难』的区分由模型判断",
+    probe: {
+      file: "tools/spec-0001-behaviour-probes.mjs",
+      probeId: "B-impossible-is-refused-not-priced",
+    },
   },
   {
     id: "C",
@@ -66,11 +85,15 @@ const SCENARIOS = [
         file: "tests/kp-vnext-hazard-actor-death-fold.test.mjs",
         name: "an interaction can kill its actor before its summary event is folded and replayed",
       },
+      {
+        file: "tests/npc-mechanical-definition-v5.test.mjs",
+        name: "extreme but structurally valid NPC mechanics commit — the kernel reports danger and never scales it down",
+      },
     ],
-    pending:
-      "死亡这一半有覆盖；『校验不因数值过高而拒绝或缩放』这一半没有。"
-      + "需要一个用例：同一结构在极高 AC/HP/伤害下仍被原样接受。",
     judgement: "危险是否符合世界逻辑由模型判断",
+    probePending:
+      "内核只看结构不看量级这一半已由确定性用例证明；"
+      + "『这个危险是否符合世界逻辑』没有可判定的题面，暂无探针。",
   },
   {
     id: "D",
@@ -100,10 +123,15 @@ const SCENARIOS = [
         file: "tests/kp-vnext-claims.test.mjs",
         name: "an NPC source claim remains attributed and does not publish the hidden world truth",
       },
+      {
+        file: "tests/world-campaign-v2.test.mjs",
+        name: "SPEC 0001 F: a rumour cannot be recorded without its source, its time, or its motive",
+      },
+      {
+        file: "tests/world-campaign-v2.test.mjs",
+        name: "SPEC 0001 F: sensory evidence citing a fact that was never frozen is refused",
+      },
     ],
-    pending:
-      "『主张与事实不混淆』有覆盖；『传闻必须固化来源、时间、动机与知识依据』没有。"
-      + "需要一个用例：缺少其中任一项的传闻提交被拒绝。",
   },
   {
     id: "G",
@@ -113,10 +141,17 @@ const SCENARIOS = [
         file: "tests/kp-vnext-hazard-actor-death-fold.test.mjs",
         name: "an interaction can kill its actor before its summary event is folded and replayed",
       },
+      {
+        file: "tests/world-campaign-v2.test.mjs",
+        name: "SPEC 0001 G: a frozen hazard's damage is applied at full amount even past the target's remaining HP",
+      },
     ],
-    pending:
-      "致死与冻结结算有覆盖；『不得追加第二层机关』没有。"
-      + "需要一个用例：已提交的危害之上不能再挂一层新的危害。",
+    judgement:
+      "『不追加第二层机关』约束的是 KP 的作者判断，不是内核："
+      + "一个地牢本来就可以有两个陷阱，内核去拦截反而是错的。",
+    probePending:
+      "vnext-2 的 wire 还不能表达危害的作者化（Phase 3），"
+      + "这一半目前无法用探针衡量。",
   },
   {
     id: "H",
@@ -128,6 +163,10 @@ const SCENARIOS = [
       },
     ],
     judgement: "『这次不值得掷骰』由模型判断，schema 无法强制",
+    probe: {
+      file: "tools/spec-0001-behaviour-probes.mjs",
+      probeId: "H-trivial-needs-no-roll",
+    },
   },
   {
     id: "I",
@@ -137,11 +176,15 @@ const SCENARIOS = [
         file: "tests/kp-vnext-stage3-room.test.ts",
         name: "settles one shared ability check across a vnext-2 Bundle: the roll picks the interaction's branch and decides whether the conditional entry is committed at all",
       },
+      {
+        file: "tests/ending-reorientation-room-v2.test.ts",
+        name: "refuses a meaningful failure that changes nothing in the world",
+      },
     ],
-    pending:
-      "『失败分支被真实提交、条件步骤被跳过』有覆盖；"
-      + "『失败必须携带非空状态增量，空增量的失败应被拒绝』没有。",
     judgement: "变化是否『相称』由模型判断",
+    probePending:
+      "『非空』是可以强制的下限，且已经强制；"
+      + "『相称』不是，它需要一道能分辨『代价太轻』的题面，尚未构造。",
   },
   {
     id: "J",
@@ -193,10 +236,19 @@ const SCENARIOS = [
         file: "tests/multiplayer-room-v2.test.ts",
         name: "routes group-rest consent through trusted pending ownership without auto-resting another player",
       },
+      {
+        file: "tests/rules-multiplayer-v2.test.mjs",
+        name: "split locations keep independent FictionTimeline/CausalFrontier and Spotlight never advances time",
+      },
     ],
-    pending:
-      "『不得代他人决定』与逐 Viewer 保密有覆盖；『在自然决定点切换聚光灯』没有。",
-    judgement: "何处是『自然决定点』由模型判断",
+    judgement:
+      "『在自然决定点切换聚光灯』约束的是 KP 的判断；"
+      + "内核负责的聚光灯账本与逐 Viewer 保密已经覆盖。",
+    probePending:
+      "vnext-2 的 wire 没有聚光灯概念（Phase 4），这一半目前无法用探针衡量。"
+      + "另注：app/_runtime/lib/kp/clock.ts 的 spotlightSkew/spotlightRefuseSpeech "
+      + "是一套完整但从未接线的实现，今天只作为提示词文本存在，"
+      + "MAX_SPOTLIGHT_SKEW 同样无人引用。",
   },
   {
     id: "N",
@@ -273,16 +325,60 @@ test("the acceptance gate reports its own honest state", () => {
   // These three numbers are the gate. Raising the first is the work; this
   // assertion exists so that raising it is a deliberate edit, and so that
   // coverage can never quietly fall.
-  assert.equal(covered.length, 10, covered.map((entry) => entry.id).join(","));
-  assert.equal(partial.length, 5, partial.map((entry) => entry.id).join(","));
+  assert.equal(covered.length, 15, covered.map((entry) => entry.id).join(","));
+  assert.equal(partial.length, 0, partial.map((entry) => entry.id).join(","));
   assert.equal(uncovered.length, 0, uncovered.map((entry) => entry.id).join(","));
 
-  // A scenario whose only open half is model judgement is not a coverage gap
-  // in this file; it belongs to the evaluation suite. Recording it keeps the
-  // two kinds of gap from being confused for one another.
+  // Fifteen covered does not mean fifteen finished. Every scenario's
+  // MECHANICAL half -- what the system enforces whatever the model says -- now
+  // has a named assertion, and that is what the three numbers above count.
+  // Seven scenarios also carry a JUDGEMENT half that no fixture can settle,
+  // and two of those constrain the KP's authoring rather than the kernel:
+  // G's second layer and M's spotlight switch would be wrong to enforce in
+  // code, because a dungeon may hold two traps and the natural decision point
+  // is a reading of the fiction. Keeping the two kinds apart is the point of
+  // this file; collapsing them would let a judgement gap masquerade as done.
   const judgement = SCENARIOS.filter((entry) => entry.judgement !== undefined);
   assert.deepEqual(
     judgement.map((entry) => entry.id),
-    ["A", "B", "C", "H", "I", "M"],
+    ["A", "B", "C", "G", "H", "I", "M"],
   );
+});
+
+test("every judgement half either names a probe or says why it has none", async () => {
+  const probes = await readFile(
+    new URL("../tools/spec-0001-behaviour-probes.mjs", import.meta.url),
+    "utf8",
+  );
+
+  for (const scenario of SCENARIOS) {
+    const { id, judgement, probe, probePending } = scenario;
+    if (judgement === undefined) {
+      assert.equal(probe, undefined, `scenario ${id} names a probe but no judgement half`);
+      assert.equal(probePending, undefined, `scenario ${id} defers a probe it does not need`);
+      continue;
+    }
+    // Exactly one, so a judgement half can never be silently unaccounted for:
+    // it is measured, or the reason it is not is written down.
+    assert.ok(
+      (probe === undefined) !== (probePending === undefined),
+      `scenario ${id} must name exactly one of probe / probePending`,
+    );
+    if (probe === undefined) {
+      assert.ok(probePending.length > 0, id);
+      continue;
+    }
+    assert.equal(probe.file, "tools/spec-0001-behaviour-probes.mjs", id);
+    // The probe registry is load-bearing the same way the test names are:
+    // deleting a probe has to break this gate, not quietly stop measuring.
+    assert.ok(
+      probes.includes(JSON.stringify(probe.probeId)),
+      `scenario ${id}: no probe named ${JSON.stringify(probe.probeId)}`,
+    );
+  }
+
+  const measured = SCENARIOS.filter((entry) => entry.probe !== undefined);
+  const deferred = SCENARIOS.filter((entry) => entry.probePending !== undefined);
+  assert.deepEqual(measured.map((entry) => entry.id), ["B", "H"]);
+  assert.deepEqual(deferred.map((entry) => entry.id), ["A", "C", "G", "I", "M"]);
 });

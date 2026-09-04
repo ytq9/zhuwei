@@ -1219,6 +1219,10 @@ export function campaignLifecycleCausalDraft(program: CausalActionProgram): Camp
   }
   if (value.action !== "commitMeaningfulFailure") return { kind: "invalid" };
   const basisRefs = boundedReferenceList(value.basisRefs, 40);
+  // A failure that changes nothing is not a meaningful failure: SPEC 0001 21.I
+  // demands a proportionate change to the world alongside the new options, so an
+  // empty consequence list is rejected here rather than committed as an
+  // outcome that cost fiction time and moved nothing.
   const consequenceRefs = boundedTextList(value.consequenceRefs, 40, 800);
   if (!hasExactKeys(value, [
     "action", "basisRefs", "consequenceRefs", "newOptions", "precedentRef", "schema",
@@ -1228,6 +1232,7 @@ export function campaignLifecycleCausalDraft(program: CausalActionProgram): Camp
     || basisRefs === undefined
     || basisRefs.length === 0
     || consequenceRefs === undefined
+    || consequenceRefs.length === 0
     || !Array.isArray(value.newOptions)
     || value.newOptions.length < 1
     || value.newOptions.length > 12) return { kind: "invalid" };

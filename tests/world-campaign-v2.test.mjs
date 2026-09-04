@@ -2461,3 +2461,128 @@ test("correcting an ended tenure after the successor acted opens a causal branch
   assert.ok(Object.values(branched.correctionRuntime.audit).some((entry) =>
     entry.rootActionId === "root:causal-successor-acts"));
 });
+
+test("SPEC 0001 F: a rumour cannot be recorded without its source, its time, or its motive", () => {
+  const validSourceClaimPayload = {
+    speakerId: "npc-warden",
+    claimId: "claim:cellar-treasure",
+    semanticContent: "守钥人听说地窖里只有旧王的宝藏",
+    sourceBasis: "十年前商旅转述",
+    motive: "阻止外人靠近",
+    formedAtFictionMicros: "0",
+  };
+  assert.equal(
+    validateCampaignEventPayload("SourceClaimCreated", validSourceClaimPayload),
+    true,
+    "the baseline payload must itself be valid before its negatives are meaningful",
+  );
+
+  // Source, time and motive are what make a rumour attributable, which is what
+  // lets a player cross-examine one instead of having to believe it: a claim
+  // may be false, but never anonymous.
+  for (const omitted of ["sourceBasis", "formedAtFictionMicros", "motive"]) {
+    const withoutOne = { ...validSourceClaimPayload };
+    delete withoutOne[omitted];
+    assert.equal(
+      validateCampaignEventPayload("SourceClaimCreated", withoutOne),
+      false,
+      `a claim missing ${omitted} must not validate`,
+    );
+  }
+});
+
+test("SPEC 0001 F: sensory evidence citing a fact that was never frozen is refused", () => {
+  const scenario = createScenario();
+  const declared = scenario.run({
+    kind: "declareCanonicalFact",
+    proposalId: "proposal:freeze-scorch-marks",
+    fact: {
+      factId: "fact:scorch-marks",
+      factKind: "hiddenReality",
+      subjectRefs: ["zone:powder-cellar"],
+      value: "地窖墙面留有新鲜焦痕",
+      source: "dynamicMaterialization",
+      causalParentIds: ["fact:chapter-one-goal"],
+      visibilityPolicy: "hiddenUntilEvidence",
+    },
+  }, "committed");
+  assert.ok(eventTypes(declared).includes("CanonicalFactDeclared"));
+  const stateWithFrozenFact = scenario.state();
+
+  const acquired = scenario.run({
+    kind: "acquireSensoryEvidence",
+    proposalId: "proposal:alice-smells-scorch",
+    characterId: "pc-1",
+    factId: "fact:scorch-marks",
+    sense: "smell",
+    clarity: "obvious",
+    publicEvidence: "焦痕散发出刺鼻的火药味",
+  }, "committed");
+  const sensoryEvent = eventOf(acquired, "SensoryEvidenceAcquired");
+
+  assert.equal(
+    applyCampaignEvent(structuredClone(stateWithFrozenFact), sensoryEvent),
+    true,
+    "sensory evidence citing an already-frozen fact must apply cleanly",
+  );
+
+  const fabricatedEvent = {
+    ...sensoryEvent,
+    payload: { ...sensoryEvent.payload, factId: "fact:never-frozen" },
+  };
+  assert.throws(
+    () => applyCampaignEvent(structuredClone(stateWithFrozenFact), fabricatedEvent),
+    /fact unavailable/,
+    "sensory evidence citing a fact that was never frozen must be refused -- the火药味 must have an already-frozen cause",
+  );
+});
+
+test("SPEC 0001 G: a frozen hazard's damage is applied at full amount even past the target's remaining HP", () => {
+  const scenario = createScenario();
+  scenario.run({
+    kind: "registerDynamicDefinition",
+    proposalId: "proposal:define-flash-fire-lethal",
+    definition: {
+      definitionId: "hazard:flash-fire-lethal",
+      revision: "1",
+      definitionKind: "environmentHazard",
+      rulesBasis: "srd5.1-2014",
+      trigger: { kind: "enterZone", zoneId: "zone:powder-cellar" },
+      perceptibleSigns: ["强烈火药味", "地面积尘中的火星"],
+      disableMethods: ["隔绝火源", "浸湿火药"],
+      effect: { kind: "fixedDamage", amount: 30, damageType: "fire" },
+    },
+  }, "committed");
+  assert.equal(scenario.state().entities["pc-1"].hitPoints.current, 7,
+    "the fixture must start pc-1 with fewer HP than the frozen hazard's damage amount");
+
+  const hazard = scenario.run({
+    kind: "triggerHazard",
+    proposalId: "proposal:trigger-flash-fire-lethal",
+    definitionId: "hazard:flash-fire-lethal",
+    triggeringEntityId: "pc-1",
+    zoneId: "zone:powder-cellar",
+    causeFactIds: ["fact:chapter-one-goal"],
+  }, "committed");
+
+  const damagePacket = eventOf(hazard, "DamagePacketResolved");
+  assert.equal(
+    damagePacket.payload.amount,
+    30,
+    "the frozen fixedDamage amount must be applied at full value -- 不降低伤害",
+  );
+
+  const hpChanged = eventOf(hazard, "HitPointsChanged");
+  assert.equal(hpChanged.payload.before, 7);
+  assert.equal(
+    hpChanged.payload.after,
+    0,
+    "the kernel floors HP at 0 rather than going negative, so the undiminished quantity is the "
+      + "damage amount above, not this HP delta",
+  );
+
+  assert.ok(
+    eventTypes(hazard).includes("CreatureDied"),
+    "damage sufficient to kill must be allowed to kill -- 足以致死时允许死亡",
+  );
+});
