@@ -2537,6 +2537,102 @@ test("SPEC 0001 F: sensory evidence citing a fact that was never frozen is refus
   );
 });
 
+function spec8Hazard(overrides = {}) {
+  return {
+    definitionId: overrides.definitionId ?? "hazard:spec8:powder-blast",
+    revision: "1",
+    definitionKind: "environmentHazard",
+    rulesBasis: "srd5.1-2014",
+    visibilityPolicyRef: "visibility:hidden-until-evidence",
+    causalBasisRefs: [],
+    content: {
+      schema: "zhuwei.environment-hazard-definition/v1",
+      label: "火药地窖的爆燃",
+      trigger: { kind: "enterZone", ref: "zone:powder-cellar" },
+      perceptibleSigns: ["强烈火药味", "地面积尘中的火星"],
+      disableMethods: ["隔绝火源", "浸湿火药"],
+      resolution: { kind: "save", ability: "dex", dc: "15", onSuccess: "half" },
+      area: { kind: "burst", centerRef: "zone:powder-cellar", radiusInches: "240" },
+      damage: { kind: "roll", formula: "8d6", damageType: "fire" },
+      conditions: ["prone"],
+      environmentalConsequences: ["地窖顶部塌落，通道被封"],
+      durationMicros: "0",
+      ...(overrides.content ?? {}),
+    },
+  };
+}
+
+test("SPEC 0001 8: a KP-created hazard must settle all nine of its properties", () => {
+  const scenario = createScenario();
+  scenario.run({
+    kind: "registerDynamicDefinition",
+    proposalId: "proposal:spec8-hazard",
+    definition: spec8Hazard(),
+  }, "committed");
+
+  // Section 8 requires the KP to determine 触发条件、可感知迹象、调查或解除方法、
+  // 攻击或豁免、影响范围、伤害、状态、持续时间和环境后果 before the danger is
+  // real. Dropping any one of them leaves a hazard the KP did not finish
+  // deciding, which is exactly what the specification forbids.
+  for (const omitted of [
+    "trigger",
+    "perceptibleSigns",
+    "disableMethods",
+    "resolution",
+    "area",
+    "damage",
+    "conditions",
+    "environmentalConsequences",
+    "durationMicros",
+  ]) {
+    const incomplete = spec8Hazard({ definitionId: `hazard:spec8:missing-${omitted}` });
+    delete incomplete.content[omitted];
+    createScenario().reject({
+      kind: "registerDynamicDefinition",
+      proposalId: `proposal:spec8-missing-${omitted}`,
+      definition: incomplete,
+    }, "invalidRulesInput");
+  }
+
+  // 可感知迹象 and 调除方法 must be non-empty rather than merely present: a
+  // danger nobody could notice and nobody could deal with is unfair by
+  // construction, which section 10 does not license.
+  for (const emptied of ["perceptibleSigns", "disableMethods"]) {
+    createScenario().reject({
+      kind: "registerDynamicDefinition",
+      proposalId: `proposal:spec8-empty-${emptied}`,
+      definition: spec8Hazard({
+        definitionId: `hazard:spec8:empty-${emptied}`,
+        content: { [emptied]: [] },
+      }),
+    }, "invalidRulesInput");
+  }
+});
+
+test("SPEC 0001 8: a hazard is never refused for being too dangerous", () => {
+  // "高 AC、高 HP、高攻击或高伤害本身不能作为拒绝理由" -- the kernel reports
+  // danger and never scales it down, so a hazard pinned at the representable
+  // ceiling on every axis still registers exactly as written.
+  const scenario = createScenario();
+  const deadly = spec8Hazard({
+    definitionId: "hazard:spec8:deadly",
+    content: {
+      resolution: { kind: "save", ability: "dex", dc: "30", onSuccess: "none" },
+      damage: { kind: "roll", formula: "100d100+1000", damageType: "force" },
+      area: { kind: "burst", centerRef: "zone:powder-cellar", radiusInches: "100000" },
+    },
+  });
+  scenario.run({
+    kind: "registerDynamicDefinition",
+    proposalId: "proposal:spec8-deadly",
+    definition: deadly,
+  }, "committed");
+  assert.deepEqual(
+    scenario.state().campaignRuntime.definitions["hazard:spec8:deadly"].content.damage,
+    { kind: "roll", formula: "100d100+1000", damageType: "force" },
+  );
+});
+
 test("SPEC 0001 G: a frozen hazard's damage is applied at full amount even past the target's remaining HP", () => {
   const scenario = createScenario();
   scenario.run({

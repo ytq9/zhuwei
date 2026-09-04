@@ -29,6 +29,10 @@ import {
   registeredAbilityRecord,
 } from "../profiles/ability-compiler";
 import {
+  isEnvironmentHazardDefinition,
+  isEnvironmentHazardDefinitionCandidate,
+} from "./environment-hazards";
+import {
   isNpcMechanicalTemplateDefinition,
   NPC_MECHANICAL_TEMPLATE_KIND,
   synchronizeCombatItemResources,
@@ -1518,6 +1522,8 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || definitionId in runtime.definitions
         || (payload.definition.definitionKind === NPC_MECHANICAL_TEMPLATE_KIND
           && !isNpcMechanicalTemplateDefinition(payload.definition))
+        || (isEnvironmentHazardDefinitionCandidate(payload.definition)
+          && !isEnvironmentHazardDefinition(payload.definition))
         || payload.definition.definitionKind === "item") {
         throw new TypeError("definition already registered or malformed");
       }

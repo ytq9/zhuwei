@@ -73,6 +73,10 @@ import {
   NPC_MECHANICAL_TEMPLATE_KIND,
 } from "./npc-mechanics";
 import {
+  isEnvironmentHazardDefinition,
+  isEnvironmentHazardDefinitionCandidate,
+} from "./environment-hazards";
+import {
   createInitialItemEntry,
   compileItemEntryUseAbility,
   isItemDefinitionV1,
@@ -2269,6 +2273,23 @@ function registerDefinition(profiles: RuntimeProfileManifest, state: Authoritati
     || !isNonEmptyString(definition.revision) || !isNonEmptyString(definition.definitionKind)
     || definition.definitionId in state.campaignRuntime.definitions) {
     return rejected("invalidRulesInput", "Dynamic definition identity is unavailable or already registered.");
+  }
+  // Hazards are settled before abilities are considered. A trap carries
+  // perceptible signs, ways to be found or disarmed, and consequences it
+  // leaves behind -- none of which an Ability has -- so letting the Ability
+  // compiler claim it first is what allowed a hazard to be frozen with none of
+  // SPEC 0001 section 8's nine properties.
+  if (isEnvironmentHazardDefinitionCandidate(definition)) {
+    if (!isEnvironmentHazardDefinition(definition)) {
+      return rejected(
+        "invalidRulesInput",
+        "A hazard must settle its trigger, signs, disable methods, resolution, area, damage, conditions, duration and consequences.",
+      );
+    }
+    return sequence("committed", profiles, state, root, [{
+      eventType: "DefinitionRegistered",
+      payload: { definition: structuredClone(definition) },
+    }]);
   }
   if (isAbilityDefinitionCandidate(definition)) {
     const compiled = compileAbilityDefinition(definition);

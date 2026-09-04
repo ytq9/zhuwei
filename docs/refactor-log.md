@@ -2374,3 +2374,19 @@
 - 定向验证与退出码：`npx tsx --test` 七个目标文件（proposal-schema、materialization-and-feasibility-rules、world-interaction-rules、hazard-actor-death-fold、claims、strict-tool-provider、world-campaign-v2）退出 0，117/117；`npx vitest run tests/kp-vnext-stage3-room.test.ts --testTimeout=120000` 退出 0（18/18）；`npm run typecheck` 退出 0；改动测试文件 `npx eslint` 退出 0。类型检查在中途主动指出了 `events.ts` 的 fold 仍按 item 形状消费 `appliedCosts`，那正是新代价必须真正生效的地方。
 
 - 未覆盖范围：`item` 语义类的物化（vNext 目前只能固化 sceneFeature/worldFact/npc/worldRelation，拿起并带走一件物品仍需 v3 的物件系统入口）与可作者化危害仍未接线，因此 SPEC 0001 G 的判断探针仍无法构造。传输 schema 改变即 `schemaHash` 改变，本次未重跑真实 DeepSeek 握手，故不声明该 schema 已获注册证据。vNext 在生产仍是休眠的：Workers 运行时只以 `new RoomDurableObject(ctx, env)` 构造，第三、四个构造参数（vNext runtime 与裁决桥）结构上无法注入，`WORLD_INTERACTION_PROFILE` 也不在生产注册表内；`tests/room-worker.ts` 的子类是接线模板，但那条路要动 DO namespace 绑定与迁移，本次未做。未运行完整 Node/Worker 套件、浏览器 QA、migration、部署，未修改 Secret、Cloudflare 资源、`main` 或 grok.me。
+
+## SPEC 0001 §8 自创危害的结构契约（2026-09-04）
+
+- 目标与能力合同：SPEC 0001 §8 允许 KP 动态创造陷阱与环境危险，但要求“必须确定触发条件、可感知迹象、调查或解除方法、攻击或豁免、影响范围、伤害、状态、持续时间和环境后果”九项。调查发现这九项**一项都没有被强制**：`registerDefinition` 只校验 `definitionId`/`revision`/`definitionKind` 非空，`environmentHazard` 这个词在整个 `app/` 里从未出现，今天所谓的危害定义其实因为带 `effect` 键而落进 `isAbilityDefinitionCandidate`、被当作能力定义编译，`triggerHazard` 再经 `frozenRegisteredAbilityOperation(definition, "Effect")` 取出效果。也就是说，一处危险可以在没有任何可感知迹象、没有任何解除方法的情况下被冻结。本次把 §8 的九项立成一个受校验的定义形状 `zhuwei.environment-hazard-definition/v1`。
+
+- 可达性调查（结论先于设计）：KP 在生产里根本无法自创危害。`registerDynamicDefinition` 的两处降级只注册 `compoundDynamicFact` 与势力/能力定义，`triggerHazard` 只有测试到达；`app/_runtime/lib/kp/` 内不存在发出这两个动作的表单。因此现在立契约的代价最低——没有任何生产路径依赖那个松散形状。另需记录内核里同时存在**三套互不相通的危害概念**：`campaign-actions.triggerHazard` 配 `hazard:*` 定义、vNext `world-interactions` 的 `registeredHazard` 配写死的 `WORLD_DAMAGE_PROFILE_REGISTRY`（全表只有一条“落物 6 点钝击”）、以及 `rules/v2/environment.ts` 环境要素 FSM 的 `triggerHazard`/`resolveHazard` 意图。三者未统一，本次未合并。
+
+- 校验只看结构不看量级：§8 明确“高 AC、高 HP、高攻击或高伤害本身不能作为拒绝理由”，§10 补“世界危险不围绕玩家等级自动平衡”，故所有上界都取可表示性而非平衡性——豁免 DC 1..30、攻击调整值 -30..30、固定伤害 1..1,000,000、骰式沿用 `combat-actions.canonicalFormula` 的 count ≤ 100 / sides ≤ 100 / |modifier| ≤ 1000、爆发半径 1..100,000 英寸、持续时间 0..86,400,000,000 微秒。`perceptibleSigns` 与 `disableMethods` 要求非空而非仅存在：§10 要求有可察觉依据的风险必须以痕迹、传闻、环境或 NPC 反应预示，一处既无迹象又无应对方法的危险是构造性的不公平，而这正是“不怜悯”不许可的那一种。`conditions` 与 `environmentalConsequences` 允许为空数组——飞镖陷阱两者皆无是合理的——但字段必须存在，空数组即“已确定为无”。
+
+- 契约以 schema 而非 kind 绑定：`environmentHazard` 在本契约之前是自由文本，既有定义带着这个 kind 却是能力形状且仍可触发。若按 kind 路由，那些定义会立刻失效。故 `isEnvironmentHazardDefinitionCandidate` 要求 `content.schema` 精确等于本 schema，使契约恰好绑定按它书写的定义，旧形状既不被打断也不被默认为合规。首轮按 kind 路由时 `tests/world-campaign-v2.test.mjs` 的两例危害用例确实转红，改为按 schema 绑定后恢复。
+
+- 修改文件与直接消费者：新增 `rules/v2/environment-hazards.ts`；`rules/v2/campaign-actions.ts` 的 `registerDefinition` 在能力编译**之前**分流危害（陷阱有迹象、解除方法与遗留后果，能力没有，让能力编译先认领它正是九项从未被要求的原因）；`rules/v2/campaign-events.ts` 的 `DefinitionRegistered` fold 按 NPC 模板同样的方式校验危害。
+
+- 代表性矩阵与定向验证：`tests/world-campaign-v2.test.mjs` 新增两例——九项逐一删除各得一次 `invalidRulesInput`，`perceptibleSigns`/`disableMethods` 置空数组同样被拒；以及“绝不因过于危险而拒绝”，把豁免 DC 30、`100d100+1000`、半径 100,000 同时顶格的危害原样注册并断言冻结内容逐字段一致。反转自检：把 `perceptibleSigns` 的最小长度由 1 放宽为 0，该用例立刻转红，证明规则承重，随后还原。`npx tsx --test tests/world-campaign-v2.test.mjs` 退出 0（22/22，20→22）；`npm run typecheck` 退出 0；`npx eslint` 该文件退出 0。
+
+- 未覆盖范围（本阶段有意止步）：按本契约书写的危害**尚不能被触发**。§8 要求“致命危险必须通过规则结算”，而 `resolution` 无论豁免还是攻击都需要一次投骰；内核的非战斗豁免路径 `savingThrow` 只冻结豁免并请求权威随机，其 `SaveFrozen` 的 success/failure 记录 fold 从不执行，通用随机结算只产出 `ImprovisedCheckResolved` 的成败与叙述结果、不施加机械效果，而 `randomness()` 的续跑描述符只带身份、没有承载“结算后施加何种伤害”的位置。因此让危害按豁免结算需要新增续跑种类或改动权威随机的结算路径——那是回执、作用域证明与重放最吃安全性的地方，另立增量再做，本次不半途改动。同理 vNext 的 wire 仍只能引用那条写死的注册表 profile，KP 可达的危害作者化路径未打通，SPEC 0001 G 的判断探针仍无法构造。未运行完整 Node/Worker 套件、浏览器 QA、migration、部署，未修改 Secret、Cloudflare 资源、`main` 或 grok.me。
