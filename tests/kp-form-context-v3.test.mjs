@@ -1031,3 +1031,61 @@ function plannerToolResponse(argumentsValue) {
     }],
   };
 }
+
+/**
+ * SPEC 0001 section 7 makes materialization mandatory, not optional: "the
+ * first time an open blank becomes relevant to a player action, sensory
+ * evidence or a mechanical settlement, the KP must determine the hidden
+ * reality and freeze it before publishing the outcome." Acceptance scenario A
+ * adds that an unscripted but reasonable action may not be refused merely
+ * because no Interaction was registered for it.
+ *
+ * A player saying "I pick up the candle from the table" is exactly that case:
+ * the candle is a reasonable part of the scene that was never persisted. If
+ * the allowlist for ordinary prose has no materialization Form, the KP has no
+ * legal way to comply -- it can only reference an item that is not
+ * authoritative (which fails as `proposalReference`), ask a clarification the
+ * spec does not call for, or refuse in violation of scenario A.
+ *
+ * So the capability has to survive the allowlist for ordinary prose, not only
+ * for social resolution.
+ */
+test("ordinary player prose keeps the materialization capability SPEC 0001 section 7 requires", () => {
+  // The signals v3-context-runtime builds for non-social prose.
+  const ordinaryProse = {
+    interaction: "free",
+    risk: "ordinary",
+    mayNeedClarification: true,
+    mayNeedRefusal: true,
+    mayMaterialize: true,
+    mayUseEnvironment: true,
+    mayUseNpcExchange: false,
+    serverSelectedForm: "ordinary-check.v1",
+    preferObservationForFree: false,
+    preferMaterializationForFree: false,
+    preferredCount: 3,
+  };
+
+  for (const [label, signals] of [
+    ["no NPC in scene", ordinaryProse],
+    ["an NPC in scene", { ...ordinaryProse, mayUseNpcExchange: true }],
+    ["observation routed", { ...ordinaryProse, interaction: "observe" }],
+    ["high risk", { ...ordinaryProse, risk: "high", serverSelectedForm: "high-risk-action.v1" }],
+  ]) {
+    const forms = selectAllowedKpForms(signals);
+    assert.ok(
+      forms.includes("materialization.v1"),
+      `${label}: KP must be able to freeze an open blank, got ${forms.join(", ")}`,
+    );
+    // Clarification stays available; the two capabilities must not compete for
+    // the same slot, because scenario L only asks for a clarification on an
+    // ambiguous *major* intent, never in place of freezing a mentioned object.
+    assert.ok(
+      forms.includes("clarification.v1"),
+      `${label}: clarification must remain available, got ${forms.join(", ")}`,
+    );
+    assert.ok(forms.includes("compound.v1"), label);
+    assert.ok(forms.length >= 3 && forms.length <= 6, `${label}: ${forms.length}`);
+    assert.equal(new Set(forms).size, forms.length, label);
+  }
+});

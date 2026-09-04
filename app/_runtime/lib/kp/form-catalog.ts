@@ -366,10 +366,30 @@ export function selectAllowedKpForms(signals: FormSelectionSignals): readonly Kp
     desiredCount - 1 + (signals.mayNeedClarification === true ? 1 : 0),
   );
   const selected = ranked.slice(0, selectedCount);
-  if (signals.mayNeedClarification === true && !selected.includes("clarification.v1")) {
-    // Ambiguous free prose must retain an actual clarification capability;
-    // ranking hints cannot consume every slot and force KP to guess intent.
-    selected[Math.max(0, selected.length - 1)] = "clarification.v1";
+
+  // Capabilities the contract requires to stay reachable, whatever the ranking
+  // hints prefer.
+  //
+  // SPEC 0001 section 7 makes freezing mandatory the first time an open blank
+  // becomes relevant to a player action, and acceptance scenario A forbids
+  // refusing a reasonable unscripted action for lack of a registered
+  // Interaction. A player picking up a candle nobody persisted is exactly
+  // that: without a materialization Form the KP can only reference an item
+  // that is not authoritative, ask a clarification the spec did not call for,
+  // or refuse. Scenario L likewise needs a real clarification capability for
+  // an ambiguous major intent.
+  //
+  // These two must therefore not compete for one slot. The list grows to the
+  // ceiling first, and only a full list lets the lowest-ranked hint give way,
+  // because a ranking hint is a preference while these are obligations.
+  const requiredCapabilities: KpFormId[] = [
+    ...(signals.mayNeedClarification === true ? ["clarification.v1" as const] : []),
+    ...(signals.mayMaterialize === true ? ["materialization.v1" as const] : []),
+  ];
+  for (const capability of requiredCapabilities) {
+    if (selected.includes(capability)) continue;
+    if (selected.length < 5) selected.push(capability);
+    else selected[selected.length - 1] = capability;
   }
   selected.push("compound.v1");
   return Object.freeze(selected);

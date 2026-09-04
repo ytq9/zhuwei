@@ -1,5 +1,6 @@
 import { canonicalJson } from "./authoritative-helpers";
 import {
+  KP_FORM_IDS,
   buildKpFormToolParameters,
   kpFormToolName,
   modelFormDescriptors,
@@ -83,6 +84,29 @@ const NARRATIVE_ITEM_FORM_REPAIR_CONTRACT = `当 selectedForm 是 materializatio
 const ACTOR_PLAN_FORM_REPAIR_CONTRACT = `当 selectedForm 是 materialization.v1 且 method 为 formActorPlan 时，只能修成 zhuwei.actor-plan-draft/v1 的闭合 JSON；npcRef、premiseRefs、resourceRefs 与备选 targetRef 必须来自并保留在 basisRefs，factionRef 或 trigger ref 非 null 时才必须把对应 ref 保留在 basisRefs。个人计划的 factionRef 必须为 null；势力计划只能引用该 NPC 所属的现有势力并把势力冻结资源列入 resourceRefs。due 只能是 {"kind":"activityCompletion"} 或 null，trigger 只能是一个 committedEvent/knowledgeAcquired 引用或 null，两者恰有一个非 null。不得增加 actor、revision、status、chapter、module、骰面、机械结果或事件字段。`;
 
 const CURRENT_WORLD_FORM_REPAIR_CONTRACT = `当 selectedForm 是 observe.v1 且 method 为 observeExistingFact 时，resolution 必须为 direct，focus 与唯一 basisRefs 项必须是同一个现有可见 fact ref，desiredInformation 只能修成 {"schema":"zhuwei.observed-fact-acquisition-draft/v1","factRef":"同一个 fact ref","observedContent":"由该 fact 支持的有界读取结果"}，不能补可见性或取得者。当 method 为 observeItemInformation 时，resolution 必须为 direct，focus 必须是同一个现有 itemRef，basisRefs 必须精确为当前 sceneRef 与 itemRef，desiredInformation 只能修成 zhuwei.item-information-observation-draft/v1 的 schema、itemRef、sourceRef、information 四个字段；information 只能是 sensoryEvidence 的 kind/sense/content，或 sourceClaim 的 kind/semanticContent/sourceBasis/motive/formedAtFictionMicros，未知的后三项保持 null，不能补 actor、holder、Audience、visibility、知识层级、事件或状态，也不能把 consumed、destroyed、异地或他人持有的物件修成可接触。当 selectedForm 是 materialization.v1 时，materializeHiddenReality 只能修成 zhuwei.hidden-reality-candidate-set-draft/v1 的完整候选集，不能补选中项或骰面；materializePassageAndMove 只能修成只含 schema、locationRef、destinationSceneRef、destinationName、passageRef、traversal、geometry 的 zhuwei.dynamic-passage-move-draft/v1；geometry 必须是非空 spawnPoints、非空真实 obstacles 和 polygon boundary 的 zhuwei.tactical-geometry/v1，不能补空障碍或一维占位。必须保留当前 sceneRef 在 basisRefs，不能增加 actor、sourceSceneRef、characterRef、到达时刻或队伍裁决；commitWorldConsequences 只能修成只含 schema、factRef、summary、consequences 的 zhuwei.world-consequence-draft/v1，consequences 只能使用 spendResource/acquireKnowledge/updateRelationship/recordPromise/recordDebt 的各自闭合字段，basisRefs 必须保留 scene、所有同场 counterparty 与真正可见的因果事实，不得补 actor、targetRef、Audience、visibility、event、state、通用 effects 或补丁；registerAbilityDefinition 只能修成只含 schema、definition 的 zhuwei.ability-definition-draft/v1，basisRefs 只能保留 scene 与 definition.causalBasisRefs，不能补 artifact/graph/hash/compilerProfile/MechanicOp、actor、event 或 state；registerFactionDefinition 只能修成 zhuwei.faction-definition-draft/v1 的七个闭合字段，basisRefs 必须保留 scene、全部同场 active NPC memberRefs 和成员知识/actor 可见 causalBasisRefs，不能补 definition、visibility 或权威字段；resolveNoncombatContest 只能修成 zhuwei.noncombat-contest-draft/v1，双方引用与 scene 必须保留在 basisRefs；recordAdjudicationPrecedent 只能修成 zhuwei.adjudication-precedent-draft/v1，record/supersede 的闭合字段、公开/私有依据与 scope ref 必须保留。proposedFact.schema 为 zhuwei.campaign-lifecycle-draft/v1 时，只能在 raiseEndingCandidate、concludeStory、transitionChapter、commitMeaningfulFailure、retryFailedAction 的对应闭合字段内修复；不得增加 actor、Campaign/current Chapter/ordinal、continuityPolicy、状态、事件或骰面。retryFailedAction 的 changeKind=null 必须保持 evidenceRefs=[]，不能把原样重试伪装修成条件变化；非 methodChanged 的变化必须保留至少一个已有 evidence ref。`;
+/**
+ * Forms whose draft carries `resolution`, read from the catalog so the set
+ * cannot drift away from the rule `validateKpFormDraft` actually enforces.
+ */
+const RESOLUTION_FORM_IDS: ReadonlySet<KpFormId> = new Set(
+  KP_FORM_IDS.filter((formId) =>
+    Object.hasOwn(
+      (buildKpFormToolParameters(formId).properties ?? {}) as Record<string, unknown>,
+      "resolution",
+    )),
+);
+
+/**
+ * The rule behind `<field>:direct-forbidden` and `<field>:check-required`.
+ *
+ * These arrive as bare machine codes, and nothing else in the repair prompt
+ * says what they mean or how to satisfy them, so a repair can come back with
+ * the identical errors it was asked to fix. Both ways out are spelled out,
+ * because deleting the fields and switching to a real check are both correct
+ * repairs and only the KP knows which one the fiction calls for.
+ */
+const RESOLUTION_FORM_REPAIR_CONTRACT = `当 selectedForm 的草稿带有 resolution 字段时，ability、skill、dc、mode、successConsequence、failureConsequence 这六个检定字段与 resolution 严格绑定。resolution 为 "direct" 时，这六个键一个都不得出现（写 null、0、"none" 或空串同样算出现，必须整个删除键），对应错误 <字段>:direct-forbidden；resolution 为 "check" 时，这六个键必须全部出现且有实际内容，对应错误 <字段>:check-required。修复 direct-forbidden 只有两条合法路径：删除全部六个键，或把 resolution 改为 "check" 并补齐全部六个；修复 check-required 同理：补齐全部六个，或把 resolution 改为 "direct" 并删除全部六个。不得只删一部分或只补一部分，也不得保留占位值。`;
+
 const ITEM_INFORMATION_REPAIR_SECRECY_CONTRACT = `修复 observeItemInformation 时，goal 只能描述公开可观察的动作，不得复述 information 中的秘密正文；sourceRef 必须保持 fact:item-information: 命名空间。`;
 
 /**
@@ -156,6 +180,36 @@ export function privateFormProposalModelInput(input: Readonly<{
   };
 }
 
+/**
+ * The repair carries exactly one Form, so it is sent exactly the contracts
+ * that govern that Form.
+ *
+ * Sending all of them unconditionally made the system message a wall of rules
+ * for Forms that are not being repaired, with no rule at all for the ordinary
+ * mechanical Forms -- the model had to filter thousands of characters to find
+ * guidance that was not there. A repair that returns the same four errors it
+ * was handed is the visible cost of that.
+ */
+function repairSystemContract(selectedForm: KpFormId): string {
+  const contracts: string[] = [PRIVATE_FORM_REPAIR_SYSTEM];
+  if (selectedForm === "npc-exchange.v1" || selectedForm === "materialization.v1") {
+    contracts.push(SOCIAL_FORM_REPAIR_CONTRACT);
+  }
+  if (selectedForm === "materialization.v1") {
+    contracts.push(NARRATIVE_ITEM_FORM_REPAIR_CONTRACT, ACTOR_PLAN_FORM_REPAIR_CONTRACT);
+  }
+  if (selectedForm === "observe.v1" || selectedForm === "materialization.v1") {
+    contracts.push(CURRENT_WORLD_FORM_REPAIR_CONTRACT);
+  }
+  if (selectedForm === "observe.v1") {
+    contracts.push(ITEM_INFORMATION_REPAIR_SECRECY_CONTRACT);
+  }
+  if (RESOLUTION_FORM_IDS.has(selectedForm)) {
+    contracts.push(RESOLUTION_FORM_REPAIR_CONTRACT);
+  }
+  return contracts.join("\n");
+}
+
 export function privateFormRepairModelInput(input: Readonly<{
   rootActionRef: string;
   originalForm: KpFormId;
@@ -171,7 +225,7 @@ export function privateFormRepairModelInput(input: Readonly<{
     messages: [
       {
         role: "system",
-        content: `${PRIVATE_FORM_REPAIR_SYSTEM}\n${SOCIAL_FORM_REPAIR_CONTRACT}\n${NARRATIVE_ITEM_FORM_REPAIR_CONTRACT}\n${ACTOR_PLAN_FORM_REPAIR_CONTRACT}\n${CURRENT_WORLD_FORM_REPAIR_CONTRACT}\n${ITEM_INFORMATION_REPAIR_SECRECY_CONTRACT}`,
+        content: repairSystemContract(input.selectedForm),
       },
       {
         role: "user",
