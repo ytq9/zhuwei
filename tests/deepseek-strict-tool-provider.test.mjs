@@ -453,6 +453,19 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
         ]),
       },
       {
+        caseId: "shared-ability-check",
+        contractId: "submit-proposal-bundle",
+        capability: "shared-ability-check",
+        modelInput: {
+          ...strictModelInput(),
+          messages: [{ role: "user", content: "撬开压住链条的石板" }],
+        },
+        parse: (response) => parseToolResponse(response, [
+          "world-interaction",
+          "materialization",
+        ]),
+      },
+      {
         caseId: "summary-only-correction",
         contractId: "correct-proposal-bundle",
         capability: "proposal-summary-correction",
@@ -474,6 +487,15 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
       if (input.tools[0].function.name === "correct_proposal_bundle") {
         return correctionToolResponse();
       }
+      if (input.messages[0].content.includes("石板")) {
+        return toolResponse({
+          bundleKind: "proposal-bundle",
+          operations: [
+            { kind: "world-interaction", ref: "object:slab:1" },
+            { kind: "materialization", ref: "object:cache:1" },
+          ],
+        });
+      }
       return input.messages[0].content.includes("椅子")
         ? toolResponse({
             bundleKind: "proposal-bundle",
@@ -492,14 +514,14 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
 
   assert.equal(report.status, "passed");
   assert.equal(report.registrationAccepted, true);
-  assert.equal(report.liveProviderCalls, 4);
-  assert.equal(report.positiveCases.length, 3);
+  assert.equal(report.liveProviderCalls, 5);
+  assert.equal(report.positiveCases.length, 4);
   assert.ok(report.positiveCases.every((entry) => entry.passed));
   assert.equal(report.invalidSchemaCase.rejectedBeforeGeneration, true);
-  assert.equal(report.evidence.successfulStrictToolCalls, 3);
+  assert.equal(report.evidence.successfulStrictToolCalls, 4);
   assert.equal(report.evidence.invalidSchemaRejections, 1);
   assert.equal(report.evidence.contracts.length, 2);
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   assert.ok(calls.every((entry) => entry.signal instanceof AbortSignal));
   assert.equal(JSON.stringify(report).includes("抓起场景中的椅子"), false);
 });

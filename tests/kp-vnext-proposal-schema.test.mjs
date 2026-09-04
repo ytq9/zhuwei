@@ -119,6 +119,68 @@ function materializeThenInteractArguments() {
   return value;
 }
 
+/** The wire form of a shared ability check: one roll, one interaction that
+ * owns it, and a materialization that happens on success alone. `skill` and
+ * `abilityRef` ride the `none` sentinel the transport uses for nullable
+ * values. */
+function sharedCheckArguments() {
+  const handle = "prospective:cache";
+  return {
+    mode: "adjudication",
+    basisRefs: [],
+    adjudication: {
+      kind: "check",
+      checkKind: "abilityCheck",
+      ability: "str",
+      skill: "none",
+      dc: 13,
+      mode: "normal",
+      risk: "石板卡得很紧，撬得开撬不开都有可能。",
+      successOutcome: "石板被撬开。",
+      failureOutcome: "石板纹丝不动。",
+    },
+    terminal: { kind: "none" },
+    proposals: [{
+      kind: "worldInteraction",
+      basisRefs: [],
+      consumes: [],
+      produces: [],
+      outcomeBinding: "always",
+      sceneRef: "scene:atrium",
+      targetRefs: ["sceneFeature:chain"],
+      directTargetRefs: ["sceneFeature:chain"],
+      instrumentRefs: [],
+      abilityRef: "none",
+      intent: "撬开压住链条的石板。",
+      method: "双手扣住石板边缘发力。",
+      branches: {
+        success: successBranch({ outcomeCode: "outcome:slab-pried", summary: "石板被撬开。" }),
+        failure: successBranch({ outcomeCode: "outcome:slab-stuck", summary: "石板纹丝不动。" }),
+      },
+    }, {
+      kind: "materializeObject",
+      basisRefs: [],
+      consumes: [],
+      produces: [{ handle, kind: "semanticDefinition", outcomeBinding: "onSuccess" }],
+      outcomeBinding: "onSuccess",
+      semanticKind: "sceneFeature",
+      templateRef: "template:scene-feature",
+      templateHash: HASH,
+      visibilityPolicyRef: "visibility:scene-observers",
+      definition: {
+        sceneRef: "scene:atrium",
+        visibilityFactId: "none",
+        label: "石板后的暗格",
+        description: "石板被撬开后露出的浅暗格。",
+        observableState: "open",
+        affordances: ["inspect"],
+        mechanicDefinitionRefs: [],
+      },
+      summary: "石板被撬开后固化出它后面的暗格。",
+    }],
+  };
+}
+
 function clarificationArguments() {
   const continuation = materializeThenInteractArguments();
   const executable = {
@@ -988,7 +1050,9 @@ test("concrete vNext-2 handshake definition passes offline without claiming live
           }],
         });
       }
-      return toolResponse(input.messages[0].content.includes("prospective:alcove")
+      const prompt = input.messages[0].content;
+      if (prompt.includes("prospective:cache")) return toolResponse(sharedCheckArguments());
+      return toolResponse(prompt.includes("prospective:alcove")
         ? materializeThenInteractArguments()
         : worldInteractionArguments());
     },
@@ -998,12 +1062,12 @@ test("concrete vNext-2 handshake definition passes offline without claiming live
     },
   });
   assert.equal(report.status, "passed", JSON.stringify(report));
-  assert.equal(positiveCalls, 3);
+  assert.equal(positiveCalls, 4);
   assert.equal(negativeCalls, 1);
   assert.equal(report.liveProviderCalls, 0);
   assert.equal(report.registrationAccepted, false);
   assert.equal(report.evidence.executionMode, "offline-fixture");
-  assert.equal(report.evidence.successfulStrictToolCalls, 3);
+  assert.equal(report.evidence.successfulStrictToolCalls, 4);
   assert.equal(report.evidence.invalidSchemaRejections, 1);
   assert.deepEqual(
     report.evidence.contracts.map(({ contractId }) => contractId),

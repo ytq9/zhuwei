@@ -498,13 +498,21 @@ export type VNextProposalBundleCorrectionResult =
     }>;
 
 /**
- * The live-gated stage-three transport deliberately exposes only the
- * direct-success world-interaction and materialize-then-interact slice. The
- * domain parser and validator remain broader, but a later transport expansion
- * must earn new Provider evidence before a Room can select it. Every `anyOf`
- * branch declares a literal type because DeepSeek's strict beta rejects a
- * `$ref` used directly as a branch. The string sentinel `"none"` represents
- * nullable domain values and is normalized before local validation.
+ * The live-gated stage-three transport exposes the direct-success and
+ * shared-ability-check world-interaction and materialize-then-interact
+ * slices. Under a check the Bundle's entries may bind to an outcome
+ * (`onSuccess` / `onFailure`), so one roll decides the whole Bundle.
+ *
+ * The domain parser and validator remain broader than this transport, and a
+ * later expansion must earn new Provider evidence before a Room can select
+ * it: `attack` checks and `highRisk` rulings stay off the wire, the first
+ * because it needs an abilityRef this transport pins to `none`, the second
+ * because it is pending until Room supplies a trusted confirmation.
+ *
+ * Every `anyOf` branch declares a literal type because DeepSeek's strict beta
+ * rejects a `$ref` used directly as a branch. The string sentinel `"none"`
+ * represents nullable domain values and is normalized before local
+ * validation.
  */
 export const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = makeStrictBundleSchema();
 
@@ -613,7 +621,7 @@ function makeStrictBundleSchema(): Record<string, unknown> {
   const noneText = { type: "string", enum: ["none"] };
   const nullableRef = { ...refText };
   const nullableText = { ...text };
-  const outcome = { type: "string", enum: ["always"] };
+  const outcome = { type: "string", enum: ["always", "onSuccess", "onFailure"] };
   const reference = object({
     kind: { type: "string", enum: ["prospective"] },
     handle: refText,
@@ -757,11 +765,38 @@ function makeStrictBundleSchema(): Record<string, unknown> {
   return object({
     mode: { type: "string", enum: ["adjudication"] },
     basisRefs: refArray,
-    adjudication: object({
-      kind: { type: "string", enum: ["directSuccess"] },
-      risk: text,
-      successOutcome: text,
-    }),
+    adjudication: {
+      anyOf: [
+        object({
+          kind: { type: "string", enum: ["directSuccess"] },
+          risk: text,
+          successOutcome: text,
+        }),
+        object({
+          kind: { type: "string", enum: ["check"] },
+          // Only `abilityCheck` is offered on the wire. An `attack` check
+          // requires a non-null abilityRef (proposals.ts rejects the pair with
+          // `world-interaction:attack-ability-required`), and this transport
+          // pins abilityRef to the `none` sentinel, so an `attack` branch here
+          // would be a shape the model could emit and the server could only
+          // ever refuse.
+          checkKind: { type: "string", enum: ["abilityCheck"] },
+          ability: {
+            type: "string",
+            enum: ["str", "dex", "con", "int", "wis", "cha"],
+          },
+          skill: nullableRef,
+          dc: { type: "integer", minimum: 1, maximum: 40 },
+          mode: {
+            type: "string",
+            enum: ["normal", "advantage", "disadvantage"],
+          },
+          risk: text,
+          successOutcome: text,
+          failureOutcome: text,
+        }),
+      ],
+    },
     terminal: object({ kind: { type: "string", enum: ["none"] } }),
     proposals: {
       type: "array",

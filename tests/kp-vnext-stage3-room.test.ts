@@ -1133,6 +1133,222 @@ function materializeAlcoveAloneProposal(request: JsonRecord): JsonRecord {
   };
 }
 
+// -- vnext-2 shared-check fixtures ---------------------------------------
+// One roll decides the whole Bundle. ALICE has str 12, so an abilityCheck on
+// str with no skill carries a +1 modifier: against DC 13 a face of 18 totals
+// 19 and succeeds, a face of 3 totals 4 and fails. Both branches are
+// therefore reachable, which the Rules preflight requires before it will
+// request any randomness at all.
+
+const CACHE_HANDLE_V2 = "prospective:stage3-alcove-cache-v2";
+
+const ALCOVE_SHARED_CHECK_V2: JsonRecord = Object.freeze({
+  kind: "check",
+  checkKind: "abilityCheck",
+  ability: "str",
+  skill: null,
+  dc: 13,
+  mode: "normal",
+  risk: "壁龛内壁的石板卡得很紧，硬掰可能撬开，也可能纹丝不动。",
+  successOutcome: "石板被撬开，露出后面的暗格。",
+  failureOutcome: "石板纹丝不动，只掉下些许石屑。",
+});
+
+const ALCOVE_SHARED_HIGH_RISK_V2: JsonRecord = Object.freeze({
+  kind: "highRisk",
+  risk: "硬撬石板可能让整面墙塌下来。",
+  confirmationQuestion: "确定要用力撬这块石板吗？",
+  successOutcome: "石板被撬开，露出后面的暗格。",
+  failureOutcome: "石板崩裂，碎石砸了下来。",
+  // A high-risk ruling that carries a check is shaped exactly like the
+  // shared-check Bundle above, so the validator lets it through and the
+  // refusal under test really comes from the lowering gate rather than from
+  // an earlier shape rule.
+  check: {
+    checkKind: "abilityCheck",
+    ability: "str",
+    skill: null,
+    dc: 13,
+    mode: "normal",
+  },
+  acceptedCosts: [],
+});
+
+/** The same inspect entry, but with the real, reachable failure branch a
+ * shared check requires. */
+function pryAlcoveEntryV2(handle: string): JsonRecord {
+  const evidence = (text: string) => [{
+    observerRef: ALICE_ID,
+    subjectRef: null,
+    sense: "sight",
+    evidence: text,
+    basisRefs: [SCENE_REF],
+  }];
+  return {
+    kind: "worldInteraction",
+    basisRefs: [SCENE_REF],
+    consumes: [{ kind: "prospective", handle }],
+    produces: [],
+    outcomeBinding: "always",
+    sceneRef: SCENE_REF,
+    targetRefs: [handle],
+    directTargetRefs: [handle],
+    instrumentRefs: [],
+    abilityRef: null,
+    intent: "撬开壁龛内壁卡住的石板。",
+    method: "双手扣住石板边缘向外用力。",
+    branches: {
+      success: {
+        outcomeCode: "outcome:stage3:pry-alcove-v2:success",
+        summary: "角色撬开了壁龛内壁的石板。",
+        effects: [],
+        sensoryEvidence: evidence("石板松动后被拉开，后面是一处凹进去的暗格。"),
+        pressures: [],
+        opportunities: [],
+      },
+      failure: {
+        outcomeCode: "outcome:stage3:pry-alcove-v2:failure",
+        summary: "石板纹丝不动。",
+        effects: [],
+        sensoryEvidence: evidence("石板边缘只掉下些许石屑，位置没有变化。"),
+        pressures: [],
+        opportunities: [],
+      },
+    },
+  };
+}
+
+/** A materialization bound to the success outcome alone: the hidden cache
+ * exists only if the roll actually opened the slab. */
+function materializeCacheEntryV2(): JsonRecord {
+  return {
+    kind: "materializeObject",
+    basisRefs: [SCENE_REF],
+    consumes: [],
+    produces: [
+      { handle: CACHE_HANDLE_V2, kind: "semanticDefinition", outcomeBinding: "onSuccess" },
+    ],
+    outcomeBinding: "onSuccess",
+    semanticKind: "sceneFeature",
+    templateRef: "template:stage3:alcove-cache-v2",
+    templateHash: `sha256:${"8".repeat(64)}`,
+    visibilityPolicyRef: "visibility:scene-observers",
+    definition: {
+      sceneRef: SCENE_REF,
+      visibilityFactId: null,
+      label: "石板后的暗格(v2)",
+      description: "石板被撬开后露出的一处浅暗格。",
+      observableState: "刚刚露出",
+      affordances: ["可以伸手掏取"],
+      mechanicDefinitionRefs: [],
+    },
+    summary: "石板被撬开后，固化出它后面的暗格。",
+  };
+}
+
+/** The shared-check vertical: reveal the alcove unconditionally, pry its slab
+ * on one roll, and materialize what is behind the slab only if that roll
+ * succeeded. Exactly one worldInteraction, bound to "always", is what makes
+ * this Bundle a legal shared-check owner. */
+function checkedPryAlcoveBundleV2(): JsonRecord {
+  return adjudicationBundleV2(
+    [
+      materializeAlcoveEntryV2(),
+      pryAlcoveEntryV2(ALCOVE_HANDLE_V2),
+      materializeCacheEntryV2(),
+    ],
+    ALCOVE_SHARED_CHECK_V2,
+  );
+}
+
+/** A lone checked interaction against an already-frozen scene feature. Rolled
+ * at advantage on wisdom against DC 15: ALICE has wis 12, so the modifier is
+ * +1 and the higher of two faces decides. Nothing is materialized, so this is
+ * the non-atomic single-step path rather than the Bundle path above. */
+const ROPE_SHARED_CHECK_V2: JsonRecord = Object.freeze({
+  kind: "check",
+  checkKind: "abilityCheck",
+  ability: "wis",
+  skill: null,
+  dc: 15,
+  mode: "advantage",
+  risk: "看走眼的话会误判麻绳还能撑多久。",
+  successOutcome: "角色看清了绳股的磨损程度。",
+  failureOutcome: "角色没能从磨损痕迹里看出什么。",
+});
+
+function checkedRopeReadingBundleV2(): JsonRecord {
+  const evidence = (text: string) => [{
+    observerRef: ALICE_ID,
+    subjectRef: ROPE_REF,
+    sense: "sight",
+    evidence: text,
+    // Rules requires every basisRefs list inside sensory evidence to be a
+    // strictly ascending canonical set and does not sort it for the proposer,
+    // so "feature:..." precedes "wake" here.
+    basisRefs: [ROPE_REF, SCENE_REF],
+  }];
+  return adjudicationBundleV2(
+    [{
+      kind: "worldInteraction",
+      basisRefs: [ROPE_REF, SCENE_REF],
+      consumes: [],
+      produces: [],
+      outcomeBinding: "always",
+      sceneRef: SCENE_REF,
+      targetRefs: [ROPE_REF],
+      directTargetRefs: [ROPE_REF],
+      instrumentRefs: [],
+      abilityRef: null,
+      intent: "判断麻绳还能承重多久。",
+      method: "凑近查看承重点绳股的磨损程度。",
+      branches: {
+        success: {
+          outcomeCode: "outcome:stage3:rope-reading-v2:success",
+          summary: "角色看清了麻绳承重点的磨损。",
+          effects: [],
+          sensoryEvidence: evidence("承重点的绳股已经起毛，断口就快出现。"),
+          pressures: [],
+          opportunities: [],
+        },
+        failure: {
+          outcomeCode: "outcome:stage3:rope-reading-v2:failure",
+          summary: "角色没看出麻绳的状态。",
+          effects: [],
+          sensoryEvidence: evidence("光线太暗，绳股的细节看不真切。"),
+          pressures: [],
+          opportunities: [],
+        },
+      },
+    }],
+    ROPE_SHARED_CHECK_V2,
+  );
+}
+
+/** A shared check whose one interaction has no failure branch: a roll that
+ * can fail with nothing to commit on failure. */
+function checkedBundleWithoutFailureBranchV2(): JsonRecord {
+  const entry = pryAlcoveEntryV2(ALCOVE_HANDLE_V2) as JsonRecord & {
+    branches: { success: JsonRecord; failure: JsonRecord | null };
+  };
+  return adjudicationBundleV2(
+    [
+      materializeAlcoveEntryV2(),
+      { ...entry, branches: { success: entry.branches.success, failure: null } },
+    ],
+    ALCOVE_SHARED_CHECK_V2,
+  );
+}
+
+/** A high-risk ruling, which is pending until Room supplies a trusted
+ * confirmation this transport has no seam for. */
+function highRiskPryAlcoveBundleV2(): JsonRecord {
+  return adjudicationBundleV2(
+    [materializeAlcoveEntryV2(), pryAlcoveEntryV2(ALCOVE_HANDLE_V2)],
+    ALCOVE_SHARED_HIGH_RISK_V2,
+  );
+}
+
 /** Violates the frozen materializeObject contract (semanticKind is only ever
  * "sceneFeature" or "worldFact") -- used for the invalid-schema-fails-closed
  * case. Rejected by validateVNextProposalBundle before Rules ever sees it. */
@@ -1228,13 +1444,16 @@ function inspectAlcoveEntryV2(handle: string): JsonRecord {
   };
 }
 
-function adjudicationBundleV2(proposals: JsonRecord[]): JsonRecord {
+function adjudicationBundleV2(
+  proposals: JsonRecord[],
+  adjudication: JsonRecord = ALCOVE_SHARED_RULING_V2,
+): JsonRecord {
   return {
     schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     mode: "adjudication",
     basisRefs: [SCENE_REF],
-    adjudication: ALCOVE_SHARED_RULING_V2,
+    adjudication,
     terminal: null,
     proposals,
   };
@@ -2792,5 +3011,294 @@ describe("vNext stage-three Room verticals", () => {
     expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
     expect(counters.rolls).toBe(0);
     expect(await roomSnapshot(authority)).toEqual(before);
+  });
+  it("settles one shared ability check across a vnext-2 Bundle: the roll picks the interaction's branch and decides whether the conditional entry is committed at all", async () => {
+    const mapStep = (raw: unknown) => {
+      const step = record(raw, "atomic settlement step");
+      return { proposalRef: String(step.proposalRef), status: String(step.status) };
+    };
+    const labels = (state: JsonRecord) => Object.values(definitions(state))
+      .map((definition) => String(record(record(definition, "definition").content, "content").label));
+
+    // Sub-case 1: the roll succeeds. All three entries commit, including the
+    // materialization bound to the success outcome alone.
+    {
+      const { authority } = await initializeRoom("kp-vnext2-stage3-room-shared-check-success");
+      const counters = emptyActionCounters();
+      const prepared: PreparedCapture = { all: [] };
+      const kp = new DeterministicKp(() => checkedPryAlcoveBundleV2(), prepared, undefined, false);
+      const outcome = record(await runAction({
+        authority,
+        principal: ALICE,
+        action: intent(
+          "submission:stage3:vnext2-shared-check-success",
+          "角色掰开壁龛内壁卡住的石板。",
+        ),
+        kp,
+        counters,
+        prepared,
+        rolls: [18],
+      }), "vnext-2 shared check success outcome");
+
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({
+        kind: "committed",
+        action: "committed",
+        narration: "published",
+      });
+      expect(kp.counters).toMatchObject({ propose: 1 });
+      // One Bundle, one roll -- not one roll per entry.
+      expect(counters.rolls).toBe(1);
+
+      const committed = await roomSnapshot(authority);
+
+      // The server derived the check from the shared ruling, not from any
+      // per-entry ruling: str 12 gives the +1 modifier, and the DC is the
+      // model's own 13.
+      const randomnessEvents = eventsOf(committed, "RandomnessRequested");
+      expect(randomnessEvents).toHaveLength(1);
+      const randomness = eventPayload(randomnessEvents[0]);
+      expect(record(randomness.request, "randomness request")).toMatchObject({
+        purpose: "worldInteractionCheck",
+      });
+      expect(record(record(randomness.request, "randomness request").frozenCheck, "frozen check"))
+        .toMatchObject({
+          kind: "ability",
+          ability: "strength",
+          skill: null,
+          dc: "13",
+          modifier: "1",
+          mode: "normal",
+        });
+
+      // One roll is requested for the whole Bundle because the Bundle carries
+      // one shared ruling: every step declares it, and exactly one of them
+      // owns the mechanical check.
+      const atomicPlan = record(randomness.resolutionPlan, "atomic steps plan");
+      expect(atomicPlan.sharedRuling).toBe("check");
+      const planSteps = list(atomicPlan.steps, "atomic plan steps")
+        .map((raw) => record(raw, "atomic plan step"));
+      expect(planSteps).toHaveLength(3);
+      expect(planSteps.map((step) => String(step.ruling))).toEqual(["check", "check", "check"]);
+      expect(planSteps.filter((step) => {
+        const rulesInput = record(step.rulesInput, "step rules input");
+        return rulesInput.kind === "resolveWorldInteraction"
+          && record(record(rulesInput.plan, "step plan").ruling, "step ruling").kind === "check";
+      })).toHaveLength(1);
+      // The conditional entry is ordered after the roll that decides it.
+      expect(planSteps.map((step) => String(step.outcomeBinding)))
+        .toEqual(["always", "always", "onSuccess"]);
+      expect(list(planSteps[2]!.dependsOn, "conditional step dependencies"))
+        .toEqual([String(planSteps[1]!.proposalRef)]);
+
+      const settlementEvents = eventsOf(committed, "AtomicWorldInteractionStepsResolved");
+      expect(settlementEvents).toHaveLength(1);
+      const settlement = eventPayload(settlementEvents[0]);
+      expect(settlement.branch).toBe("success");
+      expect(list(settlement.steps, "atomic settlement steps").map(mapStep).map((step) => step.status))
+        .toEqual(["applied", "applied", "applied"]);
+
+      expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(2);
+      expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
+      expect(labels(committed.state)).toEqual(
+        expect.arrayContaining(["新出现的壁龛(v2)", "石板后的暗格(v2)"]),
+      );
+
+      // Replay determinism must survive a settled roll, not only a
+      // direct-success commit.
+      const stateHashBeforeEviction = await roomStateHash(authority);
+      await evictDurableObject(authority as never);
+      expect(await roomSnapshot(authority)).toEqual(committed);
+      expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+    }
+
+    // Sub-case 2: the same Bundle, a failing roll. This is the case the
+    // direct-success-only lowering could not express at all: the interaction
+    // commits its real failure branch, the unconditional materialization
+    // still commits, and the success-bound one is skipped rather than
+    // half-applied or silently dropped.
+    {
+      const { authority } = await initializeRoom("kp-vnext2-stage3-room-shared-check-failure");
+      const counters = emptyActionCounters();
+      const prepared: PreparedCapture = { all: [] };
+      const kp = new DeterministicKp(() => checkedPryAlcoveBundleV2(), prepared, undefined, false);
+      const outcome = record(await runAction({
+        authority,
+        principal: ALICE,
+        action: intent(
+          "submission:stage3:vnext2-shared-check-failure",
+          "角色掰开壁龛内壁卡住的石板。",
+        ),
+        kp,
+        counters,
+        prepared,
+        rolls: [3],
+      }), "vnext-2 shared check failure outcome");
+
+      // An honest failure is still a commit: the attempt happened.
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({
+        kind: "committed",
+        action: "committed",
+        narration: "published",
+      });
+      expect(counters.rolls).toBe(1);
+
+      const committed = await roomSnapshot(authority);
+      const settlementEvents = eventsOf(committed, "AtomicWorldInteractionStepsResolved");
+      expect(settlementEvents).toHaveLength(1);
+      const settlement = eventPayload(settlementEvents[0]);
+      expect(settlement.branch).toBe("failure");
+      expect(list(settlement.steps, "atomic settlement steps").map(mapStep).map((step) => step.status))
+        .toEqual(["applied", "applied", "skipped"]);
+
+      expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(1);
+      expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
+      const committedLabels = labels(committed.state);
+      expect(committedLabels).toContain("新出现的壁龛(v2)");
+      expect(committedLabels).not.toContain("石板后的暗格(v2)");
+
+      // The player was told the interaction failed, and the skipped entry
+      // left no trace in anything player-visible.
+      const narration = narrationForViewer(kp, `${ALICE.principal.id}${ALICE_ID}`)[0];
+      expect(narration).toBeDefined();
+      expect(claimKinds(narration)).toEqual(expect.arrayContaining(["mechanicalOutcome", "actionCommitted"]));
+      expect(JSON.stringify(narration)).not.toContain("prospective:");
+      expect(JSON.stringify(narration)).not.toContain("石板后的暗格");
+    }
+  });
+
+  it("refuses a vnext-2 shared ruling this transport cannot honestly execute, before Rules, randomness, or persistence", async () => {
+    // Sub-case 1: highRisk is pending by construction -- it may only run once
+    // Room supplies a trusted confirmation carrying the accepted costs, and
+    // there is no seam here to ask for one.
+    {
+      const { authority } = await initializeRoom("kp-vnext2-stage3-room-shared-high-risk");
+      const counters = emptyActionCounters();
+      const prepared: PreparedCapture = { all: [] };
+      const before = await roomSnapshot(authority);
+      const kp = new DeterministicKp(() => highRiskPryAlcoveBundleV2(), prepared, undefined, false);
+      const outcome = record(await runAction({
+        authority,
+        principal: ALICE,
+        action: intent(
+          "submission:stage3:vnext2-shared-high-risk",
+          "角色掰开壁龛内壁卡住的石板。",
+        ),
+        kp,
+        counters,
+        prepared,
+      }), "vnext-2 high-risk ruling outcome");
+
+      expect(outcome).toMatchObject({
+        kind: "rejected",
+        code: "BUNDLE_LOWERING_UNSUPPORTED",
+        action: "notCommitted",
+        narration: "notApplicable",
+      });
+      expect(counters.rolls).toBe(0);
+      expect(await roomSnapshot(authority)).toEqual(before);
+    }
+
+    // Sub-case 2: a roll that can fail, with nothing declared to commit on
+    // failure. Refused by the Bundle validator before lowering, so no
+    // placeholder failure text can ever reach a player.
+    {
+      const { authority } = await initializeRoom("kp-vnext2-stage3-room-check-without-failure");
+      const counters = emptyActionCounters();
+      const prepared: PreparedCapture = { all: [] };
+      const before = await roomSnapshot(authority);
+      const kp = new DeterministicKp(
+        () => checkedBundleWithoutFailureBranchV2(),
+        prepared,
+        undefined,
+        false,
+      );
+      const outcome = record(await runAction({
+        authority,
+        principal: ALICE,
+        action: intent(
+          "submission:stage3:vnext2-check-without-failure",
+          "角色掰开壁龛内壁卡住的石板。",
+        ),
+        kp,
+        counters,
+        prepared,
+      }), "vnext-2 check without failure branch outcome");
+
+      expect(outcome).toMatchObject({
+        kind: "rejected",
+        code: "PROPOSAL_BUNDLE_INVALID",
+        action: "notCommitted",
+        narration: "notApplicable",
+      });
+      expect(counters.rolls).toBe(0);
+      expect(await roomSnapshot(authority)).toEqual(before);
+    }
+  });
+  it("rolls a lone vnext-2 checked interaction on the single-step path, carrying the shared ruling's own check parameters into Rules", async () => {
+    const { authority } = await initializeRoom("kp-vnext2-stage3-room-single-check");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(() => checkedRopeReadingBundleV2(), prepared, undefined, false);
+
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent(
+        "submission:stage3:vnext2-single-check",
+        "角色凑近查看麻绳承重点还能撑多久。",
+      ),
+      kp,
+      counters,
+      prepared,
+      // Advantage asks for two faces and keeps the higher one: 18 + 1 clears
+      // DC 15 even though the other face would not have.
+      rolls: [3, 18],
+    }), "vnext-2 single-step check outcome");
+
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    // The mode reached Rules, not just the ruling kind: a normal-mode check
+    // would have consumed exactly one face.
+    expect(counters.rolls).toBe(2);
+
+    const committed = await roomSnapshot(authority);
+    // A one-entry Bundle lowers to a plain Rules step, never to the atomic
+    // multi-step compiler.
+    expect(eventsOf(committed, "AtomicWorldInteractionStepsResolved")).toHaveLength(0);
+    expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(0);
+    expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
+
+    const randomnessEvents = eventsOf(committed, "RandomnessRequested");
+    expect(randomnessEvents).toHaveLength(1);
+    const resolutionPlan = record(
+      eventPayload(randomnessEvents[0]).resolutionPlan,
+      "world-interaction resolution plan",
+    );
+    const ruling = record(resolutionPlan.ruling, "resolution plan ruling");
+    expect(ruling.kind).toBe("check");
+    expect(ruling.resolutionKind).toBe("abilityCheck");
+    expect(record(ruling.check, "frozen check")).toMatchObject({
+      kind: "ability",
+      ability: "wisdom",
+      skill: null,
+      dc: "15",
+      modifier: "1",
+      mode: "advantage",
+    });
+
+    const resolved = eventPayload(eventsOf(committed, "WorldInteractionResolved")[0]);
+    expect(resolved.targetRefs).toEqual([ROPE_REF]);
+
+    const narration = narrationForViewer(kp, `${ALICE.principal.id}\u001f${ALICE_ID}`)[0];
+    expect(narration).toBeDefined();
+    expect(claimKinds(narration)).toEqual(expect.arrayContaining(["mechanicalOutcome", "actionCommitted"]));
+
+    const stateHashBeforeEviction = await roomStateHash(authority);
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
   });
 });

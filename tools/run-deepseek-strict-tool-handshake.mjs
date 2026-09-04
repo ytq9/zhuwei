@@ -23,6 +23,7 @@ export const DEEPSEEK_STRICT_TOOL_HANDSHAKE_REPORT_SCHEMA =
 export const DEEPSEEK_STRICT_TOOL_HANDSHAKE_CAPABILITIES = Object.freeze([
   "world-interaction",
   "materialization+world-interaction",
+  "shared-ability-check",
   "proposal-summary-correction",
 ]);
 

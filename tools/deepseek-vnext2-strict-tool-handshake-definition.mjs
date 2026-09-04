@@ -13,14 +13,17 @@ import {
 } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 
 export const VNEXT2_STRICT_TOOL_PROMPT_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-handshake-prompts-v3",
+  version: "kp-vnext2-proposal-handshake-prompts-v4",
   common: [
     "只调用 submit_kp_proposal_bundle 一次。",
     "只使用题面给出的冻结引用或本束 prospective handle。",
     "不得生成 rootActionId、角色 authority id、骰面、modifier、Receipt、事件或执行 DAG。",
-    "当前候选填写面只允许 mode=adjudication、directSuccess、terminal none，以及 materializeObject/worldInteraction。",
-    "directSuccess 的 branches.failure 必须使用 {kind:'none'} sentinel。",
-    "directSuccess 下每个 proposal 的 outcomeBinding 都必须是 always。",
+    "当前候选填写面只允许 mode=adjudication、terminal none，以及 materializeObject/worldInteraction；"
+      + "adjudication 只能是 directSuccess 或 checkKind=abilityCheck 的 check。",
+    "directSuccess 的 branches.failure 必须使用 {kind:'none'} sentinel，且每个 proposal 的 outcomeBinding 都必须是 always。",
+    "check 必须恰好有一个 worldInteraction，其 outcomeBinding=always 且 branches.failure 必须是真实分支；"
+      + "只在成功时才发生的 proposal 用 outcomeBinding=onSuccess。",
+    "check 不写 abilityRef：本填写面的 abilityRef 恒为 none。",
   ],
   correction: [
     "只调用 correct_kp_proposal_bundle 一次。",
@@ -40,6 +43,12 @@ Provider dialect handshake；不要扩写故事。角色 character:alice 位于 
 提交 mode=adjudication、bundle basisRefs=[]、directSuccess，两项 proposal 严格按顺序：
 1) materializeObject，semanticKind=sceneFeature，templateRef=template:handshake-scene-feature、templateHash=sha256:1111111111111111111111111111111111111111111111111111111111111111，产生唯一 handle prospective:alcove（semanticDefinition/always），sceneRef=scene:atrium、visibilityFactId=none、visibilityPolicyRef=visibility:scene-observers，给出短 label/description/observableState、affordances=[inspect]、mechanicDefinitionRefs=[]；materializeObject 的 basisRefs=[]、consumes=[]，outcomeBinding=always；
 2) worldInteraction 显式 consumes prospective:alcove，并在 targetRefs/directTargetRefs 使用它，basisRefs=[]、produces=[]、outcomeBinding=always，意图是检查壁龛；无 instrument/ability，成功分支的 effects/sensoryEvidence/pressures/opportunities 全为空，failure 使用 none；terminal 使用 none。`;
+
+const SHARED_CHECK_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.common.join("\n")}
+Provider dialect handshake；不要扩写故事。角色 character:alice 位于 scene:atrium，面前 sceneFeature:chain 被一块卡死的石板压住，撬得开撬不开都有可能。
+提交 mode=adjudication、bundle basisRefs=[]、terminal 使用 none，adjudication 使用 check：checkKind=abilityCheck、ability=str、skill=none、dc=13、mode=normal，risk/successOutcome/failureOutcome 各写一句短句。两项 proposal 严格按顺序：
+1) worldInteraction，outcomeBinding=always，意图是撬开压住链条的石板，sceneRef=scene:atrium，targetRefs/directTargetRefs=[sceneFeature:chain]，无 instrument、abilityRef=none、basisRefs/consumes/produces 为空；success 与 failure 两个分支都要真实填写，outcomeCode 分别为 outcome:slab-pried 与 outcome:slab-stuck，summary 简洁，effects/sensoryEvidence/pressures/opportunities 均为空；
+2) materializeObject，outcomeBinding=onSuccess，semanticKind=sceneFeature，templateRef=template:handshake-scene-feature、templateHash=sha256:1111111111111111111111111111111111111111111111111111111111111111，产生唯一 handle prospective:cache（semanticDefinition/onSuccess），sceneRef=scene:atrium、visibilityFactId=none、visibilityPolicyRef=visibility:scene-observers，给出短 label/description/observableState、affordances=[inspect]、mechanicDefinitionRefs=[]，basisRefs=[]、consumes=[]。`;
 
 const CORRECTION_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.correction.join("\n")}
 Provider dialect handshake；allowedPaths 只有 ["proposals",0,"branches","success","summary"]。
@@ -102,6 +111,46 @@ function assertMaterializeThenInteract(response) {
   return bundle;
 }
 
+function assertSharedCheck(response) {
+  const bundle = parseSubmitKpProposalBundleResponse(response);
+  if (bundle.mode !== "adjudication"
+    || bundle.terminal !== null
+    || bundle.adjudication?.kind !== "check"
+    || bundle.adjudication.checkKind !== "abilityCheck"
+    || bundle.proposals.length !== 2) {
+    throw new TypeError("VNEXT2_HANDSHAKE_SHARED_CHECK_SHAPE_INVALID");
+  }
+  const interactions = bundle.proposals.filter((entry) => entry.kind === "worldInteraction");
+  const materializations = bundle.proposals.filter((entry) => entry.kind === "materializeObject");
+  // A shared check is only meaningful if something actually rides the roll:
+  // one interaction owns it, and the other entry happens on success alone.
+  if (interactions.length !== 1
+    || materializations.length !== 1
+    || interactions[0].outcomeBinding !== "always"
+    || interactions[0].branches.failure === null
+    || materializations[0].outcomeBinding !== "onSuccess") {
+    throw new TypeError("VNEXT2_HANDSHAKE_SHARED_CHECK_BINDING_INVALID");
+  }
+  const graph = deriveVNextProposalBundlePlan({
+    bundle,
+    rootActionId: "root:strict-handshake",
+    actorCharacterId: "character:alice",
+    contextHash: `sha256:${"c".repeat(64)}`,
+    readSet: [],
+  });
+  if (graph.kind !== "accepted") {
+    throw new TypeError("VNEXT2_HANDSHAKE_SHARED_CHECK_GRAPH_INVALID");
+  }
+  const owner = graph.plan.entries.find((entry) => entry.kind === "worldInteraction");
+  if (owner === undefined
+    || graph.plan.sharedCheckEntryRef === null
+    || graph.plan.sharedCheckEntryRef !== owner.entryRef
+    || graph.plan.executionOrder[0] !== owner.entryRef) {
+    throw new TypeError("VNEXT2_HANDSHAKE_SHARED_CHECK_OWNER_INVALID");
+  }
+  return bundle;
+}
+
 function assertSummaryCorrection(response) {
   const correction = parseCorrectKpProposalBundleResponse(response, {
     baseBundleHash: CORRECTION_BASE_HASH,
@@ -122,7 +171,7 @@ export const strictToolHandshakeDefinition = Object.freeze({
     contractId: "submit-proposal-bundle",
     promptHash: stableStructuralHash({
       contract: VNEXT2_STRICT_TOOL_PROMPT_CONTRACT,
-      cases: [WORLD_INTERACTION_PROMPT, MATERIALIZE_INTERACT_PROMPT],
+      cases: [WORLD_INTERACTION_PROMPT, MATERIALIZE_INTERACT_PROMPT, SHARED_CHECK_PROMPT],
     }),
     parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,
   }, {
@@ -145,6 +194,12 @@ export const strictToolHandshakeDefinition = Object.freeze({
     capability: "materialization+world-interaction",
     modelInput: createSubmitKpProposalBundleModelInput(MATERIALIZE_INTERACT_PROMPT),
     parse: assertMaterializeThenInteract,
+  }, {
+    caseId: "shared-ability-check",
+    contractId: "submit-proposal-bundle",
+    capability: "shared-ability-check",
+    modelInput: createSubmitKpProposalBundleModelInput(SHARED_CHECK_PROMPT),
+    parse: assertSharedCheck,
   }, {
     caseId: "summary-only-correction",
     contractId: "correct-proposal-bundle",
