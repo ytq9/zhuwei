@@ -1760,9 +1760,14 @@ function fulfillAuthoritativeRandomnessBatch(
     if (stored === undefined
       || stored.continuation.capability !== value.continuation.capability
       || stored.request.purpose === "hiddenRealitySelection") return [];
-    const expected = stored.request.purpose === "restHitDice"
+    const checkFaces = stored.request.purpose === "restHitDice"
       ? Number(stored.request.dice[0]?.count)
       : stored.request.frozenCheck.mode === "normal" ? 1 : 2;
+    // A world interaction froze one extra d20 per saving throw its branches
+    // will need, so the batch has to expect those faces as well.
+    const expected = stored.request.purpose === "worldInteractionCheck"
+      ? checkFaces + stored.request.hazardSaves.length
+      : checkFaces;
     const maximumFace = stored.request.purpose === "restHitDice"
       ? Number(stored.request.dice[0]?.sides)
       : 20;

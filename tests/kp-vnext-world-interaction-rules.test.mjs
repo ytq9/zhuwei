@@ -1010,13 +1010,14 @@ test("proposal lowering fails closed for malformed authority inputs", () => {
   }
 });
 
-function authoredHazardMechanics(definitionId, amount) {
+function authoredHazardMechanics(definitionId, amount, extra = {}) {
   return {
     definitionId,
     revision: "1",
     definitionKind: "environmentHazardMechanics",
     rulesBasis: "srd5.1-2014",
     effect: { kind: "fixedDamage", amount, damageType: "bludgeoning" },
+    ...extra,
   };
 }
 
@@ -1053,11 +1054,11 @@ function registerDefinitionStep(world, state, definition, rootActionId) {
 
 /** Mechanics first, then the danger that cites them: a hazard's numbers are
  * frozen by the registration of the Ability it settles through. */
-function registerAuthoredHazard(world, definition, rootActionId, amount = 9) {
+function registerAuthoredHazard(world, definition, rootActionId, amount = 9, extra = {}) {
   const mechanics = registerDefinitionStep(
     world,
     world.state,
-    authoredHazardMechanics(definition.content.mechanicsRef, amount),
+    authoredHazardMechanics(definition.content.mechanicsRef, amount, extra),
     `${rootActionId}:mechanics`,
   );
   const hazard = registerDefinitionStep(world, mechanics.state, definition, rootActionId);
@@ -1113,6 +1114,63 @@ test("a branch settles a hazard the KP froze this session, not only one the runt
     [...registered.events, ...pending.events, ...committed.events],
   );
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+});
+
+test("a frozen saving throw is rolled by each creature the danger reaches, not by the actor", () => {
+  // SPEC 0001 section 8: 致命危险必须通过规则结算. The interaction's own check is
+  // the actor's, and says only whether the branch runs; whether a given
+  // creature got out of the way is that creature's own roll against the DC the
+  // KP froze. One target here makes it and takes half, the other does not and
+  // takes all of it.
+  const world = initialize();
+  const registered = registerAuthoredHazard(
+    world,
+    authoredHazardDefinition({ definitionId: "hazard:vnext:saved-collapse" }),
+    "root:q:register-saved-collapse",
+    10,
+    { save: { ability: "dex", dc: 15, halfOnSuccess: true } },
+  );
+  const plan = interactionPlan(registered.state);
+  plan.branches.success.effects = [{
+    kind: "registeredHazard",
+    sourceDefinitionRef: SOURCE,
+    zoneRef: ZONE,
+    damage: { kind: "authored", hazardDefinitionRef: "hazard:vnext:saved-collapse" },
+  }];
+
+  const pending = runtime.step(world.profiles, registered.state, {
+    kind: "resolveWorldInteraction",
+    rootActionId: "root:q:saved-collapse",
+    actorCharacterId: ACTOR,
+    plan,
+  });
+  assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
+  // The frozen request says exactly how many faces the authority owes: the
+  // actor's check, then one d20 for each creature the danger reaches.
+  assert.equal(pending.randomnessRequest.hazardSaves.length, 2);
+  assert.equal(pending.randomnessRequest.diceExpression, "1d20+2d20");
+  const savingOrder = pending.randomnessRequest.hazardSaves.map(({ targetRef }) => targetRef);
+
+  const committed = runtime.step(world.profiles, pending.state, {
+    kind: "fulfillAuthoritativeRandomness",
+    continuation: pending.continuation,
+    rolls: [20, 20, 1],
+  });
+  assert.equal(committed.kind, "committed", JSON.stringify(committed));
+  const damage = Object.fromEntries(committed.mechanicalResult.appliedEffects
+    .filter(({ kind }) => kind === "damage")
+    .map(({ targetRef, amount }) => [targetRef, amount]));
+  assert.deepEqual(damage, {
+    [savingOrder[0]]: 5,
+    [savingOrder[1]]: 10,
+  });
+
+  const rebuilt = runtime.replay(
+    world.genesis,
+    [...registered.events, ...pending.events, ...committed.events],
+  );
+  assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
+  assert.equal(rebuilt.head.stateHash, committed.stateHash);
 });
 
 test("a branch cannot cite a hazard the KP has not frozen, nor the bare mechanics behind one", () => {

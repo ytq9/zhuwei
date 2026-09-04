@@ -33,6 +33,7 @@ import {
 } from "./world-interaction-mechanics";
 import { WORLD_DAMAGE_PROFILE_REGISTRY } from "../profiles/world-interaction-registry";
 import { frozenRegisteredAbilityOperation } from "../profiles/ability-compiler";
+import { savingThrowModifier } from "./proficiency";
 import { environmentHazardMechanics } from "./environment-hazards";
 import {
   composeDefinition,
@@ -215,19 +216,21 @@ function settleCheckedWorldInteraction(
     || canonicalSha256(stored.request.frozenCheck) !== canonicalSha256(plan.ruling.check)) {
     return rejected("invalidWorldState", "The world interaction continuation changed its frozen ruling.");
   }
-  const expectedRollCount = plan.ruling.check.mode === "normal" ? 1 : 2;
-  if (rolls.length !== expectedRollCount
+  const frozenSaves = stored.request.hazardSaves;
+  const checkRollCount = plan.ruling.check.mode === "normal" ? 1 : 2;
+  if (rolls.length !== checkRollCount + frozenSaves.length
     || !rolls.every((roll) => Number.isSafeInteger(roll) && roll >= 1 && roll <= 20)) {
     return rejected("invalidRulesInput", "The world interaction roll does not match its frozen d20 request.");
   }
   if (!authorityReadSetMatches(accumulator.state, plan.readSet)) {
     return rejected("causalFrontierConflict", "The world interaction read set changed before settlement.");
   }
+  const checkRolls = rolls.slice(0, checkRollCount);
   const selectedRoll = plan.ruling.check.mode === "advantage"
-    ? Math.max(...rolls)
+    ? Math.max(...checkRolls)
     : plan.ruling.check.mode === "disadvantage"
-      ? Math.min(...rolls)
-      : rolls[0]!;
+      ? Math.min(...checkRolls)
+      : checkRolls[0]!;
   const total = selectedRoll + Number(plan.ruling.check.modifier);
   const succeeded = plan.ruling.resolutionKind === "attack"
     ? selectedRoll === 20
@@ -262,18 +265,41 @@ function settleCheckedWorldInteraction(
     accumulator, profiles, stored.rootActionId, plan.actorCharacterId, plan.costs, plan.interactionRef,
   );
   if (!Array.isArray(appliedEffects)) return appliedEffects;
+  // Each frozen save is settled against the creature that had to make it,
+  // with that creature's own proficiency -- the actor's check decided which
+  // branch runs, and has no bearing on whether anyone else got out of the way.
+  const saves = new Map<string, boolean>();
+  for (const [index, frozen] of frozenSaves.entries()) {
+    const target = accumulator.state.entities[frozen.targetRef];
+    const modifier = savingThrowModifier(profiles, target, frozen.ability as ProficiencyAbility);
+    if (modifier === undefined) {
+      return rejected(
+        "privateOrUnknownReference",
+        "A creature a frozen hazard reaches can no longer make its saving throw.",
+      );
+    }
+    const roll = rolls[checkRollCount + index]!;
+    saves.set(
+      hazardSaveKey(frozen.targetRef, frozen.ability, frozen.dc),
+      roll + modifier >= frozen.dc,
+    );
+  }
   const branchEffects = applyBranchEffects(
     accumulator,
     profiles,
     stored.rootActionId,
     plan,
     branch,
+    saves,
   );
   appliedEffects.push(...branchEffects);
   return finalizeInteraction(accumulator, profiles, stored.rootActionId, plan, branchName, branch, {
     resolutionKind: plan.ruling.resolutionKind,
     randomnessId: stored.request.randomnessId,
-    rolls: [...rolls],
+    // The actor's check reports the actor's dice. Every creature's saving
+    // throw is its own roll, audited in full through the DiceRolled faces and
+    // visible in what each of them actually took.
+    rolls: [...checkRolls],
     selectedRoll,
     total,
     dc: Number(plan.ruling.check.dc),
@@ -520,6 +546,15 @@ function resolveWorldInteraction(
   if (failureValidation !== undefined) return failureValidation;
 
   if (plan.ruling.kind === "directSuccess") {
+    // Nothing was rolled, so nothing could have made the save the danger
+    // froze. Refusing here keeps the refusal a ruling the KP can act on,
+    // rather than a settlement that silently skips a frozen saving throw.
+    if (hazardSaveRequests(accumulator.state, plan).length > 0) {
+      return rejected(
+        "invalidRulesInput",
+        "A danger that froze a saving throw cannot settle on a direct success.",
+      );
+    }
     appendAbilityInvocation(accumulator, profiles, input.rootActionId, plan);
     const costEffects = applyItemCosts(
       accumulator, profiles, input.rootActionId, plan.actorCharacterId, plan.costs, plan.interactionRef,
@@ -545,16 +580,7 @@ function resolveWorldInteraction(
     );
   }
 
-  const request: RandomnessRequest = {
-    randomnessId: plan.ruling.randomnessId,
-    resolutionId: plan.resolutionId,
-    actorCharacterId: plan.actorCharacterId,
-    purpose: "worldInteractionCheck",
-    diceExpression: plan.ruling.check.mode === "normal"
-      ? "1d20"
-      : plan.ruling.check.mode === "advantage" ? "2d20kh1" : "2d20kl1",
-    frozenCheck: structuredClone(plan.ruling.check),
-  };
+  const request = randomnessRequestForWorldInteraction(accumulator.state, plan);
   const continuation: AuthorityContinuation = {
     kind: "roomAuthorityRandomness",
     continuationId: `continuation:${plan.resolutionId}`,
@@ -1212,7 +1238,7 @@ function requestAtomicWorldInteractionRandomness(
   if (checkPlan.ruling.kind !== "check") {
     return rejected("invalidRulesInput", "The atomic randomness plan has no shared check.");
   }
-  const request = randomnessRequestForWorldInteraction(checkPlan);
+  const request = randomnessRequestForWorldInteraction(state, checkPlan);
   const continuation: AuthorityContinuation = {
     kind: "roomAuthorityRandomness",
     continuationId: `continuation:${checkPlan.resolutionId}`,
@@ -1342,19 +1368,81 @@ function finalizeAtomicWorldInteractionExecution(
   };
 }
 
-function randomnessRequestForWorldInteraction(plan: WorldInteractionResolutionPlan): RandomnessRequest {
+/**
+ * Every saving throw the branches of this plan already know they will need.
+ *
+ * Both branches are walked, because which one runs is exactly what the check
+ * has not decided yet, and a save cannot be asked for after the fact without
+ * letting the roll be chosen once the outcome is known. The order is the order
+ * the faces arrive in, so it has to be derived the same way at request time and
+ * at settlement -- which it is, from the same plan and the same state.
+ */
+function hazardSaveRequests(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+): Array<{ targetRef: string; ability: string; dc: number; halfOnSuccess: boolean }> {
+  const collected: Array<{
+    targetRef: string; ability: string; dc: number; halfOnSuccess: boolean;
+  }> = [];
+  const seen = new Set<string>();
+  for (const branch of [plan.branches.success, plan.branches.failure]) {
+    if (branch === null) continue;
+    for (const effect of branch.effects) {
+      if (effect.kind !== "registeredHazard") continue;
+      const damage = hazardDamage(state, effect);
+      if (damage?.save === undefined || damage.save === null) continue;
+      const targets = registeredHazardTargets(state, plan.sceneRef, effect) ?? [];
+      for (const { targetRef } of targets) {
+        const key = `${targetRef}|${damage.save.ability}|${damage.save.dc}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        collected.push({
+          targetRef,
+          ability: damage.save.ability,
+          dc: damage.save.dc,
+          halfOnSuccess: damage.save.halfOnSuccess,
+        });
+      }
+    }
+  }
+  return collected;
+}
+
+/** The key a settled save is stored under, so a branch looks up the save its
+ * own frozen hazard asked for rather than whichever one shared the target. */
+function hazardSaveKey(targetRef: string, ability: string, dc: number): string {
+  return `${targetRef}|${ability}|${dc}`;
+}
+
+function checkDiceExpression(plan: WorldInteractionResolutionPlan): string {
   if (plan.ruling.kind !== "check") {
     throw new TypeError("world interaction randomness requires a check ruling");
   }
+  return plan.ruling.check.mode === "normal"
+    ? "1d20"
+    : plan.ruling.check.mode === "advantage" ? "2d20kh1" : "2d20kl1";
+}
+
+function randomnessRequestForWorldInteraction(
+  state: AuthoritativeWorldState,
+  plan: WorldInteractionResolutionPlan,
+): RandomnessRequest {
+  if (plan.ruling.kind !== "check") {
+    throw new TypeError("world interaction randomness requires a check ruling");
+  }
+  const hazardSaves = hazardSaveRequests(state, plan);
   return {
     randomnessId: plan.ruling.randomnessId,
     resolutionId: plan.resolutionId,
     actorCharacterId: plan.actorCharacterId,
     purpose: "worldInteractionCheck",
-    diceExpression: plan.ruling.check.mode === "normal"
-      ? "1d20"
-      : plan.ruling.check.mode === "advantage" ? "2d20kh1" : "2d20kl1",
+    // The check's own dice first, then one d20 per frozen save, in the order
+    // `hazardSaveRequests` produced them.
+    diceExpression: hazardSaves.length === 0
+      ? checkDiceExpression(plan)
+      : `${checkDiceExpression(plan)}+${hazardSaves.length}d20`,
     frozenCheck: structuredClone(plan.ruling.check),
+    hazardSaves,
   };
 }
 
@@ -1567,10 +1655,16 @@ function abilityAuthorityForPlan(
 function hazardDamage(
   state: AuthoritativeWorldState,
   effect: WorldInteractionRegisteredHazardEffect,
-): Readonly<{ targetResolver: string; amount: number; damageType: string }> | undefined {
+): Readonly<{
+  targetResolver: string;
+  amount: number;
+  damageType: string;
+  save: Readonly<{ ability: string; dc: number; halfOnSuccess: boolean }> | null;
+}> | undefined {
   if (effect.damage.kind === "profile") {
     const profile = WORLD_DAMAGE_PROFILE_REGISTRY[effect.damage.damageProfileRef];
-    return profile === undefined ? undefined : Object.freeze({ ...profile });
+    // A shipped profile is a danger that simply happens; it froze no save.
+    return profile === undefined ? undefined : Object.freeze({ ...profile, save: null });
   }
   const mechanics = environmentHazardMechanics(
     state.campaignRuntime.definitions,
@@ -1584,10 +1678,17 @@ function hazardDamage(
     || damage.kind !== "fixedDamage"
     || !Number.isSafeInteger(damage.amount)
     || !isNonEmptyString(damage.damageType)) return undefined;
+  const frozenSave = frozenRegisteredAbilityOperation(mechanics, "Random", "/save");
+  const save = isRecord(frozenSave?.input) ? frozenSave.input : undefined;
   return Object.freeze({
     targetResolver: "active-contains-relation",
     amount: Number(damage.amount),
     damageType: String(damage.damageType),
+    save: save === undefined ? null : Object.freeze({
+      ability: String(save.ability),
+      dc: Number(save.dc),
+      halfOnSuccess: save.halfOnSuccess === true,
+    }),
   });
 }
 
@@ -1955,6 +2056,9 @@ function applyBranchEffects(
   rootActionId: string,
   plan: WorldInteractionResolutionPlan,
   branch: WorldInteractionBranch,
+  /** Which creatures made the frozen save, when the branch carries a hazard
+   * that froze one. Absent for every other branch. */
+  saves?: ReadonlyMap<string, boolean>,
 ): AppliedWorldInteractionEffect[] {
   const applied: AppliedWorldInteractionEffect[] = [];
   for (const effect of branch.effects) {
@@ -1964,13 +2068,30 @@ function applyBranchEffects(
       if (profile === undefined || targets === undefined) {
         throw new TypeError("registered world-interaction hazard changed after preflight");
       }
+      // A danger that froze a save is settled by that save, one roll per
+      // creature it reaches. Applying its damage without those rolls would be
+      // the kernel overriding a ruling the KP already froze, so a missing
+      // outcome fails closed rather than defaulting to a full hit.
+      if (profile.save !== null
+        && targets.some(({ targetRef }) => saves?.get(
+          hazardSaveKey(targetRef, profile.save!.ability, profile.save!.dc),
+        ) === undefined)) {
+        throw new TypeError("frozen world-interaction hazard save was never rolled");
+      }
       for (const target of targets) {
+        const succeeded = profile.save === null
+          ? false
+          : saves!.get(hazardSaveKey(target.targetRef, profile.save.ability, profile.save.dc))!;
+        const amount = !succeeded
+          ? profile.amount
+          : profile.save!.halfOnSuccess ? Math.floor(profile.amount / 2) : 0;
+        if (amount === 0) continue;
         applied.push(applyDamageEffect(accumulator, profiles, rootActionId, {
           sourceDefinitionRef: effect.sourceDefinitionRef,
           zoneRef: effect.zoneRef,
           relationRefs: target.relationRefs,
           targetRef: target.targetRef,
-          amount: profile.amount,
+          amount,
           damageType: profile.damageType,
         }));
       }

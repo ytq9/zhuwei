@@ -430,7 +430,10 @@ function randomness(
   state: AuthoritativeWorldState,
   rootActionId: string,
   actorCharacterId: string,
-  purpose: Exclude<RandomnessRequest["purpose"], "restHitDice" | "hiddenRealitySelection">,
+  purpose: Exclude<
+    RandomnessRequest["purpose"],
+    "restHitDice" | "hiddenRealitySelection" | "worldInteractionCheck"
+  >,
   check: FrozenCheck,
   suffix: string,
 ): { request: RandomnessRequest; continuation: AuthorityContinuation; draft: Draft } {

@@ -786,9 +786,19 @@ export function isRegisteredAbilityRecord(value: unknown): value is JsonRecord {
  * Reads one operation from the graph frozen in DefinitionRegistered. This
  * validates the complete artifact and never invokes the current compiler.
  */
+/**
+ * One frozen operation from a registered ability.
+ *
+ * `family` alone is ambiguous for `Random`, which covers an attack roll, a
+ * saving throw and the damage dice all at once, so a caller that means one of
+ * them in particular passes `sourcePath` as well. Without it the first
+ * operation of the family wins, which is only ever what a caller wants when
+ * the family holds a single operation.
+ */
 export function frozenRegisteredAbilityOperation(
   value: unknown,
   family: MechanicOpFamily,
+  sourcePath?: string,
 ): MechanicOp | undefined {
   if (!isRegisteredAbilityRecord(value)) return undefined;
   const metadataKeys = new Set([
@@ -810,7 +820,8 @@ export function frozenRegisteredAbilityOperation(
     referenceClosure: value.referenceClosure,
   };
   if (!isDefinitionRegisteredAbilityPayload(payload)) return undefined;
-  const operation = payload.mechanicGraph.operations.find((entry) => entry.family === family);
+  const operation = payload.mechanicGraph.operations.find((entry) => entry.family === family
+    && (sourcePath === undefined || entry.sourcePath === sourcePath));
   return operation === undefined ? undefined : structuredClone(operation);
 }
 

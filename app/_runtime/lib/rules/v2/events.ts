@@ -563,6 +563,37 @@ function isRandomnessRequest(value: unknown): value is RandomnessRequest {
     const { requestHash: _requestHash, ...core } = value;
     return canonicalSha256(core) === value.requestHash;
   }
+  if (value.purpose === "worldInteractionCheck") {
+    // A world interaction freezes the saving throws its branches will need
+    // alongside its own check, so the number of faces the authority must
+    // produce is settled before the first one is produced. The expression
+    // spells that out: the check's dice, then one d20 per frozen save.
+    if (!hasExactKeys(value, [
+      "actorCharacterId",
+      "diceExpression",
+      "frozenCheck",
+      "hazardSaves",
+      "purpose",
+      "randomnessId",
+      "resolutionId",
+    ])
+      || ![value.randomnessId, value.resolutionId, value.actorCharacterId].every(isNonEmptyString)
+      || !isFrozenCheck(value.frozenCheck)
+      || !Array.isArray(value.hazardSaves)
+      || value.hazardSaves.length > 64
+      || !value.hazardSaves.every((entry) => isRecord(entry)
+        && hasExactKeys(entry, ["ability", "dc", "halfOnSuccess", "targetRef"])
+        && isNonEmptyString(entry.targetRef)
+        && ["str", "dex", "con", "int", "wis", "cha"].includes(String(entry.ability))
+        && Number.isSafeInteger(entry.dc)
+        && typeof entry.halfOnSuccess === "boolean")) return false;
+    const checkExpression = String(value.frozenCheck.mode) === "normal"
+      ? "1d20"
+      : String(value.frozenCheck.mode) === "advantage" ? "2d20kh1" : "2d20kl1";
+    return value.diceExpression === (value.hazardSaves.length === 0
+      ? checkExpression
+      : `${checkExpression}+${value.hazardSaves.length}d20`);
+  }
   return hasExactKeys(value, [
       "actorCharacterId",
       "diceExpression",
@@ -574,9 +605,8 @@ function isRandomnessRequest(value: unknown): value is RandomnessRequest {
     && isNonEmptyString(value.randomnessId)
     && isNonEmptyString(value.resolutionId)
     && isNonEmptyString(value.actorCharacterId)
-    && [
-      "improvisedCheck", "abilityCheck", "contestCheck", "savingThrow", "worldInteractionCheck",
-    ].includes(String(value.purpose))
+    && ["improvisedCheck", "abilityCheck", "contestCheck", "savingThrow"]
+      .includes(String(value.purpose))
     && ["1d20", "2d20kh1", "2d20kl1"].includes(String(value.diceExpression))
     && isFrozenCheck(value.frozenCheck);
 }
@@ -1134,6 +1164,21 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
           && value.faces.every((face) => Number.isInteger(face) && face >= 1 && face <= 20)
           && Number.isInteger(value.selectedFace)
           && value.faces.includes(value.selectedFace);
+      }
+      // A world interaction's dice: the check's own faces first, then one d20
+      // for each saving throw the branches froze. The selected face has to come
+      // from the check's own dice -- a settlement that could select a save's
+      // face would be reading someone else's roll as the actor's.
+      const interactionFormula = /^(1d20|2d20kh1|2d20kl1)\+([1-9][0-9]*)d20$/
+        .exec(String(value.formula));
+      if (interactionFormula !== null) {
+        const checkFaces = interactionFormula[1] === "1d20" ? 1 : 2;
+        return Array.isArray(value.faces)
+          && value.faces.length === checkFaces + Number(interactionFormula[2])
+          && value.faces.length <= 66
+          && value.faces.every((face) => Number.isInteger(face) && face >= 1 && face <= 20)
+          && Number.isInteger(value.selectedFace)
+          && value.faces.slice(0, checkFaces).includes(value.selectedFace);
       }
       const restFormula = /^([1-9][0-9]*)d(6|8|10|12)$/.exec(String(value.formula));
       if (restFormula !== null) return Array.isArray(value.faces)

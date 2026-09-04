@@ -400,10 +400,35 @@ export type CheckRandomnessRequest = {
   randomnessId: string;
   resolutionId: string;
   actorCharacterId: string;
-  purpose: "improvisedCheck" | "abilityCheck" | "contestCheck" | "savingThrow"
-    | "worldInteractionCheck";
+  purpose: "improvisedCheck" | "abilityCheck" | "contestCheck" | "savingThrow";
   diceExpression: "1d20" | "2d20kh1" | "2d20kl1";
   frozenCheck: FrozenCheck;
+};
+
+/**
+ * A world interaction's check, together with the saving throws its branches
+ * already know they will need.
+ *
+ * A frozen hazard rolls one save per creature it reaches, and those creatures
+ * are known from the plan before anyone rolls, so they are frozen into the
+ * request rather than asked for afterwards. That settles how many faces the
+ * authority must produce before the first is produced, keeps every die for one
+ * action inside a single commitment, and means a save cannot be re-rolled by
+ * asking again once the check is known.
+ */
+export type WorldInteractionRandomnessRequest = {
+  randomnessId: string;
+  resolutionId: string;
+  actorCharacterId: string;
+  purpose: "worldInteractionCheck";
+  diceExpression: string;
+  frozenCheck: FrozenCheck;
+  hazardSaves: Array<{
+    targetRef: string;
+    ability: string;
+    dc: number;
+    halfOnSuccess: boolean;
+  }>;
 };
 
 export type RestHitDiceRandomnessRequest = {
@@ -418,7 +443,10 @@ export type RestHitDiceRandomnessRequest = {
   requestHash: Sha256Ref;
 };
 
-export type RandomnessRequest = CheckRandomnessRequest | RestHitDiceRandomnessRequest | HiddenRealityRandomnessRequest;
+export type RandomnessRequest = CheckRandomnessRequest
+  | RestHitDiceRandomnessRequest
+  | HiddenRealityRandomnessRequest
+  | WorldInteractionRandomnessRequest;
 
 export type HiddenRealityRandomnessRequest = {
   randomnessId: string;
