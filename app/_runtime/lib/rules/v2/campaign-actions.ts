@@ -73,6 +73,7 @@ import {
   NPC_MECHANICAL_TEMPLATE_KIND,
 } from "./npc-mechanics";
 import {
+  environmentHazardMechanics,
   isEnvironmentHazardDefinition,
   isEnvironmentHazardDefinitionCandidate,
 } from "./environment-hazards";
@@ -2283,7 +2284,16 @@ function registerDefinition(profiles: RuntimeProfileManifest, state: Authoritati
     if (!isEnvironmentHazardDefinition(definition)) {
       return rejected(
         "invalidRulesInput",
-        "A hazard must settle its trigger, signs, disable methods, resolution, area, damage, conditions, duration and consequences.",
+        "A hazard must settle its trigger, signs, disable methods, consequences and the mechanics it resolves through.",
+      );
+    }
+    // SPEC 0001 section 10: a danger takes effect only once it has been
+    // frozen, and a hazard's numbers are frozen by the registration of the
+    // ability it settles through -- so that ability has to exist first.
+    if (environmentHazardMechanics(state.campaignRuntime.definitions, definition) === undefined) {
+      return rejected(
+        "privateOrUnknownReference",
+        "The mechanics a hazard settles through are not a frozen ability definition.",
       );
     }
     return sequence("committed", profiles, state, root, [{

@@ -2537,6 +2537,16 @@ test("SPEC 0001 F: sensory evidence citing a fact that was never frozen is refus
   );
 });
 
+function hazardMechanics(definitionId, body) {
+  return {
+    definitionId,
+    revision: "1",
+    definitionKind: "environmentHazardMechanics",
+    rulesBasis: "srd5.1-2014",
+    ...body,
+  };
+}
+
 function spec8Hazard(overrides = {}) {
   return {
     definitionId: overrides.definitionId ?? "hazard:spec8:powder-blast",
@@ -2551,19 +2561,27 @@ function spec8Hazard(overrides = {}) {
       trigger: { kind: "enterZone", ref: "zone:powder-cellar" },
       perceptibleSigns: ["强烈火药味", "地面积尘中的火星"],
       disableMethods: ["隔绝火源", "浸湿火药"],
-      resolution: { kind: "save", ability: "dex", dc: "15", onSuccess: "half" },
-      area: { kind: "burst", centerRef: "zone:powder-cellar", radiusInches: "240" },
-      damage: { kind: "roll", formula: "8d6", damageType: "fire" },
-      conditions: ["prone"],
       environmentalConsequences: ["地窖顶部塌落，通道被封"],
-      durationMicros: "0",
+      mechanicsRef: overrides.mechanicsRef ?? "ability:spec8:powder-blast",
       ...(overrides.content ?? {}),
     },
   };
 }
 
-test("SPEC 0001 8: a KP-created hazard must settle all nine of its properties", () => {
+function scenarioWithHazardMechanics(definitionId, body) {
   const scenario = createScenario();
+  scenario.run({
+    kind: "registerDynamicDefinition",
+    proposalId: `proposal:mechanics:${definitionId}`,
+    definition: hazardMechanics(definitionId, body),
+  }, "committed");
+  return scenario;
+}
+
+test("SPEC 0001 8: a KP-created hazard must settle every one of its properties", () => {
+  const scenario = scenarioWithHazardMechanics("ability:spec8:powder-blast", {
+    effect: { kind: "fixedDamage", amount: 30, damageType: "fire" },
+  });
   scenario.run({
     kind: "registerDynamicDefinition",
     proposalId: "proposal:spec8-hazard",
@@ -2571,34 +2589,33 @@ test("SPEC 0001 8: a KP-created hazard must settle all nine of its properties", 
   }, "committed");
 
   // Section 8 requires the KP to determine 触发条件、可感知迹象、调查或解除方法、
-  // 攻击或豁免、影响范围、伤害、状态、持续时间和环境后果 before the danger is
-  // real. Dropping any one of them leaves a hazard the KP did not finish
-  // deciding, which is exactly what the specification forbids.
+  // 环境后果 and the mechanics the danger settles through before it is real.
+  // Dropping any one leaves a hazard the KP did not finish deciding.
   for (const omitted of [
     "trigger",
     "perceptibleSigns",
     "disableMethods",
-    "resolution",
-    "area",
-    "damage",
-    "conditions",
     "environmentalConsequences",
-    "durationMicros",
+    "mechanicsRef",
   ]) {
     const incomplete = spec8Hazard({ definitionId: `hazard:spec8:missing-${omitted}` });
     delete incomplete.content[omitted];
-    createScenario().reject({
+    scenarioWithHazardMechanics("ability:spec8:powder-blast", {
+      effect: { kind: "fixedDamage", amount: 30, damageType: "fire" },
+    }).reject({
       kind: "registerDynamicDefinition",
       proposalId: `proposal:spec8-missing-${omitted}`,
       definition: incomplete,
     }, "invalidRulesInput");
   }
 
-  // 可感知迹象 and 调除方法 must be non-empty rather than merely present: a
-  // danger nobody could notice and nobody could deal with is unfair by
+  // 可感知迹象 and 调查或解除方法 must be non-empty rather than merely present:
+  // a danger nobody could notice and nobody could deal with is unfair by
   // construction, which section 10 does not license.
   for (const emptied of ["perceptibleSigns", "disableMethods"]) {
-    createScenario().reject({
+    scenarioWithHazardMechanics("ability:spec8:powder-blast", {
+      effect: { kind: "fixedDamage", amount: 30, damageType: "fire" },
+    }).reject({
       kind: "registerDynamicDefinition",
       proposalId: `proposal:spec8-empty-${emptied}`,
       definition: spec8Hazard({
@@ -2607,29 +2624,66 @@ test("SPEC 0001 8: a KP-created hazard must settle all nine of its properties", 
       }),
     }, "invalidRulesInput");
   }
+
+  // Section 10: a danger takes effect only once frozen, and a hazard's numbers
+  // are frozen by the registration of the ability it settles through.
+  createScenario().reject({
+    kind: "registerDynamicDefinition",
+    proposalId: "proposal:spec8-unfrozen-mechanics",
+    definition: spec8Hazard({
+      definitionId: "hazard:spec8:unfrozen",
+      mechanicsRef: "ability:spec8:never-registered",
+    }),
+  }, "privateOrUnknownReference");
+});
+
+test("SPEC 0001 8: a hazard's mechanics are the whole Ability vocabulary, not one template", () => {
+  // The question this answers is whether the KP can author any danger the
+  // rules can express, or only the one shape a bespoke schema happened to
+  // allow. The mechanics below use a dexterity save with half on success, an
+  // area target and rolled damage -- none of which the hazard contract itself
+  // knows anything about, because it defers all five mechanical properties of
+  // section 8 to the Ability compiler that already validates them.
+  const scenario = scenarioWithHazardMechanics("ability:spec8:collapsing-gallery", {
+    activation: { kind: "trigger", actionGrant: "none" },
+    target: { kind: "area", area: { shape: "sphere", sizeFeet: 20 } },
+    save: { ability: "dex", dc: 15, halfOnSuccess: true },
+    damage: [{ type: "bludgeoning", formula: "8d6" }],
+    effects: [{ tag: "buried", label: "被碎石压住", kind: "special" }],
+  });
+  scenario.run({
+    kind: "registerDynamicDefinition",
+    proposalId: "proposal:spec8-general-mechanics",
+    definition: spec8Hazard({
+      definitionId: "hazard:spec8:collapsing-gallery",
+      mechanicsRef: "ability:spec8:collapsing-gallery",
+      content: { label: "回廊塌落" },
+    }),
+  }, "committed");
+  assert.equal(
+    scenario.state().campaignRuntime.definitions["hazard:spec8:collapsing-gallery"]
+      .content.mechanicsRef,
+    "ability:spec8:collapsing-gallery",
+  );
 });
 
 test("SPEC 0001 8: a hazard is never refused for being too dangerous", () => {
   // "高 AC、高 HP、高攻击或高伤害本身不能作为拒绝理由" -- the kernel reports
-  // danger and never scales it down, so a hazard pinned at the representable
-  // ceiling on every axis still registers exactly as written.
-  const scenario = createScenario();
-  const deadly = spec8Hazard({
-    definitionId: "hazard:spec8:deadly",
-    content: {
-      resolution: { kind: "save", ability: "dex", dc: "30", onSuccess: "none" },
-      damage: { kind: "roll", formula: "100d100+1000", damageType: "force" },
-      area: { kind: "burst", centerRef: "zone:powder-cellar", radiusInches: "100000" },
-    },
+  // danger and never scales it down.
+  const scenario = scenarioWithHazardMechanics("ability:spec8:deadly", {
+    effect: { kind: "fixedDamage", amount: 999999, damageType: "force" },
   });
   scenario.run({
     kind: "registerDynamicDefinition",
     proposalId: "proposal:spec8-deadly",
-    definition: deadly,
+    definition: spec8Hazard({
+      definitionId: "hazard:spec8:deadly",
+      mechanicsRef: "ability:spec8:deadly",
+    }),
   }, "committed");
-  assert.deepEqual(
-    scenario.state().campaignRuntime.definitions["hazard:spec8:deadly"].content.damage,
-    { kind: "roll", formula: "100d100+1000", damageType: "force" },
+  assert.equal(
+    scenario.state().campaignRuntime.definitions["hazard:spec8:deadly"].content.mechanicsRef,
+    "ability:spec8:deadly",
   );
 });
 

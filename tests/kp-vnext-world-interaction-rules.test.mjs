@@ -1010,6 +1010,16 @@ test("proposal lowering fails closed for malformed authority inputs", () => {
   }
 });
 
+function authoredHazardMechanics(definitionId, amount) {
+  return {
+    definitionId,
+    revision: "1",
+    definitionKind: "environmentHazardMechanics",
+    rulesBasis: "srd5.1-2014",
+    effect: { kind: "fixedDamage", amount, damageType: "bludgeoning" },
+  };
+}
+
 function authoredHazardDefinition(overrides = {}) {
   return {
     definitionId: overrides.definitionId ?? "hazard:vnext:collapsing-gallery",
@@ -1024,25 +1034,34 @@ function authoredHazardDefinition(overrides = {}) {
       trigger: { kind: "enterZone", ref: ZONE },
       perceptibleSigns: ["承重柱上的新裂纹"],
       disableMethods: ["先加固承重柱再通过"],
-      resolution: { kind: "save", ability: "dex", dc: "15", onSuccess: "half" },
-      area: { kind: "zone", ref: ZONE },
-      damage: { kind: "fixed", amount: "9", damageType: "bludgeoning" },
-      conditions: [],
       environmentalConsequences: ["回廊被碎石堵死"],
-      durationMicros: "0",
+      mechanicsRef: overrides.mechanicsRef ?? "ability:vnext:collapsing-gallery",
       ...(overrides.content ?? {}),
     },
   };
 }
 
-function registerAuthoredHazard(world, definition, rootActionId) {
-  const registered = runtime.step(world.profiles, world.state, {
+function registerDefinitionStep(world, state, definition, rootActionId) {
+  const registered = runtime.step(world.profiles, state, {
     kind: "registerDynamicDefinition",
     proposalId: rootActionId,
     definition,
   });
   assert.equal(registered.kind, "committed", JSON.stringify(registered));
   return registered;
+}
+
+/** Mechanics first, then the danger that cites them: a hazard's numbers are
+ * frozen by the registration of the Ability it settles through. */
+function registerAuthoredHazard(world, definition, rootActionId, amount = 9) {
+  const mechanics = registerDefinitionStep(
+    world,
+    world.state,
+    authoredHazardMechanics(definition.content.mechanicsRef, amount),
+    `${rootActionId}:mechanics`,
+  );
+  const hazard = registerDefinitionStep(world, mechanics.state, definition, rootActionId);
+  return { ...hazard, events: [...mechanics.events, ...hazard.events] };
 }
 
 test("a branch settles a hazard the KP froze this session, not only one the runtime shipped", () => {
@@ -1096,22 +1115,20 @@ test("a branch settles a hazard the KP froze this session, not only one the runt
   assert.equal(rebuilt.kind, "replayed", JSON.stringify(rebuilt));
 });
 
-test("a branch cannot cite a hazard the KP has not frozen, or one frozen for another zone", () => {
+test("a branch cannot cite a hazard the KP has not frozen, nor the bare mechanics behind one", () => {
   const world = initialize();
-  const elsewhere = registerAuthoredHazard(
+  const frozen = registerAuthoredHazard(
     world,
-    authoredHazardDefinition({
-      definitionId: "hazard:vnext:elsewhere",
-      content: { area: { kind: "zone", ref: SOURCE } },
-    }),
-    "root:q:register-elsewhere",
+    authoredHazardDefinition({ definitionId: "hazard:vnext:reject-case" }),
+    "root:q:register-reject-case",
   );
   for (const [label, hazardDefinitionRef, state] of [
     // Section 10: a danger takes effect only once it has been frozen.
     ["never frozen", "hazard:vnext:never-frozen", world.state],
-    // The effect names where the danger goes off and the definition names what
-    // it covers; a hazard frozen for another zone is not this danger.
-    ["frozen elsewhere", "hazard:vnext:elsewhere", elsewhere.state],
+    // The Ability carries the numbers, but the hazard is what carries the
+    // trigger, the signs and the ways to deal with it. Citing the mechanics
+    // alone would settle damage with none of the fairness the danger owes.
+    ["bare mechanics", "ability:vnext:collapsing-gallery", frozen.state],
   ]) {
     const plan = interactionPlan(state);
     plan.branches.success.effects = [{

@@ -1,4 +1,5 @@
 import type { JsonRecord } from "./model";
+import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
 import {
   hasExactKeys,
   isNonEmptyString,
@@ -10,27 +11,33 @@ import {
  *
  * SPEC 0001 section 8 says the KP may invent traps and environmental dangers
  * but "必须确定触发条件、可感知迹象、调查或解除方法、攻击或豁免、影响范围、
- * 伤害、状态、持续时间和环境后果" -- nine properties, all of them settled
- * before the danger is real. Until now none of them were required: a hazard
+ * 伤害、状态、持续时间和环境后果" -- nine properties, all settled before the
+ * danger is real. Until this contract existed none of them were required: a
  * definition only had to carry an id, a revision and a kind, so a danger could
  * be frozen with no sign a character could notice and no way to deal with it.
  *
- * This validates structure and never magnitude. Section 8 is explicit that
- * "高 AC、高 HP、高攻击或高伤害本身不能作为拒绝理由", and section 10 adds that
- * the world does not balance itself around party level, so every bound below
- * is a representability limit -- what the rest of the kernel can carry through
- * a die roll or a canonical integer -- and never a judgement about whether a
- * danger is too strong for the party that walked into it.
+ * The nine split in two, and the split is the whole design.
+ *
+ * Four are about how the danger meets the fiction -- what sets it off, what it
+ * shows, how it can be found or defused, what it leaves behind -- and nothing
+ * else in the kernel models them, so they live here.
+ *
+ * The other five -- attack or save, area, damage, conditions, duration -- are
+ * mechanics, and the kernel already has a general way to express and execute
+ * mechanics: a compiled ability definition. That compiler validates saves,
+ * attack rolls, area targets, damage components, granted effects and their
+ * durations against the 2014 rules and lowers them into the primitives the
+ * kernel executes. Restating those five as bespoke fields here would hand the
+ * KP a narrow template in place of a vocabulary it already has, so a hazard
+ * names an ability instead, through `mechanicsRef`.
+ *
+ * That reference has to be registered already. Section 10 says a danger
+ * "只在事实已经存在或已按第 7 节固化后生效", and an ability is frozen by its
+ * own registration, so a hazard citing an unregistered one is a danger whose
+ * numbers were never settled.
  */
 export const ENVIRONMENT_HAZARD_KIND = "environmentHazard" as const;
 export const ENVIRONMENT_HAZARD_SCHEMA = "zhuwei.environment-hazard-definition/v1" as const;
-
-const SAVE_ABILITIES = new Set(["str", "dex", "con", "int", "wis", "cha"]);
-
-/** `NdM` with an optional signed modifier, the one damage-formula shape the
- * rest of the kernel parses. The ceilings match `canonicalFormula` in
- * combat-actions so a hazard cannot freeze a roll the dice path would refuse. */
-const DAMAGE_FORMULA_PATTERN = /^([1-9][0-9]*)d([1-9][0-9]*)([+-][0-9]+)?$/;
 
 function canonicalIntegerString(value: unknown, minimum: number, maximum: number): boolean {
   if (typeof value !== "string" || !/^(0|-?[1-9][0-9]*)$/.test(value)) return false;
@@ -48,68 +55,13 @@ function boundedTextList(
     && value.every((entry) => isNonEmptyString(entry) && entry.length <= 400);
 }
 
-function canonicalDamageFormula(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const match = DAMAGE_FORMULA_PATTERN.exec(value);
-  if (match === null) return false;
-  const count = Number(match[1]);
-  const sides = Number(match[2]);
-  const modifier = match[3] === undefined ? 0 : Number(match[3]);
-  return count <= 100 && sides <= 100 && Math.abs(modifier) <= 1000;
-}
-
-/** 触发条件. Each kind names one frozen reference, so a trigger can never be
- * a free-text condition the kernel cannot evaluate. */
+/** 触发条件. Each kind names one frozen reference, so a trigger can never be a
+ * free-text condition the kernel has no way to evaluate. */
 function isTrigger(value: unknown): boolean {
   return isRecord(value)
     && hasExactKeys(value, ["kind", "ref"])
     && ["enterZone", "contactFeature", "disturbFeature"].includes(String(value.kind))
     && isNonEmptyString(value.ref);
-}
-
-/**
- * 攻击或豁免. A hazard resolves one way or the other and never both, and
- * never neither -- "致命危险必须通过规则结算；KP 不能跳过机械直接宣布角色死亡".
- */
-function isResolution(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  if (value.kind === "save") {
-    return hasExactKeys(value, ["ability", "dc", "kind", "onSuccess"])
-      && SAVE_ABILITIES.has(String(value.ability))
-      && canonicalIntegerString(value.dc, 1, 30)
-      && ["half", "none"].includes(String(value.onSuccess));
-  }
-  return value.kind === "attack"
-    && hasExactKeys(value, ["kind", "modifier"])
-    && canonicalIntegerString(value.modifier, -30, 30);
-}
-
-/** 影响范围. */
-function isArea(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  if (value.kind === "burst") {
-    return hasExactKeys(value, ["centerRef", "kind", "radiusInches"])
-      && isNonEmptyString(value.centerRef)
-      && canonicalIntegerString(value.radiusInches, 1, 100_000);
-  }
-  return ["zone", "single"].includes(String(value.kind))
-    && hasExactKeys(value, ["kind", "ref"])
-    && isNonEmptyString(value.ref);
-}
-
-/** 伤害. A flat amount and a rolled formula are separate closed shapes so a
- * hazard can never freeze both and leave the settlement to choose. */
-function isDamage(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  if (value.kind === "fixed") {
-    return hasExactKeys(value, ["amount", "damageType", "kind"])
-      && canonicalIntegerString(value.amount, 1, 1_000_000)
-      && isNonEmptyString(value.damageType);
-  }
-  return value.kind === "roll"
-    && hasExactKeys(value, ["damageType", "formula", "kind"])
-    && canonicalDamageFormula(value.formula)
-    && isNonEmptyString(value.damageType);
 }
 
 export function isEnvironmentHazardDefinition(value: unknown): value is JsonRecord {
@@ -132,20 +84,14 @@ export function isEnvironmentHazardDefinition(value: unknown): value is JsonReco
     || !isRecord(value.content)) return false;
 
   const content = value.content;
-  // Every one of section 8's nine properties, plus the schema tag and a label
-  // to name the danger. `hasExactKeys` rather than `hasOnlyKeys`: a hazard with
-  // a property left out is one the KP did not settle, which is the failure the
-  // specification names.
+  // `hasExactKeys` rather than `hasOnlyKeys`: a hazard missing a property is
+  // one the KP did not finish settling, which is the failure section 8 names.
   if (!hasExactKeys(content, [
-    "area",
-    "conditions",
-    "damage",
     "disableMethods",
-    "durationMicros",
     "environmentalConsequences",
     "label",
+    "mechanicsRef",
     "perceptibleSigns",
-    "resolution",
     "schema",
     "trigger",
   ])) return false;
@@ -162,19 +108,12 @@ export function isEnvironmentHazardDefinition(value: unknown): value is JsonReco
     // than by design -- which is the one thing "不怜悯" does not license.
     && boundedTextList(content.perceptibleSigns, { minimum: 1 })
     && boundedTextList(content.disableMethods, { minimum: 1 })
-    // 攻击或豁免
-    && isResolution(content.resolution)
-    // 影响范围
-    && isArea(content.area)
-    // 伤害
-    && isDamage(content.damage)
-    // 状态 and 环境后果 may legitimately be none -- a dart trap leaves neither
-    // -- but the KP still has to have settled the question, so the field is
+    // 环境后果 may legitimately be none -- a dart trap leaves nothing behind --
+    // but the KP still has to have settled the question, so the field is
     // required and an empty list is the explicit answer.
-    && boundedTextList(content.conditions, { minimum: 0 })
     && boundedTextList(content.environmentalConsequences, { minimum: 0 })
-    // 持续时间. "0" is an instantaneous hazard, which is most of them.
-    && canonicalIntegerString(content.durationMicros, 0, 86_400_000_000);
+    // 攻击或豁免、影响范围、伤害、状态、持续时间, all five, by reference.
+    && isNonEmptyString(content.mechanicsRef);
 }
 
 /**
@@ -183,13 +122,27 @@ export function isEnvironmentHazardDefinition(value: unknown): value is JsonReco
  *
  * The distinction matters because `environmentHazard` was free text before
  * this contract existed: definitions already in play carry that kind with an
- * Ability-shaped body, and they are still triggerable. Keying on the schema
- * lets the contract bind exactly the definitions written against it, so the
- * older shape neither breaks nor is quietly blessed as conforming.
+ * Ability-shaped body and are still triggerable. Keying on the schema binds
+ * the contract to exactly the definitions written against it, so the older
+ * shape is neither broken nor quietly counted as conforming.
  */
 export function isEnvironmentHazardDefinitionCandidate(value: unknown): boolean {
   return isRecord(value)
     && value.definitionKind === ENVIRONMENT_HAZARD_KIND
     && isRecord(value.content)
     && value.content.schema === ENVIRONMENT_HAZARD_SCHEMA;
+}
+
+/**
+ * The frozen mechanics a hazard settles through, or undefined when the danger
+ * cites something that was never registered as an executable ability.
+ */
+export function environmentHazardMechanics(
+  definitions: Readonly<Record<string, unknown>>,
+  hazard: unknown,
+): JsonRecord | undefined {
+  if (!isEnvironmentHazardDefinition(hazard)) return undefined;
+  const content = hazard.content as JsonRecord;
+  const mechanics = definitions[String(content.mechanicsRef)];
+  return isRegisteredAbilityRecord(mechanics) ? mechanics as JsonRecord : undefined;
 }

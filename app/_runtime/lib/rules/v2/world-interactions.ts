@@ -32,7 +32,8 @@ import {
   type WorldInteractionAbilityAuthority,
 } from "./world-interaction-mechanics";
 import { WORLD_DAMAGE_PROFILE_REGISTRY } from "../profiles/world-interaction-registry";
-import { isEnvironmentHazardDefinition } from "./environment-hazards";
+import { frozenRegisteredAbilityOperation } from "../profiles/ability-compiler";
+import { environmentHazardMechanics } from "./environment-hazards";
 import {
   composeDefinition,
   createDefinitionSnapshot,
@@ -1556,12 +1557,12 @@ function abilityAuthorityForPlan(
 /**
  * The damage a hazard effect settles for, from whichever side froze it.
  *
- * An authored hazard has to have frozen the very zone this effect names: the
- * effect says where the danger goes off and the definition says what it covers,
- * and a hazard whose own frozen area is somewhere else is not the danger being
- * triggered. A rolled formula is refused rather than approximated, because
- * settling it needs a die this path does not have -- and a hazard quietly
- * downgraded to a flat number would be the kernel revising a frozen ruling.
+ * An authored hazard settles through the ability it froze its mechanics in,
+ * which is where its attack or save, area, damage, conditions and duration all
+ * live. This path reads the frozen flat-damage effect; a hazard whose ability
+ * rolls its damage needs dice this branch does not request, and is refused
+ * rather than flattened to an average, because quietly downgrading a frozen
+ * ruling is the kernel revising it.
  */
 function hazardDamage(
   state: AuthoritativeWorldState,
@@ -1571,16 +1572,18 @@ function hazardDamage(
     const profile = WORLD_DAMAGE_PROFILE_REGISTRY[effect.damage.damageProfileRef];
     return profile === undefined ? undefined : Object.freeze({ ...profile });
   }
-  const definition = state.campaignRuntime.definitions[effect.damage.hazardDefinitionRef];
-  if (!isEnvironmentHazardDefinition(definition)) return undefined;
-  const content = definition.content as Record<string, unknown>;
-  const area = content.area;
-  const damage = content.damage;
-  if (!isRecord(area)
-    || area.kind !== "zone"
-    || area.ref !== effect.zoneRef
-    || !isRecord(damage)
-    || damage.kind !== "fixed") return undefined;
+  const mechanics = environmentHazardMechanics(
+    state.campaignRuntime.definitions,
+    state.campaignRuntime.definitions[effect.damage.hazardDefinitionRef],
+  );
+  const frozenEffect = frozenRegisteredAbilityOperation(mechanics, "Effect");
+  const damage = isRecord(frozenEffect?.input.effect)
+    ? frozenEffect.input.effect
+    : frozenEffect?.input;
+  if (!isRecord(damage)
+    || damage.kind !== "fixedDamage"
+    || !Number.isSafeInteger(damage.amount)
+    || !isNonEmptyString(damage.damageType)) return undefined;
   return Object.freeze({
     targetResolver: "active-contains-relation",
     amount: Number(damage.amount),
