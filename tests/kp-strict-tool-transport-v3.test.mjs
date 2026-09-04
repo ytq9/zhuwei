@@ -52,19 +52,19 @@ test("the Form selection call keeps the ordinary transport on every profile", ()
   // selection protocol SPEC 0015 6.1 freezes. So the selection call must stay
   // byte-identical to what production sends today, while the repair -- the
   // last call before PROPOSAL_REPAIR_EXHAUSTED -- becomes provider-enforced.
+  // No profile is opted in: strict output is enforced by shape only, while the
+  // rule that decides this Form family (`resolution: "direct"` forbids the
+  // check fields) is conditional and has no dialect keyword, so enabling it
+  // made the live model fill forbidden defaults instead of the sentinel.
   for (const profile of AUTHORITATIVE_KP_PROFILES) {
-    assert.equal(kpStructuredOutputMode(profile), "strict-tool", profile.modelProfileVersion);
-    assert.equal(
-      kpCallStructuredOutputMode(profile, 3),
-      "tool",
-      profile.modelProfileVersion,
-    );
-    assert.equal(
-      kpCallStructuredOutputMode(profile, 1),
-      "strict-tool",
-      profile.modelProfileVersion,
-    );
+    assert.equal(kpStructuredOutputMode(profile), "tool", profile.modelProfileVersion);
+    assert.equal(kpCallStructuredOutputMode(profile, 1), "tool", profile.modelProfileVersion);
   }
+  // The per-call rule is still asserted, so an opt-in can never reach the
+  // multi-Form selection call the moment one is added.
+  const optedIn = { modelProfileVersion: "authoritative-kp-deepseek-v4-flash-private-tools-v2" };
+  const opted = { ...optedIn };
+  assert.equal(kpCallStructuredOutputMode(opted, 3), "tool");
   // An unknown profile has not opted in and stays ordinary on every call.
   assert.equal(kpStructuredOutputMode({ modelProfileVersion: "unknown" }), "tool");
   assert.equal(kpCallStructuredOutputMode({ modelProfileVersion: "unknown" }, 1), "tool");

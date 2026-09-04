@@ -120,12 +120,23 @@ export const AUTHORITATIVE_KP_PROFILE = AUTHORITATIVE_KP_PROFILES[0];
  */
 const KP_STRUCTURED_OUTPUT_MODES: Readonly<Record<string, KpStructuredOutputMode>> =
   Object.freeze({
-    // Both private-tools profiles offer the identical Form surface, and every
-    // Form in it now has a faithful strict encoding, so both opt in together.
-    // Enabling only the primary would let a fallback to the pro tier drop
-    // silently back to an unenforced schema on exactly the retry that matters.
-    "authoritative-kp-deepseek-v4-flash-private-tools-v2": "strict-tool",
-    "authoritative-kp-deepseek-v4-pro-private-tools-v2": "strict-tool",
+    // Deliberately empty: every Form now has a faithful strict encoding, but
+    // enabling one measurably makes the repair worse.
+    //
+    // Strict output enforces shape and requires every key to be present. The
+    // rule that decides this Form family is conditional -- `resolution:
+    // "direct"` forbids the check fields -- and the dialect has no
+    // conditional keyword, so `convertNode` drops it and `validateKpFormDraft`
+    // remains its only enforcement. The model must therefore choose the
+    // omitted sentinel for every inapplicable field, and against the live
+    // provider it does not: it fills `ability`, `skill`, `dc` and `mode` with
+    // plausible defaults on a `direct` draft, which survive decoding and are
+    // rejected as `<field>:direct-forbidden`. Ordinary output lets the model
+    // omit those fields, which is valid.
+    //
+    // So enabling this turns a legal omission into an illegal forbidden
+    // field. Re-enable only with evidence that a repair draft round-trips
+    // cleanly against the live provider for a `direct` resolution.
   });
 
 export function kpStructuredOutputMode(

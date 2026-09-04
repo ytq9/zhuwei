@@ -109,9 +109,17 @@ function isNullTypeSchema(value: unknown): boolean {
  */
 function optionalSchema(schema: SchemaRecord): SchemaRecord {
   const description = typeof schema.description === "string" ? schema.description : undefined;
+  // The sentinel instruction has to sit on the field, not only on the branch.
+  // A model reading the field description alone fills a plausible default --
+  // `skill: "none"`, `dc: 0`, `mode: "normal"` -- and because strict output
+  // requires every key to be present, that default survives decoding and the
+  // local rules reject it as a forbidden field on a `direct` draft. The whole
+  // point of the sentinel is that omission has to be said out loud.
+  const rule = `本字段可以不适用。不适用时必须精确填写 "${KP_STRICT_TOOL_OMITTED_SENTINEL}"，`
+    + "不要填 0、\"none\"、\"normal\" 或任何其他占位值。";
   return {
     anyOf: [schema, omittedSentinelSchema()],
-    ...(description === undefined ? {} : { description }),
+    description: description === undefined ? rule : `${description} ${rule}`,
   };
 }
 
