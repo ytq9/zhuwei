@@ -24,6 +24,7 @@ export const DEEPSEEK_STRICT_TOOL_HANDSHAKE_CAPABILITIES = Object.freeze([
   "world-interaction",
   "materialization+world-interaction",
   "shared-ability-check",
+  "in-world-refusal",
   "proposal-summary-correction",
 ]);
 

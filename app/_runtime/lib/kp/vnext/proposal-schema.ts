@@ -500,8 +500,16 @@ export type VNextProposalBundleCorrectionResult =
 /**
  * The live-gated stage-three transport exposes the direct-success and
  * shared-ability-check world-interaction and materialize-then-interact
- * slices. Under a check the Bundle's entries may bind to an outcome
- * (`onSuccess` / `onFailure`), so one roll decides the whole Bundle.
+ * slices, plus the in-world refusal terminal. Under a check the Bundle's
+ * entries may bind to an outcome (`onSuccess` / `onFailure`), so one roll
+ * decides the whole Bundle.
+ *
+ * A refusal is a terminal bundle: the world declining an action is a
+ * mechanical outcome the player is owed, not an error, and SPEC 0001
+ * acceptance scenario B requires it to be stated plainly rather than hidden
+ * behind an unreachable DC. Clarification is the other terminal and is not
+ * on the wire yet: each of its choices carries a complete frozen
+ * continuation, which is a far larger schema than this one.
  *
  * The domain parser and validator remain broader than this transport, and a
  * later expansion must earn new Provider evidence before a Room can select
@@ -762,11 +770,56 @@ function makeStrictBundleSchema(): Record<string, unknown> {
       failure: { anyOf: [branch, noneBranch] },
     }),
   });
+  // An in-world refusal: the world declining an action is a first-class
+  // mechanical outcome, not an error. Everything below the wire already
+  // supports it -- the domain validator (`isTerminalProposal`), the lowering
+  // (`lowerTerminal`) and the Rules feasibility seam -- so this only unpins
+  // the transport.
+  //
+  // `attemptCosts` deliberately exposes the `item` shape alone. The domain
+  // also models `fictionTime` and `resource`, but `lowerAttemptCosts` accepts
+  // only items, so offering the other two would hand the model a shape the
+  // server could never execute.
+  const attemptCost = object({
+    kind: { type: "string", enum: ["item"] },
+    entryRef: refText,
+    quantity: { type: "integer", minimum: 0 },
+    charges: { type: "integer", minimum: 0 },
+    durability: { type: "integer", minimum: 0 },
+  });
+  const prerequisite = object({
+    kind: {
+      type: "string",
+      enum: ["tool", "knowledge", "position", "permission", "condition"],
+    },
+    ref: nullableRef,
+    description: text,
+  });
+  const nextAction = object({ description: text, basisRefs: refArray });
+  const inWorldRefusalTerminal = object({
+    kind: { type: "string", enum: ["inWorldRefusal"] },
+    intent: text,
+    method: text,
+    ruling: object({
+      kind: { type: "string", enum: ["missingPrerequisite", "worldLawViolation"] },
+      publicBasis: text,
+      prerequisites: { type: "array", items: prerequisite },
+      nextActions: { type: "array", items: nextAction },
+      attemptCosts: { type: "array", items: attemptCost },
+    }),
+  });
+  const noneTerminal = object({ kind: { type: "string", enum: ["none"] } });
+
   return object({
-    mode: { type: "string", enum: ["adjudication"] },
+    // A bundle is either an adjudication or a terminal. The unused half
+    // carries the `none` sentinel, which `decodeVNextStrictToolBundle`
+    // resolves to null before the domain validator sees it; the validator's
+    // own cross-field rule then enforces that exactly one half is present.
+    mode: { type: "string", enum: ["adjudication", "terminal"] },
     basisRefs: refArray,
     adjudication: {
       anyOf: [
+        noneTerminal,
         object({
           kind: { type: "string", enum: ["directSuccess"] },
           risk: text,
@@ -797,7 +850,7 @@ function makeStrictBundleSchema(): Record<string, unknown> {
         }),
       ],
     },
-    terminal: object({ kind: { type: "string", enum: ["none"] } }),
+    terminal: { anyOf: [noneTerminal, inWorldRefusalTerminal] },
     proposals: {
       type: "array",
       items: { anyOf: [materializeObject, worldInteraction] },

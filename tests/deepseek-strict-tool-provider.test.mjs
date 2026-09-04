@@ -466,6 +466,16 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
         ]),
       },
       {
+        caseId: "in-world-refusal",
+        contractId: "submit-proposal-bundle",
+        capability: "in-world-refusal",
+        modelInput: {
+          ...strictModelInput(),
+          messages: [{ role: "user", content: "徒手把整扇石门拆下来" }],
+        },
+        parse: (response) => parseToolResponse(response, ["in-world-refusal"]),
+      },
+      {
         caseId: "summary-only-correction",
         contractId: "correct-proposal-bundle",
         capability: "proposal-summary-correction",
@@ -486,6 +496,12 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
       calls.push({ kind: "positive", model, input, signal });
       if (input.tools[0].function.name === "correct_proposal_bundle") {
         return correctionToolResponse();
+      }
+      if (input.messages[0].content.includes("石门")) {
+        return toolResponse({
+          bundleKind: "proposal-bundle",
+          operations: [{ kind: "in-world-refusal", ref: "object:stone-door:1" }],
+        });
       }
       if (input.messages[0].content.includes("石板")) {
         return toolResponse({
@@ -514,14 +530,14 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
 
   assert.equal(report.status, "passed");
   assert.equal(report.registrationAccepted, true);
-  assert.equal(report.liveProviderCalls, 5);
-  assert.equal(report.positiveCases.length, 4);
+  assert.equal(report.liveProviderCalls, 6);
+  assert.equal(report.positiveCases.length, 5);
   assert.ok(report.positiveCases.every((entry) => entry.passed));
   assert.equal(report.invalidSchemaCase.rejectedBeforeGeneration, true);
-  assert.equal(report.evidence.successfulStrictToolCalls, 4);
+  assert.equal(report.evidence.successfulStrictToolCalls, 5);
   assert.equal(report.evidence.invalidSchemaRejections, 1);
   assert.equal(report.evidence.contracts.length, 2);
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   assert.ok(calls.every((entry) => entry.signal instanceof AbortSignal));
   assert.equal(JSON.stringify(report).includes("抓起场景中的椅子"), false);
 });

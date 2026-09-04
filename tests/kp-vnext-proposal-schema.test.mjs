@@ -181,6 +181,34 @@ function sharedCheckArguments() {
   };
 }
 
+/** The wire form of an in-world refusal: a terminal bundle whose shape has
+ * nowhere to put a DC, which is how SPEC 0001 scenario B's "no fake high DC"
+ * stops being a rule someone has to remember. */
+function inWorldRefusalArguments() {
+  return {
+    mode: "terminal",
+    basisRefs: ["scene:atrium", "sceneFeature:chain"],
+    adjudication: { kind: "none" },
+    terminal: {
+      kind: "inWorldRefusal",
+      intent: "徒手把整扇石门拆下来",
+      method: "双手抠住门缘向外硬掰",
+      ruling: {
+        kind: "missingPrerequisite",
+        publicBasis: "石门嵌在整块承重墙里，没有缝隙也没有着力点。",
+        prerequisites: [
+          { kind: "tool", ref: "none", description: "需要能卡进石缝的撬棍一类工具。" },
+        ],
+        nextActions: [
+          { description: "在场景里找一件能当撬棍的硬物。", basisRefs: ["scene:atrium"] },
+        ],
+        attemptCosts: [],
+      },
+    },
+    proposals: [],
+  };
+}
+
 function clarificationArguments() {
   const continuation = materializeThenInteractArguments();
   const executable = {
@@ -635,10 +663,20 @@ test("closed refs preserve transport sentinels and prospective namespace", () =>
   }
 });
 
-test("stage-three transport is direct-success-only while the domain none-check stays closed", () => {
+test("the stage-three transport surface is exactly what the server can execute", () => {
+  // A tripwire, not a ceiling: every value here is one the layers below the
+  // wire already support, and widening it further should be a deliberate edit
+  // that updates this list rather than a silent drift.
   assert.deepEqual(
     SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.mode.enum,
-    ["adjudication"],
+    ["adjudication", "terminal"],
+  );
+  // Only the refusal terminal is on the wire. Clarification is not: each of
+  // its choices carries a complete frozen continuation, a far larger schema.
+  assert.deepEqual(
+    SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.terminal.anyOf
+      .map((branch) => branch.properties.kind.enum[0]),
+    ["none", "inWorldRefusal"],
   );
   assert.deepEqual(
     SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.proposals.items.anyOf
@@ -1051,6 +1089,9 @@ test("concrete vNext-2 handshake definition passes offline without claiming live
         });
       }
       const prompt = input.messages[0].content;
+      // Keyed on wording unique to the refusal case: the shared contract
+      // lines mention inWorldRefusal on every submit prompt.
+      if (prompt.includes("徒手把整扇石门")) return toolResponse(inWorldRefusalArguments());
       if (prompt.includes("prospective:cache")) return toolResponse(sharedCheckArguments());
       return toolResponse(prompt.includes("prospective:alcove")
         ? materializeThenInteractArguments()
@@ -1062,15 +1103,112 @@ test("concrete vNext-2 handshake definition passes offline without claiming live
     },
   });
   assert.equal(report.status, "passed", JSON.stringify(report));
-  assert.equal(positiveCalls, 4);
+  assert.equal(positiveCalls, 5);
   assert.equal(negativeCalls, 1);
   assert.equal(report.liveProviderCalls, 0);
   assert.equal(report.registrationAccepted, false);
   assert.equal(report.evidence.executionMode, "offline-fixture");
-  assert.equal(report.evidence.successfulStrictToolCalls, 4);
+  assert.equal(report.evidence.successfulStrictToolCalls, 5);
   assert.equal(report.evidence.invalidSchemaRejections, 1);
   assert.deepEqual(
     report.evidence.contracts.map(({ contractId }) => contractId),
     ["correct-proposal-bundle", "submit-proposal-bundle"],
   );
+});
+
+/**
+ * SPEC 0001 acceptance scenario B: an action that the frozen facts make
+ * impossible must be refused plainly, with the missing prerequisite and a real
+ * alternative path -- and explicitly *not* behind an unreachable DC.
+ *
+ * The refusal terminal is what carries that, and until now it existed at every
+ * layer except the wire: the domain validator, `lowerTerminal` and the Rules
+ * feasibility seam all accepted it while `mode` was pinned to "adjudication".
+ * These assertions cover the transport half of that round trip.
+ */
+function refusalWireBundle(overrides = {}) {
+  return {
+    mode: "terminal",
+    basisRefs: ["scene:hall", "feature:hall:stone-door"],
+    adjudication: { kind: "none" },
+    terminal: {
+      kind: "inWorldRefusal",
+      intent: "徒手把整扇石门拆下来",
+      method: "双手抠住门缘向外硬掰",
+      ruling: {
+        kind: "missingPrerequisite",
+        publicBasis: "石门嵌在整块承重墙里，没有缝隙也没有着力点。",
+        prerequisites: [
+          { kind: "tool", ref: "none", description: "需要能卡进石缝的撬棍一类工具。" },
+        ],
+        nextActions: [
+          { description: "在大厅里找一件能当撬棍的硬物。", basisRefs: ["scene:hall"] },
+        ],
+        attemptCosts: [],
+      },
+      ...overrides,
+    },
+    proposals: [],
+  };
+}
+
+test("a wire refusal decodes and validates as a terminal bundle", () => {
+  const decoded = decodeVNextStrictToolBundle(refusalWireBundle());
+  // The unused half of the bundle and an inapplicable prerequisite ref both
+  // ride the `none` sentinel and must come back as real nulls.
+  assert.equal(decoded.adjudication, null);
+  assert.equal(decoded.terminal.ruling.prerequisites[0].ref, null);
+
+  const result = validateVNextProposalBundle({
+    schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    ...decoded,
+  });
+  assert.equal(result.kind, "accepted", JSON.stringify(result));
+  assert.equal(result.bundle.mode, "terminal");
+  assert.equal(result.bundle.terminal.kind, "inWorldRefusal");
+  assert.deepEqual(result.bundle.proposals, []);
+});
+
+test("a refusal cannot carry a check, which is what scenario B forbids", () => {
+  const terminalBranches = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.terminal.anyOf;
+  const refusal = terminalBranches.find((branch) =>
+    branch.properties?.kind?.enum?.[0] === "inWorldRefusal");
+  assert.ok(refusal, "the refusal terminal must be on the wire");
+
+  // "Do not set a fake high DC" is enforced by shape, not by asking nicely:
+  // the refusal branch has no field a DC could live in, at any depth.
+  const keys = new Set();
+  (function walk(node) {
+    if (node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) return node.forEach(walk);
+    for (const [key, child] of Object.entries(node)) {
+      keys.add(key);
+      walk(child);
+    }
+  })(refusal);
+  for (const forbidden of ["dc", "ability", "skill", "mode", "checkKind"]) {
+    assert.equal(keys.has(forbidden), false, `refusal must not carry ${forbidden}`);
+  }
+});
+
+test("the wire offers only the attempt cost the server can actually spend", () => {
+  const refusal = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.terminal.anyOf.find((branch) =>
+    branch.properties?.kind?.enum?.[0] === "inWorldRefusal");
+  const cost = refusal.properties.ruling.properties.attemptCosts.items;
+  // The domain also models fictionTime and resource costs, but
+  // `lowerAttemptCosts` accepts only items. Offering the other two would be a
+  // shape the model can write and the server can only ever refuse.
+  assert.deepEqual(cost.properties.kind.enum, ["item"]);
+
+  const withCost = refusalWireBundle();
+  withCost.terminal.ruling.attemptCosts = [
+    { kind: "item", entryRef: "item-entry:hall:torch", quantity: 0, charges: 1, durability: 0 },
+  ];
+  const result = validateVNextProposalBundle({
+    schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    ...decodeVNextStrictToolBundle(withCost),
+  });
+  assert.equal(result.kind, "accepted", JSON.stringify(result));
 });

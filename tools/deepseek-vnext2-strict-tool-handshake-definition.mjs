@@ -13,7 +13,7 @@ import {
 } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 
 export const VNEXT2_STRICT_TOOL_PROMPT_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-handshake-prompts-v4",
+  version: "kp-vnext2-proposal-handshake-prompts-v5",
   common: [
     "只调用 submit_kp_proposal_bundle 一次。",
     "只使用题面给出的冻结引用或本束 prospective handle。",
@@ -24,6 +24,9 @@ export const VNEXT2_STRICT_TOOL_PROMPT_CONTRACT = Object.freeze({
     "check 必须恰好有一个 worldInteraction，其 outcomeBinding=always 且 branches.failure 必须是真实分支；"
       + "只在成功时才发生的 proposal 用 outcomeBinding=onSuccess。",
     "check 不写 abilityRef：本填写面的 abilityRef 恒为 none。",
+    "行动在既有事实下不可行时提交 mode=terminal 的 inWorldRefusal，"
+      + "adjudication 使用 {kind:'none'}、proposals 为空数组；拒绝不携带任何检定字段，"
+      + "不得用一个够不到的 DC 代替说明。",
   ],
   correction: [
     "只调用 correct_kp_proposal_bundle 一次。",
@@ -49,6 +52,11 @@ Provider dialect handshake；不要扩写故事。角色 character:alice 位于 
 提交 mode=adjudication、bundle basisRefs=[]、terminal 使用 none，adjudication 使用 check：checkKind=abilityCheck、ability=str、skill=none、dc=13、mode=normal，risk/successOutcome/failureOutcome 各写一句短句。两项 proposal 严格按顺序：
 1) worldInteraction，outcomeBinding=always，意图是撬开压住链条的石板，sceneRef=scene:atrium，targetRefs/directTargetRefs=[sceneFeature:chain]，无 instrument、abilityRef=none、basisRefs/consumes/produces 为空；success 与 failure 两个分支都要真实填写，outcomeCode 分别为 outcome:slab-pried 与 outcome:slab-stuck，summary 简洁，effects/sensoryEvidence/pressures/opportunities 均为空；
 2) materializeObject，outcomeBinding=onSuccess，semanticKind=sceneFeature，templateRef=template:handshake-scene-feature、templateHash=sha256:1111111111111111111111111111111111111111111111111111111111111111，产生唯一 handle prospective:cache（semanticDefinition/onSuccess），sceneRef=scene:atrium、visibilityFactId=none、visibilityPolicyRef=visibility:scene-observers，给出短 label/description/observableState、affordances=[inspect]、mechanicDefinitionRefs=[]，basisRefs=[]、consumes=[]。`;
+
+const IN_WORLD_REFUSAL_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.common.join("\n")}
+Provider dialect handshake；不要扩写故事。角色 character:alice 在 scene:atrium，面前 sceneFeature:chain 所连的石门嵌在整块承重墙里，没有缝隙也没有把手。玩家说“我徒手把整扇石门拆下来”。
+这在既有事实下不可行，且不是一个可以用高 DC 掩盖的检定。提交 mode=terminal、bundle basisRefs=[scene:atrium, sceneFeature:chain]、adjudication 使用 {kind:"none"}、proposals 为空数组。
+terminal 使用 inWorldRefusal：intent 与 method 复述玩家的做法，ruling.kind=missingPrerequisite，publicBasis 用一句说明为什么当前方式不可行，prerequisites 给出 1-2 条真正缺少的前提（没有对应冻结引用时 ref 精确填 "none"），nextActions 给出 1-2 条玩家可以改走的路径，attemptCosts 为空数组。`;
 
 const CORRECTION_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.correction.join("\n")}
 Provider dialect handshake；allowedPaths 只有 ["proposals",0,"branches","success","summary"]。
@@ -151,6 +159,27 @@ function assertSharedCheck(response) {
   return bundle;
 }
 
+function assertInWorldRefusal(response) {
+  const bundle = parseSubmitKpProposalBundleResponse(response);
+  if (bundle.mode !== "terminal"
+    || bundle.adjudication !== null
+    || bundle.proposals.length !== 0
+    || bundle.terminal?.kind !== "inWorldRefusal") {
+    throw new TypeError("VNEXT2_HANDSHAKE_REFUSAL_SHAPE_INVALID");
+  }
+  const ruling = bundle.terminal.ruling;
+  if (ruling.kind !== "missingPrerequisite" && ruling.kind !== "worldLawViolation") {
+    throw new TypeError("VNEXT2_HANDSHAKE_REFUSAL_RULING_INVALID");
+  }
+  // SPEC 0001 scenario B: a refusal has to name what is missing and leave a way
+  // forward, instead of hiding behind a DC the player can never reach. The
+  // shape cannot carry a DC at all, so this only checks the content is real.
+  if (ruling.prerequisites.length === 0 || ruling.nextActions.length === 0) {
+    throw new TypeError("VNEXT2_HANDSHAKE_REFUSAL_NOT_ACTIONABLE");
+  }
+  return bundle;
+}
+
 function assertSummaryCorrection(response) {
   const correction = parseCorrectKpProposalBundleResponse(response, {
     baseBundleHash: CORRECTION_BASE_HASH,
@@ -171,7 +200,12 @@ export const strictToolHandshakeDefinition = Object.freeze({
     contractId: "submit-proposal-bundle",
     promptHash: stableStructuralHash({
       contract: VNEXT2_STRICT_TOOL_PROMPT_CONTRACT,
-      cases: [WORLD_INTERACTION_PROMPT, MATERIALIZE_INTERACT_PROMPT, SHARED_CHECK_PROMPT],
+      cases: [
+        WORLD_INTERACTION_PROMPT,
+        MATERIALIZE_INTERACT_PROMPT,
+        SHARED_CHECK_PROMPT,
+        IN_WORLD_REFUSAL_PROMPT,
+      ],
     }),
     parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,
   }, {
@@ -200,6 +234,12 @@ export const strictToolHandshakeDefinition = Object.freeze({
     capability: "shared-ability-check",
     modelInput: createSubmitKpProposalBundleModelInput(SHARED_CHECK_PROMPT),
     parse: assertSharedCheck,
+  }, {
+    caseId: "in-world-refusal",
+    contractId: "submit-proposal-bundle",
+    capability: "in-world-refusal",
+    modelInput: createSubmitKpProposalBundleModelInput(IN_WORLD_REFUSAL_PROMPT),
+    parse: assertInWorldRefusal,
   }, {
     caseId: "summary-only-correction",
     contractId: "correct-proposal-bundle",
