@@ -296,14 +296,27 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
   const worldInteractionSchema = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA
     .properties.proposals.items.anyOf
     .find((entry) => entry.properties.kind.enum[0] === "worldInteraction");
-  assert.deepEqual(worldInteractionSchema.properties.abilityRef.enum, ["none"]);
+  // `abilityRef` is a nullable reference now, not a pinned sentinel: an
+  // attack needs a real Ability and a bare ability check needs none. The
+  // pairing spans the Bundle's adjudication and the entry, so it is enforced
+  // by the domain rather than by the shape.
+  assert.equal(worldInteractionSchema.properties.abilityRef.enum, undefined);
+  assert.equal(worldInteractionSchema.properties.abilityRef.pattern, "^\\S+$");
   // Materialization is a union of the legal (semanticKind, visibility,
   // visibilityFactId) combinations, so a single branch no longer describes the
   // surface; the combination table is asserted in its own test below.
   assert.equal(worldInteractionSchema.properties.intent.pattern, "[\\s\\S]+");
-  assert.equal(
-    worldInteractionSchema.properties.consumes.items.properties.kind.enum[0],
-    "prospective",
+  // A consume is a union: a bundle-local handle or a frozen authority ref,
+  // and neither branch can carry the other's field.
+  assert.deepEqual(
+    worldInteractionSchema.properties.consumes.items.anyOf
+      .map((branch) => branch.properties.kind.enum[0]),
+    ["prospective", "existing"],
+  );
+  assert.deepEqual(
+    worldInteractionSchema.properties.consumes.items.anyOf
+      .map((branch) => Object.keys(branch.properties).sort()),
+    [["handle", "kind"], ["kind", "ref"]],
   );
   // Every materialization branch is closed the same way, whichever
   // combination it encodes: one semantic kind, and a produced handle bound to
@@ -1426,4 +1439,64 @@ test("the domain still rejects the combinations the wire cannot express", () => 
     assert.equal(result.kind, "rejected", variant.name);
     assert.deepEqual(result.issues, ["bundle:materialization-invalid"], variant.name);
   }
+});
+
+test("a consume may name a frozen reference as well as a bundle-local handle", () => {
+  // The domain has always modelled both kinds; only the wire was pinned to
+  // prospective. An existing consume declares a dependency on a ref the world
+  // already froze, which is how an entry can say what it is acting upon
+  // without first creating it.
+  const bundle = {
+    mode: "adjudication",
+    basisRefs: ["scene:atrium", "sceneFeature:chain"],
+    adjudication: {
+      kind: "directSuccess",
+      risk: "靠近查看已知的铁链，不带来额外风险。",
+      successOutcome: "角色看清了铁链的磨损情况。",
+    },
+    terminal: { kind: "none" },
+    proposals: [{
+      kind: "worldInteraction",
+      basisRefs: ["scene:atrium", "sceneFeature:chain"],
+      consumes: [{ kind: "existing", ref: "sceneFeature:chain" }],
+      produces: [],
+      outcomeBinding: "always",
+      sceneRef: "scene:atrium",
+      targetRefs: ["sceneFeature:chain"],
+      directTargetRefs: ["sceneFeature:chain"],
+      instrumentRefs: [],
+      abilityRef: "none",
+      intent: "查看铁链的磨损。",
+      method: "凑近观察链节。",
+      branches: {
+        success: {
+          outcomeCode: "outcome:probe:chain-read",
+          summary: "角色看清了链节的磨损。",
+          effects: [],
+          sensoryEvidence: [],
+          pressures: [],
+          opportunities: [],
+        },
+        failure: { kind: "none" },
+      },
+    }],
+  };
+
+  const decoded = decodeVNextStrictToolBundle(bundle);
+  // The decoder builds null-prototype records, so compare the fields rather
+  // than the object identity.
+  assert.deepEqual(
+    decoded.proposals[0].consumes.map((entry) => ({ ...entry })),
+    [{ kind: "existing", ref: "sceneFeature:chain" }],
+  );
+  // `abilityRef` is no longer pinned, so the sentinel still has to resolve to
+  // null for an interaction that uses no Ability.
+  assert.equal(decoded.proposals[0].abilityRef, null);
+
+  const result = validateVNextProposalBundle({
+    schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+    kind: "proposalBundle",
+    ...decoded,
+  });
+  assert.equal(result.kind, "accepted", JSON.stringify(result));
 });

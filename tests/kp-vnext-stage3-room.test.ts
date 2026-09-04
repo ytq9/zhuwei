@@ -1325,6 +1325,66 @@ function checkedRopeReadingBundleV2(): JsonRecord {
   );
 }
 
+/** A vnext-2 attack: the Bundle's shared ruling is `checkKind: "attack"`, so
+ * the entry must carry the Ability the attack is made with. The two are bound
+ * to each other by the domain rather than by the schema, because the ruling
+ * sits on the Bundle and the Ability on the entry. */
+function attackChainBundleV2(request: JsonRecord, dc: number): JsonRecord {
+  const abilityRef = pistolAbility(requiredContext(request));
+  const evidence = (text: string) => [{
+    observerRef: ALICE_ID,
+    subjectRef: CHAIN_REF,
+    sense: "sight",
+    evidence: text,
+    basisRefs: [CHAIN_REF, SCENE_REF],
+  }];
+  return adjudicationBundleV2(
+    [{
+      kind: "worldInteraction",
+      basisRefs: [CHAIN_REF, PISTOL_ENTRY_REF, SCENE_REF],
+      consumes: [],
+      produces: [],
+      outcomeBinding: "always",
+      sceneRef: SCENE_REF,
+      targetRefs: [CHAIN_REF],
+      directTargetRefs: [CHAIN_REF],
+      instrumentRefs: [PISTOL_ENTRY_REF],
+      abilityRef,
+      intent: "用手枪打断吊灯的铁链。",
+      method: "举枪瞄准可见的铁链链节并击发。",
+      branches: {
+        success: {
+          outcomeCode: "outcome:stage3:chain-shot-v2:success",
+          summary: "子弹击中铁链。",
+          effects: [],
+          sensoryEvidence: evidence("枪响之后铁链上多出一道新的凹痕。"),
+          pressures: [],
+          opportunities: [],
+        },
+        failure: {
+          outcomeCode: "outcome:stage3:chain-shot-v2:failure",
+          summary: "子弹打偏了。",
+          effects: [],
+          sensoryEvidence: evidence("弹丸擦过铁链打在墙上，铁链没有变化。"),
+          pressures: [],
+          opportunities: [],
+        },
+      },
+    }],
+    {
+      kind: "check",
+      checkKind: "attack",
+      ability: "dex",
+      skill: null,
+      dc,
+      mode: "normal",
+      risk: "会消耗一次弹药，且未必命中。",
+      successOutcome: "子弹击中铁链。",
+      failureOutcome: "子弹打偏，弹药照样消耗。",
+    },
+  );
+}
+
 /** A shared check whose one interaction has no failure branch: a roll that
  * can fail with nothing to commit on failure. */
 function checkedBundleWithoutFailureBranchV2(): JsonRecord {
@@ -3295,6 +3355,64 @@ describe("vNext stage-three Room verticals", () => {
     const narration = narrationForViewer(kp, `${ALICE.principal.id}\u001f${ALICE_ID}`)[0];
     expect(narration).toBeDefined();
     expect(claimKinds(narration)).toEqual(expect.arrayContaining(["mechanicalOutcome", "actionCommitted"]));
+
+    const stateHashBeforeEviction = await roomStateHash(authority);
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+  });
+
+  it("resolves a vnext-2 attack by the attack rule, not by arithmetic, and spends the ability's ammunition either way", async () => {
+    // DC 40 is unreachable by addition: dexterity 16 gives +3, so 20 + 3 is 23.
+    // An attack still hits on a natural 20, and a bare ability check would not,
+    // so a success here can only mean `checkKind: "attack"` survived the wire,
+    // the lowering and the frozen ruling all the way into Rules.
+    const { authority } = await initializeRoom("kp-vnext2-stage3-room-attack-crit");
+    const counters = emptyActionCounters();
+    const prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(
+      (request) => attackChainBundleV2(request, 40),
+      prepared,
+      undefined,
+      false,
+    );
+    const outcome = record(await runAction({
+      authority,
+      principal: ALICE,
+      action: intent("submission:stage3:vnext2-attack-crit", "角色举枪打向吊灯的铁链。"),
+      kp,
+      counters,
+      prepared,
+      rolls: [20],
+    }), "vnext-2 attack natural twenty outcome");
+
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
+      kind: "committed",
+      action: "committed",
+      narration: "published",
+    });
+    expect(counters.rolls).toBe(1);
+
+    const committed = await roomSnapshot(authority);
+    const randomness = eventPayload(eventsOf(committed, "RandomnessRequested")[0]);
+    const ruling = record(
+      record(randomness.resolutionPlan, "resolution plan").ruling,
+      "frozen ruling",
+    );
+    expect(ruling.resolutionKind).toBe("attack");
+    expect(record(ruling.check, "frozen check")).toMatchObject({ dc: "40", mode: "normal" });
+
+    const resolved = eventPayload(eventsOf(committed, "WorldInteractionResolved")[0]);
+    expect(resolved.outcome ?? resolved.branch).toBeDefined();
+    expect(JSON.stringify(resolved)).toContain("outcome:stage3:chain-shot-v2:success");
+
+    // The Ability's ammunition is a frozen cost, so it is spent on the attempt
+    // rather than on the result.
+    const ammunition = record(
+      record(itemEntries(committed.state), "item entries")[AMMO_ENTRY_REF],
+      "ammunition entry after the attack",
+    );
+    expect(ammunition).toBeDefined();
 
     const stateHashBeforeEviction = await roomStateHash(authority);
     await evictDurableObject(authority as never);

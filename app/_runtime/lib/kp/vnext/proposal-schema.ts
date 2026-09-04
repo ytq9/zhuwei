@@ -513,9 +513,9 @@ export type VNextProposalBundleCorrectionResult =
  *
  * The domain parser and validator remain broader than this transport, and a
  * later expansion must earn new Provider evidence before a Room can select
- * it: `attack` checks and `highRisk` rulings stay off the wire, the first
- * because it needs an abilityRef this transport pins to `none`, the second
- * because it is pending until Room supplies a trusted confirmation.
+ * it: `highRisk` rulings stay off the wire because they are pending until
+ * Room supplies a trusted confirmation, and `reviseSemanticDefinition` has no
+ * lowering yet.
  *
  * Every `anyOf` branch declares a literal type because DeepSeek's strict beta
  * rejects a `$ref` used directly as a branch. The string sentinel `"none"`
@@ -630,10 +630,14 @@ function makeStrictBundleSchema(): Record<string, unknown> {
   const nullableRef = { ...refText };
   const nullableText = { ...text };
   const outcome = { type: "string", enum: ["always", "onSuccess", "onFailure"] };
-  const reference = object({
-    kind: { type: "string", enum: ["prospective"] },
-    handle: refText,
-  });
+  // The two reference kinds carry different fields, so this is a union and
+  // not a flat shape with a discriminator: a prospective consume names a
+  // bundle-local handle, an existing one names a frozen authority ref, and
+  // neither can carry the other's field.
+  const references = [
+    object({ kind: { type: "string", enum: ["prospective"] }, handle: refText }),
+    object({ kind: { type: "string", enum: ["existing"] }, ref: refText }),
+  ];
   const produced = object({
     handle: text,
     kind: { type: "string", enum: ["semanticDefinition"] },
@@ -748,7 +752,7 @@ function makeStrictBundleSchema(): Record<string, unknown> {
   ) => object({
     kind: { type: "string", enum: ["materializeObject"] },
     basisRefs: refArray,
-    consumes: { type: "array", items: reference },
+    consumes: { type: "array", items: { anyOf: references } },
     produces: { type: "array", items: produced },
     outcomeBinding: outcome,
     semanticKind: { type: "string", enum: [semanticKind] },
@@ -789,14 +793,18 @@ function makeStrictBundleSchema(): Record<string, unknown> {
   const worldInteraction = object({
     kind: { type: "string", enum: ["worldInteraction"] },
     basisRefs: refArray,
-    consumes: { type: "array", items: reference },
+    consumes: { type: "array", items: { anyOf: references } },
     produces: { type: "array", items: produced },
     outcomeBinding: outcome,
     sceneRef: refText,
     targetRefs: refArray,
     directTargetRefs: refArray,
     instrumentRefs: refArray,
-    abilityRef: noneText,
+    // `none` when the interaction is unarmed or resolved by a bare ability
+    // check; a frozen Ability ref when an attack or an ability-backed action
+    // draws that Ability's costs. Rules binds the frozen check parameters and
+    // costs to that Ability's authority.
+    abilityRef: nullableRef,
     intent: text,
     method: text,
     branches: object({
@@ -861,13 +869,20 @@ function makeStrictBundleSchema(): Record<string, unknown> {
         }),
         object({
           kind: { type: "string", enum: ["check"] },
-          // Only `abilityCheck` is offered on the wire. An `attack` check
-          // requires a non-null abilityRef (proposals.ts rejects the pair with
-          // `world-interaction:attack-ability-required`), and this transport
-          // pins abilityRef to the `none` sentinel, so an `attack` branch here
-          // would be a shape the model could emit and the server could only
-          // ever refuse.
-          checkKind: { type: "string", enum: ["abilityCheck"] },
+          // Both check kinds are offered, and each is paired with the
+          // ability reference the entry must carry: an `attack` needs a
+          // non-null abilityRef and an `abilityCheck` needs none.
+          //
+          // That pairing is deliberately left to the domain rather than
+          // encoded as a union. It spans two objects -- the Bundle's one
+          // shared adjudication and each entry's abilityRef -- and a union can
+          // only bind fields inside a single object. This is not the shape
+          // that made `resolution: "direct"` unsatisfiable on the v3 Forms:
+          // there one value had no legal draft at all, whereas here both
+          // values are reachable and a mismatch is a named, actionable
+          // rejection (`world-interaction:attack-ability-required` /
+          // `world-interaction:ability-attack-required`).
+          checkKind: { type: "string", enum: ["abilityCheck", "attack"] },
           ability: {
             type: "string",
             enum: ["str", "dex", "con", "int", "wis", "cha"],
