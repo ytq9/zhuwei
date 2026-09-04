@@ -297,19 +297,23 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
     .properties.proposals.items.anyOf
     .find((entry) => entry.properties.kind.enum[0] === "worldInteraction");
   assert.deepEqual(worldInteractionSchema.properties.abilityRef.enum, ["none"]);
+  // Materialization is a union of the legal (semanticKind, visibility,
+  // visibilityFactId) combinations, so a single branch no longer describes the
+  // surface; the combination table is asserted in its own test below.
   assert.equal(worldInteractionSchema.properties.intent.pattern, "[\\s\\S]+");
   assert.equal(
     worldInteractionSchema.properties.consumes.items.properties.kind.enum[0],
     "prospective",
   );
-  const materializeSchema = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA
-    .properties.proposals.items.anyOf
-    .find((entry) => entry.properties.kind.enum[0] === "materializeObject");
-  assert.deepEqual(materializeSchema.properties.semanticKind.enum, ["sceneFeature"]);
-  assert.deepEqual(
-    materializeSchema.properties.visibilityPolicyRef.enum,
-    ["visibility:scene-observers"],
-  );
+  // Every materialization branch is closed the same way, whichever
+  // combination it encodes: one semantic kind, and a produced handle bound to
+  // the entry's own outcome.
+  for (const entry of SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.proposals.items.anyOf
+    .filter((branch) => branch.properties.kind.enum[0] === "materializeObject")) {
+    assert.equal(entry.properties.semanticKind.enum.length, 1);
+    assert.equal(entry.additionalProperties, false);
+    assert.equal(entry.properties.produces.items.properties.kind.enum[0], "semanticDefinition");
+  }
   const correctionInput = createCorrectKpProposalBundleModelInput("只修正允许的摘要。");
   assert.equal(correctionInput.tools.length, 1);
   assert.equal(
@@ -678,11 +682,69 @@ test("the stage-three transport surface is exactly what the server can execute",
       .map((branch) => branch.properties.kind.enum[0]),
     ["none", "inWorldRefusal"],
   );
+  // Materialization is four closed variants rather than one flat shape:
+  // `isMaterializedDefinition` binds semanticKind to sceneRef and the
+  // visibility policy to visibilityFactId, and those are conditionals the
+  // dialect cannot carry. Enumerating the legal combinations is what makes the
+  // illegal ones unconstructible instead of merely forbidden.
   assert.deepEqual(
     SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.proposals.items.anyOf
       .map((entry) => entry.properties.kind.enum[0]),
-    ["materializeObject", "worldInteraction"],
+    [
+      "materializeObject", "materializeObject", "materializeObject",
+      "materializeObject", "worldInteraction",
+    ],
   );
+  const materializations = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.proposals.items.anyOf
+    .filter((entry) => entry.properties.kind.enum[0] === "materializeObject")
+    .map((entry) => ({
+      semanticKind: entry.properties.semanticKind.enum[0],
+      policies: entry.properties.visibilityPolicyRef.enum,
+      sceneRef: entry.properties.definition.properties.sceneRef.enum?.[0] ?? "ref",
+      visibilityFactId:
+        entry.properties.definition.properties.visibilityFactId.enum?.[0] ?? "ref",
+    }));
+  assert.deepEqual(materializations, [
+    {
+      semanticKind: "sceneFeature",
+      policies: ["visibility:public", "visibility:scene-observers"],
+      sceneRef: "ref",
+      visibilityFactId: "none",
+    },
+    {
+      semanticKind: "sceneFeature",
+      policies: ["visibility:hidden-until-evidence"],
+      sceneRef: "ref",
+      visibilityFactId: "ref",
+    },
+    {
+      semanticKind: "worldFact",
+      policies: ["visibility:public"],
+      sceneRef: "none",
+      visibilityFactId: "none",
+    },
+    {
+      semanticKind: "worldFact",
+      policies: ["visibility:hidden-until-evidence"],
+      sceneRef: "none",
+      visibilityFactId: "ref",
+    },
+  ]);
+  // The combinations the domain validator rejects have no branch at all: a
+  // world fact is never scene-observers, a hidden reality never lacks the fact
+  // that gates its reveal, and a visible one never carries a stray gate.
+  for (const variant of materializations) {
+    assert.equal(
+      variant.semanticKind === "worldFact"
+        && variant.policies.includes("visibility:scene-observers"),
+      false,
+    );
+    assert.equal(
+      variant.policies.includes("visibility:hidden-until-evidence"),
+      variant.visibilityFactId === "ref",
+    );
+    assert.equal(variant.semanticKind === "sceneFeature", variant.sceneRef === "ref");
+  }
   assert.equal("$def" in SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, false);
   assert.equal(decodeVNextStrictToolBundle({
     checkKind: "none",
@@ -1211,4 +1273,157 @@ test("the wire offers only the attempt cost the server can actually spend", () =
     ...decodeVNextStrictToolBundle(withCost),
   });
   assert.equal(result.kind, "accepted", JSON.stringify(result));
+});
+
+/**
+ * The four materialization variants are only worth enumerating if each one
+ * actually survives the domain validator that motivated them. This walks the
+ * wire shapes the schema now offers, decodes each the way the provider adapter
+ * would, and asserts `isMaterializedDefinition` accepts every one.
+ */
+function materializeWireBundle(variant) {
+  const definition = {
+    sceneRef: variant.sceneRef,
+    visibilityFactId: variant.visibilityFactId,
+    label: "祭坛后的凹槽",
+    description: "祭坛背面有一处刚被注意到的凹槽。",
+    observableState: "刚刚露出",
+    affordances: ["可以伸手探查"],
+    mechanicDefinitionRefs: [],
+  };
+  return {
+    mode: "adjudication",
+    basisRefs: ["scene:atrium"],
+    adjudication: {
+      kind: "directSuccess",
+      risk: "让一处先前没被注意到的细节显形，不带来额外风险。",
+      successOutcome: "该细节成为可引用的固化事实。",
+    },
+    terminal: { kind: "none" },
+    proposals: [{
+      kind: "materializeObject",
+      basisRefs: ["scene:atrium"],
+      consumes: [],
+      produces: [
+        { handle: "prospective:niche", kind: "semanticDefinition", outcomeBinding: "always" },
+      ],
+      outcomeBinding: "always",
+      semanticKind: variant.semanticKind,
+      templateRef: "template:probe:niche",
+      templateHash: `sha256:${"9".repeat(64)}`,
+      visibilityPolicyRef: variant.visibilityPolicyRef,
+      definition,
+      summary: "把刚被注意到的细节固化为可引用事实。",
+    }],
+  };
+}
+
+test("every materialization variant the wire offers is one the domain accepts", () => {
+  const variants = [
+    {
+      name: "scene feature, visible to the room",
+      semanticKind: "sceneFeature",
+      visibilityPolicyRef: "visibility:scene-observers",
+      sceneRef: "scene:atrium",
+      visibilityFactId: "none",
+    },
+    {
+      name: "scene feature, public",
+      semanticKind: "sceneFeature",
+      visibilityPolicyRef: "visibility:public",
+      sceneRef: "scene:atrium",
+      visibilityFactId: "none",
+    },
+    {
+      // SPEC 0001 section 7: an open blank made relevant is frozen before it is
+      // revealed, and the fact that gates the reveal is named up front.
+      name: "scene feature, hidden until evidence",
+      semanticKind: "sceneFeature",
+      visibilityPolicyRef: "visibility:hidden-until-evidence",
+      sceneRef: "scene:atrium",
+      visibilityFactId: "fact:atrium:niche-not-yet-seen",
+    },
+    {
+      name: "world fact, public",
+      semanticKind: "worldFact",
+      visibilityPolicyRef: "visibility:public",
+      sceneRef: "none",
+      visibilityFactId: "none",
+    },
+    {
+      name: "world fact, hidden until evidence",
+      semanticKind: "worldFact",
+      visibilityPolicyRef: "visibility:hidden-until-evidence",
+      sceneRef: "none",
+      visibilityFactId: "fact:world:ledger-was-forged",
+    },
+  ];
+
+  for (const variant of variants) {
+    const decoded = decodeVNextStrictToolBundle(materializeWireBundle(variant));
+    const entry = decoded.proposals[0];
+    // The `none` sentinel is how the wire says "not applicable"; the domain
+    // checks real nulls.
+    assert.equal(
+      entry.definition.sceneRef,
+      variant.sceneRef === "none" ? null : variant.sceneRef,
+      variant.name,
+    );
+    assert.equal(
+      entry.definition.visibilityFactId,
+      variant.visibilityFactId === "none" ? null : variant.visibilityFactId,
+      variant.name,
+    );
+    const result = validateVNextProposalBundle({
+      schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+      kind: "proposalBundle",
+      ...decoded,
+    });
+    assert.equal(result.kind, "accepted", `${variant.name}: ${JSON.stringify(result)}`);
+  }
+});
+
+test("the domain still rejects the combinations the wire cannot express", () => {
+  // These are the shapes the union removed. They must stay rejected, so that
+  // the wire's silence about them is a real guarantee and not a coincidence.
+  const illegal = [
+    {
+      name: "a world fact scoped to scene observers",
+      semanticKind: "worldFact",
+      visibilityPolicyRef: "visibility:scene-observers",
+      sceneRef: "none",
+      visibilityFactId: "none",
+    },
+    {
+      name: "a hidden reality with no fact gating its reveal",
+      semanticKind: "sceneFeature",
+      visibilityPolicyRef: "visibility:hidden-until-evidence",
+      sceneRef: "scene:atrium",
+      visibilityFactId: "none",
+    },
+    {
+      name: "a visible feature carrying a stray gate",
+      semanticKind: "sceneFeature",
+      visibilityPolicyRef: "visibility:scene-observers",
+      sceneRef: "scene:atrium",
+      visibilityFactId: "fact:atrium:niche-not-yet-seen",
+    },
+    {
+      name: "a world fact bound to a scene",
+      semanticKind: "worldFact",
+      visibilityPolicyRef: "visibility:public",
+      sceneRef: "scene:atrium",
+      visibilityFactId: "none",
+    },
+  ];
+
+  for (const variant of illegal) {
+    const result = validateVNextProposalBundle({
+      schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+      kind: "proposalBundle",
+      ...decodeVNextStrictToolBundle(materializeWireBundle(variant)),
+    });
+    assert.equal(result.kind, "rejected", variant.name);
+    assert.deepEqual(result.issues, ["bundle:materialization-invalid"], variant.name);
+  }
 });

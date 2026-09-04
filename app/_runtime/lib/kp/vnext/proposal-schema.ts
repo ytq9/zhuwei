@@ -727,31 +727,65 @@ function makeStrictBundleSchema(): Record<string, unknown> {
     opportunities: { type: "array", items: opportunity },
   });
   const noneBranch = object({ kind: { type: "string", enum: ["none"] } });
-  const materializedDefinition = object({
-    sceneRef: refText,
-    visibilityFactId: noneText,
-    label: text,
-    description: text,
-    observableState: text,
-    affordances: { type: "array", items: text },
-    mechanicDefinitionRefs: refArray,
-  });
-  const materializeObject = object({
+  /**
+   * `materializeObject` as a union of closed variants rather than one flat
+   * shape plus conditional rules.
+   *
+   * `isMaterializedDefinition` binds three fields to each other: a
+   * `sceneFeature` must name a scene and a `worldFact` must not; a
+   * `hidden-until-evidence` policy requires a visibility fact and every other
+   * policy forbids one; and a `worldFact` may not be scene-observers. Those are
+   * exactly the conditionals the strict dialect cannot carry, and a flat shape
+   * would leave the model to satisfy them from prose -- the shape that made a
+   * `direct` resolution unsatisfiable on the v3 Forms. Enumerating the four
+   * legal combinations instead makes every illegal one unconstructible.
+   */
+  const materializeVariant = (
+    semanticKind: string,
+    sceneRef: Record<string, unknown>,
+    policies: readonly string[],
+    visibilityFactId: Record<string, unknown>,
+  ) => object({
     kind: { type: "string", enum: ["materializeObject"] },
     basisRefs: refArray,
     consumes: { type: "array", items: reference },
     produces: { type: "array", items: produced },
     outcomeBinding: outcome,
-    semanticKind: { type: "string", enum: ["sceneFeature"] },
+    semanticKind: { type: "string", enum: [semanticKind] },
     templateRef: refText,
     templateHash: { type: "string" },
-    visibilityPolicyRef: {
-      type: "string",
-      enum: ["visibility:scene-observers"],
-    },
-    definition: materializedDefinition,
+    visibilityPolicyRef: { type: "string", enum: [...policies] },
+    definition: object({
+      sceneRef,
+      visibilityFactId,
+      label: text,
+      description: text,
+      observableState: text,
+      affordances: { type: "array", items: text },
+      mechanicDefinitionRefs: refArray,
+    }),
     summary: text,
   });
+  // Flattened into the proposals union below rather than nested: the dialect
+  // requires every `anyOf` branch to declare a literal type, so an `anyOf`
+  // cannot itself be a branch.
+  const materializeObjectVariants = [
+      // A scene feature everyone present can see, or one only the room's
+      // observers can: either way there is no separate visibility fact.
+      materializeVariant("sceneFeature", refText,
+        ["visibility:public", "visibility:scene-observers"], noneText),
+      // A scene feature that stays hidden until evidence exists. SPEC 0001
+      // section 7 is the reason this variant exists: an open blank made
+      // relevant must be frozen before it is revealed, and the fact that
+      // gates the reveal is named here rather than invented later.
+      materializeVariant("sceneFeature", refText,
+        ["visibility:hidden-until-evidence"], refText),
+      // A world fact belongs to no scene, and scene-observers is meaningless
+      // for it, so that policy is simply not offered on these two variants.
+      materializeVariant("worldFact", noneText, ["visibility:public"], noneText),
+      materializeVariant("worldFact", noneText,
+        ["visibility:hidden-until-evidence"], refText),
+  ];
   const worldInteraction = object({
     kind: { type: "string", enum: ["worldInteraction"] },
     basisRefs: refArray,
@@ -853,7 +887,7 @@ function makeStrictBundleSchema(): Record<string, unknown> {
     terminal: { anyOf: [noneTerminal, inWorldRefusalTerminal] },
     proposals: {
       type: "array",
-      items: { anyOf: [materializeObject, worldInteraction] },
+      items: { anyOf: [...materializeObjectVariants, worldInteraction] },
     },
   });
 }
