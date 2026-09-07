@@ -8,11 +8,16 @@
 
 ## 1. 一句话状态
 
-vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSeek 走完一次完整行动（round73 施法首句、round75 社交首句）。**但从来没有一个批次连过第二个意图。**
+vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSeek 走完一次完整行动。[round78](docs/agent/vnext-round78-validation.md) 是**第一个连过第二个意图**的批次——之前 77 批都停在第一句，因为 gate 要求首句就形成 NPC 计划。
 
-[round77](docs/agent/vnext-round77-validation.md) 是最新一批：首句 4 次调用完整提交并发布，双工具 surface 真的到达模型。但它和 round75 一样停在 `legalNoPlan`——没有形成 NPC 计划。
+那条要求是错的，而且不是代码：`formActorPlan` 的依据只从**本次行动之前**的 `state` 读（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以同束里引不到本束刚创建的承诺。首句能做的只有**记下承诺**，第二句才谈得上形成计划。gate 改成声明并双向核对世界的实际新增之后，链条第一次走通。
 
-**而这个 gate 不是代码，是回执里手写的场景规则**（`legalNoPlan` 只出现在 docs 里）。粒度本来就归 KP 判断：`passTime` 和计划形成的 `durationMicros` 都没有下限，半分钟合法。所以前四批的 `legalNoPlan` 是这条手写期望在失败。**真正缺的是判断留痕——选了 `passTime` 又不用，这个 delta 没被任何地方记录，于是「判断为可就地消化」和「忘了」逐字节相同。下一件事见 §7。**
+round78 一次看到两件事：
+
+- **承诺只存在于散文里。** 瓦罗公开说「过半刻，我敲一记账台」，同一 step 的 `goal` 也写着「并在半分钟后敲账台提醒」，而 `consequences: []`。promise 槽位在 schema 里，指引也写着「NPC只能作出自己的承诺或债务」。第三批连着如此（75/77/78）。
+- **时间真的走了，到期什么也没有。** 第二句 `passTime` 推进 `nowMicros` 0 → 60000000，三条事件齐全，机械侧完全正确；但 0 条 `NpcActionCommitted`、0 条痕迹、`npcPlans`/`promises` 仍是 0。**关于时长阈值的怀疑到此可以放下：玩家显式等了一分钟，时钟诚实推进，承诺的动作依然不存在。问题与时长无关。**
+
+还有一条：第二句选中 `observe` 后在填写阶段丢弃，玩家明写的「留意瓦罗和周围的动静」随之消失，而且 `narration: notApplicable`——**等了一分钟的玩家屏幕上什么也没多出来**。选中后丢弃不留痕，这次有了具体代价。
 
 ## 2. 接手坐标
 
@@ -97,37 +102,24 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 还没做的：`worldInteraction.instrumentRefs` 仍是自由字符串（准入带持有人作用域，要另立合同）；遥测仍只报 `REFERENCE_UNAVAILABLE / unrecognized`，没指向模型填错的字段位置；round73 选错能力（cure 而非 healing-word）是模型判断问题，不是准入问题。
 
-## 7. KP 自己决定——代码本来就是这样，缺的是判断留痕
+## 7. 下一件事：为什么 `consequences` 是空的
 
-上一版这一节要求裁定一条阈值规则（多长的虚构时长必须变成机械对象）。**那条规则不需要存在。**
+round78 把这条从推测变成了三次真实观察（75/77/78）。NPC 在公开旁白里承诺一个未来动作，而 `social` step 的 `consequences` 是空数组。
 
-代码里没有任何阈值：
+不缺任何前提条件：
 
-- `passTime` 只填 `durationMicros`（正整数微秒字符串），**无下限**——半分钟写成 `"30000000"` 完全合法（[proposal-guidance.ts:26](app/_runtime/lib/kp/vnext/proposal-guidance.ts:26)）。
-- `NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA.durationMicros` 同样是 `^[1-9][0-9]*$`，同样无下限（[npc-plan-formation.ts:45](app/_runtime/lib/rules/v2/npc-plan-formation.ts:45)）。
+- 槽位在 —— `socialConsequence` 的 promise 变体（[proposal-schema.ts:1018](app/_runtime/lib/kp/vnext/proposal-schema.ts:1018)），字段是 `content` / `condition` / `authorityRefs`。
+- 指引在 —— social 的填写指引写着「NPC只能作出自己的承诺或债务，不替玩家承诺」，还写着「需要时间或额外成本的行动必须有独立可执行计划，不能只写在risk/summary中」。
+- 依据不需要预先存在 —— promise 由这一束创建，不受 `actorPlanPremiseIsAvailable` 的 pre-state 限制。
 
-粒度本来就归 KP 判断，产品这一侧没有要裁的东西。而那个 gate 不是代码：`legalNoPlan` 只出现在七个文件里，**全部是 docs**——它是批次回执里手写的场景规则。round70/74/75/77 三次「失败」是这条手写期望在失败，运行时从未拒绝过什么。
+而模型把承诺写进了 `goal` 和 `response.text`，机械槽位留空。**这是要改的地方**，也是唯一还没被真实证据排除的解释：指引把 promise 说成「允许」而不是「当 NPC 承诺未来行为时必须记录」。
 
-### 真正的缺口：判断不留痕
+改完之后才谈得上第二句的 `formActorPlan`：有了 active promise，它才有合法依据。
 
-round77 选择阶段选了 `passTime`，填写阶段没有用。**这个 delta 就是判断本身**——模型伸手拿了时间工具又放了回去。但没有任何地方记录它（搜遍 `app/ tools/ tests/`，无 selected-but-unused 一类遥测）。于是状态里这两件事逐字节相同：
+### 同批发现的另外两条（各自独立，别塞进同一个补丁）
 
-| | 留下的记录 |
-| --- | --- |
-| KP 判断半分钟可就地消化 | `consequences: []`、`nowMicros: "0"`、无计划、无 Activity |
-| KP 忘了那半分钟 | 同上 |
-
-分不开，就没法说 round77 到底是对是错。
-
-### 要做的改动
-
-让判断可观察，不是加阈值。
-
-- 两次响应都已按 ordinal 持久化（`assertVNextInvocationTransition` 读 `prior(ordinal).response_json`），所以 **delta = 选中集 ∖（已用 step kinds ∪ terminal kind）可以直接算出来**：零额外模型调用、零新字段，也不碰「每步行为都填一张表」那个冗余顾虑。
-- gate 改问「记录自洽吗」——要么时间成了机械对象，要么 KP 明示就地消化——而不是「有没有形成计划」。
-- 场景不必先改。gate 改对之后，半分钟这个场景就是一个合法的**通过**用例。想专门考计划形成，另开一个几小时尺度的场景（「明早卯时把文书送来」），在那里不留计划才值得追问。
-
-**抓不住的一类**：模型压根不选 `passTime`，却在旁白里断言时间过去。此时 delta 为空，什么也看不见。这需要读散文，暂无便宜守卫，记为缺口。
+- **等待不发布任何旁白。** 第二句 `passTime` 提交成功、时钟推进 60 秒、事件齐全，但 `narration: "notApplicable"`，公开记录止于玩家自己那句 say。等了一分钟的玩家什么也没看到。这是产品缺陷，与计划形成无关。
+- **选中后丢弃不留痕。** 第二句选了 `["passTime","observe"]`，填写只出 `passTime`，玩家明写的「留意瓦罗和周围的动静」随 `observe` 一起消失。两次响应都已按 ordinal 持久化，delta = 选中集 ∖（已用 step kinds ∪ terminal kind）可以直接算出来，零额外调用、零新字段。
 
 ### 已完成、真实证据分账
 
@@ -136,8 +128,9 @@ round77 选择阶段选了 `passTime`，填写阶段没有用。**这个 delta �
 | parser v39 引用槽准入 | round75 验到「不误伤」；未验到「挡得住」 |
 | parser v40 未解析重发 | **无**，从未触发 |
 | parser v41 边界前移 | round77 选择组合变了（一个样本，不是因果证明） |
-| parser v41 一次补选 | **无**，模型从未使用 |
-| 传输接受双工具 | round77 有真实证据：capture 记录两个工具确实到达模型 |
+| parser v41 一次补选 | **无**，四次 ordinal 2 请求都带着该工具，一次未用 |
+| 传输接受双工具 | round77/78 都有真实证据：capture 记录两个工具确实到达模型 |
+| gate 允许无计划继续 | round78 首次走到第二句，链条打通 |
 
 另注意：terminal-only 选择（如 `abilityOperation`）没有第三次调用预算，一次语法失败仍即停批。供应商侧事实见 [round76 回执](docs/agent/vnext-round76-validation.md)：strict 声明了仍会返回非法 JSON，32 份草稿里 3 份如此。
 

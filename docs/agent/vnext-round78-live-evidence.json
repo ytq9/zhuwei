@@ -1,0 +1,206 @@
+{
+  "round": 78,
+  "verifiedAt": "2026-09-07T10:51:32Z",
+  "verdict": "first batch ever to send the second sentence; the wait works mechanically and publishes nothing, and the promised NPC act has no support",
+  "sourceCommit": "8b67f32355d002da64764e32ef31dfdd76a1a36d",
+  "sourceManifestSha256": "2c55fb434072c9736fc4efb00d2c73108df6b008bb570402edd7f51d57dfa91b",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v41",
+  "scenario": "round70 NPC three-intent scenario, gate changed only: the wait chain no longer requires a formed plan; scenario.mjs sha256 0a6e9291c79a3dbc420effd7e017ab0686e94d4b4c5e8203f83b32a9b00c103d",
+  "scenarioChange": "gate at action 1 declares and verifies the world's actual new promises and plans in both directions instead of demanding a plan",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 2,
+  "unattemptedIntents": 1,
+  "actions": [
+    {
+      "ordinal": 1,
+      "action": "committed",
+      "narration": "published",
+      "calls": 4,
+      "npcPublicCommitment": "过半刻，我敲一记账台，算打断，也算了结。",
+      "socialStepGoal": "应承旅行守卫临时整理的请求，并在半分钟后敲账台提醒。",
+      "consequences": [],
+      "selectedCapabilities": [
+        "social"
+      ],
+      "amendmentUsed": false
+    },
+    {
+      "ordinal": 2,
+      "action": "committed",
+      "narration": "notApplicable",
+      "calls": 2,
+      "selectedCapabilities": [
+        "passTime",
+        "observe"
+      ],
+      "filled": {
+        "kind": "passTime",
+        "durationMicros": "60000000"
+      },
+      "droppedAfterSelection": [
+        "observe"
+      ],
+      "amendmentUsed": false,
+      "publicResult": "none; the transcript ends on the player's own say"
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "coverage": "nothing-recorded-awaiting-due"
+    },
+    {
+      "afterAction": 2,
+      "next": "stop",
+      "coverage": "uncovered"
+    }
+  ],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "debts": 0,
+    "relationships": 0,
+    "activities": 1,
+    "activityKinds": [
+      "time-passage"
+    ],
+    "fictionNowMicrosAfter1": "0",
+    "fictionNowMicrosAfter2": "60000000",
+    "eventTypes": [
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "npcActionCommitted": 0,
+    "traceFacts": 0
+  },
+  "meter": {
+    "calls": 6,
+    "inputTokens": 117719,
+    "outputTokens": 1275,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 117719,
+    "outputBudgetCharge": 1275,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.364632,
+    "invocations": [
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 1,
+        "requestHash": "sha256:b2a49a0df65b6df9d9a2516d2b8a7198e8086e49a184baf4341f28756a169a6e",
+        "bindingHash": "sha256:56eb05855c8019819340a3ee90d6b6ff408c4b38148169421be3838dc04c7129",
+        "estimatedInputTokens": 24308,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:dfbfb8897eda9895202a056670a1ababbbc8d66ec0fd00d0c6c17137db0830ef",
+        "result": "success",
+        "durationMs": 888,
+        "responseHash": "sha256:075ae802461a03bd54703d95a05d0c35ddeb949b88ed65b6721e5977cb1e8d3d",
+        "inputTokens": 21399,
+        "outputTokens": 46
+      },
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 2,
+        "requestHash": "sha256:61e7c0bd8aff95f513bfc00cad23c0ec715ca7df9ac1c7b0e37c6368fd33e4c7",
+        "bindingHash": "sha256:56eb05855c8019819340a3ee90d6b6ff408c4b38148169421be3838dc04c7129",
+        "estimatedInputTokens": 28186,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:dfbfb8897eda9895202a056670a1ababbbc8d66ec0fd00d0c6c17137db0830ef",
+        "result": "success",
+        "durationMs": 4723,
+        "responseHash": "sha256:c744781edc862bc8fc9cbc37cc620482b64d6adabe6156e9e8b9d6f31119c672",
+        "inputTokens": 25696,
+        "outputTokens": 487
+      },
+      {
+        "eventName": "room.model.invocation.completed",
+        "modelTask": "narration",
+        "modelInvocationPurpose": "initialNarration",
+        "modelResult": "success",
+        "modelInputTokens": 2238,
+        "modelOutputTokens": 466,
+        "outcomeKind": "success",
+        "durationMs": 4374
+      },
+      {
+        "eventName": "room.model.invocation.completed",
+        "modelTask": "narration",
+        "modelInvocationPurpose": "narrationReview",
+        "modelResult": "success",
+        "modelInputTokens": 3357,
+        "modelOutputTokens": 168,
+        "outcomeKind": "success",
+        "durationMs": 1210
+      },
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 1,
+        "requestHash": "sha256:65c9467e3bf62345b6b2a1ed1ea212cabf4603f0bdb7f200601e2dc7c93ff4d5",
+        "bindingHash": "sha256:56eb05855c8019819340a3ee90d6b6ff408c4b38148169421be3838dc04c7129",
+        "estimatedInputTokens": 33206,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:632237390c0a8cee4192dfc606e03b17a1a1ddf839e0dbf36b2b0563b7680944",
+        "result": "success",
+        "durationMs": 1262,
+        "responseHash": "sha256:896c629f0c12853f813370e53258714427d906bc592184c1354bd6c25e2e8beb",
+        "inputTokens": 30614,
+        "outputTokens": 51
+      },
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 2,
+        "requestHash": "sha256:e47f366454e85702b29c842c85940c6067afb3d23bc68bad8576bc74d81c000b",
+        "bindingHash": "sha256:56eb05855c8019819340a3ee90d6b6ff408c4b38148169421be3838dc04c7129",
+        "estimatedInputTokens": 36357,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:632237390c0a8cee4192dfc606e03b17a1a1ddf839e0dbf36b2b0563b7680944",
+        "result": "success",
+        "durationMs": 1624,
+        "responseHash": "sha256:8883d51da50d97613fe66c8bef5edd85b76408fbd3280fa45ae8dddc89253ed5",
+        "inputTokens": 34415,
+        "outputTokens": 57
+      }
+    ]
+  },
+  "pricing": {
+    "window": "off-peak",
+    "chargedAt": "peak tariff, the conservative direction",
+    "unknownUsageCalls": 0,
+    "cny": 0.364632,
+    "budgetCny": 5
+  },
+  "replay": {
+    "exactState": true,
+    "stateVersion": "8",
+    "events": 8,
+    "pinnedProfilesMatch": true
+  },
+  "sourceEnd": {
+    "files": 321,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "game": "verifiedAbsent",
+    "capture": "verifiedAbsent",
+    "ports": "no listener on 4320/4321"
+  },
+  "notCovered": [
+    "third sentence never sent: the wait published no narration, so there was no public result to review",
+    "selection amendment still has zero real-model evidence; both ordinal-2 requests carried the tool and neither used it",
+    "parser v40 unparsed re-emit still never triggered"
+  ]
+}

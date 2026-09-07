@@ -3339,3 +3339,11 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 **场景适用性质疑（用户提出，本回执不裁定）**：回合制对话中玩家下一句到达时间不确定，半分钟落在回合粒度之下，此类约定无实际意义，几小时尺度才有。若成立，则 round70/74/75/77 共用场景的 gate 要求「形成 NPC 计划」对该时长本就不合理，三次 legalNoPlan 可能是 gate 错而非模型错；round75 的「承诺无机械支撑」与 round77 的「旁白称已到而时钟为 0」两条观察也只在阈值以上成立。需先裁定「多长的虚构时长必须成为机械对象」这条阈值规则，SPEC 0001 §11 只说虚构时间经过时 NPC 依条件行动，未给粒度。**在裁定前不再用该场景验证计划形成。** 甲/乙 的机制工作不因此作废：「一句意图需要多类型组合」与时长无关，几小时尺度同样需要 social+formActorPlan+passTime。
 
 收尾：services shutdown 两角色 verifiedAbsent、lsof 无监听；source-end 321 项 allEqual、分支与 HEAD 未变。回执 docs/agent/vnext-round77-{validation.md,live-evidence.json}，handoff §1/§5/§7 同步。未部署/push/远端 migration/退役；Goal active。
+
+## round78：第一次问到第二句（2026-09-07，源码 `8b67f32`）
+
+场景 gate 改动，产品代码未变。首句之后不再要求形成 NPC 计划——`formActorPlan` 的依据只从行动前 `state` 读，同束引不到本束刚创建的承诺，所以首句本就只能记承诺。gate 改成声明并双向核对世界的实际新增（promise / plan）。
+
+结果：首句 `consequences: []`（第三批连着），第二句 `passTime` 推进时钟 0 → 60000000 而到期零事件、零痕迹、零计划，且 `narration: notApplicable` 使玩家一无所见。`observe` 被选中后丢弃。6 次调用 ¥0.364632，replay `exactState`，321 项源码起止一致。
+
+时长阈值的怀疑到此排除：玩家显式等了一分钟，时钟诚实推进，承诺的动作依然不存在。详见 [round78 回执](agent/vnext-round78-validation.md)。
