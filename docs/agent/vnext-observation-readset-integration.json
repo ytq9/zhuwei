@@ -1,0 +1,66 @@
+{
+  "task": "observation read-set and sensory subject authority",
+  "workspace": "/tmp/zhuwei-observation-readset-rules-work",
+  "mainWorkspace": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "changes": [
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interactions.ts",
+      "baselineSha256": "4721548c3969390beb9ce89f8098606bc88f22532966f9fb78bdea9f56ff4ab9",
+      "newSha256": "62a82f419a2c961d2b4dabba38dcaa729325e4983c669c265e7629ea1d7a8655"
+    },
+    {
+      "path": "tests/kp-vnext-observation-readset.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "000bd702be7fcf91d26f2af77daaa51e582142efb81791a9c618ac760f514eb3"
+    }
+  ],
+  "patch": "/tmp/zhuwei-observation-readset-rules-work/observation-readset-rules.patch",
+  "patchSha256": "151637a3934a2ea9d5de39b283c73680d8c492e2714119b0de0e0b09d5bcc065",
+  "validation": [
+    {
+      "command": "npx tsx --test tests/kp-vnext-observation-readset.test.mjs",
+      "source": "baseline",
+      "exitCode": 1,
+      "passed": 3,
+      "failed": 2,
+      "failures": [
+        "missing read-set dependency committed",
+        "hidden secondary sensory subject requested randomness"
+      ]
+    },
+    {
+      "command": "npx tsx --test tests/kp-vnext-observation-readset.test.mjs",
+      "source": "new",
+      "exitCode": 0,
+      "passed": 5,
+      "failed": 0
+    },
+    {
+      "command": "npx tsx --test tests/kp-vnext-observe.test.mjs tests/kp-vnext-world-interaction-rules.test.mjs",
+      "source": "new",
+      "exitCode": 1,
+      "passed": 17,
+      "failed": 1,
+      "failures": [
+        "kp-vnext-observe module load: parallel snapshot proposal-context.ts lacks proposalObservationSubjectRefs export; context agent owns final consumer validation"
+      ]
+    },
+    {
+      "command": "git apply --check --whitespace=error /tmp/zhuwei-observation-readset-rules-work/observation-readset-rules.patch",
+      "source": "current main baseline",
+      "exitCode": 0
+    }
+  ],
+  "notes": [
+    "Only listed source/test changed; no writes to main tree.",
+    "No exported types or signatures changed; no typecheck required.",
+    "No API calls, deploy or push.",
+    "Parent owns execution log and integration.",
+    "Typed observations and existing scene interactions share existing dependency and visibility predicates; no second authority.",
+    "Parent confirmed context export is integrated in main; parent will run final main consumer group, no additional isolated rerun."
+  ],
+  "appliedAt": "2026-09-06T22:28:42.257974+00:00",
+  "backupDirectory": "/tmp/zhuwei-observation-readset-root-before",
+  "sourceManifestSha256": "f8b46130170390f3902cb6f97036bb8ea0b7f1a91130b90fb02c6cd4b41c5704",
+  "conflicts": 0
+}

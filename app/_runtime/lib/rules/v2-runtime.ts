@@ -1,3 +1,4 @@
+import { validateAuthoredDefinitionSource } from "./v2/authored-materialization";
 import {
   createRuntimeProfileRegistry,
   PRODUCTION_RUNTIME_PROFILE_REGISTRY,
@@ -74,7 +75,8 @@ import {
   isAtomicWorldInteractionStepsPlan,
   isWorldInteractionResolutionPlan,
 } from "./v2/world-interaction-model";
-import { isWorldInteractionContinuationStateBinding } from "./v2/world-interactions";
+import { isWorldInteractionContinuationStateBinding, stepVNextWorldInteraction, continueFrozenPlayerChoice } from "./v2/world-interactions";
+import { frozenChoiceForRoot, frozenChoicePublicOptions, selectedFrozenContinuation } from "./v2/frozen-player-choice";
 
 function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
   return left.profileId === right.profileId && left.profileHash === right.profileHash;
@@ -288,10 +290,49 @@ function stateWorldInteractionProfilesMatch(
       isWorldInteractionResolutionPlan(continuation.resolutionPlan)
       || isAtomicWorldInteractionStepsPlan(continuation.resolutionPlan));
   const hasArtifacts = semanticDefinitions.length > 0 || continuations.length > 0;
-  if (!worldInteractionProfileEnabled(profiles.extensions)) return !hasArtifacts;
-  return semanticDefinitions.every(isStoredSemanticDefinition)
+  if (!worldInteractionProfileEnabled(profiles.extensions)) return !hasArtifacts && state.atomicWorldInteractions === undefined
+    && state.frozenPlayerChoices === undefined;
+  if (state.atomicWorldInteractions === undefined) return false;
+  return stateFrozenChoicesMatch(profiles, state, false) && semanticDefinitions.every(isStoredSemanticDefinition)
     && continuations.every(([continuationId]) =>
       isWorldInteractionContinuationStateBinding(state, continuationId));
+}
+
+/** Replay and incremental projection may inspect a valid event prefix.
+ * Executable states additionally require the full pending/continuation seam. */
+function stateFrozenChoicesMatch(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, stable: boolean): boolean {
+  const roots = new Set<string>();
+  for (const choice of Object.values(state.frozenPlayerChoices ?? {})) {
+    const plan = choice.plan, root = plan.rootActionId;
+    if (roots.has(root) || plan.profilesHash !== canonicalSha256(profiles)
+      || state.entities[plan.actorCharacterId] === undefined) return false;
+    roots.add(root);
+    const pending = state.pendingInputs[plan.pendingInputId], receipt = state.receipts[root];
+    const atomic = state.atomicWorldInteractions?.[root];
+    const continuations = Object.values(state.internalContinuations).filter(value => value.rootActionId === root);
+    if (choice.selectedChoiceId === null) {
+      if (pending !== undefined && (pending.kind !== "playerChoice" || pending.rootActionId !== root
+        || pending.controllerCharacterId !== plan.actorCharacterId || pending.question !== plan.question
+        || canonicalSha256(pending.options?.choices ?? null) !== canonicalSha256(frozenChoicePublicOptions(plan)))) return false;
+      if (stable && (pending === undefined || receipt?.status !== "awaitingInput"
+        || atomic !== undefined || continuations.length > 0)) return false;
+      continue;
+    }
+    const selected = selectedFrozenContinuation(choice);
+    if (pending !== undefined || selected === undefined || selected.kind === "cancel") return false;
+    if (selected.kind === "adjudication") {
+      if (atomic !== undefined && canonicalSha256(atomic.plan) !== canonicalSha256(selected.plan)) return false;
+      if (continuations.some(value => value.resolutionPlan !== undefined
+        && canonicalSha256(value.resolutionPlan) !== canonicalSha256(selected.plan))) return false;
+    }
+    if (stable && (choice.inFlightInput !== null || selected.kind !== "adjudication"
+      || (atomic === undefined ? receipt?.status !== "awaitingRandomness" || continuations.length !== 1
+        || canonicalSha256(continuations[0].resolutionPlan ?? null) !== canonicalSha256(selected.plan)
+        : atomic.profilesHash !== canonicalSha256(profiles)
+          || receipt?.status !== (atomic.waiting.kind === "input" ? "awaitingInput" : "awaitingRandomness")))) return false;
+  }
+  return !stable || Object.values(state.atomicWorldInteractions ?? {}).every(atomic =>
+    frozenChoiceForRoot(atomic.sourceState, atomic.rootActionId) === undefined || roots.has(atomic.rootActionId));
 }
 
 function stateItemSystemMatches(
@@ -526,6 +567,13 @@ function replayWithRegistry(
     }
   }
 
+  // Reconstruct each frozen execution segment with the same Rules executor.
+  // The journal carries external inputs, never inferred mechanical answers.
+  // A legitimate cursor may end inside the expected sequence; if more events
+  // follow they must match globally, including across root boundaries.
+  const managedFrozenRoots = new Set(Object.values(state.frozenPlayerChoices ?? {}).map(record => record.plan.rootActionId));
+  let expectedFrozenEvents: EventEnvelope[] = [];
+  let expectedFrozenIndex = 0;
   for (const eventValue of eventsValue) {
     if (!isAuthoritativeWorldState(state)) {
       return rejected("invalidWorldState", "Replay state left the authoritative-v2 schema.");
@@ -584,6 +632,34 @@ function replayWithRegistry(
       );
     }
     try {
+      if (expectedFrozenIndex === expectedFrozenEvents.length) {
+        expectedFrozenEvents = [];
+        expectedFrozenIndex = 0;
+        const choice = frozenChoiceForRoot(state, event.rootActionId);
+        let derived: StepResult | undefined;
+        if (choice?.selectedChoiceId === null && event.eventType === "PendingInputAnswered") {
+          const payload = event.payload as import("./v2/model").EventPayloadByType["PendingInputAnswered"];
+          derived = stepVNextWorldInteraction(event.profiles, state, { kind: "answerFrozenPlayerChoice",
+            rootActionId: event.rootActionId, controllerCharacterId: payload.actorCharacterId,
+            pendingInputId: payload.pendingInputId, choiceId: payload.answer.choiceId });
+        } else if (choice !== undefined && event.eventType === "FrozenPlayerChoiceInputRecorded") {
+          const payload = event.payload as import("./v2/model").EventPayloadByType["FrozenPlayerChoiceInputRecorded"];
+          derived = continueFrozenPlayerChoice(event.profiles, state, event.rootActionId, payload.input);
+        } else if (managedFrozenRoots.has(event.rootActionId)
+          && !(choice?.selectedChoiceId === null && event.eventType === "PlayerChoiceRequested")) {
+          throw new TypeError("frozen-choice:execution-input-required");
+        }
+        if (derived !== undefined) {
+          if (derived.kind !== "committed" && derived.kind !== "awaitingInput" && derived.kind !== "awaitingRandomness")
+            throw new TypeError("frozen-choice:recorded-input-cannot-execute");
+          expectedFrozenEvents = derived.events;
+          if (expectedFrozenEvents.length === 0) throw new TypeError("frozen-choice:empty-execution-segment");
+        }
+      }
+      if (expectedFrozenIndex < expectedFrozenEvents.length
+        && canonicalSha256(event) !== canonicalSha256(expectedFrozenEvents[expectedFrozenIndex++]))
+        throw new TypeError("frozen-choice:execution-segment-changed");
+      if (event.eventType === "FrozenPlayerChoicePrepared") managedFrozenRoots.add(event.rootActionId);
       const next = foldEvent(state, event);
       if (!isAuthoritativeWorldState(next)) {
         return rejected(
@@ -792,10 +868,23 @@ function stepWithRegistry(
     return rejected("invalidRulesInput", "Rules step input must be a structured proposal.");
   }
   if (containsForbidden2024Semantics(input)) {
+    const authoredInputs = input.kind === "materializeDefinition" ? [{ input, path: "/plan" }]
+      : input.kind === "applyAtomicWorldInteractionSteps" && Array.isArray(input.steps)
+        ? input.steps.slice(0, 16).flatMap((step, index) => isRecord(step) && isRecord(step.rulesInput)
+          && step.rulesInput.kind === "materializeDefinition"
+          ? [{ input: step.rulesInput, path: `/steps/${index}/rulesInput/plan` }] : []) : [];
+    const sourceDiagnostics = authoredInputs.flatMap(({ input: child, path }) => {
+      if (!isRecord(child.plan)) return [];
+      const validation = validateAuthoredDefinitionSource(child.plan.source);
+      return validation.ok ? [] : validation.diagnostics.map(diagnostic => ({
+        code: "unsupportedRulesBasis", message: diagnostic.reason, path: `${path}${diagnostic.path}`,
+        source: "SPEC 0013" as const, visibility: "public" as const,
+      }));
+    });
     return rejected(
       "unsupportedRulesBasis",
       "Only SRD 5.1 / D&D 5e 2014 mechanics are accepted by this runtime.",
-      [{
+      sourceDiagnostics.length > 0 ? sourceDiagnostics : [{
         code: "unsupportedRulesBasis",
         message: "dnd2024, 5.5e, latest, and Weapon Mastery semantics are outside this ruleset.",
         path: "input",
@@ -859,6 +948,8 @@ function stepWithRegistry(
       "State semantic definitions or world interactions do not match the room manifest extensions.",
     );
   }
+  if (!stateFrozenChoicesMatch(resolution.profiles, state, true)) return rejected("profileIntegrityMismatch",
+    "The frozen choice is an incomplete or inconsistent execution state.");
   return stepAuthoritativeWorld(resolution.profiles, state, input);
 }
 

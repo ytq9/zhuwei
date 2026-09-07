@@ -1,0 +1,121 @@
+{
+  "integratedAt": "2026-09-06T23:55:29.500353+00:00",
+  "sourceHead": "258caee404e0814405eb497653ee9f00d647b773",
+  "branch": "cloudflare",
+  "manifest": "/tmp/zhuwei-sustained-casting-work/sustained-casting-final-manifest.json",
+  "manifestSha256": "40e57a74fce9422740b0abfc1c182a62120d4779dc9872a4b3f2ede9f0c058b2",
+  "patch": "/tmp/zhuwei-sustained-casting-work/sustained-casting-final.patch",
+  "patchSha256": "720c0995b3bec6be1980e8a2f28877c731a22af793360251dd611bd6d010cf1f",
+  "backup": "/tmp/zhuwei-sustained-casting-root-before",
+  "files": [
+    {
+      "path": "app/_runtime/lib/room/authority-store.ts",
+      "baselineSha256": "4784512361f0d75742c7a316b80966773d632e8bee88e931022c1344d31a1643",
+      "newSha256": "8a94bf64e1ae4bd1de29d77e6bd3443f6dfc301478d7544940242bd77bf3b122"
+    },
+    {
+      "path": "app/_runtime/lib/room/durable-object.ts",
+      "baselineSha256": "bfb3f8486a4736eb084fd83b05424c9093456ac0456b4131bcd8e263cce099ad",
+      "newSha256": "aff694c0f1603f0d2073537a0259cc04d0831ac3cb202bd57aca58eeab441280"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/actions.ts",
+      "baselineSha256": "59b428adedc18955100d3ac95ad6965bb5315bdf509af4d84b12a7a93517c82c",
+      "newSha256": "dd1ae487cde7b6de060f8dec4759087588a8d4759a223a4de195cdf93d661867"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-actions.ts",
+      "baselineSha256": "989387fac78aaf55b1a55010e85bae8e195a7c3e545d19f8573f1df2a86de44d",
+      "newSha256": "059f9bc14ad754ccf819fe6bae6217533951138686dc9f7c1d077b837d46cd9b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-events.ts",
+      "baselineSha256": "62120aabe473f7aaa49c0b656f84ab40a2e5a376a35061bac968709acae7e867",
+      "newSha256": "e3d56e8fbd54c3f88f88a1b4f79f3239cd48bb7059e9af733e25b3db9139a605"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/character-abilities.ts",
+      "baselineSha256": "5995549a7bde442ad3eff8774c25a335631ae6059852d814796972beba4ab363",
+      "newSha256": "80c75a2a4e8da1f3efca631a15fc251813b73153c3f99981f4240d9667503cad"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/claims.ts",
+      "baselineSha256": "558efe87f03cc09bd7cc906b955c31147e6cbf1bac3498476b589af9adc4e110",
+      "newSha256": "f3518bbba87567f2bee667671e70ed643c7a332f4fd71b24840477c494d16bcd"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-actions.ts",
+      "baselineSha256": "f983d601660a6889138523ef1afccc2d8cb6bf789e2fe64177316b23cefb4b62",
+      "newSha256": "a3bf6ac65f8d39999e1c9cab12c32891ba50a35fecb81cd2f91d17b768d2d5cd"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/due-activities.ts",
+      "baselineSha256": "159144ce3fafb328b3611f8f1c1884dc23a16dd7409b449deddb571f2d3ec8d6",
+      "newSha256": "b2ed31a42afcfbfef628563106890b270ffeb379b6add4eca20587220d7f2d9d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/events.ts",
+      "baselineSha256": "3834890d415f91746a92fc859f16ac00bf8cd1dc929a36d7fccda6dbd4409fa6",
+      "newSha256": "e7c4c676ac106f69fc49d9ffa2dd8fef271e8c93f89ab8c2cc06855a3d7f79cd"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/model.ts",
+      "baselineSha256": "79a05c76f738f4d072e69ef6fbee60210f27ed5dedb1ce8d19043ac82042e0c8",
+      "newSha256": "2b635c9c42de9913a130060fdfbc8313877b45a567ca9933aa46d8c0df3aec59"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/time-passage-binding.ts",
+      "baselineSha256": "cb1ca29a73e0e2c4ad5ea3ad4d2b052a2ba35c89b110262374ed187766a4d5d6",
+      "newSha256": "7f8d6741b3467c4b752865246b1a183a849872e83443ece5cc1fec1d27f56754"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/timeline.ts",
+      "baselineSha256": "5d08b1a786ab000df8b676b681ceec62228d4530f085e744a3df826b512a50d2",
+      "newSha256": "c29e94b98e464cb714ea14f0a308581916d7f78aa275a687221b40f71023f0f5"
+    },
+    {
+      "path": "tests/kp-vnext-sustained-casting-due.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "e0ddfa02bedbde4383fc8e3602d52c0cf34402a113839c1257799ac0ddc907b3"
+    },
+    {
+      "path": "tests/kp-vnext-sustained-casting-mechanics.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "605f9d6d4290f62189d273b2274150773bef5f46e8d23405b7247c432cbc6647"
+    },
+    {
+      "path": "tests/kp-vnext-sustained-casting-room.test.ts",
+      "baselineSha256": null,
+      "newSha256": "941be4003e3262c0cea85f4641214c9a6e0ed0393bfb2c3015ba4d928ce8e82c"
+    },
+    {
+      "path": "tests/kp-vnext-time-passage-rules.test.mjs",
+      "baselineSha256": "43604c22095bf5c00cf62a9df343b11d6e649793e0e7c76c235fb788216e27c5",
+      "newSha256": "8b6e42d4fff394c0598484bab8f12ffb43287114e41a6f3d84815e9a0ee4b52f"
+    }
+  ],
+  "conflicts": 0,
+  "apiCalls": 0,
+  "rootValidation": {
+    "node": {
+      "passed": 55,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-terminal-casting-root-node.log"
+    },
+    "castingAndTimeRoom": {
+      "passed": 11,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-casting-root-room.log"
+    },
+    "selectionRoom": {
+      "passed": 6,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-terminal-selection-root-room.log"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-terminal-casting-root-types.log"
+    }
+  },
+  "independentReadOnlyReview": "No P1/P2 blockers in sustained casting target/owner/pending/randomness boundaries."
+}

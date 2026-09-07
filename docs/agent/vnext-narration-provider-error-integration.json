@@ -1,0 +1,50 @@
+{
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/authoritative.ts",
+      "baselineSha256": "1fbe8b27e9a3d6f3047ad0571fc9553f4ecea5bcbd92714245b5a759f6a1ebc8",
+      "newSha256": "70c381e627964d19f69ba4f6d7d7c43f112b29b3634b429cb37f902093be3b00",
+      "mainStillBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/action.ts",
+      "baselineSha256": "b22aa42659be76e5a029c8e6e0b497ddcd29fea79f0ef63f490e6c17bdfa0aa6",
+      "newSha256": "a1017865752551559e6675f04a9a1e444b41a0e62ace0a028cc9052dc088c596",
+      "mainStillBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/telemetry.ts",
+      "baselineSha256": "584ef0adab590c47c944b566d1592fca3364a6be8e25b5b8064f948f4ef77bfc",
+      "newSha256": "542e719d134332552dc1ad41e6cf82cb64eb3226fc9dbb2789f0254c1f0f6342",
+      "mainStillBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/table/authoritative.ts",
+      "baselineSha256": "ea8e7e9ac8352e172a5d2ea4a725ef74f9ebc3287a5f10075b3a82824e96eee8",
+      "newSha256": "922daeeb6eefb3f497b9fcf814552e417c963fc637f7f247b329b8ce4f8c57ff",
+      "mainStillBaseline": true
+    },
+    {
+      "path": "tests/table-server-outcome-v2.test.mjs",
+      "baselineSha256": "ca20e7482b30de98d37628989414ea96c072e00497bdc9b90dc59196f7c93680",
+      "newSha256": "8db50923073ca6cd24054293dac9c8923d3b666f34acaee874f62fa4f46aa8df",
+      "mainStillBaseline": true
+    },
+    {
+      "path": "tests/structured-telemetry-v3.test.mjs",
+      "baselineSha256": "7774a17e186714e43eb687f199e1fc2465b991ce5b13724572ef0e0979ef8778",
+      "newSha256": "08846acca0b21d6c4a037ba37b0a5f9d8719add924a5336f760400ee4a6b85b5",
+      "mainStillBaseline": true
+    },
+    {
+      "path": "tests/narration-provider-failure.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "5d462881fe6b5434e445a423eece2935c72e38edae2cc8e685a98a85bc6dacfc",
+      "mainStillBaseline": true
+    }
+  ],
+  "integratedAt": "2026-09-06T20:37:06.612838+00:00",
+  "backup": "/tmp/zhuwei-narration-provider-error-root-before",
+  "delivery": "/tmp/zhuwei-narration-provider-error-work",
+  "conflicts": 0
+}

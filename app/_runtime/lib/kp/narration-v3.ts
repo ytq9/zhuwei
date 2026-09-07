@@ -6,7 +6,6 @@ import {
 } from "./authoritative-helpers";
 import { NARRATION_TOOL_NAME } from "./authoritative-policy";
 import type {
-  FrozenClaimsNarrationRequest,
   ObserverProjectionNarrationRequest,
 } from "./authoritative-types";
 
@@ -49,18 +48,6 @@ const BODY_ONLY_NARRATION_GROUNDING_REPLACEMENT_SYSTEM = `你是烛帷 KP。上�
 这次只依据当前 Receipt、renderableClaims、pressure 与 opportunities，重新写一份完整回应。只有 renderableClaims 能支持本次结果、新的世界事实与 NPC 反应。如果其中有 checkResolved.result、contestResolved.result、privateInferenceFormed 或新获得的 knowledge，直接、具体地呈现该结果，不要重建场景或重新回答玩家原问题。
 
 清楚呈现已有依据的结果，把决定权交还玩家。没有明确依据的感官、空间、姿态、目光、声音、气味、陈设、NPC 台词或判断一律省略；不得用固定伪成功句掩盖缺失内容。
-
-只调用 submit_current_narration 一次，并且参数只能是 {"body":"非空正文"}。不得输出任何元数据。`;
-
-const FROZEN_CLAIMS_NARRATION_SYSTEM = `你是烛帷 KP。你只叙述当前 Receipt 已提交且该观察者可见的结果。
-输入严格只有 Receipt 与 renderableClaims；renderableClaims 是本次所有新事实、机械结果、感官证据、压力与机会的唯一依据。不得补写其中没有的动作、结果、世界事实、NPC 反应、感官或空间细节，也不得替玩家决定思想、情绪、台词或下一步。
-
-每项 Claim 的 narrationFacts 是已冻结的观察者安全原子事实。对所有实质 Claim，正文必须逐项使用全部 narrationFacts，保留其原词；不得只写能力名、来源或其中一项而省略剩余效果。sourceClaim 与 characterInference 已在 narrationFacts 中绑定该 Viewer 可公开的来源称谓，必须原样保留，不得替换为“传闻”、“有人”或无来源事实。Claims 已经按观察者投影，不要解释协议、哈希、引用或内部字段。只有 actionCommitted 而没有其他结果时，只确认其 narrationFacts，不宣称目标已经实现。末句若交还决定权，使用“你接下来怎么做？”这类单纯提问。
-
-只调用 submit_current_narration 一次，并且参数只能是 {"body":"非空正文"}。不得输出任何元数据。`;
-
-const FROZEN_CLAIMS_GROUNDING_REPLACEMENT_SYSTEM = `你是烛帷 KP。上一份正文因超出冻结 Claims 的事实依据而被丢弃；不要复述或修补它。
-只根据当前 Receipt 与 renderableClaims 重写完整回应。对所有实质 Claim，每个事实分句直接复用其全部 narrationFacts 的原词；不得做文学性同义改写，也不得加入 Claims 未明示的动作、结果、世界事实、NPC 反应、感官、空间、思想、情绪、台词或下一步。sourceClaim 与 characterInference 的 Viewer-safe 来源称谓已在 narrationFacts 中冻结，不得泛化或替换。末句如需交还决定权，只写“你接下来怎么做？”。
 
 只调用 submit_current_narration 一次，并且参数只能是 {"body":"非空正文"}。不得输出任何元数据。`;
 
@@ -519,163 +506,6 @@ export function bodyOnlyNarrationGroundingReplacementModelInput(
     temperature: 0,
     max_completion_tokens: 800,
   };
-}
-
-/** Reduces the vNext request to its frozen Viewer facts. Unlike the legacy
- * observer path there is no ambient projection or transcript to consult. */
-export function frozenClaimsNarrationContext(
-  request: FrozenClaimsNarrationRequest,
-): JsonRecord {
-  return {
-    receipt: safeReceipt(request.receipt),
-    viewerKey: request.viewerKey,
-    renderableClaims: structuredClone(request.renderableClaims) as unknown as JsonRecord,
-  };
-}
-
-export function frozenClaimsNarrationModelInput(
-  request: FrozenClaimsNarrationRequest,
-): Record<string, unknown> {
-  return {
-    messages: [
-      { role: "system", content: FROZEN_CLAIMS_NARRATION_SYSTEM },
-      { role: "user", content: canonicalJson(frozenClaimsNarrationContext(request)) },
-    ],
-    tools: [BODY_ONLY_NARRATION_TOOL],
-    tool_choice: "required",
-    parallel_tool_calls: false,
-    temperature: 0,
-    max_completion_tokens: 800,
-  };
-}
-
-export function frozenClaimsNarrationGroundingReplacementModelInput(
-  request: FrozenClaimsNarrationRequest,
-): Record<string, unknown> {
-  return {
-    messages: [
-      { role: "system", content: FROZEN_CLAIMS_GROUNDING_REPLACEMENT_SYSTEM },
-      { role: "user", content: canonicalJson(frozenClaimsNarrationContext(request)) },
-    ],
-    tools: [BODY_ONLY_NARRATION_TOOL],
-    tool_choice: "required",
-    parallel_tool_calls: false,
-    temperature: 0,
-    max_completion_tokens: 800,
-  };
-}
-
-export function validateFrozenClaimsNarrationOutput(
-  value: unknown,
-  request: FrozenClaimsNarrationRequest,
-): { body: string } {
-  const result = validateBodyOnlyNarration(value, {
-    renderableClaims: request.renderableClaims as unknown as JsonRecord,
-  });
-  assertFrozenClaimsNarrationGrounded(result.body, request);
-  return result;
-}
-
-type FrozenNarrationFact = Readonly<{
-  factRef: string;
-  kind: string;
-  text: string;
-}>;
-
-const CLAIM_SENTENCE_BOUNDARY = /[。！？!?；;\n]+/u;
-const CLAIM_COMPOUND_BOUNDARY = /(?:[，,、]+|并且|而且|与此同时|随后|然后|但是|不过|却|并|且|同时|又|从而|所以|因此|因而|导致|迫使|令|让)/u;
-const INTERNAL_REFERENCE_ASSERTION = /[a-z][a-z0-9-]{1,63}:[a-z0-9][a-z0-9._:/-]*/iu;
-const PLAYER_AGENCY_ASSERTION = /你(?:已经|正在|随后|然后|立刻|马上|最终|必须|不得|应该|将要|会)?(?:感到|觉得|认为|相信|怀疑|意识到|想起|决定|选择|打算|准备|想要|愿意|害怕|恐惧|愤怒|悲伤|高兴|说|回答|承诺|发誓|转身|冲|跑|逃|攻击|挥动|进入|离开|追赶|躲藏)/u;
-
-function frozenClaimFacts(claim: unknown): readonly FrozenNarrationFact[] {
-  if (!isRecord(claim)
-    || typeof claim.claimRef !== "string"
-    || typeof claim.kind !== "string"
-    || !Array.isArray(claim.narrationFacts)) return [];
-  const claimRef = claim.claimRef;
-  const kind = claim.kind;
-  const facts = claim.narrationFacts.filter((fact): fact is string =>
-    typeof fact === "string" && normalizeGroundingText(fact).length >= 1);
-  if (facts.length !== claim.narrationFacts.length || new Set(facts).size !== facts.length) {
-    return [];
-  }
-  return facts.map((text, index) => ({
-    factRef: `${claimRef}\u001f${index}`,
-    kind,
-    text,
-  }));
-}
-
-function normalizeGroundingText(value: string): string {
-  return (value.normalize("NFKC").toLowerCase().match(/[\p{L}\p{M}\p{N}\p{S}]+/gu) ?? [])
-    .join("");
-}
-
-function narrationFactCore(value: string): string {
-  let text = value.trim().replace(/^[“”"'「」『』（）()\s]+|[“”"'「」『』（）()\s]+$/gu, "");
-  text = text.replace(/^(?:结果|事实|情况)(?:是|为)[：:\s]*/u, "");
-  return normalizeGroundingText(text);
-}
-
-function withoutTerminalAspectParticle(value: string): string {
-  return value.replace(/[了着呢]$/u, "");
-}
-
-function claimTextSupportsClause(clause: string, evidenceText: string): boolean {
-  const body = narrationFactCore(clause);
-  const evidence = normalizeGroundingText(evidenceText);
-  if (body.length < 1 || evidence.length < 1) return false;
-  // vNext narration is intentionally extractive: an accepted fact must be a
-  // complete Claim payload (apart from a harmless Chinese aspect particle),
-  // never merely overlap it. Coverage scores allow a short invented suffix to
-  // hitchhike on a longer true sentence.
-  return body === evidence
-    || withoutTerminalAspectParticle(body) === withoutTerminalAspectParticle(evidence);
-}
-
-function isDecisionReturnClause(clause: string): boolean {
-  const normalized = normalizeGroundingText(clause);
-  return /^(?:那么)?(?:你)?(?:(?:现在|接下来|下一步))?(?:打算|准备|想要|想|要|会|选择)?(?:怎么做|做什么|如何行动|采取什么行动|怎么办)$/u.test(normalized)
-    || /^(?:请)?(?:你)?决定(?:你的)?下一步(?:行动)?$/u.test(normalized)
-    || /^(?:你的)?下一步是什么$/u.test(normalized);
-}
-
-function assertFrozenClaimsNarrationGrounded(
-  body: string,
-  request: FrozenClaimsNarrationRequest,
-): void {
-  if (INTERNAL_REFERENCE_ASSERTION.test(body)) throw new NarrationGroundingValidationError();
-  const factsByClaim = request.renderableClaims.claims.map(frozenClaimFacts);
-  if (factsByClaim.some((facts) => facts.length === 0)) {
-    throw new NarrationGroundingValidationError();
-  }
-  const evidence = factsByClaim.flat();
-  const clauses = body.split(CLAIM_SENTENCE_BOUNDARY).map((clause) => clause.trim()).filter(Boolean);
-  if (clauses.length === 0) throw new NarrationGroundingValidationError();
-  const renderedFactRefs = new Set<string>();
-
-  const validateClause = (clause: string, maySplit: boolean): void => {
-    if (isDecisionReturnClause(clause)) return;
-    if (PLAYER_AGENCY_ASSERTION.test(clause)) throw new NarrationGroundingValidationError();
-    const matching = evidence.filter((entry) => claimTextSupportsClause(clause, entry.text));
-    if (matching.length === 0) {
-      const parts = maySplit
-        ? clause.split(CLAIM_COMPOUND_BOUNDARY).map((part) => part.trim()).filter(Boolean)
-        : [];
-      if (parts.length < 2) throw new NarrationGroundingValidationError();
-      for (const part of parts) validateClause(part, false);
-      return;
-    }
-    for (const entry of matching) renderedFactRefs.add(entry.factRef);
-  };
-
-  for (const clause of clauses) validateClause(clause, true);
-
-  const substantiveFacts = evidence.filter(({ kind }) => kind !== "actionCommitted");
-  const requiredFacts = substantiveFacts.length > 0 ? substantiveFacts : evidence;
-  if (requiredFacts.some(({ factRef }) => !renderedFactRefs.has(factRef))) {
-    throw new NarrationGroundingValidationError();
-  }
 }
 
 export function validateBodyOnlyNarrationOutput(

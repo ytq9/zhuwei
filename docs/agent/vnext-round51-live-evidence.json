@@ -1,0 +1,78 @@
+{
+  "batch": 51,
+  "attempts": 1,
+  "usage": {
+    "prompt_tokens": 2314,
+    "completion_tokens": 245,
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 2314
+  },
+  "cny": "0.0045735",
+  "notAttempted": [
+    "r49-exact-body",
+    "new-childhood-no-old-citation",
+    "objective-childhood-conflict",
+    "attributed-npc-lie",
+    "npc-lie-as-truth",
+    "new-environment-paraphrase",
+    "environment-contradiction",
+    "mechanics-complete",
+    "mechanics-changed",
+    "knowledge-upgrade",
+    "private-motive-invented",
+    "player-agency",
+    "r49-repeat-fixed"
+  ],
+  "sourceHashesUnchangedDuringBatch": true,
+  "sourceHashes": {
+    "app/_runtime/lib/kp/narration-vnext.ts": "d435b81b842d2962ab6f3ad1e4ae5bcbb090f52f98cd5cb2b5c0243be210051f",
+    "app/_runtime/lib/kp/authoritative.ts": "1aa63f69281b35d03f73606a79dbda2f26658c3c8c9e3efc1e126d243bf4d2b4",
+    "app/_runtime/lib/kp/deepseek.ts": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8",
+    "app/_runtime/lib/kp/narration-context.ts": "91c4d29d416f50509042c264ca937b75bc57823c79f1533c6ec4e4d011f8f16e",
+    "app/_runtime/lib/rules/v2/claims.ts": "3c340ce08c206d3bfc3ad96b5eb2894d083f1241f4dd905bbe257437a4a13477"
+  },
+  "results": [
+    {
+      "id": "cost-omitted",
+      "verdict": "rejected",
+      "expected": "rejected",
+      "matched": false,
+      "reason": "ModelOutputValidationError",
+      "diagnostics": null,
+      "durationMs": 1451,
+      "usage": {
+        "prompt_tokens": 2314,
+        "completion_tokens": 245,
+        "total_tokens": 2559,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2314
+      },
+      "cny": 0.0045735
+    }
+  ],
+  "finalDecoderReplay": {
+    "finalRequestDeepEqual": true,
+    "originalResponseUnchanged": true,
+    "verdict": "rejected",
+    "reason": "missingClaimFacts",
+    "diagnostics": [
+      {
+        "code": "RESULT_OMITTED",
+        "check": "results",
+        "quote": "",
+        "occurrence": 0,
+        "start": null,
+        "constraintRef": "/facts/0",
+        "reason": "正文只表述了生命值恢复，未提及药剂的使用和数量变化（2变为1），遗漏了m0组的物品消耗结果。"
+      }
+    ],
+    "reportConflicts": [
+      "checks.results",
+      "resultChecks.m0"
+    ],
+    "apiCalls": 0
+  }
+}

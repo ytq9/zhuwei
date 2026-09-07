@@ -72,7 +72,7 @@ test("narration recovery explains cause separately from the retry action", () =>
   );
   assert.equal(
     publicNarrationFailureReason("NARRATION_BODY_INVALID"),
-    "KP 服务配置或返回内容未通过有效性检查",
+    "KP 返回的回复内容未通过格式检查",
   );
   assert.equal(
     publicNarrationFailureReason("NARRATION_GROUNDING_REJECTED"),
@@ -344,7 +344,7 @@ test("uncommitted failures advertise retry only when an identical resubmission c
   assert.equal(unclassified.retryable, true);
 });
 
-test("V3 error DTOs expose all and only the ten stable public pipeline codes", async () => {
+test("V3 error DTOs expose all and only the stable public pipeline codes", async () => {
   const mapOutcome = await tableOutcomeMapper();
   const proposalKinds = {
     PROPOSAL_PROVIDER_TIMEOUT: "retryableFailure",
@@ -356,8 +356,10 @@ test("V3 error DTOs expose all and only the ten stable public pipeline codes", a
   };
   const narrationStates = {
     NARRATION_PROVIDER_TIMEOUT: "retryableFailure",
+    NARRATION_PROVIDER_REJECTED: "rejected",
     NARRATION_BODY_INVALID: "rejected",
     NARRATION_GROUNDING_REJECTED: "rejected",
+    NARRATION_CONTEXT_BUDGET_EXCEEDED: "retryableFailure",
     NARRATION_PUBLICATION_FAILED: "retryableFailure",
   };
 
@@ -415,6 +417,13 @@ test("viewer-local narration retry preserves its exact safe failure code", async
     code: "NARRATION_GROUNDING_REJECTED",
     error: "行动保持已提交；KP 回复与已经结算的事实不一致。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
   });
+  assert.deepEqual(mapRecovery({
+    kind: "committed", action: "committed", narration: "rejected",
+    narrationFailureCode: "NARRATION_PROVIDER_REJECTED",
+  }), {
+    action: "committed", narration: "rejected", code: "NARRATION_PROVIDER_REJECTED",
+    error: "行动保持已提交；KP 服务拒绝了生成或审核请求，回复检查尚未完成。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
+  });
   const privateFailure = mapRecovery({
     kind: "committed",
     action: "committed",
@@ -423,4 +432,36 @@ test("viewer-local narration retry preserves its exact safe failure code", async
   });
   assert.equal("code" in privateFailure, false);
   assert.equal(JSON.stringify(privateFailure).includes("PRIVATE_PROVIDER_DETAIL"), false);
+});
+
+test("narration capacity failure has a stable player explanation", () => {
+  assert.equal(publicV3FailureCode("NARRATION_CONTEXT_BUDGET_EXCEEDED"), "NARRATION_CONTEXT_BUDGET_EXCEEDED");
+  assert.match(publicNarrationFailureReason("NARRATION_CONTEXT_BUDGET_EXCEEDED"), /处理容量.*行动结果已保留/u);
+});
+
+
+test("a failed repaired proposal never exposes its private diagnostics or draft to the table", async () => {
+  const mapOutcome = await tableOutcomeMapper();
+  const mapped = mapOutcome("submission:private-repair", {
+    kind: "needsKp", code: "PROPOSAL_REPAIR_EXHAUSTED", action: "notCommitted", narration: "notApplicable",
+    proposal: { issues: ["private-validation-reason"], diagnostics: [{ code: "REFERENCE_UNAVAILABLE",
+      actual: "PRIVATE-NPC-REFERENCE", expected: { refs: ["PRIVATE-CANDIDATE"] },
+      repair: { allowed: false, reason: "private-repair-reason" } }], draft: { secret: "PRIVATE-DRAFT" },
+      authorityDiagnostics: [{ code: "costUnavailable", publicPath: "PRIVATE-AUTHORITY-REASON" }] },
+  }, true);
+  assert.equal(mapped.action, "notCommitted");
+  assert.equal(mapped.code, "PROPOSAL_REPAIR_EXHAUSTED");
+  assert.doesNotMatch(JSON.stringify(mapped), /PRIVATE|private-validation|diagnostics|proposal|draft/);
+});
+
+test("a rejected proposal keeps lowering details private at the actual table boundary", async () => {
+  const mapOutcome = await tableOutcomeMapper();
+  const mapped = mapOutcome("submission:private-lowering", {
+    kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", explanation: "The proposal could not be verified.",
+    action: "notCommitted", narration: "notApplicable",
+    proposal: { issues: ["PRIVATE-LOWERING-REASON"], diagnostics: [{ code: "REFERENCE_UNAVAILABLE",
+      expected: { refs: ["PRIVATE-NPC-CANDIDATE"] } }] },
+  }, true);
+  assert.equal(mapped.code, "PROPOSAL_REFERENCE_INVALID");
+  assert.doesNotMatch(JSON.stringify(mapped), /PRIVATE|"diagnostics"|"proposal"/);
 });

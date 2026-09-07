@@ -1,0 +1,59 @@
+{
+  "kind": "transcribed-tool-execution-receipt",
+  "rawStdoutWasRedirected": false,
+  "note": "Commands were run without filesystem stdout redirection. Counts, exit codes and excerpts below are transcribed from actual tool outputs, not a replacement claim of saved raw logs.",
+  "changedFiles": {
+    "app/_runtime/lib/kp/vnext/proposal-provider.ts": "d04fa2ecb3ad8805fa2de4db723c33eacebcef7b1cd89ba696948ef9bbfb43bc",
+    "tests/kp-vnext-producer-wire.test.mjs": "4ba7832400adbc30f6870040615ab0cdabc88669e5cde9122317fc90379d0e38"
+  },
+  "runs": [
+    {
+      "command": "./node_modules/.bin/tsx --test --test-name-pattern='exact producer wire confirmations' tests/kp-vnext-producer-wire.test.mjs",
+      "phase": "red",
+      "exitCode": 1,
+      "passed": 0,
+      "failed": 1,
+      "toolChunkId": "8435c0",
+      "failureConstraint": "correction:path-not-allowed"
+    },
+    {
+      "command": "./node_modules/.bin/tsx --test --test-name-pattern='exact producer wire confirmations' tests/kp-vnext-producer-wire.test.mjs",
+      "phase": "green",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "toolChunkId": "cafbed"
+    },
+    {
+      "command": "./node_modules/.bin/tsx --test tests/kp-vnext-producer-wire.test.mjs tests/kp-vnext-proposal-schema.test.mjs tests/kp-vnext-diagnostic-repair-provider.test.mjs",
+      "phase": "direct-consumers",
+      "exitCode": 0,
+      "passed": 71,
+      "failed": 0,
+      "toolChunkId": "8b9e10"
+    },
+    {
+      "command": "./node_modules/.bin/tsx --test tests/kp-vnext-producer-wire.test.mjs tests/kp-vnext-diagnostic-repair-provider.test.mjs tests/kp-vnext-proposal-schema.test.mjs tests/kp-vnext-json-syntax-diagnostics.test.mjs tests/kp-vnext-schema-retrieval.test.mjs",
+      "phase": "final-requested-five-targets",
+      "exitCode": 0,
+      "passed": 89,
+      "failed": 0,
+      "toolChunkId": "c5e533",
+      "note": "Dispatched after root requested all five targets, before its subsequent instruction to run only the two additional files was delivered."
+    },
+    {
+      "command": "git diff --check -- app/_runtime/lib/kp/vnext/proposal-provider.ts tests/kp-vnext-producer-wire.test.mjs",
+      "exitCode": 0,
+      "toolChunkId": "1bf7b8"
+    }
+  ],
+  "evidence": {
+    "strictDialect": "kp-vnext-proposal-schema validates CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA through deepSeekStrictToolSchemaIssues",
+    "advertisedCorrectionValues": "producer family matrix validates each actual emitted correction against input.tools[0].function.parameters with matchesAuthoredSourceSchema, including singleton producer objects and nested cases",
+    "round41": "captured original wire and six exact response changes embedded in producer-wire regression; accepted without mutation of original wire or adjudication"
+  },
+  "apiCalls": 0,
+  "typecheck": "owned by root",
+  "roomReplay": "owned by root",
+  "documentationChanges": 0
+}

@@ -1,0 +1,165 @@
+{
+  "round": 64,
+  "status": "stopped-on-second-action-json-syntax",
+  "sourceManifest": "143e68372045f11c939066b3b4c77a787857c82a23caad59efd685147340b96b",
+  "actions": [
+    {
+      "ordinal": 1,
+      "result": "committed",
+      "narration": "published"
+    },
+    {
+      "ordinal": 2,
+      "result": "notCommitted",
+      "narration": "notApplicable"
+    },
+    {
+      "ordinal": 3,
+      "result": "notExecuted",
+      "reason": "stop-on-first-failure"
+    }
+  ],
+  "usage": {
+    "input": 76141,
+    "hit": 16640,
+    "miss": 59501,
+    "output": 1149,
+    "estimatedCny": "0.095254",
+    "physicalCalls": 4,
+    "unknownUsageCalls": 0,
+    "pricePeriod": "offPeak"
+  },
+  "callRows": [
+    {
+      "file": "01.json",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 33350,
+      "hit": 7424,
+      "miss": 25926,
+      "output": 85,
+      "finishReason": "tool_calls"
+    },
+    {
+      "file": "02.json",
+      "tools": [],
+      "model": "deepseek-v4-flash",
+      "input": 1836,
+      "hit": 896,
+      "miss": 940,
+      "output": 257,
+      "finishReason": "stop"
+    },
+    {
+      "file": "03.json",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 2705,
+      "hit": 896,
+      "miss": 1809,
+      "output": 142,
+      "finishReason": "tool_calls"
+    },
+    {
+      "file": "04.json",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 38250,
+      "hit": 7424,
+      "miss": 30826,
+      "output": 665,
+      "finishReason": "tool_calls"
+    }
+  ],
+  "stateChecks": {
+    "firstKnowledgeTimeResourcesPlanUnchanged": true,
+    "secondNoStateOrEventChange": true,
+    "finalTime": "0",
+    "duplicateNewCalls": [
+      0
+    ],
+    "eventCount": 3,
+    "eventTypes": [
+      "NpcPlanFormed",
+      "ActivityStarted",
+      "KnowledgeReviewed"
+    ],
+    "receipts": 2,
+    "pendingDue": 0,
+    "modelInvocations": 2,
+    "deliveryStatuses": [
+      "open"
+    ],
+    "audienceStatuses": [
+      "published"
+    ]
+  },
+  "failure": {
+    "ordinal": 2,
+    "code": "PROPOSAL_FORM_INVALID",
+    "stage": "argumentsParsing",
+    "diagnostics": [
+      {
+        "code": "JSON_SYNTAX",
+        "constraint": "json:string-unclosed",
+        "repair": {
+          "allowed": false,
+          "reason": "semantic-equivalence-unproven"
+        },
+        "path": [
+          "decision",
+          "steps",
+          0,
+          "result",
+          "entries",
+          1,
+          "evidence"
+        ],
+        "pathBase": "arguments",
+        "location": {
+          "offset": 1408,
+          "line": 1,
+          "column": 1409
+        }
+      }
+    ],
+    "rules": "notEntered",
+    "repair": "notAttempted-unclosed-string-no-safe-completion",
+    "latentRouteMismatch": "Unparsed raw draft selected observe and wrote one minute only in method/summary; not an executed Rules or world-time failure."
+  },
+  "counts": {
+    "syntaxFailures": 1,
+    "formFailures": 0,
+    "loweringReferenceRejections": 0,
+    "rulesRejections": 0,
+    "observedPublishedNarrativeContradictions": 0,
+    "recoveryCalls": 0,
+    "npcCalls": 0
+  },
+  "scopeLimit": "Existing future NPC plan is only a trusted local fixture. Observation, actual NPC due action, new model plan formation and stability are not covered by this batch.",
+  "processes": {
+    "capturePid": 13793,
+    "setupPid": 13802,
+    "gamePid": 13875,
+    "allExited": true,
+    "shutdownSignal": "SIGTERM",
+    "exitCodes": null,
+    "exitCodeReason": "Detached process exit status unavailable; exact process identities and ports verified absent."
+  },
+  "checks": {
+    "extractExit": 0,
+    "sourceEndExit": 0,
+    "replayExit": 0
+  },
+  "observations": [
+    "The knowledge narration uses self-described relative wording beyond the quoted label; no explicit contradiction proved, source attribution precision remains an observation.",
+    "Provider returned finish_reason=tool_calls and completion_tokens=665 for the invalid second proposal; it was not reported as length.",
+    "Offline parser extraction initially threw the expected diagnostic before artifact write; the follow-up caught and preserved it, with no API retry."
+  ]
+}

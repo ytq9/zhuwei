@@ -200,6 +200,7 @@ function validateObjectSchema(
     invalid(`${path}.additionalProperties:false-required`);
   }
   const propertyNames = Object.keys(value.properties).sort();
+  if (propertyNames.length === 0) invalid(`${path}.properties:non-empty-object-required`);
   const required = [...new Set(value.required as string[])].sort();
   if (required.length !== (value.required as string[]).length
     || propertyNames.length !== required.length

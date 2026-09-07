@@ -1,0 +1,141 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round28",
+  "recordedAt": "2026-09-06T04:38:19.249803+00:00",
+  "scope": "One normal Cookie HTTP NPC conversation attempt after local worldFact memory implementation",
+  "budget": {
+    "batch": "round28",
+    "maximumActions": 2,
+    "maximumCalls": 10,
+    "maximumInputTokens": 580000,
+    "maximumOutputTokens": 81920,
+    "maximumDurationMs": 600000,
+    "callsReservedPerAction": 5,
+    "firstFailureStopsBatch": true,
+    "scope": "Normal authenticated NPC new history and next-turn continuity; no thinking contrast"
+  },
+  "setupCalls": 0,
+  "sourceManifest": {
+    "path": "vnext-round28-source-manifest.json",
+    "sha256": "21f8180bed31ae166b0fab3a85555805b4d79d991c25954bdf3f751b91115862",
+    "fileCount": 299,
+    "createdAt": "2026-09-06T04:29:17.675165+00:00",
+    "sourceChangedDuringProviderBatch": false,
+    "laterChanges": "NPC exact-holder knowledgeRef alias resolution was implemented after server shutdown; the original real attempt remains rejected"
+  },
+  "workflowHash": "sha256:d2fbb424df759fe4e427c2ad4b1d366d79d2f555794c80c2d0a24eb28e5bffb9",
+  "schemaHash": "sha256:50c1f6cf8ae67ac40cbc93c669e0d033d41c55fbeec6344d0813d2e07929ea2a",
+  "parserHash": "sha256:9d279a3dceb8a83e076592e20f15e699a0c2eaa240eb87f44214d795bb493757",
+  "runtimeManifest": {
+    "profileId": "runtime-srd51-2014-authoritative-vnext-stage3",
+    "profileHash": "sha256:9e8847f79e1d3b84094ede87ceac4cc9ecad2bbcedb6c4f9f170ee9ed99ddc7c"
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "purpose": "proposal",
+      "model": "deepseek-v4-flash",
+      "startedAt": "2026-09-06T04:29:57.926Z",
+      "durationMs": 8635,
+      "inputTokens": 31536,
+      "cacheHitTokens": 0,
+      "cacheMissTokens": 31536,
+      "outputTokensIncludingReasoning": 953,
+      "thinking": {
+        "type": "disabled"
+      },
+      "offPeakCny": 0.0515925,
+      "captureFileSha256": "5f994e9d02b69c1d555eea0c61dec59481d6809b7f3d0f2b5eb00eb3c3604b9d",
+      "finishReasons": [
+        "tool_calls"
+      ]
+    }
+  ],
+  "totals": {
+    "attemptedCalls": 1,
+    "knownUsageCalls": 1,
+    "unknownUsageCalls": 0,
+    "inputTokens": 31536,
+    "cacheHitTokens": 0,
+    "cacheMissTokens": 31536,
+    "outputTokensIncludingReasoning": 953,
+    "knownOffPeakCny": 0.0515925
+  },
+  "response": {
+    "action": "notCommitted",
+    "narration": "notApplicable",
+    "code": "PROPOSAL_REFERENCE_INVALID",
+    "outcomeKind": "rejected"
+  },
+  "mechanicalEvidence": {
+    "eventCount": 0,
+    "eventTypes": [],
+    "receipts": 0,
+    "pendingDue": 0,
+    "modelInvocations": 1,
+    "deliveryStatuses": [],
+    "audienceStatuses": []
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsChecked": 0,
+    "frozenContextsConform": null,
+    "authorityUnchangedFromGenesis": true,
+    "resourcesAndTimeUnchanged": true,
+    "eventCount": 0,
+    "eventTypes": [],
+    "receiptCount": 0,
+    "newEvidenceCount": 0,
+    "randomnessAbsent": true,
+    "claimsNote": "No committed Claims to validate."
+  },
+  "diagnostics": {
+    "originalParser": "accepted",
+    "originalLowering": {
+      "kind": "rejected",
+      "code": "PROPOSAL_REFERENCE_INVALID",
+      "issues": [
+        "social:foreign-npc-basis"
+      ]
+    },
+    "exactExpectedOriginalRequest": true,
+    "afterFixLowering": "accepted",
+    "sameOriginalResponse": true,
+    "submittedDiagnostic": false,
+    "extraCalls": 0
+  },
+  "semanticAudit": {
+    "status": "not-accepted-for-play",
+    "proposalKinds": [
+      "social"
+    ],
+    "unresolved": [
+      "response.text contains stage directions and a malformed final quotation",
+      "the draft presents a new personal episode through speech without the worldFact producer needed to establish new true history",
+      "whether parts are authored truth, remembered report or deliberate invention must be fixed before commitment; do not invent deception after failure"
+    ],
+    "notFailureByItself": "Unrecorded detail has no old citation, or an NPC claim differs from actual truth",
+    "newWorldFactSubmitted": false,
+    "narrationInvoked": false
+  },
+  "priceSource": {
+    "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "currency": "CNY",
+    "perMillionTokensOffPeak": {
+      "cacheHitInput": 0.05,
+      "cacheMissInput": 1.5,
+      "output": 4.5
+    }
+  },
+  "externalOperations": {
+    "deployment": false,
+    "gitPush": false,
+    "remoteMigration": false,
+    "productionRetirement": false,
+    "localServersStopped": true,
+    "serverExitCode": 130,
+    "captureExitCode": 130
+  }
+}

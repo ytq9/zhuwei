@@ -42,7 +42,7 @@ const SHAPE = `两条路径都写清楚了，你只需要自己判断走哪一�
 
 若你判断这个做法在当前事实下【可行】：
   mode=adjudication、terminal 填 {kind:"none"}、bundle basisRefs 列出你依据的冻结引用。
-  proposals 恰好一项 worldInteraction：outcomeBinding=always、basisRefs 与 consumes/produces 为空数组、
+  proposals 恰好一项 worldInteraction：outcomeBinding=always、basisRefs 与 consumes 为空数组、produces={kind:"none"}、
   sceneRef=scene:hall、targetRefs 与 directTargetRefs 填你作用的那个冻结引用、instrumentRefs=[]、abilityRef="none"、
   intent 与 method 各一句复述玩家的做法；branches.success 填 outcomeCode、summary，
   effects/sensoryEvidence/pressures/opportunities 均为空数组。

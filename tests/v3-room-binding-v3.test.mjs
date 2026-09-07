@@ -167,7 +167,7 @@ test("correction and party reject V3 binding failures before constructing a mode
   const retry = server.slice(retryStart, retryEnd);
 
   for (const section of [action, retry, correction, party]) {
-    const validation = section.indexOf("validateV3RoomBinding");
+    const validation = section.indexOf(".validateRoomBinding");
     const rejection = section.indexOf("v3BindingRejection", validation);
     const adapter = section.indexOf("createAuthoritativeKpAdapter", validation);
     assert.notEqual(validation, -1);
@@ -197,7 +197,7 @@ test("correction and party reject V3 binding failures before constructing a mode
     tableServer.indexOf("export const startGame"),
     tableServer.indexOf("export const sendAction"),
   );
-  assert.match(startGame, /hasExactV3KpWorkflowManifest/u);
+  assert.match(startGame, /roomRuntimeConfiguration\(env\)\.hasWorkflow/u);
   assert.match(startGame, /canonicalJson\(initialized\.runtimeProfiles\)/u);
   assert.ok(
     startGame.indexOf("canonicalJson(initialized.runtimeProfiles)")

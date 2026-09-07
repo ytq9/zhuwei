@@ -1,3 +1,6 @@
+import { proposalProspectiveHandles as prospectiveHandles } from "./proposal-reference-slots";
+import { diagnosticActual, diagnosticsFromIssues, proposalDiagnostic, type ProposalDiagnostic, type ProposalDiagnosticPath } from "./proposal-diagnostics";
+import { vnextSharedCheckOwnerOrdinal } from "./proposal-check-owner";
 import {
   canonicalHash,
   compareCodeUnits,
@@ -16,29 +19,42 @@ import type {
 } from "./proposal-schema";
 import {
   VNEXT_MATERIALIZATION_FORM_ID,
+  VNEXT_INVENTORY_OPERATION_FORM_ID,
   VNEXT_PROPOSAL_BUNDLE_PLAN_SCHEMA,
   VNEXT_WORLD_INTERACTION_FORM_ID,
+  VNEXT_OBSERVE_FORM_ID,
+  VNEXT_SOCIAL_FORM_ID,
+  VNEXT_OBJECTIVE_CONTINUITY_FORM_ID,
 } from "./proposal-schema";
 
 export type BundleGraphResult =
   | Readonly<{ kind: "accepted"; plan: VNextDerivedBundlePlan }>
-  | Readonly<{ kind: "rejected"; issues: readonly string[] }>;
+  | Readonly<{ kind: "rejected"; issues: readonly string[]; diagnostics: readonly ProposalDiagnostic[] }>;
 
 /** Dependency-only conformance used before context-bound lowering. */
 export function validateVNextProposalBundleDependencies(
   entries: readonly VNextProposalBundleEntry[],
+  diagnostics?: ProposalDiagnostic[],
 ): readonly string[] {
   const issues: string[] = [];
+  const add = (issue: string, diagnostic: ProposalDiagnostic) => {
+    issues.push(issue);
+    diagnostics?.push(diagnostic);
+  };
   const producers = new Map<string, VNextBundleProducedReference>();
-  for (const entry of entries) {
-    for (const produced of entry.produces) {
+  entries.forEach((entry, entryIndex) => {
+    entry.produces.forEach((produced, producedIndex) => {
       if (producers.has(produced.handle)) {
-        issues.push(`bundle:prospective-producer-duplicate:${produced.handle}`);
+        add(`bundle:prospective-producer-duplicate:${produced.handle}`,
+          proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:prospective-producer-duplicate", {
+            path: ["proposals", entryIndex, "produces", producedIndex, "handle"],
+            expected: { producersPerHandle: 1 }, actual: diagnosticActual(produced.handle),
+          }));
       } else {
         producers.set(produced.handle, produced);
       }
-    }
-  }
+    });
+  });
   const edges = new Map<number, number[]>();
   entries.forEach((entry, index) => {
     const dependencies: number[] = [];
@@ -47,23 +63,48 @@ export function validateVNextProposalBundleDependencies(
     const referenced = new Set(prospectiveHandles(entry));
     for (const handle of referenced) {
       if (!declared.has(handle)) {
-        issues.push(`bundle:prospective-consumer-not-declared:${handle}`);
+        add(`bundle:prospective-consumer-not-declared:${handle}`,
+          proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:prospective-consumer-not-declared", {
+            path: ["proposals", index, "consumes"], expected: { declaration: { kind: "prospective", handle } },
+          }));
       }
     }
     for (const handle of declared) {
       if (!referenced.has(handle)) {
-        issues.push(`bundle:prospective-consume-unused:${handle}`);
+        add(`bundle:prospective-consume-unused:${handle}`,
+          proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:prospective-consume-unused", {
+            path: ["proposals", index, "consumes", entry.consumes.findIndex(consume => consume.kind === "prospective" && consume.handle === handle), "handle"],
+            expected: { referencedByPayload: true }, actual: diagnosticActual(handle),
+          }));
       }
     }
-    for (const consume of entry.consumes) {
+    for (const [ref, expected, path] of typedProducedRequirements(entry)) {
+      if (ref.startsWith("prospective:") && producers.get(ref)?.kind !== expected) {
+        add(`bundle:prospective-type-mismatch:${ref}:${expected}`,
+          proposalDiagnostic(producers.has(ref) ? "CONSTRAINT_CONFLICT" : "REFERENCE_UNAVAILABLE", "bundle:prospective-type-mismatch", {
+            path: ["proposals", index, ...path], expected: { producerKind: expected },
+            actual: { ref, ...(producers.has(ref) ? { producerKind: producers.get(ref)!.kind } : { producer: "not-declared" }) },
+          }));
+      }
+    }
+    for (const [consumeIndex, consume] of entry.consumes.entries()) {
       if (consume.kind !== "prospective") continue;
       const producer = producers.get(consume.handle);
       if (producer === undefined) {
-        issues.push(`bundle:prospective-consumer-unbound:${consume.handle}`);
+        add(`bundle:prospective-consumer-unbound:${consume.handle}`,
+          proposalDiagnostic("REFERENCE_UNAVAILABLE", "bundle:prospective-consumer-unbound", {
+            path: ["proposals", index, "consumes", consumeIndex, "handle"],
+            expected: { producerInBundle: true }, actual: diagnosticActual(consume.handle),
+          }));
         continue;
       }
       if (!outcomeDominates(producer.outcomeBinding, entry.outcomeBinding)) {
-        issues.push(`bundle:prospective-condition-not-dominated:${consume.handle}`);
+        add(`bundle:prospective-condition-not-dominated:${consume.handle}`,
+          proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:prospective-condition-not-dominated", {
+            path: ["proposals", index, "consumes", consumeIndex, "handle"],
+            expected: { producerOutcomeBinding: ["always", entry.outcomeBinding] },
+            actual: { handle: consume.handle, producerOutcomeBinding: producer.outcomeBinding, consumerOutcomeBinding: entry.outcomeBinding },
+          }));
       }
       const producerIndex = entries.findIndex((candidate) =>
         candidate.produces.some((produced) => produced.handle === consume.handle));
@@ -71,7 +112,11 @@ export function validateVNextProposalBundleDependencies(
     }
     edges.set(index, dependencies);
   });
-  if (hasCycle(edges, entries.length)) issues.push("bundle:dependency-cycle");
+  if (hasCycle(edges, entries.length)) add("bundle:dependency-cycle",
+    proposalDiagnostic("CONSTRAINT_CONFLICT", "bundle:dependency-cycle", {
+      path: ["proposals"], expected: { dependencyGraph: "acyclic" },
+      actual: { dependencies: [...edges].map(([ordinal, dependsOn]) => ({ ordinal, dependsOn })) },
+    }));
   return Object.freeze([...new Set(issues)].sort(compareCodeUnits));
 }
 
@@ -88,6 +133,9 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
   /** Required for a Bundle nested under a clarification choice. */
   derivationScope?: string;
 }>): BundleGraphResult {
+  const dependencyDiagnostics: ProposalDiagnostic[] = [];
+  const dependencyIssues = validateVNextProposalBundleDependencies(input.bundle.proposals, dependencyDiagnostics);
+  if (dependencyIssues.length > 0) return rejected(dependencyIssues, dependencyDiagnostics);
   const bundleHash = canonicalHash(input.bundle);
   if (input.derivationScope !== undefined
     && (input.derivationScope.length < 1
@@ -245,6 +293,10 @@ function hasCycle(edges: ReadonlyMap<number, readonly number[]>, count: number):
 export function formIdForKind(
   kind: VNextProposalBundleEntry["kind"],
 ): Exclude<VNextBundleFormId, "clarification.vnext-1" | "in-world-refusal.vnext-1"> {
+  if (kind === "formActorPlan") return VNEXT_OBJECTIVE_CONTINUITY_FORM_ID;
+  if (kind === "social") return VNEXT_SOCIAL_FORM_ID;
+  if (kind === "observe") return VNEXT_OBSERVE_FORM_ID;
+  if (kind === "inventoryOperation") return VNEXT_INVENTORY_OPERATION_FORM_ID;
   return kind === "worldInteraction"
     ? VNEXT_WORLD_INTERACTION_FORM_ID
     : VNEXT_MATERIALIZATION_FORM_ID;
@@ -286,85 +338,8 @@ function sharedCheckOwner(
   const requiresCheck = bundle.adjudication.kind === "check"
     || (bundle.adjudication.kind === "highRisk" && bundle.adjudication.check !== null);
   if (!requiresCheck) return null;
-  const interactions = entries.filter(({ entry }) => entry.kind === "worldInteraction");
-  if (interactions.length !== 1 || interactions[0]?.entry.outcomeBinding !== "always") {
-    return "invalid";
-  }
-  return interactions[0].entryRef;
-}
-
-function prospectiveHandles(entry: VNextProposalBundleEntry): readonly string[] {
-  const refs: string[] = [];
-  const collect = (value: unknown): void => {
-    if (typeof value === "string" && value.startsWith("prospective:")) refs.push(value);
-    else if (Array.isArray(value)) value.forEach(collect);
-    else if (value !== null && typeof value === "object") {
-      for (const child of Object.values(value as Record<string, unknown>)) collect(child);
-    }
-  };
-  collect(entry.basisRefs);
-  // The `consumes` list itself is authoritative and is not scanned as a
-  // payload; scan only schema-defined reference slots. Narrative text remains
-  // opaque even when it is byte-identical to a local handle.
-  if (entry.kind === "worldInteraction") {
-    collect(entry.sceneRef);
-    collect(entry.targetRefs);
-    collect(entry.directTargetRefs);
-    collect(entry.instrumentRefs);
-    collect(entry.abilityRef);
-    for (const branch of [entry.branches.success, entry.branches.failure]) {
-      if (branch === null) continue;
-      for (const effect of branch.effects) {
-        if (effect.kind === "relationTransition") collect(effect.relationRef);
-        else if (effect.kind === "definitionRevision") {
-          collect(effect.definitionRef);
-          for (const operation of effect.operations) {
-            if (operation.kind === "removeByRef") collect(operation.ref);
-            else if (operation.kind === "upsertByRef") {
-              collect("goalRef" in operation.entry
-                ? operation.entry.goalRef
-                : operation.entry.planRef);
-            }
-          }
-        } else {
-          collect(effect.sourceDefinitionRef);
-          collect(effect.zoneRef);
-        }
-      }
-      for (const evidence of branch.sensoryEvidence) {
-        collect(evidence.observerRef);
-        collect(evidence.subjectRef);
-        collect(evidence.basisRefs);
-      }
-      for (const pressure of branch.pressures) {
-        collect(pressure.sourceRef);
-        collect(pressure.basisRefs);
-      }
-      for (const opportunity of branch.opportunities) {
-        collect(opportunity.targetRef);
-        collect(opportunity.basisRefs);
-      }
-    }
-  } else if (entry.kind === "reviseSemanticDefinition") {
-    collect(entry.definitionRef);
-    collect(entry.npcRef);
-    collect(entry.templateRef);
-    for (const operation of entry.operations) {
-      if (operation.kind === "removeByRef") collect(operation.ref);
-      else if (operation.kind === "upsertByRef") {
-        collect("goalRef" in operation.entry
-          ? operation.entry.goalRef
-          : operation.entry.planRef);
-      }
-    }
-  } else {
-    collect(entry.templateRef);
-    collect(entry.visibilityPolicyRef);
-    collect(entry.definition.sceneRef);
-    collect(entry.definition.visibilityFactId);
-    collect(entry.definition.mechanicDefinitionRefs);
-  }
-  return [...new Set(refs)].sort(compareCodeUnits);
+  const ordinal = vnextSharedCheckOwnerOrdinal(entries.map(({ entry }) => entry));
+  return ordinal === undefined ? "invalid" : entries[ordinal].entryRef;
 }
 
 function outcomeDominates(
@@ -397,9 +372,37 @@ function topologicalOrder(
   return Object.freeze(result);
 }
 
-function rejected(issues: readonly string[]): BundleGraphResult {
+function rejected(issues: readonly string[], diagnostics = diagnosticsFromIssues("BUNDLE_DEPENDENCY_INVALID", issues)): BundleGraphResult {
   return Object.freeze({
     kind: "rejected",
     issues: Object.freeze([...new Set(issues)].sort(compareCodeUnits)),
+    diagnostics: deepFreeze([...diagnostics]),
   });
+}
+
+function typedProducedRequirements(entry: VNextProposalBundleEntry): Array<[string, VNextBundleProducedReference["kind"], ProposalDiagnosticPath]> {
+  const result: Array<[string, VNextBundleProducedReference["kind"], ProposalDiagnosticPath]> = [];
+  if (entry.kind === "materializeDefinition") {
+    if (entry.source.kind === "hazard") result.push([String(entry.source.content.mechanicsRef), "abilityDefinition", ["source", "content", "mechanicsRef"]]);
+    if (entry.source.kind === "item") {
+      for (const [index, ref] of entry.source.content.equippedAbilityRefs.entries()) result.push([ref, "abilityDefinition", ["source", "content", "equippedAbilityRefs", index]]);
+      if (entry.source.content.use) result.push([entry.source.content.use.abilityRef, "abilityDefinition", ["source", "content", "use", "abilityRef"]]);
+      if (entry.source.content.equipment?.weapon?.ammunitionDefinitionRef) result.push([entry.source.content.equipment.weapon.ammunitionDefinitionRef, "itemDefinition", ["source", "content", "equipment", "weapon", "ammunitionDefinitionRef"]]);
+    }
+    if (entry.source.kind === "ability" && Array.isArray(entry.source.content.costs)) {
+      for (const [index, cost] of entry.source.content.costs.entries()) if (cost && typeof cost === "object" && !Array.isArray(cost)
+        && cost.kind === "item") result.push([String(cost.resourceId), "itemEntry", ["source", "content", "costs", index, "resourceId"]]);
+    }
+  } else if (entry.kind === "materializeItem") result.push([entry.definitionRef, "itemDefinition", ["definitionRef"]]);
+  else if (entry.kind === "inventoryOperation") {
+    if (entry.operation.kind === "assemble") entry.operation.components.forEach((component, index) => result.push([component.entryRef, "itemEntry", ["operation", "components", index, "entryRef"]]));
+    else if (entry.operation.kind !== "disassemble") result.push([entry.operation.entryRef, "itemEntry", ["operation", "entryRef"]]);
+  }
+  else if (entry.kind === "worldInteraction") {
+    if (entry.abilityRef) result.push([entry.abilityRef, "abilityDefinition", ["abilityRef"]]);
+    for (const key of ["success", "failure"] as const) for (const [index, effect] of (entry.branches[key]?.effects ?? []).entries()) {
+      if (effect.kind === "registeredHazard" && effect.damage.kind === "authored") result.push([effect.damage.hazardDefinitionRef, "hazardDefinition", ["branches", key, "effects", index, "damage", "hazardDefinitionRef"]]);
+    }
+  }
+  return result;
 }

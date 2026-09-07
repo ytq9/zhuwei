@@ -1,4 +1,8 @@
+import { isEnvironmentHazardDefinition } from "../../../rules/v2/environment-hazards";
+import { dynamicPassageConform, locationSceneRef } from "../../../rules/v2/dynamic-locations";
+import { characterTimelineAuthorityRef } from "../../../rules/v2/authority-bindings";
 import {
+  authorityGeometryFeatureRecords,
   isStoredSemanticDefinition,
   VNEXT_CONTINUITY_AUTHORITY_COLLECTIONS,
   type AuthoritativeWorldState,
@@ -23,14 +27,21 @@ import type { ContextWorkBudget, ContextWorkReceipt } from "./work-budget";
  */
 export type AuthorityRefKind =
   | "scene"
+  | "geometryFeature"
   | "entity"
+  | "characterTimeline"
+  | "itemAssembly"
   | "itemEntry"
   | "itemDefinition"
   | "semanticDefinition"
   | "campaignDefinition"
   | "abilityDefinition"
   | "canonicalFact"
+  | "narrativeCommitment"
+  | "narrativeBinding"
   | "knowledge"
+  | "knowledgeCatalog"
+  | "abilityCatalog"
   | "continuityCollection"
   | "continuityEntry"
   | "profileContext";
@@ -52,12 +63,14 @@ export type TypedRelationEdge = Readonly<{
 export type ReferenceNode = Readonly<{
   ref: string;
   kind: AuthorityRefKind;
-  semanticKind?: SemanticDefinitionKind;
+  semanticKind?: SemanticDefinitionKind | "hazard";
   visibilityPolicyRef?: string;
   templateRef?: string;
   templateHash?: string;
   /** Scene the record is bound to, when authority state binds it to one. */
   sceneRef?: string;
+  /** Geometry only: obstacle slot in the same frozen scene snapshot. */
+  geometryIndex?: number;
   /** Item entries only: the entity currently holding the entry. */
   holderRef?: string;
   /** Item entries only: the definition the entry instantiates. */
@@ -72,6 +85,8 @@ export type ReferenceNode = Readonly<{
 
 export type ReferenceIndex = Readonly<{
   nodes: ReadonlyMap<string, ReferenceNode>;
+  /** Frozen trigger ref -> the hazards whose declared trigger names it. */
+  hazardsByTrigger: ReadonlyMap<string, readonly string[]>;
   /** subjectRef -> outgoing typed relations. */
   relationsBySubject: ReadonlyMap<string, readonly TypedRelationEdge[]>;
   /** objectRef -> incoming typed relations. `blocks`/`triggers` are only
@@ -89,6 +104,8 @@ export type ReferenceIndex = Readonly<{
   itemEntriesByDefinition: ReadonlyMap<string, readonly string[]>;
   /** sceneRef -> refs authority state binds to that scene. */
   refsByScene: ReadonlyMap<string, readonly string[]>;
+  /** Published continuity, kept separate from mechanical scene membership. */
+  narrativeCommitmentsByScene: ReadonlyMap<string, readonly string[]>;
 }>;
 
 export type ReferenceIndexResult =
@@ -100,6 +117,8 @@ export function buildReferenceIndex(
   budget: ContextWorkBudget,
 ): ReferenceIndexResult {
   const nodes = new Map<string, ReferenceNode>();
+  const hazardsByTrigger = new Map<string, string[]>();
+  const hazardRefs = new Set<string>();
   const relationsBySubject = new Map<string, TypedRelationEdge[]>();
   const relationsByObject = new Map<string, TypedRelationEdge[]>();
   const factsBySubject = new Map<string, string[]>();
@@ -107,6 +126,7 @@ export function buildReferenceIndex(
   const itemEntriesByHolder = new Map<string, string[]>();
   const itemEntriesByDefinition = new Map<string, string[]>();
   const refsByScene = new Map<string, string[]>();
+  const narrativeCommitmentsByScene = new Map<string, string[]>();
 
   const limited = { hit: false };
   /** Charges one record before it is read. Returns false once spent. */
@@ -133,7 +153,14 @@ export function buildReferenceIndex(
       nodes.set(ref, freezeNode({
         ref,
         kind: "entity",
+        ...(entity.kind === "npc" ? { semanticKind: "npc" as const } : {}),
         ...(typeof entity.sceneId === "string" ? { sceneRef: entity.sceneId } : {}),
+      }));
+      nodes.set(characterTimelineAuthorityRef(ref), freezeNode({
+        ref: characterTimelineAuthorityRef(ref), kind: "characterTimeline",
+      }));
+      if (state.combatRuntime.entities[ref] !== undefined) nodes.set(`ability-catalog:${ref}`, freezeNode({
+        ref: `ability-catalog:${ref}`, kind: "abilityCatalog", knowledgeHolderRef: ref,
       }));
       if (typeof entity.sceneId === "string") bindScene(entity.sceneId, ref);
     }
@@ -152,6 +179,7 @@ export function buildReferenceIndex(
       nodes.set(ref, freezeNode({
         ref,
         kind: "itemEntry",
+        semanticKind: "item",
         ...(sceneRef === undefined ? {} : { sceneRef }),
         ...(holderRef === undefined ? {} : { holderRef }),
         ...(typeof entry.definitionRef === "string"
@@ -170,6 +198,15 @@ export function buildReferenceIndex(
   }
 
   if (!limited.hit) {
+    for (const [ref, assembly] of entries(state.campaignRuntime.itemSystem.assemblies ?? {})) {
+      if (!admit()) break;
+      if (assembly.state !== "active") continue;
+      nodes.set(ref, freezeNode({ ref, kind: "itemAssembly", sceneRef: assembly.sceneRef, visibilityPolicyRef: "visibility:scene-observers" }));
+      bindScene(assembly.sceneRef, ref);
+    }
+  }
+
+  if (!limited.hit) {
     for (const [ref] of entries(state.campaignRuntime.itemSystem.definitions)) {
       if (!admit()) break;
       nodes.set(ref, freezeNode({ ref, kind: "itemDefinition" }));
@@ -180,10 +217,25 @@ export function buildReferenceIndex(
     for (const [ref, definition] of entries(state.campaignRuntime.definitions)) {
       if (!admit()) break;
       if (!isStoredSemanticDefinition(definition)) {
-        nodes.set(ref, freezeNode({ ref, kind: "campaignDefinition" }));
+        nodes.set(ref, freezeNode({
+          ref,
+          kind: "campaignDefinition",
+          ...(typeof definition.visibilityPolicyRef === "string"
+            ? { visibilityPolicyRef: definition.visibilityPolicyRef }
+            : {}),
+        }));
+        if (isEnvironmentHazardDefinition(definition)) {
+          if (!budget.charge("postingWrites", 1)) {
+            limited.hit = true;
+            break;
+          }
+          const trigger = (definition.content as { trigger: { ref: string } }).trigger;
+          push(hazardsByTrigger, trigger.ref, ref);
+          hazardRefs.add(ref);
+        }
         continue;
       }
-      const sceneRef = definition.semanticKind === "sceneFeature"
+      const sceneRef = ["sceneFeature", "location", "passage"].includes(definition.semanticKind)
         && typeof definition.content.sceneRef === "string"
         ? definition.content.sceneRef
         : undefined;
@@ -197,6 +249,12 @@ export function buildReferenceIndex(
         ...(sceneRef === undefined ? {} : { sceneRef }),
       }));
       if (sceneRef !== undefined) bindScene(sceneRef, ref);
+      if (definition.semanticKind === "passage" && dynamicPassageConform(definition.content.passage)) {
+        for (const endpoint of [definition.content.passage.fromLocationRef, definition.content.passage.toLocationRef]) {
+          const endpointScene = locationSceneRef(state, endpoint);
+          if (endpointScene !== undefined && endpointScene !== sceneRef) bindScene(endpointScene, ref);
+        }
+      }
 
       const edge = typedRelationEdge(ref, definition);
       if (edge === undefined) continue;
@@ -215,7 +273,56 @@ export function buildReferenceIndex(
   if (!limited.hit) {
     for (const [ref] of entries(state.combatRuntime.definitions)) {
       if (!admit()) break;
-      nodes.set(ref, freezeNode({ ref, kind: "abilityDefinition" }));
+      // DefinitionRegistered also places hazard records in this catalog. Only
+      // the campaign pass classifies those records; treating their duplicates
+      // as Abilities would discard their trigger and mechanics dependencies.
+      if (!hazardRefs.has(ref)) {
+        nodes.set(ref, freezeNode({ ref, kind: "abilityDefinition" }));
+      }
+    }
+  }
+
+  // A live geometric obstacle has its own versioned address without becoming a
+  // semantic definition. Never derive these records from static module prose.
+  if (!limited.hit) {
+    const duplicates = new Set<string>();
+    const geometryRefs = new Set<string>();
+    for (const { sceneRef, obstacleIndex, feature } of authorityGeometryFeatureRecords(state, admit)) {
+      const ref = feature.featureId;
+      if (duplicates.has(ref)) continue;
+      if (nodes.has(ref)) {
+        if (nodes.get(ref)?.kind === "geometryFeature") {
+          nodes.delete(ref);
+          geometryRefs.delete(ref);
+          duplicates.add(ref);
+        }
+        continue;
+      }
+      nodes.set(ref, freezeNode({ ref, kind: "geometryFeature", sceneRef, geometryIndex: obstacleIndex,
+        ...(typeof feature.visibilityPolicyId === "string" ? { visibilityPolicyRef: feature.visibilityPolicyId } : {}) }));
+      geometryRefs.add(ref);
+    }
+    if (!limited.hit) for (const ref of geometryRefs) {
+      if (!budget.charge("postingWrites", 1)) { limited.hit = true; break; }
+      const node = nodes.get(ref)!;
+      bindScene(node.sceneRef!, ref);
+    }
+  }
+
+  // A hazard is an instantiated, trigger-bound danger. Its scope follows that
+  // trigger after the entire definition directory exists (catalog order is
+  // immaterial). A bare ItemDefinition or NPC template never enters this map
+  // as proof that an instance exists.
+  if (!limited.hit) {
+    for (const [triggerRef, refs] of hazardsByTrigger) {
+      const sceneRef = nodes.get(triggerRef)?.sceneRef;
+      for (const ref of refs) {
+        if (!budget.charge("postingWrites", 1)) { limited.hit = true; break; }
+        const node = nodes.get(ref)!;
+        nodes.set(ref, freezeNode({ ...node, semanticKind: "hazard",
+          ...(sceneRef === undefined ? {} : { sceneRef }) }));
+        if (sceneRef !== undefined) bindScene(sceneRef, ref);
+      }
     }
   }
 
@@ -225,12 +332,34 @@ export function buildReferenceIndex(
       const subjectRefs = Array.isArray(fact.subjectRefs)
         ? fact.subjectRefs.filter((subject): subject is string => typeof subject === "string")
         : [];
+      if (fact.kind === "narrativeCommitment") {
+        const sceneRef = isPlainRecord(fact.value) && typeof fact.value.sceneRef === "string"
+          ? fact.value.sceneRef : subjectRefs.find((subject) => state.scenes[subject] !== undefined);
+        nodes.set(ref, freezeNode({ ref, kind: "narrativeCommitment", ...(sceneRef === undefined ? {} : { sceneRef }) }));
+        if (sceneRef !== undefined) {
+          if (!budget.charge("postingWrites", 1)) { limited.hit = true; break; }
+          push(narrativeCommitmentsByScene, sceneRef, ref);
+        }
+        continue;
+      }
+      if (fact.kind === "narrativeMaterialization") {
+        nodes.set(ref, freezeNode({ ref, kind: "narrativeBinding" }));
+        // A publication binding links continuity to its materialized identity;
+        // it does not make all scene descriptions co-subject mechanical causes.
+        continue;
+      }
       nodes.set(ref, freezeNode({
         ref,
         kind: "canonicalFact",
         subjectRefs: Object.freeze([...subjectRefs]),
       }));
       for (const subject of subjectRefs) push(factsBySubject, subject, ref);
+      // A local denial's declared scope is an authority dependency even when
+      // its co-subjects name only the surveyed object or method.
+      if (fact.kind === "localAbsence" && isPlainRecord(fact.value)
+        && typeof fact.value.scopeRef === "string" && !subjectRefs.includes(fact.value.scopeRef)) {
+        push(factsBySubject, fact.value.scopeRef, ref);
+      }
     }
   }
 
@@ -242,6 +371,14 @@ export function buildReferenceIndex(
         nodes.set(ref, freezeNode({ ref, kind: "knowledge", knowledgeHolderRef: holderRef }));
         push(knowledgeByHolder, holderRef, ref);
       }
+    }
+  }
+
+  if (!limited.hit) {
+    for (const [holderRef] of entries(state.entities)) {
+      if (!admit()) break;
+      const ref = `knowledge-catalog:${holderRef}`;
+      nodes.set(ref, freezeNode({ ref, kind: "knowledgeCatalog", knowledgeHolderRef: holderRef }));
     }
   }
 
@@ -292,6 +429,7 @@ export function buildReferenceIndex(
     kind: "indexed",
     index: Object.freeze({
       nodes,
+      hazardsByTrigger: frozenRefs(hazardsByTrigger),
       relationsBySubject: frozenEdges(relationsBySubject),
       relationsByObject: frozenEdges(relationsByObject),
       factsBySubject: frozenRefs(factsBySubject),
@@ -299,6 +437,7 @@ export function buildReferenceIndex(
       itemEntriesByHolder: frozenRefs(itemEntriesByHolder),
       itemEntriesByDefinition: frozenRefs(itemEntriesByDefinition),
       refsByScene: frozenRefs(refsByScene),
+      narrativeCommitmentsByScene: frozenRefs(narrativeCommitmentsByScene),
     }),
   });
 }

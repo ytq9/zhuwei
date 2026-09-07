@@ -91,7 +91,7 @@ function worldState(overrides = {}) {
         },
       },
     },
-    combatRuntime: { definitions: {} },
+    combatRuntime: { scenes: {}, definitions: {} },
   };
 }
 
@@ -153,6 +153,34 @@ test("a relevant record with no literal ref in its body is still discoverable", 
   const { result } = discover(worldState({ definitions: { "feature:orphan-lamp": orphan } }));
 
   assert.equal(candidates(result).some(({ ref }) => ref === "feature:orphan-lamp"), true);
+});
+
+test("standalone Chinese words recall compound names without matching incidental characters inside other query words", () => {
+  for (const [label, intentText, irrelevant] of [
+    ["燧发手枪", "我用枪瞄准支撑。", "木制手杖"],
+    ["精钢长剑", "我拿剑挑开帘子。", "帘边烛台"],
+  ]) {
+    const state = worldState({ definitions: {
+      "feature:opaque-tool": sceneFeature("feature:opaque-tool", { sceneRef: SCENE, label, description: "", observableState: "完好", affordances: [] }),
+      "feature:irrelevant-alias": sceneFeature("feature:irrelevant-alias", { sceneRef: SCENE, label: irrelevant, description: "", observableState: "完好", affordances: [] }),
+    } });
+    const refs = candidates(discover(state, { intentText }).result).map(row => row.ref);
+    assert.ok(refs.includes("feature:opaque-tool"), label);
+    assert.ok(!refs.includes("feature:irrelevant-alias"), irrelevant);
+    state.campaignRuntime.definitions["feature:private-tool"] = sceneFeature("feature:private-tool", {
+      sceneRef: SCENE, label, description: "", observableState: "完好", affordances: [],
+    }, "visibility:room-authority-only");
+    state.campaignRuntime.definitions["feature:remote-tool"] = sceneFeature("feature:remote-tool", {
+      sceneRef: OTHER_SCENE, label, description: "", observableState: "完好", affordances: [],
+    });
+    const playerRefs = candidates(discover(state, { intentText, subject: { kind: "character", characterRef: ALICE, sceneRef: SCENE } }).result).map(row => row.ref);
+    assert.ok(!playerRefs.includes("feature:private-tool"));
+    assert.ok(!playerRefs.includes("feature:remote-tool"));
+  }
+  const state = worldState({ definitions: {
+    "feature:paper": sceneFeature("feature:paper", { sceneRef: SCENE, label: "纸卷", description: "", observableState: "完好", affordances: [] }),
+  } });
+  assert.ok(!candidates(discover(state, { intentText: "我查看报纸。" }).result).some(row => row.ref === "feature:paper"));
 });
 
 test("unregistered schemas and precedent prose are never opened for free text", () => {

@@ -1,0 +1,63 @@
+{
+  "workspace": "/tmp/zhuwei-fact-source-context-work",
+  "baselineManifestSha256": "f2e5f7b2c56a9f394ecb7ca6ac05c859abb4400509fb972d0e46da0bb8244fca",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/runtime-requirements.ts",
+      "baselineSha256": "c23a3e175455f4468306848269802fa2b19c4a8c3e02624e0c82603179b43e00",
+      "newSha256": "c3b4b5250ae8f58a52f77207eb779654d466ece6c92d5c1de142449f66a5d4cb"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/obligation-closure.ts",
+      "baselineSha256": "ecffac16de946f26a84989a7cda27585c502c710315cea9f046fa4d570d65bd4",
+      "newSha256": "1beec19e3601c7c85caa05e11ea31470f9f22c03fc28c89c7b10082bb54a2892"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/coverage.ts",
+      "baselineSha256": "415ea44c1378cd63aaeffd790e2b06163219ab1c0d8e15fed0b9872430b494a1",
+      "newSha256": "9ae02b7309ac3f4272082d00544b2e54e200bef624aa78e4555a5457ca52a38b"
+    },
+    {
+      "path": "tests/kp-vnext-fact-source-context.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "33692870e46d133c5b823b22c5b5a2828682d0f50aa3aec752b299e155932cd6"
+    }
+  ],
+  "commit": null,
+  "overlay": [],
+  "checks": [
+    {
+      "command": "npx tsx --test tests/kp-vnext-fact-source-context.test.mjs",
+      "exitCode": 0,
+      "pass": 5,
+      "fail": 0
+    },
+    {
+      "command": "npx tsx --test tests/kp-vnext-context-runtime.test.mjs tests/kp-vnext-observable-context.test.mjs tests/kp-vnext-world-fact-memory.test.mjs",
+      "exitCode": 0,
+      "pass": 28,
+      "fail": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    }
+  ],
+  "notes": [
+    "Baseline targeted tests fail for missing shown canonical fact own known entries; generic NPC trace and physicalMark both reproduce.",
+    "Only typed worldFactConstraints.facts records seed sourceRecord; no string ID scan and no targets/knowledge granted.",
+    "Source record freezes are decisive and nonexpanding, preserving existing budgets and authority Viewer classification."
+  ],
+  "limitations": [
+    "No real API calls or captured round63 output replay in this work item. Root owns the next bounded API batch.",
+    "No other embedded definitions or continuity source closure is added.",
+    "No main-tree edits, commit, push, migration or deployment."
+  ],
+  "integration": {
+    "root": "/Users/sanmu/Documents/zhuwei-cloudflare",
+    "backup": "/tmp/zhuwei-fact-source-root-before",
+    "filesApplied": 4,
+    "conflicts": 0,
+    "baselineAndResultShaVerified": true
+  }
+}

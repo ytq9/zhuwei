@@ -12,6 +12,7 @@ import type {
 } from "./authority-types";
 import type { AuthoritativeArchiveProgress } from "./archive";
 import { authorityPendingBindings } from "./pending-bindings";
+import type { DueActivityDescriptor } from "../rules/v2/model";
 
 export type { ExperiencedTranscriptMessage };
 
@@ -39,7 +40,7 @@ export type AuthorityEventHead = {
 
 export type AuthoritySubmissionRow = {
   submission_id: string;
-  principal_id: string;
+  principal_id: string | null;
   payload_hash: string;
   input_kind: string;
   root_action_id: string;
@@ -65,6 +66,18 @@ export type AuthorityActionStageRow = {
   result_json: string | null;
 };
 
+export type AuthorityDueWorkRow = {
+  child_root_action_id: string;
+  cause_root_action_id: string;
+  cause_event_id: string;
+  descriptor_json: string;
+  timeline_id: string;
+  completion_fiction_micros: string;
+  activity_id: string;
+  status: "pending" | "committed" | "cancelled";
+  next_attempt_at: number | null;
+};
+
 export type AuthorityRandomnessBatchJournalRow = {
   prepared_action_id: string;
   proposal_hash: string;
@@ -88,6 +101,31 @@ export type AuthorityProposalRecoveryRow = {
   proposal_hash: string;
   recovery_hash: string;
   recovery_json: string;
+};
+
+export type AuthorityVNextInvocationRow = {
+  prepared_action_id: string;
+  ordinal: number;
+  context_hash: string;
+  binding_hash: string;
+  request_hash: string;
+  request_json: string;
+  repair_ticket_json: string | null;
+  capability: string;
+  lease_until: number;
+  status: "prepared" | "running" | "completed" | "retryable" | "rejected";
+  response_json: string | null;
+};
+
+export type AuthorityNpcDecisionRow = {
+  prepared_action_id: string;
+  capability: string;
+  pending_input_id: string;
+  proposal_hash: string;
+  wave_index: number;
+  input_json: string;
+  request_json: string;
+  answer_json: string | null;
 };
 
 export type AuthorityPendingRow = {
@@ -253,7 +291,7 @@ export class AuthoritativeRoomStore {
         ON authority_events(root_action_id, length(event_seq), event_seq);
       CREATE TABLE IF NOT EXISTS authority_submissions (
         submission_id TEXT PRIMARY KEY,
-        principal_id TEXT NOT NULL,
+        principal_id TEXT CHECK (principal_id IS NOT NULL OR input_kind = 'dueActivity'),
         payload_hash TEXT NOT NULL,
         input_kind TEXT NOT NULL,
         root_action_id TEXT NOT NULL,
@@ -284,6 +322,43 @@ export class AuthoritativeRoomStore {
         proposal_hash TEXT NOT NULL,
         recovery_hash TEXT NOT NULL,
         recovery_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS authority_due_work (
+        child_root_action_id TEXT PRIMARY KEY,
+        cause_root_action_id TEXT NOT NULL,
+        cause_event_id TEXT NOT NULL,
+        descriptor_json TEXT NOT NULL,
+        timeline_id TEXT NOT NULL,
+        completion_fiction_micros TEXT NOT NULL,
+        activity_id TEXT NOT NULL,
+        next_attempt_at INTEGER,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'committed', 'cancelled'))
+      );
+      CREATE INDEX IF NOT EXISTS authority_due_work_pending_idx
+        ON authority_due_work(status, timeline_id);
+      CREATE TABLE IF NOT EXISTS authority_npc_decisions (
+        prepared_action_id TEXT PRIMARY KEY,
+        capability TEXT NOT NULL UNIQUE,
+        pending_input_id TEXT NOT NULL,
+        proposal_hash TEXT NOT NULL,
+        wave_index INTEGER NOT NULL,
+        input_json TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        answer_json TEXT
+      );
+      CREATE TABLE IF NOT EXISTS authority_vnext_invocations (
+        prepared_action_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2, 3)),
+        context_hash TEXT NOT NULL,
+        binding_hash TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        repair_ticket_json TEXT,
+        capability TEXT NOT NULL,
+        lease_until INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        response_json TEXT,
+        PRIMARY KEY (prepared_action_id, ordinal)
       );
       CREATE TABLE IF NOT EXISTS authority_randomness_batches (
         prepared_action_id TEXT PRIMARY KEY,
@@ -425,6 +500,43 @@ export class AuthoritativeRoomStore {
         prepared_at INTEGER NOT NULL
       );
     `);
+    const principalColumn = this.storage.sql.exec<{ name: string; notnull: number }>(
+      "PRAGMA table_info(authority_submissions)",
+    ).toArray().find(column => column.name === "principal_id");
+    if (principalColumn?.notnull === 1) {
+      // SQLite cannot remove NOT NULL in place. Preserve every existing row
+      // atomically; CREATE IF NOT EXISTS alone cannot evolve this constraint.
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_submissions RENAME TO authority_submissions_principal_required;
+        DROP INDEX authority_submissions_root_idx;
+        CREATE TABLE authority_submissions (
+          submission_id TEXT PRIMARY KEY,
+          principal_id TEXT CHECK (principal_id IS NOT NULL OR input_kind = 'dueActivity'),
+          payload_hash TEXT NOT NULL,
+          input_kind TEXT NOT NULL,
+          root_action_id TEXT NOT NULL,
+          prepared_action_id TEXT NOT NULL UNIQUE,
+          character_id TEXT NOT NULL,
+          scene_scope TEXT NOT NULL,
+          prepared_scope_version INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          proposal_hash TEXT,
+          prepared_json TEXT NOT NULL,
+          continuation_json TEXT,
+          result_json TEXT
+        );
+        INSERT INTO authority_submissions (
+          submission_id, principal_id, payload_hash, input_kind, root_action_id,
+          prepared_action_id, character_id, scene_scope, prepared_scope_version,
+          status, proposal_hash, prepared_json, continuation_json, result_json
+        ) SELECT submission_id, principal_id, payload_hash, input_kind, root_action_id,
+          prepared_action_id, character_id, scene_scope, prepared_scope_version,
+          status, proposal_hash, prepared_json, continuation_json, result_json
+          FROM authority_submissions_principal_required;
+        DROP TABLE authority_submissions_principal_required;
+        CREATE INDEX authority_submissions_root_idx ON authority_submissions(root_action_id);
+      `));
+    }
     const existing = this.storage.sql.exec<{
       room_id: string;
       genesis_json: string;
@@ -485,7 +597,10 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_events)
         + (SELECT COUNT(*) FROM authority_submissions)
         + (SELECT COUNT(*) FROM authority_action_stages)
+        + (SELECT COUNT(*) FROM authority_due_work)
         + (SELECT COUNT(*) FROM authority_proposal_recovery)
+        + (SELECT COUNT(*) FROM authority_vnext_invocations)
+        + (SELECT COUNT(*) FROM authority_npc_decisions)
         + (SELECT COUNT(*) FROM authority_randomness_batches)
         + (SELECT COUNT(*) FROM authority_randomness_authorizations)
         + (SELECT COUNT(*) FROM authority_scope_versions)
@@ -926,6 +1041,57 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
+  enqueueDueWork(input: { causeRootActionId: string; causeEventId: string; activity: DueActivityDescriptor }): void {
+    const due = input.activity;
+    this.storage.sql.exec(`INSERT INTO authority_due_work (
+      child_root_action_id, cause_root_action_id, cause_event_id, descriptor_json,
+      timeline_id, completion_fiction_micros, activity_id, status, next_attempt_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0) ON CONFLICT(child_root_action_id) DO NOTHING`,
+    due.childRootActionId, input.causeRootActionId, input.causeEventId, JSON.stringify(due),
+    due.timelineId, due.completionFictionMicros, due.activityId);
+  }
+
+  dueWorkByRoot(rootActionId: string): AuthorityDueWorkRow | undefined {
+    return this.storage.sql.exec<AuthorityDueWorkRow>(
+      `SELECT * FROM authority_due_work WHERE child_root_action_id = ?`, rootActionId,
+    ).toArray()[0];
+  }
+
+  pendingDueWork(): AuthorityDueWorkRow[] {
+    return this.storage.sql.exec<AuthorityDueWorkRow>(`SELECT * FROM authority_due_work WHERE status = 'pending'
+      ORDER BY length(completion_fiction_micros), completion_fiction_micros,
+      COALESCE(json_extract(descriptor_json, '$.actorPlan.planId'), activity_id)`).toArray();
+  }
+
+  finishDueWork(rootActionId: string, status: "committed" | "cancelled"): void {
+    this.storage.sql.exec(`UPDATE authority_due_work SET status = ?, next_attempt_at = NULL
+      WHERE child_root_action_id = ? AND status = 'pending'`, status, rootActionId);
+  }
+
+  deferDueWork(rootActionId: string, nextAttemptAt: number | null): void {
+    this.storage.sql.exec(`UPDATE authority_due_work SET next_attempt_at = ?
+      WHERE child_root_action_id = ? AND status = 'pending'`, nextAttemptAt, rootActionId);
+  }
+
+  dueWorkAlarmAt(): number | null {
+    const seen = new Set<string>();
+    let next: number | null = null;
+    for (const row of this.pendingDueWork()) {
+      if (seen.has(row.timeline_id)) continue;
+      seen.add(row.timeline_id);
+      if (row.next_attempt_at !== null) next = Math.min(next ?? row.next_attempt_at, row.next_attempt_at);
+    }
+    return next;
+  }
+
+  hasPendingDueWorkInTimelines(timelineIds: string[], excludingChildRoot?: string): boolean {
+    const timelines = [...new Set(timelineIds)];
+    if (timelines.length === 0) return false;
+    return this.storage.sql.exec<{ held: number }>(`SELECT 1 AS held FROM authority_due_work
+      WHERE status = 'pending' AND timeline_id IN (${timelines.map(() => "?").join(",")})
+      AND child_root_action_id <> ? LIMIT 1`, ...timelines, excludingChildRoot ?? "").toArray()[0] !== undefined;
+  }
+
   actionStageByChildRoot(childRootActionId: string): AuthorityActionStageRow | undefined {
     return this.storage.sql.exec<AuthorityActionStageRow>(`
       SELECT prepared_action_id, submission_id, phase, target_id,
@@ -1078,6 +1244,64 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
+  vnextInvocation(preparedActionId: string, ordinal: number): AuthorityVNextInvocationRow | undefined {
+    return this.storage.sql.exec<AuthorityVNextInvocationRow>(
+      "SELECT * FROM authority_vnext_invocations WHERE prepared_action_id = ? AND ordinal = ?",
+      preparedActionId, ordinal,
+    ).toArray()[0];
+  }
+
+  saveVnextInvocation(row: AuthorityVNextInvocationRow): void {
+    this.storage.sql.exec(`INSERT INTO authority_vnext_invocations (
+      prepared_action_id, ordinal, context_hash, binding_hash, request_hash,
+      request_json, repair_ticket_json, capability, lease_until, status, response_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(prepared_action_id, ordinal) DO UPDATE SET
+      capability = excluded.capability, lease_until = excluded.lease_until,
+      status = excluded.status, response_json = excluded.response_json`,
+    row.prepared_action_id, row.ordinal, row.context_hash, row.binding_hash, row.request_hash,
+    row.request_json, row.repair_ticket_json, row.capability, row.lease_until, row.status, row.response_json);
+  }
+
+  npcDecision(preparedActionId: string): AuthorityNpcDecisionRow | undefined {
+    return this.storage.sql.exec<AuthorityNpcDecisionRow>(
+      "SELECT * FROM authority_npc_decisions WHERE prepared_action_id = ?",
+      preparedActionId,
+    ).toArray()[0];
+  }
+
+  saveNpcDecision(row: AuthorityNpcDecisionRow): void {
+    this.storage.sql.exec(`INSERT INTO authority_npc_decisions (
+      prepared_action_id, capability, pending_input_id, proposal_hash, wave_index,
+      input_json, request_json, answer_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(prepared_action_id) DO UPDATE SET
+      capability = excluded.capability, pending_input_id = excluded.pending_input_id,
+      proposal_hash = excluded.proposal_hash, wave_index = excluded.wave_index,
+      input_json = excluded.input_json, request_json = excluded.request_json,
+      answer_json = excluded.answer_json`,
+    row.prepared_action_id, row.capability, row.pending_input_id, row.proposal_hash,
+    row.wave_index, row.input_json, row.request_json, row.answer_json);
+  }
+
+  answerNpcDecision(preparedActionId: string, capability: string, answer: unknown): void {
+    this.storage.sql.exec(`UPDATE authority_npc_decisions SET answer_json = ?
+      WHERE prepared_action_id = ? AND capability = ? AND answer_json IS NULL`,
+    JSON.stringify(answer), preparedActionId, capability);
+  }
+
+  freezeNpcDecisionProposal(preparedActionId: string, proposalHash: string): void {
+    this.storage.sql.exec(`UPDATE authority_submissions SET proposal_hash = ?
+      WHERE prepared_action_id = ? AND proposal_hash IS NULL`, proposalHash, preparedActionId);
+  }
+
+  appendRandomnessDecisionEvents(preparedActionId: string, events: EventEnvelope[]): void {
+    const batch = this.randomnessBatch(preparedActionId);
+    if (batch === undefined) return;
+    const prior = JSON.parse(batch.request_events_json) as EventEnvelope[];
+    this.storage.sql.exec(`UPDATE authority_randomness_batches SET request_events_json = ?
+      WHERE prepared_action_id = ?`, JSON.stringify([...prior, ...events]), preparedActionId);
+  }
+
   saveProposalRecovery(input: {
     preparedActionId: string;
     proposalHash: string;
@@ -1097,7 +1321,7 @@ export class AuthoritativeRoomStore {
 
   insertSubmission(input: {
     submissionId: string;
-    principalId: string;
+    principalId: string | null;
     payloadHash: string;
     inputKind: string;
     rootActionId: string;
@@ -1260,10 +1484,14 @@ export class AuthoritativeRoomStore {
   ): void {
     this.storage.sql.exec(
       `UPDATE authority_submissions
-       SET status = ?, proposal_hash = ?, continuation_json = NULL, result_json = ?
+       SET status = ?, proposal_hash = ?,
+           continuation_json = CASE WHEN input_kind = 'dueActivity' AND ? = 'awaitingInput'
+             THEN continuation_json ELSE NULL END,
+           result_json = ?
        WHERE prepared_action_id = ?`,
       status,
       proposalHash,
+      status,
       JSON.stringify(result),
       preparedActionId,
     );
@@ -1456,7 +1684,7 @@ export class AuthoritativeRoomStore {
   /** Returns at most one unfinished publication owned by this exact frozen
    * ViewerKey. Ordering is by authoritative source sequence, not insertion
    * timing, so Durable Object eviction cannot change which recovery is shown. */
-  recoverableDeliveryAudience(viewerKey: string): AuthorityDeliveryAudienceRow | undefined {
+  recoverableDeliveryAudience(viewerKey: string, oldestFirst = false): AuthorityDeliveryAudienceRow | undefined {
     return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
       SELECT audience.publish_capability, audience.audience_id,
              audience.viewer_key, audience.projection_hash,
@@ -1468,7 +1696,8 @@ export class AuthoritativeRoomStore {
       WHERE audience.viewer_key = ?
         AND audience.status IN ('pending', 'rejected', 'retryableFailure')
         AND plan.status = 'open'
-      ORDER BY length(plan.source_event_seq) DESC, plan.source_event_seq DESC
+      ORDER BY length(plan.source_event_seq) ${oldestFirst ? "ASC" : "DESC"},
+               plan.source_event_seq ${oldestFirst ? "ASC" : "DESC"}, audience.audience_id
       LIMIT 1
     `, viewerKey).toArray()[0];
   }
@@ -1478,6 +1707,7 @@ export class AuthoritativeRoomStore {
    * Character, session, projection hash, and plan before authorizing use. */
   recoverableDeliveryAudiencesForPrincipal(
     principalId: string,
+    oldestFirst = false,
   ): AuthorityDeliveryAudienceRow[] {
     const viewerKeyPrefix = `${principalId}\u001f`;
     return this.storage.sql.exec<AuthorityDeliveryAudienceRow>(`
@@ -1491,7 +1721,8 @@ export class AuthoritativeRoomStore {
       WHERE instr(audience.viewer_key, ?) = 1
         AND audience.status IN ('pending', 'rejected', 'retryableFailure')
         AND plan.status = 'open'
-      ORDER BY length(plan.source_event_seq) DESC, plan.source_event_seq DESC,
+      ORDER BY length(plan.source_event_seq) ${oldestFirst ? "ASC" : "DESC"},
+               plan.source_event_seq ${oldestFirst ? "ASC" : "DESC"},
                audience.audience_id
     `, viewerKeyPrefix).toArray();
   }
@@ -1994,7 +2225,10 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_randomness_authorizations;
       DELETE FROM authority_randomness_batches;
       DELETE FROM authority_proposal_recovery;
+      DELETE FROM authority_vnext_invocations;
+      DELETE FROM authority_npc_decisions;
       DELETE FROM authority_action_stages;
+      DELETE FROM authority_due_work;
       DELETE FROM authority_submissions;
       DELETE FROM authority_corrections;
       DELETE FROM authority_room_administration;

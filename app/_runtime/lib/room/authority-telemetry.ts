@@ -14,6 +14,7 @@ export type RoomAuthorityTelemetryContext = {
   requestId?: string;
   submissionId?: string;
   clock?: () => number;
+  actorPlanTransport?: import("./actor-plan-transport-types").ActorPlanTransport;
   emit(event: RoomTelemetryEvent): void;
 };
 
@@ -147,7 +148,8 @@ export function withRoomAuthorityTelemetry(
 
   return {
     prepare(principal: unknown, input: RoomActionInput) {
-      return measure("prepare", undefined, () => authority.prepare(principal, input));
+      return measure("prepare", undefined, () => context.actorPlanTransport === undefined
+        ? authority.prepare(principal, input) : authority.prepare(principal, input, context.actorPlanTransport));
     },
     observe(principal: unknown, query?: unknown) {
       return measure("observe", undefined, () => authority.observe(principal, query));
@@ -156,7 +158,8 @@ export function withRoomAuthorityTelemetry(
       return measure(
         "commit",
         stringValue(rulesInput.rootActionId),
-        () => authority.commit(principal, preparedActionId, rulesInput),
+        () => context.actorPlanTransport === undefined ? authority.commit(principal, preparedActionId, rulesInput)
+          : authority.commit(principal, preparedActionId, rulesInput, context.actorPlanTransport),
       );
     },
     ...(authority.resumePlayerRandomness === undefined
@@ -166,7 +169,8 @@ export function withRoomAuthorityTelemetry(
             return measure(
               "commit",
               undefined,
-              () => authority.resumePlayerRandomness!(principal, randomnessId),
+              () => context.actorPlanTransport === undefined ? authority.resumePlayerRandomness!(principal, randomnessId)
+                : authority.resumePlayerRandomness!(principal, randomnessId, context.actorPlanTransport),
             );
           },
         }),

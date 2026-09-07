@@ -1,0 +1,87 @@
+{
+  "round": 42,
+  "status": "failed-stopped",
+  "attempts": 2,
+  "passed": 1,
+  "failed": 1,
+  "notAttempted": [
+    "saved check recovery"
+  ],
+  "syntheticFirstPass": true,
+  "realCorrection": true,
+  "realLocalRoom": true,
+  "syntheticNarration": true,
+  "productionSourceUnchanged": true,
+  "sourceFileCount": 308,
+  "rows": [
+    {
+      "id": 1,
+      "durationMs": 1220,
+      "usage": {
+        "prompt_tokens": 3430,
+        "completion_tokens": 187,
+        "total_tokens": 3617,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 3430
+      },
+      "finishReason": "tool_calls",
+      "knownCny": "0.0059865",
+      "status": "passed",
+      "case": "worldInteraction"
+    },
+    {
+      "id": 2,
+      "durationMs": 1308,
+      "usage": {
+        "prompt_tokens": 3405,
+        "completion_tokens": 174,
+        "total_tokens": 3579,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 3405
+      },
+      "finishReason": "tool_calls",
+      "knownCny": "0.0058905",
+      "status": "failed",
+      "case": "observe"
+    }
+  ],
+  "failure": {
+    "code": "PROPOSAL_REPAIR_EXHAUSTED",
+    "constraint": "required-field",
+    "diagnosticCode": "FIELD_MISSING",
+    "path": [
+      "terminal"
+    ],
+    "action": "notCommitted"
+  },
+  "scope": "worldInteraction repaired and committed; full Room snapshot unchanged after eviction and duplicate submission. Observe correction omitted a required repair. No third call.",
+  "knownCny": "0.0118770",
+  "artifacts": {
+    "1-request.json": "3613244e9bf780c09a6d6caf9f93d97f5a27222bd5ebab45109fbb7d9d0d73ed",
+    "usage.json": "3a1cf0afe709966ba9ece9b6b575eb88ce83a1b8df36576cba1fb69ea8e4b0e1",
+    "plan.json": "e52dcf6f9774a2a67464bb8953844e00e98ef99224de04ecb19fb74bef0b82a5",
+    "1-response.json": "b5abbafcb079603b1e92fd7c233ece1411d5305bf216bfa9276eacc89bec139e",
+    "harness.json": "37922cd023c38a81ddd4d41739282c555b81b96135f1f9fdeb672e5e2f05f49f",
+    "2-response.json": "665f7f8099d98b9b041efd54f959aee6ce93c71df81b2c59d6d82381cb5f732b",
+    "vitest.log": "27acaa64c418f7d7bf9e38f99c595465410ed0d881fac3884792e3045de6b02b",
+    "2-dispatch.json": "41883a4da9717da91eb78f50e870d9eba8d365192c977b45a36f86ca8eadeb0d",
+    "final.json": "1c5620f134f9a26551828bcfbd9f1592031c0221f939cbe09862a2625caedeaf",
+    "2-request.json": "3fa02140835727d2d7d688042cf659233736e8506489ba349f08241ab906d80b",
+    "1-dispatch.json": "e767d78f7a46d65165fb4a0f9ddae80c1f08512486157e65ce649c6fcbf0b4b4"
+  },
+  "cumulative": {
+    "attempts": 79,
+    "knownUsageCalls": 68,
+    "unknownUsageCalls": 11,
+    "inputTokens": 770668,
+    "outputTokens": 63569,
+    "knownCnyMin": "1.14065535",
+    "knownCnyMax": "1.2547921"
+  }
+}

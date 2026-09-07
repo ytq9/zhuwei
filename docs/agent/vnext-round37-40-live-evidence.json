@@ -1,0 +1,125 @@
+{
+  "scope": "completed noncommitting narration protocol probes; no new calls during closeout",
+  "rounds": [
+    {
+      "startedAt": "2026-09-06T13:30:47.267Z",
+      "model": "deepseek-v4-flash",
+      "requestHash": "f5bd2e7718642fd1bd818742f6b8d29ab90acef17fd4a2b47d9180a66544388b",
+      "candidateHash": "13c17a9ec3881933c8cd8ef3e3866b3ef5ae4397c9f68689240be095798b0dae",
+      "maxCalls": 1,
+      "maxInputTokens": 12000,
+      "maxOutputTokens": 8192,
+      "maxCny": 0.11,
+      "timeoutMs": 45000,
+      "durationMs": 220,
+      "round": 37,
+      "accepted": false,
+      "usage": null,
+      "privateArtifactSha256": "ccbee02818181fdb8fe2c2841d11aaca8027a43cb1af7c1dbb20411938db0f22",
+      "httpStatus": 400,
+      "reason": "Thinking mode does not support this tool_choice",
+      "trace": {
+        "phase": "body",
+        "startedAt": "2026-09-06T13:30:47.268Z",
+        "byteCount": 146,
+        "headersMs": 219,
+        "httpStatus": 400,
+        "firstBodyMs": 220
+      }
+    },
+    {
+      "startedAt": "2026-09-06T13:32:10.690Z",
+      "model": "deepseek-v4-flash",
+      "requestHash": "2e7efd834d3e78b7294aae149ad57f7acaf428203e7f735c4f6deef8da65db61",
+      "candidateHash": "13c17a9ec3881933c8cd8ef3e3866b3ef5ae4397c9f68689240be095798b0dae",
+      "maxCalls": 1,
+      "maxInputTokens": 12000,
+      "maxOutputTokens": 8192,
+      "maxCny": 0.11,
+      "timeoutMs": 45000,
+      "durationMs": 3088,
+      "round": 38,
+      "accepted": false,
+      "usage": {
+        "prompt_tokens": 4462,
+        "completion_tokens": 429,
+        "total_tokens": 4891,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 4462
+      },
+      "privateArtifactSha256": "be7e661b4f9cd70bb59b7e9295225dcd01725aa169f2126852dc1b744586e693",
+      "httpStatus": 200,
+      "reason": "full validator rejected; wrong same-Claim evidence, omitted fact assessment, and unsupported unlit assertion"
+    },
+    {
+      "startedAt": "2026-09-06T13:36:36.220Z",
+      "model": "deepseek-v4-flash",
+      "requestHash": "5d1288cd82c76c4fa21024605e9b236b4845f0e5cf75a0a1cc28574332a2ad28",
+      "candidateHash": "13c17a9ec3881933c8cd8ef3e3866b3ef5ae4397c9f68689240be095798b0dae",
+      "maxCalls": 1,
+      "maxInputTokens": 12000,
+      "maxOutputTokens": 8192,
+      "maxCny": 0.11,
+      "timeoutMs": 45000,
+      "durationMs": 45007,
+      "round": 39,
+      "accepted": false,
+      "usage": null,
+      "privateArtifactSha256": "dc42bf14321f33dc5f6e2c72eeef53f2d0a2a0a2f5f4cbbe2117d4c0def5b0a2",
+      "httpStatus": 200,
+      "reason": "deadline with zero body bytes",
+      "trace": {
+        "phase": "headers",
+        "startedAt": "2026-09-06T13:36:36.223Z",
+        "byteCount": 0,
+        "headersMs": 266,
+        "httpStatus": 200
+      }
+    },
+    {
+      "startedAt": "2026-09-06T13:39:32.053Z",
+      "model": "deepseek-v4-flash",
+      "requestHash": "b10e6742784f304c5d819007475c2b9c6b4e67cb2828b3c9e8cc9fb2f6d98d1e",
+      "candidateHash": "13c17a9ec3881933c8cd8ef3e3866b3ef5ae4397c9f68689240be095798b0dae",
+      "maxCalls": 1,
+      "maxInputTokens": 12000,
+      "maxOutputTokens": 8192,
+      "maxCny": 0.11,
+      "timeoutMs": 45000,
+      "durationMs": 45008,
+      "round": 40,
+      "accepted": false,
+      "usage": null,
+      "privateArtifactSha256": "d3197a663c717771862529fe904e596380492ccda76455451ef96b3cd667be19",
+      "httpStatus": 200,
+      "reason": "deadline with zero body bytes",
+      "trace": {
+        "phase": "headers",
+        "startedAt": "2026-09-06T13:39:32.054Z",
+        "byteCount": 0,
+        "headersMs": 246,
+        "httpStatus": 200
+      }
+    }
+  ],
+  "attempts": 4,
+  "knownUsageCalls": 1,
+  "unknownUsageCalls": 3,
+  "inputTokens": 4462,
+  "outputTokens": 429,
+  "knownCny": "0.0086235",
+  "accepted": 0,
+  "productionCandidateAdopted": false,
+  "cumulative": {
+    "attempts": 76,
+    "knownUsageCalls": 65,
+    "unknownUsageCalls": 11,
+    "inputTokens": 761225,
+    "outputTokens": 63022,
+    "knownCnyMin": "1.12551415",
+    "knownCnyMax": "1.2396509"
+  }
+}

@@ -4,6 +4,7 @@ import test from "node:test";
 import { stableStructuralHash } from "../app/_runtime/lib/kp/causal-action-program.ts";
 import {
   DeepSeekStrictToolConfigurationError,
+  createDeepSeekAuthoritativeBinding,
   createDeepSeekStrictToolBinding,
 } from "../app/_runtime/lib/kp/deepseek.ts";
 import {
@@ -79,6 +80,25 @@ function strictModelInput(schema = STRICT_SCHEMA) {
     max_completion_tokens: 1_200,
   };
 }
+
+test('explicit narration thinking reaches the provider while callers without a mode keep their frozen default', async () => {
+  const sent = [];
+  const binding = createDeepSeekAuthoritativeBinding({ apiKey: 'test-local-key', fetcher: async (_url, init) => {
+    sent.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+  } });
+  const input = { messages: [{ role: 'user', content: 'bounded frozen material' }], tool_choice: 'auto',
+    thinking: { type: 'enabled' }, reasoning_effort: 'low', max_completion_tokens: 6000 };
+  await binding.run('deepseek-v4-flash', input);
+  assert.deepEqual(sent[0].thinking, { type: 'enabled' });
+  assert.equal(sent[0].reasoning_effort, 'low');
+  assert.equal(sent[0].max_tokens, 6000);
+  assert.equal(sent[0].max_completion_tokens, undefined);
+  await binding.run('deepseek-v4-flash', { messages: input.messages });
+  assert.deepEqual(sent[1].thinking, { type: 'disabled' });
+  await assert.rejects(binding.run('deepseek-v4-flash', { ...input, thinking: { type: 'unknown' } }));
+  assert.equal(sent.length, 2, 'An unsupported mode must fail before I/O');
+});
 
 function strictCorrectionModelInput() {
   const input = strictModelInput(CORRECTION_SCHEMA);
@@ -271,6 +291,28 @@ test("strict-tool beta Adapter rejects unconstrained or unsupported schemas befo
   }
   assert.equal(fetchCount, 0);
   assert.match(deepSeekStrictToolSchemaIssues(unsupportedArraySchema)[0], /minItems/u);
+});
+
+test("strict vendor validation rejects zero-property objects with exact paths before a physical call", async () => {
+  const empty = { type: "object", properties: {}, required: [], additionalProperties: false };
+  let calls = 0;
+  const binding = createDeepSeekStrictToolBinding({ apiKey: "test-key", fetcher: async () => {
+    calls += 1; throw new Error("an empty object schema must fail before fetch");
+  } });
+  for (const [schema, diagnosticPath] of [[empty, "$.properties"],
+    [{ type: "object", properties: { resultChecks: empty }, required: ["resultChecks"], additionalProperties: false },
+      "$.properties.resultChecks.properties"]]) {
+    const expected = `${diagnosticPath}:non-empty-object-required`;
+    assert.throws(() => assertDeepSeekStrictToolSchema(schema), error => error.message.includes(expected));
+    await assert.rejects(binding.run("deepseek-v4-flash", strictModelInput(schema)), error => {
+      assert.ok(error instanceof DeepSeekStrictToolConfigurationError);
+      assert.ok(error.cause instanceof Error);
+      assert.ok(error.cause.message.includes(expected));
+      assert.equal(JSON.stringify(error).includes("resultChecks"), false);
+      return true;
+    });
+  }
+  assert.equal(calls, 0);
 });
 
 test("DeepSeek strict dialect accepts documented $def refs and rejects unresolved or standard $defs refs", () => {
@@ -497,13 +539,13 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
       if (input.tools[0].function.name === "correct_proposal_bundle") {
         return correctionToolResponse();
       }
-      if (input.messages[0].content.includes("石门")) {
+      if (input.messages.find(message => message.role === "user").content.includes("石门")) {
         return toolResponse({
           bundleKind: "proposal-bundle",
           operations: [{ kind: "in-world-refusal", ref: "object:stone-door:1" }],
         });
       }
-      if (input.messages[0].content.includes("石板")) {
+      if (input.messages.find(message => message.role === "user").content.includes("石板")) {
         return toolResponse({
           bundleKind: "proposal-bundle",
           operations: [
@@ -512,7 +554,7 @@ test("injected handshake covers both vNext shapes plus Provider-side pre-generat
           ],
         });
       }
-      return input.messages[0].content.includes("椅子")
+      return input.messages.find(message => message.role === "user").content.includes("椅子")
         ? toolResponse({
             bundleKind: "proposal-bundle",
             operations: [

@@ -194,7 +194,7 @@ function appendSpokenClaim(
           knowledgeRef: claimRef,
           objectKind: "sourceClaim",
           content,
-          provenanceChain: [claimRef],
+          provenanceChain: [...accumulator.state.knowledge[speakerId][claimRef].provenanceChain].sort(),
         }],
       },
       visibilityPolicyId: `visibility:knowledge-holder:${characterId}`,
@@ -253,7 +253,7 @@ function appendSocialCommitment(
         scopeRefs: [...plan.successResponse.sourceRefs],
       }),
     },
-    visibilityPolicyId: "visibility:relationship-participants",
+    visibilityPolicyId: "visibility:promise-participants",
     secrecy: "private",
     reads: [
       `entity:${plan.actorCharacterId}`,

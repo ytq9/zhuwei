@@ -1,3 +1,5 @@
+import { isItemStockResourceId } from "./item-resources";
+import { playerResourceKeyForCombatPool } from "./character-abilities";
 import type {
   AuthoritativeWorldState,
   CharacterRecord,
@@ -5,6 +7,9 @@ import type {
   EventType,
   JsonRecord,
 } from "./model";
+import { applyWorldEffectEvent, isWorldEffectRecord, isWorldEffectRecordCandidate, synchronizeWorldEffectSuspensions } from "./world-effects";
+import { resolveCreatureDamage, worldDamageTarget } from "./damage";
+import { conditionMovementPermission, conditionMovementCost, conditionSpeed, conditionDamageDefense } from "./condition-mechanics";
 import {
   hasExactKeys,
   hasOnlyKeys,
@@ -264,8 +269,7 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
     case "MovementSegmentCommitted": return canonicalMovementSegmentPayload(value);
     case "ConditionChanged": return isNonEmptyString(value.entityId) && isRecord(value.conditions);
     case "ResourceSpent": return [value.entityId, value.resourceId].every(isNonEmptyString)
-      && !String(value.resourceId).startsWith("item:")
-      && !String(value.resourceId).startsWith("item-entry:")
+      && !isItemStockResourceId(String(value.resourceId))
       && canonicalUnsignedIntegerString(value.amount)
       && value.amount !== "0"
       && canonicalUnsignedIntegerString(value.resourceAfter);
@@ -294,7 +298,8 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
     case "SpellCountered": return [value.castId, value.sourceEntityId, value.abilityRef, value.counteredByCastId].every(isNonEmptyString);
     case "SpellResolved": return [value.castId, value.sourceEntityId, value.abilityRef].every(isNonEmptyString)
       && isRecord(value.outcome);
-    case "EffectApplied": return isRecord(value.effect) && isNonEmptyString(value.effect.effectId);
+    case "EffectApplied": return isRecord(value.effect) && isNonEmptyString(value.effect.effectId)
+      && (!isWorldEffectRecordCandidate(value.effect) || isWorldEffectRecord(value.effect));
     case "EffectEnded": return [value.effectId, value.targetEntityId, value.reason].every(isNonEmptyString);
     case "RoundEnded": return isNonEmptyString(value.encounterId)
       && isNonEmptyString(value.fictionAdvanceMicros) && Number.isSafeInteger(value.round);
@@ -432,6 +437,7 @@ function synchronizeNpcItemSystemCombatCache(
   const equipment = npcItemSystemEquipmentMechanics(
     character,
     itemSystem,
+    state.combatRuntime.definitions,
   );
   for (const equipmentDefinition of equipment.definitions) {
     const registered = state.combatRuntime.definitions[String(equipmentDefinition.definitionId)];
@@ -547,11 +553,12 @@ function applyMovementSegment(
     || !encounter.participantEntityIds.includes(sourceEntityId)
     || JSON.stringify(source.position) !== JSON.stringify(path[0])
   ) throw new TypeError("movement segment does not continue the authoritative combat state");
-  const speed = isRecord(source.conditions) && isNonEmptyString(source.conditions.grappledBy)
-    ? "0"
-    : isRecord(source.speedInches)
-      ? source.speedInches[movementMode]
-      : undefined;
+  const baseSpeed = isRecord(source.speedInches) ? source.speedInches[movementMode] : undefined;
+  const conditionMovement = typeof baseSpeed === "string" ? conditionSpeed(state, sourceEntityId, baseSpeed) : undefined;
+  const speed = conditionMovement?.canMove && (!conditionMovement.mustCrawl || movementMode === "walk") ? conditionMovement.speed : "0";
+  if (!conditionMovementPermission(state, sourceEntityId, path).allowed) {
+    throw new TypeError("movement segment violates an authoritative condition");
+  }
   if (!canonicalUnsignedIntegerString(speed)) {
     throw new TypeError("movement segment mode has no authoritative speed");
   }
@@ -575,7 +582,7 @@ function applyMovementSegment(
   );
   if (
     !analyzed.ok
-    || analyzed.totalMilliInches !== payload.distanceMilliInches
+    || conditionMovementCost(state, sourceEntityId, analyzed.totalMilliInches, analyzed.path) !== payload.distanceMilliInches
     || JSON.stringify(analyzed.path) !== JSON.stringify(path)
   ) throw new TypeError("movement segment distance or geometry is not authoritative");
 
@@ -634,10 +641,13 @@ function removeResidualPhaseTask(
 /** Applies combat events only; core/campaign events return false. */
 export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnvelope): boolean {
   const runtime = state.combatRuntime;
+  if (applyWorldEffectEvent(state, event)) return true;
   // Definitions are version-pinned room facts, not encounter-local state.  They
   // must remain replayable before the first combat/story runtime is opened so a
   // later encounter can refer to exactly the definition that was committed.
-  if (runtime.story === null && event.eventType !== "DefinitionRegistered") return false;
+  if (runtime.story === null
+    && event.eventType !== "DefinitionRegistered"
+    && event.eventType !== "DamagePacketResolved") return false;
   if (event.resolutionId !== null && event.eventType !== "RandomnessRequested") {
     delete runtime.randomnessResolutions[event.resolutionId];
   }
@@ -793,6 +803,7 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       const encounter = runtime.encounters[String(payload.encounterId)];
       if (encounter === undefined) throw new TypeError("encounter unavailable");
       encounter.activeEntityId = payload.sourceEntityId;
+      encounter.combatMoment = {edge:"turnStart"};
       const order = encounter.turnOrderEntityIds;
       if (Array.isArray(order)) encounter.turnCursor = order.indexOf(payload.sourceEntityId);
       const entity = runtime.entities[String(payload.sourceEntityId)];
@@ -828,6 +839,8 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       return true;
     }
     case "TurnEnded": {
+      const encounter = runtime.encounters[String(payload.encounterId)];
+      if(encounter!==undefined)encounter.combatMoment={edge:"turnEnd"};
       const entity = runtime.entities[String(payload.sourceEntityId)];
       if (entity !== undefined && isRecord(entity.turn) && entity.turn.surprised === true) {
         entity.turn.surprised = false;
@@ -845,16 +858,28 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       const entity = runtime.entities[String(payload.entityId)];
       if (entity === undefined) throw new TypeError("condition entity unavailable");
       entity.conditions = structuredClone(payload.conditions);
+      synchronizeWorldEffectSuspensions(state,String(payload.entityId));
       return true;
     }
     case "ResourceSpent": {
       const resourceId = String(payload.resourceId);
-      if (resourceId.startsWith("item:") || resourceId.startsWith("item-entry:")) {
+      if (isItemStockResourceId(resourceId)) {
         throw new TypeError("item costs must use ItemUsed");
       }
       const entity = runtime.entities[String(payload.entityId)];
       if (entity === undefined || !isRecord(entity.resources) || !isRecord(entity.resources[resourceId])) throw new TypeError("resource unavailable");
       const resource = entity.resources[resourceId] as JsonRecord;
+      const core = state.entities[String(payload.entityId)];
+      if (core?.kind === "player") {
+        const key = playerResourceKeyForCombatPool(core, resourceId, resource);
+        const amount = Number(payload.amount);
+        const after = Number(payload.resourceAfter);
+        if (key === undefined || !Number.isSafeInteger(amount) || amount <= 0
+          || !Number.isSafeInteger(after) || after < 0
+          || after !== Number(resource.current) - amount)
+          throw new TypeError("player resource spending lacks its authoritative pool");
+        core.resources![key] = after;
+      }
       resource.current = payload.resourceAfter;
       synchronizeCoreNpcCombatState(state, entity);
       return true;
@@ -908,19 +933,46 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
         || payload.targetPatch.id !== payload.targetEntityId) {
         throw new TypeError("damage packet target patch is malformed");
       }
-      const previousCombatEntity = runtime.entities[String(payload.targetEntityId)];
+      const previousSnapshot = runtime.entities[String(payload.targetEntityId)];
+      const needsMechanicalBaseline = !isRecord(previousSnapshot?.hitPoints);
+      const previousCombatEntity = needsMechanicalBaseline
+        ? worldDamageTarget(state, String(payload.targetEntityId))
+        : previousSnapshot;
       if (!isRecord(previousCombatEntity)) {
         throw new TypeError("damage packet target is unavailable");
+      }
+      if (needsMechanicalBaseline) {
+        if (!Array.isArray(payload.components)
+          || !payload.components.every((component) => isRecord(component)
+            && isNonEmptyString(component.type)
+            && Number.isSafeInteger(component.rolled) && Number(component.rolled) >= 0)) {
+          throw new TypeError("world damage components are malformed");
+        }
+        const expected = resolveCreatureDamage(previousCombatEntity,
+          payload.components.map((component) => ({
+            type: String((component as JsonRecord).type),
+            rolled: Number((component as JsonRecord).rolled),
+          })), (type) => conditionDamageDefense(state, String(payload.targetEntityId), type));
+        if (payload.pipelineProfileId !== "damage-death-srd51-2014-v1"
+          || expected.totalApplied !== payload.totalApplied
+          || canonicalSha256(expected.components) !== canonicalSha256(payload.components)
+          || canonicalSha256(expected.targetPatch) !== canonicalSha256(payload.targetPatch)) {
+          throw new TypeError("world damage packet differs from the authoritative creature result");
+        }
       }
       const coreHitPointSync = coreHitPointSyncForCombatPatch(
         state,
         previousCombatEntity,
         payload.targetPatch,
       );
-      patchEntity(state, payload.targetPatch);
+      if (previousSnapshot === undefined) {
+        runtime.entities[String(payload.targetEntityId)] = structuredClone(payload.targetPatch);
+        synchronizeCoreNpcCombatState(state, payload.targetPatch);
+      } else patchEntity(state, payload.targetPatch);
       if (coreHitPointSync !== undefined) {
         state.entities[coreHitPointSync.characterId].hitPoints!.current = coreHitPointSync.current;
       }
+      synchronizeWorldEffectSuspensions(state,String(payload.targetEntityId));
       return true;
     }
     // Campaign/world hazards own this canonical event. Returning false lets
@@ -1007,7 +1059,11 @@ export function applyCombatEvent(state: AuthoritativeWorldState, event: EventEnv
       timeline.nowMicros = (BigInt(timeline.nowMicros) + BigInt(String(payload.fictionAdvanceMicros))).toString();
       return true;
     }
-    case "DeathSaveResolved": patchEntity(state, payload.entityPatch); return true;
+    case "DeathSaveResolved": {
+      patchEntity(state, payload.entityPatch);
+      if(isRecord(payload.entityPatch))synchronizeWorldEffectSuspensions(state,String(payload.entityPatch.id));
+      return true;
+    }
     case "EncounterConclusionProposed": runtime.pendingInputs[String((payload.pending as JsonRecord).pendingInputId)] = structuredClone(payload.pending as JsonRecord); return true;
     case "EncounterConcluded": {
       const encounter = runtime.encounters[String(payload.encounterId)];

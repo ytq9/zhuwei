@@ -163,6 +163,38 @@ function playerView(world, state) {
   });
 }
 
+test("ability identity, references, and prose cannot become dice expressions", () => {
+  const world = initialize("opaque-identity");
+  const definition = {
+    ...stormLance([], []),
+    definitionId: "ability:character:11111111-1111-4111-8111-12345d678901:spell:healing",
+    publicDescription: Array(40).fill("1001d6").join("+"),
+    costs: [{ kind: "resource", resourceRef: "resource:charge-99999d6", amount: 1 }],
+    healing: { formula: "1d8+3" },
+  };
+  const result = register(world, "root:opaque-identity", definition);
+  assert.equal(result.kind, "committed", JSON.stringify(result.diagnostics));
+  assert.equal(result.events[0].payload.definition.definitionId, definition.definitionId);
+  assert.equal(result.events[0].payload.definitionHash, canonicalSha256(definition));
+});
+
+test("dice complexity remains bounded in derived and explicit mechanic formulas", () => {
+  for (const [suffix, addition, path, reason] of [
+    ["healing-count", { healing: { formula: "1001d6" } }, "/healing/formula", "a dice term exceeds 1,000 dice"],
+    ["temporary-count", { temporaryHitPoints: { formula: "1001d4" } }, "/temporaryHitPoints/formula", "a dice term exceeds 1,000 dice"],
+    ["explicit-count", { resolution: [{ nodeId: "restore", kind: "recovery", formula: "1001d8" }] }, "/resolution/0/formula", "a dice term exceeds 1,000 dice"],
+    ["term-count", { healing: { formula: Array(33).fill("1d6").join("+") } }, "", "dice term count exceeds the compiler profile"],
+  ]) {
+    const world = initialize(`formula-boundary-${suffix}`);
+    const result = register(world, `root:formula-boundary:${suffix}`, { ...stormLance([], []), ...addition });
+    assert.equal(result.kind, "needsKp", JSON.stringify(result));
+    assert.equal(result.diagnostics[0].code, "definitionComplexityExceeded");
+    assert.equal(result.diagnostics[0].path, path);
+    assert.equal(result.diagnostics[0].message, reason);
+    assert.deepEqual(result.events, []);
+  }
+});
+
 test("A01 set-like tags and aliases produce one JCS definition and compiled hash", () => {
   const firstWorld = initialize("a01-first");
   const secondWorld = initialize("a01-second");

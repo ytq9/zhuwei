@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { project, replay, step } from "../app/_runtime/lib/rules/index.ts";
+import { domainStateBeforeAuditRange } from "../app/_runtime/lib/rules/v2/correction.ts";
+import { authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
 } from "../app/_runtime/lib/rules/profiles/manifests.ts";
@@ -641,6 +643,8 @@ test("promotion preserves established NPC hit points and unrelated noncombat res
   assert.equal(scenario.state.entities[STATIC_NPC].resources["resource:rumor"], 2);
   assert.equal(scenario.state.entities[STATIC_NPC].resourceMaximums["resource:rumor"], 3);
 
+  const beforeResource = authorityRevisionOrHash(scenario.state, `entity:${STATIC_NPC}`);
+  assert.ok(beforeResource);
   const recoveredBrace = step(scenario.profiles, scenario.state, {
     kind: "changeResource",
     proposalId: "root:npc-mechanics-v5:recover-brace",
@@ -657,6 +661,10 @@ test("promotion preserves established NPC hit points and unrelated noncombat res
     "1",
   );
   assert.equal(scenario.state.entities[STATIC_NPC].resources["resource:rumor"], 2);
+  const beforeRecovery = domainStateBeforeAuditRange(scenario.state, recoveredBrace.events[0].eventSeq);
+  assert.equal(beforeRecovery.entities[STATIC_NPC].resources["resource:brace"], 0);
+  assert.equal(beforeRecovery.combatRuntime.entities[STATIC_NPC].resources["resource:brace"].current, "0");
+  assert.equal(authorityRevisionOrHash(beforeRecovery, `entity:${STATIC_NPC}`), beforeResource);
 });
 
 test("a first combat definition cannot contradict an NPC's frozen noncombat attributes", () => {

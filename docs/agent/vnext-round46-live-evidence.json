@@ -1,0 +1,130 @@
+{
+  "round": 46,
+  "scope": "fixed-body real reviewer probe; failed; candidate not adopted",
+  "started": {
+    "at": "2026-09-06T15:42:46.088Z"
+  },
+  "plan": {
+    "maxCalls": 4,
+    "maxInputTokens": 48000,
+    "maxOutputTokens": 32768,
+    "maxCny": 0.44,
+    "perCallTimeoutMs": 45000,
+    "batchTimeoutMs": 240000,
+    "model": "deepseek-v4-flash",
+    "productionCodeChanged": true,
+    "originalFullValidator": true,
+    "experimentalWire": "v8-operation-anchor-candidate",
+    "manualStatementReviewRequired": true,
+    "cases": [
+      {
+        "id": "inventory-action-realization",
+        "expected": "accepted",
+        "body": "你取出一根火把，把它放下，没有点燃。",
+        "requestHash": "23e31712d81c239ba4c87ae5606455ddf8e07ff64397ab3119c05ebc12df30ad",
+        "estimatedInputTokens": 7497
+      },
+      {
+        "id": "inventory-unsupported-state",
+        "expected": "rejected",
+        "body": "你放下了一根火把，火把没有燃烧，周围完全没有光。",
+        "requestHash": "025b0e9cd757a68cb396576e67c3a4b1ba18a93f2508e318f14d3bca41967971",
+        "estimatedInputTokens": 7503
+      },
+      {
+        "id": "npc-attributed-source",
+        "expected": "accepted",
+        "body": "林说，门后没有人。",
+        "requestHash": "eeb7fc54b20da2e7d518298bdefe9ae9b35e91a87f44b48292a416b1b70ab49a",
+        "estimatedInputTokens": 4936
+      },
+      {
+        "id": "npc-source-as-truth",
+        "expected": "rejected",
+        "body": "门后没有人。",
+        "requestHash": "c4dbbae45428d8dfc0e781fe93c3e96b64adc5b162dc74e6af1c43086b7a61bd",
+        "estimatedInputTokens": 4934
+      }
+    ]
+  },
+  "machineResults": {
+    "sourceHashesUnchanged": true,
+    "results": [
+      {
+        "id": "inventory-action-realization",
+        "verdict": "rejected",
+        "expected": "accepted",
+        "matched": false,
+        "reason": "ModelOutputValidationError",
+        "durationMs": 2448,
+        "usage": {
+          "prompt_tokens": 6571,
+          "completion_tokens": 321,
+          "total_tokens": 6892,
+          "prompt_tokens_details": {
+            "cached_tokens": 256
+          },
+          "prompt_cache_hit_tokens": 256,
+          "prompt_cache_miss_tokens": 6315
+        }
+      }
+    ],
+    "notAttempted": [
+      "inventory-unsupported-state",
+      "npc-attributed-source",
+      "npc-source-as-truth"
+    ],
+    "endedAt": "2026-09-06T15:42:48.538Z"
+  },
+  "manualReview": {
+    "result": "failed",
+    "inconsistency": {
+      "declaredCoveredWithoutEvidence": [
+        "f2"
+      ]
+    },
+    "notes": [
+      "The reviewer marked f2 covered without an assertion evidence edge. The original complete gate rejected the contradictory form.",
+      "No actionRealization assertion was emitted, so this probe does not demonstrate correct model selection of operation anchors.",
+      "The other three cases were not attempted; no HTTP action batch was started."
+    ]
+  },
+  "knownCostCny": "0.0109298",
+  "cumulative": {
+    "attempts": 88,
+    "knownUsageCalls": 77,
+    "inputTokens": 807591,
+    "outputTokens": 65922,
+    "cacheHitTokens": 134656,
+    "cacheMissTokens": 594220,
+    "legacyInputsWithoutCacheSplit": 78715,
+    "knownCnyLower": "1.19864755",
+    "knownCnyUpper": "1.3127843",
+    "unknownUsageCalls": 11
+  },
+  "sourceBefore": {
+    "app/_runtime/lib/kp/narration-vnext.ts": "a9cdd98efa712dadb5243521ef0502a5742dcfa7c050a9c7d31399215a9c71b2",
+    "app/_runtime/lib/kp/deepseek.ts": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8",
+    "app/_runtime/lib/kp/vnext/invocation/budget.ts": "419715f0713f1fd89c15451da37bd34fdd797dca42fcad0ce6cebeeab147ad89"
+  },
+  "candidateSource": {
+    "candidate.mjs": "0167aacf5604dd753e12e2150cb75671f6a4b09c473e0735c52fc066ce359b86",
+    "strict-adapter.mjs": "2b46bf2615aa918c1e55979dab9dbab184bc6c5bb1e381720143fca82934f02e"
+  },
+  "artifactHashes": {
+    "source-manifest.json": "cfbe278ee231495d57118a5f4bf38a833ee528dff41911b72f21478d5c50c7fd",
+    "inventory-action-realization-input.json": "1d4830003e92d0f2aaec7fb1b1f82b910995fd9a356f620d6012acb27dcec1c4",
+    "plan.json": "cbf13d5b2adb6f209ee8017fb31bfdc7d1f4e7d1b7809fe1dc3b75c291a6289d",
+    "inventory-action-realization-result.json": "2c9780bb294eab8886c49a82759deae574a00ba0dfa8f18ef07666377f43e0de",
+    "started.json": "c574c1938e94ff51112528a27a7e876eb567ff02ec8569dd1e7839c6a4022cd6",
+    "inventory-action-realization-response.json": "36926d393e9a4daf95897d296aef37cc282bece03b34175c7cf24643357639db",
+    "candidate-source.json": "e9f90a9fbd00863f4847f98cbe171dc349287b4d9e52fcde80a8d6d2a982be16",
+    "final.json": "f29d0304dce125900c8a861c8c539e27cbdfd3e6651a0611aea16df413e61a5a"
+  },
+  "harnessHash": "a456d056650bdabc5e3a6b28f11aed90d93128331c0fc60ca06bca93152e6c65",
+  "currentSourceNote": "After the probe, catalog schema and policy identifiers were advanced to v2/v6 with an explicit operation binding; the probe hash identifies its own source, not the final tree.",
+  "paths": {
+    "private": "/tmp/zhuwei-review-candidate-46-private",
+    "log": "/tmp/zhuwei-review-candidate-46.log"
+  }
+}

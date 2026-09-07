@@ -201,7 +201,7 @@ export const ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_DOCUMENT: CanonicalProfileD
 
 export const ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE = Object.freeze({
   profileId: ENVIRONMENT_V5_RUNTIME_MANIFEST_PROFILE_ID,
-  profileHash: "sha256:4ee31c57284246b9bb634ab127a11b4ca1a2e2f30fd4d0fc102621c5096e72e3",
+  profileHash: "sha256:206fc48eb7e384e26d85af2e470a12545042bb38cfacfdbc8bbe13d6c53b1432",
 }) satisfies ProfileRef;
 
 /** Product 0.4's only registered runtime manifest. */

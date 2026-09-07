@@ -1,7 +1,9 @@
+import type { RuleDiagnostic } from "../rules/v2/model";
 import type { TacticalPosition } from "../rules/tactical-projection";
 import type { RuntimeProfileManifest } from "../rules";
 import type { ProfileRef } from "../rules/profiles/types";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
+import type { ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -317,7 +319,20 @@ export type AuthoritativeRoomObservation = {
   presentationHold?: { knowledgeRefs: string[] };
 };
 
-export type AuthorityCommitOutcome =
+export type AuthorityCommitOutcome = AuthorityCoreCommitOutcome & {
+  /** Server-only independent results caused by an already committed timeline
+   * transition. They retain their own receipts and frozen Viewer delivery. */
+  dueOutcomes?: AuthorityCommitOutcome[];
+};
+
+type AuthorityCoreCommitOutcome =
+  | {
+      /** Server-only orchestration outcome. Never enters an observer projection. */
+      kind: "awaitingKpDecision";
+      preparedActionId: string;
+      rootActionId: string;
+      decision: JsonObject;
+    }
   | {
       kind: "continue";
       prepared: PreparedAuthoritativeAction;
@@ -353,6 +368,9 @@ export type AuthorityCommitOutcome =
       kind: "rejected";
       code: string;
       explanation: string;
+      /** Private KP diagnostics; publicFailure emits its existing safe fields only. */
+      issues?: readonly string[];
+      diagnostics?: readonly (ProposalDiagnostic | RuleDiagnostic)[];
       receipt?: PublicReceipt;
     }
   | {

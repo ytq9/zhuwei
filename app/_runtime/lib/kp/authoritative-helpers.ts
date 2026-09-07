@@ -10,6 +10,7 @@ import type {
   JsonValue,
   ModelInvocationResult,
   NarrationAgencyClaim,
+  NarrationGroundingReason,
   NpcSemanticActionPlan,
 } from "./authoritative-types";
 import {
@@ -40,14 +41,14 @@ const NPC_FORBIDDEN_OPERATIONS = new Set<string>([
   "advanceCampaignLifecycle",
 ]);
 export class ModelOutputValidationError extends Error {
-  constructor() {
+  constructor(readonly outputConstraint?: string) {
     super("模型返回的结构化结果不符合权威 KP 协议。");
     this.name = "ModelOutputValidationError";
   }
 }
 
 export class NarrationGroundingValidationError extends ModelOutputValidationError {
-  constructor() {
+  constructor(readonly reason: NarrationGroundingReason = "legacyEvidenceMismatch") {
     super();
     this.name = "NarrationGroundingValidationError";
   }
@@ -1094,12 +1095,14 @@ export function extractSingleToolCall(response: unknown): Readonly<{
   name: string;
   arguments: unknown;
 }> {
-  if (!isRecord(response)) invalid();
+  if (!isRecord(response)) throw new ModelOutputValidationError("tool-response:object-required");
   const calls = toolCalls(response);
-  if (calls === undefined || calls.length !== 1 || !isRecord(calls[0])) invalid();
+  if (calls === undefined) throw new ModelOutputValidationError("tool-response:tool-calls-required");
+  if (calls.length !== 1) throw new ModelOutputValidationError("tool-response:exactly-one-call-required");
+  if (!isRecord(calls[0])) throw new ModelOutputValidationError("tool-response:call-object-required");
   const call = calls[0];
   const functionCall = isRecord(call.function) ? call.function : call;
-  if (typeof functionCall.name !== "string" || functionCall.name.length === 0) invalid();
+  if (typeof functionCall.name !== "string" || functionCall.name.length === 0) throw new ModelOutputValidationError("tool-response:nonempty-function-name-required");
   return Object.freeze({
     name: functionCall.name,
     arguments: functionCall.arguments,

@@ -421,8 +421,11 @@ function walkComplexity(value: unknown, path = "", depth = 0): { expressionNodes
 
 function validateDice(value: unknown, path = ""): number {
   let terms = 0;
-  const inspect = (entry: unknown, cursor: string): void => {
+  const inspect = (entry: unknown, cursor: string, field?: string): void => {
     if (typeof entry === "string") {
+      // Dice belong to formula fields, including explicit resolution nodes.
+      // Opaque IDs, reference strings, and prose may contain the same text.
+      if (field !== "formula") return;
       const matches = [...entry.matchAll(/(?:^|[+-])(\d+)d(\d+)/g)];
       for (const match of matches) {
         terms += 1;
@@ -437,7 +440,7 @@ function validateDice(value: unknown, path = ""): number {
       return;
     }
     if (isRecord(entry)) {
-      Object.entries(entry).forEach(([key, nested]) => inspect(nested, `${cursor}/${key}`));
+      Object.entries(entry).forEach(([key, nested]) => inspect(nested, `${cursor}/${key}`, key));
     }
   };
   inspect(value, path);

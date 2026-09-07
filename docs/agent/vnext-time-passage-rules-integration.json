@@ -1,0 +1,121 @@
+{
+  "schema": "zhuwei.isolated-file-integration/v1",
+  "sourceDirectory": "/tmp/zhuwei-time-passage-rules-work",
+  "targetDirectory": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "baselineManifestSha256": "521d1b6ce51a5f422bf4eec0a9d2ceb700f6c75088da0c2f99044d5892c4d726",
+  "files": [
+    {
+      "path": "app/_runtime/lib/rules/v2/time-passage.ts",
+      "baselineSha256": null,
+      "newSha256": "06ee5a1e2f9ff7512076440739755161fdc671146c061c04a2763ee58fc00e70"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/time-passage-binding.ts",
+      "baselineSha256": null,
+      "newSha256": "cb1ca29a73e0e2c4ad5ea3ad4d2b052a2ba35c89b110262374ed187766a4d5d6"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-encounters.ts",
+      "baselineSha256": null,
+      "newSha256": "af7c7ac7d78c58741b7ae9ecd6bf1282c890f4dba1b3282fecee7b995c1b1e2a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/due-activities.ts",
+      "baselineSha256": "592ad343b8fe4e621c1c9ca7d32613a9922b2bcb80a9dae9bc51c03afc065b02",
+      "newSha256": "159144ce3fafb328b3611f8f1c1884dc23a16dd7409b449deddb571f2d3ec8d6"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/actor-plans.ts",
+      "baselineSha256": "5c96b26c941cc74a683a6e54cd420f152adeb6a5f598f8dc1d26e0498476472d",
+      "newSha256": "5fef5c33d0496cce25c09c8ba33b1f09ea88b96064e1739efcf2be7d15863577"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-effects.ts",
+      "baselineSha256": "6e5f62085d865dd98b3b491084b34014e38c82fafac2b6359693aa35ab552258",
+      "newSha256": "310b29f3c576065c3447d8c11038139cb1dcdb0e1d6c22770360b4fac166dd27"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-model.ts",
+      "baselineSha256": "38ffe3f1c3ad14bca73e33367d503b33379fb9169c4d7c619f33ca1605f1895e",
+      "newSha256": "56f35c157cae457e951f2829a07e0509fb4c4fa3156e5a8a00689d0c69cdd219"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-actions.ts",
+      "baselineSha256": "5d67d489a99080cc2b4aeb78179de4b4e3a1c65868b80a2c7b4c8e4b6faa2a8d",
+      "newSha256": "f983d601660a6889138523ef1afccc2d8cb6bf789e2fe64177316b23cefb4b62"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/model.ts",
+      "baselineSha256": "13800abed368aa3794f75a4a7b133e06407b6b4b3ba0150b6d795f52ada2c823",
+      "newSha256": "79a05c76f738f4d072e69ef6fbee60210f27ed5dedb1ce8d19043ac82042e0c8"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-actions.ts",
+      "baselineSha256": "4984418f0057e1bdb8b17db920eace715ea9ff89d7e52cf609d5b0130359d10f",
+      "newSha256": "989387fac78aaf55b1a55010e85bae8e195a7c3e545d19f8573f1df2a86de44d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-events.ts",
+      "baselineSha256": "6c0ab6886f6eb81b4a5da67d5e4f3083eb8ed3e4121af12c7f2c3ca62ba8cb05",
+      "newSha256": "3cf50acf009884463064bbef9cb04d971b287c226a9e2de345f1726f700fe43f"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/actions.ts",
+      "baselineSha256": "de882f47f8c15a7ddecce81c07e5995232176eb674c49002ddff38d18d7e1bc3",
+      "newSha256": "59b428adedc18955100d3ac95ad6965bb5315bdf509af4d84b12a7a93517c82c"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/timeline.ts",
+      "baselineSha256": "db30f43804670b42688d341a61ef3c3bf3f5238a0a7a6daac6336db5f77a30e4",
+      "newSha256": "5d08b1a786ab000df8b676b681ceec62228d4530f085e744a3df826b512a50d2"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/events.ts",
+      "baselineSha256": "f56648afceb8108ba7e5beac1fb1920978b62842ce1ffaad94269a126aa6b5ab",
+      "newSha256": "3834890d415f91746a92fc859f16ac00bf8cd1dc929a36d7fccda6dbd4409fa6"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/projector.ts",
+      "baselineSha256": "4a6fa5e59aabb20db597bd935453bb21369018442f9b8a8e81206e9c82cc1af1",
+      "newSha256": "514c5902fc27819e4da2a959b1af88993fdf4c7ebf0bca1bcb81d530be0b73fd"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/condition-consequences.ts",
+      "baselineSha256": "65fe2358fa254f9cb9cba34a67e24dc0f4c345d37bdc1a4013c64a65706b9a42",
+      "newSha256": "53608caca6408d0b1e7ba281ad241c0a4e1e06f72171f60e7897b8ab364f99a4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/vnext-world-interaction.ts",
+      "baselineSha256": "d54ecd8774348ac86235bc7ac23800705486d1aa4f3e9bb312959484707fde9c",
+      "newSha256": "03199b2d658c870df5c56428d62e4ed835f51fb7015e6a3b4e86ec29921281f3"
+    },
+    {
+      "path": "tests/kp-vnext-time-passage-rules.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "a370a44e5f33ea69b981c840f644e05cdde84cac9bda5c7f58ec8ae61060ea23"
+    }
+  ],
+  "checks": [
+    {
+      "command": "npx tsx --test tests/kp-vnext-time-passage-rules.test.mjs tests/kp-vnext-due-activity.test.mjs tests/kp-vnext-actor-plan-due-claims.test.mjs tests/world-effects-vnext.test.mjs",
+      "exitCode": 0,
+      "passed": 32,
+      "failed": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "git apply --check --whitespace=error-all /tmp/zhuwei-time-passage-rules-work/time-passage-rules.patch",
+      "exitCode": 0
+    }
+  ],
+  "integration": {
+    "at": "2026-09-06T21:27:40.122804+00:00",
+    "files": 18,
+    "conflicts": 0,
+    "backup": "/tmp/zhuwei-time-passage-rules-root-before",
+    "sourceManifestSha256": "183fd552eae67deae0db395149c32bbed444caf9492b485ae54107e5855aa707"
+  }
+}

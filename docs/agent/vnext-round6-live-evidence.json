@@ -1,0 +1,235 @@
+{
+  "date": "2026-09-05",
+  "branch": "cloudflare",
+  "baseCommit": "258caee404e0814405eb497653ee9f00d647b773",
+  "environment": "local authenticated HTTP and SQLite Durable Objects with real DeepSeek; production unchanged",
+  "budget": {
+    "maximumRoots": 3,
+    "maximumCalls": 12,
+    "maximumInputTokens": 360000,
+    "maximumOutputTokens": 32000,
+    "maximumCallsPerHttp": 4
+  },
+  "actual": {
+    "calls": 7,
+    "inputTokens": 92593,
+    "outputTokens": 2956,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "callTelemetryConsistent": true
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "tool": "submit_kp_proposal_bundle",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 28377,
+      "outputTokens": 1170,
+      "cachedInputTokens": 9984,
+      "responseFileSha256": "4c9fc77790bdbe2005b1cb86bf4e4e2b6aa9ddd8f501e95da87ca76d294ac48c"
+    },
+    {
+      "ordinal": 2,
+      "tool": "submit_kp_proposal_bundle",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 28360,
+      "outputTokens": 505,
+      "cachedInputTokens": 15744,
+      "responseFileSha256": "3e7bcf8e95ad80823d3cf63be94ef9f0bc6c49ebbf565e0b4909c3e0fffb0c65"
+    },
+    {
+      "ordinal": 3,
+      "tool": "submit_current_narration",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 1728,
+      "outputTokens": 201,
+      "cachedInputTokens": 0,
+      "responseFileSha256": "e62f2371e65c12ff7f096868775363dea92e9466b6a762ed420ebc08aa2b7d7f"
+    },
+    {
+      "ordinal": 4,
+      "tool": "review_frozen_narration",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 2268,
+      "outputTokens": 303,
+      "cachedInputTokens": 0,
+      "responseFileSha256": "2bccd47b3ed482234f368aedf2e2d3c3769e920617d1f8e6ad2d730710019c19"
+    },
+    {
+      "ordinal": 5,
+      "tool": "submit_kp_proposal_bundle",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 28367,
+      "outputTokens": 542,
+      "cachedInputTokens": 18048,
+      "responseFileSha256": "a95a182d7f73f78797dc5b837e81c4702d3bce4d121d744917a502d730b3518c"
+    },
+    {
+      "ordinal": 6,
+      "tool": "submit_current_narration",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 1499,
+      "outputTokens": 63,
+      "cachedInputTokens": 0,
+      "responseFileSha256": "5aff8cf560d7eefacb4421b7493a7645a190232d330b3a8fc33fc5393cee93ab"
+    },
+    {
+      "ordinal": 7,
+      "tool": "review_frozen_narration",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 1994,
+      "outputTokens": 172,
+      "cachedInputTokens": 0,
+      "responseFileSha256": "a98bdc3324516f8f3c0077da5035ee7be95510e1f27cd21007d48f35f5aaa8af"
+    }
+  ],
+  "actions": [
+    {
+      "ordinal": 1,
+      "request": "release one inventory unit and observe current scene",
+      "outcome": "notCommitted",
+      "failure": "PROPOSAL_FORM_INVALID",
+      "cause": "original tool arguments put failure inside the success branch; no Rules or Narration"
+    },
+    {
+      "ordinal": 2,
+      "request": "release one inventory unit",
+      "outcome": "committed/unpublished",
+      "failure": "NARRATION_BODY_INVALID",
+      "cause": "review asserted grounded with empty fact references; generated prose also added unsupported sensory details and NPC reactions"
+    },
+    {
+      "ordinal": 3,
+      "request": "same inventory operation in a new room with narrowed relevant expression",
+      "outcome": "committed/published",
+      "body": "你俯身，将随身的一支弩矢放到脚边的地上。弩矢轻轻落地，就搁在你脚旁。",
+      "humanReview": "Accepted after user clarified harmless realization of a committed action is permitted; no stealth success, extra action or NPC response follows from the wording."
+    }
+  ],
+  "successfulState": {
+    "heldQuantityBefore": 20,
+    "heldQuantityAfter": 19,
+    "newSceneQuantity": 1,
+    "hp": {
+      "current": 28,
+      "maximum": 28
+    },
+    "fictionTime": {
+      "branchId": "branch:main",
+      "nowMicros": "0"
+    },
+    "pendingInputs": [],
+    "otherClassResourcesUnchanged": true
+  },
+  "duplicateChecks": {
+    "noModelReinvocation": true,
+    "sameSubmissionId": true,
+    "sameReceipt": true,
+    "sameMechanicalState": true,
+    "sameDelivery": true
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsConform": true,
+    "eventCount": 1,
+    "eventTypes": [
+      "InventoryOperationApplied"
+    ]
+  },
+  "limitations": [
+    "One published real inventory action does not close V01-V03 or production replacement.",
+    "NPC voices, failure/cost diversity, long continuity and token adoption still need real continuous-game acceptance.",
+    "Final user clarification of expression policy and removal of an unused wire schema branch have targeted/local evidence, not another live batch.",
+    "The final review-capacity error mapping fix has targeted adapter and public-outcome evidence only; no additional real call.",
+    "The semantic reviewer is a model judgment, not a deterministic proof."
+  ],
+  "providerTelemetry": [
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "requestHash": "sha256:dee0e90e48edd46aaf94e6060c43a7a1feed5eff91ce77396f620b2086967356",
+      "bindingHash": "sha256:331066756379899d8c1cac7723761cdd31f0e871c281215965d19d474be6d75e",
+      "estimatedInputTokens": 29809,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:a175eb7c697a1131c958ddaabaaa70d102af6fc3daaaff82050f7e87afc4836c",
+      "result": "success",
+      "durationMs": 7977,
+      "responseHash": "sha256:d1e27ecebb03c2a5635f56b78870c5f0962bc0bd0f0bddeb345465e3481bd6f8",
+      "inputTokens": 28377,
+      "outputTokens": 1170
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "requestHash": "sha256:9612d2dc3054e7e23e7c7919faee4018ab2c20ee5b1fb8db1e40eb07a79087ad",
+      "bindingHash": "sha256:331066756379899d8c1cac7723761cdd31f0e871c281215965d19d474be6d75e",
+      "estimatedInputTokens": 29785,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:ad5ce0f3886895929df6c8ea11cd19a0bcf23dcb886b5d95b592f8095c213d8b",
+      "result": "success",
+      "durationMs": 3468,
+      "responseHash": "sha256:797aa0c6f04bdec57c1932775e21cab231096b577d6dc4136f83f60b6f34f9f2",
+      "inputTokens": 28360,
+      "outputTokens": 505
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelTask": "narration",
+      "modelInvocationPurpose": "initialNarration",
+      "modelResult": "success",
+      "modelInputTokens": 1728,
+      "modelOutputTokens": 201,
+      "outcomeKind": "success",
+      "durationMs": 2402
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelTask": "narration",
+      "modelInvocationPurpose": "narrationReview",
+      "modelResult": "modelPermanent",
+      "modelInputTokens": 2268,
+      "modelOutputTokens": 303,
+      "outcomeKind": "modelPermanent",
+      "errorCode": "narrationSchema",
+      "durationMs": 1904
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "requestHash": "sha256:34e184a82d17c915a16928e35415897d8c53546d28708ea8839c2bb1c94925ad",
+      "bindingHash": "sha256:56ec43eb4e20c561777f50519723ea7efc816bc4667679f3d2be6983267051b6",
+      "estimatedInputTokens": 29785,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:ab0ef5aee2ca7b7b90156c3e3ec63ae39ae68b3910b14ca1204559a2150400f5",
+      "result": "success",
+      "durationMs": 3797,
+      "responseHash": "sha256:cd8a5524372f1121787b55163302b213d3ddc3445dd7879ad8528b7e7968f0a9",
+      "inputTokens": 28367,
+      "outputTokens": 542
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelTask": "narration",
+      "modelInvocationPurpose": "initialNarration",
+      "modelResult": "success",
+      "modelInputTokens": 1499,
+      "modelOutputTokens": 63,
+      "outcomeKind": "success",
+      "durationMs": 635
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelTask": "narration",
+      "modelInvocationPurpose": "narrationReview",
+      "modelResult": "success",
+      "modelInputTokens": 1994,
+      "modelOutputTokens": 172,
+      "outcomeKind": "success",
+      "durationMs": 1440
+    }
+  ]
+}

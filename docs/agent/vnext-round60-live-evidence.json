@@ -1,0 +1,156 @@
+{
+  "round": 60,
+  "verdict": "failed-after-one-passed-action",
+  "scope": "Normal authenticated HTTP and actual default DeepSeek; one preexisting future NPC plan was seeded via trusted local Rules fixture, not a model-created plan.",
+  "sourceManifestSha256": "0707414a84a0ae248abe4af34f1a2b1766fbf2edf3fbb775bac7b28224e666c5",
+  "sourceUnchanged": true,
+  "actions": [
+    {
+      "index": 1,
+      "text": "我现在知道哪些事？",
+      "action": "committed",
+      "narration": "published",
+      "behaviorPassed": true
+    },
+    {
+      "index": 2,
+      "text": "我暂时留在原地，安静等一分钟，留意身边的动静。",
+      "action": "committed",
+      "narration": "published",
+      "behaviorPassed": false
+    }
+  ],
+  "unattemptedActions": 1,
+  "failures": {
+    "jsonOrFilling": 0,
+    "ruleRejections": 0,
+    "narrativeAuthorityContradictions": 1,
+    "detail": "The second proposal authored completed one-minute observation evidence, but contained no time operation; Rules and Viewer time remained zero. A scheduled NPC future trace was echoed before its due action executed."
+  },
+  "recovery": {
+    "invoked": false,
+    "reason": "Both deliveries already published; this is a semantic/state failure, not a pending delivery."
+  },
+  "checks": {
+    "knowledgeReviewNoTimeInventoryKnowledgeOrPlanChange": true,
+    "duplicateFirstAction": {
+      "noModelReinvocation": true,
+      "sameSubmissionId": true,
+      "sameReceipt": true,
+      "sameMechanicalState": true,
+      "sameDelivery": true
+    },
+    "secondActionTimeStillZero": true,
+    "inventoryAndResourcesUnchanged": true,
+    "npcPlanStillScheduledUnchanged": true,
+    "npcTraceCanonicalFactAbsent": true,
+    "noNpcModelDecision": true,
+    "emptyMechanicalReviewSchemaAccepted": true,
+    "fullReplayExact": true
+  },
+  "authority": {
+    "eventCount": 8,
+    "eventTypes": [
+      "NpcPlanFormed",
+      "ActivityStarted",
+      "KnowledgeReviewed",
+      "CanonicalFactDeclared",
+      "SensoryEvidenceAcquired",
+      "CanonicalFactDeclared",
+      "SensoryEvidenceAcquired",
+      "WorldInteractionResolved"
+    ],
+    "receipts": 3,
+    "pendingDue": 0,
+    "modelInvocations": 2,
+    "deliveryStatuses": [
+      "open",
+      "open"
+    ],
+    "audienceStatuses": [
+      "published",
+      "published"
+    ]
+  },
+  "usage": {
+    "calls": 6,
+    "unknownUsageCalls": 0,
+    "rows": [
+      {
+        "ordinal": 1,
+        "tool": "offer_kp_proposal_bundle",
+        "input": 29683,
+        "hit": 13056,
+        "miss": 16627,
+        "output": 86,
+        "estimatedCny": 0.025980299999999998
+      },
+      {
+        "ordinal": 2,
+        "tool": "natural-narration",
+        "input": 1829,
+        "hit": 896,
+        "miss": 933,
+        "output": 748,
+        "estimatedCny": 0.0048103
+      },
+      {
+        "ordinal": 3,
+        "tool": "review_frozen_narration",
+        "input": 2711,
+        "hit": 896,
+        "miss": 1815,
+        "output": 148,
+        "estimatedCny": 0.0034333000000000002
+      },
+      {
+        "ordinal": 4,
+        "tool": "offer_kp_proposal_bundle",
+        "input": 34214,
+        "hit": 18816,
+        "miss": 15398,
+        "output": 706,
+        "estimatedCny": 0.0272148
+      },
+      {
+        "ordinal": 5,
+        "tool": "natural-narration",
+        "input": 1885,
+        "hit": 896,
+        "miss": 989,
+        "output": 172,
+        "estimatedCny": 0.0023023
+      },
+      {
+        "ordinal": 6,
+        "tool": "review_frozen_narration",
+        "input": 3001,
+        "hit": 0,
+        "miss": 3001,
+        "output": 169,
+        "estimatedCny": 0.005262
+      }
+    ],
+    "totals": {
+      "input": 73323,
+      "hit": 34560,
+      "miss": 38763,
+      "output": 2029,
+      "estimatedCny": 0.069003
+    },
+    "pricePerMillionCny": {
+      "hit": 0.05,
+      "miss": 1.5,
+      "output": 4.5
+    },
+    "priceEvidence": "/tmp/zhuwei-round58-preparation/pricing-verification.json",
+    "pricingWindow": "Beijing 2026-09-07 04:40–04:42 off peak",
+    "costCategory": "development validation"
+  },
+  "limitations": [
+    "Not evidence of stable success rates or completed NPC due/new-plan capability.",
+    "Main KP was authorized to read planned continuity; inference that it copied the planned trace is supported by overlap, not proof of internal reasoning.",
+    "No late retry, rephrasing, deployment, push, commit or migration."
+  ],
+  "closedAt": "2026-09-06T20:45:25.980Z"
+}

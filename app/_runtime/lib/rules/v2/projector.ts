@@ -1,4 +1,16 @@
+import { timePassageSchedule } from "./due-activities";
+import { timePassagePublicInterruptionReason, timePassageTimelineId } from "./time-passage";
+import { projectWorldFact } from "./world-facts";
+import { projectHeldKnowledgeIdentities } from "./knowledge-identities";
+import { publicExpressionConform } from "./public-expression";
+import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
+import { nonItemResources, projectItemStockResources } from "./item-resources";
+import { projectNarrativeFact } from "./narrative-commitments";
+import { itemIdentifiedBy, hiddenItemPresentation } from "./item-authority-vnext";
+import { combatPendingAnswerOptions } from "./combat-actions";
+import { atomicContinuationCanResume, isAtomicWorldContinuation } from "./atomic-world-input";
 import { canonicalSha256 } from "../profiles/canonical";
+import { projectHeldSourceClaims } from "./knowledge-records";
 import { pathLengthMilliInches } from "../profiles/combat-geometry";
 import { isCanonicalTacticalGeometry } from "../profiles/tactical-geometry";
 import { projectRegisteredAbility } from "../profiles/ability-compiler";
@@ -15,6 +27,7 @@ import type {
   AuthoritativeWorldState,
   CharacterRecord,
   DueActorPlanReadModel,
+  DueActivitiesReadModel,
   JsonRecord,
   KpSpatialReadModel,
   KpViewer,
@@ -26,6 +39,7 @@ import type {
   SafeReadModel,
 } from "./model";
 import { dueActorPlanChildRoot, earliestEligibleDueActorPlan } from "./actor-plans";
+import { dueActivityDescriptors } from "./due-activities";
 import { applyObserverRangeProjection, safeReceipt } from "./observer-delta";
 import { rejected } from "./results";
 import {
@@ -33,6 +47,7 @@ import {
   spatialRecordVisibleTo,
 } from "./spatial-visibility";
 import { characterTimelineId } from "./timeline";
+import { effectiveConditions, effectiveConditionEntity } from "./world-effects";
 import { projectRestRecoveryOptions } from "./character-rest";
 import {
   itemPolicyVisibleToViewer,
@@ -45,6 +60,7 @@ import {
 } from "./npc-mechanics";
 import {
   canonicalFactVisibleToCharacter,
+  hasExactKeys,
   isAuthoritativeWorldState,
   isNonEmptyString,
   isRecord,
@@ -62,6 +78,25 @@ const FORMER_TENURE_STATUSES: ReadonlySet<CharacterRecord["tenureStatus"]> = new
   "missing",
   "npcTransitioned",
 ] as const);
+
+function activityLifecycleProjection(state: AuthoritativeWorldState, entry: JsonRecord) {
+  const sourceTimeline = timePassageTimelineId(state, entry);
+  const schedule = entry.activityKind === "timePassage" && entry.status === "active" ? timePassageSchedule(state, entry) : undefined;
+  return {
+        activityId: entry.activityId,
+        characterId: entry.characterId,
+        status: entry.status,
+        startedAtFictionMicros: entry.startedAtFictionMicros,
+        intendedDurationMicros: entry.intendedDurationMicros,
+        ...(entry.restKind === "short" || entry.restKind === "long" ? { restKind: entry.restKind } : {}),
+        ...(entry.activityKind === "timePassage" ? { kind: "timePassage",
+          ...(sourceTimeline === undefined ? {} : { progressFictionMicros: state.fictionTimelines[sourceTimeline].nowMicros }),
+          ...(schedule?.kind === "blocked" && schedule.reason !== undefined ? { processingState: "blocked" } : {}),
+          ...(typeof entry.endedAtFictionMicros === "string" ? { endedAtFictionMicros: entry.endedAtFictionMicros } : {}),
+          ...(entry.status === "interrupted" ? { interruptionReason: timePassagePublicInterruptionReason(entry) } : {}),
+        } : {}),
+      };
+}
 
 function projectLifecycle(
   profiles: RuntimeProfileManifest,
@@ -106,6 +141,9 @@ function projectLifecycle(
     activeBranchId: state.activeBranchId,
     viewer: { kind: "player" as const, principalId: value.principalId },
     controlledCharacter: null,
+    activities: Object.values(state.campaignRuntime.activities)
+      .filter(activity => activity.characterId === value.characterId && activity.activityKind === "timePassage")
+      .map(entry => activityLifecycleProjection(state, entry)),
     ...(state.multiplayerRuntime.safetyPresentations[value.principalId] === undefined
       ? {}
       : {
@@ -202,11 +240,11 @@ function safeVisibleItemFor(
   const entryVisible = itemPolicyVisibleToViewer(entry.visibilityPolicyRef, viewer, entry)
     && (entry.visibilityPolicyRef !== "visibility:scene-observers" || sameScene);
   if (!entryVisible) return undefined;
-  const definitionVisible = itemPolicyVisibleToViewer(
+  const definitionVisible = itemIdentifiedBy(state, character.id, entry, definition) || (itemPolicyVisibleToViewer(
     definition.visibilityPolicyRef,
     viewer,
     entry,
-  ) && (definition.visibilityPolicyRef !== "visibility:scene-observers" || sameScene);
+  ) && (definition.visibilityPolicyRef !== "visibility:scene-observers" || sameScene));
   return {
     itemEntryId: entry.entryId,
     kind: definitionVisible ? "identified" : "opaque",
@@ -214,6 +252,7 @@ function safeVisibleItemFor(
       ? { definitionRef: definition.definitionId, name: definition.content.label }
       : {}),
     disposition: entry.disposition,
+    ...(entry.assemblyRef === undefined ? {} : { assemblyRef: entry.assemblyRef }),
     quantity: entry.quantity,
     ...(holderId === undefined ? {} : { holderRef: holderId }),
     ...(sceneId === undefined ? {} : { sceneRef: sceneId }),
@@ -229,12 +268,6 @@ function safeRelationshipFor(relationship: JsonRecord): JsonRecord | undefined {
     relationshipId: relationship.relationshipId,
     subjectIds: [...relationship.subjectIds].sort(),
     value: relationship.value,
-    ...(Array.isArray(relationship.basisFactIds)
-      ? { basisFactIds: relationship.basisFactIds.filter(isNonEmptyString).sort() }
-      : {}),
-    ...(isNonEmptyString(relationship.sourceFactId)
-      ? { sourceFactId: relationship.sourceFactId }
-      : {}),
   };
 }
 
@@ -248,7 +281,6 @@ function safePromiseFor(promise: JsonRecord): JsonRecord | undefined {
     content: promise.content,
     ...(isNonEmptyString(promise.condition) ? { condition: promise.condition } : {}),
     ...(isNonEmptyString(promise.status) ? { status: promise.status } : {}),
-    ...(isNonEmptyString(promise.sourceFactId) ? { sourceFactId: promise.sourceFactId } : {}),
   };
 }
 
@@ -262,10 +294,6 @@ function safeDebtFor(debt: JsonRecord): JsonRecord | undefined {
     obligation: debt.obligation,
     condition: debt.condition,
     ...(isNonEmptyString(debt.status) ? { status: debt.status } : {}),
-    ...(Array.isArray(debt.basisFactIds)
-      ? { basisFactIds: debt.basisFactIds.filter(isNonEmptyString).sort() }
-      : {}),
-    ...(isNonEmptyString(debt.sourceFactId) ? { sourceFactId: debt.sourceFactId } : {}),
   };
 }
 
@@ -318,6 +346,11 @@ function safeConversationThreadFor(
   thread: JsonRecord,
   viewerKind: "player" | "npc",
 ): JsonRecord {
+  if (thread.schema === "zhuwei.social-conversation/vnext-1") {
+    return Object.fromEntries(["schema", "threadRef", "rootActionId", "resolutionId", "actorCharacterId", "npcCharacterId", "sourceSceneId",
+      "playerExpression", ...(viewerKind === "player" ? ["goal", "method"] : []), "addressedThreadRef", "outcome", "status", "claimRef", "responseClaimRef", "updatedByEventId"]
+      .flatMap(key => thread[key] === undefined ? [] : [[key, structuredClone(thread[key])]]));
+  }
   const commonKeys = [
     "threadRef",
     "actorCharacterId",
@@ -379,11 +412,17 @@ function observerSafeCombatEntity(
   entity: JsonRecord,
   viewerCharacterId: string,
 ): JsonRecord {
+  entity = effectiveConditionEntity(state, String(entity.id), entity, viewerCharacterId);
   const effectiveArmorClass = projectedArmorClass(state, entity);
-  if (entity.id === viewerCharacterId) return {
-    ...structuredClone(entity),
-    ...(effectiveArmorClass === undefined ? {} : { effectiveArmorClass }),
-  };
+  if (entity.id === viewerCharacterId) {
+    const hidden = hiddenItemPresentation(state, viewerCharacterId);
+    const projected = structuredClone(entity);
+    for (const key of ["abilityRefs", "equipmentAbilityRefs"]) {
+      if (Array.isArray(projected[key])) projected[key] = projected[key].filter(ref => !hidden.abilityRefs.has(String(ref)));
+    }
+    if (isRecord(projected.resources)) projected.resources = Object.fromEntries(Object.entries(projected.resources).filter(([ref]) => !hidden.resourceRefs.has(ref)));
+    return { ...projected, ...(effectiveArmorClass === undefined ? {} : { effectiveArmorClass }) };
+  }
   const projected: JsonRecord = {};
   for (const key of [
     "id",
@@ -523,6 +562,7 @@ function projectKpSpatialEvidence(
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([entityId, entity]) => [entityId, {
         id: entity.id as string,
+        conditions: effectiveConditions(state, entityId),
         ...(includeNpcMechanics && isNonEmptyString(entity.name) ? { name: entity.name } : {}),
         sceneId: entity.sceneId as string,
         ...(includeNpcMechanics && isNonEmptyString(entity.mechanicalDefinitionRef)
@@ -804,13 +844,26 @@ function projectAuthoritative(
   const inventory = projectHeldInventory(state.campaignRuntime.itemSystem, {
     kind: authorized.kind,
     characterId: character.id,
+    identifiedEntryRefs: Object.values(state.campaignRuntime.itemSystem.entries).filter(entry => {
+      const definition = state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
+      return definition !== undefined && itemIdentifiedBy(state, character.id, entry, definition);
+    }).map(entry => entry.entryId),
   });
   const timelineId = characterTimelineId(state, character.id) ?? state.activeBranchId;
   const timeline = state.fictionTimelines[timelineId];
   const visibleFacts = Object.values(state.canonicalFacts)
     .filter((fact) => canonicalFactVisibleToCharacter(state, fact, character))
     .sort((left, right) => left.id.localeCompare(right.id))
-    .map((fact) => structuredClone(fact));
+    .map(fact => {
+      const projected = projectWorldFact(state, projectNarrativeFact(fact));
+      // The observed trace is public material; its plan binding and triggering
+      // root remain in authority state for replay and future NPC decisions.
+      if (projected.kind === "npcPlanTrace" && projected.source === "npcOrFactionAction") {
+        const description = isRecord(projected.value) ? projected.value.description : undefined;
+        return { ...projected, value: isNonEmptyString(description) ? { description } : {} };
+      }
+      return projected;
+    });
   const knowledge = Object.values(state.knowledge[character.id] ?? {})
     .sort((left, right) => left.knowledgeRef.localeCompare(right.knowledgeRef))
     .map((entry) => structuredClone(entry));
@@ -916,6 +969,10 @@ function projectAuthoritative(
             ? "是否将这次近战攻击改为非致命击昏？"
             : "请选择本次战斗行动的明确目标或取消。",
       ...(isNonEmptyString(pending.choiceKind) ? { choiceKind: pending.choiceKind } : {}),
+      answerOptions: (Array.isArray(pending.answerOptions) ? pending.answerOptions : combatPendingAnswerOptions(state, pending))
+        .filter(option => isRecord(option) && isNonEmptyString(option.label) && isRecord(option.answer)
+          && (!isNonEmptyString(option.answer.targetEntityId) || visibleCombatEntityIds.has(option.answer.targetEntityId)))
+        .map(option => structuredClone(option)),
       ...(Array.isArray(pending.candidateEntityIds)
         ? { candidateEntityIds: pending.candidateEntityIds.filter((entry) =>
             isNonEmptyString(entry) && visibleCombatEntityIds.has(entry)) }
@@ -1023,8 +1080,9 @@ function projectAuthoritative(
     return rejected("invalidWorldState", "The viewer tactical projection is unavailable.");
   }
   const controlledCombatEntity = state.combatRuntime.entities[character.id];
+  const hiddenItems = hiddenItemPresentation(state, character.id);
   const controlledAbilityRefs = Array.isArray(controlledCombatEntity?.abilityRefs)
-    ? controlledCombatEntity.abilityRefs.filter(isNonEmptyString).sort()
+    ? controlledCombatEntity.abilityRefs.filter(isNonEmptyString).filter(ref => !hiddenItems.abilityRefs.has(ref)).sort()
     : [];
   const controlledCombat = controlledCombatEntity === undefined
     ? undefined
@@ -1039,7 +1097,7 @@ function projectAuthoritative(
               : structuredClone(definition)]];
         })),
         resources: isRecord(controlledCombatEntity.resources)
-          ? structuredClone(controlledCombatEntity.resources)
+          ? Object.fromEntries(Object.entries(controlledCombatEntity.resources).filter(([ref]) => !hiddenItems.resourceRefs.has(ref)))
           : {},
         ...(isRecord(controlledCombatEntity.spellcasting)
           ? { spellcasting: structuredClone(controlledCombatEntity.spellcasting) }
@@ -1061,6 +1119,7 @@ function projectAuthoritative(
     },
     controlledCharacter: {
       characterId: character.id,
+      conditions: effectiveConditions(state, character.id, character.id),
       name: character.name,
       sceneId: character.sceneId,
       tenureStatus: character.tenureStatus,
@@ -1072,13 +1131,16 @@ function projectAuthoritative(
       ...(character.raceId === undefined ? {} : { raceId: character.raceId }),
       ...(character.subclassId === undefined ? {} : { subclassId: character.subclassId }),
       ...(character.hitPoints === undefined ? {} : { hitPoints: structuredClone(character.hitPoints) }),
-      ...(character.resources === undefined ? {} : { resources: structuredClone(character.resources) }),
+      resources: {
+        ...nonItemResources(character.resources ?? {}),
+        ...projectItemStockResources(state.campaignRuntime.itemSystem, inventory),
+      },
       ...(authorized.kind === "player"
         ? { restRecoveryOptions: projectRestRecoveryOptions(character) }
         : {}),
       ...(character.resourceMaximums === undefined
         ? {}
-        : { resourceMaximums: structuredClone(character.resourceMaximums) }),
+        : { resourceMaximums: nonItemResources(character.resourceMaximums) }),
       ...(character.abilityScores === undefined
         ? {}
         : { abilityScores: structuredClone(character.abilityScores) }),
@@ -1109,6 +1171,20 @@ function projectAuthoritative(
           }),
       ...(controlledCombat === undefined ? {} : { combat: controlledCombat }),
     },
+    ...(authorized.kind !== "npc" || character.semanticDefinitionRef === undefined ? {} : {
+      npcIdentity: (() => {
+        const definition = state.campaignRuntime.definitions[character.semanticDefinitionRef!];
+        const content = isRecord(definition?.content) ? definition.content : undefined;
+        const semantics = isRecord(content?.semantics) ? content.semantics : {};
+        return { definitionRef: character.semanticDefinitionRef!,
+          // The NPC's established identity and background constrain new
+          // history. Keep these fields without exposing private author notes.
+          ...Object.fromEntries(["label", "description"].filter(key => typeof content?.[key] === "string")
+            .map(key => [key, content![key]])),
+          ...Object.fromEntries(["attitude", "goals", "plans", "publicExpression", "behavioralConstraints", "initialUnknowns"].filter(key => Object.hasOwn(semantics, key))
+            .map(key => [key, structuredClone(semantics[key])])) };
+      })(),
+    }),
     abilityDefinitions: Object.fromEntries(
       Object.entries(state.campaignRuntime.definitions)
         .filter(([, definition]) => isRecord(definition.mechanicGraph)
@@ -1128,6 +1204,12 @@ function projectAuthoritative(
     },
     visibleFacts,
     knowledge,
+    knowledgeIdentities: projectHeldKnowledgeIdentities(state, character.id, knowledge),
+    ...(state.vNextItemAuthority === undefined ? {} : { itemKnowledge: Object.values(state.vNextItemAuthority.identifications[character.id] ?? {}).flatMap(grant => {
+      const definition = state.campaignRuntime.itemSystem.definitions[grant.definitionRef];
+      return definition === undefined || canonicalSha256(definition) !== grant.definitionHash ? []
+        : [{ entryRef: grant.entryRef, name: definition.content.label, description: definition.content.description }];
+    }).sort((left, right) => left.entryRef.localeCompare(right.entryRef)) }),
     receipts,
     pendingInputs,
     adjudicationPrecedents,
@@ -1145,8 +1227,14 @@ function projectAuthoritative(
     causalFrontier,
     activities: Object.values(state.campaignRuntime.activities)
       .filter((activity) => activity.characterId === character.id)
-      .map((entry) => structuredClone(entry)),
+      // Completion plans include future knowledge, hidden targets and frozen
+      // effects. Only the owner's lifecycle is public before or after due.
+      .map(entry => activityLifecycleProjection(state, entry)),
     ...(authorized.kind === "player" ? { roomMembers, partyGroups, spotlightLedger } : {}),
+    visibleAssemblies: Object.values(state.campaignRuntime.itemSystem.assemblies ?? {})
+      .filter(assembly => assembly.state === "active" && assembly.sceneRef === character.sceneId)
+      .map(({ assemblyRef, label, description, sceneRef }) => ({ assemblyRef, label, description, sceneRef, state: "active" as const }))
+      .sort((a, b) => a.assemblyRef.localeCompare(b.assemblyRef)),
     visibleItems: Object.values(state.campaignRuntime.itemSystem.entries)
       .flatMap((entry) => {
         const definition = state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
@@ -1190,10 +1278,7 @@ function projectAuthoritative(
           return safe === undefined ? [] : [safe];
         }),
       unresolvedThreats: [...state.campaignRuntime.unresolvedThreats],
-      sourceClaims: Object.values(state.campaignRuntime.sourceClaims)
-        .filter((claim) => claim.speakerId === character.id
-          || String(claim.claimId) in (state.knowledge[character.id] ?? {}))
-        .map((entry) => structuredClone(entry)),
+      sourceClaims: projectHeldSourceClaims(state, character.id, authorized.kind),
       ...(state.campaignRuntime.conversationThreads === undefined
         ? {}
         : {
@@ -1216,12 +1301,48 @@ function projectAuthoritative(
       encounters: visibleEncounters,
       story: structuredClone(state.combatRuntime.story),
     }),
+    ...(worldInteractionProfileEnabled(profiles.extensions) ? {
+      publicExpression: {
+        scene: { name: state.scenes[character.sceneId]?.name ?? "当前场景", tone: state.scenes[character.sceneId]?.publicTone ?? "" },
+        characters: Object.values(state.entities).filter(entity => entity.kind === "npc" && visibleCombatEntityIds.has(entity.id))
+          .flatMap(entity => {
+            const definition = entity.semanticDefinitionRef === undefined ? undefined : state.campaignRuntime.definitions[entity.semanticDefinitionRef];
+            const content = isRecord(definition?.content) ? definition.content : undefined;
+            const semantics = isRecord(content?.semantics) ? content.semantics : undefined;
+            const cues = semantics?.publicExpression ?? entity.publicExpression;
+            return publicExpressionConform(cues) ? [{ characterRef: entity.id, name: entity.name, ...structuredClone(cues) }] : [];
+          }).sort((a, b) => a.characterRef.localeCompare(b.characterRef)),
+      },
+    } : {}),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
   };
   return {
     ...base,
     projectionHash: canonicalSha256(base),
   } satisfies SafeReadModel;
+}
+
+function projectDueActivities(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  viewerValue: unknown,
+  query: ProjectionQuery,
+): DueActivitiesReadModel | ReturnType<typeof rejected> {
+  if (!isKpSpatialViewer(viewerValue)) {
+    return rejected("viewerUnauthorized", "Due Activity selection requires the internal KP capability.");
+  }
+  if (!hasExactKeys(query, ["dueActivities"]) || query.dueActivities !== true) {
+    return rejected("invalidRulesInput", "Due Activity selection requires its exclusive canonical query.");
+  }
+  const base = {
+    kind: "projected" as const,
+    runtimeProfiles: structuredClone(profiles),
+    stateVersion: state.version,
+    activeBranchId: state.activeBranchId,
+    viewer: { kind: "kp" as const, subjectId: "kp" as const },
+    dueActivities: dueActivityDescriptors(state),
+  };
+  return { ...base, projectionHash: canonicalSha256(base) };
 }
 
 function projectDueActorPlan(
@@ -1275,6 +1396,44 @@ function projectDueActorPlan(
   return { ...base, projectionHash: canonicalSha256(base) } as DueActorPlanReadModel;
 }
 
+function projectPendingNpcDecision(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  viewer: unknown,
+  query: ProjectionQuery,
+): ProjectionResult {
+  if (!isRecord(viewer) || viewer.kind !== "npc"
+    || viewer.purpose !== "kpDecision" || viewer.capability !== "internal:npc-limited-knowledge"
+    || !isNonEmptyString(viewer.npcId) || !isRecord(query.pendingNpcDecisionFor)
+    || !isNonEmptyString(query.pendingNpcDecisionFor.pendingInputId)
+    || query.dueActorPlanFor !== undefined) {
+    return rejected("viewerUnauthorized", "Pending NPC projection requires the exact internal NPC capability.");
+  }
+  const pendingInputId = query.pendingNpcDecisionFor.pendingInputId;
+  const pending = state.combatRuntime.pendingInputs[pendingInputId];
+  if (!isRecord(pending) || pending.kind !== "kpDecision" || pending.controllerEntityId !== viewer.npcId) {
+    return rejected("viewerUnauthorized", "The pending decision does not belong to this NPC.");
+  }
+  const stored = Object.values(state.atomicWorldInteractions ?? {}).find(value =>
+    isRecord(value) && isRecord(value.waiting) && value.waiting.kind === "input"
+    && isRecord(value.waiting.mirror) && value.waiting.mirror.pendingInputId === pendingInputId);
+  if (stored === undefined) return projectAuthoritative(profiles, state, viewer);
+  if (!isAtomicWorldContinuation(stored) || stored.waiting.kind !== "input"
+    || !atomicContinuationCanResume(profiles, state, stored)) {
+    return rejected("causalFrontierConflict", "The pending NPC candidate no longer matches authority.");
+  }
+  // Only Rules selects the candidate. The ordinary NPC projector still owns
+  // all knowledge/visibility filtering; the external pending ID remains the
+  // sole answer capability and no native continuation reaches this view.
+  const pendingInputs = { ...stored.candidateState.combatRuntime.pendingInputs };
+  delete pendingInputs[stored.waiting.nativePendingInputId];
+  pendingInputs[pendingInputId] = stored.waiting.mirror;
+  return projectAuthoritative(profiles, {
+    ...stored.candidateState,
+    combatRuntime: { ...stored.candidateState.combatRuntime, pendingInputs },
+  }, viewer);
+}
+
 /** Query channel and guessed reference never select a second projection path. */
 export function projectWorld(
   profiles: RuntimeProfileManifest,
@@ -1287,6 +1446,12 @@ export function projectWorld(
   }
   if (!isAuthoritativeWorldState(state)) {
     return rejected("invalidWorldState", "Projection requires a canonical V5 WorldState.");
+  }
+  if (isRecord(query) && Object.hasOwn(query, "dueActivities")) {
+    return projectDueActivities(profiles, state, viewerValue, query);
+  }
+  if (query?.pendingNpcDecisionFor !== undefined) {
+    return projectPendingNpcDecision(profiles, state, viewerValue, query);
   }
   if (query?.dueActorPlanFor !== undefined) {
     return projectDueActorPlan(profiles, state, viewerValue, query);

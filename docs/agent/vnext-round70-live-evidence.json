@@ -1,0 +1,359 @@
+{
+  "round": 70,
+  "verifiedAt": "2026-09-07T02:40:03.716450+00:00",
+  "verdict": "firstProposalReferenceFailure-batchStopped",
+  "sourceManifestSha256": "609b4fad8b6e00b37de61ea7e2f27407ae14b1bc33d00a2e7c83934ce6172318",
+  "sourceManifestHashScope": "manifestSha256 embedded in the source manifest; the file byte hash is listed separately in evidenceFiles.",
+  "parser": "v36",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "setup": {
+    "startedAt": "2026-09-07T02:24:55.331Z",
+    "status": "completed",
+    "phase": "verifyBaseline",
+    "phaseStatus": "completed",
+    "endedAt": "2026-09-07T02:24:56.173Z"
+  },
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "text": "我走到账台旁，向瓦罗点头：“我叫旅行守卫。我想先用半分钟整理一下思路。您若方便，过半分钟轻敲一下账台提醒我，我们再接着谈。”",
+      "submissionId": "vnext-round70-npc-http-b714e64b-7e56-432c-85c6-f8ab28615ea8",
+      "outcomeKind": "rejected",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "error": "The KP proposal bundle could not be verified against its frozen context.",
+      "code": "PROPOSAL_REFERENCE_INVALID",
+      "calls": 2,
+      "repairUsed": false,
+      "acceptance": "formatFailure",
+      "validJson": true,
+      "wireErrorPath": [
+        "decision",
+        "steps",
+        0,
+        "basisRefs",
+        2
+      ],
+      "actualRecordedDiagnosticFields": [
+        {
+          "path": "proposals[].basisRefs[]",
+          "code": "REFERENCE_UNAVAILABLE"
+        }
+      ],
+      "diagnosticTelemetryOccurrences": 2,
+      "diagnosticOccurrenceScope": "Original submission and its duplicate recorded the same failure. The duplicate made zero new model calls; this is one failed intent.",
+      "originalSelectionArguments": "{\"requestedCapabilities\": [\"passTime\", \"social\"]}",
+      "originalProposalArgumentsSha256": "cc74e33b1269066bdce0ae95c339ad49593fa89576a1f2e5e864dd0f31bcabbf",
+      "originalProposalArgumentsPrivateFile": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-private/02.json",
+      "redactedProposalExcerpt": {
+        "decision": {
+          "kind": "directSuccess",
+          "steps": [
+            {
+              "kind": "social",
+              "basisRefs": [
+                "wake",
+                "npc:black-oak-will:varo",
+                "npc-decision:npc:black-oak-will:varo"
+              ],
+              "npcRef": "npc:black-oak-will:varo",
+              "result": {
+                "response": {
+                  "basis": [
+                    "definition:module-npc:npc:black-oak-will:varo",
+                    "npc:black-oak-will:varo",
+                    "wake",
+                    {
+                      "kind": "playerExpression"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "excerptLimit": "Only decision kind and relevant reference fields are reproduced. Private NPC motive, unreleased response text and other draft content are omitted. This excerpt is not the complete proposal.",
+      "referenceChecks": {
+        "wrapper": "npc-decision:npc:black-oak-will:varo",
+        "wrapperInViewerEvidenceRefs": false,
+        "wrapperInAuthorityBasisRefs": false,
+        "wrapperInNonCitableRefs": true,
+        "npcSourceChoiceCount": 10,
+        "wrapperOfferedInNpcSourceChoices": false,
+        "responseStringSourcesAllOfferedForNpc": true,
+        "playerExpressionHasExactKindShape": true
+      },
+      "referenceChecksLimit": "The response source fields locally used the supplied surface; the entire proposal was rejected. No planned statement or unreleased NPC promise is treated as published narrative or a committed world fact.",
+      "diagnosticLimit": "Saved telemetry exposes REFERENCE_UNAVAILABLE at proposals[].basisRefs[] only. The exact wire index and non-citable membership are separately verified against the original draft and frozen authorized context; no absent constraint, expected value or repair permission is presented as original telemetry.",
+      "stateChecks": {
+        "sameAuthoritativeStateAsInitial": true,
+        "sameEventsAsInitial": true,
+        "sameRandomnessJournalAsInitial": true,
+        "samePublicControlledCharacterAsInitial": true,
+        "samePublicFictionTimeAsInitial": true,
+        "narrationMessagesBefore": 1,
+        "narrationMessagesAfter": 1,
+        "newNarrationMessages": 0,
+        "events": 0,
+        "receipts": 0,
+        "pendingDue": 0,
+        "deliveryPlans": 0,
+        "audiences": 0
+      },
+      "modelEvidence": {
+        "model": "deepseek-v4-flash",
+        "invocationCount": 2,
+        "repairUsed": false,
+        "contextHash": "sha256:ae055ba8988eddc35d68924fde8434a25c1b57dbc11e526215720859c5685893",
+        "bindingHash": "sha256:fd95bd3d72c29611efe4932bd3f239b674e19958fcaed15912afcd6cfdf31e01",
+        "exactCapturedJournal": true,
+        "identicalUserBodyAcrossSelectionAndProposal": true,
+        "sameContextHashAcrossCalls": true,
+        "repairTicketsPersisted": 0,
+        "thirdProviderCall": false
+      },
+      "duplicate": {
+        "calls": 0,
+        "checks": {
+          "sameAuthoritativeState": true,
+          "sameEvents": true,
+          "sameRandomnessJournal": true,
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameOutcome": true,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        },
+        "receiptEqualityMeans": "Both results have no Receipt; no Receipt was generated."
+      }
+    }
+  ],
+  "gate": {
+    "afterAction": 1,
+    "next": "stop",
+    "category": "formatFailure",
+    "reason": "First real proposal rejected with PROPOSAL_REFERENCE_INVALID before Rules: steps[0].basisRefs included the explicitly non-citable npc-decision wrapper. No model repair, no events/resources/randomness/time delta and no new narration. response.basis used available references and playerExpression, but that local success does not validate the entire proposal. Stop without resampling or new intents.",
+    "publicEvidence": [],
+    "reviewedAt": "2026-09-07T02:27:11.339Z",
+    "publicTableHash": "0063225dde12fee28ab92c2d3ab6f3503dab1479736311ed0250775cd3f89a4f",
+    "authoritySnapshotHash": "20d61aae1596a5fb50d48a0c133c62237965dd66cc6ef6d0b2d482e8d5d47112"
+  },
+  "categories": {
+    "formatFailure": 1,
+    "jsonSyntaxFailure": 0,
+    "referenceFailure": 1,
+    "proposalRuleRejection": 0,
+    "mechanicalMismatch": 0,
+    "narrativeContradiction": 0,
+    "safeRepair": 0,
+    "viewerRecovery": 0
+  },
+  "categoryScope": "referenceFailure is a subtype of the one formatFailure, not an additional failed action. Rejection occurred before Rules. There was no mechanical execution or new narration; zero observed narrative contradictions does not assess unreleased draft text or establish narrative correctness. Two remaining intents were not sent.",
+  "usage": {
+    "calls": [
+      {
+        "call": 1,
+        "actionOrdinal": 1,
+        "stage": "selection",
+        "model": "deepseek-v4-flash",
+        "input": 19002,
+        "cacheHit": 1408,
+        "cacheMiss": 17594,
+        "output": 50,
+        "costCny": "0.0533728",
+        "requestHash": "sha256:251ce0c074bb3e2764fc68715f692650fac5ada98632b560b7fda27d583d1687",
+        "responseHash": "sha256:595772c6a0a4eb8542caa3cdc925adf5cdfc1aad36a6fcd28cbbc14b4c26b187",
+        "originalArgumentsSha256": "1de8a38f0a849963f55b647df9f1f8bda1732eb71a3d643e259fad2f0d10b157"
+      },
+      {
+        "call": 2,
+        "actionOrdinal": 1,
+        "stage": "proposal",
+        "model": "deepseek-v4-flash",
+        "input": 25023,
+        "cacheHit": 1024,
+        "cacheMiss": 23999,
+        "output": 498,
+        "costCny": "0.0765814",
+        "requestHash": "sha256:3c9161c47662765098562401c427df346e41e0b8168edcd4101d2693bf3d52d9",
+        "responseHash": "sha256:9ad06f9fb385bee049266577c3d03d12052a07202dd9560c58575e1042a62de4",
+        "originalArgumentsSha256": "cc74e33b1269066bdce0ae95c339ad49593fa89576a1f2e5e864dd0f31bcabbf"
+      }
+    ],
+    "totalInput": 44025,
+    "totalCacheHit": 2432,
+    "totalCacheMiss": 41593,
+    "totalOutput": 548,
+    "totalCostCny": "0.1299542",
+    "pricing": {
+      "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+      "verifiedAt": "2026-09-07T00:58:26.847440Z",
+      "htmlSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+      "model": "deepseek-v4-flash",
+      "offPeakCnyPerMillion": {
+        "hit": "0.05",
+        "miss": "1.5",
+        "output": "4.5"
+      },
+      "peakCnyPerMillion": {
+        "hit": "0.10",
+        "miss": "3.0",
+        "output": "9.0"
+      },
+      "peakWindow": "Asia/Shanghai Mon-Fri 09:00-12:00,14:00-18:00",
+      "declaredBudgetCny": "5.0",
+      "maximumAtPeakCny": "4.95456",
+      "localEvidence": "/tmp/zhuwei-round69-pricing.html",
+      "verificationSource": "Root fetched the official tariff in this session; preparation verified the supplied local evidence hash. Charge conservatively at peak tariff."
+    },
+    "costBasis": "Captured actual usage at the same-day verified peak tariff, cache hit 0.10 / miss 3 / output 9 CNY per million. Calculated charge, not a provider invoice.",
+    "conservativeMeterChargeCny": "0.137007",
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "callTelemetryConsistent": true,
+    "meterUsageExact": true
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0,
+    "eventTypes": [],
+    "checkedAt": "2026-09-07T02:27:19.947Z"
+  },
+  "sourceComparison": {
+    "beforeCount": 321,
+    "afterCount": 321,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-07T02:27:19.993210+00:00",
+    "initialManifestSha256": "609b4fad8b6e00b37de61ea7e2f27407ae14b1bc33d00a2e7c83934ce6172318",
+    "allEqual": true
+  },
+  "processClosure": {
+    "capture": {
+      "port": 4320,
+      "stoppedAt": "2026-09-07T02:27:11.745246+00:00",
+      "exitCode": null,
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "port": 4321,
+      "stoppedAt": "2026-09-07T02:27:11.737859+00:00",
+      "exitCode": null,
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  },
+  "processClosureScope": "Processes and ports were verified absent at this batch closeout only; this does not describe later serial batches or current port state.",
+  "privateEvidenceDirectory": "/tmp/zhuwei-round70-npc-preparation/evidence",
+  "evidenceFiles": [
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/plan.json",
+      "sha256": "d1062dc2791d7e2e73599a2d337e5a5f727b60e15fe8a4ee23981e2e73c57100"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-action1.json",
+      "sha256": "7195525a5947a3409fd5dc28c649017e3c1fe9b89149fffa10024456065c02bb"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-decision1.json",
+      "sha256": "96a6ed55e8c1d796966bd2d1eef8a8f34dccb65131cc8455c7f2a61f8ca846fa"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/gate1.json",
+      "sha256": "d057c58b9b7e79750a13dee59c0a0f9e18b3a1273f1418643423371855ecc00a"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-duplicate1.json",
+      "sha256": "50d3e429c77928fe501f36d018954f5e3d8d15359ef983959fe068e5a80910e0"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-mechanical-evidence.json",
+      "sha256": "8576ee6543e37666b5debad89b440a831dd334f2442b835986912b3abc18a911"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-initial-authority.json",
+      "sha256": "1725c22d279a308a1d28364a93b8a8a4ed302369b7d5348c1229dd885d38645c"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-after1-authority.json",
+      "sha256": "d55fd24fab8d6107de5d296d65db67de2b953a708610bc32ce7d62b05c1086dc"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-after-duplicate1-authority.json",
+      "sha256": "d55fd24fab8d6107de5d296d65db67de2b953a708610bc32ce7d62b05c1086dc"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-initial-table.json",
+      "sha256": "4edf4aa793c53f9a5f9abe58dc7fb3eeab79c6588f74701a7b3160f50a2d2d92"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-after1-table.json",
+      "sha256": "4edf4aa793c53f9a5f9abe58dc7fb3eeab79c6588f74701a7b3160f50a2d2d92"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-prepared.json",
+      "sha256": "53ba5bce8a79db6f71b3d30968abb00f60edc08f75a5c77f506ac5b65e9612cd"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-journal.json",
+      "sha256": "e48ab93e25a811a2a22b210979e363913029a002cd82349ceb689a9085e7fec8"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-server.log",
+      "sha256": "b7eb5b6e7feb01d903648e10b04c053766928ee43abfb783cc0ff71f8446fb22"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-private/01.json",
+      "sha256": "68b9bef01b15c9b891a981c239b4b61ac906d9021526d54696d374f0a39d7b8e"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-private/02.json",
+      "sha256": "21df7989a6aefc17b677b402dd475290bd02f180ecb177bec8099fb3eca3660e"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/round70-source-manifest.json",
+      "sha256": "6a722ffe7129e4adf073140d196941484e0b282315318088e286a6f423f5d4c1"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/evidence/processes.json",
+      "sha256": "56eeba5f0819fc36d7f2e2e3ddbe0c0ef4b664f564a3de27174c8073c2c5a71b"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/closeout/final-meter.json",
+      "sha256": "b6541b4916c70c8e0c4f9ed8f939328a0beb8f887e832801571926d011b9634c"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/closeout/replay-result.json",
+      "sha256": "0a560f959a869d80a33668872f5fa05bcb0225edb3925e432b88cfbdd3ef35ee"
+    },
+    {
+      "path": "/tmp/zhuwei-round70-npc-preparation/closeout/source-comparison.json",
+      "sha256": "9a87750fcf11f92a13ca82909cccf14192e3b196131a056ab2e78e2d37476f8d"
+    }
+  ],
+  "remainingGaps": [
+    "The first NPC conversation did not commit; neither later intent was sent.",
+    "NPC plan formation, active waiting, due-plan decisions and execution remain unverified by this batch.",
+    "Local success in response.basis does not establish whole-form correctness or a higher model success rate.",
+    "No new narration was published; unreleased draft speech is not evaluated as an actual world contradiction or successful promise.",
+    "Safe eligibility for changing the invalid basis reference is not established by this batch; no repair or resampling occurred."
+  ],
+  "deployment": false,
+  "push": false,
+  "documentationWork": {
+    "newFilesOnly": true,
+    "sourceOrScriptEdits": false,
+    "additionalApiCalls": 0,
+    "codeTestsRun": false
+  }
+}

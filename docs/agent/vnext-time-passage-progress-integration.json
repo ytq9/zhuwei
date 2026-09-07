@@ -1,0 +1,36 @@
+{
+  "schema": "zhuwei.isolated-file-integration/v1",
+  "sourceDirectory": "/tmp/zhuwei-time-passage-rules-work",
+  "targetDirectory": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "files": [
+    {
+      "path": "app/_runtime/lib/rules/v2/projector.ts",
+      "baselineSha256": "514c5902fc27819e4da2a959b1af88993fdf4c7ebf0bca1bcb81d530be0b73fd",
+      "newSha256": "debdbbd2f00954f90a9ddec173e4a83c3b43fc8fa88f7c34d68645b01bee09d1"
+    },
+    {
+      "path": "tests/kp-vnext-time-passage-rules.test.mjs",
+      "baselineSha256": "a370a44e5f33ea69b981c840f644e05cdde84cac9bda5c7f58ec8ae61060ea23",
+      "newSha256": "43604c22095bf5c00cf62a9df343b11d6e649793e0e7c76c235fb788216e27c5"
+    }
+  ],
+  "checks": [
+    {
+      "command": "npx tsx --test --test-name-pattern='world interruptions preserve' tests/kp-vnext-time-passage-rules.test.mjs",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "git apply --check --whitespace=error-all /tmp/zhuwei-time-passage-rules-work/time-passage-progress.patch",
+      "exitCode": 0
+    }
+  ],
+  "integration": {
+    "at": "2026-09-06T21:33:23.904246+00:00",
+    "files": 2,
+    "conflicts": 0,
+    "backup": "/tmp/zhuwei-time-passage-progress-root-before",
+    "sourceManifestSha256": "ca2d8cafe5df6289217e6f806b9b284a8bc8e82caa7634cbb14eb6c0c388a783"
+  }
+}

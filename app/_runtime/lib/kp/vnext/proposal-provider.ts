@@ -1,3 +1,5 @@
+import { ProposalFillingError, socialSourceArgumentDiagnostics, proposalIntentEchoArgumentDiagnostics, proposalDecisionFieldArgumentPath } from "./proposal-filling-interface";
+import { diagnosticsFromIssues, proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding } from "../authoritative-types";
 import {
   ModelOutputValidationError,
@@ -6,19 +8,27 @@ import {
 import {
   canonicalClone,
   canonicalHash,
+  completeJsonObjectSyntaxEvidence,
   deepFreeze,
   isPlainRecord,
   parseJsonWithUniqueMembers,
+  JsonSyntaxError,
   type JsonRecord,
 } from "./canonical-json";
 import {
   CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+  OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+  VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS,
+  closeVNextProposalSchemaRequest, type VNextProposalSchemaSelection,
+  vnextSelectedProposalDecisionKinds,
   VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
+  VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL,
   createCorrectKpProposalBundleModelInput,
   createSubmitKpProposalBundleModelInput,
+  createVNextProposalOfferModelInput,
   decodeVNextStrictToolBundle,
   type VNextBundleCorrection,
   type VNextProposalBundle,
@@ -26,34 +36,49 @@ import {
 import {
   applyVNextProposalBundleCorrection,
   repairableVNextProposalBundlePaths,
+  vnextProposalRepairPlan, vnextProposalRepairDiagnostics, type VNextProposalRepair,
 } from "./proposal-correction";
 import type { VNextRequiredContext } from "./required-context";
+import { proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices } from "./proposal-context";
+
+/** The canonical repair proof is unchanged; source diagnostics retain the
+ * model's exact choice location after the representation transform. */
+export function vnextProposalModelRepairDiagnostics(...args: Parameters<typeof vnextProposalRepairDiagnostics>) {
+  return proposalIntentEchoArgumentDiagnostics(args[0], socialSourceArgumentDiagnostics(args[0], vnextProposalRepairDiagnostics(...args)));
+}
 import { validateVNextProposalBundle } from "./proposal-validator";
+import { requiredContextBasisReferences } from "./required-context-runtime";
+import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITY_IDS,
+  UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v4",
+  version: "kp-vnext2-proposal-parser-v38",
+  offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+  schemaRetrieval: "flat-type-selection-then-exact-selected-forms-terminal-two-step-three-v4",
   toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   bundleSchema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   correctionToolName: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   correctionSchema: CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
-  sentinelVersion: "none-v1",
+  sentinelVersion: "decision-v2-server-assembled-results-and-typed-dependencies",
   requiresExactToolCall: true,
   allowsTextFallback: false,
   rejectsDuplicateJsonMembersAtEveryDepth: true,
   injectsBundleAndCorrectionEnvelopes: true,
-  localValidation: "closed-domain-and-dependency-v1",
-  correctionPolicy: "persisted-repair-ticket-summary-only-once-v2",
+  localValidation: "closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6",
+  referenceSelection: "frozen-authorized-read-bound-basis-and-visible-subjects-v2",
+  correctionPolicy: "server-proven-plan-confirmation-exact-number-and-frozen-intent-echo-once-v9",
+  correctionResponseProtocol: VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL,
 });
 
 export const VNEXT_PROPOSAL_BUNDLE_REPAIR_TICKET_SCHEMA =
-  "zhuwei.kp-proposal-bundle-repair-ticket/vnext-1" as const;
+  "zhuwei.kp-proposal-bundle-repair-ticket/vnext-5" as const;
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_HASH = canonicalHash(
   VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT,
 );
 
 export class VNextProposalBundleOutputError extends ModelOutputValidationError {
-  constructor() {
+  constructor(readonly diagnostics: readonly ProposalDiagnostic[] = [proposalDiagnostic("CONSTRAINT_CONFLICT", "strict-tool-output-contract")]) {
     super();
     this.name = "VNextProposalBundleOutputError";
   }
@@ -69,9 +94,144 @@ export type VNextProposalBundleCandidate =
       kind: "locallyRejected";
       draft: Readonly<JsonRecord>;
       bundleHash: string;
-      validationCode: "PROPOSAL_BUNDLE_INVALID" | "BUNDLE_DEPENDENCY_INVALID";
+      validationCode: "PROPOSAL_BUNDLE_INVALID" | "BUNDLE_DEPENDENCY_INVALID" | "PROPOSAL_JSON_INVALID" | "PROPOSAL_WIRE_INVALID";
       issues: readonly string[];
+      diagnostics: readonly ProposalDiagnostic[];
+      syntaxEvidence?: VNextProposalSyntaxEvidence;
+      originalArguments: string;
+      argumentSource: "rawString" | "decodedObject";
     }>;
+
+type VNextProposalSyntaxEvidence = Readonly<{
+  toolName: typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME;
+  originalArguments: string;
+}>;
+
+export type VNextProposalSchemaRequest = Readonly<{ kind: "schemaRequested" }> & VNextProposalSchemaSelection;
+
+/** The first stage selects schemas only. Never reinterpret or salvage a draft
+ * as a selection, including a syntactically repairable former offer shape. */
+export function parseVNextProposalOfferResponse(response: unknown): VNextProposalSchemaRequest {
+  let call: ReturnType<typeof extractSingleToolCall>, raw: unknown;
+  try {
+    call = extractSingleToolCall(response);
+    raw = typeof call.arguments === "string" ? parseJsonWithUniqueMembers(call.arguments) : call.arguments;
+  } catch (error) { return invalidOutput(error); }
+  if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return wrongTool(call.name, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+  if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "offer:object-required", [], "object", raw);
+  const keys = ["requestedCapabilities"];
+  if (!hasExactKeys(raw, keys)) return invalidOutput(new VNextProposalBundleOutputError([
+    ...keys.filter(key => !Object.hasOwn(raw, key)).map(key => proposalDiagnostic("FIELD_MISSING", "offer:schema-request-field-required",
+      { path: [key], pathBase: "arguments", expected: { required: true }, actual: diagnosticActual(undefined) })),
+    ...Object.keys(raw).filter(key => !keys.includes(key)).map(key => proposalDiagnostic("VALUE_INVALID", "offer:schema-request-additional-field",
+      { path: [key], pathBase: "arguments", expected: { allowedFields: keys }, actual: diagnosticActual(raw[key]) })),
+  ]));
+  const requested = raw.requestedCapabilities;
+  if (!Array.isArray(requested)) return fieldOutput(requested === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "offer:requested-capabilities-array-required", ["requestedCapabilities"], "array", requested);
+  if (requested.length === 0 || requested.length > VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.length) return fieldOutput("VALUE_INVALID", "offer:requested-capabilities-size",
+    ["requestedCapabilities"], { minItems: 1, maxItems: VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.length }, requested);
+  for (const [index, id] of requested.entries()) {
+    if (typeof id !== "string") return fieldOutput("TYPE_MISMATCH", "offer:capability-id-string-required", ["requestedCapabilities", index], { type: "string" }, id);
+    if (requested.indexOf(id) !== index) return fieldOutput("VALUE_INVALID", "offer:requested-capabilities-unique", ["requestedCapabilities", index], { uniqueItems: true }, id);
+  }
+  try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(requested) }); }
+  catch (error) {
+    if (error instanceof UnknownVNextProposalCapabilityError) {
+      const index = requested.indexOf(error.capabilityId);
+      return invalidOutput(new VNextProposalBundleOutputError([proposalDiagnostic("VALUE_INVALID", error.message, {
+        ...(index < 0 ? {} : { path: ["requestedCapabilities", index], pathBase: "arguments" as const }),
+        expected: { enum: VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS },
+        // Internal dependency identities are not submitted values or authorized candidates.
+        ...(index < 0 ? {} : { actual: diagnosticActual(requested[index]) }),
+      })]));
+    }
+    return invalidOutput(error);
+  }
+}
+
+/** Selection only removes whole registered variants. Keep the broad domain
+ * validator, then additionally reject variants absent from this exact wire. */
+export function assertVNextProposalCandidateCapabilities(candidate: VNextProposalBundleCandidate,
+  capabilities: readonly VNextProposalCapabilityId[], terminalKinds?: readonly string[]): void {
+  const bundle = candidate.kind === "accepted" ? candidate.bundle : candidate.draft;
+  assertRuntimeProposalSurface(bundle);
+  const decisionPath = bundle.mode === "adjudication" ? "adjudication" : "terminal";
+  const decision = bundle[decisionPath];
+  const allowedKinds = vnextSelectedProposalDecisionKinds(capabilities, terminalKinds);
+  if (isPlainRecord(decision) && typeof decision.kind === "string" && !allowedKinds.includes(decision.kind)) {
+    invalidOutput(new VNextProposalBundleOutputError([
+      proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:capability-not-loaded", {
+        path: [decisionPath, "kind"], expected: { enum: allowedKinds }, actual: diagnosticActual(decision.kind),
+        repair: { allowed: false, reason: "schema-selection-must-precede-decision" },
+      }),
+    ]));
+  }
+  for (const { value, path } of proposalFrames(bundle)) {
+    const nativeCapability = path.length > 0 ? vnextProposalCapabilityForEntry(value) : undefined;
+    if (nativeCapability !== undefined && !capabilities.includes(nativeCapability)) invalidOutput(new VNextProposalBundleOutputError([
+      proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:capability-not-loaded", { path: [...path, "kind"],
+        expected: { enum: capabilities }, repair: { allowed: false, reason: "schema-selection-must-precede-decision" } }),
+    ]));
+    if (!Array.isArray(value.proposals)) continue; // The domain validator supplies shape diagnostics.
+    for (const [index, entry] of value.proposals.entries()) {
+      const capability = vnextProposalCapabilityForEntry(entry);
+      if (capability === undefined && candidate.kind === "locallyRejected") continue;
+      if (capability === undefined || !capabilities.includes(capability)) invalidOutput(new VNextProposalBundleOutputError([
+        proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:capability-not-loaded", { path: [...path, "proposals", index, "kind"],
+          expected: "variant in the frozen loaded tool schema", repair: { allowed: false, reason: "schema-retrieval-must-precede-decision" } }),
+      ]));
+    }
+  }
+}
+
+/** A third call is reserved for an actual selected execution family.
+ * Selecting an unused step cannot buy another call for a terminal decision;
+ * native operations still need the same separately proved narrow repair. */
+export function vnextProposalHasExecutionRepairBudget(draft: Readonly<JsonRecord>, capabilities: readonly VNextProposalCapabilityId[]): boolean {
+  const selected = (entry: unknown) => {
+    const id = vnextProposalCapabilityForEntry(entry);
+    return id !== undefined && capabilities.includes(id);
+  };
+  return proposalFrames(draft).some(({ value }) => selected(value) || selected(value.terminal)
+    || (Array.isArray(value.proposals) && value.proposals.some(selected)));
+}
+
+/** The domain contract allows one nonrecursive level of complete choices. */
+function proposalFrames(bundle: Record<string, unknown>): { value: Record<string, unknown>; path: (string | number)[] }[] {
+  const frames = [{ value: bundle, path: [] as (string | number)[] }];
+  if (isPlainRecord(bundle.terminal) && bundle.terminal.kind === "clarification" && Array.isArray(bundle.terminal.choices)) {
+    bundle.terminal.choices.forEach((choice, index) => {
+      if (isPlainRecord(choice) && isPlainRecord(choice.continuation))
+        frames.push({ value: choice.continuation, path: ["terminal", "choices", index, "continuation"] });
+    });
+  }
+  return frames;
+}
+
+function assertRuntimeProposalSurface(bundle: Record<string, unknown>): void {
+  // Check every saved branch even if another field needs a narrow repair.
+  for (const { value, path } of proposalFrames(bundle)) {
+    if (isPlainRecord(value.adjudication) && value.adjudication.kind === "highRisk")
+      fieldOutput("CONSTRAINT_CONFLICT", "proposal:adjudication-outside-runtime-surface", [...path, "adjudication", "kind"],
+        ["directSuccess", "check"], value.adjudication.kind);
+  }
+}
+
+export async function invokeVNextProposalOffer(input: Readonly<{
+  binding: AuthoritativeModelBinding; modelId: string; message: string; requiredContext: VNextRequiredContext;
+}>): Promise<VNextProposalSchemaRequest | Extract<VNextProposalBundleProviderResult, { kind: "rejected" }>> {
+  if (typeof input.modelId !== "string" || !input.modelId.trim()) throw new TypeError("VNEXT_PROPOSAL_MODEL_ID_REQUIRED");
+  const contextHash = input.requiredContext?.binding?.contextHash;
+  if (typeof contextHash !== "string" || !contextHash) throw new TypeError("VNEXT_PROPOSAL_CONTEXT_HASH_REQUIRED");
+  const response = await input.binding.run(input.modelId,
+    createVNextProposalOfferModelInput(input.message));
+  try {
+    return parseVNextProposalOfferResponse(response);
+  } catch (error) {
+    if (!(error instanceof VNextProposalBundleOutputError)) throw error;
+    return providerRejected("PROPOSAL_FORM_INVALID", error.diagnostics.map(d => d.constraint), false, 1, error.diagnostics);
+  }
+}
 
 export type VNextProposalBundleProviderResult =
   | Readonly<{
@@ -87,6 +247,7 @@ export type VNextProposalBundleProviderResult =
       kind: "rejected";
       code: "PROPOSAL_FORM_INVALID" | "PROPOSAL_REPAIR_EXHAUSTED";
       issues: readonly string[];
+      diagnostics: readonly ProposalDiagnostic[];
       repairUsed: boolean;
       invocationCount: 1 | 2;
     }>;
@@ -96,9 +257,14 @@ export type VNextProposalBundleRepairTicket = Readonly<{
   draft: Readonly<JsonRecord>;
   bundleHash: string;
   contextHash: string;
-  validationCode: "PROPOSAL_BUNDLE_INVALID" | "BUNDLE_DEPENDENCY_INVALID";
+  validationCode: "PROPOSAL_BUNDLE_INVALID" | "BUNDLE_DEPENDENCY_INVALID" | "PROPOSAL_JSON_INVALID" | "PROPOSAL_WIRE_INVALID";
   issues: readonly string[];
+  diagnostics: readonly ProposalDiagnostic[];
   allowedPaths: readonly (readonly (string | number)[])[];
+  repairPlan: readonly VNextProposalRepair[];
+  syntaxEvidence?: VNextProposalSyntaxEvidence;
+  originalArguments: string;
+  argumentSource: "rawString" | "decodedObject";
   ticketHash: string;
 }>;
 
@@ -114,16 +280,31 @@ export type VNextProposalBundleFirstPassResult =
 export function parseSubmitKpProposalBundleCandidateArguments(
   value: unknown,
 ): VNextProposalBundleCandidate {
-  let raw: unknown = value;
-  if (typeof raw === "string") {
+  const parsed = readProposalArguments(value, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+  return candidateForArguments(parsed.raw, parsed.syntaxEvidence, value);
+}
+
+function readProposalArguments(value: unknown, toolName: VNextProposalSyntaxEvidence["toolName"]): {
+  raw: unknown; syntaxEvidence?: VNextProposalSyntaxEvidence;
+} {
+  if (typeof value !== "string") return { raw: value };
+  try { return { raw: parseJsonWithUniqueMembers(value) }; }
+  catch (error) {
     try {
-      raw = parseJsonWithUniqueMembers(raw);
-    } catch {
-      return invalidOutput();
-    }
+      const evidence = completeJsonObjectSyntaxEvidence(value);
+      return { raw: evidence.value, syntaxEvidence: { toolName, originalArguments: value } };
+    } catch { return invalidOutput(error); }
   }
-  if (!isPlainRecord(raw) || "schema" in raw || "kind" in raw) return invalidOutput();
-  const decoded = decodeVNextStrictToolBundle(raw);
+}
+
+function candidateForArguments(raw: unknown, syntaxEvidence?: VNextProposalSyntaxEvidence, originalArguments?: unknown): VNextProposalBundleCandidate {
+  if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "proposal:object-required", [], "object", raw);
+  if ("schema" in raw || "kind" in raw) return invalidOutput(new VNextProposalBundleOutputError([
+    ...["schema", "kind"].filter(key => Object.hasOwn(raw, key)).map(key => proposalDiagnostic("CONSTRAINT_CONFLICT", "proposal:server-owned-envelope", { pathBase: "arguments", path: [key], expected: "absent from model arguments" })),
+  ]));
+  let decoded: unknown;
+  try { decoded = decodeVNextStrictToolBundle(raw); }
+  catch (error) { return invalidOutput(error); }
   if (!isPlainRecord(decoded)) return invalidOutput();
   let draft: JsonRecord;
   try {
@@ -132,11 +313,11 @@ export function parseSubmitKpProposalBundleCandidateArguments(
       schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
       kind: "proposalBundle",
     }) as JsonRecord;
-  } catch {
-    return invalidOutput();
+  } catch (error) {
+    return invalidOutput(error);
   }
   const validated = validateVNextProposalBundle(draft);
-  if (validated.kind === "accepted") {
+  if (validated.kind === "accepted" && syntaxEvidence === undefined) {
     return deepFreeze({
       kind: "accepted",
       bundle: validated.bundle,
@@ -147,8 +328,17 @@ export function parseSubmitKpProposalBundleCandidateArguments(
     kind: "locallyRejected",
     draft,
     bundleHash: canonicalHash(draft),
-    validationCode: validated.code,
-    issues: [...validated.issues],
+    validationCode: syntaxEvidence !== undefined ? "PROPOSAL_JSON_INVALID"
+      : validated.kind === "rejected" ? validated.code : "PROPOSAL_WIRE_INVALID",
+    diagnostics: [
+      ...(syntaxEvidence === undefined ? [] : [syntaxDiagnostic(completeJsonObjectSyntaxEvidence(syntaxEvidence.originalArguments).diagnostic)]),
+      ...(validated.kind === "rejected" ? socialSourceArgumentDiagnostics(draft, validated.diagnostics ?? diagnosticsFromIssues(validated.code, validated.issues)) : []),
+    ],
+    issues: [...(syntaxEvidence === undefined ? [] : [completeJsonObjectSyntaxEvidence(syntaxEvidence.originalArguments).issue]),
+      ...(validated.kind === "rejected" ? validated.issues : [])],
+    ...(syntaxEvidence === undefined ? {} : { syntaxEvidence }),
+    originalArguments: typeof originalArguments === "string" ? originalArguments : JSON.stringify(raw),
+    argumentSource: typeof originalArguments === "string" ? "rawString" : "decodedObject",
   });
 }
 
@@ -158,10 +348,10 @@ export function parseSubmitKpProposalBundleCandidateResponse(
   let call: ReturnType<typeof extractSingleToolCall>;
   try {
     call = extractSingleToolCall(response);
-  } catch {
-    return invalidOutput();
+  } catch (error) {
+    return invalidOutput(error);
   }
-  if (call.name !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return invalidOutput();
+  if (call.name !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return wrongTool(call.name, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   return parseSubmitKpProposalBundleCandidateArguments(call.arguments);
 }
 
@@ -170,14 +360,14 @@ export function parseSubmitKpProposalBundleArguments(
   value: unknown,
 ): VNextProposalBundle {
   const candidate = parseSubmitKpProposalBundleCandidateArguments(value);
-  return candidate.kind === "accepted" ? candidate.bundle : invalidOutput();
+  return candidate.kind === "accepted" ? candidate.bundle : invalidOutput(new VNextProposalBundleOutputError(candidate.diagnostics));
 }
 
 export function parseSubmitKpProposalBundleResponse(
   response: unknown,
 ): VNextProposalBundle {
   const candidate = parseSubmitKpProposalBundleCandidateResponse(response);
-  return candidate.kind === "accepted" ? candidate.bundle : invalidOutput();
+  return candidate.kind === "accepted" ? candidate.bundle : invalidOutput(new VNextProposalBundleOutputError(candidate.diagnostics));
 }
 
 export function parseCorrectKpProposalBundleResponse(
@@ -185,40 +375,67 @@ export function parseCorrectKpProposalBundleResponse(
   binding: Readonly<{ baseBundleHash: string; contextHash: string }>,
 ): VNextBundleCorrection {
   let call: ReturnType<typeof extractSingleToolCall>;
-  try {
-    call = extractSingleToolCall(response);
-  } catch {
-    return invalidOutput();
-  }
-  if (call.name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return invalidOutput();
+  try { call = extractSingleToolCall(response); } catch (error) { return invalidOutput(error); }
+  if (call.name !== CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return wrongTool(call.name, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   let raw: unknown = call.arguments;
   if (typeof raw === "string") {
-    try {
-      raw = parseJsonWithUniqueMembers(raw);
-    } catch {
-      return invalidOutput();
-    }
+    try { raw = parseJsonWithUniqueMembers(raw); } catch (error) { return invalidOutput(error); }
   }
-  if (!isPlainRecord(raw)
-    || !hasExactKeys(raw, ["changes"])
-    || !Array.isArray(raw.changes)
-    || raw.changes.length < 1
-    || raw.changes.length > 8
-    || !raw.changes.every((change) => isPlainRecord(change)
-      && hasExactKeys(change, ["path", "value"])
-      && correctionPathConforms(change.path)
-      && typeof change.value === "string")) return invalidOutput();
+  if (!isPlainRecord(raw)) return fieldOutput("TYPE_MISMATCH", "correction:object-required", [], "object", raw);
+  // Legacy changes-only responses are not converted into confirmations.
+  assertCorrectionKeys(raw, ["confirm", "summaries"], [], "correction:exact-envelope-keys");
+  if (raw.confirm !== "server-plan") return fieldOutput("VALUE_INVALID", "correction:confirmation-required", ["confirm"], "server-plan", raw.confirm);
+  if (!Array.isArray(raw.summaries)) return fieldOutput("TYPE_MISMATCH", "correction:summaries-array-required", ["summaries"], "array", raw.summaries);
+  if (raw.summaries.length > 8) return fieldOutput("VALUE_INVALID", "correction:change-budget", ["summaries"], { maximumItems: 8 }, raw.summaries);
+  const seen = new Set<string>();
+  for (const [index, summary] of raw.summaries.entries()) {
+    if (!isPlainRecord(summary)) return fieldOutput("TYPE_MISMATCH", "correction:summary-object-required", ["summaries", index], "object", summary);
+    assertCorrectionKeys(summary, ["path", "value"], ["summaries", index], "correction:exact-summary-keys");
+    if (!correctionPathConforms(summary.path)) return fieldOutput("VALUE_INVALID", "correction:path-shape", ["summaries", index, "path"], "1..16 string keys or nonnegative integer indices", summary.path);
+    const identity = canonicalHash(summary.path);
+    if (seen.has(identity)) throw new VNextProposalBundleOutputError([
+      proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "correction:path-not-allowed", { path: summary.path,
+        repair: { allowed: false, reason: "summary-path-must-be-unique" } }),
+    ]);
+    seen.add(identity);
+    if (typeof summary.value !== "string") return fieldOutput("TYPE_MISMATCH", "correction:summary-text-required", ["summaries", index, "value"], "string", summary.value);
+  }
   try {
-    return deepFreeze(canonicalClone({
-      schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
-      baseBundleHash: binding.baseBundleHash,
-      contextHash: binding.contextHash,
-      attempt: 1 as const,
-      changes: raw.changes,
+    return deepFreeze(canonicalClone({ schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
+      baseBundleHash: binding.baseBundleHash, contextHash: binding.contextHash, attempt: 1 as const,
+      changes: raw.summaries,
     }) as VNextBundleCorrection);
-  } catch {
-    return invalidOutput();
-  }
+  } catch (error) { return invalidOutput(error); }
+}
+
+/** Exact free-value coverage is checked before the immutable fixed plan is
+ * combined with it. The original apply path re-proves every resulting edit. */
+function confirmedPlanCorrection(candidate: VNextProposalBundleRepairTicket, correction: VNextBundleCorrection): VNextBundleCorrection {
+  const summaryPaths = candidate.repairPlan.filter(change => change.operation !== "remove" && !Object.hasOwn(change, "value")).map(change => change.path);
+  const allowed = new Set(summaryPaths.map(path => canonicalHash(path)));
+  const supplied = new Set(correction.changes.map(change => canonicalHash(change.path)));
+  const diagnostics: ProposalDiagnostic[] = [];
+  for (const change of correction.changes) if (!allowed.has(canonicalHash(change.path))) diagnostics.push(
+    proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "correction:path-not-allowed", { path: change.path,
+      expected: { summaryPaths }, repair: { allowed: false, reason: "only-free-summary-paths-may-be-supplied" } }));
+  for (const path of summaryPaths) if (!supplied.has(canonicalHash(path))) diagnostics.push(
+    proposalDiagnostic("FIELD_MISSING", "correction:summary-required", { path, expected: "one presentation summary of the frozen operations",
+      repair: { allowed: false, reason: "all-free-summaries-required-in-the-single-confirmation" } }));
+  if (diagnostics.length > 0) throw new VNextProposalBundleOutputError(diagnostics);
+  const fixed = candidate.repairPlan.flatMap(change => Object.hasOwn(change, "value")
+    ? [{ path: change.path, value: change.value as VNextBundleCorrection["changes"][number]["value"] }] : []);
+  return deepFreeze({ ...correction, changes: [...fixed, ...correction.changes] });
+}
+
+function assertCorrectionKeys(value: Record<string, unknown>, keys: readonly string[],
+  path: readonly (string | number)[], constraint: string): void {
+  if (hasExactKeys(value, keys)) return;
+  throw new VNextProposalBundleOutputError([
+    ...keys.filter(key => !Object.hasOwn(value, key)).map(key => proposalDiagnostic("FIELD_MISSING", constraint,
+      { path: [...path, key], expected: { required: true }, actual: diagnosticActual(undefined) })),
+    ...Object.keys(value).filter(key => !keys.includes(key)).map(key => proposalDiagnostic("CONSTRAINT_CONFLICT", constraint,
+      { path: [...path, key], expected: { allowedFields: keys }, actual: diagnosticActual(value[key]) })),
+  ]);
 }
 
 export async function invokeSubmitKpProposalBundle(input: Readonly<{
@@ -246,6 +463,8 @@ export async function invokeSubmitKpProposalBundleFirstPass(
     modelId: string;
     message: string;
     requiredContext: VNextRequiredContext;
+    capabilities?: readonly VNextProposalCapabilityId[];
+    terminalKinds?: readonly string[];
     signal?: AbortSignal;
   }>,
 ): Promise<VNextProposalBundleFirstPassResult> {
@@ -259,24 +478,32 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   if (typeof contextHash !== "string" || contextHash.length === 0) {
     throw new TypeError("VNEXT_PROPOSAL_CONTEXT_HASH_REQUIRED");
   }
+  const requiredContext = deepFreeze(canonicalClone(input.requiredContext)) as VNextRequiredContext;
   const runOptions = input.signal === undefined ? undefined : { signal: input.signal };
+  const capabilities = closeVNextProposalCapabilities(input.capabilities ?? VNEXT_PROPOSAL_CAPABILITY_IDS);
   const response = await input.binding.run(
     input.modelId,
-    createSubmitKpProposalBundleModelInput(input.message),
+    createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext)),
     runOptions,
   );
   let candidate: VNextProposalBundleCandidate;
   try {
     candidate = parseSubmitKpProposalBundleCandidateResponse(response);
+    assertVNextProposalCandidateCapabilities(candidate, capabilities, input.terminalKinds);
   } catch (error) {
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
     return providerRejected(
       "PROPOSAL_FORM_INVALID",
-      ["proposal:strict-tool-output-invalid"],
+      error.diagnostics.map(d => d.constraint),
       false,
       1,
+      error.diagnostics,
     );
   }
+  return firstPassForCandidate(candidate, requiredContext);
+}
+
+function firstPassForCandidate(candidate: VNextProposalBundleCandidate, requiredContext: VNextRequiredContext): VNextProposalBundleFirstPassResult {
   if (candidate.kind === "accepted") {
     return deepFreeze({
       kind: "locallyAccepted",
@@ -286,18 +513,29 @@ export async function invokeSubmitKpProposalBundleFirstPass(
       invocationCount: 1,
     });
   }
-  const allowedPaths = repairableVNextProposalBundlePaths(candidate.draft);
-  if (allowedPaths.length === 0) {
+  const proofDiagnostics: ProposalDiagnostic[] = [];
+  const allowedPaths = vnextProposalRepairPlan(candidate.draft, proofDiagnostics, numericRepairSource(candidate), requiredContext).map(change => change.path);
+  if (allowedPaths.length > 8) return providerRejected(
+    "PROPOSAL_FORM_INVALID", [...candidate.issues, "repair:change-budget-exceeded"], false, 1,
+    [...candidate.diagnostics, proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "repair:change-budget-exceeded", {
+      expected: { maximumChanges: 8 }, actual: { changes: allowedPaths.length },
+      repair: { allowed: false, reason: "bounded-representation-repair-budget-exceeded" },
+    })]);
+  if (allowedPaths.length === 0 && !((candidate.syntaxEvidence !== undefined)
+    && validateVNextProposalBundle(candidate.draft).kind === "accepted")) {
+    const diagnostics = [...new Map(proposalIntentEchoArgumentDiagnostics(candidate.draft, socialSourceArgumentDiagnostics(candidate.draft, [...candidate.diagnostics, ...proofDiagnostics]))
+      .map(detail => [canonicalHash(detail), detail])).values()];
     return providerRejected(
       "PROPOSAL_FORM_INVALID",
-      candidate.issues,
+      [...new Set([...candidate.issues, ...proofDiagnostics.map(detail => detail.constraint)])],
       false,
       1,
+      diagnostics,
     );
   }
   return deepFreeze({
     kind: "repairRequired",
-    repairTicket: createRepairTicket(candidate, contextHash, allowedPaths),
+    repairTicket: createRepairTicket(candidate, requiredContext, allowedPaths),
     invocationCount: 1,
   });
 }
@@ -317,16 +555,12 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
   if (typeof contextHash !== "string" || contextHash.length === 0) {
     throw new TypeError("VNEXT_PROPOSAL_CONTEXT_HASH_REQUIRED");
   }
-  assertRepairTicket(input.repairTicket, contextHash);
-  const candidate = input.repairTicket;
-  const correctionPrompt = JSON.stringify({
-    instruction: "只修改 allowedPaths 列出的摘要。每个 change 必须使用原样 path 和非空 replacement value。",
-    baseBundleHash: candidate.bundleHash,
-    contextHash,
-    issues: candidate.issues,
-    allowedPaths: candidate.allowedPaths,
-    rejectedBundle: candidate.draft,
-  });
+  const requiredContext = deepFreeze(canonicalClone(input.requiredContext)) as VNextRequiredContext;
+  assertRepairTicket(input.repairTicket, contextHash, requiredContext);
+  // The request and its eventual confirmation share one immutable snapshot,
+  // including when a resumed ticket came from a mutable JSON deserialization.
+  const candidate = deepFreeze(canonicalClone(input.repairTicket)) as VNextProposalBundleRepairTicket;
+  const correctionPrompt = vnextProposalCorrectionPrompt(candidate);
   const runOptions = input.signal === undefined ? undefined : { signal: input.signal };
   const correctionResponse = await input.binding.run(
     input.modelId,
@@ -335,24 +569,39 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
   );
   let correction: VNextBundleCorrection;
   try {
-    correction = parseCorrectKpProposalBundleResponse(correctionResponse, {
+    correction = confirmedPlanCorrection(candidate, parseCorrectKpProposalBundleResponse(correctionResponse, {
       baseBundleHash: candidate.bundleHash,
       contextHash,
-    });
+    }));
   } catch (error) {
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
     return providerRejected(
       "PROPOSAL_REPAIR_EXHAUSTED",
-      ["proposal:correction-tool-output-invalid"],
+      error.diagnostics.map(d => d.constraint),
       true,
       2,
+      error.diagnostics,
     );
+  }
+  // A transport-only acknowledgement consumes the same single correction call.
+  // The ticket was re-proved above; still revalidate the entire frozen Bundle.
+  if ((candidate.syntaxEvidence !== undefined) && candidate.allowedPaths.length === 0) {
+    if (correction.changes.length > 0) return providerRejected("PROPOSAL_REPAIR_EXHAUSTED",
+      ["correction:path-not-allowed"], true, 2, correction.changes.map(change =>
+        proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "correction:path-not-allowed", { path: change.path,
+          expected: { allowedPaths: [] }, repair: { allowed: false, reason: "transport-confirmation-cannot-edit-frozen-decisions" } })));
+    const validated = validateVNextProposalBundle(candidate.draft);
+    if (validated.kind === "accepted") return deepFreeze({
+      kind: "locallyAccepted", bundle: validated.bundle,
+      bundleHash: canonicalHash(validated.bundle), repairUsed: true, invocationCount: 2,
+    });
   }
   const repaired = applyVNextProposalBundleCorrection({
     bundle: candidate.draft,
     correction,
-    requiredContext: input.requiredContext,
+    requiredContext,
     allowedPaths: candidate.allowedPaths,
+    ...(numericRepairSource(candidate) === undefined ? {} : { originalArguments: candidate.originalArguments }),
   });
   if (repaired.kind === "rejected") {
     return providerRejected(
@@ -360,6 +609,7 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
       repaired.issues,
       true,
       2,
+      repaired.diagnostics,
     );
   }
   return deepFreeze({
@@ -368,6 +618,27 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
     bundleHash: repaired.bundleHash,
     repairUsed: true,
     invocationCount: 2,
+  });
+}
+
+/** Both the Provider and Room bind this exact private body to a proved ticket. */
+export function vnextProposalCorrectionPrompt(candidate: VNextProposalBundleRepairTicket): string {
+  return JSON.stringify({
+    responseProtocol: VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL,
+    instruction: "审核当前冻结草稿、diagnostics、repairPlan及表示证据后，用confirm:'server-plan'明确同意本请求的完整固定修复计划。服务器按同一已重证计划执行所有固定value字段修复及已证明的remove删除，并确认syntaxEvidence，不要求你复制path/value。summaries必须完整且只包含summaryPaths中的每个路径一次；没有自由摘要时填[]。摘要只表达原稿中已有操作，不新增事实、裁决、目标、DC、成本、后果或玩家决定；结构校验不证明自由摘要文字的语义。不得返回changes、固定patch、新Proposal或schema请求。原草稿、冻结上下文和全部裁决保持绑定，完整提案仍会从头重验。",
+    summaryPaths: candidate.repairPlan.filter(change => change.operation !== "remove" && !Object.hasOwn(change, "value")).map(change => change.path),
+    baseBundleHash: candidate.bundleHash,
+    contextHash: candidate.contextHash,
+    issues: candidate.issues,
+    diagnostics: candidate.diagnostics,
+    repairPlan: candidate.repairPlan.map(change => change.operation === "remove"
+      ? { ...change, path: proposalDecisionFieldArgumentPath(candidate.draft, change.path) ?? change.path } : change),
+    allowedPaths: candidate.repairPlan.map(change => change.operation === "remove"
+      ? proposalDecisionFieldArgumentPath(candidate.draft, change.path) ?? change.path : change.path),
+    rejectedBundle: candidate.draft,
+    ...(candidate.syntaxEvidence === undefined ? {} : { syntaxEvidence: candidate.syntaxEvidence }),
+    originalArguments: candidate.originalArguments,
+    argumentSource: candidate.argumentSource,
   });
 }
 
@@ -400,46 +671,76 @@ export async function invokeSubmitKpProposalBundleWithOneCorrection(
 
 function createRepairTicket(
   candidate: Extract<VNextProposalBundleCandidate, { kind: "locallyRejected" }>,
-  contextHash: string,
+  requiredContext: VNextRequiredContext,
   allowedPaths: readonly (readonly (string | number)[])[],
 ): VNextProposalBundleRepairTicket {
   const body = canonicalClone({
     schema: VNEXT_PROPOSAL_BUNDLE_REPAIR_TICKET_SCHEMA,
     draft: candidate.draft,
     bundleHash: candidate.bundleHash,
-    contextHash,
+    contextHash: requiredContext.binding.contextHash,
     validationCode: candidate.validationCode,
     issues: candidate.issues,
+    diagnostics: vnextProposalModelRepairDiagnostics(candidate.draft, candidate.diagnostics, candidate.syntaxEvidence !== undefined, numericRepairSource(candidate), requiredContext),
+    repairPlan: vnextProposalRepairPlan(candidate.draft, undefined, numericRepairSource(candidate), requiredContext),
     allowedPaths,
+    ...(candidate.syntaxEvidence === undefined ? {} : { syntaxEvidence: candidate.syntaxEvidence }),
+    originalArguments: candidate.originalArguments,
+    argumentSource: candidate.argumentSource,
   }) as Omit<VNextProposalBundleRepairTicket, "ticketHash">;
   return deepFreeze({ ...body, ticketHash: canonicalHash(body) });
 }
 
-function assertRepairTicket(ticket: unknown, contextHash: string): asserts ticket is VNextProposalBundleRepairTicket {
+export function assertRepairTicket(ticket: unknown, contextHash: string, requiredContext?: VNextRequiredContext): asserts ticket is VNextProposalBundleRepairTicket {
   if (!isPlainRecord(ticket)
     || !hasExactKeys(ticket, [
-      "allowedPaths", "bundleHash", "contextHash", "draft", "issues", "schema",
-      "ticketHash", "validationCode",
+      "allowedPaths", "bundleHash", "contextHash", "draft", "issues", "diagnostics", "repairPlan", "schema", "originalArguments",
+      "ticketHash", "validationCode", "argumentSource", ...(ticket.syntaxEvidence === undefined ? [] : ["syntaxEvidence"]),
     ])
     || ticket.schema !== VNEXT_PROPOSAL_BUNDLE_REPAIR_TICKET_SCHEMA
     || ticket.contextHash !== contextHash
+    || (requiredContext !== undefined && requiredContext.binding?.contextHash !== contextHash)
+    || typeof ticket.originalArguments !== "string"
+    || (ticket.argumentSource !== "rawString" && ticket.argumentSource !== "decodedObject")
     || !isPlainRecord(ticket.draft)
     || ticket.bundleHash !== canonicalHash(ticket.draft)
     || (ticket.validationCode !== "PROPOSAL_BUNDLE_INVALID"
-      && ticket.validationCode !== "BUNDLE_DEPENDENCY_INVALID")
+      && ticket.validationCode !== "BUNDLE_DEPENDENCY_INVALID"
+      && ticket.validationCode !== "PROPOSAL_JSON_INVALID" && ticket.validationCode !== "PROPOSAL_WIRE_INVALID")
     || !Array.isArray(ticket.issues)
     || !ticket.issues.every((issue) => typeof issue === "string" && issue.length > 0)
-    || !Array.isArray(ticket.allowedPaths)) {
+    || !Array.isArray(ticket.allowedPaths) || !Array.isArray(ticket.diagnostics) || !Array.isArray(ticket.repairPlan)) {
     throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID");
   }
-  const allowedPaths = repairableVNextProposalBundlePaths(ticket.draft);
-  if (canonicalHash(allowedPaths) !== canonicalHash(ticket.allowedPaths)) {
+  try { assertRuntimeProposalSurface(ticket.draft); }
+  catch { throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID"); }
+  const allowedPaths = repairableVNextProposalBundlePaths(ticket.draft, numericRepairSource(ticket), requiredContext);
+  if (canonicalHash(allowedPaths) !== canonicalHash(ticket.allowedPaths)
+    || canonicalHash(vnextProposalRepairPlan(ticket.draft, undefined, numericRepairSource(ticket), requiredContext)) !== canonicalHash(ticket.repairPlan)) {
     throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID");
   }
-  const validation = validateVNextProposalBundle(ticket.draft);
-  if (validation.kind !== "rejected"
-    || validation.code !== ticket.validationCode
-    || canonicalHash(validation.issues) !== canonicalHash(ticket.issues)) {
+  let proven: VNextProposalBundleCandidate;
+  try {
+    const evidence = ticket.syntaxEvidence;
+    if (evidence !== undefined && (!isPlainRecord(evidence) || !hasExactKeys(evidence, ["toolName", "originalArguments"])
+      || evidence.originalArguments !== ticket.originalArguments
+      || evidence.toolName !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME)) {
+      throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID");
+    }
+    const parsed = readProposalArguments(ticket.originalArguments,
+      (isPlainRecord(evidence) ? evidence.toolName : SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) as VNextProposalSyntaxEvidence["toolName"]);
+    proven = candidateForArguments(parsed.raw, parsed.syntaxEvidence, numericRepairSource(ticket));
+  } catch { throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID"); }
+  if (proven.kind !== "locallyRejected" || proven.bundleHash !== ticket.bundleHash
+    || proven.argumentSource !== ticket.argumentSource
+    || canonicalHash(proven.syntaxEvidence ?? null) !== canonicalHash(ticket.syntaxEvidence ?? null)
+    || (allowedPaths.length === 0 && (proven.syntaxEvidence === undefined || validateVNextProposalBundle(proven.draft).kind !== "accepted"))) {
+    throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID");
+  }
+  const validation = { code: proven.validationCode, issues: proven.issues, diagnostics: proven.diagnostics };
+  if (validation.code !== ticket.validationCode
+    || canonicalHash(validation.issues) !== canonicalHash(ticket.issues)
+    || canonicalHash(vnextProposalModelRepairDiagnostics(ticket.draft, validation.diagnostics ?? diagnosticsFromIssues(validation.code, validation.issues), ticket.syntaxEvidence !== undefined, numericRepairSource(ticket), requiredContext)) !== canonicalHash(ticket.diagnostics)) {
     throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_INVALID");
   }
   const { ticketHash, ...body } = ticket;
@@ -448,7 +749,7 @@ function assertRepairTicket(ticket: unknown, contextHash: string): asserts ticke
   }
 }
 
-function correctionPathConforms(value: unknown): boolean {
+function correctionPathConforms(value: unknown): value is readonly (string | number)[] {
   return Array.isArray(value)
     && value.length >= 1
     && value.length <= 16
@@ -469,16 +770,45 @@ function providerRejected(
   issues: readonly string[],
   repairUsed: boolean,
   invocationCount: 1 | 2,
+  diagnostics: readonly ProposalDiagnostic[] = diagnosticsFromIssues(code, issues),
 ): Extract<VNextProposalBundleProviderResult, { kind: "rejected" }> {
   return deepFreeze({
     kind: "rejected",
     code,
     issues: [...new Set(issues)].sort(),
+    diagnostics,
     repairUsed,
     invocationCount,
   });
 }
 
-function invalidOutput(): never {
-  throw new VNextProposalBundleOutputError();
+function syntaxDiagnostic(error: { reason: string; path: readonly (string | number)[]; offset: number; line: number; column: number }): ProposalDiagnostic {
+  return proposalDiagnostic("JSON_SYNTAX", error.reason, { path: error.path, pathBase: "arguments",
+    location: { offset: error.offset, line: error.line, column: error.column } });
+}
+
+function invalidOutput(error?: unknown): never {
+  if (error instanceof VNextProposalBundleOutputError) throw error;
+  if (error instanceof ProposalFillingError) throw new VNextProposalBundleOutputError(
+    error.diagnostics.map(detail => ({ ...detail, pathBase: "arguments" })));
+  throw new VNextProposalBundleOutputError(error instanceof JsonSyntaxError ? [syntaxDiagnostic(error)]
+    : error instanceof ModelOutputValidationError && error.outputConstraint !== undefined
+      ? [proposalDiagnostic("CONSTRAINT_CONFLICT", error.outputConstraint)]
+    : error instanceof TypeError && error.message.startsWith("canonical JSON")
+      ? [proposalDiagnostic("VALUE_INVALID", error.message, { repair: { allowed: false, reason: "draft-cannot-use-current-canonical-binding" } })] : undefined);
+}
+
+function wrongTool(actual: string, expected: string): never {
+  throw new VNextProposalBundleOutputError([proposalDiagnostic("VALUE_INVALID", "tool-response:wrong-function", { expected, actual })]);
+}
+
+function fieldOutput(code: ProposalDiagnostic["code"], constraint: string, path: readonly (string | number)[], expected: unknown, actual: unknown): never {
+  throw new VNextProposalBundleOutputError([proposalDiagnostic(code, constraint, { path, pathBase: "arguments", expected, actual: diagnosticActual(actual) })]);
+}
+
+/** JSON.stringify of an already-decoded argument cannot prove the original
+ * numeric lexeme. Only a raw source saved before parsing may authorize it. */
+export function numericRepairSource(candidate: Readonly<{ argumentSource?: unknown; originalArguments?: unknown }>): string | undefined {
+  return candidate.argumentSource === "rawString" && typeof candidate.originalArguments === "string"
+    ? candidate.originalArguments : undefined;
 }

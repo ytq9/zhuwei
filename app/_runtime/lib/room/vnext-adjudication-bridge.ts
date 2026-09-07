@@ -8,6 +8,8 @@ import type {
   RuntimeProfileManifest,
 } from "../rules";
 import type { AuthoritativeActionInput, JsonObject } from "./authority-types";
+import type { AuthoritativeModuleProfile } from "../module/authoritative";
+import type { ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 
 export type RoomVNextReadSetPhase =
   | "proposalLowering"
@@ -24,6 +26,7 @@ export type RoomVNextPrepareContextInput = Readonly<{
   state: AuthoritativeWorldState;
   replayHead: ReplayHead;
   kpProjection: JsonObject;
+  moduleProfile?: AuthoritativeModuleProfile;
 }>;
 
 export type RoomVNextPrepareContextResult =
@@ -79,6 +82,9 @@ export type RoomVNextProposalLoweringResult =
       code: string;
       /** This text crosses the Room public rejection boundary and must not contain secrets. */
       explanation: string;
+      /** KP-private; never copied into the public action failure. */
+      issues?: readonly string[];
+      diagnostics?: readonly ProposalDiagnostic[];
     }>;
 
 /**

@@ -1,0 +1,263 @@
+{
+  "round": 65,
+  "sourceManifestSha256": "e8429292d189d761292d9b58f604eadee1e9dcf905e7a978c13312c03f235ddd",
+  "summary": {
+    "inputTokens": 114197,
+    "cacheHitTokens": 20480,
+    "cacheMissTokens": 93717,
+    "outputTokens": 4498,
+    "calls": 11,
+    "costCny": "0.1618405",
+    "allUsageKnown": true
+  },
+  "calls": [
+    {
+      "capture": "01.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "offer_kp_proposal_bundle",
+      "decisionKind": "knowledgeReview",
+      "createdAt": "2026-09-07T07:36:24+08:00",
+      "inputTokens": 16156,
+      "cacheHitTokens": 0,
+      "cacheMissTokens": 16156,
+      "outputTokens": 97,
+      "costCny": "0.0246705",
+      "responseSha256": "303cbac89f866282e0500df72a2626e3417940f98247be6c003c32ba4550cfb5",
+      "fileSha256": "ff13f997facad2d12bf0d991f79351ce0bca67d7e3ef7139e448290263167a18"
+    },
+    {
+      "capture": "02.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "narration",
+      "decisionKind": null,
+      "createdAt": "2026-09-07T07:36:25+08:00",
+      "inputTokens": 1864,
+      "cacheHitTokens": 896,
+      "cacheMissTokens": 968,
+      "outputTokens": 1177,
+      "costCny": "0.0067933",
+      "responseSha256": "8448abf35d5cfd2072a0030a09c371a96915549f83c2d19eb2b5cec5f75b35d5",
+      "fileSha256": "8c2995fc382fb25eedbb7f97a904e2abce6ac12d6150fed120aa79d3b9f08213"
+    },
+    {
+      "capture": "03.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "review_frozen_narration",
+      "decisionKind": null,
+      "createdAt": "2026-09-07T07:36:35+08:00",
+      "inputTokens": 2731,
+      "cacheHitTokens": 896,
+      "cacheMissTokens": 1835,
+      "outputTokens": 144,
+      "costCny": "0.0034453",
+      "responseSha256": "1b90aed1a32f8773a025d4311b517ed4772aabb81ad11a4e6bc8e6ee573a8c55",
+      "fileSha256": "e5f7b208f64732a94a3fd5c370d147fa3d9db76f91d3d218ca37e3df6cbb2fee"
+    },
+    {
+      "capture": "04.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "offer_kp_proposal_bundle",
+      "decisionKind": "passTime",
+      "createdAt": "2026-09-07T07:37:29+08:00",
+      "inputTokens": 21017,
+      "cacheHitTokens": 640,
+      "cacheMissTokens": 20377,
+      "outputTokens": 57,
+      "costCny": "0.030854",
+      "responseSha256": "2804c14c360a31494f2832840553d0bf4c55233bc0003c61e19cf9b252d0ca79",
+      "fileSha256": "fdd84137582b38520299406c1cabdf691227e0baf5892f790b0ca09ee9c3ace1"
+    },
+    {
+      "capture": "05.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "submit_due_actor_plan_decision",
+      "decisionKind": null,
+      "createdAt": "2026-09-07T07:37:30+08:00",
+      "inputTokens": 14588,
+      "cacheHitTokens": 10496,
+      "cacheMissTokens": 4092,
+      "outputTokens": 81,
+      "costCny": "0.0070273",
+      "responseSha256": "ec8a16f1f413a17d6888f7f365de44a2ba8c2c9a65f42c2d78a22c6ba98bd38e",
+      "fileSha256": "990a4795c4fbd461e02ea2b3ad93b8237be9719cfa2e71f90fa871ead1a25c66"
+    },
+    {
+      "capture": "06.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "narration",
+      "decisionKind": null,
+      "createdAt": "2026-09-07T07:37:31+08:00",
+      "inputTokens": 1202,
+      "cacheHitTokens": 1024,
+      "cacheMissTokens": 178,
+      "outputTokens": 89,
+      "costCny": "0.0007187",
+      "responseSha256": "947a7e65ee46e10ac8e86df5799c8d48adb6782406ac46974b5ef2e8a5aff7e8",
+      "fileSha256": "c50698587dac1eb01e84bb0de88ff4720956f61b2bccf649d1bf37a1e05cd8a6"
+    },
+    {
+      "capture": "07.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "review_frozen_narration",
+      "decisionKind": null,
+      "createdAt": "2026-09-07T07:37:32+08:00",
+      "inputTokens": 1932,
+      "cacheHitTokens": 896,
+      "cacheMissTokens": 1036,
+      "outputTokens": 145,
+      "costCny": "0.0022513",
+      "responseSha256": "09b493174645e22c716879a31e818bcde5e62043ae195195a047dc4ee62a8b5b",
+      "fileSha256": "9c967e8a97cfd02dbaf3f7a509cd714a398123f8d0837a6c8adc7d1269c48105"
+    },
+    {
+      "capture": "08.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "offer_kp_proposal_bundle",
+      "decisionKind": "schemaRequest",
+      "createdAt": "2026-09-07T07:38:13+08:00",
+      "inputTokens": 21555,
+      "cacheHitTokens": 3456,
+      "cacheMissTokens": 18099,
+      "outputTokens": 57,
+      "costCny": "0.0275778",
+      "responseSha256": "022389fc06e4c7c7740eb36926a90f4afc6683bb1a1ad2917db1510df6b8b199",
+      "fileSha256": "2a5a32efd0582777ba36ca968e60daa3aa4f302ccab90ca403de46a18a12b227"
+    },
+    {
+      "capture": "09.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "submit_kp_proposal_bundle",
+      "decisionKind": "directSuccess",
+      "createdAt": "2026-09-07T07:38:14+08:00",
+      "inputTokens": 25414,
+      "cacheHitTokens": 640,
+      "cacheMissTokens": 24774,
+      "outputTokens": 1257,
+      "costCny": "0.0428495",
+      "responseSha256": "ff79ada397e792bfb582be84842f01da0c9bfb91134d89ff273a14ba71a064fd",
+      "fileSha256": "a1721a052f83a8b500969628fc29ebffa1dd35a44926881fd5af46f8e52acf13"
+    },
+    {
+      "capture": "10.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "narration",
+      "decisionKind": null,
+      "createdAt": "2026-09-07T07:38:24+08:00",
+      "inputTokens": 3159,
+      "cacheHitTokens": 896,
+      "cacheMissTokens": 2263,
+      "outputTokens": 1228,
+      "costCny": "0.0089653",
+      "responseSha256": "f34d383ffa5b6052dd1d140dcee0a4d4557000f948aae8398243f8e4fb0fca34",
+      "fileSha256": "c824ac8f10d6242aaa98e90e6019ebbfd799a9076c5867c11b9a544855d35c6b"
+    },
+    {
+      "capture": "11.json",
+      "model": "deepseek-v4-flash",
+      "purpose": "review_frozen_narration",
+      "decisionKind": null,
+      "createdAt": "2026-09-07T07:38:33+08:00",
+      "inputTokens": 4579,
+      "cacheHitTokens": 640,
+      "cacheMissTokens": 3939,
+      "outputTokens": 166,
+      "costCny": "0.0066875",
+      "responseSha256": "8eadce157ffef2228f424bb78a442f0ba101155b2dd322d3c3a4d8aa7074f9d5",
+      "fileSha256": "ac2df7394ec23dc2dfa61f03480132dc9b4a2f9e32d620b2f288c7dc31b66bd4"
+    }
+  ],
+  "checks": {
+    "firstNoEntitiesKnowledgeTimeChange": true,
+    "firstPlanUnchanged": true,
+    "secondEntitiesUnchanged": true,
+    "secondTimeMicros": "60000000",
+    "thirdNoEntitiesOrTimeChange": true,
+    "threePublished": true,
+    "duplicates": [
+      {
+        "action": 1,
+        "newCalls": 0,
+        "checks": {
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        }
+      },
+      {
+        "action": 2,
+        "newCalls": 0,
+        "checks": {
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        }
+      },
+      {
+        "action": 3,
+        "newCalls": 0,
+        "checks": {
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        }
+      }
+    ]
+  },
+  "resultCounts": {
+    "primaryActions": 3,
+    "committedPublished": 3,
+    "formatFailures": 0,
+    "rulesRejections": 0,
+    "identifiedNarrativeContradictions": 0,
+    "semanticAudit": "manual comparison of actual public output, prior opening/committed trace and authorized spatial positions; not exhaustive proof",
+    "correctionCalls": 0,
+    "recoveryAttempts": 0
+  },
+  "limits": [
+    "The future NPC plan was a trusted Rules fixture, not model plan creation.",
+    "Three sequential actions do not prove statistical reliability or arbitrary complex proposal support."
+  ],
+  "localEvidence": "/tmp/zhuwei-round65-original-preparation/evidence",
+  "setupAndShutdownExitCodes": {
+    "freeze": 0,
+    "captureStart": 0,
+    "setupStart": 0,
+    "setup": 0,
+    "setupStop": 0,
+    "seedApply": 0,
+    "gameStart": 0,
+    "actions": [
+      0,
+      0,
+      0
+    ],
+    "snapshots": [
+      0,
+      0,
+      0
+    ],
+    "duplicates": [
+      0,
+      0,
+      0
+    ],
+    "acks": [
+      0,
+      0,
+      0
+    ],
+    "meter": 0,
+    "shutdown": 0,
+    "status": 0,
+    "extract": 0,
+    "replay": 0,
+    "sourceEnd": 0
+  },
+  "detachedProcessExitCode": null
+}

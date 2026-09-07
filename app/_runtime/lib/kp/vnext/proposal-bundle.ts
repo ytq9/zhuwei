@@ -21,6 +21,10 @@ import {
   requiredContextViewerRefs,
 } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
+import { materializationAuthorityBasis } from "./materialization-authority";
+import { worldInteractionFeasibilityDependencyRefs, worldInteractionFeasibilityMechanicalRefs } from "../../rules/v2/world-interaction-model";
+import { composeSemanticTemplate } from "../../rules/profiles/semantic-templates";
+import type { SemanticJsonRecord } from "../../rules/v2/semantic-definitions";
 import {
   itemEntryResourceId,
   type JsonRecord,
@@ -187,20 +191,20 @@ export type VNextBundleSemanticRevisionProposal = Readonly<{
  * exists -- see the `prospective:` handle convention on VNextBundleReference.
  */
 export type VNextBundleMaterializedObjectDefinition = Readonly<{
-  /** Required for sceneFeature; must be null for worldFact. */
+  /** The retained vNext1 path creates scene features only. World truth uses the vNext2 frozen fact contract. */
   sceneRef: string | null;
   /** Required only by hidden-until-evidence visibility. */
   visibilityFactId: string | null;
   label: string;
   description: string;
-  observableState: string;
-  affordances: readonly string[];
+  observableState: string | null;
+  affordances: readonly string[] | null;
   mechanicDefinitionRefs: readonly string[];
 }>;
 
 export type VNextBundleMaterializeObjectProposal = Readonly<{
   kind: "materializeObject";
-  semanticKind: "sceneFeature" | "worldFact";
+  semanticKind: "sceneFeature";
   templateRef: string;
   templateHash: string;
   visibilityPolicyRef: string;
@@ -297,6 +301,8 @@ export type VNextProposalBundleCommand =
       method: string;
       ruling: VNextRefusalRuling;
       basisRefs: readonly string[];
+      contextHash: string;
+      readSet: readonly Readonly<{ ref: string; revisionOrHash: string }>[];
     }>
   | Readonly<{
       /** A confirmed high-risk ruling awaits the dedicated Rules primitive. */
@@ -567,6 +573,9 @@ function lowerSingleEntry(
         hiddenPrerequisites.map((ref) => `refusal:prerequisite-not-viewer-visible:${ref}`),
       );
     }
+    const basisRefs = [...new Set([...entry.basisRefs, ...entry.ruling.nextActions.flatMap(action => action.basisRefs)])].sort(compareCodeUnits);
+    const read = selectFeasibilityReadSet(input, basisRefs, entry.ruling);
+    if (read.kind === "rejected") return read;
     return acceptedCommand({
       kind: "inWorldRefusal",
       rootActionId: input.rootActionId,
@@ -576,7 +585,9 @@ function lowerSingleEntry(
       intent: entry.proposal.intent,
       method: entry.proposal.method,
       ruling: entry.ruling,
-      basisRefs: [...entry.basisRefs],
+      basisRefs,
+      contextHash: input.requiredContext.binding.contextHash,
+      readSet: read.readSet,
     });
   }
   if (entry.formId === VNEXT_CLARIFICATION_FORM_ID) {
@@ -737,7 +748,7 @@ function isFormProposal(
         "definition", "kind", "semanticKind", "summary", "templateHash", "templateRef",
         "visibilityPolicyRef",
       ])
-        && (proposal.semanticKind === "sceneFeature" || proposal.semanticKind === "worldFact")
+        && proposal.semanticKind === "sceneFeature"
         && isRef(proposal.templateRef)
         && isRef(proposal.templateHash)
         && isRef(proposal.visibilityPolicyRef)
@@ -1185,33 +1196,34 @@ function lowerMaterializeObjectEntry(
     };
   }
   const handle = produced[0].handle;
+  const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
+    scopeRef: proposal.definition.sceneRef ?? input.state.entities[input.actorCharacterId]?.sceneId,
+    kind: proposal.semanticKind, templateRef: proposal.templateRef });
+  if (authority.kind === "rejected") return authority;
+  const creationBasis = [...new Set([...entry.basisRefs, ...authority.basisRefs])].sort(compareCodeUnits);
   const dependencyRefs = [
     input.actorCharacterId,
-    ...entry.basisRefs,
+    ...creationBasis,
     ...(proposal.definition.sceneRef === null ? [] : [proposal.definition.sceneRef]),
     ...(proposal.definition.visibilityFactId === null ? [] : [proposal.definition.visibilityFactId]),
     ...proposal.definition.mechanicDefinitionRefs,
   ];
   const planReadSet = selectPlanReadSet(input.requiredContext, dependencyRefs);
   if (planReadSet.kind === "rejected") return planReadSet;
-  const content: JsonRecord = proposal.semanticKind === "sceneFeature"
-    ? {
+  const content: SemanticJsonRecord = {
         sceneRef: proposal.definition.sceneRef,
         label: proposal.definition.label,
         description: proposal.definition.description,
+        ...(proposal.definition.visibilityFactId === null ? {} : { visibilityFactId: proposal.definition.visibilityFactId }),
         ...(proposal.definition.mechanicDefinitionRefs.length > 0
           ? { mechanicDefinitionRefs: [...proposal.definition.mechanicDefinitionRefs].sort() }
           : {}),
-        observableState: proposal.definition.observableState,
-        affordances: [...proposal.definition.affordances],
-      }
-    : {
-        label: proposal.definition.label,
-        description: proposal.definition.description,
-        ...(proposal.definition.visibilityFactId === null
-          ? {}
-          : { visibilityFactId: proposal.definition.visibilityFactId }),
+        ...(proposal.definition.observableState === null ? {} : { observableState: proposal.definition.observableState }),
+        ...(proposal.definition.affordances === null ? {} : { affordances: [...proposal.definition.affordances] }),
       };
+  const composed = composeSemanticTemplate({ semanticKind: proposal.semanticKind,
+    templateRef: proposal.templateRef, templateHash: proposal.templateHash, overrides: content });
+  if (composed.kind !== "accepted") return composed;
   return {
     kind: "accepted",
     rulesInput: {
@@ -1228,9 +1240,9 @@ function lowerMaterializeObjectEntry(
         visibilityPolicyRef: proposal.visibilityPolicyRef,
         contextHash: input.requiredContext.binding.contextHash,
         readSet: planReadSet.readSet,
-        basisRefs: [...entry.basisRefs],
+        basisRefs: creationBasis,
         sourceRefs: [],
-        content,
+        content: composed.content,
         summary: proposal.summary,
       },
     },
@@ -1344,7 +1356,7 @@ export function validateAttemptCosts(
   const issues: string[] = [];
   for (const cost of costs) {
     if (cost.kind === "fictionTime") continue;
-    const ref = cost.kind === "item" ? cost.entryRef : cost.resourceId;
+    const ref = cost.kind === "item" ? cost.entryRef : input.actorCharacterId;
     if (!authorityRefs.has(ref) || !readRefs.has(ref)) {
       issues.push(`cost:not-read-bound:${ref}`);
       continue;
@@ -1369,6 +1381,22 @@ export function validateAttemptCosts(
   return Object.freeze([...new Set(issues)].sort(compareCodeUnits));
 }
 
+export function selectFeasibilityReadSet(
+  input: Pick<VNextProposalBundleLoweringInput, "requiredContext" | "actorCharacterId">,
+  basisRefs: readonly string[],
+  ruling: VNextRefusalRuling,
+) {
+  const knownRefs = new Set(input.requiredContext.entries.flatMap(entry =>
+    entry.kind === "known" ? [entry.entryRef] : []));
+  const missing = worldInteractionFeasibilityMechanicalRefs(input.actorCharacterId, ruling.attemptCosts)
+    .filter(ref => !knownRefs.has(ref));
+  if (missing.length > 0) return rejected("CONTEXT_INSUFFICIENT",
+    missing.map(ref => `proposal:dependency-not-read-bound:${ref}`));
+  return selectPlanReadSet(input.requiredContext, worldInteractionFeasibilityDependencyRefs(input.actorCharacterId, {
+    basisRefs, prerequisites: ruling.prerequisites, costs: ruling.attemptCosts,
+  }));
+}
+
 function entryRefs(entry: VNextProposalBundleEntry): readonly string[] {
   const proposalRefs = entry.proposal.kind === "worldInteraction"
     ? [
@@ -1381,10 +1409,8 @@ function entryRefs(entry: VNextProposalBundleEntry): readonly string[] {
     : entry.proposal.kind === "reviseSemanticDefinition"
       ? [entry.proposal.definitionRef, entry.proposal.npcRef, entry.proposal.templateRef]
       : entry.proposal.kind === "materializeObject"
-        // templateRef/templateHash are opaque KP-chosen provenance tags for a
-        // definition that does not exist yet; unlike reviseSemanticDefinition
-        // they name no existing authority ref and so are never checked here.
-        // Rules is the final authority on this proposal's own new definition.
+        // Static template identity is checked against the runtime catalog by
+        // composition, separately from existing live authority references.
         ? [
             ...(entry.proposal.definition.sceneRef === null
               ? []
@@ -1415,15 +1441,11 @@ function rulingRefs(ruling: VNextFeasibilityRuling): readonly string[] {
     return [
       ...ruling.prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref]),
       ...ruling.nextActions.flatMap(({ basisRefs }) => [...basisRefs]),
-      ...ruling.attemptCosts.flatMap((cost) => cost.kind === "fictionTime"
-        ? []
-        : [cost.kind === "item" ? cost.entryRef : cost.resourceId]),
+      ...ruling.attemptCosts.flatMap((cost) => cost.kind === "item" ? [cost.entryRef] : []),
     ];
   }
   if (ruling.kind === "highRisk") {
-    return ruling.acceptedCosts.flatMap((cost) => cost.kind === "fictionTime"
-      ? []
-      : [cost.kind === "item" ? cost.entryRef : cost.resourceId]);
+    return ruling.acceptedCosts.flatMap((cost) => cost.kind === "item" ? [cost.entryRef] : []);
   }
   return [];
 }
@@ -1513,19 +1535,19 @@ function isTextArray(value: unknown, maximum: number, itemMaximum: number): bool
 
 function isMaterializedObjectDefinition(
   value: unknown,
-  semanticKind: "sceneFeature" | "worldFact",
+  semanticKind: "sceneFeature",
 ): value is VNextBundleMaterializedObjectDefinition {
   return isPlainRecord(value)
     && exactKeys(value, [
       "affordances", "description", "label", "mechanicDefinitionRefs", "observableState",
       "sceneRef", "visibilityFactId",
     ])
-    && (semanticKind === "sceneFeature" ? isRef(value.sceneRef) : value.sceneRef === null)
+    && semanticKind === "sceneFeature" && isRef(value.sceneRef)
     && (value.visibilityFactId === null || isRef(value.visibilityFactId))
     && isBoundedText(value.label, 300)
     && isBoundedText(value.description, 4_000)
-    && isBoundedText(value.observableState, 2_000)
-    && isTextArray(value.affordances, 16, 300)
+    && (value.observableState === null || isBoundedText(value.observableState, 2_000))
+    && (value.affordances === null || isTextArray(value.affordances, 16, 300))
     && isRefArray(value.mechanicDefinitionRefs);
 }
 

@@ -101,20 +101,43 @@ function intervalGap(left: AxisInterval, right: AxisInterval): bigint {
 }
 
 /** Exact range comparison; no square root or display rounding participates. */
-export function entitiesWithinRange(
-  left: JsonRecord,
-  right: JsonRecord,
-  rangeInches: string,
-): boolean {
-  const range = canonicalInteger(rangeInches);
-  if (range === undefined || range < 0n) throw new TypeError("combat range is malformed");
+export function entityDistanceSquared(left: JsonRecord, right: JsonRecord): bigint {
   const a = measurementCore(left);
   const b = measurementCore(right);
   const dx = intervalGap(a.x, b.x);
   const dy = intervalGap(a.y, b.y);
   const dz = intervalGap(a.z, b.z);
+  return dx * dx + dy * dy + dz * dz;
+}
+
+export function entitiesWithinRange(left: JsonRecord, right: JsonRecord, rangeInches: string): boolean {
+  const range = canonicalInteger(rangeInches);
+  if (range === undefined || range < 0n) throw new TypeError("combat range is malformed");
   const doubledRange = range * 2n;
-  return dx * dx + dy * dy + dz * dz <= doubledRange * doubledRange;
+  return entityDistanceSquared(left, right) <= doubledRange * doubledRange;
+}
+
+/** Squared distance between translated convex measurement cores is convex
+ * along a straight segment. Its initial derivative is negative exactly when
+ * that segment first moves closer; equal endpoint distances are insufficient. */
+export function movementApproachesEntity(mover: JsonRecord, source: JsonRecord, pathValue: unknown): boolean {
+  const path = canonicalizeCombatPath(pathValue);
+  if (path === undefined) throw new TypeError("fear movement path is malformed");
+  const fixed = measurementCore(source);
+  for (let index = 1; index < path.length; index++) {
+    const before = path[index - 1];
+    const after = path[index];
+    const moving = measurementCore({ ...mover, position: before });
+    const velocity = { x: BigInt(after.x) - BigInt(before.x),
+      y: BigInt(after.y) - BigInt(before.y), z: BigInt(after.elevation) - BigInt(before.elevation) };
+    const derivative = (["x", "y", "z"] as const).reduce((sum, axis) => {
+      const gap = moving[axis].low > fixed[axis].high ? moving[axis].low - fixed[axis].high
+        : moving[axis].high < fixed[axis].low ? moving[axis].high - fixed[axis].low : 0n;
+      return sum + gap * velocity[axis];
+    }, 0n);
+    if (derivative < 0n) return true;
+  }
+  return false;
 }
 
 export function entityWithinPointRange(
@@ -140,7 +163,7 @@ export function entityWithinPointRange(
   return dx * dx + dy * dy + dz * dz <= doubledRange * doubledRange;
 }
 
-function rectangularFeatureEntity(feature: JsonRecord, sceneId: string): JsonRecord | undefined {
+export function rectangularFeatureEntity(feature: JsonRecord, sceneId: string): JsonRecord | undefined {
   if (!Array.isArray(feature.polygon) || feature.polygon.length !== 4) return undefined;
   const points = feature.polygon.map((entry) => {
     if (!isRecord(entry)) return undefined;

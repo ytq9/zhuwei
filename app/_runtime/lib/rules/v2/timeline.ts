@@ -6,14 +6,36 @@ import type {
   JsonRecord,
 } from "./model";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
+import { timePassageTimelineId, longSpellcastingTimelineId } from "./time-passage-binding";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
+import { isDynamicLocationScene, resolvePassageTraversal, passageTraversalMatches, passageActivityBinding,
+  type PassageTraversalBinding } from "./dynamic-locations";
 
 export type MovementPlan = {
   sourceTimelineId: string;
   destinationTimelineId: string;
   departureMicros: string;
   arrivalMicros: string;
+  passage?: PassageTraversalBinding;
+  activityId?: string;
 };
+
+function requiresPassage(state: AuthoritativeWorldState, actorIds: readonly string[], destination: string): boolean {
+  return isDynamicLocationScene(state, destination) || actorIds.some(id => isDynamicLocationScene(state, state.entities[id]?.sceneId ?? ""));
+}
+
+function passageActivityDue(state: AuthoritativeWorldState, actorId: string, activityId: string,
+  passage: PassageTraversalBinding, completed: boolean): boolean {
+  const activity = state.campaignRuntime.activities[activityId], timeline = characterTimelineId(state, actorId);
+  const binding = passageActivityBinding(activity);
+  return activity !== undefined && activity.characterId === actorId && activity.status === (completed ? "completed" : "active")
+    && binding !== undefined && binding.passageRef === passage.passageRef && binding.passageHash === passage.passageHash
+    && binding.sourceSceneRef === passage.sourceSceneRef && binding.destinationSceneRef === passage.destinationSceneRef
+    && binding.travelDurationMicros === passage.travelDurationMicros && activity.intendedDurationMicros === passage.travelDurationMicros
+    && typeof activity.startedAtFictionMicros === "string" && /^(0|[1-9][0-9]*)$/.test(activity.startedAtFictionMicros)
+    && timeline !== undefined && BigInt(state.fictionTimelines[timeline].nowMicros)
+      >= BigInt(activity.startedAtFictionMicros) + BigInt(passage.travelDurationMicros);
+}
 
 export function characterTimelineId(
   state: AuthoritativeWorldState,
@@ -28,6 +50,11 @@ export function sceneTimelineId(state: AuthoritativeWorldState, sceneId: string)
 }
 
 function payloadCharacterId(state: AuthoritativeWorldState, payload: JsonRecord): string | undefined {
+  const effect = payload.effect;
+  if (effect !== null && typeof effect === "object" && !Array.isArray(effect)) {
+    const target = (effect as JsonRecord).targetEntityId;
+    if (typeof target === "string" && target in state.entities) return target;
+  }
   const direct = [
     payload.actorCharacterId,
     payload.characterId,
@@ -39,6 +66,7 @@ function payloadCharacterId(state: AuthoritativeWorldState, payload: JsonRecord)
     payload.npcId,
     payload.actingNpcId,
     payload.targetId,
+    payload.targetEntityId,
   ].find((value) => typeof value === "string" && value in state.entities);
   if (typeof direct === "string") return direct;
   if (typeof payload.activityId === "string") {
@@ -61,6 +89,12 @@ export function eventFictionTimelineId(
   rootActionId: string,
 ): string {
   const record = payload as JsonRecord;
+  if (["FictionTimeAdvanced", "ActivityInterrupted", "ActivityCompleted"].includes(_eventType)
+    && typeof record.activityId === "string") {
+    const activity = state.campaignRuntime.activities[record.activityId];
+    const timeline = timePassageTimelineId(state, activity) ?? longSpellcastingTimelineId(state, activity);
+    if (timeline !== undefined) return timeline;
+  }
   if (typeof record.sourceTimelineId === "string"
     && record.sourceTimelineId in state.fictionTimelines) {
     return record.sourceTimelineId;
@@ -100,6 +134,7 @@ export function recordSpotlightDecision(
 ): void {
   if (!firstEventForRoot
     || event.secrecy === "internal"
+    || event.eventType === "KnowledgeReviewed"
     || event.eventType === "SafetyPauseRequested"
     || event.eventType === "SafetyPresentationAdjusted") return;
   const actorCharacterId = spotlightSubject(state, event);
@@ -170,8 +205,13 @@ export function movementPlan(
   characterIds: string[],
   destinationSceneId: string,
   durationMicros: string,
+  passageRef?: string,
 ): MovementPlan | undefined {
   if (!(destinationSceneId in state.scenes) || !/^[1-9][0-9]*$/.test(durationMicros)) return undefined;
+  const passage = passageRef === undefined ? undefined : resolvePassageTraversal(state, characterIds[0], passageRef);
+  if (passageRef !== undefined && (passage === undefined || passage.destinationSceneRef !== destinationSceneId
+    || durationMicros !== passage.travelDurationMicros || !passageTraversalMatches(state, characterIds, passage))) return undefined;
+  if (passage === undefined && requiresPassage(state, characterIds, destinationSceneId)) return undefined;
   const sourceIds = [...new Set(characterIds.map((characterId) => characterTimelineId(state, characterId)))];
   if (sourceIds.length !== 1 || sourceIds[0] === undefined) return undefined;
   const sourceTimelineId = sourceIds[0];
@@ -184,7 +224,7 @@ export function movementPlan(
   // It may never enter a destination whose frontier is already in the future;
   // that case requires an explicit wait/meeting synchronization decision.
   if (existing !== undefined && BigInt(existing.nowMicros) > BigInt(arrivalMicros)) return undefined;
-  return { sourceTimelineId, destinationTimelineId, departureMicros, arrivalMicros };
+  return { sourceTimelineId, destinationTimelineId, departureMicros, arrivalMicros, ...(passage === undefined ? {} : { passage }) };
 }
 
 /**
@@ -196,8 +236,13 @@ export function completedActivityMovementPlan(
   state: AuthoritativeWorldState,
   characterId: string,
   destinationSceneId: string,
+  passage?: PassageTraversalBinding,
+  activityId?: string,
 ): MovementPlan | undefined {
   if (!(destinationSceneId in state.scenes)) return undefined;
+  if (passage === undefined && requiresPassage(state, [characterId], destinationSceneId)) return undefined;
+  if (passage !== undefined && (passage.destinationSceneRef !== destinationSceneId || activityId === undefined
+    || !passageTraversalMatches(state, [characterId], passage) || !passageActivityDue(state, characterId, activityId, passage, false))) return undefined;
   const sourceTimelineId = characterTimelineId(state, characterId);
   if (sourceTimelineId === undefined) return undefined;
   const departureMicros = state.fictionTimelines[sourceTimelineId]?.nowMicros;
@@ -210,6 +255,7 @@ export function completedActivityMovementPlan(
     destinationTimelineId,
     departureMicros,
     arrivalMicros: departureMicros,
+    ...(passage === undefined ? {} : { passage, activityId }),
   };
 }
 
@@ -223,6 +269,16 @@ export function applyMovement(
   const source = state.fictionTimelines[plan.sourceTimelineId];
   if (source === undefined || source.nowMicros !== plan.departureMicros) {
     throw new TypeError("movement source timeline changed");
+  }
+  if (plan.passage === undefined) {
+    if (plan.activityId !== undefined || requiresPassage(state, characterIds, destinationSceneId)) throw new TypeError("passage:explicit-connection-required");
+  } else {
+    const elapsed = BigInt(plan.arrivalMicros) - BigInt(plan.departureMicros);
+    if (plan.passage.destinationSceneRef !== destinationSceneId || !passageTraversalMatches(state, characterIds, plan.passage)
+      || (plan.activityId === undefined ? elapsed !== BigInt(plan.passage.travelDurationMicros)
+        : elapsed !== 0n || characterIds.length !== 1 || !passageActivityDue(state, characterIds[0], plan.activityId, plan.passage, true))) {
+      throw new TypeError("passage:frozen-traversal-or-paid-duration-invalid");
+    }
   }
   const existing = state.fictionTimelines[plan.destinationTimelineId];
   if (existing === undefined) {

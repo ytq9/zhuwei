@@ -1,6 +1,13 @@
 import type { JsonRecord } from "../v2/model";
 import { isNonEmptyString, isRecord } from "../v2/validation";
 
+export function attackArmorClass(target: JsonRecord, effects: readonly JsonRecord[]): number {
+  const id = target.id ?? target.entityId;
+  const shield = effects.filter(effect => effect.kind === "shield" && effect.targetEntityId === id)
+    .reduce((maximum, effect) => Math.max(maximum, Number(effect.armorClassBonus ?? 0)), 0);
+  return Number(target.armorClass ?? 10) + shield;
+}
+
 function abilityModifier(entity: JsonRecord, ability: string): number {
   const stats = entity.stats;
   if (!isRecord(stats)) return 0;
@@ -9,6 +16,11 @@ function abilityModifier(entity: JsonRecord, ability: string): number {
 }
 
 export function combatAttackBonus(source: JsonRecord, definition: JsonRecord): number {
+  if (isRecord(definition.attack) && definition.attack.kind === "fixed") {
+    const bonus = definition.attack.bonus;
+    if (typeof bonus !== "string" || !/^-?(0|[1-9][0-9]*)$/.test(bonus) || !Number.isSafeInteger(Number(bonus))) throw new TypeError("fixed attack bonus is not canonical");
+    return Number(bonus);
+  }
   if (isRecord(definition.attack) && definition.attack.kind === "spellAttack"
     && isRecord(source.spellcasting)) return Number(source.spellcasting.spellAttackBonus ?? 0);
   const ability = isRecord(definition.attack) && isNonEmptyString(definition.attack.ability)

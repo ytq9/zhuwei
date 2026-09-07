@@ -53,7 +53,7 @@ function list(value: unknown, label: string): unknown[] {
 function encounterProposal(
   rootActionId: string,
   enemyId: string,
-  options: { includeSaveAbility?: boolean } = {},
+  options: { includeSaveAbility?: boolean; npcPending?: boolean; knockout?: boolean } = {},
 ) {
   const encounterId = `encounter:${rootActionId}`;
   const enemySaveAbilityId = `ability:${rootActionId}:sentinel-cinder-burst`;
@@ -68,9 +68,15 @@ function encounterProposal(
       armorClass: "14",
       hitPoints: { current: "18", maximum: "18", temporary: "0" },
       speedInches: { walk: "360" },
-      resources: {},
+      resources: options.npcPending ? { "spellSlot:1": { current: "1", maximum: "1" } } : {},
       deathPolicy: "defeatedAtZero",
       abilities: [
+        ...(options.npcPending ? [{
+          definitionId: "ability:npc-pending:shield", revision: "1", rulesBasis: "srd5.1-2014",
+          mechanicalKey: "shield", activation: { kind: "reactionSpell", spellLevel: "1" },
+          costs: [{ kind: "spellSlot", level: "1", amount: "1" }],
+          effect: { kind: "shield", duration: "untilOwnNextTurnStart", armorClassBonus: "5", magicMissileImmunity: true },
+        }] : []),
         {
           definitionId: `ability:${rootActionId}:sentinel-spear`,
           revision: "1",
@@ -78,7 +84,7 @@ function encounterProposal(
           activation: { kind: "attack", actionGrant: "attack" },
           target: { kind: "creature", count: "1", reachInches: "120", requiresSight: true },
           attack: { ability: "str", proficiency: true },
-          damage: [{ type: "piercing", formula: "1d6+2" }],
+          damage: [{ type: "piercing", formula: options.knockout ? "4d6+2" : "1d6+2" }],
         },
         ...(options.includeSaveAbility ? [{
           definitionId: enemySaveAbilityId,
@@ -110,7 +116,7 @@ function encounterProposal(
 
 async function initializedRoom(
   checkpoint: string,
-  options: { concentrationCaster?: boolean; transferSeat?: boolean } = {},
+  options: { concentrationCaster?: boolean; transferSeat?: boolean; npcPending?: boolean; knockout?: boolean } = {},
 ) {
   const roomId = `combat-room-randomness-v2-${checkpoint}`;
   const enemyId = `enemy:${roomId}:sentinel`;
@@ -180,6 +186,8 @@ async function initializedRoom(
   }), "prepared encounter");
   const encounter = encounterProposal(String(prepared.rootActionId), enemyId, {
     includeSaveAbility: options.concentrationCaster === true,
+    npcPending: options.npcPending,
+    knockout: options.knockout,
   });
   return {
     stub,
@@ -219,7 +227,7 @@ async function commitOpeningEncounterWithPlayerInitiative(room: {
         room.preparedActionId,
         structuredClone(room.proposal),
       );
-      expect(rollIndex, "opening initiative roll count").toBe(openingInitiativeFaces.length);
+      expect(rollIndex, `opening initiative roll count: ${JSON.stringify(opened)}`).toBe(openingInitiativeFaces.length);
       return opened;
     } finally {
       target.authorityRoll = originalRoll;
@@ -228,6 +236,137 @@ async function commitOpeningEncounterWithPlayerInitiative(room: {
 }
 
 type CombatRoom = Awaited<ReturnType<typeof initializedRoom>>;
+
+describe("NPC pending decision continuation", () => {
+  it("keeps a due NPC knockout frozen across model failure and settles the new recovery die once", async () => {
+    const room = await initializedRoom("npc-pending-knockout", { knockout: true });
+    expect(record(await commitOpeningEncounterWithPlayerInitiative(room), "opening").kind).toBe("committed");
+    const observed = record(await room.stub.observe(ALICE), "observation");
+    const tactical = record(record(observed.readModel, "read model").tacticalProjection, "tactical");
+    const advanced = await handleRoomAction({ principal: ALICE, authority: room.stub, kp: {
+      propose: async () => { throw new Error("movement must not propose"); },
+      decideDueActorPlan: async () => { throw new Error("movement must not decide ActorPlan"); },
+      narrate: async () => ({ body: "阿莱莎逼近哨兵。", agencyClaims: [] }),
+    } }, { kind: "movement", submissionId: "npc:knockout:advance", movementMode: "walk",
+      spatialRevision: String(tactical.spatialRevision) as `sha256:${string}`,
+      path: [record(record(tactical.self, "self").position, "position") as { x: string; y: string; elevation: string },
+        { x: "-240", y: "-240", elevation: "0" }] });
+    expect(advanced.kind, JSON.stringify(advanced)).toBe("committed");
+    expect((await commitPlayerEndTurn(room, "npc-pending-knockout")).kind).toBe("committed");
+    const attack = await prepareDueNpcAction(room, "npc-pending-knockout", "用长矛击倒近前的来者", {
+      operation: "invokeCombatAction", abilityRef: room.enemyDefinition.abilities.find((entry) => entry.definitionId.endsWith(":sentinel-spear"))!.definitionId,
+      targetEntityRef: PLAYER_CHARACTER_ID,
+    }, PLAYER_CHARACTER_ID);
+    const paused = record(await runInDurableObject(room.stub as never, async (instance) => {
+      const target = instance as unknown as Authority & { authorityRoll(sides: number): number };
+      target.authorityRoll = (sides) => sides === 20 ? 12 : 5;
+      return target.commit(ALICE, attack.preparedActionId, attack.proposal);
+    }), "NPC knockout pause");
+    expect(paused.kind, JSON.stringify(paused)).toBe("awaitingKpDecision");
+    const decision = record(paused.decision, "decision");
+    expect(record(decision.pending, "pending")).toMatchObject({ choiceKind: "knockOut", npcId: room.enemyId });
+    const retry = { kind: "retry" as const, submissionId: "submission:combat-room:execute-npc-plan:npc-pending-knockout", rootActionId: attack.rootActionId };
+    const failed = await handleRoomAction({ principal: ALICE, authority: room.stub, kp: {
+      propose: async () => { throw new Error("no proposal before NPC answer"); },
+      decideDueActorPlan: async () => { throw new Error("do not revisit the ActorPlan"); },
+      decidePendingInput: async () => { throw Object.assign(new Error("model transport unavailable"), { code: "modelTransient" }); },
+      narrate: async () => { throw new Error("no result to narrate"); },
+    } }, retry);
+    expect(failed.kind).toBe("retryableFailure");
+    await evictDurableObject(room.stub as never);
+    const { continued, dice } = await runInDurableObject(room.stub as never, async (instance) => {
+      const target = instance as unknown as Authority & { authorityRoll(sides: number): number };
+      const dice: number[] = [];
+      target.authorityRoll = (sides) => { dice.push(sides); return 1; };
+      const continued = await target.commit(ALICE, attack.preparedActionId, {
+        kind: "npcPendingDecision", capability: decision.capability, answer: { kind: "knockOut" },
+      });
+      return { continued, dice };
+    });
+    expect(continued, JSON.stringify(continued)).toMatchObject({ kind: "continue", prepared: { phase: "playerIntent" } });
+    expect(dice).toEqual([4]);
+    await expect(room.stub.commit(ALICE, attack.preparedActionId, {
+      kind: "npcPendingDecision", capability: decision.capability, answer: { kind: "knockOut" },
+    })).resolves.toEqual(continued);
+    const exported = record(await room.stub.exportAuthoritativeArchive(room.archiveExport), "archive");
+    const events = list(record(exported.archive, "archive data").events, "events").map((value) => record(value, "event"));
+    expect(events.filter((event) => event.eventType === "ReactionAnswered")).toHaveLength(1);
+  });
+
+  it("resumes a frozen NPC Shield after eviction through Room and KP, without re-proposal or reroll", async () => {
+    const room = await initializedRoom("npc-pending-shield", { npcPending: true, transferSeat: true });
+    expect(record(await commitOpeningEncounterWithPlayerInitiative(room), "opening").kind).toBe("committed");
+    const observed = record(await room.stub.observe(ALICE), "observation");
+    const tactical = record(record(observed.readModel, "read model").tacticalProjection, "tactical");
+    const advanced = await handleRoomAction({ principal: ALICE, authority: room.stub, kp: {
+      propose: async () => { throw new Error("movement must not propose"); },
+      decideDueActorPlan: async () => { throw new Error("movement must not decide ActorPlan"); },
+      narrate: async () => ({ body: "阿莱莎逼近哨兵。", agencyClaims: [] }),
+    } }, { kind: "movement", submissionId: "npc:shield:advance", movementMode: "walk",
+      spatialRevision: String(tactical.spatialRevision) as `sha256:${string}`,
+      path: [record(record(tactical.self, "self").position, "position") as { x: string; y: string; elevation: string },
+        { x: "-240", y: "-240", elevation: "0" }] });
+    expect(advanced.kind, JSON.stringify(advanced)).toBe("committed");
+    const controlled = record(record(observed.readModel, "read model").controlledCharacter, "controlled");
+    const definitions = Object.values(record(record(controlled.combat, "combat").definitions, "definitions"))
+      .map((value) => record(value, "definition"));
+    const strike = definitions.find((value) => value.mechanicalKey === "improvised-strike")!;
+    expect(strike).toBeDefined();
+    const paused = record(await runInDurableObject(room.stub as never, async (instance) => {
+      const target = instance as unknown as { authorityRoll(sides: number): number };
+      const original = target.authorityRoll;
+      target.authorityRoll = (sides) => sides === 20 ? 12 : 1;
+      try {
+        return await commitPlayerCombatAction({ ...room, stub: instance as unknown as Authority }, "npc-pending-shield", "挥剑攻击哨兵", String(strike.definitionId), room.enemyId);
+      } finally { target.authorityRoll = original; }
+    }), "NPC Shield pause");
+    expect(paused.kind, JSON.stringify(paused)).toBe("awaitingKpDecision");
+    const decision = record(paused.decision, "decision");
+    const pending = record(decision.pending, "pending");
+    expect(pending).toMatchObject({ choiceKind: "reaction", reactionKind: "shield", npcId: room.enemyId });
+    expect(record(record(decision.projection, "NPC projection").viewer, "viewer"))
+      .toMatchObject({ kind: "npc", subjectId: room.enemyId });
+    for (const key of ["ownerFrame", "continuation", "frozenDamageFaces", "lethalDamagePayload"]) {
+      expect(JSON.stringify(decision)).not.toContain(`"${key}"`);
+    }
+    const option = list(pending.answerOptions, "answer options").map((entry) => record(entry, "option"))
+      .find((entry) => record(entry.answer, "answer").kind === "useReaction")!;
+    const answer = record(option.answer, "Shield answer");
+    const payload = { kind: "npcPendingDecision", capability: decision.capability, answer };
+    await expect(room.stub.commit(BOB, String(paused.preparedActionId), payload))
+      .resolves.toMatchObject({ kind: "rejected", code: "privateOrUnknownReference" });
+    await expect(room.stub.commit(ALICE, String(paused.preparedActionId), { ...payload, capability: "forged" }))
+      .resolves.toMatchObject({ kind: "rejected", code: "privateOrUnknownReference" });
+    await expect(room.stub.prepare(ALICE, { kind: "answer", submissionId: "npc:forged-player-answer",
+      pendingInputId: pending.pendingInputId, answer }))
+      .resolves.toMatchObject({ kind: "rejected" });
+    await evictDurableObject(room.stub as never);
+    let calls = 0;
+    const completed = await runInDurableObject(room.stub as never, async (instance) => {
+      const target = instance as unknown as { authorityRoll(sides: number): number };
+      target.authorityRoll = () => { throw new Error("NPC continuation must not reroll the original attack"); };
+      return handleRoomAction({ principal: ALICE, authority: instance as never, kp: {
+        propose: async () => { throw new Error("NPC continuation must not re-propose"); },
+        decideDueActorPlan: async () => { throw new Error("not an ActorPlan decision"); },
+        decidePendingInput: async (request) => {
+          calls += 1;
+          expect(request.capability).toBe(decision.capability);
+          return payload;
+        },
+        narrate: async () => ({ body: "哨兵施放护盾，挡住了这次攻击。", agencyClaims: [] }),
+      } }, { kind: "retry", submissionId: "submission:combat-room:player-target:npc-pending-shield", rootActionId: String(paused.rootActionId) });
+    });
+    expect(completed.kind, JSON.stringify(completed)).toBe("committed");
+    expect(calls).toBe(1);
+    expect(record(await room.stub.commit(ALICE, String(paused.preparedActionId), payload), "repeat").kind).toBe("committed");
+    await expect(room.stub.commit(ALICE, String(paused.preparedActionId), {
+      ...payload, answer: { kind: "decline" },
+    })).resolves.toMatchObject({ kind: "rejected", code: "idempotencyPayloadMismatch" });
+    const exported = record(await room.stub.exportAuthoritativeArchive(room.archiveExport), "archive");
+    const events = list(record(exported.archive, "archive data").events, "events").map((value) => record(value, "event"));
+    expect(events.filter((event) => event.eventType === "ReactionAnswered")).toHaveLength(1);
+  });
+});
 
 async function prepareDueNpcAction(
   room: CombatRoom,

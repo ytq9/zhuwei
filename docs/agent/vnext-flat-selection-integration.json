@@ -1,0 +1,143 @@
+{
+  "integratedAt": "2026-09-07T00:31:50.532010+00:00",
+  "sourceHead": "258caee404e0814405eb497653ee9f00d647b773",
+  "branch": "cloudflare",
+  "manifest": "/tmp/zhuwei-kp-flat-selection-core-manifest.json",
+  "manifestSha256": "6718e802cb18154fe1c4b01cd1bf43811841790bfc6adc5e9083ffdc9658c181",
+  "patch": "/tmp/zhuwei-kp-flat-selection-core.patch",
+  "patchSha256": "dc24cb5fae7fe8c466db5985b9591db516d059f03430b51d2d5c0cb3bfea7683",
+  "backup": "/tmp/zhuwei-flat-selection-root-before",
+  "files": {
+    "app/_runtime/lib/kp/vnext/adapter.ts": {
+      "baselineSha256": "5961a937fa9a41a510948f6827c303a08034a454b0afb9ca10133422572084d0",
+      "newSha256": "5a13bbde3c262277af82182e4c146f0b659ab87152b0c282c9ff0613650970e4"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-capabilities.ts": {
+      "baselineSha256": "36c4cf416b3cb1c78b6ee053ebe1795beb60bf981ad253bdb91ed93b6025e924",
+      "newSha256": "815395ac6ab08058de27f960c860d2c532845ed41105af6ac4a9bca8b14ea908"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-filling-interface.ts": {
+      "baselineSha256": "d38729903fd6b17748292b4e5719b4828869016286bcfd172b263f29140c9cab",
+      "newSha256": "726d3e68d634bdbe45bdbaa37b9362350fe56d3d81bfc357ab41a9db9c4b1296"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-guidance.ts": {
+      "baselineSha256": "6ae2f849ab0dfbb2c7fd2e729a3c1915f6867d8bdf008e8d3f507416f1e8bc05",
+      "newSha256": "7fabc8e8fc71b8019c6291adfc6461f6d8acc9da1496c5973ea48f7cf8ee0fd1"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-provider.ts": {
+      "baselineSha256": "961e03891d1b31716ca373d219cba744ebbc492b2bae1dedb58daca27429ba77",
+      "newSha256": "6fb03df96e04d567cf77edd420f0a0460bb6134a76ada2fe90e61a9186d073b7"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-schema.ts": {
+      "baselineSha256": "a7de3e514c1b89175fc6d5fcc0f114a7d9658718314daf7f304f408f08821699",
+      "newSha256": "21e69606f7e8084f2c3dc848a5ed9a01f90ce32ba5ac5ea945a02dd7536be075"
+    },
+    "app/_runtime/lib/kp/vnext/runtime-policy.ts": {
+      "baselineSha256": "752f535a12e21a6fbe611d0869bb01c7dac9bfe445e4609a39fc8608ccfa018b",
+      "newSha256": "d4d51df711fe4d34fa44c8dd506846fb8e7a9e5857a92730d570d39fcf9ae2d3"
+    },
+    "app/_runtime/lib/room/vnext-proposal-invocation.ts": {
+      "baselineSha256": "83a4883779e76f260fb0b52642973fbadde5dfad292d4c8e87ed8265b07ddb42",
+      "newSha256": "5e9feb8a69a1411a7df0a34a5363d6ea2d6cccf052cee487431835f502c417e6"
+    },
+    "tests/kp-vnext-diagnostic-repair-provider.test.mjs": {
+      "baselineSha256": "97e1251cca3948a3dbbae0c070af41a69300cad0dd694779e6e068e7ea7003aa",
+      "newSha256": "734339b1a2104a1d9d70f6fc6accb75fc2f0c2de59a79c1ab6bfec7f4a5a6f43"
+    },
+    "tests/kp-vnext-item-reference-surface.test.mjs": {
+      "baselineSha256": "b8bf3da737741cf2529d09c6d552f2b65e41d459e8f5896d6442676fbded7324",
+      "newSha256": "06277fc79b5ae259e053b6841bb9e6b0e1ef4d668641bbd3492ed23b54ccfdf1"
+    },
+    "tests/kp-vnext-npc-plan-formation.test.mjs": {
+      "baselineSha256": "7494945d16fb837de10c8af23829a6caa45cf24a97c7b908738dfb66f44320d8",
+      "newSha256": "52d0c29b19d4be07515dbe91e563bac81c0e955ae66505cf5dd52b42c3b3184e"
+    },
+    "tests/kp-vnext-observation-reference-surface.test.mjs": {
+      "baselineSha256": "38cb5e902fe563669e6248997a9ed8823704b2b0ba8c22a492182072345ecf25",
+      "newSha256": "d5827bcdd3dd3785844e25084e01f62a68d7b76f3eea79c0ca0e57116e2575bd"
+    },
+    "tests/kp-vnext-provider-room.test.ts": {
+      "baselineSha256": "0e5e0ab81c3022f30e4dd46727a783ab1acaeaab29c43127326614c1d51636f4",
+      "newSha256": "e97f8ebbe06f18de2877d38199bcd2a6413bbce1a52f9da17cecb63719715cd7"
+    },
+    "tests/kp-vnext-schema-retrieval.test.mjs": {
+      "baselineSha256": "5ea217b029d1b67de9e9153cf96ef55d2ced5bd7b1613d55f978f93e4e14ee68",
+      "newSha256": "056551fb35feed9145538a8afda89d6d1ad220c050edac3f3f7815bbced6e2d3"
+    },
+    "tests/kp-vnext-dynamic-locations-room.test.ts": {
+      "baselineSha256": "f96d77783bc16780911c54e799b0e4e2fc226c9201f6bd6b7ddc98f581eb23ce",
+      "newSha256": "c755cd68584abe914e4a4ab13ec61706e9d4dcbd5d285a633a13c3fb4d668dad"
+    },
+    "tests/kp-vnext-npc-plan-formation-room.test.ts": {
+      "baselineSha256": "ed5d7d58e5f4ec4d9e13e7a8811ce833ad6a6a17f79de0f6a4351e90bf8c6731",
+      "newSha256": "6c46a15fa7a4baaf3828edc5204514520c0381b0082abd10dd043e6ab4a4e66d"
+    }
+  },
+  "conflicts": 0,
+  "apiCalls": 0,
+  "rootValidation": {
+    "node": {
+      "passed": 97,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-flat-selection-root-node.log"
+    },
+    "room": {
+      "passed": 50,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-flat-selection-root-room.log"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-flat-selection-root-types.log"
+    }
+  },
+  "isolatedVerification": [
+    {
+      "command": "node --import tsx --test tests/kp-vnext-schema-retrieval.test.mjs tests/kp-vnext-filling-interface.test.mjs tests/kp-vnext-npc-plan-formation.test.mjs tests/kp-vnext-diagnostic-repair-provider.test.mjs tests/kp-vnext-item-reference-surface.test.mjs tests/kp-vnext-observation-reference-surface.test.mjs tests/kp-vnext-proposal-schema.test.mjs",
+      "exit": 0,
+      "result": "97/97 passed",
+      "log": "/tmp/zhuwei-kp-flat-selection-node-consumers.log",
+      "note": "before subsequent Room-only TS narrowing source change"
+    },
+    {
+      "command": "./node_modules/.bin/vitest run tests/kp-vnext-provider-room.test.ts",
+      "exit": 0,
+      "result": "44/44 passed",
+      "log": "/tmp/zhuwei-kp-flat-selection-provider-room-final.log"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit": 0,
+      "log": "/tmp/zhuwei-kp-flat-selection-typecheck-final.log"
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "consumerDelta": {
+    "manifest": "/tmp/zhuwei-kp-flat-selection-consumers-manifest.json",
+    "manifestSha256": "593d36a3b50d38740a6146ae2d7010cabf7f6ac36e393196acfb7d7a874958fa",
+    "patch": "/tmp/zhuwei-kp-flat-selection-consumers.patch",
+    "patchSha256": "1490533d58383863a4059fde99f00ba15e83cebb9c0d9415a741382c216c4468",
+    "verification": [
+      {
+        "command": "npx vitest run tests/kp-vnext-npc-plan-formation-room.test.ts",
+        "exit": 0,
+        "result": "5/5 passed",
+        "log": "/tmp/zhuwei-kp-flat-selection-npc-consumer.log"
+      },
+      {
+        "command": "npx vitest run tests/kp-vnext-dynamic-locations-room.test.ts",
+        "exit": 0,
+        "result": "1/1 passed",
+        "log": "/tmp/zhuwei-kp-flat-selection-locations-consumer.log"
+      },
+      {
+        "command": "git diff --check",
+        "exit": 0
+      }
+    ]
+  },
+  "independentReview": "No new P1/P2 in the eight production files; final delta renames the shared execution budget predicate and narrows TypeScript message shape."
+}

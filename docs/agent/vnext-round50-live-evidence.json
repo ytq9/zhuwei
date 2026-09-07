@@ -1,0 +1,276 @@
+{
+  "batch": 50,
+  "attempts": 10,
+  "usage": {
+    "prompt_tokens": 20415,
+    "completion_tokens": 1978,
+    "prompt_cache_hit_tokens": 7168,
+    "prompt_cache_miss_tokens": 13247
+  },
+  "cny": "0.0291299",
+  "notAttempted": [
+    "knowledge-upgrade",
+    "private-motive-invented",
+    "player-agency",
+    "r49-repeat-fixed"
+  ],
+  "sourceHashesUnchangedDuringBatch": true,
+  "sourceHashes": {
+    "app/_runtime/lib/kp/narration-vnext.ts": "8adc7ed2bb3f029e7ba19feaee944413f6dda56463b407b54474324c431694b9",
+    "app/_runtime/lib/kp/authoritative.ts": "b7f4add14f388d92ff5f0acbf588ca267dc8a585de54018faa04055cf95ac588",
+    "app/_runtime/lib/kp/deepseek.ts": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8",
+    "app/_runtime/lib/kp/narration-context.ts": "91c4d29d416f50509042c264ca937b75bc57823c79f1533c6ec4e4d011f8f16e",
+    "app/_runtime/lib/rules/v2/claims.ts": "3c340ce08c206d3bfc3ad96b5eb2894d083f1241f4dd905bbe257437a4a13477"
+  },
+  "results": [
+    {
+      "id": "r49-exact-body",
+      "verdict": "accepted",
+      "expected": "accepted",
+      "matched": true,
+      "reason": null,
+      "diagnostics": null,
+      "durationMs": 1061,
+      "usage": {
+        "prompt_tokens": 2675,
+        "completion_tokens": 144,
+        "total_tokens": 2819,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2675
+      },
+      "cny": 0.0046605
+    },
+    {
+      "id": "new-childhood-no-old-citation",
+      "verdict": "accepted",
+      "expected": "accepted",
+      "matched": true,
+      "reason": null,
+      "diagnostics": null,
+      "durationMs": 1784,
+      "usage": {
+        "prompt_tokens": 1921,
+        "completion_tokens": 143,
+        "total_tokens": 2064,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 1921
+      },
+      "cny": 0.003525
+    },
+    {
+      "id": "objective-childhood-conflict",
+      "verdict": "rejected",
+      "expected": "rejected",
+      "matched": true,
+      "reason": "continuityMismatch",
+      "diagnostics": [
+        {
+          "code": "FACT_CONFLICT",
+          "check": "continuity",
+          "quote": "林从小住在内陆，从未见过海。",
+          "occurrence": 0,
+          "start": 0,
+          "constraintRef": "/facts/0",
+          "reason": "正文声称林住在内陆且从未见过海，但facts与payloads固化的事实为\"林小时候常帮家人修渔网\"，且expression的establishedDetails载明\"林在海边长大\"（detail:shore）。修渔网是海边渔村常见活动，与\"从未见过海\"直接冲突。正确材料应为林在海边长大、帮家人修渔网，而非内陆从未见海。"
+        }
+      ],
+      "durationMs": 1724,
+      "usage": {
+        "prompt_tokens": 1913,
+        "completion_tokens": 278,
+        "total_tokens": 2191,
+        "prompt_tokens_details": {
+          "cached_tokens": 896
+        },
+        "prompt_cache_hit_tokens": 896,
+        "prompt_cache_miss_tokens": 1017
+      },
+      "cny": 0.0028213
+    },
+    {
+      "id": "attributed-npc-lie",
+      "verdict": "accepted",
+      "expected": "accepted",
+      "matched": true,
+      "reason": null,
+      "diagnostics": null,
+      "durationMs": 834,
+      "usage": {
+        "prompt_tokens": 1930,
+        "completion_tokens": 148,
+        "total_tokens": 2078,
+        "prompt_tokens_details": {
+          "cached_tokens": 896
+        },
+        "prompt_cache_hit_tokens": 896,
+        "prompt_cache_miss_tokens": 1034
+      },
+      "cny": 0.0022618
+    },
+    {
+      "id": "npc-lie-as-truth",
+      "verdict": "rejected",
+      "expected": "rejected",
+      "matched": true,
+      "reason": "unsupportedClause",
+      "diagnostics": [
+        {
+          "code": "SOURCE_ATTRIBUTION",
+          "check": "attribution",
+          "quote": "林从没见过海。",
+          "occurrence": 0,
+          "start": 0,
+          "constraintRef": "policy:attribution",
+          "reason": "正文直接把林的话写成事实陈述，丢失了事实说明中要求的来源归属：林声称自己从没见过海，且该说法尚未由记录证实（facts注明'尚未由这条记录证实'）。表述成'没见过'落定了该说法为真，而应保留为林本人的声称/自述，不把说法升级为确立事实。"
+        }
+      ],
+      "durationMs": 1960,
+      "usage": {
+        "prompt_tokens": 1916,
+        "completion_tokens": 265,
+        "total_tokens": 2181,
+        "prompt_tokens_details": {
+          "cached_tokens": 896
+        },
+        "prompt_cache_hit_tokens": 896,
+        "prompt_cache_miss_tokens": 1020
+      },
+      "cny": 0.0027673000000000003
+    },
+    {
+      "id": "new-environment-paraphrase",
+      "verdict": "accepted",
+      "expected": "accepted",
+      "matched": true,
+      "reason": null,
+      "diagnostics": null,
+      "durationMs": 850,
+      "usage": {
+        "prompt_tokens": 1912,
+        "completion_tokens": 151,
+        "total_tokens": 2063,
+        "prompt_tokens_details": {
+          "cached_tokens": 896
+        },
+        "prompt_cache_hit_tokens": 896,
+        "prompt_cache_miss_tokens": 1016
+      },
+      "cny": 0.0022483000000000004
+    },
+    {
+      "id": "environment-contradiction",
+      "verdict": "rejected",
+      "expected": "rejected",
+      "matched": true,
+      "reason": "unsupportedClause",
+      "diagnostics": [
+        {
+          "code": "RESULT_CHANGED",
+          "check": "results",
+          "quote": "天花板漆成深黑色，没有任何纹路。",
+          "occurrence": 0,
+          "start": 3,
+          "constraintRef": "/payloads/0",
+          "reason": "冻结材料规定天花板的浅色纹路沿拱顶排列成弧形（亮色弧形纹路），候选正文写成『深黑色、没有任何纹路』，把浅色弧形纹路改成无纹路深色，反转了颜色与纹路两项关键视觉结果。"
+        }
+      ],
+      "durationMs": 1908,
+      "usage": {
+        "prompt_tokens": 1903,
+        "completion_tokens": 257,
+        "total_tokens": 2160,
+        "prompt_tokens_details": {
+          "cached_tokens": 896
+        },
+        "prompt_cache_hit_tokens": 896,
+        "prompt_cache_miss_tokens": 1007
+      },
+      "cny": 0.0027118000000000003
+    },
+    {
+      "id": "mechanics-complete",
+      "verdict": "accepted",
+      "expected": "accepted",
+      "matched": true,
+      "reason": null,
+      "diagnostics": null,
+      "durationMs": 1085,
+      "usage": {
+        "prompt_tokens": 2091,
+        "completion_tokens": 148,
+        "total_tokens": 2239,
+        "prompt_tokens_details": {
+          "cached_tokens": 896
+        },
+        "prompt_cache_hit_tokens": 896,
+        "prompt_cache_miss_tokens": 1195
+      },
+      "cny": 0.0025033
+    },
+    {
+      "id": "mechanics-changed",
+      "verdict": "rejected",
+      "expected": "rejected",
+      "matched": true,
+      "reason": "unsupportedClause",
+      "diagnostics": [
+        {
+          "code": "RESULT_CHANGED",
+          "check": "results",
+          "quote": "你恢复了12点生命值",
+          "occurrence": 0,
+          "start": 0,
+          "constraintRef": "/facts/3",
+          "reason": "facts和payloads明确记录旅人恢复了7点生命值，正文改为恢复12点，改变了实际结果数值。"
+        },
+        {
+          "code": "RESULT_CHANGED",
+          "check": "results",
+          "quote": "药剂没有消耗，仍有两份",
+          "occurrence": 0,
+          "start": 11,
+          "constraintRef": "/payloads/0",
+          "reason": "payloads记录旅人使用了一份药剂，数量由2变为1、剩下一份；正文称药剂未消耗仍有两份，与实际结果相悖。"
+        }
+      ],
+      "durationMs": 1702,
+      "usage": {
+        "prompt_tokens": 2081,
+        "completion_tokens": 301,
+        "total_tokens": 2382,
+        "prompt_tokens_details": {
+          "cached_tokens": 896
+        },
+        "prompt_cache_hit_tokens": 896,
+        "prompt_cache_miss_tokens": 1185
+      },
+      "cny": 0.0031768
+    },
+    {
+      "id": "cost-omitted",
+      "verdict": "accepted",
+      "expected": "rejected",
+      "matched": false,
+      "reason": null,
+      "diagnostics": null,
+      "durationMs": 889,
+      "usage": {
+        "prompt_tokens": 2073,
+        "completion_tokens": 143,
+        "total_tokens": 2216,
+        "prompt_tokens_details": {
+          "cached_tokens": 896
+        },
+        "prompt_cache_hit_tokens": 896,
+        "prompt_cache_miss_tokens": 1177
+      },
+      "cny": 0.0024538000000000003
+    }
+  ]
+}

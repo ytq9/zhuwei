@@ -80,6 +80,8 @@ function worldState({ noise = 0, tenureStatus = "active" } = {}) {
     version: "v:1",
     runtimeEpochId: "epoch:1",
     activeBranchId: "branch:main",
+    fictionTimelines: { "branch:main": { branchId: "branch:main", nowMicros: "0" } },
+    multiplayerRuntime: { characterTimelineIds: {} },
     scenes: { [SCENE]: { id: SCENE } },
     entities: {
       [ALICE]: { id: ALICE, kind: "player", name: "艾丽丝", sceneId: SCENE, tenureStatus },
@@ -94,7 +96,7 @@ function worldState({ noise = 0, tenureStatus = "active" } = {}) {
       chapters: { "chapter:one": { chapterId: "chapter:one", summary: "第一章" } },
       stories: { "story:main": { storyId: "story:main" } },
     },
-    combatRuntime: { entities: {}, scenes: {}, definitions: {} },
+    combatRuntime: { entities: {}, scenes: {}, definitions: {}, effects: {} },
   };
 }
 

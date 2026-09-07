@@ -1,3 +1,5 @@
+import { isItemStockResourceId } from "./item-resources";
+import { passageTraversalBindingConform, passageTraversalMatches } from "./dynamic-locations";
 import type {
   AuthoritativeWorldState,
   CharacterRecord,
@@ -222,9 +224,14 @@ function character(value: unknown): value is CharacterRecord {
         && Array.isArray(value.proficientSkills)
         && value.expertiseSkills.every((skill) =>
           (value.proficientSkills as string[]).includes(skill))))
+    && (value.resources === undefined || (isRecord(value.resources)
+      && Object.entries(value.resources).every(([resourceId, amount]) =>
+        isNonEmptyString(resourceId) && !isItemStockResourceId(resourceId)
+        && Number.isSafeInteger(amount) && Number(amount) >= 0)))
     && (value.resourceMaximums === undefined || (isRecord(value.resourceMaximums)
       && Object.entries(value.resourceMaximums).every(([resourceId, maximum]) =>
-        isNonEmptyString(resourceId) && Number.isSafeInteger(maximum) && Number(maximum) >= 0)));
+        isNonEmptyString(resourceId) && !isItemStockResourceId(resourceId)
+        && Number.isSafeInteger(maximum) && Number(maximum) >= 0)));
 }
 
 export function validCharacterMechanicsSnapshot(
@@ -407,6 +414,7 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
         && isNonEmptyString(value.reason);
     case "PartyMoveProposed":
       return hasExactKeys(value, [
+        ...(Object.hasOwn(value, "passage") ? ["passage"] : []),
         "arrivalMicros",
         "departureMicros",
         "destinationSceneId",
@@ -431,13 +439,15 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
           value.sourceTimelineId,
         ].every(isNonEmptyString)
         && canonicalStrings(value.memberCharacterIds)
-        && canonicalStrings(value.pendingInputIds);
+        && canonicalStrings(value.pendingInputIds)
+        && (!Object.hasOwn(value, "passage") || passageTraversalBindingConform(value.passage));
     case "PartyMoveConsentRecorded":
       return hasExactKeys(value, ["accepted", "characterId", "groupId", "pendingInputId", "proposalId"])
         && [value.characterId, value.groupId, value.pendingInputId, value.proposalId].every(isNonEmptyString)
         && typeof value.accepted === "boolean";
     case "PartyMoved":
       return hasExactKeys(value, [
+        ...(Object.hasOwn(value, "passage") ? ["passage"] : []),
         "arrivalMicros",
         "departureMicros",
         "destinationSceneId",
@@ -456,9 +466,12 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
           value.proposalId,
           value.sourceTimelineId,
         ].every(isNonEmptyString)
-        && canonicalStrings(value.memberCharacterIds);
+        && canonicalStrings(value.memberCharacterIds)
+        && (!Object.hasOwn(value, "passage") || passageTraversalBindingConform(value.passage));
     case "CharacterMoved":
       return hasExactKeys(value, [
+        ...(Object.hasOwn(value, "passage") ? ["passage"] : []),
+        ...(Object.hasOwn(value, "activityId") ? ["activityId"] : []),
         "arrivalMicros",
         "characterId",
         "departureMicros",
@@ -473,7 +486,9 @@ export function validateMultiplayerEventPayload(eventType: EventType, value: Jso
           value.destinationSceneId,
           value.destinationTimelineId,
           value.sourceTimelineId,
-        ].every(isNonEmptyString);
+        ].every(isNonEmptyString)
+        && (!Object.hasOwn(value, "passage") || passageTraversalBindingConform(value.passage))
+        && (!Object.hasOwn(value, "activityId") || isNonEmptyString(value.activityId));
     case "FictionTimelinesMet":
       return hasExactKeys(value, [
         "characterIds",
@@ -522,12 +537,18 @@ export function applyCharacterMechanicsSnapshot(
   for (const definition of definitions) {
     const definitionId = String(definition.definitionId);
     const prior = state.combatRuntime.definitions[definitionId];
-    if (prior !== undefined && canonicalSha256(prior) !== canonicalSha256(definition)) {
+    if (prior !== undefined && canonicalSha256(prior) !== canonicalSha256(definition)
+      && !(isRegisteredAbilityRecord(prior) && prior.definitionHash === canonicalSha256(definition))) {
       throw new TypeError("character ability definition conflicts with its pinned revision");
     }
   }
   for (const definition of definitions) {
-    state.combatRuntime.definitions[String(definition.definitionId)] = structuredClone(definition);
+    const prior = state.combatRuntime.definitions[String(definition.definitionId)];
+    // A mechanics refresh proposes source definitions; keep the already frozen
+    // executable when that source matches its pinned hash exactly.
+    state.combatRuntime.definitions[String(definition.definitionId)] = structuredClone(
+      isRegisteredAbilityRecord(prior) ? prior : definition,
+    );
   }
   state.combatRuntime.entities[characterId] = structuredClone(combatEntity);
 }
@@ -738,6 +759,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
             payload.action === "wear"
               ? { action: "wear", slot: payload.slot, entryId: payload.itemId }
               : { action: "stow", slot: payload.slot },
+            state.combatRuntime.definitions,
           );
       const expectedEquipmentAbilityRefs = "error" in transition ? [] : transition.equipment.refs;
       const movedItemId = "error" in transition ? undefined : transition.movedEntryId;
@@ -802,6 +824,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
             definition,
             payload.itemId,
             payload.action,
+            state.combatRuntime.definitions,
           );
       const equipmentAbilityRefs = "error" in transition ? [] : transition.equipment.refs;
       if ("error" in transition
@@ -990,6 +1013,9 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
     case "PartyMoveProposed": {
       const payload = event.payload as EventPayloadByType["PartyMoveProposed"];
       if (payload.proposalId in state.multiplayerRuntime.partyMoveProposals) throw new TypeError("party move already proposed");
+      if (payload.passage !== undefined && (!passageTraversalMatches(state, payload.memberCharacterIds, payload.passage)
+        || payload.passage.destinationSceneRef !== payload.destinationSceneId
+        || payload.passage.travelDurationMicros !== payload.fictionTimeCostMicros)) throw new TypeError("passage:party-proposal-invalid");
       state.multiplayerRuntime.partyMoveProposals[payload.proposalId] = {
         ...structuredClone(payload),
         acceptedCharacterIds: [payload.leaderCharacterId],
@@ -1037,6 +1063,7 @@ export function applyMultiplayerEvent(state: AuthoritativeWorldState, event: Eve
         || !payload.memberCharacterIds.every((id) => acceptedCharacterIds.includes(id))) {
         throw new TypeError("party move lacks unanimous consent");
       }
+      if (canonicalSha256(payload.passage ?? null) !== canonicalSha256(proposal.passage ?? null)) throw new TypeError("passage:party-consent-binding-changed");
       applyMovement(state, event.eventId, payload.memberCharacterIds, payload.destinationSceneId, payload);
       proposal.status = "committed";
       return true;

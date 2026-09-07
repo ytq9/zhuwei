@@ -1,0 +1,134 @@
+{
+  "date": "2026-09-06",
+  "branch": "cloudflare",
+  "baseCommit": "258caee404e0814405eb497653ee9f00d647b773",
+  "environment": "local Cookie HTTP and SQLite Room DO plus real DeepSeek; production unchanged",
+  "budget": {
+    "maximumRoots": 2,
+    "maximumCalls": 8,
+    "maximumInputTokens": 360000,
+    "maximumOutputTokens": 32000,
+    "maximumCallsPerHttp": 4,
+    "stopOnFailure": true,
+    "maximumDiagnosticContrasts": 1
+  },
+  "actual": {
+    "calls": 4,
+    "inputTokens": 58060,
+    "outputTokens": 1165,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "callTelemetryConsistent": true
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "purpose": "submit_kp_proposal_bundle",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 27816,
+      "outputTokens": 505,
+      "cachedInputTokens": 0,
+      "captureFileSha256": "7972a45ec2a2abc1fd3294339d7172a12c6e49676ed7ba45f84bd6c9546143d8"
+    },
+    {
+      "ordinal": 2,
+      "purpose": "submit_current_narration",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 1523,
+      "outputTokens": 76,
+      "cachedInputTokens": 0,
+      "captureFileSha256": "970f14b1da93e027ed06f141efc9487861e5da4546f82635d0d60604c39fca0c"
+    },
+    {
+      "ordinal": 3,
+      "purpose": "review_frozen_narration",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 2032,
+      "outputTokens": 166,
+      "cachedInputTokens": 0,
+      "captureFileSha256": "0349db9e9426ca43709031d75621c85b9037c552765a863f9c1a336185d03bca"
+    },
+    {
+      "ordinal": 4,
+      "purpose": "same-frozen-context-cost-contrast",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 26689,
+      "outputTokens": 418,
+      "cachedInputTokens": 11904,
+      "captureFileSha256": "4de09491838c4c3c081c9c73a5aa326d5ebf354712e6e9e38b076545431dafb8"
+    }
+  ],
+  "workflowHash": "sha256:83fe19d7661abbe4592f264d8246bdb861e8d4e3105685dad6b7df037a032d61",
+  "promptHash": "sha256:372f3fca2a0ac590b674752bf90d7c7920e6531ad17da83b47d872015bbb19f3",
+  "schemaHash": "sha256:571d3ed3904fb55a7b57402cc7414859f6aeeb8ccc5c3ae08d55e6f8cce51657",
+  "parserHash": "sha256:44db41ad1abb333166114bd44371d34f8661c47f12943a3517a5c0378d7bb3a3",
+  "contextRepresentation": "zhuwei.proposal-context/vnext-1",
+  "endpoint": "https://api.deepseek.com/beta/chat/completions",
+  "validationSuiteFileHashes": {
+    "tests/deepseek-strict-schema-compaction.test.mjs": "98baab6e7b4fb2496e06a1dc7ca6af235971e73af8599423d318408c0b396515",
+    "tests/kp-vnext-proposal-schema.test.mjs": "0b34ab7b3a367604901276fa77c1849b4585ff12b779295cc7e1155e5d762f84",
+    "tests/vnext-local-room-binding.test.mjs": "68f915a36ddfdd86b4dc731465959270db0ddc548c415c1f386a0115ed26cb2b",
+    "tests/kp-vnext-provider-room.test.ts": "5d3c4bf76d238d896d6d94f881132aa6b60761d55fc892b509f69e9d42d4a34a"
+  },
+  "schemaBytes": {
+    "currentBytes": 47346,
+    "beforeThisTurnBytes": 49778,
+    "expandedBytes": 82214,
+    "changesSinceHistoricalRequest": [
+      "schema.properties.proposals.items.anyOf.5.properties.branches.properties.success.properties.effects.items.anyOf.1.properties.operations.items.anyOf.0.properties.value.anyOf.4",
+      "schema.properties.proposals.items.anyOf.5.properties.branches.properties.failure.anyOf.0.properties.effects.items.anyOf.1.properties.operations.items.anyOf.0.properties.value.anyOf.4"
+    ]
+  },
+  "costContrast": {
+    "baselineInputTokens": 28367,
+    "currentInputTokens": 26689,
+    "inputReduction": 0.05915324144252124,
+    "baselineRequestBytes": 89943,
+    "currentRequestBytes": 84245,
+    "budget": {
+      "profileRef": "zhuwei.local-vnext-input-budget/v1",
+      "profileHash": "sha256:8b1da9b3bfb220c32e4dd3e47be086df8ed9be8ff7828c243ae2c0368f9eef73",
+      "counterRef": "conservative-v1",
+      "estimatedInputTokens": 27886,
+      "allowedInputTokens": 58000,
+      "decision": "accepted"
+    },
+    "contextHash": "sha256:ab0ef5aee2ca7b7b90156c3e3ec63ae39ae68b3910b14ca1204559a2150400f5",
+    "baselineRequestHash": "18512054f3614db2d51e56d458ba2ab7b3064284584871cfb451139f0a553f31",
+    "currentRequestHash": "d8302cf95acb81886582b2a9180ef3c0eef3015d47131e548b2ecddbc042ed24",
+    "parsed": true,
+    "roomCommit": false
+  },
+  "gameAction": {
+    "roots": 1,
+    "action": "committed",
+    "narration": "rejected",
+    "reason": "missingClaimFacts",
+    "heldBefore": 20,
+    "heldAfter": 19,
+    "groundAfter": 1,
+    "hitPoints": [
+      28,
+      28
+    ],
+    "otherResourcesChanged": false,
+    "pendingCount": 0,
+    "receiptCount": 1,
+    "humanNarrationReview": "Generated prose added unsupported container, floor material and sound; model review falsely grounded those details and omitted a required duplicate-text fact index. No narration published."
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "eventTypes": [
+      "InventoryOperationApplied"
+    ],
+    "eventCount": 1
+  },
+  "remaining": [
+    "simple Proposal 8k and overall 16k adoption thresholds",
+    "semantic candidate precision and compound references",
+    "narration quality and reviewer false positives/negatives",
+    "continuous real-game acceptance and production replacement"
+  ],
+  "serversStopped": true
+}

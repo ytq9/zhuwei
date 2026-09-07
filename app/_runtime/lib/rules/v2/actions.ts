@@ -1,4 +1,9 @@
+import { stepKnowledgeReview } from "./knowledge-review";
+import { publicExpressionConform } from "./public-expression";
+import { worldInteractionDiceValid } from "./world-interaction-randomness";
+import { nonItemResources } from "./item-resources";
 import { canonicalSha256 } from "../profiles/canonical";
+import { registeredAbilityRecord } from "../profiles/ability-compiler";
 import { environmentProfileEnabled } from "../profiles/environment";
 import {
   isCanonicalTacticalGeometry,
@@ -60,7 +65,7 @@ import { stepEnvironmentWorld } from "./environment";
 import {
   buildNpcSpatialEntity,
   buildPlayerCombatEntity,
-  compileStaticCharacterCombat,
+  planPlayerAbilityCatalog,
 } from "./character-abilities";
 import { experienceThresholdForLevel } from "./character-progression";
 import {
@@ -159,9 +164,10 @@ function validateInitializationCollections(
   const knowledge = input.initialKnowledge;
 
   return scenes.every((scene) => isRecord(scene)
-      && hasOnlyKeys(scene, ["id", "name"], ["geometry"])
+      && hasOnlyKeys(scene, ["id", "name"], ["geometry", "publicTone"])
       && isNonEmptyString(scene.id)
       && isNonEmptyString(scene.name)
+      && (scene.publicTone === undefined || (worldInteractionProfileEnabled(profiles.extensions) && typeof scene.publicTone === "string"))
       && (scene.geometry === undefined || isCanonicalTacticalGeometry(scene.geometry)))
     && principals.every((principal) => isRecord(principal)
       && hasOnlyKeys(principal, ["id", "sessionVersion"], ["role"])
@@ -195,10 +201,12 @@ function validateInitializationCollections(
           "proficiencyBonus",
           "proficientSkills",
           "proficientSaves",
+          "conditionImmunities",
           "raceId",
           "resourceMaximums",
           "resources",
           "socialMechanics",
+          "publicExpression",
           "spatialVisibilityFactId",
           "spatialVisibilityPolicyId",
           "subclassId",
@@ -244,6 +252,8 @@ function validateInitializationCollections(
         || (Number.isSafeInteger(character.proficiencyBonus)
           && Number(character.proficiencyBonus) >= 0
           && Number(character.proficiencyBonus) <= 12))
+      && (character.publicExpression === undefined || (character.kind === "npc"
+        && worldInteractionProfileEnabled(profiles.extensions) && publicExpressionConform(character.publicExpression)))
       && (character.socialMechanics === undefined
         || (character.kind === "npc"
           && socialResolutionProfileEnabled(profiles.extensions)
@@ -432,6 +442,7 @@ function buildInitialState(
     id: string;
     name: string;
     geometry?: CanonicalTacticalGeometry;
+    publicTone?: string;
   }>;
   if (!sceneInputs.every((scene) => scene.geometry === undefined
     || scene.geometry.obstacles.every((feature) => feature.environment === undefined
@@ -461,6 +472,7 @@ function buildInitialState(
     proficientSkills?: string[];
     expertiseSkills?: string[];
     proficientSaves?: string[];
+    conditionImmunities?: string[];
     classId?: string;
     raceId?: string;
     subclassId?: string;
@@ -471,6 +483,7 @@ function buildInitialState(
     lastLongRestCompletedAtMicros?: string;
     loadout?: CharacterRecord["loadout"];
     socialMechanics?: CharacterRecord["socialMechanics"];
+    publicExpression?: CharacterRecord["publicExpression"];
     characterBuild?: JsonRecord;
     spatialVisibilityPolicyId?: "visibility:scene-observers" | "visibility:hidden-until-evidence";
     spatialVisibilityFactId?: string;
@@ -494,7 +507,7 @@ function buildInitialState(
     provenanceChain: string[];
   }>;
 
-  const scenes = recordById(sceneInputs.map((scene) => ({ id: scene.id, name: scene.name })));
+  const scenes = recordById(sceneInputs.map((scene) => ({ id: scene.id, name: scene.name, ...(scene.publicTone === undefined ? {} : { publicTone: scene.publicTone }) })));
   const principals = recordById(principalInputs.map(({ id, sessionVersion }) => ({ id, sessionVersion })));
   const principalSeeds = recordById(principalInputs.map((principal) => ({ ...principal })));
   const seats = recordById(seatInputs.map((seat) => ({ ...seat })));
@@ -534,6 +547,8 @@ function buildInitialState(
     }
     return ({
     ...structuredClone(core),
+    ...(core.resources === undefined ? {} : { resources: nonItemResources(core.resources) }),
+    ...(core.resourceMaximums === undefined ? {} : { resourceMaximums: nonItemResources(core.resourceMaximums) }),
     ...(minimumExperience === undefined
       ? {}
       : { experiencePoints: core.experiencePoints ?? minimumExperience }),
@@ -543,6 +558,7 @@ function buildInitialState(
     ...(core.expertiseSkills === undefined
       ? {}
       : { expertiseSkills: [...core.expertiseSkills].sort() }),
+    ...(core.conditionImmunities === undefined ? {} : { conditionImmunities: [...core.conditionImmunities].sort() }),
     ...(core.proficientSaves === undefined
       ? {}
       : { proficientSaves: [...core.proficientSaves].sort() }),
@@ -708,18 +724,16 @@ function buildInitialState(
     tacticalPositionByCharacter.set(character.id, structuredClone(tacticalPosition));
   }
   for (const character of Object.values(entities).filter((entry) => entry.kind === "player")) {
-    const compiled = compileStaticCharacterCombat(
+    const plannedAbilities = planPlayerAbilityCatalog({
       character,
-      characterBuilds[character.id],
+      characterBuild: characterBuilds[character.id],
       itemSystem,
-      combatDefinitions,
-    );
-    for (const [definitionId, definition] of Object.entries(compiled.definitions)) {
-      const existing = combatDefinitions[definitionId];
-      if (existing !== undefined && canonicalSha256(existing) !== canonicalSha256(definition)) {
-        return undefined;
-      }
-      combatDefinitions[definitionId] = structuredClone(definition);
+      catalog: combatDefinitions,
+    });
+    if ("error" in plannedAbilities) return undefined;
+    const { compiled } = plannedAbilities;
+    for (const artifact of plannedAbilities.registrations) {
+      combatDefinitions[String(artifact.definition.definitionId)] = registeredAbilityRecord(artifact);
     }
     const control = characterControls[character.id];
     const seat = control === undefined ? undefined : seats[control.seatId];
@@ -766,6 +780,7 @@ function buildInitialState(
     receipts: {},
     pendingInputs: {},
     internalContinuations: {},
+    ...(worldInteractionProfileEnabled(profiles.extensions) ? { atomicWorldInteractions: {} } : {}),
     campaignRuntime: {
       campaign: {
         campaignId: `campaign:${input.roomId as string}`,
@@ -1279,6 +1294,9 @@ function answerPendingInput(
   }
   const pending = state.pendingInputs[input.pendingInputId];
   const receipt = state.receipts[input.rootActionId];
+  if (state.frozenPlayerChoices?.[input.pendingInputId] !== undefined) {
+    return rejected("invalidRulesInput", "A frozen player choice cannot accept a replacement proposal.");
+  }
   const actor = actionCharacter(state, input.controllerCharacterId);
   if (input.proposal.kind === "recordAdvancementChoice") {
     if (
@@ -1626,7 +1644,7 @@ function fulfillAuthoritativeRandomness(
   const maximumFace = stored.request.purpose === "restHitDice"
     ? Number(stored.request.dice[0]?.sides)
     : 20;
-  if (!(input.rolls as number[]).every((roll) => roll <= maximumFace)) {
+  if (stored.request.purpose !== "worldInteractionCheck" && !(input.rolls as number[]).every((roll) => roll <= maximumFace)) {
     return rejected("invalidRulesInput", "The authoritative face exceeds the frozen die.");
   }
   const worldInteraction = fulfillVNextWorldInteractionRandomness(
@@ -1666,6 +1684,7 @@ function fulfillAuthoritativeRandomness(
     input.rolls as number[],
   );
   if (actorPlan !== undefined) return actorPlan;
+  if(stored.request.frozenCheck===null)return rejected("invalidWorldState","The check continuation has no frozen check.");
   const expectedRollCount = stored.request.frozenCheck.mode === "normal" ? 1 : 2;
   if (input.rolls.length !== expectedRollCount) {
     return rejected("invalidRulesInput", "The authoritative roll count does not match the frozen request.");
@@ -1760,18 +1779,14 @@ function fulfillAuthoritativeRandomnessBatch(
     if (stored === undefined
       || stored.continuation.capability !== value.continuation.capability
       || stored.request.purpose === "hiddenRealitySelection") return [];
-    const checkFaces = stored.request.purpose === "restHitDice"
-      ? Number(stored.request.dice[0]?.count)
-      : stored.request.frozenCheck.mode === "normal" ? 1 : 2;
-    // A world interaction froze one extra d20 per saving throw its branches
-    // will need, so the batch has to expect those faces as well.
-    const expected = stored.request.purpose === "worldInteractionCheck"
-      ? checkFaces + stored.request.hazardSaves.length
-      : checkFaces;
-    const maximumFace = stored.request.purpose === "restHitDice"
-      ? Number(stored.request.dice[0]?.sides)
-      : 20;
-    if (value.rolls.length !== expected || !value.rolls.every((roll) => Number(roll) <= maximumFace)) return [];
+    if(stored.request.purpose==="worldInteractionCheck") {
+      if(!worldInteractionDiceValid(stored.request.dice,value.rolls as number[]))return [];
+    } else {
+      const expected=stored.request.purpose==="restHitDice"?Number(stored.request.dice[0]?.count)
+        :stored.request.frozenCheck.mode==="normal"?1:2;
+      const maximum=stored.request.purpose==="restHitDice"?Number(stored.request.dice[0]?.sides):20;
+      if(value.rolls.length!==expected||!value.rolls.every(roll=>Number(roll)<=maximum))return [];
+    }
     return [{
       continuation: structuredClone(value.continuation) as AuthorityContinuation,
       rolls: [...value.rolls] as number[],
@@ -1992,17 +2007,21 @@ export function stepAuthoritativeWorld(
     if (safetyResult !== undefined) {
       return safetyResult;
     }
+    if (input.kind === "knowledgeReview") return stepKnowledgeReview(profiles, stateValue, input);
+    if (input.kind === "startTimePassage" || input.kind === "advanceTimePassage" || input.kind === "advanceLongSpellcasting") {
+      return stepCampaignWorld(profiles, stateValue, input)!;
+    }
     const environmentResult = stepEnvironmentWorld(profiles, stateValue, input);
     if (environmentResult !== undefined) {
       return environmentResult;
     }
-    const vNextWorldInteractionResult = stepVNextWorldInteraction(profiles, stateValue, input);
-    if (vNextWorldInteractionResult !== undefined) {
-      return vNextWorldInteractionResult;
-    }
     const dueActivityResult = settleDueActivityBeforeInput(profiles, stateValue, input);
     if (dueActivityResult !== undefined) {
       return dueActivityResult;
+    }
+    const vNextWorldInteractionResult = stepVNextWorldInteraction(profiles, stateValue, input);
+    if (vNextWorldInteractionResult !== undefined) {
+      return vNextWorldInteractionResult;
     }
     const multiplayerResult = stepMultiplayerWorld(profiles, stateValue, input);
     if (multiplayerResult !== undefined) {

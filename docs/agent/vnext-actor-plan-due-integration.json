@@ -1,0 +1,156 @@
+{
+  "status": "integrated-pending-root-targeted-validation",
+  "integratedAt": "2026-09-06T20:07:46.689Z",
+  "branch": "cloudflare",
+  "head": "258caee404e0814405eb497653ee9f00d647b773",
+  "source": "/tmp/zhuwei-actor-plan-due-delivery",
+  "manifestSha256": "4c20a73d3a5e5e0816c0733591b0799dec9b67bf39581e26e1e5c7901673c848",
+  "backup": "/tmp/zhuwei-actor-plan-due-root-before",
+  "conflicts": [],
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/actor-plan-decision.ts",
+      "baselineSha256": null,
+      "newSha256": "5f8c938fb467cafea6487c315f104a0f14b9fe284d49a4226db15f19dfe867bf",
+      "mainCurrentSha256": null,
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/model-call-scope.ts",
+      "baselineSha256": null,
+      "newSha256": "48a0930c596d2ff4aeee1d3c0b7c601762eda7a097ed6be8ff784714fdaae039",
+      "mainCurrentSha256": null,
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/runtime-policy.ts",
+      "baselineSha256": "34801f3d5fe26d8181913e3d4d938fb7a7298335a2e2aba3ca939823933310f5",
+      "newSha256": "752f535a12e21a6fbe611d0869bb01c7dac9bfe445e4609a39fc8608ccfa018b",
+      "mainCurrentSha256": "34801f3d5fe26d8181913e3d4d938fb7a7298335a2e2aba3ca939823933310f5",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/action.ts",
+      "baselineSha256": "136822e32a12c777975a5c4e9509a36c3414c5becd280db8512804e635fa289c",
+      "newSha256": "b22aa42659be76e5a029c8e6e0b497ddcd29fea79f0ef63f490e6c17bdfa0aa6",
+      "mainCurrentSha256": "136822e32a12c777975a5c4e9509a36c3414c5becd280db8512804e635fa289c",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/actor-plan-transport-types.ts",
+      "baselineSha256": null,
+      "newSha256": "b3f66624d6cc45e1c7d4a23f86af669addfa2bfe74d965af42aad8a3a8a3fc6d",
+      "mainCurrentSha256": null,
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/actor-plan-transport.ts",
+      "baselineSha256": null,
+      "newSha256": "2a02a48d37bacd85c34f4f05852a50cb8bc975e14360fa469eccd582413adca8",
+      "mainCurrentSha256": null,
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/authority-store.ts",
+      "baselineSha256": "0bd5b3f5b2691836adb9785b0094fbfb2621329829643dc1cd9b7552abc92e4b",
+      "newSha256": "4784512361f0d75742c7a316b80966773d632e8bee88e931022c1344d31a1643",
+      "mainCurrentSha256": "0bd5b3f5b2691836adb9785b0094fbfb2621329829643dc1cd9b7552abc92e4b",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/authority-telemetry.ts",
+      "baselineSha256": "28cb4a5cc44cfa5bfd15f5b59bd49c793290063ca8ba4be698623e46f773ae39",
+      "newSha256": "6c7aae3eca1b090f3fe65f4de992ecef573a0434c944ad0df6e985a9cb981581",
+      "mainCurrentSha256": "28cb4a5cc44cfa5bfd15f5b59bd49c793290063ca8ba4be698623e46f773ae39",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/durable-object.ts",
+      "baselineSha256": "06fa6cfb3f7067ad7b4f5fca542c32a3f0ae72102d6d73b2abdbb8393553089a",
+      "newSha256": "71612be33131b86163babbb94bef74ae820385f9be54f2dbccb684ac6bd0847f",
+      "mainCurrentSha256": "06fa6cfb3f7067ad7b4f5fca542c32a3f0ae72102d6d73b2abdbb8393553089a",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/room/server.ts",
+      "baselineSha256": "058cb3f64eddb741e1a4bf5118c18ac636f8c7189b673fb7b39cf067d5bea36d",
+      "newSha256": "f11173dd6a9b179da41314868fd36061ac5edbf7d827cf904e016a75f71ce4ef",
+      "mainCurrentSha256": "058cb3f64eddb741e1a4bf5118c18ac636f8c7189b673fb7b39cf067d5bea36d",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/actor-plans.ts",
+      "baselineSha256": "3a481d5881305570d256f83104b45123c472491663e51d18b82820f031ba4fe9",
+      "newSha256": "5c96b26c941cc74a683a6e54cd420f152adeb6a5f598f8dc1d26e0498476472d",
+      "mainCurrentSha256": "3a481d5881305570d256f83104b45123c472491663e51d18b82820f031ba4fe9",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/claims.ts",
+      "baselineSha256": "1d9f3c34d0c570207ca1276bd94609a33acb625d096bfa182b4ad38d83a1d2c4",
+      "newSha256": "1e8540fcfe3d7a178806ffdd8570a9bef6d9047568dbcee71821a55e2b685eff",
+      "mainCurrentSha256": "1d9f3c34d0c570207ca1276bd94609a33acb625d096bfa182b4ad38d83a1d2c4",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/due-activities.ts",
+      "baselineSha256": "afda91d77cb907000e5707cc1c28efd9fd263ad710a03b6940c1e11c7df31844",
+      "newSha256": "592ad343b8fe4e621c1c9ca7d32613a9922b2bcb80a9dae9bc51c03afc065b02",
+      "mainCurrentSha256": "afda91d77cb907000e5707cc1c28efd9fd263ad710a03b6940c1e11c7df31844",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/events.ts",
+      "baselineSha256": "c1b38211c9207b3a3c8f4622c9016e4694bf2fdd14a781ef00406e1b3c22cf54",
+      "newSha256": "f56648afceb8108ba7e5beac1fb1920978b62842ce1ffaad94269a126aa6b5ab",
+      "mainCurrentSha256": "c1b38211c9207b3a3c8f4622c9016e4694bf2fdd14a781ef00406e1b3c22cf54",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/model.ts",
+      "baselineSha256": "13bf1da87efd6690a099106a81e4989cab3b20a3ff401e171a303f34fc374443",
+      "newSha256": "13800abed368aa3794f75a4a7b133e06407b6b4b3ba0150b6d795f52ada2c823",
+      "mainCurrentSha256": "13bf1da87efd6690a099106a81e4989cab3b20a3ff401e171a303f34fc374443",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/projector.ts",
+      "baselineSha256": "a9e14fcb4f120ca5569a602bfba8a9a568b9a6891b48e0f088d327ac4f65e360",
+      "newSha256": "4a6fa5e59aabb20db597bd935453bb21369018442f9b8a8e81206e9c82cc1af1",
+      "mainCurrentSha256": "a9e14fcb4f120ca5569a602bfba8a9a568b9a6891b48e0f088d327ac4f65e360",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "tests/actor-plan-kp-boundary-v3.test.mjs",
+      "baselineSha256": "2655083e483d09b7c2d1e8b2dbc17e5101787713a3324301870dd1afbee70c72",
+      "newSha256": "fac54ea71f9bb5d092cdb20ad2d38ca793ad3f0d974dbdfc1c0272dea91ed0aa",
+      "mainCurrentSha256": "2655083e483d09b7c2d1e8b2dbc17e5101787713a3324301870dd1afbee70c72",
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "tests/kp-vnext-actor-plan-due-claims.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "db66a9e22a5b743b0bc5ba9e90805956aab408145592826fcb479d6806f6d8e7",
+      "mainCurrentSha256": null,
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "tests/kp-vnext-actor-plan-due-room.test.ts",
+      "baselineSha256": null,
+      "newSha256": "271abdc088719d3dd655c770758a0b1877d0916c2415194eb60a644187205cce",
+      "mainCurrentSha256": null,
+      "mainMatchesBaseline": true
+    },
+    {
+      "path": "tests/kp-vnext-model-call-scope.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "cb9bc8da69d115f189d8138438a50257fc05fd383b8cbe84a26f657f4ec9b505",
+      "mainCurrentSha256": null,
+      "mainMatchesBaseline": true
+    }
+  ],
+  "externalOperations": [],
+  "commit": false,
+  "push": false,
+  "deployment": false
+}

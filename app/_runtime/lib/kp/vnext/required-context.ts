@@ -120,6 +120,9 @@ export type FrozenPlayerIntent = Readonly<{
   submissionRef: string;
   actorRef: string;
   text: string;
+  /** Server-derived commitments explicitly addressed by this action that must
+   * be materialized before the response adjudicates their use. */
+  narrativeMaterializationRefs?: readonly string[];
 }>;
 
 export type RequiredContextReferenceDirectory = Readonly<{
@@ -128,6 +131,8 @@ export type RequiredContextReferenceDirectory = Readonly<{
     authorityBasisRefs: readonly string[];
     npcKnowledge: readonly Readonly<{
       npcRef: string;
+      /** Exact holder-namespaced known entry refs; raw knowledge IDs do not
+       * identify which holder's content, source or layer is being cited. */
       refs: readonly string[];
     }>[];
     nonCitableRefs: readonly string[];
@@ -198,6 +203,12 @@ export function buildRequiredContext(input: RequiredContextInput): RequiredConte
     const references = normalizeReferenceDirectory(input.references);
     const binding = normalizeBinding(input.binding);
     assertEntriesHaveCitationClass(entries, references);
+    for (const ref of intent.narrativeMaterializationRefs ?? []) {
+      if (!entries.some((entry) => entry.kind === "known" && entry.entryRef === ref)
+        || !references.citations.viewerEvidenceRefs.includes(ref)) {
+        throw new TypeError("intent.narrativeMaterializationRefs:visible-frozen-entry-required");
+      }
+    }
 
     const criticalUnavailable = entries
       .filter((entry): entry is UnavailableContextEntry =>
@@ -256,6 +267,10 @@ function normalizeIntent(intent: FrozenPlayerIntent): FrozenPlayerIntent {
     submissionRef: intent.submissionRef,
     actorRef: intent.actorRef,
     text: intent.text.normalize("NFC"),
+    ...(intent.narrativeMaterializationRefs === undefined ? {} : {
+      narrativeMaterializationRefs: sortedUniqueStrings(intent.narrativeMaterializationRefs,
+        "intent.narrativeMaterializationRefs"),
+    }),
   });
 }
 

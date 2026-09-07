@@ -1,0 +1,624 @@
+{
+  "schema": "zhuwei.vnext.live-validation-report/v1",
+  "round": 54,
+  "status": "failedAtAction3",
+  "scope": "One bounded, authenticated local HTTP sequence with real DeepSeek calls; no deployment or push. Evidence report only; no response rewritten and no model call retried for this report.",
+  "branch": "cloudflare",
+  "head": "258caee404e0814405eb497653ee9f00d647b773",
+  "testedParserVersion": "v23",
+  "modelReportedByResponses": "deepseek-v4-flash",
+  "modelRevisionClaim": null,
+  "modelRevisionNote": "No response-specific revision was established; configured revision must not be presented as a returned model revision.",
+  "sourceFreeze": {
+    "createdAt": "2026-09-06T18:29:46.230501+00:00",
+    "initialManifestSha256": "9545ee35c31aaf276e39240d71a36b3042cd16455d529b9e48a831d5de1e59e1",
+    "comparison": {
+      "beforeCount": 310,
+      "afterCount": 310,
+      "branchUnchanged": true,
+      "headUnchanged": true,
+      "added": [],
+      "removed": [],
+      "changed": [],
+      "checkedAt": "2026-09-06T18:32:35.067999+00:00",
+      "initialManifestSha256": "9545ee35c31aaf276e39240d71a36b3042cd16455d529b9e48a831d5de1e59e1",
+      "allEqual": true
+    }
+  },
+  "postStopScopeExclusion": {
+    "coordinatorReportedParserVersion": "v24",
+    "changes": "Root kind/schema diagnostics now use arguments path base; non-string decision.kind/templateRef use TYPE_MISMATCH. Acceptance rules and repair permissions unchanged.",
+    "verification": "Coordinator reports two new counterexamples red, then filling/confirmation/retrieval 27/27 passed, exit 0. This is deterministic post-stop evidence, not a round54 model result.",
+    "offlineOriginalParse": "parse-original-result.json was produced after shutdown by calling the current parser on unchanged original capture 07 arguments. Exact offset and repair reason are offline extracted diagnostics; frozen v23 live telemetry separately records JSON_SYNTAX at arguments."
+  },
+  "actions": [
+    {
+      "ordinal": 1,
+      "intent": "我从背包里取出一根火把，放在身旁。",
+      "action": "committed",
+      "narration": "published",
+      "receiptCountBefore": 0,
+      "receiptCountAfter": 1,
+      "newCommittedReceipts": 1,
+      "stateVersionBefore": "0",
+      "stateVersionAfter": "1",
+      "torchBefore": 10,
+      "torchAfter": 9,
+      "calls": 3,
+      "publishedNarration": "你从背包里取出一根火把，把它放在了自己身旁，火把现已放下。",
+      "rulesReached": true,
+      "observedPublishedContradiction": false
+    },
+    {
+      "ordinal": 2,
+      "intent": "我把刚才放在身旁的那根火把拾起来，收回背包。",
+      "action": "committed",
+      "narration": "published",
+      "receiptCountBefore": 1,
+      "receiptCountAfter": 2,
+      "newCommittedReceipts": 1,
+      "stateVersionBefore": "1",
+      "stateVersionAfter": "2",
+      "torchBefore": 9,
+      "torchAfter": 10,
+      "calls": 3,
+      "publishedNarration": "你把刚才放在身旁的那根火把拾起来，收回背包里。",
+      "rulesReached": true,
+      "observedPublishedContradiction": false
+    },
+    {
+      "ordinal": 3,
+      "intent": "我用背包里的麻绳和餐具做一个可拆的拉绳警铃，做好后手动拉动，试试响声。",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "receiptCountBefore": 2,
+      "receiptCountAfter": 2,
+      "newCommittedReceipts": 0,
+      "stateVersionBefore": "2",
+      "stateVersionAfter": "2",
+      "torchBefore": 10,
+      "torchAfter": 10,
+      "calls": 1,
+      "outcomeKind": "rejected",
+      "publicErrorCode": "PROPOSAL_FORM_INVALID",
+      "diagnosticCode": "JSON_SYNTAX",
+      "rulesReached": false,
+      "publishedNarration": null,
+      "observedPublishedContradiction": null,
+      "mechanicalAndPublishedMessagesUnchanged": true
+    }
+  ],
+  "categories": {
+    "format": {
+      "proposalResponses": 3,
+      "acceptedBeforeRules": 2,
+      "failed": 1,
+      "failedActions": [
+        3
+      ],
+      "diagnostic": {
+        "code": "JSON_SYNTAX",
+        "path": [],
+        "pathBase": "arguments",
+        "constraint": "json:object-delimiter-expected",
+        "repair": {
+          "allowed": false,
+          "reason": "semantic-equivalence-unproven"
+        },
+        "location": {
+          "offset": 2121,
+          "line": 1,
+          "column": 2122
+        }
+      }
+    },
+    "rules": {
+      "actionsReached": 2,
+      "committed": 2,
+      "rejected": 0,
+      "notReachedActions": [
+        3
+      ],
+      "note": "Action 3 failed JSON parsing before Rules; it is not counted as a Rules rejection."
+    },
+    "narrative": {
+      "newPublishedNarrations": 2,
+      "evaluatedForThisSequence": 2,
+      "observedContradictions": 0,
+      "notEvaluatedActions": [
+        3
+      ],
+      "note": "Published action 1/2 text matches authoritative inventory changes. This is bounded observation, not a proof of arbitrary narrative consistency. Action 3 has no published narration."
+    },
+    "recovery": {
+      "proposalRepairCalls": 0,
+      "proposalRepairSuccesses": 0,
+      "repairAdmissionRefusals": 1,
+      "refusalReason": "semantic-equivalence-unproven",
+      "repairTicketsPersisted": 0,
+      "duplicateSubmissionsVerified": 2,
+      "duplicates": [
+        {
+          "action": 1,
+          "recordedChecks": {
+            "noModelReinvocation": true,
+            "sameSubmissionId": true,
+            "sameReceipt": true,
+            "sameMechanicalState": true,
+            "sameDelivery": true
+          },
+          "independentlyRechecked": {
+            "sameSubmissionId": true,
+            "sameReceipt": true,
+            "sameMechanicalState": true,
+            "noModelReinvocation": true,
+            "sameActionAndNarration": true
+          },
+          "beforeCalls": 3,
+          "afterCalls": 3
+        },
+        {
+          "action": 2,
+          "recordedChecks": {
+            "noModelReinvocation": true,
+            "sameSubmissionId": true,
+            "sameReceipt": true,
+            "sameMechanicalState": true,
+            "sameDelivery": true
+          },
+          "independentlyRechecked": {
+            "sameSubmissionId": true,
+            "sameReceipt": true,
+            "sameMechanicalState": true,
+            "noModelReinvocation": true,
+            "sameActionAndNarration": true
+          },
+          "beforeCalls": 6,
+          "afterCalls": 6
+        }
+      ],
+      "replayExact": true,
+      "note": "No attempt to reconstruct nested JSON, invent outcomes, reroll, or reapply costs. Duplicate replay is separate from model repair."
+    }
+  },
+  "failureEvidence": {
+    "liveTelemetry": [
+      {
+        "occurredAt": "2026-09-06T18:31:43.724Z",
+        "eventName": "room.action.completed",
+        "outcomeKind": "rejected",
+        "failureClass": "modelPermanent",
+        "errorCode": "PROPOSAL_FORM_INVALID",
+        "proposalDiagnosticFields": [
+          {
+            "path": "arguments",
+            "code": "JSON_SYNTAX"
+          }
+        ]
+      }
+    ],
+    "offlineOriginalParse": {
+      "originalCapturePath": "/tmp/zhuwei-vnext-round54-private/07.json",
+      "toolName": "offer_kp_proposal_bundle",
+      "originalArgumentsSha256": "affe36de6b7e49c266b8caaf09c291f288302b4a02df1d93e4ce95442eab5796",
+      "originalArgumentsCharacters": 2124,
+      "candidateKind": "thrownOutputError",
+      "diagnostics": [
+        {
+          "code": "JSON_SYNTAX",
+          "path": [],
+          "pathBase": "arguments",
+          "constraint": "json:object-delimiter-expected",
+          "repair": {
+            "allowed": false,
+            "reason": "semantic-equivalence-unproven"
+          },
+          "location": {
+            "offset": 2121,
+            "line": 1,
+            "column": 2122
+          }
+        }
+      ],
+      "candidateFields": [
+        "kind",
+        "errorName",
+        "message",
+        "diagnostics"
+      ]
+    },
+    "thirdActionUnchangedFields": [
+      "stateVersion",
+      "receiptCount",
+      "hp",
+      "resources",
+      "resourceMaximums",
+      "inventory",
+      "pendingInputs",
+      "fictionTime",
+      "messages"
+    ],
+    "thirdActionNewCommittedEvents": 0
+  },
+  "route": {
+    "proposalCalls": 3,
+    "ordinaryOfferCalls": 3,
+    "schemaRequestCalls": 0,
+    "expandedSubmitCalls": 0,
+    "repairCalls": 0,
+    "fillingRoot": "decision",
+    "proposalInvocationOrdinals": [
+      1,
+      1,
+      1
+    ],
+    "notes": "Each original proposal chose directSuccess on the offered ordinary interface. Action 3 used worldInteraction and attempted commitNarrativeDetail, without requesting authorItem/authorAbility schemas."
+  },
+  "uncommittedSemanticRisks": [
+    {
+      "kind": "draftInternalConflict",
+      "evidence": "The untouched failed draft says it cuts a length of rope while declaring both original materials intact with unchanged counts.",
+      "classification": "Uncommitted semantic risk; not an actual published narrative contradiction."
+    },
+    {
+      "kind": "componentRelationPersistenceGap",
+      "evidence": "The failed draft attempts to describe an assembled alarm through commitNarrativeDetail. A description does not prove a persisted component relation or inventory lifecycle correctness.",
+      "classification": "Uncommitted semantic risk and remaining implementation gap; not a committed state defect in this run."
+    }
+  ],
+  "usage": {
+    "calls": 7,
+    "inputTokens": 114122,
+    "cacheHitTokens": 19584,
+    "cacheMissTokens": 94538,
+    "outputTokens": 2320,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "allPerCallTelemetryMatched": true,
+    "costCnyFromUsage": "0.1532262",
+    "ratesCnyPerMillionTokens": {
+      "cacheHit": "0.05",
+      "cacheMiss": "1.5",
+      "output": "4.5"
+    },
+    "pricingSource": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "pricingSourceProvenance": "Official rates supplied and verified by coordinator; this reporting subtask performed no network request.",
+    "periodRule": "Asia/Shanghai, weekday 09:00-12:00 and 14:00-18:00 are peak; each response.created here is outside peak.",
+    "feeNote": "Usage-derived estimate, not account billing; completion_tokens already contains reasoning_tokens and is charged once.",
+    "callsDetail": [
+      {
+        "capture": "01.json",
+        "action": 1,
+        "purpose": "proposal",
+        "responseModel": "deepseek-v4-flash",
+        "createdUnixSeconds": 1788719414,
+        "createdAsiaShanghai": "2026-09-07T02:30:14+08:00",
+        "pricePeriod": "offPeak",
+        "inputTokens": 31117,
+        "cacheHitTokens": 0,
+        "cacheMissTokens": 31117,
+        "outputTokens": 239,
+        "reasoningTokensIncludedInOutput": null,
+        "telemetryInputMatches": true,
+        "telemetryOutputMatches": true,
+        "costCnyFromUsage": "0.047751",
+        "requestTools": [
+          "offer_kp_proposal_bundle"
+        ],
+        "responseTools": [
+          "offer_kp_proposal_bundle"
+        ],
+        "wireRoot": "decision",
+        "decisionKindFromOriginalPrefix": "directSuccess",
+        "originalArgumentsCharacters": 497,
+        "originalArgumentsSha256": "53f9e195c473bf668c7f98de79ea17eb2fe5a9e71c30048fffd47f807a618525"
+      },
+      {
+        "capture": "02.json",
+        "action": 1,
+        "purpose": "initialNarration",
+        "responseModel": "deepseek-v4-flash",
+        "createdUnixSeconds": 1788719417,
+        "createdAsiaShanghai": "2026-09-07T02:30:17+08:00",
+        "pricePeriod": "offPeak",
+        "inputTokens": 1886,
+        "cacheHitTokens": 896,
+        "cacheMissTokens": 990,
+        "outputTokens": 246,
+        "reasoningTokensIncludedInOutput": 221,
+        "telemetryInputMatches": true,
+        "telemetryOutputMatches": true,
+        "costCnyFromUsage": "0.0026368",
+        "requestTools": [],
+        "responseTools": []
+      },
+      {
+        "capture": "03.json",
+        "action": 1,
+        "purpose": "narrationReview",
+        "responseModel": "deepseek-v4-flash",
+        "createdUnixSeconds": 1788719419,
+        "createdAsiaShanghai": "2026-09-07T02:30:19+08:00",
+        "pricePeriod": "offPeak",
+        "inputTokens": 2908,
+        "cacheHitTokens": 1024,
+        "cacheMissTokens": 1884,
+        "outputTokens": 174,
+        "reasoningTokensIncludedInOutput": null,
+        "telemetryInputMatches": true,
+        "telemetryOutputMatches": true,
+        "costCnyFromUsage": "0.0036602",
+        "requestTools": [
+          "review_frozen_narration"
+        ],
+        "responseTools": [
+          "review_frozen_narration"
+        ]
+      },
+      {
+        "capture": "04.json",
+        "action": 2,
+        "purpose": "proposal",
+        "responseModel": "deepseek-v4-flash",
+        "createdUnixSeconds": 1788719451,
+        "createdAsiaShanghai": "2026-09-07T02:30:51+08:00",
+        "pricePeriod": "offPeak",
+        "inputTokens": 36578,
+        "cacheHitTokens": 4992,
+        "cacheMissTokens": 31586,
+        "outputTokens": 294,
+        "reasoningTokensIncludedInOutput": null,
+        "telemetryInputMatches": true,
+        "telemetryOutputMatches": true,
+        "costCnyFromUsage": "0.0489516",
+        "requestTools": [
+          "offer_kp_proposal_bundle"
+        ],
+        "responseTools": [
+          "offer_kp_proposal_bundle"
+        ],
+        "wireRoot": "decision",
+        "decisionKindFromOriginalPrefix": "directSuccess",
+        "originalArgumentsCharacters": 587,
+        "originalArgumentsSha256": "f63d89d9a1a7ce71fee3e6383db4966b735773df4d4ef838fe82242e6a0fa23d"
+      },
+      {
+        "capture": "05.json",
+        "action": 2,
+        "purpose": "initialNarration",
+        "responseModel": "deepseek-v4-flash",
+        "createdUnixSeconds": 1788719454,
+        "createdAsiaShanghai": "2026-09-07T02:30:54+08:00",
+        "pricePeriod": "offPeak",
+        "inputTokens": 1790,
+        "cacheHitTokens": 896,
+        "cacheMissTokens": 894,
+        "outputTokens": 149,
+        "reasoningTokensIncludedInOutput": 129,
+        "telemetryInputMatches": true,
+        "telemetryOutputMatches": true,
+        "costCnyFromUsage": "0.0020563",
+        "requestTools": [],
+        "responseTools": []
+      },
+      {
+        "capture": "06.json",
+        "action": 2,
+        "purpose": "narrationReview",
+        "responseModel": "deepseek-v4-flash",
+        "createdUnixSeconds": 1788719456,
+        "createdAsiaShanghai": "2026-09-07T02:30:56+08:00",
+        "pricePeriod": "offPeak",
+        "inputTokens": 2798,
+        "cacheHitTokens": 1024,
+        "cacheMissTokens": 1774,
+        "outputTokens": 177,
+        "reasoningTokensIncludedInOutput": null,
+        "telemetryInputMatches": true,
+        "telemetryOutputMatches": true,
+        "costCnyFromUsage": "0.0035087",
+        "requestTools": [
+          "review_frozen_narration"
+        ],
+        "responseTools": [
+          "review_frozen_narration"
+        ]
+      },
+      {
+        "capture": "07.json",
+        "action": 3,
+        "purpose": "proposal",
+        "responseModel": "deepseek-v4-flash",
+        "createdUnixSeconds": 1788719496,
+        "createdAsiaShanghai": "2026-09-07T02:31:36+08:00",
+        "pricePeriod": "offPeak",
+        "inputTokens": 37045,
+        "cacheHitTokens": 10752,
+        "cacheMissTokens": 26293,
+        "outputTokens": 1041,
+        "reasoningTokensIncludedInOutput": null,
+        "telemetryInputMatches": true,
+        "telemetryOutputMatches": true,
+        "costCnyFromUsage": "0.0446616",
+        "requestTools": [
+          "offer_kp_proposal_bundle"
+        ],
+        "responseTools": [
+          "offer_kp_proposal_bundle"
+        ],
+        "wireRoot": "decision",
+        "decisionKindFromOriginalPrefix": "directSuccess",
+        "originalArgumentsCharacters": 2124,
+        "originalArgumentsSha256": "affe36de6b7e49c266b8caaf09c291f288302b4a02df1d93e4ce95442eab5796"
+      }
+    ]
+  },
+  "mechanicalEvidence": {
+    "eventCount": 2,
+    "eventTypes": [
+      "InventoryOperationApplied",
+      "InventoryOperationApplied"
+    ],
+    "receipts": 2,
+    "pendingDue": 0,
+    "modelInvocations": 3,
+    "deliveryStatuses": [
+      "open",
+      "open"
+    ],
+    "audienceStatuses": [
+      "published",
+      "published"
+    ]
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "2",
+    "events": 2,
+    "eventTypes": [
+      "InventoryOperationApplied",
+      "InventoryOperationApplied"
+    ],
+    "checkedAt": "2026-09-06T18:32:35.594Z"
+  },
+  "shutdown": {
+    "status": "stopped",
+    "coordinatorReported": "capture PID 83032 and server PID 83046 terminated with exit 143; ports empty. No service restarted by reporting subtask."
+  },
+  "limitations": [
+    "One bounded sequence only; no success-rate or stability improvement claim is supported.",
+    "The complex third action still fails JSON syntax under the new interface.",
+    "No successful complex assembly, persistent component relation, or post-stop v24 real-model validation is established.",
+    "Third action Rules acceptance and narration consistency are untested because parsing failed."
+  ],
+  "auditPolicy": "Original private captures remain only under /tmp paths. This report contains whitelisted metadata and short risk descriptions, not full private requests/responses, session credentials, Cookies, or API keys.",
+  "auditArtifacts": [
+    {
+      "path": "/tmp/zhuwei-vnext-round54-source-manifest.json",
+      "sha256": "112a292502d4fa4963772884940127f95a67206dba4a4933d60d33302c4fead4",
+      "bytes": 48264
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-action1.json",
+      "sha256": "6551759336ec2731c5dc79f5607e3f3fadfec3bdf396fe6a71eadd8d7392183d",
+      "bytes": 514
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-action2.json",
+      "sha256": "66dd69daec8dae3f32052724161331fb4051c5efcb63bda9d287a4365e31f2d4",
+      "bytes": 514
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-action3.json",
+      "sha256": "66ff394d7c4645f7eb813df8251318f0658595c1ecb8faf6d7879aaadeeb6c39",
+      "bytes": 250
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-initial-summary.json",
+      "sha256": "afc2d091e582b15f3184d6f08fe304a15635c3f94be8b059d8e746bde03bb572",
+      "bytes": 6606
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-after1-summary.json",
+      "sha256": "138aaaa2b1a30957a2e2af23ee6d1cfc8eb30159eee26c294e07ed916d385e38",
+      "bytes": 6892
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-after2-summary.json",
+      "sha256": "75a7c05ae93dc839ed3c2f5db7da649992c13fe79dea37bef6c0a24aa95e1acc",
+      "bytes": 7135
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-after3-summary.json",
+      "sha256": "c212df2e2df43298d7a0e17f252e3e3657694240a4eda4b00d076fd15b6d9154",
+      "bytes": 6983
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-duplicate1.json",
+      "sha256": "c241851640ac2f8fa42c40d016a53e11c9f934f71f5fdd6a2f462805591fb6db",
+      "bytes": 48519
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-duplicate2.json",
+      "sha256": "28c9729098c20721aa34e31bdb0be23acb6abeb1c4b39d9332354d3cb9e62bf0",
+      "bytes": 51695
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-meter.json",
+      "sha256": "0671a30273698bad29ceb4e4ff5be9b2057b01fe3183f2cd3fac66253c76f728",
+      "bytes": 2808
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-mechanical-evidence.json",
+      "sha256": "3adf011b9172532561c04accd2a4c1984bd54c6b046feceaa807db07f9a4ec4e",
+      "bytes": 284
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-journal.json",
+      "sha256": "d4847a4607caf99b13bfb2908389336cba4872d1b6b9f6e0511dd81a67d4f21a",
+      "bytes": 407183
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-server.log",
+      "sha256": "f3e10e0bd6696ea81521d4a51a45f8da7b4f863046ad0de6a27ecd2e49a90b28",
+      "bytes": 31747
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-private/01.json",
+      "sha256": "f4137ef3538344d15547ffabc45fc25d3e871b87284fa55a815aaf0b2888cd30",
+      "bytes": 202036
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-private/02.json",
+      "sha256": "584fd3a693d7f8230175255c7d9ea742d390b0df0f740b9399889593f9cf51d2",
+      "bytes": 9835
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-private/03.json",
+      "sha256": "2e34164696e144355d1ea6ce01ac9f23087eb0596139c87fc4f9d139a3e90d3a",
+      "bytes": 15060
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-private/04.json",
+      "sha256": "21fb4e292233c62219cc31c4ca3accd6e8a6d30c9d4337746af5cce229c68534",
+      "bytes": 220206
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-private/05.json",
+      "sha256": "e8c14d019084acccbf4fb5c749c5a23aaf64c8ff68f6b9de89076aa53d9e32d8",
+      "bytes": 9076
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-private/06.json",
+      "sha256": "61e094d512a037135efe6a9af59a52b0fa52f6add7ad2eaf7a2449cd03b02f22",
+      "bytes": 14650
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round54-private/07.json",
+      "sha256": "7c22f42217b43f88c4e263cd246d9ad9e1f109257ae14cf7f94be36af239eef5",
+      "bytes": 223563
+    },
+    {
+      "path": "/tmp/redacted/zhuwei-round54-closeout/source-end.json",
+      "sha256": "9e1a308a00d5114fecab0e6f8f6c0b574039daa103e650acdebcc1b32b7ff2f6",
+      "bytes": 47867
+    },
+    {
+      "path": "/tmp/redacted/zhuwei-round54-closeout/source-comparison.json",
+      "sha256": "a126f3497cd338419a26e77356896b4dc214aea250da917f4494066042aa2403",
+      "bytes": 313
+    },
+    {
+      "path": "/tmp/redacted/zhuwei-round54-closeout/replay-result.json",
+      "sha256": "333378f6cd9a307b82f301a0bdfeee16ae93877e921c74d6dd528d876639e3ce",
+      "bytes": 253
+    },
+    {
+      "path": "/tmp/redacted/zhuwei-round54-closeout/parse-original-result.json",
+      "sha256": "980817b3a925923e309ce65bbfbcccca9410876dfca82f9a05d5bdd117d8126b",
+      "bytes": 746
+    }
+  ]
+}

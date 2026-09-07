@@ -1,3 +1,13 @@
+import { activeEncounter } from "./combat-encounters";
+import { timePassageHasPendingWork } from "./due-activities";
+export { activeEncounter } from "./combat-encounters";
+import { hiddenItemPresentation } from "./item-authority-vnext";
+import { conditionFollowupDrafts } from "./condition-consequences";
+import { conditionMechanics, conditionActionPermission, conditionAbilityCheck,
+  conditionAttack, conditionSavingThrow, conditionSpeed, conditionDamageDefense,
+  conditionSourceRefs, conditionMovementPermission, conditionMovementCost } from "./condition-mechanics";
+import { effectiveConditions, isWorldEffectRecord, planWorldEffect, planWorldEffectEnd } from "./world-effects";
+import { combatPhaseExpiryAnchor, initiativePhaseOrder, phaseSlotForEntity } from "./effect-phase";
 import {
   CAUSAL_ACTION_LANGUAGE_PROFILE,
   type CausalActionProgram,
@@ -5,6 +15,7 @@ import {
 import { canonicalSha256 } from "../profiles/canonical";
 import {
   compileAbilityDefinition,
+  frozenRegisteredAbilityOperation,
   isExactItemEntryResourceId,
   registeredAbilityRecord,
 } from "../profiles/ability-compiler";
@@ -50,6 +61,7 @@ import {
   pathLengthMilliInches,
 } from "../profiles/combat-geometry";
 import {
+  attackArmorClass,
   combatAttackBonus,
   resolveCombatAttackRoll,
 } from "../profiles/attack-resolution";
@@ -78,7 +90,7 @@ import {
   isNonEmptyString,
   isRecord,
 } from "./validation";
-import { resolveCombatDamage } from "./damage";
+import { resolveCombatDamage, rolledDamageComponents, parseDamageFormula as parseFormula } from "./damage";
 import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
 import { characterTimelineId, sceneTimelineId } from "./timeline";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
@@ -128,7 +140,7 @@ import {
   deriveCharacterLoadoutFromItems,
   spendItemEntryCosts,
 } from "./item-transitions";
-import { compileCanonicalCharacterCombat } from "./character-abilities";
+import { compileCanonicalCharacterCombat, playerResourceKeyForCombatPool } from "./character-abilities";
 
 type Draft = {
   eventType: EventType;
@@ -169,7 +181,12 @@ function sequence(
   let state = source;
   const events: EventEnvelope[] = [];
   let receipt: PublicReceipt | undefined;
-  for (const draft of drafts) {
+  for (let draftIndex=0;draftIndex<drafts.length;draftIndex++) {
+    const draft=drafts[draftIndex]!;
+    // A boundary's condition followups can already consume a precomputed
+    // residual phase task. Do not emit a second ending for that same effect.
+    if (draft.eventType === "EffectEnded" && (draft.payload as JsonRecord).reason === "encounterPhaseDue"
+      && state.combatRuntime.effects[String((draft.payload as JsonRecord).effectId)] === undefined) continue;
     const eventScopeProof = createScopeProof(
       state,
       draft.reads ?? ["combat:authoritative-state"],
@@ -188,6 +205,7 @@ function sequence(
     events.push(transition.event);
     state = transition.state;
     receipt = transition.receipt;
+    drafts.splice(draftIndex+1,0,...conditionFollowupDrafts(state,transition.event));
   }
   return {
     kind,
@@ -424,7 +442,7 @@ function canonicalTarget(value: unknown): boolean {
   return false;
 }
 
-function targetsCreature(definition: JsonRecord): boolean {
+export function targetsCreature(definition: JsonRecord): boolean {
   return isRecord(definition.target)
     && (definition.target.kind === "creature"
       || definition.target.kind === "creatureOrEnvironmentFeature");
@@ -1152,6 +1170,7 @@ function prepareNpcMechanicalCombatants(
     const initialEquipment = npcItemSystemEquipmentMechanics(
       validationCharacter,
       entityItemSystem,
+      availableDefinitions,
     );
     for (const equipmentDefinition of initialEquipment.definitions) {
       const compiled = compileAbilityDefinition(equipmentDefinition);
@@ -1277,6 +1296,7 @@ function prepareNpcMechanicalCombatants(
       const finalEquipment = npcItemSystemEquipmentMechanics(
         { ...validationCharacter, loadout: importPlan.finalLoadout },
         importPlan.finalItemSystem,
+        availableDefinitions,
       );
       finalEntity = {
         ...structuredClone(entity),
@@ -1493,6 +1513,8 @@ function startEncounter(
     const entity = state.combatRuntime.entities[firstId] ?? dynamicEntitiesById.get(firstId);
     if (entity === undefined) return rejected("privateOrUnknownReference", "Initiative combatant is unavailable.");
     const modifier = abilityModifier(entity, "dex");
+    const conditionCheck = combatConditionCheck(state, entity);
+    if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "Initiative requires its condition source's line of sight.");
     const purposeKey = group.combatantEntityIds.length === 1
       ? `initiative:${firstId}`
       : `initiative:group:${group.entryId}`;
@@ -1501,15 +1523,17 @@ function startEncounter(
       combatantEntityIds: [...group.combatantEntityIds],
       modifier,
       purposeKey,
+      checkMode: conditionCheck.mode,
     });
     specs.push({
       purposeKey,
-      dice: [{ count: "1", sides: "20" }],
+      dice: attackDice(conditionCheck.mode),
       frozenParameters: {
         encounterId: input.encounterId,
         entryId: group.entryId,
         combatantEntityIds: [...group.combatantEntityIds],
         modifier,
+        mode: conditionCheck.mode,
       },
     });
   }
@@ -1551,16 +1575,6 @@ function startEncounter(
 }
 
 type AuthorityFaces = Map<string, number[]>;
-
-type ParsedFormula = { count: number; sides: number; modifier: number };
-
-function parseFormula(value: unknown): ParsedFormula | undefined {
-  if (!isNonEmptyString(value)) return undefined;
-  const match = /^(\d+)d(\d+)([+-]\d+)?$/.exec(value);
-  if (match === null) return undefined;
-  const parsed = { count: Number(match[1]), sides: Number(match[2]), modifier: Number(match[3] ?? 0) };
-  return parsed.count > 0 && parsed.sides > 1 ? parsed : undefined;
-}
 
 function formulaSpec(purposeKey: string, formula: string, frozenParameters: JsonRecord): DiceSpec {
   const parsed = parseFormula(formula);
@@ -1703,13 +1717,6 @@ function legalCreatureCandidates(
     });
 }
 
-export function activeEncounter(
-  state: AuthoritativeWorldState,
-  sourceId: string,
-): JsonRecord | undefined {
-  return Object.values(state.combatRuntime.encounters).find((encounter) => encounter.status !== "concluded"
-    && Array.isArray(encounter.participantEntityIds) && encounter.participantEntityIds.includes(sourceId));
-}
 
 export function currentGroupAllows(encounter: JsonRecord, sourceId: string): boolean {
   return encounter.activeEntityId === sourceId;
@@ -1934,6 +1941,7 @@ function synchronizeSourcePatchAfterItemCosts(
     const equipment = npcItemSystemEquipmentMechanics(
       { ...structuredClone(character), loadout: derived.loadout },
       itemSystem,
+      state.combatRuntime.definitions,
     );
     const intrinsicAbilityRefs = (definition.content as JsonRecord).intrinsicAbilityRefs;
     if (!Array.isArray(intrinsicAbilityRefs) || !intrinsicAbilityRefs.every(isNonEmptyString)) {
@@ -1963,6 +1971,7 @@ function spendCosts(
     return undefined;
   }
   const spent: SpentCost[] = [];
+  const validatedPlayerPools = new Set<string>();
   let workingItemSystem = state.campaignRuntime.itemSystem;
   let spentItem = false;
   for (const cost of definition.costs) {
@@ -2007,6 +2016,11 @@ function spendCosts(
         ...transitioned.snapshot,
       });
       continue;
+    }
+    const core = state.entities[sourceEntityId];
+    if (core?.kind === "player" && !validatedPlayerPools.has(resourceId)) {
+      if (playerResourceKeyForCombatPool(core, resourceId, record) === undefined) return undefined;
+      validatedPlayerPools.add(resourceId);
     }
     if (amount <= 0 || Number(record.current) < amount) return undefined;
     const before = String(record.current);
@@ -2132,6 +2146,56 @@ function appendTransitions(prefix: StepResult, next: StepResult): StepResult {
   };
 }
 
+function abilityWorldEffects(definition: JsonRecord): JsonRecord[] {
+  return [definition.effect, ...(Array.isArray(definition.effects) ? definition.effects : [])]
+    .filter((effect): effect is JsonRecord => isRecord(effect)
+      && (effect.kind === "grantEffect" || effect.kind === "endEffect"));
+}
+
+/** Each frozen Effect reads the preceding Effect's committed state. This also
+ * preserves native conditions when a later operation ends only one grant. */
+function appendAbilityWorldEffects(
+  profiles: RuntimeProfileManifest,
+  transition: StepResult,
+  rootActionId: string,
+  operation: JsonRecord,
+  mechanicalResult: JsonRecord,
+): StepResult {
+  if (transition.kind !== "committed"
+    || !isRecord(operation.definition) || !Array.isArray(operation.targetEntityIds)) return transition;
+  let result: StepResult = transition;
+  for (const [index, effect] of abilityWorldEffects(operation.definition).entries()) {
+    for (const targetEntityId of operation.targetEntityIds.filter(isNonEmptyString)) {
+      const attack = isRecord(mechanicalResult.attacks)
+        ? mechanicalResult.attacks[targetEntityId] : mechanicalResult.attack;
+      const save = isRecord(mechanicalResult.saves) ? mechanicalResult.saves[targetEntityId] : undefined;
+      if ((isRecord(attack) && attack.hit !== true) || (isRecord(save) && save.success === true)) continue;
+      if (result.kind === "rejected" || result.kind === "initialized") return result;
+      let drafts: Draft[];
+      if (effect.kind === "grantEffect") {
+        const planned = planWorldEffect(result.state, {
+          rootActionId, sourceRef: String(operation.sourceEntityId),
+          sourceDefinitionRef: String(operation.abilityRef), targetEntityId, effect, index,
+        });
+        if (planned.kind === "rejected") return rejected("invalidRulesInput", planned.message);
+        drafts = planned.kind === "immune" ? [] : [{
+          eventType: "EffectApplied", payload: { effect: planned.effectRecord },
+          visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
+        }];
+      } else {
+        const planned = planWorldEffectEnd(result.state, {
+          sourceDefinitionRef: String(operation.abilityRef), targetEntityId, effect,
+        });
+        if (planned.kind === "rejected") return rejected("invalidRulesInput", planned.message);
+        drafts = planned.drafts;
+      }
+      if (drafts.length > 0) result = appendTransitions(result,
+        sequence("committed", profiles, result.state, rootActionId, drafts, { mechanicalResult }));
+    }
+  }
+  return { ...result, mechanicalResult } as StepResult;
+}
+
 function afterDrafts(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -2179,9 +2243,12 @@ function abilityRefs(entity: JsonRecord): string[] {
 }
 
 function definitionHasMechanicalKey(definition: JsonRecord | undefined, key: string): boolean {
+  if (key === "shield" || key === "counterspell") {
+    const paths = ["/effect", ...(Array.isArray(definition?.effects)
+      ? definition.effects.map((_, index) => `/effects/${index}`) : [])];
+    return paths.some(path => frozenRegisteredAbilityOperation(definition, "Effect", path)?.input.kind === key);
+  }
   return definition?.mechanicalKey === key
-    || (key === "shield" && definition?.definitionId === "spell:shield")
-    || (key === "counterspell" && String(definition?.definitionId).endsWith("counterspell"))
     || (key === "magic-missile" && String(definition?.definitionId).endsWith("magic-missile"));
 }
 
@@ -2203,8 +2270,8 @@ function reactionSpellRefs(
   }).sort();
 }
 
-function reactionAvailable(entity: JsonRecord): boolean {
-  return entity.lifeState !== "dead" && !incapacitated(entity)
+function reactionAvailable(state: AuthoritativeWorldState, entity: JsonRecord): boolean {
+  return entity.lifeState !== "dead" && !incapacitated(state, entity)
     && (!isRecord(entity.turn) || Number(entity.turn.reaction ?? 1) > 0);
 }
 
@@ -2214,10 +2281,7 @@ function shieldEffects(state: AuthoritativeWorldState, targetId: string): JsonRe
 }
 
 function effectiveArmorClass(state: AuthoritativeWorldState, target: JsonRecord): number {
-  const base = Number(target.armorClass ?? 10);
-  const shieldBonus = shieldEffects(state, entityId(target))
-    .reduce((maximum, effect) => Math.max(maximum, Number(effect.armorClassBonus ?? 0)), 0);
-  return base + shieldBonus;
+  return attackArmorClass(target, Object.values(state.combatRuntime.effects));
 }
 
 function magicMissileImmune(state: AuthoritativeWorldState, targetId: string): boolean {
@@ -2230,8 +2294,8 @@ function canSeeWithinCounterspellRange(
   caster: JsonRecord,
 ): boolean {
   return reactor.sceneId === caster.sceneId
-    && !condition(reactor, "blinded")
-    && !condition(caster, "invisible")
+    && !condition(state, reactor, "blinded")
+    && !condition(state, caster, "invisible")
     && entitiesWithinRange(reactor, caster, "720")
     && targetCover(state, reactor, caster) !== "full";
 }
@@ -2270,7 +2334,7 @@ function counterspellCandidates(
   caster: JsonRecord,
 ): Array<{ controllerEntityId: string; abilityRefs: string[] }> {
   const candidates = Object.values(state.combatRuntime.entities).flatMap((entity) => {
-    if (entityId(entity) === entityId(caster) || !reactionAvailable(entity)) return [];
+    if (entityId(entity) === entityId(caster) || !reactionAvailable(state, entity)) return [];
     const refs = reactionSpellRefs(state, entity, "counterspell");
     return refs.length === 0 || !canSeeWithinCounterspellRange(state, entity, caster)
       ? []
@@ -2299,7 +2363,7 @@ function spendReactionSpell(
   if (definition === undefined || activationKind(definition) !== "reactionSpell"
     || !abilityRefs(source).includes(abilityRef)
     || !Number.isSafeInteger(slotLevel) || slotLevel < Math.max(1, definitionSpellLevel(definition)) || slotLevel > 9
-    || !reactionAvailable(source)) return undefined;
+    || !reactionAvailable(state, source)) return undefined;
   const sourcePatch = structuredClone(source);
   const turn = isRecord(sourcePatch.turn)
     ? sourcePatch.turn
@@ -2308,6 +2372,9 @@ function spendReactionSpell(
   const resourceId = `spellSlot:${slotLevel}`;
   const pool = sourcePatch.resources[resourceId];
   if (!isRecord(pool) || Number(pool.current) <= 0) return undefined;
+  const core = state.entities[entityId(source)];
+  if (core?.kind === "player"
+    && playerResourceKeyForCombatPool(core, resourceId, pool) === undefined) return undefined;
   turn.reaction = "0";
   sourcePatch.turn = turn;
   pool.current = String(Number(pool.current) - 1);
@@ -2323,16 +2390,37 @@ type AttackMode = {
   mode: "normal" | "advantage" | "disadvantage";
   advantageReasons: string[];
   disadvantageReasons: string[];
+  allowed: boolean;
+  requiredContext: string[];
+  criticalIfHit: boolean;
 };
 
-function condition(entity: JsonRecord, id: string): boolean {
-  return isRecord(entity.conditions) && entity.conditions[id] === true;
+function condition(state: AuthoritativeWorldState, entity: JsonRecord, id: string): boolean {
+  return effectiveConditions(state, entityId(entity))[id] === true;
 }
 
-function incapacitated(entity: JsonRecord): boolean {
-  return entity.lifeState === "dead"
-    || ["incapacitated", "paralyzed", "stunned", "unconscious"]
-      .some((id) => condition(entity, id));
+function incapacitated(state: AuthoritativeWorldState, entity: JsonRecord): boolean {
+  return conditionMechanics(state, entityId(entity)).incapacitated;
+}
+
+function visibleConditionFearSources(state: AuthoritativeWorldState, source: JsonRecord): string[] | undefined {
+  const refs = conditionSourceRefs(state, entityId(source), "frightened");
+  const visible: string[] = [];
+  for (const ref of refs) {
+    const target = combatEntity(state, ref);
+    if (target === undefined || !isRecord(target.position) || !isRecord(target.footprint)) return undefined;
+    if (target.sceneId === source.sceneId && !condition(state, source, "blinded")
+      && !condition(state, target, "invisible") && targetCover(state, source, target) !== "full") visible.push(ref);
+  }
+  return visible;
+}
+
+function combatConditionCheck(state: AuthoritativeWorldState, source: JsonRecord, mode: unknown = "normal") {
+  return conditionAbilityCheck(state, entityId(source), {
+    visibleFearSourceRefs: visibleConditionFearSources(state, source),
+    advantageReasons: mode === "advantage" ? ["declaredCheckAdvantage"] : [],
+    disadvantageReasons: mode === "disadvantage" ? ["declaredCheckDisadvantage"] : [],
+  });
 }
 
 function attackMode(
@@ -2344,20 +2432,12 @@ function attackMode(
   const targetDefinition = isRecord(definition.target) ? definition.target : {};
   const ranged = ["rangeInches", "rangeNormalInches", "rangeLongInches"]
     .some((key) => targetDefinition[key] !== undefined);
-  const meleeWithinFiveFeet = !ranged
-    && canonicalIntegerString(targetDefinition.reachInches, 0, 1_000_000)
-    && entitiesWithinRange(source, target, String(targetDefinition.reachInches));
-  const advantageReasons: string[] = [];
-  const disadvantageReasons: string[] = [];
-
-  if (condition(target, "prone")) {
-    (meleeWithinFiveFeet ? advantageReasons : disadvantageReasons).push("targetProne2014");
-  }
-  if (["blinded", "paralyzed", "restrained", "stunned", "unconscious", "squeezing"]
-    .some((id) => condition(target, id))) advantageReasons.push("targetCondition2014");
-  if (["blinded", "poisoned", "restrained", "squeezing"]
-    .some((id) => condition(source, id))) disadvantageReasons.push("sourceCondition2014");
-  if (condition(target, "invisible")) disadvantageReasons.push("targetUnseen2014");
+  const conditions = conditionAttack(state, entityId(source), entityId(target), {
+    withinFiveFeet: entitiesWithinRange(source, target, "60"),
+    visibleFearSourceRefs: visibleConditionFearSources(state, source),
+  });
+  const advantageReasons = [...conditions.advantageReasons];
+  const disadvantageReasons = [...conditions.disadvantageReasons];
 
   const normalRange = Number(targetDefinition.rangeNormalInches);
   const longRange = Number(targetDefinition.rangeLongInches);
@@ -2366,13 +2446,13 @@ function attackMode(
     && entitiesWithinRange(source, target, String(targetDefinition.rangeLongInches))) {
     disadvantageReasons.push("longRange2014");
   }
-  if (ranged && !condition(source, "invisible")) {
+  if (ranged && !condition(state, source, "invisible")) {
     const adjacentHostile = hostileCandidates(state, entityId(source)).some((hostileId) => {
       const hostile = state.combatRuntime.entities[hostileId];
       return hostile !== undefined
         && hostile.sceneId === source.sceneId
-        && !incapacitated(hostile)
-        && !condition(hostile, "blinded")
+        && !incapacitated(state, hostile)
+        && !condition(state, hostile, "blinded")
         && entitiesWithinRange(source, hostile, "60");
     });
     if (adjacentHostile) disadvantageReasons.push("hostileWithinFiveFeet2014");
@@ -2381,6 +2461,9 @@ function attackMode(
   const advantage = advantageReasons.length > 0;
   const disadvantage = disadvantageReasons.length > 0;
   return {
+    allowed: conditions.allowed,
+    requiredContext: conditions.requiredContext,
+    criticalIfHit: conditions.criticalIfHit,
     mode: advantage === disadvantage ? "normal" : advantage ? "advantage" : "disadvantage",
     advantageReasons: [...new Set(advantageReasons)].sort(),
     disadvantageReasons: [...new Set(disadvantageReasons)].sort(),
@@ -2412,10 +2495,8 @@ function selectedD20(rolls: number[], mode: string): number {
   return mode === "advantage" ? Math.max(...rolls) : mode === "disadvantage" ? Math.min(...rolls) : rolls[0];
 }
 
-function savingThrowMode(target: JsonRecord, ability: string): "normal" | "disadvantage" {
-  return ability === "dex" && ["restrained", "squeezing"].some((id) => condition(target, id))
-    ? "disadvantage"
-    : "normal";
+function savingThrowMode(state: AuthoritativeWorldState, target: JsonRecord, ability: string): "normal" | "disadvantage" {
+  return conditionSavingThrow(state, entityId(target), ability).mode as "normal" | "disadvantage";
 }
 
 function purposeStem(abilityRef: string): string {
@@ -2434,30 +2515,49 @@ function concentrationPurpose(abilityRef: string, definition: JsonRecord, target
     : `save:concentration:${targetId}`;
 }
 
-function damageDice(definition: JsonRecord): Array<{ count: string; sides: string }> {
+function damageDice(definition: JsonRecord, reserveCriticalDice = false): Array<{ count: string; sides: string }> {
   if (!Array.isArray(definition.damage)) return [];
   return definition.damage.map((component) => {
     if (!isRecord(component)) throw new TypeError("damage component is malformed");
     const parsed = parseFormula(component.formula);
     if (parsed === undefined) throw new TypeError("damage formula is malformed");
-    return { count: String(parsed.count), sides: String(parsed.sides) };
+    return { count: String(parsed.count * (reserveCriticalDice ? 2 : 1)), sides: String(parsed.sides) };
   });
 }
 
-function rolledDamageComponents(
-  definition: JsonRecord,
-  faces: AuthorityFaces,
-  purposeKey: string,
-): Array<{ type: string; rolled: number }> {
-  if (!Array.isArray(definition.damage)) return [];
-  const tape = [...(faces.get(purposeKey) ?? [])];
-  return definition.damage.map((component) => {
-    if (!isRecord(component) || !isNonEmptyString(component.type)) throw new TypeError("damage component is malformed");
-    const parsed = parseFormula(component.formula);
-    if (parsed === undefined || tape.length < parsed.count) throw new TypeError("damage faces are incomplete");
-    const subtotal = tape.splice(0, parsed.count).reduce((sum, face) => sum + face, 0) + parsed.modifier;
-    return { type: component.type, rolled: subtotal };
-  });
+/** Executable choices come from the same legality checks as the answer reducer. */
+export function combatPendingAnswerOptions(state: AuthoritativeWorldState, pending: JsonRecord): JsonRecord[] {
+  if (pending.choiceKind === "knockOut") return [
+    { label: "非致命击昏", answer: { kind: "knockOut" } },
+    { label: "造成致命伤害", answer: { kind: "dealLethalDamage" } },
+  ];
+  if (pending.choiceKind !== "reaction") return [];
+  const options: JsonRecord[] = [];
+  const source = state.combatRuntime.entities[String(pending.controllerEntityId)];
+  if (source !== undefined && reactionAvailable(state, source)) {
+    if (pending.reactionKind === "shield" || pending.reactionKind === "counterspell") {
+      for (const ref of Array.isArray(pending.candidateAbilityRefs) ? pending.candidateAbilityRefs : []) {
+        if (!isNonEmptyString(ref)) continue;
+        for (const resource of Object.keys(isRecord(source.resources) ? source.resources : {}).sort()) {
+          const match = /^spellSlot:([1-9])$/u.exec(resource);
+          if (match === null) continue;
+          const spent = spendReactionSpell(state, source, ref, match[1]);
+          if (spent === undefined || !definitionHasMechanicalKey(spent.definition, pending.reactionKind)) continue;
+          options.push({ label: `${hiddenItemPresentation(state, String(pending.controllerEntityId)).abilityRefs.has(ref) ? "使用未知物品的反应" : String(spent.definition.name ?? spent.definition.label ?? ref)} · ${match[1]}环`,
+            answer: { kind: "useReaction", abilityRef: ref, slotLevel: match[1] } });
+        }
+      }
+    } else if (pending.reactionKind === "ready") {
+      options.push({ label: "执行预备回应", answer: { kind: "useReaction" } });
+    } else if (Array.isArray(pending.candidateAbilityRefs)
+      && pending.candidateAbilityRefs.includes("action:opportunity-attack")
+      && isNonEmptyString(pending.movingEntityId ?? pending.targetEntityId)) {
+      options.push({ label: "借机攻击", answer: { kind: "useReaction", abilityRef: "action:opportunity-attack",
+        targetEntityId: pending.movingEntityId ?? pending.targetEntityId } });
+    }
+  }
+  options.push({ label: "放弃反应", answer: { kind: "decline" } });
+  return options;
 }
 
 function publicPending(pending: JsonRecord): JsonRecord {
@@ -2471,6 +2571,7 @@ function publicPending(pending: JsonRecord): JsonRecord {
     "controllerEntityIds",
     "orderedEntityIds",
     "candidateEntityIds",
+    "maximumTargetCount",
     "candidateAbilityRefs",
     "reactionKind",
     "triggerKind",
@@ -2502,6 +2603,7 @@ function openTargetPending(
     choiceKind: "target",
     controllerEntityId: sourceId,
     candidateEntityIds: legalCreatureCandidates(state, source, definition),
+    maximumTargetCount: isRecord(definition.target) ? Number(definition.target.count) : 1,
     operation: { kind: "invokeAbility", sourceEntityId: sourceId, abilityRef, parameters },
   };
   return sequence("awaitingInput", profiles, state, root, [{
@@ -2522,16 +2624,27 @@ function directAbility(
   const activation = definition.activation;
   if (!isRecord(activation)) return undefined;
   if (activation.kind !== "free") return undefined;
+  if (abilityRef !== "ability:action-surge" && definition.mechanicalKey !== "action-surge") return undefined;
+  // This direct executor implements only Action Surge's existing one-action
+  // grant. Other free abilities use the ordinary target/effect/dice resolver.
+  if (["attack", "save", "damage", "healing", "temporaryHitPoints", "effect"].some(key => definition[key] !== undefined)
+    || (Array.isArray(definition.effects) && definition.effects.length > 0)
+    || !Array.isArray(definition.grants) || definition.grants.length !== 1
+    || !isRecord(definition.grants[0]) || definition.grants[0].kind !== "normalAction" || definition.grants[0].count !== "1") {
+    return rejected("unsupportedOperation", "The direct action grant includes an effect without its matching executor.");
+  }
+  // consumeTurnGrant supports transient noncombat actions for other abilities;
+  // Action Surge cannot use that convenience to create a new combat turn.
+  if (activeEncounter(state, entityId(source)) === undefined || !isRecord(source.turn)) {
+    return rejected("invalidRulesInput", "The direct action grant requires an existing active combat turn.");
+  }
   const sourcePatch = consumeTurnGrant(source, definition, abilityRef);
-  if (sourcePatch === undefined) return rejected("invalidRulesInput", "The action grant is unavailable.");
+  if (sourcePatch === undefined || !isRecord(sourcePatch.turn)) return rejected("invalidRulesInput", "The action grant is unavailable.");
   const spent = spendCosts(state, entityId(source), sourcePatch, definition);
   if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
   const drafts: Draft[] = spent.map((cost) =>
     spentCostDraft(state, entityId(source), abilityRef, cost));
-  if (abilityRef === "ability:action-surge" || definition.mechanicalKey === "action-surge") {
-    const turn = sourcePatch.turn as JsonRecord;
-    turn.action = String(Number(turn.action ?? 0) + 1);
-  }
+  sourcePatch.turn.action = String(Number(sourcePatch.turn.action ?? 0) + 1);
   const mechanicalResult: JsonRecord = { abilityRef, activation: activation.kind };
   drafts.push({
     eventType: "AbilityInvoked",
@@ -2548,9 +2661,11 @@ function areaTargets(
   direction?: JsonRecord,
 ): string[] {
   const source = combatEntity(state, sourceId);
-  const candidates = hostileCandidates(state, sourceId)
-    .map((id) => state.combatRuntime.entities[id])
-    .filter((entity): entity is JsonRecord => entity !== undefined);
+  // An area is a geometric effect, including allies and its source when their
+  // occupied space intersects it. Hostility is not an implicit immunity and
+  // an encounter is not required for an area to exist.
+  const candidates = source === undefined ? [] : Object.values(state.combatRuntime.entities)
+    .filter((entity) => entity.sceneId === source.sceneId);
   const scene = source === undefined ? undefined : state.combatRuntime.scenes[String(source.sceneId)];
   return entitiesAffectedByArea(
     candidates,
@@ -2600,6 +2715,8 @@ function beginMedicineStabilization(
     return rejected("invalidRulesInput", "Medicine can stabilize only an unstable creature at 0 hit points.");
   }
   const modifier = combatSkillModifier(profiles, source, "wis", "medicine");
+  const conditionCheck = combatConditionCheck(state, source);
+  if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "The ability check requires its condition source's line of sight.");
   const purposeKey = `check:medicine:${entityId(source)}`;
   return awaitRandomness(profiles, state, rootActionId, {
     kind: "resolveMedicineStabilization",
@@ -2612,9 +2729,10 @@ function beginMedicineStabilization(
     purposeKey,
     dc: 10,
     modifier,
+    checkMode: conditionCheck.mode,
   }, [{
     purposeKey,
-    dice: [{ count: "1", sides: "20" }],
+    dice: attackDice(conditionCheck.mode),
     frozenParameters: {
       sourceEntityId: entityId(source),
       targetEntityId: entityId(target),
@@ -2622,6 +2740,7 @@ function beginMedicineStabilization(
       skill: "medicine",
       dc: 10,
       modifier,
+      mode: conditionCheck.mode,
     },
   }]);
 }
@@ -2661,6 +2780,11 @@ function beginSpecialMeleeContest(
   }
   const contestKind = abilityRef === "action:grapple" ? "grapple" : "shove";
   const defenderAbility = defenderContestAbility === "acrobatics" ? "dex" : "str";
+  const sourceCheck = combatConditionCheck(state, source);
+  const targetCheck = combatConditionCheck(state, target);
+  if (sourceCheck.requiredContext.length > 0 || targetCheck.requiredContext.length > 0) {
+    return rejected("privateOrUnknownReference", "The contested check requires its condition source's line of sight.");
+  }
   return awaitRandomness(profiles, state, root, {
     kind: "resolveCombatAbility",
     resolutionKind: contestKind,
@@ -2670,12 +2794,14 @@ function beginSpecialMeleeContest(
     definition,
     sourcePatch,
     spent,
+    sourceCheckMode: sourceCheck.mode,
+    targetCheckMode: targetCheck.mode,
     ...(options.reactionContext === undefined
       ? {}
       : { reactionContext: structuredClone(options.reactionContext) }),
   }, [
-    { purposeKey: `check:${contestKind}:${entityId(source)}`, dice: [{ count: "1", sides: "20" }], frozenParameters: { ability: "athletics", entityId: entityId(source), modifier: combatSkillModifier(profiles, source, "str", "athletics", true), outcome: contestKind } },
-    { purposeKey: `check:${contestKind}:${entityId(target)}`, dice: [{ count: "1", sides: "20" }], frozenParameters: { ability: defenderContestAbility, entityId: entityId(target), modifier: combatSkillModifier(profiles, target, defenderAbility, defenderContestAbility, true), tieWinner: entityId(target) } },
+    { purposeKey: `check:${contestKind}:${entityId(source)}`, dice: attackDice(sourceCheck.mode), frozenParameters: { ability: "athletics", entityId: entityId(source), modifier: combatSkillModifier(profiles, source, "str", "athletics", true), mode: sourceCheck.mode, outcome: contestKind } },
+    { purposeKey: `check:${contestKind}:${entityId(target)}`, dice: attackDice(targetCheck.mode), frozenParameters: { ability: defenderContestAbility, entityId: entityId(target), modifier: combatSkillModifier(profiles, target, defenderAbility, defenderContestAbility, true), mode: targetCheck.mode, tieWinner: entityId(target) } },
   ], options.prefix ?? []);
 }
 
@@ -2704,6 +2830,23 @@ function costsAvailableAtLongSpellStart(
   return spendCosts(state, entityId(source), probe, { ...definition, costs }) !== undefined;
 }
 
+/** Match the effect branches actually executed by the shared native resolver. */
+function abilityEffectsExecutable(definition: JsonRecord, specCount: number): boolean {
+  if (definition.grants !== undefined
+    && (!Array.isArray(definition.grants) || definition.grants.length > 0)) return false;
+  const executableEffects = new Set(abilityWorldEffects(definition));
+  // Match the actual no-dice continuation: its concentration branch runs only
+  // for the singular effect and only when no world-effect executor takes over.
+  if (specCount === 0 && executableEffects.size === 0
+    && isRecord(definition.effect) && definition.effect.kind === "concentration") {
+    executableEffects.add(definition.effect);
+  }
+  const effects = [definition.effect, ...(Array.isArray(definition.effects) ? definition.effects : [])]
+    .filter((effect) => effect !== undefined);
+  return (specCount > 0 || executableEffects.size > 0)
+    && effects.every((effect) => isRecord(effect) && executableEffects.has(effect));
+}
+
 function startLongSpellcasting(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -2713,6 +2856,7 @@ function startLongSpellcasting(
   definition: JsonRecord,
   parameters: JsonRecord,
   encounter: JsonRecord | undefined,
+  selectedTargetIds: string[],
 ): StepResult {
   const activation = definition.activation;
   if (!isRecord(activation)
@@ -2732,10 +2876,19 @@ function startLongSpellcasting(
   if (!costsAvailableAtLongSpellStart(state, source, definition, ritual)) {
     return rejected("insufficientResource", "Long-spell completion costs are unavailable.");
   }
-  const sourcePatch = consumeTurnGrant(source, definition, abilityRef);
+  const prepared = prepareAbilityExecution(profiles, state, source, abilityRef, definition,
+    { parameters, targetIds: selectedTargetIds }, []);
+  if ("kind" in prepared) return prepared;
+  if (!abilityEffectsExecutable(definition, prepared.specs.length)) {
+    return rejected("unsupportedOperation", "Long spellcasting includes an effect without an executable 2014 mechanic.");
+  }
+  const grantSource = encounter === undefined ? structuredClone(source) : source;
+  if (encounter === undefined) delete grantSource.turn;
+  const sourcePatch = consumeTurnGrant(grantSource, definition, abilityRef);
   if (sourcePatch === undefined) {
     return rejected("invalidRulesInput", "The normal action grant is unavailable for long spellcasting.");
   }
+  if (encounter === undefined) delete sourcePatch.turn;
   sourcePatch.concentration = null;
   const baseDurationMicros = BigInt(String(activation.castingTimeMicros));
   const intendedDurationMicros = baseDurationMicros
@@ -2744,13 +2897,13 @@ function startLongSpellcasting(
   const requiredActionRounds = encounter === undefined
     ? 1
     : Number((intendedDurationMicros + COMBAT_ROUND_MICROS - 1n) / COMBAT_ROUND_MICROS);
-  const targetEntityIds = isNonEmptyString(parameters.targetEntityId)
-    ? [String(parameters.targetEntityId)]
-    : [];
+  const targetEntityIds = prepared.targetIds;
   const completion = {
     kind: "longSpellcasting",
     activityId,
     sourceEntityId: entityId(source),
+    sourceSceneId: source.sceneId,
+    sourceTimelineId: characterTimelineId(state, entityId(source)),
     abilityRef,
     definition: structuredClone(definition),
     parameters: structuredClone(parameters),
@@ -2869,204 +3022,70 @@ function continueLongSpellcasting(
   }], { mechanicalResult });
 }
 
-function invokeAbility(
-  profiles: RuntimeProfileManifest,
+type AbilityTargetSelection = { parameters: JsonRecord; targetIds: string[] };
+type PreparedAbilityExecution = {
+  targetIds: string[];
+  mechanical: JsonRecord;
+  specs: DiceSpec[];
+  deferDamageForShield: boolean;
+  concentrationReserves: JsonRecord[];
+};
+
+/** One target validator for immediate execution and a frozen long-spell choice.
+ * It never fills in a missing player choice or substitutes another target. */
+function selectAbilityTargets(
   state: AuthoritativeWorldState,
-  input: JsonRecord,
-): StepResult {
-  if (!hasExactKeys(input, ["abilityRef", "kind", "parameters", "rootActionId", "sourceEntityId"])
-    || ![input.rootActionId, input.sourceEntityId, input.abilityRef].every(isNonEmptyString)
-    || !isRecord(input.parameters)) return rejected("invalidRulesInput", "Ability invocation is not canonical.");
-  const root = rootAction(state, input);
-  const source = combatEntity(state, input.sourceEntityId);
-  if (root === undefined || source === undefined || source.lifeState === "dead") {
-    return rejected("privateOrUnknownReference", "Ability source is unavailable.");
-  }
-  const abilityRef = input.abilityRef as string;
-  const builtinDefinition = builtinSpecialMeleeDefinition(abilityRef);
-  const definition = builtinDefinition ?? state.combatRuntime.definitions[abilityRef];
-  if (definition === undefined
-    || definition.rulesBasis !== "srd5.1-2014"
-    || (builtinDefinition === undefined && !abilityRefs(source).includes(abilityRef))) {
-    return rejected("privateOrUnknownReference", "AbilityDefinition is unavailable.");
-  }
-  const activation = definition.activation;
-  if (!isRecord(activation)) return rejected("invalidRulesInput", "Ability activation is malformed.");
-  const itemEntryUse = activation.kind === "useObject"
-    && Array.isArray(definition.costs)
-    && definition.costs.some((cost) => isRecord(cost)
-      && cost.kind === "item"
-      && isNonEmptyString(cost.resourceId)
-      && cost.resourceId.startsWith("item-entry:"));
-  if (itemEntryUse
-    && (source.lifeState !== "alive" || incapacitated(source))) {
-    return rejected("invalidRulesInput", "An incapacitated creature cannot use a held item.");
-  }
-  if (activationKind(definition) === "reaction" || activationKind(definition) === "reactionSpell") {
-    return rejected("invalidRulesInput", "A reaction ability can only be used from its frozen reaction window.");
-  }
-  const encounter = activeEncounter(state, entityId(source));
-  if (encounter !== undefined && !currentGroupAllows(encounter, entityId(source))) {
-    return rejected("invalidRulesInput", "Combatant does not hold the current initiative turn.");
-  }
-  if (targetsCreature(definition)
-    && !isNonEmptyString(input.parameters.targetEntityId)) {
-    return openTargetPending(profiles, state, root, source, abilityRef, definition, input.parameters);
-  }
+  source: JsonRecord,
+  definition: JsonRecord,
+  submittedParameters: JsonRecord,
+): AbilityTargetSelection | StepResult {
+  const parameters = structuredClone(submittedParameters);
+  let targetIds: string[] = [];
   if (targetsCreature(definition)) {
-    const targetEntityId = String(input.parameters.targetEntityId);
-    if (!legalCreatureCandidates(state, source, definition).includes(targetEntityId)) {
+    const maximum = isRecord(definition.target) ? Number(definition.target.count) : 0;
+    const requested = parameters.targetEntityIds === undefined
+      ? [parameters.targetEntityId] : parameters.targetEntityIds;
+    if (!Array.isArray(requested) || requested.length === 0 || requested.length > maximum
+      || !requested.every(isNonEmptyString) || new Set(requested).size !== requested.length
+      || (parameters.targetEntityId !== undefined && parameters.targetEntityIds !== undefined)) {
+      return rejected("invalidRulesInput", "Ability target selection does not match its frozen count.");
+    }
+    const candidates = new Set(legalCreatureCandidates(state, source, definition));
+    if (requested.some((targetId) => !candidates.has(targetId))) {
       return rejected("privateOrUnknownReference", "Ability target is unavailable.");
     }
+    targetIds = [...requested];
+    if (targetIds.length === 1) {
+      delete parameters.targetEntityIds;
+      parameters.targetEntityId = targetIds[0];
+    }
   }
-  if (isLongSpellcastingRequest(definition, input.parameters)) {
-    return startLongSpellcasting(
-      profiles,
-      state,
-      root,
-      source,
-      abilityRef,
-      definition,
-      input.parameters,
-      encounter,
-    );
-  }
-  const direct = directAbility(profiles, state, root, source, abilityRef, definition);
-  if (direct !== undefined) return direct;
+  return { parameters, targetIds };
+}
 
-  if (activation.kind === "actionSpell" && Number(activation.spellLevel) > 0
-    && isRecord(source.turn)
-    && (source.turn.bonusActionSpellCast === true || source.turn.leveledBonusActionSpell === true)) {
-    return rejected("bonusActionSpellRestriction2014", "A bonus-action leveled spell limits the same turn to cantrips with a casting time of one action.");
-  }
-  if (activation.kind === "bonusActionSpell"
-    && isRecord(source.turn)
-      && source.turn.leveledActionSpell === true) {
-    return rejected("bonusActionSpellRestriction2014", "A bonus-action spell cannot follow a leveled spell cast with an action on the same turn.");
-  }
-  const noncombatItemUse = itemEntryUse && encounter === undefined;
-  if (noncombatItemUse && Object.values(state.campaignRuntime.activities).some((activity) =>
-    activity.status === "active" && activity.characterId === entityId(source))) {
-    return rejected("pendingInputUnresolved", "The character is already committed to an active Activity.");
-  }
-  const grantSource = noncombatItemUse
-    ? (() => {
-        const transient = structuredClone(source);
-        delete transient.turn;
-        return transient;
-      })()
-    : source;
-  const sourcePatch = consumeTurnGrant(
-    grantSource,
-    definition,
-    abilityRef,
-    input.parameters.actionGrant,
-  );
-  if (sourcePatch === undefined) return rejected("invalidRulesInput", "The action grant is unavailable.");
-  if (noncombatItemUse) delete sourcePatch.turn;
-  const spent = spendCosts(state, entityId(source), sourcePatch, definition);
-  if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
-  const itemActivityPrefix: Draft[] = noncombatItemUse
-    ? [{
-        eventType: "ActivityStarted",
-        payload: {
-          activityId: `activity:item-use:${root}`,
-          characterId: entityId(source),
-          activityKind: "itemUseObject2014",
-          intendedDurationMicros: COMBAT_ROUND_MICROS.toString(),
-          completion: {
-            kind: "itemUseObject2014",
-            sourceEntityId: entityId(source),
-            abilityRef,
-          },
-        },
-        visibilityPolicyId: `visibility:character-controller:${entityId(source)}`,
-        secrecy: "private",
-      }, {
-        eventType: "FictionTimeAdvanced",
-        payload: {
-          durationMicros: COMBAT_ROUND_MICROS.toString(),
-          reason: "使用物品",
-        },
-        visibilityPolicyId: "visibility:scene-observers",
-        secrecy: "public",
-      }, {
-        eventType: "ActivityCompleted",
-        payload: { activityId: `activity:item-use:${root}` },
-        visibilityPolicyId: `visibility:character-controller:${entityId(source)}`,
-        secrecy: "private",
-      }]
-    : [];
-
-  if (abilityRef === "action:shove" || abilityRef === "action:grapple") {
-    return beginSpecialMeleeContest(
-      profiles,
-      state,
-      root,
-      source,
-      abilityRef,
-      definition,
-      input.parameters,
-      sourcePatch,
-      spent,
-    );
-  }
-  if (abilityRef === "action:stabilize") {
-    const target = combatEntity(state, input.parameters.targetEntityId);
-    return target === undefined
-      ? rejected("privateOrUnknownReference", "Medicine target is unavailable.")
-      : beginMedicineStabilization(
-          profiles,
-          state,
-          root,
-          source,
-          target,
-          definition,
-          sourcePatch,
-          spent,
-        );
-  }
-
-  if (isRecord(definition.healing) && isNonEmptyString(definition.healing.formula)) {
-    return awaitRandomness(profiles, state, root, {
-      kind: "resolveCombatAbility",
-      resolutionKind: "healing",
-      sourceEntityId: entityId(source),
-      targetEntityIds: [String(input.parameters.targetEntityId)],
-      abilityRef,
-      definition,
-      sourcePatch,
-      spent,
-    }, [formulaSpec(`healing:${abilityRef}`, definition.healing.formula, {
-      sourceEntityId: entityId(source), targetEntityId: input.parameters.targetEntityId, spent,
-    })], itemActivityPrefix);
-  }
-
-  if (isRecord(definition.temporaryHitPoints)
-    && isNonEmptyString(definition.temporaryHitPoints.formula)) {
-    return awaitRandomness(profiles, state, root, {
-      kind: "resolveCombatAbility",
-      resolutionKind: "temporaryHitPoints",
-      sourceEntityId: entityId(source),
-      targetEntityIds: [String(input.parameters.targetEntityId)],
-      abilityRef,
-      definition,
-      sourcePatch,
-      spent,
-    }, [formulaSpec(`temporary-hit-points:${abilityRef}`, definition.temporaryHitPoints.formula, {
-      sourceEntityId: entityId(source), targetEntityId: input.parameters.targetEntityId, spent,
-    })], itemActivityPrefix);
-  }
-
+/** Pure mechanical preparation shared by ordinary and sustained abilities.
+ * Producing dice specifications does not request or consume randomness. */
+function prepareAbilityExecution(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  source: JsonRecord,
+  abilityRef: string,
+  definition: JsonRecord,
+  selection: AbilityTargetSelection,
+  spent: SpentCost[],
+): PreparedAbilityExecution | StepResult {
+  const parameters = selection.parameters;
   const specs: DiceSpec[] = [];
   let targetIds: string[] = [];
   const mechanical: JsonRecord = {};
+  const savingThrows: JsonRecord = {};
+  if (isRecord(definition.save)) mechanical.savingThrows = savingThrows;
   let deferDamageForShield = false;
   if (isRecord(definition.target) && definition.target.kind === "area") {
-    const origin = input.parameters.areaOrigin;
+    const origin = parameters.areaOrigin;
     if (!isRecord(origin) || !isRecord(definition.target.shape)
-      || input.parameters.targetIds !== undefined
-      || input.parameters.affectedEntityIds !== undefined) {
+      || parameters.targetIds !== undefined
+      || parameters.affectedEntityIds !== undefined) {
       return rejected("invalidRulesInput", "Area invocation is incomplete.");
     }
     const parsedOrigin = canonicalCombatPoint(origin);
@@ -3082,9 +3101,9 @@ function invokeAbility(
       return rejected("privateOrUnknownReference", "Area origin is unavailable.");
     }
     const directional = ["cube", "cone", "line"].includes(String(definition.target.shape.kind));
-    const direction = directional ? canonicalCombatDirection(input.parameters.areaDirection) : undefined;
+    const direction = directional ? canonicalCombatDirection(parameters.areaDirection) : undefined;
     if ((directional && direction === undefined)
-      || (!directional && input.parameters.areaDirection !== undefined)) {
+      || (!directional && parameters.areaDirection !== undefined)) {
       return rejected("invalidRulesInput", "Area direction is not canonical for this shape.");
     }
     const scene = state.combatRuntime.scenes[String(source.sceneId)];
@@ -3118,8 +3137,12 @@ function invokeAbility(
       for (const targetId of targetIds) {
         const target = state.combatRuntime.entities[targetId];
         const ability = String(definition.save.ability);
-        const mode = savingThrowMode(target, ability);
+        const savingThrow = conditionSavingThrow(state, targetId, ability);
+        const mode = savingThrow.mode;
         const dc = Number(definition.save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
+        savingThrows[targetId] = { ability, dc, mode, automaticFailure: savingThrow.automaticFailure,
+          modifier: combatSavingThrowModifier(profiles, target, ability) };
+        if (savingThrow.automaticFailure) continue;
         specs.push({
           purposeKey: `save:${saveStem(abilityRef)}:${targetId}`,
           dice: attackDice(mode),
@@ -3135,51 +3158,265 @@ function invokeAbility(
       });
     }
   } else {
-    const target = combatEntity(state, input.parameters.targetEntityId);
-    if (target === undefined) return rejected("privateOrUnknownReference", "Ability target is unavailable.");
-    targetIds = [entityId(target)];
-    if (isRecord(definition.attack)) {
-      const attack = attackMode(state, source, target, definition);
-      const mode = attack.mode;
-      const cover = targetCover(state, source, target);
-      const baseArmorClass = Number(target.armorClass ?? 10);
-      const activeArmorClass = effectiveArmorClass(state, target);
-      const coverBonus = cover === "half" ? 2 : cover === "threeQuarters" ? 5 : 0;
-      mechanical.attack = {
-        ...attack,
-        cover,
-        baseArmorClass,
-        activeArmorClass,
-        effectiveArmorClass: activeArmorClass + coverBonus,
-      };
-      deferDamageForShield = shieldEffects(state, entityId(target)).length === 0
-        && reactionAvailable(target)
-        && reactionSpellRefs(state, target, "shield").length > 0;
-      specs.push({
-        purposeKey: `attack:${purposeStem(abilityRef)}`,
-        dice: attackDice(mode),
-        frozenParameters: {
-          sourceEntityId: entityId(source),
-          targetEntityId: entityId(target),
-          ...attack,
-          attackBonus: attackBonus(source, definition),
-          cover,
-          baseArmorClass,
-          activeArmorClass,
-          effectiveArmorClass: activeArmorClass + coverBonus,
-        },
+    targetIds = isRecord(definition.target) && definition.target.kind === "self"
+      ? [entityId(source)] : selection.targetIds;
+    const manyAttacks = targetIds.length > 1 && isRecord(definition.attack);
+    const attacks: Record<string, JsonRecord> = {};
+    for (const targetId of targetIds) {
+      const target = combatEntity(state, targetId);
+      if (target === undefined) return rejected("privateOrUnknownReference", "Ability target is unavailable.");
+      if (isRecord(definition.attack)) {
+        const attack = attackMode(state, source, target, definition);
+        if (!attack.allowed || attack.requiredContext.length > 0) {
+          return rejected("invalidRulesInput", "The creature's condition prevents this attack or requires its source context.");
+        }
+        const mode = attack.mode;
+        const cover = targetCover(state, source, target);
+        const baseArmorClass = Number(target.armorClass ?? 10);
+        const activeArmorClass = effectiveArmorClass(state, target);
+        const coverBonus = cover === "half" ? 2 : cover === "threeQuarters" ? 5 : 0;
+        const frozenAttack = { ...attack, cover, baseArmorClass, activeArmorClass,
+          criticalIfHit: ("criticalIfHit" in attack && attack.criticalIfHit === true)
+            || (entitiesWithinRange(source, target, "60") && (condition(state, target, "unconscious") || condition(state, target, "paralyzed"))),
+          effectiveArmorClass: activeArmorClass + coverBonus };
+        if (manyAttacks) attacks[targetId] = frozenAttack;
+        else mechanical.attack = frozenAttack;
+        deferDamageForShield ||= shieldEffects(state, targetId).length === 0
+          && reactionAvailable(state, target) && reactionSpellRefs(state, target, "shield").length > 0;
+        specs.push({
+          purposeKey: `attack:${purposeStem(abilityRef)}${manyAttacks ? `:${targetId}` : ""}`,
+          dice: attackDice(mode),
+          frozenParameters: { sourceEntityId: entityId(source), targetEntityId: targetId,
+            ...frozenAttack, attackBonus: attackBonus(source, definition) },
+        });
+      }
+      if (isRecord(definition.save)) {
+        const ability = String(definition.save.ability);
+        const savingThrow = conditionSavingThrow(state, targetId, ability);
+        const mode = savingThrow.mode;
+        const dc = Number(definition.save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
+        savingThrows[targetId] = { ability, dc, mode, automaticFailure: savingThrow.automaticFailure,
+          modifier: combatSavingThrowModifier(profiles, target, ability) };
+        if (savingThrow.automaticFailure) continue;
+        specs.push({ purposeKey: `save:${saveStem(abilityRef)}:${targetId}`, dice: attackDice(mode),
+          frozenParameters: { targetEntityId: targetId, ability, dc,
+            modifier: combatSavingThrowModifier(profiles, target, ability), mode,
+            halfOnSuccess: definition.save.halfOnSuccess === true } });
+      }
+    }
+    if (manyAttacks) mechanical.attacks = attacks;
+    if (Array.isArray(definition.damage) && definition.damage.length > 0) {
+      if (manyAttacks) for (const targetId of targetIds) specs.push({
+        purposeKey: `damage:${purposeStem(abilityRef)}:${targetId}`, dice: damageDice(definition, true),
+        frozenParameters: { targetEntityIds: [targetId], components: structuredClone(definition.damage), reservedCriticalDice: true },
       });
-    }
-    if (isRecord(definition.save)) {
-      const ability = String(definition.save.ability);
-      const mode = savingThrowMode(target, ability);
-      const dc = Number(definition.save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
-      specs.push({ purposeKey: `save:${saveStem(abilityRef)}:${entityId(target)}`, dice: attackDice(mode), frozenParameters: { targetEntityId: entityId(target), ability, dc, modifier: combatSavingThrowModifier(profiles, target, ability), mode, halfOnSuccess: definition.save.halfOnSuccess === true } });
-    }
-    if (!deferDamageForShield && Array.isArray(definition.damage) && definition.damage.length > 0) {
-      specs.push({ purposeKey: `damage:${purposeStem(abilityRef)}`, dice: damageDice(definition), frozenParameters: { targetEntityIds: targetIds, components: structuredClone(definition.damage) } });
+      else specs.push({ purposeKey: `damage:${purposeStem(abilityRef)}`, dice: damageDice(definition, isRecord(definition.attack)),
+        frozenParameters: { targetEntityIds: targetIds, components: structuredClone(definition.damage),
+          sharedAcrossTargets: targetIds.length > 1, reservedCriticalDice: isRecord(definition.attack) } });
     }
   }
+  if (isRecord(definition.healing) && isNonEmptyString(definition.healing.formula)) {
+    specs.push(formulaSpec(`healing:${abilityRef}`, definition.healing.formula, {
+      sourceEntityId: entityId(source), targetEntityIds: targetIds, spent,
+    }));
+  }
+
+  if (isRecord(definition.temporaryHitPoints)
+    && isNonEmptyString(definition.temporaryHitPoints.formula)) {
+    specs.push(formulaSpec(`temporary-hit-points:${abilityRef}`, definition.temporaryHitPoints.formula, {
+      sourceEntityId: entityId(source), targetEntityIds: targetIds, spent,
+    }));
+  }
+
+  const concentrationReserves: JsonRecord[] = [];
+  if (Array.isArray(definition.damage) && definition.damage.length > 0) {
+    for (const targetId of targetIds) {
+      const target = combatEntity(state, targetId);
+      if (target === undefined || !isRecord(target.concentration)) continue;
+      const reserve = {
+        targetEntityId: targetId, ability: "con", sourceAbilityRef: abilityRef,
+        purposeKey: concentrationPurpose(abilityRef, definition, targetId),
+        modifier: combatSavingThrowModifier(profiles, target, "con"),
+        mode: conditionSavingThrow(state, targetId, "con").mode,
+        potentialDamage: true,
+      };
+      concentrationReserves.push(reserve);
+      specs.push({ purposeKey: reserve.purposeKey, dice: attackDice(reserve.mode), frozenParameters: reserve });
+    }
+  }
+
+  return { targetIds, mechanical, specs, deferDamageForShield, concentrationReserves };
+}
+
+function invokeAbility(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (!hasExactKeys(input, ["abilityRef", "kind", "parameters", "rootActionId", "sourceEntityId"])
+    || ![input.rootActionId, input.sourceEntityId, input.abilityRef].every(isNonEmptyString)
+    || !isRecord(input.parameters)) return rejected("invalidRulesInput", "Ability invocation is not canonical.");
+  const root = rootAction(state, input);
+  const source = combatEntity(state, input.sourceEntityId);
+  if (root === undefined || source === undefined || source.lifeState === "dead") {
+    return rejected("privateOrUnknownReference", "Ability source is unavailable.");
+  }
+  const abilityRef = input.abilityRef as string;
+  const builtinDefinition = builtinSpecialMeleeDefinition(abilityRef);
+  const definition = builtinDefinition ?? state.combatRuntime.definitions[abilityRef];
+  if (definition === undefined
+    || definition.rulesBasis !== "srd5.1-2014"
+    || (builtinDefinition === undefined && !abilityRefs(source).includes(abilityRef))) {
+    return rejected("privateOrUnknownReference", "AbilityDefinition is unavailable.");
+  }
+  const activation = definition.activation;
+  if (!isRecord(activation)) return rejected("invalidRulesInput", "Ability activation is malformed.");
+  if (!conditionMechanics(state, entityId(source)).canAct) {
+    return rejected("invalidRulesInput", "The creature's condition prevents taking this action.");
+  }
+  const itemEntryUse = activation.kind === "useObject"
+    && Array.isArray(definition.costs)
+    && definition.costs.some((cost) => isRecord(cost)
+      && cost.kind === "item"
+      && isNonEmptyString(cost.resourceId)
+      && cost.resourceId.startsWith("item-entry:"));
+  if (itemEntryUse
+    && (source.lifeState !== "alive" || incapacitated(state, source))) {
+    return rejected("invalidRulesInput", "An incapacitated creature cannot use a held item.");
+  }
+  if (activationKind(definition) === "reaction" || activationKind(definition) === "reactionSpell") {
+    return rejected("invalidRulesInput", "A reaction ability can only be used from its frozen reaction window.");
+  }
+  const encounter = activeEncounter(state, entityId(source));
+  if (encounter !== undefined && !currentGroupAllows(encounter, entityId(source))) {
+    return rejected("invalidRulesInput", "Combatant does not hold the current initiative turn.");
+  }
+  const submittedParameters = input.parameters;
+  if (targetsCreature(definition)
+    && submittedParameters.targetEntityId === undefined && submittedParameters.targetEntityIds === undefined) {
+    return openTargetPending(profiles, state, root, source, abilityRef, definition, submittedParameters);
+  }
+  const selection = selectAbilityTargets(state, source, definition, submittedParameters);
+  if ("kind" in selection) return selection;
+  const parameters = selection.parameters;
+  if (encounter !== undefined && activation.kind === "actionSpell" && Number(activation.spellLevel) > 0
+    && isRecord(source.turn)
+    && (source.turn.bonusActionSpellCast === true || source.turn.leveledBonusActionSpell === true)) {
+    return rejected("bonusActionSpellRestriction2014", "A bonus-action leveled spell limits the same turn to cantrips with a casting time of one action.");
+  }
+  if (encounter !== undefined && activation.kind === "bonusActionSpell"
+    && isRecord(source.turn)
+      && source.turn.leveledActionSpell === true) {
+    return rejected("bonusActionSpellRestriction2014", "A bonus-action spell cannot follow a leveled spell cast with an action on the same turn.");
+  }
+  if (isLongSpellcastingRequest(definition, parameters)) {
+    return startLongSpellcasting(
+      profiles,
+      state,
+      root,
+      source,
+      abilityRef,
+      definition,
+      parameters,
+      encounter,
+      selection.targetIds,
+    );
+  }
+  const direct = abilityWorldEffects(definition).length === 0
+    ? directAbility(profiles, state, root, source, abilityRef, definition) : undefined;
+  if (direct !== undefined) return direct;
+
+  const noncombatItemUse = itemEntryUse && encounter === undefined;
+  if (noncombatItemUse && Object.values(state.campaignRuntime.activities).some((activity) =>
+    activity.status === "active" && activity.characterId === entityId(source))) {
+    return rejected("pendingInputUnresolved", "The character is already committed to an active Activity.");
+  }
+  const grantSource = encounter === undefined
+    ? (() => {
+        const transient = structuredClone(source);
+        delete transient.turn;
+        return transient;
+      })()
+    : source;
+  const sourcePatch = consumeTurnGrant(
+    grantSource,
+    definition,
+    abilityRef,
+    parameters.actionGrant,
+  );
+  if (sourcePatch === undefined) return rejected("invalidRulesInput", "The action grant is unavailable.");
+  if (encounter === undefined) delete sourcePatch.turn;
+  const spent = spendCosts(state, entityId(source), sourcePatch, definition);
+  if (spent === undefined) return rejected("insufficientResource", "Ability resource is unavailable.");
+  const itemActivityId = `activity:item-use:${root}${state.atomicWorldInteractions === undefined ? "" : `:${state.version}`}`;
+  const itemActivityPrefix: Draft[] = noncombatItemUse
+    ? [{
+        eventType: "ActivityStarted",
+        payload: {
+          activityId: itemActivityId,
+          characterId: entityId(source),
+          activityKind: "itemUseObject2014",
+          intendedDurationMicros: COMBAT_ROUND_MICROS.toString(),
+          completion: {
+            kind: "itemUseObject2014",
+            sourceEntityId: entityId(source),
+            abilityRef,
+          },
+        },
+        visibilityPolicyId: `visibility:character-controller:${entityId(source)}`,
+        secrecy: "private",
+      }, {
+        eventType: "FictionTimeAdvanced",
+        payload: {
+          durationMicros: COMBAT_ROUND_MICROS.toString(),
+          reason: "使用物品",
+        },
+        visibilityPolicyId: "visibility:scene-observers",
+        secrecy: "public",
+      }, {
+        eventType: "ActivityCompleted",
+        payload: { activityId: itemActivityId },
+        visibilityPolicyId: `visibility:character-controller:${entityId(source)}`,
+        secrecy: "private",
+      }]
+    : [];
+
+  if (abilityRef === "action:shove" || abilityRef === "action:grapple") {
+    return beginSpecialMeleeContest(
+      profiles,
+      state,
+      root,
+      source,
+      abilityRef,
+      definition,
+      parameters,
+      sourcePatch,
+      spent,
+    );
+  }
+  if (abilityRef === "action:stabilize") {
+    const target = combatEntity(state, parameters.targetEntityId);
+    return target === undefined
+      ? rejected("privateOrUnknownReference", "Medicine target is unavailable.")
+      : beginMedicineStabilization(
+          profiles,
+          state,
+          root,
+          source,
+          target,
+          definition,
+          sourcePatch,
+          spent,
+        );
+  }
+
+  const prepared = prepareAbilityExecution(profiles, state, source, abilityRef, definition, selection, spent);
+  if ("kind" in prepared) return prepared;
+  if (!abilityEffectsExecutable(definition, prepared.specs.length)) {
+    return rejected("unsupportedOperation", "Ability includes an effect without an executable 2014 mechanic.");
+  }
+  const { targetIds, mechanical, specs, deferDamageForShield, concentrationReserves } = prepared;
+
   const operation = {
     kind: "resolveCombatAbility",
     resolutionKind: "ability",
@@ -3192,9 +3429,11 @@ function invokeAbility(
     mechanical,
     encounterId: encounter?.encounterId ?? null,
     deferDamageForShield,
+    reservedCriticalDice: isRecord(definition.attack),
+    concentrationReserves,
   };
   if (isSpellDefinition(definition)) {
-    const slotLevel = Number(input.parameters.slotLevel ?? definitionSpellLevel(definition));
+    const slotLevel = Number(parameters.slotLevel ?? definitionSpellLevel(definition));
     const frame = {
       castId: `cast:${root}:0`,
       rootActionId: root,
@@ -3207,18 +3446,24 @@ function invokeAbility(
         kind: "ability",
         definition: structuredClone(definition),
         targetEntityIds: structuredClone(targetIds),
-        parameters: structuredClone(input.parameters),
+        parameters: structuredClone(parameters),
         mechanical: structuredClone(mechanical),
         specs: structuredClone(specs),
         encounterId: encounter?.encounterId ?? null,
         deferDamageForShield,
+        reservedCriticalDice: isRecord(definition.attack),
+        concentrationReserves: structuredClone(concentrationReserves),
       },
       onPrevented: { kind: "stop" },
     };
     return beginSpellFrame(profiles, state, frame, sourcePatch, spent);
   }
-  if (specs.length === 0) return rejected("unsupportedOperation", "Ability has no executable 2014 mechanic.");
-  return awaitRandomness(profiles, state, root, operation, specs);
+  if (specs.length === 0) {
+    if (abilityWorldEffects(definition).length === 0) return rejected("unsupportedOperation", "Ability has no executable 2014 mechanic.");
+    return afterDrafts(profiles, state, root, itemActivityPrefix, (nextState) =>
+      resolveCombatAbilityRandomness(profiles, nextState, { rootActionId: root, operation }, new Map()));
+  }
+  return awaitRandomness(profiles, state, root, operation, specs, itemActivityPrefix);
 }
 
 function invokeItemActivity(
@@ -3639,6 +3884,8 @@ function invokeEnvironmentalStunt(
       activation.skill,
     );
     const purposeKey = `check:environmental-stunt:${feature.featureId}`;
+    const conditionCheck = combatConditionCheck(state, source, activation.mode);
+    if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "The stunt check requires its condition source's line of sight.");
     return awaitRandomness(profiles, state, root, {
       kind: "resolveEnvironmentalStuntCheck",
       sourceEntityId: actorCharacterId,
@@ -3651,16 +3898,17 @@ function invokeEnvironmentalStunt(
       sourceBeforeHash: canonicalSha256(source),
       sourcePatch,
       purposeKey,
+      checkMode: conditionCheck.mode,
     }, [{
       purposeKey,
-      dice: attackDice(activation.mode),
+      dice: attackDice(conditionCheck.mode),
       frozenParameters: {
         sourceEntityId: actorCharacterId,
         featureId: feature.featureId,
         ability: activation.ability,
         skill: activation.skill,
         dc: activation.dc,
-        mode: activation.mode,
+        mode: conditionCheck.mode,
         modifier,
         environmentFeatureHash: binding.featureDefinitionHash,
       },
@@ -4187,7 +4435,7 @@ function beginEnvironmentHazardRandomness(
       if (target === undefined) {
         throw new TypeError("environment hazard target disappeared before randomness freeze");
       }
-      const mode = savingThrowMode(target, saveAbility);
+      const mode = savingThrowMode(prefix.state, target, saveAbility);
       return {
         purposeKey: `save:environment-hazard:${feature.featureId}:${targetEntityId}`,
         dice: attackDice(mode),
@@ -4326,10 +4574,10 @@ function resolveEnvironmentalStuntCheckRandomness(
     return rejected("privateOrUnknownReference", "Environmental stunt check continuation is unavailable.");
   }
   const checkRolls = faces.get(String(operation.purposeKey)) ?? [];
-  if (checkRolls.length !== (activation.mode === "normal" ? 1 : 2)) {
+  if (checkRolls.length !== (operation.checkMode === "normal" ? 1 : 2)) {
     return rejected("invalidRulesInput", "Environmental stunt check faces are unavailable.");
   }
-  const selectedRoll = selectedD20(checkRolls, activation.mode);
+  const selectedRoll = selectedD20(checkRolls, String(operation.checkMode));
   const modifier = combatSkillModifier(
     profiles,
     source,
@@ -4694,13 +4942,15 @@ function applyDownedState(target: JsonRecord, amount: number, criticalHit = fals
 }
 
 function damageDraft(
+  state: AuthoritativeWorldState,
   target: JsonRecord,
   rolled: Array<{ type: string; rolled: number }>,
   encounterId: unknown,
   sourceDefinitionId: string,
   criticalHit = false,
 ): { draft: Draft; resolution: ReturnType<typeof resolveCombatDamage>; died: boolean } {
-  const resolution = resolveCombatDamage(target, rolled);
+  const resolution = resolveCombatDamage(target, rolled,
+    (type) => conditionDamageDefense(state, entityId(target), type));
   const beforeCurrent = isRecord(target.hitPoints) ? Number(target.hitPoints.current) : 0;
   const temporaryBefore = isRecord(target.hitPoints) ? Number(target.hitPoints.temporary ?? 0) : 0;
   const hitPointDamage = Math.max(0, resolution.totalApplied - temporaryBefore);
@@ -4831,7 +5081,7 @@ function resolveMedicineStabilization(
     return rejected("invalidRulesInput", "Medicine continuation is malformed.");
   }
   const target = combatEntity(state, operation.targetEntityId);
-  const roll = faces.get(String(operation.purposeKey))?.[0];
+  const roll = selectedD20(faces.get(String(operation.purposeKey)) ?? [], String(operation.checkMode));
   if (target === undefined || target.lifeState === "dead"
     || !isRecord(target.hitPoints) || Number(target.hitPoints.current) !== 0
     || roll === undefined) {
@@ -4904,16 +5154,18 @@ function continueAfterDamageConcentration(
   if (checks.length === 0) {
     return sequence("committed", profiles, state, rootActionId, drafts, { mechanicalResult });
   }
+  const conditionedChecks = checks.map((check): JsonRecord & {mode:"normal"|"advantage"|"disadvantage"} => ({ ...check,
+    mode: conditionSavingThrow(state, String(check.targetEntityId), "con").mode }));
   return awaitRandomness(profiles, state, rootActionId, {
     kind: "resolveDamageConcentration",
-    checks: structuredClone(checks),
+    checks: structuredClone(conditionedChecks),
     mechanicalResult: structuredClone(mechanicalResult),
     ...(afterDamageSpellFrame === undefined
       ? {}
       : { afterDamageSpellFrame: structuredClone(afterDamageSpellFrame) }),
-  }, checks.map((check) => ({
+  }, conditionedChecks.map((check) => ({
     purposeKey: String(check.purposeKey),
-    dice: [{ count: "1", sides: "20" }],
+    dice: attackDice(check.mode),
     frozenParameters: {
       targetEntityId: check.targetEntityId,
       ability: "con",
@@ -4921,6 +5173,7 @@ function continueAfterDamageConcentration(
       modifier: check.modifier,
       damageTaken: check.damageTaken,
       sourceAbilityRef: check.sourceAbilityRef,
+      mode: check.mode,
     },
   })), drafts);
 }
@@ -4949,7 +5202,7 @@ function resolveDamageConcentration(
       return rejected("invalidRulesInput", "Damage-concentration check is malformed.");
     }
     const target = combatEntity(state, check.targetEntityId);
-    const roll = faces.get(String(check.purposeKey))?.[0];
+    const roll = selectedD20(faces.get(String(check.purposeKey)) ?? [], String(check.mode));
     if (target === undefined || !isRecord(target.concentration) || roll === undefined) {
       return rejected("privateOrUnknownReference", "Damage-concentration target is unavailable.");
     }
@@ -5046,6 +5299,32 @@ function continuationAfterCounterCandidate(pending: JsonRecord): JsonRecord {
     : { kind: "resolveSpell", spellFrame: structuredClone(pending.spellFrame) };
 }
 
+function continueMultiTargetAttackShields(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  rootActionId: string,
+  continuation: JsonRecord,
+): StepResult {
+  if (!isRecord(continuation.operation) || !isRecord(continuation.mechanicalResult)
+    || !isRecord(continuation.mechanicalResult.attacks) || !Array.isArray(continuation.remainingTargetIds)) {
+    return rejected("invalidRulesInput", "Multi-target reaction continuation is malformed.");
+  }
+  const remaining = continuation.remainingTargetIds.filter(isNonEmptyString);
+  while (remaining.length > 0) {
+    const targetId = remaining.shift()!;
+    const target = combatEntity(state, targetId);
+    const attack = continuation.mechanicalResult.attacks[targetId];
+    const shieldRefs = target === undefined || !isRecord(attack) || attack.hit !== true
+      || !reactionAvailable(state, target) ? [] : reactionSpellRefs(state, target, "shield");
+    if (shieldRefs.length === 0 || shieldEffects(state, targetId).length > 0) continue;
+    return openShieldWindow(profiles, state, {
+      castId: `attack:${rootActionId}:${targetId}`, rootActionId,
+      sourceEntityId: continuation.operation.sourceEntityId, abilityRef: continuation.operation.abilityRef, effectKind: "attackHit",
+    }, targetId, shieldRefs, { ...structuredClone(continuation), remainingTargetIds: remaining, shieldTargetId: targetId });
+  }
+  return requestPostAttackDamage(profiles, state, rootActionId, continuation.operation, continuation.mechanicalResult);
+}
+
 function executeSpellContinuation(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -5073,6 +5352,10 @@ function executeSpellContinuation(
         continuation.reactionQueue as JsonRecord[],
         Number(continuation.reactionIndex),
       ));
+  }
+  if (continuation.kind === "multiTargetAttackShields") {
+    return afterDrafts(profiles, state, rootActionId, prefix, (nextState) =>
+      continueMultiTargetAttackShields(profiles, nextState, rootActionId, continuation));
   }
   if (continuation.kind === "postAttackDamage"
     && isRecord(continuation.operation)
@@ -5143,7 +5426,7 @@ function openCounterspellWindow(
     ),
   );
   const controller = combatEntity(state, candidate.controllerEntityId);
-  const currentRefs = controller === undefined || !reactionAvailable(controller)
+  const currentRefs = controller === undefined || !reactionAvailable(state, controller)
     || !canSeeWithinCounterspellRange(state, controller, caster)
     ? []
     : reactionSpellRefs(state, controller, "counterspell")
@@ -5222,12 +5505,15 @@ function resolveCounterspellAttempt(
   }
   const ability = String(caster.spellcasting.ability);
   const dc = 10 + targetLevel;
+  const conditionCheck = combatConditionCheck(state, caster);
+  if (conditionCheck.requiredContext.length > 0) return rejected("privateOrUnknownReference", "Counterspell requires its condition source's line of sight.");
   return awaitRandomness(profiles, state, String(counterFrame.rootActionId), {
     kind: "resolveCounterspellCheck",
     counterFrame: structuredClone(counterFrame),
+    checkMode: conditionCheck.mode,
   }, [{
     purposeKey: `check:counterspell:${entityId(caster)}`,
-    dice: [{ count: "1", sides: "20" }],
+    dice: attackDice(conditionCheck.mode),
     frozenParameters: {
       ability,
       modifier: abilityModifier(caster, ability),
@@ -5235,6 +5521,7 @@ function resolveCounterspellAttempt(
       targetSpellLevel: targetLevel,
       slotLevel,
       kind: "spellcastingAbilityCheck2014",
+      mode: conditionCheck.mode,
     },
   }]);
 }
@@ -5277,9 +5564,10 @@ function resolveShieldSpell(
     spellEventDraft("SpellResolved", frame, { kind: "shield2014", effectId: effect.effectId }),
   ];
   const continuation = frame.effect.continuation;
-  if (continuation.kind === "postAttackDamage"
+  if (["postAttackDamage", "multiTargetAttackShields"].includes(String(continuation.kind))
     && isRecord(continuation.mechanicalResult)) {
-    const attack = continuation.mechanicalResult.attack;
+    const attack = continuation.kind === "multiTargetAttackShields" && isRecord(continuation.mechanicalResult.attacks)
+      ? continuation.mechanicalResult.attacks[String(continuation.shieldTargetId)] : continuation.mechanicalResult.attack;
     if (!isRecord(attack)) throw new TypeError("shield attack continuation is malformed");
     const selected = Number(attack.selected);
     const total = Number(attack.total);
@@ -5295,7 +5583,7 @@ function resolveShieldSpell(
     attack.effectiveArmorClass = armorClass;
     attack.hit = hit;
     attack.shieldApplied = true;
-    if (!hit) {
+    if (!hit && continuation.kind === "postAttackDamage") {
       return sequence("committed", profiles, state, String(frame.rootActionId), drafts);
     }
   }
@@ -5358,7 +5646,7 @@ function resolveSpellFrame(
           ]);
         }
         const target = combatEntity(state, targetId);
-        const shieldRefs = target === undefined || !reactionAvailable(target)
+        const shieldRefs = target === undefined || !reactionAvailable(state, target)
           ? []
           : reactionSpellRefs(state, target, "shield");
         if (shieldRefs.length > 0) {
@@ -5410,6 +5698,12 @@ function resolveSpellAbilityEffect(
     throw new TypeError("spell ability frame is malformed");
   }
   if (frame.effect.specs.length === 0) {
+    if (abilityWorldEffects(frame.effect.definition).length > 0) {
+      return resolveSpellAbilityRandomness(profiles, state, {
+        rootActionId: frame.rootActionId,
+        operation: { kind: "resolveSpellAbilityEffect", spellFrame: frame },
+      }, new Map());
+    }
     const source = combatEntity(state, frame.sourceEntityId);
     if (source === undefined) throw new TypeError("spell source is unavailable");
     const drafts: Draft[] = [{
@@ -5436,7 +5730,7 @@ function resolveSpellAbilityEffect(
           entityId: frame.sourceEntityId,
           concentration: {
             abilityRef: frame.abilityRef,
-            targetEntityId: parameters.targetEntityId,
+            ...(parameters.targetEntityId === undefined ? {} : { targetEntityId: parameters.targetEntityId }),
             durationMicros: frame.effect.definition.effect.durationMicros,
           },
         },
@@ -5486,6 +5780,7 @@ function testConcentration(
     return rejected("privateOrUnknownReference", "Active concentration is unavailable.");
   }
   const modifier = combatSavingThrowModifier(profiles, source, "con");
+  const mode = conditionSavingThrow(state, entityId(source), "con").mode;
   const purposeKey = `save:concentration:environment:${String(input.sourceEntityId)}:${String(input.causeFactId)}`;
   return awaitRandomness(profiles, state, root, {
     kind: "resolveEnvironmentalConcentration",
@@ -5494,15 +5789,17 @@ function testConcentration(
     purposeKey,
     dc: 10,
     modifier,
+    mode,
   }, [{
     purposeKey,
-    dice: [{ count: "1", sides: "20" }],
+    dice: attackDice(mode),
     frozenParameters: {
       sourceEntityId: input.sourceEntityId,
       causeFactId: input.causeFactId,
       ability: "con",
       dc: 10,
       modifier,
+      mode,
     },
   }]);
 }
@@ -5522,7 +5819,7 @@ function resolveEnvironmentalConcentration(
     return rejected("invalidRulesInput", "Environmental concentration continuation is malformed.");
   }
   const source = combatEntity(state, operation.sourceEntityId);
-  const roll = faces.get(String(operation.purposeKey))?.[0];
+  const roll = selectedD20(faces.get(String(operation.purposeKey)) ?? [], String(operation.mode));
   if (source === undefined || !isRecord(source.concentration) || roll === undefined) {
     return rejected("privateOrUnknownReference", "Environmental concentration continuation is unavailable.");
   }
@@ -5593,6 +5890,28 @@ function openShieldWindow(
   }], { pending: publicPending(pending) });
 }
 
+/** A caller with a frozen attack keeps ownership of damage and its dice tape.
+ * This window uses the ordinary reaction/spell stack and returns after it
+ * settles; the caller then rechecks the same attack against the resulting AC. */
+export function openFrozenAttackReaction(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: { rootActionId: string; occurrenceId: string; sourceRef: string; targetRef: string; hit: boolean },
+): StepResult | undefined {
+  const target = combatEntity(state, input.targetRef);
+  if (!input.hit || target === undefined || !reactionAvailable(state, target)) return undefined;
+  const refs = reactionSpellRefs(state, target, "shield");
+  if (refs.length === 0) return undefined;
+  return openShieldWindow(profiles, state, {
+    rootActionId: input.rootActionId,
+    castId: input.occurrenceId,
+    abilityRef: input.sourceRef,
+    sourceEntityId: input.sourceRef,
+    effectKind: "attackHit",
+    depth: 0,
+  }, input.targetRef, refs, { kind: "stop" });
+}
+
 function postAttackDiceSpecs(
   state: AuthoritativeWorldState,
   operation: JsonRecord,
@@ -5603,14 +5922,16 @@ function postAttackDiceSpecs(
   const targetIds = operation.targetEntityIds.filter(isNonEmptyString);
   const specs: DiceSpec[] = [];
   if (Array.isArray(definition.damage) && definition.damage.length > 0) {
-    specs.push({
-      purposeKey: `damage:${purposeStem(String(operation.abilityRef))}`,
-      dice: damageDice(definition),
-      frozenParameters: {
-        targetEntityIds: targetIds,
-        components: structuredClone(definition.damage),
-      },
-    });
+    const attacks = isRecord(operation.mechanical) && isRecord(operation.mechanical.attacks) ? operation.mechanical.attacks : undefined;
+    if (attacks !== undefined) {
+      for (const targetId of targetIds) {
+        const attack = attacks[targetId];
+        if (!isRecord(attack) || attack.hit !== true) continue;
+        specs.push({ purposeKey: `damage:${purposeStem(String(operation.abilityRef))}:${targetId}`,
+          dice: damageDice(definition), frozenParameters: { targetEntityIds: [targetId], components: structuredClone(definition.damage) } });
+      }
+    } else specs.push({ purposeKey: `damage:${purposeStem(String(operation.abilityRef))}`,
+      dice: damageDice(definition), frozenParameters: { targetEntityIds: targetIds, components: structuredClone(definition.damage) } });
   }
   return specs;
 }
@@ -5622,7 +5943,21 @@ function requestPostAttackDamage(
   operation: JsonRecord,
   mechanicalResult: JsonRecord,
 ): StepResult {
-  const specs = postAttackDiceSpecs(state, operation);
+  if (isRecord(operation.frozenDamageFaces) && isNonEmptyString(operation.originResolutionId)) {
+    const source = combatEntity(state, operation.sourceEntityId);
+    if (source === undefined) return rejected("privateOrUnknownReference", "Post-attack source is unavailable.");
+    const frozenFaces = new Map(Object.entries(operation.frozenDamageFaces).map(([key, value]) => {
+      if (!Array.isArray(value) || !value.every((face) => Number.isSafeInteger(face))) throw new TypeError("Frozen damage dice are malformed.");
+      return [key, value.map(Number)] as const;
+    }));
+    return resolveCombatAbilityRandomness(profiles, state, {
+      rootActionId, resolutionId: operation.originResolutionId,
+      operation: { ...structuredClone(operation), sourcePatch: structuredClone(source), spent: [],
+        costsCommitted: true, invocationCommitted: true, attackAlreadyResolved: true,
+        deferDamageForShield: false, mechanical: structuredClone(mechanicalResult) },
+    }, frozenFaces);
+  }
+  const specs = postAttackDiceSpecs(state, { ...operation, mechanical: mechanicalResult });
   if (specs.length === 0) {
     return sequence("committed", profiles, state, rootActionId, [{
       eventType: "SpellResolved",
@@ -5705,6 +6040,9 @@ function resolveSpellAbilityRandomness(
       costsCommitted: true,
       mechanical: structuredClone(frame.effect.mechanical),
       encounterId: frame.effect.encounterId ?? null,
+      deferDamageForShield: frame.effect.deferDamageForShield === true,
+      reservedCriticalDice: frame.effect.reservedCriticalDice === true,
+      concentrationReserves: structuredClone(frame.effect.concentrationReserves ?? []),
       afterDamageSpellFrame: structuredClone(frame),
     },
   };
@@ -5738,7 +6076,7 @@ function resolveCounterspellCheckRandomness(
     return rejected("privateOrUnknownReference", "Counterspell caster is unavailable.");
   }
   const ability = String(caster.spellcasting.ability);
-  const roll = faces.get(`check:counterspell:${entityId(caster)}`)?.[0];
+  const roll = selectedD20(faces.get(`check:counterspell:${entityId(caster)}`) ?? [], String(resolution.operation.checkMode));
   if (roll === undefined) return rejected("invalidRulesInput", "Counterspell ability-check face is unavailable.");
   const dc = 10 + Number(frame.effect.targetCast.spellLevel ?? 0);
   const total = roll + abilityModifier(caster, ability);
@@ -5766,6 +6104,46 @@ function resolveCounterspellCheckRandomness(
     ? frame.onPrevented
     : { kind: "resolveSpell", spellFrame: frame.effect.targetCast };
   return executeSpellContinuation(profiles, state, String(frame.rootActionId), continuation, drafts);
+}
+
+function appendAbilityRecovery(
+  profiles: RuntimeProfileManifest,
+  transition: StepResult,
+  root: string,
+  operation: JsonRecord,
+  faces: AuthorityFaces,
+  mechanicalResult: JsonRecord,
+): StepResult {
+  if (!isRecord(operation.definition) || !Array.isArray(operation.targetEntityIds)) return transition;
+  let result = transition;
+  for (const kind of ["healing", "temporaryHitPoints"] as const) {
+    const effect = operation.definition[kind];
+    if (!isRecord(effect) || !isNonEmptyString(effect.formula)) continue;
+    const healing = kind === "healing";
+    const targetIds = operation.targetEntityIds.filter(isNonEmptyString);
+    const amount = formulaTotal(faces, `${healing ? "healing" : "temporary-hit-points"}:${operation.abilityRef}`, effect.formula);
+    const results: Record<string, JsonRecord> = {};
+    for (const targetId of targetIds) {
+      if (result.kind === "rejected" || result.kind === "initialized") return result;
+      const target = combatEntity(result.state, targetId);
+      if (target === undefined || !isRecord(target.hitPoints)) return rejected("privateOrUnknownReference", "Recovery target is unavailable.");
+      const attack = isRecord(mechanicalResult.attacks) ? mechanicalResult.attacks[targetId] : mechanicalResult.attack;
+      const save = isRecord(mechanicalResult.saves) ? mechanicalResult.saves[targetId] : undefined;
+      if ((isRecord(attack) && attack.hit !== true) || (isRecord(save) && save.success === true)) continue;
+      const before = Number(healing ? target.hitPoints.current : target.hitPoints.temporary ?? 0);
+      const after = healing ? Math.min(Number(target.hitPoints.maximum), before + amount) : Math.max(before, amount);
+      results[targetId] = { rolled: amount, ...(healing ? { applied: after - before } : {}), before, after };
+      const drafts: Draft[] = healing ? [
+        ...(after > before ? interruptStableRecoveryDrafts(result.state, targetId, { kind: "healing", sourceDefinitionId: operation.abilityRef }) : []),
+        { eventType: "HealingResolved", payload: { entityId: targetId, before: String(before), after: String(after) } },
+      ] : [{ eventType: "TemporaryHitPointsGranted", payload: {
+        entityId: targetId, sourceDefinitionId: String(operation.abilityRef), before: String(before), after: String(after),
+      } }];
+      result = appendTransitions(result, sequence("committed", profiles, result.state, root, drafts));
+    }
+    mechanicalResult[kind] = targetIds.length === 1 ? results[targetIds[0]] ?? {} : results;
+  }
+  return { ...result, mechanicalResult } as StepResult;
 }
 
 function resolveCombatAbilityRandomness(
@@ -5799,9 +6177,9 @@ function resolveCombatAbilityRandomness(
       : undefined;
     const defenderAbilityName = frozen?.ability === "acrobatics" ? "acrobatics" : "athletics";
     const defenderAbility = defenderAbilityName === "acrobatics" ? "dex" : "str";
-    const sourceTotal = Number(faces.get(`check:${contestKind}:${operation.sourceEntityId}`)?.[0])
+    const sourceTotal = selectedD20(faces.get(`check:${contestKind}:${operation.sourceEntityId}`) ?? [], String(operation.sourceCheckMode))
       + combatSkillModifier(profiles, source, "str", "athletics", true);
-    const targetTotal = Number(faces.get(targetPurpose)?.[0])
+    const targetTotal = selectedD20(faces.get(targetPurpose) ?? [], String(operation.targetCheckMode))
       + combatSkillModifier(profiles, target, defenderAbility, defenderAbilityName, true);
     const winnerEntityId = sourceTotal > targetTotal ? String(operation.sourceEntityId) : targetId;
     const mechanicalResult = { contest: {
@@ -5845,58 +6223,6 @@ function resolveCombatAbilityRandomness(
     return continued === undefined ? committed : appendTransitions(committed, continued);
   }
 
-  if (operation.resolutionKind === "healing") {
-    const target = combatEntity(state, operation.targetEntityIds[0]);
-    if (target === undefined || !isRecord(target.hitPoints) || !isRecord(operation.definition.healing)) {
-      return rejected("privateOrUnknownReference", "Healing target is unavailable.");
-    }
-    const amount = formulaTotal(faces, `healing:${operation.abilityRef}`, String(operation.definition.healing.formula));
-    const before = Number(target.hitPoints.current);
-    const after = Math.min(Number(target.hitPoints.maximum), before + amount);
-    const mechanicalResult = { healing: { rolled: amount, applied: after - before, before, after } };
-    const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
-    if (after > before) drafts.push(...interruptStableRecoveryDrafts(
-      state,
-      entityId(target),
-      { kind: "healing", sourceDefinitionId: operation.abilityRef },
-    ));
-    drafts.push({ eventType: "HealingResolved", payload: { entityId: entityId(target), before: String(before), after: String(after) } });
-    return sequence("committed", profiles, state, root, drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })), { mechanicalResult });
-  }
-
-  if (operation.resolutionKind === "temporaryHitPoints") {
-    const target = combatEntity(state, operation.targetEntityIds[0]);
-    if (target === undefined || !isRecord(target.hitPoints)
-      || !isRecord(operation.definition.temporaryHitPoints)) {
-      return rejected("privateOrUnknownReference", "Temporary-hit-point target is unavailable.");
-    }
-    const amount = formulaTotal(
-      faces,
-      `temporary-hit-points:${operation.abilityRef}`,
-      String(operation.definition.temporaryHitPoints.formula),
-    );
-    const before = Number(target.hitPoints.temporary ?? 0);
-    const after = Math.max(before, amount);
-    const mechanicalResult = { temporaryHitPoints: { rolled: amount, before, after } };
-    const drafts = resourceAndInvocationDrafts(state, operation, mechanicalResult);
-    drafts.push({
-      eventType: "TemporaryHitPointsGranted",
-      payload: {
-        entityId: entityId(target),
-        sourceDefinitionId: String(operation.abilityRef),
-        before: String(before),
-        after: String(after),
-      },
-    });
-    return sequence(
-      "committed",
-      profiles,
-      state,
-      root,
-      drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })),
-      { mechanicalResult },
-    );
-  }
 
   const definition = operation.definition;
   const targetIds = operation.targetEntityIds.filter(isNonEmptyString);
@@ -5921,6 +6247,50 @@ function resolveCombatAbilityRandomness(
       mechanicalResult.attack = { ...mechanicalResult.attack, rolls, ...attack };
     }
   }
+  if (isRecord(mechanicalResult.attacks)) {
+    for (const targetId of targetIds) {
+      const frozen = mechanicalResult.attacks[targetId];
+      if (!isRecord(frozen)) return rejected("invalidRulesInput", "A selected target lacks its frozen attack.");
+      if (operation.attackAlreadyResolved !== true) {
+        const rolls = faces.get(`attack:${purposeStem(String(operation.abilityRef))}:${targetId}`) ?? [];
+        mechanicalResult.attacks[targetId] = { ...frozen, rolls, ...resolveCombatAttackRoll(
+          source, definition, Number(frozen.effectiveArmorClass), rolls,
+          String(frozen.mode) as "normal" | "advantage" | "disadvantage",
+        ) };
+      }
+    }
+    attackHit = Object.values(mechanicalResult.attacks).some((attack) => isRecord(attack) && attack.hit === true);
+  }
+  const saves: Record<string, JsonRecord> = isRecord(mechanicalResult.saves) ? mechanicalResult.saves as Record<string, JsonRecord> : {};
+  if (isRecord(definition.save) && operation.attackAlreadyResolved !== true) {
+    for (const targetId of targetIds) {
+      const target = combatEntity(state, targetId);
+      if (target === undefined) continue;
+      const ability = String(definition.save.ability);
+      const savingThrow = isRecord(mechanicalResult.savingThrows) ? mechanicalResult.savingThrows[targetId] : undefined;
+      if (!isRecord(savingThrow) || savingThrow.ability !== ability) {
+        return rejected("invalidRulesInput", "The selected target lacks its frozen saving throw.");
+      }
+      const mode = String(savingThrow.mode);
+      const rolls = faces.get(`save:${saveStem(String(operation.abilityRef))}:${targetId}`) ?? [];
+      const dc = Number(savingThrow.dc);
+      const roll = savingThrow.automaticFailure === true ? null : selectedD20(rolls, mode);
+      const total = roll === null ? null : roll + Number(savingThrow.modifier);
+      saves[targetId] = { ability, dc, mode, rolls, roll, total,
+        automaticFailure: savingThrow.automaticFailure === true, success: total !== null && total >= dc };
+    }
+    mechanicalResult.saves = saves;
+  }
+
+  if (operation.deferDamageForShield === true && isRecord(mechanicalResult.attacks)) {
+    const continuation = { kind: "multiTargetAttackShields", operation: {
+      ...structuredClone(operation), costsCommitted: true, invocationCommitted: true,
+      attackAlreadyResolved: true, deferDamageForShield: false,
+      frozenDamageFaces: Object.fromEntries(faces), originResolutionId: String(resolution.resolutionId),
+    }, mechanicalResult: structuredClone(mechanicalResult), remainingTargetIds: [...targetIds] };
+    return executeSpellContinuation(profiles, state, root, continuation,
+      drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })));
+  }
   if (operation.deferDamageForShield === true) {
     if (!attackHit) {
       return sequence(
@@ -5934,7 +6304,7 @@ function resolveCombatAbilityRandomness(
     }
     const targetId = targetIds[0];
     const target = combatEntity(state, targetId);
-    const shieldRefs = target === undefined || !reactionAvailable(target)
+    const shieldRefs = target === undefined || !reactionAvailable(state, target)
       ? []
       : reactionSpellRefs(state, target, "shield");
     const continuation = {
@@ -5945,6 +6315,7 @@ function resolveCombatAbilityRandomness(
         invocationCommitted: true,
         attackAlreadyResolved: true,
         deferDamageForShield: false,
+        frozenDamageFaces: Object.fromEntries(faces), originResolutionId: String(resolution.resolutionId),
       },
       mechanicalResult: structuredClone(mechanicalResult),
     };
@@ -5965,39 +6336,39 @@ function resolveCombatAbilityRandomness(
     return afterDrafts(profiles, state, root, committedDrafts, (nextState) =>
       openShieldWindow(profiles, nextState, ownerFrame, targetId, shieldRefs, continuation));
   }
-  const saves: Record<string, JsonRecord> = {};
-  if (isRecord(definition.save)) {
-    for (const targetId of targetIds) {
-      const target = combatEntity(state, targetId);
-      if (target === undefined) continue;
-      const ability = String(definition.save.ability);
-      const mode = savingThrowMode(target, ability);
-      const rolls = faces.get(`save:${saveStem(String(operation.abilityRef))}:${targetId}`) ?? [];
-      const roll = selectedD20(rolls, mode);
-      const dc = Number(definition.save.dc ?? (isRecord(source.spellcasting) ? source.spellcasting.spellSaveDc : 10));
-      const total = roll + combatSavingThrowModifier(profiles, target, ability);
-      saves[targetId] = { ability, dc, mode, rolls, roll, total, success: total >= dc };
-    }
-    mechanicalResult.saves = saves;
-  }
 
   const damageResults: Array<{ targetId: string; resolution: ReturnType<typeof resolveCombatDamage> }> = [];
   const concentrationChecks: JsonRecord[] = [];
-  let knockOutPending: JsonRecord | undefined;
+  const knockOutPendings: JsonRecord[] = [];
   if (attackHit && Array.isArray(definition.damage) && definition.damage.length > 0) {
-    const baseRolled = rolledDamageComponents(definition, faces, `damage:${purposeStem(String(operation.abilityRef))}`);
+    const manyAttacks = isRecord(mechanicalResult.attacks);
+    const sharedDamage = manyAttacks ? undefined
+      : rolledDamageComponents(definition, faces, `damage:${purposeStem(String(operation.abilityRef))}`, {
+          reservedCriticalDice: operation.reservedCriticalDice === true,
+          critical: isRecord(mechanicalResult.attack) && (Number(mechanicalResult.attack.selected) === 20 || mechanicalResult.attack.criticalIfHit === true),
+        });
     for (const targetId of targetIds) {
-      const target = combatEntity(state, targetId);
+      const attack = manyAttacks ? (mechanicalResult.attacks as JsonRecord)[targetId] : mechanicalResult.attack;
+      if (isRecord(attack) && attack.hit !== true) continue;
+      const currentTarget = combatEntity(state, targetId);
+      // Damage may reach the invoker. Its patch starts after the one resource
+      // spend, so damage cannot resurrect a consumed item or an action grant.
+      const target = targetId === operation.sourceEntityId && operation.invocationCommitted !== true && isRecord(operation.sourcePatch)
+        ? operation.sourcePatch : currentTarget;
       if (target === undefined) continue;
-      const rolled = saves[targetId]?.success === true && isRecord(definition.save) && definition.save.halfOnSuccess === true
-        ? baseRolled.map((component) => ({ ...component, rolled: Math.floor(component.rolled / 2) }))
+      const baseRolled = sharedDamage ?? rolledDamageComponents(definition, faces, `damage:${purposeStem(String(operation.abilityRef))}:${targetId}`, {
+        reservedCriticalDice: operation.reservedCriticalDice === true,
+        critical: isRecord(attack) && (Number(attack.selected) === 20 || attack.criticalIfHit === true),
+      });
+      const rolled = saves[targetId]?.success === true && isRecord(definition.save)
+        ? baseRolled.map((component) => ({ ...component, rolled: (definition.save as JsonRecord).halfOnSuccess === true ? Math.floor(component.rolled / 2) : 0 }))
         : baseRolled;
       const melee = isRecord(definition.target) && isNonEmptyString(definition.target.reachInches)
         && entitiesWithinRange(source, target, String(definition.target.reachInches));
-      const criticalHit = isRecord(mechanicalResult.attack)
-        && (Number(mechanicalResult.attack.selected) === 20
-          || (melee && condition(target, "unconscious")));
+      const criticalHit = isRecord(attack)
+        && (Number(attack.selected) === 20 || attack.criticalIfHit === true);
       const damage = damageDraft(
+        state,
         target,
         rolled,
         operation.encounterId,
@@ -6009,8 +6380,7 @@ function resolveCombatAbilityRandomness(
       const afterCurrent = isRecord(damage.resolution.targetPatch.hitPoints)
         ? Number(damage.resolution.targetPatch.hitPoints.current)
         : beforeCurrent;
-      const eligibleKnockOut = knockOutPending === undefined
-        && isRecord(definition.attack)
+      const eligibleKnockOut = isRecord(definition.attack)
         && melee
         && beforeCurrent > 0
         && afterCurrent === 0;
@@ -6029,7 +6399,7 @@ function resolveCombatAbilityRandomness(
           ...structuredClone(damage.draft.payload),
           targetPatch: knockOutPatch,
         };
-        knockOutPending = {
+        knockOutPendings.push({
           pendingInputId: `pending:${root}:knock-out:${targetId}`,
           rootActionId: root,
           kind: source.kind === "player" ? "playerChoice" : "kpDecision",
@@ -6044,7 +6414,9 @@ function resolveCombatAbilityRandomness(
             ? { afterDamageSpellFrame: structuredClone(operation.afterDamageSpellFrame) }
             : {}),
           mechanicalResult: structuredClone(mechanicalResult),
-        };
+          abilityOperation: { ...structuredClone(operation), targetEntityIds: [targetId] },
+          frozenRecoveryFaces: Object.fromEntries(faces),
+        });
       } else {
         if (damage.resolution.totalApplied > 0) drafts.push(...interruptStableRecoveryDrafts(
           state,
@@ -6053,12 +6425,7 @@ function resolveCombatAbilityRandomness(
         ));
         drafts.push(damage.draft);
         if (isRecord(target.concentration) && damage.resolution.totalApplied > 0) {
-          if (afterCurrent === 0 || damage.died) {
-            drafts.push({
-              eventType: "ConcentrationEnded",
-              payload: { entityId: targetId, reason: "incapacitatedByDamage" },
-            });
-          } else {
+          if (afterCurrent > 0 && !damage.died) {
             concentrationChecks.push({
               targetEntityId: targetId,
               purposeKey: concentrationPurpose(String(operation.abilityRef), definition, targetId),
@@ -6084,27 +6451,57 @@ function resolveCombatAbilityRandomness(
       totalApplied: result.totalApplied,
     }]));
   }
+  if (drafts.length === 0) drafts.push({
+    eventType: "SpellResolved", payload: {
+      castId: `attack-resolution:${root}`, sourceEntityId: operation.sourceEntityId,
+      abilityRef: operation.abilityRef, outcome: { kind: "attack", hit: attackHit, damage: false },
+    },
+  });
+  let committed = sequence("committed", profiles, state, root,
+    drafts.map((draft) => ({ ...draft,
+      ...(isNonEmptyString(resolution.resolutionId) ? { resolutionId: resolution.resolutionId } : {}),
+    })), { mechanicalResult });
+  if (committed.kind !== "committed") return committed;
+  const damageState = committed.state;
+  const pendingChecks = concentrationChecks.filter((check) =>
+    isRecord(combatEntity(damageState, check.targetEntityId)?.concentration));
+  if (pendingChecks.length > 0 && Array.isArray(operation.concentrationReserves)) {
+    const checks = pendingChecks.map((check) => {
+      const reserve = (operation.concentrationReserves as unknown[]).find((entry) =>
+        isRecord(entry) && entry.targetEntityId === check.targetEntityId);
+      if (!isRecord(reserve) || !faces.has(String(reserve.purposeKey))) {
+        throw new TypeError("The damaged target lacks its frozen concentration reserve.");
+      }
+      return { ...check, mode: reserve.mode, modifier: reserve.modifier, purposeKey: reserve.purposeKey };
+    });
+    const tested = resolveDamageConcentration(profiles, damageState, {
+      rootActionId: root, resolutionId: resolution.resolutionId,
+      operation: { kind: "resolveDamageConcentration", checks, mechanicalResult },
+    }, faces);
+    committed = appendTransitions(committed, tested);
+    if (tested.kind !== "rejected" && tested.kind !== "initialized" && isRecord(tested.mechanicalResult)) {
+      Object.assign(mechanicalResult, tested.mechanicalResult);
+    }
+  }
+  const deferredTargets = new Set(knockOutPendings.map((pending) => String(pending.targetEntityId)));
+  const resolvedOperation = { ...operation, targetEntityIds: targetIds.filter((targetId) => !deferredTargets.has(targetId)) };
+  committed = appendAbilityRecovery(profiles, committed, root, resolvedOperation, faces, mechanicalResult);
+  committed = appendAbilityWorldEffects(profiles, committed, root, resolvedOperation, mechanicalResult);
+  if (committed.kind !== "committed") return committed;
+  const knockOutPending = knockOutPendings.shift();
   if (knockOutPending !== undefined) {
     knockOutPending.mechanicalResult = structuredClone(mechanicalResult);
-    return sequence("awaitingInput", profiles, state, root, [
-      ...drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })),
-      {
-        eventType: "CombatPendingOpened",
-        payload: { pending: knockOutPending },
-        resolutionId: String(resolution.resolutionId),
-        secrecy: "private",
-      },
-    ], { pending: publicPending(knockOutPending), mechanicalResult });
+    knockOutPending.remainingKnockOuts = knockOutPendings;
+    knockOutPending.stableRecoveryTargetIds = [];
+    return appendTransitions(committed, sequence("awaitingInput", profiles, committed.state, root, [{
+      eventType: "CombatPendingOpened", payload: { pending: knockOutPending }, secrecy: "private",
+    }], { pending: publicPending(knockOutPending), mechanicalResult }));
   }
-  return continueAfterDamageConcentration(
-    profiles,
-    state,
-    root,
-    drafts.map((draft) => ({ ...draft, resolutionId: String(resolution.resolutionId) })),
-    concentrationChecks,
-    mechanicalResult,
+  if (pendingChecks.length === 0 || Array.isArray(operation.concentrationReserves)) return committed;
+  return appendTransitions(committed, continueAfterDamageConcentration(
+    profiles, committed.state, root, [], pendingChecks, mechanicalResult,
     isRecord(operation.afterDamageSpellFrame) ? operation.afterDamageSpellFrame : undefined,
-  );
+  ));
 }
 
 function movementPatch(
@@ -6127,9 +6524,11 @@ function movementPatch(
   return { patch, distanceMilliInches };
 }
 
-function movementSpeedInches(entity: JsonRecord, movementMode: string): unknown {
-  if (isRecord(entity.conditions) && isNonEmptyString(entity.conditions.grappledBy)) return "0";
-  return isRecord(entity.speedInches) ? entity.speedInches[movementMode] : undefined;
+function movementSpeedInches(state: AuthoritativeWorldState, entity: JsonRecord, movementMode: string): unknown {
+  const speed = isRecord(entity.speedInches) ? entity.speedInches[movementMode] : undefined;
+  if (typeof speed !== "string") return undefined;
+  const movement = conditionSpeed(state, entityId(entity), speed);
+  return movement.canMove && (!movement.mustCrawl || movementMode === "walk") ? movement.speed : "0";
 }
 
 function movementContinuation(
@@ -6200,9 +6599,10 @@ function continueMovement(
   if (source === undefined || source.lifeState === "dead" || encounter === undefined || path === undefined
     || !currentGroupAllows(encounter, entityId(source))
     || JSON.stringify(source.position) !== JSON.stringify(path[0])) return undefined;
+  if (!conditionMovementPermission(state, entityId(source), path).allowed) return undefined;
 
   const movementMode = String(continuation.movementMode);
-  const speed = movementSpeedInches(source, movementMode);
+  const speed = movementSpeedInches(state, source, movementMode);
   const spentBefore = isRecord(source.movement)
     ? String(source.movement.spentMilliInches ?? "0")
     : "0";
@@ -6236,7 +6636,7 @@ function continueMovement(
   const moved = movementPatch(
     source,
     analyzed.path,
-    analyzed.totalMilliInches,
+    conditionMovementCost(state, entityId(source), analyzed.totalMilliInches, analyzed.path),
     analyzed.squeezingAtEndpoint,
   );
   if (BigInt(spentBefore) + BigInt(moved.distanceMilliInches) > BigInt(String(speed)) * 1_000n) {
@@ -6317,7 +6717,10 @@ function moveCombatant(
     return rejected("invalidRulesInput", "Only the active initiative group may move this combatant.");
   }
   if (JSON.stringify(source.position) !== JSON.stringify(canonicalPath[0])) return rejected("invalidRulesInput", "Movement path does not start at the authoritative position.");
-  const speed = movementSpeedInches(source, String(input.movementMode));
+  const movementPermission = conditionMovementPermission(state, entityId(source), canonicalPath);
+  if (!movementPermission.allowed) return rejected("invalidRulesInput",
+    movementPermission.requiredContext.length > 0 ? "The condition's movement source needs authoritative geometry." : "The creature's condition prevents this movement.");
+  const speed = movementSpeedInches(state, source, String(input.movementMode));
   const spentBefore = isRecord(source.movement)
     ? String(source.movement.spentMilliInches ?? "0")
     : "0";
@@ -6336,7 +6739,7 @@ function moveCombatant(
     new Set(hostileCandidates(state, entityId(source))),
   );
   if (!preflight.ok) return rejected("privateOrUnknownReference", "The movement path is unavailable.");
-  if (BigInt(spentBefore) + BigInt(preflight.totalMilliInches) > BigInt(String(speed)) * 1_000n) {
+  if (BigInt(spentBefore) + BigInt(conditionMovementCost(state, entityId(source), preflight.totalMilliInches, canonicalPath)) > BigInt(String(speed)) * 1_000n) {
     return rejected("invalidRulesInput", "The path exceeds the remaining movement for this movement mode.");
   }
   const continuation = movementContinuation(
@@ -6519,7 +6922,7 @@ function readyResponseStillLegal(
   ready: JsonRecord,
   controller: JsonRecord | undefined,
 ): boolean {
-  if (controller === undefined || !reactionAvailable(controller)
+  if (controller === undefined || !reactionAvailable(state, controller)
     || state.combatRuntime.effects[String(ready.effectId)] === undefined
     || !isRecord(ready.response)) return false;
   if (ready.response.kind !== "move") {
@@ -6542,8 +6945,10 @@ function readyResponseStillLegal(
   }
   const path = canonicalizeCombatPath(ready.response.path);
   if (path === undefined || JSON.stringify(controller.position) !== JSON.stringify(path[0])) return false;
-  const moved = movementPatch(controller, path);
-  const speed = movementSpeedInches(controller, String(ready.response.movementMode));
+  if (!conditionMovementPermission(state, entityId(controller), path).allowed) return false;
+  const moved = movementPatch(controller, path,
+    conditionMovementCost(state, entityId(controller), pathLengthMilliInches(path), path));
+  const speed = movementSpeedInches(state, controller, String(ready.response.movementMode));
   if (!canonicalIntegerString(speed, 0, 1_000_000)
     || BigInt(moved.distanceMilliInches) > BigInt(String(speed)) * 1_000n) return false;
   return !Object.values(state.combatRuntime.entities).some((other) =>
@@ -6682,91 +7087,6 @@ function openReadyWindow(
   ], { pending: publicPending(pending) });
 }
 
-function initiativePhaseEntries(encounter: JsonRecord): JsonRecord[] {
-  const order = Array.isArray(encounter.turnOrderEntityIds)
-    ? encounter.turnOrderEntityIds.filter(isNonEmptyString)
-    : [];
-  const entries = isRecord(encounter.initiative) && Array.isArray(encounter.initiative.entries)
-    ? encounter.initiative.entries.filter(isRecord)
-    : [];
-  return [...entries].sort((left, right) => {
-    const leftMembers = Array.isArray(left.combatantEntityIds)
-      ? left.combatantEntityIds.filter(isNonEmptyString)
-      : [];
-    const rightMembers = Array.isArray(right.combatantEntityIds)
-      ? right.combatantEntityIds.filter(isNonEmptyString)
-      : [];
-    const leftIndex = leftMembers.reduce((minimum, id) => {
-      const index = order.indexOf(id);
-      return index < 0 ? minimum : Math.min(minimum, index);
-    }, Number.POSITIVE_INFINITY);
-    const rightIndex = rightMembers.reduce((minimum, id) => {
-      const index = order.indexOf(id);
-      return index < 0 ? minimum : Math.min(minimum, index);
-    }, Number.POSITIVE_INFINITY);
-    return leftIndex - rightIndex || String(left.entryId).localeCompare(String(right.entryId));
-  });
-}
-
-function initiativePhaseOrder(encounter: JsonRecord): {
-  entries: JsonRecord[];
-  initiativeOrderHash: string;
-} {
-  const entries = initiativePhaseEntries(encounter);
-  return {
-    entries,
-    initiativeOrderHash: canonicalSha256(entries.map((entry) => ({
-      entryId: String(entry.entryId),
-      combatantEntityIds: Array.isArray(entry.combatantEntityIds)
-        ? entry.combatantEntityIds.filter(isNonEmptyString)
-        : [],
-    }))),
-  };
-}
-
-function phaseSlotForEntity(entries: JsonRecord[], targetEntityId: string): number {
-  return entries.findIndex((entry) => Array.isArray(entry.combatantEntityIds)
-    && entry.combatantEntityIds.includes(targetEntityId));
-}
-
-function combatPhaseExpiryAnchor(
-  state: AuthoritativeWorldState,
-  targetEntityId: string,
-  edge: "turnStart" | "turnEnd",
-  createdRootActionId: string,
-): JsonRecord {
-  const encounter = activeEncounter(state, targetEntityId);
-  if (encounter === undefined) return { kind: edge, entityId: targetEntityId };
-  const { entries, initiativeOrderHash } = initiativePhaseOrder(encounter);
-  const slotIndex = phaseSlotForEntity(entries, targetEntityId);
-  const currentSlot = phaseSlotForEntity(entries, String(encounter.activeEntityId));
-  if (entries.length === 0 || slotIndex < 0 || currentSlot < 0) {
-    return { kind: edge, entityId: targetEntityId };
-  }
-  const currentRound = Number(encounter.round);
-  const currentEdge = isRecord(encounter.combatMoment) && encounter.combatMoment.edge === "turnEnd"
-    ? "turnEnd"
-    : "turnStart";
-  const phaseRemainsInCurrentRound = encounter.roundClosed !== true
-    && (slotIndex > currentSlot
-      || (slotIndex === currentSlot && currentEdge === "turnStart" && edge === "turnEnd"));
-  return {
-    kind: edge,
-    entityId: targetEntityId,
-    targetRound: currentRound + (phaseRemainsInCurrentRound ? 0 : 1),
-    initiativeOrderHash,
-    slotIndex,
-    entryCount: entries.length,
-    createdAt: {
-      rootActionId: createdRootActionId,
-      roundIndex: currentRound,
-      initiativeOrderHash,
-      slotIndex: currentSlot,
-      edge: currentEdge,
-    },
-  };
-}
-
 function phaseTaskOrder(left: JsonRecord, right: JsonRecord): number {
   const leftDue = BigInt(String(left.dueMicros));
   const rightDue = BigInt(String(right.dueMicros));
@@ -6794,7 +7114,8 @@ function phaseTasksForConclusion(
     ? encounter.participantEntityIds.filter(isNonEmptyString)
     : [];
   return Object.values(state.combatRuntime.effects).flatMap((effect): JsonRecord[] => {
-    if (!isNonEmptyString(effect.effectId)
+    if ((isWorldEffectRecord(effect) && isRecord((effect as JsonRecord).suspension))
+      || !isNonEmptyString(effect.effectId)
       || !isRecord(effect.expiresAt)
       || !["turnStart", "turnEnd"].includes(String(effect.expiresAt.kind))
       || !isNonEmptyString(effect.expiresAt.entityId)
@@ -6849,7 +7170,7 @@ function phaseTaskExpiryDrafts(
 ): Draft[] {
   return [...tasks].sort(phaseTaskOrder).flatMap((task): Draft[] => {
     const effect = state.combatRuntime.effects[String(task.effectId)];
-    if (effect === undefined) return [];
+    if (effect === undefined || (isWorldEffectRecord(effect) && isRecord((effect as JsonRecord).suspension))) return [];
     if (effect.kind === "readiedAction") {
       return [
         {
@@ -6873,9 +7194,11 @@ function phaseTaskExpiryDrafts(
       eventType: "EffectEnded",
       payload: {
         effectId: effect.effectId,
-        targetEntityId: task.targetEntityId,
+        targetEntityId: effect.targetEntityId ?? task.targetEntityId,
         reason: "encounterPhaseDue",
       },
+      ...(effect.kind === "condition" ? { secrecy: "internal" as const,
+        visibilityPolicyId: "visibility:room-authority-only" } : {}),
     }];
   });
 }
@@ -7016,10 +7339,12 @@ function endTurn(
     nextRound: Number(encounter.round) + 1,
     turnOrderEntityIds: order,
     targetEntityIds: deathSaveTargets,
+    modes: Object.fromEntries(deathSaveTargets.map((id) => [id, conditionSavingThrow(state, id, "death").mode])),
   }, deathSaveTargets.map((targetId) => ({
     purposeKey: `death-save:${targetId}`,
-    dice: [{ count: "1", sides: "20" }],
-    frozenParameters: { targetEntityId: targetId, naturalOneFailures: 2, successThreshold: 10, deathFailureThreshold: 3 },
+    dice: attackDice(conditionSavingThrow(state, targetId, "death").mode),
+    frozenParameters: { targetEntityId: targetId, mode: conditionSavingThrow(state, targetId, "death").mode,
+      naturalOneFailures: 2, successThreshold: 10, deathFailureThreshold: 3 },
   })), drafts);
 }
 
@@ -7037,7 +7362,7 @@ function resolveDeathSavesAndRound(
   const newlyStableTargetIds: string[] = [];
   for (const targetId of operation.targetEntityIds.filter(isNonEmptyString)) {
     const target = combatEntity(state, targetId);
-    const natural = faces.get(`death-save:${targetId}`)?.[0];
+    const natural = selectedD20(faces.get(`death-save:${targetId}`) ?? [], isRecord(operation.modes) ? String(operation.modes[targetId]) : "normal");
     if (target === undefined || natural === undefined) return rejected("privateOrUnknownReference", "Death-save target is unavailable.");
     const patch = structuredClone(target);
     const saves = isRecord(patch.deathSaves) ? patch.deathSaves : { successes: 0, failures: 0 };
@@ -7198,7 +7523,7 @@ function establishInitiative(
       || !Array.isArray(raw.combatantEntityIds) || !Number.isSafeInteger(raw.modifier)) {
       throw new TypeError("initiative group continuation is malformed");
     }
-    const roll = faces.get(raw.purposeKey)?.[0];
+    const roll = selectedD20(faces.get(raw.purposeKey) ?? [], String(raw.checkMode));
     if (roll === undefined) throw new TypeError("initiative face is unavailable");
     return {
       entryId: raw.entryId,
@@ -7384,18 +7709,16 @@ function answerTargetPending(
   answer: JsonRecord,
 ): StepResult {
   if (answer.kind === "cancel") return closeCancelledPending(profiles, state, pending, answer);
-  if (
-    !hasExactKeys(answer, ["kind", "targetEntityId"])
-    || answer.kind !== "selectTarget"
-    || !isNonEmptyString(answer.targetEntityId)
-    || !Array.isArray(pending.candidateEntityIds)
-    || !pending.candidateEntityIds.includes(answer.targetEntityId)
-    || !isRecord(pending.operation)
-    || pending.operation.kind !== "invokeAbility"
-    || !isNonEmptyString(pending.operation.sourceEntityId)
-    || !isNonEmptyString(pending.operation.abilityRef)
-    || !isRecord(pending.operation.parameters)
-  ) return rejected("invalidRulesInput", "Target choice is not one of the frozen candidates.");
+  const selected = answer.kind === "selectTarget" && hasExactKeys(answer, ["kind", "targetEntityId"])
+    ? [answer.targetEntityId]
+    : answer.kind === "selectTargets" && hasExactKeys(answer, ["kind", "targetEntityIds"])
+      && Array.isArray(answer.targetEntityIds) ? answer.targetEntityIds : undefined;
+  if (selected === undefined || selected.length === 0 || !selected.every(isNonEmptyString)
+    || selected.length > Number(pending.maximumTargetCount ?? 1) || new Set(selected).size !== selected.length
+    || !Array.isArray(pending.candidateEntityIds) || selected.some((id) => !(pending.candidateEntityIds as unknown[]).includes(id))
+    || !isRecord(pending.operation) || pending.operation.kind !== "invokeAbility"
+    || !isNonEmptyString(pending.operation.sourceEntityId) || !isNonEmptyString(pending.operation.abilityRef)
+    || !isRecord(pending.operation.parameters)) return rejected("invalidRulesInput", "Target choice is not one of the frozen candidates.");
   const rootActionId = String(pending.rootActionId);
   const closed = sequence("committed", profiles, state, rootActionId, [{
     eventType: "CombatPendingClosed",
@@ -7410,7 +7733,7 @@ function answerTargetPending(
     abilityRef: pending.operation.abilityRef,
     parameters: {
       ...structuredClone(pending.operation.parameters),
-      targetEntityId: answer.targetEntityId,
+      ...(selected.length === 1 ? { targetEntityId: selected[0] } : { targetEntityIds: selected }),
     },
   }, rootActionId));
   if (resumed.kind === "rejected") return resumed;
@@ -7457,39 +7780,51 @@ function answerKnockOut(
     },
     { eventType: "DamagePacketResolved", payload: structuredClone(damagePayload) },
   ];
-  if (pending.concentrationWasActive === true) {
-    drafts.push({
-      eventType: "ConcentrationEnded",
-      payload: { entityId: pending.targetEntityId, reason: "incapacitatedByDamage" },
-    });
-  }
   if (!knockedOut && pending.lethalCreatureDied === true) {
     drafts.push({
       eventType: "CreatureDied",
       payload: { characterId: pending.targetEntityId, causeId: pending.rootActionId },
     });
   }
+  const mechanicalResult = isRecord(pending.mechanicalResult) ? structuredClone(pending.mechanicalResult) : {};
+  let committed = sequence("committed", profiles, state, String(pending.rootActionId), drafts, { mechanicalResult });
+  if (isRecord(pending.abilityOperation) && isRecord(pending.frozenRecoveryFaces)) {
+    const faces = new Map(Object.entries(pending.frozenRecoveryFaces).map(([key, value]) => {
+      if (!Array.isArray(value) || !value.every((face) => Number.isSafeInteger(face))) throw new TypeError("Frozen recovery dice are malformed.");
+      return [key, value.map(Number)] as const;
+    }));
+    committed = appendAbilityRecovery(profiles, committed, String(pending.rootActionId), pending.abilityOperation, faces, mechanicalResult);
+    committed = appendAbilityWorldEffects(profiles, committed, String(pending.rootActionId), pending.abilityOperation, mechanicalResult);
+  }
+  if (committed.kind !== "committed") return committed;
+  const recoveryTargets = [
+    ...(Array.isArray(pending.stableRecoveryTargetIds) ? pending.stableRecoveryTargetIds.filter(isNonEmptyString) : []),
+    ...(knockedOut ? [String(pending.targetEntityId)] : []),
+  ];
+  const remaining = Array.isArray(pending.remainingKnockOuts)
+    ? pending.remainingKnockOuts.filter(isRecord) : [];
+  const next = remaining.shift();
+  if (next !== undefined) {
+    const nextPending = { ...structuredClone(next), remainingKnockOuts: remaining,
+      stableRecoveryTargetIds: recoveryTargets, mechanicalResult };
+    return appendTransitions(committed, sequence("awaitingInput", profiles, committed.state, String(pending.rootActionId), [{
+      eventType: "CombatPendingOpened", payload: { pending: nextPending }, secrecy: "private",
+    }], { pending: publicPending(nextPending), mechanicalResult }));
+  }
   if (isRecord(pending.afterDamageSpellFrame)) {
-    drafts.push(spellEventDraft(
-      "SpellResolved",
-      pending.afterDamageSpellFrame,
-      { kind: "ability", succeeded: true },
-    ));
+    committed = appendTransitions(committed, sequence("committed", profiles, committed.state, String(pending.rootActionId), [
+      spellEventDraft("SpellResolved", pending.afterDamageSpellFrame, { kind: "ability", succeeded: true }),
+    ], { mechanicalResult }));
   }
-  if (!knockedOut) {
-    return sequence("committed", profiles, state, String(pending.rootActionId), drafts, {
-      mechanicalResult: isRecord(pending.mechanicalResult)
-        ? structuredClone(pending.mechanicalResult)
-        : {},
-    });
-  }
-  return beginStableRecoverySchedule(
-    profiles,
-    state,
-    String(pending.rootActionId),
-    [String(pending.targetEntityId)],
-    drafts,
-  );
+  if (committed.kind !== "committed") return committed;
+  const completedState = committed.state;
+  const stableTargets = recoveryTargets.filter((targetId) => {
+    const current = combatEntity(completedState, targetId);
+    return current !== undefined && isRecord(current.hitPoints) && Number(current.hitPoints.current) === 0
+      && current.lifeState !== "dead" && isRecord(current.conditions) && current.conditions.stable === true;
+  });
+  return stableTargets.length === 0 ? committed : appendTransitions(committed,
+    beginStableRecoverySchedule(profiles, completedState, String(pending.rootActionId), stableTargets, []));
 }
 
 function reactionAnswerPrefix(pending: JsonRecord, answer: JsonRecord): Draft[] {
@@ -7759,7 +8094,7 @@ function answerReadyReaction(
     return finishReadyResponse(profiles, state, pending, [...prefix, ...expiry]);
   }
   if (!hasExactKeys(answer, ["kind"]) || answer.kind !== "useReaction"
-    || !reactionAvailable(source) || !isRecord(ready.response)) {
+    || !reactionAvailable(state, source) || !isRecord(ready.response)) {
     return rejected("invalidRulesInput", "Ready answer is not canonical or no longer legal.");
   }
   const sourcePatch = structuredClone(source);
@@ -7773,8 +8108,12 @@ function answerReadyReaction(
     if (path === undefined || JSON.stringify(source.position) !== JSON.stringify(path[0])) {
       return rejected("invalidRulesInput", "The frozen readied path no longer starts at the authoritative position.");
     }
-    const moved = movementPatch(sourcePatch, path);
-    const speed = movementSpeedInches(source, String(ready.response.movementMode));
+    if (!conditionMovementPermission(state, entityId(source), path).allowed) {
+      return rejected("invalidRulesInput", "The creature's condition prevents this readied movement.");
+    }
+    const moved = movementPatch(sourcePatch, path,
+      conditionMovementCost(state, entityId(source), pathLengthMilliInches(path), path));
+    const speed = movementSpeedInches(state, source, String(ready.response.movementMode));
     if (!canonicalIntegerString(speed, 0, 1_000_000)
       || BigInt(moved.distanceMilliInches) > BigInt(String(speed)) * 1_000n) {
       return rejected("invalidRulesInput", "The frozen readied movement is no longer legal.");
@@ -7958,6 +8297,7 @@ function resolveOpportunityAndMovement(
   const drafts: Draft[] = [{ eventType: "AbilityInvoked", payload: { sourceEntityId: operation.sourceEntityId, abilityRef: "action:opportunity-attack", mechanicalResult, sourcePatch: operation.sourcePatch }, resolutionId: String(resolution.resolutionId) }];
   if (hit) {
     const damage = damageDraft(
+      state,
       target,
       [{ type: "bludgeoning", rolled: Number(faces.get(`damage:opportunity:${operation.sourceEntityId}`)?.[0]) }],
       operation.movementContinuation.encounterId,
@@ -8164,6 +8504,49 @@ function settleDueLongSpellBeforeInput(
         : String(left.activityId).localeCompare(String(right.activityId));
     })[0];
   if (due === undefined || !isRecord(due.completion)) return undefined;
+  return settleLongSpellActivity(profiles, state, due, String(input.kind));
+}
+
+/** A due queue and the existing before-input interceptor consume the same
+ * frozen Activity. No invocation parameters or replacement definition enter. */
+export function completeLongSpellcasting(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  input: JsonRecord,
+): StepResult {
+  if (input.kind !== "completeLongSpellcasting"
+    || !hasExactKeys(input, ["activityId", "kind", "proposalId"])
+    || ![input.activityId, input.proposalId].every(isNonEmptyString)) {
+    return rejected("invalidRulesInput", "Long-spell completion input is not canonical.");
+  }
+  const activity = state.campaignRuntime.activities[String(input.activityId)];
+  if (activity?.status !== "active" || activity.activityKind !== "longSpellcasting"
+    || !isNonEmptyString(activity.characterId)
+    || typeof activity.startedAtFictionMicros !== "string" || !/^(0|[1-9][0-9]*)$/.test(activity.startedAtFictionMicros)
+    || typeof activity.intendedDurationMicros !== "string" || !/^[1-9][0-9]*$/.test(activity.intendedDurationMicros)) {
+    return rejected("privateOrUnknownReference", "The selected long-spell Activity is unavailable.");
+  }
+  const dueMicros = BigInt(String(activity.startedAtFictionMicros)) + BigInt(String(activity.intendedDurationMicros));
+  const timelineId = characterTimelineId(state, activity.characterId);
+  const timeline = timelineId === undefined ? undefined : state.fictionTimelines[timelineId];
+  if (timeline === undefined || BigInt(timeline.nowMicros) < dueMicros
+    || input.proposalId !== `long-spell-due:${activity.activityId}:${dueMicros}`) {
+    return rejected("invalidRulesInput", "Long-spell completion requires its exact due Activity root and time.");
+  }
+  return settleLongSpellActivity(profiles, state, activity, String(input.kind));
+}
+
+function settleLongSpellActivity(
+  profiles: RuntimeProfileManifest,
+  state: AuthoritativeWorldState,
+  due: JsonRecord,
+  intentKind: string,
+): StepResult {
+  const timelineId = characterTimelineId(state, String(due.characterId));
+  if (timelineId === undefined) return rejected("privateOrUnknownReference", "The long-spell timeline is unavailable.");
+  if (timePassageHasPendingWork(state, timelineId)) {
+    return rejected("pendingInputUnresolved", "Existing input or randomness on this timeline must resolve before spell completion.");
+  }
   const source = combatEntity(state, due.characterId);
   const concentration = source?.concentration;
   const completion = due.completion;
@@ -8172,30 +8555,57 @@ function settleDueLongSpellBeforeInput(
     || concentration.kind !== "longSpellcasting"
     || concentration.activityId !== due.activityId
     || Number(concentration.investedActionRounds) < Number(concentration.requiredActionRounds)
+    || source.lifeState === "dead"
+    || !conditionMechanics(state, entityId(source)).canAct
+    || !isRecord(completion)
     || completion.kind !== "longSpellcasting"
+    || completion.activityId !== due.activityId
+    || completion.sourceEntityId !== due.characterId
+    || (isRecord(completion.definition) && isRecord(completion.definition.target)
+      && completion.definition.target.kind === "area" && completion.sourceSceneId !== source.sceneId)
+    || completion.sourceTimelineId !== characterTimelineId(state, String(due.characterId))
     || !isRecord(completion.definition)
+    || completion.definition.definitionId !== completion.abilityRef
+    || !isRecord(completion.parameters)
     || !Array.isArray(completion.targetEntityIds)) {
-    return undefined;
+    return rejected("privateOrUnknownReference", "The frozen long-spell completion is unavailable.");
   }
   const dueMicros = (BigInt(String(due.startedAtFictionMicros))
     + BigInt(String(due.intendedDurationMicros))).toString();
   const rootActionId = `long-spell-due:${String(due.activityId)}:${dueMicros}`;
-  if (rootActionId in state.receipts) return undefined;
-  const sourcePatch = structuredClone(source);
-  sourcePatch.concentration = null;
+  if (rootActionId in state.receipts) {
+    return rejected("duplicateRootAction", "The long-spell completion already has an authoritative receipt.");
+  }
+  const selection = selectAbilityTargets(state, source, completion.definition, completion.parameters);
+  if ("kind" in selection) return selection;
+  if (targetsCreature(completion.definition)
+    && canonicalSha256(selection.targetIds) !== canonicalSha256(completion.targetEntityIds)) {
+    return rejected("invalidWorldState", "The long-spell target selection differs from its frozen Activity.");
+  }
+  // These are tentative pure transitions until the entire Rules result is
+  // returned. Compile after ending casting concentration, so a self-affecting
+  // spell does not reserve a save for concentration that already ended.
+  const prefix = sequence("committed", profiles, state, rootActionId, [
+    { eventType: "ActivityCompleted", payload: { activityId: due.activityId } },
+    { eventType: "ConcentrationEnded", payload: { entityId: due.characterId, reason: "longSpellCompleted" } },
+  ]);
+  if (prefix.kind !== "committed") return prefix;
+  const executionState = prefix.state;
+  const executionSource = combatEntity(executionState, due.characterId);
+  if (executionSource === undefined) return rejected("privateOrUnknownReference", "The long-spell caster is unavailable.");
+  const sourcePatch = structuredClone(executionSource);
   const ritual = completion.ritual === true;
   const spent = longSpellCompletionCosts(
-    state,
-    String(due.characterId),
-    sourcePatch,
-    completion.definition,
-    ritual,
+    executionState, String(due.characterId), sourcePatch, completion.definition, ritual,
   );
   if (spent === undefined) {
     return rejected("insufficientResource", "Long-spell completion costs are unavailable.");
   }
+  const prepared = prepareAbilityExecution(profiles, executionState, executionSource, String(completion.abilityRef),
+    completion.definition, selection, spent);
+  if ("kind" in prepared) return prepared;
   const spellLevel = definitionSpellLevel(completion.definition);
-  const parameters = isRecord(completion.parameters) ? completion.parameters : {};
+  const parameters = selection.parameters;
   const frame = {
     castId: `cast:${rootActionId}:0`,
     rootActionId,
@@ -8207,26 +8617,24 @@ function settleDueLongSpellBeforeInput(
     effect: {
       kind: "ability",
       definition: structuredClone(completion.definition),
-      targetEntityIds: structuredClone(completion.targetEntityIds),
+      targetEntityIds: structuredClone(prepared.targetIds),
       parameters: structuredClone(parameters),
       mechanical: {
+        ...structuredClone(prepared.mechanical),
         longSpellcasting: true,
         ritual,
         activityId: due.activityId,
       },
-      specs: [],
+      specs: structuredClone(prepared.specs),
       encounterId: concentration.encounterId ?? null,
-      deferDamageForShield: false,
+      deferDamageForShield: prepared.deferDamageForShield,
+      reservedCriticalDice: isRecord(completion.definition.attack),
+      concentrationReserves: structuredClone(prepared.concentrationReserves),
     },
     onPrevented: { kind: "stop" },
   };
-  const completionResult = afterDrafts(profiles, state, rootActionId, [
-    { eventType: "ActivityCompleted", payload: { activityId: due.activityId } },
-    {
-      eventType: "ConcentrationEnded",
-      payload: { entityId: due.characterId, reason: "longSpellCompleted" },
-    },
-  ], (nextState) => beginSpellFrame(profiles, nextState, frame, sourcePatch, spent));
+  const completionResult = appendTransitions(prefix,
+    beginSpellFrame(profiles, executionState, frame, sourcePatch, spent));
   if (completionResult.kind === "rejected" || completionResult.kind === "initialized") {
     return completionResult;
   }
@@ -8236,7 +8644,7 @@ function settleDueLongSpellBeforeInput(
       kind: "dueLongSpellSettled",
       activityId: due.activityId,
       ritual,
-      interruptedIntentKind: input.kind,
+      interruptedIntentKind: intentKind,
       retryOriginalIntent: true,
     },
   };
@@ -8301,6 +8709,7 @@ export function stepCombatWorld(
   state: AuthoritativeWorldState,
   input: JsonRecord,
 ): StepResult | undefined {
+  if (input.kind === "completeLongSpellcasting") return completeLongSpellcasting(profiles, state, input);
   const dueLongSpellResult = settleDueLongSpellBeforeInput(profiles, state, input);
   if (dueLongSpellResult !== undefined) return dueLongSpellResult;
   const duePhaseResult = settleDueCombatPhaseBeforeInput(profiles, state, input);

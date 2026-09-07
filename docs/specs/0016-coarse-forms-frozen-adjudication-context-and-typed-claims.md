@@ -3,6 +3,7 @@
 - 状态：**已裁定；阶段三代表性纵切已有开发期回执，Availability/Bundle/真实 Provider 收口实施中；完整 Form 家族尚未全部纵切，且尚未切换生产、删除 V5、执行 migration、部署或发布**
 - 裁定日期：2026-09-01
 - 收口修订日期：2026-09-02
+- 环境叙述修订日期：2026-09-05，用户明确批准；对应 SPEC 0001 §§3.3、7、12。
 - 产品：烛帷 V3（当前应用版本仍为 0.4.0）
 - 适用规则：D&D 5e 2014 / SRD 5.1
 - 上位规格：`SPEC 0001`（最高产品合同）、`SPEC 0003`、`SPEC 0004`、`SPEC 0005`、`SPEC 0006`、`SPEC 0007`、`SPEC 0008`、`SPEC 0009`、`SPEC 0010`、`SPEC 0011`、`SPEC 0012`、`SPEC 0013`、`SPEC 0014`、`SPEC 0015` 的未被本规格取代部分
@@ -11,18 +12,18 @@
 
 ## 1. 目的与能力合同
 
-任意获得认证的玩家都可以用自然语言提出合理行动。主 KP 必须得到一份对本次裁决最小充分、权限正确、版本固定且可追溯的 `RequiredContext`，据此理解目标与方法、判断可行性、DC、风险和世界因果，并通过按权威与事务边界划分的粗粒度 Form 提出结果候选。Rules 只验证权限、引用和机械合法性，执行有限机械原语与权威随机；Room Durable Object 仍是唯一活跃状态权威。提交后，`project(viewer, committedRange)` 必须为每个冻结 Viewer 生成充分、准确、有限且可追溯的 Typed Claims，Narration 只能表达这些材料，不能补事实。
+任意获得认证的玩家都可以用自然语言提出合理行动。主 KP 必须得到一份对本次裁决最小充分、权限正确、版本固定且可追溯的 `RequiredContext`，据此理解目标与方法、判断可行性、DC、风险和世界因果，并通过按权威与事务边界划分的粗粒度 Form 提出结果候选。Rules 只验证权限、引用和机械合法性，执行有限机械原语与权威随机；Room Durable Object 仍是唯一活跃状态权威。提交后，`project(viewer, committedRange)` 必须为每个冻结 Viewer 生成充分、准确、有限且可追溯的 Typed Claims。已提交结果、机械后果和角色知识由 Typed Claims 唯一证明；KP 也可按 SPEC 0001 §§3.3、7、12 创作非机械环境细节，将其保存为叙述承诺后发布。叙述承诺只约束连续性，不能直接成为机械对象或裁决结果。
 
 本能力必须同时支持：
 
 - 玩家行动的对象、工具、方法、目标、场景关系和结果组合不断变化，而不按动作名称增加 Form；
 - 动态 NPC、场景对象、物品、能力、任务与故事连续性进入同一冻结裁决上下文；
-- 缺失的决定性世界语义在产生证据、随机或机械影响前，以版本化稀疏定义或事实固化；
+- 缺失的决定性世界语义在玩家引用、产生因果证据、随机或机械影响前，以版本化稀疏定义或事实固化；非机械环境描写可以先保存叙述承诺；
 - 一个 RootAction 跨越多项类型化提案时仍只产生一个原子 Receipt，不由模型编写执行 DAG；
 - Rules 保持机械权威，KP 保持可行性与叙事权威，页面、模型、RAG、编译器和 Narration 都不成为第二权威；
 - Viewer 无权知道的事实、关系和依据不进入其 Claims、Prompt、错误、日志、DOM、语音或重试路径。
 
-本规格不修改、缩小或重新解释 `SPEC 0001`。
+本规格服从 `SPEC 0001`；2026-09-05 的环境描写调整与主规格的同日用户批准修订同步，不缩小其行为边界。
 
 ## 2. 唯一行动与叙述链
 
@@ -63,7 +64,7 @@ authenticated natural-language Intent
 | `in-world-refusal` | 缺少前提或违反世界规律；这是世界内裁决，不是 Provider 错误 | 可公开理由、真实尝试成本和仍可行动的前提/方向 |
 | `observe` | 会取得感官证据、角色推断或来源主张，受角色知识与 Viewer 权限约束 | 玩家想知道什么、观察方法、既有事实引用、本次取得的具体证据、角色推断及必要的新事实固化 |
 | `social` | NPC 回应受有限知识、目标、关系、承诺和来源主张约束 | 玩家表达、NPC 知识依据、回应/主张、检定或代价、关系和承诺后果 |
-| `materialization` | 新世界事实或实体必须在首次证据、引用、随机或机械影响前固化 | 稳定领域身份、来源、可见性、稀疏语义定义、模板/定义引用和固化时点 |
+| `materialization` | 新世界事实或实体必须在首次因果证据、玩家引用、随机或机械影响前固化；先前环境描写按叙述承诺固化 | 稳定领域身份、来源、可见性、稀疏语义定义、模板/定义引用、原叙述承诺和固化时点 |
 | `world-interaction` | 开放式物理与环境互动需要组合现有对象、工具、状态和关系，但不拥有物品或故事生命周期 | 目标/工具/做法、依据、共同裁决、成功/失败的类型化语义后果候选 |
 | `inventory-operation` | 物品所有权、持有、位置、装备、使用、消耗、损坏与销毁有独立权限和生命周期不变量 | 对权威 ItemEntry 的取得、转移、装备、收起、使用、成本和生命周期提案 |
 | `objective-continuity` | 主线/支线/承诺/威胁的开启、推进、失败、放弃与完成有长期连续性不变量 | Objective 状态转换、因果依据、参与者、期限、后续机会或威胁 |
@@ -136,10 +137,13 @@ type RequiredContext = {
 - 相关隐藏事实及其因果闭包，只进入有权的 KP Context；
 - 物品实例及本次操作需要的定义、所有权、位置、装备、数量、charges、durability 和可见性；
 - Campaign、Chapter、Objective、Story、unresolved threat、relationship、ending candidate 与先前承诺中本次相关的连续性切片；
+- 当前场景、被提及对象和意图相关的叙述承诺及其适用场景、受众、来源和固化绑定；它们必须保留原描述，不以模型摘要、最近 N 条窗口或检索零命中消除连续性约束；
 - 适用裁决先例的正文、机械参数、适用范围和取代关系，而不是只有 precedent ref；
 - 当前行动真正需要的故事锚点、核心真相约束、内容边界、安全限制与有限 recent dialogue。
 
 RequiredContext 仍不是完整 WorldState、完整历史或完整 Story Bible。无法构造最小充分且不泄密的上下文时返回 `CONTEXT_INSUFFICIENT`，不得让模型猜测。
+
+叙述承诺与机械对象必须明确区分：前者可约束“之前已经如何描写”，不能仅凭出现于上下文就取得 Item、Ability、Geometry 或其他可机械操作实例的资格。玩家引用或利用尚未固化的细节时，先沿相同 Proposal、Rules、Room 提交链固化；所需原承诺进入本次冻结读取集，存在、外观、位置和关系不得借此重写。后续权威事件产生的真实变化可以改变现状，但必须保留原承诺及其因果变更记录。
 
 ### 4.3 先检索相关内容，再完成决定性闭包
 
@@ -152,7 +156,7 @@ RequiredContext 仍不是完整 WorldState、完整历史或完整 Story Bible�
 5. 对会改变可行性、风险、目标或结果的依赖完成不可截断的决定性闭包；
 6. 最后才裁未采用的 RetrievedContext 与 Optional 内容。
 
-普通行动的 RequiredContext 以约 8k units 为正常目标，所有行动以 16k units 为硬门。若决定性闭包自身超过硬门，返回 `CONTEXT_BUDGET_EXCEEDED`；不得随机裁掉闭包的一部分继续裁决。实现中的大对象数量只可作为异常防爆保护，不能代表正常可接受规模，也不能掩盖相关性检索失败。
+2026-09-06 用户为本次 vNext 快速开发部署明确将原普通 8k / 全体 16k 输入与百分比压缩指标改为优化参考，不作为本次阻断门；统计采用认证后置，详见 [执行决定](../agent/vnext-production-todo.md#本次快速开发部署决定2026-09-06)。运行时仍须执行可配置的异常预算；决定性闭包超过实际预算时返回 `CONTEXT_BUDGET_EXCEEDED`，不得随机裁掉闭包的一部分继续裁决。实现中的大对象数量只可作为异常防爆保护，不能代表正常可接受规模，也不能掩盖相关性检索失败。
 
 ### 4.4 五态 Availability 语义
 
@@ -213,13 +217,15 @@ KP 根据这些已固化语义、角色做法、工具、Geometry、自然规律
 
 ### 5.2 决定性缺失事实必须先固化
 
-若已有语义不足以区分结果，而且该差异将产生直接证据、随机或机械后果，KP 必须在这些后果出现前：
+若已有语义不足以区分结果，而且该差异将产生因果证据、随机或机械后果，或者玩家已经引用、调查、接触或利用先前描写的细节，KP 必须在裁决及这些后果出现前：
 
 1. 引用已有事实推导；或
 2. 在开放留白中提出新事实/稀疏定义；或
 3. 为同样合理候选请求可信随机固化。
 
 不得在看到骰面、玩家剩余资源或后续选择后再补“链条其实更脆”“石头其实足够重”等决定性事实。
+
+尚未承担这些作用的环境细节可先创作并保存叙述承诺，无需预建完整规则对象；固化时必须继承承诺已经明确的内容，补齐本次必要的规则语义。不得用非机械描写暗中追加危险、线索结论、实际资源或不可逆后果，也不得用固化步骤撤回已描写内容。已发布矛盾按 SPEC 0001 §17 可审计更正，未提交矛盾拒绝后重做。
 
 ### 5.3 模板只提供创建时默认语义
 
@@ -311,11 +317,17 @@ Prospective 可寻址性只能在 `Rules.step` 内部验证。Rules 必须复用
 
 ### 7.2 Bundle 语义冻结与一次窄修复
 
+首轮仅以扁平 `requestedCapabilities` 数组选择类型，不填写 decision 或草稿。小表单标识从同一领域 schema 的填写转换派生；服务器保留实际所选小表单身份，只加载所选执行家族与类型依赖。未知标识、重复 ID 和混合草稿继续拒绝，不将缺失裁决的响应改写为类型查询。
+
+2026-09-06 用户批准 [按需 Proposal schema 合同修订](../agent/schema-retrieval-contract-proposal.md)。2026-09-07 按用户简化填写接口与调整 Goal 验证的决定，首次单一 strict 工具只选择轻量目录中的 schema 类型，第二轮才填写；knowledgeReview、passTime、inWorldRefusal 也经过相同选择，clarification 须先选齐完整 continuation 所需家族。服务端只加载所选家族及类型依赖，全部已注册能力均可召回，不能按物品名、动词或已有对象存在性硬裁玩家的合理行动。schema 选择不得夹带 Proposal 草稿、裁决、风险、成本、结果或世界事实，不产生语义冻结或任何机械、世界、随机、资源与发布副作用。服务端从冻结版本的注册表精确读取选中 schema，并沿类型依赖补齐完整定义；schema 标识不是物化权限或存在证明，后续仍执行完整本地与 Rules 校验。
+
+选择至多一次。Room 在外部调用前保存精确请求及 hash，在下一阶段前保存响应；两轮 user 正文逐字绑定同一完整冻结上下文，恢复不重读新世界、不重选能力或版本。第二轮只允许提交 Proposal。普通小表单最多 2 次模型调用，选择与填写用完后不得再调用 correction；实际包含所选执行家族的复杂提案最多 3 次，即一次纯选择、一次 Proposal 和最多一次窄 correction，不得增加第四阶段。额外选择未使用执行家族不能为最终纯小表单取得第三次调用，Adapter 与 Room 从同一原稿证明预算准入。所有实际调用及 Provider 重试均计入 RootAction 调用、token、费用和延迟预算，模型采用的统计认证按本次快速部署决定后置，产品正确性边界不变。未知标识、混合草稿、重复选择、不可闭合定义和预算超限是技术失败，不是 clarification、世界内拒绝或成功结果。
+
 首份 ProposalBundle 形成一个 bundle-level 语义冻结。修复模型只接收唯一工具 schema、拒绝草稿、合并后的精确诊断、相关有限引用、冻结 hash 和允许修改的字段路径，并只返回这些路径的稀疏 correction；它不重发或重选整个 Bundle。
 
 服务器合并 correction 后必须从头重跑完整 closed-schema、引用、权限、跨字段、produces/consumes、条件支配、循环/规模、lowering 和 Rules 预检。局部修复限制模型填写面，不缩小服务器重验面。修复不得改变玩家 goal/method、已确认重大目标、Ruling、风险、成本或 outcome binding；一次修复仍非法时返回 `PROPOSAL_REPAIR_EXHAUSTED`，整束保持未提交。Context 缺失/超预算、Provider schema 配置、网络、限流和超时不消耗模型语义修复机会，也不能改走 clarification。
 
-## 8. Typed Claims 是提交后的唯一可叙述材料
+## 8. Typed Claims、叙述承诺与发布
 
 ### 8.1 两阶段 Claim
 
@@ -362,6 +374,7 @@ Claim vocabulary 至少覆盖：
 - `sourceClaim` / `characterInference`：NPC/文献声称与角色解释，不能冒充世界真相；
 - `inventoryOutcome`：所有权、装备、数量、charges、durability 和物品状态变化；
 - `objectiveContinuity` / `storyContinuity`：任务、威胁、承诺、收束、尾声或续篇的实际变化；
+- 非机械环境叙述承诺：发布前保存原描述及其场景、受众和来源，作为连续性材料投影；它不证明新的机械结果或对象已经物化；
 - `pressure` / `opportunity`：必须有已提交事实或可见状态依据；
 - `actionCommitted`：只作最低事务事实，不能在存在更多可叙述事实时替代其他 Claims。
 
@@ -369,14 +382,16 @@ Claim 必须充分覆盖真实机械结果、直接感知、与行动相关的�
 
 ### 8.3 Narration、Grounding 与重试
 
-Narration 输入严格只有当前 `PublicReceipt + ViewerKey + FrozenRenderableClaims` 及冻结的 Narration Policy；不读取新 WorldState、通用 committed delta、Story Bible、完整 KP Context 或未冻结 recent dialogue。Narration 只输出 body，不能补 Claim 之外的事实、机械、Audience、情绪或玩家选择。
+Narration 输入只有当前 `PublicReceipt + ViewerKey + FrozenRenderableClaims`、本次获授权且冻结的表达上下文及 Narration Policy。表达上下文包含可信 Viewer/行动者关系、仅行动者本人可见的原意图、相关 NPC 公开声口与已表现的态度、相关已听对话、场景基调和叙述承诺；它约束表达与连续性，不证明新的世界或机械事实。2026-09-05 用户批准该 Narration 重构，并明确不改变意图或后果的普通动作润色可以接受；润色不能推出额外行动、规则状态、潜行成功、无人察觉等效果。
 
-Grounding 对 Claim payload、Viewer grant 和 agency 逐项校验。Narration 失败后的重试必须复用相同 receipt、ViewerKey、projectionHash、claimsHash 和 claims，不重新 project 当前世界、不重跑 KP Proposal、Rules、随机或资源结算。
+Narration 不读取新 WorldState、通用 committed delta、Story Bible、完整 KP Context 或未冻结 recent dialogue。非机械环境创作必须在发布前保存为 Room 权威中的叙述承诺，并沿相同 Viewer 投影交接；可以在 Proposal 阶段提出承诺，再经 Claims seam 交给 body-only Narration 表达，不要求额外模型调用。Narration 不能凭自由文本增加机械后果、改写承诺、决定 Audience 或替玩家选择。
+
+Grounding 对 Claim payload、叙述承诺、Viewer grant 和 agency 逐项校验。Narration 失败后的重试必须复用相同 receipt、ViewerKey、projectionHash、claimsHash、claims 和完整冻结表达上下文，不重新 project 当前世界、不重跑 KP Proposal、Rules、随机或资源结算，不重新创造环境。原已发布或已冻结文本及承诺是恢复依据；相关决定性材料不为 token 预算任意截断。
 
 ## 9. 权限、版本与失败边界
 
 1. Principal、actor、ViewerKey、Audience、实际区域目标、scope proof、Profile/hash、Receipt 和 Claim freeze metadata 均由服务端派生。
-2. 主 KP 可取得本次相关 KP-only 事实，但 NPC 行动只能依据单独的 NPC Viewer Context；Narration 只能取得目标 Viewer 的 Claims。
+2. 主 KP 可取得本次相关 KP-only 事实，但 NPC 行动只能依据单独的 NPC Viewer Context；Narration 只能取得目标 Viewer 的 Claims 及上节获授权的冻结表达上下文。
 3. 所有新 Form、RequiredContext、Sparse Semantic Definition、Relation、ProposalBundle、Rules primitive 和 Claim vocabulary 都必须进入新的完整 runtime manifest；未知或错 hash fail closed。
 4. 当前 V5 ID/hash 不原地改义。阶段一至三期间，新 Profile 不进入生产默认 Registry，不删除 V5，不建立静默 Adapter、fallback、双写或 migration。
 5. 上下文不足、定义 base/hash 冲突、引用越权、依赖无法导出、Rules 诊断或 Claims 不充分都必须显式停在相应稳定点；不能用世界内拒绝、固定旁白或自动换模型掩盖技术/合同失败。
@@ -420,6 +435,8 @@ Grounding 对 Claim payload、Viewer grant 和 agency 逐项校验。Narration �
 4. 五态 Availability、候选 Bundle 协议、本地 validator/repair 与脱敏遥测可以在文件所有权不重叠时并行；真实 Provider 探针依赖候选 schema；Room/Rules 集成依赖 schema 与 Availability Interface 稳定；
 5. 最终新增一条 `materialization + world-interaction` 跨合同纵切，证明同束创建并消费新对象、所有分支随机前预检、原子提交、逐 Viewer Claims、幂等与 replay。
 
+schema 补取扩展按 2026-09-07 简化接口的执行决定验证：知识回顾与主动等待可首轮提交，库存操作、场景交互与独立观察先选家族再填写；无 steps 的澄清也不能绕过首轮准入；Item 创作召回后闭合 Ability 依赖并在同一原子 Bundle 物化、使用，Hazard 创作覆盖另一依赖结构；未加载类型、未知能力、混合草稿及重复补取在任何副作用前拒绝。必须覆盖补取响应保存后恢复、最终 Proposal 恢复、唯一窄 correction、429 与预算阻断，并核对精确请求、阶段和全部实际调用证据。当前选定 schema 的本地校验不能因领域 parser 更宽而接受未加载类型。真实 Provider 需验证初次 strict 工具的提交/纯补取两种响应和补取后的最终工具，schema 字节、真实 tokens、调用与端到端延迟分别报告，不以传输通过代替模型采用门。
+
 阶段三收口的模型工具顶层不得包含 rootAction、actor、context/profile hash、权威 proposal/receipt/event ID、骰面、最终伤害或实际隐藏 targets。每层 object 必须 closed；Provider dialect 不支持的字符串、数组和 Bundle 大小限制仍由本地 validator 执行。真实探针只证明 transport 可行，不证明 KP 判断质量；正式采用仍服从 `SPEC 0015` 的金标、首次合法率、调用、延迟与安全门。
 
 ## 11. 阶段三的两条真实纵切验收
@@ -457,15 +474,16 @@ Grounding 对 Claim payload、Viewer grant 和 agency 逐项校验。Narration �
 
 ## 12. 对 SPEC 0015 的窄 supersede 与 Interface 深化
 
-本规格不整篇替代 `SPEC 0015`。其静态 RAG 权威重读、1+1 调用预算与语义冻结、body-only Narration、action/narration 双状态、逐受众发布、Model Profile、日志白名单、D1 派生索引和 V5 历史发布事实继续有效。仅旧 Catalog、compound/DAG 与详细环境模型由本规格窄取代；RequiredContext 与 Claims 行是对既有原则的深化，不否定其原约束。全部处理只适用于未来绑定本规格完整 Profile 的房间：
+本规格不整篇替代 `SPEC 0015`。其静态 RAG 权威重读、首份 Proposal + 最多一次窄修订与语义冻结、body-only Narration、action/narration 双状态、逐受众发布、Model Profile、日志白名单、D1 派生索引和 V5 历史发布事实继续有效；2026-09-06 用户批准的唯一调用预算扩展是 §7.2 的一次纯 schema 补取，普通路径最多 2 次，补取路径最多 3 次且全部计入预算。旧 Catalog、compound/DAG 与详细环境模型仍按原范围窄取代；RequiredContext 与 Claims 行是对既有原则的深化，不否定其原约束。全部处理只适用于未来绑定本规格完整 Profile 的房间：
 
 | 处理 | SPEC 0015 原条款 | 原合同的目标/缺口 | 本规格裁定 | 仍保留内容 |
 | --- | --- | --- | --- | --- |
 | **窄取代** | §2 步骤 3、5–8；§3.1–3.2.1 | 每次筛 3–6 张、从十张窄 Form 选一张；`ordinary-check/high-risk/environmental-stunt/compound` 作为动作类别或逃生舱 | §3 的粗粒度 Form 家族；五类 Ruling 为共享字段；一个 RootAction 可有多项类型化子提案，但没有模型可见 compound | 玩家只说自然语言、Form 私有且 closed、authority 字段服务端派生 |
 | **窄取代** | §6.2 的 compound 升级；§6.3 `CausalActionProgram` 复合拓扑 | 模型通过 compound stages/conditions 表达复合依赖 | §7 的服务器私有 ProposalBundle；依赖从 produces/consumes、生命周期和 outcome binding 确定性导出，模型不填 DAG | 一次首 Proposal + 最多一次窄修订、语义冻结、整束预检、单 RootAction/Receipt |
+| **用户批准的窄修订** | §6.1 的总调用两次上限 | 完整 schema 每次发送；无纯 schema 补取阶段 | 2026-09-06 批准 §7.2：初次单一 strict 工具可直接提交或仅请求能力标识，按冻结注册表闭合依赖后只允许最终 Proposal | 普通最多 2 次；补取最多 3 次且全部计预算；仅一份 Proposal 与一次窄修订；补取无裁决、草稿或副作用；同请求恢复、技术失败不变成世界内拒绝 |
 | **深化** | §4.1 RequiredContext 最小权威切片 | 已要求包含相关 mechanics、动态定义、continuity 与先例，但未把认知权限和事务读取显式分开 | §4 的 `epistemicRefs/readSetRefs`、冻结元数据和最小充分正文 | Planner/RAG 不可删除 Required、Context 不等于完整 WorldState |
 | **窄取代** | §11 与 §19.11–12 | `environmental-stunt`、详细材质/尺寸/高度、对象 AC/耐久/阈值、有限状态图及统一 `state-only/area-hazard` 模式作为开放环境的主要表达 | §5–7 的简单 `materialDescription`、少量类型化关系、KP 可行性判断和有限 Rules 原语；真实 Hazard/Area 只在游戏后果确实需要且已有原语时使用 | 不按对象名/archetype 派发；实际区域目标仍只由 Rules/Geometry 计算；不按队伍等级削弱危险 |
-| **深化** | §7 的 `renderableClaims` 输入约定 | 已要求 Narration 只依据冻结 claims，但 Claim vocabulary 与唯一生成 seam 尚未充分固定 | §8 将 `project(viewer, committedRange) → FrozenRenderableClaims` 冻结为唯一交接 Interface | body-only、Grounding、Audience 与 Narration 失败不回滚行动 |
+| **深化及用户批准的窄修订** | §7 的 `renderableClaims` 输入约定 | 已要求 Narration 只依据冻结 claims，但 Claim vocabulary 与唯一生成 seam 尚未充分固定；旧限制不允许尚未机械固化的环境创作 | §8 固定 `project(viewer, committedRange) → FrozenRenderableClaims` 交接；2026-09-05 随 SPEC 0001 批准非机械环境叙述承诺，发布前持久保存，玩家引用或产生因果影响前再固化 | 机械结果唯一权威、body-only、Grounding、Audience、连续性和 Narration 失败不回滚行动 |
 
 本 supersede 只决定未来 Profile 的目标，不原地重解释当前 V5 房间，也不把 `feature/kp-form-graph-v6` 注册为新默认。出现本表之外的解释差异时，优先保持 `SPEC 0001`、单一 Room/Rules/DO 权威、秘密安全与冻结版本语义。
 
@@ -476,7 +494,7 @@ Grounding 对 Claim payload、Viewer grant 和 agency 逐项校验。Narration �
 3. KP 拥有可行性、DC、风险和世界因果判断；Rules 拥有机械合法性、随机、数值执行和类型化提交。
 4. ProposalBundle、InteractionPlan、definition synthesis 和 Claim builder 都不拥有状态、权限、随机或独立投影。
 5. 所有进入因果链的新事实、定义、关系和连续性变化都经同一 `step`、Room commit、`project/replay`。
-6. Typed Claims 是纯派生投影，不是第二正史；Narration 文本也不是正史。
+6. Typed Claims 是纯派生投影，不是第二正史；Narration 文本不能直接改写世界。非机械环境叙述的原始承诺由 Room 持久保存并约束后续创作，其物化与后果仍经同一权威链。
 7. Hidden authority refs 永不进入 Viewer Claims；无权关系 Claim 整体丢弃，不能靠删 ref 掩盖泄漏 payload。
 8. 当前任务不切生产、不删 V5、不迁移房间、不部署、不创建 Cloudflare 资源，也不授权 Git push。
 

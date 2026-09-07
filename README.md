@@ -22,6 +22,8 @@ V3 表示产品与仓库架构代际，0.4 表示当前应用版本；两者都�
 
 ## Cloudflare 架构
 
+查找模块职责、真实调用链、V3/vNext 接入状态或测试入口时，先读 [repo map](docs/agent/repo-map.md)。
+
 - 页面和 API：`app/`
 - 迁移后的完整规则、桌面、KP 与语音运行时：`app/_runtime/`
 - D1 访问与 schema：`db/`
@@ -51,7 +53,18 @@ npm test
 npm run dev
 ```
 
-development 环境使用固定本地用户；该用户绝不会成为生产身份。
+本地也通过正常注册/登录和 Cookie 会话进入桌面。
+
+验证 vNext 的正常 API 链路时，使用独立本地数据库和 DO 数据目录：
+
+```bash
+npx wrangler d1 migrations apply DB --local --persist-to .wrangler/vnext/state
+npm run dev:vnext
+```
+
+可给一次 HTTP 请求的提案、修订和旁白设置本地调用总上限，例如 `ZHUWEI_VNEXT_LOCAL_CALL_LIMIT=3 npm run dev:vnext`；批次总预算仍由测试编排记录。
+
+该入口为新房间绑定 vNext，并在请求期选择对应 runtime；不修改生产注册表。DeepSeek 密钥从本地 `.dev.vars` 读取，真实调用按 [有界测试预算](docs/agent/vnext-production-todo.md) 执行。
 
 ## 身份与密钥
 

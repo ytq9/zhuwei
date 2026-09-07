@@ -78,6 +78,8 @@ export function emptyCorrectionRuntime(roomId: string, runtimeEpochId: string): 
 export function isCorrectionEffect(value: unknown): value is CorrectionEffect {
   if (!record(value) || !nonEmpty(value.kind)) return false;
   switch (value.kind) {
+    case "removeFrozenChoiceRoot":
+      return exact(value, ["kind", "rootActionId"]) && nonEmpty(value.rootActionId);
     case "restoreFictionTime":
       return exact(value, ["beforeMicros", "kind", "timelineId"])
         && nonEmpty(value.timelineId)
@@ -193,7 +195,9 @@ export function isCorrectionRuntime(value: unknown): value is CorrectionRuntimeS
     || !record(value.branches)
   ) return false;
   return Object.entries(value.audit).every(([eventId, entry]) => record(entry)
-    && exact(entry, ["branchId", "effects", "eventId", "eventSeq", "eventType", "payloadHash", "rootActionId"])
+    && exact(entry, ["branchId", "effects", "eventId", "eventSeq", "eventType", "payloadHash", "rootActionId",
+      ...(Object.hasOwn(entry, "resolutionId") ? ["resolutionId"] : [])])
+    && (entry.resolutionId === undefined || nonEmpty(entry.resolutionId))
     && entry.eventId === eventId
     && [entry.branchId, entry.eventSeq, entry.eventType, entry.rootActionId].every(nonEmpty)
     && typeof entry.payloadHash === "string"
@@ -291,7 +295,7 @@ function restoreCampaignEntry(
 
 function restoreItemSystemCollection(
   state: AuthoritativeWorldState,
-  collection: "definitions" | "entries",
+  collection: "definitions" | "entries" | "assemblies",
 ): CorrectionEffect {
   const effect = restoreCampaignEntry(state, "itemSystem", collection);
   if (effect === undefined) throw new TypeError("authoritative item system is unavailable");
@@ -406,6 +410,17 @@ export function correctionEffectsBefore(
 ): CorrectionEffect[] {
   const payload = event.payload as JsonRecord;
   switch (event.eventType) {
+    case "FrozenPlayerChoicePrepared":
+      // A prepared choice starts a fresh root. Corrections target whole
+      // receipts, so its inverse removes every private artifact of that root.
+      // Do not snapshot recursive atomic candidates into every audit entry.
+      return [{ kind: "removeFrozenChoiceRoot", rootActionId: event.rootActionId }];
+    case "WorldInteractionResolved": {
+      const social = record(payload.social) && record(payload.social.plan) && record(payload.social.plan.social)
+        ? payload.social.plan.social : undefined;
+      return social === undefined ? [] : [...new Set([social.threadRef, social.addressedThreadRef].filter(nonEmpty))]
+        .flatMap(ref => { const effect = restoreCampaignEntry(state, "conversationThreads", ref); return effect ? [effect] : []; });
+    }
     case "ImprovisedActionResolved": {
       const fact = payload.fact;
       return record(fact) && nonEmpty(fact.id)
@@ -489,7 +504,13 @@ export function correctionEffectsBefore(
       ];
     case "ResourceReserved":
     case "ResourceUsed":
-    case "ResourceChanged":
+    case "ResourceChanged": {
+      if (!nonEmpty(payload.characterId)) return [];
+      const combatEntity = state.combatRuntime.entities[payload.characterId];
+      return [restoreCharacter(state, payload.characterId),
+        ...(record(combatEntity) && nonEmpty(combatEntity.mechanicalDefinitionRef)
+          ? [restoreCombatEntity(state, payload.characterId)] : [])];
+    }
     case "CharacterControlTransferred":
     case "ExperienceAwarded":
       return nonEmpty(payload.characterId) ? [restoreCharacter(state, payload.characterId)] : [];
@@ -530,6 +551,15 @@ export function correctionEffectsBefore(
         : [];
     case "ItemDefinitionRegistered": {
       return [restoreItemSystemCollection(state, "definitions")];
+    }
+    case "ConditionStateSynchronized": return [restoreCharacter(state,String(payload.characterId)),restoreCombatRuntime(state),restoreItemSystemCollection(state,"entries")];
+    case "ItemAssemblyChanged": return [restoreItemSystemCollection(state, "entries"), restoreItemSystemCollection(state, "assemblies"), restoreCharacter(state, String(payload.actorCharacterId)), restoreCombatRuntime(state)];
+    case "InventoryOperationApplied": {
+      const refs = new Set([payload.actorCharacterId,
+        record(payload.operation) ? payload.operation.targetCharacterRef : undefined,
+        record(payload.operation) ? state.campaignRuntime.itemSystem.entries[String(payload.operation.entryRef)]?.holderRef : undefined,
+      ].filter(nonEmpty));
+      return [restoreItemSystemCollection(state, "entries"), ...[...refs].map(ref => restoreCharacter(state, ref)), restoreCombatRuntime(state)];
     }
     case "ItemMaterialized": {
       return [restoreItemSystemCollection(state, "entries")];
@@ -640,7 +670,7 @@ export function correctionEffectsBefore(
     }
     case "CharacterMoved": {
       if (!nonEmpty(payload.characterId)) return [];
-      const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId)];
+      const effects: CorrectionEffect[] = [restoreCharacter(state, payload.characterId), restoreCombatEntity(state, payload.characterId)];
       const timeline = restoreCharacterTimeline(state, payload.characterId);
       if (timeline !== undefined) effects.push(timeline);
       return effects;
@@ -740,6 +770,16 @@ export function correctionEffectsBefore(
         : undefined;
       return effect === undefined ? [] : [effect];
     }
+    case "SemanticDefinitionRevised": {
+      const effects: CorrectionEffect[] = nonEmpty(payload.definitionRef)
+        ? [restoreDefinition(state, payload.definitionRef)] : [];
+      const content = record(payload.nextDefinition) && record(payload.nextDefinition.content)
+        ? payload.nextDefinition.content : undefined;
+      const entityRef = content !== undefined && record(content.links) ? content.links.entityRef : undefined;
+      if (payload.semanticKind === "npc" && nonEmpty(entityRef)) effects.push(restoreCharacter(state, entityRef));
+      return effects;
+    }
+    case "SemanticDefinitionMaterialized":
     case "DefinitionRegistered": {
       const definition = payload.definition;
       const effect = record(definition) && nonEmpty(definition.definitionId)
@@ -748,16 +788,16 @@ export function correctionEffectsBefore(
       const content = record(definition) && record(definition.content)
         ? definition.content
         : undefined;
-      const sceneEffect: CorrectionEffect | undefined = record(definition)
-        && definition.definitionKind === "location"
-        && content !== undefined
-        && nonEmpty(content.sceneId)
+      const sceneId = content === undefined ? undefined
+        : event.eventType === "SemanticDefinitionMaterialized" && payload.semanticKind === "location" ? content.sceneRef
+        : record(definition) && definition.definitionKind === "location" ? content.sceneId : undefined;
+      const sceneEffect: CorrectionEffect | undefined = nonEmpty(sceneId)
         ? {
             kind: "restoreScene",
-            sceneId: content.sceneId,
-            before: state.scenes[content.sceneId] === undefined
+            sceneId,
+            before: state.scenes[sceneId] === undefined
               ? null
-              : structuredClone(state.scenes[content.sceneId]),
+              : structuredClone(state.scenes[sceneId]),
           }
         : undefined;
       const factionEffect: CorrectionEffect | undefined = record(definition)
@@ -766,7 +806,8 @@ export function correctionEffectsBefore(
         && nonEmpty(content.factionId)
         ? restoreCampaignEntry(state, "factions", content.factionId)
         : undefined;
-      return [effect, sceneEffect, factionEffect, restoreCombatRuntime(state)]
+      return [effect, sceneEffect, factionEffect,
+        ...(event.eventType === "DefinitionRegistered" || sceneEffect !== undefined ? [restoreCombatRuntime(state)] : [])]
         .filter((entry): entry is CorrectionEffect => entry !== undefined);
     }
     case "NpcPlanFormed":
@@ -879,8 +920,19 @@ export function recordCorrectionAudit(
     rootActionId: event.rootActionId,
     branchId: event.branchId,
     payloadHash: event.payloadHash,
+    ...(event.resolutionId === null ? {} : { resolutionId: event.resolutionId }),
     effects: structuredClone(effects),
   };
+}
+
+/** Recover domain records for an internal event-fold proof. This is not a
+ * replay head: receipt/frontier/version metadata intentionally stays current. */
+export function domainStateBeforeAuditRange(state: AuthoritativeWorldState, fromEventSeq: string): AuthoritativeWorldState {
+  const before = structuredClone(state);
+  const audit = Object.values(state.correctionRuntime.audit).filter(entry => BigInt(entry.eventSeq) >= BigInt(fromEventSeq))
+    .sort((a, b) => BigInt(a.eventSeq) > BigInt(b.eventSeq) ? -1 : 1);
+  for (const entry of audit) applyEffects(before, [...entry.effects].reverse());
+  return before;
 }
 
 function applyEffects(
@@ -889,6 +941,17 @@ function applyEffects(
 ): void {
   for (const effect of effects) {
     switch (effect.kind) {
+      case "removeFrozenChoiceRoot":
+        for (const [key, choice] of Object.entries(state.frozenPlayerChoices ?? {}))
+          if (choice.plan.rootActionId === effect.rootActionId) delete state.frozenPlayerChoices![key];
+        for (const [key, pending] of Object.entries(state.pendingInputs))
+          if (pending.rootActionId === effect.rootActionId) delete state.pendingInputs[key];
+        for (const [key, pending] of Object.entries(state.combatRuntime.pendingInputs))
+          if (pending.rootActionId === effect.rootActionId) delete state.combatRuntime.pendingInputs[key];
+        for (const [key, continuation] of Object.entries(state.internalContinuations))
+          if (continuation.rootActionId === effect.rootActionId) delete state.internalContinuations[key];
+        if (state.atomicWorldInteractions !== undefined) delete state.atomicWorldInteractions[effect.rootActionId];
+        break;
       case "restoreFictionTime":
         if (!(effect.timelineId in state.fictionTimelines)) {
           throw new TypeError("correction fiction timeline is unavailable");

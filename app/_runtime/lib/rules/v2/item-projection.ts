@@ -61,6 +61,7 @@ export type ProjectedInventory = {
 export type ItemInventoryViewer = {
   kind: "player" | "npc";
   characterId: string;
+  identifiedEntryRefs?: readonly string[];
 };
 
 function useDisabledReason(
@@ -93,7 +94,8 @@ function projectEntry(
     condition: entry.condition,
     equippedSlot: entry.equippedSlot,
   };
-  if (!itemPolicyVisibleToViewer(definition.visibilityPolicyRef, viewer, entry)) {
+  if (!viewer.identifiedEntryRefs?.includes(entry.entryId)
+    && !itemPolicyVisibleToViewer(definition.visibilityPolicyRef, viewer, entry)) {
     return { kind: "opaque", ...shell };
   }
 

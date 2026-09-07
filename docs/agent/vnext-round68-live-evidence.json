@@ -1,0 +1,132 @@
+{
+  "round": 68,
+  "status": "stopped-on-second-stage-json-syntax",
+  "sourceManifestSha256": "024c8a81fc85d7eef51a9077c8b4cbc095127a9894fb1d852c7651b5875fd854",
+  "parserVersion": "kp-vnext2-proposal-parser-v34",
+  "defaultModel": "deepseek-v4-flash",
+  "fixture": false,
+  "actions": [
+    {
+      "ordinal": 1,
+      "result": "notCommitted",
+      "narration": "notApplicable"
+    },
+    {
+      "ordinal": 2,
+      "result": "notExecuted"
+    },
+    {
+      "ordinal": 3,
+      "result": "notExecuted"
+    }
+  ],
+  "selection": {
+    "requestedCapabilities": [
+      "social",
+      "passTime"
+    ],
+    "accepted": true
+  },
+  "diagnostics": [
+    {
+      "code": "JSON_SYNTAX",
+      "constraint": "json:string-expected",
+      "repair": {
+        "allowed": false,
+        "reason": "semantic-equivalence-unproven"
+      },
+      "path": [
+        "decision",
+        "steps",
+        0,
+        "result",
+        "response"
+      ],
+      "pathBase": "arguments",
+      "location": {
+        "offset": 1210,
+        "line": 1,
+        "column": 1211
+      }
+    }
+  ],
+  "usage": {
+    "calls": 2,
+    "inputTokens": 41507,
+    "cacheHitTokens": 768,
+    "cacheMissTokens": 40739,
+    "outputTokens": 681,
+    "costCny": "0.0642114",
+    "unknownUsageCalls": 0
+  },
+  "resultCounts": {
+    "formatFailures": 1,
+    "rulesRejections": 0,
+    "identifiedNarrativeContradictions": 0,
+    "correctionCalls": 0,
+    "recoveryAttempts": 0,
+    "modelPlansFormed": 0
+  },
+  "stateChecks": {
+    "stateEqualToInitial": true,
+    "events": 0,
+    "receipts": 0,
+    "plans": 0,
+    "activities": 0,
+    "pendingDue": 0,
+    "replayExact": true,
+    "sourceEndAllEqual": true
+  },
+  "evidenceDirectory": "/tmp/zhuwei-round68-npc-preparation/evidence",
+  "originalCaptures": [
+    {
+      "path": "/tmp/zhuwei-round68-npc-preparation/evidence/round68-private/01.json",
+      "sha256": "73d725a964e3122ab5ce00e8c20e2d5a14a4c64ed3672a130ad99493e49ba541"
+    },
+    {
+      "path": "/tmp/zhuwei-round68-npc-preparation/evidence/round68-private/02.json",
+      "sha256": "6d5c0bf396143375ff30fa4342a221e2e2dc973fc4c4ba8710be127c916494c8"
+    }
+  ],
+  "processes": {
+    "capture": 28707,
+    "game": 28717,
+    "signal": "SIGTERM",
+    "identityChecked": true,
+    "processAndPortsAbsent": true,
+    "detachedExitCode": null
+  },
+  "commandExitCodes": {
+    "freeze": 0,
+    "captureStart": 0,
+    "gameStart": 0,
+    "setup": 0,
+    "action1": 0,
+    "meter": 0,
+    "shutdown": 0,
+    "extract": 0,
+    "replayFirstMistakenStdoutRedirect": 1,
+    "replayAfterPreservingEmptyRedirectFile": 0,
+    "sourceEnd": 0,
+    "originalParserInspection": 0
+  },
+  "diagnosticOnlyFollowup": {
+    "apiCalls": 0,
+    "originalChanged": false,
+    "trailingCommaOffset": 1208,
+    "extraArrayCloserOffset": 1232,
+    "localValidatorAfterPunctuationOnlyCopy": "social:materialized-knowledge-requires-bundle-producer",
+    "localValidatorPath": [
+      "proposals",
+      0,
+      "branches",
+      "success",
+      "response",
+      "basis",
+      1,
+      "definitionRef"
+    ],
+    "repairAllowed": false,
+    "note": "Offline diagnostic copy only; not an accepted proposal, Rules execution, or repair success."
+  }
+}

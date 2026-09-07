@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { authoritativeModuleProfile } from "../app/_runtime/lib/module/authoritative";
@@ -41,9 +42,10 @@ function character(characterId: string, controllerPrincipalId: string, sceneId: 
 }
 
 describe("authoritative room opening delivery", () => {
-  it("publishes and retains the pinned opening only for characters who experienced it", async () => {
-    const roomName = "authoritative-opening-v2-current-slot";
-    const stub = env.ROOMS.getByName(roomName) as unknown as Authority;
+  it.each(["ROOMS", "VNEXT_ROOMS"] as const)("%s persists opening knowledge only for characters who experienced it", async (binding) => {
+    const roomName = `authoritative-opening-${binding}-current-slot`;
+    const durableStub = env[binding].getByName(roomName);
+    const stub = durableStub as unknown as Authority;
     await expect(stub.initializeAuthoritative({
       roomId: roomName,
       moduleId: "black-oak-will",
@@ -78,6 +80,19 @@ describe("authoritative room opening delivery", () => {
     expect(bobFrame.text).toBe(opening);
     expect(aliceFrame.deliveryId).not.toBe(bobFrame.deliveryId);
     expect(carol.delivery).toEqual({ kind: "none" });
+    const knowledge = (observation: Record<string, unknown>) =>
+      record(observation.readModel, "read model").knowledge as Array<Record<string, unknown>>;
+    const aliceKnowledge = knowledge(alice);
+    const bobKnowledge = knowledge(bob);
+    expect(aliceKnowledge).toEqual([expect.objectContaining({
+      objectKind: "sensoryEvidence", layer: "full", visibility: "private",
+      content: expect.objectContaining({ description: opening, sceneId: "wake", moduleRef: moduleProfile.moduleRef }),
+    })]);
+    expect(bobKnowledge).toEqual([expect.objectContaining({ content: aliceKnowledge[0].content })]);
+    expect(knowledge(carol)).toEqual([]);
+    for (const observation of [alice, bob, carol]) {
+      expect(JSON.stringify(knowledge(observation))).not.toContain(moduleProfile.storyBible.coreTruth);
+    }
 
     for (const observation of [alice, bob, carol]) {
       expect(JSON.stringify(observation)).not.toMatch(
@@ -93,6 +108,10 @@ describe("authoritative room opening delivery", () => {
       "Alice after opening ACK",
     );
     expect(afterAck.delivery).toEqual({ kind: "none" });
+    expect(knowledge(afterAck)).toEqual(aliceKnowledge);
+    await evictDurableObject(durableStub);
+    expect(knowledge(record(await stub.observe(ALICE), "Alice restored"))).toEqual(aliceKnowledge);
+    expect(knowledge(record(await stub.observe(CAROL), "Carol restored"))).toEqual([]);
     expect(afterAck.transcript).toEqual([
       expect.objectContaining({
         messageId: deliveryId,

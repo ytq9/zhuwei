@@ -1,0 +1,49 @@
+{
+  "schema": "zhuwei.isolated-file-integration/v1",
+  "sourceDirectory": "/tmp/zhuwei-passive-time-room-work",
+  "targetDirectory": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "files": [
+    {
+      "path": "app/_runtime/lib/room/durable-object.ts",
+      "baselineSha256": "71612be33131b86163babbb94bef74ae820385f9be54f2dbccb684ac6bd0847f",
+      "newSha256": "bfb3f8486a4736eb084fd83b05424c9093456ac0456b4131bcd8e263cce099ad"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/claims.ts",
+      "baselineSha256": "1e8540fcfe3d7a178806ffdd8570a9bef6d9047568dbcee71821a55e2b685eff",
+      "newSha256": "071797c630ed31df0d27a110607091aa31402489f49abb9674852cdd99a4a5b7"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/observer-delta.ts",
+      "baselineSha256": "8061c885a57968c7b619ccc061068800964bf20e0c459f13310b67c31df516d7",
+      "newSha256": "f944ef4e55dbbc197599cda9618de64bb4c1eb0b39e1c64d908db2a13babb1f4"
+    },
+    {
+      "path": "app/_runtime/lib/table/authoritative.ts",
+      "baselineSha256": "922daeeb6eefb3f497b9fcf814552e417c963fc637f7f247b329b8ce4f8c57ff",
+      "newSha256": "1de7ed4aadc46fe513aff31f63503eeab6ed5d5d272fc537dd51fc106f9eba96"
+    },
+    {
+      "path": "app/_runtime/components/play-table.tsx",
+      "baselineSha256": "dd2c29c38c7396e8bcc6004a15a444139ed1cb523edbec95aee3f6cac0a82b43",
+      "newSha256": "5898bf7e8b42969c557ccd9385de9875aa4a100e34a5184141c90e1ede575bb5"
+    },
+    {
+      "path": "tests/kp-vnext-time-passage-room.test.ts",
+      "baselineSha256": null,
+      "newSha256": "b7a9affec5eb6d28ee102c4d473c216eebc6bb6032c88c4dbbd8baf2ca704e46"
+    },
+    {
+      "path": "tests/play-table-time-passage-ui.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "955f7f41e4b46d3689c8582eb90e00aabe75a71f1f0e20c1f7787c579d52c81a"
+    }
+  ],
+  "integration": {
+    "at": "2026-09-06T21:37:13.389310+00:00",
+    "files": 7,
+    "conflicts": 0,
+    "backup": "/tmp/zhuwei-time-passage-room-root-before",
+    "sourceManifestSha256": "cfbe7d65312b4f65e93eea7e7f10f537f5a34ff61007f85fb88f8e06ef11ebae"
+  }
+}

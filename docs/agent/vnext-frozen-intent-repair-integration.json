@@ -1,0 +1,165 @@
+{
+  "scope": "round72 exact frozen intent echo removal",
+  "status": "implemented-and-targeted-validation-passed; awaiting root real API acceptance",
+  "rootCause": "The actual validator rejected an extra decision.intent copy but representation repair could not prove its removal, refusing before the already budgeted third call.",
+  "changes": [
+    "Validator-driven fixed remove in existing representationRepairPlan, only exact three-field frozen input copies at codec-proven decision paths; full proposal proof required.",
+    "Provider first-pass and correction snapshot the server context before await; ticket create/assert/apply and Room third-call admission re-prove from actual frozen context.",
+    "Model still confirms server plan with summaries; no model delete or arbitrary empty correction permission.",
+    "Diagnostics, repair changes, allowedPaths and plan show decision.intent including clarification continuations.",
+    "Parser v37, correction policy v9 and ticket vnext5; runtime workflow and handshake derive parserHash."
+  ],
+  "tests": [
+    {
+      "command": "npx tsx --test tests/kp-vnext-frozen-intent-repair.test.mjs",
+      "phase": "pre-fix red",
+      "exitCode": 1,
+      "evidence": "intent-red.log",
+      "reason": "Expected repairRequired; actual PROPOSAL_FORM_INVALID/terminal.intent."
+    },
+    {
+      "command": "npx tsx --test tests/kp-vnext-frozen-intent-repair.test.mjs tests/kp-vnext-plan-confirmation.test.mjs tests/kp-vnext-representation-repair.test.mjs tests/kp-vnext-numeric-repair.test.mjs",
+      "exitCode": 0,
+      "passed": 36,
+      "evidence": "intent-node-final.log"
+    },
+    {
+      "command": "npx vitest run tests/kp-vnext-ability-operation-room.test.ts",
+      "exitCode": 0,
+      "passed": 6,
+      "evidence": "intent-room.log",
+      "sourceNote": "Before as-const typing fix and exact mapping of a newly revealed continuation diagnostic; existing third-call path already passed."
+    },
+    {
+      "command": "npx vitest run tests/kp-vnext-ability-operation-room.test.ts -t 'exact intent echo'",
+      "exitCode": 0,
+      "passed": 1,
+      "skipped": 5,
+      "evidence": "intent-room-final.log",
+      "sourceNote": "Final exact source targeted recovery check."
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0,
+      "evidence": "intent-typecheck-final.log",
+      "previousFailure": "Only newly introduced tuple index typing error TS7053; fixed by as const."
+    },
+    {
+      "command": "git diff --check -- <8 changed paths>; new-file whitespace check",
+      "exitCode": 0,
+      "evidence": "intent-diff-check.log"
+    }
+  ],
+  "supported": [
+    "abilityOperation",
+    "directSuccess",
+    "check",
+    "clarification continuation (root legal intent retained)",
+    "passTime and knowledgeReview proof without extending execution call budget",
+    "combination with existing fixed representation and presentation repairs"
+  ],
+  "rejected": [
+    "wrong/partial/extra/type-invalid intent copy",
+    "other extra fields",
+    "missing target, DC or outcome",
+    "legitimate narrative intent overwritten by object",
+    "missing trusted frozen context",
+    "forged plan, allowlist, original wire or context",
+    "duplicate members and truncated nested JSON",
+    "model-supplied delete path or mechanical replacement"
+  ],
+  "recoveryEvidence": "Third response durable save then simulated disconnect: 3 calls and 0 mechanics; eviction resumes saved response, total 1 die/1 ResourceSpent/1 HealingResolved; second eviction and duplicate submission leave events and state unchanged; each snapshot replays exact.",
+  "directConsumers": "proposal-correction / provider / Room invocation updated; old context-free numeric, representation and confirmation callers pass; parserHash consumers in runtime-policy and strict-tool handshake derive updated binding without extra files.",
+  "artifacts": [
+    "pre-fix-edit-baseline/manifest.json",
+    "intent-production.diff",
+    "intent-fix.diff",
+    "intent-fix-hashes.json"
+  ],
+  "uncovered": [
+    "No real API call in this subtask; root round73 held batch will assess production-default model recovery/stability.",
+    "No broad regression, new deployment, push or mechanics protocol change."
+  ],
+  "docs": "No docs/TODO/log edited; root to append consolidated log.",
+  "evidenceDirectory": "/tmp/zhuwei-round72-intent-echo-diagnosis",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-repair-plan.ts",
+      "exists": true,
+      "sha256": "ad6589e7277fbe709848dfaca690e27fd7c550e26992dac53d62f36dda949c2d",
+      "afterSha256": "9ca30471612185a074fee8373250511f788523143980adadbd0b953f372c09a4",
+      "bytesBefore": 14422,
+      "bytesAfter": 15893,
+      "changed": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-correction.ts",
+      "exists": true,
+      "sha256": "22a193d135ff9e4eece4dc6a5d6fb9e4a776c0c7078fd520305f6375d838cbb4",
+      "afterSha256": "6d712948199159725f082840fb8f88881c096265c5c2146a1186bd5fd28be4de",
+      "bytesBefore": 14109,
+      "bytesAfter": 15097,
+      "changed": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-diagnostics.ts",
+      "exists": true,
+      "sha256": "1203fe9e8ec1bcd7e1afb9ba146eab8e7ea1d75dcefb3e41e65518343379bd5c",
+      "afterSha256": "ce876c7f070ebcf333dc102962dfc180cbdf5288dcd526b11ef789f70e0ce49e",
+      "bytesBefore": 2455,
+      "bytesAfter": 2466,
+      "changed": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-filling-interface.ts",
+      "exists": true,
+      "sha256": "1bf27b2a215d8629ddccae9beeeba4ba53fa1d18fffbc426f2c47591e8fa4f3f",
+      "afterSha256": "001b7ebbd4f9b8f1d414a666ba0cdcd8249a433c77cc8f8961d3cb49919c2b43",
+      "bytesBefore": 32157,
+      "bytesAfter": 35446,
+      "changed": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-provider.ts",
+      "exists": true,
+      "sha256": "56e1bc8e4293d97c191dda9cb91495ea6ca1b9d0573b1434862f02033bbc0845",
+      "afterSha256": "14ce6e8eb33c39f74d31dab727acd15d53714b0ca71a273c1fa101347fa074e2",
+      "bytesBefore": 42882,
+      "bytesAfter": 43974,
+      "changed": true
+    },
+    {
+      "path": "app/_runtime/lib/room/vnext-proposal-invocation.ts",
+      "exists": true,
+      "sha256": "180fb91253bb91688cc4568aa31f4a84438a6c2409a4b76269ea190acc117194",
+      "afterSha256": "218a8e0cb973a8105029d9ad52eb27ccb1a946723118d5a42aa798401d18238e",
+      "bytesBefore": 6351,
+      "bytesAfter": 6385,
+      "changed": true
+    },
+    {
+      "path": "tests/kp-vnext-ability-operation-room.test.ts",
+      "exists": true,
+      "sha256": "fa9d2f33196c676e1cbbfa49eb6b96dfea219c2a4ca21c8075ebe86a974fa705",
+      "afterSha256": "76091b17e029d372ac09209d4c264bcde9f253e91ea1ddcecaad45af234bba43",
+      "bytesBefore": 21754,
+      "bytesAfter": 24884,
+      "changed": true
+    },
+    {
+      "path": "tests/kp-vnext-frozen-intent-repair.test.mjs",
+      "exists": false,
+      "afterSha256": "e5e8fc83e4070be1b14c58d04fbdf697db391b678db0744234a2f5d20ef350ec",
+      "bytesBefore": 0,
+      "bytesAfter": 14709,
+      "changed": true
+    }
+  ],
+  "rootOriginalAdmission": {
+    "command": "npx tsx /tmp/zhuwei-round72-intent-echo-diagnosis/original-admission.mjs",
+    "exitCode": 0,
+    "evidence": "original-admission.json",
+    "result": "Original live response plus original Room context produces exactly one fixed remove; originalArguments preserved; no API and no Room commit."
+  },
+  "independentReview": "No reproducible blocker in six production file delta; root and an independent read-only reviewer."
+}

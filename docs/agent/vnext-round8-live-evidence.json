@@ -1,0 +1,93 @@
+{
+  "schema": "zhuwei.vnext-schema-retrieval-evidence/v1",
+  "date": "2026-09-06",
+  "branch": "cloudflare",
+  "head": "258caee404e0814405eb497653ee9f00d647b773",
+  "sourceState": "uncommitted development",
+  "productionChanged": false,
+  "bindings": {
+    "workflowHash": "sha256:a5743838e8fe5b5a699a2ed6b0ed30d325e3169df4e01fac49ea7762ac10e7af",
+    "capabilityPolicyHash": "sha256:9ae820a0c9415e8ce0069853f5a36af7fd50c0e7d32e946d09383277ea764656",
+    "offerToolHash": "sha256:d8d08eabdacca24d4f43872a4ba2d0fced4fc7f0de1d3441e254894220d2e27d"
+  },
+  "cost": {
+    "fullSchemaBytes": 47346,
+    "offerSchemaBytes": 21199,
+    "schemaReduction": 0.5522536222700967,
+    "beforeToolBytes": 48770,
+    "currentToolBytes": 25161,
+    "toolReduction": 0.48408857904449454,
+    "fullToolSameContextRequestBytes": 91050,
+    "actualFlatRequestBytes": 67441,
+    "sameContextRequestByteReduction": 0.2592970895112575,
+    "byteComparisonHasNoAdditionalProviderCall": true
+  },
+  "external": {
+    "maximumCalls": 8,
+    "maximumInputTokens": 120000,
+    "maximumOutputTokens": 12000,
+    "calls": 2,
+    "inputTokens": 40483,
+    "outputTokens": 1028,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "gameRoots": 1,
+    "nonCommittingContrasts": 1,
+    "initial": {
+      "inputTokens": 20266,
+      "outputTokens": 446,
+      "requestHash": "sha256:0c606bd77a0e4a9d94d539f33ce0802dc94bed216c56abf7cdc6d68a7cd65686",
+      "responseHash": "sha256:70584b8dbd9eb54ac4ff6be94a316f4ee0170445d841d06ed4c150ebb6a28472",
+      "outcome": "PROPOSAL_FORM_INVALID",
+      "cause": "Provider arguments are malformed JSON at the nested envelope close despite finish_reason=tool_calls.",
+      "committed": false,
+      "narrationInvoked": false
+    },
+    "contrast": {
+      "comparison": "same frozen context and system messages; flat offer envelope versus nested offer envelope",
+      "roomCommit": false,
+      "contextHash": "sha256:bcff0eafaa91b35bb95590a74deca58fef8d5384902f7ddc7651efe277651b62",
+      "sameMessages": true,
+      "inputTokens": 20217,
+      "outputTokens": 582,
+      "durationMs": 4769,
+      "requestHash": "sha256:fd44d05193d1d112268ff2c3135137367c655e6f105cfba95047a480a760f12e",
+      "responseHash": "sha256:a867f95f4c652fd552779c62bd614358855854aeaf5e21be777c0ec77ffc5d10",
+      "parsed": {
+        "kind": "accepted",
+        "bundleHash": "sha256:ba29470aa92f9281fe9f16bf38160949be0aa09dfb1e9a689efc5c2b48d6d0b4"
+      },
+      "budget": {
+        "profileRef": "zhuwei.local-vnext-input-budget/v1",
+        "profileHash": "sha256:8b1da9b3bfb220c32e4dd3e47be086df8ed9be8ff7828c243ae2c0368f9eef73",
+        "counterRef": "conservative-v1",
+        "estimatedInputTokens": 22240,
+        "allowedInputTokens": 58000,
+        "decision": "accepted"
+      },
+      "requestBytes": 67441,
+      "schemaBytes": 21199
+    },
+    "worldUnchanged": {
+      "authoritative": true,
+      "fictionTime": true,
+      "pendingInputs": true,
+      "receipts": true
+    },
+    "stopped": true
+  },
+  "validation": {
+    "node": 41,
+    "room": 8,
+    "typecheckExitCode": 0,
+    "finalRetrievalNode": 4,
+    "finalRetrievalNodeOverlapsNodeTotal": true
+  },
+  "limitations": [
+    "Real flat-envelope response passed local parsing only; no Room commit or Narration in the contrast.",
+    "Real schema-request expansion still needs a bounded live acceptance batch; controlled Room test covers expansion, replay, correction, item creation/acquisition/use.",
+    "Actual input remains above simple 8k/all 16k adoption thresholds; schema reduction below 60% goal.",
+    "Actual RootAction cumulative token/cost/retry hard cap is not implemented; current scope has stage limits, per-request budget, per-call telemetry and external batch accounting.",
+    "Generated summary still includes unsupported container/ground details; narration quality and continuous V01-V03 acceptance remain incomplete."
+  ]
+}

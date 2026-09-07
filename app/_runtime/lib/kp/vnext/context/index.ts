@@ -1,6 +1,11 @@
 import type { RuntimeProfileManifest } from "../../../rules/profiles/types";
+import type { AuthoritativeModuleProfile } from "../../../module/authoritative";
+import { isEnvironmentHazardDefinition } from "../../../rules/v2/environment-hazards";
+import { hazardTriggerRelationRef } from "../../../rules/v2/hazard-lifecycle";
+import { itemEntryUseAbilityId } from "../../../rules/v2/items";
 import {
   authorityRevisionOrHash,
+  authorityEquippedItemWeaponAbilityRefs,
   type AuthoritativeWorldState,
   type KpSpatialReadModel,
 } from "../../../rules/authority-read";
@@ -27,7 +32,7 @@ import {
   resolvePrecedentApplicability,
   type PrecedentApplicabilityQuery,
 } from "./precedent-applicability";
-import { authorityCompositeRecord, indexableRecord } from "./authority-records";
+import { authorityCompositeRecord, indexableRecord, indexedSpatialRefVisibleTo } from "./authority-records";
 import { discoverCandidates, type DiscoveredCandidate } from "./candidate-discovery";
 import {
   citationClass,
@@ -45,6 +50,9 @@ import {
   type ObligationSeed,
 } from "./obligation-closure";
 import { buildReferenceIndex, type ReferenceNode } from "./reference-index";
+import { deriveRuntimeContextRequirements } from "./runtime-requirements";
+import { narrativeContextRequirements } from "./narrative-continuity";
+import { freezeNpcDecisionEntry } from "./npc-decision";
 import {
   createContextWorkBudget,
   VNEXT_CONTEXT_WORK_BUDGET,
@@ -104,12 +112,16 @@ export type AdjudicationContextInput = Readonly<{
   state: AuthoritativeWorldState;
   profiles: RuntimeProfileManifest;
   kpProjection: KpSpatialReadModel;
+  npcProjections?: Readonly<Record<string, unknown>>;
   replayHead: Readonly<{ eventSeq: string; stateHash: string }>;
   preparedActionId: string;
   rootActionId: string;
   submissionRef: string;
   actorCharacterId: string;
   intentText: string;
+  /** Registered module snapshot supplied by the Room prepare path. Its full
+   * content hash and Room binding are checked before deriving permissions. */
+  moduleProfile?: AuthoritativeModuleProfile;
   /** Refs the player addressed through UI or map focus. */
   focusRefs?: readonly string[];
   /** Explicit questions about what a scope does or does not contain. Absence
@@ -163,6 +175,20 @@ export function freezeAdjudicationContext(
     return blocked("preparationLimit", ["referenceIndex:work-budget-exhausted"], budget);
   }
   const index = indexed.index;
+  // A generic request can refer to people already in view without naming them.
+  // Freeze their exact records using the same visibility/spatial predicate as
+  // Rules. This membership read is bounded and does not select action targets
+  // or expand each bystander's knowledge, relations or decision context.
+  const observableSubjects: ObligationSeed[] = [];
+  for (const ref of index.refsByScene.get(sceneRef) ?? []) {
+    if (!budget.charge("postingVisits", 1)) {
+      return blocked("preparationLimit", ["observableSubjects:work-budget-exhausted"], budget);
+    }
+    const node = index.nodes.get(ref);
+    if (node?.kind === "entity" && indexedSpatialRefVisibleTo(input.state, node, sceneRef, input.actorCharacterId)) {
+      observableSubjects.push({ ref, obligation: "observableSubject" });
+    }
+  }
 
   const precedent = input.precedentApplicability === undefined
     ? undefined
@@ -186,7 +212,7 @@ export function freezeAdjudicationContext(
   const discovered = discoverCandidates({
     state: input.state,
     index,
-    subject: { kind: "kp", sceneRef },
+    subject: { kind: "kp", sceneRef, actorCharacterRef: input.actorCharacterId },
     focusRefs: input.focusRefs ?? [],
     intentText: input.intentText,
     profile: retrieval,
@@ -196,18 +222,59 @@ export function freezeAdjudicationContext(
     return blocked("preparationLimit", ["candidateDiscovery:work-budget-exhausted"], budget);
   }
 
+  const narrative = narrativeContextRequirements({
+    state: input.state, index, actorRef: input.actorCharacterId, sceneRef,
+    intentText: input.intentText, focusRefs: input.focusRefs ?? [], discovery: discovered, budget,
+  });
+  if (narrative.kind === "blocked") return blocked(narrative.reason, [narrative.issue], budget);
+
+  const runtimeResult = input.moduleProfile === undefined ? undefined : deriveRuntimeContextRequirements({
+    state: input.state,
+    moduleProfile: input.moduleProfile,
+    actorCharacterId: input.actorCharacterId,
+    candidates: discovered.candidates,
+    index,
+    budget,
+  });
+  if (runtimeResult?.kind === "blocked") {
+    return blocked(runtimeResult.reason, [runtimeResult.issue], budget);
+  }
+  const runtime = runtimeResult?.requirements;
+  const runtimePrecedents = (runtime?.precedentQueries ?? []).map((query) => resolvePrecedentApplicability({
+    collection: runtime!.precedentCollection,
+    collectionComplete: true,
+    query,
+    collectionRef: "continuity:adjudicationPrecedents",
+  }));
+  for (const result of runtimePrecedents) {
+    if (result.kind === "integrityConflict") return blocked("integrityConflict", [result.issue], budget);
+    if (result.kind === "unresolved") return blocked("criticalUnavailable", result.issues, budget);
+  }
+  const selectedPrecedentRefs = runtimePrecedents.flatMap((result) =>
+    result.kind === "integrityConflict" || result.kind === "unresolved" ? [] : precedentRefs(result));
+  const requirements = [...(input.availabilityRequirements ?? []), ...(runtime?.availabilityRequirements ?? [])];
+  const authorizations = [...(input.openBlankAuthorizations ?? []), ...(runtime?.openBlankAuthorizations ?? [])];
+  const runtimeSeeds = runtime?.seeds ?? [];
+  // Missing decisive bases must survive seed admission and fail closed. The
+  // ordinary optional continuity seeds may legitimately be absent in fixtures.
+  const missingRuntimeBasis = runtimeSeeds.filter(({ ref }) => !index.nodes.has(ref));
+  if (missingRuntimeBasis.length > 0) {
+    return blocked("criticalUnavailable", ["availability:authority-basis-unavailable"], budget);
+  }
+
   const closed = closeObligations({
     index,
-    seeds: seeds(input, sceneRef, discovered.candidates, precedentRefs(precedent))
+    seeds: [...seeds(input, sceneRef, discovered.candidates,
+      [...precedentRefs(precedent), ...selectedPrecedentRefs]), ...runtimeSeeds, ...narrative.seeds, ...observableSubjects]
       .filter(({ ref }) => index.nodes.has(ref)),
     budget,
-    // A declared ref that authority cannot address is not a missing record: it
-    // names something resolved inside another record, such as a tactical
-    // obstacle carried by its scene's geometry. Reporting it as unreadable
-    // would block on a gap that does not exist.
+    // Ability refs and hazard dependencies address independent frozen records:
+    // missing ones must remain critical gaps. Other schemas may also name
+    // embedded resources or tactical obstacles carried by their parent body.
     dependencies: (ref, obligation, node) =>
       declaredDependencies(input.state, index, sceneRef, obligation, node, budget)
-        .filter((seed) => index.nodes.has(seed.ref)),
+        .filter((seed) => index.nodes.has(seed.ref)
+          || seed.obligation === "ability" || node?.kind === "campaignDefinition"),
   });
   if (closed.kind !== "closed") {
     return blocked("preparationLimit", ["obligationClosure:work-budget-exhausted"], budget);
@@ -224,7 +291,12 @@ export function freezeAdjudicationContext(
     const node = index.nodes.get(closedRef.ref);
     const read = node === undefined
       ? undefined
-      : rereadEntry(input.state, node, closedRef, decisive, caps.maxEntryRereadBytes, budget);
+      : rereadEntry(input.state, node, closedRef, decisive, caps.maxEntryRereadBytes, budget,
+          node.ref === runtime?.profileContext.entryRef ? runtime.profileContext.value
+            // Bind the complete collection's version while carrying only the
+            // scope-selected records, whose full bodies are independently read.
+            : runtime !== undefined && node.ref === "continuity:adjudicationPrecedents"
+              ? { selectedRefs: selectedPrecedentRefs, scopeRef: sceneRef } : undefined);
     if (read === "preparationLimit") {
       return blocked("preparationLimit", ["authorityReread:work-budget-exhausted"], budget);
     }
@@ -262,12 +334,12 @@ export function freezeAdjudicationContext(
   const loadedRefs = new Set(entries.flatMap((entry) =>
     entry.kind === "known" ? [entry.entryRef] : []));
   const unresolvedRequirements: string[] = [];
-  for (const requirement of input.availabilityRequirements ?? []) {
+  for (const requirement of requirements) {
     const outcome = resolveAvailability({
       state: input.state,
       index,
       requirement,
-      authorizations: input.openBlankAuthorizations ?? [],
+      authorizations,
       loadedRefs,
       frontierExhausted: discovered.droppedCandidateCount === 0,
     });
@@ -280,15 +352,64 @@ export function freezeAdjudicationContext(
     // technical failure that did not happen.
     if (outcome.kind === "unresolved") {
       unresolvedRequirements.push(`${requirement.entryRef}:${outcome.reason}`);
+      if (runtime !== undefined) {
+        return blocked("criticalUnavailable", ["availability:decisive-role-unresolved"], budget);
+      }
     }
   }
   if (precedent?.kind === "knownAbsent") entries.push(precedent.entry);
+  for (const result of runtimePrecedents) if (result.kind === "knownAbsent") entries.push(result.entry);
+  if (runtime?.noPrecedents !== undefined) entries.push(runtime.noPrecedents);
+  if (runtime?.scopePermission !== undefined) {
+    if (discovered.droppedCandidateCount > 0 || discovered.truncatedPaths.length > 0
+      || discovered.droppedGenericTerms.length > 0) {
+      // This optional permission is withheld, not turned into world absence.
+      // Existing fully read targets remain actionable; materialization cannot
+      // rely on this entry because it is not an openBlank authorization.
+      entries.push({ kind: "unavailable", entryRef: runtime.scopePermission.entryRef,
+        reason: "truncated", critical: false });
+    } else {
+      if (runtime.scopePermission.basisRefs.some((ref) => !loadedRefs.has(ref))) {
+        return blocked("criticalUnavailable", ["availability:scope-constraints-incomplete"], budget);
+      }
+      entries.push(runtime.scopePermission);
+    }
+  }
 
+  const npcDecisionRefs = new Set(closed.refs.filter(entry =>
+    entry.obligations.some(obligation => obligation !== "observableSubject")).map(entry => entry.ref));
+  for (const npcRef of [...new Set(entries.flatMap(entry => entry.kind === "known"
+    && npcDecisionRefs.has(entry.entryRef)
+    && input.state.entities[entry.entryRef]?.kind === "npc" ? [entry.entryRef] : []))]) {
+    const projection = input.npcProjections?.[npcRef];
+    if (projection !== undefined) {
+      let projectionBytes = 0;
+      try { projectionBytes = canonicalUnits(projection) * 4; } catch { /* The freezer records invalidProjection. */ }
+      // Same-source projection checks scan the indexed authority again. Pay
+      // for that work and its input before recomputing or cloning the view.
+      if (!budget.charge("scannedRecords", index.nodes.size)
+        || !budget.charge("authorityRereadBytes", projectionBytes)
+        || !budget.charge("canonicalizeBytes", projectionBytes)) {
+        return blocked("preparationLimit", ["npcDecision:work-budget-exhausted"], budget);
+      }
+    }
+    const decision = freezeNpcDecisionEntry(input.state, input.profiles, npcRef, projection, entries);
+    const bytes = canonicalUnits(decision) * 4;
+    if (!budget.charge("authorityRereadBytes", bytes) || !budget.charge("canonicalizeBytes", bytes)) {
+      return blocked("preparationLimit", ["npcDecision:work-budget-exhausted"], budget);
+    }
+    entries.push(bytes > budget.profile.caps.maxEntryRereadBytes
+      ? { kind: "unavailable", entryRef: decision.entryRef, reason: "truncated", critical: false } : decision);
+    citations.set(decision.entryRef, "nonCitable");
+  }
   const built = buildRequiredContext({
     intent: {
       submissionRef: input.submissionRef,
       actorRef: input.actorCharacterId,
       text: input.intentText,
+      ...(narrative.materializationRefs.length === 0 ? {} : {
+        narrativeMaterializationRefs: narrative.materializationRefs,
+      }),
     },
     entries,
     references: referenceDirectory(input.state, input.actorCharacterId, citations, domains),
@@ -401,31 +522,40 @@ function declaredDependencies(
   node: ReferenceNode | undefined,
   budget: ContextWorkBudget,
 ): readonly ObligationSeed[] {
-  if (node === undefined) return [];
+  if (node === undefined || obligation === "observableSubject") return [];
   if (!budget.charge("postingVisits", 1)) return [];
 
-  // What a character can do, carries and knows is bounded by that character.
-  // The replaced collector reached the same material by sweeping every entity
-  // in the scene; here it arrives only for characters the action actually
-  // turns on, and each character's knowledge stays its own slice.
-  if (node.kind === "entity" && (obligation === "actor" || obligation === "target")) {
+  // The actor body already freezes its complete attributes, defense, active
+  // effects, resources and possession references. Possession does not make an
+  // item this action's instrument, nor does knowing an active ability mean it
+  // was selected. Those complete definitions enter through addressed targets,
+  // registered capability discovery and typed causal dependencies instead.
+  // Reactions are different: their possible response can matter without the
+  // player naming them, so retain their complete mechanics by activation type.
+  if (node.kind === "entity" && (obligation === "actor" || obligation === "target" || obligation === "relation")) {
     const combatEntity = state.combatRuntime.entities[node.ref];
-    const abilityRefs = obligation === "actor"
-      && isPlainRecord(combatEntity)
+    const abilityRefs = isPlainRecord(combatEntity)
       && Array.isArray(combatEntity.abilityRefs)
       ? combatEntity.abilityRefs
       : [];
     return [
-      ...abilityRefs.flatMap((abilityRef) => typeof abilityRef === "string"
-        ? [{ ref: abilityRef, obligation: "ability" as ContextObligation }]
-        : []),
-      ...(index.itemEntriesByHolder.get(node.ref) ?? []).map((entryRef) => ({
-        ref: entryRef,
-        obligation: "instrument" as ContextObligation,
-      })),
-      ...(index.knowledgeByHolder.get(node.ref) ?? []).map((knowledgeRef) => ({
+      ...(obligation === "actor" ? [
+        { ref: `knowledge-catalog:${node.ref}`, obligation: "actor" as ContextObligation },
+        { ref: `ability-catalog:${node.ref}`, obligation: "actor" as ContextObligation },
+        { ref: `character-timeline:${node.ref}`, obligation: "actor" as ContextObligation },
+        ...(isPlainRecord(combatEntity?.concentration) && combatEntity.concentration.kind === "longSpellcasting"
+          && typeof combatEntity.concentration.activityId === "string"
+          ? [{ ref: `continuity:activities:${combatEntity.concentration.activityId}`, obligation: "actor" as ContextObligation }] : []),
+      ] : []),
+      ...abilityRefs.flatMap((abilityRef) => {
+        const definition = typeof abilityRef === "string" ? state.combatRuntime.definitions[abilityRef] : undefined;
+        const activation = isPlainRecord(definition?.activation) ? definition.activation.kind : undefined;
+        return typeof abilityRef === "string" && (activation === "reaction" || activation === "reactionSpell")
+          ? [{ ref: abilityRef, obligation: "reaction" as ContextObligation }] : [];
+      }),
+      ...(obligation === "relation" ? [] : index.knowledgeByHolder.get(node.ref) ?? []).map((knowledgeRef) => ({
         ref: knowledgeRef,
-        obligation: "fact" as ContextObligation,
+        obligation: (obligation === "actor" ? "actor" : "fact") as ContextObligation,
       })),
     ];
   }
@@ -433,14 +563,57 @@ function declaredDependencies(
   // Naming a kind of thing is not naming one of them. A definition the player
   // referred to resolves to the instances actually standing in this scene, and
   // to no others; which one they meant stays the KP's to decide.
-  if (node.kind === "itemDefinition" && (obligation === "target" || obligation === "instrument")) {
-    return (index.itemEntriesByDefinition.get(node.ref) ?? [])
-      .filter((entryRef) => index.nodes.get(entryRef)?.sceneRef === sceneRef)
-      .map((entryRef) => ({ ref: entryRef, obligation: "instrument" as ContextObligation }));
+  if (node.kind === "itemDefinition") {
+    const definition = state.campaignRuntime.itemSystem.definitions[node.ref];
+    const use = definition?.content.use;
+    const abilityRefs = [
+      ...(definition?.content.equippedAbilityRefs ?? []),
+      ...(use === null || use === undefined ? [] : [use.abilityRef]),
+    ];
+    return [
+      ...abilityRefs.map((ref) => ({ ref, obligation: "ability" as ContextObligation })),
+      ...(obligation === "target" || obligation === "instrument"
+        ? (index.itemEntriesByDefinition.get(node.ref) ?? [])
+          .filter((entryRef) => index.nodes.get(entryRef)?.sceneRef === sceneRef)
+          .map((ref) => ({ ref, obligation: "instrument" as ContextObligation }))
+        : []),
+    ];
+  }
+
+  if (node.kind === "itemAssembly") {
+    const assembly = state.campaignRuntime.itemSystem.assemblies?.[node.ref];
+    return assembly?.state !== "active" ? [] : [
+      { ref: assembly.sceneRef, obligation: "scene" as ContextObligation },
+      ...assembly.components.map(component => ({ ref: component.entryRef, obligation: "instrument" as ContextObligation })),
+    ];
+  }
+  if (node.kind === "itemEntry") {
+    const entry = state.campaignRuntime.itemSystem.entries[node.ref];
+    const definition = entry === undefined
+      ? undefined : state.campaignRuntime.itemSystem.definitions[entry.definitionRef];
+    const use = definition?.content.use;
+    // The source describes the item; the executable per-entry Ability also
+    // freezes which exact instance pays its costs. Read both when available.
+    return [
+      ...(entry?.assemblyRef === undefined ? [] : [{ ref: entry.assemblyRef, obligation: "relation" as ContextObligation }]),
+      ...authorityEquippedItemWeaponAbilityRefs(state, node.ref, count => budget.charge("postingVisits", count))
+        .map(ref => ({ ref, obligation: "ability" as ContextObligation })),
+      ...(use === null || use === undefined || entry === undefined ? []
+        : [{ ref: itemEntryUseAbilityId(use.abilityRef, entry.entryId), obligation: "ability" as ContextObligation }]),
+    ];
   }
 
   const record = indexableRecord(state, node);
   if (!isPlainRecord(record)) return [];
+
+  if (node.kind === "campaignDefinition" && isEnvironmentHazardDefinition(record)) {
+    const content = record.content as { mechanicsRef: string; trigger: { ref: string } };
+    return [
+      { ref: content.mechanicsRef, obligation: "ability" },
+      { ref: content.trigger.ref, obligation: "relation" },
+      { ref: hazardTriggerRelationRef(node.ref), obligation: "relation" },
+    ];
+  }
 
   // An NPC's semantics and the entity acting them out are one subject. Reaching
   // the definition without the character would let the KP revise a disposition
@@ -487,8 +660,9 @@ function rereadEntry(
   decisive: boolean,
   maxEntryRereadBytes: number,
   budget: ContextWorkBudget,
+  projectedValue?: JsonValue,
 ): RereadOutcome {
-  const value = authorityCompositeRecord(state, node);
+  const value = projectedValue ?? authorityCompositeRecord(state, node);
   const revisionOrHash = authorityRevisionOrHash(state, node.ref);
   if (value === undefined || revisionOrHash === null) return undefined;
 
@@ -552,12 +726,12 @@ function referenceDirectory(
         .sort((left, right) => right.length - left.length)[0];
       return holderRef === undefined || state.entities[holderRef]?.kind !== "npc"
         ? []
-        : [{ npcRef: holderRef, knowledgeRef: ref.slice(`knowledge:${holderRef}:`.length) }];
+        : [{ npcRef: holderRef, entryRef: ref }];
     })
     .reduce<{ npcRef: string; refs: string[] }[]>((accumulated, entry) => {
       const existing = accumulated.find(({ npcRef }) => npcRef === entry.npcRef);
-      if (existing === undefined) accumulated.push({ npcRef: entry.npcRef, refs: [entry.knowledgeRef] });
-      else existing.refs.push(entry.knowledgeRef);
+      if (existing === undefined) accumulated.push({ npcRef: entry.npcRef, refs: [entry.entryRef] });
+      else existing.refs.push(entry.entryRef);
       return accumulated;
     }, [])
     .map(({ npcRef, refs }) => ({ npcRef, refs: [...refs].sort(compareCodeUnits) }))

@@ -1,0 +1,60 @@
+{
+  "round": 55,
+  "kind": "locallyAccepted",
+  "calls": 1,
+  "modelReported": "deepseek-v4-flash",
+  "usage": {
+    "prompt_tokens": 4534,
+    "completion_tokens": 60,
+    "total_tokens": 4594,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 4534
+  },
+  "responseCreated": 1788720639,
+  "parser": "v25",
+  "parserHash": "sha256:a00257a3d6c66c047623158536eb9a43c011b237fe5d71f05cc2f793c8aa7fde",
+  "originalArgumentsSha256": "affe36de6b7e49c266b8caaf09c291f288302b4a02df1d93e4ce95442eab5796",
+  "originalPreserved": true,
+  "allowedSemanticChanges": 0,
+  "exactDraftPreserved": true,
+  "fullProposalValid": true,
+  "correctionArguments": "{\"confirm\": \"server-plan\", \"summaries\": []}",
+  "worldCommits": 0,
+  "rulesExecution": "not-run",
+  "scope": "real correction of archived actual model response; not a new normal Room playthrough",
+  "diagnostics": [],
+  "endedAt": "2026-09-06T18:50:39.911Z",
+  "createdAsiaShanghai": "2026-09-07T02:50:39+08:00",
+  "pricePeriod": "offPeak",
+  "costCnyFromUsage": "0.007071",
+  "costNote": "Usage estimate; not account billing. Official price artifact verified in round54; completion includes reasoning once.",
+  "evidence": [
+    {
+      "path": "/tmp/zhuwei-round55-private/plan.json",
+      "sha256": "3537cc5c502d679292696ef93c346da94b97671fc85e933f1581a9d719fa2d24"
+    },
+    {
+      "path": "/tmp/zhuwei-round55-private/report.json",
+      "sha256": "892a6334e60804ee2d43f3d04a4c05e54ea936a981cb1e9ba264a41548e97e9a"
+    },
+    {
+      "path": "/tmp/zhuwei-round55-private/request.json",
+      "sha256": "993e705f63c6f1cdbc3f6de792fcc309c7c77ac916977a1b455c207f3f1a5db4"
+    },
+    {
+      "path": "/tmp/zhuwei-round55-private/response.json",
+      "sha256": "8b4affcff967c3cb27144df02f17a6108959a9cf0d51258ee5739fd35aa65672"
+    },
+    {
+      "path": "/tmp/zhuwei-round55-private/result.json",
+      "sha256": "e17709478f792cf92c33af5e22c3140a3fca07c717b3d9cd3cabbdb8d4c7ee1a"
+    },
+    {
+      "path": "/tmp/zhuwei-round55-private/ticket.json",
+      "sha256": "9c01f89f65e86f86653a6c0e8390339ab4dc0f535fd0eccf2283315644f2fd8a"
+    }
+  ]
+}

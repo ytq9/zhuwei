@@ -6,6 +6,11 @@ import {
   type RuntimeProfileManifest,
 } from "../rules";
 
+// The Room supplies the same registered replay capability that owns its live
+// state. Callers without an explicit runtime retain the production registry;
+// an unknown manifest never triggers a fallback to another interpreter.
+type ArchiveReplay = typeof replay;
+
 export type RoomServiceCapabilityPurpose =
   | "archiveExport"
   | "disasterRecovery"
@@ -230,8 +235,8 @@ export async function buildAuthoritativeArchive(input: {
   events: EventEnvelope[];
   receiptRefs: ArchiveReceiptReference[];
   projectionAudits: ArchiveProjectionAudit[];
-}): Promise<AuthoritativeRoomArchive> {
-  const replayed = replay(input.signedGenesis, input.events);
+}, replayArchive: ArchiveReplay = replay): Promise<AuthoritativeRoomArchive> {
+  const replayed = replayArchive(input.signedGenesis, input.events);
   if (replayed.kind !== "replayed" || !isRecord(replayed.state)) {
     throw new Error("Cannot export an archive that fails authoritative replay.");
   }
@@ -276,7 +281,10 @@ function sameProfiles(left: unknown, right: unknown): boolean {
   }
 }
 
-export async function validateAuthoritativeArchive(value: unknown): Promise<ArchiveValidation> {
+export async function validateAuthoritativeArchive(
+  value: unknown,
+  replayArchive: ArchiveReplay = replay,
+): Promise<ArchiveValidation> {
   if (
     !isRecord(value)
     || !hasExactKeys(value, [
@@ -349,7 +357,7 @@ export async function validateAuthoritativeArchive(value: unknown): Promise<Arch
     return { ok: false, code: "archiveIntegrityMismatch" };
   }
 
-  const genesisReplay = replay(value.signedGenesis, []);
+  const genesisReplay = replayArchive(value.signedGenesis, []);
   if (genesisReplay.kind !== "replayed") {
     return {
       ok: false,
@@ -417,7 +425,7 @@ export async function validateAuthoritativeArchive(value: unknown): Promise<Arch
     return { ok: false, code: "archiveIntegrityMismatch" };
   }
 
-  const replayed = replay(value.signedGenesis, value.events);
+  const replayed = replayArchive(value.signedGenesis, value.events);
   if (replayed.kind !== "replayed" || !isRecord(replayed.state)) {
     return {
       ok: false,
@@ -667,6 +675,7 @@ async function assertCheckpointIsSafe(
   db: D1Database,
   probe: AuthoritativeArchiveCursorProbe,
   archive: AuthoritativeRoomArchive,
+  replayArchive: ArchiveReplay,
 ): Promise<void> {
   const checkpointFields = [
     probe.checkpoint_genesis_hash,
@@ -702,7 +711,7 @@ async function assertCheckpointIsSafe(
     throw new AuthoritativeArchiveCursorMismatchError();
   }
   if (checkpointSeq === "0") {
-    const genesisReplay = replay(archive.signedGenesis, []);
+    const genesisReplay = replayArchive(archive.signedGenesis, []);
     if (genesisReplay.kind !== "replayed"
       || genesisReplay.head.eventSeq !== "0"
       || genesisReplay.head.eventHash !== probe.checkpoint_event_hash
@@ -739,7 +748,7 @@ async function assertCheckpointIsSafe(
     } catch {
       throw new AuthoritativeArchiveCursorMismatchError();
     }
-    const checkpointReplay = replay(archive.signedGenesis, checkpointEvents);
+    const checkpointReplay = replayArchive(archive.signedGenesis, checkpointEvents);
     if (checkpointReplay.kind !== "replayed"
       || checkpointReplay.head.eventSeq !== checkpointSeq
       || checkpointReplay.head.eventHash !== probe.checkpoint_event_hash
@@ -843,6 +852,7 @@ async function assertArchiveHeadEventsMaterializedInD1(
   db: D1Database,
   archive: AuthoritativeRoomArchive,
   pending: PendingArchiveWrite[],
+  replayArchive: ArchiveReplay,
 ): Promise<void> {
   const pendingGenesis = pending.some((entry) => entry.kind === "genesis");
   const genesisRow = await db.prepare(`/* authoritative_archive_head_genesis */
@@ -913,7 +923,7 @@ async function assertArchiveHeadEventsMaterializedInD1(
   if (persisted.size !== 0) {
     throw new AuthoritativeArchiveCursorMismatchError();
   }
-  const headReplay = replay(archive.signedGenesis, archive.events);
+  const headReplay = replayArchive(archive.signedGenesis, archive.events);
   if (headReplay.kind !== "replayed"
     || headReplay.head.eventSeq !== archive.head.eventSeq
     || headReplay.head.eventHash !== archive.head.eventHash
@@ -927,11 +937,12 @@ export async function appendAuthoritativeArchiveToD1(
   db: D1Database,
   archive: AuthoritativeRoomArchive,
   persistedProgress?: AuthoritativeArchiveProgress,
+  replayArchive: ArchiveReplay = replay,
 ): Promise<AuthoritativeArchiveAppendResult> {
   const genesis = archive.signedGenesis;
   const progress = normalizeArchiveProgress(archive, persistedProgress);
   const probe = await assertArchiveProgressMaterializedInD1(db, archive, progress);
-  await assertCheckpointIsSafe(db, probe, archive);
+  await assertCheckpointIsSafe(db, probe, archive, replayArchive);
   const checkpointMatches = checkpointMatchesArchive(probe, archive);
   const pending: PendingArchiveWrite[] = [];
 
@@ -1046,7 +1057,7 @@ export async function appendAuthoritativeArchiveToD1(
   const page = pending.slice(0, archiveWriteLimit);
   const archiveWritesComplete = page.length === pending.length;
   if (needsCheckpoint && archiveWritesComplete) {
-    await assertArchiveHeadEventsMaterializedInD1(db, archive, page);
+    await assertArchiveHeadEventsMaterializedInD1(db, archive, page, replayArchive);
     await assertArchiveHeadAuditsMaterializedInD1(db, archive, page);
     page.push({
       kind: "checkpoint",
@@ -1130,6 +1141,7 @@ function parseArchiveJson<T>(value: unknown): T {
 export async function readAuthoritativeArchiveFromD1(
   db: D1Database,
   locator: unknown,
+  replayArchive: ArchiveReplay = replay,
 ): Promise<AuthoritativeRoomArchive> {
   if (!exactArchiveLocator(locator)) {
     throw new AuthoritativeArchiveD1ReadError("The D1 archive locator is not exact.");
@@ -1206,7 +1218,7 @@ export async function readAuthoritativeArchiveFromD1(
       events,
       receiptRefs: [],
       projectionAudits,
-    });
+    }, replayArchive);
   } catch {
     throw new AuthoritativeArchiveD1ReadError("The D1 archive prefix failed authoritative replay.");
   }
@@ -1219,7 +1231,7 @@ export async function readAuthoritativeArchiveFromD1(
   ) {
     throw new AuthoritativeArchiveD1ReadError("The D1 checkpoint does not match its settled archive prefix.");
   }
-  const validation = await validateAuthoritativeArchive(archive);
+  const validation = await validateAuthoritativeArchive(archive, replayArchive);
   if (!validation.ok) {
     throw new AuthoritativeArchiveD1ReadError("The D1 archive failed closed validation.");
   }

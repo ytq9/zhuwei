@@ -32,7 +32,7 @@ import type {
   StepResult,
 } from "./model";
 import { rejected } from "./results";
-import { resolveCombatDamage } from "./damage";
+import { resolveCombatDamage, resolveCreatureDamage } from "./damage";
 import { savingThrowModifier, type ProficiencyAbility } from "./proficiency";
 import {
   hasExactKeys,
@@ -217,7 +217,7 @@ export function resolveEnvironmentAreaTarget(
   const damageBeforeMitigation = saveSucceeded
     ? areaEffect.save.halfOnSuccess ? Math.floor(rolledDamage / 2) : 0
     : rolledDamage;
-  const resolution = resolveCombatDamage(
+  const resolution = resolveCreatureDamage(
     target,
     [{ type: areaEffect.damage.type, rolled: damageBeforeMitigation }],
   );
@@ -225,33 +225,7 @@ export function resolveEnvironmentAreaTarget(
   if (!isRecord(target.hitPoints) || !isRecord(targetPatch.hitPoints)) {
     throw new TypeError("environment area target lacks hit points");
   }
-  const beforeCurrent = Number(target.hitPoints.current);
-  const temporaryBefore = Number(target.hitPoints.temporary ?? 0);
-  const hitPointDamage = Math.max(0, resolution.totalApplied - temporaryBefore);
-  const afterCurrent = Number(targetPatch.hitPoints.current);
-  let died = false;
-  if (afterCurrent === 0) {
-    const conditions = { ...(isRecord(targetPatch.conditions) ? targetPatch.conditions : {}) };
-    delete conditions.stable;
-    targetPatch.conditions = { ...conditions, unconscious: true, prone: true };
-    const maximum = Number(targetPatch.hitPoints.maximum);
-    const massiveDamage = beforeCurrent > 0 && hitPointDamage - beforeCurrent >= maximum;
-    if (targetPatch.deathPolicy === "deadAtZero" || massiveDamage) {
-      targetPatch.lifeState = "dead";
-      died = true;
-    } else if (beforeCurrent === 0 && hitPointDamage > 0) {
-      const saves = isRecord(targetPatch.deathSaves)
-        ? targetPatch.deathSaves
-        : { successes: 0, failures: 0 };
-      saves.failures = Number(saves.failures ?? 0) + 1;
-      targetPatch.deathSaves = saves;
-      if (Number(saves.failures) >= 3) {
-        targetPatch.lifeState = "dead";
-        died = true;
-      }
-    }
-    if (!died) targetPatch.lifeState = "unconscious";
-  }
+  const died = resolution.died;
   const statusApplied = !saveSucceeded
     && areaEffect.failureStatus === "prone"
     && !died

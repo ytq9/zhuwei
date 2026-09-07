@@ -96,6 +96,7 @@ function worldState(overrides = {}) {
       ...(overrides.campaignRuntime ?? {}),
     },
     combatRuntime: {
+      scenes: {},
       definitions: { "ability:pistol-shot": { abilityId: "ability:pistol-shot" } },
     },
   };

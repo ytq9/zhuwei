@@ -1,0 +1,70 @@
+{
+  "batch": "round29",
+  "status": "failed-stopped",
+  "budget": {
+    "batch": "round29",
+    "maximumActions": 2,
+    "maximumCalls": 10,
+    "maximumInputTokens": 580000,
+    "maximumOutputTokens": 81920,
+    "maximumDurationMs": 600000,
+    "callsReservedPerAction": 5,
+    "firstFailureStopsBatch": true,
+    "maximumCostCnyAtPeak": 2.5,
+    "scope": "Current structured diagnostics and NPC social response via normal authenticated HTTP, then a context-dependent follow-up; no thinking contrast",
+    "officialPriceUrl": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "priceCnyPerMillion": {
+      "offPeak": {
+        "cachedInput": 0.05,
+        "uncachedInput": 1.5,
+        "output": 4.5
+      },
+      "peak": {
+        "cachedInput": 0.1,
+        "uncachedInput": 3.0,
+        "output": 9.0
+      }
+    }
+  },
+  "sourceManifestSha256": "b0236e36cd76ae479805407d3738101fd7fdc843281e106fe494c3817c2a80e4",
+  "sourceFilesUnchangedDuringBatch": 301,
+  "actualCalls": 1,
+  "captures": 1,
+  "usage": {
+    "prompt_tokens": 31358,
+    "completion_tokens": 1534,
+    "total_tokens": 32892,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 31358
+  },
+  "costCny": 0.05394,
+  "officialPricePageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+  "requestMatchesCurrentAtInvocation": true,
+  "parserAtInvocation": "accepted",
+  "loweringAtInvocation": "accepted",
+  "rulesRejection": {
+    "code": "privateOrUnknownReference",
+    "message": "social:materialized-knowledge-unavailable"
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsChecked": 0,
+    "frozenContextsConform": null,
+    "authorityUnchangedFromGenesis": true,
+    "resourcesAndTimeUnchanged": true,
+    "eventCount": 0,
+    "eventTypes": [],
+    "receiptCount": 0,
+    "newEvidenceCount": 0,
+    "randomnessAbsent": true,
+    "claimsNote": "No committed Claims to validate."
+  },
+  "followUpPerformed": false,
+  "duplicatePerformed": false,
+  "servicesStopped": true,
+  "afterFix": "Original unmodified response is rejected earlier with precise source-kind diagnostics; not submitted, no new model call."
+}

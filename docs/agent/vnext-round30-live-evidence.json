@@ -1,0 +1,87 @@
+{
+  "batch": "round30",
+  "status": "failed-stopped",
+  "budget": {
+    "batch": "round30",
+    "maximumActions": 2,
+    "maximumCalls": 10,
+    "maximumInputTokens": 580000,
+    "maximumOutputTokens": 81920,
+    "maximumDurationMs": 600000,
+    "callsReservedPerAction": 5,
+    "firstFailureStopsBatch": true,
+    "maximumCostCnyAtPeak": 2.5,
+    "scope": "Post-fix normal authenticated NPC action and context-dependent follow-up or complex schema retrieval; stop at first explicit failure; no thinking contrast",
+    "officialPriceUrl": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "priceCnyPerMillion": {
+      "offPeak": {
+        "cachedInput": 0.05,
+        "uncachedInput": 1.5,
+        "output": 4.5
+      },
+      "peak": {
+        "cachedInput": 0.1,
+        "uncachedInput": 3.0,
+        "output": 9.0
+      }
+    }
+  },
+  "sourceManifestSha256": "8917503e03372576bfd81082ce01b10ff9e9d319dea3b8f143c97b02de972d1f",
+  "sourceFilesUnchangedDuringBatch": 301,
+  "actualCalls": 1,
+  "captures": 1,
+  "usage": {
+    "prompt_tokens": 31796,
+    "completion_tokens": 895,
+    "total_tokens": 32691,
+    "prompt_tokens_details": {
+      "cached_tokens": 1920
+    },
+    "prompt_cache_hit_tokens": 1920,
+    "prompt_cache_miss_tokens": 29876
+  },
+  "costCny": 0.0489375,
+  "officialPricePageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+  "requestMatchesCurrentAtInvocation": true,
+  "parserAtInvocation": "strictRejected",
+  "diagnostics": [
+    {
+      "code": "JSON_SYNTAX",
+      "constraint": "json:object-delimiter-expected",
+      "repair": {
+        "allowed": false,
+        "reason": "semantic-equivalence-unproven"
+      },
+      "path": [
+        "proposals",
+        0,
+        "branches",
+        "success"
+      ],
+      "location": {
+        "offset": 1683,
+        "line": 1,
+        "column": 1684
+      }
+    }
+  ],
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsChecked": 0,
+    "frozenContextsConform": null,
+    "authorityUnchangedFromGenesis": true,
+    "resourcesAndTimeUnchanged": true,
+    "eventCount": 0,
+    "eventTypes": [],
+    "receiptCount": 0,
+    "newEvidenceCount": 0,
+    "randomnessAbsent": true,
+    "claimsNote": "No committed Claims to validate."
+  },
+  "followUpPerformed": false,
+  "duplicatePerformed": false,
+  "servicesStopped": true,
+  "extraModelCalls": 0,
+  "nextDiagnostic": "Verify official strict function calling transport contract against actual provider endpoint; do not repair absent decision branches."
+}

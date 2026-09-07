@@ -1,0 +1,139 @@
+{
+  "round": 71,
+  "verifiedAt": "2026-09-07T02:05:04.010892+00:00",
+  "verdict": "mechanicalMismatch",
+  "sourceManifestSha256": "93f250341b3748f1803118a09f0762c24f593633ab13e589249c0206bb57da06",
+  "parser": "v36",
+  "normalAuthenticatedSetup": true,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "submittedText": "我握住圣徽，对自己施放一次一环的治愈伤口。",
+  "action": "committed",
+  "narration": "published",
+  "events": 9,
+  "mechanicalEvidence": {
+    "spent": {
+      "resourceId": "spellSlot:1",
+      "amount": 1,
+      "after": 3
+    },
+    "coreResources": {
+      "slot1": 4,
+      "spellSlot:1": 3
+    },
+    "coreMaximums": {
+      "slot1": 4,
+      "spellSlot:1": null
+    },
+    "combatPool": {
+      "current": 3,
+      "maximum": 4
+    },
+    "die": {
+      "sides": 8,
+      "faces": [
+        8
+      ],
+      "formula": "1d8+3",
+      "total": 11,
+      "applied": 0
+    },
+    "hp": {
+      "before": 24,
+      "after": 24,
+      "maximum": 24
+    }
+  },
+  "categories": {
+    "formatFailure": 0,
+    "proposalRuleRejection": 0,
+    "mechanicalMismatch": 1,
+    "narrativeContradiction": 0,
+    "safeRepair": 0,
+    "viewerRecovery": 0
+  },
+  "narrationReviewLimit": "Only published resource claim and no HP gain were checked; full independent narrative quality acceptance and duplicate/ack were not completed after mechanical failure.",
+  "modelEvidence": {
+    "model": "deepseek-v4-flash",
+    "invocationCount": 2,
+    "repairUsed": false,
+    "requestHashes": [
+      "sha256:c984509a14fc9918e30c33adbe8fca15c62065c8eda3978205d5e58888201cba",
+      "sha256:d65d05757ade37b144ab9a3e4fb904a153364e64a590d54f23219474dae94162"
+    ],
+    "contextHash": "sha256:b8b32239b73e5509accb13734fcdd070ac8ec751c81b36332fc54bf0de05f2c4",
+    "exactCapturedJournal": true
+  },
+  "usage": {
+    "calls": [
+      {
+        "call": 1,
+        "model": "deepseek-v4-flash",
+        "input": 26187,
+        "cacheHit": 0,
+        "cacheMiss": 26187,
+        "output": 47,
+        "costCny": "0.078984"
+      },
+      {
+        "call": 2,
+        "model": "deepseek-v4-flash",
+        "input": 28598,
+        "cacheHit": 768,
+        "cacheMiss": 27830,
+        "output": 152,
+        "costCny": "0.0849348"
+      },
+      {
+        "call": 3,
+        "model": "deepseek-v4-flash",
+        "input": 1814,
+        "cacheHit": 896,
+        "cacheMiss": 918,
+        "output": 100,
+        "costCny": "0.0037436"
+      },
+      {
+        "call": 4,
+        "model": "deepseek-v4-flash",
+        "input": 3053,
+        "cacheHit": 1024,
+        "cacheMiss": 2029,
+        "output": 189,
+        "costCny": "0.0078904"
+      }
+    ],
+    "totalInput": 59652,
+    "totalOutput": 488,
+    "totalCostCny": "0.1755528",
+    "pricing": "Peak official tariff verified 2026-09-07T00:58:26.847440Z, cache hit .10/miss3/output9 CNY per million",
+    "pricingSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5"
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "scope": "at the batch-frozen source before resource correction"
+  },
+  "sourceComparison": {
+    "beforeCount": 321,
+    "afterCount": 321,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-07T01:56:17.977696+00:00",
+    "initialManifestSha256": "93f250341b3748f1803118a09f0762c24f593633ab13e589249c0206bb57da06",
+    "allEqual": true
+  },
+  "portsAbsent": [
+    4320,
+    4321
+  ],
+  "rootCause": "ResourceSpent directly writes combat resourceId into core, skipping original-pool mapping; first divergence at event3",
+  "recoveryImpact": "offline long-rest/rebuild reproduced combat3/3 from duplicated pool; no HTTP rest attempted",
+  "diagnosisDirectory": "/tmp/zhuwei-round71-resource-diagnosis",
+  "status": "local fix and directed verification complete; original failure preserved; actual revalidation in round72",
+  "deployment": false,
+  "push": false
+}

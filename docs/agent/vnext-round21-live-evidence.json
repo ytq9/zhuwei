@@ -1,0 +1,49 @@
+{
+  "batch": "round21",
+  "transport": "local authenticated register/createRoom/lockCharacter/startGame/sendAction/fetchTable",
+  "sourceManifest": "vnext-round21-source-manifest.json",
+  "budget": {
+    "maximumActions": 1,
+    "maximumCalls": 3,
+    "maximumInputTokens": 174000,
+    "maximumOutputTokens": 24576
+  },
+  "model": "deepseek-v4-flash",
+  "calls": 1,
+  "usage": {
+    "prompt_tokens": 17771,
+    "completion_tokens": 197,
+    "total_tokens": 17968,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 17771
+  },
+  "result": {
+    "outcomeKind": "rejected",
+    "action": "notCommitted",
+    "narration": "notApplicable",
+    "code": "PROPOSAL_FORM_INVALID"
+  },
+  "failure": "Model chose knowledgeReview/allKnown but put a held knowledge reference in root basisRefs, which must be empty. Rejected before Rules commit. No normalization or repair of the captured response.",
+  "fix": "Align root basisRefs schema description and knowledgeReview guidance; one separately bounded round22 contrast.",
+  "costOffPeakCny": 0.027543,
+  "invocations": [
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "requestHash": "sha256:d565743e5335ca02997b4c90e592ad61cccc8737d4ae8ddbf85816e3596003e2",
+      "bindingHash": "sha256:27cea2dbff13cdb6384becd5bb96e2b6f56b157db204cdf5d64ece5d59dc8ff9",
+      "estimatedInputTokens": 19860,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:3734d0909fb315a4a0398d59d8a294b525e2f4f4cbe31a28403390b57b9fc9fe",
+      "result": "success",
+      "durationMs": 2064,
+      "responseHash": "sha256:15e72fcfcbcca1addb6bcaed44fab9eeeaff4eba1c65e991b86d4f1405a31482",
+      "inputTokens": 17771,
+      "outputTokens": 197
+    }
+  ]
+}

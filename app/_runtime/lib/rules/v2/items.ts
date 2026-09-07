@@ -1,3 +1,4 @@
+import { isItemAssemblyRecord, type ItemAssemblyRecord } from "./item-assembly-shapes";
 import {
   GEAR_SLOTS,
   allowedSlots,
@@ -159,12 +160,15 @@ export type ItemEntryV1 = {
   durability: ItemCounter | null;
   visibilityPolicyRef: string;
   ownership: ItemOwnership;
+  /** Occupied components remain exact original entries and cannot be spent independently. */
+  assemblyRef?: string;
 };
 
 export type ItemSystemStateV1 = {
   schema: typeof ITEM_SYSTEM_STATE_SCHEMA;
   definitions: Record<string, ItemDefinitionV1>;
   entries: Record<string, ItemEntryV1>;
+  assemblies?: Record<string, ItemAssemblyRecord>;
 };
 
 export type InitialItemPlacement =
@@ -332,47 +336,53 @@ function isUseActivity(value: unknown): value is ItemUseActivity {
     && isBoundedInteger(value.durabilityCost, 0);
 }
 
-function contentSemanticsValid(content: ItemDefinitionContentV1): boolean {
+export type ItemDefinitionDiagnostic = { path: string; reason: string };
+
+function contentSemanticDiagnostics(content: ItemDefinitionContentV1): ItemDefinitionDiagnostic[] {
+  const diagnostics: ItemDefinitionDiagnostic[] = [];
+  const invalid = (field: string, reason: string) => diagnostics.push({ path: `/content/${field}`, reason });
   const equipment = content.equipment;
   if (content.stackable
-    && (content.chargesMaximum !== null || content.durabilityMaximum !== null)) return false;
-  if (content.stackable && equipment !== null && content.category !== "ammunition") return false;
-  if (content.equippedAbilityRefs.length > 0 && equipment === null) return false;
+    && content.chargesMaximum !== null) invalid("chargesMaximum", "stackable items cannot carry per-instance charges");
+  if (content.stackable
+    && content.durabilityMaximum !== null) invalid("durabilityMaximum", "stackable items cannot carry per-instance durability");
+  if (content.stackable && equipment !== null && content.category !== "ammunition") invalid("equipment", "only ammunition can be both stackable and equippable");
+  if (content.equippedAbilityRefs.length > 0 && equipment === null) invalid("equippedAbilityRefs", "equipped abilities require an equipment model");
   if (content.use !== null) {
-    if (!content.stackable && content.use.quantityCost > 1) return false;
+    if (!content.stackable && content.use.quantityCost > 1) invalid("use/quantityCost", "a nonstackable item cannot spend more than one instance");
     if (content.use.chargeCost > 0
       && (content.chargesMaximum === null
-        || content.use.chargeCost > content.chargesMaximum)) return false;
+        || content.use.chargeCost > content.chargesMaximum)) invalid("use/chargeCost", "charge cost requires sufficient declared capacity");
     if (content.use.durabilityCost > 0
       && (content.durabilityMaximum === null
-        || content.use.durabilityCost > content.durabilityMaximum)) return false;
+        || content.use.durabilityCost > content.durabilityMaximum)) invalid("use/durabilityCost", "durability cost requires sufficient declared capacity");
   }
   if (content.category === "consumable"
     && content.use !== null
     && content.use.quantityCost === 0
     && content.use.chargeCost === 0
-    && content.use.durabilityCost === 0) return false;
+    && content.use.durabilityCost === 0) invalid("use", "a consumable use must spend quantity, charges, or durability");
   if (content.category === "weapon"
     && (equipment === null
       || (!equipment.allowedSlots.every((slot) => slot === "main" || slot === "off"))
-      || equipment.weapon === null)) return false;
-  if (content.category !== "weapon" && equipment !== null && equipment.weapon !== null) return false;
+      || equipment.weapon === null)) invalid("equipment", "weapons require weapon mechanics and hand slots");
+  if (content.category !== "weapon" && equipment !== null && equipment.weapon !== null) invalid("equipment/weapon", "weapon mechanics require the weapon category");
   if (content.category === "armor"
-    && (equipment === null || equipment.armor === null || equipment.armor.kind === "shield")) return false;
-  if (content.category === "shield" && equipment?.armor?.kind !== "shield") return false;
+    && (equipment === null || equipment.armor === null || equipment.armor.kind === "shield")) invalid("equipment/armor", "armor requires a non-shield armor model");
+  if (content.category === "shield" && equipment?.armor?.kind !== "shield") invalid("equipment/armor", "shields require the shield armor model");
   if (content.category === "ammunition") {
     if (!content.stackable
       || equipment === null
       || equipment.allowedSlots.length !== 1
-      || equipment.allowedSlots[0] !== "ammo") return false;
+      || equipment.allowedSlots[0] !== "ammo") invalid("equipment", "ammunition must be stackable and use only the ammunition slot");
   }
   if (equipment?.twoHanded === true
-    && (equipment.allowedSlots.length !== 1 || equipment.allowedSlots[0] !== "main")) return false;
+    && (equipment.allowedSlots.length !== 1 || equipment.allowedSlots[0] !== "main")) invalid("equipment/allowedSlots", "two-handed equipment must occupy the main slot");
   if (equipment?.armor !== null && equipment?.armor !== undefined) {
     const expectedSlot = equipment.armor.kind === "shield" ? "off" : "armor";
-    if (equipment.allowedSlots.length !== 1 || equipment.allowedSlots[0] !== expectedSlot) return false;
+    if (equipment.allowedSlots.length !== 1 || equipment.allowedSlots[0] !== expectedSlot) invalid("equipment/allowedSlots", "armor and shield slots must match their armor model");
   }
-  return true;
+  return diagnostics;
 }
 
 export function isItemDefinitionV1(value: unknown): value is ItemDefinitionV1 {
@@ -397,7 +407,12 @@ export function isItemDefinitionV1(value: unknown): value is ItemDefinitionV1 {
     || !isCanonicalString(value.visibilityPolicyRef)
     || !isRecord(value.content)) return false;
 
-  const content = value.content;
+  return itemDefinitionContentDiagnostics(value.content).length === 0;
+}
+
+/** The Item validator and authored proposal diagnostics share these exact checks. */
+export function itemDefinitionContentDiagnostics(content: unknown): ItemDefinitionDiagnostic[] {
+  if (!isRecord(content)) return [{ path: "/content", reason: "item content must be an object" }];
   if (!hasExactKeys(content, [
     "aliases",
     "category",
@@ -411,26 +426,25 @@ export function isItemDefinitionV1(value: unknown): value is ItemDefinitionV1 {
     "stackable",
     "tags",
     "use",
-  ])
-    || content.schema !== ITEM_DEFINITION_CONTENT_SCHEMA
-    || !isCanonicalString(content.label)
-    || !isCanonicalString(content.description, MAX_TEXT_LENGTH)
-    || ![
+  ])) return [{ path: "/content", reason: "item content has missing or unsupported fields" }];
+  const checks: Array<[string, boolean, string]> = [
+    ["schema", content.schema === ITEM_DEFINITION_CONTENT_SCHEMA, "item content schema is unsupported"],
+    ["label", isCanonicalString(content.label), "item label must be bounded canonical text"],
+    ["description", isCanonicalString(content.description, MAX_TEXT_LENGTH), "item description must be bounded canonical text"],
+    ["category", [
       "weapon", "armor", "shield", "ammunition", "consumable",
       "tool", "currency", "equipment", "object",
-    ].includes(String(content.category))
-    || !isCanonicalStringSet(content.aliases)
-    || !isCanonicalStringSet(content.tags)
-    || typeof content.stackable !== "boolean"
-    || !(content.equipment === null || isEquipmentModel(content.equipment))
-    || !isCanonicalStringSet(content.equippedAbilityRefs)
-    || !(content.use === null || isUseActivity(content.use))
-    || !(content.chargesMaximum === null
-      || isBoundedInteger(content.chargesMaximum, 1))
-    || !(content.durabilityMaximum === null
-      || isBoundedInteger(content.durabilityMaximum, 1))) return false;
-
-  return contentSemanticsValid(content as ItemDefinitionContentV1);
+    ].includes(String(content.category)), "item category is unsupported"],
+    ...["aliases", "tags", "equippedAbilityRefs"].map((field): [string, boolean, string] =>
+      [field, isCanonicalStringSet(content[field]), "item string sets must be bounded, canonical, sorted, and unique"]),
+    ["stackable", typeof content.stackable === "boolean", "stackable must be boolean"],
+    ["equipment", content.equipment === null || isEquipmentModel(content.equipment), "equipment slots, armor, or weapon mechanics are invalid"],
+    ["use", content.use === null || isUseActivity(content.use), "item use requires a canonical ability reference and nonnegative costs"],
+    ...["chargesMaximum", "durabilityMaximum"].map((field): [string, boolean, string] =>
+      [field, content[field] === null || isBoundedInteger(content[field], 1), "item capacity must be null or a bounded positive integer"]),
+  ];
+  const diagnostics = checks.filter(([, valid]) => !valid).map(([field, , reason]) => ({ path: `/content/${field}`, reason }));
+  return diagnostics.length > 0 ? diagnostics : contentSemanticDiagnostics(content as ItemDefinitionContentV1);
 }
 
 function isOwnership(value: unknown): value is ItemOwnership {
@@ -464,7 +478,9 @@ export function isItemEntryV1(value: unknown): value is ItemEntryV1 {
       "sceneRef",
       "schema",
       "visibilityPolicyRef",
+      ...(Object.hasOwn(value, "assemblyRef") ? ["assemblyRef"] : []),
     ])
+    || (value.assemblyRef !== undefined && !isCanonicalString(value.assemblyRef))
     || value.schema !== ITEM_ENTRY_SCHEMA
     || !isCanonicalString(value.entryId)
     || !value.entryId.startsWith("item-entry:")
@@ -549,17 +565,29 @@ export function itemStackIdentity(entry: ItemEntryV1): string {
     entry.visibilityPolicyRef,
     entry.ownership.kind,
     entry.ownership.ownerRef,
+    ...(entry.assemblyRef === undefined ? [] : [entry.assemblyRef]),
   ]);
 }
 
 export function isItemSystemStateV1(value: unknown): value is ItemSystemStateV1 {
   if (!isRecord(value)
-    || !hasExactKeys(value, ["definitions", "entries", "schema"])
+    || !hasExactKeys(value, ["definitions", "entries", "schema", ...(Object.hasOwn(value, "assemblies") ? ["assemblies"] : [])])
     || value.schema !== ITEM_SYSTEM_STATE_SCHEMA
     || !isRecord(value.definitions)
     || !isRecord(value.entries)) return false;
   const definitions = value.definitions;
   const entries = value.entries;
+  const assemblies = value.assemblies ?? {};
+  if (!isRecord(assemblies) || !Object.entries(assemblies).every(([ref, assembly]) => isItemAssemblyRecord(assembly) && assembly.assemblyRef === ref)) return false;
+  for (const [ref, entry] of Object.entries(entries)) {
+    if (!isRecord(entry) || entry.assemblyRef === undefined) continue;
+    const assembly = assemblies[String(entry.assemblyRef)];
+    if (!isItemAssemblyRecord(assembly) || assembly.state !== "active" || entry.disposition !== "scene"
+      || entry.sceneRef !== assembly.sceneRef || entry.equippedSlot !== null
+      || !assembly.components.some(component => component.entryRef === ref)) return false;
+  }
+  for (const assembly of Object.values(assemblies)) if (isItemAssemblyRecord(assembly) && assembly.state === "active"
+    && assembly.components.some(component => { const entry = entries[component.entryRef]; return !isRecord(entry) || entry.assemblyRef !== assembly.assemblyRef; })) return false;
   if (!Object.entries(definitions).every(([definitionId, definition]) =>
     isItemDefinitionV1(definition) && definition.definitionId === definitionId)) return false;
   if (!Object.entries(entries).every(([entryId, entry]) => {

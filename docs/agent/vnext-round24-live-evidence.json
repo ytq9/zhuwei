@@ -1,0 +1,174 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round24",
+  "recordedAt": "2026-09-05T22:48:18.569309+00:00",
+  "scope": "One local authenticated HTTP ordinary hearth observation; no schema retrieval; stopped on narration review timeout",
+  "budget": {
+    "batch": "round24",
+    "createdFor": "schema retrieval complex action and next legal action",
+    "maximumRootActions": 2,
+    "maximumProviderCalls": 9,
+    "maximumInputTokens": 522000,
+    "maximumOutputTokens": 73728,
+    "maximumWallTimeMinutes": 10,
+    "failurePolicy": "stop at first explicit failure; no resampling before diagnosis",
+    "setupCalls": 0
+  },
+  "sourceManifest": {
+    "path": "vnext-round24-source-manifest.json",
+    "sha256": "ffb31229a14c052b1dbddd7ef9edce984a18e75703c7f808907edf1b99dc7d00",
+    "createdAt": "2026-09-05T22:42:27.477743+00:00",
+    "fileCount": 289,
+    "changedFilesDuringBatch": []
+  },
+  "workflowHash": "sha256:1835a36cc2eb7fd721c535f9e3d72b27e81b8b8473566402a4d1de5d28a0b672",
+  "calls": [
+    {
+      "ordinal": 1,
+      "purpose": "proposal",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 20383,
+      "cacheHitTokens": 9088,
+      "cacheMissTokens": 11295,
+      "outputTokensIncludingReasoning": 845,
+      "reasoningTokensIncluded": 0,
+      "offPeakCny": 0.0211994,
+      "captureFileSha256": "a42652c2f33e0e1ac87221e2a020dc4c3450f98b2850c0bab36ff7595d5aafd8",
+      "finishReasons": [
+        "tool_calls"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "purpose": "generation",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 1799,
+      "cacheHitTokens": 768,
+      "cacheMissTokens": 1031,
+      "outputTokensIncludingReasoning": 428,
+      "reasoningTokensIncluded": 317,
+      "offPeakCny": 0.0035109,
+      "captureFileSha256": "8fdc7a58666386ab6794404c3f995c3f132d9650e5279778fef73a5841a35b6d",
+      "finishReasons": [
+        "stop"
+      ]
+    },
+    {
+      "ordinal": 3,
+      "purpose": "review",
+      "model": "deepseek-v4-flash",
+      "result": "modelTransient",
+      "durationMs": 41621,
+      "inputTokens": null,
+      "outputTokensIncludingReasoning": null,
+      "offPeakCny": null,
+      "usageUnknownReason": "No response captured before local shared narration timeout"
+    }
+  ],
+  "totals": {
+    "inputTokens": 22182,
+    "cacheHitTokens": 9856,
+    "cacheMissTokens": 12326,
+    "outputTokensIncludingReasoning": 1273,
+    "reasoningTokensIncluded": 317,
+    "offPeakCny": 0.0247103,
+    "attemptedCalls": 3,
+    "knownUsageCalls": 2,
+    "unknownUsageCalls": 1,
+    "offPeakCnyNote": "known subtotal only; third call fees unknown, not zero"
+  },
+  "response": {
+    "action": "committed",
+    "narration": "retryableFailure",
+    "retryable": true,
+    "code": "NARRATION_PROVIDER_TIMEOUT"
+  },
+  "mechanicalEvidence": {
+    "eventCount": 5,
+    "eventTypes": [
+      "CanonicalFactDeclared",
+      "SensoryEvidenceAcquired",
+      "CanonicalFactDeclared",
+      "SensoryEvidenceAcquired",
+      "WorldInteractionResolved"
+    ],
+    "receipts": 1,
+    "pendingDue": 0,
+    "modelInvocations": 1,
+    "deliveryStatuses": [
+      "open"
+    ],
+    "audienceStatuses": [
+      "retryableFailure"
+    ]
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsConform": true,
+    "resourcesAndTimeUnchanged": true,
+    "eventCount": 5,
+    "eventTypes": [
+      "CanonicalFactDeclared",
+      "SensoryEvidenceAcquired",
+      "CanonicalFactDeclared",
+      "SensoryEvidenceAcquired",
+      "WorldInteractionResolved"
+    ],
+    "receiptCount": 1,
+    "newEvidenceCount": 2,
+    "randomnessAbsent": true,
+    "claimsNote": "Structural replay checks do not validate semantic evidence/inference classification."
+  },
+  "semanticAudit": {
+    "schemaRetrievalOccurred": false,
+    "reason": "The hearth already exists as a tactical feature; worldInteraction is initially loaded. No-retrieval is not a routing bug.",
+    "knowledgeClassification": "failed: historical cause and inferred timing were placed in sensoryEvidence and persisted as full sensory knowledge",
+    "narrationStatus": "unpublished; no review verdict received",
+    "currentRecovery": "same frozen Claims/expression; generates candidate and reviews again, not persisted review-only resume"
+  },
+  "priceSource": {
+    "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "currency": "CNY",
+    "perMillionTokensOffPeak": {
+      "cacheHitInput": 0.05,
+      "cacheMissInput": 1.5,
+      "output": 4.5
+    }
+  },
+  "externalOperations": {
+    "deployment": false,
+    "gitPush": false,
+    "remoteMigration": false,
+    "productionRetirement": false,
+    "localServersStopped": true
+  },
+  "notCovered": [
+    "schema retrieval complex HTTP chain",
+    "published usable narration",
+    "same-submission or Viewer recovery after this timeout",
+    "next legal action",
+    "two-player 20+ chain",
+    "production replacement"
+  ],
+  "diagnostics": {
+    "timeoutRecoveryTest": {
+      "passed": 1,
+      "exitCode": 0,
+      "scope": "existing deterministic same-frozen-materials, rate-limit and timeout behavior"
+    },
+    "knowledgeBoundary": {
+      "exitCode": 0,
+      "originalBundle": "accepted",
+      "persistedKnowledgeKind": "sensoryEvidence",
+      "persistedLayer": "full",
+      "persistedEvidenceCount": 2,
+      "exactEvidenceTextPreserved": true,
+      "directRegisteredRulesInference": "committed",
+      "unknownEvidence": "privateOrUnknownReference",
+      "vnextInferenceVariant": "PROPOSAL_BUNDLE_INVALID",
+      "meaning": "reproduces the current interface gap; not a semantic repair pass"
+    }
+  }
+}

@@ -322,7 +322,7 @@ describe("B53 natural-language combat vertical slice", () => {
       }), `NPC ${label} outcome`);
       npcActionChildRoots.set(
         outcome,
-        `actor-plan-due:${planRef}:trigger:knowledgeAcquired`,
+        `actor-plan-due:${planRef}:revision:1:trigger:knowledgeAcquired`,
       );
       return outcome;
     };

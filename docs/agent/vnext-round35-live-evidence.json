@@ -1,0 +1,65 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round35",
+  "recordedAt": "2026-09-06T13:17:56.315879+00:00",
+  "sourceManifest": "vnext-round34-source-manifest.json",
+  "reusesSourceManifestFromBatch": "round34",
+  "purpose": "single-exact-request-transport-stage-probe",
+  "model": "deepseek-v4-flash",
+  "startedAt": "2026-09-06T13:12:40.245Z",
+  "requestSha256": "937d2727431e956e6d9c0db3c91e7765948a96c20d70aaf3864779bb9b91af88",
+  "originalRequestSha256": "937d2727431e956e6d9c0db3c91e7765948a96c20d70aaf3864779bb9b91af88",
+  "matchesRound33OriginalRequest": true,
+  "candidateSha256": "13c17a9ec3881933c8cd8ef3e3866b3ef5ae4397c9f68689240be095798b0dae",
+  "budget": {
+    "maxCalls": 1,
+    "maxInputTokens": 12000,
+    "maxOutputTokens": 8192,
+    "maxCny": 0.11,
+    "timeoutMs": 45000
+  },
+  "estimatedInputTokens": 5356,
+  "result": {
+    "status": "failed",
+    "durationMs": 45009,
+    "recordedError": 23,
+    "trace": {
+      "phase": "headers",
+      "startedAt": "2026-09-06T13:12:40.246Z",
+      "byteCount": 0,
+      "headersMs": 200,
+      "httpStatus": 200
+    },
+    "response": null,
+    "finishReason": null,
+    "usage": null,
+    "costCny": null,
+    "usageStatus": "unknown-no-response"
+  },
+  "batchTotals": {
+    "actualModelAttempts": 1,
+    "knownUsageCount": 0,
+    "unknownUsageCount": 1,
+    "promptTokens": null,
+    "completionTokens": null,
+    "costCny": null,
+    "costClassification": "development-diagnostic"
+  },
+  "scope": {
+    "newPlayerAction": false,
+    "rulesExecuted": false,
+    "roomSubmissionAttempted": false,
+    "narrationPublished": false,
+    "additionalBatchRetries": 0
+  },
+  "privateArtifactHashes": {
+    "result": "c32240cdd0b0161ff68ea798b38f0e1cdececd6cce48905e0cb8de8d5be2391e",
+    "transportTrace": "4bb6e965d53f543cae038ce21562b5a39dd9714e5a0749dc4429d85db600f5bf",
+    "script": "f4da8d06701c956fb8fa5228d74d0e9e793fdcddf1968c621b02e79f31bb8037"
+  },
+  "limitations": [
+    "HTTP 200 response headers do not imply a completed review.",
+    "No body bytes arrived by the deadline; this does not identify an internal model, server or network cause.",
+    "Unknown usage and cost are not zero; the input estimate and budget are not actual billed usage."
+  ]
+}

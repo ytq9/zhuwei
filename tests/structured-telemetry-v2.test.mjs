@@ -567,3 +567,20 @@ test("all thirteen failure classifications remain globally consistent across roo
     }
   }
 });
+
+test('narration grounding telemetry emits only a closed reason code for failed narration', async () => {
+  const telemetry = await import(TELEMETRY_MODULE);
+  const receipt = { task: 'narration', result: 'modelPermanent', failureStage: 'narrationGrounding',
+    invocationPurpose: 'narrationGroundingRepair', groundingReason: 'missingClaimFacts',
+    body: SENSITIVE.delivery, claimRef: SENSITIVE.knowledge };
+  const event = telemetry.buildModelInvocationTelemetryEvent({ receipt });
+  assert.equal(event.modelGroundingReason, 'missingClaimFacts');
+  assert.equal(JSON.stringify(event).includes(SENSITIVE.delivery), false);
+  assert.equal(JSON.stringify(event).includes(SENSITIVE.knowledge), false);
+  for (const change of [{ groundingReason: SENSITIVE.prompt }, { groundingReason: { body: SENSITIVE.prompt } },
+    { result: 'success' }, { task: 'proposal' }, { failureStage: 'narrationSchema' }]) {
+    const hidden = telemetry.buildModelInvocationTelemetryEvent({ receipt: { ...receipt, ...change } });
+    assert.equal(hidden.modelGroundingReason, undefined);
+    assert.equal(JSON.stringify(hidden).includes(SENSITIVE.prompt), false);
+  }
+});

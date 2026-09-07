@@ -1,8 +1,11 @@
+import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
+import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { expandDeepSeekSchema } from "./fixtures/expand-deepseek-schema.mjs";
 
 import { deepSeekStrictToolSchemaIssues } from "../app/_runtime/lib/kp/deepseek-strict-tool.ts";
-import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
+import { canonicalHash, completeJsonObjectSyntaxEvidence, parseJsonWithUniqueMembers } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
 import {
   applyVNextProposalBundleCorrection,
   repairableVNextProposalBundlePaths,
@@ -10,6 +13,8 @@ import {
 import { deriveVNextProposalBundlePlan } from "../app/_runtime/lib/kp/vnext/proposal-graph.ts";
 import {
   VNextProposalBundleOutputError,
+  assertRepairTicket,
+  invokeVNextProposalOffer,
   invokeCorrectKpProposalBundle,
   invokeSubmitKpProposalBundle,
   invokeSubmitKpProposalBundleFirstPass,
@@ -20,7 +25,8 @@ import {
 import {
   CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA,
+  OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+  SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA as TRANSPORT_SCHEMA,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
   VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
@@ -29,6 +35,10 @@ import {
   decodeVNextStrictToolBundle,
 } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { validateVNextProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-validator.ts";
+const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = expandDeepSeekSchema(TRANSPORT_SCHEMA);
+const DECISION_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.decision.anyOf;
+const DIRECT_STEP_SCHEMAS = DECISION_SCHEMAS.find(item => item.properties.kind.enum[0] === "directSuccess").properties.steps.items.anyOf;
+const decodeDomainFixture = value => decodeVNextStrictToolBundle(encodeVNextStrictToolBundle(value));
 import {
   composeDefinition,
   createDefinitionSnapshot,
@@ -94,8 +104,8 @@ function materializeThenInteractArguments() {
     produces: [{ handle, kind: "semanticDefinition", outcomeBinding: "always" }],
     outcomeBinding: "always",
     semanticKind: "sceneFeature",
-    templateRef: "template:scene-feature",
-    templateHash: HASH,
+    templateRef: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateRef,
+    templateHash: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateHash,
     visibilityPolicyRef: "visibility:scene-observers",
     definition: {
       sceneRef: "scene:atrium",
@@ -164,8 +174,8 @@ function sharedCheckArguments() {
       produces: [{ handle, kind: "semanticDefinition", outcomeBinding: "onSuccess" }],
       outcomeBinding: "onSuccess",
       semanticKind: "sceneFeature",
-      templateRef: "template:scene-feature",
-      templateHash: HASH,
+      templateRef: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateRef,
+      templateHash: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateHash,
       visibilityPolicyRef: "visibility:scene-observers",
       definition: {
         sceneRef: "scene:atrium",
@@ -258,7 +268,7 @@ function namedToolResponse(name, argumentsValue) {
           type: "function",
           function: {
             name,
-            arguments: JSON.stringify(argumentsValue),
+            arguments: JSON.stringify(encodeVNextStrictToolBundle(argumentsValue)),
           },
         }],
       },
@@ -284,7 +294,7 @@ function toolResponse(argumentsValue) {
 }
 
 test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
-  assert.deepEqual(deepSeekStrictToolSchemaIssues(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
+  assert.deepEqual(deepSeekStrictToolSchemaIssues(TRANSPORT_SCHEMA), []);
   assert.deepEqual(deepSeekStrictToolSchemaIssues(CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
   const input = createSubmitKpProposalBundleModelInput("提交冻结上下文中的裁决。");
   assert.equal(input.tools.length, 1);
@@ -293,39 +303,39 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
   assert.equal(input.tool_choice, "required");
   assert.equal(input.parallel_tool_calls, false);
   assert.equal(input.max_completion_tokens, 4_000);
-  const worldInteractionSchema = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA
-    .properties.proposals.items.anyOf
+  const worldInteractionSchema = DIRECT_STEP_SCHEMAS
     .find((entry) => entry.properties.kind.enum[0] === "worldInteraction");
   // `abilityRef` is a nullable reference now, not a pinned sentinel: an
   // attack needs a real Ability and a bare ability check needs none. The
   // pairing spans the Bundle's adjudication and the entry, so it is enforced
   // by the domain rather than by the shape.
   assert.equal(worldInteractionSchema.properties.abilityRef.enum, undefined);
-  assert.equal(worldInteractionSchema.properties.abilityRef.pattern, "^\\S+$");
+  assert.equal(worldInteractionSchema.properties.abilityRef.anyOf.find((branch) => branch.type === "string").pattern, "^\\S+$");
+  assert.deepEqual(worldInteractionSchema.properties.abilityRef.anyOf.find((branch) => branch.type === "object").properties.kind.enum, ["none"]);
   // Materialization is a union of the legal (semanticKind, visibility,
   // visibilityFactId) combinations, so a single branch no longer describes the
   // surface; the combination table is asserted in its own test below.
   assert.equal(worldInteractionSchema.properties.intent.pattern, "[\\s\\S]+");
-  // A consume is a union: a bundle-local handle or a frozen authority ref,
-  // and neither branch can carry the other's field.
-  assert.deepEqual(
-    worldInteractionSchema.properties.consumes.items.anyOf
-      .map((branch) => branch.properties.kind.enum[0]),
-    ["prospective", "existing"],
-  );
-  assert.deepEqual(
-    worldInteractionSchema.properties.consumes.items.anyOf
-      .map((branch) => Object.keys(branch.properties).sort()),
-    [["handle", "kind"], ["kind", "ref"]],
-  );
+  assert.equal(worldInteractionSchema.properties.consumes, undefined);
+  assert.equal(worldInteractionSchema.properties.produces, undefined);
+  assert.ok(worldInteractionSchema.properties.result);
+  assert.equal(worldInteractionSchema.properties.failure, undefined);
   // Every materialization branch is closed the same way, whichever
   // combination it encodes: one semantic kind, and a produced handle bound to
   // the entry's own outcome.
-  for (const entry of SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.proposals.items.anyOf
+  for (const entry of DIRECT_STEP_SCHEMAS
     .filter((branch) => branch.properties.kind.enum[0] === "materializeObject")) {
     assert.equal(entry.properties.semanticKind.enum.length, 1);
     assert.equal(entry.additionalProperties, false);
-    assert.equal(entry.properties.produces.items.properties.kind.enum[0], "semanticDefinition");
+    assert.ok(entry.properties.handle.pattern.startsWith("^prospective:"));
+    assert.equal(entry.properties.templateHash, undefined);
+    const affordances = entry.properties.definition.properties.affordances;
+    if (["location", "passage"].includes(entry.properties.semanticKind.enum[0])) {
+      assert.deepEqual(affordances.enum, ["none"]);
+    } else {
+      assert.deepEqual(affordances.anyOf.map(branch => branch.type), ["array", "string"]);
+      assert.deepEqual(affordances.anyOf[1].enum, ["none"]);
+    }
   }
   const correctionInput = createCorrectKpProposalBundleModelInput("只修正允许的摘要。");
   assert.equal(correctionInput.tools.length, 1);
@@ -393,7 +403,7 @@ test("clarification freezes complete nonrecursive continuations in the first Bun
   );
 });
 
-test("clarification proposal budget is global and high risk binds its public risk", () => {
+test("clarification proposal budget is global and unadvertised high risk cannot bypass the filling surface", () => {
   const overBudget = clarificationArguments();
   const operation = structuredClone(worldInteractionArguments().proposals[0]);
   overBudget.terminal.choices = Array.from({ length: 6 }, (_, choiceIndex) => ({
@@ -435,10 +445,9 @@ test("clarification proposal budget is global and high risk binds its public ris
     (error) => error instanceof VNextProposalBundleOutputError,
   );
   mismatchedRisk.terminal.choices[0].publicRisk = "绳索断裂会坠落。";
-  assert.equal(
-    parseSubmitKpProposalBundleResponse(toolResponse(mismatchedRisk)).mode,
-    "terminal",
-  );
+  // highRisk is still outside the advertised runtime filling surface even
+  // when its public risk matches. It cannot enter through a hidden branch.
+  assert.throws(() => parseSubmitKpProposalBundleResponse(toolResponse(mismatchedRisk)), VNextProposalBundleOutputError);
 });
 
 test("clarification choice scope prevents identical frozen branches from sharing refs", () => {
@@ -504,7 +513,7 @@ test("shared check structurally dominates outcome-bound entries", () => {
     },
     summary: "失败分支痕迹。",
   });
-  const decoded = decodeVNextStrictToolBundle(argumentsValue);
+  const decoded = decodeDomainFixture(argumentsValue);
   const validation = validateVNextProposalBundle({
     ...decoded,
     schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
@@ -526,17 +535,17 @@ test("shared check structurally dominates outcome-bound entries", () => {
 });
 
 test("strict parser rejects text fallback, wrong/multiple tools, malformed JSON, and model envelope fields", () => {
-  const prototypeKey = worldInteractionArguments();
+  const prototypeKey = encodeVNextStrictToolBundle(worldInteractionArguments());
   Object.defineProperty(prototypeKey, "__proto__", {
     enumerable: true,
     value: { polluted: true },
   });
   const invalidResponses = [
-    { choices: [{ message: { content: JSON.stringify(worldInteractionArguments()) } }] },
+    { choices: [{ message: { content: JSON.stringify(encodeVNextStrictToolBundle(worldInteractionArguments())) } }] },
     {
       choices: [{ message: { tool_calls: [{ function: {
         name: "wrong_tool",
-        arguments: JSON.stringify(worldInteractionArguments()),
+        arguments: JSON.stringify(encodeVNextStrictToolBundle(worldInteractionArguments())),
       } }] } }],
     },
     {
@@ -546,9 +555,9 @@ test("strict parser rejects text fallback, wrong/multiple tools, malformed JSON,
       ] } }],
     },
     toolResponse("not-json"),
-    toolResponse({ ...worldInteractionArguments(), schema: "model-owned" }),
+    toolResponse({ ...encodeVNextStrictToolBundle(worldInteractionArguments()), schema: "model-owned" }),
     toolResponse({
-      ...worldInteractionArguments(),
+      ...encodeVNextStrictToolBundle(worldInteractionArguments()),
       terminal: { kind: "none", hiddenExtra: true },
     }),
     toolResponse(prototypeKey),
@@ -562,14 +571,14 @@ test("strict parser rejects text fallback, wrong/multiple tools, malformed JSON,
 });
 
 test("strict main and correction parsers reject duplicate JSON members at every depth", () => {
-  const valid = JSON.stringify(worldInteractionArguments());
+  const valid = JSON.stringify(encodeVNextStrictToolBundle(worldInteractionArguments()));
   const duplicateMode = valid.replace(
     /^\{/u,
-    "{\"mode\":\"terminal\",",
+    "{\"decision\":{},",
   );
   const duplicateNestedSummary = valid.replace(
-    /"success":\{/u,
-    "\"success\":{\"summary\":\"伪造结果。\",",
+    /"result":\{/u,
+    "\"result\":{\"summary\":\"伪造结果。\",",
   );
   for (const rawArguments of [duplicateMode, duplicateNestedSummary]) {
     assert.throws(
@@ -638,8 +647,8 @@ test("closed domain rejects ambiguous shared checks and non-random outcome bindi
     (error) => error instanceof VNextProposalBundleOutputError,
   );
 
-  const direct = worldInteractionArguments();
-  direct.proposals[0].outcomeBinding = "onSuccess";
+  const direct = encodeVNextStrictToolBundle(worldInteractionArguments());
+  direct.decision.steps[0].outcomeBinding = "onSuccess";
   assert.throws(
     () => parseSubmitKpProposalBundleResponse(toolResponse(direct)),
     (error) => error instanceof VNextProposalBundleOutputError,
@@ -684,31 +693,25 @@ test("the stage-three transport surface is exactly what the server can execute",
   // A tripwire, not a ceiling: every value here is one the layers below the
   // wire already support, and widening it further should be a deliberate edit
   // that updates this list rather than a silent drift.
-  assert.deepEqual(
-    SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.mode.enum,
-    ["adjudication", "terminal"],
-  );
-  // Only the refusal terminal is on the wire. Clarification is not: each of
-  // its choices carries a complete frozen continuation, a far larger schema.
-  assert.deepEqual(
-    SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.terminal.anyOf
-      .map((branch) => branch.properties.kind.enum[0]),
-    ["none", "inWorldRefusal"],
-  );
-  // Materialization is four closed variants rather than one flat shape:
+  assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision"]);
+  assert.deepEqual(DECISION_SCHEMAS.map(branch => branch.properties.kind.enum[0]),
+    ["directSuccess", "check", "inWorldRefusal", "knowledgeReview", "passTime", "clarification"]);
+  // Materialization uses closed variants rather than one flat shape:
   // `isMaterializedDefinition` binds semanticKind to sceneRef and the
   // visibility policy to visibilityFactId, and those are conditionals the
   // dialect cannot carry. Enumerating the legal combinations is what makes the
   // illegal ones unconstructible instead of merely forbidden.
   assert.deepEqual(
-    SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.proposals.items.anyOf
+    DIRECT_STEP_SCHEMAS
       .map((entry) => entry.properties.kind.enum[0]),
     [
       "materializeObject", "materializeObject", "materializeObject",
-      "materializeObject", "worldInteraction",
+      "materializeObject", "materializeObject", "materializeObject", "materializeObject", "materializeObject",
+      "observe", "formActorPlan", "social", "worldInteraction", "commitNarrativeDetail",
+      "materializeDefinition", "materializeDefinition", "materializeDefinition", "materializeItem", "materializeItem", "inventoryOperation",
     ],
   );
-  const materializations = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.proposals.items.anyOf
+  const materializations = DIRECT_STEP_SCHEMAS
     .filter((entry) => entry.properties.kind.enum[0] === "materializeObject")
     .map((entry) => ({
       semanticKind: entry.properties.semanticKind.enum[0],
@@ -721,6 +724,12 @@ test("the stage-three transport surface is exactly what the server can execute",
     {
       semanticKind: "sceneFeature",
       policies: ["visibility:public", "visibility:scene-observers"],
+      sceneRef: "ref",
+      visibilityFactId: "none",
+    },
+    {
+      semanticKind: "sceneFeature",
+      policies: ["visibility:narrative-audience"],
       sceneRef: "ref",
       visibilityFactId: "none",
     },
@@ -740,6 +749,24 @@ test("the stage-three transport surface is exactly what the server can execute",
       semanticKind: "worldFact",
       policies: ["visibility:hidden-until-evidence"],
       sceneRef: "none",
+      visibilityFactId: "none",
+    },
+    {
+      semanticKind: "location",
+      policies: ["visibility:scene-observers"],
+      sceneRef: "ref",
+      visibilityFactId: "none",
+    },
+    {
+      semanticKind: "passage",
+      policies: ["visibility:scene-observers"],
+      sceneRef: "ref",
+      visibilityFactId: "none",
+    },
+    {
+      semanticKind: "passage",
+      policies: ["visibility:hidden-until-evidence"],
+      sceneRef: "ref",
       visibilityFactId: "ref",
     },
   ]);
@@ -753,32 +780,14 @@ test("the stage-three transport surface is exactly what the server can execute",
       false,
     );
     assert.equal(
-      variant.policies.includes("visibility:hidden-until-evidence"),
+      ["sceneFeature", "passage"].includes(variant.semanticKind) && variant.policies.includes("visibility:hidden-until-evidence"),
       variant.visibilityFactId === "ref",
     );
-    assert.equal(variant.semanticKind === "sceneFeature", variant.sceneRef === "ref");
+    assert.equal(variant.semanticKind !== "worldFact", variant.sceneRef === "ref");
   }
-  assert.equal("$def" in SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, false);
-  assert.equal(decodeVNextStrictToolBundle({
-    checkKind: "none",
-    ability: "none",
-    skill: "none",
-    dc: 0,
-    mode: "normal",
-  }), null);
-  assert.deepEqual({ ...decodeVNextStrictToolBundle({
-    checkKind: "none",
-    ability: "none",
-    skill: "none",
-    dc: 1,
-    mode: "normal",
-  }) }, {
-    checkKind: "none",
-    ability: "none",
-    skill: null,
-    dc: 1,
-    mode: "normal",
-  });
+  assert.ok(TRANSPORT_SCHEMA.$def, "wire shares repeated structures without changing the expanded contract");
+  assert.throws(() => decodeVNextStrictToolBundle({ checkKind: "none", ability: "none", skill: "none", dc: 0, mode: "normal" }),
+    /PROPOSAL_FILLING_INTERFACE_INVALID/);
   const value = {
     ...parseSubmitKpProposalBundleResponse(toolResponse(worldInteractionArguments())),
     adjudication: {
@@ -834,7 +843,10 @@ test("NPC goal and plan operations match the active Rules reference-field allowl
     operations,
     summary: "守卫形成了新的目标和计划。",
   }];
-  const bundle = parseSubmitKpProposalBundleResponse(toolResponse(argumentsValue));
+  const accepted = validateVNextProposalBundle({ schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle",
+    ...argumentsValue, terminal: null });
+  assert.equal(accepted.kind, "accepted", JSON.stringify(accepted));
+  const bundle = accepted.bundle;
   assert.equal(bundle.proposals[0].kind, "reviseSemanticDefinition");
 
   const snapshot = createDefinitionSnapshot("definition:npc:warden", "1", {
@@ -894,7 +906,7 @@ test("one sparse correction can repair only an allowed path and is then fully re
   const result = applyVNextProposalBundleCorrection({
     bundle: rejectedDraft,
     correction,
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [path],
   });
   assert.equal(result.kind, "accepted", JSON.stringify(result));
@@ -903,7 +915,7 @@ test("one sparse correction can repair only an allowed path and is then fully re
   assert.equal(applyVNextProposalBundleCorrection({
     bundle: rejectedDraft,
     correction: { ...correction, attempt: 2 },
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [path],
   }).kind, "rejected");
   assert.equal(applyVNextProposalBundleCorrection({
@@ -912,7 +924,7 @@ test("one sparse correction can repair only an allowed path and is then fully re
       ...correction,
       changes: [{ path: ["adjudication", "kind"], value: "check" }],
     },
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [["adjudication", "kind"]],
   }).kind, "rejected");
 
@@ -934,7 +946,7 @@ test("one sparse correction can repair only an allowed path and is then fully re
       attempt: 1,
       changes: [{ path: authorityPath, value: "relation:major-b" }],
     },
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [authorityPath],
   }).kind, "rejected");
 });
@@ -958,7 +970,7 @@ test("summary-only correction reaches a frozen clarification continuation", () =
       attempt: 1,
       changes: [{ path, value: "右侧壁龛已检查。" }],
     },
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [path],
   });
   assert.equal(result.kind, "accepted", JSON.stringify(result));
@@ -989,6 +1001,127 @@ test("provider invocation sends the exact strict request through an injected bin
   assert.equal(calls[0].input.tool_choice, "required");
 });
 
+test("complete root JSON syntax evidence requires the single explicit sparse acknowledgement", async () => {
+  const valid = JSON.stringify(encodeVNextStrictToolBundle(worldInteractionArguments()));
+  const expected = parseSubmitKpProposalBundleResponse(toolResponse(worldInteractionArguments()));
+  for (const suffix of ["", ",", ",}"]) {
+    const damaged = valid.slice(0, -1) + suffix;
+    assert.throws(() => parseJsonWithUniqueMembers(damaged));
+    assert.equal(canonicalHash(completeJsonObjectSyntaxEvidence(damaged).value), canonicalHash(JSON.parse(valid)));
+    assert.throws(() => parseSubmitKpProposalBundleResponse(rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, damaged)), VNextProposalBundleOutputError);
+    const calls = [];
+    const result = await invokeSubmitKpProposalBundleWithOneCorrection({
+      binding: { async run(_model, request) {
+        calls.push(request);
+        return calls.length === 1 ? rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, damaged)
+          : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [] });
+      } }, modelId: "deepseek-v4-flash", message: "冻结原提案。",
+      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+      persistRepairTicket(ticket) {
+        assert.equal(calls.length, 1);
+        assert.equal(ticket.syntaxEvidence.originalArguments, damaged);
+        assert.deepEqual(ticket.allowedPaths, []);
+        assert.doesNotThrow(() => assertRepairTicket(structuredClone(ticket), CONTEXT_HASH));
+      },
+    });
+    assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
+    assert.equal(result.repairUsed, true);
+    assert.equal(canonicalHash(result.bundle), canonicalHash(expected));
+    assert.equal(calls.length, 2);
+  }
+});
+
+test("missing or mistyped presentation summaries use the same bounded correction with complete semantics", async () => {
+  for (const malformedSyntax of [false, true]) {
+    for (const summaryValue of [undefined, 1, ' \n\t ']) {
+      const args = worldInteractionArguments();
+      if (summaryValue === undefined) delete args.proposals[0].branches.success.summary;
+      else args.proposals[0].branches.success.summary = summaryValue;
+      const path = ["proposals", 0, "branches", "success", "summary"];
+      let calls = 0;
+      const raw = JSON.stringify(encodeVNextStrictToolBundle(args));
+      const result = await invokeSubmitKpProposalBundleWithOneCorrection({
+        binding: { async run() { return ++calls === 1
+          ? rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, malformedSyntax ? raw.slice(0, -1) : raw)
+          : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [{ path, value: "检查完成。" }] }); } },
+        modelId: "deepseek-v4-flash", message: "仅修摘要。",
+        requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+        persistRepairTicket(ticket) { assert.deepEqual(ticket.allowedPaths, [path]); },
+      });
+      assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
+      assert.equal(canonicalHash(result.bundle), canonicalHash(parseSubmitKpProposalBundleResponse(toolResponse(worldInteractionArguments()))));
+      assert.equal(calls, 2);
+    }
+  }
+});
+
+test("syntax recovery rejects incomplete semantics, duplicates and mixed schema selection before correction", async () => {
+  const args = { ...worldInteractionArguments(), requestedCapabilities: [] };
+  const raw = JSON.stringify(encodeVNextStrictToolBundle(args));
+  const nested = JSON.stringify({ wrapper: args }).slice(0, -1);
+  const invalid = [
+    raw.slice(0, raw.indexOf('"steps"') + 15),
+    raw.slice(0, raw.indexOf('"summary"') + 14),
+    raw.replace('"steps":[', '"steps":[').slice(0, raw.lastIndexOf(']')),
+    raw.slice(0, -1) + ',"mode":"adjudication"',
+    raw.replace('"summary":"检查完成。"', '"summary":"检查完成。","summary":"检查完成。"').slice(0, -1),
+    raw.replace('"kind":', '"kind":"directSuccess","ki\\u006ed":').slice(0, -1),
+    raw.slice(0, -1) + ',"unfinished":',
+    raw.slice(0, -1) + ',} trailing', nested,
+    JSON.stringify({ ...args, mode: "schemaRequest", basisRefs: [], proposals: [],
+      adjudication: { kind: "none" }, terminal: { kind: "none" }, requestedCapabilities: ["authorItem"] }).slice(0, -1),
+    JSON.stringify({ ...args, requestedCapabilities: ["authorItem"] }).slice(0, -1),
+  ];
+  for (const originalArguments of invalid) {
+    let calls = 0;
+    const result = await invokeVNextProposalOffer({
+      binding: { async run() { calls++; return rawNamedToolResponse(OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, originalArguments); } },
+      modelId: "deepseek-v4-flash", message: "必须完整。",
+      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    });
+    assert.equal(result.kind, "rejected", originalArguments);
+    assert.equal(result.code, "PROPOSAL_FORM_INVALID");
+    assert.equal(calls, 1);
+  }
+});
+
+test("syntax repair cannot change frozen meaning or use an empty correction to bypass a field error", async () => {
+  const args = worldInteractionArguments();
+  const first = await invokeSubmitKpProposalBundleFirstPass({
+    binding: { async run() { return rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify(encodeVNextStrictToolBundle(args)).slice(0, -1)); } },
+    modelId: "deepseek-v4-flash", message: "冻结。", requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+  });
+  assert.equal(first.kind, "repairRequired");
+  const original = first.repairTicket;
+  for (const path of [["adjudication", "risk"], ["adjudication", "kind"], ["proposals", 0, "intent"],
+    ["proposals", 0, "method"], ["proposals", 0, "outcomeBinding"], ["proposals", 0, "branches", "success", "summary"]]) {
+    let calls = 0;
+    const result = await invokeCorrectKpProposalBundle({
+      binding: { async run() { calls++; return namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [{ path, value: "替换" }] }); } },
+      modelId: "deepseek-v4-flash", requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } }, repairTicket: original,
+    });
+    assert.equal(result.kind, "rejected");
+    assert.equal(result.code, "PROPOSAL_REPAIR_EXHAUSTED");
+    assert.equal(calls, 1);
+  }
+  const forged = structuredClone(original);
+  forged.draft.proposals[0].intent = "不同的目标。";
+  forged.bundleHash = canonicalHash(forged.draft);
+  const { ticketHash: _oldHash, ...body } = forged;
+  forged.ticketHash = canonicalHash(body);
+  assert.throws(() => assertRepairTicket(forged, CONTEXT_HASH), /VNEXT_PROPOSAL_REPAIR_TICKET_INVALID/u);
+  args.proposals[0].branches.success.summary = "";
+  let calls = 0;
+  const rejected = await invokeSubmitKpProposalBundleWithOneCorrection({
+    binding: { async run() { return ++calls === 1 ? toolResponse(args)
+      : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [] }); } },
+    modelId: "deepseek-v4-flash", message: "需要补摘要。", requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    persistRepairTicket() {},
+  });
+  assert.equal(rejected.code, "PROPOSAL_REPAIR_EXHAUSTED");
+  assert.equal(calls, 2);
+});
+
 test("provider uses one summary-only correction and completely revalidates the Bundle", async () => {
   const rejected = worldInteractionArguments();
   rejected.proposals[0].branches.success.summary = "";
@@ -998,7 +1131,7 @@ test("provider uses one summary-only correction and completely revalidates the B
   const queue = [
     toolResponse(rejected),
     namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, {
-      changes: [{ path, value: "检查完成。" }],
+      confirm: "server-plan", summaries: [{ path, value: "检查完成。" }],
     }),
   ];
   const result = await invokeSubmitKpProposalBundleWithOneCorrection({
@@ -1010,7 +1143,7 @@ test("provider uses one summary-only correction and completely revalidates the B
     },
     modelId: "deepseek-v4-flash",
     message: "只裁定冻结上下文。",
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     async persistRepairTicket(ticket) {
       assert.equal(calls.length, 1);
       persistedTickets.push(ticket);
@@ -1026,7 +1159,7 @@ test("provider uses one summary-only correction and completely revalidates the B
   assert.equal(Object.isFrozen(persistedTickets[0]), true);
   assert.equal(calls[0].input.tools[0].function.name, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   assert.equal(calls[1].input.tools[0].function.name, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-  const repairContext = JSON.parse(calls[1].input.messages[0].content);
+  const repairContext = JSON.parse(calls[1].input.messages.find(message => message.role === "user").content);
   assert.deepEqual(repairContext.allowedPaths, [path]);
   assert.equal(repairContext.contextHash, CONTEXT_HASH);
 });
@@ -1045,19 +1178,23 @@ test("provider does not spend correction on authority errors and never makes a t
     },
     modelId: "deepseek-v4-flash",
     message: "只裁定冻结上下文。",
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     persistRepairTicket() {
       assert.fail("unrepairable authority errors must not create a repair ticket");
     },
   });
-  assert.deepEqual(unrepairable, {
+  const { diagnostics, ...unrepairableSummary } = unrepairable;
+  assert.deepEqual(unrepairableSummary, {
     kind: "rejected",
     code: "PROPOSAL_FORM_INVALID",
-    issues: ["bundle:world-interaction-invalid"],
+    issues: ["reference-field-grammar"],
     repairUsed: false,
     invocationCount: 1,
   });
   assert.equal(calls, 1);
+  assert.equal(diagnostics[0].code, "VALUE_INVALID");
+  assert.deepEqual(diagnostics[0].path, ["proposals", 0, "targetRefs", 0]);
+  assert.equal(diagnostics[0].repair.allowed, false);
 
   const twoSummaries = worldInteractionArguments();
   twoSummaries.proposals[0].branches.success.summary = "";
@@ -1075,7 +1212,7 @@ test("provider does not spend correction on authority errors and never makes a t
   const partialQueue = [
     toolResponse(twoSummaries),
     namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, {
-      changes: [{ path: partialPath, value: "主结果已修正。" }],
+      confirm: "server-plan", summaries: [{ path: partialPath, value: "主结果已修正。" }],
     }),
   ];
   const partial = await invokeSubmitKpProposalBundleWithOneCorrection({
@@ -1087,7 +1224,7 @@ test("provider does not spend correction on authority errors and never makes a t
     },
     modelId: "deepseek-v4-flash",
     message: "只裁定冻结上下文。",
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     persistRepairTicket() {},
   });
   assert.equal(partial.kind, "rejected");
@@ -1110,7 +1247,7 @@ test("persisted repair ticket resumes correction without repeating the main call
     },
     modelId: "deepseek-v4-flash",
     message: "只裁定冻结上下文。",
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
   });
   assert.equal(firstPass.kind, "repairRequired", JSON.stringify(firstPass));
   const persisted = structuredClone(firstPass.repairTicket);
@@ -1120,12 +1257,12 @@ test("persisted repair ticket resumes correction without repeating the main call
       async run() {
         correctionCalls += 1;
         return namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, {
-          changes: [{ path, value: "恢复后的检查结果。" }],
+          confirm: "server-plan", summaries: [{ path, value: "恢复后的检查结果。" }],
         });
       },
     },
     modelId: "deepseek-v4-flash",
-    requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
     repairTicket: persisted,
   });
   assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
@@ -1139,7 +1276,7 @@ test("persisted repair ticket resumes correction without repeating the main call
     invokeCorrectKpProposalBundle({
       binding: { async run() { assert.fail("tampered ticket must fail before Provider I/O"); } },
       modelId: "deepseek-v4-flash",
-      requiredContext: { binding: { contextHash: CONTEXT_HASH } },
+      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
       repairTicket: tampered,
     }),
     /VNEXT_PROPOSAL_REPAIR_TICKET_INVALID/u,
@@ -1157,13 +1294,13 @@ test("concrete vNext-2 handshake definition passes offline without claiming live
       positiveCalls += 1;
       if (input.tools[0].function.name === CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         return namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, {
-          changes: [{
+          confirm: "server-plan", summaries: [{
             path: ["proposals", 0, "branches", "success", "summary"],
             value: "检查完成。",
           }],
         });
       }
-      const prompt = input.messages[0].content;
+      const prompt = input.messages.find(message => message.role === "user").content;
       // Keyed on wording unique to the refusal case: the shared contract
       // lines mention inWorldRefusal on every submit prompt.
       if (prompt.includes("徒手把整扇石门")) return toolResponse(inWorldRefusalArguments());
@@ -1228,7 +1365,7 @@ function refusalWireBundle(overrides = {}) {
 }
 
 test("a wire refusal decodes and validates as a terminal bundle", () => {
-  const decoded = decodeVNextStrictToolBundle(refusalWireBundle());
+  const decoded = decodeDomainFixture(refusalWireBundle());
   // The unused half of the bundle and an inapplicable prerequisite ref both
   // ride the `none` sentinel and must come back as real nulls.
   assert.equal(decoded.adjudication, null);
@@ -1246,7 +1383,7 @@ test("a wire refusal decodes and validates as a terminal bundle", () => {
 });
 
 test("a refusal cannot carry a check, which is what scenario B forbids", () => {
-  const terminalBranches = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.terminal.anyOf;
+  const terminalBranches = DECISION_SCHEMAS;
   const refusal = terminalBranches.find((branch) =>
     branch.properties?.kind?.enum?.[0] === "inWorldRefusal");
   assert.ok(refusal, "the refusal terminal must be on the wire");
@@ -1268,7 +1405,7 @@ test("a refusal cannot carry a check, which is what scenario B forbids", () => {
 });
 
 test("the wire offers every attempt cost the server can spend, each closed to its own fields", () => {
-  const refusal = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.terminal.anyOf.find((branch) =>
+  const refusal = DECISION_SCHEMAS.find((branch) =>
     branch.properties?.kind?.enum?.[0] === "inWorldRefusal");
   const variants = refusal.properties.ruling.properties.attemptCosts.items.anyOf;
   // Rules has a transition for each of these kinds now, so the wire offers
@@ -1300,7 +1437,7 @@ test("the wire offers every attempt cost the server can spend, each closed to it
     const result = validateVNextProposalBundle({
       schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
       kind: "proposalBundle",
-      ...decodeVNextStrictToolBundle(withCost),
+      ...decodeDomainFixture(withCost),
     });
     assert.equal(result.kind, "accepted", JSON.stringify({ attemptCosts, result }));
   }
@@ -1314,6 +1451,8 @@ test("the wire offers every attempt cost the server can spend, each closed to it
  */
 function materializeWireBundle(variant) {
   const definition = {
+    ...(variant.semanticKind === "worldFact" ? { worldFact: { subjectRefs: ["scene:atrium"], occurrence: "此前。", initialKnowledge: [],
+      consistency: { judgment: "compatible", explanation: "与已知场景相容。" } } } : {}),
     sceneRef: variant.sceneRef,
     visibilityFactId: variant.visibilityFactId,
     label: "祭坛后的凹槽",
@@ -1340,8 +1479,8 @@ function materializeWireBundle(variant) {
       ],
       outcomeBinding: "always",
       semanticKind: variant.semanticKind,
-      templateRef: "template:probe:niche",
-      templateHash: `sha256:${"9".repeat(64)}`,
+      templateRef: VNEXT_SEMANTIC_TEMPLATES[variant.semanticKind].templateRef,
+      templateHash: VNEXT_SEMANTIC_TEMPLATES[variant.semanticKind].templateHash,
       visibilityPolicyRef: variant.visibilityPolicyRef,
       definition,
       summary: "把刚被注意到的细节固化为可引用事实。",
@@ -1386,12 +1525,12 @@ test("every materialization variant the wire offers is one the domain accepts", 
       semanticKind: "worldFact",
       visibilityPolicyRef: "visibility:hidden-until-evidence",
       sceneRef: "none",
-      visibilityFactId: "fact:world:ledger-was-forged",
+      visibilityFactId: "none",
     },
   ];
 
   for (const variant of variants) {
-    const decoded = decodeVNextStrictToolBundle(materializeWireBundle(variant));
+    const decoded = decodeDomainFixture(materializeWireBundle(variant));
     const entry = decoded.proposals[0];
     // The `none` sentinel is how the wire says "not applicable"; the domain
     // checks real nulls.
@@ -1427,6 +1566,7 @@ test("the domain still rejects the combinations the wire cannot express", () => 
     },
     {
       name: "a hidden reality with no fact gating its reveal",
+      expectedConstraint: "materialization:hidden-visibility-fact-required",
       semanticKind: "sceneFeature",
       visibilityPolicyRef: "visibility:hidden-until-evidence",
       sceneRef: "scene:atrium",
@@ -1434,6 +1574,7 @@ test("the domain still rejects the combinations the wire cannot express", () => 
     },
     {
       name: "a visible feature carrying a stray gate",
+      expectedConstraint: "materialization:visibility-fact-must-be-null",
       semanticKind: "sceneFeature",
       visibilityPolicyRef: "visibility:scene-observers",
       sceneRef: "scene:atrium",
@@ -1452,10 +1593,14 @@ test("the domain still rejects the combinations the wire cannot express", () => 
     const result = validateVNextProposalBundle({
       schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
       kind: "proposalBundle",
-      ...decodeVNextStrictToolBundle(materializeWireBundle(variant)),
+      ...decodeDomainFixture(materializeWireBundle(variant)),
     });
     assert.equal(result.kind, "rejected", variant.name);
-    assert.deepEqual(result.issues, ["bundle:materialization-invalid"], variant.name);
+    assert.deepEqual(result.issues, [variant.expectedConstraint ?? "bundle:materialization-invalid"], variant.name);
+    if (variant.expectedConstraint) assert.ok(result.diagnostics.some(diagnostic =>
+      diagnostic.code === "CONSTRAINT_CONFLICT"
+      && diagnostic.constraint === variant.expectedConstraint
+      && JSON.stringify(diagnostic.path) === JSON.stringify(["proposals", 0, "definition", "visibilityFactId"])), variant.name);
   }
 });
 
@@ -1500,12 +1645,12 @@ test("a consume may name a frozen reference as well as a bundle-local handle", (
     }],
   };
 
-  const decoded = decodeVNextStrictToolBundle(bundle);
+  const decoded = decodeDomainFixture(bundle);
   // The decoder builds null-prototype records, so compare the fields rather
   // than the object identity.
   assert.deepEqual(
     decoded.proposals[0].consumes.map((entry) => ({ ...entry })),
-    [{ kind: "existing", ref: "sceneFeature:chain" }],
+    [{ kind: "existing", ref: "scene:atrium" }, { kind: "existing", ref: "sceneFeature:chain" }],
   );
   // `abilityRef` is no longer pinned, so the sentinel still has to resolve to
   // null for an interaction that uses no Ability.

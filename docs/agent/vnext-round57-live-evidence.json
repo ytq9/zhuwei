@@ -1,0 +1,512 @@
+{
+  "round": 57,
+  "status": "four-normal-http-actions-committed-and-published",
+  "parser": "kp-vnext2-proposal-parser-v27",
+  "source": {
+    "beforeCount": 312,
+    "afterCount": 312,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-06T19:40:32.658214+00:00",
+    "initialManifestSha256": "5b526a76e9ff9873e662d7e84fbc9c17e575c3775ad3d75c323cefcc60ef1827",
+    "allEqual": true
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723323,
+      "beijingTime": "2026-09-07T03:35:23+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 32868,
+      "cacheHitInputTokens": 384,
+      "cacheMissInputTokens": 32484,
+      "outputTokens": 278,
+      "estimatedCny": "0.0499962",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "argumentSha256": [
+        "c2d62f9c20fd12bcf04845a9ae5e0842f110628d315300f3cb298c69c99824c1"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723326,
+      "beijingTime": "2026-09-07T03:35:26+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 1989,
+      "cacheHitInputTokens": 0,
+      "cacheMissInputTokens": 1989,
+      "outputTokens": 60,
+      "estimatedCny": "0.0032535",
+      "tools": [
+        "correct_kp_proposal_bundle"
+      ],
+      "argumentSha256": [
+        "392c3a53c4770fbb73ba9e476a2995172828ccfa03cb0f8791360b3dec966e08"
+      ]
+    },
+    {
+      "ordinal": 3,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723327,
+      "beijingTime": "2026-09-07T03:35:27+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 1933,
+      "cacheHitInputTokens": 896,
+      "cacheMissInputTokens": 1037,
+      "outputTokens": 109,
+      "estimatedCny": "0.0020908",
+      "tools": [],
+      "argumentSha256": []
+    },
+    {
+      "ordinal": 4,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723328,
+      "beijingTime": "2026-09-07T03:35:28+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 2946,
+      "cacheHitInputTokens": 1024,
+      "cacheMissInputTokens": 1922,
+      "outputTokens": 173,
+      "estimatedCny": "0.0037127",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "argumentSha256": [
+        "6855125ddb8e9676ccc1c13e4e828c9cf2ef3f9a55c4f646eddc3858e58fedd5"
+      ]
+    },
+    {
+      "ordinal": 5,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723411,
+      "beijingTime": "2026-09-07T03:36:51+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 38473,
+      "cacheHitInputTokens": 6016,
+      "cacheMissInputTokens": 32457,
+      "outputTokens": 270,
+      "estimatedCny": "0.0502013",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "argumentSha256": [
+        "0e40e09742cfd3669516e0b1173891f16561f8079b6beaecf79203564217e00c"
+      ]
+    },
+    {
+      "ordinal": 6,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723414,
+      "beijingTime": "2026-09-07T03:36:54+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 1831,
+      "cacheHitInputTokens": 896,
+      "cacheMissInputTokens": 935,
+      "outputTokens": 109,
+      "estimatedCny": "0.0019378",
+      "tools": [],
+      "argumentSha256": []
+    },
+    {
+      "ordinal": 7,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723415,
+      "beijingTime": "2026-09-07T03:36:55+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 2835,
+      "cacheHitInputTokens": 1024,
+      "cacheMissInputTokens": 1811,
+      "outputTokens": 175,
+      "estimatedCny": "0.0035552",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "argumentSha256": [
+        "799282b8d6f2e4c5b07b29604b90abf7c41b667e97c5c47159c61a28d0902a17"
+      ]
+    },
+    {
+      "ordinal": 8,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723464,
+      "beijingTime": "2026-09-07T03:37:44+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 38940,
+      "cacheHitInputTokens": 11776,
+      "cacheMissInputTokens": 27164,
+      "outputTokens": 953,
+      "estimatedCny": "0.0456233",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "argumentSha256": [
+        "d8d467bfbaafd3a627250783c259d789a5917959d713aa69bcc74e0bf3b1417f"
+      ]
+    },
+    {
+      "ordinal": 9,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723471,
+      "beijingTime": "2026-09-07T03:37:51+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 2630,
+      "cacheHitInputTokens": 1024,
+      "cacheMissInputTokens": 1606,
+      "outputTokens": 327,
+      "estimatedCny": "0.0039317",
+      "tools": [],
+      "argumentSha256": []
+    },
+    {
+      "ordinal": 10,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723474,
+      "beijingTime": "2026-09-07T03:37:54+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 3878,
+      "cacheHitInputTokens": 1024,
+      "cacheMissInputTokens": 2854,
+      "outputTokens": 182,
+      "estimatedCny": "0.0051512",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "argumentSha256": [
+        "71d5b0dce35bc7b8f569d4f02c9cd6971c4da7a99eec55c75a1fe3c25a67edfb"
+      ]
+    },
+    {
+      "ordinal": 11,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723547,
+      "beijingTime": "2026-09-07T03:39:07+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 38557,
+      "cacheHitInputTokens": 11776,
+      "cacheMissInputTokens": 26781,
+      "outputTokens": 301,
+      "estimatedCny": "0.0421148",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "argumentSha256": [
+        "55bcd077497b15cb71617c1938773f0f2f7633bbfd70d0f96063ceb42c1b31fe"
+      ]
+    },
+    {
+      "ordinal": 12,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723549,
+      "beijingTime": "2026-09-07T03:39:09+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 2168,
+      "cacheHitInputTokens": 1024,
+      "cacheMissInputTokens": 1144,
+      "outputTokens": 82,
+      "estimatedCny": "0.0021362",
+      "tools": [],
+      "argumentSha256": []
+    },
+    {
+      "ordinal": 13,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788723550,
+      "beijingTime": "2026-09-07T03:39:10+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 3214,
+      "cacheHitInputTokens": 1024,
+      "cacheMissInputTokens": 2190,
+      "outputTokens": 173,
+      "estimatedCny": "0.0041147",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "argumentSha256": [
+        "fea51479257cb828740c0316238776a1de97b02a03f0c327141af6ad00dcdd3e"
+      ]
+    }
+  ],
+  "totals": {
+    "calls": 13,
+    "inputTokens": 172262,
+    "cacheHitInputTokens": 37888,
+    "cacheMissInputTokens": 134374,
+    "outputTokens": 3192,
+    "estimatedCny": "0.2178194"
+  },
+  "actions": [
+    {
+      "ordinal": 1,
+      "action": "committed",
+      "narration": "published",
+      "stateVersion": "1",
+      "receiptCount": 1,
+      "visibleAssemblies": [],
+      "torchQuantity": 9,
+      "components": [
+        {
+          "entryId": "item-entry:standard:46:character:498916d9-9f1e-4124-8b9d-b1596c1d8a03:mess-kit:unit-000001",
+          "name": "餐具",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        },
+        {
+          "entryId": "item-entry:standard:46:character:498916d9-9f1e-4124-8b9d-b1596c1d8a03:rope-50ft:unit-000001",
+          "name": "五十尺麻绳",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        }
+      ],
+      "duplicate": {
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      },
+      "callsBeforeAndAfterDuplicate": [
+        4,
+        4
+      ]
+    },
+    {
+      "ordinal": 2,
+      "action": "committed",
+      "narration": "published",
+      "stateVersion": "2",
+      "receiptCount": 2,
+      "visibleAssemblies": [],
+      "torchQuantity": 10,
+      "components": [
+        {
+          "entryId": "item-entry:standard:46:character:498916d9-9f1e-4124-8b9d-b1596c1d8a03:mess-kit:unit-000001",
+          "name": "餐具",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        },
+        {
+          "entryId": "item-entry:standard:46:character:498916d9-9f1e-4124-8b9d-b1596c1d8a03:rope-50ft:unit-000001",
+          "name": "五十尺麻绳",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        }
+      ],
+      "duplicate": {
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      },
+      "callsBeforeAndAfterDuplicate": [
+        7,
+        7
+      ]
+    },
+    {
+      "ordinal": 3,
+      "action": "committed",
+      "narration": "published",
+      "stateVersion": "7",
+      "receiptCount": 3,
+      "visibleAssemblies": [
+        {
+          "assemblyRef": "assembly:dc0b98ecf19095b8544699fe95705f00",
+          "label": "拉绳警铃（麻绳＋餐具）",
+          "description": "用麻绳系住餐具，做成一个可拆卸的简单拉绳警铃——拉动麻绳会扯动餐具发出金属碰撞声。拆解可完整回收两件原物。",
+          "sceneRef": "wake",
+          "state": "active"
+        }
+      ],
+      "torchQuantity": 10,
+      "components": [],
+      "duplicate": {
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      },
+      "callsBeforeAndAfterDuplicate": [
+        10,
+        10
+      ]
+    },
+    {
+      "ordinal": 4,
+      "action": "committed",
+      "narration": "published",
+      "stateVersion": "8",
+      "receiptCount": 4,
+      "visibleAssemblies": [],
+      "torchQuantity": 10,
+      "components": [
+        {
+          "entryId": "item-entry:standard:46:character:498916d9-9f1e-4124-8b9d-b1596c1d8a03:mess-kit:unit-000001",
+          "name": "餐具",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        },
+        {
+          "entryId": "item-entry:standard:46:character:498916d9-9f1e-4124-8b9d-b1596c1d8a03:rope-50ft:unit-000001",
+          "name": "五十尺麻绳",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        }
+      ],
+      "duplicate": {
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      },
+      "callsBeforeAndAfterDuplicate": [
+        13,
+        13
+      ]
+    }
+  ],
+  "classification": {
+    "jsonSyntaxFailures": 1,
+    "recoveredSyntaxFailures": 1,
+    "formFailures": 0,
+    "rulesRejections": 0,
+    "publishedNarrativeContradictionsObserved": 0,
+    "repairAttempts": 1,
+    "repairSuccesses": 1
+  },
+  "repair": {
+    "actionOrdinal": 1,
+    "originalArgumentsSha256": "c2d62f9c20fd12bcf04845a9ae5e0842f110628d315300f3cb298c69c99824c1",
+    "originalArgumentsPreserved": true,
+    "diagnostics": [
+      {
+        "code": "JSON_SYNTAX",
+        "constraint": "json:object-delimiter-expected",
+        "repair": {
+          "allowed": true,
+          "reason": "complete-root-members-frozen",
+          "changes": []
+        },
+        "path": [],
+        "pathBase": "arguments",
+        "location": {
+          "offset": 547,
+          "line": 1,
+          "column": 548
+        }
+      }
+    ],
+    "issues": [
+      "json:root-redundant-delimiters"
+    ],
+    "allowedPaths": [],
+    "repairPlan": [],
+    "realConfirmation": {
+      "confirm": "server-plan",
+      "summaries": []
+    },
+    "committedOperationEqualsFrozenOriginal": true,
+    "sameFrozenContextHash": true
+  },
+  "mechanical": {
+    "events": 8,
+    "eventTypes": [
+      "InventoryOperationApplied",
+      "InventoryOperationApplied",
+      "ItemAssemblyChanged",
+      "CanonicalFactDeclared",
+      "SensoryEvidenceAcquired",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved",
+      "ItemAssemblyChanged"
+    ],
+    "fullPublicInventoryRestored": true,
+    "hitPointsAndResourcesUnchanged": true,
+    "fictionTimeUnchanged": true,
+    "itemDefinitionsUnchanged": true,
+    "assemblies": [
+      {
+        "schema": "zhuwei.item-assembly/v1",
+        "assemblyRef": "assembly:dc0b98ecf19095b8544699fe95705f00",
+        "creatorRef": "character:498916d9-9f1e-4124-8b9d-b1596c1d8a03",
+        "sceneRef": "wake",
+        "label": "拉绳警铃（麻绳＋餐具）",
+        "description": "用麻绳系住餐具，做成一个可拆卸的简单拉绳警铃——拉动麻绳会扯动餐具发出金属碰撞声。拆解可完整回收两件原物。",
+        "state": "disassembled",
+        "components": [
+          {
+            "entryRef": "item-entry:standard:46:character:498916d9-9f1e-4124-8b9d-b1596c1d8a03:mess-kit:unit-000001",
+            "recoverable": true
+          },
+          {
+            "entryRef": "item-entry:standard:46:character:498916d9-9f1e-4124-8b9d-b1596c1d8a03:rope-50ft:unit-000001",
+            "recoverable": true
+          }
+        ]
+      }
+    ],
+    "replay": {
+      "pinnedProfilesMatch": true,
+      "replayKind": "replayed",
+      "exactState": true,
+      "stateVersion": "8",
+      "events": 8,
+      "eventTypes": [
+        "InventoryOperationApplied",
+        "InventoryOperationApplied",
+        "ItemAssemblyChanged",
+        "CanonicalFactDeclared",
+        "SensoryEvidenceAcquired",
+        "WorldInteractionResolved",
+        "AtomicWorldInteractionStepsResolved",
+        "ItemAssemblyChanged"
+      ],
+      "checkedAt": "2026-09-06T19:40:33.099Z"
+    },
+    "fourthAssemblyRefFromPreviousPublicView": true
+  },
+  "stoppedProcesses": [
+    {
+      "pid": 90473,
+      "exitCode": 143
+    },
+    {
+      "pid": 90439,
+      "exitCode": 143
+    }
+  ],
+  "limitations": [
+    "One four-action sequence does not establish a statistical stability rate.",
+    "Mixed irreversible recovery, combat assembly and moving an assembly were not exercised by the real API.",
+    "Duplicate and replay do not prove Durable Object eviction recovery.",
+    "Usage-based fees are estimates, not an account bill."
+  ],
+  "thirdActionFilling": {
+    "assemblyOperations": 1,
+    "worldResultRecordKinds": [
+      "sensoryEvidence"
+    ]
+  }
+}

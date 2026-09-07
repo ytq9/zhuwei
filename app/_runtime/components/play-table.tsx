@@ -224,9 +224,8 @@ type TablePendingInput = {
     } & (
       | { choiceKind: "target"; candidateEntityIds: string[] }
       | {
-          choiceKind: "reaction";
-          candidateAbilityRefs: string[];
-          targetEntityId: string;
+          choiceKind: "reaction" | "knockOut";
+          answerOptions: Array<{ label: string; answer: Record<string, unknown> }>;
         }
       | { choiceKind: "initiativeTieOrder"; orderedEntityIds: string[] }
       | { choiceKind: "encounterConclusion" }
@@ -292,6 +291,11 @@ export type TableSnap = {
         status: "active" | "completed" | "interrupted";
         startedAtFictionMicros: string;
         intendedDurationMicros: string;
+        kind?: "timePassage";
+        processingState?: "processing" | "blocked" | "cannotSafelyContinue";
+        progressFictionMicros?: string;
+        endedAtFictionMicros?: string;
+        interruptionReason?: string;
         restKind?: "short" | "long";
       }>;
       inCombat?: boolean;
@@ -368,6 +372,30 @@ export type TableSnap = {
   };
   module: { title: string; chapters: { id: string; name: string }[] };
 };
+
+function timePassageProgress(state: TableSnap["state"]): string | undefined {
+  const activities = state.authoritative?.activities?.filter(activity => activity.kind === "timePassage"
+    && /^(0|[1-9][0-9]*)$/.test(activity.startedAtFictionMicros));
+  const activity = activities?.sort((left, right) => BigInt(left.startedAtFictionMicros) > BigInt(right.startedAtFictionMicros) ? -1 : 1)[0];
+  if (!activity) return undefined;
+  const ended = activity.status === "active" ? activity.progressFictionMicros : activity.endedAtFictionMicros;
+  if (ended === undefined || !/^(0|[1-9][0-9]*)$/.test(ended)
+    || !/^[1-9][0-9]*$/.test(activity.intendedDurationMicros) || BigInt(ended) < BigInt(activity.startedAtFictionMicros)) return undefined;
+  const seconds = (value: bigint) => {
+    const fraction = String(value % 1_000_000n).padStart(6, "0").replace(/0+$/, "");
+    return `${value / 1_000_000n}${fraction ? `.${fraction}` : ""}`;
+  };
+  const elapsed = seconds(BigInt(ended) - BigInt(activity.startedAtFictionMicros));
+  const intended = seconds(BigInt(activity.intendedDurationMicros));
+  const status = activity.status === "active" ? "等待中" : activity.status === "completed" ? "等待已结束" : "等待已中断";
+  const reasons: Record<string, string> = { actorUnavailable: "无法继续行动", actorIncapacitated: "无法继续等待",
+    encounterActive: "需要处理当前遭遇", locationChanged: "地点已改变", externalInterruption: "受到中断" };
+  const reason = activity.status === "interrupted" ? reasons[activity.interruptionReason ?? ""] : undefined;
+  const processing = activity.status !== "active" ? "" : activity.processingState === "cannotSafelyContinue"
+    ? " · 系统无法安全继续本次处理，等待尚未完成，已过时间已保留。"
+    : activity.processingState === "blocked" ? " · 系统尚未完成本次处理，等待尚未完成，已过时间已保留。" : "";
+  return `${status} · 实际经过 ${elapsed} 秒 / 计划 ${intended} 秒${reason ? ` · ${reason}` : ""}${processing}`;
+}
 
 export function PlayTable({
   code,
@@ -940,6 +968,7 @@ export function PlayTable({
         : null;
   const topStatusKind: TableTopStatusKind | null = conversationWorkKind
     ?? (syncing ? "sync" : null);
+  const passageProgress = timePassageProgress(snap.state);
   const momentLabel = topStatusKind
     ? topStatusKind === "speech"
       ? "正在整理语音"
@@ -970,6 +999,7 @@ export function PlayTable({
                 第 {snap.state.ruleProjection.viewer.timeline.spotlightBeat} 拍 · 虚构时间约 {Math.floor(snap.state.ruleProjection.viewer.timeline.fictionSeconds / 60)} 分钟
               </p>
             ) : null}
+            {passageProgress ? <p className="mt-0.5 text-[11px] text-brass" role="status">{passageProgress}</p> : null}
             {snap.state.partySplit ? (
               <p className="mt-0.5 text-[11px] text-brass">
                 队伍已分开，同一条时间线。你只听见自己这边；最多差三拍，领先的人先停。
@@ -1685,31 +1715,19 @@ function CombatChoicePanel({
     );
   }
 
-  if (pending.choiceKind === "reaction") {
+  if (pending.choiceKind === "reaction" || pending.choiceKind === "knockOut") {
     return (
       <div className="mt-3 flex flex-wrap gap-2">
-        {pending.candidateAbilityRefs.map((abilityRef) => (
+        {pending.answerOptions.map((option, index) => (
           <Button
-            key={abilityRef}
+            key={`${index}:${option.label}`}
             type="button"
             disabled={sending}
-            onClick={() => void onSubmit({
-              kind: "useReaction",
-              abilityRef,
-              targetEntityId: pending.targetEntityId,
-            }, `我对 ${entityLabel(pending.targetEntityId)} 使用反应。`)}
+            onClick={() => void onSubmit(structuredClone(option.answer), option.label)}
           >
-            {abilityRef === "action:opportunity-attack" ? "借机攻击" : abilityRef}
+            {option.label}
           </Button>
         ))}
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={sending}
-          onClick={() => void onSubmit({ kind: "decline" }, "我不使用这次反应。")}
-        >
-          不使用反应
-        </Button>
       </div>
     );
   }

@@ -1778,7 +1778,7 @@ function settleProgram(
     let total: number | undefined;
     if (resolution === "check") {
       const entry = randomness.get(step.nodeRef);
-      if (entry === undefined || !isRecord(entry.request) || !("frozenCheck" in entry.request)) {
+      if (entry === undefined || !isRecord(entry.request) || !("frozenCheck" in entry.request) || entry.request.frozenCheck===null) {
         return rejected("invalidRulesInput", "Every frozen causal check requires one authoritative result.");
       }
       const check = entry.request.frozenCheck;

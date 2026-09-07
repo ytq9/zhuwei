@@ -1,0 +1,305 @@
+{
+  "baselineBranch": "cloudflare",
+  "baselineHead": "258caee404e0814405eb497653ee9f00d647b773",
+  "isolatedReceipt": "/tmp/zhuwei-location-passage-handoff-v2-20260906/receipt.json",
+  "patchSha256": "4443f2bd3bb64c305120416d03e176fdbb88e46cdafdbd022cf8ff146a37d0da",
+  "integrationDirectory": "/var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-location-main-integration-n8eg7kap",
+  "integration": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/extractors.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "9583c5fcc666a9af4f1bf6eeee1babd89316f6f2a9bd90eaa8fa34f625a0143f",
+      "mergedSha256": "5116438ccc28bece1fd7c05443f9ef14fc9f12a40ac70db0514bc86336f9f4c3"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/reference-index.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "8aafefac0f44b282e014e7f2964215946b3d33f3b74766e1f50be82fde4b4baa",
+      "mergedSha256": "50722f26ddac349066b389e8788261634ab9b41b363975d05536925f8e9d9918"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/runtime-requirements.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "d61fccf917a30dd9ed7e95ec55aaacbc2b117607774d278582422fc2b752e6e5",
+      "mergedSha256": "c23a3e175455f4468306848269802fa2b19c4a8c3e02624e0c82603179b43e00"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "86306f8bb29f3388eeb48fed6f6c7a9f84591b663ecd31400bdd92f5a6a964bf",
+      "mergedSha256": "41c618986e1d31c658d12bc2fbaf55566b5db1aede20054f74c3c82782df65fd"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-capabilities.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "891c156cdd756ed6a10cbb41b82e55baad6dbfe9eed57c97f5d572d311f1ad5b",
+      "mergedSha256": "6034091fe45a01f7ec86b732eea15eebfaf0d51af3333c275fe142b4dbd0ab21"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-graph.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "e6c9c4bd0310c61438ddc1bb5d92f19d2603a4084450e9b3a7449ee9f98b4336",
+      "mergedSha256": "989d152813426fe4d4b47055bcc9577e866ff3bddf88655031f81b6f917463cd"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-guidance.ts",
+      "kind": "three-way",
+      "mergeExitCode": 0,
+      "beforeSha256": "d63ca99c102a49093564e660ac0f89ed74ece6138a57ce5683b39b697855501e",
+      "mergedSha256": "869e329a2bcb1da5a330561941f237eb1ed1f9bcfe2270d9e96c111d05c7eb9c"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-schema.ts",
+      "kind": "three-way",
+      "mergeExitCode": 0,
+      "beforeSha256": "93e5bd53c408796642a462c68824b0f87d53c7a6acdba16c3485861e66ac196c",
+      "mergedSha256": "cf3b7c270e896fb42413f76c970f2b31722b0f62ea84df9d755e6120b5195001"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-validator.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "943bd85d3263c541a7ffeb7b131d5eafda951d9a8560902e81c2d96fb7f6fdd6",
+      "mergedSha256": "32e2520037c1921ec5b33572dad85000d2b4fca17bca41559127459db4881535"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposals.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "e5f84fb56eb09a6ae429eedccffec8113661f6dac1c645078ceb77434def54d5",
+      "mergedSha256": "5973ab172cf94d2641ab036fa72c8a7526c1c32658bc9526eb1f299f50e77e58"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/semantic-templates.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "a4e9ccc5fd8d9961a35d516092eb085f078b253fa9f2550166888cdbb28bcca7",
+      "mergedSha256": "0da13c42011751f11ed162d4465f6beac1b29a458223e6eef1680484bed6357d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/authority-bindings.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "9291220c040a3d3685996b091dfac3f385f589403a2b7a209e6b953421ace01e",
+      "mergedSha256": "a90d9bf19fd0a34be9850efc48ccefb6ba7f17c810517aa29a7cce5324843eb2"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-actions.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "57c795fb537d744e25324fc6a6004e36ee150f4cdcfdd3295401c9c3fcc0b2db",
+      "mergedSha256": "4984418f0057e1bdb8b17db920eace715ea9ff89d7e52cf609d5b0130359d10f"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-events.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "7723b10611b1cc60b97bf05e1ada20cbd111bf114967265141196f4ee23ebc62",
+      "mergedSha256": "719baa37bd654b430fba51b1fa8a8295ccf5a98e0ee707b0e9f2942ae0616bc9"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/claims.ts",
+      "kind": "three-way",
+      "mergeExitCode": 0,
+      "beforeSha256": "96b6554c8abe604163ae5b1a47486d4309482d493d8a711efaab3cebc779ccd2",
+      "mergedSha256": "3c340ce08c206d3bfc3ad96b5eb2894d083f1241f4dd905bbe257437a4a13477"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/compound-model.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "28d763d6c82bd2e9320a146f2f7d1446cccb36139027ce9408274630c6a65151",
+      "mergedSha256": "9e81cd0c3e67ae2a04b961eb496d09bd01c82873834372bb4b48bf1b9594b5ed"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/correction.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "ff71e3cb18f754372f5410038a400b5d3fba8b53a152851697c8ce994fd65063",
+      "mergedSha256": "74b7ee05ea047b82f2695e1e6e7f34836980856488d85d43f100d2545855cd0b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/dynamic-location-shapes.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": null,
+      "mergedSha256": "9420fa79686df7ecee714506f19e2af759d77abd6af76ed540041182f0f3d3dc"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/dynamic-locations.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": null,
+      "mergedSha256": "c3a6700b213fa655e75deb75bf8f6fc0daac4eaa84204649b2ac4e0ded307fc5"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/events.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "457bd8d74e3932f7046f8afc9826dd7fb662f9349d0fefe450f6fecebe6409ed",
+      "mergedSha256": "69499a8e1a6a222ec810072114e260f89f513964ee00356e9a7ac8d87725e892"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/model.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "fc8789b7150efbd2c47515471cf30fc7e879669de97d60b5020562c2b0c890ae",
+      "mergedSha256": "bb2ad3af2459bbe7c9b41528ed8a0f037fdee4dbda355815dc18b013caffd278"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/multiplayer-actions.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "54af6dbce48e44bf02c4297713f62dfebc2a61c0e8a60bf139e629d2ede2e386",
+      "mergedSha256": "76c72b1440708d325e76afbabae6427cf1b8cc99467b63a3177d20ca4819807f"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/multiplayer-events.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "179481cbd928ee451c32bc065a0e7728836ad5be9320c22d3f6520467211e227",
+      "mergedSha256": "0168a1dde68fcf532ab17538d4a9f6d2731deb78bc1461192e1058666c1a2f7f"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/observer-delta.ts",
+      "kind": "three-way",
+      "mergeExitCode": 0,
+      "beforeSha256": "5f2b70311e8e77cfe360951592da821cc35613612185a104717454e9f9c5a9ed",
+      "mergedSha256": "ccfbf55313773a3568e2b4af7b01eb1ff96b1a10bfec9cba3154be8135fdb3ec"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/semantic-definitions.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "b9dbe71d5b31963871f72b1278d7da2f223ecb53c7db04757251aad9a956e2e7",
+      "mergedSha256": "1f594672972c87a67c42e98b2e55d10fffd9499b40b0fbc5675482803f0825fc"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/timeline.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "95ddb2bad7e79368bb09a33c4b5a3683b8998de79a3839733d321bd5720b0d4a",
+      "mergedSha256": "db30f43804670b42688d341a61ef3c3bf3f5238a0a7a6daac6336db5f77a30e4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-model.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "793285930a93bfa2be81bdbc4c21fd7fe79c92f2b07a166e34353088aebbf36e",
+      "mergedSha256": "38ffe3f1c3ad14bca73e33367d503b33379fb9169c4d7c619f33ca1605f1895e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interactions.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": "8e8e0cc4801f5390bb3c16cbc4d74638d55633adef5739585cddc4324a0a8f43",
+      "mergedSha256": "58802f1f88497964d75330c0a210a4ab99eb95f6610489b00451f52b98701186"
+    },
+    {
+      "path": "tests/kp-vnext-dynamic-locations-room.test.ts",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": null,
+      "mergedSha256": "3a2e4b506f0b1d8774a5f960edaa311f9fe4dfa2dcc11d9b078b7bc735c40681"
+    },
+    {
+      "path": "tests/kp-vnext-dynamic-locations.test.mjs",
+      "kind": "baseline-exact",
+      "mergeExitCode": 0,
+      "beforeSha256": null,
+      "mergedSha256": "04343098b4fcae283bac82fc367b8ea52294892ffae74e7bbce227f29912fb44"
+    },
+    {
+      "path": "tests/kp-vnext-proposal-schema.test.mjs",
+      "kind": "three-way",
+      "mergeExitCode": 0,
+      "beforeSha256": "9bb11af82df10e8036a8839fe9394f13088c99381ea42686d25d69ffb1f58cb9",
+      "mergedSha256": "0cc09cb027836dbcb0aa7035c9f5e57aa0722d22a9c27cea3045897e64cc1509"
+    }
+  ],
+  "applied": {
+    "applied": true,
+    "verifiedFiles": 31,
+    "threeWayFiles": 5
+  },
+  "subsequentChanges": "Original shape predicates gained relative diagnostics; schema consumer expects exact visibilityFactId constraints. Inventory sourceBefore and v22 preserved by three-way merge.",
+  "finalHashes": {
+    "app/_runtime/lib/kp/vnext/context/extractors.ts": "5116438ccc28bece1fd7c05443f9ef14fc9f12a40ac70db0514bc86336f9f4c3",
+    "app/_runtime/lib/kp/vnext/context/reference-index.ts": "50722f26ddac349066b389e8788261634ab9b41b363975d05536925f8e9d9918",
+    "app/_runtime/lib/kp/vnext/context/runtime-requirements.ts": "c23a3e175455f4468306848269802fa2b19c4a8c3e02624e0c82603179b43e00",
+    "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts": "41c618986e1d31c658d12bc2fbaf55566b5db1aede20054f74c3c82782df65fd",
+    "app/_runtime/lib/kp/vnext/proposal-capabilities.ts": "6034091fe45a01f7ec86b732eea15eebfaf0d51af3333c275fe142b4dbd0ab21",
+    "app/_runtime/lib/kp/vnext/proposal-graph.ts": "989d152813426fe4d4b47055bcc9577e866ff3bddf88655031f81b6f917463cd",
+    "app/_runtime/lib/kp/vnext/proposal-guidance.ts": "869e329a2bcb1da5a330561941f237eb1ed1f9bcfe2270d9e96c111d05c7eb9c",
+    "app/_runtime/lib/kp/vnext/proposal-schema.ts": "cf3b7c270e896fb42413f76c970f2b31722b0f62ea84df9d755e6120b5195001",
+    "app/_runtime/lib/kp/vnext/proposal-validator.ts": "118d2a5360650c6666c84db23490f8a8e1e2d7571380d2fabc5427fc720bef11",
+    "app/_runtime/lib/kp/vnext/proposals.ts": "5973ab172cf94d2641ab036fa72c8a7526c1c32658bc9526eb1f299f50e77e58",
+    "app/_runtime/lib/rules/profiles/semantic-templates.ts": "0da13c42011751f11ed162d4465f6beac1b29a458223e6eef1680484bed6357d",
+    "app/_runtime/lib/rules/v2/authority-bindings.ts": "a90d9bf19fd0a34be9850efc48ccefb6ba7f17c810517aa29a7cce5324843eb2",
+    "app/_runtime/lib/rules/v2/campaign-actions.ts": "4984418f0057e1bdb8b17db920eace715ea9ff89d7e52cf609d5b0130359d10f",
+    "app/_runtime/lib/rules/v2/campaign-events.ts": "719baa37bd654b430fba51b1fa8a8295ccf5a98e0ee707b0e9f2942ae0616bc9",
+    "app/_runtime/lib/rules/v2/claims.ts": "3c340ce08c206d3bfc3ad96b5eb2894d083f1241f4dd905bbe257437a4a13477",
+    "app/_runtime/lib/rules/v2/compound-model.ts": "9e81cd0c3e67ae2a04b961eb496d09bd01c82873834372bb4b48bf1b9594b5ed",
+    "app/_runtime/lib/rules/v2/correction.ts": "74b7ee05ea047b82f2695e1e6e7f34836980856488d85d43f100d2545855cd0b",
+    "app/_runtime/lib/rules/v2/dynamic-location-shapes.ts": "2ccb91ada117799372f678930567a70e5e3661e63696d8da4103d98a2c2df23a",
+    "app/_runtime/lib/rules/v2/dynamic-locations.ts": "c3a6700b213fa655e75deb75bf8f6fc0daac4eaa84204649b2ac4e0ded307fc5",
+    "app/_runtime/lib/rules/v2/events.ts": "69499a8e1a6a222ec810072114e260f89f513964ee00356e9a7ac8d87725e892",
+    "app/_runtime/lib/rules/v2/model.ts": "bb2ad3af2459bbe7c9b41528ed8a0f037fdee4dbda355815dc18b013caffd278",
+    "app/_runtime/lib/rules/v2/multiplayer-actions.ts": "76c72b1440708d325e76afbabae6427cf1b8cc99467b63a3177d20ca4819807f",
+    "app/_runtime/lib/rules/v2/multiplayer-events.ts": "0168a1dde68fcf532ab17538d4a9f6d2731deb78bc1461192e1058666c1a2f7f",
+    "app/_runtime/lib/rules/v2/observer-delta.ts": "ccfbf55313773a3568e2b4af7b01eb1ff96b1a10bfec9cba3154be8135fdb3ec",
+    "app/_runtime/lib/rules/v2/semantic-definitions.ts": "1f594672972c87a67c42e98b2e55d10fffd9499b40b0fbc5675482803f0825fc",
+    "app/_runtime/lib/rules/v2/timeline.ts": "db30f43804670b42688d341a61ef3c3bf3f5238a0a7a6daac6336db5f77a30e4",
+    "app/_runtime/lib/rules/v2/world-interaction-model.ts": "38ffe3f1c3ad14bca73e33367d503b33379fb9169c4d7c619f33ca1605f1895e",
+    "app/_runtime/lib/rules/v2/world-interactions.ts": "58802f1f88497964d75330c0a210a4ab99eb95f6610489b00451f52b98701186",
+    "tests/kp-vnext-dynamic-locations-room.test.ts": "3a2e4b506f0b1d8774a5f960edaa311f9fe4dfa2dcc11d9b078b7bc735c40681",
+    "tests/kp-vnext-dynamic-locations.test.mjs": "04343098b4fcae283bac82fc367b8ea52294892ffae74e7bbce227f29912fb44",
+    "tests/kp-vnext-proposal-schema.test.mjs": "0072fcbbde1a29e0e67ee0fd61d065b2b917dc4647b609027059cdeed97ed59f"
+  },
+  "checks": [
+    {
+      "command": "node --import tsx --test tests/kp-vnext-spatial-diagnostics.test.mjs",
+      "exitCode": 0,
+      "passed": 8,
+      "failed": 0,
+      "rawOutput": "subagent functions.exec -> exec_command tool result; chunk_id 0a5664",
+      "standaloneStdoutLog": false,
+      "durationMs": 390.275542
+    },
+    {
+      "command": "node --import tsx --test tests/kp-vnext-dynamic-locations.test.mjs tests/kp-vnext-proposal-schema.test.mjs tests/kp-vnext-inventory-source.test.mjs tests/kp-vnext-plan-confirmation.test.mjs",
+      "log": "/tmp/zhuwei-v22-spatial-final-node.log",
+      "exitCode": 1,
+      "passed": 47,
+      "failed": 1,
+      "failure": "Existing schema consumer expected aggregate issue; updated to exact visibilityFactId constraint and path."
+    },
+    {
+      "command": "node --import tsx --test --test-name-pattern='the domain still rejects the combinations the wire cannot express' tests/kp-vnext-proposal-schema.test.mjs",
+      "log": "/tmp/zhuwei-v22-spatial-schema-consumer.log",
+      "exitCode": 0,
+      "passed": 1
+    },
+    {
+      "command": "npx vitest run tests/kp-vnext-dynamic-locations-room.test.ts tests/kp-vnext-provider-room.test.ts -t 'natural language vNext creates a passage|repairs .* representation errors through the Room journal|keeps a repaired check frozen|requires plan confirmation|rejects a correction changing'",
+      "log": "/tmp/zhuwei-v22-spatial-final-room.log",
+      "exitCode": 0,
+      "passed": 6,
+      "skipped": 29
+    },
+    {
+      "command": "npm run typecheck",
+      "log": "/tmp/zhuwei-v22-spatial-final-types.log",
+      "exitCode": 0
+    }
+  ],
+  "realLocationModelTested": false,
+  "deployed": false,
+  "pushed": false
+}

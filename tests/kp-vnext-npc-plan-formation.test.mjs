@@ -1,0 +1,189 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+  CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { parseSubmitKpProposalBundleCandidateArguments, invokeSubmitKpProposalBundleWithOneCorrection,
+  invokeSubmitKpProposalBundleFirstPass, assertRepairTicket } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
+import { applyVNextProposalBundleCorrection } from '../app/_runtime/lib/kp/vnext/proposal-correction.ts';
+import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
+import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
+import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
+import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
+import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
+import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
+
+const NPC = 'npc:planner', SECOND = 'npc:other-planner', KNOWLEDGE = 'knowledge:held-premise';
+const PRIVATE = 'PLAYER_PRIVATE_FORMATION_CANARY';
+const source = (npcRef = NPC) => ({ kind: 'formActorPlan', npcRef, factionRef: { kind: 'none' },
+  goal: '设法让下一次交接更有条理。', nextStep: '交接以后在门框上系一条布带。', premiseRefs: [npcRef],
+  resourceRefs: [], durationMicros: '2000000', traceDescription: '门框上多了一条新系的布带。',
+  alternateTargetRef: SCENE, alternateReason: '需要改换行动对象时仍留意当前场景。' });
+const wire = (entry = source()) => ({ decision: { kind: 'directSuccess', risk: '形成私有计划尚未执行行动。',
+  successOutcome: '保存计划并开始对应的Activity。', steps: [entry] } });
+const request = { modelId: 'controlled-test', message: '根据NPC本人情况安排下一步。', requiredContext: { entries: [],
+  references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: 'sha256:formation-test' } } };
+const response = (raw, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) => ({ choices: [{ message: { tool_calls: [
+  { type: 'function', function: { name, arguments: typeof raw === 'string' ? raw : JSON.stringify(raw) } },
+] } }] });
+const confirm = () => response({ confirm: 'server-plan', summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
+function parsed(value) { return parseSubmitKpProposalBundleCandidateArguments(typeof value === 'string' ? value : JSON.stringify(value)); }
+
+function clarification(entry) { return { decision: { kind: 'clarification', basisRefs: [], intent: '先确定行动方案。',
+  method: '确认后保存该计划。', question: '采用哪个方案？', choices: ['first', 'second'].map(choiceId => ({
+    choiceId, label: choiceId, publicRisk: '形成计划还没有执行后续行动。', basisRefs: [], continuation: wire(structuredClone(entry)).decision,
+  })) } }; }
+
+test('the selected shared schema exposes one flat timer form for distinct NPCs without model-owned identities or repeated evidence', () => {
+  assert.deepEqual(deepSeekStrictToolSchemaIssues(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
+  const schema = expandDeepSeekSchema(createVNextProposalBundleSchema(["formActorPlan"], undefined, undefined, []));
+  for (const npcRef of [NPC, SECOND]) {
+    const input = wire(source(npcRef));
+    assert.equal(matchesAuthoredSourceSchema(input, schema), true);
+    const accepted = parsed(input); assert.equal(accepted.kind, 'accepted', JSON.stringify(accepted));
+    const entry = accepted.bundle.proposals[0];
+    assert.equal(entry.kind, 'formActorPlan'); assert.equal(entry.npcRef, npcRef); assert.equal(entry.factionRef, null);
+    assert.deepEqual(entry.basisRefs, []); assert.deepEqual(entry.consumes, []); assert.deepEqual(entry.produces, []);
+    assert.equal(entry.outcomeBinding, 'always');
+    for (const key of ['basisRefs', 'consumes', 'produces', 'planId', 'activityId', 'due', 'trigger', 'trace', 'alternateTarget', 'readSet']) {
+      assert.equal(Object.hasOwn(input.decision.steps[0], key), false);
+    }
+  }
+});
+
+test('same Rules shape diagnostics locate missing decisions and wrong numeric representation, while future sources are explicitly refused', () => {
+  const missing = wire(); delete missing.decision.steps[0].goal;
+  const numeric = wire(); numeric.decision.steps[0].durationMicros = 2000000;
+  const future = wire(); future.decision.steps[0].premiseRefs = ['prospective:future-knowledge'];
+  for (const [input, field, code] of [[missing, 'goal', 'FIELD_MISSING'], [numeric, 'durationMicros', 'TYPE_MISMATCH'], [future, 'premiseRefs', 'REFERENCE_UNAVAILABLE']]) {
+    const result = parsed(input); assert.equal(result.kind, 'locallyRejected', JSON.stringify(result));
+    const diagnostic = result.diagnostics.find(detail => detail.path?.[0] === 'proposals' && detail.path?.[2] === field);
+    assert.ok(diagnostic, JSON.stringify(result)); assert.equal(diagnostic.code, code);
+    assert.equal(diagnostic.repair.allowed, false);
+  }
+});
+
+test('exact integer duration tokens use the existing one-confirmation repair for both direct and frozen-choice timer forms', async () => {
+  for (const input of [wire(source()), clarification(source(SECOND))]) {
+    const originalArguments = JSON.stringify(input).replaceAll('"durationMicros":"2000000"', '"durationMicros":2000000');
+    let calls = 0, ticket;
+    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request,
+      persistRepairTicket(value) { ticket = value; }, binding: { async run(_model, request) {
+        calls++; if (calls === 1) return response(originalArguments);
+        const prompt = JSON.parse(request.messages[1].content);
+        assert.equal(prompt.originalArguments, originalArguments);
+        assert.ok(prompt.repairPlan.every(change => change.reason === 'exact-integer-token-to-string' && change.value === '2000000'));
+        return confirm();
+      } } });
+    assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result)); assert.equal(calls, 2); assert.equal(result.repairUsed, true);
+    assert.equal(ticket.originalArguments, originalArguments); assertRepairTicket(ticket, request.requiredContext.binding.contextHash);
+    if (result.bundle.mode === 'adjudication') assert.equal(result.bundle.proposals[0].durationMicros, '2000000');
+    else for (const choice of result.bundle.terminal.choices) assert.equal(choice.continuation.proposals[0].durationMicros, '2000000');
+  }
+});
+
+test('fractional rounding, exponents, unavailable original tokens and missing goals never invite a new plan decision', async () => {
+  const raw = JSON.stringify(wire()).replace('"durationMicros":"2000000"', '"durationMicros":TOKEN');
+  const missing = wire(); delete missing.decision.steps[0].goal;
+  const values = ['2000000.000000001', '2e6', '0', '-1', '9007199254740992'].map(token => raw.replace('TOKEN', token));
+  values.push(JSON.stringify(missing));
+  for (const value of values) {
+    let calls = 0;
+    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request, persistRepairTicket() { assert.fail('unsafe repair'); },
+      binding: { async run() { calls++; return response(value); } } });
+    assert.equal(result.kind, 'rejected', JSON.stringify(result)); assert.equal(calls, 1); assert.equal(result.repairUsed, false);
+  }
+  const candidate = parsed(raw.replace('TOKEN', '2000000'));
+  assert.equal(candidate.kind, 'locallyRejected');
+  const { vnextProposalRepairPlan } = await import('../app/_runtime/lib/kp/vnext/proposal-correction.ts');
+  assert.deepEqual(vnextProposalRepairPlan(candidate.draft), []);
+});
+
+test('caller-supplied correction paths cannot change NPC, premise, goal, timing, resources or any future consequence', async () => {
+  const originalArguments = JSON.stringify(wire()).replace('"durationMicros":"2000000"', '"durationMicros":2000000');
+  const begun = await invokeSubmitKpProposalBundleFirstPass({ ...request, binding: { async run() { return response(originalArguments); } } });
+  assert.equal(begun.kind, 'repairRequired');
+  const ticket = begun.repairTicket;
+  for (const [key, value] of Object.entries({ npcRef: SECOND, premiseRefs: [ACTOR], goal: '更换目标。', nextStep: '立即离开。', durationMicros: '3000000',
+    factionRef: 'faction:other', resourceRefs: ['hitDice'], alternateTargetRef: ACTOR, alternateReason: '换一个理由。', traceDescription: '出现不同的机械后果。' })) {
+    const path = ['proposals', 0, key];
+    const result = applyVNextProposalBundleCorrection({ bundle: ticket.draft, originalArguments, requiredContext: request.requiredContext,
+      allowedPaths: [path], correction: { schema: VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA, attempt: 1,
+        baseBundleHash: canonicalHash(ticket.draft), contextHash: request.requiredContext.binding.contextHash,
+        changes: [{ path, operation: 'replace', value }] } });
+    assert.equal(result.kind, 'rejected', key);
+  }
+});
+
+function fixture(name) {
+  const f = createAuthoredProbeFixture(`formation-kp:${name}`, { npcCharacters: [{ id: NPC, name: '排班人', resources: { supplies: 3 } }, { id: SECOND, name: '巡夜人' }],
+    initialKnowledge: [{ characterId: SECOND, knowledgeRef: KNOWLEDGE, content: '交接以后整理巡夜标记。', kind: 'sourceClaim', layer: 'partial', visibility: 'private', provenanceChain: ['genesis:npc'] },
+      { characterId: ACTOR, knowledgeRef: 'knowledge:player-private', content: PRIVATE, kind: 'sourceClaim', layer: 'partial', visibility: 'private', provenanceChain: ['genesis:player'] }] });
+  return f;
+}
+function lower(f, input, context) {
+  const accepted = parsed(input); assert.equal(accepted.kind, 'accepted', JSON.stringify(accepted));
+  return lowerVNext2ProposalBundle({ value: accepted.bundle, requiredContext: context, state: f.state, profiles: f.profiles,
+    rootActionId: context.binding.rootActionId, actorCharacterId: ACTOR });
+}
+
+test('empty self and holder-scoped knowledge lower through the same atomic plan with frozen authority versions', () => {
+  const f = fixture('sources');
+  for (const entry of [source(), { ...source(SECOND), premiseRefs: [`knowledge:${SECOND}:${KNOWLEDGE}`] }]) {
+    const context = freezeAuthoredProbeContext(f, f.state, { focusRefs: [entry.npcRef] }).context;
+    const result = lower(f, wire(entry), context); assert.equal(result.kind, 'accepted', JSON.stringify(result));
+    assert.equal(result.command.rulesInput.kind, 'applyAtomicWorldInteractionSteps');
+    const step = result.command.rulesInput.steps[0]; assert.equal(step.formId, 'objective-continuity.vnext-1');
+    assert.equal(step.rulesInput.kind, 'formNpcActorPlan'); assert.deepEqual(step.produces, []);
+    assert.deepEqual(step.rulesInput.plan.source.premiseRefs, [entry.npcRef === NPC ? NPC : KNOWLEDGE]);
+    assert.ok(step.rulesInput.plan.readSet.some(binding => binding.ref === `character-timeline:${entry.npcRef}`));
+    assert.equal(step.rulesInput.plan.source.goal, entry.goal);
+  }
+});
+
+test('plan diagnostics list only the selected NPC own frozen premises even if another holder was loaded', () => {
+  const f = fixture('private'), context = freezeAuthoredProbeContext(f, f.state, { focusRefs: [NPC, SECOND] }).context;
+  for (const ref of [`knowledge:${ACTOR}:knowledge:player-private`, `knowledge:${SECOND}:${KNOWLEDGE}`]) {
+    const input = wire({ ...source(), premiseRefs: [ref] });
+    const result = lower(f, input, context); assert.equal(result.kind, 'rejected');
+    assert.equal(result.code, 'PROPOSAL_REFERENCE_INVALID');
+    const diagnostic = result.diagnostics[0]; assert.deepEqual(diagnostic.expected.refs, [NPC]);
+    assert.equal(JSON.stringify(diagnostic).includes(PRIVATE), false);
+    assert.equal(diagnostic.repair.allowed, false);
+  }
+});
+
+
+test('a legitimate faction freezes its own resource closure without asking the model to repeat it or spending anything', () => {
+  const f = fixture('faction'), factionRef = 'faction:watch';
+  const registered = f.runtime.step(f.profiles, f.state, { kind: 'registerDynamicDefinition', proposalId: `${f.rootActionId}:faction`,
+    definition: { definitionId: 'definition:watch', definitionKind: 'faction', revision: '1', rulesBasis: 'zhuwei-product-ruling',
+      visibilityPolicyRef: 'visibility:scene-observers', content: { factionId: factionRef, name: '值班队', goal: '安排值班标记。',
+        memberRefs: [NPC], resourceRefs: ['faction-resource:bell'] } } });
+  assert.equal(registered.kind, 'committed', JSON.stringify(registered)); f.state = registered.state;
+  const context = freezeAuthoredProbeContext(f, f.state, { focusRefs: [NPC, SECOND] }).context;
+  const result = lower(f, wire({ ...source(), factionRef, resourceRefs: ['supplies'] }), context);
+  assert.equal(result.kind, 'accepted', JSON.stringify(result));
+  const plan = result.command.rulesInput.steps[0].rulesInput.plan;
+  assert.deepEqual(plan.source.resourceRefs, [factionRef, 'faction-resource:bell', 'supplies'].sort());
+  assert.ok(plan.readSet.some(binding => binding.ref === `continuity:factions:${factionRef}`));
+  const committed = f.runtime.step(f.profiles, f.state, result.command.rulesInput);
+  assert.equal(committed.kind, 'committed', JSON.stringify(committed));
+  assert.equal(committed.state.entities[NPC].resources.supplies, 3);
+  assert.ok(committed.state.campaignRuntime.factionPlans[plan.planId]);
+  assert.equal(committed.state.canonicalFacts[plan.traceFactRef], undefined);
+  const outsider = lower(f, wire({ ...source(SECOND), factionRef }), context);
+  assert.equal(outsider.kind, 'rejected'); assert.equal(outsider.code, 'CONTEXT_INSUFFICIENT');
+  assert.equal(outsider.diagnostics[0].constraint, 'npc-plan:frozen-faction-required');
+});
+
+test('a future trigger and model-authored identities cannot enter a repair turn', async () => {
+  for (const extra of [{ trigger: { kind: 'knowledgeAcquired', knowledgeRef: 'knowledge:future' } },
+    { planId: 'plan:chosen-by-model' }, { basisRefs: [NPC] }, { due: { kind: 'fictionTime', atFictionMicros: '3000000' } }]) {
+    let calls = 0;
+    const input = wire({ ...source(), ...extra });
+    const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...request, persistRepairTicket() { assert.fail('not a formatting decision'); },
+      binding: { async run() { calls++; return response(input); } } });
+    assert.equal(result.kind, 'rejected', JSON.stringify(result)); assert.equal(calls, 1); assert.equal(result.repairUsed, false);
+    assert.ok(result.diagnostics.every(detail => detail.repair.allowed === false));
+  }
+});

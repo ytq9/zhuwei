@@ -107,6 +107,7 @@ function equippedAmmunitionResourceId(
 export function npcItemSystemEquipmentMechanics(
   character: CharacterRecord,
   itemSystem: ItemSystemStateV1,
+  catalog: Record<string, JsonRecord>,
 ): NpcItemSystemEquipment {
   if (!isItemSystemStateV1(itemSystem)) {
     throw new TypeError("NPC item system is invalid");
@@ -157,7 +158,7 @@ export function npcItemSystemEquipmentMechanics(
     const use = definition?.content.use;
     const baseAbility = definition === undefined
       ? undefined
-      : itemUseBaseAbilityDefinition(definition, {});
+      : itemUseBaseAbilityDefinition(definition, catalog);
     if (entry.disposition !== "held"
       || entry.holderRef !== character.id
       || entry.condition !== "usable"
@@ -229,6 +230,7 @@ export function changeNpcItemSystemEquipment(
   definition: JsonRecord,
   action: { action: "wear"; entryId: string; slot: GearSlot }
     | { action: "stow"; slot: GearSlot },
+  catalog: Record<string, JsonRecord>,
 ): {
   itemSystem: ItemSystemStateV1;
   loadout: CharacterLoadoutRecord;
@@ -252,7 +254,7 @@ export function changeNpcItemSystemEquipment(
     itemSystem: changed.itemSystem,
     loadout: derived.loadout,
     movedEntryId: changed.movedEntryId,
-    equipment: npcItemSystemEquipmentMechanics(nextCharacter, changed.itemSystem),
+    equipment: npcItemSystemEquipmentMechanics(nextCharacter, changed.itemSystem, catalog),
   };
 }
 
@@ -262,6 +264,7 @@ export function changeNpcItemSystemLifecycle(
   definition: JsonRecord,
   entryId: string,
   action: ItemLifecycleAction,
+  catalog: Record<string, JsonRecord>,
 ): {
   itemSystem: ItemSystemStateV1;
   loadout: CharacterLoadoutRecord;
@@ -279,7 +282,7 @@ export function changeNpcItemSystemLifecycle(
   return {
     itemSystem: changed.itemSystem,
     loadout: derived.loadout,
-    equipment: npcItemSystemEquipmentMechanics(nextCharacter, changed.itemSystem),
+    equipment: npcItemSystemEquipmentMechanics(nextCharacter, changed.itemSystem, catalog),
   };
 }
 
@@ -452,6 +455,7 @@ export function planNpcInitialItemImport(input: {
       { ...structuredClone(input.character), loadout: currentLoadout },
       input.definition,
       { action: "wear", entryId, slot: materialization.desiredSlot },
+      input.catalog,
     );
     if ("error" in changed) return changed;
     current = changed.itemSystem;

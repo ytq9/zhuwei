@@ -1,0 +1,106 @@
+{
+  "round": 67,
+  "status": "stopped-on-first-invalid-social-decision",
+  "sourceManifestSha256": "a2f7375f3d9fe992155e8ef44de4523bf3aaeac9a070a449c44dd88985226b4a",
+  "defaultModel": "deepseek-v4-flash",
+  "fixture": false,
+  "actions": [
+    {
+      "ordinal": 1,
+      "result": "notCommitted",
+      "narration": "notApplicable"
+    },
+    {
+      "ordinal": 2,
+      "result": "notExecuted"
+    },
+    {
+      "ordinal": 3,
+      "result": "notExecuted"
+    }
+  ],
+  "actualDecisionKind": "social",
+  "missingRulingAndOutcome": true,
+  "diagnostics": [
+    {
+      "code": "VALUE_INVALID",
+      "constraint": "filling:decision-kind",
+      "repair": {
+        "allowed": false,
+        "reason": "semantic-equivalence-unproven"
+      },
+      "path": [
+        "decision",
+        "kind"
+      ],
+      "pathBase": "arguments",
+      "expected": {
+        "type": "string",
+        "enum": [
+          "directSuccess",
+          "check",
+          "knowledgeReview",
+          "passTime",
+          "inWorldRefusal",
+          "clarification"
+        ]
+      },
+      "actual": {
+        "type": "string",
+        "value": "social"
+      }
+    }
+  ],
+  "usage": {
+    "calls": 1,
+    "inputTokens": 19931,
+    "cacheHitTokens": 768,
+    "cacheMissTokens": 19163,
+    "outputTokens": 185,
+    "costCny": "0.0296154",
+    "unknownUsageCalls": 0
+  },
+  "resultCounts": {
+    "formatFailures": 1,
+    "rulesRejections": 0,
+    "identifiedNarrativeContradictions": 0,
+    "correctionCalls": 0,
+    "recoveryAttempts": 0,
+    "modelPlansFormed": 0
+  },
+  "stateChecks": {
+    "stateEqualToInitial": true,
+    "events": 0,
+    "receipts": 0,
+    "plans": 0,
+    "activities": 0,
+    "pendingDue": 0,
+    "replayExact": true,
+    "sourceEndAllEqual": true
+  },
+  "evidenceDirectory": "/tmp/zhuwei-round67-npc-preparation/evidence",
+  "originalCaptureSha256": "2523ef8d4cdb935ac8445773868ada05cf4c9a94cca176c23d1182fedfd9591e",
+  "processes": {
+    "capture": 24080,
+    "game": 24088,
+    "signal": "SIGTERM",
+    "identityChecked": true,
+    "processAndPortsAbsent": true,
+    "detachedExitCode": null
+  },
+  "commandExitCodes": {
+    "freeze": 0,
+    "captureStart": 0,
+    "gameStart": 0,
+    "setup": 0,
+    "action1": 0,
+    "meter": 0,
+    "shutdown": 0,
+    "status": 0,
+    "extract": 0,
+    "replay": 0,
+    "sourceEnd": 0,
+    "originalParserInspection": 0
+  },
+  "next": "Read-only audit of competing instructions and selection/filling ambiguity; no draft conversion or real API resampling."
+}

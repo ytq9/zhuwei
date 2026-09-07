@@ -1,0 +1,96 @@
+{
+  "round": 43,
+  "scope": "review-only candidate; original complete v6 validator",
+  "limits": {
+    "maxCalls": 4,
+    "maxInputTokens": 48000,
+    "maxOutputTokens": 32768,
+    "maxCny": 0.44,
+    "perCallTimeoutMs": 45000,
+    "batchTimeoutMs": 240000,
+    "model": "deepseek-v4-flash",
+    "productionCodeChanged": false,
+    "originalFullValidator": true,
+    "cases": [
+      {
+        "id": "inventory-action-realization",
+        "expected": "accepted",
+        "body": "你取出一根火把，把它放下，没有点燃。",
+        "requestHash": "19ac1b3138e3d79d84f6dfc8fccaeb6ac0ddb2c2d08087996bd9b7df1ce78745",
+        "estimatedInputTokens": 5746
+      },
+      {
+        "id": "inventory-unsupported-state",
+        "expected": "rejected",
+        "body": "你放下了一根火把，火把没有燃烧，周围完全没有光。",
+        "requestHash": "cd65b015f81274eb09f753d73848f8753ea78544dc0e1545cf3bb306b6e54c3a",
+        "estimatedInputTokens": 5752
+      },
+      {
+        "id": "npc-attributed-source",
+        "expected": "accepted",
+        "body": "林说，门后没有人。",
+        "requestHash": "c6b05db6f152e023154ad114849d63a2cabd2e98169bd2988268b7de9f76c403",
+        "estimatedInputTokens": 4116
+      },
+      {
+        "id": "npc-source-as-truth",
+        "expected": "rejected",
+        "body": "门后没有人。",
+        "requestHash": "361a035f58f8e907d9e2835934801c59307f4cedac184d0a8fe3e2d7139e3acf",
+        "estimatedInputTokens": 4114
+      }
+    ]
+  },
+  "final": {
+    "results": [
+      {
+        "id": "inventory-action-realization",
+        "verdict": "rejected",
+        "expected": "accepted",
+        "matched": false,
+        "reason": "ModelOutputValidationError",
+        "durationMs": 3137,
+        "usage": {
+          "prompt_tokens": 4728,
+          "completion_tokens": 502,
+          "total_tokens": 5230,
+          "prompt_tokens_details": {
+            "cached_tokens": 1536
+          },
+          "prompt_cache_hit_tokens": 1536,
+          "prompt_cache_miss_tokens": 3192
+        }
+      }
+    ],
+    "notAttempted": [
+      "inventory-unsupported-state",
+      "npc-attributed-source",
+      "npc-source-as-truth"
+    ],
+    "endedAt": "2026-09-06T14:47:06.025Z"
+  },
+  "knownCostCny": "0.0071238",
+  "artifacts": {
+    "final.json": "a57ab69deeaaf8025a2c757b5cba8f4506dfb5b9e8e7ef89c6110398c0ff93c1",
+    "inventory-action-realization-input.json": "fd019bddcdeedfcddc0864e0b5052b1aa821ca1d0d6d2364d384886639fcdc71",
+    "inventory-action-realization-response.json": "63e6dd530d94dab8fd8aabc000f9a35ab3ad85089a87b56236ed94adef3ec1f1",
+    "inventory-action-realization-result.json": "031473e0c9edd90d017542a90343953941c6a7c6465a4808a26110d1becf5470",
+    "plan.json": "e017e221ec793a92cbe868887401734ddb37d89a0d5d1c72787706d952d54354",
+    "source-manifest.json": "36facf7c7834a8aeea16be13aa9021710dacfb1d3234768b6d422640632023b4"
+  },
+  "productionNarrationChanged": false,
+  "deployed": false,
+  "pushed": false,
+  "sourceManifest": {
+    "app/_runtime/lib/kp/narration-vnext.ts": "9c94c8b4aecb1a7ceb13ec9d8658b0f5b84bd666ee3552283ba3c2853ae6b7f7",
+    "app/_runtime/lib/kp/deepseek.ts": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8",
+    "app/_runtime/lib/kp/vnext/invocation/budget.ts": "419715f0713f1fd89c15451da37bd34fdd797dca42fcad0ce6cebeeab147ad89"
+  },
+  "manualReview": [
+    "f2 lacks evidence from claimIndex 1",
+    "f3 absent from both coverage and omissions",
+    "statement adds backpack absent from candidate",
+    "statement strengthens omitted action into unlit object state"
+  ]
+}

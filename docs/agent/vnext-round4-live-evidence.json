@@ -1,0 +1,405 @@
+{
+  "schema": "zhuwei.agent-live-evidence/round4",
+  "date": "2026-09-05",
+  "branch": "cloudflare",
+  "head": "258caee404e0814405eb497653ee9f00d647b773",
+  "dirtyWorktree": true,
+  "environment": {
+    "host": "localhost:4319",
+    "entry": "ordinary Cookie-authenticated /api/game",
+    "model": "deepseek-v4-flash",
+    "endpoint": "https://api.deepseek.com/beta/chat/completions",
+    "productionDeployment": false
+  },
+  "limits": {
+    "rootActions": 3,
+    "calls": 12,
+    "inputTokens": 360000,
+    "outputTokens": 32000,
+    "perHttpCalls": 4,
+    "afterFirstFailure": "one discriminating contrast only; no further model call after grounding failure"
+  },
+  "strictControl": {
+    "kind": "strict-control-only",
+    "callCount": 1,
+    "usage": {
+      "prompt_tokens": 607,
+      "completion_tokens": 105,
+      "total_tokens": 712,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 607
+    },
+    "finishReason": "tool_calls",
+    "singleCorrectTool": true,
+    "jsonParsed": true,
+    "schemaValid": true
+  },
+  "cases": [
+    {
+      "input": "我从背包里取出一支弩矢，轻轻放在脚边的地上。",
+      "action": "committed",
+      "narration": "published",
+      "errorCode": null,
+      "before": {
+        "stateVersion": "0",
+        "receiptCount": 0,
+        "hp": {
+          "current": 28,
+          "maximum": 28
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 20,
+          "arrow": 0,
+          "torch": 10,
+          "ration": 10,
+          "gold": 10
+        },
+        "resourceMaximums": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0
+        },
+        "pendingInputs": [],
+        "fictionTime": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        }
+      },
+      "after": {
+        "stateVersion": "1",
+        "receiptCount": 1,
+        "hp": {
+          "current": 28,
+          "maximum": 28
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 19,
+          "arrow": 0,
+          "torch": 10,
+          "ration": 10,
+          "gold": 10
+        },
+        "resourceMaximums": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0
+        },
+        "pendingInputs": [],
+        "fictionTime": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        }
+      },
+      "eventTypes": [
+        "InventoryOperationApplied"
+      ],
+      "proposalInvocations": [
+        {
+          "ordinal": 1,
+          "status": "completed",
+          "requestHash": "sha256:c65524800508543dab7551befc7398cb24140b7c0708f90d3757dc0960c03f82",
+          "contextHash": "sha256:490f1ab67fa2e4625fad454bb35ceeb77fe74dd025674f8b9c41a6f1074cb590",
+          "bindingHash": "sha256:ea93f54d70132a81fe99bdf129321f596c5b385ab29710fdb0aff453f94f0ac9",
+          "requestBytes": 88045,
+          "model": "deepseek-v4-flash",
+          "usage": {
+            "prompt_tokens": 27541,
+            "completion_tokens": 436,
+            "total_tokens": 27977,
+            "prompt_tokens_details": {
+              "cached_tokens": 7936
+            },
+            "prompt_cache_hit_tokens": 7936,
+            "prompt_cache_miss_tokens": 19605
+          },
+          "finishReason": "tool_calls",
+          "proposalKinds": [
+            "inventoryOperation"
+          ]
+        }
+      ]
+    },
+    {
+      "input": "我从背包里取出一支弩矢，轻轻放在脚边的地上，然后站在原地看看四周。",
+      "action": "committed",
+      "narration": "rejected",
+      "errorCode": "NARRATION_GROUNDING_REJECTED",
+      "before": {
+        "stateVersion": "0",
+        "receiptCount": 0,
+        "hp": {
+          "current": 28,
+          "maximum": 28
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 20,
+          "arrow": 0,
+          "torch": 10,
+          "ration": 10,
+          "gold": 10
+        },
+        "resourceMaximums": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0
+        },
+        "pendingInputs": [],
+        "fictionTime": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        }
+      },
+      "after": {
+        "stateVersion": "5",
+        "receiptCount": 1,
+        "hp": {
+          "current": 28,
+          "maximum": 28
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 19,
+          "arrow": 0,
+          "torch": 10,
+          "ration": 10,
+          "gold": 10
+        },
+        "resourceMaximums": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0
+        },
+        "pendingInputs": [],
+        "fictionTime": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        }
+      },
+      "eventTypes": [
+        "InventoryOperationApplied",
+        "CanonicalFactDeclared",
+        "SensoryEvidenceAcquired",
+        "WorldInteractionResolved",
+        "AtomicWorldInteractionStepsResolved"
+      ],
+      "proposalInvocations": [
+        {
+          "ordinal": 1,
+          "status": "completed",
+          "requestHash": "sha256:cb8c6f76bb64e7e281129943918c82f451dd9535207fdc08497f1af00ba97185",
+          "contextHash": "sha256:880d06dcfc856ff0ae5df358f9698cdf35bda50992cd7cab3baae3dec506f356",
+          "bindingHash": "sha256:5dd050f8401371e23dfc1547a1103ea46de76eb877fc27eb3a8838e0fcf36502",
+          "requestBytes": 88270,
+          "model": "deepseek-v4-flash",
+          "usage": {
+            "prompt_tokens": 27598,
+            "completion_tokens": 904,
+            "total_tokens": 28502,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 27598
+          },
+          "finishReason": "tool_calls",
+          "proposalKinds": [
+            "inventoryOperation",
+            "worldInteraction"
+          ]
+        }
+      ]
+    }
+  ],
+  "meter": {
+    "calls": 6,
+    "inputTokens": 61518,
+    "outputTokens": 1807,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 61518,
+    "outputBudgetCharge": 1807,
+    "callTelemetryConsistent": true,
+    "invocations": [
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 1,
+        "requestHash": "sha256:cb8c6f76bb64e7e281129943918c82f451dd9535207fdc08497f1af00ba97185",
+        "bindingHash": "sha256:5dd050f8401371e23dfc1547a1103ea46de76eb877fc27eb3a8838e0fcf36502",
+        "estimatedInputTokens": 29229,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:880d06dcfc856ff0ae5df358f9698cdf35bda50992cd7cab3baae3dec506f356",
+        "result": "success",
+        "durationMs": 7573,
+        "responseHash": "sha256:cc8d777e3acf25bafdf5a03eb5cdd13cf55191fae41781fd4b10652ac0390cec",
+        "inputTokens": 27598,
+        "outputTokens": 904
+      },
+      {
+        "eventName": "room.model.invocation.completed",
+        "modelTask": "narration",
+        "modelInvocationPurpose": "initialNarration",
+        "modelResult": "modelPermanent",
+        "modelInputTokens": 2365,
+        "modelOutputTokens": 156,
+        "outcomeKind": "modelPermanent",
+        "errorCode": "narrationGrounding",
+        "durationMs": 2692
+      },
+      {
+        "eventName": "room.model.invocation.completed",
+        "modelTask": "narration",
+        "modelInvocationPurpose": "narrationGroundingRepair",
+        "modelResult": "modelPermanent",
+        "modelInputTokens": 2267,
+        "modelOutputTokens": 156,
+        "outcomeKind": "modelPermanent",
+        "errorCode": "narrationGrounding",
+        "durationMs": 2079
+      }
+    ]
+  },
+  "firstCasePublishedBody": "本次行动已经由权威状态提交。你接下来怎么做？",
+  "firstCaseQualityPass": false,
+  "firstCaseDuplicate": {
+    "noModelReinvocation": true,
+    "sameSubmissionId": true,
+    "sameReceipt": true,
+    "sameMechanicalState": true,
+    "sameDelivery": true
+  },
+  "replay": [
+    {
+      "case": "zhuwei-vnext-round4",
+      "replayKind": "replayed",
+      "exactState": true,
+      "version": "1",
+      "eventTypes": [
+        "InventoryOperationApplied"
+      ]
+    },
+    {
+      "case": "zhuwei-vnext-round4-contrast",
+      "replayKind": "replayed",
+      "exactState": true,
+      "version": "5",
+      "eventTypes": [
+        "InventoryOperationApplied",
+        "CanonicalFactDeclared",
+        "SensoryEvidenceAcquired",
+        "WorldInteractionResolved",
+        "AtomicWorldInteractionStepsResolved"
+      ]
+    }
+  ],
+  "narrationEvidenceLimit": {
+    "rawInitialAndRepairResponsesPersisted": false,
+    "specificGroundingReasonsAvailable": false,
+    "offlineFaithfulClaimsBodyAccepted": true,
+    "offlineFaithfulClaimsBodyIsRealModelResponse": false
+  },
+  "offlineFollowups": [
+    "independent source and target inventory Claims without private envelope",
+    "current-scene sensory scope with unchanged object gates",
+    "server-frozen narrative materializer dependencies accepted by both atomic compiler and persisted-plan validator",
+    "closed grounding reason carried through initial and repair receipts into redacted telemetry"
+  ],
+  "afterLiveOnly": [
+    "narrative obligation dependency fix",
+    "grounding reason telemetry"
+  ],
+  "status": {
+    "mechanicalHttpCommit": true,
+    "usefulAccurateModelNarration": false,
+    "onlineNarrativeCommitmentThenMaterialization": false,
+    "onlineActionAndClassResourceConsumption": false,
+    "tokenAdoptionGate": false,
+    "productionReplacementReady": false
+  }
+}

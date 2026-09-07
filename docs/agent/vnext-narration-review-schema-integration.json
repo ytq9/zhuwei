@@ -1,0 +1,103 @@
+{
+  "status": "integrated",
+  "root": "/tmp/zhuwei-narration-review-schema-work",
+  "targetRoot": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "baselineManifest": "/tmp/zhuwei-narration-review-schema-work/schema-baseline-manifest.json",
+  "patchPath": "/tmp/zhuwei-narration-review-schema-work/narration-review-schema.patch",
+  "patchSha256": "76da2517119bcf4864e075a2bb2da3becb577a06d7291287a159933cb37517f6",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/deepseek.ts",
+      "sourcePath": "/tmp/zhuwei-narration-review-schema-work/app/_runtime/lib/kp/deepseek.ts",
+      "baselineSha256": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8",
+      "newSha256": "ff953eaa27916c6c536b1b0bd202af9db30c76fc34c8edeeefe9a6cb26d747d0",
+      "liveSha256AtDelivery": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8"
+    },
+    {
+      "path": "app/_runtime/lib/kp/deepseek-strict-tool.ts",
+      "sourcePath": "/tmp/zhuwei-narration-review-schema-work/app/_runtime/lib/kp/deepseek-strict-tool.ts",
+      "baselineSha256": "d90482e7e204acc77879de8c31793265f7f8f03c5daf54e1baa65a7ab87f2dd2",
+      "newSha256": "bd01c2835a8f9ea12e3cff073eb1601f7eaed8e41a2bd41df827f325edcbebab",
+      "liveSha256AtDelivery": "d90482e7e204acc77879de8c31793265f7f8f03c5daf54e1baa65a7ab87f2dd2"
+    },
+    {
+      "path": "app/_runtime/lib/kp/narration-vnext.ts",
+      "sourcePath": "/tmp/zhuwei-narration-review-schema-work/app/_runtime/lib/kp/narration-vnext.ts",
+      "baselineSha256": "dd7416a6245946bbe05197cf7e1af47d3f6d0d751d95200945b50f1a419ad75b",
+      "newSha256": "c658450656fd03b4d673310839d7bd081cf679c407f2cab02348d3def3aeb8f7",
+      "liveSha256AtDelivery": "dd7416a6245946bbe05197cf7e1af47d3f6d0d751d95200945b50f1a419ad75b"
+    },
+    {
+      "path": "tests/kp-vnext-knowledge-review.test.mjs",
+      "sourcePath": "/tmp/zhuwei-narration-review-schema-work/tests/kp-vnext-knowledge-review.test.mjs",
+      "baselineSha256": "40ca6f7d8dc1a50f678e233b374c1404fcd51aa0e699e3bedc3b886f77e3614a",
+      "newSha256": "4247e550b5f4e6b102208d9836ac530984c2d613a4b7d2f03df12e5ab5427455",
+      "liveSha256AtDelivery": "40ca6f7d8dc1a50f678e233b374c1404fcd51aa0e699e3bedc3b886f77e3614a"
+    },
+    {
+      "path": "tests/kp-vnext-narration.test.mjs",
+      "sourcePath": "/tmp/zhuwei-narration-review-schema-work/tests/kp-vnext-narration.test.mjs",
+      "baselineSha256": "24f2df94af343246f14d12ff39747205974cf1d2450347290c397d7800b283b1",
+      "newSha256": "c86e2cd77015e56999ab985dd36e0d4fb2f1daec94f1f3e3784e33db4d622985",
+      "liveSha256AtDelivery": "24f2df94af343246f14d12ff39747205974cf1d2450347290c397d7800b283b1"
+    },
+    {
+      "path": "tests/deepseek-strict-tool-provider.test.mjs",
+      "sourcePath": "/tmp/zhuwei-narration-review-schema-work/tests/deepseek-strict-tool-provider.test.mjs",
+      "baselineSha256": "34140a5f0ed7b5e2de5d86d97dc0fd18819718200660e152723954112bb1afb8",
+      "newSha256": "7b6075ee93ac9a85d0c3d5295306939706b58c8c633fe6bf95430f73defd1167",
+      "liveSha256AtDelivery": "34140a5f0ed7b5e2de5d86d97dc0fd18819718200660e152723954112bb1afb8"
+    }
+  ],
+  "versions": {
+    "narrationReviewSchema": "zhuwei.narration-review/v11",
+    "promptPolicyVersion": "kp-vnext-narration-policy-v9"
+  },
+  "validation": [
+    {
+      "phase": "red",
+      "command": "npx tsx --test --test-name-pattern='zero-mechanical|model inquiry|zero-property' tests/kp-vnext-narration.test.mjs tests/kp-vnext-knowledge-review.test.mjs tests/deepseek-strict-tool-provider.test.mjs",
+      "exitCode": 1,
+      "tests": 3,
+      "pass": 0,
+      "fail": 3
+    },
+    {
+      "phase": "green",
+      "command": "npx tsx --test tests/kp-vnext-narration.test.mjs tests/kp-vnext-knowledge-review.test.mjs tests/deepseek-strict-tool-provider.test.mjs",
+      "exitCode": 0,
+      "tests": 48,
+      "pass": 48,
+      "fail": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "git apply --check --whitespace=error /tmp/zhuwei-narration-review-schema-work/narration-review-schema.patch",
+      "workdir": "/Users/sanmu/Documents/zhuwei-cloudflare",
+      "exitCode": 0
+    }
+  ],
+  "scope": [
+    "No mechanical results: omit resultChecks from strict schema, prompt and decoded report; reject any supplied table.",
+    "Nonempty mechanical results: preserve exact per-group completeness validation and bounded two-call adapter.",
+    "Bind reviewId to selected prompt; update schema/policy fingerprints.",
+    "Reject empty object properties in the existing vendor schema validator; preserve its exact Error as non-enumerable cause across strict binding."
+  ],
+  "limitations": [
+    "No live model/API call performed by this isolated task; round58/59 remained failed evidence.",
+    "No main-tree edits, service changes, deploy or push; root owns integration and execution log.",
+    "Provider rejection classification is separate sibling delivery."
+  ],
+  "readonlyReview": {
+    "reviewer": "/root/timeline_prefix_design/actor_due_claims",
+    "status": "approved",
+    "substantiveFindings": [],
+    "additionalTestsOrApiCalls": false
+  },
+  "integratedAt": "2026-09-06T20:38:17.282208+00:00",
+  "backup": "/tmp/zhuwei-narration-review-schema-root-before",
+  "conflicts": 0
+}

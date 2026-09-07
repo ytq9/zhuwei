@@ -1,0 +1,704 @@
+{
+  "baseCommit": "258caee404e0814405eb497653ee9f00d647b773",
+  "branch": "cloudflare",
+  "scope": "modified and untracked implementation, test, and runtime configuration files; unchanged files supplied by base commit",
+  "files": [
+    {
+      "path": "app/_runtime/components/play-table.tsx",
+      "sha256": "dd2c29c38c7396e8bcc6004a15a444139ed1cb523edbec95aee3f6cac0a82b43"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/class-resources.ts",
+      "sha256": "63c706d8c63917123c60265bb9472f2ea00c82f2638d24461449f18fe2e64292"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/gear.ts",
+      "sha256": "9e3d7356604a2052aeaf0293b066a8575ad7f12594d44bb95becec8594e89d1e"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/resources.ts",
+      "sha256": "0f8e03a825f0f1cc7defbe50edd30e165193df9b7ab8b478b16fa8b10c0961b2"
+    },
+    {
+      "path": "app/_runtime/lib/kp/authoritative-helpers.ts",
+      "sha256": "72392d0ff2a801223b64cb15df95ff4a0c06a78be97227a3f6422d73db74d477"
+    },
+    {
+      "path": "app/_runtime/lib/kp/authoritative-types.ts",
+      "sha256": "7cb6f4c6037f3ebe542ae6f8d9499c2e8c6b859ac24182be0c78269cb3ae50ab"
+    },
+    {
+      "path": "app/_runtime/lib/kp/authoritative.ts",
+      "sha256": "6987138f037df2438a937c73afd5040483848bc324cf5edad4025cb28f88806b"
+    },
+    {
+      "path": "app/_runtime/lib/kp/deepseek-strict-schema-compaction.ts",
+      "sha256": "17bf39d596fd2010f7bd76758d43bb14bcd3de8713a8b6ffd67aa2ef15ec088d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/deepseek.ts",
+      "sha256": "08937f4de5621288c19aad8ba9ad8bdec665abfb5b8e4e42dee0a42ba46ae259"
+    },
+    {
+      "path": "app/_runtime/lib/kp/narration-context.ts",
+      "sha256": "91c4d29d416f50509042c264ca937b75bc57823c79f1533c6ec4e4d011f8f16e"
+    },
+    {
+      "path": "app/_runtime/lib/kp/narration-v3.ts",
+      "sha256": "e6b296bb265de684bd6fbe0a8ebfa5439fe5d32cc977711a1212fcf4a6d96cbe"
+    },
+    {
+      "path": "app/_runtime/lib/kp/narration-vnext.ts",
+      "sha256": "c80e93896fd2e8a26dab8f600bed47657bd97614f7c185da53a67df027d62d47"
+    },
+    {
+      "path": "app/_runtime/lib/kp/pending-decision-policy.ts",
+      "sha256": "4a71e51b0e68e5b706c718913449bb7a11c3b535ad6aa1cc4520bcc2fbc205cf"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/adapter.ts",
+      "sha256": "3458d887691eeb447576c70cc0f4cb21f5dbce7d14cb5a5ab69824d2cd3281d2"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/authored-proposal-contract.ts",
+      "sha256": "5027d309c22896e8d640a3c6d27da19f9aa20d41a508de158a96de54840ff163"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/ambiguity.ts",
+      "sha256": "6a01484211508d047a533b497ad9da634d064f72ef406a767dc88a6fa1ceaabf"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/authority-records.ts",
+      "sha256": "a78ac36a917895ff55ee6e081d4e6221884e62b9fcff02c940bb6755ba5537c9"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/availability.ts",
+      "sha256": "b81e1390eedf26a8f215035ad52ae07d22431f99e9fcde050c09b7c89d07726f"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/candidate-discovery.ts",
+      "sha256": "6757561125437f73cf8124fc39a3a4481fc35f790160ff03b503b5bf2a932edc"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/coverage.ts",
+      "sha256": "f95e5464b171c5f61634cfff95295650f667e4d24f61ecb970178fd074672583"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/extractors.ts",
+      "sha256": "9583c5fcc666a9af4f1bf6eeee1babd89316f6f2a9bd90eaa8fa34f625a0143f"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/index.ts",
+      "sha256": "780ae029cc286bcdbf8f049b262e466392a23c6da6e7d08035f0a968828a7822"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/narrative-continuity.ts",
+      "sha256": "9940b7251360c30099d9e7b382216d136aaf5f138d4b9856bb2a064e74960e26"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/obligation-closure.ts",
+      "sha256": "09631c1b89bd9dede1a4ff96739f148fdaa349fcf7e6a788d4d057312f7dfc96"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/reference-index.ts",
+      "sha256": "693cd8a1376233dbb42bc76e74cceb02fe08e6461fa7a527cbc7a9c72381a332"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/runtime-requirements.ts",
+      "sha256": "a0e640f3f99893a03babcab5f82360af3e48e2f8c32626637ed04bc30f252bfd"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/invocation/assemble.ts",
+      "sha256": "4fd0896cf330aefab70c3b4e2f04d6685366ef6da1ce5a70564d80e14b1f72f7"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/materialization-authority.ts",
+      "sha256": "ed85bd5a933a7d1294f5f0cd0a44ed44441f3023c9d8f2c0ace3e1ce1974006b"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts",
+      "sha256": "5c5b5ea548243f803b5873f76cb56d35fe2945f14de20bb631747593da4bcd94"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-bundle.ts",
+      "sha256": "0465a5894234e9a3d6c8c130b82bf14deffb337b1ae8a9551a9209668d703948"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-capabilities.ts",
+      "sha256": "6657c7e47f0423caeb57b817463c86843c34b2c60af14b81e32119c242bfd994"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-context.ts",
+      "sha256": "d267d7eb62c31575d0852592ac8f8b0c96c367db22c4613e9424d423fcc84ff3"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-correction.ts",
+      "sha256": "e063f0798d9cfa036de83ae661eb5d0e1f1dae37940c540b934f50fd9e6937bd"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-graph.ts",
+      "sha256": "15c8340ff664b7860deb6c5b380fc26c561b179c2f0aa63e68e015cc166c13c1"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-guidance.ts",
+      "sha256": "7c1f75c1c4aa3f4cf7956f2fb953f991f750c31765ffca49a72a65a5f856d615"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-provider.ts",
+      "sha256": "72a00af302b5aac660e7a0d1d945c63810f0a605a247fd9fdb119d5c868b1c3d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-schema.ts",
+      "sha256": "15408a73a64bb155bb4738d2e9027cf401266db7c528e9a7b75f6e4e7b3e8ba0"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-validator.ts",
+      "sha256": "483f2c9b0a3b92a3c3d35bfd9fc94067b339126946f1872f13cfab63851407af"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposals.ts",
+      "sha256": "c851d72b8de5510f2d277c678939c2331e7bc9851738749ddf8df2fb6fd2031b"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/required-context.ts",
+      "sha256": "0f4ca2703e6bf225e2c88e41b5c1d1e935b9c617dc2ec2bdaaab6afd240b353d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/room-bridge.ts",
+      "sha256": "e8ffbb2019c4b96ce275e67a69bc6fe997238fce1b0801d9effd7504ec0085b7"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/runtime-policy.ts",
+      "sha256": "34801f3d5fe26d8181913e3d4d938fb7a7298335a2e2aba3ca939823933310f5"
+    },
+    {
+      "path": "app/_runtime/lib/room/action.ts",
+      "sha256": "07702d08f84577af4441f6362d23f0619fac48f5058b5ac5820b00c8171b2c40"
+    },
+    {
+      "path": "app/_runtime/lib/room/archive.ts",
+      "sha256": "de4bfdd172144db8bb9dec37c9746717c2c7510e34375536075f079c0bec206f"
+    },
+    {
+      "path": "app/_runtime/lib/room/authority-store.ts",
+      "sha256": "4f81cb63fb66b7d3f02733166aed6c760f2436df7aab74d33f0e19f6caa09de3"
+    },
+    {
+      "path": "app/_runtime/lib/room/authority-types.ts",
+      "sha256": "34b543d79b8b450baa4e82e10e13ed29ccbd45fa8cd344ae9495f91573f59041"
+    },
+    {
+      "path": "app/_runtime/lib/room/durable-object.ts",
+      "sha256": "3237c982c088c762ec442182d03610471e50d52039b46a23c3a8b4ef50e8db1f"
+    },
+    {
+      "path": "app/_runtime/lib/room/narration-context.ts",
+      "sha256": "373229af2dc3735b2a62de7b589e567163dc925ada92d8d7b7f049c6343ce92e"
+    },
+    {
+      "path": "app/_runtime/lib/room/pending-bindings.ts",
+      "sha256": "f8d675f0e3169b87e6137795f27f86077d70b53f1cfaa6787154a721f23d21cb"
+    },
+    {
+      "path": "app/_runtime/lib/room/runtime-configuration.ts",
+      "sha256": "30353df7f74dac440391ea9f5db67a4bff5490d53fc8a5f60c7b98e778a5772a"
+    },
+    {
+      "path": "app/_runtime/lib/room/server.ts",
+      "sha256": "058cb3f64eddb741e1a4bf5118c18ac636f8c7189b673fb7b39cf067d5bea36d"
+    },
+    {
+      "path": "app/_runtime/lib/room/telemetry.ts",
+      "sha256": "584ef0adab590c47c944b566d1592fca3364a6be8e25b5b8064f948f4ef77bfc"
+    },
+    {
+      "path": "app/_runtime/lib/room/vnext-adjudication-bridge.ts",
+      "sha256": "0f1724b1ffc2a028c9f74b9dbdf00c52ad5e77bd17834f7facf70dcb818e06a8"
+    },
+    {
+      "path": "app/_runtime/lib/room/vnext-proposal-invocation.ts",
+      "sha256": "96df99e6740a7e91db2fc4d178d7bbf030d1c8f88585f43d820a09babb3ed837"
+    },
+    {
+      "path": "app/_runtime/lib/rules/authority-read.ts",
+      "sha256": "3ed5e7e0dd74c0c6fa7cc5b1e6296efb29d3de8587e89167aa06609ee4388fea"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/attack-resolution.ts",
+      "sha256": "7953de947120cf03f6b695ee38b6dcf0145ccca3b6a982f017388428700a2ef3"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/combat-geometry.ts",
+      "sha256": "dd3aeb2553e1a779d0adbbe3396f2b61d4ff8972a7f2ed42b7af07c932df2dd3"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/manifests.ts",
+      "sha256": "a2c71d7be83bbf7ec67f1fee641fd3ec1d2026fc32d98ca8c97f0d14637ea16b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/npc-mechanics.ts",
+      "sha256": "e607e89be5f1e5ce6fe59ae9fa2e4dc256c6c4558a78afef8c25c11f582fb44e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/semantic-templates.ts",
+      "sha256": "79207d93d98d3372b001d3fa5de0c54cfe88bf2dbfcfd7d78e794aa0441fe432"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/standard-gear.ts",
+      "sha256": "276c010061b0c4e924d7fa630f6de20862ca1b565f586235addd89dedbe0f19b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/vnext-world-interaction.ts",
+      "sha256": "0e7a7e5f62d91730e8405c9d24f65839a34a9de78ff03c2f3280eed963014d25"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2-runtime.ts",
+      "sha256": "43b8bcd143851d9198f986a714a73295275336f00e00725eb3fb748889b4f453"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/actions.ts",
+      "sha256": "a20935d7ab83029bd634c2ee4c6bd821cc9a630ad7690677fb226b33e7f6ebc8"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/atomic-world-input.ts",
+      "sha256": "11405ff979672beadcfb71321b053bfe3bea078bd56be1c2d67f895c8a3b2b6e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/authored-materialization.ts",
+      "sha256": "5160d99b91e1c5077d4e4ad7b91a5538e875c9da36e7c4529a9243d66abd6001"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/authority-bindings.ts",
+      "sha256": "463f54a799da590eeeeba886bdd23914e8e081593c97e82bed59f1dc146d10f9"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-actions.ts",
+      "sha256": "7550801b281139056644706c39a3dc087e21d05e5a81653eab751e4745ef18b9"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-continuity.ts",
+      "sha256": "22d42556dd9634844c3dbc46aad40da9b530216efc4e732cea35dcdc74c14d47"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-events.ts",
+      "sha256": "8a608c6320cdfc1fac1e8a41df66c9f5d802679f73596651615a90240c68e015"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/causal-actions.ts",
+      "sha256": "bd95c75fdb482376f75a1f378a3b6409e9024d63780dfe8438d943d1b771a3eb"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/character-abilities.ts",
+      "sha256": "5995549a7bde442ad3eff8774c25a335631ae6059852d814796972beba4ab363"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/claims.ts",
+      "sha256": "9f0399f6a1030da11f0b84daf3a76484adefb099cf03a1613cd34efb05e11a2a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-actions.ts",
+      "sha256": "5d67d489a99080cc2b4aeb78179de4b4e3a1c65868b80a2c7b4c8e4b6faa2a8d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-events.ts",
+      "sha256": "dbe6b49a051ce79a6be77b52f2c32cc1dac710b3b68e6f71334724e7b8b357a5"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/compound-actions.ts",
+      "sha256": "98e5662b3ead4d71287019941b8a8ccf18927cc64f691c66b091b57734276391"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/condition-consequences.ts",
+      "sha256": "65fe2358fa254f9cb9cba34a67e24dc0f4c345d37bdc1a4013c64a65706b9a42"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/condition-mechanics.ts",
+      "sha256": "dfb5f70e1e5598ae1b1121de38f9b72c661864fe9806238449e3fe241b22b0c5"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/correction.ts",
+      "sha256": "ed48c44d5f3382f05b133f62214273afb10f0cd19950a341888449c084e3db20"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/damage.ts",
+      "sha256": "e9587b46f860e4ad5c586f2c6e3d628660ccad7a89a8bd61b37041f8bcbe332a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/effect-phase.ts",
+      "sha256": "1396136a0e38a8ca644249744e8b1bca4d8395035f175760622d9c1be72e09a1"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/environment-hazard-schema.ts",
+      "sha256": "5acaaa4bc5d417dcd8990f1331b84474e89c6bf8e6635e31080480cd52c13975"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/environment-hazards.ts",
+      "sha256": "1d2f5b2b39f7fb4604cf482d1683ad1ed6e8cca2b41463db5dde1220dd1234c7"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/environment.ts",
+      "sha256": "3c0402334bb2462bf51135a4b4ab5592b900c16799fa3aef968b7deafcbda203"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/events.ts",
+      "sha256": "a00f86aa85417848d0888755af89a68e66115b7842dd47dd518d2cf273190c62"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/hazard-lifecycle.ts",
+      "sha256": "71935d9bc6d6f82765fd5cb842dc14ec617e798e813d05b12f082c5d5bb5d916"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/inventory-operations.ts",
+      "sha256": "bf88a3fbe7e6ce6e7cdc05a602f5349fbbd826fe2f81968a3787dcdff54266e0"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-authority-vnext.ts",
+      "sha256": "e70421956490d3c670fc1d158581f2d4d003a34f0f2c5283ef570a7efe19224f"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-projection.ts",
+      "sha256": "9fb5bf4f3c216190b9cef875fc57d06d76051dc9350cceb16baac7fdb4e1eaa4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-resources.ts",
+      "sha256": "4960f6d2f6f7e3986f7beb8bcf88ee51fff9a6044a9203c0083d7a9a092c269c"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-transitions.ts",
+      "sha256": "6feb501a0d967413b2091825b3eef5b2045dbed3663561ad553efd9cd441a757"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/items.ts",
+      "sha256": "7af69442d424a49ebd7cd88019a41c011d04e04cec72df4c2ca219f153b87564"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/model.ts",
+      "sha256": "6f41ddcff7429006f606e4c1acb57e8411ee6f80e58930c8bf311a62fe39b6f1"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/multiplayer-actions.ts",
+      "sha256": "54af6dbce48e44bf02c4297713f62dfebc2a61c0e8a60bf139e629d2ede2e386"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/multiplayer-events.ts",
+      "sha256": "179481cbd928ee451c32bc065a0e7728836ad5be9320c22d3f6520467211e227"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/narrative-commitments.ts",
+      "sha256": "7bc8da6345b324ada06a47745c066a4ad36c3d4f6662429e0e7020251710e207"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/npc-item-system.ts",
+      "sha256": "45f3901369a6970c53e98077746c7166fcce795114562c53bc9127d088c380e4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/npc-mechanics.ts",
+      "sha256": "e7a1b62822f2b995ad823ef86faa1628287c4669c39e687c7cd0052d975dd2cd"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/observer-delta.ts",
+      "sha256": "c767fa84b2659204d2d7d7fda10172933c58872418c8918063d858e45ede2d40"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/projector.ts",
+      "sha256": "9dcdd1cf3bfeaa4b28f5945439107ec0bd02980e5c7052e7b5b2ec70d3718f84"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/public-expression.ts",
+      "sha256": "e33bc8fa16245d8acde9da1ae781a298d66edb9ef8c6560521f3c31acc035c3a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/semantic-definitions.ts",
+      "sha256": "b06ac8e7673c72f951af660626c1214b9c80808c1f1540974a796559a783515c"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/timeline.ts",
+      "sha256": "8816d7a64e27e9b627eecb1eeaf7d53808d0452675c61379d87287438f3bea61"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/validation.ts",
+      "sha256": "f483d520754e5f9f455a74df4a47ce2c644409bc1d98164ce70f260214850f15"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-effects.ts",
+      "sha256": "6e5f62085d865dd98b3b491084b34014e38c82fafac2b6359693aa35ab552258"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-conditions.ts",
+      "sha256": "35dc68fc556b506e15bf02b82968c227e2e23e2c6fc456ee5ed5917822c1705d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-hazards.ts",
+      "sha256": "1db70a098c103b5a435873725b9a0680c90b0155fe0a90e4b946a37f5bb72d0b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-mechanics.ts",
+      "sha256": "0598e6bfcab5feef06ad8aa7d7a99dec5ddbc216238df6453ec8fa2339f9a4a8"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-model.ts",
+      "sha256": "a2d9a8324154aa168c849f4b2b69b0fd71a3284a8fe4c1147f410cf85a3d60f1"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-randomness.ts",
+      "sha256": "c992aaf9c825a70f08cfc23b348aa54d3fdab1f7d31635d6e6af063b3d33118e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-targets.ts",
+      "sha256": "58c83daa0f80c245a40c5b3c64ec932a333f262854bd3d7416acf0235e444313"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interactions.ts",
+      "sha256": "95d31544e6d05a803a232d9acb20eaaf421799b8ec7932996b0ad789ee3f157b"
+    },
+    {
+      "path": "app/_runtime/lib/table/authoritative.ts",
+      "sha256": "c375aac0d943a4ad9672173641bfe2429b85deebe85c137d56591735e9a43e5c"
+    },
+    {
+      "path": "app/_runtime/lib/table/server.ts",
+      "sha256": "7f5fba98bb434e230cdf7c1c38bf72eb71067b9f1347418cfc0bc0402da73041"
+    },
+    {
+      "path": "package.json",
+      "sha256": "4f457e1c950a77c42c6360d5687d0d966b1103172e54ac8957341abc7ee15f49"
+    },
+    {
+      "path": "tests/archive-do-resume-v2.test.ts",
+      "sha256": "e33caacc997f0dd37576002c8604ae3a7b3a24972a9e3651e56a106cdedb6bc4"
+    },
+    {
+      "path": "tests/authoritative-kp-adapter.test.mjs",
+      "sha256": "a31bed8f115a97f27bb36b28614c475e15ed2aba177d8f5f34358ff48f976e42"
+    },
+    {
+      "path": "tests/authoritative-opening-v2.test.ts",
+      "sha256": "9d610ad04134dda73b0b03d5c4e4e48429e813549b31c41bfd621ba241a2098d"
+    },
+    {
+      "path": "tests/combat-mechanics-v2.test.mjs",
+      "sha256": "bf843611e2225dd66bf928d575415f290efad9129c8a063350fbd4191b6ece64"
+    },
+    {
+      "path": "tests/combat-room-randomness-v2.test.ts",
+      "sha256": "a8a5ed0e60b850175be5aff74d79c9966a541698fac171d575097d6a369e7ddc"
+    },
+    {
+      "path": "tests/condition-mechanics.test.mjs",
+      "sha256": "603f28ba910919e0022b72d709a0f502d97656902c698ee69a2d2226890c4a50"
+    },
+    {
+      "path": "tests/deepseek-strict-schema-compaction.test.mjs",
+      "sha256": "98baab6e7b4fb2496e06a1dc7ca6af235971e73af8599423d318408c0b396515"
+    },
+    {
+      "path": "tests/deepseek-strict-tool-provider.test.mjs",
+      "sha256": "6996dd4873ff3c1f9f1a521e984f9cbc5f666746ac98770543a3cf492b82c8f4"
+    },
+    {
+      "path": "tests/fixtures/deepseek-authored-item-wire.json",
+      "sha256": "f6175b4afabf747fcce7f764280c0c4facd0bc5cf62b8414ee80e030d8590f52"
+    },
+    {
+      "path": "tests/fixtures/expand-deepseek-schema.mjs",
+      "sha256": "ffb82e3ed8aa53b7e29b78485033f238fc03e338c07c391cb1714b36a11d87d8"
+    },
+    {
+      "path": "tests/fixtures/vnext-authored-bundles.mjs",
+      "sha256": "a3f16bbdae31997c4ebd93346119340decebd72dd536ededb4949235989140ce"
+    },
+    {
+      "path": "tests/inventory-operations-vnext.test.mjs",
+      "sha256": "518cbce572bbf5f04aa83ecdc16609c1f4e35744189d48a7d0f168cbb989b0ed"
+    },
+    {
+      "path": "tests/item-stock-authority.test.mjs",
+      "sha256": "700d3ccd87aadb6126a184349def0fd5e1355618e5abe4273095e06cf1584181"
+    },
+    {
+      "path": "tests/kp-vnext-atomic-input.test.mjs",
+      "sha256": "04e0fae2ead7a1308fe70bc861c4efcb0f394f2b9561df3de3e4025552829703"
+    },
+    {
+      "path": "tests/kp-vnext-authored-context.test.mjs",
+      "sha256": "015f4f6424880586c5320ccc8792e1a846a665bd96bf4423cd93eeab92677e4a"
+    },
+    {
+      "path": "tests/kp-vnext-authored-diagnostics.test.mjs",
+      "sha256": "688ed12c06176f89d21a4f9333eb69a4360bda366740a3d64e1a1cd97e6ce6bd"
+    },
+    {
+      "path": "tests/kp-vnext-authored-materialization.test.mjs",
+      "sha256": "6126e3662bdb87e83480a189b8891ee0427bb1c422aa669e936fa1a0d286d1b2"
+    },
+    {
+      "path": "tests/kp-vnext-authored-runtime.test.mjs",
+      "sha256": "90f83573e458c163f12d8db4d1986d8e456647354fd762590e6f872a1682ce21"
+    },
+    {
+      "path": "tests/kp-vnext-claims.test.mjs",
+      "sha256": "5c085383fa55a2d2fa9aaa5747ed7b29b70334862ca2e079550ed744671a122a"
+    },
+    {
+      "path": "tests/kp-vnext-context-ambiguity.test.mjs",
+      "sha256": "0c032351995a1bd6f255e9b990ccf7107d386e4054f00e9521794796429e0d8c"
+    },
+    {
+      "path": "tests/kp-vnext-context-closure.test.mjs",
+      "sha256": "0ca4b4bfd0273e150a86ca384c94adb776f3376d10d0feb8c68a10b9509a73f5"
+    },
+    {
+      "path": "tests/kp-vnext-context-discovery.test.mjs",
+      "sha256": "2e0c7885f3632df6223de09707da5eceefd662b4aec2ad011409af0e13fbd402"
+    },
+    {
+      "path": "tests/kp-vnext-context-freeze.test.mjs",
+      "sha256": "a4b5a2d7e87a6f36d36c6148c0c04d538d98acf18e917d836a56d48f9124ecb8"
+    },
+    {
+      "path": "tests/kp-vnext-context-geometry.test.mjs",
+      "sha256": "ca569a5c34518bcf11349204ca0da43dee17421ac041991414a636415a320875"
+    },
+    {
+      "path": "tests/kp-vnext-context-index.test.mjs",
+      "sha256": "e7b5dd33b2676652e6daf39bf7bf72731be9691d9f461173fb92fbd2fefb1123"
+    },
+    {
+      "path": "tests/kp-vnext-context-inventory-scope.test.mjs",
+      "sha256": "49cea84bd63d6367e1ee7f44a7563871a951a1a37efc763001c48ef8c96a42ca"
+    },
+    {
+      "path": "tests/kp-vnext-context-runtime.test.mjs",
+      "sha256": "fb3163a27c2272146eca4a0c2b766bc4070b00053510d431b8c6bdb7645638fb"
+    },
+    {
+      "path": "tests/kp-vnext-hazard-actor-death-fold.test.mjs",
+      "sha256": "15a5c2f2eff22c8cfba6a516edfb38acf5a6a158bcc6f685ca4fceb2788bb0da"
+    },
+    {
+      "path": "tests/kp-vnext-hazard-concentration.test.mjs",
+      "sha256": "718bb0e7e4eb1cb8fc412ce9a0fde0a705a95da09f5b85989e38d30ebd9b41dd"
+    },
+    {
+      "path": "tests/kp-vnext-hazard-lifecycle.test.mjs",
+      "sha256": "bc135ac0a2e128dd7236add8b3c0da015d5c1cf91a599e7425aeb69e4fe64f61"
+    },
+    {
+      "path": "tests/kp-vnext-hazard-product-closure.test.mjs",
+      "sha256": "a667ea155535641e8736ed63ff664b325880702b665c23083838f589e0a19379"
+    },
+    {
+      "path": "tests/kp-vnext-item-product-closure.test.mjs",
+      "sha256": "2560145861905fe2afb05ca6ceafa0162a3e89e6e1a0aaf587b5c72642da9695"
+    },
+    {
+      "path": "tests/kp-vnext-materialization-and-feasibility-rules.test.mjs",
+      "sha256": "4152d14d4a66023837623400b6bb414ba54f4ab283333f407f5155260b8852e1"
+    },
+    {
+      "path": "tests/kp-vnext-materialization-authority.test.mjs",
+      "sha256": "348608f191c8cc88e41ac752f30dc3204aa97a213d69060b01078a084686f032"
+    },
+    {
+      "path": "tests/kp-vnext-narration.test.mjs",
+      "sha256": "d874f540fe908073a619d032aaec0b3bb120ffa90fd73c65de1db59143485dfe"
+    },
+    {
+      "path": "tests/kp-vnext-narrative-context.test.mjs",
+      "sha256": "14f1213e828d9094258ec8e628487377d34b8ee1248039d39e69b0fa8e65d49f"
+    },
+    {
+      "path": "tests/kp-vnext-narrative-details.test.mjs",
+      "sha256": "88f42a935005011b64f1ed8500d294dd36a2650536d091e926da7c50fe70104e"
+    },
+    {
+      "path": "tests/kp-vnext-narrative-item.test.mjs",
+      "sha256": "3208bc44f2898044495ddb26b18365cc1e800c4398667a4cb087d8dcbe474a46"
+    },
+    {
+      "path": "tests/kp-vnext-nullable-reference-wire.test.mjs",
+      "sha256": "9b93ed6f9cf54ccc03feb15fcfd35b4cb698a935df55db3d9432afd06e30e785"
+    },
+    {
+      "path": "tests/kp-vnext-proposal-schema.test.mjs",
+      "sha256": "33c8dca42fddf0c85327021f2a2061800a684842e0231513a9de6941268ff903"
+    },
+    {
+      "path": "tests/kp-vnext-provider-room.test.ts",
+      "sha256": "57880a756a686489e6b311de65af32501d90e53875171e047bbf6f0dce9388b1"
+    },
+    {
+      "path": "tests/kp-vnext-schema-retrieval.test.mjs",
+      "sha256": "5c1d2efaa5ff355d1572c22a85dea29bff90af6091eb39e6f75ae15889fa7a81"
+    },
+    {
+      "path": "tests/kp-vnext-stage3-room.test.ts",
+      "sha256": "cdc9dcb68a4102d730b22e814e76d1d16e0077effae5317a7197fe57d112b520"
+    },
+    {
+      "path": "tests/kp-vnext-world-condition-input.test.mjs",
+      "sha256": "1a2848db648bbec56c3683f24852434aa056f9b5745f4bace2fd504bca19e373"
+    },
+    {
+      "path": "tests/kp-vnext-world-interaction-rules.test.mjs",
+      "sha256": "032d04c285fe761e53d1175142fca091927cb5bb50dd212b6e56913bfaa81a56"
+    },
+    {
+      "path": "tests/npc-pending-kp-boundary.test.mjs",
+      "sha256": "2475d084fa8c7a97060463ae4cc2055e3568da072e829d22614db55dbb0d057f"
+    },
+    {
+      "path": "tests/play-table-combat-choice-ui.test.mjs",
+      "sha256": "7aef021594f730a7e1afc43dde667e54e6d7ac95f4b0769fdbf855fafd29cc9b"
+    },
+    {
+      "path": "tests/room-combat-pending-projection.test.mjs",
+      "sha256": "313c40be0be763c465285c8f46a22c3ceb59e8cb4ee7ce963878a8c665dd8e83"
+    },
+    {
+      "path": "tests/standard-gear-catalog-v5.test.mjs",
+      "sha256": "a567e81fdc2701087b440720d266013619bceb23cd48a60d08dd4d595eb4160e"
+    },
+    {
+      "path": "tests/structured-telemetry-v2.test.mjs",
+      "sha256": "8bd7d888c6f29d5d0d09a48e45c58169604620e57531c93f40d59635d2254eb0"
+    },
+    {
+      "path": "tests/table-server-outcome-v2.test.mjs",
+      "sha256": "7c928be3723fccb58ca76d64b546f0f3a842a43a777533980cb9c41fbf9abc32"
+    },
+    {
+      "path": "tests/v3-room-binding-v3.test.mjs",
+      "sha256": "e0dcaad05db46fcec880cd7d4e9c00e0798249456410ec6a7d3c50d261b138cb"
+    },
+    {
+      "path": "tests/vnext-local-room-binding.test.mjs",
+      "sha256": "68f915a36ddfdd86b4dc731465959270db0ddc548c415c1f386a0115ed26cb2b"
+    },
+    {
+      "path": "tests/world-effects-vnext.test.mjs",
+      "sha256": "5c55ae4f3ca8da41c95c591a6c870947d77b31a785afb33d545f127754f02b20"
+    },
+    {
+      "path": "tests/world-interaction-range-mode.test.mjs",
+      "sha256": "9697565b24c1a0d2faefc33a6af568564899639f5a5ff5608a9c1d9da9aa43f3"
+    },
+    {
+      "path": "tools/deepseek-vnext2-strict-tool-handshake-definition.mjs",
+      "sha256": "204f6677b05598085f115603f7a58637a2272689db8a07b06c3a55314f22fd34"
+    },
+    {
+      "path": "tools/lib/vnext-authored-probe-fixture.mjs",
+      "sha256": "dc17865f1fe139e03a9a4dc7be6e59c884325df175e43bb3e298b85ba099bcb3"
+    },
+    {
+      "path": "tools/run-deepseek-vnext2-authored-probe.mjs",
+      "sha256": "f926637c353c0a3113f5d7227ed704d21731ff5842c1b58fb4c46e0d36ef145f"
+    },
+    {
+      "path": "vite.config.ts",
+      "sha256": "b4050c934df803237467f2c242da3e1e42712d58a29e5db8c0c8c25655f485c4"
+    }
+  ],
+  "manifestSha256": "2a3b3a43a03b539958bee5643683c8597d94968938404295f0d97db42b5a03ac"
+}

@@ -1,3 +1,5 @@
+import { CLASS_RESOURCE_CATALOG } from "../../dnd/class-resources";
+import { nonItemResources } from "./item-resources";
 import type { GearItemResolver } from "../../dnd/gear";
 import { spellDefinition } from "../spell-catalog";
 import type { DiceFormula, SpellDefinition, SpellRange } from "../spell-model";
@@ -56,14 +58,15 @@ export function frozenPlayerAbilityMatches(
  */
 export function planPlayerAbilityCatalog(input: {
   character: CharacterRecord;
+  characterBuild?: unknown;
   itemSystem: ItemSystemStateV1;
   catalog: Record<string, JsonRecord>;
 }): PlayerAbilityCatalogPlan | { error: string } {
-  const compiled = compileCanonicalCharacterCombat(
-    input.character,
-    input.itemSystem,
-    input.catalog,
-  );
+  const compiled = input.characterBuild === undefined
+    ? compileCanonicalCharacterCombat(input.character, input.itemSystem, input.catalog)
+    : compileStaticCharacterCombat(
+        input.character, input.characterBuild, input.itemSystem, input.catalog,
+      );
   const catalog = structuredClone(input.catalog);
   const registrations: CompiledAbilityArtifact[] = [];
   for (const [definitionId, definition] of Object.entries(compiled.definitions)
@@ -127,7 +130,7 @@ export function buildPlayerCombatEntity(
   const maximumHitPoints = character.hitPoints?.maximum ?? 1;
   const currentHitPoints = character.hitPoints?.current ?? maximumHitPoints;
   const resources: Record<string, JsonRecord> = Object.fromEntries(
-    Object.entries(character.resources ?? {}).map(([resourceId, current]) => [combatResourceId(resourceId), {
+    Object.entries(nonItemResources(character.resources ?? {})).map(([resourceId, current]) => [combatResourceId(resourceId), {
       current: String(current),
       maximum: String(character.resourceMaximums?.[resourceId] ?? current),
     }]),
@@ -164,6 +167,7 @@ export function buildPlayerCombatEntity(
       ? {
           expertiseSkills: [...(character.expertiseSkills ?? [])].sort(),
           proficientSaves: [...(character.proficientSaves ?? [])].sort(),
+          conditionImmunities: [...(character.conditionImmunities ?? [])].sort(),
         }
       : {}),
     armorClass: String(character.loadout?.armorClass ?? (10 + abilityModifier(dexterity))),
@@ -218,6 +222,7 @@ export function synchronizePlayerCombatEntity(
   const {
     expertiseSkills: _expertiseSkills,
     proficientSaves: _proficientSaves,
+    conditionImmunities: _conditionImmunities,
     spellcasting: _spellcasting,
     ...prior
   } = existing;
@@ -231,6 +236,7 @@ export function synchronizePlayerCombatEntity(
     ...(initial.expertiseSkills === undefined
       ? {}
       : { expertiseSkills: structuredClone(initial.expertiseSkills) }),
+    ...(initial.conditionImmunities === undefined ? {} : { conditionImmunities: structuredClone(initial.conditionImmunities) }),
     ...(initial.proficientSaves === undefined
       ? {}
       : { proficientSaves: structuredClone(initial.proficientSaves) }),
@@ -291,7 +297,9 @@ function spellcastingAbility(build: JsonRecord, spellId: string): "int" | "wis" 
 
 function activation(definition: SpellDefinition): JsonRecord | undefined {
   if (definition.actionCost === "action") {
-    return { kind: "actionSpell", spellLevel: String(definition.level) };
+    return { kind: "actionSpell", spellLevel: String(definition.level),
+      ...(definition.castingSeconds > 6 || definition.ritual === true
+        ? { castingTimeMicros: String(definition.castingSeconds * 1_000_000), ritual: definition.ritual === true } : {}) };
   }
   if (definition.actionCost === "bonusAction") {
     return { kind: "bonusActionSpell", spellLevel: String(definition.level) };
@@ -351,7 +359,9 @@ function compileSpell(
   }
   const castingAbility = spellcastingAbility(build, spellId);
   const castingModifier = abilityModifier(character.abilityScores?.[castingAbility] ?? 10);
-  const definitionId = `ability:${character.id}:spell:${spellId}:level:${character.level ?? 1}:modifier:${castingModifier}:proficiency:${character.proficiencyBonus ?? 0}`;
+  const castingIdentity = spellActivation.castingTimeMicros === undefined ? ""
+    : `:casting:${spellActivation.castingTimeMicros}:ritual:${spellActivation.ritual === true}`;
+  const definitionId = `ability:${character.id}:spell:${spellId}:level:${character.level ?? 1}:modifier:${castingModifier}:proficiency:${character.proficiencyBonus ?? 0}${castingIdentity}`;
   const compiled: JsonRecord = {
     definitionId,
     revision: "1",
@@ -400,6 +410,11 @@ function compileSpell(
   return compiled;
 }
 
+/** Stable source identity shared by compilation and frozen-catalog lookup. */
+export function equippedWeaponMechanicalKey(entryRef: string, slot: "main" | "off"): string {
+  return `weapon:${entryRef}${slot === "main" ? "" : ":off"}`;
+}
+
 export function compileEquippedWeaponAbility(
   character: CharacterRecord,
   resolveItem: GearItemResolver,
@@ -427,7 +442,7 @@ export function compileEquippedWeaponAbility(
     definitionId: `ability:${character.id}:weapon:${item.id}${slotIdentity}:level:${character.level ?? 1}:modifier:${modifier}:proficiency:${character.proficiencyBonus ?? 0}`,
     revision: "1",
     rulesBasis: "srd5.1-2014",
-    mechanicalKey: `weapon:${item.id}${slotIdentity}`,
+    mechanicalKey: equippedWeaponMechanicalKey(item.id, slot),
     activation: { kind: "attack", actionGrant: "attack" },
     target: ranged
       ? {
@@ -455,20 +470,30 @@ export function compileEquippedWeaponAbility(
 }
 
 export function combatResourceId(resourceId: string): string {
-  const aliases: Record<string, string> = {
-    slot1: "spellSlot:1",
-    slot2: "spellSlot:2",
-    surge: "resource:action-surge",
-    secondWind: "resource:second-wind",
-    rage: "resource:rage",
-    channel: "resource:channel-divinity",
-    superiority: "resource:superiority-die",
-    warPriest: "resource:war-priest",
-    breath: "resource:breath-weapon",
-    relentless: "resource:relentless-endurance",
-  };
   const slot = /^slot([1-9])$/.exec(resourceId);
-  return slot === null ? aliases[resourceId] ?? resourceId : `spellSlot:${slot[1]}`;
+  return slot === null ? (Object.hasOwn(CLASS_RESOURCE_CATALOG, resourceId)
+    ? CLASS_RESOURCE_CATALOG[resourceId]!.resourceId : resourceId) : `spellSlot:${slot[1]}`;
+}
+
+/** Resolve the one existing player pool represented by a combat resource. */
+export function playerResourceKeyForCombatPool(
+  character: CharacterRecord,
+  resourceId: string,
+  pool: JsonRecord,
+): string | undefined {
+  const keys = Object.keys(character.resources ?? {})
+    .filter((key) => combatResourceId(key) === resourceId);
+  if (keys.length !== 1) return undefined;
+  const key = keys[0];
+  const current = character.resources![key];
+  const maximum = character.resourceMaximums?.[key];
+  const combatCurrent = Number(pool.current);
+  const combatMaximum = Number(pool.maximum);
+  if (!Number.isSafeInteger(current) || current < 0
+    || !Number.isSafeInteger(combatCurrent) || combatCurrent !== current
+    || !Number.isSafeInteger(combatMaximum) || combatMaximum < current
+    || (maximum !== undefined && maximum !== combatMaximum)) return undefined;
+  return key;
 }
 
 export function compileStaticCharacterCombat(

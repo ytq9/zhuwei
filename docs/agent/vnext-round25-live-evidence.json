@@ -1,0 +1,169 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round25",
+  "recordedAt": "2026-09-05T23:37:42.166914+00:00",
+  "scope": "One local authenticated HTTP observation-and-inference attempt; rejected before Rules on malformed strict-tool arguments",
+  "budget": {
+    "maximumRootActions": 2,
+    "maximumProviderCalls": 10,
+    "maximumInputTokens": 580000,
+    "maximumOutputTokens": 81920,
+    "maximumWallTimeMinutes": 10,
+    "callsReservedPerAction": 5,
+    "localCallLimitPerHttpRequest": 5,
+    "actionStartRequiresRemainingWallTimeMs": 120000,
+    "setupCalls": 0,
+    "failurePolicy": "stop on first explicit failure"
+  },
+  "sourceManifest": {
+    "path": "vnext-round25-source-manifest.json",
+    "sha256": "b6c3c61f4fae04f6813719fa94b2568b91cfc86ba53d86ed46546e11d07aafac",
+    "createdAt": "2026-09-05T23:28:47.583234+00:00",
+    "fileCount": 290,
+    "changedFilesDuringBatch": []
+  },
+  "workflowHash": "sha256:5f20b4c6760ff1627be580b5be0f220e77e568be4c00fe8e6527a202ed322b96",
+  "schemaHash": "sha256:a0a2a493b9784e465ca95b2a4088909bca8b0cd6cdb6bab31335cc26966beb7a",
+  "parserHash": "sha256:56a7840611a0771caa9ee3c097476942162a6474e32b5060614307191d44322f",
+  "runtimeManifest": {
+    "profileId": "runtime-srd51-2014-authoritative-vnext-stage3",
+    "profileHash": "sha256:246593e8bccb34662e49b778b267d89c161527468aca7d364b44f1932c0ff8e7"
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "purpose": "proposal",
+      "model": "deepseek-v4-flash",
+      "durationMs": 11049,
+      "inputTokens": 20555,
+      "cacheHitTokens": 256,
+      "cacheMissTokens": 20299,
+      "outputTokensIncludingReasoning": 1541,
+      "thinking": "disabled",
+      "reasoningTokensReported": null,
+      "offPeakCny": 0.0373958,
+      "captureFileSha256": "cfa8af3c9ca524086ecc88e81fd6464f4f63f1e4d14c9c4e3b5d9424262d21ea",
+      "finishReasons": [
+        "tool_calls"
+      ]
+    }
+  ],
+  "totals": {
+    "attemptedCalls": 1,
+    "knownUsageCalls": 1,
+    "unknownUsageCalls": 0,
+    "inputTokens": 20555,
+    "cacheHitTokens": 256,
+    "cacheMissTokens": 20299,
+    "outputTokensIncludingReasoning": 1541,
+    "offPeakCny": 0.0373958
+  },
+  "response": {
+    "action": "notCommitted",
+    "narration": "notApplicable",
+    "code": "PROPOSAL_FORM_INVALID",
+    "outcomeKind": "rejected"
+  },
+  "mechanicalEvidence": {
+    "eventCount": 0,
+    "eventTypes": [],
+    "receipts": 0,
+    "pendingDue": 0,
+    "modelInvocations": 1,
+    "deliveryStatuses": [],
+    "audienceStatuses": []
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsChecked": 0,
+    "frozenContextsConform": null,
+    "authorityUnchangedFromGenesis": true,
+    "resourcesAndTimeUnchanged": true,
+    "eventCount": 0,
+    "eventTypes": [],
+    "receiptCount": 0,
+    "newEvidenceCount": 0,
+    "randomnessAbsent": true,
+    "claimsNote": "No proposal reached Rules; zero Claims to validate. Semantic draft audit is separate."
+  },
+  "diagnostics": {
+    "originalJson": "json:object-delimiter-expected",
+    "originalOffer": "VNextProposalBundleOutputError",
+    "missingClosingBraceOffset": 3012,
+    "syntaxOnlyDiagnostic": "bundle:adjudication-shape-invalid",
+    "shapeOnlyAfterRemovingUnknownField": "accepted-not-submitted-not-semantic-validation",
+    "exactExpectedRequest": true,
+    "unknownFieldInActualRequest": false,
+    "strict": true,
+    "finishReason": "tool_calls",
+    "maxOutputTokens": 4000,
+    "actualOutputTokens": 1541,
+    "inferenceCount": 1,
+    "inferenceSourceKinds": [
+      "sensoryEvidence",
+      "sensoryEvidence"
+    ],
+    "schemaRetrieval": false,
+    "semanticClassification": "failed-draft-sensory-includes-interpretation",
+    "extraCalls": 0
+  },
+  "semanticAudit": {
+    "status": "not-passed",
+    "selectedObserveInMalformedDraft": true,
+    "reason": "The draft uses separate inference fields but sensory text still contains interpretations; no correction copy was submitted.",
+    "schemaRetrievalOccurred": false,
+    "noOldGuidanceContaminationEvidence": true,
+    "narrationInvoked": false
+  },
+  "priceSource": {
+    "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "currency": "CNY",
+    "perMillionTokensOffPeak": {
+      "cacheHitInput": 0.05,
+      "cacheMissInput": 1.5,
+      "output": 4.5
+    }
+  },
+  "localProbeScripts": [
+    {
+      "name": "zhuwei-vnext-round25-capture.mjs",
+      "sha256": "9678d8f5c67bf459c8caf83d85cc6d472b8f44df6c2be9cb02b17baaaf91a274"
+    },
+    {
+      "name": "zhuwei-vnext-round25-diagnostic.mts",
+      "sha256": "1bf0586dfd3cc89cbcb0d578f8d7cf286168fe4ee9896e1161c090cb2ea84701"
+    },
+    {
+      "name": "zhuwei-vnext-round25-extract.py",
+      "sha256": "672ca0946c88585eeabd0d76535689f293a11e63b2d8d6fc5dbc6ce009aeccb1"
+    },
+    {
+      "name": "zhuwei-vnext-round25-replay.mts",
+      "sha256": "78e22624462bde10ba675ba7bf9dbbeedd3dc64f1b59b8e4dda254d41c085559"
+    },
+    {
+      "name": "zhuwei-vnext-round25-source-manifest.py",
+      "sha256": "a73bed0ea0ac61312a85dfdd839b7bf9f14ab2c67186325045ac4c26d834a2f0"
+    },
+    {
+      "name": "zhuwei-vnext-round25.mjs",
+      "sha256": "934d77ee45a61b710fb1357ac6eac5f9987f34a607e80760ba58a72f5514afd3"
+    }
+  ],
+  "externalOperations": {
+    "deployment": false,
+    "gitPush": false,
+    "remoteMigration": false,
+    "productionRetirement": false,
+    "localServersStopped": true
+  },
+  "notCovered": [
+    "valid current-model observe submission and narration",
+    "complex schema retrieval HTTP chain",
+    "next legal action",
+    "two-player 20+ chain",
+    "production replacement"
+  ]
+}

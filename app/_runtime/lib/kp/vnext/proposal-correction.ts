@@ -7,63 +7,99 @@ import {
 } from "./canonical-json";
 import {
   VNEXT_PROPOSAL_BUNDLE_CORRECTION_SCHEMA,
+  type VNextBundleCorrection,
   type VNextBundleCorrectionPath,
   type VNextProposalBundleCorrectionInput,
   type VNextProposalBundleCorrectionResult,
 } from "./proposal-schema";
+import type { VNextRequiredContext } from "./required-context";
+import { representationRepairPlan } from "./proposal-repair-plan";
+import { diagnosticsFromIssues, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { validateVNextProposalBundle } from "./proposal-validator";
 
 const MAX_CHANGES = 8;
 const MAX_PATH_DEPTH = 16;
 
-/** Returns a repair allowlist only when invalid presentation summaries are
- * the complete reason the decoded Bundle fails local validation. */
-export function repairableVNextProposalBundlePaths(
-  bundle: unknown,
-): readonly VNextBundleCorrectionPath[] {
+export type VNextProposalRepair = Readonly<{
+  path: VNextBundleCorrectionPath;
+  operation: "add" | "replace" | "remove";
+  /** Absent for a fixed remove or an existing presentation-summary contract. */
+  value?: VNextBundleCorrection["changes"][number]["value"];
+  reason: string;
+}>;
+
+/** Computes permitted edits from the immutable draft, then proves the complete
+ * repaired shape using the same validator. No caller-supplied path grants authority. */
+export function vnextProposalRepairPlan(bundle: unknown, proofDiagnostics?: ProposalDiagnostic[], originalArguments?: string, requiredContext?: VNextRequiredContext): readonly VNextProposalRepair[] {
   let candidate: unknown;
-  try {
-    candidate = canonicalClone(bundle);
-  } catch {
-    return Object.freeze([]);
-  }
-  if (!isPlainRecord(candidate) || !Array.isArray(candidate.proposals)) {
-    return Object.freeze([]);
-  }
+  try { candidate = canonicalClone(bundle); } catch { return Object.freeze([]); }
+  if (!isPlainRecord(candidate)) return Object.freeze([]);
   const paths: VNextBundleCorrectionPath[] = [];
-  const addIfInvalid = (path: VNextBundleCorrectionPath, maximum: number) => {
-    const value = valueAtPath(candidate, path);
-    if (value.found && !isValidSummary(value.value, maximum)) paths.push(path);
+  const addIfInvalid = (path: VNextBundleCorrectionPath, maximum: number, trimmed = true) => {
+    const found = valueAtPath(candidate, path);
+    if (!found.found || !isValidSummary(found.value, maximum, trimmed)) paths.push(path);
   };
-  collectProposalSummaryPaths(candidate.proposals, [], addIfInvalid);
-  if (isPlainRecord(candidate.terminal)
-    && candidate.terminal.kind === "clarification"
+  if (Array.isArray(candidate.proposals)) collectProposalSummaryPaths(candidate.proposals, [], addIfInvalid);
+  if (isPlainRecord(candidate.terminal) && candidate.terminal.kind === "clarification"
     && Array.isArray(candidate.terminal.choices)) {
     for (const [choiceIndex, choice] of candidate.terminal.choices.entries()) {
-      if (!isPlainRecord(choice)
-        || !isPlainRecord(choice.continuation)
-        || choice.continuation.kind !== "adjudication"
-        || !Array.isArray(choice.continuation.proposals)) continue;
-      collectProposalSummaryPaths(
-        choice.continuation.proposals,
-        ["terminal", "choices", choiceIndex, "continuation"],
-        addIfInvalid,
-      );
+      if (!isPlainRecord(choice) || !isPlainRecord(choice.continuation)
+        || choice.continuation.kind !== "adjudication" || !Array.isArray(choice.continuation.proposals)) continue;
+      collectProposalSummaryPaths(choice.continuation.proposals,
+        ["terminal", "choices", choiceIndex, "continuation"], addIfInvalid);
     }
   }
-  if (paths.length < 1 || paths.length > MAX_CHANGES) return Object.freeze([]);
-  const proof = canonicalClone(candidate) as unknown;
-  for (const path of paths) {
-    if (!replaceExistingPath(proof, path, "修正后的摘要。")) return Object.freeze([]);
+  const fixed = representationRepairPlan(candidate, paths, proofDiagnostics, originalArguments, requiredContext);
+  const plan: VNextProposalRepair[] = [
+    ...paths.map(path => ({ path, operation: valueAtPath(candidate, path).found ? "replace" as const : "add" as const,
+      reason: "presentation-summary-only" })), ...fixed,
+  ];
+  if (plan.length < 1 || plan.length > MAX_CHANGES) return Object.freeze([]);
+  const proof = canonicalClone(candidate);
+  for (const change of plan) {
+    if (!replaceExistingPath(proof, change.path, Object.hasOwn(change, "value") ? change.value : "修正后的摘要。", change.operation === "add", change.operation === "remove")) return Object.freeze([]);
   }
-  if (validateVNextProposalBundle(proof).kind !== "accepted") return Object.freeze([]);
-  return deepFreeze(paths.map((path) => [...path]));
+  return validateVNextProposalBundle(proof).kind === "accepted" ? deepFreeze(plan) : Object.freeze([]);
+}
+
+export function repairableVNextProposalBundlePaths(bundle: unknown, originalArguments?: string, requiredContext?: VNextRequiredContext): readonly VNextBundleCorrectionPath[] {
+  return deepFreeze(vnextProposalRepairPlan(bundle, undefined, originalArguments, requiredContext).map(change => change.path));
+}
+
+export function vnextProposalRepairDiagnostics(bundle: unknown, diagnostics: readonly ProposalDiagnostic[],
+  syntaxProven = false, originalArguments?: string, requiredContext?: VNextRequiredContext): readonly ProposalDiagnostic[] {
+  const plan = vnextProposalRepairPlan(bundle, undefined, originalArguments, requiredContext);
+  const described = diagnostics.map(diagnostic => {
+    if (diagnostic.code === "JSON_SYNTAX" && syntaxProven) return { ...diagnostic,
+      repair: { allowed: true, reason: "complete-root-members-frozen", changes: [] } };
+    // A proven whole-array replacement also repairs the diagnosed member.
+    // Keep the original error location and grant only the exact plan path/value.
+    const changes = plan.filter(change => diagnostic.path === undefined
+      || pathIdentity(change.path) === pathIdentity(diagnostic.path)
+      || (change.operation === "replace" && change.path.length < diagnostic.path.length
+        && change.path.every((segment, index) => segment === diagnostic.path![index])));
+    return changes.length === 0 ? diagnostic : { ...diagnostic,
+      repair: { allowed: true, reason: changes.every(change => change.operation === "remove" || Object.hasOwn(change, "value"))
+        ? "complete-bundle-representation-proven" : "presentation-summary-only", changes } };
+  });
+  // Short-circuit validators need not report later defects. Include every
+  // proven edit so the model can repair the entire draft in the single call.
+  for (const change of plan) {
+    if (described.some(d => d.path !== undefined && pathIdentity(d.path) === pathIdentity(change.path))) continue;
+    const original = valueAtPath(bundle, change.path);
+    described.push(proposalDiagnostic(change.operation === "add" ? "FIELD_MISSING" : "VALUE_INVALID", change.reason,
+      { path: change.path, ...(original.found ? { actual: original.value } : {}),
+        ...(change.operation === "remove" ? { expected: "absent; exact frozen input echo is redundant" } : Object.hasOwn(change, "value") ? { expected: change.value } : { expected: "nonempty presentation summary of the frozen operations" }),
+        repair: { allowed: true, reason: change.operation === "remove" || Object.hasOwn(change, "value")
+          ? "complete-bundle-representation-proven" : "presentation-summary-only", changes: [change] } }));
+  }
+  return deepFreeze(described);
 }
 
 /**
  * Applies the single permitted sparse repair without trusting a partial
- * validation result. A caller that later enables the consumer must lower and
- * Rules-preflight the returned full Bundle again from the beginning.
+ * validation result. The consumer must lower and Rules-preflight the returned
+ * full Bundle again from the beginning.
  */
 export function applyVNextProposalBundleCorrection(
   input: VNextProposalBundleCorrectionInput,
@@ -86,35 +122,53 @@ export function applyVNextProposalBundleCorrection(
     || input.correction.baseBundleHash !== canonicalHash(original)
     || input.correction.contextHash !== input.requiredContext.binding.contextHash
     || !Array.isArray(input.correction.changes)
-    || input.correction.changes.length < 1
     || input.correction.changes.length > MAX_CHANGES
     || !validAllowedPaths(input.allowedPaths)) {
     return rejected("PROPOSAL_CORRECTION_INVALID", ["correction:envelope-invalid"]);
   }
 
-  const allowed = new Set(input.allowedPaths.map(pathIdentity));
+  const plan = vnextProposalRepairPlan(original, undefined, input.originalArguments, input.requiredContext);
+  if (plan.length === 0 || canonicalHash(plan.map(change => change.path)) !== canonicalHash(input.allowedPaths)
+    || (input.correction.changes.length === 0 && !plan.every(change => change.operation === "remove"))) {
+    return rejected("PROPOSAL_CORRECTION_INVALID", ["correction:allowlist-not-proven"]);
+  }
+  const allowed = new Map(plan.map(change => [pathIdentity(change.path), change]));
   const seen = new Set<string>();
   const merged = canonicalClone(original) as unknown;
+  // Deletions are fixed server operations, never supplied by the model.
+  for (const change of plan.filter(change => change.operation === "remove")) {
+    if (!replaceExistingPath(merged, change.path, undefined, false, true)) {
+      return rejected("PROPOSAL_CORRECTION_INVALID", ["correction:path-not-found"]);
+    }
+    seen.add(pathIdentity(change.path));
+  }
   for (const change of input.correction.changes) {
     if (!isPlainRecord(change)
       || !exactKeys(change, ["path", "value"])
-      || !isCorrectionPath(change.path)
-      || !repairablePath(change.path)) {
+      || !isCorrectionPath(change.path)) {
       return rejected("PROPOSAL_CORRECTION_INVALID", ["correction:change-invalid"]);
     }
     const identity = pathIdentity(change.path);
-    if (!allowed.has(identity) || seen.has(identity) || typeof change.value !== "string") {
-      return rejected("PROPOSAL_CORRECTION_INVALID", ["correction:path-not-allowed"]);
+    const permission = allowed.get(identity);
+    if (!permission || seen.has(identity)) {
+      return rejected("PROPOSAL_CORRECTION_INVALID", ["correction:path-not-allowed"], [proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "correction:path-not-allowed", { path: change.path,
+        repair: { allowed: false, reason: "path-not-in-server-proven-plan" } })]);
     }
+    const fixedValue = Object.hasOwn(permission, "value");
+    let matches = false;
+    try { matches = fixedValue ? canonicalHash(change.value) === canonicalHash(permission.value) : typeof change.value === "string"; } catch { /* invalid JSON cannot match */ }
+    if (!matches) return rejected("PROPOSAL_CORRECTION_INVALID", ["correction:replacement-not-proven"],
+      [proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "correction:replacement-not-proven", { path: change.path,
+        ...(fixedValue ? { expected: permission.value } : {}), repair: { allowed: false, reason: "replacement-changes-frozen-semantics" } })]);
     seen.add(identity);
-    if (!replaceExistingPath(merged, change.path, change.value)) {
+    if (!replaceExistingPath(merged, change.path, change.value, permission.operation === "add")) {
       return rejected("PROPOSAL_CORRECTION_INVALID", ["correction:path-not-found"]);
     }
   }
 
   const validated = validateVNextProposalBundle(merged);
   if (validated.kind === "rejected") {
-    return rejected("PROPOSAL_REPAIR_EXHAUSTED", validated.issues);
+    return rejected("PROPOSAL_REPAIR_EXHAUSTED", validated.issues, validated.diagnostics);
   }
   return Object.freeze({
     kind: "accepted",
@@ -127,7 +181,7 @@ function validAllowedPaths(value: readonly VNextBundleCorrectionPath[]): boolean
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_CHANGES) return false;
   const identities = new Set<string>();
   return value.every((path) => {
-    if (!isCorrectionPath(path) || !repairablePath(path)) return false;
+    if (!isCorrectionPath(path)) return false;
     const identity = pathIdentity(path);
     if (identities.has(identity)) return false;
     identities.add(identity);
@@ -144,54 +198,25 @@ function isCorrectionPath(value: unknown): value is VNextBundleCorrectionPath {
       || (Number.isSafeInteger(segment) && Number(segment) >= 0));
 }
 
-/** Repairs are presentation-only. Authority bindings, rulings, branches,
- * effects and materialized semantics remain frozen even if a caller supplies
- * an over-broad diagnostic allowlist. */
-function repairablePath(path: VNextBundleCorrectionPath): boolean {
-  const proposalOffset = path[0] === "proposals"
-    ? 0
-    : path[0] === "terminal"
-      && path[1] === "choices"
-      && typeof path[2] === "number"
-      && path[3] === "continuation"
-      && path[4] === "proposals"
-      ? 4
-      : -1;
-  if (proposalOffset < 0 || typeof path[proposalOffset + 1] !== "number") return false;
-  if (path.length === proposalOffset + 3 && path[proposalOffset + 2] === "summary") {
-    return true;
-  }
-  if (path.length === proposalOffset + 5
-    && path[proposalOffset + 2] === "branches"
-    && (path[proposalOffset + 3] === "success"
-      || path[proposalOffset + 3] === "failure")
-    && path[proposalOffset + 4] === "summary") return true;
-  return path.length === proposalOffset + 7
-    && path[proposalOffset + 2] === "branches"
-    && (path[proposalOffset + 3] === "success"
-      || path[proposalOffset + 3] === "failure")
-    && path[proposalOffset + 4] === "effects"
-    && typeof path[proposalOffset + 5] === "number"
-    && path[proposalOffset + 6] === "summary";
-}
-
 function collectProposalSummaryPaths(
   proposals: readonly unknown[],
   prefix: VNextBundleCorrectionPath,
-  addIfInvalid: (path: VNextBundleCorrectionPath, maximum: number) => void,
+  addIfInvalid: (path: VNextBundleCorrectionPath, maximum: number, trimmed?: boolean) => void,
 ): void {
   for (const [proposalIndex, proposal] of proposals.entries()) {
     if (!isPlainRecord(proposal)) continue;
     const proposalPath = [...prefix, "proposals", proposalIndex] as const;
-    if (proposal.kind === "materializeObject" || proposal.kind === "reviseSemanticDefinition") {
+    if (["materializeObject", "reviseSemanticDefinition", "materializeDefinition", "materializeItem", "inventoryOperation"].includes(String(proposal.kind))) {
       addIfInvalid([...proposalPath, "summary"], 2_000);
     }
-    if (proposal.kind !== "worldInteraction" || !isPlainRecord(proposal.branches)) continue;
+    if (!["worldInteraction", "observe", "social"].includes(String(proposal.kind)) || !isPlainRecord(proposal.branches)) continue;
     for (const branchName of ["success", "failure"] as const) {
       const branch = proposal.branches[branchName];
       if (!isPlainRecord(branch)) continue;
-      addIfInvalid([...proposalPath, "branches", branchName, "summary"], 4_000);
-      if (!Array.isArray(branch.effects)) continue;
+      // Social's existing source contract permits whitespace in summaries.
+      // Other branches require canonical text; an all-blank summary is empty.
+      addIfInvalid([...proposalPath, "branches", branchName, "summary"], 4_000, proposal.kind !== "social");
+      if (proposal.kind !== "worldInteraction" || !Array.isArray(branch.effects)) continue;
       for (const [effectIndex, effect] of branch.effects.entries()) {
         if (!isPlainRecord(effect) || effect.kind !== "definitionRevision") continue;
         addIfInvalid([
@@ -207,6 +232,8 @@ function replaceExistingPath(
   root: unknown,
   path: VNextBundleCorrectionPath,
   value: unknown,
+  allowAdd = false,
+  remove = false,
 ): boolean {
   let parent = root;
   for (const segment of path.slice(0, -1)) {
@@ -214,18 +241,21 @@ function replaceExistingPath(
       if (!Array.isArray(parent) || segment >= parent.length) return false;
       parent = parent[segment];
     } else {
-      if (!isPlainRecord(parent) || !(segment in parent)) return false;
+      if (!isPlainRecord(parent) || !Object.hasOwn(parent, segment)) return false;
       parent = parent[segment];
     }
   }
   const leaf = path.at(-1)!;
   if (typeof leaf === "number") {
-    if (!Array.isArray(parent) || leaf >= parent.length) return false;
+    if (remove || !Array.isArray(parent) || leaf >= parent.length) return false;
     parent[leaf] = value;
     return true;
   }
-  if (!isPlainRecord(parent) || !(leaf in parent)) return false;
-  parent[leaf] = value;
+  // The plan proves additions only for inactive branches or summary leaves.
+  // Parent objects always have to exist in the original draft.
+  if (!isPlainRecord(parent) || (!Object.hasOwn(parent, leaf) && !allowAdd)) return false;
+  if (remove) delete parent[leaf];
+  else parent[leaf] = value;
   return true;
 }
 
@@ -246,11 +276,11 @@ function valueAtPath(
   return { found: true, value };
 }
 
-function isValidSummary(value: unknown, maximum: number): value is string {
+function isValidSummary(value: unknown, maximum: number, trimmed: boolean): value is string {
   return typeof value === "string"
     && value.length > 0
+    && (!trimmed || value.trim().length > 0)
     && value.length <= maximum
-    && value.trim() === value
     && value.normalize("NFC") === value;
 }
 
@@ -268,10 +298,12 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
 function rejected(
   code: Extract<VNextProposalBundleCorrectionResult, { kind: "rejected" }>["code"],
   issues: readonly string[],
+  diagnostics: readonly ProposalDiagnostic[] = diagnosticsFromIssues(code, issues),
 ): Extract<VNextProposalBundleCorrectionResult, { kind: "rejected" }> {
   return Object.freeze({
     kind: "rejected",
     code,
+    diagnostics,
     issues: Object.freeze([...new Set(issues)].sort(compareCodeUnits)),
   });
 }

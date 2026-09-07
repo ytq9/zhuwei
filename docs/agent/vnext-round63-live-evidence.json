@@ -1,0 +1,197 @@
+{
+  "round": 63,
+  "status": "stopped-on-third-action-basis-reference-rejection",
+  "sourceManifest": "e8316c542efe4086786976ee9f998ec62abbd2f764e35fcfa78a850d01f5369c",
+  "actions": [
+    {
+      "ordinal": 1,
+      "result": "committed",
+      "narration": "published"
+    },
+    {
+      "ordinal": 2,
+      "result": "committed",
+      "narration": "published"
+    },
+    {
+      "ordinal": 3,
+      "result": "notCommitted",
+      "narration": "notApplicable"
+    }
+  ],
+  "usage": {
+    "physicalCalls": 8,
+    "input": 133062,
+    "hit": 31104,
+    "miss": 101958,
+    "output": 2204,
+    "unknownUsageCalls": 0,
+    "estimatedCny": "0.1644102",
+    "pricePeriod": "offPeak"
+  },
+  "callRows": [
+    {
+      "file": "01.json",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 33562,
+      "hit": 0,
+      "miss": 33562,
+      "output": 71
+    },
+    {
+      "file": "02.json",
+      "tools": [],
+      "model": "deepseek-v4-flash",
+      "input": 1857,
+      "hit": 896,
+      "miss": 961,
+      "output": 496
+    },
+    {
+      "file": "03.json",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 2719,
+      "hit": 896,
+      "miss": 1823,
+      "output": 140
+    },
+    {
+      "file": "04.json",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 38474,
+      "hit": 1664,
+      "miss": 36810,
+      "output": 57
+    },
+    {
+      "file": "05.json",
+      "tools": [
+        "submit_due_actor_plan_decision"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 14588,
+      "hit": 10496,
+      "miss": 4092,
+      "output": 81
+    },
+    {
+      "file": "06.json",
+      "tools": [],
+      "model": "deepseek-v4-flash",
+      "input": 1201,
+      "hit": 1024,
+      "miss": 177,
+      "output": 89
+    },
+    {
+      "file": "07.json",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 1925,
+      "hit": 896,
+      "miss": 1029,
+      "output": 142
+    },
+    {
+      "file": "08.json",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 38736,
+      "hit": 15232,
+      "miss": 23504,
+      "output": 1128
+    }
+  ],
+  "stateChecks": {
+    "timeSegments": [
+      "2000000",
+      "58000000"
+    ],
+    "finalTime": "60000000",
+    "thirdActionNoStateChange": true,
+    "duplicateNewCalls": [
+      0,
+      0
+    ],
+    "eventCount": 10,
+    "eventTypes": [
+      "NpcPlanFormed",
+      "ActivityStarted",
+      "KnowledgeReviewed",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "NpcActionCommitted",
+      "CanonicalFactDeclared",
+      "ActivityCompleted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "receipts": 7,
+    "pendingDue": 0,
+    "modelInvocations": 4,
+    "deliveryStatuses": [
+      "open",
+      "open",
+      "open",
+      "open",
+      "open",
+      "open"
+    ],
+    "audienceStatuses": [
+      "published",
+      "published"
+    ]
+  },
+  "failure": {
+    "ordinal": 3,
+    "kind": "loweringReferenceRejection",
+    "code": "PROPOSAL_REFERENCE_INVALID",
+    "constraint": "proposal:basis-ref-not-authorized",
+    "parse": "accepted",
+    "lowering": "rejected",
+    "rules": "notEntered",
+    "repair": "notAttempted",
+    "subcause": "The submitted trace is a real committed scene-observers CanonicalFact, visible in actorProjection and explicitly shown in the frozen profile factConstraints frame. Its own known entry, citation and read binding are missing. This is a server source-closure gap; targets are valid visible NPC and scene references."
+  },
+  "counts": {
+    "syntaxFailures": 0,
+    "formFailures": 0,
+    "loweringReferenceRejections": 1,
+    "rulesRejections": 0,
+    "observedPublishedNarrativeContradictions": 0,
+    "recoveryCalls": 0
+  },
+  "scopeLimit": "Existing future NPC plan is a trusted local Rules fixture. No proof of model-created plans, NPC lies, multiplayer 20+ or statistical stability.",
+  "processes": {
+    "setupPid": 12092,
+    "gamePid": 12185,
+    "capturePid": 12084,
+    "allExited": true,
+    "exitCodes": [
+      143,
+      143,
+      143
+    ]
+  },
+  "checks": {
+    "extractExit": 0,
+    "sourceEndExit": 0,
+    "replayExit": 0
+  },
+  "harnessNotes": [
+    "Live budget conservatively charges the NPC call as unknown without matching usage telemetry; captured response usage is complete."
+  ]
+}

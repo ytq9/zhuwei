@@ -1,0 +1,75 @@
+{
+  "workspace": "/tmp/zhuwei-observable-context-work",
+  "baselineManifestSha256": "bf72ca8faa31fa1633020b8c01b3420cee73ecf4a11c2eabdf2bf8eb1b1f733b",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/index.ts",
+      "baselineSha256": "5493c8b65abb7c1184a168c2f2dda85c0adf92f6e35d81453317430ddbb0bd05",
+      "newSha256": "ffaa41a9cbe0bc1994f7073cf0d45870cd72a7da3a685ff8aab39ef2c3ad7f97"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/obligation-closure.ts",
+      "baselineSha256": "09631c1b89bd9dede1a4ff96739f148fdaa349fcf7e6a788d4d057312f7dfc96",
+      "newSha256": "ecffac16de946f26a84989a7cda27585c502c710315cea9f046fa4d570d65bd4"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/coverage.ts",
+      "baselineSha256": "a3890d947047c28a6c9f4e100e6d11010c10ebde60cce52dd86fa80c1b7dbd71",
+      "newSha256": "415ea44c1378cd63aaeffd790e2b06163219ab1c0d8e15fed0b9872430b494a1"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-context.ts",
+      "baselineSha256": "3b2a8e86a0f1dadcdd90e73346f4b5ab25e467065540689c71bd0b990853055f",
+      "newSha256": "e425b8e22d9f283420a7151543c377d48bd1f7c262e78f2be141d1aa0700ff56"
+    },
+    {
+      "path": "tests/kp-vnext-observable-context.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "fc4b9525dd3de77569c8300528051e8374171cf37737a5eb7b7a683f250e3321"
+    },
+    {
+      "path": "tests/kp-vnext-context-runtime.test.mjs",
+      "baselineSha256": "17bdc0f54f9d20e9d0d2081a8c7a4735e76c98e6cd4a8be8ff29ee16dd6c9013",
+      "newSha256": "9009d245b10fa3476b8752d447abe1bb6912bb11b715f6a81963a18ca4d69588"
+    }
+  ],
+  "commit": null,
+  "protectedOverlay": [],
+  "checks": [
+    {
+      "command": "npx tsx --test tests/kp-vnext-observable-context.test.mjs",
+      "exitCode": 1,
+      "pass": 5,
+      "fail": 1,
+      "reason": "pending Rules owner fix: missing selected observation subject read-set still commits on inherited Rules"
+    },
+    {
+      "command": "npx tsx --test tests/kp-vnext-context-runtime.test.mjs tests/kp-vnext-context-geometry.test.mjs tests/kp-vnext-npc-decision-context.test.mjs tests/kp-vnext-dynamic-locations.test.mjs",
+      "exitCode": 1,
+      "pass": 30,
+      "fail": 2,
+      "reason": "existing hand-written fixture omitted causalParentIds; reproduced on baseline context/index.ts"
+    },
+    {
+      "command": "npx tsx --test tests/kp-vnext-context-runtime.test.mjs",
+      "exitCode": 0,
+      "pass": 10,
+      "fail": 0,
+      "reason": "after fixture field correction"
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    }
+  ],
+  "limitations": [
+    "No real API calls. Root owns model schema/Provider wiring and live validation.",
+    "Missing selected subject read-set is a separately assigned Rules fix; regression assertion is retained.",
+    "Generic enumeration freezes visible entity records, not all scene objects or every NPC decision.",
+    "No push, deployment, commit, migration or main-tree changes."
+  ],
+  "appliedAt": "2026-09-06T22:25:18.861758+00:00",
+  "backupDirectory": "/tmp/zhuwei-observable-context-root-before",
+  "sourceManifestSha256": "7408b5b2bddef625b37aef97db2df5f2b470dab1ced65ce1d51a3f4d8cbef18c",
+  "conflicts": 0
+}

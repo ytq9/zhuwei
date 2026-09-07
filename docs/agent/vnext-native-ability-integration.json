@@ -1,0 +1,149 @@
+{
+  "baseHead": "258caee404e0814405eb497653ee9f00d647b773",
+  "base": "current main worktree after flat selection; not HEAD alone",
+  "files": {
+    "app/_runtime/lib/kp/vnext/context/authority-records.ts": {
+      "baselineSha256": "6945de8865b5f8c21406c5f6100c7a6155c7e02a0cbb5cc07ca588c21875bf47",
+      "newSha256": "485d6a489e0efa572ecf58647d0eeb8f2369290b587c4e32e71d2fd91bded149"
+    },
+    "app/_runtime/lib/kp/vnext/context/coverage.ts": {
+      "baselineSha256": "9ae02b7309ac3f4272082d00544b2e54e200bef624aa78e4555a5457ca52a38b",
+      "newSha256": "3fc03ec9b263d018b6aae9a92736febf8c74b08844fb0bbb3be1d73ddf8b1d69"
+    },
+    "app/_runtime/lib/kp/vnext/context/index.ts": {
+      "baselineSha256": "ffaa41a9cbe0bc1994f7073cf0d45870cd72a7da3a685ff8aab39ef2c3ad7f97",
+      "newSha256": "41db2acbbd257ad7efcbb24ad869816bae3f949522b1eb822d605abf2c0301c6"
+    },
+    "app/_runtime/lib/kp/vnext/context/reference-index.ts": {
+      "baselineSha256": "711b47d71183137ffc67f5cf7804e135fc5d5aa0814402222917c18f9d917a8b",
+      "newSha256": "7a7e9c0046fa520e86b507c1333f726efac18b8fbf4115c28181d98ec40ca723"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts": {
+      "baselineSha256": "0bb4736ef6fbaf023ae53e88ba681f5aa806a94e893e2e50222c84ee39535507",
+      "newSha256": "a62c9205b7f8efe5d954dbc01a74d4b8a097827ee5d3b3c7b46f4e2161dc2fa1"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-capabilities.ts": {
+      "baselineSha256": "815395ac6ab08058de27f960c860d2c532845ed41105af6ac4a9bca8b14ea908",
+      "newSha256": "d9c2478dfc713a885f8a0c14e1eea96725984c5d0f154ab2d92551dfc6723c90"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-filling-interface.ts": {
+      "baselineSha256": "726d3e68d634bdbe45bdbaa37b9362350fe56d3d81bfc357ab41a9db9c4b1296",
+      "newSha256": "100aee06953fe4c22fcd722c531b9d5adb094640db7a07aad5ef8ee0cf66f63c"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-guidance.ts": {
+      "baselineSha256": "7fabc8e8fc71b8019c6291adfc6461f6d8acc9da1496c5973ea48f7cf8ee0fd1",
+      "newSha256": "31cf9f73440b6c46c1f9a6eae9cbb8d2c4277b54a7fb89f032d438f01e67c92a"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-provider.ts": {
+      "baselineSha256": "6fb03df96e04d567cf77edd420f0a0460bb6134a76ada2fe90e61a9186d073b7",
+      "newSha256": "cc09eb775c6d8792df4950c7a175de2498752a7986357e9638f933bf0cdbc08e"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-schema.ts": {
+      "baselineSha256": "21e69606f7e8084f2c3dc848a5ed9a01f90ce32ba5ac5ea945a02dd7536be075",
+      "newSha256": "930e1a0c27637e9e65dc7a118b16b3e2103cdfd87591cef6621b0442c3b9005b"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-validator.ts": {
+      "baselineSha256": "e7a447fa23cb685e013e59639daaa1ff40c928afb5e888855cdb66c7a2609d61",
+      "newSha256": "21a47690d2c3395c9844482e6b780c9b53615e7733f3d9efef29f2b3290d58ab"
+    },
+    "app/_runtime/lib/kp/vnext/room-bridge.ts": {
+      "baselineSha256": "e469b3ea7e9c3e00769485aa975c5dc426f3663331a041ec4a9a4fceb3e1d330",
+      "newSha256": "b28964c44623417dfd682b388991f16c574238bf4e8dcc2d5f71b06836e9a863"
+    },
+    "app/_runtime/lib/rules/v2/ability-operation.ts": {
+      "baselineSha256": null,
+      "newSha256": "a264adc81dc7026637a6900efa62e1506ba3515f361f54b64f53da4a05a00271"
+    },
+    "app/_runtime/lib/rules/v2/actions.ts": {
+      "baselineSha256": "dd1ae487cde7b6de060f8dec4759087588a8d4759a223a4de195cdf93d661867",
+      "newSha256": "203f1b896b1257bcd7e95aeb545fd11acb68a8782609aa21bfab9cdd2eae114c"
+    },
+    "app/_runtime/lib/rules/v2/authority-bindings.ts": {
+      "baselineSha256": "f0cf5a26110a68009acfd73899a7f7920b3dc56190a3cedf8b5564ca7e1e1b35",
+      "newSha256": "8537c7bf21521f1c4f1f363b0589a645e88812c162e364fe823d89b72cf3f23e"
+    },
+    "app/_runtime/lib/rules/v2/campaign-actions.ts": {
+      "baselineSha256": "059f9bc14ad754ccf819fe6bae6217533951138686dc9f7c1d077b837d46cd9b",
+      "newSha256": "f9962e44ed91963458c7922518d234a6f9bbf765087359f083f195a88ffea665"
+    },
+    "app/_runtime/lib/rules/v2/character-abilities.ts": {
+      "baselineSha256": "80c75a2a4e8da1f3efca631a15fc251813b73153c3f99981f4240d9667503cad",
+      "newSha256": "de85ed7e4d8b7983ce37ca8f5b8e6d6c05a06ce41271f83e69f05e5a6a07f56f"
+    },
+    "app/_runtime/lib/rules/v2/combat-actions.ts": {
+      "baselineSha256": "a3bf6ac65f8d39999e1c9cab12c32891ba50a35fecb81cd2f91d17b768d2d5cd",
+      "newSha256": "1bed84b1ceb850d62ccc115ccb05691d0c83f5eeea61d5f1b4d5228aadfc7dde"
+    },
+    "app/_runtime/lib/rules/v2/multiplayer-actions.ts": {
+      "baselineSha256": "76c72b1440708d325e76afbabae6427cf1b8cc99467b63a3177d20ca4819807f",
+      "newSha256": "cf5bade2a5ff9f23dc3d49489029802ce11d815651774eafa6c436be18aca90b"
+    },
+    "app/_runtime/lib/rules/v2/world-interaction-model.ts": {
+      "baselineSha256": "e8f320347b4cfe1076456c3bbce2371feeeb0d43b74f927ce1085e82617a7f94",
+      "newSha256": "2383a7c62d3cb78fc99735055ed672c204101e511ba08a10ce23ff105b011439"
+    },
+    "app/_runtime/lib/rules/v2/world-interactions.ts": {
+      "baselineSha256": "62a82f419a2c961d2b4dabba38dcaa729325e4983c669c265e7629ea1d7a8655",
+      "newSha256": "9bb248bf11accae027b2e487ccc9de67bf274cd0d46136ca9f7cc88ddbd31a5a"
+    },
+    "tests/kp-vnext-ability-operation-room.test.ts": {
+      "baselineSha256": null,
+      "newSha256": "24a3609df1e297dfd34ffa3506356b094fa2f9991a469bc2be489e6415ef7ae4"
+    },
+    "tests/kp-vnext-ability-operation.test.mjs": {
+      "baselineSha256": null,
+      "newSha256": "d1b1f1b6379ffc883c254ef9191185e1b6cfb53928a9dfc79be05d3e2c4f6042"
+    },
+    "tests/kp-vnext-atomic-input.test.mjs": {
+      "baselineSha256": "c486d043c5052e8370d4d4bc75ee76cc1b884718f5d75a7a6da219e7c8e29827",
+      "newSha256": "050a50c04c560c7899a45ea5d40c67fde03385757b6bc7611f59e71523b87910"
+    },
+    "tests/kp-vnext-schema-retrieval.test.mjs": {
+      "baselineSha256": "056551fb35feed9145538a8afda89d6d1ad220c050edac3f3f7815bbced6e2d3",
+      "newSha256": "e2638bf448d884e6621696239bc54c97eff310f12e60bf2027f5321a035c5a02"
+    },
+    "tests/kp-vnext-sustained-casting-mechanics.test.mjs": {
+      "baselineSha256": "605f9d6d4290f62189d273b2274150773bef5f46e8d23405b7247c432cbc6647",
+      "newSha256": "85bebc7598000801905ac4f31db2bf7572244a2d6408da8ce50625dd8de6276d"
+    },
+    "tests/kp-vnext-time-passage-room.test.ts": {
+      "baselineSha256": "b7a9affec5eb6d28ee102c4d473c216eebc6bb6032c88c4dbbd8baf2ca704e46",
+      "newSha256": "12eb6fadb73e3e8f0f95c13c848dc249979251b1c8bcec82e8c67cc85a100285"
+    },
+    "vitest.config.ts": {
+      "baselineSha256": "cab1e46e060745b0b6499cc6e8129c1df558e213bfc2a50fa6a5c37fc4ab01a1",
+      "newSha256": "4c97370374d9341baa545dd4e79d94adeb14d9cf5e4ee7b867e06665694ae2e3"
+    }
+  },
+  "integratedAt": "2026-09-07T01:25:22.527285+00:00",
+  "patchSha256": "e0fb380187b190658c58cc6125c44a98e3003f94ac4d394475a5ff8d2f8c3c73",
+  "backup": "/tmp/zhuwei-kp-ability-root-before",
+  "conflicts": 0,
+  "applyExitCode": 0,
+  "rootVerification": {
+    "node": {
+      "passed": 89,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-native-ability-root-node.log"
+    },
+    "atomicConsumer": {
+      "passed": 2,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-native-ability-root-atomic.log"
+    },
+    "worker": {
+      "passed": 60,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-native-ability-root-room.log"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-native-ability-root-types.log"
+    },
+    "livePreflight": {
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-round69-ability-preparation/ready-preflight.log"
+    }
+  },
+  "knownBlocker": "Three full cards reproduce correction audit snapshot growth and SQLITE_TOOBIG; no correction/store edits in this patch."
+}

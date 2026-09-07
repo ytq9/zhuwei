@@ -1,0 +1,87 @@
+{
+  "schema": "zhuwei.isolated-file-integration/v1",
+  "sourceDirectory": "/tmp/zhuwei-npc-plan-formation-kp-work",
+  "targetDirectory": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-capabilities.ts",
+      "baselineSha256": "6034091fe45a01f7ec86b732eea15eebfaf0d51af3333c275fe142b4dbd0ab21",
+      "newSha256": "713d03e307ddac1437ba9334b50a8146307bba5c10255a48254e9d7870cf6c31"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-schema.ts",
+      "baselineSha256": "ae06f789f825a778875352193714445d09d97d71faa6de14cee2fbaf383e511c",
+      "newSha256": "74a7e297945ccfeb4ec4b5ba631eed175ce72d4b6f86f97c0a4b48dc53da799b"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-validator.ts",
+      "baselineSha256": "61b88ebbe3a10b9b43987990ca46d673454064af4703077408d6752f1bc1652c",
+      "newSha256": "e7a447fa23cb685e013e59639daaa1ff40c928afb5e888855cdb66c7a2609d61"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-filling-interface.ts",
+      "baselineSha256": "0fc60293b07936809854b3ec053b3993777c3b1f2b295aa78f0c1dd4a09dce0a",
+      "newSha256": "1f19345b68359c9f72234ef06ffe27ea8e26e8337bcfffb4a1a53da6e32ab53d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-graph.ts",
+      "baselineSha256": "af7a770f956f30ce9cf77406818a7c79f6f100f9843f4289435f1cb69ae243a7",
+      "newSha256": "646ee7ddfd3c5d2a24280a948992ede942fd63e196b4774322f7ad4ca10228fe"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-reference-slots.ts",
+      "baselineSha256": "f421b70b9e345faf2b9b8d6889c25c12b46456984de92d4f5d5770d932a305ad",
+      "newSha256": "4ff1c3da44327d9966c241773ea2d2879f7f1355fcd34951df2ffa498453febf"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-producer-contract.ts",
+      "baselineSha256": "b8e2de85c8d8c6cba1f38b6ddc0fc9fba8f616894b1f0c581476cb6117a5b7cd",
+      "newSha256": "835780be7e53bb14888c41be214f125a4846dac4f76e19f86f29148d9daafcd8"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts",
+      "baselineSha256": "3838a0a287a696205b6474c4abe99ec0e9c7a18bb6af910afa42d2c72b15a684",
+      "newSha256": "319ef16aa7fd865d53721f1d1a8d8edbcbd7fe51b298cd6e68eb7f7b704343d6"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-provider.ts",
+      "baselineSha256": "5355fca8f7105bb4bf6f63e04f96a624921bf846aeaf5be02098e06757d191d9",
+      "newSha256": "2f3f301c1e10479c099340650c912ed6b5a14441f160e96eeab0745e717635ce"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-guidance.ts",
+      "baselineSha256": "2231232a602fa4dc45b6b04e1538089da3937d25e167161d9ddfe0dd69ee2a77",
+      "newSha256": "65af05b6f3737a264c0e1d0fc9de59f2b30765f13a46ad0c01866f784f363440"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-repair-plan.ts",
+      "baselineSha256": "17112009465aa82454e7f39269dc6648270a7d65385b5fc57025f95d9342b47b",
+      "newSha256": "ad6589e7277fbe709848dfaca690e27fd7c550e26992dac53d62f36dda949c2d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/room-bridge.ts",
+      "baselineSha256": "3432d2863a87c59d7ba286d9d1e8458018f86b8de99ae3a407076256d41367d7",
+      "newSha256": "e469b3ea7e9c3e00769485aa975c5dc426f3663331a041ec4a9a4fceb3e1d330"
+    },
+    {
+      "path": "tests/kp-vnext-npc-plan-formation.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "7494945d16fb837de10c8af23829a6caa45cf24a97c7b908738dfb66f44320d8"
+    },
+    {
+      "path": "tests/kp-vnext-npc-plan-formation-room.test.ts",
+      "baselineSha256": null,
+      "newSha256": "adbc65de905be6fa78b1a53f6356238c18447c50df55fc0ea956de0b1c6e13c4"
+    }
+  ],
+  "dependencies": {
+    "rulesManifest": "/tmp/zhuwei-npc-plan-rules-work/npc-plan-rules-integration.json",
+    "rulesManifestSha256": "99a71a85dcd7ba578b5ccf3aeb14b83422126f291da766fb7da5422c9aee8a29",
+    "proposalsOverlaySha256": "7cb9c16f1e3841216700d520a651ae18663e0853ace97180a422a141ec060b6a"
+  },
+  "patch": "/tmp/zhuwei-npc-plan-formation-kp-work/npc-plan-kp.patch",
+  "appliedAt": "2026-09-06T22:13:55.453339+00:00",
+  "backupDirectory": "/tmp/zhuwei-npc-plan-kp-root-before",
+  "sourceManifestSha256": "4f02f444053a272d29e2ddd483d27b58b60e4c0c8cb1d60960ae777d51afdac3",
+  "conflicts": 0
+}

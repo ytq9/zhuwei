@@ -1,0 +1,138 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round23",
+  "recordedAt": "2026-09-05T22:31:34.946289+00:00",
+  "scope": "One local authenticated HTTP knowledge review; real DeepSeek generation and review/v5; duplicate only",
+  "budget": {
+    "rootRequests": 1,
+    "maxProviderCalls": 4,
+    "inputTokens": 232000,
+    "outputTokens": 32768
+  },
+  "sourceManifest": {
+    "path": "vnext-round23-source-manifest.json",
+    "sha256": "4e8d519c2e3a6464da5e824f31f09b93621823d647520028b9d01c6e5cdd9f2e",
+    "createdAt": "2026-09-05T22:28:49.063044+00:00",
+    "fileCount": 289,
+    "changedFilesDuringBatch": []
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "purpose": "proposal",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 17958,
+      "cacheHitTokens": 3328,
+      "cacheMissTokens": 14630,
+      "outputTokensIncludingReasoning": 179,
+      "reasoningTokensIncluded": 0,
+      "offPeakCny": 0.0229169,
+      "captureFileSha256": "bf5882adb58638982446f0f87f2c8ea7c5a3b5fd3667154899476a3b2c184fe4",
+      "finishReasons": [
+        "tool_calls"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "purpose": "generation",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 1693,
+      "cacheHitTokens": 512,
+      "cacheMissTokens": 1181,
+      "outputTokensIncludingReasoning": 850,
+      "reasoningTokensIncluded": 718,
+      "offPeakCny": 0.0056221,
+      "captureFileSha256": "5ff9bc7160ac340fa1e2ef1edc5b596429747251767084978cae687b5ed8f392",
+      "finishReasons": [
+        "stop"
+      ]
+    },
+    {
+      "ordinal": 3,
+      "purpose": "review",
+      "model": "deepseek-v4-flash",
+      "inputTokens": 4475,
+      "cacheHitTokens": 0,
+      "cacheMissTokens": 4475,
+      "outputTokensIncludingReasoning": 2148,
+      "reasoningTokensIncluded": 1226,
+      "offPeakCny": 0.0163785,
+      "captureFileSha256": "1b572bd38131ca7d7ce06c260015139bb4dacb64fb7dd06ef75e8084e45bf5c5",
+      "finishReasons": [
+        "tool_calls"
+      ]
+    }
+  ],
+  "totals": {
+    "inputTokens": 24126,
+    "cacheHitTokens": 3840,
+    "cacheMissTokens": 20286,
+    "outputTokensIncludingReasoning": 3177,
+    "reasoningTokensIncluded": 1944,
+    "offPeakCny": 0.0449175
+  },
+  "response": {
+    "action": "committed",
+    "narration": "published"
+  },
+  "mechanical": {
+    "eventCount": 1,
+    "eventTypes": [
+      "KnowledgeReviewed"
+    ],
+    "receipts": 1,
+    "pendingDue": 0,
+    "modelInvocations": 1,
+    "deliveryStatuses": [
+      "open"
+    ],
+    "audienceStatuses": [
+      "published"
+    ]
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsConform": true,
+    "nonActionUnchanged": true,
+    "eventCount": 1,
+    "eventTypes": [
+      "KnowledgeReviewed"
+    ]
+  },
+  "duplicate": {
+    "checks": {
+      "noModelReinvocation": true,
+      "sameSubmissionId": true,
+      "sameReceipt": true,
+      "sameMechanicalState": true,
+      "sameDelivery": true
+    },
+    "additionalProviderCalls": 0
+  },
+  "manualNarrationReview": {
+    "factsSupported": true,
+    "publishedBodyEqualsHeldOpening": true,
+    "addedWorldFacts": false,
+    "scopeLimitation": "single existing opening-knowledge entry; does not prove varied summaries, NPC dialogue, or continuous play"
+  },
+  "priceEvidence": {
+    "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "offPeakCnyPerMillion": {
+      "hit": 0.05,
+      "miss": 1.5,
+      "output": 4.5
+    }
+  },
+  "processes": {
+    "serverExitCode": 130,
+    "captureExitCode": 130
+  },
+  "externalChanges": {
+    "productionDeploy": false,
+    "push": false,
+    "remoteMigration": false,
+    "productionDataRetirement": false
+  }
+}

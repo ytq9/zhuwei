@@ -1,3 +1,5 @@
+import { frozenNarrationContextConform } from "./narration-context";
+import { naturalNarrationModelInput, narrationReviewModelInput, validateNarrationCandidate, decodeNarrationReviewResponse, extractFrozenNarrationResponse, VNEXT_NARRATION_POLICY, VNEXT_NARRATION_SCHEMA, NARRATION_REVIEW_SCHEMA } from "./narration-vnext";
 import {
   AUTHORITATIVE_KP_PROFILE,
   authoritativeKpProfileByBinding,
@@ -35,10 +37,7 @@ import {
 import {
   bodyOnlyNarrationGroundingReplacementModelInput,
   bodyOnlyNarrationModelInput,
-  frozenClaimsNarrationGroundingReplacementModelInput,
-  frozenClaimsNarrationModelInput,
   validateBodyOnlyNarrationOutput,
-  validateFrozenClaimsNarrationOutput,
 } from "./narration-v3";
 import {
   privateFormProposalModelInput,
@@ -51,6 +50,7 @@ import {
   validateActorPlanDecisionOutput,
 } from "./actor-plan-policy";
 import { HEALING_POTION_ITEM_DEFINITION_ID } from "../rules/profiles/item-system";
+import { NPC_PENDING_DECISION_TOOL_NAME, npcPendingDecisionModelInput, validateNpcPendingDecisionOutput } from "./pending-decision-policy";
 import { isCanonicalTacticalGeometry } from "../rules/profiles/tactical-geometry";
 import { frozenRenderableClaimsConform } from "../rules/authority-read";
 import { buildV3ContextPack, v3FormSelectionSignals } from "./v3-context-runtime";
@@ -1915,6 +1915,7 @@ function validateNarrationRequest(request: KpNarrationRequest): void {
       || request.renderableClaims.viewerKey !== request.viewerKey
       || request.renderableClaims.rootActionId !== request.rootActionId
       || request.renderableClaims.receiptId !== receiptId
+      || !frozenNarrationContextConform(request.narrationContext, request.renderableClaims)
     ) throw new ModelOutputValidationError();
     return;
   }
@@ -1981,6 +1982,7 @@ export function createAuthoritativeKpAdapter(
     invocationPurpose: ModelInvocationPurpose,
     input: Record<string, unknown>,
     timeoutBudgetMs = invocationTimeoutMs,
+    metadata: Pick<Partial<ModelInvocationReceipt>, "schemaVersion" | "promptPolicyVersion"> = {},
   ): Promise<InvocationSuccess> {
     const startedAt = now();
     const abortController = new AbortController();
@@ -2011,6 +2013,7 @@ export function createAuthoritativeKpAdapter(
           endedAt,
           "success",
           {
+            ...metadata,
             ...usageFrom(response),
             responseHash: await responseHash(response),
           },
@@ -2019,7 +2022,7 @@ export function createAuthoritativeKpAdapter(
     } catch (error) {
       const endedAt = now();
       const result = classifyModelError(error);
-      throw new AuthoritativeKpModelError(
+      const failure = new AuthoritativeKpModelError(
         result,
         receipt(
           profile,
@@ -2030,9 +2033,16 @@ export function createAuthoritativeKpAdapter(
           startedAt,
           endedAt,
           result,
+          metadata,
         ),
         retryAfterFrom(error),
       );
+      // The provider did not return a result to validate. Its permanent
+      // rejection says nothing about the generated body or grounding report.
+      if (task === "narration" && result === "modelPermanent") {
+        Object.assign(failure, { publicCode: "NARRATION_PROVIDER_REJECTED" });
+      }
+      throw failure;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
@@ -2065,11 +2075,75 @@ export function createAuthoritativeKpAdapter(
     publicCode: string,
     invocationReceipt: ModelInvocationReceipt,
     failureStage: ModelInvocationFailureStage,
+    groundingReason?: ModelInvocationReceipt["groundingReason"],
   ): AuthoritativeKpModelError {
     return Object.assign(new AuthoritativeKpModelError(
       "modelPermanent",
-      { ...invocationReceipt, result: "modelPermanent", failureStage },
+      { ...invocationReceipt, result: "modelPermanent", failureStage, ...(groundingReason ? { groundingReason } : {}) },
     ), { publicCode });
+  }
+
+  async function narrateFrozen(request: FrozenClaimsNarrationRequest) {
+    const startedAt = now();
+    const attempt = request.attempt ?? 1;
+    const purpose = narrationInvocationPurpose(request);
+    // Preflight has no model receipt: no provider invocation occurred.
+    let generationInput: Record<string, unknown>;
+    try { generationInput = naturalNarrationModelInput(request, profile.modelId); } catch (error) {
+      if (error instanceof NarrationGroundingValidationError) throw Object.assign(error, { publicCode: "NARRATION_CONTEXT_BUDGET_EXCEEDED" });
+      throw error;
+    }
+    const generation = await invoke("narration", request.rootActionId, attempt, purpose,
+      generationInput, invocationTimeoutMs, {
+        schemaVersion: VNEXT_NARRATION_SCHEMA, promptPolicyVersion: VNEXT_NARRATION_POLICY.promptPolicyVersion,
+      });
+    let candidate: { body: string };
+    let reviewInput: Record<string, unknown>;
+    const rejected = (error: ModelOutputValidationError, evidence: ModelInvocationReceipt) => {
+      const failure = v3Failure(
+        error instanceof NarrationGroundingValidationError ? "NARRATION_GROUNDING_REJECTED" : "NARRATION_BODY_INVALID",
+        evidence, error instanceof NarrationGroundingValidationError ? "narrationGrounding" : "narrationSchema",
+        error instanceof NarrationGroundingValidationError ? error.reason : undefined,
+      );
+      if ("diagnostics" in error && Array.isArray(error.diagnostics)) {
+        // Retain the verified report for the server-side caller. It must not
+        // enter public error/receipt serialization or invocation telemetry.
+        Object.defineProperty(failure, "narrationDiagnostics", { value: structuredClone(error.diagnostics) });
+        if ("reportConflicts" in error) Object.defineProperty(failure, "narrationReportConflicts", { value: structuredClone(error.reportConflicts) });
+      }
+      return failure;
+    };
+    try {
+      candidate = validateNarrationCandidate(extractFrozenNarrationResponse(generation.response, "generation"));
+      reviewInput = narrationReviewModelInput(request, candidate.body, profile.modelId);
+    } catch (error) {
+      if (error instanceof NarrationGroundingValidationError && error.reason === "materialBudget") {
+        // Generation succeeded; review has not called the provider. Preserve its
+        // real receipt and report a capacity failure, not a factual rejection.
+        emitInvocationReceipt(generation.receipt);
+        throw Object.assign(error, { publicCode: "NARRATION_CONTEXT_BUDGET_EXCEEDED" });
+      }
+      if (error instanceof ModelOutputValidationError) throw rejected(error, generation.receipt);
+      throw error;
+    }
+    const remainingMs = invocationTimeoutMs - Math.max(0, now() - startedAt);
+    if (remainingMs < 1) {
+      throw new AuthoritativeKpModelError("modelTransient", { ...generation.receipt, result: "modelTransient" });
+    }
+    emitInvocationReceipt(generation.receipt);
+    const review = await invoke("narration", request.rootActionId, attempt,
+      purpose === "narrationRecovery" ? "narrationRecoveryReview" : "narrationReview",
+      reviewInput, remainingMs, {
+        schemaVersion: NARRATION_REVIEW_SCHEMA, promptPolicyVersion: VNEXT_NARRATION_POLICY.promptPolicyVersion,
+      });
+    try {
+      decodeNarrationReviewResponse(review.response, request, candidate.body);
+    } catch (error) {
+      if (error instanceof ModelOutputValidationError) throw rejected(error, review.receipt);
+      throw error;
+    }
+    return { ...candidate, audience: { viewerKey: request.viewerKey, projectionHash: request.renderableClaims.projectionHash },
+      modelInvocationReceipt: review.receipt };
   }
 
   async function prepareV3Context(
@@ -2557,6 +2631,29 @@ export function createAuthoritativeKpAdapter(
         });
       },
 
+      async decidePendingInput(request) {
+        try {
+          let modelInput: Record<string, unknown>;
+          try { modelInput = npcPendingDecisionModelInput(request); } catch {
+            throw permanentContractError(profile, "proposal", request.rootActionId, 1, "actorPlan", now);
+          }
+          const invocation = await invoke("proposal", request.rootActionId, 1, "actorPlan", modelInput);
+          try {
+            const decision = validateNpcPendingDecisionOutput(extractStructuredOutput(
+              invocation.response, NPC_PENDING_DECISION_TOOL_NAME,
+            ), request);
+            emitInvocationReceipt(invocation.receipt);
+            return decision;
+          } catch (error) {
+            if (!(error instanceof ModelOutputValidationError)) throw error;
+            throw v3Failure("NPC_PENDING_DECISION_INVALID", invocation.receipt, "proposalSchema");
+          }
+        } catch (error) {
+          if (error instanceof AuthoritativeKpModelError) emitInvocationReceipt(error.modelInvocationReceipt);
+          throw error;
+        }
+      },
+
       async decideDueActorPlan(request: DueActorPlanDecisionRequest) {
         const rootActionId = typeof request?.rootActionId === "string"
           ? request.rootActionId
@@ -2619,6 +2716,9 @@ export function createAuthoritativeKpAdapter(
           try {
             validateNarrationRequest(request);
           } catch {
+            if (request?.narrationInputMode === "frozenRenderableClaims-vnext-1") {
+              throw Object.assign(new ModelOutputValidationError(), { publicCode: "NARRATION_BODY_INVALID" });
+            }
             throw permanentContractError(
               profile,
               "narration",
@@ -2628,34 +2728,25 @@ export function createAuthoritativeKpAdapter(
               now,
             );
           }
+          if (request.narrationInputMode === "frozenRenderableClaims-vnext-1") return narrateFrozen(structuredClone(request));
           let invocation = await invoke(
             "narration",
             request.rootActionId,
             attempt,
             initialPurpose,
-            request.narrationInputMode === "frozenRenderableClaims-vnext-1"
-              ? frozenClaimsNarrationModelInput(request)
-              : bodyOnlyNarrationModelInput(request, {
+            bodyOnlyNarrationModelInput(request, {
                   socialResolution: isSocialResolutionKpProfile(profile),
                 }),
           );
           try {
             const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
             const candidate = unwrapSingleEnvelope(structured);
-            const narration = request.narrationInputMode
-                === "frozenRenderableClaims-vnext-1"
-              ? validateFrozenClaimsNarrationOutput(candidate, request)
-              : validateBodyOnlyNarrationOutput(candidate, request.projection, {
+            const narration = validateBodyOnlyNarrationOutput(candidate, request.projection, {
                   socialResolution: isSocialResolutionKpProfile(profile),
                 });
             return {
               ...narration,
-              audience: request.narrationInputMode === "frozenRenderableClaims-vnext-1"
-                ? {
-                    viewerKey: request.viewerKey,
-                    projectionHash: request.renderableClaims.projectionHash,
-                  }
-                : audienceIdentity(request.projection),
+              audience: audienceIdentity(request.projection),
               modelInvocationReceipt: invocation.receipt,
             };
           } catch (error) {
@@ -2668,11 +2759,11 @@ export function createAuthoritativeKpAdapter(
               error instanceof NarrationGroundingValidationError
                 ? "narrationGrounding"
                 : "narrationSchema",
+              error instanceof NarrationGroundingValidationError ? error.reason : undefined,
             );
             if (
               !(error instanceof NarrationGroundingValidationError)
-              || (request.narrationInputMode !== "frozenRenderableClaims-vnext-1"
-                && !isSocialResolutionKpProfile(profile))
+              || !isSocialResolutionKpProfile(profile)
             ) throw failed;
             const remainingInvocationMs = invocationTimeoutMs - Math.max(
               0,
@@ -2685,9 +2776,7 @@ export function createAuthoritativeKpAdapter(
               request.rootActionId,
               attempt,
               narrationGroundingRepairPurpose(initialPurpose),
-              request.narrationInputMode === "frozenRenderableClaims-vnext-1"
-                ? frozenClaimsNarrationGroundingReplacementModelInput(request)
-                : bodyOnlyNarrationGroundingReplacementModelInput(request, {
+              bodyOnlyNarrationGroundingReplacementModelInput(request, {
                     socialResolution: isSocialResolutionKpProfile(profile),
                   }),
               remainingInvocationMs,
@@ -2695,21 +2784,12 @@ export function createAuthoritativeKpAdapter(
             try {
               const structured = extractStructuredOutput(invocation.response, NARRATION_TOOL_NAME);
               const candidate = unwrapSingleEnvelope(structured);
-              const narration = request.narrationInputMode
-                  === "frozenRenderableClaims-vnext-1"
-                ? validateFrozenClaimsNarrationOutput(candidate, request)
-                : validateBodyOnlyNarrationOutput(candidate, request.projection, {
+              const narration = validateBodyOnlyNarrationOutput(candidate, request.projection, {
                     socialResolution: isSocialResolutionKpProfile(profile),
                   });
               return {
                 ...narration,
-                audience: request.narrationInputMode
-                    === "frozenRenderableClaims-vnext-1"
-                  ? {
-                      viewerKey: request.viewerKey,
-                      projectionHash: request.renderableClaims.projectionHash,
-                    }
-                  : audienceIdentity(request.projection),
+                audience: audienceIdentity(request.projection),
                 modelInvocationReceipt: invocation.receipt,
               };
             } catch (replacementError) {
@@ -2722,6 +2802,7 @@ export function createAuthoritativeKpAdapter(
                 replacementError instanceof NarrationGroundingValidationError
                   ? "narrationGrounding"
                   : "narrationSchema",
+                replacementError instanceof NarrationGroundingValidationError ? replacementError.reason : undefined,
               );
             }
           }

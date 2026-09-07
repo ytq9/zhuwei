@@ -1,3 +1,4 @@
+import type { FrozenNarrationContext } from "./narration-context";
 import { GEAR_SLOTS, type GearSlot } from "../dnd/gear";
 import type { FrozenRenderableClaims } from "../rules/authority-read";
 
@@ -80,6 +81,8 @@ export const MODEL_INVOCATION_PURPOSES = [
   "narrationGroundingRepair",
   "narrationRecovery",
   "narrationRecoveryGroundingRepair",
+  "narrationReview",
+  "narrationRecoveryReview",
 ] as const;
 
 export type ModelInvocationPurpose = typeof MODEL_INVOCATION_PURPOSES[number];
@@ -113,6 +116,14 @@ export const MODEL_INVOCATION_FAILURE_STAGES = [
 export type ModelInvocationFailureStage =
   typeof MODEL_INVOCATION_FAILURE_STAGES[number];
 
+export const NARRATION_GROUNDING_REASONS = [
+  "legacyEvidenceMismatch", "internalReference", "invalidClaimFacts", "emptyNarration",
+  "playerAgency", "unsupportedClause", "missingClaimFacts",
+  "materialBudget", "roleMismatch", "reviewUncertain", "unnaturalNarration",
+  "characterMismatch", "continuityMismatch",
+] as const;
+export type NarrationGroundingReason = typeof NARRATION_GROUNDING_REASONS[number];
+
 export type ModelInvocationReceipt = {
   provider: "cloudflare-workers-ai" | "deepseek";
   modelId: string;
@@ -128,6 +139,7 @@ export type ModelInvocationReceipt = {
   endedAt: number;
   result: ModelInvocationResult;
   failureStage?: ModelInvocationFailureStage;
+  groundingReason?: NarrationGroundingReason;
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
@@ -470,6 +482,7 @@ export type FrozenClaimsNarrationRequest = KpNarrationRequestBase & {
   narrationInputMode: "frozenRenderableClaims-vnext-1";
   viewerKey: string;
   renderableClaims: FrozenRenderableClaims;
+  narrationContext: FrozenNarrationContext;
   projection?: never;
 };
 
@@ -571,5 +584,6 @@ export type AuthoritativeKpAdapterOptions = {
 export type AuthoritativeKpAdapter = {
   propose(request: KpProposalRequest): Promise<V3AuthoritativeKpProposal>;
   decideDueActorPlan(request: DueActorPlanDecisionRequest): Promise<DueActorPlanDecision>;
+  decidePendingInput(request: import("./pending-decision-policy").NpcPendingDecisionRequest): Promise<import("./pending-decision-policy").NpcPendingDecision>;
   narrate(request: KpNarrationRequest): Promise<CurrentNarration | BodyOnlyCurrentNarration>;
 };

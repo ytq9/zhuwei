@@ -1,0 +1,377 @@
+{
+  "schema": "zhuwei.vnext-round22-live-evidence/v1",
+  "date": "2026-09-06",
+  "scope": "round21-22 development HTTP probes; historical review/v4 outcomes preserved; no production or full-game acceptance",
+  "baseCommit": "258caee404e0814405eb497653ee9f00d647b773",
+  "hashSemantics": "File hashes digest the original local file bytes. Object hashes digest UTF-8 JSON with sorted keys, compact separators, Unicode preserved and no NaN; they are not HTTP wire-byte hashes. Provider created timestamps are response metadata, not measured invocation start times.",
+  "sourceBinding": "Each batch has an original 288-file source manifest saved before its real Provider call, linked below. Per-call capture hashes and per-batch workflow hashes supplement those source manifests. Original manifests are unchanged; later punctuation or other fixes are not attributed to the historical call.",
+  "attempts": 4,
+  "usageKnownCalls": 4,
+  "unknownUsageCalls": 0,
+  "totals": {
+    "prompt_tokens": 41554,
+    "prompt_cache_hit_tokens": 768,
+    "prompt_cache_miss_tokens": 40786,
+    "completion_tokens": 6228
+  },
+  "reportedReasoningTokensIncludedInCompletion": 4504,
+  "offPeakUsagePriceCny": 0.0892434,
+  "pricing": {
+    "source": "vnext-cost-estimate.md",
+    "currency": "CNY",
+    "unit": "per million tokens",
+    "cachedInput": 0.05,
+    "uncachedInput": 1.5,
+    "output": 4.5,
+    "basis": "documented off-peak list price, not an account debit receipt"
+  },
+  "batches": [
+    {
+      "batch": "round21",
+      "environment": "new local room; normal authenticated HTTP; real DeepSeek; development only",
+      "maximums": {
+        "actions": 1,
+        "providerCalls": 3,
+        "inputTokens": 174000,
+        "outputTokens": 24576
+      },
+      "actualCalls": 1,
+      "workflowHashAtInvocation": "sha256:27cea2dbff13cdb6384becd5bb96e2b6f56b157db204cdf5d64ece5d59dc8ff9",
+      "outcome": {
+        "outcomeKind": "rejected",
+        "action": "notCommitted",
+        "narration": "notApplicable",
+        "code": "PROPOSAL_FORM_INVALID"
+      },
+      "mechanical": {
+        "eventCount": 0,
+        "eventTypes": [],
+        "receiptCount": 0,
+        "unchanged": {
+          "knowledge": true,
+          "canonicalFacts": true,
+          "entities": true,
+          "campaignRuntime": true,
+          "combatRuntime": true,
+          "fictionTimelines": true,
+          "spotlight": true,
+          "frontierTime": true
+        },
+        "deliveryStatuses": [],
+        "persistedProposalInvocations": 1,
+        "invocationCountNote": "The mechanical file counts the persisted Proposal invocation only; actualCalls includes narration generation and review."
+      },
+      "replay": {
+        "kind": "replayed",
+        "exactState": true,
+        "frozenContextsConform": true,
+        "eventCount": 0,
+        "eventTypes": [],
+        "exitCode": 0,
+        "exitCodeEvidence": "execution handoff; replay result file independently inspected"
+      },
+      "mechanicalEvidenceFileSha256": "cdd7f0e90a0beacd448b8df5867b8bc25ba59894046e3697b1dfdaa355407382",
+      "replayEvidenceFileSha256": "700b404064d7603b07970bd099261a6900ed53c754499a17e3c2b1cba139411e",
+      "totals": {
+        "prompt_tokens": 17771,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 17771,
+        "completion_tokens": 197
+      },
+      "offPeakUsagePriceCny": 0.027543,
+      "sourceManifest": {
+        "path": "vnext-round21-source-manifest.json",
+        "fileCount": 288,
+        "createdAt": "2026-09-05T20:35:24.226736+00:00",
+        "manifestSha256": "b6acf3dc347dcdda8b61beeed5e52ab26bc5c55fb1ff97ce6e0ce303fbf78b0e",
+        "sourceManifestFileSha256": "077e6a07da1bcf78cfbfa7114ab2b77e83c3761dd689466d54a1f4c10b120db6",
+        "provenance": "original pre-call source manifest; unchanged"
+      }
+    },
+    {
+      "batch": "round22",
+      "environment": "new local room; normal authenticated HTTP; real DeepSeek; development only",
+      "maximums": {
+        "actions": 1,
+        "providerCalls": 3,
+        "inputTokens": 174000,
+        "outputTokens": 24576
+      },
+      "actualCalls": 3,
+      "workflowHashAtInvocation": "sha256:c937dfd2151b0635fbc9031ff57d139f752a8b9c5ef13c5b73ab89c0e10bd8ed",
+      "outcome": {
+        "outcomeKind": "committed",
+        "action": "committed",
+        "narration": "rejected",
+        "code": "NARRATION_BODY_INVALID"
+      },
+      "mechanical": {
+        "eventCount": 1,
+        "eventTypes": [
+          "KnowledgeReviewed"
+        ],
+        "receiptCount": 1,
+        "unchanged": {
+          "knowledge": true,
+          "canonicalFacts": true,
+          "entities": true,
+          "campaignRuntime": true,
+          "combatRuntime": true,
+          "fictionTimelines": true,
+          "spotlight": true,
+          "frontierTime": true
+        },
+        "deliveryStatuses": [
+          "rejected"
+        ],
+        "persistedProposalInvocations": 1,
+        "invocationCountNote": "The mechanical file counts the persisted Proposal invocation only; actualCalls includes narration generation and review."
+      },
+      "replay": {
+        "kind": "replayed",
+        "exactState": true,
+        "frozenContextsConform": true,
+        "eventCount": 1,
+        "eventTypes": [
+          "KnowledgeReviewed"
+        ],
+        "exitCode": 0,
+        "exitCodeEvidence": "execution handoff; replay result file independently inspected"
+      },
+      "mechanicalEvidenceFileSha256": "c492b13a9b809ea5700d2ba53912c652b7941af29e1fdb5acfca821e818db373",
+      "replayEvidenceFileSha256": "d898b6faed05963505b7fdd77752cd75a59569158c4e804939208913f4e7577c",
+      "totals": {
+        "prompt_tokens": 23783,
+        "prompt_cache_hit_tokens": 768,
+        "prompt_cache_miss_tokens": 23015,
+        "completion_tokens": 6031
+      },
+      "offPeakUsagePriceCny": 0.0617004,
+      "sourceManifest": {
+        "path": "vnext-round22-source-manifest.json",
+        "fileCount": 288,
+        "createdAt": "2026-09-05T20:38:17.402717+00:00",
+        "manifestSha256": "5acabf75df18387d24bb768f13c79c7acd548d4024fbb8e938a4ac0e917201c0",
+        "sourceManifestFileSha256": "85f71371d09ee8a090cb380a68792bc028685d26565400490227a400c0cf9283",
+        "provenance": "original pre-call source manifest; unchanged"
+      }
+    }
+  ],
+  "calls": [
+    {
+      "batch": "round21",
+      "ordinal": 1,
+      "purpose": "proposalOffer",
+      "model": "deepseek-v4-flash",
+      "providerResponseCreatedUnix": 1788640554,
+      "providerResponseCreatedAtUtc": "2026-09-05T20:35:54Z",
+      "invocationDurationMs": 2064,
+      "captureFileSha256": "5dfda51c322ab47d21430ad1a2d1774864a801da042d84073f02e72790bd334a",
+      "requestObjectJsonSha256": "d565743e5335ca02997b4c90e592ad61cccc8737d4ae8ddbf85816e3596003e2",
+      "responseObjectJsonSha256": "15e72fcfcbcca1addb6bcaed44fab9eeeaff4eba1c65e991b86d4f1405a31482",
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 17771,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 17771,
+        "completion_tokens": 197,
+        "total_tokens": 17968
+      },
+      "offPeakUsagePriceCny": 0.027543,
+      "validationAtInvocation": {
+        "status": "rejected",
+        "code": "PROPOSAL_FORM_INVALID",
+        "issue": "knowledge:terminal-basis-must-be-empty",
+        "rootBasisRefCount": 1
+      }
+    },
+    {
+      "batch": "round22",
+      "ordinal": 1,
+      "purpose": "proposalOffer",
+      "model": "deepseek-v4-flash",
+      "providerResponseCreatedUnix": 1788640707,
+      "providerResponseCreatedAtUtc": "2026-09-05T20:38:27Z",
+      "invocationDurationMs": 1494,
+      "captureFileSha256": "cb2dd7224426229159fc92f525f8b9c220e363b5cec8c85fa4e4f00623367e2f",
+      "requestObjectJsonSha256": "cb37a528b11e7a202fd07415c2db391524acbd2c8069b8332f2f76509fee4534",
+      "responseObjectJsonSha256": "7713e505172cef8e0fe120e760c1aeddb3ad0c9d151f416a4e733e25778223fd",
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 17830,
+        "prompt_cache_hit_tokens": 256,
+        "prompt_cache_miss_tokens": 17574,
+        "completion_tokens": 168,
+        "total_tokens": 17998
+      },
+      "offPeakUsagePriceCny": 0.0271298,
+      "validationAtInvocation": {
+        "status": "accepted"
+      }
+    },
+    {
+      "batch": "round22",
+      "ordinal": 2,
+      "purpose": "initialNarration",
+      "model": "deepseek-v4-flash",
+      "providerResponseCreatedUnix": 1788640709,
+      "providerResponseCreatedAtUtc": "2026-09-05T20:38:29Z",
+      "invocationDurationMs": 3927,
+      "captureFileSha256": "64925d4e94db06ca2dc33238d708ce4c1e0c290e2e45aa23d2c1524e16e9bfe2",
+      "requestObjectJsonSha256": "84e9669ab5474569f0c41bd9d61dc423d1081a6450e39487568083a9d7c185a4",
+      "responseObjectJsonSha256": "a9124ac2480f2c964252055f43d49267138008c8177e61475c8dd32fa9a115d2",
+      "finishReason": "stop",
+      "usage": {
+        "prompt_tokens": 1696,
+        "prompt_cache_hit_tokens": 512,
+        "prompt_cache_miss_tokens": 1184,
+        "completion_tokens": 463,
+        "total_tokens": 2159,
+        "reasoning_tokens_included_in_completion": 322
+      },
+      "offPeakUsagePriceCny": 0.0038851,
+      "validationAtInvocation": {
+        "status": "accepted"
+      }
+    },
+    {
+      "batch": "round22",
+      "ordinal": 3,
+      "purpose": "narrationReview",
+      "model": "deepseek-v4-flash",
+      "providerResponseCreatedUnix": 1788640713,
+      "providerResponseCreatedAtUtc": "2026-09-05T20:38:33Z",
+      "invocationDurationMs": 34850,
+      "captureFileSha256": "4753c59127a9a641e35b4b7c916d9bc4ce275bf60da41cc2e6acac3afa5aa14e",
+      "requestObjectJsonSha256": "cea926b4ce26513a6605503a5dd68e491a74d2283e38b480c0448d0195f2c500",
+      "responseObjectJsonSha256": "b4bc805dc98754c2dbe57aa0f30e2a583dddfa27fbc02a74a1e30a5434dfb21d",
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 4257,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 4257,
+        "completion_tokens": 5400,
+        "total_tokens": 9657,
+        "reasoning_tokens_included_in_completion": 4182
+      },
+      "offPeakUsagePriceCny": 0.0306855,
+      "validationAtInvocation": {
+        "status": "rejected",
+        "code": "NARRATION_BODY_INVALID",
+        "failureStage": "narrationSchema",
+        "errorType": "ModelOutputValidationError"
+      }
+    }
+  ],
+  "round22ReviewDiagnosticAtHistoricalPolicy": {
+    "result": "rejected",
+    "errorType": "ModelOutputValidationError",
+    "catalogMatches": true,
+    "segmentCount": 6,
+    "coverageRowCount": 2,
+    "requiredFactIndexes": [
+      0
+    ],
+    "optionalFactIndexes": [
+      1
+    ],
+    "firstRejectedGap": {
+      "segmentIndex": 5,
+      "assertionIndex": 2,
+      "startOffset": 23,
+      "endOffsetExclusive": 25,
+      "codePoints": [
+        "U+2014",
+        "U+2014"
+      ]
+    },
+    "otherGapsCodePoints": [
+      [
+        "U+FF0C"
+      ]
+    ],
+    "diagnosticEvidenceFileSha256": "6728c2f3e2d1d094eff314fd16ea542c40ecd60208aa19c555fb4e2c1e6f0949",
+    "interpretation": "The historical validator rejects the complete Chinese dash punctuation gap. This diagnosis does not reclassify the response or prove semantic narration quality."
+  },
+  "postProbeSyntheticValidation": {
+    "scope": "new synthetic cases only; no provider request or historical response rewriting/reclassification",
+    "coverageAlignmentPolicy": "complete-separator-spans/v2",
+    "changes": "Permit only exactly two U+2014 between nonnumeric letters; reject lone/longer/ASCII dash runs, omitted substantive characters and numeric separators including whitespace, Unicode and Chinese numerals.",
+    "checks": [
+      {
+        "target": "tests/kp-vnext-narration.test.mjs: synthetic Chinese dash regression before fix",
+        "tests": 1,
+        "passed": 0,
+        "failed": 1,
+        "exitCode": 1,
+        "logSha256": "a822306733574653e457594e6c1f0f7e118875561169bcf5b78b19db6162e2bd"
+      },
+      {
+        "target": "tests/kp-vnext-knowledge-review.test.mjs + tests/kp-vnext-narration.test.mjs",
+        "tests": 39,
+        "passed": 39,
+        "failed": 0,
+        "exitCode": 0,
+        "logSha256": "a25f30cbbf1a60ab85c8346bd86f480ac1ceda3ad8ad8d173996151fbd114d2b"
+      }
+    ],
+    "exitCodeEvidence": "execution handoff; terminal test totals independently inspected",
+    "historicalRound22ReviewRemainsRejected": true
+  },
+  "cumulativeCostLedger": {
+    "scope": "round6-22, matching the existing cost ledger; earlier batches are outside this cumulative subtotal",
+    "attempts": 44,
+    "usageKnownCalls": 43,
+    "unknownUsageCalls": 1,
+    "prompt_tokens": 399115,
+    "completion_tokens": 44263,
+    "knownPromptCacheHitTokens": 98176,
+    "knownPromptCacheMissTokens": 222224,
+    "promptTokensWithoutCacheSplit": 78715,
+    "offPeakKnownUsagePriceCnyRange": [
+      0.54136405,
+      0.6555008
+    ],
+    "unknownUsageNote": "One round12 HTTP 400 has unknown usage and possible additional cost; round8/9 input cache splits are missing.",
+    "recomputedFrom": [
+      "vnext-round6-live-evidence.json",
+      "vnext-round7-live-evidence.json",
+      "vnext-round8-live-evidence.json",
+      "vnext-round9-live-evidence.json",
+      "vnext-round10-live-evidence.json",
+      "vnext-round16-live-evidence.json",
+      "vnext-round20-live-evidence.json",
+      "round21/22 original private capture usage"
+    ]
+  },
+  "cleanup": {
+    "localServerAndCaptureStopped": true,
+    "stopExitCode": 130,
+    "evidence": "execution handoff records Ctrl-C/exit130; parent independently confirmed no matching background processes",
+    "gitCommit": false,
+    "gitPush": false,
+    "deployment": false,
+    "remoteMigration": false,
+    "productionDataRetirement": false
+  },
+  "limitations": [
+    "Knowledge review has one real Rules/Room/replay success but no accepted real narration delivery in these batches.",
+    "No post-fix real Provider call, narration recovery request, repeated submission or long multiplayer chain was run in these batches.",
+    "The synthetic dash fix does not resolve the older round20 factCoverage reliability issue.",
+    "No private narration, model reasoning, room/player identities, session credentials or raw projections are included."
+  ],
+  "interBatchValidation": {
+    "scope": "after round21 and before round22; existing terminal basis constraint clarified on the model filling surface",
+    "checks": [
+      {
+        "target": "tests/kp-vnext-proposal-schema.test.mjs",
+        "tests": 28,
+        "passed": 28,
+        "failed": 0,
+        "exitCode": 0,
+        "logSha256": "5c92f5e56ded196590b342781f5b7f06df036c8bed7c6491ecc174a4bd114040"
+      }
+    ],
+    "exitCodeEvidence": "execution handoff; terminal test totals independently inspected"
+  }
+}

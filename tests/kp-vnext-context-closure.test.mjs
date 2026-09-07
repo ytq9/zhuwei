@@ -101,7 +101,7 @@ function worldState({ noise = 0, chainState = "active", facts = {} } = {}) {
         definitions: { "item-definition:pistol": { definitionId: "item-definition:pistol" } },
       },
     },
-    combatRuntime: { definitions: {} },
+    combatRuntime: { scenes: {}, definitions: {} },
   };
 }
 

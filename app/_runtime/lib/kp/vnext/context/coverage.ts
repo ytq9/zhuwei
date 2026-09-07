@@ -1,9 +1,10 @@
 import {
-  authoritySpatialRefVisibleTo,
   canonicalFactVisibleToCharacter,
   type AuthoritativeWorldState,
 } from "../../../rules/authority-read";
 import { compareCodeUnits } from "../canonical-json";
+import { narrativeDetailVisibleTo } from "../../../rules/v2/narrative-commitments";
+import { indexedSpatialRefVisibleTo } from "./authority-records";
 import type { EquivalentSelection } from "./ambiguity";
 import type { ContextObligation } from "./obligation-closure";
 import type { ReferenceNode } from "./reference-index";
@@ -19,9 +20,14 @@ export type ContextDomain = "ability" | "item" | "semantic";
 const DECISIVE_OBLIGATIONS: ReadonlySet<ContextObligation> = new Set([
   "actor",
   "target",
+  "observableSubject",
+  "sourceRecord",
   "instrument",
   "ability",
+  "definition",
+  "reaction",
   "relation",
+  "narrativeContinuity",
 ]);
 
 export function obligationsAreDecisive(
@@ -44,16 +50,22 @@ export function citationClass(
   sceneRef: string,
 ): CitationClass {
   switch (node.kind) {
+    case "narrativeCommitment":
+      return narrativeDetailVisibleTo(state, node.ref, actorCharacterId) ? "viewer" : "nonCitable";
+    case "narrativeBinding":
+      return "authority";
     case "scene":
       return node.ref === sceneRef ? "viewer" : "authority";
     case "entity":
+    case "itemAssembly":
     case "itemEntry":
-      return authoritySpatialRefVisibleTo(state, node.ref, sceneRef, actorCharacterId)
+    case "geometryFeature":
+      return indexedSpatialRefVisibleTo(state, node, sceneRef, actorCharacterId)
         ? "viewer"
         : "authority";
     case "semanticDefinition":
-      if (node.semanticKind === "sceneFeature") {
-        return authoritySpatialRefVisibleTo(state, node.ref, sceneRef, actorCharacterId)
+      if (node.semanticKind === "sceneFeature" || node.semanticKind === "location" || node.semanticKind === "passage") {
+        return indexedSpatialRefVisibleTo(state, node, sceneRef, actorCharacterId)
           ? "viewer"
           : "authority";
       }
@@ -70,7 +82,10 @@ export function citationClass(
         ? "viewer"
         : "authority";
     }
+    case "abilityCatalog":
+      return node.knowledgeHolderRef === actorCharacterId ? "viewer" : "authority";
     case "knowledge":
+    case "knowledgeCatalog":
       if (node.knowledgeHolderRef === actorCharacterId) return "viewer";
       // Another character's knowledge grounds NPC behaviour but is not
       // material anyone may cite back into the fiction.
@@ -83,9 +98,11 @@ export function citationClass(
   }
 }
 
-export function contextDomain(node: ReferenceNode): ContextDomain {
+export function contextDomain(node: ReferenceNode): ContextDomain | undefined {
+  if (node.kind === "knowledgeCatalog" || node.kind === "abilityCatalog" || node.kind === "characterTimeline") return undefined;
+  if (node.kind === "narrativeCommitment" || node.kind === "narrativeBinding") return undefined;
   if (node.kind === "abilityDefinition") return "ability";
-  if (node.kind === "itemEntry" || node.kind === "itemDefinition") return "item";
+  if (node.kind === "itemAssembly" || node.kind === "itemEntry" || node.kind === "itemDefinition") return "item";
   return "semantic";
 }
 

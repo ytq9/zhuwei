@@ -359,6 +359,62 @@ function capturedTelemetry(calls: unknown[][]) {
 }
 
 describe("Room DO incremental D1 archive continuation", () => {
+  it("uses the bound runtime through vNext export, checkpoint advancement, eviction and D1 recovery", async () => {
+    const roomId = "archive-do-bound-vnext-runtime";
+    const host = "principal:archive-vnext:host";
+    const stub = env.VNEXT_ROOMS.getByName(roomId) as unknown as HarnessAuthority & DurableObjectStub;
+    const initialized = record(await stub.initializeAuthoritative({
+      roomId, moduleId: "black-oak-will",
+      members: [{ principalId: host, role: "host" },
+        { principalId: "principal:archive-vnext:first", role: "player" },
+        { principalId: "principal:archive-vnext:second", role: "player" }],
+      characters: [{ characterId: "character:archive-vnext:host", controllerPrincipalId: host,
+        staticCard: { name: "归档角色", sceneId: "wake" } }],
+    }), "vNext archive initialization");
+    expect(initialized).toMatchObject({ created: true });
+    const capabilities = record(initialized.serviceCapabilities, "vNext archive capabilities");
+    const initialExport = record(await stub.exportAuthoritativeArchive(capabilities.archiveExport), "vNext initial export");
+    expect(initialExport).toMatchObject({ kind: "exported" });
+    expect(record(record(initialExport.archive, "initial archive").head, "initial head").eventSeq).toBe("0");
+    await installFakeArchiveDb(stub);
+    await forceArchiveAlarmDue(stub);
+    expect((await archiveHarnessState(stub)).progress?.pending).toBe(false);
+
+    // Advance first from a genesis checkpoint, then from a nonempty prefix.
+    // Both replay paths must use the exact runtime already bound to the Room.
+    for (const suffix of ["first", "second"]) {
+      const persisted = await archiveHarnessState(stub);
+      await evictDurableObject(stub as never);
+      await installFakeArchiveDb(stub, persisted.snapshot);
+      await expect(stub.applyRoomAdministration(capabilities.roomAdministration, {
+        kind: "removeMember", commandId: `archive-admin:vnext:${suffix}`,
+        principalId: `principal:archive-vnext:${suffix}`, reason: "archiveRuntimeFixture",
+      })).resolves.toMatchObject({ kind: "committed" });
+      await forceArchiveAlarmDue(stub);
+      expect((await archiveHarnessState(stub)).progress?.pending).toBe(false);
+    }
+    const exported = record(await stub.exportAuthoritativeArchive(capabilities.archiveExport), "vNext advanced export");
+    expect(exported).toMatchObject({ kind: "exported" });
+    const archive = record(exported.archive, "vNext advanced archive");
+    const completed = await archiveHarnessState(stub);
+    expect(completed.snapshot?.events.length).toBeGreaterThan(1);
+    expect(completed.snapshot?.checkpoints).toHaveLength(1);
+    const locator = { roomId, runtimeEpochId: String(record(archive.signedGenesis, "vNext genesis").runtimeEpochId) };
+
+    const wrongRuntime = env.ROOMS.getByName(`${roomId}:production`) as unknown as HarnessAuthority & DurableObjectStub;
+    await installFakeArchiveDb(wrongRuntime, completed.snapshot);
+    await expect(wrongRuntime.restoreAuthoritativeArchiveFromD1(capabilities.disasterRecovery, locator))
+      .resolves.toMatchObject({ kind: "rejected", code: "archiveIntegrityMismatch" });
+
+    const restored = env.VNEXT_ROOMS.getByName(`${roomId}:restored`) as unknown as HarnessAuthority & DurableObjectStub;
+    await installFakeArchiveDb(restored, completed.snapshot);
+    await expect(restored.restoreAuthoritativeArchiveFromD1(capabilities.disasterRecovery, locator))
+      .resolves.toMatchObject({ kind: "restored", projectionIntegrity: "verified" });
+    const recovered = record(await restored.exportAuthoritativeArchive(capabilities.archiveExport), "recovered vNext export");
+    expect(record(recovered.archive, "recovered vNext archive").head).toEqual(archive.head);
+    expect(record(recovered.archive, "recovered vNext archive").projectionAudits).toEqual(archive.projectionAudits);
+  }, 30_000);
+
   it("emits content-free archive failure, catch-up, caught-up, and lag-bucket telemetry", async () => {
     const roomId = "archive-do-telemetry-v2";
     const removablePrincipalId = "principal:archive-telemetry:removable";

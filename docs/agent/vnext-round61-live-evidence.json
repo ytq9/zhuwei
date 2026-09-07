@@ -1,0 +1,161 @@
+{
+  "round": 61,
+  "status": "stopped-on-third-action-rules-rejection",
+  "sourceManifest": "4db082a4d110d127cbe0d4a984fd02e213ddf934ae0d6b32f788ff82faedf8ea",
+  "actions": [
+    {
+      "ordinal": 1,
+      "result": "committed",
+      "narration": "published"
+    },
+    {
+      "ordinal": 2,
+      "result": "committed",
+      "narration": "published"
+    },
+    {
+      "ordinal": 3,
+      "result": "notCommitted",
+      "narration": "notApplicable"
+    }
+  ],
+  "usage": {
+    "physicalCalls": 8,
+    "input": 122846,
+    "hit": 36224,
+    "miss": 86622,
+    "output": 1310,
+    "unknownUsageCalls": 0,
+    "estimatedCny": "0.1376392",
+    "pricePeriod": "offPeak"
+  },
+  "callRows": [
+    {
+      "file": "01.json",
+      "tool": "required",
+      "model": "deepseek-v4-flash",
+      "input": 30385,
+      "hit": 0,
+      "miss": 30385,
+      "output": 79
+    },
+    {
+      "file": "02.json",
+      "tool": null,
+      "model": "deepseek-v4-flash",
+      "input": 1871,
+      "hit": 896,
+      "miss": 975,
+      "output": 167
+    },
+    {
+      "file": "03.json",
+      "tool": "required",
+      "model": "deepseek-v4-flash",
+      "input": 2730,
+      "hit": 896,
+      "miss": 1834,
+      "output": 138
+    },
+    {
+      "file": "04.json",
+      "tool": "required",
+      "model": "deepseek-v4-flash",
+      "input": 34934,
+      "hit": 13440,
+      "miss": 21494,
+      "output": 57
+    },
+    {
+      "file": "05.json",
+      "tool": "required",
+      "model": "deepseek-v4-flash",
+      "input": 14588,
+      "hit": 0,
+      "miss": 14588,
+      "output": 81
+    },
+    {
+      "file": "06.json",
+      "tool": null,
+      "model": "deepseek-v4-flash",
+      "input": 1203,
+      "hit": 896,
+      "miss": 307,
+      "output": 69
+    },
+    {
+      "file": "07.json",
+      "tool": "required",
+      "model": "deepseek-v4-flash",
+      "input": 1933,
+      "hit": 896,
+      "miss": 1037,
+      "output": 145
+    },
+    {
+      "file": "08.json",
+      "tool": "required",
+      "model": "deepseek-v4-flash",
+      "input": 35202,
+      "hit": 19200,
+      "miss": 16002,
+      "output": 574
+    }
+  ],
+  "stateChecks": {
+    "timeSegments": [
+      "2000000",
+      "58000000"
+    ],
+    "finalTime": "60000000",
+    "npcPlanStatus": "resolved",
+    "npcTraceCommitted": true,
+    "thirdActionNoStateChange": true,
+    "entitiesInventoryResourcesUnchanged": true,
+    "duplicateNewCalls": [
+      0,
+      0
+    ],
+    "events": 10,
+    "receipts": 7
+  },
+  "failure": {
+    "ordinal": 3,
+    "kind": "rulesRejection",
+    "code": "causalFrontierConflict",
+    "message": "Scene observation requires the frozen scope and evidence read set.",
+    "parse": "accepted",
+    "lowering": "accepted",
+    "repair": "refused-without-new-provider-call",
+    "subcause": "Server failed to canonicalize held-knowledge aliases in plan and branch basisRefs to the same holder-qualified record used by frozen readSet."
+  },
+  "counts": {
+    "syntaxFailures": 0,
+    "formFailures": 0,
+    "rulesRejections": 1,
+    "observedPublishedNarrativeContradictions": 0,
+    "recoveryCalls": 0
+  },
+  "scopeLimit": "One existing future NPC plan is a trusted local Rules fixture; no evidence of model-created plans, NPC lie attribution, multiplayer 20+ chain, or statistical stability.",
+  "processes": {
+    "setupPid": 4962,
+    "gamePid": 5066,
+    "capturePid": 4948,
+    "allExited": true,
+    "exitCodes": [
+      143,
+      143,
+      143
+    ]
+  },
+  "checks": {
+    "extractExit": 0,
+    "sourceEndExit": 0,
+    "replayExit": 0
+  },
+  "harnessNotes": [
+    "The live budget meter conservatively charged one NPC call as unknown because it omitted that telemetry event; its captured response has full usage, included here.",
+    "Offline authority inspection used SQLite copies with WAL after a direct read failed to find the active room. An initial guessed plan status executed was corrected to the actual resolved status; no game input or response changed."
+  ]
+}

@@ -1,3 +1,5 @@
+import { nonItemResources } from "./item-resources";
+import { passageTraversalBindingConform } from "./dynamic-locations";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import {
   compileAbilityDefinition,
@@ -29,7 +31,6 @@ import { movementPlan } from "./timeline";
 import { isContinuedCompoundRoot } from "./internal-compound";
 import {
   buildPlayerCombatEntity,
-  compileStaticCharacterCombat,
   planPlayerAbilityCatalog,
 } from "./character-abilities";
 import { isGearSlot } from "./character-gear";
@@ -215,10 +216,10 @@ export function canonicalControlledCharacter(
       : { hitPoints: structuredClone(value.hitPoints) as CharacterRecord["hitPoints"] }),
     ...(value.resources === undefined
       ? {}
-      : { resources: structuredClone(value.resources) as Record<string, number> }),
+      : { resources: nonItemResources(value.resources as Record<string, number>) }),
     ...(value.resourceMaximums === undefined
       ? {}
-      : { resourceMaximums: structuredClone(value.resourceMaximums) as Record<string, number> }),
+      : { resourceMaximums: nonItemResources(value.resourceMaximums as Record<string, number>) }),
     ...(value.abilityScores === undefined
       ? {}
       : { abilityScores: structuredClone(value.abilityScores) as Record<string, number> }),
@@ -362,12 +363,23 @@ function grantSeat(
         creates: [`control:${character.id}`],
       });
     } else {
-      const compiled = compileStaticCharacterCombat(
-        eventCharacter!,
-        isRecord(command.character) ? command.character.characterBuild : undefined,
-        preparedItems!.itemSystem,
-        state.combatRuntime.definitions,
-      );
+      const plannedAbilities = planPlayerAbilityCatalog({
+        character: eventCharacter!,
+        characterBuild: isRecord(command.character) ? command.character.characterBuild : undefined,
+        itemSystem: preparedItems!.itemSystem,
+        catalog: state.combatRuntime.definitions,
+      });
+      if ("error" in plannedAbilities) {
+        return rejected("invalidWorldState", "The new character ability closure cannot be frozen.");
+      }
+      const { compiled } = plannedAbilities;
+      drafts.push(...plannedAbilities.registrations.map((artifact): Draft => ({
+        eventType: "DefinitionRegistered",
+        payload: structuredClone(artifact),
+        creates: [`definition:${String(artifact.definition.definitionId)}`],
+        visibilityPolicyId: "visibility:room-authority-only",
+        secrecy: "internal",
+      })));
       const spawn = allocateDynamicCombatantSpawn(state, eventCharacter!.sceneId);
       if (spawn.kind === "unavailable") {
         return rejected(
@@ -456,12 +468,16 @@ function materializeCharacter(
     );
   }
   const eventCharacter = preparedItems.character;
-  const compiled = compileStaticCharacterCombat(
-    eventCharacter,
-    build,
-    preparedItems.itemSystem,
-    state.combatRuntime.definitions,
-  );
+  const plannedAbilities = planPlayerAbilityCatalog({
+    character: eventCharacter,
+    characterBuild: build,
+    itemSystem: preparedItems.itemSystem,
+    catalog: state.combatRuntime.definitions,
+  });
+  if ("error" in plannedAbilities) {
+    return rejected("invalidWorldState", "The new character ability closure cannot be frozen.");
+  }
+  const { compiled } = plannedAbilities;
   const spawn = allocateDynamicCombatantSpawn(state, character.sceneId);
   if (spawn.kind === "unavailable") {
     return rejected(
@@ -478,6 +494,13 @@ function materializeCharacter(
     preparedItems.itemSystem,
   );
   return sequence(profiles, state, rootActionId, [
+    ...plannedAbilities.registrations.map((artifact): Draft => ({
+      eventType: "DefinitionRegistered",
+      payload: structuredClone(artifact),
+      creates: [`definition:${String(artifact.definition.definitionId)}`],
+      visibilityPolicyId: "visibility:room-authority-only",
+      secrecy: "internal",
+    })),
     {
       eventType: "CharacterControlGranted",
       payload: {
@@ -718,6 +741,7 @@ function changeNpcGear(
         input.action === "wear"
           ? { action: "wear", slot: input.slot, entryId: input.itemId as string }
           : { action: "stow", slot: input.slot },
+        state.combatRuntime.definitions,
       );
   if ("error" in transition) {
     return rejected(
@@ -887,6 +911,7 @@ function changeNpcItemState(
         definition,
         String(input.itemId),
         input.action as "break" | "repair" | "destroy",
+        state.combatRuntime.definitions,
       );
   if ("error" in transition) {
     return rejected(
@@ -1232,6 +1257,7 @@ function proposePartyMove(
   input: JsonRecord,
 ): StepResult {
   if (!hasExactKeys(input, [
+    ...(Object.hasOwn(input, "passageRef") ? ["passageRef"] : []),
     "destinationSceneId",
     "fictionTimeCostMicros",
     "kind",
@@ -1254,11 +1280,13 @@ function proposePartyMove(
     || new Set(memberCharacterIds.map((characterId) => state.entities[characterId]?.sceneId)).size !== 1) {
     return rejected("privateOrUnknownReference", "Party members are no longer co-located and controlled.");
   }
+  if (Object.hasOwn(input, "passageRef") && !isNonEmptyString(input.passageRef)) return rejected("invalidRulesInput", "passage:explicit-reference-required");
   const plan = movementPlan(
     state,
     memberCharacterIds,
     input.destinationSceneId,
     input.fictionTimeCostMicros,
+    typeof input.passageRef === "string" ? input.passageRef : undefined,
   );
   if (plan === undefined) return rejected("privateOrUnknownReference", "Party movement conflicts with a causal frontier.");
   const nonLeaderMembers = memberCharacterIds.filter((id) => id !== input.leaderCharacterId);
@@ -1354,6 +1382,7 @@ function answerPartyMove(
         destinationTimelineId: proposal.destinationTimelineId as string,
         departureMicros: proposal.departureMicros as string,
         arrivalMicros: proposal.arrivalMicros as string,
+        ...(passageTraversalBindingConform(proposal.passage) ? { passage: proposal.passage } : {}),
       },
     });
     return sequence(profiles, state, input.rootActionId, drafts);
@@ -1379,6 +1408,7 @@ function moveIndividually(
   input: JsonRecord,
 ): StepResult {
   if (!hasExactKeys(input, [
+    ...(Object.hasOwn(input, "passageRef") ? ["passageRef"] : []),
     "characterId",
     "destinationSceneId",
     "fictionTimeCostMicros",
@@ -1392,7 +1422,9 @@ function moveIndividually(
     || state.characterControls[input.characterId] === undefined) {
     return rejected("invalidRulesInput", "Individual movement input is not canonical.");
   }
-  const plan = movementPlan(state, [input.characterId], input.destinationSceneId, input.fictionTimeCostMicros);
+  if (Object.hasOwn(input, "passageRef") && !isNonEmptyString(input.passageRef)) return rejected("invalidRulesInput", "passage:explicit-reference-required");
+  const plan = movementPlan(state, [input.characterId], input.destinationSceneId, input.fictionTimeCostMicros,
+    typeof input.passageRef === "string" ? input.passageRef : undefined);
   if (plan === undefined) return rejected("privateOrUnknownReference", "Individual movement conflicts with a causal frontier.");
   const drafts = partyDepartureEvents(state, input.characterId, "individualAction");
   drafts.push({

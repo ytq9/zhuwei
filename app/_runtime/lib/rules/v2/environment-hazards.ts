@@ -1,5 +1,7 @@
 import type { JsonRecord } from "./model";
 import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
+import { ENVIRONMENT_HAZARD_KIND, ENVIRONMENT_HAZARD_SCHEMA } from "./environment-hazard-schema";
+export { ENVIRONMENT_HAZARD_KIND, ENVIRONMENT_HAZARD_SCHEMA } from "./environment-hazard-schema";
 import {
   hasExactKeys,
   isNonEmptyString,
@@ -36,9 +38,6 @@ import {
  * own registration, so a hazard citing an unregistered one is a danger whose
  * numbers were never settled.
  */
-export const ENVIRONMENT_HAZARD_KIND = "environmentHazard" as const;
-export const ENVIRONMENT_HAZARD_SCHEMA = "zhuwei.environment-hazard-definition/v1" as const;
-
 function canonicalIntegerString(value: unknown, minimum: number, maximum: number): boolean {
   if (typeof value !== "string" || !/^(0|-?[1-9][0-9]*)$/.test(value)) return false;
   const parsed = Number(value);

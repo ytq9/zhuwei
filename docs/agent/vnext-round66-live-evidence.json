@@ -1,0 +1,112 @@
+{
+  "round": 66,
+  "status": "stopped-on-first-schema-selection-value-error",
+  "sourceManifestSha256": "468d463cd3333aef14dd246bb2f84d8cc23381dd64b5442081c75dbfb95ed106",
+  "defaultModel": "deepseek-v4-flash",
+  "fixture": false,
+  "actions": [
+    {
+      "ordinal": 1,
+      "result": "notCommitted",
+      "narration": "notApplicable"
+    },
+    {
+      "ordinal": 2,
+      "result": "notExecuted"
+    },
+    {
+      "ordinal": 3,
+      "result": "notExecuted"
+    }
+  ],
+  "originalSchemaSelection": [
+    "passTime",
+    "social"
+  ],
+  "diagnostics": [
+    {
+      "code": "VALUE_INVALID",
+      "constraint": "PROPOSAL_SCHEMA_CAPABILITY_UNKNOWN",
+      "repair": {
+        "allowed": false,
+        "reason": "semantic-equivalence-unproven"
+      },
+      "path": [
+        "decision",
+        "requestedCapabilities",
+        0
+      ],
+      "expected": {
+        "enum": [
+          "materializeObject",
+          "observe",
+          "formActorPlan",
+          "social",
+          "worldInteraction",
+          "commitNarrativeDetail",
+          "authorAbility",
+          "authorHazard",
+          "authorItem",
+          "materializeItem",
+          "inventoryOperation"
+        ]
+      },
+      "actual": {
+        "type": "string",
+        "value": "passTime"
+      }
+    }
+  ],
+  "diagnosticPathNote": "The existing parser reports the actual wire decision path but omits pathBase; this direct boundary is included in the followup fix. Public telemetry intentionally summarizes to decision.",
+  "usage": {
+    "calls": 1,
+    "inputTokens": 19941,
+    "cacheHitTokens": 3456,
+    "cacheMissTokens": 16485,
+    "outputTokens": 60,
+    "costCny": "0.0251703",
+    "unknownUsageCalls": 0
+  },
+  "resultCounts": {
+    "formatFailures": 1,
+    "rulesRejections": 0,
+    "identifiedNarrativeContradictions": 0,
+    "correctionCalls": 0,
+    "recoveryAttempts": 0,
+    "modelPlansFormed": 0
+  },
+  "stateChecks": {
+    "stateEqualToInitial": true,
+    "events": 0,
+    "receipts": 0,
+    "plans": 0,
+    "activities": 0,
+    "pendingDue": 0,
+    "replayExact": true,
+    "sourceEndAllEqual": true
+  },
+  "evidenceDirectory": "/tmp/zhuwei-round66-npc-preparation/evidence",
+  "originalCaptureSha256": "a5fa666a24edc71d7b24926fba7db17dbe61df72f7d6ee4ae573e2fd33d849fe",
+  "processes": {
+    "capture": 21812,
+    "game": 21820,
+    "signal": "SIGTERM",
+    "identityChecked": true,
+    "processAndPortsAbsent": true,
+    "detachedExitCode": null
+  },
+  "commands": {
+    "freeze": 0,
+    "captureStart": 0,
+    "gameStart": 0,
+    "setup": 0,
+    "action1": 0,
+    "meter": 0,
+    "shutdown": 0,
+    "status": 0,
+    "extract": 0,
+    "replay": 0,
+    "sourceEnd": 0,
+    "originalParserInspection": 0
+  }
+}

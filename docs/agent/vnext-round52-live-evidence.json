@@ -1,0 +1,312 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "round": 52,
+  "result": "failed-on-second-action",
+  "sourceManifestSha256": "c3388c9aae11b46f0352be944a6fb98e7dce725a15f4748d4d6b8b06036356e2",
+  "sourceComparison": {
+    "beforeCount": 308,
+    "afterCount": 308,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-06T17:08:17.788415+00:00",
+    "allEqual": true
+  },
+  "mechanical": {
+    "source": "read-only exact-room SQLite copy selected by the initial room id",
+    "stateVersion": "1",
+    "eventCount": 1,
+    "eventTypes": [
+      "InventoryOperationApplied"
+    ],
+    "eventRoots": [
+      "root-action:vnext-http-8a4f45ee-9ef6-48cd-92a5-0d789df3190a"
+    ],
+    "operation": {
+      "kind": "release",
+      "entryRef": "item-entry:standard:46:character:356f7346-121b-441f-ab2b-e97aa7743d30:torch:stack",
+      "quantity": 1,
+      "sceneRef": "wake",
+      "releaseKind": "placement"
+    },
+    "sourceEntry": {
+      "entryId": "item-entry:standard:46:character:356f7346-121b-441f-ab2b-e97aa7743d30:torch:stack",
+      "definitionRef": "item-definition:standard-gear:torch:1",
+      "disposition": "held",
+      "holderRef": "character:356f7346-121b-441f-ab2b-e97aa7743d30",
+      "sceneRef": null,
+      "quantity": 9
+    },
+    "targetEntry": {
+      "entryId": "item-entry:inventory:cb9cedfb9d6e8d6604466eccf91dc7adfb73b208a33689a8a3af561aa7f75126",
+      "definitionRef": "item-definition:standard-gear:torch:1",
+      "disposition": "scene",
+      "holderRef": null,
+      "sceneRef": "wake",
+      "quantity": 1
+    },
+    "sourceQuantityBefore": 10,
+    "sourceQuantityAfter": 9,
+    "sceneQuantityAfter": 1,
+    "definitionTotalBefore": 10,
+    "definitionTotalAfter": 10,
+    "allDefinitionTotalsConserved": true,
+    "timelineUnchanged": true,
+    "action2TableUnchanged": {
+      "stateVersion": true,
+      "receiptCount": true,
+      "hp": true,
+      "resources": true,
+      "resourceMaximums": true,
+      "inventory": true,
+      "pendingInputs": true,
+      "fictionTime": true,
+      "messages": true
+    },
+    "action2Events": 0,
+    "action2Receipts": 0,
+    "sqliteCounts": {
+      "events": 1,
+      "receipts": 1,
+      "randomnessBatches": 0,
+      "pendingDue": 0,
+      "proposalInvocations": 2,
+      "repairTickets": 0
+    },
+    "deliveryStatuses": [
+      "open"
+    ],
+    "audienceStatuses": [
+      "published"
+    ],
+    "replay": {
+      "pinnedProfilesMatch": true,
+      "replayKind": "replayed",
+      "exactState": true,
+      "stateVersion": "1",
+      "events": 1,
+      "eventTypes": [
+        "InventoryOperationApplied"
+      ],
+      "checkedAt": "2026-09-06T17:09:55.485Z"
+    },
+    "duplicateAction1": {
+      "checks": {
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      },
+      "allChecksPassed": true,
+      "callsBefore": 3,
+      "callsAfter": 3,
+      "sameMechanicalStateIndependentlyCompared": true
+    }
+  },
+  "publication": {
+    "action1Http": {
+      "submissionId": "vnext-http-8a4f45ee-9ef6-48cd-92a5-0d789df3190a",
+      "action": "committed",
+      "narration": "published",
+      "outcome": {
+        "kind": "committed",
+        "receipt": {
+          "receiptId": "receipt:root-action:vnext-http-8a4f45ee-9ef6-48cd-92a5-0d789df3190a:1",
+          "rootActionId": "root-action:vnext-http-8a4f45ee-9ef6-48cd-92a5-0d789df3190a",
+          "status": "committed",
+          "runtimeEpochId": "runtime-epoch:80940303-31f3-48c0-ade8-67a37ed02e5d",
+          "activeBranchId": "branch:main"
+        }
+      }
+    },
+    "candidateBody": "你从背包里取出一根火把，放在身旁。",
+    "candidatePublished": true,
+    "action2PublishedNewMessages": false
+  },
+  "failure": {
+    "http": {
+      "submissionId": "vnext-http-58b8a4a2-2779-4a1c-805f-0030591753b3",
+      "outcomeKind": "needsKp",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "retryable": false,
+      "error": "这项行动在规则上还不成立，行动未提交。请调整做法或目标后再试，原样重试不会改变结果",
+      "code": "PROPOSAL_RULES_DIAGNOSTIC"
+    },
+    "telemetry": [
+      {
+        "occurredAt": "2026-09-06T17:06:00.935Z",
+        "eventName": "room.action.completed",
+        "outcomeKind": "needsKp",
+        "failureClass": "mechanicalDiagnostic",
+        "errorCode": "PROPOSAL_RULES_DIAGNOSTIC",
+        "proposalDiagnosticFields": [
+          {
+            "path": "unrecognized",
+            "code": "other"
+          }
+        ]
+      }
+    ],
+    "modelDraftOperation": {
+      "kind": "acquire",
+      "entryRef": "item-definition:standard-gear:torch:1",
+      "quantity": 1
+    },
+    "draftConsumes": [
+      {
+        "kind": "existing",
+        "ref": "item-entry:inventory:cb9cedfb9d6e8d6604466eccf91dc7adfb73b208a33689a8a3af561aa7f75126"
+      },
+      {
+        "kind": "existing",
+        "ref": "item-entry:standard:46:character:356f7346-121b-441f-ab2b-e97aa7743d30:torch:stack"
+      }
+    ],
+    "draftBasisRefs": [
+      "character:356f7346-121b-441f-ab2b-e97aa7743d30",
+      "item-entry:inventory:cb9cedfb9d6e8d6604466eccf91dc7adfb73b208a33689a8a3af561aa7f75126",
+      "item-entry:standard:46:character:356f7346-121b-441f-ab2b-e97aa7743d30:torch:stack",
+      "item-entry:standard:46:character:356f7346-121b-441f-ab2b-e97aa7743d30:backpack:unit-000001",
+      "item-definition:standard-gear:torch:1",
+      "wake"
+    ],
+    "operationRefIsExistingEntry": false,
+    "operationRefIsTargetDefinition": true,
+    "targetEntryRefPresentInCapturedRequest": true,
+    "draftConsumesIncludeTargetEntry": true,
+    "repairWasInvoked": false,
+    "interpretation": "The captured draft uses an item definition id as acquire.entryRef despite containing the scene entry ref in its references. The HTTP and telemetry show a Rules diagnostic, but the exact diagnostic was not retained in the checked SQLite result/recovery/stage rows or telemetry. The specific Rules rejection reason is not claimed from these artifacts."
+  },
+  "usage": {
+    "calls": [
+      {
+        "ordinal": 1,
+        "stage": "proposalOffer",
+        "model": "deepseek-v4-flash",
+        "createdAtBeijing": "2026-09-07T01:00:55+08:00",
+        "priceWindow": "offPeak",
+        "inputTokens": 26109,
+        "cacheHitTokens": 8448,
+        "cacheMissTokens": 17661,
+        "outputTokens": 490,
+        "totalTokens": 26599,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0291189",
+        "capturePath": "/tmp/zhuwei-vnext-round52-private/01.json",
+        "captureSha256": "0b0ea680871533911a1c82750728e9a66611af514b273a97930d34bd86b8f06e"
+      },
+      {
+        "ordinal": 2,
+        "stage": "initialNarration",
+        "model": "deepseek-v4-flash",
+        "createdAtBeijing": "2026-09-07T01:00:58+08:00",
+        "priceWindow": "offPeak",
+        "inputTokens": 1859,
+        "cacheHitTokens": 896,
+        "cacheMissTokens": 963,
+        "outputTokens": 73,
+        "totalTokens": 1932,
+        "knownReasoningOutputTokens": 55,
+        "finishReasons": [
+          "stop"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0018178",
+        "capturePath": "/tmp/zhuwei-vnext-round52-private/02.json",
+        "captureSha256": "39e088925ccdd69f0744b3156bff828c0d286d4a688775bbac94e9b7b9c0caa7"
+      },
+      {
+        "ordinal": 3,
+        "stage": "narrationReview",
+        "model": "deepseek-v4-flash",
+        "createdAtBeijing": "2026-09-07T01:00:59+08:00",
+        "priceWindow": "offPeak",
+        "inputTokens": 2886,
+        "cacheHitTokens": 0,
+        "cacheMissTokens": 2886,
+        "outputTokens": 180,
+        "totalTokens": 3066,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.005139",
+        "capturePath": "/tmp/zhuwei-vnext-round52-private/03.json",
+        "captureSha256": "b9f7632b8ffccd5d982de2faeb5470e0b67e423fa1c794a53216f4d12915f6e0"
+      },
+      {
+        "ordinal": 4,
+        "stage": "proposalOffer",
+        "model": "deepseek-v4-flash",
+        "createdAtBeijing": "2026-09-07T01:05:56+08:00",
+        "priceWindow": "offPeak",
+        "inputTokens": 30969,
+        "cacheHitTokens": 14208,
+        "cacheMissTokens": 16761,
+        "outputTokens": 746,
+        "totalTokens": 31715,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0292089",
+        "capturePath": "/tmp/zhuwei-vnext-round52-private/04.json",
+        "captureSha256": "59ea3e3f02ebaa52bdc815497f89da32d58f058a104c6335b397b397ad35e06c"
+      }
+    ],
+    "totals": {
+      "inputTokens": 61823,
+      "cacheHitTokens": 23552,
+      "cacheMissTokens": 38271,
+      "outputTokens": 1489,
+      "totalTokens": 63312,
+      "computedCny": "0.0652846",
+      "capturedCalls": 4,
+      "telemetryMatches": true,
+      "itemizedReasoningOutputTokens": 55
+    },
+    "pricing": {
+      "sourceUrl": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+      "localSourcePath": "/tmp/zhuwei-round52-pricing.html",
+      "localSourceSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+      "currency": "CNY",
+      "units": "per million tokens",
+      "peakDefinition": "Asia/Shanghai Monday-Friday 09:00-12:00 and 14:00-18:00; all other times off-peak",
+      "calculationStatus": "exact decimal calculation from captured usage and saved public tariff; not a billing-account reconciliation",
+      "excerpt": "   模型  deepseek-v4-flash  deepseek-v4-pro  deepseek-v4-flash-vision-exp    BASE URL (OpenAI 格式)   https://api.deepseek.com     BASE URL (Anthropic 格式)   https://api.deepseek.com/anthropic     模型版本  DeepSeek-V4-Flash-0731  DeepSeek-V4-Pro-0813  DeepSeek-V4-Flash-Vision-Exp    思考模式  支持非思考与思考模式（默认） 切换方式详见 思考模式     上下文长度  1M    输出长度  最大 384K    功能   Json Output   支持  支持  支持     Tool Calls   支持  支持  支持     Responses API   支持  支持  支持     Anthropic API   支持  支持  支持     对话前缀续写（Beta）   支持  支持  支持     FIM 补全（Beta）   仅非思考模式支持  仅非思考模式支持  不支持    价格 (1)(2)   百万tokens输入 （缓存命中）  空闲时段  0.05元  0.15元  0.05元    高峰时段  0.10元  0.30元  0.10元    百万tokens输入 （缓存未命中）  空闲时段  1.5元  4.5元  1.5元    高峰时段  3.0元  9.0元  3.0元    百万tokens输出  空闲时段  4.5元  13.5元  4.5元    高峰时段  9.0元  27.0元  9.0元    并发限制 (3)   2500  500  2500   \n(1) 空闲时段价格为高峰时段价格的一半。高峰时段为北京时间周一至周五 9:00 - 12:00、14:00 - 18:00（其余为空闲时段）。 "
+    },
+    "knownRange": "Exactly four stored provider responses for round52 action1 proposal/narration/review and action2 proposal. All prompt/cache/output counters are present and match telemetry. Completion totals include reasoning; only call2 itemizes 55 reasoning tokens. No provider-billing or cross-batch reconciliation."
+  },
+  "limitations": [
+    "Third action not executed",
+    "No exact rejection diagnostic persisted in inspected SQLite or telemetry",
+    "No statistical stability conclusion",
+    "No deployment or push"
+  ]
+}

@@ -1,5 +1,31 @@
+import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
+import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
+  npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,
+  isNpcActorPlanFormationPlan } from "../../rules/v2/npc-plan-formation";
+import { TIME_PASSAGE_PLAN_SCHEMA, timePassageStartReadRefs } from "../../rules/v2/time-passage";
+import { isItemAssemblyOperation } from "../../rules/v2/item-assembly-shapes";
+import { itemAssemblyReadRefs } from "../../rules/v2/item-assemblies";
+import type { RuntimeProfileManifest } from "../../rules/profiles/types";
+import { FROZEN_PLAYER_CHOICE_SCHEMA, type FrozenPlayerChoicePlan } from "../../rules/v2/frozen-player-choice";
+import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, isAtomicWorldInteractionStepsPlan } from "../../rules/v2/world-interaction-model";
+import { lowerFeasibilityPlan } from "./feasibility-lowering";
+import { authoredWorldFactConform, worldFactConstraints, worldFactConstraintsRef } from "../../rules/v2/world-facts";
+import { socialListeners, socialThreadRef, type SocialInteractionPlan } from "../../rules/v2/social-interaction";
+import { npcDecisionContext, npcDecisionEvidenceRef } from "./context/npc-decision";
+import { observationKnowledgeIssue } from "../../rules/v2/character-inference";
+import type { WorldInteractionResolutionPlan } from "../../rules/v2/world-interaction-model";
+import { KNOWLEDGE_REVIEW_PLAN_SCHEMA } from "../../rules/v2/knowledge-review";
+import { authorityKnowledgeCatalog } from "../../rules/v2/authority-bindings";
+import { authoredReferenceSlots } from "./authored-proposal-contract";
+import { narrativeSourceRefs, narrativeMaterializationPolicy, narrativeMaterializationIssue,
+  narrativeDetailVisibleTo, narrativeMaterializedRef,
+  NARRATIVE_DETAIL_PLAN_SCHEMA } from "../../rules/v2/narrative-commitments";
+import { materializationAuthorityBasis } from "./materialization-authority";
+import { composeSemanticTemplate } from "../../rules/profiles/semantic-templates";
+import type { SemanticJsonRecord } from "../../rules/v2/semantic-definitions";
 import {
   canonicalHash,
+  isPlainRecord,
   compareCodeUnits,
   isNonEmptyString,
 } from "./canonical-json";
@@ -11,22 +37,36 @@ import {
   VNEXT_WORLD_INTERACTION_FORM_ID,
   type WorldInteractionAdjudication,
 } from "./proposals";
-import { validateAttemptCosts } from "./proposal-bundle";
+import { selectFeasibilityReadSet, validateAttemptCosts } from "./proposal-bundle";
 import { deriveVNextProposalBundlePlan } from "./proposal-graph";
 import { validateVNextProposalBundle } from "./proposal-validator";
+import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
+import { socialSourceArgumentDiagnostics } from "./proposal-filling-interface";
+import { proposalNpcSourceChoices } from "./proposal-context";
 import { requiredContextViewerRefs } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
 import {
+  authorityRefBoundToScene,
   normalizedProspectiveRef,
   type AuthoritativeWorldState,
   type JsonRecord,
 } from "../../rules/authority-read";
 import {
   VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
+  VNEXT_INVENTORY_OPERATION_FORM_ID,
+  VNEXT_OBSERVE_FORM_ID,
+  VNEXT_SOCIAL_FORM_ID,
+  VNEXT_OBJECTIVE_CONTINUITY_FORM_ID,
+  type VNextFormActorPlanEntry,
+  type VNextSocialEntry,
+  type VNextObserveEntry,
   VNEXT_CLARIFICATION_FORM_ID,
   VNEXT_IN_WORLD_REFUSAL_FORM_ID,
   VNEXT_PROPOSAL_BUNDLE_PLAN_SCHEMA,
   type VNextCheckRuling,
+  type VNextKnowledgeReviewTerminal,
+  type VNextPassTimeTerminal,
+  type VNextAbilityOperationTerminal,
   type VNextClarificationTerminal,
   type VNextDerivedBundleEntry,
   type VNextDerivedBundlePlan,
@@ -57,24 +97,21 @@ export type VNext2ProposalBundleCommand =
       formId:
         | typeof VNEXT_MATERIALIZATION_FORM_ID
         | typeof VNEXT_WORLD_INTERACTION_FORM_ID
+        | typeof VNEXT_INVENTORY_OPERATION_FORM_ID
+        | typeof VNEXT_OBSERVE_FORM_ID
+        | typeof VNEXT_SOCIAL_FORM_ID
+        | typeof VNEXT_OBJECTIVE_CONTINUITY_FORM_ID
         | typeof VNEXT2_PROPOSAL_BUNDLE_SCHEMA;
       proposalRef: string;
       ruling: "directSuccess" | "check";
       rulesInput: JsonRecord;
     }>
   | Readonly<{
-      kind: "pendingClarification";
+      kind: "frozenPlayerChoice";
       rootActionId: string;
       actorCharacterId: string;
       proposalRef: string;
-      pendingInputId: string;
-      question: string;
-      choices: readonly Readonly<{
-        choiceId: string;
-        label: string;
-        publicRisk: string;
-        basisRefs: readonly string[];
-      }>[];
+      plan: FrozenPlayerChoicePlan;
     }>
   | Readonly<{
       kind: "inWorldRefusal";
@@ -86,6 +123,8 @@ export type VNext2ProposalBundleCommand =
       method: string;
       ruling: VNextRefusalRuling;
       basisRefs: readonly string[];
+      contextHash: string;
+      readSet: readonly Readonly<{ ref: string; revisionOrHash: string }>[];
     }>;
 
 export type VNext2ProposalBundleLoweringResult =
@@ -102,12 +141,15 @@ export type VNext2ProposalBundleLoweringResult =
         | "CONTEXT_INSUFFICIENT"
         | "COST_INVALID";
       issues: readonly string[];
+      diagnostics?: readonly ProposalDiagnostic[];
     }>;
 
 export type VNext2ProposalBundleLoweringInput = Readonly<{
   value: unknown;
   requiredContext: VNextRequiredContext;
   state: AuthoritativeWorldState;
+  /** Trusted Room manifest; required when freezing player choices. */
+  profiles?: RuntimeProfileManifest;
   rootActionId: string;
   actorCharacterId: string;
 }>;
@@ -127,6 +169,7 @@ type VNext2EntryLoweringResult =
         | "BUNDLE_DEPENDENCY_INVALID"
         | "BUNDLE_LOWERING_UNSUPPORTED";
       issues: readonly string[];
+      diagnostics?: readonly ProposalDiagnostic[];
     }>;
 
 /**
@@ -146,6 +189,13 @@ type VNext2EntryLoweringResult =
 export function lowerVNext2ProposalBundle(
   input: VNext2ProposalBundleLoweringInput,
 ): VNext2ProposalBundleLoweringResult {
+  const result = lowerBundle(input);
+  return result.kind === "rejected" && result.diagnostics !== undefined
+    ? { ...result, diagnostics: socialSourceArgumentDiagnostics(input.value, result.diagnostics) } : result;
+}
+
+function lowerBundle(input: VNext2ProposalBundleLoweringInput,
+  branch?: Readonly<{ derivationScope: string }>): VNext2ProposalBundleLoweringResult {
   try {
     const validated = validateVNextProposalBundle(input.value);
     if (validated.kind === "rejected") return validated;
@@ -157,9 +207,27 @@ export function lowerVNext2ProposalBundle(
     }
     const bundle = validated.bundle;
     const contextHash = input.requiredContext.binding.contextHash;
+    const narrativeMaterializationRefs = input.requiredContext.intent.narrativeMaterializationRefs ?? [];
+    if (narrativeMaterializationRefs.some(ref => !narrativeDetailVisibleTo(input.state, ref, input.actorCharacterId)
+      || narrativeMaterializedRef(input.state, ref) !== undefined)) {
+      return rejected("CONTEXT_INSUFFICIENT", ["narrative:materialization-obligation-state-changed"]);
+    }
 
     if (bundle.mode === "terminal") {
-      return lowerTerminal(input, bundle.terminal, contextHash);
+      if (bundle.terminal.kind !== "knowledgeReview" && bundle.terminal.kind !== "passTime" && bundle.terminal.kind !== "clarification" && narrativeMaterializationRefs.length > 0) return rejected("PROPOSAL_REFERENCE_INVALID", ["narrative:materialization-required-before-terminal"]);
+      return lowerTerminal(input, bundle.terminal, contextHash, bundle.basisRefs);
+    }
+
+    const mandatoryMaterializerOrdinals = new Set<number>();
+    for (const ref of narrativeMaterializationRefs) {
+      const sources = bundle.proposals.flatMap((entry, ordinal) =>
+        (entry.kind === "materializeObject" || entry.kind === "materializeItem")
+          && (entry.basisRefs.includes(ref) || entry.consumes.some(consume => consume.kind === "existing" && consume.ref === ref))
+          ? [{ ordinal, outcomeBinding: entry.outcomeBinding }] : []);
+      if (sources.length !== 1 || sources[0].outcomeBinding !== "always") {
+        return rejected("PROPOSAL_REFERENCE_INVALID", ["narrative:every-required-commitment-needs-one-unconditional-materializer"]);
+      }
+      mandatoryMaterializerOrdinals.add(sources[0].ordinal);
     }
 
     // mode === "adjudication"
@@ -178,9 +246,10 @@ export function lowerVNext2ProposalBundle(
       // per-entry Rules plans below each derive and enforce their own real
       // read set through selectPlanReadSet.
       readSet: [],
+      ...(branch === undefined ? {} : { derivationScope: branch.derivationScope }),
     });
     if (planResult.kind === "rejected") {
-      return rejected("BUNDLE_DEPENDENCY_INVALID", planResult.issues);
+      return rejected("BUNDLE_DEPENDENCY_INVALID", planResult.issues, planResult.diagnostics);
     }
     const plan = planResult.plan;
     // proposal-graph.ts selects the shared check owner from the ruling alone
@@ -195,7 +264,8 @@ export function lowerVNext2ProposalBundle(
       ]);
     }
 
-    if (plan.entries.length === 1) {
+    if (branch === undefined && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0
+      && bundle.proposals[0]?.kind !== "formActorPlan") {
       const derivedEntry = plan.entries[0]!;
       const sourceEntry = bundle.proposals[derivedEntry.ordinal]!;
       // A lone worldInteraction can never legitimately reference a
@@ -254,6 +324,21 @@ export function lowerVNext2ProposalBundle(
         outcomeBinding: derivedEntry.outcomeBinding,
       });
     }
+    const mandatoryMaterializers = plan.entries.filter(entry => mandatoryMaterializerOrdinals.has(entry.ordinal)).map(entry => entry.entryRef);
+    for (const step of steps) {
+      const kind = (step.rulesInput as JsonRecord).kind;
+      if (kind === "resolveWorldInteraction" || kind === "inventoryOperation" || kind === "reviseSemanticDefinition") {
+        step.dependsOn = [...new Set([...(step.dependsOn as string[]), ...mandatoryMaterializers])];
+      }
+    }
+    const orderedSteps: JsonRecord[] = [];
+    const pendingSteps = [...steps];
+    while (pendingSteps.length > 0) {
+      const ready = pendingSteps.findIndex(step => (step.dependsOn as string[])
+        .every(dependency => orderedSteps.some(prior => prior.proposalRef === dependency)));
+      if (ready < 0) return rejected("BUNDLE_DEPENDENCY_INVALID", ["narrative:materialization-dependency-cycle"]);
+      orderedSteps.push(pendingSteps.splice(ready, 1)[0]);
+    }
 
     // Rules compiles this same invariant (world-interactions.ts requires
     // exactly one step whose `rulesInput.plan.ruling.kind` is `check` under a
@@ -303,18 +388,21 @@ export function lowerVNext2ProposalBundle(
         bundleHash: plan.referenceNamespaceHash,
         contextHash,
         sharedRuling: ruling.kind,
-        steps,
+        ...(narrativeMaterializationRefs.length === 0 ? {} : { narrativeMaterializationRefs: [...narrativeMaterializationRefs] }),
+        steps: orderedSteps,
       },
     });
-  } catch {
-    return rejected("PROPOSAL_BUNDLE_INVALID", ["bundle2:lowering-input-invalid"]);
+  } catch (error) {
+    return structuredLoweringFailure(error)
+      ?? rejected("PROPOSAL_BUNDLE_INVALID", ["bundle2:lowering-input-invalid"]);
   }
 }
 
 function lowerTerminal(
   input: VNext2ProposalBundleLoweringInput,
-  terminal: VNextClarificationTerminal | VNextInWorldRefusalTerminal,
+  terminal: VNextClarificationTerminal | VNextInWorldRefusalTerminal | VNextKnowledgeReviewTerminal | VNextPassTimeTerminal | VNextAbilityOperationTerminal,
   contextHash: string,
+  terminalBasisRefs: readonly string[],
 ): VNext2ProposalBundleLoweringResult {
   const bundleHash = canonicalHash({
     schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
@@ -331,6 +419,62 @@ function lowerTerminal(
     kind: "terminal",
   }).slice("sha256:".length, "sha256:".length + 32)}`;
 
+  if (terminal.kind === "abilityOperation") {
+    const refs = abilityOperationReadRefs(input.state, input.actorCharacterId, terminal.operation);
+    if (refs === undefined) return rejected("PROPOSAL_REFERENCE_INVALID", ["ability:owned-operation-unavailable"]);
+    const selected = selectPlanReadSet(input.requiredContext, refs);
+    if (selected.kind === "rejected") return selected;
+    const visible = requiredContextViewerRefs(input.requiredContext);
+    if (terminal.operation.kind === "invoke" && terminal.operation.target.kind === "creatures"
+      && terminal.operation.target.refs.some(ref => !visible.has(ref))) {
+      return rejected("PROPOSAL_REFERENCE_INVALID", ["ability:target-not-in-frozen-viewer-context"]);
+    }
+    return acceptedCommand({ kind: "rulesStep", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+      formId: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, proposalRef, ruling: "directSuccess", rulesInput: {
+        kind: "applyAtomicWorldInteractionSteps", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+        bundleHash, contextHash, sharedRuling: "directSuccess", steps: [{ formId: ABILITY_OPERATION_FORM_ID,
+          proposalRef, ruling: "directSuccess", outcomeBinding: "always", consumes: [], produces: [], dependsOn: [],
+          rulesInput: { kind: "performAbilityOperation", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+            plan: { schema: ABILITY_OPERATION_PLAN_SCHEMA, contextHash, readSet: selected.readSet, operation: structuredClone(terminal.operation) } } }],
+      } });
+  }
+  if (terminal.kind === "passTime") {
+    const refs = timePassageStartReadRefs(input.state, input.actorCharacterId);
+    if (refs === undefined) return rejected("CONTEXT_INSUFFICIENT", ["time-passage:actor-context-unavailable"]);
+    const selected = selectPlanReadSet(input.requiredContext, refs);
+    if (selected.kind === "rejected") return selected;
+    return acceptedCommand({ kind: "rulesStep", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+      formId: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, proposalRef, ruling: "directSuccess", rulesInput: {
+        kind: "startTimePassage", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+        plan: { schema: TIME_PASSAGE_PLAN_SCHEMA, contextHash, readSet: selected.readSet,
+          activityId: `activity:time-passage:${input.rootActionId}`, intendedDurationMicros: terminal.durationMicros,
+          method: input.requiredContext.intent.text },
+      } });
+  }
+  if (terminal.kind === "knowledgeReview") {
+    const catalogRef = `knowledge-catalog:${input.actorCharacterId}`;
+    const catalog = input.requiredContext.entries.find(entry => entry.kind === "known" && entry.entryRef === catalogRef);
+    const expected = authorityKnowledgeCatalog(input.state, input.actorCharacterId);
+    if (catalog?.kind !== "known" || expected === undefined || canonicalHash(expected) !== catalog.revisionOrHash
+      || canonicalHash(catalog.value) !== catalog.revisionOrHash) return rejected("CONTEXT_INSUFFICIENT", ["knowledge:complete-held-catalog-not-frozen"]);
+    const selected = terminal.scope === "allKnown" ? expected.records.map(record => record.knowledgeRef) : [...terminal.knowledgeRefs].sort();
+    const records = selected.map(ref => expected.records.find(record => record.knowledgeRef === ref));
+    if (records.some(record => record === undefined)) return rejected("PROPOSAL_REFERENCE_INVALID", ["knowledge:reference-not-held"]);
+    for (const record of records) {
+      const entry = input.requiredContext.entries.find(entry => entry.kind === "known" && entry.entryRef === record!.recordRef);
+      if (entry?.kind !== "known" || entry.revisionOrHash !== record!.recordHash || canonicalHash(entry.value) !== record!.recordHash) {
+        return rejected("CONTEXT_INSUFFICIENT", ["knowledge:selected-held-record-not-frozen"]);
+      }
+    }
+    const selectedReadSet = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, catalogRef, ...records.map(record => record!.recordRef)]);
+    if (selectedReadSet.kind === "rejected") return selectedReadSet;
+    return acceptedCommand({ kind: "rulesStep", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+      formId: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, proposalRef, ruling: "directSuccess", rulesInput: {
+        kind: "knowledgeReview", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+        plan: { schema: KNOWLEDGE_REVIEW_PLAN_SCHEMA, contextHash, readSet: selectedReadSet.readSet,
+          inquiry: terminal.inquiry, scope: terminal.scope, knowledgeRefs: selected },
+      } });
+  }
   if (terminal.kind === "clarification") {
     const pendingInputId = `pending:vnext2:${canonicalHash({
       rootActionId: input.rootActionId,
@@ -339,20 +483,50 @@ function lowerTerminal(
       question: terminal.question,
       choices: terminal.choices,
     }).slice("sha256:".length, "sha256:".length + 32)}`;
-    return acceptedCommand({
-      kind: "pendingClarification",
-      rootActionId: input.rootActionId,
-      actorCharacterId: input.actorCharacterId,
-      proposalRef,
-      pendingInputId,
-      question: terminal.question,
-      choices: terminal.choices.map((choice) => ({
-        choiceId: choice.choiceId,
-        label: choice.label,
-        publicRisk: choice.publicRisk,
-        basisRefs: [...choice.basisRefs],
-      })),
-    });
+    if (input.profiles === undefined) return rejected("CONTEXT_INSUFFICIENT", ["clarification:trusted-profiles-required"]);
+    const outerHash = canonicalHash(input.value);
+    const choices: FrozenPlayerChoicePlan["choices"][number][] = [];
+    const basisRefs = new Set(terminalBasisRefs);
+    for (const [choiceIndex, choice] of terminal.choices.entries()) {
+      choice.basisRefs.forEach(ref => basisRefs.add(ref));
+      const next = choice.continuation;
+      if (next.kind === "cancel") {
+        choices.push({ choiceId: choice.choiceId, label: choice.label, publicRisk: choice.publicRisk, continuation: next });
+        continue;
+      }
+      next.basisRefs.forEach(ref => basisRefs.add(ref));
+      const { kind, basisRefs: nextBasis, ...content } = next;
+      const nested = kind === "adjudication"
+        ? { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication",
+            basisRefs: nextBasis, ...content, terminal: null }
+        : { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "terminal",
+            basisRefs: nextBasis, adjudication: null, proposals: [], terminal: { kind, ...content } };
+      const lowered = lowerBundle({ ...input, value: nested }, { derivationScope: `${outerHash}:${choice.choiceId}` });
+      if (lowered.kind === "rejected") return { ...lowered,
+        ...(lowered.diagnostics === undefined ? {} : { diagnostics: lowered.diagnostics.map(diagnostic => ({ ...diagnostic,
+          ...(diagnostic.path === undefined ? {} : { path: ["terminal", "choices", choiceIndex, "continuation", ...diagnostic.path] }),
+        })) }) };
+      let continuation: FrozenPlayerChoicePlan["choices"][number]["continuation"];
+      if (lowered.command.kind === "rulesStep" && lowered.command.rulesInput.kind === "applyAtomicWorldInteractionSteps") {
+        const { kind: _commandKind, ...fields } = lowered.command.rulesInput;
+        const plan = { schema: ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, ...fields };
+        if (!isAtomicWorldInteractionStepsPlan(plan)) return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["clarification:atomic-plan-invalid"]);
+        continuation = { kind: "adjudication", plan };
+      } else if (lowered.command.kind === "inWorldRefusal") {
+        const plan = lowerFeasibilityPlan(lowered.command);
+        if (plan === undefined) return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["clarification:refusal-cost-unsupported"]);
+        continuation = { kind: "inWorldRefusal", plan };
+      } else return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["clarification:continuation-not-executable"]);
+      choices.push({ choiceId: choice.choiceId, label: choice.label, publicRisk: choice.publicRisk, continuation });
+    }
+    const read = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, ...basisRefs]);
+    if (read.kind === "rejected") return read;
+    return acceptedCommand({ kind: "frozenPlayerChoice", rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId, proposalRef, plan: {
+        schema: FROZEN_PLAYER_CHOICE_SCHEMA, rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+        pendingInputId, contextHash, bundleHash: outerHash, profilesHash: canonicalHash(input.profiles),
+        readSet: read.readSet, question: terminal.question, choices,
+      } });
   }
 
   // kind === "inWorldRefusal"
@@ -372,6 +546,9 @@ function lowerTerminal(
       hiddenPrerequisites.map((ref) => `refusal:prerequisite-not-viewer-visible:${ref}`),
     );
   }
+  const basisRefs = [...new Set([...terminalBasisRefs, ...terminal.ruling.nextActions.flatMap(action => action.basisRefs)])].sort(compareCodeUnits);
+  const read = selectFeasibilityReadSet(input, basisRefs, terminal.ruling);
+  if (read.kind === "rejected") return read;
   return acceptedCommand({
     kind: "inWorldRefusal",
     rootActionId: input.rootActionId,
@@ -381,7 +558,9 @@ function lowerTerminal(
     intent: terminal.intent,
     method: terminal.method,
     ruling: terminal.ruling,
-    basisRefs: [],
+    basisRefs,
+    contextHash,
+    readSet: read.readSet,
   });
 }
 
@@ -392,11 +571,33 @@ function lowerExecutableEntry(
   plan: VNextDerivedBundlePlan,
   sharedRuling: VNextDirectSuccessRuling | VNextCheckRuling,
 ): VNext2EntryLoweringResult {
+  if (entry.kind === "formActorPlan") return lowerActorPlanFormationEntry(input, entry, derivedEntry);
+  if (entry.kind === "commitNarrativeDetail") {
+    const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
+      scopeRef: entry.sceneRef, kind: "sceneFeature" });
+    if (authority.kind === "rejected") return authority;
+    const viewerRefs = new Set(requiredContextViewerRefs(input.requiredContext));
+    if (entry.sceneRef !== input.state.entities[input.actorCharacterId]?.sceneId
+      || entry.basisRefs.some(ref => !viewerRefs.has(ref))) return {
+        kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["narrative:visible-current-scene-basis-required"],
+      };
+    const selected = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, entry.sceneRef, ...entry.basisRefs, ...authority.basisRefs]);
+    if (selected.kind === "rejected") return selected;
+    return { kind: "accepted", rulesInput: { kind: "commitNarrativeDetail", rootActionId: input.rootActionId,
+      actorCharacterId: input.actorCharacterId, plan: { schema: NARRATIVE_DETAIL_PLAN_SCHEMA, proposalRef: derivedEntry.entryRef,
+        contextHash: input.requiredContext.binding.contextHash, sceneRef: entry.sceneRef, label: entry.label, description: entry.description,
+        audience: entry.audience, basisRefs: [...entry.basisRefs], authorizationRefs: authority.basisRefs, readSet: selected.readSet } } };
+  }
   if (entry.kind === "materializeObject") {
     return lowerMaterializeObjectEntryV2(input, entry, derivedEntry, plan);
   }
+  if (entry.kind === "materializeDefinition" || entry.kind === "materializeItem" || entry.kind === "inventoryOperation") {
+    return lowerAuthoredEntry(input, entry, plan);
+  }
+  if (entry.kind === "social") return sourceReferenceDiagnostics(lowerSocialEntry(input, entry, derivedEntry, plan, sharedRuling), entry, derivedEntry.ordinal);
+  if (entry.kind === "observe") return sourceReferenceDiagnostics(lowerObserveEntry(input, entry, derivedEntry, plan, sharedRuling), entry, derivedEntry.ordinal);
   if (entry.kind === "worldInteraction") {
-    return lowerWorldInteractionEntryV2(input, entry, derivedEntry, plan, sharedRuling);
+    return sourceReferenceDiagnostics(lowerWorldInteractionEntryV2(input, entry, derivedEntry, plan, sharedRuling), entry, derivedEntry.ordinal);
   }
   // reviseSemanticDefinition: never reachable through the live strict-tool
   // transport (SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA only offers materializeObject
@@ -407,6 +608,48 @@ function lowerExecutableEntry(
     code: "BUNDLE_LOWERING_UNSUPPORTED",
     issues: ["bundle2:revise-semantic-definition-not-supported"],
   };
+}
+
+/** Map only the exact reference slots created by the lowering above back to
+ * the validated draft. Other diagnostics already name their original source. */
+function sourceReferenceDiagnostics(result: VNext2EntryLoweringResult,
+  source: VNextWorldInteractionEntry | VNextObserveEntry | VNextSocialEntry,
+  ordinal: number): VNext2EntryLoweringResult {
+  if (result.kind !== "rejected" || result.diagnostics === undefined) return result;
+  const diagnostics = result.diagnostics.flatMap(detail => {
+    if (detail.constraint === "proposal:basis-ref-not-authorized" || detail.constraint === "proposal:basis-ref-not-read-bound") {
+      // Coarse root bases include server-derived unions. Locate only explicit
+      // typed source slots; never label a synthesized field as model input.
+      const ref = isPlainRecord(detail.actual) ? detail.actual.value : undefined;
+      const paths: (string | number)[][] = [];
+      const collect = (refs: readonly string[], path: (string | number)[]) => {
+        refs.forEach((value, index) => { if (value === ref) paths.push([...path, index]); });
+      };
+      collect(source.basisRefs, ["basisRefs"]);
+      if (source.kind === "observe") collect(source.existingFactRefs, ["existingFactRefs"]);
+      if (source.kind !== "social") for (const branchName of ["success", "failure"] as const) {
+        const branch = source.branches[branchName];
+        if (!branch) continue;
+        branch.sensoryEvidence.forEach((item, index) => collect(item.basisRefs,
+          ["branches", branchName, "sensoryEvidence", index, "basisRefs"]));
+        if (source.kind === "worldInteraction") for (const field of ["pressures", "opportunities"] as const) {
+          source.branches[branchName]?.[field].forEach((item, index) => collect(item.basisRefs,
+            ["branches", branchName, field, index, "basisRefs"]));
+        }
+      }
+      const { path: _derivedPath, ...unlocated } = detail;
+      return paths.length ? paths.map(path => ({ ...detail, path: ["proposals", ordinal, ...path] })) : [unlocated];
+    }
+    if (detail.path?.[0] !== "proposal") return detail;
+    let relative = detail.path.slice(1);
+    if (relative[0] === "targetRefs" || relative[0] === "directTargetRefs") {
+      if (source.kind === "observe") relative = source.focusRefs.length
+        ? ["focusRefs", ...relative.slice(1)] : ["sceneRef"];
+      if (source.kind === "social") relative = ["npcRef"];
+    }
+    return { ...detail, path: ["proposals", ordinal, ...relative] };
+  });
+  return { ...result, diagnostics: [...new Map(diagnostics.map(detail => [canonicalHash(detail), detail])).values()] };
 }
 
 /**
@@ -449,33 +692,87 @@ function lowerMaterializeObjectEntryV2(
     };
   }
 
+  const authority = materializationAuthorityBasis({ context: input.requiredContext, state: input.state,
+    scopeRef: entry.definition.sceneRef ?? input.state.entities[input.actorCharacterId]?.sceneId,
+    kind: entry.semanticKind, templateRef: entry.templateRef });
+  if (authority.kind === "rejected") return authority;
+  const creationBasis = [...new Set([...entry.basisRefs, ...entry.consumes.flatMap(ref => ref.kind === "existing" ? [ref.ref] : []), ...authority.basisRefs,
+    ...(entry.definition.passage ? [entry.definition.passage.fromLocationRef, entry.definition.passage.toLocationRef] : []),
+  ])].sort(compareCodeUnits);
+  const sourceRefs = narrativeSourceRefs(input.state, [...entry.basisRefs,
+    ...entry.consumes.flatMap(reference => reference.kind === "existing" ? [reference.ref] : [])]);
+  const visibilityPolicyRef = narrativeMaterializationPolicy(input.state, { sourceRefs,
+    actorCharacterId: input.actorCharacterId, requestedPolicy: entry.visibilityPolicyRef });
+  if (visibilityPolicyRef === undefined) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["narrative:source-audience-required"] };
+  const narrativeIssue = narrativeMaterializationIssue(input.state, { sourceRefs, actorCharacterId: input.actorCharacterId,
+    sceneRef: entry.definition.sceneRef ?? "", label: entry.definition.label, description: entry.definition.description, visibilityPolicyRef });
+  if (narrativeIssue !== undefined) return { kind: "rejected", code: "DEFINITION_CONFLICT", issues: [narrativeIssue] };
+  const worldFact = entry.definition.worldFact;
+  const factBindings: { ref: string; revisionOrHash: string }[] = [];
+  if (entry.semanticKind === "worldFact") {
+    if (!authoredWorldFactConform(worldFact) || entry.outcomeBinding !== "always"
+      || worldFact.consistency.judgment !== "compatible") return { kind: "rejected", code: "DEFINITION_CONFLICT", issues: ["world-fact:compatible-unconditional-history-required"] };
+    const sceneRef = input.state.entities[input.actorCharacterId].sceneId;
+    const frame = worldFactConstraints(input.state, sceneRef);
+    const profile = input.requiredContext.entries.find(e => e.kind === "known" && authority.basisRefs.includes(e.entryRef)
+      && isPlainRecord(e.value) && Object.hasOwn(e.value, "factConstraints"));
+    if (!frame || frame.missingParentRefs.length > 0 || profile?.kind !== "known" || !isPlainRecord(profile.value)
+      || canonicalHash(profile.value.factConstraints) !== canonicalHash(frame)
+      || worldFact.subjectRefs.some(ref => !frame.subjectRefs.includes(ref) || input.state.entities[ref]?.kind === "player")) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["world-fact:constraint-frame-unavailable-or-changed"] };
+    factBindings.push({ ref: worldFactConstraintsRef(sceneRef), revisionOrHash: canonicalHash(frame) });
+    for (const knowledge of worldFact.initialKnowledge) {
+      const npc = npcDecisionContext(input.requiredContext.entries, knowledge.holderRef);
+      const allowed = new Set([...(npc?.records.map(r => r.ref) ?? []), ...(npc?.knowledge.map(r => r.entryRef) ?? [])]);
+      if (!npc || !worldFact.subjectRefs.includes(knowledge.holderRef)
+        || knowledge.acquisitionBasisRefs.some(ref => !allowed.has(ref))
+        || creationBasis.some(ref => !authority.basisRefs.includes(ref) && !allowed.has(ref))) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["world-fact:initial-knowledge-holder-basis-invalid"] };
+      factBindings.push(...npc.records.map(({ ref, revisionOrHash }) => ({ ref, revisionOrHash })),
+        ...npc.knowledge.map(({ entryRef, revisionOrHash }) => ({ ref: entryRef, revisionOrHash })));
+    }
+  }
   const dependencyRefs = [
     input.actorCharacterId,
-    ...entry.basisRefs.filter((ref) => !LOCAL_HANDLE_PATTERN.test(ref)),
+    ...sourceRefs,
+    ...creationBasis.filter((ref) => !LOCAL_HANDLE_PATTERN.test(ref)),
     ...(entry.definition.sceneRef === null ? [] : [entry.definition.sceneRef]),
     ...(entry.definition.visibilityFactId === null ? [] : [entry.definition.visibilityFactId]),
     ...entry.definition.mechanicDefinitionRefs,
+    ...(entry.definition.passage ? [entry.definition.passage.fromLocationRef, entry.definition.passage.toLocationRef] : []),
   ];
-  const planReadSet = selectPlanReadSet(input.requiredContext, dependencyRefs);
+  const planReadSet = selectPlanReadSet(input.requiredContext, dependencyRefs.filter((ref) => !LOCAL_HANDLE_PATTERN.test(ref)));
   if (planReadSet.kind === "rejected") return planReadSet;
-  const content: JsonRecord = entry.semanticKind === "sceneFeature"
+  const content: SemanticJsonRecord = entry.semanticKind === "sceneFeature"
     ? {
         sceneRef: entry.definition.sceneRef,
         label: entry.definition.label,
         description: entry.definition.description,
+        ...(entry.definition.visibilityFactId === null ? {} : { visibilityFactId: entry.definition.visibilityFactId }),
         ...(entry.definition.mechanicDefinitionRefs.length > 0
           ? { mechanicDefinitionRefs: [...entry.definition.mechanicDefinitionRefs].sort() }
           : {}),
+        ...(entry.definition.observableState === null ? {} : { observableState: entry.definition.observableState }),
+        ...(entry.definition.affordances === null ? {} : { affordances: [...entry.definition.affordances] }),
+      }
+    : entry.semanticKind === "location" ? {
+        scopeRef: entry.definition.sceneRef,
+        label: entry.definition.label, description: entry.definition.description,
+        geometry: entry.definition.geometry as unknown as SemanticJsonRecord,
+      }
+    : entry.semanticKind === "passage" ? {
+        sceneRef: entry.definition.sceneRef,
+        label: entry.definition.label, description: entry.definition.description,
         observableState: entry.definition.observableState,
-        affordances: [...entry.definition.affordances],
+        passage: entry.definition.passage as unknown as SemanticJsonRecord,
+        ...(entry.definition.visibilityFactId === null ? {} : { visibilityFactId: entry.definition.visibilityFactId }),
       }
     : {
         label: entry.definition.label,
         description: entry.definition.description,
-        ...(entry.definition.visibilityFactId === null
-          ? {}
-          : { visibilityFactId: entry.definition.visibilityFactId }),
+        worldFact: worldFact as unknown as SemanticJsonRecord,
       };
+  const composed = composeSemanticTemplate({ semanticKind: entry.semanticKind,
+    templateRef: entry.templateRef, templateHash: entry.templateHash, overrides: content });
+  if (composed.kind !== "accepted") return composed;
   return {
     kind: "accepted",
     rulesInput: {
@@ -489,12 +786,12 @@ function lowerMaterializeObjectEntryV2(
         semanticKind: entry.semanticKind,
         templateRef: entry.templateRef,
         templateHash: entry.templateHash,
-        visibilityPolicyRef: entry.visibilityPolicyRef,
+        visibilityPolicyRef,
         contextHash: input.requiredContext.binding.contextHash,
-        readSet: planReadSet.readSet,
-        basisRefs: [...entry.basisRefs],
-        sourceRefs: [],
-        content,
+        readSet: [...new Map([...planReadSet.readSet, ...factBindings].map(binding => [binding.ref, binding])).values()].sort((a,b) => compareCodeUnits(a.ref,b.ref)),
+        basisRefs: creationBasis,
+        sourceRefs,
+        content: composed.content,
         summary: entry.summary,
       },
     },
@@ -525,11 +822,159 @@ function lowerMaterializeObjectEntryV2(
  *   plan type requires a non-null branch -- finalizeInteraction applies
  *   `branches.success` alone there, so it is never committed nor shown.
  */
+/** The NPC chooses the plan. The server only addresses its already frozen
+ * premises, versions and identities; Rules owns every formation constraint. */
+function lowerActorPlanFormationEntry(input: VNext2ProposalBundleLoweringInput,
+  entry: VNextFormActorPlanEntry, derivedEntry: VNextDerivedBundleEntry): VNext2EntryLoweringResult {
+  const context = npcDecisionContext(input.requiredContext.entries, entry.npcRef);
+  const deny = (code: "CONTEXT_INSUFFICIENT" | "PROPOSAL_REFERENCE_INVALID", constraint: string,
+    field: string, actual: unknown, expected?: unknown): VNext2EntryLoweringResult => ({
+    kind: "rejected", code, issues: [constraint], diagnostics: [proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
+      path: ["proposals", derivedEntry.ordinal, field], actual: diagnosticActual(actual), ...(expected === undefined ? {} : { expected }),
+      repair: { allowed: false, reason: "npc-plan-decision-change-is-not-a-proven-representation-repair" },
+    })],
+  });
+  if (!context) return deny("CONTEXT_INSUFFICIENT", "npc-plan:npc-decision-context-unavailable", "npcRef", entry.npcRef);
+  const available = [...context.records.map(record => record.ref), ...context.knowledge.map(record => record.entryRef)]
+    .filter(ref => npcActorPlanFormationPremiseRef(context, ref) !== undefined).sort(compareCodeUnits);
+  const premiseRefs: string[] = [];
+  for (const [index, ref] of entry.premiseRefs.entries()) {
+    const premise = npcActorPlanFormationPremiseRef(context, ref);
+    if (premise === undefined) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["npc-plan:frozen-own-premise-required"],
+      diagnostics: [proposalDiagnostic("REFERENCE_UNAVAILABLE", "npc-plan:frozen-own-premise-required", {
+        path: ["proposals", derivedEntry.ordinal, "premiseRefs", index], actual: diagnosticActual(ref),
+        expected: { npcRef: entry.npcRef, source: "loadedNpcDecisionContext", refs: available },
+        repair: { allowed: false, reason: "npc-plan-premise-change-requires-a-decision" },
+      })] };
+    premiseRefs.push(premise);
+  }
+  // Bind the explicitly selected faction before deriving its resource closure.
+  // A live authority record alone cannot grant new context to the model.
+  if (entry.factionRef !== null) {
+    const faction = context.records.find(record => record.ref === `continuity:factions:${entry.factionRef}`);
+    if (faction === undefined) return deny("CONTEXT_INSUFFICIENT", "npc-plan:frozen-faction-required", "factionRef", entry.factionRef);
+  }
+  const resourceRefs = npcActorPlanFormationResourceRefs(input.state, entry.npcRef, entry.factionRef, entry.resourceRefs);
+  if (!resourceRefs) return deny("PROPOSAL_REFERENCE_INVALID", "npc-plan:resource-or-faction-scope-invalid", "resourceRefs", entry.resourceRefs);
+  const { kind: _kind, basisRefs: _basisRefs, consumes: _consumes, produces: _produces, outcomeBinding: _outcomeBinding, ...fields } = entry;
+  const source = { ...fields, premiseRefs: [...new Set(premiseRefs)], resourceRefs: [...resourceRefs] };
+  const refs = npcActorPlanFormationReadRefs(input.state, source);
+  if (!refs) return deny("PROPOSAL_REFERENCE_INVALID", "npc-plan:formation-reference-invalid", "npcRef", entry.npcRef);
+  const snapshotBindings = new Map([...context.records.map(({ ref, revisionOrHash }) => [ref, { ref, revisionOrHash }] as const),
+    ...context.knowledge.map(({ entryRef: ref, revisionOrHash }) => [ref, { ref, revisionOrHash }] as const)]);
+  const externalRefs = refs.filter(ref => !snapshotBindings.has(ref));
+  const selected = selectPlanReadSet(input.requiredContext, externalRefs);
+  if (selected.kind === "rejected") return selected;
+  const readSet = [...selected.readSet, ...refs.flatMap(ref => snapshotBindings.has(ref) ? [snapshotBindings.get(ref)!] : [])]
+    .sort((a, b) => compareCodeUnits(a.ref, b.ref));
+  const plan = { schema: NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA,
+    contextHash: input.requiredContext.binding.contextHash, readSet,
+    ...npcActorPlanFormationIds(input.rootActionId, derivedEntry.entryRef), source };
+  if (!isNpcActorPlanFormationPlan(plan)) return { kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: ["npc-plan:lowered-shape-invalid"] };
+  return { kind: "accepted", rulesInput: { kind: "formNpcActorPlan", rootActionId: input.rootActionId,
+    actorCharacterId: input.actorCharacterId, plan: plan as unknown as JsonRecord } };
+}
+
+function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNextSocialEntry,
+  derivedEntry: VNextDerivedBundleEntry, bundlePlan: VNextDerivedBundlePlan,
+  ruling: VNextDirectSuccessRuling | VNextCheckRuling): VNext2EntryLoweringResult {
+  if (ruling.kind === "check" && bundlePlan.sharedCheckEntryRef === derivedEntry.entryRef && ruling.checkKind !== "abilityCheck") return {
+    kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: ["social:attack-is-not-conversation"],
+  };
+  const context = npcDecisionContext(input.requiredContext.entries, entry.npcRef);
+  if (!context) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["social:npc-decision-context-unavailable"] };
+  const invalidBasis: ProposalDiagnostic[] = [];
+  // Only enumerate the already verified snapshot for this NPC. Neither the
+  // state nor another NPC's loaded knowledge is a source of alternatives.
+  const expected = { npcRef: entry.npcRef, source: "loadedNpcDecisionContext",
+    refs: proposalNpcSourceChoices(input.requiredContext).find(choice => choice.npcRef === entry.npcRef)?.refs ?? [] };
+  for (const branchName of ["success", "failure"] as const) {
+    entry.branches[branchName]?.response.basis.forEach((evidence, basisIndex) => {
+      if (evidence.kind !== "npcContext" || npcDecisionEvidenceRef(context, evidence.ref) !== undefined) return;
+      invalidBasis.push(proposalDiagnostic("REFERENCE_UNAVAILABLE", "social:foreign-npc-basis", {
+        path: ["proposals", derivedEntry.ordinal, "branches", branchName, "response", "basis", basisIndex, "ref"],
+        expected, actual: diagnosticActual(evidence.ref),
+        repair: { allowed: false, reason: "npc-knowledge-basis-change-is-not-a-proven-representation-repair" },
+      }));
+    });
+  }
+  if (invalidBasis.length > 0) return {
+    kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["social:foreign-npc-basis"],
+    diagnostics: Object.freeze(invalidBasis),
+  };
+  const resolveBranch = (value: VNextSocialEntry["branches"]["success"]) => ({ ...value,
+    response: { ...value.response, basis: value.response.basis.map(evidence => evidence.kind === "npcContext"
+      ? { ...evidence, ref: npcDecisionEvidenceRef(context, evidence.ref)! } : evidence) } });
+  const resolvedBranches = { success: resolveBranch(entry.branches.success),
+    failure: entry.branches.failure ? resolveBranch(entry.branches.failure) : null };
+  const branch = (value: VNextSocialEntry["branches"]["success"]) => ({ outcomeCode: value.outcomeCode, summary: value.summary,
+    effects: [], sensoryEvidence: [], pressures: [], opportunities: [] });
+  const lowered = lowerWorldInteractionEntryV2(input, {
+    kind: "worldInteraction", basisRefs: [...new Set([input.actorCharacterId, entry.npcRef, entry.sceneRef, ...entry.basisRefs])],
+    consumes: entry.consumes, produces: [], outcomeBinding: entry.outcomeBinding, sceneRef: entry.sceneRef,
+    targetRefs: [entry.npcRef], directTargetRefs: [entry.npcRef], instrumentRefs: [], abilityRef: null,
+    intent: input.requiredContext.intent.text, method: entry.method,
+    branches: { success: branch(entry.branches.success), failure: entry.branches.failure ? branch(entry.branches.failure) : null },
+  }, derivedEntry, bundlePlan, ruling);
+  if (lowered.kind === "rejected") return lowered;
+  const plan = lowered.rulesInput.plan as unknown as WorldInteractionResolutionPlan;
+  const snapshotBindings = [...context.records.map(({ ref, revisionOrHash }) => ({ ref, revisionOrHash })),
+    ...context.knowledge.map(({ entryRef, revisionOrHash }) => ({ ref: entryRef, revisionOrHash }))];
+  const snapshotRefs = new Set(snapshotBindings.map(record => record.ref));
+  const selected = selectPlanReadSet(input.requiredContext, [...plan.readSet.map(record => record.ref),
+    `character-timeline:${input.actorCharacterId}`, ...(entry.retryChange?.basisRefs ?? [])].filter(ref => !snapshotRefs.has(ref)));
+  if (selected.kind === "rejected") return selected;
+  // The verified NPC snapshot also owns frozen version bindings for its
+  // catalog and timeline; these need not be duplicated as top-level entries.
+  const readSet = [...selected.readSet, ...snapshotBindings].sort((a, b) => compareCodeUnits(a.ref, b.ref));
+  const social: SocialInteractionPlan = { schema: "zhuwei.social-interaction/vnext-1", npcRef: entry.npcRef,
+    threadRef: socialThreadRef(input.rootActionId, plan.resolutionId), addressedThreadRef: entry.addressedThreadRef,
+    playerExpression: input.requiredContext.intent.text, goal: entry.goal, communication: entry.communication, audience: entry.audience,
+    listeners: socialListeners(input.state, input.actorCharacterId, entry.npcRef, entry.audience), npcContext: context,
+    retryChange: entry.retryChange, branches: { success: resolvedBranches.success,
+      failure: resolvedBranches.failure ?? { ...structuredClone(resolvedBranches.success), outcomeCode: plan.branches.failure.outcomeCode, summary: plan.branches.failure.summary } } };
+  return { kind: "accepted", rulesInput: { ...lowered.rulesInput, plan: { ...plan, readSet, social } as unknown as JsonRecord } };
+}
+
+function lowerObserveEntry(input: VNext2ProposalBundleLoweringInput, entry: VNextObserveEntry,
+  derivedEntry: VNextDerivedBundleEntry, bundlePlan: VNextDerivedBundlePlan,
+  ruling: VNextDirectSuccessRuling | VNextCheckRuling): VNext2EntryLoweringResult {
+  if (ruling.kind === "check" && bundlePlan.sharedCheckEntryRef === derivedEntry.entryRef && ruling.checkKind !== "abilityCheck") return {
+    kind: "rejected", code: "PROPOSAL_FORM_INVALID", issues: ["observe:attack-is-not-observation"],
+  };
+  const branch = (value: VNextObserveEntry["branches"]["success"]) => ({
+    outcomeCode: value.outcomeCode, summary: value.summary, sensoryEvidence: value.sensoryEvidence,
+    effects: [], pressures: [], opportunities: [],
+  });
+  const lowered = lowerWorldInteractionEntryV2(input, {
+    kind: "worldInteraction", basisRefs: [...new Set([input.actorCharacterId, entry.sceneRef, ...entry.basisRefs, ...entry.existingFactRefs])],
+    consumes: entry.consumes, produces: [], outcomeBinding: entry.outcomeBinding, sceneRef: entry.sceneRef,
+    targetRefs: entry.focusRefs.length ? entry.focusRefs : [entry.sceneRef],
+    directTargetRefs: entry.focusRefs.length ? entry.focusRefs : [entry.sceneRef],
+    instrumentRefs: [], abilityRef: null, intent: entry.inquiry, method: entry.method,
+    branches: { success: branch(entry.branches.success), failure: entry.branches.failure ? branch(entry.branches.failure) : null },
+  }, derivedEntry, bundlePlan, ruling);
+  if (lowered.kind === "rejected") return lowered;
+  const plan = lowered.rulesInput.plan as unknown as WorldInteractionResolutionPlan;
+  const held = [...entry.branches.success.characterInferences, ...(entry.branches.failure?.characterInferences ?? [])]
+    .flatMap(inference => inference.evidence.flatMap(source => source.kind === "heldKnowledge" ? [source.ref] : []));
+  const recordRefs = held.map(ref => `knowledge:${input.actorCharacterId}:${ref}`);
+  const selected = selectPlanReadSet(input.requiredContext, [...plan.readSet.map(record => record.ref),
+    ...(held.length ? [`knowledge-catalog:${input.actorCharacterId}`, ...recordRefs] : [])]);
+  if (selected.kind === "rejected") return selected;
+  const observationPlan: WorldInteractionResolutionPlan = { ...plan, readSet: selected.readSet,
+    observation: { inquiry: entry.inquiry, inferences: { success: entry.branches.success.characterInferences,
+      failure: entry.branches.failure?.characterInferences ?? [] } } };
+  const issue = observationKnowledgeIssue(input.state, observationPlan);
+  if (issue) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: [issue] };
+  return { kind: "accepted", rulesInput: { ...lowered.rulesInput, plan: observationPlan as unknown as JsonRecord } };
+}
+
 function lowerWorldInteractionEntryV2(
   input: VNext2ProposalBundleLoweringInput,
   entry: VNextWorldInteractionEntry,
   derivedEntry: VNextDerivedBundleEntry,
-  _plan: VNextDerivedBundlePlan,
+  plan: VNextDerivedBundlePlan,
   sharedRuling: VNextDirectSuccessRuling | VNextCheckRuling,
 ): VNext2EntryLoweringResult {
   if (derivedEntry.produces.length !== 0) {
@@ -542,7 +987,7 @@ function lowerWorldInteractionEntryV2(
 
   let adjudication: WorldInteractionAdjudication;
   let failureBranch: VNextWorldInteractionEntry["branches"]["success"];
-  if (sharedRuling.kind === "check") {
+  if (sharedRuling.kind === "check" && plan.sharedCheckEntryRef === derivedEntry.entryRef) {
     if (entry.branches.failure === null) {
       // Unreachable through validateVNextProposalBundle, which rejects this
       // shape upstream. Kept as a hard refusal because the alternative -- the
@@ -610,6 +1055,7 @@ function lowerWorldInteractionEntryV2(
   };
   return lowerVNextCoarseFormProposal({
     value: envelope,
+    prospectiveDefinitionKinds: Object.fromEntries(plan.entries.flatMap((candidate) => candidate.produces.map((produced) => [produced.handle, produced.kind]))),
     requiredContext: input.requiredContext,
     state: input.state,
     rootActionId: input.rootActionId,
@@ -656,10 +1102,91 @@ function acceptedCommand(
 function rejected(
   code: Extract<VNext2ProposalBundleLoweringResult, { kind: "rejected" }>["code"],
   issues: readonly string[],
+  diagnostics?: readonly ProposalDiagnostic[],
 ): Extract<VNext2ProposalBundleLoweringResult, { kind: "rejected" }> {
   return Object.freeze({
     kind: "rejected",
     code,
     issues: Object.freeze([...new Set(issues)].sort(compareCodeUnits)),
+    ...(diagnostics === undefined ? {} : { diagnostics: Object.freeze([...diagnostics]) }),
   });
+}
+
+/** Preserve structured failures from private collaborators through exception
+ * wrappers. Unknown exception messages may contain state and stay private. */
+function structuredLoweringFailure(error: unknown, depth = 0): Extract<VNext2ProposalBundleLoweringResult, { kind: "rejected" }> | undefined {
+  if (depth > 8 || error === null || typeof error !== "object") return undefined;
+  const detail = error as Record<string, unknown>;
+  const nested = structuredLoweringFailure(detail.cause ?? detail.rejection, depth + 1);
+  if (!Array.isArray(detail.issues) || !detail.issues.every(issue => typeof issue === "string") || detail.issues.length === 0) return nested;
+  const code = ["PROPOSAL_BUNDLE_INVALID", "PROPOSAL_FORM_INVALID", "PROPOSAL_REFERENCE_INVALID", "DEFINITION_CONFLICT",
+    "BUNDLE_DEPENDENCY_INVALID", "BUNDLE_LOWERING_UNSUPPORTED", "CONTEXT_INSUFFICIENT", "COST_INVALID"].includes(String(detail.code))
+    ? detail.code as Extract<VNext2ProposalBundleLoweringResult, { kind: "rejected" }>["code"] : nested?.code ?? "PROPOSAL_BUNDLE_INVALID";
+  const diagnostics = Array.isArray(detail.diagnostics) && detail.diagnostics.every(value => isPlainRecord(value)
+    && typeof value.code === "string" && typeof value.constraint === "string" && isPlainRecord(value.repair)
+    && typeof value.repair.allowed === "boolean" && typeof value.repair.reason === "string")
+    ? detail.diagnostics as readonly ProposalDiagnostic[] : [];
+  const preserved = [...diagnostics, ...(nested?.diagnostics ?? [])];
+  return rejected(code, [...detail.issues, ...(nested?.issues ?? [])], preserved.length > 0 ? preserved : undefined);
+}
+
+function lowerAuthoredEntry(
+  input: VNext2ProposalBundleLoweringInput,
+  entry: Extract<VNextProposalBundleEntry, { kind: "materializeDefinition" | "materializeItem" | "inventoryOperation" }>,
+  plan: VNextDerivedBundlePlan,
+): VNext2EntryLoweringResult {
+  if (entry.kind === "materializeItem" && entry.uniquenessBasisRef !== undefined
+    && input.state.canonicalFacts[entry.uniquenessBasisRef] === undefined) return {
+      kind: "rejected", code: "BUNDLE_DEPENDENCY_INVALID", issues: ["bundle2:unique-item-requires-existing-canonical-fact"],
+    };
+  if (entry.kind === "materializeDefinition" && entry.source.kind === "hazard") {
+    const triggerRef = String((entry.source.content.trigger as { ref: string }).ref);
+    const sceneRef = input.state.entities[input.actorCharacterId]?.sceneId;
+    if (!LOCAL_HANDLE_PATTERN.test(triggerRef)
+      && (sceneRef === undefined || !authorityRefBoundToScene(input.state, triggerRef, sceneRef))) {
+      return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["materialization:trigger-outside-granted-scope"] };
+    }
+  }
+  const authority = entry.kind === "inventoryOperation" ? undefined : materializationAuthorityBasis({
+    context: input.requiredContext, state: input.state,
+    scopeRef: entry.kind === "materializeItem" ? entry.sceneRef : input.state.entities[input.actorCharacterId]?.sceneId,
+    kind: entry.kind === "materializeItem" ? "item" : entry.source.kind,
+    ...(entry.kind === "materializeItem" ? { templateRef: entry.definitionRef }
+      : { createsInstance: entry.source.kind === "hazard" }),
+  });
+  if (authority?.kind === "rejected") return authority;
+  const narrativeSources = narrativeSourceRefs(input.state, [
+    ...entry.basisRefs,
+    ...entry.consumes.flatMap(consume => consume.kind === "existing" ? [consume.ref] : []),
+  ]);
+  const creationBasis = [...new Set([...entry.basisRefs, ...narrativeSources, ...(authority?.basisRefs ?? [])])];
+  const dependencyRefs = [input.actorCharacterId, ...creationBasis, ...authoredReferenceSlots(entry),
+    ...(entry.kind === "inventoryOperation" && isItemAssemblyOperation(entry.operation)
+      ? itemAssemblyReadRefs(input.state, input.actorCharacterId, entry.operation) : [])]
+    .filter((ref) => !LOCAL_HANDLE_PATTERN.test(ref));
+  const read = selectPlanReadSet(input.requiredContext, dependencyRefs);
+  if (read.kind === "rejected") return read;
+  const common = { contextHash: input.requiredContext.binding.contextHash, readSet: read.readSet, basisRefs: creationBasis, summary: entry.summary };
+  if (entry.kind === "inventoryOperation") return { kind: "accepted", rulesInput: {
+    kind: "inventoryOperation", rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+    plan: { schema: "zhuwei.inventory-operation-plan/vnext-1", ...common, operation: structuredClone(entry.operation) },
+  } };
+  const produced = entry.produces[0];
+  if (!produced) return { kind: "rejected", code: "BUNDLE_DEPENDENCY_INVALID", issues: ["bundle2:authored-producer-missing"] };
+  const visibilityPolicyRef = narrativeMaterializationPolicy(input.state, {
+    sourceRefs: narrativeSources, actorCharacterId: input.actorCharacterId, requestedPolicy: entry.visibilityPolicyRef,
+  });
+  if (visibilityPolicyRef === undefined) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID",
+    issues: ["narrative:materialization-audience-unavailable"] };
+  const authoring = { ...common, bundleHash: plan.referenceNamespaceHash, handle: produced.handle,
+    sourceRefs: narrativeSources, visibilityPolicyRef };
+  return { kind: "accepted", rulesInput: {
+    kind: entry.kind, rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
+    plan: entry.kind === "materializeDefinition"
+      ? { ...authoring, schema: "zhuwei.authored-definition-materialization-plan/vnext-1", source: structuredClone(entry.source),
+          causalBasisRefs: entry.basisRefs.filter((ref) => Object.hasOwn(input.state.canonicalFacts ?? {}, ref)) }
+      : { ...authoring, schema: "zhuwei.authored-item-materialization-plan/vnext-1", definitionRef: entry.definitionRef,
+          sceneRef: entry.sceneRef, quantity: entry.quantity, ownership: structuredClone(entry.ownership),
+          ...(entry.uniquenessBasisRef === undefined ? {} : { uniquenessBasisRef: entry.uniquenessBasisRef }) },
+  } };
 }

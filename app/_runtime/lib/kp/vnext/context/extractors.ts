@@ -1,6 +1,8 @@
 import { canonicalHash, compareCodeUnits, isPlainRecord } from "../canonical-json";
 import type { AuthorityRefKind } from "./reference-index";
 import type { ContextWorkBudget } from "./work-budget";
+import { SPELLS } from "../../../dnd/catalog";
+import { CLASS_RESOURCE_CATALOG } from "../../../dnd/class-resources";
 
 /**
  * What a field is indexed *for*. Purpose is part of the extractor key, so a
@@ -23,6 +25,9 @@ export type FieldExtractor = Readonly<{
   path: readonly string[];
   termKind: ExtractorTermKind;
   purpose: RetrievalPurpose;
+  /** Registered source IDs may expose catalog names as candidate hints only.
+   * This vocabulary is frozen and hashed with the retrieval profile. */
+  valueLabels?: Readonly<Record<string, string>>;
 }>;
 
 export type TokenizerProfile = Readonly<{
@@ -96,7 +101,8 @@ export function retrievalProfile(
       if (extractor.path.length === 0) {
         throw new TypeError("retrievalProfile.extractors.path:non-empty-required");
       }
-      return Object.freeze({ ...extractor, path: Object.freeze([...extractor.path]) });
+      return Object.freeze({ ...extractor, path: Object.freeze([...extractor.path]),
+        ...(extractor.valueLabels === undefined ? {} : { valueLabels: Object.freeze({ ...extractor.valueLabels }) }) });
     })
     .sort((left, right) => compareCodeUnits(extractorKey(left), extractorKey(right))));
   if (normalizedExtractors.some((extractor, index) =>
@@ -109,6 +115,7 @@ export function retrievalProfile(
       profileRef,
       tokenizer: normalizedTokenizer,
       extractors: normalizedExtractors,
+      hanAliasPolicy: "intl-zh-word-query-single-character-alias/v1",
     }),
     tokenizer: normalizedTokenizer,
     extractors: normalizedExtractors,
@@ -133,6 +140,13 @@ export const VNEXT_RETRIEVAL_PROFILE = retrievalProfile(
     maxCandidates: 128,
   },
   [
+    { sourceSchema: SEMANTIC_SCHEMA, recordKind: "location", path: ["content", "label"], termKind: "alias", purpose: "objectIdentification" },
+    { sourceSchema: SEMANTIC_SCHEMA, recordKind: "location", path: ["content", "description"], termKind: "lexical", purpose: "objectIdentification" },
+    { sourceSchema: SEMANTIC_SCHEMA, recordKind: "passage", path: ["content", "label"], termKind: "alias", purpose: "objectIdentification" },
+    { sourceSchema: SEMANTIC_SCHEMA, recordKind: "passage", path: ["content", "description"], termKind: "lexical", purpose: "objectIdentification" },
+    { sourceSchema: SEMANTIC_SCHEMA, recordKind: "passage", path: ["content", "observableState"], termKind: "lexical", purpose: "objectIdentification" },
+    { sourceSchema: SEMANTIC_SCHEMA, recordKind: "passage", path: ["content", "passage", "fromLocationRef"], termKind: "structural", purpose: "objectIdentification" },
+    { sourceSchema: SEMANTIC_SCHEMA, recordKind: "passage", path: ["content", "passage", "toLocationRef"], termKind: "structural", purpose: "objectIdentification" },
     { sourceSchema: SEMANTIC_SCHEMA, recordKind: "sceneFeature", path: ["content", "label"], termKind: "alias", purpose: "objectIdentification" },
     { sourceSchema: SEMANTIC_SCHEMA, recordKind: "sceneFeature", path: ["content", "description"], termKind: "lexical", purpose: "objectIdentification" },
     { sourceSchema: SEMANTIC_SCHEMA, recordKind: "sceneFeature", path: ["content", "materialDescription"], termKind: "lexical", purpose: "objectIdentification" },
@@ -148,10 +162,20 @@ export const VNEXT_RETRIEVAL_PROFILE = retrievalProfile(
     { sourceSchema: SEMANTIC_SCHEMA, recordKind: "npc", path: ["content", "semantics", "goals", "description"], termKind: "lexical", purpose: "actorIntent" },
     { sourceSchema: SEMANTIC_SCHEMA, recordKind: "npc", path: ["content", "semantics", "plans", "description"], termKind: "lexical", purpose: "actorIntent" },
     { sourceSchema: "authority:entity", recordKind: "", path: ["name"], termKind: "alias", purpose: "objectIdentification" },
+    { sourceSchema: "authority:geometryFeature", recordKind: "", path: ["label"], termKind: "alias", purpose: "objectIdentification" },
+    { sourceSchema: "authority:geometryFeature", recordKind: "", path: ["state"], termKind: "lexical", purpose: "objectIdentification" },
+    { sourceSchema: "authority:narrativeCommitment", recordKind: "", path: ["value", "label"], termKind: "alias", purpose: "objectIdentification" },
+    { sourceSchema: "authority:narrativeCommitment", recordKind: "", path: ["value", "description"], termKind: "lexical", purpose: "objectIdentification" },
+    { sourceSchema: "authority:itemAssembly", recordKind: "", path: ["label"], termKind: "alias", purpose: "objectIdentification" },
+    { sourceSchema: "authority:itemAssembly", recordKind: "", path: ["description"], termKind: "lexical", purpose: "objectIdentification" },
     { sourceSchema: "authority:itemDefinition", recordKind: "", path: ["content", "label"], termKind: "alias", purpose: "objectIdentification" },
     { sourceSchema: "authority:itemDefinition", recordKind: "", path: ["content", "description"], termKind: "lexical", purpose: "objectIdentification" },
     { sourceSchema: "authority:itemDefinition", recordKind: "", path: ["content", "aliases"], termKind: "alias", purpose: "objectIdentification" },
     { sourceSchema: "authority:abilityDefinition", recordKind: "", path: ["label"], termKind: "alias", purpose: "capability" },
+    { sourceSchema: "authority:abilityDefinition", recordKind: "", path: ["sourceSpellId"], termKind: "alias", purpose: "capability",
+      valueLabels: Object.fromEntries(SPELLS.map(({ id, name }) => [id, name])) },
+    { sourceSchema: "authority:abilityDefinition", recordKind: "", path: ["costs", "resourceId"], termKind: "alias", purpose: "capability",
+      valueLabels: Object.fromEntries(Object.values(CLASS_RESOURCE_CATALOG).map(({ resourceId, label }) => [resourceId, label])) },
   ],
 );
 
@@ -189,7 +213,10 @@ export function extractTerms(
   for (const extractor of profile.extractors) {
     if (extractor.sourceSchema !== descriptor.sourceSchema
       || extractor.recordKind !== descriptor.recordKind) continue;
-    for (const raw of fieldStrings(record, extractor.path)) {
+    for (const field of fieldStrings(record, extractor.path)) {
+      const raw = extractor.valueLabels === undefined ? field
+        : Object.hasOwn(extractor.valueLabels, field) ? extractor.valueLabels[field]! : undefined;
+      if (raw === undefined) continue;
       if (extractor.termKind === "structural") {
         if (!budget.charge("postingWrites", 1)) return LIMITED;
         addTerm(terms, raw, extractor);
@@ -201,7 +228,13 @@ export function extractTerms(
       // Charged before tokenizing, so an oversized surface is refused rather
       // than expanded and then rejected.
       if (!budget.charge("searchableCharacters", text.length)) return LIMITED;
-      const tokens = tokenize(text, profile.tokenizer);
+      // Compound names may be addressed by a one-character word. Only aliases
+      // expose these characters; prose does not gain a broad unigram index.
+      const allTokens = [...new Set([...tokenize(text, profile.tokenizer),
+        ...(extractor.termKind === "alias" ? text.match(/\p{Script=Han}/gu) ?? [] : []),
+      ])];
+      if (allTokens.length > profile.tokenizer.maxTermsPerField) truncatedPaths.push(extractor.path.join("."));
+      const tokens = allTokens.slice(0, profile.tokenizer.maxTermsPerField);
       if (!budget.charge("postingWrites", tokens.length)) return LIMITED;
       for (const token of tokens) addTerm(terms, token, extractor);
     }
@@ -214,12 +247,17 @@ export function extractTerms(
   });
 }
 
-/**
- * Deterministic tokenizer. Han runs yield fixed-width n-grams because the
- * language has no space-delimited words; latin and digit runs yield whole
- * tokens. No dictionary, no locale, no scoring heuristics — the same text
- * always produces the same terms in the same order.
- */
+/** Query-only word boundaries keep a character inside an unrelated compound
+ * from becoming a standalone alias query. This retrieves candidates, not intent. */
+export function singleHanQueryWords(text: string): readonly string[] {
+  const segmenter = new Intl.Segmenter("zh", { granularity: "word" });
+  return [...new Set([...segmenter.segment(text.normalize("NFC"))]
+    .filter(segment => segment.isWordLike && /^\p{Script=Han}$/u.test(segment.segment))
+    .map(segment => segment.segment))].sort(compareCodeUnits);
+}
+
+/** Fixed-width Han n-grams and whole Latin/digit tokens. The word-boundary
+ * supplement above is separate and the combined policy is profile-hashed. */
 export function tokenize(
   text: string,
   tokenizer: TokenizerProfile,

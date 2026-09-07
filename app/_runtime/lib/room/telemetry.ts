@@ -6,6 +6,8 @@ import {
 import {
   MODEL_INVOCATION_FAILURE_STAGES,
   MODEL_INVOCATION_PURPOSES,
+  NARRATION_GROUNDING_REASONS,
+  type NarrationGroundingReason,
   type ModelInvocationFailureStage,
   type ModelInvocationPurpose,
 } from "../kp/authoritative-types";
@@ -58,6 +60,7 @@ export type RoomTelemetryEvent = {
   modelOutputTokens: number | undefined;
   modelTotalTokens: number | undefined;
   modelResponseHash: string | undefined;
+  modelGroundingReason?: NarrationGroundingReason;
   authorityOperation: "prepare" | "observe" | "commit" | "ack" | undefined;
   authorityResult: "completed" | "retryableFailure" | "exception" | undefined;
   outcomeKind: string | undefined;
@@ -113,7 +116,9 @@ const FAILURE_CODES: Readonly<Record<string, readonly [RoomFailureClass, string]
   PROPOSAL_REPAIR_EXHAUSTED: ["modelPermanent", "PROPOSAL_REPAIR_EXHAUSTED"],
   CONTEXT_INSUFFICIENT: ["validation", "CONTEXT_INSUFFICIENT"],
   NARRATION_PROVIDER_TIMEOUT: ["modelTransient", "NARRATION_PROVIDER_TIMEOUT"],
+  NARRATION_PROVIDER_REJECTED: ["modelPermanent", "NARRATION_PROVIDER_REJECTED"],
   NARRATION_BODY_INVALID: ["modelPermanent", "NARRATION_BODY_INVALID"],
+  NARRATION_CONTEXT_BUDGET_EXCEEDED: ["modelPermanent", "NARRATION_CONTEXT_BUDGET_EXCEEDED"],
   NARRATION_GROUNDING_REJECTED: ["modelPermanent", "NARRATION_GROUNDING_REJECTED"],
   NARRATION_PUBLICATION_FAILED: ["authorityTransient", "NARRATION_PUBLICATION_FAILED"],
   unauthenticated: ["authentication", "authenticationRequired"],
@@ -169,6 +174,11 @@ export function failureCodeIsRetryable(value: unknown): boolean {
 }
 
 const MODEL_FAILURE_STAGE_SET = new Set<string>(MODEL_INVOCATION_FAILURE_STAGES);
+const GROUNDING_REASON_SET = new Set<string>(NARRATION_GROUNDING_REASONS);
+
+function groundingReason(value: unknown): NarrationGroundingReason | undefined {
+  return typeof value === "string" && GROUNDING_REASON_SET.has(value) ? value as NarrationGroundingReason : undefined;
+}
 
 function modelFailureStage(value: unknown): ModelInvocationFailureStage | undefined {
   return typeof value === "string" && MODEL_FAILURE_STAGE_SET.has(value)
@@ -365,6 +375,8 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     modelOutputTokens: nonNegativeInteger(model?.outputTokens),
     modelTotalTokens: nonNegativeInteger(model?.totalTokens),
     modelResponseHash: sha256Value(model?.responseHash),
+    ...(model?.task === "narration" && model?.result === "modelPermanent" && model?.failureStage === "narrationGrounding" && groundingReason(model?.groundingReason)
+      ? { modelGroundingReason: groundingReason(model?.groundingReason) } : {}),
     authorityOperation: authorityOperation(authority?.operation),
     authorityResult: authorityResult(authority?.result),
     outcomeKind: stringValue(outcome?.kind),

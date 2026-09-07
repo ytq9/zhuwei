@@ -1,0 +1,268 @@
+{
+  "date": "2026-09-05",
+  "baseline": "258caee404e0814405eb497653ee9f00d647b773",
+  "environment": "local normal authenticated API, real DeepSeek",
+  "requestLimit": 12,
+  "actualRequests": 10,
+  "stoppedAfter": "one initial product failure and one discriminating comparison",
+  "handshakePhases": [
+    {
+      "phase": "initial-handshake",
+      "workflowHash": "sha256:ebc6643d2950c1e0f3b9efdb4ba6d014bc441b9f1c53165b77f9d3f4cf92f74f",
+      "profile": {
+        "promptPolicyVersion": "kp-vnext-authority-policy-v1",
+        "proposalSchemaVersion": "zhuwei.kp-proposal-bundle/vnext-2",
+        "actionLanguageVersion": "kp-vnext2-proposal-bundle-v1",
+        "narrationSchemaVersion": "authoritative-kp-body-only-narration-v2",
+        "provider": "deepseek",
+        "modelId": "deepseek-v4-flash",
+        "modelRevision": "deepseek-v4-flash-0731",
+        "modelProfileVersion": "authoritative-kp-deepseek-vnext-local-v1"
+      },
+      "endpoint": "https://api.deepseek.com/beta/chat/completions",
+      "cases": [
+        {
+          "id": "world-interaction-only",
+          "requestHash": "sha256:ce02f5147031f235d3f6f8dd1eabf4b97694c8db32e838a4c4a136c49bf916fe",
+          "schemaHash": "sha256:42e4f025d8bf0e0205f031a3036b4a64e1177e45dbebc180b37c920c28d8bd45",
+          "promptHash": "sha256:3dc0295aa4e68072a35efa8be712774f5c35d51dcd36415187eb90ee923167df",
+          "result": "passed",
+          "usage": {
+            "prompt_tokens": 22394,
+            "completion_tokens": 305,
+            "total_tokens": 22699,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 22394
+          },
+          "durationMs": 2837,
+          "mode": "adjudication"
+        },
+        {
+          "id": "materialize-then-interact",
+          "requestHash": "sha256:6797c51a88c16db330ea6d517b418bcb81615724db5617de6468896c65a44dc9",
+          "schemaHash": "sha256:42e4f025d8bf0e0205f031a3036b4a64e1177e45dbebc180b37c920c28d8bd45",
+          "promptHash": "sha256:ba61f93a6ee4f3153775787f87d6ac5fb7cd947661aec5f1ed7b64b857344d35",
+          "result": "passed",
+          "usage": {
+            "prompt_tokens": 22545,
+            "completion_tokens": 604,
+            "total_tokens": 23149,
+            "prompt_tokens_details": {
+              "cached_tokens": 22272
+            },
+            "prompt_cache_hit_tokens": 22272,
+            "prompt_cache_miss_tokens": 273
+          },
+          "durationMs": 4266,
+          "mode": "adjudication"
+        },
+        {
+          "id": "provider-rejects-open-root-object",
+          "result": "passed",
+          "http": 400,
+          "error": {
+            "message": "additionalProperties should not be true",
+            "type": "invalid_request_error",
+            "param": null,
+            "code": "invalid_request_error"
+          }
+        }
+      ],
+      "calls": 3
+    },
+    {
+      "phase": "template-v7-handshake",
+      "workflowHash": "sha256:f7c1f573e10af7ca365e5c5e3b5acec52eadd69083f508877100b220c0129a74",
+      "profile": {
+        "promptPolicyVersion": "kp-vnext-authority-policy-v1",
+        "proposalSchemaVersion": "zhuwei.kp-proposal-bundle/vnext-2",
+        "actionLanguageVersion": "kp-vnext2-proposal-bundle-v1",
+        "narrationSchemaVersion": "authoritative-kp-body-only-narration-v2",
+        "provider": "deepseek",
+        "modelId": "deepseek-v4-flash",
+        "modelRevision": "deepseek-v4-flash-0731",
+        "modelProfileVersion": "authoritative-kp-deepseek-vnext-local-v1"
+      },
+      "endpoint": "https://api.deepseek.com/beta/chat/completions",
+      "cases": [
+        {
+          "id": "world-interaction-only",
+          "requestHash": "sha256:b05ba5050e7a67398f8bb0e79a6b871c965747867aaf07c3e222a60663aab1b1",
+          "schemaHash": "sha256:42e4f025d8bf0e0205f031a3036b4a64e1177e45dbebc180b37c920c28d8bd45",
+          "promptHash": "sha256:eb656e7bdae8e7974f41f90c1a02afad7de3d64c21b43fffebc4ab64996314fd",
+          "result": "passed",
+          "usage": {
+            "prompt_tokens": 22707,
+            "completion_tokens": 322,
+            "total_tokens": 23029,
+            "prompt_tokens_details": {
+              "cached_tokens": 0
+            },
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 22707
+          },
+          "durationMs": 3436,
+          "mode": "adjudication"
+        },
+        {
+          "id": "materialize-then-interact",
+          "requestHash": "sha256:360b0219ed66dadf7e5015c6467487c6562fbfd8a55c90e2c34905e9eb8edc8c",
+          "schemaHash": "sha256:42e4f025d8bf0e0205f031a3036b4a64e1177e45dbebc180b37c920c28d8bd45",
+          "promptHash": "sha256:45044fc36aadb54565ac6eefb160fc13a2bd0fc87a6cda53cb1e310b9ad326a9",
+          "result": "passed",
+          "usage": {
+            "prompt_tokens": 22875,
+            "completion_tokens": 581,
+            "total_tokens": 23456,
+            "prompt_tokens_details": {
+              "cached_tokens": 16768
+            },
+            "prompt_cache_hit_tokens": 16768,
+            "prompt_cache_miss_tokens": 6107
+          },
+          "durationMs": 3755,
+          "mode": "adjudication"
+        }
+      ],
+      "calls": 2
+    },
+    {
+      "phase": "current-v8-handshake",
+      "workflowHash": "sha256:db88713640d53b9847104d63aa9b64e9cfa6b336b7dcdf90004edc779fc81f48",
+      "profile": {
+        "promptPolicyVersion": "kp-vnext-authority-policy-v1",
+        "proposalSchemaVersion": "zhuwei.kp-proposal-bundle/vnext-2",
+        "actionLanguageVersion": "kp-vnext2-proposal-bundle-v1",
+        "narrationSchemaVersion": "authoritative-kp-body-only-narration-v2",
+        "provider": "deepseek",
+        "modelId": "deepseek-v4-flash",
+        "modelRevision": "deepseek-v4-flash-0731",
+        "modelProfileVersion": "authoritative-kp-deepseek-vnext-local-v1"
+      },
+      "endpoint": "https://api.deepseek.com/beta/chat/completions",
+      "cases": [
+        {
+          "id": "world-interaction-only",
+          "requestHash": "sha256:7d45aa93bb538dc77aa947863a60ee13d28d0755f609cc4b5db03805bd761900",
+          "schemaHash": "sha256:6a17768ea358c01a7f0f41f4649845692f2b200d106b34c37b6eb9315439871c",
+          "promptHash": "sha256:e9684254743ee0363e962582a4ce406ce3c1b964802f34699c5125ee8ffd3a7f",
+          "result": "passed",
+          "usage": {
+            "prompt_tokens": 22980,
+            "completion_tokens": 316,
+            "total_tokens": 23296,
+            "prompt_tokens_details": {
+              "cached_tokens": 512
+            },
+            "prompt_cache_hit_tokens": 512,
+            "prompt_cache_miss_tokens": 22468
+          },
+          "durationMs": 2765,
+          "mode": "adjudication"
+        },
+        {
+          "id": "materialize-then-interact",
+          "requestHash": "sha256:91db69be8da93fda39901fac62b33855d71988604d35b3426df144efb987a3de",
+          "schemaHash": "sha256:6a17768ea358c01a7f0f41f4649845692f2b200d106b34c37b6eb9315439871c",
+          "promptHash": "sha256:edc1bb7690ead6bb99b47749489fa51ea06ebe7636a2a714f0c9d5d5f6f4fbfb",
+          "result": "passed",
+          "usage": {
+            "prompt_tokens": 23148,
+            "completion_tokens": 602,
+            "total_tokens": 23750,
+            "prompt_tokens_details": {
+              "cached_tokens": 17024
+            },
+            "prompt_cache_hit_tokens": 17024,
+            "prompt_cache_miss_tokens": 6124
+          },
+          "durationMs": 4193,
+          "mode": "adjudication"
+        },
+        {
+          "id": "provider-rejects-open-root-object",
+          "result": "passed",
+          "http": 400,
+          "error": {
+            "message": "additionalProperties should not be true",
+            "type": "invalid_request_error",
+            "param": null,
+            "code": "invalid_request_error"
+          }
+        }
+      ],
+      "calls": 3
+    }
+  ],
+  "httpInvocations": [
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "preparedActionId": "prepared-action:vnext-http-72ac0a11-d2af-47fc-9249-e89a0dab074f",
+      "rootActionId": "root-action:vnext-http-72ac0a11-d2af-47fc-9249-e89a0dab074f",
+      "requestHash": "sha256:5a7c6a19e6ab98c71868757f20da75487469cff086cf89c14742899dc6f67a80",
+      "bindingHash": "sha256:db88713640d53b9847104d63aa9b64e9cfa6b336b7dcdf90004edc779fc81f48",
+      "estimatedInputTokens": 30976,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:8f18a6ea76c0c70d4513882b7cd47fdcb26ee7bfe4ea0ce3a634b2236b747f55",
+      "result": "success",
+      "durationMs": 4919,
+      "responseHash": "sha256:1ed578445ae595e64351acf82810df26eb6be9deaa362ce8e69f3a2a2ba0f857",
+      "inputTokens": 30296,
+      "outputTokens": 467,
+      "roomId": "room_e4583fd6b4d747f5",
+      "submissionId": "vnext-http-72ac0a11-d2af-47fc-9249-e89a0dab074f"
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "preparedActionId": "prepared-action:vnext-http-2f3c4aab-f9fb-4f76-9b0f-3688f6c7ec95",
+      "rootActionId": "root-action:vnext-http-2f3c4aab-f9fb-4f76-9b0f-3688f6c7ec95",
+      "requestHash": "sha256:321a09e17fe3b9ba3d36ca71bf8f3a9dec321ddd1a84489adee433f71e606c88",
+      "bindingHash": "sha256:b97df9e455a980007a6b0408f204a634321370c61144fd90051da6700027be37",
+      "estimatedInputTokens": 31231,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:d0459037dc435a1087c9221a21c0f2b708dd62b410d640ca9b7afc7a00580c61",
+      "result": "success",
+      "durationMs": 5162,
+      "responseHash": "sha256:5f5039d940fbf43c1f810ef8b397ceaaa79ae5c1abe0bf3f48d0eb0122ec492b",
+      "inputTokens": 30548,
+      "outputTokens": 625,
+      "roomId": "room_141903c11ccf4a32",
+      "submissionId": "vnext-http-2f3c4aab-f9fb-4f76-9b0f-3688f6c7ec95"
+    }
+  ],
+  "httpOutcomes": [
+    {
+      "case": "ordinary-action-first",
+      "result": "rejected",
+      "code": "PROPOSAL_FORM_INVALID",
+      "cause": "adjudication proposals was empty"
+    },
+    {
+      "case": "ordinary-action-clarified-protocol",
+      "result": "rejected",
+      "code": "PROPOSAL_REFERENCE_INVALID",
+      "cause": "model invented feature:wake:candles from static anchor; no such authority record"
+    }
+  ],
+  "finalViewer": {
+    "stateVersion": "0",
+    "receiptCount": 0,
+    "messageCount": 1,
+    "hitPoints": {
+      "current": 28,
+      "maximum": 28
+    }
+  },
+  "limitations": [
+    "No successful real HTTP to Provider to commit to Viewer product chain in this batch.",
+    "No live production deployment or data changes.",
+    "Budget counts all attempts, including HTTP 400 negative handshakes."
+  ]
+}

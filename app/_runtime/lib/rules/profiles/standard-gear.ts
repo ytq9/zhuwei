@@ -19,7 +19,7 @@ export const STANDARD_GEAR_PROFILE_DOCUMENT: CanonicalProfileDocument = {
   schema: "zhuwei.runtime-profile/v1",
   profileKind: "standardGearCatalog",
   profileId: PROFILE_ID,
-  semanticVersion: "1.1.0",
+  semanticVersion: "1.2.0",
   normativePayload: {
     conformanceVersion: "1",
     rulesBasis: "srd5.1-2014",
@@ -38,13 +38,15 @@ export const STANDARD_GEAR_PROFILE_DOCUMENT: CanonicalProfileDocument = {
       hands: "main-and-off-hand-weapons-compile-as-distinct-attack-options",
     },
     armorDerivation: "armor-record-plus-current-dexterity-cap-shield-items-always-grant-two-ac",
+    stockDerivation: "held-item-authority-only-viewer-authorized-display-counters-no-independent-resource-pools",
+    bundleDerivation: "structured-contents-expand-before-initial-item-import-never-replenish-from-description",
     replay: "resolve-only-the-exact-profile-pinned-by-the-room-manifest",
   },
 };
 
 export const STANDARD_GEAR_PROFILE = Object.freeze({
   profileId: PROFILE_ID,
-  profileHash: "sha256:96be7de4760e9f0f0a9da46c795e96f65cae74e58efc2beb83e1c59e94b791b9",
+  profileHash: "sha256:66657561a99eae10c1bef75a5e20c02a5626ba85dba5a500768cea51d5e04995",
 }) satisfies ProfileRef;
 
 /** Future immutable catalogs must add a new exact branch; unknown or

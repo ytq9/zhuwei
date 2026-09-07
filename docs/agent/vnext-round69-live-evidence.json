@@ -1,0 +1,74 @@
+{
+  "round": 69,
+  "date": "2026-09-07T01:43:53.879027+00:00",
+  "verdict": "setupInitializationFailure",
+  "parser": "v36",
+  "sourceManifestSha256": "45b8cc04e4e9135c53136d8464a15b17ccaf88164028cfd505ff09b6d7c639d2",
+  "http": {
+    "register": 201,
+    "createRoom": 200,
+    "lockCharacter": 200,
+    "startGame": {
+      "status": 200,
+      "ok": false,
+      "error": "权威房间初始化失败，请稍后重试"
+    }
+  },
+  "meter": {
+    "modelCalls": 0,
+    "captureFiles": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "costCny": 0,
+    "stage": "startGame initialization rejected before model invocation",
+    "intentsAttempted": 0,
+    "replay": "unavailable: no successful initial authority snapshot",
+    "session": "not saved by original harness before startGame failure"
+  },
+  "persistence": {
+    "exactFailedRoomAuthorityMatches": 0,
+    "matches": [],
+    "authoritativeInitializationCompleted": false
+  },
+  "sourceComparison": {
+    "beforeCount": 321,
+    "afterCount": 321,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-07T01:40:00.030857+00:00",
+    "initialManifestSha256": "45b8cc04e4e9135c53136d8464a15b17ccaf88164028cfd505ff09b6d7c639d2",
+    "allEqual": true
+  },
+  "servicesStopped": true,
+  "portsAbsent": [
+    4320,
+    4321
+  ],
+  "fixedIntentsAttempted": 0,
+  "proposalFormatFailures": 0,
+  "proposalRulesRejections": 0,
+  "narrativeContradictions": 0,
+  "mechanicalMismatches": 0,
+  "recoveryAttempted": false,
+  "modelStability": "not evaluated; setup failed before KP",
+  "rootCause": {
+    "kind": "opaqueIdentifierMisparsedAsDice",
+    "validator": "ability-compiler.ts validateDice",
+    "diagnosticCode": "definitionComplexityExceeded",
+    "diagnosticPath": "/definitionId",
+    "diagnosticReason": "a dice term exceeds 1,000 dice",
+    "lossChain": [
+      "playerAbilityDefinitionInvalid",
+      "buildInitialState undefined",
+      "invalidInitialization unknown reference or duplicate",
+      "startGame generic Chinese initialization failure"
+    ],
+    "offlineReproduction": "/tmp/zhuwei-round69-init-diagnosis",
+    "status": "修复定向通过"
+  },
+  "evidenceDirectory": "/tmp/zhuwei-round69-ability-preparation/evidence",
+  "privateDataPolicy": "Raw setup card and account binding remain private; no cookie/password in public receipt."
+}

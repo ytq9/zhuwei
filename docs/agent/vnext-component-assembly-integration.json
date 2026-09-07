@@ -1,0 +1,218 @@
+{
+  "schema": "component-assembly-root-integration/v1",
+  "integratedAt": "2026-09-06T19:16:26.628806+00:00",
+  "deliveryManifestSha256": "54828689ae74f08e1e481d83bb477df1eed1a2c77240ff96559d3f7c66567e59",
+  "count": 26,
+  "conflicts": [],
+  "preservedRootProvider": "v26; excluded from delivery",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/authored-proposal-contract.ts",
+      "baselineSha256": "250a91e10ae6848ca63c4c40fc710de44cdf0b9ffc8a195a9f3a500406f512b3",
+      "finalSha256": "128ed567bfc339891e6ef8ead1fdc93418fc0dd747e41ccae58f6cfb70fa2b15",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/authored-proposal-contract.ts",
+      "liveSha256AtDelivery": "250a91e10ae6848ca63c4c40fc710de44cdf0b9ffc8a195a9f3a500406f512b3",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/authority-records.ts",
+      "baselineSha256": "c61ff8f409abe7a4a47b58c35a4510b9651a57447c3801d7d280419b173cf820",
+      "finalSha256": "6945de8865b5f8c21406c5f6100c7a6155c7e02a0cbb5cc07ca588c21875bf47",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/context/authority-records.ts",
+      "liveSha256AtDelivery": "c61ff8f409abe7a4a47b58c35a4510b9651a57447c3801d7d280419b173cf820",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/coverage.ts",
+      "baselineSha256": "85303649fb1c5d9a47a791e528072195475d043e8caf8d52dbe56ce5c3a0b739",
+      "finalSha256": "a3890d947047c28a6c9f4e100e6d11010c10ebde60cce52dd86fa80c1b7dbd71",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/context/coverage.ts",
+      "liveSha256AtDelivery": "85303649fb1c5d9a47a791e528072195475d043e8caf8d52dbe56ce5c3a0b739",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/extractors.ts",
+      "baselineSha256": "5116438ccc28bece1fd7c05443f9ef14fc9f12a40ac70db0514bc86336f9f4c3",
+      "finalSha256": "ad2812f495f3ee04bc8ddd2ae099e27af1a68e6b9fb0ecfda01245c12fece805",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/context/extractors.ts",
+      "liveSha256AtDelivery": "5116438ccc28bece1fd7c05443f9ef14fc9f12a40ac70db0514bc86336f9f4c3",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/index.ts",
+      "baselineSha256": "8ab4b7214316d92617df1ab782a3aac6ca9d2dc9067b8bd1d513e666ab0ed2d5",
+      "finalSha256": "5493c8b65abb7c1184a168c2f2dda85c0adf92f6e35d81453317430ddbb0bd05",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/context/index.ts",
+      "liveSha256AtDelivery": "8ab4b7214316d92617df1ab782a3aac6ca9d2dc9067b8bd1d513e666ab0ed2d5",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/reference-index.ts",
+      "baselineSha256": "50722f26ddac349066b389e8788261634ab9b41b363975d05536925f8e9d9918",
+      "finalSha256": "711b47d71183137ffc67f5cf7804e135fc5d5aa0814402222917c18f9d917a8b",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/context/reference-index.ts",
+      "liveSha256AtDelivery": "50722f26ddac349066b389e8788261634ab9b41b363975d05536925f8e9d9918",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts",
+      "baselineSha256": "41c618986e1d31c658d12bc2fbaf55566b5db1aede20054f74c3c82782df65fd",
+      "finalSha256": "8d9b14f65d6df6e006b3fae140b5b58455573e9c379eaf2d15cfb07ece634548",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts",
+      "liveSha256AtDelivery": "41c618986e1d31c658d12bc2fbaf55566b5db1aede20054f74c3c82782df65fd",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-graph.ts",
+      "baselineSha256": "fb656062d4ea7a720f0a8ab2895538aede2002e46979244b14585991039ff6b5",
+      "finalSha256": "af7a770f956f30ce9cf77406818a7c79f6f100f9843f4289435f1cb69ae243a7",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/proposal-graph.ts",
+      "liveSha256AtDelivery": "fb656062d4ea7a720f0a8ab2895538aede2002e46979244b14585991039ff6b5",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-reference-slots.ts",
+      "baselineSha256": "d5cdaad42c7e7fd5e9092d124a2a6ac5ec188e9587c16247bd539463a9fca144",
+      "finalSha256": "f421b70b9e345faf2b9b8d6889c25c12b46456984de92d4f5d5770d932a305ad",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/proposal-reference-slots.ts",
+      "liveSha256AtDelivery": "d5cdaad42c7e7fd5e9092d124a2a6ac5ec188e9587c16247bd539463a9fca144",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-schema.ts",
+      "baselineSha256": "d7a087a94978b86734da773a4c81bd0c41f33735d0aa6e475c08cb73a7e8b865",
+      "finalSha256": "823d25244e4021869fb2cff5a8e80671d1be0f65ff1a6657c47bce75e91f8b74",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/kp/vnext/proposal-schema.ts",
+      "liveSha256AtDelivery": "d7a087a94978b86734da773a4c81bd0c41f33735d0aa6e475c08cb73a7e8b865",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/authority-bindings.ts",
+      "baselineSha256": "a90d9bf19fd0a34be9850efc48ccefb6ba7f17c810517aa29a7cce5324843eb2",
+      "finalSha256": "f0cf5a26110a68009acfd73899a7f7920b3dc56190a3cedf8b5564ca7e1e1b35",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/authority-bindings.ts",
+      "liveSha256AtDelivery": "a90d9bf19fd0a34be9850efc48ccefb6ba7f17c810517aa29a7cce5324843eb2",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-events.ts",
+      "baselineSha256": "719baa37bd654b430fba51b1fa8a8295ccf5a98e0ee707b0e9f2942ae0616bc9",
+      "finalSha256": "6c0ab6886f6eb81b4a5da67d5e4f3083eb8ed3e4121af12c7f2c3ca62ba8cb05",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/campaign-events.ts",
+      "liveSha256AtDelivery": "719baa37bd654b430fba51b1fa8a8295ccf5a98e0ee707b0e9f2942ae0616bc9",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/claims.ts",
+      "baselineSha256": "3c340ce08c206d3bfc3ad96b5eb2894d083f1241f4dd905bbe257437a4a13477",
+      "finalSha256": "1d9f3c34d0c570207ca1276bd94609a33acb625d096bfa182b4ad38d83a1d2c4",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/claims.ts",
+      "liveSha256AtDelivery": "3c340ce08c206d3bfc3ad96b5eb2894d083f1241f4dd905bbe257437a4a13477",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/correction.ts",
+      "baselineSha256": "74b7ee05ea047b82f2695e1e6e7f34836980856488d85d43f100d2545855cd0b",
+      "finalSha256": "658d64be8cedacc2ce34671f01536b88494feeb38262fb1b71f86e678cc22c7b",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/correction.ts",
+      "liveSha256AtDelivery": "74b7ee05ea047b82f2695e1e6e7f34836980856488d85d43f100d2545855cd0b",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/events.ts",
+      "baselineSha256": "69499a8e1a6a222ec810072114e260f89f513964ee00356e9a7ac8d87725e892",
+      "finalSha256": "c1b38211c9207b3a3c8f4622c9016e4694bf2fdd14a781ef00406e1b3c22cf54",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/events.ts",
+      "liveSha256AtDelivery": "69499a8e1a6a222ec810072114e260f89f513964ee00356e9a7ac8d87725e892",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/inventory-operations.ts",
+      "baselineSha256": "91efedb69a43822c133263b94884c092486ca7540a0629391651b92a3e421e40",
+      "finalSha256": "90b2cf4a70483a4db09c185965866a1e28fffd3055d7f848d426c3f00830f9ef",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/inventory-operations.ts",
+      "liveSha256AtDelivery": "91efedb69a43822c133263b94884c092486ca7540a0629391651b92a3e421e40",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-assemblies.ts",
+      "baselineSha256": null,
+      "finalSha256": "4ee9536066bafebc5c5b103400a5e61b03b405e91429a25fc63971cb7efdba9d",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/item-assemblies.ts",
+      "liveSha256AtDelivery": null,
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-assembly-shapes.ts",
+      "baselineSha256": null,
+      "finalSha256": "ce551584727369514e2a64b5b8f347e93715f58007ca67c61776053798e861ea",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/item-assembly-shapes.ts",
+      "liveSha256AtDelivery": null,
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-transitions.ts",
+      "baselineSha256": "6feb501a0d967413b2091825b3eef5b2045dbed3663561ad553efd9cd441a757",
+      "finalSha256": "22ee87bccbe5bcffbc6d17ff6a93d237b493b260a74e0e4dd099797ce5a2707d",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/item-transitions.ts",
+      "liveSha256AtDelivery": "6feb501a0d967413b2091825b3eef5b2045dbed3663561ad553efd9cd441a757",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/items.ts",
+      "baselineSha256": "7af69442d424a49ebd7cd88019a41c011d04e04cec72df4c2ca219f153b87564",
+      "finalSha256": "8b855e8c2ea6d82c3aeff1658de63667da7047051af096a6cc9805a70916d359",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/items.ts",
+      "liveSha256AtDelivery": "7af69442d424a49ebd7cd88019a41c011d04e04cec72df4c2ca219f153b87564",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/model.ts",
+      "baselineSha256": "2e5cc3fa4376e0ccb5185d6e5af897226334bcb24556071a77bb2cbc8b5e97b7",
+      "finalSha256": "13bf1da87efd6690a099106a81e4989cab3b20a3ff401e171a303f34fc374443",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/model.ts",
+      "liveSha256AtDelivery": "2e5cc3fa4376e0ccb5185d6e5af897226334bcb24556071a77bb2cbc8b5e97b7",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/observer-delta.ts",
+      "baselineSha256": "ccfbf55313773a3568e2b4af7b01eb1ff96b1a10bfec9cba3154be8135fdb3ec",
+      "finalSha256": "8061c885a57968c7b619ccc061068800964bf20e0c459f13310b67c31df516d7",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/observer-delta.ts",
+      "liveSha256AtDelivery": "ccfbf55313773a3568e2b4af7b01eb1ff96b1a10bfec9cba3154be8135fdb3ec",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/projector.ts",
+      "baselineSha256": "41972c4d6fbe42a7b99fdce0e90723586e5108447d99fb601d4134aa5aed3305",
+      "finalSha256": "a9e14fcb4f120ca5569a602bfba8a9a568b9a6891b48e0f088d327ac4f65e360",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/projector.ts",
+      "liveSha256AtDelivery": "41972c4d6fbe42a7b99fdce0e90723586e5108447d99fb601d4134aa5aed3305",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-prefix.ts",
+      "baselineSha256": "f76161acc73bfaee0fa789f09ddb21694284e3fa6af14c3133372c6c8705c0cc",
+      "finalSha256": "6f4f8f402558c800d7560e8cba7b74d2de0f9b48e5357255a04887b1e62ea6f4",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/rules/v2/world-interaction-prefix.ts",
+      "liveSha256AtDelivery": "f76161acc73bfaee0fa789f09ddb21694284e3fa6af14c3133372c6c8705c0cc",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "app/_runtime/lib/table/authoritative.ts",
+      "baselineSha256": "991ad74a7f735a35e626b8b227e24392449c23acf79e2917da431126af070c92",
+      "finalSha256": "ea8e7e9ac8352e172a5d2ea4a725ef74f9ebc3287a5f10075b3a82824e96eee8",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/app/_runtime/lib/table/authoritative.ts",
+      "liveSha256AtDelivery": "991ad74a7f735a35e626b8b227e24392449c23acf79e2917da431126af070c92",
+      "liveMatchesBaseline": true
+    },
+    {
+      "path": "tests/item-assemblies-vnext.test.mjs",
+      "baselineSha256": null,
+      "finalSha256": "14eb053bfa2c3151d258761a160d0f814f0674485e28d1cc747fb2d42dbef4ce",
+      "fullFile": "/tmp/zhuwei-component-assembly-delivery/tests/item-assemblies-vnext.test.mjs",
+      "liveSha256AtDelivery": null,
+      "liveMatchesBaseline": true
+    }
+  ]
+}

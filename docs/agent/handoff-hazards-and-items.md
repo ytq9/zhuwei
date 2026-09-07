@@ -234,3 +234,45 @@ oversight to "fix" casually:
 Turning either on means a Durable Object namespace binding and a migration, and
 existing rooms replay under the manifest their genesis pinned. That is a
 deliberate deployment decision, not a loose end.
+
+## 7. Continuation status — 2026-09-05 working tree
+
+The original sections above describe `0a86fc0`; operational paths and test
+commands there are historical evidence, not instructions for this checkout.
+Implementation now runs on `/Users/sanmu/Documents/zhuwei-cloudflare`, based on
+`258caee404e0814405eb497653ee9f00d647b773`.
+
+Rolled mixed damage, per-target saves, direct-success hazard randomness,
+world effects using the existing combat vocabulary, KP-authored definitions
+and Item creation/inventory operations are implemented and have targeted
+Rules/Room evidence. No fixture names dispatch production behavior.
+
+The hazards/items implementation handoff is complete in this working tree.
+Single interactions and Bundles share the ordered private executor; native
+Shield/Counterspell/knock-out decisions retain frozen costs and randomness.
+Players can choose newly equipped authored reactions without publishing the
+candidate inventory/HP. NPC choices use the unique Rules candidate through an
+NPC-limited projection, persist their answer capability, and survive model
+failure and eviction. Trigger deactivation persists through the same relation
+authority used by context reads.
+
+Earlier effects can apply or remove conditions before later hazards. Potential
+targets and dice are reserved before randomness; current conditions, sight and
+AC decide which faces/effects apply. Normal rolls use the first reserved face,
+not the better of two. Source mechanics, Ability effects, range and viewer
+permissions determine behavior; fixture names never dispatch production code.
+
+Final focused Node coverage comprises 86 cases (after updating the 25-case
+consumer group for the new reservations); Room coverage comprises 10 cases
+(the two affected fixtures were corrected and rerun). All passed. Integrated
+typecheck and diff-check passed. Earlier stable capability coverage was 119/119.
+DeepSeek actual calls total 9/12, including failures: authored model output has
+Rules/replay/context evidence; captured real output has Room evidence; the new
+NPC adapter passed one small live tool call. These are separate evidence paths,
+not a continuous live HTTP/model/Room run or a production qualification.
+
+See [repo map](repo-map.md), [production TODO](vnext-production-todo.md) and
+[execution log](../refactor-log.md) for the remaining SPEC 0001 product adoption
+and release work. New NPC body creation on the vNext wire belongs to V04; native
+NPC fixture setup is not presented as that capability. Production remains V3;
+no deployment, migration, push or deletion has occurred.

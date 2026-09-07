@@ -1,0 +1,312 @@
+{
+  "round": 56,
+  "status": "failed-closed-at-third-action",
+  "parser": "kp-vnext2-proposal-parser-v26",
+  "source": {
+    "beforeCount": 312,
+    "afterCount": 312,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-06T19:21:28.162822+00:00",
+    "initialManifestSha256": "5bf4a96948e541ff25f67a0f3cc66c1955e9c02d5ed2a2393fa294b953e1c20c",
+    "allEqual": true
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788722308,
+      "beijingTime": "2026-09-07T03:18:28+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 31943,
+      "cacheHitInputTokens": 384,
+      "cacheMissInputTokens": 31559,
+      "outputTokens": 254,
+      "estimatedCny": "0.0485007",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "argumentSha256": [
+        "f5a63bb1cddacad65ae1361c0b133aafd0aaab534c070f69319682c45c61657e"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788722311,
+      "beijingTime": "2026-09-07T03:18:31+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 1902,
+      "cacheHitInputTokens": 896,
+      "cacheMissInputTokens": 1006,
+      "outputTokens": 124,
+      "estimatedCny": "0.0021118",
+      "tools": [],
+      "argumentSha256": []
+    },
+    {
+      "ordinal": 3,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788722312,
+      "beijingTime": "2026-09-07T03:18:32+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 2913,
+      "cacheHitInputTokens": 1024,
+      "cacheMissInputTokens": 1889,
+      "outputTokens": 172,
+      "estimatedCny": "0.0036587",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "argumentSha256": [
+        "e31f1927d1fac183d36c2d8ac57bc2e462d028b9f1002968bdd6e7d46987f60e"
+      ]
+    },
+    {
+      "ordinal": 4,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788722371,
+      "beijingTime": "2026-09-07T03:19:31+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 37615,
+      "cacheHitInputTokens": 6016,
+      "cacheMissInputTokens": 31599,
+      "outputTokens": 322,
+      "estimatedCny": "0.0491483",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "argumentSha256": [
+        "c1367e5f954768741c0ad87a71aaedab97d5666eff2f30bff0b38b2b05b404d1"
+      ]
+    },
+    {
+      "ordinal": 5,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788722374,
+      "beijingTime": "2026-09-07T03:19:34+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 1806,
+      "cacheHitInputTokens": 896,
+      "cacheMissInputTokens": 910,
+      "outputTokens": 92,
+      "estimatedCny": "0.0018238",
+      "tools": [],
+      "argumentSha256": []
+    },
+    {
+      "ordinal": 6,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788722375,
+      "beijingTime": "2026-09-07T03:19:35+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 2809,
+      "cacheHitInputTokens": 1024,
+      "cacheMissInputTokens": 1785,
+      "outputTokens": 175,
+      "estimatedCny": "0.0035162",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "argumentSha256": [
+        "f9ed312cf5ed7360225b71b06bf7fea14bddb911ac1992684dd9ee3fc7fc3cb1"
+      ]
+    },
+    {
+      "ordinal": 7,
+      "responseModel": "deepseek-v4-flash",
+      "created": 1788722406,
+      "beijingTime": "2026-09-07T03:20:06+08:00",
+      "priceWindow": "offPeak",
+      "inputTokens": 37925,
+      "cacheHitInputTokens": 11008,
+      "cacheMissInputTokens": 26917,
+      "outputTokens": 1499,
+      "estimatedCny": "0.0476714",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "argumentSha256": [
+        "55228386eb4691770ae462894ae23ec79d64321dbec989bbb58a8a9af41fb1c4"
+      ]
+    }
+  ],
+  "totals": {
+    "calls": 7,
+    "inputTokens": 116913,
+    "cacheHitInputTokens": 21248,
+    "cacheMissInputTokens": 95665,
+    "outputTokens": 2638,
+    "estimatedCny": "0.1564309"
+  },
+  "actions": [
+    {
+      "ordinal": 1,
+      "action": "committed",
+      "narration": "published",
+      "code": null,
+      "stateVersion": "1",
+      "receiptCount": 1,
+      "visibleAssemblies": [],
+      "torchQuantity": 9,
+      "components": [
+        {
+          "entryId": "item-entry:standard:46:character:48b0443d-b631-49ea-9dc2-a7c7a39516c8:mess-kit:unit-000001",
+          "name": "餐具",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        },
+        {
+          "entryId": "item-entry:standard:46:character:48b0443d-b631-49ea-9dc2-a7c7a39516c8:rope-50ft:unit-000001",
+          "name": "五十尺麻绳",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        }
+      ],
+      "duplicate": {
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      }
+    },
+    {
+      "ordinal": 2,
+      "action": "committed",
+      "narration": "published",
+      "code": null,
+      "stateVersion": "2",
+      "receiptCount": 2,
+      "visibleAssemblies": [],
+      "torchQuantity": 10,
+      "components": [
+        {
+          "entryId": "item-entry:standard:46:character:48b0443d-b631-49ea-9dc2-a7c7a39516c8:mess-kit:unit-000001",
+          "name": "餐具",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        },
+        {
+          "entryId": "item-entry:standard:46:character:48b0443d-b631-49ea-9dc2-a7c7a39516c8:rope-50ft:unit-000001",
+          "name": "五十尺麻绳",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        }
+      ],
+      "duplicate": {
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      }
+    },
+    {
+      "ordinal": 3,
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_FORM_INVALID",
+      "stateVersion": "2",
+      "receiptCount": 2,
+      "visibleAssemblies": [],
+      "torchQuantity": 10,
+      "components": [
+        {
+          "entryId": "item-entry:standard:46:character:48b0443d-b631-49ea-9dc2-a7c7a39516c8:mess-kit:unit-000001",
+          "name": "餐具",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        },
+        {
+          "entryId": "item-entry:standard:46:character:48b0443d-b631-49ea-9dc2-a7c7a39516c8:rope-50ft:unit-000001",
+          "name": "五十尺麻绳",
+          "quantity": 1,
+          "condition": "usable",
+          "charges": null,
+          "durability": null
+        }
+      ],
+      "duplicate": null
+    },
+    {
+      "ordinal": 4,
+      "status": "notAttempted",
+      "reason": "batch stopped after first explicit failure"
+    }
+  ],
+  "classification": {
+    "jsonSyntaxFailures": 0,
+    "formFailures": 1,
+    "rulesRejections": 0,
+    "rulesNotReachedActions": [
+      3
+    ],
+    "publishedNarrativeContradictionsObserved": 0,
+    "repairAttempts": 0,
+    "fourthActionNotAttempted": true,
+    "diagnostics": [
+      {
+        "code": "VALUE_INVALID",
+        "path": "proposals[1].branches.success.characterInferences",
+        "reason": "field belongs to observe and is not allowed in worldInteraction"
+      },
+      {
+        "code": "FIELD_MISSING",
+        "path": "proposals[1].branches.success.effects",
+        "reason": "worldInteraction mechanical effects list missing; absence cannot be inferred safely"
+      }
+    ],
+    "unsubmittedNarrativeRisk": "assembly description mentions cutting rope and then says no cutting; not committed or published"
+  },
+  "mechanical": {
+    "events": 2,
+    "eventTypes": [
+      "InventoryOperationApplied",
+      "InventoryOperationApplied"
+    ],
+    "thirdActionAuthoritativeProjectionUnchanged": true,
+    "assemblyCount": 0,
+    "replay": {
+      "pinnedProfilesMatch": true,
+      "replayKind": "replayed",
+      "exactState": true,
+      "stateVersion": "2",
+      "events": 2,
+      "eventTypes": [
+        "InventoryOperationApplied",
+        "InventoryOperationApplied"
+      ],
+      "checkedAt": "2026-09-06T19:21:28.618Z"
+    }
+  },
+  "stoppedProcesses": [
+    {
+      "pid": 87546,
+      "exitCode": 143
+    },
+    {
+      "pid": 87529,
+      "exitCode": 143
+    }
+  ],
+  "limitations": [
+    "No complete assembly or disassembly was committed in this batch.",
+    "No inference of statistical model stability or improvement.",
+    "Duplicate and replay do not prove Durable Object eviction recovery.",
+    "Usage-based fees are estimates, not an account bill."
+  ]
+}

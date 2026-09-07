@@ -1,3 +1,4 @@
+import { isItemStockResourceId, nonItemResources } from "./item-resources";
 import type {
   AuthoritativeWorldState,
   CharacterLoadoutRecord,
@@ -123,7 +124,8 @@ function canonicalResourceMaximums(value: unknown): value is JsonRecord {
   return isRecord(value)
     && Object.keys(value).length <= 100
     && Object.entries(value).every(([resourceId, maximum]) =>
-      isNonEmptyString(resourceId) && canonicalIntegerString(maximum, 0, 1_000_000));
+      isNonEmptyString(resourceId) && !isItemStockResourceId(resourceId)
+      && canonicalIntegerString(maximum, 0, 1_000_000));
 }
 
 function canonicalSpellcasting(value: unknown): boolean {
@@ -471,7 +473,7 @@ export function npcMechanicalEntityMatchesTemplate(
     return false;
   }
   const effectiveCharacter = { ...character, loadout: derived.loadout };
-  const equipment = npcItemSystemEquipmentMechanics(effectiveCharacter, itemSystem);
+  const equipment = npcItemSystemEquipmentMechanics(effectiveCharacter, itemSystem, catalog);
   const expectedEquipmentAbilityRefs = equipment.refs;
   const expectedAbilityRefs = [
     ...(content.intrinsicAbilityRefs as string[]),
@@ -515,7 +517,7 @@ export function npcMechanicalEntityMatchesTemplate(
   }
   const mechanicalResources = Object.fromEntries(
     Object.entries(entityResources).filter(([resourceId]) =>
-      !resourceId.startsWith("item-entry:")),
+      !isItemStockResourceId(resourceId)),
   );
   const itemResources = Object.fromEntries(
     Object.entries(entityResources).filter(([resourceId]) =>
@@ -634,15 +636,13 @@ export function synchronizeCoreNpcCombatState(
     };
   }
   if (isRecord(entity.resources)) {
-    const resources: Record<string, number> = { ...(synchronized.resources ?? {}) };
-    const resourceMaximums: Record<string, number> = {
-      ...(synchronized.resourceMaximums ?? {}),
-    };
+    const resources = nonItemResources(synchronized.resources ?? {});
+    const resourceMaximums = nonItemResources(synchronized.resourceMaximums ?? {});
     for (const [resourceId, pool] of Object.entries(entity.resources)) {
       if (resourceId.startsWith("item:")) {
         throw new TypeError("non-entry item resource identities are unavailable");
       }
-      if (resourceId.startsWith("item-entry:")) continue;
+      if (isItemStockResourceId(resourceId)) continue;
       if (!isRecord(pool)
         || !canonicalIntegerString(pool.current, 0, 1_000_000)
         || !canonicalIntegerString(pool.maximum, 0, 1_000_000)) {
@@ -741,7 +741,7 @@ export function instantiateNpcMechanicalEntity(input: {
     proficiencyBonus: Number(content.proficiencyBonus),
     loadout,
   } satisfies CharacterRecord;
-  const equipment = npcItemSystemEquipmentMechanics(character, input.itemSystem);
+  const equipment = npcItemSystemEquipmentMechanics(character, input.itemSystem, input.catalog);
   const entity: JsonRecord = {
     id: input.entityId,
     entityId: input.entityId,

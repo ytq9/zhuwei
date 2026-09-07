@@ -1,4 +1,8 @@
+import { authoredWorldFactConform } from "./world-facts";
+import { publicExpressionConform } from "./public-expression";
 import { canonicalSha256 } from "../profiles/canonical";
+import { composeSemanticTemplate } from "../profiles/semantic-templates";
+import { dynamicLocationSceneRef } from "./dynamic-location-shapes";
 
 export type SemanticJsonScalar = string | number | boolean | null;
 export type SemanticJsonValue =
@@ -23,6 +27,8 @@ export type SemanticDefinitionKind =
   | "item"
   | "worldFact"
   | "sceneFeature"
+  | "location"
+  | "passage"
   | "worldRelation";
 
 export type DefinitionSnapshot = Readonly<{
@@ -91,6 +97,8 @@ const SEMANTIC_KINDS = new Set<SemanticDefinitionKind>([
   "item",
   "worldFact",
   "sceneFeature",
+  "location",
+  "passage",
   "worldRelation",
 ]);
 
@@ -157,7 +165,13 @@ export function materializedSemanticDefinition(
     plan.bundleHash,
     prospectiveRef,
   );
-  const snapshot = createDefinitionSnapshot(definitionRef, "1", plan.content);
+  const composed = composeSemanticTemplate({ semanticKind: plan.semanticKind,
+    templateRef: plan.templateRef, templateHash: plan.templateHash, overrides: plan.content });
+  if (composed.kind !== "accepted" || canonicalSha256(composed.content) !== canonicalSha256(plan.content)) {
+    throw new TypeError("semantic materialization requires the exact composed static template");
+  }
+  const snapshot = createDefinitionSnapshot(definitionRef, "1", plan.semanticKind === "location"
+    ? { ...composed.content, sceneRef: dynamicLocationSceneRef(definitionRef) } : composed.content);
   const definition = storedSemanticDefinition(
     plan.semanticKind,
     plan.visibilityPolicyRef,
@@ -165,6 +179,16 @@ export function materializedSemanticDefinition(
     { templateRef: plan.templateRef, templateHash: plan.templateHash },
   );
   return Object.freeze({ prospectiveRef, definitionRef, definition });
+}
+
+/** The executor and committed-prefix verification bind the same full event. */
+export function semanticDefinitionMaterializedPayload(actorCharacterId: string,
+  plan: SemanticDefinitionMaterializationPlan, materialized: MaterializedSemanticDefinition): SemanticDefinitionMaterializedPayload {
+  return { actorCharacterId, bundleHash: plan.bundleHash, prospectiveRef: materialized.prospectiveRef,
+    definitionRef: materialized.definitionRef, semanticKind: plan.semanticKind,
+    templateRef: plan.templateRef, templateHash: plan.templateHash, contextHash: plan.contextHash,
+    basisRefs: [...plan.basisRefs], sourceRefs: [...plan.sourceRefs], summary: plan.summary,
+    definition: materialized.definition };
 }
 
 export function isSemanticDefinitionMaterializedPayload(
@@ -222,6 +246,10 @@ export function isSemanticDefinitionMaterializationPlan(
   try {
     // Validate the complete sparse definition without requiring a live state.
     assertDefinitionContainsNoMechanicalFields(value.content as JsonRecord);
+    const composed = composeSemanticTemplate({ semanticKind: String(value.semanticKind),
+      templateRef: String(value.templateRef), templateHash: String(value.templateHash),
+      overrides: value.content as JsonRecord });
+    if (composed.kind !== "accepted" || canonicalSha256(composed.content) !== canonicalSha256(value.content)) return false;
   } catch {
     return false;
   }
@@ -349,9 +377,12 @@ export function storedSemanticDefinition(
   },
 ): StoredSemanticDefinition {
   validateBase(snapshot);
-  if (!["npc", "item", "worldFact", "sceneFeature", "worldRelation"].includes(semanticKind)) {
+  if (!["npc", "item", "worldFact", "sceneFeature", "worldRelation", "location", "passage"].includes(semanticKind)) {
     throw new TypeError("semanticKind:unsupported");
   }
+  if (semanticKind === "npc" && isPlainRecord(snapshot.definition.semantics)
+    && snapshot.definition.semantics.publicExpression !== undefined
+    && !publicExpressionConform(snapshot.definition.semantics.publicExpression)) throw new TypeError("npc:public-expression-invalid");
   assertRef(visibilityPolicyRef, "visibilityPolicyRef");
   assertRef(template.templateRef, "templateRef");
   assertSha256(template.templateHash, "templateHash");
@@ -375,7 +406,7 @@ export function semanticDefinitionSnapshot(
   if (!isPlainRecord(value)
     || value.schema !== VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA
     || value.definitionKind !== "semantic"
-    || !["npc", "item", "worldFact", "sceneFeature", "worldRelation"].includes(
+    || !["npc", "item", "worldFact", "sceneFeature", "worldRelation", "location", "passage"].includes(
       String(value.semanticKind),
     )
     || !isNonEmptyString(value.definitionId)
@@ -386,6 +417,9 @@ export function semanticDefinitionSnapshot(
     || !isNonEmptyString(value.visibilityPolicyRef)
     || !isPlainRecord(value.content)) return undefined;
   try {
+    if (value.semanticKind === "npc" && isPlainRecord(value.content.semantics)
+      && value.content.semantics.publicExpression !== undefined
+      && !publicExpressionConform(value.content.semantics.publicExpression)) return undefined;
     const snapshot = createDefinitionSnapshot(
       value.definitionId,
       value.revision,
@@ -681,7 +715,11 @@ function assertNoMechanicalValue(value: unknown, label: string, depth = 0): void
 
 function assertDefinitionContainsNoMechanicalFields(definition: JsonRecord): void {
   try {
-    assertNoMechanicalValue(definition, "base.definition");
+    if (Object.hasOwn(definition, "worldFact")) {
+      if (!authoredWorldFactConform(definition.worldFact)) throw new TypeError("base:world-fact-invalid");
+      const { worldFact: _worldFact, ...body } = definition;
+      assertNoMechanicalValue(body, "base.definition");
+    } else assertNoMechanicalValue(definition, "base.definition");
   } catch (error) {
     const message = issueMessage(error);
     if (message.startsWith("mechanical-field:")) throw new TypeError(`base:${message}`);

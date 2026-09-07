@@ -3,6 +3,8 @@ import {
   buildKpFormToolParameters,
   type KpFormId,
 } from "./form-catalog";
+import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA } from "./vnext/proposal-schema";
+import { PROPOSAL_DIAGNOSTIC_CODES } from "./vnext/proposal-diagnostics";
 
 /**
  * Field-level telemetry for a proposal that never committed.
@@ -27,6 +29,7 @@ import {
 
 /** Diagnostic codes the Form validator, envelope and Rules boundary emit. */
 export const KP_DIAGNOSTIC_CODES: readonly string[] = Object.freeze([
+  ...PROPOSAL_DIAGNOSTIC_CODES,
   "absent-feature-forbidden",
   "area-hazard-required",
   "arguments-invalid",
@@ -74,6 +77,10 @@ const STRUCTURAL_TOKENS: readonly string[] = Object.freeze([
   "structured-output",
   "tool",
   "visibility",
+  "arguments",
+  "rulesInput",
+  "plan",
+  "steps",
 ]);
 
 /**
@@ -111,12 +118,17 @@ function catalogFieldNames(): ReadonlySet<string> {
       }
     }
     if (node.items !== undefined) collect(node.items);
+    if (node.$def !== null && typeof node.$def === "object" && !Array.isArray(node.$def)) {
+      for (const definition of Object.values(node.$def)) collect(definition);
+    }
     for (const key of ["anyOf", "allOf", "oneOf"]) {
       const branches = node[key];
       if (Array.isArray(branches)) for (const branch of branches) collect(branch);
     }
   };
   for (const formId of KP_FORM_IDS) collect(buildKpFormToolParameters(formId));
+  collect(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA);
+  collect(VNEXT_PROPOSAL_DOMAIN_DIAGNOSTIC_SCHEMA);
   return names;
 }
 
@@ -164,6 +176,23 @@ export type KpDiagnosticField = Readonly<{
  * leaking whatever it interpolated.
  */
 export function desensitizeKpDiagnostic(value: unknown): KpDiagnosticField {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const diagnostic = value as Record<string, unknown>;
+    const parts: string[] = diagnostic.pathBase === "rulesInput" ? ["rulesInput"]
+      : diagnostic.pathBase === "arguments" ? ["arguments"] : [];
+    if (Array.isArray(diagnostic.path)) for (const part of diagnostic.path) {
+      if ((typeof part === "number" && Number.isSafeInteger(part) && part >= 0)
+        || (typeof part === "string" && /^(0|[1-9][0-9]*)$/u.test(part))) {
+        if (parts.length === 0) break;
+        parts[parts.length - 1] += "[]";
+      } else if (typeof part === "string" && FIELD_NAMES.has(part)) parts.push(part);
+      else break;
+    }
+    // Discard actual, expected, constraint, repair and message wholesale.
+    return Object.freeze({ path: parts.join(".") || KP_DIAGNOSTIC_UNRECOGNIZED_PATH,
+      code: typeof diagnostic.code === "string" && CODE_SET.has(diagnostic.code)
+        ? diagnostic.code : KP_DIAGNOSTIC_OTHER_CODE });
+  }
   if (typeof value !== "string") {
     return Object.freeze({
       path: KP_DIAGNOSTIC_UNRECOGNIZED_PATH,

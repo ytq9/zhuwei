@@ -1,3 +1,5 @@
+import { normalizedSocialUtterance, socialUtteranceFingerprint, socialMethodFingerprint, socialParticipantsCoPresent } from "./social-primitives";
+export { socialUtteranceFingerprint, socialMethodFingerprint, socialParticipantsCoPresent } from "./social-primitives";
 import {
   lowerCausalActionProgram,
   validateCausalActionProgram,
@@ -19,6 +21,7 @@ import {
 import type {
   AuthoritativeWorldState,
   CharacterRecord,
+  ConversationThreadRecord,
   FrozenCheck,
   InternalContinuationRecord,
   NpcSocialMechanicsRecord,
@@ -72,40 +75,6 @@ const ASSERTION_PREDICATES = [
   "relatedTo",
   "locatedAt",
 ] as const;
-
-function normalizedSocialUtterance(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\p{P}\p{S}\p{Z}]+/gu, "");
-}
-
-export function socialUtteranceFingerprint(value: string): string {
-  return canonicalSha256({ utterance: normalizedSocialUtterance(value) });
-}
-
-/** Same place is insufficient while split-party causal timelines have not
- * explicitly rejoined. Social exchange and hearing require both conditions. */
-export function socialParticipantsCoPresent(
-  state: AuthoritativeWorldState,
-  left: CharacterRecord,
-  right: CharacterRecord,
-): boolean {
-  if (left.sceneId !== right.sceneId) return false;
-  const leftTimelineId = characterTimelineId(state, left.id);
-  const rightTimelineId = characterTimelineId(state, right.id);
-  return leftTimelineId !== undefined && leftTimelineId === rightTimelineId;
-}
-
-/** A retry method is the mechanical approach plus the normalized fictional
- * method. Punctuation-only rewrites and restating the same speech do not open
- * another roll, while a genuinely different described approach can. */
-export function socialMethodFingerprint(
-  value: Pick<FrozenCheck, "ability" | "skill" | "method">,
-): string {
-  return canonicalSha256({
-    ability: value.ability,
-    skill: value.skill,
-    method: normalizedSocialUtterance(value.method),
-  });
-}
 
 function socialTopicFingerprint(
   npcCharacterId: string,
@@ -579,7 +548,7 @@ function deriveSocialClaimSemantics(
   const influenceGoal = draft.influenceGoal as SocialClaimSemantics["influenceGoal"];
   const addressedThread = draft.addressedThreadRef === null
     ? undefined
-    : state.campaignRuntime.conversationThreads?.[draft.addressedThreadRef];
+    : legacySocialThread(state, draft.addressedThreadRef);
   if (draft.addressedThreadRef !== null
     && (!refs.includes(draft.addressedThreadRef)
       || addressedThread?.actorCharacterId !== actor.id
@@ -1154,7 +1123,7 @@ function socialContinuationBindingCore(
   const actor = state.entities[plan.actorCharacterId];
   const npc = state.entities[plan.npcCharacterId];
   const fact = state.canonicalFacts[plan.programFactRef];
-  const thread = state.campaignRuntime.conversationThreads?.[plan.threadRef];
+  const thread = legacySocialThread(state, plan.threadRef);
   const program = plan.program as unknown as CausalActionProgram;
   const expectedRequest = {
     randomnessId: `randomness:${rootActionId}:social:${plan.nodeRef}`,
@@ -1204,4 +1173,11 @@ export function isSocialContinuationStateBinding(
       stored.continuation,
       stored.resolutionPlan,
     );
+}
+
+/** Legacy events cannot consume the structurally different vNext thread. */
+export function legacySocialThread(state: AuthoritativeWorldState, ref: string): ConversationThreadRecord | undefined {
+  const thread = state.campaignRuntime.conversationThreads?.[ref];
+  return thread && thread.schema !== "zhuwei.social-conversation/vnext-1" && isSocialClaimSemantics(thread.claimSemantics)
+    ? thread as ConversationThreadRecord : undefined;
 }

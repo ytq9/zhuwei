@@ -1,6 +1,7 @@
 import {
   GEAR_SLOTS,
   ITEMS,
+  expandGearBundles,
   itemById,
   type GearItem,
   type GearItemResolver,
@@ -140,6 +141,14 @@ export function mergeInitialStandardLoadout(
       || backpack.has(entry.itemId)) return { error: "invalidCharacterLoadout" };
     if (itemById(entry.itemId) === undefined) return { error: "unknownStandardGear" };
     backpack.set(entry.itemId, entry.quantity);
+  }
+  const expanded = expandGearBundles([...backpack].map(([itemId, qty]) => ({ itemId, qty })));
+  backpack.clear();
+  for (const entry of expanded) {
+    if (!boundedQuantity(entry.qty) || itemById(entry.itemId) === undefined) {
+      return { error: "invalidCharacterLoadout" };
+    }
+    backpack.set(entry.itemId, entry.qty);
   }
 
   const equipped = new Map<GearSlot, string>();
@@ -556,7 +565,6 @@ function moveItemQuantityToHolder(
     return { error: "nonStackableQuantity" };
   }
   const partial = quantity < source.quantity;
-  if (partial && !canonicalString(targetEntryId)) return { error: "targetEntryIdRequired" };
   const holderVisibilityPolicyRef = `visibility:character-controller:${holderRef}`;
 
   const next = structuredClone(itemSystem);
@@ -573,6 +581,7 @@ function moveItemQuantityToHolder(
   const targetStacks = definition.content.stackable
     ? Object.values(next.entries).filter((entry) =>
         entry.entryId !== source.entryId
+        && entry.assemblyRef === undefined
         && entry.disposition === "held"
         && entry.holderRef === holderRef
         && entry.definitionRef === source.definitionRef
@@ -614,7 +623,8 @@ function moveItemQuantityToHolder(
       : { itemSystem: validated.itemSystem, targetEntryId: nextSource.entryId };
   }
 
-  if (next.entries[targetEntryId!] !== undefined) return { error: "targetEntryConflict" };
+  if (!canonicalString(targetEntryId)) return { error: "targetEntryIdRequired" };
+  if (next.entries[targetEntryId] !== undefined) return { error: "targetEntryConflict" };
   nextSource.quantity -= quantity;
   const target: ItemEntryV1 = {
     ...structuredClone(nextSource),
@@ -651,6 +661,7 @@ export function transferItemQuantity(
     || !canonicalString(input.toHolderRef)
     || input.fromHolderRef === input.toHolderRef) return { error: "invalidTransferParticipants" };
   const source = itemSystem.entries[input.entryId];
+  if (source?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
   if (source === undefined || source.disposition !== "held") return { error: "itemUnavailable" };
   if (source.holderRef !== input.fromHolderRef) return { error: "itemHolderMismatch" };
   if (input.ownershipDisposition !== "preserve"
@@ -682,6 +693,7 @@ export function acquireItemQuantity(
   if (!isItemSystemStateV1(itemSystem)) return { error: "invalidItemSystem" };
   if (!canonicalString(input.holderRef)) return { error: "invalidCharacterId" };
   const source = itemSystem.entries[input.entryId];
+  if (source?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
   if (source === undefined || source.disposition !== "scene") {
     return { error: "itemUnavailable" };
   }
@@ -695,6 +707,76 @@ export function acquireItemQuantity(
       ? { kind: "character", ownerRef: input.holderRef }
       : structuredClone(source.ownership),
   );
+}
+
+/** Places all or part of one held entry in a scene. Identity and ownership are
+ * preserved; only an exactly homogeneous scene stack may absorb it. Caller
+ * authorization and the actor's scene are checked by the Rules operation. */
+export function releaseItemQuantity(
+  itemSystem: ItemSystemStateV1,
+  input: {
+    entryId: string;
+    holderRef: string;
+    sceneRef: string;
+    quantity: number;
+    targetEntryId?: string;
+  },
+): { itemSystem: ItemSystemStateV1; targetEntryId: string } | ItemTransitionError {
+  if (!isItemSystemStateV1(itemSystem)) return { error: "invalidItemSystem" };
+  if (!canonicalString(input.holderRef) || !canonicalString(input.sceneRef)) {
+    return { error: "invalidItemPlacement" };
+  }
+  const source = itemSystem.entries[input.entryId];
+  if (source?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
+  if (source?.disposition !== "held") return { error: "itemUnavailable" };
+  if (source.holderRef !== input.holderRef) return { error: "itemHolderMismatch" };
+  const definition = itemSystem.definitions[source.definitionRef];
+  if (definition === undefined) return { error: "itemDefinitionUnavailable" };
+  if (!boundedQuantity(input.quantity) || input.quantity > source.quantity) {
+    return { error: "invalidQuantity" };
+  }
+  if (!definition.content.stackable && (input.quantity !== 1 || source.quantity !== 1)) {
+    return { error: "nonStackableQuantity" };
+  }
+  const partial = input.quantity < source.quantity;
+  const placed: ItemEntryV1 = {
+    ...structuredClone(source),
+    disposition: "scene",
+    holderRef: null,
+    sceneRef: input.sceneRef,
+    equippedSlot: null,
+    quantity: input.quantity,
+    visibilityPolicyRef: "visibility:scene-observers",
+  };
+  const identity = itemStackIdentity(placed);
+  const matches = definition.content.stackable
+    ? Object.values(itemSystem.entries).filter((entry) =>
+        entry.entryId !== source.entryId
+        && entry.assemblyRef === undefined
+        && entry.disposition === "scene"
+        && itemStackIdentity(entry) === identity)
+    : [];
+  if (matches.length > 1) return { error: "targetStackConflict" };
+  const match = matches[0];
+  const targetEntryId = match?.entryId ?? (partial ? input.targetEntryId : source.entryId);
+  if (!canonicalString(targetEntryId)) return { error: "targetEntryIdRequired" };
+  if (input.targetEntryId !== undefined && input.targetEntryId !== targetEntryId) {
+    return { error: "targetEntryConflict" };
+  }
+  if (match === undefined && targetEntryId !== source.entryId
+    && itemSystem.entries[targetEntryId] !== undefined) return { error: "targetEntryConflict" };
+  if (partial && targetEntryId === source.entryId) return { error: "targetEntryConflict" };
+  const next = structuredClone(itemSystem);
+  if (match !== undefined) {
+    if (match.quantity + input.quantity > MAX_ITEM_QUANTITY) return { error: "invalidQuantity" };
+    next.entries[match.entryId].quantity += input.quantity;
+  } else {
+    next.entries[targetEntryId] = { ...placed, entryId: targetEntryId };
+  }
+  if (partial) next.entries[source.entryId].quantity -= input.quantity;
+  else if (targetEntryId !== source.entryId) delete next.entries[source.entryId];
+  const validated = validNextItemSystem(next);
+  return "error" in validated ? validated : { itemSystem: validated.itemSystem, targetEntryId };
 }
 
 export type ItemCostSnapshot = {
@@ -728,6 +810,7 @@ export function spendItemEntryCosts(
     return { error: "invalidItemCost" };
   }
   const source = itemSystem.entries[input.entryId];
+  if (source?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
   if (source === undefined || source.disposition !== "held") return { error: "itemUnavailable" };
   if (source.holderRef !== input.holderRef) return { error: "itemHolderMismatch" };
   if (source.condition !== "usable") return { error: "itemNotUsable" };
@@ -782,6 +865,7 @@ export function consumeItemQuantity(
 ): { itemSystem: ItemSystemStateV1; entryId: string } | ItemTransitionError {
   if (!isItemSystemStateV1(itemSystem)) return { error: "invalidItemSystem" };
   const source = itemSystem.entries[input.entryId];
+  if (source?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
   if (source === undefined || source.disposition !== "held") return { error: "itemUnavailable" };
   if (source.holderRef !== input.holderRef) return { error: "itemHolderMismatch" };
   if (source.condition !== "usable") return { error: "itemNotUsable" };
@@ -821,6 +905,7 @@ export function changeItemLifecycle(
 ): { itemSystem: ItemSystemStateV1; entryId: string } | ItemTransitionError {
   if (!isItemSystemStateV1(itemSystem)) return { error: "invalidItemSystem" };
   const source = itemSystem.entries[input.entryId];
+  if (source?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
   if (source === undefined
     || source.disposition === "consumed"
     || source.disposition === "destroyed") return { error: "itemUnavailable" };

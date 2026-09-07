@@ -10,6 +10,33 @@ import {
   kpProposalFailureTelemetry,
 } from "../app/_runtime/lib/kp/diagnostic-telemetry.ts";
 
+test("structured vNext diagnostics preserve schema fields and codes without copying evidence or candidates", () => {
+  const secret = 'HIDDEN-ITEM-CANARY';
+  const common = { code: 'REFERENCE_UNAVAILABLE', actual: secret,
+    expected: { candidates: [secret] }, constraint: secret, message: secret,
+    repair: { changes: [{ value: secret }] } };
+  assert.deepEqual(desensitizeKpDiagnostic({ ...common, pathBase: 'rulesInput',
+    path: ['steps', '1', 'rulesInput', 'plan', 'operation', 'entryRef'] }), {
+    path: 'rulesInput.steps[].rulesInput.plan.operation.entryRef', code: 'REFERENCE_UNAVAILABLE',
+  });
+  assert.deepEqual(desensitizeKpDiagnostic({ ...common, path: ['proposals', 7, 'operation', 'entryRef'] }), {
+    path: 'proposals[].operation.entryRef', code: 'REFERENCE_UNAVAILABLE',
+  });
+  for (const [pathBase, path, expected] of [
+    ['arguments', ['decision', 'steps', 3, 'otherTargetRefs', 1], 'arguments.decision.steps[].otherTargetRefs[]'],
+    ['arguments', ['decision', 'steps', 1, 'result', 'entries', 0, 'recordKind'], 'arguments.decision.steps[].result.entries[].recordKind'],
+    [undefined, ['proposals', 1, 'consumes', 0, 'ref'], 'proposals[].consumes[].ref'],
+    [undefined, ['proposals', 1, 'branches', 'failure', 'effects', 0, 'kind'], 'proposals[].branches.failure.effects[].kind'],
+  ]) {
+    assert.deepEqual(desensitizeKpDiagnostic({ ...common, pathBase, path }), {
+      path: expected, code: 'REFERENCE_UNAVAILABLE',
+    });
+  }
+  for (const path of [[secret], ['proposals', 0, secret, 'entryRef'], ['proposals.operation', secret]]) {
+    assert.equal(JSON.stringify(desensitizeKpDiagnostic({ ...common, path })).includes(secret), false);
+  }
+});
+
 test("a diagnostic reduces to the field it names and the rule it broke", () => {
   assert.deepEqual(desensitizeKpDiagnostic("goal:required"), {
     path: "goal",

@@ -22,6 +22,10 @@ import {
  * repair: `initial`, `initial → schemaRepair`, or `initial → mechanicalRepair`.
  * `initial → schemaRepair → mechanicalRepair` is not a longer path, it is a
  * third full prompt and is forbidden.
+ * The approved vNext schema retrieval exception is orchestrated separately by
+ * its adapter and Room transition guard: a pure offer response can precede the
+ * initial Proposal. This module measures each exact body; its repair ordinal
+ * is not the RootAction's total provider call count.
  */
 export type InvocationKind = "initial" | "schemaRepair" | "mechanicalRepair";
 export type InvocationOrdinal = 1 | 2;
@@ -174,6 +178,30 @@ export function assembleProposalInvocation(
 }
 
 export const VNEXT_PROPOSAL_REQUEST_SCHEMA = "zhuwei.proposal-request/vnext-1" as const;
+
+/** Final transport body gate. The returned body is the exact input carried by
+ * the provider codec; no context-only estimate or post-measure enrichment. */
+export function assembleProviderInvocation(input: Readonly<{
+  providerBody: JsonRecord;
+  invocationKind: InvocationKind;
+  ledger: RepairLedger;
+  budgetProfile: ProviderBudgetProfile;
+}>): ProposalInvocationResult {
+  if (input.invocationKind !== "initial" && input.ledger.repairConsumed) {
+    return blocked("PROPOSAL_REPAIR_EXHAUSTED", ["ledger:repair-already-consumed"]);
+  }
+  let providerBody: JsonRecord;
+  try { providerBody = deepFreeze(canonicalClone(input.providerBody)) as JsonRecord; }
+  catch { return blocked("PROPOSAL_FORM_INVALID", ["providerBody:not-canonical-json"]); }
+  const budgetReceipt = evaluateInputBudget(JSON.stringify(providerBody), input.budgetProfile);
+  if (budgetReceipt.decision === "blocked") {
+    return Object.freeze({ kind: "blocked", code: "PROPOSAL_INPUT_BUDGET_EXCEEDED", budgetReceipt,
+      issues: Object.freeze([`estimatedInputTokens:${budgetReceipt.estimatedInputTokens}`,
+        `allowedInputTokens:${budgetReceipt.allowedInputTokens}`]) });
+  }
+  return Object.freeze({ kind: "ready", providerBody, requestHash: canonicalHash(providerBody), budgetReceipt,
+    invocationKind: input.invocationKind, invocationOrdinal: input.invocationKind === "initial" ? 1 : 2 });
+}
 
 /**
  * Builds the receipt for one invocation. A blocked assembly yields

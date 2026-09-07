@@ -1,0 +1,444 @@
+{
+  "round": 72,
+  "verifiedAt": "2026-09-07T02:24:57.643297+00:00",
+  "verdict": "firstAbilityPassed-secondProposalFormatFailure-batchStopped",
+  "sourceManifestSha256": "ef2c660d9d8ab2cd43cf941150a99bbc12184515e3bc8babcc4bc2371737bbd9",
+  "parser": "v36",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 2,
+  "unattemptedIntents": 1,
+  "actions": [
+    {
+      "ordinal": 1,
+      "text": "我握住圣徽，对自己施放一次一环的治愈伤口。",
+      "action": "committed",
+      "narration": "published",
+      "calls": 4,
+      "repairUsed": false,
+      "acceptance": "invoked",
+      "receipt": {
+        "receiptId": "receipt:root-action:vnext-round72-ability-http-83b8ddd7-5037-467a-86ec-bd2523cc9c81:9",
+        "rootActionId": "root-action:vnext-round72-ability-http-83b8ddd7-5037-467a-86ec-bd2523cc9c81",
+        "status": "committed",
+        "runtimeEpochId": "runtime-epoch:4dc7e341-3c70-4385-8db0-4764e3fb2b48",
+        "activeBranchId": "branch:main"
+      },
+      "mechanics": {
+        "kind": "invoked",
+        "spellId": "cure",
+        "abilityRef": "ability:character:d3935603-b7c9-451d-a4e4-c605994cfb33:spell:cure:level:3:modifier:3:proficiency:2",
+        "rootActionId": "root-action:vnext-round72-ability-http-83b8ddd7-5037-467a-86ec-bd2523cc9c81",
+        "receiptId": "receipt:root-action:vnext-round72-ability-http-83b8ddd7-5037-467a-86ec-bd2523cc9c81:9",
+        "randomnessId": "randomness:resolution:atomic:root-action:vnext-round72-ability-http-83b8ddd7-5037-467a-86ec-bd2523cc9c81",
+        "faces": [
+          4
+        ],
+        "formula": "1d8+3",
+        "rolled": 7,
+        "applied": 0,
+        "hp": {
+          "current": 24,
+          "maximum": 24
+        },
+        "slots": {
+          "slot1": 3,
+          "slot2": 2
+        },
+        "oneSlot": true,
+        "oneDie": true,
+        "randomnessJournalFinalized": true,
+        "noUnfinishedContinuation": true
+      },
+      "resourcesBefore": {
+        "coreSlot1": 4,
+        "publicSlot1": 4,
+        "combatSlot1": {
+          "current": "4",
+          "maximum": "4"
+        },
+        "coreSlot1Maximum": 4,
+        "publicSlot1Maximum": 4,
+        "coreHasCombatAlias": false,
+        "publicHasCombatAlias": false,
+        "slot2": 2,
+        "hitPoints": {
+          "current": 24,
+          "maximum": 24
+        }
+      },
+      "resourcesAfter": {
+        "coreSlot1": 3,
+        "publicSlot1": 3,
+        "combatSlot1": {
+          "current": "3",
+          "maximum": "4"
+        },
+        "coreSlot1Maximum": 4,
+        "publicSlot1Maximum": 4,
+        "coreHasCombatAlias": false,
+        "publicHasCombatAlias": false,
+        "slot2": 2,
+        "hitPoints": {
+          "current": 24,
+          "maximum": 24
+        }
+      },
+      "publicNarration": "你握住圣徽，对自己施放了一环治愈伤口。施法完成后，你的生命值仍为24，并未发生变化；该法术的资源剩余数量为3。",
+      "reviewQuote": {
+        "messageIndex": 2,
+        "quote": "你的生命值仍为24，并未发生变化；该法术的资源剩余数量为3。"
+      },
+      "narrativeReview": {
+        "noContradiction": true,
+        "noInventedHealing": true
+      },
+      "modelEvidence": {
+        "model": "deepseek-v4-flash",
+        "invocationCount": 2,
+        "repairUsed": false,
+        "requestHashes": [
+          "sha256:e3d720538e000a8d19618aa047df608efe77b25d936262be4e26f4291efb1d6b",
+          "sha256:ecc65c02db9a7cadd30b98f2a8a4607ae90a1de00f9934f533ebe7e0d7db4e46"
+        ],
+        "contextHash": "sha256:a8644f673127d4b117f89c233f603c754f70402f2f9f87415e7676a09fa0686c",
+        "exactCapturedJournal": true
+      },
+      "duplicate": {
+        "calls": 0,
+        "checks": {
+          "sameAuthoritativeState": true,
+          "sameEvents": true,
+          "sameRandomnessJournal": true,
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameOutcome": true,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        }
+      },
+      "acknowledgement": {
+        "ok": true,
+        "deliveryId": "delivery:receipt:root-action:vnext-round72-ability-http-83b8ddd7-5037-467a-86ec-bd2523cc9c81:9:character:d3935603-b7c9-451d-a4e4-c605994cfb33"
+      }
+    },
+    {
+      "ordinal": 2,
+      "text": "我对自己念出治愈真言，使用一环法术位。",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "calls": 2,
+      "repairUsed": false,
+      "code": "PROPOSAL_FORM_INVALID",
+      "acceptance": "formatFailure",
+      "validJson": true,
+      "wireErrorPath": [
+        "decision",
+        "intent"
+      ],
+      "actualRecordedDiagnosticFields": [
+        {
+          "path": "terminal.intent",
+          "code": "VALUE_INVALID"
+        }
+      ],
+      "originalArguments": "{\"decision\": {\"kind\": \"abilityOperation\", \"intent\": {\"submissionRef\": \"vnext-round72-ability-http-f8f549a5-900a-4203-86e7-a08551d13cab\", \"actorRef\": \"character:d3935603-b7c9-451d-a4e4-c605994cfb33\", \"text\": \"我对自己念出治愈真言，使用一环法术位。\"}, \"operation\": {\"kind\": \"invoke\", \"abilityRef\": \"ability:character:d3935603-b7c9-451d-a4e4-c605994cfb33:spell:healing-word:level:3:modifier:3:proficiency:2\", \"castingMode\": \"normal\", \"target\": {\"kind\": \"creatures\", \"refs\": [\"character:d3935603-b7c9-451d-a4e4-c605994cfb33\"]}}}}",
+      "originalArgumentsSha256": "f817a8f03a237b0a78febcf3b9a2f3df56a2449f5bead13e8e68059138c14729",
+      "selectedFormAllowedFields": [
+        "kind",
+        "operation"
+      ],
+      "draftIntentFields": [
+        "submissionRef",
+        "actorRef",
+        "text"
+      ],
+      "operationFieldsSelectedOriginalAbilityAndSelfTarget": true,
+      "operationNotCommitted": true,
+      "rootEventCount": 0,
+      "afterStateEventsAndRandomnessEqualToAfterFirst": true,
+      "resourcesAfter": {
+        "coreSlot1": 3,
+        "publicSlot1": 3,
+        "combatSlot1": {
+          "current": "3",
+          "maximum": "4"
+        },
+        "coreSlot1Maximum": 4,
+        "publicSlot1Maximum": 4,
+        "coreHasCombatAlias": false,
+        "publicHasCombatAlias": false,
+        "slot2": 2,
+        "hitPoints": {
+          "current": 24,
+          "maximum": 24
+        }
+      },
+      "diagnosticLimit": "Saved telemetry exposes VALUE_INVALID at terminal.intent only. This is a decoded-domain path, not the original wire location decision.intent; path mapping and potential safe redundant-field repair are separate work. No missing diagnostic reason, constraint or repair permission is invented."
+    },
+    {
+      "ordinal": 3,
+      "text": "我现在还剩多少法术位，身体状况怎样？",
+      "action": "notSent",
+      "calls": 0,
+      "reason": "First format failure stopped the batch; no rephrasing or resampling."
+    }
+  ],
+  "categories": {
+    "formatFailure": 1,
+    "jsonSyntaxFailure": 0,
+    "proposalRuleRejection": 0,
+    "mechanicalMismatch": 0,
+    "narrativeContradiction": 0,
+    "safeRepair": 0,
+    "viewerRecovery": 0
+  },
+  "categoryScope": "Counts only this actual bounded batch: first action passed the saved mechanical/public review, second produced no effects or narration, third was not sent. Zero observed mismatches is not a global reliability guarantee.",
+  "usage": {
+    "calls": [
+      {
+        "call": 1,
+        "actionOrdinal": 1,
+        "stage": "selection",
+        "model": "deepseek-v4-flash",
+        "input": 26254,
+        "cacheHit": 256,
+        "cacheMiss": 25998,
+        "output": 47,
+        "costCny": "0.0784426"
+      },
+      {
+        "call": 2,
+        "actionOrdinal": 1,
+        "stage": "proposal",
+        "model": "deepseek-v4-flash",
+        "input": 28665,
+        "cacheHit": 768,
+        "cacheMiss": 27897,
+        "output": 152,
+        "costCny": "0.0851358"
+      },
+      {
+        "call": 3,
+        "actionOrdinal": 1,
+        "stage": "narration",
+        "model": "deepseek-v4-flash",
+        "input": 1814,
+        "cacheHit": 896,
+        "cacheMiss": 918,
+        "output": 209,
+        "costCny": "0.0047246"
+      },
+      {
+        "call": 4,
+        "actionOrdinal": 1,
+        "stage": "audit",
+        "model": "deepseek-v4-flash",
+        "input": 3036,
+        "cacheHit": 1024,
+        "cacheMiss": 2012,
+        "output": 189,
+        "costCny": "0.0078394"
+      },
+      {
+        "call": 5,
+        "actionOrdinal": 2,
+        "stage": "selection",
+        "model": "deepseek-v4-flash",
+        "input": 19663,
+        "cacheHit": 1408,
+        "cacheMiss": 18255,
+        "output": 47,
+        "costCny": "0.0553288"
+      },
+      {
+        "call": 6,
+        "actionOrdinal": 2,
+        "stage": "proposal",
+        "model": "deepseek-v4-flash",
+        "input": 22074,
+        "cacheHit": 3712,
+        "cacheMiss": 18362,
+        "output": 241,
+        "costCny": "0.0576262"
+      }
+    ],
+    "totalInput": 101506,
+    "totalCacheHit": 8064,
+    "totalCacheMiss": 93442,
+    "totalOutput": 885,
+    "totalCostCny": "0.2890974",
+    "pricing": {
+      "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+      "verifiedAt": "2026-09-07T00:58:26.847440Z",
+      "htmlSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+      "model": "deepseek-v4-flash",
+      "offPeakCnyPerMillion": {
+        "hit": "0.05",
+        "miss": "1.5",
+        "output": "4.5"
+      },
+      "peakCnyPerMillion": {
+        "hit": "0.10",
+        "miss": "3.0",
+        "output": "9.0"
+      },
+      "peakWindow": "Asia/Shanghai Mon-Fri 09:00-12:00,14:00-18:00",
+      "declaredBudgetCny": "5.0",
+      "maximumAtPeakCny": "4.95456",
+      "localEvidence": "/tmp/zhuwei-round69-pricing.html",
+      "verificationSource": "Root fetched the official tariff in this session; preparation verified the supplied local evidence hash. Charge conservatively at peak tariff."
+    },
+    "costBasis": "Captured actual usage at the same-day verified peak tariff, cache hit 0.10 / miss 3 / output 9 CNY per million; includes all completion tokens. Calculated charge, not a provider invoice.",
+    "conservativeMeterChargeCny": "0.312483",
+    "meterUsageExact": true
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "9",
+    "events": 9,
+    "eventTypes": [
+      "RandomnessRequested",
+      "DiceRolled",
+      "ResourceSpent",
+      "SpellCastingStarted",
+      "RandomnessRequested",
+      "AbilityInvoked",
+      "HealingResolved",
+      "SpellResolved",
+      "AtomicWorldInteractionStepsResolved"
+    ],
+    "checkedAt": "2026-09-07T02:19:28.074Z"
+  },
+  "sourceComparison": {
+    "beforeCount": 321,
+    "afterCount": 321,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-07T02:19:28.137206+00:00",
+    "initialManifestSha256": "ef2c660d9d8ab2cd43cf941150a99bbc12184515e3bc8babcc4bc2371737bbd9",
+    "allEqual": true
+  },
+  "processClosure": {
+    "capture": {
+      "port": 4320,
+      "stoppedAt": "2026-09-07T02:19:27.510885+00:00",
+      "exitCode": null,
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "port": 4321,
+      "stoppedAt": "2026-09-07T02:19:27.390912+00:00",
+      "exitCode": null,
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  },
+  "privateEvidenceDirectory": "/tmp/zhuwei-round72-ability-preparation/evidence",
+  "evidenceFiles": [
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-action1.json",
+      "sha256": "23328e7dab577fe5b859781e140f06c7228fd2e1c4c00c7746dabb6f50a27e55"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-action2.json",
+      "sha256": "4c468c9e4192478dddb83cbec071e5287b786fc3c067e4304fc6dc758b687753"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-decision1.json",
+      "sha256": "c398a6f4b1e5778fce6539a9e8f5779aca8a4b7e9e5a3d88e9978f5687089dd3"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-decision2.json",
+      "sha256": "04948b17a24feb3ccb6afcd6b9770da518c31e0cd8365a913326481e486b02d5"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-duplicate1.json",
+      "sha256": "10fc48e313f6c4de1c60dda0f3b3fc043c6578b17573e1d15a0eb0bed7865c45"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-after1-authority.json",
+      "sha256": "a30c06de406e8625e0a63d361706011210cf7d90b3270b7083fa48b1e0b7b5be"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-after2-authority.json",
+      "sha256": "e79d0349d4e72570d5a040b1cd2a23c3b3c229fb70439582ee21b93e685ac668"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-after1-table.json",
+      "sha256": "5cc03859745267c4ea234b2a6cc180601e8164b962a2190c094805a424e7147c"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-after2-table.json",
+      "sha256": "d030415b50716e238aed710d0da1153a3e7af844e249a4165f8b864928eb441e"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-journal.json",
+      "sha256": "cf9d3fa955bf2e70fabab1b0d7b1b6358aac2fb23826d13adb4c107ab895dd81"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/processes.json",
+      "sha256": "1054e385bfd07fb4507e89257b0cea5d07ba15fe6a16bf28624c1800411fac23"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-server.log",
+      "sha256": "9833f7e0fc4517c2c9c0861082b4aea0fcc6dc9d990627703f05444d41cf48c1"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-private/01.json",
+      "sha256": "ed25e1de39ec9289b046193c9be1320586ad389e1923e046a5c30be8f0d8045b"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-private/02.json",
+      "sha256": "36abb6b6ed8e572ad84e5621d484f5d665226b9b26ec74dbd9ecc2ccb49a0bba"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-private/03.json",
+      "sha256": "5f0c1a33ab07a7489a9dc81fe81785df7e15a9e01d81147fe79e84f85b6124e8"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-private/04.json",
+      "sha256": "a0c3111ff319ec931ea59a941ddc2d1375987a58ec1418d00aee2d05911e3789"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-private/05.json",
+      "sha256": "1974bf71f867382d25a1fc4cf6b31e5f7a7264248ad805dd4dc72a1e63aaaa12"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/evidence/round72-private/06.json",
+      "sha256": "8ecf008a3d7967c577ae7b32b73f45cc19e24713eb5c0f1c70de3d7a9ad5f34b"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/closeout/final-meter.json",
+      "sha256": "25a30a18872f5f98ddc3f3e49a010828629f9d3316cefa8c8ee09a7a5f97d13e"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/closeout/replay-result.json",
+      "sha256": "230c8ad52a1fd61e59e222887d811437037f96b7eee48aa3a876752af01d04f6"
+    },
+    {
+      "path": "/tmp/zhuwei-round72-ability-preparation/closeout/source-comparison.json",
+      "sha256": "3a44c027c95d7499674d93970483ed553f713a0a86efebce8f38011d9b86b7ea"
+    }
+  ],
+  "remainingGaps": [
+    "Second healing-word was selected in a syntactically valid draft but not submitted; it has no successful mechanical outcome in this batch.",
+    "Third status action and continuous three-step reliability remain unverified.",
+    "No claim of improved model success rate; previous batch results and this original failure remain unchanged.",
+    "Error path mapping terminal.intent versus decision.intent and eligibility of a safe redundant-field repair require separate work.",
+    "Only a full-health self-target cure was committed; injured-target healing and arbitrary Ability behavior are not established."
+  ],
+  "deployment": false,
+  "push": false,
+  "documentationWork": {
+    "newFilesOnly": true,
+    "sourceOrScriptEdits": false,
+    "additionalApiCalls": 0,
+    "codeTestsRun": false
+  }
+}

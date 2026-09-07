@@ -1,0 +1,94 @@
+{
+  "workdir": "/tmp/zhuwei-kp-social-source-work",
+  "baselineCommit": "2bcd2e79208d33d30829b47488405c06e420594d",
+  "base": "main dirty snapshot plus final Ability shared and mechanical dependencies; not original HEAD alone",
+  "files": {
+    "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts": {
+      "baselineSha256": "a62c9205b7f8efe5d954dbc01a74d4b8a097827ee5d3b3c7b46f4e2161dc2fa1",
+      "newSha256": "0ab4a60b9670aef688f2a12fbdf666113f2ce6c14c53212246c1e6ef7431c145"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-context.ts": {
+      "baselineSha256": "e425b8e22d9f283420a7151543c377d48bd1f7c262e78f2be141d1aa0700ff56",
+      "newSha256": "3184e24e21349ab54f1e0d6db85c66740138e2029429b06ecbb9a270c69057a9"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-filling-interface.ts": {
+      "baselineSha256": "100aee06953fe4c22fcd722c531b9d5adb094640db7a07aad5ef8ee0cf66f63c",
+      "newSha256": "1bf27b2a215d8629ddccae9beeeba4ba53fa1d18fffbc426f2c47591e8fa4f3f"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-guidance.ts": {
+      "baselineSha256": "31cf9f73440b6c46c1f9a6eae9cbb8d2c4277b54a7fb89f032d438f01e67c92a",
+      "newSha256": "368fcb8d5f14fa29c31118a2657a6d3fe057b8c418bc690714d5b14b9f932ab8"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-provider.ts": {
+      "baselineSha256": "cc09eb775c6d8792df4950c7a175de2498752a7986357e9638f933bf0cdbc08e",
+      "newSha256": "56e1bc8e4293d97c191dda9cb91495ea6ca1b9d0573b1434862f02033bbc0845"
+    },
+    "app/_runtime/lib/kp/vnext/proposal-schema.ts": {
+      "baselineSha256": "930e1a0c27637e9e65dc7a118b16b3e2103cdfd87591cef6621b0442c3b9005b",
+      "newSha256": "d7fdfc5a9e7afca12ee6f7ef5cd6cb66ad695dba067cb7f7f9a4933cd3becbef"
+    },
+    "app/_runtime/lib/room/vnext-proposal-invocation.ts": {
+      "baselineSha256": "5e9feb8a69a1411a7df0a34a5363d6ea2d6cccf052cee487431835f502c417e6",
+      "newSha256": "180fb91253bb91688cc4568aa31f4a84438a6c2409a4b76269ea190acc117194"
+    },
+    "tests/kp-vnext-npc-plan-formation-room.test.ts": {
+      "baselineSha256": "6c46a15fa7a4baaf3828edc5204514520c0381b0082abd10dd043e6ab4a4e66d",
+      "newSha256": "247e5778f540294fd86e1e9cf62d498686f5a7eb50c490b6e05703dc3113bbc7"
+    },
+    "tests/kp-vnext-private-lowering-diagnostics.test.mjs": {
+      "baselineSha256": "dccebda1f101dc126be76ecb532fef4df659e2d35c0ae7f2dc8d417f93c0161e",
+      "newSha256": "44491bb561828d57a05574c227e05263e494245a0dc1f743ff542bf0112e46b4"
+    },
+    "tests/kp-vnext-schema-retrieval.test.mjs": {
+      "baselineSha256": "e2638bf448d884e6621696239bc54c97eff310f12e60bf2027f5321a035c5a02",
+      "newSha256": "4368ea32712fc9cbfbec38392ef8fc54ecaf928ee762690af1d7ba8b40cbaced"
+    },
+    "tests/kp-vnext-social-plan.test.mjs": {
+      "baselineSha256": "aa63fa3e26dcafba582d3c347180e92903299b6cbfc57ba53460af03d3d1f780",
+      "newSha256": "bfbef6cf097d512b0df09a62912d1d5c27d89575397254aca3591ef6e688ddd9"
+    },
+    "tests/kp-vnext-social-source-selection.test.mjs": {
+      "baselineSha256": null,
+      "newSha256": "2a8277d7d09077088c1fb55c9d9addbd915e724a1012efc5d893cb3117733110"
+    },
+    "tests/kp-vnext-world-fact-memory.test.mjs": {
+      "baselineSha256": "c523597c7ac723a70fb2bd62105c51ae78d8383760c6aa76a7a86796abe61548",
+      "newSha256": "91a7a86be92a24ca0732f3a5418da30d286217043889039a1a8e87d6e1f24a4a"
+    }
+  },
+  "abilityBaseChecks": {
+    "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts": true,
+    "app/_runtime/lib/kp/vnext/proposal-filling-interface.ts": true,
+    "app/_runtime/lib/kp/vnext/proposal-guidance.ts": true,
+    "app/_runtime/lib/kp/vnext/proposal-provider.ts": true,
+    "app/_runtime/lib/kp/vnext/proposal-schema.ts": true,
+    "tests/kp-vnext-schema-retrieval.test.mjs": true
+  },
+  "patchSha256": "dc5b8ebd98104ad71ae375d4087cb1a4ba1dac9df368d78813e2734c127eecd2",
+  "integratedAt": "2026-09-07T01:31:37.062370+00:00",
+  "backup": "/tmp/zhuwei-social-source-root-before",
+  "conflicts": 0,
+  "rootVerification": {
+    "node": {
+      "command": "npx tsx --test tests/kp-vnext-social-source-selection.test.mjs tests/kp-vnext-filling-interface.test.mjs tests/kp-vnext-schema-retrieval.test.mjs tests/kp-vnext-world-fact-memory.test.mjs tests/kp-vnext-private-lowering-diagnostics.test.mjs tests/kp-vnext-social-plan.test.mjs tests/kp-vnext-diagnostic-repair-provider.test.mjs tests/kp-vnext-structured-diagnostics.test.mjs tests/kp-vnext-representation-repair.test.mjs tests/kp-vnext-ability-operation.test.mjs",
+      "passed": 138,
+      "failed": 0,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-social-source-root-node.log"
+    },
+    "worker": {
+      "command": "npx vitest run tests/kp-vnext-npc-plan-formation-room.test.ts tests/kp-vnext-provider-room.test.ts tests/kp-vnext-ability-operation-room.test.ts",
+      "filesPassed": 3,
+      "passed": 55,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-social-source-root-room.log"
+    },
+    "typecheck": {
+      "command": "npm run typecheck",
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-social-source-root-types.log"
+    }
+  },
+  "validationReceipt": "docs/agent/vnext-social-source-validation.md",
+  "liveModelImprovementEstablished": false
+}

@@ -1,0 +1,232 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round27",
+  "recordedAt": "2026-09-06T03:06:54.094759+00:00",
+  "scope": "One normal Cookie HTTP NPC social attempt plus one non-submitting thinking-only diagnostic rejected by Provider",
+  "budget": {
+    "batch": "round27",
+    "createdBeforeCallsAt": "2026-09-06T02:50:27.145292+00:00",
+    "maximumRootActions": 2,
+    "maximumProviderCalls": 10,
+    "maximumInputTokens": 580000,
+    "maximumOutputTokens": 81920,
+    "maximumWallTimeMinutes": 10,
+    "callsReservedPerAction": 5,
+    "localCallLimitPerHttpRequest": 5,
+    "actionStartRequiresRemainingWallTimeMs": 120000,
+    "scope": "Repeat the original social intent after citation and normal NPC genesis fixes, then a lawful follow-up if published",
+    "failurePolicy": "stop on first explicit failure; no sampling to select success"
+  },
+  "setupCalls": 0,
+  "sourceManifest": {
+    "path": "vnext-round27-source-manifest.json",
+    "sha256": "c579b7f3ebead1e89bbddc1c86b7034384cc22cd4d3b5d29dbccb8d835b36896",
+    "createdAt": "2026-09-06T02:50:27.191988+00:00",
+    "fileCount": 298,
+    "sourceChangedDuringProviderBatch": false,
+    "laterChanges": "Authorship guidance and missing NPC self-background were corrected after shutdown. The original batch is not reclassified."
+  },
+  "workflowHash": "sha256:107652583143f2ff101d1a0ce39f917bde589b88ab21960500c677658c7890cd",
+  "schemaHash": "sha256:b1699d177f3e0fc0cbb7b2c419a461d72eca3071aee78679a31f834ca5e96ab8",
+  "parserHash": "sha256:9d279a3dceb8a83e076592e20f15e699a0c2eaa240eb87f44214d795bb493757",
+  "runtimeManifest": {
+    "profileId": "runtime-srd51-2014-authoritative-vnext-stage3",
+    "profileHash": "sha256:eb496bd870ee6ce96ca3918a7511230be98ed5ffd714dd8985ac31626a7864d9"
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "purpose": "proposal",
+      "model": "deepseek-v4-flash",
+      "startedAt": "2026-09-06T02:51:15.860Z",
+      "durationMs": 9969,
+      "inputTokens": 27982,
+      "cacheHitTokens": 768,
+      "cacheMissTokens": 27214,
+      "outputTokensIncludingReasoning": 1185,
+      "thinking": {
+        "type": "disabled"
+      },
+      "offPeakCny": 0.0461919,
+      "captureFileSha256": "2193222fe16ea5736a6617976caa25efdf33eb07a160eb7db916017e0d5f9603",
+      "finishReasons": [
+        "tool_calls"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "purpose": "one fixed-context thinking-only diagnostic, never Room submission",
+      "model": "deepseek-v4-flash",
+      "startedAt": "2026-09-06T02:55:46.987Z",
+      "maximumCalls": 1,
+      "maximumOutputTokens": 4000,
+      "timeoutMs": 60000,
+      "changedFields": [
+        "thinking.type"
+      ],
+      "requestHash": "sha256:4ee14caec8735fdadd6868ed59518133229d9e4b9b632ca72f236b3f667c9e4d",
+      "status": "failed",
+      "durationMs": 182,
+      "error": {
+        "name": "DeepSeekApiError",
+        "code": "request_rejected",
+        "status": 400
+      },
+      "usage": null,
+      "submitted": false,
+      "usageUnknown": true,
+      "offPeakCny": null,
+      "causeKnown": false,
+      "responseBodyPreserved": false
+    }
+  ],
+  "totals": {
+    "attemptedCalls": 2,
+    "knownUsageCalls": 1,
+    "unknownUsageCalls": 1,
+    "inputTokens": 27982,
+    "cacheHitTokens": 768,
+    "cacheMissTokens": 27214,
+    "outputTokensIncludingReasoning": 1185,
+    "knownOffPeakCny": 0.0461919,
+    "unknownUsageNote": "The 58000/4000 externalBudget token reservations are conservative capacity reservations, not actual usage."
+  },
+  "response": {
+    "action": "notCommitted",
+    "narration": "notApplicable",
+    "code": "PROPOSAL_FORM_INVALID",
+    "outcomeKind": "rejected"
+  },
+  "mechanicalEvidence": {
+    "eventCount": 0,
+    "eventTypes": [],
+    "receipts": 0,
+    "pendingDue": 0,
+    "modelInvocations": 1,
+    "deliveryStatuses": [],
+    "audienceStatuses": []
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsChecked": 0,
+    "frozenContextsConform": null,
+    "authorityUnchangedFromGenesis": true,
+    "resourcesAndTimeUnchanged": true,
+    "eventCount": 0,
+    "eventTypes": [],
+    "receiptCount": 0,
+    "newEvidenceCount": 0,
+    "randomnessAbsent": true,
+    "claimsNote": "No committed Claims to validate."
+  },
+  "diagnostics": {
+    "originalJson": "json:object-delimiter-expected",
+    "missingClosingBraceOffset": 2399,
+    "syntaxOnlyParser": "accepted",
+    "syntaxOnlyLowering": {
+      "kind": "rejected",
+      "code": "PROPOSAL_REFERENCE_INVALID",
+      "issues": [
+        "proposal:basis-ref-not-read-bound"
+      ]
+    },
+    "basisFactRefsIsAllowed": true,
+    "exactExpectedRequest": true,
+    "strict": true,
+    "npcIdentityPresent": true,
+    "holderRefsValid": true,
+    "semanticStatus": "requires-canon-consistency-review; unrecorded-history-alone-is-not-a-failure",
+    "submittedDiagnostic": false,
+    "extraCalls": 0
+  },
+  "semanticAudit": {
+    "status": "draft-not-submitted; authorship-misclassification-corrected",
+    "authorshipRule": "KP may author unrecorded history without a prior citation proving it. Existing references identify constraints, access and known facts. New canon must be persisted and checked for consistency. Attributed speech may conflict with world truth; canonical consistency does not impose truthfulness on every source claim.",
+    "openIssues": [
+      "canonical creation and NPC memory acquisition are not closed through current social Form",
+      "draft addresses the player by an unintroduced character name; knowledge authorization remains to be checked",
+      "meaningful failure and disclosure boundaries need review"
+    ],
+    "notFailuresByThemselves": [
+      "new childhood history without an old citation",
+      "new details about who gave the key"
+    ],
+    "schemaRetrievalOccurred": false,
+    "narrationInvoked": false,
+    "canonicalInterpretationConflict": {
+      "establishedBackground": "NPC publicFace says 28 years old",
+      "draft": "Received the key in childhood and has held it for thirty years",
+      "basis": "module NPC publicFace and captured response; age is stored in genesis definition.description but absent from the designated NPC decision identity",
+      "qualification": "This conflicts if asserted as true personal history. Attributed NPC speech may be exaggerated, mistaken or deliberately false; the draft must be reviewed using its already-frozen motive and information basis, never retroactively assigned a lie to excuse it."
+    }
+  },
+  "priceSource": {
+    "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "currency": "CNY",
+    "perMillionTokensOffPeak": {
+      "cacheHitInput": 0.05,
+      "cacheMissInput": 1.5,
+      "output": 4.5
+    }
+  },
+  "localProbeScripts": [
+    {
+      "name": "zhuwei-vnext-round27-capture.mjs",
+      "sha256": "e7960633e6fccc66a84d579566eeaf675f24546727718eb180313647064a0e76"
+    },
+    {
+      "name": "zhuwei-vnext-round27-diagnostic.mts",
+      "sha256": "759d2ba708ccd26469e0c367177c93f991ccdf874b26cc3164da967a19494fe6"
+    },
+    {
+      "name": "zhuwei-vnext-round27-extract.py",
+      "sha256": "05e95f24de967a6719ea53bdcc62054d7bc1fc031048eaab7d98007c52f28481"
+    },
+    {
+      "name": "zhuwei-vnext-round27-replay.mts",
+      "sha256": "d571b03a8e38450c6ea6fc92f8fca37f8b2d16543ee2ce2f81c7c5b063c6a024"
+    },
+    {
+      "name": "zhuwei-vnext-round27-report.py",
+      "sha256": "0891bc1067fa732fbc3e52142ce71f89b5c1d7e2a03033d1e157a0fc3a4252f7"
+    },
+    {
+      "name": "zhuwei-vnext-round27-source-manifest.py",
+      "sha256": "b9e139a93bca337255dfef0d49d8d5358b450de8a44b1c634fc85a8aac3e5ecb"
+    },
+    {
+      "name": "zhuwei-vnext-round27-thinking-contrast.mts",
+      "sha256": "be6cd17370730ef8d91e27f5159ec07c256f34882225c3cdc11c0eac53325ea1"
+    },
+    {
+      "name": "zhuwei-vnext-round27.mjs",
+      "sha256": "190ae964951118751c7354b5a47ba87f435b093867ad791a02c50044619aea8b"
+    }
+  ],
+  "externalOperations": {
+    "deployment": false,
+    "gitPush": false,
+    "remoteMigration": false,
+    "productionRetirement": false,
+    "localServersStopped": true,
+    "serverExitCode": 130,
+    "captureExitCode": 1
+  },
+  "postBatchBindingFix": {
+    "diagnosticCopyOnly": true,
+    "originalStillRejected": true,
+    "syntaxOnlyOffset": 2399,
+    "basisRefsUnchanged": true,
+    "originalArgumentsHash": "sha256:3f1761d4d1aecf1efcf9bbbdbe601c98efe41acac2c98103f09ffc16c99b8c93",
+    "actorAliasResolvesToExactHolder": true,
+    "selectedBindingHash": "sha256:05ab7089a8b16d1f8f59d7ec47a23738b1166363a1123726bfaf191ce8ed7f24",
+    "contextGlobalReadSetLength": 0,
+    "lowering": "accepted",
+    "rulesExecution": false,
+    "roomSubmission": false,
+    "providerCalls": 0,
+    "recordedAt": "2026-09-06T03:25:59.160Z"
+  }
+}

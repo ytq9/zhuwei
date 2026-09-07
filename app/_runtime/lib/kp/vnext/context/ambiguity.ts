@@ -1,11 +1,11 @@
 import {
-  authoritySpatialRefVisibleTo,
   type AuthoritativeWorldState,
 } from "../../../rules/authority-read";
 import { canonicalHash, compareCodeUnits, isPlainRecord } from "../canonical-json";
 import type { AmbiguityCandidate, AmbiguousContextEntry } from "../required-context";
-import { indexableRecord } from "./authority-records";
+import { indexableRecord, indexedSpatialRefVisibleTo } from "./authority-records";
 import type { DiscoveredCandidate } from "./candidate-discovery";
+import { narrativeDetailVisibleTo } from "../../../rules/v2/narrative-commitments";
 import type { ReferenceIndex, ReferenceNode } from "./reference-index";
 
 /**
@@ -75,8 +75,10 @@ export function resolveTargetAmbiguity(input: AmbiguityInput): AmbiguityOutcome 
   }
 
   const addressable = resolved.map((node) =>
-    node.sceneRef === input.sceneRef
-    && authoritySpatialRefVisibleTo(input.state, node.ref, input.sceneRef, input.actorCharacterId));
+    node.kind === "narrativeCommitment"
+      ? narrativeDetailVisibleTo(input.state, node.ref, input.actorCharacterId)
+      : node.sceneRef === input.sceneRef
+        && indexedSpatialRefVisibleTo(input.state, node, input.sceneRef, input.actorCharacterId));
   const viewerSafe = addressable.every(Boolean);
   const material = materialDifference(input, resolved);
 
@@ -117,7 +119,7 @@ function equivalenceKey(
   sceneRef: string,
 ): string | undefined {
   const reachable = node.sceneRef === sceneRef
-    && authoritySpatialRefVisibleTo(state, node.ref, sceneRef, actorCharacterId);
+    && indexedSpatialRefVisibleTo(state, node, sceneRef, actorCharacterId);
   const record = indexableRecord(state, node);
   if (!isPlainRecord(record)) return undefined;
 
@@ -175,9 +177,9 @@ function materialDifference(
   if (distinct(nodes.map((node) => node.holderRef ?? null))) return true;
   if (distinct(nodes.map((node) =>
     node.sceneRef === input.sceneRef
-    && authoritySpatialRefVisibleTo(
+    && indexedSpatialRefVisibleTo(
       input.state,
-      node.ref,
+      node,
       input.sceneRef,
       input.actorCharacterId,
     )))) return true;

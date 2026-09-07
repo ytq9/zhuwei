@@ -41,6 +41,10 @@ export type GearItem = {
   /** Dex added to AC; cap 2 for medium, 0 for heavy. */
   acDexCap?: number;
   damage?: string;
+  /** Optional display counter; its quantity is always derived from held items. */
+  stockResourceId?: string;
+  /** Starting equipment bundle, expanded once before entering Item authority. */
+  contents?: readonly PackEntry[];
   /** Closed mechanics used by the versioned standard-gear compiler. Display
    * text is never parsed to decide an attack's rules. */
   weapon?: {
@@ -106,23 +110,47 @@ export const ITEMS: readonly GearItem[] = [
   { id: "greataxe", name: "巨斧", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d12 挥砍", weapon: { attackAbility: "str", damageDice: "1d12", damageType: "slashing", reachInches: "60" }, text: "军用近战。重型、双手。", aliases: ["巨斧"] },
   { id: "glaive", name: "关刀", category: "weapon", stackable: false, wear: "weapon", twoHanded: true, damage: "1d10 挥砍", weapon: { attackAbility: "str", damageDice: "1d10", damageType: "slashing", reachInches: "120" }, text: "军用近战。重型、触及、双手。" },
 
-  { id: "bolt", name: "弩矢", category: "ammunition", stackable: true, wear: "ammo", text: "轻弩或手弩的弹药。", aliases: ["20 矢"] },
-  { id: "arrow", name: "箭", category: "ammunition", stackable: true, wear: "ammo", text: "短弓或长弓的弹药。" },
+  { id: "bolt", name: "弩矢", category: "ammunition", stackable: true, wear: "ammo", stockResourceId: "bolt", text: "轻弩或手弩的弹药。", aliases: ["20 矢"] },
+  { id: "arrow", name: "箭", category: "ammunition", stackable: true, wear: "ammo", stockResourceId: "arrow", text: "短弓或长弓的弹药。" },
+  { id: "torch", name: "火把", category: "consumable", stackable: true, wear: "pack", stockResourceId: "torch", text: "可携带、点燃和消耗的火把。" },
+  { id: "ration", name: "口粮", category: "consumable", stackable: true, wear: "pack", stockResourceId: "ration", text: "一日份干粮。" },
+  { id: "backpack", name: "背包", category: "equipment", stackable: false, wear: "pack", text: "携带随身物品的背包。" },
+  { id: "bedroll", name: "睡袋", category: "equipment", stackable: false, wear: "pack", text: "旅行睡袋。" },
+  { id: "mess-kit", name: "餐具", category: "tool", stackable: false, wear: "pack", text: "随身餐具。" },
+  { id: "tinderbox", name: "火绒盒", category: "tool", stackable: false, wear: "pack", text: "用于生火。" },
+  { id: "waterskin", name: "水袋", category: "equipment", stackable: false, wear: "pack", text: "盛放饮水的水袋。" },
+  { id: "rope-50ft", name: "五十尺麻绳", category: "equipment", stackable: false, wear: "pack", text: "一卷五十尺长的麻绳。" },
+  { id: "string-10ft", name: "十尺细线", category: "equipment", stackable: false, wear: "pack", text: "一卷十尺长的细线。" },
+  { id: "ball-bearing", name: "滚珠", category: "equipment", stackable: true, wear: "pack", text: "一颗金属滚珠。" },
+  { id: "bell", name: "铃铛", category: "equipment", stackable: false, wear: "pack", text: "可发出声响的小铃。" },
+  { id: "candle", name: "蜡烛", category: "consumable", stackable: true, wear: "pack", text: "可点燃和消耗的蜡烛。" },
+  { id: "hammer", name: "锤子", category: "tool", stackable: false, wear: "pack", text: "敲打用工具。" },
+  { id: "piton", name: "岩钉", category: "equipment", stackable: true, wear: "pack", text: "攀爬用铁钉。" },
+  { id: "lantern", name: "遮光提灯", category: "equipment", stackable: false, wear: "pack", text: "可遮蔽光线的燃油提灯。" },
+  { id: "oil", name: "灯油", category: "consumable", stackable: true, wear: "pack", text: "一瓶灯油。" },
+  { id: "book", name: "知识书籍", category: "object", stackable: false, wear: "pack", text: "一本记载学识的书。" },
+  { id: "parchment", name: "羊皮纸", category: "equipment", stackable: true, wear: "pack", text: "一张书写用羊皮纸。" },
+  { id: "sand-pouch", name: "沙袋", category: "equipment", stackable: false, wear: "pack", text: "一小袋细沙。" },
+  { id: "blanket", name: "毯子", category: "equipment", stackable: false, wear: "pack", text: "旅行毯。" },
+  { id: "vestments", name: "祭服", category: "equipment", stackable: false, wear: "pack", text: "仪式服饰。" },
+  { id: "alms-box", name: "捐献箱", category: "equipment", stackable: false, wear: "pack", text: "收集捐献的小箱。" },
+  { id: "censer", name: "香炉", category: "equipment", stackable: false, wear: "pack", text: "焚烧熏香的香炉。" },
 
   { id: "holy-symbol", name: "圣徽", category: "equipment", stackable: false, wear: "neck", text: "牧师法器。可戴在颈上，或持于盾面。施法时需要一只空闲手持用法器，戴着则免。", aliases: ["圣徽"] },
   { id: "orb", name: "奥术宝珠", category: "equipment", stackable: false, wear: "pack", text: "奥术法器。施法时持用。", aliases: ["奥术法器（宝珠）"] },
   { id: "spellbook", name: "法术书", category: "object", stackable: false, wear: "pack", text: "法师的法术抄本。被毁则准备清单出问题。", aliases: ["法术书"] },
   { id: "thieves-tools", name: "盗贼工具", category: "tool", stackable: false, wear: "pack", text: "开锁、解除陷阱。熟练则可加熟练加值。", aliases: ["盗贼工具"] },
   { id: "crowbar", name: "撬棍", category: "tool", stackable: false, wear: "pack", text: "撬、别。相关力量检定有优势。", aliases: ["撬棍"] },
-  { id: "explorer-pack", name: "探险者套装", category: "equipment", stackable: false, wear: "pack", text: "背包、睡袋、餐具、火绒盒、十支火把、十份口粮、水袋、五十尺绳。", aliases: ["探险者套装"] },
-  { id: "burglar-pack", name: "盗贼套装", category: "equipment", stackable: false, wear: "pack", text: "背包、一千颗滚珠、十尺绳、铃铛、蜡烛、撬棍、锤子、十根钉子、提灯、油、口粮、水袋、麻袋。", aliases: ["盗贼套装"] },
-  { id: "scholar-pack", name: "学者套装", category: "equipment", stackable: false, wear: "pack", text: "背包、书、墨水、笔、小袋羊皮纸、小刀、沙袋。", aliases: ["学者套装"] },
-  { id: "priest-pack", name: "牧师套装", category: "equipment", stackable: false, wear: "pack", text: "背包、毯子、蜡烛、香、祭服、口粮、水袋。", aliases: ["牧师套装"] },
+  // SRD 5.1 (2016), Equipment Packs, PDF p. 70: https://media.wizards.com/2016/downloads/DND/SRD-OGL_V5.1.pdf
+  { id: "explorer-pack", name: "探险者套装", category: "equipment", stackable: false, wear: "pack", contents: [{ itemId: "backpack", qty: 1 }, { itemId: "bedroll", qty: 1 }, { itemId: "mess-kit", qty: 1 }, { itemId: "tinderbox", qty: 1 }, { itemId: "torch", qty: 10 }, { itemId: "ration", qty: 10 }, { itemId: "waterskin", qty: 1 }, { itemId: "rope-50ft", qty: 1 }], text: "背包、睡袋、餐具、火绒盒、十支火把、十份口粮、水袋、五十尺绳。", aliases: ["探险者套装"] },
+  { id: "burglar-pack", name: "盗贼套装", category: "equipment", stackable: false, wear: "pack", contents: [{ itemId: "backpack", qty: 1 }, { itemId: "ball-bearing", qty: 1000 }, { itemId: "string-10ft", qty: 1 }, { itemId: "bell", qty: 1 }, { itemId: "candle", qty: 5 }, { itemId: "crowbar", qty: 1 }, { itemId: "hammer", qty: 1 }, { itemId: "piton", qty: 10 }, { itemId: "lantern", qty: 1 }, { itemId: "oil", qty: 2 }, { itemId: "ration", qty: 5 }, { itemId: "tinderbox", qty: 1 }, { itemId: "waterskin", qty: 1 }, { itemId: "rope-50ft", qty: 1 }], text: "背包、一千颗滚珠、十尺细线、铃铛、五根蜡烛、撬棍、锤子、十根岩钉、遮光提灯、两瓶灯油、五日口粮、火绒盒、水袋、五十尺麻绳。", aliases: ["盗贼套装"] },
+  { id: "scholar-pack", name: "学者套装", category: "equipment", stackable: false, wear: "pack", contents: [{ itemId: "backpack", qty: 1 }, { itemId: "book", qty: 1 }, { itemId: "ink", qty: 1 }, { itemId: "parchment", qty: 10 }, { itemId: "knife", qty: 1 }, { itemId: "sand-pouch", qty: 1 }], text: "背包、知识书籍、一瓶墨水与一支墨水笔、十张羊皮纸、小刀、小袋细沙。", aliases: ["学者套装"] },
+  { id: "priest-pack", name: "牧师套装", category: "equipment", stackable: false, wear: "pack", contents: [{ itemId: "backpack", qty: 1 }, { itemId: "blanket", qty: 1 }, { itemId: "candle", qty: 10 }, { itemId: "tinderbox", qty: 1 }, { itemId: "alms-box", qty: 1 }, { itemId: "incense", qty: 2 }, { itemId: "censer", qty: 1 }, { itemId: "vestments", qty: 1 }, { itemId: "ration", qty: 2 }, { itemId: "waterskin", qty: 1 }], text: "背包、毯子、十根蜡烛、火绒盒、捐献箱、两块熏香、香炉、祭服、两日口粮、水袋。", aliases: ["牧师套装"] },
   { id: "clothes", name: "普通衣服", category: "equipment", stackable: false, wear: "pack", text: "日常穿着。不占护甲格，也不提供 AC。", aliases: ["普通衣服"] },
   { id: "fine-clothes", name: "细服", category: "equipment", stackable: false, wear: "pack", text: "体面场合。某些社交场合有帮助。", aliases: ["细服"] },
   { id: "prayer-book", name: "祈祷书", category: "object", stackable: false, wear: "pack", text: "仪式与经文。", aliases: ["祈祷书"] },
-  { id: "incense", name: "香烛", category: "consumable", stackable: true, wear: "pack", text: "供仪式使用。", aliases: ["香烛"] },
-  { id: "ink", name: "墨水与笔", category: "tool", stackable: false, wear: "pack", text: "书写。", aliases: ["墨水与笔", "瓶装墨水"] },
+  { id: "incense", name: "熏香", category: "consumable", stackable: true, wear: "pack", text: "一块供仪式使用的熏香。", aliases: ["香烛"] },
+  { id: "ink", name: "墨水与笔", category: "tool", stackable: false, wear: "pack", text: "一瓶墨水与一支墨水笔，合为一套书写工具。", aliases: ["墨水与笔", "瓶装墨水"] },
   { id: "knife", name: "小刀", category: "tool", stackable: false, wear: "pack", text: "工具小刀，不当武器。", aliases: ["小刀"] },
   { id: "letters", name: "书信", category: "object", stackable: false, wear: "pack", text: "几封旧信。", aliases: ["书信"] },
   { id: "pot", name: "铁锅", category: "tool", stackable: false, wear: "pack", text: "野炊。", aliases: ["铁锅", "铁质器皿"] },
@@ -133,8 +161,39 @@ export const ITEMS: readonly GearItem[] = [
   { id: "dark-cloak-bag", name: "暗袋", category: "equipment", stackable: false, wear: "pack", text: "藏小东西。", aliases: ["暗袋"] },
   { id: "map-scrap", name: "地图残片", category: "object", stackable: false, wear: "pack", text: "城市的一块残图。", aliases: ["地图残片"] },
   { id: "pet-rat", name: "宠物鼠", category: "object", stackable: false, wear: "pack", text: "一只习惯口袋的老鼠。不是熟悉物。", aliases: ["宠物鼠"] },
-  { id: "gp", name: "金币", category: "currency", stackable: true, wear: "pack", text: "通用货币。10 gp＝1 pp，1 gp＝10 sp。", aliases: ["gp", "15 gp", "10 gp", "25 gp"] },
+  { id: "gp", name: "金币", category: "currency", stackable: true, wear: "pack", stockResourceId: "gold", text: "通用货币。10 gp＝1 pp，1 gp＝10 sp。", aliases: ["gp", "15 gp", "10 gp", "25 gp"] },
 ];
+
+export const ITEM_STOCK_RESOURCE_IDS: readonly string[] = Object.freeze(
+  ITEMS.flatMap((item) => item.stockResourceId === undefined ? [] : [item.stockResourceId]),
+);
+
+/** Bundles are acquisition descriptions, never replenishable held items. */
+export function expandGearBundles(entries: readonly PackEntry[]): PackEntry[] {
+  const result: PackEntry[] = [];
+  const add = (entry: PackEntry, ancestors: readonly string[]) => {
+    if (!Number.isSafeInteger(entry.qty) || entry.qty < 0) throw new TypeError("invalid gear quantity");
+    if (entry.qty === 0) return;
+    const contents = itemById(entry.itemId)?.contents;
+    if (contents === undefined) {
+      addPack(result, entry.itemId, entry.qty);
+      return;
+    }
+    if (ancestors.includes(entry.itemId)) throw new TypeError("cyclic equipment bundle");
+    for (const child of contents) add({ itemId: child.itemId, qty: child.qty * entry.qty }, [...ancestors, entry.itemId]);
+  };
+  for (const entry of entries) add(entry, []);
+  return result;
+}
+
+export function gearStockResources(backpack: readonly PackEntry[]): Record<string, number> {
+  const counts = Object.fromEntries(ITEM_STOCK_RESOURCE_IDS.map((id) => [id, 0]));
+  for (const entry of backpack) {
+    const resourceId = itemById(entry.itemId)?.stockResourceId;
+    if (resourceId !== undefined) counts[resourceId] += entry.qty;
+  }
+  return counts;
+}
 
 export function itemById(id: string | undefined | null) {
   if (!id) return undefined;
@@ -175,22 +234,11 @@ function takePack(pack: PackEntry[], itemId: string, qty = 1): boolean {
   return true;
 }
 
-function kitQty(raw: string, item: GearItem): number {
-  if (/两把|两支/.test(raw) || item.aliases?.some((a) => /两把/.test(a) && a === raw))
-    return 2;
-  const n = raw.match(/(\d+)\s*(支|矢|gp)/);
+function kitQty(raw: string): number {
+  if (/两把|两支/.test(raw)) return 2;
+  const n = raw.match(/(\d+)\s*(把|支|矢|gp)/);
   if (n) return Number(n[1]);
-  if (raw.includes("15 gp")) return 15;
-  if (raw.includes("25 gp")) return 25;
-  if (raw.includes("10 gp")) return 10;
-  if (raw.includes("20 矢") && item.id !== "bolt" && item.id !== "arrow") return 1;
   return 1;
-}
-
-function extraAmmo(raw: string): PackEntry | null {
-  if (!/20\s*矢/.test(raw)) return null;
-  if (/弓/.test(raw)) return { itemId: "arrow", qty: 20 };
-  return { itemId: "bolt", qty: 20 };
 }
 
 export function defaultSlot(item: GearItem): GearSlot | null {
@@ -204,18 +252,25 @@ export function kitToGear(lines: string[]): { equipped: Equipped; backpack: Pack
   const equipped = emptyEquipped();
   const backpack: PackEntry[] = [];
   for (const line of lines) {
-    const item = itemByAlias(line);
-    if (!item) {
+    // Quantity belongs to its kit component. An ammunition suffix cannot
+    // multiply the weapon, and its type comes from the weapon definition.
+    const bundle = line.trim().match(/^(.*?)\s*与\s*(\d+)\s*矢$/);
+    const primary = (bundle?.[1] ?? line).trim();
+    const item = itemByAlias(primary) ?? itemByAlias(primary.replace(
+      /^(?:两|\d+)\s*(?:把|支)\s*|\s*(?:两|\d+)\s*(?:把|支)$/g, "",
+    ));
+    const ammunitionId = bundle === null ? undefined : item?.weapon?.ammunitionId;
+    if (!item || (bundle !== null && ammunitionId === undefined)) {
       backpack.push({ itemId: line, qty: 1 });
       continue;
     }
-    const qty = kitQty(line, item);
-    const ammo = extraAmmo(line);
+    const qty = kitQty(primary);
     let placed = 0;
     const slot = defaultSlot(item);
     if (slot && !equipped[slot]) {
       equipped[slot] = item.id;
-      placed = 1;
+      // The ammunition slot selects its backpack stack, not a separate unit.
+      placed = slot === "ammo" ? 0 : 1;
       if (item.twoHanded) equipped.off = undefined;
     } else if (item.wear === "weapon" && !equipped.off && !item.twoHanded && !itemById(equipped.main)?.twoHanded) {
       equipped.off = item.id;
@@ -228,13 +283,13 @@ export function kitToGear(lines: string[]): { equipped: Equipped; backpack: Pack
       placed = 1;
     }
     if (qty - placed > 0) addPack(backpack, item.id, qty - placed);
-    if (ammo) addPack(backpack, ammo.itemId, ammo.qty);
+    if (ammunitionId !== undefined && bundle !== null) addPack(backpack, ammunitionId, Number(bundle[2]));
   }
   if (!equipped.ammo) {
     if (backpack.some((p) => p.itemId === "arrow")) equipped.ammo = "arrow";
     else if (backpack.some((p) => p.itemId === "bolt")) equipped.ammo = "bolt";
   }
-  return { equipped, backpack };
+  return { equipped, backpack: expandGearBundles(backpack) };
 }
 
 export function acFromGear(

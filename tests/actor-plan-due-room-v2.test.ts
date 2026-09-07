@@ -903,6 +903,59 @@ describe("due ActorPlan Room Action phase", () => {
       .toMatchObject({ subjectRefs: [NPC_ID, "wake"] });
   });
 
+  it.each(["same", "changed"])("executes a revised %s knowledge trigger once after eviction without reusing the prior decision root", async (variant) => {
+    const roomId = `actor-plan-trigger-revision-${variant}`;
+    const { authority: initialAuthority, archiveCapability } = await initializeRoom(roomId);
+    let authority = initialAuthority;
+    await formDuePlan(authority, `submission:${roomId}:form`, triggerFormationProposal);
+    const triggerRef = variant === "same" ? NPC_KNOWLEDGE_REF : NPC_UNFROZEN_KNOWLEDGE_REF;
+    const decisionRoots: string[] = [];
+    const run = (decision: "revise" | "execute") => handleRoomAction({
+      principal: ALICE,
+      authority,
+      kp: {
+        async decideDueActorPlan(request) {
+          const value = record(request, "trigger revision decision");
+          const projection = record(value.projection, "trigger revision NPC projection");
+          decisionRoots.push(String(projection.dueActorPlanChildRootActionId));
+          expect(JSON.stringify(value)).not.toContain(PLAYER_PRIVATE_REF);
+          if (decision === "execute") return executeDuePlanDecision(String(value.rootActionId));
+          const revised = reviseDuePlanDecision(String(value.rootActionId));
+          return { ...revised, revision: { ...revised.revision,
+            premiseRefs: [...new Set([NPC_KNOWLEDGE_REF, triggerRef])],
+            due: null, trigger: { kind: "knowledgeAcquired", knowledgeRef: triggerRef },
+          } };
+        },
+        async propose(request) {
+          return playerIntentProposal(String(record(request, "trigger revision player request").rootActionId));
+        },
+        async narrate() { return { body: "守夜人继续巡视。", agencyClaims: [] }; },
+      },
+    }, { kind: "intent", submissionId: `submission:${roomId}:${decision}`, text: "我观察守夜人的巡视。" } as never);
+
+    const revised = record(await run("revise"), "trigger revised outcome");
+    expect(revised.kind, JSON.stringify(revised)).toBe("committed");
+    await evictDurableObject(authority as never);
+    authority = env.ROOMS.getByName(roomId) as unknown as Authority;
+    const executed = record(await run("execute"), "revised trigger execution");
+    expect(executed.kind, JSON.stringify(executed)).toBe("committed");
+    expect(decisionRoots).toHaveLength(2);
+    expect(new Set(decisionRoots).size).toBe(2);
+
+    const events = await archiveEvents(authority, archiveCapability);
+    expect(events.filter(event => event.eventType === "NpcPlanRevised" && event.rootActionId === decisionRoots[0])).toHaveLength(1);
+    expect(events.filter(event => event.eventType === "NpcActionCommitted" && event.rootActionId === decisionRoots[1])).toHaveLength(1);
+    expect(events.filter(event => event.eventType === "ActivityCompleted"
+      && record(event.payload, "revised trigger activity").activityId === ACTIVITY_ID)).toHaveLength(1);
+    expect(events.filter(event => event.eventType === "CanonicalFactDeclared"
+      && record(record(event.payload, "revised trigger trace").fact, "trace").id === REVISED_TRACE_FACT_REF)).toHaveLength(1);
+    await evictDurableObject(authority as never);
+    authority = env.ROOMS.getByName(roomId) as unknown as Authority;
+    expect(record(await run("execute"), "duplicate trigger action").kind).toBe("committed");
+    expect(decisionRoots).toHaveLength(2);
+    expect(await archiveEvents(authority, archiveCapability)).toEqual(events);
+  });
+
   it("executes a knowledge-triggered plan before the affected player intent without advancing real time", async () => {
     const { authority, archiveCapability } = await initializeRoom("actor-plan-trigger-execute-v2");
     const formed = record(await handleRoomAction({
@@ -960,7 +1013,7 @@ describe("due ActorPlan Room Action phase", () => {
     });
     const action = events.find((event) =>
       event.eventType === "NpcActionCommitted"
-      && event.rootActionId === `actor-plan-due:${PLAN_ID}:trigger:knowledgeAcquired`
+      && event.rootActionId === `actor-plan-due:${PLAN_ID}:revision:1:trigger:knowledgeAcquired`
     );
     expect(action).toBeDefined();
     expect(record(action!.payload, "triggered NpcAction payload").causedByRootActionId)

@@ -1,0 +1,330 @@
+{
+  "date": "2026-09-06",
+  "branch": "cloudflare",
+  "baseCommit": "258caee404e0814405eb497653ee9f00d647b773",
+  "sourceState": "uncommitted-development-tree",
+  "batches": [
+    {
+      "batch": "round10",
+      "maximums": {
+        "maximumActions": 2,
+        "maximumCalls": 12,
+        "maximumInputTokens": 240000,
+        "maximumOutputTokens": 24000
+      },
+      "calls": [
+        {
+          "ordinal": 1,
+          "purpose": "proposal",
+          "model": "deepseek-v4-flash",
+          "tool": "offer_kp_proposal_bundle",
+          "requestSha256": "bc6f4eeb4a6101c8bde0c2fdf77349a0d0d6c95593969ae1fa7ec31d9d280806",
+          "responseCreatedAtUnix": 1788633119,
+          "usage": {
+            "prompt_tokens": 19029,
+            "prompt_cache_hit_tokens": 4736,
+            "prompt_cache_miss_tokens": 14293,
+            "completion_tokens": 503
+          },
+          "diagnosticOnly": false,
+          "validation": null
+        },
+        {
+          "ordinal": 2,
+          "purpose": "narrationGeneration",
+          "model": "deepseek-v4-flash",
+          "tool": "submit_current_narration",
+          "requestSha256": "9fe132014e82f113ba9855bc0702ebd2d6c38225a4227771001afc5180f93826",
+          "responseCreatedAtUnix": 1788633122,
+          "usage": {
+            "prompt_tokens": 1541,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1541,
+            "completion_tokens": 72
+          },
+          "diagnosticOnly": false,
+          "validation": null
+        },
+        {
+          "ordinal": 3,
+          "purpose": "narrationReview",
+          "model": "deepseek-v4-flash",
+          "tool": "review_frozen_narration",
+          "requestSha256": "cffcac6b3d54bf4d0b4740a11ae3396a0f3523c1f89cc2e5060c7517ab10186f",
+          "responseCreatedAtUnix": 1788633123,
+          "usage": {
+            "prompt_tokens": 2046,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 2046,
+            "completion_tokens": 172
+          },
+          "diagnosticOnly": false,
+          "validation": null
+        },
+        {
+          "ordinal": 4,
+          "purpose": "development-review-contrast",
+          "model": "deepseek-v4-flash",
+          "tool": "review_frozen_narration",
+          "requestSha256": "cf97111f93d2a1bc62ac763c1d7feb1fc14f740ab5e087232a902fb317586a9e",
+          "responseCreatedAtUnix": 1788633933,
+          "usage": {
+            "prompt_tokens": 2439,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 2439,
+            "completion_tokens": 407
+          },
+          "diagnosticOnly": true,
+          "validation": {
+            "accepted": false,
+            "reason": "unsupportedClause"
+          }
+        }
+      ],
+      "totals": {
+        "prompt_tokens": 25055,
+        "prompt_cache_hit_tokens": 4736,
+        "prompt_cache_miss_tokens": 20319,
+        "completion_tokens": 1154
+      },
+      "before": {
+        "stateVersion": "0",
+        "receiptCount": 0,
+        "hitPoints": {
+          "current": 28,
+          "maximum": 28
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 20,
+          "arrow": 0,
+          "torch": 10,
+          "ration": 10,
+          "gold": 10
+        },
+        "fictionTime": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        },
+        "pendingInputs": [],
+        "boltQuantity": 20
+      },
+      "after": {
+        "stateVersion": "1",
+        "receiptCount": 1,
+        "hitPoints": {
+          "current": 28,
+          "maximum": 28
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 19,
+          "arrow": 0,
+          "torch": 10,
+          "ration": 10,
+          "gold": 10
+        },
+        "fictionTime": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        },
+        "pendingInputs": [],
+        "boltQuantity": 19
+      },
+      "action": "committed",
+      "narration": "published",
+      "humanNarrationAcceptance": false,
+      "replay": {
+        "kind": "replayed",
+        "exactState": true,
+        "frozenContextsConform": true,
+        "eventCount": 1,
+        "eventTypes": [
+          "InventoryOperationApplied"
+        ]
+      },
+      "diagnostic": "Former false approval now rejected; result coverage classification still imperfect",
+      "duplicateChecks": {
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      },
+      "playerOpeningKnowledgeCount": [
+        0
+      ],
+      "estimatedOffPeakCny": 0.0359083
+    },
+    {
+      "batch": "round11",
+      "maximums": {
+        "maximumActions": 2,
+        "maximumCalls": 12,
+        "maximumInputTokens": 240000,
+        "maximumOutputTokens": 24000
+      },
+      "calls": [
+        {
+          "ordinal": 1,
+          "purpose": "proposal",
+          "model": "deepseek-v4-flash",
+          "tool": "offer_kp_proposal_bundle",
+          "requestSha256": "8e0ea098d3ee5613af7c7c2ef6b966e25195e2b66c84b78f710b47dab0ef5b38",
+          "responseCreatedAtUnix": 1788634042,
+          "usage": {
+            "prompt_tokens": 19778,
+            "prompt_cache_hit_tokens": 8704,
+            "prompt_cache_miss_tokens": 11074,
+            "completion_tokens": 523
+          },
+          "diagnosticOnly": false,
+          "validation": null
+        },
+        {
+          "ordinal": 2,
+          "purpose": "narrationGeneration",
+          "model": "deepseek-v4-flash",
+          "tool": "submit_current_narration",
+          "requestSha256": "531231a92e6a234c580f3f1f8546a8a8246291573fad92731c97cf877aac23ef",
+          "responseCreatedAtUnix": 1788634045,
+          "usage": {
+            "prompt_tokens": 1590,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 1590,
+            "completion_tokens": 80
+          },
+          "diagnosticOnly": false,
+          "validation": null
+        },
+        {
+          "ordinal": 3,
+          "purpose": "narrationReview",
+          "model": "deepseek-v4-flash",
+          "tool": "review_frozen_narration",
+          "requestSha256": "647c53c4a71b4ac851877c0e753892baa39f4aaf03f3606210a8c0bc37fa5d32",
+          "responseCreatedAtUnix": 1788634046,
+          "usage": {
+            "prompt_tokens": 2506,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 2506,
+            "completion_tokens": 464
+          },
+          "diagnosticOnly": false,
+          "validation": null
+        }
+      ],
+      "totals": {
+        "prompt_tokens": 23874,
+        "prompt_cache_hit_tokens": 8704,
+        "prompt_cache_miss_tokens": 15170,
+        "completion_tokens": 1067
+      },
+      "before": {
+        "stateVersion": "0",
+        "receiptCount": 0,
+        "hitPoints": {
+          "current": 28,
+          "maximum": 28
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 20,
+          "arrow": 0,
+          "torch": 10,
+          "ration": 10,
+          "gold": 10
+        },
+        "fictionTime": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        },
+        "pendingInputs": [],
+        "boltQuantity": 20
+      },
+      "after": {
+        "stateVersion": "1",
+        "receiptCount": 1,
+        "hitPoints": {
+          "current": 28,
+          "maximum": 28
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 0,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 1,
+          "slot1": 0,
+          "slot2": 0,
+          "superiority": 0,
+          "surge": 1,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 19,
+          "arrow": 0,
+          "torch": 10,
+          "ration": 10,
+          "gold": 10
+        },
+        "fictionTime": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        },
+        "pendingInputs": [],
+        "boltQuantity": 19
+      },
+      "action": "committed",
+      "narration": "rejected",
+      "humanNarrationAcceptance": false,
+      "replay": {
+        "kind": "replayed",
+        "exactState": true,
+        "frozenContextsConform": true,
+        "eventCount": 1,
+        "eventTypes": [
+          "InventoryOperationApplied"
+        ]
+      },
+      "diagnostic": "Uncommitted scene/material attributes rejected; no further sampling",
+      "playerOpeningKnowledgeCount": [
+        1
+      ],
+      "estimatedOffPeakCny": 0.0279917
+    }
+  ]
+}

@@ -183,6 +183,9 @@ describe("long-rest Activity across Room DO eviction", () => {
     );
     expect(first.outcome.kind, JSON.stringify(first.outcome)).toBe("committed");
     const firstActivityId = `activity:${first.action.rootActionId}`;
+    const activeActivity = record(list(readModel(await authority.observe(ALICE)).activities, "active activities")
+      .find(entry => record(entry, "active activity").activityId === firstActivityId), "active rest");
+    expect(Object.keys(activeActivity).sort()).toEqual(["activityId", "characterId", "intendedDurationMicros", "restKind", "startedAtFictionMicros", "status"]);
 
     await evictDurableObject(authority as never);
 
@@ -198,6 +201,7 @@ describe("long-rest Activity across Room DO eviction", () => {
         .find((entry) => record(entry, "activity after interruption").activityId === firstActivityId),
       "rebuilt long-rest activity",
     );
+    expect(Object.keys(interruptedActivity).sort()).toEqual(Object.keys(activeActivity).sort());
     const afterInterruptionCharacter = record(
       afterInterruption.controlledCharacter,
       "character after interruption",

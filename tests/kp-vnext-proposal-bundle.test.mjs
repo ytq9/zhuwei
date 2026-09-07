@@ -8,13 +8,28 @@ import {
   VNEXT_IN_WORLD_REFUSAL_FORM_ID,
   VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
 } from "../app/_runtime/lib/kp/vnext/proposal-bundle.ts";
-import { VNEXT_WORLD_INTERACTION_FORM_ID } from "../app/_runtime/lib/kp/vnext/proposals.ts";
+import { VNEXT_MATERIALIZATION_FORM_ID, VNEXT_WORLD_INTERACTION_FORM_ID } from "../app/_runtime/lib/kp/vnext/proposals.ts";
 import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
 
 const ROOT_ACTION = "root:proposal-bundle";
 const ACTOR = "character:bundle-actor";
 const CONTEXT_HASH = `sha256:${"c".repeat(64)}`;
 const BASIS = "fact:bundle-basis";
+
+test("vNext1 materialization accepts scene features and rejects world facts without the vNext2 truth contract", () => {
+  const proposal = {
+    kind: "materializeObject", semanticKind: "sceneFeature", templateRef: "template:scene-feature",
+    templateHash: CONTEXT_HASH, visibilityPolicyRef: "visibility:public", summary: "创建一个场景对象。",
+    definition: { sceneRef: "scene:bundle", visibilityFactId: null, label: "壁画", description: "墙上的壁画。",
+      observableState: null, affordances: null, mechanicDefinitionRefs: [] },
+  };
+  const value = bundle(entry({ formId: VNEXT_MATERIALIZATION_FORM_ID, proposal,
+    produces: [{ handle: "prospective:scene-feature", kind: "semanticDefinition", outcomeBinding: "always" }] }));
+  assertAccepted(value);
+  proposal.semanticKind = "worldFact";
+  proposal.definition.sceneRef = null;
+  assert.equal(validateVNextProposalBundle(value).kind, "rejected");
+});
 
 function branch(overrides = {}) {
   return {
@@ -141,7 +156,7 @@ function bundle(...entries) {
 }
 
 function contextFor(refs = [BASIS, "scene:bundle", "feature:bundle-target"], viewerRefs = []) {
-  const uniqueRefs = [...new Set(refs)];
+  const uniqueRefs = [...new Set([ACTOR, `character-timeline:${ACTOR}`, ...refs])];
   return {
     schema: "zhuwei.adjudication-context/vnext-1",
     intent: {
@@ -338,6 +353,9 @@ test("missing prerequisite and world-law violation lower to traceable in-world r
     assert.equal(result.command.ruling.kind, feasibility);
     assert.equal(result.command.ruling.prerequisites[0].ref, "item-definition:required-tool");
     assert.equal(result.command.ruling.attemptCosts[0].durationMicros, "1");
+    assert.equal(result.command.contextHash, CONTEXT_HASH);
+    assert.deepEqual(result.command.readSet.map(binding => binding.ref),
+      [ACTOR, `character-timeline:${ACTOR}`, BASIS, "item-definition:required-tool"].sort());
     assert.equal(JSON.stringify(result.command).includes("randomness"), false);
     assert.equal(JSON.stringify(result.command).includes("effects"), false);
   }

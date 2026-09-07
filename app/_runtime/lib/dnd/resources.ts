@@ -1,7 +1,8 @@
+import { CLASS_RESOURCE_CATALOG } from "./class-resources";
 import { abilityMod } from "@/lib/utils";
 import { classById, spellById, SPELLS } from "./catalog";
 import type { CharacterSheet } from "./types";
-import { itemById } from "./gear";
+import { gearStockResources, itemById } from "./gear";
 
 export type Charge = { max: number; used: number };
 
@@ -39,17 +40,7 @@ export function initResources(sheet: Pick<CharacterSheet, "classId" | "subclassI
   const slot2 = caster && caster !== "ranger" ? 2 : 0;
   const wis = abilityMod(sheet.scores?.wis ?? 10);
   const int = abilityMod(sheet.scores?.int ?? 10);
-  const gold =
-    sheet.equipment
-      ?.map((e) => /(\d+)\s*gp/i.exec(e))
-      .filter(Boolean)
-      .reduce((n, m) => n + Number(m![1]), 0) ?? 0;
-  const pack = sheet.backpack ?? [];
-  const qty = (id: string) => pack.find((p) => p.itemId === id)?.qty ?? 0;
-  const kit = (sheet.equipment ?? []).join(" ");
-  const packIds = pack.map((p) => p.itemId);
-  const explorer = packIds.includes("explorer-pack") || kit.includes("探险者");
-  const priest = packIds.includes("priest-pack") || kit.includes("牧师套装");
+  const stocks = gearStockResources(sheet.backpack ?? []);
   return {
     slot1: { max: slot1, used: 0 },
     slot2: { max: slot2, used: 0 },
@@ -75,11 +66,11 @@ export function initResources(sheet: Pick<CharacterSheet, "classId" | "subclassI
     arcaneRecovery: false,
     conc: null,
     ward: sheet.subclassId === "abjuration" ? 6 + int : 0,
-    gold,
-    arrow: qty("arrow") || (kit.includes("矢") || kit.includes("箭") ? 20 : 0),
-    bolt: qty("bolt") || (kit.includes("弩") ? 20 : 0),
-    torch: qty("torch") || (explorer ? 10 : 0),
-    ration: qty("ration") || (explorer || priest ? 10 : 0),
+    gold: stocks.gold,
+    arrow: stocks.arrow,
+    bolt: stocks.bolt,
+    torch: stocks.torch,
+    ration: stocks.ration,
   };
 }
 
@@ -130,29 +121,29 @@ export function listStocks(sheet: CharacterSheet): StockItem[] {
   const items: StockItem[] = [];
   if (r.slot1.max) items.push({ id: "slot1", label: "一环", remain: left(r.slot1), max: r.slot1.max, note: "长休" });
   if (r.slot2.max) items.push({ id: "slot2", label: "二环", remain: left(r.slot2), max: r.slot2.max, note: "长休" });
-  if (r.channel.max) items.push({ id: "channel", label: "引导神力", remain: left(r.channel), max: r.channel.max, note: "短休" });
+  if (r.channel.max) items.push({ id: "channel", label: CLASS_RESOURCE_CATALOG.channel!.label, remain: left(r.channel), max: r.channel.max, note: "短休" });
   if (r.rage.max) {
     items.push({
       id: "rage",
-      label: "狂暴",
+      label: CLASS_RESOURCE_CATALOG.rage!.label,
       remain: left(r.rage),
       max: r.rage.max,
       note: r.rage.on ? "进行中" : "长休",
     });
   }
-  if (r.surge.max) items.push({ id: "surge", label: "动作如潮", remain: left(r.surge), max: r.surge.max, note: "短休" });
+  if (r.surge.max) items.push({ id: "surge", label: CLASS_RESOURCE_CATALOG.surge!.label, remain: left(r.surge), max: r.surge.max, note: "短休" });
   if (r.secondWind.max) {
-    items.push({ id: "secondWind", label: "回气", remain: left(r.secondWind), max: r.secondWind.max, note: "短休" });
+    items.push({ id: "secondWind", label: CLASS_RESOURCE_CATALOG.secondWind!.label, remain: left(r.secondWind), max: r.secondWind.max, note: "短休" });
   }
   if (r.superiority.max) {
-    items.push({ id: "superiority", label: "战术骰", remain: left(r.superiority), max: r.superiority.max, note: "短休" });
+    items.push({ id: "superiority", label: CLASS_RESOURCE_CATALOG.superiority!.label, remain: left(r.superiority), max: r.superiority.max, note: "短休" });
   }
   if (r.warPriest.max) {
-    items.push({ id: "warPriest", label: "战争祭司", remain: left(r.warPriest), max: r.warPriest.max, note: "感知调整/长休" });
+    items.push({ id: "warPriest", label: CLASS_RESOURCE_CATALOG.warPriest!.label, remain: left(r.warPriest), max: r.warPriest.max, note: "感知调整/长休" });
   }
-  if (r.breath.max) items.push({ id: "breath", label: "吐息", remain: left(r.breath), max: r.breath.max, note: "短休" });
+  if (r.breath.max) items.push({ id: "breath", label: CLASS_RESOURCE_CATALOG.breath!.label, remain: left(r.breath), max: r.breath.max, note: "短休" });
   if (r.relentless.max) {
-    items.push({ id: "relentless", label: "不屈不挠", remain: left(r.relentless), max: r.relentless.max, note: "长休" });
+    items.push({ id: "relentless", label: CLASS_RESOURCE_CATALOG.relentless!.label, remain: left(r.relentless), max: r.relentless.max, note: "长休" });
   }
   items.push({
     id: "hitDice",

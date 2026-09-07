@@ -1,0 +1,204 @@
+{
+  "round": 62,
+  "status": "stopped-on-third-action-lowering-reference-rejection",
+  "sourceManifest": "4d297b108d916dfd4288934d82e2767e8ed68e33733f7f2d5f1957cdd6c25e80",
+  "actions": [
+    {
+      "ordinal": 1,
+      "result": "committed",
+      "narration": "published"
+    },
+    {
+      "ordinal": 2,
+      "result": "committed",
+      "narration": "published"
+    },
+    {
+      "ordinal": 3,
+      "result": "notCommitted",
+      "narration": "notApplicable"
+    }
+  ],
+  "usage": {
+    "physicalCalls": 8,
+    "input": 122684,
+    "hit": 65920,
+    "miss": 56764,
+    "output": 1454,
+    "unknownUsageCalls": 0,
+    "estimatedCny": "0.094985",
+    "pricePeriod": "offPeak"
+  },
+  "callRows": [
+    {
+      "file": "01.json",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 30333,
+      "hit": 19200,
+      "miss": 11133,
+      "output": 71
+    },
+    {
+      "file": "02.json",
+      "tools": [],
+      "model": "deepseek-v4-flash",
+      "input": 1864,
+      "hit": 896,
+      "miss": 968,
+      "output": 220
+    },
+    {
+      "file": "03.json",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 2737,
+      "hit": 896,
+      "miss": 1841,
+      "output": 143
+    },
+    {
+      "file": "04.json",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 34869,
+      "hit": 19200,
+      "miss": 15669,
+      "output": 57
+    },
+    {
+      "file": "05.json",
+      "tools": [
+        "submit_due_actor_plan_decision"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 14592,
+      "hit": 4736,
+      "miss": 9856,
+      "output": 81
+    },
+    {
+      "file": "06.json",
+      "tools": [],
+      "model": "deepseek-v4-flash",
+      "input": 1202,
+      "hit": 896,
+      "miss": 306,
+      "output": 127
+    },
+    {
+      "file": "07.json",
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 1928,
+      "hit": 896,
+      "miss": 1032,
+      "output": 143
+    },
+    {
+      "file": "08.json",
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "model": "deepseek-v4-flash",
+      "input": 35159,
+      "hit": 19200,
+      "miss": 15959,
+      "output": 612
+    }
+  ],
+  "stateChecks": {
+    "timeSegments": [
+      "2000000",
+      "58000000"
+    ],
+    "finalTime": "60000000",
+    "thirdActionNoStateChange": true,
+    "duplicateNewCalls": [
+      0,
+      0
+    ],
+    "eventCount": 10,
+    "eventTypes": [
+      "NpcPlanFormed",
+      "ActivityStarted",
+      "KnowledgeReviewed",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "NpcActionCommitted",
+      "CanonicalFactDeclared",
+      "ActivityCompleted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "receipts": 7,
+    "pendingDue": 0,
+    "modelInvocations": 4,
+    "deliveryStatuses": [
+      "open",
+      "open",
+      "open",
+      "open",
+      "open",
+      "open"
+    ],
+    "audienceStatuses": [
+      "published",
+      "published"
+    ]
+  },
+  "failure": {
+    "ordinal": 3,
+    "kind": "loweringReferenceRejection",
+    "code": "PROPOSAL_REFERENCE_INVALID",
+    "constraint": "world-interaction:direct-target-not-addressable",
+    "path": [
+      "proposals",
+      0,
+      "focusRefs",
+      0
+    ],
+    "parse": "accepted",
+    "lowering": "rejected",
+    "rules": "notEntered",
+    "repair": "notAttempted-semantic-target-change-unproven",
+    "subcause": "held knowledge record used as directly observed target; context candidate audit ongoing"
+  },
+  "counts": {
+    "syntaxFailures": 0,
+    "formFailures": 0,
+    "loweringReferenceRejections": 1,
+    "rulesRejections": 0,
+    "observedPublishedNarrativeContradictions": 0,
+    "recoveryCalls": 0
+  },
+  "scopeLimit": "Existing future NPC plan is a trusted local Rules fixture. No proof of model-created plans, NPC lies, multiplayer 20+ or statistical stability.",
+  "processes": {
+    "setupPid": 7913,
+    "gamePid": 8042,
+    "capturePid": 7895,
+    "allExited": true,
+    "exitCodes": [
+      143,
+      143,
+      143
+    ]
+  },
+  "checks": {
+    "extractExit": 0,
+    "sourceEndExit": 0,
+    "replayExit": 0
+  },
+  "harnessNotes": [
+    "Live budget conservatively charges the NPC call as unknown because no matching usage telemetry is emitted; captured response usage is complete and included in final costs.",
+    "source-end exits zero; combined lsof command exits one because no service listens."
+  ]
+}

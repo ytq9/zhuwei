@@ -1,4 +1,5 @@
-import type { AuthoritativeWorldState, JsonRecord } from "./model";
+import { canonicalSha256 } from "../profiles/canonical";
+import type { AuthoritativeWorldState, DueActivityDescriptor, JsonRecord } from "./model";
 import { characterTimelineId } from "./timeline";
 import { isNonEmptyString, isRecord } from "./validation";
 
@@ -21,6 +22,9 @@ export function actorPlanPremiseIsAvailable(
   npcId: string,
   reference: string,
 ): boolean {
+  const npc = state.entities[npcId];
+  if (actorPlanNpcIsAvailable(npc) && (reference === npcId
+    || (reference === npc.semanticDefinitionRef && state.campaignRuntime.definitions[reference] !== undefined))) return true;
   if (reference in (state.knowledge[npcId] ?? {})) return true;
   const relationship = state.campaignRuntime.relationships[reference];
   if (Array.isArray(relationship?.subjectIds)
@@ -38,6 +42,9 @@ export function actorPlanPremiseScope(
   npcId: string,
   reference: string,
 ): string | undefined {
+  if (reference === npcId && actorPlanNpcIsAvailable(state.entities[npcId])) return `entity:${npcId}`;
+  if (reference === state.entities[npcId]?.semanticDefinitionRef
+    && state.campaignRuntime.definitions[reference] !== undefined) return `definition:${reference}`;
   if (reference in (state.knowledge[npcId] ?? {})) return `knowledge:${npcId}:${reference}`;
   if (reference in state.campaignRuntime.relationships) return `relationship:${reference}`;
   if (reference in state.campaignRuntime.promises) return `promise:${reference}`;
@@ -135,6 +142,7 @@ function eligiblePlan(
   state: AuthoritativeWorldState,
   affectedCharacterId: string,
   plan: JsonRecord,
+  includeFuture = false,
 ): EligibleDueActorPlan | undefined {
   const affected = state.entities[affectedCharacterId];
   const npcId = isNonEmptyString(plan.npcId) ? plan.npcId : undefined;
@@ -148,8 +156,8 @@ function eligiblePlan(
     ? undefined
     : state.campaignRuntime.activities[activityId];
   if (
-    affected?.kind !== "player"
-    || affected.tenureStatus !== "active"
+    !(affected?.kind === "player" && affected.tenureStatus === "active"
+      || affectedCharacterId === npcId && actorPlanNpcIsAvailable(affected))
     || !actorPlanNpcIsAvailable(npc)
     || npc.sceneId !== affected.sceneId
     || affectedTimelineId === undefined
@@ -192,12 +200,17 @@ function eligiblePlan(
       eligibleAtFictionMicros: timelineNow,
     };
   }
+  if (includeFuture && isRecord(plan.due) && plan.due.kind === "fictionTime"
+    && typeof plan.due.atFictionMicros === "string" && /^(0|[1-9][0-9]*)$/.test(plan.due.atFictionMicros)) {
+    return { plan, npcId, timelineId: affectedTimelineId, eligibleAtFictionMicros: plan.due.atFictionMicros };
+  }
   return undefined;
 }
 
 /**
  * Rules owns both eligibility and deterministic ordering. Room supplies only
- * the authenticated player's character id and never reads plan internals.
+ * a validated affected character or the NPC owner and never selects a plan
+ * by examining private plan internals outside this Rules predicate.
  */
 export function earliestEligibleDueActorPlan(
   state: AuthoritativeWorldState,
@@ -217,11 +230,41 @@ export function earliestEligibleDueActorPlan(
 }
 
 export function dueActorPlanChildRoot(plan: JsonRecord): string | undefined {
-  if (!isNonEmptyString(plan.planId)) return undefined;
+  if (!isNonEmptyString(plan.planId) || typeof plan.revision !== "string"
+    || !/^[1-9][0-9]*$/.test(plan.revision)) return undefined;
   const dueKey = isRecord(plan.due) && typeof plan.due.atFictionMicros === "string"
     ? `time:${plan.due.atFictionMicros}`
     : isRecord(plan.trigger) && isNonEmptyString(plan.trigger.kind)
       ? `trigger:${plan.trigger.kind}`
       : undefined;
-  return dueKey === undefined ? undefined : `actor-plan-due:${plan.planId}:${dueKey}`;
+  // A revision is a new decision obligation even when it keeps the same
+  // trigger. Retry of one revision must reuse its root; a later revision must
+  // never collide with that decision's Receipt, stage or randomness journal.
+  return dueKey === undefined ? undefined : `actor-plan-due:${plan.planId}:revision:${plan.revision}:${dueKey}`;
+}
+
+/** Uses the same eligibility predicate as resolution. NPC self-selection lets
+ * an already scheduled off-screen plan progress without a fabricated player. */
+function actorPlanDescriptors(state: AuthoritativeWorldState, includeFuture: boolean): DueActivityDescriptor[] {
+  return Object.values(state.campaignRuntime.npcPlans).flatMap(plan => {
+    if (!isNonEmptyString(plan.npcId)) return [];
+    const selected = eligiblePlan(state, plan.npcId, plan, includeFuture);
+    const childRootActionId = dueActorPlanChildRoot(plan);
+    const activity = planActivity(plan);
+    if (selected === undefined || childRootActionId === undefined || activity === undefined) return [];
+    const activityId = String(activity.activityId);
+    return [{ activityId, ownerEntityId: selected.npcId, timelineId: selected.timelineId,
+      completionFictionMicros: selected.eligibleAtFictionMicros, childRootActionId,
+      activityHash: canonicalSha256(state.campaignRuntime.activities[activityId]),
+      sceneIds: [state.entities[selected.npcId].sceneId],
+      actorPlan: { planId: String(plan.planId), revision: String(plan.revision), planHash: canonicalSha256(plan) } }];
+  });
+}
+
+/** Future scheduling and current due resolution share identical identity/eligibility checks. */
+export function scheduledActorPlanDescriptors(state: AuthoritativeWorldState): DueActivityDescriptor[] {
+  return actorPlanDescriptors(state, true);
+}
+export function dueActorPlanDescriptors(state: AuthoritativeWorldState): DueActivityDescriptor[] {
+  return actorPlanDescriptors(state, false);
 }

@@ -1,0 +1,165 @@
+{
+  "round": 45,
+  "scope": "experimental review only; no production adoption",
+  "plan": {
+    "maxCalls": 4,
+    "maxInputTokens": 48000,
+    "maxOutputTokens": 32768,
+    "maxCny": 0.44,
+    "perCallTimeoutMs": 45000,
+    "batchTimeoutMs": 240000,
+    "model": "deepseek-v4-flash",
+    "productionCodeChanged": false,
+    "originalFullValidator": true,
+    "experimentalWire": "v8-candidate",
+    "manualStatementReviewRequired": true,
+    "cases": [
+      {
+        "id": "inventory-action-realization",
+        "expected": "accepted",
+        "body": "你取出一根火把，把它放下，没有点燃。",
+        "requestHash": "6ff0be6c2d4a9d56c58680d208fd367b6649313ae33a2e1ee13884a8ba86d5f4",
+        "estimatedInputTokens": 6607
+      },
+      {
+        "id": "inventory-unsupported-state",
+        "expected": "rejected",
+        "body": "你放下了一根火把，火把没有燃烧，周围完全没有光。",
+        "requestHash": "91ffc589def6813d60291551c638cc52300c0b5b32a0b87719b112b74d19b7ad",
+        "estimatedInputTokens": 6613
+      },
+      {
+        "id": "npc-attributed-source",
+        "expected": "accepted",
+        "body": "林说，门后没有人。",
+        "requestHash": "dca669bb58b691d715285df10a0c05e36345f0e73e119c097e9f05f11a7dab74",
+        "estimatedInputTokens": 4599
+      },
+      {
+        "id": "npc-source-as-truth",
+        "expected": "rejected",
+        "body": "门后没有人。",
+        "requestHash": "7754a6d0fb6ebef0b12b3f1c88cd6267cfc7c92a1710cf2db66592ec2f88dfd4",
+        "estimatedInputTokens": 4597
+      }
+    ]
+  },
+  "machineResults": {
+    "results": [
+      {
+        "id": "inventory-action-realization",
+        "verdict": "accepted",
+        "expected": "accepted",
+        "matched": true,
+        "reason": null,
+        "durationMs": 2864,
+        "usage": {
+          "prompt_tokens": 5693,
+          "completion_tokens": 390,
+          "total_tokens": 6083,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 5693
+        }
+      },
+      {
+        "id": "inventory-unsupported-state",
+        "verdict": "rejected",
+        "expected": "rejected",
+        "matched": true,
+        "reason": "unsupportedClause",
+        "durationMs": 3374,
+        "usage": {
+          "prompt_tokens": 5696,
+          "completion_tokens": 437,
+          "total_tokens": 6133,
+          "prompt_tokens_details": {
+            "cached_tokens": 256
+          },
+          "prompt_cache_hit_tokens": 256,
+          "prompt_cache_miss_tokens": 5440
+        }
+      },
+      {
+        "id": "npc-attributed-source",
+        "verdict": "accepted",
+        "expected": "accepted",
+        "matched": true,
+        "reason": null,
+        "durationMs": 2143,
+        "usage": {
+          "prompt_tokens": 3695,
+          "completion_tokens": 273,
+          "total_tokens": 3968,
+          "prompt_tokens_details": {
+            "cached_tokens": 256
+          },
+          "prompt_cache_hit_tokens": 256,
+          "prompt_cache_miss_tokens": 3439
+        }
+      },
+      {
+        "id": "npc-source-as-truth",
+        "verdict": "rejected",
+        "expected": "rejected",
+        "matched": true,
+        "reason": "unsupportedClause",
+        "durationMs": 1489,
+        "usage": {
+          "prompt_tokens": 3692,
+          "completion_tokens": 250,
+          "total_tokens": 3942,
+          "prompt_tokens_details": {
+            "cached_tokens": 2432
+          },
+          "prompt_cache_hit_tokens": 2432,
+          "prompt_cache_miss_tokens": 1260
+        }
+      }
+    ],
+    "notAttempted": [],
+    "endedAt": "2026-09-06T15:09:52.352Z"
+  },
+  "manualReview": {
+    "status": "not-cleared",
+    "inventory-action-realization": "Action realization cites e3 actionCommitted and e27 actor identity; no concrete release operation witness. No claim that original omitted ignition action is itself invented state.",
+    "inventory-unsupported-state": "Rejection is correct, but statement rewrites object not burning as player choice not to ignite.",
+    "npc-attributed-source": "Attributed speech accepted without asserting Q is true.",
+    "npc-source-as-truth": "Unattributed Q rejected as unsupported world fact."
+  },
+  "knownCostCny": "0.0299702",
+  "candidateSource": {
+    "candidate.mjs": "0167aacf5604dd753e12e2150cb75671f6a4b09c473e0735c52fc066ce359b86",
+    "strict-adapter.mjs": "39b3113d1a0a70e02ab9eb896aa681a66529c5ac09b842ec16f812300a60509c"
+  },
+  "sourceManifest": {
+    "app/_runtime/lib/kp/narration-vnext.ts": "9c94c8b4aecb1a7ceb13ec9d8658b0f5b84bd666ee3552283ba3c2853ae6b7f7",
+    "app/_runtime/lib/kp/deepseek.ts": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8",
+    "app/_runtime/lib/kp/vnext/invocation/budget.ts": "419715f0713f1fd89c15451da37bd34fdd797dca42fcad0ce6cebeeab147ad89"
+  },
+  "artifacts": {
+    "candidate-source.json": "640042a7d4ee21a52dbff1aebbeb6b410e75535855e820f022b1335aa4c20ae8",
+    "final.json": "9ca01a614d107c3e4b2e5213e68467dbec6fdbb829e18814d5add58be81e6bc0",
+    "inventory-action-realization-input.json": "040ec4af9b9b30a7b093cd2f7648260d12f4ef1da4be2b192b2941369487d7b5",
+    "inventory-action-realization-response.json": "4c18e87ffb992c659a2f0bccfd6f714f2d0018020f02bed47fb1db197049c62a",
+    "inventory-action-realization-result.json": "8ea5c5c7460258a35199d828fb7fbe676c0b35ec8ad040083c754fa95e96515b",
+    "inventory-unsupported-state-input.json": "ba4ce3f461f8f1bce83415ab06e75b70944a400ecff026eed4bdd8801cdc681d",
+    "inventory-unsupported-state-response.json": "3b0c7659de076d91b0f79f649570b3d12ea0c10285a20a350182f11741af8581",
+    "inventory-unsupported-state-result.json": "484b910fe8b3e0645a969b888b2dc04cbfb434f5da21dcfe1a6937a0be8c04a9",
+    "npc-attributed-source-input.json": "1c02d9168db2dd0fb5ff6646e738a8be573a94b1e74985fb3f7c38f6451ce19e",
+    "npc-attributed-source-response.json": "c2a60a6d343c2d29fa1167c9f03c3fdc96d85926c8c61f8e3443fdf435537681",
+    "npc-attributed-source-result.json": "f1cd2e685e9b279715851c8aea1bb74f0ba7e9f671847969216edd81626b94dc",
+    "npc-source-as-truth-input.json": "43a543795781f74d215c25d0e28ce3f5e088aa512e260b0bf9baf5d0fd273def",
+    "npc-source-as-truth-response.json": "d384a27c068e045869fa152c246160b747823bcfe4b0dc1297edfe0e9aa5b17b",
+    "npc-source-as-truth-result.json": "ccb5337a60350b613e01bcc9e0fda756c780a75937834cfa9373e348117fe5d7",
+    "plan.json": "6059f4e4b74d40e362011ee6a8c80dffecd6c53372e827f8956c299d52e7d390",
+    "source-manifest.json": "36facf7c7834a8aeea16be13aa9021710dacfb1d3234768b6d422640632023b4"
+  },
+  "roomSubmission": false,
+  "narrationPublication": false,
+  "productionCodeChanged": false,
+  "deployed": false,
+  "pushed": false
+}

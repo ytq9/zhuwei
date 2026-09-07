@@ -62,7 +62,7 @@ function actor() {
     proficientSkills: ["perception"],
     resources: {},
     resourceMaximums: {},
-    hitPoints: { current: 6, maximum: 6 },
+    hitPoints: { current: 3, maximum: 3 },
     loadout: { armorClass: 10, speedFeet: 30, equipped: {}, backpack: [] },
     characterBuild: {
       classId: "fighter",
@@ -271,7 +271,7 @@ test("an interaction can kill its actor before its summary event is folded and r
   const committed = runtime.step(world.profiles, pending.state, {
     kind: "fulfillAuthoritativeRandomness",
     continuation: pending.continuation,
-    rolls: [20],
+    rolls: pending.randomnessRequest.dice.flatMap(die => Array(Number(die.count)).fill(20)),
   });
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   assert.equal(committed.state.entities[ACTOR].hitPoints.current, 0);
@@ -280,7 +280,7 @@ test("an interaction can kill its actor before its summary event is folded and r
     committed.mechanicalResult.appliedEffects
       .filter(({ kind }) => kind === "damage")
       .map(({ targetRef, hpBefore, hpAfter, died }) => ({ targetRef, hpBefore, hpAfter, died })),
-    [{ targetRef: ACTOR, hpBefore: 6, hpAfter: 0, died: true }],
+    [{ targetRef: ACTOR, hpBefore: 3, hpAfter: 0, died: true }],
   );
 
   const laterAction = runtime.step(world.profiles, committed.state, {
@@ -334,7 +334,7 @@ test("a dead actor cannot authorize a forged world-interaction damage summary", 
   const committed = runtime.step(world.profiles, pending.state, {
     kind: "fulfillAuthoritativeRandomness",
     continuation: pending.continuation,
-    rolls: [20],
+    rolls: pending.randomnessRequest.dice.flatMap(die => Array(Number(die.count)).fill(20)),
   });
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   assert.equal(committed.state.entities[ACTOR].tenureStatus, "dead");
@@ -363,7 +363,7 @@ test("a dead actor cannot authorize a forged world-interaction damage summary", 
       targetRef: ACTOR,
       amount: 6,
       damageType: "bludgeoning",
-      hpBefore: 6,
+      hpBefore: 3,
       hpAfter: 0,
       died: true,
     }],

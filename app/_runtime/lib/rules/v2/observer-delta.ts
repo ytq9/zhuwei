@@ -1,4 +1,6 @@
 import { canonicalSha256 } from "../profiles/canonical";
+import { authoritySpatialRefVisibleTo } from "./authority-bindings";
+import { narrativeDetailVisibleTo } from "./narrative-commitments";
 import { socialResolutionProfileEnabled } from "../profiles/social-resolution";
 import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import type { RuntimeProfileManifest } from "../profiles/types";
@@ -23,10 +25,14 @@ import type {
 import { eventHash, foldEvent, validateEventEnvelope } from "./events";
 import {
   committedRangeUsesFrozenRenderableClaims,
+  deriveAuthorityClaims,
   deriveAuthorityClaimsFromCommittedRange,
   projectRenderableClaims,
+  RENDERABLE_CLAIMS_SCHEMA,
   type FrozenAuthorityClaims,
   type FrozenRenderableClaims,
+  type RenderableClaim,
+  type VerifiedClaimCommittedRange,
 } from "./claims";
 import { rejected } from "./results";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
@@ -120,6 +126,8 @@ type VerifiedCommittedRange = {
   priorState: AuthoritativeWorldState;
   events: EventEnvelope[];
   receipt: PublicReceipt;
+  eventStates?: VerifiedClaimCommittedRange["eventStates"];
+  interleaved?: boolean;
 };
 
 function sameProjectedValue(left: unknown, right: unknown): boolean {
@@ -392,6 +400,7 @@ function verifiedCommittedRange(
 
   let folded = structuredClone(rangeValue.priorState);
   const events: EventEnvelope[] = [];
+  const eventStates = new Map<string, { priorState: AuthoritativeWorldState; state: AuthoritativeWorldState }>();
   try {
     for (const eventValue of rangeValue.events) {
       const validation = validateEventEnvelope(eventValue);
@@ -402,10 +411,10 @@ function verifiedCommittedRange(
         event.roomId !== folded.roomId
         || event.runtimeEpochId !== folded.runtimeEpochId
         || event.eventSeq !== expectedSeq
-        || event.rootActionId !== receipt.rootActionId
         || event.previousEventHash !== folded.eventHeadHash
         || event.parentEventId !== folded.lastEventId
         || event.stateBeforeHash !== hashWorldState(folded)
+        || (!worldInteractionProfileEnabled(profiles.extensions) && event.rootActionId !== receipt.rootActionId)
         || event.profiles.manifest.profileId !== profiles.manifest.profileId
         || event.profiles.manifest.profileHash !== profiles.manifest.profileHash
       ) return "invalid";
@@ -414,6 +423,7 @@ function verifiedCommittedRange(
         hashWorldState(next) !== event.stateHashAfter
         || eventHash(event) !== event.eventHash
       ) return "invalid";
+      if (event.rootActionId === receipt.rootActionId) eventStates.set(event.eventId, { priorState: folded, state: next });
       folded = next;
       events.push(event);
     }
@@ -440,6 +450,8 @@ function verifiedCommittedRange(
     (vnext
       ? receiptFrom !== segmentFrom || receiptTo !== segmentTo
       : receiptFrom > segmentFrom || receiptTo < segmentTo)
+    || first.rootActionId !== receipt.rootActionId
+    || last.rootActionId !== receipt.rootActionId
     || folded.version !== state.version
     || folded.lastEventId !== state.lastEventId
     || folded.eventHeadHash !== state.eventHeadHash
@@ -449,7 +461,9 @@ function verifiedCommittedRange(
   return {
     actorCharacterId: rangeValue.actorCharacterId,
     priorState: rangeValue.priorState,
-    events,
+    events: events.filter(event => event.rootActionId === receipt.rootActionId),
+    eventStates,
+    interleaved: events.some(event => event.rootActionId !== receipt.rootActionId),
     receipt: {
       ...safeReceipt(receipt),
       eventRange: {
@@ -798,39 +812,39 @@ function socialObserverEventChanges(
   range: VerifiedCommittedRange,
   state: AuthoritativeWorldState,
   viewerCharacterId: string,
+  before: SafeReadModel | undefined,
+  after: SafeReadModel,
 ): ObserverDeltaChange[] {
   const changes: ObserverDeltaChange[] = [];
   for (const event of range.events) {
     if (event.eventType === "SourceClaimCreated") {
       const payload = event.payload as EventPayloadByType["SourceClaimCreated"];
-      if (!payload.claimId.startsWith("claim:social:")
-        && !payload.claimId.startsWith("claim:social-npc:")) continue;
-      const heard = payload.speakerId === viewerCharacterId
-        || range.events.some((candidate) => {
-          if (candidate.eventType !== "KnowledgeAcquired") return false;
-          const acquired = candidate.payload as EventPayloadByType["KnowledgeAcquired"];
-          return "medium" in acquired
-            && acquired.characterId === viewerCharacterId
-            && acquired.medium === "spokenConversation"
-            && acquired.items.some((item) => item.knowledgeRef === payload.claimId);
-        });
-      if (!heard) continue;
-      const thread = Object.values(state.campaignRuntime.conversationThreads ?? {})
-        .find((candidate) => candidate.claimRef === payload.claimId);
-      changes.push({
-        kind: "spokenClaimHeard",
-        speakerCharacterId: payload.speakerId,
-        speakerName: state.entities[payload.speakerId]?.name ?? payload.speakerId,
-        claimRef: payload.claimId,
-        truthStatus: "unresolved",
-        ...(thread?.claimSemantics.assertion === undefined
-          || thread.claimSemantics.assertion === null
-          ? {}
-          : {
-              assertion: structuredClone(thread?.claimSemantics.assertion),
-            }),
-        utterance: payload.semanticContent,
-      });
+      if (payload.speakerId !== viewerCharacterId || !range.events.some(candidate => {
+        if (candidate.eventType !== "KnowledgeAcquired") return false;
+        const acquired = candidate.payload as EventPayloadByType["KnowledgeAcquired"];
+        return "items" in acquired && acquired.sourceCharacterId === payload.speakerId
+          && acquired.medium === "spokenConversation"
+          && acquired.items.some(item => item.objectKind === "sourceClaim" && item.knowledgeRef === payload.claimId);
+      })) continue;
+      changes.push({ kind: "spokenClaimHeard", speakerCharacterId: viewerCharacterId,
+        speakerName: after.controlledCharacter.name ?? "该消息来源", claimRef: payload.claimId,
+        truthStatus: "unresolved", layer: "full", utterance: payload.semanticContent });
+      continue;
+    }
+    if (event.eventType === "KnowledgeAcquired") {
+      const payload = event.payload as EventPayloadByType["KnowledgeAcquired"];
+      if (!("items" in payload) || payload.characterId !== viewerCharacterId
+        || payload.medium !== "spokenConversation") continue;
+      const speakerId = payload.sourceCharacterId;
+      const speaker = before?.entities?.[speakerId] ?? after.entities?.[speakerId];
+      const ownName = speakerId === viewerCharacterId ? after.controlledCharacter.name : undefined;
+      const name = isRecord(speaker) && isNonEmptyString(speaker.name) ? speaker.name : ownName;
+      for (const item of payload.items) {
+        if (item.objectKind !== "sourceClaim" || typeof item.content !== "string") continue;
+        changes.push({ kind: "spokenClaimHeard", speakerCharacterId: speakerId,
+          speakerName: isNonEmptyString(name) ? name : "该消息来源", claimRef: item.knowledgeRef,
+          truthStatus: "unresolved", layer: payload.contentLayer, utterance: item.content });
+      }
       continue;
     }
     if (event.eventType === "SocialDirectResolved") {
@@ -892,12 +906,6 @@ function observerRenderableClaims(
   if (range === undefined
     || !worldInteractionProfileEnabled(profiles.extensions)
     || !committedRangeUsesFrozenRenderableClaims(range.events)) return undefined;
-  const beforeValue = projectCurrent(profiles, range.priorState, viewerValue);
-  const before = beforeValue.kind === "rejected"
-    || isKpSpatialReadModel(beforeValue)
-    || isLifecycleReadModel(beforeValue)
-    ? undefined
-    : beforeValue;
   let authorityClaims: FrozenAuthorityClaims;
   try {
     authorityClaims = deriveAuthorityClaimsFromCommittedRange({
@@ -906,34 +914,44 @@ function observerRenderableClaims(
       priorState: range.priorState,
       state,
       events: range.events,
+      eventStates: range.eventStates,
     });
   } catch {
     return "invalid";
   }
-  const refs = viewerClaimRefs(
-    state,
-    range,
-    viewerValue,
-    before,
-    after,
-    authorityClaims,
-  );
-  const displayNames = viewerClaimDisplayNames(before, after, new Set(refs));
-  let projected: FrozenRenderableClaims;
+  const claims: RenderableClaim[] = [];
+  const viewerKey = viewerClaimKey(viewerValue, after.viewer.subjectId);
   try {
-    projected = projectRenderableClaims(authorityClaims, {
-      viewerKey: viewerClaimKey(viewerValue, after.viewer.subjectId),
-      refs,
-      displayNames,
-      projectionHash: after.projectionHash,
-    });
+    for (const [index, event] of range.events.entries()) {
+      const materials = authorityClaims.claims.filter(claim => claim.kind === "actionCommitted"
+        ? index === range.events.length - 1 : claim.basis.authorityRefs.includes(event.eventId));
+      if (materials.length === 0) continue;
+      const frame = range.eventStates?.get(event.eventId);
+      if (frame === undefined) return "invalid";
+      const eventRange = { ...range, priorState: frame.priorState, events: [event], eventStates: undefined };
+      const beforeValue = projectCurrent(profiles, frame.priorState, viewerValue);
+      const afterValue = projectCurrent(profiles, frame.state, viewerValue);
+      if ((beforeValue.kind === "rejected" && beforeValue.rejection.code !== "viewerUnauthorized")
+        || (afterValue.kind === "rejected" && afterValue.rejection.code !== "viewerUnauthorized")) return "invalid";
+      const before = beforeValue.kind === "rejected" || isKpSpatialReadModel(beforeValue) || isLifecycleReadModel(beforeValue)
+        ? undefined : beforeValue;
+      if (afterValue.kind === "rejected" || isKpSpatialReadModel(afterValue) || isLifecycleReadModel(afterValue)) continue;
+      const batch = deriveAuthorityClaims({ receiptId: range.receipt.receiptId, rootActionId: range.receipt.rootActionId, materials });
+      const refs = viewerClaimRefs(frame.state, eventRange, viewerValue, before, afterValue, batch);
+      const displayNames = viewerClaimDisplayNames(before, afterValue, new Set(refs));
+      claims.push(...projectRenderableClaims(batch, { viewerKey, refs, displayNames,
+        knowledgeIdentities: afterValue.knowledgeIdentities, projectionHash: after.projectionHash }).claims);
+    }
   } catch {
     return "invalid";
   }
   // A verified vNext projection with no visible facts is still a frozen
   // Claims result. `undefined` is reserved for profiles/ranges that do not
   // use the vNext Claims seam at all.
-  return projected;
+  const core = { schema: RENDERABLE_CLAIMS_SCHEMA, receiptId: range.receipt.receiptId,
+    rootActionId: range.receipt.rootActionId, viewerKey, projectionHash: after.projectionHash,
+    claims: Object.freeze(claims) };
+  return Object.freeze({ ...core, claimsHash: canonicalSha256(core) });
 }
 
 function viewerClaimKey(
@@ -957,7 +975,8 @@ function viewerClaimRefs(
   authorityClaims: FrozenAuthorityClaims,
 ): string[] {
   const viewerCharacterId = after.viewer.subjectId;
-  const refs = new Set<string>([viewerCharacterId, range.receipt.receiptId]);
+  const refs = new Set<string>([viewerCharacterId, range.receipt.receiptId,
+    `visibility:character-controller:${viewerCharacterId}`]);
   collectProjectedRefs(before, refs);
   collectProjectedRefs(after, refs);
 
@@ -976,12 +995,15 @@ function viewerClaimRefs(
 
   for (const [definitionRef, definition] of Object.entries(state.campaignRuntime.definitions)) {
     if (!isRecord(definition) || definition.schema !== "zhuwei.semantic-definition/vnext-1") continue;
+    if ((definition.semanticKind === "location" || definition.semanticKind === "passage")
+      && ![state.entities[viewerCharacterId]?.sceneId, range.priorState.entities[viewerCharacterId]?.sceneId]
+        .some(sceneRef => typeof sceneRef === "string" && authoritySpatialRefVisibleTo(state, definitionRef, sceneRef, viewerCharacterId))) continue;
     const policyRef = isNonEmptyString(definition.visibilityPolicyRef)
       ? definition.visibilityPolicyRef
       : undefined;
     if (policyRef === undefined || !visibilityPolicyVisibleToViewer(
       policyRef,
-      definition.content,
+      definition.semanticKind === "passage" ? { ...definition.content as JsonRecord, sceneRef: state.entities[viewerCharacterId]?.sceneId } : definition.content,
       state,
       range,
       viewerValue,
@@ -1034,6 +1056,7 @@ function viewerClaimDisplayNames(
         add(ref, definition.name ?? definition.label ?? definition.displayName);
       }
     }
+    for (const assembly of projection.visibleAssemblies ?? []) add(assembly.assemblyRef, assembly.label);
     if (Array.isArray(projection.visibleItems)) {
       for (const item of projection.visibleItems) {
         if (!isRecord(item)) continue;
@@ -1128,8 +1151,7 @@ function collectProjectedRefs(value: SafeReadModel | undefined, refs: Set<string
   collectProjectedRecordListRefs(
     refs,
     value.knowledge,
-    ["characterId", "knowledgeRef", "acquiredByEventId", "sourceCharacterId"],
-    ["provenanceChain"],
+    ["characterId", "knowledgeRef", "acquiredByEventId"],
   );
   collectProjectedRecordListRefs(refs, value.receipts, ["receiptId", "rootActionId"]);
   collectProjectedRecordListRefs(
@@ -1151,8 +1173,9 @@ function collectProjectedRefs(value: SafeReadModel | undefined, refs: Set<string
   collectProjectedRecordListRefs(
     refs,
     value.visibleItems,
-    ["itemEntryId", "definitionRef", "holderRef", "sceneRef"],
+    ["itemEntryId", "definitionRef", "holderRef", "sceneRef", "assemblyRef"],
   );
+  collectProjectedRecordListRefs(refs, value.visibleAssemblies, ["assemblyRef", "sceneRef"]);
   collectProjectedRecordRefs(refs, value.campaign, ["campaignId"]);
   collectProjectedRecordListRefs(
     refs,
@@ -1175,25 +1198,24 @@ function collectProjectedRefs(value: SafeReadModel | undefined, refs: Set<string
   collectProjectedRecordListRefs(
     refs,
     value.relationships,
-    ["relationshipId", "sourceFactId"],
-    ["subjectIds", "basisFactIds"],
+    ["relationshipId"],
+    ["subjectIds"],
   );
   collectProjectedRecordListRefs(
     refs,
     value.promises,
-    ["promiseId", "promisorId", "promiseeId", "sourceFactId"],
+    ["promiseId", "promisorId", "promiseeId"],
   );
   collectProjectedRecordListRefs(
     refs,
     value.debts,
-    ["debtId", "debtorId", "creditorId", "sourceFactId"],
-    ["basisFactIds"],
+    ["debtId", "debtorId", "creditorId"],
   );
   collectProjectedRecordListRefs(refs, value.activities, ["activityId", "characterId"]);
   collectProjectedRecordListRefs(
     refs,
     value.sourceClaims,
-    ["claimId", "speakerId", "sourceFactId"],
+    ["claimId", "sourceFactId"],
     ["evidenceRefs"],
   );
   collectProjectedRecordListRefs(
@@ -1259,6 +1281,8 @@ function visibilityPolicyVisibleToViewer(
   viewerValue: PlayerViewer | NpcViewer | unknown,
   viewerCharacterId: string,
 ): boolean {
+  if (policyRef.startsWith("visibility:narrative:")) return narrativeDetailVisibleTo(state,
+    policyRef.slice("visibility:narrative:".length), viewerCharacterId);
   if (policyRef === "visibility:public" || policyRef.startsWith("visibility:public:")) return true;
   if (policyRef === `visibility:character-controller:${viewerCharacterId}`
     || policyRef === `visibility:knowledge-holder:${viewerCharacterId}`
@@ -1329,11 +1353,28 @@ function observerCommittedDelta(
   after: SafeReadModel,
   range: VerifiedCommittedRange | undefined,
   projectCurrent: CurrentProjectionProjector,
-): ObserverCommittedDelta | undefined {
+): ObserverCommittedDelta | "invalid" | undefined {
   if (range === undefined) return undefined;
+  if (range.interleaved && range.eventStates !== undefined) {
+    const changes: ObserverDeltaChange[] = [];
+    for (const event of range.events) {
+      const frame = range.eventStates.get(event.eventId);
+      if (frame === undefined) return "invalid";
+      const eventProjection = projectCurrent(profiles, frame.state, viewerValue);
+      if (eventProjection.kind === "rejected" && eventProjection.rejection.code !== "viewerUnauthorized") return "invalid";
+      if (eventProjection.kind === "rejected" || isKpSpatialReadModel(eventProjection) || isLifecycleReadModel(eventProjection)) continue;
+      const delta = observerCommittedDelta(profiles, frame.state, viewerValue, eventProjection,
+        { ...range, priorState: frame.priorState, events: [event], interleaved: false }, projectCurrent);
+      if (delta === "invalid") return "invalid";
+      if (delta !== undefined) changes.push(...delta.changes);
+    }
+    return changes.length === 0 ? undefined : { schema: "zhuwei.observer-committed-delta/v1",
+      actorCharacterId: range.actorCharacterId, viewerCharacterId: after.viewer.subjectId, receipt: range.receipt, changes };
+  }
   const viewerCharacterId = after.viewer.subjectId;
   const actor = viewerCharacterId === range.actorCharacterId;
   const beforeProjection = projectCurrent(profiles, range.priorState, viewerValue);
+  if (beforeProjection.kind === "rejected" && beforeProjection.rejection.code !== "viewerUnauthorized") return "invalid";
   const before = beforeProjection.kind === "rejected"
     || isKpSpatialReadModel(beforeProjection)
     || isLifecycleReadModel(beforeProjection)
@@ -1356,7 +1397,7 @@ function observerCommittedDelta(
     : projectionFieldChanges(before, after, actor);
   const eventChanges = actorEventChanges(range, state, viewerCharacterId);
   const socialChanges = socialResolutionProfileEnabled(profiles.extensions)
-    ? socialObserverEventChanges(range, state, viewerCharacterId)
+    ? socialObserverEventChanges(range, state, viewerCharacterId, before, after)
     : [];
   const correctionChanges = correction ? publicCorrectionChanges(range) : [];
   const changes = [
@@ -1433,6 +1474,42 @@ function projectFormerActorCommittedResult(
   return { ...hashable, projectionHash: canonicalSha256(hashable) };
 }
 
+/** A former controller can receive only the settlement of that character's
+ * already-authorized wait. Lifecycle projection has authenticated the seat;
+ * it grants no current scene knowledge and no other former character's facts. */
+function lifecycleTimePassageClaims(
+  state: AuthoritativeWorldState, viewerValue: unknown, projected: LifecycleReadModel,
+  range: VerifiedCommittedRange | undefined,
+): FrozenRenderableClaims | "invalid" | undefined {
+  if (range === undefined || !isRecord(viewerValue) || viewerValue.kind !== "player"
+    || viewerValue.purpose !== "lifecycle" || viewerValue.characterId !== range.actorCharacterId
+    || !projected.lifecycle.eligiblePredecessors.some(entry => entry.characterId === range.actorCharacterId)) return undefined;
+  const actorId = range.actorCharacterId;
+  const ending = range.events.filter(event => {
+    const payload: unknown = event.payload;
+    if (!["ActivityCompleted", "ActivityInterrupted"].includes(event.eventType)
+      || !isRecord(payload) || typeof payload.activityId !== "string") return false;
+    const activity = state.campaignRuntime.activities[payload.activityId];
+    return activity?.characterId === actorId && isRecord(activity.completion) && activity.completion.kind === "timePassage";
+  });
+  if (ending.length !== 1 || range.events.length !== 1) return undefined;
+  const event = ending[0];
+  if (event.visibilityPolicyId !== `visibility:knowledge-holder:${actorId}` || event.secrecy !== "private") return "invalid";
+  try {
+    const derived = deriveAuthorityClaimsFromCommittedRange({ receipt: range.receipt, actorCharacterId: actorId,
+      priorState: range.priorState, state, events: range.events, eventStates: range.eventStates });
+    const materials = derived.claims.filter(claim => claim.kind === "mechanicalOutcome"
+      && ["timePassageCompleted", "timePassageInterrupted"].includes(String(claim.outcomeCode))
+      && claim.basis.authorityRefs.includes(event.eventId));
+    if (materials.length !== 1) return "invalid";
+    const batch = deriveAuthorityClaims({ receiptId: range.receipt.receiptId, rootActionId: range.receipt.rootActionId, materials });
+    const name = projected.lifecycle.eligiblePredecessors.find(entry => entry.characterId === actorId)!.name;
+    return projectRenderableClaims(batch, { viewerKey: viewerClaimKey(viewerValue, actorId),
+      refs: [actorId, event.eventId, event.visibilityPolicyId], displayNames: { [actorId]: name },
+      projectionHash: projected.projectionHash });
+  } catch { return "invalid"; }
+}
+
 export function applyObserverRangeProjection(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -1469,6 +1546,12 @@ export function applyObserverRangeProjection(
     );
   }
   if (isLifecycleReadModel(projected)) {
+    const renderableClaims = vnextClaims ? lifecycleTimePassageClaims(state, viewerValue, projected, committedRange) : undefined;
+    if (renderableClaims === "invalid") return rejected("projectionIntegrity", "The former controller's time passage settlement could not produce canonical Claims.");
+    if (renderableClaims !== undefined) {
+      const { projectionHash: _projectionHash, ...hashable } = projected;
+      return { ...projected, renderableClaims, projectionHash: canonicalSha256({ ...hashable, renderableClaims }) };
+    }
     const incrementalDelta = lifecycleIncrementalDelta(
       profiles,
       state,
@@ -1530,7 +1613,7 @@ export function applyObserverRangeProjection(
     committedRange,
     projectCurrent,
   );
-  if (renderableClaims === "invalid") {
+  if (renderableClaims === "invalid" || committedDelta === "invalid") {
     return rejected(
       "projectionIntegrity",
       "The committed event range could not produce canonical Viewer Claims.",

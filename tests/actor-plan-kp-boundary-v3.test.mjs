@@ -13,6 +13,9 @@ import {
 import { AUTHORITATIVE_KP_PROFILES } from "../app/_runtime/lib/kp/authoritative-policy.ts";
 import { handleRoomAction } from "../app/_runtime/lib/room/action.ts";
 import { normalizeRoomKpProposal } from "../app/_runtime/lib/room/proposal-adapter.ts";
+import { VNEXT_ACTOR_PLAN_DECISION_TOOL, parseVnextActorPlanDecision,
+  vnextActorPlanDecisionInput } from "../app/_runtime/lib/kp/vnext/actor-plan-decision.ts";
+import { assertDeepSeekStrictToolSchema } from "../app/_runtime/lib/kp/deepseek-strict-tool.ts";
 
 const ROOT_ACTION_ID = "root-action:due-plan-v3";
 const PREPARED_ACTION_ID = "prepared-action:due-plan-v3";
@@ -85,6 +88,67 @@ const DECISION_REQUEST = Object.freeze({
   dueActorPlan: ACTOR_PLAN,
   projection: NPC_PROJECTION,
   attempt: 1,
+});
+
+test("vNext strict due transport represents lifecycle choices through the existing ActorPlan validator", () => {
+  assertDeepSeekStrictToolSchema(VNEXT_ACTOR_PLAN_DECISION_TOOL.function.parameters);
+  for (const decision of [
+    { decision: "execute", planId: PLAN_ID, mechanicalProposal: null },
+    { decision: "cancel", planId: PLAN_ID, mechanicalProposal: null, reason: "命令已撤销" },
+    { decision: "defer", planId: PLAN_ID, mechanicalProposal: null, reason: "等巡逻者通过", deferUntilFictionMicros: "200" },
+    { decision: "revise", planId: PLAN_ID, mechanicalProposal: null, revision: {
+      reason: "执行条件变化", premiseRefs: [KNOWLEDGE_REF], resourceRefs: [RESOURCE_REF], nextStep: "守住内门",
+      due: { kind: "fictionTime", atFictionMicros: "200" }, trigger: null,
+      trace: { factRef: ACTOR_PLAN.trace.factRef, description: "内门旁出现守卫" },
+      alternateTarget: { targetRef: ALTERNATE_TARGET_REF, reason: "原计划的备选位置" },
+    } },
+  ]) {
+    const wire = JSON.parse(JSON.stringify(decision), (_key, value) => value === null ? { kind: "none" } : value);
+    if (decision.decision === "execute") wire.targetRef = { kind: "none" };
+    assert.deepEqual(parseVnextActorPlanDecision(toolResponse({ decision: wire }), DECISION_REQUEST),
+      validateActorPlanDecisionOutput(decision, DECISION_REQUEST, { npcEquipment: true }));
+  }
+  assert.throws(() => parseVnextActorPlanDecision(toolResponse({ decision: {
+    decision: "execute", planId: PLAN_ID, mechanicalProposal: { kind: "none" }, targetRef: "scene:unseen",
+  } }), DECISION_REQUEST));
+  assert.throws(() => parseVnextActorPlanDecision(toolResponse({ decision: {
+    decision: "execute", planId: PLAN_ID, mechanicalProposal: null, targetRef: { kind: "none" },
+  } }), DECISION_REQUEST));
+});
+
+test("vNext freezes NPC premises while omitting only the global causal event cursor", () => {
+  const before = structuredClone(DECISION_REQUEST);
+  before.projection.causalFrontier = { eventHeadId: "event:before", nowMicros: "100", timelineId: "timeline:one" };
+  const after = structuredClone(before);
+  after.projection.causalFrontier.eventHeadId = "event:knowledge-review";
+  assert.deepEqual(vnextActorPlanDecisionInput(before), vnextActorPlanDecisionInput(after));
+  after.projection.knowledge.push({ knowledgeRef: "knowledge:new-observation" });
+  assert.notDeepEqual(vnextActorPlanDecisionInput(before), vnextActorPlanDecisionInput(after));
+  assert.equal(before.projection.causalFrontier.eventHeadId, "event:before");
+});
+
+test("vNext due rejects duplicate JSON members and text fallback before interpreting a decision", () => {
+  const args = JSON.stringify({ decision: { decision: "execute", planId: PLAN_ID,
+    mechanicalProposal: { kind: "none" }, targetRef: { kind: "none" } } });
+  for (const duplicate of [
+    args.replace('"decision":"execute"', '"decision":"cancel","decision":"execute"'),
+    args.replace('"planId":', '"planId":"plan:other","planId":'),
+    `{ "decision": {}, ${args.slice(1)}`,
+  ]) {
+    const response = toolResponse({});
+    response.choices[0].message.tool_calls[0].function.arguments = duplicate;
+    assert.throws(() => parseVnextActorPlanDecision(response, DECISION_REQUEST),
+      error => error.reason === "json:duplicate-object-member");
+    assert.equal(response.choices[0].message.tool_calls[0].function.arguments, duplicate);
+  }
+  assert.throws(() => parseVnextActorPlanDecision({ choices: [{ message: { content: args } }] }, DECISION_REQUEST));
+  const wrongTool = toolResponse(JSON.parse(args));
+  wrongTool.choices[0].message.tool_calls[0].function.name = "submit_player_proposal";
+  assert.throws(() => parseVnextActorPlanDecision(wrongTool, DECISION_REQUEST));
+  const multiple = toolResponse(JSON.parse(args));
+  multiple.choices[0].message.tool_calls.push(structuredClone(multiple.choices[0].message.tool_calls[0]));
+  assert.throws(() => parseVnextActorPlanDecision(multiple, DECISION_REQUEST));
+  assert.equal(parseVnextActorPlanDecision(toolResponse(JSON.parse(args)), DECISION_REQUEST).decision, "execute");
 });
 
 test("pre-0.4 authenticated formNpcPlan ingress is not a Room proposal", () => {

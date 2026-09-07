@@ -3,6 +3,7 @@ import type {
   CompoundActionEffect,
   CompoundResolutionPlan,
 } from "./model";
+import { passageTraversalBindingConform } from "./dynamic-locations";
 import {
   CANONICAL_SIGNED_INTEGER_PATTERN,
   hasExactKeys,
@@ -76,7 +77,8 @@ export function isCompoundActionEffect(value: unknown): value is CompoundActionE
         && isNonEmptyString(value.npcId)
         && isNonEmptyString(value.status);
     case "moveEntity":
-      return hasExactKeys(value, ["entityRef", "kind", "sceneRef"])
+      return hasExactKeys(value, ["entityRef", "kind", "sceneRef", ...(Object.hasOwn(value, "passage") ? ["passage"] : [])])
+        && (!Object.hasOwn(value, "passage") || passageTraversalBindingConform(value.passage))
         && isNonEmptyString(value.entityRef)
         && isNonEmptyString(value.sceneRef);
     case "advanceFictionTime":

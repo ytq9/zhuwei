@@ -1,3 +1,23 @@
+import { frozenPlayerChoiceIssue } from "./world-interactions";
+import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
+import { atomicContinuationCanResume } from "./atomic-world-input";
+import { frozenChoiceForRoot, frozenChoiceReadSet, frozenChoiceReadSetMatches, frozenChoicePublicBindingMatches,
+  isFrozenPlayerChoiceRecord, isFrozenPlayerChoiceContinuationInput, selectedFrozenContinuation } from "./frozen-player-choice";
+import { isWorldFactPointer, worldFactDefinition, worldFactPointer, worldFactRef, authoredWorldFactConform } from "./world-facts";
+import { legacySocialThread } from "./social-model";
+import { publicExpressionConform } from "./public-expression";
+import { verifySocialSettlement, socialConversationRecord, hasCommittedSocialExpression } from "./social-interaction";
+import { socialCommitmentFromPayload, socialCommitmentParticipants } from "./social-commitments";
+import { heldKnowledgeRecord, knowledgeLayerCanBeShared } from "./knowledge-records";
+import { authorityRevisionOrHash, authoritySpatialRefVisibleTo } from "./authority-bindings";
+import { emptyVNextItemAuthority, isItemUniquenessBoundPayload, isItemIdentifiedPayload, uniqueItemEntryRef } from "./item-authority-vnext";
+import { worldInteractionEffectiveCheck } from "./world-interaction-conditions";
+import { bindNarrativeMaterialization, committedNarrativeFact, isNarrativeDetailCommittedPayload,
+  isNarrativeDetailMaterializedPayload, narrativeDetailRef } from "./narrative-commitments";
+import { isAtomicWorldContinuation } from "./atomic-world-input";
+import { isConditionImmunities } from "./world-effects";
+import { isWorldInteractionRandomnessRequest, worldInteractionDiceEventValid, worldInteractionDiceValid } from "./world-interaction-randomness";
+import { isKnowledgeReviewedPayload, validateKnowledgeReviewedEvent } from "./knowledge-review";
 import { canonicalSha256 } from "../profiles/canonical";
 import {
   ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
@@ -130,6 +150,7 @@ import {
   worldInteractionPlanHash,
 } from "./world-interaction-model";
 import {
+  materializedSemanticDefinition,
   isSemanticDefinitionMaterializedPayload,
   semanticDefinitionSnapshot,
   type StoredSemanticDefinition,
@@ -309,6 +330,10 @@ function eventRequiresNpcMechanicsProfile(eventType: EventType, payload: unknown
 
 function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown): boolean {
   if ([
+    "ConditionStateSynchronized",
+  "AuthoredMaterializationResolved",
+  "InventoryOperationApplied",
+  "ItemAssemblyChanged",
     "ItemDefinitionRegistered",
     "ItemMaterialized",
     "ItemAcquired",
@@ -321,7 +346,13 @@ function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown):
 }
 
 function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unknown): boolean {
-  return eventType === "AtomicWorldInteractionStepsResolved"
+  return eventType === "FrozenPlayerChoicePrepared" || eventType === "FrozenPlayerChoiceInputRecorded" || eventType === "KnowledgeReviewed" || eventType === "NarrativeDetailCommitted" || eventType === "NarrativeDetailMaterialized"
+    || eventType === "ItemUniquenessBound" || eventType === "ItemIdentified"
+    || eventType === "AuthoredMaterializationResolved"
+    || eventType === "InventoryOperationApplied" || eventType === "ItemAssemblyChanged"
+    || eventType === "AtomicWorldInteractionStepsResolved"
+    || eventType === "AtomicWorldInteractionSuspended"
+    || eventType === "AtomicWorldInteractionResumed"
     || eventType === "SemanticDefinitionRevised"
     || eventType === "SemanticDefinitionMaterialized"
     || eventType === "WorldInteractionResolved"
@@ -424,7 +455,15 @@ function expectedEventTypeVersion(
 }
 
 const EVENT_TYPES = new Set<EventType>([
+  "KnowledgeReviewed",
+  "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
+  "ItemUniquenessBound", "ItemIdentified",
+  "AuthoredMaterializationResolved",
+  "InventoryOperationApplied",
+  "ItemAssemblyChanged",
   "AtomicWorldInteractionStepsResolved",
+  "AtomicWorldInteractionSuspended",
+  "AtomicWorldInteractionResumed",
   "SemanticDefinitionRevised",
   "SemanticDefinitionMaterialized",
   "WorldInteractionResolved",
@@ -432,6 +471,8 @@ const EVENT_TYPES = new Set<EventType>([
   "ImprovisedActionResolved",
   "ClarificationRequested",
   "PlayerChoiceRequested",
+  "FrozenPlayerChoicePrepared",
+  "FrozenPlayerChoiceInputRecorded",
     "SocialResolutionOffered",
     "SocialResolutionDeclined",
     "SocialDirectResolved",
@@ -563,37 +604,7 @@ function isRandomnessRequest(value: unknown): value is RandomnessRequest {
     const { requestHash: _requestHash, ...core } = value;
     return canonicalSha256(core) === value.requestHash;
   }
-  if (value.purpose === "worldInteractionCheck") {
-    // A world interaction freezes the saving throws its branches will need
-    // alongside its own check, so the number of faces the authority must
-    // produce is settled before the first one is produced. The expression
-    // spells that out: the check's dice, then one d20 per frozen save.
-    if (!hasExactKeys(value, [
-      "actorCharacterId",
-      "diceExpression",
-      "frozenCheck",
-      "hazardSaves",
-      "purpose",
-      "randomnessId",
-      "resolutionId",
-    ])
-      || ![value.randomnessId, value.resolutionId, value.actorCharacterId].every(isNonEmptyString)
-      || !isFrozenCheck(value.frozenCheck)
-      || !Array.isArray(value.hazardSaves)
-      || value.hazardSaves.length > 64
-      || !value.hazardSaves.every((entry) => isRecord(entry)
-        && hasExactKeys(entry, ["ability", "dc", "halfOnSuccess", "targetRef"])
-        && isNonEmptyString(entry.targetRef)
-        && ["str", "dex", "con", "int", "wis", "cha"].includes(String(entry.ability))
-        && Number.isSafeInteger(entry.dc)
-        && typeof entry.halfOnSuccess === "boolean")) return false;
-    const checkExpression = String(value.frozenCheck.mode) === "normal"
-      ? "1d20"
-      : String(value.frozenCheck.mode) === "advantage" ? "2d20kh1" : "2d20kl1";
-    return value.diceExpression === (value.hazardSaves.length === 0
-      ? checkExpression
-      : `${checkExpression}+${value.hazardSaves.length}d20`);
-  }
+  if (value.purpose === "worldInteractionCheck") return isWorldInteractionRandomnessRequest(value,isFrozenCheck);
   return hasExactKeys(value, [
       "actorCharacterId",
       "diceExpression",
@@ -642,20 +653,25 @@ function isWorldInteractionRandomnessEventBinding(
     || value.formula !== value.request.diceExpression
     || !isAuthorityContinuation(value.continuation)
     || value.continuation.continuationId !== `continuation:${value.request.resolutionId}`) return false;
-  const resolutionPlan = isWorldInteractionResolutionPlan(value.resolutionPlan)
-    ? value.resolutionPlan
-    : isAtomicWorldInteractionStepsPlan(value.resolutionPlan)
-      ? atomicWorldInteractionCheckPlan(value.resolutionPlan)
-      : undefined;
-  if (resolutionPlan === undefined
-    || (isAtomicWorldInteractionStepsPlan(value.resolutionPlan)
-      && value.resolutionPlan.rootActionId !== rootActionId)
-    || resolutionPlan.ruling.kind !== "check"
-    || value.request.actorCharacterId !== resolutionPlan.actorCharacterId
-    || value.request.resolutionId !== resolutionPlan.resolutionId
-    || value.request.randomnessId !== resolutionPlan.ruling.randomnessId
-    || canonicalSha256(value.request.frozenCheck)
-      !== canonicalSha256(resolutionPlan.ruling.check)) return false;
+  const atomic=isAtomicWorldInteractionStepsPlan(value.resolutionPlan)?value.resolutionPlan:undefined;
+  const resolutionPlan = isWorldInteractionResolutionPlan(value.resolutionPlan)?value.resolutionPlan
+    :atomic===undefined?undefined:atomicWorldInteractionCheckPlan(atomic)
+      ??atomic.steps.flatMap(step=>step.rulesInput.kind==="resolveWorldInteraction"?[step.rulesInput.plan]:[])[0];
+  if(atomic===undefined&&resolutionPlan===undefined)return false;
+  if(atomic!==undefined&&atomic.rootActionId!==rootActionId)return false;
+  const expectedResolution=resolutionPlan===undefined?`resolution:atomic:${atomic!.rootActionId}`:resolutionPlan.resolutionId;
+  const effective = atomic === undefined && resolutionPlan !== undefined ? worldInteractionEffectiveCheck(state,resolutionPlan) : undefined;
+  if (effective?.kind === "rejected") return false;
+  const check=effective?.check ?? (resolutionPlan?.ruling.kind==="check"?resolutionPlan.ruling.check:null);
+  // Atomic prefixes may alter conditions before their shared check. The
+  // capability freezes its exact mode; execution revalidates that mode at
+  // the candidate prefix, before any effects can become authoritative.
+  const boundCheck = atomic !== undefined && check !== null && value.request.frozenCheck !== null
+    ? {...check,mode:value.request.frozenCheck.mode} : check;
+  if(value.request.actorCharacterId!==(resolutionPlan?.actorCharacterId??atomic!.actorCharacterId)
+    ||value.request.resolutionId!==expectedResolution
+    ||value.request.randomnessId!==(resolutionPlan?.ruling.kind==="check"?resolutionPlan.ruling.randomnessId:`randomness:${expectedResolution}`)
+    ||canonicalSha256(value.request.frozenCheck)!==canonicalSha256(boundCheck))return false;
   const resolutionPlanHash = isAtomicWorldInteractionStepsPlan(value.resolutionPlan)
     ? atomicWorldInteractionStepsPlanHash(value.resolutionPlan)
     : isWorldInteractionResolutionPlan(value.resolutionPlan)
@@ -707,12 +723,14 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
       "proficiencyBonus",
       "proficientSkills",
       "proficientSaves",
+      "conditionImmunities",
       "raceId",
       "resourceMaximums",
       "resources",
       "semanticDefinitionRef",
       "semanticDefinitionRevision",
       "socialMechanics",
+      "publicExpression",
       "subclassId",
     ])
     && isNonEmptyString(value.id)
@@ -738,6 +756,7 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
       .every((entry) => entry === undefined || isCanonicalStringArray(entry))
     && [value.proficientSkills, value.expertiseSkills, value.proficientSaves]
       .every((entry) => entry === undefined || isCanonicalStringArray(entry))
+    && (value.conditionImmunities === undefined || isConditionImmunities(value.conditionImmunities))
     && (value.proficientSaves === undefined
       || (Array.isArray(value.proficientSaves) && value.proficientSaves.every((ability) =>
         ["str", "dex", "con", "int", "wis", "cha"].includes(ability))))
@@ -749,6 +768,7 @@ function isCharacterRecord(value: unknown): value is CharacterRecord {
     && (value.resourceMaximums === undefined || (isRecord(value.resourceMaximums)
       && Object.entries(value.resourceMaximums).every(([resourceId, maximum]) =>
         isNonEmptyString(resourceId) && Number.isSafeInteger(maximum) && Number(maximum) >= 0)))
+    && (value.publicExpression === undefined || (value.kind === "npc" && publicExpressionConform(value.publicExpression)))
     && (value.socialMechanics === undefined
       || (value.kind === "npc" && isNpcSocialMechanics(value.socialMechanics)));
 }
@@ -758,12 +778,25 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     return false;
   }
   switch (eventType) {
+    case "KnowledgeReviewed": return isKnowledgeReviewedPayload(value);
+    case "NarrativeDetailCommitted": return isNarrativeDetailCommittedPayload(value);
+    case "NarrativeDetailMaterialized": return isNarrativeDetailMaterializedPayload(value);
+    case "ItemUniquenessBound": return isItemUniquenessBoundPayload(value);
+    case "ItemIdentified": return isItemIdentifiedPayload(value);
+    case "AtomicWorldInteractionSuspended":
+      return hasExactKeys(value, ["continuation"]) && isAtomicWorldContinuation(value.continuation);
+    case "AtomicWorldInteractionResumed":
+      return hasExactKeys(value, ["rootActionId"]) && isNonEmptyString(value.rootActionId);
     case "AtomicWorldInteractionStepsResolved":
       return isAtomicWorldInteractionStepsResolvedPayload(value);
     case "SemanticDefinitionRevised":
       return isSemanticDefinitionRevisedPayload(value);
     case "SemanticDefinitionMaterialized":
       return isSemanticDefinitionMaterializedPayload(value);
+    case "AuthoredMaterializationResolved":
+      return isRecord(value)&&hasExactKeys(value,["actorCharacterId","contextHash","kind","ref","summary"])
+        &&isNonEmptyString(value.actorCharacterId)&&isSha256(value.contextHash)&&isNonEmptyString(value.ref)&&isNonEmptyString(value.summary)
+        &&["abilityDefinition","hazardDefinition","itemDefinition","itemEntry"].includes(String(value.kind));
     case "WorldInteractionResolved":
       return isWorldInteractionResolvedPayload(value);
     case "WorldInteractionFeasibilityRuled":
@@ -778,6 +811,11 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
         && isNonEmptyString(value.actorCharacterId)
         && isNonEmptyString(value.pendingInputId)
         && isNonEmptyString(value.question);
+    case "FrozenPlayerChoicePrepared":
+      return hasExactKeys(value, ["record"]) && isFrozenPlayerChoiceRecord(value.record)
+        && value.record.selectedChoiceId === null && value.record.inFlightInput === null;
+    case "FrozenPlayerChoiceInputRecorded":
+      return hasExactKeys(value, ["input"]) && isFrozenPlayerChoiceContinuationInput(value.input);
     case "PlayerChoiceRequested":
       return hasExactKeys(value, ["actorCharacterId", "choices", "pendingInputId", "question"])
         && isNonEmptyString(value.actorCharacterId)
@@ -1157,40 +1195,7 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
         || !isNonEmptyString(value.resolutionId)
         || !isSha256(value.requestHash)
         || !isSha256(value.frozenParametersHash)) return false;
-      if (["1d20", "2d20kh1", "2d20kl1"].includes(String(value.formula))) {
-        return Array.isArray(value.faces)
-          && value.faces.length >= 1
-          && value.faces.length <= 2
-          && value.faces.every((face) => Number.isInteger(face) && face >= 1 && face <= 20)
-          && Number.isInteger(value.selectedFace)
-          && value.faces.includes(value.selectedFace);
-      }
-      // A world interaction's dice: the check's own faces first, then one d20
-      // for each saving throw the branches froze. The selected face has to come
-      // from the check's own dice -- a settlement that could select a save's
-      // face would be reading someone else's roll as the actor's.
-      const interactionFormula = /^(1d20|2d20kh1|2d20kl1)\+([1-9][0-9]*)d20$/
-        .exec(String(value.formula));
-      if (interactionFormula !== null) {
-        const checkFaces = interactionFormula[1] === "1d20" ? 1 : 2;
-        return Array.isArray(value.faces)
-          && value.faces.length === checkFaces + Number(interactionFormula[2])
-          && value.faces.length <= 66
-          && value.faces.every((face) => Number.isInteger(face) && face >= 1 && face <= 20)
-          && Number.isInteger(value.selectedFace)
-          && value.faces.slice(0, checkFaces).includes(value.selectedFace);
-      }
-      const restFormula = /^([1-9][0-9]*)d(6|8|10|12)$/.exec(String(value.formula));
-      if (restFormula !== null) return Array.isArray(value.faces)
-        && value.faces.length === Number(restFormula[1])
-        && value.faces.length <= 20
-        && value.faces.every((face) => Number.isInteger(face)
-          && face >= 1 && face <= Number(restFormula[2]))
-        && value.selectedFace === null;
-      const hiddenFormula = /^1d([1-9][0-9]*)$/.exec(String(value.formula));
-      return hiddenFormula !== null && Array.isArray(value.faces) && value.faces.length === 1
-        && Number.isInteger(value.faces[0]) && value.faces[0] >= 1
-        && value.faces[0] <= Number(hiddenFormula[1]) && value.selectedFace === value.faces[0];
+      return worldInteractionDiceEventValid(value);
     case "HiddenRealityCandidatesFrozen":
       return hasExactKeys(value, ["candidateSetId", "candidates"])
         && isNonEmptyString(value.candidateSetId) && Array.isArray(value.candidates) && value.candidates.length >= 2;
@@ -1304,7 +1309,9 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
 }
 
 function publicReceipt(event: EventEnvelope): PublicReceipt {
-  const status = event.eventType === "ClarificationRequested"
+  const status = event.eventType === "AtomicWorldInteractionSuspended"
+    ? ((event.payload as EventPayloadByType["AtomicWorldInteractionSuspended"]).continuation.waiting.kind === "input" ? "awaitingInput" : "awaitingRandomness")
+    : event.eventType === "ClarificationRequested"
     || event.eventType === "PlayerChoiceRequested"
     || event.eventType === "SocialResolutionOffered"
     || event.eventType === "AdvancementAvailable"
@@ -1341,7 +1348,7 @@ function publicReceipt(event: EventEnvelope): PublicReceipt {
   };
 }
 
-function eventSubjects(event: EventEnvelope): string[] {
+function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): string[] {
   const payload = event.payload as JsonRecord;
   const candidates = [
     payload.actorCharacterId,
@@ -1365,6 +1372,32 @@ function eventSubjects(event: EventEnvelope): string[] {
   }
   if (isRecord(payload.request) && isNonEmptyString(payload.request.actorCharacterId)) {
     candidates.push(payload.request.actorCharacterId);
+  }
+  // Lifecycle events reference the existing Activity instead of repeating its
+  // owner. Receipt subjects must come from that authoritative relationship,
+  // not from a caller-supplied cause or the mere shape of an activity ID.
+  if ((event.eventType === "ActivityInterrupted" || event.eventType === "ActivityCompleted"
+    || (event.eventType === "FictionTimeAdvanced" && ["timePassage", "longSpellcasting"].includes(String(payload.reason))))
+    && isNonEmptyString(payload.activityId)) {
+    const owner = state.campaignRuntime.activities[payload.activityId]?.characterId;
+    if (isNonEmptyString(owner)) candidates.push(owner);
+  }
+  // A private revision can be the entire due receipt. Bind its actor from
+  // the plan already validated and folded by Rules, even without an Activity
+  // completion event to carry that relationship into receipt subjects.
+  if (["NpcActionCommitted", "NpcPlanRevised", "NpcPlanCancelled"].includes(event.eventType)
+    && isNonEmptyString(payload.planId)) {
+    const owner = state.campaignRuntime.npcPlans[payload.planId]?.npcId;
+    if (isNonEmptyString(owner) && owner === payload.npcId) candidates.push(owner);
+  }
+  if (["FactionActionCommitted", "FactionPlanAdvanced"].includes(event.eventType)
+    && isNonEmptyString(payload.planId)) {
+    const owner = state.campaignRuntime.factionPlans[payload.planId]?.actingNpcId;
+    if (isNonEmptyString(owner) && owner === payload.actingNpcId) candidates.push(owner);
+  }
+  if (event.eventType === "RelationshipChanged" || event.eventType === "PromiseMade" || event.eventType === "DebtIncurred") {
+    const commitment = socialCommitmentFromPayload(event.eventType, payload);
+    if (commitment !== undefined) candidates.push(...socialCommitmentParticipants(commitment));
   }
   return [...new Set(candidates)].sort();
 }
@@ -1666,31 +1699,36 @@ function worldInteractionDamageEffectsWereCommitted(
   state: AuthoritativeWorldState,
   event: EventEnvelope<"WorldInteractionResolved">,
   effects: readonly AppliedWorldInteractionDamage[],
+  socialFirstEventSeq?: string,
 ): boolean {
+  const priorResolutionSeq = Object.values(state.correctionRuntime.audit).filter(entry=>entry.rootActionId===event.rootActionId&&entry.eventType==="WorldInteractionResolved").reduce((seq,entry)=>BigInt(entry.eventSeq)>seq?BigInt(entry.eventSeq):seq,0n);
   const audits = Object.values(state.correctionRuntime.audit)
+    .filter(entry=>BigInt(entry.eventSeq)>priorResolutionSeq
+      && (socialFirstEventSeq === undefined || BigInt(entry.eventSeq) >= BigInt(socialFirstEventSeq)))
     .filter((entry) => entry.rootActionId === event.rootActionId
       && entry.branchId === event.branchId);
   const packets = audits.filter((entry) => entry.eventType === "DamagePacketResolved");
   const hitPointChanges = audits.filter((entry) => entry.eventType === "HitPointsChanged");
   const deaths = audits.filter((entry) => entry.eventType === "CreatureDied");
   if (packets.length !== effects.length
-    || hitPointChanges.length !== effects.length
-    || deaths.length !== effects.filter((effect) => effect.died).length) return false;
+    || hitPointChanges.length !== effects.filter(effect=>effect.damagePacketHash===undefined).length
+    || deaths.length < effects.filter((effect) => effect.died).length) return false;
 
   const usedAuditRefs = new Set<string>();
   const lastEffectByTarget = new Map<string, AppliedWorldInteractionDamage>();
+  const lastEffectSeqByTarget = new Map<string,bigint>();
   let previousEffectEventSeq = 0n;
   for (const effect of effects) {
     const target = state.entities[effect.targetRef];
     const previousForTarget = lastEffectByTarget.get(effect.targetRef);
     if (target?.hitPoints === undefined
-      || effect.hpBefore <= 0
-      || Math.max(0, effect.hpBefore - effect.amount) !== effect.hpAfter
-      || effect.died !== (effect.hpAfter === 0)
+      || effect.hpBefore < 0
+      || Math.max(0, effect.hpBefore - (effect.hitPointDamage ?? effect.amount)) !== effect.hpAfter
+      || (effect.damagePacketHash === undefined && effect.died !== (effect.hpAfter === 0))
       || (previousForTarget !== undefined && previousForTarget.hpAfter !== effect.hpBefore)) {
       return false;
     }
-    const packet = matchingAudit(packets, usedAuditRefs, previousEffectEventSeq, canonicalSha256({
+    const packet = matchingAudit(packets, usedAuditRefs, previousEffectEventSeq, effect.damagePacketHash ?? canonicalSha256({
       targetId: effect.targetRef,
       amount: effect.amount,
       damageType: effect.damageType,
@@ -1698,7 +1736,7 @@ function worldInteractionDamageEffectsWereCommitted(
     }));
     if (packet === undefined) return false;
     usedAuditRefs.add(packet.eventId);
-    const hitPointChange = matchingAudit(
+    const hitPointChange = effect.damagePacketHash !== undefined ? packet : matchingAudit(
       hitPointChanges,
       usedAuditRefs,
       BigInt(packet.eventSeq),
@@ -1729,10 +1767,18 @@ function worldInteractionDamageEffectsWereCommitted(
     }
     previousEffectEventSeq = finalEventSeq;
     lastEffectByTarget.set(effect.targetRef, effect);
+    lastEffectSeqByTarget.set(effect.targetRef,finalEventSeq);
   }
 
   return [...lastEffectByTarget].every(([targetRef, effect]) => {
-    const target = state.entities[targetRef];
+    // A later condition consequence can clamp HP or kill after this packet.
+    // The existing correction audit freezes the character immediately before
+    // that next write, so the damage receipt is checked at its own boundary.
+    const subsequent = audits.filter(audit=>BigInt(audit.eventSeq)>lastEffectSeqByTarget.get(targetRef)!)
+      .sort((a,b)=>BigInt(a.eventSeq)<BigInt(b.eventSeq)?-1:1)
+      .flatMap(audit=>audit.effects.filter(change=>change.kind==="restoreCharacter"&&change.characterId===targetRef));
+    const first=subsequent[0];
+    const target = first?.kind==="restoreCharacter"?first.before:state.entities[targetRef];
     return target?.hitPoints?.current === effect.hpAfter
       && (effect.died ? target.tenureStatus === "dead" : target.tenureStatus === "active");
   });
@@ -1749,12 +1795,30 @@ function matchingAudit(
     && entry.payloadHash === payloadHash);
 }
 
+function clearAtomicSuspension(state: AuthoritativeWorldState, rootActionId: string): void {
+  const prior = state.atomicWorldInteractions?.[rootActionId];
+  if (prior?.waiting.kind === "input") delete state.combatRuntime.pendingInputs[String(prior.waiting.mirror.pendingInputId)];
+  if (prior?.waiting.kind === "randomness") delete state.internalContinuations[prior.waiting.continuationId];
+  if (state.atomicWorldInteractions !== undefined) delete state.atomicWorldInteractions[rootActionId];
+}
+
 /** Private fold: callers can only exercise it through step/replay. */
 export function foldEvent(
   source: AuthoritativeWorldState,
   event: EventEnvelope,
 ): AuthoritativeWorldState {
   return foldEventInternal(source, event, false);
+}
+
+function frozenAtomicPlans(state: AuthoritativeWorldState, rootActionId: string) {
+  const plans = Object.values(state.internalContinuations).filter(c => c.rootActionId === rootActionId)
+    .flatMap(c => isAtomicWorldInteractionStepsPlan(c.resolutionPlan) ? [c.resolutionPlan] : []);
+  const suspended = state.atomicWorldInteractions?.[rootActionId]?.plan;
+  if (suspended) plans.push(suspended);
+  const choice = frozenChoiceForRoot(state, rootActionId);
+  const selected = choice === undefined ? undefined : selectedFrozenContinuation(choice);
+  if (selected?.kind === "adjudication") plans.push(selected.plan);
+  return plans;
 }
 
 /** The candidate mode uses the exact same domain reducer but deliberately
@@ -1769,13 +1833,107 @@ function foldEventInternal(
   const correctionEffects = correctionEffectsBefore(source, event);
   const firstEventForRoot = !(event.rootActionId in source.receipts);
   const state = structuredClone(source);
+  const frozenChoice = frozenChoiceForRoot(source, event.rootActionId);
+  if (frozenChoice?.selectedChoiceId === null && !["PlayerChoiceRequested", "PendingInputAnswered"].includes(event.eventType)) {
+    throw new TypeError("frozen-choice:selection-required-before-effects");
+  }
 
   switch (event.eventType) {
+    case "FrozenPlayerChoicePrepared": {
+      const { record } = event.payload as EventPayloadByType["FrozenPlayerChoicePrepared"];
+      const refusalCosts: typeof record.refusalCosts = {};
+      if (record.plan.rootActionId !== event.rootActionId || record.plan.profilesHash !== canonicalSha256(event.profiles)
+        || event.secrecy !== "internal" || event.visibilityPolicyId !== "visibility:room-authority-only"
+        || record.plan.pendingInputId in state.pendingInputs || event.rootActionId in state.receipts
+        || frozenChoiceForRoot(state, event.rootActionId) !== undefined
+        || !frozenChoiceReadSetMatches(state, record)
+        || canonicalSha256(record.readSet) !== canonicalSha256(frozenChoiceReadSet(state, record.plan))
+        || frozenPlayerChoiceIssue(event.profiles, state, record.plan, refusalCosts) !== undefined
+        || canonicalSha256(record.refusalCosts) !== canonicalSha256(refusalCosts)) throw new TypeError("frozen-choice:invalid-prepared-plan");
+      state.frozenPlayerChoices ??= {};
+      state.frozenPlayerChoices[record.plan.pendingInputId] = structuredClone(record);
+      break;
+    }
+    case "FrozenPlayerChoiceInputRecorded": {
+      const { input } = event.payload as EventPayloadByType["FrozenPlayerChoiceInputRecorded"];
+      const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
+      if (selected?.kind !== "adjudication" || frozenChoice?.inFlightInput !== null || event.secrecy !== "internal"
+        || event.visibilityPolicyId !== "visibility:room-authority-only") throw new TypeError("frozen-choice:continuation-input-unavailable");
+      if (frozenChoice.plan.profilesHash !== canonicalSha256(event.profiles) || !frozenChoiceReadSetMatches(source, frozenChoice))
+        throw new TypeError("frozen-choice:continuation-basis-changed");
+      const atomic = state.atomicWorldInteractions?.[event.rootActionId];
+      if (atomic !== undefined) {
+        if (!atomicContinuationCanResume(event.profiles, source, atomic)
+          || (input.kind === "randomness" ? atomic.waiting.kind !== "randomness" || atomic.waiting.continuationId !== input.continuationId
+            : atomic.waiting.kind !== "input" || atomic.waiting.mirror.pendingInputId !== input.pendingInputId))
+          throw new TypeError("frozen-choice:continuation-input-not-bound");
+        // This private input event changes no authority dependency. Keep the
+        // already checked checkpoint resumable at its new journal position.
+        atomic.resumeAtEventSeq = event.eventSeq;
+      } else if (input.kind !== "randomness"
+        || state.internalContinuations[input.continuationId]?.rootActionId !== event.rootActionId
+        || canonicalSha256(state.internalContinuations[input.continuationId]?.resolutionPlan ?? null) !== canonicalSha256(selected.plan)) {
+        throw new TypeError("frozen-choice:continuation-input-not-bound");
+      }
+      state.frozenPlayerChoices![frozenChoice.plan.pendingInputId].inFlightInput = structuredClone(input);
+      break;
+    }
+    case "AtomicWorldInteractionSuspended": {
+      const { continuation } = event.payload as EventPayloadByType["AtomicWorldInteractionSuspended"];
+      if (state.atomicWorldInteractions === undefined || continuation.rootActionId !== event.rootActionId
+        || continuation.resumeAtEventSeq !== event.eventSeq) throw new TypeError("atomic suspension checkpoint is not canonical");
+      clearAtomicSuspension(state, event.rootActionId);
+      state.atomicWorldInteractions[event.rootActionId] = structuredClone(continuation);
+      if (frozenChoice !== undefined) state.frozenPlayerChoices![frozenChoice.plan.pendingInputId].inFlightInput = null;
+      if (continuation.waiting.kind === "input") {
+        const mirror = continuation.waiting.mirror;
+        state.combatRuntime.pendingInputs[String(mirror.pendingInputId)] = structuredClone(mirror);
+      }
+      break;
+    }
+    case "AtomicWorldInteractionResumed": {
+      const payload = event.payload as EventPayloadByType["AtomicWorldInteractionResumed"];
+      if (payload.rootActionId !== event.rootActionId || state.atomicWorldInteractions?.[event.rootActionId] === undefined)
+        throw new TypeError("atomic suspension is unavailable");
+      clearAtomicSuspension(state, event.rootActionId);
+      break;
+    }
     case "AtomicWorldInteractionStepsResolved": {
       const payload = event.payload as EventPayloadByType["AtomicWorldInteractionStepsResolved"];
       if (!(payload.actorCharacterId in state.entities)) {
         throw new TypeError("atomic world-interaction actor does not exist");
       }
+      if (state.receipts[event.rootActionId]?.proposalBundleSettlement) {
+        throw new TypeError("atomic world-interaction bundle is already settled");
+      }
+      const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
+      if (frozenChoice !== undefined && (selected?.kind !== "adjudication"
+        || canonicalSha256(payload.steps.map(step => ({ proposalRef: step.proposalRef, outcomeBinding: step.outcomeBinding })))
+          !== canonicalSha256(selected.plan.steps.map(step => ({ proposalRef: step.proposalRef, outcomeBinding: step.outcomeBinding }))))) {
+        throw new TypeError("frozen-choice:settlement-does-not-match-selection");
+      }
+      // A completion marker cannot release the pre-roll plan while its
+      // unconditional history or holder grants are still missing.
+      for (const plan of frozenAtomicPlans(state, event.rootActionId)) {
+        for (const step of plan.steps) {
+          if (step.rulesInput.kind !== "materializeSemanticDefinition" || step.rulesInput.plan.semanticKind !== "worldFact") continue;
+          const expected = materializedSemanticDefinition(event.rootActionId, step.rulesInput.plan);
+          const stored = state.campaignRuntime.definitions[expected.definitionRef];
+          const fact = state.canonicalFacts[worldFactRef(expected.definitionRef)];
+          const authored = expected.definition.content.worldFact;
+          if (step.outcomeBinding !== "always" || !stored || canonicalSha256(stored) !== canonicalSha256(expected.definition)
+            || !fact || !worldFactDefinition(state, fact) || !authoredWorldFactConform(authored)
+            || authored.initialKnowledge.some(grant => {
+              const held = state.knowledge[grant.holderRef]?.[fact.id];
+              return !held || held.objectKind !== "canonicalFact" || held.layer !== "full"
+                || canonicalSha256(held.content) !== canonicalSha256(worldFactPointer(expected.definition));
+            })) throw new TypeError("world-fact:frozen-producer-incomplete");
+        }
+      }
+      for(const [key,stored] of Object.entries(state.internalContinuations)) {
+        if(stored.rootActionId===event.rootActionId&&isAtomicWorldInteractionStepsPlan(stored.resolutionPlan))delete state.internalContinuations[key];
+      }
+      if (frozenChoice !== undefined) delete state.frozenPlayerChoices![frozenChoice.plan.pendingInputId];
       break;
     }
     case "SemanticDefinitionRevised": {
@@ -1813,6 +1971,31 @@ function foldEventInternal(
       }
       break;
     }
+    case "KnowledgeReviewed":
+      validateKnowledgeReviewedEvent(state, event);
+      break;
+    case "NarrativeDetailCommitted": {
+      const payload = event.payload as EventPayloadByType["NarrativeDetailCommitted"];
+      const actor = state.entities[payload.actorCharacterId];
+      if (actor?.sceneId !== payload.detail.sceneRef || actor.tenureStatus !== "active"
+        || payload.commitmentRef !== narrativeDetailRef(event.rootActionId, payload.proposalRef)
+        || state.canonicalFacts[payload.commitmentRef] !== undefined
+        || !payload.detail.audienceCharacterIds.includes(actor.id)
+        || payload.detail.audienceCharacterIds.some(ref => state.entities[ref]?.sceneId !== actor.sceneId)
+        || (payload.detail.audience === "actorOnly" && payload.detail.audienceCharacterIds.length !== 1)) {
+        throw new TypeError("narrative detail identity, scene or audience is invalid");
+      }
+      state.canonicalFacts[payload.commitmentRef] = committedNarrativeFact(payload, {
+        branchId: event.branchId, eventSeq: event.eventSeq, eventId: event.eventId,
+      });
+      break;
+    }
+    case "NarrativeDetailMaterialized": {
+      bindNarrativeMaterialization(state, event.payload as EventPayloadByType["NarrativeDetailMaterialized"], {
+        branchId: event.branchId, eventSeq: event.eventSeq, eventId: event.eventId,
+      });
+      break;
+    }
     case "SemanticDefinitionMaterialized": {
       const payload = event.payload as EventPayloadByType["SemanticDefinitionMaterialized"];
       if (!(payload.actorCharacterId in state.entities)) {
@@ -1821,19 +2004,44 @@ function foldEventInternal(
       if (state.campaignRuntime.definitions[payload.definitionRef] !== undefined) {
         throw new TypeError("semantic definition materialization ref already exists");
       }
+      if (["worldFact", "location", "passage"].includes(payload.semanticKind)) {
+        if (state.receipts[event.rootActionId]?.proposalBundleSettlement) throw new TypeError("world-fact:bundle-already-settled");
+        for (const plan of frozenAtomicPlans(state, event.rootActionId)) {
+          const candidates = plan.steps.flatMap(step => step.rulesInput.kind === "materializeSemanticDefinition"
+            && step.rulesInput.plan.semanticKind === payload.semanticKind
+            && (payload.semanticKind !== "worldFact" || step.outcomeBinding === "always")
+              ? [materializedSemanticDefinition(event.rootActionId, step.rulesInput.plan)] : []);
+          const expected = candidates.find(candidate => candidate.definitionRef === payload.definitionRef);
+          if (!expected || canonicalSha256(expected.definition) !== canonicalSha256(payload.definition)
+            || expected.prospectiveRef !== payload.prospectiveRef) throw new TypeError("world-fact:frozen-producer-changed");
+        }
+      }
       const snapshot = semanticDefinitionSnapshot(payload.definition);
       if (snapshot === undefined || snapshot.revision !== "1") {
         throw new TypeError("semantic definition materialization payload is not canonical");
       }
+      const dynamicIssue = dynamicMaterializationIssue(state, payload.actorCharacterId, payload.semanticKind,
+        payload.definition.content, payload.basisRefs, payload.basisRefs);
+      if (dynamicIssue !== undefined) throw new TypeError(dynamicIssue);
+      applyDynamicLocation(state, payload.definition);
       state.campaignRuntime.definitions[payload.definitionRef] =
         structuredClone(payload.definition) as JsonRecord;
       break;
     }
     case "WorldInteractionFeasibilityRuled": {
       const payload = event.payload as EventPayloadByType["WorldInteractionFeasibilityRuled"];
+      const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
+      if (frozenChoice !== undefined && (selected?.kind !== "inWorldRefusal"
+        || payload.actorCharacterId !== selected.plan.actorCharacterId
+        || canonicalSha256(payload.appliedCosts) !== canonicalSha256(frozenChoice.refusalCosts[frozenChoice.selectedChoiceId!])
+        || payload.intent !== selected.plan.intent || payload.method !== selected.plan.method
+        || payload.rulingKind !== selected.plan.rulingKind || payload.publicBasis !== selected.plan.publicBasis
+        || canonicalSha256(payload.prerequisites) !== canonicalSha256(selected.plan.prerequisites)
+        || canonicalSha256(payload.nextActions) !== canonicalSha256(selected.plan.nextActions))) throw new TypeError("frozen-choice:refusal-plan-changed");
       if (!(payload.actorCharacterId in state.entities)) {
         throw new TypeError("world interaction feasibility actor does not exist");
       }
+      if (frozenChoice !== undefined) delete state.frozenPlayerChoices![frozenChoice.plan.pendingInputId];
       // Each applied cost is checked against the state its own transition
       // left behind: this summary event never spends anything itself, so a
       // ruling that claims a cost no earlier event actually paid must not
@@ -1863,8 +2071,69 @@ function foldEventInternal(
       }
       break;
     }
+    case "ItemUniquenessBound": {
+      const payload = event.payload as EventPayloadByType["ItemUniquenessBound"];
+      const entry = state.campaignRuntime.itemSystem.entries[payload.entryRef];
+      if (state.canonicalFacts[payload.basisRef] === undefined || entry?.definitionRef !== payload.definitionRef
+        || entry.quantity !== 1 || payload.entryRef !== uniqueItemEntryRef(payload.basisRef)
+        || state.vNextItemAuthority?.uniqueItems[payload.basisRef] !== undefined) {
+        throw new TypeError("Unique item identity must bind one unused canonical source and its exact entry.");
+      }
+      const metadata = state.vNextItemAuthority ??= emptyVNextItemAuthority();
+      metadata.uniqueItems[payload.basisRef] = structuredClone(payload);
+      break;
+    }
+    case "ItemIdentified": {
+      const payload = event.payload as EventPayloadByType["ItemIdentified"];
+      const actor = state.entities[payload.characterId];
+      const entry = state.campaignRuntime.itemSystem.entries[payload.entryRef];
+      const definition = state.campaignRuntime.itemSystem.definitions[payload.definitionRef];
+      const sceneId = entry?.disposition === "scene" ? entry.sceneRef : entry?.holderRef === null ? null : state.entities[entry?.holderRef ?? ""]?.sceneId;
+      if (actor?.tenureStatus !== "active" || entry?.definitionRef !== payload.definitionRef
+        || sceneId !== actor.sceneId || definition === undefined || canonicalSha256(definition) !== payload.definitionHash
+        || !authoritySpatialRefVisibleTo(state, payload.entryRef, actor.sceneId, actor.id)
+        || payload.basisRefs.some(ref => authorityRevisionOrHash(state, ref) === null)) {
+        throw new TypeError("Item identification must refer to an available exact definition and causal basis.");
+      }
+      const metadata = state.vNextItemAuthority ??= emptyVNextItemAuthority();
+      const grants = metadata.identifications[payload.characterId] ??= {};
+      grants[payload.entryRef] = structuredClone(payload);
+      break;
+    }
+    case "AuthoredMaterializationResolved": {
+      const payload=event.payload as EventPayloadByType["AuthoredMaterializationResolved"];
+      const exists=payload.kind==="itemEntry"?state.campaignRuntime.itemSystem.entries[payload.ref]
+        :payload.kind==="itemDefinition"?state.campaignRuntime.itemSystem.definitions[payload.ref]
+        :state.campaignRuntime.definitions[payload.ref];
+      if(state.entities[payload.actorCharacterId]===undefined||exists===undefined)throw new TypeError("Authored materialization summary has no registered authority.");
+      break;
+    }
     case "WorldInteractionResolved": {
       const payload = event.payload as EventPayloadByType["WorldInteractionResolved"];
+      if (!payload.social && hasCommittedSocialExpression(state, event as EventEnvelope<"WorldInteractionResolved">)) {
+        throw new TypeError("social:settlement-marker-missing");
+      }
+      let socialFirstEventSeq: string | undefined;
+      if (payload.social) {
+        const source = state.internalContinuations[`continuation:${payload.resolutionId}`]?.resolutionPlan;
+        const atomicSources = frozenAtomicPlans(state, event.rootActionId).filter(plan => plan.steps.some(step =>
+          step.rulesInput.kind === "resolveWorldInteraction" && step.rulesInput.plan.resolutionId === payload.resolutionId));
+        if (new Set(atomicSources.map(canonicalSha256)).size > 1) throw new TypeError("social:frozen-source-plan-ambiguous");
+        const atomicSource = atomicSources[0];
+        const sourceStep = atomicSource?.steps.find(step => step.rulesInput.kind === "resolveWorldInteraction"
+          && step.rulesInput.plan.resolutionId === payload.resolutionId);
+        const sourcePlan = sourceStep?.rulesInput.kind === "resolveWorldInteraction" ? sourceStep.rulesInput.plan
+          : isWorldInteractionResolutionPlan(source) ? source : undefined;
+        const verified = verifySocialSettlement(state, event.profiles, event as EventEnvelope<"WorldInteractionResolved">,
+          sourcePlan, atomicSource, candidate);
+        if (typeof verified === "string") throw new TypeError(verified);
+        // Private candidate folding is not a publication certificate. A public
+        // fold may exclude earlier native damage only after the frozen prefix
+        // is proven here; without an anchor the original damage check remains.
+        if (candidate || verified.prefixProven) socialFirstEventSeq = verified.firstEventSeq;
+        state.campaignRuntime.conversationThreads ??= {};
+        state.campaignRuntime.conversationThreads[payload.social.plan.social!.threadRef] = socialConversationRecord(state, event as EventEnvelope<"WorldInteractionResolved">);
+      }
       const actor = state.entities[payload.actorCharacterId];
       const damageEffects = payload.appliedEffects.filter(
         (effect): effect is AppliedWorldInteractionDamage => effect.kind === "damage",
@@ -1873,6 +2142,7 @@ function foldEventInternal(
         state,
         event as EventEnvelope<"WorldInteractionResolved">,
         damageEffects,
+        socialFirstEventSeq,
       );
       if (!damageEffectsWereCommitted) {
         throw new TypeError("world interaction damage effects were not committed by this root action");
@@ -1880,18 +2150,21 @@ function foldEventInternal(
       const actorDiedFromThisResolution = actor?.tenureStatus === "dead"
         && actor.hitPoints?.current === 0
         && damageEffectsWereCommitted
-        && damageEffects.some((effect) =>
+        && (damageEffects.some((effect) =>
           effect.targetRef === payload.actorCharacterId
           && effect.hpBefore > 0
           && effect.hpAfter === 0
           && effect.died
-          && Math.max(0, effect.hpBefore - effect.amount) === effect.hpAfter);
+          && Math.max(0, effect.hpBefore - effect.amount) === effect.hpAfter)
+          || Object.values(state.correctionRuntime.audit).some(audit=>audit.rootActionId===event.rootActionId
+            && audit.eventType==="CreatureDied"&&audit.payloadHash===canonicalSha256({
+              characterId:payload.actorCharacterId,causeId:event.rootActionId})));
       if (actor === undefined
         || actor.sceneId !== payload.sceneRef
         || (actor.tenureStatus !== "active" && !actorDiedFromThisResolution)) {
         throw new TypeError("world interaction actor is unavailable from its frozen scene");
       }
-      if (payload.rulingKind === "check") {
+      if (payload.rulingKind === "check" && !candidate) {
         const continuationId = `continuation:${payload.resolutionId}`;
         const stored = state.internalContinuations[continuationId];
         const continuedPlan = stored === undefined
@@ -1903,14 +2176,33 @@ function foldEventInternal(
               : undefined;
         if (stored === undefined
           || continuedPlan === undefined
-          || worldInteractionPlanHash(continuedPlan) !== payload.planHash
+          || (!payload.social && worldInteractionPlanHash(continuedPlan) !== payload.planHash)
+          || Boolean(continuedPlan.social) !== Boolean(payload.social)
           || stored.request.purpose !== "worldInteractionCheck") {
           throw new TypeError("world interaction continuation does not exist");
         }
-        delete state.internalContinuations[continuationId];
+        if (continuedPlan.social) {
+          const dice = stored.committedDice, check = payload.check;
+          const audit = dice && state.correctionRuntime.audit[dice.eventId];
+          const count = stored.request.frozenCheck?.mode === "normal" ? 1 : 2;
+          if (!dice || !check || !audit || audit.eventType !== "DiceRolled" || audit.rootActionId !== event.rootActionId
+            || audit.branchId !== event.branchId || audit.payloadHash !== canonicalSha256(dice.payload)
+            || BigInt(audit.eventSeq) >= BigInt(event.eventSeq)
+            || dice.payload.randomnessId !== check.randomnessId || dice.payload.resolutionId !== payload.resolutionId
+            || canonicalSha256(dice.payload.faces.slice(0, count)) !== canonicalSha256(check.rolls)
+            || dice.payload.selectedFace !== check.selectedRoll) throw new TypeError("social:check-does-not-match-committed-dice");
+        }
+        if (!isAtomicWorldInteractionStepsPlan(stored.resolutionPlan)) delete state.internalContinuations[continuationId];
+      } else if(payload.rulingKind === "directSuccess") {
+        const key=`continuation:${payload.resolutionId}`;
+        if(isWorldInteractionResolutionPlan(state.internalContinuations[key]?.resolutionPlan))delete state.internalContinuations[key];
       }
       for (const effect of payload.appliedEffects) {
-        if (effect.kind === "definitionRevision" || effect.kind === "relationTransition") {
+        if (effect.kind === "passageTraversalStarted") {
+          const activity = state.campaignRuntime.activities[effect.activityId];
+          if (activity?.status !== "active" || activity.characterId !== payload.actorCharacterId
+            || canonicalSha256(passageActivityBinding(activity)) !== canonicalSha256(effect.passage)) throw new TypeError("passage:activity-not-committed");
+        } else if (effect.kind === "definitionRevision" || effect.kind === "relationTransition") {
           const definition = state.campaignRuntime.definitions[effect.definitionRef];
           if (!isRecord(definition)
             || definition.revision !== effect.toRevision
@@ -1979,6 +2271,10 @@ function foldEventInternal(
     }
     case "PlayerChoiceRequested": {
       const payload = event.payload as EventPayloadByType["PlayerChoiceRequested"];
+      if (frozenChoice !== undefined && (!frozenChoicePublicBindingMatches(frozenChoice, payload)
+        || payload.pendingInputId in state.pendingInputs || event.secrecy !== "private"
+        || event.visibilityPolicyId !== `visibility:character-controller:${frozenChoice.plan.actorCharacterId}`))
+        throw new TypeError("frozen-choice:public-options-changed");
       if (!(payload.actorCharacterId in state.entities)) {
         throw new TypeError("player choice controller does not exist");
       }
@@ -2088,13 +2384,22 @@ function foldEventInternal(
       ) {
         throw new TypeError("pending answer does not match the open clarification");
       }
+      const choice = state.frozenPlayerChoices?.[payload.pendingInputId];
+      if (choice !== undefined) {
+        const option = choice.plan.choices.find(option => option.choiceId === payload.answer.choiceId);
+        if (choice.selectedChoiceId !== null || !hasExactKeys(payload.answer, ["choiceId"])
+          || option === undefined || (option.continuation.kind !== "cancel" && !frozenChoiceReadSetMatches(source, choice)))
+          throw new TypeError("frozen-choice:answer-not-bound");
+        choice.selectedChoiceId = String(payload.answer.choiceId);
+        if (selectedFrozenContinuation(choice)?.kind === "cancel") delete state.frozenPlayerChoices![payload.pendingInputId];
+      }
       delete state.pendingInputs[payload.pendingInputId];
       break;
     }
     case "SocialResolutionDeclined": {
       const payload = event.payload as EventPayloadByType["SocialResolutionDeclined"];
       const threads = state.campaignRuntime.conversationThreads;
-      const prior = threads?.[payload.threadRef];
+      const prior = legacySocialThread(state, payload.threadRef);
       if (threads === undefined
         || prior?.actorCharacterId !== payload.actorCharacterId
         || prior.npcCharacterId !== payload.npcCharacterId
@@ -2123,7 +2428,7 @@ function foldEventInternal(
       const response = payload.plan.successResponse;
       const addressed = payload.addressedThreadRef === null
         ? undefined
-        : threads?.[payload.addressedThreadRef];
+        : legacySocialThread(state, payload.addressedThreadRef);
       if (threads === undefined
         || actor?.kind !== "player"
         || npc?.kind !== "npc"
@@ -2212,7 +2517,7 @@ function foldEventInternal(
     case "SocialCheckResolved": {
       const payload = event.payload as EventPayloadByType["SocialCheckResolved"];
       const threads = state.campaignRuntime.conversationThreads;
-      const prior = threads?.[payload.threadRef];
+      const prior = legacySocialThread(state, payload.threadRef);
       const actor = state.entities[payload.actorCharacterId];
       const npc = state.entities[payload.npcCharacterId];
       const frozenResponse = isRecord(prior?.successResponse)
@@ -2220,7 +2525,7 @@ function foldEventInternal(
         : undefined;
       const addressed = payload.addressedThreadRef === null
         ? undefined
-        : threads?.[payload.addressedThreadRef];
+        : legacySocialThread(state, payload.addressedThreadRef);
       if (threads === undefined
         || prior?.actorCharacterId !== payload.actorCharacterId
         || prior.npcCharacterId !== payload.npcCharacterId
@@ -2378,6 +2683,7 @@ function foldEventInternal(
         || !initialKnowledgeAuthorized
         || definition?.definitionKind !== "npc"
         || !isNonEmptyString(content?.name)
+        || (content.publicExpression !== undefined && !publicExpressionConform(content.publicExpression))
         || socialMechanics === undefined
         || canonicalSha256(socialMechanics) !== payload.socialMechanicsHash) {
         throw new TypeError("dynamic NPC materialization is not bound to an established source");
@@ -2388,6 +2694,7 @@ function foldEventInternal(
         id: payload.entityId,
         kind: "npc",
         name: content.name,
+        ...(publicExpressionConform(content.publicExpression) ? { publicExpression: structuredClone(content.publicExpression) } : {}),
         sceneId: payload.sceneId,
         tenureStatus: "active",
         entityOrdinal: String(nextOrdinal),
@@ -2401,6 +2708,12 @@ function foldEventInternal(
     }
     case "RandomnessRequested": {
       const payload = event.payload as EventPayloadByType["RandomnessRequested"];
+      const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
+      // Native and choice-dependent random requests use their native schemas.
+      // Replay proves their complete source segment with the same executor;
+      // only an explicitly supplied top-level plan must match here.
+      if (frozenChoice !== undefined && (selected?.kind !== "adjudication" || ("resolutionPlan" in payload
+        && canonicalSha256(payload.resolutionPlan) !== canonicalSha256(selected.plan)))) throw new TypeError("frozen-choice:randomness-plan-changed");
       if ("resolution" in payload) {
         const resolution = payload.resolution;
         state.combatRuntime.randomnessResolutions[String(resolution.resolutionId)] = structuredClone(resolution);
@@ -2422,8 +2735,20 @@ function foldEventInternal(
       };
       break;
     }
-    case "DiceRolled":
+    case "DiceRolled": {
+      const payload=event.payload as EventPayloadByType["DiceRolled"];
+      const stored=state.internalContinuations[`continuation:${payload.resolutionId}`];
+      if(stored?.request.purpose==="worldInteractionCheck") {
+        const request=stored.request;
+        if(payload.requestHash!==request.requestHash || payload.frozenParametersHash!==canonicalSha256(request.frozenParameters)
+          || payload.formula!==request.diceExpression || !worldInteractionDiceValid(request.dice,payload.faces)) throw new TypeError("world interaction dice are not bound to the frozen authority request");
+        const selected=request.frozenCheck===null?null:request.frozenCheck.mode==="advantage"?Math.max(...payload.faces.slice(0,2)):request.frozenCheck.mode==="disadvantage"?Math.min(...payload.faces.slice(0,2)):payload.faces[0];
+        if(payload.selectedFace!==selected)throw new TypeError("world interaction selected a face outside its check");
+        if (stored.committedDice) throw new TypeError("world interaction randomness was already committed");
+        stored.committedDice = { eventId: event.eventId, payload: structuredClone(payload) };
+      }
       break;
+    }
     case "HiddenRealityCandidatesFrozen":
       break;
     case "HiddenRealityMaterialized": {
@@ -2457,6 +2782,18 @@ function foldEventInternal(
           throw new TypeError("knowledge batch recipient or source does not exist");
         }
         const entries = knowledgeFor(state, payload.characterId);
+        if (worldInteractionProfileEnabled(event.profiles.extensions)) {
+          const unique = new Set<string>();
+          if (event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`
+            || payload.items.some(item => {
+              const source = heldKnowledgeRecord(state, payload.sourceCharacterId, item.knowledgeRef);
+              if (!source || unique.has(item.knowledgeRef) || Object.hasOwn(entries, item.knowledgeRef)
+                || source.objectKind !== item.objectKind || !knowledgeLayerCanBeShared(source.layer, payload.contentLayer)
+                || canonicalSha256(source.content) !== canonicalSha256(item.content)
+                || canonicalSha256([...source.provenanceChain].sort()) !== canonicalSha256([...item.provenanceChain].sort())) return true;
+              unique.add(item.knowledgeRef); return false;
+            })) throw new TypeError("Shared knowledge must preserve an actual holder's content, layer, provenance and private recipient.");
+        }
         for (const item of payload.items) {
           entries[item.knowledgeRef] = {
             characterId: payload.characterId,
@@ -2475,6 +2812,17 @@ function foldEventInternal(
       }
       if (!(payload.characterId in state.entities) || !(payload.causeFactId in state.canonicalFacts)) {
         throw new TypeError("knowledge acquisition reference is not available");
+      }
+      if (isWorldFactPointer(payload.content)) {
+        const fact = state.canonicalFacts[payload.causeFactId];
+        const definition = fact && worldFactDefinition(state, fact);
+        const authored = definition?.content.worldFact;
+        const grant = authoredWorldFactConform(authored) && authored.initialKnowledge.find(k => k.holderRef === payload.characterId);
+        if (!definition || !grant || payload.knowledgeRef !== fact.id || payload.objectKind !== "canonicalFact"
+          || payload.layer !== "full" || payload.visibility !== "private" || event.secrecy !== "private"
+          || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`
+          || canonicalSha256(payload.content) !== canonicalSha256(worldFactPointer(definition))
+          || payload.acquisition.method !== grant.acquisitionExplanation) throw new TypeError("world-fact:knowledge-grant-mismatch");
       }
       const entries = knowledgeFor(state, payload.characterId);
       if (payload.knowledgeRef in entries) {
@@ -2633,7 +2981,7 @@ function foldEventInternal(
       }
   }
 
-  if (!candidate) {
+  if (!candidate && event.eventType !== "FrozenPlayerChoiceInputRecorded") {
     const priorReceipt = state.receipts[event.rootActionId];
     const receipt = publicReceipt(event);
     if (
@@ -2650,7 +2998,7 @@ function foldEventInternal(
       inputHash: priorReceipt?.inputHash ?? event.payloadHash,
       subjectCharacterIds: [...new Set([
         ...(priorReceipt?.subjectCharacterIds ?? []),
-        ...eventSubjects(event),
+        ...eventSubjects(event, state),
       ])].sort(),
       ...(event.eventType === "AtomicWorldInteractionStepsResolved"
         ? {
@@ -2665,7 +3013,7 @@ function foldEventInternal(
   }
   recordCorrectionAudit(state, event, correctionEffects);
   recordCausalFrontier(state, event);
-  if (!candidate) recordSpotlightDecision(state, event, firstEventForRoot);
+  if (!candidate && event.eventType !== "FrozenPlayerChoiceInputRecorded") recordSpotlightDecision(state, event, firstEventForRoot);
   state.version = event.eventSeq;
   state.eventHeadHash = event.eventHash;
   state.lastEventId = event.eventId;

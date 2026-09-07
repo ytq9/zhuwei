@@ -7,7 +7,6 @@ import {
 import {
   authoritativeKpProfileByModelId,
   kpRequestDeclaresStrictTool,
-  kpStructuredOutputMode,
 } from "./authoritative-policy";
 import type {
   AuthoritativeKpProfile,
@@ -29,15 +28,10 @@ export function authoritativeKpModelBinding(
   if (profile.provider === "deepseek") {
     const apiKey = deepSeekApiKey() ?? "";
     const ordinary = createDeepSeekAuthoritativeBinding({ apiKey });
-    // A profile that has not opted in never reaches the beta endpoint.
-    if (kpStructuredOutputMode(profile) !== "strict-tool") return ordinary;
-    // A profile that has opted in still sends two shapes of request: the Form
-    // selection call carries several tools and cannot be strict, and the
-    // repair carries the one chosen Form and is. Routing both to the beta
-    // endpoint refuses the selection call before it is dispatched, so the
-    // transport follows the request that is actually being sent -- a tool
-    // declaring `strict` reaches the endpoint that enforces it, and a request
-    // declaring nothing is not sent there claiming it does.
+    // The request owns its transport. A vNext narration review explicitly
+    // declares strict even when the shared generation profile uses ordinary
+    // Forms. Profile-level routing would silently skip strict enforcement.
+    // Ordinary generation and Form selection keep their original endpoint.
     const strict = createDeepSeekStrictToolBinding({ apiKey });
     return {
       run(model, input, options) {

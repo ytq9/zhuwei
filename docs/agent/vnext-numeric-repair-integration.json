@@ -1,0 +1,43 @@
+{
+  "root": "/tmp/zhuwei-pass-time-numeric-repair-work",
+  "baselineManifestSha256": "2bf7ffbd68da91c675ba76eff3aebb39b2c3a872ebdf6613a196d8c1749f6d48",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/canonical-json.ts",
+      "baselineSha256": "7876f23f7c4b2aef9390c15900020eb4c58af6f7febe93dadfaf2a213c61fcaa",
+      "newSha256": "cf38161c602257be446c378cf4b3a5e1297ad7bc1d4ce90928b5f3f206e8b796"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-provider.ts",
+      "baselineSha256": "f1350cb454d5b2fd2863241d1ade201edc0cd9981634c072c6022e7ccbf15c16",
+      "newSha256": "5355fca8f7105bb4bf6f63e04f96a624921bf846aeaf5be02098e06757d191d9"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-correction.ts",
+      "baselineSha256": "3918e87c12df3947d5a8a87dd91879f6e5694bc607918d76948e59b0cc989e6b",
+      "newSha256": "22a193d135ff9e4eece4dc6a5d6fb9e4a776c0c7078fd520305f6375d838cbb4"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-repair-plan.ts",
+      "baselineSha256": "43bcc6c23ad3e22775aacd1014da884c1551fed638e64a403836de6cf47ec721",
+      "newSha256": "17112009465aa82454e7f39269dc6648270a7d65385b5fc57025f95d9342b47b"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-schema.ts",
+      "baselineSha256": "1b5a56cbb4969ce5634198447b4d1c00d2290302c0e0c07978c41f9fe00201cb",
+      "newSha256": "ae06f789f825a778875352193714445d09d97d71faa6de14cee2fbaf383e511c"
+    },
+    {
+      "path": "tests/kp-vnext-numeric-repair.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "a829b8ab0814e15bcbc391ddba9b4c88650323873d71e51e2a558293d34a7542"
+    }
+  ],
+  "integration": {
+    "at": "2026-09-06T21:33:23.902808+00:00",
+    "files": 6,
+    "conflicts": 0,
+    "backup": "/tmp/zhuwei-numeric-repair-root-before",
+    "sourceManifestSha256": "a43b7c777cdbea29286e69dffac17d17f4b283fdb9037876c9f77a833bf3fa55"
+  }
+}

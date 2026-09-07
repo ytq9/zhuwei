@@ -1,3 +1,4 @@
+import { characterInferenceContentText } from "../rules/v2/character-inference";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
 import { failureCodeIsRetryable } from "../room/telemetry";
 import { classById } from "../dnd/catalog";
@@ -18,8 +19,10 @@ export const V3_PUBLIC_FAILURE_CODES = [
   "PROPOSAL_REPAIR_EXHAUSTED",
   "CONTEXT_INSUFFICIENT",
   "NARRATION_PROVIDER_TIMEOUT",
+  "NARRATION_PROVIDER_REJECTED",
   "NARRATION_BODY_INVALID",
   "NARRATION_GROUNDING_REJECTED",
+  "NARRATION_CONTEXT_BUDGET_EXCEEDED",
   "NARRATION_PUBLICATION_FAILED",
 ] as const;
 
@@ -37,8 +40,12 @@ export function publicNarrationFailureReason(value: unknown): string {
   switch (publicV3FailureCode(value)) {
     case "NARRATION_PROVIDER_TIMEOUT":
       return "KP 服务暂时不可用，或本次响应超过时限";
+    case "NARRATION_PROVIDER_REJECTED":
+      return "KP 服务拒绝了生成或审核请求，回复检查尚未完成";
     case "NARRATION_BODY_INVALID":
-      return "KP 服务配置或返回内容未通过有效性检查";
+      return "KP 返回的回复内容未通过格式检查";
+    case "NARRATION_CONTEXT_BUDGET_EXCEEDED":
+      return "本次回复所需内容超出处理容量，行动结果已保留";
     case "NARRATION_GROUNDING_REJECTED":
       return "KP 回复与已经结算的事实不一致";
     case "NARRATION_PUBLICATION_FAILED":
@@ -53,7 +60,7 @@ export function publicNarrationRecoveryReason(value: unknown): string {
     case "pending":
       return "KP 回复仍在处理，或上次连接在完成前中断。";
     case "rejected":
-      return "KP 回复未通过格式或已结算事实检查。";
+      return "KP 服务请求被拒绝，或回复未通过检查。";
     case "retryableFailure":
       return "KP 服务或回复发布暂时失败；这不代表一定等待超时。";
     default:
@@ -845,6 +852,8 @@ function publicKnowledgeText(content: unknown): {
   text?: string;
 } {
   if (typeof content === "string") return { text: content };
+  const inference = characterInferenceContentText(content);
+  if (inference !== undefined) return { text: inference };
   if (!isRecord(content)) return {};
   return {
     name: nonEmptyString(content.title) ?? nonEmptyString(content.name),
@@ -1215,6 +1224,48 @@ export function buildAuthoritativeButtonAction(input: {
  * allow-listing adapter: internal facts, entity records, delivery metadata and
  * narration history never cross this boundary.
  */
+function safeProjectedActivities(value: unknown) {
+  return Array.isArray(value)
+    ? value.flatMap((activity) => {
+        if (!isRecord(activity)) return [];
+        const activityId = nonEmptyString(activity.activityId);
+        const characterId = nonEmptyString(activity.characterId);
+        const status = activity.status === "active"
+          || activity.status === "completed"
+          || activity.status === "interrupted"
+          ? activity.status
+          : undefined;
+        const startedAtFictionMicros = nonEmptyString(activity.startedAtFictionMicros);
+        const intendedDurationMicros = nonEmptyString(activity.intendedDurationMicros);
+        const restKind = activity.restKind === "short" || activity.restKind === "long"
+          ? activity.restKind
+          : undefined;
+        return activityId && characterId && status && startedAtFictionMicros && intendedDurationMicros
+          ? [{
+              activityId,
+              characterId,
+              status,
+              startedAtFictionMicros,
+              intendedDurationMicros,
+              ...(activity.kind !== "timePassage" ? {} : {
+                kind: "timePassage" as const,
+                ...(typeof activity.progressFictionMicros === "string" && /^(0|[1-9][0-9]*)$/.test(activity.progressFictionMicros)
+                  ? { progressFictionMicros: activity.progressFictionMicros } : {}),
+                ...(["processing", "blocked", "cannotSafelyContinue"].includes(String(activity.processingState))
+                  ? { processingState: activity.processingState as "processing" | "blocked" | "cannotSafelyContinue" } : {}),
+                ...(typeof activity.endedAtFictionMicros === "string" && /^(0|[1-9][0-9]*)$/.test(activity.endedAtFictionMicros)
+                  ? { endedAtFictionMicros: activity.endedAtFictionMicros } : {}),
+                ...(typeof activity.interruptionReason === "string" && ["actorUnavailable", "actorIncapacitated", "encounterActive", "locationChanged",
+                  "externalInterruption"].includes(activity.interruptionReason)
+                  ? { interruptionReason: activity.interruptionReason } : {}),
+              }),
+              ...(restKind === undefined ? {} : { restKind }),
+            }]
+          : [];
+      })
+    : [];
+}
+
 export function projectAuthoritativeTableObservation(input: {
   userId: string;
   members: string[];
@@ -1337,7 +1388,7 @@ export function projectAuthoritativeTableObservation(input: {
       projectionHash: nonEmptyString(readModel.projectionHash),
       controlledCharacter: null,
       ...(safetyPresentation === undefined ? {} : { safetyPresentation }),
-      activities: [],
+      activities: safeProjectedActivities(readModel.activities),
       inCombat: false,
       lifecycle: {
         kind: "successorRequired" as const,
@@ -1441,33 +1492,7 @@ export function projectAuthoritativeTableObservation(input: {
   const restRecoveryOptions = safeRestRecoveryOptions(
     readModel.controlledCharacter.restRecoveryOptions,
   );
-  const activities = Array.isArray(readModel.activities)
-    ? readModel.activities.flatMap((activity) => {
-        if (!isRecord(activity)) return [];
-        const activityId = nonEmptyString(activity.activityId);
-        const characterId = nonEmptyString(activity.characterId);
-        const status = activity.status === "active"
-          || activity.status === "completed"
-          || activity.status === "interrupted"
-          ? activity.status
-          : undefined;
-        const startedAtFictionMicros = nonEmptyString(activity.startedAtFictionMicros);
-        const intendedDurationMicros = nonEmptyString(activity.intendedDurationMicros);
-        const restKind = activity.restKind === "short" || activity.restKind === "long"
-          ? activity.restKind
-          : undefined;
-        return activityId && characterId && status && startedAtFictionMicros && intendedDurationMicros
-          ? [{
-              activityId,
-              characterId,
-              status,
-              startedAtFictionMicros,
-              intendedDurationMicros,
-              ...(restKind === undefined ? {} : { restKind }),
-            }]
-          : [];
-      })
-    : [];
+  const activities = safeProjectedActivities(readModel.activities);
   const inCombat = Array.isArray(readModel.encounters)
     && readModel.encounters.some((encounter) => isRecord(encounter)
       && encounter.status !== "concluded"
@@ -1730,6 +1755,11 @@ export function projectAuthoritativeTableObservation(input: {
     },
     ...(safetyPresentation === undefined ? {} : { safetyPresentation }),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),
+    visibleAssemblies: (Array.isArray(readModel.visibleAssemblies) ? readModel.visibleAssemblies : []).flatMap(value => {
+      if (!isRecord(value) || value.state !== "active" || value.sceneRef !== sceneId) return [];
+      const assemblyRef = nonEmptyString(value.assemblyRef), label = safeProjectedText(value.label, 500), description = safeProjectedText(value.description, 4000);
+      return assemblyRef && label && description && sceneId ? [{ assemblyRef, label, description, sceneRef: sceneId, state: "active" as const }] : [];
+    }),
     activities,
     inCombat,
     ...(safeFictionTime ? { fictionTime: safeFictionTime } : {}),
@@ -1782,6 +1812,7 @@ export function buildAuthoritativeTableState(input: {
     controlledCharacter: projected.controlledCharacter,
     activities: projected.activities,
     inCombat: projected.inCombat,
+    visibleAssemblies: "visibleAssemblies" in projected ? projected.visibleAssemblies : [],
     ...(safetyPresentation === undefined ? {} : { safetyPresentation }),
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(tacticalProjection === undefined ? {} : { tacticalProjection }),

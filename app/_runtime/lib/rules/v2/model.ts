@@ -1,3 +1,14 @@
+import type { ItemAssemblyChangedPayload } from "./item-assemblies";
+import type { FrozenPlayerChoiceRecord } from "./frozen-player-choice";
+import type { PassageTraversalBinding } from "./dynamic-locations";
+import type { KnowledgeIdentity } from "./knowledge-identities";
+import type { PublicExpression } from "./public-expression";
+import type { VNextItemAuthority, ItemUniquenessBoundPayload, ItemIdentifiedPayload } from "./item-authority-vnext";
+import type { NarrativeDetailCommittedPayload, NarrativeDetailMaterializedPayload } from "./narrative-commitments";
+import type { AtomicWorldContinuation } from "./atomic-world-input";
+import type { ConditionStateSynchronizedPayload } from "./condition-consequences";
+import type { KnowledgeReviewedPayload } from "./knowledge-review";
+import type { InventoryOperationAppliedPayload } from "./inventory-operations";
 import type {
   ProfileRef,
   RuntimeProfileManifest,
@@ -28,6 +39,9 @@ export type RuleDiagnostic = {
   code: string;
   message: string;
   path?: string;
+  /** Safe contract metadata only; never copy private state or candidate refs. */
+  constraint?: string;
+  expected?: Readonly<Record<string, unknown>>;
   source: "SPEC 0003" | "SPEC 0004" | "SPEC 0005" | "SPEC 0008" | "SPEC 0010" | "SPEC 0013";
   visibility: "public";
 };
@@ -94,6 +108,7 @@ export type NeedsKpRulesResult = {
 export type SceneRecord = {
   id: string;
   name: string;
+  publicTone?: string;
 };
 
 export type PrincipalRecord = {
@@ -211,11 +226,13 @@ export type CharacterRecord = {
   proficientSkills?: string[];
   expertiseSkills?: string[];
   proficientSaves?: string[];
+  conditionImmunities?: string[];
   cantripIds?: string[];
   preparedSpellIds?: string[];
   featureIds?: string[];
   loadout?: CharacterLoadoutRecord;
   socialMechanics?: NpcSocialMechanicsRecord;
+  publicExpression?: PublicExpression;
   semanticDefinitionRef?: string;
   semanticDefinitionRevision?: string;
   lastLongRestCompletedAtMicros?: string;
@@ -280,6 +297,7 @@ export type StoredReceipt = PublicReceipt & {
 };
 
 export type CorrectionEffect =
+  | { kind: "removeFrozenChoiceRoot"; rootActionId: string }
   | { kind: "restoreFictionTime"; timelineId: string; beforeMicros: string }
   | { kind: "restoreScene"; sceneId: string; before: SceneRecord | null }
   | { kind: "restoreCanonicalFact"; factId: string; before: CanonicalFactRecord | null }
@@ -326,6 +344,7 @@ export type CorrectionAuditRecord = {
   rootActionId: string;
   branchId: string;
   payloadHash: Sha256Ref;
+  resolutionId?: string;
   effects: CorrectionEffect[];
 };
 
@@ -421,14 +440,13 @@ export type WorldInteractionRandomnessRequest = {
   resolutionId: string;
   actorCharacterId: string;
   purpose: "worldInteractionCheck";
+  purposeKey: string;
   diceExpression: string;
-  frozenCheck: FrozenCheck;
-  hazardSaves: Array<{
-    targetRef: string;
-    ability: string;
-    dc: number;
-    halfOnSuccess: boolean;
-  }>;
+  dice: Array<{ count: string; sides: string }>;
+  frozenCheck: FrozenCheck | null;
+  hazardRolls: readonly import("./world-interaction-randomness").WorldInteractionDiceSpec[];
+  frozenParameters: JsonRecord;
+  requestHash: Sha256Ref;
 };
 
 export type RestHitDiceRandomnessRequest = {
@@ -505,6 +523,7 @@ export type CompoundActionEffect =
       kind: "moveEntity";
       entityRef: string;
       sceneRef: string;
+      passage?: PassageTraversalBinding;
     }
   | {
       kind: "advanceFictionTime";
@@ -683,7 +702,7 @@ export type CampaignRuntimeState = {
   stories: Record<string, JsonRecord>;
   epilogues: Record<string, JsonRecord>;
   inheritanceSources: Record<string, JsonRecord>;
-  conversationThreads?: Record<string, ConversationThreadRecord>;
+  conversationThreads?: Record<string, ConversationThreadRecord | import("./social-interaction").SocialConversationRecord>;
   itemSystem: ItemSystemStateV1;
 };
 
@@ -728,6 +747,7 @@ export type InternalContinuationRecord = {
   continuation: AuthorityContinuation;
   rootActionId: string;
   request: RandomnessRequest;
+  committedDice?: { eventId: string; payload: EventPayloadByType["DiceRolled"] };
   resolutionPlan?: CompoundResolutionPlan | CausalActionResolutionPlan | SocialResolutionPlan
     | ContestResolutionPlan | HiddenRealityResolutionPlan | WorldInteractionResolutionPlan
     | AtomicWorldInteractionStepsPlan;
@@ -750,7 +770,10 @@ export type AuthoritativeWorldState = {
   knowledge: Record<string, Record<string, KnowledgeRecord>>;
   receipts: Record<string, StoredReceipt>;
   pendingInputs: Record<string, PendingInputRecord>;
+  frozenPlayerChoices?: Record<string, FrozenPlayerChoiceRecord>;
   internalContinuations: Record<string, InternalContinuationRecord>;
+  atomicWorldInteractions?: Record<string, AtomicWorldContinuation>;
+  vNextItemAuthority?: VNextItemAuthority;
   campaignRuntime: CampaignRuntimeState;
   combatRuntime: CombatRuntimeState;
   correctionRuntime: CorrectionRuntimeState;
@@ -848,9 +871,22 @@ export type ActorPlanFormedPayload = {
 
 export type EventPayloadByType = {
   AtomicWorldInteractionStepsResolved: AtomicWorldInteractionStepsResolvedPayload;
+  AtomicWorldInteractionSuspended: { continuation: AtomicWorldContinuation };
+  AtomicWorldInteractionResumed: { rootActionId: string };
   SemanticDefinitionRevised: SemanticDefinitionRevisedPayload;
   SemanticDefinitionMaterialized: SemanticDefinitionMaterializedPayload;
+  NarrativeDetailCommitted: NarrativeDetailCommittedPayload;
+  NarrativeDetailMaterialized: NarrativeDetailMaterializedPayload;
   WorldInteractionResolved: WorldInteractionResolvedPayload;
+  ConditionStateSynchronized:ConditionStateSynchronizedPayload;
+  KnowledgeReviewed: KnowledgeReviewedPayload;
+  InventoryOperationApplied: InventoryOperationAppliedPayload;
+  ItemAssemblyChanged: ItemAssemblyChangedPayload;
+  ItemUniquenessBound: ItemUniquenessBoundPayload;
+  ItemIdentified: ItemIdentifiedPayload;
+  AuthoredMaterializationResolved: {
+    actorCharacterId:string;contextHash:Sha256Ref;kind:"abilityDefinition"|"hazardDefinition"|"itemDefinition"|"itemEntry";ref:string;summary:string;
+  };
   WorldInteractionFeasibilityRuled: WorldInteractionFeasibilityRuledPayload;
   EnvironmentFeatureMaterialized: {
     actorCharacterId: string;
@@ -981,6 +1017,8 @@ export type EventPayloadByType = {
     question: string;
     choices: Array<{ choiceId: string; label: string; consequence: string }>;
   };
+  FrozenPlayerChoicePrepared: { record: FrozenPlayerChoiceRecord };
+  FrozenPlayerChoiceInputRecorded: { input: import("./frozen-player-choice").FrozenPlayerChoiceContinuationInput };
   SocialResolutionOffered: {
     actorCharacterId: string;
     npcCharacterId: string;
@@ -1172,6 +1210,7 @@ export type EventPayloadByType = {
   PartyLeaderTransferred: { groupId: string; fromCharacterId: string; toCharacterId: string };
   PartyGroupDisbanded: { groupId: string; reason: string };
   PartyMoveProposed: {
+    passage?: PassageTraversalBinding;
     proposalId: string;
     groupId: string;
     leaderCharacterId: string;
@@ -1192,6 +1231,7 @@ export type EventPayloadByType = {
     accepted: boolean;
   };
   PartyMoved: {
+    passage?: PassageTraversalBinding;
     proposalId: string;
     groupId: string;
     memberCharacterIds: string[];
@@ -1202,6 +1242,8 @@ export type EventPayloadByType = {
     arrivalMicros: string;
   };
   CharacterMoved: {
+    passage?: PassageTraversalBinding;
+    activityId?: string;
     characterId: string;
     destinationSceneId: string;
     sourceTimelineId: string;
@@ -1319,7 +1361,7 @@ export type EventPayloadByType = {
     success: JsonRecord;
     failure: JsonRecord;
   };
-  FictionTimeAdvanced: { durationMicros: string; reason: string };
+  FictionTimeAdvanced: { durationMicros: string; reason: string; activityId?: string };
   ContestFrozen: { initiatorId: string; defenderId: string; initiatorCheck: JsonRecord; defenderCheck: JsonRecord; tieResult: string };
   SaveFrozen: { targetId: string; sourceDefinitionId: string; ability: string; dc: number; success: JsonRecord; failure: JsonRecord };
   ResourceUsed: { characterId: string; resourceId: string; amount: number; purpose: string };
@@ -1707,9 +1749,17 @@ export type ProjectionQuery = {
   dueActorPlanFor?: {
     affectedCharacterId: string;
   };
+  /** Internal Rules-owned selection of every due ordinary Activity. */
+  dueActivities?: true;
+  /** Internal finite-knowledge view of the unique pending NPC controller,
+   * including its uncommitted atomic prefix when Rules suspended one. */
+  pendingNpcDecisionFor?: {
+    pendingInputId: string;
+  };
 };
 
 export type SafeReadModel = {
+  npcIdentity?: JsonRecord;
   kind: "projected";
   runtimeProfiles: RuntimeProfileManifest;
   stateVersion: string;
@@ -1720,7 +1770,12 @@ export type SafeReadModel = {
     kind: "player" | "npc";
     subjectId: string;
   };
+  publicExpression?: {
+    scene: { name: string; tone: string };
+    characters: Array<{ characterRef: string; name: string; voice: string; attitude: string | null }>;
+  };
   controlledCharacter: {
+    conditions?: JsonRecord;
     characterId: string;
     name?: string;
     sceneId?: string;
@@ -1748,6 +1803,8 @@ export type SafeReadModel = {
   };
   visibleFacts: CanonicalFactRecord[];
   knowledge: KnowledgeRecord[];
+  knowledgeIdentities?: KnowledgeIdentity[];
+  itemKnowledge?: Array<{ entryRef: string; name: string; description: string }>;
   receipts: PublicReceipt[];
   pendingInputs: Array<{
     pendingInputId: string;
@@ -1782,6 +1839,7 @@ export type SafeReadModel = {
   campaign?: JsonRecord | null;
   chapters?: JsonRecord[];
   visibleItems?: JsonRecord[];
+  visibleAssemblies?: Array<Readonly<{ assemblyRef: string; label: string; description: string; sceneRef: string; state: "active" }>>;
   factions?: JsonRecord[];
   factionPlans?: JsonRecord[];
   relationships?: JsonRecord[];
@@ -1811,6 +1869,8 @@ export type LifecycleReadModel = {
   activeBranchId: string;
   projectionHash: Sha256Ref;
   incrementalDelta?: ObserverIncrementalDelta;
+  renderableClaims?: FrozenRenderableClaims;
+  activities?: JsonRecord[];
   viewer: {
     kind: "player";
     principalId: string;
@@ -1884,11 +1944,36 @@ export type DueActorPlanReadModel =
       dueActorPlanChildRootActionId: null;
     };
 
+export type DueActivityDescriptor = {
+  timePassage?: { phase: "advance" | "interrupt" | "blocked"; fromFictionMicros: string; toFictionMicros: string };
+  longSpellcasting?: { phase: "advance" | "blocked" | "complete"; fromFictionMicros: string; toFictionMicros: string };
+  /** A specialized completion shares the same durable obligation queue. */
+  actorPlan?: { planId: string; revision: string; planHash: Sha256Ref };
+  activityId: string;
+  ownerEntityId: string;
+  timelineId: string;
+  completionFictionMicros: string;
+  childRootActionId: string;
+  activityHash: Sha256Ref;
+  sceneIds: string[];
+};
+
+export type DueActivitiesReadModel = {
+  kind: "projected";
+  runtimeProfiles: RuntimeProfileManifest;
+  stateVersion: string;
+  activeBranchId: string;
+  projectionHash: Sha256Ref;
+  viewer: { kind: "kp"; subjectId: "kp" };
+  dueActivities: DueActivityDescriptor[];
+};
+
 export type ProjectionResult =
   | SafeReadModel
   | LifecycleReadModel
   | KpSpatialReadModel
   | DueActorPlanReadModel
+  | DueActivitiesReadModel
   | RejectedRulesResult;
 
 export type InitializedRulesResult = {

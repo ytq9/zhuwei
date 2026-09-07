@@ -1,3 +1,4 @@
+import { authorityItemComposite } from "./item-authority-vnext";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { Sha256Ref } from "../profiles/types";
 import type { AuthoritativeWorldState } from "./model";
@@ -70,6 +71,11 @@ export function campaignContinuityManifest(
       ref: `knowledge:${characterId}:${knowledgeRef}`,
       stateHash: canonicalSha256(state.knowledge[characterId][knowledgeRef]),
     })));
+  for (const [characterId, entries] of Object.entries(state.vNextItemAuthority?.identifications ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
+    for (const [entryRef, grant] of Object.entries(entries).sort(([left], [right]) => left.localeCompare(right))) {
+      knowledgeStates.push({ ref: `item-knowledge:${characterId}:${entryRef}`, stateHash: canonicalSha256(grant) });
+    }
+  }
   const characterStates = Object.keys(state.entities).sort().map((characterId) => ({
     ref: `character:${characterId}`,
     stateHash: canonicalSha256({
@@ -80,7 +86,7 @@ export function campaignContinuityManifest(
   const core = {
     schema: "zhuwei.campaign-continuity-manifest/v2" as const,
     characterStates,
-    itemStates: hashedRecords("item", state.campaignRuntime.itemSystem.entries),
+    itemStates: hashedRecords("item", Object.fromEntries(Object.keys(state.campaignRuntime.itemSystem.entries).map(ref => [ref, authorityItemComposite(state, ref)]))),
     knowledgeStates,
     relationshipStates: hashedRecords("relationship", state.campaignRuntime.relationships),
     debtStates: hashedRecords("debt", state.campaignRuntime.debts),

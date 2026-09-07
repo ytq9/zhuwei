@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import {
   authMiddleware,
   createServerFn,
@@ -34,20 +35,11 @@ import {
   transferAndDepartAuthoritativeHost,
 } from "@/lib/room/server";
 import { kpModelConfigurationError } from "@/lib/kp/provider";
-import {
-  authoritativeKpProfileByBinding,
-  authoritativeKpProfileByModelId,
-  hasExactV3KpWorkflowManifest,
-  isV3AuthoritativeKpProfile,
-  PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON,
-  runtimeManifestForExactV3KpWorkflow,
-} from "@/lib/kp/authoritative-policy";
+import { roomRuntimeConfiguration } from "@/lib/room/runtime-configuration";
 import { canonicalJson } from "@/lib/kp/authoritative-helpers";
 import { DISABLED_CONTEXT_PLANNER_PROFILE_REF } from "@/lib/kp/model-registry";
-import { hasExactV3KpGenerationBinding } from "@/lib/room/v3-binding";
 import {
   AUTHORITATIVE_KP_MODEL,
-  isAuthoritativeKpModel,
   publicKpModelId,
 } from "@/lib/kp/models";
 import {
@@ -231,11 +223,14 @@ async function bestEffortSynchronizeAuthoritativeGrowthCard(input: {
   else console.warn(serialized);
 }
 
-function authoritativeRoomKpProfileIsAvailable(
+function authoritativeRoomKpBindingIsAvailable(
   model: string,
   modelProfileVersion: string,
+  workflow: unknown,
 ): boolean {
-  return authoritativeKpProfileByBinding(model, modelProfileVersion) !== undefined;
+  const configuration = roomRuntimeConfiguration(env);
+  const profile = configuration.profileByBinding(model, modelProfileVersion);
+  return profile !== undefined && configuration.hasGenerationBinding(profile, workflow);
 }
 
 async function submitAuthoritativeTableAction(input: {
@@ -250,8 +245,8 @@ async function submitAuthoritativeTableAction(input: {
   const workflow = (await sql<{ kp_workflow_manifest: string | null }>`
     select kp_workflow_manifest from rooms where id = ${input.roomId}
   `)[0];
-  const v3 = hasExactV3KpWorkflowManifest(workflow?.kp_workflow_manifest);
-  if (!authoritativeRoomKpProfileIsAvailable(input.model, input.modelProfileVersion)) {
+  const v3 = roomRuntimeConfiguration(env).hasWorkflow(workflow?.kp_workflow_manifest);
+  if (!authoritativeRoomKpBindingIsAvailable(input.model, input.modelProfileVersion, workflow?.kp_workflow_manifest)) {
     const failure = {
       ok: false as const,
       submissionId: input.submissionId,
@@ -292,8 +287,8 @@ async function submitAuthoritativePartyTableAction(input: {
   const workflow = (await sql<{ kp_workflow_manifest: string | null }>`
     select kp_workflow_manifest from rooms where id = ${input.roomId}
   `)[0];
-  const v3 = hasExactV3KpWorkflowManifest(workflow?.kp_workflow_manifest);
-  if (!authoritativeRoomKpProfileIsAvailable(input.model, input.modelProfileVersion)) {
+  const v3 = roomRuntimeConfiguration(env).hasWorkflow(workflow?.kp_workflow_manifest);
+  if (!authoritativeRoomKpBindingIsAvailable(input.model, input.modelProfileVersion, workflow?.kp_workflow_manifest)) {
     const failure = {
       ok: false as const,
       submissionId: input.submissionId,
@@ -816,8 +811,10 @@ export const createRoom = createServerFn({ method: "POST" })
   .validator((input: { nickname: string; model?: string }) => input)
   .handler(async ({ context, data }) => {
     const model = data.model === undefined ? AUTHORITATIVE_KP_MODEL : data.model;
-    const profile = authoritativeKpProfileByModelId(model);
-    if (!isAuthoritativeKpModel(model) || profile === undefined) {
+    const configuration = roomRuntimeConfiguration(env);
+    const profile = configuration.profileByModelId(model);
+    const workflowManifest = profile === undefined ? undefined : configuration.workflowForProfile(profile);
+    if (profile === undefined || workflowManifest === undefined) {
       return { ok: false as const, error: "这个模型不支持新规则房间" };
     }
     const sql = await getSql();
@@ -838,7 +835,7 @@ export const createRoom = createServerFn({ method: "POST" })
       values (
         ${id}, ${code}, ${context.userId}, ${"黑橡居酒屋的第三份遗嘱"},
         ${"black-oak-will"}, ${AUTHORITATIVE_RULESET_VERSION}, ${profile.modelId},
-        ${profile.modelProfileVersion}, ${PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON},
+        ${profile.modelProfileVersion}, ${workflowManifest},
         ${DISABLED_CONTEXT_PLANNER_PROFILE_REF}, ${"lobby"}
       )
     `;
@@ -964,9 +961,10 @@ export const fetchTable = createServerFn({ method: "GET" })
         ruleset_version: string;
         kp_model: string;
         kp_model_profile: string;
+        kp_workflow_manifest: string | null;
       }>`
         select id, code, title, status, module_id, ruleset_version,
-               kp_model, kp_model_profile
+               kp_model, kp_model_profile, kp_workflow_manifest
         from rooms where id = ${room.id}
       `
     )[0];
@@ -1000,10 +998,11 @@ export const fetchTable = createServerFn({ method: "GET" })
     };
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       if (
-        authoritativeKpProfileByBinding(
+        !authoritativeRoomKpBindingIsAvailable(
           info.kp_model,
           info.kp_model_profile,
-        ) === undefined
+          info.kp_workflow_manifest,
+        )
       ) {
         return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
       }
@@ -1190,10 +1189,12 @@ export const lockCharacter = createServerFn({ method: "POST" })
       const characterId = successor
         ? `${authoritativeCharacterId(context.userId)}:successor:${submissionId}`
         : authoritativeCharacterId(context.userId);
-      const runtimeProfiles = runtimeManifestForExactV3KpWorkflow(
+      const runtimeProfiles = roomRuntimeConfiguration(env).runtimeManifestForWorkflow(
         rules.kp_workflow_manifest,
       );
-      if (runtimeProfiles === undefined) {
+      if (runtimeProfiles === undefined || !authoritativeRoomKpBindingIsAvailable(
+        rules.kp_model, rules.kp_model_profile, rules.kp_workflow_manifest,
+      )) {
         return { ok: false as const, error: "本桌的 0.4 Runtime Profile 已不可用" };
       }
       const staticCharacter = buildAuthoritativeCharacterSeed({
@@ -1381,7 +1382,7 @@ export const startGame = createServerFn({ method: "POST" })
     if (info.ruleset_version !== AUTHORITATIVE_RULESET_VERSION) {
       return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
     }
-    const authoritativeProfile = authoritativeKpProfileByBinding(
+    const authoritativeProfile = roomRuntimeConfiguration(env).profileByBinding(
       info.kp_model,
       info.kp_model_profile,
     );
@@ -1389,9 +1390,9 @@ export const startGame = createServerFn({ method: "POST" })
       return { ok: false as const, error: "本桌绑定的权威 KP 模型 Profile 已不可用" };
     }
     if (
-      !isV3AuthoritativeKpProfile(authoritativeProfile)
-      || !hasExactV3KpWorkflowManifest(info.kp_workflow_manifest)
-      || !hasExactV3KpGenerationBinding(authoritativeProfile, info.kp_workflow_manifest)
+      !roomRuntimeConfiguration(env).acceptsProfile(authoritativeProfile)
+      || !roomRuntimeConfiguration(env).hasWorkflow(info.kp_workflow_manifest)
+      || !roomRuntimeConfiguration(env).hasGenerationBinding(authoritativeProfile, info.kp_workflow_manifest)
       || info.kp_context_planner_profile !== DISABLED_CONTEXT_PLANNER_PROFILE_REF
     ) {
       return { ok: false as const, error: "本桌的 V3 工作流或 Context Planner Profile 已不可用" };
@@ -1407,7 +1408,7 @@ export const startGame = createServerFn({ method: "POST" })
       select user_id, nickname, is_host from room_members where room_id = ${room.id}
     `;
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
-      const workflowRuntimeProfiles = runtimeManifestForExactV3KpWorkflow(
+      const workflowRuntimeProfiles = roomRuntimeConfiguration(env).runtimeManifestForWorkflow(
         info.kp_workflow_manifest,
       );
       if (workflowRuntimeProfiles === undefined) {
@@ -1537,7 +1538,7 @@ export const sendAction = createServerFn({ method: "POST" })
         from rooms where id = ${room.id}
       `
     )[0];
-    const v3 = hasExactV3KpWorkflowManifest(info.kp_workflow_manifest);
+    const v3 = roomRuntimeConfiguration(env).hasWorkflow(info.kp_workflow_manifest);
     const suppliedSubmissionId = data.submissionId?.trim();
     if (!text) return publicActionInputFailure("空话不会进桌", v3, suppliedSubmissionId);
     if (text.length > 1200) {
@@ -1555,10 +1556,11 @@ export const sendAction = createServerFn({ method: "POST" })
     if (!pc?.locked) return publicActionInputFailure("先锁定人物卡", v3, suppliedSubmissionId);
     if (info.ruleset_version === AUTHORITATIVE_RULESET_VERSION) {
       if (
-        authoritativeKpProfileByBinding(
+        !authoritativeRoomKpBindingIsAvailable(
           info.kp_model,
           info.kp_model_profile,
-        ) === undefined
+          info.kp_workflow_manifest,
+        )
       ) {
         return publicActionInputFailure(
           "本桌绑定的权威 KP 模型 Profile 已不可用",
@@ -1633,15 +1635,16 @@ export const retryNarration = createServerFn({ method: "POST" })
         from rooms where id = ${room.id}
       `
     )[0];
-    const profile = authoritativeKpProfileByBinding(
+    const profile = roomRuntimeConfiguration(env).profileByBinding(
       info?.kp_model,
       info?.kp_model_profile,
     );
     if (
       info?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
       || profile === undefined
-      || !isV3AuthoritativeKpProfile(profile)
-      || !hasExactV3KpWorkflowManifest(info.kp_workflow_manifest)
+      || !roomRuntimeConfiguration(env).acceptsProfile(profile)
+      || !roomRuntimeConfiguration(env).hasWorkflow(info.kp_workflow_manifest)
+      || !roomRuntimeConfiguration(env).hasGenerationBinding(profile, info.kp_workflow_manifest)
     ) {
       return {
         action: "notCommitted" as const,

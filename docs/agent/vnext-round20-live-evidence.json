@@ -1,0 +1,173 @@
+{
+  "scope": "development-only; round17-20; all failures retained; no claim of production or full game acceptance",
+  "baseCommit": "258caee404e0814405eb497653ee9f00d647b773",
+  "hashSemantics": "Hashes are serialized or canonical JSON object digests as named, never captured HTTP wire-byte digests. No credentials or reasoning text included.",
+  "attempts": 6,
+  "usageKnownCalls": 6,
+  "totals": {
+    "prompt_tokens": 37109,
+    "completion_tokens": 14362,
+    "prompt_cache_hit_tokens": 12416,
+    "prompt_cache_miss_tokens": 24693
+  },
+  "idlePriceCny": 0.1022893,
+  "finalChangedSourceFiles": [
+    {
+      "path": "app/_runtime/lib/kp/narration-vnext.ts",
+      "sha256": "d013a86d7ccd03f21dbdfaa11ea1f12dd43b923a77bcb55544745ed0952a1908"
+    },
+    {
+      "path": "app/_runtime/lib/kp/authoritative.ts",
+      "sha256": "2511469dedc7175a98c683f6f5086570da977824762f9b59b8dfabf6ba4db42d"
+    },
+    {
+      "path": "tests/kp-vnext-narration.test.mjs",
+      "sha256": "f48d3ad1f0eb49b9d2409147343d6f8c2439bc1415718e92d2fca030ed213452"
+    }
+  ],
+  "calls": [
+    {
+      "batch": "round17",
+      "purpose": "noncommitting-review-diagnostic",
+      "ordinal": 1,
+      "model": "deepseek-v4-flash",
+      "startedAt": "2026-09-05T19:46:27.706Z",
+      "endedAt": "2026-09-05T19:46:41.442Z",
+      "requestObjectJsonSha256": "08d1524464b4850b459e94cfd593a7f466f4b39067a0fe50e4694f567a8c19f2",
+      "responseObjectJsonSha256": "cf588e8f3c6b7eba3b4647a60eda77ebb0b3aa5080414a6e5be92c8bb3180baf",
+      "validation": {
+        "accepted": false,
+        "reason": "ModelOutputValidationError"
+      },
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 4387,
+        "completion_tokens": 1970,
+        "total_tokens": 6357,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1537
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 4387
+      }
+    },
+    {
+      "batch": "round18",
+      "purpose": "noncommitting-review-diagnostic",
+      "ordinal": 1,
+      "model": "deepseek-v4-flash",
+      "startedAt": "2026-09-05T19:48:42.222Z",
+      "endedAt": "2026-09-05T19:48:58.952Z",
+      "requestObjectJsonSha256": "c6aa884075aa4c4d381168b8960de2c755e1255779cb9239d24f17535bb10fa4",
+      "responseObjectJsonSha256": "83d1da276bb03c07d8c3a8b38ff715503d07afe5f8224ebc3de75abf12362e7b",
+      "validation": {
+        "accepted": true
+      },
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 4472,
+        "completion_tokens": 2320,
+        "total_tokens": 6792,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1823
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 4472
+      }
+    },
+    {
+      "batch": "round19",
+      "purpose": "proposal",
+      "ordinal": 1,
+      "model": "deepseek-v4-flash",
+      "requestCanonicalObjectSha256": "9c9bdcf801e002dd35364fc65928347763a0895065ad24b006cb193611004168",
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 18351,
+        "completion_tokens": 494,
+        "total_tokens": 18845,
+        "prompt_tokens_details": {
+          "cached_tokens": 8704
+        },
+        "prompt_cache_hit_tokens": 8704,
+        "prompt_cache_miss_tokens": 9647
+      }
+    },
+    {
+      "batch": "round19",
+      "purpose": "narration-generation",
+      "ordinal": 2,
+      "model": "deepseek-v4-flash",
+      "requestCanonicalObjectSha256": "668c5d7ba64be447765f96b50975a242b979fc4783c16556c027b4032770f6a3",
+      "finishReason": "stop",
+      "usage": {
+        "prompt_tokens": 1533,
+        "completion_tokens": 99,
+        "total_tokens": 1632,
+        "prompt_tokens_details": {
+          "cached_tokens": 640
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 77
+        },
+        "prompt_cache_hit_tokens": 640,
+        "prompt_cache_miss_tokens": 893
+      }
+    },
+    {
+      "batch": "round19",
+      "purpose": "narration-review",
+      "ordinal": 3,
+      "model": "deepseek-v4-flash",
+      "requestCanonicalObjectSha256": "a1ee5571c8e2b6cefdd6b3d971f94d5ab2d0b013970677203d68da393e658e5c",
+      "finishReason": "length",
+      "usage": {
+        "prompt_tokens": 4185,
+        "completion_tokens": 4837,
+        "total_tokens": 9022,
+        "prompt_tokens_details": {
+          "cached_tokens": 1024
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 4837
+        },
+        "prompt_cache_hit_tokens": 1024,
+        "prompt_cache_miss_tokens": 3161
+      }
+    },
+    {
+      "batch": "round20",
+      "purpose": "noncommitting-review-diagnostic",
+      "ordinal": 1,
+      "model": "deepseek-v4-flash",
+      "startedAt": "2026-09-05T19:55:30.373Z",
+      "endedAt": "2026-09-05T19:56:04.927Z",
+      "requestObjectJsonSha256": "452455c11b503cf9ba2439c590ecfb58c7a5e04e19bf97576e0a528a367131b9",
+      "responseObjectJsonSha256": "b7a7dd08cc1b3a58598b7a5f5eaff5ea08b9903d42e990a1629229894e822bc9",
+      "validation": {
+        "accepted": false,
+        "reason": "ModelOutputValidationError"
+      },
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 4181,
+        "completion_tokens": 4642,
+        "total_tokens": 8823,
+        "prompt_tokens_details": {
+          "cached_tokens": 2048
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 4200
+        },
+        "prompt_cache_hit_tokens": 2048,
+        "prompt_cache_miss_tokens": 2133
+      }
+    }
+  ]
+}

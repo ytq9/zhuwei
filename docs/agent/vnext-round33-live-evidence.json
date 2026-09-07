@@ -1,0 +1,201 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round33",
+  "recordedAt": "2026-09-06T13:13:02.443642+00:00",
+  "sourceManifest": "vnext-round33-source-manifest.json",
+  "intent": "我从背包里取出一根火把，不点燃，把它放在自己脚边。",
+  "result": {
+    "submissionId": "vnext-http-ab5181c4-c992-4da4-bf78-011e979a8ec3",
+    "outcomeKind": "committed",
+    "action": "committed",
+    "narration": "retryableFailure",
+    "retryable": true,
+    "error": "行动已经提交；KP 服务暂时不可用，或本次响应超过时限。请重试；不会重复执行行动。",
+    "code": "NARRATION_PROVIDER_TIMEOUT"
+  },
+  "invocations": [
+    {
+      "ordinal": 1,
+      "purpose": "proposal",
+      "scope": "originalAuthenticatedHttp",
+      "model": "deepseek-v4-flash",
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 26077,
+        "completion_tokens": 495,
+        "total_tokens": 26572,
+        "prompt_tokens_details": {
+          "cached_tokens": 8320
+        },
+        "prompt_cache_hit_tokens": 8320,
+        "prompt_cache_miss_tokens": 17757
+      },
+      "costCny": 0.029279,
+      "requestSha256": "3d4fe8a0bfa7040fa39d46171d2ff850e7896c5ff14c0c8532e257827db84bb2",
+      "privateCaptureSha256": "365bfe89d1f1551cf5befc137897376b3f424aa18242213dd87b01156573457f",
+      "rawArgumentsSha256": "5908d690bb478b974afd0c63019c0c7a8d636f1b89dd2689dc6adab8e2b3c966"
+    },
+    {
+      "ordinal": 2,
+      "purpose": "narrationGeneration",
+      "scope": "originalAuthenticatedHttp",
+      "model": "deepseek-v4-flash",
+      "finishReason": "stop",
+      "usage": {
+        "prompt_tokens": 1808,
+        "completion_tokens": 69,
+        "total_tokens": 1877,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 47
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 1808
+      },
+      "costCny": 0.0030225,
+      "requestSha256": "509dc9957299b7ccb1fda4666d103acb06a8938cda0f6e5296d87263de151ef1",
+      "privateCaptureSha256": "41fd3c586299881f8dd62008320a8dedc2dc8d32b879ea142187ef7bc54fa0a3",
+      "bodySha256": "13c17a9ec3881933c8cd8ef3e3866b3ef5ae4397c9f68689240be095798b0dae"
+    },
+    {
+      "ordinal": 3,
+      "purpose": "narrationReview",
+      "scope": "originalAuthenticatedHttp",
+      "model": "deepseek-v4-flash",
+      "durationMs": 43639,
+      "result": "modelTransient",
+      "publicCode": "NARRATION_PROVIDER_TIMEOUT",
+      "usage": null,
+      "costCny": null,
+      "usageStatus": "unknown-no-response"
+    },
+    {
+      "ordinal": 4,
+      "purpose": "narrationReviewThinkingContrast",
+      "scope": "noncommittingDiagnostic",
+      "model": "deepseek-v4-flash",
+      "thinking": {
+        "type": "disabled"
+      },
+      "status": "failed",
+      "startedAt": "2026-09-06T12:58:13.420Z",
+      "durationMs": 45008,
+      "recordedError": 23,
+      "estimatedInputTokens": 5348,
+      "requestSha256": "17bb9839e1093973ab0416802b3689b3f153cc5d1576b1a376d9e10e510be7fe",
+      "originalConfigurationRequestSha256": "937d2727431e956e6d9c0db3c91e7765948a96c20d70aaf3864779bb9b91af88",
+      "candidateSha256": "13c17a9ec3881933c8cd8ef3e3866b3ef5ae4397c9f68689240be095798b0dae",
+      "privateCaptureSha256": "d4f3f5e7c1e859eca4f2be387b038d1db1c236715b8e90ff557e7c572ae8034c",
+      "usage": null,
+      "costCny": null,
+      "usageStatus": "unknown-no-response",
+      "roomSubmissionAttempted": false,
+      "publicationAttempted": false
+    }
+  ],
+  "batchTotals": {
+    "attempts": 4,
+    "knownUsageCount": 2,
+    "unknownUsageCount": 2,
+    "promptTokens": 27885,
+    "completionTokens": 564,
+    "totalTokens": 28449,
+    "promptCacheHitTokens": 8320,
+    "promptCacheMissTokens": 19565,
+    "knownCostCny": 0.0323015,
+    "unknownCostCalls": 2,
+    "costClassification": "development-validation",
+    "successfulCompleteGameActions": 0
+  },
+  "pricingCnyPerMillion": {
+    "hit": 0.05,
+    "miss": 1.5,
+    "output": 4.5
+  },
+  "pricingSnapshotSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+  "mechanical": {
+    "eventCount": 1,
+    "eventTypes": [
+      "InventoryOperationApplied"
+    ],
+    "receipts": 1,
+    "pendingDue": 0,
+    "modelInvocations": 1,
+    "deliveryStatuses": [
+      "open"
+    ],
+    "audienceStatuses": [
+      "retryableFailure"
+    ]
+  },
+  "mechanicalModelInvocationsNote": "This extracted field counts the persisted Proposal invocation only. Batch attempts including generation/review are counted separately above.",
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "eventCount": 1,
+    "eventTypes": [
+      "InventoryOperationApplied"
+    ],
+    "receiptCount": 1,
+    "frozenContextsChecked": 1,
+    "frozenContextsConform": true,
+    "authorityUnchangedFromGenesis": false,
+    "inventory": {
+      "sourceQuantityBefore": 10,
+      "sourceQuantityAfter": 9,
+      "placedQuantity": 1,
+      "placedDisposition": "scene",
+      "placedSceneRef": "wake",
+      "totalQuantityConserved": true,
+      "onlyExpectedItemEntriesChanged": true,
+      "loadoutAndCombatInventoryMirrorConform": true
+    },
+    "nonInventoryResourcesUnchanged": true,
+    "fictionTimeUnchanged": true,
+    "pendingAndRandomnessContinuationsUnchanged": true,
+    "randomnessAbsent": true,
+    "newEvidenceCount": 0,
+    "claimsNote": "Conformance covers actual frozen audiences; semantic prose audit is separate.",
+    "labelCorrection": {
+      "oldResourcesAndTimeUnchanged": false,
+      "oldRandomnessAbsent": false,
+      "reason": "The earlier generic script compared inventory-derived actor state as if every resource must remain unchanged and incorrectly classified Inventory events as randomness. The expected placement and its inventory mirrors are now checked exactly; non-inventory state, fiction time and random continuations remain unchanged."
+    }
+  },
+  "replaySourceFilesComparedToManifest": 115,
+  "replaySourceFileMismatches": [],
+  "originalSubmissionRetried": false,
+  "secondActionAttempted": false,
+  "schemaRetrievalCovered": false,
+  "narrationReviewPassed": false,
+  "narrationPublished": false,
+  "privateHttpMeterScope": {
+    "calls": 3,
+    "includesThinkingContrast": false,
+    "ledgerModifiedDuringCloseout": false
+  },
+  "localValidation": {
+    "reviewV6Node": {
+      "passed": 31,
+      "failed": 0,
+      "logSha256": "ca2f1b4d273862776356a4b3b39d7af55a8c2c29063740e9fd9e7c7e54807227"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "logSha256": "d97f8601719bdbd13e41c5b53fe8da9046400384079f618bac0bf2c4db44dc6b"
+    },
+    "realModelStabilityProven": false
+  },
+  "privateArtifactHashes": {
+    "replayScript": "a204917a024aebc9d17a90a297e51ae8def4ca43eb7fb0c353dbfdf61557c5f5",
+    "replayInput": "f9489a20df0cdd694b0342208b83c153494d5cd74d0b1e1f227952509cdf6bd3",
+    "reviewContrastScript": "a5efaf8ca806da54bb56256a9a697b90201203512c692640deed853a51bbbc9c"
+  },
+  "limitations": [
+    "Both review attempts ended without response usage; no exact fees or output diagnoses are available.",
+    "Single committed event and Receipt do not prove a repeated HTTP submission test.",
+    "Frozen-context conformance and local tests do not prove semantic narration quality or model reliability."
+  ]
+}

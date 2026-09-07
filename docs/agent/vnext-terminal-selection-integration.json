@@ -1,0 +1,61 @@
+{
+  "integratedAt": "2026-09-06T23:55:29.486288+00:00",
+  "sourceHead": "258caee404e0814405eb497653ee9f00d647b773",
+  "branch": "cloudflare",
+  "manifest": "/tmp/zhuwei-kp-terminal-selection-delivery.json",
+  "manifestSha256": "675252568bda5e494de0449fb81272fff9f8b39e64a89b0a73b62b7aa70adbcc",
+  "patch": "/tmp/zhuwei-kp-terminal-selection-final.patch",
+  "patchSha256": "ee24f8920d24d0c6053015ec61145cf92dffede719b06915361df0913e1c92dd",
+  "backup": "/tmp/zhuwei-terminal-selection-root-before",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-guidance.ts",
+      "baselineSha256": "a7dc6dc39acc5d66111afdbfaa34bccf8d31d3e1b9f8b08327aaade39ea57eb9",
+      "newSha256": "6ae2f849ab0dfbb2c7fd2e729a3c1915f6867d8bdf008e8d3f507416f1e8bc05"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-provider.ts",
+      "baselineSha256": "5c036fd777d5fd6d0bd9cbf74b4520687f191cd4ecbf3682e8d5304e00bc6530",
+      "newSha256": "961e03891d1b31716ca373d219cba744ebbc492b2bae1dedb58daca27429ba77"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-schema.ts",
+      "baselineSha256": "634e86ff8a035e5087881cafa0df47dc4163eef974f3cdcb93a37f126c67e527",
+      "newSha256": "a7de3e514c1b89175fc6d5fcc0f114a7d9658718314daf7f304f408f08821699"
+    },
+    {
+      "path": "tests/kp-vnext-provider-room.test.ts",
+      "baselineSha256": "bf6d602240cf0a00c3013a39c65684ae094ba31c7d776e411da3407c1371ed93",
+      "newSha256": "0e5e0ab81c3022f30e4dd46727a783ab1acaeaab29c43127326614c1d51636f4"
+    },
+    {
+      "path": "tests/kp-vnext-schema-retrieval.test.mjs",
+      "baselineSha256": "8a3a08bf954b7d22cab4dfc83bddd7ef042526f7c4b8c9c3c14fafe859b74aa9",
+      "newSha256": "5ea217b029d1b67de9e9153cf96ef55d2ced5bd7b1613d55f978f93e4e14ee68"
+    }
+  ],
+  "conflicts": 0,
+  "apiCalls": 0,
+  "rootValidation": {
+    "node": {
+      "passed": 55,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-terminal-casting-root-node.log"
+    },
+    "castingAndTimeRoom": {
+      "passed": 11,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-casting-root-room.log"
+    },
+    "selectionRoom": {
+      "passed": 6,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-terminal-selection-root-room.log"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-terminal-casting-root-types.log"
+    }
+  },
+  "independentReadOnlyReview": "No P1/P2 blockers in sustained casting target/owner/pending/randomness boundaries."
+}

@@ -1,3 +1,5 @@
+import { VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH } from "../app/_runtime/lib/kp/vnext/proposal-guidance.ts";
+import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 import { stableStructuralHash } from "../app/_runtime/lib/kp/causal-action-program.ts";
 import { DEEPSEEK_V4_FLASH_VNEXT2_STRICT_TOOL_CANDIDATE } from "../app/_runtime/lib/kp/model-registry.ts";
 import { deriveVNextProposalBundlePlan } from "../app/_runtime/lib/kp/vnext/proposal-graph.ts";
@@ -13,24 +15,20 @@ import {
 } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 
 export const VNEXT2_STRICT_TOOL_PROMPT_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-handshake-prompts-v5",
+  version: "kp-vnext2-proposal-handshake-prompts-v8",
   common: [
     "只调用 submit_kp_proposal_bundle 一次。",
     "只使用题面给出的冻结引用或本束 prospective handle。",
     "不得生成 rootActionId、角色 authority id、骰面、modifier、Receipt、事件或执行 DAG。",
-    "当前候选填写面只允许 mode=adjudication、terminal none，以及 materializeObject/worldInteraction；"
-      + "adjudication 只能是 directSuccess 或 checkKind=abilityCheck 的 check。",
-    "directSuccess 的 branches.failure 必须使用 {kind:'none'} sentinel，且每个 proposal 的 outcomeBinding 都必须是 always。",
-    "check 必须恰好有一个 worldInteraction，其 outcomeBinding=always 且 branches.failure 必须是真实分支；"
-      + "只在成功时才发生的 proposal 用 outcomeBinding=onSuccess。",
-    "check 不写 abilityRef：本填写面的 abilityRef 恒为 none。",
-    "行动在既有事实下不可行时提交 mode=terminal 的 inWorldRefusal，"
-      + "adjudication 使用 {kind:'none'}、proposals 为空数组；拒绝不携带任何检定字段，"
-      + "不得用一个够不到的 DC 代替说明。",
+    "只提交decision；普通操作用directSuccess，检定用check，不填写无用外壳或服务器依赖表。",
+    "directSuccess的步骤只写result，不填失败分支或outcomeBinding。",
+    "check恰好一个worldInteraction填写success/failure且outcomeBinding=always，其余步骤按always/onSuccess/onFailure绑定同次检定。",
+    "本探针不使用已注册Ability，abilityRef填{kind:'none'}；实际目标填directTargetRefs，其他目标填otherTargetRefs。",
+    "不可行时decision.kind=inWorldRefusal，说明真实前提，不用虚假的高DC代替拒绝。",
   ],
   correction: [
     "只调用 correct_kp_proposal_bundle 一次。",
-    "只返回题面 allowedPaths 中列出的摘要修正，不改变裁决、引用、效果或其他权威字段。",
+    "返回confirm=server-plan明确确认当前服务端计划；summaries只填写题面summaryPaths的全部自由摘要，不改变裁决、引用、效果或其他权威字段。",
   ],
 });
 
@@ -39,28 +37,28 @@ const CORRECTION_CONTEXT_HASH = `sha256:${"c".repeat(64)}`;
 
 const WORLD_INTERACTION_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.common.join("\n")}
 Provider dialect handshake；不要扩写故事。角色 character:alice 位于 scene:atrium，看见 sceneFeature:chain。
-提交 mode=adjudication、bundle basisRefs=[]、directSuccess，且只有一个 worldInteraction：意图是检查链条，sceneRef=scene:atrium，targetRefs/directTargetRefs=[sceneFeature:chain]，无 instrument、abilityRef=none、basisRefs/consumes/produces 为空。成功分支 outcomeCode=outcome:chain-inspected，summary 简洁，effects/evidence/pressure/opportunity 均为空；terminal 使用 none。`;
+提交 decision.kind=directSuccess，且只有一个 worldInteraction：意图是检查链条，sceneRef=scene:atrium，directTargetRefs=[sceneFeature:chain]，otherTargetRefs=[]、instrumentRefs=[]、abilityRef={kind:"none"}、basisRefs=[]。result.outcomeCode=outcome:chain-inspected，summary 简洁，effects/evidence/pressure/opportunity 均为空。`;
 
 const MATERIALIZE_INTERACT_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.common.join("\n")}
 Provider dialect handshake；不要扩写故事。角色 character:alice 位于 scene:atrium，刚刚发现一个先前未定义但公开可见的壁龛。
-提交 mode=adjudication、bundle basisRefs=[]、directSuccess，两项 proposal 严格按顺序：
-1) materializeObject，semanticKind=sceneFeature，templateRef=template:handshake-scene-feature、templateHash=sha256:1111111111111111111111111111111111111111111111111111111111111111，产生唯一 handle prospective:alcove（semanticDefinition/always），sceneRef=scene:atrium、visibilityFactId=none、visibilityPolicyRef=visibility:scene-observers，给出短 label/description/observableState、affordances=[inspect]、mechanicDefinitionRefs=[]；materializeObject 的 basisRefs=[]、consumes=[]，outcomeBinding=always；
-2) worldInteraction 显式 consumes prospective:alcove，并在 targetRefs/directTargetRefs 使用它，basisRefs=[]、produces=[]、outcomeBinding=always，意图是检查壁龛；无 instrument/ability，成功分支的 effects/sensoryEvidence/pressures/opportunities 全为空，failure 使用 none；terminal 使用 none。`;
+提交 decision.kind=directSuccess，steps两项严格按顺序：
+1) materializeObject，semanticKind=sceneFeature，templateRef=${VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateRef}，产生唯一 handle prospective:alcove，sceneRef=scene:atrium、visibilityFactId=none、visibilityPolicyRef=visibility:scene-observers，给出短 label/description/observableState、affordances=[inspect]、mechanicDefinitionRefs=[]；materializeObject的basisRefs=[]；
+2) worldInteraction在directTargetRefs使用prospective:alcove，otherTargetRefs=[]、basisRefs=[]，意图是检查壁龛；无 instrument/ability，result的effects/sensoryEvidence/pressures/opportunities全为空。`;
 
 const SHARED_CHECK_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.common.join("\n")}
 Provider dialect handshake；不要扩写故事。角色 character:alice 位于 scene:atrium，面前 sceneFeature:chain 被一块卡死的石板压住，撬得开撬不开都有可能。
-提交 mode=adjudication、bundle basisRefs=[]、terminal 使用 none，adjudication 使用 check：checkKind=abilityCheck、ability=str、skill=none、dc=13、mode=normal，risk/successOutcome/failureOutcome 各写一句短句。两项 proposal 严格按顺序：
-1) worldInteraction，outcomeBinding=always，意图是撬开压住链条的石板，sceneRef=scene:atrium，targetRefs/directTargetRefs=[sceneFeature:chain]，无 instrument、abilityRef=none、basisRefs/consumes/produces 为空；success 与 failure 两个分支都要真实填写，outcomeCode 分别为 outcome:slab-pried 与 outcome:slab-stuck，summary 简洁，effects/sensoryEvidence/pressures/opportunities 均为空；
-2) materializeObject，outcomeBinding=onSuccess，semanticKind=sceneFeature，templateRef=template:handshake-scene-feature、templateHash=sha256:1111111111111111111111111111111111111111111111111111111111111111，产生唯一 handle prospective:cache（semanticDefinition/onSuccess），sceneRef=scene:atrium、visibilityFactId=none、visibilityPolicyRef=visibility:scene-observers，给出短 label/description/observableState、affordances=[inspect]、mechanicDefinitionRefs=[]，basisRefs=[]、consumes=[]。`;
+提交 decision.kind=check：checkKind=abilityCheck、ability=str、skill=none、dc=13、mode=normal，risk/successOutcome/failureOutcome 各写一句短句。steps两项严格按顺序：
+1) worldInteraction，outcomeBinding=always，意图是撬开压住链条的石板，sceneRef=scene:atrium，directTargetRefs=[sceneFeature:chain]，otherTargetRefs=[]、instrumentRefs=[]、abilityRef={kind:"none"}、basisRefs=[]；success 与 failure 两个分支都要真实填写，outcomeCode 分别为 outcome:slab-pried 与 outcome:slab-stuck，summary 简洁，effects/sensoryEvidence/pressures/opportunities 均为空；
+2) materializeObject，outcomeBinding=onSuccess，semanticKind=sceneFeature，templateRef=${VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateRef}，产生唯一 handle prospective:cache，sceneRef=scene:atrium、visibilityFactId=none、visibilityPolicyRef=visibility:scene-observers，给出短 label/description/observableState、affordances=[inspect]、mechanicDefinitionRefs=[]，basisRefs=[]。`;
 
 const IN_WORLD_REFUSAL_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.common.join("\n")}
 Provider dialect handshake；不要扩写故事。角色 character:alice 在 scene:atrium，面前 sceneFeature:chain 所连的石门嵌在整块承重墙里，没有缝隙也没有把手。玩家说“我徒手把整扇石门拆下来”。
-这在既有事实下不可行，且不是一个可以用高 DC 掩盖的检定。提交 mode=terminal、bundle basisRefs=[scene:atrium, sceneFeature:chain]、adjudication 使用 {kind:"none"}、proposals 为空数组。
-terminal 使用 inWorldRefusal：intent 与 method 复述玩家的做法，ruling.kind=missingPrerequisite，publicBasis 用一句说明为什么当前方式不可行，prerequisites 给出 1-2 条真正缺少的前提（没有对应冻结引用时 ref 精确填 "none"），nextActions 给出 1-2 条玩家可以改走的路径，attemptCosts 为空数组。`;
+这在既有事实下不可行，且不是一个可以用高 DC 掩盖的检定。提交 decision.kind=inWorldRefusal、basisRefs=[scene:atrium, sceneFeature:chain]。
+intent 与 method 复述玩家的做法，ruling.kind=missingPrerequisite，publicBasis 用一句说明为什么当前方式不可行，prerequisites 给出 1-2 条真正缺少的前提（没有对应冻结引用时 ref 精确填 "none"），nextActions 给出 1-2 条玩家可以改走的路径，attemptCosts 为空数组。`;
 
 const CORRECTION_PROMPT = `${VNEXT2_STRICT_TOOL_PROMPT_CONTRACT.correction.join("\n")}
-Provider dialect handshake；allowedPaths 只有 ["proposals",0,"branches","success","summary"]。
-返回恰好一个 change，path 必须逐段相同，value 使用“检查完成。”。`;
+Provider dialect handshake；固定修复计划为空，summaryPaths 只有 ["proposals",0,"branches","success","summary"]。
+返回confirm="server-plan"，summaries恰好一项；path 必须逐段相同，value 使用“检查完成。”。`;
 
 const INVALID_SCHEMA = structuredClone(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function.parameters);
 INVALID_SCHEMA.additionalProperties = true;
@@ -200,6 +198,7 @@ export const strictToolHandshakeDefinition = Object.freeze({
     contractId: "submit-proposal-bundle",
     promptHash: stableStructuralHash({
       contract: VNEXT2_STRICT_TOOL_PROMPT_CONTRACT,
+      guidancePolicyHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH,
       cases: [
         WORLD_INTERACTION_PROMPT,
         MATERIALIZE_INTERACT_PROMPT,
@@ -212,6 +211,7 @@ export const strictToolHandshakeDefinition = Object.freeze({
     contractId: "correct-proposal-bundle",
     promptHash: stableStructuralHash({
       contract: VNEXT2_STRICT_TOOL_PROMPT_CONTRACT,
+      guidancePolicyHash: VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH,
       cases: [CORRECTION_PROMPT],
     }),
     parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,

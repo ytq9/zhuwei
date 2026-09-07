@@ -1,0 +1,129 @@
+{
+  "round": 48,
+  "scope": "fixed-body real review; complete result failed; structural cells valid in one sample",
+  "started": {
+    "at": "2026-09-06T15:55:58.214Z"
+  },
+  "plan": {
+    "maxCalls": 4,
+    "maxInputTokens": 48000,
+    "maxOutputTokens": 32768,
+    "maxCny": 0.44,
+    "perCallTimeoutMs": 45000,
+    "batchTimeoutMs": 240000,
+    "model": "deepseek-v4-flash",
+    "originalFullValidator": true,
+    "experimentalWire": "v9-explicit-fact-cells",
+    "manualStatementReviewRequired": true,
+    "cases": [
+      {
+        "id": "inventory-action-realization",
+        "expected": "accepted",
+        "body": "你取出一根火把，把它放下，没有点燃。",
+        "requestHash": "81717752f5b5c794ee7b85cacb325ec6227e49b362fbfa02717f355ca7d3254c",
+        "estimatedInputTokens": 7007
+      },
+      {
+        "id": "inventory-unsupported-state",
+        "expected": "rejected",
+        "body": "你放下了一根火把，火把没有燃烧，周围完全没有光。",
+        "requestHash": "f739ee4dd08a5f8de41d28930775c87161ec04b779ef8685fc70d106e75b0354",
+        "estimatedInputTokens": 7013
+      },
+      {
+        "id": "npc-attributed-source",
+        "expected": "accepted",
+        "body": "林说，门后没有人。",
+        "requestHash": "a0a3c0e3d95a2077e1c2be5a79836afd76e5e7658a58d77d76546282d10bb6e8",
+        "estimatedInputTokens": 4761
+      },
+      {
+        "id": "npc-source-as-truth",
+        "expected": "rejected",
+        "body": "门后没有人。",
+        "requestHash": "96aff6afbe23d0a7f10a83ed4c030dc1a4b51d49a66f4c01222de2b37cab2c9b",
+        "estimatedInputTokens": 4758
+      }
+    ]
+  },
+  "machineResults": {
+    "sourceHashesUnchanged": true,
+    "results": [
+      {
+        "id": "inventory-action-realization",
+        "verdict": "rejected",
+        "expected": "accepted",
+        "matched": false,
+        "reason": "unsupportedClause",
+        "durationMs": 2733,
+        "usage": {
+          "prompt_tokens": 6091,
+          "completion_tokens": 393,
+          "total_tokens": 6484,
+          "prompt_tokens_details": {
+            "cached_tokens": 512
+          },
+          "prompt_cache_hit_tokens": 512,
+          "prompt_cache_miss_tokens": 5579
+        }
+      }
+    ],
+    "notAttempted": [
+      "inventory-unsupported-state",
+      "npc-attributed-source",
+      "npc-source-as-truth"
+    ],
+    "endedAt": "2026-09-06T15:56:00.949Z"
+  },
+  "structuralCellAudit": {
+    "allFactKeysPresent": true,
+    "allCellEvidenceWithinOwnFactOrClaim": true,
+    "allRequiredFactsSelected": true,
+    "actionRealizationUsesCurrentOperationAnchors": true,
+    "legacyCoverageSummaryAbsent": true,
+    "note": "Inspected the untouched response cells; this is not an accepted full review."
+  },
+  "manualReview": {
+    "result": "failed",
+    "details": [
+      "The ordinary take-out clause selects actual release anchors e11/e23.",
+      "The placement clause explicitly covers f0/e0, f1/e1 and f2/e2; optional f3 is empty.",
+      "The final clause preserves the negative-action meaning but classifies it as unsupported worldFact, contrary to the expected ordinary-action/non-action boundary.",
+      "No statement was changed and no unsupported verdict was overridden. Other three samples were not called."
+    ]
+  },
+  "knownCostCny": "0.0101626",
+  "cumulative": {
+    "attempts": 89,
+    "knownUsageCalls": 78,
+    "inputTokens": 813682,
+    "outputTokens": 66315,
+    "cacheHitTokens": 135168,
+    "cacheMissTokens": 599799,
+    "legacyInputsWithoutCacheSplit": 78715,
+    "knownCnyLower": "1.20881015",
+    "knownCnyUpper": "1.3229469",
+    "unknownUsageCalls": 11
+  },
+  "sourceBefore": {
+    "/Users/sanmu/Documents/zhuwei-cloudflare/app/_runtime/lib/kp/narration-vnext.ts": "d42e720c5bd6968bb7e021269c0e6783c4427defe3c49c1a07f5ebbad7e9945c",
+    "/Users/sanmu/Documents/zhuwei-cloudflare/app/_runtime/lib/kp/deepseek.ts": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8",
+    "/Users/sanmu/Documents/zhuwei-cloudflare/app/_runtime/lib/kp/vnext/invocation/budget.ts": "419715f0713f1fd89c15451da37bd34fdd797dca42fcad0ce6cebeeab147ad89",
+    "/tmp/zhuwei-narration-review-v9/candidate.mjs": "13e69e2aa59c64ee1ffc225f6148add8818f43e1386996f02ef907462b7c4ca9",
+    "/tmp/zhuwei-narration-review-v9/strict-adapter.mjs": "4a4b4452b531df35f4f432583f3bf5032fcd1cf65f4d31b24c66cf6bcf518d53"
+  },
+  "artifactHashes": {
+    "source-manifest.json": "97d890fca12a21f8ea821bac45ce80fd8f632064009e3d628c10e542f903eb37",
+    "inventory-action-realization-input.json": "1cea449fd9c2b18e59c69f61dec12987206bd564da3a12dd4cbd44447e2aff9b",
+    "plan.json": "d4eba46607cb48d7d02d6e670acf439ea935dc61aa8be97dcb6b2ab553f786ff",
+    "harness.json": "e41a86c03b75942ffda45a3b5add14946f1a3ff24aeb3754d1a9c47c67def584",
+    "inventory-action-realization-result.json": "ac91072251db6397f7f029e8e68aaefe77360eef605bb5af8540658257d2fcf4",
+    "started.json": "49bb72a7dd5fee001489d1973c1b7ac1cf6c0d5ea154ee2548c43a6205be952e",
+    "inventory-action-realization-response.json": "46d32597bfb16d3dc33ac046ec846c91d3bc93348e449d287ba69d79e191f525",
+    "final.json": "675e8f92ef49b32beafd0bb6e3780e1389fc6dccaacb12131f032edcce10bfe6"
+  },
+  "paths": {
+    "private": "/tmp/zhuwei-review-candidate-48-private",
+    "log": "/tmp/zhuwei-review-candidate-48.log"
+  }
+}

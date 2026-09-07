@@ -1,3 +1,6 @@
+import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, isAtomicWorldInteractionStepsPlan } from "../../rules/v2/world-interaction-model";
+import { isFrozenPlayerChoicePlan } from "../../rules/v2/frozen-player-choice";
+import { lowerFeasibilityPlan } from "./feasibility-lowering";
 import type { RuntimeProfileManifest } from "../../rules/profiles/types";
 import type { KpSpatialReadModel } from "../../rules/authority-read";
 import type {
@@ -13,7 +16,6 @@ import { validateVNextTransactionReadSet } from "./required-context-runtime";
 import {
   lowerVNextProposalBundle,
   VNEXT1_PROPOSAL_BUNDLE_SCHEMA,
-  type VNextAttemptCost,
   type VNextProposalBundleCommand,
 } from "./proposal-bundle";
 import {
@@ -21,6 +23,7 @@ import {
   type VNext2ProposalBundleCommand,
 } from "./proposal-bundle-lowering";
 import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from "./proposal-schema";
+import { diagnosticsFromIssues } from "./proposal-diagnostics";
 
 /**
  * Hard ceiling on the frozen artifact, in canonical units (UTF-8 bytes / 4).
@@ -29,7 +32,10 @@ import { VNEXT2_PROPOSAL_BUNDLE_SCHEMA } from "./proposal-schema";
  * context that fits here can still overflow once the system prompt, Form and
  * tool schemas and repair diagnostics are built around it.
  */
-const VNEXT_CONTEXT_MAX_UNITS = 16_000;
+// The current Goal makes 8k/16k optimization targets advisory. Required
+// closure is bounded here; the separately assembled request must still fit
+// the provider input budget (including schemas and output reserve).
+const VNEXT_CONTEXT_MAX_UNITS = 160_000;
 
 /**
  * Preparation failures are reported by cause, so a request that never reached
@@ -62,6 +68,10 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
         return Object.freeze({ kind: "notApplicable" });
       }
       if (input.actionInput.kind !== "intent") {
+        // Room has already bound this answer to its trusted pending controller.
+        // The Rules continuation owns the frozen plan; asking KP to prepare a
+        // new intent context here would prevent or rewrite that continuation.
+        if (input.actionInput.kind === "answer") return Object.freeze({ kind: "notApplicable" });
         return Object.freeze({
           kind: "rejected",
           code: "requiredContextUnavailable",
@@ -79,6 +89,7 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
         state: input.state,
         profiles: input.profiles,
         kpProjection: input.kpProjection,
+        ...(isPlainRecord(input.kpProjection.npcViewers) ? { npcProjections: input.kpProjection.npcViewers } : {}),
         replayHead: {
           eventSeq: input.replayHead.eventSeq,
           stateHash: input.replayHead.stateHash,
@@ -88,6 +99,7 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
         submissionRef: input.actionInput.submissionId,
         actorCharacterId: input.actorCharacterId,
         intentText: input.actionInput.text,
+        ...(input.moduleProfile === undefined ? {} : { moduleProfile: input.moduleProfile }),
         maxUnits: VNEXT_CONTEXT_MAX_UNITS,
       });
       // The work receipt and coverage stay server-private; only the reason
@@ -153,6 +165,8 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
           return Object.freeze({
             kind: "rejected",
             code: lowered.code,
+            issues: lowered.issues,
+            diagnostics: diagnosticsFromIssues(lowered.code, lowered.issues),
             explanation: "The KP proposal bundle could not be verified against its frozen context.",
           });
         }
@@ -163,6 +177,7 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
           value: formProposal,
           requiredContext: input.requiredContext,
           state: input.state,
+          profiles: input.profiles,
           rootActionId: input.rootActionId,
           actorCharacterId: input.actorCharacterId,
         });
@@ -170,6 +185,8 @@ export const VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE: RoomVNextAdjudicationBridge 
           return Object.freeze({
             kind: "rejected",
             code: lowered.code,
+            issues: lowered.issues,
+            diagnostics: lowered.diagnostics ?? diagnosticsFromIssues(lowered.code, lowered.issues),
             explanation: "The KP proposal bundle could not be verified against its frozen context.",
           });
         }
@@ -241,54 +258,7 @@ export function bundleCommandToRoomLowering(
       },
     });
   }
-  if (command.kind === "inWorldRefusal") {
-    // The world declining an action is a first-class mechanical outcome, not
-    // an error -- it lowers to the typed feasibility-ruling Rules input.
-    // Attempt costs are lowered only when Rules already has a transition
-    // path for their kind; a cost kind Rules cannot yet apply must fail the
-    // whole lowering closed rather than be silently dropped, since a real
-    // spent cost must never vanish.
-    const costs = lowerAttemptCosts(command.ruling.attemptCosts);
-    if (costs === undefined) {
-      return Object.freeze({
-        kind: "rejected",
-        code: "BUNDLE_LOWERING_UNSUPPORTED",
-        explanation: "The pinned vNext Rules profile has no transition for one of the attempt costs.",
-      });
-    }
-    return Object.freeze({
-      kind: "accepted",
-      input: {
-        kind: "ruleWorldInteractionFeasibility",
-        rootActionId: command.rootActionId,
-        actorCharacterId: command.actorCharacterId,
-        plan: {
-          schema: "zhuwei.world-interaction-feasibility-ruling-plan/v1",
-          actorCharacterId: command.actorCharacterId,
-          intent: command.intent,
-          method: command.method,
-          rulingKind: command.ruling.kind,
-          publicBasis: command.ruling.publicBasis,
-          prerequisites: command.ruling.prerequisites.map((prerequisite) => ({
-            kind: prerequisite.kind,
-            ref: prerequisite.ref,
-            description: prerequisite.description,
-          })),
-          nextActions: command.ruling.nextActions.map((nextAction) => ({
-            description: nextAction.description,
-          })),
-          costs,
-          // Authority-only: the KP's own citation plus every nextAction's
-          // basisRefs fold in here so Rules can bind its read scope to them.
-          // None of this reaches the committed payload -- see the plan type.
-          basisRefs: [...new Set([
-            ...command.basisRefs,
-            ...command.ruling.nextActions.flatMap((nextAction) => nextAction.basisRefs),
-          ])].sort(),
-        },
-      },
-    });
-  }
+  if (command.kind === "inWorldRefusal") return refusalCommandToRoomLowering(command);
   // A confirmed high-risk ruling must not ask the player to confirm again.
   // It remains blocked until the dedicated Rules primitive can consume its
   // frozen ruling and accepted costs.
@@ -300,14 +270,10 @@ export function bundleCommandToRoomLowering(
 }
 
 /**
- * vnext-2 counterpart of bundleCommandToRoomLowering above. Only three
- * command kinds exist for vnext-2 in this pass (see
- * proposal-bundle-lowering.ts): a `rulesStep` forwards its rulesInput
- * verbatim -- this is also how a whole atomic multi-entry Bundle reaches
- * Room, since its rulesInput.kind is `applyAtomicWorldInteractionSteps`,
- * the exact same Rules primitive the vnext-1 `atomicRulesSteps` command
- * lowers to just above. `pendingClarification` and `inWorldRefusal` are
- * unchanged in shape from vnext-1 and lower the same way.
+ * vnext-2 commands enter the same Rules interface. `rulesStep` forwards its
+ * input, including atomic bundles; `frozenPlayerChoice` opens the complete
+ * validated choice plan. Refusals use the shared feasibility conversion.
+ * This boundary neither repairs a proposal nor supplies a missing decision.
  */
 export function vnext2CommandToRoomLowering(
   command: VNext2ProposalBundleCommand,
@@ -318,120 +284,25 @@ export function vnext2CommandToRoomLowering(
       input: structuredClone(command.rulesInput),
     });
   }
-  if (command.kind === "pendingClarification") {
-    return Object.freeze({
-      kind: "accepted",
-      input: {
-        kind: "resolveImprovisedAction",
-        rootActionId: command.rootActionId,
-        actorCharacterId: command.actorCharacterId,
-        ruling: {
-          kind: "playerChoice",
-          pendingInputId: command.pendingInputId,
-          question: command.question,
-          choices: command.choices.map((choice) => ({
-            choiceId: choice.choiceId,
-            label: choice.label,
-            consequence: choice.publicRisk,
-          })),
-        },
-      },
-    });
-  }
-  // kind === "inWorldRefusal"
-  const costs = lowerAttemptCosts(command.ruling.attemptCosts);
-  if (costs === undefined) {
-    return Object.freeze({
-      kind: "rejected",
-      code: "BUNDLE_LOWERING_UNSUPPORTED",
-      explanation: "The pinned vNext Rules profile has no transition for one of the attempt costs.",
-    });
-  }
-  return Object.freeze({
-    kind: "accepted",
-    input: {
-      kind: "ruleWorldInteractionFeasibility",
-      rootActionId: command.rootActionId,
-      actorCharacterId: command.actorCharacterId,
-      plan: {
-        schema: "zhuwei.world-interaction-feasibility-ruling-plan/v1",
-        actorCharacterId: command.actorCharacterId,
-        intent: command.intent,
-        method: command.method,
-        rulingKind: command.ruling.kind,
-        publicBasis: command.ruling.publicBasis,
-        prerequisites: command.ruling.prerequisites.map((prerequisite) => ({
-          kind: prerequisite.kind,
-          ref: prerequisite.ref,
-          description: prerequisite.description,
-        })),
-        nextActions: command.ruling.nextActions.map((nextAction) => ({
-          description: nextAction.description,
-        })),
-        costs,
-        basisRefs: [...new Set([
-          ...command.basisRefs,
-          ...command.ruling.nextActions.flatMap((nextAction) => nextAction.basisRefs),
-        ])].sort(),
-      },
-    },
-  });
+  if (command.kind === "frozenPlayerChoice") return {
+    kind: "accepted", input: { kind: "openFrozenPlayerChoice", rootActionId: command.rootActionId,
+      actorCharacterId: command.actorCharacterId, plan: structuredClone(command.plan) },
+  };
+  return refusalCommandToRoomLowering(command);
 }
 
-/**
- * Rules currently has exactly one attempt-cost transition path: the item-cost
- * path world-interaction already uses. A `fictionTime` or `resource` attempt
- * cost has no Rules consumer yet, so its presence fails the whole lowering
- * closed -- it must never be silently dropped, because it was really spent.
- */
-type LoweredAttemptCost =
-  | Readonly<{
-      kind: "item";
-      entryRef: string;
-      quantity: number;
-      charges: number;
-      durability: number;
-    }>
-  | Readonly<{ kind: "fictionTime"; durationMicros: string }>
-  | Readonly<{ kind: "resource"; resourceId: string; amount: number }>;
-
-/**
- * Every attempt-cost kind the domain models now has a Rules transition, so
- * this no longer narrows the union -- it re-emits it in the Rules shape. The
- * function survives the widening because the contract it enforces is the one
- * that matters: a cost Rules could not apply must fail the whole lowering
- * closed rather than be dropped, and a future fourth kind will land here as
- * `undefined` instead of silently vanishing.
- */
-function lowerAttemptCosts(
-  costs: readonly VNextAttemptCost[],
-): readonly LoweredAttemptCost[] | undefined {
-  const lowered: LoweredAttemptCost[] = [];
-  for (const cost of costs) {
-    if (cost.kind === "item") {
-      lowered.push({
-        kind: "item",
-        entryRef: cost.entryRef,
-        quantity: cost.quantity,
-        charges: cost.charges,
-        durability: cost.durability,
-      });
-      continue;
-    }
-    if (cost.kind === "fictionTime") {
-      lowered.push({ kind: "fictionTime", durationMicros: cost.durationMicros });
-      continue;
-    }
-    if (cost.kind === "resource") {
-      lowered.push({ kind: "resource", resourceId: cost.resourceId, amount: cost.amount });
-      continue;
-    }
-    return undefined;
-  }
-  return lowered;
+function refusalCommandToRoomLowering(
+  command: Extract<VNextProposalBundleCommand, { kind: "inWorldRefusal" }>,
+): RoomVNextProposalLoweringResult {
+  const plan = lowerFeasibilityPlan(command);
+  return plan === undefined
+    ? { kind: "rejected", code: "BUNDLE_LOWERING_UNSUPPORTED",
+        explanation: "The pinned vNext Rules profile has no transition for one of the attempt costs." }
+    : { kind: "accepted", input: { kind: "ruleWorldInteractionFeasibility",
+        rootActionId: command.rootActionId, actorCharacterId: command.actorCharacterId, plan } };
 }
 
-function isKpProjection(value: unknown): value is KpSpatialReadModel {
+function isKpProjection(value: unknown): value is KpSpatialReadModel & { npcViewers?: unknown } {
   return isPlainRecord(value)
     && value.kind === "projected"
     && isPlainRecord(value.viewer)
@@ -445,14 +316,29 @@ function isKpProjection(value: unknown): value is KpSpatialReadModel {
 function loweredTransactionReadSet(
   rulesInput: Readonly<Record<string, unknown>>,
 ): readonly Readonly<{ ref: string; revisionOrHash: string }>[] | undefined {
+  if (rulesInput.kind === "openFrozenPlayerChoice") {
+    if (!isFrozenPlayerChoicePlan(rulesInput.plan)) return undefined;
+    const merged = new Map(rulesInput.plan.readSet.map(binding => [binding.ref, binding.revisionOrHash]));
+    for (const choice of rulesInput.plan.choices) {
+      const next = choice.continuation;
+      if (next.kind === "cancel") continue;
+      const reads = loweredTransactionReadSet(next.kind === "adjudication"
+        ? { kind: "applyAtomicWorldInteractionSteps", ...next.plan }
+        : { kind: "ruleWorldInteractionFeasibility", plan: next.plan });
+      if (reads === undefined) return undefined;
+      for (const { ref, revisionOrHash } of reads) {
+        if (merged.has(ref) && merged.get(ref) !== revisionOrHash) return undefined;
+        merged.set(ref, revisionOrHash);
+      }
+    }
+    return [...merged].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([ref, revisionOrHash]) => ({ ref, revisionOrHash }));
+  }
   if (rulesInput.kind === "applyAtomicWorldInteractionSteps") {
-    if (!Array.isArray(rulesInput.steps) || rulesInput.steps.length < 2) return undefined;
+    const { kind: _kind, ...fields } = rulesInput;
+    const plan = { schema: ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, ...fields };
+    if (!isAtomicWorldInteractionStepsPlan(plan)) return undefined;
     const merged = new Map<string, string>();
-    for (const step of rulesInput.steps) {
-      if (!isPlainRecord(step)
-        || !isPlainRecord(step.rulesInput)
-        || !["materializeSemanticDefinition", "reviseSemanticDefinition", "resolveWorldInteraction"]
-          .includes(String(step.rulesInput.kind))) return undefined;
+    for (const step of plan.steps) {
       const childReadSet = loweredTransactionReadSet(step.rulesInput);
       if (childReadSet === undefined || childReadSet.length === 0) return undefined;
       for (const { ref, revisionOrHash } of childReadSet) {
@@ -468,9 +354,18 @@ function loweredTransactionReadSet(
       .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
       .map(([ref, revisionOrHash]) => ({ ref, revisionOrHash }));
   }
-  if ((rulesInput.kind !== "materializeSemanticDefinition"
+  if ((rulesInput.kind !== "commitNarrativeDetail"
+      && rulesInput.kind !== "materializeSemanticDefinition"
       && rulesInput.kind !== "reviseSemanticDefinition"
-      && rulesInput.kind !== "resolveWorldInteraction")
+      && rulesInput.kind !== "resolveWorldInteraction"
+      && rulesInput.kind !== "materializeDefinition"
+      && rulesInput.kind !== "materializeItem"
+      && rulesInput.kind !== "inventoryOperation"
+      && rulesInput.kind !== "ruleWorldInteractionFeasibility"
+      && rulesInput.kind !== "knowledgeReview"
+      && rulesInput.kind !== "startTimePassage"
+      && rulesInput.kind !== "performAbilityOperation"
+      && rulesInput.kind !== "formNpcActorPlan")
     || !isPlainRecord(rulesInput.plan)
     || !Array.isArray(rulesInput.plan.readSet)) return undefined;
   const readSet = rulesInput.plan.readSet;

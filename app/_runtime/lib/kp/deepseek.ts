@@ -40,8 +40,8 @@ export class DeepSeekStrictToolConfigurationError extends Error {
   readonly status = 422;
   readonly code = "strict_tool_configuration_invalid";
 
-  constructor(reason: string) {
-    super(`DeepSeek strict-tool request is invalid: ${reason}.`);
+  constructor(reason: string, cause?: unknown) {
+    super(`DeepSeek strict-tool request is invalid: ${reason}.`, { cause });
     this.name = "DeepSeekStrictToolConfigurationError";
   }
 }
@@ -63,8 +63,16 @@ function hasInsufficientSystemResource(response: unknown): boolean {
   ));
 }
 
-function requestBody(model: string, input: Record<string, unknown>) {
+export function deepSeekRequestBody(model: string, input: Record<string, unknown>) {
   const supported = { ...input };
+  const thinking = supported.thinking ?? { type: "disabled" };
+  if (!isRecord(thinking) || !hasOnlyKeys(thinking, ["type"])
+    || (thinking.type !== "enabled" && thinking.type !== "disabled")
+    || (supported.reasoning_effort !== undefined
+      && (thinking.type !== "enabled"
+        || !["low", "high", "max"].includes(String(supported.reasoning_effort))))) {
+    throw new TypeError("Unsupported DeepSeek thinking configuration.");
+  }
   const maxCompletionTokens = supported.max_completion_tokens;
   delete supported.max_completion_tokens;
   delete supported.parallel_tool_calls;
@@ -74,7 +82,7 @@ function requestBody(model: string, input: Record<string, unknown>) {
     ...(typeof maxCompletionTokens === "number"
       ? { max_tokens: maxCompletionTokens }
       : {}),
-    thinking: { type: "disabled" },
+    thinking,
     stream: false,
   };
 }
@@ -96,7 +104,7 @@ export function createDeepSeekAuthoritativeBinding(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify(requestBody(model, input)),
+        body: JSON.stringify(deepSeekRequestBody(model, input)),
         signal: runOptions?.signal,
       });
       if (!response.ok) {
@@ -130,7 +138,7 @@ export function createDeepSeekStrictToolBinding(
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify(requestBody(model, input)),
+        body: JSON.stringify(deepSeekRequestBody(model, input)),
         signal: runOptions?.signal,
       });
       if (!response.ok) {
@@ -180,8 +188,8 @@ export function assertDeepSeekStrictToolModelInput(
     }
     try {
       assertDeepSeekStrictToolSchema(definition.parameters);
-    } catch {
-      strictConfigurationInvalid(`tools-${index}-schema-invalid`);
+    } catch (cause) {
+      strictConfigurationInvalid(`tools-${index}-schema-invalid`, cause);
     }
   }
 }
@@ -195,6 +203,6 @@ function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean 
   return Object.keys(value).every((key) => allowedSet.has(key));
 }
 
-function strictConfigurationInvalid(reason: string): never {
-  throw new DeepSeekStrictToolConfigurationError(reason);
+function strictConfigurationInvalid(reason: string, cause?: unknown): never {
+  throw new DeepSeekStrictToolConfigurationError(reason, cause);
 }

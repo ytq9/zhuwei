@@ -15,6 +15,10 @@
  * `step`, not here.
  */
 export {
+  authorityGeometryFeatureAt,
+  authorityGeometryFeatureAtVisibleTo,
+  authorityGeometryFeatureComposite,
+  authorityGeometryFeatureRecords,
   authorityReadSetConflicts,
   authorityReadSetMatches,
   authorityRefBoundToScene,
@@ -41,7 +45,9 @@ export {
 } from "./v2/semantic-definitions";
 
 export { canonicalFactVisibleToCharacter } from "./v2/validation";
+export { authorityWorldInteractionTargetVisibleTo } from "./v2/world-interaction-targets";
 export { itemEntryResourceId } from "./v2/items";
+export { authorityEquippedItemWeaponAbilityRefs } from "./v2/item-authority-vnext";
 export {
   committedRangeUsesFrozenRenderableClaims,
   frozenRenderableClaimsConform,

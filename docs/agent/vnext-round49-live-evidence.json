@@ -1,0 +1,287 @@
+{
+  "schema": "zhuwei.round49.offline-closeout/v1",
+  "createdAt": "2026-09-06T16:31:30.371082+00:00",
+  "actionsTaken": "local extract, source hashes, replay, usage arithmetic only; no services, HTTP, API, or repository writes",
+  "sourceComparison": {
+    "startManifestSha256": "dad7e2c6f47137467a43b594c89e77906c3fff00b8238ec8fc4952a5930a019d",
+    "startManifestHashValid": true,
+    "endManifestSha256": "6da4b77193f77d4635e83b63e99d9a215356094a563871064f0e6993d8082eb2",
+    "startFiles": 308,
+    "endFiles": 308,
+    "changed": [],
+    "added": [],
+    "removed": [],
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "checkedAt": "2026-09-06T16:28:15.389907+00:00"
+  },
+  "mechanical": {
+    "source": "offline SQLite extract, exact room selected from initial table room id",
+    "stateVersion": "1",
+    "eventCount": 1,
+    "eventTypes": [
+      "InventoryOperationApplied"
+    ],
+    "operation": {
+      "kind": "release",
+      "entryRef": "item-entry:standard:46:character:f07c5823-4b60-44e3-a9dd-5b7fb4040582:torch:stack",
+      "quantity": 1,
+      "sceneRef": "wake",
+      "releaseKind": "placement"
+    },
+    "sourceEntry": {
+      "entryId": "item-entry:standard:46:character:f07c5823-4b60-44e3-a9dd-5b7fb4040582:torch:stack",
+      "definitionRef": "item-definition:standard-gear:torch:1",
+      "disposition": "held",
+      "holderRef": "character:f07c5823-4b60-44e3-a9dd-5b7fb4040582",
+      "sceneRef": null,
+      "quantity": 9
+    },
+    "targetEntry": {
+      "entryId": "item-entry:inventory:2826fd99020ba0729b2a735bffd8d99a4e858654c1155ce9e1b18da039934b26",
+      "definitionRef": "item-definition:standard-gear:torch:1",
+      "disposition": "scene",
+      "holderRef": null,
+      "sceneRef": "wake",
+      "quantity": 1
+    },
+    "sourceQuantityBefore": 10,
+    "sourceQuantityAfter": 9,
+    "groundQuantity": 1,
+    "quantityConserved": true,
+    "receiptCount": 1,
+    "timelineUnchanged": true,
+    "mechanicalCounters": {
+      "eventCount": 1,
+      "eventTypes": [
+        "InventoryOperationApplied"
+      ],
+      "receipts": 1,
+      "pendingDue": 0,
+      "modelInvocations": 1,
+      "deliveryStatuses": [
+        "open"
+      ],
+      "audienceStatuses": [
+        "rejected"
+      ]
+    },
+    "replay": {
+      "pinnedProfilesMatch": true,
+      "replayKind": "replayed",
+      "exactState": true,
+      "stateVersion": "1",
+      "events": 1,
+      "eventTypes": [
+        "InventoryOperationApplied"
+      ],
+      "checkedAt": "2026-09-06T16:29:40.110Z"
+    }
+  },
+  "failure": {
+    "telemetryReason": "missingClaimFacts",
+    "telemetryErrorCode": "narrationGrounding",
+    "candidateBody": "你从背包里取出一根火把，放在身旁。",
+    "candidatePublishedAsNarration": false,
+    "reviewReadability": "pass",
+    "reviewCharacterConsistency": "pass",
+    "reviewContinuity": "pass",
+    "facts": [
+      {
+        "coverageKey": "f0",
+        "claimIndex": 0,
+        "required": true,
+        "text": "旅行守卫已将 1 件火把放置在场景中",
+        "evidenceId": "e0",
+        "selectedEvidenceIds": [
+          "e0"
+        ]
+      },
+      {
+        "coverageKey": "f1",
+        "claimIndex": 0,
+        "required": true,
+        "text": "火把的状态为 已放下",
+        "evidenceId": "e1",
+        "selectedEvidenceIds": [
+          "e1"
+        ]
+      },
+      {
+        "coverageKey": "f2",
+        "claimIndex": 1,
+        "required": true,
+        "text": "旅行守卫已将 1 件火把放置在场景中",
+        "evidenceId": "e2",
+        "selectedEvidenceIds": []
+      },
+      {
+        "coverageKey": "f3",
+        "claimIndex": 2,
+        "required": false,
+        "text": "本次行动已经由权威状态提交",
+        "evidenceId": "e3",
+        "selectedEvidenceIds": []
+      }
+    ],
+    "missingRequiredCoverageKeys": [
+      "f2"
+    ],
+    "duplicateRequiredTexts": [
+      "旅行守卫已将 1 件火把放置在场景中"
+    ],
+    "interpretation": "review selected evidence for the first required placement fact and omitted the second required fact with identical text; stored failure is missingClaimFacts"
+  },
+  "usage": {
+    "calls": [
+      {
+        "ordinal": 1,
+        "stage": "proposalOffer",
+        "model": "deepseek-v4-flash",
+        "createdAtBeijing": "2026-09-07T00:20:05+08:00",
+        "priceWindow": "offPeak",
+        "inputTokens": 26367,
+        "cacheHitTokens": 896,
+        "cacheMissTokens": 25471,
+        "outputTokens": 531,
+        "totalTokens": 26898,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0406408",
+        "capturePath": "/tmp/zhuwei-vnext-round49-private/01.json",
+        "captureSha256": "bbc75be027405f6aa7b3505bd1daf98faedb3b14827acc152e7cf5f89d9f6b1d"
+      },
+      {
+        "ordinal": 2,
+        "stage": "initialNarration",
+        "model": "deepseek-v4-flash",
+        "createdAtBeijing": "2026-09-07T00:20:09+08:00",
+        "priceWindow": "offPeak",
+        "inputTokens": 1896,
+        "cacheHitTokens": 0,
+        "cacheMissTokens": 1896,
+        "outputTokens": 82,
+        "totalTokens": 1978,
+        "knownReasoningOutputTokens": 64,
+        "finishReasons": [
+          "stop"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.003213",
+        "capturePath": "/tmp/zhuwei-vnext-round49-private/02.json",
+        "captureSha256": "7b3ce0dedfb17bfdb21dd6d725247f6a7265cc047b2a8f7f522d4d02bdbbf0ca"
+      },
+      {
+        "ordinal": 3,
+        "stage": "narrationReview",
+        "model": "deepseek-v4-flash",
+        "createdAtBeijing": "2026-09-07T00:20:11+08:00",
+        "priceWindow": "offPeak",
+        "inputTokens": 6531,
+        "cacheHitTokens": 640,
+        "cacheMissTokens": 5891,
+        "outputTokens": 253,
+        "totalTokens": 6784,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.010007",
+        "capturePath": "/tmp/zhuwei-vnext-round49-private/03.json",
+        "captureSha256": "a37dd7ad634f240ca8946d63a77de4eca2fc41446c6d4fee4ac86a4dd3121a9f"
+      }
+    ],
+    "totals": {
+      "inputTokens": 34794,
+      "cacheHitTokens": 1536,
+      "cacheMissTokens": 33258,
+      "outputTokens": 866,
+      "totalTokens": 35660,
+      "computedCny": "0.0538608",
+      "capturedCalls": 3,
+      "telemetryMatches": true,
+      "knownReasoningOutputTokens": 64
+    },
+    "pricing": {
+      "sourceUrl": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+      "localSourcePath": "/tmp/zhuwei-round49-pricing.html",
+      "localSourceSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+      "model": "deepseek-v4-flash",
+      "currency": "CNY",
+      "units": "per million tokens",
+      "offPeakRates": {
+        "cacheHit": "0.05",
+        "cacheMiss": "1.5",
+        "output": "4.5"
+      },
+      "peakDefinition": "Asia/Shanghai Monday-Friday 09:00-12:00 and 14:00-18:00; all other times off-peak",
+      "calculationStatus": "exact decimal calculation from captured usage and saved public tariff, not a billing-account reconciliation",
+      "excerpt": "   模型  deepseek-v4-flash  deepseek-v4-pro  deepseek-v4-flash-vision-exp    BASE URL (OpenAI 格式)   https://api.deepseek.com     BASE URL (Anthropic 格式)   https://api.deepseek.com/anthropic     模型版本  DeepSeek-V4-Flash-0731  DeepSeek-V4-Pro-0813  DeepSeek-V4-Flash-Vision-Exp    思考模式  支持非思考与思考模式（默认） 切换方式详见 思考模式     上下文长度  1M    输出长度  最大 384K    功能   Json Output   支持  支持  支持     Tool Calls   支持  支持  支持     Responses API   支持  支持  支持     Anthropic API   支持  支持  支持     对话前缀续写（Beta）   支持  支持  支持     FIM 补全（Beta）   仅非思考模式支持  仅非思考模式支持  不支持    价格 (1)(2)   百万tokens输入 （缓存命中）  空闲时段  0.05元  0.15元  0.05元    高峰时段  0.10元  0.30元  0.10元    百万tokens输入 （缓存未命中）  空闲时段  1.5元  4.5元  1.5元    高峰时段  3.0元  9.0元  3.0元    百万tokens输出  空闲时段  4.5元  13.5元  4.5元    高峰时段  9.0元  27.0元  9.0元    并发限制 (3)   2500  500  2500   \n(1) 空闲时段价格为高峰时段价格的一半。高峰时段为北京时间周一至周五 9:00 - 12:00、14:00 - 18:00（其余为空闲时段）。 "
+    },
+    "knownRange": "Exactly the three stored provider responses for round49 action 1; all prompt/cache/output counters are present. No unknown usage in this captured batch. Does not reconcile provider billing or other batches. Completion totals include reported reasoning; only call 2 itemizes 64 reasoning tokens."
+  },
+  "remainingGaps": [
+    "No second pickup action or third authored alarm action in this stopped batch.",
+    "No successful narration publication for action 1.",
+    "Offline replay is not an authenticated duplicate-submission or recovery HTTP test.",
+    "One failed real-model sample does not establish an improved repair or narration success rate."
+  ],
+  "inputHashes": [
+    {
+      "path": "/tmp/zhuwei-vnext-round49-replay-input.json",
+      "sha256": "cc3e1f0501e37be69776c07cb6d9b0c491c08ca676fc3ea50ae05f9ac693885a"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-mechanical-evidence.json",
+      "sha256": "58f86c6263a867dc7f34e42e66675c56a3e6ee058db10aa2fc53cbb6419a026b"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-source-manifest.json",
+      "sha256": "8b1ac2b995c71f8a746470643e2e6aa3f64af04a1510c8d4902bd066dc13c9fa"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-extract.py",
+      "sha256": "e9066d291344e5375923539812954306e474ba3effa179d9e1f157e3a0408097"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-source-manifest.py",
+      "sha256": "cd5001efb11c897a17e00e1da0b4084de504c0cd26136765a68ca68d3176abd2"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-meter.json",
+      "sha256": "f402d159af21972b689603b742f41be955909455e4aa8adb1de5c96cbe2fd091"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-after1-summary.json",
+      "sha256": "de994f2901858b540011ef1269294584ac0c60dc704b93b82e413e87bc092bd4"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-private/01.json",
+      "sha256": "bbc75be027405f6aa7b3505bd1daf98faedb3b14827acc152e7cf5f89d9f6b1d"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-private/02.json",
+      "sha256": "7b3ce0dedfb17bfdb21dd6d725247f6a7265cc047b2a8f7f522d4d02bdbbf0ca"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round49-private/03.json",
+      "sha256": "a37dd7ad634f240ca8946d63a77de4eca2fc41446c6d4fee4ac86a4dd3121a9f"
+    }
+  ]
+}

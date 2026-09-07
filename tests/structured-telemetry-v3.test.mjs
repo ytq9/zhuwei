@@ -11,6 +11,7 @@ const EXPECTED = Object.freeze({
   PROPOSAL_REPAIR_EXHAUSTED: "modelPermanent",
   CONTEXT_INSUFFICIENT: "validation",
   NARRATION_PROVIDER_TIMEOUT: "modelTransient",
+  NARRATION_PROVIDER_REJECTED: "modelPermanent",
   NARRATION_BODY_INVALID: "modelPermanent",
   NARRATION_GROUNDING_REJECTED: "modelPermanent",
   NARRATION_PUBLICATION_FAILED: "authorityTransient",

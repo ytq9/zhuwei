@@ -11,12 +11,17 @@ import type { ContextWorkBudget, ContextWorkReceipt } from "./work-budget";
 export const CONTEXT_OBLIGATIONS = Object.freeze([
   "actor",
   "target",
+  "observableSubject",
+  "sourceRecord",
   "instrument",
   "ability",
+  "definition",
+  "reaction",
   "relation",
   "geometry",
   "fact",
   "continuity",
+  "narrativeContinuity",
   "precedent",
   "safety",
 ] as const);
@@ -110,14 +115,24 @@ export function closeObligations(input: ObligationClosureInput): ObligationClosu
     // Scope is read as a container, never as a membership list. Expanding a
     // scene into everything standing in it is exactly the wide collection this
     // pipeline replaces; members enter through relations, facts or the
-    // player's own reference instead.
+    // player's own reference instead. Visible entity membership is separately
+    // seeded as non-expanding observableSubject by the context owner.
     if (node?.sceneRef !== undefined && node.sceneRef !== item.ref) {
       if (!enqueue({ ref: node.sceneRef, obligation: "geometry" }, item.ref)) return limited(budget);
     }
     if (node?.definitionRef !== undefined) {
-      if (!enqueue({ ref: node.definitionRef, obligation: item.obligation }, item.ref)) {
+      // Reading an instance's definition is not an instruction to search for
+      // every other instance of that definition. A definition addressed by the
+      // player still starts as target/instrument and resolves its candidates.
+      if (!enqueue({ ref: node.definitionRef,
+        obligation: node.kind === "itemEntry" ? "definition" : item.obligation }, item.ref)) {
         return limited(budget);
       }
+    }
+
+    for (const hazardRef of index.hazardsByTrigger.get(item.ref) ?? []) {
+      if (!budget.charge("postingVisits", 1)
+        || !enqueue({ ref: hazardRef, obligation: "relation" }, item.ref)) return limited(budget);
     }
 
     for (const edge of [
@@ -165,13 +180,15 @@ export function closeObligations(input: ObligationClosureInput): ObligationClosu
 
 /**
  * Obligations that pull neighbours in. The rest are read for their own content:
- * `geometry` is the scope a decisive ref sits in, `safety` is the policy that
+ * `sourceRecord` freezes an already displayed record without making its
+ * subjects action targets. `geometry` is the scope a decisive ref sits in, `safety` is the policy that
  * governs disclosure, and neither is a reason to walk further outward.
  */
 function expands(obligation: ContextObligation): boolean {
   return obligation === "actor"
     || obligation === "target"
     || obligation === "instrument"
+    || obligation === "definition"
     || obligation === "relation"
     || obligation === "fact";
 }

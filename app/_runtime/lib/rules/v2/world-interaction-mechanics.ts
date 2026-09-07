@@ -21,6 +21,7 @@ export type WorldInteractionAbilityAuthority = Readonly<{
   abilityDefinition: JsonRecord;
   tacticalFeatureRefs: readonly string[];
   rangeBand: "normal" | "long";
+  checkDisadvantageReasons: readonly string[];
   checkAbility: "strength" | "dexterity" | "constitution" | "intelligence" | "wisdom" | "charisma";
   checkModifier: number;
   costs: readonly WorldInteractionCost[];
@@ -47,7 +48,6 @@ export function worldInteractionAbilityAuthority(input: Readonly<{
   sceneRef: string;
   abilityRef: string;
   directTargetRefs: readonly string[];
-  checkMode: "normal" | "advantage" | "disadvantage";
 }>): WorldInteractionAbilityAuthorityResult {
   const source = input.state.combatRuntime.entities[input.actorCharacterId];
   const abilityDefinition = input.state.combatRuntime.definitions[input.abilityRef];
@@ -154,12 +154,9 @@ export function worldInteractionAbilityAuthority(input: Readonly<{
     );
   }
   const rangeBand = withinNormal ? "normal" : "long";
-  if (rangeBand === "long" && input.checkMode !== "disadvantage") {
-    return rejected(
-      "invalidRulesInput",
-      "A long-range world-interaction attack must freeze disadvantage.",
-    );
-  }
+  // Range supplies one disadvantage source. The shared condition resolver
+  // combines it with all advantage sources before the roll is frozen.
+  const checkDisadvantageReasons = rangeBand === "long" ? ["longRange2014"] : [];
 
   const encounter = activeEncounter(input.state, input.actorCharacterId);
   let sourcePatch: JsonRecord;
@@ -189,6 +186,7 @@ export function worldInteractionAbilityAuthority(input: Readonly<{
       abilityDefinition: structuredClone(abilityDefinition),
       tacticalFeatureRefs: Object.freeze(tacticalFeatureRefs),
       rangeBand,
+      checkDisadvantageReasons: Object.freeze(checkDisadvantageReasons),
       checkAbility,
       checkModifier: combatAttackBonus(source, abilityDefinition),
       costs: Object.freeze(costs),

@@ -18,6 +18,7 @@ import {
 } from "../app/_runtime/lib/kp/vnext/proposals.ts";
 import { requiredContextViewerRefs } from "../app/_runtime/lib/kp/vnext/required-context-runtime.ts";
 import { freezeAdjudicationContext } from "../app/_runtime/lib/kp/vnext/context/index.ts";
+import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../app/_runtime/lib/kp/vnext/room-bridge.ts";
 import {
   createDefinitionSnapshot,
   storedSemanticDefinition,
@@ -319,11 +320,11 @@ function initialize(options = {}) {
     characters: [
       player(ACTOR, "Q1", 16, ["perception"], options),
       player(TARGET, "Q10", 10),
-      {
+      ...(options.withoutSemanticObjects ? [] : [{
         ...player(NPC_ENTITY, "Q30", 10),
         kind: "npc",
         spatialVisibilityPolicyId: "visibility:hidden-until-evidence",
-      },
+      }]),
     ],
     characterControls: [
       { characterId: ACTOR, seatId: "seat:q1" },
@@ -331,7 +332,7 @@ function initialize(options = {}) {
     ],
     canonicalFacts: [],
     initialKnowledge: [],
-    vNextSeed: {
+    vNextSeed: options.withoutSemanticObjects ? { semanticDefinitions: [], itemDefinitions: [], itemEntries: [], entityDefinitionBindings: [] } : {
       semanticDefinitions: [
         source,
         secondSource,
@@ -718,7 +719,7 @@ test("opaque IDs resolve registered hazard targets and damage through step/proje
   const committed = runtime.step(world.profiles, pending.state, {
     kind: "fulfillAuthoritativeRandomness",
     continuation: pending.continuation,
-    rolls: [20],
+    rolls: pending.randomnessRequest.dice.flatMap(die => Array(Number(die.count)).fill(20)),
   });
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   assert.equal(committed.state.entities[ACTOR].hitPoints.current, 14);
@@ -816,7 +817,7 @@ test("visible raw content cannot grant a hidden Claim payload reference", () => 
   const committed = runtime.step(world.profiles, pending.state, {
     kind: "fulfillAuthoritativeRandomness",
     continuation: pending.continuation,
-    rolls: [20],
+    rolls: pending.randomnessRequest.dice.flatMap(die => Array(Number(die.count)).fill(20)),
   });
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   const events = [...pending.events, ...committed.events];
@@ -1094,7 +1095,7 @@ test("a branch settles a hazard the KP froze this session, not only one the runt
   const committed = runtime.step(world.profiles, pending.state, {
     kind: "fulfillAuthoritativeRandomness",
     continuation: pending.continuation,
-    rolls: [20],
+    rolls: pending.randomnessRequest.dice.flatMap(die => Array(Number(die.count)).fill(20)),
   });
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   // Nine, the amount the KP froze -- not the six the shipped profile carries.
@@ -1145,16 +1146,21 @@ test("a frozen saving throw is rolled by each creature the danger reaches, not b
     plan,
   });
   assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
-  // The frozen request says exactly how many faces the authority owes: the
-  // actor's check, then one d20 for each creature the danger reaches.
-  assert.equal(pending.randomnessRequest.hazardSaves.length, 2);
-  assert.equal(pending.randomnessRequest.diceExpression, "1d20+2d20");
-  const savingOrder = pending.randomnessRequest.hazardSaves.map(({ targetRef }) => targetRef);
+  // Each creature owns its save and condition reserve. In normal mode the
+  // second face must not replace the first merely because it is better.
+  const specs = pending.randomnessRequest.hazardRolls;
+  const saves = specs.filter(spec => spec.purposeKey.includes(":save:"));
+  assert.equal(saves.length, 2);
+  assert.equal(specs.filter(spec => spec.purposeKey.includes(":concentration:")).length, 2);
+  const savingOrder = saves.map(({ frozenParameters }) => frozenParameters.targetRef);
+  const hazardFaces = specs.flatMap(spec => spec.purposeKey.includes(":save:")
+    ? spec.frozenParameters.targetRef === savingOrder[0] ? [20, 1] : [1, 20]
+    : spec.dice.flatMap(die => Array(Number(die.count)).fill(20)));
 
   const committed = runtime.step(world.profiles, pending.state, {
     kind: "fulfillAuthoritativeRandomness",
     continuation: pending.continuation,
-    rolls: [20, 20, 1],
+    rolls: [20, ...hazardFaces],
   });
   assert.equal(committed.kind, "committed", JSON.stringify(committed));
   const damage = Object.fromEntries(committed.mechanicalResult.appliedEffects
@@ -1383,4 +1389,81 @@ test("world-interaction production mechanics contain no fixture-name or material
     sources,
     /\b(?:chandelier|rope|iron|wood|stone|rock|trap|pressure[-_ ]?plate|pistol|firearm|gun|flammability|materialClass)\b|吊灯|绳索|铁链|木材|石头|陷阱|压板|枪/iu,
   );
+});
+
+function lowerSceneObservation(world, { intent = '留在原地环顾周围。', sense = 'sight', subjectRef = SCENE } = {}) {
+  const rootActionId = 'root:q:scene-observation';
+  const kpProjection = runtime.project(world.profiles, world.state, { kind: 'kp', capability: 'internal:kp-spatial-evidence' });
+  const frozen = freezeAdjudicationContext({ state: world.state, profiles: world.profiles, kpProjection,
+    replayHead: world.head, preparedActionId: 'prepared:scene-observation', rootActionId,
+    submissionRef: 'submission:scene-observation', actorCharacterId: ACTOR, intentText: intent, focusRefs: [], maxUnits: 160_000 });
+  assert.equal(frozen.kind, 'ready', JSON.stringify(frozen));
+  const value = proposalEnvelope({ contextHash: frozen.context.binding.contextHash, directTargetRef: SCENE });
+  value.basisRefs = [SCENE]; value.proposal.intent = intent; value.proposal.method = intent;
+  for (const branch of Object.values(value.proposal.branches)) {
+    branch.effects = []; branch.pressures = []; branch.opportunities = [];
+    branch.sensoryEvidence = [{ observerRef: ACTOR, subjectRef, sense,
+      evidence: sense === 'hearing' ? '周围没有传来额外的声响。' : '你仍然身处眼前的场景中。', basisRefs: [SCENE] }];
+  }
+  const lowered = lowerVNextCoarseFormProposal({ value, requiredContext: frozen.context,
+    state: world.state, rootActionId, actorCharacterId: ACTOR });
+  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+  return { lowered, value, context: frozen.context, rootActionId };
+}
+
+test('general sight and ambient hearing use the real scene scope through frozen context, Room, Rules, Claims and replay', () => {
+  for (const options of [{}, { withoutSemanticObjects: true, intent: '停下脚步，听听周围的声音。', sense: 'hearing', subjectRef: null }]) {
+    const world = initialize(options);
+    const { lowered, context } = lowerSceneObservation(world, options);
+    assert.ok(requiredContextViewerRefs(context).has(SCENE));
+    assert.deepEqual(VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE.validateReadSet({ phase: 'beforeFirstRulesStep',
+      requiredContext: context, rulesInput: lowered.rulesInput, profiles: world.profiles, state: world.state, replayHead: world.head }), { kind: 'valid' });
+    const result = runtime.step(world.profiles, world.state, lowered.rulesInput);
+    assert.equal(result.kind, 'committed', JSON.stringify(result));
+    assert.ok(result.events.some(event => event.eventType === 'SensoryEvidenceAcquired'));
+    assert.deepEqual(result.state.campaignRuntime.itemSystem, world.state.campaignRuntime.itemSystem);
+    assert.deepEqual(result.state.entities[ACTOR].resources, world.state.entities[ACTOR].resources);
+    const view = runtime.project(world.profiles, result.state, { kind: 'player', characterId: ACTOR,
+      principalId: 'principal:q1', seatId: 'seat:q1', sessionVersion: 1 }, { channel: 'realtime', committedRange: {
+        receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: world.state, events: result.events } });
+    assert.equal(view.kind, 'projected', JSON.stringify(view));
+    assert.ok(view.renderableClaims.claims.some(claim => claim.kind === 'sensoryEvidence' && claim.sense === (options.sense ?? 'sight')));
+    assert.equal(JSON.stringify(view.renderableClaims).includes(HIDDEN_SOURCE), false);
+    const restored = runtime.replay(world.genesis, result.events);
+    assert.equal(restored.kind, 'replayed', JSON.stringify(restored));
+    assert.deepEqual(restored.state, result.state);
+  }
+});
+
+test('a scene scope cannot replace mechanical targets, disclose hidden subjects, or omit frozen dependencies', () => {
+  const world = initialize();
+  const { lowered } = lowerSceneObservation(world);
+  const base = lowered.rulesInput;
+  const mutations = [
+    plan => { plan.abilityRef = abilityRefByMechanicalKey(world.state, 'improvised-strike'); },
+    plan => { plan.branches.failure.effects = interactionPlan(world.state).branches.success.effects; },
+    plan => { plan.sceneRef = OTHER_SCENE; plan.targetRefs = [OTHER_SCENE]; plan.directTargetRefs = [OTHER_SCENE]; },
+    plan => { plan.targetRefs = [HIDDEN_SOURCE, SCENE].sort(); plan.directTargetRefs = [...plan.targetRefs]; },
+    plan => { plan.branches.success.sensoryEvidence[0].subjectRef = HIDDEN_SOURCE; },
+    plan => { plan.branches.failure.sensoryEvidence[0].subjectRef = FOREIGN_SOURCE; },
+    plan => { plan.readSet = plan.readSet.filter(binding => binding.ref !== SCENE); },
+  ];
+  for (const mutate of mutations) {
+    let plan = structuredClone(base.plan);
+    plan = bindPlanReadSet(world.state, plan, [HIDDEN_SOURCE, FOREIGN_SOURCE, OTHER_SCENE]);
+    mutate(plan);
+    const result = runtime.step(world.profiles, world.state, { ...base, plan });
+    assert.equal(result.kind, 'rejected', JSON.stringify(result));
+    assert.deepEqual(result.events, []);
+  }
+  const checked = structuredClone(base);
+  checked.plan.ruling = interactionPlan(world.state).ruling;
+  const check = runtime.step(world.profiles, world.state, checked);
+  assert.equal(check.kind, 'awaitingRandomness', JSON.stringify(check));
+  assert.equal(check.randomnessRequest.frozenCheck.modifier, '5');
+  const self = structuredClone(base);
+  self.plan.targetRefs = [ACTOR]; self.plan.directTargetRefs = [ACTOR];
+  self.plan.branches.success.sensoryEvidence[0].subjectRef = ACTOR;
+  const selfResult = runtime.step(world.profiles, world.state, self);
+  assert.equal(selfResult.kind, 'committed', JSON.stringify(selfResult));
 });

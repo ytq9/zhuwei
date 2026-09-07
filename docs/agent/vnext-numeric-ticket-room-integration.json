@@ -1,0 +1,48 @@
+{
+  "schema": "zhuwei.isolated-file-integration/v1",
+  "sourceDirectory": "/tmp/zhuwei-npc-plan-formation-kp-work",
+  "targetDirectory": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "mode": "hunk-integration-only-preserve-root-candidate-directory-edits",
+  "baseline": "previous frozen NPC formation delivery plus its frozen Room invocation file",
+  "files": [
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-provider.ts",
+      "baselineSha256": "2f3f301c1e10479c099340650c912ed6b5a14441f160e96eeab0745e717635ce",
+      "newSha256": "ec353ac73a540a8915b8f2db6ca3f33622f33c1d6de45eb3d81603dd4f0f242b",
+      "rootBeforeSha256": "0073839e9f3b6d44004bd0589ab7085e9a33d585c96a14ee5e4f91fbd3b7a4b3",
+      "rootAfterSha256": "d75130f10728d346e84b6d46e6b23e2c4b58e2fa5053b61e1522a39e647a95f5"
+    },
+    {
+      "path": "app/_runtime/lib/room/vnext-proposal-invocation.ts",
+      "baselineSha256": "eb67cc3a16116b94e435a4a15635a9a4fb7e18cbeeee505bb68145626b7d194f",
+      "newSha256": "3e11455441e1a2247c75e129ff2ac9bbf77342e5d618210de5959547c4a2a5e1",
+      "rootBeforeSha256": "9ef2820b7e88d08d6905a03181a2e5d1c183dbb85788994287f4f5b0ca91ee88",
+      "rootAfterSha256": "83a4883779e76f260fb0b52642973fbadde5dfad292d4c8e87ed8265b07ddb42"
+    },
+    {
+      "path": "tests/kp-vnext-npc-plan-formation-room.test.ts",
+      "baselineSha256": "adbc65de905be6fa78b1a53f6356238c18447c50df55fc0ea956de0b1c6e13c4",
+      "newSha256": "0ec2b2d9d573cef31baa87fad6b30cc15bdcb842fce92b7307105495b6cc188d",
+      "rootBeforeSha256": "adbc65de905be6fa78b1a53f6356238c18447c50df55fc0ea956de0b1c6e13c4",
+      "rootAfterSha256": "0ec2b2d9d573cef31baa87fad6b30cc15bdcb842fce92b7307105495b6cc188d"
+    }
+  ],
+  "patch": "/tmp/zhuwei-npc-plan-formation-kp-work/numeric-ticket-delta.patch",
+  "checks": [
+    {
+      "command": "npx vitest run tests/kp-vnext-npc-plan-formation-room.test.ts",
+      "tests": 5,
+      "passed": 5,
+      "exitCode": 0
+    },
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    }
+  ],
+  "appliedAt": "2026-09-06T22:25:18.932651+00:00",
+  "backupDirectory": "/tmp/zhuwei-numeric-ticket-root-before",
+  "sourceManifestSha256": "dce172ef7dabe2c8e60c3784dd52033f607ebc20482a0c61f165c4b4c604166e",
+  "conflicts": 0,
+  "rootCandidateDirectoryEditsPreserved": true
+}

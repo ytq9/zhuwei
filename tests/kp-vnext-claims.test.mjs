@@ -32,6 +32,118 @@ function sha256(digit) {
   return `sha256:${digit.repeat(64).slice(0, 64)}`;
 }
 
+test("typed inventory facts bind actor, recipient and item without inferring roles from sorted participants", () => {
+  for (const [label, operation, expected] of [
+    ["弩矢", { kind: "release", actorRef: "character:zed", quantity: 1, releaseKind: "placement" }, "远行者已将 1 件弩矢放置在场景中"],
+    ["玻璃镜", { kind: "transfer", actorRef: "character:zed", quantity: 2, recipientRef: "character:amy" }, "远行者已将 2 件玻璃镜交给药师"],
+  ]) {
+    const authority = deriveAuthorityClaims({ receiptId: RECEIPT.receiptId, rootActionId: RECEIPT.rootActionId, materials: [{
+      claimRef: "claim:typed-item", kind: "inventoryOutcome", itemRef: "item:visible",
+      change: operation.kind === "transfer" ? "transferred" : "updated",
+      characterRefs: ["character:amy", "character:zed"], operation,
+      summary: "角色已完成这次物品操作。", basis: { authorityRefs: [], viewerRefs: [] }, visibility: { kind: "public" },
+    }] });
+    const grants = { viewerKey: "viewer:amy", refs: ["item:visible", "character:amy", "character:zed"],
+      displayNames: { "item:visible": label, "character:zed": "远行者", "character:amy": "药师" } };
+    const projected = projectRenderableClaims(authority, grants);
+    assert.deepEqual(projected.claims[0].narrationFacts, [expected]);
+    assert.equal(frozenRenderableClaimsConform(projected), true);
+    assert.equal(projectRenderableClaims(authority, { ...grants,
+      refs: grants.refs.filter(ref => ref !== "character:zed"),
+      displayNames: { "item:visible": label, "character:amy": "药师" },
+    }).claims.length, 0);
+    const tampered = structuredClone(projected);
+    tampered.claims[0].operation.privateContext = "CANARY";
+    const { claimsHash: _hash, ...core } = tampered;
+    tampered.claimsHash = canonicalSha256(core);
+    assert.equal(frozenRenderableClaimsConform(tampered), false);
+  }
+});
+
+test("typed environment interaction facts bind visible actor and target while preserving actual check results", () => {
+  for (const check of [undefined, { kind: "attack", result: "failure", total: 9, dc: 15 }]) {
+    const range = worldInteractionRange();
+    const payload = range.events[0].payload;
+    payload.check = check === undefined ? undefined
+      : { resolutionKind: "attack", succeeded: false, total: check.total, dc: check.dc };
+    payload.branch = check === undefined ? "success" : "failure";
+    payload.sensoryEvidence = []; payload.pressures = []; payload.opportunities = [];
+    const viewerKey = "viewer:observer";
+    const projected = projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(range), {
+      viewerKey, refs: ["character:alice", "feature:chandelier", "visibility:scene-observers"],
+      displayNames: { "character:alice": "调查员", "feature:chandelier": "铜吊灯" },
+    });
+    const outcome = projected.claims.find(claim => claim.kind === "mechanicalOutcome");
+    assert.equal(outcome.outcomeKind, "worldInteraction");
+    assert.deepEqual(outcome.narrationFacts, check === undefined ? ["调查员对铜吊灯的环境互动直接成功"]
+      : ["调查员对铜吊灯的环境互动攻击未命中", "调查员对铜吊灯的环境互动检定总值为 9", "调查员对铜吊灯的环境互动难度为 15"]);
+    assert.equal(frozenRenderableClaimsConform(projected), true);
+
+  }
+});
+
+test("a direct consequence requires the exact applied ledger entry and an actual matching check in the same root and branch", () => {
+  const initial = worldInteractionRange(), owner = initial.events[0];
+  owner.branchId = "branch:active";
+  Object.assign(owner.payload, { resolutionId: "resolution:owner", interactionRef: "proposal:owner", branch: "failure",
+    check: { resolutionKind: "abilityCheck", succeeded: false, total: 1, dc: 12 }, sensoryEvidence: [], pressures: [], opportunities: [] });
+  const child = { ...structuredClone(owner), eventId: "event:child", eventSeq: "12" };
+  Object.assign(child.payload, { resolutionId: "resolution:child", interactionRef: "proposal:child", rulingKind: "directSuccess",
+    check: null, branch: "success" });
+  const ledger = { ...structuredClone(owner), eventId: "event:settlement", eventSeq: "13", eventType: "AtomicWorldInteractionStepsResolved",
+    payload: { actorCharacterId: "character:alice", branch: "failure", checkResolutionId: "resolution:owner",
+      steps: [{ proposalRef: "proposal:child", outcomeBinding: "onFailure", status: "applied" }] } };
+  initial.events = [owner, child, ledger]; initial.receipt.eventRange.toEventSeq = "13";
+  const outcome = range => projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(range), {
+    viewerKey: "viewer:observer", refs: ["character:alice", "feature:chandelier", "visibility:scene-observers"],
+  }).claims.find(claim => claim.claimRef === "claim:event:child:interaction").outcomeCode;
+  assert.equal(outcome(initial), "applied");
+  for (const mutate of [
+    range => { range.events[2].payload.checkResolutionId = "resolution:invented"; },
+    range => { range.events[2].payload.actorCharacterId = "character:other"; },
+    range => { range.events[0].branchId = "branch:other"; },
+    range => { range.events[0].payload.resolutionId = "resolution:other"; },
+    range => { range.events[0].payload.actorCharacterId = "character:other"; },
+    range => { range.events[0].payload.check.succeeded = true; },
+    range => { range.events[0].payload.branch = "success"; },
+    range => { range.events[0].eventSeq = "14"; range.receipt.eventRange.fromEventSeq = "14"; },
+    range => { range.events[2].payload.steps[0].proposalRef = "proposal:other"; },
+    range => { range.events[2].payload.steps[0].status = "skipped"; },
+    range => { range.events[2].payload.steps[0].outcomeBinding = "onSuccess"; },
+  ]) { const range = structuredClone(initial); mutate(range); assert.equal(outcome(range), "success"); }
+});
+
+test("each witnessed inventory operation produces its own complete facts and preserves source-stack state", () => {
+  const actor = "character:alice", item = "item:source", target = "item:target";
+  for (const [operation, expected, state] of [
+    [{ kind: "acquire", quantity: 2 }, "艾莉丝取得了 2 件铜片"],
+    [{ kind: "release", quantity: 2, releaseKind: "placement" }, "艾莉丝已将 2 件铜片放置在场景中", "已放下"],
+    [{ kind: "release", quantity: 2, releaseKind: "drop" }, "艾莉丝已将 2 件铜片丢在场景中", "已丢下"],
+    [{ kind: "release", quantity: 2, releaseKind: "loss" }, "艾莉丝已将 2 件铜片遗失在场景中", "已遗失"],
+    [{ kind: "transfer", quantity: 2, targetCharacterRef: "character:bram" }, "艾莉丝已将 2 件铜片交给布兰"],
+    [{ kind: "equip", action: "wear" }, "艾莉丝已将铜片装备到指定部位", "已装备"],
+    [{ kind: "equip", action: "stow" }, "艾莉丝已将铜片从装备部位收起", "已收起"],
+    [{ kind: "identify" }, "艾莉丝已辨识铜片", "已识别"],
+    [{ kind: "lifecycle", action: "break" }, "铜片已损坏，当前不可正常使用", "损坏"],
+    [{ kind: "lifecycle", action: "repair" }, "铜片已修复，可以正常使用", "可用"],
+    [{ kind: "lifecycle", action: "destroy" }, "铜片已被销毁", "销毁"],
+  ]) {
+    const range = authoredRange([["InventoryOperationApplied", {
+      actorCharacterId: actor, targetEntryId: target, operation: { ...operation, entryRef: item },
+    }]]);
+    const projected = projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(range), {
+      viewerKey: "viewer:alice", refs: [actor, "character:bram", item, target],
+      displayNames: { [actor]: "艾莉丝", "character:bram": "布兰", [item]: "铜片", [target]: "铜片" },
+    });
+    const targetClaim = projected.claims.find(claim => claim.kind === "inventoryOutcome" && claim.itemRef === target);
+    const sourceClaim = projected.claims.find(claim => claim.kind === "inventoryOutcome" && claim.itemRef === item);
+    assert.deepEqual(targetClaim.narrationFacts, [expected, ...(state ? [`铜片的状态为 ${state}`] : [])]);
+    assert.deepEqual(sourceClaim.narrationFacts, [expected]);
+    assert.equal(sourceClaim.state, undefined);
+    assert.equal(frozenRenderableClaimsConform(projected), true);
+  }
+});
+
 test("the mixed stage-three manifest routes only explicit vNext event families to Claims", () => {
   assert.equal(committedRangeUsesFrozenRenderableClaims([
     { eventType: "RandomnessRequested" },
@@ -144,8 +256,8 @@ function materializationRange({
     definitionId: definitionRef,
     revision: "1",
     definitionHash: sha256("4"),
-    templateRef: "template:scene-feature",
-    templateHash: sha256("5"),
+    templateRef: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateRef,
+    templateHash: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateHash,
     visibilityPolicyRef: visibilityPolicyId,
     content: {
       sceneRef: "scene:atrium",
@@ -337,7 +449,7 @@ test("an NPC source claim remains attributed and does not publish the hidden wor
     speakerName: "守门人",
     statement: "门后没有守卫。",
     basisRefs: ["event:keeper-spoke"],
-    narrationFacts: ["守门人声称：门后没有守卫"],
+    narrationFacts: ["守门人声称（尚未由这条记录证实）：门后没有守卫"],
   });
   assert.doesNotMatch(JSON.stringify(projected), /two-guards|两名守卫/u);
   assert.match(projected.claimsHash, /^sha256:[0-9a-f]{64}$/u);
@@ -969,3 +1081,97 @@ test("the Viewer claim contract projects every supported typed material through 
   ]);
   assert.doesNotMatch(JSON.stringify(projected), /authority:only/u);
 });
+
+function authoredRange(payloads, priorEffects = {}) {
+  const base = materializationRange();
+  const seed = base.events[0];
+  base.priorState.combatRuntime.effects = priorEffects;
+  base.priorState.combatRuntime.entities = { "character:alice": { conditions: {} } };
+  base.state.combatRuntime.effects = {};
+  base.state.combatRuntime.entities = { "character:alice": { conditions: {} } };
+  base.events = payloads.map(([eventType, payload], index) => ({ ...seed, eventId: `event:authored:${index}`, eventSeq: String(21 + index), eventType, payload,
+    visibilityPolicyId: "visibility:scene-observers", secrecy: "public" }));
+  base.receipt.eventRange = { fromEventSeq: "21", toEventSeq: String(20 + payloads.length) };
+  return base;
+}
+function conditionEffect() {
+  return { schema: "zhuwei.condition-effect/v1", effectId: "effect:hidden-canary", kind: "condition", sourceRef: "source:CANARY_HIDDEN", sourceDefinitionRef: "ability:CANARY_HIDDEN",
+    targetEntityId: "character:alice", condition: "blinded", level: null, duration: { kind: "timed", durationMicros: "10000000" }, startedAtFictionMicros: "0", expiresAt: { kind: "fictionTime", entityId: "character:alice", dueMicros: "10000000" }, visibilityPolicyId: "visibility:scene-observers" };
+}
+function authoredGrants(extra = []) {
+  return { viewerKey: "viewer:alice", refs: ["character:alice", "visibility:scene-observers", "visibility:character-controller:character:alice", ...extra], displayNames: { "character:alice": "艾莉丝" } };
+}
+
+test("condition applied and ended claims retain visible mechanics without requiring or leaking hidden Ability refs", () => {
+  const effect = conditionEffect();
+  const range = authoredRange([
+    ["EffectApplied", { effect }],
+    ["EffectEnded", { effectId: effect.effectId, targetEntityId: "character:alice", reason: "durationExpired" }],
+    ["AtomicWorldInteractionStepsResolved", {}],
+  ]);
+  const projected = projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(range), authoredGrants());
+  const outcomes = projected.claims.filter(({ kind }) => kind === "mechanicalOutcome");
+  assert.equal(outcomes.length, 2);
+  assert.match(outcomes[0].summary, /目盲.*10 秒/u);
+  assert.match(outcomes[1].summary, /目盲.*结束/u);
+  assert.ok(outcomes[0].narrationFacts.includes("作用目标：艾莉丝"));
+  assert.doesNotMatch(JSON.stringify(projected), /CANARY|effect:hidden/u);
+  const later = authoredRange([["EffectEnded", { effectId: effect.effectId, targetEntityId: "character:alice", reason: "explicitEnd" }], ["AtomicWorldInteractionStepsResolved", {}]], { [effect.effectId]: effect });
+  assert.ok(deriveAuthorityClaimsFromCommittedRange(later).claims.some(({ outcomeCode }) => outcomeCode === "effectEnded"));
+});
+
+test("definition registration remains a private ledger while actual item appearance and inventory outcomes render", () => {
+  const onlyDefinition = authoredRange([
+    ["DefinitionRegistered", { definition: { label: "CANARY_DEFINITION" } }],
+    ["AuthoredMaterializationResolved", { kind: "hazardDefinition", ref: "hazard:private", actorCharacterId: "character:alice", contextHash: sha256("2"), summary: "CANARY_SUMMARY" }],
+  ]);
+  const projected = projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(onlyDefinition), authoredGrants());
+  assert.deepEqual(projected.claims.map(({ kind }) => kind), ["actionCommitted"]);
+  assert.doesNotMatch(JSON.stringify(projected), /CANARY|hazard:private/u);
+  const range = authoredRange([
+    ["ItemDefinitionRegistered", { definition: { definitionId: "item-definition:private" } }],
+    ["ItemMaterialized", { entry: { entryId: "item-entry:rope", quantity: 2, holderRef: null } }],
+    ["InventoryOperationApplied", { actorCharacterId: "character:alice", targetEntryId: "item-entry:rope", operation: { kind: "acquire", entryRef: "item-entry:rope", quantity: 2 }, summary: "CANARY_SUMMARY" }],
+  ]);
+  const visible = projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(range), authoredGrants(["item-entry:rope"]));
+  const claims = visible.claims.filter(({ kind }) => kind === "inventoryOutcome");
+  assert.deepEqual(claims.map(({ change }) => change), ["materialized", "acquired"]);
+  assert.deepEqual(claims[0].quantity, { before: 0, after: 2 });
+  assert.match(claims[1].summary, /2 件/u);
+  assert.doesNotMatch(JSON.stringify(visible), /CANARY|item-definition:private/u);
+});
+
+test("item Activity, elapsed time, recovery and native condition changes have explicit closed claim coverage", () => {
+  const range = authoredRange([
+    ["ActivityStarted", { activityId: "activity:use", characterId: "character:alice" }],
+    ["FictionTimeAdvanced", { durationMicros: "6500000", reason: "CANARY_CAUSE" }],
+    ["ActivityCompleted", { activityId: "activity:use" }],
+    ["HealingResolved", { entityId: "character:alice", before: "10", after: "17" }],
+    ["TemporaryHitPointsGranted", { entityId: "character:alice", before: "0", after: "4", sourceDefinitionId: "ability:CANARY_HIDDEN" }],
+    ["ConditionChanged", { entityId: "character:alice", conditions: { prone: true } }],
+    ["AtomicWorldInteractionStepsResolved", {}],
+  ]);
+  const visible = projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(range), authoredGrants());
+  assert.equal(visible.claims.filter(({ kind }) => kind === "mechanicalOutcome").length, 5);
+  assert.match(JSON.stringify(visible), /6.5 秒|由 10 变为 17|临时生命值|倒地/u);
+  assert.doesNotMatch(JSON.stringify(visible), /CANARY/u);
+});
+
+test("native reaction completion renders its visible outcome and keeps the atomic continuation private",()=>{
+  const range=authoredRange([
+    ["AtomicWorldInteractionSuspended",{continuation:{candidateState:"CANARY_CANDIDATE"}}],
+    ["CombatPendingOpened",{pending:{ownerFrame:"CANARY_FRAME"}}],
+    ["CombatPendingClosed",{pendingInputId:"pending:CANARY"}],
+    ["ReactionAnswered",{answer:{kind:"useReaction"}}],
+    ["SpellCastingStarted",{cast:{abilityRef:"ability:CANARY"}}],
+    ["SpellCountered",{sourceEntityId:"character:alice",abilityRef:"ability:CANARY",castId:"cast:CANARY"}],
+    ["SpellResolved",{sourceEntityId:"character:CANARY_HIDDEN",abilityRef:"ability:CANARY",castId:"cast:CANARY"}],
+    ["AtomicWorldInteractionResumed",{}],
+    ["AtomicWorldInteractionStepsResolved",{}],
+  ]);
+  const visible=projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(range),authoredGrants());
+  assert.equal(visible.claims.filter(c=>c.kind==="mechanicalOutcome").length,1);
+  assert.match(JSON.stringify(visible),/施法被反制/u);
+  assert.doesNotMatch(JSON.stringify(visible),/CANARY/u);
+});
+import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";

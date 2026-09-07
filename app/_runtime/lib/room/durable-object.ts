@@ -1,6 +1,20 @@
+import type { LifecycleReadModel } from "../rules/v2/model";
+import { isSupersededTimePassageAdvance, isSupersededLongSpellcastingAdvance } from "../rules/v2/due-activities";
+import { deepSeekRequestBody } from "../kp/deepseek";
+import type { ActorPlanTransport } from "./actor-plan-transport-types";
+import type { AuthoritativeModelBinding, DueActorPlanDecisionRequest } from "../kp/authoritative-types";
+import { vnextActorPlanDecisionInput, parseVnextActorPlanDecision, VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "../kp/vnext/actor-plan-decision";
+import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "../kp/vnext/invocation/assemble";
+import { VNEXT_KP_PROFILE, VNEXT_PROVIDER_BUDGET } from "../kp/vnext/runtime-policy";
+import type { DueActivityDescriptor, RuleDiagnostic } from "../rules/v2/model";
+import { characterTimelineId } from "../rules/v2/timeline";
+import { roomNarrationContext } from "./narration-context";
+import { moduleNpcSemanticSeeds } from "../module/npc-semantics";
+import { frozenNarrationContextConform } from "../kp/narration-context";
 import { DurableObject } from "cloudflare:workers";
 
 import { validateCausalActionProgram } from "../kp/causal-action-program";
+import { isFrozenPlayerChoiceAnswerInput } from "../rules/v2/frozen-player-choice";
 import {
   authoritativeModuleProfile,
   moduleAuthorityFactSeeds,
@@ -39,6 +53,15 @@ import {
 } from "../rules/v2/world-interaction-model";
 import { isSemanticDefinitionMaterializationPlan } from "../rules/v2/semantic-definitions";
 import { isCanonicalAtomicWorldInteractionStepsInput } from "../rules/v2/world-interactions";
+import { isTimePassagePlan } from "../rules/v2/time-passage";
+import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
+import { npcPendingAnswerConforms } from "../kp/pending-decision-policy";
+import { canonicalJson as canonicalNpcAnswer } from "../kp/authoritative-helpers";
+import { canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord } from "../kp/vnext/canonical-json";
+import { VNEXT_KP_WORKFLOW_HASH, VNEXT_LOCAL_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
+import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../kp/vnext/room-bridge";
+import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
+import { assertVNextInvocationTransition, vnextInvocationRetryAfter } from "./vnext-proposal-invocation";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { compileEnvironmentFeature } from "../rules/profiles/environment";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
@@ -53,6 +76,7 @@ import {
   type AuthorityDeliveryPlanRow,
   type AuthorityRandomnessBatchJournalRow,
   type AuthorityProposalRecoveryRow,
+  type AuthorityNpcDecisionRow,
   type AuthoritySubmissionRow,
 } from "./authority-store";
 import { buildRoomTelemetryEvent } from "./telemetry";
@@ -97,7 +121,7 @@ import {
   projectedStorySummary,
   roomPlayerProjection,
 } from "./proposal-adapter";
-import { authorityPendingBindings } from "./pending-bindings";
+import { authorityPendingBindings, frozenPlayerChoiceAnswer } from "./pending-bindings";
 import type {
   RoomVNextAdjudicationBridge,
   RoomVNextProposalLoweringResult,
@@ -137,7 +161,7 @@ function parseJson<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
-function isObserverProjection(value: ReturnType<typeof projectAuthoritative>): value is SafeReadModel {
+function isObserverProjection(value: ReturnType<typeof projectAuthoritative>): value is SafeReadModel | LifecycleReadModel {
   return value.kind === "projected" && value.viewer.kind !== "kp";
 }
 
@@ -292,7 +316,15 @@ type AuthorityCommitSource =
       kind: "canonicalInput";
       proposalHash: string;
       input: JsonObject;
+      receiptExtras?: JsonObject;
+      forceConcluded?: boolean;
+      answeredPendingInputId?: string;
     };
+
+type AuthorityCommitContext = TrustedPrincipalContext | {
+  kind: "internalDueActivity";
+  rootActionId: string;
+};
 
 type AuthorityReplay = {
   profiles: RuntimeProfileManifest;
@@ -731,6 +763,15 @@ function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord 
         || (Array.isArray(value.memberCharacterIds)
           && value.memberCharacterIds.every(nonEmptyString)));
   }
+  if (value.kind === "startTimePassage") {
+    return hasExactJsonKeys(value, ["actorCharacterId", "kind", "plan", "rootActionId"])
+      && nonEmptyString(value.actorCharacterId) && nonEmptyString(value.rootActionId)
+      && isTimePassagePlan(value.plan);
+  }
+  if (["completeActivity", "advanceTimePassage", "advanceLongSpellcasting", "completeLongSpellcasting"].includes(String(value.kind))) {
+    return hasExactJsonKeys(value, ["activityId", "kind", "proposalId"])
+      && nonEmptyString(value.activityId) && nonEmptyString(value.proposalId);
+  }
   if (value.kind === "interruptActivity") {
     return hasExactJsonKeys(value, ["activityId", "cause", "kind", "proposalId"])
       && nonEmptyString(value.activityId)
@@ -804,6 +845,7 @@ function isCanonicalAuthorityRecoveryInput(value: unknown): value is JsonRecord 
       && (value.targetRef === undefined || nonEmptyString(value.targetRef))
       && isJsonRecord(value.mechanicalProposal);
   }
+  if (value.kind === "answerFrozenPlayerChoice") return isFrozenPlayerChoiceAnswerInput(value);
   if (value.kind === "answerSocialResolution") {
     return hasExactJsonKeys(value, [
       "choice",
@@ -870,8 +912,10 @@ async function verifiedAuthorityCommitRecovery(
 function rejectedAuthority(
   code: string,
   explanation: string,
+  diagnostics?: readonly RuleDiagnostic[],
 ): Extract<AuthorityCommitOutcome, { kind: "rejected" }> {
-  return { kind: "rejected", code, explanation };
+  return { kind: "rejected", code, explanation,
+    ...(diagnostics === undefined ? {} : { diagnostics: structuredClone(diagnostics) }) };
 }
 
 function presentationUnavailable(): Extract<AuthorityCommitOutcome, { kind: "rejected" }> {
@@ -898,10 +942,24 @@ function hasUnsettledAuthoritativeRandomness(state: AuthoritativeWorldState): bo
     || Object.keys(state.combatRuntime.randomnessResolutions).length > 0;
 }
 
+function hasPendingAuthorityRoot(state: AuthoritativeWorldState, rootActionId: string): boolean {
+  const status = state.receipts[rootActionId]?.status;
+  if (status === "awaitingInput") return [...Object.values(state.pendingInputs),
+    ...Object.values(state.combatRuntime.pendingInputs)].some(pending => pending.rootActionId === rootActionId);
+  if (status === "awaitingRandomness") return [...Object.values(state.internalContinuations),
+    ...Object.values(state.combatRuntime.randomnessResolutions)].some(pending => pending.rootActionId === rootActionId);
+  return false;
+}
+
 function compareEventSeq(left: string, right: string): number {
   const leftValue = BigInt(left);
   const rightValue = BigInt(right);
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+}
+
+function dueActivityRulesInputKind(due: DueActivityDescriptor): "completeActivity" | "advanceTimePassage" | "advanceLongSpellcasting" | "completeLongSpellcasting" {
+  if (due.longSpellcasting !== undefined) return due.longSpellcasting.phase === "complete" ? "completeLongSpellcasting" : "advanceLongSpellcasting";
+  return due.timePassage === undefined ? "completeActivity" : "advanceTimePassage";
 }
 
 export class RoomDurableObject extends DurableObject<Env> {
@@ -917,14 +975,16 @@ export class RoomDurableObject extends DurableObject<Env> {
   constructor(
     ctx: DurableObjectState,
     env: Env,
-    rulesRuntime: VersionedRulesRuntime = PRODUCTION_RULES_RUNTIME,
+    rulesRuntime?: VersionedRulesRuntime,
     vnextAdjudicationBridge?: RoomVNextAdjudicationBridge,
   ) {
     super(ctx, env);
     this.bindings = env;
     this.authorityStore = new AuthoritativeRoomStore(ctx.storage);
-    this.rulesRuntime = rulesRuntime;
-    this.vnextAdjudicationBridge = vnextAdjudicationBridge;
+    const localVNext = (env as Env & { ZHUWEI_VNEXT_LOCAL?: string }).ZHUWEI_VNEXT_LOCAL === "true";
+    this.rulesRuntime = rulesRuntime ?? (localVNext ? VNEXT_LOCAL_RULES_RUNTIME : PRODUCTION_RULES_RUNTIME);
+    this.vnextAdjudicationBridge = vnextAdjudicationBridge
+      ?? (localVNext ? VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE : undefined);
     ctx.blockConcurrencyWhile(async () => {
       this.authorityStore.ensureSchema();
       // Alarm state is durable, but recomputing the minimum on construction
@@ -955,6 +1015,27 @@ export class RoomDurableObject extends DurableObject<Env> {
     rulesInput: JsonObject,
   ): Extract<AuthorityCommitOutcome, { kind: "rejected" }> | undefined {
     if (this.vnextAdjudicationBridge === undefined) return undefined;
+    let actorPlanDue = false;
+    if (submission.input_kind === "dueActivity") {
+      const work = this.authorityStore.dueWorkByRoot(submission.root_action_id);
+      try { actorPlanDue = work !== undefined && parseJson<DueActivityDescriptor>(work.descriptor_json).actorPlan !== undefined; }
+      catch { return rejectedAuthority("dueActorPlanIntegrityMismatch", "The persisted due Activity descriptor is invalid."); }
+    }
+    if (actorPlanDue) {
+      // Once randomness is journaled, its validated Rules continuation owns
+      // the frozen decision. Before that boundary compare the exact NPC frame
+      // again in the transaction that is about to commit effects or dice.
+      if (this.authorityStore.proposalRecovery(submission.prepared_action_id) !== undefined) return undefined;
+      try {
+        const continuation = parseJson<JsonObject>(submission.continuation_json!);
+        const due = continuation.dueActivity as unknown as DueActivityDescriptor;
+        const request = continuation.actorPlanRequest as unknown as DueActorPlanDecisionRequest;
+        const current = this.actorPlanRequest(replay, due);
+        if (current !== undefined && vnextCanonicalHash(this.actorPlanProviderInput(current))
+          === vnextCanonicalHash(this.actorPlanProviderInput(request))) return undefined;
+      } catch { /* The same explicit conflict covers unavailable private state. */ }
+      return rejectedAuthority("dueActorPlanContextChanged", "The frozen NPC decision no longer matches its authorized context.");
+    }
     const prepared = this.preparedActionSnapshot(submission);
     if (prepared === undefined) {
       return rejectedAuthority(
@@ -1001,8 +1082,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now() + ROOM_DELETION_RECONCILE_DELAY_MS);
       return;
     }
-    const archiveAt = this.authorityStore.archiveAlarmAt();
-    if (archiveAt !== null) await this.ctx.storage.setAlarm(archiveAt);
+    // Safety stops fictional progression. Keep the work durable and re-arm it
+    // when the pause is cleared; scheduling an already-due deadline would spin.
+    const dueAlarmAt = this.authorityStore.room() !== undefined
+      && hasActiveSafetyPause(this.authoritativeReplay().state)
+      ? null : this.authorityStore.dueWorkAlarmAt();
+    const candidates = [this.authorityStore.archiveAlarmAt(), dueAlarmAt]
+      .filter((value): value is number => value !== null);
+    if (candidates.length > 0) await this.ctx.storage.setAlarm(Math.max(Date.now() + 100, Math.min(...candidates)));
     else await this.ctx.storage.deleteAlarm();
   }
 
@@ -1241,10 +1328,49 @@ export class RoomDurableObject extends DurableObject<Env> {
     };
   }
 
+  private timePassageFormerViewer(state: AuthoritativeWorldState, characterId: string, events: EventEnvelope[]): PlayerViewer | undefined {
+    if (!events.some(event => {
+      const payload: unknown = event.payload;
+      if (!["ActivityCompleted", "ActivityInterrupted"].includes(event.eventType)
+        || !isJsonRecord(payload) || typeof payload.activityId !== "string") return false;
+      const activity = state.campaignRuntime.activities[payload.activityId];
+      return activity?.characterId === characterId && isJsonRecord(activity.completion) && activity.completion.kind === "timePassage";
+    })) return undefined;
+    const character = state.entities[characterId];
+    if (character === undefined || !["dead", "retired", "missing", "npcTransitioned"].includes(String(character.tenureStatus))) return undefined;
+    const seat = character.lastControllerSeatId === undefined ? undefined : state.seats[character.lastControllerSeatId];
+    const principal = seat === undefined ? undefined : state.principals[seat.principalId];
+    if (seat?.status !== "active" || principal === undefined) return undefined;
+    return { kind: "player", purpose: "lifecycle", principalId: principal.id, sessionVersion: principal.sessionVersion,
+      seatId: seat.id, characterId };
+  }
+
+  private withTimePassageProcessing(readModel: JsonObject, characterId: string, state: AuthoritativeWorldState): JsonObject {
+    if (!Array.isArray(readModel.activities)) return readModel;
+    const pending = this.authorityStore.pendingDueWork();
+    return { ...readModel, activities: readModel.activities.map(value => {
+      if (!isJsonRecord(value) || value.kind !== "timePassage" || value.characterId !== characterId || value.status !== "active") return value;
+      const activity = state.campaignRuntime.activities[String(value.activityId)];
+      const completion = activity?.completion;
+      if (!isJsonRecord(completion) || completion.kind !== "timePassage") return value;
+      const obligations = pending.filter(work => {
+        const due = parseJson<DueActivityDescriptor>(work.descriptor_json);
+        return due.timelineId === completion.sourceTimelineId || due.sceneIds.includes(String(completion.sourceSceneId));
+      });
+      const unknown = obligations.some(work => {
+        const invocation = this.authorityStore.vnextInvocation(work.child_root_action_id, 1);
+        return invocation?.status === "retryable" || invocation?.status === "rejected"
+          || (invocation?.status === "running" && invocation.lease_until <= Date.now());
+      });
+      const blocked = value.processingState === "blocked" || obligations.some(work => work.next_attempt_at === null || work.next_attempt_at > Date.now());
+      return { ...value, processingState: unknown ? "cannotSafelyContinue" : blocked ? "blocked" : "processing" };
+    }) };
+  }
+
   private authorityViewerForCharacter(
     state: AuthoritativeWorldState,
     characterId: string,
-  ): PlayerViewer | undefined {
+  ): (PlayerViewer & { sessionVersion: number }) | undefined {
     const control = state.characterControls[characterId];
     const seat = control === undefined ? undefined : state.seats[control.seatId];
     const principal = seat === undefined ? undefined : state.principals[seat.principalId];
@@ -1360,7 +1486,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   } | undefined {
     const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
     const audience = capability === undefined
-      ? this.authorityStore.recoverableDeliveryAudience(viewerKey)
+      ? this.authorityStore.recoverableDeliveryAudience(viewerKey, this.vnextAdjudicationBridge !== undefined)
       : this.authorityStore.deliveryAudiences(capability)
           .find((candidate) => candidate.viewer_key === viewerKey);
     if (audience === undefined) return undefined;
@@ -1396,6 +1522,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         || renderableClaims.rootActionId !== plan.rootActionId
         || renderableClaims.viewerKey !== audience.viewer_key
         || renderableClaims.projectionHash !== binding.projectionHash
+        || !isJsonRecord(binding.kpProjection)
+        || !frozenNarrationContextConform(binding.kpProjection.narrationContext, renderableClaims)
+        || binding.kpProjection.narrationContext.expression.viewer.characterRef !== viewer.characterId
       ) return undefined;
     }
     const receipt = this.authorityStore.receipt(plan.receiptId);
@@ -1448,6 +1577,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const candidates = capability === undefined
       ? this.authorityStore.recoverableDeliveryAudiencesForPrincipal(
           authenticated.principalId,
+          this.vnextAdjudicationBridge !== undefined,
         )
       : this.authorityStore.deliveryAudiences(capability);
     for (const audience of candidates) {
@@ -1509,6 +1639,16 @@ export class RoomDurableObject extends DurableObject<Env> {
           capability: recovery.plan.publishCapability,
           state: recovery.audience.status as "pending" | "rejected" | "retryableFailure",
         };
+  }
+
+  private earlierFrozenNarrationPending(planRow: AuthorityDeliveryPlanRow,
+    binding: DeliveryAudienceBinding): boolean {
+    if (deliveryNarrationInputMode(binding) !== "frozenRenderableClaims-vnext-1") return false;
+    const first = this.authorityStore.recoverableDeliveryAudience(
+      `${binding.principalId}\u001f${binding.characterId}`, true);
+    const earlier = first === undefined ? undefined : this.authorityStore.deliveryPlan(first.publish_capability);
+    return earlier !== undefined && earlier.active_branch_id === planRow.active_branch_id
+      && compareEventSeq(earlier.source_event_seq, planRow.source_event_seq) < 0;
   }
 
   private viewerNarrationPresentationHold(
@@ -1759,6 +1899,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (
       hasUnsettledAuthoritativeRandomness(replay.state)
       || this.authorityStore.hasSuspendedActionStage()
+      || this.authorityStore.pendingDueWork().length > 0
     ) {
       throw new AuthorityArchiveSettlementPendingError();
     }
@@ -1769,6 +1910,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (
       hasUnsettledAuthoritativeRandomness(current.state)
       || this.authorityStore.hasSuspendedActionStage()
+      || this.authorityStore.pendingDueWork().length > 0
       || current.replay.head.eventHash !== replay.replay.head.eventHash
       || current.replay.head.stateHash !== replay.replay.head.stateHash
     ) {
@@ -1780,7 +1922,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       events,
       receiptRefs,
       projectionAudits,
-    });
+    }, this.rulesRuntime.replay);
   }
 
   private authorityArchiveDatabase(): D1Database | undefined {
@@ -1819,7 +1961,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const startedAt = Date.now();
     try {
       const archive = await this.currentAuthoritativeArchive();
-      const result = await appendAuthoritativeArchiveToD1(db, archive, work.progress);
+      const result = await appendAuthoritativeArchiveToD1(db, archive, work.progress, this.rulesRuntime.replay);
       if (this.authorityStore.roomDeletion() !== undefined) {
         await this.scheduleExpiryAlarm();
         return;
@@ -2081,6 +2223,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       version: "authoritative-v2",
     });
     const runtimeEpochId = randomId("runtime-epoch");
+    const openingSceneId = moduleProfile.storyBible.storyAnchors.chapters[0]?.sceneIds[0];
+    const openingLocation = openingSceneId === undefined
+      ? undefined
+      : moduleProfile.storyBible.storyAnchors.locations.find((location) => location.sceneId === openingSceneId);
     const suppliedFixtures = input.fixtureFacts === undefined ? [] : input.fixtureFacts;
     const fixtures = projectInitializationFixtures([
       ...suppliedFixtures,
@@ -2108,16 +2254,34 @@ export class RoomDurableObject extends DurableObject<Env> {
         "Every initial tactical scene must be defined by the pinned Module Profile.",
       );
     }
+    const vnextInitialization = input.runtimeProfiles === undefined
+      ? this.vnextAdjudicationBridge !== undefined
+      : worldInteractionProfileEnabled(input.runtimeProfiles.extensions);
     const scenes = sceneIds.map((sceneId) => {
       const location = locationBySceneId.get(sceneId);
       return {
         id: sceneId,
         name: location?.name ?? sceneId,
+        ...(vnextInitialization ? { publicTone: moduleProfile.tone } : {}),
         ...(location?.tacticalGeometry === undefined
           ? {}
           : { geometry: structuredClone(location.tacticalGeometry) }),
       };
     });
+    const suppliedSeed = vNextSeed as {
+      semanticDefinitions: JsonRecord[]; itemDefinitions: JsonRecord[]; itemEntries: JsonRecord[];
+      entityDefinitionBindings: JsonRecord[];
+    } | undefined;
+    const moduleNpcSeeds = vnextInitialization
+      ? moduleNpcSemanticSeeds(moduleProfile).filter(({ binding }) => !suppliedSeed?.entityDefinitionBindings
+        .some(existing => existing.entityRef === binding.entityRef))
+      : [];
+    const initializationSeed = moduleNpcSeeds.length === 0 ? suppliedSeed : {
+      semanticDefinitions: [...(suppliedSeed?.semanticDefinitions ?? []), ...moduleNpcSeeds.map(entry => entry.definition)],
+      entityDefinitionBindings: [...(suppliedSeed?.entityDefinitionBindings ?? []), ...moduleNpcSeeds.map(entry => entry.binding)],
+      itemDefinitions: suppliedSeed?.itemDefinitions ?? [],
+      itemEntries: suppliedSeed?.itemEntries ?? [],
+    };
     const initialized = this.rulesRuntime.step(input.runtimeProfiles, undefined, {
       kind: "initializeAuthoritativeWorld",
       roomId: input.roomId,
@@ -2153,6 +2317,8 @@ export class RoomDurableObject extends DurableObject<Env> {
             id: npc.entityId,
             kind: "npc" as const,
             name: npc.name,
+            ...(vnextInitialization && npc.voice.trim()
+              ? { publicExpression: { voice: npc.voice.trim(), attitude: null } } : {}),
             sceneId: npc.startSceneId,
             tenureStatus: "active" as const,
             ...(npc.socialMechanics === undefined
@@ -2181,8 +2347,30 @@ export class RoomDurableObject extends DurableObject<Env> {
           value: structuredClone(fact.value),
         })),
       ],
-      initialKnowledge: fixtures.initialKnowledge,
-      ...(vNextSeed === undefined ? {} : { vNextSeed: structuredClone(vNextSeed) }),
+      initialKnowledge: [
+        ...fixtures.initialKnowledge,
+        // The pinned public opening was actually experienced by these initial
+        // characters. Preserve that evidence in genesis, independently of ACK
+        // and transient delivery, without granting module truths or NPC minds.
+        ...(openingLocation === undefined ? [] : input.characters
+          .filter((character) => character.staticCard.sceneId === openingLocation.sceneId)
+          .map((character) => ({
+            characterId: character.characterId,
+            knowledgeRef: `${character.characterId}:module-opening:${openingLocation.sceneId}`,
+            kind: "sensoryEvidence" as const,
+            layer: "full" as const,
+            content: {
+              schema: "zhuwei.module-opening-knowledge/v1",
+              moduleRef: structuredClone(moduleProfile.moduleRef),
+              sceneId: openingLocation.sceneId,
+              description: openingLocation.publicOpening,
+            },
+            visibility: "private" as const,
+            provenanceChain: [`genesis:module-opening:${openingLocation.sceneId}`,
+              moduleProfile.moduleRef.profileId, moduleProfile.moduleRef.profileHash],
+          }))),
+      ],
+      ...(initializationSeed === undefined ? {} : { vNextSeed: structuredClone(initializationSeed) }),
     });
     if (initialized.kind !== "initialized") {
       return initialized.kind === "rejected"
@@ -2195,11 +2383,6 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const initialState = replayed.state as AuthoritativeWorldState;
 
-    const openingSceneId = moduleProfile.storyBible.storyAnchors.chapters[0]?.sceneIds[0];
-    const openingLocation = openingSceneId === undefined
-      ? undefined
-      : moduleProfile.storyBible.storyAnchors.locations
-          .find((location) => location.sceneId === openingSceneId);
     const openingPayloadHash = openingLocation === undefined
       ? undefined
       : await authorityHash({ text: openingLocation.publicOpening });
@@ -2878,8 +3061,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
-      this.authorityStore.appendEvents(stepped.events);
-      this.authorityStore.updateState(stepped.state);
+      this.appendAuthorityTransition(stepped.state, stepped.events);
       this.authorityStore.invalidatePreparedActionStagesInScopes(changedControlSceneScopes);
       for (const changedScopeId of Object.keys(administrationScopeVersions)) {
         this.authorityStore.advanceScope(changedScopeId);
@@ -2905,10 +3087,23 @@ export class RoomDurableObject extends DurableObject<Env> {
     context: TrustedPrincipalContext,
     replay: AuthorityReplay,
     existing: AuthoritySubmissionRow,
+    actorPlanTransport?: ActorPlanTransport,
   ): Promise<AuthorityCommitOutcome | PreparedAuthoritativeAction> {
     const staged = this.authorityStore.actionStage(existing.prepared_action_id);
     if (existing.status === "prepared" && staged?.status === "committed") {
       return parseJson<PreparedAuthoritativeAction>(existing.prepared_json);
+    }
+    const npcDecision = this.authorityStore.npcDecision(existing.prepared_action_id);
+    if (npcDecision !== undefined && existing.result_json === null) {
+      if (npcDecision.answer_json === null) return this.npcDecisionOutcome(existing, npcDecision);
+      const canonical = parseJson<JsonObject>(npcDecision.input_json);
+      return this.withDueTail(await this.commitAuthoritative(context, existing.prepared_action_id, {
+        kind: "canonicalInput", proposalHash: npcDecision.proposal_hash,
+        input: canonical.input as JsonObject,
+        ...(isJsonRecord(canonical.receiptExtras) ? { receiptExtras: canonical.receiptExtras } : {}),
+        ...(canonical.forceConcluded === true ? { forceConcluded: true } : {}),
+        ...(nonEmptyString(canonical.answeredPendingInputId) ? { answeredPendingInputId: canonical.answeredPendingInputId } : {}),
+      }), actorPlanTransport);
     }
     if (
       existing.status === "prepared"
@@ -2928,11 +3123,11 @@ export class RoomDurableObject extends DurableObject<Env> {
         ? this.authorityStore.proposalRecovery(staged.child_root_action_id)
         : undefined);
     if (recovery !== undefined) {
-      return this.commitAuthoritative(
+      return this.withDueTail(await this.commitAuthoritative(
         context,
         existing.prepared_action_id,
         { kind: "recovery", row: recovery },
-      );
+      ), actorPlanTransport);
     }
     if (existing.status === "prepared") {
       return parseJson<PreparedAuthoritativeAction>(existing.prepared_json);
@@ -2945,7 +3140,104 @@ export class RoomDurableObject extends DurableObject<Env> {
     } satisfies AuthorityCommitOutcome;
   }
 
-  async prepare(context: TrustedPrincipalContext, actionInput: AuthoritativeActionInput) {
+  async beginVNextProposalInvocation(
+    context: TrustedPrincipalContext,
+    preparedActionId: string,
+    input: VNextInvocationRequest,
+  ): Promise<VNextInvocationStart> {
+    if (this.authorityStore.roomDeletion() !== undefined || this.vnextAdjudicationBridge === undefined) {
+      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
+    }
+    const replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+    const prepared = submission === undefined ? undefined : this.preparedActionSnapshot(submission);
+    if (authenticated === undefined || submission?.principal_id !== authenticated.principalId
+      || !authenticated.characterIds.includes(submission.character_id)
+      || prepared?.requiredContext?.binding.contextHash !== input.contextHash
+      || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
+      || input.bindingHash !== VNEXT_KP_WORKFLOW_HASH
+      || (input.ordinal !== 1 && input.ordinal !== 2 && input.ordinal !== 3)
+      || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash) {
+      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
+    }
+    return this.ctx.storage.transactionSync((): VNextInvocationStart => {
+      const existing = this.authorityStore.vnextInvocation(preparedActionId, input.ordinal);
+      try {
+        assertVNextInvocationTransition(input, ordinal => this.authorityStore.vnextInvocation(preparedActionId, ordinal), prepared.requiredContext!);
+      } catch { return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" }; }
+      if (existing !== undefined) {
+        if (existing.context_hash !== input.contextHash || existing.binding_hash !== input.bindingHash
+          || existing.request_hash !== input.requestHash
+          || existing.repair_ticket_json !== (input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket))) {
+          return { kind: "rejected", code: "PROPOSAL_REPAIR_EXHAUSTED" };
+        }
+        if (existing.status === "completed") return { kind: "completed", response: JSON.parse(existing.response_json!) };
+        if (existing.status === "rejected") return { kind: "rejected", code: "PROPOSAL_PROVIDER_CONFIGURATION" };
+        if (existing.status === "running" && existing.lease_until > Date.now()) {
+          return { kind: "retryableFailure", code: "PROPOSAL_INVOCATION_IN_PROGRESS" };
+        }
+        if (existing.status === "retryable" && existing.lease_until > Date.now()) {
+          return { kind: "retryableFailure", code: "PROPOSAL_PROVIDER_TIMEOUT",
+            retryAfter: Math.ceil((existing.lease_until - Date.now()) / 1_000) };
+        }
+      }
+      if (submission.status !== "prepared" || submission.proposal_hash !== null) {
+        return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
+      }
+      const capability = crypto.randomUUID();
+      this.authorityStore.saveVnextInvocation({
+        prepared_action_id: preparedActionId, ordinal: input.ordinal,
+        context_hash: input.contextHash, binding_hash: input.bindingHash,
+        request_hash: input.requestHash, request_json: JSON.stringify(input.request),
+        repair_ticket_json: input.repairTicket === undefined ? null : JSON.stringify(input.repairTicket),
+        capability, lease_until: Date.now() + 60_000, status: "running", response_json: null,
+      });
+      return { kind: "ready", capability };
+    });
+  }
+
+  async completeVNextProposalInvocation(
+    context: TrustedPrincipalContext,
+    preparedActionId: string,
+    input: VNextInvocationCompletion,
+  ): Promise<{ kind: "saved" } | { kind: "rejected"; code: string }> {
+    const replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+    if (this.authorityStore.roomDeletion() !== undefined || authenticated === undefined
+      || submission?.principal_id !== authenticated.principalId
+      || !authenticated.characterIds.includes(submission.character_id)) {
+      return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
+    }
+    return this.ctx.storage.transactionSync(() => {
+      const row = this.authorityStore.vnextInvocation(preparedActionId, input.ordinal);
+      if (row === undefined || row.capability !== input.capability || row.request_hash !== input.requestHash) {
+        return { kind: "rejected" as const, code: "PROPOSAL_REFERENCE_INVALID" };
+      }
+      if (row.status === "completed") return { kind: "saved" as const };
+      if (row.status !== "running" || !["completed", "retryable", "rejected"].includes(input.result.kind)) {
+        return { kind: "rejected" as const, code: "PROPOSAL_REFERENCE_INVALID" };
+      }
+      if (input.result.kind === "completed") {
+        this.authorityStore.saveVnextInvocation({ ...row,
+          status: "completed", response_json: JSON.stringify(input.result.response),
+        });
+      } else {
+        const retryAfter = input.result.kind === "retryable"
+          ? vnextInvocationRetryAfter(input.result.retryAfter) : undefined;
+        const code = input.result.kind === "retryable"
+          ? "PROPOSAL_PROVIDER_TIMEOUT" : "PROPOSAL_PROVIDER_CONFIGURATION";
+        this.authorityStore.saveVnextInvocation({ ...row,
+          status: input.result.kind, lease_until: Date.now() + (retryAfter ?? 0) * 1_000,
+          response_json: JSON.stringify({ code, ...(retryAfter === undefined ? {} : { retryAfter }) }),
+        });
+      }
+      return { kind: "saved" as const };
+    });
+  }
+
+  async prepare(context: TrustedPrincipalContext, actionInput: AuthoritativeActionInput, actorPlanTransport?: ActorPlanTransport) {
     if (this.authorityStore.roomDeletion() !== undefined) {
       return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
     }
@@ -2985,9 +3277,9 @@ export class RoomDurableObject extends DurableObject<Env> {
             "Independent narration recovery belongs to the current frozen ViewerKey.",
           );
         }
-        return result;
+        return this.withDueTail(result, actorPlanTransport);
       }
-      return this.resumeUnfinishedAuthoritySubmission(context, replay, existing);
+      return this.resumeUnfinishedAuthoritySubmission(context, replay, existing, actorPlanTransport);
     }
 
     let canonicalActionInput: JsonObject;
@@ -3237,8 +3529,8 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The submission id was already used with a different payload.",
         );
       }
-      if (existing.result_json !== null) return parseJson(existing.result_json);
-      return this.resumeUnfinishedAuthoritySubmission(context, replay, existing);
+      if (existing.result_json !== null) return this.withDueTail(parseJson(existing.result_json), actorPlanTransport);
+      return this.resumeUnfinishedAuthoritySubmission(context, replay, existing, actorPlanTransport);
     }
 
     if (actionInput.kind === "errorReport") {
@@ -3336,6 +3628,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     if (
       !["safetyPause", "safetyAdjust"].includes(actionInput.kind)
+      && !(this.vnextAdjudicationBridge !== undefined && actionInput.kind === "intent")
       && this.viewerPendingPlayerRolls(replay, authenticated).length > 0
     ) {
       return rejectedAuthority(
@@ -3343,7 +3636,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         "The authorized dice request must be resolved before another action can change the scene.",
       );
     }
-    if (actionInput.kind === "intent"
+    if (actionInput.kind === "intent" && this.vnextAdjudicationBridge === undefined
       && Object.values(replay.state.pendingInputs).some((pending) =>
         pending.kind === "socialResolution"
         && authenticated.characterIds.includes(pending.controllerCharacterId))) {
@@ -3403,7 +3696,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       rootActionId = pending.root_action_id;
       try {
         const pendingProjection = parseJson<JsonObject>(pending.pending_json);
-        if ([
+        if (replay.state.frozenPlayerChoices?.[actionInput.pendingInputId] !== undefined) {
+          if (pendingProjection.kind !== "playerChoice" || frozenPlayerChoiceAnswer(replay.state,
+            { rootActionId, controllerCharacterId: characterId, pendingInputId: actionInput.pendingInputId }, actionInput.answer) === undefined)
+            return rejectedAuthority("invalidPendingResolution", "The frozen choice requires one of its saved choice IDs.");
+          resolutionMode = "authorityDirect";
+        } else if ([
           "advancementChoice",
           "combatChoice",
           "groupRestConsent",
@@ -3478,7 +3776,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     let dueActorPlan: JsonObject | undefined;
     let dueActorPlanChildRootActionId: string | undefined;
     let dueActorPlanProjection: JsonObject | undefined;
-    if (actionInput.kind === "intent") {
+    if (actionInput.kind === "intent" && this.vnextAdjudicationBridge === undefined) {
       const dueProjection = this.rulesRuntime.project(
         replay.profiles,
         replay.state,
@@ -3517,7 +3815,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       : `scene:${character.sceneId}`;
     const preparedActionId = `prepared-action:${actionInput.submissionId}`;
     let requiredContext: PreparedAuthoritativeAction["requiredContext"];
-    if (this.vnextAdjudicationBridge !== undefined) {
+    // Only KP decisions need a frozen model context. The canonical branches
+    // above assign authorityDirect after validating registered button/answer
+    // inputs; those retain the existing authenticated Rules commit path.
+    if (this.vnextAdjudicationBridge !== undefined && resolutionMode !== "authorityDirect") {
       let contextResult: ReturnType<RoomVNextAdjudicationBridge["prepareRequiredContext"]>;
       try {
         contextResult = this.vnextAdjudicationBridge.prepareRequiredContext({
@@ -3529,6 +3830,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           state: replay.state,
           replayHead: replay.replay.head,
           kpProjection,
+          moduleProfile,
         });
       } catch {
         return rejectedAuthority(
@@ -3714,6 +4016,9 @@ export class RoomDurableObject extends DurableObject<Env> {
     receiptExtras?: JsonObject;
     forceConcluded?: boolean;
   } | { rejection: Extract<AuthorityCommitOutcome, { kind: "rejected" }> }> {
+    if (submission.principal_id === null) {
+      return { rejection: rejectedAuthority("preparedActionUnauthorized", "A system Activity cannot accept an external proposal.") };
+    }
     const nestedMechanical = isJsonRecord(proposalValue) && isJsonRecord(proposalValue.mechanicalProposal)
       ? proposalValue.mechanicalProposal
       : undefined;
@@ -4118,7 +4423,11 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
       }
       if (lowered.kind === "rejected") {
-        return { rejection: rejectedAuthority(lowered.code, lowered.explanation) };
+        return { rejection: {
+          ...rejectedAuthority(lowered.code, lowered.explanation),
+          ...(lowered.issues === undefined ? {} : { issues: structuredClone(lowered.issues) }),
+          ...(lowered.diagnostics === undefined ? {} : { diagnostics: structuredClone(lowered.diagnostics) }),
+        } };
       }
       if (lowered.kind === "accepted") {
         return {
@@ -4429,6 +4738,13 @@ export class RoomDurableObject extends DurableObject<Env> {
             "The authenticated answer continuation is incomplete.",
           ),
         };
+      }
+      if (state.frozenPlayerChoices?.[pendingInputId] !== undefined) {
+        const input = frozenPlayerChoiceAnswer(state, { pendingInputId, rootActionId: submission.root_action_id,
+          controllerCharacterId: submission.character_id }, answer);
+        return input === undefined || pendingProjection.kind !== "playerChoice"
+          ? { rejection: rejectedAuthority("invalidPendingResolution", "The frozen choice is unavailable or its answer changed.") }
+          : { input };
       }
       if (pendingProjection.kind === "partyInvitation" || pendingProjection.kind === "partyMoveConsent") {
         if (!hasExactJsonKeys(answer, ["accept"]) || typeof answer.accept !== "boolean") {
@@ -4796,6 +5112,14 @@ export class RoomDurableObject extends DurableObject<Env> {
     // gesture. Combat, saves, and hidden reality keep authority-generated
     // randomness behavior.
     if (request === undefined || requestEvents === undefined) return true;
+    if (this.vnextAdjudicationBridge !== undefined && request.purpose === "restHitDice") {
+      return requestEvents.some(event => {
+        const payload = event.payload as unknown;
+        return event.eventType === "RandomnessRequested" && isJsonRecord(payload)
+          && isJsonRecord(payload.request)
+          && vnextCanonicalHash(payload.request) === vnextCanonicalHash(request);
+      });
+    }
     return requestEvents.some((event) => {
       if (event.eventType !== "RandomnessRequested") return false;
       const payload = event.payload as unknown;
@@ -4985,6 +5309,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     state: AuthoritativeWorldState,
     submission: AuthoritySubmissionRow,
   ): TrustedPrincipalContext | undefined {
+    if (submission.principal_id === null) return undefined;
     const sessionVersion = state.principals[submission.principal_id]?.sessionVersion;
     return Number.isSafeInteger(sessionVersion)
       ? {
@@ -5284,7 +5609,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       };
     }
     const usesFrozenRenderableClaims = worldInteractionProfileEnabled(profiles.extensions)
-      && committedRangeUsesFrozenRenderableClaims(events);
+      && committedRangeUsesFrozenRenderableClaims(events.filter(event => event.rootActionId === rootActionId));
     const bindings: DeliveryAudienceBinding[] = [];
     const candidates = new Map<string, typeof actor>();
     for (const character of [...Object.values(priorState.entities), ...Object.values(state.entities)]) {
@@ -5297,6 +5622,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const viewer = this.authorityViewerForCharacter(state, character.id)
         ?? (character.id === actorCharacterId
           ? this.authorityViewerForCharacter(priorState, character.id)
+            ?? this.timePassageFormerViewer(state, character.id, events)
           : undefined);
       if (viewer === undefined) continue;
       const projection = this.rulesRuntime.project(profiles, state, viewer, {
@@ -5317,7 +5643,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
       }
       const projectionRecord = projection as unknown as JsonObject;
-      const hasCommittedDelta = projection.committedDelta !== undefined
+      const hasCommittedDelta = "committedDelta" in projection && projection.committedDelta !== undefined
         && projection.committedDelta.changes.length > 0;
       const renderableClaims = frozenRenderableClaimsConform(
           projectionRecord.renderableClaims,
@@ -5350,10 +5676,21 @@ export class RoomDurableObject extends DurableObject<Env> {
           };
         }
         if (renderableClaims.claims.length === 0) continue;
+        // A pure wait result is already delivered by the owner's projected
+        // Activity, with exact actual/planned time and terminal status. Keep
+        // its canonical event/Claim derivation without spending another model
+        // call. Decide per Viewer; mixed mechanical facts still need narration.
+        if (renderableClaims.claims.every(claim => claim.kind === "mechanicalOutcome"
+          && ["timePassageCompleted", "timePassageInterrupted"].includes(String(claim.outcomeCode)))) continue;
+        if (projection.controlledCharacter === null) return { kind: "rejected",
+          outcome: rejectedAuthority("projectionFailure", "A lifecycle audience contains unsupported narration material.") };
         narrationInputMode = "frozenRenderableClaims-vnext-1";
         projectionHash = renderableClaims.projectionHash;
         kpProjection = {
           renderableClaims: structuredClone(renderableClaims) as unknown as JsonObject,
+          narrationContext: roomNarrationContext({ claims: renderableClaims, projection, actorCharacterId, actorMessage,
+            experiencedTranscript: this.experiencedTranscriptForViewer(viewer, state),
+          }) as unknown as JsonObject,
         };
       } else {
         if (!hasCommittedDelta) continue;
@@ -5409,13 +5746,555 @@ export class RoomDurableObject extends DurableObject<Env> {
     return { kind: "accepted", audiences: bindings };
   }
 
+  private npcDecisionOutcome(
+    submission: AuthoritySubmissionRow,
+    row: AuthorityNpcDecisionRow,
+  ): Extract<AuthorityCommitOutcome, { kind: "awaitingKpDecision" }> {
+    return {
+      kind: "awaitingKpDecision",
+      preparedActionId: submission.prepared_action_id,
+      rootActionId: submission.root_action_id,
+      decision: { ...parseJson<JsonObject>(row.request_json), capability: row.capability },
+    };
+  }
+
+  private async commitNpcDecision(
+    context: TrustedPrincipalContext,
+    preparedActionId: string,
+    decision: JsonObject,
+  ): Promise<AuthorityCommitOutcome> {
+    const replay = this.authoritativeReplay();
+    const viewer = this.authenticatedAuthorityViewer(context, replay.state);
+    const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+    const row = this.authorityStore.npcDecision(preparedActionId);
+    if (viewer === undefined || submission === undefined || row === undefined
+      || submission.principal_id !== viewer.principalId
+      || !viewer.characterIds.includes(submission.character_id)
+      || !hasExactJsonKeys(decision, ["kind", "capability", "answer"])
+      || decision.capability !== row.capability || !isJsonRecord(decision.answer)) {
+      return rejectedAuthority("privateOrUnknownReference", "The NPC decision capability is unavailable.");
+    }
+    if (row.answer_json !== null
+      && await authorityHash(parseJson(row.answer_json)) !== await authorityHash(decision.answer)) {
+      return rejectedAuthority("idempotencyPayloadMismatch", "The NPC decision already has a frozen answer.");
+    }
+    if (!npcPendingAnswerConforms(parseJson<JsonObject>(row.request_json).pending, decision.answer)) {
+      return rejectedAuthority("invalidPendingResolution", "The answer is outside this NPC decision capability.");
+    }
+    if (submission.result_json !== null) return parseJson<AuthorityCommitOutcome>(submission.result_json);
+    const finishedStage = this.authorityStore.actionStage(preparedActionId);
+    if (finishedStage?.status === "committed" && finishedStage.result_json !== null
+      && finishedStage.proposal_hash === row.proposal_hash) {
+      return parseJson<AuthorityCommitOutcome>(finishedStage.result_json);
+    }
+    if (hasActiveSafetyPause(replay.state)) return presentationUnavailable();
+    const pending = replay.state.combatRuntime.pendingInputs[row.pending_input_id];
+    if (!isJsonRecord(pending) || pending.kind !== "kpDecision") {
+      // An answered checkpoint can already have advanced to a later randomness
+      // wave. Recovery consumes that journal, never the old answer a second time.
+      if (row.answer_json === null) return rejectedAuthority("privateOrUnknownReference", "The NPC decision is no longer pending.");
+    }
+    const canonical = parseJson<JsonObject>(row.input_json);
+    const accepted = this.authorityStore.transaction(() => {
+      const current = this.authorityStore.npcDecision(preparedActionId);
+      if (current?.capability !== row.capability) return false;
+      if (current.answer_json !== null
+        && canonicalNpcAnswer(parseJson(current.answer_json)) !== canonicalNpcAnswer(decision.answer)) return false;
+      this.authorityStore.answerNpcDecision(preparedActionId, row.capability, decision.answer);
+      return true;
+    });
+    if (!accepted) return rejectedAuthority("idempotencyPayloadMismatch", "The NPC decision already has a frozen answer.");
+    return this.commitAuthoritative(context, preparedActionId, {
+      kind: "canonicalInput", proposalHash: row.proposal_hash,
+      input: canonical.input as JsonObject,
+      ...(isJsonRecord(canonical.receiptExtras) ? { receiptExtras: canonical.receiptExtras } : {}),
+      ...(canonical.forceConcluded === true ? { forceConcluded: true } : {}),
+      ...(nonEmptyString(canonical.answeredPendingInputId) ? { answeredPendingInputId: canonical.answeredPendingInputId } : {}),
+    });
+  }
+
+  private async suspendNpcDecision(input: {
+    submission: AuthoritySubmissionRow;
+    proposalHash: string;
+    journalPreparedActionId: string;
+    waveIndex: number;
+    replay: AuthorityReplay;
+    canonical: { input: JsonObject; receiptExtras?: JsonObject; forceConcluded?: boolean; answeredPendingInputId?: string };
+    resolved: Extract<ReturnType<typeof stepAuthoritative>, { kind: "awaitingInput" }>;
+  }): Promise<AuthorityCommitOutcome> {
+    const { submission, resolved, replay } = input;
+    const publicPending = isJsonRecord(resolved.pending) ? resolved.pending : undefined;
+    const pendingId = publicPending?.pendingInputId;
+    const pending = nonEmptyString(pendingId)
+      ? resolved.state.combatRuntime.pendingInputs[pendingId] : undefined;
+    if (!isJsonRecord(pending) || pending.kind !== "kpDecision"
+      || !nonEmptyString(pending.controllerEntityId)) {
+      return rejectedAuthority("invalidRulesResult", "The NPC pending input has no trusted controller.");
+    }
+    const projection = this.rulesRuntime.project(replay.profiles, resolved.state, {
+      kind: "npc", npcId: pending.controllerEntityId, purpose: "kpDecision",
+      capability: "internal:npc-limited-knowledge",
+    }, { pendingNpcDecisionFor: { pendingInputId: String(pendingId) } });
+    if (projection.kind === "rejected" || projection.viewer.kind !== "npc"
+      || projection.viewer.subjectId !== pending.controllerEntityId) {
+      return rejectedAuthority("projectionFailure", "The NPC limited-knowledge projection is unavailable.");
+    }
+    const safePending: JsonObject = {
+      pendingInputId: pendingId,
+      npcId: pending.controllerEntityId,
+      choiceKind: pending.choiceKind,
+    };
+    for (const key of ["reactionKind", "triggerKind", "candidateEntityIds", "maximumTargetCount",
+      "orderedEntityIds", "orderedTriggerInstanceIds", "triggerBatchId", "triggerBatchHash"]) {
+      if (pending[key] !== undefined) safePending[key] = structuredClone(pending[key]);
+    }
+    if (pending.choiceKind === "reaction" || pending.choiceKind === "knockOut") {
+      safePending.answerOptions = Array.isArray(pending.answerOptions)
+        ? structuredClone(pending.answerOptions)
+        : combatPendingAnswerOptions(resolved.state, pending);
+    }
+    const row: AuthorityNpcDecisionRow = {
+      prepared_action_id: submission.prepared_action_id,
+      capability: `npc-decision:${crypto.randomUUID()}`,
+      pending_input_id: String(pendingId), proposal_hash: input.proposalHash,
+      wave_index: input.waveIndex,
+      input_json: JSON.stringify(input.canonical),
+      request_json: JSON.stringify({ pending: safePending, projection }), answer_json: null,
+    };
+    const outcome = this.authorityStore.transaction(() => {
+      const existing = this.authorityStore.npcDecision(submission.prepared_action_id);
+      if (existing !== undefined && existing.pending_input_id === pendingId) return this.npcDecisionOutcome(submission, existing);
+      if (canonicalNpcAnswer(this.authoritativeReplay().state) !== canonicalNpcAnswer(replay.state)) {
+        return rejectedAuthority("scopeConflict", "The authority changed before the NPC decision paused.");
+      }
+      this.appendAuthorityTransition(resolved.state, resolved.events);
+      this.authorityStore.syncPendingAuthority(resolved.state);
+      this.authorityStore.freezeNpcDecisionProposal(submission.prepared_action_id, input.proposalHash);
+      this.authorityStore.saveNpcDecision(row);
+      this.authorityStore.appendRandomnessDecisionEvents(input.journalPreparedActionId, resolved.events);
+      this.authorityStore.markArchivePending(Date.now());
+      return this.npcDecisionOutcome(submission, row);
+    });
+    this.runAuthorityRecoveryCheckpoint("afterNpcDecisionCommit");
+    return outcome;
+  }
+
+  private dueActivities(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState): DueActivityDescriptor[] {
+    if (this.vnextAdjudicationBridge === undefined) return [];
+    const projected = this.rulesRuntime.project(profiles, state,
+      { kind: "kp", capability: "internal:kp-spatial-evidence" }, { dueActivities: true });
+    if (projected.kind === "rejected" || !("dueActivities" in projected)) {
+      throw new Error("The canonical due Activity projection is unavailable.");
+    }
+    return projected.dueActivities;
+  }
+
+  private enqueueNewDueActivities(profiles: RuntimeProfileManifest, before: AuthoritativeWorldState,
+    after: AuthoritativeWorldState, events: EventEnvelope[]): void {
+    const cause = events.at(-1);
+    if (cause === undefined || this.vnextAdjudicationBridge === undefined) return;
+    const prior = new Set(this.dueActivities(profiles, before).map(due => due.childRootActionId));
+    for (const work of this.authorityStore.pendingDueWork()) {
+      // ActorPlan lifecycle may commit before its frozen mechanical check.
+      // Only the final Receipt closes that in-flight independent task.
+      const descriptor = parseJson<DueActivityDescriptor>(work.descriptor_json), actorPlan = descriptor.actorPlan;
+      if (descriptor.longSpellcasting?.phase === "complete"
+        && (cause.rootActionId === work.child_root_action_id
+          || hasPendingAuthorityRoot(after, work.child_root_action_id))) {
+        // The duration may complete before Counterspell or player dice. Only
+        // the final receipt closes this frozen spell-resolution obligation.
+        continue;
+      }
+      if (actorPlan !== undefined) {
+        const inFlight = cause.rootActionId === work.child_root_action_id
+          || this.authorityStore.proposalRecovery(work.child_root_action_id) !== undefined;
+        const plan = after.campaignRuntime.npcPlans[actorPlan.planId];
+        if (!inFlight && (plan === undefined || plan.status !== "scheduled" || plan.revision !== actorPlan.revision)) {
+          this.authorityStore.finishDueWork(work.child_root_action_id, "cancelled");
+        }
+        continue;
+      }
+      const status = after.campaignRuntime.activities[work.activity_id]?.status;
+      if (status === "interrupted" || status === "completed") {
+        this.authorityStore.finishDueWork(work.child_root_action_id,
+          status === "completed" ? "committed" : "cancelled");
+      } else {
+        const owner = String(after.campaignRuntime.activities[work.activity_id]?.characterId ?? "");
+        if (work.next_attempt_at === null && this.authorityViewerForCharacter(before, owner) === undefined
+          && this.authorityViewerForCharacter(after, owner) !== undefined) {
+          // A missing controller is an event-driven wait. Regaining a trusted
+          // owner wakes it once; any existing dice journal still requires its
+          // original player gesture and cannot be drawn by this wakeup.
+          this.authorityStore.deferDueWork(work.child_root_action_id, 0);
+        }
+      }
+    }
+    for (const due of this.dueActivities(profiles, after)) {
+      if (!prior.has(due.childRootActionId)) this.authorityStore.enqueueDueWork({
+        activity: due, causeRootActionId: cause.rootActionId, causeEventId: cause.eventId,
+      });
+    }
+  }
+
+  /** Called only inside the transaction that persists the corresponding
+   * Receipt or continuation. Every authority producer uses the same due seam. */
+  private appendAuthorityTransition(state: AuthoritativeWorldState, events: EventEnvelope[]): void {
+    const before = this.authoritativeReplay();
+    this.enqueueNewDueActivities(before.profiles, before.state, state, events);
+    this.authorityStore.appendEvents(events);
+    this.authorityStore.updateState(state);
+  }
+
+  private verifiedDueActivity(rootActionId: string, replay: AuthorityReplay): DueActivityDescriptor | undefined {
+    const work = this.authorityStore.dueWorkByRoot(rootActionId);
+    if (work?.status !== "pending") return undefined;
+    const frozen = parseJson<DueActivityDescriptor>(work.descriptor_json);
+    const saved = this.authorityStore.submissionByPrepared(rootActionId);
+    const pendingSpellResolution = frozen.longSpellcasting?.phase === "complete"
+      && (saved?.status === "awaitingInput" || saved?.status === "awaitingRandomness")
+      && hasPendingAuthorityRoot(replay.state, rootActionId);
+    const recoveringSpecialized = saved?.input_kind === "dueActivity"
+      && (pendingSpellResolution || ((frozen.actorPlan !== undefined || frozen.longSpellcasting?.phase === "complete")
+        && (saved.status === "awaitingRandomness" || saved.status === "awaitingInput")
+        && this.authorityStore.proposalRecovery(rootActionId) !== undefined));
+    const candidate = this.dueActivities(replay.profiles, replay.state).find(candidate => candidate.childRootActionId === rootActionId);
+    const due = recoveringSpecialized ? frozen : candidate?.actorPlan === undefined ? candidate
+      : { ...candidate, completionFictionMicros: frozen.completionFictionMicros };
+    if (due === undefined || work.activity_id !== due.activityId || work.timeline_id !== due.timelineId
+      || work.completion_fiction_micros !== due.completionFictionMicros) return undefined;
+    try {
+      if (vnextCanonicalHash(parseJson(work.descriptor_json)) !== vnextCanonicalHash(due)) return undefined;
+      const submission = this.authorityStore.submissionByPrepared(rootActionId);
+      if (submission !== undefined) {
+        const continuation = submission.continuation_json === null ? undefined : parseJson<JsonObject>(submission.continuation_json);
+        if (submission.input_kind !== "dueActivity" || submission.character_id !== due.ownerEntityId
+          || submission.root_action_id !== rootActionId || continuation?.causeRootActionId !== work.cause_root_action_id
+          || continuation.causeEventId !== work.cause_event_id
+          || vnextCanonicalHash(continuation.dueActivity) !== vnextCanonicalHash(due)) return undefined;
+      }
+    } catch { return undefined; }
+    return this.authorityStore.events().some(event => event.eventId === work.cause_event_id
+      && event.rootActionId === work.cause_root_action_id) ? due : undefined;
+  }
+
+  private authorizedInternalDueActivity(context: AuthorityCommitContext, source: AuthorityCommitSource,
+    submission: AuthoritySubmissionRow | undefined, replay: AuthorityReplay): boolean {
+    if (!("kind" in context) || context.kind !== "internalDueActivity" || source.kind === "proposal"
+      || submission?.principal_id !== null || submission.root_action_id !== context.rootActionId) return false;
+    const due = this.verifiedDueActivity(context.rootActionId, replay);
+    const completion = due === undefined ? undefined : replay.state.campaignRuntime.activities[due.activityId]?.completion;
+    return due !== undefined && (replay.state.entities[due.ownerEntityId]?.kind === "npc"
+      || (isJsonRecord(completion) && completion.kind === "timePassage"));
+  }
+
+  /** Request-scoped transport. The durable invocation below owns attempts and
+   * raw responses; the model cannot supply a task identity or authority input. */
+  private actorPlanDecisionBinding(transport?: ActorPlanTransport): AuthoritativeModelBinding | undefined {
+    if (transport === undefined) return undefined;
+    return { async run(model, input) {
+      const result = await transport.run(model, input);
+      if (result.kind === "completed") return result.response;
+      throw Object.assign(new Error(result.code), { actorPlanNotInvoked: true, code: result.code });
+    } };
+  }
+
+  private actorPlanProviderInput(request: DueActorPlanDecisionRequest): Record<string, unknown> {
+    const assembled = assembleProviderInvocation({
+      providerBody: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, vnextActorPlanDecisionInput(request)) as VNextJsonRecord,
+      invocationKind: "initial", ledger: INITIAL_REPAIR_LEDGER, budgetProfile: VNEXT_PROVIDER_BUDGET,
+    });
+    if (assembled.kind === "blocked") throw new TypeError(assembled.code);
+    return assembled.providerBody;
+  }
+
+  private actorPlanRequest(replay: AuthorityReplay, due: DueActivityDescriptor): DueActorPlanDecisionRequest | undefined {
+    const projected = this.rulesRuntime.project(replay.profiles, replay.state,
+      { kind: "kp", capability: "internal:kp-spatial-evidence" },
+      { dueActorPlanFor: { affectedCharacterId: due.ownerEntityId } });
+    if (projected.kind === "rejected" || !("dueActorPlan" in projected)
+      || projected.dueActorPlan === null || projected.dueActorPlan.planId !== due.actorPlan?.planId
+      || projected.dueActorPlanChildRootActionId !== due.childRootActionId) return undefined;
+    return { preparedActionId: due.childRootActionId, rootActionId: due.childRootActionId,
+      dueActorPlan: structuredClone(projected.dueActorPlan), projection: structuredClone(projected), attempt: 1 };
+  }
+
+  private async commitDueActorPlanWork(rootActionId: string, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
+    const replay = this.authoritativeReplay();
+    const work = this.authorityStore.dueWorkByRoot(rootActionId);
+    const due = this.verifiedDueActivity(rootActionId, replay);
+    if (work === undefined || due?.actorPlan === undefined) {
+      return rejectedAuthority("dueActorPlanIntegrityMismatch", "The persisted ActorPlan obligation is no longer eligible.");
+    }
+    const recovery = this.authorityStore.proposalRecovery(rootActionId);
+    if (recovery !== undefined) return this.commitAuthoritative({ kind: "internalDueActivity", rootActionId }, rootActionId,
+      { kind: "recovery", row: recovery });
+    let submission = this.authorityStore.submissionByPrepared(rootActionId);
+    if (submission === undefined) {
+      const request = this.actorPlanRequest(replay, due);
+      if (request === undefined) return rejectedAuthority("dueActorPlanIntegrityMismatch", "The selected NPC decision is unavailable.");
+      // Validate the exact NPC-only frame before persisting or sending it.
+      try { this.actorPlanProviderInput(request); }
+      catch { return rejectedAuthority("dueActorPlanContextUnavailable", "The NPC limited-knowledge frame is unavailable."); }
+      this.authorityStore.transaction(() => {
+        if (this.authorityStore.submissionByPrepared(rootActionId) !== undefined) return;
+        const sceneScope = `scene:${replay.state.entities[due.ownerEntityId].sceneId}`;
+        this.authorityStore.insertSubmission({ submissionId: `due-submission:${rootActionId}`, principalId: null,
+          payloadHash: vnextCanonicalHash(due), inputKind: "dueActivity", rootActionId, preparedActionId: rootActionId,
+          characterId: due.ownerEntityId, sceneScope, preparedScopeVersion: this.authorityStore.scopeVersion(sceneScope),
+          prepared: { kind: "prepared", preparedActionId: rootActionId, rootActionId, kpProjection: {}, resolutionMode: "authorityDirect" },
+          continuation: { dueActivity: structuredClone(due), causeRootActionId: work.cause_root_action_id,
+            causeEventId: work.cause_event_id, actorPlanRequest: structuredClone(request) as unknown as JsonObject } });
+      });
+      this.runAuthorityRecoveryCheckpoint("afterDueSubmissionBeforeCommit");
+      submission = this.authorityStore.submissionByPrepared(rootActionId)!;
+    }
+    if (submission.result_json !== null) return parseJson<AuthorityCommitOutcome>(submission.result_json);
+    const continuation = submission.continuation_json === null ? undefined : parseJson<JsonObject>(submission.continuation_json);
+    const request = continuation?.actorPlanRequest as DueActorPlanDecisionRequest | undefined;
+    if (request === undefined) return rejectedAuthority("dueActorPlanContextUnavailable", "The frozen NPC decision is unavailable.");
+    const currentRequest = this.actorPlanRequest(this.authoritativeReplay(), due);
+    let modelInput: Record<string, unknown>;
+    try {
+      modelInput = this.actorPlanProviderInput(request);
+      if (currentRequest === undefined || vnextCanonicalHash(this.actorPlanProviderInput(currentRequest)) !== vnextCanonicalHash(modelInput)) {
+        return rejectedAuthority("dueActorPlanContextChanged", "The NPC's frozen premises changed before its decision committed.");
+      }
+    } catch { return rejectedAuthority("dueActorPlanContextUnavailable", "The frozen NPC decision failed integrity validation."); }
+    const requestHash = vnextCanonicalHash(modelInput), contextHash = vnextCanonicalHash(request);
+    let response: unknown;
+    // Exactly one physical attempt. A prepared request has not been sent;
+    // a running request may have reached the provider and is never resent.
+    for (const ordinal of [1]) {
+      let row = this.authorityStore.vnextInvocation(rootActionId, ordinal);
+      if (row !== undefined) {
+        let savedRequest: unknown;
+        try { savedRequest = parseJson(row.request_json); }
+        catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC request is invalid."); }
+        if (row.request_hash !== requestHash || row.context_hash !== contextHash
+          || row.binding_hash !== VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH
+          || vnextCanonicalHash(savedRequest) !== requestHash) {
+          return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation does not match its frozen contract.");
+        }
+        if (row.status === "completed") {
+          try { response = parseJson(row.response_json!); }
+          catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC response is invalid."); }
+          break;
+        }
+        if (row.status === "rejected") return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The bounded NPC decision was rejected.");
+        if (row.status === "running" && row.lease_until > Date.now()) {
+          return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_PENDING" };
+        }
+        if (row.status !== "prepared") {
+          return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The single NPC provider attempt has no reliable saved response; it cannot be repeated.");
+        }
+      }
+      row ??= { prepared_action_id: rootActionId, ordinal, context_hash: contextHash,
+        binding_hash: VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH, request_hash: requestHash,
+        request_json: JSON.stringify(modelInput), repair_ticket_json: null, capability: crypto.randomUUID(),
+        lease_until: 0, status: "prepared", response_json: null };
+      this.authorityStore.saveVnextInvocation(row);
+      this.runAuthorityRecoveryCheckpoint("afterActorPlanInvocationPrepared");
+      const binding = this.actorPlanDecisionBinding(actorPlanTransport);
+      if (binding === undefined) return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED" };
+      row = { ...row, status: "running", lease_until: Date.now() + 60_000 };
+      this.authorityStore.saveVnextInvocation(row);
+      this.runAuthorityRecoveryCheckpoint("afterActorPlanInvocationStarted");
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        response = await Promise.race([
+          binding.run(VNEXT_KP_PROFILE.modelId, modelInput, { signal: controller.signal }),
+          new Promise<never>((_resolve, reject) => {
+            // The server binding has a 45s provider deadline plus at most 1s
+            // private capture. Preserve its completed response across that
+            // instrumentation tail while staying below the 60s lease.
+            timer = setTimeout(() => { controller.abort(); reject(new Error("ACTOR_PLAN_DECISION_TIMEOUT")); }, 50_000);
+          }),
+        ]);
+      } catch (error) {
+        if (error !== null && typeof error === "object" && "actorPlanNotInvoked" in error
+          && error.actorPlanNotInvoked === true) {
+          this.authorityStore.saveVnextInvocation({ ...row, status: "prepared", lease_until: 0 });
+          return { kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" };
+        }
+        this.authorityStore.saveVnextInvocation({ ...row, status: "retryable", lease_until: 0 });
+        return rejectedAuthority("ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN", "The single NPC provider attempt has no reliable saved response; it cannot be repeated.");
+      } finally { if (timer !== undefined) clearTimeout(timer); }
+      const active = this.authorityStore.vnextInvocation(rootActionId, ordinal);
+      if (active?.status !== "running" || active.capability !== row.capability
+        || active.request_hash !== requestHash || active.context_hash !== contextHash) {
+        return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation changed while its response was running.");
+      }
+      try { vnextCanonicalHash(response); }
+      catch {
+        this.authorityStore.saveVnextInvocation({ ...row, status: "rejected", lease_until: 0 });
+        return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The NPC response must be canonical JSON.");
+      }
+      this.authorityStore.saveVnextInvocation({ ...row, status: "completed", lease_until: 0, response_json: JSON.stringify(response) });
+      this.runAuthorityRecoveryCheckpoint("afterActorPlanResponseSaved");
+      break;
+    }
+    let decision;
+    try { decision = parseVnextActorPlanDecision(response, request); }
+    catch { return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The saved NPC decision does not satisfy its frozen ActorPlan contract."); }
+    const fresh = this.actorPlanRequest(this.authoritativeReplay(), due);
+    if (fresh === undefined || vnextCanonicalHash(this.actorPlanProviderInput(fresh)) !== requestHash) {
+      return rejectedAuthority("dueActorPlanContextChanged", "The NPC's frozen premises changed while its decision was running.");
+    }
+    const { kind: _kind, proposalAttemptId: _attempt, rootActionId: _root, ...decisionFields } = decision;
+    const rulesInput = { kind: "resolveDueActorPlan", ...decisionFields, proposalId: rootActionId,
+      affectedCharacterId: due.ownerEntityId, causedByRootActionId: work.cause_root_action_id };
+    return this.commitAuthoritative({ kind: "internalDueActivity", rootActionId }, rootActionId,
+      { kind: "canonicalInput", input: rulesInput as unknown as JsonObject, proposalHash: vnextCanonicalHash(rulesInput) });
+  }
+
+  /** A persisted scheduling obligation is the only authority to create this
+   * internal submission. Player requests never supply its actor or input. */
+  private async commitDueActivity(childRootActionId: string, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
+    const work = this.authorityStore.dueWorkByRoot(childRootActionId);
+    if (work === undefined || work.status !== "pending") {
+      return rejectedAuthority("dueActivityUnavailable", "The due Activity work is unavailable.");
+    }
+    const replay = this.authoritativeReplay();
+    const frozen = parseJson<DueActivityDescriptor>(work.descriptor_json);
+    if (frozen.actorPlan !== undefined) return this.commitDueActorPlanWork(childRootActionId, actorPlanTransport);
+    const due = this.verifiedDueActivity(childRootActionId, replay);
+    if (due === undefined) {
+      if (frozen.childRootActionId === childRootActionId && frozen.activityId === work.activity_id
+        && frozen.timelineId === work.timeline_id && frozen.completionFictionMicros === work.completion_fiction_micros
+        && this.authorityStore.events().some(event => event.eventId === work.cause_event_id && event.rootActionId === work.cause_root_action_id)
+        && (isSupersededTimePassageAdvance(replay.state, frozen) || isSupersededLongSpellcastingAdvance(replay.state, frozen))) {
+        this.authorityStore.finishDueWork(childRootActionId, "cancelled");
+        return rejectedAuthority("dueActivitySuperseded", "The authoritative clock superseded this time segment.");
+      }
+      const activity = replay.state.campaignRuntime.activities[work.activity_id];
+      if (activity?.status === "interrupted" || activity?.status === "completed") {
+        this.authorityStore.finishDueWork(childRootActionId,
+          activity.status === "completed" ? "committed" : "cancelled");
+        const cached = this.authorityStore.submissionByPrepared(childRootActionId)?.result_json;
+        return cached ? parseJson<AuthorityCommitOutcome>(cached)
+          : rejectedAuthority("dueActivityCancelled", "The activity has already settled.");
+      }
+      return rejectedAuthority("dueActivityIntegrityMismatch", "The frozen due Activity is no longer eligible.");
+    }
+    if (due.longSpellcasting?.phase === "complete"
+      && replay.state.receipts[childRootActionId]?.status === "awaitingRandomness"
+      && hasPendingAuthorityRoot(replay.state, childRootActionId)
+      && this.authorityStore.proposalRecovery(childRootActionId) === undefined) {
+      return rejectedAuthority("pendingInputUnresolved", "The spell's authorized randomness must resume through its saved answer journal.");
+    }
+    const viewer = this.authorityViewerForCharacter(replay.state, due.ownerEntityId);
+    const completion = replay.state.campaignRuntime.activities[due.activityId]?.completion;
+    const internalOwner = replay.state.entities[due.ownerEntityId]?.kind === "npc"
+      || (isJsonRecord(completion) && completion.kind === "timePassage");
+    if (!internalOwner && viewer === undefined) return rejectedAuthority("dueActivityOwnerUnavailable", "The activity owner has no active controller.");
+    const context: AuthorityCommitContext = internalOwner
+      ? { kind: "internalDueActivity", rootActionId: childRootActionId }
+      : { principal: { id: viewer!.principalId, sessionVersion: viewer!.sessionVersion } };
+    const rulesInput = { kind: dueActivityRulesInputKind(due),
+      proposalId: childRootActionId, activityId: due.activityId };
+    const proposalHash = vnextCanonicalHash(rulesInput);
+    this.authorityStore.transaction(() => {
+      if (this.authorityStore.submissionByPrepared(childRootActionId) !== undefined) return;
+      const sceneScope = `scene:${replay.state.entities[due.ownerEntityId].sceneId}`;
+      this.authorityStore.insertSubmission({
+        submissionId: `due-submission:${childRootActionId}`, principalId: internalOwner ? null : viewer!.principalId,
+        payloadHash: proposalHash, inputKind: "dueActivity", rootActionId: childRootActionId,
+        preparedActionId: childRootActionId, characterId: due.ownerEntityId, sceneScope,
+        preparedScopeVersion: this.authorityStore.scopeVersion(sceneScope),
+        prepared: { kind: "prepared", preparedActionId: childRootActionId,
+          rootActionId: childRootActionId, kpProjection: {}, resolutionMode: "authorityDirect" },
+        continuation: { dueActivity: frozen, causeRootActionId: work.cause_root_action_id,
+          causeEventId: work.cause_event_id },
+      });
+    });
+    this.runAuthorityRecoveryCheckpoint("afterDueSubmissionBeforeCommit");
+    const recovery = this.authorityStore.proposalRecovery(childRootActionId);
+    return this.commitAuthoritative(context, childRootActionId, recovery === undefined
+      ? { kind: "canonicalInput", input: rulesInput, proposalHash }
+      : { kind: "recovery", row: recovery });
+  }
+
+  private async drainDueActivities(actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome[]> {
+    const outcomes: AuthorityCommitOutcome[] = [];
+    const blockedTimelines = new Set<string>();
+    let actorPlanDecisionTaken = false;
+    for (let count = 0; count < 32; count += 1) {
+      if (this.authorityStore.roomDeletion() !== undefined) break;
+      const replay = this.authoritativeReplay();
+      if (hasActiveSafetyPause(replay.state)) break;
+      const next = this.authorityStore.pendingDueWork().find(row => !blockedTimelines.has(row.timeline_id));
+      if (next === undefined) break;
+      if (next.next_attempt_at === null || next.next_attempt_at > Date.now()) {
+        blockedTimelines.add(next.timeline_id); continue;
+      }
+      const actorPlan = parseJson<DueActivityDescriptor>(next.descriptor_json).actorPlan;
+      if (actorPlan !== undefined && actorPlanDecisionTaken) { blockedTimelines.add(next.timeline_id); continue; }
+      if (actorPlan !== undefined) actorPlanDecisionTaken = true;
+      let outcome: AuthorityCommitOutcome;
+      try { outcome = await this.commitDueActivity(next.child_root_action_id, actorPlanTransport); }
+      catch { outcome = { kind: "retryableFailure", code: "dueActivitySettlementInterrupted" }; }
+      outcomes.push(outcome);
+      if (this.authorityStore.dueWorkByRoot(next.child_root_action_id)?.status !== "pending") continue;
+      // Player gesture and deterministic failures must not turn into a hot
+      // alarm loop. Their durable journal remains available for explicit resume.
+      this.authorityStore.deferDueWork(next.child_root_action_id,
+        outcome.kind === "retryableFailure"
+          && outcome.code !== "ACTOR_PLAN_DECISION_TRANSPORT_REQUIRED"
+          && outcome.code !== "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" ? Date.now() + 30_000 : null);
+      blockedTimelines.add(next.timeline_id);
+    }
+    await this.scheduleExpiryAlarm();
+    return outcomes;
+  }
+
+  /** Durable due roots retain their immediate cause. Following that stored
+   * chain lets a retry of the original wait resume its later segment without
+   * treating an unrelated player action as permission to advance the clock. */
+  private dueWorkDescendsFrom(work: { child_root_action_id: string; cause_root_action_id: string }, rootActionId: string): boolean {
+    const visited = new Set<string>();
+    let cursor: typeof work | undefined = work;
+    while (cursor !== undefined && !visited.has(cursor.child_root_action_id)) {
+      if (cursor.cause_root_action_id === rootActionId) return true;
+      visited.add(cursor.child_root_action_id);
+      cursor = this.authorityStore.dueWorkByRoot(cursor.cause_root_action_id);
+    }
+    return false;
+  }
+
+  private async withDueTail(outcome: AuthorityCommitOutcome, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
+    if ((outcome.kind !== "committed" && outcome.kind !== "concluded")
+      || this.vnextAdjudicationBridge === undefined) return outcome;
+    const causedPending = this.authorityStore.pendingDueWork()
+      .some(work => this.dueWorkDescendsFrom(work, outcome.receipt.rootActionId));
+    if (!causedPending && this.authorityStore.dueWorkByRoot(outcome.receipt.rootActionId) === undefined) return outcome;
+    for (const work of this.authorityStore.pendingDueWork()) {
+      if (!this.dueWorkDescendsFrom(work, outcome.receipt.rootActionId)) continue;
+      const invocation = this.authorityStore.vnextInvocation(work.child_root_action_id, 1);
+      // Explicit retry can resume a saved response immediately, without any
+      // new provider call. A request never dispatched can use a fresh call
+      // scope; an unknown response never becomes eligible for resampling.
+      if (invocation?.status === "completed"
+        || (actorPlanTransport !== undefined && invocation?.status === "prepared")) {
+        this.authorityStore.deferDueWork(work.child_root_action_id, 0);
+      }
+    }
+    this.runAuthorityRecoveryCheckpoint("afterCauseCommitBeforeDueTail");
+    const dueOutcomes = await this.drainDueActivities(actorPlanTransport);
+    return dueOutcomes.length === 0 ? outcome : { ...outcome, dueOutcomes };
+  }
+
   async commit(
     context: TrustedPrincipalContext,
     preparedActionId: string,
     mechanicalProposal: unknown,
+    actorPlanTransport?: ActorPlanTransport,
   ): Promise<AuthorityCommitOutcome> {
     if (this.authorityStore.roomDeletion() !== undefined) {
       return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
+    }
+    if (isJsonRecord(mechanicalProposal) && mechanicalProposal.kind === "npcPendingDecision") {
+      return this.withDueTail(await this.commitNpcDecision(context, preparedActionId, mechanicalProposal), actorPlanTransport);
     }
     const stage = nonEmptyString(preparedActionId)
       ? this.authorityStore.actionStage(preparedActionId)
@@ -5425,18 +6304,19 @@ export class RoomDurableObject extends DurableObject<Env> {
       && (stage.status === "prepared"
         || (isJsonRecord(mechanicalProposal) && mechanicalProposal.kind === "actorPlanDecision"))
     ) {
-      return this.commitDueActorPlan(context, preparedActionId, mechanicalProposal);
+      return this.withDueTail(await this.commitDueActorPlan(context, preparedActionId, mechanicalProposal), actorPlanTransport);
     }
-    return this.commitAuthoritative(
+    return this.withDueTail(await this.commitAuthoritative(
       context,
       preparedActionId,
       { kind: "proposal", value: mechanicalProposal },
-    );
+    ), actorPlanTransport);
   }
 
   async resumePlayerRandomness(
     context: TrustedPrincipalContext,
     randomnessId: string,
+    actorPlanTransport?: ActorPlanTransport,
   ): Promise<AuthorityCommitOutcome> {
     if (this.authorityStore.roomDeletion() !== undefined) {
       return rejectedAuthority("roomDeleting", "The room is sealed for deletion.");
@@ -5491,7 +6371,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         || authorization.character_id !== currentOwner
         || !authenticated.characterIds.includes(currentOwner)
       ) continue;
-      return parseJson<AuthorityCommitOutcome>(cachedResultJson);
+      return this.withDueTail(parseJson<AuthorityCommitOutcome>(cachedResultJson), actorPlanTransport);
     }
 
     for (const submission of this.authorityStore.awaitingRandomnessSubmissions()) {
@@ -5571,11 +6451,11 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (recovery === undefined) {
         return { kind: "retryableFailure", code: "randomnessRecoveryInputMissing" };
       }
-      return this.commitAuthoritative(
+      return this.withDueTail(await this.commitAuthoritative(
         context,
         submission.prepared_action_id,
         { kind: "recovery", row: recovery },
-      );
+      ), actorPlanTransport);
     }
     return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
   }
@@ -5932,8 +6812,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
-      this.authorityStore.appendEvents(stepped.events);
-      this.authorityStore.updateState(stepped.state);
+      this.appendAuthorityTransition(stepped.state, stepped.events);
       this.authorityStore.advanceScope(currentSubmission.scene_scope);
       this.authorityStore.saveReceipt(receipt);
       this.authorityStore.syncAuthorityIndex(stepped.state);
@@ -6043,7 +6922,6 @@ export class RoomDurableObject extends DurableObject<Env> {
       pendingInputId: currentBinding.pendingInputId,
     };
     const pending: JsonObject = {
-      ...resolved.pending,
       ...currentBinding.pending,
       controllerCharacterId: currentBinding.controllerCharacterId,
       controllerPrincipalId: currentBinding.controllerPrincipalId,
@@ -6130,8 +7008,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
-      this.authorityStore.appendEvents(eventsToAppend);
-      this.authorityStore.updateState(resolved.state);
+      this.appendAuthorityTransition(resolved.state, eventsToAppend);
       this.authorityStore.advanceScope(currentSubmission.scene_scope);
       this.authorityStore.saveReceipt(receipt);
       this.authorityStore.syncAuthorityIndex(resolved.state);
@@ -6360,8 +7237,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
-      this.authorityStore.appendEvents(eventsToAppend);
-      this.authorityStore.updateState(resolved.state);
+      this.appendAuthorityTransition(resolved.state, eventsToAppend);
       this.authorityStore.advanceScope(currentSubmission.scene_scope);
       this.authorityStore.saveReceipt(receipt);
       this.authorityStore.syncAuthorityIndex(resolved.state);
@@ -6386,7 +7262,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private async commitAuthoritative(
-    context: TrustedPrincipalContext,
+    context: AuthorityCommitContext,
     preparedActionId: string,
     source: AuthorityCommitSource,
   ): Promise<AuthorityCommitOutcome> {
@@ -6397,26 +7273,35 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("invalidPreparedAction", "A prepared action id is required.");
     }
     let replay = this.authoritativeReplay();
-    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
-    if (authenticated === undefined) {
+    const playerContext = "principal" in context ? context : undefined;
+    const authenticated = playerContext === undefined ? undefined : this.authenticatedAuthorityViewer(playerContext, replay.state);
+    const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+    const internalDueActivity = this.authorizedInternalDueActivity(context, source, submission, replay);
+    if (authenticated === undefined && !internalDueActivity) {
       return rejectedAuthority("unauthenticated", "The trusted principal session is unavailable.");
     }
-    const submission = this.authorityStore.submissionByPrepared(preparedActionId);
+    const dueWork = submission?.input_kind === "dueActivity"
+      ? this.authorityStore.dueWorkByRoot(submission.root_action_id) : undefined;
+    const internalDueRecovery = dueWork !== undefined && source.kind !== "proposal";
     const transferredRandomnessRecovery = source.kind === "recovery"
       && submission !== undefined
-      && authenticated.characterIds.includes(submission.character_id);
+      && authenticated?.characterIds.includes(submission.character_id) === true;
     if (submission === undefined
-      || (submission.principal_id !== authenticated.principalId && !transferredRandomnessRecovery)) {
+      || (!internalDueActivity && submission.principal_id !== authenticated?.principalId
+        && !transferredRandomnessRecovery && !internalDueRecovery)) {
       return rejectedAuthority("preparedActionUnauthorized", "The prepared action is unavailable.");
     }
-    if (!authenticated.characterIds.includes(submission.character_id)) {
+    if (!internalDueActivity && authenticated?.characterIds.includes(submission.character_id) !== true) {
       return rejectedAuthority(
         "preparedActionUnauthorized",
         "The prepared action's character is no longer controlled by this principal.",
       );
     }
     const actionStage = this.authorityStore.actionStage(preparedActionId);
-    const usesVNextTransactionReadSet = this.preparedActionSnapshot(submission)
+    if (submission.input_kind === "dueActivity" && (dueWork === undefined || source.kind === "proposal")) {
+      return rejectedAuthority("preparedActionUnauthorized", "Only persisted due work may complete an Activity.");
+    }
+    const usesVNextTransactionReadSet = dueWork !== undefined || this.preparedActionSnapshot(submission)
       ?.requiredContext !== undefined;
 
     let proposalHash: string;
@@ -6433,7 +7318,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (recovery === undefined) {
         return { kind: "retryableFailure", code: "proposalRecoveryIntegrityMismatch" };
       }
-      dueActorPlanStage = recovery.rulesInput.kind === "resolveDueActorPlan";
+      dueActorPlanStage = recovery.rulesInput.kind === "resolveDueActorPlan" && dueWork === undefined;
       const expectedRecoveryId = dueActorPlanStage
         ? actionStage?.child_root_action_id
         : preparedActionId;
@@ -6451,9 +7336,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       };
       answeredPendingInputId = recovery.answeredPendingInputId ?? undefined;
     } else if (source.kind === "canonicalInput") {
-      dueActorPlanStage = source.input.kind === "resolveDueActorPlan";
+      dueActorPlanStage = source.input.kind === "resolveDueActorPlan" && dueWork === undefined;
       proposalHash = source.proposalHash;
-      adapted = { input: structuredClone(source.input) };
+      answeredPendingInputId = source.answeredPendingInputId;
+      adapted = {
+        input: structuredClone(source.input),
+        ...(source.receiptExtras === undefined ? {} : { receiptExtras: structuredClone(source.receiptExtras) }),
+        ...(source.forceConcluded === true ? { forceConcluded: true } : {}),
+      };
     } else {
       try {
         proposalHash = await authorityHash(source.value);
@@ -6509,6 +7399,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return presentationUnavailable();
     }
     if (submission.input_kind === "movement") {
+      if (authenticated === undefined) return rejectedAuthority("preparedActionUnauthorized", "Movement requires a trusted player.");
       const continuation = submission.continuation_json === null
         ? undefined
         : parseJson<JsonObject>(submission.continuation_json);
@@ -6581,7 +7472,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     });
 
     if (adapted === undefined) {
-      if (source.kind !== "proposal") {
+      if (source.kind !== "proposal" || authenticated === undefined) {
         return { kind: "retryableFailure", code: "proposalRecoveryIntegrityMismatch" };
       }
       const externalAdapted = await this.authorityMechanicalInput(
@@ -6610,6 +7501,47 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
 
     let rulesInput = adapted.input;
+    const dueDescriptor = dueWork === undefined ? undefined : parseJson<DueActivityDescriptor>(dueWork.descriptor_json);
+    if (dueWork !== undefined && (rulesInput.proposalId !== dueWork.child_root_action_id
+      || (dueDescriptor?.actorPlan === undefined
+        ? rulesInput.kind !== dueActivityRulesInputKind(dueDescriptor!)
+          || rulesInput.activityId !== dueWork.activity_id
+        : rulesInput.kind !== "resolveDueActorPlan" || rulesInput.planId !== dueDescriptor.actorPlan.planId
+          || rulesInput.affectedCharacterId !== dueDescriptor.ownerEntityId
+          || rulesInput.causedByRootActionId !== dueWork.cause_root_action_id))) {
+      return { kind: "retryableFailure", code: "proposalRecoveryIntegrityMismatch" };
+    }
+    // A validated durable random journal continues its frozen operation; it
+    // must finish before due work waiting on the same scene can make progress.
+    const permitsPendingDue = randomnessBatch !== undefined
+      || (dueDescriptor?.timePassage !== undefined && rulesInput.kind === "advanceTimePassage")
+      || (dueDescriptor?.longSpellcasting !== undefined && rulesInput.kind === dueActivityRulesInputKind(dueDescriptor))
+      || ["knowledgeReview", "completeActivity", "interruptActivity",
+      "answerPendingInput", "answerFrozenPlayerChoice", "answerGroupRestInvitation", "answerPartyInvitation", "answerPartyMove", "answerSocialResolution",
+      "resolveDueActorPlan", "requestSafetyPause", "adjustSafetyPresentation"].includes(String(rulesInput.kind));
+    if (!permitsPendingDue && this.vnextAdjudicationBridge !== undefined) {
+      const timelineId = characterTimelineId(replay.state, submission.character_id);
+      const sceneId = replay.state.entities[submission.character_id]?.sceneId;
+      const due = this.dueActivities(replay.profiles, replay.state);
+      if (due.some(work => work.timelineId === timelineId || work.sceneIds.includes(sceneId ?? ""))) {
+        return rejectedAuthority("dueActivityPending", "Previously triggered activity effects must settle before this action. The frozen proposal has not committed.");
+      }
+      if (authenticated !== undefined && this.viewerPendingPlayerRolls(replay, authenticated).length > 0) {
+        return rejectedAuthority("pendingInputUnresolved", "The authorized dice request must settle before a new world action.");
+      }
+    }
+    const storedNpcDecision = this.authorityStore.npcDecision(preparedActionId);
+    const npcDecision = storedNpcDecision?.proposal_hash === proposalHash ? storedNpcDecision : undefined;
+    if (npcDecision !== undefined && npcDecision.answer_json === null) {
+      return this.npcDecisionOutcome(submission, npcDecision);
+    }
+    const npcAnswerInput = npcDecision?.answer_json === null || npcDecision === undefined
+      ? undefined : {
+          kind: "answerPendingInput",
+          pendingInputId: npcDecision.pending_input_id,
+          responseId: `npc-response:${await authorityHash({ preparedActionId, pendingInputId: npcDecision.pending_input_id })}`,
+          answer: parseJson<JsonObject>(npcDecision.answer_json),
+        };
     if (source.kind === "proposal"
       && socialResolutionProfileEnabled(replay.profiles.extensions)
       && rulesInput.kind === "executeCausalActionProgram"
@@ -6654,7 +7586,13 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       answeredPendingInputId = continuation.pendingInputId;
       const combatPending = replay.state.combatRuntime.pendingInputs[continuation.pendingInputId];
-      if (
+      if (replay.state.frozenPlayerChoices?.[continuation.pendingInputId] !== undefined || rulesInput.kind === "answerFrozenPlayerChoice") {
+        const saved = frozenPlayerChoiceAnswer(replay.state, { pendingInputId: continuation.pendingInputId,
+          rootActionId: submission.root_action_id, controllerCharacterId: submission.character_id }, continuation.answer);
+        if (saved === undefined || vnextCanonicalHash(saved) !== vnextCanonicalHash(rulesInput))
+          return rejectedAuthority("invalidPendingResolution", "The pending answer must select its original frozen plan.");
+        rulesInput = saved;
+      } else if (
         isJsonRecord(combatPending)
         && combatPending.kind === "playerChoice"
         && combatPending.controllerEntityId === submission.character_id
@@ -6797,15 +7735,16 @@ export class RoomDurableObject extends DurableObject<Env> {
     let eventsToAppend: EventEnvelope[] = [];
     let receiptEvents: EventEnvelope[] = [];
     let usedRandomnessJournal = false;
-    const projectionFailure = (explanation: string): AuthorityCommitOutcome =>
-      usedRandomnessJournal
+    const projectionFailure = (explanation: string): AuthorityCommitOutcome => {
+      return usedRandomnessJournal
         ? { kind: "retryableFailure", code: "projectionFailure" }
         : rejectedAuthority("projectionFailure", explanation);
+    };
     const audienceProjectionFailure = (
       outcome: AuthorityCommitOutcome,
-    ): AuthorityCommitOutcome => usedRandomnessJournal
-      ? { kind: "retryableFailure", code: "projectionFailure" }
-      : outcome;
+    ): AuthorityCommitOutcome => {
+      return usedRandomnessJournal ? { kind: "retryableFailure", code: "projectionFailure" } : outcome;
+    };
     let randomness: Array<{
       randomnessId: string;
       faces: number[];
@@ -6820,9 +7759,15 @@ export class RoomDurableObject extends DurableObject<Env> {
         rulesInput,
       );
       if (readSetConflict !== undefined) return readSetConflict;
-      const first = this.rulesRuntime.step(replay.profiles, replay.state, rulesInput);
+      const first = this.rulesRuntime.step(replay.profiles, replay.state,
+        npcDecision?.wave_index === -1 && npcAnswerInput !== undefined ? npcAnswerInput : rulesInput);
+      if (first.kind === "awaitingInput" && isJsonRecord(first.pending) && first.pending.kind === "kpDecision") {
+        return this.suspendNpcDecision({ submission, proposalHash, journalPreparedActionId,
+          waveIndex: -1, replay, canonical: { ...adapted, answeredPendingInputId }, resolved: first });
+      }
       if (first.kind === "needsKp") {
         return needsKp(first.diagnostics.map((diagnostic) => ({
+          ...structuredClone(diagnostic),
           code: diagnostic.code,
           publicPath: diagnostic.message,
           revisionHint: "保留原目标与做法，按 Rules 诊断修订能力定义后重新提交。",
@@ -6845,7 +7790,14 @@ export class RoomDurableObject extends DurableObject<Env> {
           && (submission.input_kind === "intent" || socialPendingReframe)
           && source.kind === "proposal"
         ) {
-          return needsKp([{
+          const diagnostics = first.rejection.diagnostics;
+          return needsKp(diagnostics?.length ? diagnostics.map(diagnostic => ({
+            ...structuredClone(diagnostic),
+            publicPath: diagnostic.message,
+            revisionHint: "当前诊断不授予修改冻结目标或裁决的权限。",
+            secrecy: "kp",
+            rulesMessage: first.rejection.message,
+          })) : [{
             code: first.rejection.code,
             publicPath: "KP 提案未通过权威机械诊断。",
             revisionHint: "依据 Rules 诊断修订当前机械提案；不得改变玩家原始目标、提供骰面或提交状态补丁。",
@@ -6853,7 +7805,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             rulesMessage: first.rejection.message,
           }]);
         }
-        return rejectedAuthority(first.rejection.code, first.rejection.message);
+        return rejectedAuthority(first.rejection.code, first.rejection.message, first.rejection.diagnostics);
       }
       if (first.kind === "initialized") {
         return rejectedAuthority("invalidRulesResult", "Rules returned an initialization result during commit.");
@@ -7062,8 +8014,11 @@ export class RoomDurableObject extends DurableObject<Env> {
           if (readSetConflict !== undefined) {
             return { kind: "outcome" as const, outcome: readSetConflict };
           }
-          this.authorityStore.appendEvents(first.events);
-          this.authorityStore.updateState(first.state);
+          if (dueWork !== undefined && first.events[0]?.previousEventHash !== this.authoritativeReplay().replay.head.eventHash) {
+            return { kind: "outcome" as const,
+              outcome: { kind: "retryableFailure" as const, code: "dueActivityHeadConflict" } };
+          }
+          this.appendAuthorityTransition(first.state, first.events);
           this.authorityStore.markAwaitingRandomness(preparedActionId, proposalHash);
           this.authorityStore.saveRandomnessBatchRequest({
             preparedActionId: journalPreparedActionId,
@@ -7185,7 +8140,8 @@ export class RoomDurableObject extends DurableObject<Env> {
               && this.authorityPlayerRollOwner(replay.state, entry.request, requestEvents) !== undefined
               && !authorized.has(entry.randomnessId));
             if (waitingForPlayer) {
-              return this.awaitingPlayerRollOutcome(replay, authenticated);
+              return authenticated === undefined ? { kind: "awaitingPlayerRoll", pendingPlayerRolls: [] }
+                : this.awaitingPlayerRollOutcome(replay, authenticated);
             }
           }
           if (this.authorityStore.roomDeletion() !== undefined) {
@@ -7323,9 +8279,16 @@ export class RoomDurableObject extends DurableObject<Env> {
           rulesInput,
         );
         if (readSetConflict !== undefined) return readSetConflict;
-        const fulfilled = this.rulesRuntime.step(replay.profiles, replay.state, fulfillmentInput);
+        const fulfilled = this.rulesRuntime.step(replay.profiles, replay.state,
+          npcDecision?.wave_index === activeWaveIndex && npcAnswerInput !== undefined
+            ? npcAnswerInput : fulfillmentInput);
+        if (fulfilled.kind === "awaitingInput" && isJsonRecord(fulfilled.pending) && fulfilled.pending.kind === "kpDecision") {
+          return this.suspendNpcDecision({ submission, proposalHash, journalPreparedActionId,
+            waveIndex: activeWaveIndex, replay, canonical: { ...adapted, answeredPendingInputId }, resolved: fulfilled });
+        }
         if (fulfilled.kind === "needsKp") {
           return needsKp(fulfilled.diagnostics.map((diagnostic) => ({
+            ...structuredClone(diagnostic),
             code: diagnostic.code,
             publicPath: diagnostic.message,
             revisionHint: "保持已冻结参数与骰面，修订后续能力定义而不得重掷。",
@@ -7335,7 +8298,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           })));
         }
         if (fulfilled.kind === "rejected") {
-          return rejectedAuthority(fulfilled.rejection.code, fulfilled.rejection.message);
+          return rejectedAuthority(fulfilled.rejection.code, fulfilled.rejection.message, fulfilled.rejection.diagnostics);
         }
         if (fulfilled.kind === "initialized") {
           return rejectedAuthority(
@@ -7451,8 +8414,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             if (readSetConflict !== undefined) {
               return { kind: "outcome" as const, outcome: readSetConflict };
             }
-            this.authorityStore.appendEvents(fulfilled.events);
-            this.authorityStore.updateState(fulfilled.state);
+            this.appendAuthorityTransition(fulfilled.state, fulfilled.events);
             this.authorityStore.advanceRandomnessBatchWave({
               preparedActionId: journalPreparedActionId,
               requests: cumulativeRequests,
@@ -7504,27 +8466,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       return { kind: "retryableFailure", code: "incompleteAuthorityCommit" };
     }
     const resolved = final;
-    if (
-      resolved.kind === "awaitingInput"
-      && isJsonRecord(resolved.pending)
-      && resolved.pending.kind === "kpDecision"
-    ) {
-      if (usedRandomnessJournal) {
-        return {
-          kind: "retryableFailure",
-          code: "kpDecisionAfterRandomnessUnsupported",
-        };
-      }
-      return needsKp([{
-        code: "kpDecisionRequired",
-        publicPath: "该 NPC 或势力行动需要 KP 依据其有限知识作出明确选择。",
-        revisionHint: "使用待决输入给出的合法候选，补全 NPC 机械提案后以同一 rootActionId 重新提交。",
-        secrecy: "kp",
-        pending: structuredClone(resolved.pending),
-      }]);
-    }
     if (dueActorPlanStage) {
-      if (actionStage === undefined) {
+      if (actionStage === undefined || playerContext === undefined) {
         return rejectedAuthority(
           "invalidRulesResult",
           "Due ActorPlan mechanics lost their frozen child stage.",
@@ -7532,7 +8475,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       if (resolved.kind === "awaitingInput") {
         return this.suspendDueActorPlanMechanicalStage({
-          context,
+          context: playerContext,
           preparedActionId,
           proposalHash,
           journalPreparedActionId,
@@ -7553,7 +8496,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         );
       }
       return this.finishDueActorPlanMechanicalStage({
-        context,
+        context: playerContext,
         preparedActionId,
         proposalHash,
         journalPreparedActionId,
@@ -7610,6 +8553,33 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
       }
     }
+    if (resolved.kind !== "awaitingInput"
+      && worldInteractionProfileEnabled(replay.profiles.extensions)
+      && (committedRangeUsesFrozenRenderableClaims(receiptEvents)
+        || Object.values(replay.state.frozenPlayerChoices ?? {}).some(choice => choice.plan.rootActionId === resolved.receipt.rootActionId))) {
+      // Projection verifies the complete global journal interval, including
+      // other roots that committed during a pause. Rules selects only this
+      // receipt's events after verification; append receives just our suffix.
+      const canonicalReceipt = resolved.state.receipts[resolved.receipt.rootActionId];
+      if (canonicalReceipt?.receiptId !== resolved.receipt.receiptId
+        || canonicalReceipt.rootActionId !== resolved.receipt.rootActionId) {
+        return projectionFailure("The continuation has no matching authoritative receipt.");
+      }
+      const from = BigInt(canonicalReceipt.eventRange.fromEventSeq);
+      const to = BigInt(canonicalReceipt.eventRange.toEventSeq);
+      const complete = [...this.authorityStore.events(), ...eventsToAppend]
+        .filter((event) => BigInt(event.eventSeq) >= from && BigInt(event.eventSeq) <= to)
+        .sort((left, right) => BigInt(left.eventSeq) < BigInt(right.eventSeq) ? -1 : 1);
+      const unique = [...new Map(complete.map((event) => [event.eventId, event])).values()];
+      if (BigInt(unique.length) !== to - from + 1n
+        || unique[0]?.rootActionId !== resolved.receipt.rootActionId
+        || unique.at(-1)?.rootActionId !== resolved.receipt.rootActionId
+        || unique.some((event, index) => BigInt(event.eventSeq) !== from + BigInt(index)
+          || (index > 0 && event.previousEventHash !== unique[index - 1].eventHash))) {
+        return projectionFailure("The continuation receipt has no complete verified journal interval.");
+      }
+      receiptEvents = unique;
+    }
     const status = resolved.kind === "awaitingInput"
       ? "awaitingInput" as const
       : resolved.kind === "concluded" || adapted.forceConcluded === true
@@ -7637,11 +8607,16 @@ export class RoomDurableObject extends DurableObject<Env> {
       ...currentRandomnessCommitments,
     ].map((entry) => [entry.randomnessId, entry])).values()];
     const priorEventRange = suspendedDue?.outcome.receipt.eventRange;
+    // A reactor supplies the answer, while the persisted due root still
+    // belongs to the original caster. Authentication above remains attached
+    // to the reactor; full-root delivery uses the verified initiating actor.
+    const resumedSpellDue = this.verifiedDueActivity(resolved.receipt.rootActionId, replay);
+    const receiptActorCharacterId = suspendedDue?.outcome.receipt.actorCharacterId
+      ?? (resumedSpellDue?.longSpellcasting === undefined ? submission.character_id : resumedSpellDue.ownerEntityId);
     const receipt: PublicReceipt = {
       receiptId: resolved.receipt.receiptId,
       rootActionId: submission.root_action_id,
-      actorCharacterId: suspendedDue?.outcome.receipt.actorCharacterId
-        ?? submission.character_id,
+      actorCharacterId: receiptActorCharacterId,
       status,
       runtimeEpochId: resolved.state.runtimeEpochId,
       activeBranchId: resolved.state.activeBranchId,
@@ -7668,15 +8643,15 @@ export class RoomDurableObject extends DurableObject<Env> {
       : priorActorViewer === undefined
         ? undefined
         : this.rulesRuntime.project(replay.profiles, replay.state, priorActorViewer);
-    if (actorProjection === undefined || actorProjection.kind === "rejected") {
+    if (!internalDueActivity && (actorProjection === undefined || actorProjection.kind === "rejected")) {
       return projectionFailure("The committed actor projection is unavailable.");
     }
     const kpProjection: JsonObject = {
-      ...roomPlayerProjection(
+      ...(internalDueActivity ? {} : roomPlayerProjection(
         actorProjection as unknown as JsonObject,
         submission.character_id,
-      ),
-      ...(actorViewer !== undefined ? {} : {
+      )),
+      ...(internalDueActivity || actorViewer !== undefined ? {} : {
         lifecycleTransition: {
           characterId: submission.character_id,
           tenureStatus: resolved.state.entities[submission.character_id]?.tenureStatus ?? "missing",
@@ -7827,7 +8802,6 @@ export class RoomDurableObject extends DurableObject<Env> {
             pendingInputId: resolved.pending.pendingInputId,
           }
         : {
-            ...resolved.pending,
             ...currentBinding.pending,
             controllerCharacterId: currentBinding.controllerCharacterId,
             controllerPrincipalId: currentBinding.controllerPrincipalId,
@@ -7843,7 +8817,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         const audienceBindings = this.authorityAudienceBindings(
           replay.profiles,
           resolved.state,
-          submission.character_id,
+          receiptActorCharacterId,
           receipt.receiptId,
           receipt.rootActionId,
           deliveryPriorState,
@@ -7865,7 +8839,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const audienceBindings = this.authorityAudienceBindings(
         replay.profiles,
         resolved.state,
-        submission.character_id,
+        receiptActorCharacterId,
         receipt.receiptId,
         receipt.rootActionId,
         deliveryPriorState,
@@ -7954,17 +8928,22 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       const current = this.authorityStore.submissionByPrepared(preparedActionId);
       const currentReplay = this.authoritativeReplay();
-      const currentAuthenticated = this.authenticatedAuthorityViewer(context, currentReplay.state);
+      const currentAuthenticated = playerContext === undefined ? undefined
+        : this.authenticatedAuthorityViewer(playerContext, currentReplay.state);
+      const currentInternalDueActivity = internalDueActivity && this.authorizedInternalDueActivity(context, source, current, currentReplay);
       const currentTransferredRandomnessRecovery = usedRandomnessJournal
         && source.kind === "recovery"
         && current !== undefined
         && currentAuthenticated?.characterIds.includes(current.character_id) === true;
+      const currentInternalDueRecovery = internalDueRecovery && current !== undefined
+        && this.authorityStore.dueWorkByRoot(current.root_action_id)?.status === "pending"
+        && currentAuthenticated?.characterIds.includes(current.character_id) === true;
       if (
         current === undefined
-        || currentAuthenticated === undefined
-        || (current.principal_id !== currentAuthenticated.principalId
-          && !currentTransferredRandomnessRecovery)
-        || !currentAuthenticated.characterIds.includes(current.character_id)
+        || (!currentInternalDueActivity && (currentAuthenticated === undefined
+          || (current.principal_id !== currentAuthenticated.principalId
+            && !currentTransferredRandomnessRecovery && !currentInternalDueRecovery)
+          || !currentAuthenticated.characterIds.includes(current.character_id)))
       ) {
         return {
           outcome: rejectedAuthority(
@@ -8049,7 +9028,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
-      if (this.authorityStore.hasRandomnessSettlementInScene(
+      if (rulesInput.kind !== "knowledgeReview" && !safetyDirect && this.authorityStore.hasRandomnessSettlementInScene(
         current.scene_scope,
         preparedActionId,
       )) {
@@ -8061,8 +9040,10 @@ export class RoomDurableObject extends DurableObject<Env> {
           committedHere: false,
         };
       }
-      this.authorityStore.appendEvents(eventsToAppend);
-      this.authorityStore.updateState(resolved.state);
+      if (dueWork !== undefined && eventsToAppend[0]?.previousEventHash !== currentReplay.replay.head.eventHash) {
+        return { outcome: { kind: "retryableFailure" as const, code: "dueActivityHeadConflict" }, committedHere: false };
+      }
+      this.appendAuthorityTransition(resolved.state, eventsToAppend);
       this.authorityStore.advanceScope(current.scene_scope);
       this.authorityStore.saveReceipt(receipt);
       if (answeredPendingMessage !== undefined) {
@@ -8179,6 +9160,9 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
       }
       this.authorityStore.finishSubmission(preparedActionId, status, proposalHash, outcome);
+      if (resolved.kind === "committed" && this.authorityStore.dueWorkByRoot(receipt.rootActionId) !== undefined) {
+        this.authorityStore.finishDueWork(receipt.rootActionId, "committed");
+      }
       this.authorityStore.markArchivePending(Date.now());
       return { outcome, committedHere: true };
     });
@@ -8247,7 +9231,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         "Disaster recovery is allowed only for an empty authoritative Room Durable Object.",
       );
     }
-    const validation = await validateAuthoritativeArchive(archiveValue);
+    const validation = await validateAuthoritativeArchive(archiveValue, this.rulesRuntime.replay);
     if (!validation.ok) {
       return rejectedAuthority(validation.code, "The supplied archive failed closed validation.");
     }
@@ -8434,7 +9418,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
     }
     try {
-      const archive = await readAuthoritativeArchiveFromD1(db, locator);
+      const archive = await readAuthoritativeArchiveFromD1(db, locator, this.rulesRuntime.replay);
       return await this.restoreAuthoritativeArchive(disasterRecoveryCapability, archive);
     } catch (error) {
       if (error instanceof AuthoritativeArchiveD1ReadError) {
@@ -8474,6 +9458,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       });
       return { kind: "superseded" as const, receipt: structuredClone(recovery.receipt) };
     }
+    if (this.earlierFrozenNarrationPending(recovery.planRow, recovery.binding)) {
+      return rejectedAuthority("narrationPredecessorPending", "An earlier frozen narration for this Viewer must be delivered first.");
+    }
     const deliveryGeneration = this.authorityStore.beginDeliveryAudienceAttempt(
       recovery.plan.publishCapability,
       recovery.binding.audienceId,
@@ -8494,6 +9481,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         : {
             viewerKey: renderableClaims!.viewerKey,
             renderableClaims: structuredClone(renderableClaims!),
+            narrationContext: structuredClone((recovery.binding.kpProjection as JsonObject).narrationContext),
           }),
       deliveryGeneration,
       deliveryProtocol: INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE,
@@ -8720,6 +9708,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           audienceId: current.audience_id,
           deliveryGeneration: current.delivery_generation,
         };
+      }
+      if (this.earlierFrozenNarrationPending(row, binding)) {
+        return rejectedAuthority("narrationPredecessorPending", "An earlier frozen narration for this Viewer must be delivered first.");
       }
       const deliveryGeneration = this.authorityStore.beginDeliveryAudienceAttempt(
         query.publishCapability as string,
@@ -8996,6 +9987,13 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (currentPlan === undefined) {
         return rejectedAuthority("publishCapabilityInvalid", "The publish capability is unavailable.");
       }
+      // Recheck before any frame mutates the publication journal. A concurrent
+      // publisher must not advance a Viewer past an undelivered frozen root.
+      for (const { binding } of preparedFrames) {
+        if (this.earlierFrozenNarrationPending(currentPlan, binding)) {
+          return rejectedAuthority("narrationPredecessorPending", "An earlier frozen narration for this Viewer must be delivered first.");
+        }
+      }
       for (const { audienceId, attemptHash, viewer, frame } of preparedFrames) {
         const journal = this.authorityStore.deliveryAudience(publishCapability, audienceId);
         if (
@@ -9130,7 +10128,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           narrationRecovery,
         );
         return {
-          readModel,
+          readModel: this.withTimePassageProcessing(readModel as unknown as JsonObject, latest.id, replay.state),
           transcript: this.experiencedObservationTranscript(viewerKey, latest.sceneId),
           delivery: slot === undefined
               ? { kind: "none" }
@@ -9240,7 +10238,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       narrationRecovery,
     );
     return {
-      readModel,
+      readModel: this.withTimePassageProcessing(readModel, characterId, replay.state),
       transcript: this.experiencedObservationTranscript(
         viewerKey,
         replay.state.entities[characterId]?.sceneId,
@@ -9517,8 +10515,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           receiptId: frame.receiptId,
         });
       }
-      this.authorityStore.appendEvents(corrected.events);
-      this.authorityStore.updateState(corrected.state);
+      this.appendAuthorityTransition(corrected.state, corrected.events);
       this.authorityStore.syncPendingAuthority(corrected.state);
       this.authorityStore.supersedeReceipts(supersededRootActionIds);
       this.authorityStore.supersedeDeliveries(supersededRootActionIds);
@@ -9545,6 +10542,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       return;
     }
     const now = Date.now();
+    const dueAt = this.authorityStore.dueWorkAlarmAt();
+    if (dueAt !== null && dueAt <= now && this.authorityStore.room() !== undefined) await this.drainDueActivities();
     const archive = this.authorityStore.archiveProgress();
     if (
       archive?.pending

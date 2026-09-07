@@ -1,0 +1,598 @@
+{
+  "schema": "zhuwei.round53.offline-closeout/v1",
+  "createdAt": "2026-09-06T17:42:28.554314+00:00",
+  "servicesStoppedBeforeExtract": [
+    {
+      "pid": 78491,
+      "alive": false
+    },
+    {
+      "pid": 78478,
+      "alive": false
+    }
+  ],
+  "sourceComparison": {
+    "beforeCount": 308,
+    "afterCount": 308,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-06T17:35:13.153596+00:00",
+    "initialManifestSha256": "cbbff391ed6dec7050587e60d590063fe028616ae4ccbf3f2622b9fc4229080b",
+    "allEqual": true
+  },
+  "mechanical": {
+    "eventTypes": [
+      "InventoryOperationApplied",
+      "InventoryOperationApplied"
+    ],
+    "operations": [
+      {
+        "kind": "release",
+        "entryRef": "item-entry:standard:46:character:fd621381-dc6c-42fa-8e2f-778cce4e9c81:torch:stack",
+        "quantity": 1,
+        "sceneRef": "wake",
+        "releaseKind": "placement"
+      },
+      {
+        "kind": "acquire",
+        "entryRef": "item-entry:inventory:34015e448944f80d8db6cddfeee4b184653dfcd6eca6abbac405030d402aa433",
+        "quantity": 1
+      }
+    ],
+    "exactPlacedEntryAcquired": true,
+    "sqliteCounts": {
+      "events": 2,
+      "receipts": 2,
+      "randomnessBatches": 0,
+      "proposalInvocations": 4,
+      "repairTickets": 0,
+      "pendingDue": 0
+    },
+    "stateVersion": "2",
+    "completeItemSystemRestored": true,
+    "sourceQuantityBefore": 10,
+    "sourceQuantityAfter": 10,
+    "groundFinal": 0,
+    "torchResourceSequence": [
+      10,
+      9,
+      10,
+      10
+    ],
+    "timelineUnchanged": true,
+    "action3TableUnchanged": {
+      "stateVersion": true,
+      "receiptCount": true,
+      "hp": true,
+      "resources": true,
+      "resourceMaximums": true,
+      "inventory": true,
+      "pendingInputs": true,
+      "fictionTime": true,
+      "messages": true
+    },
+    "newItemDefinitions": [],
+    "newSemanticDefinitions": [],
+    "activitiesUnchanged": true,
+    "action3Events": 0,
+    "action3Receipts": 0,
+    "deliveryStatuses": [
+      "open",
+      "open"
+    ],
+    "audienceStatuses": [
+      "published",
+      "published"
+    ],
+    "duplicates": [
+      {
+        "action": 1,
+        "checks": {
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        },
+        "allChecksPassed": true,
+        "callsBefore": 3,
+        "callsAfter": 3,
+        "independentMechanicalEquality": true
+      },
+      {
+        "action": 2,
+        "checks": {
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        },
+        "allChecksPassed": true,
+        "callsBefore": 6,
+        "callsAfter": 6,
+        "independentMechanicalEquality": true
+      }
+    ],
+    "replay": {
+      "pinnedProfilesMatch": true,
+      "replayKind": "replayed",
+      "exactState": true,
+      "stateVersion": "2",
+      "events": 2,
+      "eventTypes": [
+        "InventoryOperationApplied",
+        "InventoryOperationApplied"
+      ],
+      "checkedAt": "2026-09-06T17:35:13.425Z"
+    }
+  },
+  "failure": {
+    "http": {
+      "submissionId": "vnext-http-ed7fce23-fdd2-4ef2-91b2-baef2980dd35",
+      "outcomeKind": "rejected",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "error": "权威 KP 模型配置或输出无效。",
+      "code": "PROPOSAL_FORM_INVALID"
+    },
+    "telemetry": [
+      {
+        "occurredAt": "2026-09-06T17:32:40.695Z",
+        "eventName": "room.action.completed",
+        "outcomeKind": "rejected",
+        "failureClass": "modelPermanent",
+        "errorCode": "PROPOSAL_FORM_INVALID",
+        "proposalDiagnosticFields": [
+          {
+            "path": "arguments.proposals[]",
+            "code": "JSON_SYNTAX"
+          }
+        ]
+      }
+    ],
+    "originalParserEvidencePath": "/tmp/zhuwei-round53-json-diagnostic.json",
+    "originalParserEvidence": {
+      "argumentsSha256": "d4f741735698ff1cd28512c4c8f0fb5392e1492ff59bd76379df6d8a3a8b64f1",
+      "result": {
+        "kind": "rejected",
+        "name": "VNextProposalBundleOutputError",
+        "diagnostics": [
+          {
+            "code": "JSON_SYNTAX",
+            "constraint": "json:object-delimiter-expected",
+            "repair": {
+              "allowed": false,
+              "reason": "semantic-equivalence-unproven"
+            },
+            "path": [
+              "proposals",
+              0
+            ],
+            "pathBase": "arguments",
+            "location": {
+              "offset": 3220,
+              "line": 1,
+              "column": 3221
+            }
+          }
+        ]
+      },
+      "apiCalls": 0,
+      "originalResponseChanged": false
+    },
+    "pythonJsonDiagnostic": {
+      "position": 3220,
+      "line": 1,
+      "column": 3221,
+      "message": "Expecting ',' delimiter",
+      "argumentLengthCodepoints": 3222
+    },
+    "schemaRequest": {
+      "mode": "schemaRequest",
+      "basisRefs": [],
+      "adjudication": {
+        "kind": "none"
+      },
+      "terminal": {
+        "kind": "none"
+      },
+      "proposals": [],
+      "requestedCapabilities": [
+        "materializeItem",
+        "authorItem",
+        "authorAbility"
+      ]
+    },
+    "correctionInvoked": false,
+    "rawDraftObservations": {
+      "status": "unparsed invalid raw text only, not an accepted proposal or world fact",
+      "worldInteractionText": true,
+      "effectsEmptyText": true,
+      "noProducerText": true,
+      "authoredOrMaterializeKindText": false,
+      "manualSoundQuote": "做好后手动拉绳：绳子绷紧、餐具磕在硬物上发出清脆的金属哐当声，松开后恢复。",
+      "cutRopeQuote": "从五十尺麻绳卷上截/抽出一段",
+      "uncutAndRecoveredQuote": "绳段与餐具都完好收回（未真正裁剪成小件，仍是那卷50尺麻绳与整套餐具）"
+    },
+    "interpretation": "Nested JSON syntax is invalid; exact parser refuses narrow repair because semantic equivalence is unproven. The raw text describes manual sound using existing rope/mess-kit and has cut/uncut/recovered contradictions. It does not prove a persisted reusable assembly or automatic trigger. No new object/component/effect exists in authority."
+  },
+  "publication": [
+    {
+      "action": 1,
+      "http": {
+        "submissionId": "vnext-http-c57aa19c-6de7-4855-9b59-77f379aaef6f",
+        "action": "committed",
+        "narration": "published",
+        "outcome": {
+          "kind": "committed",
+          "receipt": {
+            "receiptId": "receipt:root-action:vnext-http-c57aa19c-6de7-4855-9b59-77f379aaef6f:1",
+            "rootActionId": "root-action:vnext-http-c57aa19c-6de7-4855-9b59-77f379aaef6f",
+            "status": "committed",
+            "runtimeEpochId": "runtime-epoch:da039e3a-f8e2-40c9-b820-b2973338c7f7",
+            "activeBranchId": "branch:main"
+          }
+        }
+      },
+      "candidateBody": "你从背包里取出一根火把，放在身旁。",
+      "published": true
+    },
+    {
+      "action": 2,
+      "http": {
+        "submissionId": "vnext-http-0235c4c4-7f32-4844-b1e5-8325fb2a6a76",
+        "action": "committed",
+        "narration": "published",
+        "outcome": {
+          "kind": "committed",
+          "receipt": {
+            "receiptId": "receipt:root-action:vnext-http-0235c4c4-7f32-4844-b1e5-8325fb2a6a76:2",
+            "rootActionId": "root-action:vnext-http-0235c4c4-7f32-4844-b1e5-8325fb2a6a76",
+            "status": "committed",
+            "runtimeEpochId": "runtime-epoch:da039e3a-f8e2-40c9-b820-b2973338c7f7",
+            "activeBranchId": "branch:main"
+          }
+        }
+      },
+      "candidateBody": "你把刚才放在身旁的那根火把拾起来，收回背包。",
+      "published": true
+    }
+  ],
+  "usage": {
+    "calls": [
+      {
+        "ordinal": 1,
+        "stage": "proposalOffer",
+        "createdAtBeijing": "2026-09-07T01:30:47+08:00",
+        "priceWindow": "offPeak",
+        "model": "deepseek-v4-flash",
+        "inputTokens": 27902,
+        "cacheHitTokens": 5760,
+        "cacheMissTokens": 22142,
+        "outputTokens": 465,
+        "totalTokens": 28367,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0355935",
+        "capturePath": "/tmp/zhuwei-vnext-round53-private/01.json",
+        "captureSha256": "1b87005e0f04035a911f5a7d0e75496ea875398c332107e81b7c01f47e57cc9d"
+      },
+      {
+        "ordinal": 2,
+        "stage": "initialNarration",
+        "createdAtBeijing": "2026-09-07T01:30:50+08:00",
+        "priceWindow": "offPeak",
+        "model": "deepseek-v4-flash",
+        "inputTokens": 1897,
+        "cacheHitTokens": 896,
+        "cacheMissTokens": 1001,
+        "outputTokens": 522,
+        "totalTokens": 2419,
+        "knownReasoningOutputTokens": 504,
+        "finishReasons": [
+          "stop"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0038953",
+        "capturePath": "/tmp/zhuwei-vnext-round53-private/02.json",
+        "captureSha256": "6aaf1c29afe7fd7bcacbc1c6e1315ec79ec8f0812c0688ae6448eaa7df6cbbc9"
+      },
+      {
+        "ordinal": 3,
+        "stage": "narrationReview",
+        "createdAtBeijing": "2026-09-07T01:30:55+08:00",
+        "priceWindow": "offPeak",
+        "model": "deepseek-v4-flash",
+        "inputTokens": 2916,
+        "cacheHitTokens": 1024,
+        "cacheMissTokens": 1892,
+        "outputTokens": 176,
+        "totalTokens": 3092,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0036812",
+        "capturePath": "/tmp/zhuwei-vnext-round53-private/03.json",
+        "captureSha256": "3415708d9d86791918b27375cafcf3dc39e1893963b4d0043175c8f91b88386c"
+      },
+      {
+        "ordinal": 4,
+        "stage": "proposalOffer",
+        "createdAtBeijing": "2026-09-07T01:31:33+08:00",
+        "priceWindow": "offPeak",
+        "model": "deepseek-v4-flash",
+        "inputTokens": 33030,
+        "cacheHitTokens": 11520,
+        "cacheMissTokens": 21510,
+        "outputTokens": 659,
+        "totalTokens": 33689,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0358065",
+        "capturePath": "/tmp/zhuwei-vnext-round53-private/04.json",
+        "captureSha256": "da437e9674fe3ea2ba36cbca853fe6540f79ef461a5d3de5fe17b5d61f0f12ea"
+      },
+      {
+        "ordinal": 5,
+        "stage": "initialNarration",
+        "createdAtBeijing": "2026-09-07T01:31:38+08:00",
+        "priceWindow": "offPeak",
+        "model": "deepseek-v4-flash",
+        "inputTokens": 1799,
+        "cacheHitTokens": 896,
+        "cacheMissTokens": 903,
+        "outputTokens": 81,
+        "totalTokens": 1880,
+        "knownReasoningOutputTokens": 62,
+        "finishReasons": [
+          "stop"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0017638",
+        "capturePath": "/tmp/zhuwei-vnext-round53-private/05.json",
+        "captureSha256": "6cafe335bcf6e50a80e95f5f842348dac99eb6a90b574e041cf60d6a3e51c9cd"
+      },
+      {
+        "ordinal": 6,
+        "stage": "narrationReview",
+        "createdAtBeijing": "2026-09-07T01:31:40+08:00",
+        "priceWindow": "offPeak",
+        "model": "deepseek-v4-flash",
+        "inputTokens": 2790,
+        "cacheHitTokens": 1024,
+        "cacheMissTokens": 1766,
+        "outputTokens": 169,
+        "totalTokens": 2959,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0034607",
+        "capturePath": "/tmp/zhuwei-vnext-round53-private/06.json",
+        "captureSha256": "5467195b1f4a91a7fbc818824e22219d6b29994a5052aa6e0b5e0a0294220afb"
+      },
+      {
+        "ordinal": 7,
+        "stage": "proposalSchemaRequest",
+        "createdAtBeijing": "2026-09-07T01:32:26+08:00",
+        "priceWindow": "offPeak",
+        "model": "deepseek-v4-flash",
+        "inputTokens": 33476,
+        "cacheHitTokens": 11520,
+        "cacheMissTokens": 21956,
+        "outputTokens": 152,
+        "totalTokens": 33628,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.034194",
+        "capturePath": "/tmp/zhuwei-vnext-round53-private/07.json",
+        "captureSha256": "88177cc743623af0f3b0da41d13640d177f1f0a7c0607dc5d63571358f7c38f7"
+      },
+      {
+        "ordinal": 8,
+        "stage": "expandedProposal",
+        "createdAtBeijing": "2026-09-07T01:32:28+08:00",
+        "priceWindow": "offPeak",
+        "model": "deepseek-v4-flash",
+        "inputTokens": 40674,
+        "cacheHitTokens": 0,
+        "cacheMissTokens": 40674,
+        "outputTokens": 1695,
+        "totalTokens": 42369,
+        "knownReasoningOutputTokens": null,
+        "finishReasons": [
+          "tool_calls"
+        ],
+        "ratesCnyPerMillion": {
+          "hit": "0.05",
+          "miss": "1.5",
+          "output": "4.5"
+        },
+        "computedCny": "0.0686385",
+        "capturePath": "/tmp/zhuwei-vnext-round53-private/08.json",
+        "captureSha256": "0e4fe4e5d476282f0a3e235707bce3f27ab349472e78d03f4bc9ebcc150ccffa"
+      }
+    ],
+    "totals": {
+      "inputTokens": 144484,
+      "cacheHitTokens": 32640,
+      "cacheMissTokens": 111844,
+      "outputTokens": 3919,
+      "totalTokens": 148403,
+      "capturedCalls": 8,
+      "computedCny": "0.1870335",
+      "telemetryMatches": true,
+      "itemizedReasoningOutputTokens": 566
+    },
+    "pricing": {
+      "sourceUrl": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+      "localSourcePath": "/tmp/zhuwei-round52-pricing.html",
+      "localSourceSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+      "sourceSelection": "same-session official tariff saved for round52; closeout made no pricing HTTP call",
+      "peakDefinition": "Asia/Shanghai Monday-Friday 09:00-12:00 and 14:00-18:00; all other times off-peak",
+      "calculationStatus": "exact decimal arithmetic from captured usage and saved tariff, not provider-billing reconciliation"
+    },
+    "knownRange": "Eight captured responses, all usage counters present and per-call matching telemetry. Completion totals include reasoning; only calls2/5 itemize 504/62 reasoning tokens."
+  },
+  "remainingGaps": [
+    "Third construction/manual test did not parse, commit, or publish.",
+    "No actual narrow-correction invocation; schema retrieval is not correction.",
+    "Two successful actions and duplicate submissions do not establish improved model repair success rate.",
+    "Offline replay and duplicates do not establish DO-eviction/recovery HTTP behavior.",
+    "Invalid prose cannot prove a reusable assembly or automatic alarm capability."
+  ],
+  "inputHashes": [
+    {
+      "path": "/tmp/zhuwei-vnext-round53-replay-input.json",
+      "sha256": "efd794d2ccb65d1132c986bed08dc6515ccfd5d0074410fbb734efccde53c17e"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-mechanical-evidence.json",
+      "sha256": "61c57324636428bbe294ac0b623daafcdb51b4a4a7b35e86484d9d19c13fc393"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-journal.json",
+      "sha256": "f5ede8a8a09a28a1435285486d8c2229d5943c93da31f701bfa1ace1c227f7c0"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-prepared.json",
+      "sha256": "0d6447e55ed7d26c15b7314a80f7abdaf1e82e9132943f7694a7e13d762b8e46"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-source-manifest.json",
+      "sha256": "e5c6ab08a5edbdd3abe7264ecd5f5b3b4cd47ccdbbe98f4052feb36baf18f4a3"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-extract.py",
+      "sha256": "8d75f906de4177303949d92517ddaf4bcf06b008b25c132b102b25705d6870f8"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-meter.json",
+      "sha256": "209e0bd28490badc015ef60b59f51eb7facd697a10d2bd5381c49378307bbc41"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-action1.json",
+      "sha256": "8784fe63f1abe611841de24094435af9f84856d630f412206a4a964ac04ccba6"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-action2.json",
+      "sha256": "24dad9f694e98a4efd0be513b87abbb231bbbbbaad2a09a7be92858b80a8dffe"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-action3.json",
+      "sha256": "aaa53495c1507173b845043250124358ebf9415607f1c5dabcb32bcbdc1cab83"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-duplicate1.json",
+      "sha256": "40b5fd1369199dda48a80e98a66dd5857f8f8b107e8130975cdbf5340841180b"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-duplicate2.json",
+      "sha256": "a0dba9def109f949593122c4ab7931194b0ad3bddd8885628ed2ce6be3808c22"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-initial-summary.json",
+      "sha256": "37eb02bd056db0c84c97ed107b4ea2fad3cd3e24cfc19b98476e7296e74b6c45"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-after1-summary.json",
+      "sha256": "6519fdeca53018e3e0ca20629f0ce2280a53a887319c1a1dbc31da973d85d912"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-after2-summary.json",
+      "sha256": "383d4895b76fa4caf56b92dd874d9e0e153db587b02c32bafcd83714008ed140"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-after3-summary.json",
+      "sha256": "8418fa3cb5827540fa8a3016116b87d2e2f8e0e409649e9088584ac959cb3262"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-server.log",
+      "sha256": "efc02338afb76a9326fac76cf2a16abb249bcf4a282ee9a14f4ed934a94d494a"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-private/01.json",
+      "sha256": "1b87005e0f04035a911f5a7d0e75496ea875398c332107e81b7c01f47e57cc9d"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-private/02.json",
+      "sha256": "6aaf1c29afe7fd7bcacbc1c6e1315ec79ec8f0812c0688ae6448eaa7df6cbbc9"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-private/03.json",
+      "sha256": "3415708d9d86791918b27375cafcf3dc39e1893963b4d0043175c8f91b88386c"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-private/04.json",
+      "sha256": "da437e9674fe3ea2ba36cbca853fe6540f79ef461a5d3de5fe17b5d61f0f12ea"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-private/05.json",
+      "sha256": "6cafe335bcf6e50a80e95f5f842348dac99eb6a90b574e041cf60d6a3e51c9cd"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-private/06.json",
+      "sha256": "5467195b1f4a91a7fbc818824e22219d6b29994a5052aa6e0b5e0a0294220afb"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-private/07.json",
+      "sha256": "88177cc743623af0f3b0da41d13640d177f1f0a7c0607dc5d63571358f7c38f7"
+    },
+    {
+      "path": "/tmp/zhuwei-vnext-round53-private/08.json",
+      "sha256": "0e4fe4e5d476282f0a3e235707bce3f27ab349472e78d03f4bc9ebcc150ccffa"
+    },
+    {
+      "path": "/tmp/zhuwei-round52-pricing.html",
+      "sha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5"
+    },
+    {
+      "path": "/tmp/zhuwei-round53-json-diagnostic.json",
+      "sha256": "1223fe4bd36d1534a02105db3a04c30b59ea813f83fc2d9caa1ec9ac365fef9a"
+    }
+  ]
+}

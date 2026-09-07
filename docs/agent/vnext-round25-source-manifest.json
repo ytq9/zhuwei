@@ -1,0 +1,1171 @@
+{
+  "schema": "zhuwei.source-file-manifest/v1",
+  "purpose": "round25 current observe classification and narration then complex schema retrieval via local authenticated HTTP",
+  "branch": "cloudflare",
+  "head": "258caee404e0814405eb497653ee9f00d647b773",
+  "createdAt": "2026-09-05T23:28:47.583234+00:00",
+  "selection": "all tracked or untracked nonignored app/worker/cloudflare/db/drizzle/tools plus package/wrangler/vite/tsconfig files",
+  "files": [
+    {
+      "path": "app/_lib/auth.server.ts",
+      "sha256": "de2eefa38d421d5f255264226bb72f2dd26075cf9f92cdcd0699bc93904ed651"
+    },
+    {
+      "path": "app/_runtime/components/character-wizard.tsx",
+      "sha256": "5424ae8c31fd871141e2f39a7d11973832803c7f8bf10aa9f8cc8bb7d3a0bceb"
+    },
+    {
+      "path": "app/_runtime/components/inventory-panel.tsx",
+      "sha256": "7d4df378dec4216e4c1d7f4b3a9035efdf577b3cb56b025fdd148cae4e7b4e76"
+    },
+    {
+      "path": "app/_runtime/components/play-table.tsx",
+      "sha256": "dd2c29c38c7396e8bcc6004a15a444139ed1cb523edbec95aee3f6cac0a82b43"
+    },
+    {
+      "path": "app/_runtime/components/tactical-map.tsx",
+      "sha256": "b9991f523e1a53e03a48012c7ed8e6922df634a93e9d81385d9bbce39d0c51cc"
+    },
+    {
+      "path": "app/_runtime/components/ui/button.tsx",
+      "sha256": "4c18b9e3676e5df089ce722b795ebf33e34bd21d5cdf441674f4f9755bcbd79d"
+    },
+    {
+      "path": "app/_runtime/components/ui/input.tsx",
+      "sha256": "33d15e661f6e9545024d2111752f78689add8afbac6ece3675c4e17a48e50326"
+    },
+    {
+      "path": "app/_runtime/lib/db.ts",
+      "sha256": "0139b57785a909f160eec46a46a18ba118c12026dd9a27c000796edf9c85af88"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/boosts.ts",
+      "sha256": "f0a701e6c8682b53d34d7b4a6e6bc71963833bcd31f09753672c4517b77df927"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/catalog.ts",
+      "sha256": "8b9eb617dc284e985a8c036aa9d168d4b73c371c140cddef88af5b6be7a7a001"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/class-resources.ts",
+      "sha256": "63c706d8c63917123c60265bb9472f2ea00c82f2638d24461449f18fe2e64292"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/compute.ts",
+      "sha256": "55a843abe678b42465b7b2b9a67ef5147710d734b8252d667f3c01789962bd83"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/gear.ts",
+      "sha256": "9e3d7356604a2052aeaf0293b066a8575ad7f12594d44bb95becec8594e89d1e"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/resources.ts",
+      "sha256": "0f8e03a825f0f1cc7defbe50edd30e165193df9b7ab8b478b16fa8b10c0961b2"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/spell-card.ts",
+      "sha256": "aebecab7258077ec4796ec8b3270bcd0ff324f9ea664634c9004f5315ec4e948"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/types.ts",
+      "sha256": "45dd9f8e4abcb2df96ae9638114a46c04403176c593aa103b1957ef25057d1c0"
+    },
+    {
+      "path": "app/_runtime/lib/dnd/world-items.ts",
+      "sha256": "2b54d29b67c40e16a13dd8092fcf88c620fc75afff155bac1209da06ffa72aa3"
+    },
+    {
+      "path": "app/_runtime/lib/kp/action-ruling.ts",
+      "sha256": "8ccb70cd25bba7277d8fedcd8dded35725284bc0af6bf3fbf75615bcda4230b4"
+    },
+    {
+      "path": "app/_runtime/lib/kp/actor-plan-policy.ts",
+      "sha256": "588e810d5aa965754ce989bad61545319c9546c8a681b974cc1d5c7bb614ada8"
+    },
+    {
+      "path": "app/_runtime/lib/kp/authoritative-helpers.ts",
+      "sha256": "72392d0ff2a801223b64cb15df95ff4a0c06a78be97227a3f6422d73db74d477"
+    },
+    {
+      "path": "app/_runtime/lib/kp/authoritative-policy.ts",
+      "sha256": "2199983dff53a3899122b4e1b54f450c608e397ba8fd174a54c9472869fd48c3"
+    },
+    {
+      "path": "app/_runtime/lib/kp/authoritative-types.ts",
+      "sha256": "7cb6f4c6037f3ebe542ae6f8d9499c2e8c6b859ac24182be0c78269cb3ae50ab"
+    },
+    {
+      "path": "app/_runtime/lib/kp/authoritative.ts",
+      "sha256": "2511469dedc7175a98c683f6f5086570da977824762f9b59b8dfabf6ba4db42d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/busy.ts",
+      "sha256": "99f2e46dcfbc43fe73ebc492148c5f69ba67863b75a19f5362cc4baa281562f4"
+    },
+    {
+      "path": "app/_runtime/lib/kp/causal-action-program.ts",
+      "sha256": "fb7678a9fc922827ea0637d8abc9ad7981918ce9e8eacd29dd78ca22e66eb129"
+    },
+    {
+      "path": "app/_runtime/lib/kp/clock.ts",
+      "sha256": "85a911284ffa0abbb3100fa0baf8df76a69f4db58441507d3bcad60c481b654a"
+    },
+    {
+      "path": "app/_runtime/lib/kp/clue-state.ts",
+      "sha256": "c53311b59bccef0325e26fda50359bad9e7eec265668585e0d94c89fa15c651b"
+    },
+    {
+      "path": "app/_runtime/lib/kp/combat.ts",
+      "sha256": "1dd9cbf2c29e9333acbcb5c7bb1d453973f3ec09e3b99bc13f9b6399b9d732a6"
+    },
+    {
+      "path": "app/_runtime/lib/kp/compound-composition.ts",
+      "sha256": "2f29000b012e0a99b30d97e188d801264d3015c0a47926cef3aff58ea7879764"
+    },
+    {
+      "path": "app/_runtime/lib/kp/context-pack.ts",
+      "sha256": "9829efc97390af7046f72358a2aa5053f57ab7bd538aa140e77d6f901c31f52a"
+    },
+    {
+      "path": "app/_runtime/lib/kp/context-planner-policy.ts",
+      "sha256": "6657b73667de4f95313da229946f9de1febc961c424883b3b25ffe71d8c6091d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/deepseek-strict-schema-compaction.ts",
+      "sha256": "17bf39d596fd2010f7bd76758d43bb14bcd3de8713a8b6ffd67aa2ef15ec088d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/deepseek-strict-tool.ts",
+      "sha256": "d90482e7e204acc77879de8c31793265f7f8f03c5daf54e1baa65a7ab87f2dd2"
+    },
+    {
+      "path": "app/_runtime/lib/kp/deepseek.ts",
+      "sha256": "4e609e6aa7a8e50788e85d62f5d94be798558c054c57fb045d6510d0f687c9a8"
+    },
+    {
+      "path": "app/_runtime/lib/kp/diagnostic-telemetry.ts",
+      "sha256": "b01c0f0f5d3e74a50b2ffc0c2305bebe6f9f1ed16273c73f591ca9e2908f6ffb"
+    },
+    {
+      "path": "app/_runtime/lib/kp/form-catalog.ts",
+      "sha256": "8c0b73848dfc9e6c083859230523f4449ce0d3f2b37283e37eae70a285a7d550"
+    },
+    {
+      "path": "app/_runtime/lib/kp/form-strict-tool.ts",
+      "sha256": "9059d55fd1c54dc495314a1fdb6cf207b6db771e0952b156c2e7f55989ff2fcf"
+    },
+    {
+      "path": "app/_runtime/lib/kp/model-registry.ts",
+      "sha256": "4c5a99d07167600515c9ae11f06a1f8d430f7e9af6fc2085b87fbd30768b598a"
+    },
+    {
+      "path": "app/_runtime/lib/kp/models.ts",
+      "sha256": "88426621f2488cbf9d267b3104698bbf96e881091f37f135729ee750d29c32ce"
+    },
+    {
+      "path": "app/_runtime/lib/kp/narration-context.ts",
+      "sha256": "91c4d29d416f50509042c264ca937b75bc57823c79f1533c6ec4e4d011f8f16e"
+    },
+    {
+      "path": "app/_runtime/lib/kp/narration-v3.ts",
+      "sha256": "e6b296bb265de684bd6fbe0a8ebfa5439fe5d32cc977711a1212fcf4a6d96cbe"
+    },
+    {
+      "path": "app/_runtime/lib/kp/narration-vnext.ts",
+      "sha256": "0510bf2663db4c5d95f65a3b82678b977d3c1e35dcf8178eab59d845156ac5b1"
+    },
+    {
+      "path": "app/_runtime/lib/kp/pending-decision-policy.ts",
+      "sha256": "4a71e51b0e68e5b706c718913449bb7a11c3b535ad6aa1cc4520bcc2fbc205cf"
+    },
+    {
+      "path": "app/_runtime/lib/kp/private-form-policy.ts",
+      "sha256": "a6e6ee68c6722e7d099148152ea5edd5f42a061751ac0c124587709a22615901"
+    },
+    {
+      "path": "app/_runtime/lib/kp/prompt.ts",
+      "sha256": "9f76743b4d21ec238f172915ed9cc305952da2f8ba5d938666f6983a15e1c8ac"
+    },
+    {
+      "path": "app/_runtime/lib/kp/provider.ts",
+      "sha256": "96912b4c42bb5c89351ee4173609eda494b7cf6d717fa03e45fcee082b96e705"
+    },
+    {
+      "path": "app/_runtime/lib/kp/sanitize.ts",
+      "sha256": "1f7b576177bfe5c9f43033729216ff5ee2b04e5e4b462583842a1369d37e0ff2"
+    },
+    {
+      "path": "app/_runtime/lib/kp/squad.ts",
+      "sha256": "0cfb5cdac63697a168a8fc1c491239ff0a6b6f4f5ae08a16c723c09790da6e89"
+    },
+    {
+      "path": "app/_runtime/lib/kp/stance.ts",
+      "sha256": "7d44e30bddcbd82771ecc4c1ab6bcc07dfc632dfad46bb0d4478868b966a69bc"
+    },
+    {
+      "path": "app/_runtime/lib/kp/static-corpus.ts",
+      "sha256": "aff46b9f4f89b4a7758ca280d0831b07b04cadfdfe5eee3d06f91be3f2d52184"
+    },
+    {
+      "path": "app/_runtime/lib/kp/static-retrieval.ts",
+      "sha256": "11517f33b01cdd5db61211ea9aa64653f7d93fc70c23c4f8f5e942656c3c34db"
+    },
+    {
+      "path": "app/_runtime/lib/kp/v3-context-runtime.ts",
+      "sha256": "8ffa0b20978c4a7eb228f5361ab403ad6e9fd736d9d4391eb3d75d92d5bbcc8f"
+    },
+    {
+      "path": "app/_runtime/lib/kp/v3-production-context.ts",
+      "sha256": "185c7b81de9b1f05a1b9cb50e4bc723c3afabf92ec17b565e3b2590786756f49"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/adapter.ts",
+      "sha256": "3458d887691eeb447576c70cc0f4cb21f5dbce7d14cb5a5ab69824d2cd3281d2"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/authored-proposal-contract.ts",
+      "sha256": "5027d309c22896e8d640a3c6d27da19f9aa20d41a508de158a96de54840ff163"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/canonical-json.ts",
+      "sha256": "d2eace83eab4fc86e1efbc094c87f7d496b204397776bbc454dc648497d2d041"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/ambiguity.ts",
+      "sha256": "6a01484211508d047a533b497ad9da634d064f72ef406a767dc88a6fa1ceaabf"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/authority-records.ts",
+      "sha256": "c61ff8f409abe7a4a47b58c35a4510b9651a57447c3801d7d280419b173cf820"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/availability.ts",
+      "sha256": "b81e1390eedf26a8f215035ad52ae07d22431f99e9fcde050c09b7c89d07726f"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/candidate-discovery.ts",
+      "sha256": "6757561125437f73cf8124fc39a3a4481fc35f790160ff03b503b5bf2a932edc"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/coverage.ts",
+      "sha256": "85303649fb1c5d9a47a791e528072195475d043e8caf8d52dbe56ce5c3a0b739"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/extractors.ts",
+      "sha256": "9583c5fcc666a9af4f1bf6eeee1babd89316f6f2a9bd90eaa8fa34f625a0143f"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/index.ts",
+      "sha256": "154cdad5698310ca9e4847d3715edd750e2d3eace5dad8357d0751b73aaa390e"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/narrative-continuity.ts",
+      "sha256": "9940b7251360c30099d9e7b382216d136aaf5f138d4b9856bb2a064e74960e26"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/obligation-closure.ts",
+      "sha256": "09631c1b89bd9dede1a4ff96739f148fdaa349fcf7e6a788d4d057312f7dfc96"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/precedent-applicability.ts",
+      "sha256": "5951d842bae44758b74066d5c2f98500332d09dfbf9e22cad83ee7a6ad309033"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/reference-index.ts",
+      "sha256": "8aafefac0f44b282e014e7f2964215946b3d33f3b74766e1f50be82fde4b4baa"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/runtime-requirements.ts",
+      "sha256": "a0e640f3f99893a03babcab5f82360af3e48e2f8c32626637ed04bc30f252bfd"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/context/work-budget.ts",
+      "sha256": "e40ba8cce84de1aa40ec6679226c40760e0f1e131e7a08e0aa287388f8b63827"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/index.ts",
+      "sha256": "28ecacb13a6b5ed30cfef68b9e6a60a2f88516039325d8ebe09ca6e1af4f0c6a"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/invocation/assemble.ts",
+      "sha256": "4fd0896cf330aefab70c3b4e2f04d6685366ef6da1ce5a70564d80e14b1f72f7"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/invocation/budget.ts",
+      "sha256": "419715f0713f1fd89c15451da37bd34fdd797dca42fcad0ce6cebeeab147ad89"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/materialization-authority.ts",
+      "sha256": "ed85bd5a933a7d1294f5f0cd0a44ed44441f3023c9d8f2c0ace3e1ce1974006b"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/narration.ts",
+      "sha256": "e9e0c0bf9f2cd22babae25070d76f363e86b453021783b40159a6ba940616eae"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts",
+      "sha256": "40d34938e27e5c1b76a3bf42c1a150326ae9b3b8dc854f23f0f7d5d71d6ae944"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-bundle.ts",
+      "sha256": "d807520ca04852700edfb5b95c06b4be6ad855dd69ee4f0c33116fee366b5de0"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-capabilities.ts",
+      "sha256": "682d24125e12c0ee27cd3d6a93e235e58eb5b6f774446ce81845263fa998b335"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-context.ts",
+      "sha256": "d267d7eb62c31575d0852592ac8f8b0c96c367db22c4613e9424d423fcc84ff3"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-correction.ts",
+      "sha256": "4d4385abdddfd8944b54b04b554b82e54f93535942b6d1bfd7967c0317b45340"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-graph.ts",
+      "sha256": "061f9011a2b8726312a7881949f7a149d0e366e8978efce9062a69b39401dcd2"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-guidance.ts",
+      "sha256": "a9029000cbcc0df97643abffad4bb28b1d2a08239eb4a3fd2c3323df9c096288"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-provider.ts",
+      "sha256": "6d2feeaf33a8e9553877a26e72a3ca713bd523f1b9284a5f2d9d2ae6f9a3ea03"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-schema.ts",
+      "sha256": "6384a88506eebed00a77e5fd08896fee2ca96f47c4238e6d2fd8c8839e093348"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposal-validator.ts",
+      "sha256": "bff35090fcef5f49a7cc2f261b3f28444604725a587528e5f4aadddf539c928c"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/proposals.ts",
+      "sha256": "c851d72b8de5510f2d277c678939c2331e7bc9851738749ddf8df2fb6fd2031b"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/required-context-runtime.ts",
+      "sha256": "edb1b91801d9cd114320569effe700c6080f814ec213b420aa1759d3c4fe9816"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/required-context.ts",
+      "sha256": "0f4ca2703e6bf225e2c88e41b5c1d1e935b9c617dc2ec2bdaaab6afd240b353d"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/room-bridge.ts",
+      "sha256": "7131b78ba0ba7ef2825541ea904177d12390e165b548a55c7ca999570acfe53a"
+    },
+    {
+      "path": "app/_runtime/lib/kp/vnext/runtime-policy.ts",
+      "sha256": "34801f3d5fe26d8181913e3d4d938fb7a7298335a2e2aba3ca939823933310f5"
+    },
+    {
+      "path": "app/_runtime/lib/kp/where.ts",
+      "sha256": "800cda358cc8b2a8f86a4cb5b32f43c65fdf17c198fb0d1eaba3186808a5dffe"
+    },
+    {
+      "path": "app/_runtime/lib/module/authoritative.ts",
+      "sha256": "2e9e864e820ba57ddd247fa8dae8e4f3c815493c2a41e0126559898b92a92686"
+    },
+    {
+      "path": "app/_runtime/lib/module/black-oak-will-social.ts",
+      "sha256": "ad6287f05e25f43edc219e71e68edb211446685039ba3343b854bf2c915ad37c"
+    },
+    {
+      "path": "app/_runtime/lib/module/black-oak-will-tactical.ts",
+      "sha256": "fe8aeb8f8af2b49d64311b4604359af46236d39e88cc1560545a06466220152f"
+    },
+    {
+      "path": "app/_runtime/lib/module/black-oak-will.ts",
+      "sha256": "32655d143f226cef60672ffa0354ec2ed3b5bda3d9a277a263a878c89a1b3d2c"
+    },
+    {
+      "path": "app/_runtime/lib/module/index.ts",
+      "sha256": "bb074a5e76832ab9daaa18efed7c66f75d1be65133b861dcb4dd63de8f363343"
+    },
+    {
+      "path": "app/_runtime/lib/module/registry.ts",
+      "sha256": "610671a43dbea37d2c28056898527cf31be9e9a007a6a96394fe77faeec37985"
+    },
+    {
+      "path": "app/_runtime/lib/module/schema.ts",
+      "sha256": "d3fd3ce6acaa00f2b4b1ab76001ef0d9dbdd33ae918d75e481bc954be2d0801a"
+    },
+    {
+      "path": "app/_runtime/lib/module/writing.ts",
+      "sha256": "5d1d0936e171b0399df764dcb17fcd9802bb8b254c818f6464a0c43eba1bef8a"
+    },
+    {
+      "path": "app/_runtime/lib/platform/server-fn.ts",
+      "sha256": "72dceaaefd1710d29118e969561052f34b321e9a9fa6c327c58eedc767d92003"
+    },
+    {
+      "path": "app/_runtime/lib/room/action.ts",
+      "sha256": "61e84c5d53734631f0a094a394e5b1fd47bb4fd3419beeba67935d5b1a602f87"
+    },
+    {
+      "path": "app/_runtime/lib/room/archive.ts",
+      "sha256": "de4bfdd172144db8bb9dec37c9746717c2c7510e34375536075f079c0bec206f"
+    },
+    {
+      "path": "app/_runtime/lib/room/authority-store.ts",
+      "sha256": "0bd5b3f5b2691836adb9785b0094fbfb2621329829643dc1cd9b7552abc92e4b"
+    },
+    {
+      "path": "app/_runtime/lib/room/authority-telemetry.ts",
+      "sha256": "28cb4a5cc44cfa5bfd15f5b59bd49c793290063ca8ba4be698623e46f773ae39"
+    },
+    {
+      "path": "app/_runtime/lib/room/authority-types.ts",
+      "sha256": "503ceb2e28eb7b6c37adc43368b8d1b5d660ec1532f3bea2fe16d1bb96b8ea67"
+    },
+    {
+      "path": "app/_runtime/lib/room/durable-object.ts",
+      "sha256": "e7be95848eea89edc464df16053165cb44f4e9389121d5b081112c97193cacae"
+    },
+    {
+      "path": "app/_runtime/lib/room/environment-proposal-lowering.ts",
+      "sha256": "9c65b5984723c650631f4c6a9bbda3fb2fa7f579d729df76cdaf879fda04eef2"
+    },
+    {
+      "path": "app/_runtime/lib/room/narration-context.ts",
+      "sha256": "373229af2dc3735b2a62de7b589e567163dc925ada92d8d7b7f049c6343ce92e"
+    },
+    {
+      "path": "app/_runtime/lib/room/pending-bindings.ts",
+      "sha256": "f8d675f0e3169b87e6137795f27f86077d70b53f1cfaa6787154a721f23d21cb"
+    },
+    {
+      "path": "app/_runtime/lib/room/proposal-adapter.ts",
+      "sha256": "fd36742a884cd4ec78e9a5a429e82defc69113d3caf46abfd53664292d3df166"
+    },
+    {
+      "path": "app/_runtime/lib/room/runtime-configuration.ts",
+      "sha256": "30353df7f74dac440391ea9f5db67a4bff5490d53fc8a5f60c7b98e778a5772a"
+    },
+    {
+      "path": "app/_runtime/lib/room/server.ts",
+      "sha256": "058cb3f64eddb741e1a4bf5118c18ac636f8c7189b673fb7b39cf067d5bea36d"
+    },
+    {
+      "path": "app/_runtime/lib/room/telemetry.ts",
+      "sha256": "584ef0adab590c47c944b566d1592fca3364a6be8e25b5b8064f948f4ef77bfc"
+    },
+    {
+      "path": "app/_runtime/lib/room/v3-binding.ts",
+      "sha256": "67d0deb2c6059c4917c5af20c9cfa2ecf3729a23daaaacc01d7800115ef0b151"
+    },
+    {
+      "path": "app/_runtime/lib/room/vnext-adjudication-bridge.ts",
+      "sha256": "0f1724b1ffc2a028c9f74b9dbdf00c52ad5e77bd17834f7facf70dcb818e06a8"
+    },
+    {
+      "path": "app/_runtime/lib/room/vnext-proposal-invocation.ts",
+      "sha256": "96df99e6740a7e91db2fc4d178d7bbf030d1c8f88585f43d820a09babb3ed837"
+    },
+    {
+      "path": "app/_runtime/lib/rules/authority-read.ts",
+      "sha256": "3ed5e7e0dd74c0c6fa7cc5b1e6296efb29d3de8587e89167aa06609ee4388fea"
+    },
+    {
+      "path": "app/_runtime/lib/rules/compiler.ts",
+      "sha256": "4fe6ff5cf42f5feefcbd5b892aa7411b2b17329a25e46d9d7d116bada1f6217e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/index.ts",
+      "sha256": "0e99e68b5fc8c06fba6c2b548a92ea0c94fe8d9a48b9f2585239c08a52e17e95"
+    },
+    {
+      "path": "app/_runtime/lib/rules/model.ts",
+      "sha256": "90b3d7dcf277eaa6b29ffad43c6fb55738b4a221c9834c9201e56e5825b8023a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/ability-compiler.ts",
+      "sha256": "5047c86d37ea36761ab9d4c0b4f1257061eca44122fee7bba82c5b48990905f0"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/attack-resolution.ts",
+      "sha256": "7953de947120cf03f6b695ee38b6dcf0145ccca3b6a982f017388428700a2ef3"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/canonical.ts",
+      "sha256": "d13b6df066e799dd5846110157c0f96b0b9f2e7c8c1eaadbe870c95bcf81241d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/causal-action-interpreter.ts",
+      "sha256": "0cd7b8a0cdb39165e74adc587a51b5db23d690287695227a9a3ccc15bdd54ba8"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/character-proficiency.ts",
+      "sha256": "61308483543a32731d40aa2dd5394bda45ab13e1086e9b1b969ab0ebdd4f6193"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/combat-geometry.ts",
+      "sha256": "dd3aeb2553e1a779d0adbbe3396f2b61d4ff8972a7f2ed42b7af07c932df2dd3"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/environment-definition-builder.ts",
+      "sha256": "6753f8a7bda99acc9bafdc4e94230263ddb1ecd88cc358923538dfa5dcba122d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/environment-form-lowering.ts",
+      "sha256": "3d114de89db77600e895459508c3deb556e0eec912a9feba1d379ca9e4b66926"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/environment.ts",
+      "sha256": "870e41d3d37624518b8758e22d33cc0bcd3e2e420704fd96221de1536e376586"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/fiction-time.ts",
+      "sha256": "3a2b186b85d791c36be4f51b675103fa6217b86cbe083a58327808c20ddb9d00"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/item-system.ts",
+      "sha256": "5bd5f39a3c9b8ce274201c35b18f24a0a0564a5e9e0ee80bb3108e109675d426"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/manifests.ts",
+      "sha256": "a2c71d7be83bbf7ec67f1fee641fd3ec1d2026fc32d98ca8c97f0d14637ea16b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/npc-mechanics.ts",
+      "sha256": "e607e89be5f1e5ce6fe59ae9fa2e4dc256c6c4558a78afef8c25c11f582fb44e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/registry.ts",
+      "sha256": "466ab6c68c755aa7d0827771fe180d5bea1a4cbec2261c65753a2b359d60b286"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/semantic-templates.ts",
+      "sha256": "79207d93d98d3372b001d3fa5de0c54cfe88bf2dbfcfd7d78e794aa0441fe432"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/social-resolution.ts",
+      "sha256": "72036bc1e97d5336a82bd7c53e648444e6e355fba7352ce611245c6943a59358"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/standard-gear.ts",
+      "sha256": "276c010061b0c4e924d7fa630f6de20862ca1b565f586235addd89dedbe0f19b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/tactical-geometry.ts",
+      "sha256": "2dd9f1201acd022d13c6c894583dc48879de55bcdd0f218c8d32d21c0e9ce546"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/trigger-ordering.ts",
+      "sha256": "4f58fc7fffb99aef38aae6755ce5ea6fbca986eab929a6d9c07f2dd3f5212900"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/types.ts",
+      "sha256": "b0bdc51e38516275ec1c6767e861a717845805db3a57f0cac0cfdd53e25ffdde"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/vnext-world-interaction.ts",
+      "sha256": "4418cbb4c76240a9f3b13621b852c20f876b7db394e6bb9fd5666cac8fbf4541"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/world-interaction-registry.ts",
+      "sha256": "684f9224290c65b6c7f6a6f4e35978e99cf2a7a0987ac2c7e6c684e9f924e569"
+    },
+    {
+      "path": "app/_runtime/lib/rules/ruleset.ts",
+      "sha256": "12d22648efa46406ca6e0a021c807ab1dd78d6a16470712ed5f079d6912968b7"
+    },
+    {
+      "path": "app/_runtime/lib/rules/spell-catalog.ts",
+      "sha256": "ef5237eb8b273541116b88c67b275dc54b012a652c5816671e2d04874f2dc58a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/spell-model.ts",
+      "sha256": "ff0023d0e5e24de986377e5a6225be08cb9c019e0dab9d9139a92bc41ba177a6"
+    },
+    {
+      "path": "app/_runtime/lib/rules/tactical-projection.ts",
+      "sha256": "cdaac3da3c62d4d827349fe1c298349d91eaa94f115ef08560f5d967862f4449"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2-runtime.ts",
+      "sha256": "43b8bcd143851d9198f986a714a73295275336f00e00725eb3fb748889b4f453"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/actions.ts",
+      "sha256": "2a8658725c6de94cfca8bfc1a64f8dc3bbfb0a22a69efa8787b9b4bc22aaa649"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/actor-plans.ts",
+      "sha256": "f3eeb9ca75d5fb0c2caf3592e92d50efb51c5f4dc6163bda86a75971c583bdb9"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/atomic-world-input.ts",
+      "sha256": "11405ff979672beadcfb71321b053bfe3bea078bd56be1c2d67f895c8a3b2b6e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/authored-materialization.ts",
+      "sha256": "5160d99b91e1c5077d4e4ad7b91a5538e875c9da36e7c4529a9243d66abd6001"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/authority-bindings.ts",
+      "sha256": "dfaf1e4d6fba9cfd16e5c344ac08c677ae906500e9a7bf4267ff2f22c030c688"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-actions.ts",
+      "sha256": "a81a92ffb0862cdbdc887a760d0da15d174e357122dc72602b806475c8d94c51"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-continuity.ts",
+      "sha256": "22d42556dd9634844c3dbc46aad40da9b530216efc4e732cea35dcdc74c14d47"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-events.ts",
+      "sha256": "d1e284657bc3a794f7b4c2ea224633d11a9349459c0d83b2062463eafb09a00f"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/causal-action-drafts.ts",
+      "sha256": "b5b85d704f3744ce5a7d21b715225a1037c28c0cf1c79536aa52644394e458ad"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/causal-actions.ts",
+      "sha256": "bd95c75fdb482376f75a1f378a3b6409e9024d63780dfe8438d943d1b771a3eb"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/causal-model.ts",
+      "sha256": "f8210c6cc33aeef1e55b50ec1db5441093efa7a18169023c455f5b7ae0fd6213"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/character-abilities.ts",
+      "sha256": "5995549a7bde442ad3eff8774c25a335631ae6059852d814796972beba4ab363"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/character-gear.ts",
+      "sha256": "89783fa14d14d088554c3c8e18875beb9bfa30f800b22ce0efebc432b21e888b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/character-inference.ts",
+      "sha256": "20bb9d986461bc5988960f049bce7b6aec91c25a8e9dfd618000057269913925"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/character-lifecycle.ts",
+      "sha256": "1b400d1b6be0402ec9dd2fbf2dece1464f6b0dd024f608d140ab8e68083baacf"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/character-progression.ts",
+      "sha256": "f92d0a2478607d1a0e9891c13b34383b351edee64f3c774a0e80fd72b95e02d4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/character-rest.ts",
+      "sha256": "528c254e4b5a59220e48ca38ad6b1965638b7a42cc5f5b1ee917f233a17df31c"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/claims.ts",
+      "sha256": "70c9f71bf1fdff917aeaa1da4f0968fcf070fa1f66bf3da789976de28664911d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-actions.ts",
+      "sha256": "5d67d489a99080cc2b4aeb78179de4b4e3a1c65868b80a2c7b4c8e4b6faa2a8d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-events.ts",
+      "sha256": "dbe6b49a051ce79a6be77b52f2c32cc1dac710b3b68e6f71334724e7b8b357a5"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-model.ts",
+      "sha256": "ea74a85662663bc0d902adf2bc169882d796221507f4bce3dc572a466fb59907"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/compound-actions.ts",
+      "sha256": "98e5662b3ead4d71287019941b8a8ccf18927cc64f691c66b091b57734276391"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/compound-model.ts",
+      "sha256": "28d763d6c82bd2e9320a146f2f7d1446cccb36139027ce9408274630c6a65151"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/condition-consequences.ts",
+      "sha256": "65fe2358fa254f9cb9cba34a67e24dc0f4c345d37bdc1a4013c64a65706b9a42"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/condition-mechanics.ts",
+      "sha256": "dfb5f70e1e5598ae1b1121de38f9b72c661864fe9806238449e3fe241b22b0c5"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/correction.ts",
+      "sha256": "ed48c44d5f3382f05b133f62214273afb10f0cd19950a341888449c084e3db20"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/damage.ts",
+      "sha256": "e9587b46f860e4ad5c586f2c6e3d628660ccad7a89a8bd61b37041f8bcbe332a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/due-activities.ts",
+      "sha256": "afda91d77cb907000e5707cc1c28efd9fd263ad710a03b6940c1e11c7df31844"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/effect-phase.ts",
+      "sha256": "1396136a0e38a8ca644249744e8b1bca4d8395035f175760622d9c1be72e09a1"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/environment-hazard-schema.ts",
+      "sha256": "5acaaa4bc5d417dcd8990f1331b84474e89c6bf8e6635e31080480cd52c13975"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/environment-hazards.ts",
+      "sha256": "1d2f5b2b39f7fb4604cf482d1683ad1ed6e8cca2b41463db5dde1220dd1234c7"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/environment-targeting.ts",
+      "sha256": "c6c4960daee260d5afd110462bde3b8a29c867a1c13a345d412d94bfe194f708"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/environment.ts",
+      "sha256": "3c0402334bb2462bf51135a4b4ab5592b900c16799fa3aef968b7deafcbda203"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/events.ts",
+      "sha256": "f99f501bec1570670ab36dd6cd6184f87622c6f1836cdd356acfc3d3c516fae9"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/hazard-lifecycle.ts",
+      "sha256": "71935d9bc6d6f82765fd5cb842dc14ec617e798e813d05b12f082c5d5bb5d916"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/internal-compound.ts",
+      "sha256": "94e9897e7066a7aa2ad1d95c89e3fb60a99d5ad7d40f12c5f32562b36cf9244a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/inventory-operations.ts",
+      "sha256": "bf88a3fbe7e6ce6e7cdc05a602f5349fbbd826fe2f81968a3787dcdff54266e0"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-authority-vnext.ts",
+      "sha256": "e70421956490d3c670fc1d158581f2d4d003a34f0f2c5283ef570a7efe19224f"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-projection.ts",
+      "sha256": "9fb5bf4f3c216190b9cef875fc57d06d76051dc9350cceb16baac7fdb4e1eaa4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-resources.ts",
+      "sha256": "4960f6d2f6f7e3986f7beb8bcf88ee51fff9a6044a9203c0083d7a9a092c269c"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/item-transitions.ts",
+      "sha256": "6feb501a0d967413b2091825b3eef5b2045dbed3663561ad553efd9cd441a757"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/items.ts",
+      "sha256": "7af69442d424a49ebd7cd88019a41c011d04e04cec72df4c2ca219f153b87564"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/knowledge-expression.ts",
+      "sha256": "3ba401cdc3c33a81b253cd0190806fd64924f5eb9797e7322f71775d2799f336"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/knowledge-identities.ts",
+      "sha256": "9f21ad625eb06ab1a6d9c1c44971037bf30c4ef651983aa112fe440e2e2efa9b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/knowledge-review.ts",
+      "sha256": "72c67cd9c3cc89d6b5f08cc80aafa1757701c702b61a004cc109e42e092c1d9e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/model.ts",
+      "sha256": "f7c64326f3ddc08f4900d00aee5ac60c8da4b61707893dd1397c93330a10892c"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/multiplayer-actions.ts",
+      "sha256": "54af6dbce48e44bf02c4297713f62dfebc2a61c0e8a60bf139e629d2ede2e386"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/multiplayer-events.ts",
+      "sha256": "179481cbd928ee451c32bc065a0e7728836ad5be9320c22d3f6520467211e227"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/multiplayer-model.ts",
+      "sha256": "70205ff6ef7bf63a0a980e1b536e15d792431a37cbbe13d5119b6118e46eeb6e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/narrative-commitments.ts",
+      "sha256": "7bc8da6345b324ada06a47745c066a4ad36c3d4f6662429e0e7020251710e207"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/npc-item-system.ts",
+      "sha256": "45f3901369a6970c53e98077746c7166fcce795114562c53bc9127d088c380e4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/npc-mechanics.ts",
+      "sha256": "e7a1b62822f2b995ad823ef86faa1628287c4669c39e687c7cd0052d975dd2cd"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/observer-delta.ts",
+      "sha256": "c84d7e3556209868fdb795397cef7e15c9497d60e3884ca201ace3ca517e850d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/player-item-system.ts",
+      "sha256": "210c0be3f95424ed8c519315320908d6e383f74249a8895cfe61d4739c3ac689"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/proficiency.ts",
+      "sha256": "f886f0b0285782a4cdb85b093e1e69f262d8373c135af6487610ce78d1d56dad"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/projector.ts",
+      "sha256": "67e6df17b2c5da9f019f7d97a96b5296b74cb789f1c48bf41ac97436c176020d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/public-expression.ts",
+      "sha256": "e33bc8fa16245d8acde9da1ae781a298d66edb9ef8c6560521f3c31acc035c3a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/results.ts",
+      "sha256": "47cdfe4f8cfd06fab22b5cb13923ff875dd29464ceab9fd4467ceb6fdea0f204"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/safety.ts",
+      "sha256": "0d589414c405c179d2a5b069c0fdaae66345e59c6697af79a20249d6753ee700"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/semantic-definitions.ts",
+      "sha256": "b06ac8e7673c72f951af660626c1214b9c80808c1f1540974a796559a783515c"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/social-actions.ts",
+      "sha256": "bd07c414efeffe5ea9e7c40f238f0b80bfb6c8a4896a2cbe683c781d79935ea4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/social-model.ts",
+      "sha256": "fcd5a364d36b2b9ae63042ef7d89bb7d1c90c666d4934e14f5bd28a84c9befef"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/spatial-spawn.ts",
+      "sha256": "f5febc55e879e9eaf36b5be45c3a5f4fa042437ed10a63eb21f3d838b932ba3f"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/spatial-visibility.ts",
+      "sha256": "11da2fa2310214a667ea8633cb3a7ed5154c8bdb59244be3120c0f2df00bf538"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/timeline.ts",
+      "sha256": "95ddb2bad7e79368bb09a33c4b5a3683b8998de79a3839733d321bd5720b0d4a"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/validation.ts",
+      "sha256": "f483d520754e5f9f455a74df4a47ce2c644409bc1d98164ce70f260214850f15"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-effects.ts",
+      "sha256": "6e5f62085d865dd98b3b491084b34014e38c82fafac2b6359693aa35ab552258"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-conditions.ts",
+      "sha256": "35dc68fc556b506e15bf02b82968c227e2e23e2c6fc456ee5ed5917822c1705d"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-hazards.ts",
+      "sha256": "1db70a098c103b5a435873725b9a0680c90b0155fe0a90e4b946a37f5bb72d0b"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-mechanics.ts",
+      "sha256": "0598e6bfcab5feef06ad8aa7d7a99dec5ddbc216238df6453ec8fa2339f9a4a8"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-model.ts",
+      "sha256": "cb1d2b3a370386680d71864f7c3674ebe323ce7dbc66ca40d1a503088e36c9f3"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-randomness.ts",
+      "sha256": "c992aaf9c825a70f08cfc23b348aa54d3fdab1f7d31635d6e6af063b3d33118e"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-targets.ts",
+      "sha256": "58c83daa0f80c245a40c5b3c64ec932a333f262854bd3d7416acf0235e444313"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interactions.ts",
+      "sha256": "22a00fb0dacab83df9104e70d496ae4c13bd6c200ae28f8f3725920969f07bf0"
+    },
+    {
+      "path": "app/_runtime/lib/table/authoritative-client.ts",
+      "sha256": "712d9211a40628918ee962f3535dbb19558cfc25e07a68b9f973314ec5346a8c"
+    },
+    {
+      "path": "app/_runtime/lib/table/authoritative-growth.ts",
+      "sha256": "0f89f85ef6068ee0c9dc862d65ff0f4b41d9b9ddb62ac1cb33936f7e121fd9ec"
+    },
+    {
+      "path": "app/_runtime/lib/table/authoritative.ts",
+      "sha256": "991ad74a7f735a35e626b8b227e24392449c23acf79e2917da431126af070c92"
+    },
+    {
+      "path": "app/_runtime/lib/table/client.ts",
+      "sha256": "8bd82cdb41f6257013cb62eae30e49e4d3d1dad13f1f1670051981865b42ccd5"
+    },
+    {
+      "path": "app/_runtime/lib/table/message-projection.ts",
+      "sha256": "a0e7b358e34c995e6f75e21739351d337a1964eb1432148149ad35e6349c2c4b"
+    },
+    {
+      "path": "app/_runtime/lib/table/server.ts",
+      "sha256": "7f5fba98bb434e230cdf7c1c38bf72eb71067b9f1347418cfc0bc0402da73041"
+    },
+    {
+      "path": "app/_runtime/lib/utils.ts",
+      "sha256": "0258450fa385716503ce96af40147b7d62b247816fcd4a6312bed0b4fa5936f7"
+    },
+    {
+      "path": "app/_runtime/lib/voice/client.ts",
+      "sha256": "f42ead999cdbd5bff9f88988398a3211020c69664e05ab045f7dcc689d633dbc"
+    },
+    {
+      "path": "app/_runtime/lib/voice/current-delivery.ts",
+      "sha256": "a0699b7cd0f5db828ffa4fa25e790a73f0b844fb0701556b02bdb16ebf069c11"
+    },
+    {
+      "path": "app/_runtime/lib/voice/server.ts",
+      "sha256": "8c4cd2fa778e91a1332c2e89a138691201000d3340a4ab169f9993d42e9a69e7"
+    },
+    {
+      "path": "app/api/_shared.ts",
+      "sha256": "55cbb85d1c6fa0707a1098ea5053825a81791c4308b980780bf432d8ce855837"
+    },
+    {
+      "path": "app/api/auth/_shared.ts",
+      "sha256": "6856728a98d8950de6f0d0c8654eddf7cfed9157637d9e1bbead33e2fa7d7477"
+    },
+    {
+      "path": "app/api/auth/login/route.ts",
+      "sha256": "480b7aa7c5a796c69890a7467b5a4e1bfea4a92b64fade47feefcbfc5b03f3cc"
+    },
+    {
+      "path": "app/api/auth/logout/route.ts",
+      "sha256": "87e4ac1b5d3af458d38c94276751f4329c87e95a69d5155d32be7e882e696bcb"
+    },
+    {
+      "path": "app/api/auth/register/route.ts",
+      "sha256": "cd0111be1dc4d5a0baef1a74d0fbd5ddb4b53108084dfac0354708a24a7f10bf"
+    },
+    {
+      "path": "app/api/auth/session/route.ts",
+      "sha256": "631cf3e3f4e286e3d93eafe9859f798e1ebaa97c1532713f3eb7dc86bd7ea714"
+    },
+    {
+      "path": "app/api/game/route.ts",
+      "sha256": "7f1f04e1ff59b2c4bca872a30af220fb2e570b431f68ce3f5b5db881e9f21739"
+    },
+    {
+      "path": "app/auth-panel.tsx",
+      "sha256": "734f781ab7b41a4a6838d71d21e6ff367ccc2d77399b351e4131824b667fab73"
+    },
+    {
+      "path": "app/chatgpt-auth.ts",
+      "sha256": "6fb63f8f61f6c9f7053fb8abe8ccdca96b1be52024a5e7904cf4f76d3c6bebe7"
+    },
+    {
+      "path": "app/globals.css",
+      "sha256": "61e0e6a442e057fe1414d6aeeeaa2b0082341787d926428309d2eb2a3b9ddcaa"
+    },
+    {
+      "path": "app/hall/hall-client.tsx",
+      "sha256": "df464df62b4094ac26f2308c535a81d7bca0fc9d5b2b84c2d626b281659de435"
+    },
+    {
+      "path": "app/hall/page.tsx",
+      "sha256": "48191e78716f08a1914834efbd92d22029c4619e32799dd3baa464d4f95fce98"
+    },
+    {
+      "path": "app/layout.tsx",
+      "sha256": "066f78864eb033629a508c9f34126141a76ce7ccb8e982d494be822cb4b858f2"
+    },
+    {
+      "path": "app/login/page.tsx",
+      "sha256": "1b471fdbc84cef8c47c60b115abcc7d7a9e8be47321b9dcf7519f7b937547712"
+    },
+    {
+      "path": "app/logout-button.tsx",
+      "sha256": "daeb93653015042f9f556b8495ed5496c928ae11a585e6ea43be040e8af0291a"
+    },
+    {
+      "path": "app/page.tsx",
+      "sha256": "006ef38e606303eb94653629fee3f9146f3695baf84385e6ac51459273bdb210"
+    },
+    {
+      "path": "app/providers.tsx",
+      "sha256": "f2b1bec1a14ca854e07247a4ba1fda4fb0ab7851171278c09dfbba7dd7eaa598"
+    },
+    {
+      "path": "app/register/page.tsx",
+      "sha256": "8fa6d30a7cdb5534d17dccf5ccadada26763aea4ea05e47093b9912f106c4a91"
+    },
+    {
+      "path": "app/table/[code]/page.tsx",
+      "sha256": "92943cd0452f794ed8b3466245e4125c439f0a5ac2ece58a610355f477ecdf9b"
+    },
+    {
+      "path": "app/table/[code]/table-client.tsx",
+      "sha256": "98d6c520f21adff416ee81ccac25127631c6a8788043308ac53df21b55b37ed4"
+    },
+    {
+      "path": "cloudflare/verify-deploy-config.mjs",
+      "sha256": "d8c4e0bde2feef3c87d9c7c1e6738a208c424c615668aff27d0d9c338b019575"
+    },
+    {
+      "path": "db/index.ts",
+      "sha256": "1e4e09481942f1c6a004b7f9bcee23dae5f9fb6444abe785ad754053fcec6e1e"
+    },
+    {
+      "path": "db/schema.ts",
+      "sha256": "1ec9205120f61e2f11c5999fb65e1207f187cab3989e09e9a6106dcfa10011cd"
+    },
+    {
+      "path": "drizzle/0000_cheerful_freak.sql",
+      "sha256": "44d039d16e4a188731bc380ee04a3d9a2968d0d142d7171d13638c9590eb88f3"
+    },
+    {
+      "path": "drizzle/0001_free_elektra.sql",
+      "sha256": "8811387cf3f955f1a3742a2cab90c04b9570e43cdf64597968f6daf4acb903ff"
+    },
+    {
+      "path": "drizzle/0002_robust_lord_tyger.sql",
+      "sha256": "752add73ffb76857066208139559bb5467da19bd24d8b13d5e6901cfa37cd90b"
+    },
+    {
+      "path": "drizzle/0003_rich_boom_boom.sql",
+      "sha256": "e5a03f16ec1e598a9125dc37ca53b3b230ba01ebecd0eba5975c8fc685afc055"
+    },
+    {
+      "path": "drizzle/0004_eminent_sumo.sql",
+      "sha256": "1dd2a5d36cf4d19cd99fbd04b4ffc6f992d0153381fe9bf49da63a14bc8684aa"
+    },
+    {
+      "path": "drizzle/0005_unusual_pestilence.sql",
+      "sha256": "bf9bf2cd1089d1e4e84f2d91aa90ffad39858cd94567ec0d2c61d1c2a43e6642"
+    },
+    {
+      "path": "drizzle/0006_nice_iron_lad.sql",
+      "sha256": "e9a53c8e9dce612ff23be0c723962b8ae5035205caacb678a3dd61de9716b82a"
+    },
+    {
+      "path": "drizzle/0007_free_black_bolt.sql",
+      "sha256": "42806a5234e26d0862c0be7c091ac5978671e1040ed6cc78bcf5fd034ec176ad"
+    },
+    {
+      "path": "drizzle/0008_clumsy_lady_vermin.sql",
+      "sha256": "cdcfd1d021de6ef4227bb78bd8372385f5cbb1af4041bfd511ecbbaed3555733"
+    },
+    {
+      "path": "drizzle/0009_huge_red_wolf.sql",
+      "sha256": "16794c67e03f8808122b9c1fd4259fa8805ffcb34dc2ce2986e7b0718fe85688"
+    },
+    {
+      "path": "drizzle/0010_scrub_kp_static_derived_index.sql",
+      "sha256": "bb3968cb26c9a797b9ae03503845b764a1180b59d193f587927f4ee8f3257e04"
+    },
+    {
+      "path": "drizzle/0011_low_leo.sql",
+      "sha256": "da8aa71c0ac9e909b890d02536c7eb6cc555e1c9b0fdb29808fcf77903863a8e"
+    },
+    {
+      "path": "drizzle/0012_soft_ghost_rider.sql",
+      "sha256": "1387740f5a4583d9a3515635ab0e3c56a4a0f6b476c10d4d966aee1ca08b5c94"
+    },
+    {
+      "path": "drizzle/meta/0000_snapshot.json",
+      "sha256": "e403603c4f85407e62960384bfdf7f420704372ec41d26bc4951ab5026f87f92"
+    },
+    {
+      "path": "drizzle/meta/0008_snapshot.json",
+      "sha256": "20c9ccb8631e951574f500029814b38108ec315314bc8da4b93ec4842de7d2fa"
+    },
+    {
+      "path": "drizzle/meta/0009_snapshot.json",
+      "sha256": "193e5b96fb4f903f0c543c5983495f6941da31d88119d3d0ea654939926eb4be"
+    },
+    {
+      "path": "drizzle/meta/0010_snapshot.json",
+      "sha256": "4962ab6064be93267880d688b56535878bfb7ddf6320e9a5009ea678923314f1"
+    },
+    {
+      "path": "drizzle/meta/0011_snapshot.json",
+      "sha256": "3502a4ee8def2753a635dc578d75f96335de30567cdb2a5c22b510087faccb45"
+    },
+    {
+      "path": "drizzle/meta/0012_snapshot.json",
+      "sha256": "25e6a76680b6ca6292720fd4cc8642b59b9942fd370d0ba02684335ef74d8444"
+    },
+    {
+      "path": "drizzle/meta/_journal.json",
+      "sha256": "5ba8214f31fba4d91508dd89a1bf1a50271c78069f8fc3fca070646f88ad6f9e"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "7aec23b27284c3a2a2d74ddc318d546e17ddd1b4de757b91750145d89ad566ee"
+    },
+    {
+      "path": "package.json",
+      "sha256": "4f457e1c950a77c42c6360d5687d0d966b1103172e54ac8957341abc7ee15f49"
+    },
+    {
+      "path": "tools/check-modules.mjs",
+      "sha256": "f7e915246891eb6b3acb0ea125d934a689044484e6c784cbfde8c971765790a9"
+    },
+    {
+      "path": "tools/deepseek-vnext2-strict-tool-handshake-definition.mjs",
+      "sha256": "204f6677b05598085f115603f7a58637a2272689db8a07b06c3a55314f22fd34"
+    },
+    {
+      "path": "tools/lib/vnext-authored-probe-fixture.mjs",
+      "sha256": "95ca7cf9aa99ac7e3e749ef9df7b8eb0398a68c38b9284234eac987625ca5d76"
+    },
+    {
+      "path": "tools/live-kp-eval.mjs",
+      "sha256": "8c6843589d3c071c3b0e8436e4c2540f4e49b0fa7368a85fbb4071c91449908c"
+    },
+    {
+      "path": "tools/run-context-planner-role-validation.mjs",
+      "sha256": "fd5578dfc60294ca3a76aeedbdc437534b1abb50fbebb1118744e8f097b8fa1b"
+    },
+    {
+      "path": "tools/run-deepseek-strict-tool-handshake.mjs",
+      "sha256": "974483fcd0e17aeee4895f06c1be6ebd43a4edf4f7f19fc8fd88c4b3d62e4c83"
+    },
+    {
+      "path": "tools/run-deepseek-vnext2-authored-probe.mjs",
+      "sha256": "f926637c353c0a3113f5d7227ed704d21731ff5842c1b58fb4c46e0d36ef145f"
+    },
+    {
+      "path": "tools/run-kp-v3-eval.mjs",
+      "sha256": "60b9f3b0489b14c0685b976b7adae21e0a8d46f281b25b1eff1024fe6a1736de"
+    },
+    {
+      "path": "tools/run-live-kp-eval.mjs",
+      "sha256": "710fff5800c7e77031af6bb8c344b42f357699f4f657db44a1bb2e829801a5b2"
+    },
+    {
+      "path": "tools/spec-0001-behaviour-probes.mjs",
+      "sha256": "c7983d98c0998eabc3526f4cf1aca95950cd4a010ca408b36302381f1d54a381"
+    },
+    {
+      "path": "tools/summarize-kp-telemetry-tail.mjs",
+      "sha256": "499d148ed048d157ca84bec1feafef00ab4d7e8952d5ed0ddbcc9dda0823eddf"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "a82c08fa800341cda2257885dfdce2780a3e808162af087cec4c236fe5c9a63a"
+    },
+    {
+      "path": "vite.config.ts",
+      "sha256": "b4050c934df803237467f2c242da3e1e42712d58a29e5db8c0c8c25655f485c4"
+    },
+    {
+      "path": "worker/index.ts",
+      "sha256": "6d941f991a25718cf685947e1d3a6abdc17b6ddab3a886f2b509296de22b3c09"
+    },
+    {
+      "path": "wrangler.jsonc",
+      "sha256": "1f2de7722ba5f00d914bd4d02c5b28a8d11995c3c2b9e61ee6ae92a946ce23dd"
+    }
+  ],
+  "manifestSha256": "b6c3c61f4fae04f6813719fa94b2568b91cfc86ba53d86ed46546e11d07aafac"
+}

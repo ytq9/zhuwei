@@ -1,0 +1,201 @@
+{
+  "round": 58,
+  "status": "stopped-on-first-delivery-failure",
+  "source": {
+    "beforeCount": 316,
+    "afterCount": 316,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "checkedAt": "2026-09-06T20:17:20.932245+00:00",
+    "initialManifestSha256": "916f8e9a58a175d0ebfc44a160d41dbad33b60bce3f888548d97dd3c760ffc5e",
+    "allEqual": true
+  },
+  "fixture": {
+    "setup": "normal authenticated new local room, then server stopped for trusted local Rules fixture only",
+    "events": [
+      "NpcPlanFormed",
+      "ActivityStarted"
+    ],
+    "realModelPlanCreation": false
+  },
+  "actions": {
+    "attempted": 1,
+    "committed": 1,
+    "published": 0,
+    "notAttempted": 2,
+    "result": {
+      "action": "committed",
+      "narration": "rejected",
+      "code": "NARRATION_BODY_INVALID"
+    }
+  },
+  "classification": {
+    "proposalJsonOrFormFailures": 0,
+    "rulesRejections": 0,
+    "providerPermanentFailures": 1,
+    "publishedNarrativeContradictionsObserved": 0,
+    "proposalRepairs": 0,
+    "viewerRecoveryAttempted": 0,
+    "reason": "Generation returned valid body JSON. The next review invocation ended modelPermanent/modelUnavailable after 74ms. The HTTP error body and status were discarded by existing boundaries; exact provider reason is not known."
+  },
+  "authority": {
+    "checks": {
+      "timeUnchanged": true,
+      "entitiesUnchanged": true,
+      "inventoryUnchanged": true,
+      "knowledgeUnchanged": true,
+      "planUnchanged": true,
+      "noFutureTrace": true,
+      "onlyKnowledgeReviewAfterSeed": true,
+      "noNpcInvocation": true,
+      "noDueWork": true
+    },
+    "fixtureEvents": 2,
+    "playerEvents": 1,
+    "allEvents": 3,
+    "fixtureReceipts": 1,
+    "playerReceipts": 1,
+    "replay": {
+      "pinnedProfilesMatch": true,
+      "replayKind": "replayed",
+      "exactState": true,
+      "stateVersion": "3",
+      "events": 3,
+      "eventTypes": [
+        "NpcPlanFormed",
+        "ActivityStarted",
+        "KnowledgeReviewed"
+      ],
+      "checkedAt": "2026-09-06T20:17:21.264Z"
+    }
+  },
+  "usage": {
+    "physicalCalls": 3,
+    "capturedResponses": 2,
+    "unknownUsageCalls": 1,
+    "known": {
+      "input": 31665,
+      "hit": 12672,
+      "miss": 18993,
+      "output": 256
+    },
+    "knownOffPeakCny": 0.0302751,
+    "failedReviewCostKnown": false,
+    "models": [
+      "deepseek-v4-flash"
+    ],
+    "completionIncludesReasoning": true
+  },
+  "transport": {
+    "setupServerPid": 94936,
+    "gameServerPid": 95040,
+    "capturePid": 94922,
+    "terminationExitCodes": [
+      143,
+      143,
+      143
+    ],
+    "inFlightCalls": 0
+  },
+  "evidence": {
+    "originalProposalArgumentsSha256": "68c880078c36325c6fabaef05873a5300517c5c012e11ff1a4cfa6e1050aa53a",
+    "privatePrefix": "/tmp/zhuwei-vnext-round58",
+    "sourceFiles": 316
+  },
+  "limits": {
+    "round": 58,
+    "status": "prepared-not-executed",
+    "preparedAt": "2026-09-06T20:00:29.646Z",
+    "scope": "Normal authenticated HTTP with actual default DeepSeek responses; only the preexisting future NPC plan is a trusted local Rules fixture. This is not evidence of a model creating a new plan.",
+    "actions": [
+      "我现在知道哪些事？",
+      "我暂时留在原地，安静等一分钟，留意身边的动静。",
+      "我观察周围在场的人现在各自在做什么。"
+    ],
+    "maximumActions": 3,
+    "maximumCalls": 20,
+    "maximumInputTokens": 1160000,
+    "maximumOutputTokens": 163840,
+    "maximumCny": 5,
+    "durationMs": 1200000,
+    "perHttpTimeoutMs": 120000,
+    "perHttpCallLimit": 5,
+    "modelOverride": false,
+    "artifacts": [
+      {
+        "source": "/tmp/zhuwei-vnext-round57.mjs",
+        "dest": "/tmp/zhuwei-vnext-round58.mjs",
+        "sha256": "f15b021ded0612998d0a55d0ff7a937a6d3053cf6505581a8d3de716b80170d2"
+      },
+      {
+        "source": "/tmp/zhuwei-vnext-round57-capture.mjs",
+        "dest": "/tmp/zhuwei-vnext-round58-capture.mjs",
+        "sha256": "4b7a318cfc12e4aac2ad55be0d06af85ccc42540389bd45df3c9f2314de2bf14"
+      },
+      {
+        "source": "/tmp/zhuwei-vnext-round57-source-manifest.py",
+        "dest": "/tmp/zhuwei-vnext-round58-source-manifest.py",
+        "sha256": "1111bee45466ac17e166fb8d1bdceb29eb39a62b60865b5b9e3998b2a7b4580b"
+      },
+      {
+        "source": "/tmp/zhuwei-vnext-round57-extract.py",
+        "dest": "/tmp/zhuwei-vnext-round58-extract.py",
+        "sha256": "c1063eae29f49eece17c2abe9fc727e07fcba57ac5aa0dc5c37120248bef5593"
+      },
+      {
+        "source": "/tmp/zhuwei-round57-preparation/replay.mjs",
+        "dest": "/tmp/zhuwei-round58-preparation/replay.mjs",
+        "sha256": "1b725a0504744f1e0abe694a4a3a3781b012e8b6d33ff91989b333702a8597a2"
+      },
+      {
+        "source": "/tmp/zhuwei-round57-preparation/source-end.py",
+        "dest": "/tmp/zhuwei-round58-preparation/source-end.py",
+        "sha256": "8a91669599b0e737ef546c3ee4ad759004ac8b1dd39418f4245a08ee62771486"
+      }
+    ],
+    "seed": "/tmp/zhuwei-round58-preparation/seed-existing-plan.mjs",
+    "primaryFailurePolicy": "First explicit failure stops new actions. Preserve the response, original requests, journal, due work and authority state. No rephrasing or resampling.",
+    "recoveryPolicy": "At most one explicitly recorded retryNarration through the actual current Viewer capability after a committed delivery failure, within this batch call/token/time ceilings. It never resubmits a Proposal or NPC decision. A recovery failure stops; no second recovery.",
+    "budgetNote": "Twenty physical calls includes the three primary actions and one bounded delivery recovery, all default-model proposal/schema/correction/NPC/narration/review. Duplicates must use zero calls. The prior peak tariff implies CNY 4.95456; reverify official pricing before execution.",
+    "requiredAssertions": [
+      "knowledgeReview changes no time/resources and does not dispatch the future plan",
+      "one original due decision request with only the NPC authorized knowledge",
+      "execute/revise/defer/cancel reflects the real response and exact Rules state; do not force execute",
+      "player/NPC calls share one per-HTTP boundProbe counter",
+      "original response saved; duplicate does not call NPC or repeat mechanics",
+      "every published trace derives from committed plan result; private goal/premises remain private",
+      "public followup uses only prior actual Table; no invented observation",
+      "full replay equality, source freeze, all failures and actual usage recorded"
+    ],
+    "sourceFrozen": false,
+    "apiCalls": 0,
+    "pricing": {
+      "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+      "verifiedAt": "2026-09-06T20:05:27.076Z",
+      "htmlSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+      "model": "deepseek-v4-flash",
+      "offPeakCnyPerMillion": {
+        "hit": "0.05",
+        "miss": "1.5",
+        "output": "4.5"
+      },
+      "peakCnyPerMillion": {
+        "hit": "0.10",
+        "miss": "3.0",
+        "output": "9.0"
+      },
+      "peakWindow": "Asia/Shanghai Mon-Fri 09:00-12:00,14:00-18:00",
+      "declaredBudgetCny": "5.0",
+      "maximumAtPeakCny": "4.95456"
+    },
+    "offlinePreflight": {
+      "runner": "exit 0",
+      "seed": "exit 0",
+      "trustedFixtureWrites": 0,
+      "apiCalls": 0
+    }
+  }
+}

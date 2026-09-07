@@ -1,0 +1,153 @@
+{
+  "schema": "zhuwei.vnext-live-validation-evidence/v1",
+  "date": "2026-09-05",
+  "batch": "round3-narrative-and-inventory",
+  "baseline": {
+    "branch": "cloudflare",
+    "head": "258caee404e0814405eb497653ee9f00d647b773",
+    "workingTree": "uncommitted V01-V03 and approved narrative contract changes"
+  },
+  "scope": "Normal Cookie-authenticated local Worker HTTP and real remote DeepSeek; not deployed vNext production.",
+  "budget": {
+    "maximumRootActions": 3,
+    "maximumCalls": 12,
+    "maximumInputTokens": 360000,
+    "maximumOutputTokens": 32000,
+    "actualRootActions": 2,
+    "actualCalls": 2,
+    "actualInputTokens": 53131,
+    "actualOutputTokens": 1725,
+    "cachedInputTokens": 12032,
+    "uncachedInputTokens": 41099,
+    "status": "stopped-after-first-failure-and-one-diagnostic-contrast"
+  },
+  "provider": {
+    "endpoint": "https://api.deepseek.com/beta/chat/completions",
+    "model": "deepseek-v4-flash",
+    "strict": true,
+    "toolChoice": "required",
+    "thinking": "disabled",
+    "stream": false,
+    "maxOutputTokens": 4000,
+    "localPerHttpCallLimit": 4
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "status": "completed",
+      "requestHash": "sha256:08fdbfdcdad43fa49bf634a7aee5b2f73faa9a6c78363ed829ba8761ebb22015",
+      "contextHash": "sha256:e5dbbe95c2474b520c90788be68ca5ed30ec6caf90155c41d7efed63ae0efbe6",
+      "bindingHash": "sha256:5678b3282e060a3ce395c60a6edcc21b5d38fd1717a3ab34108fe3026dd694a7",
+      "requestBytes": 82579,
+      "model": "deepseek-v4-flash",
+      "usage": {
+        "prompt_tokens": 25889,
+        "completion_tokens": 1077,
+        "total_tokens": 26966,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 25889
+      },
+      "finishReason": "tool_calls",
+      "proposalKinds": [
+        "MALFORMED_JSON"
+      ],
+      "playerText": "我环顾大厅，仔细看看近旁的陈设和表面细节。",
+      "publicResult": {
+        "outcomeKind": "rejected",
+        "action": "notCommitted",
+        "narration": "notApplicable",
+        "code": "PROPOSAL_FORM_INVALID"
+      },
+      "diagnostic": "Provider returned malformed JSON, mismatched closing delimiter and misplaced branch fields; not truncated."
+    },
+    {
+      "ordinal": 1,
+      "status": "completed",
+      "requestHash": "sha256:ef8c7c933f9e1b4e3a3476265e7f2720e0ee40e268d5e7dbdc7f43dea0365c62",
+      "contextHash": "sha256:d90adc8973835e3f35458b066c5a3e12fe4f531aa4189ebc6a201b75ce8ee4d1",
+      "bindingHash": "sha256:5678b3282e060a3ce395c60a6edcc21b5d38fd1717a3ab34108fe3026dd694a7",
+      "requestBytes": 86995,
+      "model": "deepseek-v4-flash",
+      "usage": {
+        "prompt_tokens": 27242,
+        "completion_tokens": 648,
+        "total_tokens": 27890,
+        "prompt_tokens_details": {
+          "cached_tokens": 12032
+        },
+        "prompt_cache_hit_tokens": 12032,
+        "prompt_cache_miss_tokens": 15210
+      },
+      "finishReason": "tool_calls",
+      "proposalKinds": [
+        "inventoryOperation",
+        "inventoryOperation"
+      ],
+      "playerText": "我从背包里取出一支弩矢，轻轻放在脚边的地上。",
+      "publicResult": {
+        "outcomeKind": "needsKp",
+        "action": "notCommitted",
+        "narration": "notApplicable",
+        "code": "PROPOSAL_RULES_DIAGNOSTIC"
+      },
+      "diagnostic": "Parser/lowering accepted; Rules invalidRulesInput / inventoryUseUnavailable. Item use=null; model added use as an intent marker before release."
+    }
+  ],
+  "sameProfileFinalObservation": {
+    "source": "normal fetchTable after second action",
+    "stateVersion": "0",
+    "receipts": 0,
+    "hp": {
+      "current": 28,
+      "maximum": 28
+    },
+    "physicalStocks": {
+      "bolt": 20,
+      "arrow": 0,
+      "torch": 10,
+      "ration": 10,
+      "gold": 10
+    },
+    "classResources": {
+      "hitDice": 3,
+      "secondWind": 1,
+      "surge": 1
+    },
+    "events": 0,
+    "newNarrationMessages": 0,
+    "inventoryAndResourcesUnchanged": true
+  },
+  "offlineControl": {
+    "live": false,
+    "input": "Captured second response with invalid use removed; original release unchanged",
+    "outcome": "committed",
+    "heldQuantityBefore": 20,
+    "heldQuantityAfter": 19,
+    "sceneQuantityCreated": 1,
+    "eventTypes": [
+      "InventoryOperationApplied"
+    ],
+    "replayMatches": true,
+    "wroteLiveState": false
+  },
+  "postCaptureChange": "Clarified generic inventory operation and sensory-evidence semantics. Final schema tests passed; no additional live calls. Schema/Profile hash changed, so this local room rejects the new Profile; next test needs a fresh room.",
+  "priorSeparateBatch": {
+    "batch": "vnext-live-round2",
+    "maximumRootActions": 3,
+    "maximumProviderCalls": 12,
+    "maximumInputTokens": 360000,
+    "maximumOutputTokens": 32000,
+    "perRequestProviderCallLimit": 4,
+    "providerTimeoutMs": 45000,
+    "actualProviderCalls": 2,
+    "status": "stopped-after-diagnostic-contrast",
+    "actualRootActions": 2,
+    "actualInputTokens": 61840,
+    "actualOutputTokens": 2092
+  },
+  "onlineAcceptancePassed": false,
+  "deployed": false
+}

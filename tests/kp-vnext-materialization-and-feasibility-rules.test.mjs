@@ -1,3 +1,4 @@
+import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -8,6 +9,7 @@ import {
 } from "../app/_runtime/lib/rules/profiles/vnext-world-interaction.ts";
 import { createVersionedRulesRuntime } from "../app/_runtime/lib/rules/v2-runtime.ts";
 import { authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
+import { worldInteractionFeasibilityDependencyRefs } from "../app/_runtime/lib/rules/v2/world-interaction-model.ts";
 import {
   eventHash,
   validateEventEnvelope,
@@ -160,7 +162,10 @@ function initialize(extraDefinitions = [], options = {}) {
         ? [{ characterId: OBSERVER, seatId: "seat:mf-observer" }]
         : []),
     ],
-    canonicalFacts: [],
+    canonicalFacts: [{
+      id: BASIS_CANARY, kind: "moduleAnchor", source: "moduleAnchor", subjectRefs: [SCENE],
+      value: { description: "封锁机关的权威背景。" }, visibilityPolicyId: "visibility:room-authority-only",
+    }],
     initialKnowledge: options.initialKnowledge ?? [],
     vNextSeed: {
       semanticDefinitions: extraDefinitions,
@@ -203,15 +208,15 @@ function materializationPlan(state, overrides = {}) {
       schema: "zhuwei.semantic-definition-materialization-plan/vnext-1",
       bundleHash,
       handle,
-      semanticKind: overrides.semanticKind ?? "worldFact",
-      templateRef: overrides.templateRef ?? "template:mf-worldfact",
-      templateHash: overrides.templateHash ?? canonicalSha256({ template: "mf-worldfact" }),
+      semanticKind: overrides.semanticKind ?? "sceneFeature",
+      templateRef: overrides.templateRef ?? VNEXT_SEMANTIC_TEMPLATES[overrides.semanticKind ?? "sceneFeature"].templateRef,
+      templateHash: overrides.templateHash ?? VNEXT_SEMANTIC_TEMPLATES[overrides.semanticKind ?? "sceneFeature"].templateHash,
       visibilityPolicyRef: overrides.visibilityPolicyRef ?? "visibility:scene-observers",
       contextHash,
       readSet,
       basisRefs: overrides.basisRefs ?? [],
       sourceRefs: overrides.sourceRefs ?? [],
-      content: overrides.content ?? { description: "桌上的一张便条。" },
+      content: { label: "测试对象", sceneRef: SCENE, observableState: "present", affordances: [], ...(overrides.content ?? { description: "桌上的一张便条。" }) },
       summary: overrides.summary ?? "为测试而创建的世界事实。",
     },
   };
@@ -261,7 +266,7 @@ test("materializeSemanticDefinition commits a new sparse definition and replays 
   const stored = committed.state.campaignRuntime.definitions[expectedDefinitionRef];
   assert.ok(stored, "materialized definition must be stored under its derived ref");
   assert.equal(stored.revision, "1");
-  assert.equal(stored.semanticKind, "worldFact");
+  assert.equal(stored.semanticKind, "sceneFeature");
   assert.deepEqual(stored.content, plan.content);
 
   const rebuilt = runtime.replay(world.genesis, committed.events);
@@ -859,8 +864,8 @@ test("atomic settlement replay rejects a ledger that contradicts its branch bind
   assert.equal(replayed.kind, "rejected", JSON.stringify(replayed));
 });
 
-function feasibilityPlan(overrides = {}) {
-  return {
+function feasibilityPlan(state, overrides = {}) {
+  const plan = {
     schema: "zhuwei.world-interaction-feasibility-ruling-plan/v1",
     actorCharacterId: ACTOR,
     intent: overrides.intent ?? "尝试打开一扇上锁的门。",
@@ -874,12 +879,18 @@ function feasibilityPlan(overrides = {}) {
     costs: overrides.costs ?? [],
     basisRefs: overrides.basisRefs ?? [],
   };
+  const readSet = worldInteractionFeasibilityDependencyRefs(ACTOR, plan).map(ref => {
+    const revisionOrHash = authorityRevisionOrHash(state, ref);
+    assert.notEqual(revisionOrHash, null, ref);
+    return { ref, revisionOrHash };
+  });
+  return { ...plan, readSet, contextHash: canonicalSha256({ readSet }) };
 }
 
 test("ruleWorldInteractionFeasibility commits a refusal with no cost and replays identically", () => {
   const world = initialize();
   const rootActionId = "root:feasibility-basic";
-  const plan = feasibilityPlan({ basisRefs: [BASIS_CANARY] });
+  const plan = feasibilityPlan(world.state, { basisRefs: [BASIS_CANARY] });
   const committed = runtime.step(world.profiles, world.state, {
     kind: "ruleWorldInteractionFeasibility",
     rootActionId,
@@ -908,7 +919,7 @@ test("ruleWorldInteractionFeasibility commits a refusal with no cost and replays
 test("ruleWorldInteractionFeasibility applies a real attempt cost through the item-cost transition path", () => {
   const world = initialize();
   const rootActionId = "root:feasibility-cost";
-  const plan = feasibilityPlan({
+  const plan = feasibilityPlan(world.state, {
     rulingKind: "worldLawViolation",
     costs: [{ kind: "item", entryRef: ITEM_ENTRY_REF, quantity: 1, charges: 0, durability: 0 }],
   });
@@ -942,7 +953,7 @@ test("ruleWorldInteractionFeasibility spends the fiction time an attempt really 
   // attempt cost the wire and Rules had a word for. Ten minutes spent failing
   // to force a door is a real change to the world and now settles as one.
   const world = initialize();
-  const plan = feasibilityPlan({
+  const plan = feasibilityPlan(world.state, {
     costs: [{ kind: "fictionTime", durationMicros: "600000000" }],
   });
   const committed = runtime.step(world.profiles, world.state, {
@@ -973,7 +984,7 @@ test("ruleWorldInteractionFeasibility spends the fiction time an attempt really 
 
 test("ruleWorldInteractionFeasibility spends a resource the attempt had already committed", () => {
   const world = initialize([], { actorResources: { "spellSlot:1": 1 } });
-  const plan = feasibilityPlan({
+  const plan = feasibilityPlan(world.state, {
     rulingKind: "worldLawViolation",
     costs: [{ kind: "resource", resourceId: "spellSlot:1", amount: 1 }],
   });
@@ -1009,7 +1020,7 @@ test("ruleWorldInteractionFeasibility refuses a resource cost the actor cannot p
     kind: "ruleWorldInteractionFeasibility",
     rootActionId: "root:feasibility-resource-missing",
     actorCharacterId: ACTOR,
-    plan: feasibilityPlan({
+    plan: feasibilityPlan(world.state, {
       costs: [{ kind: "resource", resourceId: "spellSlot:1", amount: 1 }],
     }),
   });
@@ -1025,7 +1036,7 @@ test("mixed attempt costs settle in the order the ruling declared them", () => {
     kind: "ruleWorldInteractionFeasibility",
     rootActionId: "root:feasibility-mixed-costs",
     actorCharacterId: ACTOR,
-    plan: feasibilityPlan({
+    plan: feasibilityPlan(world.state, {
       rulingKind: "worldLawViolation",
       costs: [
         { kind: "fictionTime", durationMicros: "60000000" },
@@ -1057,7 +1068,7 @@ test("mixed attempt costs settle in the order the ruling declared them", () => {
 
 test("ruleWorldInteractionFeasibility rejects an attempt cost that is not actually available", () => {
   const world = initialize();
-  const plan = feasibilityPlan({
+  const plan = feasibilityPlan(world.state, {
     costs: [{ kind: "item", entryRef: ITEM_ENTRY_REF, quantity: 99, charges: 0, durability: 0 }],
   });
   const result = runtime.step(world.profiles, world.state, {
@@ -1073,7 +1084,7 @@ test("ruleWorldInteractionFeasibility rejects an attempt cost that is not actual
 test("ruleWorldInteractionFeasibility rejects a duplicate RootAction", () => {
   const world = initialize();
   const rootActionId = "root:feasibility-duplicate";
-  const plan = feasibilityPlan();
+  const plan = feasibilityPlan(world.state);
   const committed = runtime.step(world.profiles, world.state, {
     kind: "ruleWorldInteractionFeasibility",
     rootActionId,
@@ -1092,7 +1103,7 @@ test("ruleWorldInteractionFeasibility rejects a duplicate RootAction", () => {
 });
 
 function refusalCommand(overrides = {}) {
-  return {
+  const command = {
     kind: "inWorldRefusal",
     rootActionId: "root:bridge-refusal",
     actorCharacterId: ACTOR,
@@ -1113,6 +1124,10 @@ function refusalCommand(overrides = {}) {
       attemptCosts: overrides.attemptCosts ?? [],
     },
   };
+  const frozen = feasibilityPlan(initialize().state, {
+    basisRefs: command.basisRefs, prerequisites: command.ruling.prerequisites, costs: command.ruling.attemptCosts,
+  });
+  return { ...command, contextHash: frozen.contextHash, readSet: frozen.readSet };
 }
 
 test("bundleCommandToRoomLowering lowers an in-world refusal into the typed feasibility Rules input", () => {

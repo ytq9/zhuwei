@@ -1,4 +1,11 @@
-import { VNEXT_CONTINUITY_AUTHORITY_COLLECTIONS } from "../../../rules/authority-read";
+import { authorityDefinitionComposite, authorityEntityComposite, authorityKnowledgeCatalog, authorityCharacterTimeline, authorityAbilityCatalog } from "../../../rules/v2/authority-bindings";
+import { authorityItemComposite } from "../../../rules/v2/item-authority-vnext";
+import {
+  authorityGeometryFeatureAt,
+  authorityGeometryFeatureAtVisibleTo,
+  authoritySpatialRefVisibleTo,
+  VNEXT_CONTINUITY_AUTHORITY_COLLECTIONS,
+} from "../../../rules/authority-read";
 import type { AuthoritativeWorldState } from "../../../rules/authority-read";
 import { isPlainRecord } from "../canonical-json";
 import type { ReferenceNode } from "./reference-index";
@@ -16,10 +23,16 @@ export function indexableRecord(
   node: ReferenceNode,
 ): unknown {
   switch (node.kind) {
+    case "characterTimeline":
+      return authorityCharacterTimeline(state, node.ref.slice("character-timeline:".length));
+    case "geometryFeature":
+      return indexedGeometryFeature(state, node)?.feature;
     case "scene":
       return state.scenes[node.ref];
     case "entity":
       return state.entities[node.ref];
+    case "itemAssembly":
+      return state.campaignRuntime.itemSystem.assemblies?.[node.ref];
     case "itemEntry":
       return state.campaignRuntime.itemSystem.entries[node.ref];
     case "itemDefinition":
@@ -30,6 +43,8 @@ export function indexableRecord(
     case "abilityDefinition":
       return state.combatRuntime.definitions[node.ref];
     case "canonicalFact":
+    case "narrativeCommitment":
+    case "narrativeBinding":
       return state.canonicalFacts[node.ref];
     case "knowledge":
       return node.knowledgeHolderRef === undefined
@@ -37,6 +52,10 @@ export function indexableRecord(
         : state.knowledge[node.knowledgeHolderRef]?.[
             node.ref.slice(`knowledge:${node.knowledgeHolderRef}:`.length)
           ];
+    case "knowledgeCatalog":
+      return node.knowledgeHolderRef === undefined ? undefined : authorityKnowledgeCatalog(state, node.knowledgeHolderRef);
+    case "abilityCatalog":
+      return node.knowledgeHolderRef === undefined ? undefined : authorityAbilityCatalog(state, node.knowledgeHolderRef);
     default:
       return undefined;
   }
@@ -56,11 +75,9 @@ export function authorityCompositeRecord(
   node: ReferenceNode,
 ): unknown {
   if (node.kind === "entity") {
-    const entity = state.entities[node.ref];
-    if (entity === undefined) return undefined;
-    const combat = state.combatRuntime.entities[node.ref];
-    return combat === undefined ? { entity } : { entity, combat };
+    return authorityEntityComposite(state,node.ref);
   }
+  if (node.kind === "geometryFeature") return indexedGeometryFeature(state, node);
   if (node.kind === "scene") {
     const scene = state.scenes[node.ref];
     if (scene === undefined) return undefined;
@@ -74,7 +91,26 @@ export function authorityCompositeRecord(
     const moduleRef = state.campaignRuntime.campaign?.moduleRef;
     return isPlainRecord(moduleRef) ? { moduleRef } : undefined;
   }
+  if (node.kind === "campaignDefinition") return authorityDefinitionComposite(state, node.ref);
+  if (node.kind === "itemEntry") return authorityItemComposite(state, node.ref);
   return indexableRecord(state, node);
+}
+
+/** Index entries carry a unique geometry locator over this frozen snapshot.
+ * Other spatial kinds retain the shared authority resolver. */
+export function indexedSpatialRefVisibleTo(
+  state: AuthoritativeWorldState, node: ReferenceNode, sceneRef: string, viewerCharacterId: string,
+): boolean {
+  if (node.kind !== "geometryFeature") {
+    return authoritySpatialRefVisibleTo(state, node.ref, sceneRef, viewerCharacterId);
+  }
+  return node.sceneRef === sceneRef && node.geometryIndex !== undefined
+    && authorityGeometryFeatureAtVisibleTo(state, sceneRef, node.geometryIndex, node.ref, viewerCharacterId);
+}
+
+function indexedGeometryFeature(state: AuthoritativeWorldState, node: ReferenceNode) {
+  return node.sceneRef === undefined || node.geometryIndex === undefined
+    ? undefined : authorityGeometryFeatureAt(state, node.sceneRef, node.geometryIndex, node.ref);
 }
 
 function continuityValue(state: AuthoritativeWorldState, node: ReferenceNode): unknown {

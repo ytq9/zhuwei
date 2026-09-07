@@ -1,0 +1,144 @@
+{
+  "schema": "zhuwei.agent-live-evidence/round5",
+  "date": "2026-09-05",
+  "branch": "cloudflare",
+  "head": "258caee404e0814405eb497653ee9f00d647b773",
+  "dirtyWorktree": true,
+  "environment": {
+    "host": "localhost:4319",
+    "entry": "ordinary Cookie-authenticated /api/game narration recovery",
+    "model": "deepseek-v4-flash",
+    "endpoint": "https://api.deepseek.com/chat/completions",
+    "strictTool": false,
+    "productionDeployment": false
+  },
+  "limits": {
+    "calls": 12,
+    "inputTokens": 360000,
+    "outputTokens": 32000,
+    "perHttpCalls": 4,
+    "actualNewRootActions": 0,
+    "afterFailure": "one private response diagnostic and one post-fix HTTP contrast; stopped after contrast failure"
+  },
+  "calls": [
+    {
+      "httpInvocation": 1,
+      "modelInvocationPurpose": "initialNarration",
+      "modelResult": "modelPermanent",
+      "modelInputTokens": 2365,
+      "modelOutputTokens": 156,
+      "modelGroundingReason": "unsupportedClause",
+      "outcomeKind": "modelPermanent",
+      "errorCode": "narrationGrounding",
+      "durationMs": 1234
+    },
+    {
+      "httpInvocation": 2,
+      "modelInvocationPurpose": "narrationGroundingRepair",
+      "modelResult": "modelPermanent",
+      "modelInputTokens": 2267,
+      "modelOutputTokens": 156,
+      "modelGroundingReason": "unsupportedClause",
+      "outcomeKind": "modelPermanent",
+      "errorCode": "narrationGrounding",
+      "durationMs": 1067
+    },
+    {
+      "httpInvocation": 3,
+      "modelInvocationPurpose": "initialNarration",
+      "modelResult": "modelPermanent",
+      "modelInputTokens": 995,
+      "modelOutputTokens": 148,
+      "modelGroundingReason": "unsupportedClause",
+      "outcomeKind": "modelPermanent",
+      "errorCode": "narrationGrounding",
+      "durationMs": 1243
+    },
+    {
+      "httpInvocation": 4,
+      "modelInvocationPurpose": "narrationGroundingRepair",
+      "modelResult": "modelPermanent",
+      "modelInputTokens": 880,
+      "modelOutputTokens": 159,
+      "modelGroundingReason": "missingClaimFacts",
+      "outcomeKind": "modelPermanent",
+      "errorCode": "narrationGrounding",
+      "durationMs": 1145
+    }
+  ],
+  "diagnostic": {
+    "kind": "standalone reconstruction, not an HTTP acceptance run",
+    "calls": 1,
+    "inputTokens": 2307,
+    "outputTokens": 157,
+    "finishReason": "tool_calls",
+    "singleCorrectTool": true,
+    "groundingReason": "unsupportedClause",
+    "exactHttpRequest": false,
+    "requestDifference": "Rules receipt instead of Room public receipt; safeReceipt omitted runtimeEpochId, activeBranchId and eventRange; same model, messages policy, Claims, tools and parameters otherwise",
+    "capturedDifference": "Model combined item name with operation, changed actor to Viewer second person, and combined scene name with interaction result; sensory facts were retained"
+  },
+  "recovery": {
+    "beforePresentationFix": {
+      "sameMechanicalState": true,
+      "noProposalReinvocation": true,
+      "sameSubmission": true,
+      "published": false
+    },
+    "afterPresentationFix": {
+      "sameMechanicalState": true,
+      "sameSubmission": true,
+      "published": false,
+      "newMessageCount": 0
+    },
+    "proposalCalls": 0,
+    "mechanicalReexecution": false
+  },
+  "total": {
+    "calls": 5,
+    "inputTokens": 8814,
+    "outputTokens": 776,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0
+  },
+  "postLiveImplementation": {
+    "typedInventoryActorRecipientAndOperation": true,
+    "typedWorldInteractionFacts": true,
+    "realModelTested": false,
+    "oldFrozenMaterialCheck": {
+      "oldFrozenClaimsConform": true,
+      "oldFrozenFactsStillAccepted": true,
+      "groups": 5,
+      "facts": 14
+    }
+  },
+  "validation": {
+    "claimsInventoryWorld": {
+      "passed": 57,
+      "failed": 0,
+      "exitCode": 0
+    },
+    "targetedNarrationAdapter": {
+      "passed": 8,
+      "failed": 0,
+      "exitCode": 0
+    },
+    "typecheckExitCode": 0,
+    "diffCheckExitCode": 0
+  },
+  "acceptance": {
+    "v01UsableNarration": false,
+    "newNarrativeCommitmentThenMaterialization": false,
+    "costlyActionsAndClassResourcesOnline": false,
+    "tokenAdoptionGate": false,
+    "vNextReplacesProduction": false
+  },
+  "cleanup": {
+    "localServerStopped": true,
+    "serverExitCode": 130,
+    "push": false,
+    "deploy": false,
+    "remoteMigration": false,
+    "productionDataDeletion": false
+  }
+}

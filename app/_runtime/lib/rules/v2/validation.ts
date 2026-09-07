@@ -1,3 +1,9 @@
+import { isFrozenPlayerChoiceRecord } from "./frozen-player-choice";
+import { isWorldFactPointer, worldFactDefinition, worldFactPointer } from "./world-facts";
+import { isVNextItemAuthority } from "./item-authority-vnext";
+import { socialConversationRecordConform } from "./social-interaction";
+import { narrativeDetailVisibleTo } from "./narrative-commitments";
+import { isAtomicWorldContinuation } from "./atomic-world-input";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { ProfileRef, Sha256Ref } from "../profiles/types";
 import type {
@@ -101,8 +107,16 @@ export function canonicalFactVisibleToCharacter(
   fact: CanonicalFactRecord,
   character: CharacterRecord,
 ): boolean {
+  if (fact.visibilityPolicyId.startsWith("visibility:narrative:")) {
+    return narrativeDetailVisibleTo(state, fact.visibilityPolicyId.slice("visibility:narrative:".length), character.id);
+  }
   if (fact.visibilityPolicyId.startsWith("visibility:public")) return true;
   if (fact.visibilityPolicyId === "visibility:hidden-until-evidence") {
+    if (isWorldFactPointer(fact.value)) {
+      const held = state.knowledge[character.id]?.[fact.id], definition = worldFactDefinition(state, fact);
+      return Boolean(definition && held?.objectKind === "canonicalFact" && held.layer === "full"
+        && canonicalSha256(held.content) === canonicalSha256(worldFactPointer(definition)));
+    }
     return fact.id in (state.knowledge[character.id] ?? {});
   }
   if (
@@ -201,6 +215,7 @@ function recordsSatisfy(
 }
 
 function isConversationThreadRecord(value: JsonRecord, threadRef: string): boolean {
+  if (value.schema === "zhuwei.social-conversation/vnext-1") return value.threadRef === threadRef && socialConversationRecordConform(value);
   const claim = value.claimSemantics;
   if (!isRecord(claim)
     || !hasExactKeys(claim, [
@@ -273,7 +288,7 @@ function exactProfileRef(left: unknown, right: unknown): boolean {
 }
 
 export function isAuthoritativeWorldState(value: unknown): value is AuthoritativeWorldState {
-  if (!isRecord(value) || !hasExactKeys(value, STATE_KEYS)) {
+  if (!isRecord(value) || !hasExactKeys(value, [...STATE_KEYS, ...(value.frozenPlayerChoices === undefined ? [] : ["frozenPlayerChoices"]), ...(value.atomicWorldInteractions === undefined ? [] : ["atomicWorldInteractions"]), ...(value.vNextItemAuthority === undefined ? [] : ["vNextItemAuthority"])])) {
     return false;
   }
   if (
@@ -442,9 +457,16 @@ export function isAuthoritativeWorldState(value: unknown): value is Authoritativ
     return false;
   }
 
-  return isRecord(value.receipts)
+  return (value.vNextItemAuthority === undefined || isVNextItemAuthority(value.vNextItemAuthority))
+    && isRecord(value.receipts)
     && isRecord(value.pendingInputs)
-    && isRecord(value.internalContinuations);
+    && isRecord(value.internalContinuations)
+    && (value.frozenPlayerChoices === undefined || (isRecord(value.frozenPlayerChoices)
+      && Object.entries(value.frozenPlayerChoices).every(([key, record]) => isFrozenPlayerChoiceRecord(record)
+        && key === record.plan.pendingInputId)))
+    && (value.atomicWorldInteractions === undefined
+      || (isRecord(value.atomicWorldInteractions) && Object.entries(value.atomicWorldInteractions).every(([key, entry]) =>
+        isAtomicWorldContinuation(entry) && key === entry.rootActionId)));
 }
 
 export function stateHashSource(state: JsonRecord): JsonRecord {

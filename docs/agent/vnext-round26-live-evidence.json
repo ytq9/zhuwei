@@ -1,0 +1,173 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round26",
+  "recordedAt": "2026-09-06T02:43:46.451321+00:00",
+  "scope": "One normal Cookie HTTP NPC social attempt; structurally parsed, rejected on contradictory citation-directory reference",
+  "budget": {
+    "batch": "round26",
+    "createdBeforeCallsAt": "2026-09-06T02:30:06.260139+00:00",
+    "maximumRootActions": 2,
+    "maximumProviderCalls": 10,
+    "maximumInputTokens": 580000,
+    "maximumOutputTokens": 81920,
+    "maximumWallTimeMinutes": 10,
+    "callsReservedPerAction": 5,
+    "localCallLimitPerHttpRequest": 5,
+    "actionStartRequiresRemainingWallTimeMs": 120000,
+    "scope": "normal Cookie HTTP new room social interaction then a follow-up action; complex retrieval if naturally needed",
+    "failurePolicy": "stop on first explicit failure; no sampling to select success"
+  },
+  "setupCalls": 0,
+  "sourceManifest": {
+    "path": "vnext-round26-source-manifest.json",
+    "sha256": "f114cde1313ad008c7937e0ffa36d4f6a758a2c1ec11f1ec2781dae5063bc90a",
+    "createdAt": "2026-09-06T02:30:06.299008+00:00",
+    "fileCount": 297,
+    "sourceChangedDuringProviderBatch": false,
+    "laterChanges": "Citation and Activity projection fixes followed server shutdown; original batch is not reclassified."
+  },
+  "workflowHash": "sha256:d096c64316cafc9f4035763667383fbec01827ba9198dc2ba1fbfa49b63ea467",
+  "schemaHash": "sha256:9f67c2e913bd8b357442d9ac7799572a980e8bcb9747d84f98c7da9c4bca2d65",
+  "parserHash": "sha256:9d279a3dceb8a83e076592e20f15e699a0c2eaa240eb87f44214d795bb493757",
+  "runtimeManifest": {
+    "profileId": "runtime-srd51-2014-authoritative-vnext-stage3",
+    "profileHash": "sha256:66817680997fd4709d84fb221c0eda74f160042f2b5c232a9436c84899af51ab"
+  },
+  "calls": [
+    {
+      "ordinal": 1,
+      "purpose": "proposal",
+      "model": "deepseek-v4-flash",
+      "startedAt": "2026-09-06T02:30:45.339Z",
+      "durationMs": 8182,
+      "inputTokens": 23403,
+      "cacheHitTokens": 768,
+      "cacheMissTokens": 22635,
+      "outputTokensIncludingReasoning": 994,
+      "thinking": {
+        "type": "disabled"
+      },
+      "offPeakCny": 0.0384639,
+      "captureFileSha256": "63a89e1375874a550f00d84fa7aed827559f8bcdf865bf270033fd03072560f7",
+      "finishReasons": [
+        "tool_calls"
+      ]
+    }
+  ],
+  "totals": {
+    "attemptedCalls": 1,
+    "knownUsageCalls": 1,
+    "unknownUsageCalls": 0,
+    "inputTokens": 23403,
+    "cacheHitTokens": 768,
+    "cacheMissTokens": 22635,
+    "outputTokensIncludingReasoning": 994,
+    "offPeakCny": 0.0384639
+  },
+  "response": {
+    "action": "notCommitted",
+    "narration": "notApplicable",
+    "code": "PROPOSAL_REFERENCE_INVALID",
+    "outcomeKind": "rejected"
+  },
+  "mechanicalEvidence": {
+    "eventCount": 0,
+    "eventTypes": [],
+    "receipts": 0,
+    "pendingDue": 0,
+    "modelInvocations": 1,
+    "deliveryStatuses": [],
+    "audienceStatuses": []
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsChecked": 0,
+    "frozenContextsConform": null,
+    "authorityUnchangedFromGenesis": true,
+    "resourcesAndTimeUnchanged": true,
+    "eventCount": 0,
+    "eventTypes": [],
+    "receiptCount": 0,
+    "newEvidenceCount": 0,
+    "randomnessAbsent": true,
+    "claimsNote": "No proposal reached Rules; zero Claims to validate. Semantic draft audit is separate."
+  },
+  "diagnostics": {
+    "originalJson": "accepted",
+    "originalLowering": {
+      "kind": "rejected",
+      "code": "PROPOSAL_REFERENCE_INVALID",
+      "issues": [
+        "social:foreign-npc-basis"
+      ]
+    },
+    "directoryAdvertisesRawRef": true,
+    "directoryForbidsHolderRef": true,
+    "holderSnapshotPresent": true,
+    "diagnosticHolderRefOnly": "accepted",
+    "submittedDiagnostic": false,
+    "extraCalls": 0
+  },
+  "semanticAudit": {
+    "status": "draft-not-submitted; authorship-misclassification-corrected",
+    "issues": [
+      "static NPC goal and behavioral constraints are missing from genesis finite context",
+      "stage directions stored as spoken words; physical NPC gesture has no executable plan",
+      "meaningful check not demonstrated"
+    ],
+    "schemaRetrievalOccurred": false,
+    "narrationInvoked": false,
+    "authorshipCorrection": "Unrecorded personal history may be authored without a prior citation proving it. Inspect consistency with established canon and persist new history; lack of old evidence alone is not failure.",
+    "canonicalCreationGap": "Current social source claim does not establish the described history as canonical truth."
+  },
+  "priceSource": {
+    "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "currency": "CNY",
+    "perMillionTokensOffPeak": {
+      "cacheHitInput": 0.05,
+      "cacheMissInput": 1.5,
+      "output": 4.5
+    }
+  },
+  "localProbeScripts": [
+    {
+      "name": "zhuwei-vnext-round26-capture.mjs",
+      "sha256": "1e1ae82955fa40841c24d3f594ebaa9951da4843133ad12e0a96c75601c1eb71"
+    },
+    {
+      "name": "zhuwei-vnext-round26-diagnostic.mts",
+      "sha256": "7f3d42e1c0aa6dc8218487ec443f0a06cad4d34dba2178f06cfe7389dd8df6ce"
+    },
+    {
+      "name": "zhuwei-vnext-round26-extract.py",
+      "sha256": "e3241fffd3625c6bba6ccafc82d3b0a9f7c4c4ecebdbdf598f7a0242052e35e2"
+    },
+    {
+      "name": "zhuwei-vnext-round26-replay.mts",
+      "sha256": "85b4afc10811fed6321034f73f914e4cd0e205b0a2e5c3e4595c0f5fa7c59fa2"
+    },
+    {
+      "name": "zhuwei-vnext-round26-report.py",
+      "sha256": "2c77a50cda932e4aab0e62a58e254585c6c608eaff5ceb1ae2336d208551152c"
+    },
+    {
+      "name": "zhuwei-vnext-round26-source-manifest.py",
+      "sha256": "7312e7994f247409cf2a48ebe5bfffdc55a707fdade067bde0ed6d3239e5fb99"
+    },
+    {
+      "name": "zhuwei-vnext-round26.mjs",
+      "sha256": "83950f24d4f87de0bfc1bd27724c2ffd94153c3ad3a9586844a582d25a00c06f"
+    }
+  ],
+  "externalOperations": {
+    "deployment": false,
+    "gitPush": false,
+    "remoteMigration": false,
+    "productionRetirement": false,
+    "localServersStopped": true,
+    "serverExitCode": 130,
+    "captureExitCode": 1
+  }
+}

@@ -1,6 +1,9 @@
+import { isAuthoredExecutionArea } from "./authored-proposal-contract";
+import { resolvePassageTraversal, passageFactRef } from "../../rules/v2/dynamic-locations";
 import {
   authorityRefBoundToScene,
   authoritySpatialRefVisibleTo,
+  authorityWorldInteractionTargetVisibleTo,
   composeDefinition,
   itemEntryResourceId,
   semanticDefinitionSnapshot,
@@ -27,10 +30,13 @@ import {
 } from "./canonical-json";
 import {
   requiredContextAuthorityRefs,
+  requiredContextBasisReferences,
+  requiredContextReadBindings,
   requiredContextReadRefs,
   requiredContextViewerRefs,
 } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
+import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 
 export const VNEXT_KP_PROPOSAL_SCHEMA = "zhuwei.kp-coarse-form-proposal/vnext-1" as const;
 export const VNEXT_MATERIALIZATION_FORM_ID = "materialization.vnext-1" as const;
@@ -100,6 +106,7 @@ export type WorldInteractionAdjudication =
     }>;
 
 export type VNextWorldSemanticEffect =
+  | Readonly<{ kind: "traversePassage"; passageRef: string }>
   | Readonly<{
       kind: "relationTransition";
       relationRef: string;
@@ -117,7 +124,7 @@ export type VNextWorldSemanticEffect =
       zoneRef: string;
       damage:
         | Readonly<{ kind: "profile"; damageProfileRef: WorldDamageProfileRef }>
-        | Readonly<{ kind: "authored"; hazardDefinitionRef: string }>;
+        | Readonly<{ kind: "authored"; hazardDefinitionRef: string; area?: { origin: { x: string; y: string; elevation: string }; direction?: { x: string; y: string; elevation: string } } }>;
     }>;
 
 export type VNextWorldInteractionBranchProposal = Readonly<{
@@ -186,6 +193,7 @@ export type VNextProposalLoweringResult =
         | "DEFINITION_CONFLICT"
         | "CONTEXT_INSUFFICIENT";
       issues: readonly string[];
+      diagnostics?: readonly ProposalDiagnostic[];
     }>;
 
 export function validateVNextCoarseFormProposal(
@@ -226,6 +234,8 @@ export function validateVNextCoarseFormProposal(
 
 export function lowerVNextCoarseFormProposal(input: Readonly<{
   value: unknown;
+  /** Derived from an already validated Bundle graph; Rules resolves the actual authority. */
+  prospectiveDefinitionKinds?: Readonly<Record<string, string>>;
   requiredContext: VNextRequiredContext;
   state: AuthoritativeWorldState;
   rootActionId: string;
@@ -244,6 +254,8 @@ export function lowerVNextCoarseFormProposal(input: Readonly<{
 
 function lowerVNextCoarseFormProposalUnchecked(input: Readonly<{
   value: unknown;
+  /** Derived from an already validated Bundle graph; Rules resolves the actual authority. */
+  prospectiveDefinitionKinds?: Readonly<Record<string, string>>;
   requiredContext: VNextRequiredContext;
   state: AuthoritativeWorldState;
   rootActionId: string;
@@ -257,19 +269,22 @@ function lowerVNextCoarseFormProposalUnchecked(input: Readonly<{
     || input.requiredContext.intent.actorRef !== input.actorCharacterId) {
     return rejected("CONTEXT_INSUFFICIENT", ["proposal:context-binding-mismatch"]);
   }
-  const authorityRefs = requiredContextAuthorityRefs(input.requiredContext);
-  const readRefs = requiredContextReadRefs(input.requiredContext);
-  const allBasis = uniqueRefs([
-    ...proposal.basisRefs,
+  const basisReferences = requiredContextBasisReferences(input.requiredContext);
+  const basisSlots = [
+    ...proposal.basisRefs.map((ref, index) => ({ ref, path: ["basisRefs", index] })),
     ...(proposal.formId === VNEXT_WORLD_INTERACTION_FORM_ID
-      ? branchBasisRefs(proposal.proposal.branches)
+      ? branchBasisSlots(proposal.proposal.branches)
       : []),
-  ]);
-  if (allBasis.some((ref) => !authorityRefs.has(ref))) {
-    return rejected("PROPOSAL_REFERENCE_INVALID", ["proposal:basis-ref-not-authorized"]);
-  }
-  if (allBasis.some((ref) => !readRefs.has(ref))) {
-    return rejected("PROPOSAL_REFERENCE_INVALID", ["proposal:basis-ref-not-read-bound"]);
+  ];
+  for (const constraint of ["proposal:basis-ref-not-authorized", "proposal:basis-ref-not-read-bound"] as const) {
+    const diagnostics = basisSlots.filter(({ ref }) => basisReferences.rejection(ref) === constraint
+      && !Object.hasOwn(input.prospectiveDefinitionKinds ?? {}, ref))
+      .map(({ ref, path }) => proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
+        path, actual: diagnosticActual(ref),
+        expected: { source: "frozenRequiredContext", authorized: true, readBinding: "required" },
+        repair: { allowed: false, reason: "basis-replacement-or-binding-creation-is-not-a-proven-representation-repair" },
+      }));
+    if (diagnostics.length) return rejected("PROPOSAL_REFERENCE_INVALID", [constraint], diagnostics);
   }
 
   return proposal.formId === VNEXT_MATERIALIZATION_FORM_ID
@@ -386,33 +401,46 @@ function lowerWorldInteraction(
   const proposal = envelope.proposal;
   const actor = input.state.entities[input.actorCharacterId];
   if (actor === undefined || actor.sceneId !== proposal.sceneRef) {
-    return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:actor-scene-mismatch"]);
+    return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:actor-scene-mismatch"], [
+      proposalDiagnostic("REFERENCE_UNAVAILABLE", "world-interaction:actor-scene-mismatch", {
+        path: ["proposal", "sceneRef"], actual: diagnosticActual(proposal.sceneRef),
+        expected: { requirement: "the acting character's frozen current scene" },
+      }),
+    ]);
   }
   const authorityRefs = requiredContextAuthorityRefs(input.requiredContext);
-  const selectedRefs = [
-    proposal.sceneRef,
-    ...proposal.targetRefs,
-    ...proposal.directTargetRefs,
-    ...proposal.instrumentRefs,
-    ...(proposal.abilityRef === null ? [] : [proposal.abilityRef]),
-  ].filter((ref) => !PROSPECTIVE_HANDLE_PATTERN.test(ref));
-  if (selectedRefs.some((ref) => !authorityRefs.has(ref))) {
-    return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:selected-ref-not-authorized"]);
+  const selectedSlots = [
+    { ref: proposal.sceneRef, path: ["proposal", "sceneRef"] },
+    ...(["targetRefs", "directTargetRefs", "instrumentRefs"] as const).flatMap(key =>
+      proposal[key].map((ref, index) => ({ ref, path: ["proposal", key, index] }))),
+    ...(proposal.abilityRef === null ? [] : [{ ref: proposal.abilityRef, path: ["proposal", "abilityRef"] }]),
+  ].filter(({ ref }) => !PROSPECTIVE_HANDLE_PATTERN.test(ref));
+  const unauthorized = selectedSlots.filter(({ ref }) => !authorityRefs.has(ref));
+  if (unauthorized.length) {
+    return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:selected-ref-not-authorized"],
+      unauthorized.map(({ ref, path }) => proposalDiagnostic("REFERENCE_UNAVAILABLE", "world-interaction:selected-ref-not-authorized", {
+        path, actual: diagnosticActual(ref), expected: { requirement: "an exact reference in the frozen authorized context" },
+      })));
   }
   const viewerRefs = requiredContextViewerRefs(input.requiredContext);
-  if (proposal.directTargetRefs
-    .filter((ref) => !PROSPECTIVE_HANDLE_PATTERN.test(ref))
-    .some((ref) =>
-      !viewerRefs.has(ref)
-      || !authoritySpatialRefVisibleTo(
-        input.state,
-        ref,
-        proposal.sceneRef,
-        input.actorCharacterId,
-      ))) {
+  const addressable = (ref: string) => viewerRefs.has(ref)
+    && authorityWorldInteractionTargetVisibleTo(input.state, ref, input.actorCharacterId, proposal);
+  const unavailable = proposal.directTargetRefs.map((ref, index) => ({ ref, index }))
+    .filter(({ ref }) => !PROSPECTIVE_HANDLE_PATTERN.test(ref) && !addressable(ref));
+  if (unavailable.length) {
+    // Candidate refs obey the same target predicate and frozen Viewer scope.
+    // Listing them explains the slot; it never authorizes a target replacement.
+    const readRefs = requiredContextReadRefs(input.requiredContext);
+    const refs = [...viewerRefs].filter(ref => authorityRefs.has(ref) && readRefs.has(ref) && addressable(ref))
+      .sort(compareCodeUnits);
     return rejected(
       "PROPOSAL_REFERENCE_INVALID",
       ["world-interaction:direct-target-not-addressable"],
+      unavailable.map(({ ref, index }) => proposalDiagnostic("REFERENCE_UNAVAILABLE", "world-interaction:direct-target-not-addressable", {
+        path: ["proposal", "directTargetRefs", index], actual: diagnosticActual(ref),
+        expected: { requirement: "an addressable world target, not a knowledge or authority-basis record", refs },
+        repair: { allowed: false, reason: "target-replacement-would-change-decision-semantics" },
+      })),
     );
   }
 
@@ -449,11 +477,21 @@ function lowerWorldInteraction(
   if (costs === undefined) {
     return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:ability-cost-unavailable"]);
   }
+  // A held knowledge alias and its holder-qualified record denote the same
+  // frozen evidence. Keep source references in the exact representation used
+  // by selectPlanReadSet; targets, subjects and semantic knowledge IDs retain
+  // their own contracts and are never rewritten here.
+  const frozenBindings = requiredContextReadBindings(input.requiredContext);
+  const canonicalBasisRefs = (refs: readonly string[]) => uniqueRefs(
+    refs.map(ref => frozenBindings.get(ref)?.ref ?? ref),
+  );
   const success = lowerBranch(
     proposal.branches.success,
     input.state,
     input.actorCharacterId,
     proposal.sceneRef,
+    canonicalBasisRefs,
+    input.prospectiveDefinitionKinds,
   );
   if (success.kind === "rejected") return success;
   const failure = lowerBranch(
@@ -461,9 +499,11 @@ function lowerWorldInteraction(
     input.state,
     input.actorCharacterId,
     proposal.sceneRef,
+    canonicalBasisRefs,
+    input.prospectiveDefinitionKinds,
   );
   if (failure.kind === "rejected") return failure;
-  const basisRefs = uniqueRefs([
+  const basisRefs = canonicalBasisRefs([
     ...envelope.basisRefs,
     ...branchBasisRefs(proposal.branches),
   ]);
@@ -562,11 +602,20 @@ function lowerBranch(
   state: AuthoritativeWorldState,
   actorCharacterId: string,
   sceneRef: string,
+  canonicalBasisRefs: (refs: readonly string[]) => readonly string[],
+  prospectiveKinds: Readonly<Record<string, string>> = {},
 ): { kind: "accepted"; branch: JsonRecord; dependencyRefs: readonly string[] }
   | Extract<VNextProposalLoweringResult, { kind: "rejected" }> {
   const effects: JsonRecord[] = [];
   const dependencyRefs: string[] = [];
   for (const effect of branch.effects) {
+    if (effect.kind === "traversePassage") {
+      const passage = resolvePassageTraversal(state, actorCharacterId, effect.passageRef);
+      if (passage === undefined || passage.sourceSceneRef !== sceneRef) return rejected("PROPOSAL_REFERENCE_INVALID", ["passage:authorized-open-connection-required"]);
+      effects.push({ kind: "traversePassage", passage });
+      dependencyRefs.push(passage.passageRef, passage.sourceSceneRef, passage.destinationSceneRef, passageFactRef(passage.passageRef));
+      continue;
+    }
     if (effect.kind === "relationTransition") {
       const composed = composeSemanticNext(state, effect.relationRef, [{
         kind: "set",
@@ -624,7 +673,7 @@ function lowerBranch(
     if (effect.kind === "definitionRevision") {
       const current = state.campaignRuntime.definitions[effect.definitionRef];
       if (!isPlainRecord(current)
-        || current.semanticKind !== "sceneFeature"
+        || !["sceneFeature", "passage"].includes(String(current.semanticKind))
         || !authorityRefBoundToScene(state, effect.definitionRef, sceneRef)) {
         return rejected(
           "PROPOSAL_REFERENCE_INVALID",
@@ -652,11 +701,11 @@ function lowerBranch(
     // section 7, so a branch cannot cite a hazard the KP has not yet settled.
     if (!(effect.damage.kind === "profile"
       ? isWorldDamageProfileRef(effect.damage.damageProfileRef)
-      : isEnvironmentHazardDefinition(
+      : (prospectiveKinds[effect.damage.hazardDefinitionRef] === "hazardDefinition" || isEnvironmentHazardDefinition(
         state.campaignRuntime.definitions[effect.damage.hazardDefinitionRef],
-      ))
-      || !authorityRefBoundToScene(state, effect.sourceDefinitionRef, sceneRef)
-      || !authorityRefBoundToScene(state, effect.zoneRef, sceneRef)) {
+      )))
+      || !(prospectiveKinds[effect.sourceDefinitionRef] === "semanticDefinition" || authorityRefBoundToScene(state, effect.sourceDefinitionRef, sceneRef))
+      || !(prospectiveKinds[effect.zoneRef] === "semanticDefinition" || authorityRefBoundToScene(state, effect.zoneRef, sceneRef))) {
       return rejected("PROPOSAL_REFERENCE_INVALID", ["world-interaction:registered-hazard-unavailable"]);
     }
     dependencyRefs.push(
@@ -675,16 +724,19 @@ function lowerBranch(
       effects,
       sensoryEvidence: branch.sensoryEvidence.map((evidence) => ({
         ...structuredClone(evidence),
+        basisRefs: canonicalBasisRefs(evidence.basisRefs),
         visibilityPolicyRef: evidence.observerRef === actorCharacterId
           ? `visibility:knowledge-holder:${actorCharacterId}`
           : "visibility:scene-observers",
       })),
       pressures: branch.pressures.map((pressure) => ({
         ...structuredClone(pressure),
+        basisRefs: canonicalBasisRefs(pressure.basisRefs),
         visibilityPolicyRef: "visibility:scene-observers",
       })),
       opportunities: branch.opportunities.map((opportunity) => ({
         ...structuredClone(opportunity),
+        basisRefs: canonicalBasisRefs(opportunity.basisRefs),
         visibilityPolicyRef: "visibility:scene-observers",
       })),
     },
@@ -939,6 +991,7 @@ function isBranch(value: unknown): value is VNextWorldInteractionBranchProposal 
 
 function isWorldEffect(value: unknown): value is VNextWorldSemanticEffect {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "traversePassage") return exactKeys(value, ["kind", "passageRef"]) && isRef(value.passageRef);
   if (value.kind === "relationTransition") {
     return exactKeys(value, ["kind", "relationRef", "toState"])
       && isRef(value.relationRef)
@@ -969,7 +1022,8 @@ function isHazardDamage(value: unknown): boolean {
       && isWorldDamageProfileRef(value.damageProfileRef);
   }
   return value.kind === "authored"
-    && exactKeys(value, ["hazardDefinitionRef", "kind"])
+    && (exactKeys(value, ["hazardDefinitionRef", "kind"])
+      || (exactKeys(value, ["hazardDefinitionRef", "kind", "area"]) && isAuthoredExecutionArea(value.area)))
     && isRef(value.hazardDefinitionRef);
 }
 
@@ -1002,11 +1056,15 @@ function isSemanticOperations(value: unknown): value is readonly SemanticDefinit
 }
 
 function branchBasisRefs(branches: VNextWorldInteractionProposal["proposal"]["branches"]): string[] {
-  return [branches.success, branches.failure].flatMap((branch) => [
-    ...branch.sensoryEvidence.flatMap(({ basisRefs }) => [...basisRefs]),
-    ...branch.pressures.flatMap(({ basisRefs }) => [...basisRefs]),
-    ...branch.opportunities.flatMap(({ basisRefs }) => [...basisRefs]),
-  ]);
+  return branchBasisSlots(branches).map(({ ref }) => ref);
+}
+
+function branchBasisSlots(branches: VNextWorldInteractionProposal["proposal"]["branches"]) {
+  return (["success", "failure"] as const).flatMap(branch =>
+    (["sensoryEvidence", "pressures", "opportunities"] as const).flatMap(field =>
+      branches[branch][field].flatMap(({ basisRefs }, entryIndex) => basisRefs.map((ref, index) => ({
+        ref, path: ["proposal", "branches", branch, field, entryIndex, "basisRefs", index],
+      })))));
 }
 
 /** Exported so proposal-bundle.ts can build a materializeObject Rules plan's
@@ -1020,12 +1078,7 @@ export function selectPlanReadSet(
   kind: "accepted";
   readSet: readonly Readonly<{ ref: string; revisionOrHash: string }>[];
 }> | Extract<VNextProposalLoweringResult, { kind: "rejected" }> {
-  const byRef = new Map(context.entries.flatMap((entry) => entry.kind === "known"
-    ? [[entry.entryRef, {
-        ref: entry.entryRef,
-        revisionOrHash: entry.revisionOrHash,
-      }] as const]
-    : []));
+  const byRef = requiredContextReadBindings(context);
   const selected = new Map<string, Readonly<{ ref: string; revisionOrHash: string }>>();
   const missing: string[] = [];
   const npcKnowledgeRefs = npcRef === undefined
@@ -1035,10 +1088,6 @@ export function selectPlanReadSet(
 
   for (const dependencyRef of uniqueRefs(dependencyRefs)) {
     let binding = byRef.get(dependencyRef);
-    if (binding === undefined) {
-      binding = byRef.get(`knowledge:${context.intent.actorRef}:${dependencyRef}`)
-        ?? byRef.get(`npc-knowledge:${context.intent.actorRef}:${dependencyRef}`);
-    }
     if (binding === undefined && npcRef !== undefined && npcKnowledgeRefs.has(dependencyRef)) {
       binding = byRef.get(`knowledge:${npcRef}:${dependencyRef}`)
         ?? byRef.get(`npc-knowledge:${npcRef}:${dependencyRef}`);
@@ -1106,11 +1155,13 @@ function uniqueRefs(values: readonly string[]): readonly string[] {
 function rejected(
   code: Extract<VNextProposalLoweringResult, { kind: "rejected" }>["code"],
   issues: readonly string[],
+  diagnostics?: readonly ProposalDiagnostic[],
 ): Extract<VNextProposalLoweringResult, { kind: "rejected" }> {
   return Object.freeze({
     kind: "rejected",
     code,
     issues: Object.freeze([...issues].sort(compareCodeUnits)),
+    ...(diagnostics === undefined ? {} : { diagnostics: Object.freeze([...diagnostics]) }),
   });
 }
 

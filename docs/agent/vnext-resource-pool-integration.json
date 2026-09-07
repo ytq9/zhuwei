@@ -1,0 +1,57 @@
+{
+  "date": "2026-09-07T02:15:03.390287+00:00",
+  "workdir": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "branch": "cloudflare",
+  "base": "current dirty source after UUID compiler fix; not HEAD alone",
+  "files": [
+    {
+      "path": "app/_runtime/lib/rules/v2/character-abilities.ts",
+      "sha256": "de85ed7e4d8b7983ce37ca8f5b8e6d6c05a06ce41271f83e69f05e5a6a07f56f",
+      "afterSha256": "3fa19bf066d33dc1e83e9b0fb5c5fc18c144feabe550ff5e73b3355d7b8a05e4"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-events.ts",
+      "sha256": "dbe6b49a051ce79a6be77b52f2c32cc1dac710b3b68e6f71334724e7b8b357a5",
+      "afterSha256": "7b1629ddff4d5aafd5c546322b7e2d606dd0a86e65f46cd48a5822938fee94d8"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/combat-actions.ts",
+      "sha256": "1bed84b1ceb850d62ccc115ccb05691d0c83f5eeea61d5f1b4d5228aadfc7dde",
+      "afterSha256": "8c47f8b61e8b2f12fa2418dace766d1687dd2efe03cd7392b58cc0e556dd060d"
+    },
+    {
+      "path": "tests/kp-vnext-ability-operation.test.mjs",
+      "sha256": "d1b1f1b6379ffc883c254ef9191185e1b6cfb53928a9dfc79be05d3e2c4f6042",
+      "afterSha256": "c5ae77d56435255bc567f10f8a7ed94359acdf433d9936520e108b47308a7220"
+    },
+    {
+      "path": "tests/kp-vnext-ability-operation-room.test.ts",
+      "sha256": "a0fb36c42c9c856b6c83d142df71521a5751f6a47465bbfb92ff23b1f4bd774e",
+      "afterSha256": "fa9d2f33196c676e1cbbfa49eb6b96dfea219c2a4ca21c8075ebe86a974fa705"
+    }
+  ],
+  "delta": "/tmp/zhuwei-round71-resource-diagnosis/resource-fix.diff",
+  "baselineDirectory": "/tmp/zhuwei-round71-resource-diagnosis/pre-fix-edit-baseline",
+  "verification": {
+    "node": {
+      "command": "npx tsx --test tests/kp-vnext-ability-operation.test.mjs",
+      "passed": 19,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-round71-resource-diagnosis/resource-node-final.log"
+    },
+    "room": {
+      "command": "npx vitest run tests/kp-vnext-ability-operation-room.test.ts",
+      "passed": 5,
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-round71-resource-diagnosis/resource-room.log"
+    },
+    "types": {
+      "command": "npm run typecheck",
+      "exitCode": 0,
+      "log": "/tmp/zhuwei-round71-resource-diagnosis/resource-typecheck.log"
+    }
+  },
+  "realApi": "pending; round71 original failure retained",
+  "dataMutation": "none; old development snapshot replay retained with its original source",
+  "independentReview": "No reproducible blocker in the exact three-production-file delta; did not rerun tests or API."
+}

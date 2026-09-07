@@ -1,4 +1,14 @@
+import { isAbilityOperationPlan, type AbilityOperationPlan } from "./ability-operation";
+import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, type NpcActorPlanFormationPlan } from "./npc-plan-formation";
+import { observationKnowledgePlanConform, type ObservationKnowledgePlan } from "./character-inference";
+import { passageTraversalBindingConform, type PassageTraversalBinding } from "./dynamic-location-shapes";
+import { socialInteractionPlanConform, type SocialInteractionPlan } from "./social-interaction";
+import { isInventoryOperationPlan,type InventoryOperationInput } from "./inventory-operations";
+import { isNarrativeDetailPlan, isNarrativeMaterializationRefs } from "./narrative-commitments";
+import { isAuthoredDefinitionMaterializationPlan, isAuthoredItemMaterializationPlan, type AuthoredDefinitionMaterializationPlan, type AuthoredItemMaterializationPlan } from "./authored-materialization";
 import { canonicalSha256 } from "../profiles/canonical";
+import { hasOnlyKeys } from "./validation";
+import { canonicalCombatPoint, canonicalCombatDirection } from "../profiles/combat-geometry";
 import type { Sha256Ref } from "../profiles/types";
 import type { FrozenCheck, JsonRecord } from "./model";
 import {
@@ -102,7 +112,7 @@ export type WorldInteractionDefinitionEffect = Readonly<{
  */
 export type WorldInteractionHazardDamageSource = Readonly<
   | { kind: "profile"; damageProfileRef: WorldDamageProfileRef }
-  | { kind: "authored"; hazardDefinitionRef: string }
+  | { kind: "authored"; hazardDefinitionRef: string; area?: {origin:{x:string;y:string;elevation:string};direction?:{x:string;y:string;elevation:string}} }
 >;
 
 export type WorldInteractionRegisteredHazardEffect = Readonly<{
@@ -113,6 +123,7 @@ export type WorldInteractionRegisteredHazardEffect = Readonly<{
 }>;
 
 export type WorldInteractionEffect =
+  | Readonly<{ kind: "traversePassage"; passage: PassageTraversalBinding }>
   | WorldInteractionRelationEffect
   | WorldInteractionDefinitionEffect
   | WorldInteractionRegisteredHazardEffect;
@@ -151,6 +162,8 @@ export type WorldInteractionBranch = Readonly<{
 }>;
 
 export type WorldInteractionResolutionPlan = Readonly<{
+  observation?: ObservationKnowledgePlan;
+  social?: SocialInteractionPlan;
   schema: typeof WORLD_INTERACTION_RESOLUTION_PLAN_SCHEMA;
   resolutionId: string;
   interactionRef: string;
@@ -180,6 +193,12 @@ export type WorldInteractionResolutionPlan = Readonly<{
   }>;
 }>;
 
+/** One discriminator for initial execution, persisted atomic tapes and
+ * resumed inputs. Every consumer must agree about the actual plan family. */
+export function worldInteractionFormId(plan: WorldInteractionResolutionPlan): "observe.vnext-1" | "world-interaction.vnext-1" | "social.vnext-1" {
+  return plan.social ? "social.vnext-1" : plan.observation ? "observe.vnext-1" : "world-interaction.vnext-1";
+}
+
 export type AtomicWorldInteractionOutcomeBinding = "always" | "onSuccess" | "onFailure";
 
 export type AtomicWorldInteractionReference = Readonly<
@@ -189,11 +208,17 @@ export type AtomicWorldInteractionReference = Readonly<
 
 export type AtomicWorldInteractionProducedReference = Readonly<{
   handle: string;
-  kind: "semanticDefinition" | "canonicalFact" | "relation" | "itemEntry";
+  kind: "semanticDefinition" | "canonicalFact" | "relation" | "itemEntry" | "abilityDefinition" | "hazardDefinition" | "itemDefinition";
   outcomeBinding: AtomicWorldInteractionOutcomeBinding;
 }>;
 
 export type AtomicWorldInteractionRulesInput = Readonly<
+  | { kind: "performAbilityOperation"; rootActionId: string; actorCharacterId: string; plan: AbilityOperationPlan }
+  | { kind: "formNpcActorPlan"; rootActionId: string; actorCharacterId: string; plan: NpcActorPlanFormationPlan }
+  | { kind: "commitNarrativeDetail"; rootActionId: string; actorCharacterId: string; plan: import("./narrative-commitments").NarrativeDetailPlan }
+  | InventoryOperationInput
+  | {kind:"materializeDefinition";rootActionId:string;actorCharacterId:string;plan:AuthoredDefinitionMaterializationPlan}
+  | {kind:"materializeItem";rootActionId:string;actorCharacterId:string;plan:AuthoredItemMaterializationPlan}
   | {
       kind: "materializeSemanticDefinition";
       rootActionId: string;
@@ -215,7 +240,7 @@ export type AtomicWorldInteractionRulesInput = Readonly<
 >;
 
 export type AtomicWorldInteractionStep = Readonly<{
-  formId: "materialization.vnext-1" | "world-interaction.vnext-1";
+  formId: "materialization.vnext-1" | "world-interaction.vnext-1" | "inventory-operation.vnext-1" | "observe.vnext-1" | "social.vnext-1" | "objective-continuity.vnext-1" | "combat.vnext-1";
   proposalRef: string;
   ruling: "directSuccess" | "check";
   rulesInput: AtomicWorldInteractionRulesInput;
@@ -234,8 +259,25 @@ export type AtomicWorldInteractionStepsPlan = Readonly<{
   bundleHash: Sha256Ref;
   contextHash: Sha256Ref;
   sharedRuling: "directSuccess" | "check";
+  narrativeMaterializationRefs?: readonly string[];
+  /** Additional accepted costs, distinct from an Ability's fixed costs.
+   * Fictional duration belongs to an Activity, never an immediate spend. */
+  executionCosts?: AtomicWorldInteractionExecutionCosts;
   steps: readonly AtomicWorldInteractionStep[];
 }>;
+
+export type AtomicWorldInteractionExecutionCosts = Readonly<{
+  costs: readonly Exclude<WorldInteractionAttemptCost, { kind: "fictionTime" }>[];
+  readSet: readonly VersionedAuthorityBinding[];
+}>;
+
+export function isAtomicWorldInteractionExecutionCosts(value: unknown): value is AtomicWorldInteractionExecutionCosts {
+  return isRecord(value) && hasExactKeys(value, ["costs", "readSet"])
+    && isCanonicalReadSet(value.readSet) && Array.isArray(value.costs)
+    && value.costs.length > 0 && value.costs.length <= 16
+    && value.costs.every(cost => isAttemptCost(cost) && cost.kind !== "fictionTime")
+    && new Set(value.costs.map(attemptCostIdentity)).size === value.costs.length;
+}
 
 export type AtomicWorldInteractionStepsResolvedPayload = Readonly<{
   actorCharacterId: string;
@@ -276,6 +318,8 @@ export type WorldInteractionFeasibilityNextAction = Readonly<{
  */
 export type WorldInteractionFeasibilityRulingPlan = Readonly<{
   schema: typeof WORLD_INTERACTION_FEASIBILITY_RULING_PLAN_SCHEMA;
+  contextHash: Sha256Ref;
+  readSet: readonly VersionedAuthorityBinding[];
   actorCharacterId: string;
   intent: string;
   method: string;
@@ -286,6 +330,30 @@ export type WorldInteractionFeasibilityRulingPlan = Readonly<{
   costs: readonly WorldInteractionAttemptCost[];
   basisRefs: readonly string[];
 }>;
+
+/** Both lowering and Rules derive required reads from the same semantic
+ * dependencies. Actor resources are part of the actor's composite binding. */
+export function worldInteractionFeasibilityMechanicalRefs(
+  actorCharacterId: string,
+  costs: readonly WorldInteractionAttemptCost[],
+): string[] {
+  return [...new Set([
+    actorCharacterId,
+    ...costs.flatMap(cost => cost.kind === "item" ? [cost.entryRef]
+      : cost.kind === "fictionTime" ? [`character-timeline:${actorCharacterId}`] : []),
+  ])].sort();
+}
+
+export function worldInteractionFeasibilityDependencyRefs(
+  actorCharacterId: string,
+  plan: Pick<WorldInteractionFeasibilityRulingPlan, "basisRefs" | "prerequisites" | "costs">,
+): string[] {
+  return [...new Set([
+    ...worldInteractionFeasibilityMechanicalRefs(actorCharacterId, plan.costs),
+    ...plan.basisRefs,
+    ...plan.prerequisites.flatMap(({ ref }) => ref === null ? [] : [ref]),
+  ])].sort();
+}
 
 export type WorldInteractionFeasibilityRuledPayload = Readonly<{
   actorCharacterId: string;
@@ -302,6 +370,7 @@ export type WorldInteractionFeasibilityRuledPayload = Readonly<{
 }>;
 
 export type AppliedWorldInteractionEffect =
+  | Readonly<{ kind: "passageTraversalStarted"; activityId: string; passage: PassageTraversalBinding }>
   | Readonly<{
       kind: "relationTransition";
       relationRef: string;
@@ -359,6 +428,8 @@ export type AppliedWorldInteractionEffect =
       hpBefore: number;
       hpAfter: number;
       died: boolean;
+      hitPointDamage?: number;
+      damagePacketHash?: Sha256Ref;
     }>;
 
 export type SemanticDefinitionRevisedPayload = Readonly<{
@@ -376,6 +447,8 @@ export type SemanticDefinitionRevisedPayload = Readonly<{
 }>;
 
 export type WorldInteractionResolvedPayload = Readonly<{
+  observation?: true;
+  social?: Readonly<{ plan: WorldInteractionResolutionPlan }>;
   interactionRef: string;
   resolutionId: string;
   actorCharacterId: string;
@@ -407,7 +480,7 @@ export type WorldInteractionResolvedPayload = Readonly<{
 }>;
 
 const SEMANTIC_KINDS = new Set<SemanticDefinitionKind>([
-  "npc", "item", "worldFact", "sceneFeature", "worldRelation",
+  "npc", "item", "worldFact", "sceneFeature", "worldRelation", "location", "passage",
 ]);
 const RELATION_KINDS = new Set([
   "supports", "attachedTo", "contains", "blocks", "triggers",
@@ -448,6 +521,8 @@ export function isWorldInteractionResolutionPlan(
       "abilityRef", "actorCharacterId", "basisRefs", "branches", "contextHash", "costs",
       "directTargetRefs", "instrumentRefs", "intent", "interactionRef", "method", "readSet",
       "resolutionId", "ruling", "sceneRef", "schema", "targetRefs",
+      ...(Object.hasOwn(value, "observation") ? ["observation"] : []),
+      ...(Object.hasOwn(value, "social") ? ["social"] : []),
     ])
     || value.schema !== WORLD_INTERACTION_RESOLUTION_PLAN_SCHEMA
     || ![value.resolutionId, value.interactionRef, value.actorCharacterId, value.sceneRef]
@@ -472,7 +547,45 @@ export function isWorldInteractionResolutionPlan(
     || !hasExactKeys(value.branches, ["failure", "success"])
     || !isBranch(value.branches.success)
     || !isBranch(value.branches.failure)) return false;
+  if (Object.hasOwn(value, "observation") && (!observationKnowledgePlanConform(value.observation)
+    || value.abilityRef !== null || value.costs.length !== 0
+    || (value.ruling.kind === "check" && value.ruling.resolutionKind !== "abilityCheck")
+    || [value.branches.success, value.branches.failure].some(branch => branch.effects.length !== 0
+      || branch.pressures.length !== 0 || branch.opportunities.length !== 0))) return false;
+  if (Object.hasOwn(value, "social") && (!socialInteractionPlanConform(value.social) || Object.hasOwn(value, "observation")
+    || value.abilityRef !== null || value.costs.length !== 0 || value.instrumentRefs.length !== 0
+    || value.directTargetRefs.length !== 1 || value.directTargetRefs[0] !== value.social.npcRef
+    || (value.ruling.kind === "check" && value.ruling.resolutionKind !== "abilityCheck")
+    || [value.branches.success, value.branches.failure].some(branch => branch.effects.length !== 0
+      || branch.sensoryEvidence.length !== 0 || branch.pressures.length !== 0 || branch.opportunities.length !== 0))) return false;
+  if (value.social && ["success", "failure"].some(branch => {
+    const spatial = (value.branches as WorldInteractionResolutionPlan["branches"])[branch as "success" | "failure"];
+    const social = (value.social as SocialInteractionPlan).branches[branch as "success" | "failure"];
+    return spatial.outcomeCode !== social.outcomeCode || spatial.summary !== social.summary;
+  })) return false;
   return true;
+}
+
+/** Server-frozen obligations add causal edges even when a step does not
+ * consume the resulting object's handle (for example, observing its scene).
+ * Raw-input compilation and persisted-plan validation must derive the same
+ * edges; the materializer's full source contract is validated separately. */
+export function atomicNarrativeMaterializerRefs(steps: readonly unknown[], refs: readonly string[]): string[] | undefined {
+  const dependencies = new Set<string>();
+  for (const ref of refs) {
+    const matches = steps.filter(step => isRecord(step) && isRecord(step.rulesInput)
+      && (step.rulesInput.kind === "materializeSemanticDefinition" || step.rulesInput.kind === "materializeItem")
+      && isRecord(step.rulesInput.plan) && Array.isArray(step.rulesInput.plan.sourceRefs)
+      && step.rulesInput.plan.sourceRefs.includes(ref));
+    if (matches.length !== 1 || !isRecord(matches[0]) || matches[0].outcomeBinding !== "always"
+      || !isRef(matches[0].proposalRef)) return undefined;
+    dependencies.add(matches[0].proposalRef);
+  }
+  return [...dependencies].sort();
+}
+
+export function atomicStepNeedsNarrativeMaterialization(kind: unknown): boolean {
+  return kind === "resolveWorldInteraction" || kind === "inventoryOperation" || kind === "reviseSemanticDefinition";
 }
 
 export function isAtomicWorldInteractionStepsPlan(
@@ -481,15 +594,19 @@ export function isAtomicWorldInteractionStepsPlan(
   if (!isRecord(value)
     || !hasExactKeys(value, [
       "actorCharacterId", "bundleHash", "contextHash", "rootActionId", "schema", "sharedRuling", "steps",
+      ...(Object.hasOwn(value, "narrativeMaterializationRefs") ? ["narrativeMaterializationRefs"] : []),
+      ...(Object.hasOwn(value, "executionCosts") ? ["executionCosts"] : []),
     ])
     || value.schema !== ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA
     || !isRef(value.rootActionId)
     || !isRef(value.actorCharacterId)
     || !isSha256(value.bundleHash)
     || !isSha256(value.contextHash)
+    || (Object.hasOwn(value, "narrativeMaterializationRefs") && !isNarrativeMaterializationRefs(value.narrativeMaterializationRefs))
+    || (Object.hasOwn(value, "executionCosts") && !isAtomicWorldInteractionExecutionCosts(value.executionCosts))
     || (value.sharedRuling !== "directSuccess" && value.sharedRuling !== "check")
     || !Array.isArray(value.steps)
-    || value.steps.length < 2
+    || value.steps.length < 1
     || value.steps.length > 16) return false;
 
   const checkProposalRefs = value.steps.flatMap((step) =>
@@ -505,6 +622,8 @@ export function isAtomicWorldInteractionStepsPlan(
   if ((value.sharedRuling === "check" && checkProposalRefs.length !== 1)
     || (value.sharedRuling === "directSuccess" && checkProposalRefs.length !== 0)) return false;
   const sharedCheckProposalRef = checkProposalRefs[0];
+  const narrativeDependencies = atomicNarrativeMaterializerRefs(value.steps, (value.narrativeMaterializationRefs ?? []) as readonly string[]);
+  if (narrativeDependencies === undefined) return false;
 
   const seen = new Set<string>();
   const producerByHandle = new Map<string, {
@@ -519,7 +638,7 @@ export function isAtomicWorldInteractionStepsPlan(
         "rulesInput", "ruling",
       ])
       || (step.formId !== "materialization.vnext-1"
-        && step.formId !== "world-interaction.vnext-1")
+        && step.formId !== "world-interaction.vnext-1" && step.formId !== "inventory-operation.vnext-1" && step.formId !== "observe.vnext-1" && step.formId !== "social.vnext-1" && step.formId !== "objective-continuity.vnext-1" && step.formId !== "combat.vnext-1")
       || !isRef(step.proposalRef)
       || seen.has(step.proposalRef)
       || step.ruling !== value.sharedRuling
@@ -537,8 +656,17 @@ export function isAtomicWorldInteractionStepsPlan(
       )) return false;
     const rulesInput = step.rulesInput as AtomicWorldInteractionRulesInput;
     const plan = rulesInput.plan;
+    if (rulesInput.kind === "formNpcActorPlan" && step.consumes.some((ref: AtomicWorldInteractionReference) => ref.kind === "prospective")) return false;
+    if (rulesInput.kind === "formNpcActorPlan") {
+      const ids = npcActorPlanFormationIds(value.rootActionId, step.proposalRef);
+      if (Object.entries(ids).some(([key, id]) => rulesInput.plan[key as keyof typeof ids] !== id)) return false;
+    }
     if (plan.contextHash !== value.contextHash) return false;
-    if (rulesInput.kind === "materializeSemanticDefinition") {
+    if (rulesInput.kind === "materializeDefinition" || rulesInput.kind === "materializeItem") {
+      const expectedKind=rulesInput.kind==="materializeItem"?"itemEntry":`${rulesInput.plan.source.kind}Definition`;
+      if(rulesInput.plan.bundleHash!==value.bundleHash||step.produces.length!==1||step.produces[0]?.handle!==rulesInput.plan.handle
+        ||step.produces[0]?.kind!==expectedKind||step.produces[0]?.outcomeBinding!==step.outcomeBinding)return false;
+    } else if (rulesInput.kind === "materializeSemanticDefinition") {
       if (rulesInput.plan.bundleHash !== value.bundleHash
         || step.produces.length !== 1
         || step.produces[0]?.handle !== rulesInput.plan.handle
@@ -562,7 +690,7 @@ export function isAtomicWorldInteractionStepsPlan(
     seen.add(step.proposalRef);
   }
   for (const step of value.steps) {
-    const expectedDependencies = new Set<string>();
+    const expectedDependencies = new Set<string>(atomicStepNeedsNarrativeMaterialization(step.rulesInput.kind) ? narrativeDependencies : []);
     for (const consumed of step.consumes) {
       if (consumed.kind !== "prospective") continue;
       const producer = producerByHandle.get(consumed.handle);
@@ -612,7 +740,7 @@ export function isAtomicWorldInteractionStepsResolvedPayload(
     || (value.branch !== "success" && value.branch !== "failure")
     || !(value.checkResolutionId === null || isRef(value.checkResolutionId))
     || !Array.isArray(value.steps)
-    || value.steps.length < 2
+    || value.steps.length < 1
     || value.steps.length > 16) return false;
   const refs = new Set<string>();
   return value.steps.every((step) => {
@@ -636,12 +764,18 @@ function isAtomicRulesInput(
   value: unknown,
   rootActionId: string,
   actorCharacterId: string,
-  formId: "materialization.vnext-1" | "world-interaction.vnext-1",
+  formId: AtomicWorldInteractionStep["formId"],
 ): value is AtomicWorldInteractionRulesInput {
   if (!isRecord(value)
     || !hasExactKeys(value, ["actorCharacterId", "kind", "plan", "rootActionId"])
     || value.rootActionId !== rootActionId
     || value.actorCharacterId !== actorCharacterId) return false;
+  if (value.kind === "formNpcActorPlan") return formId === "objective-continuity.vnext-1" && isNpcActorPlanFormationPlan(value.plan);
+  if (value.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(value.plan);
+  if (value.kind === "commitNarrativeDetail") return formId === "materialization.vnext-1" && isNarrativeDetailPlan(value.plan);
+  if(value.kind==="inventoryOperation")return formId==="inventory-operation.vnext-1"&&isInventoryOperationPlan(value.plan);
+  if(value.kind==="materializeDefinition")return formId==="materialization.vnext-1"&&isAuthoredDefinitionMaterializationPlan(value.plan);
+  if(value.kind==="materializeItem")return formId==="materialization.vnext-1"&&isAuthoredItemMaterializationPlan(value.plan);
   if (value.kind === "materializeSemanticDefinition") {
     return formId === "materialization.vnext-1"
       && isSemanticDefinitionMaterializationPlan(value.plan);
@@ -651,8 +785,8 @@ function isAtomicRulesInput(
       && isSemanticDefinitionRevisionPlan(value.plan);
   }
   return value.kind === "resolveWorldInteraction"
-    && formId === "world-interaction.vnext-1"
-    && isWorldInteractionResolutionPlan(value.plan);
+    && isWorldInteractionResolutionPlan(value.plan)
+    && formId === worldInteractionFormId(value.plan);
 }
 
 function isAtomicOutcomeBinding(value: unknown): value is AtomicWorldInteractionOutcomeBinding {
@@ -694,7 +828,7 @@ function isAtomicProduces(
       || typeof entry.handle !== "string"
       || !ATOMIC_PROSPECTIVE_HANDLE.test(entry.handle)
       || handles.has(entry.handle)
-      || !["semanticDefinition", "canonicalFact", "relation", "itemEntry"].includes(String(entry.kind))
+      || !["semanticDefinition", "canonicalFact", "relation", "itemEntry", "abilityDefinition", "hazardDefinition", "itemDefinition"].includes(String(entry.kind))
       || !isAtomicOutcomeBinding(entry.outcomeBinding)) return false;
     handles.add(entry.handle);
     return true;
@@ -756,10 +890,12 @@ export function isWorldInteractionFeasibilityRulingPlan(
 ): value is WorldInteractionFeasibilityRulingPlan {
   return isRecord(value)
     && hasExactKeys(value, [
-      "actorCharacterId", "basisRefs", "costs", "intent", "method", "nextActions",
-      "prerequisites", "publicBasis", "rulingKind", "schema",
+      "actorCharacterId", "basisRefs", "contextHash", "costs", "intent", "method", "nextActions",
+      "prerequisites", "publicBasis", "readSet", "rulingKind", "schema",
     ])
     && value.schema === WORLD_INTERACTION_FEASIBILITY_RULING_PLAN_SCHEMA
+    && isSha256(value.contextHash)
+    && isCanonicalReadSet(value.readSet)
     && isRef(value.actorCharacterId)
     && isText(value.intent)
     && isText(value.method)
@@ -814,7 +950,12 @@ export function isWorldInteractionResolvedPayload(
       "contextHash", "directTargetRefs", "instrumentRefs", "interactionRef", "opportunities",
       "outcomeCode", "planHash", "pressures", "resolutionId", "rulingKind", "sceneRef",
       "sensoryEvidence", "summary", "targetRefs",
+      ...(Object.hasOwn(value, "observation") ? ["observation"] : []),
+      ...(Object.hasOwn(value, "social") ? ["social"] : []),
     ])
+    || (Object.hasOwn(value, "observation") && (value.observation !== true
+      || value.abilityRef !== null || !Array.isArray(value.appliedEffects) || value.appliedEffects.length !== 0
+      || (value.check !== null && (!isRecord(value.check) || value.check.resolutionKind !== "abilityCheck"))))
     || ![value.interactionRef, value.resolutionId, value.actorCharacterId, value.sceneRef]
       .every(isRef)
     || !(value.abilityRef === null || isRef(value.abilityRef))
@@ -838,6 +979,22 @@ export function isWorldInteractionResolvedPayload(
     || !value.pressures.every(isPressure)
     || !Array.isArray(value.opportunities)
     || !value.opportunities.every(isOpportunity)) return false;
+  if (Object.hasOwn(value, "social")) {
+    if (Object.hasOwn(value, "observation") || !isRecord(value.social) || !hasExactKeys(value.social, ["plan"])
+      || !isWorldInteractionResolutionPlan(value.social.plan) || !value.social.plan.social
+      || worldInteractionPlanHash(value.social.plan) !== value.planHash
+      || value.appliedEffects.length !== 0 || value.sensoryEvidence.length !== 0 || value.pressures.length !== 0 || value.opportunities.length !== 0
+      || ["actorCharacterId", "sceneRef", "resolutionId", "interactionRef", "contextHash", "abilityRef"].some(key => value[key] !== (value.social as { plan: JsonRecord }).plan[key])
+      || ["targetRefs", "directTargetRefs", "instrumentRefs", "basisRefs"].some(key => canonicalSha256(value[key]) !== canonicalSha256((value.social as { plan: JsonRecord }).plan[key]))
+      || value.rulingKind !== value.social.plan.ruling.kind) return false;
+    if (value.social.plan.ruling.kind === "check" && (!isResolvedCheck(value.check)
+      || value.check.randomnessId !== value.social.plan.ruling.randomnessId
+      || value.check.dc !== Number(value.social.plan.ruling.check.dc)
+      || value.check.total !== value.check.selectedRoll + Number(value.social.plan.ruling.check.modifier)
+      || value.check.resolutionKind !== value.social.plan.ruling.resolutionKind)) return false;
+    const branch = value.social.plan.social.branches[value.branch as "success" | "failure"];
+    if (value.summary !== branch.summary || value.outcomeCode !== branch.outcomeCode) return false;
+  }
   if (value.rulingKind === "directSuccess") {
     return value.branch === "success" && value.check === null;
   }
@@ -845,7 +1002,7 @@ export function isWorldInteractionResolvedPayload(
     && value.branch === (value.check.succeeded ? "success" : "failure");
 }
 
-function isResolvedCheck(value: unknown): value is NonNullable<WorldInteractionResolvedPayload["check"]> {
+export function isResolvedCheck(value: unknown): value is NonNullable<WorldInteractionResolvedPayload["check"]> {
   return isRecord(value)
     && hasExactKeys(value, [
       "dc", "randomnessId", "resolutionKind", "rolls", "selectedRoll", "succeeded", "total",
@@ -877,8 +1034,10 @@ function resolvedCheckSucceeded(
     : total >= dc;
 }
 
-function isAppliedEffect(value: unknown): value is AppliedWorldInteractionEffect {
+export function isAppliedEffect(value: unknown): value is AppliedWorldInteractionEffect {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "passageTraversalStarted") return hasExactKeys(value, ["kind", "activityId", "passage"])
+    && isRef(value.activityId) && passageTraversalBindingConform(value.passage);
   if (value.kind === "itemCost") {
     return hasExactKeys(value, [
       "chargesAfter", "chargesBefore", "durabilityAfter", "durabilityBefore", "entryRef",
@@ -904,11 +1063,13 @@ function isAppliedEffect(value: unknown): value is AppliedWorldInteractionEffect
   }
   if (value.kind === "damage") {
     return hasExactKeys(value, [
+      ...(value.damagePacketHash === undefined ? [] : ["damagePacketHash","hitPointDamage"]),
       "amount", "damageType", "died", "hpAfter", "hpBefore", "kind",
       "sourceDefinitionRef", "targetRef",
     ])
       && [value.sourceDefinitionRef, value.targetRef, value.damageType].every(isRef)
-      && isPositiveInteger(value.amount)
+      && isNonnegativeInteger(value.amount)
+      && (value.damagePacketHash === undefined || (isSha256(value.damagePacketHash) && isNonnegativeInteger(value.hitPointDamage)))
       && [value.hpBefore, value.hpAfter].every(isNonnegativeInteger)
       && typeof value.died === "boolean";
   }
@@ -969,6 +1130,8 @@ function isBranch(value: unknown): value is WorldInteractionBranch {
 
 function isEffect(value: unknown): value is WorldInteractionEffect {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "traversePassage") return hasExactKeys(value, ["kind", "passage"])
+    && passageTraversalBindingConform(value.passage);
   if (value.kind === "registeredHazard") {
     return hasExactKeys(value, ["damage", "kind", "sourceDefinitionRef", "zoneRef"])
       && [value.sourceDefinitionRef, value.zoneRef].every(isRef)
@@ -1063,7 +1226,10 @@ function isHazardDamageSource(value: unknown): boolean {
       && isWorldDamageProfileRef(value.damageProfileRef);
   }
   return value.kind === "authored"
-    && hasExactKeys(value, ["hazardDefinitionRef", "kind"])
+    && (hasExactKeys(value, ["hazardDefinitionRef", "kind"]) || (hasExactKeys(value,["hazardDefinitionRef","kind","area"])
+      && isRecord(value.area) && hasOnlyKeys(value.area,["origin"],["direction"])
+      && canonicalCombatPoint(value.area.origin) !== undefined
+      && (value.area.direction === undefined || canonicalCombatDirection(value.area.direction) !== undefined)))
     && isRef(value.hazardDefinitionRef);
 }
 
@@ -1116,7 +1282,7 @@ function isSemanticOperationShape(value: unknown): boolean {
     && isRef(value.ref);
 }
 
-function isCanonicalReadSet(value: unknown): value is readonly VersionedAuthorityBinding[] {
+export function isCanonicalReadSet(value: unknown): value is readonly VersionedAuthorityBinding[] {
   return Array.isArray(value)
     && value.length >= 1
     && value.length <= 128

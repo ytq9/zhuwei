@@ -1,0 +1,107 @@
+{
+  "schema": "zhuwei.vnext-form-guidance-evidence/v1",
+  "date": "2026-09-06",
+  "branch": "cloudflare",
+  "head": "258caee404e0814405eb497653ee9f00d647b773",
+  "productionChanged": false,
+  "bindings": {
+    "liveWorkflowHash": "sha256:5d2b613735a15e9fc26b7dbb01ec3f7e87b5edb9089da7552d8527d0f2b8ef14",
+    "finalWorkflowHash": "sha256:2d61a97b7cb69b904ee926e532f9a40ac1da72b74405a6c5d9bf505906367202",
+    "guidancePolicyHash": "sha256:1e61449bf6f3fa6e5fa0c88e1e58e886b3eaf82cd55017eb1686ebf77ccdd260",
+    "schemaPresentationHash": "sha256:fe56947b43e7002d80afcdd98372571ae535b1bd2f58ecff342d7d6445b138af",
+    "finalRequestExactlyMatchesContrast": true,
+    "note": "Final metadata adds schema presentation hash and Room order verification after live sampling; prompt and Provider body match the contrast exactly."
+  },
+  "preservation": {
+    "sameFrozenModelContext": true,
+    "sameSchemaConstraintsAndBranches": true,
+    "contrastSameMessages": true,
+    "contrastSameStructuralSchema": true
+  },
+  "cost": {
+    "beforeSameContextRequestBytes": 67441,
+    "afterSameContextRequestBytes": 65923,
+    "requestByteReduction": 0.022508563040287033,
+    "beforeSystemBytes": 6826,
+    "afterSystemBytes": 8049,
+    "beforeToolBytes": 25161,
+    "afterToolBytes": 22323,
+    "fullSchemaBytes": 48421,
+    "initialSchemaBytes": 22050,
+    "byteComparisonHasNoProviderCall": true,
+    "actualTokenReductionNotMeasured": true
+  },
+  "external": {
+    "maximumCalls": 12,
+    "maximumInputTokens": 240000,
+    "maximumOutputTokens": 24000,
+    "calls": 2,
+    "inputTokens": 38232,
+    "outputTokens": 1126,
+    "unknownUsageCalls": 0,
+    "gameRoots": 1,
+    "nonCommittingContrasts": 1,
+    "initial": {
+      "inputTokens": 19116,
+      "outputTokens": 546,
+      "requestHash": "sha256:52f2da26efdc6312396d292c6ce6703bc2193c29229971a95a5c6ba459667d26",
+      "wireSha256": "ac1d50a53df23e50903ae48251b797f6c372f5c6dee5d905df0a6c65ecf90dc8",
+      "responseHash": "sha256:f092afd8c1887e56d83cf4bf127f4300b7ce7abc6b2622f5ec69bb5a7275b5f6",
+      "outcome": "PROPOSAL_FORM_INVALID",
+      "cause": "Duplicate kind member in inventoryOperation. Choice, references, quantity and release operation were correctly expressed, but duplicate JSON members must be rejected.",
+      "committed": false,
+      "narrationInvoked": false
+    },
+    "contrast": {
+      "comparison": "same frozen context and system messages; authored schema discriminators presented before common fields",
+      "roomCommit": false,
+      "contextHash": "sha256:2ee08bf1934665be68f73b218e3addb2b5233ab7c3c17ffdb942b5cfc250293f",
+      "sameMessages": true,
+      "inputTokens": 19116,
+      "outputTokens": 580,
+      "durationMs": 3534,
+      "requestHash": "sha256:52f2da26efdc6312396d292c6ce6703bc2193c29229971a95a5c6ba459667d26",
+      "responseHash": "sha256:349d36a18b8fd318d5cc563bc95c5a3dc9887f55d5c82f3f6121ac392c925796",
+      "parsed": {
+        "kind": "accepted",
+        "bundleHash": "sha256:750ca6d3cbeb50ee27b2a7ac5e03ec49617ed203a3131f713696d33faecdfd1f"
+      },
+      "budget": {
+        "profileRef": "zhuwei.local-vnext-input-budget/v1",
+        "profileHash": "sha256:8b1da9b3bfb220c32e4dd3e47be086df8ed9be8ff7828c243ae2c0368f9eef73",
+        "counterRef": "conservative-v1",
+        "estimatedInputTokens": 21120,
+        "allowedInputTokens": 58000,
+        "decision": "accepted"
+      },
+      "requestBytes": 64018,
+      "schemaBytes": 22050,
+      "wireSha256": "ef1798fa9ff75a74e78aed565975a44ddafa71bd1db87d08fc5967e1527bc259",
+      "causality": "One successful sample after presentation reordering does not prove it fixes Provider reliability.",
+      "committed": false,
+      "narrationInvoked": false
+    }
+  },
+  "authority": {
+    "snapshotBeforeHash": "sha256:8aa9d6cba54519bea1fa4181ce27e3c2cca32ef0ab36b73f93420d6de7786f71",
+    "snapshotAfterHash": "sha256:8aa9d6cba54519bea1fa4181ce27e3c2cca32ef0ab36b73f93420d6de7786f71",
+    "unchanged": true,
+    "stateVersion": "0",
+    "receipts": 0,
+    "pendingInputs": [],
+    "hp": {
+      "current": 28,
+      "maximum": 28
+    },
+    "stockUnchanged": true,
+    "resourcesUnchanged": true
+  },
+  "limitations": [
+    "Real schema retrieval followed by Room commit and narration remains unverified.",
+    "One contrast parsed; not evidence of reliable model output.",
+    "Input remains above the 8k/16k adoption gates.",
+    "No persistent RootAction cumulative token/cost/retry cap.",
+    "Contrast risk text still adds a backpack containment detail that is not proven by carried inventory."
+  ],
+  "serversStopped": true
+}

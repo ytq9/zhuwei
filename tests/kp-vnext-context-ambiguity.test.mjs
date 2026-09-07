@@ -49,6 +49,8 @@ function worldState(definitions) {
     version: "v:1",
     runtimeEpochId: "epoch:1",
     activeBranchId: "branch:main",
+    fictionTimelines: { "branch:main": { branchId: "branch:main", nowMicros: "0" } },
+    multiplayerRuntime: { characterTimelineIds: {} },
     scenes: { [SCENE]: { id: SCENE } },
     entities: {
       [ALICE]: { id: ALICE, kind: "player", name: "艾丽丝", sceneId: SCENE, tenureStatus: "active" },
@@ -61,7 +63,7 @@ function worldState(definitions) {
       itemSystem: { entries: {}, definitions: {} },
       adjudicationPrecedents: {},
     },
-    combatRuntime: { entities: {}, scenes: {}, definitions: {} },
+    combatRuntime: { entities: {}, scenes: {}, definitions: {}, effects: {} },
   };
 }
 

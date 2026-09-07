@@ -1,3 +1,4 @@
+import { frozenNarrationContextConform } from "../kp/narration-context";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import type { ProfileRef } from "../rules/profiles/types";
 import { frozenRenderableClaimsConform } from "../rules/authority-read";
@@ -144,10 +145,10 @@ export type RoomActionOutcome = InternalRoomActionOutcome & {
 };
 
 export type RoomAuthorityCapability = {
-  prepare(principal: unknown, input: RoomActionInput): Promise<unknown>;
+  prepare(principal: unknown, input: RoomActionInput, actorPlanTransport?: import("./actor-plan-transport-types").ActorPlanTransport): Promise<unknown>;
   observe(principal: unknown, query?: unknown): Promise<unknown>;
-  commit(principal: unknown, preparedActionId: string, rulesInput: UnknownRecord): Promise<unknown>;
-  resumePlayerRandomness?(principal: unknown, randomnessId: string): Promise<unknown>;
+  commit(principal: unknown, preparedActionId: string, rulesInput: UnknownRecord, actorPlanTransport?: import("./actor-plan-transport-types").ActorPlanTransport): Promise<unknown>;
+  resumePlayerRandomness?(principal: unknown, randomnessId: string, actorPlanTransport?: import("./actor-plan-transport-types").ActorPlanTransport): Promise<unknown>;
   acknowledge(principal: unknown, deliveryId: string): Promise<unknown>;
   deliveryPublicationStatus?(query: { publishCapability: unknown }): Promise<unknown>;
   beginDeliveryAudiencePublication?(query: {
@@ -183,6 +184,7 @@ type DeliveryPublicationAuthority = Pick<
 export type KpAdapterCapability = {
   propose(request: UnknownRecord): Promise<unknown>;
   decideDueActorPlan(request: UnknownRecord): Promise<unknown>;
+  decidePendingInput?(request: UnknownRecord): Promise<unknown>;
   narrate(request: UnknownRecord): Promise<unknown>;
 };
 
@@ -227,6 +229,7 @@ type DeliveryAudience = {
   narrationInputMode: NarrationInputMode;
   viewerKey?: string;
   renderableClaims?: UnknownRecord;
+  narrationContext?: unknown;
 };
 
 type NarrationInputMode =
@@ -248,12 +251,18 @@ const PROPOSAL_PUBLIC_FAILURE_CODES = [
   "PROPOSAL_RULES_DIAGNOSTIC",
   "PROPOSAL_REPAIR_EXHAUSTED",
   "CONTEXT_INSUFFICIENT",
+  "CONTEXT_BUDGET_EXCEEDED",
+  "PROPOSAL_INPUT_BUDGET_EXCEEDED",
+  "PROPOSAL_PROVIDER_CONFIGURATION",
+  "PROPOSAL_INVOCATION_IN_PROGRESS",
 ] as const;
 
 const NARRATION_PUBLIC_FAILURE_CODES = [
   "NARRATION_PROVIDER_TIMEOUT",
+  "NARRATION_PROVIDER_REJECTED",
   "NARRATION_BODY_INVALID",
   "NARRATION_GROUNDING_REJECTED",
+  "NARRATION_CONTEXT_BUDGET_EXCEEDED",
   "NARRATION_PUBLICATION_FAILED",
 ] as const;
 
@@ -683,6 +692,12 @@ function publicFailure(
       explanation:
         typeof value.explanation === "string" ? value.explanation : "当前行动被拒绝。",
     };
+    // This remains an internal Room outcome. Preserve the original lowering
+    // diagnosis for the server; the Table DTO strips the whole proposal block.
+    if (hasDiagnostics(value)) result.proposal = {
+      diagnostics: structuredClone(value.diagnostics),
+      ...(Array.isArray(value.issues) ? { issues: structuredClone(value.issues) } : {}),
+    };
     copyOptionalReceipt(value, result);
     return result as InternalRoomActionOutcome;
   }
@@ -730,12 +745,16 @@ function modelFailure(error: unknown, receipt?: unknown): InternalRoomActionOutc
     const result: UnknownRecord = { kind: "needsKp", code: publicCode };
     if (receipt !== undefined) result.receipt = receipt;
     if (typeof candidate?.retryAfter === "number") result.retryAfter = candidate.retryAfter;
+    if (isRecord(candidate?.proposalDiagnostics)) result.proposal = candidate.proposalDiagnostics;
     return result as InternalRoomActionOutcome;
   }
   if (
     publicCode === "PROPOSAL_FORM_INVALID"
     || publicCode === "PROPOSAL_REFERENCE_INVALID"
     || publicCode === "CONTEXT_INSUFFICIENT"
+    || publicCode === "CONTEXT_BUDGET_EXCEEDED"
+    || publicCode === "PROPOSAL_INPUT_BUDGET_EXCEEDED"
+    || publicCode === "PROPOSAL_PROVIDER_CONFIGURATION"
   ) {
     const result: UnknownRecord = {
       kind: "rejected",
@@ -743,6 +762,7 @@ function modelFailure(error: unknown, receipt?: unknown): InternalRoomActionOutc
       explanation: "权威 KP 模型配置或输出无效。",
     };
     if (receipt !== undefined) result.receipt = receipt;
+    if (isRecord(candidate?.proposalDiagnostics)) result.proposal = candidate.proposalDiagnostics;
     return result as InternalRoomActionOutcome;
   }
   const result: UnknownRecord = {
@@ -969,6 +989,8 @@ function parseDeliveryPlan(value: unknown): DeliveryPlan | undefined {
         || claims.viewerKey !== viewerKey
         || claims.rootActionId !== planRootActionId
         || claims.receiptId !== planReceiptId
+        || !isRecord(projection) || !frozenNarrationContextConform(projection.narrationContext, claims)
+        || projection.narrationContext.expression.viewer.characterRef !== characterId
       ) return undefined;
       renderableClaims = claims;
     }
@@ -979,7 +1001,7 @@ function parseDeliveryPlan(value: unknown): DeliveryPlan | undefined {
       principalId,
       narrationInputMode,
       ...(viewerKey === undefined ? {} : { viewerKey }),
-      ...(renderableClaims === undefined ? {} : { renderableClaims }),
+      ...(renderableClaims === undefined ? {} : { renderableClaims, narrationContext: (projection as UnknownRecord).narrationContext }),
     });
   }
 
@@ -1048,8 +1070,9 @@ function narrationFailure(error: unknown): {
     ? candidate.modelInvocationReceipt
     : undefined;
   const explicit = narrationPublicFailureCode(candidate?.publicCode)
-    ?? narrationPublicFailureCode(candidate?.code)
-    ?? (candidate?.code === "modelPermanent" ? "NARRATION_BODY_INVALID" : undefined);
+    ?? narrationPublicFailureCode(candidate?.code);
+  if (explicit === "NARRATION_PROVIDER_REJECTED") return { state: "rejected", errorCode: explicit };
+  if (explicit === "NARRATION_CONTEXT_BUDGET_EXCEEDED") return { state: "retryableFailure", errorCode: explicit };
   if (explicit === "NARRATION_GROUNDING_REJECTED" || receipt?.failureStage === "narrationGrounding") {
     return { state: "rejected", errorCode: "NARRATION_GROUNDING_REJECTED" };
   }
@@ -1220,6 +1243,7 @@ async function publishDeliveryPlan(
               receipt: result.receipt,
               viewerKey: audience.viewerKey,
               renderableClaims: audience.renderableClaims,
+              narrationContext: audience.narrationContext,
               deliveryGeneration,
             },
         );
@@ -1436,6 +1460,25 @@ async function publishCommittedOutcome(
     publicationFailureCode = "NARRATION_PUBLICATION_FAILED";
   }
 
+  // These are already committed independent Activity roots. Publish their own
+  // frozen audiences. Room keeps each Viewer behind any earlier failed root,
+  // while other Viewers can continue independently.
+  // Never turn a child result into the player's Receipt or rerun its mechanics.
+  if (Array.isArray(result.dueOutcomes)) {
+    for (const child of result.dueOutcomes) {
+      if (!isRecord(child) || (child.kind !== "committed" && child.kind !== "concluded")
+        || child.deliveryPlan === undefined) continue;
+      try {
+        const childPublication = await publishDeliveryPlan(context, child, child);
+        publication = publication === undefined ? childPublication : {
+          state: publication.state === "published" ? childPublication.state : publication.state,
+          audiences: [...publication.audiences, ...childPublication.audiences],
+        };
+        if (childPublication.state !== "published") deliveryPending = true;
+      } catch { deliveryPending = true; }
+    }
+  }
+
   let observed: unknown;
   try {
     observed = await context.authority.observe(context.principal);
@@ -1473,7 +1516,6 @@ async function publishCommittedOutcome(
     ?? publicationFailureCode;
   const viewerDeliveryPending = independent
     ? recovery?.kind === "available"
-      && recovery.capability === plan?.publishCapability
     : deliveryPending;
   const viewerNarrationFailure = recovery?.state === "rejected"
     ? "rejected" as const
@@ -1531,6 +1573,48 @@ async function handleRoomActionInternal(
   context: RoomActionContext,
   input: RoomActionInput,
 ): Promise<InternalRoomActionOutcome> {
+  const authority = context.authority;
+  const settleNpcDecision = async (principal: unknown, initial: unknown): Promise<unknown> => {
+    let outcome = initial;
+    for (let count = 0; isRecord(outcome) && outcome.kind === "awaitingKpDecision"; count += 1) {
+      if (count >= MAX_ACTION_PHASE_TRANSITIONS || !context.kp.decidePendingInput
+        || !isRecord(outcome.decision) || !preparedIdentifiers(outcome)) {
+        return { kind: "retryableFailure", code: "npcDecisionContinuationUnavailable" };
+      }
+      let decision: unknown;
+      try {
+        decision = await context.kp.decidePendingInput({
+          preparedActionId: outcome.preparedActionId,
+          rootActionId: outcome.rootActionId,
+          ...outcome.decision,
+        });
+      } catch (error) {
+        return modelFailure(error);
+      }
+      if (!isRecord(decision)) return modelFailure(undefined);
+      outcome = await authority.commit(principal, String(outcome.preparedActionId), decision);
+    }
+    return outcome;
+  };
+  // The wrapper consumes Room-only decisions before any public outcome handler.
+  // Other capabilities retain their original receiver (including RPC stubs).
+  context = {
+    ...context,
+    authority: new Proxy(authority, {
+      get(target, property) {
+        if (property === "prepare") return async (principal: unknown, input: RoomActionInput) =>
+          settleNpcDecision(principal, await target.prepare(principal, input));
+        if (property === "commit") return async (principal: unknown, preparedId: string, proposal: UnknownRecord) =>
+          settleNpcDecision(principal, await target.commit(principal, preparedId, proposal));
+        if (property === "resumePlayerRandomness" && target.resumePlayerRandomness) {
+          return async (principal: unknown, randomnessId: string) =>
+            settleNpcDecision(principal, await target.resumePlayerRandomness!(principal, randomnessId));
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? (...args: unknown[]) => Reflect.apply(value, target, args) : value;
+      },
+    }),
+  };
   const rebuilt = rebuildInput(input);
   if (isRejectedValidation(rebuilt)) return rebuilt;
   let activeInput = rebuilt;
@@ -1996,7 +2080,8 @@ export async function handleViewerNarrationRecovery(
     && frozenRenderableClaimsConform(recoveryClaims)
     && recoveryClaims.viewerKey === recoveryViewerKey
     && recoveryClaims.rootActionId === rootActionId
-    && recoveryClaims.receiptId === receiptId;
+    && recoveryClaims.receiptId === receiptId
+    && frozenNarrationContextConform(begunValue.narrationContext, recoveryClaims);
   if (
     begunValue.kind !== "pending"
     || rootActionId === undefined
@@ -2026,6 +2111,7 @@ export async function handleViewerNarrationRecovery(
           receipt: begunValue.receipt,
           viewerKey: recoveryViewerKey,
           renderableClaims: recoveryClaims,
+          narrationContext: begunValue.narrationContext,
           deliveryGeneration,
         },
     );

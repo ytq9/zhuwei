@@ -1,3 +1,7 @@
+import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema";
+import { worldFactSocialBundle } from "./fixtures/vnext-world-facts.mjs";
+import { frozenNarrationContextConform } from "../app/_runtime/lib/kp/narration-context";
+import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
@@ -25,6 +29,8 @@ import {
   repairableVNextProposalBundlePaths,
 } from "../app/_runtime/lib/kp/vnext/proposal-correction";
 import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json";
+import { npcDecisionContext } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
+import { authoritativeModuleProfile } from "../app/_runtime/lib/module/authoritative";
 import type { VNextRequiredContext } from "../app/_runtime/lib/kp/vnext/required-context";
 import {
   WORLD_INTERACTION_PROFILE,
@@ -39,6 +45,10 @@ import {
   type StoredSemanticDefinition,
 } from "../app/_runtime/lib/rules/v2/semantic-definitions";
 import { isItemDefinitionV1 } from "../app/_runtime/lib/rules/v2/items";
+import { itemBundle, hazardBundle } from "./fixtures/vnext-authored-bundles.mjs";
+import { sharedCheckBundle } from "./fixtures/vnext-shared-check.mjs";
+import capturedItemWire from "./fixtures/deepseek-authored-item-wire.json";
+import { parseSubmitKpProposalBundleArguments } from "../app/_runtime/lib/kp/vnext/proposal-provider";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -350,7 +360,7 @@ function itemDefinitions(): JsonRecord[] {
   }];
 }
 
-function worldSeed(): {
+function worldSeed(npcHazardTarget = false): {
   vNextSeed: JsonRecord;
   initialNpcDefinition: StoredSemanticDefinition;
 } {
@@ -399,7 +409,7 @@ function worldSeed(): {
       HIDDEN_TARGET_RELATION_CANARY,
       "contains",
       IMPACT_ZONE_REF,
-      BOB_ID,
+      npcHazardTarget ? LIAN_ID : BOB_ID,
       "visibility:room-authority-only",
     ),
     sceneFeature(ROPE_REF, {
@@ -527,9 +537,9 @@ function character(characterId: string, principalId: string, name: string, dexte
   };
 }
 
-async function initializeRoom(name: string) {
+async function initializeRoom(name: string, aliceHitPoints = 20, bobHitPoints = 20, npcHazardTarget = false) {
   const authority = vnextRoom(name);
-  const seed = worldSeed();
+  const seed = worldSeed(npcHazardTarget);
   const semanticDefinitions = seed.vNextSeed.semanticDefinitions as unknown[];
   const seededItemDefinitions = seed.vNextSeed.itemDefinitions as unknown[];
   expect(semanticDefinitions.every(isStoredSemanticDefinition), "semantic seed conformance").toBe(true);
@@ -561,6 +571,8 @@ async function initializeRoom(name: string) {
     }],
     vNextSeed: seed.vNextSeed,
   };
+  initializationInput.characters[0]!.staticCard.hp.current = aliceHitPoints;
+  initializationInput.characters[1]!.staticCard.hp.current = bobHitPoints;
   const initialized = record(await authority.initializeAuthoritative(initializationInput), `${name} initialization`);
   expect(initialized, JSON.stringify(initialized)).toMatchObject({ created: true });
   return { authority, seed };
@@ -714,6 +726,7 @@ class DeterministicKp {
     expect(Object.keys(request).sort()).toEqual([
       "deliveryGeneration",
       "narrationInputMode",
+      "narrationContext",
       ...(request.narrationPurpose === undefined ? [] : ["narrationPurpose"]),
       "receipt",
       "renderableClaims",
@@ -731,6 +744,7 @@ class DeterministicKp {
       claimsHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
       claims: expect.any(Array),
     });
+    expect(frozenNarrationContextConform(request.narrationContext, claims as never)).toBe(true);
     const serialized = JSON.stringify(request);
     expect(serialized).not.toContain(HIDDEN_TARGET_RELATION_CANARY);
     expect(serialized).not.toContain(HIDDEN_TRIGGER_RELATION_CANARY);
@@ -767,7 +781,8 @@ function npcRevisionProposal(
     proposals: [{
       formId: VNEXT_MATERIALIZATION_FORM_ID,
       proposalRef: `proposal:npc-revision:${String(request.rootActionId)}`,
-      basisRefs: [NPC_KNOWLEDGE_REF],
+      basisRefs: [context.references.citations.npcKnowledge.find(({ npcRef }) => npcRef === LIAN_ID)!.refs
+        .find(ref => ref === `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}`)!],
       consumes: [],
       produces: [],
       outcomeBinding: "always",
@@ -1042,8 +1057,8 @@ function materializeAlcoveProposal(
     proposal: {
       kind: "materializeObject",
       semanticKind: "sceneFeature",
-      templateRef: "template:stage3:alcove",
-      templateHash: `sha256:${"7".repeat(64)}`,
+      templateRef: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateRef,
+      templateHash: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateHash,
       visibilityPolicyRef: "visibility:scene-observers",
       definition: {
         sceneRef: SCENE_REF,
@@ -1230,8 +1245,8 @@ function materializeCacheEntryV2(): JsonRecord {
     ],
     outcomeBinding: "onSuccess",
     semanticKind: "sceneFeature",
-    templateRef: "template:stage3:alcove-cache-v2",
-    templateHash: `sha256:${"8".repeat(64)}`,
+    templateRef: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateRef,
+    templateHash: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateHash,
     visibilityPolicyRef: "visibility:scene-observers",
     definition: {
       sceneRef: SCENE_REF,
@@ -1456,8 +1471,8 @@ function materializeAlcoveEntryV2(
     ],
     outcomeBinding: "always",
     semanticKind: "sceneFeature",
-    templateRef: "template:stage3:alcove-v2",
-    templateHash: `sha256:${"7".repeat(64)}`,
+    templateRef: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateRef,
+    templateHash: VNEXT_SEMANTIC_TEMPLATES.sceneFeature.templateHash,
     visibilityPolicyRef: "visibility:scene-observers",
     definition: {
       sceneRef: SCENE_REF,
@@ -1571,6 +1586,7 @@ async function runAction(input: {
   counters: ActionCounters;
   prepared: PreparedCapture;
   rolls?: number[];
+  dieSides?: number[];
   transformCommittedProjection?: (
     projection: ReturnType<VersionedRulesRuntime["project"]>,
   ) => ReturnType<VersionedRulesRuntime["project"]>;
@@ -1593,7 +1609,7 @@ async function runAction(input: {
     const faces = [...(input.rolls ?? [])];
     let rollIndex = 0;
     target.authorityRoll = (sides: number) => {
-      expect(sides, "vNext Room authority die").toBe(20);
+      expect(sides, "vNext Room authority die").toBe(input.dieSides?.[rollIndex] ?? 20);
       const face = faces[rollIndex];
       expect(face, "unexpected additional vNext authority randomness").toBeDefined();
       rollIndex += 1;
@@ -1668,6 +1684,141 @@ function narrationForViewer(kp: DeterministicKp, viewerKey: string): JsonRecord[
   return kp.narrationRequests.filter((request) => request.viewerKey === viewerKey);
 }
 
+// Fixture setup uses the native public Rules input to complete an existing
+// NPC's combat mechanics. This does not claim a vNext NPC creation capability.
+async function initializeNpcShieldMechanics(authority: Authority) {
+  await runInDurableObject(authority as never, async (instance) => {
+    const target = instance as unknown as RoomInternals;
+    const replay = target.authoritativeReplay() as ReturnType<RoomInternals["authoritativeReplay"]> & { profiles: unknown };
+    const npc = record(entities(replay.state)[LIAN_ID], "existing NPC");
+    const combat = record(record(replay.state.combatRuntime, "combat").entities, "combat entities");
+    const spatialNpc = record(combat[LIAN_ID], "NPC spatial identity");
+    const social = npc.socialMechanics === undefined ? {} : record(npc.socialMechanics, "NPC social mechanics");
+    const scores = record(npc.abilityScores ?? social.abilityScores ?? { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }, "NPC scores");
+    const input = {
+      kind: "startEncounter", rootActionId: "root:stage3:npc-shield-fixture",
+      proposalAttemptId: "proposal:stage3:npc-shield-fixture", encounterId: "encounter:stage3:npc-shield",
+      sceneId: SCENE_REF, participantEntityIds: [ALICE_ID],
+      dynamicEntities: [{ entityId: LIAN_ID, name: npc.name,
+        placement: { position: structuredClone(spatialNpc.position) },
+        mechanics: { kind: "bespokeDefinition", definition: {
+          definitionId: "npc-template:stage3:lian-shield", revision: "1", definitionKind: "npcMechanicalTemplate",
+          rulesBasis: "srd5.1-2014", causalBasisRefs: [NPC_DEFINITION_REF], visibilityPolicyRef: "visibility:scene-observers",
+          content: { schema: "zhuwei.npc-mechanical-template/v1", label: npc.name,
+            footprint: structuredClone(spatialNpc.footprint),
+            stats: Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, String(value)])),
+            proficiencyBonus: String(npc.proficiencyBonus ?? social.proficiencyBonus ?? 2),
+            armorClass: "12", armorClassModel: { kind: "higherOfBaseAndEquipment", baseArmorClass: "12", shieldBonus: "0" },
+            hitPointsMaximum: "20", speedInches: { walk: "360" }, resourceMaximums: { "spellSlot:1": "2" },
+            deathPolicy: "deadAtZero", intrinsicAbilities: [{
+              definitionId: "ability:stage3:lian-shield", revision: "1", rulesBasis: "srd5.1-2014", mechanicalKey: "shield",
+              activation: { kind: "reactionSpell", spellLevel: "1" }, costs: [{ kind: "spellSlot", level: "1", amount: "1" }],
+              effect: { kind: "shield", duration: "untilOwnNextTurnStart", armorClassBonus: "5", magicMissileImmunity: true },
+            }], itemDefinitions: [], itemDefinitionRefs: [], initialLoadout: { entries: [] },
+          },
+        } },
+      }],
+      initiativeGroups: [{ entryId: "initiative:stage3:alice", combatantEntityIds: [ALICE_ID] },
+        { entryId: "initiative:stage3:lian", combatantEntityIds: [LIAN_ID] }],
+      hostilities: [{ fromEntityIds: [ALICE_ID], toEntityIds: [LIAN_ID] },
+        { fromEntityIds: [LIAN_ID], toEntityIds: [ALICE_ID] }], battlefieldFactIds: [],
+    };
+    let result = target.rulesRuntime.step(replay.profiles, replay.state, input);
+    const events: unknown[] = [];
+    let rollIndex = 0;
+    while (result.kind === "awaitingRandomness") {
+      events.push(...result.events);
+      const waiting = result;
+      result = target.rulesRuntime.step(replay.profiles, waiting.state, {
+        kind: "authoritativeRandomness", resolutionId: waiting.resolutionId,
+        responseId: `authority:stage3:npc-shield:${rollIndex}`, continuationCapability: waiting.continuationCapability,
+        randomnessResults: waiting.randomnessRequests.map(request => ({
+          randomnessId: request.randomnessId, requestHash: request.requestHash,
+          draws: request.dice.map(term => ({ sides: Number(term.sides),
+            faces: Array.from({ length: Number(term.count) }, () => ++rollIndex === 1 ? 20 : 1) })),
+        })),
+      });
+    }
+    expect(result.kind, JSON.stringify(result)).toBe("committed");
+    if (result.kind !== "committed") return;
+    events.push(...result.events);
+    const store = target.authorityStore as unknown as {
+      appendEvents(events: unknown[]): void; updateState(state: unknown): void; syncAuthorityIndex(state: unknown): void;
+    };
+    store.appendEvents(events); store.updateState(result.state); store.syncAuthorityIndex(result.state);
+    expect(target.authoritativeReplay().state).toEqual(result.state);
+  });
+}
+
+describe("atomic NPC candidate decisions through Room", () => {
+  it("uses the prior hazard's private HP change for the next Shield decision and resumes once after model failure", async () => {
+    const { authority } = await initializeRoom("kp-vnext-atomic-npc-candidate", 20, 20, true);
+    await initializeNpcShieldMechanics(authority);
+    const before = await roomSnapshot(authority), counters = emptyActionCounters(), prepared: PreparedCapture = { all: [] };
+    const refs: Record<string, string> = { "character:probe-actor": ALICE_ID, "character:probe-target": LIAN_ID,
+      "scene:probe-gallery": SCENE_REF, "definition:probe-valve": CHAIN_REF, "definition:probe-steam-zone": IMPACT_ZONE_REF };
+    const bundle = JSON.parse(JSON.stringify(hazardBundle()),
+      (_key, value) => typeof value === "string" ? refs[value] ?? value : value) as JsonRecord;
+    const proposals = bundle.proposals as JsonRecord[];
+    Object.assign(record(record(proposals[0].source, "source").content, "ability"), {
+      save: null, attack: { kind: "fixed", bonus: "2" },
+      target: { kind: "creature", count: "1", rangeInches: "1200", requiresSight: false },
+      damage: [{ type: "force", formula: "1d4", sharedAcrossTargets: false }], effects: [],
+    });
+    const effects = record(record(proposals[2].branches, "branches").success, "success").effects as unknown[];
+    effects.push(structuredClone(effects[0]));
+    const kp = new DeterministicKp(() => bundle, prepared, undefined, false);
+    const requests: JsonRecord[] = [];
+    Object.assign(kp, { decidePendingInput: async (request: JsonRecord) => {
+      requests.push(structuredClone(request));
+      const projection = record(request.projection, "NPC finite projection");
+      expect(record(projection.viewer, "NPC viewer")).toMatchObject({ kind: "npc", subjectId: LIAN_ID });
+      const hp = record(record(projection.controlledCharacter, "NPC self").hitPoints, "candidate HP");
+      expect(hp.current).toBe(requests.length === 1 ? 20 : 18);
+      expect(JSON.stringify(request)).not.toMatch(/candidateState|nativePendingInputId|frozenDamageFaces|ownerFrame|lethalDamagePayload/);
+      expect(JSON.stringify(request)).not.toContain(PLAYER_SECRET_CANARY);
+      if (requests.length === 2) throw Object.assign(new Error("NPC model temporarily unavailable"), { code: "modelTransient" });
+      const pending = record(request.pending, "pending");
+      const option = list(pending.answerOptions, "answers").map(value => record(value, "answer option"))
+        .find(value => record(value.answer, "answer").kind === (requests.length === 1 ? "decline" : "useReaction"));
+      expect(option).toBeDefined();
+      return { kind: "npcPendingDecision", capability: request.capability, answer: option!.answer };
+    } });
+    const action = intent("submission:stage3:atomic-npc-candidate", "扰动吊灯铁链，让莉安所在区域的两次危险依次触发。");
+    const paused = await runAction({ authority, principal: ALICE, action, kp, counters, prepared,
+      // Each hit freezes damage, critical reserve, two CON and two attack faces.
+      rolls: [2, 2, 20, 1, 10, 1, 2, 2, 20, 1, 10, 1],
+      dieSides: [4, 4, 20, 20, 20, 20, 4, 4, 20, 20, 20, 20] });
+    expect(paused, JSON.stringify(paused)).toMatchObject({ kind: "retryableFailure" });
+    expect(requests).toHaveLength(2);
+    const waiting = await roomSnapshot(authority);
+    expect(entities(waiting.state)).toEqual(entities(before.state));
+    expect(definitions(waiting.state)).toEqual(definitions(before.state));
+    expect(waiting.events.filter(event => event.eventType === "DamagePacketResolved")).toHaveLength(0);
+    expect(kp.counters.narrate).toBe(0);
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(waiting);
+    const retry: RoomActionInput = { kind: "retry", submissionId: action.submissionId, rootActionId: String(prepared.latest!.rootActionId) };
+    const done = await runAction({ authority, principal: ALICE, action: retry, kp, counters, prepared });
+    expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed", narration: "published" });
+    expect(requests).toHaveLength(3);
+    expect(requests[2]).toEqual(requests[1]);
+    const committed = await roomSnapshot(authority);
+    expect(record(entities(committed.state)[LIAN_ID], "NPC").hitPoints).toMatchObject({ current: 18 });
+    expect(record(entities(committed.state)[LIAN_ID], "NPC").resources).toMatchObject({ "spellSlot:1": 1 });
+    expect(eventsOf(committed, "ReactionAnswered")).toHaveLength(2);
+    expect(eventsOf(committed, "DamagePacketResolved")).toHaveLength(1);
+    expect(eventsOf(committed, "AtomicWorldInteractionStepsResolved")).toHaveLength(1);
+    expect(kp.counters.propose).toBe(1);
+    expect(counters.rolls).toBe(12);
+    await runAction({ authority, principal: ALICE, action: retry, kp, counters, prepared });
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    expect(requests).toHaveLength(3);
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+  }, 20_000);
+});
+
 function claimKinds(request: JsonRecord): string[] {
   const claims = list(
     record(request.renderableClaims, "renderable claims").claims,
@@ -1679,6 +1830,186 @@ function claimKinds(request: JsonRecord): string[] {
 // Test level: T2 — these cases cross the real local Room API, identity,
 // Durable Object transaction, Rules, projection and recovery seams.
 describe("vNext stage-three Room verticals", () => {
+  it("normal module initialization preserves each NPC identity and finite context without a synthetic semantic seed", async () => {
+    const authority = vnextRoom("vnext-normal-module-npc-context");
+    const profile = await authoritativeModuleProfile("black-oak-will");
+    const initialized = record(await authority.initializeAuthoritative({
+      roomId: "vnext-normal-module-npc-context", moduleId: "black-oak-will",
+      members: [{ principalId: ALICE.principal.id, role: "host" }],
+      characters: [character(ALICE_ID, ALICE.principal.id, "阿莱莎", 16)],
+      fixtureFacts: [{ knowledgeRef: "knowledge:normal-player-private", holderEntityId: ALICE_ID, content: PLAYER_SECRET_CANARY }],
+    }), "normal module initialization");
+    expect(initialized).toMatchObject({ created: true });
+    const initial = await roomSnapshot(authority);
+    const player = record(await authority.observe(ALICE), "player observation");
+    for (const sourceId of ["lian", "varo"]) {
+      const npc = profile.storyBible.importantNpcs.find(entry => entry.sourceNpcId === sourceId)!;
+      const entity = record(record(initial.state.entities, "entities")[npc.entityId], "module NPC");
+      expect(entity.semanticDefinitionRef, "normal genesis must bind the NPC's semantic identity").toBeTypeOf("string");
+      expect(JSON.stringify(player)).not.toContain(npc.goal);
+      const prepared = record(await authority.prepare(ALICE, intent(`submission:normal-npc:${sourceId}`, `我问${npc.name}：「你愿意和我聊聊吗？」`)), "normal NPC context");
+      expect(prepared.kind, JSON.stringify(prepared)).toBe("prepared");
+      const context = requiredContext(prepared), decision = npcDecisionContext(context.entries, npc.entityId);
+      expect(decision).toBeDefined();
+      const identity = record(decision!.records.find(entry => entry.kind === "identity")!.value, "NPC identity");
+      expect(identity).toMatchObject({ definitionRef: entity.semanticDefinitionRef,
+        label: npc.name, description: npc.publicFace,
+        goals: [{ description: npc.goal }], behavioralConstraints: npc.behavioralConstraints, initialUnknowns: npc.declaredUnknowns });
+      const bodies = decision!.knowledge.map(entry => context.entries.find(candidate => candidate.kind === "known" && candidate.entryRef === entry.entryRef));
+      const isolated = JSON.stringify({ decision, bodies });
+      expect(isolated).not.toContain(PLAYER_SECRET_CANARY);
+      for (const other of profile.storyBible.importantNpcs.filter(entry => entry.entityId !== npc.entityId)) {
+        expect(isolated).not.toContain(other.goal);
+        for (const secret of other.initialKnowledge.filter(value => !npc.initialKnowledge.includes(value))) expect(isolated).not.toContain(secret);
+      }
+      for (const known of npc.initialKnowledge) expect(isolated).toContain(known);
+    }
+    await evictDurableObject(authority as never);
+    expect((await roomSnapshot(authority)).state).toEqual(initial.state);
+  });
+
+  it("normal Room materializes a new NPC history, recalls it after eviction and never duplicates it", async () => {
+    const authority = vnextRoom("vnext-world-fact-memory-normal");
+    const initialized = record(await authority.initializeAuthoritative({
+      roomId: "vnext-world-fact-memory-normal", moduleId: "black-oak-will",
+      members: [{ principalId: ALICE.principal.id, role: "host" }],
+      characters: [character(ALICE_ID, ALICE.principal.id, "阿莱莎", 16)],
+    }), "normal module initialization");
+    expect(initialized).toMatchObject({ created: true });
+    const before = await roomSnapshot(authority), actor = record(record(before.state.entities, "entities")[ALICE_ID], "actor");
+    const description = "莉安幼年曾跟随祖父学着修补渔网。";
+    const counters = emptyActionCounters(), prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(() => parseSubmitKpProposalBundleArguments(JSON.stringify(encodeVNextStrictToolBundle(worldFactSocialBundle({
+      sceneRef: String(actor.sceneId), npcRef: LIAN_ID, description,
+    })))) as unknown as JsonRecord, prepared, undefined, false);
+    const action = intent("submission:world-fact-memory", "我问莉安：你小时候跟家人一起学过什么？");
+    const result = await runAction({ authority, principal: ALICE, action, kp, counters, prepared });
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", narration: "published" });
+    const committed = await roomSnapshot(authority);
+    expect(eventsOf(committed, "CanonicalFactDeclared")).toHaveLength(1);
+    const fact = record(record(eventsOf(committed, "CanonicalFactDeclared")[0].payload, "payload").fact, "fact");
+    expect(record(record(committed.state.knowledge, "knowledge")[ALICE_ID], "player knowledge")[String(fact.id)]).toBeUndefined();
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    await runAction({ authority, principal: ALICE, action, kp, counters, prepared });
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    expect(kp.counters.propose).toBe(1);
+    const next = record(await authority.prepare(ALICE, intent("submission:world-fact-memory-next", "我问莉安：你刚才提到的祖父教了你什么？")), "next preparation");
+    expect(next.kind, JSON.stringify(next)).toBe("prepared");
+    const decision = npcDecisionContext(requiredContext(next).entries, LIAN_ID);
+    expect(JSON.stringify(decision)).toContain(description);
+    expect(JSON.stringify(record(await authority.observe(ALICE), "player observation"))).not.toMatch(/PRIVATE-ACQUISITION|PRIVATE-FACT-MOTIVE/);
+  });
+
+  for (const roll of [null, 1, 20]) it(`executes social Form through Room, private NPC evidence and eviction (${roll ?? "direct"})`, async () => {
+    const { authority } = await initializeRoom(`kp-vnext-social-form-${roll ?? "direct"}`);
+    const before = await roomSnapshot(authority), counters = emptyActionCounters(), prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp((request) => {
+      const context = requiredContext(request), decision = npcDecisionContext(context.entries, LIAN_ID);
+      expect(decision).toBeDefined();
+      expect(JSON.stringify(decision)).not.toContain(PLAYER_SECRET_CANARY);
+      const response = (failure: boolean) => ({ outcomeCode: failure ? "outcome:declined" : "outcome:answered",
+        summary: failure ? "莉安暂时不愿回应。" : "莉安回应了账册的问题。",
+        response: { kind: "speech", text: failure ? "现在先别问这个。" : "我亲眼看见你归还了父亲的账册。",
+          motive: NPC_SUMMARY_CANARY, basis: [{ kind: "npcContext", ref: roll === null ? NPC_KNOWLEDGE_REF : `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}` }] },
+        consequences: failure ? [] : [{ kind: "promise", content: "协助核对账册上的签字。", condition: "先看过账册以后。", authorityRefs: [LIAN_ID] }] });
+      const wire = { mode: "adjudication", basisRefs: [LIAN_ID], terminal: { kind: "none" },
+        adjudication: roll === null ? { kind: "directSuccess", risk: "普通交谈。", successOutcome: "莉安回应。" }
+          : { kind: "check", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
+            risk: "她可能拒绝本次请求。", successOutcome: "愿意协助。", failureOutcome: "拒绝协助。" },
+        proposals: [{ kind: "social", basisRefs: [LIAN_ID], consumes: [], produces: [], outcomeBinding: "always",
+          sceneRef: SCENE_REF, npcRef: LIAN_ID, addressedThreadRef: { kind: "none" }, goal: "询问归还账册的见闻并请求协助。",
+          method: "平静地询问她亲眼见到的事。", communication: "spokenConversation", audience: "participants", retryChange: { kind: "none" },
+          branches: { success: response(false), failure: roll === null ? { kind: "none" } : response(true) } }] };
+      return parseSubmitKpProposalBundleArguments(JSON.stringify(encodeVNextStrictToolBundle(wire))) as unknown as JsonRecord;
+    }, prepared, undefined, false);
+    const action = intent(`submission:social-form:${roll ?? "direct"}`, "我问莉安：你亲眼看见我归还账册了吗？可以帮我核对签字吗？");
+    const result = await runAction({ authority, principal: ALICE, action, kp, counters, prepared,
+      ...(roll === null ? {} : { rolls: [roll], dieSides: [20] }) });
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", narration: "published" });
+    expect(counters.rolls).toBe(roll === null ? 0 : 1);
+    expect(kp.counters.propose).toBe(1);
+    const committed = await roomSnapshot(authority);
+    expect(eventsOf(committed, "SourceClaimCreated")).toHaveLength(2);
+    expect(eventsOf(committed, "KnowledgeAcquired")).toHaveLength(2);
+    expect(eventsOf(committed, "PromiseMade")).toHaveLength(roll === 1 ? 0 : 1);
+    expect(itemEntries(committed.state)).toEqual(itemEntries(before.state));
+    expect(entities(committed.state)).toEqual(entities(before.state));
+    expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
+    const aliceNarration = narrationForViewer(kp, `${ALICE.principal.id}\u001f${ALICE_ID}`)[0];
+    expect(JSON.stringify(aliceNarration)).toContain('"outcomeKind":"social"');
+    expect(JSON.stringify(aliceNarration)).not.toContain(NPC_SUMMARY_CANARY);
+    expect(JSON.stringify(narrationForViewer(kp, `${BOB.principal.id}\u001f${BOB_ID}`))).not.toContain("亲眼看见你归还");
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    await runAction({ authority, principal: ALICE, action, kp, counters, prepared });
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    expect(kp.counters.propose).toBe(1);
+    expect(counters.rolls).toBe(roll === null ? 0 : 1);
+    const nextPrepared = record(await authority.prepare(ALICE, intent(`submission:social-memory:${roll ?? "direct"}`,
+      "我接着问莉安：你刚才为什么这样回答？")), "next NPC memory preparation");
+    expect(nextPrepared.kind, JSON.stringify(nextPrepared)).toBe("prepared");
+    const nextDecision = npcDecisionContext(requiredContext(nextPrepared).entries, LIAN_ID);
+    const ownClaim = nextDecision?.records.find(entry => entry.kind === "sourceClaim"
+      && record(entry.value, "NPC claim").speakerId === LIAN_ID);
+    expect(record(ownClaim?.value, "remembered own claim")).toMatchObject({ ownOrigin: { motive: NPC_SUMMARY_CANARY,
+      sourceBasis: JSON.stringify([{ kind: "npcContext", ref: `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}` }]) } });
+    expect(JSON.stringify(record(await authority.observe(ALICE), "player after recovery"))).not.toContain(NPC_SUMMARY_CANARY);
+  });
+
+  for (const roll of [1, 20]) it(`applies direct sibling consequences of one shared check through Room and eviction (${roll})`, async () => {
+    const { authority } = await initializeRoom(`kp-vnext-shared-siblings-${roll}`);
+    const counters = emptyActionCounters(), prepared: PreparedCapture = { all: [] };
+    const refs: Record<string, string> = { "character:probe-actor": ALICE_ID, "scene:probe-gallery": SCENE_REF,
+      "definition:probe-valve": CHAIN_REF };
+    const wire = JSON.parse(JSON.stringify(sharedCheckBundle()),
+      (_key, value) => typeof value === "string" ? refs[value] ?? value : value);
+    const proposal = parseSubmitKpProposalBundleArguments(JSON.stringify(encodeVNextStrictToolBundle(wire))) as unknown as JsonRecord;
+    const kp = new DeterministicKp(() => proposal, prepared, undefined, false);
+    const action = intent(`submission:shared-siblings:${roll}`, "先听清吊灯铁链附近的声音变化，再调整铁链；判断错误会卡住。");
+    const result = await runAction({ authority, principal: ALICE, action, kp, counters, prepared, rolls: [roll], dieSides: [20] });
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", narration: "published" });
+    expect(counters.rolls).toBe(1);
+    const committed = await roomSnapshot(authority);
+    expect(record(definitions(committed.state)[CHAIN_REF], "chain definition").content).toMatchObject({ observableState: roll === 20 ? "opened" : "jammed" });
+    expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(2);
+    expect(eventsOf(committed, "WorldInteractionResolved").filter(event => eventPayload(event).rulingKind === "check")).toHaveLength(1);
+    expect(eventsOf(committed, "AtomicWorldInteractionStepsResolved")).toHaveLength(1);
+    const narration = narrationForViewer(kp, `${ALICE.principal.id}\u001f${ALICE_ID}`)[0];
+    expect(JSON.stringify(narration)).toContain('"outcomeCode":"applied"');
+    expect(JSON.stringify(narration)).not.toContain("直接成功");
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    const beforeRetryRolls = counters.rolls, beforeRetryProposals = kp.counters.propose;
+    await runAction({ authority, principal: ALICE, action, kp, counters, prepared });
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    expect(counters.rolls).toBe(beforeRetryRolls);
+    expect(kp.counters.propose).toBe(beforeRetryProposals);
+  });
+
+  it.each([
+    "我用枪打断吊灯的支撑，让它砸向下面的敌人。",
+    "我用燧发手枪打断吊灯的支撑，让它砸向下面的敌人。",
+  ])("prepares the addressed equipped weapon with its frozen executable ability before any model call (%s)", async (text) => {
+    const { authority } = await initializeRoom(`kp-vnext-stage3-room-ability-context-${text.length}`);
+    const prepared = record(await authority.prepare(ALICE, intent(
+      "submission:stage3:ability-context", text,
+    )), "prepared equipment context");
+    expect(prepared.kind).toBe("prepared");
+    const context = requiredContext(prepared);
+    const before = await roomSnapshot(authority);
+    const runtime = record(before.state.combatRuntime, "runtime");
+    const actor = record(record(runtime.entities, "combat entities")[ALICE_ID], "actor");
+    const definitions = record(runtime.definitions, "ability catalog");
+    const refs = list(actor.abilityRefs, "actor abilities").filter(ref => {
+      const definition = record(definitions[String(ref)], "registered ability");
+      return String(definition.mechanicalKey).includes(PISTOL_ENTRY_REF);
+    });
+    expect(refs).toHaveLength(1);
+
+    expect(context.references.domains.abilityRefs).toEqual(expect.arrayContaining(refs));
+  });
+
   it("rejects the retired coarse-form envelope before Rules or persistence", async () => {
     const { authority } = await initializeRoom("kp-vnext-stage3-room-retired-coarse-envelope");
     const counters = emptyActionCounters();
@@ -1718,7 +2049,14 @@ describe("vNext stage-three Room verticals", () => {
     const { authority, seed } = await initializeRoom("kp-vnext-stage3-room-npc");
     const counters = emptyActionCounters();
     const prepared: PreparedCapture = { all: [] };
-    const kp = new DeterministicKp((request) => npcRevisionProposal(request), prepared);
+    const kp = new DeterministicKp((request) => {
+      const proposal = npcRevisionProposal(request);
+      const entry = record(list(proposal.proposals, "entries")[0], "entry");
+      const revision = record(entry.proposal, "revision");
+      (revision.operations as JsonRecord[]).push({ kind: "set", path: ["semantics", "publicExpression"],
+        value: { voice: "短句、克制，称呼来客为诸位", attitude: "谨慎地表示愿意协助" } });
+      return proposal;
+    }, prepared);
     const action = intent(
       "submission:stage3:npc-revision",
       "莉安看过归还的账册后，重新考虑她对我们的态度和下一步安排。",
@@ -1747,8 +2085,15 @@ describe("vNext stage-three Room verticals", () => {
     const lianKnowledge = context.references.citations.npcKnowledge
       .find(({ npcRef }) => npcRef === LIAN_ID);
     expect(lianKnowledge, "Lian receives her complete finite knowledge slice").toBeDefined();
-    expect(lianKnowledge?.refs).toEqual(expect.arrayContaining([NPC_KNOWLEDGE_REF]));
-    expect(lianKnowledge?.refs).not.toContain("knowledge:stage3:alice-private");
+    expect(lianKnowledge?.refs).toEqual(expect.arrayContaining([`knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}`]));
+    expect(lianKnowledge?.refs).not.toContain(`knowledge:${ALICE_ID}:knowledge:stage3:alice-private`);
+    const npcDecision = npcDecisionContext(context.entries, LIAN_ID);
+    expect(npcDecision, "Room prepare freezes the independently projected NPC decision context").toBeDefined();
+    expect(npcDecision?.knowledge).toEqual(expect.arrayContaining([
+      expect.objectContaining({ knowledgeRef: NPC_KNOWLEDGE_REF, entryRef: `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}` }),
+    ]));
+    expect(JSON.stringify(npcDecision)).not.toContain(PLAYER_SECRET_CANARY);
+    expect(JSON.stringify(npcDecision)).not.toContain(NPC_SUMMARY_CANARY);
     expect(JSON.stringify(context)).toContain("莉安亲眼看见阿莱莎归还了父亲的账册");
     expect(contextEntry(context, LIAN_LEDGER_ENTRY_REF)).toMatchObject({
       entryId: LIAN_LEDGER_ENTRY_REF,
@@ -1770,9 +2115,7 @@ describe("vNext stage-three Room verticals", () => {
       LIAN_LEDGER_ENTRY_REF,
       SCENE_LEDGER_ENTRY_REF,
       LIAN_LEDGER_DEFINITION_REF,
-      PISTOL_ENTRY_REF,
     ]));
-    expect(pistolAbility(context)).toMatch(/^ability:/u);
     expect(context.binding.readSet).toEqual([]);
     expect(context.entries.map(({ entryRef }) => entryRef)).toEqual(expect.arrayContaining([
       ALICE_ID,
@@ -1807,6 +2150,10 @@ describe("vNext stage-three Room verticals", () => {
         privateNotes: PLAYER_SECRET_CANARY,
       },
     });
+    const publicRead = record(record(await authority.observe(ALICE), "observer").readModel, "read model");
+    expect(record(publicRead.publicExpression, "public expression").characters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ characterRef: LIAN_ID, voice: "短句、克制，称呼来客为诸位", attitude: "谨慎地表示愿意协助" }),
+    ]));
     const revisionEvents = eventsOf(snapshot, "SemanticDefinitionRevised");
     expect(revisionEvents).toHaveLength(1);
     const revisionPayload = eventPayload(revisionEvents[0]);
@@ -1924,7 +2271,7 @@ describe("vNext stage-three Room verticals", () => {
       kp,
       counters,
       prepared,
-      rolls: [7],
+      rolls: [7, 20, 1], // attack check plus frozen possible concentration dice
       transformCommittedProjection(projection) {
         const withoutClaims = structuredClone(
           record(projection, "random committed-range observer projection"),
@@ -1940,7 +2287,7 @@ describe("vNext stage-three Room verticals", () => {
       narration: "notApplicable",
     });
     expect(kp.counters).toMatchObject({ propose: 1, narrate: 0 });
-    expect(counters).toMatchObject({ rolls: 1, publishDelivery: 0 });
+    expect(counters).toMatchObject({ rolls: 3, publishDelivery: 0 });
 
     const journaled = await roomSnapshot(authority);
     expect(eventsOf(journaled, "RandomnessRequested")).toHaveLength(1);
@@ -1967,7 +2314,7 @@ describe("vNext stage-three Room verticals", () => {
       narration: "published",
     });
     expect(kp.counters.propose).toBe(1);
-    expect(counters.rolls).toBe(1);
+    expect(counters.rolls).toBe(3);
 
     const committed = await roomSnapshot(authority);
     expect(eventsOf(committed, "RandomnessRequested")).toHaveLength(1);
@@ -2006,16 +2353,16 @@ describe("vNext stage-three Room verticals", () => {
       kp,
       counters,
       prepared,
-      rolls: [7],
+      rolls: [7, 20, 1], // attack check plus frozen possible concentration dice
     }), "gun/chandelier outcome");
-    expect(outcome).toMatchObject({
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
       kind: "committed",
       action: "committed",
       narration: "retryableFailure",
       receipt: { rootActionId: expect.any(String), receiptId: expect.any(String) },
     });
     expect(kp.counters).toMatchObject({ propose: 1, decideDueActorPlan: 0 });
-    expect(counters.rolls).toBe(1);
+    expect(counters.rolls).toBe(3);
 
     const proposalRequest = kp.proposalRequests[0];
     const context = requiredContext(proposalRequest);
@@ -2035,7 +2382,7 @@ describe("vNext stage-three Room verticals", () => {
       quantity: 8,
       holderRef: ALICE_ID,
     });
-    expect(contextEntry(context, "continuity:adjudicationPrecedents")).toEqual({});
+    expect(contextEntry(context, "continuity:adjudicationPrecedents")).toEqual({ selectedRefs: [], scopeRef: SCENE_REF });
     const abilityRef = pistolAbility(context);
     expect(context.binding.readSet).toEqual([]);
     expect(context.entries.map(({ entryRef }) => entryRef)).toEqual(expect.arrayContaining([
@@ -2165,6 +2512,7 @@ describe("vNext stage-three Room verticals", () => {
     expect(actorNarrations[1].narrationPurpose).toBe("narrationRecovery");
     expect(actorNarrations[1].receipt).toEqual(actorNarrations[0].receipt);
     expect(actorNarrations[1].renderableClaims).toEqual(actorNarrations[0].renderableClaims);
+    expect(actorNarrations[1].narrationContext).toEqual(actorNarrations[0].narrationContext);
     const firstClaims = record(actorNarrations[0].renderableClaims, "first frozen claims");
     const retryClaims = record(actorNarrations[1].renderableClaims, "retry frozen claims");
     expect(retryClaims.claimsHash).toBe(firstClaims.claimsHash);
@@ -2225,9 +2573,9 @@ describe("vNext stage-three Room verticals", () => {
       kp,
       counters,
       prepared,
-      rolls: [19],
+      rolls: [19, 20, 1],
     }), "DC 40 gun failure outcome");
-    expect(outcome).toMatchObject({
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({
       kind: "committed",
       action: "committed",
       narration: "published",
@@ -2288,12 +2636,12 @@ describe("vNext stage-three Room verticals", () => {
       principal: ALICE,
       action: intent(
         "submission:stage3:attack-natural-20",
-        "我瞄准支撑物发起攻击，让悬挂物落入下方区域。",
+        "我用燧发手枪瞄准吊灯的支撑发起攻击，让悬挂物落入下方区域。",
       ),
       kp: twentyKp,
       counters: twentyCounters,
       prepared: twentyPrepared,
-      rolls: [20],
+      rolls: [20, 20, 1],
     }), "natural-20 attack outcome");
     expect(twentyOutcome).toMatchObject({ kind: "committed", action: "committed" });
     const afterTwenty = await roomSnapshot(naturalTwenty.authority);
@@ -2323,12 +2671,12 @@ describe("vNext stage-three Room verticals", () => {
       principal: ALICE,
       action: intent(
         "submission:stage3:attack-natural-1",
-        "我瞄准支撑物发起攻击，让悬挂物落入下方区域。",
+        "我用燧发手枪瞄准吊灯的支撑发起攻击，让悬挂物落入下方区域。",
       ),
       kp: oneKp,
       counters: oneCounters,
       prepared: onePrepared,
-      rolls: [1],
+      rolls: [1, 20, 1],
     }), "natural-1 attack outcome");
     expect(oneOutcome).toMatchObject({ kind: "committed", action: "committed" });
     const afterOne = await roomSnapshot(naturalOne.authority);
@@ -2364,6 +2712,7 @@ describe("vNext stage-three Room verticals", () => {
       kp: ropeKp,
       counters,
       prepared: ropePrepared,
+      rolls: [20, 1], // frozen concentration reserve; the actor still makes no check
     }), "burn-rope interaction outcome");
     expect(ropeOutcome, JSON.stringify(ropeOutcome)).toMatchObject({
       kind: "committed",
@@ -3390,7 +3739,7 @@ describe("vNext stage-three Room verticals", () => {
     const outcome = record(await runAction({
       authority,
       principal: ALICE,
-      action: intent("submission:stage3:vnext2-attack-crit", "角色举枪打向吊灯的铁链。"),
+      action: intent("submission:stage3:vnext2-attack-crit", "角色用燧发手枪打向吊灯的铁链。"),
       kp,
       counters,
       prepared,
@@ -3429,5 +3778,158 @@ describe("vNext stage-three Room verticals", () => {
     await evictDurableObject(authority as never);
     expect(await roomSnapshot(authority)).toEqual(committed);
     expect(await roomStateHash(authority)).toBe(stateHashBeforeEviction);
+  });
+});
+
+function authoredRoomBundle(kind: "hazard" | "item", captured=false): JsonRecord {
+  const refs: Record<string,string> = {
+    "character:probe-actor": ALICE_ID, "character:probe-target": BOB_ID,
+    "scene:probe-gallery": SCENE_REF, "definition:probe-valve": CHAIN_REF,
+    "definition:probe-steam-zone": IMPACT_ZONE_REF,
+  };
+  // Explicit synthetic transport update of a preserved historical sample; no model response is rewritten.
+  const bundle=captured?parseSubmitKpProposalBundleArguments(encodeVNextStrictToolBundle(capturedItemWire)):kind === "hazard" ? hazardBundle() : itemBundle();
+  if (kind === "hazard") {
+    // The reused scene is larger than the probe gallery; author a range that
+    // actually reaches the intended zone instead of relying on contains alone.
+    const proposals = bundle.proposals as JsonRecord[];
+    record(record(record(proposals[0].source, "source").content, "ability").target, "target").rangeInches = "1200";
+  }
+  return JSON.parse(JSON.stringify(bundle),
+    (_key, value) => typeof value === "string" ? refs[value] ?? value : value) as JsonRecord;
+}
+
+describe("authored hazards and Items through Room persistence", () => {
+  for (const choice of ["knockOut", "dealLethalDamage"]) it(`holds an atomic Item until its controller chooses ${choice}, including eviction and foreign answers`, async () => {
+    const {authority}=await initializeRoom(`kp-vnext-authored-pending-${choice}`,20,1);
+    const before=await roomSnapshot(authority),counters=emptyActionCounters(),prepared:PreparedCapture={all:[]};
+    const proposal=authoredRoomBundle("item"),proposals=proposal.proposals as JsonRecord[];
+    Object.assign(record(record(proposals[0]!.source,"source").content,"content"),{
+      healing:null,target:{kind:"creature",count:"1",reachInches:"900",requiresSight:false},
+      attack:{ability:"str",proficiency:true},damage:[{type:"force",formula:"1d4",sharedAcrossTargets:false}],
+    });
+    record(proposals[4]!.operation,"use").targetRefs=[BOB_ID];
+    const kp=new DeterministicKp(()=>proposal,prepared,undefined,false);
+    const start=await runAction({authority,principal:ALICE,
+      action:intent(`submission:authored-pending:${choice}`,"取用吊灯铁链下的物件，近战击中站在吊物下方的对手。"),
+      kp,counters,prepared,rolls:[15,2,2],dieSides:[20,4,4]});
+    expect(start,JSON.stringify(start)).toMatchObject({kind:"awaitingInput"});
+    const waiting=await roomSnapshot(authority), pending=record(record(start,"start").pending,"pending");
+    expect(itemEntries(waiting.state)).toEqual(itemEntries(before.state));
+    expect(entities(waiting.state)).toEqual(entities(before.state));
+    expect(waiting.events.filter(e=>e.eventType==="AtomicWorldInteractionSuspended")).toHaveLength(1);
+    expect(JSON.stringify(start)).not.toMatch(/candidateState|frozenDamageFaces|lethalDamagePayload|ownerFrame/);
+    expect(pending.answerOptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({answer:{kind:choice}}),
+    ]));
+    expect(kp.counters.narrate).toBe(0);
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(waiting);
+    const answer={kind:"answer" as const,submissionId:`submission:authored-answer:${choice}`,
+      pendingInputId:String(pending.pendingInputId),answer:{kind:choice}};
+    const foreign=await runAction({authority,principal:BOB,action:answer,kp,counters,prepared});
+    expect(foreign).toMatchObject({kind:"rejected"});
+    expect(await roomSnapshot(authority)).toEqual(waiting);
+    const malformed=await runAction({authority,principal:ALICE,
+      action:{...answer,submissionId:`${answer.submissionId}:invalid`,answer:{kind:"useReaction"}},kp,counters,prepared});
+    expect(malformed).toMatchObject({kind:"rejected"});
+    expect(await roomSnapshot(authority)).toEqual(waiting);
+    const done=await runAction({authority,principal:ALICE,action:answer,kp,counters,prepared,
+      rolls:choice==="knockOut"?[3]:[],dieSides:[4]});
+    expect(done,JSON.stringify(done)).toMatchObject({kind:"committed",narration:"published"});
+    const committed=await roomSnapshot(authority);
+    expect(committed.events.filter(e=>e.eventType==="ItemUsed")).toHaveLength(1);
+    expect(record(entities(committed.state)[BOB_ID],"target").hitPoints).toMatchObject({current:0});
+    await runAction({authority,principal:ALICE,action:answer,kp,counters,prepared});
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+  });
+
+  for (const kind of ["hazard", "item"] as const) it(`commits ${kind} with heterogeneous frozen dice, Claims, duplicate protection and eviction replay`, async () => {
+    const { authority } = await initializeRoom(`kp-vnext-authored-room-${kind}`,10);
+    const counters=emptyActionCounters();
+    const prepared:PreparedCapture={all:[]};
+    const kp=new DeterministicKp(()=>authoredRoomBundle(kind),prepared,undefined,false);
+    const action=intent(`submission:authored-room:${kind}`,kind==="hazard"?"扰动吊灯链条，使区域内危险触发。":"在吊灯链条下找到两份治疗药剂，拾取并使用一份。");
+    const outcome=await runAction({authority,principal:ALICE,action,kp,counters,prepared,
+      rolls:kind==="hazard"?[2,2,20,1,2,20]:[2,2],dieSides:kind==="hazard"?[6,8,20,20,20,20]:[4,4]});
+    expect(outcome,JSON.stringify(outcome)).toMatchObject({kind:"committed",narration:"published"});
+    const committed=await roomSnapshot(authority);
+    const allEvents=committed.events;
+    expect(allEvents.filter(event=>event.eventType==="AtomicWorldInteractionStepsResolved")).toHaveLength(1);
+    expect(allEvents.filter(event=>event.eventType==="RandomnessRequested"
+      && eventPayload(event).purpose==="worldInteractionCheck")).toHaveLength(1);
+    if(kind==="hazard") {
+      expect(record(entities(committed.state)[BOB_ID],"target").hitPoints).toMatchObject({current:15});
+      expect(allEvents.filter(event=>event.eventType==="EffectApplied")).toHaveLength(1);
+    } else {
+      expect(record(entities(committed.state)[ALICE_ID],"actor").hitPoints).toMatchObject({current:16});
+      expect(Object.values(itemEntries(committed.state))).toEqual(expect.arrayContaining([
+        expect.objectContaining({holderRef:ALICE_ID,quantity:1}),
+      ]));
+      expect(allEvents.filter(event=>event.eventType==="ItemUsed")).toHaveLength(1);
+    }
+    expect(kp.narrationRequests.length).toBeGreaterThan(0);
+    const stateHash=await roomStateHash(authority);
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+    expect(await roomStateHash(authority)).toBe(stateHash);
+    await runAction({authority,principal:ALICE,action,kp,counters,prepared,rolls:[]});
+    expect(await roomSnapshot(authority)).toEqual(committed);
+  });
+
+  it("rejects an invalid later Item quantity with no partial definitions, dice or Claims",async()=>{
+    const {authority}=await initializeRoom("kp-vnext-authored-room-rollback");
+    const before=await roomSnapshot(authority),counters=emptyActionCounters(),prepared:PreparedCapture={all:[]};
+    const proposal=authoredRoomBundle("item");
+    const proposals=proposal.proposals as JsonRecord[];
+    (proposals[3]!.operation as JsonRecord).quantity=3;
+    const kp=new DeterministicKp(()=>proposal,prepared,undefined,false);
+    const outcome=await runAction({authority,principal:ALICE,
+      action:intent("submission:authored-room:rollback","在吊灯链条下拾取并使用药剂。"),kp,counters,prepared,rolls:[]});
+    expect(outcome).not.toMatchObject({kind:"committed"});
+    expect(await roomSnapshot(authority)).toEqual(before);
+    expect(kp.counters.narrate).toBe(0);
+  });
+
+  it("recovers an Item narration after eviction with identical expression and no second inventory or resource settlement", async () => {
+    const { authority } = await initializeRoom("kp-vnext-narration-frozen-item-recovery", 10);
+    const counters = emptyActionCounters(), prepared: PreparedCapture = { all: [] };
+    const viewerKey = `${ALICE.principal.id}\u001f${ALICE_ID}`;
+    const kp = new DeterministicKp(() => authoredRoomBundle("item", true), prepared, viewerKey, false);
+    const outcome = await runAction({ authority, principal: ALICE,
+      action: intent("submission:narration-frozen-item", "在吊灯链条下找到两份治疗药剂，拾取并使用一份。"),
+      kp, counters, prepared, rolls: [2, 3], dieSides: [4, 4] });
+    expect(outcome).toMatchObject({ kind: "committed", narration: "retryableFailure" });
+    const committed = await roomSnapshot(authority);
+    const previous = narrationForViewer(kp, viewerKey)[0];
+    const proposalCount = kp.counters.propose, rollCount = counters.rolls;
+    await evictDurableObject(authority as never);
+    const observed = record(await authority.observe(ALICE), "observation after eviction");
+    const recovery = record(observed.narrationRecovery, "narration recovery");
+    const result = await handleViewerNarrationRecovery({ principal: ALICE,
+      authority: instrumentAuthority(authority, counters, prepared), kp }, String(recovery.capability));
+    expect(result).toMatchObject({ kind: "committed", narration: "published" });
+    const retried = narrationForViewer(kp, viewerKey)[1];
+    expect(retried.narrationContext).toEqual(previous.narrationContext);
+    expect(retried.renderableClaims).toEqual(previous.renderableClaims);
+    expect(kp.counters.propose).toBe(proposalCount); expect(counters.rolls).toBe(rollCount);
+    expect(await roomSnapshot(authority)).toEqual(committed);
+  });
+
+  it("replays a current-wire fixture derived from the historical DeepSeek Item proposal through Room",async()=>{
+    const {authority}=await initializeRoom("kp-vnext-authored-room-captured-provider",10);
+    const counters=emptyActionCounters(),prepared:PreparedCapture={all:[]};
+    const kp=new DeterministicKp(()=>authoredRoomBundle("item",true),prepared,undefined,false);
+    const outcome=await runAction({authority,principal:ALICE,
+      action:intent("submission:authored-room:captured","在吊灯链条下找到两份治疗药剂，拾取并使用一份。"),
+      kp,counters,prepared,rolls:[2,3],dieSides:[4,4]});
+    expect(outcome).toMatchObject({kind:"committed",narration:"published"});
+    const beforeEviction=await roomSnapshot(authority);
+    expect(record(entities(beforeEviction.state)[ALICE_ID],"actor").hitPoints).toMatchObject({current:17});
+    expect(beforeEviction.events.filter(event=>event.eventType==="ItemUsed")).toHaveLength(1);
+    await evictDurableObject(authority as never);
+    expect(await roomSnapshot(authority)).toEqual(beforeEviction);
   });
 });

@@ -4,7 +4,7 @@ import { getSql } from "../db";
 import type { CharacterSheet } from "../dnd/types";
 import { createAuthoritativeKpAdapter } from "../kp/authoritative";
 import {
-  authoritativeKpProfileByBinding,
+  AUTHORITATIVE_KP_PROFILE,
   isSocialResolutionKpProfile,
 } from "../kp/authoritative-policy";
 import {
@@ -12,6 +12,13 @@ import {
   createModelProfileRegistry,
 } from "../kp/model-registry";
 import { authoritativeKpModelBinding } from "../kp/provider";
+import { createDeepSeekStrictToolBinding } from "../kp/deepseek";
+import { createVNextKpAdapter } from "../kp/vnext/adapter";
+import { VNEXT_KP_PROFILE } from "../kp/vnext/runtime-policy";
+import { createVNextModelCallScope } from "../kp/vnext/model-call-scope";
+import { ActorPlanTransportCapability } from "./actor-plan-transport";
+import type { ActorPlanTransport } from "./actor-plan-transport-types";
+import { roomRuntimeConfiguration } from "./runtime-configuration";
 import { createV3ProductionContextPreparer } from "../kp/v3-production-context";
 import type {
   DueActorPlanDecisionRequest,
@@ -40,11 +47,17 @@ import {
 import { withRoomAuthorityTelemetry } from "./authority-telemetry";
 import {
   type PersistedRoomKpBinding,
-  validateV3RoomBinding,
 } from "./v3-binding";
 
 function roomStub(roomId: string) {
   return env.ROOMS.getByName(roomId);
+}
+
+function vnextRequestModelCallScope(roomId: string) {
+  const localEnv = env as Env & { ZHUWEI_VNEXT_LOCAL_CALL_LIMIT?: string; ZHUWEI_VNEXT_LOCAL_CAPTURE_URL?: string };
+  return createVNextModelCallScope({ roomId,
+    limit: localEnv.ZHUWEI_VNEXT_LOCAL_CALL_LIMIT, captureUrl: localEnv.ZHUWEI_VNEXT_LOCAL_CAPTURE_URL,
+    emit(event) { console.info(JSON.stringify(event)); } });
 }
 
 function telemetryRoomAuthority(input: {
@@ -52,10 +65,12 @@ function telemetryRoomAuthority(input: {
   userId: string;
   requestId?: string;
   submissionId?: string;
+  actorPlanTransport?: ActorPlanTransport;
 }) {
   return withRoomAuthorityTelemetry(roomStub(input.roomId), {
     roomId: input.roomId,
     principalId: input.userId,
+    ...(input.actorPlanTransport === undefined ? {} : { actorPlanTransport: input.actorPlanTransport }),
     ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
     ...(input.submissionId === undefined ? {} : { submissionId: input.submissionId }),
     emit(event) {
@@ -115,11 +130,11 @@ export async function runAuthoritativeRoomAction(input: {
       where id = ${input.roomId}
     `
   )[0];
-  const profile = authoritativeKpProfileByBinding(
+  const profile = roomRuntimeConfiguration(env).profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  const requestedProfile = authoritativeKpProfileByBinding(
+  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
@@ -129,7 +144,7 @@ export async function runAuthoritativeRoomAction(input: {
   const boundModuleProfile = binding === undefined
     ? undefined
     : await observedRoomModuleProfile(binding.module_id, bindingObservation);
-  const v3Binding = validateV3RoomBinding({
+  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
     binding,
     roomProfile: profile,
     requestedProfile,
@@ -143,6 +158,38 @@ export async function runAuthoritativeRoomAction(input: {
     || boundModuleProfile === undefined
   ) {
     return v3BindingRejection();
+  }
+  if (profile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion) {
+    const stub = roomStub(input.roomId);
+    const principal = trustedRoomPrincipal(input.userId);
+    // A local probe can bound all real calls in this HTTP request, including
+    // proposal correction and narration. The counter is request-scoped and
+    // never changes a proposal, a result or the production model policy.
+    const callScope = vnextRequestModelCallScope(input.roomId);
+    const boundProbe = callScope.bind;
+    const proposalBinding = boundProbe(createDeepSeekStrictToolBinding({
+      apiKey: (env as Env & { DEEPSEEK_API_KEY?: string }).DEEPSEEK_API_KEY ?? "",
+    }));
+    const actorPlanTransport = new ActorPlanTransportCapability(proposalBinding);
+    const narrationAdapter = createAuthoritativeKpAdapter({
+      ai: boundProbe(authoritativeKpModelBinding(AUTHORITATIVE_KP_PROFILE)), profile: AUTHORITATIVE_KP_PROFILE,
+      onInvocationReceipt(receipt) {
+        console.info(JSON.stringify(buildModelInvocationTelemetryEvent({ roomId: input.roomId,
+          principalId: input.userId, receipt })));
+      },
+    });
+    return executeAuthoritativeRoomAction(input, createVNextKpAdapter({
+      proposalBinding,
+      narrationAdapter,
+      journal: {
+        begin: (preparedActionId, request) => stub.beginVNextProposalInvocation(principal, preparedActionId, request),
+        complete: (preparedActionId, result) => stub.completeVNextProposalInvocation(principal, preparedActionId, result),
+      },
+      onInvocation(event) { console.info(JSON.stringify({ ...event,
+        roomId: input.roomId, principalId: input.userId,
+        ...("submissionId" in input.action ? { submissionId: input.action.submissionId } : {}),
+      })); },
+    }), actorPlanTransport);
   }
   const registry = createModelProfileRegistry([{
     profileRef: profile.modelProfileVersion,
@@ -167,8 +214,8 @@ export async function runAuthoritativeRoomAction(input: {
     includeDynamicAuthoritativeFacts: isSocialResolutionKpProfile(profile),
   });
   const kp = createAuthoritativeKpAdapter({
-    ai: authoritativeKpModelBinding(profile),
-    profile,
+    ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
+    profile: narrationProfileFor(profile),
     prepareV3Context: async (request, allowedFormIds) => {
       const exactModule = await kpProjectionModuleProfile(binding.module_id, request.projection);
       if (exactModule === undefined) {
@@ -235,18 +282,18 @@ export async function retryAuthoritativeViewerNarration(input: {
       from rooms where id = ${input.roomId}
     `
   )[0];
-  const roomProfile = authoritativeKpProfileByBinding(
+  const roomProfile = roomRuntimeConfiguration(env).profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  const requestedProfile = authoritativeKpProfileByBinding(
+  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
   const observation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
-  const v3Binding = validateV3RoomBinding({
+  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
     binding,
     roomProfile,
     requestedProfile,
@@ -261,9 +308,11 @@ export async function retryAuthoritativeViewerNarration(input: {
   ) {
     return v3BindingRejection();
   }
+  const narrationBinding = authoritativeKpModelBinding(narrationProfileFor(roomProfile));
   const kp = createAuthoritativeKpAdapter({
-    ai: authoritativeKpModelBinding(roomProfile),
-    profile: roomProfile,
+    ai: roomProfile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion
+      ? vnextRequestModelCallScope(input.roomId).bind(narrationBinding) : narrationBinding,
+    profile: narrationProfileFor(roomProfile),
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
         roomId: input.roomId,
@@ -386,14 +435,14 @@ export async function runAuthoritativeRoomCorrection(
       where id = ${input.roomId}
     `
   )[0];
-  const profile = authoritativeKpProfileByBinding(
+  const profile = roomRuntimeConfiguration(env).profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
   const correctionObservation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(binding.host_user_id));
-  const v3Binding = validateV3RoomBinding({
+  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
     binding,
     roomProfile: profile,
     expectedModuleRef: binding === undefined
@@ -403,8 +452,8 @@ export async function runAuthoritativeRoomCorrection(
   });
   if (v3Binding.kind === "invalid" || profile === undefined) return v3BindingRejection();
   const kp = createAuthoritativeKpAdapter({
-    ai: authoritativeKpModelBinding(profile),
-    profile,
+    ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
+    profile: narrationProfileFor(profile),
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
         roomId: input.roomId,
@@ -474,12 +523,13 @@ async function executeAuthoritativeRoomAction(input: {
   roomId: string;
   userId: string;
   action: RoomActionInput;
-}, kp: KpAdapterCapability) {
+}, kp: KpAdapterCapability, actorPlanTransport?: ActorPlanTransport) {
   const startedAt = Date.now();
   const principal = trustedRoomPrincipal(input.userId);
   const authority = telemetryRoomAuthority({
     roomId: input.roomId,
     userId: input.userId,
+    ...(actorPlanTransport === undefined ? {} : { actorPlanTransport }),
     requestId: input.action.kind === "acknowledge"
       ? input.action.deliveryId
       : input.action.submissionId,
@@ -782,7 +832,7 @@ export async function runAuthoritativePartyAction(input: {
   submissionId: string;
   action: AuthoritativePartyAction;
 }) {
-  const requestedProfile = authoritativeKpProfileByBinding(
+  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
@@ -795,7 +845,7 @@ export async function runAuthoritativePartyAction(input: {
       where id = ${input.roomId}
     `
   )[0];
-  const roomProfile = authoritativeKpProfileByBinding(
+  const roomProfile = roomRuntimeConfiguration(env).profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
@@ -805,7 +855,7 @@ export async function runAuthoritativePartyAction(input: {
   const partyObservation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
-  const v3Binding = validateV3RoomBinding({
+  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
     binding,
     roomProfile,
     requestedProfile,
@@ -954,8 +1004,8 @@ export async function runAuthoritativePartyAction(input: {
     }
   }
   const narration = createAuthoritativeKpAdapter({
-    ai: authoritativeKpModelBinding(profile),
-    profile,
+    ai: authoritativeKpModelBinding(narrationProfileFor(profile)),
+    profile: narrationProfileFor(profile),
     onInvocationReceipt(receipt) {
       console.info(JSON.stringify(buildModelInvocationTelemetryEvent({
         roomId: input.roomId,
@@ -977,6 +1027,9 @@ export async function runAuthoritativePartyAction(input: {
     },
     decideDueActorPlan: (request) => narration.decideDueActorPlan(
       request as unknown as DueActorPlanDecisionRequest,
+    ),
+    decidePendingInput: (request) => narration.decidePendingInput(
+      request as unknown as import("../kp/pending-decision-policy").NpcPendingDecisionRequest,
     ),
     narrate: (request) => narration.narrate(request as unknown as KpNarrationRequest),
   });
@@ -1020,4 +1073,8 @@ function resourceCounts(sheet: CharacterSheet) {
   }
   values.inspiration = sheet.inspiration ? 1 : 0;
   return values;
+}
+
+function narrationProfileFor(profile: typeof AUTHORITATIVE_KP_PROFILE | import("../kp/authoritative-types").AuthoritativeKpProfile) {
+  return profile.modelProfileVersion === VNEXT_KP_PROFILE.modelProfileVersion ? AUTHORITATIVE_KP_PROFILE : profile;
 }

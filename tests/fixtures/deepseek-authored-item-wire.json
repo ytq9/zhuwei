@@ -1,0 +1,206 @@
+{
+  "mode": "adjudication",
+  "basisRefs": [
+    "definition:probe-valve"
+  ],
+  "adjudication": {
+    "kind": "directSuccess",
+    "risk": "喝下治疗药水并恢复生命值；操作本身在无威胁的隔离环境中可进行，药水效果由机械规则掷骰决定。",
+    "successOutcome": "药剂制备与饮用顺畅实施，恢复量由Rules根据药水效果掷骰结算。"
+  },
+  "terminal": {
+    "kind": "none"
+  },
+  "proposals": [
+    {
+      "kind": "materializeDefinition",
+      "basisRefs": [
+        "definition:probe-valve"
+      ],
+      "consumes": [],
+      "produces": [
+        {
+          "handle": "prospective:healing-ability",
+          "kind": "abilityDefinition",
+          "outcomeBinding": "always"
+        }
+      ],
+      "outcomeBinding": "always",
+      "source": {
+        "kind": "ability",
+        "content": {
+          "label": "治疗药水",
+          "description": "饮用后恢复2d4+2点生命值。",
+          "aliases": [
+            "potion-of-healing",
+            "治疗药剂"
+          ],
+          "tags": [
+            "consumable",
+            "healing"
+          ],
+          "activation": {
+            "kind": "useObject",
+            "actionGrant": "normalAction"
+          },
+          "target": {
+            "kind": "creature",
+            "count": "1",
+            "rangeInches": "0",
+            "requiresSight": false
+          },
+          "attack": {
+            "kind": "none"
+          },
+          "save": {
+            "kind": "none"
+          },
+          "damage": [],
+          "healing": {
+            "formula": "2d4+2"
+          },
+          "temporaryHitPoints": {
+            "kind": "none"
+          },
+          "effect": {
+            "kind": "none"
+          },
+          "effects": [],
+          "costs": [],
+          "grants": []
+        }
+      },
+      "visibilityPolicyRef": "visibility:public",
+      "summary": "创作治疗药水Ability，恢复2d4+2HP。"
+    },
+    {
+      "kind": "materializeDefinition",
+      "basisRefs": [
+        "definition:probe-valve"
+      ],
+      "consumes": [
+        {
+          "kind": "prospective",
+          "handle": "prospective:healing-ability"
+        }
+      ],
+      "produces": [
+        {
+          "handle": "prospective:healing-potion-def",
+          "kind": "itemDefinition",
+          "outcomeBinding": "always"
+        }
+      ],
+      "outcomeBinding": "always",
+      "source": {
+        "kind": "item",
+        "content": {
+          "schema": "zhuwei.item-definition-content/v1",
+          "label": "治疗药水",
+          "description": "一瓶可喝的治疗药剂，饮用后恢复2d4+2点生命值。",
+          "category": "consumable",
+          "aliases": [
+            "potion-of-healing"
+          ],
+          "tags": [
+            "consumable",
+            "healing"
+          ],
+          "stackable": true,
+          "equipment": {
+            "kind": "none"
+          },
+          "equippedAbilityRefs": [],
+          "use": {
+            "kind": "useObject",
+            "abilityRef": "prospective:healing-ability",
+            "quantityCost": 1,
+            "chargeCost": 0,
+            "durabilityCost": 0
+          },
+          "chargesMaximum": {
+            "kind": "none"
+          },
+          "durabilityMaximum": {
+            "kind": "none"
+          }
+        }
+      },
+      "visibilityPolicyRef": "visibility:public",
+      "summary": "创作治疗药水ItemDefinition，引用治疗Ability。"
+    },
+    {
+      "kind": "materializeItem",
+      "basisRefs": [
+        "definition:probe-valve"
+      ],
+      "consumes": [
+        {
+          "kind": "prospective",
+          "handle": "prospective:healing-potion-def"
+        }
+      ],
+      "produces": [
+        {
+          "handle": "prospective:healing-potion-entry",
+          "kind": "itemEntry",
+          "outcomeBinding": "always"
+        }
+      ],
+      "outcomeBinding": "always",
+      "definitionRef": "prospective:healing-potion-def",
+      "sceneRef": "scene:probe-gallery",
+      "quantity": 2,
+      "ownership": {
+        "kind": "unowned",
+        "ownerRef": {
+          "kind": "none"
+        }
+      },
+      "visibilityPolicyRef": "visibility:public",
+      "summary": "在场景生成2瓶治疗药水。"
+    },
+    {
+      "kind": "inventoryOperation",
+      "basisRefs": [
+        "definition:probe-valve"
+      ],
+      "consumes": [
+        {
+          "kind": "prospective",
+          "handle": "prospective:healing-potion-entry"
+        }
+      ],
+      "produces": [],
+      "outcomeBinding": "always",
+      "operation": {
+        "kind": "acquire",
+        "entryRef": "prospective:healing-potion-entry",
+        "quantity": 2
+      },
+      "summary": "演员拿起2瓶治疗药水。"
+    },
+    {
+      "kind": "inventoryOperation",
+      "basisRefs": [
+        "definition:probe-valve"
+      ],
+      "consumes": [
+        {
+          "kind": "prospective",
+          "handle": "prospective:healing-potion-entry"
+        }
+      ],
+      "produces": [],
+      "outcomeBinding": "always",
+      "operation": {
+        "kind": "use",
+        "entryRef": "prospective:healing-potion-entry",
+        "targetRefs": [
+          "character:probe-actor"
+        ]
+      },
+      "summary": "演员对自身使用1瓶治疗药水，恢复2d4+2HP。"
+    }
+  ]
+}

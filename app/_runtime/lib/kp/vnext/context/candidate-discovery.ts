@@ -1,14 +1,15 @@
 import {
-  authoritySpatialRefVisibleTo,
   canonicalFactVisibleToCharacter,
   type AuthoritativeWorldState,
 } from "../../../rules/authority-read";
 import { compareCodeUnits } from "../canonical-json";
-import { indexableRecord } from "./authority-records";
+import { narrativeDetailVisibleTo } from "../../../rules/v2/narrative-commitments";
+import { indexableRecord, indexedSpatialRefVisibleTo } from "./authority-records";
 import {
   extractTerms,
   nodeDescriptor,
   profileIndexesDescriptor,
+  singleHanQueryWords,
   tokenize,
   type ExtractedTerm,
   type RetrievalProfile,
@@ -25,7 +26,7 @@ import type { ContextWorkBudget, ContextWorkReceipt } from "./work-budget";
  * from silently inheriting the KP's reach.
  */
 export type EpistemicSubject =
-  | Readonly<{ kind: "kp"; sceneRef: string }>
+  | Readonly<{ kind: "kp"; sceneRef: string; actorCharacterRef?: string }>
   | Readonly<{ kind: "character"; characterRef: string; sceneRef: string }>;
 
 export type CandidateMatchKind = "exactRef" | "alias" | "lexical";
@@ -82,7 +83,12 @@ export function discoverCandidates(input: CandidateDiscoveryInput): CandidateDis
   );
 
   if (!budget.charge("searchableCharacters", input.intentText.length)) return limited(budget);
-  const queryTerms = new Set(tokenize(input.intentText, profile.tokenizer));
+  const queryTerms = new Set([...tokenize(input.intentText, profile.tokenizer), ...singleHanQueryWords(input.intentText)]);
+  const actorRef = input.subject.kind === "character" ? input.subject.characterRef : input.subject.actorCharacterRef;
+  const actorAbilities = actorRef === undefined ? undefined : input.state.combatRuntime.entities?.[actorRef]?.abilityRefs;
+  const abilityRefs = Array.isArray(actorAbilities) ? actorAbilities : [];
+  if (!budget.charge("postingVisits", abilityRefs.length)) return limited(budget);
+  const ownedAbilities = new Set(abilityRefs.filter((ref): ref is string => typeof ref === "string"));
 
   const postings = new Map<string, Map<string, ExtractedTerm>>();
   const truncatedPaths = new Set<string>();
@@ -92,6 +98,10 @@ export function discoverCandidates(input: CandidateDiscoveryInput): CandidateDis
     if (!profileIndexesDescriptor(profile, descriptor)) continue;
     if (!budget.charge("scannedRecords", 1)) return limited(budget);
     if (!addressable(node, input.subject.sceneRef)) continue;
+    // Naming a capability searches the acting character's frozen repertoire.
+    // Other actors and hazards enter through their own typed dependencies;
+    // a matching catalog name alone cannot supply an actor capability.
+    if (node.kind === "abilityDefinition" && !ownedAbilities.has(ref)) continue;
     if (!authorized(input.state, input.subject, node)) continue;
     const record = indexableRecord(input.state, node);
     if (record === undefined) continue;
@@ -143,6 +153,8 @@ export function discoverCandidates(input: CandidateDiscoveryInput): CandidateDis
 
   for (const ref of [...new Set(input.focusRefs)].sort(compareCodeUnits)) {
     if (!input.index.nodes.has(ref)) continue;
+    const node = input.index.nodes.get(ref)!;
+    if (node.kind === "narrativeCommitment" && !authorized(input.state, input.subject, node)) continue;
     if (!budget.charge("candidateScores", 1)) return limited(budget);
     scores.set(ref, {
       purpose: "objectIdentification",
@@ -183,7 +195,9 @@ export function discoverCandidates(input: CandidateDiscoveryInput): CandidateDis
  * being offered as things the player might have meant.
  */
 function addressable(node: ReferenceNode, sceneRef: string): boolean {
-  return node.sceneRef === undefined || node.sceneRef === sceneRef;
+  // Published descriptions remain recallable after leaving the scene. This
+  // only retrieves continuity; it grants no remote mechanical reach.
+  return node.kind === "narrativeCommitment" || node.sceneRef === undefined || node.sceneRef === sceneRef;
 }
 
 function authorized(
@@ -191,6 +205,10 @@ function authorized(
   subject: EpistemicSubject,
   node: ReferenceNode,
 ): boolean {
+  if (node.kind === "narrativeCommitment") {
+    const characterRef = subject.kind === "character" ? subject.characterRef : subject.actorCharacterRef;
+    return characterRef !== undefined && narrativeDetailVisibleTo(state, node.ref, characterRef);
+  }
   if (subject.kind === "kp") return true;
   if (node.kind === "canonicalFact") {
     const fact = state.canonicalFacts[node.ref];
@@ -204,7 +222,7 @@ function authorized(
   // the scene it is acting in. Authority-only records have no character
   // surface at all.
   return node.sceneRef === subject.sceneRef
-    && authoritySpatialRefVisibleTo(state, node.ref, subject.sceneRef, subject.characterRef);
+    && indexedSpatialRefVisibleTo(state, node, subject.sceneRef, subject.characterRef);
 }
 
 function limited(budget: ContextWorkBudget): CandidateDiscoveryResult {

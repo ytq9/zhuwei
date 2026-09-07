@@ -1,0 +1,179 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round31",
+  "recordedAt": "2026-09-06T10:38:12.673048+00:00",
+  "intent": "我环顾大厅，仔细看看肉眼可见的门窗、楼梯和通路，不触碰物品。",
+  "result": {
+    "submissionId": "vnext-http-50f38f20-e578-4e97-855e-ccfadbe28864",
+    "outcomeKind": "rejected",
+    "action": "notCommitted",
+    "narration": "notApplicable",
+    "error": "权威 KP 模型配置或输出无效。",
+    "code": "PROPOSAL_FORM_INVALID"
+  },
+  "usage": {
+    "prompt_tokens": 29866,
+    "completion_tokens": 1779,
+    "total_tokens": 31645,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 29866
+  },
+  "costCny": 0.0528045,
+  "pricingCnyPerMillion": {
+    "hit": 0.05,
+    "miss": 1.5,
+    "output": 4.5
+  },
+  "parserDiagnostics": {
+    "kind": "rejected",
+    "name": "VNextProposalBundleOutputError",
+    "message": "模型返回的结构化结果不符合权威 KP 协议。",
+    "diagnostics": [
+      {
+        "code": "JSON_SYNTAX",
+        "constraint": "json:object-delimiter-expected",
+        "repair": {
+          "allowed": false,
+          "reason": "semantic-equivalence-unproven"
+        },
+        "path": [
+          "proposals",
+          0
+        ],
+        "location": {
+          "offset": 3595,
+          "line": 1,
+          "column": 3596
+        }
+      }
+    ]
+  },
+  "mechanical": {
+    "eventCount": 0,
+    "eventTypes": [],
+    "receipts": 0,
+    "pendingDue": 0,
+    "modelInvocations": 1,
+    "deliveryStatuses": [],
+    "audienceStatuses": []
+  },
+  "replay": {
+    "kind": "replayed",
+    "exactState": true,
+    "frozenContextsChecked": 0,
+    "frozenContextsConform": null,
+    "authorityUnchangedFromGenesis": true,
+    "resourcesAndTimeUnchanged": true,
+    "eventCount": 0,
+    "eventTypes": [],
+    "receiptCount": 0,
+    "newEvidenceCount": 0,
+    "randomnessAbsent": true,
+    "claimsNote": "No committed Claims to validate."
+  },
+  "requestSha256": "6fe1b0a52083a575e1f0000bc2fe2a74cfd7aad528bff35cf257648dcc9371c0",
+  "rawArgumentsSha256": "1b2e1e11bb37efdee6fdff56957239dcaa6b2a99612e1a9b266c02b314912f8f",
+  "finishReason": "tool_calls",
+  "privateArtifactHashes": {
+    ".mjs": "5453dc8262271a5ddeeb0088f2d0994289a3dc31d59899fb3cd57df7bd4403f0",
+    "-capture.mjs": "f10f968632f8c9b83cf8891130a7483888649df328040041e63b1032a80d137d",
+    "-source-manifest.py": "d46a5ffc6fbd8b950fe3ce42c34dcc7ea385518d3a11e8ece15cc2efd9f9b5aa",
+    "-extract.py": "01c88d865b5e135374ac95b6ca95fcc043ceeee7dae65b8f23ed91657b359e41",
+    "-replay.mts": "12c780826163b214deac373d2d2d1de7cff3975e55bf84de3913e7180dc45265"
+  },
+  "transportControl": {
+    "purpose": "Single schema-representation diagnostic; not submitted to Room and not a successful action",
+    "startedAt": "2026-09-06T10:40:22.277Z",
+    "endedAt": "2026-09-06T10:40:30.021Z",
+    "elapsedMilliseconds": 7744,
+    "model": "deepseek-v4-flash",
+    "thinking": {
+      "type": "disabled"
+    },
+    "maxTokens": 4000,
+    "estimatedInputTokens": 44206,
+    "finishReason": "tool_calls",
+    "toolName": "offer_kp_proposal_bundle",
+    "jsonSyntaxValid": true,
+    "originalResult": {
+      "kind": "locallyRejected",
+      "issues": [
+        "bundle:observe-invalid"
+      ],
+      "diagnostics": [
+        {
+          "code": "CONSTRAINT_CONFLICT",
+          "constraint": "bundle:observe-invalid",
+          "repair": {
+            "allowed": false,
+            "reason": "semantic-equivalence-unproven"
+          }
+        }
+      ]
+    },
+    "domainIssue": {
+      "proposalIndex": 0,
+      "proposalKind": "observe",
+      "producerCount": 1,
+      "note": "The captured strict schema advertised a generic producer array without the domain requirement that observe produce no handles. This is not evidence of violating the advertised schema."
+    },
+    "schemaEquivalence": {
+      "capturedEquivalent": true,
+      "recomputedEquivalent": true,
+      "method": "Recursively resolve local $ref without siblings or cycles; remove $def after resolution; compare UTF-8 compact JSON with recursively sorted keys.",
+      "expandedCanonicalSha256": "a1a4fce84f9b1b1a50a720c56382d23c66d59f58fe66cac06a5e4c3baae94364",
+      "originalDefinitionCount": 26,
+      "controlDefinitionNames": [
+        "proposals"
+      ],
+      "unchangedRequestFields": [
+        "messages",
+        "model",
+        "thinking",
+        "max_tokens",
+        "tool_choice",
+        "stream"
+      ],
+      "unchangedToolMetadata": [
+        "name",
+        "strict",
+        "description"
+      ]
+    },
+    "usage": {
+      "prompt_tokens": 38229,
+      "completion_tokens": 895,
+      "total_tokens": 39124,
+      "prompt_tokens_details": {
+        "cached_tokens": 896
+      },
+      "prompt_cache_hit_tokens": 896,
+      "prompt_cache_miss_tokens": 37333
+    },
+    "costCny": 0.0600718,
+    "requestSha256": "6a3d6c8aae485185e9bb2e23d098000091086752109d7cb14b45efd978d312f9",
+    "rawArgumentsSha256": "bc27761315b53e8e07c216cba370f2db7f449febb7e45effa894cc69e5055100",
+    "privateCaptureSha256": "58cd48c7cef3b430f21353f02b51da5e1dfaf4c2b4b77ffc59b57547906bbdeb",
+    "roomSubmissionAttempted": false,
+    "correctionAttempted": false,
+    "narrationAttempted": false,
+    "reusedAsSuccessfulAction": false,
+    "laterOfflineDiagnosisReference": "vnext-proposal-diagnostics-validation.md#v17同源深层诊断与修订准入拒绝原因",
+    "historicalScope": "The original result above belongs to round31/v16. Later offline diagnostics do not change this result or its source manifest."
+  },
+  "batchTotals": {
+    "attempts": 2,
+    "knownUsageCount": 2,
+    "promptTokens": 68095,
+    "completionTokens": 2674,
+    "totalTokens": 70769,
+    "promptCacheHitTokens": 896,
+    "promptCacheMissTokens": 67199,
+    "costCny": 0.1128763,
+    "costClassification": "development-validation",
+    "successfulGameActions": 0
+  }
+}

@@ -170,7 +170,8 @@ function activeLocalAbsence(
     if (value.scopeRef !== requirement.scopeRef) continue;
     if (value.status !== "active") continue;
     if (value.scopeRevisionOrHash !== currentScopeRevision) continue;
-    const selector = parseSelector(value.selector);
+    if (fact.branchId !== undefined && fact.branchId !== state.activeBranchId) continue;
+    const selector = parseAbsenceSelector(value.selector);
     if (selector === undefined || !sameSelector(selector, requirement.selector)) continue;
     const basisRefs = Array.isArray(value.basisRefs)
       ? value.basisRefs.filter(isNonEmptyString)
@@ -184,7 +185,7 @@ function activeLocalAbsence(
   return undefined;
 }
 
-function parseSelector(value: unknown): AbsenceSelector | undefined {
+export function parseAbsenceSelector(value: unknown): AbsenceSelector | undefined {
   if (!isPlainRecord(value)) return undefined;
   if (value.kind === "exactRef" && isNonEmptyString(value.ref)) {
     return Object.freeze({ kind: "exactRef", ref: value.ref });

@@ -3363,8 +3363,8 @@ test("Shield opens only after a hit and before damage, is controller-private, an
   assert.equal(hit.result.pending.controllerEntityId, BOB_ID);
   assert.equal(
     authority.observedRequests.some(({ purposeKey }) => purposeKey === "damage:ability:cinder-sentinel-bolt"),
-    false,
-    "damage is not requested until the Shield window is answered",
+    true,
+    "damage entropy is reserved before the Shield window without applying damage",
   );
   assert.equal(read(scenario, BOB_VIEWER).pendingInputs.some(
     ({ pendingInputId }) => pendingInputId === hit.result.pending.pendingInputId,

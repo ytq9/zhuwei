@@ -1,0 +1,71 @@
+{
+  "schema": "zhuwei.isolated-file-integration/v1",
+  "sourceDirectory": "/tmp/zhuwei-npc-plan-rules-work",
+  "targetDirectory": "/Users/sanmu/Documents/zhuwei-cloudflare",
+  "baselineManifestSha256": "f77dc3b312538352735a01782b14a9edb092fc6b56034f3bdfe47f4c3bfcfc52",
+  "files": [
+    {
+      "path": "app/_runtime/lib/rules/v2/actor-plans.ts",
+      "baselineSha256": "5fef5c33d0496cce25c09c8ba33b1f09ea88b96064e1739efcf2be7d15863577",
+      "newSha256": "a549e0446618671085167406671605906d8299495ad380871016ca5de1613d57"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/campaign-events.ts",
+      "baselineSha256": "3cf50acf009884463064bbef9cb04d971b287c226a9e2de345f1726f700fe43f",
+      "newSha256": "62120aabe473f7aaa49c0b656f84ab40a2e5a376a35061bac968709acae7e867"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/claims.ts",
+      "baselineSha256": "071797c630ed31df0d27a110607091aa31402489f49abb9674852cdd99a4a5b7",
+      "newSha256": "558efe87f03cc09bd7cc906b955c31147e6cbf1bac3498476b589af9adc4e110"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/compound-actions.ts",
+      "baselineSha256": "98e5662b3ead4d71287019941b8a8ccf18927cc64f691c66b091b57734276391",
+      "newSha256": "7c74a420f8f1e103fa45dd06de1e1496c9aa8a75ce19e64ee1d30b1e7c948637"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/npc-plan-formation.ts",
+      "baselineSha256": null,
+      "newSha256": "3d97783c2712a8771f6f8048e20d592cb4b699447fdeaa3aef7bc80112bf0cf7"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/npc-decision-context.ts",
+      "baselineSha256": "ce1916cb290f897a2043b2bee98f93bbdca4303c888cefb729e6912b1af775d9",
+      "newSha256": "e4e6fdb45454b39a553f2cee0fec0a3681b9b07b9faa7b44f7effbb4e328d6fc"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interaction-model.ts",
+      "baselineSha256": "56f35c157cae457e951f2829a07e0509fb4c4fa3156e5a8a00689d0c69cdd219",
+      "newSha256": "e8f320347b4cfe1076456c3bbce2371feeeb0d43b74f927ce1085e82617a7f94"
+    },
+    {
+      "path": "app/_runtime/lib/rules/v2/world-interactions.ts",
+      "baselineSha256": "e420cc8e533af553ddd252202ab0a9f267db670911c54a9e1988436d0ed873ae",
+      "newSha256": "4721548c3969390beb9ce89f8098606bc88f22532966f9fb78bdea9f56ff4ab9"
+    },
+    {
+      "path": "app/_runtime/lib/rules/profiles/vnext-world-interaction.ts",
+      "baselineSha256": "03199b2d658c870df5c56428d62e4ed835f51fb7015e6a3b4e86ec29921281f3",
+      "newSha256": "8b2ea4bb7b102bd1702622c2aa214436661ac54a8705aa4f23a370ffdcc7c2b4"
+    },
+    {
+      "path": "tests/kp-vnext-npc-plan-formation-rules.test.mjs",
+      "baselineSha256": null,
+      "newSha256": "833ac8db2bd252ff81963d175f678e3d76d3bb5151b0bde6616de72a03fd0caf"
+    }
+  ],
+  "patchPath": "/tmp/zhuwei-npc-plan-rules-work/npc-plan-rules.patch",
+  "patchSha256": "c9599b4a25f8cebe33f161ccf81422f3a73c176e884e6d88cb22801772400b47",
+  "validation": {
+    "formationNode": "9/9 pass",
+    "directConsumersNode": "38/38 pass",
+    "typecheck": "exit 0",
+    "scope": "No main-tree edits, KP, Room, Table, docs, API, deployment or push.",
+    "patchCheck": "git apply --check --whitespace=error: exit 0"
+  },
+  "appliedAt": "2026-09-06T22:12:34.991125+00:00",
+  "backupDirectory": "/tmp/zhuwei-npc-plan-rules-root-before",
+  "sourceManifestSha256": "99a71a85dcd7ba578b5ccf3aeb14b83422126f291da766fb7da5422c9aee8a29",
+  "conflicts": 0
+}

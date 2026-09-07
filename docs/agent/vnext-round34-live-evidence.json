@@ -1,0 +1,317 @@
+{
+  "schema": "zhuwei.vnext-live-evidence/v1",
+  "batch": "round34",
+  "recordedAt": "2026-09-06T13:17:56.314888+00:00",
+  "sourceManifest": "vnext-round34-source-manifest.json",
+  "parserHash": "sha256:10d2a88992009d44680d1883e95a39b872b6afc5fe0da3e4eea60d4cba200aca",
+  "sourceFilesComparedAtCloseout": 305,
+  "sourceFileMismatches": [],
+  "budget": {
+    "maxCalls": 3,
+    "maxInputTokens": 48000,
+    "maxOutputTokens": 1800,
+    "maxCny": 0.17,
+    "timeoutMs": 45000,
+    "deadlineAt": 1788700514919
+  },
+  "startedAt": "2026-09-06T13:11:14.919Z",
+  "endedAt": "2026-09-06T13:11:18.089Z",
+  "syntheticFirstPass": true,
+  "realCorrection": true,
+  "noRulesOrRoomExecution": true,
+  "notAttempted": [],
+  "cases": [
+    {
+      "id": "terminal-knowledge",
+      "mode": "terminal",
+      "adjudicationKind": null,
+      "proposalKinds": [],
+      "fixedRepairCount": 4,
+      "diagnosticCodes": [
+        "FIELD_MISSING",
+        "FIELD_MISSING",
+        "VALUE_INVALID",
+        "VALUE_INVALID"
+      ],
+      "repairs": [
+        {
+          "path": [
+            "adjudication"
+          ],
+          "operation": "add",
+          "reason": "inactive-bundle-branch"
+        },
+        {
+          "path": [
+            "proposals"
+          ],
+          "operation": "add",
+          "reason": "inactive-bundle-branch"
+        },
+        {
+          "path": [
+            "terminal",
+            "knowledgeRefs"
+          ],
+          "operation": "replace",
+          "reason": "reference-set-duplicates"
+        },
+        {
+          "path": [
+            "terminal",
+            "inquiry"
+          ],
+          "operation": "replace",
+          "reason": "text-canonical-form"
+        }
+      ],
+      "expectedBundleSha256": "95223de391f31d6d8896a5745620590f2dd616e31154075d906515f660925cdc",
+      "ticketSha256": "6153142fc61fe85af84c3708a47cc2cee7fd75e8f9a683a20d93cd2f83b8a824",
+      "requestSha256": "14ae2d3e9da4e5b046a5b5ceb3f01be022c18645d590dc063d3d08fb42351b4e",
+      "frozenHashChecksConform": true,
+      "fullBundleEqualsFrozenExpected": true,
+      "repairTicketUnchangedDuringExecution": true,
+      "resultKind": "locallyAccepted",
+      "repairUsed": true,
+      "protocolInvocationCount": 2,
+      "actualModelCalls": 1,
+      "syntheticFirstPassCalls": 1,
+      "durationMs": 1207,
+      "finishReason": "tool_calls",
+      "trace": {
+        "id": "terminal-knowledge",
+        "phase": "body-complete",
+        "startedAt": "2026-09-06T13:11:14.920Z",
+        "byteCount": 915,
+        "headersMs": 201,
+        "httpStatus": 200,
+        "firstBodyMs": 1205,
+        "bodyMs": 1205
+      },
+      "usage": {
+        "prompt_tokens": 1683,
+        "completion_tokens": 113,
+        "total_tokens": 1796,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 1683
+      },
+      "costCny": 0.003033,
+      "privateArtifactHashes": {
+        "input": "20511412b2e6c880f288add6a6d872f76832ad18dfd2550a64ee8ef1296faf22",
+        "response": "c1050500ad4cec90adfa0d8d723750808f67e7bedad96447f628b6d6176427d6",
+        "result": "2e0f2e95538496692625e309912d06c560b88e6c5effffce2092c273241c2b70",
+        "trace": "52d93056a2c5fa8a13376bf7c7d5b6f7bda8f6dedc088f14d16a121ea4450d89"
+      }
+    },
+    {
+      "id": "shared-observation",
+      "mode": "adjudication",
+      "adjudicationKind": "check",
+      "proposalKinds": [
+        "worldInteraction",
+        "observe",
+        "worldInteraction"
+      ],
+      "fixedRepairCount": 4,
+      "diagnosticCodes": [
+        "VALUE_INVALID",
+        "VALUE_INVALID",
+        "FIELD_MISSING",
+        "VALUE_INVALID",
+        "VALUE_INVALID"
+      ],
+      "repairs": [
+        {
+          "path": [
+            "basisRefs"
+          ],
+          "operation": "replace",
+          "reason": "reference-set-duplicates"
+        },
+        {
+          "path": [
+            "proposals",
+            0,
+            "branches",
+            "failure"
+          ],
+          "operation": "add",
+          "reason": "inactive-direct-success-branch"
+        },
+        {
+          "path": [
+            "proposals",
+            1,
+            "consumes"
+          ],
+          "operation": "replace",
+          "reason": "reference-set-duplicates"
+        },
+        {
+          "path": [
+            "proposals",
+            1,
+            "method"
+          ],
+          "operation": "replace",
+          "reason": "text-canonical-form"
+        }
+      ],
+      "expectedBundleSha256": "d2878a25a4b0f68fbe733499ed444faa6e522deb40ba17dc8968e692d78f346a",
+      "ticketSha256": "854f73dc8e8286547ab5d5129d2a767c91676ab2ad1a2cad4bed68377f0b2fb2",
+      "requestSha256": "081fd9b04cdc68a06f6ecf2c60350d548a83f690da84a01e1d90db6493315bd9",
+      "frozenHashChecksConform": true,
+      "fullBundleEqualsFrozenExpected": true,
+      "repairTicketUnchangedDuringExecution": true,
+      "resultKind": "locallyAccepted",
+      "repairUsed": true,
+      "protocolInvocationCount": 2,
+      "actualModelCalls": 1,
+      "syntheticFirstPassCalls": 1,
+      "durationMs": 1151,
+      "finishReason": "tool_calls",
+      "trace": {
+        "id": "shared-observation",
+        "phase": "body-complete",
+        "startedAt": "2026-09-06T13:11:16.127Z",
+        "byteCount": 1008,
+        "headersMs": 145,
+        "httpStatus": 200,
+        "firstBodyMs": 1145,
+        "bodyMs": 1146
+      },
+      "usage": {
+        "prompt_tokens": 2620,
+        "completion_tokens": 150,
+        "total_tokens": 2770,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2620
+      },
+      "costCny": 0.004605,
+      "privateArtifactHashes": {
+        "input": "66bfb3c210a97f85ae0f8141a3ddd1e7da4c08cdef6b7675fe73aa2220c12e20",
+        "response": "d0a391a5d7f9cc31c84d875027dbf3176b952bbf7bcb7e8f8dc1c1e287b9880f",
+        "result": "48346fec9fd59e01cdf374a5cafb854ef787bb8be1244b6c3ee5a706a8b5b469",
+        "trace": "5bb5a3be4831e29c545d60b020cec8258bbfe82814a26a24787695abb6ca720d"
+      }
+    },
+    {
+      "id": "authored-item",
+      "mode": "adjudication",
+      "adjudicationKind": "directSuccess",
+      "proposalKinds": [
+        "materializeDefinition",
+        "materializeDefinition",
+        "materializeItem",
+        "inventoryOperation",
+        "inventoryOperation"
+      ],
+      "fixedRepairCount": 3,
+      "diagnosticCodes": [
+        "FIELD_MISSING",
+        "VALUE_INVALID",
+        "VALUE_INVALID"
+      ],
+      "repairs": [
+        {
+          "path": [
+            "basisRefs"
+          ],
+          "operation": "replace",
+          "reason": "reference-set-duplicates"
+        },
+        {
+          "path": [
+            "terminal"
+          ],
+          "operation": "add",
+          "reason": "inactive-bundle-branch"
+        },
+        {
+          "path": [
+            "proposals",
+            1,
+            "consumes"
+          ],
+          "operation": "replace",
+          "reason": "reference-set-duplicates"
+        }
+      ],
+      "expectedBundleSha256": "390bf29aa274b428028419e508e69409e5f21af298c447f95c4b0e0c266e8043",
+      "ticketSha256": "5c09b120921d37428e921466183e18b7343c0e3cbe61f3c6ed5469e63b545f81",
+      "requestSha256": "c7fc116f0d583fdfd345535d083c26b7234debf1e47297d2aa39e2231ea6ead3",
+      "frozenHashChecksConform": true,
+      "fullBundleEqualsFrozenExpected": true,
+      "repairTicketUnchangedDuringExecution": true,
+      "resultKind": "locallyAccepted",
+      "repairUsed": true,
+      "protocolInvocationCount": 2,
+      "actualModelCalls": 1,
+      "syntheticFirstPassCalls": 1,
+      "durationMs": 810,
+      "finishReason": "tool_calls",
+      "trace": {
+        "id": "authored-item",
+        "phase": "body-complete",
+        "startedAt": "2026-09-06T13:11:17.279Z",
+        "byteCount": 897,
+        "headersMs": 108,
+        "httpStatus": 200,
+        "firstBodyMs": 804,
+        "bodyMs": 805
+      },
+      "usage": {
+        "prompt_tokens": 2301,
+        "completion_tokens": 114,
+        "total_tokens": 2415,
+        "prompt_tokens_details": {
+          "cached_tokens": 1024
+        },
+        "prompt_cache_hit_tokens": 1024,
+        "prompt_cache_miss_tokens": 1277
+      },
+      "costCny": 0.0024797,
+      "privateArtifactHashes": {
+        "input": "3059bd3e8c159424011b4abffd2a2e4579d80c80059f40577eb8d1c0aaa96d21",
+        "response": "84797c00b493c3d262b3d3e34b1d6154bf3e99c3bdd8d3c5deb5343117f0548f",
+        "result": "4d582edacc2564855f750ef310d5e61d96377d46c2018ce98943980a233cc703",
+        "trace": "93fd5b9e2894f3268069a885633f3946d51899c0c96627aca2ddbb9b1ba9980e"
+      }
+    }
+  ],
+  "batchTotals": {
+    "actualModelAttempts": 3,
+    "knownUsageCount": 3,
+    "unknownUsageCount": 0,
+    "promptTokens": 6604,
+    "completionTokens": 377,
+    "totalTokens": 6981,
+    "promptCacheHitTokens": 1024,
+    "promptCacheMissTokens": 5580,
+    "costCny": 0.0101177,
+    "fixedSyntheticCasesAccepted": 3,
+    "costClassification": "development-diagnostic"
+  },
+  "pricingCnyPerMillion": {
+    "hit": 0.05,
+    "miss": 1.5,
+    "output": 4.5
+  },
+  "pricingSnapshotSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+  "privateArtifactHashes": {
+    "plan": "6b483c92496ff5bb5f1546cabd8b42e1be80e160d195f06f88febbda479ec482",
+    "final": "9422cf4cc4d00e0735286b62b8469848354c435e04ad5b8d916485018a0926e2",
+    "script": "6acee22680909fe660fc7e6714ccae18fd8719591fdc6fb15df9b44c7e497c82"
+  },
+  "limitations": [
+    "The first drafts and their defects are fixed synthetic cases, not naturally occurring model errors.",
+    "Only correction used the real API; no Room, Rules, narration, dice or resource execution occurred.",
+    "Three accepted cases are not a before-after comparison or statistical evidence of improved repair success rates."
+  ]
+}

@@ -1,3 +1,4 @@
+import { prepareNpcActorPlanFormation } from "./npc-plan-formation";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import { createEventTransition, createScopeProof } from "./events";
@@ -29,7 +30,6 @@ import {
   hasOnlyKeys,
   hashWorldState,
   isNonEmptyString,
-  isProfileRef,
   isRecord,
 } from "./validation";
 import { isCompoundResolutionPlan } from "./compound-model";
@@ -47,8 +47,6 @@ import {
 import {
   actorPlanNpcIsAvailable,
   actorPlanPremiseIsAvailable,
-  actorPlanPremiseScope,
-  actorPlanResourceScopes,
   dueActorPlanChildRoot,
   earliestEligibleDueActorPlan,
 } from "./actor-plans";
@@ -2296,253 +2294,11 @@ function formTypedNpcActorPlan(
   ])) return rejected("invalidRulesInput", "ActorPlan formation input is not canonical.");
 
   const rootActionId = isNonEmptyString(input.proposalId) ? input.proposalId : undefined;
-  const npc = isNonEmptyString(input.npcId) ? state.entities[input.npcId] : undefined;
-  const factionRef = input.factionRef === null
-    ? null
-    : isNonEmptyString(input.factionRef)
-      ? input.factionRef
-      : undefined;
-  const planId = isNonEmptyString(input.planId) ? input.planId : undefined;
-  const goal = isNonEmptyString(input.goal) ? input.goal : undefined;
-  const nextStep = isNonEmptyString(input.nextStep) ? input.nextStep : undefined;
-  const premiseRefs = canonicalStrings(input.premiseRefs);
-  const resourceRefs = canonicalStrings(input.resourceRefs);
-  const activity = isRecord(input.activity) ? input.activity : undefined;
-  const trace = isRecord(input.trace) ? input.trace : undefined;
-  const traceFactRef = isNonEmptyString(trace?.factRef) ? trace.factRef : undefined;
-  const traceDescription = isNonEmptyString(trace?.description) ? trace.description : undefined;
-  const traceVisibilityPolicyRef = isNonEmptyString(trace?.visibilityPolicyRef)
-    ? trace.visibilityPolicyRef
-    : undefined;
-  const alternateTarget = isRecord(input.alternateTarget) ? input.alternateTarget : undefined;
-  const alternateTargetRef = isNonEmptyString(alternateTarget?.targetRef)
-    ? alternateTarget.targetRef
-    : undefined;
-  const alternateTargetReason = isNonEmptyString(alternateTarget?.reason)
-    ? alternateTarget.reason
-    : undefined;
-  if (
-    rootActionId === undefined
-    || !isContinuedCompoundRoot(input, rootActionId)
-    || !actorPlanNpcIsAvailable(npc)
-    || factionRef === undefined
-    || planId === undefined
-    || goal === undefined
-    || nextStep === undefined
-    || [planId, goal, nextStep].some((value) => value.length > 480)
-    || premiseRefs === undefined
-    || premiseRefs.length === 0
-    || resourceRefs === undefined
-    || [premiseRefs, resourceRefs].some((refs) =>
-      refs.length > 40 || refs.some((reference) => reference.length > 240))
-    || premiseRefs.some((reference) => !actorPlanPremiseIsAvailable(state, npc.id, reference))
-    || planId in state.campaignRuntime.npcPlans
-    || activity === undefined
-    || !hasExactKeys(activity, ["activityId", "activityKind", "intendedDurationMicros"])
-    || !isNonEmptyString(activity.activityId)
-    || !isNonEmptyString(activity.activityKind)
-    || activity.activityKind === "stableRecovery2014"
-    || typeof activity.intendedDurationMicros !== "string"
-    || !/^[1-9][0-9]*$/u.test(activity.intendedDurationMicros)
-    || activity.activityId in state.campaignRuntime.activities
-    || Object.values(state.campaignRuntime.activities)
-      .some((entry) => entry.status === "active" && entry.characterId === npc.id)
-    || trace === undefined
-    || !hasExactKeys(trace, ["description", "factRef", "visibilityPolicyRef"])
-    || traceFactRef === undefined
-    || traceDescription === undefined
-    || traceVisibilityPolicyRef === undefined
-    || traceFactRef in state.canonicalFacts
-    || traceFactRef in state.campaignRuntime.definitions
-    || alternateTarget === undefined
-    || !hasExactKeys(alternateTarget, ["reason", "targetRef"])
-    || alternateTargetReason === undefined
-    || alternateTargetRef === undefined
-    || (!(alternateTargetRef in state.scenes)
-      && !(alternateTargetRef in state.entities))
-  ) return rejected("invalidRulesInput", "ActorPlan fields exceed the current finite plan contract.");
-
-  const faction = factionRef === null ? undefined : state.campaignRuntime.factions[factionRef];
-  const factionResourceRefs = Array.isArray(faction?.resourceRefs)
-    && faction.resourceRefs.every(isNonEmptyString)
-    ? faction.resourceRefs
-    : undefined;
-  const availableResources = new Set(Object.keys(npc.resources ?? {}));
-  if (factionRef !== null && factionResourceRefs !== undefined) {
-    availableResources.add(factionRef);
-    for (const reference of factionResourceRefs) availableResources.add(reference);
+  if (rootActionId === undefined || !isContinuedCompoundRoot(input, rootActionId)) {
+    return rejected("invalidRulesInput", "ActorPlan formation requires a continued authority root.");
   }
-  if (
-    resourceRefs.some((reference) => !availableResources.has(reference))
-    || (factionRef !== null && (
-      faction === undefined
-      || !Array.isArray(faction.memberRefs)
-      || !faction.memberRefs.includes(npc.id)
-      || factionResourceRefs === undefined
-      || !resourceRefs.includes(factionRef)
-      || factionResourceRefs.some((reference) => !resourceRefs.includes(reference))
-    ))
-  ) {
-    return rejected("privateOrUnknownReference", "ActorPlan resources are unavailable to the finite NPC.");
-  }
-
-  const timelineId = characterTimelineId(state, npc.id);
-  if (timelineId === undefined) {
-    return rejected("invalidWorldState", "The ActorPlan NPC timeline is unavailable.");
-  }
-  let due: { kind: "fictionTime"; atFictionMicros: string } | null = null;
-  if (input.due !== null) {
-    if (
-      !isRecord(input.due)
-      || !hasExactKeys(input.due, ["atFictionMicros", "kind"])
-      || input.due.kind !== "fictionTime"
-      || typeof input.due.atFictionMicros !== "string"
-      || !/^(0|[1-9][0-9]*)$/u.test(input.due.atFictionMicros)
-      || (BigInt(state.fictionTimelines[timelineId].nowMicros)
-        + BigInt(activity.intendedDurationMicros)).toString() !== input.due.atFictionMicros
-    ) return rejected("invalidRulesInput", "ActorPlan due time is not bound to its Activity duration.");
-    due = { kind: "fictionTime", atFictionMicros: input.due.atFictionMicros };
-  }
-
-  let trigger: { kind: "committedEvent"; eventRef: string }
-    | { kind: "knowledgeAcquired"; knowledgeRef: string }
-    | null = null;
-  if (input.trigger !== null) {
-    if (!isRecord(input.trigger)) {
-      return rejected("invalidRulesInput", "ActorPlan trigger is not canonical.");
-    }
-    const triggerInput = input.trigger;
-    const knowledgeRef = isNonEmptyString(triggerInput.knowledgeRef)
-      ? triggerInput.knowledgeRef
-      : undefined;
-    const eventRef = isNonEmptyString(triggerInput.eventRef) ? triggerInput.eventRef : undefined;
-    if (
-      triggerInput.kind === "knowledgeAcquired"
-      && hasExactKeys(triggerInput, ["kind", "knowledgeRef"])
-      && knowledgeRef !== undefined
-      && premiseRefs.includes(knowledgeRef)
-      && knowledgeRef in (state.knowledge[npc.id] ?? {})
-    ) {
-      trigger = { kind: "knowledgeAcquired", knowledgeRef };
-    } else if (
-      triggerInput.kind === "committedEvent"
-      && hasExactKeys(triggerInput, ["eventRef", "kind"])
-      && eventRef !== undefined
-      && Object.values(state.knowledge[npc.id] ?? {}).some((knowledge) =>
-        knowledge.acquiredByEventId === eventRef
-        || knowledge.provenanceChain.includes(eventRef))
-    ) {
-      trigger = { kind: "committedEvent", eventRef };
-    } else {
-      return rejected("privateOrUnknownReference", "ActorPlan trigger is unavailable to the finite NPC.");
-    }
-  }
-  if ((due === null) === (trigger === null)) {
-    return rejected("invalidRulesInput", "ActorPlan requires exactly one due time or frozen trigger.");
-  }
-
-  const chapterId = isNonEmptyString(state.campaignRuntime.campaign?.currentChapterId)
-    ? state.campaignRuntime.campaign.currentChapterId
-    : undefined;
-  const chapter = chapterId === undefined ? undefined : state.campaignRuntime.chapters[chapterId];
-  if (chapterId === undefined || chapter?.status !== "active" || !isProfileRef(chapter.moduleRef)) {
-    return rejected("invalidWorldState", "ActorPlan requires the Room's active pinned chapter.");
-  }
-
-  const payload: EventPayloadByType["NpcPlanFormed"] = {
-    npcId: npc.id,
-    factionRef,
-    planId,
-    actorKind: "npc",
-    actorRef: npc.id,
-    decisionNpcId: npc.id,
-    revision: "1",
-    status: "scheduled",
-    goal,
-    premiseRefs,
-    nextStep,
-    resourceRefs,
-    activity: {
-      activityId: activity.activityId as string,
-      activityKind: activity.activityKind as string,
-      intendedDurationMicros: activity.intendedDurationMicros as string,
-    },
-    due,
-    trigger,
-    trace: {
-      factRef: traceFactRef,
-      description: traceDescription,
-      visibilityPolicyRef: traceVisibilityPolicyRef,
-    },
-    alternateTarget: {
-      targetRef: alternateTargetRef,
-      reason: alternateTargetReason,
-    },
-    chapterId,
-    moduleRef: structuredClone(chapter.moduleRef),
-  };
-  const premiseScopes = premiseRefs.flatMap((reference) => {
-    const scope = actorPlanPremiseScope(state, npc.id, reference);
-    return scope === undefined ? [] : [scope];
-  });
-  const resourceScopes = actorPlanResourceScopes(state, npc.id, factionRef, resourceRefs);
-  const alternateTargetScope = alternateTargetRef in state.entities
-    ? `entity:${alternateTargetRef}`
-    : `scene:${alternateTargetRef}`;
-  const drafts: Draft[] = [{
-    eventType: "NpcPlanFormed",
-    payload,
-    visibilityPolicyId: `visibility:npc:${npc.id}`,
-    secrecy: "internal",
-    reads: [...new Set([
-      ...premiseScopes,
-      ...resourceScopes,
-      `chapter:${chapterId}`,
-      `timeline:${timelineId}`,
-      `activity:${activity.activityId as string}`,
-      `fact:${traceFactRef}`,
-      `definition:${traceFactRef}`,
-      alternateTargetScope,
-    ])],
-    creates: [`npc-plan:${planId}`],
-  }];
-  if (factionRef !== null) {
-    drafts.push({
-      eventType: "FactionPlanFormed",
-      payload: {
-        factionId: factionRef,
-        planId,
-        actingNpcId: npc.id,
-        premiseRefs,
-        resourceRefs,
-        revision: "1",
-        status: "scheduled",
-      },
-      visibilityPolicyId: `visibility:npc:${npc.id}`,
-      secrecy: "internal",
-      reads: [
-        `npc-plan:${planId}`,
-        ...premiseScopes,
-        ...resourceScopes,
-      ],
-      creates: [`faction-plan:${planId}`],
-    });
-  }
-  drafts.push({
-    eventType: "ActivityStarted",
-    payload: {
-      activityId: activity.activityId as string,
-      characterId: npc.id,
-      activityKind: activity.activityKind as string,
-      intendedDurationMicros: activity.intendedDurationMicros as string,
-      completion: { kind: "actorPlan", planId },
-    },
-    visibilityPolicyId: `visibility:npc:${npc.id}`,
-    secrecy: "internal",
-    reads: [`npc-plan:${planId}`],
-    creates: [`activity:${activity.activityId as string}`],
-  });
-  return result("committed", profiles, state, rootActionId, drafts);
+  const prepared = prepareNpcActorPlanFormation(state, input);
+  return prepared.kind === "rejected" ? prepared : result("committed", profiles, state, rootActionId, prepared.drafts);
 }
 
 export function stepActorPlanMechanics(
@@ -2830,6 +2586,7 @@ export function fulfillActorPlanRandomness(
   if (
     stored.request.purpose === "restHitDice"
     || stored.request.purpose === "hiddenRealitySelection"
+    || stored.request.frozenCheck === null
   ) {
     return rejected("invalidWorldState", "A due ActorPlan must resume a frozen d20 check.");
   }

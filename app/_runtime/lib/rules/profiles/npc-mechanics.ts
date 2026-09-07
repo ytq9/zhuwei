@@ -63,7 +63,7 @@ export const NPC_MECHANICS_PROFILE_DOCUMENT: CanonicalProfileDocument = {
 
 export const NPC_MECHANICS_PROFILE = Object.freeze({
   profileId: PROFILE_ID,
-  profileHash: "sha256:6e3ebb6456b8db2e909648378131a249050cfc33da31f2d3ed7f24a654693b88",
+  profileHash: "sha256:3b458c22da3e497ee3acd9f7d5009f548af7880f71ade93ea67adea37efb2dd1",
 }) satisfies ProfileRef;
 
 export function npcMechanicsProfileEnabled(extensions: readonly ProfileRef[]): boolean {

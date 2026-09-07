@@ -1,0 +1,96 @@
+{
+  "round": 44,
+  "scope": "real correction and local Room; synthetic first proposal and narration",
+  "limits": {
+    "maxCalls": 3,
+    "maxInputTokens": 48000,
+    "maxOutputTokens": 1800,
+    "maxCny": 0.17,
+    "perCallTimeoutMs": 45000,
+    "batchTimeoutMs": 240000
+  },
+  "final": {
+    "exitCode": 0,
+    "attempts": 3,
+    "results": [
+      {
+        "id": 1,
+        "durationMs": 614,
+        "usage": {
+          "prompt_tokens": 2437,
+          "completion_tokens": 60,
+          "total_tokens": 2497,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 2437
+        },
+        "finishReason": "tool_calls"
+      },
+      {
+        "id": 2,
+        "durationMs": 679,
+        "usage": {
+          "prompt_tokens": 2410,
+          "completion_tokens": 60,
+          "total_tokens": 2470,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 2410
+        },
+        "finishReason": "tool_calls"
+      },
+      {
+        "id": 3,
+        "durationMs": 665,
+        "usage": {
+          "prompt_tokens": 2001,
+          "completion_tokens": 60,
+          "total_tokens": 2061,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "prompt_cache_hit_tokens": 768,
+          "prompt_cache_miss_tokens": 1233
+        },
+        "finishReason": "tool_calls"
+      }
+    ],
+    "failed": false,
+    "endedAt": "2026-09-06T14:50:56.066Z",
+    "sourceUnchanged": true
+  },
+  "knownCostCny": "0.0099684",
+  "artifacts": {
+    "1-dispatch.json": "3601cd4326a93a2ee41d238542ba6acd923a1786df10547f600ecb7c19219f0f",
+    "1-request.json": "a8a6ee005afddfa7509aaec3b9ccf6241054ceef02020d31b65d772908f10008",
+    "1-response.json": "ce1d8afd640dde56e7f9436c04f1f6dce4977dd6708d9c4404d94ede6cebc4e1",
+    "2-dispatch.json": "a68f9a8d7f47f259b6fca82ff8b6c578a40394334487d8981c1faade51943acf",
+    "2-request.json": "8ab2c82657086fbdc7a12d462125687b9e7d8957ece04e61dd72735061a1fb49",
+    "2-response.json": "0250ffb0b4506390af2d0fa9d58448c57872d899a3118852579d6688fce4e356",
+    "3-dispatch.json": "b0dd9c2f09854f060d7b9e3bacd8262be45714beb08adfbebc1192ef3cbcaa3e",
+    "3-request.json": "057aba92d873875559c0e90c4dea8bb451eb58fcf16ebf86bff5894e09ef9c46",
+    "3-response.json": "3df7e6fa92a22214daf1c897b701e383751b0e5a434513bdeff6903db215f738",
+    "final.json": "83fe15b0c6b26e0a26ae14bd7d7832aaeda78f241030dceb1614017228813da9",
+    "harness.json": "3ab134d9a9d75e44ccadd6dd6fe89a4f9510337a59b8619b7c5c856cdde8eec2",
+    "plan.json": "df94e0d8eaf108a2eaf8297a8aa7c70c0ced9558d6ed4ce12e7f4ad46070034e",
+    "usage.json": "fb1072cb94b5a0bfd3811540c3106aac1e6794a8c6854b7c1050736117509acb",
+    "vitest.log": "7318412476a7bad561558008b56e6786e289b0aa46b528ab97ecbe66a0343c83"
+  },
+  "productionNarrationChanged": false,
+  "deployed": false,
+  "pushed": false,
+  "sourceManifestVerifiedAfterBatch": {
+    "file": "vnext-round44-source-manifest.json",
+    "count": 251,
+    "allEqual": true
+  },
+  "outcomes": [
+    "worldInteraction repaired once; eviction duplicate full snapshot unchanged",
+    "observe repaired once including terminal; eviction duplicate full snapshot unchanged",
+    "saved repaired check interrupted then evicted; resume no extra API and draws=1; duplicate snapshot unchanged"
+  ]
+}
