@@ -1396,9 +1396,13 @@ function decodeVNextSentinels(value: unknown): unknown {
     decoded[key] = record.kind === "abilityOperation" && key === "operation"
       ? structuredClone(child) : decodeVNextSentinels(child);
   }
+  // Every wire field offered as `anyOf: [ref, {kind:"none"}]` decodes a bare
+  // "none" the same way. The reference grammar reserves the word, so the
+  // string can only mean the sentinel; round 79 lost a batch to the two
+  // fields this list did not yet name.
   for (const key of [
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
-    "sceneRef", "visibilityFactId",
+    "sceneRef", "visibilityFactId", "addressedThreadRef", "relationshipRef", "factionRef",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;
   }

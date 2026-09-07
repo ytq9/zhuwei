@@ -53,7 +53,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v42",
+  version: "kp-vnext2-proposal-parser-v43",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "full-filling-boundaries-at-selection-then-selected-forms-amendable-once-v5",
   actionDuration: "shared-ruling-nonnegative-microseconds-positive-for-in-world-acts-zero-for-pure-authoring-v1",
@@ -61,7 +61,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   bundleSchema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   correctionToolName: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   correctionSchema: CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
-  sentinelVersion: "decision-v2-server-assembled-results-and-typed-dependencies",
+  sentinelVersion: "decision-v2-server-assembled-results-typed-dependencies-and-uniform-none-sentinel-v3",
   requiresExactToolCall: true,
   allowsTextFallback: false,
   rejectsDuplicateJsonMembersAtEveryDepth: true,
