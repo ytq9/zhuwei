@@ -1,0 +1,225 @@
+{
+  "round": 80,
+  "verifiedAt": "2026-09-07T13:22:09Z",
+  "verdict": "first real-model evidence that an ordinary conversation spends fictional time: the KP declared 12 s on the shared ruling and the actor's timeline advanced by exactly that before any result; the wait then added its minute; the promised NPC act still has nothing behind it",
+  "sourceCommit": "fee45efec2ba59dbbbd4724d194e73f4a1885f94",
+  "sourceManifestSha256": "ddb2e84cc71951eb3868fcb4fe2a2656e1331671f0f3f6e926b07f6fd634d359",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v43",
+  "scenario": "round70 NPC three-intent scenario; round79 gate (new promises/plans and the actor timeline's fictional delta, both verified); scenario.mjs sha256 013ccd9ea7659e97043ac31e8821af373178770b0a7dfdd3033ae563452beaef",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 2,
+  "unattemptedIntents": 1,
+  "actions": [
+    {
+      "ordinal": 1,
+      "action": "committed",
+      "narration": "published",
+      "calls": 4,
+      "selectedCapabilities": [
+        "passTime",
+        "social",
+        "knowledgeReview"
+      ],
+      "amendmentUsed": false,
+      "declaredDurationMicros": "12000000",
+      "addressedThreadRef": {
+        "kind": "none"
+      },
+      "consequences": [],
+      "npcPublicSpeech": "“行。半分钟。你自称旅行守卫——镇公所记下过你这类过路人的名义。我不催，也不背着你动这份备案。敲账台两下，你再说话。”",
+      "advance": {
+        "eventIndex": 0,
+        "timeline": "branch:main",
+        "visibility": "visibility:scene-observers",
+        "payload": {
+          "durationMicros": "12000000",
+          "reason": "atomicWorldInteraction:acceptedCosts",
+          "characterId": "character:fbcfecb1-4577-44cd-9675-81ded654ddff"
+        }
+      },
+      "fictionNowMicrosAfter": "12000000",
+      "narrationSawTimeClaim": true
+    },
+    {
+      "ordinal": 2,
+      "action": "committed",
+      "narration": "notApplicable",
+      "calls": 2,
+      "selectedCapabilities": [
+        "passTime",
+        "observe"
+      ],
+      "filled": {
+        "kind": "passTime",
+        "durationMicros": "60000000"
+      },
+      "droppedAfterSelection": [
+        "observe"
+      ],
+      "fictionNowMicrosAfter": "72000000",
+      "publicResult": "none; the transcript ends on the player's own say"
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "coverage": "nothing-recorded-awaiting-due",
+      "declaredFictionTimeMicros": "12000000"
+    },
+    {
+      "afterAction": 2,
+      "next": "stop",
+      "coverage": "uncovered",
+      "declaredFictionTimeMicros": "60000000"
+    }
+  ],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {
+      "time-passage": "completed"
+    },
+    "fictionNowMicros": "72000000",
+    "eventTypes": [
+      "FictionTimeAdvanced",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "mechanicalResult.fictionTime (crossedDeadlines) did not appear in the Room result or telemetry; only Rules carries it"
+  ],
+  "meter": {
+    "calls": 6,
+    "inputTokens": 118719,
+    "outputTokens": 1415,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 118719,
+    "outputBudgetCharge": 1415,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.368892,
+    "invocations": [
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 1,
+        "requestHash": "sha256:88ec1ad9423eabfcfe71bcce32431ce5cdc41190ae3feb1e43ca4e39a09b59e8",
+        "bindingHash": "sha256:b024ea4ee1e9b0dda0a311b390129dc7de94c359d4671a5b541616f2607f5cc5",
+        "estimatedInputTokens": 24328,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:b58f0e353bda5c820593367cd7ee0a9881393aac00e2d338a5dbcbf572cb6004",
+        "result": "success",
+        "durationMs": 1520,
+        "responseHash": "sha256:5a05285eaa9f2e5329b5d9bf141c073fdfef23de10da53eb74c96a4750512910",
+        "inputTokens": 21241,
+        "outputTokens": 54
+      },
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 2,
+        "requestHash": "sha256:2c6aad43bda2c17798bfd4dbe6db5d9f751f42a483692c24cf53439ee3f7387f",
+        "bindingHash": "sha256:b024ea4ee1e9b0dda0a311b390129dc7de94c359d4671a5b541616f2607f5cc5",
+        "estimatedInputTokens": 29448,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:b58f0e353bda5c820593367cd7ee0a9881393aac00e2d338a5dbcbf572cb6004",
+        "result": "success",
+        "durationMs": 5661,
+        "responseHash": "sha256:b5f7700bbc5e797fc8b06c9b37fb969ebba7ce47c6cb8e15178a644e24a0f757",
+        "inputTokens": 26466,
+        "outputTokens": 509
+      },
+      {
+        "eventName": "room.model.invocation.completed",
+        "modelTask": "narration",
+        "modelInvocationPurpose": "initialNarration",
+        "modelResult": "success",
+        "modelInputTokens": 2395,
+        "modelOutputTokens": 576,
+        "outcomeKind": "success",
+        "durationMs": 5141
+      },
+      {
+        "eventName": "room.model.invocation.completed",
+        "modelTask": "narration",
+        "modelInvocationPurpose": "narrationReview",
+        "modelResult": "success",
+        "modelInputTokens": 3581,
+        "modelOutputTokens": 168,
+        "outcomeKind": "success",
+        "durationMs": 1205
+      },
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 1,
+        "requestHash": "sha256:5ad5826981398dbb0c4a877c6ee7ab3a73f5afa8a79f38d34f4ad4592e72e606",
+        "bindingHash": "sha256:b024ea4ee1e9b0dda0a311b390129dc7de94c359d4671a5b541616f2607f5cc5",
+        "estimatedInputTokens": 33243,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:b8520c79c4f826d6b528bbd33980653aecbe6eed4902bd58d826b43f5ceb8f20",
+        "result": "success",
+        "durationMs": 1231,
+        "responseHash": "sha256:0357ea866720ce5c7eda55f276dbae087dbaabf49ce4c9dc743642d9156577e2",
+        "inputTokens": 30450,
+        "outputTokens": 51
+      },
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 2,
+        "requestHash": "sha256:0afc30a76b6e31f62de7ebfa61b79c949954ce8aae489ffd5b9a711724e7fbbc",
+        "bindingHash": "sha256:b024ea4ee1e9b0dda0a311b390129dc7de94c359d4671a5b541616f2607f5cc5",
+        "estimatedInputTokens": 36845,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:b8520c79c4f826d6b528bbd33980653aecbe6eed4902bd58d826b43f5ceb8f20",
+        "result": "success",
+        "durationMs": 1574,
+        "responseHash": "sha256:aeebceb1765e425ede17ae1549ab29548ca5efa5f5f7ac28c89bd0bf8e2345ae",
+        "inputTokens": 34586,
+        "outputTokens": 57
+      }
+    ]
+  },
+  "pricing": {
+    "window": "off-peak",
+    "chargedAt": "peak tariff, the conservative direction",
+    "unknownUsageCalls": 0,
+    "cny": 0.368892,
+    "budgetCny": 5
+  },
+  "replay": {
+    "exactState": true,
+    "stateVersion": "10",
+    "events": 10,
+    "pinnedProfilesMatch": true
+  },
+  "sourceEnd": {
+    "files": 321,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "game": "verifiedAbsent",
+    "capture": "verifiedAbsent",
+    "ports": "no listener on 4320/4321"
+  },
+  "notCovered": [
+    "third sentence never sent: the wait published no narration",
+    "crossedDeadlines never populated (no plan existed to cross)",
+    "selection amendment still unused",
+    "the none-sentinel codec fix was not exercised: the model spelled {kind:'none'} correctly this time"
+  ]
+}

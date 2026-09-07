@@ -106,11 +106,13 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 round78 之后用户指出：这是虚构时间，剧本里做的任何事都应该有一个合理的虚构时长。对照源码：成功的 `social` / `observe` / `worldInteraction` / `inventoryOperation` **没有任何时长字段**，只有 `passTime`、通行、长施法、拒绝的 `attemptCosts` 能推进时钟。能力目录甚至写着「当前表单支持即时口头交谈」。这是三层缺口里最底下的一层——它不通，`formActorPlan` 的到期时刻只在玩家显式等待时才会到来。
 
-能力合同：[vnext-fiction-time-contract-proposal.md](docs/agent/vnext-fiction-time-contract-proposal.md)。**用户已裁定，本地已实现**（parser v42）：`decision.durationMicros` 落在共享裁决上，角色行动必须 > 0、纯创作必须 = 0；时长作为束级 `executionCosts` 的 `fictionTime` 成本，先于结果推进行动者时间线；跨过的到期点记入 `mechanicalResult.fictionTime.crossedDeadlines`。实现回执与四处偏差（Rules 只裁一半、单条角色行动改走原子路径、推进事件点名行动者、不加 step 级时间线读集）见 [vnext-fiction-time-validation.md](docs/agent/vnext-fiction-time-validation.md)。本地：node 694 通过、vitest 97 通过，基线红之外 0 新失败，typecheck 0。
+能力合同：[vnext-fiction-time-contract-proposal.md](docs/agent/vnext-fiction-time-contract-proposal.md)。**用户已裁定，本地已实现**（parser v42）：`decision.durationMicros` 落在共享裁决上，角色行动必须 > 0、纯创作必须 = 0；时长作为束级 `executionCosts` 的 `fictionTime` 成本，先于结果推进行动者时间线；跨过的到期点记入 `mechanicalResult.fictionTime.crossedDeadlines`。实现回执与四处偏差（Rules 只裁一半、单条角色行动改走原子路径、推进事件点名行动者、不加 step 级时间线读集）见 [vnext-fiction-time-validation.md](docs/agent/vnext-fiction-time-validation.md)。本地：node 696 通过、vitest 97 通过，基线红之外 0 新失败，typecheck 0。
 
 [round79](docs/agent/vnext-round79-validation.md)：模型**第一次就填了 `durationMicros: "30000000"`**——玩家要的正是半分钟。声明这一半有了真实证据。但草稿在与时长无关的地方倒了：`addressedThreadRef` 写成裸 `"none"` 而非 `{kind:"none"}`，本地校验拒绝且不允许修订，2 次调用停批，`nowMicros` 仍 0。执行这一半仍只有本地证据。
 
-**下一件小事**：`nullableRef` 的自由字符串一支让裸 `"none"` 在 strict 端点上合法、到域校验才被拒且不可修——79 批里第一次撞上就整批作废。把它视为 `{kind:"none"}` 的语义等价（解码时归一，或修订票据允许这一种精确替换）是一个独立小合同；做完再跑 round80 拿推进的真实证据。
+裸 `"none"` 的修法查下去变了：strict-tool codec **本来就**把裸 `"none"` 解码成 null，只是 `addressedThreadRef` / `relationshipRef` / `factionRef` 三个字段不在它的列表里。补进列表（`fee45ef`，parser v43），不走修订票据。
+
+[round80](docs/agent/vnext-round80-validation.md)：**执行半边有了真实证据。** 首句模型填 `durationMicros:"12000000"`，`branch:main` 的时钟 0 → 12000000，`FictionTimeAdvanced` 是第一条事件、落在行动者时间线、旁白看到了时间 Claim。第二句 `passTime` 再加 60 秒。两句 72 秒。第 2 层（`consequences: []`）五批不变；`mechanicalResult.fictionTime` 没进 Room 返回/遥测，是缺口。
 
 之后再谈下面这条。
 

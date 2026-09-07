@@ -3359,3 +3359,7 @@ round78 之后确认成功的普通行动在填写面上没有虚构时长入口
 ## round79：模型填了 30 秒，草稿倒在裸 "none"（2026-09-07，源码 `759393d`）
 
 v42 的第一批真实调用。模型在共享裁决上填 `durationMicros:"30000000"`，正是玩家要的半分钟——声明半边的第一份真实证据。同一草稿 `addressedThreadRef:"none"`（裸字符串）被 `reference-field-grammar` 拒绝且不可修订，2 次调用 ¥0.14826 停批，未提交。见 [round79 回执](agent/vnext-round79-validation.md)。
+
+## 裸 "none" 统一解码 + round80（2026-09-07，源码 `fee45ef`，parser v43）
+
+codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段不在列表里；补齐，不走修订票据。round80 首句：模型填 `durationMicros:"12000000"`，时钟 0 → 12000000，`FictionTimeAdvanced` 为首条事件、落在行动者时间线——虚构时长合同的执行半边第一次有真实证据。第二句等待 +60 秒。`consequences: []` 五批不变。见 [round80 回执](agent/vnext-round80-validation.md)。
