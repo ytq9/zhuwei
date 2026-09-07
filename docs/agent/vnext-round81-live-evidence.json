@@ -1,0 +1,177 @@
+{
+  "round": 81,
+  "verifiedAt": "2026-09-07T16:29:48.373802+00:00",
+  "verdict": "All three sentences committed and published (first batch ever to connect three). The model picked the 5min tier twice and the wait was narrated for the first time with the correct dialogue context. The tap-return question could not get a positive case: this Varo declined to tap; the negative case (no invented tap) passed.",
+  "sourceCommit": "1f4300ad4d846585afd29a36266f543c527c2303",
+  "sourceManifestSha256": "5ddbe33b9e53b7a9983949cce6de12bdb471d368e7e4bd8a414a03e35d239d1f",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v44",
+  "scenario": "round70 three NPC intents verbatim; gate as round79/80 (fictional delta verified both ways); third sentence chosen from the public wait result",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 3,
+  "unattemptedIntents": 0,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round81-npc-http-0f4fe6ec-6d0b-4e02-8c57-33ee5d322016",
+      "action": "committed",
+      "narration": "published",
+      "receiptId": "receipt:root-action:vnext-round81-npc-http-0f4fe6ec-6d0b-4e02-8c57-33ee5d322016:7",
+      "modelCalls": 4,
+      "evidence": "selection [social]; decision directSuccess duration 5min; addressedThreadRef written as a bare \"none\" and accepted in one call (v43 codec); consequences []; branch:main 0 -> 300000000; narration published; Varo declines the tap (\"也不必等敲台——你开口我就知道\")."
+    },
+    {
+      "ordinal": 2,
+      "submissionId": "vnext-round81-npc-http-cfdaf6b7-1fdd-4959-84ef-4914d8312b5a",
+      "action": "committed",
+      "narration": "published",
+      "receiptId": "receipt:root-action:vnext-round81-npc-http-cfdaf6b7-1fdd-4959-84ef-4914d8312b5a:8",
+      "modelCalls": 4,
+      "evidence": "selection [passTime, observe]; decision passTime 60000000 (observe dropped at fill); Activity completed 300000000 -> 360000000; FIRST wait narration published: \"你静静等了一分钟，约定的时间到了。\"; frozen recentDialogue held the request, Varo's reply and the wait line; review 5/5 pass, m0 complete; no invented tap."
+    },
+    {
+      "ordinal": 3,
+      "submissionId": "vnext-round81-npc-http-2d321dda-095a-4ac7-ab4e-cfc81a962074",
+      "action": "committed",
+      "narration": "published",
+      "receiptId": "receipt:root-action:vnext-round81-npc-http-2d321dda-095a-4ac7-ab4e-cfc81a962074:17",
+      "modelCalls": 4,
+      "evidence": "selection [social]; decision directSuccess duration 5min; addressedThreadRef = the first sentence's real thread ref; Varo consistent with his own line (\"好，你开口了，我便接着\"); 360000000 -> 660000000; narration published; review 5/5 pass, m0/m3 complete."
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "category": "committed",
+      "interpretation": "public-response-permits-fixed-wait",
+      "reason": "首句提交并发布（4 次调用）。模型在共享裁决上选了档位 5min；行动者时间线 branch:main 由 0 推进到 300000000，FictionTimeAdvanced 为本根首条事件、带 characterId、scene-observers 可见。模型把 addressedThreadRef 写成裸 \"none\"（round79 的拼写），本次一次调用即被接受——v43 codec 修复第一次被真实触发。瓦罗公开回应：在此候着，不必等敲台，玩家开口他就知道；consequences 仍为 []，没有承诺、没有计划。公开回应允许固定的一分钟等待：玩家留在账台旁安静等一分钟，瓦罗已明说会守在账台旁等玩家开口。第二句的检验变成负例：等待应有旁白，且旁白不得替瓦罗补出他已明确拒绝的敲击。",
+      "publicEvidence": [
+        {
+          "messageIndex": 2,
+          "quote": "也不必等敲台——你开口我就知道"
+        },
+        {
+          "messageIndex": 2,
+          "quote": "半分钟过去了，你们这轮交谈就此完成，瓦罗仍守在账台旁等你开口"
+        }
+      ],
+      "observed": {
+        "fictionTimeMicros": "300000000",
+        "planIds": [],
+        "promiseIds": []
+      }
+    },
+    {
+      "afterAction": 2,
+      "next": "noReminder",
+      "category": "committed",
+      "interpretation": "wait-ended-without-confirmable-reminder",
+      "reason": "等待提交并发布（4 次调用：offer、passTime、旁白、审核）。这是等待第一次有模型旁白。冻结的旁白上下文 recentDialogue 恰好是三句：玩家的请求、瓦罗的回应、玩家的等待句——等待窗口按设计工作。旁白「你静静等了一分钟，约定的时间到了。」没有替瓦罗补出他已明确拒绝的敲击，审核五项 pass、m0 complete。Activity 300000000 → 360000000 完成，事件 ActivityStarted / FictionTimeAdvanced(60000000) / ActivityCompleted。没有可确认的提醒：瓦罗首句已说不必等敲台，旁白也未声称任何敲击，因此第三句走 noReminder 分支。选择阶段再次选了 observe 而填写只出 passTime（已知缺口，不留痕）。",
+      "publicEvidence": [
+        {
+          "messageIndex": 4,
+          "quote": "你静静等了一分钟"
+        }
+      ],
+      "observed": {
+        "fictionTimeMicros": "60000000"
+      }
+    }
+  ],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {
+      "activity:time-passage:root-action:vnext-round81-npc-http-cfdaf6b7-1fdd-4959-84ef-4914d8312b5a": {
+        "kind": "timePassage",
+        "status": "completed",
+        "started": "300000000",
+        "ended": "360000000"
+      }
+    },
+    "conversationThreads": [
+      {
+        "threadRef": "conversation:42d41473483b5815d1a1e58369aa13b912babab5929ec304eb82bbb8967ad3c3",
+        "addressedThreadRef": null,
+        "status": "resolved"
+      },
+      {
+        "threadRef": "conversation:6dfd6b230630da74c1d43c800c0957fb067e13e6f5939064afcdba6f1bbbd883",
+        "addressedThreadRef": "conversation:42d41473483b5815d1a1e58369aa13b912babab5929ec304eb82bbb8967ad3c3",
+        "status": "resolved"
+      }
+    ],
+    "fictionNowMicros": "660000000",
+    "eventTypes": [
+      "FictionTimeAdvanced",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted",
+      "FictionTimeAdvanced",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved"
+    ],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "mechanicalResult.fictionTime / crossedDeadlines still not in the Room result or telemetry (no deadline to cross here anyway).",
+    "observe selected at ordinal 1 of the wait and dropped at fill, unrecorded."
+  ],
+  "meter": {
+    "calls": 12,
+    "inputTokens": 197192,
+    "outputTokens": 2862,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 197192,
+    "outputBudgetCharge": 2862,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.617334
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 00:2x-00:3x Beijing)",
+    "chargedAt": "saved peak tariff (conservative); pricing page re-fetched, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.617334,
+    "budgetCny": 5
+  },
+  "replay": {
+    "exactState": true,
+    "stateVersion": "17",
+    "events": 17,
+    "pinnedProfilesMatch": true
+  },
+  "sourceEnd": {
+    "files": 322,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "game": "stopped pid 89810 verifiedAbsent",
+    "capture": "stopped pid 89799 verifiedAbsent",
+    "ports": "4320/4321 no listener"
+  },
+  "duplicate": {
+    "newCalls": 0,
+    "sameReceipt": true
+  },
+  "notCovered": [
+    "Positive case of a context-held promise returned inside a wait narration (Varo made no promise this time).",
+    "Whether review tolerates an NPC's promised small act written as done (clause never exercised).",
+    "crossedDeadlines: no data.",
+    "Selection amendment: still zero real evidence.",
+    "Alarm-path wait narration recovery."
+  ]
+}

@@ -3371,3 +3371,7 @@ codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段�
 ## 时长改档位（2026-09-08，parser v44，本地验证）
 
 `decision.duration` 枚举 `none|5min|10min|30min|1h|halfDay` 上线；域内 `durationMicros` 只接受六个档位的微秒，codec 双向映射，lowering/Rules 不动。夹具时长 6 秒 → 5 分钟，相应时钟期望改档。暴露一个缺口：5 分钟的行动跨过更短 Activity 的到期点后，若其冻结完成已不合法，到期优先结算会堵住整条时间线（留 todo 用例）。见[合同 §10](agent/vnext-fiction-time-contract-proposal.md)。
+
+## round81：第一次连过三句（2026-09-08，源码 `1f4300a`，parser v44）
+
+三句全部 committed/published，12 次调用 ¥0.617。首句 `duration:"5min"`，时钟 0→300000000；裸 `"none"` 被 v43 codec 接受（第一次真实触发）；等待第一次有旁白，冻结的 recentDialogue 恰是前三句，旁白没有编造瓦罗拒绝过的敲击；第三句 `addressedThreadRef` 接续了真实线程。瓦罗拒绝敲击，承诺归还只验到负例。见 [round81 回执](agent/vnext-round81-validation.md)。

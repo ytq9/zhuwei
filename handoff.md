@@ -8,7 +8,7 @@
 
 ## 1. 一句话状态
 
-**阶段性交接，2026-09-08。基线 `81c3b1e` 之上多了两个提交（等待走模型旁白、时长改档位），分支 `cloudflare` 领先 `origin` 未推送。** 本节只写「现在在哪、下一步是什么」；细节在 §7 与各回执。
+**阶段性交接，2026-09-08 凌晨。基线 `81c3b1e` 之上：等待走模型旁白（`efe2879`）、时长改档位（`27e1d55`）、round81 回执；分支 `cloudflare` 领先 `origin` 未推送。** 本节只写「现在在哪、下一步是什么」；细节在 §7 与各回执。
 
 vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSeek 走完完整行动。round78 是第一个连过第二句的批次；[round80](docs/agent/vnext-round80-validation.md) 是第一个**普通交谈推进了时钟**的批次：模型在共享裁决上填 `durationMicros:"12000000"`，`branch:main` 0 → 12000000，`FictionTimeAdvanced` 是首条事件、落在行动者时间线、旁白看到了时间 Claim；第二句 `passTime` 再 +60 秒。**正常游玩里时间从此会走。**
 
@@ -18,7 +18,7 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 2. **不重要的行为不进机械。** 一个承诺只有在**独立于玩家注意力而发生**、**被别处的人看到**、或**改变权威状态**时才进 promise → plan → due；否则留在 `recentDialogue` / `commitNarrativeDetail`，KP 凭时钟自己兑现。半分钟的敲击三条都不沾。**因此五批 `consequences: []` 是模型在做正确判断，不是缺陷**——我此前要加强指引让模型必须记承诺的想法是错的，撤回。第 2、3 层的合同缩到几小时尺度的约定。
 3. **承诺怎么还，分三种情况。** 玩家留下等 → 等待的旁白里还；留下做别的 → 下一次回应的背景里还；离开 → 承诺依附于在场，不需要还，但瓦罗的记忆已是机械的（社交交谈产生 `KnowledgeAcquired`）。
 
-由此，**「等待不发布旁白」从独立小缺陷变成主线阻塞**：round78/80 里玩家等了一分钟屏幕上什么也没多出来，承诺没还，是因为纯等待走确定性交付、不建模型旁白（round61 为省调用的决定）。**这一条已在本地做完**（[等待旁白回执](docs/agent/vnext-wait-narration-validation.md)）：活着的 Viewer 的等待现在建模型旁白，旁白上下文给等待冻结前 30 分钟同场景的已听发言，提示词允许按 NPC 原话兑现即时小动作。零真实证据；round81 第三句是它的检验。
+由此，**「等待不发布旁白」从独立小缺陷变成主线阻塞**：round78/80 里玩家等了一分钟屏幕上什么也没多出来，承诺没还，是因为纯等待走确定性交付、不建模型旁白（round61 为省调用的决定）。**这一条已做完并有真实证据**（[等待旁白回执](docs/agent/vnext-wait-narration-validation.md)、[round81](docs/agent/vnext-round81-validation.md)）：活着的 Viewer 的等待现在建模型旁白，旁白上下文给等待冻结前 30 分钟同场景的已听发言，提示词允许按 NPC 原话兑现即时小动作。round81 是**第一个连过三句的批次**：首句档位 5min、等待有旁白且上下文正确、第三句接续了真实线程。但这批的瓦罗拒绝了敲击，「承诺经上下文归还」只验到负例（旁白没有编造敲击），正例还没有。
 
 ## 2. 接手坐标
 
@@ -77,6 +77,7 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 | [round75](docs/agent/vnext-round75-validation.md) | 同一 NPC 场景，在 v39 + v40 落地之后 | 首句 4 次调用完整 committed/published，无修订无重发，公开结果合法连贯（瓦罗答应半分钟后敲三下）。但 `npcPlans`/`activities` 为空、无 `NpcPlanFormed`/`ActivityStarted`，提案降级为 `worldInteraction` | `legalNoPlan` 停止（**非技术失败**），第二三句未发 |
 | [round76](docs/agent/vnext-round76-validation.md) | 同上，在 v41 落地之后 | ordinal 2 **从未发出 HTTP**：本地传输断言要求恰好一个工具，而提案调用带了两个。日志里的 `providerStatus:422` 是本地常量，不是供应商响应 | `transportFailure`，我方缺陷，非模型失败 |
 | [round77](docs/agent/vnext-round77-validation.md) | 同上，传输放宽之后 | 首句 4 次调用完整 committed/published。双工具 surface 真的到达模型（传输修复有真实证据）；选择组合变为 `["social","passTime"]`（round75 是 `["social","commitNarrativeDetail"]`）。但 `passTime` 未被使用，`formActorPlan` 未选，计划/活动/承诺仍为 0 | `legalNoPlan` —— **但这个 gate 可能考错了东西，见 §7** |
+| [round81](docs/agent/vnext-round81-validation.md) | 同上，等待旁白 + 档位 v44 之后 | **三句全部 committed/published**，12 次调用 ¥0.62。首句 `duration:5min`、时钟 0→300000000、裸 `"none"` 被接受；等待第一次有旁白（上下文正确、无编造）；第三句接续真实线程引用。瓦罗拒绝敲击，`consequences: []` 第六批 | 没停：`waited-without-confirmable-reminder` → noReminder 分支走完 |
 
 round73 三个必须记住的细节：
 
@@ -113,9 +114,9 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 [合同 §10](docs/agent/vnext-fiction-time-contract-proposal.md)。线上 `decision.duration` 枚举 `none|5min|10min|30min|1h|halfDay`；域内仍是 `durationMicros`，只接受六个档位的微秒；codec（`proposal-filling-interface.ts`）双向映射；parser v44。夹具时长 6 秒 → 5 分钟（`FIXTURE_ACT_DURATION_MICROS`），受影响的时钟期望已改。**暴露的缺口**：5 分钟的行动跨过更短 Activity（60 秒通行）的到期点后，若其冻结完成已不合法，到期优先结算会拒绝之后每一次输入——时间线堵死；应改为结算时中断该 Activity。todo 用例在 `tests/kp-vnext-dynamic-locations.test.mjs`。零真实证据；round81 首句看模型填哪一档。
 
-### 3. round81：三句发完，看第三句
+### 3. round81：三句发完 —— 已跑，见[回执](docs/agent/vnext-round81-validation.md)
 
-准备包从 `/tmp/zhuwei-round80-npc-preparation` 复制（round79 起 gate 已双向核对每句的虚构增量）。等待有了旁白之后 gate2 才有公开结果可复核，第三句才发得出去。**第三句的问题只有一个：KP 有没有把那两下敲击还给玩家。** 这是上下文路线成立与否的直接证据。
+三句连通。等待旁白、档位、裸 `"none"` 修复、线程接续都拿到了真实证据。**没拿到的**：承诺归还的正例——这批瓦罗说「不必等敲台，你开口我就知道」，没有承诺可还；旁白正确地没有编造。下一批若要验正例，只能等一个真的承诺出现（不能改话、不能提示），或换一个 NPC 更可能主动约定的场景。一批三句 ≠ 稳定。
 
 ### 4. 第 2、3 层只管几小时尺度
 
@@ -143,7 +144,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 
-- **连续意图稳定性**：从来没有一个批次连过三句。这是当前最大的未知，不是某个单点 bug。
+- **连续意图稳定性**：round81 之前从来没有一个批次连过三句；round81 连过了一次（n=1）。仍是最大的未知，不是某个单点 bug。
 - **过期夹具（早于 `0ab18b7`）**：`kp-vnext-filling-interface`（9）、`kp-vnext-proposal-schema`（7）、`kp-vnext-pass-time`（1）一直红：夹具的冻结上下文没有 `citations.authorityBasisRefs`，另有一处 decision.kind 枚举没把 `abilityOperation` 算进去。不是功能坏了，是测试没跟上；基线比对法看不见它们。单独清一次。
 - **真实窄修订**：机制齐了，模型没触发过一次。
 - **旁白文字精确度**：满血说“伤势”、笼统说“资源剩 3 次”（未区分环级）。
