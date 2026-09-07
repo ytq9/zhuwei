@@ -1918,7 +1918,7 @@ describe("vNext stage-three Room verticals", () => {
         summary: failure ? "莉安暂时不愿回应。" : "莉安回应了账册的问题。",
         response: { kind: "speech", text: failure ? "现在先别问这个。" : "我亲眼看见你归还了父亲的账册。",
           motive: NPC_SUMMARY_CANARY, basis: [{ kind: "npcContext", ref: roll === null ? NPC_KNOWLEDGE_REF : `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}` }] },
-        consequences: failure ? [] : [{ kind: "promise", content: "协助核对账册上的签字。", condition: "先看过账册以后。", authorityRefs: [LIAN_ID] }] });
+        consequences: failure ? [] : [{ kind: "promise", content: "协助核对账册上的签字。", condition: "先看过账册以后。", authorityRefs: [LIAN_ID] , due: "none", trace: null}] });
       const wire = { mode: "adjudication", basisRefs: [LIAN_ID], terminal: { kind: "none" },
         adjudication: roll === null ? { kind: "directSuccess", durationMicros: "300000000", risk: "普通交谈。", successOutcome: "莉安回应。" }
           : { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",

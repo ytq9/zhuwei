@@ -1,6 +1,6 @@
 # 能力合同（待裁定）：几小时尺度的 NPC 承诺如何变成会到期的计划
 
-2026-09-08。状态：**草案，等用户裁定。** 承接 [交接 §7 第 4 条](../../handoff.md)与[虚构时长合同 §9](vnext-fiction-time-contract-proposal.md)。这一份只管第 2、3 层——承诺进机械、机械到期执行；半分钟一档内的小约定按[等待旁白回执](vnext-wait-narration-validation.md)走上下文路线，不在这里。
+2026-09-08。状态：**用户已裁定（乙、五个档位可扩展、trace 由 KP 承诺时填），本地已实现（parser v46），真实证据待 round82。** 实现与偏差见 §7。 承接 [交接 §7 第 4 条](../../handoff.md)与[虚构时长合同 §9](vnext-fiction-time-contract-proposal.md)。这一份只管第 2、3 层——承诺进机械、机械到期执行；半分钟一档内的小约定按[等待旁白回执](vnext-wait-narration-validation.md)走上下文路线，不在这里。
 
 ## 1. 哪些承诺才进这里
 
@@ -73,3 +73,15 @@ round70 的三句（半分钟）不能验这层。要换一个几小时尺度的
 1. 乙 vs 甲。
 2. `due` 的档位集合：上面这五个够不够；要不要 `nextDusk` / `nextDay`。
 3. `trace` 由 KP 在承诺时填，还是到期执行时再由决策调用生成（前者一次调用，后者更贴近到期时的状态）。
+
+## 7. 实现回执（2026-09-08）
+
+- **wire**：social 后果 promise 多两个字段——`due` 枚举 `none|1h|halfDay|day|nextDawn`，`trace` 为一句文本或 `{kind:"none"}`。校验器（`socialConsequenceConform`）要求 `due=none ⇔ trace=null`。
+- **`PromiseMade` 事件不变**（5 个键）。承诺的到期时间不写在承诺记录上，而写在派生计划上：`npcPlans[planId].premiseRefs === [promiseId]`。这样旧房间的事件回放不受影响。
+- **派生点**：`finalizeInteraction` 在 social 的领域事件（发言、知识、后果）折入累加状态之后，对每个 `due≠none` 的承诺调用现成的 `prepareNpcActorPlanFormation`：`goal=nextStep=content`，`premiseRefs=[promiseId]`（刚折入，前提可用），`durationMicros` 由档位算出，`trace` 用 KP 填的痕迹，`alternateTarget` 是承诺时 NPC 所在场景，`factionRef=null`。计划 id 用 `npcActorPlanFormationIds(root, promiseId)`。
+- **结算校验**：`verifySocialSettlement` 原本要求 social 后缀恰好等于其领域草稿；现在每个带档位的承诺后面允许且必须跟一对 `NpcPlanFormed` + `ActivityStarted`，按 planId、premise、activity、trace 引用绑定到该承诺。
+- **`nextDawn` 的锚**：虚构日 24 小时、日出在 06:00（`FICTION_DAY_MICROS`、`FICTION_DAWN_OFFSET_MICROS`）；时钟原点（`nowMicros=0`）默认是午夜，可由 `campaignRuntime.campaign.fictionClock.originTimeOfDayMicros` 覆盖。**黑橡遗嘱模组现在没有这个字段**：守灵夜从 0 起算等于从午夜起算，第一个 `nextDawn` 是 6 小时后。给模组填开场时刻是数据改动，未做。
+- 第 3 层不动：到期照旧走 `commitDueActorPlanWork` 的一次决策调用。承诺记录的状态不随执行改变（没有 `PromiseFulfilled` 事件），关联靠计划的 premise。
+- 拒绝面：NPC 已有活动中的 Activity、没有活动章节、NPC 不在 `entities` 里时，派生失败会拒绝整个 social 提交（`promise:due-plan:…`），不会悄悄丢掉承诺。
+- 本地证据：`kp-vnext-promise-due`（档位与 nextDawn 算术）、`kp-vnext-social-plan`（同根派生：PromiseMade 在 NpcPlanFormed 之前，时长 3600000000，痕迹事实此时不存在，replay 一致；`none` 只记承诺）、`kp-vnext-none-sentinel-wire`（wire 双向、due/trace 耦合拒绝）。
+

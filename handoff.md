@@ -118,9 +118,9 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 三句连通。等待旁白、档位、裸 `"none"` 修复、线程接续都拿到了真实证据。**没拿到的**：承诺归还的正例——这批瓦罗说「不必等敲台，你开口我就知道」，没有承诺可还；旁白正确地没有编造。下一批若要验正例，只能等一个真的承诺出现（不能改话、不能提示），或换一个 NPC 更可能主动约定的场景。一批三句 ≠ 稳定。
 
-### 4. 第 2、3 层只管几小时尺度 —— 合同草案已写，等裁定
+### 4. 第 2、3 层只管几小时尺度 —— 用户已裁定乙，本地已实现（parser v46）
 
-[草案](docs/agent/vnext-hours-scale-promise-contract-proposal.md)：推荐乙——promise 后果自带 `due` 档位和 `trace`，Rules 在同一根、`PromiseMade` fold 之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。三个待定项在草案 §6。原始推理保留如下。
+[合同](docs/agent/vnext-hours-scale-promise-contract-proposal.md) §7 是实现回执。promise 后果带 `due`（none|1h|halfDay|day|nextDawn）和 `trace`；Rules 在同一根、`PromiseMade` 折入之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。**零真实证据。下一批（round82）要换成几小时尺度的场景**：玩家向瓦罗要备案文书副本，看他是否承诺、是否填非 none 的档位、同根是否派生计划、跨过到期点后是否执行并留痕。模组没有开场时刻字段，`nextDawn` 现在从午夜起算。原始推理保留如下。
 
 「明早卯时把文书送来」这一类才需要 `consequences.promise` → `formActorPlan` → due。`formActorPlan` 只认行动前 `state` 里的依据（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以最短闭合是 promise 自带 `dueMicros`、Rules 在同根内 `PromiseMade` fold 之后派生计划——那时依据已在累加状态里。另立合同，不动现有 `consequences` 指引。场景要换成几小时尺度的，round70 那句半分钟不再用来验这层。
 

@@ -1,3 +1,4 @@
+import { PROMISE_DUE_TIERS } from "../../rules/v2/promise-due";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/v2/npc-plan-formation";
@@ -1020,7 +1021,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   ] };
   const socialConsequence = { anyOf: [
     object({ kind: { type: "string", enum: ["relationship"] }, relationshipRef: nullableRef, change: text, basisFactRefs: refArray }),
-    object({ kind: { type: "string", enum: ["promise"] }, content: text, condition: text, authorityRefs: refArray }),
+    object({ kind: { type: "string", enum: ["promise"] }, content: text, condition: text, authorityRefs: refArray,
+      due: { type: "string", enum: [...PROMISE_DUE_TIERS], description: "When the promised act must happen at the latest, as one coarse tier from now. Pick a tier other than \"none\" only when the act would happen without the player's attention, be seen elsewhere, or change authoritative state (a delivery, a door, an NPC going somewhere); the server then derives this NPC's own timed plan in the same commit and executes it when due. \"none\" keeps the promise in conversation only. nextDawn is the next morning." },
+      trace: { anyOf: [text, object({ kind: { type: "string", enum: ["none"] } })], description: "For a due tier other than none: one sentence of the visible mark the act leaves in the world once done (what someone at the scene would find). Exactly {kind:'none'} when due is none." } }),
     object({ kind: { type: "string", enum: ["debt"] }, obligation: text, condition: text, basisFactRefs: refArray }),
   ] };
   const socialBranch = object({ outcomeCode: refText, summary: text,

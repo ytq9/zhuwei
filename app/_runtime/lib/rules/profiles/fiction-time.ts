@@ -28,6 +28,11 @@ export const FICTION_COMBAT_TIME_PROFILE_DOCUMENT: CanonicalProfileDocument = {
 };
 
 export const COMBAT_ROUND_MICROS = 6_000_000n;
+/** A fictional day, and where dawn sits in it. The campaign's clock origin
+ * (fictionTimelines nowMicros 0) is midnight unless the campaign record says
+ * otherwise; see promiseDueDurationMicros. */
+export const FICTION_DAY_MICROS = 86_400_000_000n;
+export const FICTION_DAWN_OFFSET_MICROS = 21_600_000_000n;
 export const MAX_INITIATIVE_ENTRIES = 4_096;
 
 export function combatMomentOffsetMicros(

@@ -3391,3 +3391,7 @@ codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段�
 ## 遥测补两处（2026-09-08）
 
 `room.authority.commit.completed` 带 `fictionTimeMicros`、`crossedDeadlineCount`（来自 Rules 的 `mechanicalResult.fictionTime`，只有数量不带引用）；vNext adapter 在填写落定后发 `kp.vnext.selection`，记录选择阶段要了哪些能力、填写用了哪些、丢了哪些（round78/80/81 三次丢 `observe`，此前不留痕）。
+
+## 承诺档位 → NPC 定时计划（2026-09-08，parser v46，本地验证）
+
+social 的 promise 后果带 `due`（none|1h|halfDay|day|nextDawn）与 `trace`；`due≠none` 时 Rules 在同一根、`PromiseMade` 折入之后用现成的计划形成派生 `NpcPlanFormed` + timer Activity，premise 就是那条承诺；结算校验接受这一对。`PromiseMade` 事件不变。`nextDawn` 锚在 24 小时虚构日的 06:00，时钟原点默认午夜、可由 campaign.fictionClock 覆盖。见[合同 §7](agent/vnext-hours-scale-promise-contract-proposal.md)。

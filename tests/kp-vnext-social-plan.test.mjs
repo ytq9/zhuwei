@@ -25,14 +25,14 @@ function fixture(label) {
     initialKnowledge: [NPC, ACTOR].map(characterId => ({ characterId, knowledgeRef: KNOWLEDGE, kind: "sourceClaim", layer: "full",
       content: characterId === NPC ? RESPONSE : "PLAYER-KNOWLEDGE-CANARY", visibility: "private", provenanceChain: ["genesis:message"] })) });
 }
-function input(f, { check = false, promise = false, silence = false, audience = "participants", state = f.state, root = f.rootActionId } = {}) {
+function input(f, { check = false, promise = false, silence = false, audience = "participants", state = f.state, root = f.rootActionId, due = "none", trace = null } = {}) {
   const context = authoritativeNpcDecisionContext(state, f.profiles, NPC);
   assert.ok(context);
   const resolutionId = `resolution:${root}`, expression = "你看到信使往哪里走了吗？", method = "平静询问亲眼见到的行踪。";
   const branch = (failure) => ({ outcomeCode: failure ? "outcome:declined" : "outcome:answered", summary: failure ? "守门人没有接受请求。" : "守门人作出了回应。",
     response: { kind: silence ? "silence" : "speech", text: silence ? "" : failure ? "我现在不想谈论这件事。" : RESPONSE,
       motive: "PRIVATE-NPC-MOTIVE-CANARY", basis: [{ kind: "npcContext", ref: `knowledge:${NPC}:${KNOWLEDGE}` }] },
-    consequences: promise && !failure ? [{ kind: "promise", content: "为来访者打开侧门。", condition: "核实介绍信以后。", authorityRefs: [NPC] }] : [] });
+    consequences: promise && !failure ? [{ kind: "promise", content: "为来访者打开侧门。", condition: "核实介绍信以后。", authorityRefs: [NPC], due, trace }] : [] });
   const social = { schema: "zhuwei.social-interaction/vnext-1", npcRef: NPC, threadRef: socialThreadRef(root, resolutionId), addressedThreadRef: null,
     playerExpression: expression, goal: SECRET, communication: "spokenConversation", audience,
     listeners: socialListeners(state, ACTOR, NPC, audience), npcContext: context, retryChange: null,
@@ -148,7 +148,7 @@ test("malformed social snapshot and foreign failure-branch evidence reject befor
     p => { p.social.npcContext.schema = "e\u0301"; },
     p => { p.social.audience = { toString: null }; },
     p => { p.social.branches.failure.response.basis = [{ kind: "npcContext", ref: `knowledge:${ACTOR}:${KNOWLEDGE}` }]; },
-    p => { p.social.branches.failure.consequences = [{ kind: "promise", content: "交付物品。", condition: "立即。", authorityRefs: [ACTOR] }]; },
+    p => { p.social.branches.failure.consequences = [{ kind: "promise", content: "交付物品。", condition: "立即。", authorityRefs: [ACTOR], due: "none", trace: null }]; },
   ]) {
     const command = structuredClone(input(f, { check: true })); mutate(command.plan);
     const result = f.runtime.step(f.profiles, f.state, command);
@@ -466,4 +466,36 @@ test("social relationship updates preserve identity and correction restores the 
   assert.equal(corrected.kind, "committed", diagnostic(corrected));
   assert.deepEqual(corrected.state.campaignRuntime.relationships[relation], created.state.campaignRuntime.relationships[relation]);
   replay(f, [...events, ...corrected.events], corrected.state);
+});
+
+test("a promise with a due tier derives the NPC's own timed plan in the same root; none leaves it to context", () => {
+  const TRACE = "账台上多了一份盖印的备案文书。";
+  const f = fixture("promise-due"), command = input(f, { promise: true, due: "1h", trace: TRACE });
+  const result = f.runtime.step(f.profiles, f.state, command);
+  assert.equal(result.kind, "committed", diagnostic(result));
+  const promise = Object.values(result.state.campaignRuntime.promises)[0];
+  assert.equal(promise.status, "active");
+  const plans = Object.values(result.state.campaignRuntime.npcPlans);
+  assert.equal(plans.length, 1);
+  const plan = plans[0];
+  assert.equal(plan.npcId, NPC); assert.equal(plan.status, "scheduled"); assert.equal(plan.factionRef, null);
+  assert.deepEqual(plan.premiseRefs, [promise.promiseId]);
+  assert.equal(plan.goal, "为来访者打开侧门。"); assert.equal(plan.nextStep, "为来访者打开侧门。");
+  assert.equal(plan.activity.intendedDurationMicros, "3600000000");
+  assert.equal(plan.trace.description, TRACE);
+  assert.equal(plan.alternateTarget.targetRef, f.state.entities[NPC].sceneId);
+  const timelineId = f.state.multiplayerRuntime.characterTimelineIds[NPC] ?? f.state.activeBranchId;
+  assert.equal(plan.due.atFictionMicros, (BigInt(result.state.fictionTimelines[timelineId].nowMicros) + 3600000000n).toString());
+  const types = result.events.map(event => event.eventType);
+  assert.ok(types.indexOf("PromiseMade") < types.indexOf("NpcPlanFormed"), types.join(","));
+  assert.ok(types.includes("ActivityStarted"));
+  assert.equal(result.state.campaignRuntime.activities[plan.activity.activityId].status, "active");
+  // The promise's own trace fact does not exist yet: it appears only when the plan executes.
+  assert.equal(result.state.canonicalFacts[plan.trace.factRef], undefined);
+  replay(f, result.events, result.state);
+  // The same conversation with due none records the promise and nothing more.
+  const plain = f.runtime.step(f.profiles, f.state, input(f, { promise: true }));
+  assert.equal(plain.kind, "committed", diagnostic(plain));
+  assert.equal(Object.keys(plain.state.campaignRuntime.promises).length, 1);
+  assert.deepEqual(plain.state.campaignRuntime.npcPlans, {});
 });

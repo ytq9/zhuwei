@@ -1,5 +1,5 @@
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
-import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
+import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation, prepareNpcActorPlanFormation } from "./npc-plan-formation";
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { dynamicMaterializationIssue, passageFactRef, locationSceneRef, passageTraversalMatches, dynamicPassageConform, passageActivityPayload } from "./dynamic-locations";
 import { partyDepartureEvents } from "./multiplayer-actions";
@@ -8,7 +8,9 @@ import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoice
   type FrozenPlayerChoiceRefusalCosts, isFrozenPlayerChoiceContinuationInput, type FrozenPlayerChoiceContinuationInput } from "./frozen-player-choice";
 import { authoredWorldFactConform, worldFactConstraints, worldFactConstraintsRef, worldFactRef, worldFactPointer } from "./world-facts";
 import { authoritativeNpcDecisionContext } from "./npc-decision-context";
-import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
+import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope, socialConsequenceEvent } from "./social-interaction";
+import { promiseDueDurationMicros } from "./promise-due";
+import { characterTimelineId } from "./timeline";
 import { heldKnowledgeRecord } from "./knowledge-records";
 import { ATOMIC_ACCEPTED_COST_PURPOSE, worldInteractionItemCostPayload, worldInteractionResourceCostPayload } from "./world-interaction-costs";
 import { characterInferencePayload, observationKnowledgeIssue } from "./character-inference";
@@ -3039,6 +3041,44 @@ function applyDamageEffect(accumulator:TransitionAccumulator,profiles:RuntimePro
     hitPointDamage:resolution.hitPointDamage,damagePacketHash:canonicalSha256(packet)};
 }
 
+function derivePromisePlans(
+  accumulator: TransitionAccumulator,
+  profiles: RuntimeProfileManifest,
+  rootActionId: string,
+  plan: WorldInteractionResolutionPlan,
+  branchName: "success" | "failure",
+): StepResult | undefined {
+  const social = plan.social!;
+  const npc = accumulator.state.entities[social.npcRef];
+  const timelineId = characterTimelineId(accumulator.state, social.npcRef);
+  for (const [index, effect] of social.branches[branchName].consequences.entries()) {
+    if (effect.kind !== "promise" || effect.due === "none") continue;
+    if (npc === undefined || timelineId === undefined || effect.trace === null) {
+      return rejected("invalidRulesInput", "promise:due-plan-requires-the-npc-timeline-and-a-trace");
+    }
+    const duration = promiseDueDurationMicros(accumulator.state, timelineId, effect.due);
+    if (duration === undefined) continue;
+    const payload = socialConsequenceEvent(rootActionId, plan, branchName, index).payload;
+    if (!("promiseId" in payload)) continue;
+    const promiseId = payload.promiseId;
+    const ids = npcActorPlanFormationIds(rootActionId, promiseId);
+    const prepared = prepareNpcActorPlanFormation(accumulator.state, {
+      kind: "formNpcActorPlan", npcId: social.npcRef, factionRef: null, planId: ids.planId,
+      goal: effect.content, nextStep: effect.content, premiseRefs: [promiseId], resourceRefs: [],
+      activity: { activityId: ids.activityId, activityKind: "npcActorPlan", intendedDurationMicros: duration },
+      due: { kind: "fictionTime", atFictionMicros: (BigInt(accumulator.state.fictionTimelines[timelineId].nowMicros) + BigInt(duration)).toString() },
+      trigger: null,
+      trace: { factRef: ids.traceFactRef, description: effect.trace, visibilityPolicyRef: "visibility:scene-observers" },
+      alternateTarget: { targetRef: npc.sceneId, reason: "承诺时所在的场景；到期时不在此处则改在此处理。" },
+    });
+    if (prepared.kind === "rejected") return rejected("invalidRulesInput", `promise:due-plan:${prepared.rejection.message}`);
+    for (const draft of prepared.drafts) {
+      appendTransition(accumulator, profiles, rootActionId, { ...draft, reads: draft.reads ?? [], writes: draft.writes ?? [] });
+    }
+  }
+  return undefined;
+}
+
 function finalizeInteraction(
   accumulator: TransitionAccumulator,
   profiles: RuntimeProfileManifest,
@@ -3062,6 +3102,11 @@ function finalizeInteraction(
         reads: plan.readSet.map(record => record.ref), ...scope });
       if (draft.eventType === "SourceClaimCreated") sourceEvents.set(draft.payload.claimId, accumulator.events.at(-1)!.eventId);
     }
+    // A promise the KP gave a due tier becomes this NPC's own timed plan in
+    // the same root, with the freshly folded promise as its premise: the
+    // hours-scale promise contract's second layer. "none" stays in context.
+    const derived = derivePromisePlans(accumulator, profiles, rootActionId, plan, branchName);
+    if (derived !== undefined) return derived;
   }
   branch.sensoryEvidence.forEach((evidence, index) => {
     const factId = sensoryEvidenceFactId(rootActionId, plan.resolutionId, branchName, index);

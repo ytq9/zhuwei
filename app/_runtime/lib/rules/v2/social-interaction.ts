@@ -1,3 +1,5 @@
+import { PROMISE_DUE_TIERS, type PromiseDueTier } from "./promise-due";
+import { npcActorPlanFormationIds } from "./npc-plan-formation";
 import { worldFactRef, worldFactDefinition, worldFactPointer } from "./world-facts";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
@@ -20,7 +22,7 @@ export type SocialResponse = Readonly<{
 }>;
 export type SocialConsequence =
   | Readonly<{ kind: "relationship"; relationshipRef: string | null; change: string; basisFactRefs: readonly string[] }>
-  | Readonly<{ kind: "promise"; content: string; condition: string; authorityRefs: readonly string[] }>
+  | Readonly<{ kind: "promise"; content: string; condition: string; authorityRefs: readonly string[]; due: PromiseDueTier; trace: string | null }>
   | Readonly<{ kind: "debt"; obligation: string; condition: string; basisFactRefs: readonly string[] }>;
 export type SocialInteractionBranch = Readonly<{
   outcomeCode: string; summary: string; response: SocialResponse; consequences: readonly SocialConsequence[];
@@ -133,9 +135,14 @@ export function socialConsequenceConform(value: unknown, diagnostics?: SocialSha
   if (value.kind === "relationship") return socialShapeKeys(value, ["kind", "relationshipRef", "change", "basisFactRefs"], diagnostics)
     && socialShapeRef(value, "relationshipRef", diagnostics, true) && socialShapeText(value, "change", diagnostics)
     && socialShapeRefs(value, "basisFactRefs", diagnostics);
-  if (value.kind === "promise") return socialShapeKeys(value, ["kind", "content", "condition", "authorityRefs"], diagnostics)
+  if (value.kind === "promise") return socialShapeKeys(value, ["kind", "content", "condition", "authorityRefs", "due", "trace"], diagnostics)
     && socialShapeText(value, "content", diagnostics) && socialShapeText(value, "condition", diagnostics)
-    && socialShapeRefs(value, "authorityRefs", diagnostics, 1);
+    && socialShapeRefs(value, "authorityRefs", diagnostics, 1)
+    && socialShapeEnum(value, "due", [...PROMISE_DUE_TIERS], diagnostics)
+    // A promise the world must act on names the trace it will leave; one left to context has none.
+    && (value.due === "none"
+      ? value.trace === null || socialShapeFailure(diagnostics, "VALUE_INVALID", ["trace"], { const: null, when: "due=none" }, "social:promise-trace-without-due")
+      : socialShapeText(value, "trace", diagnostics));
   return socialShapeKeys(value, ["kind", "obligation", "condition", "basisFactRefs"], diagnostics)
     && socialShapeText(value, "obligation", diagnostics) && socialShapeText(value, "condition", diagnostics)
     && socialShapeRefs(value, "basisFactRefs", diagnostics, 1);
@@ -453,6 +460,23 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
     const actual = suffix[index++];
     if (!actual || actual.eventType !== draft.eventType || actual.payloadHash !== canonicalSha256(draft.payload)) return "social:domain-events-do-not-match";
     if (draft.eventType === "SourceClaimCreated") sourceIds.set(draft.payload.claimId, actual.eventId);
+  }
+  // A promise with a due tier is followed, in this same suffix, by the NPC's
+  // derived plan and its timer Activity. Their payloads were validated when
+  // they folded; here the suffix must hold exactly one pair per such promise,
+  // bound to the promise by the plan's identities and premise.
+  for (const [consequenceIndex, consequence] of plan.social!.branches[event.payload.branch].consequences.entries()) {
+    if (consequence.kind !== "promise" || consequence.due === "none") continue;
+    const payload = socialConsequenceEvent(event.rootActionId, plan, event.payload.branch, consequenceIndex).payload;
+    if (!("promiseId" in payload)) continue;
+    const ids = npcActorPlanFormationIds(event.rootActionId, payload.promiseId);
+    const formed = suffix[index++], started = suffix[index++];
+    const stored = state.campaignRuntime.npcPlans[ids.planId], activity = state.campaignRuntime.activities[ids.activityId];
+    if (formed?.eventType !== "NpcPlanFormed" || started?.eventType !== "ActivityStarted"
+      || stored?.formedAtEventId !== formed.eventId || stored.npcId !== plan.social!.npcRef
+      || !Array.isArray(stored.premiseRefs) || stored.premiseRefs.length !== 1 || stored.premiseRefs[0] !== payload.promiseId
+      || !isRecord(stored.activity) || stored.activity.activityId !== ids.activityId || !isRecord(stored.trace) || stored.trace.factRef !== ids.traceFactRef
+      || activity?.characterId !== plan.social!.npcRef) return "social:promise-plan-not-derived";
   }
   return index === suffix.length ? { firstEventSeq: first[0].eventSeq, prefixProven } : "social:unexpected-domain-events";
 }

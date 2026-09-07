@@ -86,3 +86,22 @@ test('the round 79 shape now reaches local acceptance in one call, with no corre
   assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));
   assert.equal(result.bundle.proposals[0].addressedThreadRef, null);
 });
+
+test('a promise on the wire carries its due tier and trace; due none takes the none sentinel as its trace', () => {
+  const promise = (due, trace) => {
+    const wire = socialWire({ kind: 'none' });
+    wire.decision.steps[0].result.consequences = [{ kind: 'promise', content: '明早卯时把备案文书送到账台。', condition: '天亮以后。', authorityRefs: [NPC], due, trace }];
+    return wire;
+  };
+  const timed = parse(promise('nextDawn', '账台上多了一份盖印的备案文书。'));
+  assert.equal(timed.kind, 'accepted', JSON.stringify(timed));
+  assert.deepEqual(timed.bundle.proposals[0].branches.success.consequences[0], { kind: 'promise', content: '明早卯时把备案文书送到账台。',
+    condition: '天亮以后。', authorityRefs: [NPC], due: 'nextDawn', trace: '账台上多了一份盖印的备案文书。' });
+  const context = parse(promise('none', { kind: 'none' }));
+  assert.equal(context.kind, 'accepted', JSON.stringify(context));
+  assert.equal(context.bundle.proposals[0].branches.success.consequences[0].trace, null);
+  // A trace without a due, or a due without a trace, is refused.
+  assert.equal(parse(promise('none', '有痕迹。')).kind, 'locallyRejected');
+  assert.equal(parse(promise('1h', { kind: 'none' })).kind, 'locallyRejected');
+  assert.equal(parse(promise('tomorrow', '有痕迹。')).kind, 'locallyRejected');
+});

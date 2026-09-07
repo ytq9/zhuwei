@@ -29,7 +29,7 @@ test('social shape diagnostics locate response, evidence, consequence and retry 
     [socialEvidenceConform, () => ({ kind: 'materializedKnowledge', holderRef: 'npc:guard' }), 'FIELD_MISSING', ['definitionRef']],
     [socialEvidenceConform, () => ({ kind: 'omniscient' }), 'VALUE_INVALID', ['kind']],
     [socialConsequenceConform, () => ({ kind: 'relationship', relationshipRef: null, change: 7, basisFactRefs: [] }), 'TYPE_MISMATCH', ['change']],
-    [socialConsequenceConform, () => ({ kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: [] }), 'VALUE_INVALID', ['authorityRefs']],
+    [socialConsequenceConform, () => ({ kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: [], due: 'none', trace: null }), 'VALUE_INVALID', ['authorityRefs']],
     [socialConsequenceConform, () => ({ kind: 'debt', obligation: '归还工具。', basisFactRefs: ['fact:loan'] }), 'FIELD_MISSING', ['condition']],
     [socialBranchConform, () => { const v = branch(); v.consequences = [{ kind: 'debt', obligation: '归还工具。', condition: '明日。', basisFactRefs: [7] }]; return v; }, 'TYPE_MISMATCH', ['consequences', 0, 'basisFactRefs', 0]],
     [socialRetryChangeConform, () => ({ ...retry(), kind: 'unknown' }), 'VALUE_INVALID', ['kind']],
@@ -59,7 +59,7 @@ test('social shape validation preserves lies, silence and already legal whitespa
     [socialEvidenceConform, { kind: 'playerExpression' }],
     [socialEvidenceConform, { kind: 'materializedKnowledge', definitionRef: 'prospective:history', holderRef: 'npc:guard' }],
     [socialConsequenceConform, { kind: 'relationship', relationshipRef: null, change: '  更信任对方。  ', basisFactRefs: [] }],
-    [socialConsequenceConform, { kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: ['npc:guard'] }],
+    [socialConsequenceConform, { kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: ['npc:guard'], due: 'none', trace: null }],
     [socialConsequenceConform, { kind: 'debt', obligation: '归还工具。', condition: '明日。', basisFactRefs: ['fact:loan'] }],
     [socialRetryChangeConform, { ...retry(), kind: 'cost', explanation: '  原 Rules 形状仍允许此类型。  ' }],
   ];
