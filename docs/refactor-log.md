@@ -3347,3 +3347,7 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 结果：首句 `consequences: []`（第三批连着），第二句 `passTime` 推进时钟 0 → 60000000 而到期零事件、零痕迹、零计划，且 `narration: notApplicable` 使玩家一无所见。`observe` 被选中后丢弃。6 次调用 ¥0.364632，replay `exactState`，321 项源码起止一致。
 
 时长阈值的怀疑到此排除：玩家显式等了一分钟，时钟诚实推进，承诺的动作依然不存在。详见 [round78 回执](agent/vnext-round78-validation.md)。
+
+## 能力合同：普通行动的虚构时长（2026-09-07，源码 `a377544`，提案未实现）
+
+round78 之后确认成功的普通行动在填写面上没有虚构时长入口，只有等待、通行、施法与拒绝成本能推进时钟；Rules 的执行半边（`FictionTimeAdvanced` 发出、fold、Claim、Room 提交后尾随清算）已齐。合同把时长放在共享裁决 `decision.durationMicros`，角色行动必须为正、纯创作必须为零，采用即时推进、到期尾随并记录 `crossedDeadlines`。见 [提案](agent/vnext-fiction-time-contract-proposal.md)。

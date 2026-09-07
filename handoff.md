@@ -102,7 +102,15 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 还没做的：`worldInteraction.instrumentRefs` 仍是自由字符串（准入带持有人作用域，要另立合同）；遥测仍只报 `REFERENCE_UNAVAILABLE / unrecognized`，没指向模型填错的字段位置；round73 选错能力（cure 而非 healing-word）是模型判断问题，不是准入问题。
 
-## 7. 下一件事：为什么 `consequences` 是空的
+## 7. 下一件事：先让普通行动消耗虚构时间，再问 `consequences` 为什么是空的
+
+round78 之后用户指出：这是虚构时间，剧本里做的任何事都应该有一个合理的虚构时长。对照源码：成功的 `social` / `observe` / `worldInteraction` / `inventoryOperation` **没有任何时长字段**，只有 `passTime`、通行、长施法、拒绝的 `attemptCosts` 能推进时钟。能力目录甚至写着「当前表单支持即时口头交谈」。这是三层缺口里最底下的一层——它不通，`formActorPlan` 的到期时刻只在玩家显式等待时才会到来。
+
+能力合同已写：[vnext-fiction-time-contract-proposal.md](docs/agent/vnext-fiction-time-contract-proposal.md)。**待用户裁定，未实现。** 核心：`decision.durationMicros` 落在共享裁决上，角色行动必须 > 0、纯创作必须 = 0；即时推进、到期尾随（乙），记录 `crossedDeadlines` 作为日后是否改成 Activity（甲）的数据。执行的另一半（`FictionTimeAdvanced` 的发出、fold、Claim、Room 尾随清算）都已存在。
+
+裁定之后再谈下面这条。
+
+### 第 2 层：为什么 `consequences` 是空的
 
 round78 把这条从推测变成了三次真实观察（75/77/78）。NPC 在公开旁白里承诺一个未来动作，而 `social` step 的 `consequences` 是空数组。
 
