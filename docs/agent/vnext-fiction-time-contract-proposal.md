@@ -202,3 +202,14 @@ round79 填 30 秒、round80 填 12 秒——同一句「半分钟」两次估�
 
 已知未闭合：冻结上下文里没有显式的「你正在遭遇中」标记——KP 只能从行动者记录里的战斗回合预算和场景记录的 `combatScene` 推断。填错只能硬拒，不能修订。给上下文加一个显式遭遇标记是另一条小合同。
 
+### 10.2 跨过到期点后：完成不再合法的 Activity 结算为中断（2026-09-08）
+
+§10 记的那个缺口关掉了。规则：**到期的普通 Activity 若其冻结完成已不合法，就在到期结算时中断，而不是堵住时间线。**
+
+- `prepareActivityCompletion` 对「完成草稿无法生成」的情况不再返回拒绝，而是返回 `illegal` 及一条 `ActivityInterrupted`（cause `{ kind: "completionNoLongerLegal" }`，`scene-observers` 可见）。
+- `completeActivity`（Room 到期子根的规范输入）和 `settleDueActivityBeforeInput`（下一次输入前的到期优先结算）都把它提交为中断；后者的 `mechanicalResult` 多一个 `settledAs: "interrupted"`，`retryOriginalIntent` 照旧为 true，原输入随后重试即可提交。
+- 章节转换里显式要求「完成」的分支保持拒绝——那是明确要完成，不是到期结算。
+- Claims：普通 Activity 的这种中断有自己的 `mechanicalOutcome`（`activityInterrupted`；通行：「原定路线已经无法走完」），否则闭合覆盖会把这条事件判成未映射。
+
+验证：`kp-vnext-dynamic-locations` 的 todo 变成真用例——60 秒通行，5 分钟的关门行动跨过到期点（`crossedDeadlines` 记录到该 Activity），随后的等待触发结算：中断、行动者留在原地、事件挂在 `activity-due:` 子根下、原输入无 Receipt，同一等待再发即提交，replay 一致。
+

@@ -3379,3 +3379,7 @@ codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段�
 ## 遭遇内不花档位（2026-09-08，parser v45，本地验证）
 
 战斗内时钟只按轮走，定时效果按微秒到期、战斗效果按轮次锚点到期；档位会让在遭遇中的交谈/操作把场景时钟跳 300 秒。现在遭遇中 KP 填 `none`；lowering 拒绝非零档位（`bundle2:duration-forbidden-in-encounter`），Rules 在遭遇中拒绝任何 `fictionTime` 执行成本。战斗外不变。见[合同 §10.1](agent/vnext-fiction-time-contract-proposal.md)。
+
+## 到期 Activity 完成不合法时结算为中断（2026-09-08，本地验证）
+
+档位化后 5 分钟的行动会跨过 60 秒通行的到期点；若跨过期间通道被关，原来到期优先结算会以「完成不再合法」拒绝之后每一次输入。现在 `prepareActivityCompletion` 返回 `illegal`，`completeActivity` 与 `settleDueActivityBeforeInput` 把它提交为 `ActivityInterrupted`（cause `completionNoLongerLegal`），带 `settledAs:"interrupted"`、`retryOriginalIntent:true`；新增 `activityInterrupted` Claim。todo 用例转正。见[合同 §10.2](agent/vnext-fiction-time-contract-proposal.md)。

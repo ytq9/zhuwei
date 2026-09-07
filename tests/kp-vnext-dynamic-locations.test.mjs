@@ -273,13 +273,39 @@ test("party consent freezes one explicit passage for all members and rejects a c
   assert.equal(replay.kind, "replayed", JSON.stringify(replay)); assert.deepEqual(replay.state, moved.state);
 });
 
-// Recorded gap, not yet a contract: an act one tier long crosses a shorter travel's
-// deadline (Rules records it in mechanicalResult.fictionTime.crossedDeadlines and
-// lets the act commit). If the passage closed inside that act, the overdue
-// travel's frozen completion is illegal, and due-first settlement then rejects
-// every later input on that timeline. Settlement should interrupt such an
-// Activity instead of blocking the timeline.
-test("an overdue travel whose completion became illegal is interrupted at settlement instead of blocking the timeline", { todo: true });
+test("an overdue travel whose completion became illegal is interrupted at settlement instead of blocking the timeline", () => {
+  // An act one tier long crosses a one-minute travel's deadline; Rules records the
+  // crossing and lets the act commit. The passage closed inside that act, so the
+  // overdue travel's frozen completion is illegal. Due-first settlement on the next
+  // input must interrupt the travel, then hand the input back for its retry.
+  const f = createAuthoredProbeFixture("passage-closed-overdue");
+  const created = commit(f, [location(f), passage(DESTINATION)]), connection = definitions(created)[1].definitionRef;
+  const started = commit(nextFixture(f, created.state, "overdue-travel", [connection]),
+    [interaction(connection, [{ kind: "traversePassage", passageRef: connection }])]);
+  const activityId = started.events.find(event => event.eventType === "ActivityStarted").payload.activityId;
+  const closing = interaction(connection, [{ kind: "definitionRevision", definitionRef: connection,
+    operations: [{ kind: "set", path: ["observableState"], value: "closed" }], summary: "连接已关闭。" }]);
+  const closed = commit(nextFixture(f, started.state, "close-overdue", [connection]), [closing]);
+  assert.deepEqual(closed.mechanicalResult.fictionTime.crossedDeadlines.map(deadline => deadline.ref), [activityId]);
+  assert.equal(closed.state.campaignRuntime.activities[activityId].status, "active");
+  const wait = { kind: "resolveFreeAction", proposalId: "root:overdue:wait", characterId: ACTOR,
+    goal: "时间经过", method: "等待", feasibility: { kind: "directSuccess", publicBasis: "时间经过。" },
+    outcome: { publicResult: "一分钟经过。", fictionTimeCostMicros: "60000000" } };
+  const settled = act(f, closed.state, wait);
+  assert.equal(settled.mechanicalResult.kind, "dueActivitySettled");
+  assert.equal(settled.mechanicalResult.settledAs, "interrupted");
+  assert.equal(settled.mechanicalResult.retryOriginalIntent, true);
+  assert.deepEqual(settled.events.map(event => event.eventType), ["ActivityInterrupted"]);
+  assert.ok(settled.events.every(event => event.rootActionId.startsWith("activity-due:")));
+  assert.equal(settled.state.campaignRuntime.activities[activityId].status, "interrupted");
+  assert.equal(settled.state.entities[ACTOR].sceneId, SCENE);
+  assert.equal(settled.state.receipts[wait.proposalId], undefined);
+  // The timeline is free again: the same wait now commits.
+  const waited = act(f, settled.state, wait);
+  assert.ok(waited.events.some(event => event.eventType === "FictionTimeAdvanced"));
+  const replay = f.runtime.replay(f.genesis, [...created.events, ...started.events, ...closed.events, ...settled.events, ...waited.events]);
+  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+});
 
 test("closing a passage through the ordinary world effect invalidates both a prepared traversal and an active travel completion", () => {
   const f = createAuthoredProbeFixture("passage-closed");
@@ -302,10 +328,14 @@ test("closing a passage through the ordinary world effect invalidates both a pre
   const waited = act(f, closedDuring.state, { kind: "resolveFreeAction", proposalId: "root:closed:wait", characterId: ACTOR,
     goal: "时间经过", method: "等待", feasibility: { kind: "directSuccess", publicBasis: "时间经过。" },
     outcome: { publicResult: "半小时经过。", fictionTimeCostMicros: "1800000000" } });
-  const refused = act(f, waited.state, { kind: "completeActivity", proposalId: "root:closed:finish", activityId }, "rejected");
-  assert.deepEqual(refused.events, []);
-  assert.equal(waited.state.entities[ACTOR].sceneId, SCENE);
-  const replay = f.runtime.replay(f.genesis, [...created.events, ...started.events, ...closedDuring.events, ...waited.events]);
+  // The frozen completion can no longer apply, so the due travel settles as an interruption rather than blocking its timeline.
+  const interrupted = act(f, waited.state, { kind: "completeActivity", proposalId: "root:closed:finish", activityId });
+  assert.deepEqual(interrupted.events.map(event => event.eventType), ["ActivityInterrupted"]);
+  assert.deepEqual(interrupted.state.campaignRuntime.activities[activityId].interruptionCause, { kind: "completionNoLongerLegal" });
+  assert.equal(interrupted.state.campaignRuntime.activities[activityId].status, "interrupted");
+  assert.equal(interrupted.state.entities[ACTOR].sceneId, SCENE);
+  assert.ok(!interrupted.events.some(event => event.eventType === "CharacterMoved"));
+  const replay = f.runtime.replay(f.genesis, [...created.events, ...started.events, ...closedDuring.events, ...waited.events, ...interrupted.events]);
   assert.equal(replay.kind, "replayed", JSON.stringify(replay));
-  assert.deepEqual(replay.state, waited.state);
+  assert.deepEqual(replay.state, interrupted.state);
 });

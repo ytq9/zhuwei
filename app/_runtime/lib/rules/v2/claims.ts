@@ -582,6 +582,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
       case "ActivityInterrupted":
         if (timePassageActivity(eventRange, payload.activityId) !== undefined) materials.push(timePassageEndedClaim(event, payload, eventRange));
         else if (longSpellcastingActivity(eventRange, payload.activityId) !== undefined) materials.push(longSpellcastingEndedClaim(event, payload, eventRange));
+        else if (recordOrEmpty(payload.cause).kind === "completionNoLongerLegal") materials.push(activityInterruptedClaim(event, payload, eventRange));
         break;
       case "ActivityCompleted":
         materials.push(timePassageActivity(eventRange, payload.activityId) !== undefined
@@ -1104,6 +1105,19 @@ function timePassageEndedClaim(event: EventEnvelope, payload: JsonRecord, range:
     kind: "mechanicalOutcome", targetRefs: [actorRef], outcomeCode: interrupted ? "timePassageInterrupted" : "timePassageCompleted",
     summary: interrupted ? `等待已中断，实际经过 ${duration} 秒，原计划为 ${planned} 秒。${reason}`
       : `等待已结束，实际经过 ${duration} 秒，原计划为 ${planned} 秒。` };
+}
+
+/** An ordinary Activity settled at its deadline because the world moved on
+ * under it: the frozen completion could not apply, so it was interrupted. */
+function activityInterruptedClaim(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): MechanicalOutcomeClaimMaterial {
+  const activityId = stringField(payload, "activityId");
+  const activity = activityId === undefined ? undefined : completedActivity(range, activityId);
+  const actorRef = activity === undefined ? undefined : stringField(activity, "characterId");
+  if (actorRef === undefined) throw new TypeError("ACTIVITY_INTERRUPTED_CLAIM_BINDING_INVALID");
+  const summary = activity?.activityKind === "passageTraversal" ? "该角色的通行已中断：原定路线已经无法走完。"
+    : "该角色的活动已中断：原定的完成条件已不成立。";
+  return { ...eventClaimBaseWithSeparatedBasis(event, "activity-interrupted", { authorityRefs: [activityId] }),
+    kind: "mechanicalOutcome", targetRefs: [actorRef], outcomeCode: "activityInterrupted", summary };
 }
 
 function activityCompletedClaim(event: EventEnvelope, payload: JsonRecord, range: VerifiedClaimCommittedRange): MechanicalOutcomeClaimMaterial {

@@ -2227,12 +2227,24 @@ function prepareActivityCompletion(
       : { kind: "committed", drafts } as const;
   }
   const drafts = activityCompletionDrafts(state, rootActionId, activityId, activity);
+  // The world moved on while the Activity ran (a passage closed, a fact was
+  // withdrawn). Its frozen completion cannot apply, and the Activity must not
+  // stay due forever: callers settle it as an interruption at its deadline.
   return drafts === undefined
-    ? {
-        kind: "rejected",
-        result: rejected("missingPrerequisite", "The frozen Activity completion is no longer mechanically legal."),
-      } as const
+    ? { kind: "illegal", drafts: activityInterruptionDrafts(activityId) } as const
     : { kind: "committed", drafts } as const;
+}
+
+export const COMPLETION_NO_LONGER_LEGAL_CAUSE = Object.freeze({ kind: "completionNoLongerLegal" });
+
+function activityInterruptionDrafts(activityId: string): Draft[] {
+  return [{
+    eventType: "ActivityInterrupted",
+    payload: { activityId, cause: { ...COMPLETION_NO_LONGER_LEGAL_CAUSE } },
+    visibilityPolicyId: "visibility:scene-observers",
+    reads: [`activity:${activityId}`],
+    writes: [`activity:${activityId}`],
+  }];
 }
 
 function completeActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
@@ -2319,6 +2331,7 @@ export function settleDueActivityBeforeInput(
       activityId: due.activityId,
       interruptedIntentKind: input.kind,
       retryOriginalIntent: true,
+      ...(prepared.kind === "illegal" ? { settledAs: "interrupted" } : {}),
     },
   };
   if (prepared.kind === "awaitingRandomness") {
@@ -3641,6 +3654,7 @@ function transitionChapter(
     } else if (transition.disposition === "complete") {
       const prepared = prepareActivityCompletion(profiles, manifestState, root, transition.activityId);
       if (prepared.kind === "rejected") return prepared.result;
+      if (prepared.kind === "illegal") return rejected("missingPrerequisite", "The frozen Activity completion is no longer mechanically legal.");
       if (prepared.kind === "awaitingRandomness") {
         return rejected(
           "pendingInputUnresolved",
