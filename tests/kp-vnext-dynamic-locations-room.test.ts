@@ -48,7 +48,7 @@ async function initialize(): Promise<Stub> {
 }
 
 // Creating a location or passage authors the world and takes no time; setting off through one is an act.
-const actDuration = (proposals: unknown[]) => proposals.some((entry) => (entry as { kind?: string }).kind === "worldInteraction") ? "6000000" : "0";
+const actDuration = (proposals: unknown[]) => proposals.some((entry) => (entry as { kind?: string }).kind === "worldInteraction") ? "300000000" : "0";
 function bundle(proposals: unknown[]) { return { mode: "adjudication", basisRefs: [SOURCE], terminal: null,
   adjudication: { kind: "directSuccess", durationMicros: actDuration(proposals), risk: "当前行为无需检定。", successOutcome: "按已声明的环境和行为固化。" }, proposals }; }
 function creation() {
@@ -154,7 +154,7 @@ it("natural language vNext creates a passage, starts travel separately and resum
   expect(activity.status).toBe("active"); expect(started.state.entities[ACTOR].sceneId).toBe(SCENE);
   // Setting off is an act with its own frozen duration; the travel time itself stays in the Activity.
   const actorTimeline = created.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? created.state.activeBranchId;
-  expect(BigInt(started.state.fictionTimelines[actorTimeline].nowMicros) - BigInt(created.state.fictionTimelines[actorTimeline].nowMicros)).toBe(6000000n);
+  expect(BigInt(started.state.fictionTimelines[actorTimeline].nowMicros) - BigInt(created.state.fictionTimelines[actorTimeline].nowMicros)).toBe(300000000n);
   expect(JSON.stringify(await stub.observe(ALICE as never))).not.toContain(INTERIOR);
   await evictDurableObject(stub);
   expect(await snapshot(stub)).toEqual(started);
@@ -184,7 +184,7 @@ it("natural language vNext creates a passage, starts travel separately and resum
   expect(JSON.stringify(await stub.observe(ALICE as never))).toContain(INTERIOR);
   expect(JSON.stringify(await stub.observe(BOB as never))).not.toContain(INTERIOR);
   const movements = arrived.events.filter(event => event.eventType === "CharacterMoved"); expect(movements).toHaveLength(1);
-  expect(movements[0].payload).toMatchObject({ departureMicros: "66000000" /* six seconds to set off, then the minute of travel */, arrivalMicros: "66000000", activityId: activity.activityId });
+  expect(movements[0].payload).toMatchObject({ departureMicros: "360000000" /* six seconds to set off, then the minute of travel */, arrivalMicros: "360000000", activityId: activity.activityId });
   expect(arrived.state.campaignRuntime.activities[String(activity.activityId)].status).toBe("completed");
   expect(capture.calls).toBe(6);
   await evictDurableObject(stub);

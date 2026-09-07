@@ -19,14 +19,14 @@ function branch() {
 }
 function observation() {
   return { mode: "adjudication", basisRefs: [SOURCE], adjudication: {
-    kind: "directSuccess", durationMicros: "6000000", risk: "没有显著风险。", successOutcome: "可以直接观察。",
+    kind: "directSuccess", durationMicros: "300000000", risk: "没有显著风险。", successOutcome: "可以直接观察。",
   }, terminal: none(), proposals: [{ kind: "worldInteraction", basisRefs: [SOURCE], consumes: [], produces: [],
     outcomeBinding: "always", sceneRef: SCENE, targetRefs: [SOURCE], directTargetRefs: [SOURCE], instrumentRefs: [],
     abilityRef: none(), intent: "观察现有对象。", method: "靠近观察。", branches: { success: branch(), failure: none() } }] };
 }
 function check() {
   const value = observation();
-  value.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "str", skill: none(), dc: 12, mode: "normal",
+  value.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "str", skill: none(), dc: 12, mode: "normal",
     risk: "操作有失败的可能。", successOutcome: "操作成功。", failureOutcome: "操作失败。" };
   value.proposals[0].branches.failure = branch();
   return value;

@@ -1,3 +1,4 @@
+import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/v2/npc-plan-formation";
 import { vnextProposalProducerContract, type VNextProposalProducerContract } from "./proposal-producer-contract";
@@ -1273,9 +1274,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   // SPEC 0013 §7.1: an ordinary act's fictional duration is frozen by the KP
   // before its result and verified by Rules. One value for the whole action;
   // its steps are facets of the same act, not a sequence.
-  // The strict subset has no maxLength; the validator bounds the digits.
-  const actionDuration = { type: "string", pattern: "^(0|[1-9][0-9]*)$",
-    description: "Fictional time this whole action takes, in exact microseconds as a string. Positive whenever the character performs an act (talking, looking, handling, operating); exactly \"0\" only when the bundle merely authors world content. This is the act itself, not any waiting afterwards -- waiting is passTime. Anchors: a one-line reply 5-15 s, a back-and-forth conversation 1-5 min, a glance 3-10 s, examining one object about 1 min, searching a room about 10 min, handling an item 6 s. When unsure, shorter. The server advances this actor's timeline before the results and shows it to scene observers." };
+  // One coarse tier on the wire; the codec maps it to the domain's exact microseconds.
+  const actionDuration = { type: "string", enum: [...VNEXT_ACTION_DURATION_TIER_IDS],
+    description: "Fictional time this whole action takes, as one coarse tier. Pick a tier whenever the character performs an act (talking, looking, handling, operating); exactly \"none\" only when the bundle merely authors world content. This is the act itself, not any waiting afterwards -- waiting is passTime. 5min: a reply, a glance, handling an item, a short exchange. 10min: examining one place closely, searching a room, a longer conversation. 30min: a thorough search, a negotiation. 1h: a long walk, a wide search. halfDay: an activity spanning most of a day. When unsure, shorter. The server advances this actor's timeline by the tier before the results and shows it to scene observers." };
   const sharedAdjudication = {
       description: "The one shared ruling for all proposals. Required as directSuccess or check when mode=adjudication, including bundles containing only authoring or inventory operations. directSuccess requires every outcomeBinding=always and every observe/social/worldInteraction failure={kind:'none'}. check requires exactly one observe, social or worldInteraction with outcomeBinding=always and complete success/failure branches; additional observe/social/worldInteraction consequences have failure={kind:'none'} and run according to their outcomeBinding without another check.",
       anyOf: [
@@ -1284,7 +1285,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           kind: { type: "string", enum: ["directSuccess"] },
           risk: text,
           successOutcome: text,
-          durationMicros: actionDuration,
+          duration: actionDuration,
         }),
         object({
           kind: { type: "string", enum: ["check"] },
@@ -1315,7 +1316,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           risk: text,
           successOutcome: text,
           failureOutcome: text,
-          durationMicros: actionDuration,
+          duration: actionDuration,
         }),
       ],
     };

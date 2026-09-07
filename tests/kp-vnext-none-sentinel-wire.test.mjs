@@ -15,7 +15,7 @@ import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deeps
 // must decode it the same way. Anywhere else "none" stays a reference error.
 const NPC = 'npc:none-sentinel:archivist';
 function socialWire(addressedThreadRef, relationshipRef) {
-  return { decision: { kind: 'directSuccess', durationMicros: '6000000', risk: '普通交谈。', successOutcome: '作出回应。',
+  return { decision: { kind: 'directSuccess', duration: '5min', risk: '普通交谈。', successOutcome: '作出回应。',
     steps: [{ kind: 'social', basisRefs: [NPC], sceneRef: SCENE, npcRef: NPC, addressedThreadRef, goal: '说明来意。', method: '当面交谈。',
       audience: 'participants', retryChange: { kind: 'none' },
       result: { outcomeCode: 'answered', summary: '对方作出回应。',
@@ -23,7 +23,7 @@ function socialWire(addressedThreadRef, relationshipRef) {
         consequences: relationshipRef === undefined ? [] : [{ kind: 'relationship', relationshipRef, change: '略有好感。', basisFactRefs: [] }] } }] } };
 }
 function planWire(factionRef) {
-  return { decision: { kind: 'directSuccess', durationMicros: '0', risk: '只形成私有计划。', successOutcome: '记录计划。',
+  return { decision: { kind: 'directSuccess', duration: 'none', risk: '只形成私有计划。', successOutcome: '记录计划。',
     steps: [{ kind: 'formActorPlan', npcRef: NPC, factionRef, goal: '整理档案。', nextStep: '取出账册。', premiseRefs: [NPC], resourceRefs: [],
       durationMicros: '2000000', traceDescription: '账台上多了一本翻开的账册。', alternateTargetRef: SCENE, alternateReason: '若账册不在，改为询问。' }] } };
 }

@@ -229,7 +229,7 @@ test("cross-field failures identify target subset and shared check constraints",
   target.proposals[1].directTargetRefs = ["definition:another"];
   diagnosed(target, "CONSTRAINT_CONFLICT", ["proposals", 1, "directTargetRefs"], "direct-targets-must-be-targets");
   const direct = domain(sharedCheckBundle("observe"));
-  direct.adjudication = { kind: "directSuccess", durationMicros: "6000000", risk: "无需检定。", successOutcome: "直接完成。" };
+  direct.adjudication = { kind: "directSuccess", durationMicros: "300000000", risk: "无需检定。", successOutcome: "直接完成。" };
   diagnosed(direct, "CONSTRAINT_CONFLICT", ["proposals", 0, "outcomeBinding"], "bundle:non-random-outcome-binding-invalid");
   const missingCheck = domain(sharedCheckBundle("observe"));
   missingCheck.proposals[1].branches.failure = null;

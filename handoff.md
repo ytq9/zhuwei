@@ -8,7 +8,7 @@
 
 ## 1. 一句话状态
 
-**阶段性交接，2026-09-07 晚。基线 `81c3b1e` 之上多了一个提交（等待走模型旁白），分支 `cloudflare` 领先 `origin` 未推送。** 本节只写「现在在哪、下一步是什么」；细节在 §7 与各回执。
+**阶段性交接，2026-09-08。基线 `81c3b1e` 之上多了两个提交（等待走模型旁白、时长改档位），分支 `cloudflare` 领先 `origin` 未推送。** 本节只写「现在在哪、下一步是什么」；细节在 §7 与各回执。
 
 vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSeek 走完完整行动。round78 是第一个连过第二句的批次；[round80](docs/agent/vnext-round80-validation.md) 是第一个**普通交谈推进了时钟**的批次：模型在共享裁决上填 `durationMicros:"12000000"`，`branch:main` 0 → 12000000，`FictionTimeAdvanced` 是首条事件、落在行动者时间线、旁白看到了时间 Claim；第二句 `passTime` 再 +60 秒。**正常游玩里时间从此会走。**
 
@@ -109,9 +109,9 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 [回执](docs/agent/vnext-wait-narration-validation.md)。三处改动：Room 只对 lifecycle 受众跳过等待旁白；`roomNarrationContext` 给等待冻结 `[开始 − 30 分钟, 结束]` 内同场景已听发言与本人最近发言；生成/审核提示词各加一条「NPC 原话约定在经过时间内兑现的即时小动作可按原话写成已发生」（review schema v12、policy v10）。代价：纯等待 2 → 4 次调用，等待 + 可见 NPC 行动 5 → 7——**round81 若场景里有到期 NPC 行动，per-HTTP 限额要设 7**（round81 现有场景 npcPlans 为 0，4 次够）。闹钟路径完成的等待落成 `narrationRecovery`，未真实验证。
 
-### 2. 时长改档位
+### 2. 时长改档位 —— 已做，本地验证
 
-`decision.durationMicros`（pattern 字符串）→ 枚举 `duration`：`5min | 10min | 30min | 1h | halfDay`，lowering 映射成微秒后仍走现有 `executionCosts.fictionTime` 路径（[实现回执](docs/agent/vnext-fiction-time-validation.md)）。纯创作束仍不花时间（现在是 `"0"`，改成不填或 `none`，二选一时保持「零必须显式」）。指引里的锚点表换成枚举说明。parser 升版。夹具：`tests/fixtures/vnext-action-duration.mjs` 的 `actDuration` / `withActDuration` 改返回档位即可，24 处 `soleStep` 读取不受影响。
+[合同 §10](docs/agent/vnext-fiction-time-contract-proposal.md)。线上 `decision.duration` 枚举 `none|5min|10min|30min|1h|halfDay`；域内仍是 `durationMicros`，只接受六个档位的微秒；codec（`proposal-filling-interface.ts`）双向映射；parser v44。夹具时长 6 秒 → 5 分钟（`FIXTURE_ACT_DURATION_MICROS`），受影响的时钟期望已改。**暴露的缺口**：5 分钟的行动跨过更短 Activity（60 秒通行）的到期点后，若其冻结完成已不合法，到期优先结算会拒绝之后每一次输入——时间线堵死；应改为结算时中断该 Activity。todo 用例在 `tests/kp-vnext-dynamic-locations.test.mjs`。零真实证据；round81 首句看模型填哪一档。
 
 ### 3. round81：三句发完，看第三句
 
@@ -137,6 +137,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 - `mechanicalResult.fictionTime`（含 `crossedDeadlines`）没进 Room 返回和遥测，只在 Rules 结果上（round80 确认）。档位化之后再接。
 - 第二句选中 `observe` 后填写阶段丢弃，玩家明写的「留意动静」随之消失，不留痕（round78/80 均如此）。
+- 到期 Activity 的冻结完成不再合法时（通道关闭、通行未完成），`settleDueActivityBeforeInput` 拒绝输入而不是中断 Activity，时间线堵死；档位化后一次行动就能跨过 60 秒的通行，容易撞上。另立合同。
 - 闹钟路径（玩家不在线时到期）完成的等待：audience 建好但当时无人旁白，靠 `narrationRecovery` 在下次 observe 发布——链路是旧的，等待这一用法没跑过。
 - 旧线 vnext-1（`atomicRulesSteps`）没有时长字段，Rules 只裁「纯创作不能花时间」这一半；「角色行动必须声明」是 vnext-2 lowering 的规则。
 

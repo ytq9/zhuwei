@@ -3367,3 +3367,7 @@ codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段�
 ## 等待走模型旁白（2026-09-07，基线 `81c3b1e`，本地验证）
 
 纯等待只对 lifecycle 受众跳过旁白；活着的 Viewer 的等待建模型 audience。`roomNarrationContext` 给等待冻结 `[开始 − 30 分钟, 结束]` 内的同场景已听发言（按虚构时间排序）和本人最近发言；生成与审核提示词各加一条：NPC 原话约定在经过时间内兑现的即时小动作可按原话写成已发生，不新增台词、信息、持续状态或机械效果。review schema v12、policy v10。代价：纯等待 2 → 4 次调用，等待 + 可见 NPC 行动 5 → 7。node/vitest 按名比对基线 0 新失败。见 [回执](agent/vnext-wait-narration-validation.md)。
+
+## 时长改档位（2026-09-08，parser v44，本地验证）
+
+`decision.duration` 枚举 `none|5min|10min|30min|1h|halfDay` 上线；域内 `durationMicros` 只接受六个档位的微秒，codec 双向映射，lowering/Rules 不动。夹具时长 6 秒 → 5 分钟，相应时钟期望改档。暴露一个缺口：5 分钟的行动跨过更短 Activity 的到期点后，若其冻结完成已不合法，到期优先结算会堵住整条时间线（留 todo 用例）。见[合同 §10](agent/vnext-fiction-time-contract-proposal.md)。

@@ -53,10 +53,10 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v43",
+  version: "kp-vnext2-proposal-parser-v44",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "full-filling-boundaries-at-selection-then-selected-forms-amendable-once-v5",
-  actionDuration: "shared-ruling-nonnegative-microseconds-positive-for-in-world-acts-zero-for-pure-authoring-v1",
+  actionDuration: "shared-ruling-duration-tier-none-5min-10min-30min-1h-halfDay-mapped-to-exact-microseconds-v2",
   toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   bundleSchema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   correctionToolName: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,

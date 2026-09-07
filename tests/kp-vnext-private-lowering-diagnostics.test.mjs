@@ -29,9 +29,9 @@ function social(npcRef = NPC, ref = ownRef) {
 }
 function bundle(check = true) {
   return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: 'proposalBundle', mode: 'adjudication', basisRefs: [NPC], terminal: null,
-    adjudication: check ? { kind: 'check', durationMicros: '6000000', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal',
+    adjudication: check ? { kind: 'check', durationMicros: '300000000', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal',
       risk: '守门人可能拒绝。', successOutcome: '守门人回答。', failureOutcome: '守门人拒绝。' }
-      : { kind: 'directSuccess', durationMicros: '6000000', risk: '普通交谈。', successOutcome: '对话得到回应。' },
+      : { kind: 'directSuccess', durationMicros: '300000000', risk: '普通交谈。', successOutcome: '对话得到回应。' },
     proposals: [social()],
   };
 }

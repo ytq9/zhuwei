@@ -1,10 +1,11 @@
 // A Bundle in which the character acts in the world carries the act's frozen
 // fictional duration on its shared ruling; a Bundle that only authors content
-// says "0". Fixture helpers that take their proposals as a parameter derive it
+// says "0". The domain keeps microseconds; the wire says a tier. Fixture helpers that take their proposals as a parameter derive it
 // here so one helper can build both kinds without lying about time.
 const IN_WORLD_ACT_KINDS = new Set(['social', 'observe', 'worldInteraction', 'inventoryOperation']);
 
-export const FIXTURE_ACT_DURATION_MICROS = '6000000';
+// One tier (5 minutes): the smallest duration the KP can freeze for an act.
+export const FIXTURE_ACT_DURATION_MICROS = '300000000';
 
 export function actDuration(proposals) {
   const list = Array.isArray(proposals) ? proposals : [proposals];

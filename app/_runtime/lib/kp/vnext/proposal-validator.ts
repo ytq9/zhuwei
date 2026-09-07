@@ -1,3 +1,4 @@
+import { isActionDurationMicros } from "./action-duration";
 import { isAbilityOperation, ABILITY_OPERATION_SOURCE_SCHEMA } from "../../rules/v2/ability-operation";
 import { npcActorPlanFormationSourceConform, type NpcActorPlanFormationShapeDiagnostic } from "../../rules/v2/npc-plan-formation";
 import { isTimePassageDuration } from "../../rules/v2/time-passage";
@@ -457,11 +458,11 @@ function isClarificationContinuation(
   }
 }
 
-/** The whole action's frozen fictional duration: exact non-negative
- * microseconds as a string. Whether zero is legal depends on the steps and is
- * decided at lowering and again by Rules, not here. */
+/** The whole action's frozen fictional duration: the exact microseconds of
+ * one coarse tier. Whether zero is legal depends on the steps and is decided
+ * at lowering and again by Rules, not here. */
 function isActionDuration(value: unknown): value is string {
-  return typeof value === "string" && value.length <= 16 && /^(0|[1-9][0-9]*)$/u.test(value);
+  return isActionDurationMicros(value);
 }
 
 function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {

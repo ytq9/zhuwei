@@ -26,9 +26,9 @@ function entry(kind, handle, definition, consumes = []) {
 function location(fixture, handle = DESTINATION) {
   return entry("location", handle, { geometry: structuredClone(fixture.state.combatRuntime.scenes[SCENE].geometry) });
 }
-function passage(toLocationRef, { fromLocationRef = SCENE, handle = PASSAGE, state = "open", bidirectional = true } = {}) {
+function passage(toLocationRef, { fromLocationRef = SCENE, handle = PASSAGE, state = "open", bidirectional = true, travelDurationMicros = "60000000" } = {}) {
   return entry("passage", handle, { observableState: state,
-    passage: { fromLocationRef, toLocationRef, bidirectional, traversal: "沿石阶步行", travelDurationMicros: "60000000" } },
+    passage: { fromLocationRef, toLocationRef, bidirectional, traversal: "沿石阶步行", travelDurationMicros } },
     [fromLocationRef, toLocationRef].map(ref => ref.startsWith("prospective:") ? { kind: "prospective", handle: ref } : { kind: "existing", ref }));
 }
 function bundle(proposals) { const base = itemBundle(); return withActDuration({ ...base, adjudication: { ...base.adjudication, durationMicros: actDuration(proposals) }, proposals }); }
@@ -88,7 +88,7 @@ test("a later vNext traversal starts an Activity and moves only when its existin
   assert.equal(started.state.entities[ACTOR].sceneId, SCENE);
   // Setting off is an act with its own small frozen duration; the travel time itself stays in the Activity.
   const timelineId = created.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? created.state.activeBranchId;
-  assert.equal(BigInt(started.state.fictionTimelines[timelineId].nowMicros) - BigInt(created.state.fictionTimelines[timelineId].nowMicros), 6000000n);
+  assert.equal(BigInt(started.state.fictionTimelines[timelineId].nowMicros) - BigInt(created.state.fictionTimelines[timelineId].nowMicros), 300000000n);
   assert.equal(activity.intendedDurationMicros, "60000000");
   const projection = f.runtime.project(f.profiles, started.state, f.viewer, { channel: "realtime", committedRange: {
     receiptId: started.receipt.receiptId, actorCharacterId: ACTOR, priorState: created.state, events: started.events } });
@@ -102,9 +102,9 @@ test("a later vNext traversal starts an Activity and moves only when its existin
   const completed = act(f, waited.state, { kind: "completeActivity", proposalId: "root:travel:complete", activityId: activity.activityId });
   assert.equal(completed.state.entities[ACTOR].sceneId, destScene);
   const moved = completed.events.find(event => event.eventType === "CharacterMoved").payload;
-  // Six seconds to set off, then the minute of travel.
-  assert.equal(moved.departureMicros, "66000000");
-  assert.equal(moved.arrivalMicros, "66000000");
+  // One tier to set off, then the minute of travel.
+  assert.equal(moved.departureMicros, "360000000");
+  assert.equal(moved.arrivalMicros, "360000000");
   assert.equal(moved.passage.passageRef, connection.definitionRef);
   assert.equal(moved.activityId, activity.activityId);
   const duplicate = act(f, completed.state, { kind: "completeActivity", proposalId: "root:travel:duplicate", activityId: activity.activityId }, "rejected");
@@ -273,9 +273,18 @@ test("party consent freezes one explicit passage for all members and rejects a c
   assert.equal(replay.kind, "replayed", JSON.stringify(replay)); assert.deepEqual(replay.state, moved.state);
 });
 
+// Recorded gap, not yet a contract: an act one tier long crosses a shorter travel's
+// deadline (Rules records it in mechanicalResult.fictionTime.crossedDeadlines and
+// lets the act commit). If the passage closed inside that act, the overdue
+// travel's frozen completion is illegal, and due-first settlement then rejects
+// every later input on that timeline. Settlement should interrupt such an
+// Activity instead of blocking the timeline.
+test("an overdue travel whose completion became illegal is interrupted at settlement instead of blocking the timeline", { todo: true });
+
 test("closing a passage through the ordinary world effect invalidates both a prepared traversal and an active travel completion", () => {
   const f = createAuthoredProbeFixture("passage-closed");
-  const created = commit(f, [location(f), passage(DESTINATION)]), connection = definitions(created)[1].definitionRef;
+  // The closing act itself takes one tier, so the travel must outlast it for the closing to land mid-travel.
+  const created = commit(f, [location(f), passage(DESTINATION, { travelDurationMicros: "1800000000" })]), connection = definitions(created)[1].definitionRef;
   const next = nextFixture(f, created.state, "prepared-travel", [connection]);
   const proposal = interaction(connection, [{ kind: "traversePassage", passageRef: connection }]);
   const prepared = lower(next, [proposal]);
@@ -292,7 +301,7 @@ test("closing a passage through the ordinary world effect invalidates both a pre
   const closedDuring = commit(nextFixture(f, started.state, "close-during", [connection]), [closing]);
   const waited = act(f, closedDuring.state, { kind: "resolveFreeAction", proposalId: "root:closed:wait", characterId: ACTOR,
     goal: "时间经过", method: "等待", feasibility: { kind: "directSuccess", publicBasis: "时间经过。" },
-    outcome: { publicResult: "一分钟经过。", fictionTimeCostMicros: "60000000" } });
+    outcome: { publicResult: "半小时经过。", fictionTimeCostMicros: "1800000000" } });
   const refused = act(f, waited.state, { kind: "completeActivity", proposalId: "root:closed:finish", activityId }, "rejected");
   assert.deepEqual(refused.events, []);
   assert.equal(waited.state.entities[ACTOR].sceneId, SCENE);

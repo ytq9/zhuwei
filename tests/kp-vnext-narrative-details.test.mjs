@@ -219,7 +219,7 @@ test("frozen materialization obligations survive shared randomness and restore o
     interaction.branches.failure = { ...structuredClone(interaction.branches.success), outcomeCode: "outcome:uncertain",
       summary: "细节保留，但无法辨认更多。", sensoryEvidence: [] };
     const value = bundle([interaction, materialize(first.ref)]);
-    value.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "wis", skill: null, dc: 10, mode: "normal",
+    value.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "wis", skill: null, dc: 10, mode: "normal",
       risk: "短暂照明可能不足以看清细微结构。", successOutcome: "看清原有细节。", failureOutcome: "无法辨认更多。" };
     const lowered = later(fixture, first.result.state, value, first.ref);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));

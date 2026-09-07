@@ -33,7 +33,7 @@ function fixture(label) {
 }
 function observe(subjectRef) {
   return { mode: 'adjudication', basisRefs: [subjectRef],
-    adjudication: { kind: 'directSuccess', durationMicros: '6000000', risk: '只观察眼前情况。', successOutcome: '看见当前站位。' },
+    adjudication: { kind: 'directSuccess', durationMicros: '300000000', risk: '只观察眼前情况。', successOutcome: '看见当前站位。' },
     terminal: { kind: 'none' }, proposals: [{ kind: 'observe', basisRefs: [subjectRef], consumes: [], produces: [],
       outcomeBinding: 'always', sceneRef: SCENE, inquiry: '对方现在在哪里？', method: '观察在场人物。',
       focusRefs: [subjectRef], existingFactRefs: [], branches: { success: {

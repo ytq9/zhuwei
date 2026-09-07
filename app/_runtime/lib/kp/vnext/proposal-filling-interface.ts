@@ -1,5 +1,6 @@
 import { VNEXT_PROPOSAL_CAPABILITIES } from "./proposal-capabilities";
 import { isPlainRecord } from "./canonical-json";
+import { actionDurationMicrosForTier, actionDurationTierForMicros } from "./action-duration";
 import { proposalDiagnostic, diagnosticActual, type ProposalDiagnostic, type ProposalDiagnosticPath } from "./proposal-diagnostics";
 import { vnextEntryProducerContract } from "./proposal-producer-contract";
 import { proposalProspectiveHandles } from "./proposal-reference-slots";
@@ -170,10 +171,16 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
     const proposals = Array.isArray(steps) ? steps.map((entry, index) => decodeStep(entry, [...path, "steps", index], kind === "check", layouts)) : steps;
     const basisRefs = Array.isArray(proposals) ? [...new Set(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs)
       ? entry.basisRefs.filter((ref): ref is string => typeof ref === "string" && !ref.startsWith("prospective:")) : []))].sort() : [];
+    // The wire carries the act's duration as one coarse tier; the domain keeps
+    // exact microseconds. An unknown tier passes through so the domain
+    // validator diagnoses the value instead of silently dropping it.
+    const { duration, ...ruling } = content;
+    const adjudication = { kind, ...ruling,
+      ...(duration === undefined ? {} : { durationMicros: actionDurationMicrosForTier(duration) ?? duration }) };
     // Missing steps remain missing proposals, so the canonical validator can
     // diagnose them. No empty successful plan is synthesized.
-    return continuation ? { kind: "adjudication", basisRefs, adjudication: { kind, ...content }, ...(steps === undefined ? {} : { proposals }) }
-      : { mode: "adjudication", basisRefs, adjudication: { kind, ...content }, terminal: null, ...(steps === undefined ? {} : { proposals }) };
+    return continuation ? { kind: "adjudication", basisRefs, adjudication, ...(steps === undefined ? {} : { proposals }) }
+      : { mode: "adjudication", basisRefs, adjudication, terminal: null, ...(steps === undefined ? {} : { proposals }) };
   }
   if (steps !== undefined) fail("CONSTRAINT_CONFLICT", "filling:terminal-cannot-have-steps", [...path, "steps"], { required: false }, steps);
   const { basisRefs, ...terminal } = content;
@@ -271,7 +278,9 @@ export function encodeProposalFilling(value: unknown, domain: Schema): unknown {
 function encodeDecision(value: RecordValue, continuation: boolean, layouts: ResultLayouts): unknown {
   if (value.mode === "adjudication" || (continuation && value.kind === "adjudication")) {
     if (!isPlainRecord(value.adjudication)) return { steps: value.proposals };
-    return { ...value.adjudication, steps: Array.isArray(value.proposals)
+    const { durationMicros, ...ruling } = value.adjudication;
+    return { ...ruling, ...(durationMicros === undefined ? {} : { duration: actionDurationTierForMicros(durationMicros) ?? durationMicros }),
+      steps: Array.isArray(value.proposals)
       ? value.proposals.map(entry => encodeStep(entry, (value.adjudication as RecordValue).kind === "check", layouts)) : value.proposals };
   }
   const source = continuation ? value : value.terminal;

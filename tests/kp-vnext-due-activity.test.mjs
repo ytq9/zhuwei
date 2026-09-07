@@ -39,7 +39,7 @@ function vnextInput(fixture, state, rootActionId) {
   const frozen = freezeAuthoredProbeContext(fixture, state, { rootActionId, focusRefs: [SOURCE] });
   const value = {
     schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SOURCE],
-    adjudication: { kind: "directSuccess", durationMicros: "6000000", risk: "观察已有对象的表面。", successOutcome: "看清对象。" }, terminal: null,
+    adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "观察已有对象的表面。", successOutcome: "看清对象。" }, terminal: null,
     proposals: [{ kind: "worldInteraction", basisRefs: [SOURCE], consumes: [], produces: [], outcomeBinding: "always",
       sceneRef: SCENE, targetRefs: [SOURCE], directTargetRefs: [SOURCE], instrumentRefs: [], abilityRef: null,
       intent: "观察阀门。", method: "查看当前可见表面。", branches: { success: {

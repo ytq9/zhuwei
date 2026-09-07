@@ -45,7 +45,7 @@ test('exact frozen intent echo enters the existing bounded server confirmation',
 
 function direct() {
   const bundle = sharedCheckBundle('worldInteraction');
-  bundle.adjudication = { kind: 'directSuccess', durationMicros: '6000000', risk: '操作的条件已满足。', successOutcome: '阀门发生预定变化。' };
+  bundle.adjudication = { kind: 'directSuccess', durationMicros: '300000000', risk: '操作的条件已满足。', successOutcome: '阀门发生预定变化。' };
   bundle.proposals = [bundle.proposals[1]]; bundle.proposals[0].branches.failure = { kind: 'none' };
   return encodeVNextStrictToolBundle(bundle);
 }

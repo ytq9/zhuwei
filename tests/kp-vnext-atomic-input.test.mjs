@@ -218,7 +218,7 @@ test('frozen execution proves native reaction and choice-dependent randomness wi
 // Every in-world act now spends its frozen duration ahead of its results, so
 // an overriding cost set has to carry that spend too, with the actor's
 // timeline bound; otherwise Rules refuses the act for declaring no duration.
-const ACT_DURATION_MICROS = '6000000';
+const ACT_DURATION_MICROS = '300000000';
 function fictionTimeCost(f, durationMicros = ACT_DURATION_MICROS) {
   return { cost: { kind: 'fictionTime', durationMicros },
     binding: { ref: `character-timeline:${ACTOR}`, revisionOrHash: authorityRevisionOrHash(f.state, `character-timeline:${ACTOR}`) } };
@@ -275,7 +275,7 @@ test('a direct atomic action pays accepted item and resource costs once without 
   const context = freezeAuthoredProbeContext(f, acquired.state, { rootActionId,
     focusRefs: [TARGET, 'definition:probe-valve'] }).context;
   const value = sharedCheckBundle('worldInteraction');
-  value.adjudication = { kind: 'directSuccess', durationMicros: '6000000', risk: '消耗一份材料。', successOutcome: '完成观察。' };
+  value.adjudication = { kind: 'directSuccess', durationMicros: '300000000', risk: '消耗一份材料。', successOutcome: '完成观察。' };
   value.proposals = [value.proposals[1]];
   value.proposals[0].branches.failure = { kind: 'none' };
   const parsed = parseBundle(value);
@@ -443,8 +443,8 @@ test('social after item acquisition and use preserves frozen context through nat
     assert.equal(events.filter(event => event.eventType === 'FictionTimeAdvanced').length, 2);
     const social = events.find(event => event.eventType === 'WorldInteractionResolved' && event.payload.social);
     assert.ok(social);
-    // The NPC snapshot is rebound after the item Activity's minute and this act's own duration.
-    assert.equal(social.payload.social.plan.social.npcContext.records.find(record => record.kind === 'timeline').value.nowMicros, '12000000');
+    // The NPC snapshot is rebound after the item Activity's six seconds and this act's own tier.
+    assert.equal(social.payload.social.plan.social.npcContext.records.find(record => record.kind === 'timeline').value.nowMicros, '306000000');
     assert.equal(Object.keys(done.state.atomicWorldInteractions).length, 0);
     replay(f, events, done.state);
     if (native) assert.equal(answer(f, { ...result, state: done.state }, { kind: 'decline' }).kind, 'rejected');
@@ -466,7 +466,7 @@ test('social after direct acquisition proves changed inventory without a dice or
     assert.equal(done.kind,'committed',JSON.stringify(done));
     assert.equal(events.some(event=>event.eventType==='DiceRolled'),false);
     // No dice, and the only time that passed is the act's own frozen duration, paid ahead of everything else.
-    assert.deepEqual(events.filter(event=>event.eventType==='FictionTimeAdvanced').map(event=>event.payload.durationMicros),['6000000']);
+    assert.deepEqual(events.filter(event=>event.eventType==='FictionTimeAdvanced').map(event=>event.payload.durationMicros),['300000000']);
     assert.ok(events.findIndex(event=>event.eventType==='FictionTimeAdvanced')<events.findIndex(event=>event.eventType==='WorldInteractionResolved'),'the act pays its duration before its result');
     assert.equal(done.state.entities[ACTOR].resources.focus,withCosts?2:3);
     assert.ok(events.some(event=>event.eventType==='WorldInteractionResolved'&&event.payload.social));
@@ -491,7 +491,7 @@ test('item prefix composes with materialized NPC knowledge and silence', () => {
     assert.ok(events.some(event => event.eventType === 'DamagePacketResolved'));
     const context = social.payload.social.plan.social.npcContext;
     // The NPC snapshot is rebound to the clock after the item Activity and after this act's own duration.
-    assert.equal(context.records.find(record => record.kind === 'timeline').value.nowMicros, '12000000');
+    assert.equal(context.records.find(record => record.kind === 'timeline').value.nowMicros, '306000000');
     assert.equal(context.knowledge.length, history ? 1 : 0);
     const thread = done.state.campaignRuntime.conversationThreads[social.payload.social.plan.social.threadRef];
     assert.equal(thread.responseClaimRef === null, silence);
@@ -730,7 +730,7 @@ test('an act pays its frozen duration once, ahead of its results, on the actor t
     actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(first.kind, 'accepted', JSON.stringify(first));
   // Acquiring the item is itself an act, so the creation Bundle carries the fixture's duration and spends it once.
-  assert.deepEqual(first.command.rulesInput.executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '6000000' }]);
+  assert.deepEqual(first.command.rulesInput.executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '300000000' }]);
   const acquired = f.runtime.step(f.profiles, f.state, first.command.rulesInput);
   assert.equal(acquired.kind, 'committed', JSON.stringify(acquired));
   assert.equal(acquired.events.filter(event => event.eventType === 'FictionTimeAdvanced').length, 1);
@@ -738,7 +738,7 @@ test('an act pays its frozen duration once, ahead of its results, on the actor t
   const context = freezeAuthoredProbeContext(f, acquired.state, { rootActionId,
     focusRefs: [TARGET, 'definition:probe-valve'] }).context;
   const value = sharedCheckBundle('worldInteraction');
-  value.adjudication = { kind: 'directSuccess', durationMicros: '1000000', risk: '转动阀门。', successOutcome: '阀门转动。' };
+  value.adjudication = { kind: 'directSuccess', durationMicros: '600000000', risk: '转动阀门。', successOutcome: '阀门转动。' };
   value.proposals = [value.proposals[1]];
   value.proposals[0].branches.failure = { kind: 'none' };
   const parsed = parseBundle(value);
@@ -751,12 +751,12 @@ test('an act pays its frozen duration once, ahead of its results, on the actor t
   const zero = structuredClone(parsed.bundle); zero.adjudication = { ...zero.adjudication, durationMicros: '0' };
   assert.deepEqual(lowerVNext2ProposalBundle({ value: zero, rootActionId, actorCharacterId: ACTOR, requiredContext: context, state: acquired.state }).issues,
     ['bundle2:duration-required-for-in-world-act']);
-  const authoring = itemBundle(); authoring.proposals = authoring.proposals.slice(0, 3); authoring.adjudication.durationMicros = '6000000';
+  const authoring = itemBundle(); authoring.proposals = authoring.proposals.slice(0, 3); authoring.adjudication.durationMicros = '300000000';
   assert.deepEqual(lowerVNext2ProposalBundle({ value: authoring, rootActionId: f.rootActionId, actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state }).issues,
     ['bundle2:duration-forbidden-for-pure-authoring']);
   // A solo in-world act takes the atomic path, and lowering declared the ruling's duration as its execution cost.
   assert.equal(lower.command.rulesInput.kind, 'applyAtomicWorldInteractionSteps');
-  assert.deepEqual(lower.command.rulesInput.executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '1000000' }]);
+  assert.deepEqual(lower.command.rulesInput.executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '600000000' }]);
   assert.ok(lower.command.rulesInput.executionCosts.readSet.some(binding => binding.ref === `character-timeline:${ACTOR}`));
   const timelineId = acquired.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? acquired.state.activeBranchId;
   const before = BigInt(acquired.state.fictionTimelines[timelineId].nowMicros);
@@ -764,11 +764,11 @@ test('an act pays its frozen duration once, ahead of its results, on the actor t
   assert.equal(done.kind, 'committed', JSON.stringify(done));
   const advances = done.events.filter(event => event.eventType === 'FictionTimeAdvanced');
   assert.equal(advances.length, 1);
-  assert.equal(advances[0].payload.durationMicros, '1000000');
+  assert.equal(advances[0].payload.durationMicros, '600000000');
   // The advance precedes every result of the act.
   assert.equal(done.events.indexOf(advances[0]), 0);
-  assert.equal(BigInt(done.state.fictionTimelines[timelineId].nowMicros) - before, 1000000n);
-  assert.deepEqual(done.mechanicalResult.fictionTime, { durationMicros: '1000000', crossedDeadlines: [] });
+  assert.equal(BigInt(done.state.fictionTimelines[timelineId].nowMicros) - before, 600000000n);
+  assert.deepEqual(done.mechanicalResult.fictionTime, { durationMicros: '600000000', crossedDeadlines: [] });
   replay(f, [...acquired.events, ...done.events], done.state);
 });
 

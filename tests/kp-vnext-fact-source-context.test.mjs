@@ -43,7 +43,7 @@ function declare(f,ref,{subjectRefs=[SCENE],hidden=false,parents=[]}={}) {
   commit(f,{kind:'declareCanonicalFact',proposalId:`${f.rootActionId}:${ref}`,fact:{factId:ref,factKind:'physicalMark',source:'characterAction',subjectRefs,value:{description:hidden?'HIDDEN_CANARY':'窗框留有已经刻下的记号。',condition:'present'},causalParentIds:parents,visibilityPolicy:hidden?'hiddenUntilEvidence':'public'}});return ref;
 }
 function observe(f,ref) {
-  const raw={mode:'adjudication',basisRefs:[ref],adjudication:{kind:'directSuccess', durationMicros: '6000000',risk:'观察已有的明显痕迹。',successOutcome:'看清已存在的痕迹。'},terminal:{kind:'none'},proposals:[{
+  const raw={mode:'adjudication',basisRefs:[ref],adjudication:{kind:'directSuccess', durationMicros: '300000000',risk:'观察已有的明显痕迹。',successOutcome:'看清已存在的痕迹。'},terminal:{kind:'none'},proposals:[{
     kind:'observe',basisRefs:[ref],consumes:[],produces:[],outcomeBinding:'always',sceneRef:SCENE,inquiry:'现在能看到什么？',method:'留意眼前的痕迹。',focusRefs:[SCENE],existingFactRefs:[ref],branches:{success:{outcomeCode:'seen',summary:'看见已有痕迹。',sensoryEvidence:[{observerRef:ACTOR,subjectRef:SCENE,sense:'sight',evidence:'眼前留有此前出现的痕迹。',basisRefs:[ref]}],characterInferences:[]},failure:{kind:'none'}}}]};
   const parsed=parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(raw)));assert.equal(parsed.kind,'accepted',JSON.stringify(parsed));
   return lowerVNext2ProposalBundle({...f,value:parsed.bundle});

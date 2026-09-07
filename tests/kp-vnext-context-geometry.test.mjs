@@ -29,7 +29,7 @@ function known(frozen, ref = FEATURE) {
 }
 function observation(ref = FEATURE, basisRefs = [ref]) {
   return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs,
-    adjudication: { kind: "directSuccess", durationMicros: "6000000", risk: "观察已存在对象的表面。", successOutcome: "看清对象的当前状态。" }, terminal: null,
+    adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "观察已存在对象的表面。", successOutcome: "看清对象的当前状态。" }, terminal: null,
     proposals: [{ kind: "worldInteraction", basisRefs, consumes: [], produces: [], outcomeBinding: "always",
       sceneRef: SCENE, targetRefs: [ref], directTargetRefs: [ref], instrumentRefs: [], abilityRef: null,
       intent: "观察对象。", method: "查看当前可见表面。", branches: { success: {

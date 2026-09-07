@@ -106,7 +106,7 @@ function toolResponse(argumentsValue: unknown, toolName: string = record(argumen
 function proposal(summary = "控制件已经转到开启位置。", actorRef = ACTOR) {
   return {
     mode: "adjudication", basisRefs: [SOURCE],
-    adjudication: { kind: "directSuccess", durationMicros: "6000000", risk: "普通控制件没有有意义的失败后果。", successOutcome: "控制件打开。" },
+    adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通控制件没有有意义的失败后果。", successOutcome: "控制件打开。" },
     terminal: { kind: "none" },
     proposals: [{ kind: "worldInteraction", basisRefs: [SOURCE], consumes: [], produces: [], outcomeBinding: "always",
       sceneRef: SCENE, targetRefs: [SOURCE], directTargetRefs: [SOURCE], instrumentRefs: [], abilityRef: { kind: "none" },
@@ -126,7 +126,7 @@ function action(submissionId: string): RoomActionInput {
 
 function observationProposal(heldKnowledgeRef?: string) {
   return { mode: "adjudication", basisRefs: heldKnowledgeRef ? [] : [SOURCE],
-    adjudication: { kind: "directSuccess", durationMicros: "6000000", risk: "整理可获得的信息，不作有风险的操作。", successOutcome: "保留信息与有限推断。" },
+    adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "整理可获得的信息，不作有风险的操作。", successOutcome: "保留信息与有限推断。" },
     terminal: { kind: "none" }, proposals: [{ kind: "observe", basisRefs: heldKnowledgeRef ? [] : [SOURCE],
       consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
       focusRefs: heldKnowledgeRef ? [] : [SOURCE], existingFactRefs: [],
@@ -204,7 +204,7 @@ it("resumes a frozen clarification check after either random checkpoint without 
     const draft = frozenClarificationProposal() as JsonRecord;
     const choice = record((record(draft.terminal).choices as unknown[])[0]);
     const continuation = record(choice.continuation);
-    continuation.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "str", skill: { kind: "none" },
+    continuation.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "str", skill: { kind: "none" },
       dc: 12, mode: "normal", risk: "用力错误会使控制件卡住。", successOutcome: "控制件打开。", failureOutcome: "控制件卡住。" };
     const entry = record((continuation.proposals as unknown[])[0]);
     record(entry.branches).failure = { outcomeCode: "outcome:jammed", summary: "控制件卡住。",
@@ -1365,7 +1365,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const input = action("submission:provider:missing-check-dc");
     const before = await snapshot(stub);
     const draft = proposal() as JsonRecord;
-    draft.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "str", skill: { kind: "none" },
+    draft.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "str", skill: { kind: "none" },
       mode: "normal", risk: "用力不当可能打不开控制件。", successOutcome: "控制件打开。", failureOutcome: "控制件保持原状。" };
     const entry = (draft.proposals as JsonRecord[])[0]!;
     entry.method = ` ${String(entry.method)} `;
@@ -1480,7 +1480,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const input = action("submission:structured-repair:dice");
     const before = await snapshot(stub);
     const draft = proposal() as JsonRecord;
-    draft.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "str", skill: { kind: "none" },
+    draft.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "str", skill: { kind: "none" },
       dc: 12, mode: "normal", risk: "用力不当可能打不开控制件。", successOutcome: "控制件打开。", failureOutcome: "控制件保持原状。" };
     const entry = (draft.proposals as JsonRecord[])[0]!;
     entry.method = ` ${String(entry.method)} `;
@@ -1499,7 +1499,7 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(prompt.repairPlan).toEqual([{ path: ["proposals", 0, "method"], operation: "replace",
         value: String(entry.method).trim(), reason: "text-canonical-form" }]);
       expect(prompt.originalArguments).toBe(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments);
-      expect(prompt.rejectedBundle.adjudication).toMatchObject({ kind: "check", durationMicros: "6000000", dc: 12,
+      expect(prompt.rejectedBundle.adjudication).toMatchObject({ kind: "check", durationMicros: "300000000", dc: 12,
         risk: "用力不当可能打不开控制件。", successOutcome: "控制件打开。", failureOutcome: "控制件保持原状。" });
       expect(prompt.rejectedBundle.proposals[0].branches.failure).toEqual(record(entry.branches).failure);
       return toolResponse({ confirm: "server-plan", summaries: [] }, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);

@@ -18,7 +18,7 @@ const source = (npcRef = NPC) => ({ kind: 'formActorPlan', npcRef, factionRef: {
   goal: '设法让下一次交接更有条理。', nextStep: '交接以后在门框上系一条布带。', premiseRefs: [npcRef],
   resourceRefs: [], durationMicros: '2000000', traceDescription: '门框上多了一条新系的布带。',
   alternateTargetRef: SCENE, alternateReason: '需要改换行动对象时仍留意当前场景。' });
-const wire = (entry = source()) => ({ decision: { kind: 'directSuccess', durationMicros: '0', risk: '形成私有计划尚未执行行动。',
+const wire = (entry = source()) => ({ decision: { kind: 'directSuccess', duration: 'none', risk: '形成私有计划尚未执行行动。',
   successOutcome: '保存计划并开始对应的Activity。', steps: [entry] } });
 const request = { modelId: 'controlled-test', message: '根据NPC本人情况安排下一步。', requiredContext: { entries: [],
   references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: 'sha256:formation-test' } } };

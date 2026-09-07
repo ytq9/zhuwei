@@ -237,9 +237,9 @@ function bundle(f, check = false) {
   const plan = input(f, { check, promise: true }).plan;
   const { npcRef, addressedThreadRef, goal, communication, audience, branches } = plan.social;
   return { mode: "adjudication", basisRefs: [NPC], terminal: { kind: "none" },
-    adjudication: check ? { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
+    adjudication: check ? { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
       risk: "守门人可能拒绝。", successOutcome: "守门人回答。", failureOutcome: "守门人拒绝。" }
-      : { kind: "directSuccess", durationMicros: "6000000", risk: "普通交谈。", successOutcome: "守门人回答。" },
+      : { kind: "directSuccess", durationMicros: "300000000", risk: "普通交谈。", successOutcome: "守门人回答。" },
     proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
       npcRef, addressedThreadRef: addressedThreadRef ?? { kind: "none" }, goal, method: plan.method, communication, audience,
       retryChange: { kind: "none" }, branches: { success: branches.success, failure: check ? branches.failure : { kind: "none" } } }] };

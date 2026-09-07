@@ -1158,7 +1158,7 @@ function materializeAlcoveAloneProposal(request: JsonRecord): JsonRecord {
 const CACHE_HANDLE_V2 = "prospective:stage3-alcove-cache-v2";
 
 const ALCOVE_SHARED_CHECK_V2: JsonRecord = Object.freeze({
-  kind: "check", durationMicros: "6000000",
+  kind: "check", durationMicros: "300000000",
   checkKind: "abilityCheck",
   ability: "str",
   skill: null,
@@ -1281,7 +1281,7 @@ function checkedPryAlcoveBundleV2(): JsonRecord {
  * +1 and the higher of two faces decides. Nothing is materialized, so this is
  * the non-atomic single-step path rather than the Bundle path above. */
 const ROPE_SHARED_CHECK_V2: JsonRecord = Object.freeze({
-  kind: "check", durationMicros: "6000000",
+  kind: "check", durationMicros: "300000000",
   checkKind: "abilityCheck",
   ability: "wis",
   skill: null,
@@ -1387,7 +1387,7 @@ function attackChainBundleV2(request: JsonRecord, dc: number): JsonRecord {
       },
     }],
     {
-      kind: "check", durationMicros: "6000000",
+      kind: "check", durationMicros: "300000000",
       checkKind: "attack",
       ability: "dex",
       skill: null,
@@ -1454,7 +1454,7 @@ const ALCOVE_HANDLE_V2 = "prospective:stage3-new-alcove-v2";
 const ALCOVE_UNPRODUCED_HANDLE_V2 = "prospective:stage3-unproduced-handle-v2";
 
 const ALCOVE_SHARED_RULING_V2: JsonRecord = Object.freeze({
-  kind: "directSuccess", durationMicros: "6000000",
+  kind: "directSuccess", durationMicros: "300000000",
   risk: "让一个先前没被注意到的壁龛显形并靠近查看，不会带来额外风险。",
   successOutcome: "壁龛作为新的场景对象被固化，角色随即查看了它的内部。",
 });
@@ -1526,7 +1526,7 @@ function adjudicationBundleV2(
 ): JsonRecord {
   // The shared ruling's duration follows the proposals: authoring alone takes no time, an act does.
   const ruling = adjudication ?? { ...ALCOVE_SHARED_RULING_V2,
-    durationMicros: proposals.some((entry) => IN_WORLD_ACT_KINDS_V2.has(String(entry.kind))) ? "6000000" : "0" };
+    durationMicros: proposals.some((entry) => IN_WORLD_ACT_KINDS_V2.has(String(entry.kind))) ? "300000000" : "0" };
   return {
     schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
@@ -1918,8 +1918,8 @@ describe("vNext stage-three Room verticals", () => {
           motive: NPC_SUMMARY_CANARY, basis: [{ kind: "npcContext", ref: roll === null ? NPC_KNOWLEDGE_REF : `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}` }] },
         consequences: failure ? [] : [{ kind: "promise", content: "协助核对账册上的签字。", condition: "先看过账册以后。", authorityRefs: [LIAN_ID] }] });
       const wire = { mode: "adjudication", basisRefs: [LIAN_ID], terminal: { kind: "none" },
-        adjudication: roll === null ? { kind: "directSuccess", durationMicros: "6000000", risk: "普通交谈。", successOutcome: "莉安回应。" }
-          : { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
+        adjudication: roll === null ? { kind: "directSuccess", durationMicros: "300000000", risk: "普通交谈。", successOutcome: "莉安回应。" }
+          : { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
             risk: "她可能拒绝本次请求。", successOutcome: "愿意协助。", failureOutcome: "拒绝协助。" },
         proposals: [{ kind: "social", basisRefs: [LIAN_ID], consumes: [], produces: [], outcomeBinding: "always",
           sceneRef: SCENE_REF, npcRef: LIAN_ID, addressedThreadRef: { kind: "none" }, goal: "询问归还账册的见闻并请求协助。",

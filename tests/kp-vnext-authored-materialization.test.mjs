@@ -195,7 +195,7 @@ test("typed dependency closure rejects cycles and conditional producer gaps whil
   assert.equal(cycle.kind, "rejected");
   assert.ok(cycle.issues.includes("bundle:dependency-cycle"), JSON.stringify(cycle));
   const conditional = bundle([source("ability", ability(), A), source("hazard", hazard(), H, [A]), interaction()]);
-  conditional.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "str", skill: null, dc: 15, mode: "normal", risk: "危险", successOutcome: "成功", failureOutcome: "失败" };
+  conditional.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "str", skill: null, dc: 15, mode: "normal", risk: "危险", successOutcome: "成功", failureOutcome: "失败" };
   conditional.proposals[1].outcomeBinding = "onSuccess";
   conditional.proposals[1].produces[0].outcomeBinding = "onSuccess";
   conditional.proposals[2].branches.failure = branch();

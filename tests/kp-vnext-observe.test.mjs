@@ -30,9 +30,9 @@ function observe({ reflection = false, check = false } = {}) {
       { kind: "heldKnowledge", ref: PRIOR }])],
   };
   return { mode: "adjudication", basisRefs: reflection ? [] : [SOURCE],
-    adjudication: check ? { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "wis", skill: "perception",
+    adjudication: check ? { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "wis", skill: "perception",
       dc: 12, mode: "normal", risk: "声音很轻，未必能分辨。", successOutcome: "听清嘶鸣。", failureOutcome: "无法分辨细节。" }
-      : { kind: "directSuccess", durationMicros: "6000000", risk: "现有信息足以作出有限推断。", successOutcome: "整理信息。" },
+      : { kind: "directSuccess", durationMicros: "300000000", risk: "现有信息足以作出有限推断。", successOutcome: "整理信息。" },
     terminal: { kind: "none" }, proposals: [{ kind: "observe", basisRefs: reflection ? [] : [SOURCE],
       consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
       inquiry: "这些信息意味着什么？", method: reflection ? "回想本人已有记录。" : "靠近阀门倾听，不触碰它。",
@@ -62,7 +62,7 @@ function worldUnchanged(before, after) {
   // Observing is an act: the only change to the clock is the declared duration on the actor timeline.
   const timelineId = before.multiplayerRuntime.characterTimelineIds[ACTOR] ?? before.activeBranchId;
   for (const [id, timeline] of Object.entries(after.fictionTimelines)) {
-    const expected = id === timelineId ? String(BigInt(before.fictionTimelines[id].nowMicros) + 6000000n) : before.fictionTimelines[id].nowMicros;
+    const expected = id === timelineId ? String(BigInt(before.fictionTimelines[id].nowMicros) + 300000000n) : before.fictionTimelines[id].nowMicros;
     assert.equal(timeline.nowMicros, expected, `fictionTimelines.${id}`);
   }
 }
