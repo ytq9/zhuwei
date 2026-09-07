@@ -3383,3 +3383,7 @@ codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段�
 ## 到期 Activity 完成不合法时结算为中断（2026-09-08，本地验证）
 
 档位化后 5 分钟的行动会跨过 60 秒通行的到期点；若跨过期间通道被关，原来到期优先结算会以「完成不再合法」拒绝之后每一次输入。现在 `prepareActivityCompletion` 返回 `illegal`，`completeActivity` 与 `settleDueActivityBeforeInput` 把它提交为 `ActivityInterrupted`（cause `completionNoLongerLegal`），带 `settledAs:"interrupted"`、`retryOriginalIntent:true`；新增 `activityInterrupted` Claim。todo 用例转正。见[合同 §10.2](agent/vnext-fiction-time-contract-proposal.md)。
+
+## 遭遇标记进冻结上下文 + 过期夹具清理（2026-09-08）
+
+行动者复合记录在遭遇进行中带 `encounter` 字段，KP 指引指向它填 `none`。`kp-vnext-filling-interface`、`kp-vnext-proposal-schema`、`kp-vnext-pass-time` 的手写上下文补 `authorityBasisRefs`/`npcKnowledge`，传输面枚举加 `abilityOperation`：17 个早于 `0ab18b7` 的红用例转绿。

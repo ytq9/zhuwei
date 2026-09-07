@@ -200,7 +200,7 @@ round79 填 30 秒、round80 填 12 秒——同一句「半分钟」两次估�
 - Rules：`applyCompiledAtomicWorldInteractionPlan` 在遭遇中拒绝任何 `fictionTime` 执行成本（"An act inside an Encounter spends turns, not a frozen duration."），不管计划是谁产出的。
 - parser v45。
 
-已知未闭合：冻结上下文里没有显式的「你正在遭遇中」标记——KP 只能从行动者记录里的战斗回合预算和场景记录的 `combatScene` 推断。填错只能硬拒，不能修订。给上下文加一个显式遭遇标记是另一条小合同。
+补上的一环（同日）：行动者的冻结复合记录（`authorityEntityComposite`）在遭遇进行中多一个 `encounter` 字段（encounterId、round、activeEntityId、status），KP 据此填 `none`；指引明说了这个字段。它进入绑定哈希，但战斗回合预算本来就在同一记录里逐轮变化，所以没有新增失效面。填错仍是硬拒，不修订。
 
 ### 10.2 跨过到期点后：完成不再合法的 Activity 结算为中断（2026-09-08）
 

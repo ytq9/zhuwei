@@ -15,7 +15,7 @@ const wire = durationMicros => ({ decision: { kind: 'passTime', durationMicros }
 const candidate = value => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(value));
 const clone = value => JSON.parse(JSON.stringify(value));
 const request = { modelId: 'scripted-local', message: '保留原时间决定。', requiredContext: { entries: [],
-  references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: 'sha256:pass-time-test' } } };
+  references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:pass-time-test' } } };
 
 for (const [durationMicros, intent] of [['60000000', '我留在原地安静等待，留意周围。'], ['15000000', '我停留片刻，保持守望。']]) {
   test(`passTime ${durationMicros} derives one Activity command from the same minimal filling contract`, () => {

@@ -1,3 +1,4 @@
+import { activeEncounter } from "./combat-encounters";
 import { worldFactConstraints } from "./world-facts";
 import { isRegisteredAbilityRecord } from "../profiles/ability-compiler";
 import { dynamicDefinitionInScene } from "./dynamic-locations";
@@ -255,7 +256,14 @@ export function authorityEntityComposite(state:AuthoritativeWorldState,ref:strin
   const combat=state.combatRuntime.entities[ref];
   const effects=Object.values(state.combatRuntime.effects).filter(effect=>effect.targetEntityId===ref)
     .sort((a,b)=>String(a.effectId).localeCompare(String(b.effectId)));
-  return {entity,...(combat===undefined?{}:{combat}),...(effects.length===0?{}:{effects})};
+  // An explicit marker: the KP reads it to know the actor is inside an
+  // Encounter (rounds carry the time; the act's duration tier is "none").
+  // Minimal authority snapshots (tests, partial freezes) may carry no encounters map at all.
+  const encounters=state.combatRuntime?.encounters;
+  const encounter=encounters!==null&&typeof encounters==="object"?activeEncounter(state,ref):undefined;
+  const inEncounter=encounter===undefined?{}:{encounter:{encounterId:String(encounter.encounterId),round:encounter.round,
+    activeEntityId:encounter.activeEntityId,status:encounter.status}};
+  return {entity,...(combat===undefined?{}:{combat}),...(effects.length===0?{}:{effects}),...inEncounter};
 }
 
 export function authorityReadSetConflicts(

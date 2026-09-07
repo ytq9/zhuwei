@@ -139,14 +139,14 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 - `mechanicalResult.fictionTime`（含 `crossedDeadlines`）没进 Room 返回和遥测，只在 Rules 结果上（round80 确认）。档位化之后再接。
 - 第二句选中 `observe` 后填写阶段丢弃，玩家明写的「留意动静」随之消失，不留痕（round78/80 均如此）。
 - ~~到期 Activity 的冻结完成不再合法时时间线堵死~~ —— 已改为到期结算时中断（[合同 §10.2](docs/agent/vnext-fiction-time-contract-proposal.md)），本地验证。
-- 冻结上下文没有显式的「遭遇进行中」标记，KP 只能从行动者的回合预算和场景的 `combatScene` 推断；遭遇中填了档位只能硬拒。加一个显式标记是一条小合同。
+- ~~冻结上下文没有显式的「遭遇进行中」标记~~ —— 行动者复合记录在遭遇中带 `encounter` 字段，指引已指向它（[合同 §10.1](docs/agent/vnext-fiction-time-contract-proposal.md)）。填错仍是硬拒。
 - 闹钟路径（玩家不在线时到期）完成的等待：audience 建好但当时无人旁白，靠 `narrationRecovery` 在下次 observe 发布——链路是旧的，等待这一用法没跑过。
 - 旧线 vnext-1（`atomicRulesSteps`）没有时长字段，Rules 只裁「纯创作不能花时间」这一半；「角色行动必须声明」是 vnext-2 lowering 的规则。
 
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 
 - **连续意图稳定性**：round81 之前从来没有一个批次连过三句；round81 连过了一次（n=1）。仍是最大的未知，不是某个单点 bug。
-- **过期夹具（早于 `0ab18b7`）**：`kp-vnext-filling-interface`（9）、`kp-vnext-proposal-schema`（7）、`kp-vnext-pass-time`（1）一直红：夹具的冻结上下文没有 `citations.authorityBasisRefs`，另有一处 decision.kind 枚举没把 `abilityOperation` 算进去。不是功能坏了，是测试没跟上；基线比对法看不见它们。单独清一次。
+- ~~过期夹具（早于 `0ab18b7`）~~ —— 已清：三个文件的手写上下文补上 `authorityBasisRefs`/`npcKnowledge`，decision.kind 枚举加上 `abilityOperation`，17 个用例转绿。
 - **真实窄修订**：机制齐了，模型没触发过一次。
 - **旁白文字精确度**：满血说“伤势”、笼统说“资源剩 3 次”（未区分环级）。
 - **`highRiskConfirmed`**：仍无消费者，继续失败关闭；启用前要把私有 pending continuation 与 bundle/plan/context/ruling hash 一起持久化并在提交时重验。

@@ -695,7 +695,7 @@ test("the stage-three transport surface is exactly what the server can execute",
   // that updates this list rather than a silent drift.
   assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision"]);
   assert.deepEqual(DECISION_SCHEMAS.map(branch => branch.properties.kind.enum[0]),
-    ["directSuccess", "check", "inWorldRefusal", "knowledgeReview", "passTime", "clarification"]);
+    ["directSuccess", "check", "inWorldRefusal", "knowledgeReview", "passTime", "clarification", "abilityOperation"]);
   // Materialization uses closed variants rather than one flat shape:
   // `isMaterializedDefinition` binds semanticKind to sceneRef and the
   // visibility policy to visibilityFactId, and those are conditionals the
@@ -906,7 +906,7 @@ test("one sparse correction can repair only an allowed path and is then fully re
   const result = applyVNextProposalBundleCorrection({
     bundle: rejectedDraft,
     correction,
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [path],
   });
   assert.equal(result.kind, "accepted", JSON.stringify(result));
@@ -915,7 +915,7 @@ test("one sparse correction can repair only an allowed path and is then fully re
   assert.equal(applyVNextProposalBundleCorrection({
     bundle: rejectedDraft,
     correction: { ...correction, attempt: 2 },
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [path],
   }).kind, "rejected");
   assert.equal(applyVNextProposalBundleCorrection({
@@ -924,7 +924,7 @@ test("one sparse correction can repair only an allowed path and is then fully re
       ...correction,
       changes: [{ path: ["adjudication", "kind"], value: "check" }],
     },
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [["adjudication", "kind"]],
   }).kind, "rejected");
 
@@ -946,7 +946,7 @@ test("one sparse correction can repair only an allowed path and is then fully re
       attempt: 1,
       changes: [{ path: authorityPath, value: "relation:major-b" }],
     },
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [authorityPath],
   }).kind, "rejected");
 });
@@ -970,7 +970,7 @@ test("summary-only correction reaches a frozen clarification continuation", () =
       attempt: 1,
       changes: [{ path, value: "右侧壁龛已检查。" }],
     },
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     allowedPaths: [path],
   });
   assert.equal(result.kind, "accepted", JSON.stringify(result));
@@ -1016,7 +1016,7 @@ test("complete root JSON syntax evidence requires the single explicit sparse ack
         return calls.length === 1 ? rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, damaged)
           : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [] });
       } }, modelId: "deepseek-v4-flash", message: "冻结原提案。",
-      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
       persistRepairTicket(ticket) {
         assert.equal(calls.length, 1);
         assert.equal(ticket.syntaxEvidence.originalArguments, damaged);
@@ -1045,7 +1045,7 @@ test("missing or mistyped presentation summaries use the same bounded correction
           ? rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, malformedSyntax ? raw.slice(0, -1) : raw)
           : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [{ path, value: "检查完成。" }] }); } },
         modelId: "deepseek-v4-flash", message: "仅修摘要。",
-        requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+        requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
         persistRepairTicket(ticket) { assert.deepEqual(ticket.allowedPaths, [path]); },
       });
       assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
@@ -1077,7 +1077,7 @@ test("syntax recovery rejects incomplete semantics, duplicates and mixed schema 
     const result = await invokeVNextProposalOffer({
       binding: { async run() { calls++; return rawNamedToolResponse(OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, originalArguments); } },
       modelId: "deepseek-v4-flash", message: "必须完整。",
-      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     });
     assert.equal(result.kind, "rejected", originalArguments);
     assert.equal(result.code, "PROPOSAL_FORM_INVALID");
@@ -1089,7 +1089,7 @@ test("syntax repair cannot change frozen meaning or use an empty correction to b
   const args = worldInteractionArguments();
   const first = await invokeSubmitKpProposalBundleFirstPass({
     binding: { async run() { return rawNamedToolResponse(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify(encodeVNextStrictToolBundle(args)).slice(0, -1)); } },
-    modelId: "deepseek-v4-flash", message: "冻结。", requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    modelId: "deepseek-v4-flash", message: "冻结。", requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
   });
   assert.equal(first.kind, "repairRequired");
   const original = first.repairTicket;
@@ -1098,7 +1098,7 @@ test("syntax repair cannot change frozen meaning or use an empty correction to b
     let calls = 0;
     const result = await invokeCorrectKpProposalBundle({
       binding: { async run() { calls++; return namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [{ path, value: "替换" }] }); } },
-      modelId: "deepseek-v4-flash", requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } }, repairTicket: original,
+      modelId: "deepseek-v4-flash", requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } }, repairTicket: original,
     });
     assert.equal(result.kind, "rejected");
     assert.equal(result.code, "PROPOSAL_REPAIR_EXHAUSTED");
@@ -1115,7 +1115,7 @@ test("syntax repair cannot change frozen meaning or use an empty correction to b
   const rejected = await invokeSubmitKpProposalBundleWithOneCorrection({
     binding: { async run() { return ++calls === 1 ? toolResponse(args)
       : namedToolResponse(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME, { confirm: "server-plan", summaries: [] }); } },
-    modelId: "deepseek-v4-flash", message: "需要补摘要。", requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    modelId: "deepseek-v4-flash", message: "需要补摘要。", requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     persistRepairTicket() {},
   });
   assert.equal(rejected.code, "PROPOSAL_REPAIR_EXHAUSTED");
@@ -1143,7 +1143,7 @@ test("provider uses one summary-only correction and completely revalidates the B
     },
     modelId: "deepseek-v4-flash",
     message: "只裁定冻结上下文。",
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     async persistRepairTicket(ticket) {
       assert.equal(calls.length, 1);
       persistedTickets.push(ticket);
@@ -1178,7 +1178,7 @@ test("provider does not spend correction on authority errors and never makes a t
     },
     modelId: "deepseek-v4-flash",
     message: "只裁定冻结上下文。",
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     persistRepairTicket() {
       assert.fail("unrepairable authority errors must not create a repair ticket");
     },
@@ -1224,7 +1224,7 @@ test("provider does not spend correction on authority errors and never makes a t
     },
     modelId: "deepseek-v4-flash",
     message: "只裁定冻结上下文。",
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     persistRepairTicket() {},
   });
   assert.equal(partial.kind, "rejected");
@@ -1247,7 +1247,7 @@ test("persisted repair ticket resumes correction without repeating the main call
     },
     modelId: "deepseek-v4-flash",
     message: "只裁定冻结上下文。",
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
   });
   assert.equal(firstPass.kind, "repairRequired", JSON.stringify(firstPass));
   const persisted = structuredClone(firstPass.repairTicket);
@@ -1262,7 +1262,7 @@ test("persisted repair ticket resumes correction without repeating the main call
       },
     },
     modelId: "deepseek-v4-flash",
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
     repairTicket: persisted,
   });
   assert.equal(result.kind, "locallyAccepted", JSON.stringify(result));
@@ -1276,7 +1276,7 @@ test("persisted repair ticket resumes correction without repeating the main call
     invokeCorrectKpProposalBundle({
       binding: { async run() { assert.fail("tampered ticket must fail before Provider I/O"); } },
       modelId: "deepseek-v4-flash",
-      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: CONTEXT_HASH } },
+      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: CONTEXT_HASH } },
       repairTicket: tampered,
     }),
     /VNEXT_PROPOSAL_REPAIR_TICKET_INVALID/u,

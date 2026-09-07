@@ -26,7 +26,7 @@ function strictWire(value) {
 }
 const wireFor = value => encodeVNextStrictToolBundle(strictWire(value));
 const request = { modelId: 'scripted-local', message: '冻结原意图。', requiredContext: { entries: [],
-  references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: 'sha256:filling-interface-test' } } };
+  references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:filling-interface-test' } } };
 function response(value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
   return { choices: [{ message: { tool_calls: [{ type: 'function', function: { name, arguments: JSON.stringify(value) } }] } }] };
 }
