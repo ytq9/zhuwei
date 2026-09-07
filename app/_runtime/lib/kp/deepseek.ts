@@ -161,8 +161,13 @@ export function assertDeepSeekStrictToolModelInput(
   if (input.response_format !== undefined) {
     strictConfigurationInvalid("response-format-conflicts-with-tool-output");
   }
-  if (!Array.isArray(input.tools) || input.tools.length !== 1) {
-    strictConfigurationInvalid("single-function-tool-required");
+  // One tool, or two when the proposal call also offers the selection tool so
+  // an intent that needs a type this selection lacks can say so. Verified
+  // against the live beta endpoint on 2026-09-07: two strict tools with
+  // tool_choice "required" and parallel_tool_calls false returned 200 and the
+  // model chose the second and filled it. Anything wider is still refused.
+  if (!Array.isArray(input.tools) || input.tools.length < 1 || input.tools.length > 2) {
+    strictConfigurationInvalid("one-or-two-function-tools-required");
   }
   for (const [index, candidate] of input.tools.entries()) {
     if (!isRecord(candidate)
@@ -192,6 +197,10 @@ export function assertDeepSeekStrictToolModelInput(
       strictConfigurationInvalid(`tools-${index}-schema-invalid`, cause);
     }
   }
+  // Two tools must be two distinct choices; a repeated name makes the model's
+  // selection unreadable and would let one surface stand in for the other.
+  const names = input.tools.map(candidate => (candidate as { function: { name: string } }).function.name);
+  if (new Set(names).size !== names.length) strictConfigurationInvalid("tool-names-must-be-unique");
 }
 
 function isRecord(value: unknown): value is UnknownRecord {

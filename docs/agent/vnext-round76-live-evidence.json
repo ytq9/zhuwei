@@ -1,0 +1,144 @@
+{
+  "round": 76,
+  "verifiedAt": "2026-09-07T09:28:08Z",
+  "verdict": "firstIntentStoppedByOurOwnTransportContract-noApiCallForTheProposal",
+  "sourceCommit": "df864b0c08a62fb8d540e6915535bafcf2cf851b",
+  "sourceManifestSha256": "e809539eabbdde0ad1375f34d00bfdfc70c8f5a138d6d33491009df01fe5ccbc",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v41",
+  "scenario": "round70 NPC three-intent scenario; scenario.mjs sha256 668da7addddab534dd659f9f25c6a6de2b8e6681bc4dd6a52c83e04d27646f85",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "setup": {
+    "actorName": "旅行守卫",
+    "actorId": "character:23046af4-4c66-4e10-a260-fe16705a3960",
+    "npcId": "npc:black-oak-will:varo",
+    "sceneId": "wake",
+    "preexistingPlans": 0,
+    "preexistingActivities": 0,
+    "preexistingActionEvents": 0,
+    "baselineVerified": true
+  },
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "text": "我走到账台旁，向瓦罗点头：“我叫旅行守卫。我想先用半分钟整理一下思路。您若方便，过半分钟轻敲一下账台提醒我，我们再接着谈。”",
+      "submissionId": "vnext-round76-npc-http-fd58bc50-013b-4e06-bf67-e3ab101cb9ce",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "outcomeKind": "rejected",
+      "publicError": "权威 KP 模型配置或输出无效。",
+      "calls": 2
+    }
+  ],
+  "rootCause": {
+    "where": "app/_runtime/lib/kp/deepseek.ts assertDeepSeekStrictToolModelInput",
+    "what": "The proposal call now offers two tools (submit plus the selection tool). The transport assertion required exactly one and threw DeepSeekStrictToolConfigurationError.",
+    "statusIsLocal": "DeepSeekStrictToolConfigurationError.status = 422 is a local constant, so the server log's providerStatus:422 does not mean DeepSeek rejected anything. The ordinal 2 request never left the machine and has no usage.",
+    "ownDefect": true,
+    "notAModelFailure": true
+  },
+  "invocations": [
+    {
+      "ordinal": 1,
+      "requestHash": "sha256:d7e454e5c4fff42c41d6bc980202b2e8b8703e7f9ab09c5200842e831aa843a2",
+      "bindingHash": "sha256:56eb05855c8019819340a3ee90d6b6ff408c4b38148169421be3838dc04c7129",
+      "estimatedInputTokens": 24308,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:7f9b7ec38f052de4dd4119acb4ee1c7bdcf14097f6e66cd7a5b8f78b316d0cef",
+      "result": "success",
+      "durationMs": 1642,
+      "responseHash": "sha256:a1347f4cd7e229420e597c0637a68124f94928a72fa6029e3c877c5d2aaca097",
+      "inputTokens": 21215,
+      "outputTokens": 50
+    },
+    {
+      "ordinal": 2,
+      "requestHash": "sha256:6729c470b6190b773facf55e59b89cf5b7fe7ef26ba0b14bd919a3281461876d",
+      "bindingHash": "sha256:56eb05855c8019819340a3ee90d6b6ff408c4b38148169421be3838dc04c7129",
+      "estimatedInputTokens": 28548,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:7f9b7ec38f052de4dd4119acb4ee1c7bdcf14097f6e66cd7a5b8f78b316d0cef",
+      "result": "PROPOSAL_PROVIDER_CONFIGURATION",
+      "durationMs": 5
+    }
+  ],
+  "meter": {
+    "calls": 2,
+    "inputTokens": 21215,
+    "outputTokens": 50,
+    "unknownInputCalls": 1,
+    "unknownOutputCalls": 1,
+    "inputBudgetCharge": 79215,
+    "outputBudgetCharge": 8242,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.311823
+  },
+  "meterNote": "Two calls are counted but only ordinal 1 reached the API (21215 in / 50 out). Ordinal 2 has no usage and is charged at the conservative upper bound, which is why the CNY figure exceeds round75's four real calls.",
+  "pricing": {
+    "window": "peak",
+    "chargedCny": 0.311823,
+    "capCny": 5,
+    "tariffHtmlSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "note": "Unknown usage charged at the conservative upper bound. Computed from the saved verified tariff, not a provider invoice."
+  },
+  "authorityAfterBatch": {
+    "stateVersion": "0",
+    "events": 0,
+    "receipts": 0,
+    "npcPlans": 0,
+    "activities": 0
+  },
+  "gate1": {
+    "next": "stop",
+    "category": "transportFailure"
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0
+  },
+  "sourceEnd": {
+    "beforeCount": 321,
+    "afterCount": 321,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "servicesStopped": true,
+    "verifiedAbsent": true,
+    "ports": {
+      "4320": false,
+      "4321": false
+    }
+  },
+  "followUpProbe": {
+    "question": "Does the strict-tool beta endpoint accept two strict tools at all?",
+    "request": "POST https://api.deepseek.com/beta/chat/completions, deepseek-v4-flash, two strict:true function tools, tool_choice required, parallel_tool_calls false",
+    "result": {
+      "status": 200,
+      "toolCalled": "ask_more_types",
+      "arguments": "{\"requestedCapabilities\": [\"passTime\"]}",
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 397,
+        "completion_tokens": 44
+      }
+    },
+    "conclusion": "The provider accepts two strict tools and the model selected the second and filled it. The one-tool rule was ours, not the provider's, and it was wrong for this use."
+  },
+  "coverageOfTheTwoLocalChanges": {
+    "selectionCarriesFillingBoundaries": "Not exercised beyond ordinal 1 returning a selection; the proposal call never reached the API.",
+    "selectionAmendment": "Not exercised, and as shipped it could not have been: the transport refused the surface it needs."
+  },
+  "notCovered": [
+    "Intents 2 and 3 were not sent.",
+    "Neither local change has real-model evidence; this batch tested our own transport contract instead.",
+    "Rounds 70, 72, 73, 74 and 75 are unchanged by this batch."
+  ]
+}

@@ -3303,3 +3303,17 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 定向验证（与 `9a631fc` 基线 worktree 逐名 comm）：矩阵 4/4 exit0；11 个 schema/repair/reference 消费者 78/106 与基线同集；provider-room 44/44 exit0；stage3-room 31/35，4 项与基线同名；typecheck 与 diff-check exit0。过程中引入并修正 3 处断言：provider-room 与 observation-reference-surface 的 ordinal 2 系统提示词/surface 需补 amendable（生产 surface 确实变了），schema-retrieval 的「选择阶段无填写指导」按不变量更新（裁决三件仍断言缺席，filling 改断言存在）；均为生产行为真变化，非放宽实现。
 
 未覆盖：零 API 调用，两项都无真实模型证据；两项同批上线，真实通过时无法区分谁起作用，事后只能从 Room journal 分辨乙是否触发（补选留下 ordinal 3 的 offer 响应），甲无法分辨；补选后一稿再不可解析时重发与修订争用 ordinal 4，未做代表性验证；terminalMaximumTotal 改 3 未经真实批次证明够用；不裁定「NPC 口头承诺是否必须形成计划」。回执 docs/agent/vnext-selection-composition-validation.md。无部署/push/远端 migration/退役；Goal active。
+
+## 2026-09-07 round76 被自身传输契约挡住与契约放宽（真实批次+开发期）
+
+新建 round76 准备包（自 round75 复制重参数化；scenario.mjs 仍 668da7ad… 与 round70 同字节）。释放前发现并更新准备包一处过时断言：budget-preflight 钉着旧 callPolicy，改为当前 selections1/selectionAmendments1/proposals1/terminalMaximumTotal3/stepCorrections1/stepMaximumTotal4，并记入预算账——每 HTTP 上限仍 5，无补选一次行动 4 次，有补选正好 5，补选后再需修订/重发会要第 6 次并在绑定前被拒，上限不上调。preflight 8/8、networkCalls0/modelCalls0、planSha256 d98f9e4d…；源码/schema 检查在干净树 df864b0 上 14/14 exit0；端口空闲；价目沿用本日已核 htmlSha256 899affbd…，周一17:25 峰值窗口内。freeze 321 项，manifest e809539e…。
+
+结果：ordinal 1 正常（21215/50），ordinal 2 **从未发出 HTTP**——assertDeepSeekStrictToolModelInput 要求恰好一个工具，而本次改动的提案调用提供 submit+offer 两个，抛 DeepSeekStrictToolConfigurationError。服务端日志的 providerStatus:422 是该错误的本地常量，不是供应商响应。0 提交/事件/Receipt，stateVersion 0。gate1 记 transportFailure 停批，第二三句未发。2 次计数调用中仅 1 次到达 API，ordinal 2 无 usage 按保守上限计费，故 ¥0.311823 高于 round75 四次真实调用的 ¥0.162933。
+
+追加一次一调用有界探针直接问端点：两个 strict:true 工具 + tool_choice required + parallel_tool_calls false → **HTTP 200**，模型选中第二个并正确填写（397/44）。证明「恰好一个工具」是我们自己的约束、供应商不要求，且对此用途是错的。
+
+期间曾把补选改为 submit schema 内的 terminal 变体作为绕法，撞上架构：proposalFillingSchema 按 selectedTerminalKinds 过滤 terminal 变体，而补选是传输信号不是被选中的终结表单，会被过滤掉；要通过就得把信号硬塞进不为它设计的过滤器。探针出结果后整体 git checkout 撤回该绕法，回到 df864b0 的双工具设计。
+
+修改：app/_runtime/lib/kp/deepseek.ts 工具面允许 1 或 2 个并新增工具名唯一性检查（两个工具必须可区分，重名使模型选择不可读），注释记明 2026-09-07 已对真实端点验证，更宽形状仍拒绝。验证：amendment+reemit 矩阵 9/9 exit0；strict-tool-transport + schema-compaction 12/12 exit0；provider-room 44/44；schema/proposal-schema/observation/reference-slot 四文件与 df864b0 基线逐名 comm 零回归；typecheck 与 diff-check exit0。
+
+未覆盖：两项本地改动仍无真实模型证据（提案调用未到达 API）；传输放宽后需另开批次重验；round70/72/73/74/75 结论不变。回执 docs/agent/vnext-round76-{validation.md,live-evidence.json}。未部署/push/远端 migration/退役；Goal active。
