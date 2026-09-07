@@ -1,7 +1,8 @@
 import type { JsonRecord } from "../kp/vnext/canonical-json";
 import type { VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provider";
 import { assertRepairTicket, assertVNextProposalCandidateCapabilities, parseSubmitKpProposalBundleCandidateResponse,
-  parseVNextProposalOfferResponse, vnextProposalCorrectionPrompt, numericRepairSource, vnextProposalHasExecutionRepairBudget, vnextProposalModelRepairDiagnostics } from "../kp/vnext/proposal-provider";
+  parseVNextProposalOfferResponse, vnextProposalCorrectionPrompt, numericRepairSource, vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget,
+  vnextProposalModelRepairDiagnostics, vnextProposalReemitPrompt, vnextProposalUnparsedArguments } from "../kp/vnext/proposal-provider";
 import { createVNextProposalOfferModelInput, CORRECT_KP_PROPOSAL_BUNDLE_TOOL, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../kp/vnext/proposal-schema";
 import { proposalCreatureTargetRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalModelContext, proposalNpcSourceChoices } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
@@ -43,7 +44,8 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   prior: (ordinal: number) => SavedInvocation | undefined,
   requiredContext: VNextRequiredContext): void {
   const invalid = (): never => { throw new TypeError("PROPOSAL_REPAIR_EXHAUSTED"); };
-  const assertSurface = (tools: unknown, stage: VNextProposalStage, capabilities?: readonly VNextProposalCapabilityId[], terminalKinds?: readonly string[]) => {
+  const assertSurface = (tools: unknown, stage: VNextProposalStage, capabilities?: readonly VNextProposalCapabilityId[],
+    terminalKinds?: readonly string[], expectedUserBody?: string) => {
     // Keep property presentation pinned as well as structural meaning.
     if (JSON.stringify(input.request.tools) !== JSON.stringify(tools)) invalid();
     const messages = input.request.messages;
@@ -52,7 +54,9 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       || typeof messages[1].content !== "string" || !messages[1].content.trim()
       || Object.keys(messages[1]).sort().join(",") !== "content,role"
       || canonicalHash(messages[0]) !== canonicalHash({ role: "system", content: vnextProposalSystemPrompt(stage, capabilities, terminalKinds) })
-      || (stage !== "correction" && messages[1].content !== JSON.stringify({ requiredContext: proposalModelContext(requiredContext) }))) invalid();
+      || (expectedUserBody !== undefined
+        ? messages[1].content !== expectedUserBody
+        : stage !== "correction" && messages[1].content !== JSON.stringify({ requiredContext: proposalModelContext(requiredContext) }))) invalid();
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();
@@ -74,6 +78,20 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     return;
   }
   if (input.ordinal !== 3) return invalid();
+  // Room decides for itself whether the saved proposal parsed. When it did not,
+  // no draft, ticket or repair plan can exist, and the only legal third call is
+  // one re-emit of the same question. The proof is the journal, not the caller.
+  const unparsed = vnextProposalUnparsedArguments(response(2));
+  if (unparsed !== undefined) {
+    if (input.repairTicket !== undefined) invalid();
+    if (!vnextProposalHasThirdCallBudget(first.capabilities)) invalid();
+    assertSurface(createSubmitKpProposalBundleModelInput("bound", first.capabilities,
+      proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), first.terminalKinds,
+      proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext),
+      proposalCreatureTargetRefs(requiredContext)).tools,
+      "expandedProposal", first.capabilities, first.terminalKinds, vnextProposalReemitPrompt(unparsed));
+    return;
+  }
   const candidate = parseSubmitKpProposalBundleCandidateResponse(response(2));
   assertVNextProposalCandidateCapabilities(candidate, first.capabilities, first.terminalKinds);
   if (candidate.kind !== "locallyRejected" || !vnextProposalHasExecutionRepairBudget(candidate.draft, first.capabilities)) return invalid();

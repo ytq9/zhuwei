@@ -12,7 +12,7 @@ vNext 已经能用正常注册 Cookie → `/api/game` 的真实链路，让真�
 
 引用槽准入已于 2026-09-07 对齐（parser v39，见[回执](docs/agent/vnext-reference-slot-admission-validation.md)）：模型现在结构上填不出界。**但它至今没有任何真实模型证据** —— round74 已经跑了，第一句就因为模型输出的 JSON 不合法而停批，草稿从没走到引用校验。
 
-round74 反而暴露了一件更基本的事：请求带着 `strict: true` 发往 DeepSeek strict-tool beta 端点，供应商仍返回了语法非法的 JSON。下一件事是先弄清这个，见 §7。
+round74 暴露了一件更基本的事：请求带着 `strict: true` 发往 DeepSeek strict-tool beta 端点，供应商仍返回语法非法的 JSON，历史上 32 份草稿里有 3 份如此、无一被救回。这条已经处理（parser v40，一次由 journal 证明的重发，见 §7），同样只有本地证据。**下一件事是跑一批真实的，把 v39 和 v40 一起验掉。**
 
 ## 2. 接手坐标
 
@@ -94,21 +94,20 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 还没做的：`worldInteraction.instrumentRefs` 仍是自由字符串（准入带持有人作用域，要另立合同）；遥测仍只报 `REFERENCE_UNAVAILABLE / unrecognized`，没指向模型填错的字段位置；round73 选错能力（cure 而非 healing-word）是模型判断问题，不是准入问题。
 
-## 7. 下一件事：strict 声明了却拿到非法 JSON
+## 7. 未解析输出：已加一次重发，等真实验证
 
-round74 已执行完毕并收尾（服务已关、源码起止 321 项 allEqual、replay exactState、¥0.140847 / 上限 ¥5）。它没有验证到引用槽准入，却暴露了一个更靠前的问题。
+完整回执见 [vnext-unparsed-reemit-validation.md](docs/agent/vnext-unparsed-reemit-validation.md)。
 
-**已核实的事实：**第 2 次调用的请求发往 `https://api.deepseek.com/beta/chat/completions`，`tools[0].function.strict === true`，`tool_choice === "required"`，parameters 18,916 字节。返回的 `arguments` 字符串在 `decision.risk` 处有未转义 ASCII 双引号，不是合法 JSON。约束解码本应让这种输出不可能产生。
+**先记住这个事实**：请求确实发往 `https://api.deepseek.com/beta/chat/completions`、`strict: true`、`tool_choice: required`，schema 通过本地方言校验（255/2048 节点、深度 19/32、0 issues），**供应商仍然返回非法 JSON**。扫描 /tmp 全部历史 capture：32 份不同草稿里 3 份结构非法（round64 未终止字符串、round68 尾逗号、round74 裸引号），三次都是 `finish_reason=tool_calls`、远未触顶，**无一被救回**。约 9%，而批次层面一次就整批停。
 
-注意别搞混：`baeedb5` 撤销的是 **V3 生产 profile** 的 strict output（因为该 Form 家族的条件规则在 strict 方言里无法表达），**不是 vNext 这条链**。vNext 一直带着 `strict: true`。
+一个被否定的假设，别再走一遍：起初怀疑 `[\s\S]+` 这类宽松 pattern 被编进解码文法放行了裸引号 —— round68 的**尾逗号**是纯结构错误，与字符串 pattern 无关，假设不成立。另注意 `baeedb5` 撤销的是 **V3 生产 profile** 的 strict，不是 vNext 链。
 
-**我的假设（未验证，别当结论）：** 该 beta 端点在 schema 过大或 `$def` 过深时可能静默退化为非约束解码。18,916 字节、多层 `$ref` 是可疑点。也可能只是 beta 的缺陷，或只是一次偶发。**一次样本什么都不能证明。**
+现在的处理：草稿**完全没解析出来**时，允许一次由 journal 证明的重发。服务器不改写任何字节、不保留任何内容、不授予任何权限，只说明字节在哪里不再是 JSON；模型重述自己的决定，回来的草稿从头完整校验。合法 JSON 的内容拒绝、重复成员策略拒绝、根边界可恢复的尾逗号，三类都**不**走这条路 —— 它们都有草稿，服务器看得见，猜它想说什么就是臆造。parser v39 → **v40**。
 
-建议的下一步是一次**有界诊断**，不是直接改实现：用 `tools/run-deepseek-strict-tool-handshake.mjs` 配合一份握手定义，在同一端点上对照大 schema 与精简 schema 各发若干次，看语法失败是否与 schema 规模相关。预算按既有规矩预设、失败即停、保留原稿。这是一次新的能力/诊断决定，动手前先和用户确认范围与预算。
+⚠️ **两个边界要记牢：**
 
-如果确认了退化，可选路径各有代价，都不要自己拍板：把 schema 压小（`deepseek-strict-schema-compaction.ts` 已经在做压缩，还有多少余量未知）；换请求形态；或者接受这个失败率并让未解析草稿变成可有界修复的（但 `89697c4` 明确把 raw 修复改成了失败关闭，推翻它要重新论证泄漏与伪造风险）。
-
-**round74 的准备包已用尽**（`sourceFrozen=true`、session 已存在，`freeze.py` 不可重跑）。下一批要新建准备包，照 `/tmp/zhuwei-round74-npc-preparation/RUNBOOK.md` 的结构，并且——⚠️ 那些编排都在 `/tmp`，重启即失，仓库里没有副本。
+1. **零 API 调用。** 重发能否让真实模型交出合法 JSON 完全未验证。
+2. **terminal-only 选择（如 `abilityOperation`）没有第三次调用预算，仍然一次语法失败即停批。** round73 那类施法场景不受益。要覆盖必须改调用预算，是另一项决定。
 
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 

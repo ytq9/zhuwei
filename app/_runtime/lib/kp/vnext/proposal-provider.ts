@@ -48,11 +48,11 @@ export function vnextProposalModelRepairDiagnostics(...args: Parameters<typeof v
 }
 import { validateVNextProposalBundle } from "./proposal-validator";
 import { requiredContextBasisReferences } from "./required-context-runtime";
-import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITY_IDS,
+import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS,
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v39",
+  version: "kp-vnext2-proposal-parser-v40",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "flat-type-selection-then-exact-selected-forms-terminal-two-step-three-v4",
   toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -67,6 +67,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   localValidation: "closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6",
   referenceSelection: "frozen-authorized-read-bound-basis-and-classed-visible-subjects-v3",
   correctionPolicy: "server-proven-plan-confirmation-exact-number-and-frozen-intent-echo-once-v9",
+  unparsedOutputPolicy: "journal-proved-single-reemit-of-the-same-question-no-server-content-v1",
   correctionResponseProtocol: VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL,
 });
 
@@ -196,6 +197,18 @@ export function vnextProposalHasExecutionRepairBudget(draft: Readonly<JsonRecord
     || (Array.isArray(value.proposals) && value.proposals.some(selected)));
 }
 
+/** Whether this selection carries the third call at all. A terminal-only
+ * selection spends its two calls on the selection and the proposal, so it has
+ * no slot for a correction and none for a re-emit either. Unlike the repair
+ * budget this reads the selection, because an unparsed response leaves no
+ * draft to read. */
+export function vnextProposalHasThirdCallBudget(capabilities: readonly VNextProposalCapabilityId[]): boolean {
+  return capabilities.some(id => {
+    const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id);
+    return capability !== undefined && !("surface" in capability && capability.surface === "native");
+  });
+}
+
 /** The domain contract allows one nonrecursive level of complete choices. */
 function proposalFrames(bundle: Record<string, unknown>): { value: Record<string, unknown>; path: (string | number)[] }[] {
   const frames = [{ value: bundle, path: [] as (string | number)[] }];
@@ -275,6 +288,14 @@ export type VNextProposalBundleFirstPassResult =
       kind: "repairRequired";
       repairTicket: VNextProposalBundleRepairTicket;
       invocationCount: 1;
+    }>
+  | Readonly<{
+      /** Nothing parsed, so there is no draft to repair and nothing to keep.
+       * The only bounded continuation is asking the model to restate its own
+       * decision as valid JSON; the server contributes no content. */
+      kind: "reemitRequired";
+      unparsed: VNextProposalUnparsedArguments;
+      invocationCount: 1;
     }>;
 
 export function parseSubmitKpProposalBundleCandidateArguments(
@@ -353,6 +374,55 @@ export function parseSubmitKpProposalBundleCandidateResponse(
   }
   if (call.name !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) return wrongTool(call.name, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
   return parseSubmitKpProposalBundleCandidateArguments(call.arguments);
+}
+
+export type VNextProposalUnparsedArguments = Readonly<{
+  toolName: typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME;
+  originalArguments: string;
+  diagnostic: ProposalDiagnostic;
+}>;
+
+/** The saved response carried the right tool but arguments that are not JSON
+ * and cannot be recovered as a complete root object, so no draft exists at all.
+ *
+ * This is deliberately derived from the response alone: the Provider and Room
+ * reach the identical conclusion from the same saved bytes, so a re-emit is
+ * proved by the journal rather than asserted by whoever asks for it. A draft
+ * that did parse is never in scope here — that is a repair ticket's business,
+ * and the server must not guess what a malformed one meant. */
+export function vnextProposalUnparsedArguments(response: unknown): VNextProposalUnparsedArguments | undefined {
+  let call: ReturnType<typeof extractSingleToolCall>;
+  try { call = extractSingleToolCall(response); } catch { return undefined; }
+  if (call.name !== SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME || typeof call.arguments !== "string") return undefined;
+  // A re-emit spends a real call, so it needs positive evidence that one can
+  // help: the model must have finished on its own. `length` means the output
+  // hit the cap and the same request would hit it again, and an envelope with
+  // no stated reason is not the documented shape -- neither earns the call.
+  const choice = isPlainRecord(response) && Array.isArray(response.choices) ? response.choices[0] : undefined;
+  const finished = isPlainRecord(choice) ? choice.finish_reason : undefined;
+  if (typeof finished !== "string" || finished === "length") return undefined;
+  try { parseJsonWithUniqueMembers(call.arguments); return undefined; } catch (error) {
+    if (!(error instanceof JsonSyntaxError)) return undefined;
+    // Well-formed JSON that this parser rejects on policy -- duplicate members
+    // at any depth -- is a draft the server can see and must refuse, not an
+    // absent one. Only bytes that are not JSON at all leave nothing to repair.
+    try { JSON.parse(call.arguments); return undefined; } catch { /* not JSON */ }
+    try { completeJsonObjectSyntaxEvidence(call.arguments); return undefined; } catch { /* unrecoverable */ }
+    return deepFreeze({ toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+      originalArguments: call.arguments, diagnostic: syntaxDiagnostic(error) });
+  }
+}
+
+/** Both the Provider and Room bind this exact private body to the same saved
+ * unparsed response. The server states only where the bytes stopped being JSON;
+ * it never restates, guesses or repairs the decision, and the re-emitted draft
+ * is validated from scratch like any first draft. */
+export function vnextProposalReemitPrompt(evidence: VNextProposalUnparsedArguments): string {
+  return JSON.stringify({
+    instruction: "上一次工具调用的 arguments 不是合法 JSON，服务器无法解析出任何草稿，因此没有任何内容被保留或修复。请用同一个工具、同一份冻结上下文，重新完整提交你原本的决定，只需保证输出是合法 JSON：字符串内部的双引号和反斜杠必须转义，不要使用尾随逗号，不要截断。这不是让你改变裁决——重述你本来的决定，不要因为这次失败而换一个更容易写的方案。完整提案仍会从头重验。",
+    syntaxError: { reason: evidence.diagnostic.constraint, ...(evidence.diagnostic.location === undefined ? {} : { location: evidence.diagnostic.location }) },
+    originalArguments: evidence.originalArguments,
+  });
 }
 
 /** Parses only the selected strict tool's arguments; no text/JSON fallback. */
@@ -492,6 +562,8 @@ export async function invokeSubmitKpProposalBundleFirstPass(
     assertVNextProposalCandidateCapabilities(candidate, capabilities, input.terminalKinds);
   } catch (error) {
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
+    const unparsed = vnextProposalUnparsedArguments(response);
+    if (unparsed !== undefined) return deepFreeze({ kind: "reemitRequired", unparsed, invocationCount: 1 });
     return providerRejected(
       "PROPOSAL_FORM_INVALID",
       error.diagnostics.map(d => d.constraint),
@@ -644,12 +716,56 @@ export function vnextProposalCorrectionPrompt(candidate: VNextProposalBundleRepa
 
 /** Convenience orchestration that makes durable persistence an explicit gate
  * between the only main call and the optional correction call. */
+/** One re-emit of a draft that never parsed. The tool surface is the same one
+ * the first call carried, so the model answers the same question with the same
+ * frozen context; only the user body differs, and it says nothing about the
+ * decision. The result is validated from scratch and gets no further call. */
+export async function invokeReemitKpProposalBundle(
+  input: Readonly<{
+    binding: AuthoritativeModelBinding;
+    modelId: string;
+    requiredContext: VNextRequiredContext;
+    unparsed: VNextProposalUnparsedArguments;
+    capabilities?: readonly VNextProposalCapabilityId[];
+    terminalKinds?: readonly string[];
+    signal?: AbortSignal;
+  }>,
+): Promise<VNextProposalBundleProviderResult> {
+  const requiredContext = deepFreeze(canonicalClone(input.requiredContext)) as VNextRequiredContext;
+  const capabilities = closeVNextProposalCapabilities(input.capabilities ?? VNEXT_PROPOSAL_CAPABILITY_IDS);
+  const response = await input.binding.run(
+    input.modelId,
+    createSubmitKpProposalBundleModelInput(vnextProposalReemitPrompt(input.unparsed), capabilities,
+      proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds,
+      proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext),
+      proposalCreatureTargetRefs(requiredContext)),
+    input.signal === undefined ? undefined : { signal: input.signal },
+  );
+  let candidate: VNextProposalBundleCandidate;
+  try {
+    candidate = parseSubmitKpProposalBundleCandidateResponse(response);
+    assertVNextProposalCandidateCapabilities(candidate, capabilities, input.terminalKinds);
+  } catch (error) {
+    if (!(error instanceof VNextProposalBundleOutputError)) throw error;
+    return providerRejected("PROPOSAL_FORM_INVALID", error.diagnostics.map(d => d.constraint), false, 2, error.diagnostics);
+  }
+  if (candidate.kind !== "accepted") {
+    return providerRejected("PROPOSAL_FORM_INVALID", candidate.issues, false, 2, candidate.diagnostics);
+  }
+  // A re-emit is not a repair: nothing was carried over, so `repairUsed` stays
+  // false and only the invocation count records the extra call.
+  return deepFreeze({ kind: "locallyAccepted", bundle: candidate.bundle,
+    bundleHash: candidate.bundleHash, repairUsed: false, invocationCount: 2 });
+}
+
 export async function invokeSubmitKpProposalBundleWithOneCorrection(
   input: Readonly<{
     binding: AuthoritativeModelBinding;
     modelId: string;
     message: string;
     requiredContext: VNextRequiredContext;
+    capabilities?: readonly VNextProposalCapabilityId[];
+    terminalKinds?: readonly string[];
     persistRepairTicket: (ticket: VNextProposalBundleRepairTicket) => void | Promise<void>;
     signal?: AbortSignal;
   }>,
@@ -658,6 +774,11 @@ export async function invokeSubmitKpProposalBundleWithOneCorrection(
     throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_PERSISTENCE_REQUIRED");
   }
   const firstPass = await invokeSubmitKpProposalBundleFirstPass(input);
+  if (firstPass.kind === "reemitRequired") {
+    return invokeReemitKpProposalBundle({ binding: input.binding, modelId: input.modelId,
+      requiredContext: input.requiredContext, unparsed: firstPass.unparsed,
+      capabilities: input.capabilities, terminalKinds: input.terminalKinds, signal: input.signal });
+  }
   if (firstPass.kind !== "repairRequired") return firstPass;
   await input.persistRepairTicket(firstPass.repairTicket);
   return invokeCorrectKpProposalBundle({

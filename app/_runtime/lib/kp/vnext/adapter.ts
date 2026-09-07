@@ -6,7 +6,8 @@ import type { VNextInvocationRequest, VNextInvocationCompletion, VNextInvocation
 import { vnextInvocationRetryAfter } from "../../room/vnext-proposal-invocation";
 import { canonicalHash, isPlainRecord, type JsonRecord } from "./canonical-json";
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/assemble";
-import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle, vnextProposalHasExecutionRepairBudget, type VNextProposalBundleRepairTicket } from "./proposal-provider";
+import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle, invokeReemitKpProposalBundle,
+  vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, type VNextProposalBundleRepairTicket } from "./proposal-provider";
 import type { VNextRequiredContext } from "./required-context";
 import { proposalModelContext } from "./proposal-context";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET } from "./runtime-policy";
@@ -141,6 +142,26 @@ export function createVNextKpAdapter(options: Readonly<{
       const first = await invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(2),
         modelId: VNEXT_KP_PROFILE.modelId, message, requiredContext,
         capabilities: offer.capabilities, terminalKinds: offer.terminalKinds });
+      if (first.kind === "reemitRequired") {
+        // Nothing parsed, so there is no draft, no ticket and nothing kept. A
+        // terminal-only selection has already spent its two calls.
+        if (!vnextProposalHasThirdCallBudget(offer.capabilities)) {
+          const constraint = "reemit:terminal-selection-call-budget-exhausted";
+          throw vnextProposalFailure("PROPOSAL_FORM_INVALID", false, undefined, {
+            issues: [first.unparsed.diagnostic.constraint, constraint],
+            diagnostics: [first.unparsed.diagnostic, proposalDiagnostic("REPAIR_OUT_OF_SCOPE", constraint, {
+              expected: { maximumCalls: 2 }, actual: { callsUsed: 2 },
+              repair: { allowed: false, reason: "terminal-selection-and-proposal-use-the-two-call-budget" },
+            })],
+          });
+        }
+        const reemitted = await invokeReemitKpProposalBundle({ binding: await boundInvocation(3),
+          modelId: VNEXT_KP_PROFILE.modelId, requiredContext, unparsed: first.unparsed,
+          capabilities: offer.capabilities, terminalKinds: offer.terminalKinds });
+        if (reemitted.kind === "rejected") throw vnextProposalFailure(reemitted.code, false, undefined,
+          { issues: reemitted.issues, diagnostics: reemitted.diagnostics });
+        return reemitted.bundle;
+      }
       if (first.kind === "repairRequired" && !vnextProposalHasExecutionRepairBudget(first.repairTicket.draft, offer.capabilities)) {
         const constraint = "repair:terminal-selection-call-budget-exhausted";
         throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED", false, undefined, {

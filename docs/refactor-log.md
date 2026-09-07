@@ -3259,3 +3259,17 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 按 primaryFailurePolicy 首个技术失败停止新意图，gate1 记 formatFailure/stop，第二三句未发送，未重采、未改写场景、未替换 NPC。0 提交/事件/骰/Receipt/delivery，stateVersion 保持 0，瓦罗未回应，公开消息仍只有开场旁白。收尾 replay pinnedProfilesMatch/exactState=true、事件 0；services shutdown 两角色 verifiedAbsent，lsof 复核 4320/4321 无监听；source-end 321 项 allEqual、分支与 HEAD 未变。2 calls/45173 输入/592 输出，峰价 ¥0.140847（上限 ¥5）。
 
 **本批未检验引用槽准入**：草稿从未解析，basisRefs 与 response.basis 没有进入校验；round70 的 wrapper 失败未复现，也不能据此宣称已修复被真实验证。计数：格式失败 1（JSON 语法 1），引用失败 0、规则拒绝 0、叙事矛盾 0、窄修订 0、恢复 0。回执 docs/agent/vnext-round74-{validation.md,live-evidence.json}，私有证据留在 /tmp/zhuwei-round74-npc-preparation/evidence。未部署、未 push、未做远端 migration 或退役；Goal active。
+
+## 2026-09-07 未解析输出的一次重发（开发期）
+
+目标/合同：承接 round74 停批。能力合同为——完全没有解析出草稿时，允许一次由 journal 证明的重发，服务器不提供任何内容；变化维度是「草稿是否存在」而非错误文本形状。合法 JSON 的内容拒绝与重复成员策略拒绝都有草稿，走既有票据或直接拒绝；根边界可恢复的仍归 syntaxEvidence 修复。守住 `89697c4` 的原则：服务器不改写原始文本冒充合法。基线 `6dd1806`。
+
+诊断：扫描 /tmp 全部历史 capture，32 份不同 arguments 中 3 份结构非法且无一被救回（round64 未终止字符串 pos1334、round68 尾逗号 pos1208、round74 裸引号 pos56），三次均 finish_reason=tool_calls、completion 542–665 远未触及 max_tokens 4000。核实请求确发往 beta 端点、`strict:true`、`tool_choice:required`，schema 通过本地方言校验（255/2048 节点、深度 19/32、0 issues）——声明 strict 仍得非法 JSON。曾假设宽松 pattern（`[\s\S]+`）被编入解码文法放行裸引号，被 round68 的尾逗号否定（纯结构错误与字符串 pattern 无关），该假设记入回执以免重走。另澄清 `baeedb5` 撤销的是 V3 生产 profile 的 strict，非 vNext 链。
+
+修改与直接消费者：`proposal-provider.ts` 新增 `vnextProposalUnparsedArguments`（仅从响应判定：工具名、字符串 arguments、finish_reason 存在且非 length、`JSON.parse` 失败、根边界不可恢复）、`vnextProposalReemitPrompt`、`reemitRequired` 首轮结果、`invokeReemitKpProposalBundle`（同一 submit surface 与冻结上下文，仅换 user 正文，结果从头校验，invocationCount 2、repairUsed false）、`vnextProposalHasThirdCallBudget`（读选择而非草稿）；parser v39→v40 并新增 `unparsedOutputPolicy`。`adapter.ts` 接入重发分支，terminal-only 以 `reemit:terminal-selection-call-budget-exhausted` 失败关闭。`room/vnext-proposal-invocation.ts` 的 ordinal 3 先由 Room 自行判定无草稿，要求不带票据、有第三次预算、工具面同 ordinal 2、正文逐字等于重发提示词。
+
+代表性矩阵 `tests/kp-vnext-unparsed-reemit.test.mjs` 5/5：两种真实无草稿形状同路且重发正文不含任何应由模型决定的内容；内容被拒草稿/重复成员/根边界尾逗号三类均不重发；Room 独立证明并拒绝带票据与被篡改正文；finish_reason 门（tool_calls/stop 允许，length 与缺字段拒绝）；terminal-only 无第三次调用。
+
+定向验证（与 `6dd1806` 基线 worktree 逐名 comm 对照）：矩阵 5/5 exit 0；repair/syntax 组 34/53 与基线同集；schema 组与基线同集；`npx vitest run kp-vnext-provider-room + stage3-room` 75/79，provider-room 全绿、4 项 stage3 与基线同名；typecheck 与 diff-check exit 0。过程中确曾引入一次回归：初版检测器把重复成员当成无草稿，令 frozen-intent-repair 的「never gain echo deletion authority」由 rejected 变 reemitRequired；该测试判断正确，加入 JSON.parse 与 finish_reason 两道判定后回到基线同集，未修改该测试迁就实现。
+
+未覆盖：零 API 调用，重发能否让真实模型交出合法 JSON 未验证（三次失败形状各异读起来像随机，但这是推断）；terminal-only 选择仍一次语法失败即停批，round73 那类场景不受益，扩展需改调用预算另作决定；供应商 strict 不保证良构只有 3/32 观察证据，未做专门探针；重发不解决内容质量。回执 docs/agent/vnext-unparsed-reemit-validation.md，repo-map 已同步。无部署/push/远端 migration/退役，Goal active。
