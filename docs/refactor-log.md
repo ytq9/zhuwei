@@ -3363,3 +3363,7 @@ v42 的第一批真实调用。模型在共享裁决上填 `durationMicros:"3000
 ## 裸 "none" 统一解码 + round80（2026-09-07，源码 `fee45ef`，parser v43）
 
 codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段不在列表里；补齐，不走修订票据。round80 首句：模型填 `durationMicros:"12000000"`，时钟 0 → 12000000，`FictionTimeAdvanced` 为首条事件、落在行动者时间线——虚构时长合同的执行半边第一次有真实证据。第二句等待 +60 秒。`consequences: []` 五批不变。见 [round80 回执](agent/vnext-round80-validation.md)。
+
+## 等待走模型旁白（2026-09-07，基线 `81c3b1e`，本地验证）
+
+纯等待只对 lifecycle 受众跳过旁白；活着的 Viewer 的等待建模型 audience。`roomNarrationContext` 给等待冻结 `[开始 − 30 分钟, 结束]` 内的同场景已听发言（按虚构时间排序）和本人最近发言；生成与审核提示词各加一条：NPC 原话约定在经过时间内兑现的即时小动作可按原话写成已发生，不新增台词、信息、持续状态或机械效果。review schema v12、policy v10。代价：纯等待 2 → 4 次调用，等待 + 可见 NPC 行动 5 → 7。node/vitest 按名比对基线 0 新失败。见 [回执](agent/vnext-wait-narration-validation.md)。

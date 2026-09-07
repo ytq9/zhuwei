@@ -363,3 +363,32 @@ test('an inconsistent rejection retains the concrete error and its conflicting s
   });
   assert.equal(run.calls.length, 2);
 });
+
+test('a wait freezes the same-scene dialogue heard within one tier before it, in fiction order, plus the viewer\'s own recent lines', () => {
+  const request = requestFor([{ kind: 'mechanicalOutcome', targetRefs: [viewer], outcomeCode: 'timePassageCompleted', summary: '等待已结束，实际经过 60 秒，原计划为 60 秒。' }]);
+  const projection = { viewer: { kind: 'player', subjectId: viewer }, controlledCharacter: { name: '药师', sceneId: 'scene:hall' }, entities: {},
+    publicExpression: { scene: { name: '厅堂', tone: '克制' }, characters: [] }, visibleFacts: [],
+    activities: [{ kind: 'timePassage', activityId: 'activity:wait', characterId: viewer, status: 'completed', startedAtFictionMicros: '2000000000', endedAtFictionMicros: '2060000000' }],
+    conversationThreads: [
+      { threadRef: 'thread:hall', sourceSceneId: 'scene:hall', claimRef: 'source:ask', responseClaimRef: 'source:reply' },
+      { threadRef: 'thread:old', sourceSceneId: 'scene:hall', claimRef: 'source:old', responseClaimRef: null },
+      { threadRef: 'thread:later', sourceSceneId: 'scene:hall', claimRef: 'source:after', responseClaimRef: null },
+      { threadRef: 'thread:elsewhere', sourceSceneId: 'scene:gate', claimRef: 'source:gate', responseClaimRef: null }],
+    sourceClaims: [
+      { claimId: 'source:reply', speakerId: 'npc:a', semanticContent: '半分钟到了我敲两下。', acquiredAtFictionMicros: '1999000000', motive: 'PRIVATE_MOTIVE' },
+      { claimId: 'source:ask', speakerId: viewer, semanticContent: '给我半分钟。', acquiredAtFictionMicros: '1999000000' },
+      { claimId: 'source:old', speakerId: 'npc:a', semanticContent: 'STALE_LINE', acquiredAtFictionMicros: '100000000' },
+      { claimId: 'source:gate', speakerId: 'npc:a', semanticContent: 'OTHER_SCENE_LINE', acquiredAtFictionMicros: '2000000000' },
+      { claimId: 'source:after', speakerId: 'npc:a', semanticContent: 'FUTURE_LINE', acquiredAtFictionMicros: '2070000000' }] };
+  const frozen = roomNarrationContext({ claims: request.renderableClaims, projection, actorCharacterId: viewer, experiencedTranscript: { messages: [
+    { kind: 'player', body: '我等半分钟。', speakerName: '药师', speakerCharacterId: viewer },
+    { kind: 'kp', body: 'UNRELATED_OPENING', speakerName: 'KP', speakerCharacterId: null },
+    { kind: 'player', body: 'OTHER_PLAYER_LINE', speakerName: '远行者', speakerCharacterId: actor }] } });
+  assert.deepEqual(frozen.expression.recentDialogue.map(entry => [entry.kind, entry.body]),
+    [['player', '给我半分钟。'], ['npc', '半分钟到了我敲两下。'], ['player', '我等半分钟。']]);
+  assert.doesNotMatch(JSON.stringify(frozen), /STALE_LINE|OTHER_SCENE_LINE|FUTURE_LINE|UNRELATED_OPENING|OTHER_PLAYER_LINE|PRIVATE_/);
+  assert.ok(frozenNarrationContextConform(JSON.parse(JSON.stringify(frozen)), request.renderableClaims));
+  // Without a wait, the same projection lends no dialogue to an unrelated result.
+  const plain = roomNarrationContext({ claims: transfer().renderableClaims, projection, actorCharacterId: actor, experiencedTranscript: { messages: [] } });
+  assert.deepEqual(plain.expression.recentDialogue, []);
+});

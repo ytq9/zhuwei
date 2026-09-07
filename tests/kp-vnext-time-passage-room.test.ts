@@ -205,7 +205,9 @@ it("a plain wait uses one selection, one proposal, and deterministic Activity de
     endedAtFictionMicros: (BigInt(before.state.fictionTimelines[timeline].nowMicros) + 17000000n).toString() });
   expect(elapsedEvents(after.events).map(event => record(event.payload).durationMicros)).toEqual(["17000000"]);
   expect(c.playerRequests).toHaveLength(2); expect(c.actorRequests).toHaveLength(0); expect(c.draws).toBe(0);
-  expect(c.narration).toHaveLength(0);
+  // The completed wait is narrated once for its live owner; the deterministic Activity display stays.
+  expect(c.narration).toHaveLength(1);
+  expect(JSON.stringify(c.narration[0])).toContain("等待已结束，实际经过 17 秒");
   expect(c.httpCalls).toEqual([["proposal", "proposal"]]);
   const observed = await stub.observe(ALICE as never);
   expect(JSON.stringify(observed)).toContain('"kind":"timePassage"');
@@ -233,8 +235,10 @@ it("a one minute wait stops at the NPC deadline, commits its real trace, then co
   expect(traceEvent.fictionInstantMicros).toBe((BigInt(before.state.fictionTimelines[timeline].nowMicros) + 2000000n).toString());
   expect(after.state.canonicalFacts[TRACE].value).toMatchObject({ description: DESCRIPTION });
   expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
-  expect(c.narration).toHaveLength(1);
+  // The NPC's visible trace and the completed wait are separate roots, narrated in commit order.
+  expect(c.narration).toHaveLength(2);
   expect(JSON.stringify(c.narration[0])).toContain(DESCRIPTION);
+  expect(JSON.stringify(c.narration[1])).toContain("等待已结束，实际经过 60 秒");
   expect(JSON.stringify(c.narration)).not.toMatch(/NPC_PRIVATE_GOAL_CANARY|NPC_PRIVATE_ORDER_CANARY|NPC_PRIVATE_TARGET_REASON_CANARY/);
   expect(after.due).toEqual([]);
 }, 30_000);
@@ -345,14 +349,15 @@ it("a death at the current instant settles only the authorized wait and its orig
 }, 30_000);
 
 
-it("the default five-call budget completes the wait and NPC narration in five calls with no recovery", async () => {
-  const stub = await initialize("vnext-passage-budget-five"), c = capture(), root = await seedPlan(stub);
-  c.callLimit = "5"; c.countNarrationCalls = true;
-  const input = timeInput("submission:passage:budget-five");
+it("a seven-call budget completes the wait, the NPC narration and the wait narration with no recovery", async () => {
+  const stub = await initialize("vnext-passage-budget-seven"), c = capture(), root = await seedPlan(stub);
+  c.callLimit = "7"; c.countNarrationCalls = true;
+  const input = timeInput("submission:passage:budget-seven");
   const result = await run(stub, input, c, passage("60000000"));
   expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", action: "committed" });
   expect(record(result).deliveryPending).not.toBe(true);
-  expect(c.httpCalls).toEqual([["proposal", "proposal", "actorPlan", "narration", "audit"]]);
+  // The visible NPC action and the completed wait are separate committed roots; each narrates once.
+  expect(c.httpCalls).toEqual([["proposal", "proposal", "actorPlan", "narration", "audit", "narration", "audit"]]);
   const committed = await snapshot(stub, root);
   expect(passageActivity(committed.state).status).toBe("completed"); expect(committed.due).toEqual([]);
   const observation = record(await stub.observe(ALICE as never));

@@ -15,3 +15,5 @@
 普通复杂耗时裁决、完整NPC新计划、多人20+连续链及整体Goal继续未完成。本阶段不部署、push或commit。
 
 2026-09-07 预算复核后的交付决定：纯等待开始、中间计时、完成或中断均使用本人 Activity 的确定性状态展示，最终时间 Claims 仍保留审计和后续上下文；只有精确且非空的纯 timePassageCompleted/timePassageInterrupted 材料免建模型 audience，额外离队、条件、伤害或NPC可见结果继续原 Claims/旁白交付。受控 Room 已证明原设计在 NPC execute 时需要 6 次调用（Proposal1+NPC1+NPC旁白审核2+等待完成旁白审核2），会超过原每 HTTP5次；不提高上限，调整为纯等待1次、一次有可见痕迹NPC等待4次。该选择尚待最终主树定向与真实验证，不能把免调用当成虚构完成或吞掉混合机械结果。
+
+2026-09-07 晚收窄：上一条的「免建模型 audience」只保留给 lifecycle 受众；活着的 Viewer 的纯等待现在走旁白，理由与代价见[等待旁白回执](vnext-wait-narration-validation.md)。

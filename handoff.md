@@ -8,7 +8,7 @@
 
 ## 1. 一句话状态
 
-**阶段性交接，2026-09-07 晚。HEAD `2c39286`，分支 `cloudflare` 领先 `origin` 未推送。** 本节只写「现在在哪、下一步是什么」；细节在 §7 与各回执。
+**阶段性交接，2026-09-07 晚。基线 `81c3b1e` 之上多了一个提交（等待走模型旁白），分支 `cloudflare` 领先 `origin` 未推送。** 本节只写「现在在哪、下一步是什么」；细节在 §7 与各回执。
 
 vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSeek 走完完整行动。round78 是第一个连过第二句的批次；[round80](docs/agent/vnext-round80-validation.md) 是第一个**普通交谈推进了时钟**的批次：模型在共享裁决上填 `durationMicros:"12000000"`，`branch:main` 0 → 12000000，`FictionTimeAdvanced` 是首条事件、落在行动者时间线、旁白看到了时间 Claim；第二句 `passTime` 再 +60 秒。**正常游玩里时间从此会走。**
 
@@ -18,7 +18,7 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 2. **不重要的行为不进机械。** 一个承诺只有在**独立于玩家注意力而发生**、**被别处的人看到**、或**改变权威状态**时才进 promise → plan → due；否则留在 `recentDialogue` / `commitNarrativeDetail`，KP 凭时钟自己兑现。半分钟的敲击三条都不沾。**因此五批 `consequences: []` 是模型在做正确判断，不是缺陷**——我此前要加强指引让模型必须记承诺的想法是错的，撤回。第 2、3 层的合同缩到几小时尺度的约定。
 3. **承诺怎么还，分三种情况。** 玩家留下等 → 等待的旁白里还；留下做别的 → 下一次回应的背景里还；离开 → 承诺依附于在场，不需要还，但瓦罗的记忆已是机械的（社交交谈产生 `KnowledgeAcquired`）。
 
-由此，**「等待不发布旁白」从独立小缺陷变成主线阻塞**：round78/80 里玩家等了一分钟屏幕上什么也没多出来，承诺没还，是因为纯等待走确定性交付、不建模型旁白（round61 为省调用的决定）。
+由此，**「等待不发布旁白」从独立小缺陷变成主线阻塞**：round78/80 里玩家等了一分钟屏幕上什么也没多出来，承诺没还，是因为纯等待走确定性交付、不建模型旁白（round61 为省调用的决定）。**这一条已在本地做完**（[等待旁白回执](docs/agent/vnext-wait-narration-validation.md)）：活着的 Viewer 的等待现在建模型旁白，旁白上下文给等待冻结前 30 分钟同场景的已听发言，提示词允许按 NPC 原话兑现即时小动作。零真实证据；round81 第三句是它的检验。
 
 ## 2. 接手坐标
 
@@ -105,9 +105,9 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ## 7. 下一步，按这个顺序
 
-### 1. 等待走模型旁白（上下文路线的前提）
+### 1. 等待走模型旁白（上下文路线的前提）—— 已做，本地验证
 
-位置：`app/_runtime/lib/room/durable-object.ts` 约 5675–5695 —— `if (renderableClaims.claims.every(claim => claim.kind === "mechanicalOutcome" && ["timePassageCompleted","timePassageInterrupted"].includes(...))) continue;` 这一行让纯等待跳过模型 audience。要改成：等待也建模型旁白，让 KP 看着 `recentDialogue`（瓦罗那句「敲账台两下」）和走过的 60 秒，写出「半分钟过去，瓦罗敲了两下账台」。代价每次等待多一次调用（约 ¥0.04）。Activity 的确定性状态显示保留。round61 的 `passive-time` 回执记录了原设计与预算考量（`docs/agent/vnext-passive-time-validation.md`）。
+[回执](docs/agent/vnext-wait-narration-validation.md)。三处改动：Room 只对 lifecycle 受众跳过等待旁白；`roomNarrationContext` 给等待冻结 `[开始 − 30 分钟, 结束]` 内同场景已听发言与本人最近发言；生成/审核提示词各加一条「NPC 原话约定在经过时间内兑现的即时小动作可按原话写成已发生」（review schema v12、policy v10）。代价：纯等待 2 → 4 次调用，等待 + 可见 NPC 行动 5 → 7——**round81 若场景里有到期 NPC 行动，per-HTTP 限额要设 7**（round81 现有场景 npcPlans 为 0，4 次够）。闹钟路径完成的等待落成 `narrationRecovery`，未真实验证。
 
 ### 2. 时长改档位
 
@@ -137,7 +137,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 - `mechanicalResult.fictionTime`（含 `crossedDeadlines`）没进 Room 返回和遥测，只在 Rules 结果上（round80 确认）。档位化之后再接。
 - 第二句选中 `observe` 后填写阶段丢弃，玩家明写的「留意动静」随之消失，不留痕（round78/80 均如此）。
-- 等待的 `narration: notApplicable` —— 即上面第 1 条。
+- 闹钟路径（玩家不在线时到期）完成的等待：audience 建好但当时无人旁白，靠 `narrationRecovery` 在下次 observe 发布——链路是旧的，等待这一用法没跑过。
 - 旧线 vnext-1（`atomicRulesSteps`）没有时长字段，Rules 只裁「纯创作不能花时间」这一半；「角色行动必须声明」是 vnext-2 lowering 的规则。
 
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）

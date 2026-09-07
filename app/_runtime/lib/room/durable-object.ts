@@ -5676,12 +5676,14 @@ export class RoomDurableObject extends DurableObject<Env> {
           };
         }
         if (renderableClaims.claims.length === 0) continue;
-        // A pure wait result is already delivered by the owner's projected
-        // Activity, with exact actual/planned time and terminal status. Keep
-        // its canonical event/Claim derivation without spending another model
-        // call. Decide per Viewer; mixed mechanical facts still need narration.
-        if (renderableClaims.claims.every(claim => claim.kind === "mechanicalOutcome"
-          && ["timePassageCompleted", "timePassageInterrupted"].includes(String(claim.outcomeCode)))) continue;
+        // A pure wait used to be delivered only by the owner's projected
+        // Activity. A live Viewer now also gets KP narration for it: what was
+        // said just before the wait is returned inside the elapsed time. A
+        // lifecycle audience (the former controller of a dead or departed
+        // character) keeps the deterministic Activity delivery alone.
+        const pureWait = renderableClaims.claims.every(claim => claim.kind === "mechanicalOutcome"
+          && ["timePassageCompleted", "timePassageInterrupted"].includes(String(claim.outcomeCode)));
+        if (pureWait && projection.controlledCharacter === null) continue;
         if (projection.controlledCharacter === null) return { kind: "rejected",
           outcome: rejectedAuthority("projectionFailure", "A lifecycle audience contains unsupported narration material.") };
         narrationInputMode = "frozenRenderableClaims-vnext-1";
