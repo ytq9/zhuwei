@@ -8,7 +8,9 @@
 
 ## 1. 一句话状态
 
-vNext 已经能用正常注册 Cookie → `/api/game` 的真实链路，让真实 DeepSeek 完成一次施法的选择、填写、Rules/Room 提交和旁白发布（round73 首句）；**连续第二个意图仍然过不去**，最近三次真实批次都停在模型填错引用上。下一件事是把引用候选面收窄到与准入一致，然后释放已经备好的 round74。
+vNext 已经能用正常注册 Cookie → `/api/game` 的真实链路，让真实 DeepSeek 完成一次施法的选择、填写、Rules/Room 提交和旁白发布（round73 首句）；**连续第二个意图仍然过不去**，最近三次真实批次都停在模型填错引用上。
+
+引用槽准入已于 2026-09-07 对齐（parser v39，见[回执](docs/agent/vnext-reference-slot-admission-validation.md)）：模型现在结构上填不出界。**但这只有本地证据，没有任何真实模型验证。** 下一件事是释放已经备好的 round74，用真实批次证明它。
 
 ## 2. 接手坐标
 
@@ -18,10 +20,10 @@ vNext 已经能用正常注册 Cookie → `/api/game` 的真实链路，让真�
 | 检查点 | `72201ea` `chore: checkpoint the uncommitted vNext working tree` |
 | HEAD | 检查点之后还有文档提交，以 `git rev-parse HEAD` 为准 |
 | 上一个能力提交 | `258caee404e0814405eb497653ee9f00d647b773`，此前 vNext 全部实现都只在工作树里 |
-| 工作目录 | `/Users/sanmu/Documents/zhuwei-cloudflare`，工作树干净 |
+| 工作目录 | `/Users/sanmu/Documents/zhuwei-cloudflare`；工作树是否干净以 `git status` 为准 |
 | 另有 | `git stash list` 一条 `codex: preserve local changes before GitHub sync 2026-08-31`，不要动 |
-| 本次核对运行 | `npm run typecheck` → exit 0（整树可编译） |
-| 未运行 | 任何代码测试、构建、模型探针、部署、远端 migration、push |
+| 最近一次验证 | 引用槽准入的定向测试组 + `npm run typecheck` exit 0，与 `72201ea` 基线逐名对照零回归 |
+| 未运行 | 全量回归、构建、模型探针、部署、远端 migration |
 
 `72201ea` 是 2026-09-07 用户授权打的**本地还原点**，一次收进 507 个文件、85087 行，其中 369 个是首次进入版本库。它不是里程碑、不是验收、不代表任何测试跑过 —— 唯一的证据是 typecheck exit 0。对这些文件做 `git log` 或 `git blame` 只会看到这一个提交，历史在此之前不存在。
 
@@ -70,21 +72,24 @@ round73 三个必须记住的细节：
 2. **遥测指错了地方。** 原始遥测只写 `REFERENCE_UNAVAILABLE / unrecognized`，没有指向模型实际填错的字段位置。
 3. **旁白文字质量有缺口未修。** 满血状态说“伤势并未好转”，以及笼统的“可用施法资源剩余 3 次”（3 是一环池，二环还有 2）。gate 判为表达不精确，未认定机械矛盾。
 
-## 6. 下一件事：引用槽的候选面要和准入一致
+## 6. 引用槽准入：已完成，等真实验证
 
-这是 round74 被 hold 的直接原因，也是 round70 与 round73 第二句的共同形状。
+2026-09-07 落地，完整回执见 [vnext-reference-slot-admission-validation.md](docs/agent/vnext-reference-slot-admission-validation.md)。
 
-**已确认的事实：**[context/coverage.ts](app/_runtime/lib/kp/vnext/context/coverage.ts) 的 `citationClass` 把每个引用节点按行动者分成 `viewer` / `authority` / `nonCitable`，分类只读权威状态，不从闭包来路推断；[context/index.ts](app/_runtime/lib/kp/vnext/context/index.ts) 汇总，[required-context.ts](app/_runtime/lib/kp/vnext/required-context.ts) 冻结成 `nonCitableRefs` 等集合。别人（NPC）的 knowledge 是 `nonCitable`，自己的 knowledge 是 `viewer`。
+交接上一版把落点推断为 `proposal-reference-slots.ts` —— **那是错的**，那个文件只负责抽取 `prospective:` 句柄给依赖图用。真正的落点是 schema 构造：候选面以枚举形式下发给模型。
 
-**上一轮源码诊断的结论（抄自 [refactor-log.md](docs/refactor-log.md) 最后一批）：** 开放的 basis 字符串候选面比原授权 / read-bound 准入更宽，修复另记 —— 就是留给你的这件事。
+修好的两半：
 
-**我读码后的推断（标为推断，未验证）：** 两次失败其实是同一件事的两半。round70 是**可引用性**这一维没在候选面里体现（模型看得到一个它不能引的 ref）；round73 是**槽类型**这一维没体现（那个知识记录确实在授权 knowledge 和 `viewerEvidenceRefs` 里、确实可引，但 `target.kind=creatures` 的槽只接受 entity）。也就是说校验器按“类 × 类型”两维拒绝，而模型看到的是一张扁平字符串候选表。落点大概率在 [proposal-reference-slots.ts](app/_runtime/lib/kp/vnext/proposal-reference-slots.ts)（当前只有 188 行、一个 `proposalProspectiveHandles`）与 [proposal-context.ts](app/_runtime/lib/kp/vnext/proposal-context.ts) 给模型的引用目录之间。**动手前先自己复核这个推断**，不要当成已定结论。
+- round70 的 basis 半边**在本次之前就已经修好**（`tests/kp-vnext-basis-reference-surface.test.mjs` 独立跑过 exit 0）。`nonCitable` 的 NPC 包装既不在枚举里，也被 lowerer 拒绝。
+- round73 的槽类型半边是本次修的。`abilityOperation.operation.target.refs` 与 `worldInteraction.targetRefs` / `directTargetRefs` 此前是自由字符串，只有 prose 让模型“从 viewerEvidenceRefs 选”。现在由 `proposalSubjectRefs(context, class)` 按对象类别（生物 / 物理主体 / 物品条目）从同一冻结上下文投影候选面，作为枚举下发。
 
-按 [AGENTS.md](AGENTS.md) 的能力开发闭环走：先写一句能力合同（哪个槽、接受哪些节点种类、哪些类、拒绝时给什么诊断），再建代表性矩阵（round70 的 nonCitable NPC 包装、round73 的自己知识记录填生物目标、一个合法正例、一个最高风险越权），在单一事实源实现，不要为这两个样例加名称判断。
+parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升到 `frozen-authorized-read-bound-basis-and-classed-visible-subjects-v3`。
 
-改动会牵到 parser 合同版本（现为 `kp-vnext2-proposal-parser-v38`）与 `referenceSelection`（现为 `frozen-authorized-read-bound-basis-and-visible-subjects-v2`），进而牵动 workflow hash 和 Room 绑定的直接消费者 —— 这些必须一起改，见 repo map 的“vNext 当前冻结的标识”。
+**证据只有本地。** 代表性矩阵 4/4、直接消费者与基线 `72201ea` 逐名对照零回归、typecheck exit 0。零 API 调用，所以不能声称模型真的会填对了 —— 那要靠 round74。
 
-顺带把 round73 的第二个观察一起处理：遥测要能指向模型实际填错的字段位置，而不是只给 `REFERENCE_UNAVAILABLE / unrecognized`。
+顺带修好了两项**基线上就红**的既有测试（它们正是这次要依赖的守卫，都是过时夹具，生产路径无碍）；另有 10 项 schema 测试和 4 项 Room 测试在基线上就红，本次零引入零改判，清单在回执里。
+
+还没做的：`worldInteraction.instrumentRefs` 仍是自由字符串（准入带持有人作用域，要另立合同）；遥测仍只报 `REFERENCE_UNAVAILABLE / unrecognized`，没指向模型填错的字段位置；round73 选错能力（cure 而非 healing-word）是模型判断问题，不是准入问题。
 
 ## 7. round74 已经备好，但被 hold
 
@@ -96,7 +101,9 @@ round73 三个必须记住的细节：
 - 预算：3 意图 / 20 次物理调用 / ¥5 / 20 分钟 / 每次 HTTP 5 调用 120s；`priceRequiresReverification = true`
 - `stateDirectory` 与主线共用 `.wrangler/vnext/state`，靠新注册 UUID、服务器创建的房间 ID 与精确快照做逻辑隔离
 
-释放流程照 `RUNBOOK.md`：先跑 preflight（纯导入、0 网络），确认 `abilitySurfaceReady=true` 且 strict schema issues 为空，才由你显式把 `executionProhibited` 翻成 false，然后 `freeze.py` + `verify-source.py` 冻结源码 SHA。**freeze 只跑一次，不覆盖旧 session 与证据。**
+**hold 条件现在应该已经满足。** 它要求的「same-source basis reference candidate interface repair and directed validation」两部分都有了：basis 半边此前已修（`kp-vnext-basis-reference-surface.test.mjs` exit 0），槽类型半边与定向验证见 §6 的回执。剩下的是 RUNBOOK 要求的 source/schema import 检查，然后才是释放 —— 那一步由你核对后显式执行，不要因为这段话就当成已经放行。
+
+释放流程照 `RUNBOOK.md`：先跑 preflight（纯导入、0 网络），确认 `abilitySurfaceReady=true` 且 strict schema issues 为空，才由你显式把 `executionProhibited` 翻成 false，然后 `freeze.py` + `verify-source.py` 冻结源码 SHA。**freeze 只跑一次，不覆盖旧 session 与证据。** 注意 parser 已升到 v39，round74 的 plan 明确写着 `No parser version is preselected`，所以不需要为此改场景。
 
 ⚠️ **这些编排在 `/tmp`，重启就没了。** 目录里有 `RUNBOOK.md` / `runner.mjs` / `capture.mjs` / `services.py` / `replay.mjs` / `scenario.mjs` / `freeze.py`，仓库里没有副本。接手时第一件事是确认它还在（`ls /tmp/zhuwei-round74-npc-preparation`）；如果没了，得照 round73 的 RUNBOOK 结构重建，公开回执与机器证据在 `docs/agent/` 里是全的。
 
@@ -128,7 +135,13 @@ npx vitest run tests/<target>.test.ts
 npm run typecheck
 ```
 
-引用这条线相关的目标测试：`tests/kp-vnext-proposal-reference-slots.test.mjs`、`tests/kp-vnext-basis-reference-surface.test.mjs`、`tests/kp-vnext-observation-reference-surface.test.mjs`、`tests/kp-vnext-item-reference-surface.test.mjs`、`tests/kp-vnext-npc-decision-context.test.mjs`、`tests/kp-vnext-stage3-room.test.ts`。
+引用这条线相关的目标测试：`tests/kp-vnext-reference-slot-admission.test.mjs`（本次新增的代表性矩阵）、`tests/kp-vnext-basis-reference-surface.test.mjs`、`tests/kp-vnext-observation-reference-surface.test.mjs`、`tests/kp-vnext-item-reference-surface.test.mjs`、`tests/kp-vnext-proposal-reference-slots.test.mjs`、`tests/kp-vnext-npc-decision-context.test.mjs`、`tests/kp-vnext-stage3-room.test.ts`。
+
+判断某个失败是不是自己造成的，先取基线，别猜：
+
+```bash
+git worktree add --detach /tmp/zhuwei-baseline 72201ea && ln -s "$PWD/node_modules" /tmp/zhuwei-baseline/node_modules
+```
 
 ## 10. 不要做的事
 

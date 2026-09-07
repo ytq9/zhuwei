@@ -37,28 +37,53 @@ export function proposalItemEntryRefs(context: VNextRequiredContext): readonly s
     ? [entry.entryRef] : []).sort(compareCodeUnits));
 }
 
+/** The classes of world object a reference slot can accept. A slot names the
+ * class it takes; it never enumerates individual refs of its own. */
+export type ProposalSubjectClass = "physical" | "creature";
+
+/** True when this frozen record *is* the named object, rather than a record
+ * about it. Identity is matched against the entryRef so a definition, catalog,
+ * knowledge record or private decision wrapper can never stand in for the
+ * object it describes. */
+function subjectOfClass(value: Record<string, unknown>, ref: string, subjectClass: ProposalSubjectClass): boolean {
+  const creature = isPlainRecord(value.entity) && value.entity.id === ref
+    && (value.entity.kind === "player" || value.entity.kind === "npc");
+  if (subjectClass === "creature") return creature;
+  return creature
+    || (isPlainRecord(value.scene) && value.scene.id === ref)
+    || (value.schema === ITEM_ENTRY_SCHEMA && value.entryId === ref)
+    || (value.schema === "zhuwei.item-assembly/v1" && value.assemblyRef === ref)
+    || (isPlainRecord(value.feature) && value.feature.featureId === ref)
+    || (value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA
+      && (value.semanticKind === "sceneFeature" || value.semanticKind === "location" || value.semanticKind === "passage")
+      && value.definitionId === ref);
+}
+
+/** Frozen, Viewer-visible world objects of one class, as a selection surface.
+ * Viewer permission and spatial visibility were checked when these records were
+ * frozen; this neither rereads authority nor grants permissions or transaction
+ * bindings. Rules still checks the complete target predicate, so a slot's
+ * accepting validator stays authoritative and may still reject a listed ref. */
+export function proposalSubjectRefs(context: VNextRequiredContext,
+  subjectClass: ProposalSubjectClass): readonly string[] {
+  const visible = new Set(context.references.citations.viewerEvidenceRefs);
+  return Object.freeze(context.entries.flatMap(entry => entry.kind === "known"
+    && visible.has(entry.entryRef) && isPlainRecord(entry.value)
+    && subjectOfClass(entry.value, entry.entryRef, subjectClass)
+    ? [entry.entryRef] : []).sort(compareCodeUnits));
+}
+
 /** Actual observation subjects, never knowledge records about those subjects.
- * Viewer permission and spatial visibility were checked when these records
- * were frozen. This helper only selects their known physical record types; it
- * neither rereads authority nor grants new permissions or transaction bindings.
  * Definitions of people/items, facts, narratives and private decision records
  * cannot stand in for an observed creature, item instance or scene feature. */
 export function proposalObservationSubjectRefs(context: VNextRequiredContext): readonly string[] {
-  const visible = new Set(context.references.citations.viewerEvidenceRefs);
-  return Object.freeze(context.entries.flatMap(entry => {
-    if (entry.kind !== "known" || !visible.has(entry.entryRef) || !isPlainRecord(entry.value)) return [];
-    const value = entry.value, ref = entry.entryRef;
-    const physical = (isPlainRecord(value.entity) && value.entity.id === ref
-        && (value.entity.kind === "player" || value.entity.kind === "npc"))
-      || (isPlainRecord(value.scene) && value.scene.id === ref)
-      || (value.schema === ITEM_ENTRY_SCHEMA && value.entryId === ref)
-      || (value.schema === "zhuwei.item-assembly/v1" && value.assemblyRef === ref)
-      || (isPlainRecord(value.feature) && value.feature.featureId === ref)
-      || (value.schema === VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA
-        && (value.semanticKind === "sceneFeature" || value.semanticKind === "location" || value.semanticKind === "passage")
-        && value.definitionId === ref);
-    return physical ? [ref] : [];
-  }).sort(compareCodeUnits));
+  return proposalSubjectRefs(context, "physical");
+}
+
+/** Creature targets only. A scene, item, feature or place is a physical object
+ * but never a creature, so an ability that targets creatures cannot reach one. */
+export function proposalCreatureTargetRefs(context: VNextRequiredContext): readonly string[] {
+  return proposalSubjectRefs(context, "creature");
 }
 
 /** Model-facing representation of the same frozen context. Every fact,

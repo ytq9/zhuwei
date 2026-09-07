@@ -32,16 +32,28 @@ const object = (properties: Record<string, OperationSchema>) => ({ type: "object
 const ref = { type: "string", minLength: 1, maxLength: 512 };
 const point = object(Object.fromEntries(["x", "y", "elevation"].map(key =>
   [key, { type: "string", pattern: "^-?(0|[1-9][0-9]*)$" }])));
-export const ABILITY_OPERATION_SOURCE_SCHEMA = { anyOf: [
-  object({ kind: { type: "string", enum: ["invoke"] }, abilityRef: ref,
-    castingMode: { type: "string", enum: ["normal", "ritual"] }, target: { anyOf: [
-      object({ kind: { type: "string", enum: ["none"] } }),
-      object({ kind: { type: "string", enum: ["creatures"] }, refs: { type: "array", minItems: 1, maxItems: 64, uniqueItems: true, items: ref } }),
-      object({ kind: { type: "string", enum: ["area"] }, origin: point }),
-      object({ kind: { type: "string", enum: ["directionalArea"] }, origin: point, direction: point }),
-    ] } }),
-  object({ kind: { type: "string", enum: ["continue", "cancel"] }, activityRef: ref }),
-] } as const;
+/** The operation source schema. `creatureRefs` narrows the creature target slot
+ * to an exact frozen selection surface for one request; omitting it keeps the
+ * unbound domain vocabulary. Narrowing is a filling aid only: `isAbilityOperation`
+ * and the Rules target predicate below stay the accepting authority either way. */
+export function abilityOperationSourceSchema(creatureRefs?: readonly string[]) {
+  const creatureRef = creatureRefs === undefined ? ref
+    // The strict subset has no empty enum. ^$a matches no string, so a request
+    // with no visible creature permits the other target kinds and no member.
+    : creatureRefs.length ? { type: "string", enum: [...creatureRefs] } : { type: "string", pattern: "^$a" };
+  return { anyOf: [
+    object({ kind: { type: "string", enum: ["invoke"] }, abilityRef: ref,
+      castingMode: { type: "string", enum: ["normal", "ritual"] }, target: { anyOf: [
+        object({ kind: { type: "string", enum: ["none"] } }),
+        object({ kind: { type: "string", enum: ["creatures"] }, refs: { type: "array", minItems: 1, maxItems: 64, uniqueItems: true, items: creatureRef } }),
+        object({ kind: { type: "string", enum: ["area"] }, origin: point }),
+        object({ kind: { type: "string", enum: ["directionalArea"] }, origin: point, direction: point }),
+      ] } }),
+    object({ kind: { type: "string", enum: ["continue", "cancel"] }, activityRef: ref }),
+  ] };
+}
+
+export const ABILITY_OPERATION_SOURCE_SCHEMA = abilityOperationSourceSchema() as ReturnType<typeof abilityOperationSourceSchema>;
 
 export function isAbilityOperation(value: unknown): value is AbilityOperation {
   if (!isRecord(value)) return false;

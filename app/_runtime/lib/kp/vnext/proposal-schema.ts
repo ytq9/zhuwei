@@ -1,4 +1,4 @@
-import { ABILITY_OPERATION_SOURCE_SCHEMA, type AbilityOperation } from "../../rules/v2/ability-operation";
+import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSource } from "../../rules/v2/npc-plan-formation";
 import { vnextProposalProducerContract, type VNextProposalProducerContract } from "./proposal-producer-contract";
 import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling } from "./proposal-filling-interface";
@@ -654,8 +654,8 @@ export type VNextProposalBundleCorrectionResult =
  */
 export function createVNextProposalBundleSchema(capabilities: readonly string[] = VNEXT_PROPOSAL_CAPABILITY_IDS,
   itemEntryRefs?: readonly string[], observationSubjectRefs?: readonly string[], terminalKinds?: readonly string[], npcSources?: ProposalNpcSourceChoices,
-  basisChoices?: VNextBasisReferenceChoices) {
-  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices), terminalKinds, npcSources)));
+  basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[]) {
+  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs), terminalKinds, npcSources)));
 }
 
 /** Selection admission reads the exact same derived wire discriminants. */
@@ -793,6 +793,7 @@ export function createSubmitKpProposalBundleModelInput(
   terminalKinds: readonly string[] = VNEXT_INITIAL_PROPOSAL_DECISION_KINDS,
   npcSources?: ProposalNpcSourceChoices,
   basisChoices?: VNextBasisReferenceChoices,
+  creatureRefs?: readonly string[],
 ): StrictToolBundleModelInput {
   if (typeof message !== "string" || message.trim().length === 0) {
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
@@ -801,7 +802,7 @@ export function createSubmitKpProposalBundleModelInput(
     messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("expandedProposal", capabilities, terminalKinds) }, { role: "user" as const, content: message }]),
     tools: Object.freeze([{ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
       function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
-        parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices) }),
+        parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs) }),
     }] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
@@ -831,7 +832,8 @@ export function createCorrectKpProposalBundleModelInput(
 }
 
 function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId[], itemEntryRefs?: readonly string[],
-  observationSubjectRefs?: readonly string[], basisChoices?: VNextBasisReferenceChoices): Record<string, unknown> {
+  observationSubjectRefs?: readonly string[], basisChoices?: VNextBasisReferenceChoices,
+  creatureRefs?: readonly string[]): Record<string, unknown> {
   const object = (properties: Record<string, unknown>) => ({
     type: "object",
     properties,
@@ -1136,8 +1138,8 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     produces: produced("worldInteraction"),
     outcomeBinding: outcome,
     sceneRef: refText,
-    targetRefs: { ...refArray, description: "Nonempty set of actual physical interaction targets; must include every directTargetRef. Use observe for independent perception or reasoning. Include the acting character only when their own body is a real target." },
-    directTargetRefs: { ...refArray, description: "Nonempty set of intentionally manipulated targets, selected from exact viewerEvidenceRefs or same-bundle prospective objects. Include each in targetRefs. Use observe.focusRefs for an inquiry that only acquires information." },
+    targetRefs: { type: "array", items: subjectRef, description: "Nonempty set of actual physical interaction targets; must include every directTargetRef. Use observe for independent perception or reasoning. Include the acting character only when their own body is a real target." },
+    directTargetRefs: { type: "array", items: subjectRef, description: "Nonempty set of intentionally manipulated targets, selected from the listed frozen world objects or same-bundle prospective objects. Include each in targetRefs. Use observe.focusRefs for an inquiry that only acquires information." },
     instrumentRefs: { ...refArray, description: "Actual tools used in the method, or [] for an unaided interaction. Do not substitute tools for the manipulated direct targets." },
     // `none` when the interaction is unarmed or resolved by a bare ability
     // check; a frozen Ability ref when an attack or an ability-backed action
@@ -1238,7 +1240,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   });
   const allVariants = [...materializeObjectVariants, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
-    operation: { ...formationToolSchema(ABILITY_OPERATION_SOURCE_SCHEMA),
+    operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
       description: "Choose an owned registered Ability and its exact target/mode, or this actor's frozen casting Activity. Use the owned-ability-catalog and current actor resources. No DC, duration, effect, dice, slot override or additional cost fields. Missing choices cannot be inferred or added by narrow repair." } });
   const nativeVariants = capabilities.flatMap(id => {
     const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;

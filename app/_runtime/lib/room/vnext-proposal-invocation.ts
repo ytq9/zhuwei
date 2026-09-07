@@ -3,7 +3,7 @@ import type { VNextProposalBundleRepairTicket } from "../kp/vnext/proposal-provi
 import { assertRepairTicket, assertVNextProposalCandidateCapabilities, parseSubmitKpProposalBundleCandidateResponse,
   parseVNextProposalOfferResponse, vnextProposalCorrectionPrompt, numericRepairSource, vnextProposalHasExecutionRepairBudget, vnextProposalModelRepairDiagnostics } from "../kp/vnext/proposal-provider";
 import { createVNextProposalOfferModelInput, CORRECT_KP_PROPOSAL_BUNDLE_TOOL, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../kp/vnext/proposal-schema";
-import { proposalItemEntryRefs, proposalObservationSubjectRefs, proposalModelContext, proposalNpcSourceChoices } from "../kp/vnext/proposal-context";
+import { proposalCreatureTargetRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalModelContext, proposalNpcSourceChoices } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
@@ -69,7 +69,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   if (input.ordinal === 2) {
     if (input.repairTicket !== undefined) invalid();
     assertSurface(createSubmitKpProposalBundleModelInput("bound", first.capabilities,
-      proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), first.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext)).tools,
+      proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), first.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext), proposalCreatureTargetRefs(requiredContext)).tools,
       "expandedProposal", first.capabilities, first.terminalKinds);
     return;
   }

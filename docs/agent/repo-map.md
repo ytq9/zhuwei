@@ -152,7 +152,7 @@ flowchart TD
 
 - Profile：`modelProfileVersion = authoritative-kp-deepseek-vnext-local-v1`，`promptPolicyVersion = kp-vnext-authority-policy-v2`，`actionLanguageVersion = kp-vnext2-proposal-bundle-v1`
 - Workflow：`workflowRef = kp-vnext-local-workflow-v1`，`validationStatus = "development"`
-- Parser 合同：`version = kp-vnext2-proposal-parser-v38`，`schemaRetrieval = flat-type-selection-then-exact-selected-forms-terminal-two-step-three-v4`，`localValidation = closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6`，`referenceSelection = frozen-authorized-read-bound-basis-and-visible-subjects-v2`，`correctionPolicy = server-proven-plan-confirmation-exact-number-and-frozen-intent-echo-once-v9`
+- Parser 合同：`version = kp-vnext2-proposal-parser-v39`，`schemaRetrieval = flat-type-selection-then-exact-selected-forms-terminal-two-step-three-v4`，`localValidation = closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6`，`referenceSelection = frozen-authorized-read-bound-basis-and-classed-visible-subjects-v3`，`correctionPolicy = server-proven-plan-confirmation-exact-number-and-frozen-intent-echo-once-v9`
 - 修订票据：`zhuwei.kp-proposal-bundle-repair-ticket/vnext-5`
 - 调用策略：`selections 1 / proposals 1 / terminalMaximumTotal 2 / stepCorrections 1 / stepMaximumTotal 3`；NPC 决策 `decisions 1 / corrections 0`
 - 预算：`contextWindowTokens 64000`、`completionReserveTokens 4000`、`safetyMarginTokens 2000`
@@ -163,6 +163,8 @@ flowchart TD
 2. `submit_kp_proposal_bundle`：服务器按所选能力从同一领域 schema 派生小表单，模型只填 `decision`；外壳、根依据并集、producer、静态模板 hash 与类型化依赖由服务器生成。
 3. 校验失败时服务器先证明有界修复计划，`correct_kp_proposal_bundle` 只让模型确认并填获准摘要，最多一次。
 4. [vnext-proposal-invocation.ts](../../app/_runtime/lib/room/vnext-proposal-invocation.ts)† 用保存的响应证明后继调用合法，两轮正文绑定同一冻结 contextHash。
+
+**引用槽是枚举，不是自由字符串。**[proposal-context.ts](../../app/_runtime/lib/kp/vnext/proposal-context.ts) 的 `proposalSubjectRefs(context, class)` 从同一冻结上下文按对象类别投影候选面：生物、物理主体、物品条目各是一类，身份一律与 `entryRef` 比对，定义、目录、知识记录与私有决策包装不能冒充它们描述的对象。`basisRefs` 用 [required-context-runtime.ts](../../app/_runtime/lib/kp/vnext/required-context-runtime.ts)† 的 authority ∩ read 集合，`social` 用 `npcSourceChoices`。这些集合作为 schema 枚举下发，模型结构上填不出界；Rules 的完整目标判定仍是准入权威，可能再拒绝一个已列出的 ref。`worldInteraction.instrumentRefs` 尚未收窄，边界见[回执](vnext-reference-slot-admission-validation.md)。
 
 **可达性要逐层判断。** vNext-2 的 domain 类型里有 `clarification`、`highRisk`、`reviseSemanticDefinition`，但当前 strict-tool schema 只开放 `inWorldRefusal` terminal 与 `materializeObject` / `worldInteraction` / `materializeDefinition` / `materializeItem` / `inventoryOperation` / `abilityOperation` 一侧；`lowerExecutableEntry` 对 `reviseSemanticDefinition` 返回 `BUNDLE_LOWERING_UNSUPPORTED`。Rules 或 vNext-1 里存在更宽的类型，不代表当前模型入口能提交。
 

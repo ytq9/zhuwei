@@ -3233,3 +3233,19 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 `git push origin cloudflare` 报 `258caee..5f84d68  cloudflare -> cloudflare`，快进，无冲突、无强推、无 force-with-lease。push 后重新 fetch 核对：`origin/cloudflare` 与本地 HEAD 同为 `5f84d68192fed71b3ecea8d338b41825cef70f76`，工作树干净。
 
 本次只 push `cloudflare`。远端 `main` 未动，仍固定在 `29eb06dc009c983ad61b2d862454503e67a7f40a`；grok.me MVP 不受影响。没有部署、没有远端 migration、没有创建远端资源、没有退役任何房间或归档。真实模型验收状态不变：round70/72/73 仍停在第二意图，下一步是引用槽准入，见根目录 handoff.md。
+
+## 2026-09-07 引用槽准入与候选面对齐（开发期）
+
+目标/合同：承接交接的「下一件事」。能力合同为——模型填写「已存在世界对象」的引用槽时，schema 呈现的候选集必须由同一冻结上下文按该槽接受的对象类别导出，prose 不能代替枚举；变化维度是对象类别（生物/物理主体/物品条目/依据记录），不是 proposal 家族；服务端校验器仍是准入权威。基线 `72201ea` 加本次改动，工作树其余部分不动。
+
+诊断：交接上一版推断落点在 `proposal-reference-slots.ts`，读码后否定——该文件只抽取 `prospective:` 句柄供依赖图使用。真实落点是 schema 构造。逐槽核对：observe/social/inventory/basisRefs 已是枚举；`abilityOperation.operation.target.refs` 与 `worldInteraction.targetRefs`/`directTargetRefs` 是自由字符串。round70 的 basis 半边在本次之前已修好，改动前独立跑 `kp-vnext-basis-reference-surface.test.mjs` exit 0。另记一处形状：`proposals.ts:434` 在 directTarget 不可达时已经算出精确候选集当诊断吐出，即服务器一直有能力说清楚该槽能填什么，只是等模型猜错之后才说。
+
+修改与直接消费者：`proposal-context.ts` 把三个平行候选面收敛为 `proposalSubjectRefs(context, class)` 与 `subjectOfClass`，身份一律与 `entryRef` 比对；`proposalObservationSubjectRefs` 与新增 `proposalCreatureTargetRefs` 是其投影。`rules/v2/ability-operation.ts` 增 `abilityOperationSourceSchema(creatureRefs?)`，`ABILITY_OPERATION_SOURCE_SCHEMA` 保留为无参默认且结构不变，`isAbilityOperation` 与 Rules 目标判定不动。`proposal-schema.ts` 的 ability terminal 用收窄 schema，worldInteraction 两个目标槽改用与 observe 同一 `subjectRef` 变体（枚举 ∪ prospective）。`proposal-provider.ts` 与 `room/vnext-proposal-invocation.ts` 两个生产调用点同步传参，Room 重建与 provider surface 保持逐字节相等。parser 合同 v38→v39，`referenceSelection` 升 v3。空候选集用既有 `^$a` 约定。
+
+代表性矩阵 `tests/kp-vnext-reference-slot-admission.test.mjs` 4/4：round73 原样例（确实可引用的自己知识记录进不了生物槽，场景亦被拒——是物理对象但不是生物）；结构不同的同类样例（worldInteraction directTarget 接受生物/场景/prospective，拒绝同一知识记录）；边界（不传候选面保留无界词表，传空数组不接受任何成员也不接受空字符串）；单一事实源（creature ⊂ physical，均不超出冻结 Viewer 可见集，与两个具名投影逐值相等且冻结）。
+
+定向验证，同一源码状态每项一次：矩阵 4/4 exit 0；observation+item reference surface 6/6 exit 0；world-interaction/materialization-feasibility/observe 59/59 exit 0（基线同）；ability-operation+proposal-schema+schema-retrieval 54/64；stage3-room+ability-operation-room 37/41；`npm run typecheck` exit 0；`git diff --check` exit 0。
+
+既有失败与本次零关系：用 `git worktree --detach 72201ea` 取基线逐名 `comm` 对照，上述 10 项 schema 失败与 4 项 Room 失败（两项 atomic Item 控制者选择、一项无冻结 Claims 提交拒绝、一项 rope/stone trap，多为 5s 超时）在基线上同名同集，本次零引入零改判。另有两项基线红的测试因是本次要依赖的守卫而修对，均为测试侧过时夹具，生产路径无碍（round73 ordinal 2/3 通过即证据）：observation surface 手搭 provider 参数表过时，改为按生产同一组参数构建并补 observe 无 ability terminal 的 no-op 断言；item surface 夹具缺 `authorityBasisRefs` 等字段与 `intent.actorRef`，补齐。
+
+未覆盖：`instrumentRefs` 仍自由字符串（准入带持有人作用域，另立合同）；`directTargetRefs` 枚举是准入超集，完整准入依赖活跃状态与提案本身，冻结期算不出，Rules 仍可拒绝已列出的 ref，属有意；零 API 调用，真实模型是否因此填对未验证，round73 结论不改判；遥测未指向模型填错字段位置；选错能力属模型判断非准入。回执 docs/agent/vnext-reference-slot-admission-validation.md，repo-map 与 handoff 已同步。无部署/push/commit/远端 migration/退役，Goal active。

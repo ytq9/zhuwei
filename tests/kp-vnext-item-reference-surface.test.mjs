@@ -13,13 +13,15 @@ function context(label) {
   const entry = entryId => ({ schema: ITEM_ENTRY_SCHEMA, entryId });
   return {
     binding: { contextHash: 'sha256:typed-entry-fixture' },
+    intent: { actorRef: `${label}:actor` },
     entries: [known(`${label}:floor`, entry(`${label}:floor`)), known(`${label}:held`, entry(`${label}:held`)),
       known(`${label}:definition`, { schema: 'zhuwei.item-definition/v1', definitionId: `${label}:definition` }),
       known('hidden:other-holder', entry('hidden:other-holder')),
       { kind: 'unavailable', entryRef: 'unavailable:entry', reason: 'redacted', critical: false },
       known('wrong:identity', entry('different:identity'))],
-    references: { citations: { viewerEvidenceRefs: [`${label}:floor`, `${label}:held`, `${label}:definition`,
-      'unavailable:entry', 'wrong:identity'] } },
+    references: { citations: { authorityBasisRefs: [], npcKnowledge: [], nonCitableRefs: [],
+      viewerEvidenceRefs: [`${label}:floor`, `${label}:held`, `${label}:definition`,
+        'unavailable:entry', 'wrong:identity'] } },
   };
 }
 function entryField(schema) {

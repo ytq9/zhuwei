@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
-import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { requiredContextBasisReferences } from '../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { createVNextProposalBundleSchema, createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
@@ -69,8 +70,13 @@ test('empty subjects allow explicit same-bundle objects and no-individual-subjec
 test('Room reconstructs the identical subject schema from frozen context and rejects widened target candidates', () => {
   const f = fixture('room-surface');
   const message = JSON.stringify({ requiredContext: proposalModelContext(f.requiredContext) });
-  const request = createSubmitKpProposalBundleModelInput(message, ['observe'],
-    proposalItemEntryRefs(f.requiredContext), proposalObservationSubjectRefs(f.requiredContext), []);
+  // Build the surface with exactly the arguments the production provider uses;
+  // Room reconstructs from the same frozen context, so any omission here would
+  // test a request the provider never sends.
+  const surface = (subjectRefs, creatureRefs) => createSubmitKpProposalBundleModelInput(message, ['observe'],
+    proposalItemEntryRefs(f.requiredContext), subjectRefs, [],
+    proposalNpcSourceChoices(f.requiredContext), requiredContextBasisReferences(f.requiredContext), creatureRefs);
+  const request = surface(proposalObservationSubjectRefs(f.requiredContext), proposalCreatureTargetRefs(f.requiredContext));
   const input = { ordinal: 2, contextHash: f.requiredContext.binding.contextHash,
     bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request };
   const prior = () => ({ status: 'completed', context_hash: input.contextHash, binding_hash: input.bindingHash,
@@ -78,9 +84,13 @@ test('Room reconstructs the identical subject schema from frozen context and rej
       name: 'offer_kp_proposal_bundle', arguments: JSON.stringify({ requestedCapabilities: ['observe'] }),
     } }] } }] }) });
   assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, f.requiredContext));
-  const changed = createSubmitKpProposalBundleModelInput(message, ['observe'], proposalItemEntryRefs(f.requiredContext),
-    [...proposalObservationSubjectRefs(f.requiredContext), f.knowledgeRef], []);
+  const changed = surface([...proposalObservationSubjectRefs(f.requiredContext), f.knowledgeRef], proposalCreatureTargetRefs(f.requiredContext));
   assert.throws(() => assertVNextInvocationTransition({ ...input, request: changed }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
+  // An observe request carries no ability terminal, so the creature surface is
+  // not part of this schema and cannot silently widen it. The ability terminal
+  // owns that guard; see kp-vnext-ability-operation.test.mjs.
+  assert.equal(JSON.stringify(surface(proposalObservationSubjectRefs(f.requiredContext),
+    [...proposalCreatureTargetRefs(f.requiredContext), f.knowledgeRef]).tools), JSON.stringify(request.tools));
   for (const content of ['查看周围。', JSON.stringify({ requiredContext: { ...proposalModelContext(f.requiredContext), entries: [] } })]) {
     const altered = structuredClone(request); altered.messages[1].content = content;
     assert.throws(() => assertVNextInvocationTransition({ ...input, request: altered }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);

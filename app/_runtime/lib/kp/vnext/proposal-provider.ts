@@ -39,7 +39,7 @@ import {
   vnextProposalRepairPlan, vnextProposalRepairDiagnostics, type VNextProposalRepair,
 } from "./proposal-correction";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices } from "./proposal-context";
 
 /** The canonical repair proof is unchanged; source diagnostics retain the
  * model's exact choice location after the representation transform. */
@@ -52,7 +52,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITY_IDS,
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v38",
+  version: "kp-vnext2-proposal-parser-v39",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "flat-type-selection-then-exact-selected-forms-terminal-two-step-three-v4",
   toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -65,7 +65,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   rejectsDuplicateJsonMembersAtEveryDepth: true,
   injectsBundleAndCorrectionEnvelopes: true,
   localValidation: "closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6",
-  referenceSelection: "frozen-authorized-read-bound-basis-and-visible-subjects-v2",
+  referenceSelection: "frozen-authorized-read-bound-basis-and-classed-visible-subjects-v3",
   correctionPolicy: "server-proven-plan-confirmation-exact-number-and-frozen-intent-echo-once-v9",
   correctionResponseProtocol: VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL,
 });
@@ -483,7 +483,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const capabilities = closeVNextProposalCapabilities(input.capabilities ?? VNEXT_PROPOSAL_CAPABILITY_IDS);
   const response = await input.binding.run(
     input.modelId,
-    createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext)),
+    createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext), proposalCreatureTargetRefs(requiredContext)),
     runOptions,
   );
   let candidate: VNextProposalBundleCandidate;
