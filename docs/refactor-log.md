@@ -3375,3 +3375,7 @@ codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段�
 ## round81：第一次连过三句（2026-09-08，源码 `1f4300a`，parser v44）
 
 三句全部 committed/published，12 次调用 ¥0.617。首句 `duration:"5min"`，时钟 0→300000000；裸 `"none"` 被 v43 codec 接受（第一次真实触发）；等待第一次有旁白，冻结的 recentDialogue 恰是前三句，旁白没有编造瓦罗拒绝过的敲击；第三句 `addressedThreadRef` 接续了真实线程。瓦罗拒绝敲击，承诺归还只验到负例。见 [round81 回执](agent/vnext-round81-validation.md)。
+
+## 遭遇内不花档位（2026-09-08，parser v45，本地验证）
+
+战斗内时钟只按轮走，定时效果按微秒到期、战斗效果按轮次锚点到期；档位会让在遭遇中的交谈/操作把场景时钟跳 300 秒。现在遭遇中 KP 填 `none`；lowering 拒绝非零档位（`bundle2:duration-forbidden-in-encounter`），Rules 在遭遇中拒绝任何 `fictionTime` 执行成本。战斗外不变。见[合同 §10.1](agent/vnext-fiction-time-contract-proposal.md)。

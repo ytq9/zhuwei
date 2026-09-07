@@ -1763,6 +1763,8 @@ describe("atomic NPC candidate decisions through Room", () => {
       "scene:probe-gallery": SCENE_REF, "definition:probe-valve": CHAIN_REF, "definition:probe-steam-zone": IMPACT_ZONE_REF };
     const bundle = JSON.parse(JSON.stringify(hazardBundle()),
       (_key, value) => typeof value === "string" ? refs[value] ?? value : value) as JsonRecord;
+    // Alice acts inside the NPC-shield Encounter: rounds carry the time, so the ruling declares no tier.
+    (bundle.adjudication as JsonRecord).durationMicros = "0";
     const proposals = bundle.proposals as JsonRecord[];
     Object.assign(record(record(proposals[0].source, "source").content, "ability"), {
       save: null, attack: { kind: "fixed", bonus: "2" },

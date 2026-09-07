@@ -188,3 +188,17 @@ round79 填 30 秒、round80 填 12 秒——同一句「半分钟」两次估�
 - **副产品**：半分钟的约定落在 5min 档内，行动结束时已过，KP 该在同一段回应里就地兑现——这是[等待旁白回执](vnext-wait-narration-validation.md)里上下文路线的前提之一。
 
 **档位暴露的一个缺口**（另立合同）：一次行动至少 5 分钟，比很多 Activity（例如 60 秒的通行）都长。行动跨过到期点时 Rules 只记录 `crossedDeadlines`、放行动提交；若跨过期间那条 Activity 的冻结完成变得不合法（通行途中通道被关），下一次输入会被到期优先结算以「完成不再合法」拒绝，之后这条时间线上每一次输入都同样被拒。结算应当中断这条 Activity，而不是堵住时间线。`tests/kp-vnext-dynamic-locations.test.mjs` 里留了一条 todo 用例记它。
+
+### 10.1 遭遇内外（2026-09-08）
+
+用户指出档位可能让法术持续时间和轮次对不上。核对结果：**战斗外没有问题**——每次 `FictionTimeAdvanced` 之后序列器同步结算已到期的定时效果，结算用效果自己的到期瞬间；**战斗内有**——遭遇里时钟只由 `RoundEnded` 每轮推进 6 秒，定时效果按微秒到期、战斗效果按轮次锚点到期，而 vnext-2 的 social / observe / worldInteraction 在遭遇中可达且原本会照样花档位：场景时钟跳 300 秒，定时效果提前约 50 轮到期，轮次锚点的效果不动。档位之前模型可填 6 秒碰巧对齐，再之前角色行动不花时间，所以这是档位把潜在问题变成了必然。
+
+规则：**遭遇进行中，行动的时间归回合经济管，不归档位。**
+
+- KP 在遭遇中填 `none`（指引与 schema 描述都写明）。`none` 的含义因此扩为：纯创作束，或行动者在活动的遭遇里。
+- lowering：`activeEncounter(state, actor)` 时任何非零档位被拒，`bundle2:duration-forbidden-in-encounter`（与同族诊断一样不可窄修订）；`none` 正常走原子路径，不生成 `fictionTime` 成本。
+- Rules：`applyCompiledAtomicWorldInteractionPlan` 在遭遇中拒绝任何 `fictionTime` 执行成本（"An act inside an Encounter spends turns, not a frozen duration."），不管计划是谁产出的。
+- parser v45。
+
+已知未闭合：冻结上下文里没有显式的「你正在遭遇中」标记——KP 只能从行动者记录里的战斗回合预算和场景记录的 `combatScene` 推断。填错只能硬拒，不能修订。给上下文加一个显式遭遇标记是另一条小合同。
+

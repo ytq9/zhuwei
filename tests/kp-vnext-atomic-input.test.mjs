@@ -2,7 +2,7 @@ import { soleFormId, soleProposalRef, mergeExecutionCosts } from './fixtures/vne
 import { authoritativeNpcDecisionContext } from '../app/_runtime/lib/rules/v2/npc-decision-context.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET } from '../tools/lib/vnext-authored-probe-fixture.mjs';
+import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET, PROBE_SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
 import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { canonicalSha256 } from '../app/_runtime/lib/rules/profiles/canonical.ts';
 import { itemBundle, hazardBundle } from './fixtures/vnext-authored-bundles.mjs';
@@ -1091,4 +1091,51 @@ test('a single atomic inventory use releases its saved randomness after healing 
   replay(f, [...created.events, ...waiting.events, ...done.events], done.state);
   assert.equal(f.runtime.step(f.profiles, done.state, { kind: 'fulfillAuthoritativeRandomness',
     continuation: waiting.continuation, rolls: [2, 2] }).kind, 'rejected');
+});
+
+test('inside an Encounter an act declares no tier and spends no fictional time', () => {
+  // Rounds carry the time in combat: the scene clock moves six seconds per round,
+  // and timed effects are anchored to that. A frozen tier would jump the clock
+  // mid-round, so the KP says "none" there and Rules refuses any fictionTime cost.
+  const f = fixture('encounter-duration');
+  const state = structuredClone(f.state);
+  for (const id of [ACTOR, TARGET]) state.combatRuntime.entities[id].turn = {
+    action: '1', bonusAction: '1', reaction: '1', attacksRemaining: '1', leveledBonusActionSpell: false };
+  state.combatRuntime.encounters['encounter:duration'] = { encounterId: 'encounter:duration', sceneId: PROBE_SCENE, status: 'active',
+    participantEntityIds: [ACTOR, TARGET], initiativeGroups: [ACTOR, TARGET].map(id => ({ entryId: `initiative:${id}`, combatantEntityIds: [id] })),
+    hostilities: [], battlefieldFactIds: [], surprisedEntityIds: [], initiative: { ordered: true,
+      entries: [ACTOR, TARGET].map((id, index) => ({ entryId: `initiative:${id}`, combatantEntityIds: [id], total: 20 - index })) },
+    round: 1, turnCursor: 0, activeEntityId: ACTOR, turnOrderEntityIds: [ACTOR, TARGET], roundClosed: false };
+  const rootActionId = `${f.rootActionId}:encounter`;
+  const context = freezeAuthoredProbeContext(f, state, { rootActionId, focusRefs: [TARGET, 'definition:probe-valve'] }).context;
+  const draft = duration => {
+    const value = sharedCheckBundle('worldInteraction');
+    value.adjudication = { kind: 'directSuccess', durationMicros: duration, risk: '战斗中转动阀门。', successOutcome: '阀门转动。' };
+    value.proposals = [value.proposals[1]];
+    value.proposals[0].branches.failure = { kind: 'none' };
+    const parsed = parseBundle(value);
+    assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+    return lowerVNext2ProposalBundle({ value: parsed.bundle, rootActionId, actorCharacterId: ACTOR, requiredContext: context, state });
+  };
+  const tiered = draft('300000000');
+  assert.equal(tiered.kind, 'rejected');
+  assert.deepEqual(tiered.issues, ['bundle2:duration-forbidden-in-encounter']);
+  const none = draft('0');
+  assert.equal(none.kind, 'accepted', JSON.stringify(none));
+  assert.equal(none.command.rulesInput.kind, 'applyAtomicWorldInteractionSteps');
+  assert.equal(none.command.rulesInput.executionCosts, undefined);
+  // Rules holds the same line on its own, whatever produced the plan.
+  const spent = { ...none.command.rulesInput, executionCosts: { costs: [{ kind: 'fictionTime', durationMicros: '300000000' }],
+    readSet: [{ ref: ACTOR, revisionOrHash: authorityRevisionOrHash(state, ACTOR) },
+      { ref: `character-timeline:${ACTOR}`, revisionOrHash: authorityRevisionOrHash(state, `character-timeline:${ACTOR}`) }].sort(byRef) } };
+  const refused = f.runtime.step(f.profiles, state, spent);
+  assert.equal(refused.kind, 'rejected', JSON.stringify(refused));
+  assert.match(refused.rejection.message, /spends turns, not a frozen duration/);
+  assert.deepEqual(refused.events, []);
+  const timelineId = state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? state.activeBranchId;
+  const before = state.fictionTimelines[timelineId].nowMicros;
+  const done = f.runtime.step(f.profiles, state, none.command.rulesInput);
+  assert.equal(done.kind, 'committed', JSON.stringify(done));
+  assert.equal(done.events.filter(event => event.eventType === 'FictionTimeAdvanced').length, 0);
+  assert.equal(done.state.fictionTimelines[timelineId].nowMicros, before);
 });

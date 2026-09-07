@@ -122,6 +122,7 @@ import {
   worldInteractionFormId,
 } from "./world-interaction-model";
 import { scheduledDeadlinesWithin } from "./due-activities";
+import { activeEncounter } from "./combat-encounters";
 
 const NPC_SEMANTIC_ALLOWLIST: readonly SemanticFieldPolicy[] = Object.freeze([
   Object.freeze({ kind: "value", path: Object.freeze(["semantics", "attitude"]) }),
@@ -1177,6 +1178,13 @@ function applyCompiledAtomicWorldInteractionPlan(profiles: RuntimeProfileManifes
   const actor = state.entities[plan.actorCharacterId];
   if (actor?.tenureStatus !== "active") {
     return rejected("privateOrUnknownReference", "The atomic world-interaction actor is unavailable.");
+  }
+  // Inside an active Encounter the clock moves only by rounds and the turn
+  // economy already carries the act. A frozen duration here would jump the
+  // scene clock mid-round and expire timed effects against the round count.
+  if ((plan.executionCosts?.costs ?? []).some(cost => cost.kind === "fictionTime")
+    && activeEncounter(state, plan.actorCharacterId) !== undefined) {
+    return rejected("missingPrerequisite", "An act inside an Encounter spends turns, not a frozen duration.");
   }
   const specs = new Map<string,WorldInteractionDiceSpec>();
   const checkBinding: { check?: FrozenCheck | null } = {};

@@ -3,6 +3,7 @@ import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,
   isNpcActorPlanFormationPlan } from "../../rules/v2/npc-plan-formation";
 import { TIME_PASSAGE_PLAN_SCHEMA, timePassageStartReadRefs } from "../../rules/v2/time-passage";
+import { activeEncounter } from "../../rules/v2/combat-encounters";
 import { isItemAssemblyOperation } from "../../rules/v2/item-assembly-shapes";
 import { itemAssemblyReadRefs } from "../../rules/v2/item-assemblies";
 import type { RuntimeProfileManifest } from "../../rules/profiles/types";
@@ -381,9 +382,15 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // prefix accounting all see one FictionTimeAdvanced ahead of the results.
     // A bundle that only authors world content is not the character doing
     // anything and must say "0"; a bundle in which the character acts cannot.
+    // Inside an active Encounter the turn economy already carries the act's
+    // time and the clock moves only by rounds; a frozen tier there would jump
+    // the scene clock mid-round and expire timed effects against the round
+    // count. The KP says "none" in combat; the tier is never spent there.
     const inWorldAct = orderedSteps.some(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId)));
     const advances = ruling.durationMicros !== "0";
-    if (inWorldAct !== advances) return rejected("PROPOSAL_FORM_INVALID",
+    const inEncounter = actorInActiveEncounter(input.state, input.actorCharacterId);
+    if (inEncounter && advances) return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-in-encounter"]);
+    if (!inEncounter && inWorldAct !== advances) return rejected("PROPOSAL_FORM_INVALID",
       [inWorldAct ? "bundle2:duration-required-for-in-world-act" : "bundle2:duration-forbidden-for-pure-authoring"]);
     let executionCosts: { costs: { kind: "fictionTime"; durationMicros: string }[]; readSet: readonly { ref: string; revisionOrHash: string }[] } | undefined;
     if (advances) {
@@ -1119,6 +1126,13 @@ function acceptedCommand(
   command: VNext2ProposalBundleCommand,
 ): VNext2ProposalBundleLoweringResult {
   return Object.freeze({ kind: "accepted", command });
+}
+
+/** Lowering may run against a minimal authority snapshot; only a state that
+ * actually carries Encounters can put the actor inside one. */
+function actorInActiveEncounter(state: AuthoritativeWorldState, actorCharacterId: string): boolean {
+  return isPlainRecord(state.combatRuntime) && isPlainRecord(state.combatRuntime.encounters)
+    && activeEncounter(state, actorCharacterId) !== undefined;
 }
 
 function rejected(

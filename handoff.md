@@ -112,7 +112,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ### 2. 时长改档位 —— 已做，本地验证
 
-[合同 §10](docs/agent/vnext-fiction-time-contract-proposal.md)。线上 `decision.duration` 枚举 `none|5min|10min|30min|1h|halfDay`；域内仍是 `durationMicros`，只接受六个档位的微秒；codec（`proposal-filling-interface.ts`）双向映射；parser v44。夹具时长 6 秒 → 5 分钟（`FIXTURE_ACT_DURATION_MICROS`），受影响的时钟期望已改。**暴露的缺口**：5 分钟的行动跨过更短 Activity（60 秒通行）的到期点后，若其冻结完成已不合法，到期优先结算会拒绝之后每一次输入——时间线堵死；应改为结算时中断该 Activity。todo 用例在 `tests/kp-vnext-dynamic-locations.test.mjs`。零真实证据；round81 首句看模型填哪一档。
+[合同 §10](docs/agent/vnext-fiction-time-contract-proposal.md)。线上 `decision.duration` 枚举 `none|5min|10min|30min|1h|halfDay`；域内仍是 `durationMicros`，只接受六个档位的微秒；codec（`proposal-filling-interface.ts`）双向映射；parser v44。夹具时长 6 秒 → 5 分钟（`FIXTURE_ACT_DURATION_MICROS`），受影响的时钟期望已改。**暴露的缺口**：5 分钟的行动跨过更短 Activity（60 秒通行）的到期点后，若其冻结完成已不合法，到期优先结算会拒绝之后每一次输入——时间线堵死；应改为结算时中断该 Activity。todo 用例在 `tests/kp-vnext-dynamic-locations.test.mjs`。round81 首句和第三句模型都填了 5min。**遭遇内外已区分**（[合同 §10.1](docs/agent/vnext-fiction-time-contract-proposal.md)）：遭遇进行中 KP 填 `none`，lowering 拒绝非零档位，Rules 拒绝遭遇中的 `fictionTime` 成本；战斗外不变。parser v45，零真实证据。
 
 ### 3. round81：三句发完 —— 已跑，见[回执](docs/agent/vnext-round81-validation.md)
 
@@ -139,6 +139,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 - `mechanicalResult.fictionTime`（含 `crossedDeadlines`）没进 Room 返回和遥测，只在 Rules 结果上（round80 确认）。档位化之后再接。
 - 第二句选中 `observe` 后填写阶段丢弃，玩家明写的「留意动静」随之消失，不留痕（round78/80 均如此）。
 - 到期 Activity 的冻结完成不再合法时（通道关闭、通行未完成），`settleDueActivityBeforeInput` 拒绝输入而不是中断 Activity，时间线堵死；档位化后一次行动就能跨过 60 秒的通行，容易撞上。另立合同。
+- 冻结上下文没有显式的「遭遇进行中」标记，KP 只能从行动者的回合预算和场景的 `combatScene` 推断；遭遇中填了档位只能硬拒。加一个显式标记是一条小合同。
 - 闹钟路径（玩家不在线时到期）完成的等待：audience 建好但当时无人旁白，靠 `narrationRecovery` 在下次 observe 发布——链路是旧的，等待这一用法没跑过。
 - 旧线 vnext-1（`atomicRulesSteps`）没有时长字段，Rules 只裁「纯创作不能花时间」这一半；「角色行动必须声明」是 vnext-2 lowering 的规则。
 
