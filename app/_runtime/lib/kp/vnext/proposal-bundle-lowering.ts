@@ -7,7 +7,7 @@ import { isItemAssemblyOperation } from "../../rules/v2/item-assembly-shapes";
 import { itemAssemblyReadRefs } from "../../rules/v2/item-assemblies";
 import type { RuntimeProfileManifest } from "../../rules/profiles/types";
 import { FROZEN_PLAYER_CHOICE_SCHEMA, type FrozenPlayerChoicePlan } from "../../rules/v2/frozen-player-choice";
-import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, isAtomicWorldInteractionStepsPlan } from "../../rules/v2/world-interaction-model";
+import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, IN_WORLD_ACT_FORM_IDS, isAtomicWorldInteractionStepsPlan } from "../../rules/v2/world-interaction-model";
 import { lowerFeasibilityPlan } from "./feasibility-lowering";
 import { authoredWorldFactConform, worldFactConstraints, worldFactConstraintsRef } from "../../rules/v2/world-facts";
 import { socialListeners, socialThreadRef, type SocialInteractionPlan } from "../../rules/v2/social-interaction";
@@ -264,8 +264,13 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       ]);
     }
 
+    // A lone entry may skip the atomic Bundle only when the character does
+    // nothing in the world: a bare Rules step has nowhere to spend the act's
+    // frozen duration, so every in-world act -- a solo conversation included
+    // -- takes the atomic path below and pays its time there.
     if (branch === undefined && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0
-      && bundle.proposals[0]?.kind !== "formActorPlan") {
+      && bundle.proposals[0]?.kind !== "formActorPlan" && !IN_WORLD_ACT_FORM_IDS.has(plan.entries[0]!.formId)) {
+      if (ruling.durationMicros !== "0") return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-for-pure-authoring"]);
       const derivedEntry = plan.entries[0]!;
       const sourceEntry = bundle.proposals[derivedEntry.ordinal]!;
       // A lone worldInteraction can never legitimately reference a
@@ -371,6 +376,22 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       kind: "atomicBundle",
     }).slice("sha256:".length, "sha256:".length + 32)}`;
 
+    // The shared ruling's duration is the act's own fictional time. It rides as
+    // an execution cost so the existing cost emitter, suspension replay and
+    // prefix accounting all see one FictionTimeAdvanced ahead of the results.
+    // A bundle that only authors world content is not the character doing
+    // anything and must say "0"; a bundle in which the character acts cannot.
+    const inWorldAct = orderedSteps.some(step => IN_WORLD_ACT_FORM_IDS.has(String(step.formId)));
+    const advances = ruling.durationMicros !== "0";
+    if (inWorldAct !== advances) return rejected("PROPOSAL_FORM_INVALID",
+      [inWorldAct ? "bundle2:duration-required-for-in-world-act" : "bundle2:duration-forbidden-for-pure-authoring"]);
+    let executionCosts: { costs: { kind: "fictionTime"; durationMicros: string }[]; readSet: readonly { ref: string; revisionOrHash: string }[] } | undefined;
+    if (advances) {
+      const read = selectPlanReadSet(input.requiredContext, [input.actorCharacterId, `character-timeline:${input.actorCharacterId}`]);
+      if (read.kind === "rejected") return read;
+      executionCosts = { costs: [{ kind: "fictionTime", durationMicros: ruling.durationMicros }], readSet: read.readSet };
+    }
+
     return acceptedCommand({
       kind: "rulesStep",
       rootActionId: input.rootActionId,
@@ -389,6 +410,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         contextHash,
         sharedRuling: ruling.kind,
         ...(narrativeMaterializationRefs.length === 0 ? {} : { narrativeMaterializationRefs: [...narrativeMaterializationRefs] }),
+        ...(executionCosts === undefined ? {} : { executionCosts }),
         steps: orderedSteps,
       },
     });

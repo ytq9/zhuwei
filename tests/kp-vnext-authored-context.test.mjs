@@ -1,3 +1,4 @@
+import { actDuration, withActDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET,
@@ -23,8 +24,8 @@ function source(kind, content, handle, dependencies = [], visibilityPolicyRef = 
     visibilityPolicyRef, summary: "定义已固化。" };
 }
 function bundle(proposals) {
-  return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SOURCE],
-    adjudication: { kind: "directSuccess", risk: "依据冻结能力结算。", successOutcome: "动作能够实施。" }, terminal: null, proposals };
+  return withActDuration({ schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SOURCE],
+    adjudication: { kind: "directSuccess", durationMicros: actDuration(proposals), risk: "依据冻结能力结算。", successOutcome: "动作能够实施。" }, terminal: null, proposals });
 }
 function hazardBundle(triggerKind = "disturbFeature", execute = false) {
   const proposals = [

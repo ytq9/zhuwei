@@ -8,6 +8,38 @@ import type { AuthoritativeWorldState, DueActivityDescriptor, JsonRecord } from 
 import { characterTimelineId, sceneTimelineId } from "./timeline";
 import { isNonEmptyString, isRecord } from "./validation";
 
+export type ScheduledDeadlineWithin = Readonly<{
+  kind: "activity" | "actorPlan" | "longSpellcasting" | "worldEffect";
+  ref: string;
+  atFictionMicros: string;
+}>;
+
+/** Every scheduled deadline on the character's timeline strictly after now and
+ * no later than now + duration. An immediate advance of that duration steps
+ * over these; Room settles them in the same request's due tail. Recorded so
+ * the frequency of the case is measured before anyone pays for a staged form. */
+export function scheduledDeadlinesWithin(state: AuthoritativeWorldState, characterId: string, durationMicros: string): ScheduledDeadlineWithin[] {
+  const timelineId = characterTimelineId(state, characterId);
+  if (timelineId === undefined || !/^[1-9][0-9]*$/.test(durationMicros)) return [];
+  const now = BigInt(state.fictionTimelines[timelineId].nowMicros), end = now + BigInt(durationMicros);
+  const within = (at: string) => /^(0|[1-9][0-9]*)$/.test(at) && BigInt(at) > now && BigInt(at) <= end;
+  const crossed: ScheduledDeadlineWithin[] = [];
+  for (const due of ordinaryActivityDescriptors(state, true)) {
+    if (due.timelineId === timelineId && within(due.completionFictionMicros)) crossed.push({ kind: "activity", ref: due.activityId, atFictionMicros: due.completionFictionMicros });
+  }
+  for (const due of scheduledActorPlanDescriptors(state)) {
+    if (due.timelineId === timelineId && due.actorPlan !== undefined && within(due.completionFictionMicros)) crossed.push({ kind: "actorPlan", ref: due.actorPlan.planId, atFictionMicros: due.completionFictionMicros });
+  }
+  for (const due of scheduledLongSpellcastingDescriptors(state)) {
+    if (due.timelineId === timelineId && within(due.completionFictionMicros)) crossed.push({ kind: "longSpellcasting", ref: due.activityId, atFictionMicros: due.completionFictionMicros });
+  }
+  for (const deadline of scheduledWorldEffectDeadlines(state, { timelineId })) {
+    if (within(deadline.dueMicros)) crossed.push({ kind: "worldEffect", ref: deadline.effectId, atFictionMicros: deadline.dueMicros });
+  }
+  return crossed.sort((left, right) => BigInt(left.atFictionMicros) < BigInt(right.atFictionMicros) ? -1
+    : BigInt(left.atFictionMicros) > BigInt(right.atFictionMicros) ? 1 : left.ref < right.ref ? -1 : left.ref > right.ref ? 1 : 0);
+}
+
 /** Completion is fixed by fiction time, independent of when a request resumes. */
 export function activityCompletionFictionMicros(activity: JsonRecord): string | undefined {
   if (typeof activity.startedAtFictionMicros !== "string"

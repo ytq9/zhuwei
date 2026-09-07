@@ -165,6 +165,9 @@ export type VNextDirectSuccessRuling = Readonly<{
   kind: "directSuccess";
   risk: string;
   successOutcome: string;
+  /** Fictional duration of the whole action, frozen before its result. "0"
+   * only when the bundle merely authors world content. */
+  durationMicros: string;
 }>;
 
 export type VNextCheckRuling = VNextCheckParameters & Readonly<{
@@ -172,6 +175,7 @@ export type VNextCheckRuling = VNextCheckParameters & Readonly<{
   risk: string;
   successOutcome: string;
   failureOutcome: string;
+  durationMicros: string;
 }>;
 
 /** High risk is pending until Room supplies a trusted confirmation. */
@@ -1266,6 +1270,12 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     return selected;
   });
 
+  // SPEC 0013 §7.1: an ordinary act's fictional duration is frozen by the KP
+  // before its result and verified by Rules. One value for the whole action;
+  // its steps are facets of the same act, not a sequence.
+  // The strict subset has no maxLength; the validator bounds the digits.
+  const actionDuration = { type: "string", pattern: "^(0|[1-9][0-9]*)$",
+    description: "Fictional time this whole action takes, in exact microseconds as a string. Positive whenever the character performs an act (talking, looking, handling, operating); exactly \"0\" only when the bundle merely authors world content. This is the act itself, not any waiting afterwards -- waiting is passTime. Anchors: a one-line reply 5-15 s, a back-and-forth conversation 1-5 min, a glance 3-10 s, examining one object about 1 min, searching a room about 10 min, handling an item 6 s. When unsure, shorter. The server advances this actor's timeline before the results and shows it to scene observers." };
   const sharedAdjudication = {
       description: "The one shared ruling for all proposals. Required as directSuccess or check when mode=adjudication, including bundles containing only authoring or inventory operations. directSuccess requires every outcomeBinding=always and every observe/social/worldInteraction failure={kind:'none'}. check requires exactly one observe, social or worldInteraction with outcomeBinding=always and complete success/failure branches; additional observe/social/worldInteraction consequences have failure={kind:'none'} and run according to their outcomeBinding without another check.",
       anyOf: [
@@ -1274,6 +1284,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           kind: { type: "string", enum: ["directSuccess"] },
           risk: text,
           successOutcome: text,
+          durationMicros: actionDuration,
         }),
         object({
           kind: { type: "string", enum: ["check"] },
@@ -1304,6 +1315,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
           risk: text,
           successOutcome: text,
           failureOutcome: text,
+          durationMicros: actionDuration,
         }),
       ],
     };

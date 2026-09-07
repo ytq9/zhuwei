@@ -541,6 +541,13 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
       && isNonEmptyString(value.activityId) && ["timePassage", "longSpellcasting"].includes(String(value.reason))
       && typeof value.durationMicros === "string" && /^[1-9][0-9]*$/u.test(value.durationMicros);
   }
+  // An act's own frozen duration names its actor so the advance lands on that
+  // character's timeline rather than on whichever subject the receipt lists.
+  if (type === "FictionTimeAdvanced" && "characterId" in value) {
+    return hasExactKeys(value, ["characterId", "durationMicros", "reason"])
+      && isNonEmptyString(value.characterId) && isNonEmptyString(value.reason)
+      && typeof value.durationMicros === "string" && /^[1-9][0-9]*$/u.test(value.durationMicros);
+  }
   if (!hasExactKeys(value, PAYLOAD_KEYS[type])) {
     return false;
   }

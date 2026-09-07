@@ -135,7 +135,7 @@ test("creation constraints retain ancestor facts and reject missing parents or c
 
 test("partial sensory evidence of a new hidden fact reveals only the actual evidence", () => {
   const f = fixture("partial-evidence"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, description: "HIDDEN-TRUTH-CANARY" });
-  wire.proposals = wire.proposals.slice(0, 1);
+  wire.proposals = wire.proposals.slice(0, 1); wire.adjudication.durationMicros = "0"; // the fact alone is authoring, not an act
   const l = lower(f, wire); assert.equal(l.kind, "accepted", diagnostic(l));
   const r = f.runtime.step(f.profiles, f.state, l.command.rulesInput); assert.equal(r.kind, "committed", diagnostic(r));
   const factId = Object.keys(r.state.canonicalFacts).find(ref => ref.startsWith("fact:definition:materialized:"));

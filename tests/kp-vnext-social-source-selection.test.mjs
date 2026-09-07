@@ -1,3 +1,4 @@
+import { soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -22,8 +23,8 @@ function fixture(name) {
 function bundle(npcRef, basis, check = false) {
   const branch = outcomeCode => ({ outcomeCode, summary: '对方作出回应。', response: { kind: 'speech', text: '我听到了你的来意。', motive: '依据本人背景和当前听到的话作答。', basis }, consequences: [] });
   return { mode: 'adjudication', basisRefs: [npcRef], terminal: null,
-    adjudication: check ? { kind: 'check', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal', risk: '对方可能拒绝。', successOutcome: '作出回应。', failureOutcome: '拒绝回答。' }
-      : { kind: 'directSuccess', risk: '普通交谈。', successOutcome: '作出回应。' },
+    adjudication: check ? { kind: 'check', durationMicros: '6000000', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal', risk: '对方可能拒绝。', successOutcome: '作出回应。', failureOutcome: '拒绝回答。' }
+      : { kind: 'directSuccess', durationMicros: '6000000', risk: '普通交谈。', successOutcome: '作出回应。' },
     proposals: [{ kind: 'social', basisRefs: [npcRef], consumes: [{ kind: 'existing', ref: npcRef }], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
       npcRef, addressedThreadRef: null, goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation', audience: 'participants', retryChange: null,
       branches: { success: branch('outcome:answered'), failure: check ? branch('outcome:declined') : null } }] };
@@ -49,7 +50,7 @@ test('two NPCs and existing/player-expression sources share one frozen selector,
     const lowered = lowerVNext2ProposalBundle({ ...f, value: candidate.bundle }); assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
     const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput); assert.equal(result.kind, 'committed', JSON.stringify(result));
     const replayed = f.runtime.replay(f.genesis, result.events); assert.equal(replayed.kind, 'replayed'); assert.deepEqual(replayed.state, result.state);
-    assert.equal(lowered.command.rulesInput.plan.social.playerExpression, f.requiredContext.intent.text);
+    assert.equal(soleStep(lowered.command).plan.social.playerExpression, f.requiredContext.intent.text);
   }
   assert.deepEqual(f.requiredContext, before);
 });

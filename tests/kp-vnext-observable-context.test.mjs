@@ -1,3 +1,4 @@
+import { soleStep, rebundle, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
@@ -32,7 +33,7 @@ function fixture(label) {
 }
 function observe(subjectRef) {
   return { mode: 'adjudication', basisRefs: [subjectRef],
-    adjudication: { kind: 'directSuccess', risk: '只观察眼前情况。', successOutcome: '看见当前站位。' },
+    adjudication: { kind: 'directSuccess', durationMicros: '6000000', risk: '只观察眼前情况。', successOutcome: '看见当前站位。' },
     terminal: { kind: 'none' }, proposals: [{ kind: 'observe', basisRefs: [subjectRef], consumes: [], produces: [],
       outcomeBinding: 'always', sceneRef: SCENE, inquiry: '对方现在在哪里？', method: '观察在场人物。',
       focusRefs: [subjectRef], existingFactRefs: [], branches: { success: {
@@ -72,7 +73,7 @@ test('different observed entity kinds follow the same parser, lowering, Rules an
   for (const subjectRef of [NPC, OTHER]) {
     const f = fixture(`submit:${subjectRef}`), lowered = lower(f, subjectRef);
     assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-    assert.ok(lowered.command.rulesInput.plan.readSet.some(binding => binding.ref === subjectRef
+    assert.ok(soleStep(lowered.command).plan.readSet.some(binding => binding.ref === subjectRef
       && binding.revisionOrHash === authorityRevisionOrHash(f.state, subjectRef)));
     const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
     assert.equal(result.kind, 'committed', JSON.stringify(result));
@@ -91,8 +92,8 @@ test('missing, forged and stale subject bindings fail before events, as do hidde
   const f = fixture('binding'), lowered = lower(f, NPC);
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
   for (const mutate of [
-    input => { input.plan.readSet = input.plan.readSet.filter(binding => binding.ref !== NPC); },
-    input => { input.plan.readSet.find(binding => binding.ref === NPC).revisionOrHash = `sha256:${'0'.repeat(64)}`; },
+    input => { soleInput(input).plan.readSet = soleInput(input).plan.readSet.filter(binding => binding.ref !== NPC); },
+    input => { soleInput(input).plan.readSet.find(binding => binding.ref === NPC).revisionOrHash = `sha256:${'0'.repeat(64)}`; },
   ]) {
     const input = structuredClone(lowered.command.rulesInput); mutate(input);
     const result = f.runtime.step(f.profiles, f.state, input);
@@ -156,7 +157,7 @@ function dynamicFixture() {
             traversal: '沿石阶步行', travelDurationMicros: '60000000' } }) },
     };
   });
-  const value = { ...observe(SOURCE), proposals: producers };
+  const value = rebundle(observe(SOURCE), producers);
   const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(value)));
   assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
   const lowered = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });

@@ -35,6 +35,7 @@ function fixture(label,{knowledge=false,identity=false,faction=false}={}) {
 }
 function source(overrides={}) {return {npcRef:NPC,factionRef:null,goal:'PRIVATE_NEW_GOAL',nextStep:'PRIVATE_NEXT_STEP',premiseRefs:[NPC],resourceRefs:[],durationMicros:'2000000',traceDescription:TEXT,alternateTargetRef:SCENE,alternateReason:'PRIVATE_ALTERNATE',...overrides};}
 function bindings(state,refs) {return [...new Set(refs)].sort().map(ref=>({ref,revisionOrHash:authorityRevisionOrHash(state,ref)}));}
+function actCosts(state) {return {costs:[{kind:'fictionTime',durationMicros:'6000000'}],readSet:bindings(state,[ACTOR,`character-timeline:${ACTOR}`])};}
 function formation(f,src=source(),slot='proposal:form',root=f.rootActionId) {
   const refs=npcActorPlanFormationReadRefs(f.state,src);assert.ok(refs,'fixture source must be available');
   const plan={schema:NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA,contextHash:canonicalSha256({root}),...npcActorPlanFormationIds(root,slot),source:src,readSet:bindings(f.state,refs)};
@@ -132,7 +133,7 @@ test('a real earlier social step cannot donate its newly made promise as a forma
   const f=fixture('social-prefix',{knowledge:true}),command=socialInput(f),social=call(f,f.state,command);
   const promise=Object.keys(social.state.campaignRuntime.promises)[0];assert.ok(promise);
   const candidate={...f,state:social.state},input=formation(candidate,source({premiseRefs:[promise]}));
-  input.steps.unshift(socialStep(command));
+  input.steps.unshift(socialStep(command));input.executionCosts=actCosts(f.state);
   const before=structuredClone(f.state),rejected=call(f,f.state,input,'rejected');
   assert.match(rejected.rejection.message,/before-the-bundle|source-binding/);assert.deepEqual(f.state,before);
   assert.equal(f.state.campaignRuntime.promises[promise],undefined);assert.equal(f.state.receipts[f.rootActionId],undefined);
@@ -141,7 +142,7 @@ test('a real earlier social step cannot donate its newly made promise as a forma
 test('one shared check selects an already frozen formation branch; invalid formation rejects before a dice request',()=>{
   for(const roll of [1,20]) {
     const f=fixture(`shared-check-${roll}`,{knowledge:true}),input=formation(f),command=socialInput(f,true),formationStep=input.steps[0];
-    input.sharedRuling='check';formationStep.ruling='check';formationStep.outcomeBinding='onSuccess';formationStep.dependsOn=['proposal:social'];input.steps.unshift(socialStep(command,true));
+    input.sharedRuling='check';formationStep.ruling='check';formationStep.outcomeBinding='onSuccess';formationStep.dependsOn=['proposal:social'];input.steps.unshift(socialStep(command,true));input.executionCosts=actCosts(f.state);
     const pending=call(f,f.state,input,'awaitingRandomness');assert.equal(Object.keys(pending.state.campaignRuntime.npcPlans).length,0);
     const restored=f.runtime.replay(f.genesis,pending.events);assert.equal(restored.kind,'replayed');
     const resumed=call(f,restored.state,{kind:'fulfillAuthoritativeRandomness',continuation:pending.continuation,rolls:[roll]});

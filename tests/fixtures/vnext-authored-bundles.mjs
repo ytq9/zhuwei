@@ -1,10 +1,11 @@
+import { actDuration, withActDuration } from './vnext-action-duration.mjs';
 import {createAuthoredProbeFixture,PROBE_ACTOR as ACTOR,PROBE_TARGET as TARGET,PROBE_SCENE as SCENE,PROBE_SOURCE as SOURCE,PROBE_ZONE as ZONE} from '../../tools/lib/vnext-authored-probe-fixture.mjs';
 import {lowerVNext2ProposalBundle} from '../../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import {VNEXT2_PROPOSAL_BUNDLE_SCHEMA} from '../../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 const A='prospective:mechanics',H='prospective:hazard',I='prospective:item-definition',E='prospective:item-entry';
 function ability(extra={}){return {label:'Generated mechanics',description:'A frozen Ability.',aliases:[],tags:[],activation:{kind:'nonCombatHazard'},target:{kind:'creature',count:'1',rangeInches:'120',requiresSight:false},attack:null,save:null,damage:[],effect:null,effects:[],healing:null,temporaryHitPoints:null,costs:[],grants:[],...extra};}
 function source(kind,content,handle,consumes=[]){return {kind:'materializeDefinition',basisRefs:[SOURCE],consumes:consumes.map(handle=>({kind:'prospective',handle})),produces:[{handle,kind:`${kind}Definition`,outcomeBinding:'always'}],outcomeBinding:'always',source:{kind,content},visibilityPolicyRef:'visibility:public',summary:'Definition frozen.'};}
-function bundle(proposals){return {schema:VNEXT2_PROPOSAL_BUNDLE_SCHEMA,kind:'proposalBundle',mode:'adjudication',basisRefs:[SOURCE],adjudication:{kind:'directSuccess',risk:'Frozen mechanics settle.',successOutcome:'The action can proceed.'},terminal:null,proposals};}
+function bundle(proposals){return withActDuration({schema:VNEXT2_PROPOSAL_BUNDLE_SCHEMA,kind:'proposalBundle',mode:'adjudication',basisRefs:[SOURCE],adjudication:{kind:'directSuccess', durationMicros: actDuration(proposals),risk:'Frozen mechanics settle.',successOutcome:'The action can proceed.'},terminal:null,proposals});}
 function inventory(operation){return {kind:'inventoryOperation',basisRefs:[SOURCE],consumes:[{kind:'prospective',handle:E}],produces:[],outcomeBinding:'always',operation,summary:'Inventory changed.'};}
 export function itemBundle(){return bundle([
  source('ability',ability({activation:{kind:'useObject',actionGrant:'normalAction'},target:{kind:'creature',count:'1',rangeInches:'0',requiresSight:false},healing:{formula:'2d4+2'}}),A),

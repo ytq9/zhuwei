@@ -1,3 +1,4 @@
+import { actDuration, withActDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
@@ -30,7 +31,7 @@ function passage(toLocationRef, { fromLocationRef = SCENE, handle = PASSAGE, sta
     passage: { fromLocationRef, toLocationRef, bidirectional, traversal: "沿石阶步行", travelDurationMicros: "60000000" } },
     [fromLocationRef, toLocationRef].map(ref => ref.startsWith("prospective:") ? { kind: "prospective", handle: ref } : { kind: "existing", ref }));
 }
-function bundle(proposals) { return { ...itemBundle(), proposals }; }
+function bundle(proposals) { const base = itemBundle(); return withActDuration({ ...base, adjudication: { ...base.adjudication, durationMicros: actDuration(proposals) }, proposals }); }
 function lower(fixture, proposals) {
   const value = parseSubmitKpProposalBundleArguments(encodeVNextStrictToolBundle(bundle(proposals)));
   const valid = validateVNextProposalBundle(value);
@@ -85,7 +86,9 @@ test("a later vNext traversal starts an Activity and moves only when its existin
   const started = commit(next, [interaction(connection.definitionRef, [{ kind: "traversePassage", passageRef: connection.definitionRef }])]);
   const activity = started.events.find(event => event.eventType === "ActivityStarted").payload;
   assert.equal(started.state.entities[ACTOR].sceneId, SCENE);
-  assert.deepEqual(started.state.fictionTimelines, created.state.fictionTimelines);
+  // Setting off is an act with its own small frozen duration; the travel time itself stays in the Activity.
+  const timelineId = created.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? created.state.activeBranchId;
+  assert.equal(BigInt(started.state.fictionTimelines[timelineId].nowMicros) - BigInt(created.state.fictionTimelines[timelineId].nowMicros), 6000000n);
   assert.equal(activity.intendedDurationMicros, "60000000");
   const projection = f.runtime.project(f.profiles, started.state, f.viewer, { channel: "realtime", committedRange: {
     receiptId: started.receipt.receiptId, actorCharacterId: ACTOR, priorState: created.state, events: started.events } });
@@ -99,8 +102,9 @@ test("a later vNext traversal starts an Activity and moves only when its existin
   const completed = act(f, waited.state, { kind: "completeActivity", proposalId: "root:travel:complete", activityId: activity.activityId });
   assert.equal(completed.state.entities[ACTOR].sceneId, destScene);
   const moved = completed.events.find(event => event.eventType === "CharacterMoved").payload;
-  assert.equal(moved.departureMicros, "60000000");
-  assert.equal(moved.arrivalMicros, "60000000");
+  // Six seconds to set off, then the minute of travel.
+  assert.equal(moved.departureMicros, "66000000");
+  assert.equal(moved.arrivalMicros, "66000000");
   assert.equal(moved.passage.passageRef, connection.definitionRef);
   assert.equal(moved.activityId, activity.activityId);
   const duplicate = act(f, completed.state, { kind: "completeActivity", proposalId: "root:travel:duplicate", activityId: activity.activityId }, "rejected");

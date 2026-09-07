@@ -27,7 +27,7 @@ function fixture(name) {
 }
 function validBundle() {
   return { mode: 'adjudication', basisRefs: [NPC], terminal: null,
-    adjudication: { kind: 'directSuccess', risk: '普通交谈。', successOutcome: '作出回应。' },
+    adjudication: { kind: 'directSuccess', durationMicros: '6000000', risk: '普通交谈。', successOutcome: '作出回应。' },
     proposals: [{ kind: 'social', basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: SCENE,
       npcRef: NPC, addressedThreadRef: null, goal: '说明来意。', method: '当面交谈。', communication: 'spokenConversation',
       audience: 'participants', retryChange: null,

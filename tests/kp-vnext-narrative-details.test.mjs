@@ -1,3 +1,4 @@
+import { actDuration, withActDuration, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
@@ -17,9 +18,9 @@ function detailEntry(overrides = {}) {
     sceneRef: SCENE, label: "青铜台座", description: "墙角有一座表面布满细纹的青铜台座。", audience: "sceneObservers", ...overrides };
 }
 function bundle(proposals) {
-  return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SCENE],
-    adjudication: { kind: "directSuccess", risk: "描述当前不参与裁决的环境细节。", successOutcome: "环境细节得到持续记录。" },
-    terminal: null, proposals };
+  return withActDuration({ schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SCENE],
+    adjudication: { kind: "directSuccess", durationMicros: actDuration(proposals), risk: "描述当前不参与裁决的环境细节。", successOutcome: "环境细节得到持续记录。" },
+    terminal: null, proposals });
 }
 function lower(fixture, state, value, options = {}) {
   const rootActionId = options.rootActionId ?? fixture.rootActionId;
@@ -200,11 +201,11 @@ test("same labels retain separate server identities and unresolved narrative fac
   const action = observe(SOURCE);
   const lowered = lower(fixture, first.result.state, bundle([action]), { rootActionId: `${fixture.rootActionId}:bypass` });
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  const injected = structuredClone(lowered.command.rulesInput);
-  injected.plan.basisRefs.push(first.ref);
-  injected.plan.basisRefs.sort();
-  injected.plan.readSet.push({ ref: first.ref, revisionOrHash: authorityRevisionOrHash(first.result.state, first.ref) });
-  injected.plan.readSet.sort((a, b) => a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0);
+  const injected = structuredClone(lowered.command.rulesInput), injectedPlan = soleInput(injected).plan;
+  injectedPlan.basisRefs.push(first.ref);
+  injectedPlan.basisRefs.sort();
+  injectedPlan.readSet.push({ ref: first.ref, revisionOrHash: authorityRevisionOrHash(first.result.state, first.ref) });
+  injectedPlan.readSet.sort((a, b) => a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0);
   const rejected = fixture.runtime.step(fixture.profiles, first.result.state, injected);
   assert.equal(rejected.kind, "rejected", JSON.stringify(rejected));
   assert.match(rejected.rejection.message, /narrative:materialization-required-before-causal-use/u);
@@ -218,7 +219,7 @@ test("frozen materialization obligations survive shared randomness and restore o
     interaction.branches.failure = { ...structuredClone(interaction.branches.success), outcomeCode: "outcome:uncertain",
       summary: "细节保留，但无法辨认更多。", sensoryEvidence: [] };
     const value = bundle([interaction, materialize(first.ref)]);
-    value.adjudication = { kind: "check", checkKind: "abilityCheck", ability: "wis", skill: null, dc: 10, mode: "normal",
+    value.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "wis", skill: null, dc: 10, mode: "normal",
       risk: "短暂照明可能不足以看清细微结构。", successOutcome: "看清原有细节。", failureOutcome: "无法辨认更多。" };
     const lowered = later(fixture, first.result.state, value, first.ref);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));

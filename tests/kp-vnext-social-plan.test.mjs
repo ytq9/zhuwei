@@ -1,3 +1,4 @@
+import { soleStep, soleFormId } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_TARGET as OTHER, PROBE_SCENE as SCENE } from "../tools/lib/vnext-authored-probe-fixture.mjs";
@@ -236,9 +237,9 @@ function bundle(f, check = false) {
   const plan = input(f, { check, promise: true }).plan;
   const { npcRef, addressedThreadRef, goal, communication, audience, branches } = plan.social;
   return { mode: "adjudication", basisRefs: [NPC], terminal: { kind: "none" },
-    adjudication: check ? { kind: "check", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
+    adjudication: check ? { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
       risk: "守门人可能拒绝。", successOutcome: "守门人回答。", failureOutcome: "守门人拒绝。" }
-      : { kind: "directSuccess", risk: "普通交谈。", successOutcome: "守门人回答。" },
+      : { kind: "directSuccess", durationMicros: "6000000", risk: "普通交谈。", successOutcome: "守门人回答。" },
     proposals: [{ kind: "social", basisRefs: [NPC], consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
       npcRef, addressedThreadRef: addressedThreadRef ?? { kind: "none" }, goal, method: plan.method, communication, audience,
       retryChange: { kind: "none" }, branches: { success: branches.success, failure: check ? branches.failure : { kind: "none" } } }] };
@@ -263,7 +264,7 @@ test("social actor knowledge basis resolves raw and holder refs to the same load
   };
   const raw = lowerWith(KNOWLEDGE), canonical = lowerWith(heldRef);
   assert.equal(raw.kind, "accepted", diagnostic(raw)); assert.equal(canonical.kind, "accepted", diagnostic(canonical));
-  assert.deepEqual(raw.command.rulesInput.plan.readSet, canonical.command.rulesInput.plan.readSet,
+  assert.deepEqual(soleStep(raw.command).plan.readSet, soleStep(canonical.command).plan.readSet,
     "both spellings bind the identical authority records without rewriting the model's proposal");
   for (const lowered of [raw, canonical]) {
     const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
@@ -281,8 +282,8 @@ test("independent social Form preserves the player's original expression through
   assert.deepEqual(deepSeekStrictToolSchemaIssues(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
   const f = fixture("form"), lowered = lower(f, bundle(f));
   assert.equal(lowered.kind, "accepted", diagnostic(lowered));
-  assert.equal(lowered.command.formId, "social.vnext-1");
-  assert.equal(lowered.command.rulesInput.plan.social.playerExpression, "请告诉我：你看到信使往哪里走了吗？");
+  assert.equal(soleFormId(lowered.command), "social.vnext-1");
+  assert.equal(soleStep(lowered.command).plan.social.playerExpression, "请告诉我：你看到信使往哪里走了吗？");
   const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", diagnostic(result)); project(f, result); replay(f, result.events, result.state);
   const bad = bundle(f, true);
@@ -308,9 +309,9 @@ test("social can cite the advertised NPC knowledge directory without aliasing an
   rawWire.proposals[0].branches.success.response.basis = [{ kind: "npcContext", ref: KNOWLEDGE }];
   const raw = lower(f, rawWire);
   assert.equal(raw.kind, "accepted", diagnostic(raw));
-  assert.deepEqual(raw.command.rulesInput.plan.social.branches.success.response.basis,
-    lowered.command.rulesInput.plan.social.branches.success.response.basis);
-  assert.deepEqual(raw.command.rulesInput.plan.readSet, lowered.command.rulesInput.plan.readSet);
+  assert.deepEqual(soleStep(raw.command).plan.social.branches.success.response.basis,
+    soleStep(lowered.command).plan.social.branches.success.response.basis);
+  assert.deepEqual(soleStep(raw.command).plan.readSet, soleStep(lowered.command).plan.readSet);
   const rawResult = f.runtime.step(f.profiles, f.state, raw.command.rulesInput);
   assert.equal(rawResult.kind, "committed", diagnostic(rawResult));
   project(f, rawResult); replay(f, rawResult.events, rawResult.state);

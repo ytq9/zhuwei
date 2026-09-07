@@ -1,3 +1,4 @@
+import { soleFormId, soleProposalRef, mergeExecutionCosts } from './fixtures/vnext-action-duration.mjs';
 import { authoritativeNpcDecisionContext } from '../app/_runtime/lib/rules/v2/npc-decision-context.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -120,7 +121,7 @@ function atomicInput(f, lower, bundle) {
   const ruling = bundle.adjudication.kind;
   return { kind: 'applyAtomicWorldInteractionSteps', rootActionId: f.rootActionId, actorCharacterId: ACTOR,
     bundleHash: canonicalSha256(bundle), contextHash: f.requiredContext.binding.contextHash, sharedRuling: ruling,
-    steps: [{ formId: lower.command.formId, proposalRef: lower.command.proposalRef, ruling,
+    steps: [{ formId: soleFormId(lower.command), proposalRef: soleProposalRef(lower.command), ruling,
       rulesInput: lower.command.rulesInput, dependsOn: [], consumes: [], produces: [], outcomeBinding: 'always' }] };
 }
 
@@ -214,9 +215,19 @@ test('frozen execution proves native reaction and choice-dependent randomness wi
   }
 });
 
+// Every in-world act now spends its frozen duration ahead of its results, so
+// an overriding cost set has to carry that spend too, with the actor's
+// timeline bound; otherwise Rules refuses the act for declaring no duration.
+const ACT_DURATION_MICROS = '6000000';
+function fictionTimeCost(f, durationMicros = ACT_DURATION_MICROS) {
+  return { cost: { kind: 'fictionTime', durationMicros },
+    binding: { ref: `character-timeline:${ACTOR}`, revisionOrHash: authorityRevisionOrHash(f.state, `character-timeline:${ACTOR}`) } };
+}
+const byRef = (left, right) => left.ref < right.ref ? -1 : left.ref > right.ref ? 1 : 0;
 function acceptedCosts(f, amount = 1) {
-  return { costs: [{ kind: 'resource', resourceId: 'focus', amount }],
-    readSet: [{ ref: ACTOR, revisionOrHash: authorityRevisionOrHash(f.state, ACTOR) }] };
+  const time = fictionTimeCost(f);
+  return { costs: [{ kind: 'resource', resourceId: 'focus', amount }, time.cost],
+    readSet: [{ ref: ACTOR, revisionOrHash: authorityRevisionOrHash(f.state, ACTOR) }, time.binding].sort(byRef) };
 }
 
 test('additional accepted costs share direct and check execution without changing Ability costs or charging before settlement', () => {
@@ -264,7 +275,7 @@ test('a direct atomic action pays accepted item and resource costs once without 
   const context = freezeAuthoredProbeContext(f, acquired.state, { rootActionId,
     focusRefs: [TARGET, 'definition:probe-valve'] }).context;
   const value = sharedCheckBundle('worldInteraction');
-  value.adjudication = { kind: 'directSuccess', risk: '消耗一份材料。', successOutcome: '完成观察。' };
+  value.adjudication = { kind: 'directSuccess', durationMicros: '6000000', risk: '消耗一份材料。', successOutcome: '完成观察。' };
   value.proposals = [value.proposals[1]];
   value.proposals[0].branches.failure = { kind: 'none' };
   const parsed = parseBundle(value);
@@ -275,13 +286,12 @@ test('a direct atomic action pays accepted item and resource costs once without 
   const cost = { costs: [{ kind: 'resource', resourceId: 'focus', amount: 1 },
     { kind: 'item', entryRef: entry.entryId, quantity: 1, charges: 0, durability: 0 }],
     readSet: [ACTOR, entry.entryId].sort().map(ref => ({ ref, revisionOrHash: authorityRevisionOrHash(acquired.state, ref) })) };
-  const input = { kind: 'applyAtomicWorldInteractionSteps', rootActionId, actorCharacterId: ACTOR,
-    contextHash: context.binding.contextHash, bundleHash: canonicalSha256(parsed.bundle), sharedRuling: 'directSuccess', executionCosts: cost,
-    steps: [{ formId: lower.command.formId, proposalRef: lower.command.proposalRef, ruling: 'directSuccess',
-      rulesInput: lower.command.rulesInput, dependsOn: [], consumes: [], produces: [], outcomeBinding: 'always' }] };
+  // Lowering already produced the one-step atomic plan carrying the act's duration; the test adds its item and resource costs to it.
+  const base = lower.command.rulesInput.executionCosts;
+  const input = { ...lower.command.rulesInput, executionCosts: mergeExecutionCosts(base, cost) };
   const before = structuredClone(acquired.state);
-  for (const executionCosts of [{ ...cost, readSet: cost.readSet.filter(binding => binding.ref !== entry.entryId) },
-    { ...cost, costs: [cost.costs[0], { ...cost.costs[1], quantity: 3 }] }]) {
+  for (const executionCosts of [mergeExecutionCosts(base, { ...cost, readSet: cost.readSet.filter(binding => binding.ref !== entry.entryId) }),
+    mergeExecutionCosts(base, { ...cost, costs: [cost.costs[0], { ...cost.costs[1], quantity: 3 }] })]) {
     const denied = f.runtime.step(f.profiles, acquired.state, { ...input, executionCosts });
     assert.equal(denied.kind, 'rejected', JSON.stringify(denied));
     assert.deepEqual(denied.events, []);
@@ -429,10 +439,12 @@ test('social after item acquisition and use preserves frozen context through nat
     assert.equal(events.filter(event => event.eventType === 'ResourceSpent' && event.payload.resourceId === 'spellSlot:1').length,
       reaction === 'useReaction' ? 1 : 0);
     assert.equal(done.state.entities['character:probe-third'].resources['spellSlot:1'],reaction === 'useReaction' ? 1 : 2);
-    assert.equal(events.filter(event => event.eventType === 'FictionTimeAdvanced').length, 1);
+    // The item use's own Activity advance plus the act's frozen duration: two, and only two.
+    assert.equal(events.filter(event => event.eventType === 'FictionTimeAdvanced').length, 2);
     const social = events.find(event => event.eventType === 'WorldInteractionResolved' && event.payload.social);
     assert.ok(social);
-    assert.equal(social.payload.social.plan.social.npcContext.records.find(record => record.kind === 'timeline').value.nowMicros, '6000000');
+    // The NPC snapshot is rebound after the item Activity's minute and this act's own duration.
+    assert.equal(social.payload.social.plan.social.npcContext.records.find(record => record.kind === 'timeline').value.nowMicros, '12000000');
     assert.equal(Object.keys(done.state.atomicWorldInteractions).length, 0);
     replay(f, events, done.state);
     if (native) assert.equal(answer(f, { ...result, state: done.state }, { kind: 'decline' }).kind, 'rejected');
@@ -452,7 +464,10 @@ test('social after direct acquisition proves changed inventory without a dice or
       done=f.runtime.step(f.profiles,f.state,{...lowered.command.rulesInput,...(costs?{executionCosts:costs}:{})}); events=done.events;
     }
     assert.equal(done.kind,'committed',JSON.stringify(done));
-    assert.equal(events.some(event=>event.eventType==='DiceRolled'||event.eventType==='FictionTimeAdvanced'),false);
+    assert.equal(events.some(event=>event.eventType==='DiceRolled'),false);
+    // No dice, and the only time that passed is the act's own frozen duration, paid ahead of everything else.
+    assert.deepEqual(events.filter(event=>event.eventType==='FictionTimeAdvanced').map(event=>event.payload.durationMicros),['6000000']);
+    assert.ok(events.findIndex(event=>event.eventType==='FictionTimeAdvanced')<events.findIndex(event=>event.eventType==='WorldInteractionResolved'),'the act pays its duration before its result');
     assert.equal(done.state.entities[ACTOR].resources.focus,withCosts?2:3);
     assert.ok(events.some(event=>event.eventType==='WorldInteractionResolved'&&event.payload.social));
     replay(f,events,done.state);
@@ -475,7 +490,8 @@ test('item prefix composes with materialized NPC knowledge and silence', () => {
     assert.ok(social); assert.equal(social.payload.appliedEffects.length, 0);
     assert.ok(events.some(event => event.eventType === 'DamagePacketResolved'));
     const context = social.payload.social.plan.social.npcContext;
-    assert.equal(context.records.find(record => record.kind === 'timeline').value.nowMicros, '6000000');
+    // The NPC snapshot is rebound to the clock after the item Activity and after this act's own duration.
+    assert.equal(context.records.find(record => record.kind === 'timeline').value.nowMicros, '12000000');
     assert.equal(context.knowledge.length, history ? 1 : 0);
     const thread = done.state.campaignRuntime.conversationThreads[social.payload.social.plan.social.threadRef];
     assert.equal(thread.responseClaimRef === null, silence);
@@ -675,11 +691,7 @@ test('a single check with accepted costs closes its frozen continuation after ei
     const lower = lowerVNext2ProposalBundle({ value: parsed.bundle, rootActionId: f.rootActionId,
       actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
     assert.equal(lower.kind, 'accepted');
-    const pending = f.runtime.step(f.profiles, f.state, { kind: 'applyAtomicWorldInteractionSteps',
-      rootActionId: f.rootActionId, actorCharacterId: ACTOR, bundleHash: canonicalSha256(parsed.bundle),
-      contextHash: f.requiredContext.binding.contextHash, sharedRuling: 'check', executionCosts: acceptedCosts(f),
-      steps: [{ formId: lower.command.formId, proposalRef: lower.command.proposalRef, ruling: 'check',
-        rulesInput: lower.command.rulesInput, dependsOn: [], consumes: [], produces: [], outcomeBinding: 'always' }] });
+    const pending = f.runtime.step(f.profiles, f.state, { ...lower.command.rulesInput, executionCosts: acceptedCosts(f) });
     assert.equal(pending.kind, 'awaitingRandomness', JSON.stringify(pending));
     const result = f.runtime.step(f.profiles, pending.state,
       { kind: 'fulfillAuthoritativeRandomness', continuation: pending.continuation, rolls: [roll] });
@@ -692,22 +704,74 @@ test('a single check with accepted costs closes its frozen continuation after ei
   }
 });
 
-test('accepted cost preflight refuses missing dependencies, insufficient resources and immediate fiction time atomically', () => {
+test('accepted cost preflight refuses missing dependencies, insufficient resources, duplicates and an unbound or undeclared duration atomically', () => {
   const f = fixture('accepted-cost-invalid', { resourceBalance: 1 });
   const lower = lowerVNext2ProposalBundle({ value: itemBundle(), rootActionId: f.rootActionId,
     actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(lower.kind, 'accepted');
   const snapshot = structuredClone(f.state);
+  const time = fictionTimeCost(f);
   for (const executionCosts of [acceptedCosts(f, 2), { ...acceptedCosts(f), readSet: [] },
-    { ...acceptedCosts(f), costs: [{ kind: 'fictionTime', durationMicros: '1000000' }] },
+    // The act's duration must be bound to the actor's timeline like any other cost dependency.
+    { ...acceptedCosts(f), readSet: acceptedCosts(f).readSet.filter(binding => binding.ref === ACTOR) },
     { ...acceptedCosts(f), costs: [...acceptedCosts(f).costs, ...acceptedCosts(f).costs] },
-    { ...acceptedCosts(f), readSet: [{ ref: ACTOR, revisionOrHash: `sha256:${'0'.repeat(64)}` }] }]) {
+    { ...acceptedCosts(f), readSet: [{ ref: ACTOR, revisionOrHash: `sha256:${'0'.repeat(64)}` }, time.binding].sort(byRef) }]) {
     const rejected = f.runtime.step(f.profiles, f.state, { ...lower.command.rulesInput, executionCosts });
     assert.equal(rejected.kind, 'rejected', JSON.stringify(rejected));
     assert.deepEqual(f.state, snapshot);
     assert.deepEqual(rejected.events, []);
   }
 });
+
+test('an act pays its frozen duration once, ahead of its results, on the actor timeline', () => {
+  const f = fixture('accepted-cost-duration', { resourceBalance: 3 });
+  const creation = itemBundle(); creation.proposals.pop();
+  const first = lowerVNext2ProposalBundle({ value: creation, rootActionId: f.rootActionId,
+    actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
+  assert.equal(first.kind, 'accepted', JSON.stringify(first));
+  // Acquiring the item is itself an act, so the creation Bundle carries the fixture's duration and spends it once.
+  assert.deepEqual(first.command.rulesInput.executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '6000000' }]);
+  const acquired = f.runtime.step(f.profiles, f.state, first.command.rulesInput);
+  assert.equal(acquired.kind, 'committed', JSON.stringify(acquired));
+  assert.equal(acquired.events.filter(event => event.eventType === 'FictionTimeAdvanced').length, 1);
+  const rootActionId = `${f.rootActionId}:direct`;
+  const context = freezeAuthoredProbeContext(f, acquired.state, { rootActionId,
+    focusRefs: [TARGET, 'definition:probe-valve'] }).context;
+  const value = sharedCheckBundle('worldInteraction');
+  value.adjudication = { kind: 'directSuccess', durationMicros: '1000000', risk: '转动阀门。', successOutcome: '阀门转动。' };
+  value.proposals = [value.proposals[1]];
+  value.proposals[0].branches.failure = { kind: 'none' };
+  const parsed = parseBundle(value);
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+  const lower = lowerVNext2ProposalBundle({ value: parsed.bundle, rootActionId,
+    actorCharacterId: ACTOR, requiredContext: context, state: acquired.state });
+  assert.equal(lower.kind, 'accepted', JSON.stringify(lower));
+  // Lowering owns the "must declare" half: an act in the world with a zero duration is refused there,
+  // before Rules ever sees it, and a pure authoring Bundle with a positive one likewise.
+  const zero = structuredClone(parsed.bundle); zero.adjudication = { ...zero.adjudication, durationMicros: '0' };
+  assert.deepEqual(lowerVNext2ProposalBundle({ value: zero, rootActionId, actorCharacterId: ACTOR, requiredContext: context, state: acquired.state }).issues,
+    ['bundle2:duration-required-for-in-world-act']);
+  const authoring = itemBundle(); authoring.proposals = authoring.proposals.slice(0, 3); authoring.adjudication.durationMicros = '6000000';
+  assert.deepEqual(lowerVNext2ProposalBundle({ value: authoring, rootActionId: f.rootActionId, actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state }).issues,
+    ['bundle2:duration-forbidden-for-pure-authoring']);
+  // A solo in-world act takes the atomic path, and lowering declared the ruling's duration as its execution cost.
+  assert.equal(lower.command.rulesInput.kind, 'applyAtomicWorldInteractionSteps');
+  assert.deepEqual(lower.command.rulesInput.executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '1000000' }]);
+  assert.ok(lower.command.rulesInput.executionCosts.readSet.some(binding => binding.ref === `character-timeline:${ACTOR}`));
+  const timelineId = acquired.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? acquired.state.activeBranchId;
+  const before = BigInt(acquired.state.fictionTimelines[timelineId].nowMicros);
+  const done = f.runtime.step(f.profiles, acquired.state, lower.command.rulesInput);
+  assert.equal(done.kind, 'committed', JSON.stringify(done));
+  const advances = done.events.filter(event => event.eventType === 'FictionTimeAdvanced');
+  assert.equal(advances.length, 1);
+  assert.equal(advances[0].payload.durationMicros, '1000000');
+  // The advance precedes every result of the act.
+  assert.equal(done.events.indexOf(advances[0]), 0);
+  assert.equal(BigInt(done.state.fictionTimelines[timelineId].nowMicros) - before, 1000000n);
+  assert.deepEqual(done.mechanicalResult.fictionTime, { durationMicros: '1000000', crossedDeadlines: [] });
+  replay(f, [...acquired.events, ...done.events], done.state);
+});
+
 
 test('a frozen choice answer cannot invalidate another atomic action suspended for a native reaction', () => {
   const f = fixture('frozen-native-conflict', { shield: true });
@@ -858,7 +922,8 @@ for(const standalone of [false,true]) for(const reaction of ['decline','useReact
   assert.equal(lowered.kind,'accepted',JSON.stringify(lowered));
   let input=lowered.command.rulesInput,pre=[];
   if(standalone){
-    const materialized=f.runtime.step(f.profiles,f.state,{...input,steps:input.steps.slice(0,2)});
+    // Materializing only the authoring prefix is not the act, so it carries no duration.
+    const materialized=f.runtime.step(f.profiles,f.state,(({executionCosts:_costs,...rest})=>({...rest,steps:input.steps.slice(0,2)}))(input));
     assert.equal(materialized.kind,'committed',JSON.stringify(materialized.rejection));
     pre=materialized.events;f.state=materialized.state;f.rootActionId+=':single';
     const hazard=Object.values(f.state.campaignRuntime.definitions).find(definition=>definition.definitionKind==='environmentHazard');
@@ -868,8 +933,9 @@ for(const standalone of [false,true]) for(const reaction of ['decline','useReact
     f.requiredContext=freezeAuthoredProbeContext(f,f.state,{rootActionId:f.rootActionId,focusRefs:[TARGET,'definition:probe-valve','definition:probe-steam-zone',hazard.definitionId]}).context;
     const single=lowerVNext2ProposalBundle({value,rootActionId:f.rootActionId,actorCharacterId:ACTOR,requiredContext:f.requiredContext,state:f.state});
     assert.equal(single.kind,'accepted',JSON.stringify(single));
+    // A lone in-world act now lowers as a one-step atomic Bundle so it can spend its duration.
     input=single.command.rulesInput;
-    assert.equal(input.kind,'resolveWorldInteraction');
+    assert.equal(input.kind,'applyAtomicWorldInteractionSteps');assert.equal(input.steps.length,1);
   }
   const waiting=f.runtime.step(f.profiles,f.state,input);
   assert.equal(waiting.kind,'awaitingRandomness',JSON.stringify(waiting.rejection));
@@ -882,7 +948,8 @@ for(const standalone of [false,true]) for(const reaction of ['decline','useReact
   assert.equal(done.kind,'committed',JSON.stringify(done.rejection));
   assert.equal(done.state.entities[TARGET].hitPoints.current,reaction==='decline'?18:20);
   assert.equal(done.state.entities[TARGET].resources['spellSlot:1'],reaction==='decline'?2:1);
-  if(standalone){assert.equal(done.mechanicalResult.kind,'worldInteraction');assert.equal(done.events.some(event=>event.eventType==='AtomicWorldInteractionStepsResolved'),false);}
+  // A lone in-world act settles as a one-step atomic Bundle now; its single WorldInteractionResolved still owns the mechanical result.
+  if(standalone){assert.equal(done.mechanicalResult.kind,'worldInteraction');assert.equal(done.events.filter(event=>event.eventType==='AtomicWorldInteractionStepsResolved').length,1);}
   replay(f,[...pre,...waiting.events,...pending.events,...done.events],done.state);
 });
 

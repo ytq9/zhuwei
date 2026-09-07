@@ -1361,7 +1361,7 @@ export type EventPayloadByType = {
     success: JsonRecord;
     failure: JsonRecord;
   };
-  FictionTimeAdvanced: { durationMicros: string; reason: string; activityId?: string };
+  FictionTimeAdvanced: { durationMicros: string; reason: string; activityId?: string; characterId?: string };
   ContestFrozen: { initiatorId: string; defenderId: string; initiatorCheck: JsonRecord; defenderCheck: JsonRecord; tieResult: string };
   SaveFrozen: { targetId: string; sourceDefinitionId: string; ability: string; dc: number; success: JsonRecord; failure: JsonRecord };
   ResourceUsed: { characterId: string; resourceId: string; amount: number; purpose: string };

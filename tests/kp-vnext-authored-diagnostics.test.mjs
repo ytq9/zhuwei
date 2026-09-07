@@ -1,3 +1,4 @@
+import { soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture } from "../tools/lib/vnext-authored-probe-fixture.mjs";
@@ -83,7 +84,7 @@ test("authored diagnostics preserve legal custom Ability and Item values through
     assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
     const lowered = lower(fixture, parsed.bundle);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-    assert.deepEqual(lowered.command.rulesInput.plan.source, source);
+    assert.deepEqual(soleStep(lowered.command).plan.source, source);
     const committed = fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput);
     assert.equal(committed.kind, "committed", JSON.stringify(committed));
     const replayed = fixture.runtime.replay(fixture.genesis, committed.events);

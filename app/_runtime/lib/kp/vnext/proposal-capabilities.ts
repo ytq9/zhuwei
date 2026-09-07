@@ -7,7 +7,7 @@ export const VNEXT_PROPOSAL_CAPABILITIES = deepFreeze([
   { id: "materializeObject", proposalKind: "materializeObject", description: "固化开放留白中的场景对象、世界事实、地点与连接，或将已描述的环境承诺固化为可交互对象。创建地点与连接不会移动角色或支付通行成本。", dependencies: [] },
   { id: "observe", proposalKind: "observe", description: "获取实际感官证据，并依据角色已有知识或本次证据提出独立推断；保留来源、依据和不确定性，不替玩家决定信念。", dependencies: [] },
   { id: "formActorPlan", proposalKind: "formActorPlan", description: "依据某个NPC已有本人身份、知识和社会记录形成定时后续计划。形成只保存私有计划，不提前行动、推进时间、扣资源或发布未来痕迹。", dependencies: [] },
-  { id: "social", proposalKind: "social", description: "与已知 NPC 当面对话：依据该 NPC 自身冻结知识作出回应或沉默、关系变化及 NPC 权限内承诺和债务；保留原玩家表达，承诺不提前执行物理效果。当前表单支持即时口头交谈，耗时活动和额外成本需独立可执行计划。", dependencies: [] },
+  { id: "social", proposalKind: "social", description: "与已知 NPC 当面对话：依据该 NPC 自身冻结知识作出回应或沉默、关系变化及 NPC 权限内承诺和债务；保留原玩家表达，承诺不提前执行物理效果。交谈本身消耗虚构时间，由decision.durationMicros冻结；需要等待、通行或休整的后续动作另提相应计划。", dependencies: [] },
   { id: "worldInteraction", proposalKind: "worldInteraction", description: "操作既有或同束新对象，执行检定、攻击及已定义危险；表达操作附带的感官证据和实际世界后果。独立观察使用observe。", dependencies: [] },
   { id: "commitNarrativeDetail", proposalKind: "commitNarrativeDetail", description: "保存尚无因果或机械作用的环境描写及其受众，约束后续连续性。", dependencies: [] },
   { id: "authorAbility", proposalKind: "materializeDefinition", definitionKind: "ability", description: "创作可执行 Ability：攻击、豁免、范围、资源成本、伤害、治疗、状态和持续时间。调用已有 Ability 无需此定义 schema。", dependencies: [] },

@@ -28,6 +28,27 @@ export function worldInteractionResourceCostPayload(characterId: string, resourc
   return { characterId, resourceId, amount, purpose };
 }
 
+/** The act's own duration is paid like any other accepted cost: one
+ * FictionTimeAdvanced whose reason is the shared cost purpose. */
+export function worldInteractionFictionTimeCostPayload(characterId: string, durationMicros: string, purpose: string): EventPayloadByType["FictionTimeAdvanced"] {
+  return { durationMicros, reason: purpose, characterId };
+}
+
+type AttemptCostLike = { kind: "item"; entryRef: string; quantity: number; charges: number; durability: number }
+  | { kind: "resource"; resourceId: string; amount: number } | { kind: "fictionTime"; durationMicros: string };
+
+/** Expected event type and payload for one frozen execution cost, evaluated
+ * against the state just before that cost was paid. */
+export function expectedWorldInteractionCostEvent(before: AuthoritativeWorldState, characterId: string,
+  cost: AttemptCostLike, purpose: string): { eventType: "ItemUsed" | "ResourceUsed" | "FictionTimeAdvanced"; payload: unknown } | undefined {
+  if (cost.kind === "item") {
+    const payload = worldInteractionItemCostPayload(before, characterId, cost, purpose);
+    return payload === undefined ? undefined : { eventType: "ItemUsed", payload };
+  }
+  if (cost.kind === "fictionTime") return { eventType: "FictionTimeAdvanced", payload: worldInteractionFictionTimeCostPayload(characterId, cost.durationMicros, purpose) };
+  return { eventType: "ResourceUsed", payload: worldInteractionResourceCostPayload(characterId, cost.resourceId, cost.amount, purpose) };
+}
+
 export type FrozenAtomicExecutionBoundary = Pick<EventEnvelope<"WorldInteractionResolved">, "rootActionId" | "branchId" | "eventSeq">
   & { payload: Pick<EventEnvelope<"WorldInteractionResolved">["payload"], "branch"> };
 
@@ -114,11 +135,9 @@ export function firstFrozenAtomicEventSeq(state: AuthoritativeWorldState, profil
       if (!paid || BigInt(paid.eventSeq) !== BigInt(suspended.sourceState.version) + BigInt(index + 1)
         || paid.rootActionId !== atomic.rootActionId || paid.branchId !== event.branchId) return undefined;
       const original = domainStateBeforeAuditRange(suspended.candidateState, paid.eventSeq);
-      const expected = cost.kind === "item"
-        ? worldInteractionItemCostPayload(original, atomic.actorCharacterId, cost, ATOMIC_ACCEPTED_COST_PURPOSE)
-        : worldInteractionResourceCostPayload(atomic.actorCharacterId, cost.resourceId, cost.amount, ATOMIC_ACCEPTED_COST_PURPOSE);
-      if (!expected || paid.eventType !== (cost.kind === "item" ? "ItemUsed" : "ResourceUsed")
-        || paid.payloadHash !== canonicalSha256(expected) || paid.payloadHash !== canonicalSha256(paid.payload)) return undefined;
+      const expected = expectedWorldInteractionCostEvent(original, atomic.actorCharacterId, cost, ATOMIC_ACCEPTED_COST_PURPOSE);
+      if (!expected || paid.eventType !== expected.eventType
+        || paid.payloadHash !== canonicalSha256(expected.payload) || paid.payloadHash !== canonicalSha256(paid.payload)) return undefined;
     }
     return start;
   }
@@ -159,11 +178,9 @@ export function afterFrozenAtomicCosts(state: AuthoritativeWorldState, event: Fr
     const actual = paid[index];
     if (actual.rootActionId !== event.rootActionId || actual.branchId !== event.branchId
       || BigInt(actual.eventSeq) !== start + BigInt(index)) return undefined;
-    const payload = cost.kind === "item"
-      ? worldInteractionItemCostPayload(domainStateBeforeAuditRange(state, actual.eventSeq), atomic.actorCharacterId, cost, ATOMIC_ACCEPTED_COST_PURPOSE)
-      : worldInteractionResourceCostPayload(atomic.actorCharacterId, cost.resourceId, cost.amount, ATOMIC_ACCEPTED_COST_PURPOSE);
-    if (!payload || actual.eventType !== (cost.kind === "item" ? "ItemUsed" : "ResourceUsed")
-      || actual.payloadHash !== canonicalSha256(payload)) return undefined;
+    const expected = expectedWorldInteractionCostEvent(domainStateBeforeAuditRange(state, actual.eventSeq), atomic.actorCharacterId, cost, ATOMIC_ACCEPTED_COST_PURPOSE);
+    if (!expected || actual.eventType !== expected.eventType
+      || actual.payloadHash !== canonicalSha256(expected.payload)) return undefined;
   }
   const after = domainStateBeforeAuditRange(state, String(BigInt(paid.at(-1)!.eventSeq) + 1n));
   return { ...sourcePlan, readSet: sourcePlan.readSet.map(binding => ({ ref: binding.ref,

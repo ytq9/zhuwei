@@ -1,3 +1,4 @@
+import { soleStep, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
@@ -29,9 +30,9 @@ function observe({ reflection = false, check = false } = {}) {
       { kind: "heldKnowledge", ref: PRIOR }])],
   };
   return { mode: "adjudication", basisRefs: reflection ? [] : [SOURCE],
-    adjudication: check ? { kind: "check", checkKind: "abilityCheck", ability: "wis", skill: "perception",
+    adjudication: check ? { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "wis", skill: "perception",
       dc: 12, mode: "normal", risk: "声音很轻，未必能分辨。", successOutcome: "听清嘶鸣。", failureOutcome: "无法分辨细节。" }
-      : { kind: "directSuccess", risk: "现有信息足以作出有限推断。", successOutcome: "整理信息。" },
+      : { kind: "directSuccess", durationMicros: "6000000", risk: "现有信息足以作出有限推断。", successOutcome: "整理信息。" },
     terminal: { kind: "none" }, proposals: [{ kind: "observe", basisRefs: reflection ? [] : [SOURCE],
       consumes: [], produces: [], outcomeBinding: "always", sceneRef: SCENE,
       inquiry: "这些信息意味着什么？", method: reflection ? "回想本人已有记录。" : "靠近阀门倾听，不触碰它。",
@@ -55,8 +56,14 @@ function project(f, result, events = result.events, viewer = f.viewer) {
   return view;
 }
 function worldUnchanged(before, after) {
-  for (const field of ["entities", "combatRuntime", "campaignRuntime", "fictionTime", "fictionTimelines"]) {
+  for (const field of ["entities", "combatRuntime", "campaignRuntime", "fictionTime"]) {
     assert.deepEqual(after[field], before[field], field);
+  }
+  // Observing is an act: the only change to the clock is the declared duration on the actor timeline.
+  const timelineId = before.multiplayerRuntime.characterTimelineIds[ACTOR] ?? before.activeBranchId;
+  for (const [id, timeline] of Object.entries(after.fictionTimelines)) {
+    const expected = id === timelineId ? String(BigInt(before.fictionTimelines[id].nowMicros) + 6000000n) : before.fictionTimelines[id].nowMicros;
+    assert.equal(timeline.nowMicros, expected, `fictionTimelines.${id}`);
   }
 }
 function replay(f, events, state) {
@@ -103,7 +110,7 @@ test("pure reflection uses the same observe path without fabricating perception,
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
-  assert.deepEqual(result.events.map(e => e.eventType), ["CharacterInferenceFormed", "WorldInteractionResolved"]);
+  assert.deepEqual(result.events.map(e => e.eventType), ["FictionTimeAdvanced", "CharacterInferenceFormed", "WorldInteractionResolved", "AtomicWorldInteractionStepsResolved"]);
   worldUnchanged(f.state, result.state);
   assert.deepEqual(result.state.canonicalFacts, f.state.canonicalFacts);
   assert.doesNotMatch(JSON.stringify(project(f, result).renderableClaims), /环境互动/);
@@ -124,7 +131,7 @@ test("scene observation keeps held evidence aliases bound to the same holder-qua
     entry.branches.success.sensoryEvidence = [{ ...sensory(), subjectRef: SCENE, basisRefs: [knowledgeRef, SCENE] }];
     const original = structuredClone(value), lowered = lower(f, value);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-    const plan = lowered.command.rulesInput.plan, expected = `knowledge:${ACTOR}:${knowledgeRef}`;
+    const plan = soleStep(lowered.command).plan, expected = `knowledge:${ACTOR}:${knowledgeRef}`;
     assert.ok(plan.basisRefs.includes(expected)); assert.ok(!plan.basisRefs.includes(knowledgeRef));
     assert.deepEqual(plan.branches.success.sensoryEvidence[0].basisRefs, [SCENE, expected].sort());
     assert.ok(plan.readSet.some(binding => binding.ref === expected));
@@ -137,9 +144,9 @@ test("scene observation keeps held evidence aliases bound to the same holder-qua
     assert.doesNotMatch(JSON.stringify(project(f, result)), /FOREIGN_SAME_ALIAS_CANARY/);
     worldUnchanged(f.state, result.state); replay(f, result.events, result.state);
     for (const mutate of [
-      input => { input.plan.readSet = input.plan.readSet.filter(binding => binding.ref !== expected); },
-      input => { input.plan.readSet.find(binding => binding.ref === expected).revisionOrHash = `sha256:${"0".repeat(64)}`; },
-      input => { input.plan.branches.success.sensoryEvidence[0].basisRefs = [`knowledge:${OTHER}:${knowledgeRef}`]; },
+      input => { soleInput(input).plan.readSet = soleInput(input).plan.readSet.filter(binding => binding.ref !== expected); },
+      input => { soleInput(input).plan.readSet.find(binding => binding.ref === expected).revisionOrHash = `sha256:${"0".repeat(64)}`; },
+      input => { soleInput(input).plan.branches.success.sensoryEvidence[0].basisRefs = [`knowledge:${OTHER}:${knowledgeRef}`]; },
     ]) {
       const input = structuredClone(lowered.command.rulesInput); mutate(input);
       const rejected = f.runtime.step(f.profiles, f.state, input);
@@ -188,7 +195,7 @@ test("both observation branches reject foreign observers, invalid indices and no
     plan => { plan.readSet = plan.readSet.filter(r => r.ref !== `knowledge:${ACTOR}:${PRIOR}`); },
     plan => { plan.readSet.find(r => r.ref === `knowledge:${ACTOR}:${PRIOR}`).revisionOrHash = `sha256:${"0".repeat(64)}`; },
   ]) {
-    const input = structuredClone(lowered.command.rulesInput); mutate(input.plan);
+    const input = structuredClone(lowered.command.rulesInput); mutate(soleInput(input).plan);
     const result = f.runtime.step(f.profiles, f.state, input);
     assert.equal(result.kind, "rejected", JSON.stringify(result));
     assert.equal(result.randomnessRequest, undefined);
@@ -231,7 +238,7 @@ test("inference event folding rejects public disclosure, missing evidence and ov
   const lowered = lower(f, observe({ reflection: true }));
   const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
-  const event = result.events[0];
+  const event = result.events.find(entry => entry.eventType === "CharacterInferenceFormed");
   const draft = { rootActionId: f.rootActionId, eventType: event.eventType, payload: event.payload,
     scopeProof: result.scopeProof, secrecy: event.secrecy, visibilityPolicyId: event.visibilityPolicyId };
   for (const change of [

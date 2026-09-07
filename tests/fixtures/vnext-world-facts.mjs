@@ -10,9 +10,9 @@ export function worldFactSocialBundle({ sceneRef, npcRef, check = false,
       motive: "PRIVATE-FACT-MOTIVE：依照自己的经历和意愿回答。",
       basis: [{ kind: "materializedKnowledge", definitionRef: handle, holderRef: npcRef }] }, consequences: [] });
   return { mode: "adjudication", basisRefs: [npcRef], terminal: { kind: "none" },
-    adjudication: check ? { kind: "check", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
+    adjudication: check ? { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
       risk: "她可能不愿透露。", successOutcome: "愿意回答。", failureOutcome: "拒绝透露。" }
-      : { kind: "directSuccess", risk: "普通交谈。", successOutcome: "作出回应。" },
+      : { kind: "directSuccess", durationMicros: "6000000", risk: "普通交谈。", successOutcome: "作出回应。" },
     proposals: [{ kind: "materializeObject", semanticKind: "worldFact", basisRefs: [], consumes: [], outcomeBinding: "always",
       produces: [{ handle, kind: "semanticDefinition", outcomeBinding: "always" }], templateRef: template.templateRef,
       templateHash: template.templateHash, visibilityPolicyRef: "visibility:hidden-until-evidence", summary: "固定此前未记载的经历。",

@@ -12,7 +12,7 @@ import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
 
 function interaction() {
   return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: 'proposalBundle', mode: 'adjudication', basisRefs: ['sceneFeature:chain'],
-    adjudication: { kind: 'directSuccess', risk: '没有显著风险。', successOutcome: '能够检查目标。' }, terminal: null,
+    adjudication: { kind: 'directSuccess', durationMicros: '6000000', risk: '没有显著风险。', successOutcome: '能够检查目标。' }, terminal: null,
     proposals: [{ kind: 'worldInteraction', basisRefs: [], consumes: [], produces: [], outcomeBinding: 'always', sceneRef: 'scene:atrium',
       targetRefs: ['sceneFeature:chain'], directTargetRefs: ['sceneFeature:chain'], instrumentRefs: [], abilityRef: null,
       intent: '检查链条。', method: '靠近观察。', branches: { success: { outcomeCode: 'outcome:inspected', summary: '检查完成。',
@@ -139,7 +139,7 @@ test('semantic, authority and unknown-field errors prevent every otherwise safe 
     bundle => bundle.proposals[0].outcomeBinding = 'onFailure',
     bundle => bundle.proposals[0].branches.failure = structuredClone(bundle.proposals[0].branches.success),
     bundle => bundle.proposals[0].extra = 'do not discard this member',
-    bundle => { bundle.adjudication = { kind: 'check', checkKind: 'abilityCheck', ability: 'wis', skill: null, dc: '12', mode: 'normal', risk: '失败风险。', successOutcome: '成功。', failureOutcome: '失败。' }; },
+    bundle => { bundle.adjudication = { kind: 'check', durationMicros: '6000000', checkKind: 'abilityCheck', ability: 'wis', skill: null, dc: '12', mode: 'normal', risk: '失败风险。', successOutcome: '成功。', failureOutcome: '失败。' }; },
   ]) {
     const broken = interaction();
     broken.proposals[0].method = ' 靠近观察。 ';
@@ -147,14 +147,14 @@ test('semantic, authority and unknown-field errors prevent every otherwise safe 
     assert.deepEqual(representationRepairPlan(broken), []);
   }
   const check = interaction();
-  check.adjudication = { kind: 'check', checkKind: 'abilityCheck', ability: 'wis', skill: null, dc: 12, mode: 'normal', risk: '失败风险。', successOutcome: '成功。', failureOutcome: '失败。' };
+  check.adjudication = { kind: 'check', durationMicros: '6000000', checkKind: 'abilityCheck', ability: 'wis', skill: null, dc: 12, mode: 'normal', risk: '失败风险。', successOutcome: '成功。', failureOutcome: '失败。' };
   delete check.proposals[0].branches.failure;
   assert.deepEqual(representationRepairPlan(check), []);
 });
 
 test('a complete shared check retains its DC, risk and both consequences during prose normalization', () => {
   const expected = interaction();
-  expected.adjudication = { kind: 'check', checkKind: 'abilityCheck', ability: 'wis', skill: null, dc: 12, mode: 'normal',
+  expected.adjudication = { kind: 'check', durationMicros: '6000000', checkKind: 'abilityCheck', ability: 'wis', skill: null, dc: 12, mode: 'normal',
     risk: '失败会触发已知后果。', successOutcome: '操作成功。', failureOutcome: '操作失败。' };
   expected.proposals[0].branches.failure = { ...structuredClone(expected.proposals[0].branches.success),
     outcomeCode: 'outcome:failed', summary: '操作失败。', effects: [{ kind: 'relationTransition', relationRef: 'relation:support', toState: 'ended' }] };

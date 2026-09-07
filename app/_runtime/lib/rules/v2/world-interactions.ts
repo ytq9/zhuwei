@@ -100,6 +100,8 @@ import {
   worldInteractionFeasibilityDependencyRefs,
   worldInteractionFeasibilityMechanicalRefs,
   isWorldInteractionResolutionPlan,
+  IN_WORLD_ACT_FORM_IDS,
+  atomicWorldInteractionFictionTimeMicros,
   type AppliedWorldInteractionEffect,
   type AtomicWorldInteractionOutcomeBinding,
   type AtomicWorldInteractionProducedReference,
@@ -119,6 +121,7 @@ import {
   worldInteractionPlanHash,
   worldInteractionFormId,
 } from "./world-interaction-model";
+import { scheduledDeadlinesWithin } from "./due-activities";
 
 const NPC_SEMANTIC_ALLOWLIST: readonly SemanticFieldPolicy[] = Object.freeze([
   Object.freeze({ kind: "value", path: Object.freeze(["semantics", "attitude"]) }),
@@ -1404,6 +1407,18 @@ function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Authoritativ
     seenProposalRefs.add(raw.proposalRef);
   }
 
+  // SPEC 0013 §7.1: a Bundle that only authors content is not the character
+  // doing anything and cannot spend fictional time. The other half -- an act
+  // in the world must declare its duration -- is the vnext-2 lowering's rule:
+  // Rules cannot tell a vnext-2 producer from the legacy vnext-1 wire, which
+  // has no duration field and still lowers acts that take no time.
+  const inWorldAct = normalizedSteps.some(step => IN_WORLD_ACT_FORM_IDS.has(step.formId));
+  const declaredFictionTime = isAtomicWorldInteractionExecutionCosts(input.executionCosts)
+    && input.executionCosts.costs.some(cost => cost.kind === "fictionTime");
+  if (declaredFictionTime && !inWorldAct) {
+    return atomicCompileRejected("A Bundle that only authors content cannot spend fictional time.");
+  }
+
   const plan: AtomicWorldInteractionStepsPlan = {
     schema: ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA,
     rootActionId: String(input.rootActionId),
@@ -2181,16 +2196,27 @@ function finishAtomicExecution(profiles: RuntimeProfileManifest, state: Authorit
     eventType: "AtomicWorldInteractionResumed", payload: { rootActionId: plan.rootActionId },
     reads: [], writes: [`receipt:${plan.rootActionId}`], visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal",
   }, false);
-  const finalized=finalizeAtomicWorldInteractionExecution(plan, branch, { ...executed, accumulator });
+  const finalized=withAtomicFictionTimeResult(state, plan, finalizeAtomicWorldInteractionExecution(plan, branch, { ...executed, accumulator }));
   if(plan.steps.length===1 && finalized.kind==="committed") {
     const event=accumulator.events.findLast(event=>event.eventType==="WorldInteractionResolved");
     if(event!==undefined) {
       const payload=event.payload as EventPayloadByType["WorldInteractionResolved"];
-      return {...finalized,mechanicalResult:{kind:"worldInteraction",interactionRef:payload.interactionRef,
+      return {...finalized,mechanicalResult:{...(finalized.mechanicalResult ?? {}),kind:"worldInteraction",interactionRef:payload.interactionRef,
         branch:payload.branch,outcomeCode:payload.outcomeCode,appliedEffects:structuredClone(payload.appliedEffects)}};
     }
   }
   return finalized;
+}
+
+/** What the act's duration crossed. `state` is authority before this
+ * transaction publishes, on both the direct and the resumed path, so the scan
+ * starts from the same instant the cost was paid at. The record is evidence,
+ * not a refusal: the crossed work settles right after this commit. */
+function withAtomicFictionTimeResult(state: AuthoritativeWorldState, plan: AtomicWorldInteractionStepsPlan, result: StepResult): StepResult {
+  const durationMicros = atomicWorldInteractionFictionTimeMicros(plan);
+  if (durationMicros === undefined || result.kind !== "committed") return result;
+  const crossedDeadlines = scheduledDeadlinesWithin(state, plan.actorCharacterId, durationMicros);
+  return { ...result, mechanicalResult: { ...(result.mechanicalResult ?? {}), fictionTime: { durationMicros, crossedDeadlines } } };
 }
 
 function suspendAtomicExecution(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState,
@@ -2794,7 +2820,7 @@ function applyAttemptCosts(
     if (cost.kind === "fictionTime") {
       appendTransition(accumulator, profiles, rootActionId, {
         eventType: "FictionTimeAdvanced",
-        payload: { durationMicros: cost.durationMicros, reason: purpose },
+        payload: { durationMicros: cost.durationMicros, reason: purpose, characterId: actorCharacterId },
         reads: [`entity:${actorCharacterId}`],
         writes: [`receipt:${rootActionId}`],
         visibilityPolicyId: "visibility:scene-observers",

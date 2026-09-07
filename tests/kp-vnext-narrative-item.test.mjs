@@ -1,3 +1,4 @@
+import { actDuration, withActDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext,
@@ -20,9 +21,9 @@ const common = (kind, basisRefs = [SOURCE], consumes = [], produces = []) => ({
   kind, basisRefs, consumes, produces, outcomeBinding: "always",
 });
 function bundle(proposals) {
-  return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SOURCE],
-    adjudication: { kind: "directSuccess", risk: "依据已经表达的场景细节继续。", successOutcome: "物品进入可持续的世界状态。" },
-    terminal: null, proposals };
+  return withActDuration({ schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SOURCE],
+    adjudication: { kind: "directSuccess", durationMicros: actDuration(proposals), risk: "依据已经表达的场景细节继续。", successOutcome: "物品进入可持续的世界状态。" },
+    terminal: null, proposals });
 }
 function wire(value) {
   if (value === null) return { kind: "none" };

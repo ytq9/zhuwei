@@ -240,6 +240,16 @@ export function rebindFrozenSocialPrefix(state: AuthoritativeWorldState, profile
     const withoutClock = (value: typeof original) => ({ ...value, timeline: { ...value.timeline, nowMicros: null } });
     if (!same(withoutClock(original), withoutClock(final))) return undefined;
     let clock = original.timeline.nowMicros;
+    // The act's own duration was paid in the cost segment before this prefix
+    // and already verified there cost by cost. It advanced the actor's
+    // timeline, so every binding on that timeline -- the NPC's included, when
+    // they share a scene -- starts this walk from the advanced clock.
+    const actorTimeline = authorityCharacterTimeline(initial, actor)?.timelineId;
+    if (original.timelineId === actorTimeline) {
+      for (const cost of atomic.executionCosts?.costs ?? []) {
+        if (cost.kind === "fictionTime") clock = (BigInt(clock) + BigInt(cost.durationMicros)).toString();
+      }
+    }
     for (const [index, entry] of prefix.entries()) {
       if (!entry.effects.some(effect => effect.kind === "restoreFictionTime" && effect.timelineId === original.timelineId)) continue;
       const payload = activityPayload(prefix[index-1],entry,prefix[index+1]);

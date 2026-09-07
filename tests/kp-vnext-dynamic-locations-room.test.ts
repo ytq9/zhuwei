@@ -47,8 +47,10 @@ async function initialize(): Promise<Stub> {
   return stub;
 }
 
+// Creating a location or passage authors the world and takes no time; setting off through one is an act.
+const actDuration = (proposals: unknown[]) => proposals.some((entry) => (entry as { kind?: string }).kind === "worldInteraction") ? "6000000" : "0";
 function bundle(proposals: unknown[]) { return { mode: "adjudication", basisRefs: [SOURCE], terminal: null,
-  adjudication: { kind: "directSuccess", risk: "当前行为无需检定。", successOutcome: "按已声明的环境和行为固化。" }, proposals }; }
+  adjudication: { kind: "directSuccess", durationMicros: actDuration(proposals), risk: "当前行为无需检定。", successOutcome: "按已声明的环境和行为固化。" }, proposals }; }
 function creation() {
   const template = (kind: "location" | "passage") => ({ templateRef: VNEXT_SEMANTIC_TEMPLATES[kind].templateRef,
     templateHash: VNEXT_SEMANTIC_TEMPLATES[kind].templateHash });
@@ -150,7 +152,9 @@ it("natural language vNext creates a passage, starts travel separately and resum
   expect(await run(stub, ALICE, travel, capture, traversal(passageRef), ["worldInteraction"])).toMatchObject({ kind: "committed" });
   const started = await snapshot(stub), activity = Object.values(started.state.campaignRuntime.activities).find(value => value.activityKind === "passageTraversal")!;
   expect(activity.status).toBe("active"); expect(started.state.entities[ACTOR].sceneId).toBe(SCENE);
-  expect(started.state.fictionTimelines).toEqual(created.state.fictionTimelines);
+  // Setting off is an act with its own frozen duration; the travel time itself stays in the Activity.
+  const actorTimeline = created.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? created.state.activeBranchId;
+  expect(BigInt(started.state.fictionTimelines[actorTimeline].nowMicros) - BigInt(created.state.fictionTimelines[actorTimeline].nowMicros)).toBe(6000000n);
   expect(JSON.stringify(await stub.observe(ALICE as never))).not.toContain(INTERIOR);
   await evictDurableObject(stub);
   expect(await snapshot(stub)).toEqual(started);
@@ -180,7 +184,7 @@ it("natural language vNext creates a passage, starts travel separately and resum
   expect(JSON.stringify(await stub.observe(ALICE as never))).toContain(INTERIOR);
   expect(JSON.stringify(await stub.observe(BOB as never))).not.toContain(INTERIOR);
   const movements = arrived.events.filter(event => event.eventType === "CharacterMoved"); expect(movements).toHaveLength(1);
-  expect(movements[0].payload).toMatchObject({ departureMicros: "60000000", arrivalMicros: "60000000", activityId: activity.activityId });
+  expect(movements[0].payload).toMatchObject({ departureMicros: "66000000" /* six seconds to set off, then the minute of travel */, arrivalMicros: "66000000", activityId: activity.activityId });
   expect(arrived.state.campaignRuntime.activities[String(activity.activityId)].status).toBe("completed");
   expect(capture.calls).toBe(6);
   await evictDurableObject(stub);

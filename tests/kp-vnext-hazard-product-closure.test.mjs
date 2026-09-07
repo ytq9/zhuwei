@@ -1,3 +1,4 @@
+import { actDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -63,7 +64,7 @@ function interaction(intent, { effects = [], evidence, basisRefs = [SOURCE], tar
 function bundle(proposal) {
   const value = hazardBundle();
   value.proposals = [proposal];
-  value.adjudication = { kind: "directSuccess", risk: "已固化的危险仍按其独立机械结算。", successOutcome: "执行明确的操作。" };
+  value.adjudication = { kind: "directSuccess", durationMicros: actDuration([proposal]), risk: "已固化的危险仍按其独立机械结算。", successOutcome: "执行明确的操作。" };
   return value;
 }
 

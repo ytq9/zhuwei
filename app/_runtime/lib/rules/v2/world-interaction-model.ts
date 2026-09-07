@@ -260,14 +260,16 @@ export type AtomicWorldInteractionStepsPlan = Readonly<{
   contextHash: Sha256Ref;
   sharedRuling: "directSuccess" | "check";
   narrativeMaterializationRefs?: readonly string[];
-  /** Additional accepted costs, distinct from an Ability's fixed costs.
-   * Fictional duration belongs to an Activity, never an immediate spend. */
+  /** Additional accepted costs, distinct from an Ability's fixed costs. A
+   * fictionTime cost here is the act's own frozen duration (SPEC 0013 §7.1),
+   * spent ahead of the results; anything the KP calls an activity -- waiting,
+   * travel, casting, rest -- is still an Activity with its own schedule. */
   executionCosts?: AtomicWorldInteractionExecutionCosts;
   steps: readonly AtomicWorldInteractionStep[];
 }>;
 
 export type AtomicWorldInteractionExecutionCosts = Readonly<{
-  costs: readonly Exclude<WorldInteractionAttemptCost, { kind: "fictionTime" }>[];
+  costs: readonly WorldInteractionAttemptCost[];
   readSet: readonly VersionedAuthorityBinding[];
 }>;
 
@@ -275,9 +277,25 @@ export function isAtomicWorldInteractionExecutionCosts(value: unknown): value is
   return isRecord(value) && hasExactKeys(value, ["costs", "readSet"])
     && isCanonicalReadSet(value.readSet) && Array.isArray(value.costs)
     && value.costs.length > 0 && value.costs.length <= 16
-    && value.costs.every(cost => isAttemptCost(cost) && cost.kind !== "fictionTime")
+    && value.costs.every(cost => isAttemptCost(cost))
     && new Set(value.costs.map(attemptCostIdentity)).size === value.costs.length;
 }
+
+/** Total fictional time an atomic Bundle spends ahead of its results, or
+ * undefined when it declares none. */
+export function atomicWorldInteractionFictionTimeMicros(plan: AtomicWorldInteractionStepsPlan): string | undefined {
+  const spent = (plan.executionCosts?.costs ?? []).flatMap(cost => cost.kind === "fictionTime" ? [BigInt(cost.durationMicros)] : []);
+  return spent.length === 0 ? undefined : spent.reduce((sum, value) => sum + value, 0n).toString();
+}
+
+/** Step forms in which the character does something in the world and the KP
+ * freezes how long it takes. A Bundle made only of the others authors content
+ * and takes no fictional time. A native ability operation is also an act, but
+ * its casting time comes from the registered definition, never from the KP,
+ * so it is deliberately not in this set. */
+export const IN_WORLD_ACT_FORM_IDS: ReadonlySet<string> = new Set([
+  "world-interaction.vnext-1", "observe.vnext-1", "social.vnext-1", "inventory-operation.vnext-1",
+]);
 
 export type AtomicWorldInteractionStepsResolvedPayload = Readonly<{
   actorCharacterId: string;

@@ -154,7 +154,7 @@ async function snapshot(stub: Stub, root?: string) { return runInDurableObject(s
     invocations: root ? [1, 2, 3].map(i => target.authorityStore.vnextInvocation(root, i)).filter(Boolean).map(row => structuredClone(row!)) : [] };
 }); }
 
-function formation(premiseRefs = [NPC]) { return { decision: { kind: "directSuccess",
+function formation(premiseRefs = [NPC]) { return { decision: { kind: "directSuccess", durationMicros: "0",
   risk: "这一步只形成私有计划。", successOutcome: "记录计划，后续行为尚未执行。", steps: [{ kind: "formActorPlan", npcRef: NPC,
     factionRef: { kind: "none" }, goal: "NPC_PRIVATE_GOAL_CANARY", nextStep: "在门框系上蓝色布带。", premiseRefs,
     resourceRefs: [], durationMicros: "2000000", traceDescription: DESCRIPTION,
@@ -179,7 +179,7 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       contextDiagnostics = { choices, entries: (context.entries as RecordValue[]).filter(entry => String(entry.entryRef).includes("npc"))
         .map(entry => ({ entryRef: entry.entryRef, kind: entry.kind, reason: entry.reason })) };
       ownRefs = choices.find(value => value.npcRef === npc)?.refs;
-      return JSON.stringify({ decision: { kind: "directSuccess", risk: "这是普通交谈。", successOutcome: "值班人作出回答。",
+      return JSON.stringify({ decision: { kind: "directSuccess", durationMicros: "6000000", risk: "这是普通交谈。", successOutcome: "值班人作出回答。",
         steps: [{ kind: "social", basisRefs: [npc], sceneRef: SCENE, npcRef: npc, addressedThreadRef: { kind: "none" },
           goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" },
           result: { outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", response: { kind: "speech",

@@ -68,7 +68,7 @@ function worldInteractionArguments() {
     mode: "adjudication",
     basisRefs: [],
     adjudication: {
-      kind: "directSuccess",
+      kind: "directSuccess", durationMicros: "6000000",
       risk: "没有显著风险。",
       successOutcome: "能够检查目标。",
     },
@@ -139,7 +139,7 @@ function sharedCheckArguments() {
     mode: "adjudication",
     basisRefs: [],
     adjudication: {
-      kind: "check",
+      kind: "check", durationMicros: "6000000",
       checkKind: "abilityCheck",
       ability: "str",
       skill: "none",
@@ -485,7 +485,7 @@ test("clarification choice scope prevents identical frozen branches from sharing
 test("shared check structurally dominates outcome-bound entries", () => {
   const argumentsValue = materializeThenInteractArguments();
   argumentsValue.adjudication = {
-    kind: "check",
+    kind: "check", durationMicros: "6000000",
     checkKind: "abilityCheck",
     ability: "wis",
     skill: "none",
@@ -627,7 +627,7 @@ test("closed domain validator rejects mixed modes, unknown fields, and unbound p
 test("closed domain rejects ambiguous shared checks and non-random outcome bindings", () => {
   const checked = materializeThenInteractArguments();
   checked.adjudication = {
-    kind: "check",
+    kind: "check", durationMicros: "6000000",
     checkKind: "abilityCheck",
     ability: "wis",
     skill: "none",
@@ -1465,7 +1465,7 @@ function materializeWireBundle(variant) {
     mode: "adjudication",
     basisRefs: ["scene:atrium"],
     adjudication: {
-      kind: "directSuccess",
+      kind: "directSuccess", durationMicros: "0",
       risk: "让一处先前没被注意到的细节显形，不带来额外风险。",
       successOutcome: "该细节成为可引用的固化事实。",
     },
@@ -1613,7 +1613,7 @@ test("a consume may name a frozen reference as well as a bundle-local handle", (
     mode: "adjudication",
     basisRefs: ["scene:atrium", "sceneFeature:chain"],
     adjudication: {
-      kind: "directSuccess",
+      kind: "directSuccess", durationMicros: "6000000",
       risk: "靠近查看已知的铁链，不带来额外风险。",
       successOutcome: "角色看清了铁链的磨损情况。",
     },

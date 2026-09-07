@@ -1,3 +1,4 @@
+import { soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -28,9 +29,9 @@ function social(npcRef = NPC, ref = ownRef) {
 }
 function bundle(check = true) {
   return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: 'proposalBundle', mode: 'adjudication', basisRefs: [NPC], terminal: null,
-    adjudication: check ? { kind: 'check', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal',
+    adjudication: check ? { kind: 'check', durationMicros: '6000000', checkKind: 'abilityCheck', ability: 'cha', skill: 'persuasion', dc: 12, mode: 'normal',
       risk: '守门人可能拒绝。', successOutcome: '守门人回答。', failureOutcome: '守门人拒绝。' }
-      : { kind: 'directSuccess', risk: '普通交谈。', successOutcome: '对话得到回应。' },
+      : { kind: 'directSuccess', durationMicros: '6000000', risk: '普通交谈。', successOutcome: '对话得到回应。' },
     proposals: [social()],
   };
 }
@@ -74,7 +75,7 @@ test('valid NPC basis preserves its normal Rules lowering and a later proposal r
   const f = fixture('normal-and-ordinal'), valid = bundle();
   const accepted = lowerVNext2ProposalBundle({ ...f, value: valid });
   assert.equal(accepted.kind, 'accepted', JSON.stringify(accepted));
-  assert.equal(accepted.command.rulesInput.plan.social.npcContext.npcRef, NPC);
+  assert.equal(soleStep(accepted.command).plan.social.npcContext.npcRef, NPC);
   assert.equal(bridge(f, valid).kind, 'accepted');
   const multiple = bundle(false);
   multiple.proposals = [social(OTHER, otherRef), social(NPC, otherRef)];

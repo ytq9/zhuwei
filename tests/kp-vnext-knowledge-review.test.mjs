@@ -1,3 +1,4 @@
+import { soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
@@ -54,7 +55,7 @@ test("knowledge overview uses the actual terminal schema, private Rules event, C
   assert.equal(parsed.kind, "accepted", JSON.stringify(parsed));
   const lowered = lower(fixture, parsed.bundle);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  assert.deepEqual(lowered.command.rulesInput.plan.knowledgeRefs, ["knowledge:opening", "knowledge:rumor"]);
+  assert.deepEqual(soleStep(lowered.command).plan.knowledgeRefs, ["knowledge:opening", "knowledge:rumor"]);
   const result = fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   assert.deepEqual(result.events.map(event => event.eventType), ["KnowledgeReviewed"]);

@@ -336,6 +336,9 @@ export type VNextProposalBundleCommand =
       contextHash: string;
       /** Every entry is bound to this one frozen adjudication result. */
       sharedRuling: "directSuccess" | "check";
+      /** Costs spent ahead of the steps, the act's frozen fictional duration
+       * among them; Room forwards them to Rules unchanged. */
+      executionCosts?: Readonly<{ costs: readonly JsonRecord[]; readSet: readonly Readonly<{ ref: string; revisionOrHash: string }>[] }>;
       steps: readonly Readonly<{
         formId: typeof VNEXT_MATERIALIZATION_FORM_ID | typeof VNEXT_WORLD_INTERACTION_FORM_ID;
         proposalRef: string;

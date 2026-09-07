@@ -37,7 +37,7 @@ function spatialBundle() {
   } });
   passage.consumes = [{ kind: 'existing', ref: SCENE }, { kind: 'prospective', handle: DESTINATION }];
   return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: 'proposalBundle', mode: 'adjudication', basisRefs: [SCENE],
-    adjudication: { kind: 'directSuccess', risk: '此刻只发现环境。', successOutcome: '发现环境及其入口。' },
+    adjudication: { kind: 'directSuccess', durationMicros: '0', risk: '此刻只发现环境。', successOutcome: '发现环境及其入口。' },
     terminal: null, proposals: [location, passage] };
 }
 function clarification(inner) {

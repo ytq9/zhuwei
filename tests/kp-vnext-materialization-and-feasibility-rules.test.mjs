@@ -459,6 +459,15 @@ test("materializeSemanticDefinition still refuses a sparse definition carrying a
   assert.equal(result.rejection.code, "invalidRulesInput");
 });
 
+// An atomic Bundle whose character acts in the world spends its frozen
+// duration ahead of its results; hand-built inputs declare it the same way
+// lowering does, bound to the actor's timeline.
+function atomicActDuration(state, durationMicros = "6000000") {
+  const refs = [ACTOR, `character-timeline:${ACTOR}`].sort();
+  return { costs: [{ kind: "fictionTime", durationMicros }],
+    readSet: refs.map((ref) => ({ ref, revisionOrHash: authorityRevisionOrHash(state, ref) })) };
+}
+
 function atomicSceneFeatureInput(state, overrides = {}) {
   const rootActionId = overrides.rootActionId ?? "root:atomic-materialize-use";
   const bundleHash = overrides.bundleHash ?? canonicalSha256({ bundle: "atomic-materialize-use" });
@@ -527,6 +536,7 @@ function atomicSceneFeatureInput(state, overrides = {}) {
     bundleHash,
     contextHash,
     sharedRuling: "directSuccess",
+    ...(overrides.executionCosts === null ? {} : { executionCosts: overrides.executionCosts ?? atomicActDuration(state) }),
     steps: [{
       formId: "materialization.vnext-1",
       proposalRef: "proposal:atomic-producer",
@@ -1198,6 +1208,7 @@ test("bundleCommandToRoomLowering emits one atomic Rules input and keeps highRis
     bundleHash: expectedInput.bundleHash,
     contextHash: expectedInput.contextHash,
     sharedRuling: expectedInput.sharedRuling,
+    executionCosts: expectedInput.executionCosts,
     steps: expectedInput.steps,
   });
   assert.equal(atomic.kind, "accepted", JSON.stringify(atomic));

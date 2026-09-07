@@ -457,25 +457,34 @@ function isClarificationContinuation(
   }
 }
 
+/** The whole action's frozen fictional duration: exact non-negative
+ * microseconds as a string. Whether zero is legal depends on the steps and is
+ * decided at lowering and again by Rules, not here. */
+function isActionDuration(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 16 && /^(0|[1-9][0-9]*)$/u.test(value);
+}
+
 function isFeasibilityRuling(value: unknown): value is VNextFeasibilityRuling {
   if (!isPlainRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "directSuccess") {
-    return exactKeys(value, ["kind", "risk", "successOutcome"])
+    return exactKeys(value, ["durationMicros", "kind", "risk", "successOutcome"])
       && textField(value.risk, value, "risk", 4_000)
-      && textField(value.successOutcome, value, "successOutcome", 4_000);
+      && textField(value.successOutcome, value, "successOutcome", 4_000)
+      && isActionDuration(value.durationMicros);
   }
   if (value.kind === "check") {
     const risk = value.risk;
     const successOutcome = value.successOutcome;
     const failureOutcome = value.failureOutcome;
     return exactKeys(value, [
-      "ability", "checkKind", "dc", "failureOutcome", "kind", "mode", "risk",
+      "ability", "checkKind", "dc", "durationMicros", "failureOutcome", "kind", "mode", "risk",
       "skill", "successOutcome",
     ])
       && isCheckParameterValues(value)
       && textField(risk, value, "risk", 4_000)
       && textField(successOutcome, value, "successOutcome", 4_000)
-      && textField(failureOutcome, value, "failureOutcome", 4_000);
+      && textField(failureOutcome, value, "failureOutcome", 4_000)
+      && isActionDuration(value.durationMicros);
   }
   return value.kind === "highRisk"
     && exactKeys(value, [

@@ -104,7 +104,7 @@ test("model-visible shared ruling and area instructions agree with accepted and 
   interaction.branches.failure = structuredClone(interaction.branches.success);
   assert.throws(() => candidate(value), error => error instanceof VNextProposalBundleOutputError
     && error.diagnostics.some(detail => detail.constraint === "filling:direct-result-required"));
-  value.adjudication = { kind: "check", checkKind: "abilityCheck", ability: "dex", skill: null, dc: 12,
+  value.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "dex", skill: null, dc: 12,
     mode: "normal", risk: "操作可能失败。", successOutcome: "操作成功。", failureOutcome: "操作失败。" };
   assert.equal(candidate(value).kind, "accepted");
   value.proposals.push(structuredClone(interaction));
@@ -259,10 +259,10 @@ test("all step decisions and clarification require prior schema selection, inclu
     { choiceId: "continue", label: "继续", publicRisk: "采用已说明风险", basisRefs: [], continuation: complete.decision },
     { choiceId: "cancel", label: "取消", publicRisk: "不执行", basisRefs: [], continuation: { kind: "cancel" } },
   ] } };
-  const empty = { decision: { kind: "directSuccess", risk: "没有风险", successOutcome: "原结果", steps: [] } };
+  const empty = { decision: { kind: "directSuccess", durationMicros: "0", risk: "没有风险", successOutcome: "原结果", steps: [] } };
   const noExecutableChoice = structuredClone(choice);
   noExecutableChoice.decision.choices[0].continuation = { kind: "cancel" };
-  const emptyCheck = { decision: { kind: "check", risk: "风险已说明", successOutcome: "原成功", failureOutcome: "原失败",
+  const emptyCheck = { decision: { kind: "check", durationMicros: "0", risk: "风险已说明", successOutcome: "原成功", failureOutcome: "原失败",
     checkKind: "abilityCheck", ability: "dex", skill: { kind: "none" }, dc: 12, mode: "normal", steps: [] } };
   for (const wire of [complete, choice, noExecutableChoice, empty, emptyCheck]) {
     let calls = 0;

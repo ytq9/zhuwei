@@ -4,7 +4,7 @@
     "definition:probe-valve"
   ],
   "adjudication": {
-    "kind": "directSuccess",
+    "kind": "directSuccess", "durationMicros": "6000000", "durationMicros": "6000000",
     "risk": "喝下治疗药水并恢复生命值；操作本身在无威胁的隔离环境中可进行，药水效果由机械规则掷骰决定。",
     "successOutcome": "药剂制备与饮用顺畅实施，恢复量由Rules根据药水效果掷骰结算。"
   },

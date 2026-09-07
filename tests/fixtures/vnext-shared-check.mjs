@@ -16,7 +16,7 @@ export function sharedCheckBundle(ownerKind = "observe") {
         operations: [{ kind: "set", path: ["observableState"], value: next }], summary: `阀门变为${next}。` }],
       sensoryEvidence: [], pressures: [], opportunities: [] }, failure: { kind: "none" } } });
   return { mode: "adjudication", basisRefs: [SOURCE], terminal: { kind: "none" },
-    adjudication: { kind: "check", checkKind: "abilityCheck", ability: "wis", skill: "perception", dc: 12,
+    adjudication: { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "wis", skill: "perception", dc: 12,
       mode: "normal", risk: "判断错误会使阀门卡住。", successOutcome: "阀门开启。", failureOutcome: "阀门卡住。" },
     // Owner deliberately follows one consequence in source order. Graph
     // dependencies, never list position, determine execution order.

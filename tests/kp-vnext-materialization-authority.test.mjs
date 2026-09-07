@@ -1,3 +1,4 @@
+import { soleStep, rebundle } from './fixtures/vnext-action-duration.mjs';
 import { VNEXT_SEMANTIC_TEMPLATES, VNEXT_SEMANTIC_TEMPLATE_CATALOG,
   composeSemanticTemplate } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 import assert from "node:assert/strict";
@@ -28,7 +29,8 @@ function objectEntry() {
 test("every authored definition and Item instance receives server-selected permission dependencies before Rules commits", () => {
   for (const [name, original, count] of [["item", itemBundle(), 3], ["hazard", hazardBundle(), 2]]) {
     const f = createAuthoredProbeFixture(`grants-${name}`);
-    const value = { ...original, proposals: original.proposals.slice(0, count) };
+    // Only definitions and instances remain: the character does nothing here, so the act takes no time.
+    const value = { ...original, adjudication: { ...original.adjudication, durationMicros: "0" }, proposals: original.proposals.slice(0, count) };
     const before = structuredClone(value);
     const result = lower(f, value);
     assert.equal(result.kind, "accepted", JSON.stringify(result));
@@ -67,16 +69,16 @@ test("missing, altered, differently scoped, and stale creation grants reject whi
   const deniedKind = materializationAuthorityBasis({ context: f.requiredContext, state: f.state,
     scopeRef: PROBE_SCENE, kind: "unregistered-authoring-kind" });
   assert.equal(deniedKind.code, "CONTEXT_INSUFFICIENT");
-  const creation = lower(f, { ...value, proposals: value.proposals.slice(0, 3) });
+  const creation = lower(f, { ...value, adjudication: { ...value.adjudication, durationMicros: "0" }, proposals: value.proposals.slice(0, 3) });
   const committed = f.runtime.step(f.profiles, f.state, creation.command.rulesInput);
   const entryRef = Object.keys(committed.state.campaignRuntime.itemSystem.entries)[0];
   const next = { ...f, state: committed.state, rootActionId: `${f.rootActionId}:pickup` };
   const context = structuredClone(freezeAuthoredProbeContext(next, next.state,
     { rootActionId: next.rootActionId, focusRefs: [entryRef, PROBE_SOURCE] }).context);
   context.entries = context.entries.filter(({ kind }) => kind !== "openBlank");
-  const pickup = lower(next, { ...value, proposals: [{ kind: "inventoryOperation", basisRefs: [PROBE_SOURCE],
+  const pickup = lower(next, rebundle(value, [{ kind: "inventoryOperation", basisRefs: [PROBE_SOURCE],
     consumes: [{ kind: "existing", ref: entryRef }], produces: [], outcomeBinding: "always",
-    operation: { kind: "acquire", entryRef, quantity: 1 }, summary: "拿起已有物品。" }] }, context);
+    operation: { kind: "acquire", entryRef, quantity: 1 }, summary: "拿起已有物品。" }]), context);
   assert.equal(pickup.kind, "accepted", JSON.stringify(pickup));
   assert.equal(next.runtime.step(next.profiles, next.state, pickup.command.rulesInput).kind, "committed");
 });
@@ -93,10 +95,10 @@ test("vNext2 scene objects and world facts use the same grant, including facts w
       entry.definition.worldFact = { subjectRefs: [PROBE_SCENE], occurrence: "此刻之前。", initialKnowledge: [],
         consistency: { judgment: "compatible", explanation: "与已固定的场景相容。" } };
     }
-    const value = { ...itemBundle(), proposals: [entry] };
+    const value = rebundle(itemBundle(), [entry]);
     const result = lower(f, value);
     assert.equal(result.kind, "accepted", JSON.stringify(result));
-    assert.ok(result.command.rulesInput.plan.basisRefs.includes(PROFILE_REF));
+    assert.ok(soleStep(result.command).plan.basisRefs.includes(PROFILE_REF));
     const committed = f.runtime.step(f.profiles, f.state, result.command.rulesInput);
     assert.equal(committed.kind, "committed", JSON.stringify(committed));
     assert.equal(f.runtime.replay(f.genesis, committed.events).kind, "replayed");
@@ -121,7 +123,7 @@ test("the legacy vNext1 object creation entry cannot bypass the shared authoriza
     rootActionId: f.rootActionId, actorCharacterId: PROBE_ACTOR };
   const result = lowerVNextProposalBundle(args);
   assert.equal(result.kind, "accepted", JSON.stringify(result));
-  assert.ok(result.command.rulesInput.plan.basisRefs.includes(PROFILE_REF));
+  assert.ok(soleStep(result.command).plan.basisRefs.includes(PROFILE_REF));
   const wrongTemplate = structuredClone(value);
   wrongTemplate.proposals[0].proposal.templateHash = `sha256:${"0".repeat(64)}`;
   assert.equal(lowerVNextProposalBundle({ ...args, value: wrongTemplate }).code, "PROPOSAL_REFERENCE_INVALID");
@@ -130,8 +132,8 @@ test("the legacy vNext1 object creation entry cannot bypass the shared authoriza
   defaults.proposals[0].proposal.definition.affordances = null;
   const inherited = lowerVNextProposalBundle({ ...args, value: defaults });
   assert.equal(inherited.kind, "accepted", JSON.stringify(inherited));
-  assert.equal(inherited.command.rulesInput.plan.content.observableState, "present");
-  assert.deepEqual(inherited.command.rulesInput.plan.content.affordances, []);
+  assert.equal(soleStep(inherited.command).plan.content.observableState, "present");
+  assert.deepEqual(soleStep(inherited.command).plan.content.affordances, []);
   const missing = structuredClone(f.requiredContext);
   missing.entries = missing.entries.filter(({ kind }) => kind !== "openBlank");
   assert.equal(lowerVNextProposalBundle({ ...args, requiredContext: missing }).code, "CONTEXT_INSUFFICIENT");
@@ -147,12 +149,12 @@ test("a scope permission cannot override structurally matching active denial, an
     const context = structuredClone(f.requiredContext);
     context.entries.push({ kind: "knownAbsent", entryRef: "availability:denied", scopeRef: PROBE_SCENE,
       selector, basisRefs: [PROBE_SCENE] });
-    assert.equal(lower(f, { ...itemBundle(), proposals: [objectEntry()] }, context).code, "CONTEXT_INSUFFICIENT");
+    assert.equal(lower(f, rebundle(itemBundle(), [objectEntry()]), context).code, "CONTEXT_INSUFFICIENT");
   }
   const context = structuredClone(f.requiredContext);
   context.entries.push({ kind: "knownAbsent", entryRef: "availability:no-item", scopeRef: PROBE_SCENE,
     selector: { kind: "semanticKind", semanticKind: "item" }, basisRefs: [PROBE_SCENE] });
-  assert.equal(lower(f, { ...itemBundle(), proposals: itemBundle().proposals.slice(0, 2) }, context).kind, "accepted");
+  assert.equal(lower(f, rebundle(itemBundle(), itemBundle().proposals.slice(0, 2)), context).kind, "accepted");
   assert.equal(lower(f, itemBundle(), context).code, "CONTEXT_INSUFFICIENT");
 });
 
@@ -175,7 +177,7 @@ test("versioned default templates compose different sparse objects without actin
 
 test("both lowering and Rules reject unknown, changed, wrong-kind templates and forbidden direct-command fields", () => {
   const f = createAuthoredProbeFixture("template-boundary");
-  const value = { ...itemBundle(), proposals: [objectEntry()] };
+  const value = rebundle(itemBundle(), [objectEntry()]);
   const lowered = lower(f, value);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   for (const mutate of [
@@ -207,7 +209,7 @@ test("strict tool default sentinels reach the frozen template through decoding, 
     ["inherited", "none", "none"], ["explicit", "folded", ["unfold"]],
   ]) {
     const f = createAuthoredProbeFixture(`template-wire-${name}`);
-    const wire = structuredClone({ ...itemBundle(), proposals: [objectEntry()] });
+    const wire = structuredClone(rebundle(itemBundle(), [objectEntry()]));
     delete wire.kind;
     delete wire.schema;
     wire.terminal = { kind: "none" };
@@ -217,7 +219,7 @@ test("strict tool default sentinels reach the frozen template through decoding, 
     assert.equal(parsed.bundle.proposals[0].definition.observableState, name === "inherited" ? null : "folded");
     const lowered = lower(f, parsed.bundle);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-    const content = lowered.command.rulesInput.plan.content;
+    const content = soleStep(lowered.command).plan.content;
     assert.equal(content.observableState, name === "inherited" ? "present" : "folded");
     assert.deepEqual(content.affordances, name === "inherited" ? [] : ["unfold"]);
     const committed = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
@@ -239,7 +241,7 @@ test("strict tool default sentinels reach the frozen template through decoding, 
 test("a local grant cannot materialize a hazard on an existing trigger in another scene", () => {
   const f = createAuthoredProbeFixture("grant-foreign-trigger");
   f.state.campaignRuntime.definitions[PROBE_SOURCE].content.sceneRef = "scene:foreign";
-  const result = lower(f, { ...hazardBundle(), proposals: hazardBundle().proposals.slice(0, 2) });
+  const result = lower(f, rebundle(hazardBundle(), hazardBundle().proposals.slice(0, 2)));
   assert.equal(result.code, "CONTEXT_INSUFFICIENT", JSON.stringify(result));
   assert.deepEqual(result.issues, ["materialization:trigger-outside-granted-scope"]);
 });

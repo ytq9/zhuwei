@@ -1158,7 +1158,7 @@ function materializeAlcoveAloneProposal(request: JsonRecord): JsonRecord {
 const CACHE_HANDLE_V2 = "prospective:stage3-alcove-cache-v2";
 
 const ALCOVE_SHARED_CHECK_V2: JsonRecord = Object.freeze({
-  kind: "check",
+  kind: "check", durationMicros: "6000000",
   checkKind: "abilityCheck",
   ability: "str",
   skill: null,
@@ -1281,7 +1281,7 @@ function checkedPryAlcoveBundleV2(): JsonRecord {
  * +1 and the higher of two faces decides. Nothing is materialized, so this is
  * the non-atomic single-step path rather than the Bundle path above. */
 const ROPE_SHARED_CHECK_V2: JsonRecord = Object.freeze({
-  kind: "check",
+  kind: "check", durationMicros: "6000000",
   checkKind: "abilityCheck",
   ability: "wis",
   skill: null,
@@ -1387,7 +1387,7 @@ function attackChainBundleV2(request: JsonRecord, dc: number): JsonRecord {
       },
     }],
     {
-      kind: "check",
+      kind: "check", durationMicros: "6000000",
       checkKind: "attack",
       ability: "dex",
       skill: null,
@@ -1454,7 +1454,7 @@ const ALCOVE_HANDLE_V2 = "prospective:stage3-new-alcove-v2";
 const ALCOVE_UNPRODUCED_HANDLE_V2 = "prospective:stage3-unproduced-handle-v2";
 
 const ALCOVE_SHARED_RULING_V2: JsonRecord = Object.freeze({
-  kind: "directSuccess",
+  kind: "directSuccess", durationMicros: "6000000",
   risk: "让一个先前没被注意到的壁龛显形并靠近查看，不会带来额外风险。",
   successOutcome: "壁龛作为新的场景对象被固化，角色随即查看了它的内部。",
 });
@@ -1519,16 +1519,20 @@ function inspectAlcoveEntryV2(handle: string): JsonRecord {
   };
 }
 
+const IN_WORLD_ACT_KINDS_V2 = new Set(["social", "observe", "worldInteraction", "inventoryOperation"]);
 function adjudicationBundleV2(
   proposals: JsonRecord[],
-  adjudication: JsonRecord = ALCOVE_SHARED_RULING_V2,
+  adjudication?: JsonRecord,
 ): JsonRecord {
+  // The shared ruling's duration follows the proposals: authoring alone takes no time, an act does.
+  const ruling = adjudication ?? { ...ALCOVE_SHARED_RULING_V2,
+    durationMicros: proposals.some((entry) => IN_WORLD_ACT_KINDS_V2.has(String(entry.kind))) ? "6000000" : "0" };
   return {
     schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
     kind: "proposalBundle",
     mode: "adjudication",
     basisRefs: [SCENE_REF],
-    adjudication,
+    adjudication: ruling,
     terminal: null,
     proposals,
   };
@@ -1914,8 +1918,8 @@ describe("vNext stage-three Room verticals", () => {
           motive: NPC_SUMMARY_CANARY, basis: [{ kind: "npcContext", ref: roll === null ? NPC_KNOWLEDGE_REF : `knowledge:${LIAN_ID}:${NPC_KNOWLEDGE_REF}` }] },
         consequences: failure ? [] : [{ kind: "promise", content: "协助核对账册上的签字。", condition: "先看过账册以后。", authorityRefs: [LIAN_ID] }] });
       const wire = { mode: "adjudication", basisRefs: [LIAN_ID], terminal: { kind: "none" },
-        adjudication: roll === null ? { kind: "directSuccess", risk: "普通交谈。", successOutcome: "莉安回应。" }
-          : { kind: "check", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
+        adjudication: roll === null ? { kind: "directSuccess", durationMicros: "6000000", risk: "普通交谈。", successOutcome: "莉安回应。" }
+          : { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "cha", skill: "persuasion", dc: 12, mode: "normal",
             risk: "她可能拒绝本次请求。", successOutcome: "愿意协助。", failureOutcome: "拒绝协助。" },
         proposals: [{ kind: "social", basisRefs: [LIAN_ID], consumes: [], produces: [], outcomeBinding: "always",
           sceneRef: SCENE_REF, npcRef: LIAN_ID, addressedThreadRef: { kind: "none" }, goal: "询问归还账册的见闻并请求协助。",
@@ -3685,18 +3689,23 @@ describe("vNext stage-three Room verticals", () => {
     expect(counters.rolls).toBe(2);
 
     const committed = await roomSnapshot(authority);
-    // A one-entry Bundle lowers to a plain Rules step, never to the atomic
-    // multi-step compiler.
-    expect(eventsOf(committed, "AtomicWorldInteractionStepsResolved")).toHaveLength(0);
+    // A lone in-world act lowers to a one-step atomic Bundle so it can spend
+    // its frozen duration; the check itself is still the one shared ruling.
+    expect(eventsOf(committed, "AtomicWorldInteractionStepsResolved")).toHaveLength(1);
+    expect(eventsOf(committed, "FictionTimeAdvanced")).toHaveLength(1);
     expect(eventsOf(committed, "SemanticDefinitionMaterialized")).toHaveLength(0);
     expect(eventsOf(committed, "WorldInteractionResolved")).toHaveLength(1);
 
     const randomnessEvents = eventsOf(committed, "RandomnessRequested");
     expect(randomnessEvents).toHaveLength(1);
-    const resolutionPlan = record(
+    const frozenResolutionPlan = record(
       eventPayload(randomnessEvents[0]).resolutionPlan,
       "world-interaction resolution plan",
     );
+    // The lone act froze as a one-step atomic Bundle; its check sits on the step's own plan.
+    const resolutionPlan = Array.isArray(frozenResolutionPlan.steps)
+      ? record(record(record(frozenResolutionPlan.steps[0], "atomic step").rulesInput, "step rules input").plan, "step plan")
+      : frozenResolutionPlan;
     const ruling = record(resolutionPlan.ruling, "resolution plan ruling");
     expect(ruling.kind).toBe("check");
     expect(ruling.resolutionKind).toBe("abilityCheck");
@@ -3755,10 +3764,12 @@ describe("vNext stage-three Room verticals", () => {
 
     const committed = await roomSnapshot(authority);
     const randomness = eventPayload(eventsOf(committed, "RandomnessRequested")[0]);
-    const ruling = record(
-      record(randomness.resolutionPlan, "resolution plan").ruling,
-      "frozen ruling",
-    );
+    // A lone in-world act now freezes as a one-step atomic Bundle; the check lives on its step's plan.
+    const resolutionPlan = record(randomness.resolutionPlan, "resolution plan");
+    const frozenPlan = Array.isArray(resolutionPlan.steps)
+      ? record(record(record(resolutionPlan.steps[0], "atomic step").rulesInput, "step rules input").plan, "step plan")
+      : resolutionPlan;
+    const ruling = record(frozenPlan.ruling, "frozen ruling");
     expect(ruling.resolutionKind).toBe("attack");
     expect(record(ruling.check, "frozen check")).toMatchObject({ dc: "40", mode: "normal" });
 

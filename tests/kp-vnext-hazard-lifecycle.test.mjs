@@ -1,3 +1,4 @@
+import { actDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { authorityRevisionOrHash, authorityRefBoundToScene } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
@@ -22,7 +23,7 @@ function wire(value) {
 }
 function bundle(proposals) {
   const value = { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SOURCE],
-    adjudication: { kind: "directSuccess", risk: "按已固化来源和机械结算。", successOutcome: "完成合法的行为。" }, terminal: null, proposals };
+    adjudication: { kind: "directSuccess", durationMicros: actDuration(proposals), risk: "按已固化来源和机械结算。", successOutcome: "完成合法的行为。" }, terminal: null, proposals };
   const { schema, kind, ...argumentsValue } = value;
   return parseSubmitKpProposalBundleArguments(encodeVNextStrictToolBundle(wire(argumentsValue)));
 }
@@ -394,7 +395,7 @@ function executeOrderedHazards(prepared, mode, { saveFaces = [20, 2], attackFace
         operations: [{ kind: "set", path: ["observableState"], value: "ordered hazards resolved" }] }]).proposals[0],
     ]) : interaction(selected, [first, second]);
   const lowered = lower(fixture, state, `ordered-${mode}`, value, prepared.focusRefs).input;
-  const input = mode === "single" ? (lowered.kind === "resolveWorldInteraction" ? lowered : lowered.plan.steps[0].rulesInput) : lowered;
+  const input = mode === "single" ? (lowered.kind === "resolveWorldInteraction" ? lowered : lowered.kind === "applyAtomicWorldInteractionSteps" ? lowered.steps[0].rulesInput : lowered.plan.steps[0].rulesInput) : lowered;
   if (mode === "single") assert.equal(input.kind, "resolveWorldInteraction");
   else assert.equal(input.kind, "applyAtomicWorldInteractionSteps");
   let result = fixture.runtime.step(fixture.profiles, state, input), waves = 0;

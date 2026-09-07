@@ -154,7 +154,7 @@ test("model filling interface lowers a single ordinary assembly through the exis
   const rootActionId = "root:assembly-test:wire";
   const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId, focusRefs: f.refs, intentText: "用现有麻绳和餐具系成临时响铃。" });
   const value = { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [],
-    adjudication: { kind: "directSuccess", risk: "普通摆放和连接组件。", successOutcome: "原组件已经连接。" }, terminal: null,
+    adjudication: { kind: "directSuccess", durationMicros: "6000000", risk: "普通摆放和连接组件。", successOutcome: "原组件已经连接。" }, terminal: null,
     proposals: [{ kind: "inventoryOperation", basisRefs: [], consumes: f.refs.map(ref => ({ kind: "existing", ref })), produces: [], outcomeBinding: "always", operation: op, summary: "用原组件组装。" }] };
   const decoded = parseSubmitKpProposalBundleArguments(encodeVNextStrictToolBundle(value));
   const lowered = lowerVNext2ProposalBundle({ value: decoded, rootActionId, actorCharacterId: ACTOR, requiredContext: frozen.context, state: f.state });
@@ -195,7 +195,7 @@ test("component cardinality and duplication reach Provider diagnostics without u
   const f = scenario("diagnostics");
   for (const components of [[{ entryRef: f.refs[0], quantity: 1, recoverable: true }],
     [{ entryRef: f.refs[0], quantity: 1, recoverable: true }, { entryRef: f.refs[0], quantity: 1, recoverable: true }]]) {
-    const raw = { decision: { kind: "directSuccess", risk: "现有组件的连接。", successOutcome: "组件连接完成。", steps: [
+    const raw = { decision: { kind: "directSuccess", durationMicros: "6000000", risk: "现有组件的连接。", successOutcome: "组件连接完成。", steps: [
       { kind: "inventoryOperation", basisRefs: [], operation: operation(f, { components }), summary: "连接组件。" }] } };
     let calls = 0;
     const result = await invokeSubmitKpProposalBundleWithOneCorrection({ modelId: "scripted-test", message: "固定玩家意图", requiredContext: f.requiredContext, persistRepairTicket() { assert.fail("unsafe component choices must not enter repair"); },

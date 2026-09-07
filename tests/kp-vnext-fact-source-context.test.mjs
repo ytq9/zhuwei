@@ -1,3 +1,4 @@
+import { soleStep, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createAuthoredProbeFixture,freezeAuthoredProbeContext,PROBE_ACTOR as ACTOR,PROBE_SCENE as SCENE} from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -42,7 +43,7 @@ function declare(f,ref,{subjectRefs=[SCENE],hidden=false,parents=[]}={}) {
   commit(f,{kind:'declareCanonicalFact',proposalId:`${f.rootActionId}:${ref}`,fact:{factId:ref,factKind:'physicalMark',source:'characterAction',subjectRefs,value:{description:hidden?'HIDDEN_CANARY':'窗框留有已经刻下的记号。',condition:'present'},causalParentIds:parents,visibilityPolicy:hidden?'hiddenUntilEvidence':'public'}});return ref;
 }
 function observe(f,ref) {
-  const raw={mode:'adjudication',basisRefs:[ref],adjudication:{kind:'directSuccess',risk:'观察已有的明显痕迹。',successOutcome:'看清已存在的痕迹。'},terminal:{kind:'none'},proposals:[{
+  const raw={mode:'adjudication',basisRefs:[ref],adjudication:{kind:'directSuccess', durationMicros: '6000000',risk:'观察已有的明显痕迹。',successOutcome:'看清已存在的痕迹。'},terminal:{kind:'none'},proposals:[{
     kind:'observe',basisRefs:[ref],consumes:[],produces:[],outcomeBinding:'always',sceneRef:SCENE,inquiry:'现在能看到什么？',method:'留意眼前的痕迹。',focusRefs:[SCENE],existingFactRefs:[ref],branches:{success:{outcomeCode:'seen',summary:'看见已有痕迹。',sensoryEvidence:[{observerRef:ACTOR,subjectRef:SCENE,sense:'sight',evidence:'眼前留有此前出现的痕迹。',basisRefs:[ref]}],characterInferences:[]},failure:{kind:'none'}}}]};
   const parsed=parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(raw)));assert.equal(parsed.kind,'accepted',JSON.stringify(parsed));
   return lowerVNext2ProposalBundle({...f,value:parsed.bundle});
@@ -63,12 +64,17 @@ for(const source of ['npcTrace','physicalMark'])test(`an already committed ${sou
   assert.ok(!context.entries.some(entry=>entry.entryRef===npcDecisionEntryRef(NPC)));
   assert.ok(!context.entries.some(entry=>entry.entryRef===`knowledge:${NPC}:knowledge:private`));
   const lowered=observe(next,ref);assert.equal(lowered.kind,'accepted',JSON.stringify(lowered));
-  assert.ok(lowered.command.rulesInput.plan.readSet.some(binding=>binding.ref===ref&&binding.revisionOrHash===known.revisionOrHash));
+  assert.ok(soleStep(lowered.command).plan.readSet.some(binding=>binding.ref===ref&&binding.revisionOrHash===known.revisionOrHash));
   const result=f.runtime.step(f.profiles,f.state,lowered.command.rulesInput);assert.equal(result.kind,'committed',JSON.stringify(result));
   const view=f.runtime.project(f.profiles,result.state,f.viewer,{channel:'realtime',committedRange:{receiptId:result.receipt.receiptId,actorCharacterId:ACTOR,priorState:f.state,events:result.events}});
   assert.equal(view.kind,'projected');assert.doesNotMatch(JSON.stringify(view),/PRIVATE_|HIDDEN_CANARY/);
   const replay=f.runtime.replay(f.genesis,[...f.prefix,...result.events]);assert.equal(replay.kind,'replayed',JSON.stringify(replay));assert.deepEqual(replay.state,result.state);
-  assert.deepEqual(result.state.entities,f.state.entities);assert.deepEqual(result.state.fictionTimelines,f.state.fictionTimelines);
+  assert.deepEqual(result.state.entities,f.state.entities);
+  // Observing is an act: the actor's timeline moves by exactly what this root spent -- the declared duration when the
+  // observe ran, nothing when Rules first settled a due Activity as its own root (SPEC 0013 F04) and the intent is retried.
+  const tl=f.state.multiplayerRuntime.characterTimelineIds[ACTOR]??f.state.activeBranchId;
+  const spent=result.events.filter(e=>e.eventType==='FictionTimeAdvanced').reduce((sum,e)=>sum+BigInt(e.payload.durationMicros),0n);
+  assert.equal(BigInt(result.state.fictionTimelines[tl].nowMicros)-BigInt(f.state.fictionTimelines[tl].nowMicros),spent);
 });
 
 test('future plan trace refs, unrelated facts and hidden facts retain their actual existence and Viewer boundaries',()=>{
@@ -96,7 +102,7 @@ test('missing or changed source records cannot be replaced by a Profile binding 
   for(const mutate of [state=>{delete state.canonicalFacts[ref];},state=>{state.canonicalFacts[ref].value.condition='changed';}]) {
     const state=structuredClone(f.state);mutate(state);const result=f.runtime.step(f.profiles,state,lowered.command.rulesInput);assert.equal(result.kind,'rejected');assert.deepEqual(result.events,[]);
   }
-  const input=structuredClone(lowered.command.rulesInput);input.plan.readSet=input.plan.readSet.filter(binding=>binding.ref!==ref);
+  const input=structuredClone(lowered.command.rulesInput),plan=soleInput(input).plan;plan.readSet=plan.readSet.filter(binding=>binding.ref!==ref);
   const result=f.runtime.step(f.profiles,f.state,input);assert.equal(result.kind,'rejected');assert.deepEqual(result.events,[]);
 });
 

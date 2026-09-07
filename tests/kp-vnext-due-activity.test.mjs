@@ -39,7 +39,7 @@ function vnextInput(fixture, state, rootActionId) {
   const frozen = freezeAuthoredProbeContext(fixture, state, { rootActionId, focusRefs: [SOURCE] });
   const value = {
     schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [SOURCE],
-    adjudication: { kind: "directSuccess", risk: "观察已有对象的表面。", successOutcome: "看清对象。" }, terminal: null,
+    adjudication: { kind: "directSuccess", durationMicros: "6000000", risk: "观察已有对象的表面。", successOutcome: "看清对象。" }, terminal: null,
     proposals: [{ kind: "worldInteraction", basisRefs: [SOURCE], consumes: [], produces: [], outcomeBinding: "always",
       sceneRef: SCENE, targetRefs: [SOURCE], directTargetRefs: [SOURCE], instrumentRefs: [], abilityRef: null,
       intent: "观察阀门。", method: "查看当前可见表面。", branches: { success: {
@@ -80,7 +80,8 @@ test("vNext and legacy real actions settle the same canonical due root before co
   }
   const completed = step(fixture, waited.state, original);
   const next = step(fixture, completed.state, vnextInput(fixture, completed.state, "root:after-due"));
-  assert.deepEqual(next.events.map(event => event.eventType), ["WorldInteractionResolved"]);
+  // The act spends its frozen duration first and settles as a one-step atomic Bundle.
+  assert.deepEqual(next.events.map(event => event.eventType), ["FictionTimeAdvanced", "WorldInteractionResolved", "AtomicWorldInteractionStepsResolved"]);
   const replayed = fixture.runtime.replay(fixture.genesis, [...started.result.events, ...waited.events, ...completed.events, ...next.events]);
   assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
   assert.deepEqual(replayed.state, next.state);

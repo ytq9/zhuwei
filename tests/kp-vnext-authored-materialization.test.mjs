@@ -1,3 +1,4 @@
+import { actDuration, withActDuration, soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -46,8 +47,8 @@ function item(overrides = {}) {
     chargesMaximum: null, durabilityMaximum: null, ...overrides };
 }
 function bundle(proposals) {
-  return { schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [],
-    adjudication: { kind: "directSuccess", risk: "根据固化的机械结算。", successOutcome: "行动能够实施。" }, terminal: null, proposals };
+  return withActDuration({ schema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA, kind: "proposalBundle", mode: "adjudication", basisRefs: [],
+    adjudication: { kind: "directSuccess", durationMicros: actDuration(proposals), risk: "根据固化的机械结算。", successOutcome: "行动能够实施。" }, terminal: null, proposals });
 }
 function branch(effects = []) { return { outcomeCode: "outcome:triggered", summary: "危险触发。", effects, sensoryEvidence: [], pressures: [], opportunities: [] }; }
 function interaction() {
@@ -176,7 +177,7 @@ test("existing item definitions need no duplicate authoring and all inventory op
     outcomeBinding: "always", definitionRef: existing, sceneRef: SCENE, quantity: 1, ownership: { kind: "unowned", ownerRef: null }, visibilityPolicyRef: "visibility:public", summary: "找到一圈绳索。" };
   const result = lower(bundle([entry]), [ACTOR, SCENE, existing], authority);
   assert.equal(result.kind, "accepted", JSON.stringify(result));
-  assert.equal(result.command.rulesInput.plan.definitionRef, existing);
+  assert.equal(soleStep(result.command).plan.definitionRef, existing);
   for (const operation of [
     { kind: "release", entryRef: E, quantity: 1, sceneRef: SCENE, releaseKind: "placement" },
     { kind: "transfer", entryRef: E, quantity: 1, targetCharacterRef: ACTOR, ownershipDisposition: "preserve" },
@@ -194,7 +195,7 @@ test("typed dependency closure rejects cycles and conditional producer gaps whil
   assert.equal(cycle.kind, "rejected");
   assert.ok(cycle.issues.includes("bundle:dependency-cycle"), JSON.stringify(cycle));
   const conditional = bundle([source("ability", ability(), A), source("hazard", hazard(), H, [A]), interaction()]);
-  conditional.adjudication = { kind: "check", checkKind: "abilityCheck", ability: "str", skill: null, dc: 15, mode: "normal", risk: "危险", successOutcome: "成功", failureOutcome: "失败" };
+  conditional.adjudication = { kind: "check", durationMicros: "6000000", checkKind: "abilityCheck", ability: "str", skill: null, dc: 15, mode: "normal", risk: "危险", successOutcome: "成功", failureOutcome: "失败" };
   conditional.proposals[1].outcomeBinding = "onSuccess";
   conditional.proposals[1].produces[0].outcomeBinding = "onSuccess";
   conditional.proposals[2].branches.failure = branch();
@@ -218,7 +219,7 @@ test("definition causal provenance retains canonical facts without treating acto
   const result = lowerVNext2ProposalBundle({ value: bundle([proposal]), rootActionId: ROOT, actorCharacterId: ACTOR,
     requiredContext: context([ACTOR, SCENE, fact], initial), state: initial });
   assert.equal(result.kind, "accepted", JSON.stringify(result));
-  const frozen = result.command.rulesInput.plan;
+  const frozen = soleStep(result.command).plan;
   assert.deepEqual(frozen.causalBasisRefs, [fact]);
   assert.deepEqual(frozen.readSet.map(({ ref }) => ref).sort(), [ACTOR, SCENE, fact, "profile-context:module:authored-probe"].sort());
   const built = materializedAuthoredDefinition(ROOT, frozen);
@@ -251,7 +252,7 @@ test("inventory area use submits geometry and lets Rules choose affected targets
   const value = bundle([proposal]);
   const result = lower(value, [ACTOR, SCENE, entryRef], authority);
   assert.equal(result.kind, "accepted", JSON.stringify(result));
-  assert.deepEqual(result.command.rulesInput.plan.operation.area, operation.area);
+  assert.deepEqual(soleStep(result.command).plan.operation.area, operation.area);
   proposal.operation.targetRefs = [ACTOR];
   assert.equal(validateVNextProposalBundle(value).kind, "rejected");
   proposal.operation.targetRefs = [];

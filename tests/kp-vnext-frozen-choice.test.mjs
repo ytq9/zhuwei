@@ -150,7 +150,10 @@ test('a stale frozen plan cannot execute but its controller can cancel without c
 
 test('a one-step frozen selection completes its settlement and releases only its own plan', () => {
   const f = fixture('frozen-single');
-  f.plan.choices[0].continuation.plan.steps = [f.plan.choices[0].continuation.plan.steps[0]];
+  const plan = f.plan.choices[0].continuation.plan;
+  plan.steps = [plan.steps[0]];
+  // Only an authoring step remains, so the continuation spends no fictional time.
+  if (!['world-interaction.vnext-1', 'observe.vnext-1', 'social.vnext-1', 'inventory-operation.vnext-1'].includes(plan.steps[0].formId)) delete plan.executionCosts;
   const waiting = open(f); assert.equal(waiting.kind, 'awaitingInput', JSON.stringify(waiting));
   const done = answer(f, waiting.state, 'proceed');
   assert.equal(done.kind, 'committed', JSON.stringify(done));

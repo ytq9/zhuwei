@@ -245,6 +245,7 @@ export function bundleCommandToRoomLowering(
         bundleHash: command.bundleHash,
         contextHash: command.contextHash,
         sharedRuling: command.sharedRuling,
+        ...(command.executionCosts === undefined ? {} : { executionCosts: structuredClone(command.executionCosts) }),
         steps: command.steps.map((step) => ({
           formId: step.formId,
           proposalRef: step.proposalRef,
