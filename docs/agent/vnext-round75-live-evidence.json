@@ -1,0 +1,180 @@
+{
+  "round": 75,
+  "verifiedAt": "2026-09-07T06:48:49Z",
+  "verdict": "firstIntentCommittedAndPublished-noNpcPlanFormed-coverageEnded",
+  "sourceCommit": "74e713d3d82449909dd942231165ee670798b3c4",
+  "sourceManifestSha256": "86012e6db342548079ca91c5eceeacaf595218de273177e96a2a4b26256a8b8f",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v40",
+  "scenario": "round70 NPC three-intent scenario; scenario.mjs sha256 668da7addddab534dd659f9f25c6a6de2b8e6681bc4dd6a52c83e04d27646f85, byte-identical to round74",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "setup": {
+    "actorName": "旅行守卫",
+    "actorId": "character:a17edcd1-2ec7-4b82-80a5-de1d56c38af2",
+    "npcId": "npc:black-oak-will:varo",
+    "sceneId": "wake",
+    "preexistingPlans": 0,
+    "preexistingActivities": 0,
+    "preexistingActionEvents": 0,
+    "baselineVerified": true
+  },
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "text": "我走到账台旁，向瓦罗点头：“我叫旅行守卫。我想先用半分钟整理一下思路。您若方便，过半分钟轻敲一下账台提醒我，我们再接着谈。”",
+      "submissionId": "vnext-round75-npc-http-3f718e18-5fe9-4c13-be12-1b8533b6a332",
+      "startedAt": "2026-09-07T06:46:19.573Z",
+      "endedAt": "2026-09-07T06:46:30.497Z",
+      "action": "committed",
+      "narration": "published",
+      "calls": 4,
+      "repairUsed": false,
+      "reemitUsed": false,
+      "argumentsSha256": "78484dc8c7d5965e312003093acad821f18b36b616715fff7ea7c35633f6e110",
+      "publicNarrationQuote": "可以。半分钟，我在账台上等你。到时就敲三下。"
+    }
+  ],
+  "authorityAfterBatch": {
+    "stateVersion": "5",
+    "events": 5,
+    "eventTypes": [
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved"
+    ],
+    "receipts": 1,
+    "npcPlans": 0,
+    "activities": 0,
+    "pendingDue": 0,
+    "deliveryStatuses": [
+      "open"
+    ],
+    "audienceStatuses": [
+      "published"
+    ]
+  },
+  "gate1": {
+    "next": "stop",
+    "category": "legalNoPlan",
+    "why": "Public result is legal and coherent, but no NpcPlanFormed or ActivityStarted event exists and npcPlans/activities are empty, so the wait chain cannot be verified. The proposal lowered as worldInteraction, not formActorPlan."
+  },
+  "duplicateSubmission": {
+    "newCalls": 0,
+    "sameAuthoritativeState": true,
+    "sameEvents": true,
+    "sameRandomnessJournal": true,
+    "noModelReinvocation": true,
+    "sameReceipt": true,
+    "sameOutcome": true,
+    "sameDelivery": true
+  },
+  "coverageOfTheTwoLocalChanges": {
+    "parserV39ReferenceSlots": "Exercised only in the passing direction: a legal proposal with enum-constrained reference slots parsed, validated and committed. No bad reference choice occurred, so this does not show the enum prevents one.",
+    "parserV40UnparsedReemit": "Not exercised. The draft parsed on the first attempt, so no re-emit was requested."
+  },
+  "invocations": [
+    {
+      "ordinal": 1,
+      "requestHash": "sha256:2d14be41163e908dd7a58d075c8f2b3d4bb4f8946414f03e70daab5e636e9e52",
+      "bindingHash": "sha256:487aaa20a59b2e91bc364343e018c4897f1bcba2fa1c995ace6d95142e81ba95",
+      "estimatedInputTokens": 20898,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:8c0b28d60c1610ee448721b6209cb049132bbcd63a0b4b77a2495fb52738689a",
+      "result": "success",
+      "durationMs": 1667,
+      "responseHash": "sha256:33920d8a3092eedcc65d1d4d27907ae7df6695e035544a918a1c05eadb664da2",
+      "inputTokens": 19293,
+      "outputTokens": 52
+    },
+    {
+      "ordinal": 2,
+      "requestHash": "sha256:eaabb16f8461381eced915dd23be427d098d94653db8b06683c69ff58967f1a0",
+      "bindingHash": "sha256:487aaa20a59b2e91bc364343e018c4897f1bcba2fa1c995ace6d95142e81ba95",
+      "estimatedInputTokens": 28714,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:8c0b28d60c1610ee448721b6209cb049132bbcd63a0b4b77a2495fb52738689a",
+      "result": "success",
+      "durationMs": 5995,
+      "responseHash": "sha256:c271d67c5beb4fe018eed838c4e3bbe2c9c5d979b5856d86ee0c665db8b35278",
+      "inputTokens": 26502,
+      "outputTokens": 559
+    },
+    {
+      "modelTask": "narration",
+      "modelInvocationPurpose": "initialNarration",
+      "modelResult": "success",
+      "modelInputTokens": 2350,
+      "modelOutputTokens": 121,
+      "outcomeKind": "success",
+      "durationMs": 1585
+    },
+    {
+      "modelTask": "narration",
+      "modelInvocationPurpose": "narrationReview",
+      "modelResult": "success",
+      "modelInputTokens": 3466,
+      "modelOutputTokens": 168,
+      "outcomeKind": "success",
+      "durationMs": 1250
+    }
+  ],
+  "meter": {
+    "calls": 4,
+    "inputTokens": 51611,
+    "outputTokens": 900,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 51611,
+    "outputBudgetCharge": 900,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.162933
+  },
+  "pricing": {
+    "window": "peak",
+    "basis": {
+      "hit": "0.10",
+      "miss": "3.0",
+      "output": "9.0"
+    },
+    "tariffHtmlSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "tariffVerifiedAt": "2026-09-07T00:58:26.847440Z",
+    "chargedCny": 0.162933,
+    "capCny": 5,
+    "note": "Computed from usage against the saved verified tariff; not a provider invoice."
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "exactState": true,
+    "stateVersion": "5",
+    "events": 5
+  },
+  "sourceEnd": {
+    "beforeCount": 321,
+    "afterCount": 321,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "servicesStopped": true,
+    "verifiedAbsent": true,
+    "ports": {
+      "4320": false,
+      "4321": false
+    }
+  },
+  "openObservation": "The published narration commits Varo to knocking three times in half a minute, but no plan or activity in authority state will ever make that happen. Whether an NPC's spoken commitment must form a plan is a separate capability decision; this receipt records the observation and does not adjudicate it.",
+  "notCovered": [
+    "Intents 2 and 3 were not sent; no due execution, reminder branch or wait chain was reached.",
+    "The re-emit path (v40) got no real-model evidence.",
+    "Narrow repair was not triggered; Viewer recovery was not exercised.",
+    "runner ack refuses after a stopped batch, so acknowledgement was not exercised; the delivery remains open with audience published.",
+    "Rounds 70, 72, 73 and 74 are unchanged by this batch."
+  ]
+}

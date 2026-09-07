@@ -3273,3 +3273,17 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 定向验证（与 `6dd1806` 基线 worktree 逐名 comm 对照）：矩阵 5/5 exit 0；repair/syntax 组 34/53 与基线同集；schema 组与基线同集；`npx vitest run kp-vnext-provider-room + stage3-room` 75/79，provider-room 全绿、4 项 stage3 与基线同名；typecheck 与 diff-check exit 0。过程中确曾引入一次回归：初版检测器把重复成员当成无草稿，令 frozen-intent-repair 的「never gain echo deletion authority」由 rejected 变 reemitRequired；该测试判断正确，加入 JSON.parse 与 finish_reason 两道判定后回到基线同集，未修改该测试迁就实现。
 
 未覆盖：零 API 调用，重发能否让真实模型交出合法 JSON 未验证（三次失败形状各异读起来像随机，但这是推断）；terminal-only 选择仍一次语法失败即停批，round73 那类场景不受益，扩展需改调用预算另作决定；供应商 strict 不保证良构只有 3/32 观察证据，未做专门探针；重发不解决内容质量。回执 docs/agent/vnext-unparsed-reemit-validation.md，repo-map 已同步。无部署/push/远端 migration/退役，Goal active。
+
+## 2026-09-07 round75 首句通过但未形成 NPC 计划（真实批次审计）
+
+新建 round75 准备包（自 round74 复制并重参数化：路径/前缀/round 号，`scenario.mjs` SHA256 保持 `668da7ad…` 与 round70 同字节；evidence/closeout 清空、无 session）。发现 `budget-preflight.mjs` 里 `plan.round` 断言是数字字面量 74，sed 未覆盖，已改为 75；其余脚本无残留 round74 引用。
+
+释放前：scenario/setup preflight 8/8；runner preflight networkCalls 0/modelCalls 0；budget preflight configuredLimit 5、第六次绑定前拒绝、planSha256 4fdb9c88…；当前源码/schema 检查在干净树 `74e713d` 上跑 basis-reference-surface + reference-slot-admission + unparsed-reemit + observation-reference-surface 共 13/13 exit 0；4320/4321 空闲；价目沿用本日已核验 htmlSha256 899affbd…，本地周一 14:45 在峰值窗口内。freeze 冻结 321 项，manifest `86012e6d…`。
+
+结果：首句原样发出，4 次真实调用（选择/填写/旁白/审核），**无窄修订、无重发，committed 且 published**，1 条 Receipt，arguments SHA256 78484dc8…。公开旁白瓦罗确认身份并答应「半分钟，我在账台上等你。到时就敲三下。」——格式、引用、规则三关全过，是该 NPC 场景首次走完提交发布。但 `npcPlans`/`activities` 均空，5 条事件为 SourceClaimCreated×2、KnowledgeAcquired×2、WorldInteractionResolved，无 NpcPlanFormed/ActivityStarted：提案降级为 worldInteraction 而非 formActorPlan，等待链无从验证。gate1 记 legalNoPlan 停止，非技术失败；第二三句未发送，未追问未重采。
+
+原 submission duplicate 0 新调用，9 项检查（状态/事件/随机/Receipt/结果/delivery 等）全部 true。`runner ack` 在批次停止后拒绝执行，确认未走，delivery 仍 open、受众 published，记为未覆盖。
+
+真实覆盖分账：v39 引用槽准入只验到「不误伤」（合法提案顺利通过；本批无错误引用，未验到能挡住）；**v40 未解析重发完全没验到**（草稿一次解析成功）。待判观察另记：已发布旁白让 NPC 承诺半分钟后敲三下，而世界里无计划/活动/到期项兑现，属叙事承诺缺机械支撑，是否必须形成计划留作独立能力决定，本回执不裁定。
+
+4 calls/51611 输入/900 输出，峰价 ¥0.162933（上限 ¥5）。收尾 replay pinnedProfilesMatch/exactState=true、stateVersion 5、事件 5；services shutdown 两角色 verifiedAbsent、lsof 复核无监听；source-end 321 项 allEqual、分支与 HEAD 未变。回执 docs/agent/vnext-round75-{validation.md,live-evidence.json}。未部署/push/远端 migration/退役；Goal active。
