@@ -108,7 +108,9 @@ round78 之后用户指出：这是虚构时间，剧本里做的任何事都应
 
 能力合同：[vnext-fiction-time-contract-proposal.md](docs/agent/vnext-fiction-time-contract-proposal.md)。**用户已裁定，本地已实现**（parser v42）：`decision.durationMicros` 落在共享裁决上，角色行动必须 > 0、纯创作必须 = 0；时长作为束级 `executionCosts` 的 `fictionTime` 成本，先于结果推进行动者时间线；跨过的到期点记入 `mechanicalResult.fictionTime.crossedDeadlines`。实现回执与四处偏差（Rules 只裁一半、单条角色行动改走原子路径、推进事件点名行动者、不加 step 级时间线读集）见 [vnext-fiction-time-validation.md](docs/agent/vnext-fiction-time-validation.md)。本地：node 694 通过、vitest 97 通过，基线红之外 0 新失败，typecheck 0。
 
-**真实证据为零。下一步是 round79**：同一三句，首句 `nowMicros > 0` 是直接证据；第二句若形成 NPC 计划，`crossedDeadlines` 会第一次有数据。
+[round79](docs/agent/vnext-round79-validation.md)：模型**第一次就填了 `durationMicros: "30000000"`**——玩家要的正是半分钟。声明这一半有了真实证据。但草稿在与时长无关的地方倒了：`addressedThreadRef` 写成裸 `"none"` 而非 `{kind:"none"}`，本地校验拒绝且不允许修订，2 次调用停批，`nowMicros` 仍 0。执行这一半仍只有本地证据。
+
+**下一件小事**：`nullableRef` 的自由字符串一支让裸 `"none"` 在 strict 端点上合法、到域校验才被拒且不可修——79 批里第一次撞上就整批作废。把它视为 `{kind:"none"}` 的语义等价（解码时归一，或修订票据允许这一种精确替换）是一个独立小合同；做完再跑 round80 拿推进的真实证据。
 
 之后再谈下面这条。
 

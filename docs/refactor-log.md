@@ -3355,3 +3355,7 @@ round78 之后确认成功的普通行动在填写面上没有虚构时长入口
 ## 虚构时长落地（2026-09-07，parser v42，本地验证）
 
 `decision.durationMicros` 进入共享裁决；lowering 把它变成束级 `executionCosts` 的 `fictionTime` 成本，Rules 复用成本发出器在所有结果之前推进行动者时间线（payload 带 `characterId`），并把 `(now, now+D]` 内的排程到期点记入 `mechanicalResult.fictionTime.crossedDeadlines`。单条角色行动不再短路成裸 `rulesStep`，改走一步原子束。Rules 只拒「纯创作束花了时间」；「角色行动必须声明」是 vnext-2 lowering 的规则，因为 vnext-1 旧线没有时长字段。测试面按基线逐名比对：node 0 新失败（1 基线红转绿），vitest 0 新失败。见 [回执](agent/vnext-fiction-time-validation.md)。
+
+## round79：模型填了 30 秒，草稿倒在裸 "none"（2026-09-07，源码 `759393d`）
+
+v42 的第一批真实调用。模型在共享裁决上填 `durationMicros:"30000000"`，正是玩家要的半分钟——声明半边的第一份真实证据。同一草稿 `addressedThreadRef:"none"`（裸字符串）被 `reference-field-grammar` 拒绝且不可修订，2 次调用 ¥0.14826 停批，未提交。见 [round79 回执](agent/vnext-round79-validation.md)。

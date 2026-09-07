@@ -1,0 +1,131 @@
+{
+  "round": 79,
+  "verifiedAt": "2026-09-07T12:57:18Z",
+  "verdict": "first real-model evidence that the KP fills the shared ruling's duration (30 s for the requested half minute); the draft was then refused for an unrelated nullable-reference spelling, so the advance itself was never committed",
+  "sourceCommit": "759393dd03906c92c996dbe7ba19a70ad87f9910",
+  "sourceManifestSha256": "6239c4c0be20997dbd1b98fb3fc549a8f928116c70fab5fe3f158aa35f40928c",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v42",
+  "scenario": "round70 NPC three-intent scenario; gate records new promises/plans and the actor timeline's fictional delta, both verified; scenario.mjs sha256 013ccd9ea7659e97043ac31e8821af373178770b0a7dfdd3033ae563452beaef",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "calls": 2,
+      "outcome": "rejected",
+      "code": "PROPOSAL_FORM_INVALID",
+      "failureClass": "modelPermanent",
+      "selectedCapabilities": [
+        "social"
+      ],
+      "amendmentUsed": false,
+      "declaredDurationMicros": "30000000",
+      "declaredRulingKind": "directSuccess",
+      "stopCause": {
+        "constraint": "reference-field-grammar",
+        "path": [
+          "proposals",
+          0,
+          "addressedThreadRef"
+        ],
+        "actual": "none",
+        "expected": "an existing reference or exactly {kind:'none'}",
+        "repairAllowed": false,
+        "repairReason": "semantic-equivalence-unproven"
+      },
+      "npcPublicSpeechInDraft": "「旅行守卫？报上名来说个清楚，本官也才好认人。半分钟——不难等。账台给你听着，到点我敲一声，我们再接着把话摆开。」",
+      "consequencesInDraft": []
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "stop",
+      "coverage": "formatFailure"
+    }
+  ],
+  "authorityAfterBatch": {
+    "stateVersion": "0",
+    "events": 0,
+    "fictionNowMicros": "0",
+    "npcPlans": 0,
+    "promises": 0
+  },
+  "meter": {
+    "calls": 2,
+    "inputTokens": 47491,
+    "outputTokens": 643,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 47491,
+    "outputBudgetCharge": 643,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.14826,
+    "invocations": [
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 1,
+        "requestHash": "sha256:c395b5e9d1df0f78252b3d149628baf672fc2d987f404c01329fb33229b78e00",
+        "bindingHash": "sha256:4eb49d72d7c521cec68df6c1fe66a259b55b94652f5586350563efb306393265",
+        "estimatedInputTokens": 24328,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:708b2d17a84d2988dfcfa86736b7a7e18c6d4d83d5f2ff573356495e3ed299ee",
+        "result": "success",
+        "durationMs": 1674,
+        "responseHash": "sha256:de0a997b2067d86fa6ea70eac600dfd5b46b59af0091502daaabb6c91c82e92f",
+        "inputTokens": 21412,
+        "outputTokens": 46
+      },
+      {
+        "eventName": "kp.vnext.invocation",
+        "ordinal": 2,
+        "requestHash": "sha256:f1c7f92ba48ea86fed84d59dd083148c350143ace38bf77d88493a678cae2b94",
+        "bindingHash": "sha256:4eb49d72d7c521cec68df6c1fe66a259b55b94652f5586350563efb306393265",
+        "estimatedInputTokens": 28664,
+        "allowedInputTokens": 58000,
+        "counterRef": "conservative-v1",
+        "contextHash": "sha256:708b2d17a84d2988dfcfa86736b7a7e18c6d4d83d5f2ff573356495e3ed299ee",
+        "result": "success",
+        "durationMs": 5853,
+        "responseHash": "sha256:f8641c6a4f3fe05e6f2b37a806184d674033223407f54353933e386045242f5f",
+        "inputTokens": 26079,
+        "outputTokens": 597
+      }
+    ]
+  },
+  "pricing": {
+    "window": "off-peak",
+    "chargedAt": "peak tariff, the conservative direction",
+    "unknownUsageCalls": 0,
+    "cny": 0.14826,
+    "budgetCny": 5
+  },
+  "replay": {
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0,
+    "pinnedProfilesMatch": true
+  },
+  "sourceEnd": {
+    "files": 321,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "game": "verifiedAbsent",
+    "capture": "verifiedAbsent",
+    "ports": "no listener on 4320/4321"
+  },
+  "notCovered": [
+    "the fictional advance was never committed: nowMicros stayed 0 because the draft was refused before Rules",
+    "second and third sentences not sent",
+    "crossedDeadlines never populated",
+    "selection amendment still unused"
+  ]
+}
