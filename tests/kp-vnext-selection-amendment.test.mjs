@@ -8,6 +8,7 @@ import { assertVNextInvocationTransition } from '../app/_runtime/lib/room/vnext-
 import { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs,
   proposalCreatureTargetRefs, proposalNpcSourceChoices } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
+import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
 
 // Round 75 needed social + formActorPlan + passTime for one sentence and the
 // selection carried only social. Capabilities are locked at selection, so the
@@ -40,7 +41,10 @@ test('the proposal call can amend its own selection once, by union', async () =>
   const first = await invokeSubmitKpProposalBundleFirstPass({
     modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext,
     capabilities: ['social'], terminalKinds: [], amendable: true,
-    binding: { async run(_model, request) { requests.push(request); return amendmentResponse(['formActorPlan', 'passTime']); } },
+    binding: { async run(_model, request) {
+      assertDeepSeekStrictToolModelInput(request); requests.push(request);
+      return amendmentResponse(['formActorPlan', 'passTime']);
+    } },
   });
   assert.equal(first.kind, 'amendmentRequested', JSON.stringify(first));
   // passTime is a terminal, not an operation. An amendment that only unioned
@@ -60,7 +64,10 @@ test('the proposal call can amend its own selection once, by union', async () =>
   const second = await invokeSubmitKpProposalBundleFirstPass({
     modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext,
     capabilities: first.amendment.amendedCapabilities, terminalKinds: first.amendment.amendedTerminalKinds, amendable: false,
-    binding: { async run(_model, request) { requests.push(request); return submitResponse(validSocialBundle()); } },
+    binding: { async run(_model, request) {
+      assertDeepSeekStrictToolModelInput(request); requests.push(request);
+      return submitResponse(validSocialBundle());
+    } },
   });
   assert.deepEqual(requests[1].tools.map(t => t.function.name), [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
   assert.equal(second.kind, 'locallyAccepted', JSON.stringify(second));
@@ -76,7 +83,7 @@ test('an amendment that adds nothing is not a continuation, and a non-amendable 
   const rejected = await invokeSubmitKpProposalBundleFirstPass({
     modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext,
     capabilities: ['social'], terminalKinds: [],
-    binding: { async run() { return amendmentResponse(['passTime']); } },
+    binding: { async run(_model, request) { assertDeepSeekStrictToolModelInput(request); return amendmentResponse(['passTime']); } },
   });
   assert.equal(rejected.kind, 'rejected');
 });

@@ -126,6 +126,24 @@ test("the initial proposal call cannot be strict under the current selection pro
   );
 });
 
+test("the transport carries one tool, or two when the proposal call also offers selection", () => {
+  // Verified against the live beta endpoint on 2026-09-07: two strict tools
+  // with tool_choice "required" and parallel_tool_calls false returned 200 and
+  // the model chose the second and filled it. Round 76 was spent discovering
+  // that our own assertion, not the provider, refused that surface.
+  const tool = name => ({ type: "function", function: { name, description: "d", strict: true,
+    parameters: { type: "object", properties: { text: { type: "string", pattern: "[\\s\\S]+" } },
+      required: ["text"], additionalProperties: false } } });
+  const input = (...names) => ({ tool_choice: "required", parallel_tool_calls: false, tools: names.map(tool) });
+  assert.doesNotThrow(() => assertDeepSeekStrictToolModelInput(input("submit_kp_proposal_bundle")));
+  assert.doesNotThrow(() => assertDeepSeekStrictToolModelInput(input("submit_kp_proposal_bundle", "offer_kp_proposal_bundle")));
+  // Wider than the verified shape stays refused, and two tools must be two
+  // readable choices: a repeated name makes the model's selection ambiguous.
+  assert.throws(() => assertDeepSeekStrictToolModelInput(input()), /one-or-two-function-tools-required/u);
+  assert.throws(() => assertDeepSeekStrictToolModelInput(input("a", "b", "c")), /one-or-two-function-tools-required/u);
+  assert.throws(() => assertDeepSeekStrictToolModelInput(input("same", "same")), /tool-names-must-be-unique/u);
+});
+
 test("the narrow repair is the call strict output can actually constrain", () => {
   // The repair sends the one Form the server already chose, which is the
   // shape strict beta accepts — and it is the last call before

@@ -11,6 +11,7 @@ import { createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/v
 import { proposalItemEntryRefs, proposalObservationSubjectRefs, proposalCreatureTargetRefs,
   proposalNpcSourceChoices } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
+import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deepseek.ts';
 
 // Round 74's second call returned arguments with an unescaped ASCII quote
 // inside a prose field, so nothing parsed and no draft existed to repair. The
@@ -50,7 +51,10 @@ test('an unparsed draft is re-emitted once and the server contributes no content
       capabilities: ['social'], terminalKinds: [],
       persistRepairTicket: () => assert.fail('an unparsed draft has no ticket to persist'),
       binding: { async run(_model, request) {
-        calls.push(request);
+        // Hold every stubbed request to the transport contract: a surface the
+        // transport refuses never reaches the model, and round 76 proved a
+        // green suite can hide exactly that.
+        assertDeepSeekStrictToolModelInput(request); calls.push(request);
         return toolResponse(calls.length === 1 ? malformed : JSON.stringify(encodeVNextStrictToolBundle(validBundle())));
       } },
     });
@@ -80,7 +84,7 @@ test('a draft that parsed is never re-emitted, and a recoverable root issue keep
   const rejected = encodeVNextStrictToolBundle({ ...validBundle(), basisRefs: ['definition:not-authorized'] });
   const first = await invokeSubmitKpProposalBundleFirstPass({
     modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext, capabilities: ['social'], terminalKinds: [],
-    binding: { async run() { return toolResponse(JSON.stringify(rejected)); } },
+    binding: { async run(_model, request) { assertDeepSeekStrictToolModelInput(request); return toolResponse(JSON.stringify(rejected)); } },
   });
   assert.notEqual(first.kind, 'reemitRequired');
   assert.equal(vnextProposalUnparsedArguments(toolResponse(JSON.stringify(rejected))), undefined);

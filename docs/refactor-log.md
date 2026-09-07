@@ -3317,3 +3317,13 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 修改：app/_runtime/lib/kp/deepseek.ts 工具面允许 1 或 2 个并新增工具名唯一性检查（两个工具必须可区分，重名使模型选择不可读），注释记明 2026-09-07 已对真实端点验证，更宽形状仍拒绝。验证：amendment+reemit 矩阵 9/9 exit0；strict-tool-transport + schema-compaction 12/12 exit0；provider-room 44/44；schema/proposal-schema/observation/reference-slot 四文件与 df864b0 基线逐名 comm 零回归；typecheck 与 diff-check exit0。
 
 未覆盖：两项本地改动仍无真实模型证据（提案调用未到达 API）；传输放宽后需另开批次重验；round70/72/73/74/75 结论不变。回执 docs/agent/vnext-round76-{validation.md,live-evidence.json}。未部署/push/远端 migration/退役；Goal active。
+
+## 2026-09-07 桩 binding 强制传输契约（开发期）
+
+症状/根因：round76 花掉一整批才发现提案调用的双工具 surface 被本地传输断言拒绝。根因不是那条断言本身（已放宽并对真实端点验证），而是**测试桩绕过了传输层**：补选与重发两份代表性矩阵的 stub binding 从不调用 `assertDeepSeekStrictToolModelInput`，因此一个传输层根本不会放行的 surface 在单测里全绿。仓库里已有 4 个测试文件在桩里调它，这两份新文件漏了。
+
+修改：`tests/kp-vnext-selection-amendment.test.mjs` 与 `tests/kp-vnext-unparsed-reemit.test.mjs` 的全部 stub binding 加入 `assertDeepSeekStrictToolModelInput(request)`。另在 `tests/kp-strict-tool-transport-v3.test.mjs` 新增边界测试：1 个与 2 个工具通过，0 个与 3 个报 `one-or-two-function-tools-required`，重名报 `tool-names-must-be-unique`；注释记明 2026-09-07 已对真实端点验证。
+
+精确 RED 已取：临时把断言改回 `!== 1`，补选矩阵 4→3/1 失败，报的正是杀死 round76 的 `single-function-tool-required`；恢复后 4/4。
+
+定向验证：9 文件组 66/93，与 `1fcd8ca` 基线 worktree 逐名 comm 零引入零修复；transport 8/8 exit0；typecheck 与 diff-check exit0。未覆盖：这道守卫只覆盖传输契约本身，不能证明其他「桩比真实路径宽松」的缺口；补选与前移仍无真实模型证据。无部署/push/远端 migration/退役；Goal active。
