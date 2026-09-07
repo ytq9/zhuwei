@@ -61,19 +61,30 @@ export const VNEXT_PROPOSAL_GUIDANCE_POLICY_HASH = canonicalHash(VNEXT_PROPOSAL_
 
 export function vnextProposalSystemPrompt(stage: VNextProposalStage,
   capabilities: readonly VNextProposalCapabilityId[] = VNEXT_INITIAL_PROPOSAL_CAPABILITIES,
-  terminalKinds: readonly string[] = []): string {
+  terminalKinds: readonly string[] = [], amendable = false): string {
   if (stage === "correction") return stages.correction;
+  // Selection is the only moment the composition can be chosen, so it carries
+  // each type's complete filling boundary rather than a one-line summary. A
+  // summary cannot show that a promised future act needs its own plan and its
+  // own time passage; the detailed guidance says so, and used to arrive only
+  // after the selection was already locked.
   if (stage === "offer") return [selectionAuthority,
     `类型目录（只选择ID，不填写提案）：${JSON.stringify([
       ...terminalKinds.map(id => ({ id, description: terminalSelectionDescriptions[id] })),
       ...VNEXT_PROPOSAL_CAPABILITIES,
-    ])}`].join("\n");
+    ])}`,
+    "各类型的完整填写边界如下，只用于判断本次意图需要哪些类型的组合，本阶段不填写任何内容：",
+    ...VNEXT_PROPOSAL_CAPABILITIES.map(capability => `${capability.id}：${filling[capability.id]}`),
+  ].join("\n");
   const loaded = closeVNextProposalCapabilities(capabilities);
   const hasSteps = loaded.some(id => !VNEXT_PROPOSAL_CAPABILITIES.some(entry => entry.id === id && "surface" in entry && entry.surface === "native"));
   return [authority, stages.expandedProposal,
     ...(hasSteps ? [planRuling] : []),
     ...terminalKinds.flatMap(id => terminalFilling[id] === undefined ? [] : [terminalFilling[id]]),
-    `本轮已选终结表单：${terminalKinds.join(",") || "无"}；已加载操作：${loaded.join(",") || "无"}。只提交这些表单允许的完整结果，不能再次选择schema。`,
+    `本轮已选终结表单：${terminalKinds.join(",") || "无"}；已加载操作：${loaded.join(",") || "无"}。只提交这些表单允许的完整结果。`,
+    amendable
+      ? "若完整表达本次原意图确实需要当前未加载的类型，可以改为调用选择工具一次性补齐所需类型ID；服务器按并集重新提供表单，冻结上下文不变。补选只有一次，且只能新增不能删减；能用已加载表单完整表达时不要补选，也不得用补选换一个更容易填的方案或重开裁决。"
+      : "只能使用已加载的表单，不能再次选择schema。",
     ...loaded.map(id => {
       const capability = VNEXT_PROPOSAL_CAPABILITIES.find(entry => entry.id === id)!;
       if ("surface" in capability && capability.surface === "native") return `${id}：${filling[id]}`;

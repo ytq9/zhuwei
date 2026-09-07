@@ -8,6 +8,7 @@ import {
 import {
   canonicalClone,
   canonicalHash,
+  compareCodeUnits,
   completeJsonObjectSyntaxEvidence,
   deepFreeze,
   isPlainRecord,
@@ -52,9 +53,9 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v40",
+  version: "kp-vnext2-proposal-parser-v41",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
-  schemaRetrieval: "flat-type-selection-then-exact-selected-forms-terminal-two-step-three-v4",
+  schemaRetrieval: "full-filling-boundaries-at-selection-then-selected-forms-amendable-once-v5",
   toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   bundleSchema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   correctionToolName: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -296,6 +297,13 @@ export type VNextProposalBundleFirstPassResult =
       kind: "reemitRequired";
       unparsed: VNextProposalUnparsedArguments;
       invocationCount: 1;
+    }>
+  | Readonly<{
+      /** The loaded types cannot express this intent. Selection is amended by
+       * union once, and the same frozen context is filled again. */
+      kind: "amendmentRequested";
+      amendment: VNextProposalAmendment;
+      invocationCount: 1;
     }>;
 
 export function parseSubmitKpProposalBundleCandidateArguments(
@@ -425,6 +433,40 @@ export function vnextProposalReemitPrompt(evidence: VNextProposalUnparsedArgumen
   });
 }
 
+export type VNextProposalAmendment = Readonly<{
+  requestedCapabilities: readonly VNextProposalCapabilityId[];
+  requestedTerminalKinds: readonly string[];
+  /** Selection plus the request, closed over dependencies. Never a reduction.
+   * Terminals are amended alongside operations: one intent that needs to spend
+   * time as well as speak needs both, and dropping either half would leave the
+   * amended round unable to express the very thing it asked for. */
+  amendedCapabilities: readonly VNextProposalCapabilityId[];
+  amendedTerminalKinds: readonly string[];
+}>;
+
+/** The saved proposal response called the selection tool instead of submitting,
+ * which is how one intent says the loaded types cannot express it.
+ *
+ * Derived from the response and the current selection alone, so Room reaches
+ * the identical conclusion from the same saved bytes. The result is a union:
+ * an amendment adds types and can never drop one, so it cannot become a way to
+ * reopen a decision or escape a form the selection already accepted. */
+export function vnextProposalAmendmentRequest(response: unknown,
+  capabilities: readonly VNextProposalCapabilityId[],
+  terminalKinds: readonly string[] = []): VNextProposalAmendment | undefined {
+  let call: ReturnType<typeof extractSingleToolCall>;
+  try { call = extractSingleToolCall(response); } catch { return undefined; }
+  if (call.name !== OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) return undefined;
+  const requested = parseVNextProposalOfferResponse(response);
+  const current = closeVNextProposalCapabilities(capabilities);
+  const amended = closeVNextProposalCapabilities([...new Set([...current, ...requested.capabilities])]);
+  const amendedTerminals = [...new Set([...terminalKinds, ...requested.terminalKinds])].sort(compareCodeUnits);
+  // An amendment that adds nothing is a wasted call, not a continuation.
+  if (amended.length === current.length && amendedTerminals.length === terminalKinds.length) return undefined;
+  return deepFreeze({ requestedCapabilities: requested.capabilities, requestedTerminalKinds: requested.terminalKinds,
+    amendedCapabilities: amended, amendedTerminalKinds: amendedTerminals });
+}
+
 /** Parses only the selected strict tool's arguments; no text/JSON fallback. */
 export function parseSubmitKpProposalBundleArguments(
   value: unknown,
@@ -535,6 +577,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
     requiredContext: VNextRequiredContext;
     capabilities?: readonly VNextProposalCapabilityId[];
     terminalKinds?: readonly string[];
+    amendable?: boolean;
     signal?: AbortSignal;
   }>,
 ): Promise<VNextProposalBundleFirstPassResult> {
@@ -553,9 +596,13 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const capabilities = closeVNextProposalCapabilities(input.capabilities ?? VNEXT_PROPOSAL_CAPABILITY_IDS);
   const response = await input.binding.run(
     input.modelId,
-    createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext), proposalCreatureTargetRefs(requiredContext)),
+    createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext), proposalCreatureTargetRefs(requiredContext), input.amendable === true),
     runOptions,
   );
+  if (input.amendable === true) {
+    const amendment = vnextProposalAmendmentRequest(response, capabilities, input.terminalKinds);
+    if (amendment !== undefined) return deepFreeze({ kind: "amendmentRequested", amendment, invocationCount: 1 });
+  }
   let candidate: VNextProposalBundleCandidate;
   try {
     candidate = parseSubmitKpProposalBundleCandidateResponse(response);
@@ -773,7 +820,14 @@ export async function invokeSubmitKpProposalBundleWithOneCorrection(
   if (typeof input.persistRepairTicket !== "function") {
     throw new TypeError("VNEXT_PROPOSAL_REPAIR_TICKET_PERSISTENCE_REQUIRED");
   }
-  const firstPass = await invokeSubmitKpProposalBundleFirstPass(input);
+  const firstPass = await invokeSubmitKpProposalBundleFirstPass({ ...input, amendable: false });
+  if (firstPass.kind === "amendmentRequested") {
+    // Unreachable: this orchestration never offers the selection tool. Fail
+    // closed rather than let an unexpected shape reach a caller as a bundle.
+    return providerRejected("PROPOSAL_FORM_INVALID", ["selection:amendment-not-offered"], false, 1,
+      [proposalDiagnostic("CONSTRAINT_CONFLICT", "selection:amendment-not-offered",
+        { repair: { allowed: false, reason: "amendment-requires-the-room-orchestrated-path" } })]);
+  }
   if (firstPass.kind === "reemitRequired") {
     return invokeReemitKpProposalBundle({ binding: input.binding, modelId: input.modelId,
       requiredContext: input.requiredContext, unparsed: firstPass.unparsed,

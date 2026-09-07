@@ -779,7 +779,9 @@ export const CORRECT_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
 
 export type StrictToolBundleModelInput = Readonly<{
   messages: readonly Readonly<{ role: "user" | "system" | "assistant"; content: string }>[];
-  tools: readonly [typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL];
+  tools:
+    | readonly [typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL]
+    | readonly [typeof SUBMIT_KP_PROPOSAL_BUNDLE_TOOL, typeof OFFER_KP_PROPOSAL_BUNDLE_TOOL];
   tool_choice: "required";
   parallel_tool_calls: false;
   max_completion_tokens: number;
@@ -794,16 +796,21 @@ export function createSubmitKpProposalBundleModelInput(
   npcSources?: ProposalNpcSourceChoices,
   basisChoices?: VNextBasisReferenceChoices,
   creatureRefs?: readonly string[],
+  /** Offers the selection tool alongside the proposal so one intent that needs
+   * a type this selection lacks can still say so. The amended round drops it:
+   * selection is amendable once, and never a way to reopen a decision. */
+  amendable = false,
 ): StrictToolBundleModelInput {
   if (typeof message !== "string" || message.trim().length === 0) {
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
   }
+  const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
+    function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
+      parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs) }),
+  };
   return Object.freeze({
-    messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("expandedProposal", capabilities, terminalKinds) }, { role: "user" as const, content: message }]),
-    tools: Object.freeze([{ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
-      function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
-        parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs) }),
-    }] as const),
+    messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("expandedProposal", capabilities, terminalKinds, amendable) }, { role: "user" as const, content: message }]),
+    tools: Object.freeze(amendable ? [submitTool, OFFER_KP_PROPOSAL_BUNDLE_TOOL] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
     max_completion_tokens: 4_000,

@@ -1100,7 +1100,9 @@ describe("vNext Provider invocation and Room persistence", () => {
         return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorItem"] });
       }
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities([...VNEXT_INITIAL_PROPOSAL_CAPABILITIES, "authorItem"]), ["knowledgeReview"]));
+        // The proposal call offers the selection tool as well, so its system
+        // prompt is the amendable one. Selection is amendable exactly once.
+        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities([...VNEXT_INITIAL_PROPOSAL_CAPABILITIES, "authorItem"]), ["knowledgeReview"], true));
         return toolResponse(wire(args), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       }
       expect(name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);

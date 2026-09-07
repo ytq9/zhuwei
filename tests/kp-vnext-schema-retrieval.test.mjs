@@ -240,8 +240,14 @@ test("the first stage has one flat selection field and no executable union or fi
   assert.deepEqual(deepSeekStrictToolSchemaIssues(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA), []);
   const prompt = createVNextProposalOfferModelInput("冻结原意图").messages[0].content;
   assert.ok(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.selectionAuthority));
+  // Selection must never be able to become a ruling: the adjudication
+  // authority and the decision-filling rules stay out of this stage.
   for (const text of [VNEXT_PROPOSAL_GUIDANCE_POLICY.authority, VNEXT_PROPOSAL_GUIDANCE_POLICY.terminalRuling,
-    VNEXT_PROPOSAL_GUIDANCE_POLICY.planRuling, ...Object.values(VNEXT_PROPOSAL_GUIDANCE_POLICY.filling)]) assert.equal(prompt.includes(text), false);
+    VNEXT_PROPOSAL_GUIDANCE_POLICY.planRuling]) assert.equal(prompt.includes(text), false);
+  // It does carry every type's filling boundary, because this is the only
+  // moment the composition can be chosen. A one-line summary cannot show that
+  // a promised future act needs its own plan and its own time passage.
+  for (const text of Object.values(VNEXT_PROPOSAL_GUIDANCE_POLICY.filling)) assert.ok(prompt.includes(text));
   for (const id of VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS) assert.ok(prompt.includes(`"id":"${id}"`));
   for (const ids of [["observe"], ["social"], ["formActorPlan", "social"]])
     assert.deepEqual(parseVNextProposalOfferResponse(response(query(ids))).capabilities, ids);

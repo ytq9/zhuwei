@@ -3157,7 +3157,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || prepared?.requiredContext?.binding.contextHash !== input.contextHash
       || !worldInteractionProfileEnabled(replay.profiles.extensions ?? [])
       || input.bindingHash !== VNEXT_KP_WORKFLOW_HASH
-      || (input.ordinal !== 1 && input.ordinal !== 2 && input.ordinal !== 3)
+      || (input.ordinal !== 1 && input.ordinal !== 2 && input.ordinal !== 3 && input.ordinal !== 4)
       || !isJsonRecord(input.request) || vnextCanonicalHash(input.request) !== input.requestHash) {
       return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID" };
     }

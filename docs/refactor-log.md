@@ -3287,3 +3287,19 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 真实覆盖分账：v39 引用槽准入只验到「不误伤」（合法提案顺利通过；本批无错误引用，未验到能挡住）；**v40 未解析重发完全没验到**（草稿一次解析成功）。待判观察另记：已发布旁白让 NPC 承诺半分钟后敲三下，而世界里无计划/活动/到期项兑现，属叙事承诺缺机械支撑，是否必须形成计划留作独立能力决定，本回执不裁定。
 
 4 calls/51611 输入/900 输出，峰价 ¥0.162933（上限 ¥5）。收尾 replay pinnedProfilesMatch/exactState=true、stateVersion 5、事件 5；services shutdown 两角色 verifiedAbsent、lsof 复核无监听；source-end 321 项 allEqual、分支与 HEAD 未变。回执 docs/agent/vnext-round75-{validation.md,live-evidence.json}。未部署/push/远端 migration/退役；Goal active。
+
+## 2026-09-07 选择阶段完整填写边界前移与一次补选（开发期）
+
+目标/合同：用户裁定「甲和乙直接都做」。能力合同——模型在唯一能选择类型的时刻必须看得见每个类型的完整填写边界；填写时发现所选不足以表达完整意图时可按并集补选一次。变化维度是「一句意图需要几个类型的组合」。两项均不改权威顺序：补选只加类型，不改冻结上下文、不重开裁决、不许减少已选。基线 `9a631fc`。
+
+甲：`vnextProposalSystemPrompt("offer",…)` 附全部类型 filling，offer 提示词约1900→7961字符（round75 offer 实测输入19293/上限58000）。守住不变量：authority/planRuling/terminalRuling 仍不进选择阶段，选择不能变成裁决。
+
+乙：ordinal 2 同时提供 submit 与既有 offer 工具，模型调用后者即补选，复用原 schema 与解析器，不新增工具。服务器取并集重派表单，ordinal 3 只给 submit（补选仅一次）；ordinal 4 仅在补选真的发生过时存在，用于结算补选后那一稿。Room 从保存的 ordinal 2 响应自行判定补选，不接受调用方声称。callPolicy 改为 selections1/selectionAmendments1/proposals1/terminalMaximumTotal3/stepMaximumTotal4；DO 接受 ordinal 4；parser v40→v41，schemaRetrieval 升 v5。
+
+矩阵抓到一处真实设计错误并已修正：初版只并 capabilities，而 `passTime` 是 terminal——那版补选会丢掉 round75 真正需要的一半，且因「未新增 capability」被判空补选拒绝。修正为同时并 capabilities 与 terminalKinds，保留目录自身拆分。
+
+代表性矩阵 tests/kp-vnext-selection-amendment.test.mjs 4/4：round75 形状（capability/terminal 各自归位、并集保留原选、补选轮工具面 [submit,offer] 而补选后仅 [submit]、最终 locallyAccepted）；空补选不算继续且未开补选时同一响应按错工具失败；Room 独立证明（原选择 surface、再次可补选 surface、带票据、未补选的 ordinal 4、ordinal 5 全部拒绝）；ordinal 2 形态。
+
+定向验证（与 `9a631fc` 基线 worktree 逐名 comm）：矩阵 4/4 exit0；11 个 schema/repair/reference 消费者 78/106 与基线同集；provider-room 44/44 exit0；stage3-room 31/35，4 项与基线同名；typecheck 与 diff-check exit0。过程中引入并修正 3 处断言：provider-room 与 observation-reference-surface 的 ordinal 2 系统提示词/surface 需补 amendable（生产 surface 确实变了），schema-retrieval 的「选择阶段无填写指导」按不变量更新（裁决三件仍断言缺席，filling 改断言存在）；均为生产行为真变化，非放宽实现。
+
+未覆盖：零 API 调用，两项都无真实模型证据；两项同批上线，真实通过时无法区分谁起作用，事后只能从 Room journal 分辨乙是否触发（补选留下 ordinal 3 的 offer 响应），甲无法分辨；补选后一稿再不可解析时重发与修订争用 ordinal 4，未做代表性验证；terminalMaximumTotal 改 3 未经真实批次证明够用；不裁定「NPC 口头承诺是否必须形成计划」。回执 docs/agent/vnext-selection-composition-validation.md。无部署/push/远端 migration/退役；Goal active。

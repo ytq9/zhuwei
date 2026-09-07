@@ -73,9 +73,11 @@ test('Room reconstructs the identical subject schema from frozen context and rej
   // Build the surface with exactly the arguments the production provider uses;
   // Room reconstructs from the same frozen context, so any omission here would
   // test a request the provider never sends.
+  // Ordinal 2 offers the selection tool alongside the proposal, so the surface
+  // Room reconstructs must be the amendable one the provider actually sends.
   const surface = (subjectRefs, creatureRefs) => createSubmitKpProposalBundleModelInput(message, ['observe'],
     proposalItemEntryRefs(f.requiredContext), subjectRefs, [],
-    proposalNpcSourceChoices(f.requiredContext), requiredContextBasisReferences(f.requiredContext), creatureRefs);
+    proposalNpcSourceChoices(f.requiredContext), requiredContextBasisReferences(f.requiredContext), creatureRefs, true);
   const request = surface(proposalObservationSubjectRefs(f.requiredContext), proposalCreatureTargetRefs(f.requiredContext));
   const input = { ordinal: 2, contextHash: f.requiredContext.binding.contextHash,
     bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request };

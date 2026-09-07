@@ -8,6 +8,8 @@ import { canonicalHash, isPlainRecord, type JsonRecord } from "./canonical-json"
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/assemble";
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle, invokeReemitKpProposalBundle,
   vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, type VNextProposalBundleRepairTicket } from "./proposal-provider";
+import type { VNextProposalBundle } from "./proposal-schema";
+import type { VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
 import { proposalModelContext } from "./proposal-context";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET } from "./runtime-policy";
@@ -63,7 +65,7 @@ export function createVNextKpAdapter(options: Readonly<{
         });
       }
       const requiredContext = request.requiredContext as unknown as VNextRequiredContext;
-      async function boundInvocation(ordinal: 1 | 2 | 3, repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
+      async function boundInvocation(ordinal: 1 | 2 | 3 | 4, repairTicket?: VNextProposalBundleRepairTicket): Promise<AuthoritativeModelBinding> {
         return {
           async run(model, input) {
             if (model !== VNEXT_KP_PROFILE.modelId) throw vnextProposalFailure("PROPOSAL_PROVIDER_CONFIGURATION");
@@ -139,45 +141,64 @@ export function createVNextKpAdapter(options: Readonly<{
       // is durable and never becomes an alternative decision on retry.
       if (offer.kind === "rejected") throw vnextProposalFailure(offer.code, false, undefined,
         { issues: offer.issues, diagnostics: offer.diagnostics });
-      const first = await invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(2),
-        modelId: VNEXT_KP_PROFILE.modelId, message, requiredContext,
-        capabilities: offer.capabilities, terminalKinds: offer.terminalKinds });
-      if (first.kind === "reemitRequired") {
-        // Nothing parsed, so there is no draft, no ticket and nothing kept. A
-        // terminal-only selection has already spent its two calls.
-        if (!vnextProposalHasThirdCallBudget(offer.capabilities)) {
-          const constraint = "reemit:terminal-selection-call-budget-exhausted";
-          throw vnextProposalFailure("PROPOSAL_FORM_INVALID", false, undefined, {
-            issues: [first.unparsed.diagnostic.constraint, constraint],
-            diagnostics: [first.unparsed.diagnostic, proposalDiagnostic("REPAIR_OUT_OF_SCOPE", constraint, {
-              expected: { maximumCalls: 2 }, actual: { callsUsed: 2 },
-              repair: { allowed: false, reason: "terminal-selection-and-proposal-use-the-two-call-budget" },
-            })],
-          });
-        }
-        const reemitted = await invokeReemitKpProposalBundle({ binding: await boundInvocation(3),
-          modelId: VNEXT_KP_PROFILE.modelId, requiredContext, unparsed: first.unparsed,
-          capabilities: offer.capabilities, terminalKinds: offer.terminalKinds });
-        if (reemitted.kind === "rejected") throw vnextProposalFailure(reemitted.code, false, undefined,
-          { issues: reemitted.issues, diagnostics: reemitted.diagnostics });
-        return reemitted.bundle;
-      }
-      if (first.kind === "repairRequired" && !vnextProposalHasExecutionRepairBudget(first.repairTicket.draft, offer.capabilities)) {
-        const constraint = "repair:terminal-selection-call-budget-exhausted";
-        throw vnextProposalFailure("PROPOSAL_REPAIR_EXHAUSTED", false, undefined, {
-          issues: [...first.repairTicket.issues, constraint],
-          diagnostics: [...first.repairTicket.diagnostics, proposalDiagnostic("REPAIR_OUT_OF_SCOPE", constraint, {
-            expected: { maximumCalls: 2, allowedPaths: [], allowedOperations: [] }, actual: { callsUsed: 2 },
+      const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
+        terminalKinds: readonly string[], amendable: boolean) =>
+        invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),
+          modelId: VNEXT_KP_PROFILE.modelId, message, requiredContext, capabilities, terminalKinds, amendable });
+      const budgetExhausted = (constraint: string, code: string,
+        issues: readonly string[], diagnostics: readonly ProposalDiagnostic[], calls: number): never => {
+        throw vnextProposalFailure(code, false, undefined, {
+          issues: [...issues, constraint],
+          diagnostics: [...diagnostics, proposalDiagnostic("REPAIR_OUT_OF_SCOPE", constraint, {
+            expected: { maximumCalls: calls }, actual: { callsUsed: calls },
             repair: { allowed: false, reason: "terminal-selection-and-proposal-use-the-two-call-budget" },
           })],
         });
-      }
-      const result = first.kind === "repairRequired"
-        ? await invokeCorrectKpProposalBundle({ binding: await boundInvocation(3, first.repairTicket),
-            modelId: VNEXT_KP_PROFILE.modelId, requiredContext, repairTicket: first.repairTicket })
-        : first;
-      if (result.kind === "rejected") throw vnextProposalFailure(result.code, false, undefined, { issues: result.issues, diagnostics: result.diagnostics });
-      return result.bundle;
+      };
+      // One settlement path for the ordinary proposal and for the amended one.
+      // `last` is the call this selection may still spend; a terminal-only
+      // selection has none, so an unparsed or repairable draft fails closed.
+      const settle = async (result: Awaited<ReturnType<typeof submit>>,
+        capabilities: readonly VNextProposalCapabilityId[], terminalKinds: readonly string[],
+        last: 3 | 4): Promise<VNextProposalBundle> => {
+        if (result.kind === "amendmentRequested") throw vnextProposalFailure("PROPOSAL_FORM_INVALID", false, undefined, {
+          issues: ["selection:amendment-already-used"],
+          diagnostics: [proposalDiagnostic("REPAIR_OUT_OF_SCOPE", "selection:amendment-already-used", {
+            repair: { allowed: false, reason: "selection-is-amendable-once" } })] });
+        if (result.kind === "reemitRequired") {
+          if (!vnextProposalHasThirdCallBudget(capabilities)) {
+            budgetExhausted("reemit:terminal-selection-call-budget-exhausted", "PROPOSAL_FORM_INVALID",
+              [result.unparsed.diagnostic.constraint], [result.unparsed.diagnostic], last - 1);
+          }
+          const reemitted = await invokeReemitKpProposalBundle({ binding: await boundInvocation(last),
+            modelId: VNEXT_KP_PROFILE.modelId, requiredContext, unparsed: result.unparsed,
+            capabilities, terminalKinds });
+          if (reemitted.kind === "rejected") throw vnextProposalFailure(reemitted.code, false, undefined,
+            { issues: reemitted.issues, diagnostics: reemitted.diagnostics });
+          return reemitted.bundle;
+        }
+        if (result.kind === "repairRequired") {
+          if (!vnextProposalHasExecutionRepairBudget(result.repairTicket.draft, capabilities)) {
+            budgetExhausted("repair:terminal-selection-call-budget-exhausted", "PROPOSAL_REPAIR_EXHAUSTED",
+              result.repairTicket.issues, result.repairTicket.diagnostics, last - 1);
+          }
+          const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(last, result.repairTicket),
+            modelId: VNEXT_KP_PROFILE.modelId, requiredContext, repairTicket: result.repairTicket });
+          if (corrected.kind === "rejected") throw vnextProposalFailure(corrected.code, false, undefined,
+            { issues: corrected.issues, diagnostics: corrected.diagnostics });
+          return corrected.bundle;
+        }
+        if (result.kind === "rejected") throw vnextProposalFailure(result.code, false, undefined,
+          { issues: result.issues, diagnostics: result.diagnostics });
+        return result.bundle;
+      };
+      const first = await submit(2, offer.capabilities, offer.terminalKinds, true);
+      if (first.kind !== "amendmentRequested") return settle(first, offer.capabilities, offer.terminalKinds, 3);
+      // Selection is amended by union once, operations and terminals together.
+      // The frozen context is unchanged and the amended round cannot amend again.
+      const { amendedCapabilities, amendedTerminalKinds } = first.amendment;
+      return settle(await submit(3, amendedCapabilities, amendedTerminalKinds, false),
+        amendedCapabilities, amendedTerminalKinds, 4);
     },
     narrate: options.narrationAdapter.narrate,
     decideDueActorPlan: options.narrationAdapter.decideDueActorPlan,

@@ -40,7 +40,7 @@ export const VNEXT_KP_WORKFLOW = Object.freeze({
   })),
   offerToolHash: canonicalHash(OFFER_KP_PROPOSAL_BUNDLE_TOOL),
   schemaCapabilityPolicyHash: VNEXT_PROPOSAL_CAPABILITY_POLICY_HASH,
-  callPolicy: { selections: 1, proposals: 1, terminalMaximumTotal: 2, stepCorrections: 1, stepMaximumTotal: 3 },
+  callPolicy: { selections: 1, selectionAmendments: 1, proposals: 1, terminalMaximumTotal: 3, stepCorrections: 1, stepMaximumTotal: 4 },
   correctionSchemaHash: canonicalHash(CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA),
   parserHash: VNEXT_PROPOSAL_BUNDLE_PARSER_HASH,
   contextRepresentation: VNEXT_PROPOSAL_CONTEXT_SCHEMA,
