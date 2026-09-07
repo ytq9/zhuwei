@@ -9,7 +9,7 @@ import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/author
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
 const binding = { baseBundleHash: 'sha256:plan-test', contextHash: 'sha256:plan-context' };
-const request = { modelId: 'scripted-test', message: '冻结原意图。', requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: binding.contextHash } } };
+const request = { modelId: 'scripted-test', message: '冻结原意图。', requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: binding.contextHash } } };
 const goodSummary = { path: ['proposals', 1, 'branches', 'success', 'summary'], value: '听清了压力变化。' };
 const secondSummary = { path: ['proposals', 1, 'branches', 'failure', 'summary'], value: '声音模糊，未能分辨压力变化。' };
 function response(value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {

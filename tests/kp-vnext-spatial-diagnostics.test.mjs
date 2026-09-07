@@ -195,7 +195,7 @@ test('the shared Rules diagnostic adapter retains its existing social consumer',
 });
 
 const request = { modelId: 'scripted-spatial-diagnostics', message: '校验已冻结提案。',
-  requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: 'sha256:spatial-diagnostics-context' } } };
+  requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:spatial-diagnostics-context' } } };
 function response(value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
   return { choices: [{ message: { tool_calls: [{ type: 'function', function: { name, arguments: JSON.stringify(value) } }] } }] };
 }

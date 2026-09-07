@@ -71,6 +71,10 @@ export type RoomTelemetryEvent = {
   costBucket: "withinFreeBudget" | "overFreeBudget" | undefined;
   archiveLagBucket: "withinTarget" | "lagging" | "alert" | undefined;
   retryCount: number | undefined;
+  /** Fictional time the committed action itself spent, and how many scheduled
+   * deadlines it crossed. Counts and microseconds only; never a world reference. */
+  fictionTimeMicros: string | undefined;
+  crossedDeadlineCount: number | undefined;
   archiveStatus: string | undefined;
   replayIntegrity: string | undefined;
   correctionIntegrity: string | undefined;
@@ -280,6 +284,10 @@ function failure(value: unknown): {
   };
 }
 
+function microsValue(value: unknown): string | undefined {
+  return typeof value === "string" && /^(0|[1-9][0-9]*)$/u.test(value) ? value : undefined;
+}
+
 function latencyBucket(measurements: UnknownRecord | undefined): RoomTelemetryEvent["latencyBucket"] {
   const durationMs = finiteNumber(measurements?.durationMs);
   if (durationMs === undefined) return undefined;
@@ -387,6 +395,8 @@ export function buildRoomTelemetryEvent(input: unknown): RoomTelemetryEvent {
     costBucket: costBucket(measurements),
     archiveLagBucket: archiveLagBucket(measurements),
     retryCount: nonNegativeInteger(measurements?.retryCount),
+    fictionTimeMicros: microsValue(measurements?.fictionTimeMicros),
+    crossedDeadlineCount: nonNegativeInteger(measurements?.crossedDeadlineCount),
     archiveStatus: stringValue(archive?.status),
     replayIntegrity: stringValue(archive?.replayIntegrity),
     correctionIntegrity: stringValue(archive?.correctionIntegrity),

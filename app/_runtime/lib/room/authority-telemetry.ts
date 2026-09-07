@@ -82,6 +82,20 @@ function emitSafely(
  * Adds one fixed-schema SLO sample around each public Room Authority operation.
  * The wrapper never serializes arguments, return bodies, projections, or errors.
  */
+/** The Rules result of a committed vNext act carries the fictional time it
+ * spent and the scheduled deadlines it crossed. Only the size of each reaches
+ * the log: the deadline refs would name private plans and Activities. */
+function fictionTimeMeasurements(value: unknown): { fictionTimeMicros?: string; crossedDeadlineCount?: number } {
+  const projection = record(record(value)?.kpProjection);
+  const resolution = record(record(projection?.mechanicalResult)?.resolution);
+  const fictionTime = record(resolution?.fictionTime);
+  if (fictionTime === undefined) return {};
+  return {
+    ...(stringValue(fictionTime.durationMicros) === undefined ? {} : { fictionTimeMicros: stringValue(fictionTime.durationMicros) }),
+    ...(Array.isArray(fictionTime.crossedDeadlines) ? { crossedDeadlineCount: fictionTime.crossedDeadlines.length } : {}),
+  };
+}
+
 export function withRoomAuthorityTelemetry(
   authority: RoomAuthorityCapability,
   context: RoomAuthorityTelemetryContext,
@@ -118,6 +132,7 @@ export function withRoomAuthorityTelemetry(
         measurements: {
           operationKind: operation,
           durationMs: Math.max(0, Math.trunc(endedAt - startedAt)),
+          ...fictionTimeMeasurements(value),
         },
       }));
       return value;

@@ -53,6 +53,8 @@ const ALLOWED_OUTPUT_KEYS = Object.freeze([
   "retrievalMode",
   "retrievalStatus",
   "retryCount",
+  "fictionTimeMicros",
+  "crossedDeadlineCount",
   "roomHash",
   "rootActionHash",
   "rulesetProfileId",
@@ -129,6 +131,8 @@ const BASE_INPUT = Object.freeze({
     operationKind: "kpProposal",
     durationMs: 45_123,
     retryCount: 2,
+    fictionTimeMicros: "300000000",
+    crossedDeadlineCount: 1,
     aiInputTokens: 16_123,
     aiOutputTokens: 2_123,
     narrationTokens: 823,
@@ -249,6 +253,8 @@ test("structured telemetry emits only the fixed non-content whitelist and recurs
   assert.equal(event.replayIntegrity, "verified");
   assert.equal(event.correctionIntegrity, "notApplicable");
   assert.equal(event.retryCount, 2);
+  assert.equal(event.fictionTimeMicros, "300000000");
+  assert.equal(event.crossedDeadlineCount, 1);
   // The base input is not a failed proposal, so the three proposal fields
   // stay absent rather than logging empty rows.
   assert.equal(event.proposalFormId, undefined);

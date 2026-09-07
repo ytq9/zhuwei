@@ -177,7 +177,7 @@ test("offer admission preserves exact schema-request diagnostics without allocat
   for (const [request, code, path, constraint] of cases) {
     let calls = 0;
     const result = await invokeVNextProposalOffer({ modelId: "test", message: "冻结意图",
-      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: "sha256:test-context" } },
+      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
       binding: { async run() { calls++; return response(request); } } });
     assert.equal(result.kind, "rejected");
     assert.equal(result.repairUsed, false);
@@ -200,7 +200,7 @@ test("a malformed schema request retains JSON location while refusing proposal r
   const call = output.choices[0].message.tool_calls[0].function;
   call.arguments = call.arguments.slice(0, -1);
   const result = await invokeVNextProposalOffer({ modelId: "test", message: "冻结意图",
-    requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: "sha256:test-context" } },
+    requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
     binding: { async run() { return output; } } });
   assert.equal(result.kind, "rejected");
   assert.equal(result.repairUsed, false);
@@ -213,7 +213,7 @@ test("final proposal rejects unloaded authoring or a second query without spendi
   let offerCalls = 0;
   for (const invalid of [{ modelId: "" }, { message: "" }, { requiredContext: {} }]) {
     await assert.rejects(invokeVNextProposalOffer({ modelId: "test", message: "冻结意图",
-      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: "sha256:test-context" } },
+      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
       binding: { async run() { offerCalls++; } }, ...invalid }), TypeError);
   }
   assert.equal(offerCalls, 0);
@@ -222,7 +222,7 @@ test("final proposal rejects unloaded authoring or a second query without spendi
     response(query(["authorItem"]), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME)]) {
     let calls = 0;
     const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: "test", message: "冻结意图", capabilities: selection,
-      requiredContext: { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: "sha256:test-context" } },
+      requiredContext: { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:test-context" } },
       binding: { async run(_model, request) { calls++; assertDeepSeekStrictToolModelInput(request); return output; } } });
     assert.equal(result.kind, "rejected");
     assert.equal(result.repairUsed, false);
@@ -267,7 +267,7 @@ test("all step decisions and clarification require prior schema selection, inclu
   for (const wire of [complete, choice, noExecutableChoice, empty, emptyCheck]) {
     let calls = 0;
     const result = await invokeVNextProposalOffer({ modelId: "test", message: "冻结原意图", requiredContext: {
-      entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: "sha256:unloaded-step" },
+      entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:unloaded-step" },
     }, binding: { async run() { calls++; return response(wire); } } });
     assert.equal(result.kind, "rejected"); assert.equal(result.repairUsed, false); assert.equal(calls, 1);
     assert.ok(result.diagnostics.some(d => d.constraint === "offer:schema-request-additional-field" && d.repair.allowed === false), JSON.stringify(result));
@@ -298,7 +298,7 @@ test("schema selection retains terminals and closes only selected step families,
 });
 
 test("each terminal-only selection exposes exactly its form and rejects other terminals or another query", async () => {
-  const context = { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: "sha256:terminal-selection" } };
+  const context = { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: "sha256:terminal-selection" } };
   for (const terminal of VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) {
     const selection = parseVNextProposalOfferResponse(response(query([terminal])));
     assert.deepEqual(selection, { kind: "schemaRequested", capabilities: [], terminalKinds: [terminal] });

@@ -9,7 +9,7 @@ import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle, invokeReemitKpProposalBundle,
   vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, type VNextProposalBundleRepairTicket } from "./proposal-provider";
 import type { VNextProposalBundle } from "./proposal-schema";
-import type { VNextProposalCapabilityId } from "./proposal-capabilities";
+import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
 import { proposalModelContext } from "./proposal-context";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET } from "./runtime-policy";
@@ -192,13 +192,29 @@ export function createVNextKpAdapter(options: Readonly<{
           { issues: result.issues, diagnostics: result.diagnostics });
         return result.bundle;
       };
+      // What the selection asked for and what the filled Bundle actually used
+      // are recorded side by side: a capability selected and then dropped at
+      // filling (round78/80/81 lost "observe" this way) must leave a trace.
+      const traced = (bundle: VNextProposalBundle, capabilities: readonly VNextProposalCapabilityId[],
+        terminalKinds: readonly string[]): VNextProposalBundle => {
+        try {
+          const used = new Set<string>();
+          for (const entry of bundle.proposals) { const id = vnextProposalCapabilityForEntry(entry); if (id !== undefined) used.add(id); }
+          if (bundle.terminal !== null) used.add(bundle.terminal.kind);
+          const selected = [...capabilities, ...terminalKinds];
+          options.onInvocation?.({ eventName: "kp.vnext.selection", preparedActionId: request.preparedActionId,
+            rootActionId: request.rootActionId, contextHash: requiredContext.binding.contextHash,
+            selected, used: selected.filter(id => used.has(id)), unused: selected.filter(id => !used.has(id)) });
+        } catch { /* telemetry cannot change the accepted Bundle */ }
+        return bundle;
+      };
       const first = await submit(2, offer.capabilities, offer.terminalKinds, true);
-      if (first.kind !== "amendmentRequested") return settle(first, offer.capabilities, offer.terminalKinds, 3);
+      if (first.kind !== "amendmentRequested") return traced(await settle(first, offer.capabilities, offer.terminalKinds, 3), offer.capabilities, offer.terminalKinds);
       // Selection is amended by union once, operations and terminals together.
       // The frozen context is unchanged and the amended round cannot amend again.
       const { amendedCapabilities, amendedTerminalKinds } = first.amendment;
-      return settle(await submit(3, amendedCapabilities, amendedTerminalKinds, false),
-        amendedCapabilities, amendedTerminalKinds, 4);
+      return traced(await settle(await submit(3, amendedCapabilities, amendedTerminalKinds, false),
+        amendedCapabilities, amendedTerminalKinds, 4), amendedCapabilities, amendedTerminalKinds);
     },
     narrate: options.narrationAdapter.narrate,
     decideDueActorPlan: options.narrationAdapter.decideDueActorPlan,

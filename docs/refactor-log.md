@@ -3387,3 +3387,7 @@ codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段�
 ## 遭遇标记进冻结上下文 + 过期夹具清理（2026-09-08）
 
 行动者复合记录在遭遇进行中带 `encounter` 字段，KP 指引指向它填 `none`。`kp-vnext-filling-interface`、`kp-vnext-proposal-schema`、`kp-vnext-pass-time` 的手写上下文补 `authorityBasisRefs`/`npcKnowledge`，传输面枚举加 `abilityOperation`：17 个早于 `0ab18b7` 的红用例转绿。
+
+## 遥测补两处（2026-09-08）
+
+`room.authority.commit.completed` 带 `fictionTimeMicros`、`crossedDeadlineCount`（来自 Rules 的 `mechanicalResult.fictionTime`，只有数量不带引用）；vNext adapter 在填写落定后发 `kp.vnext.selection`，记录选择阶段要了哪些能力、填写用了哪些、丢了哪些（round78/80/81 三次丢 `observe`，此前不留痕）。

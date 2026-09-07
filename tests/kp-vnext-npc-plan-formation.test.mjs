@@ -21,7 +21,7 @@ const source = (npcRef = NPC) => ({ kind: 'formActorPlan', npcRef, factionRef: {
 const wire = (entry = source()) => ({ decision: { kind: 'directSuccess', duration: 'none', risk: '形成私有计划尚未执行行动。',
   successOutcome: '保存计划并开始对应的Activity。', steps: [entry] } });
 const request = { modelId: 'controlled-test', message: '根据NPC本人情况安排下一步。', requiredContext: { entries: [],
-  references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: 'sha256:formation-test' } } };
+  references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:formation-test' } } };
 const response = (raw, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) => ({ choices: [{ message: { tool_calls: [
   { type: 'function', function: { name, arguments: typeof raw === 'string' ? raw : JSON.stringify(raw) } },
 ] } }] });

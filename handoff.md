@@ -118,7 +118,9 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 三句连通。等待旁白、档位、裸 `"none"` 修复、线程接续都拿到了真实证据。**没拿到的**：承诺归还的正例——这批瓦罗说「不必等敲台，你开口我就知道」，没有承诺可还；旁白正确地没有编造。下一批若要验正例，只能等一个真的承诺出现（不能改话、不能提示），或换一个 NPC 更可能主动约定的场景。一批三句 ≠ 稳定。
 
-### 4. 第 2、3 层只管几小时尺度
+### 4. 第 2、3 层只管几小时尺度 —— 合同草案已写，等裁定
+
+[草案](docs/agent/vnext-hours-scale-promise-contract-proposal.md)：推荐乙——promise 后果自带 `due` 档位和 `trace`，Rules 在同一根、`PromiseMade` fold 之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。三个待定项在草案 §6。原始推理保留如下。
 
 「明早卯时把文书送来」这一类才需要 `consequences.promise` → `formActorPlan` → due。`formActorPlan` 只认行动前 `state` 里的依据（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以最短闭合是 promise 自带 `dueMicros`、Rules 在同根内 `PromiseMade` fold 之后派生计划——那时依据已在累加状态里。另立合同，不动现有 `consequences` 指引。场景要换成几小时尺度的，round70 那句半分钟不再用来验这层。
 
@@ -136,8 +138,8 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ### 已知缺口（各自独立）
 
-- `mechanicalResult.fictionTime`（含 `crossedDeadlines`）没进 Room 返回和遥测，只在 Rules 结果上（round80 确认）。档位化之后再接。
-- 第二句选中 `observe` 后填写阶段丢弃，玩家明写的「留意动静」随之消失，不留痕（round78/80 均如此）。
+- ~~`mechanicalResult.fictionTime` 没进遥测~~ —— `room.authority.commit.completed` 现在带 `fictionTimeMicros` 与 `crossedDeadlineCount`（只有数量，不带引用；玩家可见的返回里仍然没有，因为到期点引用会泄露私有计划）。
+- ~~选中后丢弃不留痕~~ —— adapter 在填写落定后发 `kp.vnext.selection`（selected / used / unused）。为什么丢弃仍未解：`observe` 被选中三次、从未被填过。
 - ~~到期 Activity 的冻结完成不再合法时时间线堵死~~ —— 已改为到期结算时中断（[合同 §10.2](docs/agent/vnext-fiction-time-contract-proposal.md)），本地验证。
 - ~~冻结上下文没有显式的「遭遇进行中」标记~~ —— 行动者复合记录在遭遇中带 `encounter` 字段，指引已指向它（[合同 §10.1](docs/agent/vnext-fiction-time-contract-proposal.md)）。填错仍是硬拒。
 - 闹钟路径（玩家不在线时到期）完成的等待：audience 建好但当时无人旁白，靠 `narrationRecovery` 在下次 observe 发布——链路是旧的，等待这一用法没跑过。
@@ -146,7 +148,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 
 - **连续意图稳定性**：round81 之前从来没有一个批次连过三句；round81 连过了一次（n=1）。仍是最大的未知，不是某个单点 bug。
-- ~~过期夹具（早于 `0ab18b7`）~~ —— 已清：三个文件的手写上下文补上 `authorityBasisRefs`/`npcKnowledge`，decision.kind 枚举加上 `abilityOperation`，17 个用例转绿。
+- ~~过期夹具（早于 `0ab18b7`）~~ —— 已清：九个测试文件的手写冻结上下文补上 `authorityBasisRefs`/`npcKnowledge`，传输面枚举加上 `abilityOperation`；node 全套相对 `81c3b1e` 基线 64 个用例转绿、0 新失败。仍红的 100 个集中在 combat-mechanics-v2（26）、context-discovery/closure/index（25）等，与本轮无关，未看。
 - **真实窄修订**：机制齐了，模型没触发过一次。
 - **旁白文字精确度**：满血说“伤势”、笼统说“资源剩 3 次”（未区分环级）。
 - **`highRiskConfirmed`**：仍无消费者，继续失败关闭；启用前要把私有 pending continuation 与 bundle/plan/context/ruling hash 一起持久化并在提交时重验。

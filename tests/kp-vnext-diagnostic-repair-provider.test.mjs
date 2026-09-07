@@ -13,7 +13,7 @@ import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
 import { itemBundle } from './fixtures/vnext-authored-bundles.mjs';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
 import { VNEXT_INITIAL_PROPOSAL_CAPABILITIES } from '../app/_runtime/lib/kp/vnext/proposal-capabilities.ts';
-const context = { entries: [], references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: 'sha256:repair-context', preparedActionId: 'prepared:repair', rootActionId: 'root:repair' } };
+const context = { entries: [], references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:repair-context', preparedActionId: 'prepared:repair', rootActionId: 'root:repair' } };
 const input = { modelId: 'scripted-test', message: '冻结的玩家意图', requiredContext: context };
 function response(value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, raw = false) {
   return { choices: [{ message: { tool_calls: [{ type: 'function', function: { name, arguments: raw ? value : JSON.stringify(encodeVNextStrictToolBundle(value)) } }] } }] };
@@ -528,4 +528,30 @@ test('a refused action may trim existing public prose but cannot change its froz
     correction: correction(ticket, ticket.repairPlan.map(({ path, value }) => ({ path, value }))) });
   assert.equal(accepted.kind, 'accepted');
   assert.deepEqual(accepted.bundle.terminal.ruling.attemptCosts, wire.terminal.ruling.attemptCosts);
+});
+
+test('the adapter records what the selection asked for and what the filled Bundle actually used', async () => {
+  // Rounds 78, 80 and 81 selected observe next to passTime and filled only
+  // passTime; nothing recorded the drop. The trace is telemetry only: it
+  // never changes the accepted Bundle and never spends a call.
+  const events = []; let calls = 0;
+  const adapter = createVNextKpAdapter({ onInvocation: event => events.push(event),
+    proposalBinding: { async run(_model, request) {
+      calls += 1;
+      assertDeepSeekStrictToolModelInput(request);
+      return calls === 1 ? response({ requestedCapabilities: ['passTime', 'observe'] }, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME)
+        : response({ mode: 'terminal', basisRefs: [], adjudication: null, terminal: { kind: 'passTime', durationMicros: '60000000' }, proposals: [] });
+    } },
+    journal: { async begin() { return { kind: 'ready', capability: 'journal:selection-trace' }; }, async complete() { return { kind: 'saved' }; } },
+    narrationAdapter: {} });
+  const bundle = await adapter.propose({ preparedActionId: context.binding.preparedActionId, rootActionId: context.binding.rootActionId,
+    requiredContext: context, attempt: 1 });
+  assert.equal(bundle.terminal.kind, 'passTime');
+  assert.equal(calls, 2);
+  const trace = events.filter(event => event.eventName === 'kp.vnext.selection');
+  assert.equal(trace.length, 1);
+  assert.deepEqual({ selected: trace[0].selected, used: trace[0].used, unused: trace[0].unused },
+    { selected: ['observe', 'passTime'], used: ['passTime'], unused: ['observe'] });
+  assert.equal(trace[0].rootActionId, context.binding.rootActionId);
+  assert.equal(trace[0].contextHash, context.binding.contextHash);
 });

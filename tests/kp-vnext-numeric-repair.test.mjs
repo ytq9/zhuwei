@@ -7,7 +7,7 @@ import { SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NA
 import { vnextProposalRepairPlan, applyVNextProposalBundleCorrection } from '../app/_runtime/lib/kp/vnext/proposal-correction.ts';
 
 const request = { modelId: 'scripted-test', message: '按原意图等待。', requiredContext: { entries: [],
-  references: { citations: { viewerEvidenceRefs: [] } }, binding: { contextHash: 'sha256:numeric-repair' } } };
+  references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:numeric-repair' } } };
 const raw = token => `{"decision":{"kind":"passTime","durationMicros":${token}}}`;
 const path = ['terminal', 'durationMicros'];
 const response = (value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) => ({ choices: [{ message: { tool_calls: [
