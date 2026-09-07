@@ -15,18 +15,21 @@ vNext 已经能用正常注册 Cookie → `/api/game` 的真实链路，让真�
 | 项 | 值 |
 | --- | --- |
 | 分支 | `cloudflare` |
-| HEAD | `258caee404e0814405eb497653ee9f00d647b773`（`docs(agent): hand off the hazard work and the item slice after it`） |
-| 工作目录 | `/Users/sanmu/Documents/zhuwei-cloudflare` |
-| 工作树 | 137 项已跟踪修改（+14621 / −4294）+ 369 项未跟踪，**全部未提交** |
+| 检查点 | `72201ea` `chore: checkpoint the uncommitted vNext working tree` |
+| HEAD | 检查点之后还有文档提交，以 `git rev-parse HEAD` 为准 |
+| 上一个能力提交 | `258caee404e0814405eb497653ee9f00d647b773`，此前 vNext 全部实现都只在工作树里 |
+| 工作目录 | `/Users/sanmu/Documents/zhuwei-cloudflare`，工作树干净 |
 | 另有 | `git stash list` 一条 `codex: preserve local changes before GitHub sync 2026-08-31`，不要动 |
 | 本次核对运行 | `npm run typecheck` → exit 0（整树可编译） |
 | 未运行 | 任何代码测试、构建、模型探针、部署、远端 migration、push |
+
+`72201ea` 是 2026-09-07 用户授权打的**本地还原点**，一次收进 507 个文件、85087 行，其中 369 个是首次进入版本库。它不是里程碑、不是验收、不代表任何测试跑过 —— 唯一的证据是 typecheck exit 0。对这些文件做 `git log` 或 `git blame` 只会看到这一个提交，历史在此之前不存在。
 
 源码地图见 [repo-map.md](docs/agent/repo-map.md)（同日核对）。
 
 ## 3. 先接受这三件事，再动手
 
-**一，工作树是产物本身。** vNext 绝大部分实现（72 个源码文件、88 个测试）从没进过 commit。不要 `git commit -a`、不要 `git reset`、不要 `git stash`、不要 `git checkout --` 任何文件来“清理环境”。用户在本轮之前从未授权提交；历次回执都明确记录“不 commit / 不 push / 不部署”。要看 HEAD 与工作树的差别，用 `git diff` 和 `git status`，不要用切换分支的方式。
+**一，`72201ea` 是还原点，不是许可。** 在它之前，vNext 绝大部分实现（72 个源码文件、88 个测试）从没进过 commit，一次误操作就会全丢；用户在 2026-09-07 授权打了这个本地检查点，仅此一次、仅在本地。这不改变常规边界：commit 只在用户当轮要求时做，push、部署、远端 migration 仍然每次都要单独授权。任何时候都不要用 `git reset`、`git stash`、`git checkout --` 或切分支来“清理环境”；要看差别就用 `git diff` 和 `git status`。
 
 **二，本地绿不等于真实通过。** 这个项目区分得很严：本地 Node/Vitest 测试和 typecheck 只用于定位与防回归；只有 `docs/agent/vnext-round<N>-validation.md` 里、经正常注册 Cookie + 真实 DeepSeek 走完的批次，才算“真的过了”。注入响应、fixture、重采样都不算。失败不改判、不重跑洗成功、不把两类失败合并计数。
 

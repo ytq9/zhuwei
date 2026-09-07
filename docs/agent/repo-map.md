@@ -1,8 +1,8 @@
 # 烛帷 repo map
 
-核对日期：2026-09-07。分支 `cloudflare`，HEAD `258caee404e0814405eb497653ee9f00d647b773`。
+核对日期：2026-09-07。分支 `cloudflare`，检查点 `72201ea`（`chore: checkpoint the uncommitted vNext working tree`）。
 
-**这份地图描述的是工作树，不是 HEAD。** 本次核对时工作树有 137 项已跟踪修改（+14621 / −4294）和 369 项未跟踪文件；`git stash list` 另有一条 2026-08-31 的 codex 保存记录。地图里带 `†` 的文件只存在于工作树，从 HEAD 检出的副本里没有它们。本次只运行了 `npm run typecheck`（exit 0）作为整树可编译的证据，没有运行测试、构建、模型探针、部署或 push。
+核对是在 `258caee` 加未提交工作树上做的，随后这棵工作树被一次性提交为 `72201ea`：507 个文件、85087 行，其中 369 个首次进入版本库。因此这份地图与 HEAD 内容一致，但**版本库历史只追溯到 `72201ea`** —— 对 vNext 的多数文件做 `git log` 或 `git blame` 只会看到这一个提交，改动理由要去 [refactor-log.md](../refactor-log.md) 和对应的 `vnext-*-validation.md` 找。`git stash list` 另有一条 2026-08-31 的 codex 保存记录，不要动。本次只运行了 `npm run typecheck`（exit 0）作为整树可编译的证据，没有运行测试、构建、模型探针或部署。
 
 产品行为以 [SPEC 0001](../specs/0001-llm-kp-responsibility-contract.md) 和已批准补充 SPEC 为准。本图记录的是当前实现位置与调用关系，实现限制不是产品能力上限；标识、hash 和版本号一律以源码为准，本图抄录的值仅供定位。
 
@@ -61,9 +61,9 @@ flowchart TD
 | `tools` | 10 + `lib/`† | ~6k | 模块门、探针、有界评测 |
 | `tests` | 228（170 `.mjs` + 54 `.ts`） | ~96k | Node 测试与 Worker/Vitest 测试 |
 
-## 只存在于工作树的源码（† 标记的来源）
+## 首次进入版本库于 `72201ea` 的源码（† 标记的来源）
 
-HEAD 里没有下列 72 个源码文件；它们是 vNext 大部分新能力的实现所在，也是这份地图与 `git show HEAD:` 结果不一致的原因。
+下列 72 个源码文件在 `258caee` 时还不在版本库里，是随检查点一次性提交进来的。它们是 vNext 大部分新能力的实现所在；地图里的 † 就是这批文件的标记，含义是「没有 `72201ea` 之前的历史」。
 
 - `app/_runtime/lib/rules/v2/`：`ability-operation`、`atomic-world-input`、`authored-materialization`、`character-inference`、`combat-encounters`、`condition-consequences`、`condition-mechanics`、`due-activities`、`dynamic-location-shapes`、`dynamic-locations`、`effect-phase`、`environment-hazard-schema`、`frozen-player-choice`、`hazard-lifecycle`、`inventory-operations`、`item-assemblies`、`item-assembly-shapes`、`item-authority-vnext`、`item-resources`、`knowledge-expression`、`knowledge-identities`、`knowledge-records`、`knowledge-review`、`narrative-commitments`、`npc-decision-context`、`npc-plan-formation`、`public-expression`、`social-commitments`、`social-interaction`、`social-primitives`、`time-passage`、`time-passage-binding`、`world-effects`、`world-facts`、`world-interaction-conditions`、`world-interaction-costs`、`world-interaction-hazards`、`world-interaction-prefix`、`world-interaction-randomness`、`world-interaction-targets`
 - `app/_runtime/lib/kp/vnext/`：`actor-plan-decision`、`adapter`、`authored-proposal-contract`、`feasibility-lowering`、`materialization-authority`、`model-call-scope`、`proposal-capabilities`、`proposal-check-owner`、`proposal-context`、`proposal-diagnostics`、`proposal-filling-interface`、`proposal-guidance`、`proposal-producer-contract`、`proposal-reference-slots`、`proposal-repair-plan`、`runtime-policy`，以及 `context/narrative-continuity`、`context/npc-decision`、`context/runtime-requirements`
@@ -71,7 +71,7 @@ HEAD 里没有下列 72 个源码文件；它们是 vNext 大部分新能力的�
 - `app/_runtime/lib/room/`：`actor-plan-transport`、`actor-plan-transport-types`、`narration-context`、`runtime-configuration`、`vnext-proposal-invocation`
 - 其他：`app/_runtime/lib/dnd/class-resources`、`app/_runtime/lib/module/npc-semantics`、`app/_runtime/lib/rules/profiles/semantic-templates`、`tools/lib/vnext-authored-probe-fixture.mjs`、`tools/run-deepseek-vnext2-authored-probe.mjs`
 
-另有 88 个未跟踪测试（多数是 `tests/kp-vnext-*.test.mjs`）和 5 个 `tests/fixtures/*`。
+同一批还带进 88 个测试（多数是 `tests/kp-vnext-*.test.mjs`）、5 个 `tests/fixtures/*` 和 203 份 `docs/agent/` 回执。
 
 ## 页面、请求与身份
 

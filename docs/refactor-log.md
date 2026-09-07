@@ -3206,10 +3206,22 @@ round72多填decision.intent被原validator拒绝，原修订缺少等义删除�
 
 ## 2026-09-07 repo map 重核与 vNext 续作交接（文档）
 
-目标：按用户要求把导航文档对齐当前工作树。核对基线 cloudflare / 258caee404e0814405eb497653ee9f00d647b773，工作树 137 项已跟踪修改（+14621/−4294）+369 项未跟踪全部保留，无 commit/stash/reset/还原。
+目标：按用户要求把导航文档对齐当前工作树。核对基线 cloudflare / 258caee404e0814405eb497653ee9f00d647b773，核对期间工作树 137 项已跟踪修改（+14621/−4294）+369 项未跟踪全部保留，无 stash/reset/还原。核对完成后用户明确授权打本地还原点，工作树整体提交为 `72201ea`，随后授权 push；见下一条审计记录。
 
 repo-map.md 重写为 2026-09-07 核对版：明确声明描述对象是工作树而非 HEAD，新增 72 个只存在于工作树的源码文件清单与 † 标记、代码规模分布、`room/runtime-configuration.ts` 的代际闸门（仅 `ZHUWEI_VNEXT_LOCAL=true` 接受 vNext 绑定）、`room/server.ts` 按 `modelProfileVersion` 选 Adapter、两轮填表流程、本地 vNext 主机与 4320/4321 批次编排、Codex 回执命名约定（91 validation / 23 integration / 130 round / 58 live-evidence）与部署边界。从源码而非文档核正冻结标识：parser `kp-vnext2-proposal-parser-v38`（日志末条写 v37）、票据 `zhuwei.kp-proposal-bundle-repair-ticket/vnext-5`、`correctionPolicy ...-v9`、callPolicy 与预算值。删去 round4–6 的逐批叙事段落，改为回执索引；历史结论仍在各自 validation 文档与本日志。
 
-替换根目录 handoff.md 为当前交接点（原 `cee6834` 检查点内容保留在 `git show HEAD:handoff.md`，未删除历史提交）：接手坐标、工作树不可提交的约束、本地绿不等于真实通过、已授权与需再授权的执行边界、round70/72/73 精确结论（含窄修订仍未被真实模型触发、遥测未指向模型字段、旁白措辞缺口）、下一件事为引用槽候选面与准入对齐（已确认事实与我的读码推断分开标注）、`/tmp/zhuwei-round74-npc-preparation` 的 hold 状态与 /tmp 易失警告、已知缺口与收尾更新要求。
+替换根目录 handoff.md 为当前交接点（原 `cee6834` 检查点内容保留在 `git show 258caee:handoff.md`，未删除历史提交）：接手坐标、`72201ea` 是还原点而非许可、本地绿不等于真实通过、已授权与需再授权的执行边界、round70/72/73 精确结论（含窄修订仍未被真实模型触发、遥测未指向模型字段、旁白措辞缺口）、下一件事为引用槽候选面与准入对齐（已确认事实与我的读码推断分开标注）、`/tmp/zhuwei-round74-npc-preparation` 的 hold 状态与 /tmp 易失警告、已知缺口与收尾更新要求。
 
-验证：`npm run typecheck` exit 0（整树可编译，作为地图状态证据）；两份文档相对链接程序化核对 0 broken；`git diff --check` exit 0。未运行代码测试、构建、模型探针、部署、远端 migration、push；未改源码、SPEC、TODO 或其他回执。Goal active。
+验证：`npm run typecheck` exit 0（整树可编译，作为地图状态证据）；两份文档相对链接程序化核对 0 broken；`git diff --check` exit 0。未运行代码测试、构建、模型探针、部署或远端 migration；未改源码、SPEC、TODO 或其他回执。Goal active。
+
+## 2026-09-07 工作树检查点提交与 push（审计）
+
+基线：`cloudflare` / `258caee404e0814405eb497653ee9f00d647b773`，与 `origin/cloudflare` 相同。用户在本轮明确授权两步：先打本地还原点，再 push 到远端。此前所有 vNext 实现都只在工作树里，唯一备份是 2026-08-31 的 codex stash。
+
+提交前检查：`.gitignore` 覆盖 `.dev.vars*`、`.wrangler`、`dist`、`node_modules`、`tsconfig.tsbuildinfo`、`*.log`，`git check-ignore` 逐项确认；无根目录未跟踪文件进入暂存。对全部 507 项做密钥/凭据模式扫描（`sk-`、`DEEPSEEK_API_KEY` 赋值、`Set-Cookie:`、`Authorization: Bearer`），唯一命中为 `tests/kp-narration-transport.test.ts` 的显式假值 `test-only-narration-transport-key`，非真实密钥。
+
+`72201ea` `chore: checkpoint the uncommitted vNext working tree`：507 files changed、85087 insertions、4361 deletions，其中 369 项首次进入版本库（72 源码 + 88 测试 + 5 fixture + 203 份 docs/agent 回执 + 1 tools 探针）。提交信息明确声明它是还原点而非里程碑，唯一证据是 typecheck exit 0，未跑测试套件、构建、模型探针、migration 或部署，也不主张任何真实模型验收。round70/72/73 的第二意图失败结论不变。
+
+随后文档提交把 handoff.md、repo-map.md 与本日志改为提交后事实：坐标改为检查点 `72201ea`、HEAD 以 `git rev-parse HEAD` 为准，† 的含义由「只在工作树」改为「无 `72201ea` 之前的历史」，并提示 vNext 多数文件 `git log` 只有一条记录、改动理由须查回执。
+
+push 结果、远端前后 SHA 与冲突处置见下一条。
