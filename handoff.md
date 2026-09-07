@@ -10,11 +10,9 @@
 
 vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSeek 走完一次完整行动（round73 施法首句、round75 社交首句）。**但从来没有一个批次连过第二个意图。**
 
-[round75](docs/agent/vnext-round75-validation.md) 是最新一批：首句 4 次调用完整提交并发布，格式、引用、规则三关全过 —— 这是这个 NPC 场景第一次走完。但它**停在一个新的地方**：模型没有形成 NPC 计划（`npcPlans`/`activities` 为空，无 `NpcPlanFormed`/`ActivityStarted`），提案降级成了 `worldInteraction` 而非 `formActorPlan`，等待链无从验证，按规则记 `legalNoPlan` 停止。这不是技术失败。
+[round77](docs/agent/vnext-round77-validation.md) 是最新一批：首句 4 次调用完整提交并发布，双工具 surface 真的到达模型。但它和 round75 一样停在 `legalNoPlan`——没有形成 NPC 计划。
 
-两项本地改动的真实覆盖要诚实分账：v39（引用槽准入）只验到「不误伤」—— 合法提案顺利通过，但本批没发生错误引用，所以没验到它能挡住错误；v40（未解析重发）**完全没验到**，草稿第一次就解析成功。
-
-**下一件事见 §7：NPC 的口头承诺没有机械支撑。** 瓦罗在公开旁白里答应「半分钟后敲三下」，而世界里没有任何计划、活动或到期项会兑现它。
+**而这个 gate 很可能考错了东西。** 用户指出：回合制里半分钟落在一个回合的粒度之下，这种约定本就没有实际意义，几小时尺度的才有。若成立，模型把半分钟就地消化是**正确判断**，前四批的 `legalNoPlan` 是 gate 错不是模型错。**下一件事是裁定时长阈值，见 §7；在那之前不要再用这个场景验证计划形成。**
 
 ## 2. 接手坐标
 
@@ -71,6 +69,8 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 | [round73](docs/agent/vnext-round73-validation.md) | 同上，在冻结输入回填修订落地之后 | 首句 4 次调用、无修订、完整通过（真骰 d8=5，满血所以 applied=0，一环 4→3）；第二句 `operation.abilityRef` 又选了上一句的 cure 而不是 healing-word，`target.kind=creatures` 的 `refs[0]` 填了自己的开场知识记录 | `PROPOSAL_REFERENCE_INVALID`，0 提交，第三句未发 |
 | [round74](docs/agent/vnext-round74-validation.md) | 原 NPC 三句，在引用槽准入落地之后 | 第一句第 2 次调用返回的 tool arguments 不是合法 JSON：`decision.risk` 里有未转义 ASCII 双引号（模型把玩家用中文引号写的名字改成了 ASCII 引号）。无窄修订可用——草稿未解析则 bundle 不存在 | `PROPOSAL_FORM_INVALID` / `JSON_SYNTAX`，0 提交，stateVersion 保持 0，第二三句未发 |
 | [round75](docs/agent/vnext-round75-validation.md) | 同一 NPC 场景，在 v39 + v40 落地之后 | 首句 4 次调用完整 committed/published，无修订无重发，公开结果合法连贯（瓦罗答应半分钟后敲三下）。但 `npcPlans`/`activities` 为空、无 `NpcPlanFormed`/`ActivityStarted`，提案降级为 `worldInteraction` | `legalNoPlan` 停止（**非技术失败**），第二三句未发 |
+| [round76](docs/agent/vnext-round76-validation.md) | 同上，在 v41 落地之后 | ordinal 2 **从未发出 HTTP**：本地传输断言要求恰好一个工具，而提案调用带了两个。日志里的 `providerStatus:422` 是本地常量，不是供应商响应 | `transportFailure`，我方缺陷，非模型失败 |
+| [round77](docs/agent/vnext-round77-validation.md) | 同上，传输放宽之后 | 首句 4 次调用完整 committed/published。双工具 surface 真的到达模型（传输修复有真实证据）；选择组合变为 `["social","passTime"]`（round75 是 `["social","commitNarrativeDetail"]`）。但 `passTime` 未被使用，`formActorPlan` 未选，计划/活动/承诺仍为 0 | `legalNoPlan` —— **但这个 gate 可能考错了东西，见 §7** |
 
 round73 三个必须记住的细节：
 
@@ -97,24 +97,35 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 还没做的：`worldInteraction.instrumentRefs` 仍是自由字符串（准入带持有人作用域，要另立合同）；遥测仍只报 `REFERENCE_UNAVAILABLE / unrecognized`，没指向模型填错的字段位置；round73 选错能力（cure 而非 healing-word）是模型判断问题，不是准入问题。
 
-## 7. 下一件事：NPC 的口头承诺没有机械支撑
+## 7. 先裁定一件事：多长的虚构时长必须变成机械对象
 
-round75 首句里，瓦罗在**已发布**的公开旁白中承诺「半分钟，我在账台上等你。到时就敲三下。」而权威状态里没有任何东西会兑现它：`npcPlans` 空、`activities` 空、无到期项、虚构时间未推进。提案被降级成 `worldInteraction`，而不是能形成未来计划的 `formActorPlan`。
+**这是继续之前必须解决的问题，而且它可能让前四批的结论全部改写。**
 
-这是目前挡住等待链的东西，也是一个**产品合同问题而非填表问题**：NPC 说出口的承诺，是否必须在世界里固化成计划？SPEC 0001 对叙事承诺与固化有要求，动手前先读那一段，再决定这是
+用户在 round77 之后指出：回合制对话里玩家的下一句什么时候来是不确定的，**半分钟落在一个回合的粒度之下**，这种约定没有实际意义；几小时尺度的约定才有。
 
-- KP 侧的问题（模型该选 `formActorPlan` 却选了 `worldInteraction`——那就是引导或能力目录的事），还是
-- Rules/Room 侧的问题（社交承诺本就该派生一个计划），还是
-- 产品本就允许「口头答应但不保证做到」（那 gate 的期望要改，不是实现要改）。
+如果成立，那么 round70/74/75/77 共用的那个场景一直在考错东西：它的 gate 要求「形成 NPC 计划」才能继续等待链，而半分钟根本不值得一个持久计划 + Activity + 到期执行。round77 的模型把半分钟在同一段回应里消化掉（「可以，半分钟。……到了。」），**可能是正确的 KP 判断而不是缺陷**；三次 `legalNoPlan` 可能都是 gate 错。
 
-**三条路的代价完全不同，不要直接挑一条实现。** 先写清能力合同，必要时向用户提一个最小确认问题。
+要定的是一条阈值规则：**多长的虚构时长必须成为机械对象**（计划 / Activity / 时钟推进），多短可以由 KP 在一次旁白里叙述消化。SPEC 0001 §11 说 NPC 在「虚构时间经过」时依条件行动，但没有给粒度。
 
-### 已经做完、只差真实验证的两项
+定了之后才谈得上：
 
-- **parser v39 引用槽准入**（[回执](docs/agent/vnext-reference-slot-admission-validation.md)）：world-object 引用槽按对象类别枚举约束。round75 验到了「不误伤」，没验到「挡得住」。
-- **parser v40 未解析重发**（[回执](docs/agent/vnext-unparsed-reemit-validation.md)）：草稿完全没解析出来时允许一次由 journal 证明的重发，服务器不提供任何内容；有草稿的三类（内容拒绝、重复成员、根边界可恢复）都不走。**零真实证据。** 另注意 terminal-only 选择（如 `abilityOperation`）没有第三次调用预算，仍然一次语法失败即停批。
+- 改场景到几小时尺度（例如「明早卯时把文书送来」），gate 才在考它该考的东西；
+- round75 那条「NPC 承诺未来动作却无机械支撑」的观察，只有在阈值以上才成立；
+- round77 那条「旁白说『到了』而时钟是 0」的观察，同理。
 
-供应商侧的事实记在这里免得重查：请求确实带 `strict: true` 发往 beta 端点、schema 通过本地方言校验，**供应商仍返回非法 JSON**，历史 32 份草稿里 3 份如此。曾怀疑是 `[\s\S]+` 这类宽松 pattern 被编进解码文法 —— 被 round68 的**尾逗号**否定（纯结构错误与字符串 pattern 无关）。`baeedb5` 撤销的是 V3 生产 profile 的 strict，不是 vNext 链。
+**在这条阈值裁定之前，不要再用这个场景验证计划形成。**
+
+### 已完成、真实证据分账
+
+| 改动 | 真实证据 |
+| --- | --- |
+| parser v39 引用槽准入 | round75 验到「不误伤」；未验到「挡得住」 |
+| parser v40 未解析重发 | **无**，从未触发 |
+| parser v41 边界前移 | round77 选择组合变了（一个样本，不是因果证明） |
+| parser v41 一次补选 | **无**，模型从未使用 |
+| 传输接受双工具 | round77 有真实证据：capture 记录两个工具确实到达模型 |
+
+另注意：terminal-only 选择（如 `abilityOperation`）没有第三次调用预算，一次语法失败仍即停批。供应商侧事实见 [round76 回执](docs/agent/vnext-round76-validation.md)：strict 声明了仍会返回非法 JSON，32 份草稿里 3 份如此。
 
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 

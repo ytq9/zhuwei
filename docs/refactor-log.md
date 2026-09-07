@@ -3327,3 +3327,15 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 精确 RED 已取：临时把断言改回 `!== 1`，补选矩阵 4→3/1 失败，报的正是杀死 round76 的 `single-function-tool-required`；恢复后 4/4。
 
 定向验证：9 文件组 66/93，与 `1fcd8ca` 基线 worktree 逐名 comm 零引入零修复；transport 8/8 exit0；typecheck 与 diff-check exit0。未覆盖：这道守卫只覆盖传输契约本身，不能证明其他「桩比真实路径宽松」的缺口；补选与前移仍无真实模型证据。无部署/push/远端 migration/退役；Goal active。
+
+## 2026-09-07 round77 首句通过与场景适用性质疑（真实批次审计）
+
+新建 round77 准备包（自 round76 复制重参数化，scenario.mjs 仍 668da7ad…）。释放前 preflight 8/8、networkCalls0/modelCalls0、planSha256 5e190131…；源码/schema 检查在干净树 `0ab18b7` 上 22/22 exit0；端口空闲；价目沿用本日已核 htmlSha256 899affbd…，周一17:58 在峰值窗口内且批次会跨 18:00 进入平峰，全程按峰价计属保守方向。freeze 321 项，manifest fd8dfee7…。
+
+结果：首句 4 次真实调用 committed/published，无补选/修订/重发，1 Receipt、9 事件、replay exactState、stateVersion 9；duplicate 0 新调用、9 项检查全 true；¥0.168186 无未知 usage。
+
+传输修复取得真实证据：capture 记录 ordinal 2 实际发出 tools=[submit_kp_proposal_bundle, offer_kp_proposal_bundle]，双工具 surface 端到端到达模型并被接受（round76 未到此步）。补选本身无证据——模型选择 submit，从未使用。边界前移有一个可观察差异：选择组合由 round75 的 [social, commitNarrativeDetail] 变为 [social, passTime]，但属一个样本、两轮另有差异，记为观察非因果。填写阶段未使用已选 passTime，formActorPlan 未选，decision=directSuccess 单 social step、consequences []，npcPlans/activities/promises 均 0，fictionTimelines 前后 nowMicros=0。模型把半分钟在同一段回应内消化（「可以，半分钟。……到了。」），公开旁白写「片刻后他说：『到了。』」。gate1 记 legalNoPlan 停批。
+
+**场景适用性质疑（用户提出，本回执不裁定）**：回合制对话中玩家下一句到达时间不确定，半分钟落在回合粒度之下，此类约定无实际意义，几小时尺度才有。若成立，则 round70/74/75/77 共用场景的 gate 要求「形成 NPC 计划」对该时长本就不合理，三次 legalNoPlan 可能是 gate 错而非模型错；round75 的「承诺无机械支撑」与 round77 的「旁白称已到而时钟为 0」两条观察也只在阈值以上成立。需先裁定「多长的虚构时长必须成为机械对象」这条阈值规则，SPEC 0001 §11 只说虚构时间经过时 NPC 依条件行动，未给粒度。**在裁定前不再用该场景验证计划形成。** 甲/乙 的机制工作不因此作废：「一句意图需要多类型组合」与时长无关，几小时尺度同样需要 social+formActorPlan+passTime。
+
+收尾：services shutdown 两角色 verifiedAbsent、lsof 无监听；source-end 321 项 allEqual、分支与 HEAD 未变。回执 docs/agent/vnext-round77-{validation.md,live-evidence.json}，handoff §1/§5/§7 同步。未部署/push/远端 migration/退役；Goal active。

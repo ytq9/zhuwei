@@ -1,0 +1,192 @@
+{
+  "round": 77,
+  "verifiedAt": "2026-09-07T10:00:54Z",
+  "verdict": "firstIntentCommittedAndPublished-selectionComposedDifferently-stillNoNpcPlan",
+  "sourceCommit": "0ab18b727a8a2bc1f1e14119afff475435146d62",
+  "sourceManifestSha256": "fd8dfee71267417c9bd29592fec385ee721d5cbe5e936a6924fd371fd0deba10",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v41",
+  "scenario": "round70 NPC three-intent scenario; scenario.mjs sha256 668da7addddab534dd659f9f25c6a6de2b8e6681bc4dd6a52c83e04d27646f85",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "setup": {
+    "npcId": "npc:black-oak-will:varo",
+    "sceneId": "wake",
+    "preexistingPlans": 0,
+    "preexistingActivities": 0,
+    "preexistingActionEvents": 0,
+    "baselineVerified": true
+  },
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "text": "我走到账台旁，向瓦罗点头：“我叫旅行守卫。我想先用半分钟整理一下思路。您若方便，过半分钟轻敲一下账台提醒我，我们再接着谈。”",
+      "submissionId": "vnext-round77-npc-http-64afd5ff-400e-4348-b0c6-1d58ba57fede",
+      "action": "committed",
+      "narration": "published",
+      "calls": 4,
+      "amendmentUsed": false,
+      "repairUsed": false,
+      "reemitUsed": false,
+      "argumentsSha256": "e569f7aaaebc19f74fb23afb1dd58f0fe0ac70b5c95949bc1268aeaad208ed4e"
+    }
+  ],
+  "transportChangeEvidence": {
+    "toolsActuallySent": [
+      "submit_kp_proposal_bundle",
+      "offer_kp_proposal_bundle"
+    ],
+    "conclusion": "The amendable two-tool surface reached the real model and was accepted end to end. Round76 never got this far. This is real-model evidence for the transport change; it is not evidence that the amendment works, because the model chose the submit tool and never amended."
+  },
+  "selectionChange": {
+    "round75": [
+      "social",
+      "commitNarrativeDetail"
+    ],
+    "round77": [
+      "social",
+      "passTime"
+    ],
+    "conclusion": "The composition chosen at selection differs after the filling boundaries moved there. This is one sample and the two rounds differ in other ways too, so it is an observation, not a demonstrated cause."
+  },
+  "whatStillDidNotHappen": {
+    "formActorPlanSelected": false,
+    "passTimeUsedInTheDecision": false,
+    "decision": "directSuccess with a single social step; consequences []",
+    "npcPlans": 0,
+    "activities": 0,
+    "promises": 0,
+    "fictionTimeAdvanced": false
+  },
+  "authorityAfterBatch": {
+    "stateVersion": "9",
+    "events": 9,
+    "eventTypes": [
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved"
+    ],
+    "receipts": 1,
+    "deliveryStatuses": [
+      "open"
+    ],
+    "audienceStatuses": [
+      "published"
+    ]
+  },
+  "gate1": {
+    "next": "stop",
+    "category": "legalNoPlan"
+  },
+  "openObservation": "The published narration says the NPC waited and then announced the half minute was up, while the fiction clock never moved and no Activity backs it. Whether a spoken interval must advance the clock is the same undecided product question round75 raised; this receipt records the fact and does not adjudicate it as a contradiction.",
+  "duplicateSubmission": {
+    "newCalls": 0,
+    "sameAuthoritativeState": true,
+    "sameEvents": true,
+    "sameRandomnessJournal": true,
+    "noModelReinvocation": true,
+    "sameReceipt": true,
+    "sameOutcome": true,
+    "sameDelivery": true
+  },
+  "invocations": [
+    {
+      "ordinal": 1,
+      "requestHash": "sha256:270cb2946c9f15a6345b3fb42378a1989e95d4e80017a68d6f2018fa8ceffc75",
+      "bindingHash": "sha256:56eb05855c8019819340a3ee90d6b6ff408c4b38148169421be3838dc04c7129",
+      "estimatedInputTokens": 24308,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:0ad666b00ce873084c35f879ff862a65e3b5d7b36ea4a107d432b25947d3b3c4",
+      "result": "success",
+      "durationMs": 1338,
+      "responseHash": "sha256:702c8fb4f2fee28027fb50fcdfc2be57d8eb8243acdb4a924d9cafe2004195a4",
+      "inputTokens": 21398,
+      "outputTokens": 50
+    },
+    {
+      "ordinal": 2,
+      "requestHash": "sha256:bd111a6cb098e4485d0edb0d5237fd57eca0fa83c0cd01419e1dc9f635b478ed",
+      "bindingHash": "sha256:56eb05855c8019819340a3ee90d6b6ff408c4b38148169421be3838dc04c7129",
+      "estimatedInputTokens": 28548,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:0ad666b00ce873084c35f879ff862a65e3b5d7b36ea4a107d432b25947d3b3c4",
+      "result": "success",
+      "durationMs": 4790,
+      "responseHash": "sha256:960b55cab3e14da80f4e89b6046eb4ae41005d8f939a19a9e297209bc61efe8f",
+      "inputTokens": 25948,
+      "outputTokens": 439
+    },
+    {
+      "modelTask": "narration",
+      "modelInvocationPurpose": "initialNarration",
+      "modelResult": "success",
+      "modelInputTokens": 2384,
+      "modelOutputTokens": 266,
+      "outcomeKind": "success",
+      "durationMs": 2753
+    },
+    {
+      "modelTask": "narration",
+      "modelInvocationPurpose": "narrationReview",
+      "modelResult": "success",
+      "modelInputTokens": 3545,
+      "modelOutputTokens": 174,
+      "outcomeKind": "success",
+      "durationMs": 1052
+    }
+  ],
+  "meter": {
+    "calls": 4,
+    "inputTokens": 53275,
+    "outputTokens": 929,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 53275,
+    "outputBudgetCharge": 929,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.168186
+  },
+  "pricing": {
+    "window": "peak",
+    "chargedCny": 0.168186,
+    "capCny": 5,
+    "tariffHtmlSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "note": "No unknown usage this batch. Charged at peak throughout although the batch crossed 18:00 into off-peak, which is the conservative direction."
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "exactState": true,
+    "stateVersion": "9",
+    "events": 9
+  },
+  "sourceEnd": {
+    "beforeCount": 321,
+    "afterCount": 321,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "servicesStopped": true,
+    "verifiedAbsent": true,
+    "ports": {
+      "4320": false,
+      "4321": false
+    }
+  },
+  "notCovered": [
+    "Intents 2 and 3 were not sent; no due execution, reminder branch or wait chain was reached.",
+    "The amendment path got no real-model evidence: the model never used it.",
+    "Narrow repair and re-emit were not triggered.",
+    "Rounds 70 through 76 are unchanged by this batch."
+  ]
+}
