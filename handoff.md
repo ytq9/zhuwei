@@ -144,6 +144,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 
 - **连续意图稳定性**：从来没有一个批次连过三句。这是当前最大的未知，不是某个单点 bug。
+- **过期夹具（早于 `0ab18b7`）**：`kp-vnext-filling-interface`（9）、`kp-vnext-proposal-schema`（7）、`kp-vnext-pass-time`（1）一直红：夹具的冻结上下文没有 `citations.authorityBasisRefs`，另有一处 decision.kind 枚举没把 `abilityOperation` 算进去。不是功能坏了，是测试没跟上；基线比对法看不见它们。单独清一次。
 - **真实窄修订**：机制齐了，模型没触发过一次。
 - **旁白文字精确度**：满血说“伤势”、笼统说“资源剩 3 次”（未区分环级）。
 - **`highRiskConfirmed`**：仍无消费者，继续失败关闭；启用前要把私有 pending continuation 与 bundle/plan/context/ruling hash 一起持久化并在提交时重验。
