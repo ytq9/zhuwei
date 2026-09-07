@@ -10,7 +10,9 @@
 
 vNext 已经能用正常注册 Cookie → `/api/game` 的真实链路，让真实 DeepSeek 完成一次施法的选择、填写、Rules/Room 提交和旁白发布（round73 首句）；**连续第二个意图仍然过不去**，最近三次真实批次都停在模型填错引用上。
 
-引用槽准入已于 2026-09-07 对齐（parser v39，见[回执](docs/agent/vnext-reference-slot-admission-validation.md)）：模型现在结构上填不出界。**但这只有本地证据，没有任何真实模型验证。** 下一件事是释放已经备好的 round74，用真实批次证明它。
+引用槽准入已于 2026-09-07 对齐（parser v39，见[回执](docs/agent/vnext-reference-slot-admission-validation.md)）：模型现在结构上填不出界。**但它至今没有任何真实模型证据** —— round74 已经跑了，第一句就因为模型输出的 JSON 不合法而停批，草稿从没走到引用校验。
+
+round74 反而暴露了一件更基本的事：请求带着 `strict: true` 发往 DeepSeek strict-tool beta 端点，供应商仍返回了语法非法的 JSON。下一件事是先弄清这个，见 §7。
 
 ## 2. 接手坐标
 
@@ -65,6 +67,7 @@ vNext 已经能用正常注册 Cookie → `/api/game` 的真实链路，让真�
 | [round70](docs/agent/vnext-round70-validation.md) | 原 NPC 三句 | 两次调用，第二次 `response.basis` 选对了本人来源，但 `decision.steps[0].basisRefs[2]` 填了 `nonCitable` 的 npc-decision 目录包装 | `PROPOSAL_REFERENCE_INVALID`，0 提交，后两句未发 |
 | [round72](docs/agent/vnext-round72-validation.md) | 三句固定施法 | 首句 committed/published，资源 4→3 正确；第二句多填了与冻结 context 逐值相同的 `decision.intent` | `VALUE_INVALID` 在 `terminal.intent` 提前拒绝，未修订，第三句未发 |
 | [round73](docs/agent/vnext-round73-validation.md) | 同上，在冻结输入回填修订落地之后 | 首句 4 次调用、无修订、完整通过（真骰 d8=5，满血所以 applied=0，一环 4→3）；第二句 `operation.abilityRef` 又选了上一句的 cure 而不是 healing-word，`target.kind=creatures` 的 `refs[0]` 填了自己的开场知识记录 | `PROPOSAL_REFERENCE_INVALID`，0 提交，第三句未发 |
+| [round74](docs/agent/vnext-round74-validation.md) | 原 NPC 三句，在引用槽准入落地之后 | 第一句第 2 次调用返回的 tool arguments 不是合法 JSON：`decision.risk` 里有未转义 ASCII 双引号（模型把玩家用中文引号写的名字改成了 ASCII 引号）。无窄修订可用——草稿未解析则 bundle 不存在 | `PROPOSAL_FORM_INVALID` / `JSON_SYNTAX`，0 提交，stateVersion 保持 0，第二三句未发 |
 
 round73 三个必须记住的细节：
 
@@ -91,21 +94,21 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 还没做的：`worldInteraction.instrumentRefs` 仍是自由字符串（准入带持有人作用域，要另立合同）；遥测仍只报 `REFERENCE_UNAVAILABLE / unrecognized`，没指向模型填错的字段位置；round73 选错能力（cure 而非 healing-word）是模型判断问题，不是准入问题。
 
-## 7. round74 已经备好，但被 hold
+## 7. 下一件事：strict 声明了却拿到非法 JSON
 
-`/tmp/zhuwei-round74-npc-preparation/`（从 `/tmp/zhuwei-round70-npc-preparation` 迁移而来），`plan.json` 现在是：
+round74 已执行完毕并收尾（服务已关、源码起止 321 项 allEqual、replay exactState、¥0.140847 / 上限 ¥5）。它没有验证到引用槽准入，却暴露了一个更靠前的问题。
 
-- `status = "preparation-only-awaiting-source-integration"`，`executionProhibited = true`，`sourceFrozen = false`，`apiCalls = 0`
-- `executionHoldReason`：*Root must finish the same-source basis reference candidate interface repair and directed validation, then complete current source/schema import checks and explicitly release. Round70 failed at `decision.steps[0].basisRefs[2]` by citing a nonCitable NPC wrapper; response.basis was locally valid. Do not force a plan or change the scenario.*
-- 场景是 round70 的 NPC 三意图逐字复制（瓦罗、半分钟提醒、等待、追问），正常新房新注册，无 fixture
-- 预算：3 意图 / 20 次物理调用 / ¥5 / 20 分钟 / 每次 HTTP 5 调用 120s；`priceRequiresReverification = true`
-- `stateDirectory` 与主线共用 `.wrangler/vnext/state`，靠新注册 UUID、服务器创建的房间 ID 与精确快照做逻辑隔离
+**已核实的事实：**第 2 次调用的请求发往 `https://api.deepseek.com/beta/chat/completions`，`tools[0].function.strict === true`，`tool_choice === "required"`，parameters 18,916 字节。返回的 `arguments` 字符串在 `decision.risk` 处有未转义 ASCII 双引号，不是合法 JSON。约束解码本应让这种输出不可能产生。
 
-**hold 条件现在应该已经满足。** 它要求的「same-source basis reference candidate interface repair and directed validation」两部分都有了：basis 半边此前已修（`kp-vnext-basis-reference-surface.test.mjs` exit 0），槽类型半边与定向验证见 §6 的回执。剩下的是 RUNBOOK 要求的 source/schema import 检查，然后才是释放 —— 那一步由你核对后显式执行，不要因为这段话就当成已经放行。
+注意别搞混：`baeedb5` 撤销的是 **V3 生产 profile** 的 strict output（因为该 Form 家族的条件规则在 strict 方言里无法表达），**不是 vNext 这条链**。vNext 一直带着 `strict: true`。
 
-释放流程照 `RUNBOOK.md`：先跑 preflight（纯导入、0 网络），确认 `abilitySurfaceReady=true` 且 strict schema issues 为空，才由你显式把 `executionProhibited` 翻成 false，然后 `freeze.py` + `verify-source.py` 冻结源码 SHA。**freeze 只跑一次，不覆盖旧 session 与证据。** 注意 parser 已升到 v39，round74 的 plan 明确写着 `No parser version is preselected`，所以不需要为此改场景。
+**我的假设（未验证，别当结论）：** 该 beta 端点在 schema 过大或 `$def` 过深时可能静默退化为非约束解码。18,916 字节、多层 `$ref` 是可疑点。也可能只是 beta 的缺陷，或只是一次偶发。**一次样本什么都不能证明。**
 
-⚠️ **这些编排在 `/tmp`，重启就没了。** 目录里有 `RUNBOOK.md` / `runner.mjs` / `capture.mjs` / `services.py` / `replay.mjs` / `scenario.mjs` / `freeze.py`，仓库里没有副本。接手时第一件事是确认它还在（`ls /tmp/zhuwei-round74-npc-preparation`）；如果没了，得照 round73 的 RUNBOOK 结构重建，公开回执与机器证据在 `docs/agent/` 里是全的。
+建议的下一步是一次**有界诊断**，不是直接改实现：用 `tools/run-deepseek-strict-tool-handshake.mjs` 配合一份握手定义，在同一端点上对照大 schema 与精简 schema 各发若干次，看语法失败是否与 schema 规模相关。预算按既有规矩预设、失败即停、保留原稿。这是一次新的能力/诊断决定，动手前先和用户确认范围与预算。
+
+如果确认了退化，可选路径各有代价，都不要自己拍板：把 schema 压小（`deepseek-strict-schema-compaction.ts` 已经在做压缩，还有多少余量未知）；换请求形态；或者接受这个失败率并让未解析草稿变成可有界修复的（但 `89697c4` 明确把 raw 修复改成了失败关闭，推翻它要重新论证泄漏与伪造风险）。
+
+**round74 的准备包已用尽**（`sourceFrozen=true`、session 已存在，`freeze.py` 不可重跑）。下一批要新建准备包，照 `/tmp/zhuwei-round74-npc-preparation/RUNBOOK.md` 的结构，并且——⚠️ 那些编排都在 `/tmp`，重启即失，仓库里没有副本。
 
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 
