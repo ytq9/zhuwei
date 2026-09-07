@@ -8,16 +8,17 @@
 
 ## 1. 一句话状态
 
-vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSeek 走完一次完整行动。[round78](docs/agent/vnext-round78-validation.md) 是**第一个连过第二个意图**的批次——之前 77 批都停在第一句，因为 gate 要求首句就形成 NPC 计划。
+**阶段性交接，2026-09-07 晚。HEAD `2c39286`，分支 `cloudflare` 领先 `origin` 未推送。** 本节只写「现在在哪、下一步是什么」；细节在 §7 与各回执。
 
-那条要求是错的，而且不是代码：`formActorPlan` 的依据只从**本次行动之前**的 `state` 读（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以同束里引不到本束刚创建的承诺。首句能做的只有**记下承诺**，第二句才谈得上形成计划。gate 改成声明并双向核对世界的实际新增之后，链条第一次走通。
+vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSeek 走完完整行动。round78 是第一个连过第二句的批次；[round80](docs/agent/vnext-round80-validation.md) 是第一个**普通交谈推进了时钟**的批次：模型在共享裁决上填 `durationMicros:"12000000"`，`branch:main` 0 → 12000000，`FictionTimeAdvanced` 是首条事件、落在行动者时间线、旁白看到了时间 Claim；第二句 `passTime` 再 +60 秒。**正常游玩里时间从此会走。**
 
-round78 一次看到两件事：
+本次会话与用户达成的三条设计裁定（都还没实现，见 §7）：
 
-- **承诺只存在于散文里。** 瓦罗公开说「过半刻，我敲一记账台」，同一 step 的 `goal` 也写着「并在半分钟后敲账台提醒」，而 `consequences: []`。promise 槽位在 schema 里，指引也写着「NPC只能作出自己的承诺或债务」。第三批连着如此（75/77/78）。
-- **时间真的走了，到期什么也没有。** 第二句 `passTime` 推进 `nowMicros` 0 → 60000000，三条事件齐全，机械侧完全正确；但 0 条 `NpcActionCommitted`、0 条痕迹、`npcPlans`/`promises` 仍是 0。**关于时长阈值的怀疑到此可以放下：玩家显式等了一分钟，时钟诚实推进，承诺的动作依然不存在。问题与时长无关。**
+1. **时长改档位。** KP 只在 5 分钟 / 10 分钟 / 半小时 / 1 小时 / 半天里选，服务器映射成微秒；微秒仍是时钟内部单位（战斗轮、休整、通行不变）。round79 填 30 秒、round80 填 12 秒是假精度。副产品：「半分钟后敲账台」落在同一个 5 分钟档里，行动结束时已过，KP 该在同一段回应里就地兑现。
+2. **不重要的行为不进机械。** 一个承诺只有在**独立于玩家注意力而发生**、**被别处的人看到**、或**改变权威状态**时才进 promise → plan → due；否则留在 `recentDialogue` / `commitNarrativeDetail`，KP 凭时钟自己兑现。半分钟的敲击三条都不沾。**因此五批 `consequences: []` 是模型在做正确判断，不是缺陷**——我此前要加强指引让模型必须记承诺的想法是错的，撤回。第 2、3 层的合同缩到几小时尺度的约定。
+3. **承诺怎么还，分三种情况。** 玩家留下等 → 等待的旁白里还；留下做别的 → 下一次回应的背景里还；离开 → 承诺依附于在场，不需要还，但瓦罗的记忆已是机械的（社交交谈产生 `KnowledgeAcquired`）。
 
-还有一条：第二句选中 `observe` 后在填写阶段丢弃，玩家明写的「留意瓦罗和周围的动静」随之消失，而且 `narration: notApplicable`——**等了一分钟的玩家屏幕上什么也没多出来**。选中后丢弃不留痕，这次有了具体代价。
+由此，**「等待不发布旁白」从独立小缺陷变成主线阻塞**：round78/80 里玩家等了一分钟屏幕上什么也没多出来，承诺没还，是因为纯等待走确定性交付、不建模型旁白（round61 为省调用的决定）。
 
 ## 2. 接手坐标
 
@@ -102,51 +103,42 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 还没做的：`worldInteraction.instrumentRefs` 仍是自由字符串（准入带持有人作用域，要另立合同）；遥测仍只报 `REFERENCE_UNAVAILABLE / unrecognized`，没指向模型填错的字段位置；round73 选错能力（cure 而非 healing-word）是模型判断问题，不是准入问题。
 
-## 7. 下一件事：先让普通行动消耗虚构时间，再问 `consequences` 为什么是空的
+## 7. 下一步，按这个顺序
 
-round78 之后用户指出：这是虚构时间，剧本里做的任何事都应该有一个合理的虚构时长。对照源码：成功的 `social` / `observe` / `worldInteraction` / `inventoryOperation` **没有任何时长字段**，只有 `passTime`、通行、长施法、拒绝的 `attemptCosts` 能推进时钟。能力目录甚至写着「当前表单支持即时口头交谈」。这是三层缺口里最底下的一层——它不通，`formActorPlan` 的到期时刻只在玩家显式等待时才会到来。
+### 1. 等待走模型旁白（上下文路线的前提）
 
-能力合同：[vnext-fiction-time-contract-proposal.md](docs/agent/vnext-fiction-time-contract-proposal.md)。**用户已裁定，本地已实现**（parser v42）：`decision.durationMicros` 落在共享裁决上，角色行动必须 > 0、纯创作必须 = 0；时长作为束级 `executionCosts` 的 `fictionTime` 成本，先于结果推进行动者时间线；跨过的到期点记入 `mechanicalResult.fictionTime.crossedDeadlines`。实现回执与四处偏差（Rules 只裁一半、单条角色行动改走原子路径、推进事件点名行动者、不加 step 级时间线读集）见 [vnext-fiction-time-validation.md](docs/agent/vnext-fiction-time-validation.md)。本地：node 696 通过、vitest 97 通过，基线红之外 0 新失败，typecheck 0。
+位置：`app/_runtime/lib/room/durable-object.ts` 约 5675–5695 —— `if (renderableClaims.claims.every(claim => claim.kind === "mechanicalOutcome" && ["timePassageCompleted","timePassageInterrupted"].includes(...))) continue;` 这一行让纯等待跳过模型 audience。要改成：等待也建模型旁白，让 KP 看着 `recentDialogue`（瓦罗那句「敲账台两下」）和走过的 60 秒，写出「半分钟过去，瓦罗敲了两下账台」。代价每次等待多一次调用（约 ¥0.04）。Activity 的确定性状态显示保留。round61 的 `passive-time` 回执记录了原设计与预算考量（`docs/agent/vnext-passive-time-validation.md`）。
 
-[round79](docs/agent/vnext-round79-validation.md)：模型**第一次就填了 `durationMicros: "30000000"`**——玩家要的正是半分钟。声明这一半有了真实证据。但草稿在与时长无关的地方倒了：`addressedThreadRef` 写成裸 `"none"` 而非 `{kind:"none"}`，本地校验拒绝且不允许修订，2 次调用停批，`nowMicros` 仍 0。执行这一半仍只有本地证据。
+### 2. 时长改档位
 
-裸 `"none"` 的修法查下去变了：strict-tool codec **本来就**把裸 `"none"` 解码成 null，只是 `addressedThreadRef` / `relationshipRef` / `factionRef` 三个字段不在它的列表里。补进列表（`fee45ef`，parser v43），不走修订票据。
+`decision.durationMicros`（pattern 字符串）→ 枚举 `duration`：`5min | 10min | 30min | 1h | halfDay`，lowering 映射成微秒后仍走现有 `executionCosts.fictionTime` 路径（[实现回执](docs/agent/vnext-fiction-time-validation.md)）。纯创作束仍不花时间（现在是 `"0"`，改成不填或 `none`，二选一时保持「零必须显式」）。指引里的锚点表换成枚举说明。parser 升版。夹具：`tests/fixtures/vnext-action-duration.mjs` 的 `actDuration` / `withActDuration` 改返回档位即可，24 处 `soleStep` 读取不受影响。
 
-[round80](docs/agent/vnext-round80-validation.md)：**执行半边有了真实证据。** 首句模型填 `durationMicros:"12000000"`，`branch:main` 的时钟 0 → 12000000，`FictionTimeAdvanced` 是第一条事件、落在行动者时间线、旁白看到了时间 Claim。第二句 `passTime` 再加 60 秒。两句 72 秒。第 2 层（`consequences: []`）五批不变；`mechanicalResult.fictionTime` 没进 Room 返回/遥测，是缺口。
+### 3. round81：三句发完，看第三句
 
-之后再谈下面这条。
+准备包从 `/tmp/zhuwei-round80-npc-preparation` 复制（round79 起 gate 已双向核对每句的虚构增量）。等待有了旁白之后 gate2 才有公开结果可复核，第三句才发得出去。**第三句的问题只有一个：KP 有没有把那两下敲击还给玩家。** 这是上下文路线成立与否的直接证据。
 
-### 第 2 层：为什么 `consequences` 是空的
+### 4. 第 2、3 层只管几小时尺度
 
-round78 把这条从推测变成了三次真实观察（75/77/78）。NPC 在公开旁白里承诺一个未来动作，而 `social` step 的 `consequences` 是空数组。
-
-不缺任何前提条件：
-
-- 槽位在 —— `socialConsequence` 的 promise 变体（[proposal-schema.ts:1018](app/_runtime/lib/kp/vnext/proposal-schema.ts:1018)），字段是 `content` / `condition` / `authorityRefs`。
-- 指引在 —— social 的填写指引写着「NPC只能作出自己的承诺或债务，不替玩家承诺」，还写着「需要时间或额外成本的行动必须有独立可执行计划，不能只写在risk/summary中」。
-- 依据不需要预先存在 —— promise 由这一束创建，不受 `actorPlanPremiseIsAvailable` 的 pre-state 限制。
-
-而模型把承诺写进了 `goal` 和 `response.text`，机械槽位留空。**这是要改的地方**，也是唯一还没被真实证据排除的解释：指引把 promise 说成「允许」而不是「当 NPC 承诺未来行为时必须记录」。
-
-改完之后才谈得上第二句的 `formActorPlan`：有了 active promise，它才有合法依据。
-
-### 同批发现的另外两条（各自独立，别塞进同一个补丁）
-
-- **等待不发布任何旁白。** 第二句 `passTime` 提交成功、时钟推进 60 秒、事件齐全，但 `narration: "notApplicable"`，公开记录止于玩家自己那句 say。等了一分钟的玩家什么也没看到。这是产品缺陷，与计划形成无关。
-- **选中后丢弃不留痕。** 第二句选了 `["passTime","observe"]`，填写只出 `passTime`，玩家明写的「留意瓦罗和周围的动静」随 `observe` 一起消失。两次响应都已按 ordinal 持久化，delta = 选中集 ∖（已用 step kinds ∪ terminal kind）可以直接算出来，零额外调用、零新字段。
+「明早卯时把文书送来」这一类才需要 `consequences.promise` → `formActorPlan` → due。`formActorPlan` 只认行动前 `state` 里的依据（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以最短闭合是 promise 自带 `dueMicros`、Rules 在同根内 `PromiseMade` fold 之后派生计划——那时依据已在累加状态里。另立合同，不动现有 `consequences` 指引。场景要换成几小时尺度的，round70 那句半分钟不再用来验这层。
 
 ### 已完成、真实证据分账
 
 | 改动 | 真实证据 |
 | --- | --- |
+| 虚构时长合同（v42，`759393d`） | **round80：声明 12 秒、时钟推进 12 秒、事件首条、行动者时间线、旁白见 Claim** |
+| 裸 `"none"` 统一解码（v43，`fee45ef`） | 未触发（round80 模型写对了 `{kind:"none"}`）；round79 是它的用例 |
+| gate 记录而非要求计划（round78 起） | round78/80 走到第二句 |
+| 传输接受双工具 | round77/78/80 capture 均见两个工具到达模型 |
 | parser v39 引用槽准入 | round75 验到「不误伤」；未验到「挡得住」 |
-| parser v40 未解析重发 | **无**，从未触发 |
-| parser v41 边界前移 | round77 选择组合变了（一个样本，不是因果证明） |
-| parser v41 一次补选 | **无**，四次 ordinal 2 请求都带着该工具，一次未用 |
-| 传输接受双工具 | round77/78 都有真实证据：capture 记录两个工具确实到达模型 |
-| gate 允许无计划继续 | round78 首次走到第二句，链条打通 |
+| parser v40 未解析重发 | **无** |
+| parser v41 一次补选 | **无**，六次 ordinal 2 都带着工具、一次未用 |
 
-另注意：terminal-only 选择（如 `abilityOperation`）没有第三次调用预算，一次语法失败仍即停批。供应商侧事实见 [round76 回执](docs/agent/vnext-round76-validation.md)：strict 声明了仍会返回非法 JSON，32 份草稿里 3 份如此。
+### 已知缺口（各自独立）
+
+- `mechanicalResult.fictionTime`（含 `crossedDeadlines`）没进 Room 返回和遥测，只在 Rules 结果上（round80 确认）。档位化之后再接。
+- 第二句选中 `observe` 后填写阶段丢弃，玩家明写的「留意动静」随之消失，不留痕（round78/80 均如此）。
+- 等待的 `narration: notApplicable` —— 即上面第 1 条。
+- 旧线 vnext-1（`atomicRulesSteps`）没有时长字段，Rules 只裁「纯创作不能花时间」这一半；「角色行动必须声明」是 vnext-2 lowering 的规则。
 
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 
