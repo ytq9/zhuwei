@@ -1,0 +1,151 @@
+{
+  "round": 74,
+  "verifiedAt": "2026-09-07T06:14:05Z",
+  "verdict": "firstIntentJsonSyntaxFailure-batchStopped-noCommit",
+  "sourceCommit": "f1aa565dcc86c833ae05712356dde2d6b0270210",
+  "sourceManifestSha256": "adde8baff7348caa0358aaedff3f5417c75ae52b59b21c0996f57380af99643e",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v39",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "scenario": "round70 NPC three-intent scenario, byte-identical scenario.mjs",
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "setup": {
+    "actorName": "旅行守卫",
+    "npcId": "npc:black-oak-will:varo",
+    "sceneId": "wake",
+    "preexistingPlans": 0,
+    "preexistingActivities": 0,
+    "preexistingActionEvents": 0,
+    "baselineVerified": true
+  },
+  "actions": [
+    {
+      "ordinal": 1,
+      "text": "我走到账台旁，向瓦罗点头：“我叫旅行守卫。我想先用半分钟整理一下思路。您若方便，过半分钟轻敲一下账台提醒我，我们再接着谈。”",
+      "submissionId": "vnext-round74-npc-http-cb9355ea-f8d7-46d4-9c39-480bbf67592e",
+      "startedAt": "2026-09-07T06:10:59.184Z",
+      "endedAt": "2026-09-07T06:11:06.814Z",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "outcomeKind": "rejected",
+      "publicCode": "PROPOSAL_FORM_INVALID",
+      "failureClass": "modelPermanent",
+      "calls": 2,
+      "repairUsed": false,
+      "diagnostic": {
+        "path": "arguments.decision",
+        "code": "JSON_SYNTAX"
+      },
+      "syntaxError": {
+        "reason": "unescaped ASCII double quotes inside a JSON string value",
+        "field": "decision.risk",
+        "byteContext": "\"risk\": \"玩家向瓦罗报号\"旅行守卫\"，…",
+        "independentParsePosition": {
+          "pos": 56,
+          "line": 1,
+          "column": 57
+        }
+      },
+      "argumentsSha256": "f9b6660181298d40644f1759a07828e37a44815d3ef240e2a1386e490e987410",
+      "repairWithheldReason": "The draft never parsed, so no bundle exists and no repair plan can be proven. JSON_SYNTAX only becomes repairable when the complete root members are frozen; this is the designed fail-closed path, not an exhausted budget."
+    }
+  ],
+  "invocations": [
+    {
+      "ordinal": 1,
+      "requestHash": "sha256:18874f2ff73814bf420576a40b6deff410932c401908db27418e159d5a4fcee9",
+      "bindingHash": "sha256:afee227302d1792bfe898624d714fc6a056a79e9af5a8ae9e607b38e7abe6826",
+      "estimatedInputTokens": 20898,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:131823a31e4354aa8382f09624c1937c8c6e89fa7d9f3c45349aa3e7319b042d",
+      "result": "success",
+      "durationMs": 1207,
+      "responseHash": "sha256:c2413b5dfccf778b1949953f5f9c0c276b4193fd0c7adf7d3513bbe5d7f29005",
+      "inputTokens": 19290,
+      "outputTokens": 50
+    },
+    {
+      "ordinal": 2,
+      "requestHash": "sha256:70d76f96aac66e84c4918409123aa05f26e9f8fdc210178dd4587a2d0e9c4b1b",
+      "bindingHash": "sha256:afee227302d1792bfe898624d714fc6a056a79e9af5a8ae9e607b38e7abe6826",
+      "estimatedInputTokens": 28176,
+      "allowedInputTokens": 58000,
+      "counterRef": "conservative-v1",
+      "contextHash": "sha256:131823a31e4354aa8382f09624c1937c8c6e89fa7d9f3c45349aa3e7319b042d",
+      "result": "success",
+      "durationMs": 6314,
+      "responseHash": "sha256:5b901ac01ab586efb8078cd303832c2522a033ed49e5c6db991ea8448b3d7337",
+      "inputTokens": 25883,
+      "outputTokens": 542
+    }
+  ],
+  "meter": {
+    "calls": 2,
+    "inputTokens": 45173,
+    "outputTokens": 592,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 45173,
+    "outputBudgetCharge": 592,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.140847
+  },
+  "pricing": {
+    "window": "peak",
+    "basis": {
+      "hit": "0.10",
+      "miss": "3.0",
+      "output": "9.0"
+    },
+    "tariffHtmlSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5",
+    "tariffVerifiedAt": "2026-09-07T00:58:26.847440Z",
+    "chargedCny": 0.140847,
+    "capCny": 5,
+    "note": "Computed from usage against the saved verified tariff; not a provider invoice."
+  },
+  "authorityAfterBatch": {
+    "stateVersion": "0",
+    "events": 0,
+    "receipts": 0,
+    "randomness": 0,
+    "deliveries": 0,
+    "pendingDue": 0,
+    "publicMessages": "opening narration only",
+    "npcResponded": false
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0
+  },
+  "sourceEnd": {
+    "beforeCount": 321,
+    "afterCount": 321,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "servicesStopped": true,
+    "ports": {
+      "4320": false,
+      "4321": false
+    },
+    "verifiedAbsent": true,
+    "note": "services.py reported verifiedAbsent for both roles and a follow-up lsof found no listener."
+  },
+  "referenceSlotAdmissionExercised": false,
+  "notCovered": [
+    "The draft never parsed, so basisRefs and response.basis were never validated: this batch says nothing about the reference-slot admission change.",
+    "Intents 2 and 3 were not sent. No plan formation, due execution, reminder branch or wait chain was reached.",
+    "No narrow repair, no Viewer recovery, no duplicate submission was exercised.",
+    "Rounds 70, 72 and 73 are unchanged by this batch."
+  ],
+  "evidenceFiles": {
+    "private": "/tmp/zhuwei-round74-npc-preparation/evidence (session, capture, authority snapshots, raw arguments)",
+    "public": "docs/agent/vnext-round74-validation.md"
+  }
+}

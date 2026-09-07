@@ -3249,3 +3249,13 @@ push 前 `git fetch origin cloudflare` 确认远端仍为 `258caee404e0814405eb4
 既有失败与本次零关系：用 `git worktree --detach 72201ea` 取基线逐名 `comm` 对照，上述 10 项 schema 失败与 4 项 Room 失败（两项 atomic Item 控制者选择、一项无冻结 Claims 提交拒绝、一项 rope/stone trap，多为 5s 超时）在基线上同名同集，本次零引入零改判。另有两项基线红的测试因是本次要依赖的守卫而修对，均为测试侧过时夹具，生产路径无碍（round73 ordinal 2/3 通过即证据）：observation surface 手搭 provider 参数表过时，改为按生产同一组参数构建并补 observe 无 ability terminal 的 no-op 断言；item surface 夹具缺 `authorityBasisRefs` 等字段与 `intent.actorRef`，补齐。
 
 未覆盖：`instrumentRefs` 仍自由字符串（准入带持有人作用域，另立合同）；`directTargetRefs` 枚举是准入超集，完整准入依赖活跃状态与提案本身，冻结期算不出，Rules 仍可拒绝已列出的 ref，属有意；零 API 调用，真实模型是否因此填对未验证，round73 结论不改判；遥测未指向模型填错字段位置；选错能力属模型判断非准入。回执 docs/agent/vnext-reference-slot-admission-validation.md，repo-map 与 handoff 已同步。无部署/push/commit/远端 migration/退役，Goal active。
+
+## 2026-09-07 round74 首句 JSON 语法失败停批（真实批次审计）
+
+用户授权跑真实批次。释放前按 RUNBOOK 完成：三项 preflight（scenario/setup 8/8、runner preflight networkCalls 0/modelCalls 0、budget preflight configuredLimit 5 且第六次绑定前拒绝）；当前来源候选/schema 检查在干净树 `f1aa565` 上跑 basis-reference-surface + reference-slot-admission + observation-reference-surface 共 8/8 exit 0，明确不把 round70 的 `response.basis` 局部有效当作该检查通过；上批服务关闭核对（4320/4321 无监听、无遗留进程）；价目适用性核对（本日 00:58:26Z 已核验 htmlSha256 899affbd…，本地周一 14:08 Asia/Shanghai 在峰值窗口内，按峰价）。随后写入 releaseReason 并将 executionProhibited 置 false，`freeze.py` 冻结 321 项源码，manifest `adde8baff7348caa0358aaedff3f5417c75ae52b59b21c0996f57380af99643e`。
+
+结果：第一句原样发出，2 次真实调用，第 2 次返回的 tool arguments 不是合法 JSON —— `decision.risk` 字符串内部有未转义 ASCII 双引号（`报号"旅行守卫"，`）。诊断 path=arguments.decision、code=JSON_SYNTAX，公开码 PROPOSAL_FORM_INVALID、failureClass=modelPermanent、durationMs 7590；独立复算解析位置 pos56/line1/col57；arguments SHA256 f9b6660181298d40644f1759a07828e37a44815d3ef240e2a1386e490e987410。repairUsed=false 且非预算耗尽：草稿未解析则 bundle 不存在，无可证明修复计划，`invalidOutput` 直接抛单条语法诊断，JSON_SYNTAX 仅在 syntaxProven 时才获 repair.allowed——设计上的失败关闭。
+
+按 primaryFailurePolicy 首个技术失败停止新意图，gate1 记 formatFailure/stop，第二三句未发送，未重采、未改写场景、未替换 NPC。0 提交/事件/骰/Receipt/delivery，stateVersion 保持 0，瓦罗未回应，公开消息仍只有开场旁白。收尾 replay pinnedProfilesMatch/exactState=true、事件 0；services shutdown 两角色 verifiedAbsent，lsof 复核 4320/4321 无监听；source-end 321 项 allEqual、分支与 HEAD 未变。2 calls/45173 输入/592 输出，峰价 ¥0.140847（上限 ¥5）。
+
+**本批未检验引用槽准入**：草稿从未解析，basisRefs 与 response.basis 没有进入校验；round70 的 wrapper 失败未复现，也不能据此宣称已修复被真实验证。计数：格式失败 1（JSON 语法 1），引用失败 0、规则拒绝 0、叙事矛盾 0、窄修订 0、恢复 0。回执 docs/agent/vnext-round74-{validation.md,live-evidence.json}，私有证据留在 /tmp/zhuwei-round74-npc-preparation/evidence。未部署、未 push、未做远端 migration 或退役；Goal active。
