@@ -3399,3 +3399,7 @@ social 的 promise 后果带 `due`（none|1h|halfDay|day|nextDawn）与 `trace`�
 ## round82：承诺档位第一次被真实填对，草稿倒在结尾的 `]`（2026-09-08，源码 `9bbd007`）
 
 新场景首句：双分支 check、1208 token，tool arguments 结尾多一个 `]`，未解析重发逐字节相同，`PROPOSAL_FORM_INVALID`，3 次调用 ¥0.197。同一草稿里 `due:"1h"`、trace 填对，`authorityRefs: []`。随后给承诺 `authorityRefs` 加 wire 描述与指引（至少本 NPC 自己的引用），parser v47。见 [round82 回执](agent/vnext-round82-validation.md)。
+
+## round83：承诺填全、窄修订首次真实触发、骰子 3（2026-09-08，源码 `09d558b`）
+
+首句 5 次调用提交发布：魅力检定 DC 13，d20 = 3，瓦罗拒绝，`legalRefusal` 停止。成功分支的承诺 `authorityRefs:["npc:…varo"]`、`due:"1h"`、trace 全对；结尾多一个 `}` 被服务器完整根语法证据判定可修，一次 `correct_kp_proposal_bundle` 确认——真实窄修订第一次触发。见 [round83 回执](agent/vnext-round83-validation.md)。

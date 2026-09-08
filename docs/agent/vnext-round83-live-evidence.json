@@ -1,0 +1,103 @@
+{
+  "round": 83,
+  "verifiedAt": "2026-09-08T04:05:15.340092+00:00",
+  "verdict": "First sentence committed and published (5 calls). The model ruled a Charisma check (DC 13); the real d20 rolled 3, so the failure branch resolved: Varo declines until the visitor states origin and principal. No promise, no plan; legal refusal ends coverage without resampling. Two firsts: the accepted success branch carried a complete promise (authorityRefs [own npcRef], due \"1h\", trace), and the fill's JSON tail error (an extra \"}\") was repaired by the server's complete-root syntax evidence with one confirming correction call -- the first real narrow repair.",
+  "sourceCommit": "09d558b9d7f8dcba04120fe6427446d701966a47",
+  "sourceManifestSha256": "b904f7482e4cca47fa9a173599aad0bf9dff5984d33ef4cf692f05a3a45fa992",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v47",
+  "scenario": "hours-scale three sentences (same as round82): ask Varo for a copy within the hour; wait a little over an hour; check the desk",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round83-npc-http-880f614b-a1c2-4256-8899-4124d30b8aa5",
+      "action": "committed",
+      "narration": "published",
+      "receiptId": "receipt:root-action:vnext-round83-npc-http-880f614b-a1c2-4256-8899-4124d30b8aa5:9",
+      "modelCalls": 5,
+      "evidence": "offer [social]; fill: check cha DC 13, duration 10min, success branch promise {authorityRefs:[\"npc:black-oak-will:varo\"], due:\"1h\", trace:\"账台上放着一份墨迹尚新的文书副本…\"}, failure branch consequences []; arguments ended with one extra \"}\" -> diagnostic json:object-delimiter-expected with repair allowed (complete-root-members-frozen); ordinal 3 correct_kp_proposal_bundle confirm server-plan, summaries []; DiceRolled faces [3], total 3 < 13 -> branch failure (failure-varo-declines-identity); FictionTimeAdvanced 600000000 first; narration published; review 5/5 pass, m0/m3 complete."
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "stop",
+      "category": "legalRefusal",
+      "reason": "首句提交并发布（5 次调用）。模型把请求裁成魅力检定 DC 13；真实 d20 掷出 3，走失败分支：瓦罗按镇法要求先说清来历与为谁办事，拒绝当场誊抄。没有承诺、没有计划，第二句「等一个多小时看副本」的前提不成立，按纪律停止，不重采。注意两点：填写的 tool arguments 结尾多了一个 }（JSON 语法错），这次服务器的完整根语法证据修法生效，第 3 次调用是真实的 correct_kp_proposal_bundle（confirm: server-plan，0 条摘要）——真实窄修订第一次被触发；时钟 0 → 600000000（10min 档）。",
+      "publicEvidence": [
+        {
+          "messageIndex": 2,
+          "quote": "得先说清从哪来、为谁办事，他才斟酌誊副本的事"
+        },
+        {
+          "messageIndex": 2,
+          "quote": "约莫过了十分钟"
+        }
+      ]
+    }
+  ],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {},
+    "fictionNowMicros": "600000000",
+    "eventTypes": [
+      "RandomnessRequested",
+      "DiceRolled",
+      "FictionTimeAdvanced",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved"
+    ],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "The dice outcome (3 vs 13) is not in the public table; only the narration reflects the refusal."
+  ],
+  "meter": {
+    "calls": 5,
+    "inputTokens": 58832,
+    "outputTokens": 1543,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 58832,
+    "outputBudgetCharge": 1543,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.190383
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 12:02 Beijing)",
+    "chargedAt": "saved peak tariff (conservative); pricing page sha256 unchanged today",
+    "unknownUsageCalls": 0,
+    "cny": 0.190383,
+    "budgetCny": 5
+  },
+  "replay": {
+    "exactState": true,
+    "stateVersion": "9",
+    "events": 9,
+    "pinnedProfilesMatch": true
+  },
+  "sourceEnd": {
+    "files": 323,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "game": "stopped pid 15129 verifiedAbsent",
+    "capture": "stopped pid 15119 verifiedAbsent",
+    "ports": "4320/4321 no listener"
+  },
+  "notCovered": [
+    "Layer 2 derivation in a real commit: the promise sat on the success branch and the check failed.",
+    "Layer 3 execution and the third narration.",
+    "A second and third sentence were not sent (legal refusal)."
+  ]
+}
