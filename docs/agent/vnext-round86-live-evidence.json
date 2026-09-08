@@ -1,0 +1,69 @@
+{
+  "round": 86,
+  "verifiedAt": "2026-09-08T06:19:35.694074+00:00",
+  "verdict": "Died on the first sentence, before the fix under test was reached. The fill was a clean three-table social bundle (no stray ruling fields, no nested result), but responseBasis cited the social-resolution rules profile (profile-context:module:black-oak-will:social-resolution-v1) as NPC context; lowering refuses a response basis outside the NPC's own decision context (social:foreign-npc-basis, REFERENCE_UNAVAILABLE, repair not allowed by design). 2 calls, nothing committed. Varo refused the request outright this time (consequences []).",
+  "sourceCommit": "373e3776149d352a777e3c8b7182e0c8b492ee60",
+  "sourceManifestSha256": "a6eb74b4186d09f6e0730f1e347e60b66a8fd83765dac2d378c1523a4c68cb4e",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v48",
+  "scenario": "hours-scale three sentences (same as rounds 82-85)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round86-npc-http-7ff5953d-0417-4f22-802e-15a9d603d852",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_REFERENCE_INVALID",
+      "modelCalls": 2,
+      "evidence": "offer [social]; fill: decision directSuccess duration 5min (no basisRefs on the ruling); steps [social, addressedThreadRef = the actor's module-opening record ref (a string, not a thread), retryChange {kind none}, outcomeBinding always]; results [social step 0 branch result, outcomeCode ok, consequences [], responseBasis = [profile-context social-resolution profile, definition:module-npc varo, npc varo, wake]]. Lowering: social:foreign-npc-basis at results[].responseBasis[] (the profile ref), repair not allowed. Whether the module-opening addressedThreadRef would have passed is unknown."
+    }
+  ],
+  "gates": [],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {},
+    "fictionNowMicros": "0",
+    "eventTypes": [],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "The ruling-level basisRefs drop (373e377) got no exposure: the model did not repeat the round85 copy on this sentence.",
+    "The response-basis slot is free text in the schema; nothing stops a rules-profile ref there before lowering."
+  ],
+  "meter": {
+    "calls": 2,
+    "inputTokens": 47769,
+    "outputTokens": 793,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 47769,
+    "outputBudgetCharge": 793,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.150444
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 14:16 Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched at release, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.150444,
+    "budgetCny": 5
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "beforeCount": 323,
+    "afterCount": 323,
+    "headUnchanged": true
+  },
+  "servicesShutdown": "both roles verifiedAbsent; no listener on 4320/4321"
+}

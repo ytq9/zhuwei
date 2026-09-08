@@ -3419,3 +3419,7 @@ round84：模型写对了三张表，又在步骤里塞了旧写法的 `result`�
 ## round85 → 裁决上重复的 basisRefs 丢弃（2026-09-08）
 
 round85：三张表前两句零修订提交（社交 + 一个半小时等待，等待有模型旁白）；第三句 observe 被拒——模型把步骤的 `basisRefs` 又抄到了 directSuccess 裁决上，解码器按服务器所有字段拒绝。现在：裁决上的 `basisRefs` 与服务器从步骤推导的列表完全相同（去重、排序、剔除 prospective）时直接丢弃，其它列表仍拒。同 round84 的空字段哨兵归一原则：只接受不带信息的重复。见[round85 回执](agent/vnext-round85-validation.md)。
+
+## round86 → responseBasis 的枚举移出 anyOf（2026-09-08）
+
+round86 首句：模型在 `responseBasis` 里引了社交判定的规则档案；schema 里该槽位的字符串变体带着 10 个引用的 `enum`，DeepSeek 严格模式没有拦——这是 anyOf 分支内约束不校验的第三个实例（round84 多余属性、round85 多余属性、round86 枚举）。lowering 按设计拒绝且不可修订（换回应依据不是表示层修补），2 次调用停批。现在没有选生产者时数组项就是一个平的枚举字符串，`playerExpression` 是它的保留成员；选了生产者才回到 anyOf。parser v49。见[三表回执](agent/vnext-three-table-wire-validation.md)、[round86 回执](agent/vnext-round86-validation.md)。

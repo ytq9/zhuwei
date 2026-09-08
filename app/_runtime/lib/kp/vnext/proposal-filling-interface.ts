@@ -64,12 +64,15 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     && variant.properties.definition?.properties?.worldFact !== undefined);
   const socialResult = (branch: Schema): Schema => {
     const response = branch.properties.response, basis = response.properties.basis;
-    const playerExpression = basis.items.anyOf.find((source: Schema) => source.properties.kind.enum.includes("playerExpression"));
     const worldFact = basis.items.anyOf.find((source: Schema) => source.properties.kind.enum.includes("materializedKnowledge"));
+    // Round 86: DeepSeek strict mode let a ref outside this enum through when
+    // the enum sat inside an anyOf variant. With no producer selected the item
+    // is one plain enum string, "playerExpression" a member of it; the anyOf
+    // returns only when a same-bundle worldFact handle must be admitted.
+    const source: Schema = sourceRefs === undefined ? { type: "string", pattern: "^\\S+$" } : { type: "string", enum: [...sourceRefs, PLAYER_EXPRESSION_SOURCE] };
     return object({ ...branch.properties, response: object({ ...response.properties, basis: {
-      ...basis, description: "Choose exact existing refs from npcSourceChoices for this step's npcRef; the server supplies source kinds. playerExpression means only what the player said now. worldFactRef explicitly selects a same-bundle worldFact producer; its holder is this npcRef. Never cite a wrapper or infer a new fact from speech.",
-      items: { anyOf: [...(sourceRefs?.length === 0 ? [] : [{ type: "string", ...(sourceRefs === undefined ? { pattern: "^\\S+$" } : { enum: sourceRefs }) }]),
-        playerExpression, ...(newWorldFact ? [object({ worldFactRef: worldFact.properties.definitionRef })] : [])] },
+      ...basis, description: "Choose exact existing refs from npcSourceChoices for this step's npcRef; the server supplies source kinds. This is what the NPC itself knows or is, never the step's basisRefs: rule profiles, availability and precedent records, the scene's opening and the player's own records are KP basis, not NPC context. The member playerExpression means only what the player said now. worldFactRef explicitly selects a same-bundle worldFact producer; its holder is this npcRef. Never cite a wrapper or infer a new fact from speech.",
+      items: newWorldFact ? { anyOf: [source, object({ worldFactRef: worldFact.properties.definitionRef })] } : source,
     } }) });
   };
   const definitions: Schema = {};
@@ -202,6 +205,9 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
 /** Pure wire -> domain representation. Invalid semantic fields are preserved
  * for the existing complete validator. Ambiguous or colliding representations
  * fail at their actual argument path; nothing guesses a missing decision. */
+/** The reserved response-basis member for the player's present words. */
+const PLAYER_EXPRESSION_SOURCE = "playerExpression";
+
 const RESULT_BRANCHES = ["result", "success", "failure"] as const;
 type ResultBranch = typeof RESULT_BRANCHES[number];
 const SOCIAL_RESPONSE_FIELDS: Readonly<Record<string, string>> = Object.freeze({ kind: "responseKind", text: "responseText", motive: "responseMotive", basis: "responseBasis" });
@@ -552,6 +558,10 @@ function encodeStep(value: unknown, checked: boolean, layouts: ResultLayouts): u
 }
 
 function decodeSocialSource(value: unknown, npcRef: unknown, path: ProposalDiagnosticPath): unknown {
+  // The wire spells the player's present words as the reserved member
+  // "playerExpression" of the same closed enum as the NPC's refs, so the slot
+  // needs no anyOf; the older object spelling still decodes to the same source.
+  if (value === PLAYER_EXPRESSION_SOURCE) return { kind: "playerExpression" };
   if (typeof value === "string") return { kind: "npcContext", ref: value };
   if (!isPlainRecord(value)) fail("TYPE_MISMATCH", "social:source-selection-required", path,
     "existing ref, playerExpression, or explicit worldFactRef", value);
@@ -570,6 +580,7 @@ function encodeSocialBranch(value: unknown, npcRef: unknown): unknown {
   return { ...value, response: { ...value.response, basis: value.response.basis.map(source => {
     if (!isPlainRecord(source)) return source;
     if (source.kind === "npcContext" && Object.keys(source).sort().join(",") === "kind,ref") return source.ref;
+    if (source.kind === "playerExpression" && Object.keys(source).length === 1) return PLAYER_EXPRESSION_SOURCE;
     if (source.kind === "materializedKnowledge" && Object.keys(source).sort().join(",") === "definitionRef,holderRef,kind") {
       if (source.holderRef !== npcRef) throw new TypeError("SOCIAL_SOURCE_HOLDER_CANNOT_BE_ENCODED");
       return { worldFactRef: source.definitionRef };

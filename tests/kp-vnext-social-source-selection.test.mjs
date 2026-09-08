@@ -46,7 +46,7 @@ test('two NPCs and existing/player-expression sources share one frozen selector,
   }
   for (const [npc, basis] of [[A, [{ kind: 'npcContext', ref: A }]], [B, [{ kind: 'npcContext', ref: held(B) }]], [A, [{ kind: 'playerExpression' }]]]) {
     const domain = bundle(npc, basis), wire = encodeVNextStrictToolBundle(domain), original = structuredClone(wire);
-    assert.deepEqual(row(wire, 0, 'result').responseBasis, basis.map(source => source.kind === 'npcContext' ? source.ref : source));
+    assert.deepEqual(row(wire, 0, 'result').responseBasis, basis.map(source => source.kind === 'npcContext' ? source.ref : source.kind === 'playerExpression' ? 'playerExpression' : source));
     const candidate = parse(wire); assert.equal(candidate.kind, 'accepted'); assert.deepEqual(wire, original);
     const lowered = lowerVNext2ProposalBundle({ ...f, value: candidate.bundle }); assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
     const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput); assert.equal(result.kind, 'committed', JSON.stringify(result));
@@ -63,11 +63,14 @@ test('selected social schema offers frozen refs and only selected producer-backe
     assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
     const full = expandDeepSeekSchema(schema);
     const social = full.properties.results.items.anyOf.find(value => value.properties.kind.enum.includes('social'));
-    const basis = social.properties.responseBasis.items.anyOf;
-    assert.deepEqual(basis.find(value => value.type === 'string').enum, [...new Set(choices.flatMap(value => value.refs))].sort());
-    assert.equal(basis.some(value => value.properties?.worldFactRef), materialize);
-    assert.ok(basis.some(value => value.properties?.kind?.enum?.includes('playerExpression')));
-    assert.ok(!JSON.stringify(basis).includes('holderRef')); assert.ok(!JSON.stringify(basis).includes('PRIVATE_SOURCE_'));
+    // Round 86: the closed set sits on the array item itself, playerExpression a member of it; an anyOf appears only to admit a selected producer's handle.
+    const items = social.properties.responseBasis.items;
+    const source = { type: 'string', enum: [...[...new Set(choices.flatMap(value => value.refs))].sort(), 'playerExpression'] };
+    if (materialize) {
+      assert.deepEqual(items.anyOf[0], source);
+      assert.equal(items.anyOf.length, 2); assert.ok(items.anyOf[1].properties?.worldFactRef);
+    } else assert.deepEqual(items, source);
+    assert.ok(!JSON.stringify(items).includes('holderRef')); assert.ok(!JSON.stringify(items).includes('PRIVATE_SOURCE_'));
   }
 });
 

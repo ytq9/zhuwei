@@ -63,11 +63,12 @@ test("selected schemas preserve exact full-contract variants and resolve all str
       assert.ok(original, `${id}:result`);
       const expected = structuredClone(original);
       if (variant.properties.kind.enum.includes("social")) {
-        const selectedBasis = variant.properties.responseBasis.items.anyOf, completeBasis = expected.properties.responseBasis.items.anyOf;
-        for (const source of selectedBasis) assert.ok(completeBasis.some(value => JSON.stringify(value) === JSON.stringify(source)));
-        assert.deepEqual(selectedBasis, completeBasis.filter(source => !source.properties?.worldFactRef),
-          "social-only selection cannot reference an unselected world-fact producer");
-        expected.properties.responseBasis.items.anyOf = selectedBasis;
+        // The response-basis item is one closed enum string; the full contract wraps it in an anyOf only to admit a producer's handle.
+        const selectedItems = variant.properties.responseBasis.items, completeItems = expected.properties.responseBasis.items;
+        const completeSource = completeItems.anyOf ? completeItems.anyOf.find(value => !value.properties?.worldFactRef) : completeItems;
+        if (selectedItems.anyOf) assert.deepEqual(selectedItems, completeItems);
+        else assert.deepEqual(selectedItems, completeSource, "social-only selection cannot reference an unselected world-fact producer");
+        expected.properties.responseBasis.items = selectedItems;
       }
       assert.deepEqual(variant, expected, `${id}:result`);
     }

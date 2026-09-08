@@ -79,6 +79,7 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 | [round77](docs/agent/vnext-round77-validation.md) | 同上，传输放宽之后 | 首句 4 次调用完整 committed/published。双工具 surface 真的到达模型（传输修复有真实证据）；选择组合变为 `["social","passTime"]`（round75 是 `["social","commitNarrativeDetail"]`）。但 `passTime` 未被使用，`formActorPlan` 未选，计划/活动/承诺仍为 0 | `legalNoPlan` —— **但这个 gate 可能考错了东西，见 §7** |
 | [round81](docs/agent/vnext-round81-validation.md) | 同上，等待旁白 + 档位 v44 之后 | **三句全部 committed/published**，12 次调用 ¥0.62。首句 `duration:5min`、时钟 0→300000000、裸 `"none"` 被接受；等待第一次有旁白（上下文正确、无编造）；第三句接续真实线程引用。瓦罗拒绝敲击，`consequences: []` 第六批 | 没停：`waited-without-confirmable-reminder` → noReminder 分支走完 |
 | [round82](docs/agent/vnext-round82-validation.md) | **新场景**：一小时内抄副本 / 等一个多小时 / 看账台，承诺档位 v46 之后 | 首句填写是 1208 token 的双分支 check，结尾多一个 `]`，重发逐字节相同。同一草稿里模型**第一次就填了 `due:"1h"` 和 trace**，但 `authorityRefs: []` | `PROPOSAL_FORM_INVALID`（JSON 语法），3 次调用 ¥0.20，0 提交，后两句未发 |
+| [round86](docs/agent/vnext-round86-validation.md) | 同上，裁决 basisRefs 丢弃之后 | 首句三张表干净，但 `responseBasis` 引了社交判定规则档案（schema 枚举在 anyOf 内，严格模式没拦） | `PROPOSAL_REFERENCE_INVALID`（`social:foreign-npc-basis`，按设计不可修订），2 次调用 ¥0.15，0 提交 |
 | [round85](docs/agent/vnext-round85-validation.md) | 同上，continuation 拆表之后 | 前两句提交并发布（各 4 次调用，零修订）；等待有旁白、时钟走了一个半小时；第三句 observe 的裁决上多了一行 `basisRefs`（与步骤相同） | 前两句 `committed`；第三句 `PROPOSAL_FORM_INVALID`（`filling:server-owned-field`），10 次调用 ¥0.50，2 提交 |
 | [round84](docs/agent/vnext-round84-validation.md) | 同上，三张表 v48 之后 | JSON 合法、三张表都对；但步骤里又塞了旧写法 `result`（摘要不同），`retryChange` 是带空字段的 none 混合体 | `PROPOSAL_FORM_INVALID`（`filling:result-duplicate-row`），2 次调用 ¥0.16，0 提交 |
 | [round83](docs/agent/vnext-round83-validation.md) | 同上，v47 之后 | 首句 5 次调用 committed/published。裁成魅力检定 DC 13，真实 d20 = 3，失败分支：瓦罗拒绝。成功分支里的承诺**填全了**（own ref、`due:"1h"`、trace）；结尾多一个 `}`，**服务器语法证据修法第一次真实触发**，一次 correct 调用确认 | `legalRefusal` 停止，后两句未发 |
@@ -128,9 +129,9 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 「明早卯时把文书送来」这一类才需要 `consequences.promise` → `formActorPlan` → due。`formActorPlan` 只认行动前 `state` 里的依据（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以最短闭合是 promise 自带 `dueMicros`、Rules 在同根内 `PromiseMade` fold 之后派生计划——那时依据已在累加状态里。另立合同，不动现有 `consequences` 指引。场景要换成几小时尺度的，round70 那句半分钟不再用来验这层。
 
-### 5. round86：同三句再跑，验第三句
+### 5. round86 → round87：同三句再跑
 
-round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。第三句 observe 倒在裁决上重复的 `basisRefs`，修复只有本地测试。round86 要验的：(a) 裁决上与推导列表相同的 `basisRefs` 被丢弃、observe 单独成根真实提交；(b) `existingFactRefs` 里 `knowledge:` 前缀与 `module-opening` 引用是否合法（round85 没走到校验）；(c) 承诺第 2/3 层正例——瓦罗肯不肯承诺仍是 KP 的选择，句子不改。
+round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。round86（[回执](docs/agent/vnext-round86-validation.md)）首句就倒在 `responseBasis` 引了规则档案——schema 里的枚举在 anyOf 分支内，严格模式不校验；枚举已移到平的数组项上（parser v49），只有本地测试。round87 要验的：(0) `responseBasis` 的平枚举是否真被传输执行；(a) 裁决上与推导列表相同的 `basisRefs` 被丢弃、observe 单独成根真实提交；(b) `existingFactRefs` 里 `knowledge:` 前缀与 `module-opening` 引用是否合法（round85 没走到校验）；(c) 承诺第 2/3 层正例——瓦罗肯不肯承诺仍是 KP 的选择，句子不改。
 
 ### 已完成、真实证据分账
 

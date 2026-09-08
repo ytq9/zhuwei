@@ -51,3 +51,17 @@ round84 的模型把新表填对了，却又在步骤里塞了一份旧写法的
 - 诊断路径按作用域重映射：根表 `steps[i] / results[j]`，continuation 表 `decision.choices[c].continuation.steps[i] / results[j]`。
 
 本地：codec 组全部通过，Room 三套件（provider、abilityOperation、npc-plan-formation）56/56，node / vitest 按名比对基线 0 新失败。
+
+## round85 / round86：严格模式在 anyOf 分支里不校验（同日）
+
+三批真实证据，同一个传输事实：DeepSeek 严格模式对 anyOf 分支内部的约束不校验。
+
+| 批次 | 写进来的 | schema 里本该拦住它的 |
+| --- | --- | --- |
+| round84 | `steps[0].result`（分支对象里多出的属性） | 变体的 `additionalProperties: false` |
+| round85 | `decision.basisRefs`（directSuccess 变体上多出的属性） | 变体的 `additionalProperties: false` |
+| round86 | `responseBasis` 里的 `profile-context:…social-resolution-v1` | 数组项 anyOf 里字符串变体的 `enum`（10 个引用） |
+
+官方文档写的是 `enum`、`anyOf`、`additionalProperties` 都支持；抓到的请求里这三个约束都在。所以能靠 schema 封死的槽位，约束必须放在**不在 anyOf 里**的位置。round86 之后 `responseBasis` 的数组项就是一个平的枚举字符串（NPC 可引用集合 + 保留成员 `playerExpression`），只有本束选了 worldFact 生产者时才回到 anyOf 去接纳 prospective 句柄。旧的 `{kind:"playerExpression"}` 对象写法仍解码为同一来源。
+
+这条只对没有 anyOf 的位置有效——裁决变体、步骤变体本身就是 anyOf，它们内部的多余属性只能靠解码器拒（round84/85 的处理）。
