@@ -453,7 +453,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               { ...original, allowedPaths: [['adjudication', 'dc']] },
               { ...original, summaryPaths: [['adjudication', 'dc']] },
               { ...original, responseProtocol: 'legacy-changes' },
-              { ...original, originalArguments: JSON.stringify({ decision: { kind: "directSuccess", steps: [] } }) }]) {
+              { ...original, originalArguments: JSON.stringify({ decision: { kind: "directSuccess" }, steps: [], results: [] }) }]) {
               const altered = structuredClone(request.request);
               record((altered.messages as JsonRecord[])[1]).content = JSON.stringify(content);
               expect(await target.beginVNextProposalInvocation(principal, preparedActionId,
@@ -506,8 +506,8 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
             if (record(schema.properties).decision !== undefined) {
               const decisions = resolve(record(schema.properties).decision).anyOf as JsonRecord[];
               const direct = decisions.find(variant => (resolve(record(variant.properties).kind).enum as string[]).includes("directSuccess"));
-              if (direct) {
-                const steps = resolve(record(direct.properties).steps);
+              if (direct && record(schema.properties).steps !== undefined) {
+                const steps = resolve(record(schema.properties).steps);
                 reorderedNode = resolve((resolve(steps.items).anyOf as JsonRecord[])[0]);
               } else reorderedNode = resolve(decisions[0]);
             }
@@ -1453,8 +1453,8 @@ describe("vNext Provider invocation and Room persistence", () => {
       expect(prompt.originalArguments).toBe(ticket.originalArguments);
       expect(ticket.originalArguments).toBe(toolResponse(draft).choices[0]!.message.tool_calls[0]!.function.arguments);
       const originalWire = JSON.parse(ticket.originalArguments);
-      expect(Object.keys(originalWire)).toEqual(["decision"]);
-      expect(originalWire.decision.steps[0].method).toBe(entries[0]!.method);
+      expect(Object.keys(originalWire)).toEqual(["decision", "steps", "results"]);
+      expect(originalWire.steps[0].method).toBe(entries[0]!.method);
       expect(originalWire.decision.risk).toBe(adjudication.risk);
       expect(ticket.draft.proposals[0].method).toBe(entries[0]!.method);
       expect(ticket.draft.adjudication.risk).toBe(adjudication.risk);

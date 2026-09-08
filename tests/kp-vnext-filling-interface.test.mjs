@@ -1,6 +1,7 @@
+import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { encodeVNextStrictToolBundle, decodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA,
+import { encodeVNextStrictToolBundle, decodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, createVNextProposalBundleSchema,
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseSubmitKpProposalBundleCandidateArguments, invokeSubmitKpProposalBundleWithOneCorrection,
   assertRepairTicket } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
@@ -73,8 +74,8 @@ test('one explicit result list assembles world and observation collections witho
       owner.branches.success.characterInferences.push({ conclusion: '压力可能尚未稳定。', confidence: '依据声音变化作有限推测。',
         evidence: [{ kind: 'sensoryEvidence', index: 1 }] });
     }
-    const wire = wireFor(original), result = wire.decision.steps[1].success;
-    assert.deepEqual(Object.keys(result).sort(), ['entries', 'outcomeCode', 'summary']);
+    const wire = wireFor(original), result = row(wire, 1, 'success');
+    assert.deepEqual(Object.keys(result).sort(), ['branch', 'entries', 'kind', 'outcomeCode', 'step', 'summary']);
     assert.ok(result.entries.some(entry => entry.recordKind === 'sensoryEvidence'));
     if (kind === 'observe') {
       // Inference indices retain the sensory subsequence, even if an inference
@@ -86,7 +87,7 @@ test('one explicit result list assembles world and observation collections witho
     assert.deepEqual(decoded.bundle.proposals[1].branches.success, original.proposals[1].branches.success);
     assert.deepEqual(decoded.bundle.proposals[1].branches.failure, original.proposals[1].branches.failure);
     assert.deepEqual(decoded.bundle.proposals[0].branches.success.effects, original.proposals[0].branches.success.effects);
-    const empty = clone(wire); empty.decision.steps[1].success.entries = [];
+    const empty = clone(wire); row(empty, 1, 'success').entries = [];
     const explicitNone = parsed(empty); assert.equal(explicitNone.kind, 'accepted');
     assert.deepEqual(explicitNone.bundle.proposals[1].branches.success.sensoryEvidence, []);
     assert.deepEqual(explicitNone.bundle.proposals[1].branches.success[kind === 'observe' ? 'characterInferences' : 'effects'], []);
@@ -96,16 +97,16 @@ test('one explicit result list assembles world and observation collections witho
 test('missing result lists and mixed form result kinds reject once without guessing effects or deleting inferences', async () => {
   for (const kind of ['worldInteraction', 'observe']) {
     const original = wireFor(sharedCheckBundle(kind));
-    const missing = clone(original); delete missing.decision.steps[1].success.entries;
-    diagnosticAt(missing, ['decision', 'steps', 1, 'success', 'entries'], 'FIELD_MISSING', 'arguments');
-    const mixed = clone(original); mixed.decision.steps[1].success.entries.push({
+    const missing = clone(original); delete row(missing, 1, 'success').entries;
+    diagnosticAt(missing, ['results', 1, 'entries'], 'FIELD_MISSING', 'arguments');
+    const mixed = clone(original); row(mixed, 1, 'success').entries.push({
       recordKind: kind === 'worldInteraction' ? 'characterInferences' : 'effects', conclusion: '不得在另一表单中删除或猜测这份结果。',
     });
-    const index = mixed.decision.steps[1].success.entries.length - 1;
-    const detail = diagnosticAt(mixed, ['decision', 'steps', 1, 'success', 'entries', index, 'recordKind'], 'VALUE_INVALID', 'arguments');
+    const index = row(mixed, 1, 'success').entries.length - 1;
+    const detail = diagnosticAt(mixed, ['results', 1, 'entries', index, 'recordKind'], 'VALUE_INVALID', 'arguments');
     assert.equal(detail.expected.enum.includes(kind === 'worldInteraction' ? 'characterInferences' : 'effects'), false);
-    const legacy = clone(original); legacy.decision.steps[1].success.sensoryEvidence = [];
-    diagnosticAt(legacy, ['decision', 'steps', 1, 'success', 'sensoryEvidence'], 'CONSTRAINT_CONFLICT', 'arguments');
+    const legacy = clone(original); row(legacy, 1, 'success').sensoryEvidence = [];
+    diagnosticAt(legacy, ['results', 1, 'sensoryEvidence'], 'CONSTRAINT_CONFLICT', 'arguments');
     for (const wire of [missing, mixed, legacy]) await refusesBeforeRepair(wire);
   }
 });
@@ -122,31 +123,44 @@ test('the internal fixture encoder cannot erase a colliding field or turn a malf
   assert.ok(diagnostics(wireFor(incomplete)).length > 0);
 });
 
-test('the advertised decision interface has direct results and checked result or two-outcome steps', () => {
+test('the advertised decision interface is three flat tables: ruling, steps without results, one result row per branch', () => {
   assert.deepEqual(deepSeekStrictToolSchemaIssues(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA), []);
   const schema = expandDeepSeekSchema(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA);
-  assert.deepEqual(Object.keys(schema.properties), ['decision']);
+  assert.deepEqual(Object.keys(schema.properties), ['decision', 'steps', 'results']);
   for (const kind of ['directSuccess', 'check']) {
     const plan = schema.properties.decision.anyOf.find(value => value.properties.kind.enum.includes(kind));
-    assert.ok(plan); assert.ok(plan.required.includes('steps'));
-    for (const step of plan.properties.steps.items.anyOf) {
-      assert.equal(step.additionalProperties, false);
-      assert.deepEqual(step.required, Object.keys(step.properties).sort());
-      for (const name of ['consumes', 'produces', 'templateHash', 'communication', 'branches']) assert.equal(name in step.properties, false);
-      assert.equal('outcomeBinding' in step.properties, kind === 'check');
-      const contract = vnextEntryProducerContract({ kind: step.properties.kind.enum[0], source: { kind: step.properties.source?.properties.kind.enum[0] } });
-      assert.ok(contract); assert.equal('handle' in step.properties, contract.count === 1);
-      if (step.properties.kind.enum[0] === 'worldInteraction') {
-        assert.ok('directTargetRefs' in step.properties); assert.ok('otherTargetRefs' in step.properties);
-        assert.equal('targetRefs' in step.properties, false);
-      }
-      if (['worldInteraction', 'observe', 'social'].includes(step.properties.kind.enum[0])) {
-        assert.equal('result' in step.properties, !('success' in step.properties));
-        if ('success' in step.properties) { assert.equal(kind, 'check'); assert.ok('failure' in step.properties); }
-        else { assert.equal('failure' in step.properties, false); }
-      }
+    assert.ok(plan); assert.equal('steps' in plan.properties, false);
+  }
+  for (const step of schema.properties.steps.items.anyOf) {
+    assert.equal(step.additionalProperties, false);
+    assert.deepEqual(step.required, Object.keys(step.properties).sort());
+    for (const name of ['consumes', 'produces', 'templateHash', 'communication', 'branches', 'result', 'success', 'failure']) assert.equal(name in step.properties, false);
+    assert.ok('outcomeBinding' in step.properties);
+    const contract = vnextEntryProducerContract({ kind: step.properties.kind.enum[0], source: { kind: step.properties.source?.properties.kind.enum[0] } });
+    assert.ok(contract); assert.equal('handle' in step.properties, contract.count === 1);
+    if (step.properties.kind.enum[0] === 'worldInteraction') {
+      assert.ok('directTargetRefs' in step.properties); assert.ok('otherTargetRefs' in step.properties);
+      assert.equal('targetRefs' in step.properties, false);
     }
   }
+  const rows = schema.properties.results.items.anyOf;
+  assert.deepEqual(rows.map(row => row.properties.kind.enum[0]).sort(), ['observe', 'social', 'worldInteraction']);
+  for (const row of rows) {
+    assert.equal(row.additionalProperties, false);
+    assert.deepEqual(row.required, Object.keys(row.properties).sort());
+    assert.equal(row.properties.step.type, 'integer');
+    assert.deepEqual(row.properties.branch.enum, ['result', 'success', 'failure']);
+    if (row.properties.kind.enum[0] === 'social') {
+      for (const name of ['responseKind', 'responseText', 'responseMotive', 'responseBasis', 'consequences']) assert.ok(name in row.properties, name);
+      assert.equal('response' in row.properties, false);
+    } else {
+      assert.ok('entries' in row.properties);
+    }
+  }
+  // A selection without any result-producing step still carries the table, with a row shape no row can take.
+  const timerOnly = expandDeepSeekSchema(createVNextProposalBundleSchema(['formActorPlan']));
+  assert.deepEqual(Object.keys(timerOnly.properties), ['decision', 'steps', 'results']);
+  assert.deepEqual(timerOnly.properties.results.items.anyOf.map(row => row.properties.kind.enum[0]), ['none']);
 });
 
 test('different item, hazard, knowledge and interaction families use the same codec and full validator including continuations', () => {
@@ -171,16 +185,17 @@ test('direct results acquire no failure while a check preserves its unique owner
   assert.equal(direct.bundle.proposals[2].branches.failure, null);
   assert.equal(direct.bundle.proposals[2].outcomeBinding, 'always');
   const checked = wireFor(sharedCheckBundle('worldInteraction'));
-  assert.ok(checked.decision.steps[0].result); assert.ok(checked.decision.steps[1].success); assert.ok(checked.decision.steps[1].failure);
+  assert.ok(row(checked, 0, 'result')); assert.ok(row(checked, 1, 'success')); assert.ok(row(checked, 1, 'failure'));
+  assert.deepEqual(checked.results.map(entry => [entry.step, entry.branch]), [[0, 'result'], [1, 'success'], [1, 'failure'], [2, 'result']]);
   const accepted = parsed(checked); assert.equal(accepted.kind, 'accepted');
   assert.deepEqual(accepted.bundle.proposals.map(entry => entry.outcomeBinding), ['onSuccess', 'always', 'onFailure']);
   assert.deepEqual(accepted.bundle.proposals[1].branches, sharedCheckBundle('worldInteraction').proposals[1].branches);
-  const missing = clone(checked); delete missing.decision.steps[1].failure;
+  const missing = clone(checked); dropRow(missing, 1, 'failure');
   diagnosticAt(missing, ['proposals', 1, 'branches', 'failure'], 'FIELD_MISSING');
-  const noOwner = clone(checked); noOwner.decision.steps[1].result = noOwner.decision.steps[1].success;
-  delete noOwner.decision.steps[1].success; delete noOwner.decision.steps[1].failure;
+  const noOwner = clone(checked); row(noOwner, 1, 'success').branch = 'result'; dropRow(noOwner, 1, 'failure');
   assert.ok(diagnostics(noOwner).some(value => value.code === 'CONSTRAINT_CONFLICT'));
-  const duplicate = clone(checked); duplicate.decision.steps[0] = clone(duplicate.decision.steps[1]);
+  const duplicate = clone(checked); duplicate.steps[0] = clone(duplicate.steps[1]);
+  dropRow(duplicate, 0, 'result'); duplicate.results.push(...duplicate.results.filter(entry => entry.step === 1).map(entry => ({ ...clone(entry), step: 0 })));
   assert.ok(diagnostics(duplicate).some(value => value.code === 'CONSTRAINT_CONFLICT'));
 });
 
@@ -192,17 +207,17 @@ test('server derives typed producer declarations, prospective dependencies, publ
     [[], ['prospective:mechanics'], ['prospective:item-definition'], ['prospective:item-entry'], ['prospective:item-entry']]);
   const world = worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story' }), wire = wireFor(world);
   const accepted = parsed(wire); assert.equal(accepted.kind, 'accepted');
-  const template = VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.find(item => item.templateRef === wire.decision.steps[0].templateRef);
+  const template = VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.find(item => item.templateRef === wire.steps[0].templateRef);
   assert.equal(accepted.bundle.proposals[0].templateHash, template.templateHash);
   assert.equal(accepted.bundle.proposals[1].communication, 'spokenConversation');
   assert.deepEqual(accepted.bundle.basisRefs, ['npc:story']);
   assert.deepEqual(accepted.bundle.proposals[1].consumes, [{ kind: 'existing', ref: 'npc:story' }, { kind: 'prospective', handle: 'prospective:new-experience' }]);
-  const missingTemplate = clone(wire); delete missingTemplate.decision.steps[0].templateRef;
-  diagnosticAt(missingTemplate, ['decision', 'steps', 0, 'templateRef'], 'FIELD_MISSING', 'arguments');
-  const unknownTemplate = clone(wire); unknownTemplate.decision.steps[0].templateRef = 'template:unknown';
-  diagnosticAt(unknownTemplate, ['decision', 'steps', 0, 'templateRef'], 'REFERENCE_UNAVAILABLE', 'arguments');
-  const wrongTemplateType = clone(wire); wrongTemplateType.decision.steps[0].templateRef = 17;
-  diagnosticAt(wrongTemplateType, ['decision', 'steps', 0, 'templateRef'], 'TYPE_MISMATCH', 'arguments');
+  const missingTemplate = clone(wire); delete missingTemplate.steps[0].templateRef;
+  diagnosticAt(missingTemplate, ['steps', 0, 'templateRef'], 'FIELD_MISSING', 'arguments');
+  const unknownTemplate = clone(wire); unknownTemplate.steps[0].templateRef = 'template:unknown';
+  diagnosticAt(unknownTemplate, ['steps', 0, 'templateRef'], 'REFERENCE_UNAVAILABLE', 'arguments');
+  const wrongTemplateType = clone(wire); wrongTemplateType.steps[0].templateRef = 17;
+  diagnosticAt(wrongTemplateType, ['steps', 0, 'templateRef'], 'TYPE_MISMATCH', 'arguments');
 });
 
 test('explicit causal and knowledge sources stay attached to their step and are never inferred from targets', () => {
@@ -210,7 +225,7 @@ test('explicit causal and knowledge sources stay attached to their step and are 
   original.proposals[1].consumes = [{ kind: 'existing', ref: 'evidence:chosen-source' }];
   original.proposals[1].targetRefs = ['definition:other-target']; original.proposals[1].directTargetRefs = ['definition:other-target'];
   const wire = wireFor(original), decoded = decodeVNextStrictToolBundle(wire);
-  assert.deepEqual(wire.decision.steps[1].basisRefs, ['definition:probe-valve', 'evidence:chosen-source']);
+  assert.deepEqual(wire.steps[1].basisRefs, ['definition:probe-valve', 'evidence:chosen-source']);
   assert.deepEqual(decoded.proposals[0].basisRefs, ['definition:probe-valve']);
   assert.deepEqual(clone(decoded.proposals[1].consumes), [{ kind: 'existing', ref: 'definition:probe-valve' }, { kind: 'existing', ref: 'evidence:chosen-source' }]);
   assert.equal(decoded.proposals[1].consumes.some(ref => ref.ref === 'definition:other-target'), false);
@@ -222,11 +237,11 @@ test('explicit causal and knowledge sources stay attached to their step and are 
 });
 
 test('wrong prospective type, missing producer, duplicate producer and cross-outcome consumption fail in the existing validator', async () => {
-  const wrongType = wireFor(itemBundle()); wrongType.decision.steps[1].source.content.use.abilityRef = 'prospective:item-entry';
-  const missingProducer = wireFor(itemBundle()); missingProducer.decision.steps[1].source.content.use.abilityRef = 'prospective:missing';
-  const duplicate = wireFor(itemBundle()); duplicate.decision.steps[1].handle = duplicate.decision.steps[0].handle;
+  const wrongType = wireFor(itemBundle()); wrongType.steps[1].source.content.use.abilityRef = 'prospective:item-entry';
+  const missingProducer = wireFor(itemBundle()); missingProducer.steps[1].source.content.use.abilityRef = 'prospective:missing';
+  const duplicate = wireFor(itemBundle()); duplicate.steps[1].handle = duplicate.steps[0].handle;
   const crossOutcome = wireFor(worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story', check: true }));
-  crossOutcome.decision.steps[0].outcomeBinding = 'onSuccess';
+  crossOutcome.steps[0].outcomeBinding = 'onSuccess';
   for (const wire of [wrongType, missingProducer, duplicate, crossOutcome]) {
     const candidate = parsed(wire); assert.equal(candidate.kind, 'locallyRejected', JSON.stringify(candidate));
     assert.equal(validateVNextProposalBundle(candidate.draft).kind, 'rejected');
@@ -241,20 +256,20 @@ test('retired shells, mixed shapes and model-supplied derived fields are explici
     itemBundle(), { ...valid, proposals: [] }, { ...valid, mode: 'adjudication' },
     ...['adjudication', 'terminal', 'proposals', 'basisRefs'].map(key => ({ decision: { ...clone(valid.decision), [key]: [] } })),
     ...['produces', 'consumes', 'templateHash', 'communication', 'branches', 'outcomeBinding'].map(key => {
-      const wire = clone(valid); wire.decision.steps[0][key] = 'injected'; return wire;
+      const wire = clone(valid); wire.steps[0][key] = 'injected'; return wire;
     }),
-    (() => { const wire = wireFor(hazardBundle()); wire.decision.steps[2].targetRefs = []; return wire; })(),
-    (() => { const wire = wireFor(hazardBundle()); wire.decision.steps[2].handle = 'prospective:undeclared'; return wire; })(),
-    (() => { const wire = wireFor(hazardBundle()); wire.decision.steps[2].success = clone(wire.decision.steps[2].result); return wire; })(),
-    (() => { const wire = wireFor(sharedCheckBundle()); wire.decision.steps[1].failure = null; return wire; })(),
+    (() => { const wire = wireFor(hazardBundle()); wire.steps[2].targetRefs = []; return wire; })(),
+    (() => { const wire = wireFor(hazardBundle()); wire.steps[2].handle = 'prospective:undeclared'; return wire; })(),
+    (() => { const wire = wireFor(hazardBundle()); wire.results.push({ ...clone(row(wire, 2, 'result')), branch: 'success' }); return wire; })(),
+    (() => { const wire = wireFor(sharedCheckBundle()); const failure = row(wire, 1, 'failure'); for (const key of Object.keys(failure)) if (!['kind', 'step', 'branch'].includes(key)) delete failure[key]; return wire; })(),
   ]) await refusesBeforeRepair(wire);
 });
 
 test('unknown fields survive decoding so the complete validator rejects them instead of silently dropping them', async () => {
   for (const change of [
     wire => { wire.decision.unexpected = 'preserve-to-reject'; },
-    wire => { wire.decision.steps[0].unexpected = 'preserve-to-reject'; },
-    wire => { wire.decision.steps[2].result.unexpected = 'preserve-to-reject'; },
+    wire => { wire.steps[0].unexpected = 'preserve-to-reject'; },
+    wire => { row(wire, 2, 'result').unexpected = 'preserve-to-reject'; },
   ]) {
     const wire = wireFor(hazardBundle()); change(wire);
     const candidate = parsed(wire); assert.equal(candidate.kind, 'locallyRejected');
@@ -271,13 +286,13 @@ test('missing fields identify their actual arguments or decoded draft path and n
   const injectedEnvelope = { ...wireFor(itemBundle()), kind: 'check' };
   diagnosticAt(injectedEnvelope, ['kind'], 'CONSTRAINT_CONFLICT', 'arguments');
   await refusesBeforeRepair(injectedEnvelope);
-  const missingSteps = wireFor(itemBundle()); delete missingSteps.decision.steps;
-  diagnosticAt(missingSteps, ['proposals'], 'FIELD_MISSING');
+  const missingSteps = wireFor(itemBundle()); delete missingSteps.steps;
+  diagnosticAt(missingSteps, ['steps'], 'FIELD_MISSING', 'arguments');
   const missingDc = wireFor(sharedCheckBundle()); delete missingDc.decision.dc;
   diagnosticAt(missingDc, ['adjudication', 'dc'], 'FIELD_MISSING');
-  const missingHandle = wireFor(itemBundle()); delete missingHandle.decision.steps[0].handle;
+  const missingHandle = wireFor(itemBundle()); delete missingHandle.steps[0].handle;
   diagnosticAt(missingHandle, ['proposals', 0, 'produces', 0, 'handle'], 'FIELD_MISSING');
-  const missingResult = wireFor(hazardBundle()); delete missingResult.decision.steps[2].result;
+  const missingResult = wireFor(hazardBundle()); dropRow(missingResult, 2, 'result');
   diagnosticAt(missingResult, ['proposals', 2, 'branches', 'success'], 'FIELD_MISSING');
   for (const wire of [missingSteps, missingDc, missingHandle, missingResult]) await refusesBeforeRepair(wire);
 });
@@ -327,7 +342,7 @@ test('complete-root JSON syntax evidence uses the same one-confirmation path wit
 
 
 test('direct and additional targets retain their distinct roles while the server derives their combined target set', async () => {
-  const wire = wireFor(hazardBundle()), step = wire.decision.steps[2];
+  const wire = wireFor(hazardBundle()), step = wire.steps[2];
   assert.deepEqual(step.otherTargetRefs, []); assert.equal('targetRefs' in step, false);
   const direct = step.directTargetRefs[0]; step.otherTargetRefs = ['definition:affected-neighbor'];
   const result = parsed(wire); assert.equal(result.kind, 'accepted', JSON.stringify(result));
@@ -336,13 +351,13 @@ test('direct and additional targets retain their distinct roles while the server
   assert.equal(result.bundle.proposals[2].consumes.some(ref => ref.ref === 'definition:affected-neighbor'), false);
   for (const value of [undefined, null, 'definition:wrong-shape']) {
     const malformed = clone(wire);
-    if (value === undefined) delete malformed.decision.steps[2].otherTargetRefs;
-    else malformed.decision.steps[2].otherTargetRefs = value;
-    diagnosticAt(malformed, ['decision', 'steps', 2, 'otherTargetRefs'], value === undefined ? 'FIELD_MISSING' : 'TYPE_MISMATCH', 'arguments');
+    if (value === undefined) delete malformed.steps[2].otherTargetRefs;
+    else malformed.steps[2].otherTargetRefs = value;
+    diagnosticAt(malformed, ['steps', 2, 'otherTargetRefs'], value === undefined ? 'FIELD_MISSING' : 'TYPE_MISMATCH', 'arguments');
     await refusesBeforeRepair(malformed);
   }
   const inventory = wireFor(itemBundle());
-  assert.deepEqual(inventory.decision.steps[4].operation.targetRefs, itemBundle().proposals[4].operation.targetRefs);
+  assert.deepEqual(inventory.steps[4].operation.targetRefs, itemBundle().proposals[4].operation.targetRefs);
 });
 
 test('confirmation cannot rewrite actual item targets, quantity costs or authored resource costs', async () => {

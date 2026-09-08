@@ -1,3 +1,4 @@
+import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -49,28 +50,36 @@ test("selected schemas preserve exact full-contract variants and resolve all str
       assert.ok(!expanded.properties.decision.anyOf.some(entry => entry.properties.kind.enum.includes("directSuccess")));
       continue;
     }
-    for (const kind of ["directSuccess", "check"]) {
-      const selected = decisionSchema(expanded, kind);
-      const complete = decisionSchema(full, kind);
-      for (const variant of selected.properties.steps.items.anyOf) {
-        const original = complete.properties.steps.items.anyOf.find(original => variant.properties.kind.enum.includes("social")
-          ? original.properties.kind.enum.includes("social") && ("result" in original.properties) === ("result" in variant.properties)
-          : JSON.stringify(original) === JSON.stringify(variant));
-        assert.ok(original, `${id}:${kind}`);
-        const expected = structuredClone(original);
-        if (variant.properties.kind.enum.includes("social")) for (const branch of "result" in variant.properties ? ["result"] : ["success", "failure"]) {
-          const selectedBasis = variant.properties[branch].properties.response.properties.basis.items.anyOf;
-          const completeBasis = expected.properties[branch].properties.response.properties.basis.items.anyOf;
-          for (const source of selectedBasis) assert.ok(completeBasis.some(value => JSON.stringify(value) === JSON.stringify(source)));
-          assert.deepEqual(selectedBasis, completeBasis.filter(source => !source.properties?.worldFactRef),
-            "social-only selection cannot reference an unselected world-fact producer");
-          expected.properties[branch].properties.response.properties.basis.items.anyOf = selectedBasis;
-        }
-        assert.deepEqual(variant, expected, `${id}:${kind}`);
+    // Steps and results are root tables shared by both rulings; the ruling
+    // variants themselves carry no steps. Every selected row must be one of
+    // the full contract's rows, with the social basis narrowed to the selection.
+    for (const variant of expanded.properties.steps.items.anyOf) {
+      assert.ok(full.properties.steps.items.anyOf.some(original => JSON.stringify(original) === JSON.stringify(variant)), `${id}:step`);
+    }
+    for (const variant of expanded.properties.results.items.anyOf) {
+      const original = full.properties.results.items.anyOf.find(original => variant.properties.kind.enum.includes("social")
+        ? original.properties.kind.enum.includes("social") : JSON.stringify(original) === JSON.stringify(variant));
+      if (variant.properties.kind.enum.includes("none")) continue;
+      assert.ok(original, `${id}:result`);
+      const expected = structuredClone(original);
+      if (variant.properties.kind.enum.includes("social")) {
+        const selectedBasis = variant.properties.responseBasis.items.anyOf, completeBasis = expected.properties.responseBasis.items.anyOf;
+        for (const source of selectedBasis) assert.ok(completeBasis.some(value => JSON.stringify(value) === JSON.stringify(source)));
+        assert.deepEqual(selectedBasis, completeBasis.filter(source => !source.properties?.worldFactRef),
+          "social-only selection cannot reference an unselected world-fact producer");
+        expected.properties.responseBasis.items.anyOf = selectedBasis;
       }
+      assert.deepEqual(variant, expected, `${id}:result`);
+    }
+    for (const kind of ["directSuccess", "check"]) {
+      assert.deepEqual(decisionSchema(expanded, kind), decisionSchema(full, kind), `${id}:${kind}`);
       const continuations = decisionSchema(expanded, "clarification").properties.choices.items.properties.continuation.anyOf;
-      assert.deepEqual(continuations.find(entry => entry.properties.kind.enum.includes(kind)), selected,
-        `${id}:${kind} clarification must retain the same loaded step contracts`);
+      const continuation = continuations.find(entry => entry.properties.kind.enum.includes(kind));
+      assert.ok(continuation, `${id}:${kind} clarification must retain a nested continuation`);
+      for (const variant of continuation.properties.steps.items.anyOf) {
+        assert.ok(expanded.properties.steps.items.anyOf.some(step => step.properties.kind.enum[0] === variant.properties.kind.enum[0]),
+          `${id}:${kind} continuation step kinds match the selected steps`);
+      }
     }
   }
   assert.deepEqual(createVNextProposalBundleSchema(VNEXT_PROPOSAL_CAPABILITY_IDS), SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA);
@@ -256,14 +265,14 @@ test("the first stage has one flat selection field and no executable union or fi
 test("all step decisions and clarification require prior schema selection, including repairable or empty drafts", async () => {
   const complete = argumentsFor(hazardBundle());
   const choice = { decision: { kind: "clarification", intent: "选择方案", method: "确认后操作", basisRefs: [], question: "继续吗？", choices: [
-    { choiceId: "continue", label: "继续", publicRisk: "采用已说明风险", basisRefs: [], continuation: complete.decision },
+    { choiceId: "continue", label: "继续", publicRisk: "采用已说明风险", basisRefs: [], continuation: nestedDecision(complete) },
     { choiceId: "cancel", label: "取消", publicRisk: "不执行", basisRefs: [], continuation: { kind: "cancel" } },
   ] } };
-  const empty = { decision: { kind: "directSuccess", duration: "none", risk: "没有风险", successOutcome: "原结果", steps: [] } };
+  const empty = { decision: { kind: "directSuccess", duration: "none", risk: "没有风险", successOutcome: "原结果" }, steps: [], results: [] };
   const noExecutableChoice = structuredClone(choice);
   noExecutableChoice.decision.choices[0].continuation = { kind: "cancel" };
   const emptyCheck = { decision: { kind: "check", duration: "none", risk: "风险已说明", successOutcome: "原成功", failureOutcome: "原失败",
-    checkKind: "abilityCheck", ability: "dex", skill: { kind: "none" }, dc: 12, mode: "normal", steps: [] } };
+    checkKind: "abilityCheck", ability: "dex", skill: { kind: "none" }, dc: 12, mode: "normal" }, steps: [], results: [] };
   for (const wire of [complete, choice, noExecutableChoice, empty, emptyCheck]) {
     let calls = 0;
     const result = await invokeVNextProposalOffer({ modelId: "test", message: "冻结原意图", requiredContext: {

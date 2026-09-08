@@ -11,7 +11,8 @@ import { createAuthoredProbeFixture, freezeAuthoredProbeContext } from '../tools
 import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from '../app/_runtime/lib/kp/vnext/room-bridge.ts';
 
-const wire = durationMicros => ({ decision: { kind: 'passTime', durationMicros } });
+// A terminal decision still sends the two empty tables of the three-table wire.
+const wire = durationMicros => ({ decision: { kind: 'passTime', durationMicros }, steps: [], results: [] });
 const candidate = value => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(value));
 const clone = value => JSON.parse(JSON.stringify(value));
 const request = { modelId: 'scripted-local', message: '保留原时间决定。', requiredContext: { entries: [],

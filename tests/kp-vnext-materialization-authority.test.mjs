@@ -231,8 +231,8 @@ test("strict tool default sentinels reach the frozen template through decoding, 
     assert.equal(replay.kind, "replayed");
     assert.deepEqual(replay.state, committed.state);
   }
-  const authored = decodeVNextStrictToolBundle({ decision: { kind: "directSuccess", steps: [{ kind: "materializeDefinition",
-    source: { kind: "ability", observableState: "none", affordances: "none" } }] } });
+  const authored = decodeVNextStrictToolBundle({ decision: { kind: "directSuccess" }, steps: [{ kind: "materializeDefinition",
+    source: { kind: "ability", observableState: "none", affordances: "none" }, outcomeBinding: "always" }], results: [] });
   const { kind: _kind, ...authoredSource } = authored.proposals[0].source;
   assert.deepEqual({ ...authoredSource },
   { observableState: "none", affordances: "none" }, "template sentinels cannot rewrite authored source fields");

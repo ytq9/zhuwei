@@ -3403,3 +3403,7 @@ social 的 promise 后果带 `due`（none|1h|halfDay|day|nextDawn）与 `trace`�
 ## round83：承诺填全、窄修订首次真实触发、骰子 3（2026-09-08，源码 `09d558b`）
 
 首句 5 次调用提交发布：魅力检定 DC 13，d20 = 3，瓦罗拒绝，`legalRefusal` 停止。成功分支的承诺 `authorityRefs:["npc:…varo"]`、`due:"1h"`、trace 全对；结尾多一个 `}` 被服务器完整根语法证据判定可修，一次 `correct_kp_proposal_bundle` 确认——真实窄修订第一次触发。见 [round83 回执](agent/vnext-round83-validation.md)。
+
+## 提案 wire 拆成三张平表（2026-09-08，parser v48，本地验证）
+
+round82/83 的长草稿都在结尾多关一层括号；损坏落在唯一顶层成员内部时服务器无法证明。用户裁定拆表：`decision`（裁决）、`steps`（不含结果）、`results`（每条结果一行，`kind/step/branch`，social 回应摊平）。全部在编解码器与 schema 生成层，域、lowering、Rules 不动；clarification 的 continuation 保持嵌套。十七个测试文件改到新形状，新增 `tests/fixtures/vnext-wire-tables.mjs`。node/vitest 按名比对基线 0 新失败。见[回执](agent/vnext-three-table-wire-validation.md)。

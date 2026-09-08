@@ -50,8 +50,8 @@ test('foreign NPC basis reports each exact branch and index using only this NPC 
   assert.equal(rejected.code, 'PROPOSAL_REFERENCE_INVALID');
   assert.deepEqual(rejected.issues, ['social:foreign-npc-basis']);
   assert.deepEqual(rejected.diagnostics.map(d => d.path), [
-    ['decision', 'steps', 0, 'success', 'response', 'basis', 1],
-    ['decision', 'steps', 0, 'failure', 'response', 'basis', 0],
+    ['results', 0, 'responseBasis', 1],
+    ['results', 1, 'responseBasis', 0],
   ]);
   const context = npcDecisionContext(f.requiredContext.entries, NPC);
   assert.ok(context && npcDecisionContext(f.requiredContext.entries, OTHER), 'both NPC snapshots are loaded');
@@ -82,7 +82,7 @@ test('valid NPC basis preserves its normal Rules lowering and a later proposal r
   multiple.proposals.forEach(entry => { entry.branches.failure = null; });
   const rejected = lowerVNext2ProposalBundle({ ...f, value: multiple });
   assert.equal(rejected.kind, 'rejected');
-  assert.deepEqual(rejected.diagnostics[0].path, ['decision', 'steps', 1, 'result', 'response', 'basis', 0]);
+  assert.deepEqual(rejected.diagnostics[0].path, ['results', 1, 'responseBasis', 0]);
 });
 
 test('unselected clarification lowering preserves every private diagnostic with its exact branch prefix', () => {
@@ -98,8 +98,13 @@ test('unselected clarification lowering preserves every private diagnostic with 
           adjudication: entry.adjudication, proposals: entry.proposals } })) } };
   const before = structuredClone(f.state), rejected = lowerVNext2ProposalBundle({ ...f, value });
   assert.equal(rejected.kind, 'rejected');
+  // The main decision reports result rows (results[j].responseBasis); a
+  // clarification continuation keeps the nested step layout, so the same
+  // diagnostic lands on continuation.steps[0].<branch>.response.basis.
+  const nested = path => path[0] === 'results'
+    ? ['steps', 0, ['success', 'failure'][path[1]], 'response', 'basis', ...path.slice(3)] : path.slice(1);
   assert.deepEqual(rejected.diagnostics, original.diagnostics.map(detail => ({ ...detail,
-    path: ['decision', 'choices', 1, 'continuation', ...detail.path.slice(1)] })));
+    path: ['decision', 'choices', 1, 'continuation', ...nested(detail.path)] })));
   assert.deepEqual(bridge(f, value).diagnostics, rejected.diagnostics);
   assert.deepEqual(f.state, before);
   assert.doesNotMatch(JSON.stringify(rejected), /OTHER-NPC-KNOWLEDGE-SECRET|OWN-NPC-KNOWLEDGE-CONTENT|PRIVATE-MOTIVE/);

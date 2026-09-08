@@ -1,3 +1,4 @@
+import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA, createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -19,7 +20,7 @@ const source = (npcRef = NPC) => ({ kind: 'formActorPlan', npcRef, factionRef: {
   resourceRefs: [], durationMicros: '2000000', traceDescription: '门框上多了一条新系的布带。',
   alternateTargetRef: SCENE, alternateReason: '需要改换行动对象时仍留意当前场景。' });
 const wire = (entry = source()) => ({ decision: { kind: 'directSuccess', duration: 'none', risk: '形成私有计划尚未执行行动。',
-  successOutcome: '保存计划并开始对应的Activity。', steps: [entry] } });
+  successOutcome: '保存计划并开始对应的Activity。' }, steps: [{ ...entry, outcomeBinding: 'always' }], results: [] });
 const request = { modelId: 'controlled-test', message: '根据NPC本人情况安排下一步。', requiredContext: { entries: [],
   references: { citations: { authorityBasisRefs: [], viewerEvidenceRefs: [], npcKnowledge: [] } }, binding: { contextHash: 'sha256:formation-test' } } };
 const response = (raw, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) => ({ choices: [{ message: { tool_calls: [
@@ -30,7 +31,7 @@ function parsed(value) { return parseSubmitKpProposalBundleCandidateArguments(ty
 
 function clarification(entry) { return { decision: { kind: 'clarification', basisRefs: [], intent: '先确定行动方案。',
   method: '确认后保存该计划。', question: '采用哪个方案？', choices: ['first', 'second'].map(choiceId => ({
-    choiceId, label: choiceId, publicRisk: '形成计划还没有执行后续行动。', basisRefs: [], continuation: wire(structuredClone(entry)).decision,
+    choiceId, label: choiceId, publicRisk: '形成计划还没有执行后续行动。', basisRefs: [], continuation: nestedDecision(wire(structuredClone(entry))),
   })) } }; }
 
 test('the selected shared schema exposes one flat timer form for distinct NPCs without model-owned identities or repeated evidence', () => {
@@ -45,15 +46,15 @@ test('the selected shared schema exposes one flat timer form for distinct NPCs w
     assert.deepEqual(entry.basisRefs, []); assert.deepEqual(entry.consumes, []); assert.deepEqual(entry.produces, []);
     assert.equal(entry.outcomeBinding, 'always');
     for (const key of ['basisRefs', 'consumes', 'produces', 'planId', 'activityId', 'due', 'trigger', 'trace', 'alternateTarget', 'readSet']) {
-      assert.equal(Object.hasOwn(input.decision.steps[0], key), false);
+      assert.equal(Object.hasOwn(input.steps[0], key), false);
     }
   }
 });
 
 test('same Rules shape diagnostics locate missing decisions and wrong numeric representation, while future sources are explicitly refused', () => {
-  const missing = wire(); delete missing.decision.steps[0].goal;
-  const numeric = wire(); numeric.decision.steps[0].durationMicros = 2000000;
-  const future = wire(); future.decision.steps[0].premiseRefs = ['prospective:future-knowledge'];
+  const missing = wire(); delete missing.steps[0].goal;
+  const numeric = wire(); numeric.steps[0].durationMicros = 2000000;
+  const future = wire(); future.steps[0].premiseRefs = ['prospective:future-knowledge'];
   for (const [input, field, code] of [[missing, 'goal', 'FIELD_MISSING'], [numeric, 'durationMicros', 'TYPE_MISMATCH'], [future, 'premiseRefs', 'REFERENCE_UNAVAILABLE']]) {
     const result = parsed(input); assert.equal(result.kind, 'locallyRejected', JSON.stringify(result));
     const diagnostic = result.diagnostics.find(detail => detail.path?.[0] === 'proposals' && detail.path?.[2] === field);
@@ -83,7 +84,7 @@ test('exact integer duration tokens use the existing one-confirmation repair for
 
 test('fractional rounding, exponents, unavailable original tokens and missing goals never invite a new plan decision', async () => {
   const raw = JSON.stringify(wire()).replace('"durationMicros":"2000000"', '"durationMicros":TOKEN');
-  const missing = wire(); delete missing.decision.steps[0].goal;
+  const missing = wire(); delete missing.steps[0].goal;
   const values = ['2000000.000000001', '2e6', '0', '-1', '9007199254740992'].map(token => raw.replace('TOKEN', token));
   values.push(JSON.stringify(missing));
   for (const value of values) {

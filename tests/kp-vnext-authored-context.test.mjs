@@ -1,3 +1,4 @@
+import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import { actDuration, withActDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -169,7 +170,7 @@ test("injected probe responses traverse real parsing, Rules, replay and next-con
 });
 test("probe persists the existing repair ticket before one summary correction and never calls a third time", async () => {
   const invalid = argumentsFor(itemBundle({ acquire: true, use: true }));
-  invalid.decision.steps[1].summary = "";
+  invalid.steps[1].summary = "";
   const path = ["proposals", 1, "summary"];
   let ticket, calls = 0;
   const report = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]],
@@ -189,7 +190,7 @@ test("probe persists the existing repair ticket before one summary correction an
   assert.equal(report.liveProviderCalls, 2);
   assert.equal(calls, 2);
 
-  invalid.decision.steps[2].summary = "";
+  invalid.steps[2].summary = "";
   let exhaustedCalls = 0;
   const exhausted = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], persistRepairTicket() {},
     async invoke() {
@@ -205,7 +206,7 @@ test("probe persists the existing repair ticket before one summary correction an
 test("probe honors the global call cap and exposes precise Rules rejection without a retry", async () => {
   let calls = 0;
   const invalid = argumentsFor(itemBundle({ acquire: true, use: true }));
-  invalid.decision.steps[3].operation.quantity = 3;
+  invalid.steps[3].operation.quantity = 3;
   const report = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], maxCalls: 1,
     async invoke() { calls += 1; return response(invalid); },
   });
@@ -216,7 +217,7 @@ test("probe honors the global call cap and exposes precise Rules rejection witho
   assert.equal(report.cases[0].stages.lowering, true);
 
   const repairable = argumentsFor(itemBundle({ acquire: true, use: true }));
-  repairable.decision.steps[0].summary = "";
+  repairable.steps[0].summary = "";
   const capped = await runAuthoredProviderProbe({ live: true, cases: [AUTHORED_PROBE_CASES[1]], maxCalls: 1, persistRepairTicket() {},
     async invoke() { calls += 1; return response(repairable); },
   });

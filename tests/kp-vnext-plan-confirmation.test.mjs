@@ -1,3 +1,4 @@
+import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { encodeVNextStrictToolBundle, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -18,10 +19,10 @@ function response(value, name = SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
 function fixture(summaries = true) {
   const original = sharedCheckBundle(), wire = encodeVNextStrictToolBundle(structuredClone(original));
   wire.decision.risk = ` ${wire.decision.risk} `;
-  wire.decision.steps[1].method = ` ${wire.decision.steps[1].method} `;
+  wire.steps[1].method = ` ${wire.steps[1].method} `;
   if (summaries) {
-    wire.decision.steps[1].success.summary = '';
-    wire.decision.steps[1].failure.summary = '';
+    row(wire, 1, 'success').summary = '';
+    row(wire, 1, 'failure').summary = '';
   }
   return { original, wire };
 }
@@ -152,7 +153,7 @@ test('original arguments, frozen context and plan are re-proved even after an al
   assertRepairTicket(begun.repairTicket, binding.contextHash);
   for (const mutate of [
     ticket => { const raw = JSON.parse(ticket.originalArguments); raw.decision.dc = 1; ticket.originalArguments = JSON.stringify(raw); },
-    ticket => { const raw = JSON.parse(ticket.originalArguments); raw.decision.steps[1].focusRefs = ['definition:replacement']; ticket.originalArguments = JSON.stringify(raw); },
+    ticket => { const raw = JSON.parse(ticket.originalArguments); raw.steps[1].focusRefs = ['definition:replacement']; ticket.originalArguments = JSON.stringify(raw); },
     ticket => { ticket.draft.adjudication.dc = 1; ticket.bundleHash = canonicalHash(ticket.draft); },
     ticket => { ticket.draft.proposals[1].focusRefs = ['definition:replacement']; ticket.bundleHash = canonicalHash(ticket.draft); },
     ticket => { ticket.repairPlan[0].path = ['adjudication', 'dc']; },

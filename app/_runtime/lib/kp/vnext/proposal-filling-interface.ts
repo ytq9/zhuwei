@@ -113,12 +113,61 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
       failure: branchSchema(branches.properties.failure.anyOf.find((item: Schema) => !item.properties?.kind?.enum?.includes("none"))),
     }))] : [direct];
   });
+  // The main decision is three flat tables: the ruling, the steps without
+  // their results, and one result row per (step, branch). A long check no
+  // longer closes seven levels at its tail, and a syntax slip inside one row
+  // leaves the other root members provable. Clarification continuations keep
+  // the nested step shape below; they are rare and already one level down.
+  const flatStepVariants = (): Schema[] => variants.map(variant => {
+    const { consumes: _consumes, produces: _produces, templateHash: _hash,
+      communication: _communication, outcomeBinding, branches: _branches, ...properties } = variant.properties;
+    const contract = vnextEntryProducerContract({ kind: properties.kind.enum[0],
+      source: { kind: properties.source?.properties?.kind?.enum?.[0] } });
+    if (!contract) throw new TypeError("PROPOSAL_PRODUCER_CONTRACT_UNAVAILABLE");
+    if (properties.kind.enum[0] === "formActorPlan") delete properties.basisRefs;
+    if (properties.kind.enum[0] === "worldInteraction") {
+      properties.otherTargetRefs = { ...properties.targetRefs,
+        description: "Other actual physical targets besides directTargetRefs. Use [] when there are none; the server combines both target roles." };
+      delete properties.targetRefs;
+      properties.directTargetRefs = { ...properties.directTargetRefs, description: "Nonempty exact visible or same-bundle targets intentionally manipulated by this method. Other affected targets go in otherTargetRefs." };
+    }
+    if (contract.count === 1) properties.handle = { type: "string",
+      pattern: "^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      description: "Local name of this new object; reuse it in typed references. The server derives producer kind and dependencies." };
+    properties.outcomeBinding = { ...outcomeBinding, description: "always for a directSuccess decision and for the step that owns a shared check; onSuccess/onFailure bind another step's result to that check." };
+    return object(fields(properties));
+  });
+  const resultVariants = (): Schema[] => variants.flatMap(variant => {
+    const kind = variant.properties.kind.enum[0], branches = variant.properties.branches;
+    if (!branches) return [];
+    const shaped: Schema = kind === "social" ? socialResult(branches.properties.success) : resultSchema(branches.properties.success, layouts.get(kind));
+    const { response, ...rest } = shaped.properties;
+    const flat = kind === "social" && response !== undefined
+      ? { ...rest, responseKind: response.properties.kind, responseText: response.properties.text,
+          responseMotive: response.properties.motive, responseBasis: response.properties.basis }
+      : shaped.properties;
+    return [object(fields({
+      kind: { type: "string", enum: [kind], description: "The kind of the step this result belongs to." },
+      step: { type: "integer", minimum: 0, description: "Zero-based index into steps." },
+      branch: { type: "string", enum: ["result", "success", "failure"],
+        description: "result: the one result of a directSuccess step, or of a checked step bound by its outcomeBinding. success and failure: two rows for the single step that owns the shared check." },
+      ...flat,
+    }))];
+  });
   // A terminal-only selection has no step family. Do not leave empty unions or
   // unreachable definitions for the strict provider to reject or interpret.
+  const results = variants.length > 0 ? resultVariants() : [];
   if (variants.length > 0) {
     definitions.directSteps = { type: "array", items: { anyOf: stepVariants(false) } };
     definitions.checkSteps = { type: "array", items: { anyOf: stepVariants(true) } };
+    definitions.steps = { type: "array", items: { anyOf: flatStepVariants() } };
+    // The table is always there so a ruling always sends it. When no selected
+    // step kind produces results, the only row shape is one no row can take.
+    definitions.results = { type: "array", items: { anyOf: results.length > 0 ? results : [object({ kind: { type: "string", enum: ["none"],
+      description: "No selected step kind produces a result row; results must be []." } })] } };
   }
+  const flatPlans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
+    variants.length > 0 && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties }));
   const plans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
     variants.length > 0 && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({
       ...variant.properties,
@@ -144,20 +193,138 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     }
     return object(properties);
   });
-  return { ...object({ decision: { description: "Choose one complete decision. Direct success has only results; a check fixes its one ruling and both outcomes now. The server assembles the internal bundle.",
-    anyOf: [...plans, ...terminalVariants] } }),
+  return { ...object({ decision: { description: "One complete decision: a directSuccess or check ruling, or a terminal. The steps and results tables carry what the ruling does; a terminal decision sends steps [] and results []. The server assembles the internal bundle.",
+    anyOf: [...flatPlans, ...terminalVariants] },
+    ...(variants.length > 0 ? { steps: { $ref: "#/$def/steps", description: "What the character does, one step per row, without results. Empty for a terminal decision." } } : {}),
+    ...(variants.length > 0 ? { results: { $ref: "#/$def/results", description: "One row per (step, branch): the outcome of an observe, social or worldInteraction step. A directSuccess step has one result row; the step that owns a check has a success row and a failure row. Empty for a terminal decision." } } : {}) }),
     ...(Object.keys(definitions).length > 0 ? { $def: definitions } : {}) };
 }
 
 /** Pure wire -> domain representation. Invalid semantic fields are preserved
  * for the existing complete validator. Ambiguous or colliding representations
  * fail at their actual argument path; nothing guesses a missing decision. */
+const RESULT_BRANCHES = ["result", "success", "failure"] as const;
+type ResultBranch = typeof RESULT_BRANCHES[number];
+const SOCIAL_RESPONSE_FIELDS: Readonly<Record<string, string>> = Object.freeze({ kind: "responseKind", text: "responseText", motive: "responseMotive", basis: "responseBasis" });
+/** Decoded draft -> "step:branch" -> the wire ordinal of that result row, so
+ * diagnostics on a result point at the row the model actually wrote. */
+const resultOrdinals = new WeakMap<object, ReadonlyMap<string, number>>();
+
 export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
   if (!isPlainRecord(value)) fail("TYPE_MISMATCH", "filling:object-required", [], { type: "object" }, value);
-  requireOnly(value, ["decision"], []);
+  requireOnly(value, ["decision", "steps", "results"], []);
   if (!isPlainRecord(value.decision)) fail(Object.hasOwn(value, "decision") ? "TYPE_MISMATCH" : "FIELD_MISSING",
     "filling:decision-required", ["decision"], { type: "object" }, value.decision);
-  return decodeDecision(value.decision, ["decision"], false, resultLayouts(domain));
+  const layouts = resultLayouts(domain);
+  const decision = value.decision;
+  if (typeof decision.kind !== "string" || !rulings.includes(decision.kind)) {
+    for (const table of ["steps", "results"]) {
+      const rows = value[table];
+      if (rows !== undefined && !(Array.isArray(rows) && rows.length === 0)) {
+        fail("CONSTRAINT_CONFLICT", "filling:terminal-tables-must-be-empty", [table], "absent or []", rows);
+      }
+    }
+    return decodeDecision(decision, ["decision"], false, layouts);
+  }
+  const { steps, results } = value;
+  if (!Array.isArray(steps)) fail(steps === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "filling:steps-table-required", ["steps"], { type: "array" }, steps);
+  const checked = decision.kind === "check";
+  const ordinals = new Map<string, number>();
+  const injected = steps.map((step, index) => {
+    if (!isPlainRecord(step)) return step;
+    const row: RecordValue = { ...step };
+    if (!checked) {
+      // The flat table always carries outcomeBinding; a directSuccess step can only say always.
+      if (Object.hasOwn(row, "outcomeBinding")) {
+        if (row.outcomeBinding !== "always") fail("VALUE_INVALID", "filling:direct-outcome-binding-always", ["steps", index, "outcomeBinding"], { const: "always" }, row.outcomeBinding);
+        delete row.outcomeBinding;
+      }
+    }
+    return row;
+  });
+  if (results !== undefined) {
+    if (!Array.isArray(results)) fail("TYPE_MISMATCH", "filling:results-table-required", ["results"], { type: "array" }, results);
+    for (const [ordinal, item] of results.entries()) {
+      const path = ["results", ordinal];
+      if (!isPlainRecord(item)) fail("TYPE_MISMATCH", "filling:result-row-object-required", path, { type: "object" }, item);
+      const { kind, step, branch, ...content } = item;
+      if (!Number.isInteger(step) || (step as number) < 0 || (step as number) >= injected.length) {
+        fail(step === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-step-index", [...path, "step"], { type: "integer", minimum: 0, maximum: injected.length - 1 }, step);
+      }
+      const target = injected[step as number];
+      if (!isPlainRecord(target)) fail("TYPE_MISMATCH", "filling:result-step-object-required", ["steps", step as number], { type: "object" }, target);
+      if (kind !== target.kind) fail(kind === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-kind-must-match-step", [...path, "kind"], { const: target.kind }, kind);
+      if (!(RESULT_BRANCHES as readonly unknown[]).includes(branch)) {
+        fail(branch === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-branch", [...path, "branch"], { enum: [...RESULT_BRANCHES] }, branch);
+      }
+      if (Object.hasOwn(target, branch as string)) fail("CONSTRAINT_CONFLICT", "filling:result-duplicate-row", path, { unique: ["step", "branch"] }, item);
+      target[branch as string] = target.kind === "social" ? nestSocialResult(content) : content;
+      ordinals.set(`${step}:${branch}`, ordinal);
+    }
+  }
+  try {
+    const decoded = decodeDecision({ ...decision, steps: injected }, ["decision"], false, layouts);
+    resultOrdinals.set(decoded, ordinals);
+    return decoded;
+  } catch (error) {
+    if (!(error instanceof ProposalFillingError)) throw error;
+    throw new ProposalFillingError(error.diagnostics.map(diagnostic => diagnostic.pathBase === "arguments" && diagnostic.path !== undefined
+      ? { ...diagnostic, path: remapNestedArgumentPath(diagnostic.path, ordinals) } : diagnostic));
+  }
+}
+
+/** The nested decoder reports decision.steps[i].(result|success|failure)...;
+ * the wire has steps[i] and results[j]. */
+function remapNestedArgumentPath(path: ProposalDiagnosticPath, ordinals: ReadonlyMap<string, number>): ProposalDiagnosticPath {
+  if (path[0] !== "decision" || path[1] !== "steps") return path;
+  if (typeof path[2] !== "number") return ["steps", ...path.slice(2)];
+  const step = path[2], rest = path.slice(3);
+  if (typeof rest[0] === "string" && (RESULT_BRANCHES as readonly string[]).includes(rest[0])) {
+    const ordinal = ordinals.get(`${step}:${rest[0]}`);
+    if (ordinal === undefined) return path;
+    let tail = rest.slice(1);
+    if (tail[0] === "response") {
+      tail = typeof tail[1] === "string" && Object.hasOwn(SOCIAL_RESPONSE_FIELDS, tail[1])
+        ? [SOCIAL_RESPONSE_FIELDS[tail[1]]!, ...tail.slice(2)] : tail.slice(1);
+    }
+    return ["results", ordinal, ...tail];
+  }
+  return ["steps", step, ...rest];
+}
+
+function nestSocialResult(content: RecordValue): RecordValue {
+  const { responseKind, responseText, responseMotive, responseBasis, ...rest } = content;
+  const response: RecordValue = {};
+  if (responseKind !== undefined) response.kind = responseKind;
+  if (responseText !== undefined) response.text = responseText;
+  if (responseMotive !== undefined) response.motive = responseMotive;
+  if (responseBasis !== undefined) response.basis = responseBasis;
+  return { ...rest, response };
+}
+
+function flattenSocialResult(body: unknown): RecordValue {
+  if (!isPlainRecord(body)) return { body };
+  const { response, ...rest } = body;
+  if (!isPlainRecord(response)) return body;
+  const { kind, text, motive, basis, ...other } = response;
+  return { ...rest, ...(kind === undefined ? {} : { responseKind: kind }), ...(text === undefined ? {} : { responseText: text }),
+    ...(motive === undefined ? {} : { responseMotive: motive }), ...(basis === undefined ? {} : { responseBasis: basis }),
+    ...(Object.keys(other).length === 0 ? {} : { response: other }) };
+}
+
+/** Where a result of (step, branch) sits in the wire: the row the model wrote
+ * when known, else the canonical order the encoder emits. */
+function resultRowOrdinal(draft: RecordValue, step: number, branch: ResultBranch): number | undefined {
+  const known = resultOrdinals.get(draft)?.get(`${step}:${branch}`);
+  if (known !== undefined) return known;
+  if (!Array.isArray(draft.proposals)) return undefined;
+  let ordinal = 0;
+  for (const [index, entry] of draft.proposals.entries()) {
+    if (!isPlainRecord(entry) || !isPlainRecord(entry.branches)) continue;
+    const rows: ResultBranch[] = entry.branches.failure === null || entry.branches.failure === undefined ? ["result"] : ["success", "failure"];
+    for (const row of rows) { if (index === step && row === branch) return ordinal; ordinal += 1; }
+  }
+  return undefined;
 }
 
 function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, continuation: boolean, layouts: ResultLayouts): RecordValue {
@@ -272,7 +439,24 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
  * accepting the retired wire. Only the new decision shape is accepted above. */
 export function encodeProposalFilling(value: unknown, domain: Schema): unknown {
   if (!isPlainRecord(value) || (value.mode !== "adjudication" && value.mode !== "terminal")) return value;
-  return { decision: encodeDecision(value, false, resultLayouts(domain)) };
+  const nested = encodeDecision(value, false, resultLayouts(domain));
+  // A terminal decision still sends the two empty tables: the strict schema
+  // requires every root member whenever any step kind is selected.
+  if (value.mode !== "adjudication" || !isPlainRecord(nested)) return { decision: nested, steps: [], results: [] };
+  const { steps, ...decision } = nested;
+  if (!Array.isArray(steps)) return { decision, ...(steps === undefined ? {} : { steps }) };
+  const flatSteps: unknown[] = [], results: RecordValue[] = [];
+  steps.forEach((step, index) => {
+    if (!isPlainRecord(step)) { flatSteps.push(step); return; }
+    const { result, success, failure, ...entry } = step;
+    if (entry.outcomeBinding === undefined) entry.outcomeBinding = "always";
+    flatSteps.push(entry);
+    for (const [branch, body] of [["result", result], ["success", success], ["failure", failure]] as const) {
+      if (body === undefined) continue;
+      results.push({ kind: entry.kind, step: index, branch, ...(entry.kind === "social" ? flattenSocialResult(body) : isPlainRecord(body) ? body : { body }) });
+    }
+  });
+  return { decision, steps: flatSteps, results };
 }
 
 function encodeDecision(value: RecordValue, continuation: boolean, layouts: ResultLayouts): unknown {
@@ -417,11 +601,11 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
           const paths = ["success", "failure"].flatMap(name => {
             const branch = (entry.branches as RecordValue)[name];
             if (!isPlainRecord(branch) || !isPlainRecord(branch.response) || !Array.isArray(branch.response.basis)) return [];
+            const row = (entry.branches as RecordValue).failure === null ? "result" : name as ResultBranch;
             return branch.response.basis.flatMap((source, index) => isPlainRecord(source)
               && source.kind === "materializedKnowledge" && source.definitionRef === consume.handle
-              ? [[...prefix, "steps", ordinal, entry.branches && (entry.branches as RecordValue).failure === null ? "result" : name,
-                "response", "basis", index, "worldFactRef"]] : []);
-          });
+              ? [resultBasisArgumentPath(value, prefix, ordinal, row, [index, "worldFactRef"])] : []);
+          }).filter((path): path is (string | number)[] => path !== undefined);
           if (paths.length) return paths.map(path => ({ ...diagnostic, path, pathBase: "arguments" as const }));
         }
       }
@@ -431,8 +615,10 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
       || !Array.isArray(value.proposals)) return diagnostic;
     const entry = value.proposals[ordinal];
     if (!isPlainRecord(entry) || entry.kind !== "social" || !isPlainRecord(entry.branches)) return diagnostic;
-    const resultField = entry.branches.failure === null ? "result" : branchName;
-    const path = [...prefix, "steps", ordinal, resultField, "response", "basis"];
+    const resultField = (entry.branches.failure === null ? "result" : branchName) as ResultBranch;
+    const basisPath = resultBasisArgumentPath(value, prefix, ordinal, resultField, []);
+    if (basisPath === undefined) return diagnostic;
+    const path = basisPath;
     if (index === undefined) return { ...diagnostic, path, pathBase: "arguments" as const };
     if (typeof index !== "number") return diagnostic;
     path.push(index);
@@ -445,6 +631,17 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
     else if (source.kind !== "npcContext") return diagnostic;
     return { ...diagnostic, path, pathBase: "arguments" as const };
   });
+}
+
+/** The main decision's social basis lives on a result row (results[j].responseBasis);
+ * a clarification continuation keeps the nested step path. */
+function resultBasisArgumentPath(draft: RecordValue, prefix: readonly (string | number)[], step: number, branch: ResultBranch,
+  tail: readonly (string | number)[]): (string | number)[] | undefined {
+  if (prefix.length === 1 && prefix[0] === "decision") {
+    const ordinal = resultRowOrdinal(draft, step, branch);
+    return ordinal === undefined ? undefined : ["results", ordinal, "responseBasis", ...tail];
+  }
+  return [...prefix, "steps", step, branch, "response", "basis", ...tail];
 }
 
 function decodeResult(value: unknown, layout: ResultLayout | undefined, path: ProposalDiagnosticPath): unknown {

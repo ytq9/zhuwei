@@ -195,8 +195,8 @@ test("component cardinality and duplication reach Provider diagnostics without u
   const f = scenario("diagnostics");
   for (const components of [[{ entryRef: f.refs[0], quantity: 1, recoverable: true }],
     [{ entryRef: f.refs[0], quantity: 1, recoverable: true }, { entryRef: f.refs[0], quantity: 1, recoverable: true }]]) {
-    const raw = { decision: { kind: "directSuccess", duration: "5min", risk: "现有组件的连接。", successOutcome: "组件连接完成。", steps: [
-      { kind: "inventoryOperation", basisRefs: [], operation: operation(f, { components }), summary: "连接组件。" }] } };
+    const raw = { decision: { kind: "directSuccess", duration: "5min", risk: "现有组件的连接。", successOutcome: "组件连接完成。" }, steps: [
+      { kind: "inventoryOperation", basisRefs: [], operation: operation(f, { components }), summary: "连接组件。", outcomeBinding: "always" }], results: [] };
     let calls = 0;
     const result = await invokeSubmitKpProposalBundleWithOneCorrection({ modelId: "scripted-test", message: "固定玩家意图", requiredContext: f.requiredContext, persistRepairTicket() { assert.fail("unsafe component choices must not enter repair"); },
       binding: { async run() { calls++; return { choices: [{ message: { tool_calls: [{ type: "function", function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(raw) } }] } }] }; } } });

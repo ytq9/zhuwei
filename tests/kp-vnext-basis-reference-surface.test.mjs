@@ -26,7 +26,7 @@ const response = wire => ({ choices: [{ message: { tool_calls: [{ type: 'functio
   name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(wire),
 } }] } }] });
 const decision = (schema, kind = 'directSuccess') => expandDeepSeekSchema(schema).properties.decision.anyOf.find(value => value.properties.kind.enum.includes(kind));
-const step = (schema, kind) => decision(schema).properties.steps.items.anyOf.find(value => value.properties.kind.enum.includes(kind));
+const step = (schema, kind) => expandDeepSeekSchema(schema).properties.steps.items.anyOf.find(value => value.properties.kind.enum.includes(kind));
 
 test('the real Provider basis selector excludes a read-bound NPC wrapper; original draft still fails the original lowerer', async () => {
   const f = fixture('wrapper'), wrapper = npcDecisionEntryRef(NPC), wire = encodeVNextStrictToolBundle(social([NPC, wrapper]));

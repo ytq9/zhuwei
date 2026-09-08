@@ -1,3 +1,4 @@
+import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture } from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -84,7 +85,7 @@ test('different ruling and continuation structures use one remove proof while th
 test('legitimate narrative intent remains required and cannot be replaced by the frozen input object', async () => {
   for (const wire of [refusal(), clarification(), direct()]) {
     const accepted = await first(wire); assert.equal(accepted.kind, 'locallyAccepted', JSON.stringify(accepted));
-    if (wire.decision.kind === 'directSuccess') wire.decision.steps[0].intent = structuredClone(requiredContext.intent);
+    if (wire.decision.kind === 'directSuccess') wire.steps[0].intent = structuredClone(requiredContext.intent);
     else wire.decision.intent = structuredClone(requiredContext.intent);
     const rejected = await first(wire); assert.equal(rejected.kind, 'rejected', JSON.stringify(rejected));
     assert.equal(rejected.repairUsed, false); assert.ok(rejected.diagnostics.every(d => !d.repair.allowed));
@@ -128,7 +129,7 @@ test('nonexecuting terminal proof does not grant the third execution call budget
 });
 test('remove composes with existing fixed and presentation repairs without accepting arbitrary empty changes', async () => {
   const wire = echo(encodeVNextStrictToolBundle(sharedCheckBundle()));
-  wire.decision.risk = ` ${wire.decision.risk} `; wire.decision.steps[1].success.summary = '';
+  wire.decision.risk = ` ${wire.decision.risk} `; row(wire, 1, 'success').summary = '';
   const result = await first(wire); assert.equal(result.kind, 'repairRequired', JSON.stringify(result));
   assert.deepEqual(result.repairTicket.repairPlan.map(c => c.operation).sort(), ['remove', 'replace', 'replace']);
   const done = await confirm(result.repairTicket, { confirm: 'server-plan', summaries: [

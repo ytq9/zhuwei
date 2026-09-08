@@ -1,3 +1,4 @@
+import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -136,7 +137,7 @@ test('declared production, inventory quantity and NPC motives cannot be invented
   for (const [factory, mutate, path, code] of [
     ...['observe', 'worldInteraction'].map(kind => [() => sharedCheckBundle(kind),
       wire => { wire.proposals[1].produces = [{ kind: 'semanticDefinition', handle: 'prospective:unintended', outcomeBinding: 'always' }]; },
-      ['decision', 'steps', 1, 'handle'], 'CONSTRAINT_CONFLICT']),
+      ['steps', 1, 'handle'], 'CONSTRAINT_CONFLICT']),
     [itemBundle, wire => { wire.proposals[2].quantity = '2'; }, ['proposals', 2, 'quantity'], 'TYPE_MISMATCH'],
     [() => worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:speaker' }),
       wire => { delete wire.proposals[1].branches.success.response.motive; },
@@ -324,9 +325,9 @@ test('server dependencies are derived once while missing producers and supplied 
     assert.equal(good.repairUsed, false);
     assert.ok(good.bundle.proposals.every(entry => new Set(entry.consumes.map(ref => JSON.stringify(ref))).size === entry.consumes.length));
     for (const mutate of [
-      wire => { wire.decision.steps[0].consumes = []; },
-      wire => { wire.decision.steps[0].produces = { kind: 'none' }; },
-      wire => { wire.decision.steps[0].basisRefs.push('prospective:missing'); },
+      wire => { wire.steps[0].consumes = []; },
+      wire => { wire.steps[0].produces = { kind: 'none' }; },
+      wire => { wire.steps[0].basisRefs.push('prospective:missing'); },
     ]) {
       const wire = structuredClone(source); mutate(wire); let calls = 0;
       const result = await invokeSubmitKpProposalBundleWithOneCorrection({ ...input,

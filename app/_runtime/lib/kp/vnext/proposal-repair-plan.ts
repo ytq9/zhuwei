@@ -248,7 +248,7 @@ function originalDurationIntegers(bundle: unknown, source?: string): ReadonlyMap
         if (isPlainRecord(entry) && entry.kind === "formActorPlan") select(entry, [...draftPath, index], [...wirePath, "steps", index]);
       });
     };
-    if (bundle.mode === "adjudication") proposals(bundle.proposals, ["proposals"], ["decision"]);
+    if (bundle.mode === "adjudication") proposals(bundle.proposals, ["proposals"], []);
     if (bundle.mode === "terminal" && isPlainRecord(bundle.terminal)) {
       if (bundle.terminal.kind === "passTime") select(bundle.terminal, ["terminal"], ["decision"]);
       if (bundle.terminal.kind === "clarification" && Array.isArray(bundle.terminal.choices)) bundle.terminal.choices.forEach((choice, index) => {

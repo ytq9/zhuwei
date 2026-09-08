@@ -37,7 +37,8 @@ import {
 import { validateVNextProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-validator.ts";
 const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = expandDeepSeekSchema(TRANSPORT_SCHEMA);
 const DECISION_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.decision.anyOf;
-const DIRECT_STEP_SCHEMAS = DECISION_SCHEMAS.find(item => item.properties.kind.enum[0] === "directSuccess").properties.steps.items.anyOf;
+const DIRECT_STEP_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.steps.items.anyOf;
+const RESULT_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.results.items.anyOf;
 const decodeDomainFixture = value => decodeVNextStrictToolBundle(encodeVNextStrictToolBundle(value));
 import {
   composeDefinition,
@@ -318,8 +319,14 @@ test("vNext-2 uses one locally valid DeepSeek strict tool schema", () => {
   assert.equal(worldInteractionSchema.properties.intent.pattern, "[\\s\\S]+");
   assert.equal(worldInteractionSchema.properties.consumes, undefined);
   assert.equal(worldInteractionSchema.properties.produces, undefined);
-  assert.ok(worldInteractionSchema.properties.result);
+  // Results are their own table: a step row carries no result, and the
+  // worldInteraction result variant names its step and branch.
+  assert.equal(worldInteractionSchema.properties.result, undefined);
   assert.equal(worldInteractionSchema.properties.failure, undefined);
+  const worldInteractionResult = RESULT_SCHEMAS.find((entry) => entry.properties.kind.enum[0] === "worldInteraction");
+  assert.deepEqual(worldInteractionResult.properties.branch.enum, ["result", "success", "failure"]);
+  assert.equal(worldInteractionResult.properties.step.type, "integer");
+  assert.ok(worldInteractionResult.properties.entries);
   // Every materialization branch is closed the same way, whichever
   // combination it encodes: one semantic kind, and a produced handle bound to
   // the entry's own outcome.
@@ -577,8 +584,8 @@ test("strict main and correction parsers reject duplicate JSON members at every 
     "{\"decision\":{},",
   );
   const duplicateNestedSummary = valid.replace(
-    /"result":\{/u,
-    "\"result\":{\"summary\":\"伪造结果。\",",
+    /"branch":"result",/u,
+    "\"branch\":\"result\",\"summary\":\"伪造结果。\",",
   );
   for (const rawArguments of [duplicateMode, duplicateNestedSummary]) {
     assert.throws(
@@ -648,7 +655,7 @@ test("closed domain rejects ambiguous shared checks and non-random outcome bindi
   );
 
   const direct = encodeVNextStrictToolBundle(worldInteractionArguments());
-  direct.decision.steps[0].outcomeBinding = "onSuccess";
+  direct.steps[0].outcomeBinding = "onSuccess";
   assert.throws(
     () => parseSubmitKpProposalBundleResponse(toolResponse(direct)),
     (error) => error instanceof VNextProposalBundleOutputError,
@@ -693,7 +700,7 @@ test("the stage-three transport surface is exactly what the server can execute",
   // A tripwire, not a ceiling: every value here is one the layers below the
   // wire already support, and widening it further should be a deliberate edit
   // that updates this list rather than a silent drift.
-  assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision"]);
+  assert.deepEqual(Object.keys(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["decision", "steps", "results"]);
   assert.deepEqual(DECISION_SCHEMAS.map(branch => branch.properties.kind.enum[0]),
     ["directSuccess", "check", "inWorldRefusal", "knowledgeReview", "passTime", "clarification", "abilityOperation"]);
   // Materialization uses closed variants rather than one flat shape:

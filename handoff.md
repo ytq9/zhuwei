@@ -122,7 +122,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ### 4. 第 2、3 层只管几小时尺度 —— 用户已裁定乙，本地已实现（parser v46）
 
-[合同](docs/agent/vnext-hours-scale-promise-contract-proposal.md) §7 是实现回执。promise 后果带 `due`（none|1h|halfDay|day|nextDawn）和 `trace`；Rules 在同一根、`PromiseMade` 折入之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。**round82 跑了（[回执](docs/agent/vnext-round82-validation.md)）**：模型第一次暴露就填了 `due:"1h"` 和 trace（KP 半边有真实证据），但草稿结尾多一个 `]`，重发相同，未提交；第 2、3 层仍零真实证据。同一草稿 `authorityRefs: []` 会是下一个拒绝点，已给该字段加描述与指引（parser v47）。round83 用同一三句再跑：承诺填全了（own ref、`due:"1h"`、trace），但检定 d20 = 3 失败，瓦罗拒绝，`legalRefusal` 停止（[回执](docs/agent/vnext-round83-validation.md)）。第 2、3 层的真实正例仍缺一个过 DC 的点数。模组没有开场时刻字段，`nextDawn` 现在从午夜起算。原始推理保留如下。
+[合同](docs/agent/vnext-hours-scale-promise-contract-proposal.md) §7 是实现回执。promise 后果带 `due`（none|1h|halfDay|day|nextDawn）和 `trace`；Rules 在同一根、`PromiseMade` 折入之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。**round82 跑了（[回执](docs/agent/vnext-round82-validation.md)）**：模型第一次暴露就填了 `due:"1h"` 和 trace（KP 半边有真实证据），但草稿结尾多一个 `]`，重发相同，未提交；第 2、3 层仍零真实证据。同一草稿 `authorityRefs: []` 会是下一个拒绝点，已给该字段加描述与指引（parser v47）。round83 用同一三句再跑：承诺填全了（own ref、`due:"1h"`、trace），但检定 d20 = 3 失败，瓦罗拒绝，`legalRefusal` 停止（[回执](docs/agent/vnext-round83-validation.md)）。两批的长草稿都在结尾多关一层括号，用户裁定把 wire 拆成三张平表 `decision / steps / results`（[回执](docs/agent/vnext-three-table-wire-validation.md)，parser v48），真实模型还没见过这个形状。第 2、3 层的真实正例仍缺一个过 DC 的点数。模组没有开场时刻字段，`nextDawn` 现在从午夜起算。原始推理保留如下。
 
 「明早卯时把文书送来」这一类才需要 `consequences.promise` → `formActorPlan` → due。`formActorPlan` 只认行动前 `state` 里的依据（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以最短闭合是 promise 自带 `dueMicros`、Rules 在同根内 `PromiseMade` fold 之后派生计划——那时依据已在累加状态里。另立合同，不动现有 `consequences` 指引。场景要换成几小时尺度的，round70 那句半分钟不再用来验这层。
 

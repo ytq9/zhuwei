@@ -1,3 +1,4 @@
+import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -15,22 +16,23 @@ import { assertDeepSeekStrictToolModelInput } from '../app/_runtime/lib/kp/deeps
 // must decode it the same way. Anywhere else "none" stays a reference error.
 const NPC = 'npc:none-sentinel:archivist';
 function socialWire(addressedThreadRef, relationshipRef) {
-  return { decision: { kind: 'directSuccess', duration: '5min', risk: '普通交谈。', successOutcome: '作出回应。',
+  return { decision: { kind: 'directSuccess', duration: '5min', risk: '普通交谈。', successOutcome: '作出回应。' },
     steps: [{ kind: 'social', basisRefs: [NPC], sceneRef: SCENE, npcRef: NPC, addressedThreadRef, goal: '说明来意。', method: '当面交谈。',
-      audience: 'participants', retryChange: { kind: 'none' },
-      result: { outcomeCode: 'answered', summary: '对方作出回应。',
-        response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] },
-        consequences: relationshipRef === undefined ? [] : [{ kind: 'relationship', relationshipRef, change: '略有好感。', basisFactRefs: [] }] } }] } };
+      audience: 'participants', retryChange: { kind: 'none' }, outcomeBinding: 'always' }],
+    results: [{ kind: 'social', step: 0, branch: 'result', outcomeCode: 'answered', summary: '对方作出回应。',
+      responseKind: 'speech', responseText: '我听到了。', responseMotive: '回应本人刚听到的话。', responseBasis: [{ kind: 'playerExpression' }],
+      consequences: relationshipRef === undefined ? [] : [{ kind: 'relationship', relationshipRef, change: '略有好感。', basisFactRefs: [] }] }] };
 }
 function planWire(factionRef) {
-  return { decision: { kind: 'directSuccess', duration: 'none', risk: '只形成私有计划。', successOutcome: '记录计划。',
+  return { decision: { kind: 'directSuccess', duration: 'none', risk: '只形成私有计划。', successOutcome: '记录计划。' },
     steps: [{ kind: 'formActorPlan', npcRef: NPC, factionRef, goal: '整理档案。', nextStep: '取出账册。', premiseRefs: [NPC], resourceRefs: [],
-      durationMicros: '2000000', traceDescription: '账台上多了一本翻开的账册。', alternateTargetRef: SCENE, alternateReason: '若账册不在，改为询问。' }] } };
+      durationMicros: '2000000', traceDescription: '账台上多了一本翻开的账册。', alternateTargetRef: SCENE, alternateReason: '若账册不在，改为询问。', outcomeBinding: 'always' }],
+    results: [] };
 }
 function checkWire(skill, abilityRef) {
   const wire = encodeVNextStrictToolBundle(sharedCheckBundle('worldInteraction'));
   wire.decision.skill = skill;
-  for (const step of wire.decision.steps) if (step.kind === 'worldInteraction') step.abilityRef = abilityRef;
+  for (const step of wire.steps) if (step.kind === 'worldInteraction') step.abilityRef = abilityRef;
   return wire;
 }
 const parse = wire => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
@@ -53,14 +55,14 @@ test('a bare "none" and {kind:"none"} parse to byte-identical bundles on every n
   assert.equal(parsed.bundle.proposals[0].branches.success.consequences[0].relationshipRef, null);
   // An actual reference on the same field is left alone; the domain-to-wire encoder keeps the domain null as is.
   assert.equal(parse(socialWire('thread:one')).bundle.proposals[0].addressedThreadRef, 'thread:one');
-  assert.equal(encodeVNextStrictToolBundle(parsed.bundle).decision.steps[0].addressedThreadRef, null);
+  assert.equal(encodeVNextStrictToolBundle(parsed.bundle).steps[0].addressedThreadRef, null);
 });
 
 test('"none" on a field that is not nullable stays a reference error, not a sentinel', () => {
   for (const mutate of [
-    wire => { wire.decision.steps[0].npcRef = 'none'; },
-    wire => { wire.decision.steps[0].basisRefs = ['none']; },
-    wire => { wire.decision.steps[0].sceneRef = 'none'; },
+    wire => { wire.steps[0].npcRef = 'none'; },
+    wire => { wire.steps[0].basisRefs = ['none']; },
+    wire => { wire.steps[0].sceneRef = 'none'; },
   ]) {
     const wire = socialWire({ kind: 'none' }); mutate(wire);
     const parsed = parse(wire);
@@ -90,7 +92,7 @@ test('the round 79 shape now reaches local acceptance in one call, with no corre
 test('a promise on the wire carries its due tier and trace; due none takes the none sentinel as its trace', () => {
   const promise = (due, trace) => {
     const wire = socialWire({ kind: 'none' });
-    wire.decision.steps[0].result.consequences = [{ kind: 'promise', content: '明早卯时把备案文书送到账台。', condition: '天亮以后。', authorityRefs: [NPC], due, trace }];
+    row(wire, 0, 'result').consequences = [{ kind: 'promise', content: '明早卯时把备案文书送到账台。', condition: '天亮以后。', authorityRefs: [NPC], due, trace }];
     return wire;
   };
   const timed = parse(promise('nextDawn', '账台上多了一份盖印的备案文书。'));

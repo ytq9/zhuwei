@@ -28,10 +28,13 @@ function entryField(schema) {
   const expanded = expandDeepSeekSchema(schema);
   const decisions = expanded.properties.decision.anyOf;
   const clarification = decisions.find(variant => variant.properties.kind.enum.includes('clarification'));
-  const frames = [...decisions, ...clarification.properties.choices.items.properties.continuation.anyOf];
-  return frames.filter(variant => variant.properties.kind.enum.some(kind => ['directSuccess', 'check'].includes(kind)))
-    .flatMap(variant => {
-      const inventory = variant.properties.steps.items.anyOf
+  // The main decision's steps are a root table; clarification continuations keep their nested steps.
+  const continuations = clarification.properties.choices.items.properties.continuation.anyOf
+    .filter(variant => variant.properties.kind.enum.some(kind => ['directSuccess', 'check'].includes(kind)));
+  const stepTables = [expanded.properties.steps, ...continuations.map(variant => variant.properties.steps)];
+  return stepTables
+    .flatMap(table => {
+      const inventory = table.items.anyOf
         .find(entry => entry.properties.kind.enum.includes('inventoryOperation'));
       assert.ok(inventory, 'each direct/check and clarification frame retains inventory operations');
       const fields = [];

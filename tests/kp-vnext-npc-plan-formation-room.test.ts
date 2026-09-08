@@ -155,10 +155,10 @@ async function snapshot(stub: Stub, root?: string) { return runInDurableObject(s
 }); }
 
 function formation(premiseRefs = [NPC]) { return { decision: { kind: "directSuccess", duration: "none",
-  risk: "这一步只形成私有计划。", successOutcome: "记录计划，后续行为尚未执行。", steps: [{ kind: "formActorPlan", npcRef: NPC,
+  risk: "这一步只形成私有计划。", successOutcome: "记录计划，后续行为尚未执行。" }, steps: [{ kind: "formActorPlan", npcRef: NPC,
     factionRef: { kind: "none" }, goal: "NPC_PRIVATE_GOAL_CANARY", nextStep: "在门框系上蓝色布带。", premiseRefs,
     resourceRefs: [], durationMicros: "2000000", traceDescription: DESCRIPTION,
-    alternateTargetRef: SCENE, alternateReason: "NPC_PRIVATE_ALTERNATE_CANARY" }] } }; }
+    alternateTargetRef: SCENE, alternateReason: "NPC_PRIVATE_ALTERNATE_CANARY", outcomeBinding: "always" }], results: [] }; }
 const formationInput = (id: string): RoomActionInput => ({ kind: "intent", submissionId: id, text: "我与值班人做一次简短交接。" });
 
 it("NPC source choices cross the real Room journal and replay once, while a wrapper reference has no effects or repair", async () => {
@@ -179,12 +179,12 @@ it("NPC source choices cross the real Room journal and replay once, while a wrap
       contextDiagnostics = { choices, entries: (context.entries as RecordValue[]).filter(entry => String(entry.entryRef).includes("npc"))
         .map(entry => ({ entryRef: entry.entryRef, kind: entry.kind, reason: entry.reason })) };
       ownRefs = choices.find(value => value.npcRef === npc)?.refs;
-      return JSON.stringify({ decision: { kind: "directSuccess", duration: "5min", risk: "这是普通交谈。", successOutcome: "值班人作出回答。",
+      return JSON.stringify({ decision: { kind: "directSuccess", duration: "5min", risk: "这是普通交谈。", successOutcome: "值班人作出回答。" },
         steps: [{ kind: "social", basisRefs: [npc], sceneRef: SCENE, npcRef: npc, addressedThreadRef: { kind: "none" },
-          goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" },
-          result: { outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", response: { kind: "speech",
-            text: "我没听说过交接安排。", motive: "明知安排但故意隐瞒。", basis: [allowed ? ownRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`] },
-            consequences: [] } }] } });
+          goal: "说明目前的交接安排。", method: "当面回应。", audience: "participants", retryChange: { kind: "none" }, outcomeBinding: "always" }],
+        results: [{ kind: "social", step: 0, branch: "result", outcomeCode: "outcome:answered", summary: "值班人给出了自己的说法。", responseKind: "speech",
+          responseText: "我没听说过交接安排。", responseMotive: "明知安排但故意隐瞒。", responseBasis: [allowed ? ownRefs?.find(ref => ref === `knowledge:${npc}:${PREMISE}`) : `npc-decision:${npc}`],
+          consequences: [] }] });
     };
     const outcome = await run(stub, input, c), saved = await snapshot(stub, c.preparedActionId);
     expect(ownRefs, JSON.stringify(contextDiagnostics)).toContain(`knowledge:${npc}:${PREMISE}`);
