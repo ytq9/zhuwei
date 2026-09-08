@@ -1,0 +1,69 @@
+{
+  "round": 87,
+  "verifiedAt": "2026-09-08T06:32:20.018437+00:00",
+  "verdict": "Died on the first sentence with an empty tool call: the proposal call returned submit_kp_proposal_bundle with arguments {} (25 completion tokens, finish_reason tool_calls, no content). The request went to the beta strict endpoint with strict:true on both tools, the local strict-subset checker reports no issue, and the root schema requires decision/steps/results, so strict mode did not enforce even the top-level required list here. Only difference from round86's request: responseBasis items are one plain enum string instead of an anyOf. One sample; a second run on the same source decides whether the shape or the sample is at fault.",
+  "sourceCommit": "b7c682f5ab9234908bb32df3f766262654c090db",
+  "sourceManifestSha256": "6b3200c93e1c749f020c005eb96d9ef5c86acb9a304449d3790ca7494e4000af",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v49",
+  "scenario": "hours-scale three sentences (same as rounds 82-86)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round87-npc-http-e19db827-d478-4668-88cd-25c3d3db8044",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_FORM_INVALID",
+      "modelCalls": 2,
+      "evidence": "offer [social] (46 tokens); fill: arguments \"{}\" (25 tokens). Decoder: FIELD_MISSING at arguments.decision. Parsed JSON, so not an unparsed re-emit; no correction. Request: beta strict endpoint, strict true, submit schema 18390 bytes, responseBasis items {type string, enum: 10 NPC refs + playerExpression} hoisted as $def/field1."
+    }
+  ],
+  "gates": [],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {},
+    "fictionNowMicros": "0",
+    "eventTypes": [],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "Whether the plain-enum response-basis item is what produced the empty call, or the sample was empty for its own reasons.",
+    "DeepSeek strict mode returned a tool call that violates the root required list; the documented behaviour is schema-conforming output or an error."
+  ],
+  "meter": {
+    "calls": 2,
+    "inputTokens": 47204,
+    "outputTokens": 71,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 47204,
+    "outputBudgetCharge": 71,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.142251
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 14:27 Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched at release, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.142251,
+    "budgetCny": 5
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "beforeCount": 323,
+    "afterCount": 323,
+    "headUnchanged": true
+  },
+  "servicesShutdown": "both roles verifiedAbsent; no listener on 4320/4321"
+}
