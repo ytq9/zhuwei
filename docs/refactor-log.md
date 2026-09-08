@@ -3395,3 +3395,7 @@ codec 本来就把裸 `"none"` 解码成 null，只是三个可空引用字段�
 ## 承诺档位 → NPC 定时计划（2026-09-08，parser v46，本地验证）
 
 social 的 promise 后果带 `due`（none|1h|halfDay|day|nextDawn）与 `trace`；`due≠none` 时 Rules 在同一根、`PromiseMade` 折入之后用现成的计划形成派生 `NpcPlanFormed` + timer Activity，premise 就是那条承诺；结算校验接受这一对。`PromiseMade` 事件不变。`nextDawn` 锚在 24 小时虚构日的 06:00，时钟原点默认午夜、可由 campaign.fictionClock 覆盖。见[合同 §7](agent/vnext-hours-scale-promise-contract-proposal.md)。
+
+## round82：承诺档位第一次被真实填对，草稿倒在结尾的 `]`（2026-09-08，源码 `9bbd007`）
+
+新场景首句：双分支 check、1208 token，tool arguments 结尾多一个 `]`，未解析重发逐字节相同，`PROPOSAL_FORM_INVALID`，3 次调用 ¥0.197。同一草稿里 `due:"1h"`、trace 填对，`authorityRefs: []`。随后给承诺 `authorityRefs` 加 wire 描述与指引（至少本 NPC 自己的引用），parser v47。见 [round82 回执](agent/vnext-round82-validation.md)。

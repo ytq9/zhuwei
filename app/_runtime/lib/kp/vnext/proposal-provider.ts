@@ -53,7 +53,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v46",
+  version: "kp-vnext2-proposal-parser-v47",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "full-filling-boundaries-at-selection-then-selected-forms-amendable-once-v5",
   actionDuration: "shared-ruling-duration-tier-none-5min-10min-30min-1h-halfDay-mapped-to-exact-microseconds-none-inside-encounter-v3",
@@ -429,7 +429,7 @@ export function vnextProposalUnparsedArguments(response: unknown): VNextProposal
  * is validated from scratch like any first draft. */
 export function vnextProposalReemitPrompt(evidence: VNextProposalUnparsedArguments): string {
   return JSON.stringify({
-    instruction: "上一次工具调用的 arguments 不是合法 JSON，服务器无法解析出任何草稿，因此没有任何内容被保留或修复。请用同一个工具、同一份冻结上下文，重新完整提交你原本的决定，只需保证输出是合法 JSON：字符串内部的双引号和反斜杠必须转义，不要使用尾随逗号，不要截断。这不是让你改变裁决——重述你本来的决定，不要因为这次失败而换一个更容易写的方案。完整提案仍会从头重验。",
+    instruction: "上一次工具调用的 arguments 不是合法 JSON，服务器无法解析出任何草稿，因此没有任何内容被保留或修复。请用同一个工具、同一份冻结上下文，重新完整提交你原本的决定，只需保证输出是合法 JSON：字符串内部的双引号和反斜杠必须转义，不要使用尾随逗号，不要截断；括号必须成对，每个 { 和 [ 恰好对应一个 } 和 ]，结尾不要多出或漏掉 ] 或 }（syntaxError.location 指出上一次出错的位置）。这不是让你改变裁决——重述你本来的决定，不要因为这次失败而换一个更容易写的方案。完整提案仍会从头重验。",
     syntaxError: { reason: evidence.diagnostic.constraint, ...(evidence.diagnostic.location === undefined ? {} : { location: evidence.diagnostic.location }) },
     originalArguments: evidence.originalArguments,
   });

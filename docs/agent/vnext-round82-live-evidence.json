@@ -1,0 +1,77 @@
+{
+  "round": 82,
+  "verifiedAt": "2026-09-08T03:59:59.175582+00:00",
+  "verdict": "Stopped at the first sentence: the fill (a cha check with two social branches, 1208 output tokens) ended with one stray \"]\" five bytes before the end; the unparsed re-emit returned byte-identical arguments. PROPOSAL_FORM_INVALID, nothing committed, stateVersion 0. In the same rejected draft the model wrote the promise with due \"1h\" and a trace on its first exposure to the contract, and left authorityRefs empty.",
+  "sourceCommit": "9bbd007cf3f7272ac5bd4483bdb4eb48f755aeb1",
+  "sourceManifestSha256": "2ef2e347f0fb64fd984b9787345d93bc98b73ccab34d4573b3cadde10ee8dfa3",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v46",
+  "scenario": "hours-scale three sentences approved 2026-09-08: ask Varo for a copy within the hour; wait a little over an hour; check the desk",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round82-npc-http-fab2fcb1-9a68-46bb-b270-f94bd97ee894",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_FORM_INVALID",
+      "modelCalls": 3,
+      "evidence": "offer [social]; fill: decision check (cha, dc 14, duration 5min) with success/failure social branches; success consequences = [{promise, due:\"1h\", trace:\"账台多出一张盖印的新抄备案纸…\", authorityRefs: []}]; arguments end \"consequences\": []}]}]}} -- one extra \"]\" (JSON error at 2354/2359); re-emit (ordinal 3) returned identical bytes; server telemetry proposalDiagnosticFields [{path:\"arguments.decision.steps[]\", code:\"JSON_SYNTAX\"}]."
+    }
+  ],
+  "gates": [],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {},
+    "fictionNowMicros": "0",
+    "eventTypes": [],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "kp.vnext.selection was not emitted: the fill never settled."
+  ],
+  "meter": {
+    "calls": 3,
+    "inputTokens": 58437,
+    "outputTokens": 2462,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 58437,
+    "outputBudgetCharge": 2462,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.197469
+  },
+  "pricing": {
+    "window": "peak (Tue 2026-09-08 11:5x Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.197469,
+    "budgetCny": 5
+  },
+  "replay": {
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0,
+    "pinnedProfilesMatch": true
+  },
+  "sourceEnd": {
+    "files": 323,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "game": "stopped pid 14366 verifiedAbsent",
+    "capture": "stopped pid 14356 verifiedAbsent",
+    "ports": "4320/4321 no listener"
+  },
+  "notCovered": [
+    "Layer 2 derivation in a real commit (the draft never reached lowering).",
+    "Layer 3 execution during the wait.",
+    "The third narration.",
+    "Whether authorityRefs: [] would have been the next rejection (validator requires at least one)."
+  ]
+}

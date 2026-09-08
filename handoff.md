@@ -78,6 +78,7 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 | [round76](docs/agent/vnext-round76-validation.md) | 同上，在 v41 落地之后 | ordinal 2 **从未发出 HTTP**：本地传输断言要求恰好一个工具，而提案调用带了两个。日志里的 `providerStatus:422` 是本地常量，不是供应商响应 | `transportFailure`，我方缺陷，非模型失败 |
 | [round77](docs/agent/vnext-round77-validation.md) | 同上，传输放宽之后 | 首句 4 次调用完整 committed/published。双工具 surface 真的到达模型（传输修复有真实证据）；选择组合变为 `["social","passTime"]`（round75 是 `["social","commitNarrativeDetail"]`）。但 `passTime` 未被使用，`formActorPlan` 未选，计划/活动/承诺仍为 0 | `legalNoPlan` —— **但这个 gate 可能考错了东西，见 §7** |
 | [round81](docs/agent/vnext-round81-validation.md) | 同上，等待旁白 + 档位 v44 之后 | **三句全部 committed/published**，12 次调用 ¥0.62。首句 `duration:5min`、时钟 0→300000000、裸 `"none"` 被接受；等待第一次有旁白（上下文正确、无编造）；第三句接续真实线程引用。瓦罗拒绝敲击，`consequences: []` 第六批 | 没停：`waited-without-confirmable-reminder` → noReminder 分支走完 |
+| [round82](docs/agent/vnext-round82-validation.md) | **新场景**：一小时内抄副本 / 等一个多小时 / 看账台，承诺档位 v46 之后 | 首句填写是 1208 token 的双分支 check，结尾多一个 `]`，重发逐字节相同。同一草稿里模型**第一次就填了 `due:"1h"` 和 trace**，但 `authorityRefs: []` | `PROPOSAL_FORM_INVALID`（JSON 语法），3 次调用 ¥0.20，0 提交，后两句未发 |
 
 round73 三个必须记住的细节：
 
@@ -120,7 +121,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ### 4. 第 2、3 层只管几小时尺度 —— 用户已裁定乙，本地已实现（parser v46）
 
-[合同](docs/agent/vnext-hours-scale-promise-contract-proposal.md) §7 是实现回执。promise 后果带 `due`（none|1h|halfDay|day|nextDawn）和 `trace`；Rules 在同一根、`PromiseMade` 折入之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。**零真实证据。下一批（round82）要换成几小时尺度的场景**：玩家向瓦罗要备案文书副本，看他是否承诺、是否填非 none 的档位、同根是否派生计划、跨过到期点后是否执行并留痕。模组没有开场时刻字段，`nextDawn` 现在从午夜起算。原始推理保留如下。
+[合同](docs/agent/vnext-hours-scale-promise-contract-proposal.md) §7 是实现回执。promise 后果带 `due`（none|1h|halfDay|day|nextDawn）和 `trace`；Rules 在同一根、`PromiseMade` 折入之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。**round82 跑了（[回执](docs/agent/vnext-round82-validation.md)）**：模型第一次暴露就填了 `due:"1h"` 和 trace（KP 半边有真实证据），但草稿结尾多一个 `]`，重发相同，未提交；第 2、3 层仍零真实证据。同一草稿 `authorityRefs: []` 会是下一个拒绝点，已给该字段加描述与指引（parser v47）。round83 用同一三句再跑。模组没有开场时刻字段，`nextDawn` 现在从午夜起算。原始推理保留如下。
 
 「明早卯时把文书送来」这一类才需要 `consequences.promise` → `formActorPlan` → due。`formActorPlan` 只认行动前 `state` 里的依据（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以最短闭合是 promise 自带 `dueMicros`、Rules 在同根内 `PromiseMade` fold 之后派生计划——那时依据已在累加状态里。另立合同，不动现有 `consequences` 指引。场景要换成几小时尺度的，round70 那句半分钟不再用来验这层。
 
