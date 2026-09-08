@@ -86,7 +86,7 @@ async function initialize(name: string, mechanicalNpc = false): Promise<Stub> {
 // Test-only trusted seeding of an already-existing plan through Rules and the
 // Room journal. The marker is internal and cannot be sent by a client/model.
 // This does not exercise a product entrypoint for generating new ActorPlans.
-async function seedPlan(stub: Stub, trigger = false, resourceRefs: string[] = []) {
+async function seedPlan(stub: Stub, trigger = false, resourceRefs: string[] = [], traceVisibility = "visibility:scene-observers", targetRef = SCENE) {
   return runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { profiles, state } = target.authoritativeReplay();
     const root = `root:fixture:plan:${trigger}`, now = state.fictionTimelines[characterTimelineId(state, NPC)!].nowMicros;
@@ -96,8 +96,8 @@ async function seedPlan(stub: Stub, trigger = false, resourceRefs: string[] = []
       activity: { activityId: ACTIVITY, activityKind: "watchDuty", intendedDurationMicros: "2000000" },
       due: trigger ? null : { kind: "fictionTime", atFictionMicros: (BigInt(now) + 2000000n).toString() },
       trigger: trigger ? { kind: "knowledgeAcquired", knowledgeRef: PREMISE } : null,
-      trace: { factRef: TRACE, description: DESCRIPTION, visibilityPolicyRef: "visibility:scene-observers" },
-      alternateTarget: { targetRef: SCENE, reason: "NPC_PRIVATE_TARGET_REASON_CANARY" },
+      trace: { factRef: TRACE, description: DESCRIPTION, visibilityPolicyRef: traceVisibility },
+      alternateTarget: { targetRef, reason: "NPC_PRIVATE_TARGET_REASON_CANARY" },
     }, root));
     expect(result.kind, JSON.stringify(result)).toBe("committed");
     if (result.kind !== "committed") throw new Error("the existing ActorPlan fixture did not commit");
@@ -171,7 +171,9 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: un
       if (response === undefined) throw new Error("a durable player proposal must be reused");
       const name = String(record(record((request.tools as RecordValue[])[0]).function).name);
       return { choices: [{ message: { tool_calls: [{ type: "function", function: { name,
-        arguments: JSON.stringify(encodeVNextStrictToolBundle(response)) } }] } }] };
+        arguments: JSON.stringify(name === "offer_kp_proposal_bundle"
+          ? { requestedCapabilities: [record(record(response).terminal).kind] }
+          : encodeVNextStrictToolBundle(response)) } }] } }] };
     } }) });
     return recoveryCapability === undefined
       ? handleRoomAction({ principal: ALICE, authority, kp }, input)
@@ -381,11 +383,65 @@ for (const checkpoint of ["afterRandomnessRequestCommit", "afterRandomnessCandid
     expect(settled.events.filter(e => e.rootActionId === root && e.eventType === "ResourceReserved")).toHaveLength(1);
     expect(settled.events.filter(e => e.eventType === "CanonicalFactDeclared" && record(record(e.payload).fact).id === TRACE)).toHaveLength(1);
     expect(settled.due).toEqual([]);
+    const observed = record(await stub.observe(ALICE as never));
+    expect(observed.pendingPlayerRolls).toEqual([]);
+    const dice = (observed.transcript as RecordValue[]).filter(message => message.kind === "roll");
+    expect(dice, "the witnessed NPC check must show its authoritative system roll").toEqual(expect.arrayContaining([
+      expect.objectContaining({ speakerCharacterId: NPC, body: expect.stringContaining("系统代骰") }),
+    ]));
+    expect(String(dice[0].body)).toContain("12");
+    expect(JSON.stringify(dice)).not.toMatch(/NPC_PRIVATE_GOAL_CANARY|NPC_PRIVATE_ORDER_CANARY|NPC_PRIVATE_TARGET_REASON_CANARY/);
     await evictDurableObject(stub);
     expect(await run(stub, timeInput(`submission:vnext-plan:${checkpoint}`), c)).toMatchObject({ kind: "committed" });
     expect((await snapshot(stub, root)).events).toEqual(settled.events); expect(c.draws).toBe(1); expect(c.actorRequests).toHaveLength(1);
   }, 30_000);
 }
+
+it("player dice: an NPC's combat start reaches its next choice after the player confirms initiative", async () => {
+  const stub = await initialize("vnext-npc-player-initiative", true), c = capture();
+  const root = await seedPlan(stub, false, [], "visibility:scene-observers", ACTOR);
+  // The existing reserved-plan wire branch also requires its optional const.
+  // Rules still performs only the requested combat start.
+  c.decision = { decision: "execute", planId: PLAN, targetRef: ACTOR, mechanicalProposal: {
+    operation: "startCombat", encounterRef: "encounter:npc-player-dice", targetEntityRefs: [ACTOR], itemActivityId: "use",
+  } };
+  const started = await run(stub, timeInput("submission:npc-player-initiative"), c, timedAttempt());
+  const observed = record(await stub.observe(ALICE as never));
+  const rolls = observed.pendingPlayerRolls as RecordValue[];
+  expect(rolls, JSON.stringify({ kind: started.kind, dueOutcomes: record(started).dueOutcomes })).toHaveLength(1);
+  expect(c.draws).toBe(0);
+  const randomnessId = String(rolls[0].id), waiting = await snapshot(stub, root);
+  expect(await stub.resumePlayerRandomness(BOB as never, randomnessId)).toMatchObject({ kind: "rejected" });
+  expect((await snapshot(stub, root)).events).toEqual(waiting.events);
+  await evictDurableObject(stub);
+  const roll: RoomActionInput = { kind: "roll", submissionId: "submission:npc-player-initiative-roll", randomnessId };
+  const done = await run(stub, roll, c);
+  expect(done).toMatchObject({ kind: "awaitingInput", pending: { choiceKind: "initiativeTieOrder" } });
+  const settled = await snapshot(stub, root), draws = c.draws;
+  expect(draws).toBe(2);
+  expect(record(record(done).receipt).randomnessCommitments).toHaveLength(2);
+  expect(settled.events.length).toBeGreaterThan(waiting.events.length);
+  expect(c.actorRequests).toHaveLength(1);
+  expect(record(await stub.observe(ALICE as never)).pendingPlayerRolls).toEqual([]);
+  await evictDurableObject(stub);
+  expect(await run(stub, roll, c)).toMatchObject({ kind: "awaitingInput", pending: { choiceKind: "initiativeTieOrder" } });
+  expect((await snapshot(stub, root)).events).toEqual(settled.events);
+  expect(c.draws).toBe(draws); expect(c.actorRequests).toHaveLength(1);
+});
+
+it("NPC dice stay private when the action has no public trace", async () => {
+  const stub = await initialize("vnext-npc-dice-private", true), c = capture();
+  await seedPlan(stub, false, [], `visibility:npc:${NPC}`);
+  c.decision = { decision: "execute", planId: PLAN, targetRef: { kind: "none" }, mechanicalProposal: {
+    operation: "resolveNoncombatCheck", ability: "wis", skill: "perception", dc: 12, mode: "normal",
+    duration: { unit: "second", value: 1 }, frozenCosts: [], success: [], failure: [],
+  } };
+  await run(stub, timeInput("submission:npc-private-dice"), c, timedAttempt());
+  expect(c.draws).toBe(1);
+  const observed = record(await stub.observe(ALICE as never));
+  expect((observed.transcript as RecordValue[]).filter(message => message.kind === "roll")).toEqual([]);
+  expect(JSON.stringify(observed)).not.toMatch(/NPC_PRIVATE_GOAL_CANARY|NPC_PRIVATE_ORDER_CANARY|NPC_PRIVATE_TARGET_REASON_CANARY/);
+});
 
 for (const checkpoint of ["afterDueSubmissionBeforeCommit", "afterActorPlanInvocationPrepared"]) {
   it(`an unsent NPC invocation at ${checkpoint} resumes with one physical call`, async () => {

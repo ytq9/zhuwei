@@ -182,7 +182,7 @@ export type AuthorityExperiencedMessageRow = {
   viewer_key: string;
   message_id: string;
   scene_ids_json: string;
-  kind: "player" | "kp";
+  kind: "player" | "kp" | "roll";
   speaker_character_id: string | null;
   speaker_name: string;
   body: string;
@@ -377,7 +377,7 @@ export class AuthoritativeRoomStore {
         randomness_id TEXT NOT NULL,
         principal_id TEXT NOT NULL,
         character_id TEXT NOT NULL,
-        PRIMARY KEY (prepared_action_id, randomness_id)
+        PRIMARY KEY (prepared_action_id, randomness_id, character_id)
       );
       CREATE TABLE IF NOT EXISTS authority_scope_versions (
         scope_id TEXT PRIMARY KEY,
@@ -436,7 +436,7 @@ export class AuthoritativeRoomStore {
         viewer_key TEXT NOT NULL,
         message_id TEXT NOT NULL,
         scene_ids_json TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN ('player', 'kp')),
+        kind TEXT NOT NULL CHECK (kind IN ('player', 'kp', 'roll')),
         speaker_character_id TEXT,
         speaker_name TEXT NOT NULL,
         body TEXT NOT NULL,
@@ -500,6 +500,45 @@ export class AuthoritativeRoomStore {
         prepared_at INTEGER NOT NULL
       );
     `);
+    const authorizationColumns = this.storage.sql.exec<{ name: string; pk: number }>(
+      "PRAGMA table_info(authority_randomness_authorizations)",
+    ).toArray();
+    if (!authorizationColumns.some(column => column.name === "character_id" && column.pk > 0)) {
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_randomness_authorizations RENAME TO authority_randomness_authorizations_single_owner;
+        CREATE TABLE authority_randomness_authorizations (
+          prepared_action_id TEXT NOT NULL, randomness_id TEXT NOT NULL,
+          principal_id TEXT NOT NULL, character_id TEXT NOT NULL,
+          PRIMARY KEY (prepared_action_id, randomness_id, character_id)
+        );
+        INSERT INTO authority_randomness_authorizations
+          SELECT prepared_action_id, randomness_id, principal_id, character_id FROM authority_randomness_authorizations_single_owner;
+        DROP TABLE authority_randomness_authorizations_single_owner;
+      `));
+    }
+    const transcriptSchema = this.storage.sql.exec<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authority_experienced_messages'",
+    ).one().sql;
+    if (!transcriptSchema.includes("'roll'")) {
+      // SQLite cannot extend a CHECK in place. Keep every message and ordinal
+      // while adding the derived dice-message kind in one local transaction.
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_experienced_messages RENAME TO authority_experienced_messages_before_dice;
+        CREATE TABLE authority_experienced_messages (
+          ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
+          viewer_key TEXT NOT NULL, message_id TEXT NOT NULL, scene_ids_json TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('player', 'kp', 'roll')),
+          speaker_character_id TEXT, speaker_name TEXT NOT NULL, body TEXT NOT NULL,
+          source_event_seq TEXT NOT NULL, receipt_id TEXT NOT NULL
+        );
+        INSERT INTO authority_experienced_messages
+          SELECT ordinal, viewer_key, message_id, scene_ids_json, kind, speaker_character_id,
+            speaker_name, body, source_event_seq, receipt_id FROM authority_experienced_messages_before_dice;
+        DROP TABLE authority_experienced_messages_before_dice;
+        CREATE UNIQUE INDEX authority_experienced_messages_identity_idx ON authority_experienced_messages(viewer_key, message_id);
+        CREATE INDEX authority_experienced_messages_viewer_order_idx ON authority_experienced_messages(viewer_key, ordinal);
+      `));
+    }
     const principalColumn = this.storage.sql.exec<{ name: string; notnull: number }>(
       "PRAGMA table_info(authority_submissions)",
     ).toArray().find(column => column.name === "principal_id");
@@ -1440,7 +1479,7 @@ export class AuthoritativeRoomStore {
       `INSERT INTO authority_randomness_authorizations (
          prepared_action_id, randomness_id, principal_id, character_id
        ) VALUES (?, ?, ?, ?)
-       ON CONFLICT(prepared_action_id, randomness_id) DO NOTHING`,
+       ON CONFLICT(prepared_action_id, randomness_id, character_id) DO NOTHING`,
       input.prepared_action_id,
       input.randomness_id,
       input.principal_id,

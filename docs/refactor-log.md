@@ -3539,3 +3539,20 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 生产冒烟：直连注册EHOSTUNREACH、curl超时均未达Worker；系统代理只读查明127.0.0.1:7897，未改配置，通过该独立通道正常注册→默认开房→建卡→开局→fetchTable，exit0。D1只读查询证明完整工作流原文等于候选，SHA256 dcd38dff093f10dc4d32c440c1c53994e119b14dfef2bed2b88dd634a53b1c6f。一次真实治愈伤口 committed/published，HP24/24不变、一环4→3、二环2保持，旁白明确满血/零增加与一环消耗1/剩3；重复同submission完整返回、权威投影、Receipt、Delivery和消息一致，exit0。首页HTTP200、标题正常。用户明确确认“线上可用”。
 - 证据限制：wrangler tail因ETIMEDOUT未连接，未捕获生产逐调用usage，因此不报告精确调用数/费用或生产零新增调用/完整随机journal重放。没有追加第二行动、重采样或放宽校验。生产验收账号和单个新房留存追溯；私有凭据不入库。等待重复返回状态问题、其他功能未验收、旧房退役及统计性认证仍未完成，完整说明见[生产发布回执](agent/vnext-production-release-20260908.md)。
 - 文档收尾：补充本记录、发布回执与生产TODO顶层状态，属于说明性改动，不改变已部署源码；本次仅针对三份说明提交并再次非force推送cloudflare。对应最终Git SHA以本条所属提交为准，部署源码仍为ce349be。全部进程已退出；未运行全量测试/Lint、远端migration或重新构建。
+
+## 等待误报与玩家显式掷骰（2026-09-08，本地 Bug 修复）
+
+- 症状与根因：PlayTable 把 narrationRecovery 的 pending 也当作失败展示；Room 的手动骰门只覆盖 V5 社交与特定休整请求，普通 vNext 检定会直接生成随机数。NPC 的实际机械结果没有独立、可恢复的桌面骰消息。原失败分别通过 React 等待状态用例与真实本地 Room 的优势检定复现（exit 1）。
+- 修改：play-table.tsx 仅对 rejected/retryableFailure 展示错误，pending 使用正常等待指示，恢复请求返回 pending 时不弹错误。Room 将所有已识别玩家所属请求纳入显式确认，按可信控制者授权；包括共享检定/目标豁免、原生物品骰及先攻、法术等直接请求。多人共享骰池按角色保存确认，一人的重试不会确认另一人的骰子；保存候选后恢复、控制转移及重复请求复用既有结果。
+- 结果与持久化：新增 rules/v2/dice-results.ts，从已提交的检定、攻击、豁免、先攻、死亡豁免及恢复结果生成 Viewer 骰消息；NPC 公开检定标明系统代骰，私密检定与未使用候选骰不进入桌面。world-interaction-hazards/model 和 combat-actions/events 保留实际使用的豁免/攻击与物品恢复骰结果；observer-delta 使用既有可见性规则，Room 在原提交事务保存去重消息，table/authoritative 映射为现有 roll 展示。authority-store/types 的本地 SQLite 升级保留旧消息、ordinal 与骰授权，未改变 D1 schema。
+- 直接消费者与连带检查：Room Action 的 roll 接口、Rules project/replay、更正范围、交错事件投影、Viewer transcript、表格 Adapter 和 RollButton 已检查。行为证据覆盖：待回复/真实失败/正常回复；渲染零掷骰请求、点击才发送；一般优势检定；多人各自确认；物品 2d4 恢复；NPC 公私检定；断线恢复、丢响应重试、控制转移及待掷骰期间拒绝移除控制；旧表升级与消息去重；正常休整/调查路径。
+- 最终验证：`npx tsx --test tests/delivery-confirmation-v2.test.mjs`，6/6，exit 0。`npx vitest run tests/kp-vnext-stage3-room.test.ts tests/kp-vnext-time-passage-room.test.ts tests/kp-vnext-actor-plan-due-room.test.ts tests/social-room-randomness-v5.test.ts -t 'player dice:|NPC dice|an NPC check recovers|noncombat activity: rest and a real proposal complete|keeps one frozen roll|rejects revocation'`，10/10（其余60例未运行），exit 0。`npm run typecheck`、`git diff --check` 均 exit 0。开发中夹具目标范围/旧索引及一次参数声明位置错误已定位修正，最终同组无未解释失败；不重复计算中间通过次数。
+- 未覆盖：未进行真实模型调用、线上复验、完整战斗骰型组合或完整回归；不声称线上问题已修复。本轮无 commit、push、部署、远端 migration 或数据退役。共享工作区既有承诺/计划、时间推进及其他任务改动保留，本条只记录等待与掷骰修复。
+
+## 等待与显式掷骰快速发布（2026-09-08，发布准备）
+
+- 授权与候选：用户明确要求“提交推送快速部署”。在 `cloudflare` 基线 `a6e082862d5979b3bca2e99837b1633f2848f946` 上提取本次 17 个文件的等待/骰修复；承诺、计划、故事等共享工作区改动不纳入。独立源码目录 `/tmp/zhuwei-dice-release-20260908/source`，依赖与本地测试配置复用现有忽略路径；发布源码将与主目录选定 index tree 精确核对。
+- 控制面基线：现有 Worker `zhuwei` 的版本 `11a9009d-ed5f-493e-a496-a216395e5ea8` 接收 100% 流量；ROOMS、DB `f5a448fd-4224-4e52-bafb-a84cb190b618`、AI、ASSETS 与配置一致。实时远端 main 为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`，保持本轮实查值不变，不恢复文档中的历史 SHA。无 D1 schema 变化，不执行远端 migration、Secret 修改、新资源创建或数据删除；DO 本地表升级随代码执行且保留现有行。
+- 独立审查修复：NPC 测试夹具的 capability selection 改为当前已发布 provider 格式。进一步复现 NPC 原行动等待玩家先攻后，玩家点击被当作无原角色控制者而拒绝；resumePlayerRandomness 对持久 dueActivity 沿用既有 internalDueActivity 权限，commit 内重新验证队列、因果事件、角色与恢复输入。新用例经过真实本地 Room Action，验证零提前掷骰、越权拒绝、驱逐后确认进入先攻同点选择、两份随机承诺和重复请求零新骰/模型调用。
+- 实际定向验证：独立候选 Node `npx tsx --test tests/delivery-confirmation-v2.test.mjs` 6/6，exit 0。Worker 使用前条相同四文件和筛选表达式：原 10 例通过；补充 NPC 先攻用例最终 `npx vitest run tests/kp-vnext-actor-plan-due-room.test.ts -t "an NPC's combat start"` 1/1，exit 0，合计 11 个不同用例（60 例不运行）。`npm run typecheck` exit 0；`git diff --check` exit 0。夹具旧格式、同点先攻进入 awaitingInput 的正确预期、原生随机承诺与非战斗 DiceRolled 事件区别均已据实修正，不重复累计中间通过数。最终日志位于 `/tmp/zhuwei-dice-release-20260908/`。
+- 未覆盖与探查限制：未运行全量测试/Lint、120 条统计验收或完整 NPC 战斗。额外探查发现现有 reserved-plan wire 的可选 const 限制，以及 NPC 非同点先攻在 Viewer Claims 投影处拒绝；未修改这些规格/投影消费者，也未把该变体计为通过。本次仅保证已验证的骰确认/恢复切片。线上默认模型与发布后的代表性冒烟另记实际结果。

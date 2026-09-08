@@ -105,6 +105,7 @@ import type {
   DeliveryAudienceBinding,
   DeliveryFrame,
   DeliveryPlan,
+  ExperiencedTranscriptMessageInput,
   InitializeAuthoritativeRoomInput,
   JsonObject,
   NarrationInputMode,
@@ -368,7 +369,7 @@ type AuthenticatedAuthorityViewer = {
 };
 
 type AuthorityAudienceBindingsResult =
-  | Readonly<{ kind: "accepted"; audiences: DeliveryAudienceBinding[] }>
+  | Readonly<{ kind: "accepted"; audiences: DeliveryAudienceBinding[]; diceMessages: ExperiencedTranscriptMessageInput[] }>
   | Readonly<{
       kind: "rejected";
       outcome: Extract<AuthorityCommitOutcome, { kind: "rejected" }>;
@@ -5132,32 +5133,11 @@ export class RoomDurableObject extends DurableObject<Env> {
   private authorityPlayerRollGestureRequired(
     profiles: RuntimeProfileManifest,
     request?: JsonObject,
-    requestEvents?: EventEnvelope[],
   ): boolean {
-    if (!socialResolutionProfileEnabled(profiles.extensions)) return false;
-    // A profile-only call asks whether the room exposes the capability. Once
-    // a concrete request is known, only the V5 social plan opts into a player
-    // gesture. Combat, saves, and hidden reality keep authority-generated
-    // randomness behavior.
-    if (request === undefined || requestEvents === undefined) return true;
-    if (this.vnextAdjudicationBridge !== undefined && request.purpose === "restHitDice") {
-      return requestEvents.some(event => {
-        const payload = event.payload as unknown;
-        return event.eventType === "RandomnessRequested" && isJsonRecord(payload)
-          && isJsonRecord(payload.request)
-          && vnextCanonicalHash(payload.request) === vnextCanonicalHash(request);
-      });
-    }
-    return requestEvents.some((event) => {
-      if (event.eventType !== "RandomnessRequested") return false;
-      const payload = event.payload as unknown;
-      if (!isJsonRecord(payload)
-        || !isJsonRecord(payload.request)
-        || !isJsonRecord(payload.resolutionPlan)
-        || payload.resolutionPlan.schema !== "zhuwei.social-resolution-plan/v1") return false;
-      return payload.request.randomnessId === request.randomnessId
-        && payload.request.resolutionId === request.resolutionId;
-    });
+    // The gesture authorizes a frozen player-owned request, regardless of
+    // which Rules plan produced it. Ownership is checked from trusted state.
+    return socialResolutionProfileEnabled(profiles.extensions)
+      && request?.purpose !== "hiddenRealitySelection";
   }
 
   private authorityRandomnessOperation(
@@ -5213,6 +5193,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const counterFrame = isJsonRecord(operation.counterFrame)
       ? operation.counterFrame
       : undefined;
+    const spellFrame = isJsonRecord(operation.spellFrame) ? operation.spellFrame : undefined;
     if (purposeKey.startsWith("save:")
       || purposeKey.startsWith("death-save:")
       || purposeKey.startsWith("stable-recovery:")) {
@@ -5234,7 +5215,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           ? operation.sourceEntityId
           : nonEmptyString(counterFrame?.sourceEntityId)
             ? counterFrame.sourceEntityId
-            : undefined;
+            : nonEmptyString(spellFrame?.sourceEntityId) ? spellFrame.sourceEntityId : undefined;
     return player(rollingCharacterId);
   }
 
@@ -5244,7 +5225,21 @@ export class RoomDurableObject extends DurableObject<Env> {
     requestEvents: EventEnvelope[],
     characterId: string,
   ): ViewerPendingPlayerRoll {
-    const value = request.request;
+    let value = request.request;
+    if (value.purpose === "worldInteractionCheck") {
+      if (value.actorCharacterId === characterId && isJsonRecord(value.frozenCheck)) {
+        const mode = value.frozenCheck.mode;
+        value = { ...value, diceExpression: mode === "advantage" ? "2d20kh1" : mode === "disadvantage" ? "2d20kl1" : "1d20" };
+      } else {
+        // A shared commitment may contain private NPC/unused candidate dice.
+        // Each target sees only its own save gesture, never that private pool.
+        const native = this.authorityWorldInteractionNativeRequests(value).find(entry =>
+          this.authorityPlayerRollOwner(state, entry, requestEvents) === characterId);
+        value = native === undefined
+          ? { purpose: "savingThrow", diceExpression: "d20", frozenParameters: {} }
+          : native;
+      }
+    }
     const frozen = isJsonRecord(value.frozenCheck)
       ? value.frozenCheck
       : isJsonRecord(value.frozenParameters) ? value.frozenParameters : {};
@@ -5255,6 +5250,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       ? "save"
       : value.purpose === "restHitDice"
         || purposeKey.startsWith("stable-recovery:")
+        || purposeKey.startsWith("healing:")
+        || purposeKey.startsWith("temporary-hit-points:")
         ? "heal"
         : purposeKey.startsWith("attack:")
           ? "attack"
@@ -5304,6 +5301,55 @@ export class RoomDurableObject extends DurableObject<Env> {
       ...(frozen.mode === "advantage" ? { advantage: true } : {}),
       ...(frozen.mode === "disadvantage" ? { disadvantage: true } : {}),
     };
+  }
+
+  private authorityPlayerRollOwners(state: AuthoritativeWorldState, request: JsonObject, events: EventEnvelope[]): string[] {
+    if (request.purpose !== "worldInteractionCheck") {
+      if (String(request.purposeKey).startsWith("initiative:") && isJsonRecord(request.frozenParameters)
+        && Array.isArray(request.frozenParameters.combatantEntityIds)) {
+        return [...new Set(request.frozenParameters.combatantEntityIds.flatMap(actorCharacterId => {
+          const owner = this.authorityPlayerRollOwner(state, { actorCharacterId }, events);
+          return owner === undefined ? [] : [owner];
+        }))].sort();
+      }
+      const owner = this.authorityPlayerRollOwner(state, request, events);
+      return owner === undefined ? [] : [owner];
+    }
+    const owners = new Set<string>();
+    if (isJsonRecord(request.frozenCheck)) {
+      const owner = this.authorityPlayerRollOwner(state, request, events);
+      if (owner !== undefined) owners.add(owner);
+    }
+    for (const native of this.authorityWorldInteractionNativeRequests(request)) {
+      const owner = this.authorityPlayerRollOwner(state, native, events);
+      if (owner !== undefined) owners.add(owner);
+    }
+    for (const spec of Array.isArray(request.hazardRolls) ? request.hazardRolls : []) {
+      if (!isJsonRecord(spec) || !isJsonRecord(spec.frozenParameters)) continue;
+      const target = spec.frozenParameters.targetRef;
+      const purpose = spec.purposeKey;
+      if (!nonEmptyString(target) || !nonEmptyString(purpose)) continue;
+      if (!purpose.endsWith(`:save:${target}`)
+        && !(purpose.endsWith(`:concentration:${target}`) && isJsonRecord(state.combatRuntime.entities[target]?.concentration))) continue;
+      const owner = this.authorityPlayerRollOwner(state, { purposeKey: "save:hazard",
+        frozenParameters: { targetEntityId: target } }, events);
+      if (owner !== undefined) owners.add(owner);
+    }
+    return [...owners].sort();
+  }
+
+  private authorityWorldInteractionNativeRequests(request: JsonObject): JsonObject[] {
+    return (Array.isArray(request.hazardRolls) ? request.hazardRolls : []).flatMap(spec => {
+      if (!isJsonRecord(spec) || !nonEmptyString(spec.purposeKey)
+        || !spec.purposeKey.startsWith("inventory:") || !isJsonRecord(spec.frozenParameters)
+        || !Array.isArray(spec.dice)) return [];
+      const purposeKey = spec.purposeKey.replace(
+        /^inventory:.+:\d+:(?=(?:attack|damage|save|death-save|stable-recovery|healing|temporary-hit-points|check|initiative):)/u, "");
+      if (purposeKey === spec.purposeKey) return [];
+      return [{ purposeKey, frozenParameters: { ...(!nonEmptyString(spec.frozenParameters.entityId)
+        ? { sourceEntityId: request.actorCharacterId } : {}), ...spec.frozenParameters },
+        diceExpression: spec.dice.filter(isJsonRecord).map(die => `${die.count}d${die.sides}`).join("+") }];
+    });
   }
 
   private authorityRandomnessBatchKey(submission: AuthoritySubmissionRow): string {
@@ -5386,25 +5432,20 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (batch?.status !== "requestCommitted" && batch?.status !== "candidateCommitted") continue;
       const active = this.authorityActiveRandomnessRequests({ batch });
       if (active === undefined) continue;
+      const authorized = this.authorityStore.randomnessAuthorizations(batchKey);
+      const waitingForOthers = active.activeRequests.some(request =>
+        this.authorityPlayerRollOwners(replay.state, request.request, active.requestEvents).some(characterId =>
+          !authorized.some(entry => entry.randomness_id === request.randomnessId && entry.character_id === characterId)));
       for (const request of active.activeRequests) {
         if (!this.authorityPlayerRollGestureRequired(
           replay.profiles,
           request.request,
-          active.requestEvents,
         )) continue;
-        const characterId = this.authorityPlayerRollOwner(
-          replay.state,
-          request.request,
-          active.requestEvents,
-        );
-        if (characterId === undefined
-          || !authenticated.characterIds.includes(characterId)) continue;
-        rolls.push(this.authorityViewerPendingRoll(
-          replay.state,
-          request,
-          active.requestEvents,
-          characterId,
-        ));
+        for (const characterId of this.authorityPlayerRollOwners(replay.state, request.request, active.requestEvents)) {
+          if (!authenticated.characterIds.includes(characterId)
+            || (waitingForOthers && authorized.some(entry => entry.randomness_id === request.randomnessId && entry.character_id === characterId))) continue;
+          rolls.push(this.authorityViewerPendingRoll(replay.state, request, active.requestEvents, characterId));
+        }
       }
     }
     return rolls.sort((left, right) => left.id.localeCompare(right.id));
@@ -5424,14 +5465,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         if (!this.authorityPlayerRollGestureRequired(
           replay.profiles,
           request.request,
-          active.requestEvents,
         )) continue;
-        const owner = this.authorityPlayerRollOwner(
-          replay.state,
-          request.request,
-          active.requestEvents,
-        );
-        if (owner !== undefined) owners.add(owner);
+        for (const owner of this.authorityPlayerRollOwners(replay.state, request.request, active.requestEvents)) owners.add(owner);
       }
     }
     return owners;
@@ -5639,6 +5674,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const usesFrozenRenderableClaims = worldInteractionProfileEnabled(profiles.extensions)
       && committedRangeUsesFrozenRenderableClaims(events.filter(event => event.rootActionId === rootActionId));
     const bindings: DeliveryAudienceBinding[] = [];
+    const diceMessages: ExperiencedTranscriptMessageInput[] = [];
     const candidates = new Map<string, typeof actor>();
     for (const character of [...Object.values(priorState.entities), ...Object.values(state.entities)]) {
       if (character.kind === "player") candidates.set(character.id, character);
@@ -5671,6 +5707,18 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
       }
       const projectionRecord = projection as unknown as JsonObject;
+      if ("committedDelta" in projection && projection.committedDelta !== undefined) {
+        for (const change of projection.committedDelta.changes) {
+          if (change.kind !== "diceRolled" || !nonEmptyString(change.messageId)
+            || !nonEmptyString(change.characterId) || !nonEmptyString(change.speakerName)
+            || !nonEmptyString(change.body) || !nonEmptyString(change.sceneId)
+            || !nonEmptyString(change.sourceEventSeq)) continue;
+          diceMessages.push({ viewerKey: `${viewer.principalId}\u001f${character.id}`,
+            messageId: change.messageId, kind: "roll", speakerCharacterId: change.characterId,
+            speakerName: change.speakerName, body: change.body, sceneIds: [change.sceneId],
+            sourceEventSeq: change.sourceEventSeq, receiptId });
+        }
+      }
       const hasCommittedDelta = "committedDelta" in projection && projection.committedDelta !== undefined
         && projection.committedDelta.changes.length > 0;
       const renderableClaims = frozenRenderableClaimsConform(
@@ -5773,7 +5821,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         kpProjection,
       });
     }
-    return { kind: "accepted", audiences: bindings };
+    return { kind: "accepted", audiences: bindings, diceMessages };
   }
 
   private npcDecisionOutcome(
@@ -6418,15 +6466,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       const active = batch?.status === "finalized"
         ? this.authorityActiveRandomnessRequests({ batch })
         : undefined;
-      const request = active?.activeRequests.find((entry) =>
+      const request = active?.requests.find((entry) =>
         entry.randomnessId === randomnessId);
-      const currentOwner = request === undefined || active === undefined
-        ? undefined
-        : this.authorityPlayerRollOwner(
-            replay.state,
-            request.request,
-            active.requestEvents,
-          );
+      const currentOwner = authenticated.characterIds.includes(authorization.character_id)
+        ? authorization.character_id : undefined;
       if (
         batch?.status !== "finalized"
         || cachedResultJson === null
@@ -6436,7 +6479,6 @@ export class RoomDurableObject extends DurableObject<Env> {
         || !this.authorityPlayerRollGestureRequired(
           replay.profiles,
           request.request,
-          active.requestEvents,
         )
         || currentOwner === undefined
         || authorization.character_id !== currentOwner
@@ -6450,20 +6492,19 @@ export class RoomDurableObject extends DurableObject<Env> {
       const batch = this.authorityStore.randomnessBatch(batchKey);
       if (batch?.status !== "requestCommitted" && batch?.status !== "candidateCommitted") continue;
       const active = this.authorityActiveRandomnessRequests({ batch });
-      const request = active?.activeRequests.find((entry) => entry.randomnessId === randomnessId);
+      const request = active?.requests.find((entry) => entry.randomnessId === randomnessId);
       if (active === undefined || request === undefined) continue;
       if (!this.authorityPlayerRollGestureRequired(
         replay.profiles,
         request.request,
-        active.requestEvents,
       )) {
         return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
       }
-      const ownerCharacterId = this.authorityPlayerRollOwner(
+      const ownerCharacterId = this.authorityPlayerRollOwners(
         replay.state,
         request.request,
         active.requestEvents,
-      );
+      ).find(owner => authenticated.characterIds.includes(owner));
       if (ownerCharacterId === undefined || !authenticated.characterIds.includes(ownerCharacterId)) {
         return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
       }
@@ -6479,15 +6520,15 @@ export class RoomDurableObject extends DurableObject<Env> {
           || currentBatch?.status === "candidateCommitted"
           ? this.authorityActiveRandomnessRequests({ batch: currentBatch })
           : undefined;
-        const currentRequest = currentActive?.activeRequests.find((entry) =>
+        const currentRequest = currentActive?.requests.find((entry) =>
           entry.randomnessId === randomnessId);
         const currentOwner = currentRequest === undefined || currentActive === undefined
           ? undefined
-          : this.authorityPlayerRollOwner(
+          : this.authorityPlayerRollOwners(
               replay.state,
               currentRequest.request,
               currentActive.requestEvents,
-            );
+            ).find(owner => currentViewer?.characterIds.includes(owner));
         if (
           currentViewer === undefined
           || currentSubmission?.status !== "awaitingRandomness"
@@ -6496,13 +6537,12 @@ export class RoomDurableObject extends DurableObject<Env> {
           || !this.authorityPlayerRollGestureRequired(
             replay.profiles,
             currentRequest.request,
-            currentActive.requestEvents,
           )
           || currentOwner === undefined
           || !currentViewer.characterIds.includes(currentOwner)
         ) return false;
         const existing = this.authorityStore.randomnessAuthorizations(batchKey)
-          .find((entry) => entry.randomness_id === randomnessId);
+          .find((entry) => entry.randomness_id === randomnessId && entry.character_id === currentOwner);
         if (existing !== undefined) {
           return existing.character_id === currentOwner;
         }
@@ -6522,11 +6562,23 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (recovery === undefined) {
         return { kind: "retryableFailure", code: "randomnessRecoveryInputMissing" };
       }
-      return this.withDueTail(await this.commitAuthoritative(
-        context,
+      // A target's roll can complete another character's frozen action. NPC
+      // due work keeps its persisted internal authority, verified again by commit.
+      const actorViewer = this.authorityViewerForCharacter(replay.state, submission.character_id);
+      const continuationContext: AuthorityCommitContext | undefined = submission.input_kind === "dueActivity" && submission.principal_id === null
+        ? { kind: "internalDueActivity", rootActionId: submission.root_action_id }
+        : authenticated.characterIds.includes(submission.character_id) ? context
+        : actorViewer === undefined ? undefined : { principal: { id: actorViewer.principalId,
+            sessionVersion: actorViewer.sessionVersion! } };
+      if (continuationContext === undefined) return rejectedAuthority("privateOrUnknownReference", "The action controller is unavailable.");
+      const resumed = await this.commitAuthoritative(
+        continuationContext,
         submission.prepared_action_id,
         { kind: "recovery", row: recovery },
-      ), actorPlanTransport);
+      );
+      return resumed.kind === "awaitingPlayerRoll"
+        ? this.awaitingPlayerRollOutcome(this.authoritativeReplay(), authenticated)
+        : this.withDueTail(resumed, actorPlanTransport);
     }
     return rejectedAuthority("privateOrUnknownReference", "The randomness request is unavailable.");
   }
@@ -8202,16 +8254,15 @@ export class RoomDurableObject extends DurableObject<Env> {
           if (this.authorityPlayerRollGestureRequired(replay.profiles)) {
             const authorized = new Set(
               this.authorityStore.randomnessAuthorizations(journalPreparedActionId)
-                .map((entry) => entry.randomness_id),
+                .map((entry) => `${entry.randomness_id}\u001f${entry.character_id}`),
             );
             const waitingForPlayer = activeRequests.some((entry) =>
               this.authorityPlayerRollGestureRequired(
                 replay.profiles,
                 entry.request,
-                requestEvents,
               )
-              && this.authorityPlayerRollOwner(replay.state, entry.request, requestEvents) !== undefined
-              && !authorized.has(entry.randomnessId));
+              && this.authorityPlayerRollOwners(replay.state, entry.request, requestEvents)
+                .some(owner => !authorized.has(`${entry.randomnessId}\u001f${owner}`)));
             if (waitingForPlayer) {
               return authenticated === undefined ? { kind: "awaitingPlayerRoll", pendingPlayerRolls: [] }
                 : this.awaitingPlayerRollOutcome(replay, authenticated);
@@ -8847,6 +8898,7 @@ export class RoomDurableObject extends DurableObject<Env> {
             resolved.state.entities[submission.character_id]?.sceneId,
           ]),
         };
+    let diceMessages: ExperiencedTranscriptMessageInput[] = [];
     if (resolved.kind === "awaitingInput") {
       pendingBindings = authorityPendingBindings(
         resolved.state,
@@ -8901,6 +8953,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           return audienceProjectionFailure(audienceBindings.outcome);
         }
         awaitingInputTranscriptAudiences = audienceBindings.audiences;
+        diceMessages = audienceBindings.diceMessages;
       }
     } else if (!safetyDirect && suspendedDue === undefined) {
       const deliveryPriorState = this.authorityStateBeforeEventRange(replay, receiptEvents);
@@ -8922,6 +8975,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (audienceBindings.kind === "rejected") {
         return audienceProjectionFailure(audienceBindings.outcome);
       }
+      diceMessages = audienceBindings.diceMessages;
       deliveryPlan = {
         deliveryProtocol: deliveryProtocolForProfiles(replay.profiles),
         publishCapability: randomId("publish-capability"),
@@ -9199,6 +9253,7 @@ export class RoomDurableObject extends DurableObject<Env> {
           receiptId: receipt.receiptId,
         });
       }
+      for (const message of diceMessages) this.authorityStore.appendExperiencedMessage(message);
       if (submission.input_kind === "safetyPause") {
         this.authorityStore.supersedeCharacterDeliveries(
           Object.keys(resolved.state.characterControls),

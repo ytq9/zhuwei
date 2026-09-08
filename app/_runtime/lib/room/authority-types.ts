@@ -224,7 +224,7 @@ export type ExperiencedTranscriptMessage = {
   ordinal: number;
   messageId: string;
   sceneIds: string[];
-  kind: "player" | "kp";
+  kind: "player" | "kp" | "roll";
   speakerCharacterId: string | null;
   speakerName: string;
   body: string;

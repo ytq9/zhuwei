@@ -446,6 +446,8 @@ export function PlayTable({
   const visibleViewerNarrationRecovery = localSays.length === 0
     ? viewerNarrationRecovery
     : undefined;
+  const viewerNarrationFailed = visibleViewerNarrationRecovery?.state === "rejected"
+    || visibleViewerNarrationRecovery?.state === "retryableFailure";
   const safetyPaused = safetyPresentation?.status === "paused";
   const visibleMessages = safetyPaused
     ? snap.messages.filter((message) => message.id !== snap.state.currentDeliveryId)
@@ -619,6 +621,10 @@ export function PlayTable({
       });
       if (result.action === "committed" && result.narration === "published") {
         clearRememberedSubmission();
+        void qc.invalidateQueries({ queryKey: ["table", code] });
+        return;
+      }
+      if (result.action === "committed" && result.narration === "pending") {
         void qc.invalidateQueries({ queryKey: ["table", code] });
         return;
       }
@@ -962,7 +968,7 @@ export function PlayTable({
     ?? snap.state.sceneName;
   const conversationWorkKind: TableWorkKind | null = sending
     ? "action" as const
-    : snap.state.kpBusy
+    : snap.state.kpBusy || visibleViewerNarrationRecovery?.state === "pending"
       ? "kp" as const
       : rec === "stt"
         ? "speech" as const
@@ -1129,7 +1135,7 @@ export function PlayTable({
           {conversationWorkKind ? <TableWorkIndicator kind={conversationWorkKind} /> : null}
           <div ref={endRef} />
         </div>
-        {visibleViewerNarrationRecovery?.kind === "available" ? (
+        {viewerNarrationFailed && visibleViewerNarrationRecovery?.kind === "available" ? (
           <div
             data-narration-recovery="viewer"
             role="alert"
@@ -2580,6 +2586,8 @@ function RollButton({
         ? "治疗"
         : roll.kind === "attack"
             ? "攻击"
+            : roll.kind === "save"
+              ? "豁免"
             : (SKILLS.find((s) => s.id === roll.skill)?.label ??
               ABILITY_LABEL[roll.ability as keyof typeof ABILITY_LABEL] ??
               roll.ability);
@@ -2593,6 +2601,9 @@ function RollButton({
   return (
     <div className="rounded-[16px] border border-border bg-elevated px-3 py-3">
       <p className="text-xs text-muted">{roll.reason}</p>
+      {roll.authoritative ? (
+        <p className="mt-1 text-xs text-subtle">{roll.dice}{roll.advantage ? " · 优势" : roll.disadvantage ? " · 劣势" : ""}</p>
+      ) : null}
       {alreadyGuide && (
         <p className="mt-2 text-[11px] text-brass">
           已有神导专注：掷出自动 +1d4，然后结束。

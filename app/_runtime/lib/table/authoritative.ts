@@ -218,7 +218,7 @@ function pendingPlayerRolls(
 type ExperiencedTableMessage = {
   id: string;
   user_id: string | null;
-  kind: "say" | "narrate";
+  kind: "say" | "narrate" | "roll";
   name: string;
   body: string;
   created_at: string;
@@ -238,7 +238,7 @@ function experiencedTableMessages(value: unknown, trustedUserId: string): Experi
       ? "player"
       : entry.kind === "kp" || entry.speakerKind === "kp"
         ? "kp"
-        : undefined;
+        : entry.kind === "roll" ? "roll" : undefined;
     const sceneIds = Array.isArray(entry.sceneIds)
       ? [...new Set(entry.sceneIds.map(nonEmptyString).filter((sceneId): sceneId is string => Boolean(sceneId)))]
       : [];
@@ -247,7 +247,7 @@ function experiencedTableMessages(value: unknown, trustedUserId: string): Experi
     return [{
       id,
       user_id: speakerKind === "player" ? trustedUserId : null,
-      kind: speakerKind === "player" ? ("say" as const) : ("narrate" as const),
+      kind: speakerKind === "player" ? ("say" as const) : speakerKind === "roll" ? ("roll" as const) : ("narrate" as const),
       name,
       body,
       created_at: "",

@@ -469,6 +469,73 @@ function investigation() { return { mode: "adjudication", basisRefs: [SOURCE], t
     intent: "检查固定外壳", method: "逐项查看表面", branches: { success: { outcomeCode: "outcome:inspected", summary: "完整检查已经完成。",
       effects: [], sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null } }],
 }; }
+
+it("player dice: a general check waits for its controller and reuses the result after reconnect", async () => {
+  const stub = await initialize("vnext-player-dice-general"), c = capture();
+  const wire = investigation();
+  Object.assign(wire.adjudication, { kind: "check", checkKind: "abilityCheck", ability: "wis", skill: "perception", dc: 12,
+    mode: "advantage", risk: "判断错误会耽误检查。", successOutcome: "看清外壳。", failureOutcome: "没看清外壳。" });
+  wire.proposals[0].branches.failure = { ...wire.proposals[0].branches.success, outcomeCode: "outcome:unclear", summary: "没看清外壳。" } as never;
+  const input: RoomActionInput = { kind: "intent", submissionId: "submission:explicit-check", text: "我仔细检查外壳。" };
+  await run(stub, input, c, wire);
+  expect(c.draws, "no die may be generated before the player clicks").toBe(0);
+  const waiting = record(await stub.observe(ALICE as never));
+  const rolls = waiting.pendingPlayerRolls as RecordValue[];
+  expect(rolls).toHaveLength(1);
+  expect(rolls[0]).toMatchObject({ characterId: ACTOR, kind: "check", ability: "wis", advantage: true });
+  const randomnessId = String(rolls[0].id);
+  const before = await snapshot(stub);
+  expect(await stub.resumePlayerRandomness(BOB as never, randomnessId)).toMatchObject({ kind: "rejected" });
+  expect((await snapshot(stub)).events).toEqual(before.events);
+  await evictDurableObject(stub);
+  const roll: RoomActionInput = { kind: "roll", submissionId: "submission:explicit-roll", randomnessId };
+  const done = await run(stub, roll, c);
+  expect(done, JSON.stringify(done)).toMatchObject({ kind: "committed" });
+  expect(c.draws).toBe(2);
+  const after = await snapshot(stub), calls = c.playerRequests.length;
+  const observation = record(await stub.observe(ALICE as never));
+  expect(observation.pendingPlayerRolls).toEqual([]);
+  const table = projectAuthoritativeTableObservation({ observation, userId: ALICE.principal.id,
+    members: [ALICE.principal.id], locationLabels: { [SCENE]: "守灵夜" } });
+  expect(table.messages.some(message => message.kind === "roll" && message.body.includes("合计"))).toBe(true);
+  const messages = observation.transcript as RecordValue[];
+  expect(messages.some(message => message.kind === "roll" && String(message.body).includes("12")), "committed dice must be visible without relying on narration").toBe(true);
+  await evictDurableObject(stub);
+  expect(await run(stub, roll, c)).toMatchObject({ kind: "committed" });
+  expect((await snapshot(stub)).events).toEqual(after.events);
+  expect(c.draws).toBe(2); expect(c.playerRequests).toHaveLength(calls);
+});
+
+it("player dice: upgrading the local transcript preserves old messages and stores each roll once", async () => {
+  const stub = env.VNEXT_ROOMS.getByName("vnext-dice-transcript-upgrade");
+  await runInDurableObject(stub, async (_instance, state) => {
+    const { AuthoritativeRoomStore } = await import("../app/_runtime/lib/room/authority-store");
+    const schema = state.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'authority_experienced_messages'").one().sql;
+    state.storage.sql.exec("DROP TABLE authority_experienced_messages");
+    state.storage.sql.exec(schema.replace("'player', 'kp', 'roll'", "'player', 'kp'"));
+    state.storage.sql.exec("CREATE UNIQUE INDEX authority_experienced_messages_identity_idx ON authority_experienced_messages(viewer_key, message_id)");
+    state.storage.sql.exec(`DROP TABLE authority_randomness_authorizations;
+      CREATE TABLE authority_randomness_authorizations (prepared_action_id TEXT NOT NULL, randomness_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL, character_id TEXT NOT NULL, PRIMARY KEY (prepared_action_id, randomness_id));
+      INSERT INTO authority_randomness_authorizations VALUES ('prepared:one', 'random:shared', 'principal:alice', 'character:alice');`);
+    const store = new AuthoritativeRoomStore(state.storage);
+    const previous = { viewerKey: "viewer:alice", messageId: "message:prior", sceneIds: [SCENE], kind: "kp" as const,
+      speakerCharacterId: null, speakerName: "KP", body: "已经送达的回复。", sourceEventSeq: "1", receiptId: "receipt:prior" };
+    store.appendExperiencedMessage(previous);
+    const saved = store.experiencedMessages(previous.viewerKey);
+    store.ensureSchema();
+    expect(store.experiencedMessages(previous.viewerKey)).toEqual(saved);
+    store.authorizeRandomness({ prepared_action_id: "prepared:one", randomness_id: "random:shared",
+      principal_id: "principal:bob", character_id: "character:bob" });
+    expect(store.randomnessAuthorizations("prepared:one").map(row => row.character_id).sort()).toEqual(["character:alice", "character:bob"]);
+    const roll = { ...previous, messageId: "roll:committed", kind: "roll" as const, body: "系统代骰：d20 [12]，合计 15，成功" };
+    store.appendExperiencedMessage(roll);
+    store.appendExperiencedMessage(roll);
+    store.ensureSchema();
+    expect(store.experiencedMessages(previous.viewerKey)).toHaveLength(2);
+    expect(store.experiencedMessages(previous.viewerKey)[1].ordinal).toBeGreaterThan(saved[0].ordinal);
+  });
+});
 async function seedMessage(stub: Stub) {
   await runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, current = target.authoritativeReplay();

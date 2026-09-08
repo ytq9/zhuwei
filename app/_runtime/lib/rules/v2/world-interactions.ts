@@ -3074,6 +3074,7 @@ function applyBranchEffects(
             occurrenceId:`${key}:target:${target.targetRef}`,sourceRef:effect.sourceDefinitionRef,targetRef:target.targetRef,hit:outcome.hit});
           if (pending !== undefined) return pending;
         }
+        applied.push(...outcome.rollResults);
         if(outcome.components.some(component=>component.rolled>0)) {
           const damageApplied = applyDamageEffect(accumulator,profiles,rootActionId,{
             sourceDefinitionRef:effect.sourceDefinitionRef,zoneRef:effect.zoneRef,relationRefs:target.relationRefs,

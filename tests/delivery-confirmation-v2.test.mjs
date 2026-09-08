@@ -4,6 +4,76 @@ import { createElement } from "react";
 
 import { playTableSnapFixture } from "./fixtures/tactical-map-v2.mjs";
 
+test("pending narration stays a quiet waiting state; only a confirmed failure shows recovery", async () => {
+  const [{ QueryClient, QueryClientProvider }, { compileSheet }, { PlayTable }, { act, create }] = await Promise.all([
+    import("@tanstack/react-query"), import("../app/_runtime/lib/dnd/compute.ts"),
+    import("../app/_runtime/components/play-table.tsx"), import("react-test-renderer"),
+  ]);
+  const previous = globalThis.IS_REACT_ACT_ENVIRONMENT;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const client = new QueryClient();
+  const snap = playTableSnapFixture(compileSheet);
+  snap.state.authoritative.inCombat = false;
+  snap.state.authoritative.tacticalProjection = null;
+  snap.messages = [];
+  let renderer;
+  try {
+    for (const state of ["pending", "retryableFailure", "rejected", undefined]) {
+      snap.state.kpBusy = state === "pending";
+      snap.state.authoritative.narrationRecovery = state === undefined ? undefined
+        : { kind: "available", capability: "recovery:current", state };
+      const tree = createElement(QueryClientProvider, { client }, createElement(PlayTable, { code: "WAIT", snap: structuredClone(snap) }));
+      await act(async () => { if (renderer) renderer.update(tree); else renderer = create(tree); });
+      const panels = renderer.root.findAll(node => node.props["data-narration-recovery"] === "viewer");
+      assert.equal(panels.length, state === "retryableFailure" || state === "rejected" ? 1 : 0,
+        `${state}: an unfinished reply alone must never look like an error`);
+      if (state === "pending") assert.equal(renderer.root.findByProps({ "data-table-conversation": true }).props["aria-busy"], true);
+    }
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    client.clear();
+    globalThis.IS_REACT_ACT_ENVIRONMENT = previous;
+  }
+});
+
+test("player dice require a click and committed NPC dice remain visible on the table", async () => {
+  const [{ QueryClient, QueryClientProvider }, { compileSheet }, { PlayTable }, { act, create }] = await Promise.all([
+    import("@tanstack/react-query"), import("../app/_runtime/lib/dnd/compute.ts"),
+    import("../app/_runtime/components/play-table.tsx"), import("react-test-renderer"),
+  ]);
+  const previous = globalThis.IS_REACT_ACT_ENVIRONMENT, previousFetch = globalThis.fetch;
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(String(init?.body ?? "{}")));
+    return Response.json({ ok: true, action: "committed", narration: "notApplicable" });
+  };
+  const client = new QueryClient(), snap = playTableSnapFixture(compileSheet);
+  snap.state.authoritative.inCombat = false; snap.state.authoritative.tacticalProjection = null;
+  snap.state.pendingRolls = [{ id: "randomness:player", userId: snap.me.userId, name: "阿莱莎", authoritative: true,
+    kind: "check", ability: "wis", skill: "perception", dc: 12, reason: "观察门闩", dice: "2d20kh1", advantage: true }];
+  snap.messages = [{ id: "roll:npc", user_id: null, name: "莉安", kind: "roll", created_at: "", clues: [],
+    body: "系统代骰 · 检定：d20 [12]，修正 +3，合计 15，成功" }];
+  let renderer;
+  try {
+    await act(async () => { renderer = create(createElement(QueryClientProvider, { client }, createElement(PlayTable, { code: "DICE", snap }))); });
+    assert.equal(calls.filter(call => call.command === "resolveRoll").length, 0);
+    assert.match(JSON.stringify(renderer.toJSON()), /2d20kh1/);
+    assert.match(JSON.stringify(renderer.toJSON()), /系统代骰.*合计 15，成功/);
+    const button = renderer.root.findAll(node => node.type === "button" && node.children.some(child => typeof child === "string" && child.startsWith("掷 ")))[0];
+    assert.ok(button, "the frozen player request must expose an explicit roll control");
+    await act(async () => { await button.props.onClick(); });
+    const rolls = calls.filter(call => call.command === "resolveRoll");
+    assert.equal(rolls.length, 1);
+    assert.equal(rolls[0].data.rollId, "randomness:player");
+    assert.equal(rolls[0].data.code, "DICE");
+    assert.equal("faces" in rolls[0].data, false, "the browser must never choose its own die result");
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    client.clear(); globalThis.fetch = previousFetch; globalThis.IS_REACT_ACT_ENVIRONMENT = previous;
+  }
+});
+
 test("a current Delivery stays visible across polling without a manual confirmation control", async () => {
   const [
     { QueryClient, QueryClientProvider },
