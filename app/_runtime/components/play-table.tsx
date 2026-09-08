@@ -29,6 +29,7 @@ import {
 import type { PendingRoll } from "@/lib/kp/prompt";
 import type { PublicCombat } from "@/lib/kp/combat";
 import type { KpModelId } from "@/lib/kp/models";
+import type { ViewerNarrationRecovery } from "@/lib/room/authority-types";
 import { eligibleBoosts } from "@/lib/dnd/boosts";
 import { ensureResources, left, listStocks, type StockItem } from "@/lib/dnd/resources";
 import { toast } from "sonner";
@@ -314,11 +315,7 @@ export type TableSnap = {
         }>;
       };
       tacticalProjection?: TacticalProjection;
-      narrationRecovery?: {
-        kind: "available";
-        capability: string;
-        state: "pending" | "rejected" | "retryableFailure";
-      };
+      narrationRecovery?: ViewerNarrationRecovery;
     } | null;
     restVote?: {
       kind: "short" | "long";
@@ -1143,7 +1140,7 @@ export function PlayTable({
           >
             <p className="text-sm text-fg">行动已经结算，但这条 KP 回复尚未送达。</p>
             <p className="mt-1 text-xs text-subtle">
-              {publicNarrationRecoveryReason(visibleViewerNarrationRecovery.state)}
+              {publicNarrationRecoveryReason(visibleViewerNarrationRecovery.state, visibleViewerNarrationRecovery.failureCode)}
             </p>
             <p className="mt-1 text-xs text-subtle">
               重试只恢复你自己的回复，不会重新裁定、掷骰或消耗资源。

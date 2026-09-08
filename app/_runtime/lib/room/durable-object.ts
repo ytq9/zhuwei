@@ -2,6 +2,7 @@ import type { LifecycleReadModel } from "../rules/v2/model";
 import { isSupersededTimePassageAdvance, isSupersededLongSpellcastingAdvance, isSupersededActivityProgress, scheduledDeadlinesWithin } from "../rules/v2/due-activities";
 import { activityProgressAvailable, actionActivityCompletionRoot } from "../rules/v2/activity-progress";
 import { deepSeekRequestBody } from "../kp/deepseek";
+import { narrationPublicFailureCode } from "../kp/public-failure-codes";
 import type { ActorPlanTransport } from "./actor-plan-transport-types";
 import type { AuthoritativeModelBinding, DueActorPlanDecisionRequest } from "../kp/authoritative-types";
 import { usageFrom } from "../kp/authoritative-helpers";
@@ -113,6 +114,7 @@ import type {
   PublicReceipt,
   TrustedPrincipalContext,
   ViewerPendingPlayerRoll,
+  ViewerNarrationRecovery,
 } from "./authority-types";
 import { lowerDynamicEnvironmentProposal } from "./environment-proposal-lowering";
 import {
@@ -1640,13 +1642,23 @@ export class RoomDurableObject extends DurableObject<Env> {
     const recovery = this.viewerNarrationRecoveryRecord(replay, viewer);
     return recovery === undefined
       || recovery.stale
-      || !["pending", "rejected", "retryableFailure"].includes(recovery.audience.status)
       ? undefined
-      : {
-          kind: "available" as const,
-          capability: recovery.plan.publishCapability,
-          state: recovery.audience.status as "pending" | "rejected" | "retryableFailure",
-        };
+      : this.viewerNarrationRecoveryProjection(recovery.plan.publishCapability, recovery.audience);
+  }
+
+  private viewerNarrationRecoveryProjection(
+    capability: string,
+    audience: AuthorityDeliveryAudienceRow,
+  ): ViewerNarrationRecovery | undefined {
+    const state = audience.status;
+    if (state !== "pending" && state !== "rejected" && state !== "retryableFailure") return undefined;
+    const failureCode = state === "pending" ? undefined : narrationPublicFailureCode(audience.error_code);
+    return {
+      kind: "available",
+      capability,
+      state,
+      ...(failureCode === undefined ? {} : { failureCode }),
+    };
   }
 
   private earlierFrozenNarrationPending(planRow: AuthorityDeliveryPlanRow,
@@ -10293,14 +10305,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       );
       const narrationRecovery = formerRecovery === undefined
         ? undefined
-        : {
-            kind: "available" as const,
-            capability: formerRecovery.recovery.plan.publishCapability,
-            state: formerRecovery.recovery.audience.status as
-              | "pending"
-              | "rejected"
-              | "retryableFailure",
-          };
+        : this.viewerNarrationRecoveryProjection(
+            formerRecovery.recovery.plan.publishCapability,
+            formerRecovery.recovery.audience,
+          );
       if (formerRecovery !== undefined && narrationRecovery !== undefined) {
         const viewerKey = `${formerRecovery.viewer.principalId}\u001f${formerRecovery.viewer.characterId}`;
         const slot = this.authorityStore.deliverySlot(viewerKey);

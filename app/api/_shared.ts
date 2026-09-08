@@ -41,7 +41,7 @@ export function routeError(error: unknown) {
     return Response.json({ error: error.message }, { status: error.status });
   }
   return Response.json(
-    { error: "桌面暂时无法响应，请稍后再试。" },
+    { error: "游戏服务处理请求时发生内部错误，具体原因尚未确认。请先刷新桌面核对结果；若持续出现，请将操作时间和步骤反馈给维护者。" },
     { status: 500 },
   );
 }

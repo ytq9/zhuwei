@@ -252,7 +252,7 @@ test("authoritative HTTP poll, reconnect, ACK, and voice expose only the caller'
 
   const malformedAction = await api(hostCookie, "sendAction", null);
   assert.equal(malformedAction.status, 500);
-  assert.deepEqual(malformedAction.body, { error: "桌面暂时无法响应，请稍后再试。" });
+  assert.deepEqual(malformedAction.body, { error: "游戏服务处理请求时发生内部错误，具体原因尚未确认。请先刷新桌面核对结果；若持续出现，请将操作时间和步骤反馈给维护者。" });
   assert.doesNotMatch(JSON.stringify(malformedAction.body), /Cannot read|TypeError|stack|SQL/i);
 
   const guessedByPlayer = await api(playerCookie, "speakNarration", {

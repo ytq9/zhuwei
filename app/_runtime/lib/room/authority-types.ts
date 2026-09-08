@@ -4,6 +4,7 @@ import type { RuntimeProfileManifest } from "../rules";
 import type { ProfileRef } from "../rules/profiles/types";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import type { ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
+import type { NarrationPublicFailureCode } from "../kp/public-failure-codes";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -289,6 +290,7 @@ export type ViewerNarrationRecovery = {
   kind: "available";
   capability: string;
   state: "pending" | "rejected" | "retryableFailure";
+  failureCode?: NarrationPublicFailureCode;
 };
 
 /** One frozen, viewer-owned randomness request that is waiting only for the

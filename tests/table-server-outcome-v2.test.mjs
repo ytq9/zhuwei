@@ -32,13 +32,13 @@ async function tableOutcomeMapper() {
   return Function(
     "publicAuthoritativeOutcomeError",
     "publicV3FailureCode",
-    "publicNarrationFailureReason",
+    "publicNarrationRecoveryReason",
     "failureCodeIsRetryable",
     `${compiled}\nreturn authoritativeTableOutcome;`,
   )(
-    () => "暂时无法完成这次行动",
+    publicAuthoritativeOutcomeError,
     publicV3FailureCode,
-    publicNarrationFailureReason,
+    publicNarrationRecoveryReason,
     failureCodeIsRetryable,
   );
 }
@@ -60,10 +60,28 @@ async function viewerNarrationOutcomeMapper() {
   }).outputText;
   return Function(
     "publicV3FailureCode",
-    "publicNarrationFailureReason",
+    "publicNarrationRecoveryReason",
+    "publicAuthoritativeOutcomeError",
     `${compiled}\nreturn viewerNarrationRecoveryTableOutcome;`,
-  )(publicV3FailureCode, publicNarrationFailureReason);
+  )(publicV3FailureCode, publicNarrationRecoveryReason, publicAuthoritativeOutcomeError);
 }
+
+test("player error feedback distinguishes known causes and gives a relevant next step", async () => {
+  const mapOutcome = await tableOutcomeMapper();
+  for (const [kind, code, cause, nextStep] of [
+    ["retryableFailure", "projectionFailure", /显示|核对|展示/, /刷新|联系/],
+    ["retryableFailure", "scopeConflict", /变化|更新/, /刷新/],
+    ["rejected", "PROPOSAL_PROVIDER_CONFIGURATION", /配置/, /房主|维护/],
+    ["rejected", "CONTEXT_INSUFFICIENT", /信息|资料/, /补充|联系|刷新/],
+    ["rejected", "PROPOSAL_REFERENCE_INVALID", /引用|对象/, /目标|联系|修改/],
+  ]) {
+    const value = mapOutcome("submission:player-error", { kind, code,
+      explanation: "SECRET_PROMPT_AND_OTHER_VIEWER_DETAILS", draft: { hidden: "PRIVATE_NPC" } }, true);
+    assert.match(value.error, cause, code);
+    assert.match(value.error, nextStep, code);
+    assert.doesNotMatch(JSON.stringify(value), /SECRET_|PRIVATE_NPC|draft/);
+  }
+});
 
 test("narration recovery explains cause separately from the retry action", () => {
   assert.equal(
@@ -88,7 +106,7 @@ test("narration recovery explains cause separately from the retry action", () =>
   );
   assert.equal(
     publicNarrationRecoveryReason("retryableFailure"),
-    "KP 服务或回复发布暂时失败；这不代表一定等待超时。",
+    "KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。",
   );
 });
 
@@ -111,7 +129,7 @@ test("committed and concluded actions expose a pending Delivery as an explicit s
       narration: "retryableFailure",
       committed: true,
       retryable: true,
-      error: "行动已经提交；KP 回复暂未完成，原因尚未确认。请重试；不会重复执行行动。",
+      error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
     });
     assert.deepEqual(mapOutcome(submissionId, outcome, true), {
       submissionId,
@@ -119,7 +137,7 @@ test("committed and concluded actions expose a pending Delivery as an explicit s
       action: kind,
       narration: "retryableFailure",
       retryable: true,
-      error: "行动已经提交；KP 回复暂未完成，原因尚未确认。请重试；不会重复执行行动。",
+      error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
     });
   }
 });
@@ -282,7 +300,7 @@ test("a V3 success exposes only the public outcome allowlist and never Audience 
     action: "committed",
     narration: "retryableFailure",
     retryable: true,
-    error: "行动已经提交；KP 回复暂未完成，原因尚未确认。请重试；不会重复执行行动。",
+    error: "行动已经提交；KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
     outcomeKind: "committed",
   });
   assert.equal(JSON.stringify(mapped).includes("audience:bob-secret"), false);
@@ -306,7 +324,7 @@ test("a permanently failed proposal asks for a different action, not the same on
   for (const code of ["modelTransient", "authorityTransient", "quotaExhausted"]) {
     assert.match(
       publicAuthoritativeOutcomeError({ kind: "retryableFailure", code }),
-      /用同一行动重试/u,
+      /重试原行动|原操作的重试入口/u,
       code,
     );
   }
@@ -353,6 +371,10 @@ test("V3 error DTOs expose all and only the stable public pipeline codes", async
     PROPOSAL_RULES_DIAGNOSTIC: "needsKp",
     PROPOSAL_REPAIR_EXHAUSTED: "needsKp",
     CONTEXT_INSUFFICIENT: "rejected",
+    CONTEXT_BUDGET_EXCEEDED: "rejected",
+    PROPOSAL_INPUT_BUDGET_EXCEEDED: "rejected",
+    PROPOSAL_PROVIDER_CONFIGURATION: "rejected",
+    PROPOSAL_INVOCATION_IN_PROGRESS: "retryableFailure",
   };
   const narrationStates = {
     NARRATION_PROVIDER_TIMEOUT: "retryableFailure",
@@ -415,14 +437,14 @@ test("viewer-local narration retry preserves its exact safe failure code", async
     action: "committed",
     narration: "rejected",
     code: "NARRATION_GROUNDING_REJECTED",
-    error: "行动保持已提交；KP 回复与已经结算的事实不一致。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
+    error: "行动保持已提交；KP 回复与已经结算的事实不一致。请点击“重试 KP 回复”；若同样的错误持续出现，请联系维护者。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
   });
   assert.deepEqual(mapRecovery({
     kind: "committed", action: "committed", narration: "rejected",
     narrationFailureCode: "NARRATION_PROVIDER_REJECTED",
   }), {
     action: "committed", narration: "rejected", code: "NARRATION_PROVIDER_REJECTED",
-    error: "行动保持已提交；KP 服务拒绝了生成或审核请求，回复检查尚未完成。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
+    error: "行动保持已提交；KP 服务拒绝了生成或审核请求，回复检查尚未完成。可点击“重试 KP 回复”；持续被拒绝时，请联系维护者检查 KP 服务权限或请求限制。重试只恢复回复，不会重新裁定、掷骰或消耗资源。",
   });
   const privateFailure = mapRecovery({
     kind: "committed",
@@ -437,6 +459,17 @@ test("viewer-local narration retry preserves its exact safe failure code", async
 test("narration capacity failure has a stable player explanation", () => {
   assert.equal(publicV3FailureCode("NARRATION_CONTEXT_BUDGET_EXCEEDED"), "NARRATION_CONTEXT_BUDGET_EXCEEDED");
   assert.match(publicNarrationFailureReason("NARRATION_CONTEXT_BUDGET_EXCEEDED"), /处理容量.*行动结果已保留/u);
+  assert.match(publicNarrationRecoveryReason("retryableFailure", "NARRATION_CONTEXT_BUDGET_EXCEEDED"), /容量.*维护者.*反复重试/u);
+});
+
+test("a narration retry still in progress is quiet and an unavailable recovery explains the next step", async () => {
+  const mapRecovery = await viewerNarrationOutcomeMapper();
+  for (const narration of ["pending", "published"]) {
+    assert.deepEqual(mapRecovery({ kind: "committed", action: "committed", narration }), { action: "committed", narration });
+  }
+  const unavailable = mapRecovery({ kind: "rejected", code: "narrationRecoveryUnavailable" });
+  assert.match(unavailable.error, /刷新桌面查看最新回复/);
+  assert.doesNotMatch(unavailable.error, /行动未提交/);
 });
 
 

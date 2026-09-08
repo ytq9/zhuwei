@@ -49,7 +49,7 @@ import {
   buildAuthoritativeRoomSeeds,
   buildAuthoritativeTableState,
   publicAuthoritativeOutcomeError,
-  publicNarrationFailureReason,
+  publicNarrationRecoveryReason,
   publicV3FailureCode,
   projectAuthoritativeTableObservation,
 } from "@/lib/table/authoritative";
@@ -398,7 +398,7 @@ function authoritativeTableOutcome(
       narration: narrationState,
       committed: true as const,
       retryable: true as const,
-      error: `行动已经提交；${publicNarrationFailureReason(failureCode)}。请重试；不会重复执行行动。`,
+      error: `行动已经提交；${publicNarrationRecoveryReason(narrationState, failureCode)}重试只恢复回复，不会重新裁定、掷骰或消耗资源。`,
     };
     if (!v3) return result;
     const { ok: _ok, committed: _committed, ...v3Result } = result;
@@ -434,7 +434,7 @@ function authoritativeTableOutcome(
       outcomeKind: outcome.kind,
       action: actionState,
       narration: narrationState,
-      error: outcome.explanation || "当前行动没有被接受",
+      error: publicAuthoritativeOutcomeError(outcome),
     };
     if (!v3) return result;
     const { ok: _ok, ...v3Result } = result;
@@ -471,15 +471,17 @@ function viewerNarrationRecoveryTableOutcome(outcome: {
   action?: string;
   narration?: string;
   narrationFailureCode?: unknown;
+  code?: unknown;
 }) {
   const action = outcome.action === "committed" ? "committed" as const : "notCommitted" as const;
   const narration = outcome.narration === "published"
+    || outcome.narration === "pending"
     || outcome.narration === "rejected"
     || outcome.narration === "retryableFailure"
     ? outcome.narration
     : "notApplicable" as const;
   const failureCode = publicV3FailureCode(outcome.narrationFailureCode);
-  if (action === "committed" && narration === "published") {
+  if (action === "committed" && (narration === "published" || narration === "pending")) {
     return { action, narration };
   }
   return {
@@ -487,8 +489,8 @@ function viewerNarrationRecoveryTableOutcome(outcome: {
     narration,
     ...(failureCode === undefined ? {} : { code: failureCode }),
     error: action === "committed"
-      ? `行动保持已提交；${publicNarrationFailureReason(failureCode)}。重试只恢复回复，不会重新裁定、掷骰或消耗资源。`
-      : "当前没有可恢复的 KP 回复。",
+      ? `行动保持已提交；${publicNarrationRecoveryReason(narration, failureCode)}重试只恢复回复，不会重新裁定、掷骰或消耗资源。`
+      : publicAuthoritativeOutcomeError(outcome),
   };
 }
 

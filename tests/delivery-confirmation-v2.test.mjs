@@ -21,13 +21,22 @@ test("pending narration stays a quiet waiting state; only a confirmed failure sh
     for (const state of ["pending", "retryableFailure", "rejected", undefined]) {
       snap.state.kpBusy = state === "pending";
       snap.state.authoritative.narrationRecovery = state === undefined ? undefined
-        : { kind: "available", capability: "recovery:current", state };
+        : { kind: "available", capability: "recovery:current", state,
+          ...(state === "pending" ? {} : { failureCode: state === "rejected"
+            ? "NARRATION_GROUNDING_REJECTED" : "NARRATION_CONTEXT_BUDGET_EXCEEDED" }) };
       const tree = createElement(QueryClientProvider, { client }, createElement(PlayTable, { code: "WAIT", snap: structuredClone(snap) }));
       await act(async () => { if (renderer) renderer.update(tree); else renderer = create(tree); });
       const panels = renderer.root.findAll(node => node.props["data-narration-recovery"] === "viewer");
       assert.equal(panels.length, state === "retryableFailure" || state === "rejected" ? 1 : 0,
         `${state}: an unfinished reply alone must never look like an error`);
       if (state === "pending") assert.equal(renderer.root.findByProps({ "data-table-conversation": true }).props["aria-busy"], true);
+      if (panels.length) {
+        const text = JSON.stringify(renderer.toJSON());
+        assert.match(text, /行动已经结算/);
+        assert.match(text, state === "rejected" ? /事实不一致/ : /超出处理容量/);
+        assert.match(text, /联系维护者/);
+        assert.match(text, /不会重新裁定、掷骰或消耗资源/);
+      }
     }
   } finally {
     if (renderer) await act(async () => renderer.unmount());

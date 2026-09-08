@@ -1,3 +1,4 @@
+import { proposalPublicFailureCode, narrationPublicFailureCode, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
 import { frozenNarrationContextConform } from "../kp/narration-context";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import type { ProfileRef } from "../rules/profiles/types";
@@ -245,45 +246,6 @@ type DeliveryPlan = {
   audiences: DeliveryAudience[];
 };
 
-const PROPOSAL_PUBLIC_FAILURE_CODES = [
-  "PROPOSAL_PROVIDER_TIMEOUT",
-  "PROPOSAL_FORM_INVALID",
-  "PROPOSAL_REFERENCE_INVALID",
-  "PROPOSAL_RULES_DIAGNOSTIC",
-  "PROPOSAL_REPAIR_EXHAUSTED",
-  "CONTEXT_INSUFFICIENT",
-  "CONTEXT_BUDGET_EXCEEDED",
-  "PROPOSAL_INPUT_BUDGET_EXCEEDED",
-  "PROPOSAL_PROVIDER_CONFIGURATION",
-  "PROPOSAL_INVOCATION_IN_PROGRESS",
-] as const;
-
-const NARRATION_PUBLIC_FAILURE_CODES = [
-  "NARRATION_PROVIDER_TIMEOUT",
-  "NARRATION_PROVIDER_REJECTED",
-  "NARRATION_BODY_INVALID",
-  "NARRATION_GROUNDING_REJECTED",
-  "NARRATION_CONTEXT_BUDGET_EXCEEDED",
-  "NARRATION_PUBLICATION_FAILED",
-] as const;
-
-type ProposalPublicFailureCode = typeof PROPOSAL_PUBLIC_FAILURE_CODES[number];
-type NarrationPublicFailureCode = typeof NARRATION_PUBLIC_FAILURE_CODES[number];
-
-const PROPOSAL_PUBLIC_FAILURE_CODE_SET = new Set<string>(PROPOSAL_PUBLIC_FAILURE_CODES);
-const NARRATION_PUBLIC_FAILURE_CODE_SET = new Set<string>(NARRATION_PUBLIC_FAILURE_CODES);
-
-function proposalPublicFailureCode(value: unknown): ProposalPublicFailureCode | undefined {
-  return typeof value === "string" && PROPOSAL_PUBLIC_FAILURE_CODE_SET.has(value)
-    ? value as ProposalPublicFailureCode
-    : undefined;
-}
-
-function narrationPublicFailureCode(value: unknown): NarrationPublicFailureCode | undefined {
-  return typeof value === "string" && NARRATION_PUBLIC_FAILURE_CODE_SET.has(value)
-    ? value as NarrationPublicFailureCode
-    : undefined;
-}
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);

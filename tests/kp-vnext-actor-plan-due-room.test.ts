@@ -12,6 +12,7 @@ import { continueCompoundRoot } from "../app/_runtime/lib/rules/v2/internal-comp
 import { characterTimelineId } from "../app/_runtime/lib/rules/v2/timeline";
 import { frozenRenderableClaimsConform } from "../app/_runtime/lib/rules/v2/claims";
 import { createVNextModelCallScope } from "../app/_runtime/lib/kp/vnext/model-call-scope";
+import { projectAuthoritativeTableObservation } from "../app/_runtime/lib/table/authoritative";
 import { ActorPlanTransportCapability } from "../app/_runtime/lib/room/actor-plan-transport";
 import type { ActorPlanTransport } from "../app/_runtime/lib/room/actor-plan-transport-types";
 import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest, step as rulesStep, replay as rulesReplay } from "../app/_runtime/lib/rules";
@@ -44,7 +45,7 @@ const DESCRIPTION = "门框上多了一条刚系好的蓝色布带。";
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
 type Capture = { playerRequests: RecordValue[]; actorRequests: RecordValue[]; narration: RecordValue[];
   actorCalls: Record<string, number>; draws: number; crashAt?: string; decision?: RecordValue; failActor?: boolean;
-  callLimit?: string; countNarrationCalls?: boolean; httpCalls: string[][] };
+  callLimit?: string; countNarrationCalls?: boolean; narrationFailure?: string; httpCalls: string[][] };
 const capture = (): Capture => ({ playerRequests: [], actorRequests: [], narration: [], actorCalls: {}, draws: 0, httpCalls: [] });
 function record(value: unknown): RecordValue { return value as RecordValue; }
 afterEach(() => vi.restoreAllMocks());
@@ -154,6 +155,7 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: un
       beginDeliveryAudiencePublication: (...args) => target.beginDeliveryAudiencePublication!(...args), failDeliveryAudiencePublication: (...args) => target.failDeliveryAudiencePublication!(...args),
       publishDelivery: (...args) => target.publishDelivery!(...args) };
     const narrationAdapter = { async narrate(request: RecordValue) { c.narration.push(structuredClone(request));
+      if (c.narrationFailure) throw Object.assign(new Error("PRIVATE_PROVIDER_DIAGNOSTIC"), { publicCode: c.narrationFailure });
       // Represent the existing two provider stages while exercising their real
       // shared HTTP budget and durable Room publication/recovery boundaries.
       if (c.countNarrationCalls) for (const stage of ["narration", "audit"]) {
@@ -199,6 +201,51 @@ async function resume(stub: Stub, root: string, c: Capture) {
 
 function knowledgeReview(inquiry: string) { return { mode: "terminal", basisRefs: [], adjudication: null, proposals: [],
   terminal: { kind: "knowledgeReview", inquiry, scope: "allKnown", knowledgeRefs: [] } }; }
+
+it.each([false, true])("player error feedback survives eviction and only its viewer can recover it (transferred=%s)", async transferred => {
+  const stub = await initialize(`vnext-player-error-feedback:${transferred}`, true), c = capture();
+  c.narrationFailure = "NARRATION_GROUNDING_REJECTED";
+  const input: RoomActionInput = { kind: "intent", submissionId: "submission:player-errors", text: "我目前知道什么？" };
+  expect(await run(stub, input, c, knowledgeReview(input.text))).toMatchObject({ kind: "committed", narration: "rejected" });
+  const before = record(await stub.observe(ALICE as never)), recovery = record(before.narrationRecovery);
+  expect(recovery).toEqual({ kind: "available", capability: expect.any(String), state: "rejected", failureCode: "NARRATION_GROUNDING_REJECTED" });
+  expect(JSON.stringify(recovery)).not.toMatch(/PRIVATE|audience|receipt|projection|claims/);
+  if (transferred) await runInDurableObject(stub, instance => {
+    const target = instance as unknown as Internals, { profiles, state } = target.authoritativeReplay();
+    const result = target.rulesRuntime.step(profiles, state, { kind: "applyRoomAdministration",
+      roomAdministration: { kind: "roomAdministration", capability: state.multiplayerRuntime.roomAdministrationCapability },
+      commandId: "room-admin:player-errors:transfer", command: { kind: "transferControl", characterId: ACTOR,
+        fromSeatId: `seat:${ALICE.principal.id}`, toSeatId: `seat:${BOB.principal.id}` } });
+    expect(result.kind, JSON.stringify(result)).toBe("committed");
+    if (result.kind !== "committed") throw new Error("control transfer fixture failed");
+    target.authorityStore.transaction(() => target.appendAuthorityTransition(result.state as AuthoritativeWorldState, result.events));
+  });
+  const committed = await snapshot(stub);
+  await evictDurableObject(stub);
+  const reconnected = record(await stub.observe(ALICE as never));
+  expect(reconnected.narrationRecovery).toEqual(recovery);
+  if (transferred) expect(reconnected.readModel).toBeNull();
+  expect(projectAuthoritativeTableObservation({ userId: ALICE.principal.id, members: [ALICE.principal.id, BOB.principal.id],
+    locationLabels: { wake: "守夜处" }, observation: reconnected }).narrationRecovery).toEqual(recovery);
+  expect(record(await stub.observe(BOB as never)).narrationRecovery).toBeUndefined();
+  expect(await stub.beginViewerNarrationRecovery(BOB as never, recovery.capability)).toMatchObject({ kind: "rejected", code: "narrationRecoveryUnavailable" });
+
+  // A stale private diagnostic must be filtered even when already persisted.
+  const begun = record(await stub.beginViewerNarrationRecovery(ALICE as never, recovery.capability));
+  expect(record(record(await stub.observe(ALICE as never)).narrationRecovery)).toEqual({ kind: "available", capability: recovery.capability, state: "pending" });
+  await stub.failViewerNarrationRecovery(ALICE as never, recovery.capability, {
+    deliveryGeneration: begun.deliveryGeneration, state: "retryableFailure", errorCode: "PRIVATE_STORED_DIAGNOSTIC",
+  });
+  const filtered = record(record(await stub.observe(ALICE as never)).narrationRecovery);
+  expect(filtered).toEqual({ kind: "available", capability: recovery.capability, state: "retryableFailure" });
+  c.narrationFailure = undefined;
+  const proposals = c.playerRequests.length, draws = c.draws;
+  expect(await run(stub, input, c, undefined, String(recovery.capability))).toMatchObject({ action: "committed", narration: "published" });
+  expect(c.playerRequests).toHaveLength(proposals); expect(c.draws).toBe(draws);
+  const recovered = await snapshot(stub);
+  expect(recovered.events).toEqual(committed.events); expect(recovered.state).toEqual(committed.state);
+  expect(record(await stub.observe(ALICE as never)).narrationRecovery).toBeUndefined();
+}, 30_000);
 
 it("ActorPlan telemetry records one physical invocation with usage and no NPC content, including after recovery", async () => {
   const log = vi.spyOn(console, "info").mockImplementation(() => {});
