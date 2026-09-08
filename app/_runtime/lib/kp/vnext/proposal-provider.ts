@@ -53,7 +53,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v50",
+  version: "kp-vnext2-proposal-parser-v51",
   fillingLayout: "three-flat-tables-decision-steps-results-social-response-flattened-continuations-same-tables-v2",
   responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-v1",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -64,7 +64,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   bundleSchema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   correctionToolName: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   correctionSchema: CORRECT_KP_PROPOSAL_BUNDLE_SCHEMA,
-  sentinelVersion: "decision-v2-server-assembled-results-typed-dependencies-and-uniform-none-sentinel-v3",
+  sentinelVersion: "decision-v2-server-assembled-results-typed-dependencies-and-uniform-none-sentinel-bare-none-on-every-kind-none-field-v4",
   requiresExactToolCall: true,
   allowsTextFallback: false,
   rejectsDuplicateJsonMembersAtEveryDepth: true,

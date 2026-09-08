@@ -43,6 +43,10 @@ test('a bare "none" and {kind:"none"} parse to byte-identical bundles on every n
     ['social addressedThreadRef + relationshipRef', socialWire('none', 'none'), socialWire({ kind: 'none' }, { kind: 'none' })],
     ['formActorPlan factionRef', planWire('none'), planWire({ kind: 'none' })],
     ['check skill + worldInteraction abilityRef', checkWire('none', 'none'), checkWire({ kind: 'none' }, { kind: 'none' })],
+    // round90: retryChange is a nullable object with the same {kind:"none"} spelling, not a reference.
+    ['social retryChange', (() => { const w = socialWire({ kind: 'none' }); w.steps[0].retryChange = 'none'; return w; })(), socialWire({ kind: 'none' })],
+    ['promise trace with due none', (() => { const w = socialWire({ kind: 'none' }); w.results[0].consequences = [{ kind: 'promise', content: '记下这件事。', condition: '无。', authorityRefs: [NPC], due: 'none', trace: 'none' }]; return w; })(),
+      (() => { const w = socialWire({ kind: 'none' }); w.results[0].consequences = [{ kind: 'promise', content: '记下这件事。', condition: '无。', authorityRefs: [NPC], due: 'none', trace: { kind: 'none' } }]; return w; })()],
   ]) {
     const a = parse(bare), b = parse(sentinel);
     assert.equal(a.kind, 'accepted', `${label}: ${JSON.stringify(a)}`);
@@ -105,6 +109,7 @@ test('a promise on the wire carries its due tier and trace; due none takes the n
   // A trace without a due, or a due without a trace, is refused.
   assert.equal(parse(promise('none', '有痕迹。')).kind, 'locallyRejected');
   assert.equal(parse(promise('1h', { kind: 'none' })).kind, 'locallyRejected');
+  assert.equal(parse(promise('1h', 'none')).kind, 'locallyRejected', 'a bare none is the sentinel, and a timed promise still needs a trace');
   assert.equal(parse(promise('tomorrow', '有痕迹。')).kind, 'locallyRejected');
 });
 

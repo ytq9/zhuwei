@@ -1,0 +1,69 @@
+{
+  "round": 90,
+  "verifiedAt": "2026-09-08T06:50:03.772925+00:00",
+  "verdict": "Died on the first sentence: a full, well-formed three-table bundle with a promise (due 1h, trace) was refused because retryChange was written as the bare string \"none\" instead of {kind:\"none\"} (proposals[].retryChange TYPE_MISMATCH, not repairable). The bare-none decoding added after round79 covers the nullable reference fields only; retryChange is a nullable object with the same {kind:none} spelling and was not on the list. The empty-object re-emit under test got no exposure. 2 calls, nothing committed.",
+  "sourceCommit": "5f557f32882cf1409438ced2a0ff4974737e5bfd",
+  "sourceManifestSha256": "9910328140990c9d077275159a9d3e1e03da23a89d27a7a6f3d288ceeb132a76",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v50",
+  "scenario": "hours-scale three sentences (same as rounds 82-89)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round90-npc-http-f2a976a9-9f82-4fc1-aefb-a735e55cb3de",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_FORM_INVALID",
+      "modelCalls": 2,
+      "evidence": "offer [social]; fill: directSuccess 5min; steps [social, addressedThreadRef \"none\" (bare, decoded), retryChange \"none\" (bare, refused), outcomeBinding always]; results [social step 0 branch result, consequences [promise {due 1h, trace 「账台上摆着一份新抄的备案副本，墨迹已经干透。」, authorityRefs [varo]}], responseBasis [definition varo, varo, playerExpression] all in the enum]. Decoder: TYPE_MISMATCH at proposals[].retryChange. Varo would have promised the copy within the hour."
+    }
+  ],
+  "gates": [],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {},
+    "fictionNowMicros": "0",
+    "eventTypes": [],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "The empty-object re-emit (5f557f3) got no exposure.",
+    "A bare \"none\" on retryChange: the nullable-object sentinel was not covered by the round79 bare-none rule."
+  ],
+  "meter": {
+    "calls": 2,
+    "inputTokens": 47380,
+    "outputTokens": 746,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 47380,
+    "outputBudgetCharge": 746,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.148854
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 14:47 Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched at release, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.148854,
+    "budgetCny": 5
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "beforeCount": 323,
+    "afterCount": 323,
+    "headUnchanged": true
+  },
+  "servicesShutdown": "both roles verifiedAbsent; no listener on 4320/4321"
+}

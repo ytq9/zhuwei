@@ -3431,3 +3431,7 @@ round86 首句：模型在 `responseBasis` 里引了社交判定的规则档案�
 ## round89 → 空对象 arguments 走一次未解析重发（2026-09-08）
 
 round89：前两句零修订提交（`playerExpression` 以枚举成员字符串被真实使用）；第三句 observe 单选的填写调用返回 `{}`，与 round87 相同——今天 11 次填写里 2 次为空，与 schema 形状无关。`{}` 里没有任何裁决内容，服务器无可折叠也无可猜，与「不是 JSON」同类：没有草稿。现在空对象 arguments 走一次未解析重发（同一份冻结上下文，只说上一次是空的，模型自己完整重述，从头重验）；非空但残缺的草稿仍不重发。parser v50。见[round89 回执](agent/vnext-round89-validation.md)。
+
+## round90 → 裸 none 对所有 {kind:"none"} 字段生效（2026-09-08）
+
+round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写成裸 `"none"`；round79 之后的裸 none 规则只列了可空引用字段，`retryChange` 是可空对象，被 TYPE_MISMATCH 拒掉。现在规则按线上形状而不是字段名：任何以 `{kind:"none"}` 表示空的字段都接受裸 `"none"`。parser v51。见[round90 回执](agent/vnext-round90-validation.md)。

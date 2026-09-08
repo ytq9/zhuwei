@@ -1405,13 +1405,18 @@ function decodeVNextSentinels(value: unknown): unknown {
     decoded[key] = record.kind === "abilityOperation" && key === "operation"
       ? structuredClone(child) : decodeVNextSentinels(child);
   }
-  // Every wire field offered as `anyOf: [ref, {kind:"none"}]` decodes a bare
-  // "none" the same way. The reference grammar reserves the word, so the
-  // string can only mean the sentinel; round 79 lost a batch to the two
-  // fields this list did not yet name.
+  // Every wire field offered with a `{kind:"none"}` variant decodes a bare
+  // "none" the same way, whether the other variant is a reference or an
+  // object. The reference grammar reserves the word, so the string can only
+  // mean the sentinel; round 79 lost a batch to two reference fields this
+  // list did not yet name, and round 90 to retryChange, a nullable object
+  // spelled exactly the same way on the wire. A promise trace is text or the
+  // sentinel; a bare "none" there is the sentinel, and the domain validator
+  // still refuses it whenever the due tier demands a trace.
   for (const key of [
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
     "sceneRef", "visibilityFactId", "addressedThreadRef", "relationshipRef", "factionRef",
+    "retryChange", "trace",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;
   }
