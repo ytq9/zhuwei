@@ -78,6 +78,34 @@ test('an unparsed draft is re-emitted once and the server contributes no content
   }
 });
 
+test('an empty-object arguments call is no draft: re-emitted once, and one member makes it a draft again', async () => {
+  // Rounds 87 and 89 returned exactly "{}" from the beta strict endpoint with the root required list in place.
+  for (const empty of ['{}', '{ }', ' {}\n']) {
+    const f = fixture('empty'), calls = [];
+    const result = await invokeSubmitKpProposalBundleWithOneCorrection({
+      modelId: 'test', message: '冻结上下文', requiredContext: f.requiredContext, capabilities: ['social'], terminalKinds: [],
+      persistRepairTicket: () => assert.fail('an empty call has no ticket to persist'),
+      binding: { async run(_model, request) {
+        assertDeepSeekStrictToolModelInput(request); calls.push(request);
+        return toolResponse(calls.length === 1 ? empty : JSON.stringify(encodeVNextStrictToolBundle(validBundle())));
+      } },
+    });
+    assert.equal(result.kind, 'locallyAccepted', JSON.stringify(result));
+    assert.equal(calls.length, 2); assert.equal(result.repairUsed, false);
+    assert.deepEqual(calls[1].tools, calls[0].tools);
+    const body = JSON.parse(calls[1].messages[1].content);
+    assert.deepEqual(Object.keys(body).sort(), ['instruction', 'originalArguments', 'syntaxError']);
+    assert.equal(body.originalArguments, empty);
+    assert.deepEqual(body.syntaxError, { reason: 'json:empty-arguments' });
+    for (const invented of ['social', 'directSuccess', NPC, SCENE, 'answered']) assert.equal(body.instruction.includes(invented), false, invented);
+    // Room reaches the same conclusion from the saved bytes.
+    const evidence = vnextProposalUnparsedArguments(toolResponse(empty));
+    assert.equal(evidence.diagnostic.constraint, 'json:empty-arguments'); assert.equal(evidence.diagnostic.location, undefined);
+  }
+  // One member, however wrong, is a draft the validator must diagnose; an empty array is not an object at all.
+  for (const draft of ['{"decision":{}}', '{"steps":[]}', '[]', 'null']) assert.equal(vnextProposalUnparsedArguments(toolResponse(draft)), undefined, draft);
+});
+
 test('a draft that parsed is never re-emitted, and a recoverable root issue keeps its repair ticket', async () => {
   const f = fixture('parsed');
   // Content-rejected but syntactically fine: this is a repair ticket's business.

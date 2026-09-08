@@ -3427,3 +3427,7 @@ round86 首句：模型在 `responseBasis` 里引了社交判定的规则档案�
 ## round88：承诺链真实连通（2026-09-08）
 
 同源第二样本。首句瓦罗承诺一小时内抄好副本放到账台，模型填了 `promise{due:1h, trace}`，同根折入 PromiseMade → NpcPlanFormed → ActivityStarted；第二句等待 61 分钟跨过到期点，到期决策 execute → NpcActionCommitted → CanonicalFactDeclared → 旁白先出痕迹。未解析重发第一次真实触发（未转义内层双引号）。第三句没发：准备包 `runner.mjs` 把每 HTTP 上限写死成 5。两处遥测缺口记进 handoff。无源码改动。见[round88 回执](agent/vnext-round88-validation.md)。
+
+## round89 → 空对象 arguments 走一次未解析重发（2026-09-08）
+
+round89：前两句零修订提交（`playerExpression` 以枚举成员字符串被真实使用）；第三句 observe 单选的填写调用返回 `{}`，与 round87 相同——今天 11 次填写里 2 次为空，与 schema 形状无关。`{}` 里没有任何裁决内容，服务器无可折叠也无可猜，与「不是 JSON」同类：没有草稿。现在空对象 arguments 走一次未解析重发（同一份冻结上下文，只说上一次是空的，模型自己完整重述，从头重验）；非空但残缺的草稿仍不重发。parser v50。见[round89 回执](agent/vnext-round89-validation.md)。

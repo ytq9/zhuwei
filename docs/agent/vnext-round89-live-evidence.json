@@ -1,0 +1,136 @@
+{
+  "round": 89,
+  "verifiedAt": "2026-09-08T06:43:45.008659+00:00",
+  "verdict": "Sentences 1 and 2 committed with zero corrections (4 + 4 calls); the model used the reserved enum member \"playerExpression\" as a plain string. Varo counter-offered to copy on the spot rather than promise delivery, so no plan formed and the wait ran without a due point. Sentence 3 (observe) got the second empty {} tool call of the day (25 completion tokens, observe-only schema, no response-basis slot at all), so the empty call is not tied to the enum change: two of eleven fill calls since round85 came back empty under strict mode. A parsed {} is not re-emit eligible today, so the batch died on it.",
+  "sourceCommit": "8183fad1e232012bc038c44173a5c4173925a88b",
+  "runtimeIdenticalTo": "b7c682f",
+  "sourceManifestSha256": "b1130b12201f31086a27e183009586a4d835fe324f633c7802df8018c5aa0d04",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v49",
+  "scenario": "hours-scale three sentences (same as rounds 82-88)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 3,
+  "unattemptedIntents": 0,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round89-npc-http-91ddb2c1-8c76-4be7-82e0-e4877b31aaf9",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 4,
+      "evidence": "offer [social]; fill: directSuccess 5min, one social step, one result row, consequences [], responseBasis [varo, its definition, wake, \"playerExpression\"] all inside the plain enum. Varo: original stays in hand, will copy on the spot if the player waits a cup of tea; no promise. Clock 0 -> 300000000."
+    },
+    {
+      "ordinal": 2,
+      "submissionId": "vnext-round89-npc-http-03179fd6-a17f-41e8-a902-4764f290551b",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 4,
+      "evidence": "offer [passTime, observe]; fill: passTime 5400000000, steps [] results [] (observe dropped, sixth time). Narration 「你在厅里等待了整整一个半小时，时间已经过去。」 Activity 300000000 -> 5700000000."
+    },
+    {
+      "ordinal": 3,
+      "submissionId": "vnext-round89-npc-http-05863138-8aec-44e1-886c-f04a5d89d702",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_FORM_INVALID",
+      "modelCalls": 2,
+      "evidence": "offer [observe]; fill: arguments \"{}\" (25 tokens, finish tool_calls). Decoder FIELD_MISSING at arguments.decision; parsed JSON so no re-emit. Same shape as round87's empty call."
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "coverage": "nothing-recorded-awaiting-due"
+    },
+    {
+      "afterAction": 2,
+      "next": "pending",
+      "coverage": "waited-without-plan"
+    }
+  ],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {
+      "time-passage": "completed"
+    },
+    "fictionNowMicros": "5700000000",
+    "eventTypes": [
+      "FictionTimeAdvanced",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "npcActionCommitted": 0
+  },
+  "emptyArgumentsSamples": [
+    {
+      "round": 87,
+      "selection": [
+        "social"
+      ],
+      "schemaBytes": 19346,
+      "promptTokens": 25799,
+      "cacheHit": 5120,
+      "completionTokens": 25
+    },
+    {
+      "round": 89,
+      "selection": [
+        "observe"
+      ],
+      "schemaBytes": 17242,
+      "promptTokens": 22882,
+      "cacheHit": 1536,
+      "completionTokens": 25
+    }
+  ],
+  "notSurfaced": [
+    "The ruling-level basisRefs drop still has no real exposure (the third sentence never produced a draft).",
+    "observe selected with passTime dropped again."
+  ],
+  "meter": {
+    "calls": 10,
+    "inputTokens": 153705,
+    "outputTokens": 2052,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 153705,
+    "outputBudgetCharge": 2052,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.479583
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 14:39 Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched at release, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.479583,
+    "budgetCny": 5
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "14",
+    "events": 14
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "beforeCount": 323,
+    "afterCount": 323,
+    "headUnchanged": true
+  },
+  "servicesShutdown": "both roles verifiedAbsent; no listener on 4320/4321"
+}

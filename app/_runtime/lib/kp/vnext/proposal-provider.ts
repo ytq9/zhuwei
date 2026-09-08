@@ -53,7 +53,7 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v49",
+  version: "kp-vnext2-proposal-parser-v50",
   fillingLayout: "three-flat-tables-decision-steps-results-social-response-flattened-continuations-same-tables-v2",
   responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-v1",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -72,7 +72,7 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   localValidation: "closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6",
   referenceSelection: "frozen-authorized-read-bound-basis-and-classed-visible-subjects-v3",
   correctionPolicy: "server-proven-plan-confirmation-exact-number-and-frozen-intent-echo-once-v9",
-  unparsedOutputPolicy: "journal-proved-single-reemit-of-the-same-question-no-server-content-v1",
+  unparsedOutputPolicy: "journal-proved-single-reemit-of-the-same-question-no-server-content-empty-object-is-no-draft-v2",
   correctionResponseProtocol: VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL,
 });
 
@@ -413,7 +413,17 @@ export function vnextProposalUnparsedArguments(response: unknown): VNextProposal
   const choice = isPlainRecord(response) && Array.isArray(response.choices) ? response.choices[0] : undefined;
   const finished = isPlainRecord(choice) ? choice.finish_reason : undefined;
   if (typeof finished !== "string" || finished === "length") return undefined;
-  try { parseJsonWithUniqueMembers(call.arguments); return undefined; } catch (error) {
+  try {
+    const parsed = parseJsonWithUniqueMembers(call.arguments);
+    // Rounds 87 and 89: strict mode returned arguments that are exactly {}.
+    // An empty object holds no decision at all, so like bytes that are not
+    // JSON it leaves nothing to read, repair or fold; the same single
+    // re-emit applies. Any object with a member is a draft and stays out.
+    if (isPlainRecord(parsed) && Object.keys(parsed).length === 0) return deepFreeze({ toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
+      originalArguments: call.arguments,
+      diagnostic: proposalDiagnostic("FIELD_MISSING", EMPTY_ARGUMENTS_CONSTRAINT, { path: [], pathBase: "arguments", expected: "a complete draft object", actual: "{}" }) });
+    return undefined;
+  } catch (error) {
     if (!(error instanceof JsonSyntaxError)) return undefined;
     // Well-formed JSON that this parser rejects on policy -- duplicate members
     // at any depth -- is a draft the server can see and must refuse, not an
@@ -429,7 +439,15 @@ export function vnextProposalUnparsedArguments(response: unknown): VNextProposal
  * unparsed response. The server states only where the bytes stopped being JSON;
  * it never restates, guesses or repairs the decision, and the re-emitted draft
  * is validated from scratch like any first draft. */
+/** The constraint naming arguments that were exactly an empty object. */
+export const EMPTY_ARGUMENTS_CONSTRAINT = "json:empty-arguments" as const;
+
 export function vnextProposalReemitPrompt(evidence: VNextProposalUnparsedArguments): string {
+  if (evidence.diagnostic.constraint === EMPTY_ARGUMENTS_CONSTRAINT) return JSON.stringify({
+    instruction: "上一次工具调用的 arguments 是一个空对象 {}，没有任何字段，服务器没有得到任何草稿，因此没有任何内容被保留或修复。请用同一个工具、同一份冻结上下文，重新完整提交你原本的决定：decision、steps、results 三个字段都要填，输出必须是合法 JSON。这不是让你改变裁决——重述你本来的决定，不要因为这次失败而换一个更容易写的方案。完整提案仍会从头重验。",
+    syntaxError: { reason: evidence.diagnostic.constraint },
+    originalArguments: evidence.originalArguments,
+  });
   return JSON.stringify({
     instruction: "上一次工具调用的 arguments 不是合法 JSON，服务器无法解析出任何草稿，因此没有任何内容被保留或修复。请用同一个工具、同一份冻结上下文，重新完整提交你原本的决定，只需保证输出是合法 JSON：字符串内部的双引号和反斜杠必须转义，不要使用尾随逗号，不要截断；括号必须成对，每个 { 和 [ 恰好对应一个 } 和 ]，结尾不要多出或漏掉 ] 或 }（syntaxError.location 指出上一次出错的位置）。这不是让你改变裁决——重述你本来的决定，不要因为这次失败而换一个更容易写的方案。完整提案仍会从头重验。",
     syntaxError: { reason: evidence.diagnostic.constraint, ...(evidence.diagnostic.location === undefined ? {} : { location: evidence.diagnostic.location }) },

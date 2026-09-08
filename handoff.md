@@ -79,6 +79,7 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 | [round77](docs/agent/vnext-round77-validation.md) | 同上，传输放宽之后 | 首句 4 次调用完整 committed/published。双工具 surface 真的到达模型（传输修复有真实证据）；选择组合变为 `["social","passTime"]`（round75 是 `["social","commitNarrativeDetail"]`）。但 `passTime` 未被使用，`formActorPlan` 未选，计划/活动/承诺仍为 0 | `legalNoPlan` —— **但这个 gate 可能考错了东西，见 §7** |
 | [round81](docs/agent/vnext-round81-validation.md) | 同上，等待旁白 + 档位 v44 之后 | **三句全部 committed/published**，12 次调用 ¥0.62。首句 `duration:5min`、时钟 0→300000000、裸 `"none"` 被接受；等待第一次有旁白（上下文正确、无编造）；第三句接续真实线程引用。瓦罗拒绝敲击，`consequences: []` 第六批 | 没停：`waited-without-confirmable-reminder` → noReminder 分支走完 |
 | [round82](docs/agent/vnext-round82-validation.md) | **新场景**：一小时内抄副本 / 等一个多小时 / 看账台，承诺档位 v46 之后 | 首句填写是 1208 token 的双分支 check，结尾多一个 `]`，重发逐字节相同。同一草稿里模型**第一次就填了 `due:"1h"` 和 trace**，但 `authorityRefs: []` | `PROPOSAL_FORM_INVALID`（JSON 语法），3 次调用 ¥0.20，0 提交，后两句未发 |
+| [round89](docs/agent/vnext-round89-validation.md) | 同上，脚本上限修好 | 前两句零修订（`playerExpression` 枚举成员被真实使用；瓦罗当场抄、不承诺）；第三句 observe 填写又回空 `{}` | 前两句 `committed`；第三句 `PROPOSAL_FORM_INVALID`（`decision` FIELD_MISSING），10 次调用 ¥0.48，2 提交 |
 | [round88](docs/agent/vnext-round88-validation.md) | 同上，同源第二样本 | **承诺 due 1h + trace → NpcPlanFormed → 等待跨到期 → 到期决策 execute → NpcActionCommitted → 痕迹入正史 → 旁白见痕迹**；未解析重发第一次真实触发 | 前两句 `committed`（5 + 7 次调用）；第三句没发（脚本把每 HTTP 上限写死成 5），12 次调用 ¥0.67，2 提交 |
 | [round87](docs/agent/vnext-round87-validation.md) | 同上，responseBasis 平枚举之后 | 填写调用返回 `{}`（25 token）；beta 严格端点、strict true、根上 required 都在 | `PROPOSAL_FORM_INVALID`（`decision` FIELD_MISSING），2 次调用 ¥0.14，0 提交；同源再跑一批分辨 |
 | [round86](docs/agent/vnext-round86-validation.md) | 同上，裁决 basisRefs 丢弃之后 | 首句三张表干净，但 `responseBasis` 引了社交判定规则档案（schema 枚举在 anyOf 内，严格模式没拦） | `PROPOSAL_REFERENCE_INVALID`（`social:foreign-npc-basis`，按设计不可修订），2 次调用 ¥0.15，0 提交 |
@@ -133,7 +134,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ### 5. round86 → round87：同三句再跑
 
-round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。round86（[回执](docs/agent/vnext-round86-validation.md)）首句就倒在 `responseBasis` 引了规则档案——schema 里的枚举在 anyOf 分支内，严格模式不校验；枚举已移到平的数组项上（parser v49），只有本地测试。round87（[回执](docs/agent/vnext-round87-validation.md)）填写调用回了空的 `{}`；round88 同源再跑，`{}` 没复现（是采样不是形状），**前两句把承诺链整个连通了**（[回执](docs/agent/vnext-round88-validation.md)）；第三句因批次脚本把每 HTTP 上限写死成 5 没发出去。round89 修脚本再发三句。要验的：(a) 裁决上与推导列表相同的 `basisRefs` 被丢弃、observe 单独成根真实提交；(b) `existingFactRefs` 里 `knowledge:` 前缀与 `module-opening` 引用是否合法（round85 没走到校验）；(c) 承诺第 2/3 层正例——瓦罗肯不肯承诺仍是 KP 的选择，句子不改。
+round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。round86（[回执](docs/agent/vnext-round86-validation.md)）首句就倒在 `responseBasis` 引了规则档案——schema 里的枚举在 anyOf 分支内，严格模式不校验；枚举已移到平的数组项上（parser v49），只有本地测试。round87（[回执](docs/agent/vnext-round87-validation.md)）填写调用回了空的 `{}`；round88 同源再跑，`{}` 没复现（是采样不是形状），**前两句把承诺链整个连通了**（[回执](docs/agent/vnext-round88-validation.md)）；第三句因批次脚本把每 HTTP 上限写死成 5 没发出去。round89（[回执](docs/agent/vnext-round89-validation.md)）前两句零修订，第三句又回空 `{}`（今天 11 次填写里 2 次为空，与 schema 形状无关）；空对象现在走一次未解析重发（parser v50），round90 再发三句。要验的：(00) 空 `{}` 的重发是否真能救回第三句；(a) 裁决上与推导列表相同的 `basisRefs` 被丢弃、observe 单独成根真实提交；(b) `existingFactRefs` 里 `knowledge:` 前缀与 `module-opening` 引用是否合法（round85 没走到校验）；(c) 承诺第 2/3 层正例——瓦罗肯不肯承诺仍是 KP 的选择，句子不改。
 
 ### 已完成、真实证据分账
 
@@ -146,6 +147,7 @@ round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。
 | 传输接受双工具 | round77/78/80 capture 均见两个工具到达模型 |
 | parser v39 引用槽准入 | round75 验到「不误伤」；未验到「挡得住」 |
 | parser v40 未解析重发 | **round88：填写的 JSON 里有未转义的内层双引号，第三次调用只带原字节与出错位置，模型完整重述同一裁决并通过** |
+| responseBasis 平枚举 + `playerExpression` 成员（v49） | **round88/89：六个与四个引用全在枚举内，`"playerExpression"` 字符串被真实使用**；round86 的规则档案引用没有再出现 |
 | parser v41 一次补选 | **无**，六次 ordinal 2 都带着工具、一次未用 |
 
 ### 已知缺口（各自独立）
