@@ -3529,3 +3529,13 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 最终增量证据：默认绑定与 V3 拒绝/读取 8/8，exit 0；生产 ROOMS 的两种建卡/后续登记路径与原随机恢复 3 passed / 3 skipped，exit 0；typecheck exit 0。interaction-contract 初次 6/8，两项为既有 narrationProfileFor 调用与开房查询源码断言滞后；直接消费者更新后两个各自目标 1/1、exit 0，其余六项已通过。部署守卫在更新已批准 SPEC 指纹后 3/3、exit 0。只因实际默认行为及签名改变追加上述检查，没有重跑全量门。
 - 真实本地接口：独立默认 .wrangler/state 本地 migration exit 0；不设置 ZHUWEI_VNEXT_LOCAL，不提供 createRoom.model，正常注册→开房→建卡→开局→fetchTable 成功，HP24/24、一环4、战斗未开始。D1 精确工作流核对 exit 0，保存值 SHA256=dcd38dff093f10dc4d32c440c1c53994e119b14dfef2bed2b88dd634a53b1c6f。没有真实模型调用或裁决夹具。Python SQLite 只读直连受文件打开限制，改用官方 wrangler 本地 SELECT 完成核对；原脚本失败保留，不篡改存储。服务已停止，临时假密钥文件已删除。
 - 发布范围与恢复边界：旧房已获退役授权，但本次尚未删除六个旧目录/归档，不能把旧房称为已迁移。新建 vNext 房不能回退给旧 V3 Worker 解释；如出现问题，应保留本候选协议做前向修复，不能盲目回滚旧 Worker 使新数据不可用。等待 duplicate 的 narration 状态问题仍列已知限制。一次生产新房/治愈伤口探针限一行动、最多七次物理调用、十分钟/¥2，首失败停止，不换模型或筛成功。
+
+
+## vNext 新房默认正式上线与 push 收尾（2026-09-08）
+
+- 源码与推送：冻结源码 ce349be46f4e158ccac7855d34a932598213431e、tree 113af7d369aa57b5933abe0932d7143fe31f126f；31 个文件的已审查候选以精确补丁写入 index，原目录其他任务工作区内容保留。git commit / git push origin cloudflare 退出 0，从 6ab447b 快进至 ce349be。部署在 /tmp/zhuwei-quick-release-20260908/source 的独立干净 cloudflare 检出，源码与候选树一致。
+- 构建与部署：DEPLOY_SOURCE_SHA=ce349be… npm run cf:deploy 通过守卫和唯一一次 production build，但 GET workers/services/zhuwei 返回 503（Ray a37ea78c1882816b-LAX），整命令 exit 1，旧 7f34fa5c 仍承接 100%。确认同一 103 文件构建清单后仅重试 npx wrangler deploy，exit 0；上传11个新资产，版本 11a9009d-ed5f-493e-a496-a216395e5ea8，2026-09-08T14:32:27.001Z。两次部署间没有源码/构建变化；manifest SHA256 cffdda202e0ab818ad84843d0f20b1dbd3a42c21aec6f2500c145f6f07124b04。
+- 控制面与资源：deployments status / versions view exit 0，新版本100%流量，zhuwei/ROOMS/既有DB/AI/ASSETS和唯一DEEPSEEK_API_KEY Secret名称保持。未执行远端 migration、Secret 变更、新资源创建或旧房删除；六个旧房仍未迁移。git ls-remote exit0证明cloudflare为ce349be、main前后均为cf7dbddab8cfb36365734fe96c42d82456fa1d0e；不把历史main基线不同当作本任务变更。
+- 生产冒烟：直连注册EHOSTUNREACH、curl超时均未达Worker；系统代理只读查明127.0.0.1:7897，未改配置，通过该独立通道正常注册→默认开房→建卡→开局→fetchTable，exit0。D1只读查询证明完整工作流原文等于候选，SHA256 dcd38dff093f10dc4d32c440c1c53994e119b14dfef2bed2b88dd634a53b1c6f。一次真实治愈伤口 committed/published，HP24/24不变、一环4→3、二环2保持，旁白明确满血/零增加与一环消耗1/剩3；重复同submission完整返回、权威投影、Receipt、Delivery和消息一致，exit0。首页HTTP200、标题正常。用户明确确认“线上可用”。
+- 证据限制：wrangler tail因ETIMEDOUT未连接，未捕获生产逐调用usage，因此不报告精确调用数/费用或生产零新增调用/完整随机journal重放。没有追加第二行动、重采样或放宽校验。生产验收账号和单个新房留存追溯；私有凭据不入库。等待重复返回状态问题、其他功能未验收、旧房退役及统计性认证仍未完成，完整说明见[生产发布回执](agent/vnext-production-release-20260908.md)。
+- 文档收尾：补充本记录、发布回执与生产TODO顶层状态，属于说明性改动，不改变已部署源码；本次仅针对三份说明提交并再次非force推送cloudflare。对应最终Git SHA以本条所属提交为准，部署源码仍为ce349be。全部进程已退出；未运行全量测试/Lint、远端migration或重新构建。

@@ -1,5 +1,7 @@
 # vNext 达标与生产替换 TODO
 
+> 2026-09-08 生产更新：用户已授权并确认新房默认使用 vNext，源码 `ce349be46f4e158ccac7855d34a932598213431e` 已部署为版本 `11a9009d-ed5f-493e-a496-a216395e5ea8`，100% 流量；线上正常开房/建卡/开局、真实治疗及重复返回一致，用户确认线上可用。详见[发布回执](vnext-production-release-20260908.md)。下文历史差量和未完成能力继续保留；主目录并行在途源码不等于生产版本，旧房尚未删除或迁移。
+
 日期：2026-09-05。源码基线：`cloudflare` / `258caee404e0814405eb497653ee9f00d647b773`。本清单回应“按 SPEC 0001，vNext 该做到什么程度，并最终替代目前生产 V3”。
 
 这是实施与验收计划，按现有实现计算增量工作。产品合同来自 [SPEC 0001](../specs/0001-llm-kp-responsibility-contract.md)，技术路线沿用 [SPEC 0016](../specs/0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md)；源码位置见 [repo map](repo-map.md)，历史续作背景见 [Claude 交接](handoff-hazards-and-items.md)。清单持续记录当前工作树的实施进度；已执行有界真实模型验证，没有执行数据删除或生产切换。
