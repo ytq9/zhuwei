@@ -3435,3 +3435,7 @@ round89：前两句零修订提交（`playerExpression` 以枚举成员字符串
 ## round90 → 裸 none 对所有 {kind:"none"} 字段生效（2026-09-08）
 
 round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写成裸 `"none"`；round79 之后的裸 none 规则只列了可空引用字段，`retryChange` 是可空对象，被 TYPE_MISMATCH 拒掉。现在规则按线上形状而不是字段名：任何以 `{kind:"none"}` 表示空的字段都接受裸 `"none"`。parser v51。见[round90 回执](agent/vnext-round90-validation.md)。
+
+## round91：三句零修订（2026-09-08）
+
+社交、一小时等待、observe 三根各 4 次调用全部提交，三张表第一次跑完整个场景；observe 的 `knowledge:` 与 `module-opening` 引用合法。无源码改动。见[round91 回执](agent/vnext-round91-validation.md)。

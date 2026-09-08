@@ -1,0 +1,116 @@
+{
+  "round": 91,
+  "verifiedAt": "2026-09-08T06:56:23.131171+00:00",
+  "verdict": "All three sentences committed and published with zero corrections, 4 calls each: the first complete run of the scenario on the flat three-table wire. Varo demanded the player's full name and purpose before any copy, so no promise formed; the one-hour wait ran without a due point; the observe root then committed with a sensoryEvidence entry and a characterInferences entry (CanonicalFactDeclared, SensoryEvidenceAcquired, CharacterInferenceFormed), and the narration showed no copy on the desk, consistent with the refusal. Neither fix under test (bare none on retryChange, empty-object re-emit) was needed this run.",
+  "sourceCommit": "da36c8798637d80fed724c28f6fd114eb334544c",
+  "sourceManifestSha256": "54af5924b311ec4c51d822ea52d213ae24aa6b039a510784cfb0913285f2a2cc",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v51",
+  "scenario": "hours-scale three sentences (same as rounds 82-90)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 3,
+  "unattemptedIntents": 0,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round91-npc-http-21163042-46a1-427e-9fe8-9c2b49258b22",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 4,
+      "evidence": "offer [social]; fill: directSuccess 5min; one social step (addressedThreadRef and retryChange both {kind:none}); one result row, consequences [], responseBasis [definition varo, varo, wake, playerExpression] all in the enum. Varo: a copy needs cause, name and addressee; original stays in hand tonight. Clock 0 -> 300000000."
+    },
+    {
+      "ordinal": 2,
+      "submissionId": "vnext-round91-npc-http-310fbcdf-3af2-440d-aca7-cc038ad3d962",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 4,
+      "evidence": "offer [passTime, observe]; fill: passTime 3600000000, steps [] results [] (observe dropped, seventh time). Narration 「你在大厅中等候了一个小时，此刻等待已经结束。」 Clock 300000000 -> 3900000000."
+    },
+    {
+      "ordinal": 3,
+      "submissionId": "vnext-round91-npc-http-6ab738a2-2a26-4fe5-929f-3d8c8d012dd2",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 4,
+      "evidence": "offer [observe]; fill: directSuccess 5min with no basisRefs on the ruling; one observe step (basisRefs incl. the actor's module-opening ref, existingFactRefs two knowledge: refs of the player's own social claims, focusRefs [wake, varo]); one result row with sensoryEvidence + characterInferences entries. Events: FictionTimeAdvanced, CanonicalFactDeclared, SensoryEvidenceAcquired, CharacterInferenceFormed, WorldInteractionResolved, AtomicWorldInteractionStepsResolved. Clock 3900000000 -> 4200000000. Narration: no new paper on the desk, the sealed original still there."
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "coverage": "nothing-recorded-awaiting-due"
+    },
+    {
+      "afterAction": 2,
+      "next": "pending",
+      "coverage": "waited-without-plan"
+    }
+  ],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {
+      "time-passage": "completed"
+    },
+    "fictionNowMicros": "4200000000",
+    "eventTypes": [
+      "FictionTimeAdvanced",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted",
+      "FictionTimeAdvanced",
+      "CanonicalFactDeclared",
+      "SensoryEvidenceAcquired",
+      "CharacterInferenceFormed",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved"
+    ],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "Bare none on retryChange (v51) and the empty-object re-emit (v50) were not needed: every fill was well-formed.",
+    "The ruling-level basisRefs drop still unexposed (the observe ruling carried no basisRefs).",
+    "observe selected with passTime dropped again (seventh time).",
+    "room.authority.commit.completed for the wait root again carries null fictionTimeMicros/crossedDeadlineCount."
+  ],
+  "meter": {
+    "calls": 12,
+    "inputTokens": 159878,
+    "outputTokens": 4539,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 159878,
+    "outputBudgetCharge": 4539,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.520485
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 14:53 Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched at release, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.520485,
+    "budgetCny": 5
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "16",
+    "events": 16
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "beforeCount": 323,
+    "afterCount": 323,
+    "headUnchanged": true
+  },
+  "servicesShutdown": "both roles verifiedAbsent; no listener on 4320/4321"
+}
