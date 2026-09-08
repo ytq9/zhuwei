@@ -64,7 +64,7 @@ npm run dev:vnext
 
 可给一次 HTTP 请求的提案、修订和旁白设置本地调用总上限，例如 `ZHUWEI_VNEXT_LOCAL_CALL_LIMIT=3 npm run dev:vnext`；批次总预算仍由测试编排记录。
 
-该入口为新房间绑定 vNext，并在请求期选择对应 runtime；不修改生产注册表。DeepSeek 密钥从本地 `.dev.vars` 读取，真实调用按 [有界测试预算](docs/agent/vnext-production-todo.md) 执行。
+新房默认绑定 vNext，生产和本地使用同一个 Room 裁决入口。`dev:vnext` 只为测试隔离本地数据、调用预算和私有捕获；不再决定产品代际。已保存的 workflow/Profile 标识保持原名并精确校验，旧房不会被重新解释为 vNext。DeepSeek 密钥从本地 `.dev.vars` 读取，真实调用按 [有界测试预算](docs/agent/vnext-production-todo.md) 执行。
 
 ## 身份与密钥
 

@@ -130,11 +130,11 @@ export async function runAuthoritativeRoomAction(input: {
       where id = ${input.roomId}
     `
   )[0];
-  const profile = roomRuntimeConfiguration(env).profileByBinding(
+  const profile = roomRuntimeConfiguration().profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const requestedProfile = roomRuntimeConfiguration().profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
@@ -144,7 +144,7 @@ export async function runAuthoritativeRoomAction(input: {
   const boundModuleProfile = binding === undefined
     ? undefined
     : await observedRoomModuleProfile(binding.module_id, bindingObservation);
-  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
+  const v3Binding = roomRuntimeConfiguration().validateRoomBinding({
     binding,
     roomProfile: profile,
     requestedProfile,
@@ -282,18 +282,18 @@ export async function retryAuthoritativeViewerNarration(input: {
       from rooms where id = ${input.roomId}
     `
   )[0];
-  const roomProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const roomProfile = roomRuntimeConfiguration().profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const requestedProfile = roomRuntimeConfiguration().profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
   const observation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
-  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
+  const v3Binding = roomRuntimeConfiguration().validateRoomBinding({
     binding,
     roomProfile,
     requestedProfile,
@@ -435,14 +435,14 @@ export async function runAuthoritativeRoomCorrection(
       where id = ${input.roomId}
     `
   )[0];
-  const profile = roomRuntimeConfiguration(env).profileByBinding(
+  const profile = roomRuntimeConfiguration().profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
   const correctionObservation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(binding.host_user_id));
-  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
+  const v3Binding = roomRuntimeConfiguration().validateRoomBinding({
     binding,
     roomProfile: profile,
     expectedModuleRef: binding === undefined
@@ -832,7 +832,7 @@ export async function runAuthoritativePartyAction(input: {
   submissionId: string;
   action: AuthoritativePartyAction;
 }) {
-  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const requestedProfile = roomRuntimeConfiguration().profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
@@ -845,7 +845,7 @@ export async function runAuthoritativePartyAction(input: {
       where id = ${input.roomId}
     `
   )[0];
-  const roomProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const roomProfile = roomRuntimeConfiguration().profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
@@ -855,7 +855,7 @@ export async function runAuthoritativePartyAction(input: {
   const partyObservation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
-  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
+  const v3Binding = roomRuntimeConfiguration().validateRoomBinding({
     binding,
     roomProfile,
     requestedProfile,

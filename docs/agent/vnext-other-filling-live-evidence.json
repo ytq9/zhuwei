@@ -1,0 +1,440 @@
+{
+  "schema": "zhuwei.other-filling-live-validation/v1",
+  "recordedAt": "2026-09-08T13:25:58.871955+00:00",
+  "source": {
+    "branch": "cloudflare",
+    "head": "5d4c1512488da9e134314589344c613a60aaf26a",
+    "snapshotRoot": "/tmp/zhuwei-other-filling-live-20260908/source",
+    "manifestSha256": "bcda78cd4a08c8c3ed4d3536321126987475e347276255ff196f746fdaeb74d4",
+    "createdAt": "2026-09-08T13:10:57.758362+00:00"
+  },
+  "sourceFiles": 343,
+  "runtimeSourceUnchanged": true,
+  "maximumCases": 5,
+  "maximumCalls": 25,
+  "maximumCny": 6.25,
+  "cases": [
+    {
+      "id": "01-knowledge",
+      "capability": "knowledgeReview",
+      "text": "我只回顾自己已经掌握的全部信息，帮我整理一下，不进行新的观察或调查。",
+      "attempted": true,
+      "overall": "passed",
+      "originalForm": "accepted",
+      "modelEvidence": {
+        "model": "deepseek-v4-flash",
+        "proposalCalls": 2,
+        "selectedCapabilities": [
+          "knowledgeReview"
+        ],
+        "originalForm": "accepted",
+        "parseError": null,
+        "repairUsed": false,
+        "requestHashes": [
+          "sha256:501d4a2b91b489c51c4647e65bfb444ddf9c5ffa280d0d4fc246ad43d20e8412",
+          "sha256:7883714cccb57c2fdb9a5b024af078ed1f09cbd7a360a76dbbbf2f939e656ae2"
+        ],
+        "exactCapturedJournal": true
+      },
+      "firstHttpResult": {
+        "action": "committed",
+        "narration": "published"
+      },
+      "mechanics": {
+        "effectStatus": "completed",
+        "receiptId": "receipt:root-action:vnext-precision-ability-http-70b6f362-b445-4dbb-bafa-aefa1ebf828c:1",
+        "eventTypes": [
+          "KnowledgeReviewed"
+        ],
+        "eventCount": 1,
+        "rootEventTypes": [
+          "KnowledgeReviewed"
+        ],
+        "newActivityCount": 0,
+        "hp": {
+          "current": 24,
+          "maximum": 24
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 1,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 0,
+          "slot1": 4,
+          "slot2": 2,
+          "superiority": 0,
+          "surge": 0,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 0,
+          "arrow": 0,
+          "torch": 0,
+          "ration": 2,
+          "gold": 15
+        }
+      },
+      "timelineBefore": {
+        "branch:main": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        },
+        "timeline:branch:main:shrine": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        }
+      },
+      "timelineAfter": {
+        "branch:main": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        },
+        "timeline:branch:main:shrine": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        }
+      },
+      "receipts": 1,
+      "duplicate": {
+        "newCalls": 0,
+        "checks": {
+          "sameAuthoritativeState": true,
+          "sameEvents": true,
+          "sameRandomnessJournal": true,
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameOutcome": true,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        },
+        "narration": "published"
+      },
+      "replay": {
+        "pinnedProfilesMatch": true,
+        "replayKind": "replayed",
+        "exactState": true,
+        "stateVersion": "1",
+        "events": 1,
+        "eventTypes": [
+          "KnowledgeReviewed"
+        ],
+        "checkedAt": "2026-09-08T13:16:36.673Z"
+      },
+      "narrationVerification": {
+        "case": "01-knowledge",
+        "originalBodyUnchanged": true,
+        "reviewedBodyExact": true,
+        "reviewAccepted": true,
+        "checks": {
+          "results": "pass",
+          "continuity": "pass",
+          "attribution": "pass",
+          "agency": "pass",
+          "presentation": "pass"
+        },
+        "body": "你回想起来：暮烛镇的雨已经停了，屋里还带着潮气和烛蜡味。黑橡居酒屋的大厅里点着蜡烛，赫斯·黑橡的遗体停在两张拼起的长桌上，嘴角被擦过，齿间仍夹着一片黑橡叶的梗。女儿莉安坐在炉边，手里握着一枚没有钥匙孔的铜钥。书记官瓦罗把一份盖印的文件按在账台上。那个自称「远房表弟」的奈斯站在楼梯的阴影里，没有摘风帽。镇上的人来过又走，现在只剩下你们这些外乡人，也是今晚还肯问问题的人。"
+      }
+    },
+    {
+      "id": "02-wait",
+      "capability": "passTime",
+      "text": "我留在原地安静等待一分钟，不做其他事情。",
+      "attempted": true,
+      "overall": "failed",
+      "originalForm": "accepted",
+      "modelEvidence": {
+        "model": "deepseek-v4-flash",
+        "proposalCalls": 2,
+        "selectedCapabilities": [
+          "passTime"
+        ],
+        "originalForm": "accepted",
+        "parseError": null,
+        "repairUsed": false,
+        "requestHashes": [
+          "sha256:f98def7445abd0418dc7066e36dd8bee594dfcc19e81dcf0910db0fb3e355142",
+          "sha256:7c593954d301a4a5729cd1048e6389441f01ec7496040ab14ed3dff88af84497"
+        ],
+        "exactCapturedJournal": true
+      },
+      "firstHttpResult": {
+        "action": "committed",
+        "narration": "published"
+      },
+      "mechanics": {
+        "effectStatus": "completed",
+        "receiptId": "receipt:root-action:vnext-precision-ability-http-84da0f80-51ec-4ea4-ac3f-ec2f54d803d4:1",
+        "eventTypes": [
+          "ActivityStarted",
+          "FictionTimeAdvanced",
+          "ActivityCompleted"
+        ],
+        "eventCount": 3,
+        "rootEventTypes": [
+          "ActivityStarted"
+        ],
+        "newActivityCount": 1,
+        "hp": {
+          "current": 24,
+          "maximum": 24
+        },
+        "resources": {
+          "breath": 0,
+          "channel": 1,
+          "hitDice": 3,
+          "rage": 0,
+          "relentless": 0,
+          "secondWind": 0,
+          "slot1": 4,
+          "slot2": 2,
+          "superiority": 0,
+          "surge": 0,
+          "ward": 0,
+          "warPriest": 0,
+          "bolt": 0,
+          "arrow": 0,
+          "torch": 0,
+          "ration": 2,
+          "gold": 15
+        }
+      },
+      "timelineBefore": {
+        "branch:main": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        },
+        "timeline:branch:main:shrine": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        }
+      },
+      "timelineAfter": {
+        "branch:main": {
+          "branchId": "branch:main",
+          "nowMicros": "60000000"
+        },
+        "timeline:branch:main:shrine": {
+          "branchId": "branch:main",
+          "nowMicros": "0"
+        }
+      },
+      "receipts": 3,
+      "duplicate": {
+        "newCalls": 0,
+        "checks": {
+          "sameAuthoritativeState": true,
+          "sameEvents": true,
+          "sameRandomnessJournal": true,
+          "noModelReinvocation": true,
+          "sameSubmissionId": true,
+          "sameReceipt": true,
+          "sameOutcome": false,
+          "sameMechanicalState": true,
+          "sameDelivery": true
+        },
+        "narration": "notApplicable"
+      },
+      "replay": {
+        "pinnedProfilesMatch": true,
+        "replayKind": "replayed",
+        "exactState": true,
+        "stateVersion": "3",
+        "events": 3,
+        "eventTypes": [
+          "ActivityStarted",
+          "FictionTimeAdvanced",
+          "ActivityCompleted"
+        ],
+        "checkedAt": "2026-09-08T13:23:59.124Z"
+      },
+      "narrationVerification": {
+        "case": "02-wait",
+        "originalBodyUnchanged": true,
+        "reviewedBodyExact": true,
+        "reviewAccepted": true,
+        "checks": {
+          "results": "pass",
+          "continuity": "pass",
+          "attribution": "pass",
+          "agency": "pass",
+          "presentation": "pass"
+        },
+        "resultChecks": {
+          "m0": "complete"
+        },
+        "body": "一分钟过去了，你留在原地安静等待，没有其他事情发生。"
+      }
+    },
+    {
+      "id": "03-inventory",
+      "capability": "inventoryOperation",
+      "text": "我把随身的一份口粮放在脚边的地面上。",
+      "attempted": false,
+      "reason": "Stopped after wait duplicate public-status inconsistency."
+    },
+    {
+      "id": "04-observe",
+      "capability": "observe",
+      "text": "我环顾大厅，只留意眼前能直接看见的陈设，不触碰任何物品。",
+      "attempted": false,
+      "reason": "Stopped after wait duplicate public-status inconsistency."
+    },
+    {
+      "id": "05-social",
+      "capability": "social",
+      "text": "我轻声对莉安说：“你愿意说说，手里这枚铜钥是从哪里来的吗？”",
+      "attempted": false,
+      "reason": "Stopped after wait duplicate public-status inconsistency."
+    }
+  ],
+  "usage": {
+    "calls": 8,
+    "inputTokens": 91714,
+    "outputTokens": 815,
+    "cacheHitTokens": 9984,
+    "cacheMissTokens": 81730,
+    "estimatedCny": 0.1267617
+  },
+  "calls": [
+    {
+      "ordinal": "01",
+      "model": "deepseek-v4-flash",
+      "createdAt": "2026-09-08T21:15:04+08:00",
+      "tool": "offer_kp_proposal_bundle",
+      "inputTokens": 24072,
+      "outputTokens": 47,
+      "estimatedCny": 0.034649099999999995
+    },
+    {
+      "ordinal": "02",
+      "model": "deepseek-v4-flash",
+      "createdAt": "2026-09-08T21:15:05+08:00",
+      "tool": "submit_kp_proposal_bundle",
+      "inputTokens": 21989,
+      "outputTokens": 87,
+      "estimatedCny": 0.0328182
+    },
+    {
+      "ordinal": "03",
+      "model": "deepseek-v4-flash",
+      "createdAt": "2026-09-08T21:15:08+08:00",
+      "tool": "narration-generation",
+      "inputTokens": 2140,
+      "outputTokens": 242,
+      "estimatedCny": 0.002443
+    },
+    {
+      "ordinal": "04",
+      "model": "deepseek-v4-flash",
+      "createdAt": "2026-09-08T21:15:10+08:00",
+      "tool": "review_frozen_narration",
+      "inputTokens": 2962,
+      "outputTokens": 142,
+      "estimatedCny": 0.005082
+    },
+    {
+      "ordinal": "05",
+      "model": "deepseek-v4-flash",
+      "createdAt": "2026-09-08T21:18:45+08:00",
+      "tool": "offer_kp_proposal_bundle",
+      "inputTokens": 19258,
+      "outputTokens": 47,
+      "estimatedCny": 0.0235305
+    },
+    {
+      "ordinal": "06",
+      "model": "deepseek-v4-flash",
+      "createdAt": "2026-09-08T21:18:46+08:00",
+      "tool": "submit_kp_proposal_bundle",
+      "inputTokens": 17096,
+      "outputTokens": 57,
+      "estimatedCny": 0.0247869
+    },
+    {
+      "ordinal": "07",
+      "model": "deepseek-v4-flash",
+      "createdAt": "2026-09-08T21:18:48+08:00",
+      "tool": "narration-generation",
+      "inputTokens": 1664,
+      "outputTokens": 25,
+      "estimatedCny": 0.0007525
+    },
+    {
+      "ordinal": "08",
+      "model": "deepseek-v4-flash",
+      "createdAt": "2026-09-08T21:18:49+08:00",
+      "tool": "review_frozen_narration",
+      "inputTokens": 2533,
+      "outputTokens": 168,
+      "estimatedCny": 0.0026995
+    }
+  ],
+  "providerCallTelemetryExact": true,
+  "stopReason": "The second case filled and executed correctly, but an identical submission returned narration notApplicable instead of published. Three remaining cases were not dispatched.",
+  "diagnosis": {
+    "firstHttpNarration": "published",
+    "duplicateHttpNarration": "notApplicable",
+    "sameReceipt": true,
+    "sameDelivery": true,
+    "sameState": true,
+    "sameEvents": true,
+    "newModelCalls": 0,
+    "savedRootResultKeys": [
+      "kind",
+      "receipt",
+      "kpProjection",
+      "deliveryPlan"
+    ],
+    "savedRootHasDueOutcomes": false,
+    "savedRootAudienceCount": 0,
+    "deliveryPlans": [
+      {
+        "rootActionId": "root-action:vnext-precision-ability-http-84da0f80-51ec-4ea4-ac3f-ec2f54d803d4",
+        "audiences": 0
+      },
+      {
+        "rootActionId": "time-passage-advance:activity:time-passage:root-action:vnext-precision-ability-http-84da0f80-51ec-4ea4-ac3f-ec2f54d803d4:0:60000000",
+        "audiences": 0
+      },
+      {
+        "rootActionId": "activity-due:activity:time-passage:root-action:vnext-precision-ability-http-84da0f80-51ec-4ea4-ac3f-ec2f54d803d4:60000000",
+        "audiences": 1
+      }
+    ]
+  },
+  "proposedRepair": "Derive the same viewer publication summary for first calls and repeats from persisted causal links and already-published child Activity results, without rerunning models or mechanics and without replacing the player Receipt.",
+  "repairImplemented": false,
+  "harnessAdjustments": {
+    "checkedAt": "2026-09-08T13:17:46.444327+00:00",
+    "change": "Read terminalKinds alongside capabilities in offline acceptance verifier; add path aliases to the shared capture directory.",
+    "oldScenarioHash": "e17230eae006a559f0d3ab1a9a4b0aca9a8f4e7499c64b1696492ffb45a5829f",
+    "newScenarioHash": "3afec84491c42c65e8f25f2387b1deea9a40decae0acb976b37ad2f32006f59c",
+    "runtimeSourceChanged": false,
+    "modelRequestChanged": false,
+    "modelResponseChanged": false,
+    "newModelCalls": 0,
+    "originalManifestPreserved": true,
+    "resourceProjectionAdjustment": {
+      "reason": "Public resources include inventory-derived balances; compare all authoritative core balances by key and separately keep before/after inventory and public-resource invariants.",
+      "oldScenarioHash": "3afec84491c42c65e8f25f2387b1deea9a40decae0acb976b37ad2f32006f59c",
+      "newScenarioHash": "2410ba1ba8b03f31223be9c64ae7d5b652d20225618547f59093baed0aadfa2e",
+      "modelCalls": 0
+    }
+  },
+  "cleanup": {
+    "ownedProcessesStopped": true,
+    "ports4330And4331Closed": true,
+    "productionCodeChanged": false,
+    "deployed": false,
+    "pushed": false,
+    "remoteMigration": false
+  },
+  "limitations": [
+    "Only knowledgeReview and passTime received real model calls.",
+    "Original filling and first publication passed for both; full duplicate outcome equality failed for passTime.",
+    "No statistical reliability, arbitrary gameplay or production evidence.",
+    "Provider cost is estimated using saved official prices and usage, not an account invoice."
+  ]
+}

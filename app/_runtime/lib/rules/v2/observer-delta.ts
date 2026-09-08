@@ -1056,6 +1056,13 @@ function viewerClaimDisplayNames(
         add(ref, definition.name ?? definition.label ?? definition.displayName);
       }
     }
+    const controlled: unknown = projection.controlledCharacter;
+    const combat = isRecord(controlled) ? controlled.combat : undefined;
+    if (isRecord(combat) && isRecord(combat.definitions)) {
+      for (const [ref, definition] of Object.entries(combat.definitions)) {
+        if (isRecord(definition)) add(ref, definition.name ?? definition.label ?? definition.displayName);
+      }
+    }
     for (const assembly of projection.visibleAssemblies ?? []) add(assembly.assemblyRef, assembly.label);
     if (Array.isArray(projection.visibleItems)) {
       for (const item of projection.visibleItems) {

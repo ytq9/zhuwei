@@ -2,6 +2,7 @@ import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-ta
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { closeVNextProposalCapabilities, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, VNEXT_PROPOSAL_CAPABILITIES,
   vnextProposalCapabilityForEntry } from "../app/_runtime/lib/kp/vnext/proposal-capabilities.ts";
 import { createVNextProposalBundleSchema, createVNextProposalOfferModelInput, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -32,6 +33,19 @@ function decisionSchema(expanded, kind) {
   assert.ok(variant, `missing decision variant ${kind}`);
   return variant;
 }
+function withoutProducerAvailabilityGuidance(schema) {
+  const value = structuredClone(schema);
+  function visit(node) {
+    if (!node || typeof node !== "object") return;
+    const basis = node.properties?.basisRefs;
+    if (typeof basis?.description === "string") basis.description = basis.description
+      .replace(" A proposal may also cite an exact handle declared by a supported same-bundle producer through its typed reference slots; the server derives and validates the matching dependency.", "")
+      .replace(" No same-bundle producer type was selected; use existing choices only.", "");
+    for (const child of Object.values(node)) visit(child);
+  }
+  visit(value);
+  return value;
+}
 
 test("selected schemas preserve exact full-contract variants and resolve all strict references", () => {
   const full = expandDeepSeekSchema(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA);
@@ -52,13 +66,16 @@ test("selected schemas preserve exact full-contract variants and resolve all str
     }
     // Steps and results are root tables shared by both rulings; the ruling
     // variants themselves carry no steps. Every selected row must be one of
-    // the full contract's rows, with the social basis narrowed to the selection.
+    // the full contract's rows. Producer availability guidance and the social
+    // response-basis choices reflect the selected producer types.
     for (const variant of expanded.properties.steps.items.anyOf) {
-      assert.ok(full.properties.steps.items.anyOf.some(original => JSON.stringify(original) === JSON.stringify(variant)), `${id}:step`);
+      assert.ok(full.properties.steps.items.anyOf.some(original => isDeepStrictEqual(
+        withoutProducerAvailabilityGuidance(original), withoutProducerAvailabilityGuidance(variant))), `${id}:step`);
     }
     for (const variant of expanded.properties.results.items.anyOf) {
       const original = full.properties.results.items.anyOf.find(original => variant.properties.kind.enum.includes("social")
-        ? original.properties.kind.enum.includes("social") : JSON.stringify(original) === JSON.stringify(variant));
+        ? original.properties.kind.enum.includes("social") : isDeepStrictEqual(
+          withoutProducerAvailabilityGuidance(original), withoutProducerAvailabilityGuidance(variant)));
       if (variant.properties.kind.enum.includes("none")) continue;
       assert.ok(original, `${id}:result`);
       const expected = structuredClone(original);
@@ -70,7 +87,7 @@ test("selected schemas preserve exact full-contract variants and resolve all str
         else assert.deepEqual(selectedItems, completeSource, "social-only selection cannot reference an unselected world-fact producer");
         expected.properties.responseBasis.items = selectedItems;
       }
-      assert.deepEqual(variant, expected, `${id}:result`);
+      assert.deepEqual(withoutProducerAvailabilityGuidance(variant), withoutProducerAvailabilityGuidance(expected), `${id}:result`);
     }
     for (const kind of ["directSuccess", "check"]) {
       assert.deepEqual(decisionSchema(expanded, kind), decisionSchema(full, kind), `${id}:${kind}`);
@@ -99,7 +116,9 @@ test("every advertised capability loads its complete filling guidance and only a
     for (const id of VNEXT_PROPOSAL_CAPABILITY_IDS) {
       assert.equal(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.filling[id]), loaded.includes(id), id);
     }
-    assert.equal(prompt.includes(JSON.stringify(VNEXT_SEMANTIC_TEMPLATE_CATALOG)), loaded.includes("materializeObject"));
+    const defaults = { templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) =>
+      ({ templateRef, semanticKind, defaults })) };
+    assert.equal(prompt.includes(JSON.stringify(defaults)), loaded.includes("materializeObject"));
     assert.equal(vnextProposalSystemPrompt("expandedProposal", [...loaded].reverse()), prompt);
   }
   assert.equal(vnextProposalSystemPrompt("offer", ["authorHazard"]), vnextProposalSystemPrompt("offer"));

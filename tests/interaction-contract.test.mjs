@@ -72,7 +72,7 @@ test("uses one DeepSeek provider adapter for structured KP text and Workers AI f
   assert.match(provider, /DEEPSEEK_API_KEY/);
   assert.match(deepseek, /https:\/\/api\.deepseek\.com\/chat\/completions/);
   assert.match(provider, /response_format:\s*\{ type: "json_object" \}/);
-  assert.match(roomServer, /authoritativeKpModelBinding\(profile\)/);
+  assert.match(roomServer, /authoritativeKpModelBinding\(narrationProfileFor\(profile\)\)/);
   assert.match(voice, /@cf\/openai\/whisper-large-v3-turbo/);
   assert.match(voice, /@cf\/myshell-ai\/melotts/);
   assert.doesNotMatch(voice, /api\.x\.ai/);
@@ -150,10 +150,10 @@ test("pins one host-selected KP profile when the room is created", async () => {
     server.indexOf("export const joinRoom ="),
   );
   assert.match(create, /AUTHORITATIVE_RULESET_VERSION/);
-  assert.match(create, /PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON/);
+  assert.match(create, /configuration\.workflowForProfile\(profile\)/);
   assert.match(create, /kp_model, kp_model_profile/);
-  assert.match(roomServer, /authoritativeKpProfileByBinding/);
-  assert.match(roomServer, /authoritativeKpModelBinding\(profile\)/);
+  assert.match(roomServer, /roomRuntimeConfiguration\(\)\.profileByBinding/);
+  assert.match(roomServer, /authoritativeKpModelBinding\(narrationProfileFor\(profile\)\)/);
   assert.match(provider, /createDeepSeekAuthoritativeBinding/);
   assert.match(provider, /createDeepSeekAuthoritativeBinding/);
   const publicRoomProjection = server.slice(
@@ -175,7 +175,7 @@ test("pins one host-selected KP profile when the room is created", async () => {
   assert.match(correction, /where id = \$\{input\.roomId\}/);
   assert.match(hall, /创建桌子前选择 KP 模型/);
   assert.match(hall, /createRoom\(\{ data: \{ nickname: nick, model \} \}\)/);
-  assert.match(hall, /AUTHORITATIVE_KP_MODELS\.map/);
+  assert.match(hall, /NEW_ROOM_KP_MODELS\.map/);
   assert.doesNotMatch(hall, /LEGACY_KP_MODELS/);
   assert.match(lobby, /本次跑团模型/);
   assert.match(lobby, /模型在创建桌子时固定/);

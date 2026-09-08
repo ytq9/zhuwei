@@ -18,6 +18,9 @@ export const AUTHORITATIVE_KP_MODELS = [
   },
 ] as const;
 
+/** New rooms offer only the model bound by the current vNext workflow. */
+export const NEW_ROOM_KP_MODELS = AUTHORITATIVE_KP_MODELS.filter(model => model.id === DEFAULT_KP_MODEL);
+
 export const KP_MODELS = AUTHORITATIVE_KP_MODELS;
 
 export type AuthoritativeKpModelId = (typeof AUTHORITATIVE_KP_MODELS)[number]["id"];

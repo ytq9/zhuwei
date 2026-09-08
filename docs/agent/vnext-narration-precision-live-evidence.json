@@ -1,0 +1,212 @@
+{
+  "schema": "zhuwei.narration-precision-live-evidence/v1",
+  "checkedAt": "2026-09-08T12:25:59.515144+00:00",
+  "source": {
+    "branch": "cloudflare",
+    "head": "5d4c1512488da9e134314589344c613a60aaf26a",
+    "isolatedRuntimeFiles": 324,
+    "manifestSha256": "94486e94c68b24432b098371e147a815f788cc04ed2fd38d07f83a1224ad1bdc",
+    "snapshotStartEndExact": true,
+    "currentFixFilesMatchSnapshot": true
+  },
+  "normalHttp": {
+    "outcome": "failed-before-narration",
+    "action": "我握住圣徽，对自己施放一次一环的治愈伤口。",
+    "model": "deepseek-v4-flash",
+    "physicalCalls": 2,
+    "publicCode": "PROPOSAL_FORM_INVALID",
+    "diagnostics": [
+      {
+        "code": "CONSTRAINT_CONFLICT",
+        "constraint": "filling:ability-basis-owned",
+        "repair": {
+          "allowed": false,
+          "reason": "semantic-equivalence-unproven"
+        },
+        "path": [
+          "decision",
+          "basisRefs"
+        ],
+        "pathBase": "arguments",
+        "expected": "absent",
+        "actual": {
+          "type": "array",
+          "length": 3
+        }
+      }
+    ],
+    "committedEvents": 0,
+    "receipts": 0,
+    "publicNarrations": 0,
+    "hpBefore": {
+      "current": 24,
+      "maximum": 24
+    },
+    "hpAfter": {
+      "current": 24,
+      "maximum": 24
+    },
+    "slotsBefore": {
+      "slot1": 4,
+      "slot2": 2
+    },
+    "slotsAfter": {
+      "slot1": 4,
+      "slot2": 2
+    },
+    "duplicate": {
+      "newCalls": 0,
+      "checks": {
+        "sameAuthoritativeState": true,
+        "sameEvents": true,
+        "sameRandomnessJournal": true,
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameOutcome": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      }
+    },
+    "secondAction": "not sent due to stop policy",
+    "replay": {
+      "exactState": true,
+      "events": 0
+    }
+  },
+  "isolatedNarration": {
+    "outcome": "passed-for-controlled-receipt",
+    "basis": "Current actual room genesis, separately authored legal operation and fixed d8 face 2, Rules step/project/replay. No replacement of rejected model output or Room persistence.",
+    "physicalCalls": 2,
+    "model": "deepseek-v4-flash",
+    "policy": "kp-vnext-narration-policy-v11",
+    "hpBefore": "24/24",
+    "hpAfter": "24/24",
+    "theoreticalHealing": 5,
+    "actualHealing": 0,
+    "resource": "1 环法术位",
+    "spent": 1,
+    "remaining": 3,
+    "slot2Unchanged": 2,
+    "fixtureEvents": 9,
+    "exactReplay": true,
+    "generationRequestExact": true,
+    "reviewRequestExact": true,
+    "originalBodyUnchanged": true,
+    "reviewAccepted": true,
+    "roomCommits": 0,
+    "publications": 0,
+    "body": "你握住圣徽对自己施放治愈伤口，法术顺利完成，但你的生命值本已在上限（24/24），因此没有实际恢复。这次施法消耗了1个一环法术位，剩余3个。",
+    "checks": {
+      "results": "pass",
+      "continuity": "pass",
+      "attribution": "pass",
+      "agency": "pass",
+      "presentation": "pass"
+    }
+  },
+  "usage": {
+    "physicalCalls": 4,
+    "inputTokens": 64351,
+    "outputTokens": 720,
+    "unknownUsageCalls": 0,
+    "estimatedCnyAtVerifiedOffPeakTariff": "0.0930849",
+    "billingEvidence": "Official tariff and returned usage, not account billing ledger",
+    "maximumBatchCalls": 12,
+    "maximumBatchCny": 3,
+    "unspentCallsNotSampled": 8,
+    "calls": [
+      {
+        "stage": "http-proposal",
+        "ordinal": 1,
+        "model": "deepseek-v4-flash",
+        "usage": {
+          "prompt_tokens": 28656,
+          "completion_tokens": 47,
+          "total_tokens": 28703,
+          "prompt_tokens_details": {
+            "cached_tokens": 3840
+          },
+          "prompt_cache_hit_tokens": 3840,
+          "prompt_cache_miss_tokens": 24816
+        },
+        "evidencePath": "/tmp/zhuwei-narration-precision-live-20260908/evidence/precision-private/01.json",
+        "sha256": "67c9eac82d6288919e03d44268eef4499b74cd703c55fae4a34de3149d9a822d",
+        "estimatedCnyAtVerifiedOffPeakTariff": "0.0376275"
+      },
+      {
+        "stage": "http-proposal",
+        "ordinal": 2,
+        "model": "deepseek-v4-flash",
+        "usage": {
+          "prompt_tokens": 29575,
+          "completion_tokens": 308,
+          "total_tokens": 29883,
+          "prompt_tokens_details": {
+            "cached_tokens": 768
+          },
+          "prompt_cache_hit_tokens": 768,
+          "prompt_cache_miss_tokens": 28807
+        },
+        "evidencePath": "/tmp/zhuwei-narration-precision-live-20260908/evidence/precision-private/02.json",
+        "sha256": "566168a03667686678cde84ec90e5ab596fc3b49b6d56c02e5147cfdea3cc2a0",
+        "estimatedCnyAtVerifiedOffPeakTariff": "0.0446349"
+      },
+      {
+        "stage": "isolated-narration-generation",
+        "ordinal": 3,
+        "model": "deepseek-v4-flash",
+        "usage": {
+          "prompt_tokens": 2401,
+          "completion_tokens": 171,
+          "total_tokens": 2572,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 120
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 2401
+        },
+        "evidencePath": "/tmp/zhuwei-narration-precision-live-20260908/narration-scope/01-http-response.json",
+        "sha256": "8a7a8b6a23271553e55921f6df90ef5d79a81df4faf520af61d581c548aa8651",
+        "estimatedCnyAtVerifiedOffPeakTariff": "0.004371"
+      },
+      {
+        "stage": "isolated-narration-review",
+        "ordinal": 4,
+        "model": "deepseek-v4-flash",
+        "usage": {
+          "prompt_tokens": 3719,
+          "completion_tokens": 194,
+          "total_tokens": 3913,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 3719
+        },
+        "evidencePath": "/tmp/zhuwei-narration-precision-live-20260908/narration-scope/02-http-response.json",
+        "sha256": "a663aad9cfce03858f48663c1ab307799fe5fca4e11fe66dde752aaf0fad178d",
+        "estimatedCnyAtVerifiedOffPeakTariff": "0.0064515"
+      }
+    ]
+  },
+  "processes": {
+    "ownedGameAndCaptureStopped": true,
+    "portsAbsent": [
+      4330,
+      4331
+    ]
+  },
+  "scopeLimits": [
+    "Normal real gameplay chain not passed",
+    "Second spell not sent",
+    "Independent conditions and capped/injured/class-resource cases have local tests only",
+    "Real reviewer rejection of the old bad sentence not tested",
+    "One controlled narration is not a success-rate or arbitrary semantic-consistency result",
+    "No production deploy, push, remote migration or room retirement"
+  ],
+  "privateEvidenceRoot": "/tmp/zhuwei-narration-precision-live-20260908"
+}

@@ -15,6 +15,8 @@ const terminals = ["knowledgeReview", "passTime", "inWorldRefusal", "clarificati
 const serverBasisTerminals = new Set(["knowledgeReview", "passTime", "abilityOperation"]);
 const object = (properties: Schema): Schema => ({ type: "object", properties,
   required: Object.keys(properties).sort(), additionalProperties: false });
+const decisionObject = (properties: Schema): Schema => ({ ...object(properties),
+  description: `Fill only these fields for this decision kind: ${Object.keys(properties).sort().join(", ")}. Nested objects use their own declared fields; do not copy fields from a different decision kind.` });
 type ResultLayout = Readonly<Record<string, Schema>>;
 type ResultLayouts = ReadonlyMap<string, ResultLayout>;
 
@@ -183,19 +185,22 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
         : nativeKinds.includes(variant.properties.kind.enum[0]) || selectedTerminalKinds === undefined || selectedTerminalKinds.includes(variant.properties.kind.enum[0]))).map((variant: Schema) => {
     const properties = { ...variant.properties };
     const kind = properties.kind.enum[0];
-    if (!serverBasisTerminals.has(kind)) properties.basisRefs = domain.properties.basisRefs;
+    if (!serverBasisTerminals.has(kind)) properties.basisRefs = { ...domain.properties.basisRefs,
+      description: "Exact supporting authority references for this decision, selected from the frozen context's citation choices." };
     if (kind === "clarification") {
       const choices = properties.choices;
       const oldContinuations = choices.items.properties.continuation.anyOf as Schema[];
       properties.choices = { ...choices, items: object({ ...choices.items.properties,
         continuation: { anyOf: [...continuationPlans, ...oldContinuations.filter(item => item.properties.kind.enum[0] !== "adjudication")
-          .map(item => item.properties.kind.enum[0] === "abilityOperation"
-            ? object(Object.fromEntries(Object.entries(item.properties).filter(([key]) => key !== "basisRefs"))) : item)] },
+          .map(item => decisionObject(Object.fromEntries(Object.entries(item.properties)
+            .filter(([key]) => key !== "basisRefs" || !serverBasisTerminals.has(item.properties.kind.enum[0])))))] },
       }) };
     }
-    return object(properties);
+    return decisionObject(properties);
   });
-  return { ...object({ decision: { description: "One complete decision: a directSuccess or check ruling, or a terminal. The steps and results tables carry what the ruling does; a terminal decision sends steps [] and results []. The server assembles the internal bundle.",
+  return { ...object({ decision: { description: variants.length > 0
+    ? "Choose one decision kind and fill only that branch's declared fields. A ruling uses the steps and results tables; a terminal decision leaves both tables empty."
+    : "Choose one decision kind and fill only that branch's declared fields. The only root field is decision.",
     anyOf: [...flatPlans, ...terminalVariants] },
     ...(variants.length > 0 ? { steps: { $ref: "#/$def/steps", description: "What the character does, one step per row, without results. Empty for a terminal decision." } } : {}),
     ...(variants.length > 0 ? { results: { $ref: "#/$def/results", description: "One row per (step, branch): the outcome of an observe, social or worldInteraction step. A directSuccess step has one result row; the step that owns a check has a success row and a failure row. Empty for a terminal decision." } } : {}) }),

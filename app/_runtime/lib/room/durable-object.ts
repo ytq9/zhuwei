@@ -31,7 +31,6 @@ import {
 } from "../rules/tactical-projection";
 import {
   project as projectAuthoritative,
-  replay as replayAuthoritative,
   step as stepAuthoritative,
   type AuthoritativeWorldState,
   type EventEnvelope,
@@ -60,7 +59,7 @@ import { combatPendingAnswerOptions } from "../rules/v2/combat-actions";
 import { npcPendingAnswerConforms } from "../kp/pending-decision-policy";
 import { canonicalJson as canonicalNpcAnswer } from "../kp/authoritative-helpers";
 import { canonicalHash as vnextCanonicalHash, type JsonRecord as VNextJsonRecord } from "../kp/vnext/canonical-json";
-import { VNEXT_KP_WORKFLOW_HASH, VNEXT_LOCAL_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
+import { VNEXT_KP_WORKFLOW_HASH, VNEXT_RULES_RUNTIME } from "../kp/vnext/runtime-policy";
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE } from "../kp/vnext/room-bridge";
 import type { VNextInvocationRequest, VNextInvocationStart, VNextInvocationCompletion } from "./vnext-proposal-invocation";
 import { assertVNextInvocationTransition, vnextInvocationRetryAfter } from "./vnext-proposal-invocation";
@@ -130,12 +129,6 @@ import type {
   RoomVNextReadSetPhase,
 } from "./vnext-adjudication-bridge";
 import { requiredContextMatchesPreparedAction } from "./vnext-adjudication-bridge";
-
-const PRODUCTION_RULES_RUNTIME: VersionedRulesRuntime = Object.freeze({
-  project: projectAuthoritative,
-  replay: replayAuthoritative,
-  step: stepAuthoritative,
-});
 
 function exactProfileRef(value: unknown, expected: ProfileRef): value is ProfileRef {
   return isJsonRecord(value)
@@ -997,10 +990,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     super(ctx, env);
     this.bindings = env;
     this.authorityStore = new AuthoritativeRoomStore(ctx.storage);
-    const localVNext = (env as Env & { ZHUWEI_VNEXT_LOCAL?: string }).ZHUWEI_VNEXT_LOCAL === "true";
-    this.rulesRuntime = rulesRuntime ?? (localVNext ? VNEXT_LOCAL_RULES_RUNTIME : PRODUCTION_RULES_RUNTIME);
-    this.vnextAdjudicationBridge = vnextAdjudicationBridge
-      ?? (localVNext ? VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE : undefined);
+    this.rulesRuntime = rulesRuntime ?? VNEXT_RULES_RUNTIME;
+    this.vnextAdjudicationBridge = vnextAdjudicationBridge ?? VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE;
     ctx.blockConcurrencyWhile(async () => {
       this.authorityStore.ensureSchema();
       // Alarm state is durable, but recomputing the minimum on construction

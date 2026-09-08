@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { classById, raceById } from "@/lib/dnd/catalog";
 import {
-  AUTHORITATIVE_KP_MODELS,
+  NEW_ROOM_KP_MODELS,
   DEFAULT_KP_MODEL,
   kpModelById,
   type AuthoritativeKpModelId,
@@ -110,7 +110,7 @@ export function HallClient({
             <fieldset className="mt-5">
               <legend className="text-xs text-subtle">创建桌子前选择 KP 模型</legend>
               <div className="mt-2 grid gap-2">
-                {AUTHORITATIVE_KP_MODELS.map((option) => {
+                {NEW_ROOM_KP_MODELS.map((option) => {
                   const selected = option.id === model;
                   return (
                     <button

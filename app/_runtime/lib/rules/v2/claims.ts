@@ -736,7 +736,20 @@ export function deriveAuthorityClaimsFromCommittedRange(
         }
         materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "recovery", { authorityRefs: [stringField(payload, "sourceDefinitionId")] }),
           kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: eventType === "HealingResolved" ? "healed" : "temporaryHitPointsGranted",
-          summary: `目标的${eventType === "HealingResolved" ? "生命值" : "临时生命值"}由 ${before} 变为 ${after}。${consequences.join("")}` });
+          summary: `目标的${eventType === "HealingResolved" ? "生命值" : "临时生命值"}由 ${before} 变为 ${after}。${eventType === "HealingResolved" ? `本次实际恢复了 ${after - before} 点生命值。` : ""}${consequences.join("")}` });
+        // An observed healing event does not authorize the target's private
+        // maximum HP. Freeze its explanation from this event's frame only,
+        // and expose it through the existing character-controller grant.
+        const priorHp = recordOrEmpty(priorEntity?.hitPoints), nextHp = recordOrEmpty(nextEntity?.hitPoints);
+        const priorMaximum = finiteNumber(priorHp.maximum);
+        const nextMaximum = finiteNumber(nextHp.maximum);
+        if (eventType === "HealingResolved" && priorMaximum !== undefined && nextMaximum !== undefined
+          && finiteNumber(priorHp.current) === before && finiteNumber(nextHp.current) === after) {
+          materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "healing-capacity", {
+            materialVisibilityPolicyRef: `visibility:character-controller:${targetRef}`,
+          }), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "healingCapacity",
+          summary: `治疗前生命值为 ${before}/${priorMaximum}，治疗后生命值为 ${after}/${nextMaximum}。${before === priorMaximum ? "治疗前生命值已达到上限。" : ""}` });
+        }
         break;
       }
       case "FictionTimeAdvanced": {
@@ -850,18 +863,21 @@ export function deriveAuthorityClaimsFromCommittedRange(
         const actorRef = stringField(payload, "entityId") ?? stringField(payload, "characterId");
         const resourceRef = stringField(payload, "resourceId");
         if (actorRef === undefined || resourceRef === undefined) break;
-        const after = finiteNumber(payload.resourceAfter) ?? finiteNumber(payload.after);
-        const amount = eventType === "ResourceUsed" || eventType === "ResourceReserved" ? finiteNumber(payload.amount) : undefined;
+        const frame = eventState ?? (range.events.length === 1 ? range : undefined);
+        const after = finiteNumber(payload.resourceAfter) ?? finiteNumber(payload.after)
+          ?? finiteNumber(frame?.state.entities[actorRef]?.resources?.[resourceRef]);
+        const amount = eventType === "ResourceChanged" ? undefined : finiteNumber(payload.amount);
+        const label = resourceDisplayName(resourceRef) ?? "该资源";
         materials.push({
           ...eventClaimBase(event, `resource:${resourceRef}`),
           kind: "mechanicalOutcome",
           actorRef,
           outcomeCode: "resourceChanged",
           summary: amount !== undefined
-            ? `${resourceDisplayName(resourceRef) ?? "该资源"}消耗了 ${amount}。`
+            ? `${label}消耗了 ${amount}。${after === undefined ? "" : `${label}的剩余数量为 ${after}。`}`
             : after === undefined
-            ? "该资源已经消耗。"
-            : `该资源的剩余数量为 ${after}。`,
+            ? `${label}已经消耗。`
+            : `${label}的剩余数量为 ${after}。`,
         });
         break;
       }

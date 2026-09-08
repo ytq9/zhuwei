@@ -1151,6 +1151,10 @@ test("item Activity, elapsed time, recovery and native condition changes have ex
     ["ConditionChanged", { entityId: "character:alice", conditions: { prone: true } }],
     ["AtomicWorldInteractionStepsResolved", {}],
   ]);
+  // Activity lookup now consults the current authority collection before the
+  // same-range ActivityStarted event. Keep this partial fixture well-shaped.
+  range.priorState.campaignRuntime.activities = {};
+  range.state.campaignRuntime.activities = {};
   const visible = projectRenderableClaims(deriveAuthorityClaimsFromCommittedRange(range), authoredGrants());
   assert.equal(visible.claims.filter(({ kind }) => kind === "mechanicalOutcome").length, 5);
   assert.match(JSON.stringify(visible), /6.5 秒|由 10 变为 17|临时生命值|倒地/u);

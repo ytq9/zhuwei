@@ -56,8 +56,8 @@ export const VNEXT_KP_WORKFLOW = Object.freeze({
 export const VNEXT_KP_WORKFLOW_HASH = canonicalHash(VNEXT_KP_WORKFLOW);
 export const VNEXT_KP_WORKFLOW_MANIFEST_JSON = JSON.stringify(VNEXT_KP_WORKFLOW);
 
-/** Only an explicit local host selects this runtime. Production registry is unchanged. */
-export const VNEXT_LOCAL_RULES_RUNTIME = createVersionedRulesRuntime({
+/** Room runtime for new vNext rooms and exact persisted generation bindings. */
+export const VNEXT_RULES_RUNTIME = createVersionedRulesRuntime({
   registrations: [...PRODUCTION_RUNTIME_PROFILE_REGISTRY.registrations,
     { manifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, interpreterKind: "authoritative-v2" }],
   defaultManifest: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST.manifest,

@@ -31,7 +31,7 @@ type Internals = RoomAuthorityCapability & {
 const PRINCIPAL = { principal: { id: "11111111-1111-4111-8111-12345d678901", sessionVersion: 1 } };
 const ACTOR = `character:${PRINCIPAL.principal.id}`, ABILITY = "ability:registered:room-protocol";
 const record = (value: unknown) => value as RecordValue;
-type Capture = { requests: RecordValue[]; draws: number; crashAt?: string; wire?: RecordValue; rawArguments?: string; sides?: number[]; echoIntent?: boolean; failAfterSaveOrdinal?: number };
+type Capture = { requests: RecordValue[]; draws: number; narrationRequests?: RecordValue[]; crashAt?: string; wire?: RecordValue; rawArguments?: string; sides?: number[]; echoIntent?: boolean; failAfterSaveOrdinal?: number };
 
 async function initialize(name: string, long = false): Promise<Stub> {
   const stub = env.VNEXT_ROOMS.getByName(name);
@@ -70,7 +70,7 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture) {
   });
   const target = stub as unknown as Internals;
   const narrationAdapter = { async propose() { throw new Error("vNext proposal binding owns filling"); },
-    async narrate() { return { body: "权威行动已记录。" }; } } as unknown as AuthoritativeKpAdapter;
+    async narrate(request: RecordValue) { c.narrationRequests?.push(structuredClone(request)); return { body: "权威行动已记录。" }; } } as unknown as AuthoritativeKpAdapter;
   const kp = createVNextKpAdapter({ narrationAdapter, journal: {
     begin: (id, request) => target.beginVNextProposalInvocation(PRINCIPAL, id, request),
     async complete(id, completion) {
@@ -109,7 +109,7 @@ function wire(castingMode = "normal") { return { decision: { kind: "abilityOpera
 it("normal Room filling saves native randomness and recovers the same submission without another model call, die, or slot", async () => {
   const stub = await initialize("vnext-native-ability-recovery"), input: RoomActionInput = {
     kind: "intent", submissionId: "submission:native-ability:recovery", text: "我用已经掌握的治疗法术为自己治疗。" };
-  const c: Capture = { requests: [], draws: 0, wire: wire(), crashAt: "afterRandomnessCandidateCommit" };
+  const c: Capture = { requests: [], narrationRequests: [], draws: 0, wire: wire(), crashAt: "afterRandomnessCandidateCommit" };
   expect(await run(stub, input, c)).toMatchObject({ kind: "retryableFailure", code: "authorityTransient" });
   expect(c.draws).toBe(1); expect(c.requests).toHaveLength(2);
   const first = await snapshot(stub); expect(first.events.filter(event => event.eventType === "HealingResolved")).toHaveLength(0);
@@ -127,6 +127,10 @@ it("normal Room filling saves native randomness and recovers the same submission
   await evictDurableObject(stub); expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
   expect((await snapshot(stub)).events).toEqual(after.events); expect(c.draws).toBe(1); expect(c.requests).toHaveLength(2);
   expect((await snapshot(stub)).state).toEqual(after.state);
+  expect(c.narrationRequests).toHaveLength(1);
+  const frozenClaims = record(c.narrationRequests![0].renderableClaims).claims as RecordValue[];
+  expect(frozenClaims.find(claim => claim.outcomeCode === "resourceChanged")?.summary).toMatch(/1 环法术位.*消耗.*1.*剩余.*1/u);
+  expect(frozenClaims.find(claim => claim.outcomeCode === "healingCapacity")?.summary).toContain("13/20");
 }, 30_000);
 
 
@@ -191,8 +195,8 @@ it("selected native execution can use the third call only to confirm its proven 
 }, 30_000);
 
 
-for (const later of [false, true]) it(`compiled player card and noncombat spells leave the room ready for ${later ? "later materialization" : "joined character registration"}`, async () => {
-  const roomId = `vnext-native-real-initial-catalog-${later}`, stub = env.VNEXT_ROOMS.getByName(roomId);
+for (const later of [false, true]) it(`production Room: compiled player card and noncombat spells leave the room ready for ${later ? "later materialization" : "joined character registration"}`, async () => {
+  const roomId = `vnext-native-real-initial-catalog-${later}`, stub = env.ROOMS.getByName(roomId);
   const card = { ...compileSheet({ name: "旅行牧师", raceId: "human", classId: "cleric", subclassId: "knowledge", backgroundId: "acolyte",
     scores: { str: 8, dex: 14, con: 13, int: 12, wis: 15, cha: 10 }, extraSkillIds: ["history", "medicine", "persuasion"],
     cantrips: ["guidance", "sacred-flame", "thaumaturgy"], prepared: ["cure", "healing-word", "guiding-bolt", "detect-magic", "silence", "prayer"],
@@ -215,7 +219,7 @@ for (const later of [false, true]) it(`compiled player card and noncombat spells
     expect(definitions[ref].definitionHash).toBe(canonicalSha256(source));
   }
   expect(initial.events.some(event => event.eventType === "CharacterMechanicsSynchronized")).toBe(false);
-  const c: Capture = { requests: [], draws: 0, sides: [] };
+  const c: Capture = { requests: [], narrationRequests: [], draws: 0, sides: [] };
   for (const spellId of ["cure", "healing-word"]) {
     const ref = (initial.state.combatRuntime.entities[ACTOR].abilityRefs as string[])
       .find(ref => definitions[ref].sourceSpellId === spellId);
@@ -225,6 +229,13 @@ for (const later of [false, true]) it(`compiled player card and noncombat spells
     const result = await run(stub, { kind: "intent", submissionId: `submission:real-catalog:${spellId}`, text: `我对自己施放已经准备的${spellId}。` }, c);
     expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
     expect((await snapshot(stub)).state.combatRuntime.entities[ACTOR].turn).toBeUndefined();
+    const frozenClaims = record(c.narrationRequests!.at(-1)!.renderableClaims).claims as RecordValue[];
+    expect(frozenClaims.find(claim => claim.kind === "abilityEffectApplied")?.abilityName)
+      .toBe(spellId === "cure" ? "治愈伤口" : "治愈真言");
+    expect(frozenClaims.find(claim => claim.outcomeCode === "healed")?.summary).toContain("实际恢复了 0 点生命值");
+    expect(frozenClaims.find(claim => claim.outcomeCode === "healingCapacity")?.summary).toContain("治疗前生命值已达到上限");
+    expect(frozenClaims.find(claim => claim.outcomeCode === "resourceChanged")?.summary)
+      .toContain(`1 环法术位的剩余数量为 ${spellId === "cure" ? 3 : 2}`);
   }
   const after = await snapshot(stub);
   expect(after.state.combatRuntime.entities[ACTOR].resources).toMatchObject({ "spellSlot:1": { current: "2", maximum: "4" } });

@@ -1,0 +1,243 @@
+{
+  "schema": "zhuwei.model-filling-surface-validation/v1",
+  "recordedAt": "2026-09-08T12:55:34.715371+00:00",
+  "source": {
+    "branch": "cloudflare",
+    "head": "5d4c1512488da9e134314589344c613a60aaf26a",
+    "snapshotRoot": "/tmp/zhuwei-model-filling-live-20260908/source",
+    "createdAt": "2026-09-08T12:47:35.242565+00:00",
+    "manifestSha256": "3624ec90e078d5ed4cbdfafc715a533c7ec7aed1458af98450c32dc658101f7a"
+  },
+  "sourceFiles": 343,
+  "frozenSourceChanged": [],
+  "currentWorkspaceDiffersFromSnapshot": [
+    "app/_runtime/lib/kp/vnext/proposal-schema.ts",
+    "app/_runtime/lib/rules/v2/correction.ts",
+    "app/_runtime/lib/rules/v2/events.ts",
+    "app/_runtime/lib/rules/v2/model.ts",
+    "app/_runtime/lib/rules/v2/promise-lifecycle.ts",
+    "app/_runtime/lib/rules/v2/world-facts.ts",
+    "app/_runtime/lib/rules/v2/world-interactions.ts"
+  ],
+  "guidanceVersion": "zhuwei.proposal-guidance/v8",
+  "parserChanged": false,
+  "priorFailure": "Original raw response remains rejected for filling:ability-basis-owned; it was not rewritten or reclassified.",
+  "localChecks": {
+    "newSurfaceRegression": {
+      "before": {
+        "passed": 1,
+        "failed": 3,
+        "exitCode": 1
+      },
+      "after": {
+        "passed": 4,
+        "failed": 0,
+        "exitCode": 0
+      }
+    },
+    "nodeGroupFirstRun": {
+      "total": 56,
+      "passed": 54,
+      "failed": 2,
+      "exitCode": 1
+    },
+    "schemaConsumerFinalRerun": {
+      "total": 13,
+      "passed": 13,
+      "exitCode": 0
+    },
+    "nodeUnchangedPassingCases": 43,
+    "workerRecovery": {
+      "passed": 2,
+      "skipped": 42,
+      "exitCode": 0
+    }
+  },
+  "live": {
+    "setup": "normal authenticated register/createRoom/lockCharacter/startGame against fresh local D1 and DO; no injected injury, ruling or dice",
+    "action": "我握住圣徽，对自己施放一次一环的治愈伤口。",
+    "maximumActions": 1,
+    "maximumCalls": 5,
+    "maximumCny": 1.25,
+    "response": {
+      "action": "committed",
+      "narration": "published"
+    },
+    "selectedCapabilities": [
+      "abilityOperation"
+    ],
+    "proposalOutput": {
+      "rootFields": [
+        "decision"
+      ],
+      "decisionFields": [
+        "kind",
+        "operation"
+      ],
+      "operationKind": "invoke",
+      "correctOwnedAbilityAndSelfTarget": true,
+      "repairUsed": false,
+      "exactCapturedJournal": true
+    },
+    "hpBefore": {
+      "current": 24,
+      "maximum": 24
+    },
+    "hpAfter": {
+      "current": 24,
+      "maximum": 24
+    },
+    "slotsBefore": {
+      "slot1": 4,
+      "slot2": 2
+    },
+    "slotsAfter": {
+      "slot1": 3,
+      "slot2": 2
+    },
+    "randomness": {
+      "faces": [
+        1
+      ],
+      "formula": "1d8+3",
+      "rolled": 4,
+      "applied": 0,
+      "oneDie": true,
+      "randomnessJournalFinalized": true
+    },
+    "oneSlot": true,
+    "receipts": 1,
+    "narration": "你握住圣徽，对自己施放治愈伤口，消耗了1个一环法术位（还剩3个）。但你本就满血，生命值并未增加，仍是24/24。",
+    "narrationCheck": {
+      "originalBodyUnchanged": true,
+      "reviewedBodyExact": true,
+      "reviewIdBound": true,
+      "checks": {
+        "results": "pass",
+        "continuity": "pass",
+        "attribution": "pass",
+        "agency": "pass",
+        "presentation": "pass"
+      },
+      "resultChecks": {
+        "m0": "complete",
+        "m1": "complete",
+        "m2": "complete",
+        "m3": "complete",
+        "m4": "complete"
+      },
+      "issues": [],
+      "body": "你握住圣徽，对自己施放治愈伤口，消耗了1个一环法术位（还剩3个）。但你本就满血，生命值并未增加，仍是24/24。",
+      "newModelCalls": 0
+    },
+    "duplicate": {
+      "newModelCalls": 0,
+      "checks": {
+        "sameAuthoritativeState": true,
+        "sameEvents": true,
+        "sameRandomnessJournal": true,
+        "noModelReinvocation": true,
+        "sameSubmissionId": true,
+        "sameReceipt": true,
+        "sameOutcome": true,
+        "sameMechanicalState": true,
+        "sameDelivery": true
+      }
+    },
+    "replay": {
+      "pinnedProfilesMatch": true,
+      "replayKind": "replayed",
+      "exactState": true,
+      "stateVersion": "9",
+      "events": 9,
+      "eventTypes": [
+        "RandomnessRequested",
+        "DiceRolled",
+        "ResourceSpent",
+        "SpellCastingStarted",
+        "RandomnessRequested",
+        "AbilityInvoked",
+        "HealingResolved",
+        "SpellResolved",
+        "AtomicWorldInteractionStepsResolved"
+      ],
+      "checkedAt": "2026-09-08T12:51:08.621Z"
+    },
+    "usage": {
+      "calls": 4,
+      "inputTokens": 65086,
+      "outputTokens": 562,
+      "cacheHitTokens": 512,
+      "cacheMissTokens": 64574,
+      "estimatedCny": 0.0994156,
+      "accounting": "Estimate from saved official price evidence and provider usage, not a billing receipt."
+    },
+    "calls": [
+      {
+        "ordinal": 1,
+        "purpose": "offer_kp_proposal_bundle",
+        "model": "deepseek-v4-flash",
+        "createdAt": "2026-09-08T20:49:28+08:00",
+        "inputTokens": 28914,
+        "outputTokens": 47,
+        "cacheHitTokens": 512,
+        "cacheMissTokens": 28402,
+        "peakPricing": false,
+        "estimatedCny": 0.0428401
+      },
+      {
+        "ordinal": 2,
+        "purpose": "submit_kp_proposal_bundle",
+        "model": "deepseek-v4-flash",
+        "createdAt": "2026-09-08T20:49:31+08:00",
+        "inputTokens": 29992,
+        "outputTokens": 156,
+        "cacheHitTokens": 0,
+        "cacheMissTokens": 29992,
+        "peakPricing": false,
+        "estimatedCny": 0.04569
+      },
+      {
+        "ordinal": 3,
+        "purpose": "narration-generation",
+        "model": "deepseek-v4-flash",
+        "createdAt": "2026-09-08T20:49:34+08:00",
+        "inputTokens": 2429,
+        "outputTokens": 159,
+        "cacheHitTokens": 0,
+        "cacheMissTokens": 2429,
+        "peakPricing": false,
+        "estimatedCny": 0.004359
+      },
+      {
+        "ordinal": 4,
+        "purpose": "review_frozen_narration",
+        "model": "deepseek-v4-flash",
+        "createdAt": "2026-09-08T20:49:36+08:00",
+        "inputTokens": 3751,
+        "outputTokens": 200,
+        "cacheHitTokens": 0,
+        "cacheMissTokens": 3751,
+        "peakPricing": false,
+        "estimatedCny": 0.0065265
+      }
+    ]
+  },
+  "closeout": {
+    "gameAndCaptureStopped": true,
+    "ports4330And4331Absent": true,
+    "remoteMigration": false,
+    "deployment": false,
+    "gitPush": false
+  },
+  "limits": [
+    "One real action is not evidence of statistical stability or complete gameplay.",
+    "Waiting, knowledge review, authored steps and clarification retain targeted local evidence; not new real-provider acceptance.",
+    "The model still receives necessary read-only authoritative context. This change concerns the proposal filling surface."
+  ],
+  "currentNativeSurfaceCheck": {
+    "nativeRequestUnchangedAfterParallelSchemaEdits": true,
+    "compared": "system guidance, schema, tools and request settings for the tested abilityOperation selection",
+    "checkedAt": "2026-09-08T12:58:37.073Z"
+  }
+}
