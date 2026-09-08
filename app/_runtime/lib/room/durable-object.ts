@@ -126,6 +126,7 @@ import {
   roomPlayerProjection,
 } from "./proposal-adapter";
 import { authorityPendingBindings, frozenPlayerChoiceAnswer } from "./pending-bindings";
+import { isPartyCommand } from "./party-action";
 import type {
   RoomVNextAdjudicationBridge,
   RoomVNextProposalLoweringResult,
@@ -3328,6 +3329,18 @@ export class RoomDurableObject extends DurableObject<Env> {
           ? { acknowledgementId: actionInput.acknowledgementId }
           : {}),
       };
+    } else if (actionInput.kind === "party") {
+      if (!hasOnlyJsonKeys(actionInput, ["kind", "submissionId", "command"], ["displayText"])
+        || (actionInput.displayText !== undefined && !nonEmptyString(actionInput.displayText))
+        || !isPartyCommand(actionInput.command)) {
+        return rejectedAuthority("invalidActionInput", "A closed party command is required.");
+      }
+      canonicalActionInput = {
+        kind: "party",
+        submissionId: actionInput.submissionId,
+        command: structuredClone(actionInput.command),
+        ...(actionInput.displayText === undefined ? {} : { displayText: actionInput.displayText }),
+      };
     } else if (actionInput.kind === "gear") {
       const expectedKeys = actionInput.action === "wear"
         ? ["action", "itemId", "kind", "slot", "submissionId"]
@@ -3684,7 +3697,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       characterId = authenticated.characterIds[0];
       rootActionId = `root-action:${actionInput.submissionId}`;
     } else if (
-      actionInput.kind === "gear"
+      actionInput.kind === "party"
+      || actionInput.kind === "gear"
       || actionInput.kind === "itemActivity"
       || actionInput.kind === "environmentInteract"
       || actionInput.kind === "environmentAbility"
@@ -3953,6 +3967,9 @@ export class RoomDurableObject extends DurableObject<Env> {
                   : {}),
               },
             }
+          : actionInput.kind === "party"
+            ? { continuation: { command: structuredClone(actionInput.command),
+                ...(actionInput.displayText === undefined ? {} : { displayText: actionInput.displayText }) } }
           : actionInput.kind === "gear"
             ? {
                 continuation: {
@@ -4438,6 +4455,88 @@ export class RoomDurableObject extends DurableObject<Env> {
         },
       };
     }
+    if (proposalValue.kind === "authenticatedPartyAction") {
+      // Only a prepared button command can enter this seam. KP envelopes
+      // cannot opt out of Form/read-set validation by naming this capability.
+      if (submission.input_kind !== "party"
+        || !hasExactJsonKeys(proposalValue, ["kind", "rootActionId"])
+        || submission.continuation_json === null) {
+        return { rejection: rejectedAuthority(
+          "invalidMechanicalProposal", "The party command must match its authenticated preparation.",
+        ) };
+      }
+      const continuation = parseJson<JsonObject>(submission.continuation_json);
+      if (!hasOnlyJsonKeys(continuation, ["command"], ["displayText"]) || !isPartyCommand(continuation.command)) {
+        return { rejection: rejectedAuthority(
+          "invalidMechanicalProposal", "The prepared party command is unavailable.",
+        ) };
+      }
+      const command = continuation.command;
+      switch (command.action) {
+        case "inviteMember":
+          return {
+            input: {
+              kind: "invitePartyMember",
+              rootActionId: submission.root_action_id,
+              inviterCharacterId: submission.character_id,
+              invitedCharacterId: command.targetCharacterId,
+            },
+          };
+        case "cancelInvitation":
+          return {
+            input: {
+              kind: "cancelPartyInvitation",
+              rootActionId: submission.root_action_id,
+              inviterCharacterId: submission.character_id,
+              pendingInputId: command.pendingInputId,
+            },
+          };
+        case "leave":
+          return {
+            input: {
+              kind: "leavePartyGroup",
+              rootActionId: submission.root_action_id,
+              characterId: submission.character_id,
+            },
+          };
+        case "transferLeadership":
+          return {
+            input: {
+              kind: "transferPartyLeadership",
+              rootActionId: submission.root_action_id,
+              fromCharacterId: submission.character_id,
+              toCharacterId: command.targetCharacterId,
+            },
+          };
+        case "proposeMove":
+          return {
+            input: {
+              kind: "proposePartyMove",
+              rootActionId: submission.root_action_id,
+              leaderCharacterId: submission.character_id,
+              destinationSceneId: command.destinationSceneId,
+              fictionTimeCostMicros: command.fictionTimeCostMicros,
+            },
+          };
+        case "moveIndividually":
+          return {
+            input: {
+              kind: "moveIndividually",
+              rootActionId: submission.root_action_id,
+              characterId: submission.character_id,
+              destinationSceneId: command.destinationSceneId,
+              fictionTimeCostMicros: command.fictionTimeCostMicros,
+            },
+          };
+        default:
+          return {
+            rejection: rejectedAuthority(
+              "invalidMechanicalProposal",
+              "The authenticated party action is unavailable.",
+            ),
+          };
+      }
+    }
     const prepared = this.preparedActionSnapshot(submission);
     if (
       this.vnextAdjudicationBridge?.lowerProposal !== undefined
@@ -4490,80 +4589,6 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The KP proposal is not a supported production proposal envelope.",
         ),
       };
-    }
-    if (proposal.kind === "authenticatedPartyAction") {
-      if (submission.input_kind !== "intent") {
-        return {
-          rejection: rejectedAuthority(
-            "invalidMechanicalProposal",
-            "An authenticated party action must follow its prepared player intent.",
-          ),
-        };
-      }
-      switch (proposal.action) {
-        case "inviteMember":
-          return {
-            input: {
-              kind: "invitePartyMember",
-              rootActionId: submission.root_action_id,
-              inviterCharacterId: submission.character_id,
-              invitedCharacterId: proposal.targetCharacterId,
-            },
-          };
-        case "cancelInvitation":
-          return {
-            input: {
-              kind: "cancelPartyInvitation",
-              rootActionId: submission.root_action_id,
-              inviterCharacterId: submission.character_id,
-              pendingInputId: proposal.pendingInputId,
-            },
-          };
-        case "leave":
-          return {
-            input: {
-              kind: "leavePartyGroup",
-              rootActionId: submission.root_action_id,
-              characterId: submission.character_id,
-            },
-          };
-        case "transferLeadership":
-          return {
-            input: {
-              kind: "transferPartyLeadership",
-              rootActionId: submission.root_action_id,
-              fromCharacterId: submission.character_id,
-              toCharacterId: proposal.targetCharacterId,
-            },
-          };
-        case "proposeMove":
-          return {
-            input: {
-              kind: "proposePartyMove",
-              rootActionId: submission.root_action_id,
-              leaderCharacterId: submission.character_id,
-              destinationSceneId: proposal.destinationSceneId,
-              fictionTimeCostMicros: proposal.fictionTimeCostMicros,
-            },
-          };
-        case "moveIndividually":
-          return {
-            input: {
-              kind: "moveIndividually",
-              rootActionId: submission.root_action_id,
-              characterId: submission.character_id,
-              destinationSceneId: proposal.destinationSceneId,
-              fictionTimeCostMicros: proposal.fictionTimeCostMicros,
-            },
-          };
-        default:
-          return {
-            rejection: rejectedAuthority(
-              "invalidMechanicalProposal",
-              "The authenticated party action is unavailable.",
-            ),
-          };
-      }
     }
     if (proposal.kind === "authenticatedCampaignAction") {
       if (submission.input_kind !== "intent") {
@@ -7850,6 +7875,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     } else if (
       source.kind === "proposal"
       && submission.input_kind !== "intent"
+      && submission.input_kind !== "party"
       && submission.input_kind !== "gear"
       && submission.input_kind !== "itemActivity"
       && submission.input_kind !== "environmentInteract"
@@ -8689,10 +8715,11 @@ export class RoomDurableObject extends DurableObject<Env> {
         };
       }
     }
-    if (resolved.kind !== "awaitingInput"
-      && worldInteractionProfileEnabled(replay.profiles.extensions)
-      && (committedRangeUsesFrozenRenderableClaims(receiptEvents)
-        || Object.values(replay.state.frozenPlayerChoices ?? {}).some(choice => choice.plan.rootActionId === resolved.receipt.rootActionId))) {
+    if (worldInteractionProfileEnabled(replay.profiles.extensions)
+      && (["answerPartyInvitation", "answerPartyMove"].includes(String(rulesInput.kind))
+        || (resolved.kind !== "awaitingInput"
+          && (committedRangeUsesFrozenRenderableClaims(receiptEvents)
+            || Object.values(replay.state.frozenPlayerChoices ?? {}).some(choice => choice.plan.rootActionId === resolved.receipt.rootActionId))))) {
       // Projection verifies the complete global journal interval, including
       // other roots that committed during a pause. Rules selects only this
       // receipt's events after verification; append receives just our suffix.
@@ -8884,6 +8911,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     const actorText = submission.input_kind === "intent"
       && nonEmptyString(originalInput?.text)
       ? originalInput.text
+      : submission.input_kind === "party"
+        ? nonEmptyString(continuation?.displayText) ? continuation.displayText : undefined
       : submission.input_kind === "answer"
         ? nonEmptyString(continuation?.displayText)
           ? continuation.displayText
@@ -9200,6 +9229,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       if (answeredPendingInputId !== undefined) {
         this.authorityStore.closePending(answeredPendingInputId);
+      }
+      if (rulesInput.kind === "cancelPartyInvitation") {
+        this.authorityStore.closePending(String(rulesInput.pendingInputId));
       }
       if (resolved.kind === "awaitingInput") {
         for (const binding of pendingBindings) {

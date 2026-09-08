@@ -1,3 +1,4 @@
+import type { PartyCommand } from "../app/_runtime/lib/room/party-action";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
@@ -187,6 +188,16 @@ async function commitProposal(
   return { prepared, mechanicalProposal, committed, plan };
 }
 
+async function commitPartyCommand(stub: DeliveryAuthority, submissionId: string, command: PartyCommand, displayText: string) {
+  const prepared = record(await stub.prepare(ALICE, { kind: "party", submissionId, command, displayText }), "party preparation");
+  expect(prepared).toMatchObject({ kind: "prepared", resolutionMode: "authorityDirect" });
+  const committed = record(await stub.commit(ALICE, String(prepared.preparedActionId), {
+    kind: "authenticatedPartyAction", rootActionId: prepared.rootActionId,
+  }), "party commit");
+  expect(committed.kind, JSON.stringify(committed)).toBe("committed");
+  return { committed, plan: record(committed.deliveryPlan, "party delivery plan") };
+}
+
 async function committedResult(stub: DeliveryAuthority, submissionId: string, publicResult: string) {
   const prepared = record(await stub.prepare(ALICE, {
     kind: "intent",
@@ -335,16 +346,14 @@ describe("observer-specific single-slot delivery", () => {
 
   it("freezes movement deltas for departure and arrival observers but not a third scene", async () => {
     const stub = await initialized("observer-delivery-v2-movement-delta");
-    const { plan } = await commitProposal(
+    const { plan } = await commitPartyCommand(
       stub,
       "submission:delivery:movement",
-      (rootActionId) => ({
-        kind: "authenticatedPartyAction",
+      {
         action: "moveIndividually",
         destinationSceneId: "yard",
         fictionTimeCostMicros: "60000000",
-        rootActionId,
-      }),
+      },
       "我离开档案室，沿走廊走进院子。",
     );
 
@@ -576,16 +585,14 @@ describe("observer-specific single-slot delivery", () => {
     ]);
     await publishForAudience(stub, first.plan, "档案室亲历回应");
 
-    const departed = await commitProposal(
+    const departed = await commitPartyCommand(
       stub,
       "submission:delivery:experienced:depart",
-      (rootActionId) => ({
-        kind: "authenticatedPartyAction",
+      {
         action: "moveIndividually",
         destinationSceneId: "yard",
         fictionTimeCostMicros: "60000000",
-        rootActionId,
-      }),
+      },
       "我离开档案室，沿走廊走进院子。",
     );
     const beforeDeparturePublication = record(
@@ -603,16 +610,14 @@ describe("observer-specific single-slot delivery", () => {
     );
     await publishForAudience(stub, departed.plan, "离开档案室回应");
 
-    const returned = await commitProposal(
+    const returned = await commitPartyCommand(
       stub,
       "submission:delivery:experienced:return",
-      (rootActionId) => ({
-        kind: "authenticatedPartyAction",
+      {
         action: "moveIndividually",
         destinationSceneId: "wake",
         fictionTimeCostMicros: "60000000",
-        rootActionId,
-      }),
+      },
       "我从院子沿原路回到档案室。",
     );
     await publishForAudience(stub, returned.plan, "回到档案室回应");

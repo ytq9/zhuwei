@@ -212,33 +212,6 @@ function normalizePrivateFormKpProposal(value: Record<string, unknown>): JsonObj
 export function normalizeRoomKpProposal(value: unknown): JsonObject | undefined {
   if (!isRecord(value) || !isNonEmptyString(value.kind)) return undefined;
   if (value.kind === "privateFormProposal") return normalizePrivateFormKpProposal(value);
-  if (value.kind === "authenticatedPartyAction") {
-    const exact = (...keys: string[]) =>
-      Object.keys(value).sort().join(",") === [...keys, "action", "kind", "rootActionId"].sort().join(",");
-    if (!isNonEmptyString(value.rootActionId)) return undefined;
-    if (value.action === "inviteMember" || value.action === "transferLeadership") {
-      return exact("targetCharacterId") && isNonEmptyString(value.targetCharacterId)
-        ? structuredClone(value) as JsonObject
-        : undefined;
-    }
-    if (value.action === "cancelInvitation") {
-      return exact("pendingInputId") && isNonEmptyString(value.pendingInputId)
-        ? structuredClone(value) as JsonObject
-        : undefined;
-    }
-    if (value.action === "leave") {
-      return exact() ? structuredClone(value) as JsonObject : undefined;
-    }
-    if (value.action === "proposeMove" || value.action === "moveIndividually") {
-      return exact("destinationSceneId", "fictionTimeCostMicros")
-          && isNonEmptyString(value.destinationSceneId)
-          && typeof value.fictionTimeCostMicros === "string"
-          && /^[1-9][0-9]*$/u.test(value.fictionTimeCostMicros)
-        ? structuredClone(value) as JsonObject
-        : undefined;
-    }
-    return undefined;
-  }
   if (value.kind === "authenticatedCampaignAction") {
     const exact = (...keys: string[]) =>
       Object.keys(value).sort().join(",") === [...keys, "action", "kind", "rootActionId"].sort().join(",");

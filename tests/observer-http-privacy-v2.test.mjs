@@ -393,6 +393,27 @@ test("authoritative HTTP poll, reconnect, ACK, and voice expose only the caller'
     );
   }
 
+  const duplicateInvitation = await api(hostCookie, "inviteSquad", {
+    code, targetUserId: playerPoll.body.me.userId, submissionId: invitationSubmissionId,
+  });
+  assert.deepEqual(duplicateInvitation.body, invitation.body);
+  const cannotAnswerForPlayer = await api(hostCookie, "answerSquad", {
+    code, accept: true, submissionId: `submission:http-unauthorized-party-answer:${crypto.randomUUID()}`,
+  });
+  assert.equal(cannotAnswerForPlayer.body.action, "notCommitted");
+  const acceptedInvitation = await api(playerCookie, "answerSquad", {
+    code, accept: true, submissionId: `submission:http-party-answer:${crypto.randomUUID()}`,
+  });
+  assert.equal(acceptedInvitation.body.action, "committed", JSON.stringify(acceptedInvitation.body));
+  for (const cookie of [hostCookie, playerCookie]) {
+    const joinedParty = await api(cookie, "fetchTable", code);
+    assert.equal(joinedParty.body.state.squadInvite, null);
+    assert.equal(joinedParty.body.state.squads.length, 1);
+    assert.equal(joinedParty.body.state.squads[0].captain, hostPoll.body.me.userId);
+    assert.deepEqual(joinedParty.body.state.squads[0].ids.toSorted(),
+      [hostPoll.body.me.userId, playerPoll.body.me.userId].toSorted());
+  }
+
   await setLocalRoomRuleset(roomId, "unknown-future-ruleset-v999");
   const unknownRulesetVoice = await api(hostCookie, "speakNarration", {
     roomId,

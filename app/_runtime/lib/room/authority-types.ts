@@ -1,3 +1,4 @@
+import type { PartyActionInput } from "./party-action";
 import type { RuleDiagnostic } from "../rules/v2/model";
 import type { TacticalPosition } from "../rules/tactical-projection";
 import type { RuntimeProfileManifest } from "../rules";
@@ -49,6 +50,7 @@ export type InitializeAuthoritativeRoomInput = {
 };
 
 export type AuthoritativeActionInput =
+  | PartyActionInput
   | {
       kind: "intent";
       submissionId: string;
