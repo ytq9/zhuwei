@@ -87,7 +87,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     }
     return [key, { $ref: `#/$def/${name}` }];
   }));
-  const stepVariants = (checked: boolean): Schema[] => variants.flatMap(variant => {
+  const _nestedStepVariants = (checked: boolean): Schema[] => variants.flatMap(variant => {
     const { consumes: _consumes, produces: _produces, templateHash: _hash,
       communication: _communication, outcomeBinding, branches, ...properties } = variant.properties;
     const contract = vnextEntryProducerContract({ kind: properties.kind.enum[0],
@@ -158,8 +158,6 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   // unreachable definitions for the strict provider to reject or interpret.
   const results = variants.length > 0 ? resultVariants() : [];
   if (variants.length > 0) {
-    definitions.directSteps = { type: "array", items: { anyOf: stepVariants(false) } };
-    definitions.checkSteps = { type: "array", items: { anyOf: stepVariants(true) } };
     definitions.steps = { type: "array", items: { anyOf: flatStepVariants() } };
     // The table is always there so a ruling always sends it. When no selected
     // step kind produces results, the only row shape is one no row can take.
@@ -168,11 +166,12 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   }
   const flatPlans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
     variants.length > 0 && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties }));
-  const plans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
-    variants.length > 0 && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({
-      ...variant.properties,
-      steps: { $ref: `#/$def/${variant.properties.kind.enum[0] === "check" ? "checkSteps" : "directSteps"}` },
-    }));
+  // A clarification continuation is the same three tables, one level down:
+  // the ruling with its own steps and results. No nested result shape exists
+  // anywhere in the schema, so there is nothing for the model to copy.
+  const continuationPlans = flatPlans.map((plan: Schema) => object({ ...plan.properties,
+    steps: { $ref: "#/$def/steps", description: "This continuation's steps, one per row, without results." },
+    results: { $ref: "#/$def/results", description: "This continuation's result rows, one per (step, branch) of its own steps." } }));
   const nativeKinds = VNEXT_PROPOSAL_CAPABILITIES.filter(entry => "surface" in entry && entry.surface === "native").map(entry => entry.proposalKind as string);
   const hasNative = domain.properties.terminal.anyOf.some((entry: Schema) => nativeKinds.includes(entry.properties.kind.enum[0]));
   const terminalVariants = domain.properties.terminal.anyOf.filter((variant: Schema) =>
@@ -186,7 +185,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
       const choices = properties.choices;
       const oldContinuations = choices.items.properties.continuation.anyOf as Schema[];
       properties.choices = { ...choices, items: object({ ...choices.items.properties,
-        continuation: { anyOf: [...plans, ...oldContinuations.filter(item => item.properties.kind.enum[0] !== "adjudication")
+        continuation: { anyOf: [...continuationPlans, ...oldContinuations.filter(item => item.properties.kind.enum[0] !== "adjudication")
           .map(item => item.properties.kind.enum[0] === "abilityOperation"
             ? object(Object.fromEntries(Object.entries(item.properties).filter(([key]) => key !== "basisRefs"))) : item)] },
       }) };
@@ -210,6 +209,57 @@ const SOCIAL_RESPONSE_FIELDS: Readonly<Record<string, string>> = Object.freeze({
  * diagnostics on a result point at the row the model actually wrote. */
 const resultOrdinals = new WeakMap<object, ReadonlyMap<string, number>>();
 
+/** Row ordinals of every table scope in one decode: the scope key is the
+ * wire path of the tables' owner ("" for the root, the continuation path for a
+ * clarification choice), the entry key "step:branch". */
+type TableOrdinals = Map<string, number>;
+const scopeKey = (owner: ProposalDiagnosticPath) => JSON.stringify(owner);
+
+/** Fold a steps table and a results table back onto steps the nested decoder
+ * understands. `owner` is where the two tables sit on the wire. */
+function assembleTables(decision: RecordValue, tables: RecordValue, owner: ProposalDiagnosticPath, ordinals: TableOrdinals): unknown[] {
+  const { steps, results } = tables;
+  if (!Array.isArray(steps)) fail(steps === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "filling:steps-table-required", [...owner, "steps"], { type: "array" }, steps);
+  const checked = decision.kind === "check";
+  const injected = steps.map((step, index) => {
+    if (!isPlainRecord(step)) return step;
+    const row: RecordValue = { ...step };
+    // Results live in their own table; a step row never carries one.
+    for (const branch of RESULT_BRANCHES) {
+      if (Object.hasOwn(row, branch)) fail("CONSTRAINT_CONFLICT", "filling:result-in-step-row", [...owner, "steps", index, branch], "results table row", row[branch]);
+    }
+    if (!checked) {
+      // The flat table always carries outcomeBinding; a directSuccess step can only say always.
+      if (Object.hasOwn(row, "outcomeBinding")) {
+        if (row.outcomeBinding !== "always") fail("VALUE_INVALID", "filling:direct-outcome-binding-always", [...owner, "steps", index, "outcomeBinding"], { const: "always" }, row.outcomeBinding);
+        delete row.outcomeBinding;
+      }
+    }
+    return row;
+  });
+  if (results !== undefined) {
+    if (!Array.isArray(results)) fail("TYPE_MISMATCH", "filling:results-table-required", [...owner, "results"], { type: "array" }, results);
+    for (const [ordinal, item] of results.entries()) {
+      const path = [...owner, "results", ordinal];
+      if (!isPlainRecord(item)) fail("TYPE_MISMATCH", "filling:result-row-object-required", path, { type: "object" }, item);
+      const { kind, step, branch, ...content } = item;
+      if (!Number.isInteger(step) || (step as number) < 0 || (step as number) >= injected.length) {
+        fail(step === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-step-index", [...path, "step"], { type: "integer", minimum: 0, maximum: injected.length - 1 }, step);
+      }
+      const target = injected[step as number];
+      if (!isPlainRecord(target)) fail("TYPE_MISMATCH", "filling:result-step-object-required", [...owner, "steps", step as number], { type: "object" }, target);
+      if (kind !== target.kind) fail(kind === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-kind-must-match-step", [...path, "kind"], { const: target.kind }, kind);
+      if (!(RESULT_BRANCHES as readonly unknown[]).includes(branch)) {
+        fail(branch === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-branch", [...path, "branch"], { enum: [...RESULT_BRANCHES] }, branch);
+      }
+      if (Object.hasOwn(target, branch as string)) fail("CONSTRAINT_CONFLICT", "filling:result-duplicate-row", path, { unique: ["step", "branch"] }, item);
+      target[branch as string] = target.kind === "social" ? nestSocialResult(content) : content;
+      ordinals.set(`${scopeKey(owner)}|${step}:${branch}`, ordinal);
+    }
+  }
+  return injected;
+}
+
 export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
   if (!isPlainRecord(value)) fail("TYPE_MISMATCH", "filling:object-required", [], { type: "object" }, value);
   requireOnly(value, ["decision", "steps", "results"], []);
@@ -217,53 +267,21 @@ export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
     "filling:decision-required", ["decision"], { type: "object" }, value.decision);
   const layouts = resultLayouts(domain);
   const decision = value.decision;
-  if (typeof decision.kind !== "string" || !rulings.includes(decision.kind)) {
-    for (const table of ["steps", "results"]) {
-      const rows = value[table];
-      if (rows !== undefined && !(Array.isArray(rows) && rows.length === 0)) {
-        fail("CONSTRAINT_CONFLICT", "filling:terminal-tables-must-be-empty", [table], "absent or []", rows);
-      }
-    }
-    return decodeDecision(decision, ["decision"], false, layouts);
-  }
-  const { steps, results } = value;
-  if (!Array.isArray(steps)) fail(steps === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "filling:steps-table-required", ["steps"], { type: "array" }, steps);
-  const checked = decision.kind === "check";
-  const ordinals = new Map<string, number>();
-  const injected = steps.map((step, index) => {
-    if (!isPlainRecord(step)) return step;
-    const row: RecordValue = { ...step };
-    if (!checked) {
-      // The flat table always carries outcomeBinding; a directSuccess step can only say always.
-      if (Object.hasOwn(row, "outcomeBinding")) {
-        if (row.outcomeBinding !== "always") fail("VALUE_INVALID", "filling:direct-outcome-binding-always", ["steps", index, "outcomeBinding"], { const: "always" }, row.outcomeBinding);
-        delete row.outcomeBinding;
-      }
-    }
-    return row;
-  });
-  if (results !== undefined) {
-    if (!Array.isArray(results)) fail("TYPE_MISMATCH", "filling:results-table-required", ["results"], { type: "array" }, results);
-    for (const [ordinal, item] of results.entries()) {
-      const path = ["results", ordinal];
-      if (!isPlainRecord(item)) fail("TYPE_MISMATCH", "filling:result-row-object-required", path, { type: "object" }, item);
-      const { kind, step, branch, ...content } = item;
-      if (!Number.isInteger(step) || (step as number) < 0 || (step as number) >= injected.length) {
-        fail(step === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-step-index", [...path, "step"], { type: "integer", minimum: 0, maximum: injected.length - 1 }, step);
-      }
-      const target = injected[step as number];
-      if (!isPlainRecord(target)) fail("TYPE_MISMATCH", "filling:result-step-object-required", ["steps", step as number], { type: "object" }, target);
-      if (kind !== target.kind) fail(kind === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-kind-must-match-step", [...path, "kind"], { const: target.kind }, kind);
-      if (!(RESULT_BRANCHES as readonly unknown[]).includes(branch)) {
-        fail(branch === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-branch", [...path, "branch"], { enum: [...RESULT_BRANCHES] }, branch);
-      }
-      if (Object.hasOwn(target, branch as string)) fail("CONSTRAINT_CONFLICT", "filling:result-duplicate-row", path, { unique: ["step", "branch"] }, item);
-      target[branch as string] = target.kind === "social" ? nestSocialResult(content) : content;
-      ordinals.set(`${step}:${branch}`, ordinal);
-    }
-  }
+  const ordinals: TableOrdinals = new Map();
   try {
-    const decoded = decodeDecision({ ...decision, steps: injected }, ["decision"], false, layouts);
+    if (typeof decision.kind !== "string" || !rulings.includes(decision.kind)) {
+      for (const table of ["steps", "results"]) {
+        const rows = value[table];
+        if (rows !== undefined && !(Array.isArray(rows) && rows.length === 0)) {
+          fail("CONSTRAINT_CONFLICT", "filling:terminal-tables-must-be-empty", [table], "absent or []", rows);
+        }
+      }
+      const decoded = decodeDecision(decision, ["decision"], false, layouts, ordinals);
+      resultOrdinals.set(decoded, ordinals);
+      return decoded;
+    }
+    const injected = assembleTables(decision, value, [], ordinals);
+    const decoded = decodeDecision({ ...decision, steps: injected }, ["decision"], false, layouts, ordinals);
     resultOrdinals.set(decoded, ordinals);
     return decoded;
   } catch (error) {
@@ -273,23 +291,31 @@ export function decodeProposalFilling(value: unknown, domain: Schema): unknown {
   }
 }
 
-/** The nested decoder reports decision.steps[i].(result|success|failure)...;
- * the wire has steps[i] and results[j]. */
+/** The nested decoder reports <owner>.steps[i].(result|success|failure)...
+ * where the root owner is "decision" and a continuation owner is
+ * decision.choices[c].continuation; the wire has <tables>.steps[i] and
+ * <tables>.results[j], with the root tables at the root. */
 function remapNestedArgumentPath(path: ProposalDiagnosticPath, ordinals: ReadonlyMap<string, number>): ProposalDiagnosticPath {
-  if (path[0] !== "decision" || path[1] !== "steps") return path;
-  if (typeof path[2] !== "number") return ["steps", ...path.slice(2)];
-  const step = path[2], rest = path.slice(3);
-  if (typeof rest[0] === "string" && (RESULT_BRANCHES as readonly string[]).includes(rest[0])) {
-    const ordinal = ordinals.get(`${step}:${rest[0]}`);
+  let reported: ProposalDiagnosticPath, tables: ProposalDiagnosticPath;
+  if (path[0] === "decision" && path[1] === "choices" && typeof path[2] === "number" && path[3] === "continuation") {
+    reported = path.slice(0, 4); tables = reported;
+  } else if (path[0] === "decision") { reported = ["decision"]; tables = []; }
+  else return path;
+  if (path[reported.length] !== "steps") return path;
+  const rest = path.slice(reported.length + 1);
+  if (typeof rest[0] !== "number") return [...tables, "steps", ...rest];
+  const step = rest[0], after = rest.slice(1);
+  if (typeof after[0] === "string" && (RESULT_BRANCHES as readonly string[]).includes(after[0])) {
+    const ordinal = ordinals.get(`${scopeKey(tables)}|${step}:${after[0]}`);
     if (ordinal === undefined) return path;
-    let tail = rest.slice(1);
+    let tail = after.slice(1);
     if (tail[0] === "response") {
       tail = typeof tail[1] === "string" && Object.hasOwn(SOCIAL_RESPONSE_FIELDS, tail[1])
         ? [SOCIAL_RESPONSE_FIELDS[tail[1]]!, ...tail.slice(2)] : tail.slice(1);
     }
-    return ["results", ordinal, ...tail];
+    return [...tables, "results", ordinal, ...tail];
   }
-  return ["steps", step, ...rest];
+  return [...tables, "steps", step, ...after];
 }
 
 function nestSocialResult(content: RecordValue): RecordValue {
@@ -314,12 +340,12 @@ function flattenSocialResult(body: unknown): RecordValue {
 
 /** Where a result of (step, branch) sits in the wire: the row the model wrote
  * when known, else the canonical order the encoder emits. */
-function resultRowOrdinal(draft: RecordValue, step: number, branch: ResultBranch): number | undefined {
-  const known = resultOrdinals.get(draft)?.get(`${step}:${branch}`);
+function resultRowOrdinal(root: RecordValue, owner: ProposalDiagnosticPath, container: RecordValue, step: number, branch: ResultBranch): number | undefined {
+  const known = resultOrdinals.get(root)?.get(`${scopeKey(owner)}|${step}:${branch}`);
   if (known !== undefined) return known;
-  if (!Array.isArray(draft.proposals)) return undefined;
+  if (!Array.isArray(container.proposals)) return undefined;
   let ordinal = 0;
-  for (const [index, entry] of draft.proposals.entries()) {
+  for (const [index, entry] of container.proposals.entries()) {
     if (!isPlainRecord(entry) || !isPlainRecord(entry.branches)) continue;
     const rows: ResultBranch[] = entry.branches.failure === null || entry.branches.failure === undefined ? ["result"] : ["success", "failure"];
     for (const row of rows) { if (index === step && row === branch) return ordinal; ordinal += 1; }
@@ -327,8 +353,12 @@ function resultRowOrdinal(draft: RecordValue, step: number, branch: ResultBranch
   return undefined;
 }
 
-function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, continuation: boolean, layouts: ResultLayouts): RecordValue {
-  const { kind, steps, ...content } = value;
+function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, continuation: boolean, layouts: ResultLayouts, ordinals: TableOrdinals): RecordValue {
+  const { kind, steps: rawSteps, results: rawResults, ...content } = value;
+  // A continuation carries its own two tables; fold them the same way as the root.
+  const steps = continuation && typeof kind === "string" && rulings.includes(kind)
+    ? assembleTables(value, { steps: rawSteps, results: rawResults }, path, ordinals) : rawSteps;
+  if (!continuation && rawResults !== undefined) fail("CONSTRAINT_CONFLICT", "filling:results-belong-to-the-root-table", [...path, "results"], "absent", rawResults);
   if (typeof kind !== "string" || ![...rulings, ...(continuation ? ["inWorldRefusal", "cancel", "abilityOperation"] : terminals)].includes(kind)) {
     fail(kind === undefined ? "FIELD_MISSING" : typeof kind !== "string" ? "TYPE_MISMATCH" : "VALUE_INVALID", "filling:decision-kind", [...path, "kind"],
       { type: "string", enum: [...rulings, ...(continuation ? ["inWorldRefusal", "cancel", "abilityOperation"] : terminals)] }, kind);
@@ -353,7 +383,7 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
   const { basisRefs, ...terminal } = content;
   if (kind === "clarification" && Array.isArray(terminal.choices)) {
     terminal.choices = terminal.choices.map((choice, index) => !isPlainRecord(choice) || !isPlainRecord(choice.continuation) ? choice : {
-      ...choice, continuation: decodeDecision(choice.continuation, [...path, "choices", index, "continuation"], true, layouts),
+      ...choice, continuation: decodeDecision(choice.continuation, [...path, "choices", index, "continuation"], true, layouts, ordinals),
     });
   }
   if (serverBasisTerminals.has(kind) && basisRefs !== undefined) fail("CONSTRAINT_CONFLICT", kind === "knowledgeReview" ? "filling:knowledge-basis-owned" : kind === "passTime" ? "filling:pass-time-basis-owned" : "filling:ability-basis-owned", [...path, "basisRefs"], "absent", basisRefs);
@@ -443,8 +473,14 @@ export function encodeProposalFilling(value: unknown, domain: Schema): unknown {
   // A terminal decision still sends the two empty tables: the strict schema
   // requires every root member whenever any step kind is selected.
   if (value.mode !== "adjudication" || !isPlainRecord(nested)) return { decision: nested, steps: [], results: [] };
-  const { steps, ...decision } = nested;
-  if (!Array.isArray(steps)) return { decision, ...(steps === undefined ? {} : { steps }) };
+  const split = splitTables(nested);
+  return { decision: split.ruling, steps: split.steps, results: split.results };
+}
+
+/** Nested steps with result/success/failure -> the two flat tables. */
+function splitTables(nested: RecordValue): { ruling: RecordValue; steps: unknown[]; results: RecordValue[] } {
+  const { steps, ...ruling } = nested;
+  if (!Array.isArray(steps)) return { ruling, steps: steps === undefined ? [] : [steps], results: [] };
   const flatSteps: unknown[] = [], results: RecordValue[] = [];
   steps.forEach((step, index) => {
     if (!isPlainRecord(step)) { flatSteps.push(step); return; }
@@ -456,7 +492,7 @@ export function encodeProposalFilling(value: unknown, domain: Schema): unknown {
       results.push({ kind: entry.kind, step: index, branch, ...(entry.kind === "social" ? flattenSocialResult(body) : isPlainRecord(body) ? body : { body }) });
     }
   });
-  return { decision, steps: flatSteps, results };
+  return { ruling, steps: flatSteps, results };
 }
 
 function encodeDecision(value: RecordValue, continuation: boolean, layouts: ResultLayouts): unknown {
@@ -472,9 +508,13 @@ function encodeDecision(value: RecordValue, continuation: boolean, layouts: Resu
   const result = { ...source };
   if (!serverBasisTerminals.has(String(source.kind)) && source.kind !== "cancel") result.basisRefs = value.basisRefs;
   else delete result.basisRefs;
-  if (source.kind === "clarification" && Array.isArray(source.choices)) result.choices = source.choices.map(choice =>
-    !isPlainRecord(choice) || !isPlainRecord(choice.continuation) ? choice
-      : { ...choice, continuation: encodeDecision(choice.continuation, true, layouts) });
+  if (source.kind === "clarification" && Array.isArray(source.choices)) result.choices = source.choices.map(choice => {
+    if (!isPlainRecord(choice) || !isPlainRecord(choice.continuation)) return choice;
+    const encoded = encodeDecision(choice.continuation, true, layouts);
+    if (!isPlainRecord(encoded) || !Array.isArray(encoded.steps)) return { ...choice, continuation: encoded };
+    const split = splitTables(encoded);
+    return { ...choice, continuation: { ...split.ruling, steps: split.steps, results: split.results } };
+  });
   return result;
 }
 
@@ -604,7 +644,7 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
             const row = (entry.branches as RecordValue).failure === null ? "result" : name as ResultBranch;
             return branch.response.basis.flatMap((source, index) => isPlainRecord(source)
               && source.kind === "materializedKnowledge" && source.definitionRef === consume.handle
-              ? [resultBasisArgumentPath(value, prefix, ordinal, row, [index, "worldFactRef"])] : []);
+              ? [resultBasisArgumentPath(draft, value, prefix, ordinal, row, [index, "worldFactRef"])] : []);
           }).filter((path): path is (string | number)[] => path !== undefined);
           if (paths.length) return paths.map(path => ({ ...diagnostic, path, pathBase: "arguments" as const }));
         }
@@ -616,7 +656,7 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
     const entry = value.proposals[ordinal];
     if (!isPlainRecord(entry) || entry.kind !== "social" || !isPlainRecord(entry.branches)) return diagnostic;
     const resultField = (entry.branches.failure === null ? "result" : branchName) as ResultBranch;
-    const basisPath = resultBasisArgumentPath(value, prefix, ordinal, resultField, []);
+    const basisPath = resultBasisArgumentPath(draft, value, prefix, ordinal, resultField, []);
     if (basisPath === undefined) return diagnostic;
     const path = basisPath;
     if (index === undefined) return { ...diagnostic, path, pathBase: "arguments" as const };
@@ -635,13 +675,11 @@ export function socialSourceArgumentDiagnostics(draft: unknown, diagnostics: rea
 
 /** The main decision's social basis lives on a result row (results[j].responseBasis);
  * a clarification continuation keeps the nested step path. */
-function resultBasisArgumentPath(draft: RecordValue, prefix: readonly (string | number)[], step: number, branch: ResultBranch,
+function resultBasisArgumentPath(root: RecordValue, container: RecordValue, prefix: readonly (string | number)[], step: number, branch: ResultBranch,
   tail: readonly (string | number)[]): (string | number)[] | undefined {
-  if (prefix.length === 1 && prefix[0] === "decision") {
-    const ordinal = resultRowOrdinal(draft, step, branch);
-    return ordinal === undefined ? undefined : ["results", ordinal, "responseBasis", ...tail];
-  }
-  return [...prefix, "steps", step, branch, "response", "basis", ...tail];
+  const owner = prefix.length === 1 && prefix[0] === "decision" ? [] : [...prefix];
+  const ordinal = resultRowOrdinal(root, owner, container, step, branch);
+  return ordinal === undefined ? undefined : [...owner, "results", ordinal, "responseBasis", ...tail];
 }
 
 function decodeResult(value: unknown, layout: ResultLayout | undefined, path: ProposalDiagnosticPath): unknown {

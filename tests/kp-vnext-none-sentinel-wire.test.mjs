@@ -107,3 +107,25 @@ test('a promise on the wire carries its due tier and trace; due none takes the n
   assert.equal(parse(promise('1h', { kind: 'none' })).kind, 'locallyRejected');
   assert.equal(parse(promise('tomorrow', '有痕迹。')).kind, 'locallyRejected');
 });
+
+test('a none sentinel padded with the other variant\'s empty fields decodes as the sentinel; a padded value does not', () => {
+  // round84 wrote retryChange as {kind:"none", priorThreadRef:"", basisRefs:[], explanation:""}.
+  const padded = socialWire({ kind: 'none' });
+  padded.steps[0].retryChange = { kind: 'none', priorThreadRef: '', basisRefs: [], explanation: '' };
+  const parsed = parse(padded);
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+  assert.equal(parsed.bundle.proposals[0].retryChange, null);
+  assert.equal(parsed.bundleHash, parse(socialWire({ kind: 'none' })).bundleHash);
+  const filled = socialWire({ kind: 'none' });
+  filled.steps[0].retryChange = { kind: 'none', priorThreadRef: 'thread:one', basisRefs: [], explanation: '' };
+  assert.equal(parse(filled).kind, 'locallyRejected');
+});
+
+test('a result written inside a step row is refused as such, not silently folded or preferred', () => {
+  const wire = socialWire({ kind: 'none' });
+  const row = wire.results[0];
+  wire.steps[0].result = { outcomeCode: row.outcomeCode, summary: '另一份摘要。', response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] }, consequences: [] };
+  // A filling-shape error is a protocol output error, thrown before any draft exists.
+  assert.throws(() => parse(wire), error => Array.isArray(error.diagnostics)
+    && error.diagnostics.some(d => d.constraint === 'filling:result-in-step-row' && JSON.stringify(d.path) === JSON.stringify(['steps', 0, 'result']) && d.repair.allowed === false));
+});

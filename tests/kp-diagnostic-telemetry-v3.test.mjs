@@ -23,8 +23,9 @@ test("structured vNext diagnostics preserve schema fields and codes without copy
     path: 'proposals[].operation.entryRef', code: 'REFERENCE_UNAVAILABLE',
   });
   for (const [pathBase, path, expected] of [
-    ['arguments', ['decision', 'steps', 3, 'otherTargetRefs', 1], 'arguments.decision.steps[].otherTargetRefs[]'],
-    ['arguments', ['decision', 'steps', 1, 'result', 'entries', 0, 'recordKind'], 'arguments.decision.steps[].result.entries[].recordKind'],
+    ['arguments', ['steps', 3, 'otherTargetRefs', 1], 'arguments.steps[].otherTargetRefs[]'],
+    ['arguments', ['results', 1, 'entries', 0, 'recordKind'], 'arguments.results[].entries[].recordKind'],
+    ['arguments', ['decision', 'choices', 0, 'continuation', 'results', 1, 'responseBasis', 0], 'arguments.decision.choices[].continuation.results[].responseBasis[]'],
     [undefined, ['proposals', 1, 'consumes', 0, 'ref'], 'proposals[].consumes[].ref'],
     [undefined, ['proposals', 1, 'branches', 'failure', 'effects', 0, 'kind'], 'proposals[].branches.failure.effects[].kind'],
   ]) {

@@ -3411,3 +3411,7 @@ round82/83 的长草稿都在结尾多关一层括号；损坏落在唯一顶层
 ## 结尾错位的关闭括号可证明（2026-09-08，本地验证）
 
 `parseUniqueJson` 在只剩关闭符时让每个未关闭容器各取一个关闭符（形状不限），多的算尾随、缺的算根未关闭；`json:nested-redundant-delimiters`。round82 的真实 arguments 回放得到完整结构。见[三表回执](agent/vnext-three-table-wire-validation.md)。
+
+## round84 → continuation 拆表、步骤内结果拒绝、空字段哨兵归一（2026-09-08）
+
+round84：模型写对了三张表，又在步骤里塞了旧写法的 `result`（摘要不同），`retryChange` 是带空字段的 none 混合体；2 次调用停批。continuation 改为同样的三张表，schema 里不再有任何嵌套结果写法（全量 120 KB → 77 KB）；步骤行带结果直接拒；`{kind:"none"}` 带空字段解码为哨兵。见[三表回执](agent/vnext-three-table-wire-validation.md)、[round84 回执](agent/vnext-round84-validation.md)。

@@ -40,3 +40,14 @@
 ## 兜底：结尾多出的关闭括号现在可证明（同日）
 
 `parseUniqueJson` 的根语法证据扩到嵌套层：当每个值都已完整、剩下的只有 `}` `]` 与空白时，每个未关闭的容器各取一个关闭符，不管形状对不对，多出来的算尾随内容，缺的按原来的「根未关闭」处理。结构是这些完整值唯一容许的那一个，所以是证据，不是猜测；关闭符之后还有内容的仍然拒绝。issue `json:nested-redundant-delimiters`，诊断指向第一个错位的关闭符。拿 round82 与 round83 的真实 arguments 回放：两份都得到完整结构（两条分支、后果数组原样），round82 的错位落在 2354/2359。用例：`kp-vnext-json-syntax-diagnostics`。
+
+## round84 之后：continuation 也拆表，不留任何嵌套结果写法（同日）
+
+round84 的模型把新表填对了，却又在步骤里塞了一份旧写法的 `result`，两份摘要还不一样——它能看到旧写法，因为 clarification 的 continuation 还保留着嵌套的 `directSteps / checkSteps`。现在：
+
+- continuation 是同样的三张表再下一层：`{ ...裁决, steps, results }`；schema 里 `directSteps / checkSteps` 整个删掉，五种选择的 schema 文本里不再出现任何 `"result":{ / "success":{ / "failure":{`。全量 schema 从 120195 字节降到 77483。
+- 步骤行里出现 `result / success / failure` 直接拒绝（`filling:result-in-step-row`），不折叠也不偏向任何一份。
+- `{kind:"none"}` 带着另一分支的空字段（`""` / `[]`）解码为哨兵：空字段不携带信息（round84 的 `retryChange`）。带了非空字段的仍拒绝。
+- 诊断路径按作用域重映射：根表 `steps[i] / results[j]`，continuation 表 `decision.choices[c].continuation.steps[i] / results[j]`。
+
+本地：codec 组全部通过，Room 三套件（provider、abilityOperation、npc-plan-formation）56/56，node / vitest 按名比对基线 0 新失败。

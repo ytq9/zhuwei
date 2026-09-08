@@ -1388,6 +1388,10 @@ function decodeVNextSentinels(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(decodeVNextSentinels);
   const record = value as Record<string, unknown>;
   if (hasExactKeys(record, ["kind"]) && record.kind === "none") return null;
+  // A sentinel the model padded with the other variant's fields left empty
+  // ("" or []) carries nothing beyond "none"; round84 wrote retryChange so.
+  if (record.kind === "none" && Object.entries(record).every(([key, child]) => key === "kind" || child === ""
+    || (Array.isArray(child) && child.length === 0))) return null;
   if (hasExactKeys(record, ["ability", "checkKind", "dc", "mode", "skill"])
     && record.checkKind === "none"
     && record.ability === "none"

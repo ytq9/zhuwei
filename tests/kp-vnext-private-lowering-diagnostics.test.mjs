@@ -98,11 +98,9 @@ test('unselected clarification lowering preserves every private diagnostic with 
           adjudication: entry.adjudication, proposals: entry.proposals } })) } };
   const before = structuredClone(f.state), rejected = lowerVNext2ProposalBundle({ ...f, value });
   assert.equal(rejected.kind, 'rejected');
-  // The main decision reports result rows (results[j].responseBasis); a
-  // clarification continuation keeps the nested step layout, so the same
-  // diagnostic lands on continuation.steps[0].<branch>.response.basis.
-  const nested = path => path[0] === 'results'
-    ? ['steps', 0, ['success', 'failure'][path[1]], 'response', 'basis', ...path.slice(3)] : path.slice(1);
+  // A continuation carries the same tables one level down, so the same
+  // diagnostic lands on continuation.results[j].responseBasis[k].
+  const nested = path => path[0] === 'results' ? path : path.slice(1);
   assert.deepEqual(rejected.diagnostics, original.diagnostics.map(detail => ({ ...detail,
     path: ['decision', 'choices', 1, 'continuation', ...nested(detail.path)] })));
   assert.deepEqual(bridge(f, value).diagnostics, rejected.diagnostics);

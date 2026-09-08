@@ -15,15 +15,8 @@ export function unflattenSocial(body) {
   if (responseBasis !== undefined) response.basis = responseBasis;
   return { ...rest, response };
 }
+// A clarification continuation is the same three tables one level down.
 export function nestedDecision(wire) {
-  const checked = wire.decision.kind === 'check';
-  return { ...wire.decision, steps: (wire.steps ?? []).map((step, index) => {
-    const { outcomeBinding, ...entry } = step;
-    const out = { ...entry, ...(checked ? { outcomeBinding } : {}) };
-    for (const item of (wire.results ?? []).filter(entry => entry.step === index)) {
-      const { kind, step: _step, branch, ...body } = item;
-      out[branch] = kind === 'social' ? unflattenSocial(body) : body;
-    }
-    return out;
-  }) };
+  return { ...wire.decision, steps: wire.steps ?? [], results: wire.results ?? [] };
 }
+export const continuationOf = nestedDecision;

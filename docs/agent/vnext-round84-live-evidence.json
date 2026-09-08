@@ -1,0 +1,76 @@
+{
+  "round": 84,
+  "verifiedAt": "2026-09-08T05:44:13.028743+00:00",
+  "verdict": "First real exposure of the three-table wire. The fill parsed as valid JSON with the three root tables and a well-formed results row, but the model also kept an old-style result object inside the step (different text) and wrote retryChange as {kind:\"none\"} plus empty extras. The duplicate row was refused (arguments.results[] CONSTRAINT_CONFLICT, not repairable): 2 calls, nothing committed. The nested shape it copied is the one the schema still exposed for clarification continuations.",
+  "sourceCommit": "d48400a358dbd895f78ecffa5a486bf7113bf582",
+  "sourceManifestSha256": "e6566fc78ab1b1972d1fea012137134792d9f3a5f7375f38c2f36a90f43c1d6a",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v48",
+  "scenario": "hours-scale three sentences (same as rounds 82/83)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round84-npc-http-5a5a1dd3-3983-4918-923d-c3ef30d2cbd0",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_FORM_INVALID",
+      "modelCalls": 2,
+      "evidence": "offer [social]; fill: JSON valid, root keys decision/steps/results; decision directSuccess duration 5min; steps[0] social with outcomeBinding always AND an old-style result object (summary/response/consequences); results[0] {kind social, step 0, branch result, responseKind/Text/Motive/Basis, consequences []} with a different summary than the step copy; retryChange {kind:\"none\", priorThreadRef:\"\", basisRefs:[], explanation:\"\"}. Decoder: filling:result-duplicate-row at results[0] (CONSTRAINT_CONFLICT, repair not allowed). No correction call."
+    }
+  ],
+  "gates": [],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {},
+    "fictionNowMicros": "0",
+    "eventTypes": [],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "DeepSeek strict mode did not stop an extra property inside an anyOf object variant (steps[0].result) nor the hybrid retryChange."
+  ],
+  "meter": {
+    "calls": 2,
+    "inputTokens": 49942,
+    "outputTokens": 957,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 49942,
+    "outputBudgetCharge": 957,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.158439
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 13:41 Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched at release, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.158439,
+    "budgetCny": 5
+  },
+  "replay": {
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0,
+    "pinnedProfilesMatch": true
+  },
+  "sourceEnd": {
+    "files": 323,
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true
+  },
+  "closeout": {
+    "game": "stopped pid 23164 verifiedAbsent",
+    "capture": "stopped pid 23154 verifiedAbsent",
+    "ports": "4320/4321 no listener"
+  },
+  "notCovered": [
+    "Whether the tail-closer evidence fires for real (this fill parsed).",
+    "Layers 2 and 3 of the promise contract.",
+    "The second and third sentences."
+  ]
+}
