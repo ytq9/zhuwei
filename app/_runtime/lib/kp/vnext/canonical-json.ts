@@ -106,7 +106,7 @@ export function parseJsonWithNumberTokens(source: string): Readonly<{
   return deepFreeze({ value: result.value, numberTokens: result.numberTokens });
 }
 
-type RootSyntaxIssue = "json:root-close-missing" | "json:root-trailing-comma" | "json:root-redundant-delimiters";
+type RootSyntaxIssue = "json:root-close-missing" | "json:root-trailing-comma" | "json:root-redundant-delimiters" | "json:nested-redundant-delimiters";
 
 /** Evidence only: every root member and every nested value must be complete.
  * This does not return an accepted Proposal or repair a truncated child. */
@@ -192,6 +192,12 @@ function parseUniqueJson(source: string, collectRootEvidence: boolean, collectNu
         cursor += 1;
         return record;
       }
+      // An empty container closed by the wrong shape among trailing closers.
+      if (collectRootEvidence && depth > 0 && source[cursor] === "]" && closingSuffixOnly()) {
+        if (issue === undefined) { issue = "json:nested-redundant-delimiters"; diagnostic = jsonSyntaxDiagnostic(source, "json:string-expected", path, cursor); }
+        cursor += 1;
+        return record;
+      }
       while (cursor < source.length) {
         skipWhitespace();
         const keyStart = cursor;
@@ -210,9 +216,22 @@ function parseUniqueJson(source: string, collectRootEvidence: boolean, collectNu
           return record;
         }
         if (collectRootEvidence && depth === 0 && source[cursor] === "]" && closingSuffixOnly()) {
-          issue = "json:root-redundant-delimiters";
-          diagnostic = jsonSyntaxDiagnostic(source, "json:object-delimiter-expected", path, cursor);
+          // The first slip is the diagnostic; a deeper one already recorded stays.
+          if (issue === undefined) {
+            issue = "json:root-redundant-delimiters";
+            diagnostic = jsonSyntaxDiagnostic(source, "json:object-delimiter-expected", path, cursor);
+          }
           cursor = source.length;
+          return record;
+        }
+        // Every value is complete and only closers remain, but the next one
+        // closes the wrong container: the writer lost count at the tail. Each
+        // open container takes one closer whatever its shape; the surplus
+        // becomes trailing content. The structure is the only one every
+        // complete value admits, so it is evidence, never a guess.
+        if (collectRootEvidence && depth > 0 && source[cursor] === "]" && closingSuffixOnly()) {
+          if (issue === undefined) { issue = "json:nested-redundant-delimiters"; diagnostic = jsonSyntaxDiagnostic(source, "json:object-delimiter-expected", path, cursor); }
+          cursor += 1;
           return record;
         }
         if (source[cursor] === "}") {
@@ -242,10 +261,21 @@ function parseUniqueJson(source: string, collectRootEvidence: boolean, collectNu
         cursor += 1;
         return values;
       }
+      if (collectRootEvidence && depth > 0 && source[cursor] === "}" && closingSuffixOnly()) {
+        if (issue === undefined) { issue = "json:nested-redundant-delimiters"; diagnostic = jsonSyntaxDiagnostic(source, "json:value-invalid", path, cursor); }
+        cursor += 1;
+        return values;
+      }
       while (cursor < source.length) {
         values.push(parseValue(depth + 1, [...path, values.length]));
         skipWhitespace();
         if (source[cursor] === "]") {
+          cursor += 1;
+          return values;
+        }
+        // Same tail rule for an array closed with "}".
+        if (collectRootEvidence && depth > 0 && source[cursor] === "}" && closingSuffixOnly()) {
+          if (issue === undefined) { issue = "json:nested-redundant-delimiters"; diagnostic = jsonSyntaxDiagnostic(source, "json:array-delimiter-expected", path, cursor); }
           cursor += 1;
           return values;
         }
@@ -279,11 +309,14 @@ function parseUniqueJson(source: string, collectRootEvidence: boolean, collectNu
   const value = parseValue(0, []);
   skipWhitespace();
   if (cursor !== source.length) {
-    if (!collectRootEvidence || !isPlainRecord(value) || issue !== undefined || !closingSuffixOnly()) {
+    if (!collectRootEvidence || !isPlainRecord(value) || !closingSuffixOnly()
+      || (issue !== undefined && issue !== "json:nested-redundant-delimiters")) {
       return invalid("json:trailing-content", []);
     }
-    issue = "json:root-redundant-delimiters";
-    diagnostic = jsonSyntaxDiagnostic(source, "json:trailing-content", [], cursor);
+    if (issue === undefined) {
+      issue = "json:root-redundant-delimiters";
+      diagnostic = jsonSyntaxDiagnostic(source, "json:trailing-content", [], cursor);
+    }
   }
   return { value, numberTokens, ...(issue === undefined ? {} : { issue, diagnostic }) };
 }

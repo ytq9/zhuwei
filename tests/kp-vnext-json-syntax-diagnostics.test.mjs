@@ -128,9 +128,41 @@ test("redundant closing delimiters after complete root members preserve every or
       });
     }
   }
-  for (const source of ['{"decision":{"steps":[{"dc":12]}}', '{"decision":{"dc":12,"dc":1}]}}',
+  for (const source of ['{"decision":{"dc":12,"dc":1}]}}',
     '{"decision":{"dc":12}}] "dc":1', '{"decision":{"dc":12}} {"dc":1}',
     '{"decision":{"dc":12},]}', '{"decision":{"steps":[', '{"decision":{"text":"unterminated'] ) {
     assert.throws(() => completeJsonObjectSyntaxEvidence(source), JsonSyntaxError, source);
   }
+  // Every value complete, only closers left, one of them the wrong shape and one
+  // missing: the structure is still the only one those values admit.
+  const slipped = completeJsonObjectSyntaxEvidence('{"decision":{"steps":[{"dc":12]}}');
+  assert.deepEqual(JSON.parse(JSON.stringify(slipped.value)), { decision: { steps: [{ dc: 12 }] } });
+  assert.ok(["json:nested-redundant-delimiters", "json:root-close-missing"].includes(slipped.issue));
+});
+
+// Rounds 82 and 83 both lost count of closers at the very end of a long fill:
+// every value was complete, only "}" and "]" remained, and one of them was the
+// wrong shape. When nothing but closers is left, each open container takes one
+// closer whatever its shape and the surplus is trailing content; the structure
+// is the only one every complete value admits, so it is evidence.
+test("a closer of the wrong shape among trailing closers is evidence, never a guess about content", () => {
+  const value = { decision: { kind: "check" }, steps: [{ kind: "social" }], results: [{ step: 0, branch: "failure", consequences: [] }] };
+  const valid = JSON.stringify(value);
+  // round82: "]" where the row object should close, then the intended closers.
+  const round82 = valid.replace(/"consequences":\[\]\}\]\}$/u, '"consequences":[]]}]}');
+  // An array closed with "}" deeper down, then one closer too many.
+  const arrayByBrace = valid.replace(/"consequences":\[\]\}\]\}$/u, '"consequences":[}]}]}}');
+  // The diagnostic mirrors what the strict parser reports at the slip: an empty array meeting "}" is an invalid value.
+  for (const [source, reason] of [[round82, "json:object-delimiter-expected"], [arrayByBrace, "json:value-invalid"]]) {
+    assert.throws(() => parseJsonWithUniqueMembers(source), JsonSyntaxError);
+    const evidence = completeJsonObjectSyntaxEvidence(source);
+    assert.equal(evidence.issue, "json:nested-redundant-delimiters");
+    assert.equal(evidence.diagnostic.reason, reason);
+    assert.deepEqual(JSON.parse(JSON.stringify(evidence.value)), value);
+  }
+  // Content after the slip is not a tail: it stays a plain rejection.
+  const content = valid.replace(/"consequences":\[\]\}\]\}$/u, '"consequences":[]]}],"extra":1}');
+  assert.throws(() => completeJsonObjectSyntaxEvidence(content), JsonSyntaxError);
+  // A missing closer is still missing, not conjured.
+  assert.throws(() => completeJsonObjectSyntaxEvidence(valid.slice(0, -2)), JsonSyntaxError);
 });

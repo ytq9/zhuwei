@@ -3407,3 +3407,7 @@ social 的 promise 后果带 `due`（none|1h|halfDay|day|nextDawn）与 `trace`�
 ## 提案 wire 拆成三张平表（2026-09-08，parser v48，本地验证）
 
 round82/83 的长草稿都在结尾多关一层括号；损坏落在唯一顶层成员内部时服务器无法证明。用户裁定拆表：`decision`（裁决）、`steps`（不含结果）、`results`（每条结果一行，`kind/step/branch`，social 回应摊平）。全部在编解码器与 schema 生成层，域、lowering、Rules 不动；clarification 的 continuation 保持嵌套。十七个测试文件改到新形状，新增 `tests/fixtures/vnext-wire-tables.mjs`。node/vitest 按名比对基线 0 新失败。见[回执](agent/vnext-three-table-wire-validation.md)。
+
+## 结尾错位的关闭括号可证明（2026-09-08，本地验证）
+
+`parseUniqueJson` 在只剩关闭符时让每个未关闭容器各取一个关闭符（形状不限），多的算尾随、缺的算根未关闭；`json:nested-redundant-delimiters`。round82 的真实 arguments 回放得到完整结构。见[三表回执](agent/vnext-three-table-wire-validation.md)。
