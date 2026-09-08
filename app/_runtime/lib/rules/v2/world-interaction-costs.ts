@@ -7,6 +7,7 @@ import { domainStateBeforeAuditRange } from "./correction";
 import { atomicAuthorityBindingHash } from "./atomic-world-input";
 import { frozenChoiceForRoot, frozenChoicePublicOptions, selectedFrozenContinuation } from "./frozen-player-choice";
 import { materializedSemanticDefinition, semanticDefinitionMaterializedPayload } from "./semantic-definitions";
+import { isRecord } from "./validation";
 
 export const ATOMIC_ACCEPTED_COST_PURPOSE = "atomicWorldInteraction:acceptedCosts";
 
@@ -89,7 +90,23 @@ export function frozenAtomicInitialReadSet(initial: AuthoritativeWorldState, sta
 
 /** Resolve a formally bound execution boundary. Candidate snapshots retain
  * their original dice/choice; suspended publication uses its saved frontier. */
+export function atomicEffectsStart(root: string, start: bigint, audits: readonly Audit[]): bigint {
+  const entry = audits.find(entry => BigInt(entry.eventSeq) === start);
+  if (entry?.eventType !== "ActivityCompleted" || entry.rootActionId !== root) return start;
+  const before = entry.effects.find(effect => effect.kind === "restoreCampaignEntry" && effect.collection === "activities");
+  return before?.kind === "restoreCampaignEntry" && isRecord(before.before?.completion)
+    && before.before.completion.kind === "actionExecution" && isRecord(before.before.completion.plan)
+    && before.before.completion.plan.rootActionId === root
+    && entry.payloadHash === canonicalSha256({ activityId: before.entryId }) ? start + 1n : start;
+}
+
 export function firstFrozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
+  event: FrozenAtomicExecutionBoundary, atomic: AtomicWorldInteractionStepsPlan, audits: readonly Audit[]): bigint | undefined {
+  const start = frozenAtomicEventSeq(state, profiles, event, atomic, audits);
+  return start === undefined ? undefined : atomicEffectsStart(atomic.rootActionId, start, audits);
+}
+
+function frozenAtomicEventSeq(state: AuthoritativeWorldState, profiles: RuntimeProfileManifest,
   event: FrozenAtomicExecutionBoundary, atomic: AtomicWorldInteractionStepsPlan,
   audits: readonly Audit[]): bigint | undefined {
   const samePlan = (value: unknown) => value !== undefined && canonicalSha256(value) === canonicalSha256(atomic);
@@ -116,8 +133,12 @@ export function firstFrozenAtomicEventSeq(state: AuthoritativeWorldState, profil
       if (checkpoint.payloadHash !== canonicalSha256({ continuation: suspended })) return undefined;
     } else {
       const choice = frozenChoiceForRoot(state, event.rootActionId);
-      if (checkpoint.eventType !== "FrozenPlayerChoiceInputRecorded" || !choice?.inFlightInput
-        || checkpoint.payloadHash !== canonicalSha256({ input: choice.inFlightInput })) return undefined;
+      const activity = Object.values(state.campaignRuntime.activities).find(activity => isRecord(activity.completion)
+        && isRecord(activity.completion.plan) && activity.completion.plan.rootActionId === event.rootActionId);
+      const inputPayload = checkpoint.eventType === "ActivityCompletionInputRecorded" && activity?.completionInputInFlight
+        ? { activityId: activity.activityId, input: activity.completionInputInFlight }
+        : checkpoint.eventType === "FrozenPlayerChoiceInputRecorded" && choice?.inFlightInput ? { input: choice.inFlightInput } : undefined;
+      if (inputPayload === undefined || checkpoint.payloadHash !== canonicalSha256(inputPayload)) return undefined;
       // InputRecorded is the sole transition that moves this checkpoint while
       // preserving its private candidate. Verify the preceding stored record.
       const origins = audits.filter(entry => entry.eventType === "AtomicWorldInteractionSuspended"
@@ -130,9 +151,12 @@ export function firstFrozenAtomicEventSeq(state: AuthoritativeWorldState, profil
     if (atomicAuthorityBindingHash(before) !== suspended.authorityBindingHash) return undefined;
     // The private candidate must itself have paid exactly the frozen prefix.
     // Its event identities are not reused as final publication identities.
+    const costStart = atomicEffectsStart(atomic.rootActionId, BigInt(suspended.sourceState.version) + 1n,
+      Object.values(suspended.candidateState.correctionRuntime.audit));
+    const costOffset = Number(costStart - BigInt(suspended.sourceState.version) - 1n);
     for (const [index, cost] of (atomic.executionCosts?.costs ?? []).entries()) {
-      const paid = suspended.events[index];
-      if (!paid || BigInt(paid.eventSeq) !== BigInt(suspended.sourceState.version) + BigInt(index + 1)
+      const paid = suspended.events[index + costOffset];
+      if (!paid || BigInt(paid.eventSeq) !== costStart + BigInt(index)
         || paid.rootActionId !== atomic.rootActionId || paid.branchId !== event.branchId) return undefined;
       const original = domainStateBeforeAuditRange(suspended.candidateState, paid.eventSeq);
       const expected = expectedWorldInteractionCostEvent(original, atomic.actorCharacterId, cost, ATOMIC_ACCEPTED_COST_PURPOSE);

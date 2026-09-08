@@ -317,6 +317,8 @@ function isKpProjection(value: unknown): value is KpSpatialReadModel & { npcView
 function loweredTransactionReadSet(
   rulesInput: Readonly<Record<string, unknown>>,
 ): readonly Readonly<{ ref: string; revisionOrHash: string }>[] | undefined {
+  if (rulesInput.kind === "startActionActivity") return isPlainRecord(rulesInput.completionInput)
+    ? loweredTransactionReadSet(rulesInput.completionInput) : undefined;
   if (rulesInput.kind === "openFrozenPlayerChoice") {
     if (!isFrozenPlayerChoicePlan(rulesInput.plan)) return undefined;
     const merged = new Map(rulesInput.plan.readSet.map(binding => [binding.ref, binding.revisionOrHash]));

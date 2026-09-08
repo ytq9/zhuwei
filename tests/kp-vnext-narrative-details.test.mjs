@@ -1,3 +1,6 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { atomicCompletionInput } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { actDuration, withActDuration, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -36,16 +39,16 @@ function commit(fixture, entry = detailEntry()) {
   assert.equal(candidate.kind, "accepted", JSON.stringify(candidate));
   const lowered = lower(fixture, fixture.state, candidate.bundle);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  const result = fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   const event = result.events.find(event => event.eventType === "NarrativeDetailCommitted");
   assert.ok(event);
   return { result, ref: event.payload.commitmentRef, lowered };
 }
 function projected(fixture, result, viewer = fixture.viewer) {
-  return fixture.runtime.project(fixture.profiles, result.state, viewer, { channel: "realtime", committedRange: {
+  return fixture.runtime.project(fixture.profiles, result.state, viewer, { channel: "realtime", committedRange: committedActionRange(result.state, {
     receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: fixture.state, events: result.events,
-  } });
+  }) });
 }
 
 test("environment commitments pass the real tool, Rules, viewer Claims and replay without mechanical objects", () => {
@@ -68,7 +71,7 @@ test("environment commitments pass the real tool, Rules, viewer Claims and repla
     const replay = fixture.runtime.replay(fixture.genesis, result.events);
     assert.equal(replay.kind, "replayed", JSON.stringify(replay));
     assert.deepEqual(replay.state, result.state);
-    assert.equal(fixture.runtime.step(fixture.profiles, result.state, lowered.command.rulesInput).rejection.code, "duplicateRootAction");
+    assert.equal(stepActionToDecision(fixture.runtime, fixture.profiles, result.state, lowered.command.rulesInput).rejection.code, "duplicateRootAction");
   }
 });
 
@@ -114,9 +117,9 @@ test("later explicit reference materializes furnishings and spatial appearance b
     const originalHash = authorityRevisionOrHash(first.result.state, first.ref);
     const lowered = later(fixture, first.result.state, bundle([observe(), materialize(first.ref, detail)]), first.ref);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-    assert.deepEqual(lowered.command.rulesInput.narrativeMaterializationRefs, [first.ref]);
-    assert.equal(lowered.command.rulesInput.steps[0].rulesInput.kind, "materializeSemanticDefinition");
-    const result = fixture.runtime.step(fixture.profiles, first.result.state, lowered.command.rulesInput);
+    assert.deepEqual(atomicCompletionInput(lowered.command.rulesInput).narrativeMaterializationRefs, [first.ref]);
+    assert.equal(atomicCompletionInput(lowered.command.rulesInput).steps[0].rulesInput.kind, "materializeSemanticDefinition");
+    const result = stepActionToDecision(fixture.runtime, fixture.profiles, first.result.state, lowered.command.rulesInput);
     assert.equal(result.kind, "committed", JSON.stringify(result));
     const objectRef = narrativeMaterializedRef(result.state, first.ref);
     assert.ok(objectRef);
@@ -143,8 +146,8 @@ test("omitting narrative bases cannot bypass server obligations, including Rules
   const lowered = later(fixture, first.result.state, bundle([observe(SOURCE), materialize(first.ref)]), first.ref);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const wrongOrder = structuredClone(lowered.command.rulesInput);
-  wrongOrder.steps.reverse();
-  for (const step of wrongOrder.steps) step.dependsOn = [];
+  atomicCompletionInput(wrongOrder).steps.reverse();
+  for (const step of atomicCompletionInput(wrongOrder).steps) step.dependsOn = [];
   const rejected = fixture.runtime.step(fixture.profiles, first.result.state, wrongOrder);
   assert.equal(rejected.kind, "rejected", JSON.stringify(rejected));
   assert.equal(rejected.rejection.code, "invalidRulesInput");
@@ -160,7 +163,7 @@ test("omitting narrative bases cannot bypass server obligations, including Rules
   assert.deepEqual(VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE.validateReadSet({ phase: "beforeFirstRulesStep",
     requiredContext: frozen.context, rulesInput: single.command.rulesInput, profiles: fixture.profiles, state: first.result.state,
     replayHead: { eventSeq: first.result.state.version, stateHash: canonicalSha256(first.result.state) } }), { kind: "valid" });
-  assert.equal(fixture.runtime.step(fixture.profiles, first.result.state, single.command.rulesInput).kind, "committed");
+  assert.equal(stepActionToDecision(fixture.runtime, fixture.profiles, first.result.state, single.command.rulesInput).kind, "committed");
 });
 
 test("immutable commitment content, audience, source binding and stale authority are enforced before any commit", () => {
@@ -182,7 +185,7 @@ test("immutable commitment content, audience, source binding and stale authority
   const missing = structuredClone(lowered.command.rulesInput);
   missing.steps[0].rulesInput.plan.sourceRefs = [];
   assert.equal(fixture.runtime.step(fixture.profiles, first.result.state, missing).kind, "rejected");
-  const created = fixture.runtime.step(fixture.profiles, first.result.state, lowered.command.rulesInput);
+  const created = stepActionToDecision(fixture.runtime, fixture.profiles, first.result.state, lowered.command.rulesInput);
   assert.equal(created.kind, "committed", JSON.stringify(created));
   const duplicate = later(fixture, created.state, bundle([materialize(first.ref)]), first.ref, "duplicate");
   assert.equal(duplicate.kind, "rejected");
@@ -194,7 +197,7 @@ test("same labels retain separate server identities and unresolved narrative fac
   const first = commit(fixture);
   const second = lower(fixture, first.result.state, bundle([detailEntry()]), { rootActionId: `${fixture.rootActionId}:other` });
   assert.equal(second.kind, "accepted", JSON.stringify(second));
-  const result = fixture.runtime.step(fixture.profiles, first.result.state, second.command.rulesInput);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, first.result.state, second.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   const otherRef = result.events.find(event => event.eventType === "NarrativeDetailCommitted").payload.commitmentRef;
   assert.notEqual(otherRef, first.ref);
@@ -223,7 +226,7 @@ test("frozen materialization obligations survive shared randomness and restore o
       risk: "短暂照明可能不足以看清细微结构。", successOutcome: "看清原有细节。", failureOutcome: "无法辨认更多。" };
     const lowered = later(fixture, first.result.state, value, first.ref);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-    const pending = fixture.runtime.step(fixture.profiles, first.result.state, lowered.command.rulesInput);
+    const pending = stepActionToDecision(fixture.runtime, fixture.profiles, first.result.state, lowered.command.rulesInput);
     assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
     assert.equal(narrativeMaterializedRef(pending.state, first.ref), undefined);
     const frozenPlan = pending.events.find(event => event.eventType === "RandomnessRequested").payload.resolutionPlan;
@@ -246,21 +249,21 @@ test('server narrative obligations survive compilation and replay without a fabr
   const lowered = later(fixture, first.result.state, bundle([observe(SCENE), materialize(first.ref)]), first.ref);
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
   const command = lowered.command.rulesInput;
-  const [materializer, observation] = command.steps;
+  const [materializer, observation] = atomicCompletionInput(command).steps;
   assert.equal(materializer.rulesInput.kind, 'materializeSemanticDefinition');
   assert.equal(observation.rulesInput.kind, 'resolveWorldInteraction');
   assert.deepEqual(observation.consumes, []);
   assert.ok(observation.dependsOn.includes(materializer.proposalRef));
-  const result = fixture.runtime.step(fixture.profiles, first.result.state, command);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, first.result.state, command);
   assert.equal(result.kind, 'committed', JSON.stringify(result));
   assert.ok(narrativeMaterializedRef(result.state, first.ref));
   const replayed = fixture.runtime.replay(fixture.genesis, [...first.result.events, ...result.events]);
   assert.equal(replayed.kind, 'replayed', JSON.stringify(replayed));
   assert.deepEqual(replayed.state, result.state);
   for (const mutate of [
-    input => { input.steps[1].dependsOn = []; },
-    input => { input.steps[0].outcomeBinding = input.steps[0].produces[0].outcomeBinding = 'onSuccess'; },
-    input => { input.steps.reverse(); },
+    input => { atomicCompletionInput(input).steps[1].dependsOn = []; },
+    input => { atomicCompletionInput(input).steps[0].outcomeBinding = atomicCompletionInput(input).steps[0].produces[0].outcomeBinding = 'onSuccess'; },
+    input => { atomicCompletionInput(input).steps.reverse(); },
   ]) {
     const invalid = structuredClone(command); mutate(invalid);
     const rejected = fixture.runtime.step(fixture.profiles, first.result.state, invalid);

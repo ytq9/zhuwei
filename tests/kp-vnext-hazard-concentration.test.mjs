@@ -1,3 +1,4 @@
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR, PROBE_TARGET, PROBE_SOURCE, PROBE_ZONE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -26,7 +27,7 @@ for (const saveSucceeds of [false,true]) test(`hazard reserves concentration bef
   });
   const lowered=lowerVNext2ProposalBundle({value,rootActionId:fixture.rootActionId,actorCharacterId:PROBE_ACTOR,
     requiredContext:context,state:replayed.state});assert.equal(lowered.kind,'accepted',JSON.stringify(lowered));
-  const waiting=fixture.runtime.step(fixture.profiles,replayed.state,lowered.command.rulesInput);
+  const waiting=stepActionToDecision(fixture.runtime, fixture.profiles,replayed.state,lowered.command.rulesInput);
   assert.equal(waiting.kind,'awaitingRandomness',JSON.stringify(waiting));
   const specs=waiting.randomnessRequest.hazardRolls;
   assert.equal(specs.filter(s=>s.purposeKey.includes(':concentration:')).length,1);

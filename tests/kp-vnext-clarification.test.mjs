@@ -1,3 +1,5 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR } from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -36,12 +38,12 @@ test('clarification lowers every branch through the atomic executor and pins dis
     const waiting = f.runtime.step(f.profiles, f.state, room.input);
     assert.equal(waiting.kind, 'awaitingInput', JSON.stringify(waiting));
     assert.equal(/continuation|readSet|profilesHash/.test(JSON.stringify(waiting.pending)), false);
-    const done = f.runtime.step(f.profiles, waiting.state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
+    const done = stepActionToDecision(f.runtime, f.profiles, waiting.state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
       controllerCharacterId: ACTOR, pendingInputId: plan.pendingInputId, choiceId: selected });
     assert.equal(done.kind, 'committed', JSON.stringify(done));
-    const projected = f.runtime.project(f.profiles, done.state, f.viewer, { committedRange: {
+    const projected = f.runtime.project(f.profiles, done.state, f.viewer, { committedRange: committedActionRange(done.state, {
       receiptId: done.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events: [...waiting.events, ...done.events],
-    } });
+    }) });
     assert.equal(projected.kind, 'projected', JSON.stringify(projected));
     assert.equal(done.events.filter(e => e.eventType === 'ItemMaterialized').length, selected === 'cancel' ? 0 : 1);
     assert.equal(f.runtime.replay(f.genesis, [...waiting.events, ...done.events]).kind, 'replayed');
@@ -69,7 +71,7 @@ test('a single-step option and a refusal keep their original effects and read bi
   assert.equal(f.runtime.step(f.profiles, f.state, stale).kind, 'rejected');
   const waiting = f.runtime.step(f.profiles, f.state, room.input);
   assert.equal(waiting.kind, 'awaitingInput', JSON.stringify(waiting));
-  const done = f.runtime.step(f.profiles, waiting.state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
+  const done = stepActionToDecision(f.runtime, f.profiles, waiting.state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
     controllerCharacterId: ACTOR, pendingInputId: lowered.command.plan.pendingInputId, choiceId: 'second' });
   assert.equal(done.kind, 'committed', JSON.stringify(done));
   assert.equal(done.events.filter(e => e.eventType === 'FictionTimeAdvanced').length, 1);

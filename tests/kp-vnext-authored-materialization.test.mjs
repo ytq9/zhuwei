@@ -1,3 +1,4 @@
+import { atomicCompletionInput } from './fixtures/vnext-action-duration.mjs';
 import { actDuration, withActDuration, soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -120,8 +121,8 @@ test("strict model output creates Ability then hazard then invokes it without sy
   const before = state();
   const result = lowerVNext2ProposalBundle({ value: decoded, rootActionId: ROOT, actorCharacterId: ACTOR, requiredContext: context(), state: before });
   assert.equal(result.kind, "accepted", JSON.stringify(result));
-  assert.equal(result.command.rulesInput.kind, "applyAtomicWorldInteractionSteps");
-  const steps = result.command.rulesInput.steps;
+  assert.equal(atomicCompletionInput(result.command.rulesInput).kind, "applyAtomicWorldInteractionSteps");
+  const steps = atomicCompletionInput(result.command.rulesInput).steps;
   assert.deepEqual(steps.map(({ rulesInput }) => rulesInput.kind), ["materializeDefinition", "materializeDefinition", "resolveWorldInteraction"]);
   assert.ok(steps.every(({ rulesInput }) => rulesInput.plan.readSet.every(({ ref }) => !ref.startsWith("prospective:"))));
   assert.equal(steps[2].rulesInput.plan.branches.success.effects[0].damage.hazardDefinitionRef, H);
@@ -139,7 +140,7 @@ test("Ability, ItemDefinition, instance and inventory use share the same atomic 
   accepted(value);
   const result = lower(value);
   assert.equal(result.kind, "accepted", JSON.stringify(result));
-  assert.deepEqual(result.command.rulesInput.steps.map(({ formId }) => formId), ["materialization.vnext-1", "materialization.vnext-1", "materialization.vnext-1", "inventory-operation.vnext-1", "inventory-operation.vnext-1"]);
+  assert.deepEqual(atomicCompletionInput(result.command.rulesInput).steps.map(({ formId }) => formId), ["materialization.vnext-1", "materialization.vnext-1", "materialization.vnext-1", "inventory-operation.vnext-1", "inventory-operation.vnext-1"]);
   const abilityBuilt = materializedAuthoredDefinition(ROOT, plan({ kind: "ability", content: recovery }, A));
   const itemBuilt = materializedAuthoredDefinition(ROOT, plan({ kind: "item", content: item({ use: { ...item().use, abilityRef: abilityBuilt.definitionRef } }) }, I));
   const entryPlan = { ...plan(undefined, E), schema: "zhuwei.authored-item-materialization-plan/vnext-1", definitionRef: itemBuilt.definitionRef, sceneRef: SCENE,
@@ -268,7 +269,7 @@ test("area hazards carry execution geometry independently of the frozen Ability 
   const value = bundle([source("ability", sourceAbility, A), source("hazard", hazard(), H, [A]), trigger]);
   const result = lower(value);
   assert.equal(result.kind, "accepted", JSON.stringify(result));
-  assert.deepEqual(result.command.rulesInput.steps[2].rulesInput.plan.branches.success.effects[0].damage.area, trigger.branches.success.effects[0].damage.area);
+  assert.deepEqual(atomicCompletionInput(result.command.rulesInput).steps[2].rulesInput.plan.branches.success.effects[0].damage.area, trigger.branches.success.effects[0].damage.area);
   trigger.branches.success.effects[0].damage.area.affectedEntityIds = [ACTOR];
   assert.equal(validateVNextProposalBundle(value).kind, "rejected");
 });

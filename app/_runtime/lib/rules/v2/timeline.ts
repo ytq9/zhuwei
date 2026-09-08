@@ -89,10 +89,11 @@ export function eventFictionTimelineId(
   rootActionId: string,
 ): string {
   const record = payload as JsonRecord;
-  if (["FictionTimeAdvanced", "ActivityInterrupted", "ActivityCompleted"].includes(_eventType)
+  if (["FictionTimeAdvanced", "ActivityInterrupted", "ActivityCompleted", "ActivityAttentionRequested", "ActivityAttentionAcknowledged"].includes(_eventType)
     && typeof record.activityId === "string") {
     const activity = state.campaignRuntime.activities[record.activityId];
-    const timeline = timePassageTimelineId(state, activity) ?? longSpellcastingTimelineId(state, activity);
+    const timeline = timePassageTimelineId(state, activity) ?? longSpellcastingTimelineId(state, activity)
+      ?? (activity === undefined ? undefined : characterTimelineId(state, String(activity.characterId)));
     if (timeline !== undefined) return timeline;
   }
   if (typeof record.sourceTimelineId === "string"

@@ -1,3 +1,5 @@
+import { atomicCompletionInput, soleInput } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { actDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -61,7 +63,7 @@ function lower(fixture, state, id, value, focusRefs = [SOURCE, ZONE, TARGET]) {
   return { input: result.command.rulesInput, context: frozen.context };
 }
 function commit(fixture, state, input, events) {
-  let result = fixture.runtime.step(fixture.profiles, state, input);
+  let result = stepActionToDecision(fixture.runtime, fixture.profiles, state, input);
   events.push(...result.events);
   while (result.kind === "awaitingRandomness") {
     result = fixture.runtime.step(fixture.profiles, result.state, { kind: "fulfillAuthoritativeRandomness",
@@ -138,7 +140,7 @@ test("a creature-sourced hazard derives its ability modifier and proficiency ins
   const fixture = createAuthoredProbeFixture("hazard-creature-attack");
   let { state, events, hazardRef } = authored(fixture, { ability: "dex", proficiency: true }, ACTOR);
   const planned = lower(fixture, state, "attack", interaction([effect(hazardRef, ACTOR)], [hazardRef], ACTOR));
-  const pending = fixture.runtime.step(fixture.profiles, state, planned.input);
+  const pending = stepActionToDecision(fixture.runtime, fixture.profiles, state, planned.input);
   assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
   const attack = pending.randomnessRequest.hazardRolls.find(spec => spec.purposeKey.includes(":attack:"));
   assert.equal(attack.frozenParameters.modifier, 2);
@@ -202,7 +204,7 @@ test("nonarea hazards with no reachable targets need no dice; visibility is rech
     const target = { kind: "creature", count: "1", [kind]: distance, requiresSight: false };
     const { state, hazardRef } = authored(fixture, { ability: "dex", proficiency: true }, ACTOR, target);
     const planned = lower(fixture, state, "outside-range", interaction([effect(hazardRef, ACTOR)], [hazardRef], ACTOR));
-    const result = fixture.runtime.step(fixture.profiles, state, planned.input);
+    const result = stepActionToDecision(fixture.runtime, fixture.profiles, state, planned.input);
     assert.equal(result.kind, "committed", `${kind} must filter the frozen attack target`);
     assert.equal(result.events.some(event => event.eventType === "RandomnessRequested"), false);
     assert.equal(result.state.entities[TARGET].hitPoints.current, 20);
@@ -252,7 +254,7 @@ test("one zone independently filters reach and sight while count=1 still settles
     const request = effect(hazardRef, ACTOR);
     assert.deepEqual(registeredHazardTargets(state, SCENE, request)?.map(value => value.targetRef), expected, caseId);
     const input = lower(fixture, state, "mixed-targets", interaction([request], [hazardRef], ACTOR), [SOURCE, ZONE, TARGET, NEAR]).input;
-    const waiting = fixture.runtime.step(fixture.profiles, state, input);
+    const waiting = stepActionToDecision(fixture.runtime, fixture.profiles, state, input);
     assert.equal(waiting.kind, "awaitingRandomness", caseId);
     const reserved = caseId === "hazard-mixed-sight" ? [NEAR, TARGET].sort() : expected;
     assert.deepEqual(waiting.randomnessRequest.hazardRolls.filter(spec => spec.purposeKey.includes(":attack:"))
@@ -267,7 +269,7 @@ test("one zone independently filters reach and sight while count=1 still settles
     const { state, hazardRef } = authored(missing, { ability: "dex", proficiency: true }, ACTOR,
       { kind: "creature", count: "1", rangeInches: "400", requiresSight: false });
     const input = lower(missing, state, "invalid-geometry", interaction([effect(hazardRef, ACTOR)], [hazardRef], ACTOR), [SOURCE, ZONE, TARGET, NEAR]).input;
-    const result = missing.runtime.step(missing.profiles, state, input);
+    const result = stepActionToDecision(missing.runtime, missing.profiles, state, input);
     assert.equal(result.kind, "rejected", "an unavailable bound cannot be treated as a harmless target outside range");
     assert.deepEqual(result.events, []);
   }
@@ -395,10 +397,10 @@ function executeOrderedHazards(prepared, mode, { saveFaces = [20, 2], attackFace
         operations: [{ kind: "set", path: ["observableState"], value: "ordered hazards resolved" }] }]).proposals[0],
     ]) : interaction(selected, [first, second]);
   const lowered = lower(fixture, state, `ordered-${mode}`, value, prepared.focusRefs).input;
-  const input = mode === "single" ? (lowered.kind === "resolveWorldInteraction" ? lowered : lowered.kind === "applyAtomicWorldInteractionSteps" ? lowered.steps[0].rulesInput : lowered.plan.steps[0].rulesInput) : lowered;
-  if (mode === "single") assert.equal(input.kind, "resolveWorldInteraction");
-  else assert.equal(input.kind, "applyAtomicWorldInteractionSteps");
-  let result = fixture.runtime.step(fixture.profiles, state, input), waves = 0;
+  const input = mode === "single" ? soleInput(lowered) : lowered;
+  if (mode === "single") assert.equal(soleInput(input).kind, "resolveWorldInteraction");
+  else assert.equal(atomicCompletionInput(input).kind, "applyAtomicWorldInteractionSteps");
+  let result = stepActionToDecision(fixture.runtime, fixture.profiles, state, input), waves = 0;
   const observed = [...result.events];
   while (result.kind === "awaitingRandomness") {
     assert.equal(++waves, 1, "conditions never request another dice batch after seeing the prefix outcome");

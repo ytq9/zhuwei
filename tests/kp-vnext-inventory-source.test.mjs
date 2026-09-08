@@ -1,3 +1,5 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
@@ -16,7 +18,7 @@ function execute(f, bundle) {
     actorCharacterId: ACTOR, requiredContext, state: f.state });
   assert.equal(lower.kind, "accepted", JSON.stringify(lower));
   const priorState = f.state;
-  const result = f.runtime.step(f.profiles, priorState, lower.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, priorState, lower.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   f.state = result.state;
   f.events.push(...result.events);
@@ -48,9 +50,9 @@ function fixture(name, equipped) {
 
 function project(f, action, viewer = f.viewer) {
   const { result, priorState } = action;
-  const view = f.runtime.project(f.profiles, result.state, viewer, { channel: "realtime", committedRange: {
+  const view = f.runtime.project(f.profiles, result.state, viewer, { channel: "realtime", committedRange: committedActionRange(result.state, {
     receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState, events: result.events,
-  } });
+  }) });
   assert.equal(view.kind, "projected", JSON.stringify(view));
   assert.ok(view.renderableClaims);
   assert.equal(frozenRenderableClaimsConform(view.renderableClaims), true);
@@ -93,8 +95,7 @@ test("committed inventory operations retain the exact equipped or unequipped sou
 test("source evidence is bound to the exact pre-event entry hash and never guessed from the current item", () => {
   const f = fixture("inventory-source-hash", true);
   const action = inventory(f, { kind: "release", entryRef: f.entryRef, quantity: 1, sceneRef: SCENE, releaseKind: "placement" });
-  const range = { receipt: action.result.receipt, actorCharacterId: ACTOR,
-    priorState: action.priorState, state: action.result.state, events: action.result.events };
+  const range = { receipt: action.result.receipt, state: action.result.state, ...committedActionRange(action.result.state, { receiptId: action.result.receipt.receiptId, actorCharacterId: ACTOR, priorState: action.priorState, events: action.result.events }) };
   const authority = deriveAuthorityClaimsFromCommittedRange(range);
   const material = authority.claims.find(claim => claim.kind === "inventoryOutcome");
   assert.equal(material.sourceBefore.equippedSlot, "main");

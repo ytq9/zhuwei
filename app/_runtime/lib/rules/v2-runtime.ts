@@ -1,3 +1,4 @@
+import { actionActivityForRoot } from "./v2/activity-progress";
 import { validateAuthoredDefinitionSource } from "./v2/authored-materialization";
 import {
   createRuntimeProfileRegistry,
@@ -75,7 +76,7 @@ import {
   isAtomicWorldInteractionStepsPlan,
   isWorldInteractionResolutionPlan,
 } from "./v2/world-interaction-model";
-import { isWorldInteractionContinuationStateBinding, stepVNextWorldInteraction, continueFrozenPlayerChoice } from "./v2/world-interactions";
+import { isWorldInteractionContinuationStateBinding, stepVNextWorldInteraction, continueFrozenPlayerChoice, continueActionActivity } from "./v2/world-interactions";
 import { frozenChoiceForRoot, frozenChoicePublicOptions, selectedFrozenContinuation } from "./v2/frozen-player-choice";
 
 function profilesMatch(left: ProfileRef, right: ProfileRef): boolean {
@@ -637,7 +638,16 @@ function replayWithRegistry(
         expectedFrozenIndex = 0;
         const choice = frozenChoiceForRoot(state, event.rootActionId);
         let derived: StepResult | undefined;
-        if (choice?.selectedChoiceId === null && event.eventType === "PendingInputAnswered") {
+        const activity = actionActivityForRoot(state, event.rootActionId);
+        if (activity !== undefined && event.eventType === "ActivityCompletionInputRecorded") {
+          const payload = event.payload as import("./v2/model").EventPayloadByType["ActivityCompletionInputRecorded"];
+          derived = continueActionActivity(event.profiles, state, event.rootActionId, payload.input);
+        } else if (activity !== undefined && state.receipts[event.rootActionId] === undefined) {
+          derived = stepVNextWorldInteraction(event.profiles, state, { kind: "completeActionActivity",
+            proposalId: event.rootActionId, activityId: activity.activityId });
+        } else if (activity !== undefined && state.receipts[event.rootActionId] !== undefined) {
+          throw new TypeError("activity:completion-input-required");
+        } else if (choice?.selectedChoiceId === null && event.eventType === "PendingInputAnswered") {
           const payload = event.payload as import("./v2/model").EventPayloadByType["PendingInputAnswered"];
           derived = stepVNextWorldInteraction(event.profiles, state, { kind: "answerFrozenPlayerChoice",
             rootActionId: event.rootActionId, controllerCharacterId: payload.actorCharacterId,
@@ -868,11 +878,13 @@ function stepWithRegistry(
     return rejected("invalidRulesInput", "Rules step input must be a structured proposal.");
   }
   if (containsForbidden2024Semantics(input)) {
-    const authoredInputs = input.kind === "materializeDefinition" ? [{ input, path: "/plan" }]
-      : input.kind === "applyAtomicWorldInteractionSteps" && Array.isArray(input.steps)
-        ? input.steps.slice(0, 16).flatMap((step, index) => isRecord(step) && isRecord(step.rulesInput)
+    const authoredInput = input.kind === "startActionActivity" && isRecord(input.completionInput) ? input.completionInput : input;
+    const sourcePrefix = authoredInput === input ? "" : "/completionInput";
+    const authoredInputs = authoredInput.kind === "materializeDefinition" ? [{ input: authoredInput, path: `${sourcePrefix}/plan` }]
+      : authoredInput.kind === "applyAtomicWorldInteractionSteps" && Array.isArray(authoredInput.steps)
+        ? authoredInput.steps.slice(0, 16).flatMap((step, index) => isRecord(step) && isRecord(step.rulesInput)
           && step.rulesInput.kind === "materializeDefinition"
-          ? [{ input: step.rulesInput, path: `/steps/${index}/rulesInput/plan` }] : []) : [];
+          ? [{ input: step.rulesInput, path: `${sourcePrefix}/steps/${index}/rulesInput/plan` }] : []) : [];
     const sourceDiagnostics = authoredInputs.flatMap(({ input: child, path }) => {
       if (!isRecord(child.plan)) return [];
       const validation = validateAuthoredDefinitionSource(child.plan.source);

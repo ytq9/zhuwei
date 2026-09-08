@@ -3439,3 +3439,38 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 ## round91：三句零修订（2026-09-08）
 
 社交、一小时等待、observe 三根各 4 次调用全部提交，三张表第一次跑完整个场景；observe 的 `knowledge:` 与 `module-opening` 引用合法。无源码改动。见[round91 回执](agent/vnext-round91-validation.md)。
+
+## ActorPlan 调用与等待推进遥测窄修复（2026-09-08，本地验证）
+
+- 症状/根因：NPC 到期的持久调用分支未发 invocation 行；等待真正推进走内部 due-work 子根，未经过公共提交日志包装。修改 `app/_runtime/lib/room/durable-object.ts`，分别复用现有 invocation 白名单及 Rules 期限查询，只记真实调用和已提交时间。未知响应不造 usage，预算拦截不计调用，保存响应恢复与重复回执不重复计数；不改游戏行为、持久化合同或 Profile。
+- 直接消费者/连带检查：`tests/kp-vnext-actor-plan-due-room.test.ts` 增加实际派发成功、保存后恢复、派发失联和共享预算边界；`tests/kp-vnext-time-passage-room.test.ts` 验证普通等待、NPC 到期分段及故障只过 2 秒。两者均检查私有内容不进日志。既有 meter 已识别 ActorPlan 新行；新批次须单独提取 `room.time-passage.advanced`，历史包不改。
+- 验证：ActorPlan 的 `-t 'ActorPlan telemetry'` 修复前 exit 1（3 缺日志），修复后 exit 0（3 过、12 跳过）；等待的 `-t 'a plain wait|a one minute wait|a failed due NPC decision'` 修复前 exit 1（3 缺日志），修复后 exit 0（3 过、6 跳过）；`npx tsx --test tests/structured-telemetry-v2.test.mjs tests/structured-telemetry-v3.test.mjs` exit 0（11/11）。完整命令、首次旧玩家提案路径 3 项提前失败及故障注入日志解释见[回执](agent/vnext-telemetry-validation.md)。未改原失败预期，也未重跑全组基线对比。
+- 文档：更新 `handoff.md` 的源码坐标、本地/真实分账、退役授权范围、anyOf 证据边界及下一步；TODO 当前接口改为 v51 三表，明确当前三句批次 20/HTTP7 优先于历史 12 调用默认。历史批次结论保留。等待观察与承诺状态需求待用户裁定。
+- 文档验证：新增/修改段落的 8 个本地链接目标存在，检查脚本 exit 0；最终 diff 已复核，`git diff --check` exit 0。
+- 未覆盖：修复后的真实 DeepSeek usage/非零期限日志、完整回归和生产采用。本次未新增真实 API 调用，未运行 typecheck、全项目 Lint 或构建，未 commit、push、部署、migration 或退役。
+
+## 正常耗时活动中的通知方向与合同草案（2026-09-08，纯文档）
+
+用户明确需要活动/长休期间的通知与打断，不以直接等待一两个小时作为主场景。按能力开发路由核对 SPEC 0001、0004、0007、既有时长合同和休息/到期/普通行动/Viewer 直接消费者；写入[能力草案](agent/vnext-activity-attention-contract-proposal.md)，覆盖长休、结构不同的调查/旅行、无事件完成、秘密和恢复矩阵。普通行动原乙案“结果先完成、期间事件再尾随”与途中决定点有实质时序差异，待用户确认替换，未修改原已裁定合同或运行时。同步 `handoff.md`、生产 TODO 与遥测回执的后续范围；本轮只检查文档目标、链接和 diff，不重跑已有遥测测试，不将其 17 项通过计为新能力证据，无真实模型或外部操作。
+
+文档验证：新增及修改段落的 13 个本地链接目标、新文件行尾检查脚本 exit 0；最终 diff 已复核，`git diff --check` exit 0。能力实现、行为测试、真实模型与生产采用均未完成。
+
+## 非战斗活动通知与继续（2026-09-08，本地实现）
+
+- 用户目标/合同：用户批准“非战斗状态可以，战斗不可以”。普通非战斗耗时提案先成为 Activity，与休整共用真实期限推进；已合法取得的新信息形成原控制者的决定点，通知不取消活动、不提前发最终收益。继续先检查前提，已用时间和事实保留；遭遇中不能使用活动继续跳过回合。代表性矩阵覆盖长休、调查、正常无消息、幕后计划未传达、停止/越权、完成时刻通知、驱逐/重复、检定与澄清随机恢复、物品/危险 producer 及既有施法反制。
+- 实现/消费者：新增 `rules/v2/activity-progress.ts`；更新 due-activities、world-interactions、campaign-actions/events、事件类型/时间/Claims/投影/correction；vNext lowering 先分配完成根并冻结计划，Room bridge 接纳其 readSet，Room/authority DTO 接入 activityControl 与 canonical recovery。Table/client/server、game API、play-table 展示本人通知和选择。authored probe 工具跟随真实活动阶段，不自动代答。完整文件职责见[回执](agent/vnext-activity-attention-validation.md)。
+- 根因与修复记录：取消过的推进根复用、完成时刻通知挡住旧完成根、确认后未在当次请求 drain、新步骤 recovery 白名单缺失、删除/变化的冻结依赖和澄清外层依据、继续非法前提仍耗时、结束活动的进度继续增长，均沿原事实源修复。长施法 Room 两项资源失败在独立 HEAD 导出源码复现同样 exit 1；只补 fixture 中与战斗记录一致的角色 slot1/slot3，不改施法规则。
+- 最终定向检查：`npx tsx --test tests/kp-vnext-activity-attention.test.mjs tests/kp-vnext-time-passage-rules.test.mjs tests/kp-vnext-sustained-casting-due.test.mjs` exit 0（18/18）；`npx vitest run tests/kp-vnext-time-passage-room.test.ts tests/kp-vnext-sustained-casting-room.test.ts -t 'noncombat activity|durable long casting|declining Counterspell'` exit 0（6 过、9 跳过）；`npm run typecheck` exit 0。此前工具消费者 `npx tsx --test --test-name-pattern='injected probe|probe persists|probe honors' tests/kp-vnext-authored-context.test.mjs` exit 0（3/3），工具未再改动。Room 的 interrupted 输出是明确注入的崩溃，最终恢复断言通过；不重复累计中间测试次数。
+- 范围：无真实 API 批次、浏览器实测、全量回归、build/Lint、commit、push、部署、migration 或退役。真实 NPC 主动传话/连续游玩、旧即时结算测试全面迁移、原生动作内部时长泛化、承诺 fulfilled/broken 等仍分开记录。新的活动机制没有复用旧 batch 的成功作真实验收；本地新增遥测也不代表已经取得真实 usage。
+
+## 非战斗活动直接消费者与恢复链收尾（2026-09-08，本地开发续作）
+
+- 合同与代表性矩阵沿用上节已批准的非战斗范围；没有扩大至战斗。普通玩家耗时行动与休整的通知/继续机制共用原 Rules、Room 权威，NPC 的原生计划执行路径保留。长休和调查、无消息正常完成、知识权限、停止/前提失效、保存骰面及原生选择恢复为本地矩阵。
+- 直接影响与修复：lowering 调用者改用真实 Activity 开始/推进/完成阶段，保留全部事件与每段回执；社交完成只更新已经合法经过的时间记录；新增 ActivityCompletionInputRecorded 保存真实继续输入并严格重放整个后缀；原子成本/前缀证明接纳经验证的活动完成边界；纠错清理原开始、后续阶段及冻结随机；未答完成根阻止新动作绕过；嵌套创作保留原源诊断。直接修改与消费者见[活动回执](agent/vnext-activity-attention-validation.md)。没有通过删减私有候选校验、滤事件或伪造即时结果让旧测试通过。
+- Node 证据：初次直接组 152/295、exit 1；定位并修复后，最终 37 文件清单 `/tmp/zhuwei-activity-final-node-files.txt`，以 `npx tsx --test` 运行清单文件，308/309、exit 1，日志 `/tmp/zhuwei-activity-final-node.log`。唯一余项是观察测试把 Activity 外壳传给原子计划校验器；仅修正检查位置后 `npx tsx --test tests/kp-vnext-observe.test.mjs` 为 8/8、exit 0。最终生产源码未再改变；不将首次组结果改写成 309/309，不合计重复测试数，当前定向范围无未解决失败。
+- 其他实际检查：同一最终生产源码的 `npx vitest run tests/kp-vnext-time-passage-room.test.ts tests/kp-vnext-sustained-casting-room.test.ts -t 'noncombat activity|durable long casting|declining Counterspell'` 为 6 过、9 跳过、exit 0；`npm run typecheck` exit 0。新事件的私有投影、重复输入、完整 replay、被篡改候选和纠错均在 Node 组内；崩溃栈为明确注入的 Room 故障。
+- 文档与范围：合同、活动回执、handoff、生产 TODO 同步当前结果。本次修改/新增段落 27 个本地链接、新源码行尾检查与 `git diff --check` exit 0。通行失效反例使用已关闭的权威快照，不计为实际途中关门调度或跨该合成更新的连续 replay。无新真实 API 批次、浏览器实测、全项目回归、build/Lint、commit、push、部署、migration 或退役；NPC 模型自主传话、连续游玩、原生内部时长泛化及承诺生命周期仍未由本次本地证据证明。
+
+## 活动与遥测实现本地提交（2026-09-08）
+
+用户明确要求“先把本地实现提交了”。基线为 cloudflare / e657162883b6cde129c405b4d0a2374dfce22094；本提交收录非战斗活动通知、受控继续/结束、恢复与重放修复、ActorPlan/等待遥测、直接消费者测试及对应合同/回执/交接。复用上一节的定向验证，提交准备只改文档状态；未重跑代码测试或进入发布门。暂存区按文件和日志主题选择，独立生命周期、故事创作合同及其 CONTEXT/日志修改保留在工作树；无冲突、无外部操作。本提交使用 conventional commit，父提交固定为上述基线；无 push、部署、migration 或退役，真实模型活动验收仍待后续。

@@ -3,6 +3,10 @@ import { isItemAssemblyChangedPayload, planItemAssemblyTransition, assemblySourc
 import { isWorldFactPointer, worldFactDefinition } from "./world-facts";
 import { isTimePassagePlan, timePassageStartPayload, timePassageTimelineId } from "./time-passage";
 import { dueActivityDescriptors, timePassageSchedule } from "./due-activities";
+import { activityProgressBinding, activityProgressAvailable, hasActivityProgress, activityNoticeKnowledgeRefs, activityAttentionRoot, actionActivityCompletionRoot, actionActivityDependenciesMatch } from "./activity-progress";
+import { isAtomicWorldInteractionStepsPlan, atomicWorldInteractionFictionTimeMicros } from "./world-interaction-model";
+import { activeEncounter } from "./combat-encounters";
+import { authorityRevisionOrHash } from "./authority-bindings";
 import { passageActivityBinding, passageActivityPayload, passageTraversalMatches } from "./dynamic-locations";
 import { characterInferenceContent, characterInferencePayload } from "./character-inference";
 import { socialCommitmentIssue, socialCommitmentPayloadConform, socialCommitmentPolicy } from "./social-commitments";
@@ -107,6 +111,8 @@ export const CAMPAIGN_EVENT_TYPES = [
   "GroupRestOffered",
   "GroupRestConsentRecorded",
   "ActivityInterrupted",
+  "ActivityAttentionRequested",
+  "ActivityAttentionAcknowledged",
   "ActivityCompleted",
   "RestCompleted",
   "DefinitionRegistered",
@@ -259,6 +265,8 @@ const PAYLOAD_KEYS: Record<CampaignEventType, readonly string[]> = {
     "remainingPendingInputIds",
   ],
   ActivityInterrupted: ["activityId", "cause"],
+  ActivityAttentionRequested: ["activityId", "knowledgeRefs"],
+  ActivityAttentionAcknowledged: ["activityId", "attentionRootActionId"],
   ActivityCompleted: ["activityId"],
   RestCompleted: [
     "activityId",
@@ -538,7 +546,7 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
   if (type === "NpcPlanFormed") return validNpcPlanFormed(value);
   if (type === "FictionTimeAdvanced" && "activityId" in value) {
     return hasExactKeys(value, ["activityId", "durationMicros", "reason"])
-      && isNonEmptyString(value.activityId) && ["timePassage", "longSpellcasting"].includes(String(value.reason))
+      && isNonEmptyString(value.activityId) && ["timePassage", "longSpellcasting", "activityProgress"].includes(String(value.reason))
       && typeof value.durationMicros === "string" && /^[1-9][0-9]*$/u.test(value.durationMicros);
   }
   // An act's own frozen duration names its actor so the advance lands on that
@@ -737,6 +745,10 @@ export function validateCampaignEventPayload(eventType: EventType, value: JsonRe
       return isRecord(value.fact);
     case "ActivityInterrupted":
       return isNonEmptyString(value.activityId) && isRecord(value.cause);
+    case "ActivityAttentionRequested":
+      return isNonEmptyString(value.activityId) && strings(value.knowledgeRefs) && value.knowledgeRefs.length > 0;
+    case "ActivityAttentionAcknowledged":
+      return allRequiredStrings(value, ["activityId", "attentionRootActionId"]);
     case "ActivityStarted":
       return allRequiredStrings(value, ["activityId", "characterId", "activityKind"])
         && typeof value.intendedDurationMicros === "string"
@@ -1464,8 +1476,9 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       if (timeline === undefined) throw new TypeError("fiction timeline is unavailable");
       if (payload.reason === "timePassage" || payload.activityId !== undefined) {
         const due = dueActivityDescriptors(state).find(entry => entry.activityId === payload.activityId
-          && (payload.reason === "longSpellcasting" ? entry.longSpellcasting?.phase === "advance" : entry.timePassage?.phase === "advance"));
-        const phase = due?.longSpellcasting ?? due?.timePassage;
+          && (payload.reason === "activityProgress" ? entry.activityProgress?.phase === "advance"
+            : payload.reason === "longSpellcasting" ? entry.longSpellcasting?.phase === "advance" : entry.timePassage?.phase === "advance"));
+        const phase = due?.activityProgress ?? due?.longSpellcasting ?? due?.timePassage;
         if (!worldInteractionProfileEnabled(event.profiles.extensions) || due === undefined
           || due.childRootActionId !== event.rootActionId || due.timelineId !== event.fictionTimelineId
           || phase?.fromFictionMicros !== event.fictionInstantMicros
@@ -1481,6 +1494,8 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const payload = event.payload as EventPayloadByType["RestStarted"];
       if (runtime.activities[payload.activityId] !== undefined) throw new TypeError("activity already exists");
       runtime.activities[payload.activityId] = { ...structuredClone(payload), status: "active", startedAtFictionMicros: event.fictionInstantMicros };
+      const progression = worldInteractionProfileEnabled(event.profiles.extensions) ? activityProgressBinding(state, payload.characterId) : undefined;
+      if (progression !== undefined) runtime.activities[payload.activityId].progression = progression;
       return true;
     }
     case "GroupRestOffered": {
@@ -1541,6 +1556,16 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     case "ActivityStarted": {
       const payload = event.payload as EventPayloadByType["ActivityStarted"];
       if (runtime.activities[payload.activityId] !== undefined) throw new TypeError("activity already exists");
+      if (payload.activityKind === "actionExecution") {
+        const plan = payload.completion.plan;
+        if (!worldInteractionProfileEnabled(event.profiles.extensions) || payload.completion.kind !== "actionExecution"
+          || !isAtomicWorldInteractionStepsPlan(plan) || plan.rootActionId !== actionActivityCompletionRoot(event.rootActionId)
+          || plan.actorCharacterId !== payload.characterId || atomicWorldInteractionFictionTimeMicros(plan) !== payload.intendedDurationMicros
+          || activeEncounter(state, payload.characterId) !== undefined
+          || Object.values(runtime.activities).some(activity => activity.characterId === payload.characterId && activity.status === "active")) {
+          throw new TypeError("action activity requires a distinct frozen completion and an available noncombat actor");
+        }
+      }
       if (payload.activityKind === "timePassage") {
         const plan = isRecord(payload.completion) ? payload.completion.plan : undefined;
         if (!worldInteractionProfileEnabled(event.profiles.extensions) || !isTimePassagePlan(plan)
@@ -1566,11 +1591,61 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
           || activity.intendedDurationMicros !== payload.intendedDurationMicros
         ) throw new TypeError("actor plan activity binding mismatch");
       }
+      const progression = worldInteractionProfileEnabled(event.profiles.extensions) ? activityProgressBinding(state, payload.characterId) : undefined;
+      if (progression !== undefined && payload.activityKind === "actionExecution" && isAtomicWorldInteractionStepsPlan(payload.completion.plan)) {
+        const plan = payload.completion.plan;
+        // Freeze the real starting dependencies. A later step may read a
+        // producer's output, which need not have its final hash at the start.
+        progression.completionReadSet = [...new Set([
+          ...(plan.executionCosts?.readSet ?? []), ...plan.steps.flatMap(step => step.rulesInput.plan.readSet),
+          ...Object.values(state.frozenPlayerChoices ?? {}).filter(choice => choice.plan.rootActionId === event.rootActionId).flatMap(choice => choice.readSet),
+        ].map(binding => binding.ref))].sort().flatMap(ref => {
+          const revisionOrHash = authorityRevisionOrHash(state, ref);
+          return revisionOrHash === null ? [] : [{ ref, revisionOrHash }];
+        });
+      }
       runtime.activities[payload.activityId] = {
         ...structuredClone(payload),
         status: "active",
         startedAtFictionMicros: event.fictionInstantMicros,
       };
+      if (progression !== undefined && payload.activityKind !== "timePassage"
+        && payload.completion.kind !== "actorPlan") runtime.activities[payload.activityId].progression = progression;
+      if (payload.activityKind === "actionExecution") {
+        for (const [pendingId, choice] of Object.entries(state.frozenPlayerChoices ?? {})) {
+          if (choice.plan.rootActionId !== event.rootActionId) continue;
+          const selected = choice.plan.choices.find(option => option.choiceId === choice.selectedChoiceId)?.continuation;
+          if (selected?.kind !== "adjudication" || canonicalSha256(selected.plan) !== canonicalSha256(payload.completion.plan)
+            || state.pendingInputs[pendingId] !== undefined) throw new TypeError("activity start must transfer the selected frozen choice exactly once");
+          delete state.frozenPlayerChoices![pendingId];
+        }
+      }
+      return true;
+    }
+    case "ActivityAttentionRequested": {
+      const payload = event.payload as EventPayloadByType["ActivityAttentionRequested"];
+      const activity = runtime.activities[payload.activityId];
+      const refs = activity === undefined ? [] : activityNoticeKnowledgeRefs(state, activity);
+      if (refs.length === 0 || canonicalSha256(refs) !== canonicalSha256(payload.knowledgeRefs)
+        || event.rootActionId !== activityAttentionRoot(payload.activityId, refs)
+        || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${activity.characterId}`) {
+        throw new TypeError("activity attention must refer to newly delivered character knowledge outside combat");
+      }
+      activity.attention = { rootActionId: event.rootActionId, knowledgeRefs: refs, atFictionMicros: event.fictionInstantMicros };
+      return true;
+    }
+    case "ActivityAttentionAcknowledged": {
+      const payload = event.payload as EventPayloadByType["ActivityAttentionAcknowledged"];
+      const activity = runtime.activities[payload.activityId];
+      if (activity === undefined || !activityProgressAvailable(state, activity) || !isRecord(activity.attention)
+        || activity.attention.rootActionId !== payload.attentionRootActionId || !isRecord(activity.progression)
+        || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${activity.characterId}`) {
+        throw new TypeError("activity continuation must acknowledge the current noncombat decision point");
+      }
+      activity.progression.acknowledgedKnowledgeRefs = [...new Set([
+        ...(activity.progression.acknowledgedKnowledgeRefs as string[]), ...(activity.attention.knowledgeRefs as string[]),
+      ])].sort();
+      delete activity.attention;
       return true;
     }
     case "ActivityInterrupted": {
@@ -1590,6 +1665,8 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         activity.endedAtFictionMicros = event.fictionInstantMicros;
       }
       activity.status = "interrupted";
+      if (hasActivityProgress(activity)) activity.endedAtFictionMicros = event.fictionInstantMicros;
+      delete activity.attention;
       activity.interruptionCause = structuredClone(payload.cause);
       const pendingGroupRests = [
         ...Object.entries(state.pendingInputs).map(([pendingInputId, pending]) => ({
@@ -1633,6 +1710,16 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
       const payload = event.payload as EventPayloadByType["ActivityCompleted"];
       const activity = runtime.activities[payload.activityId];
       if (activity?.status !== "active") throw new TypeError("activity is not active");
+      if (hasActivityProgress(activity) && activity.activityKind !== "longSpellcasting" && (isRecord(activity.attention)
+        || activeEncounter(state, String(activity.characterId)) !== undefined)) throw new TypeError("an activity cannot complete across a decision point or combat");
+      if (activity.activityKind === "actionExecution") {
+        const completion = activity.completion;
+        if (!isRecord(completion) || !isRecord(completion.plan) || completion.plan.rootActionId !== event.rootActionId
+          || !activityProgressAvailable(state, activity) || !actionActivityDependenciesMatch(state, activity)
+          || BigInt(event.fictionInstantMicros) < BigInt(String(activity.startedAtFictionMicros)) + BigInt(String(activity.intendedDurationMicros))) {
+          throw new TypeError("action completion requires its reached deadline and unchanged frozen dependencies");
+        }
+      }
       if (activity.activityKind === "timePassage") {
         const due = dueActivityDescriptors(state).find(entry => entry.activityId === payload.activityId && entry.timePassage === undefined);
         if (due?.childRootActionId !== event.rootActionId || due.timelineId !== event.fictionTimelineId
@@ -1645,7 +1732,10 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         if (passage === undefined || timelineId === undefined || !passageTraversalMatches(state, [String(activity.characterId)], passage)
           || BigInt(state.fictionTimelines[timelineId].nowMicros) < BigInt(String(activity.startedAtFictionMicros)) + BigInt(passage.travelDurationMicros)) throw new TypeError("passage:activity-not-due-or-connection-changed");
       }
+      delete activity.completionInputInFlight;
       activity.status = "completed";
+      if (hasActivityProgress(activity)) activity.endedAtFictionMicros = event.fictionInstantMicros;
+      delete activity.attention;
       return true;
     }
     case "RestCompleted": {

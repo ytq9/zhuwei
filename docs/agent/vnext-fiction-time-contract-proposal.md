@@ -103,6 +103,8 @@ decision.durationMicros: string, pattern ^(0|[1-9][0-9]*)$, maxLength 16
 
 ### 4.4 跨过到期点：本合同的一个明确取舍
 
+**2026-09-08 后续用户裁定：下述乙案“期间不能打断”的取舍已在非战斗范围内被[活动通知合同](vnext-activity-attention-contract-proposal.md)取代。** 非战斗耗时活动须在途中重要决定点先停，未完成的最终效果不提前结算。用户明确“非战斗状态可以，战斗不可以”；战斗内仍按 §10.1 的轮次与行动经济运行。本节甲乙对照保留为原选择的历史说明。当前 Activity 实现已通过[本地代表性矩阵](vnext-activity-attention-validation.md)，真实模型活动通知尚未验收。
+
 行动时长 D 之内可能落着一个已排程的到期点（NPC 计划 due、Activity 完成、世界效果结束）。两种做法：
 
 | | 甲：行动即 Activity | 乙：即时推进，到期尾随 |
@@ -165,7 +167,7 @@ decision.durationMicros: string, pattern ^(0|[1-9][0-9]*)$, maxLength 16
 
 ## 8. 不做的事
 
-- 不给普通行动建 Activity（甲），直到 `crossedDeadlines` 有真实频率。
+- 原“不给普通行动建 Activity，直到有真实频率”的开发取舍，已由 2026-09-08 非战斗活动通知需求取代；见 §4.4 的后续裁定。战斗不纳入本能力。
 - 不改承诺记录、不改计划形成、不碰 `formActorPlan` 的依据规则。
 - 不显示绝对时钟。
 - 不为 NPC 的行动定时长——NPC 行动仍走计划/Activity。
@@ -212,4 +214,3 @@ round79 填 30 秒、round80 填 12 秒——同一句「半分钟」两次估�
 - Claims：普通 Activity 的这种中断有自己的 `mechanicalOutcome`（`activityInterrupted`；通行：「原定路线已经无法走完」），否则闭合覆盖会把这条事件判成未映射。
 
 验证：`kp-vnext-dynamic-locations` 的 todo 变成真用例——60 秒通行，5 分钟的关门行动跨过到期点（`crossedDeadlines` 记录到该 Activity），随后的等待触发结算：中断、行动者留在原地、事件挂在 `activity-due:` 子根下、原输入无 Receipt，同一等待再发即提交，replay 一致。
-

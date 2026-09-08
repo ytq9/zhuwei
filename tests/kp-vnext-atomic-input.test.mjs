@@ -1,3 +1,5 @@
+import { atomicCompletionInput, withExecutionCosts } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { soleFormId, soleProposalRef, mergeExecutionCosts } from './fixtures/vnext-action-duration.mjs';
 import { authoritativeNpcDecisionContext } from '../app/_runtime/lib/rules/v2/npc-decision-context.ts';
 import assert from 'node:assert/strict';
@@ -7,7 +9,7 @@ import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal
 import { canonicalSha256 } from '../app/_runtime/lib/rules/profiles/canonical.ts';
 import { itemBundle, hazardBundle } from './fixtures/vnext-authored-bundles.mjs';
 import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, worldInteractionPlanHash } from '../app/_runtime/lib/rules/v2/world-interaction-model.ts';
-import { createCandidateEventTransition, createEventTransition, validateEventEnvelope } from '../app/_runtime/lib/rules/v2/events.ts';
+import { createCandidateEventTransition, createEventTransition, validateEventEnvelope, foldEvent } from '../app/_runtime/lib/rules/v2/events.ts';
 import { authorityRevisionOrHash } from '../app/_runtime/lib/rules/v2/authority-bindings.ts';
 import { parseSubmitKpProposalBundleCandidateArguments } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { encodeVNextStrictToolBundle } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
@@ -87,8 +89,7 @@ function attackBundle({ melee = false, invalidSuffix = false } = {}) {
 function begin(f, value, executionCosts) {
   const lowered = lowerVNext2ProposalBundle({ value, rootActionId: f.rootActionId, actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-  const result = f.runtime.step(f.profiles, f.state, { ...lowered.command.rulesInput,
-    ...(executionCosts === undefined ? {} : { executionCosts }) });
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, executionCosts === undefined ? lowered.command.rulesInput : withExecutionCosts(lowered.command.rulesInput, executionCosts));
   assert.equal(result.kind, 'awaitingRandomness', JSON.stringify(result));
   return result;
 }
@@ -117,7 +118,7 @@ function replay(f, events, expected) {
 }
 
 function atomicInput(f, lower, bundle) {
-  if (lower.command.rulesInput.kind === 'applyAtomicWorldInteractionSteps') return lower.command.rulesInput;
+  if (atomicCompletionInput(lower.command.rulesInput).kind === 'applyAtomicWorldInteractionSteps') return atomicCompletionInput(lower.command.rulesInput);
   const ruling = bundle.adjudication.kind;
   return { kind: 'applyAtomicWorldInteractionSteps', rootActionId: f.rootActionId, actorCharacterId: ACTOR,
     bundleHash: canonicalSha256(bundle), contextHash: f.requiredContext.binding.contextHash, sharedRuling: ruling,
@@ -144,7 +145,7 @@ function beginFrozen(f, bundle, executionCosts, expectedKind = 'awaitingRandomne
     actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(lower.kind, 'accepted');
   const { kind: _kind, ...atomic } = atomicInput(f, lower, bundle);
-  if (executionCosts !== undefined) atomic.executionCosts = executionCosts;
+  if (executionCosts !== undefined) atomic.executionCosts = withExecutionCosts(atomic, executionCosts).executionCosts;
   const pendingInputId = `pending:${f.rootActionId}`;
   const opened = f.runtime.step(f.profiles, f.state, { kind: 'openFrozenPlayerChoice', rootActionId: f.rootActionId,
     actorCharacterId: ACTOR, plan: { schema: 'zhuwei.frozen-player-choice/vnext-1', rootActionId: f.rootActionId,
@@ -156,7 +157,7 @@ function beginFrozen(f, bundle, executionCosts, expectedKind = 'awaitingRandomne
         { choiceId: 'cancel', label: '取消', publicRisk: '不执行。', continuation: { kind: 'cancel' } },
       ] } });
   assert.equal(opened.kind, 'awaitingInput');
-  const selected = f.runtime.step(f.profiles, opened.state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
+  const selected = stepActionToDecision(f.runtime, f.profiles, opened.state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
     controllerCharacterId: ACTOR, pendingInputId, choiceId: 'proceed' });
   assert.equal(selected.kind, expectedKind, JSON.stringify(selected));
   return { selected, events: [...opened.events, ...selected.events] };
@@ -168,14 +169,14 @@ test('frozen execution proves native reaction and choice-dependent randomness wi
     const begun = beginFrozen(f, attackBundle({ melee: mode === 'knockOut' }));
     const pending = dice(f, begun.selected, mode === 'shield' ? 10 : 15);
     assert.equal(pending.kind, 'awaitingInput', JSON.stringify(pending));
-    assert.equal(pending.events[0].eventType, 'FrozenPlayerChoiceInputRecorded');
+    assert.equal(pending.events[0].eventType, 'ActivityCompletionInputRecorded');
     const events = [...begun.events, ...pending.events];
     replay(f, events, pending.state);
     unpublished(f, pending);
     const prefix = f.runtime.replay(f.genesis, [...begun.events, pending.events[0]]);
     assert.equal(prefix.kind, 'replayed');
     assert.equal(prefix.state.receipts[f.rootActionId].status, begun.selected.state.receipts[f.rootActionId].status);
-    assert.deepEqual(prefix.state.multiplayerRuntime.spotlightLedger, begun.selected.state.multiplayerRuntime.spotlightLedger);
+    assert.deepEqual(prefix.state.multiplayerRuntime.spotlightLedger, pending.state.multiplayerRuntime.spotlightLedger);
     assert.equal(dice(f, { ...begun.selected, state: prefix.state }, 1).kind, 'rejected');
 
     const marker = pending.events.at(-1);
@@ -189,14 +190,14 @@ test('frozen execution proves native reaction and choice-dependent randomness wi
       value => { value.continuation.tapes[0].rolls[0] = 1; },
     ]) {
       const payload = structuredClone(marker.payload); mutate(payload);
-      const forged = createEventTransition(before.state, f.profiles, { rootActionId: f.rootActionId,
+      const forged = createEventTransition(before.state, f.profiles, { rootActionId: marker.rootActionId,
         eventType: marker.eventType, payload, scopeProof: pending.scopeProof,
         visibilityPolicyId: marker.visibilityPolicyId, secrecy: marker.secrecy });
       assert.equal(f.runtime.replay(f.genesis, [...events.slice(0, -1), forged.event]).kind, 'rejected');
     }
     let done = answer(f, pending, mode === 'shield'
       ? { kind: 'useReaction', abilityRef: 'spell:shield', slotLevel: '1' } : { kind: 'knockOut' });
-    assert.equal(done.events[0]?.eventType, 'FrozenPlayerChoiceInputRecorded', JSON.stringify(done));
+    assert.equal(done.events.some(event => event.eventType === 'FrozenPlayerChoiceInputRecorded'), false, 'the selected plan belongs to its Activity after start');
     events.push(...done.events);
     if (mode === 'knockOut') {
       assert.equal(done.kind, 'awaitingRandomness', JSON.stringify(done));
@@ -246,7 +247,7 @@ test('additional accepted costs share direct and check execution without changin
     assert.equal(result.state.entities[ACTOR].resources.focus, 2);
     assert.equal(result.events.filter(event => event.eventType === 'ResourceUsed' && event.payload.resourceId === 'focus').length, 1);
     if (kind !== 'item') {
-      const frozen = Object.values(waiting.state.internalContinuations).find(entry => entry.rootActionId === f.rootActionId).resolutionPlan;
+      const frozen = Object.values(waiting.state.internalContinuations).find(entry => entry.rootActionId === `activity-result:${f.rootActionId}`).resolutionPlan;
       const checkPlan = frozen.steps.find(step => step.rulesInput.kind === 'resolveWorldInteraction' && step.rulesInput.plan.ruling.kind === 'check').rulesInput.plan;
       const settled = result.events.find(event => event.eventType === 'WorldInteractionResolved' && event.payload.check !== null);
       assert.equal(settled.payload.planHash, worldInteractionPlanHash(checkPlan));
@@ -268,7 +269,7 @@ test('a direct atomic action pays accepted item and resource costs once without 
   const first = lowerVNext2ProposalBundle({ value: creation, rootActionId: f.rootActionId,
     actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(first.kind, 'accepted');
-  const acquired = f.runtime.step(f.profiles, f.state, first.command.rulesInput);
+  const acquired = stepActionToDecision(f.runtime, f.profiles, f.state, first.command.rulesInput);
   assert.equal(acquired.kind, 'committed', JSON.stringify(acquired));
   const entry = Object.values(acquired.state.campaignRuntime.itemSystem.entries)[0];
   const rootActionId = `${f.rootActionId}:direct`;
@@ -287,24 +288,24 @@ test('a direct atomic action pays accepted item and resource costs once without 
     { kind: 'item', entryRef: entry.entryId, quantity: 1, charges: 0, durability: 0 }],
     readSet: [ACTOR, entry.entryId].sort().map(ref => ({ ref, revisionOrHash: authorityRevisionOrHash(acquired.state, ref) })) };
   // Lowering already produced the one-step atomic plan carrying the act's duration; the test adds its item and resource costs to it.
-  const base = lower.command.rulesInput.executionCosts;
-  const input = { ...lower.command.rulesInput, executionCosts: mergeExecutionCosts(base, cost) };
+  const base = atomicCompletionInput(lower.command.rulesInput).executionCosts;
+  const input = withExecutionCosts(lower.command.rulesInput, cost);
   const before = structuredClone(acquired.state);
   for (const executionCosts of [mergeExecutionCosts(base, { ...cost, readSet: cost.readSet.filter(binding => binding.ref !== entry.entryId) }),
     mergeExecutionCosts(base, { ...cost, costs: [cost.costs[0], { ...cost.costs[1], quantity: 3 }] })]) {
-    const denied = f.runtime.step(f.profiles, acquired.state, { ...input, executionCosts });
+    const denied = f.runtime.step(f.profiles, acquired.state, { ...input, completionInput: { ...atomicCompletionInput(input), executionCosts: structuredClone(executionCosts) } });
     assert.equal(denied.kind, 'rejected', JSON.stringify(denied));
     assert.deepEqual(denied.events, []);
     assert.deepEqual(acquired.state, before);
   }
-  const done = f.runtime.step(f.profiles, acquired.state, input);
+  const done = stepActionToDecision(f.runtime, f.profiles, acquired.state, input);
   assert.equal(done.kind, 'committed', JSON.stringify(done));
   assert.equal(done.events.some(event => event.eventType === 'RandomnessRequested'), false);
   assert.equal(done.state.entities[ACTOR].resources.focus, 2);
   assert.equal(done.state.campaignRuntime.itemSystem.entries[entry.entryId].quantity, 1);
   assert.equal(done.events.filter(event => event.eventType === 'ItemUsed').length, 1);
   replay(f, [...acquired.events, ...done.events], done.state);
-  assert.equal(f.runtime.step(f.profiles, done.state, input).kind, 'rejected');
+  assert.equal(stepActionToDecision(f.runtime, f.profiles, done.state, input).kind, 'rejected');
 });
 
 test('accepted costs survive a frozen choice, native pending and later randomness without duplicate payment', () => {
@@ -339,7 +340,7 @@ test('social accepted costs preserve the verified source plan after new history 
       actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
     assert.equal(lower.kind, 'accepted', JSON.stringify(lower));
     const frozen = structuredClone(lower.command.rulesInput);
-    const first = f.runtime.step(f.profiles, f.state, { ...frozen, executionCosts: acceptedCosts(f) });
+    const first = stepActionToDecision(f.runtime, f.profiles, f.state, withExecutionCosts(frozen, acceptedCosts(f)));
     assert.equal(first.kind, roll === null ? 'committed' : 'awaitingRandomness', JSON.stringify(first));
     const result = roll === null ? first : f.runtime.step(f.profiles, first.state,
       { kind: 'fulfillAuthoritativeRandomness', continuation: first.continuation, rolls: [roll] });
@@ -375,7 +376,7 @@ test('social without new history shares direct, check and frozen-choice cost set
       actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
     assert.equal(lower.kind, 'accepted', JSON.stringify(lower));
     const first = choice ? beginFrozen(f, bundle, acceptedCosts(f), roll === null ? 'committed' : 'awaitingRandomness')
-      : { selected: f.runtime.step(f.profiles, f.state, { ...atomicInput(f, lower, bundle), executionCosts: acceptedCosts(f) }), events: [] };
+      : { selected: stepActionToDecision(f.runtime, f.profiles, f.state, withExecutionCosts(lower.command.rulesInput, acceptedCosts(f))), events: [] };
     if (!choice) first.events.push(...first.selected.events);
     assert.equal(first.selected.kind, roll === null ? 'committed' : 'awaitingRandomness', JSON.stringify(first.selected));
     const done = roll === null ? first.selected : f.runtime.step(f.profiles, first.selected.state,
@@ -461,7 +462,7 @@ test('social after direct acquisition proves changed inventory without a dice or
     else {
       const lowered=lowerVNext2ProposalBundle({value:bundle,rootActionId:f.rootActionId,actorCharacterId:ACTOR,requiredContext:f.requiredContext,state:f.state});
       assert.equal(lowered.kind,'accepted');
-      done=f.runtime.step(f.profiles,f.state,{...lowered.command.rulesInput,...(costs?{executionCosts:costs}:{})}); events=done.events;
+      done=stepActionToDecision(f.runtime, f.profiles,f.state,costs ? withExecutionCosts(lowered.command.rulesInput,costs) : lowered.command.rulesInput); events=done.events;
     }
     assert.equal(done.kind,'committed',JSON.stringify(done));
     assert.equal(events.some(event=>event.eventType==='DiceRolled'),false);
@@ -513,19 +514,22 @@ test('private social candidate cannot certify damage for a public fold with an u
       const lowered = lowerVNext2ProposalBundle({ value: bundle, rootActionId: f.rootActionId,
         actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
       assert.equal(lowered.kind,'accepted');
-      const first = f.runtime.step(f.profiles,f.state,mode === 'beforeDice' ? atomicInput(f,lowered,bundle) : lowered.command.rulesInput);
+      const first = stepActionToDecision(f.runtime, f.profiles,f.state,lowered.command.rulesInput);
       const done = mode === 'beforeDice'
         ? f.runtime.step(f.profiles,first.state,{kind:'fulfillAuthoritativeRandomness',continuation:first.continuation,rolls:[20]}) : first;
       assert.equal(done.kind,'committed');
       events=mode === 'beforeDice' ? [...first.events,...done.events] : done.events;scopeProof=done.scopeProof;
     }
-    let state=f.state, injected=false, reachedSettlement=false;
+    let state=f.state, injected=false, reachedSettlement=false, rejectedEarlier=false;
     const committed=[];
     const ids=new Map();
     const remap = value => typeof value === 'string' ? ids.get(value) ?? value
       : Array.isArray(value) ? value.map(remap) : value && typeof value === 'object'
         ? Object.fromEntries(Object.entries(value).map(([key,child]) => [key,remap(child)])) : value;
     for (const event of events) {
+      if (!injected && event.eventType !== (mode === 'beforeDice' ? 'DiceRolled' : 'SourceClaimCreated')) {
+        state=foldEvent(state,event); committed.push(event); continue;
+      }
       const draft={ rootActionId:event.rootActionId, resolutionId:event.resolutionId, eventType:event.eventType,
         payload:remap(event.payload),scopeProof,
         visibilityPolicyId:event.visibilityPolicyId,secrecy:event.secrecy };
@@ -547,10 +551,13 @@ test('private social candidate cannot certify damage for a public fold with an u
         assert.equal(f.runtime.replay(f.genesis,[...committed,candidate.event]).kind,'rejected');
         break;
       }
-      const next=createEventTransition(state,f.profiles,draft);
+      let next;
+      try { next=createEventTransition(state,f.profiles,draft); } catch (error) {
+        assert.ok(injected); assert.match(error.message, /not bound to its frozen plan|unchanged frozen dependencies|social:accepted-cost-prefix-not-proven/); rejectedEarlier=true; break;
+      }
       state=next.state;ids.set(event.eventId,next.event.eventId);committed.push(next.event);
     }
-    assert.equal(reachedSettlement,true);
+    assert.equal(reachedSettlement || rejectedEarlier,true);
   }
 });
 
@@ -562,7 +569,7 @@ test('social prefix rejects injected same-root changes and borrowed native damag
     bundle.proposals.push(socialOnlyBundle().proposals[0]);
     const first = begin(f,bundle), done = dice(f,first,10,1);
     assert.equal(done.kind,'committed');
-    let state = first.state, beforeSocial, reachedSettlement = false;
+    let state = first.state, beforeSocial, reachedSettlement = false, rejectedEarlier = false;
     const remappedIds = new Map();
     const remap = value => typeof value === 'string' ? remappedIds.get(value) ?? value
       : Array.isArray(value) ? value.map(remap) : value && typeof value === 'object'
@@ -627,11 +634,16 @@ test('social prefix rejects injected same-root changes and borrowed native damag
           /social:accepted-cost-prefix-not-proven|social:frozen-source-plan-changed|damage effects were not committed/, mutation);
         break;
       }
-      const next = createEventTransition(state,f.profiles,input);
+      let next;
+      try { next=createEventTransition(state,f.profiles,input); } catch (error) {
+        assert.ok(["missingCompletion", "missingNativeDamage", "missingCommittedDice", "changedNativeTarget", "changedNativeDamage"].includes(mutation), mutation);
+        assert.match(error.message, /inventory operation does not match|not bound to its frozen plan|unchanged frozen dependencies|social:/);
+        rejectedEarlier=true; break;
+      }
       assert.equal(validateEventEnvelope(next.event).ok,true);
       state=next.state;remappedIds.set(event.eventId,next.event.eventId);
     }
-    assert.equal(reachedSettlement,true,mutation);
+    assert.equal(reachedSettlement || rejectedEarlier,true,mutation);
   }
 });
 
@@ -642,7 +654,7 @@ test('social settlement rejects omitted or changed frozen costs even when the su
     const lower = lowerVNext2ProposalBundle({ value: bundle, rootActionId: f.rootActionId,
       actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
     assert.equal(lower.kind, 'accepted');
-    const pending = f.runtime.step(f.profiles, f.state, { ...atomicInput(f, lower, bundle), executionCosts: acceptedCosts(f) });
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, withExecutionCosts(lower.command.rulesInput, acceptedCosts(f)));
     assert.equal(pending.kind, 'awaitingRandomness');
     const done = f.runtime.step(f.profiles, pending.state,
       { kind: 'fulfillAuthoritativeRandomness', continuation: pending.continuation, rolls: [20] });
@@ -691,7 +703,7 @@ test('a single check with accepted costs closes its frozen continuation after ei
     const lower = lowerVNext2ProposalBundle({ value: parsed.bundle, rootActionId: f.rootActionId,
       actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
     assert.equal(lower.kind, 'accepted');
-    const pending = f.runtime.step(f.profiles, f.state, { ...lower.command.rulesInput, executionCosts: acceptedCosts(f) });
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, withExecutionCosts(lower.command.rulesInput, acceptedCosts(f)));
     assert.equal(pending.kind, 'awaitingRandomness', JSON.stringify(pending));
     const result = f.runtime.step(f.profiles, pending.state,
       { kind: 'fulfillAuthoritativeRandomness', continuation: pending.continuation, rolls: [roll] });
@@ -716,7 +728,7 @@ test('accepted cost preflight refuses missing dependencies, insufficient resourc
     { ...acceptedCosts(f), readSet: acceptedCosts(f).readSet.filter(binding => binding.ref === ACTOR) },
     { ...acceptedCosts(f), costs: [...acceptedCosts(f).costs, ...acceptedCosts(f).costs] },
     { ...acceptedCosts(f), readSet: [{ ref: ACTOR, revisionOrHash: `sha256:${'0'.repeat(64)}` }, time.binding].sort(byRef) }]) {
-    const rejected = f.runtime.step(f.profiles, f.state, { ...lower.command.rulesInput, executionCosts });
+    const rejected = stepActionToDecision(f.runtime, f.profiles, f.state, { ...lower.command.rulesInput, executionCosts });
     assert.equal(rejected.kind, 'rejected', JSON.stringify(rejected));
     assert.deepEqual(f.state, snapshot);
     assert.deepEqual(rejected.events, []);
@@ -730,8 +742,8 @@ test('an act pays its frozen duration once, ahead of its results, on the actor t
     actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(first.kind, 'accepted', JSON.stringify(first));
   // Acquiring the item is itself an act, so the creation Bundle carries the fixture's duration and spends it once.
-  assert.deepEqual(first.command.rulesInput.executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '300000000' }]);
-  const acquired = f.runtime.step(f.profiles, f.state, first.command.rulesInput);
+  assert.deepEqual(atomicCompletionInput(first.command.rulesInput).executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '300000000' }]);
+  const acquired = stepActionToDecision(f.runtime, f.profiles, f.state, first.command.rulesInput);
   assert.equal(acquired.kind, 'committed', JSON.stringify(acquired));
   assert.equal(acquired.events.filter(event => event.eventType === 'FictionTimeAdvanced').length, 1);
   const rootActionId = `${f.rootActionId}:direct`;
@@ -755,58 +767,56 @@ test('an act pays its frozen duration once, ahead of its results, on the actor t
   assert.deepEqual(lowerVNext2ProposalBundle({ value: authoring, rootActionId: f.rootActionId, actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state }).issues,
     ['bundle2:duration-forbidden-for-pure-authoring']);
   // A solo in-world act takes the atomic path, and lowering declared the ruling's duration as its execution cost.
-  assert.equal(lower.command.rulesInput.kind, 'applyAtomicWorldInteractionSteps');
-  assert.deepEqual(lower.command.rulesInput.executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '600000000' }]);
-  assert.ok(lower.command.rulesInput.executionCosts.readSet.some(binding => binding.ref === `character-timeline:${ACTOR}`));
+  assert.equal(lower.command.rulesInput.kind, 'startActionActivity');
+  assert.deepEqual(atomicCompletionInput(lower.command.rulesInput).executionCosts.costs, [{ kind: 'fictionTime', durationMicros: '600000000' }]);
+  assert.ok(atomicCompletionInput(lower.command.rulesInput).executionCosts.readSet.some(binding => binding.ref === `character-timeline:${ACTOR}`));
   const timelineId = acquired.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? acquired.state.activeBranchId;
   const before = BigInt(acquired.state.fictionTimelines[timelineId].nowMicros);
-  const done = f.runtime.step(f.profiles, acquired.state, lower.command.rulesInput);
+  const done = stepActionToDecision(f.runtime, f.profiles, acquired.state, lower.command.rulesInput);
   assert.equal(done.kind, 'committed', JSON.stringify(done));
   const advances = done.events.filter(event => event.eventType === 'FictionTimeAdvanced');
   assert.equal(advances.length, 1);
   assert.equal(advances[0].payload.durationMicros, '600000000');
   // The advance precedes every result of the act.
-  assert.equal(done.events.indexOf(advances[0]), 0);
+  assert.equal(done.events[0].eventType, 'ActivityStarted');
+  assert.equal(done.events.indexOf(advances[0]), 1);
   assert.equal(BigInt(done.state.fictionTimelines[timelineId].nowMicros) - before, 600000000n);
-  assert.deepEqual(done.mechanicalResult.fictionTime, { durationMicros: '600000000', crossedDeadlines: [] });
+  assert.equal(done.state.campaignRuntime.activities[`activity:${rootActionId}`].status, 'completed');
   replay(f, [...acquired.events, ...done.events], done.state);
 });
 
 
-test('a frozen choice answer cannot invalidate another atomic action suspended for a native reaction', () => {
+test('an unanswered frozen choice blocks another timed action from advancing or publishing a native candidate', () => {
   const f = fixture('frozen-native-conflict', { shield: true });
-  const bundle = itemBundle(); bundle.proposals.pop();
-  const lower = lowerVNext2ProposalBundle({ value: bundle, rootActionId: f.rootActionId,
-    actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
+  // Reuse a real frozen plan instead of inventing an immediate second action.
+  const lower = lowerVNext2ProposalBundle({ ...f, value: itemBundle() });
   assert.equal(lower.kind, 'accepted');
-  const { kind: _kind, ...atomic } = lower.command.rulesInput;
+  const { kind, ...plan } = atomicCompletionInput(lower.command.rulesInput);
   const pendingInputId = `pending:${f.rootActionId}`;
   const waiting = f.runtime.step(f.profiles, f.state, { kind: 'openFrozenPlayerChoice', rootActionId: f.rootActionId,
-    actorCharacterId: ACTOR, plan: { schema: 'zhuwei.frozen-player-choice/vnext-1', rootActionId: f.rootActionId,
-      actorCharacterId: ACTOR, pendingInputId, contextHash: f.requiredContext.binding.contextHash,
-      bundleHash: canonicalSha256(bundle), profilesHash: canonicalSha256(f.profiles), readSet: [], question: '执行还是取消？',
-      choices: [
-        { choiceId: 'proceed', label: '执行', publicRisk: '取得物品。', continuation: { kind: 'adjudication',
-          plan: { schema: ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, ...atomic } } },
-        { choiceId: 'cancel', label: '取消', publicRisk: '不执行。', continuation: { kind: 'cancel' } },
-      ] } });
+    actorCharacterId: ACTOR, plan: { schema: 'zhuwei.frozen-player-choice/vnext-1', rootActionId: f.rootActionId, actorCharacterId: ACTOR,
+      pendingInputId, contextHash: f.requiredContext.binding.contextHash, bundleHash: plan.bundleHash, profilesHash: canonicalSha256(f.profiles),
+      readSet: [], question: '执行还是取消？', choices: [{ choiceId: 'proceed', label: '执行', publicRisk: '取得物品。',
+        continuation: { kind: 'adjudication', plan: { schema: ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, ...plan } } },
+        { choiceId: 'cancel', label: '取消', publicRisk: '不执行。', continuation: { kind: 'cancel' } }] } });
   assert.equal(waiting.kind, 'awaitingInput');
   const otherRoot = `${f.rootActionId}:other`;
   const other = { ...f, state: waiting.state, rootActionId: otherRoot,
     requiredContext: freezeAuthoredProbeContext(f, waiting.state, { rootActionId: otherRoot,
       focusRefs: [TARGET, 'definition:probe-valve', 'definition:probe-steam-zone'] }).context };
-  const suspended = dice(other, begin(other, attackBundle()));
-  assert.equal(suspended.kind, 'awaitingInput');
-  assert.ok(suspended.state.atomicWorldInteractions[otherRoot]);
-  const rejected = f.runtime.step(f.profiles, suspended.state, { kind: 'answerFrozenPlayerChoice',
-    rootActionId: f.rootActionId, controllerCharacterId: ACTOR, pendingInputId, choiceId: 'proceed' });
-  assert.equal(rejected.kind, 'rejected');
-  assert.equal(rejected.rejection.code, 'causalFrontierConflict');
-  assert.deepEqual(rejected.events, []);
-  assert.ok(suspended.state.pendingInputs[pendingInputId]);
-  const resumed = answer(other, suspended, { kind: 'decline' });
-  assert.equal(resumed.kind, 'committed');
-  assert.ok(resumed.state.pendingInputs[pendingInputId]);
+  const second = lowerVNext2ProposalBundle({ ...other, value: attackBundle() });
+  assert.equal(second.kind, 'accepted');
+  const held = stepActionToDecision(f.runtime, f.profiles, waiting.state, second.command.rulesInput);
+  assert.equal(held.kind, 'committed');
+  assert.deepEqual(held.events.map(event => event.eventType), ['ActivityStarted']);
+  assert.deepEqual(held.state.fictionTimelines, waiting.state.fictionTimelines);
+  assert.deepEqual(held.state.campaignRuntime.itemSystem, waiting.state.campaignRuntime.itemSystem);
+  assert.ok(held.state.pendingInputs[pendingInputId]);
+  const refused = stepActionToDecision(f.runtime, f.profiles, held.state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
+    controllerCharacterId: ACTOR, pendingInputId, choiceId: 'proceed' });
+  assert.equal(refused.kind, 'rejected');
+  assert.deepEqual(refused.events, []);
+  replay(f, [...waiting.events, ...held.events], held.state);
 });
 for (const reaction of ['decline', 'useReaction']) test(`atomic authored Item resumes Shield ${reaction} without publishing candidate prefix`, () => {
   const f = fixture(`shield-${reaction}`, { shield: true });
@@ -923,7 +933,7 @@ for(const standalone of [false,true]) for(const reaction of ['decline','useReact
   let input=lowered.command.rulesInput,pre=[];
   if(standalone){
     // Materializing only the authoring prefix is not the act, so it carries no duration.
-    const materialized=f.runtime.step(f.profiles,f.state,(({executionCosts:_costs,...rest})=>({...rest,steps:input.steps.slice(0,2)}))(input));
+    const materialized=f.runtime.step(f.profiles,f.state,(({executionCosts:_costs,...rest})=>({...rest,steps:structuredClone(rest.steps.slice(0,2))}))(atomicCompletionInput(input)));
     assert.equal(materialized.kind,'committed',JSON.stringify(materialized.rejection));
     pre=materialized.events;f.state=materialized.state;f.rootActionId+=':single';
     const hazard=Object.values(f.state.campaignRuntime.definitions).find(definition=>definition.definitionKind==='environmentHazard');
@@ -935,9 +945,9 @@ for(const standalone of [false,true]) for(const reaction of ['decline','useReact
     assert.equal(single.kind,'accepted',JSON.stringify(single));
     // A lone in-world act now lowers as a one-step atomic Bundle so it can spend its duration.
     input=single.command.rulesInput;
-    assert.equal(input.kind,'applyAtomicWorldInteractionSteps');assert.equal(input.steps.length,1);
+    assert.equal(input.kind,'startActionActivity');assert.equal(atomicCompletionInput(input).steps.length,1);
   }
-  const waiting=f.runtime.step(f.profiles,f.state,input);
+  const waiting=stepActionToDecision(f.runtime, f.profiles,f.state,input);
   assert.equal(waiting.kind,'awaitingRandomness',JSON.stringify(waiting.rejection));
   const pending=dice(f,waiting,10,2);
   assert.equal(pending.kind,'awaitingInput',JSON.stringify(pending.rejection));
@@ -1025,7 +1035,7 @@ for(const reaction of ['decline','useReaction'])test(`player can ${reaction} wit
   f.requiredContext=freezeAuthoredProbeContext(f,f.state,{rootActionId:f.rootActionId,focusRefs:[TARGET,'definition:probe-valve','definition:probe-steam-zone']}).context;
   const lowered=lowerVNext2ProposalBundle({value:equippedReactionBundle(),rootActionId:f.rootActionId,actorCharacterId:TARGET,requiredContext:f.requiredContext,state:f.state});
   assert.equal(lowered.kind,'accepted',JSON.stringify(lowered));
-  const waiting=f.runtime.step(f.profiles,f.state,lowered.command.rulesInput);
+  const waiting=stepActionToDecision(f.runtime, f.profiles,f.state,lowered.command.rulesInput);
   assert.equal(waiting.kind,'awaitingRandomness',JSON.stringify(waiting.rejection));
   const pending=dice(f,waiting,10,2);
   assert.equal(pending.kind,'awaitingInput',JSON.stringify(pending.rejection));
@@ -1064,7 +1074,7 @@ test('a single atomic inventory use releases its saved randomness after healing 
   const setup = lowerVNext2ProposalBundle({ value: creation, rootActionId: f.rootActionId,
     actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(setup.kind, 'accepted', JSON.stringify(setup));
-  const created = f.runtime.step(f.profiles, f.state, setup.command.rulesInput);
+  const created = stepActionToDecision(f.runtime, f.profiles, f.state, setup.command.rulesInput);
   assert.equal(created.kind, 'committed', JSON.stringify(created));
   f.state = created.state; f.rootActionId += ':use';
   const entry = Object.values(f.state.campaignRuntime.itemSystem.entries)
@@ -1078,7 +1088,7 @@ test('a single atomic inventory use releases its saved randomness after healing 
   const lowered = lowerVNext2ProposalBundle({ value: use, rootActionId: f.rootActionId,
     actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-  const waiting = f.runtime.step(f.profiles, f.state, atomicInput(f, lowered, use));
+  const waiting = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(waiting.kind, 'awaitingRandomness', JSON.stringify(waiting));
   const done = dice(f, waiting);
   assert.equal(done.kind, 'committed', JSON.stringify(done));
@@ -1123,18 +1133,18 @@ test('inside an Encounter an act declares no tier and spends no fictional time',
   const none = draft('0');
   assert.equal(none.kind, 'accepted', JSON.stringify(none));
   assert.equal(none.command.rulesInput.kind, 'applyAtomicWorldInteractionSteps');
-  assert.equal(none.command.rulesInput.executionCosts, undefined);
+  assert.equal(atomicCompletionInput(none.command.rulesInput).executionCosts, undefined);
   // Rules holds the same line on its own, whatever produced the plan.
   const spent = { ...none.command.rulesInput, executionCosts: { costs: [{ kind: 'fictionTime', durationMicros: '300000000' }],
     readSet: [{ ref: ACTOR, revisionOrHash: authorityRevisionOrHash(state, ACTOR) },
       { ref: `character-timeline:${ACTOR}`, revisionOrHash: authorityRevisionOrHash(state, `character-timeline:${ACTOR}`) }].sort(byRef) } };
   const refused = f.runtime.step(f.profiles, state, spent);
   assert.equal(refused.kind, 'rejected', JSON.stringify(refused));
-  assert.match(refused.rejection.message, /spends turns, not a frozen duration/);
+  assert.match(refused.rejection.message, /timed player action must start its activity/);
   assert.deepEqual(refused.events, []);
   const timelineId = state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? state.activeBranchId;
   const before = state.fictionTimelines[timelineId].nowMicros;
-  const done = f.runtime.step(f.profiles, state, none.command.rulesInput);
+  const done = stepActionToDecision(f.runtime, f.profiles, state, none.command.rulesInput);
   assert.equal(done.kind, 'committed', JSON.stringify(done));
   assert.equal(done.events.filter(event => event.eventType === 'FictionTimeAdvanced').length, 0);
   assert.equal(done.state.fictionTimelines[timelineId].nowMicros, before);

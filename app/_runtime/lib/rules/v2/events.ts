@@ -1,4 +1,5 @@
-import { frozenPlayerChoiceIssue } from "./world-interactions";
+import { actionActivityForRoot } from "./activity-progress";
+import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
 import { frozenChoiceForRoot, frozenChoiceReadSet, frozenChoiceReadSetMatches, frozenChoicePublicBindingMatches,
@@ -346,7 +347,7 @@ function eventRequiresItemSystemProfile(eventType: EventType, payload: unknown):
 }
 
 function eventRequiresWorldInteractionProfile(eventType: EventType, payload: unknown): boolean {
-  return eventType === "FrozenPlayerChoicePrepared" || eventType === "FrozenPlayerChoiceInputRecorded" || eventType === "KnowledgeReviewed" || eventType === "NarrativeDetailCommitted" || eventType === "NarrativeDetailMaterialized"
+  return eventType === "FrozenPlayerChoicePrepared" || eventType === "FrozenPlayerChoiceInputRecorded" || eventType === "ActivityCompletionInputRecorded" || eventType === "KnowledgeReviewed" || eventType === "NarrativeDetailCommitted" || eventType === "NarrativeDetailMaterialized"
     || eventType === "ItemUniquenessBound" || eventType === "ItemIdentified"
     || eventType === "AuthoredMaterializationResolved"
     || eventType === "InventoryOperationApplied" || eventType === "ItemAssemblyChanged"
@@ -473,6 +474,7 @@ const EVENT_TYPES = new Set<EventType>([
   "PlayerChoiceRequested",
   "FrozenPlayerChoicePrepared",
   "FrozenPlayerChoiceInputRecorded",
+  "ActivityCompletionInputRecorded",
     "SocialResolutionOffered",
     "SocialResolutionDeclined",
     "SocialDirectResolved",
@@ -814,6 +816,8 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "FrozenPlayerChoicePrepared":
       return hasExactKeys(value, ["record"]) && isFrozenPlayerChoiceRecord(value.record)
         && value.record.selectedChoiceId === null && value.record.inFlightInput === null;
+    case "ActivityCompletionInputRecorded":
+      return hasExactKeys(value, ["activityId", "input"]) && isNonEmptyString(value.activityId) && isFrozenPlayerChoiceContinuationInput(value.input);
     case "FrozenPlayerChoiceInputRecorded":
       return hasExactKeys(value, ["input"]) && isFrozenPlayerChoiceContinuationInput(value.input);
     case "PlayerChoiceRequested":
@@ -1376,8 +1380,8 @@ function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): st
   // Lifecycle events reference the existing Activity instead of repeating its
   // owner. Receipt subjects must come from that authoritative relationship,
   // not from a caller-supplied cause or the mere shape of an activity ID.
-  if ((event.eventType === "ActivityInterrupted" || event.eventType === "ActivityCompleted"
-    || (event.eventType === "FictionTimeAdvanced" && ["timePassage", "longSpellcasting"].includes(String(payload.reason))))
+  if ((event.eventType === "ActivityInterrupted" || event.eventType === "ActivityCompleted" || event.eventType === "ActivityAttentionRequested" || event.eventType === "ActivityAttentionAcknowledged"
+    || (event.eventType === "FictionTimeAdvanced" && ["timePassage", "longSpellcasting", "activityProgress"].includes(String(payload.reason))))
     && isNonEmptyString(payload.activityId)) {
     const owner = state.campaignRuntime.activities[payload.activityId]?.characterId;
     if (isNonEmptyString(owner)) candidates.push(owner);
@@ -1854,6 +1858,17 @@ function foldEventInternal(
       state.frozenPlayerChoices[record.plan.pendingInputId] = structuredClone(record);
       break;
     }
+    case "ActivityCompletionInputRecorded": {
+      const payload = event.payload as EventPayloadByType["ActivityCompletionInputRecorded"];
+      const activity = actionActivityForRoot(state, event.rootActionId);
+      const issue = activityCompletionInputIssue(event.profiles, source, event.rootActionId, payload.input);
+      if (issue !== undefined || activity?.activityId !== payload.activityId || event.secrecy !== "internal"
+        || event.visibilityPolicyId !== "visibility:room-authority-only") throw new TypeError(issue ?? "activity:completion-input-not-bound");
+      activity.completionInputInFlight = structuredClone(payload.input) as unknown as JsonRecord;
+      const atomic = state.atomicWorldInteractions?.[event.rootActionId];
+      if (atomic !== undefined) atomic.resumeAtEventSeq = event.eventSeq;
+      break;
+    }
     case "FrozenPlayerChoiceInputRecorded": {
       const { input } = event.payload as EventPayloadByType["FrozenPlayerChoiceInputRecorded"];
       const selected = frozenChoice === undefined ? undefined : selectedFrozenContinuation(frozenChoice);
@@ -1882,6 +1897,8 @@ function foldEventInternal(
       const { continuation } = event.payload as EventPayloadByType["AtomicWorldInteractionSuspended"];
       if (state.atomicWorldInteractions === undefined || continuation.rootActionId !== event.rootActionId
         || continuation.resumeAtEventSeq !== event.eventSeq) throw new TypeError("atomic suspension checkpoint is not canonical");
+      const activity = actionActivityForRoot(state, event.rootActionId);
+      if (activity !== undefined) delete activity.completionInputInFlight;
       clearAtomicSuspension(state, event.rootActionId);
       state.atomicWorldInteractions[event.rootActionId] = structuredClone(continuation);
       if (frozenChoice !== undefined) state.frozenPlayerChoices![frozenChoice.plan.pendingInputId].inFlightInput = null;
@@ -2981,7 +2998,7 @@ function foldEventInternal(
       }
   }
 
-  if (!candidate && event.eventType !== "FrozenPlayerChoiceInputRecorded") {
+  if (!candidate && !["FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded"].includes(event.eventType)) {
     const priorReceipt = state.receipts[event.rootActionId];
     const receipt = publicReceipt(event);
     if (
@@ -3013,7 +3030,7 @@ function foldEventInternal(
   }
   recordCorrectionAudit(state, event, correctionEffects);
   recordCausalFrontier(state, event);
-  if (!candidate && event.eventType !== "FrozenPlayerChoiceInputRecorded") recordSpotlightDecision(state, event, firstEventForRoot);
+  if (!candidate && !["FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded"].includes(event.eventType)) recordSpotlightDecision(state, event, firstEventForRoot);
   state.version = event.eventSeq;
   state.eventHeadHash = event.eventHash;
   state.lastEventId = event.eventId;

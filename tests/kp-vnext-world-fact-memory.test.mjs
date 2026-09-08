@@ -1,3 +1,5 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { worldFactSocialBundle } from "./fixtures/vnext-world-facts.mjs";
@@ -23,8 +25,8 @@ function lower(f, wire, state = f.state) {
   return lowerVNext2ProposalBundle({ ...f, state, value: parsed.bundle });
 }
 function project(f, r, viewer, events = r.events) {
-  const projected = f.runtime.project(f.profiles, r.state, viewer, { channel: "realtime", committedRange: {
-    receiptId: r.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events } });
+  const projected = f.runtime.project(f.profiles, r.state, viewer, { channel: "realtime", committedRange: committedActionRange(r.state, {
+    receiptId: r.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events }) });
   assert.equal(projected.kind, "projected", diagnostic(projected)); return projected;
 }
 const npcViewer = npcId => ({ kind: "npc", npcId, purpose: "kpDecision", capability: "internal:npc-limited-knowledge" });
@@ -36,7 +38,7 @@ for (const variant of ["childhood", "heard-rumor"]) test(`new ${variant} freezes
   const wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, ...options });
   const lowered = lower(f, wire);
   assert.equal(lowered.kind, "accepted", diagnostic(lowered));
-  const r = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const r = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(r.kind, "committed", diagnostic(r));
   const facts = Object.values(r.state.canonicalFacts).filter(fact => fact.source === "dynamicMaterialization");
   assert.equal(facts.length, 1); const fact = facts[0];
@@ -61,7 +63,7 @@ for (const variant of ["childhood", "heard-rumor"]) test(`new ${variant} freezes
 test("both roll branches freeze the same history and pending randomness publishes none of it", () => {
   const f = fixture("branches"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, check: true });
   const lowered = lower(f, wire); assert.equal(lowered.kind, "accepted", diagnostic(lowered));
-  const pending = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
   assert.deepEqual(pending.state.canonicalFacts, f.state.canonicalFacts);
   assert.deepEqual(pending.state.knowledge, f.state.knowledge);
@@ -87,7 +89,7 @@ test("conflict, unapproved holder and conditional or undeclared knowledge produc
   ]) {
     const f = fixture("reject"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, check: true }); mutate(wire);
     const lowered = lower(f, wire);
-    const result = lowered.kind === "accepted" ? f.runtime.step(f.profiles, f.state, lowered.command.rulesInput) : lowered;
+    const result = lowered.kind === "accepted" ? stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput) : lowered;
     assert.ok(["rejected", "locallyRejected"].includes(result.kind), diagnostic(result)); assert.equal(result.randomnessRequest, undefined);
   }
 });
@@ -101,7 +103,7 @@ test("a new related fact after prepare changes the constraint membership and inv
   assert.notEqual(authorityRevisionOrHash(state, worldFactConstraintsRef(SCENE)), before);
   assert.equal(lower(f, wire, state).kind, "rejected");
   const lowered = lower(f, wire); assert.equal(lowered.kind, "accepted", diagnostic(lowered));
-  assert.equal(f.runtime.step(f.profiles, state, lowered.command.rulesInput).kind, "rejected");
+  assert.equal(stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput).kind, "rejected");
 });
 
 test("creation constraints retain ancestor facts and reject missing parents or changed continuity membership", () => {
@@ -137,7 +139,7 @@ test("partial sensory evidence of a new hidden fact reveals only the actual evid
   const f = fixture("partial-evidence"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, description: "HIDDEN-TRUTH-CANARY" });
   wire.proposals = wire.proposals.slice(0, 1); wire.adjudication.durationMicros = "0"; // the fact alone is authoring, not an act
   const l = lower(f, wire); assert.equal(l.kind, "accepted", diagnostic(l));
-  const r = f.runtime.step(f.profiles, f.state, l.command.rulesInput); assert.equal(r.kind, "committed", diagnostic(r));
+  const r = stepActionToDecision(f.runtime, f.profiles, f.state, l.command.rulesInput); assert.equal(r.kind, "committed", diagnostic(r));
   const factId = Object.keys(r.state.canonicalFacts).find(ref => ref.startsWith("fact:definition:materialized:"));
   const observed = f.runtime.step(f.profiles, r.state, { kind: "acquireSensoryEvidence", proposalId: `${f.rootActionId}:observe`,
     characterId: ACTOR, factId, sense: "sight", clarity: "partial", publicEvidence: "只看到模糊的痕迹。" });
@@ -156,7 +158,7 @@ test("multiple unconditional histories extend one NPC snapshot only with their d
   for (const branch of Object.values(social.branches)) branch.response.basis.push({ kind: "materializedKnowledge", definitionRef: second.produces[0].handle, holderRef: NPC });
   wire.proposals.splice(1, 0, second);
   const l = lower(f, wire); assert.equal(l.kind, "accepted", diagnostic(l));
-  const pending = f.runtime.step(f.profiles, f.state, l.command.rulesInput);
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, l.command.rulesInput);
   assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
   const r = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [20] });
   assert.equal(r.kind, "committed", diagnostic(r));
@@ -183,7 +185,7 @@ test("all explicit content dependencies obey holder permissions and KP cannot au
 test("a newly signed result suffix cannot replace the producer history frozen before the dice", () => {
   const f = fixture("forged-history"), l = lower(f, worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, check: true }));
   assert.equal(l.kind, "accepted", diagnostic(l));
-  const pending = f.runtime.step(f.profiles, f.state, l.command.rulesInput);
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, l.command.rulesInput);
   assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
   const result = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [20] });
   assert.equal(result.kind, "committed", diagnostic(result));
@@ -208,7 +210,7 @@ test("a late history must finish before the atomic marker releases the frozen pl
   }
   wire.proposals = [social, history];
   const l = lower(f, wire); assert.equal(l.kind, "accepted", diagnostic(l));
-  const pending = f.runtime.step(f.profiles, f.state, l.command.rulesInput);
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, l.command.rulesInput);
   assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
   const r = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [20] });
   assert.equal(r.kind, "committed", diagnostic(r));
@@ -232,7 +234,7 @@ test("a late history must finish before the atomic marker releases the frozen pl
 test("same definition under a different producer context cannot prove a frozen social prefix", () => {
   const f = fixture("producer-context"), wire = worldFactSocialBundle({ sceneRef: SCENE, npcRef: NPC, check: true });
   const lowered = lower(f, wire); assert.equal(lowered.kind, "accepted", diagnostic(lowered));
-  const pending = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
   const done = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [20] });
   assert.equal(done.kind, "committed", diagnostic(done));

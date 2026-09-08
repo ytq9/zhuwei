@@ -4,6 +4,7 @@ import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   isNpcActorPlanFormationPlan } from "../../rules/v2/npc-plan-formation";
 import { TIME_PASSAGE_PLAN_SCHEMA, timePassageStartReadRefs } from "../../rules/v2/time-passage";
 import { activeEncounter } from "../../rules/v2/combat-encounters";
+import { actionActivityCompletionRoot } from "../../rules/v2/activity-progress";
 import { isItemAssemblyOperation } from "../../rules/v2/item-assembly-shapes";
 import { itemAssemblyReadRefs } from "../../rules/v2/item-assemblies";
 import type { RuntimeProfileManifest } from "../../rules/profiles/types";
@@ -237,6 +238,18 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["bundle2:high-risk-not-supported"]);
     }
 
+    // Derive the child's identities before lowering any proposal or handle.
+    // The authenticated parent context was checked above. Only this private
+    // lowering view changes its execution root; model references stay intact.
+    const activityRoot = input.state.entities[input.actorCharacterId]?.kind === "player"
+      && (ruling.kind === "directSuccess" || ruling.kind === "check") && ruling.durationMicros !== "0"
+      ? input.rootActionId : undefined;
+    if (activityRoot !== undefined) {
+      const completionRoot = actionActivityCompletionRoot(activityRoot);
+      input = { ...input, rootActionId: completionRoot, requiredContext: { ...input.requiredContext,
+        binding: { ...input.requiredContext.binding, rootActionId: completionRoot } } };
+    }
+
     const planResult = deriveVNextProposalBundlePlan({
       bundle,
       rootActionId: input.rootActionId,
@@ -399,7 +412,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
       executionCosts = { costs: [{ kind: "fictionTime", durationMicros: ruling.durationMicros }], readSet: read.readSet };
     }
 
-    return acceptedCommand({
+    const command: Extract<VNext2ProposalBundleCommand, { kind: "rulesStep" }> = {
       kind: "rulesStep",
       rootActionId: input.rootActionId,
       actorCharacterId: input.actorCharacterId,
@@ -420,7 +433,10 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
         ...(executionCosts === undefined ? {} : { executionCosts }),
         steps: orderedSteps,
       },
-    });
+    };
+    return acceptedCommand(activityRoot === undefined ? command : { ...command, rootActionId: activityRoot,
+      rulesInput: { kind: "startActionActivity", rootActionId: activityRoot, actorCharacterId: input.actorCharacterId,
+        completionInput: command.rulesInput } });
   } catch (error) {
     return structuredLoweringFailure(error)
       ?? rejected("PROPOSAL_BUNDLE_INVALID", ["bundle2:lowering-input-invalid"]);
@@ -536,8 +552,9 @@ function lowerTerminal(
           ...(diagnostic.path === undefined ? {} : { path: ["terminal", "choices", choiceIndex, "continuation", ...diagnostic.path] }),
         })) }) };
       let continuation: FrozenPlayerChoicePlan["choices"][number]["continuation"];
-      if (lowered.command.kind === "rulesStep" && lowered.command.rulesInput.kind === "applyAtomicWorldInteractionSteps") {
-        const { kind: _commandKind, ...fields } = lowered.command.rulesInput;
+      if (lowered.command.kind === "rulesStep" && ["applyAtomicWorldInteractionSteps", "startActionActivity"].includes(String(lowered.command.rulesInput.kind))) {
+        const atomicInput = lowered.command.rulesInput.kind === "startActionActivity" ? lowered.command.rulesInput.completionInput as JsonRecord : lowered.command.rulesInput;
+        const { kind: _commandKind, ...fields } = atomicInput;
         const plan = { schema: ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, ...fields };
         if (!isAtomicWorldInteractionStepsPlan(plan)) return rejected("BUNDLE_LOWERING_UNSUPPORTED", ["clarification:atomic-plan-invalid"]);
         continuation = { kind: "adjudication", plan };

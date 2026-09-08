@@ -1,3 +1,5 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { actDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -122,7 +124,7 @@ function session(name) {
 
   function execute(input) {
     const priorState = state;
-    let result = fixture.runtime.step(fixture.profiles, state, input);
+    let result = stepActionToDecision(fixture.runtime, fixture.profiles, state, input);
     const events = [...result.events];
     const randomRequests = [];
     while (result.kind === "awaitingRandomness") {
@@ -141,8 +143,8 @@ function session(name) {
     assert.equal(restored.kind, "replayed", JSON.stringify(restored));
     assert.deepEqual(restored.state, state, "every subsequent action survives the same authoritative replay");
     const projection = fixture.runtime.project(fixture.profiles, state, fixture.viewer, {
-      channel: "realtime", committedRange: { receiptId: result.receipt.receiptId,
-        actorCharacterId: ACTOR, priorState, events },
+      channel: "realtime", committedRange: committedActionRange(state, { receiptId: result.receipt.receiptId,
+        actorCharacterId: ACTOR, priorState, events }),
     });
     assert.equal(projection.kind, "projected", JSON.stringify(projection));
     assert.ok(projection.renderableClaims, "the complete result reaches the ordinary Viewer Claims seam");

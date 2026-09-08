@@ -123,7 +123,8 @@ import {
   worldInteractionPlanHash,
   worldInteractionFormId,
 } from "./world-interaction-model";
-import { scheduledDeadlinesWithin } from "./due-activities";
+import { scheduledDeadlinesWithin, dueActivityDescriptors } from "./due-activities";
+import { actionActivityCompletionRoot, actionActivityForRoot, actionActivityBaseline, actionActivityDependenciesMatch, activityProgressAvailable } from "./activity-progress";
 import { activeEncounter } from "./combat-encounters";
 
 const NPC_SEMANTIC_ALLOWLIST: readonly SemanticFieldPolicy[] = Object.freeze([
@@ -179,6 +180,11 @@ export function stepVNextWorldInteraction(
   if (input.kind === "answerPendingInput") {
     const stored = Object.values(state.atomicWorldInteractions ?? {}).find(entry =>
       entry.waiting.kind === "input" && entry.waiting.mirror.pendingInputId === input.pendingInputId);
+    if (stored !== undefined && actionActivityForRoot(state, stored.rootActionId) !== undefined) {
+      if (!hasExactKeys(input, ["kind", "pendingInputId", "responseId", "answer"])) return rejected("invalidRulesInput", "An activity answer contains only its original input fields.");
+      return continueActionActivity(profiles, state, stored.rootActionId, { kind: "nativeAnswer",
+        pendingInputId: input.pendingInputId, responseId: input.responseId, answer: input.answer });
+    }
     if (stored !== undefined && frozenChoiceForRoot(state, stored.rootActionId) !== undefined
       && !hasExactKeys(input, ["kind", "pendingInputId", "responseId", "answer"]))
       return rejected("invalidRulesInput", "A frozen native answer contains only its original input fields.");
@@ -196,6 +202,8 @@ export function stepVNextWorldInteraction(
     && input.kind !== "materializeSemanticDefinition"
     && input.kind !== "ruleWorldInteractionFeasibility"
     && input.kind !== "applyAtomicWorldInteractionSteps"
+    && input.kind !== "startActionActivity"
+    && input.kind !== "completeActionActivity"
     && input.kind !== "inventoryOperation"
     && input.kind !== "materializeDefinition"
     && !(input.kind === "materializeItem" && isAuthoredItemMaterializationPlan(input.plan))) {
@@ -208,6 +216,8 @@ export function stepVNextWorldInteraction(
     );
   }
   if(input.kind==="inventoryOperation")return stepInventoryOperation(profiles,state,input);
+  if (input.kind === "startActionActivity") return startActionActivity(profiles, state, input);
+  if (input.kind === "completeActionActivity") return completeActionActivity(profiles, state, input);
   if (input.kind === "openFrozenPlayerChoice") return openFrozenPlayerChoice(profiles, state, input);
   if (input.kind === "answerFrozenPlayerChoice") return answerFrozenPlayerChoice(profiles, state, input);
   if (input.kind === "commitNarrativeDetail") return commitNarrativeDetail(profiles, state, input);
@@ -234,6 +244,8 @@ export function fulfillVNextWorldInteractionRandomness(
   rolls: readonly number[],
 ): StepResult | undefined {
   const root = state.internalContinuations[continuationId]?.rootActionId;
+  if (root !== undefined && actionActivityForRoot(state, root) !== undefined)
+    return continueActionActivity(profiles, state, root, { kind: "randomness", continuationId, rolls: [...rolls] });
   if (root !== undefined && frozenChoiceForRoot(state, root) !== undefined)
     return continueFrozenPlayerChoice(profiles, state, root, { kind: "randomness", continuationId, rolls: [...rolls] });
   return fulfillVNextWorldInteractionRandomnessInput(profiles, state, continuationId, rolls);
@@ -978,6 +990,43 @@ function frozenChoiceAtomicInput(plan: AtomicWorldInteractionStepsPlan): JsonRec
   return { kind: "applyAtomicWorldInteractionSteps", ...structuredClone(input) } as unknown as JsonRecord;
 }
 
+export function activityCompletionInputIssue(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState,
+  root: string, value: unknown): string | undefined {
+  const activity = actionActivityForRoot(state, root);
+  if (activity === undefined || activity.completionInputInFlight !== undefined || !isFrozenPlayerChoiceContinuationInput(value)) return "activity:completion-input-unavailable";
+  if (!activityProgressAvailable(state, activity) || !actionActivityDependenciesMatch(state, activity)) return "activity:completion-basis-changed";
+  const atomic = state.atomicWorldInteractions?.[root];
+  if (atomic !== undefined && (!atomicContinuationCanResume(profiles, state, atomic)
+    || (value.kind === "randomness" ? atomic.waiting.kind !== "randomness" || atomic.waiting.continuationId !== value.continuationId
+      : atomic.waiting.kind !== "input" || atomic.waiting.mirror.pendingInputId !== value.pendingInputId))) return "activity:completion-input-not-bound";
+  if (value.kind === "randomness") {
+    const stored = state.internalContinuations[value.continuationId];
+    if (stored?.rootActionId !== root || stored.request.purpose !== "worldInteractionCheck"
+      || !worldInteractionDiceValid(stored.request.dice, value.rolls)) return "activity:completion-randomness-not-bound";
+  } else if (atomic === undefined) return "activity:completion-pending-unavailable";
+  return undefined;
+}
+
+/** Save the exact controller/authority input before its private execution.
+ * Replay derives and compares the complete suffix, including suspensions. */
+export function continueActionActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState,
+  root: string, value: unknown): StepResult {
+  const issue = activityCompletionInputIssue(profiles, state, root, value);
+  if (issue !== undefined) return rejected("causalFrontierConflict", issue);
+  const input = value as FrozenPlayerChoiceContinuationInput, activity = actionActivityForRoot(state, root)!;
+  const accumulator = transactionAccumulator(state);
+  appendTransition(accumulator, profiles, root, { eventType: "ActivityCompletionInputRecorded",
+    payload: { activityId: String(activity.activityId), input }, reads: [`activity:${activity.activityId}`], writes: [],
+    visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" }, false);
+  const next = accumulator.state;
+  const result = input.kind === "randomness" ? fulfillVNextWorldInteractionRandomnessInput(profiles, next, input.continuationId, input.rolls)
+    : answerAtomicWorldInteractionInput(profiles, next, { kind: "answerPendingInput", pendingInputId: input.pendingInputId,
+      responseId: input.responseId, answer: input.answer }, next.atomicWorldInteractions![root]);
+  if (result === undefined || (result.kind !== "committed" && result.kind !== "awaitingInput" && result.kind !== "awaitingRandomness"))
+    return result ?? rejected("invalidRulesInput", "The recorded activity input has no continuation.");
+  return { ...result, events: [...accumulator.events, ...result.events] };
+}
+
 /** Both live opening and event replay use the original compiler/preflight.
  * No choice may conceal an illegal branch until after the player answers. */
 export function frozenPlayerChoiceIssue(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState,
@@ -1076,7 +1125,9 @@ function answerFrozenPlayerChoice(profiles: RuntimeProfileManifest, state: Autho
     stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator),
     receipt: accumulator.state.receipts[pending.rootActionId], mechanicalResult: { kind: "frozenPlayerChoiceCancelled" } };
   const result = next.kind === "adjudication"
-    ? applyCompiledAtomicWorldInteractionPlan(profiles, accumulator.state, next.plan)
+    ? next.plan.rootActionId === actionActivityCompletionRoot(pending.rootActionId)
+      ? startCompiledActionActivity(profiles, accumulator.state, pending.rootActionId, next.plan)
+      : applyCompiledAtomicWorldInteractionPlan(profiles, accumulator.state, next.plan)
     : ruleWorldInteractionFeasibility(profiles, accumulator.state, { kind: "ruleWorldInteractionFeasibility",
       rootActionId: pending.rootActionId, actorCharacterId: pending.controllerCharacterId, plan: next.plan as unknown as JsonRecord }, { skipDuplicateCheck: true });
   if (result.kind !== "committed" && result.kind !== "awaitingInput" && result.kind !== "awaitingRandomness") return result;
@@ -1153,6 +1204,91 @@ type AtomicExecutionResult =
  * normalized first, then every reachable outcome is executed on a
  * discardable formal-reducer state before any live effect or random request.
  */
+function startActionActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
+  if (!hasExactKeys(input, ["kind", "rootActionId", "actorCharacterId", "completionInput"])
+    || !isNonEmptyString(input.rootActionId) || !isRecord(input.completionInput)) return rejected("invalidRulesInput", "The action activity needs a new parent and frozen completion.");
+  if (input.rootActionId in state.receipts) return rejected("duplicateRootAction", "The action activity already has a receipt.");
+  const compiled = compileAtomicWorldInteractionPlan(input.completionInput, state, profiles);
+  if (compiled.kind === "rejected") return compiled.result;
+  if (compiled.plan.actorCharacterId !== input.actorCharacterId) return rejected("privateOrUnknownReference", "The activity controller changed.");
+  return startCompiledActionActivity(profiles, state, input.rootActionId, compiled.plan);
+}
+
+function startCompiledActionActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState,
+  root: string, plan: AtomicWorldInteractionStepsPlan): StepResult {
+  const duration = atomicWorldInteractionFictionTimeMicros(plan);
+  if (plan.rootActionId !== actionActivityCompletionRoot(root) || duration === undefined
+    || state.entities[plan.actorCharacterId]?.kind !== "player"
+    || activeEncounter(state, plan.actorCharacterId) !== undefined
+    || Object.values(state.campaignRuntime.activities).some(activity => activity.characterId === plan.actorCharacterId && activity.status === "active")) {
+    return rejected("missingPrerequisite", "A sustained action needs an available noncombat actor and a distinct completion root.");
+  }
+  const preflight = preflightAtomicWorldInteractionPlan(profiles, state, plan);
+  if (preflight !== undefined) return preflight;
+  const accumulator = transactionAccumulator(state), activityId = `activity:${root}`;
+  appendTransition(accumulator, profiles, root, { eventType: "ActivityStarted",
+    payload: { activityId, characterId: plan.actorCharacterId, activityKind: "actionExecution", intendedDurationMicros: duration,
+      completion: { kind: "actionExecution", plan: structuredClone(plan) as unknown as JsonRecord } },
+    reads: [...new Set([...(plan.executionCosts?.readSet ?? []), ...plan.steps.flatMap(step => step.rulesInput.plan.readSet),
+      ...Object.values(state.frozenPlayerChoices ?? {}).filter(choice => choice.plan.rootActionId === root).flatMap(choice => choice.readSet),
+    ].map(binding => binding.ref))], writes: [`activity:${activityId}`],
+    visibilityPolicyId: `visibility:knowledge-holder:${plan.actorCharacterId}`, secrecy: "private",
+  });
+  return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
+    stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator),
+    receipt: accumulator.state.receipts[root], mechanicalResult: { kind: "activityStarted", activityId, intendedDurationMicros: duration } };
+}
+
+function completeActionActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
+  if (!hasExactKeys(input, ["kind", "proposalId", "activityId"]) || !isNonEmptyString(input.activityId)) return rejected("invalidRulesInput", "Action completion is not canonical.");
+  if (["awaitingInput", "awaitingRandomness"].includes(state.receipts[String(input.proposalId)]?.status))
+    return rejected("pendingInputUnresolved", "The activity must resume its saved completion input.");
+  const activity = state.campaignRuntime.activities[input.activityId], completion = activity?.completion;
+  const due = dueActivityDescriptors(state).find(entry => entry.activityId === input.activityId && entry.childRootActionId === input.proposalId);
+  if (due?.activityProgress?.phase !== "complete" || !isRecord(completion) || completion.kind !== "actionExecution"
+    || !isAtomicWorldInteractionStepsPlan(completion.plan) || completion.plan.rootActionId !== input.proposalId
+    || !isRecord(activity.progression) || !isRecord(activity.progression.timelineAtStart)) return rejected("missingPrerequisite", "The action has not reached an available noncombat completion.");
+  const baseline = actionActivityBaseline(state, activity)!;
+  // Admit only the elapsed clock and this activity's own bookkeeping. Every
+  // other frozen dependency must still match, including branch membership,
+  // target state, resources and any knowledge/continuity catalog it selected.
+  const plan = structuredClone(completion.plan);
+  const changed = !actionActivityDependenciesMatch(state, activity);
+  const interrupt = (): StepResult => {
+    const accumulator = transactionAccumulator(state);
+    appendTransition(accumulator, profiles, plan.rootActionId, { eventType: "ActivityInterrupted",
+      payload: { activityId: String(input.activityId), cause: { kind: "completionNoLongerLegal" } },
+      reads: [`activity:${input.activityId}`], writes: [`activity:${input.activityId}`],
+      visibilityPolicyId: `visibility:knowledge-holder:${plan.actorCharacterId}`, secrecy: "private" });
+    return { kind: "committed", events: accumulator.events, state: accumulator.state, cache: accumulator.state,
+      stateHash: accumulator.events.at(-1)!.stateHashAfter, scopeProof: transactionScopeProof(accumulator), receipt: accumulator.state.receipts[plan.rootActionId],
+      mechanicalResult: { kind: "activityInterrupted", activityId: input.activityId, reason: "completionNoLongerLegal" } };
+  };
+  if (changed) return interrupt();
+  const rebind = (bindings: readonly { ref: string; revisionOrHash: string }[]) => bindings.map(binding => ({
+    ref: binding.ref, revisionOrHash: authorityRevisionOrHash(baseline, binding.ref) === binding.revisionOrHash
+      ? authorityRevisionOrHash(state, binding.ref) ?? binding.revisionOrHash : binding.revisionOrHash }));
+  const { executionCosts, ...fields } = plan;
+  const remainingCosts = executionCosts?.costs.filter(cost => cost.kind !== "fictionTime") ?? [];
+  const ready: AtomicWorldInteractionStepsPlan = { ...fields,
+    steps: plan.steps.map(step => {
+      const source = step.rulesInput.plan;
+      // The scheduler has already committed this activity's elapsed time.
+      // Keep all frozen NPC knowledge and provenance, refreshing only the
+      // timeline record whose dependency passed the baseline comparison above.
+      const social = step.rulesInput.kind === "resolveWorldInteraction" ? step.rulesInput.plan.social : undefined;
+      const timeline = social === undefined ? undefined
+        : authoritativeNpcDecisionContext(state, profiles, social.npcRef)?.records.find(record => record.kind === "timeline");
+      return { ...step, rulesInput: { ...step.rulesInput, plan: { ...source, readSet: rebind(source.readSet),
+        ...(social === undefined || timeline === undefined ? {} : { social: { ...social, npcContext: { ...social.npcContext,
+          records: social.npcContext.records.map(record => record.kind === "timeline" ? timeline : record) } } }),
+      } } as typeof step.rulesInput };
+    }),
+    ...(remainingCosts.length === 0 ? {} : { executionCosts: { costs: remainingCosts, readSet: rebind(executionCosts!.readSet) } }) };
+  const result = applyCompiledAtomicWorldInteractionPlan(profiles, state, ready);
+  return result.kind === "rejected" ? interrupt() : result;
+}
+
 function applyAtomicWorldInteractionSteps(
   profiles: RuntimeProfileManifest,
   state: AuthoritativeWorldState,
@@ -1163,6 +1299,10 @@ function applyAtomicWorldInteractionSteps(
   }
   const compiled = compileAtomicWorldInteractionPlan(input,state,profiles);
   if (compiled.kind === "rejected") return compiled.result;
+  if (state.entities[compiled.plan.actorCharacterId]?.kind === "player"
+    && atomicWorldInteractionFictionTimeMicros(compiled.plan) !== undefined) {
+    return rejected("missingPrerequisite", "A timed player action must start its activity before any completion effects.");
+  }
   return applyCompiledAtomicWorldInteractionPlan(profiles, state, compiled.plan);
 }
 
@@ -1687,6 +1827,17 @@ function executeAtomicWorldInteractionBranch(
 ): AtomicExecutionResult {
   const ledger: AtomicLedgerEntry[] = cursor?.ledger ?? [];
   const tapes = cursor?.tapes ?? (randomRequest === undefined ? [] : [{ request: randomRequest, rolls: [...(rolls ?? [])] }]);
+  if (cursor === undefined) {
+    const completing = Object.values(accumulator.state.campaignRuntime.activities).find(activity => activity.status === "active"
+      && isRecord(activity.completion) && activity.completion.kind === "actionExecution"
+      && isRecord(activity.completion.plan) && activity.completion.plan.rootActionId === plan.rootActionId);
+    if (completing !== undefined) appendTransition(accumulator, profiles, plan.rootActionId, { eventType: "ActivityCompleted",
+      payload: { activityId: String(completing.activityId) }, reads: [`activity:${completing.activityId}`,
+        ...(isRecord(completing.progression) && Array.isArray(completing.progression.completionReadSet)
+          ? completing.progression.completionReadSet.flatMap(binding => isRecord(binding) && typeof binding.ref === "string" ? [binding.ref] : []) : [])],
+      writes: [`activity:${completing.activityId}`],
+      visibilityPolicyId: `visibility:knowledge-holder:${plan.actorCharacterId}`, secrecy: "private" });
+  }
   if (cursor === undefined && plan.executionCosts !== undefined) {
     const { costs, readSet } = plan.executionCosts;
     const source = accumulator.source ?? accumulator.state;
@@ -2041,6 +2192,10 @@ function fulfillAtomicWorldInteractionRandomness(
   profiles:RuntimeProfileManifest,state:AuthoritativeWorldState,continuationId:string,
   rolls:readonly number[],plan:AtomicWorldInteractionStepsPlan,
 ):StepResult {
+  const activity = actionActivityForRoot(state, plan.rootActionId);
+  if (activity !== undefined && (!activityProgressAvailable(state, activity) || !actionActivityDependenciesMatch(state, activity))) {
+    return rejected("causalFrontierConflict", "The timed action dependencies changed while its dice were pending.");
+  }
   if (state.atomicWorldInteractions?.[plan.rootActionId] !== undefined)
     return rejected("privateOrUnknownReference", "The original atomic tape has already been consumed by its suspended candidate.");
   const checkPlan=atomicWorldInteractionCheckPlan(plan);

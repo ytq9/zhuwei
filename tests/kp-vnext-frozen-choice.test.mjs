@@ -1,3 +1,5 @@
+import { atomicCompletionInput } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET, PROBE_ZONE as BASIS } from '../tools/lib/vnext-authored-probe-fixture.mjs';
@@ -11,13 +13,15 @@ import { createEventTransition, eventHash } from '../app/_runtime/lib/rules/v2/e
 import { hashWorldState } from '../app/_runtime/lib/rules/v2/validation.ts';
 import { createDefinitionSnapshot, storedSemanticDefinition } from '../app/_runtime/lib/rules/v2/semantic-definitions.ts';
 
-function fixture(name, use = false) {
+function fixture(name, use = false, authorOnly = false) {
   const f = createAuthoredProbeFixture(name), bundle = itemBundle();
   if (!use) bundle.proposals.pop();
+  if (authorOnly) bundle.proposals = bundle.proposals.slice(0, 1);
   const lower = lowerVNext2ProposalBundle({ value: bundle, rootActionId: f.rootActionId,
     actorCharacterId: ACTOR, requiredContext: f.requiredContext, state: f.state });
   assert.equal(lower.kind, 'accepted', JSON.stringify(lower));
-  const { kind: _kind, ...atomic } = lower.command.rulesInput;
+  const loweredInput = atomicCompletionInput(lower.command.rulesInput);
+  const atomic = loweredInput.kind === "applyAtomicWorldInteractionSteps" ? (({kind, ...plan}) => plan)(loweredInput) : { rootActionId: f.rootActionId, actorCharacterId: ACTOR, bundleHash: canonicalSha256(bundle), contextHash: f.requiredContext.binding.contextHash, sharedRuling: "directSuccess", steps: [{ formId: lower.command.formId, proposalRef: lower.command.proposalRef, ruling: "directSuccess", rulesInput: loweredInput, dependsOn: [], consumes: bundle.proposals[0].consumes, produces: bundle.proposals[0].produces, outcomeBinding: "always" }] };
   const plan = { schema: 'zhuwei.frozen-player-choice/vnext-1', rootActionId: f.rootActionId,
     actorCharacterId: ACTOR, pendingInputId: `pending:${f.rootActionId}`, contextHash: f.requiredContext.binding.contextHash,
     bundleHash: canonicalSha256(bundle), profilesHash: canonicalSha256(f.profiles), readSet: [], question: '要执行这个方案还是取消？',
@@ -32,7 +36,7 @@ function open(f, plan = f.plan) {
   return f.runtime.step(f.profiles, f.state, { kind: 'openFrozenPlayerChoice', rootActionId: f.rootActionId, actorCharacterId: ACTOR, plan });
 }
 function answer(f, state, choiceId, extra = {}) {
-  return f.runtime.step(f.profiles, state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
+  return stepActionToDecision(f.runtime, f.profiles, state, { kind: 'answerFrozenPlayerChoice', rootActionId: f.rootActionId,
     controllerCharacterId: ACTOR, pendingInputId: f.plan.pendingInputId, choiceId, ...extra });
 }
 function replay(f, events, state) {
@@ -75,12 +79,12 @@ test('frozen input reducer rejects a stale outer basis even with a valid saved r
   const { f, opened, selected, changed, rolls } = waitingWithOuterBasis('frozen-input-reducer-basis');
   const done = f.runtime.step(f.profiles, selected.state, { kind: 'fulfillAuthoritativeRandomness', continuation: selected.continuation, rolls });
   assert.equal(done.kind, 'committed', JSON.stringify(done));
-  const marker = done.events.find(event => event.eventType === 'FrozenPlayerChoiceInputRecorded');
+  const marker = done.events.find(event => event.eventType === 'ActivityCompleted');
   assert.ok(marker);
   assert.throws(() => createEventTransition(changed, f.profiles, {
-    rootActionId: f.rootActionId, eventType: marker.eventType, payload: marker.payload,
+    rootActionId: marker.rootActionId, eventType: marker.eventType, payload: marker.payload,
     scopeProof: done.scopeProof, secrecy: marker.secrecy, visibilityPolicyId: marker.visibilityPolicyId,
-  }), /frozen-choice:/);
+  }), /action completion/);
   replay(f, [...opened.events, ...selected.events, ...done.events], done.state);
 });
 
@@ -98,7 +102,7 @@ test('frozen choice preflights all options, keeps plans private, and executes or
     replay(f, waiting.events, waiting.state);
     const done = answer(f, waiting.state, choice);
     assert.equal(done.kind, 'committed', JSON.stringify(done));
-    assert.equal(done.receipt.rootActionId, f.rootActionId);
+    assert.equal(done.receipt.rootActionId, choice === 'cancel' ? f.rootActionId : `activity-result:${f.rootActionId}`);
     assert.equal(done.state.pendingInputs[f.plan.pendingInputId], undefined);
     assert.equal(done.state.frozenPlayerChoices[f.plan.pendingInputId], undefined);
     if (choice === 'cancel') assert.deepEqual(done.state.campaignRuntime.itemSystem, f.state.campaignRuntime.itemSystem);
@@ -149,7 +153,7 @@ test('a stale frozen plan cannot execute but its controller can cancel without c
 });
 
 test('a one-step frozen selection completes its settlement and releases only its own plan', () => {
-  const f = fixture('frozen-single');
+  const f = fixture('frozen-single', false, true);
   const plan = f.plan.choices[0].continuation.plan;
   plan.steps = [plan.steps[0]];
   // Only an authoring step remains, so the continuation spends no fictional time.
@@ -172,7 +176,7 @@ test('replay rejects an early frozen settlement even when its event hashes are r
   assert.equal(answered.kind, 'replayed');
   const marker = done.events.find(event => event.eventType === 'AtomicWorldInteractionStepsResolved');
   const forged = createEventTransition(answered.state, f.profiles, {
-    rootActionId: f.rootActionId, eventType: marker.eventType, payload: marker.payload,
+    rootActionId: marker.rootActionId, eventType: marker.eventType, payload: marker.payload,
     scopeProof: done.scopeProof, visibilityPolicyId: marker.visibilityPolicyId, secrecy: marker.secrecy,
   });
   assert.equal(f.runtime.replay(f.genesis, [...prefix, forged.event]).kind, 'rejected');
@@ -246,6 +250,7 @@ test('whole-root correction removes frozen options and continuations together wi
     assert.equal(Object.keys(corrected.state.frozenPlayerChoices ?? {}).length, 0);
     assert.deepEqual(corrected.state.pendingInputs, f.state.pendingInputs);
     assert.deepEqual(corrected.state.internalContinuations, f.state.internalContinuations);
+    assert.deepEqual(corrected.state.campaignRuntime.activities, f.state.campaignRuntime.activities);
     assert.deepEqual(corrected.state.campaignRuntime.itemSystem, f.state.campaignRuntime.itemSystem);
     assert.deepEqual(corrected.state.entities, f.state.entities);
     replay(f, [...events, ...corrected.events], corrected.state);

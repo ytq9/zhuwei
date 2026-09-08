@@ -1,3 +1,6 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { atomicCompletionInput } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, PROBE_SOURCE as SOURCE, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from "../tools/lib/vnext-authored-probe-fixture.mjs";
@@ -25,9 +28,9 @@ test("a single observation or interaction check governs direct physical siblings
     assert.equal(graph.plan.executionOrder[0], graph.plan.sharedCheckEntryRef);
     const lowered = lower(f, wire); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
     const input = lowered.command.rulesInput;
-    assert.equal(input.steps.filter(step => step.rulesInput.plan.ruling.kind === "check").length, 1);
-    assert.equal(input.steps[0].formId, ownerKind === "observe" ? "observe.vnext-1" : "world-interaction.vnext-1");
-    const pending = f.runtime.step(f.profiles, f.state, input);
+    assert.equal(atomicCompletionInput(input).steps.filter(step => step.rulesInput.plan.ruling.kind === "check").length, 1);
+    assert.equal(atomicCompletionInput(input).steps[0].formId, ownerKind === "observe" ? "observe.vnext-1" : "world-interaction.vnext-1");
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, input);
     assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
     assert.equal(pending.state.campaignRuntime.definitions[SOURCE].content.observableState, "ready");
     assert.equal(pending.randomnessRequest.dice.length, 1);
@@ -42,15 +45,15 @@ test("a single observation or interaction check governs direct physical siblings
     const events = [...pending.events, ...result.events];
     const replayed = f.runtime.replay(f.genesis, events);
     assert.equal(replayed.kind, "replayed", JSON.stringify(replayed)); assert.deepEqual(replayed.state, result.state);
-    const projected = f.runtime.project(f.profiles, result.state, f.viewer, { channel: "realtime", committedRange: {
-      receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events } });
+    const projected = f.runtime.project(f.profiles, result.state, f.viewer, { channel: "realtime", committedRange: committedActionRange(result.state, {
+      receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events }) });
     assert.equal(projected.kind, "projected", JSON.stringify(projected));
     assert.ok(projected.renderableClaims.claims.some(claim => claim.outcomeKind === ownerKind));
     const outcomes = projected.renderableClaims.claims.filter(claim => claim.kind === "mechanicalOutcome");
     assert.equal(outcomes.filter(claim => claim.outcomeCode === "applied").length, 1);
     assert.equal(outcomes.filter(claim => claim.outcomeCode === (roll === 20 ? "success" : "failure")).length, 1);
     assert.equal(outcomes.some(claim => JSON.stringify(claim.narrationFacts).includes("直接成功")), false);
-    assert.equal(f.runtime.step(f.profiles, result.state, input).rejection.code, "duplicateRootAction");
+    assert.equal(stepActionToDecision(f.runtime, f.profiles, result.state, input).rejection.code, "duplicateRootAction");
   }
 });
 
@@ -68,8 +71,8 @@ test("the unselected direct sibling is still fully preflighted before the shared
   assert.equal(lower(f, wire).kind, "rejected");
   const lowered = lower(f, bundle()); assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
   const input = structuredClone(lowered.command.rulesInput);
-  const failure = input.steps.find(step => step.outcomeBinding === "onFailure");
+  const failure = atomicCompletionInput(input).steps.find(step => step.outcomeBinding === "onFailure");
   failure.rulesInput.plan.readSet[0].revisionOrHash = `sha256:${"0".repeat(64)}`;
-  const result = f.runtime.step(f.profiles, f.state, input);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, input);
   assert.equal(result.kind, "rejected"); assert.equal(result.randomnessRequest, undefined);
 });

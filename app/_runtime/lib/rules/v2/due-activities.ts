@@ -1,5 +1,6 @@
 import { scheduledWorldEffectDeadlines, isWorldEffectRecord, isWorldEffectRecordCandidate } from "./world-effects";
 import { activeEncounter } from "./combat-encounters";
+import { hasActivityProgress, activityProgressAvailable, activityNoticeKnowledgeRefs, activityAttentionRoot } from "./activity-progress";
 import { longSpellcastingTimelineId } from "./time-passage-binding";
 import { timePassageStopReason, timePassageTimelineId, type TimePassageInterruptionReason } from "./time-passage";
 import { dueActorPlanDescriptors, scheduledActorPlanDescriptors } from "./actor-plans";
@@ -104,11 +105,19 @@ function micros(value: unknown): value is string {
 
 /** Pending input/randomness belongs to its existing root and cannot be bypassed
  * by a new time stage, even if its due Activity no longer appears in the queue. */
-export function timePassageHasPendingWork(state: AuthoritativeWorldState, timelineId: string): boolean {
+function timelineHasPendingMechanics(state: AuthoritativeWorldState, timelineId: string): boolean {
   return Object.values(state.pendingInputs).some(pending => characterTimelineId(state, pending.controllerCharacterId) === timelineId)
     || Object.values(state.receipts).some(receipt => ["awaitingInput", "awaitingRandomness"].includes(receipt.status)
       && (receipt.subjectCharacterIds.length === 0
         || receipt.subjectCharacterIds.some(id => characterTimelineId(state, id) === timelineId)));
+}
+
+export function timePassageHasPendingWork(state: AuthoritativeWorldState, timelineId: string): boolean {
+  return Object.values(state.campaignRuntime.activities).some(activity => activity.status === "active"
+      && characterTimelineId(state, String(activity.characterId)) === timelineId
+      && activeEncounter(state, String(activity.characterId)) === undefined
+      && (isRecord(activity.attention) || activityNoticeKnowledgeRefs(state, activity).length > 0))
+    || timelineHasPendingMechanics(state, timelineId);
 }
 
 type ActivityTimeSchedule = { kind: "blocked"; reason?: "unsupportedDeadline" | "invalidSchedule" }
@@ -191,6 +200,37 @@ function activityTimeSchedule(state: AuthoritativeWorldState, activity: JsonReco
   return { kind: "advance", to: future[0]!.at };
 }
 
+export function ordinaryActivitySchedule(state: AuthoritativeWorldState, activity: JsonRecord): ActivityTimeSchedule {
+  if (!activityProgressAvailable(state, activity)) return { kind: "blocked" };
+  return activityTimeSchedule(state, activity, characterTimelineId(state, String(activity.characterId))!);
+}
+
+function activityProgressDescriptor(state: AuthoritativeWorldState, activity: JsonRecord): DueActivityDescriptor | undefined {
+  if (!activityProgressAvailable(state, activity) || isRecord(activity.attention)) return undefined;
+  const timelineId = characterTimelineId(state, String(activity.characterId))!;
+  const completionRoot = isRecord(activity.completion) && activity.completion.kind === "actionExecution"
+    && isRecord(activity.completion.plan) ? String(activity.completion.plan.rootActionId) : undefined;
+  const dueRoot = completionRoot ?? `activity-due:${activity.activityId}:${activityCompletionFictionMicros(activity)}`;
+  const resuming = ["awaitingInput", "awaitingRandomness"].includes(state.receipts[dueRoot]?.status);
+  if (timelineHasPendingMechanics(state, timelineId) && !resuming) return undefined;
+  const from = state.fictionTimelines[timelineId].nowMicros;
+  const knowledgeRefs = activityNoticeKnowledgeRefs(state, activity);
+  const schedule = resuming ? { kind: "complete" as const }
+    : knowledgeRefs.length > 0 ? { kind: "attention" as const } : ordinaryActivitySchedule(state, activity);
+  if (schedule.kind === "blocked" || (activity.activityKind === "longSpellcasting" && schedule.kind !== "attention")) return undefined;
+  const to = schedule.kind === "advance" ? schedule.to : from;
+  const at = schedule.kind === "complete" ? activityCompletionFictionMicros(activity)! : to;
+  const completionBinding = structuredClone(activity);
+  delete completionBinding.attention;
+  delete (completionBinding.progression as JsonRecord).acknowledgedKnowledgeRefs;
+  return { activityId: String(activity.activityId), ownerEntityId: String(activity.characterId), timelineId,
+    completionFictionMicros: at, activityHash: canonicalSha256(schedule.kind === "complete" ? completionBinding : activity), sceneIds: activitySceneIds(state, activity),
+    childRootActionId: schedule.kind === "attention" ? activityAttentionRoot(String(activity.activityId), knowledgeRefs)
+      : schedule.kind === "advance" ? `activity-advance:${activity.activityId}:${from}:${to}:${canonicalSha256((activity.progression as JsonRecord).acknowledgedKnowledgeRefs).slice(7, 23)}`
+        : completionRoot ?? `activity-due:${activity.activityId}:${activityCompletionFictionMicros(activity)}`,
+    activityProgress: { phase: schedule.kind, completion: completionRoot === undefined ? "activity" : "action", fromFictionMicros: schedule.kind === "complete" ? at : from, toFictionMicros: at } };
+}
+
 function validLongSpellcasting(state: AuthoritativeWorldState, activity: JsonRecord): boolean {
   const completion = activity.completion, concentration = state.combatRuntime.entities[String(activity.characterId)]?.concentration;
   return activity.activityKind === "longSpellcasting" && activity.status === "active"
@@ -262,13 +302,25 @@ function timePassageDescriptor(state: AuthoritativeWorldState, activity: JsonRec
 }
 
 export function dueActivityDescriptors(state: AuthoritativeWorldState): DueActivityDescriptor[] {
-  return [...ordinaryActivityDescriptors(state), ...dueActorPlanDescriptors(state),
+  return [...ordinaryActivityDescriptors(state).filter(due => !hasActivityProgress(state.campaignRuntime.activities[due.activityId])), ...dueActorPlanDescriptors(state),
     ...Object.values(state.campaignRuntime.activities).flatMap(activity => {
       if (activity.status !== "active") return [];
+      const progress = hasActivityProgress(activity) ? activityProgressDescriptor(state, activity) : undefined;
+      if (progress !== undefined) return [progress];
       const descriptor = activity.activityKind === "timePassage" ? timePassageDescriptor(state, activity)
         : activity.activityKind === "longSpellcasting" ? longSpellcastingDescriptor(state, activity) : undefined;
       return descriptor === undefined ? [] : [descriptor];
     })].sort(order);
+}
+
+export function isSupersededActivityProgress(state: AuthoritativeWorldState, frozen: DueActivityDescriptor): boolean {
+  if (frozen.activityProgress === undefined) return false;
+  const activity = state.campaignRuntime.activities[frozen.activityId];
+  if (activity === undefined || activity.characterId !== frozen.ownerEntityId) return false;
+  if (frozen.activityProgress.phase === "complete" && activity.status === "active") return false;
+  if (["awaitingInput", "awaitingRandomness"].includes(state.receipts[frozen.childRootActionId]?.status)) return false;
+  return !dueActivityDescriptors(state).some(due => due.childRootActionId === frozen.childRootActionId
+    && canonicalSha256(due) === canonicalSha256(frozen));
 }
 
 /** Room already persisted/verified this descriptor. The same Activity may

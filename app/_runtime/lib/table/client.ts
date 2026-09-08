@@ -103,6 +103,8 @@ export const resolveReact = ({ data }: Args) => callWithStableTableSubmission("r
 export const restNow = ({ data }: { data: RestNowData }) =>
   callWithStableTableSubmission("restNow", data);
 export const cancelRest = ({ data }: Args) => callWithStableTableSubmission("cancelRest", data);
+export const controlActivity = ({ data }: { data: { code: string; activityId: string; attentionRootActionId: string; decision: "continue" | "stop" } }) =>
+  callWithStableTableSubmission("controlActivity", data);
 export const castSpell = ({ data }: Args) => callWithStableTableSubmission("castSpell", data);
 export const useFeature = ({ data }: Args) => callWithStableTableSubmission("useFeature", data);
 export const useHitDie = ({ data }: Args) => callWithStableTableSubmission("useHitDie", data);

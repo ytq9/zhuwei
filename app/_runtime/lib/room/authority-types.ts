@@ -114,6 +114,7 @@ export type AuthoritativeActionInput =
       kind: "restInterrupt";
       submissionId: string;
     }
+  | { kind: "activityControl"; submissionId: string; activityId: string; attentionRootActionId: string; decision: "continue" | "stop" }
   | {
       kind: "safetyPause";
       submissionId: string;

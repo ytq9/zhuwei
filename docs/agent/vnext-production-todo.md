@@ -10,7 +10,9 @@
 
 2026-09-07 用户补充执行决定：本次填写及组装问题修好后继续完整 Goal；允许调整 Goal 的验证，以正常登录/Room入口的真实 API 行动、权威提交、公开结果和后续行动为最终验收依据。本地行为测试和类型检查继续用于定位及防回归，不替代真实通过，不将注入响应计作真实模型成功。真实批次保持预设预算、失败即停、保留原稿和全部失败；实际恢复路径必须真实触发才能算通过。用户所说组装“能恢复/不能恢复”专指原组件拆解可回收性，其他 JSON、字段、引用与修订错误仍需修复。当前开发不部署、不 push 的边界保持。
 
-当前填写 parser 为 v37：首轮只提交扁平 `requestedCapabilities`，第二轮模型只提交 `decision`，服务器生成固定外壳、根依据并集、producer、静态模板hash和类型化依赖；直接成功只填result，检定只填一次裁决及完整成败。多集合结果从同一领域schema转换为必填entries/recordKind，服务器按类型分组，缺失或混型拒绝，不猜效果。当前修订票据为vnext-5，保存并重证原始arguments；KP显式确认服务器已证明的完整修复计划，仅填开放的自由摘要。原稿、冻结上下文、完整诊断、八处总修改、一次correction及完整重验保持；不补裁决、不改目标/DC/成本/后果。调用前重证并克隆冻结，Room保存响应核对完整原稿，恢复使用同一快照。填写schema由既有领域schema转换，直接schema/prompt/parser/探针及Room绑定消费者同步。模型按实际效果选最小表单；持久组件的创建/拆解已接同一ItemSystem权威与公开Table引用，见[组件纵切](vnext-component-assembly-validation.md)。可恢复组件四步真实链已通过，更多连续行为及不可恢复组件仍待真实验证，不用sceneFeature正文或新Item/Ability自动替代。
+2026-09-08 当前填写 parser 为 **v51**：首轮只提交扁平 `requestedCapabilities`，第二轮提交 `decision / steps / results` 三张平表，continuation 同形；服务器生成固定外壳、根依据并集、producer、静态模板 hash 和类型化依赖。结果按步骤及成败分支填行，再由同一领域 schema 解码、分组与校验，缺失或混型拒绝，不猜效果。当前修订票据仍为 vnext-5，保存并重证原始 arguments；KP 显式确认服务器已证明的完整修复计划，保持八处总修改、一次 correction 和完整重验，不补裁决、目标、DC、成本或后果。空 `{}` 的一次重发已实现，但 round90/91 没有再出现空对象；裸 `none` 泛化在 round90 失败后实现，round91 未自然触发，均不能记作真实恢复通过。持久组件的创建/拆解仍走同一 ItemSystem 权威与公开 Table 引用，见[组件纵切](vnext-component-assembly-validation.md)。下文各旧 parser 版本和批次“最新”字样保留为当时记录；当前状态以本段及[根交接](../../handoff.md)为准。
+
+2026-09-08 本次接手 `e657162` 后完成[两处遥测窄修复](vnext-telemetry-validation.md)：ActorPlan 实际调用记录 usage，等待每段实际提交后记录时间增量与到期数。两组 Room 6 项及既有遥测/脱敏 11 项通过，随本次活动实现提交到本地，未跑新真实批次；完整游玩和生产采用未完成。用户随后裁定“非战斗状态可以，战斗不可以”：按[活动合同](vnext-activity-attention-contract-proposal.md)接入玩家普通耗时提案 Activity、长休/活动真实期限推进及合法新信息的受控继续/结束，战斗保持原规则。lowering 直接调用者已按阶段迁移并核对：[本地活动回执](vnext-activity-attention-validation.md)记录最终 Node 组 308/309，剩余旧形状断言修正后该文件 8/8；Room 6 过、9 跳过及 typecheck 通过。当前定向范围无未解决失败；NPC 传话仍是受控 fixture，未做新真实模型验收或全项目回归。承诺 fulfilled/broken 合同差异、完整游玩及生产采用继续独立保留。
 
 [填写Interface开发回执](vnext-filling-interface-validation.md)：不同提案家族和terminal直接消费者已适配；初次消费者组231/266，35个旧fixture/断言失败已定向修复，后续36/36、11/11、35/35通过。真实[round54](vnext-round54-validation.md)仍是前两步完整发布、第三步JSON_SYNTAX拒绝；库存10→9→10，7次模型调用，第三步0提交，2条事件replay精确。没有复杂行动稳定性改善证据。round54冻结parser v23；停批后v24只修正模型根字段的诊断来源和非字符串类型分类，27/27通过，未追加真实调用。
 
@@ -205,7 +207,7 @@ V01–V03 本批进度见 [验收记录](vnext-v01-v03-validation.md) 和 [脱�
 
 最新 **round4 已首次经正常 Cookie HTTP → real DeepSeek → Rules/Room 提交**：单项库存释放，以及修复后的库存＋原地观察组合均提交，库存20→19、地面新增1，两个实际事件流 replay 与存储精确一致。首项旁白缺结果，唯一修复对照的旁白初次/替换均 grounding 拒绝，故 V01 可用输出门仍未完成。当前已补库存双端 Claims、场景观察范围、叙述物化义务依赖与安全旁白原因码；共6调用、61,518输入/1,807输出 tokens，未追加碰运气。完整边界见 [round4 验收](vnext-round4-validation.md) 和 [脱敏证据](vnext-round4-live-evidence.json)；前述批次均为历史分账。
 
-真实调用已获授权。默认开发批次以 **1–3 个根行动、总计最多 12 次 DeepSeek 请求** 为上限，所有模拟玩家、KP 提案、修订、NPC 与叙述调用都计入；先限制回合、总调用与单次超时，再启动批次。首次明确失败即停批定位，只有能区分原因时做一次对照，并计入同一预算。预算耗尽保留未完成项，不循环重跑碰运气。
+真实调用已获授权。原默认开发批次为 **1–3 个根行动、最多 12 次 DeepSeek 请求**；2026-09-08 当前 NPC 三句批次按[根交接](../../handoff.md)及其冻结 `plan.json` 的专项上限执行：**20 次物理调用 / ¥5 / 20 分钟，每 HTTP 7 次调用 / 120 秒**，优先于本段旧默认值。其他新场景另按明确的批次计划定界，不把专项上限自动外推。所有模拟玩家、KP 提案、修订、NPC 与叙述调用都计入；先记录预算与停止条件，再启动批次。首次明确失败即停批定位，只有能区分原因时做一次对照，并计入同一预算；不循环重跑碰运气。
 
 - 可用 DeepSeek 生成模拟玩家的输入或待决回答，但模拟玩家只读取自己的 Viewer 内容；产品 KP 仍通过真实 Provider 与正常 Room Action 路径处理。测试模型不得直接编造已归一化 Rules 结果、骰面或权威状态。
 - 未切生产时使用本地/已批准测试宿主的真实 HTTP → vNext → 在线 DeepSeek 路线；当前远端 V3 的成功只能证明 V3。生产切换后再验证精确的 vNext 部署版本。

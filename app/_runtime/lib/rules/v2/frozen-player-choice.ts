@@ -1,8 +1,9 @@
 import { canonicalSha256 } from "../profiles/canonical";
+import { actionActivityCompletionRoot } from "./activity-progress";
 import type { AuthoritativeWorldState, JsonRecord } from "./model";
 import { authorityReadSetMatches, authorityRevisionOrHash } from "./authority-bindings";
 import { hasExactKeys, isNonEmptyString, isRecord, isSha256 } from "./validation";
-import { isAppliedEffect, isAtomicWorldInteractionStepsPlan, isWorldInteractionFeasibilityRulingPlan,
+import { isAppliedEffect, isAtomicWorldInteractionStepsPlan, isWorldInteractionFeasibilityRulingPlan, atomicWorldInteractionFictionTimeMicros,
   type AppliedWorldInteractionEffect, type AtomicWorldInteractionStepsPlan, type WorldInteractionFeasibilityRulingPlan } from "./world-interaction-model";
 
 export const FROZEN_PLAYER_CHOICE_SCHEMA = "zhuwei.frozen-player-choice/vnext-1" as const;
@@ -76,7 +77,9 @@ export function isFrozenPlayerChoicePlan(value: unknown): value is FrozenPlayerC
     if (next.kind === "cancel") return hasExactKeys(next, ["kind"]);
     if (!hasExactKeys(next, ["kind", "plan"])) return false;
     if (next.kind === "adjudication") return isAtomicWorldInteractionStepsPlan(next.plan)
-      && next.plan.rootActionId === value.rootActionId && next.plan.actorCharacterId === value.actorCharacterId
+      && next.plan.rootActionId === (atomicWorldInteractionFictionTimeMicros(next.plan) === undefined
+        ? value.rootActionId : actionActivityCompletionRoot(String(value.rootActionId)))
+      && next.plan.actorCharacterId === value.actorCharacterId
       && next.plan.contextHash === value.contextHash;
     return next.kind === "inWorldRefusal" && isWorldInteractionFeasibilityRulingPlan(next.plan)
       && next.plan.actorCharacterId === value.actorCharacterId && next.plan.contextHash === value.contextHash;

@@ -2020,6 +2020,21 @@ export const restNow = createServerFn({ method: "POST" })
     return { ok: false as const, error: "这间房属于 0.4 之前的开发数据，已不再支持" };
   });
 
+export const controlActivity = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { code: string; submissionId?: string; activityId: string; attentionRootActionId: string; decision: "continue" | "stop" }) => input)
+  .handler(async ({ context, data }) => {
+    const room = await roomByCode(data.code);
+    if (!room) return { ok: false as const, error: "找不到这间房" };
+    await memberOf(room.id, context.userId);
+    const rules = await roomRuleset(await getSql(), room.id);
+    const submissionId = authoritativeSubmissionId(data.submissionId);
+    if (rules?.ruleset_version !== AUTHORITATIVE_RULESET_VERSION || !submissionId) return { ok: false as const, error: "当前活动或提交标识不可用" };
+    return submitAuthoritativeTableAction({ roomId: room.id, userId: context.userId, model: rules.kp_model,
+      modelProfileVersion: rules.kp_model_profile, submissionId,
+      action: { kind: "activityControl", submissionId, activityId: data.activityId, attentionRootActionId: data.attentionRootActionId, decision: data.decision } });
+  });
+
 export const cancelRest = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: {

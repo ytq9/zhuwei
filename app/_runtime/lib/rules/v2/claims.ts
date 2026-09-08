@@ -338,6 +338,7 @@ const VNEXT_CLAIMS_ROOT_EVENT_TYPES = new Set([
 ]);
 
 const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
+  "ActivityAttentionRequested", "ActivityAttentionAcknowledged",
   "RelationshipChanged", "PromiseMade", "DebtIncurred",
   "PartyMemberLeft", "PartyLeaderTransferred", "PartyGroupDisbanded",
   "ActivityCompleted", "RestCompleted", "KnowledgeAcquired", "CharacterMoved",
@@ -380,7 +381,7 @@ const VNEXT_DIRECT_CLAIM_EVENT_TYPES = new Set([
 const VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES = new Set([
   // Choice metadata is delivered through the private Pending projection.
   // The selected executor's child events own every mechanical/narrative fact.
-  "FrozenPlayerChoicePrepared", "FrozenPlayerChoiceInputRecorded", "PlayerChoiceRequested", "PendingInputAnswered",
+  "FrozenPlayerChoicePrepared", "FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded", "PlayerChoiceRequested", "PendingInputAnswered",
   "NarrativeDetailMaterialized",
   "AuthoredMaterializationResolved", "DefinitionRegistered", "ItemDefinitionRegistered", "ItemUniquenessBound",
   "ActivityStarted", "CharacterMechanicsSynchronized",
@@ -489,12 +490,13 @@ export function committedRangeUsesFrozenRenderableClaims(
       || (eventType === "NpcPlanFormed" && events.some(event => event.eventType === "ActivityStarted"
         && event.rootActionId === rootActionId && recordOrEmpty(recordOrEmpty(event.payload).completion).kind === "actorPlan"
         && recordOrEmpty(recordOrEmpty(event.payload).completion).planId === recordOrEmpty(payload).planId))
-      || (eventType === "ActivityStarted" && recordOrEmpty(recordOrEmpty(payload).completion).kind === "timePassage")
+      || (eventType === "ActivityStarted" && ["timePassage", "actionExecution"].includes(String(recordOrEmpty(recordOrEmpty(payload).completion).kind)))
+      || ["ActivityAttentionRequested", "ActivityAttentionAcknowledged"].includes(eventType)
       || (eventType === "AbilityInvoked" && ["longSpellcastingStarted", "longSpellcastingContinued"].includes(String(recordOrEmpty(recordOrEmpty(payload).mechanicalResult).kind)))
       || (eventType === "ConcentrationEnded" && recordOrEmpty(payload).reason === "longSpellActivityInterrupted")
       || (typeof rootActionId === "string" && (rootActionId.startsWith("time-passage-advance:")
         || rootActionId.startsWith("time-passage-interrupt:") || rootActionId.startsWith("long-spell-advance:")
-        || rootActionId.startsWith("long-spell-due:")))
+        || rootActionId.startsWith("long-spell-due:") || rootActionId.startsWith("activity-advance:") || rootActionId.startsWith("activity-result:")))
       || isActorPlanDueRoot(rootActionId)
       || (eventType === "ActivityCompleted" && typeof rootActionId === "string"
         && rootActionId.startsWith("activity-due:"))))
@@ -550,6 +552,23 @@ export function deriveAuthorityClaimsFromCommittedRange(
     const eventType = String(event.eventType);
     const materialCountBeforeEvent = materials.length;
     switch (eventType) {
+      case "ActivityStarted": {
+        if (recordOrEmpty(payload.completion).kind !== "actionExecution") break;
+        materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "activity-started", { authorityRefs: [String(payload.activityId)] }),
+          kind: "mechanicalOutcome", targetRefs: [String(payload.characterId)], outcomeCode: "activityStarted",
+          summary: "角色开始进行这项耗时活动；完成结果尚未结算。" });
+        break;
+      }
+      case "ActivityAttentionRequested":
+      case "ActivityAttentionAcknowledged": {
+        const activity = eventRange.state.campaignRuntime.activities[String(payload.activityId)];
+        if (activity === undefined) throw new TypeError("ACTIVITY_ATTENTION_CLAIM_INVALID");
+        materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "activity-attention", { authorityRefs: [String(payload.activityId)] }),
+          kind: "mechanicalOutcome", targetRefs: [String(activity.characterId)], outcomeCode: eventType,
+          summary: eventType === "ActivityAttentionRequested" ? "角色获得了新信息，活动推进暂停，等待玩家决定。活动尚未取消，也未获得完成收益。"
+            : "玩家选择继续当前活动；后续时间和结果仍待实际结算。" });
+        break;
+      }
       case "CanonicalFactDeclared": {
         const fact = recordOrEmpty(payload.fact);
         if (fact.kind === "npcPlanTrace") materials.push(actorPlanTraceClaim(event, fact, eventRange));
@@ -582,7 +601,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
       case "ActivityInterrupted":
         if (timePassageActivity(eventRange, payload.activityId) !== undefined) materials.push(timePassageEndedClaim(event, payload, eventRange));
         else if (longSpellcastingActivity(eventRange, payload.activityId) !== undefined) materials.push(longSpellcastingEndedClaim(event, payload, eventRange));
-        else if (recordOrEmpty(payload.cause).kind === "completionNoLongerLegal") materials.push(activityInterruptedClaim(event, payload, eventRange));
+        else if (["completionNoLongerLegal", "playerCancelledActivity"].includes(String(recordOrEmpty(payload.cause).kind))) materials.push(activityInterruptedClaim(event, payload, eventRange));
         break;
       case "ActivityCompleted":
         materials.push(timePassageActivity(eventRange, payload.activityId) !== undefined
@@ -932,7 +951,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
     }
   }
 
-  const definitionEvents = range.events.filter(event => !["FrozenPlayerChoicePrepared", "FrozenPlayerChoiceInputRecorded",
+  const definitionEvents = range.events.filter(event => !["FrozenPlayerChoicePrepared", "FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded",
     "PlayerChoiceRequested", "PendingInputAnswered", "AtomicWorldInteractionStepsResolved"].includes(event.eventType));
   const privateDefinitionOnly = definitionEvents.some((event) => String(event.eventType) === "AuthoredMaterializationResolved"
     && ["abilityDefinition", "hazardDefinition", "itemDefinition"].includes(String(recordOrEmpty(event.payload).kind)))
@@ -1068,6 +1087,11 @@ function longSpellcastingEndedClaim(event: EventEnvelope, payload: JsonRecord, r
 
 function isTimePassageProgressEvent(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
   const payload = recordOrEmpty(event.payload);
+  if (event.eventType === "FictionTimeAdvanced" && payload.reason === "activityProgress" && typeof payload.activityId === "string") {
+    const activity = range.priorState.campaignRuntime.activities[payload.activityId];
+    return activity?.status === "active" && recordOrEmpty(activity.progression).timelineId === event.fictionTimelineId
+      && event.rootActionId === `activity-advance:${payload.activityId}:${event.fictionInstantMicros}:${BigInt(event.fictionInstantMicros) + BigInt(String(payload.durationMicros))}:${canonicalSha256(recordOrEmpty(activity.progression).acknowledgedKnowledgeRefs).slice(7, 23)}`;
+  }
   if (event.eventType === "ActivityStarted") return recordOrEmpty(payload.completion).kind === "timePassage"
     && timePassageActivity(range, payload.activityId)?.characterId === payload.characterId;
   if (event.eventType !== "FictionTimeAdvanced" || payload.reason !== "timePassage" || typeof payload.activityId !== "string") return false;
@@ -1114,7 +1138,8 @@ function activityInterruptedClaim(event: EventEnvelope, payload: JsonRecord, ran
   const activity = activityId === undefined ? undefined : completedActivity(range, activityId);
   const actorRef = activity === undefined ? undefined : stringField(activity, "characterId");
   if (actorRef === undefined) throw new TypeError("ACTIVITY_INTERRUPTED_CLAIM_BINDING_INVALID");
-  const summary = activity?.activityKind === "passageTraversal" ? "该角色的通行已中断：原定路线已经无法走完。"
+  const summary = recordOrEmpty(payload.cause).kind === "playerCancelledActivity" ? "玩家已结束当前活动，已经过的时间与发生的成本保留。"
+    : activity?.activityKind === "passageTraversal" ? "该角色的通行已中断：原定路线已经无法走完。"
     : "该角色的活动已中断：原定的完成条件已不成立。";
   return { ...eventClaimBaseWithSeparatedBasis(event, "activity-interrupted", { authorityRefs: [activityId] }),
     kind: "mechanicalOutcome", targetRefs: [actorRef], outcomeCode: "activityInterrupted", summary };

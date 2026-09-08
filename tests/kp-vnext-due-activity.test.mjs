@@ -1,3 +1,4 @@
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
@@ -17,7 +18,7 @@ const nextInput = (root, actor = ACTOR, hours = 0) => ({
   outcome: { publicResult: "完成观察。", ...(hours ? { fictionTimeCostMicros: micros(hours) } : {}) },
 });
 function step(fixture, state, input, expected = "committed") {
-  const result = fixture.runtime.step(fixture.profiles, state, input);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, state, input);
   assert.equal(result.kind, expected, JSON.stringify(result));
   return result;
 }
@@ -57,6 +58,10 @@ function shortPending(id = "late-short", owner = ACTOR) {
   fixture.state.entities[owner].resourceMaximums.hitDice = 2;
   const started = startRest(fixture, fixture.state, { owner, kind: "short", id, dice: 1 });
   const waited = step(fixture, started.result.state, nextInput(`root:${id}:wait`, ACTOR, 2));
+  // Simulate a delayed dispatcher after another authority clock update.
+  // The scheduler itself stops at 1h; lateness must not be manufactured by waiting through it.
+  waited.state = structuredClone(waited.state);
+  waited.state.fictionTimelines["branch:probe"].nowMicros = micros(2);
   const pending = step(fixture, waited.state, nextInput(`root:${id}:next`), "awaitingRandomness");
   return { fixture, activityId: started.activityId, waited, pending };
 }
@@ -80,8 +85,8 @@ test("vNext and legacy real actions settle the same canonical due root before co
   }
   const completed = step(fixture, waited.state, original);
   const next = step(fixture, completed.state, vnextInput(fixture, completed.state, "root:after-due"));
-  // The act spends its frozen duration first and settles as a one-step atomic Bundle.
-  assert.deepEqual(next.events.map(event => event.eventType), ["FictionTimeAdvanced", "WorldInteractionResolved", "AtomicWorldInteractionStepsResolved"]);
+  // Starting, advancing and finishing retain their separate authoritative events.
+  assert.deepEqual(next.events.map(event => event.eventType), ["ActivityStarted", "FictionTimeAdvanced", "ActivityCompleted", "WorldInteractionResolved"]);
   const replayed = fixture.runtime.replay(fixture.genesis, [...started.result.events, ...waited.events, ...completed.events, ...next.events]);
   assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
   assert.deepEqual(replayed.state, next.state);
@@ -96,7 +101,7 @@ test("late short-rest request and fulfillment keep the frozen due instant and us
   assert.equal(request.frozenParameters.timelineId, "branch:probe");
   assert.equal(waited.state.fictionTimelines["branch:probe"].nowMicros, micros(2));
   const outstanding = dueView(fixture, pending.state).dueActivities;
-  assert.deepEqual(outstanding.map(entry => entry.activityId), [activityId]);
+  assert.deepEqual(outstanding.map(entry => entry.activityId), [activityId], "the pending completion remains visible under its original root");
   assert.equal(step(fixture, pending.state, nextInput("root:blocked-by-rest"), "rejected").rejection.code, "pendingInputUnresolved");
   const completed = fulfill(fixture, pending.state, pending);
   assert.equal(completed.events.find(event => event.eventType === "RestCompleted").payload.completedAtFictionMicros, micros(1));
@@ -112,6 +117,8 @@ test("late long-rest completion preserves its due timestamp and the next legal 2
   const fixture = createAuthoredProbeFixture("late-long");
   const started = startRest(fixture, fixture.state);
   const waited = step(fixture, started.result.state, nextInput("root:late-long-wait", ACTOR, 25));
+  waited.state = structuredClone(waited.state);
+  waited.state.fictionTimelines["branch:probe"].nowMicros = micros(25);
   const completed = step(fixture, waited.state, { kind: "completeActivity", proposalId: "root:late-long-complete", activityId: started.activityId });
   assert.equal(completed.state.entities[ACTOR].lastLongRestCompletedAtMicros, micros(8));
   assert.equal(completed.events.find(event => event.eventType === "RestCompleted").payload.completedAtFictionMicros, micros(8));
@@ -161,6 +168,7 @@ test("internal due projection enumerates sorted ordinary Activities across timel
   const started = startRest(fixture, fixture.state, { kind: "short" });
   const waited = step(fixture, started.result.state, nextInput("root:descriptor-wait", ACTOR, 2));
   const state = structuredClone(waited.state);
+  state.fictionTimelines["branch:probe"].nowMicros = micros(2);
   const template = state.campaignRuntime.activities[started.activityId];
   state.campaignRuntime.activities = {
     "activity:z": { ...template, activityId: "activity:z", intendedDurationMicros: micros(2) },
@@ -170,21 +178,25 @@ test("internal due projection enumerates sorted ordinary Activities across timel
     "activity:b": { ...template, activityId: "activity:b" },
     "activity:future": { ...template, activityId: "activity:future", intendedDurationMicros: micros(3) },
     "activity:interrupted": { ...template, activityId: "activity:interrupted", status: "interrupted" },
-    "activity:spell": { ...template, activityId: "activity:spell", activityKind: "longSpellcasting" },
-    "activity:plan": { ...template, activityId: "activity:plan", completion: { kind: "actorPlan", planId: "plan:special" } },
   };
   state.entities[OTHER].sceneId = "scene:other";
   state.fictionTimelines["branch:other"] = { branchId: "branch:other", nowMicros: micros(2) };
   state.multiplayerRuntime.characterTimelineIds[OTHER] = "branch:other";
+  state.campaignRuntime.activities["activity:a"].progression = { ...template.progression, timelineId: "branch:other", sourceSceneId: "scene:other" };
   const before = structuredClone(state);
   const view = dueView(fixture, state);
-  assert.deepEqual(view.dueActivities.map(entry => entry.activityId), ["activity:a", "activity:b", "activity:z"]);
+  assert.deepEqual(view.dueActivities.map(entry => entry.activityId), ["activity:a", "activity:b"]);
   assert.deepEqual(view.dueActivities[0], {
     activityId: "activity:a", ownerEntityId: OTHER, timelineId: "branch:other", completionFictionMicros: micros(1),
-    childRootActionId: `activity-due:activity:a:${micros(1)}`, activityHash: canonicalSha256(state.campaignRuntime.activities["activity:a"]),
+    childRootActionId: `activity-due:activity:a:${micros(1)}`, activityHash: canonicalSha256({ ...state.campaignRuntime.activities["activity:a"], progression: (({ acknowledgedKnowledgeRefs, ...binding }) => binding)(state.campaignRuntime.activities["activity:a"].progression) }),
+    activityProgress: { phase: "complete", completion: "activity", fromFictionMicros: micros(1), toFictionMicros: micros(1) },
     sceneIds: ["scene:destination", "scene:other", "scene:source"],
   });
   assert.deepEqual(state, before);
+  const afterEarlier = structuredClone(state);
+  afterEarlier.campaignRuntime.activities["activity:a"].status = "completed";
+  afterEarlier.campaignRuntime.activities["activity:b"].status = "completed";
+  assert.equal(dueView(fixture, afterEarlier).dueActivities[0].activityId, "activity:z", "later completion waits behind the earlier deadline");
   const { projectionHash, ...base } = view;
   assert.equal(projectionHash, canonicalSha256(base));
   const settled = step(fixture, state, nextInput("root:own-timeline"));
@@ -199,6 +211,7 @@ test("same-timeline other-scene rest is due, while future other-timeline rest ca
   const shared = structuredClone(waited.state);
   shared.scenes["scene:other"] = { ...shared.scenes[SCENE], id: "scene:other" };
   shared.entities[OTHER].sceneId = "scene:other";
+  shared.campaignRuntime.activities[started.activityId].progression.sourceSceneId = "scene:other";
   assert.equal(step(fixture, shared, nextInput("root:shared-timeline")).mechanicalResult.activityId, started.activityId);
   const independent = structuredClone(shared);
   independent.fictionTimelines["branch:other"] = { branchId: "branch:other", nowMicros: "0" };

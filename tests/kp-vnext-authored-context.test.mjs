@@ -1,3 +1,4 @@
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import { actDuration, withActDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
@@ -66,7 +67,7 @@ function execute(name, value) {
   const fixture = createAuthoredProbeFixture(name);
   const lowered = lowerVNext2ProposalBundle({ value, ...fixture });
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  let result = fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput);
+  let result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered.command.rulesInput);
   const events = [...result.events];
   while (result.kind === "awaitingRandomness") {
     result = fixture.runtime.step(fixture.profiles, result.state, { kind: "fulfillAuthoritativeRandomness", continuation: result.continuation,

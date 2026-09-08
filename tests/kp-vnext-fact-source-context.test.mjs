@@ -1,3 +1,5 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { soleStep, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -19,7 +21,7 @@ import {lowerVNext2ProposalBundle} from '../app/_runtime/lib/kp/vnext/proposal-b
 const NPC='npc:independent-worker';
 function fixture(label) {return {...createAuthoredProbeFixture(`fact-source:${label}`,{npcCharacters:[{id:NPC,name:'值班人'}],
   initialKnowledge:[{characterId:NPC,knowledgeRef:'knowledge:private',content:'PRIVATE_SOURCE_KNOWLEDGE',kind:'sourceClaim',layer:'partial',visibility:'private',provenanceChain:['genesis:private']}] }),prefix:[]};}
-function commit(f,input) {const r=f.runtime.step(f.profiles,f.state,input);assert.equal(r.kind,'committed',JSON.stringify(r));f.state=r.state;f.prefix.push(...r.events);return r;}
+function commit(f,input) {const r=stepActionToDecision(f.runtime, f.profiles,f.state,input);assert.equal(r.kind,'committed',JSON.stringify(r));f.state=r.state;f.prefix.push(...r.events);return r;}
 function bindings(state,refs) {return [...new Set(refs)].sort().map(ref=>({ref,revisionOrHash:authorityRevisionOrHash(state,ref)}));}
 function freeze(f,label='observe') {const rootActionId=`${f.rootActionId}:${label}`;
   return {...f,rootActionId,requiredContext:freezeAuthoredProbeContext(f,f.state,{rootActionId,focusRefs:[],intentText:'我看看周围现在的情况。'}).context};}
@@ -65,8 +67,8 @@ for(const source of ['npcTrace','physicalMark'])test(`an already committed ${sou
   assert.ok(!context.entries.some(entry=>entry.entryRef===`knowledge:${NPC}:knowledge:private`));
   const lowered=observe(next,ref);assert.equal(lowered.kind,'accepted',JSON.stringify(lowered));
   assert.ok(soleStep(lowered.command).plan.readSet.some(binding=>binding.ref===ref&&binding.revisionOrHash===known.revisionOrHash));
-  const result=f.runtime.step(f.profiles,f.state,lowered.command.rulesInput);assert.equal(result.kind,'committed',JSON.stringify(result));
-  const view=f.runtime.project(f.profiles,result.state,f.viewer,{channel:'realtime',committedRange:{receiptId:result.receipt.receiptId,actorCharacterId:ACTOR,priorState:f.state,events:result.events}});
+  const result=stepActionToDecision(f.runtime, f.profiles,f.state,lowered.command.rulesInput);assert.equal(result.kind,'committed',JSON.stringify(result));
+  const view=f.runtime.project(f.profiles,result.state,f.viewer,{channel:'realtime',committedRange:committedActionRange(result.state, {receiptId:result.receipt.receiptId,actorCharacterId:ACTOR,priorState:f.state,events:result.events})});
   assert.equal(view.kind,'projected');assert.doesNotMatch(JSON.stringify(view),/PRIVATE_|HIDDEN_CANARY/);
   const replay=f.runtime.replay(f.genesis,[...f.prefix,...result.events]);assert.equal(replay.kind,'replayed',JSON.stringify(replay));assert.deepEqual(replay.state,result.state);
   assert.deepEqual(result.state.entities,f.state.entities);
@@ -90,7 +92,7 @@ test('future plan trace refs, unrelated facts and hidden facts retain their actu
   // KP may use hidden causal authority to adjudicate visible evidence. Merely
   // freezing that source must not disclose its body or grant it to the player.
   const lowered=observe(next,hidden);assert.equal(lowered.kind,'accepted',JSON.stringify(lowered));
-  const result=f.runtime.step(f.profiles,f.state,lowered.command.rulesInput);assert.equal(result.kind,'committed',JSON.stringify(result));
+  const result=stepActionToDecision(f.runtime, f.profiles,f.state,lowered.command.rulesInput);assert.equal(result.kind,'committed',JSON.stringify(result));
   const view=f.runtime.project(f.profiles,result.state,f.viewer);assert.equal(view.kind,'projected');
   assert.doesNotMatch(JSON.stringify(view),/HIDDEN_CANARY|PRIVATE_/);
 });
@@ -100,10 +102,10 @@ test('missing or changed source records cannot be replaced by a Profile binding 
   const missing=structuredClone(next.requiredContext);missing.entries=missing.entries.filter(entry=>entry.entryRef!==ref);
   assert.equal(observe({...next,requiredContext:missing},ref).kind,'rejected');
   for(const mutate of [state=>{delete state.canonicalFacts[ref];},state=>{state.canonicalFacts[ref].value.condition='changed';}]) {
-    const state=structuredClone(f.state);mutate(state);const result=f.runtime.step(f.profiles,state,lowered.command.rulesInput);assert.equal(result.kind,'rejected');assert.deepEqual(result.events,[]);
+    const state=structuredClone(f.state);mutate(state);const result=stepActionToDecision(f.runtime, f.profiles,state,lowered.command.rulesInput);assert.equal(result.kind,'rejected');assert.deepEqual(result.events,[]);
   }
   const input=structuredClone(lowered.command.rulesInput),plan=soleInput(input).plan;plan.readSet=plan.readSet.filter(binding=>binding.ref!==ref);
-  const result=f.runtime.step(f.profiles,f.state,input);assert.equal(result.kind,'rejected');assert.deepEqual(result.events,[]);
+  const result=stepActionToDecision(f.runtime, f.profiles,f.state,input);assert.equal(result.kind,'rejected');assert.deepEqual(result.events,[]);
 });
 
 test('already displayed source records over the existing per-entry budget fail closed instead of becoming partial citation candidates',()=>{

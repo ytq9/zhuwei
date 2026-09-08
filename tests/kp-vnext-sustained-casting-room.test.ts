@@ -37,7 +37,8 @@ async function initialize(name: string): Promise<Stub> {
     controllerPrincipalId: principal.principal.id,
     staticCard: { name: characterId === ACTOR ? "施法者" : "反制者", sceneId: "wake", level: 5,
       classId: "wizard", raceId: "human", subclassId: "evocation", scores: { str: 10, dex: 14, con: 12, int: 16, wis: 12, cha: 10 },
-      proficiency: 3, skills: ["arcana"], resources: { hitDice: { max: 5, used: 0 } },
+      proficiency: 3, skills: ["arcana"], resources: { hitDice: { max: 5, used: 0 },
+        [characterId === ACTOR ? "slot1" : "slot3"]: { max: 1, used: 0 } },
       hp: { current: 20, max: 20, temp: 0 }, ac: 13, speed: 30, equipped: {}, backpack: [] } });
   expect(await stub.initializeAuthoritative({ roomId: name, moduleId: "black-oak-will",
     members: [{ principalId: ALICE.principal.id, role: "host" }, { principalId: BOB.principal.id, role: "player" }],

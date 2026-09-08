@@ -1,3 +1,4 @@
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-tables.mjs';
 import { soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
@@ -49,7 +50,7 @@ test('two NPCs and existing/player-expression sources share one frozen selector,
     assert.deepEqual(row(wire, 0, 'result').responseBasis, basis.map(source => source.kind === 'npcContext' ? source.ref : source.kind === 'playerExpression' ? 'playerExpression' : source));
     const candidate = parse(wire); assert.equal(candidate.kind, 'accepted'); assert.deepEqual(wire, original);
     const lowered = lowerVNext2ProposalBundle({ ...f, value: candidate.bundle }); assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-    const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput); assert.equal(result.kind, 'committed', JSON.stringify(result));
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput); assert.equal(result.kind, 'committed', JSON.stringify(result));
     const replayed = f.runtime.replay(f.genesis, result.events); assert.equal(replayed.kind, 'replayed'); assert.deepEqual(replayed.state, result.state);
     assert.equal(soleStep(lowered.command).plan.social.playerExpression, f.requiredContext.intent.text);
   }
@@ -95,7 +96,7 @@ test('explicit prospective source keeps holder derivation and rejects missing pr
   assert.deepEqual(source, { worldFactRef: domain.proposals[1].branches.success.response.basis[0].definitionRef });
   assert.equal(decodeVNextStrictToolBundle(wire).proposals[1].branches.success.response.basis[0].holderRef, A);
   const lowered = lower(f, wire); assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-  assert.equal(f.runtime.step(f.profiles, f.state, lowered.command.rulesInput).kind, 'committed');
+  assert.equal(stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput).kind, 'committed');
   const missing = structuredClone(wire); missing.steps.shift(); missing.results.forEach(entry => { entry.step -= 1; });
   const missingResult = lower(f, missing); assert.notEqual(missingResult.kind, 'accepted');
   for (const detail of missingResult.diagnostics ?? []) {

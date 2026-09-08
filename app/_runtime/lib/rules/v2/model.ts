@@ -1019,6 +1019,7 @@ export type EventPayloadByType = {
   };
   FrozenPlayerChoicePrepared: { record: FrozenPlayerChoiceRecord };
   FrozenPlayerChoiceInputRecorded: { input: import("./frozen-player-choice").FrozenPlayerChoiceContinuationInput };
+  ActivityCompletionInputRecorded: { activityId: string; input: import("./frozen-player-choice").FrozenPlayerChoiceContinuationInput };
   SocialResolutionOffered: {
     actorCharacterId: string;
     npcCharacterId: string;
@@ -1433,6 +1434,8 @@ export type EventPayloadByType = {
     remainingPendingInputIds: string[];
   };
   ActivityInterrupted: { activityId: string; cause: JsonRecord };
+  ActivityAttentionRequested: { activityId: string; knowledgeRefs: string[] };
+  ActivityAttentionAcknowledged: { activityId: string; attentionRootActionId: string };
   ActivityCompleted: { activityId: string };
   RestCompleted: {
     activityId: string;
@@ -1945,6 +1948,7 @@ export type DueActorPlanReadModel =
     };
 
 export type DueActivityDescriptor = {
+  activityProgress?: { phase: "advance" | "attention" | "complete"; completion: "activity" | "action"; fromFictionMicros: string; toFictionMicros: string };
   timePassage?: { phase: "advance" | "interrupt" | "blocked"; fromFictionMicros: string; toFictionMicros: string };
   longSpellcasting?: { phase: "advance" | "blocked" | "complete"; fromFictionMicros: string; toFictionMicros: string };
   /** A specialized completion shares the same durable obligation queue. */

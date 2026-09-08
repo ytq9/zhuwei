@@ -1,3 +1,6 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { atomicCompletionInput } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { soleStep, soleFormId } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -49,8 +52,8 @@ function input(f, { check = false, promise = false, silence = false, audience = 
         effects: [], sensoryEvidence: [], pressures: [], opportunities: [] }])) } };
 }
 function project(f, result, viewer = f.viewer, events = result.events) {
-  const view = f.runtime.project(f.profiles, result.state, viewer, { channel: "realtime", committedRange: {
-    receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events } });
+  const view = f.runtime.project(f.profiles, result.state, viewer, { channel: "realtime", committedRange: committedActionRange(result.state, {
+    receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events }) });
   assert.equal(view.kind, "projected", JSON.stringify(view)); return view;
 }
 function replay(f, events, expected) {
@@ -60,7 +63,7 @@ function replay(f, events, expected) {
 
 test("social direct speech uses the NPC holder, persists a conditional promise, private Claims and exact replay", () => {
   const f = fixture("direct"), command = input(f, { promise: true });
-  const result = f.runtime.step(f.profiles, f.state, command);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
   assert.deepEqual(result.events.map(e => e.eventType), ["SourceClaimCreated", "KnowledgeAcquired", "SourceClaimCreated", "KnowledgeAcquired", "PromiseMade", "WorldInteractionResolved"]);
   assert.deepEqual(result.state.entities, f.state.entities);
@@ -94,7 +97,7 @@ for (const mode of ["deliberate-lie", "heard-false-rumor"]) test(`social ${mode}
   response.text = mode === "deliberate-lie" ? "信使往南门走了。" : "酒馆的搬运工说，信使往南门走了。";
   response.motive = mode === "deliberate-lie" ? "PRIVATE-LIE-MOTIVE：保护信使，故意把追问者引向反方向。"
     : "PRIVATE-RUMOR-MOTIVE：相信自己听到的消息，想帮助来访者。";
-  const result = f.runtime.step(f.profiles, f.state, command);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
   assert.deepEqual(result.state.canonicalFacts, f.state.canonicalFacts, "false speech does not rewrite the actual route");
   assert.deepEqual(result.state.knowledge[NPC][KNOWLEDGE], f.state.knowledge[NPC][KNOWLEDGE], "speaking does not rewrite what the NPC previously knew");
@@ -125,7 +128,7 @@ for (const mode of ["deliberate-lie", "heard-false-rumor"]) test(`social ${mode}
 test("social check freezes either response before randomness and binds formal source event IDs after suspension", () => {
   for (const roll of [1, 20]) {
     const f = fixture(`roll-${roll}`), command = input(f, { check: true, promise: true });
-    const pending = f.runtime.step(f.profiles, f.state, command);
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, command);
     assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
     assert.deepEqual(pending.state.knowledge, f.state.knowledge);
     const restored = replay(f, pending.events, pending.state);
@@ -151,14 +154,14 @@ test("malformed social snapshot and foreign failure-branch evidence reject befor
     p => { p.social.branches.failure.consequences = [{ kind: "promise", content: "交付物品。", condition: "立即。", authorityRefs: [ACTOR], due: "none", trace: null }]; },
   ]) {
     const command = structuredClone(input(f, { check: true })); mutate(command.plan);
-    const result = f.runtime.step(f.profiles, f.state, command);
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
     assert.equal(result.kind, "rejected", diagnostic(result)); assert.equal(result.randomnessRequest, undefined);
   }
 });
 
 test("silence makes no NPC statement and scene listeners hear only actual speech", () => {
   const f = fixture("silence"), command = input(f, { silence: true, audience: "sceneListeners" });
-  const result = f.runtime.step(f.profiles, f.state, command);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
   assert.equal(result.events.filter(e => e.eventType === "SourceClaimCreated").length, 1);
   assert.ok(result.state.knowledge[OTHER][result.events[0].payload.claimId]);
@@ -173,7 +176,7 @@ function signedPayload(event, mutate) {
 }
 test("social replay rejects forged result fields, missing marker, altered dice and incomplete child ledgers", () => {
   const f = fixture("replay-forgery"), command = input(f, { check: true, promise: true });
-  const pending = f.runtime.step(f.profiles, f.state, command);
+  const pending = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
   const result = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [15] });
   assert.equal(result.kind, "committed", diagnostic(result));
@@ -212,7 +215,7 @@ test("social replay rejects forged result fields, missing marker, altered dice a
 
 test("correction restores conversation, knowledge and promises; unchanged failed requests cannot reroll", () => {
   const f = fixture("correction"), command = input(f, { promise: true });
-  const result = f.runtime.step(f.profiles, f.state, command);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
   const rebuilt = replay(f, result.events, result.state);
   const corrected = f.runtime.step(f.profiles, rebuilt.state, { kind: "applyServiceCorrection",
@@ -267,7 +270,7 @@ test("social actor knowledge basis resolves raw and holder refs to the same load
   assert.deepEqual(soleStep(raw.command).plan.readSet, soleStep(canonical.command).plan.readSet,
     "both spellings bind the identical authority records without rewriting the model's proposal");
   for (const lowered of [raw, canonical]) {
-    const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
     assert.equal(result.kind, "committed", diagnostic(result));
     project(f, result); replay(f, result.events, result.state);
   }
@@ -284,7 +287,7 @@ test("independent social Form preserves the player's original expression through
   assert.equal(lowered.kind, "accepted", diagnostic(lowered));
   assert.equal(soleFormId(lowered.command), "social.vnext-1");
   assert.equal(soleStep(lowered.command).plan.social.playerExpression, "请告诉我：你看到信使往哪里走了吗？");
-  const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", diagnostic(result)); project(f, result); replay(f, result.events, result.state);
   const bad = bundle(f, true);
   bad.proposals[0].branches.failure.response.basis = [{ kind: "npcContext", ref: `knowledge:${ACTOR}:${KNOWLEDGE}` }];
@@ -302,7 +305,7 @@ test("social can cite the advertised NPC knowledge directory without aliasing an
   assert.equal(lowered.kind, "accepted", diagnostic(lowered));
   assert.deepEqual(refs, [`knowledge:${NPC}:${KNOWLEDGE}`]);
   assert.ok(refs.every(ref => !context.references.citations.nonCitableRefs.includes(ref)));
-  const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", diagnostic(result));
   project(f, result); replay(f, result.events, result.state);
   const rawWire = bundle(f);
@@ -312,7 +315,7 @@ test("social can cite the advertised NPC knowledge directory without aliasing an
   assert.deepEqual(soleStep(raw.command).plan.social.branches.success.response.basis,
     soleStep(lowered.command).plan.social.branches.success.response.basis);
   assert.deepEqual(soleStep(raw.command).plan.readSet, soleStep(lowered.command).plan.readSet);
-  const rawResult = f.runtime.step(f.profiles, f.state, raw.command.rulesInput);
+  const rawResult = stepActionToDecision(f.runtime, f.profiles, f.state, raw.command.rulesInput);
   assert.equal(rawResult.kind, "committed", diagnostic(rawResult));
   project(f, rawResult); replay(f, rawResult.events, rawResult.state);
   const frozen = freezeAuthoredProbeContext(f, f.state, { rootActionId: f.rootActionId, focusRefs: [NPC], intentText: "你看见了什么？" }).context;
@@ -340,8 +343,8 @@ test("social is the one shared check owner with independent conditional physical
     mixed.adjudication = value.adjudication; mixed.proposals[1] = value.proposals[0];
     const lowered = lower(f, mixed);
     assert.equal(lowered.kind, "accepted", diagnostic(lowered));
-    assert.equal(lowered.command.rulesInput.steps.filter(s => s.rulesInput.plan.ruling?.kind === "check").length, 1);
-    const pending = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+    assert.equal(atomicCompletionInput(lowered.command.rulesInput).steps.filter(s => s.rulesInput.plan.ruling?.kind === "check").length, 1);
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
     assert.equal(pending.kind, "awaitingRandomness", diagnostic(pending));
     const result = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness", continuation: pending.continuation, rolls: [roll] });
     assert.equal(result.kind, "committed", diagnostic(result));
@@ -373,7 +376,7 @@ test("a social prefix resumes with formal SourceClaim provenance after a later a
     focusRefs: [NPC, OTHER, "definition:probe-valve"], intentText: "先询问守门人，再使用自己取得的武器攻击旁人。" }).context;
   const lowered = lowerVNext2ProposalBundle({ ...f, requiredContext: context, value });
   assert.equal(lowered.kind, "accepted", diagnostic(lowered));
-  let result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  let result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   const events = [];
   let stages = 0;
   while (result.kind === "awaitingRandomness" && stages++ < 3) {
@@ -412,7 +415,7 @@ test("spoken conversation enforces hearing and speech while preserving the charm
     const f = fixture(`condition-${entity}-${condition}`), state = structuredClone(f.state);
     state.combatRuntime.entities[entity].conditions = { [condition]: true };
     const command = input(f, { state, check: true });
-    const result = f.runtime.step(f.profiles, state, command);
+    const result = stepActionToDecision(f.runtime, f.profiles, state, command);
     assert.equal(result.kind, "rejected", diagnostic(result)); assert.deepEqual(result.events, []);
   }
   const f = fixture("charmer"), state = structuredClone(f.state);
@@ -454,7 +457,7 @@ test("social relationship updates preserve identity and correction restores the 
   assert.equal(created.kind, "committed", diagnostic(created));
   const command = input(f, { state: created.state });
   command.plan.social.branches.success.consequences = [{ kind: "relationship", relationshipRef: relation, change: "愿意继续听取解释。", basisFactRefs: [] }];
-  const result = f.runtime.step(f.profiles, created.state, command);
+  const result = stepActionToDecision(f.runtime, f.profiles, created.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
   assert.equal(result.state.campaignRuntime.relationships[relation].value, "愿意继续听取解释。");
   assert.equal(result.scopeProof.creates.includes(`relationship:${relation}`), false);
@@ -471,7 +474,7 @@ test("social relationship updates preserve identity and correction restores the 
 test("a promise with a due tier derives the NPC's own timed plan in the same root; none leaves it to context", () => {
   const TRACE = "账台上多了一份盖印的备案文书。";
   const f = fixture("promise-due"), command = input(f, { promise: true, due: "1h", trace: TRACE });
-  const result = f.runtime.step(f.profiles, f.state, command);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
   const promise = Object.values(result.state.campaignRuntime.promises)[0];
   assert.equal(promise.status, "active");

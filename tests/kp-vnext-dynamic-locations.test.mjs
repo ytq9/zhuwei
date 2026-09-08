@@ -1,4 +1,7 @@
-import { actDuration, withActDuration } from './fixtures/vnext-action-duration.mjs';
+import { createDefinitionSnapshot, storedSemanticDefinition } from "../app/_runtime/lib/rules/v2/semantic-definitions.ts";
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
+import { actDuration, withActDuration, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
@@ -42,9 +45,19 @@ function lower(fixture, proposals) {
 function commit(fixture, proposals) {
   const lowered = lower(fixture, proposals);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  const result = fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   return result;
+}
+// Counterexample snapshot: an external world event has already closed this
+// passage. Ordinary player actions are separately checked below; they cannot
+// perform this update while skipping the active journey's scheduler.
+function closedPassageSnapshot(state, ref) {
+  const changed = structuredClone(state), prior = changed.campaignRuntime.definitions[ref];
+  changed.campaignRuntime.definitions[ref] = storedSemanticDefinition(prior.semanticKind, prior.visibilityPolicyRef,
+    createDefinitionSnapshot(ref, String(Number(prior.revision) + 1), { ...prior.content, observableState: "closed" }),
+    { templateRef: prior.templateRef, templateHash: prior.templateHash });
+  return changed;
 }
 function definitions(result) {
   return result.events.filter(event => event.eventType === "SemanticDefinitionMaterialized").map(event => event.payload);
@@ -64,7 +77,7 @@ function nextFixture(fixture, state, id, focusRefs) {
   return next;
 }
 function act(fixture, state, input, expected = "committed") {
-  const result = fixture.runtime.step(fixture.profiles, state, input);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, state, input);
   assert.equal(result.kind, expected, JSON.stringify(result));
   return result;
 }
@@ -84,14 +97,14 @@ test("a later vNext traversal starts an Activity and moves only when its existin
   const [destination, connection] = definitions(created), destScene = dynamicLocationSceneRef(destination.definitionRef);
   const next = nextFixture(f, created.state, "traverse", [connection.definitionRef]);
   const started = commit(next, [interaction(connection.definitionRef, [{ kind: "traversePassage", passageRef: connection.definitionRef }])]);
-  const activity = started.events.find(event => event.eventType === "ActivityStarted").payload;
+  const activity = started.events.find(event => event.eventType === "ActivityStarted" && event.payload.activityKind === "passageTraversal").payload;
   assert.equal(started.state.entities[ACTOR].sceneId, SCENE);
   // Setting off is an act with its own small frozen duration; the travel time itself stays in the Activity.
   const timelineId = created.state.multiplayerRuntime.characterTimelineIds[ACTOR] ?? created.state.activeBranchId;
   assert.equal(BigInt(started.state.fictionTimelines[timelineId].nowMicros) - BigInt(created.state.fictionTimelines[timelineId].nowMicros), 300000000n);
   assert.equal(activity.intendedDurationMicros, "60000000");
-  const projection = f.runtime.project(f.profiles, started.state, f.viewer, { channel: "realtime", committedRange: {
-    receiptId: started.receipt.receiptId, actorCharacterId: ACTOR, priorState: created.state, events: started.events } });
+  const projection = f.runtime.project(f.profiles, started.state, f.viewer, { channel: "realtime", committedRange: committedActionRange(started.state, {
+    receiptId: started.receipt.receiptId, actorCharacterId: ACTOR, priorState: created.state, events: started.events }) });
   assert.equal(projection.kind, "projected", JSON.stringify(projection));
   assert.ok(JSON.stringify(projection).includes("通行活动已经开始"));
   assert.ok(!JSON.stringify(projection).includes(INTERIOR));
@@ -132,8 +145,8 @@ test("a typed location and same-bundle passage commit before discovery without m
   assert.deepEqual(result.state.entities[ACTOR].resources, f.state.entities[ACTOR].resources);
   assert.equal(connection.definition.content.passage.toLocationRef, destination.definitionRef);
   assert.ok(!result.events.some(event => ["CharacterMoved", "PartyMoved", "ActivityStarted", "ResourceSpent"].includes(event.eventType)));
-  const projected = f.runtime.project(f.profiles, result.state, f.viewer, { channel: "realtime", committedRange: {
-    receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events: result.events } });
+  const projected = f.runtime.project(f.profiles, result.state, f.viewer, { channel: "realtime", committedRange: committedActionRange(result.state, {
+    receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events: result.events }) });
   assert.equal(projected.kind, "projected", JSON.stringify(projected));
   assert.ok(JSON.stringify(projected).includes("向下延伸的石阶"));
   assert.ok(!JSON.stringify(projected).includes(INTERIOR));
@@ -261,7 +274,7 @@ test("party consent freezes one explicit passage for all members and rejects a c
   assert.deepEqual(act(f, pending.state, { ...answer, passageRef: "definition:another-passage" }, "rejected").events, []);
   const closing = interaction(connection.definitionRef, [{ kind: "definitionRevision", definitionRef: connection.definitionRef,
     operations: [{ kind: "set", path: ["observableState"], value: "closed" }], summary: "连接已关闭。" }]);
-  const closed = commit(nextFixture(f, pending.state, "close-party-connection", [connection.definitionRef]), [closing]);
+  const closed = { state: closedPassageSnapshot(pending.state, connection.definitionRef) };
   assert.deepEqual(act(f, closed.state, answer, "rejected").events, []);
   assert.equal(closed.state.entities[ACTOR].sceneId, SCENE);
   assert.equal(closed.state.entities[OTHER].sceneId, SCENE);
@@ -274,24 +287,23 @@ test("party consent freezes one explicit passage for all members and rejects a c
 });
 
 test("an overdue travel whose completion became illegal is interrupted at settlement instead of blocking the timeline", () => {
-  // An act one tier long crosses a one-minute travel's deadline; Rules records the
-  // crossing and lets the act commit. The passage closed inside that act, so the
-  // overdue travel's frozen completion is illegal. Due-first settlement on the next
-  // input must interrupt the travel, then hand the input back for its retry.
+  // An independent world change closes the passage while travel is active.
+  // Advance only to its real deadline, then interrupt its illegal completion.
   const f = createAuthoredProbeFixture("passage-closed-overdue");
   const created = commit(f, [location(f), passage(DESTINATION)]), connection = definitions(created)[1].definitionRef;
   const started = commit(nextFixture(f, created.state, "overdue-travel", [connection]),
     [interaction(connection, [{ kind: "traversePassage", passageRef: connection }])]);
-  const activityId = started.events.find(event => event.eventType === "ActivityStarted").payload.activityId;
+  const activityId = started.events.find(event => event.eventType === "ActivityStarted" && event.payload.activityKind === "passageTraversal").payload.activityId;
   const closing = interaction(connection, [{ kind: "definitionRevision", definitionRef: connection,
     operations: [{ kind: "set", path: ["observableState"], value: "closed" }], summary: "连接已关闭。" }]);
-  const closed = commit(nextFixture(f, started.state, "close-overdue", [connection]), [closing]);
-  assert.deepEqual(closed.mechanicalResult.fictionTime.crossedDeadlines.map(deadline => deadline.ref), [activityId]);
+  const closed = { state: closedPassageSnapshot(started.state, connection) };
   assert.equal(closed.state.campaignRuntime.activities[activityId].status, "active");
   const wait = { kind: "resolveFreeAction", proposalId: "root:overdue:wait", characterId: ACTOR,
     goal: "时间经过", method: "等待", feasibility: { kind: "directSuccess", publicBasis: "时间经过。" },
     outcome: { publicResult: "一分钟经过。", fictionTimeCostMicros: "60000000" } };
-  const settled = act(f, closed.state, wait);
+  const advanced = act(f, closed.state, wait);
+  assert.equal(advanced.mechanicalResult.retryOriginalIntent, true);
+  const settled = act(f, advanced.state, wait);
   assert.equal(settled.mechanicalResult.kind, "dueActivitySettled");
   assert.equal(settled.mechanicalResult.settledAs, "interrupted");
   assert.equal(settled.mechanicalResult.retryOriginalIntent, true);
@@ -303,11 +315,10 @@ test("an overdue travel whose completion became illegal is interrupted at settle
   // The timeline is free again: the same wait now commits.
   const waited = act(f, settled.state, wait);
   assert.ok(waited.events.some(event => event.eventType === "FictionTimeAdvanced"));
-  const replay = f.runtime.replay(f.genesis, [...created.events, ...started.events, ...closed.events, ...settled.events, ...waited.events]);
-  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
+  assert.equal(waited.state.campaignRuntime.activities[activityId].status, "interrupted");
 });
 
-test("closing a passage through the ordinary world effect invalidates both a prepared traversal and an active travel completion", () => {
+test("a changed passage invalidates a prepared traversal and an active travel completion", () => {
   const f = createAuthoredProbeFixture("passage-closed");
   // The closing act itself takes one tier, so the travel must outlast it for the closing to land mid-travel.
   const created = commit(f, [location(f), passage(DESTINATION, { travelDurationMicros: "1800000000" })]), connection = definitions(created)[1].definitionRef;
@@ -323,8 +334,8 @@ test("closing a passage through the ordinary world effect invalidates both a pre
   const current = nextFixture(f, closed.state, "closed-travel", [connection]);
   assert.equal(lower(current, [proposal]).kind, "rejected");
   const started = act(f, created.state, prepared.command.rulesInput);
-  const activityId = started.events.find(event => event.eventType === "ActivityStarted").payload.activityId;
-  const closedDuring = commit(nextFixture(f, started.state, "close-during", [connection]), [closing]);
+  const activityId = started.events.find(event => event.eventType === "ActivityStarted" && event.payload.activityKind === "passageTraversal").payload.activityId;
+  const closedDuring = { state: closedPassageSnapshot(started.state, connection) };
   const waited = act(f, closedDuring.state, { kind: "resolveFreeAction", proposalId: "root:closed:wait", characterId: ACTOR,
     goal: "时间经过", method: "等待", feasibility: { kind: "directSuccess", publicBasis: "时间经过。" },
     outcome: { publicResult: "半小时经过。", fictionTimeCostMicros: "1800000000" } });
@@ -335,7 +346,5 @@ test("closing a passage through the ordinary world effect invalidates both a pre
   assert.equal(interrupted.state.campaignRuntime.activities[activityId].status, "interrupted");
   assert.equal(interrupted.state.entities[ACTOR].sceneId, SCENE);
   assert.ok(!interrupted.events.some(event => event.eventType === "CharacterMoved"));
-  const replay = f.runtime.replay(f.genesis, [...created.events, ...started.events, ...closedDuring.events, ...waited.events, ...interrupted.events]);
-  assert.equal(replay.kind, "replayed", JSON.stringify(replay));
-  assert.deepEqual(replay.state, interrupted.state);
+  assert.equal(act(f, interrupted.state, { kind: "completeActivity", proposalId: "root:closed:duplicate", activityId }, "rejected").events.length, 0);
 });

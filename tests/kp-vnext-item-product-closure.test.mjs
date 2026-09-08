@@ -1,3 +1,5 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_TARGET as TARGET, PROBE_SCENE as SCENE, PROBE_SOURCE as SOURCE } from "../tools/lib/vnext-authored-probe-fixture.mjs";
@@ -27,7 +29,7 @@ function settle(fixture, result) {
           randomnessResults: result.randomnessRequests.map((request, index) => ({ randomnessId: request.randomnessId,
             requestHash: request.requestHash, draws: request.dice.map(term => ({ sides: Number(term.sides),
               faces: Array(Number(term.count)).fill(Math.min(Number(term.sides), 2 + index * 5)) })) })) };
-    result = record(fixture, fixture.runtime.step(fixture.profiles, fixture.state, input));
+    result = record(fixture, stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, input));
   }
   assert.equal(result.kind, "committed", JSON.stringify(result));
   return result;
@@ -48,7 +50,7 @@ function executeBundle(fixture, value, actor = ACTOR, selectedItemRef) {
   const lowered = lowerVNext2ProposalBundle({ value, rootActionId, actorCharacterId: actor,
     requiredContext: frozen.context, state: fixture.state });
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  return settle(fixture, fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput));
+  return settle(fixture, stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered.command.rulesInput));
 }
 function inventory(fixture, operation, actor = ACTOR) {
   const value = itemBundle();
@@ -144,7 +146,7 @@ function attemptBundle(fixture, value, actor = ACTOR) {
   const rootActionId = `root:item-closure:${++fixture.counter}`;
   const frozen = freezeAuthoredProbeContext({ ...fixture, actorCharacterId: actor }, fixture.state, { rootActionId, focusRefs: [SOURCE, ACTOR, TARGET] });
   const lowered = lowerVNext2ProposalBundle({ value, rootActionId, actorCharacterId: actor, requiredContext: frozen.context, state: fixture.state });
-  return lowered.kind === "accepted" ? fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput) : lowered;
+  return lowered.kind === "accepted" ? stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered.command.rulesInput) : lowered;
 }
 function viewer(fixture, characterId) {
   const suffix = characterId === ACTOR ? "actor" : "target";
@@ -195,7 +197,7 @@ test("identification grants exact Item knowledge to one viewer while transfer pr
   assert.equal(Object.hasOwn(before.controlledCharacter.combat.resources, entryRef), false);
   const priorState = fixture.state;
   const identifiedResult = inventory(fixture, { kind: "identify", entryRef });
-  const query = { committedRange: { receiptId: identifiedResult.receipt.receiptId, actorCharacterId: ACTOR, priorState, events: identifiedResult.events } };
+  const query = { committedRange: committedActionRange(identifiedResult.state, { receiptId: identifiedResult.receipt.receiptId, actorCharacterId: ACTOR, priorState, events: identifiedResult.events }) };
   const claimsForActor = fixture.runtime.project(fixture.profiles, fixture.state, fixture.viewer, query);
   assert.equal(claimsForActor.kind, "projected", JSON.stringify(claimsForActor));
   assert.match(JSON.stringify(claimsForActor), /Vaultflower essence/);

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { handleRoomAction, handleViewerNarrationRecovery, type RoomActionInput, type RoomAuthorityCapability } from "../app/_runtime/lib/room/action";
 import { createVNextKpAdapter } from "../app/_runtime/lib/kp/vnext/adapter";
 import type { AuthoritativeKpAdapter, AuthoritativeModelBinding } from "../app/_runtime/lib/kp/authoritative-types";
@@ -47,6 +47,15 @@ type Capture = { playerRequests: RecordValue[]; actorRequests: RecordValue[]; na
   callLimit?: string; countNarrationCalls?: boolean; httpCalls: string[][] };
 const capture = (): Capture => ({ playerRequests: [], actorRequests: [], narration: [], actorCalls: {}, draws: 0, httpCalls: [] });
 function record(value: unknown): RecordValue { return value as RecordValue; }
+afterEach(() => vi.restoreAllMocks());
+function actorPlanTelemetry(calls: unknown[][]): RecordValue[] {
+  return calls.flatMap(([line]) => {
+    try {
+      const event = JSON.parse(String(line));
+      return event.eventName === "room.model.invocation.completed" && event.modelInvocationPurpose === "actorPlan" ? [event] : [];
+    } catch { return []; }
+  });
+}
 
 async function initialize(name: string, mechanicalNpc = false): Promise<Stub> {
   const stub = env.VNEXT_ROOMS.getByName(name);
@@ -114,7 +123,8 @@ function actorBinding(c: Capture): AuthoritativeModelBinding { return { async ru
     expect(JSON.stringify(input)).not.toContain(PRIVATE_REF);
     if (c.failActor) throw new Error("the ActorPlan provider response was lost after dispatch");
     const name = String(record(record((input.tools as RecordValue[])[0]).function).name);
-    return { choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify({ decision: c.decision ?? {
+    return { usage: { prompt_tokens: 123, completion_tokens: 45, total_tokens: 168 },
+      choices: [{ message: { tool_calls: [{ type: "function", function: { name, arguments: JSON.stringify({ decision: c.decision ?? {
       decision: "execute", planId: plan.planId, mechanicalProposal: { kind: "none" }, targetRef: { kind: "none" },
     } }) } }] } }] };
   } }; }
@@ -187,6 +197,66 @@ async function resume(stub: Stub, root: string, c: Capture) {
 
 function knowledgeReview(inquiry: string) { return { mode: "terminal", basisRefs: [], adjudication: null, proposals: [],
   terminal: { kind: "knowledgeReview", inquiry, scope: "allKnown", knowledgeRefs: [] } }; }
+
+it("ActorPlan telemetry records one physical invocation with usage and no NPC content, including after recovery", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
+  const stub = await initialize("vnext-actor-plan-telemetry-success"), c = capture(), root = await seedPlan(stub, true);
+  c.crashAt = "afterActorPlanResponseSaved";
+  await expect(resume(stub, root, c)).rejects.toThrow("interrupted:afterActorPlanResponseSaved");
+  const saved = await snapshot(stub, root);
+  expect(c.actorRequests).toHaveLength(1);
+  expect(saved.invocations[0].status).toBe("completed");
+  const telemetry = actorPlanTelemetry(log.mock.calls);
+  expect(telemetry).toHaveLength(1);
+  expect(telemetry[0]).toMatchObject({ modelResult: "success", modelTask: "proposal", modelAttempt: 1,
+    modelInputTokens: 123, modelOutputTokens: 45, modelTotalTokens: 168 });
+  expect(telemetry[0].rootActionHash).toBeTruthy();
+  expect(JSON.stringify(telemetry)).not.toMatch(/NPC_PRIVATE_|PLAYER_PRIVATE_|tool_calls|prompt_tokens/);
+  for (const secret of [root, PLAN, NPC, PREMISE, PRIVATE_REF, "vnext-actor-plan-telemetry-success"]) {
+    expect(JSON.stringify(telemetry)).not.toContain(secret);
+  }
+  await evictDurableObject(stub);
+  expect(await resume(stub, root, c)).toMatchObject({ kind: "committed" });
+  expect(c.actorRequests).toHaveLength(1);
+  expect(actorPlanTelemetry(log.mock.calls)).toEqual(telemetry);
+  expect((await snapshot(stub, root)).state.campaignRuntime.npcPlans[PLAN].status).toBe("resolved");
+});
+
+it("ActorPlan telemetry reports an unknown dispatched outcome once without inventing usage or resampling", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
+  const stub = await initialize("vnext-actor-plan-telemetry-failure"), c = capture(), root = await seedPlan(stub, true);
+  c.failActor = true;
+  expect(await resume(stub, root, c)).toMatchObject({ kind: "rejected", code: "ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN" });
+  expect(c.actorRequests).toHaveLength(1);
+  const telemetry = actorPlanTelemetry(log.mock.calls);
+  expect(telemetry).toHaveLength(1);
+  expect(telemetry[0]).toMatchObject({ modelResult: "modelTransient", modelAttempt: 1 });
+  expect(telemetry[0].modelInputTokens).toBeUndefined();
+  expect(telemetry[0].modelOutputTokens).toBeUndefined();
+  const before = await snapshot(stub, root);
+  await evictDurableObject(stub);
+  expect(await resume(stub, root, c)).toMatchObject({ kind: "rejected", code: "ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN" });
+  expect(c.actorRequests).toHaveLength(1);
+  expect(actorPlanTelemetry(log.mock.calls)).toEqual(telemetry);
+  expect((await snapshot(stub, root)).events).toEqual(before.events);
+});
+
+it("ActorPlan telemetry excludes a shared-budget refusal and records the later actual dispatch", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
+  const stub = await initialize("vnext-actor-plan-telemetry-budget"), c = capture(), root = await seedPlan(stub, true);
+  const scope = createVNextModelCallScope({ roomId: "vnext-actor-plan-telemetry-budget", limit: "1", emit() {} });
+  await scope.bind({ async run() { return {}; } }).run("test", {});
+  const transport = new ActorPlanTransportCapability(scope.bind(actorBinding(c)));
+  const blocked = await runInDurableObject(stub, instance => (instance as unknown as Internals).commitDueActivity(root, transport));
+  expect(blocked).toMatchObject({ kind: "retryableFailure", code: "ACTOR_PLAN_DECISION_CALL_BUDGET_EXHAUSTED" });
+  expect(c.actorRequests).toHaveLength(0);
+  expect(actorPlanTelemetry(log.mock.calls)).toEqual([]);
+  expect((await snapshot(stub, root)).invocations[0].status).toBe("prepared");
+  await evictDurableObject(stub);
+  expect(await resume(stub, root, c)).toMatchObject({ kind: "committed" });
+  expect(c.actorRequests).toHaveLength(1);
+  expect(actorPlanTelemetry(log.mock.calls)).toHaveLength(1);
+});
 
 it("a real time commit executes one existing NPC plan through the durable queue and freezes only its observable trace", async () => {
   const stub = await initialize("vnext-actor-plan-time-room"), c = capture(), root = await seedPlan(stub);

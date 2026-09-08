@@ -1,3 +1,5 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { soleStep, rebundle, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -75,16 +77,20 @@ test('different observed entity kinds follow the same parser, lowering, Rules an
     assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
     assert.ok(soleStep(lowered.command).plan.readSet.some(binding => binding.ref === subjectRef
       && binding.revisionOrHash === authorityRevisionOrHash(f.state, subjectRef)));
-    const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
     assert.equal(result.kind, 'committed', JSON.stringify(result));
     const factId = result.events.find(event => event.eventType === 'SensoryEvidenceAcquired').payload.factId;
     assert.equal(result.state.canonicalFacts[factId].value.subjectRef, subjectRef);
-    const view = f.runtime.project(f.profiles, result.state, f.viewer, { channel: 'realtime', committedRange: {
+    const view = f.runtime.project(f.profiles, result.state, f.viewer, { channel: 'realtime', committedRange: committedActionRange(result.state, {
       receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events: result.events,
-    } });
+    }) });
     assert.equal(view.kind, 'projected');
     assert.doesNotMatch(JSON.stringify(view), /OTHER_PLAYER_PRIVATE|NPC_PRIVATE|HIDDEN_PRIVATE|REMOTE_PRIVATE/);
-    for (const field of ['entities', 'combatRuntime', 'campaignRuntime', 'fictionTime']) assert.deepEqual(result.state[field], f.state[field]);
+    const { activities: _activities, ...campaign } = result.state.campaignRuntime;
+    const { activities: _initialActivities, ...initialCampaign } = f.state.campaignRuntime;
+    assert.deepEqual(campaign, initialCampaign);
+    assert.ok(Object.values(result.state.campaignRuntime.activities).every(activity => activity.status === 'completed'));
+    for (const field of ['entities', 'combatRuntime', 'fictionTime']) assert.deepEqual(result.state[field], f.state[field]);
   }
 });
 
@@ -96,12 +102,12 @@ test('missing, forged and stale subject bindings fail before events, as do hidde
     input => { soleInput(input).plan.readSet.find(binding => binding.ref === NPC).revisionOrHash = `sha256:${'0'.repeat(64)}`; },
   ]) {
     const input = structuredClone(lowered.command.rulesInput); mutate(input);
-    const result = f.runtime.step(f.profiles, f.state, input);
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, input);
     assert.equal(result.kind, 'rejected', 'every selected observation subject must retain its frozen read binding'); assert.deepEqual(result.events, []);
   }
   const moved = structuredClone(f.state);
   moved.combatRuntime.entities[NPC].position.x = '500';
-  const stale = f.runtime.step(f.profiles, moved, lowered.command.rulesInput);
+  const stale = stepActionToDecision(f.runtime, f.profiles, moved, lowered.command.rulesInput);
   assert.equal(stale.kind, 'rejected'); assert.deepEqual(stale.events, []);
   for (const ref of [HIDDEN, REMOTE, 'knowledge:same']) assert.equal(lower(f, ref).kind, 'rejected');
 });
@@ -162,7 +168,7 @@ function dynamicFixture() {
   assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
   const lowered = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-  const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, 'committed', JSON.stringify(result));
   const [locationRef, passageRef] = result.events.filter(event => event.eventType === 'SemanticDefinitionMaterialized')
     .map(event => event.payload.definitionRef);
@@ -187,7 +193,7 @@ test('closed dynamic locations and passages use the same spatial permission at e
     if (scene === SCENE) {
       const lowered = lower({ ...f, state, rootActionId, requiredContext: context }, f.passageRef);
       assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
-      assert.equal(f.runtime.step(f.profiles, state, lowered.command.rulesInput).kind, 'committed');
+      assert.equal(stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput).kind, 'committed');
     }
   }
   const hidden = structuredClone(f.state);

@@ -1,3 +1,5 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { itemAssemblyReadRefs } from "../app/_runtime/lib/rules/v2/item-assemblies.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -60,8 +62,8 @@ function verifyReplay(f, events, state) {
   assert.equal(result.kind, "replayed", JSON.stringify(result)); assert.deepEqual(result.state, state); return result;
 }
 function projected(f, before, result, viewer = f.viewer) {
-  const value = f.runtime.project(f.profiles, result.state, viewer, { channel: "realtime", committedRange: {
-    receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: before, events: result.events } });
+  const value = f.runtime.project(f.profiles, result.state, viewer, { channel: "realtime", committedRange: committedActionRange(result.state, {
+    receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: before, events: result.events }) });
   assert.equal(value.kind, "projected", JSON.stringify(value)); return value;
 }
 
@@ -159,7 +161,7 @@ test("model filling interface lowers a single ordinary assembly through the exis
   const decoded = parseSubmitKpProposalBundleArguments(encodeVNextStrictToolBundle(value));
   const lowered = lowerVNext2ProposalBundle({ value: decoded, rootActionId, actorCharacterId: ACTOR, requiredContext: frozen.context, state: f.state });
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   assert.equal(Object.keys(result.state.campaignRuntime.itemSystem.assemblies).length, 1);
   assert.equal(result.events.filter(e => e.eventType === "ItemAssemblyChanged").length, 1);

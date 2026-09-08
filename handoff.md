@@ -1,6 +1,6 @@
 # 交接 — vNext 完整 Goal 续作（2026-09-08）
 
-写给下一个接手的我自己。基线是 **HEAD**（工作树干净）；下面每条状态都注明了来源是我本次核对的，还是抄自既有回执的。
+写给下一个接手的代理。本次提交承接 `e657162`，包含两处遥测修复、非战斗活动通知实现、直接消费者测试与交接更新。历史真实批次结论与本次本地验证分开记录；独立合同的其他修改保留在工作树。
 
 这个文件永远是**当前**交接点。旧检查点仍可用 `git log -- handoff.md` 取回；按主题归档的历史交接在 `docs/agent/`。
 
@@ -8,15 +8,15 @@
 
 ## 1. 一句话状态
 
-**2026-09-08 下午。HEAD `d374dca`，`cloudflare` 领先 `origin` 40 个提交，未推送。工作树干净。** 本节只写「现在在哪、下一步是什么」；细节在 §5、§7 与各回执。
+**2026-09-08 本地实现提交。两处遥测修复和非战斗活动通知机制已完成本地定向验证并纳入本提交，父提交为 `e657162`；本提交后 `cloudflare` 领先本地跟踪引用 `origin/cloudflare` 42 个提交。本次未 fetch、push 或跑新真实批次。** 用户已明确“非战斗状态可以，战斗不可以”，无需重复询问这一边界。玩家普通耗时提案先成为 Activity，休整/活动按实际期限推进，角色合法获知消息后暂停并由原控制者继续或结束，完成结果不提前发放。战斗保留既有回合与反应规则。见[活动回执](docs/agent/vnext-activity-attention-validation.md)、[能力合同](docs/agent/vnext-activity-attention-contract-proposal.md)和[遥测回执](docs/agent/vnext-telemetry-validation.md)。lowering 的直接调用者已按 Activity 阶段迁移并核对，当前定向范围无未解决失败；真实 NPC 主动传话与连续游玩仍未验证。
 
-今天做完并拿到真实证据的三件事：
+此前当日真实批次提供了三类证据：
 
 1. **提案线改成三张平表**（`decision / steps / results`，parser v48→v51）。round91 是它第一次跑完整个场景：社交、一小时等待、observe 单独成根，每句 4 次调用、零修订、全部提交（[回执](docs/agent/vnext-round91-validation.md)）。
 2. **承诺合同第 1、2、3 层在真实模型上连成了一条链**（round88，[回执](docs/agent/vnext-round88-validation.md)）：瓦罗承诺一小时内抄好副本 → `promise{due:1h, trace}` → 同根 `PromiseMade → NpcPlanFormed → ActivityStarted` → 玩家等 61 分钟跨过到期点 → 到期决策 execute → `NpcActionCommitted → CanonicalFactDeclared` → 旁白先出「账台上放着一份抄好的备案件副本」。n=1。
-3. **传输层的一个事实**：DeepSeek 严格模式对 anyOf 分支内部的约束不校验（round84 多余属性、round85 多余属性、round86 枚举），且会返回空的 `{}`（round87、89）。能靠 schema 封死的槽位必须放在 anyOf 之外；封不死的靠解码器拒或一次重发。
+3. **传输层的观察**：DeepSeek 严格模式在已采集样本中未拦住 anyOf 分支内的多余属性（round84、85）和枚举违规（round86），也出现了空 `{}`（round87、89）。这些样本不能证明所有 anyOf 约束均不校验；当前采用平层枚举并保留本地严格校验，拒绝或按已批准边界一次重发。
 
-三条设计裁定（时长档位、几小时尺度的承诺、承诺怎么还）全部实现并有真实证据，见 §7「真实证据分账」。
+时长档位与承诺派生、到期执行已有上述证据，见 §7「真实证据分账」。承诺记录的 fulfilled/broken 生命周期仍与合同文字有差异；等待时主动观察也未闭合，不能把三句提交等同于完整产品语义通过。
 
 今天 8 批（round84–91）共约 ¥3.5，每批都在 20 次调用 / ¥5 之内，全部正常关停、replay 精确、源码起止相同。
 
@@ -24,9 +24,9 @@
 
 | 项 | 值 |
 | --- | --- |
-| 分支 | `cloudflare`，领先 `origin/cloudflare` 40 个提交，**未推送** |
-| HEAD | `d374dca`（docs），运行时最后一次改动是 `da36c87`（parser v51） |
-| 测试基线 | `81c3b1e`：node 全套与 vitest 全套的失败名单按名比对，今天每次提交都是 0 新失败（KP 组 + room 套件 793 例，759 过，34 个基线红） |
+| 分支 | `cloudflare`，本提交后领先本地 `origin/cloudflare` 42 个提交；本次未联网刷新远端引用 |
+| 实现提交 / 工作树 | 本次活动与遥测实现提交，父提交 `e657162`；具体 SHA 以 `git log -1` 为准。工作树另有独立合同修改，未纳入本提交 |
+| 测试基线 | 历史交接以 `81c3b1e` 对照，记载 KP + Room 793 例中 759 过、34 个基线红；本次未重做历史全组对比；遥测与活动机制分开验证，直接调用者与当前结果见活动回执 |
 | parser 合同 | `kp-vnext2-proposal-parser-v51`（`proposal-provider.ts` 的 `VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT`） |
 | 工作目录 | `/Users/sanmu/Documents/zhuwei-cloudflare`；工作树是否干净以 `git status` 为准 |
 | 另有 | `git stash list` 一条 `codex: preserve local changes before GitHub sync 2026-08-31`，不要动 |
@@ -35,16 +35,18 @@
 
 源码地图见 [repo-map.md](docs/agent/repo-map.md)。提案线的中心文件：`app/_runtime/lib/kp/vnext/proposal-filling-interface.ts`（三张表的 schema 与 codec）、`proposal-schema.ts`（域 schema、哨兵解码）、`proposal-provider.ts`（合同版本、修订/重发策略）、`proposal-bundle-lowering.ts`（lowering 与引用校验）。
 
+本次活动接缝主要在 `rules/v2/activity-progress.ts`、`due-activities.ts`、`world-interactions.ts`、`campaign-actions.ts`、`campaign-events.ts` 与 `room/durable-object.ts`；Table/API/Claims/重放消费者已同步，完整范围及证据见活动回执。独立合同产出不代表其能力已经实现。
+
 ## 3. 先接受这三件事，再动手
 
-**一，commit 已放开，push 没有。** 完成一个切片就自己提交，用仓库的 conventional commit 风格，正文如实写清验证了什么、没验证什么、还有什么是红的；提交尾部 `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`。这不外推：`git push`、部署、远端 migration、创建远端资源、退役房间/归档仍然每次都要用户在当轮点头。任何时候都不要用 `git reset`、`git stash`、`git checkout --` 或切分支来清理工作树。
+**一，本地提交与外部操作分开。** 用户本轮明确要求“先把本地实现提交了”；本提交只收录上述实现、测试及其文档，独立合同和对应词表/日志改动保留在工作树。继续按用户“一步一步、需求需要确认就停下”的要求推进。使用 conventional commit，正文如实写清验证与未覆盖范围，署名反映实际贡献者，不沿用其他代理署名。`git push`、部署、远端 migration、创建远端资源按下列授权边界；旧房退役以当前 AGENTS 的已授权范围为准。不要用 `git reset`、`git stash`、`git checkout --` 或切分支来清理工作树。
 
 **二，本地绿不等于真实通过。** 本地 Node/Vitest 测试和 typecheck 只用于定位与防回归；只有 `docs/agent/vnext-round<N>-validation.md` 里、经正常注册 Cookie + 真实 DeepSeek 走完的批次，才算「真的过了」。注入响应、fixture、重采样都不算。失败不改判、不重跑洗成功、不把两类失败合并计数。**批次脚本不得改玩家句子**——三句话是用户批准的。
 
 **三，执行边界（用户已明确，见 [AGENTS.md](AGENTS.md)）。**
 
 - 有界真实 DeepSeek 批次：已授权，不必逐次再问；预算每批 20 次物理调用 / ¥5 / 20 分钟，每次 HTTP **7** 次调用（用户 2026-09-08 裁定「先确保功能正确，预算之后再考虑」；round88 证明等待跨到期正好要 7）、120 s；首个技术失败停止新行动；秘密脱敏；结果精确核对。
-- 退役 0.4 以前的房间与归档：已授权。
+- 旧房退役：AGENTS 的 2026-09-05 补充决定已覆盖既有 **0.4 房间及其可恢复归档**；替代能力与切换准备完成、范围核验后执行，不为同一范围重复询问。账号、无关数据及 vNext 后续新房不在授权内；本次未执行退役。
 - 部署、远端 migration、创建远端资源、Git push、里程碑冻结、完整回归：**每次都要用户在当轮明确授权**。「修好了」「完成了」不构成授权。
 - 密钥只从 `.dev.vars` / Worker Secret 读，不写进仓库、不贴进聊天。
 
@@ -63,9 +65,11 @@
 
 还没站住的：**连续多个意图的稳定性**（连过三句的只有 round81、round91 两批）、承诺链只有一例、多人 20+、完整叙述质量、生产采用门（V12/V13 未动，生产仍是 V3）。
 
-## 5. 真实批次的准确结论（新到旧）
+## 5. 真实批次结论摘录（新到旧，非完整清单）
 
 抄自各自回执，不要在没有新批次的情况下改写这些判断。round82 起场景固定为三句：「一小时内抄一份副本送到账台」/「等上一个多小时」/「到账台前看副本在不在」。
+
+下表未收录 [round71](docs/agent/vnext-round71-validation.md)、[round78](docs/agent/vnext-round78-validation.md)、[round79](docs/agent/vnext-round79-validation.md)、[round80](docs/agent/vnext-round80-validation.md)，不能称为 round70–91 全量结论表。
 
 | 批次 | 场景 | 结果 | 停在哪 |
 | --- | --- | --- | --- |
@@ -118,12 +122,14 @@
 | 服务器语法证据的窄修订（v47） | **round83** |
 | observe 单独成根 | **round91** |
 | parser v41 一次补选 | **无** |
+| ActorPlan 调用与等待推进遥测（本次本地修复） | **无**；两组 Room 6 项、遥测白名单/脱敏 11 项通过，下一批实际核对 |
+| 非战斗活动通知（本次本地实现） | **无**；Node 组 308/309，剩余旧形状断言修正后该文件 8/8；Room 6 过、9 跳过及 typecheck 通过；消息传递为受控 fixture，不算 NPC 模型自主行为 |
 
 ### 接下来按这个顺序
 
-1. **两处遥测缺口**（代码活，各自一个小切片，本地测试即可，下一批顺带验）：ActorPlanTransport 的调用（到期计划决策）没有 invocation 遥测行，meter 只能按上限计成未知 usage（round88 ¥0.67 而不是约 ¥0.45）；等待跨到期的结算事件走时间推进路径，`room.authority.commit.completed` 对那一根的 `fictionTimeMicros` / `crossedDeadlineCount` 是 null，非零 `crossedDeadlineCount` 至今无真实证据。
-2. **observe 与 passTime 同选后被丢弃，七次。** 选择阶段要 `["passTime","observe"]`，填写只能出 passTime 终结形（`steps: []`），observe 没有落点。这是合同问题，要用户裁定：等待时的观察该是等待旁白的一部分（现状，无机械）、还是等待完成后的一个 observe 根、还是 passTime 允许带 observe 步骤。别自己选。
-3. **再跑同三句**：每批约 ¥0.5，每批都是承诺链、v50/v51/裁决 basisRefs 的一次机会；跑前把上一批的包克隆成新包（§9）。
+1. **两处遥测已本地修复，真实待验**：NPC 到期调用发 `room.model.invocation.completed`（用途 `actorPlan`，有 usage 才记 tokens）；每段等待提交后发独立 `room.time-passage.advanced`，记录实际时间增量与到期数。公共“开始等待”日志保持原含义，恢复/重复请求不新增计数。详见[回执](docs/agent/vnext-telemetry-validation.md)，不得据此回填 round88 费用或声明真实非零到期数已验证。
+2. **非战斗活动通知机制已本地贯通，真实待验。** 用户批准取代普通非战斗行动原乙案的即时结算。现有长休/调查已覆盖途中消息、恰好完成时通知、继续前提失效、停止、越权、驱逐和检定恢复；战斗不走活动继续。lowering 直接测试已迁移，恢复输入、社交时间、纠错与待决调度的直接影响已核对，详见[实现与验收](docs/agent/vnext-activity-attention-validation.md)。下一步准备真正活动中的消息场景，不把本地定向通过写成全项目或真实模型通过。原七次 passTime/observe 未使用记录作为历史问题保留。
+3. **旧三句可另行复验**：它继续验证 parser/承诺链，不能代替活动通知场景。每批约 ¥0.5，每批都是承诺链、v50/v51/裁决 basisRefs 的一次机会；跑前把上一批的包克隆成新包（§9），不改旧批次或原句。
 4. **连续意图稳定性**仍是最大的未知：n=2。
 5. push 要用户的话。
 
@@ -131,10 +137,12 @@
 
 - 闹钟路径（玩家不在线时到期）完成的等待：audience 建好但当时无人旁白，靠 `narrationRecovery` 在下次 observe 发布——链路是旧的，等待这一用法没跑过。
 - 旧线 vnext-1（`atomicRulesSteps`）没有时长字段。
-- DeepSeek 严格模式：anyOf 分支内不校验、可能返回 `{}`（2/11）。凡靠 schema 封死的字段，约束要放在 anyOf 之外；裁决/步骤变体本身就是 anyOf，其内部只能靠解码器拒。
+- DeepSeek 严格模式：已观察到 anyOf 分支内违规未被拦住，旧批次 11 次填写中有 2 次空 `{}`；这是历史样本，不能作为所有 schema 的普遍结论或当前失败率。裁决/步骤的本地校验仍必须执行。
 
 ## 8. 已知缺口（各自建合同，别塞进同一个补丁）
 
+- **承诺生命周期差异**：[承诺合同](docs/agent/vnext-hours-scale-promise-contract-proposal.md) §4.2 写 fulfilled/broken，§7 实现回执明确承诺状态不变；round88 证明计划 resolved，不证明承诺已履约。用户对违约原因和 KP 改约判断的裁定已在独立生命周期合同中整理，后续按该合同承接实现；不属于本次活动通知提交。
+- **等待时长验收**：round91 的“一个多小时”实际提交为 1 小时；普通行动的档位合同不能直接证明显式 passTime 的这次自然语言解释正确。保留为待确认的验收语义，尚未定位代码根因。
 - **真实窄修订**：语义级修订仍未触发过（round83 只是语法级）。
 - **旁白文字精确度**：满血说「伤势」、笼统说「资源剩 3 次」（round73）。
 - **`highRiskConfirmed`**：仍无消费者，继续失败关闭。
@@ -201,6 +209,8 @@ python3 /tmp/zhuwei-round<N>-npc-preparation/source-end.py
 ```
 
 然后写 `docs/agent/vnext-round<N>-validation.md` + `-live-evidence.json`（照 round91 的样子），更新本文 §5 表与 §7 分账，提交。`runner.mjs` 里 `perHttp` 的字面量是 7（round89 起）；`services.py` 给服务端的 `ZHUWEI_VNEXT_LOCAL_CALL_LIMIT` 也是 7。
+
+本次遥测修复后的新包还须提取 `room.time-passage.advanced`，逐段核对已提交的时间增量和到期数；ActorPlan invocation 可沿用 meter 现有格式。具体字段与证据边界见[遥测回执](docs/agent/vnext-telemetry-validation.md#后续验证与未覆盖范围)，不修改已关闭批次包。
 
 ## 10. 不要做的事
 

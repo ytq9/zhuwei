@@ -77,7 +77,8 @@ export function atomicAuthorityBindingHash(state: AuthoritativeWorldState): stri
     fictionTimelines: state.fictionTimelines, scenes: state.scenes,
     principals: state.principals, seats: state.seats, characterControls: state.characterControls,
     entities: state.entities, canonicalFacts: state.canonicalFacts, knowledge: state.knowledge,
-    campaignRuntime: state.campaignRuntime,
+    campaignRuntime: { ...state.campaignRuntime, activities: Object.fromEntries(Object.entries(state.campaignRuntime.activities)
+      .map(([id, activity]) => { const { completionInputInFlight: _input, ...domain } = activity; return [id, domain]; })) },
     combatRuntime: { ...state.combatRuntime, pendingInputs: {} },
     pendingInputs: state.pendingInputs,
   });

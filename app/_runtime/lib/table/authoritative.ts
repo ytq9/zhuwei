@@ -1247,6 +1247,15 @@ function safeProjectedActivities(value: unknown) {
               status,
               startedAtFictionMicros,
               intendedDurationMicros,
+              ...(activity.kind === "activity" ? { kind: "activity" as const,
+                ...(typeof activity.progressFictionMicros === "string" ? { progressFictionMicros: activity.progressFictionMicros } : {}),
+                ...(isRecord(activity.attention) && nonEmptyString(activity.attention.rootActionId)
+                  && typeof activity.attention.atFictionMicros === "string" && Array.isArray(activity.attention.messages)
+                  && activity.attention.messages.every(message => typeof message === "string") ? { attention: {
+                    rootActionId: String(activity.attention.rootActionId), atFictionMicros: activity.attention.atFictionMicros,
+                    messages: activity.attention.messages as string[],
+                  } } : {}),
+              } : {}),
               ...(activity.kind !== "timePassage" ? {} : {
                 kind: "timePassage" as const,
                 ...(typeof activity.progressFictionMicros === "string" && /^(0|[1-9][0-9]*)$/.test(activity.progressFictionMicros)

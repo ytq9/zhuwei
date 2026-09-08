@@ -1,3 +1,4 @@
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
@@ -47,7 +48,7 @@ function replay(fixture, result, precedingEvents = []) {
 function assertConflict(fixture, input, state) {
   assert.equal(validate(fixture, input, state).kind, "conflict");
   const before = structuredClone(state);
-  const result = fixture.runtime.step(fixture.profiles, state, input);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, state, input);
   assert.equal(result.kind, "rejected", JSON.stringify(result));
   assert.equal(result.rejection.code, "causalFrontierConflict");
   assert.deepEqual(result.events, []);
@@ -68,7 +69,7 @@ test("a timed in-world refusal carries its frozen dependencies through the actua
   assert.deepEqual(input.plan.basisRefs, [SOURCE, SCENE].sort());
   assert.ok(input.plan.readSet.some(binding => binding.ref === ACTOR));
   assert.ok(input.plan.readSet.some(binding => binding.ref === `character-timeline:${ACTOR}`));
-  const result = fixture.runtime.step(fixture.profiles, fixture.state, input);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, input);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   assert.equal(result.state.fictionTimelines[fixture.state.activeBranchId].nowMicros, "28800000000");
   replay(fixture, result);
@@ -84,7 +85,7 @@ test("zero-cost and resource-cost refusals use the same frozen path without inve
     const input = lowered(fixture, refusal(costs));
     assert.equal(validate(fixture, input).kind, "valid");
     assert.deepEqual(input.plan.readSet.map(binding => binding.ref), [ACTOR, SOURCE, SCENE].sort());
-    const result = fixture.runtime.step(fixture.profiles, state, input);
+    const result = stepActionToDecision(fixture.runtime, fixture.profiles, state, input);
     assert.equal(result.kind, "committed", JSON.stringify(result));
     assert.equal(result.state.entities[ACTOR].resources["spellSlot:1"], 2 - costs.length);
     assert.deepEqual(result.state.fictionTimelines, state.fictionTimelines);
@@ -127,7 +128,7 @@ test("an item refusal binds the exact held entry and rejects changed stock befor
   let fixture = createAuthoredProbeFixture("refusal-item-setup");
   const bundle = itemBundle();
   bundle.proposals.pop(); // Acquire the item through Rules; do not activate its Ability.
-  const created = fixture.runtime.step(fixture.profiles, fixture.state, lowered(fixture, bundle));
+  const created = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered(fixture, bundle));
   assert.equal(created.kind, "committed", JSON.stringify(created));
   const entryRef = Object.values(created.state.campaignRuntime.itemSystem.entries)
     .find(entry => entry.holderRef === ACTOR && entry.disposition === "held").entryId;
@@ -148,7 +149,7 @@ test("held-knowledge aliases ground refusal basis and prerequisites without subs
   const input = lowered(fixture, refusal([], [KNOWLEDGE],
     [{ kind: "knowledge", ref: KNOWLEDGE, description: "先核实已有记录中的操作条件。" }]));
   assert.ok(input.plan.readSet.some(binding => binding.ref === `knowledge:${ACTOR}:${KNOWLEDGE}`));
-  assert.equal(fixture.runtime.step(fixture.profiles, fixture.state, input).kind, "committed");
+  assert.equal(stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, input).kind, "committed");
   const changed = structuredClone(fixture.state);
   changed.knowledge[ACTOR][KNOWLEDGE].content = "记录已经改变。";
   assertConflict(fixture, input, changed);
@@ -183,7 +184,7 @@ test("knowledgeReview ignores the timeline binding and remains valid after unrel
   const state = structuredClone(fixture.state);
   state.fictionTimelines[state.activeBranchId].nowMicros = "1000000";
   assert.equal(validate(fixture, input, state).kind, "valid");
-  const result = fixture.runtime.step(fixture.profiles, state, input);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, state, input);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   assert.deepEqual(result.state.fictionTimelines, state.fictionTimelines);
 });

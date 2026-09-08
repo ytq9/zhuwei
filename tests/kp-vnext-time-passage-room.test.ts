@@ -2,7 +2,7 @@ import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json";
 import { projectAuthoritativeTableObservation } from "../app/_runtime/lib/table/authoritative";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { handleRoomAction, type RoomActionInput, type RoomAuthorityCapability } from "../app/_runtime/lib/room/action";
 import { createVNextKpAdapter } from "../app/_runtime/lib/kp/vnext/adapter";
 import type { AuthoritativeKpAdapter, AuthoritativeModelBinding } from "../app/_runtime/lib/kp/authoritative-types";
@@ -49,6 +49,15 @@ type Capture = { playerRequests: RecordValue[]; actorRequests: RecordValue[]; na
   afterStart?: (target: Internals) => void; callLimit?: string; countNarrationCalls?: boolean; httpCalls: string[][] };
 const capture = (): Capture => ({ playerRequests: [], actorRequests: [], narration: [], actorCalls: {}, draws: 0, httpCalls: [] });
 function record(value: unknown): RecordValue { return value as RecordValue; }
+afterEach(() => vi.restoreAllMocks());
+function timePassageTelemetry(calls: unknown[][]): RecordValue[] {
+  return calls.flatMap(([line]) => {
+    try {
+      const event = JSON.parse(String(line));
+      return event.eventName === "room.time-passage.advanced" ? [event] : [];
+    } catch { return []; }
+  });
+}
 
 async function initialize(name: string, mechanicalNpc = false, keepSecondPlayer = false): Promise<Stub> {
   const stub = env.VNEXT_ROOMS.getByName(name);
@@ -126,6 +135,16 @@ function actorBinding(c: Capture): AuthoritativeModelBinding { return { async ru
 
 const timeInput = (id: string): RoomActionInput => ({ kind: "intent", submissionId: id, text: "我等待并留意周围的动静。" });
 
+function requestedCapabilities(value: unknown): string[] {
+  const bundle = record(value), terminal = record(bundle.terminal);
+  if (bundle.mode !== "terminal") return [...new Set((bundle.proposals as RecordValue[]).map(entry => String(entry.kind)))];
+  if (terminal.kind !== "clarification") return [String(terminal.kind)];
+  return [...new Set((terminal.choices as RecordValue[]).flatMap(choice => {
+    const next = record(choice.continuation);
+    return next.kind === "adjudication" ? requestedCapabilities({ mode: "adjudication", proposals: next.proposals }) : [];
+  }))];
+}
+
 async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: unknown) {
   await runInDurableObject(stub, instance => install(instance as unknown as Internals, c));
   const execute = async (target: Internals) => {
@@ -162,7 +181,7 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: un
       const name = String(record(record((request.tools as RecordValue[])[0]).function).name);
       return { choices: [{ message: { tool_calls: [{ type: "function", function: { name,
         arguments: JSON.stringify(name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME
-          ? { requestedCapabilities: [String(record(record(response).terminal).kind)] } : encodeVNextStrictToolBundle(response)) } }] } }] };
+          ? { requestedCapabilities: requestedCapabilities(response) } : encodeVNextStrictToolBundle(response)) } }] } }] };
     } }) });
     return handleRoomAction({ principal: ALICE, authority, kp }, input);
   };
@@ -195,6 +214,7 @@ function passageActivity(state: AuthoritativeWorldState) {
 function elapsedEvents(events: EventEnvelope[]) { return events.filter(event => event.eventType === "FictionTimeAdvanced"); }
 
 it("a plain wait uses one selection, one proposal, and deterministic Activity delivery, with exact authority duration and replay", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
   const stub = await initialize("vnext-passage-plain"), c = capture();
   const before = await snapshot(stub), timeline = characterTimelineId(before.state, ACTOR)!;
   const input = timeInput("submission:passage:plain");
@@ -204,6 +224,9 @@ it("a plain wait uses one selection, one proposal, and deterministic Activity de
   expect(activity).toMatchObject({ status: "completed", intendedDurationMicros: "17000000",
     endedAtFictionMicros: (BigInt(before.state.fictionTimelines[timeline].nowMicros) + 17000000n).toString() });
   expect(elapsedEvents(after.events).map(event => record(event.payload).durationMicros)).toEqual(["17000000"]);
+  const telemetry = timePassageTelemetry(log.mock.calls);
+  expect(telemetry).toHaveLength(1);
+  expect(telemetry[0]).toMatchObject({ fictionTimeMicros: "17000000", crossedDeadlineCount: 0 });
   expect(c.playerRequests).toHaveLength(2); expect(c.actorRequests).toHaveLength(0); expect(c.draws).toBe(0);
   // The completed wait is narrated once for its live owner; the deterministic Activity display stays.
   expect(c.narration).toHaveLength(1);
@@ -215,6 +238,7 @@ it("a plain wait uses one selection, one proposal, and deterministic Activity de
   await evictDurableObject(stub);
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
   expect((await snapshot(stub)).events).toEqual(after.events); expect(c.playerRequests).toHaveLength(2);
+  expect(timePassageTelemetry(log.mock.calls)).toEqual(telemetry);
   await runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { genesis, state } = target.authoritativeReplay();
     const replayed = target.rulesRuntime.replay(genesis, target.authorityStore.events());
@@ -223,6 +247,7 @@ it("a plain wait uses one selection, one proposal, and deterministic Activity de
 }, 30_000);
 
 it("a one minute wait stops at the NPC deadline, commits its real trace, then completes the remaining time", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
   const stub = await initialize("vnext-passage-npc"), c = capture(), root = await seedPlan(stub);
   const before = await snapshot(stub), timeline = characterTimelineId(before.state, ACTOR)!;
   const result = await run(stub, timeInput("submission:passage:npc"), c, passage("60000000"));
@@ -231,6 +256,14 @@ it("a one minute wait stops at the NPC deadline, commits its real trace, then co
   expect(activity.status, JSON.stringify(after.due)).toBe("completed");
   expect(BigInt(after.state.fictionTimelines[timeline].nowMicros) - BigInt(before.state.fictionTimelines[timeline].nowMicros)).toBe(60000000n);
   expect(elapsedEvents(after.events).map(event => record(event.payload).durationMicros)).toEqual(["2000000", "58000000"]);
+  const telemetry = timePassageTelemetry(log.mock.calls);
+  expect(telemetry.map(event => [event.fictionTimeMicros, event.crossedDeadlineCount]))
+    .toEqual([["2000000", 1], ["58000000", 0]]);
+  expect(new Set(telemetry.map(event => event.rootActionHash)).size).toBe(2);
+  expect(JSON.stringify(telemetry)).not.toMatch(/NPC_PRIVATE_|PLAYER_PRIVATE_/);
+  for (const secret of [ACTOR, NPC, PLAN, ACTIVITY, PREMISE, "vnext-passage-npc"]) {
+    expect(JSON.stringify(telemetry)).not.toContain(secret);
+  }
   const traceEvent = after.events.find(event => event.eventType === "CanonicalFactDeclared" && record(record(event.payload).fact).id === TRACE)!;
   expect(traceEvent.fictionInstantMicros).toBe((BigInt(before.state.fictionTimelines[timeline].nowMicros) + 2000000n).toString());
   expect(after.state.canonicalFacts[TRACE].value).toMatchObject({ description: DESCRIPTION });
@@ -244,6 +277,7 @@ it("a one minute wait stops at the NPC deadline, commits its real trace, then co
 }, 30_000);
 
 it("a failed due NPC decision leaves the wait at that deadline and cannot spend the remaining time", async () => {
+  const log = vi.spyOn(console, "info").mockImplementation(() => {});
   const stub = await initialize("vnext-passage-npc-lost"), c = capture(), root = await seedPlan(stub);
   c.failActor = true;
   const before = await snapshot(stub), timeline = characterTimelineId(before.state, ACTOR)!;
@@ -252,6 +286,9 @@ it("a failed due NPC decision leaves the wait at that deadline and cannot spend 
   const failed = await snapshot(stub, root);
   expect(passageActivity(failed.state).status).toBe("active");
   expect(BigInt(failed.state.fictionTimelines[timeline].nowMicros) - BigInt(before.state.fictionTimelines[timeline].nowMicros)).toBe(2000000n);
+  const telemetry = timePassageTelemetry(log.mock.calls);
+  expect(telemetry).toHaveLength(1);
+  expect(telemetry[0]).toMatchObject({ fictionTimeMicros: "2000000", crossedDeadlineCount: 1 });
   expect(failed.state.canonicalFacts[TRACE]).toBeUndefined(); expect(c.narration).toHaveLength(0);
   const observation = await stub.observe(ALICE as never);
   expect(JSON.stringify(observation)).toContain('"processingState":"cannotSafelyContinue"');
@@ -262,6 +299,7 @@ it("a failed due NPC decision leaves the wait at that deadline and cannot spend 
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
   expect((await snapshot(stub, root)).events).toEqual(failed.events);
   expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2);
+  expect(timePassageTelemetry(log.mock.calls)).toEqual(telemetry);
 }, 30_000);
 
 it("a saved due response resumes after eviction and the original wait finishes without resampling", async () => {
@@ -422,4 +460,164 @@ it("the private due capability rejects a changed root or Activity before any tim
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
   expect(passageActivity((await snapshot(stub)).state).status).toBe("completed");
   expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
+}, 30_000);
+
+function investigation() { return { mode: "adjudication", basisRefs: [SOURCE], terminal: null,
+  adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "逐项查验需要时间。", successOutcome: "完成检查。" },
+  proposals: [{ kind: "worldInteraction", basisRefs: [SOURCE], consumes: [], produces: [], outcomeBinding: "always",
+    sceneRef: SCENE, targetRefs: [SOURCE], directTargetRefs: [SOURCE], instrumentRefs: [], abilityRef: null,
+    intent: "检查固定外壳", method: "逐项查看表面", branches: { success: { outcomeCode: "outcome:inspected", summary: "完整检查已经完成。",
+      effects: [], sensoryEvidence: [], pressures: [], opportunities: [] }, failure: null } }],
+}; }
+async function seedMessage(stub: Stub) {
+  await runInDurableObject(stub, instance => {
+    const target = instance as unknown as Internals, current = target.authoritativeReplay();
+    const sent = target.rulesRuntime.step(current.profiles, current.state, { kind: "shareKnowledge", proposalId: "root:fixture:message",
+      senderCharacterId: NPC, recipientEntityIds: [ACTOR], knowledgeRefs: [PREMISE], medium: "当面告知", contentLayer: current.state.knowledge[NPC][PREMISE].layer });
+    expect(sent.kind, JSON.stringify(sent)).toBe("committed");
+    if (sent.kind !== "committed") throw new Error("fixture communication failed");
+    target.authorityStore.transaction(() => target.appendAuthorityTransition(sent.state, sent.events));
+  });
+}
+function activityInput(family: string, suffix: string): RoomActionInput {
+  return family === "rest" ? { kind: "restStart", submissionId: `submission:activity:${suffix}`, restKind: "long", mode: "personal", hitDiceToSpend: 0, arcaneRecoverySlotLevels: [] }
+    : { kind: "intent", submissionId: `submission:activity:${suffix}`, text: "我花些时间逐项检查固定外壳。" };
+}
+
+it("noncombat activity: rest and a real proposal complete through the Room interface without wait input", async () => {
+  for (const family of ["rest", "investigation"]) {
+    const stub = await initialize(`vnext-activity-normal-${family}`), c = capture();
+    const input = activityInput(family, `normal-${family}`), before = await snapshot(stub);
+    const result = await run(stub, input, c, family === "rest" ? undefined : investigation());
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
+    const after = await snapshot(stub), activity = Object.values(after.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
+    expect(activity, JSON.stringify(after.due)).toMatchObject({ status: "completed" });
+    expect(after.events.filter(e => e.eventType === "ActivityCompleted" && record(e.payload).activityId === activity.activityId)).toHaveLength(1);
+    expect(after.events.filter(e => e.eventType === (family === "rest" ? "RestCompleted" : "WorldInteractionResolved"))).toHaveLength(1);
+    expect(after.state.fictionTimelines[characterTimelineId(after.state, ACTOR)!].nowMicros).toBe((BigInt(before.state.fictionTimelines[characterTimelineId(before.state, ACTOR)!].nowMicros) + BigInt(family === "rest" ? "28800000000" : "300000000")).toString());
+    const saved = structuredClone(after.events);
+    await evictDurableObject(stub);
+    expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
+    expect((await snapshot(stub)).events).toEqual(saved);
+  }
+}, 30_000);
+
+it("noncombat activity: a committed message pauses rest and investigation, survives eviction and consumes one authorized continuation", async () => {
+  for (const family of ["rest", "investigation"]) {
+    const stub = await initialize(`vnext-activity-notice-${family}`), c = capture();
+    const actorRoot = await seedPlan(stub), input = activityInput(family, `notice-${family}`);
+    c.crashAt = "afterCauseCommitBeforeDueTail";
+    await run(stub, input, c, family === "rest" ? undefined : investigation());
+    const started = await snapshot(stub), activity = Object.values(started.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
+    expect(activity).toMatchObject({ status: "active" });
+    const first = started.due.find(d => String(d.child_root_action_id).startsWith("activity-advance:"))!;
+    expect(first).toBeDefined();
+    await runInDurableObject(stub, async instance => {
+      const target = instance as unknown as Internals; install(target, c);
+      expect(await target.commitDueActivity(String(first.child_root_action_id))).toMatchObject({ kind: "committed" });
+    });
+    expect(await resume(stub, actorRoot, c)).toMatchObject({ kind: "committed" });
+    // Fixture world communication at the reached deadline: the existing Rules
+    // sharing operation grants only the sender's real held knowledge. This is
+    // not a claim that the NPC provider autonomously chose a delivery action.
+    await seedMessage(stub);
+    expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
+    const paused = await snapshot(stub), own = paused.state.campaignRuntime.activities[String(activity.activityId)];
+    expect(own).toMatchObject({ status: "active", attention: { atFictionMicros: "2000000" } });
+    expect(paused.events.some(e => e.eventType === (family === "rest" ? "RestCompleted" : "WorldInteractionResolved"))).toBe(false);
+    const control: RoomActionInput = { kind: "activityControl", submissionId: `submission:activity:continue:${family}`,
+      activityId: String(own.activityId), attentionRootActionId: String(record(own.attention).rootActionId), decision: "continue" };
+    await evictDurableObject(stub);
+    expect(await stub.prepare(BOB as never, control as never)).toMatchObject({ kind: "rejected" });
+    const observed = record(await stub.observe(ALICE as never)), projected = record(observed.readModel);
+    expect((projected.activities as RecordValue[]).find(a => a.activityId === own.activityId)).toMatchObject({ attention: { rootActionId: control.attentionRootActionId } });
+    const table = projectAuthoritativeTableObservation({ userId: ALICE.principal.id, members: [ALICE.principal.id], locationLabels: {}, observation: observed as never });
+    expect(table.activities.find(a => a.activityId === own.activityId)).toMatchObject({ attention: { rootActionId: control.attentionRootActionId } });
+    expect(JSON.stringify(table.activities)).not.toMatch(/completionReadSet|timelineAtStart|completionInput/);
+    expect(await run(stub, control, c)).toMatchObject({ kind: "committed" });
+    const completed = await snapshot(stub);
+    expect(completed.state.campaignRuntime.activities[String(own.activityId)].status, JSON.stringify(completed.due)).toBe("completed");
+    const beforeDuplicate = completed.events;
+    expect(await run(stub, control, c)).toMatchObject({ kind: "committed" });
+    expect((await snapshot(stub)).events).toEqual(beforeDuplicate);
+    expect(Object.values(c.actorCalls)).toEqual([1]);
+  }
+}, 30_000);
+
+it("noncombat activity: a notice at the exact completion boundary preserves and resumes the queued completion", async () => {
+  for (const family of ["rest", "investigation"]) {
+    const stub = await initialize(`vnext-activity-end-notice-${family}`), c = capture();
+    const input = activityInput(family, `end-notice-${family}`);
+    c.crashAt = "afterCauseCommitBeforeDueTail";
+    await run(stub, input, c, family === "rest" ? undefined : investigation());
+    const started = await snapshot(stub), activity = Object.values(started.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
+    await resume(stub, String(started.due[0].child_root_action_id), c);
+    const atEnd = await snapshot(stub), completionRoot = String(atEnd.due[0].child_root_action_id);
+    expect(atEnd.state.campaignRuntime.activities[String(activity.activityId)].status).toBe("active");
+    await seedMessage(stub);
+    await run(stub, input, c);
+    const paused = await snapshot(stub, completionRoot), own = paused.state.campaignRuntime.activities[String(activity.activityId)];
+    expect(own.attention).toBeDefined();
+    expect(paused.work).toMatchObject({ status: "pending", next_attempt_at: null });
+    expect(paused.events.some(e => e.eventType === (family === "rest" ? "RestCompleted" : "WorldInteractionResolved"))).toBe(false);
+    await evictDurableObject(stub);
+    const control: RoomActionInput = { kind: "activityControl", submissionId: `submission:end-notice:continue:${family}`,
+      activityId: String(own.activityId), attentionRootActionId: String(record(own.attention).rootActionId), decision: "continue" };
+    expect(await run(stub, control, c)).toMatchObject({ kind: "committed" });
+    const done = await snapshot(stub, completionRoot);
+    expect(done.work, JSON.stringify(done.due)).toMatchObject({ status: "committed" });
+    expect(done.state.campaignRuntime.activities[String(own.activityId)].status).toBe("completed");
+    expect(elapsedEvents(done.events)).toEqual(elapsedEvents(paused.events));
+    await run(stub, control, c);
+    expect((await snapshot(stub)).events).toEqual(done.events);
+  }
+}, 30_000);
+
+it("noncombat activity: timed checks and frozen choices recover either dice checkpoint without rerolling or premature effects", async () => {
+  for (const clarification of [false, true]) for (const checkpoint of ["afterRandomnessRequestCommit", "afterRandomnessCandidateCommit"]) {
+    const suffix = `${clarification}-${checkpoint}`, stub = await initialize(`vnext-activity-dice-${suffix}`), c = capture();
+    const draft = investigation() as RecordValue, proposal = (draft.proposals as RecordValue[])[0];
+    draft.adjudication = { kind: "check", durationMicros: "300000000", checkKind: "abilityCheck", ability: "wis", skill: "perception",
+      dc: 10, mode: "normal", risk: "可能漏掉关键信息。", successOutcome: "检查完成。", failureOutcome: "没有发现线索。" };
+    record(proposal.branches).failure = { outcomeCode: "outcome:missed", summary: "检查没有找到线索。", effects: [], sensoryEvidence: [], pressures: [], opportunities: [] };
+    const response = clarification ? { mode: "terminal", basisRefs: [SOURCE], adjudication: null, proposals: [],
+      terminal: { kind: "clarification", intent: "确认是否花时间检查。", method: "逐项检查。", question: "是否开始检查？",
+        choices: [{ choiceId: "inspect", label: "开始检查", publicRisk: "检查可能没有收获。", basisRefs: [SOURCE], continuation: {
+          kind: "adjudication", basisRefs: draft.basisRefs, adjudication: draft.adjudication, proposals: draft.proposals,
+        } }, { choiceId: "cancel", label: "取消", publicRisk: "不花时间检查。", basisRefs: [], continuation: { kind: "cancel" } }] } } : draft;
+    let input = activityInput("investigation", `dice-${suffix}`);
+    if (clarification) {
+      const opened = await run(stub, input, c, response);
+      expect(opened, JSON.stringify(opened)).toMatchObject({ kind: "awaitingInput" });
+      const waiting = await snapshot(stub), pendingInputId = Object.keys(waiting.state.frozenPlayerChoices ?? {})[0];
+      expect(Object.values(waiting.state.campaignRuntime.activities)).toHaveLength(0);
+      input = { kind: "answer", submissionId: `submission:activity:choice:${suffix}`, pendingInputId, answer: { choiceId: "inspect" } };
+    }
+    c.crashAt = checkpoint;
+    await run(stub, input, c, clarification ? undefined : response);
+    const saved = await snapshot(stub), activity = Object.values(saved.state.campaignRuntime.activities).find(a => a.characterId === ACTOR)!;
+    expect(activity).toMatchObject({ status: "active" });
+    const completionRoot = String(record(record(activity.completion).plan).rootActionId);
+    expect(saved.state.receipts[completionRoot]?.status, JSON.stringify(saved.due)).toBe("awaitingRandomness");
+    expect(saved.events.some(e => e.eventType === "WorldInteractionResolved" || e.eventType === "ActivityCompleted")).toBe(false);
+    expect(Object.keys(saved.state.frozenPlayerChoices ?? {})).toHaveLength(0);
+    expect(c.draws).toBe(checkpoint === "afterRandomnessRequestCommit" ? 0 : 1);
+    await evictDurableObject(stub);
+    expect(await resume(stub, completionRoot, c)).toMatchObject({ kind: "committed" });
+    expect(c.draws).toBe(1);
+    const done = await snapshot(stub, completionRoot);
+    expect(done.work).toMatchObject({ status: "committed" });
+    expect(done.state.campaignRuntime.activities[String(activity.activityId)].status).toBe("completed");
+    expect(done.events.filter(e => e.eventType === "WorldInteractionResolved")).toHaveLength(1);
+    expect(done.events.filter(e => e.eventType === "ActivityCompleted")).toHaveLength(1);
+    await run(stub, input, c);
+    expect((await snapshot(stub)).events).toEqual(done.events);
+    expect(c.draws).toBe(1); expect(c.playerRequests).toHaveLength(2);
+    await runInDurableObject(stub, instance => {
+      const target = instance as unknown as Internals, current = target.authoritativeReplay();
+      const replayed = target.rulesRuntime.replay(current.genesis, target.authorityStore.events());
+      expect(replayed.kind, JSON.stringify(replayed)).toBe("replayed");
+      if (replayed.kind === "replayed") expect(replayed.state).toEqual(current.state);
+    });
+  }
 }, 30_000);

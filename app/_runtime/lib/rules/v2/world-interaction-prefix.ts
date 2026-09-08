@@ -7,7 +7,7 @@ import { frozenChoiceForRoot } from "./frozen-player-choice";
 import { stepInventoryOperation } from "./inventory-operations";
 import type { AuthoritativeWorldState, CorrectionAuditRecord, JsonRecord, StepResult } from "./model";
 import { authoritativeNpcDecisionContext } from "./npc-decision-context";
-import { afterFrozenAtomicCosts, firstFrozenAtomicEventSeq, frozenAtomicInitialReadSet } from "./world-interaction-costs";
+import { afterFrozenAtomicCosts, firstFrozenAtomicEventSeq, frozenAtomicInitialReadSet, atomicEffectsStart } from "./world-interaction-costs";
 import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } from "./world-interaction-model";
 import { worldInteractionFaces, type WorldInteractionDiceSpec } from "./world-interaction-randomness";
 import { isRecord } from "./validation";
@@ -130,7 +130,7 @@ function activityPayload(start: Audit | undefined, advance: Audit | undefined, c
     || ended.collection !== "activities" || began.entryId !== ended.entryId || began.before !== null
     || ended.before?.status !== "active" || clock.kind !== "restoreFictionTime"
     || ended.before.startedAtFictionMicros !== clock.beforeMicros) return undefined;
-  const { status: _status, startedAtFictionMicros: _started, ...payload } = ended.before;
+  const { status: _status, startedAtFictionMicros: _started, progression: _progression, ...payload } = ended.before;
   return payload.activityId === began.entryId && start.payloadHash === canonicalSha256(payload)
     && completed.payloadHash === canonicalSha256({ activityId: payload.activityId }) ? payload : undefined;
 }
@@ -158,7 +158,7 @@ export function rebindFrozenSocialPrefix(state: AuthoritativeWorldState, profile
     || Object.values(state.internalContinuations).some(entry => entry.rootActionId === atomic.rootActionId
       && same(entry.resolutionPlan,atomic) && entry.committedDice !== undefined);
   if (boundStart === undefined && hasPersistedAnchor) return undefined;
-  const start = boundStart ?? (executionSource === undefined ? undefined : BigInt(executionSource.version) + 1n);
+  const start = boundStart ?? (executionSource === undefined ? undefined : atomicEffectsStart(atomic.rootActionId, BigInt(executionSource.version) + 1n, all));
   if (start === undefined || start > BigInt(endEventSeq)) return undefined;
   const audits = all.filter(entry => BigInt(entry.eventSeq) >= start);
   if (audits.length !== Number(BigInt(endEventSeq) - start) || audits.some((entry,index) =>

@@ -1,3 +1,6 @@
+import { committedActionRange } from './fixtures/vnext-action-lifecycle.mjs';
+import { atomicCompletionInput } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { soleStep, soleInput } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -49,16 +52,20 @@ function lower(f, args = observe(), context = f.requiredContext) {
   return lowerVNext2ProposalBundle({ ...f, requiredContext: context, value: parsed.bundle });
 }
 function project(f, result, events = result.events, viewer = f.viewer) {
-  const view = f.runtime.project(f.profiles, result.state, viewer, { channel: "realtime", committedRange: {
+  const view = f.runtime.project(f.profiles, result.state, viewer, { channel: "realtime", committedRange: committedActionRange(result.state, {
     receiptId: result.receipt.receiptId, actorCharacterId: ACTOR, priorState: f.state, events,
-  } });
+  }) });
   assert.equal(view.kind, "projected", JSON.stringify(view));
   return view;
 }
 function worldUnchanged(before, after) {
-  for (const field of ["entities", "combatRuntime", "campaignRuntime", "fictionTime"]) {
+  for (const field of ["entities", "combatRuntime", "fictionTime"]) {
     assert.deepEqual(after[field], before[field], field);
   }
+  const { activities: beforeActivities, ...beforeCampaign } = before.campaignRuntime;
+  const { activities: afterActivities, ...afterCampaign } = after.campaignRuntime;
+  assert.deepEqual(afterCampaign, beforeCampaign);
+  assert.ok(Object.values(afterActivities).every(activity => activity.status === "completed"));
   // Observing is an act: the only change to the clock is the declared duration on the actor timeline.
   const timelineId = before.multiplayerRuntime.characterTimelineIds[ACTOR] ?? before.activeBranchId;
   for (const [id, timeline] of Object.entries(after.fictionTimelines)) {
@@ -77,7 +84,7 @@ test("observe connects same-root perception and held evidence to a private infer
   const f = createAuthoredProbeFixture("observe-mixed", { initialKnowledge: [held(), held(OTHER, "knowledge:foreign", "OTHER_PRIVATE_CANARY")] });
   const lowered = lower(f);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   const seen = result.events.find(e => e.eventType === "SensoryEvidenceAcquired");
   const formed = result.events.find(e => e.eventType === "CharacterInferenceFormed");
@@ -108,14 +115,14 @@ test("pure reflection uses the same observe path without fabricating perception,
   const f = createAuthoredProbeFixture("observe-reflection", { initialKnowledge: [held()] });
   const lowered = lower(f, observe({ reflection: true }));
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
-  assert.deepEqual(result.events.map(e => e.eventType), ["FictionTimeAdvanced", "CharacterInferenceFormed", "WorldInteractionResolved", "AtomicWorldInteractionStepsResolved"]);
+  assert.deepEqual(result.events.map(e => e.eventType), ["ActivityStarted", "FictionTimeAdvanced", "ActivityCompleted", "CharacterInferenceFormed", "WorldInteractionResolved"]);
   worldUnchanged(f.state, result.state);
   assert.deepEqual(result.state.canonicalFacts, f.state.canonicalFacts);
   assert.doesNotMatch(JSON.stringify(project(f, result).renderableClaims), /环境互动/);
   replay(f, result.events, result.state);
-  assert.equal(f.runtime.step(f.profiles, result.state, lowered.command.rulesInput).rejection.code, "duplicateRootAction");
+  assert.equal(stepActionToDecision(f.runtime, f.profiles, result.state, lowered.command.rulesInput).rejection.code, "duplicateRootAction");
 });
 
 test("scene observation keeps held evidence aliases bound to the same holder-qualified read set", () => {
@@ -137,7 +144,7 @@ test("scene observation keeps held evidence aliases bound to the same holder-qua
     assert.ok(plan.readSet.some(binding => binding.ref === expected));
     assert.equal(plan.readSet.some(binding => binding.ref === `knowledge:${OTHER}:${knowledgeRef}`), false);
     assert.deepEqual(value, original, "normalizing evidence cannot alter the frozen model draft");
-    const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
     assert.equal(result.kind, "committed", JSON.stringify(result));
     assert.equal(result.events.find(event => event.eventType === "SensoryEvidenceAcquired").payload.publicEvidence,
       entry.branches.success.sensoryEvidence[0].evidence);
@@ -149,7 +156,7 @@ test("scene observation keeps held evidence aliases bound to the same holder-qua
       input => { soleInput(input).plan.branches.success.sensoryEvidence[0].basisRefs = [`knowledge:${OTHER}:${knowledgeRef}`]; },
     ]) {
       const input = structuredClone(lowered.command.rulesInput); mutate(input);
-      const rejected = f.runtime.step(f.profiles, f.state, input);
+      const rejected = stepActionToDecision(f.runtime, f.profiles, f.state, input);
       assert.equal(rejected.kind, "rejected"); assert.deepEqual(rejected.events, []);
     }
   }
@@ -160,7 +167,7 @@ test("observation check resumes either frozen branch and binds only that branch'
     const f = createAuthoredProbeFixture(`observe-check-${roll}`, { initialKnowledge: [held()] });
     const lowered = lower(f, observe({ check: true }));
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-    const pending = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
     assert.equal(pending.kind, "awaitingRandomness", JSON.stringify(pending));
     assert.deepEqual(pending.state.knowledge, f.state.knowledge);
     const result = f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness",
@@ -196,7 +203,7 @@ test("both observation branches reject foreign observers, invalid indices and no
     plan => { plan.readSet.find(r => r.ref === `knowledge:${ACTOR}:${PRIOR}`).revisionOrHash = `sha256:${"0".repeat(64)}`; },
   ]) {
     const input = structuredClone(lowered.command.rulesInput); mutate(soleInput(input).plan);
-    const result = f.runtime.step(f.profiles, f.state, input);
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, input);
     assert.equal(result.kind, "rejected", JSON.stringify(result));
     assert.equal(result.randomnessRequest, undefined);
   }
@@ -210,9 +217,9 @@ test("atomic prefix cannot request a roll before a later observation's frozen kn
   value.proposals.push(parsed.bundle.proposals[0]);
   const lowered = lowerVNext2ProposalBundle({ ...f, value });
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  assert.equal(lowered.command.rulesInput.kind, "applyAtomicWorldInteractionSteps");
-  assert.equal(isCanonicalAtomicWorldInteractionStepsInput(lowered.command.rulesInput), true);
-  const valid = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  assert.equal(lowered.command.rulesInput.kind, "startActionActivity");
+  assert.equal(isCanonicalAtomicWorldInteractionStepsInput(atomicCompletionInput(lowered.command.rulesInput)), true);
+  const valid = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(valid.kind, "awaitingRandomness", JSON.stringify(valid));
   assert.deepEqual(valid.state.knowledge, f.state.knowledge);
   const done = f.runtime.step(f.profiles, valid.state, { kind: "fulfillAuthoritativeRandomness", continuation: valid.continuation,
@@ -226,8 +233,8 @@ test("atomic prefix cannot request a roll before a later observation's frozen kn
     plan => { plan.readSet = plan.readSet.filter(r => r.ref !== `knowledge:${ACTOR}:${PRIOR}`); },
     plan => { plan.readSet.find(r => r.ref === `knowledge:${ACTOR}:${PRIOR}`).revisionOrHash = `sha256:${"0".repeat(64)}`; },
   ]) {
-    const input = structuredClone(lowered.command.rulesInput); mutate(input.steps.at(-1).rulesInput.plan);
-    const result = f.runtime.step(f.profiles, f.state, input);
+    const input = structuredClone(lowered.command.rulesInput); mutate(atomicCompletionInput(input).steps.at(-1).rulesInput.plan);
+    const result = stepActionToDecision(f.runtime, f.profiles, f.state, input);
     assert.equal(result.kind, "rejected", JSON.stringify(result));
     assert.equal(result.randomnessRequest, undefined);
   }
@@ -236,7 +243,7 @@ test("atomic prefix cannot request a roll before a later observation's frozen kn
 test("inference event folding rejects public disclosure, missing evidence and overwriting a held record", () => {
   const f = createAuthoredProbeFixture("observe-fold", { initialKnowledge: [held()] });
   const lowered = lower(f, observe({ reflection: true }));
-  const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   const event = result.events.find(entry => entry.eventType === "CharacterInferenceFormed");
   const draft = { rootActionId: f.rootActionId, eventType: event.eventType, payload: event.payload,
@@ -271,7 +278,7 @@ test("newly materialized observation subjects retain canonical references in dir
         mechanicDefinitionRefs: [] }, summary: "在场景开放范围内确定浅凹和水痕。" });
     const lowered = lower(f, args);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-    const pending = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+    const pending = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
     assert.equal(pending.kind, check ? "awaitingRandomness" : "committed", JSON.stringify(pending));
     const result = check ? f.runtime.step(f.profiles, pending.state, { kind: "fulfillAuthoritativeRandomness",
       continuation: pending.continuation, rolls: [20] }) : pending;
@@ -284,7 +291,7 @@ test("newly materialized observation subjects retain canonical references in dir
     replay(f, events, result.state);
     project(f, result, events);
     const malformed = structuredClone(lowered.command.rulesInput);
-    malformed.steps.at(-1).rulesInput.plan.basisRefs.reverse();
+    atomicCompletionInput(malformed).steps.at(-1).rulesInput.plan.basisRefs.reverse();
     assert.equal(f.runtime.step(f.profiles, f.state, malformed).kind, "rejected", "invalid raw ordering is not silently cleaned");
   }
 });

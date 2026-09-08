@@ -601,6 +601,8 @@ export function correctionEffectsBefore(
     case "RestCompleted":
       return nonEmpty(payload.characterId) ? [restoreCharacter(state, payload.characterId)] : [];
     case "RestStarted":
+    case "ActivityAttentionRequested":
+    case "ActivityAttentionAcknowledged":
     case "ActivityStarted":
     case "ActivityCompleted": {
       const effect = nonEmpty(payload.activityId)
@@ -845,7 +847,9 @@ export function correctionEffectsBefore(
       return effect === undefined ? [] : [effect];
     }
     case "RandomnessRequested":
-      return record(payload.resolution) ? [restoreCombatRuntime(state)] : [];
+      return record(payload.resolution) ? [restoreCombatRuntime(state)]
+        : record(payload.resolutionPlan) && payload.resolutionPlan.schema === "zhuwei.atomic-world-interaction-steps-plan/v1"
+          ? [{ kind: "removeFrozenChoiceRoot", rootActionId: event.rootActionId }] : [];
     case "EntityMaterialized": {
       const entity = payload.entity;
       return record(entity) && nonEmpty(entity.entityId)
@@ -1248,8 +1252,17 @@ export function correctionPlan(
   const targetReceipt = Object.values(state.receipts)
     .find((receipt) => receipt.receiptId === targetReceiptId);
   if (targetReceipt === undefined) return undefined;
+  // A completion is the frozen suffix of its action, not an independently
+  // retryable action. Correct the original choice/start and elapsed stages too,
+  // so no active shell or saved dice survives on the correction branch.
+  const activity = Object.values(state.campaignRuntime.activities).find(value => record(value.completion)
+    && value.completion.kind === "actionExecution" && record(value.completion.plan)
+    && value.completion.plan.rootActionId === targetReceipt.rootActionId);
+  const parentRoot = activity === undefined ? undefined : Object.values(state.correctionRuntime.audit).find(entry =>
+    entry.eventType === "ActivityStarted" && entry.effects.some(effect => effect.kind === "restoreCampaignEntry"
+      && effect.collection === "activities" && effect.entryId === activity.activityId))?.rootActionId;
   const targetAudits = Object.values(state.correctionRuntime.audit)
-    .filter((entry) => entry.rootActionId === targetReceipt.rootActionId)
+    .filter((entry) => entry.rootActionId === targetReceipt.rootActionId || entry.rootActionId === parentRoot)
     .sort((left, right) => BigInt(left.eventSeq) < BigInt(right.eventSeq) ? -1 : 1);
   if (targetAudits.length === 0) return undefined;
   const cutoffEventSeq = targetAudits[0].eventSeq;

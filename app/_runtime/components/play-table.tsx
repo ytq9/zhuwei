@@ -14,7 +14,7 @@ import { spellDefinition, spellMaxTargets } from "@/lib/rules/spell-catalog";
 import type { TacticalProjection } from "@/lib/rules/tactical-projection";
 import { abilityMod, cn, signed } from "@/lib/utils";
 import { transcribeAudio, speakNarration } from "@/lib/voice/client";
-import { adjustSafetyPresentation, resolveRoll, retryNarration, sendAction, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
+import { adjustSafetyPresentation, resolveRoll, retryNarration, sendAction, joinCombat, endTurn, leaveFight, resolveReact, restNow, cancelRest, controlActivity, castSpell, useFeature, extraAttack, inviteSquad, answerSquad, leaveSquadNow, approveSquadQueue, passCaptain, leaveTable, cancelSquadInvite, kickMember } from "@/lib/table/client";
 import {
   tableActionAccepted,
   type TableActionResponse,
@@ -291,7 +291,8 @@ export type TableSnap = {
         status: "active" | "completed" | "interrupted";
         startedAtFictionMicros: string;
         intendedDurationMicros: string;
-        kind?: "timePassage";
+        kind?: "timePassage" | "activity";
+        attention?: { rootActionId: string; atFictionMicros: string; messages: string[] };
         processingState?: "processing" | "blocked" | "cannotSafelyContinue";
         progressFictionMicros?: string;
         endedAtFictionMicros?: string;
@@ -3337,6 +3338,17 @@ function ResourcePanel({
 
   return (
     <div className="rounded-[12px] border border-border px-3 py-3">
+      {canEdit ? authoritativeActivities?.filter(activity => activity.status === "active" && activity.attention).map(activity => (
+        <div key={activity.activityId} className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2" role="status">
+          <p className="text-xs text-fg">活动途中有新消息，时间推进已暂停。</p>
+          {activity.attention!.messages.map((message, index) => <p key={index} className="mt-1 text-xs">{message}</p>)}
+          <p className="mt-1 text-xs text-muted">已经过的时间保留，活动仍在进行。{inCombat ? "当前由战斗回合接管。" : "请选择继续，或结束当前活动后采取其他行动。"}</p>
+          {(["continue", "stop"] as const).map(decision => <Button key={decision} size="sm" variant="ghost" className="mt-2"
+            disabled={Boolean(busy) || inCombat} onClick={() => go(`activity-${decision}`, () => controlActivity({ data: {
+              code, activityId: activity.activityId, attentionRootActionId: activity.attention!.rootActionId, decision,
+            } }))}>{decision === "continue" ? "继续当前活动" : "结束当前活动"}</Button>)}
+        </div>
+      )) : null}
       {canEdit && (activeRule?.rest?.status === "resting" || authoritativeRest !== undefined) ? (
         <div className="mb-3 rounded-[10px] border border-brass/40 bg-brass/10 px-3 py-2">
           <p className="text-xs text-fg">

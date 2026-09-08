@@ -89,6 +89,21 @@ function activityLifecycleProjection(state: AuthoritativeWorldState, entry: Json
         startedAtFictionMicros: entry.startedAtFictionMicros,
         intendedDurationMicros: entry.intendedDurationMicros,
         ...(entry.restKind === "short" || entry.restKind === "long" ? { restKind: entry.restKind } : {}),
+        ...(isRecord(entry.progression) && entry.activityKind !== "timePassage" ? {
+          kind: "activity" as const,
+          progressFictionMicros: entry.endedAtFictionMicros ?? state.fictionTimelines[String(entry.progression.timelineId)]?.nowMicros,
+          ...(isRecord(entry.attention) && Array.isArray(entry.attention.knowledgeRefs) ? { attention: {
+            rootActionId: entry.attention.rootActionId, atFictionMicros: entry.attention.atFictionMicros,
+            messages: entry.attention.knowledgeRefs.flatMap(ref => {
+              const knowledge = typeof ref === "string" ? state.knowledge[String(entry.characterId)]?.[ref] : undefined;
+              if (knowledge === undefined) return [];
+              const content = knowledge.content;
+              const message = typeof content === "string" ? content : isRecord(content)
+                ? [content.text, content.semanticContent, content.description].find(value => typeof value === "string") : undefined;
+              return [typeof message === "string" ? message : "你收到了一条新消息，已记录在已知信息中。"];
+            }),
+          } } : {}),
+        } : {}),
         ...(entry.activityKind === "timePassage" ? { kind: "timePassage",
           ...(sourceTimeline === undefined ? {} : { progressFictionMicros: state.fictionTimelines[sourceTimeline].nowMicros }),
           ...(schedule?.kind === "blocked" && schedule.reason !== undefined ? { processingState: "blocked" } : {}),

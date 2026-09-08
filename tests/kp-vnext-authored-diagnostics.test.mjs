@@ -1,3 +1,5 @@
+import { atomicCompletionInput } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { soleStep } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -85,7 +87,7 @@ test("authored diagnostics preserve legal custom Ability and Item values through
     const lowered = lower(fixture, parsed.bundle);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
     assert.deepEqual(soleStep(lowered.command).plan.source, source);
-    const committed = fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput);
+    const committed = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered.command.rulesInput);
     assert.equal(committed.kind, "committed", JSON.stringify(committed));
     const replayed = fixture.runtime.replay(fixture.genesis, committed.events);
     assert.equal(replayed.kind, "replayed");
@@ -133,16 +135,16 @@ test("Rules independently retains source diagnostics and publishes no effects fo
     const lowered = lower(fixture, bundle);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
     const input = structuredClone(lowered.command.rulesInput);
-    const source = atomic ? input.steps[index].rulesInput.plan.source : input.plan.source;
+    const source = atomic ? atomicCompletionInput(input).steps[index].rulesInput.plan.source : input.plan.source;
     example.mutate(source.content);
     const diagnostic = sourceDiagnostic(source, example.path);
     const before = structuredClone(fixture.state);
-    const result = fixture.runtime.step(fixture.profiles, fixture.state, input);
+    const result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, input);
     assert.equal(result.kind, "rejected", JSON.stringify(result));
     assert.deepEqual(result.events, []);
     assert.deepEqual(fixture.state, before);
     assert.ok(result.rejection.diagnostics?.some((item) => item.path?.includes(example.path)
-      && item.message.includes(diagnostic.reason)), JSON.stringify(result.rejection));
+      && item.message.includes(diagnostic.reason)), JSON.stringify({ id: example.id, atomic, rejection: result.rejection }));
     assert.equal(JSON.stringify(result.rejection).includes(PRIVATE), false);
   }
 });

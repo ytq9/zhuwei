@@ -68,6 +68,7 @@ export type RoomActionInput =
       arcaneRecoverySlotLevels: number[];
     }
   | { kind: "restInterrupt"; submissionId: string }
+  | { kind: "activityControl"; submissionId: string; activityId: string; attentionRootActionId: string; decision: "continue" | "stop" }
   | { kind: "safetyPause"; submissionId: string }
   | {
       kind: "safetyAdjust";
@@ -536,6 +537,13 @@ function rebuildInput(input: unknown): RoomActionInput | InternalRoomActionOutco
         .map(Number)
         .sort((left, right) => left - right),
     };
+  }
+
+  if (input.kind === "activityControl") {
+    const submissionId = requiredString(input, "submissionId"), activityId = requiredString(input, "activityId"), attentionRootActionId = requiredString(input, "attentionRootActionId");
+    if (!submissionId || !activityId || !attentionRootActionId || !["continue", "stop"].includes(String(input.decision))
+      || !hasOnlyKeys(input, ["kind", "submissionId", "activityId", "attentionRootActionId", "decision"], [])) return rejectedValidation("请使用当前活动通知选择继续或结束。");
+    return { kind: "activityControl", submissionId, activityId, attentionRootActionId, decision: input.decision as "continue" | "stop" };
   }
 
   if (input.kind === "restInterrupt") {
@@ -1844,6 +1852,7 @@ async function handleRoomActionInternal(
       || activeInput.kind === "combatEndTurn"
       || activeInput.kind === "restStart"
       || activeInput.kind === "restInterrupt"
+      || activeInput.kind === "activityControl"
       || activeInput.kind === "safetyPause"
       || activeInput.kind === "safetyAdjust"
     )
@@ -1873,6 +1882,8 @@ async function handleRoomActionInternal(
                 ? "authenticatedRestStart"
               : activeInput.kind === "restInterrupt"
                 ? "authenticatedRestInterrupt"
+              : activeInput.kind === "activityControl"
+                ? "authenticatedActivityControl"
               : activeInput.kind === "safetyPause"
                 ? "authenticatedSafetyPause"
                 : "authenticatedSafetyAdjustment",

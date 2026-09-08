@@ -8,6 +8,7 @@ import { createDeepSeekStrictToolBinding, assertDeepSeekStrictToolModelInput } f
 import { DEEPSEEK_V4_FLASH_VNEXT2_STRICT_TOOL_CANDIDATE } from "../app/_runtime/lib/kp/model-registry.ts";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical.ts";
 import { authorityDefinitionComposite } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
+import { dueActivityDescriptors } from "../app/_runtime/lib/rules/v2/due-activities.ts";
 import { createSubmitKpProposalBundleModelInput, SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import { invokeSubmitKpProposalBundleWithOneCorrection, VNEXT_PROPOSAL_BUNDLE_PARSER_HASH } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { lowerVNext2ProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts";
@@ -53,12 +54,24 @@ function settle(fixture, rulesInput) {
   let result = fixture.runtime.step(fixture.profiles, fixture.state, rulesInput);
   const events = [...(result.events ?? [])];
   let randomWaves = 0;
-  while (result.kind === "awaitingRandomness") {
-    if (++randomWaves > 4) throw problem("PROBE_RANDOMNESS_WAVE_BUDGET_EXCEEDED");
-    if (!result.continuation || !result.randomnessRequest) throw problem("PROBE_RANDOMNESS_CONTINUATION_UNSUPPORTED");
-    result = fixture.runtime.step(result.profiles ?? fixture.profiles, result.state, { kind: "fulfillAuthoritativeRandomness", continuation: result.continuation, rolls: sample(result.randomnessRequest) });
+  for (let stage = 0; stage < 32; stage++) {
+    let input;
+    if (result.kind === "awaitingRandomness") {
+      if (++randomWaves > 4) throw problem("PROBE_RANDOMNESS_WAVE_BUDGET_EXCEEDED");
+      if (!result.continuation || !result.randomnessRequest) throw problem("PROBE_RANDOMNESS_CONTINUATION_UNSUPPORTED");
+      input = { kind: "fulfillAuthoritativeRandomness", continuation: result.continuation, rolls: sample(result.randomnessRequest) };
+    } else if (result.kind === "committed") {
+      const active = Object.values(result.state.campaignRuntime.activities).find(activity => activity.status === "active" && activity.characterId === fixture.actorCharacterId);
+      if (!active) break;
+      const due = dueActivityDescriptors(result.state).find(due => due.activityId === active.activityId);
+      if (!due?.activityProgress || due.activityProgress.phase === "attention") throw problem("PROBE_ACTIVITY_REQUIRES_INPUT");
+      input = { kind: due.activityProgress.phase === "complete" ? "completeActionActivity" : "advanceActivity",
+        proposalId: due.childRootActionId, activityId: due.activityId };
+    } else break;
+    result = fixture.runtime.step(result.profiles ?? fixture.profiles, result.state, input);
     events.push(...(result.events ?? []));
   }
+  if (result.kind === "committed" && Object.values(result.state.campaignRuntime.activities).some(activity => activity.status === "active" && activity.characterId === fixture.actorCharacterId)) throw problem("PROBE_ACTIVITY_STAGE_BUDGET_EXCEEDED");
   if (result.kind !== "committed" && result.kind !== "concluded") throw problem(`RULES_${String(result.rejection?.code ?? result.kind)}`, { kind: result.kind, message: result.rejection?.message });
   const replay = fixture.runtime.replay(fixture.genesis, events);
   if (replay.kind !== "replayed" || canonicalSha256(replay.state) !== canonicalSha256(result.state)) throw problem("PROBE_REPLAY_MISMATCH");

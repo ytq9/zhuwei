@@ -27,12 +27,21 @@ export function withActDuration(bundle) {
   return bundle;
 }
 
-// A solo in-world act now lowers to a one-step atomic Bundle so it can spend
-// its duration; tests that inspect the step's own Rules plan unwrap it here.
-export const soleInput = input => input && input.kind === 'applyAtomicWorldInteractionSteps' ? input.steps[0].rulesInput : input;
+// Inspect the frozen completion without bypassing the Activity when executing it.
+export const atomicCompletionInput = input => input?.kind === 'startActionActivity' ? input.completionInput : input;
+export function withExecutionCosts(input, costs) {
+  const result = structuredClone(input), completion = atomicCompletionInput(result);
+  completion.executionCosts = costs.costs.some(cost => cost.kind === 'fictionTime')
+    ? structuredClone(costs) : mergeExecutionCosts(completion.executionCosts, costs);
+  return result;
+}
+export const soleInput = input => {
+  const completion = atomicCompletionInput(input);
+  return completion?.kind === 'applyAtomicWorldInteractionSteps' ? completion.steps[0].rulesInput : completion;
+};
 export const soleStep = command => soleInput(command.rulesInput);
-export const soleFormId = command => command.rulesInput.kind === 'applyAtomicWorldInteractionSteps' ? command.rulesInput.steps[0].formId : command.formId;
-export const soleProposalRef = command => command.rulesInput.kind === 'applyAtomicWorldInteractionSteps' ? command.rulesInput.steps[0].proposalRef : command.proposalRef;
+export const soleFormId = command => atomicCompletionInput(command.rulesInput).kind === 'applyAtomicWorldInteractionSteps' ? atomicCompletionInput(command.rulesInput).steps[0].formId : command.formId;
+export const soleProposalRef = command => atomicCompletionInput(command.rulesInput).kind === 'applyAtomicWorldInteractionSteps' ? atomicCompletionInput(command.rulesInput).steps[0].proposalRef : command.proposalRef;
 
 // Replace a Bundle's proposals and keep its duration honest for the new set.
 export function rebundle(base, proposals) {

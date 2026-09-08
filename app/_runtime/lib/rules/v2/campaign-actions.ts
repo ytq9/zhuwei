@@ -4,6 +4,7 @@ import { longSpellcastingTimelineId } from "./time-passage-binding";
 import { isFrozenAbilityCancellation } from "./ability-operation";
 import { timePassageSchedule, longSpellcastingSchedule } from "./due-activities";
 import { completeLongSpellcasting } from "./combat-actions";
+import { stepVNextWorldInteraction } from "./world-interactions";
 import { worldInteractionProfileEnabled } from "../profiles/vnext-world-interaction";
 import { passageTraversalBindingConform } from "./dynamic-locations";
 import { socialCommitmentIssue, socialCommitmentPolicy } from "./social-commitments";
@@ -65,7 +66,8 @@ import {
 } from "./character-rest";
 import { continueCompoundRoot, isContinuedCompoundRoot } from "./internal-compound";
 import { characterTimelineId, completedActivityMovementPlan } from "./timeline";
-import { activityCompletionFictionMicros, dueActivityDescriptors } from "./due-activities";
+import { activityCompletionFictionMicros, dueActivityDescriptors, ordinaryActivitySchedule } from "./due-activities";
+import { activityNoticeKnowledgeRefs, activityProgressAvailable, hasActivityProgress, actionActivityDependenciesMatch } from "./activity-progress";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
 import {
   savingThrowModifier,
@@ -307,12 +309,13 @@ function sequence(
     [...createdScopes],
   );
   const passageDraft = drafts.find(draft => (draft.payload as JsonRecord).activityKind === "timePassage"
-    || (draft.eventType === "FictionTimeAdvanced" && ["timePassage", "longSpellcasting"].includes(String((draft.payload as JsonRecord).reason))));
+    || (draft.eventType === "FictionTimeAdvanced" && ["timePassage", "longSpellcasting", "activityProgress"].includes(String((draft.payload as JsonRecord).reason))));
   const passagePayload = passageDraft?.payload as JsonRecord | undefined;
   const passageTimeline = passagePayload === undefined ? undefined : isNonEmptyString(passagePayload.characterId)
     ? characterTimelineId(source, passagePayload.characterId)
     : timePassageTimelineId(source, source.campaignRuntime.activities[String(passagePayload.activityId)])
-      ?? longSpellcastingTimelineId(source, source.campaignRuntime.activities[String(passagePayload.activityId)]);
+      ?? longSpellcastingTimelineId(source, source.campaignRuntime.activities[String(passagePayload.activityId)])
+      ?? characterTimelineId(source, String(source.campaignRuntime.activities[String(passagePayload.activityId)]?.characterId));
   const followupScope = passageTimeline === undefined ? {} : { timelineId: passageTimeline };
   let state = source;
   const events: EventEnvelope[] = [];
@@ -1821,6 +1824,46 @@ function startTimePassage(profiles: RuntimeProfileManifest, state: Authoritative
   ]);
 }
 
+function advanceActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
+  if (!hasExactKeys(input, ["kind", "proposalId", "activityId"]) || !isNonEmptyString(input.activityId)) return rejected("invalidRulesInput", "Activity stages require the canonical activity and root.");
+  const root = rootAction(state, input);
+  const due = dueActivityDescriptors(state).find(entry => entry.childRootActionId === root && entry.activityId === input.activityId);
+  const activity = state.campaignRuntime.activities[input.activityId];
+  if (root === undefined || due?.activityProgress === undefined || activity === undefined) return rejected("missingPrerequisite", "The activity stage is stale, in combat or blocked.");
+  if (due.activityProgress.phase === "attention") return sequence("committed", profiles, state, root, [{
+    eventType: "ActivityAttentionRequested", payload: { activityId: input.activityId, knowledgeRefs: activityNoticeKnowledgeRefs(state, activity) },
+    visibilityPolicyId: `visibility:knowledge-holder:${activity.characterId}`, secrecy: "private",
+    reads: [`activity:${input.activityId}`, ...activityNoticeKnowledgeRefs(state, activity).map(ref => `knowledge:${activity.characterId}:${ref}`)],
+    writes: [`activity:${input.activityId}`],
+  }]);
+  if (due.activityProgress.phase !== "advance") return rejected("invalidRulesInput", "The activity requires its completion.");
+  return sequence("committed", profiles, state, root, [{ eventType: "FictionTimeAdvanced",
+    payload: { activityId: input.activityId, reason: "activityProgress", durationMicros: (BigInt(due.activityProgress.toFictionMicros) - BigInt(due.activityProgress.fromFictionMicros)).toString() },
+    visibilityPolicyId: `visibility:knowledge-holder:${activity.characterId}`, secrecy: "private",
+  }]);
+}
+
+function controlActivity(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
+  if (!hasExactKeys(input, ["kind", "proposalId", "activityId", "actorCharacterId", "attentionRootActionId", "decision"])
+    || !isNonEmptyString(input.activityId)) return rejected("invalidRulesInput", "Activity control is not canonical.");
+  const activity = state.campaignRuntime.activities[input.activityId], root = rootAction(state, input);
+  if (root === undefined || activity === undefined || activity.characterId !== input.actorCharacterId
+    || !activityProgressAvailable(state, activity) || !isRecord(activity.attention)
+    || activity.attention.rootActionId !== input.attentionRootActionId) return rejected("missingPrerequisite", "The activity decision is unavailable, changed or in combat.");
+  if (input.decision === "stop") return interruptActivity(profiles, state, { kind: "interruptActivity", proposalId: root,
+    activityId: input.activityId, cause: { kind: "playerCancelledActivity", characterId: input.actorCharacterId } });
+  if (input.decision !== "continue") return rejected("invalidRulesInput", "The player must choose whether to continue or stop.");
+  if (activity.activityKind === "actionExecution" && !actionActivityDependenciesMatch(state, activity)) {
+    return interruptActivity(profiles, state, { kind: "interruptActivity", proposalId: root,
+      activityId: input.activityId, cause: { kind: "completionNoLongerLegal" } });
+  }
+  return sequence("committed", profiles, state, root, [{ eventType: "ActivityAttentionAcknowledged",
+    payload: { activityId: input.activityId, attentionRootActionId: input.attentionRootActionId as string },
+    visibilityPolicyId: `visibility:knowledge-holder:${activity.characterId}`, secrecy: "private",
+    reads: [`activity:${input.activityId}`], writes: [`activity:${input.activityId}`],
+  }]);
+}
+
 function advanceTimePassage(profiles: RuntimeProfileManifest, state: AuthoritativeWorldState, input: JsonRecord): StepResult {
   if (!worldInteractionProfileEnabled(profiles.extensions ?? [])
     || !hasExactKeys(input, ["kind", "proposalId", "activityId"]) || !isNonEmptyString(input.activityId)) {
@@ -2129,6 +2172,12 @@ function prepareActivityCompletion(
   if (activity?.status !== "active") {
     return { kind: "rejected", result: rejected("privateOrUnknownReference", "Activity is unavailable.") } as const;
   }
+  if (activity.activityKind === "actionExecution") {
+    return { kind: "rejected", result: rejected("invalidRulesInput", "The timed action requires its frozen action completion executor.") } as const;
+  }
+  if (hasActivityProgress(activity) && ordinaryActivitySchedule(state, activity).kind !== "complete") {
+    return { kind: "rejected", result: rejected("missingPrerequisite", "The noncombat activity has an unresolved decision, deadline or changed location.") } as const;
+  }
   if (activity.activityKind === "timePassage") {
     const due = dueActivityDescriptors(state).find(entry => entry.activityId === activityId && entry.timePassage === undefined);
     if (due === undefined || due.childRootActionId !== rootActionId || timePassageSchedule(state, activity).kind !== "complete") {
@@ -2267,6 +2316,7 @@ function completeActivity(profiles: RuntimeProfileManifest, state: Authoritative
 }
 
 const DUE_ACTIVITY_BYPASS_KINDS = new Set([
+  "advanceActivity", "controlActivity", "completeActionActivity",
   "authoritativeRandomness",
   "fulfillAuthoritativeRandomness",
   "fulfillAuthoritativeRandomnessBatch",
@@ -2309,6 +2359,18 @@ export function settleDueActivityBeforeInput(
   const due = dueActivityDescriptors(state).find((activity) => activity.timelineId === timelineId
     && (activity.longSpellcasting === undefined || worldInteractionProfileEnabled(profiles.extensions ?? [])));
   if (due === undefined) return undefined;
+  if (["awaitingInput", "awaitingRandomness"].includes(state.receipts[due.childRootActionId]?.status)) {
+    return rejected("pendingInputUnresolved", "The due Activity must resume its existing canonical root before a new action.");
+  }
+  if (due.activityProgress !== undefined && (due.activityProgress.phase !== "complete" || due.activityProgress.completion === "action")) {
+    const result = due.activityProgress.phase === "complete"
+      ? stepVNextWorldInteraction(profiles, state, { kind: "completeActionActivity", proposalId: due.childRootActionId, activityId: due.activityId })!
+      : advanceActivity(profiles, state, { kind: "advanceActivity", proposalId: due.childRootActionId, activityId: due.activityId });
+    return result.kind === "rejected" ? result : { ...result, mechanicalResult: {
+      ...("mechanicalResult" in result ? result.mechanicalResult : {}), kind: "dueActivitySettled",
+      activityId: due.activityId, interruptedIntentKind: input.kind, retryOriginalIntent: true,
+    } } as StepResult;
+  }
   if (due.timePassage !== undefined) return advanceTimePassage(profiles, state, { kind: "advanceTimePassage", proposalId: due.childRootActionId, activityId: due.activityId });
   if (due.longSpellcasting !== undefined) {
     const result = due.longSpellcasting.phase === "complete"
@@ -4095,6 +4157,8 @@ export function stepCampaignWorld(
     case "startActivity": return startActivity(profiles, state, input);
     case "startTimePassage": return startTimePassage(profiles, state, input);
     case "advanceTimePassage": return advanceTimePassage(profiles, state, input);
+    case "advanceActivity": return advanceActivity(profiles, state, input);
+    case "controlActivity": return controlActivity(profiles, state, input);
     case "advanceLongSpellcasting": return advanceLongSpellcasting(profiles, state, input);
     case "interruptActivity": return interruptActivity(profiles, state, input);
     case "completeActivity": return completeActivity(profiles, state, input);

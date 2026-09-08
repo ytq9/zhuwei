@@ -1,3 +1,4 @@
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR,
@@ -61,7 +62,7 @@ test("persisted interactable and terrain features use one discovery, exact read,
     assert.deepEqual(authoritySpatialBinding(fixture.state, FEATURE, SCENE), { kind: "geometryFeature", ref: FEATURE, sceneRef: SCENE });
     const lowered = lower(fixture, frozen);
     assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-    const result = fixture.runtime.step(fixture.profiles, fixture.state, lowered.command.rulesInput);
+    const result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, lowered.command.rulesInput);
     assert.equal(result.kind, "committed", JSON.stringify(result));
     assert.deepEqual(geometry(result.state), geometry(fixture.state), "observation never invents a Geometry write");
     const replayed = fixture.runtime.replay(fixture.genesis, result.events);
@@ -87,7 +88,7 @@ test("semantic mechanic dependencies load the same Geometry record; hidden barri
   assert.match(JSON.stringify(direct), /reference|target|viewer/i);
   const basis = lower(fixture, frozen, observation(SOURCE, [SOURCE, FEATURE]));
   assert.equal(basis.kind, "accepted", JSON.stringify(basis));
-  const result = fixture.runtime.step(fixture.profiles, fixture.state, basis.command.rulesInput);
+  const result = stepActionToDecision(fixture.runtime, fixture.profiles, fixture.state, basis.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   const discovery = discoverCandidates({ state: fixture.state, index: index(fixture.state),
     subject: { kind: "character", characterRef: ACTOR, sceneRef: SCENE }, focusRefs: [], intentText: "观察暗门背板。",
@@ -135,7 +136,7 @@ test("feature state, polygon, visibility, deletion and scene relocation all inva
     const changed = structuredClone(fixture.state);
     mutate(changed);
     assert.ok(authorityReadSetConflicts(changed, selected.readSet).some(({ ref }) => ref === FEATURE));
-    const result = fixture.runtime.step(fixture.profiles, changed, lowered.command.rulesInput);
+    const result = stepActionToDecision(fixture.runtime, fixture.profiles, changed, lowered.command.rulesInput);
     assert.equal(result.kind, "rejected", JSON.stringify(result));
     assert.equal(result.rejection.code, "causalFrontierConflict", JSON.stringify(result));
   }

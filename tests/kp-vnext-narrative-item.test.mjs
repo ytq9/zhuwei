@@ -1,3 +1,5 @@
+import { atomicCompletionInput } from './fixtures/vnext-action-duration.mjs';
+import { stepActionToDecision } from './fixtures/vnext-action-lifecycle.mjs';
 import { actDuration, withActDuration } from './fixtures/vnext-action-duration.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -50,7 +52,7 @@ function lower(f, value, focusRefs = [], actorCharacterId = ACTOR) {
 function execute(f, value, focusRefs = [], actorCharacterId = ACTOR) {
   const lowered = lower(f, value, focusRefs, actorCharacterId);
   assert.equal(lowered.kind, "accepted", JSON.stringify(lowered));
-  const result = f.runtime.step(f.profiles, f.state, lowered.command.rulesInput);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
   assert.equal(result.kind, "committed", JSON.stringify(result));
   f.state = result.state;
   f.events.push(...result.events);
@@ -97,7 +99,7 @@ function rejection(f, value, focusRefs, mutateInput) {
   if (lowered.kind === "accepted") {
     const input = structuredClone(lowered.command.rulesInput);
     mutateInput?.(input);
-    result = f.runtime.step(f.profiles, f.state, input);
+    result = stepActionToDecision(f.runtime, f.profiles, f.state, input);
   }
   assert.equal(result.kind, "rejected", JSON.stringify(result));
   if (result.events !== undefined) assert.deepEqual(result.events, []);
@@ -160,7 +162,7 @@ test("Rules rejects a narrative source omitted from sourceRefs or its frozen rea
     const f = fixture(`narrative-item-unbound-${missing}`), example = examples[0];
     const commitmentRef = commit(f, example);
     const result = rejection(f, materialize(example, commitmentRef), [commitmentRef], (input) => {
-      const item = input.steps.find((step) => step.rulesInput.kind === "materializeItem").rulesInput;
+      const item = atomicCompletionInput(input).steps.find((step) => step.rulesInput.kind === "materializeItem").rulesInput;
       if (missing === "sourceRefs") item.plan.sourceRefs = [];
       else item.plan.readSet = item.plan.readSet.filter((binding) => binding.ref !== commitmentRef);
     });
@@ -308,7 +310,7 @@ test("generic inventory identification cannot treat an unmaterialized narrative 
       readSet: refs.map((ref) => ({ ref, revisionOrHash: authorityRevisionOrHash(f.state, ref) })),
       basisRefs: [commitmentRef], summary: "未经实例化的场景叙述不能揭示物品机械信息。", operation: { kind: "identify", entryRef } } };
   assert.ok(input.plan.readSet.every((binding) => typeof binding.revisionOrHash === "string"));
-  const result = f.runtime.step(f.profiles, f.state, input);
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, input);
   assert.equal(result.kind, "rejected", JSON.stringify(result));
   assert.match(result.rejection.message, /Narrative commitments must be materialized/);
   assert.deepEqual(result.events, []);
