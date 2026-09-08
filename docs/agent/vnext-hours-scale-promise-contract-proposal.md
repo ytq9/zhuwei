@@ -85,3 +85,10 @@ round70 的三句（半分钟）不能验这层。要换一个几小时尺度的
 - 拒绝面：NPC 已有活动中的 Activity、没有活动章节、NPC 不在 `entities` 里时，派生失败会拒绝整个 social 提交（`promise:due-plan:…`），不会悄悄丢掉承诺。
 - 本地证据：`kp-vnext-promise-due`（档位与 nextDawn 算术）、`kp-vnext-social-plan`（同根派生：PromiseMade 在 NpcPlanFormed 之前，时长 3600000000，痕迹事实此时不存在，replay 一致；`none` 只记承诺）、`kp-vnext-none-sentinel-wire`（wire 双向、due/trace 耦合拒绝）。
 
+## 8. 真实证据：round88（2026-09-08）
+
+首句瓦罗公开承诺「原件不离手、就在这儿抄，一个时辰内放到账台上」，模型在 `consequences` 里填了 `promise`：`due: "1h"`、`trace: "账台上放着一份抄好的备案件副本，字迹工整，末尾有瓦罗的书记官落款。"`、`authorityRefs` 为瓦罗本人与其定义。同一根内：`PromiseMade` → `NpcPlanFormed`（`due.atFictionMicros = 3900000000 = 300000000 + 1h`，trace factRef，alternateTarget 为承诺时的场景）→ `ActivityStarted`（npcActorPlan，3600000000）。
+
+第二句「等上一个多小时」：passTime 3660000000 跨过到期点，到期优先结算——`submit_due_actor_plan_decision` 回 `execute`（mechanicalProposal none，targetRef wake）→ `NpcActionCommitted` → `CanonicalFactDeclared`（`fact:npc-plan-trace:…`，subjectRefs 瓦罗与 wake，描述即承诺时填的 trace）→ 计划 Activity 完成 → 等待 Activity 完成。计划 status `resolved`。公开旁白先出痕迹「账台上放着一份抄好的备案件副本…」，再出等待结束，没有编造抄写过程；两次审核五项 pass。时钟 300000000 → 3960000000。
+
+这一批把第 1、2、3 层连成了一条真实链：承诺 → 计划 → 到期执行 → 痕迹入正史 → 玩家看见。第三句（到账台前查看）没发出去——批次脚本把每 HTTP 上限硬编码成 5，而计划里写的是 7；等待这一句正好用了 7 次调用，脚本按自己的规则停批。回执见 [round88](vnext-round88-validation.md)。

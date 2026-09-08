@@ -79,6 +79,7 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 | [round77](docs/agent/vnext-round77-validation.md) | 同上，传输放宽之后 | 首句 4 次调用完整 committed/published。双工具 surface 真的到达模型（传输修复有真实证据）；选择组合变为 `["social","passTime"]`（round75 是 `["social","commitNarrativeDetail"]`）。但 `passTime` 未被使用，`formActorPlan` 未选，计划/活动/承诺仍为 0 | `legalNoPlan` —— **但这个 gate 可能考错了东西，见 §7** |
 | [round81](docs/agent/vnext-round81-validation.md) | 同上，等待旁白 + 档位 v44 之后 | **三句全部 committed/published**，12 次调用 ¥0.62。首句 `duration:5min`、时钟 0→300000000、裸 `"none"` 被接受；等待第一次有旁白（上下文正确、无编造）；第三句接续真实线程引用。瓦罗拒绝敲击，`consequences: []` 第六批 | 没停：`waited-without-confirmable-reminder` → noReminder 分支走完 |
 | [round82](docs/agent/vnext-round82-validation.md) | **新场景**：一小时内抄副本 / 等一个多小时 / 看账台，承诺档位 v46 之后 | 首句填写是 1208 token 的双分支 check，结尾多一个 `]`，重发逐字节相同。同一草稿里模型**第一次就填了 `due:"1h"` 和 trace**，但 `authorityRefs: []` | `PROPOSAL_FORM_INVALID`（JSON 语法），3 次调用 ¥0.20，0 提交，后两句未发 |
+| [round88](docs/agent/vnext-round88-validation.md) | 同上，同源第二样本 | **承诺 due 1h + trace → NpcPlanFormed → 等待跨到期 → 到期决策 execute → NpcActionCommitted → 痕迹入正史 → 旁白见痕迹**；未解析重发第一次真实触发 | 前两句 `committed`（5 + 7 次调用）；第三句没发（脚本把每 HTTP 上限写死成 5），12 次调用 ¥0.67，2 提交 |
 | [round87](docs/agent/vnext-round87-validation.md) | 同上，responseBasis 平枚举之后 | 填写调用返回 `{}`（25 token）；beta 严格端点、strict true、根上 required 都在 | `PROPOSAL_FORM_INVALID`（`decision` FIELD_MISSING），2 次调用 ¥0.14，0 提交；同源再跑一批分辨 |
 | [round86](docs/agent/vnext-round86-validation.md) | 同上，裁决 basisRefs 丢弃之后 | 首句三张表干净，但 `responseBasis` 引了社交判定规则档案（schema 枚举在 anyOf 内，严格模式没拦） | `PROPOSAL_REFERENCE_INVALID`（`social:foreign-npc-basis`，按设计不可修订），2 次调用 ¥0.15，0 提交 |
 | [round85](docs/agent/vnext-round85-validation.md) | 同上，continuation 拆表之后 | 前两句提交并发布（各 4 次调用，零修订）；等待有旁白、时钟走了一个半小时；第三句 observe 的裁决上多了一行 `basisRefs`（与步骤相同） | 前两句 `committed`；第三句 `PROPOSAL_FORM_INVALID`（`filling:server-owned-field`），10 次调用 ¥0.50，2 提交 |
@@ -132,18 +133,19 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ### 5. round86 → round87：同三句再跑
 
-round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。round86（[回执](docs/agent/vnext-round86-validation.md)）首句就倒在 `responseBasis` 引了规则档案——schema 里的枚举在 anyOf 分支内，严格模式不校验；枚举已移到平的数组项上（parser v49），只有本地测试。round87（[回执](docs/agent/vnext-round87-validation.md)）填写调用回了空的 `{}`——严格模式连根上的 required 都没执行，一个样本分不清是平枚举的形状还是采样；round88 同源再跑。要验的：(0) `responseBasis` 的平枚举是否真被传输执行、`{}` 是否复现；(a) 裁决上与推导列表相同的 `basisRefs` 被丢弃、observe 单独成根真实提交；(b) `existingFactRefs` 里 `knowledge:` 前缀与 `module-opening` 引用是否合法（round85 没走到校验）；(c) 承诺第 2/3 层正例——瓦罗肯不肯承诺仍是 KP 的选择，句子不改。
+round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。round86（[回执](docs/agent/vnext-round86-validation.md)）首句就倒在 `responseBasis` 引了规则档案——schema 里的枚举在 anyOf 分支内，严格模式不校验；枚举已移到平的数组项上（parser v49），只有本地测试。round87（[回执](docs/agent/vnext-round87-validation.md)）填写调用回了空的 `{}`；round88 同源再跑，`{}` 没复现（是采样不是形状），**前两句把承诺链整个连通了**（[回执](docs/agent/vnext-round88-validation.md)）；第三句因批次脚本把每 HTTP 上限写死成 5 没发出去。round89 修脚本再发三句。要验的：(a) 裁决上与推导列表相同的 `basisRefs` 被丢弃、observe 单独成根真实提交；(b) `existingFactRefs` 里 `knowledge:` 前缀与 `module-opening` 引用是否合法（round85 没走到校验）；(c) 承诺第 2/3 层正例——瓦罗肯不肯承诺仍是 KP 的选择，句子不改。
 
 ### 已完成、真实证据分账
 
 | 改动 | 真实证据 |
 | --- | --- |
+| 承诺第 2/3 层（v46，due/trace → 计划 → 到期执行 → 痕迹） | **round88：promise due 1h + trace → NpcPlanFormed → 等待跨到期 → NpcActionCommitted → CanonicalFactDeclared → 旁白见痕迹** |
 | 虚构时长合同（v42，`759393d`） | **round80：声明 12 秒、时钟推进 12 秒、事件首条、行动者时间线、旁白见 Claim** |
 | 裸 `"none"` 统一解码（v43，`fee45ef`） | 未触发（round80 模型写对了 `{kind:"none"}`）；round79 是它的用例 |
 | gate 记录而非要求计划（round78 起） | round78/80 走到第二句 |
 | 传输接受双工具 | round77/78/80 capture 均见两个工具到达模型 |
 | parser v39 引用槽准入 | round75 验到「不误伤」；未验到「挡得住」 |
-| parser v40 未解析重发 | **无** |
+| parser v40 未解析重发 | **round88：填写的 JSON 里有未转义的内层双引号，第三次调用只带原字节与出错位置，模型完整重述同一裁决并通过** |
 | parser v41 一次补选 | **无**，六次 ordinal 2 都带着工具、一次未用 |
 
 ### 已知缺口（各自独立）
@@ -152,6 +154,8 @@ round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。
 - ~~选中后丢弃不留痕~~ —— adapter 在填写落定后发 `kp.vnext.selection`（selected / used / unused）。为什么丢弃仍未解：`observe` 与 passTime 同选时被丢弃四次（round85 第二句又一次），从未被填过；单独选它时（round85 第三句）填了，倒在别处。
 - ~~到期 Activity 的冻结完成不再合法时时间线堵死~~ —— 已改为到期结算时中断（[合同 §10.2](docs/agent/vnext-fiction-time-contract-proposal.md)），本地验证。
 - ~~冻结上下文没有显式的「遭遇进行中」标记~~ —— 行动者复合记录在遭遇中带 `encounter` 字段，指引已指向它（[合同 §10.1](docs/agent/vnext-fiction-time-contract-proposal.md)）。填错仍是硬拒。
+- ActorPlanTransport 的调用（到期计划决策）没有 invocation 遥测行；meter 只能按上限把它计成未知 usage（round88）。
+- 等待跨到期的结算事件走时间推进路径，`room.authority.commit.completed` 上的 `fictionTimeMicros` / `crossedDeadlineCount` 对那一根是 null；非零的 `crossedDeadlineCount` 至今没有真实证据（round88）。
 - 闹钟路径（玩家不在线时到期）完成的等待：audience 建好但当时无人旁白，靠 `narrationRecovery` 在下次 observe 发布——链路是旧的，等待这一用法没跑过。
 - 旧线 vnext-1（`atomicRulesSteps`）没有时长字段，Rules 只裁「纯创作不能花时间」这一半；「角色行动必须声明」是 vnext-2 lowering 的规则。
 

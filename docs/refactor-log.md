@@ -3423,3 +3423,7 @@ round85：三张表前两句零修订提交（社交 + 一个半小时等待，�
 ## round86 → responseBasis 的枚举移出 anyOf（2026-09-08）
 
 round86 首句：模型在 `responseBasis` 里引了社交判定的规则档案；schema 里该槽位的字符串变体带着 10 个引用的 `enum`，DeepSeek 严格模式没有拦——这是 anyOf 分支内约束不校验的第三个实例（round84 多余属性、round85 多余属性、round86 枚举）。lowering 按设计拒绝且不可修订（换回应依据不是表示层修补），2 次调用停批。现在没有选生产者时数组项就是一个平的枚举字符串，`playerExpression` 是它的保留成员；选了生产者才回到 anyOf。parser v49。见[三表回执](agent/vnext-three-table-wire-validation.md)、[round86 回执](agent/vnext-round86-validation.md)。
+
+## round88：承诺链真实连通（2026-09-08）
+
+同源第二样本。首句瓦罗承诺一小时内抄好副本放到账台，模型填了 `promise{due:1h, trace}`，同根折入 PromiseMade → NpcPlanFormed → ActivityStarted；第二句等待 61 分钟跨过到期点，到期决策 execute → NpcActionCommitted → CanonicalFactDeclared → 旁白先出痕迹。未解析重发第一次真实触发（未转义内层双引号）。第三句没发：准备包 `runner.mjs` 把每 HTTP 上限写死成 5。两处遥测缺口记进 handoff。无源码改动。见[round88 回执](agent/vnext-round88-validation.md)。

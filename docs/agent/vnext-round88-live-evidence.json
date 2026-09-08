@@ -1,0 +1,130 @@
+{
+  "round": 88,
+  "verifiedAt": "2026-09-08T06:39:17.489850+00:00",
+  "verdict": "The promise contract closed end to end on a real model for the first time. Sentence 1: Varo promised the copy within the hour; the fill carried consequences.promise with due 1h and a trace; the same root folded PromiseMade -> NpcPlanFormed (due 3900000000) -> ActivityStarted. Sentence 2: the 61-minute wait crossed the due point; due-first settlement asked the actor-plan transport (execute), NpcActionCommitted, CanonicalFactDeclared for the trace, both activities completed, and the narration showed the copy on the desk before the wait ended. Sentence 3 was never sent: the batch runner hardcodes a per-HTTP limit of 5 while the plan says 7, and the wait spent exactly 7, so the runner stopped the batch on its own rule. Also the first real unparsed re-emit: call 2's JSON had an unescaped inner quote and call 3 restated the same ruling. Response-basis plain enum: six refs, all inside it.",
+  "sourceCommit": "2dc8d8a0eb428cf60e489bc12a797fb9cb7ba968",
+  "runtimeIdenticalTo": "b7c682f",
+  "sourceManifestSha256": "e347e06f5274eb4c3d7bec2e4e3aad6159bd20c88d638e0b7b71f22dc8fc707d",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v49",
+  "scenario": "hours-scale three sentences (same as rounds 82-87)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 2,
+  "unattemptedIntents": 1,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round88-npc-http-595fb3e4-9e9e-483d-83b4-6a01d4e29a6f",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 5,
+      "evidence": "offer [social]; fill 1: not JSON (unescaped inner double quote in risk, json:object-delimiter-expected at offset 154) -> unparsed re-emit; fill 2 (9251 prompt tokens, submit tool only): directSuccess 5min, one social step, one result row with consequences [promise {due 1h, trace, authorityRefs [varo, its definition]}], responseBasis six refs all in the plain enum. Narration + review pass. Events: FictionTimeAdvanced 300000000, SourceClaimCreated/KnowledgeAcquired x2, PromiseMade, NpcPlanFormed (due atFictionMicros 3900000000, trace factRef, alternateTarget wake), ActivityStarted (npcActorPlan 3600000000), WorldInteractionResolved, AtomicWorldInteractionStepsResolved."
+    },
+    {
+      "ordinal": 2,
+      "submissionId": "vnext-round88-npc-http-fee6caa2-c50e-43ba-aa1b-81565073667c",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 7,
+      "evidence": "offer [passTime, observe]; fill: passTime durationMicros 3660000000, steps [] results [] (observe dropped again); submit_due_actor_plan_decision: execute, mechanicalProposal none, targetRef wake; trace narration + review; wait narration + review. Events 11-17: ActivityStarted, FictionTimeAdvanced, NpcActionCommitted, CanonicalFactDeclared (fact:npc-plan-trace, subjectRefs varo + wake), ActivityCompleted (plan), FictionTimeAdvanced, ActivityCompleted (wait). Plan status resolved. Clock 300000000 -> 3960000000. Public: 「账台上放着一份抄好的备案件副本，字迹工整，末尾有瓦罗的书记官落款。」 then 「你在大厅里等候，一个小时零一分钟悄然流逝，约定的等待时间已经结束。」"
+    },
+    {
+      "ordinal": 3,
+      "action": "notSent",
+      "reason": "runner.mjs budgetChecks.perHttp uses a literal 5; plan.json perHttpCallLimit is 7; the wait spent 7 -> state.stopped. Harness rule, not a product failure."
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "coverage": "formed-awaiting-due",
+      "planIds": [
+        "npc-plan:53726fc4480dc43241335b8759b16d7da4c94057750bd1318539a2caf232f711"
+      ],
+      "promiseIds": [
+        "promise:089e82b648c0de3b9869c1e131c873f9dcd377c9d894b17d9572ebe60793426f"
+      ]
+    },
+    {
+      "afterAction": 2,
+      "next": "executed",
+      "recorded": false,
+      "reason": "runner refused: TECHNICALLY_STOPPED_BATCH_CANNOT_CONTINUE (the same per-HTTP literal)"
+    }
+  ],
+  "authorityAfterBatch": {
+    "npcPlans": {
+      "npc-plan:53726fc4480dc43241335b8759b16d7da4c94057750bd1318539a2caf232f711": "resolved"
+    },
+    "promises": {
+      "promise:089e82b648c0de3b9869c1e131c873f9dcd377c9d894b17d9572ebe60793426f": "active"
+    },
+    "activities": {
+      "npc-plan": "completed",
+      "time-passage": "completed"
+    },
+    "traceFacts": [
+      "fact:npc-plan-trace:53726fc4480dc43241335b8759b16d7da4c94057750bd1318539a2caf232f711"
+    ],
+    "fictionNowMicros": "3960000000",
+    "eventTypes": [
+      "FictionTimeAdvanced",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "PromiseMade",
+      "NpcPlanFormed",
+      "ActivityStarted",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "NpcActionCommitted",
+      "CanonicalFactDeclared",
+      "ActivityCompleted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "npcActionCommitted": 1
+  },
+  "notSurfaced": [
+    "The actor-plan transport call (submit_due_actor_plan_decision) emits no invocation telemetry row: 12 physical calls, 11 rows; the meter charged it as unknown usage at the cap (CNY 0.67 instead of about 0.45). Its usage is in the private capture.",
+    "room.authority.commit.completed for the wait root carries fictionTimeMicros null and crossedDeadlineCount null (eventRange 11-11); the settlement events 12-17 came through the time-passage advance path, which reports neither.",
+    "observe selected with passTime was dropped again (fifth time).",
+    "The ruling-level basisRefs drop got no exposure; the third sentence was not sent."
+  ],
+  "meter": {
+    "calls": 12,
+    "inputTokens": 128070,
+    "outputTokens": 4178,
+    "unknownInputCalls": 1,
+    "unknownOutputCalls": 1,
+    "inputBudgetCharge": 186070,
+    "outputBudgetCharge": 12370,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.66954
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 14:32 Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched at release, sha256 unchanged",
+    "unknownUsageCalls": 1,
+    "cny": 0.66954,
+    "budgetCny": 5
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "17",
+    "events": 17
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "beforeCount": 323,
+    "afterCount": 323,
+    "headUnchanged": true
+  },
+  "servicesShutdown": "both roles verifiedAbsent; no listener on 4320/4321"
+}
