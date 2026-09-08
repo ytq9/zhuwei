@@ -1,0 +1,113 @@
+{
+  "round": 85,
+  "verifiedAt": "2026-09-08T06:12:25.018479+00:00",
+  "verdict": "First full pass of the flat three-table wire on a real model: sentence 1 (social request) and sentence 2 (ninety-minute wait) both committed with zero corrections, 4 calls each; the wait got model narration and the clock went 0 -> 300000000 -> 5700000000. Sentence 3 (observe) was refused before any draft: the model copied the step's basisRefs onto the directSuccess ruling, a field the wire never offers there, and the decoder treats a ruling-level basisRefs as a server-owned claim (arguments.decision.basisRefs CONSTRAINT_CONFLICT, not repairable). Promise layer 2 stayed empty again: Varo answered with a conditional counter-offer, consequences [].",
+  "sourceCommit": "b46b42379e5e801a949fcec93aeb6a7813dbfdde",
+  "sourceManifestSha256": "63e51a52f03f38b39746de7de1627d870c03fef4e2fe9b8f22ece41a9cb11165",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v48",
+  "scenario": "hours-scale three sentences (same as rounds 82/83/84)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 3,
+  "unattemptedIntents": 0,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round85-npc-http-36248e27-d99a-4236-882b-2cb727863a8f",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 4,
+      "evidence": "offer [social]; fill: decision directSuccess duration 5min; steps [social, outcomeBinding always, retryChange {kind none}, addressedThreadRef {kind none}]; results [social step 0 branch result, outcomeCode occurred, responseKind speech, consequences []]. No result inside the step. Narration published; review five checks pass. FictionTimeAdvanced 300000000 first event of the root."
+    },
+    {
+      "ordinal": 2,
+      "submissionId": "vnext-round85-npc-http-1ac47369-dffe-40db-9459-7d86899ba9bf",
+      "action": "committed",
+      "narration": "published",
+      "modelCalls": 4,
+      "evidence": "offer [passTime, observe]; fill: passTime durationMicros 5400000000 with steps [] results [] (observe selected then dropped). Narration: 「你在厅里等了一个半小时，等待结束了。」 Review five checks pass. Activity 300000000 -> 5700000000 completed."
+    },
+    {
+      "ordinal": 3,
+      "submissionId": "vnext-round85-npc-http-80d6db31-458a-4a11-bc42-e086376c263b",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_FORM_INVALID",
+      "modelCalls": 2,
+      "evidence": "offer [observe]; fill: decision directSuccess duration none PLUS basisRefs (identical to steps[0].basisRefs); steps [observe with inquiry/method/focusRefs/existingFactRefs, outcomeBinding always]; results [observe step 0 branch result, one sensoryEvidence entry stating no copy on the desk]. Decoder: filling:server-owned-field at decision.basisRefs (CONSTRAINT_CONFLICT, repair not allowed). No correction call; the desk was never checked in the world."
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "coverage": "nothing-recorded-awaiting-due"
+    },
+    {
+      "afterAction": 2,
+      "next": "pending",
+      "coverage": "waited-without-plan"
+    }
+  ],
+  "authorityAfterBatch": {
+    "npcPlans": 0,
+    "promises": 0,
+    "activities": {
+      "time-passage": "completed"
+    },
+    "fictionNowMicros": "5700000000",
+    "eventTypes": [
+      "FictionTimeAdvanced",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "AtomicWorldInteractionStepsResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "npcActionCommitted": 0
+  },
+  "notSurfaced": [
+    "DeepSeek strict mode again let an extra property through inside an anyOf object variant (decision.basisRefs on directSuccess).",
+    "existingFactRefs on the observe step (a knowledge: ref and a module-opening ref) were never validated because the ruling failed first."
+  ],
+  "meter": {
+    "calls": 10,
+    "inputTokens": 155487,
+    "outputTokens": 3664,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "inputBudgetCharge": 155487,
+    "outputBudgetCharge": 3664,
+    "callTelemetryConsistent": true,
+    "peakCnyBudgetCharge": 0.499437
+  },
+  "pricing": {
+    "window": "off-peak (Tue 2026-09-08 14:06 Beijing)",
+    "chargedAt": "saved peak tariff; pricing page re-fetched at release, sha256 unchanged",
+    "unknownUsageCalls": 0,
+    "cny": 0.499437,
+    "budgetCny": 5
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "14",
+    "events": 14
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "beforeCount": 323,
+    "afterCount": 323,
+    "headUnchanged": true
+  },
+  "servicesShutdown": "both roles verifiedAbsent; no listener on 4320/4321"
+}

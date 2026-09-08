@@ -3415,3 +3415,7 @@ round82/83 的长草稿都在结尾多关一层括号；损坏落在唯一顶层
 ## round84 → continuation 拆表、步骤内结果拒绝、空字段哨兵归一（2026-09-08）
 
 round84：模型写对了三张表，又在步骤里塞了旧写法的 `result`（摘要不同），`retryChange` 是带空字段的 none 混合体；2 次调用停批。continuation 改为同样的三张表，schema 里不再有任何嵌套结果写法（全量 120 KB → 77 KB）；步骤行带结果直接拒；`{kind:"none"}` 带空字段解码为哨兵。见[三表回执](agent/vnext-three-table-wire-validation.md)、[round84 回执](agent/vnext-round84-validation.md)。
+
+## round85 → 裁决上重复的 basisRefs 丢弃（2026-09-08）
+
+round85：三张表前两句零修订提交（社交 + 一个半小时等待，等待有模型旁白）；第三句 observe 被拒——模型把步骤的 `basisRefs` 又抄到了 directSuccess 裁决上，解码器按服务器所有字段拒绝。现在：裁决上的 `basisRefs` 与服务器从步骤推导的列表完全相同（去重、排序、剔除 prospective）时直接丢弃，其它列表仍拒。同 round84 的空字段哨兵归一原则：只接受不带信息的重复。见[round85 回执](agent/vnext-round85-validation.md)。

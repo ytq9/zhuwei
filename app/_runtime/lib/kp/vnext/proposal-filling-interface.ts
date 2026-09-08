@@ -364,14 +364,18 @@ function decodeDecision(value: RecordValue, path: ProposalDiagnosticPath, contin
       { type: "string", enum: [...rulings, ...(continuation ? ["inWorldRefusal", "cancel", "abilityOperation"] : terminals)] }, kind);
   }
   if (rulings.includes(kind)) {
-    rejectOwned(value, ["adjudication", "terminal", "proposals", "basisRefs"], path);
+    rejectOwned(value, ["adjudication", "terminal", "proposals"], path);
     const proposals = Array.isArray(steps) ? steps.map((entry, index) => decodeStep(entry, [...path, "steps", index], kind === "check", layouts)) : steps;
-    const basisRefs = Array.isArray(proposals) ? [...new Set(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs)
-      ? entry.basisRefs.filter((ref): ref is string => typeof ref === "string" && !ref.startsWith("prospective:")) : []))].sort() : [];
+    const basisRefs = Array.isArray(proposals) ? rulingBasis(proposals.flatMap(entry => isPlainRecord(entry) && Array.isArray(entry.basisRefs) ? entry.basisRefs : [])) : [];
+    // The ruling's basis is derived from its steps; the wire offers no such
+    // field on a ruling. Round 85 copied the step's list onto the ruling
+    // anyway. A copy that restates the derived list says nothing and is
+    // dropped; any other list is a claim on a server-owned field.
+    if (Object.hasOwn(value, "basisRefs") && !(Array.isArray(value.basisRefs) && sameRefs(rulingBasis(value.basisRefs), basisRefs))) rejectOwned(value, ["basisRefs"], path);
     // The wire carries the act's duration as one coarse tier; the domain keeps
     // exact microseconds. An unknown tier passes through so the domain
     // validator diagnoses the value instead of silently dropping it.
-    const { duration, ...ruling } = content;
+    const { duration, basisRefs: _restated, ...ruling } = content;
     const adjudication = { kind, ...ruling,
       ...(duration === undefined ? {} : { durationMicros: actionDurationMicrosForTier(duration) ?? duration }) };
     // Missing steps remain missing proposals, so the canonical validator can
@@ -718,6 +722,15 @@ function requireOnly(value: RecordValue, fields: string[], path: ProposalDiagnos
   if (extra.length) throw new ProposalFillingError(extra.map(key => proposalDiagnostic("VALUE_INVALID", "filling:additional-field", {
     path: [...path, key], pathBase: "arguments", expected: { allowedFields: fields }, actual: diagnosticActual(value[key]),
   })));
+}
+
+/** The basis a ruling derives from its steps: the distinct existing (non-prospective) refs, sorted. */
+function rulingBasis(refs: readonly unknown[]): string[] {
+  return [...new Set(refs.filter((ref): ref is string => typeof ref === "string" && !ref.startsWith("prospective:")))].sort();
+}
+
+function sameRefs(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((ref, index) => ref === b[index]);
 }
 
 function rejectOwned(value: RecordValue, fields: string[], path: ProposalDiagnosticPath): void {

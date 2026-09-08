@@ -79,6 +79,7 @@ vNext 能用正常注册 Cookie → `/api/game` 的真实链路让真实 DeepSee
 | [round77](docs/agent/vnext-round77-validation.md) | 同上，传输放宽之后 | 首句 4 次调用完整 committed/published。双工具 surface 真的到达模型（传输修复有真实证据）；选择组合变为 `["social","passTime"]`（round75 是 `["social","commitNarrativeDetail"]`）。但 `passTime` 未被使用，`formActorPlan` 未选，计划/活动/承诺仍为 0 | `legalNoPlan` —— **但这个 gate 可能考错了东西，见 §7** |
 | [round81](docs/agent/vnext-round81-validation.md) | 同上，等待旁白 + 档位 v44 之后 | **三句全部 committed/published**，12 次调用 ¥0.62。首句 `duration:5min`、时钟 0→300000000、裸 `"none"` 被接受；等待第一次有旁白（上下文正确、无编造）；第三句接续真实线程引用。瓦罗拒绝敲击，`consequences: []` 第六批 | 没停：`waited-without-confirmable-reminder` → noReminder 分支走完 |
 | [round82](docs/agent/vnext-round82-validation.md) | **新场景**：一小时内抄副本 / 等一个多小时 / 看账台，承诺档位 v46 之后 | 首句填写是 1208 token 的双分支 check，结尾多一个 `]`，重发逐字节相同。同一草稿里模型**第一次就填了 `due:"1h"` 和 trace**，但 `authorityRefs: []` | `PROPOSAL_FORM_INVALID`（JSON 语法），3 次调用 ¥0.20，0 提交，后两句未发 |
+| [round85](docs/agent/vnext-round85-validation.md) | 同上，continuation 拆表之后 | 前两句提交并发布（各 4 次调用，零修订）；等待有旁白、时钟走了一个半小时；第三句 observe 的裁决上多了一行 `basisRefs`（与步骤相同） | 前两句 `committed`；第三句 `PROPOSAL_FORM_INVALID`（`filling:server-owned-field`），10 次调用 ¥0.50，2 提交 |
 | [round84](docs/agent/vnext-round84-validation.md) | 同上，三张表 v48 之后 | JSON 合法、三张表都对；但步骤里又塞了旧写法 `result`（摘要不同），`retryChange` 是带空字段的 none 混合体 | `PROPOSAL_FORM_INVALID`（`filling:result-duplicate-row`），2 次调用 ¥0.16，0 提交 |
 | [round83](docs/agent/vnext-round83-validation.md) | 同上，v47 之后 | 首句 5 次调用 committed/published。裁成魅力检定 DC 13，真实 d20 = 3，失败分支：瓦罗拒绝。成功分支里的承诺**填全了**（own ref、`due:"1h"`、trace）；结尾多一个 `}`，**服务器语法证据修法第一次真实触发**，一次 correct 调用确认 | `legalRefusal` 停止，后两句未发 |
 
@@ -123,9 +124,13 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 
 ### 4. 第 2、3 层只管几小时尺度 —— 用户已裁定乙，本地已实现（parser v46）
 
-[合同](docs/agent/vnext-hours-scale-promise-contract-proposal.md) §7 是实现回执。promise 后果带 `due`（none|1h|halfDay|day|nextDawn）和 `trace`；Rules 在同一根、`PromiseMade` 折入之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。**round82 跑了（[回执](docs/agent/vnext-round82-validation.md)）**：模型第一次暴露就填了 `due:"1h"` 和 trace（KP 半边有真实证据），但草稿结尾多一个 `]`，重发相同，未提交；第 2、3 层仍零真实证据。同一草稿 `authorityRefs: []` 会是下一个拒绝点，已给该字段加描述与指引（parser v47）。round83 用同一三句再跑：承诺填全了（own ref、`due:"1h"`、trace），但检定 d20 = 3 失败，瓦罗拒绝，`legalRefusal` 停止（[回执](docs/agent/vnext-round83-validation.md)）。两批的长草稿都在结尾多关一层括号，用户裁定把 wire 拆成三张平表 `decision / steps / results`（[回执](docs/agent/vnext-three-table-wire-validation.md)，parser v48），真实模型还没见过这个形状。另加了兜底：结尾错位的关闭括号成为可证明的语法证据（round82 的真实 arguments 现在能救回来）。round84（[回执](docs/agent/vnext-round84-validation.md)）：模型写对了三张表，却又在步骤里塞了一份旧写法的 `result`——它从 continuation 还保留的嵌套写法学来的；于是 continuation 也拆表，schema 里不再有任何嵌套结果写法，步骤内结果直接拒，带空字段的 none 归一为哨兵。round85 再验。第 2、3 层的真实正例仍缺一个过 DC 的点数。模组没有开场时刻字段，`nextDawn` 现在从午夜起算。原始推理保留如下。
+[合同](docs/agent/vnext-hours-scale-promise-contract-proposal.md) §7 是实现回执。promise 后果带 `due`（none|1h|halfDay|day|nextDawn）和 `trace`；Rules 在同一根、`PromiseMade` 折入之后派生 `NpcPlanFormed` + timer Activity；第 3 层不动。**round82 跑了（[回执](docs/agent/vnext-round82-validation.md)）**：模型第一次暴露就填了 `due:"1h"` 和 trace（KP 半边有真实证据），但草稿结尾多一个 `]`，重发相同，未提交；第 2、3 层仍零真实证据。同一草稿 `authorityRefs: []` 会是下一个拒绝点，已给该字段加描述与指引（parser v47）。round83 用同一三句再跑：承诺填全了（own ref、`due:"1h"`、trace），但检定 d20 = 3 失败，瓦罗拒绝，`legalRefusal` 停止（[回执](docs/agent/vnext-round83-validation.md)）。两批的长草稿都在结尾多关一层括号，用户裁定把 wire 拆成三张平表 `decision / steps / results`（[回执](docs/agent/vnext-three-table-wire-validation.md)，parser v48），真实模型还没见过这个形状。另加了兜底：结尾错位的关闭括号成为可证明的语法证据（round82 的真实 arguments 现在能救回来）。round84（[回执](docs/agent/vnext-round84-validation.md)）：模型写对了三张表，却又在步骤里塞了一份旧写法的 `result`——它从 continuation 还保留的嵌套写法学来的；于是 continuation 也拆表，schema 里不再有任何嵌套结果写法，步骤内结果直接拒，带空字段的 none 归一为哨兵。round85（[回执](docs/agent/vnext-round85-validation.md)）：三张表第一次完整跑通两句——社交请求与一个半小时的等待都零修订提交，等待有了模型旁白，时钟 0 → 300000000 → 5700000000；第三句 observe 倒在裁决上多抄的一行 `basisRefs`（与步骤逐项相同，DeepSeek 严格模式又没拦 anyOf 分支里的多余属性）。修复：与推导列表完全相同的裁决 `basisRefs` 丢弃，其它仍拒；round86 再验。第 2 层连续第十一批 `consequences: []`。第 2、3 层的真实正例仍缺一个过 DC 的点数。模组没有开场时刻字段，`nextDawn` 现在从午夜起算。原始推理保留如下。
 
 「明早卯时把文书送来」这一类才需要 `consequences.promise` → `formActorPlan` → due。`formActorPlan` 只认行动前 `state` 里的依据（[actor-plans.ts:20](app/_runtime/lib/rules/v2/actor-plans.ts:20)），所以最短闭合是 promise 自带 `dueMicros`、Rules 在同根内 `PromiseMade` fold 之后派生计划——那时依据已在累加状态里。另立合同，不动现有 `consequences` 指引。场景要换成几小时尺度的，round70 那句半分钟不再用来验这层。
+
+### 5. round86：同三句再跑，验第三句
+
+round85 前两句已过（[回执](docs/agent/vnext-round85-validation.md)）。第三句 observe 倒在裁决上重复的 `basisRefs`，修复只有本地测试。round86 要验的：(a) 裁决上与推导列表相同的 `basisRefs` 被丢弃、observe 单独成根真实提交；(b) `existingFactRefs` 里 `knowledge:` 前缀与 `module-opening` 引用是否合法（round85 没走到校验）；(c) 承诺第 2/3 层正例——瓦罗肯不肯承诺仍是 KP 的选择，句子不改。
 
 ### 已完成、真实证据分账
 
@@ -142,7 +147,7 @@ parser 合同升到 `kp-vnext2-proposal-parser-v39`，`referenceSelection` 升�
 ### 已知缺口（各自独立）
 
 - ~~`mechanicalResult.fictionTime` 没进遥测~~ —— `room.authority.commit.completed` 现在带 `fictionTimeMicros` 与 `crossedDeadlineCount`（只有数量，不带引用；玩家可见的返回里仍然没有，因为到期点引用会泄露私有计划）。
-- ~~选中后丢弃不留痕~~ —— adapter 在填写落定后发 `kp.vnext.selection`（selected / used / unused）。为什么丢弃仍未解：`observe` 被选中三次、从未被填过。
+- ~~选中后丢弃不留痕~~ —— adapter 在填写落定后发 `kp.vnext.selection`（selected / used / unused）。为什么丢弃仍未解：`observe` 与 passTime 同选时被丢弃四次（round85 第二句又一次），从未被填过；单独选它时（round85 第三句）填了，倒在别处。
 - ~~到期 Activity 的冻结完成不再合法时时间线堵死~~ —— 已改为到期结算时中断（[合同 §10.2](docs/agent/vnext-fiction-time-contract-proposal.md)），本地验证。
 - ~~冻结上下文没有显式的「遭遇进行中」标记~~ —— 行动者复合记录在遭遇中带 `encounter` 字段，指引已指向它（[合同 §10.1](docs/agent/vnext-fiction-time-contract-proposal.md)）。填错仍是硬拒。
 - 闹钟路径（玩家不在线时到期）完成的等待：audience 建好但当时无人旁白，靠 `narrationRecovery` 在下次 observe 发布——链路是旧的，等待这一用法没跑过。

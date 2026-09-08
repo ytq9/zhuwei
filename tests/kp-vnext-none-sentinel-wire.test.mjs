@@ -129,3 +129,22 @@ test('a result written inside a step row is refused as such, not silently folded
   assert.throws(() => parse(wire), error => Array.isArray(error.diagnostics)
     && error.diagnostics.some(d => d.constraint === 'filling:result-in-step-row' && JSON.stringify(d.path) === JSON.stringify(['steps', 0, 'result']) && d.repair.allowed === false));
 });
+
+test('a ruling-level basisRefs that restates the steps\' aggregate decodes as absent; any other list is refused as server-owned', () => {
+  // round85 wrote decision.basisRefs equal to steps[0].basisRefs on a directSuccess ruling, a field the wire never offers there.
+  const plain = parse(socialWire({ kind: 'none' }));
+  const copy = socialWire({ kind: 'none' }); copy.decision.basisRefs = [NPC];
+  const parsed = parse(copy);
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+  assert.equal(parsed.bundleHash, plain.bundleHash);
+  assert.deepEqual(parsed.bundle.basisRefs, [NPC]);
+  // Order and repetition do not make it a different claim; a prospective ref is not part of the derived list either.
+  const shuffled = socialWire({ kind: 'none' }); shuffled.decision.basisRefs = [NPC, NPC];
+  assert.equal(parse(shuffled).bundleHash, plain.bundleHash);
+  for (const other of [[SCENE], [NPC, SCENE], [], 'npc:none-sentinel:archivist']) {
+    const wire = socialWire({ kind: 'none' }); wire.decision.basisRefs = other;
+    assert.throws(() => parse(wire), error => Array.isArray(error.diagnostics)
+      && error.diagnostics.some(d => d.constraint === 'filling:server-owned-field' && JSON.stringify(d.path) === JSON.stringify(['decision', 'basisRefs'])), JSON.stringify(other));
+  }
+});
+
