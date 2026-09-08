@@ -25,3 +25,19 @@
 - 正常行动触发、准备结果接入与后续主持，以及当前生产/开发 Profile 的适用范围。
 - 支持的历史起点、身份映射、新 genesis 版本与归档数据责任；具体冲突须定位到规格条款。
 - 每个 Worker 的源码与测试路径、定向验证命令，集成次序与最终代表性验收证据。
+
+## 第一轮回执与暂停点
+
+合同 checkpoint：d768e7fcc5e3bdb5e833cb2d38069349924f2719。三个 Worker 均基于此提交完成只读审查；没有修改源码、测试、模型调用或新的 Worker commit。原主目录其他在途修改保留。
+
+| Worker / worktree | 决策与缺口 | 拟独占修改路径 | 实际验证与集成状态 |
+| --- | --- | --- | --- |
+| creation / story-creation-01a07fe3 | 完整准备与独立语义/玩法评审可以隔离；新 NPC 尚无 vNext 公开生产者，宿主需补齐正式实体路径；现有 occurrence 不能证明历史时间 | room/story-creation 下 index.ts、authoring.ts、review.ts、recipes.ts、prompt.ts；专属 Node 测试与 fixture | 只读源码与规格，无测试、无修改、无新 commit；暂停，尚无代码可集成 |
+| journal / story-journal-01a07fe3 | 同一 DO SQLite 同步事务可原子预留；请求内调用计数不能代表作业总额；区分未发、已发未知、已保存和迟到结果 | room/story-creation-store.ts、story-creation-invocation.ts；专属 Store Worker 测试 | 只读源码与规格，无测试、无修改、无新 commit；暂停，尚无代码可集成 |
+| history / story-history-01a07fe3 | archive/replay 可复用，首团初始化不能继承完整历史状态；需合法切点、结构化历史时间和可信新 genesis | room/story-history/**；专属 Node 测试与 fixture | 只读源码与规格，无测试、无修改、无新 commit；暂停，尚无代码可集成 |
+
+公共 contracts.ts、宿主 Adapter、Rules、Room DO、共享类型/存储、归档接入、公开输入/投影与执行日志由协调者单写。以上文件归属待共享 Interface checkpoint 后成为正式代码派工范围，避免 Worker 各自发明不兼容类型。
+
+需用户裁定的当前唯一问题见[完整故事调用预算补充](story-creation-call-budget-decision.md)：现役 SPEC 0015 §6 / SPEC 0016 §7.2 的 Proposal 选择/填写/窄修订限制，尚未表达独立故事创作与评审作业。准备增加有界子额度，保持普通行动合同与同源总预算。
+
+恢复顺序：取得具体预算裁定 → 更新直接规格与共享类型/Interface → 创建公共 checkpoint → 三 Worker 在原 worktree 继续独占实现 → 协调者串行集成共享核心与真实产品纵切 → 代表性验收。没有完成代码、集成或可玩性验证前不报告能力完成。
