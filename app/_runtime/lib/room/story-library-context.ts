@@ -9,6 +9,7 @@ import { STORY_LIBRARY_CATALOG_REF, storyLibraryOwner, validateStoryLibraryEntry
 import { bindStoryPreparationContext } from "./story-action-context";
 import { validateRoomStoryContext } from "./story-context";
 import { reviewedDefinitionEntry } from "../kp/vnext/story-materialization";
+import { storyTemporalEvidenceRef } from "../rules/v2/story-temporal-evidence";
 
 const hash = (value: unknown) => canonicalHash(value) as StoryHash;
 export function bindStoryLibraryCatalog(context: VNextRequiredContext, catalog: StoryLibraryCatalog, maxUnits: number) {
@@ -50,7 +51,8 @@ export function storyLibraryBlockedCandidates(entry: StoryLibraryEntry, mappings
   const now = new Map(current.materials.map(value => [value.ref, value]));
   const admitted = new Set([...mappings.definitions, ...mappings.facts].map(value => value.candidateRef));
   const admittedAuthority = new Set([...mappings.definitions.flatMap(value => [value.authorityRef, ...value.definitionRefs]),
-    ...mappings.facts.flatMap(value => [value.factRef, ...value.knowledge.flatMap(known => [known.knowledgeRef,
+    ...mappings.facts.flatMap(value => [value.factRef, storyTemporalEvidenceRef(entry.artifact.preparationHash, value.candidateRef),
+      ...value.knowledge.flatMap(known => [known.knowledgeRef,
       `knowledge:${known.holderRef}:${known.knowledgeRef}`])])]);
   const actorMeaning = (material: StoryContextMaterial) => {
     const content = material.content;

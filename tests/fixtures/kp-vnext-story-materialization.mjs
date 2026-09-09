@@ -51,7 +51,7 @@ export function bundle(proposals) {
 /** Synthetic draft/reviewer outcomes exercise the real preparation codec.
  * They are deterministic protocol evidence, never a model quality verdict.
  * All grants and contexts come from the real authority freezer/Room builders. */
-export async function createStoryMaterializationFixture(name, { newNpc = false, definitions = [], worldOptions = {} } = {}) {
+export async function createStoryMaterializationFixture(name, { newNpc = false, definitions = [], worldOptions = {}, editDraft } = {}) {
   const f = createAuthoredProbeFixture(`story-materialization:${name}`, {
     npcCharacters: [{ id: BOATMAN, name: '林舟' }, { id: CLERK, name: '周吏' }],
     canonicalFacts: [
@@ -100,6 +100,7 @@ export async function createStoryMaterializationFixture(name, { newNpc = false, 
   f.body.definitions.push(...definitions.map(value => ({ ref: value.ref, kind: value.kind, capability: vnextProposalCapabilityForEntry(value.producer),
     payload: { steps: encodeVNextStrictToolBundle(bundle([value.producer])).steps }, dependsOn: value.dependsOn })));
   if (definitions.length) f.body.notApplicable = f.body.notApplicable.filter(value => value.path !== '/definitions');
+  editDraft?.(f.body);
   f.reviewBody = storyReviewBody(f);
   f.invocations = []; let checkpoint = null;
   const prepared = await prepareStory(f.request, f.storyContext, null, {

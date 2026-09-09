@@ -75,6 +75,31 @@ test('current semantics include newly related collection members and keep unrela
     preparationHash: f.preparationHash, jobId: f.preparation.jobId, definitions: tampered.mappings.definitions, facts: [] }]));
 });
 
+test('a manuscript can admit its remaining facts after its own temporal evidence was committed', async () => {
+  const laterRef = 'candidate:later-proof', laterKnowledge = 'candidate:later-memory';
+  const f = await createStoryMaterializationFixture('library-own-temporal-evidence', { editDraft(body) {
+    const later = structuredClone(body.facts[0]);
+    later.ref = laterRef; later.content = '另一次核验确认卷宗的签署日期早于抄件。';
+    later.knowledge[0] = { ...later.knowledge[0], ref: laterKnowledge, factRef: laterRef, sourceRef: laterRef };
+    body.facts.push(later); body.participants[0].knowledgeRefs.push(laterKnowledge);
+  } });
+  const library = storyLibraryFixture(f), manuscriptHash = canonicalHash(library.entry.artifact);
+  admitStoryReuse(f, library, freezeStoryReuse(f, library), [factSelector(f)]);
+  const later = freezeStoryReuse(f, library, { rootActionId: `${f.rootActionId}:remaining` });
+  assert.deepEqual(later.binding.library.blockedCandidateRefs, []);
+  const unrelatedDraftEvidence = structuredClone(later.binding.library.currentContext);
+  const ownEvidence = unrelatedDraftEvidence.materials.find(value => value.content?.kind === 'storyTemporalEvidence');
+  assert.ok(ownEvidence);
+  unrelatedDraftEvidence.materials.push({ ...structuredClone(ownEvidence), ref: `${ownEvidence.ref}:another-manuscript` });
+  assert.ok(storyLibraryBlockedCandidates(library.entry, later.binding.library.mappings, unrelatedDraftEvidence).includes(laterRef),
+    'only the exact committed candidate evidence is excluded from new related material');
+  const admitted = admitStoryReuse(f, library, later, [{ ...factSelector(f), candidateRefs: [laterRef] }]);
+  assert.equal(admitted.admission.facts[0].knowledge[0].candidateRef, laterKnowledge);
+  assert.equal(library.admissions.length, 2);
+  assert.equal(canonicalHash(library.entry.artifact), manuscriptHash);
+  assert.equal(f.invocations.length, 2);
+});
+
 test('saved ability, item definition and item instance resolve declared reference slots across separate real actions', async () => {
   const producers = itemBundle().proposals.slice(0, 3);
   const refs = ['candidate:ability', 'candidate:item', 'candidate:doses'];
