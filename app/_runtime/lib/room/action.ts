@@ -1586,8 +1586,33 @@ async function handleRoomActionInternal(
     ...context,
     authority: new Proxy(authority, {
       get(target, property) {
-        if (property === "prepare") return async (principal: unknown, input: RoomActionInput) =>
-          settleNpcDecision(principal, await target.prepare(principal, input));
+        if (property === "prepare") return async (principal: unknown, input: RoomActionInput) => {
+          for (let count = 0; ; count += 1) {
+            const prepared = await target.prepare(principal, input);
+            if (!isRecord(prepared) || prepared.kind !== "priorWork")
+              return settleNpcDecision(principal, prepared);
+            if (count >= MAX_ACTION_PHASE_TRANSITIONS * 2)
+              return { kind: "retryableFailure", code: "dueActivityPending" };
+            if (isRecord(prepared.narrationRecovery) && typeof prepared.narrationRecovery.capability === "string") {
+              const recovered = await handleViewerNarrationRecovery({ ...context, principal }, prepared.narrationRecovery.capability);
+              if (recovered.action !== "committed" || recovered.narration !== "published") {
+                // The recovery's Receipt belongs to the old event. This new
+                // input remains unprepared and must never report it as success.
+                return { kind: "retryableFailure", code: "narrationPredecessorPending" };
+              }
+            } else if (isRecord(prepared.outcome)) {
+              const settled = await settleNpcDecision(principal, prepared.outcome);
+              if (!isRecord(settled)) return authorityFailure(undefined);
+              if (settled.kind === "committed" || settled.kind === "concluded") continue;
+              if (settled.kind === "awaitingPlayerRoll") return settled;
+              if (settled.kind === "retryableFailure" || settled.kind === "rejected") {
+                return { kind: settled.kind, code: settled.code,
+                  ...(settled.kind === "rejected" ? { explanation: settled.explanation } : {}) };
+              }
+              return { kind: "retryableFailure", code: "dueActivityPending" };
+            } else return authorityFailure(undefined);
+          }
+        };
         if (property === "commit") return async (principal: unknown, preparedId: string, proposal: UnknownRecord) =>
           settleNpcDecision(principal, await target.commit(principal, preparedId, proposal));
         if (property === "resumePlayerRandomness" && target.resumePlayerRandomness) {
@@ -1724,7 +1749,7 @@ async function handleRoomActionInternal(
 
   const preparedFailure = publicFailure(preparedValue, activeInput.kind);
   if (preparedFailure) return preparedFailure;
-  if (preparedValue.kind === "awaitingInput") {
+  if (preparedValue.kind === "awaitingInput" || preparedValue.kind === "awaitingPlayerRoll") {
     return observeOutcome(context, preparedValue);
   }
   if (preparedValue.kind === "committed" || preparedValue.kind === "concluded") {

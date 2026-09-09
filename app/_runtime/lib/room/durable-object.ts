@@ -135,6 +135,7 @@ import type {
   AuthoritativeMemberSeed,
   AuthoritativeRoomObservation,
   AuthorityCommitOutcome,
+  AuthorityPreparationPrerequisite,
   DeliveryAudienceBinding,
   DeliveryFrame,
   DeliveryPlan,
@@ -4028,6 +4029,12 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("unsupportedActionInput", "This retry shape is not available in this slice.");
     }
 
+    if (this.vnextAdjudicationBridge !== undefined
+      && !["answer", "activityControl", "restInterrupt", "safetyPause", "safetyAdjust"].includes(actionInput.kind)) {
+      const prior = await this.priorWorkBeforePreparation(context, characterId, actorPlanTransport);
+      if (prior !== undefined) return prior;
+    }
+
     const movementContext = actionInput.kind === "movement"
       ? this.authoritativeMovementContext(replay, authenticated, characterId)
       : undefined;
@@ -6724,6 +6731,53 @@ export class RoomDurableObject extends DurableObject<Env> {
     return this.commitAuthoritative(context, childRootActionId, recovery === undefined
       ? { kind: "canonicalInput", input: rulesInput, proposalHash }
       : { kind: "recovery", row: recovery });
+  }
+
+  /** A new action may resume an already due NPC decision, but it never owns
+   * that decision's cause, budget, Receipt or fictional time. Returning a
+   * prerequisite forces the caller to prepare again from the resulting head. */
+  private async priorWorkBeforePreparation(context: TrustedPrincipalContext, characterId: string,
+    transport?: ActorPlanTransport): Promise<AuthorityPreparationPrerequisite | AuthorityCommitOutcome | undefined> {
+    const replay = this.authoritativeReplay();
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    const viewer = authenticated?.characterIds.includes(characterId)
+      ? this.authorityPlayerViewer(authenticated, replay.state, characterId) : undefined;
+    if (viewer === undefined) return rejectedAuthority("notController", "The action controller is unavailable.");
+    const viewerKey = `${viewer.principalId}\u001f${viewer.characterId}`;
+    const hasDueNarration = this.authorityStore.recoverableDeliveryAudiencesForPrincipal(viewer.principalId, true)
+      .some(audience => {
+        const plan = this.authorityStore.deliveryPlan(audience.publish_capability);
+        return audience.viewer_key === viewerKey && plan?.active_branch_id === replay.state.activeBranchId
+          && this.authorityStore.dueWorkByRoot(plan.root_action_id)?.status === "committed";
+      });
+    if (hasDueNarration) {
+      // The first journal may be the due event's own predecessor. Recover it
+      // in the existing Viewer order, including after eviction between commit
+      // and this return; a transient drain result is never recovery authority.
+      const recovery = this.viewerNarrationRecoveryRecord(replay, viewer);
+      const projection = recovery === undefined ? undefined
+        : this.viewerNarrationRecoveryProjection(recovery.plan.publishCapability, recovery.audience);
+      if (projection === undefined) return { kind: "retryableFailure", code: "narrationPredecessorPending" };
+      return { kind: "priorWork", narrationRecovery: projection };
+    }
+    const timelineId = characterTimelineId(replay.state, characterId), sceneId = replay.state.entities[characterId].sceneId;
+    const work = this.authorityStore.pendingDueWork().find(row => {
+      const due = parseJson<DueActivityDescriptor>(row.descriptor_json);
+      return due.timelineId === timelineId || due.sceneIds.includes(sceneId);
+    });
+    if (work === undefined) return undefined;
+    const due = parseJson<DueActivityDescriptor>(work.descriptor_json);
+    // Activities, explicit player choices and future clock progression keep
+    // their existing control path. Only already queued NPC decisions resume.
+    if (!due.actorPlan && !due.promiseReview && !due.npcWork) return undefined;
+    if (work.next_attempt_at !== null && work.next_attempt_at > Date.now())
+      return { kind: "retryableFailure", code: "dueActivityPending" };
+    const outcome = await this.commitDueActivity(work.child_root_action_id, transport);
+    if (this.authorityStore.dueWorkByRoot(work.child_root_action_id)?.status === "pending")
+      this.authorityStore.deferDueWork(work.child_root_action_id, null);
+    await this.scheduleExpiryAlarm();
+    this.runAuthorityRecoveryCheckpoint("afterPriorDueBeforePreparation");
+    return { kind: "priorWork", outcome };
   }
 
   private async drainDueActivities(actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome[]> {

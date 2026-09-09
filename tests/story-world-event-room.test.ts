@@ -79,17 +79,19 @@ async function seedPlan(stub: Stub) {
   });
 }
 
-type Capture = { calls: string[]; requests: { tool: string; input: Json }[];
-  selection?: "noStory" | "unknown"; failDraft?: boolean; reuse?: string; error?: string; crashAfterWorldBegin?: boolean; callLimit?: string };
-const capture = (): Capture => ({ calls: [], requests: [] });
+type Capture = { calls: string[]; steps: string[]; requests: { tool: string; input: Json }[];
+  selection?: "noStory" | "unknown"; failDraft?: boolean; reuse?: string; error?: string; crashAfterWorldBegin?: boolean;
+  callLimit?: string; npcUnknown?: boolean; crashAfterPriorDue?: boolean };
+const capture = (): Capture => ({ calls: [], steps: [], requests: [] });
 function binding(target: Internals, c: Capture) {
   return { async run(_model: string, input: Json): Promise<unknown> {
     const tool = String(record(record((input.tools as Json[])[0]).function).name);
-    c.calls.push(tool); c.requests.push({ tool, input: structuredClone(input) });
+    c.calls.push(tool); c.steps.push(`model:${tool}`); c.requests.push({ tool, input: structuredClone(input) });
     const message = JSON.parse(String((input.messages as Json[]).find(value => value.role === "user")!.content));
     if (tool === ACTOR_PLAN_DECISION_TOOL_NAME) {
       expect(JSON.stringify(input)).not.toContain(PRIVATE);
       expect(message.actorPlan.npcId).toBe(LIAN);
+      if (c.npcUnknown) throw new Error("NPC response lost after dispatch");
       return response(tool, { decision: { decision: "execute", planId: message.actorPlan.planId,
         mechanicalProposal: { kind: "none" }, targetRef: { kind: "none" } } });
     }
@@ -126,6 +128,12 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture) {
     const target = instance as unknown as Internals;
     const scope = createVNextModelCallScope({ roomId: "story-world-room", limit: c.callLimit, emit() {} });
     const ai = scope.bind(binding(target, c)), transport = new ActorPlanTransportCapability(ai);
+    const recovery = target as unknown as { authorityRecoveryCheckpoint?: (name: string) => void };
+    recovery.authorityRecoveryCheckpoint = name => {
+      if (c.crashAfterPriorDue && name === "afterPriorDueBeforePreparation") {
+        c.crashAfterPriorDue = false; throw new Error("interrupted:priorDueCommitted");
+      }
+    };
     if (c.crashAfterWorldBegin) {
       // Interrupt after the actual durable send permit exists and before the
       // selector transport starts. The journal and its lease are not mocked.
@@ -145,16 +153,22 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture) {
       publishDelivery: (...args) => target.publishDelivery!(...args), deliveryPublicationStatus: (...args) => target.deliveryPublicationStatus!(...args),
       beginDeliveryAudiencePublication: (...args) => target.beginDeliveryAudiencePublication!(...args),
       failDeliveryAudiencePublication: (...args) => target.failDeliveryAudiencePublication!(...args),
+      beginViewerNarrationRecovery: (...args) => target.beginViewerNarrationRecovery!(...args),
+      publishViewerNarrationRecovery: (...args) => target.publishViewerNarrationRecovery!(...args),
+      failViewerNarrationRecovery: (...args) => target.failViewerNarrationRecovery!(...args),
     };
     const kp = createVNextKpAdapter({ proposalBinding: ai,
-      narrationAdapter: { async narrate() { return { body: "登记核对的结果已经留下，你可以继续选择自己的行动。" }; } } as AuthoritativeKpAdapter,
+      narrationAdapter: { async narrate(request: Json) {
+        c.steps.push(`narrate:${String(request.rootActionId)}`);
+        return { body: "登记核对的结果已经留下，你可以继续选择自己的行动。" };
+      } } as AuthoritativeKpAdapter,
       prepareStory: id => target.prepareStoryForAction(ALICE, id, transport),
       journal: { begin: (id, request) => target.beginVNextProposalInvocation(ALICE, id, request),
         complete: (id, result) => target.completeVNextProposalInvocation(ALICE, id, result) } });
     return handleRoomAction({ principal: ALICE, authority, kp }, input);
   });
 }
-async function snapshot(stub: Stub) {
+async function snapshot(stub: Stub, root?: string, submissionId?: string) {
   return runInDurableObject(stub, (instance, context) => {
     const target = instance as unknown as Internals, { state } = target.authoritativeReplay();
     const archived = target.storyStore.archiveSnapshot({ roomId: state.roomId, runtimeEpochId: state.runtimeEpochId });
@@ -163,6 +177,8 @@ async function snapshot(stub: Stub) {
     const rows = context.storage.sql.exec<{ context_kind: string; context_json: string }>(
       "SELECT context_kind, context_json FROM authority_story_host_contexts WHERE context_kind IN ('world', 'worldOutcome') ORDER BY prepared_action_id, context_kind").toArray();
     return { state, events: target.authorityStore.events(), due: target.authorityStore.pendingDueWork(),
+      work: root ? target.authorityStore.dueWorkByRoot(root) : undefined,
+      submission: submissionId ? target.authorityStore.submission(submissionId) : undefined,
       jobs: target.storyStore.listCreationJobs(), library: target.storyLibraryStore.listEntries(), story: archived.snapshot,
       worlds: rows.filter(row => row.context_kind === "world").map(row => JSON.parse(row.context_json) as StoryFrozenWorldContext),
       outcomes: rows.filter(row => row.context_kind === "worldOutcome").map(row => JSON.parse(row.context_json) as Json) };
@@ -193,7 +209,7 @@ describe("committed world events through the actual Room host", () => {
     const f = await initialize("world-budget-new-action"), root = await seedPlan(f.stub), c = capture();
     c.callLimit = "2"; c.selection = "noStory";
     const first = await run(f.stub, timeInput("submission:world-room:budget-first"), c);
-    const paused = await snapshot(f.stub);
+    const paused = await snapshot(f.stub, root);
     expect(first).toMatchObject({ kind: "committed", action: "committed" });
     expect(paused.due).toMatchObject([{ child_root_action_id: root, next_attempt_at: null }]);
     expect(paused.story.invocations.filter(row => row.invocation.purpose === "npc"))
@@ -202,7 +218,7 @@ describe("committed world events through the actual Room host", () => {
     await evictDurableObject(f.stub);
     c.callLimit = undefined;
     const next = await run(f.stub, timeInput("submission:world-room:budget-next"), c);
-    const after = await snapshot(f.stub);
+    const after = await snapshot(f.stub, root, "submission:world-room:budget-next");
     const evidence = { first: { kind: first.kind, action: record(first).action, deliveryPending: record(first).deliveryPending },
       next: { kind: next.kind, code: record(next).code }, calls: c.calls,
       due: after.due.map(row => ({ root: row.child_root_action_id, next: row.next_attempt_at })),
@@ -213,6 +229,79 @@ describe("committed world events through the actual Room host", () => {
     expect(after.due).toEqual([]);
     expect(after.events.filter(event => event.rootActionId === root && event.eventType === "NpcActionCommitted")).toHaveLength(1);
     expect(after.state.canonicalFacts[TRACE].value).toMatchObject({ description: TRACE_TEXT });
+    expect(record(record(next).receipt).rootActionId).toBe("root-action:submission:world-room:budget-next");
+    expect(after.work?.cause_root_action_id).toBe(paused.work?.cause_root_action_id);
+    expect(after.work?.cause_event_id).toBe(paused.work?.cause_event_id);
+    const oldInvocation = paused.story.invocations.find(row => row.invocation.purpose === "npc")!;
+    const resumedInvocation = after.story.invocations.find(row => row.invocation.purpose === "npc")!;
+    expect(resumedInvocation.invocation.invocationId).toBe(oldInvocation.invocation.invocationId);
+    expect(resumedInvocation.externalBinding).toEqual(oldInvocation.externalBinding);
+    expect(resumedInvocation.accountIds).toEqual(oldInvocation.accountIds);
+    expect(resumedInvocation.invocation.status).toBe("completed");
+    expect(c.calls.filter(tool => tool === ACTOR_PLAN_DECISION_TOOL_NAME)).toHaveLength(1);
+    expect(c.steps.indexOf(`narrate:${root}`)).toBeGreaterThan(-1);
+    expect(c.steps.indexOf(`narrate:${root}`)).toBeLessThan(c.steps.lastIndexOf(`model:${OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME}`));
+    const prepared = JSON.parse(after.submission!.prepared_json);
+    expect(prepared.requiredContext.binding.rootActionId).toBe("root-action:submission:world-room:budget-next");
+    expect(prepared.requiredContext.binding.baseEventSeq).toBe(after.events.filter(event => event.rootActionId === root).at(-1)!.eventSeq);
+    expect(after.state.knowledge[LIAN]).toEqual(paused.state.knowledge[LIAN]);
+    expect(JSON.stringify(next)).not.toContain(PRIVATE);
+  }, 30_000);
+
+  it("the original submission still resumes its unsent due with no second player proposal or clock advance", async () => {
+    const f = await initialize("world-budget-original"), root = await seedPlan(f.stub), c = capture();
+    c.callLimit = "2"; c.selection = "noStory";
+    const input = timeInput("submission:world-room:budget-original"), first = await run(f.stub, input, c);
+    const paused = await snapshot(f.stub, root);
+    await evictDurableObject(f.stub); c.callLimit = undefined;
+    const next = await run(f.stub, input, c), after = await snapshot(f.stub, root);
+    expect(next).toMatchObject({ kind: "committed", receipt: record(first).receipt });
+    expect(c.calls.filter(tool => tool === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME)).toHaveLength(1);
+    expect(c.calls.filter(tool => tool === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME)).toHaveLength(1);
+    expect(c.calls.filter(tool => tool === ACTOR_PLAN_DECISION_TOOL_NAME)).toHaveLength(1);
+    expect(after.state.fictionTimelines).toEqual(paused.state.fictionTimelines);
+    expect(after.due).toEqual([]);
+    expect(after.work?.cause_root_action_id).toBe(paused.work?.cause_root_action_id);
+  }, 30_000);
+
+  it("an unknown NPC response blocks a new submission before its model calls and never samples again", async () => {
+    const f = await initialize("world-npc-unknown"), root = await seedPlan(f.stub), c = capture();
+    c.npcUnknown = true;
+    expect(await run(f.stub, timeInput("submission:world-room:unknown-cause"), c)).toMatchObject({ kind: "committed" });
+    const saved = await snapshot(f.stub, root), count = c.calls.length;
+    expect(saved.story.invocations.find(row => row.invocation.purpose === "npc")!.invocation.status).toBe("unknown");
+    await evictDurableObject(f.stub); c.npcUnknown = false;
+    const input = timeInput("submission:world-room:unknown-next");
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await run(f.stub, input, c);
+      expect(result).toMatchObject({ kind: "rejected", action: "notCommitted", code: "ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN" });
+      expect(record(result).receipt).toBeUndefined();
+    }
+    const after = await snapshot(f.stub, root);
+    expect(c.calls).toHaveLength(count); expect(after.events).toEqual(saved.events);
+    expect(after.story.invocations).toEqual(saved.story.invocations);
+    expect(after.state.canonicalFacts[TRACE]).toBeUndefined();
+  }, 30_000);
+
+  it("eviction after the prior due commits recovers its frozen narration before preparing the untouched new input", async () => {
+    const f = await initialize("world-prior-due-crash"), root = await seedPlan(f.stub), c = capture();
+    c.callLimit = "2"; c.selection = "noStory";
+    await run(f.stub, timeInput("submission:world-room:crash-cause"), c);
+    c.callLimit = undefined; c.crashAfterPriorDue = true;
+    const nextInput = timeInput("submission:world-room:crash-next");
+    expect(await run(f.stub, nextInput, c)).toMatchObject({ action: "notCommitted" });
+    const interrupted = await snapshot(f.stub, root);
+    expect(interrupted.work?.status).toBe("committed");
+    expect(c.steps).not.toContain(`narrate:${root}`);
+    expect(interrupted.state.receipts["root-action:submission:world-room:crash-next"]).toBeUndefined();
+    await evictDurableObject(f.stub);
+    const resumed = await run(f.stub, nextInput, c), after = await snapshot(f.stub, root);
+    expect(resumed).toMatchObject({ kind: "committed", receipt: { rootActionId: "root-action:submission:world-room:crash-next" } });
+    expect(c.calls.filter(tool => tool === ACTOR_PLAN_DECISION_TOOL_NAME)).toHaveLength(1);
+    expect(c.steps.indexOf(`narrate:${root}`)).toBeLessThan(c.steps.lastIndexOf(`model:${OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME}`));
+    expect(after.events.filter(event => event.rootActionId === root)).toEqual(interrupted.events.filter(event => event.rootActionId === root));
+    expect(after.story.invocations.find(row => row.invocation.purpose === "npc"))
+      .toEqual(interrupted.story.invocations.find(row => row.invocation.purpose === "npc"));
   }, 30_000);
 
   it("a real NPC due prepares a ready library story and the later player reuses it without more author calls", async () => {

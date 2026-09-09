@@ -187,6 +187,14 @@ export type PreparedAuthoritativeAction = {
   resumedPrincipalContext?: TrustedPrincipalContext;
 };
 
+/** Room-to-orchestrator work that precedes a new submission. No new action
+ * has been prepared or committed; any Receipt belongs to an older due root. */
+export type AuthorityPreparationPrerequisite = {
+  kind: "priorWork";
+  outcome?: AuthorityCommitOutcome;
+  narrationRecovery?: ViewerNarrationRecovery;
+};
+
 export type NarrationInputMode =
   | "observerProjection-v1"
   | "frozenRenderableClaims-vnext-1";
