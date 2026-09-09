@@ -139,3 +139,13 @@ Coordinator 曾先修 Store 的普通回应预算门，随后由 Store 作者将
 隔离协调者从 `edfcdf97c977289314ffb4f1c96bfd78204d50b3` 合入快照。源码自动合并；六处文档冲突保留四份已批准故事文件、SPEC 0016 最新普通补选语义和自动合入的故事预算例外，执行日志保留双方记录。没有改变主目录、生产、远端或实际房间。
 
 新基线定向检查：`npm run typecheck` exit 0；`npx tsx --test tests/story-history.test.mjs` 14/14 exit 0；`npx vitest run tests/story-preparation-host.test.ts` 8/8 exit 0。下一轮由三 Worker 只读收敛完整故事上下文、统一调用/生命周期存储与历史 genesis 接缝，协调者单写共享类型、KP/Rules/DO/table 入口。独立模块仍不代表完整产品验收。
+
+## 第五轮：本地 MVP 停止点（2026-09-09）
+
+用户将当前实施范围收口为“先进行到一个 mvp 的程度停止”。后续共享接线与三个 Worker 的代码已收回隔离集成目录，最后代码提交 `2791ceb`；更早各轮“尚未接入”的状态仅为当时记录，最新模块、消费者、矩阵与证据见[实施回执](story-creation-implementation-validation.md)。完整 C01–C11/A01–A13 保留为后续目标，不改写已批准合同。
+
+本地定向结果：真实 Room/SQLite 三文件 43/43、创作及失败诊断 Node 26/26、typecheck 均 exit 0；已完成的实际鉴权历史 HTTP 两项在 `69ad0ac` 通过。一次有界 DeepSeek 检查使用 6 次调用、101,152 输入和 2,580 输出 token，普通互动已提交并发布、同提交重试 0 次调用且私有状态相同；模型未选择完整故事创作，结果仍是 `needs-review / ordinary-response`，不算完整支线质量通过。
+
+Creation 的原稿诊断和归档核验、Journal 的旧 NPC 到期工作恢复、History 的 HTTP/真实模型探针均已交回所有权，停止扩展 A08、长篇/个人线及全面模型质量验收。最终代码和文档由 `refs/codex/story-creation-mvp-20260909` 保留；并行来源、检查失败及修复、收回顺序统一记录在 `docs/refactor-log.md`。
+
+原目录此时为 `cloudflare / 79a84d47ad0b9a40178019bc252b7378a85766d3`，检查期间持续增加 Proposal/Room/规格等未提交修改。本次未合回、未覆盖或代为提交，也未 stash；后续合回须基于届时的可恢复共同基线核对差量。本任务没有 push、部署、远端 migration、新建资源或生产切换。
