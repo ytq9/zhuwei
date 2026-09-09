@@ -5,6 +5,7 @@ import { AUTHORITATIVE_KP_PROFILE } from '../app/_runtime/lib/kp/authoritative-p
 import { createJournaledNarrationAdapter } from '../app/_runtime/lib/room/story-narration.ts';
 import { storyNpcPendingRequest, storyNpcPendingCanonicalProven, freezeStoryNpcPendingContext } from '../app/_runtime/lib/room/story-npc-pending.ts';
 import { exportStoryArchiveHostBindings, validateStoryArchiveHostBinding, restoreStoryArchiveHostBindings } from '../app/_runtime/lib/room/story-archive-host.ts';
+import { buildStoryArchive, validateStoryArchive } from '../app/_runtime/lib/room/story-archive.ts';
 import { pendingFixture, pendingStores, pendingArchive, pendingSnapshot, sourceOf, beginPending,
   completePending, freezePending, pendingResponse, ACTOR, TARGET } from './fixtures/story-npc-pending.mjs';
 
@@ -138,6 +139,54 @@ test('successive pending windows retain earlier answers but restore only current
   const recovered = restore(f, bindings, context);
   assert.equal(recovered.s.authority.npcDecision(f.saved.row.prepared_action_id).pending_input_id, savedSecond.row.pending_input_id);
   assert.deepEqual(exportStoryArchiveHostBindings(recovered.s.authority, pendingSnapshot(recovered.s, f.state)), bindings);
+});
+
+test('native ability selection and filling preserve original model host as audit while restoring a pending-only owner', async () => {
+  const f = pendingFixture('original-proposal-owner', { nativeAbility: true });
+  assert.equal(f.input.kind, 'applyAtomicWorldInteractionSteps'); assert.equal(f.pending.pending.rootActionId, f.rootActionId);
+  assert.equal(storyNpcPendingCanonicalProven(f.saved.frozen, f.pending.state), true);
+  const choice = { kind: 'useReaction', abilityRef: 'spell:shield', slotLevel: '1' };
+  completePending(f, f.saved, choice);
+  const context = await pendingArchive(f), bindings = exportStoryArchiveHostBindings(f.s.authority, context.storySnapshot);
+  assert.equal(bindings.length, 2); assert.ok(bindings.every(binding => validateStoryArchiveHostBinding(binding, context)));
+  const original = bindings.find(binding => binding.kind === 'preparedAction');
+  assert.equal(original.payload.submission.prepared.requiredContext.binding.contextHash, f.requiredContext.binding.contextHash);
+  assert.equal(original.invocationIds.length, 2);
+  const recovered = restore(f, bindings, context), owner = recovered.s.authority.submissionByPrepared(f.ownerPreparedId);
+  assert.equal(owner.status, 'prepared'); assert.equal(owner.continuation_json, null);
+  assert.equal(JSON.parse(owner.prepared_json).requiredContext, undefined);
+  assert.equal(recovered.s.authority.proposalRecovery(f.ownerPreparedId), undefined);
+  assert.deepEqual(exportStoryArchiveHostBindings(recovered.s.authority, pendingSnapshot(recovered.s, f.state)), bindings);
+  const before = pendingSnapshot(recovered.s, f.state), run = adapter(recovered, f.saved);
+  const decision = await run.value.decidePendingInput(f.saved.frozen.request);
+  const done = answer(f, f.pending, decision.answer); assert.equal(done.kind, 'committed', JSON.stringify(done.rejection));
+  assert.equal(done.state.combatRuntime.entities[ACTOR].resources['spellSlot:1'].current, '1');
+  assert.equal(done.state.combatRuntime.entities[TARGET].resources['spellSlot:1'].current, '1');
+  assert.equal(done.state.entities[TARGET].hitPoints.current, 20);
+  assert.deepEqual(run.counts(), { calls: 0, ordinaryCalls: 0 });
+  assert.equal(pendingSnapshot(recovered.s, f.state).snapshotHash, before.snapshotHash);
+  recovered.s.authority.finishSubmission(f.ownerPreparedId, 'committed', f.saved.row.proposal_hash, { kind: 'committed' });
+  const after = await pendingArchive(recovered, done.state, [...f.events, ...done.events]);
+  const terminal = exportStoryArchiveHostBindings(recovered.s.authority, after.storySnapshot);
+  assert.ok(terminal.every(binding => validateStoryArchiveHostBinding(binding, after)));
+  const terminalOriginal = terminal.find(binding => binding.kind === 'preparedAction');
+  assert.equal(terminalOriginal.payload.submission.status, 'committed'); assert.equal(terminalOriginal.payload.submission.originalInput, null);
+});
+
+test('complete story archive envelope validates zero, completed and unknown pending hosts against real ledger snapshots', async () => {
+  for (const outcome of ['zero', 'completed', 'unknown']) {
+    const f = pendingFixture(`envelope-${outcome}`);
+    if (outcome !== 'zero') completePending(f, f.saved, { kind: 'decline' }, { outcome });
+    const context = await pendingArchive(f), hostBindings = exportStoryArchiveHostBindings(f.s.authority, context.storySnapshot);
+    const ports = { replay: f.runtime.replay, validateHostBinding: validateStoryArchiveHostBinding };
+    const built = await buildStoryArchive({ ...context, hostBindings, generation: '1' }, ports);
+    assert.equal(built.kind, 'prepared', JSON.stringify(built));
+    const verified = await validateStoryArchive(built.envelope, ports);
+    assert.equal(verified.kind, 'validated', JSON.stringify(verified));
+    assert.deepEqual(verified.quarantine.sourceBudgetAccountIds, [f.saved.external.source.budgetAccountId]);
+    assert.equal(verified.quarantine.invocationIds.length, outcome === 'unknown' ? 1 : 0);
+    assert.deepEqual(verified.historyMaterials.preparations, []);
+  }
 });
 
 test('rehashing cannot forge pending knowledge, canonical execution, accepted answer, controller or call ownership', async () => {
