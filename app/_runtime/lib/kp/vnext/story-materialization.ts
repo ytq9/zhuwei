@@ -2,6 +2,9 @@ import { authorityRevisionOrHash, normalizedProspectiveRef, type AuthoritativeWo
 import { STORY_FACTS_ADMISSION_PLAN_SCHEMA, storyFactAdmissionRef, storyKnowledgeAdmissionRef,
   isStoryKnowledgeBoundaryValue, type StoryAdmissionBinding, type StoryFactsAdmissionPlan } from "../../rules/v2/story-facts-admission";
 import type { StoryPreparation, StoryFactCandidate } from "../../room/story-creation/contracts";
+import { storyReviewPassed } from "../../room/story-creation/review";
+import { validateStoredReview } from "../../room/story-creation/prompt";
+import { npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
 import { canonicalHash, isPlainRecord, deepFreeze } from "./canonical-json";
 import { materializationAuthorityBasis } from "./materialization-authority";
 import { requiredContextReadBindings } from "./required-context-runtime";
@@ -28,10 +31,9 @@ export function preparedStory(context: VNextRequiredContext, preparationHash: st
     || !isPlainRecord(entry.value.preparation) || canonicalHash(entry.value.preparation) !== preparationHash
     || !isPlainRecord(entry.value.review)) return fail("story:reviewed-preparation-unavailable");
   const preparation = entry.value.preparation as unknown as StoryPreparation, review = entry.value.review;
+  try { validateStoredReview(review); } catch { return fail("story:independent-review-required"); }
   if (review.preparationHash !== preparationHash || review.contextHash !== preparation.contextHash
-    || !Array.isArray(review.findings) || review.findings.length !== 6
-    || review.findings.some(value => !isPlainRecord(value) || value.verdict !== "pass")
-    || !Array.isArray(review.recipeCriteria) || review.recipeCriteria.some(value => !isPlainRecord(value) || value.verdict !== "pass")) {
+    || !storyReviewPassed(review)) {
     return fail("story:independent-review-required");
   }
   return preparation;
@@ -109,7 +111,8 @@ export function lowerStoryFactSelection(input: Readonly<{
     bindings.set(ref, { ref, authorityRef, kind });
   };
   for (const value of generated) {
-    const authorityRef = normalizedProspectiveRef(input.rootActionId, input.bundlePlan.referenceNamespaceHash, value.handle);
+    const prospectiveRef = normalizedProspectiveRef(input.rootActionId, input.bundlePlan.referenceNamespaceHash, value.handle);
+    const authorityRef = value.kind === "entity" ? npcMaterializationEntityRef(prospectiveRef) : prospectiveRef;
     add(value.candidateRef, authorityRef, value.kind === "entity" ? "entity" : "basis");
     add(value.handle, authorityRef, value.kind === "entity" ? "entity" : "basis");
   }

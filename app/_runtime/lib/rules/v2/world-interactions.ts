@@ -1,4 +1,4 @@
-import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinitionRefs } from "./npc-materialization";
+import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinitionRefs, npcMaterializationEntityRef } from "./npc-materialization";
 import { isStoryFactsAdmissionPlan, stepAdmitStoryFacts, type StoryFactsAdmissionInput } from "./story-facts-admission";
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
@@ -76,6 +76,7 @@ import {
   isSemanticDefinitionMaterializationPlan,
   isStoredSemanticDefinition,
   materializedSemanticDefinition,
+  normalizedProspectiveRef,
   semanticDefinitionMaterializedPayload,
   semanticDefinitionSnapshot,
   storedSemanticDefinition,
@@ -1520,7 +1521,11 @@ function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Authoritativ
     if (rulesInput.kind === "materializeNpc") {
       const produced = produces[0];
       if (produces.length !== 1 || produced?.kind !== "entity" || produced.outcomeBinding !== raw.outcomeBinding
-        || bindings.has(produced.handle)) return atomicCompileRejected("NPC creation requires one unique entity producer.");
+        || bindings.has(produced.handle)
+        || rulesInput.plan.prospectiveRef !== npcMaterializationEntityRef(normalizedProspectiveRef(
+          String(input.rootActionId), String(input.bundleHash), produced.handle))) {
+        return atomicCompileRejected("NPC creation requires one unique server-bound entity producer.");
+      }
       bindings.set(produced.handle, { definitionRef: rulesInput.plan.prospectiveRef, revisionOrHash: null,
         producerProposalRef: raw.proposalRef, outcomeBinding: raw.outcomeBinding });
     } else if(rulesInput.kind==="materializeDefinition"||rulesInput.kind==="materializeItem") {

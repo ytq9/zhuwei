@@ -205,6 +205,13 @@ export function npcMaterializationDefinitionRefs(rootActionId: string, prospecti
   return { semanticDefinitionRef: `definition:npc-identity:${suffix}`, mechanicalDefinitionRef: `definition:npc-mechanics:${suffix}` };
 }
 
+/** A Bundle's local producer namespace never becomes an authority reference.
+ * Both the lowerer and Rules compiler derive this same committed entity id. */
+export function npcMaterializationEntityRef(prospectiveRef: string): string {
+  if (!/^prospective:[0-9a-f]{32}$/u.test(prospectiveRef)) throw new TypeError("npc:normalized-producer-required");
+  return `npc:${prospectiveRef.slice("prospective:".length)}`;
+}
+
 export type DerivedNpcMaterialization = Readonly<{
   kind: "derived";
   character: CharacterRecord;

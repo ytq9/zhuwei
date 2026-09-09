@@ -1,4 +1,4 @@
-import { NPC_MATERIALIZATION_PLAN_SCHEMA } from "../../rules/v2/npc-materialization";
+import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
 import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
@@ -212,7 +212,8 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     }
     let bundle = validated.bundle;
     let storyMaterials: readonly StoryMaterialSelection[] = [];
-    if (bundle.mode === "adjudication" && bundle.proposals.some(entry => entry.kind === "materializeStory" || entry.kind === "admitStoryFacts")) {
+    const hasStorySelections = bundle.mode === "adjudication" && bundle.proposals.some(entry => entry.kind === "materializeStory" || entry.kind === "admitStoryFacts");
+    if (bundle.mode === "adjudication" && hasStorySelections) {
       const expansion = expandStorySelections(bundle, input.requiredContext);
       const checked = validateVNextProposalBundle(expansion.bundle);
       if (checked.kind === "rejected") return checked;
@@ -293,7 +294,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // nothing in the world: a bare Rules step has nowhere to spend the act's
     // frozen duration, so every in-world act -- a solo conversation included
     // -- takes the atomic path below and pays its time there.
-    if (branch === undefined && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0
+    if (branch === undefined && !hasStorySelections && plan.entries.length === 1 && narrativeMaterializationRefs.length === 0
       && bundle.proposals[0]?.kind !== "formActorPlan" && !IN_WORLD_ACT_FORM_IDS.has(plan.entries[0]!.formId)) {
       if (ruling.durationMicros !== "0") return rejected("PROPOSAL_FORM_INVALID", ["bundle2:duration-forbidden-for-pure-authoring"]);
       const derivedEntry = plan.entries[0]!;
@@ -666,7 +667,7 @@ function lowerExecutableEntry(
     if (selected.kind === "rejected") return selected;
     return { kind: "accepted", rulesInput: { kind: "materializeNpc", rootActionId: input.rootActionId,
       actorCharacterId: input.actorCharacterId, plan: { schema: NPC_MATERIALIZATION_PLAN_SCHEMA,
-        contextHash: input.requiredContext.binding.contextHash, prospectiveRef: produced.prospectiveRef,
+        contextHash: input.requiredContext.binding.contextHash, prospectiveRef: npcMaterializationEntityRef(produced.prospectiveRef),
         sceneRef: entry.sceneRef, source: entry.source, basisRefs: [...new Set([...entry.basisRefs, entry.sceneRef])].sort(),
         authorizationRefs: authority.basisRefs, readSet: selected.readSet, visibilityPolicyRef: entry.visibilityPolicyRef } } };
   }
