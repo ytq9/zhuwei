@@ -66,10 +66,11 @@ export async function historyHttpSource(owner: HttpAccount, peer?: HttpAccount) 
     sceneId: "wake", sheet: compileSheet({ ...historyHttpDraft, name: index === 0 ? "原团旅人" : "同桌见证人" }),
     runtimeProfiles: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST,
   }));
-  const initialized = await stub.initializeAuthoritative({ roomId, moduleId: "black-oak-will", moduleVersion: "social-resolution-v1",
-    runtimeProfiles: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, members, characters });
+  const initialized = httpRecord(await stub.initializeAuthoritative({ roomId, moduleId: "black-oak-will", moduleVersion: "social-resolution-v1",
+    runtimeProfiles: VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST, members, characters }));
   expect(initialized, JSON.stringify(initialized)).toMatchObject({ created: true });
-  if (!("created" in initialized)) throw new Error(JSON.stringify(initialized));
+  if (initialized.created !== true || typeof initialized.runtimeEpochId !== "string" || !initialized.runtimeEpochId
+    || typeof initialized.genesisHash !== "string" || !initialized.genesisHash) throw new Error("HTTP_FIXTURE_INITIALIZATION_INVALID");
   await historyHttpDb.prepare(`INSERT INTO rooms (id, code, host_user_id, title, module_id, ruleset_version, kp_model,
     kp_model_profile, kp_workflow_manifest, kp_context_planner_profile, status, runtime_epoch_id, genesis_hash)
     VALUES (?, ?, ?, '河港旧团', 'black-oak-will', ?, ?, ?, ?, ?, 'play', ?, ?)`)
