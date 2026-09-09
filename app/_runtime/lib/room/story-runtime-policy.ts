@@ -57,3 +57,10 @@ export function roomModelUsage(response: unknown): StoryMeasuredUsage | undefine
   return valid(input) || valid(output) ? { ...(valid(input) ? { inputTokens: input } : {}),
     ...(valid(output) ? { outputTokens: output } : {}) } : undefined;
 }
+
+/** Absent provider telemetry is an absent field, never undefined JSON or
+ * zero usage. The journal retains its unknown-dimension reservations. */
+export function roomModelUsageFields(response: unknown): { usage?: StoryMeasuredUsage } {
+  const usage = roomModelUsage(response);
+  return usage === undefined ? {} : { usage };
+}

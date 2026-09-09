@@ -7,7 +7,7 @@ import { prepareRoomStory } from "./story-preparation-host";
 import { buildRoomStoryContext, validateRoomStoryContext } from "./story-context";
 import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { bindStoryPreparationContext } from "./story-action-context";
-import { ROOM_STORY_TRANSPORT, roomStoryBudget, roomModelInvocationBinding, roomModelUsage } from "./story-runtime-policy";
+import { ROOM_STORY_TRANSPORT, roomStoryBudget, roomModelInvocationBinding, roomModelUsageFields } from "./story-runtime-policy";
 import { createStoryExternalInvocationJournal } from "./story-external-invocation-journal";
 import type { StoryExternalInvocationBinding } from "./story-creation-invocation";
 import { createStoryRecipes } from "./story-creation";
@@ -3389,7 +3389,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       const completed = createStoryExternalInvocationJournal(this.storyStore).complete(row.binding, {
         invocationId: row.invocation_id, capability: input.capability,
         result: input.result.kind === "completed"
-          ? { kind: "completed", response: input.result.response, usage: roomModelUsage(input.result.response) }
+          ? { kind: "completed", response: input.result.response, ...roomModelUsageFields(input.result.response) }
           : { kind: input.result.kind === "retryable" ? "unknown" : "failed" },
       });
       return completed.kind === "saved" ? { kind: "saved" as const } : completed;
@@ -6445,10 +6445,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       } finally { if (timer !== undefined) clearTimeout(timer); }
       try { vnextCanonicalHash(response); }
       catch {
-        complete({ kind: "failed", usage: roomModelUsage(response) });
+        complete({ kind: "failed", ...roomModelUsageFields(response) });
         return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The NPC response must be canonical JSON.");
       }
-      if (complete({ kind: "completed", response, usage: roomModelUsage(response) }).kind !== "saved") {
+      if (complete({ kind: "completed", response, ...roomModelUsageFields(response) }).kind !== "saved") {
         return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation changed while its response was running.");
       }
       this.runAuthorityRecoveryCheckpoint(isNpcWorkRequest(request) && ordinal === 1 ? "afterNpcWorkSelectionSaved" : "afterActorPlanResponseSaved");
@@ -9883,7 +9883,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     try { result = await transport.run(AUTHORITATIVE_KP_PROFILE.modelId, providerRequest); }
     catch { complete({ kind: "unknown" }); return unavailable(); }
     if (result.kind !== "completed") { complete({ kind: "notSent" }); return unavailable(); }
-    if (complete({ kind: "completed", response: result.response, usage: roomModelUsage(result.response) }).kind !== "saved") return unavailable();
+    if (complete({ kind: "completed", response: result.response, ...roomModelUsageFields(result.response) }).kind !== "saved") return unavailable();
     return result.response;
   }
 
