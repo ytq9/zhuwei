@@ -13,6 +13,10 @@ import type {
 import type { AuthoritativeArchiveProgress } from "./archive";
 import { authorityPendingBindings } from "./pending-bindings";
 import type { DueActivityDescriptor } from "../rules/v2/model";
+import { canonicalHash, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
+import { isCanonicalAuthorityRecoveryInput } from "./authority-commit-recovery";
+import type { StoryFrozenNpcContext, StoryFrozenNarrationContext } from "./story-archive-host";
+import type { AuthoritativeModuleProfile } from "../module/authoritative";
 
 export type { ExperiencedTranscriptMessage };
 
@@ -125,6 +129,22 @@ export type AuthorityNpcDecisionRow = {
   input_json: string;
   request_json: string;
   answer_json: string | null;
+};
+
+/** Exact private operational rows. Published results/Delivery are deliberately
+ * absent; a trusted archive retains frozen model premises, not old UI output. */
+export type AuthorityStoryHostContextRow = {
+  prepared_action_id: string;
+  context_kind: "npc" | "narration" | "admission" | "preparationModule";
+  context_json: string;
+};
+export type AuthorityStoryHostSnapshot = {
+  submissions: Omit<AuthoritySubmissionRow, "result_json">[];
+  dueWork: AuthorityDueWorkRow[];
+  recoveries: AuthorityProposalRecoveryRow[];
+  proofs: AuthorityVNextStageProofRow[];
+  contexts: AuthorityStoryHostContextRow[];
+  scopes: { scope_id: string; version: number }[];
 };
 
 export type AuthorityPendingRow = {
@@ -354,6 +374,12 @@ export class AuthoritativeRoomStore {
         repair_ticket_json TEXT, invocation_id TEXT NOT NULL UNIQUE,
         external_binding_json TEXT NOT NULL,
         PRIMARY KEY (prepared_action_id, ordinal)
+      );
+      CREATE TABLE IF NOT EXISTS authority_story_host_contexts (
+        prepared_action_id TEXT NOT NULL,
+        context_kind TEXT NOT NULL CHECK (context_kind IN ('npc', 'narration', 'admission', 'preparationModule')),
+        context_json TEXT NOT NULL,
+        PRIMARY KEY (prepared_action_id, context_kind)
       );
       CREATE TABLE IF NOT EXISTS authority_randomness_batches (
         prepared_action_id TEXT PRIMARY KEY,
@@ -655,6 +681,7 @@ export class AuthoritativeRoomStore {
         + (SELECT COUNT(*) FROM authority_due_work)
         + (SELECT COUNT(*) FROM authority_proposal_recovery)
         + (SELECT COUNT(*) FROM authority_vnext_stage_proofs)
+        + (SELECT COUNT(*) FROM authority_story_host_contexts)
         + (SELECT COUNT(*) FROM authority_npc_decisions)
         + (SELECT COUNT(*) FROM authority_randomness_batches)
         + (SELECT COUNT(*) FROM authority_randomness_authorizations)
@@ -1076,6 +1103,14 @@ export class AuthoritativeRoomStore {
     `, preparedActionId).toArray()[0];
   }
 
+  submissionByRoot(rootActionId: string): AuthoritySubmissionRow | undefined {
+    const rows = this.storage.sql.exec<AuthoritySubmissionRow>(
+      "SELECT * FROM authority_submissions WHERE root_action_id = ? LIMIT 2", rootActionId,
+    ).toArray();
+    if (rows.length > 1) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+    return rows[0];
+  }
+
   awaitingRandomnessSubmissions(): AuthoritySubmissionRow[] {
     return this.storage.sql.exec<AuthoritySubmissionRow>(`
       SELECT submission_id, principal_id, payload_hash, input_kind,
@@ -1341,6 +1376,109 @@ export class AuthoritativeRoomStore {
 
   vnextInvocationProofs(): AuthorityVNextStageProofRow[] {
     return this.storage.sql.exec<AuthorityVNextStageProofRow>("SELECT * FROM authority_vnext_stage_proofs ORDER BY prepared_action_id, ordinal").toArray();
+  }
+
+  private saveStoryHostContext(row: AuthorityStoryHostContextRow): void {
+    const prior = this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT prepared_action_id, context_kind, context_json FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = ?",
+      row.prepared_action_id, row.context_kind,
+    ).toArray()[0];
+    const value = parseJsonWithUniqueMembers(row.context_json);
+    if (prior !== undefined) {
+      if (canonicalHash(parseJsonWithUniqueMembers(prior.context_json)) !== canonicalHash(value)) {
+        throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+      }
+      return;
+    }
+    this.storage.sql.exec("INSERT INTO authority_story_host_contexts (prepared_action_id, context_kind, context_json) VALUES (?, ?, ?)",
+      row.prepared_action_id, row.context_kind, row.context_json);
+  }
+
+  saveStoryNarrationContext(input: StoryFrozenNarrationContext): void {
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "narration", context_json: JSON.stringify(input) });
+  }
+
+  saveStoryNpcContext(input: StoryFrozenNpcContext): void {
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "npc", context_json: JSON.stringify(input) });
+  }
+
+  saveStoryPreparationModule(preparedActionId: string, moduleProfile: AuthoritativeModuleProfile): void {
+    this.saveStoryHostContext({ prepared_action_id: preparedActionId, context_kind: "preparationModule", context_json: JSON.stringify(moduleProfile) });
+  }
+
+  saveStoryAdmissionInput(preparedActionId: string, rulesInput: Record<string, unknown>): void {
+    if (!isCanonicalAuthorityRecoveryInput(rulesInput)) throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID");
+    this.saveStoryHostContext({ prepared_action_id: preparedActionId, context_kind: "admission", context_json: JSON.stringify(rulesInput) });
+  }
+
+  storyAdmissionInput(preparedActionId: string): Record<string, unknown> | undefined {
+    const row = this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT * FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = 'admission'", preparedActionId,
+    ).toArray()[0];
+    if (row === undefined) return undefined;
+    const input = parseJsonWithUniqueMembers(row.context_json);
+    if (!isCanonicalAuthorityRecoveryInput(input)) throw new TypeError("STORY_ARCHIVE_HOST_BINDING_INVALID");
+    return input;
+  }
+
+  /** Called in the DO's same synchronous capture transaction as StoryStore. */
+  storyArchiveHostSnapshot(): AuthorityStoryHostSnapshot {
+    return {
+      submissions: this.storage.sql.exec<Omit<AuthoritySubmissionRow, "result_json">>(`SELECT submission_id, principal_id,
+        payload_hash, input_kind, root_action_id, prepared_action_id, character_id, scene_scope, prepared_scope_version,
+        status, proposal_hash, prepared_json, continuation_json FROM authority_submissions ORDER BY prepared_action_id`).toArray(),
+      dueWork: this.storage.sql.exec<AuthorityDueWorkRow>("SELECT * FROM authority_due_work ORDER BY child_root_action_id").toArray(),
+      recoveries: this.storage.sql.exec<AuthorityProposalRecoveryRow>("SELECT * FROM authority_proposal_recovery ORDER BY prepared_action_id").toArray(),
+      proofs: this.vnextInvocationProofs(),
+      contexts: this.storage.sql.exec<AuthorityStoryHostContextRow>("SELECT * FROM authority_story_host_contexts ORDER BY prepared_action_id, context_kind").toArray(),
+      scopes: this.storage.sql.exec<{ scope_id: string; version: number }>("SELECT scope_id, version FROM authority_scope_versions ORDER BY scope_id").toArray(),
+    };
+  }
+
+  /** Private typed restoration after semantic host validation. The caller owns
+   * the outer Room + StoryStore transaction; conflicts abort that transaction.
+   * Terminal submissions deliberately get no result_json or Delivery rows. */
+  restoreStoryArchiveHostSnapshot(snapshot: AuthorityStoryHostSnapshot): void {
+    for (const row of snapshot.submissions) {
+      const prior = this.submissionByPrepared(row.prepared_action_id);
+      if (prior !== undefined) {
+        const { result_json: _published, ...operational } = prior;
+        if (canonicalHash(operational) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        continue;
+      }
+      this.storage.sql.exec(`INSERT INTO authority_submissions (submission_id, principal_id, payload_hash, input_kind,
+        root_action_id, prepared_action_id, character_id, scene_scope, prepared_scope_version, status, proposal_hash,
+        prepared_json, continuation_json, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      row.submission_id, row.principal_id, row.payload_hash, row.input_kind, row.root_action_id, row.prepared_action_id,
+      row.character_id, row.scene_scope, row.prepared_scope_version, row.status, row.proposal_hash, row.prepared_json, row.continuation_json);
+    }
+    for (const row of snapshot.dueWork) {
+      const prior = this.dueWorkByRoot(row.child_root_action_id);
+      if (prior !== undefined) {
+        if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        continue;
+      }
+      this.storage.sql.exec(`INSERT INTO authority_due_work (child_root_action_id, cause_root_action_id, cause_event_id,
+        descriptor_json, timeline_id, completion_fiction_micros, activity_id, work_kind, work_ref, status, next_attempt_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.child_root_action_id, row.cause_root_action_id, row.cause_event_id,
+      row.descriptor_json, row.timeline_id, row.completion_fiction_micros, row.activity_id, row.work_kind, row.work_ref, row.status, row.next_attempt_at);
+    }
+    for (const row of snapshot.recoveries) {
+      const prior = this.proposalRecovery(row.prepared_action_id);
+      if (prior !== undefined) {
+        if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+        continue;
+      }
+      this.storage.sql.exec("INSERT INTO authority_proposal_recovery (prepared_action_id, proposal_hash, recovery_hash, recovery_json) VALUES (?, ?, ?, ?)",
+        row.prepared_action_id, row.proposal_hash, row.recovery_hash, row.recovery_json);
+    }
+    for (const proof of snapshot.proofs) this.saveVnextInvocationProof(proof);
+    for (const row of snapshot.contexts) this.saveStoryHostContext(row);
+    for (const row of snapshot.scopes) {
+      const prior = this.storage.sql.exec<{ version: number }>("SELECT version FROM authority_scope_versions WHERE scope_id = ?", row.scope_id).toArray()[0];
+      if (prior !== undefined && prior.version !== row.version) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+      if (prior === undefined) this.setScopeVersion(row.scope_id, row.version);
+    }
   }
 
   saveVnextInvocationProof(row: AuthorityVNextStageProofRow): void {
@@ -2322,6 +2460,7 @@ export class AuthoritativeRoomStore {
       DELETE FROM authority_randomness_batches;
       DELETE FROM authority_proposal_recovery;
       DELETE FROM authority_vnext_stage_proofs;
+      DELETE FROM authority_story_host_contexts;
       DELETE FROM authority_npc_decisions;
       DELETE FROM authority_action_stages;
       DELETE FROM authority_due_work;
