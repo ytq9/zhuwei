@@ -150,7 +150,7 @@ function hasNonGeometryAuthorityRef(state: AuthoritativeWorldState, ref: string)
     || state.campaignRuntime.itemSystem.entries[ref] !== undefined
     || state.campaignRuntime.itemSystem.definitions[ref] !== undefined
     || state.combatRuntime.definitions[ref] !== undefined || state.canonicalFacts[ref] !== undefined
-    || ["knowledge:", "knowledge-catalog:", "ability-catalog:", "npc-knowledge:", "continuity:", "profile-context:", "character-timeline:"].some(prefix => ref.startsWith(prefix));
+    || ["knowledge:", "knowledge-catalog:", "ability-catalog:", "npc-knowledge:", "continuity:", "profile-context:", "character-timeline:", "fiction-timeline:"].some(prefix => ref.startsWith(prefix));
 }
 
 /**
@@ -166,6 +166,12 @@ export function authorityRevisionOrHash(
   if (ref.startsWith("world-fact-constraints:")) {
     const frame = worldFactConstraints(state, ref.slice("world-fact-constraints:".length));
     return frame === undefined ? null : canonicalSha256(frame);
+  }
+  if (ref.startsWith("fiction-timeline:")) {
+    const timelineId = ref.slice("fiction-timeline:".length);
+    const timeline = state.fictionTimelines[timelineId];
+    const frontier = state.multiplayerRuntime.causalFrontiers[timelineId];
+    return timeline === undefined || frontier === undefined ? null : canonicalSha256({ timelineId, timeline, frontier });
   }
   if (ref.startsWith("character-timeline:")) {
     const timeline = authorityCharacterTimeline(state, ref.slice("character-timeline:".length));

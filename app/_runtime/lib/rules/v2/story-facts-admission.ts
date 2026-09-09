@@ -162,8 +162,14 @@ export function storyKnowledgeAdmissionRef(preparationHash: string, candidateRef
 function resolve(bound: readonly StoryAdmissionBinding[], original: string): string {
   return bound.find(entry => entry.ref === original)?.authorityRef ?? original;
 }
-function resolvedTime(value: StoryTemporalBasis, bound: readonly StoryAdmissionBinding[]): StoryTemporalBasis {
-  return { ...structuredClone(value), basisRefs: [...new Set(value.basisRefs.map(original => resolve(bound, original)))].sort() };
+export function resolveStoryAdmissionTime(value: StoryTemporalBasis, bound: readonly StoryAdmissionBinding[]): StoryTemporalBasis {
+  return { ...structuredClone(value),
+    start: { ...value.start, timelineId: resolve(bound, value.start.timelineId) },
+    end: value.end === null ? null : { ...value.end, timelineId: resolve(bound, value.end.timelineId) },
+    basisRefs: [...new Set(value.basisRefs.map(original => resolve(bound, original)))].sort() };
+}
+function temporalSourceRefs(value: StoryTemporalBasis): string[] {
+  return [value.start.timelineId, ...(value.end === null ? [] : [value.end.timelineId]), ...value.basisRefs];
 }
 function relevantBindings(bound: readonly StoryAdmissionBinding[], sourceRefs: readonly string[]): StoryAdmissionBinding[] {
   const selected = new Set(sourceRefs);
@@ -199,7 +205,7 @@ function knowledgeTime(state: AuthoritativeWorldState, record: KnowledgeRecord):
     const entry = fact.value.knowledge.find(entry => entry.holderRef === record.characterId && entry.knowledgeRef === record.knowledgeRef);
     if (entry) return entry.acquisition;
   }
-  if (isStoryKnowledgeBody(record.content)) return resolvedTime(record.content.candidate.acquisition, record.content.bindings);
+  if (isStoryKnowledgeBody(record.content)) return resolveStoryAdmissionTime(record.content.candidate.acquisition, record.content.bindings);
   // Knowing a record now proves its present availability; it does not locate
   // an older acquisition on the holder's current timeline.
   return nowBasis(state, record.characterId);
@@ -217,7 +223,7 @@ function existingSource(state: AuthoritativeWorldState, reference: string, actor
   }
   const fact = state.canonicalFacts[reference];
   if (fact) {
-    const occurrence = isStoryFactBody(fact.value) ? resolvedTime(fact.value.candidate.occurrence, fact.value.bindings)
+    const occurrence = isStoryFactBody(fact.value) ? resolveStoryAdmissionTime(fact.value.candidate.occurrence, fact.value.bindings)
       : Object.values(state.canonicalFacts).flatMap(entry => entry.kind === "storyTemporalEvidence" && isStoryTemporalEvidence(entry.value)
         && entry.value.factRef === reference ? [entry.value.occurrence] : [])[0] ?? nowBasis(state, actorRef);
     return occurrence && { kind: "fact", ref: reference, occurrence, subjects: fact.subjectRefs,
@@ -277,7 +283,7 @@ export function storyFactAdmissionIssue(state: AuthoritativeWorldState, value: u
     return "story-admission:fact-body-invalid";
   }
   const fact = value.fact, body = value.fact.value, candidate = body.candidate;
-  const occurrence = resolvedTime(candidate.occurrence, body.bindings);
+  const occurrence = resolveStoryAdmissionTime(candidate.occurrence, body.bindings);
   const moduleRef = state.campaignRuntime.campaign?.moduleRef;
   if (!isRecord(moduleRef) || typeof moduleRef.profileId !== "string") return "story-admission:module-pin-unavailable";
   const pin = `profile-context:${moduleRef.profileId}`;
@@ -285,7 +291,7 @@ export function storyFactAdmissionIssue(state: AuthoritativeWorldState, value: u
     || fact.id !== storyFactAdmissionRef(body.preparationHash, candidate.ref)
     || body.bindings.find(entry => entry.ref === candidate.ref)?.kind !== "fact"
     || !same(body.bindings, relevantBindings(body.bindings, [candidate.ref, ...candidate.subjectRefs,
-      ...candidate.basisRefs, ...candidate.occurrence.basisRefs]))
+      ...candidate.basisRefs, ...temporalSourceRefs(candidate.occurrence)]))
     || resolve(body.bindings, candidate.ref) !== fact.id || (rootActionId !== undefined && rootActionId !== body.rootActionId)
     || !same(fact.subjectRefs, candidate.subjectRefs.map(reference => resolve(body.bindings, reference)))
     || candidate.subjectRefs.some(reference => authorityRevisionOrHash(state, resolve(body.bindings, reference)) === null)
@@ -315,11 +321,11 @@ export function storyKnowledgeAdmissionIssue(state: AuthoritativeWorldState, val
     || body.bindings.find(entry => entry.ref === candidate.ref)?.kind !== "knowledge"
     || body.bindings.some(entry => entry.ref === candidate.holderRef && entry.kind !== "entity")
     || !same(body.bindings, relevantBindings(body.bindings, [candidate.ref, candidate.holderRef, candidate.factRef,
-      candidate.sourceRef, ...candidate.acquisition.basisRefs]))
+      candidate.sourceRef, ...temporalSourceRefs(candidate.acquisition)]))
     || value.knowledgeRef !== storyKnowledgeAdmissionRef(metadata.preparationHash, candidate.ref, String(value.characterId))
     || value.causeFactId !== metadata.factRef || resolve(body.bindings, candidate.factRef) !== metadata.factRef
     || metadata.sourceRef !== resolve(body.bindings, candidate.sourceRef)
-    || !same(metadata.acquisition, resolvedTime(candidate.acquisition, body.bindings))
+    || !same(metadata.acquisition, resolveStoryAdmissionTime(candidate.acquisition, body.bindings))
     || value.objectKind !== storyTemporalKnowledgeKind(candidate.layer) || value.layer !== "full"
     || value.visibility !== "private" || !isRecord(value.acquisition)
     || value.acquisition.method !== candidate.explanation || value.acquisition.sense !== "storyAdmission"
@@ -349,7 +355,7 @@ export function storyAdmissionEvidenceIssue(state: AuthoritativeWorldState, valu
   const body = state.canonicalFacts[value.factRef]?.value;
   if (!isStoryFactBody(body) || value.preparationHash !== body.preparationHash || value.candidateRef !== body.candidate.ref
     || (rootActionId !== undefined && rootActionId !== body.rootActionId)
-    || !same(value.occurrence, resolvedTime(body.candidate.occurrence, body.bindings))) return "story-admission:evidence-fact-binding-invalid";
+    || !same(value.occurrence, resolveStoryAdmissionTime(body.candidate.occurrence, body.bindings))) return "story-admission:evidence-fact-binding-invalid";
   const knowledge: StoryAdmissionKnowledgeCandidate[] = [];
   for (const binding of value.knowledge) {
     const content = state.knowledge[binding.holderRef]?.[binding.knowledgeRef]?.content;
@@ -357,7 +363,7 @@ export function storyAdmissionEvidenceIssue(state: AuthoritativeWorldState, valu
       || resolve(content.bindings, content.candidate.holderRef) !== binding.holderRef
       || resolve(content.bindings, content.candidate.factRef) !== value.factRef
       || resolve(content.bindings, content.candidate.sourceRef) !== binding.sourceRef
-      || content.candidate.layer !== binding.layer || !same(binding.acquisition, resolvedTime(content.candidate.acquisition, content.bindings))) {
+      || content.candidate.layer !== binding.layer || !same(binding.acquisition, resolveStoryAdmissionTime(content.candidate.acquisition, content.bindings))) {
       return "story-admission:evidence-knowledge-binding-invalid";
     }
     knowledge.push(content.candidate);
@@ -394,7 +400,7 @@ export function prepareStoryFactsAdmission(state: AuthoritativeWorldState, value
     input.actorCharacterId, `character-timeline:${input.actorCharacterId}`, ...plan.authorizationRefs,
   ]);
   for (const candidate of plan.facts) {
-    const actualRef = resolve(bound, candidate.ref), occurrence = resolvedTime(candidate.occurrence, bound);
+    const actualRef = resolve(bound, candidate.ref), occurrence = resolveStoryAdmissionTime(candidate.occurrence, bound);
     if (bound.find(entry => entry.ref === candidate.ref)?.kind !== "fact"
       || actualRef !== storyFactAdmissionRef(plan.preparationHash, candidate.ref) || authorityRevisionOrHash(state, actualRef) !== null
       || state.canonicalFacts[storyTemporalEvidenceRef(plan.preparationHash, candidate.ref)] !== undefined) return fail("story-admission:new-fact-identity-required");
@@ -404,7 +410,7 @@ export function prepareStoryFactsAdmission(state: AuthoritativeWorldState, value
       ...(candidate.layer === "statement" ? { layer: "sourceClaim" as const } : {}) });
     for (const knowledge of candidate.knowledge) {
       const holder = resolve(bound, knowledge.holderRef), knowledgeRef = resolve(bound, knowledge.ref);
-      const acquisition = resolvedTime(knowledge.acquisition, bound);
+      const acquisition = resolveStoryAdmissionTime(knowledge.acquisition, bound);
       if (bound.find(entry => entry.ref === knowledge.ref)?.kind !== "knowledge"
         || bound.some(entry => entry.ref === knowledge.holderRef && entry.kind !== "entity")
         || knowledgeRef !== storyKnowledgeAdmissionRef(plan.preparationHash, knowledge.ref, holder)
@@ -432,8 +438,19 @@ export function prepareStoryFactsAdmission(state: AuthoritativeWorldState, value
       : binding.kind === "fact" ? selectedFacts.has(binding.authorityRef) || state.canonicalFacts[binding.authorityRef] !== undefined
       : binding.kind === "knowledge" ? selectedKnowledge.has(binding.authorityRef) || knowledgeAtRef(state, binding.authorityRef) !== undefined
       : binding.kind === "source" ? get(binding.authorityRef) !== undefined
-      : authorityRevisionOrHash(state, binding.authorityRef) !== null;
+      : authorityRevisionOrHash(state, binding.authorityRef) !== null
+        || authorityRevisionOrHash(state, `fiction-timeline:${binding.authorityRef}`) !== null;
     if (!valid) return fail("story-admission:binding-kind-or-reference-invalid");
+  }
+  for (const candidate of plan.facts) for (const temporal of [candidate.occurrence, ...candidate.knowledge.map(value => value.acquisition)]) {
+    for (const original of [temporal.start.timelineId, ...(temporal.end === null ? [] : [temporal.end.timelineId])]) {
+      const mapped = bound.find(binding => binding.ref === original);
+      if (mapped === undefined) continue;
+      if (mapped.kind !== "basis" || authorityRevisionOrHash(state, `fiction-timeline:${mapped.authorityRef}`) === null) {
+        return fail("story-admission:timeline-binding-invalid");
+      }
+      usedRefs.add(`fiction-timeline:${mapped.authorityRef}`);
+    }
   }
   const requiredTemporalRefs: string[] = [];
   for (const candidate of plan.facts) {
@@ -447,7 +464,7 @@ export function prepareStoryFactsAdmission(state: AuthoritativeWorldState, value
     requiredTemporalRefs.push(...factSource.occurrence.basisRefs);
     for (const knowledge of candidate.knowledge) {
       const holder = resolve(bound, knowledge.holderRef), sourceRef = resolve(bound, knowledge.sourceRef);
-      const acquisition = resolvedTime(knowledge.acquisition, bound), refs = acquisition.basisRefs;
+      const acquisition = resolveStoryAdmissionTime(knowledge.acquisition, bound), refs = acquisition.basisRefs;
       const issue = boundaryIssue(state, holder, factRef, acquisition)
         ?? sourceIssue(state, knowledge, holder, get(sourceRef), factSource, acquisition, sources, refs);
       if (issue) return fail(issue);
@@ -484,14 +501,14 @@ export function prepareStoryFactsAdmission(state: AuthoritativeWorldState, value
     frozenReads.add(authorityRef);
   }
   const facts = topological(plan.facts, candidate => candidate.ref,
-    candidate => [...candidate.subjectRefs, ...candidate.basisRefs, ...candidate.occurrence.basisRefs]);
+    candidate => [...candidate.subjectRefs, ...candidate.basisRefs, ...temporalSourceRefs(candidate.occurrence)]);
   const knowledge = topological(plan.facts.flatMap(fact => fact.knowledge), candidate => candidate.ref, candidate => [candidate.sourceRef]);
   if (!facts || !knowledge) return fail("story-admission:cyclic-candidate-dependencies");
   const drafts: StoryFactsAdmissionDraft[] = [], createdAuthorityRefs: string[] = [];
   const reads = [...frozenReads].sort();
   for (const candidate of facts) {
     const { knowledge: _knowledge, ...core } = candidate, actualRef = resolve(bound, candidate.ref);
-    const factBindings = relevantBindings(bound, [candidate.ref, ...candidate.subjectRefs, ...candidate.basisRefs, ...candidate.occurrence.basisRefs]);
+    const factBindings = relevantBindings(bound, [candidate.ref, ...candidate.subjectRefs, ...candidate.basisRefs, ...temporalSourceRefs(candidate.occurrence)]);
     const body: StoryFactBody = { schema: "zhuwei.story-fact-body/v1", preparationHash: plan.preparationHash,
       candidateHash: canonicalSha256(candidate), rootActionId: input.rootActionId, proposalRef: plan.proposalRef,
       contextHash: plan.contextHash, candidate: structuredClone(core), bindings: factBindings, authorizationRefs: [...plan.authorizationRefs] };
@@ -507,22 +524,22 @@ export function prepareStoryFactsAdmission(state: AuthoritativeWorldState, value
     const holder = resolve(bound, candidate.holderRef), factRef = resolve(bound, candidate.factRef), knowledgeRef = resolve(bound, candidate.ref);
     const body: StoryKnowledgeBody = { schema: "zhuwei.story-knowledge-body/v1", preparationHash: plan.preparationHash,
       candidate: structuredClone(candidate), bindings: relevantBindings(bound, [candidate.ref, candidate.holderRef, candidate.factRef,
-        candidate.sourceRef, ...candidate.acquisition.basisRefs]) };
+        candidate.sourceRef, ...temporalSourceRefs(candidate.acquisition)]) };
     drafts.push({ eventType: "KnowledgeAcquired", payload: { characterId: holder, knowledgeRef,
       objectKind: storyTemporalKnowledgeKind(candidate.layer), layer: "full", content: body, causeFactId: factRef,
       acquisition: { sense: "storyAdmission", sceneId: state.entities[holder].sceneId, method: candidate.explanation }, visibility: "private",
       storyAdmission: { schema: "zhuwei.story-knowledge-admission/v1", preparationHash: plan.preparationHash, candidateRef: candidate.ref,
-        factRef, sourceRef: resolve(bound, candidate.sourceRef), acquisition: resolvedTime(candidate.acquisition, bound) } },
+        factRef, sourceRef: resolve(bound, candidate.sourceRef), acquisition: resolveStoryAdmissionTime(candidate.acquisition, bound) } },
       reads: [holder, factRef, resolve(bound, candidate.sourceRef)], writes: [`receipt:${input.rootActionId}`],
       creates: [`knowledge:${holder}:${knowledgeRef}`], visibilityPolicyId: `visibility:knowledge-holder:${holder}`, secrecy: "private" });
     createdAuthorityRefs.push(knowledgeRef, `knowledge:${holder}:${knowledgeRef}`);
   }
   for (const candidate of facts) {
     const evidence: StoryTemporalEvidence = { schema: "zhuwei.story-temporal-evidence/v1", preparationHash: plan.preparationHash,
-      candidateRef: candidate.ref, factRef: resolve(bound, candidate.ref), occurrence: resolvedTime(candidate.occurrence, bound),
+      candidateRef: candidate.ref, factRef: resolve(bound, candidate.ref), occurrence: resolveStoryAdmissionTime(candidate.occurrence, bound),
       knowledge: candidate.knowledge.map(knowledge => ({ candidateRef: knowledge.ref, holderRef: resolve(bound, knowledge.holderRef),
         knowledgeRef: resolve(bound, knowledge.ref), sourceRef: resolve(bound, knowledge.sourceRef), layer: knowledge.layer,
-        acquisition: resolvedTime(knowledge.acquisition, bound) })) };
+        acquisition: resolveStoryAdmissionTime(knowledge.acquisition, bound) })) };
     const evidenceRef = storyTemporalEvidenceRef(plan.preparationHash, candidate.ref);
     drafts.push({ eventType: "CanonicalFactDeclared", payload: { fact: { id: evidenceRef, kind: "storyTemporalEvidence", value: evidence,
       subjectRefs: [...selectedFacts.get(evidence.factRef)!.subjects], source: "dynamicMaterialization", causalParentIds: [evidence.factRef],
@@ -584,17 +601,16 @@ export function remapStoryTemporalContent(value: unknown, timelineMap: ReadonlyM
       : { kind: "remapped", value: { ...structuredClone(value), unknownThrough: { ...value.unknownThrough, timelineId } } };
   }
   if (!isStoryFactBody(value) && !isStoryKnowledgeBody(value)) return { kind: "rejected", code: "story-admission:historical-body-invalid" };
-  const remap = (basis: StoryTemporalBasis): StoryTemporalBasis | undefined => {
-    const startTimeline = timelineMap.get(basis.start.timelineId), endTimeline = basis.end === null ? null : timelineMap.get(basis.end.timelineId);
-    return startTimeline === undefined || endTimeline === undefined ? undefined : { ...structuredClone(basis),
-      start: { ...basis.start, timelineId: startTimeline }, end: basis.end === null ? null : { ...basis.end, timelineId: endTimeline! } };
-  };
-  if (isStoryFactBody(value)) {
-    const occurrence = remap(value.candidate.occurrence);
-    return occurrence ? { kind: "remapped", value: { ...structuredClone(value), candidate: { ...structuredClone(value.candidate), occurrence } } }
-      : { kind: "rejected", code: "story-admission:historical-timeline-unavailable" };
+  const temporal = isStoryFactBody(value) ? value.candidate.occurrence : value.candidate.acquisition;
+  const mappedBindings = structuredClone(value.bindings) as StoryAdmissionBinding[];
+  for (const sourceId of new Set([temporal.start.timelineId, ...(temporal.end === null ? [] : [temporal.end.timelineId])])) {
+    const prior = mappedBindings.find(binding => binding.ref === sourceId);
+    if (prior !== undefined && prior.kind !== "basis") return { kind: "rejected", code: "story-admission:historical-timeline-unavailable" };
+    const targetId = timelineMap.get(prior?.authorityRef ?? sourceId);
+    if (targetId === undefined) return { kind: "rejected", code: "story-admission:historical-timeline-unavailable" };
+    const binding: StoryAdmissionBinding = { kind: "basis", ref: sourceId, authorityRef: targetId };
+    if (prior) mappedBindings.splice(mappedBindings.indexOf(prior), 1, binding);
+    else mappedBindings.push(binding);
   }
-  const acquisition = remap(value.candidate.acquisition);
-  return acquisition ? { kind: "remapped", value: { ...structuredClone(value), candidate: { ...structuredClone(value.candidate), acquisition } } }
-    : { kind: "rejected", code: "story-admission:historical-timeline-unavailable" };
+  return { kind: "remapped", value: { ...structuredClone(value), bindings: mappedBindings } };
 }

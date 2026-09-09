@@ -67,7 +67,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();
-    assertSurface(createVNextProposalOfferModelInput("bound").tools, "offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS);
+    assertSurface(createVNextProposalOfferModelInput("bound", selectionContext).tools, "offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS);
     return;
   }
   function response(ordinal: number): unknown {
@@ -76,7 +76,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       || row.binding_hash !== input.bindingHash || row.response_json === null) return invalid();
     return JSON.parse(row.response_json);
   }
-  const first = parseVNextProposalOfferResponse(response(1));
+  const first = parseVNextProposalOfferResponse(response(1), selectionContext);
   if ((first.story !== undefined) !== (storyBinding !== undefined)) invalid();
   const submitTools = (capabilities: readonly VNextProposalCapabilityId[],
     terminalKinds: readonly string[], amendable: boolean) =>
