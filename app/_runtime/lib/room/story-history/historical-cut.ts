@@ -134,8 +134,10 @@ export function selectHistoricalSupplements(input: {
     const candidate = material.preparation.facts.find(fact => fact.ref === binding.candidateRef)!;
     const factEvent = byEvent.get(binding.recordedByEventId);
     const fact = input.sourceState.canonicalFacts[binding.factRef];
+    const genesisFacts = input.genesis?.initialState.canonicalFacts;
+    const inheritedFact = isRecord(genesisFacts) ? genesisFacts[binding.factRef] : undefined;
     const baseline = baselines.get(material.preparationHash)!.facts.find(value => value.candidateRef === binding.candidateRef);
-    if (!fact || (!factEvent ? !baseline || canonicalJson(input.genesis?.initialState.canonicalFacts[fact.id]) !== canonicalJson(fact)
+    if (!fact || (!factEvent ? !baseline || !isRecord(inheritedFact) || canonicalJson(inheritedFact) !== canonicalJson(fact)
       : fact.validFromEventSeq !== factEvent.eventSeq)
       || fact.branchId !== input.sourceState.activeBranchId || seenFacts.has(fact.id)) {
       return rejected("STORY_HISTORY_BINDING_INVALID");
