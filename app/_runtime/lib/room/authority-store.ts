@@ -16,6 +16,7 @@ import type { DueActivityDescriptor } from "../rules/v2/model";
 import { canonicalHash, parseJsonWithUniqueMembers } from "../kp/vnext/canonical-json";
 import { isCanonicalAuthorityRecoveryInput } from "./authority-commit-recovery";
 import type { StoryFrozenNpcContext, StoryFrozenNarrationContext } from "./story-archive-host";
+import { storyNpcPendingPreparedActionId, type StoryFrozenNpcPendingContext } from "./story-npc-pending";
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
 
 export type { ExperiencedTranscriptMessage };
@@ -135,7 +136,7 @@ export type AuthorityNpcDecisionRow = {
  * absent; a trusted archive retains frozen model premises, not old UI output. */
 export type AuthorityStoryHostContextRow = {
   prepared_action_id: string;
-  context_kind: "npc" | "narration" | "admission" | "preparationModule";
+  context_kind: "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer";
   context_json: string;
 };
 export type AuthorityStoryHostSnapshot = {
@@ -1402,6 +1403,30 @@ export class AuthoritativeRoomStore {
     this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "npc", context_json: JSON.stringify(input) });
   }
 
+  saveStoryNpcPendingContext(input: StoryFrozenNpcPendingContext): void {
+    if (input.preparedActionId !== storyNpcPendingPreparedActionId(input.decision.prepared_action_id, input.decision.pending_input_id)
+      || input.decision.answer_json !== null) throw new TypeError("NPC_PENDING_DECISION_CONTEXT_INVALID");
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "npcPending", context_json: JSON.stringify(input) });
+  }
+
+  storyNpcPendingContext(preparedActionId: string): StoryFrozenNpcPendingContext | undefined {
+    const row = this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT * FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = 'npcPending'", preparedActionId,
+    ).toArray()[0];
+    return row === undefined ? undefined : parseJsonWithUniqueMembers(row.context_json) as unknown as StoryFrozenNpcPendingContext;
+  }
+
+  /** The complete host validator selects the last operational decision for
+   * each owner. Earlier frozen contexts remain provenance, never overwrite it. */
+  restoreStoryNpcPendingDecision(row: AuthorityNpcDecisionRow): void {
+    const prior = this.npcDecision(row.prepared_action_id);
+    if (prior !== undefined) {
+      if (canonicalHash(prior) !== canonicalHash(row)) throw new TypeError("STORY_ARCHIVE_HOST_IDENTITY_CONFLICT");
+      return;
+    }
+    this.saveNpcDecision(row);
+  }
+
   saveStoryPreparationModule(preparedActionId: string, moduleProfile: AuthoritativeModuleProfile): void {
     this.saveStoryHostContext({ prepared_action_id: preparedActionId, context_kind: "preparationModule", context_json: JSON.stringify(moduleProfile) });
   }
@@ -1521,6 +1546,12 @@ export class AuthoritativeRoomStore {
     this.storage.sql.exec(`UPDATE authority_npc_decisions SET answer_json = ?
       WHERE prepared_action_id = ? AND capability = ? AND answer_json IS NULL`,
     JSON.stringify(answer), preparedActionId, capability);
+    const saved = this.npcDecision(preparedActionId);
+    if (saved?.capability !== capability || saved.answer_json === null) return;
+    const id = storyNpcPendingPreparedActionId(preparedActionId, saved.pending_input_id);
+    if (this.storyNpcPendingContext(id) !== undefined) {
+      this.saveStoryHostContext({ prepared_action_id: id, context_kind: "npcPendingAnswer", context_json: saved.answer_json });
+    }
   }
 
   freezeNpcDecisionProposal(preparedActionId: string, proposalHash: string): void {
