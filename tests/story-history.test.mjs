@@ -128,6 +128,38 @@ test("missing manuscripts, changed manuscript bytes and forged fact bindings fai
   }
 });
 
+test("knowledge bindings cannot substitute another holder, fact, layer or source before historical filtering", async () => {
+  for (const mode of ["holder", "recordFact", "candidateFact", "layer", "source"]) {
+    const fixture = await createHistoryFixture();
+    const material = fixture.preparations[0], binding = material.facts[0];
+    const candidate = material.preparation.facts[0].knowledge[0];
+    if (mode === "holder") {
+      binding.knowledge = [{ ...binding.knowledge[1], candidateRef: binding.knowledge[0].candidateRef }];
+    } else if (mode === "recordFact") {
+      fixture.run({ kind: "acquireSensoryEvidence", proposalId: "root:history:future-knowledge",
+        characterId: BOATMAN, factId: "fact:history:future", sense: "hearing", clarity: "obvious",
+        publicEvidence: "FUTURE-KNOWLEDGE-CANARY" });
+      const record = fixture.state.knowledge[BOATMAN]["fact:history:future"];
+      binding.knowledge = [{ candidateRef: candidate.ref, holderRef: BOATMAN,
+        knowledgeRef: record.knowledgeRef, recordedByEventId: record.acquiredByEventId }];
+      fixture.archive = await buildAuthoritativeArchive({ roomId: fixture.state.roomId, signedGenesis: fixture.genesis,
+        events: fixture.events, receiptRefs: [], projectionAudits: [] });
+      fixture.request.source = { ...fixture.source, archiveHash: fixture.archive.archiveHash };
+    } else {
+      if (mode === "candidateFact") candidate.factRef = "candidate:another-fact";
+      if (mode === "layer") candidate.layer = "truth";
+      if (mode === "source") candidate.sourceRef = "fact:history:future";
+      await rehashMaterial(material);
+    }
+    const { result, calls } = await prepared(fixture);
+    assert.equal(result.kind, "rejected", mode);
+    assert.equal(result.code, "STORY_HISTORY_BINDING_INVALID", mode);
+    assert.equal(calls.cut, 0, mode);
+    assert.equal(calls.identity, 0, mode);
+    assert.doesNotMatch(JSON.stringify(result), /FUTURE-KNOWLEDGE-CANARY/);
+  }
+});
+
 test("ambiguous occurrence bounds, unknown timelines and uncomparable acquisitions never guess a date", async () => {
   for (const mode of ["range", "before", "timeline", "knowledge"]) {
     const fixture = await createHistoryFixture();

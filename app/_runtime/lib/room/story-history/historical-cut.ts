@@ -9,6 +9,20 @@ import { isRecord, rejected, sequence } from "./validation";
 
 type TemporalPosition = "established" | "after" | "unresolved";
 
+function knowledgeSourceMatches(
+  material: StoryHistoryPreparation, item: StoryHistoricalKnowledge["candidate"], record: StoryHistoricalKnowledge["record"],
+): boolean {
+  const sources = [
+    ...material.facts.filter(binding => binding.candidateRef === item.sourceRef).map(binding => binding.factRef),
+    ...material.facts.flatMap(binding => binding.knowledge)
+      .filter(binding => binding.candidateRef === item.sourceRef).map(binding => binding.knowledgeRef),
+  ];
+  if (sources.length > 1) return false;
+  const ref = sources[0] ?? item.sourceRef;
+  return record.provenanceChain.includes(ref) || record.knowledgeRef === ref
+    || record.sourceCharacterId === ref || record.sourceCharacterId === null && record.characterId === ref;
+}
+
 /** Compare only an expressly named timeline. A range crossing the cut and a
  * before-bound later than the cut do not establish on which side it occurred. */
 function temporalPosition(basis: StoryTemporalBasis, state: AuthoritativeWorldState): TemporalPosition {
@@ -87,7 +101,11 @@ export function selectHistoricalSupplements(input: {
       const record = input.sourceState.knowledge[granted.holderRef]?.[granted.knowledgeRef];
       const key = `${granted.holderRef}\u0000${granted.knowledgeRef}`;
       if (!item || !event || !record || record.acquiredByEventId !== event.eventId
+        || item.holderRef !== granted.holderRef || item.factRef !== candidate.ref
         || record.characterId !== granted.holderRef || record.knowledgeRef !== granted.knowledgeRef
+        || record.objectKind !== ({ truth: "canonicalFact", sensoryEvidence: "sensoryEvidence",
+          sourceClaim: "sourceClaim", inference: "characterInference" } as const)[item.layer]
+        || !record.provenanceChain.includes(binding.factRef) || !knowledgeSourceMatches(material, item, record)
         || candidateKnowledgeRefs.has(item.ref) || seenKnowledge.has(key)) {
         return rejected("STORY_HISTORY_BINDING_INVALID");
       }
