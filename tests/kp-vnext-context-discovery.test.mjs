@@ -91,7 +91,7 @@ function worldState(overrides = {}) {
         },
       },
     },
-    combatRuntime: { scenes: {}, definitions: {} },
+    combatRuntime: { scenes: {}, entities: {}, definitions: {} },
   };
 }
 

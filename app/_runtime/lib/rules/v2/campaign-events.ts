@@ -1,6 +1,7 @@
 import { npcActorPlanFormationStateIssue } from "./npc-plan-formation";
+import { promiseLifecycle, promiseKnownSnapshot, promiseChangeSnapshot } from "./promise-lifecycle";
 import { isItemAssemblyChangedPayload, planItemAssemblyTransition, assemblySourceHash, type ItemAssemblyChangedPayload } from "./item-assemblies";
-import { isWorldFactPointer, worldFactDefinition } from "./world-facts";
+import { isWorldFactPointer, worldFactDefinition, authoredWorldFactConform, worldHistoryCoverageAvailable } from "./world-facts";
 import { isTimePassagePlan, timePassageStartPayload, timePassageTimelineId } from "./time-passage";
 import { dueActivityDescriptors, timePassageSchedule } from "./due-activities";
 import { activityProgressBinding, activityProgressAvailable, hasActivityProgress, activityNoticeKnowledgeRefs, activityAttentionRoot, actionActivityCompletionRoot, actionActivityDependenciesMatch } from "./activity-progress";
@@ -1280,7 +1281,8 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || canonicalSha256(transition.itemSystem) !== payload.itemSystemHashAfter) {
         throw new TypeError("inventory operation does not match its authoritative transition");
       }
-      const loadouts = transition.affectedHolderRefs.map((ref) => {
+      const loadouts = transition.affectedHolderRefs.filter(ref => state.entities[ref].loadout !== undefined
+        || state.entities[ref].kind !== "npc").map((ref) => {
         const holder = state.entities[ref];
         return { holder, loadout: deriveItemHolderLoadout(state, holder, transition.itemSystem) };
       });
@@ -1842,9 +1844,32 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
     }
     case "CanonicalFactDeclared": {
       const payload = event.payload as EventPayloadByType["CanonicalFactDeclared"];
+      if (payload.fact.kind === "promiseTermsResult") {
+        const promise = isRecord(payload.fact.value) ? runtime.promises[String(payload.fact.value.promiseId)] : undefined;
+        const change = promiseLifecycle(promise)?.changes.at(-1);
+        if (!promise || !change?.change.accepted || change.eventId !== event.parentEventId
+          || canonicalSha256(payload.fact.value) !== canonicalSha256(promiseChangeSnapshot(promise, change.change))
+          || payload.fact.visibilityPolicyId !== "visibility:hidden-until-evidence" || event.secrecy !== "internal"
+          || payload.fact.source !== "mechanicalResolution") throw new TypeError("promise:terms-result-requires-change");
+      }
+      if (payload.fact.kind === "promiseReviewResult") {
+        const value = payload.fact.value;
+        const promise = isRecord(value) ? runtime.promises[String(value.promiseId)] : undefined;
+        const last = promiseLifecycle(promise)?.history.at(-1);
+        if (!isRecord(value)
+          || !promise || !last || last.outcome === "unchanged" || last.reviewRef !== event.parentEventId
+          || canonicalSha256(value) !== canonicalSha256(promiseKnownSnapshot(promise))
+          || ![`fact:${event.rootActionId}`, `fact:${event.rootActionId}:${promise.promiseId}`].includes(payload.fact.id) || payload.fact.source !== "mechanicalResolution"
+          || canonicalSha256(payload.fact.subjectRefs) !== canonicalSha256([promise.promisorId, promise.promiseeId])
+          || payload.fact.visibilityPolicyId !== "visibility:hidden-until-evidence"
+          || event.visibilityPolicyId !== "visibility:hidden-until-evidence" || event.secrecy !== "internal") {
+          throw new TypeError("promise:result-requires-private-review");
+        }
+      }
       if (isWorldFactPointer(payload.fact.value)) {
         const definition = worldFactDefinition(state, payload.fact);
-        if (!definition || payload.fact.kind !== "worldFact" || payload.fact.source !== "dynamicMaterialization"
+        if (!definition || !authoredWorldFactConform(definition.content.worldFact) || !worldHistoryCoverageAvailable(state, definition.content.worldFact)
+          || payload.fact.kind !== "worldFact" || payload.fact.source !== "dynamicMaterialization"
           || payload.fact.visibilityPolicyId !== definition.visibilityPolicyRef) throw new TypeError("world-fact:declaration-mismatch");
       }
       if (payload.fact.id in state.canonicalFacts) throw new TypeError("fact already exists");
@@ -1970,10 +1995,14 @@ export function applyCampaignEvent(state: AuthoritativeWorldState, event: EventE
         || payload.promiseId in runtime.promises) {
         throw new TypeError("inherited promise is unavailable");
       }
-      runtime.promises[payload.promiseId] = {
-        ...structuredClone(payload),
-        status: "active",
-      };
+      const life = promiseLifecycle(source);
+      runtime.promises[payload.promiseId] = { ...structuredClone(payload), status: source.status,
+        ...(life ? { lifecycle: structuredClone(life), inheritedKnownPromise: {
+          promiseId: payload.promiseId, content: source.content, condition: source.condition, revision: life.revision,
+          terms: structuredClone(life.terms), deadlineFictionMicros: life.deadlineFictionMicros,
+          remaining: life.obligation === "outstanding", completedParts: [...life.completedParts], releasedParts: [...life.releasedParts],
+          conditionStatus: life.conditionStatus, status: life.obligation === "outstanding" ? "active" : source.status, history: [] } } : {}) };
+
       return true;
     }
     case "DebtIncurred": {

@@ -77,6 +77,8 @@ export const MODEL_INVOCATION_PURPOSES = [
   "proposalRetry",
   "randomnessContinuation",
   "actorPlan",
+  "promiseReview",
+  "npcWork",
   "initialNarration",
   "narrationGroundingRepair",
   "narrationRecovery",

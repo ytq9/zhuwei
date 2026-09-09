@@ -1,12 +1,12 @@
 import type { VNextRequiredContext } from "./required-context";
-import { ITEM_ENTRY_SCHEMA } from "../../rules/v2/items";
+import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/v2/items";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/v2/semantic-definitions";
 import { isPlainRecord, compareCodeUnits } from "./canonical-json";
 import { npcDecisionContext, npcDecisionEvidenceRef, NPC_DECISION_CONTEXT_SCHEMA } from "../../rules/v2/npc-decision-context";
 
-// v4 adds holder-grouped NPC source choices derived from the same verified
-// frozen records. The workflow hash binds this wire meaning.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-4" as const;
+// v5 exposes typed item instance/definition choices for selection as well as
+// filling. All choices derive from the same authorized frozen records.
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-5" as const;
 
 export type ProposalNpcSourceChoices = readonly Readonly<{ npcRef: string; refs: readonly string[] }>[];
 
@@ -34,6 +34,18 @@ export function proposalItemEntryRefs(context: VNextRequiredContext): readonly s
   return Object.freeze(context.entries.flatMap(entry => entry.kind === "known"
     && visible.has(entry.entryRef) && isPlainRecord(entry.value)
     && entry.value.schema === ITEM_ENTRY_SCHEMA && entry.value.entryId === entry.entryRef
+    ? [entry.entryRef] : []).sort(compareCodeUnits));
+}
+
+/** Definitions may include authority-only mechanics already authorized for
+ * adjudication. They describe a type, never prove a physical instance exists.
+ * Only exact read-bound definitions enter this surface; no live state scan. */
+export function proposalItemDefinitionRefs(context: VNextRequiredContext): readonly string[] {
+  const authorized = new Set([...context.references.citations.viewerEvidenceRefs,
+    ...context.references.citations.authorityBasisRefs]);
+  return Object.freeze(context.entries.flatMap(entry => entry.kind === "known"
+    && authorized.has(entry.entryRef) && isPlainRecord(entry.value)
+    && entry.value.schema === ITEM_DEFINITION_SCHEMA && entry.value.definitionId === entry.entryRef
     ? [entry.entryRef] : []).sort(compareCodeUnits));
 }
 
@@ -97,6 +109,7 @@ export function proposalModelContext(context: VNextRequiredContext) {
     intent: context.intent,
     entries: context.entries,
     references: Object.freeze({ ...context.references, observationSubjectRefs: proposalObservationSubjectRefs(context),
-      npcSourceChoices: proposalNpcSourceChoices(context) }),
+      npcSourceChoices: proposalNpcSourceChoices(context), itemEntryRefs: proposalItemEntryRefs(context),
+      itemDefinitionRefs: proposalItemDefinitionRefs(context) }),
   });
 }

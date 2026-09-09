@@ -1,3 +1,4 @@
+import { promiseEvidenceTargets, promiseLifecycle } from "./promise-lifecycle";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { Sha256Ref } from "../profiles/types";
 import type {
@@ -14,6 +15,7 @@ import type {
 } from "./model";
 import { fictionTimelineIdForScene } from "./multiplayer-model";
 import { npcMechanicalItemStateCauseUseFactId } from "./multiplayer-events";
+import { npcWorkActivityTargets } from "./npc-work";
 
 function record(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -78,6 +80,9 @@ export function emptyCorrectionRuntime(roomId: string, runtimeEpochId: string): 
 export function isCorrectionEffect(value: unknown): value is CorrectionEffect {
   if (!record(value) || !nonEmpty(value.kind)) return false;
   switch (value.kind) {
+    case "truncatePromiseEvidence":
+      return exact(value, ["kind", "promiseId", "beforeLength"]) && nonEmpty(value.promiseId)
+        && Number.isSafeInteger(value.beforeLength) && Number(value.beforeLength) >= 0;
     case "removeFrozenChoiceRoot":
       return exact(value, ["kind", "rootActionId"]) && nonEmpty(value.rootActionId);
     case "restoreFictionTime":
@@ -408,6 +413,17 @@ export function correctionEffectsBefore(
   state: AuthoritativeWorldState,
   event: EventEnvelope,
 ): CorrectionEffect[] {
+  return [...domainCorrectionEffectsBefore(state, event),
+    ...npcWorkActivityTargets(state, event).flatMap(id => {
+      const effect = restoreCampaignEntry(state, "npcPlans", id);
+      return effect === undefined ? [] : [effect];
+    }), ...promiseEvidenceTargets(state, event).map(promiseId => ({
+    kind: "truncatePromiseEvidence" as const, promiseId,
+    beforeLength: promiseLifecycle(state.campaignRuntime.promises[promiseId])!.evidence.length,
+  }))];
+}
+
+function domainCorrectionEffectsBefore(state: AuthoritativeWorldState, event: EventEnvelope): CorrectionEffect[] {
   const payload = event.payload as JsonRecord;
   switch (event.eventType) {
     case "FrozenPlayerChoicePrepared":
@@ -714,6 +730,9 @@ export function correctionEffectsBefore(
       return effect === undefined ? [] : [effect];
     }
     case "PromiseMade":
+    case "PromiseTermsEstablished":
+    case "PromiseReviewed":
+    case "PromiseChanged":
     case "PromiseAssumed": {
       const effect = nonEmpty(payload.promiseId)
         ? restoreCampaignEntry(state, "promises", payload.promiseId)
@@ -813,6 +832,9 @@ export function correctionEffectsBefore(
         .filter((entry): entry is CorrectionEffect => entry !== undefined);
     }
     case "NpcPlanFormed":
+    case "NpcWorkProposed":
+    case "NpcWorkStarted":
+    case "NpcWorkDecision":
     case "NpcActionCommitted": {
       const npcPlan = nonEmpty(payload.planId)
         ? restoreCampaignEntry(state, "npcPlans", payload.planId)
@@ -945,6 +967,11 @@ function applyEffects(
 ): void {
   for (const effect of effects) {
     switch (effect.kind) {
+      case "truncatePromiseEvidence": {
+        const life = promiseLifecycle(state.campaignRuntime.promises[effect.promiseId]);
+        if (life) life.evidence.splice(effect.beforeLength);
+        break;
+      }
       case "removeFrozenChoiceRoot":
         for (const [key, choice] of Object.entries(state.frozenPlayerChoices ?? {}))
           if (choice.plan.rootActionId === effect.rootActionId) delete state.frozenPlayerChoices![key];

@@ -97,6 +97,7 @@ function worldState(overrides = {}) {
     },
     combatRuntime: {
       scenes: {},
+      entities: {},
       definitions: { "ability:pistol-shot": { abilityId: "ability:pistol-shot" } },
     },
   };

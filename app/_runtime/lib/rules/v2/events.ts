@@ -1,4 +1,6 @@
 import { actionActivityForRoot } from "./activity-progress";
+import { applyPromiseLifecycleEvent, recordPromiseEvidence, promiseTermsConform, promiseJudgmentConform, promiseChangeConform } from "./promise-lifecycle";
+import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform } from "./npc-work";
 import { frozenPlayerChoiceIssue, activityCompletionInputIssue } from "./world-interactions";
 import { applyDynamicLocation, dynamicMaterializationIssue, passageActivityBinding } from "./dynamic-locations";
 import { atomicContinuationCanResume } from "./atomic-world-input";
@@ -456,6 +458,8 @@ function expectedEventTypeVersion(
 }
 
 const EVENT_TYPES = new Set<EventType>([
+  "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged",
+  "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
   "KnowledgeReviewed",
   "NarrativeDetailCommitted", "NarrativeDetailMaterialized",
   "ItemUniquenessBound", "ItemIdentified",
@@ -780,6 +784,16 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     return false;
   }
   switch (eventType) {
+    case "NpcWorkProposed": return hasExactKeys(value, ["planId", "promiseId", "npcId", "nextStep"])
+      && [value.planId, value.promiseId, value.npcId, value.nextStep].every(isNonEmptyString);
+    case "NpcWorkDecision": return hasExactKeys(value, ["planId", "planHash", "decision"]) && isNonEmptyString(value.planId) && isSha256(value.planHash) && npcWorkDecisionConform(value.decision);
+    case "NpcWorkStarted": return hasExactKeys(value, ["planId", "planHash"]) && isNonEmptyString(value.planId) && isSha256(value.planHash);
+    case "PromiseTermsEstablished": return hasExactKeys(value, ["promiseId", "originalExpressionRef", "terms", "timelineId", "fromFictionMicros", "deadlineFictionMicros"])
+      && isNonEmptyString(value.promiseId) && promiseTermsConform(value.terms);
+    case "PromiseReviewed": return hasExactKeys(value, ["promiseId", "frameHash", "judgment"])
+      && isNonEmptyString(value.promiseId) && isSha256(value.frameHash) && promiseJudgmentConform(value.judgment);
+    case "PromiseChanged": return hasExactKeys(value, ["promiseId", "revision", "expressionRef", "change"])
+      && [value.promiseId, value.revision, value.expressionRef].every(isNonEmptyString) && promiseChangeConform(value.change);
     case "KnowledgeReviewed": return isKnowledgeReviewedPayload(value);
     case "NarrativeDetailCommitted": return isNarrativeDetailCommittedPayload(value);
     case "NarrativeDetailMaterialized": return isNarrativeDetailMaterializedPayload(value);
@@ -796,7 +810,8 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
     case "SemanticDefinitionMaterialized":
       return isSemanticDefinitionMaterializedPayload(value);
     case "AuthoredMaterializationResolved":
-      return isRecord(value)&&hasExactKeys(value,["actorCharacterId","contextHash","kind","ref","summary"])
+      return isRecord(value)&&hasExactKeys(value,["actorCharacterId","contextHash","kind","ref","summary",...(Object.hasOwn(value,"sourceRefs")?["sourceRefs"]:[])])
+        &&(value.sourceRefs===undefined || (Array.isArray(value.sourceRefs)&&value.sourceRefs.every(isNonEmptyString)&&new Set(value.sourceRefs).size===value.sourceRefs.length))
         &&isNonEmptyString(value.actorCharacterId)&&isSha256(value.contextHash)&&isNonEmptyString(value.ref)&&isNonEmptyString(value.summary)
         &&["abilityDefinition","hazardDefinition","itemDefinition","itemEntry"].includes(String(value.kind));
     case "WorldInteractionResolved":
@@ -1398,6 +1413,15 @@ function eventSubjects(event: EventEnvelope, state: AuthoritativeWorldState): st
     && isNonEmptyString(payload.planId)) {
     const owner = state.campaignRuntime.factionPlans[payload.planId]?.actingNpcId;
     if (isNonEmptyString(owner) && owner === payload.actingNpcId) candidates.push(owner);
+  }
+  if (["PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged"].includes(event.eventType)
+    && isNonEmptyString(payload.promiseId)) {
+    const promise = state.campaignRuntime.promises[payload.promiseId];
+    if (promise !== undefined) candidates.push(...[promise.promisorId, promise.promiseeId].filter(isNonEmptyString));
+  }
+  if (["NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision"].includes(event.eventType) && isNonEmptyString(payload.planId)) {
+    const plan = state.campaignRuntime.npcPlans[payload.planId];
+    if (plan?.schema === "zhuwei.npc-work/vnext-1" && isNonEmptyString(plan.npcId)) candidates.push(plan.npcId);
   }
   if (event.eventType === "RelationshipChanged" || event.eventType === "PromiseMade" || event.eventType === "DebtIncurred") {
     const commitment = socialCommitmentFromPayload(event.eventType, payload);
@@ -2987,7 +3011,9 @@ function foldEventInternal(
         break;
       }
       if (
-        !applyEnvironmentEvent(state, event)
+        !applyNpcWorkEvent(state, event)
+        && !applyPromiseLifecycleEvent(state, event)
+        && !applyEnvironmentEvent(state, event)
         && !applySafetyEvent(state, event)
         && !applyCorrectionEvent(state, event)
         && !applyMultiplayerEvent(state, event)
@@ -2998,6 +3024,8 @@ function foldEventInternal(
       }
   }
 
+  recordNpcWorkActivityOutcome(state, event);
+  recordPromiseEvidence(state, event);
   if (!candidate && !["FrozenPlayerChoiceInputRecorded", "ActivityCompletionInputRecorded"].includes(event.eventType)) {
     const priorReceipt = state.receipts[event.rootActionId];
     const receipt = publicReceipt(event);

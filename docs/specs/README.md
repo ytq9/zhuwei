@@ -4,8 +4,8 @@
 - 审查日期：2026-09-02
 - 环境叙述条款更新：2026-09-05，用户已批准；实现与在线验收独立记账。
 - Narration 表达与审核更新：2026-09-05，已按批准方案实现；一项真实库存旁白通过，完整矩阵未完成。
-- Proposal schema 选择更新：2026-09-06，用户已批准最小调用预算修订；实现与真实验收独立记账。2026-09-07 按用户简化填写接口、允许调整 Goal 验证的决定，首轮只填扁平类型列表，第二轮才填写所选表单；普通小表单最多两次，实际执行家族最多三次且至多一次窄修订，不增加调用上限。
-- 类型及小表单来自同一实际 schema/注册表，两轮完整冻结上下文一致；仍仅一次选择，未知、重复 ID、混合草稿及越界修订拒绝。实际验收见 [扁平选择接口](../agent/vnext-flat-selection-validation.md)，旧 [选择接口](../agent/vnext-terminal-selection-validation.md) 保留历史证据。
+- Proposal schema 选择更新：2026-09-06 批准纯选择例外；2026-09-07 批准完整填写边界前移与一次补选，2026-09-09 再次明确“可以补选”。当前为首轮选类型、填写时可按并集补选一次、补选后只准提交；调用额度与恢复合同统一见 [SPEC 0016 §7.2](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md#72-bundle-语义冻结与一次窄修复)。
+- 类型及小表单来自同一实际 schema/注册表，原意图与完整冻结上下文不变；未知或重复 ID、混合草稿、无新增类型及再次补选、越界修订拒绝。实际验收见 [一次补选接口](../agent/vnext-selection-composition-validation.md)，[扁平选择接口](../agent/vnext-flat-selection-validation.md)及更早回执保留历史证据；真实模型验收独立记账。
 - 适用分支：`cloudflare`
 - 当前开发版本：`0.4.0`（产品代际仍为 V3）
 - 规则边界：D&D 5e 2014 / SRD 5.1；禁止 D&D 2024/5.5e 混入
@@ -49,7 +49,7 @@
 | [0013：版本化运行时 Profiles 与确定性 Conformance](./0013-versioned-runtime-profiles.md) | **已裁定；0.4 开发重置修订已确认** | 固定当前 Ruleset/EventSchema、AbilityDefinition 与受限 MechanicOp 编译器、BattlefieldGeometry、TriggerOrdering、Fiction/Combat Time 等 Profile 及 hash/conformance/fail-closed 规则 | 上位：0001、0003–0007、0010–0012；0.4 只注册当前 V5 runtime 闭包，前 0.4 房间/归档退役且无兼容承诺 |
 | [0014：观察者战术地图、权威环境与空间意图](./0014-observer-tactical-map-and-environment.md) | **已裁定（用户 Goal 明确批准）** | 把真实 scene geometry、环境有限状态、移动/区域地图意图、秘密安全 Tactical Projection/preview、二维地图和同源文字读数接入唯一事务 | 上位：0001、0003、0005、0007、0010、0012、0013；不重写 Geometry 算法，不建立 UI/GM 第二空间 |
 | [0015：私有 Form Proposal、Context Pack/RAG、提交后叙述与动态环境](./0015-private-form-context-rag-and-narration.md) | **已裁定；V5 历史/当前实现边界保留，未来目标部分由 0016 窄取代** | 定义 V5 十 Form、三层 Context、静态 D1 FTS/权威重读、一次窄修订、CausalActionProgram、body-only Narration、双状态与逐受众恢复；旧 Catalog、compound 和详细动态环境模型只解释 V5 | `SPEC 0001` 最高；复用 0003 Room/Rules/DO、0010 Viewer/Audience、0013 Profile、0014 Geometry；未来粗粒度 Form、RequiredContext 和 Typed Claims 服从 0016，当前 V5 不因此自动切换 |
-| [0016：粗粒度 Form、冻结裁决上下文与类型化主张](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) | **已裁定；阶段三代表性纵切已完成，未切生产** | 以权威/事务边界定义粗粒度 Form；冻结 `epistemicRefs/readSetRefs`；以类型化空间角色区分 Viewer 可操作直接目标与 KP-only 因果；由 KP 判断可行性、Rules 执行有限原语；以 Typed Claims 证明提交结果，非机械环境描写先保存叙述承诺并按需固化 | `SPEC 0001` 最高；复用 0003/0010 的 Room/Viewer、0013 的版本/Profile、0014 的 Geometry 和 0015 未被取代的 RAG、一次窄修订、body-only 与双状态；§7.2 已批准一次纯 schema 补取例外，普通最多 2 次、补取最多 3 次且全部计预算；阶段三完成动态 NPC 修订与通用 `world-interaction`，并拒绝跨场景及越过 NPC/Item/continuity Form 的写入；其余 Form 纵切仍待，当前不删 V5、不部署 |
+| [0016：粗粒度 Form、冻结裁决上下文与类型化主张](./0016-coarse-forms-frozen-adjudication-context-and-typed-claims.md) | **已裁定；阶段三代表性纵切已完成，未切生产** | 以权威/事务边界定义粗粒度 Form；冻结 `epistemicRefs/readSetRefs`；以类型化空间角色区分 Viewer 可操作直接目标与 KP-only 因果；由 KP 判断可行性、Rules 执行有限原语；以 Typed Claims 证明提交结果，非机械环境描写先保存叙述承诺并按需固化 | `SPEC 0001` 最高；复用 0003/0010 的 Room/Viewer、0013 的版本/Profile、0014 的 Geometry 和 0015 未被取代的 RAG、一次窄修订、body-only 与双状态；§7.2 已批准先选择及一次并集补选，补选后只准提交，阶段与调用预算以该节为准；阶段三完成动态 NPC 修订与通用 `world-interaction`，并拒绝跨场景及越过 NPC/Item/continuity Form 的写入；其余 Form 纵切仍待，当前不删 V5、不部署 |
 
 ## 当前实现证据索引（2026-08-31）
 

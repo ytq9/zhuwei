@@ -178,7 +178,9 @@ export function freezeAdjudicationContext(
   // A generic request can refer to people already in view without naming them.
   // Freeze their exact records using the same visibility/spatial predicate as
   // Rules. This membership read is bounded and does not select action targets
-  // or expand each bystander's knowledge, relations or decision context.
+  // or expand bystander relations. A visible NPC can be addressed by a pronoun
+  // or another spelling that lexical discovery cannot resolve. Its finite
+  // decision view must already be available before KP chooses whom to address.
   const observableSubjects: ObligationSeed[] = [];
   for (const ref of index.refsByScene.get(sceneRef) ?? []) {
     if (!budget.charge("postingVisits", 1)) {
@@ -187,6 +189,9 @@ export function freezeAdjudicationContext(
     const node = index.nodes.get(ref);
     if (node?.kind === "entity" && indexedSpatialRefVisibleTo(input.state, node, sceneRef, input.actorCharacterId)) {
       observableSubjects.push({ ref, obligation: "observableSubject" });
+      if (input.state.entities[ref]?.kind === "npc") {
+        observableSubjects.push({ ref, obligation: "npcDecision" });
+      }
     }
   }
 
@@ -524,6 +529,17 @@ function declaredDependencies(
 ): readonly ObligationSeed[] {
   if (node === undefined || obligation === "observableSubject") return [];
   if (!budget.charge("postingVisits", 1)) return [];
+  // This optional, non-expanding slice supports any visible conversation
+  // candidate. It loads only holder-qualified knowledge bodies; the existing
+  // Rules projection supplies and verifies the rest of that NPC's view.
+  // Missing/oversized bodies remain unavailable for speech without making a
+  // physical observation depend on a bystander's complete private history.
+  if (obligation === "npcDecision") {
+    if (node.kind !== "entity" || state.entities[node.ref]?.kind !== "npc") return [];
+    const refs = index.knowledgeByHolder.get(node.ref) ?? [];
+    if (!budget.charge("postingVisits", refs.length)) return [];
+    return refs.map(ref => ({ ref, obligation: "npcDecision" }));
+  }
 
   // The actor body already freezes its complete attributes, defense, active
   // effects, resources and possession references. Possession does not make an

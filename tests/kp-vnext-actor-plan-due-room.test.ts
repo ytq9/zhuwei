@@ -319,7 +319,7 @@ it("a real time commit executes one existing NPC plan through the durable queue 
   expect(after.state.canonicalFacts[TRACE].value).toMatchObject({ description: DESCRIPTION });
   expect(after.events.filter(e => e.eventType === "NpcActionCommitted" && e.rootActionId === root)).toHaveLength(1);
   expect(after.events.filter(e => e.eventType === "CanonicalFactDeclared" && record(record(e.payload).fact).id === TRACE)).toHaveLength(1);
-  expect(after.due).toEqual([]); expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(1); expect(c.draws).toBe(0);
+  expect(after.due).toEqual([]); expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
   expect(after.invocations).toHaveLength(1); expect(after.invocations[0]).toMatchObject({ ordinal: 1, status: "completed", lease_until: 0 });
   await runInDurableObject(stub, (_instance, context) => {
     expect(context.storage.sql.exec<{ principal_id: string | null; prepared_action_id: string }>(
@@ -331,7 +331,7 @@ it("a real time commit executes one existing NPC plan through the durable queue 
   expect(JSON.stringify(observation)).not.toMatch(/NPC_PRIVATE_GOAL_CANARY|NPC_PRIVATE_ORDER_CANARY|NPC_PRIVATE_TARGET_REASON_CANARY/);
   await evictDurableObject(stub);
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
-  expect((await snapshot(stub, root)).events).toEqual(after.events); expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(1);
+  expect((await snapshot(stub, root)).events).toEqual(after.events); expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2);
   await runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { genesis, state } = target.authoritativeReplay();
     const replayed = target.rulesRuntime.replay(genesis, target.authorityStore.events());
@@ -564,21 +564,21 @@ it("a dispatch journal with no saved response stays pending until expiry and the
   expect(stopped.state.canonicalFacts[TRACE]).toBeUndefined(); expect(c.actorRequests).toHaveLength(0); expect(c.draws).toBe(0);
 }, 30_000);
 
-it("a shared one-call HTTP budget leaves NPC work unsent and the same submission resumes it with a fresh budget", async () => {
+it("a shared two-call HTTP budget leaves NPC work unsent and the same submission resumes it with a fresh budget", async () => {
   const stub = await initialize("vnext-actor-plan-budget-one"), c = capture(), root = await seedPlan(stub);
-  c.callLimit = "1";
+  c.callLimit = "2";
   const input = timeInput("submission:vnext-plan:budget-one");
   expect(await run(stub, input, c, timedAttempt())).toMatchObject({ kind: "committed", action: "committed" });
   const paused = await snapshot(stub, root);
-  expect(c.httpCalls).toEqual([["proposal"]]); expect(c.actorRequests).toHaveLength(0);
+  expect(c.httpCalls).toEqual([["proposal", "proposal"]]); expect(c.actorRequests).toHaveLength(0);
   expect(paused.invocations).toHaveLength(1);
   expect(paused.invocations[0]).toMatchObject({ ordinal: 1, status: "prepared", response_json: null, lease_until: 0 });
   expect(paused.due).toHaveLength(1); expect(paused.state.canonicalFacts[TRACE]).toBeUndefined();
   await evictDurableObject(stub);
   expect(await run(stub, input, c)).toMatchObject({ kind: "committed", action: "committed" });
   const settled = await snapshot(stub, root);
-  expect(c.httpCalls).toEqual([["proposal"], ["actorPlan"]]);
-  expect(c.playerRequests).toHaveLength(1); expect(c.actorRequests).toHaveLength(1); expect(c.draws).toBe(0);
+  expect(c.httpCalls).toEqual([["proposal", "proposal"], ["actorPlan"]]);
+  expect(c.playerRequests).toHaveLength(2); expect(c.actorRequests).toHaveLength(1); expect(c.draws).toBe(0);
   expect(settled.invocations).toHaveLength(1); expect(settled.invocations[0].status).toBe("completed");
   expect(settled.state.fictionTimelines).toEqual(paused.state.fictionTimelines);
   expect(settled.events.slice(paused.events.length).every(event => event.rootActionId === root)).toBe(true);
@@ -587,18 +587,18 @@ it("a shared one-call HTTP budget leaves NPC work unsent and the same submission
   expect(settled.due).toEqual([]);
 }, 30_000);
 
-it("the sixth shared call leaves only NPC narration recoverable and a new HTTP request publishes the frozen child without rerunning mechanics", async () => {
+it("the seventh shared call leaves only NPC narration recoverable and a new HTTP request publishes the frozen child without rerunning mechanics", async () => {
   const stub = await initialize("vnext-actor-plan-budget-five"), c = capture(), root = await seedPlan(stub);
-  c.callLimit = "5"; c.countNarrationCalls = true;
+  c.callLimit = "6"; c.countNarrationCalls = true;
   const input = timeInput("submission:vnext-plan:budget-five");
   const result = await run(stub, input, c, timedAttempt());
   expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed", action: "committed", narration: "retryableFailure", deliveryPending: true });
-  expect(c.httpCalls).toEqual([["proposal", "actorPlan", "narration", "audit", "narration"]]);
+  expect(c.httpCalls).toEqual([["proposal", "proposal", "actorPlan", "narration", "audit", "narration"]]);
   expect(c.narration).toHaveLength(2); expect(c.narration[1].rootActionId).toBe(root);
   const committed = await snapshot(stub, root);
   expect(committed.state.campaignRuntime.npcPlans[PLAN].status).toBe("resolved");
   expect(committed.state.canonicalFacts[TRACE].value).toMatchObject({ description: DESCRIPTION });
-  expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(1); expect(c.draws).toBe(0);
+  expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
   const observation = record(await stub.observe(ALICE as never));
   const recovery = record(observation.narrationRecovery);
   expect(recovery, JSON.stringify(observation)).toMatchObject({ kind: "available" });
@@ -606,12 +606,12 @@ it("the sixth shared call leaves only NPC narration recoverable and a new HTTP r
   const frozenChildClaims = c.narration[1].renderableClaims;
   await evictDurableObject(stub);
   expect(await run(stub, input, c, undefined, String(recovery.capability))).toMatchObject({ kind: "committed", action: "committed", narration: "published" });
-  expect(c.httpCalls).toEqual([["proposal", "actorPlan", "narration", "audit", "narration"], ["narration", "audit"]]);
+  expect(c.httpCalls).toEqual([["proposal", "proposal", "actorPlan", "narration", "audit", "narration"], ["narration", "audit"]]);
   expect(c.narration).toHaveLength(3); expect(c.narration[2].rootActionId).toBe(root);
   expect(c.narration[2].renderableClaims).toEqual(frozenChildClaims);
   const recovered = await snapshot(stub, root);
   expect(recovered.events).toEqual(committed.events); expect(recovered.state).toEqual(committed.state);
   expect(recovered.invocations).toEqual(committed.invocations);
-  expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(1); expect(c.draws).toBe(0);
+  expect(c.actorRequests).toHaveLength(1); expect(c.playerRequests).toHaveLength(2); expect(c.draws).toBe(0);
   expect(record(await stub.observe(ALICE as never)).narrationRecovery).toBeUndefined();
 }, 30_000);

@@ -1,10 +1,12 @@
-import { PROMISE_DUE_TIERS, type PromiseDueTier } from "./promise-due";
-import { npcActorPlanFormationIds } from "./npc-plan-formation";
+import { PROMISE_DUE_TIERS, promiseDueDurationMicros, type PromiseDueTier } from "./promise-due";
+import { promiseTermsConform, promiseTermsRefs, promiseChangeConform, promiseChangeIssue, promiseLifecycle,
+  promiseChangeSnapshot, promiseChangeDescription, applyPromiseChange, type PromiseTerms, type PromiseChange } from "./promise-lifecycle";
+import { npcWorkId } from "./npc-work";
 import { worldFactRef, worldFactDefinition, worldFactPointer } from "./world-facts";
 import { canonicalSha256 } from "../profiles/canonical";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { AuthoritativeWorldState, EventEnvelope, EventPayloadByType, JsonRecord } from "./model";
-import { authorityRevisionOrHash } from "./authority-bindings";
+import { authorityRevisionOrHash, authoritySpatialRefVisibleTo } from "./authority-bindings";
 import { authoritativeNpcDecisionContext, npcDecisionContextConform, type NpcDecisionContext } from "./npc-decision-context";
 import { socialCommitmentIssue, socialCommitmentPolicy, type SocialCommitmentEventType } from "./social-commitments";
 import { socialMethodFingerprint, socialParticipantsCoPresent, socialUtteranceFingerprint } from "./social-primitives";
@@ -15,6 +17,8 @@ import type { AtomicWorldInteractionStepsPlan, WorldInteractionResolutionPlan } 
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { domainStateBeforeAuditRange } from "./correction";
 
+const socialPromiseId = (ref: string) => ref.startsWith("continuity:promises:") ? ref.slice("continuity:promises:".length) : ref;
+
 export type SocialEvidence = Readonly<{ kind: "npcContext"; ref: string } | { kind: "playerExpression" }
   | { kind: "materializedKnowledge"; definitionRef: string; holderRef: string }>;
 export type SocialResponse = Readonly<{
@@ -22,7 +26,10 @@ export type SocialResponse = Readonly<{
 }>;
 export type SocialConsequence =
   | Readonly<{ kind: "relationship"; relationshipRef: string | null; change: string; basisFactRefs: readonly string[] }>
-  | Readonly<{ kind: "promise"; content: string; condition: string; authorityRefs: readonly string[]; due: PromiseDueTier; trace: string | null }>
+  | Readonly<{ kind: "promise"; content: string; condition: string; authorityRefs: readonly string[]; due: PromiseDueTier;
+      terms: PromiseTerms; nextStep: string | null; promisor?: "actor" | "npc"; promiseeRef?: string }>
+  | Readonly<{ kind: "promiseChange"; promiseRef: string; revision: string; expressionSource: "actor" | "npc";
+      expressionQuote: string; change: PromiseChange; disclose: boolean }>
   | Readonly<{ kind: "debt"; obligation: string; condition: string; basisFactRefs: readonly string[] }>;
 export type SocialInteractionBranch = Readonly<{
   outcomeCode: string; summary: string; response: SocialResponse; consequences: readonly SocialConsequence[];
@@ -131,18 +138,22 @@ export function socialEvidenceConform(value: unknown, diagnostics?: SocialShapeD
 }
 export function socialConsequenceConform(value: unknown, diagnostics?: SocialShapeDiagnostic[]): value is SocialConsequence {
   if (!socialShapeObject(value, diagnostics)
-    || !socialShapeEnum(value, "kind", ["relationship", "promise", "debt"], diagnostics)) return false;
+    || !socialShapeEnum(value, "kind", ["relationship", "promise", "promiseChange", "debt"], diagnostics)) return false;
   if (value.kind === "relationship") return socialShapeKeys(value, ["kind", "relationshipRef", "change", "basisFactRefs"], diagnostics)
     && socialShapeRef(value, "relationshipRef", diagnostics, true) && socialShapeText(value, "change", diagnostics)
     && socialShapeRefs(value, "basisFactRefs", diagnostics);
-  if (value.kind === "promise") return socialShapeKeys(value, ["kind", "content", "condition", "authorityRefs", "due", "trace"], diagnostics)
+  if (value.kind === "promiseChange") return socialShapeKeys(value, ["kind", "promiseRef", "revision", "expressionSource", "expressionQuote", "change", "disclose"], diagnostics)
+    && [value.promiseRef, value.revision, value.expressionQuote].every(isNonEmptyString)
+    && ["actor", "npc"].includes(String(value.expressionSource)) && promiseChangeConform(value.change) && typeof value.disclose === "boolean";
+  if (value.kind === "promise") return socialShapeKeys(value, ["kind", "content", "condition", "authorityRefs", "due", "terms", "nextStep",
+    ...["promisor", "promiseeRef"].filter(key => Object.hasOwn(value, key))], diagnostics)
     && socialShapeText(value, "content", diagnostics) && socialShapeText(value, "condition", diagnostics)
     && socialShapeRefs(value, "authorityRefs", diagnostics, 1)
     && socialShapeEnum(value, "due", [...PROMISE_DUE_TIERS], diagnostics)
-    // A promise the world must act on names the trace it will leave; one left to context has none.
-    && (value.due === "none"
-      ? value.trace === null || socialShapeFailure(diagnostics, "VALUE_INVALID", ["trace"], { const: null, when: "due=none" }, "social:promise-trace-without-due")
-      : socialShapeText(value, "trace", diagnostics));
+    && socialShapeField(value, "terms", promiseTermsConform, { type: "object" }, diagnostics)
+    && (value.promisor === undefined || ["actor", "npc"].includes(String(value.promisor)))
+    && (value.promiseeRef === undefined || isNonEmptyString(value.promiseeRef))
+    && (value.nextStep === null || socialShapeText(value, "nextStep", diagnostics));
   return socialShapeKeys(value, ["kind", "obligation", "condition", "basisFactRefs"], diagnostics)
     && socialShapeText(value, "obligation", diagnostics) && socialShapeText(value, "condition", diagnostics)
     && socialShapeRefs(value, "basisFactRefs", diagnostics, 1);
@@ -248,9 +259,31 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
         || canonicalSha256(held.content) !== canonicalSha256(worldFactPointer(definition))) return "social:materialized-knowledge-unavailable";
     }
     for (const [index, consequence] of branch.consequences.entries()) {
+      if (consequence.kind === "promiseChange") {
+        const source = consequence.expressionSource === "actor" ? actor.id : npc.id;
+        const expression = consequence.expressionSource === "actor" ? social.playerExpression : branch.response.text;
+        if (consequence.expressionQuote !== expression || (consequence.expressionSource === "npc" && branch.response.kind !== "speech")
+          || !reads.has(consequence.promiseRef) || reads.get(consequence.promiseRef) !== authorityRevisionOrHash(state, consequence.promiseRef))
+          return "social:promise-change-expression-or-version-unavailable";
+        const issue = promiseChangeIssue(state, { promiseId: socialPromiseId(consequence.promiseRef), revision: consequence.revision,
+          expressionRef: socialClaimRef(root, plan.resolutionId, branchName, consequence.expressionSource), change: consequence.change },
+          { speakerId: source, semanticContent: expression });
+        if (issue) return issue;
+        continue;
+      }
       // The NPC may commit its own conduct/obligation, not another person's.
-      if (consequence.kind === "promise" && consequence.authorityRefs.some(ref => ref !== npc.id
+      if (consequence.kind === "promise" && consequence.promisor === "actor") {
+        if (consequence.content !== social.playerExpression || consequence.authorityRefs.length !== 1 || consequence.authorityRefs[0] !== actor.id
+          || (actor.kind === "player" && consequence.nextStep !== null)) return "social:player-promise-intent-required";
+      } else if (consequence.kind === "promise" && consequence.authorityRefs.some(ref => ref !== npc.id
         && ref !== npc.semanticDefinitionRef && !expected.records.some(record => record.ref === ref && ["self", "identity", "plan"].includes(record.kind)))) return "social:promise-authority-unavailable";
+      if (consequence.kind === "promise" && consequence.promiseeRef !== undefined && !social.listeners.includes(consequence.promiseeRef))
+        return "social:promise-recipient-unavailable";
+      if (consequence.kind === "promise" && promiseTermsRefs(consequence.terms).some(ref =>
+        (!allowed.has(ref) && !expected.knowledge.some(k => k.entryRef === ref)
+          && !authoritySpatialRefVisibleTo(state, ref, npc.sceneId, npc.id) && ref !== npc.sceneId)
+        || !plan.readSet.some(binding => binding.ref === ref && binding.revisionOrHash === authorityRevisionOrHash(state, ref))))
+        return "social:promise-terms-context-unavailable";
       if (consequence.kind !== "promise" && consequence.basisFactRefs.some(ref => !allowed.has(ref) || !Object.hasOwn(state.canonicalFacts, ref))) return "social:consequence-basis-unavailable";
       const event = socialConsequenceEvent(root, plan, branchName, index);
       if (socialCommitmentIssue(state, event.eventType, event.payload)) return "social:consequence-invalid";
@@ -295,11 +328,13 @@ export function extendSocialMaterializedContext(state: AuthoritativeWorldState, 
 type SocialDomainDraft = { eventType: SocialCommitmentEventType; payload: EventPayloadByType[SocialCommitmentEventType]; visibilityPolicyId: string; secrecy: "private" };
 export function socialConsequenceEvent(root: string, plan: WorldInteractionResolutionPlan, branch: "success" | "failure", index: number): SocialDomainDraft {
   const social = plan.social!, effect = social.branches[branch].consequences[index];
+  if (effect.kind === "promiseChange") throw new TypeError("A promise change is not a new social commitment.");
   const identity = canonicalSha256({ root, resolutionId: plan.resolutionId, branch, index }).slice(7);
   const eventType = effect.kind === "relationship" ? "RelationshipChanged" : effect.kind === "promise" ? "PromiseMade" : "DebtIncurred";
   const payload = effect.kind === "relationship"
     ? { relationshipId: effect.relationshipRef ?? `relationship:${identity}`, subjectIds: [plan.actorCharacterId, social.npcRef].sort(), change: effect.change, basisFactIds: [...effect.basisFactRefs].sort() }
-    : effect.kind === "promise" ? { promiseId: `promise:${identity}`, promisorId: social.npcRef, promiseeId: plan.actorCharacterId, content: effect.content, condition: effect.condition }
+    : effect.kind === "promise" ? { promiseId: `promise:${identity}`, promisorId: effect.promisor === "actor" ? plan.actorCharacterId : social.npcRef,
+      promiseeId: effect.promiseeRef ?? (effect.promisor === "actor" ? social.npcRef : plan.actorCharacterId), content: effect.content, condition: effect.condition }
     : { debtId: `debt:${identity}`, debtorId: social.npcRef, creditorId: plan.actorCharacterId, obligation: effect.obligation, condition: effect.condition, basisFactIds: [...effect.basisFactRefs].sort() };
   return { eventType, payload, visibilityPolicyId: socialCommitmentPolicy(eventType), secrecy: "private" };
 }
@@ -372,8 +407,12 @@ export function socialConversationRecord(state: AuthoritativeWorldState, event: 
 }
 
 export type SocialInteractionDraft = SocialDomainDraft
+  | { eventType: "PromiseChanged"; payload: EventPayloadByType["PromiseChanged"]; visibilityPolicyId: string; secrecy: "internal" }
+  | { eventType: "CanonicalFactDeclared"; payload: EventPayloadByType["CanonicalFactDeclared"]; visibilityPolicyId: string; secrecy: "internal" }
+  | { eventType: "NpcWorkProposed"; payload: EventPayloadByType["NpcWorkProposed"]; visibilityPolicyId: string; secrecy: "private" }
+  | { eventType: "PromiseTermsEstablished"; payload: EventPayloadByType["PromiseTermsEstablished"]; visibilityPolicyId: string; secrecy: "internal" }
   | { eventType: "SourceClaimCreated"; payload: EventPayloadByType["SourceClaimCreated"]; visibilityPolicyId: string; secrecy: "private" }
-  | { eventType: "KnowledgeAcquired"; payload: Extract<EventPayloadByType["KnowledgeAcquired"], { items: unknown }>; visibilityPolicyId: string; secrecy: "private" };
+  | { eventType: "KnowledgeAcquired"; payload: EventPayloadByType["KnowledgeAcquired"]; visibilityPolicyId: string; secrecy: "private" };
 
 /** A generator lets both execution and fold bind each acquisition to the
  * actual source event that has just been appended/verified. */
@@ -397,16 +436,59 @@ export function* socialInteractionDrafts(state: AuthoritativeWorldState, root: s
         visibilityPolicyId: `visibility:knowledge-holder:${recipient}`, secrecy: "private" };
     }
   }
-  for (let index = 0; index < social.branches[branch].consequences.length; index++) yield socialConsequenceEvent(root, plan, branch, index);
+  for (let index = 0; index < social.branches[branch].consequences.length; index++) {
+    const consequence = social.branches[branch].consequences[index];
+    if (consequence.kind === "promiseChange") {
+      const promise = structuredClone(state.campaignRuntime.promises[socialPromiseId(consequence.promiseRef)]);
+      applyPromiseChange(promise, consequence.change, { eventId: root, at: state.fictionTimelines[promiseLifecycle(promise)!.timelineId].nowMicros,
+        expressionRef: socialClaimRef(root, plan.resolutionId, branch, consequence.expressionSource) });
+      yield { eventType: "PromiseChanged", payload: { promiseId: socialPromiseId(consequence.promiseRef), revision: consequence.revision,
+        expressionRef: socialClaimRef(root, plan.resolutionId, branch, consequence.expressionSource), change: structuredClone(consequence.change) },
+        visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" };
+      if (consequence.change.accepted) {
+        const factId = `promise-change:${root}:${plan.resolutionId}:${branch}:${index}`;
+        yield { eventType: "CanonicalFactDeclared", payload: { fact: { id: factId, kind: "promiseTermsResult",
+          subjectRefs: [String(promise.promisorId), String(promise.promiseeId)], value: promiseChangeSnapshot(promise, consequence.change),
+          source: "mechanicalResolution", causalParentIds: [], visibilityPolicyId: "visibility:hidden-until-evidence" } },
+          visibilityPolicyId: "visibility:hidden-until-evidence", secrecy: "internal" };
+        if (consequence.disclose) for (const recipient of social.listeners) yield {
+          eventType: "KnowledgeAcquired", payload: { characterId: recipient, knowledgeRef: factId, objectKind: "canonicalFact", layer: "full",
+            content: promiseChangeDescription(promise, consequence.change), causeFactId: factId,
+            acquisition: { sense: "hearing", sceneId: plan.sceneRef, method: "当面听到并理解此次约定的变更。" }, visibility: "private" },
+          visibilityPolicyId: `visibility:knowledge-holder:${recipient}`, secrecy: "private" };
+      }
+      continue;
+    }
+    const draft = socialConsequenceEvent(root, plan, branch, index);
+    yield draft;
+    if (consequence.kind === "promise" && "promiseId" in draft.payload) {
+      const duration = promiseDueDurationMicros(state, timelineId, consequence.due);
+      const now = state.fictionTimelines[timelineId].nowMicros;
+      yield { eventType: "PromiseTermsEstablished", payload: { promiseId: draft.payload.promiseId,
+        originalExpressionRef: socialClaimRef(root, plan.resolutionId, branch, consequence.promisor === "actor" ? "actor" : "npc"), terms: structuredClone(consequence.terms),
+        timelineId, fromFictionMicros: now, deadlineFictionMicros: duration === undefined ? null : (BigInt(now) + BigInt(duration)).toString() },
+        visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" };
+      // An NPC action promise needs a decision even before it has selected a
+      // method. Queue only that deliberation; no effect or duration is inferred.
+      const requiresDecision = consequence.promisor !== "actor" && (consequence.terms.kind !== "ongoing"
+        || consequence.terms.parts?.some(part => part.kind !== "ongoing"));
+      if (consequence.nextStep !== null || requiresDecision) yield { eventType: "NpcWorkProposed", payload: {
+        planId: npcWorkId(draft.payload.promiseId), promiseId: draft.payload.promiseId, npcId: draft.payload.promisorId,
+        nextStep: consequence.nextStep ?? consequence.content },
+        visibilityPolicyId: `visibility:knowledge-holder:${draft.payload.promisorId}`, secrecy: "private" };
+    }
+  }
 }
 
 export function socialDraftScope(state: AuthoritativeWorldState, draft: SocialInteractionDraft, root: string) {
   const payload = draft.payload as JsonRecord;
   const refs = draft.eventType === "SourceClaimCreated" ? [`claim:${payload.claimId}`, `knowledge:${payload.speakerId}:${payload.claimId}`]
-    : draft.eventType === "KnowledgeAcquired" ? (payload.items as { knowledgeRef: string }[]).map(item => `knowledge:${payload.characterId}:${item.knowledgeRef}`)
+    : draft.eventType === "NpcWorkProposed" ? [`npc-plan:${payload.planId}`]
+    : draft.eventType === "KnowledgeAcquired" ? (Array.isArray(payload.items) ? payload.items as { knowledgeRef: string }[] : [{ knowledgeRef: String(payload.knowledgeRef) }]).map(item => `knowledge:${payload.characterId}:${item.knowledgeRef}`)
     : draft.eventType === "RelationshipChanged" ? [`relationship:${payload.relationshipId}`]
-    : draft.eventType === "PromiseMade" ? [`promise:${payload.promiseId}`] : [`debt:${payload.debtId}`];
-  const creates = draft.eventType === "RelationshipChanged" && state.campaignRuntime.relationships[String(payload.relationshipId)] ? [] : refs;
+    : draft.eventType === "CanonicalFactDeclared" ? [`fact:${(payload.fact as JsonRecord).id}`]
+    : ["PromiseMade", "PromiseTermsEstablished", "PromiseChanged"].includes(draft.eventType) ? [`promise:${payload.promiseId}`] : [`debt:${payload.debtId}`];
+  const creates = ["PromiseTermsEstablished", "PromiseChanged"].includes(draft.eventType) || (draft.eventType === "RelationshipChanged" && state.campaignRuntime.relationships[String(payload.relationshipId)]) ? [] : refs;
   return { writes: [...refs, `receipt:${root}`], creates };
 }
 
@@ -460,23 +542,6 @@ export function verifySocialSettlement(state: AuthoritativeWorldState, profiles:
     const actual = suffix[index++];
     if (!actual || actual.eventType !== draft.eventType || actual.payloadHash !== canonicalSha256(draft.payload)) return "social:domain-events-do-not-match";
     if (draft.eventType === "SourceClaimCreated") sourceIds.set(draft.payload.claimId, actual.eventId);
-  }
-  // A promise with a due tier is followed, in this same suffix, by the NPC's
-  // derived plan and its timer Activity. Their payloads were validated when
-  // they folded; here the suffix must hold exactly one pair per such promise,
-  // bound to the promise by the plan's identities and premise.
-  for (const [consequenceIndex, consequence] of plan.social!.branches[event.payload.branch].consequences.entries()) {
-    if (consequence.kind !== "promise" || consequence.due === "none") continue;
-    const payload = socialConsequenceEvent(event.rootActionId, plan, event.payload.branch, consequenceIndex).payload;
-    if (!("promiseId" in payload)) continue;
-    const ids = npcActorPlanFormationIds(event.rootActionId, payload.promiseId);
-    const formed = suffix[index++], started = suffix[index++];
-    const stored = state.campaignRuntime.npcPlans[ids.planId], activity = state.campaignRuntime.activities[ids.activityId];
-    if (formed?.eventType !== "NpcPlanFormed" || started?.eventType !== "ActivityStarted"
-      || stored?.formedAtEventId !== formed.eventId || stored.npcId !== plan.social!.npcRef
-      || !Array.isArray(stored.premiseRefs) || stored.premiseRefs.length !== 1 || stored.premiseRefs[0] !== payload.promiseId
-      || !isRecord(stored.activity) || stored.activity.activityId !== ids.activityId || !isRecord(stored.trace) || stored.trace.factRef !== ids.traceFactRef
-      || activity?.characterId !== plan.social!.npcRef) return "social:promise-plan-not-derived";
   }
   return index === suffix.length ? { firstEventSeq: first[0].eventSeq, prefixProven } : "social:unexpected-domain-events";
 }

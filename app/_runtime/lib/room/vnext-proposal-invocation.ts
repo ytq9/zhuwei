@@ -5,7 +5,7 @@ import { assertRepairTicket, assertVNextProposalCandidateCapabilities, parseSubm
   vnextProposalModelRepairDiagnostics, vnextProposalReemitPrompt, vnextProposalUnparsedArguments,
   vnextProposalAmendmentRequest } from "../kp/vnext/proposal-provider";
 import { createVNextProposalOfferModelInput, CORRECT_KP_PROPOSAL_BUNDLE_TOOL, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../kp/vnext/proposal-schema";
-import { proposalCreatureTargetRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalModelContext, proposalNpcSourceChoices } from "../kp/vnext/proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalModelContext, proposalNpcSourceChoices } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
@@ -78,7 +78,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
     createSubmitKpProposalBundleModelInput("bound", capabilities,
       proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), terminalKinds,
       proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext),
-      proposalCreatureTargetRefs(requiredContext), amendable).tools;
+      proposalCreatureTargetRefs(requiredContext), amendable, proposalItemDefinitionRefs(requiredContext)).tools;
   if (input.ordinal === 2) {
     if (input.repairTicket !== undefined) invalid();
     assertSurface(submitTools(first.capabilities, first.terminalKinds, true), "expandedProposal", first.capabilities, first.terminalKinds, undefined, true);
@@ -94,7 +94,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       if (input.repairTicket !== undefined) invalid();
       if (!vnextProposalHasThirdCallBudget(capabilities)) invalid();
       assertSurface(submitTools(capabilities, terminalKinds, false), "expandedProposal", capabilities, terminalKinds,
-        vnextProposalReemitPrompt(unparsed));
+        vnextProposalReemitPrompt(unparsed, requiredContext));
       return;
     }
     const candidate = parseSubmitKpProposalBundleCandidateResponse(saved);

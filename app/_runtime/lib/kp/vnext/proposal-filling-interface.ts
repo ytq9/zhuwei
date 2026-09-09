@@ -16,7 +16,7 @@ const serverBasisTerminals = new Set(["knowledgeReview", "passTime", "abilityOpe
 const object = (properties: Schema): Schema => ({ type: "object", properties,
   required: Object.keys(properties).sort(), additionalProperties: false });
 const decisionObject = (properties: Schema): Schema => ({ ...object(properties),
-  description: `Fill only these fields for this decision kind: ${Object.keys(properties).sort().join(", ")}. Nested objects use their own declared fields; do not copy fields from a different decision kind.` });
+  description: "Fill only this decision kind's declared fields." });
 type ResultLayout = Readonly<Record<string, Schema>>;
 type ResultLayouts = ReadonlyMap<string, ResultLayout>;
 
@@ -74,7 +74,8 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     const source: Schema = sourceRefs === undefined ? { type: "string", pattern: "^\\S+$" } : { type: "string", enum: [...sourceRefs, PLAYER_EXPRESSION_SOURCE] };
     return object({ ...branch.properties, response: object({ ...response.properties, basis: {
       ...basis, description: "Choose exact existing refs from npcSourceChoices for this step's npcRef; the server supplies source kinds. This is what the NPC itself knows or is, never the step's basisRefs: rule profiles, availability and precedent records, the scene's opening and the player's own records are KP basis, not NPC context. The member playerExpression means only what the player said now. worldFactRef explicitly selects a same-bundle worldFact producer; its holder is this npcRef. Never cite a wrapper or infer a new fact from speech.",
-      items: newWorldFact ? { anyOf: [source, object({ worldFactRef: worldFact.properties.definitionRef })] } : source,
+      items: newWorldFact ? { anyOf: [source, object({ worldFactRef: { ...worldFact.properties.definitionRef,
+        description: "Exact handle of an always-bound worldFact created in this bundle with this npcRef in initialKnowledge. The server derives holder and dependencies. For existing knowledge use its npcSourceChoices string instead." } })] } : source,
     } }) });
   };
   const definitions: Schema = {};
@@ -140,7 +141,9 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
       pattern: "^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
       description: "Local name of this new object; reuse it in typed references. The server derives producer kind and dependencies." };
     properties.outcomeBinding = { ...outcomeBinding, description: "always for a directSuccess decision and for the step that owns a shared check; onSuccess/onFailure bind another step's result to that check." };
-    return object(fields(properties));
+    return { ...object(fields(properties)), description: _branches === undefined
+      ? "This step is complete in the steps table. Do not add a results row for it."
+      : "This step requires its declared outcome rows in the results table." };
   });
   const resultVariants = (): Schema[] => variants.flatMap(variant => {
     const kind = variant.properties.kind.enum[0], branches = variant.properties.branches;
@@ -162,12 +165,19 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   // A terminal-only selection has no step family. Do not leave empty unions or
   // unreachable definitions for the strict provider to reject or interpret.
   const results = variants.length > 0 ? resultVariants() : [];
+  const resultsDescription = results.length === 0
+    ? "No selected step kind takes result rows. Always fill results with []."
+    : `Only these step kinds take result rows: ${results.map(row => row.properties.kind.enum[0]).join(", ")}. For these kinds, use one result row for directSuccess, or success/failure for the one check owner. Other step kinds take no result rows. Empty for a terminal decision.`;
   if (variants.length > 0) {
-    definitions.steps = { type: "array", items: { anyOf: flatStepVariants() } };
+    const steps = flatStepVariants();
+    definitions.steps = { type: "array", items: steps.length === 1 ? steps[0] : { anyOf: steps } };
     // The table is always there so a ruling always sends it. When no selected
     // step kind produces results, the only row shape is one no row can take.
-    definitions.results = { type: "array", items: { anyOf: results.length > 0 ? results : [object({ kind: { type: "string", enum: ["none"],
-      description: "No selected step kind produces a result row; results must be []." } })] } };
+    const rows = results.length > 0 ? results : [object({ kind: { type: "string", enum: ["none"],
+      description: "No selected step kind produces a result row; results must be []." } })];
+    // A single available shape is an object, not a choice. In live DeepSeek
+    // output the one-option anyOf lost its required social response fields.
+    definitions.results = { type: "array", items: rows.length === 1 ? rows[0] : { anyOf: rows } };
   }
   const flatPlans = domain.properties.adjudication.anyOf.filter((variant: Schema) =>
     variants.length > 0 && rulings.includes(variant.properties.kind.enum[0])).map((variant: Schema) => object({ ...variant.properties }));
@@ -176,7 +186,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
   // anywhere in the schema, so there is nothing for the model to copy.
   const continuationPlans = flatPlans.map((plan: Schema) => object({ ...plan.properties,
     steps: { $ref: "#/$def/steps", description: "This continuation's steps, one per row, without results." },
-    results: { $ref: "#/$def/results", description: "This continuation's result rows, one per (step, branch) of its own steps." } }));
+    results: { $ref: "#/$def/results", description: resultsDescription } }));
   const nativeKinds = VNEXT_PROPOSAL_CAPABILITIES.filter(entry => "surface" in entry && entry.surface === "native").map(entry => entry.proposalKind as string);
   const hasNative = domain.properties.terminal.anyOf.some((entry: Schema) => nativeKinds.includes(entry.properties.kind.enum[0]));
   const terminalVariants = domain.properties.terminal.anyOf.filter((variant: Schema) =>
@@ -203,7 +213,7 @@ export function proposalFillingSchema(domain: Schema, selectedTerminalKinds?: re
     : "Choose one decision kind and fill only that branch's declared fields. The only root field is decision.",
     anyOf: [...flatPlans, ...terminalVariants] },
     ...(variants.length > 0 ? { steps: { $ref: "#/$def/steps", description: "What the character does, one step per row, without results. Empty for a terminal decision." } } : {}),
-    ...(variants.length > 0 ? { results: { $ref: "#/$def/results", description: "One row per (step, branch): the outcome of an observe, social or worldInteraction step. A directSuccess step has one result row; the step that owns a check has a success row and a failure row. Empty for a terminal decision." } } : {}) }),
+    ...(variants.length > 0 ? { results: { $ref: "#/$def/results", description: resultsDescription } } : {}) }),
     ...(Object.keys(definitions).length > 0 ? { $def: definitions } : {}) };
 }
 
@@ -260,6 +270,8 @@ function assembleTables(decision: RecordValue, tables: RecordValue, owner: Propo
       const target = injected[step as number];
       if (!isPlainRecord(target)) fail("TYPE_MISMATCH", "filling:result-step-object-required", [...owner, "steps", step as number], { type: "object" }, target);
       if (kind !== target.kind) fail(kind === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-kind-must-match-step", [...path, "kind"], { const: target.kind }, kind);
+      if (!branchKinds.has(String(kind))) fail("CONSTRAINT_CONFLICT", "filling:result-not-supported-by-type",
+        [...path, "kind"], { enum: [...branchKinds] }, kind);
       if (!(RESULT_BRANCHES as readonly unknown[]).includes(branch)) {
         fail(branch === undefined ? "FIELD_MISSING" : "VALUE_INVALID", "filling:result-branch", [...path, "branch"], { enum: [...RESULT_BRANCHES] }, branch);
       }

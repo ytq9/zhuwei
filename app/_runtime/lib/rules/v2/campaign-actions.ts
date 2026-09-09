@@ -1,4 +1,6 @@
 import { characterInferencePayload } from "./character-inference";
+import { promiseReviewFrame, promiseReviewRequest, promiseReviewFrames, promiseJudgmentIssue, promiseKnownSnapshot, applyPromiseJudgment } from "./promise-lifecycle";
+import { npcWorkDescriptors } from "./npc-work";
 import { isTimePassagePlan, timePassageStartPayload, timePassageTimelineId } from "./time-passage";
 import { longSpellcastingTimelineId } from "./time-passage-binding";
 import { isFrozenAbilityCancellation } from "./ability-operation";
@@ -2316,6 +2318,7 @@ function completeActivity(profiles: RuntimeProfileManifest, state: Authoritative
 }
 
 const DUE_ACTIVITY_BYPASS_KINDS = new Set([
+  "resolvePromiseReview", "resolveNpcWork",
   "advanceActivity", "controlActivity", "completeActionActivity",
   "authoritativeRandomness",
   "fulfillAuthoritativeRandomness",
@@ -2359,6 +2362,7 @@ export function settleDueActivityBeforeInput(
   const due = dueActivityDescriptors(state).find((activity) => activity.timelineId === timelineId
     && (activity.longSpellcasting === undefined || worldInteractionProfileEnabled(profiles.extensions ?? [])));
   if (due === undefined) return undefined;
+  if (due.promiseReview || due.npcWork) return rejected("pendingInputUnresolved", "The internal decision must settle before this action.");
   if (["awaitingInput", "awaitingRandomness"].includes(state.receipts[due.childRootActionId]?.status)) {
     return rejected("pendingInputUnresolved", "The due Activity must resume its existing canonical root before a new action.");
   }
@@ -2385,7 +2389,7 @@ export function settleDueActivityBeforeInput(
   if (rootActionId in state.receipts) {
     return rejected("pendingInputUnresolved", "The due Activity must resume its existing canonical root before a new action.");
   }
-  const prepared = prepareActivityCompletion(profiles, state, rootActionId, due.activityId);
+  const prepared = prepareActivityCompletion(profiles, state, rootActionId, due.activityId!);
   if (prepared.kind === "rejected") return prepared.result;
   const additions = {
     mechanicalResult: {
@@ -4142,6 +4146,65 @@ export function stepCampaignWorld(
   state: AuthoritativeWorldState,
   input: JsonRecord,
 ): StepResult | undefined {
+  if (input.kind === "resolveNpcWork") {
+    const due = npcWorkDescriptors(state).find(work => work.childRootActionId === input.proposalId);
+    if (Object.hasOwn(input, "decision")) {
+      if (!due?.npcWork || !hasExactKeys(input, ["kind", "proposalId", "planId", "planHash", "decision"])
+        || input.planId !== due.npcWork.planId || input.planHash !== due.npcWork.planHash)
+        return rejected("privateOrUnknownReference", "npc-work:frozen-plan-authority-unavailable");
+      return sequence("committed", profiles, state, String(input.proposalId), [{ eventType: "NpcWorkDecision",
+        payload: { planId: due.npcWork.planId, planHash: due.npcWork.planHash, decision: input.decision as EventPayloadByType["NpcWorkDecision"]["decision"] },
+        reads: [`npc-plan:${due.npcWork.planId}`], writes: [`npc-plan:${due.npcWork.planId}`],
+        visibilityPolicyId: `visibility:knowledge-holder:${due.ownerEntityId}`, secrecy: "private" }]);
+    }
+    const command = input.command;
+    if (!due || !due.npcWork || !isRecord(command) || !hasExactKeys(input, ["kind", "proposalId", "planId", "planHash", "command"])
+      || due.npcWork?.planId !== input.planId || due.npcWork.planHash !== input.planHash
+      || command.actorCharacterId !== due.ownerEntityId || command.rootActionId !== input.proposalId
+      || !["startActionActivity", "applyAtomicWorldInteractionSteps"].includes(String(command.kind)))
+      return rejected("privateOrUnknownReference", "npc-work:frozen-plan-authority-unavailable");
+    const action = stepVNextWorldInteraction(profiles, state, command);
+    if (!action || action.kind !== "committed") return action ?? rejected("invalidRulesInput", "npc-work:unsupported-command");
+    const marked = sequence("committed", profiles, action.state, String(input.proposalId), [{ eventType: "NpcWorkStarted",
+      payload: { planId: due.npcWork.planId, planHash: due.npcWork.planHash },
+      reads: [`npc-plan:${due.npcWork.planId}`], writes: [`npc-plan:${due.npcWork.planId}`],
+      visibilityPolicyId: `visibility:knowledge-holder:${due.ownerEntityId}`, secrecy: "private" }]);
+    return marked.kind === "committed" ? combineCommittedTransitions(state, action, marked) : marked;
+  }
+  if (input.kind === "resolvePromiseReview") {
+    const due = dueActivityDescriptors(state).find(work => work.promiseReview?.promiseId === input.promiseId
+      && work.childRootActionId === input.proposalId);
+    const request = due?.promiseReview && promiseReviewRequest(state, due.promiseReview.promiseIds ?? [due.promiseReview.promiseId]);
+    if (!hasExactKeys(input, ["kind", "proposalId", "promiseId", "frameHash", "judgment"])
+      || !isNonEmptyString(input.proposalId) || !request || canonicalSha256(request) !== input.frameHash)
+      return rejected("causalFrontierConflict", "promise:review-frame-unavailable");
+    const frames = promiseReviewFrames(request);
+    const reviews = request.schema === "zhuwei.promise-review-batch/vnext-1" ? input.judgment
+      : [{ promiseId: request.promiseId, judgment: input.judgment }];
+    if (!Array.isArray(reviews) || reviews.length !== frames.length || new Set(reviews.map(r => isRecord(r) ? r.promiseId : null)).size !== reviews.length)
+      return rejected("invalidRulesInput", "promise:batch-identities-invalid");
+    for (const review of reviews) {
+      const frame = isRecord(review) && frames.find(f => f.promiseId === review.promiseId);
+      if (!frame || !isRecord(review) || !hasExactKeys(review, ["promiseId", "judgment"])) return rejected("invalidRulesInput", "promise:batch-identities-invalid");
+      const issue = promiseJudgmentIssue(frame, review.judgment);
+      if (issue) return rejected("privateOrUnknownReference", issue);
+    }
+    if (input.proposalId in state.receipts) return rejected("duplicateRootAction", "The promise review already committed.");
+    return sequence("committed", profiles, state, input.proposalId, frames.flatMap(frame => {
+      const judgment = (reviews as JsonRecord[]).find(r => r.promiseId === frame.promiseId)!.judgment as EventPayloadByType["PromiseReviewed"]["judgment"];
+      const reviewedPromise = structuredClone(state.campaignRuntime.promises[frame.promiseId]);
+      applyPromiseJudgment(reviewedPromise, judgment, { eventId: input.proposalId as string, frontier: frame.evidenceFrontier, at: frame.throughFictionMicros });
+      const factId = frames.length === 1 ? `fact:${input.proposalId}` : `fact:${input.proposalId}:${frame.promiseId}`;
+      return [{ eventType: "PromiseReviewed" as const, payload: { promiseId: frame.promiseId, frameHash: canonicalSha256(frame), judgment },
+        reads: [`promise:${frame.promiseId}`], writes: [`promise:${frame.promiseId}`],
+        visibilityPolicyId: "visibility:room-authority-only", secrecy: "internal" as const },
+        ...(judgment.outcome === "unchanged" ? [] : [{ eventType: "CanonicalFactDeclared" as const,
+          payload: { fact: { id: factId, kind: "promiseReviewResult", subjectRefs: [frame.promisorId, frame.promiseeId],
+            value: promiseKnownSnapshot(reviewedPromise), visibilityPolicyId: "visibility:hidden-until-evidence", source: "mechanicalResolution" as const, causalParentIds: [] } },
+          reads: [`promise:${frame.promiseId}`], writes: [`fact:${factId}`], visibilityPolicyId: "visibility:hidden-until-evidence", secrecy: "internal" as const }])];
+    }));
+  }
+
   switch (input.kind) {
     case "resolveFreeAction": return resolveFreeAction(profiles, state, input);
     case "resolveContest": return resolveContest(profiles, state, input);

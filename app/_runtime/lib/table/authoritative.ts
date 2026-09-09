@@ -21,6 +21,8 @@ export type V3PublicFailureCode = typeof V3_PUBLIC_FAILURE_CODES[number];
 const V3_PUBLIC_FAILURE_CODE_SET = new Set<string>(V3_PUBLIC_FAILURE_CODES);
 
 export function publicV3FailureCode(value: unknown): V3PublicFailureCode | undefined {
+  if (value === "DUE_DECISION_INVALID" || value === "ACTOR_PLAN_DECISION_INVALID") return "FOLLOWUP_DECISION_INVALID";
+  if (value === "ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN") return "FOLLOWUP_DECISION_OUTCOME_UNKNOWN";
   return typeof value === "string" && V3_PUBLIC_FAILURE_CODE_SET.has(value)
     ? value as V3PublicFailureCode
     : undefined;
@@ -70,6 +72,8 @@ export function publicNarrationRecoveryReason(value: unknown, failure?: unknown)
 // These explanations come from closed server-owned categories, never from
 // model output, internal exception text, candidate details or another viewer.
 const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  FOLLOWUP_DECISION_INVALID: "后续世界行动的裁定未通过检查，相关执行已暂停；已经发生的事实仍保留。请联系维护者检查，反复提交新行动无法解决。",
+  FOLLOWUP_DECISION_OUTCOME_UNKNOWN: "后续世界行动的模型响应未能可靠保存，系统已暂停相关执行，以免重复处理。已经发生的事实仍保留，请联系维护者检查。",
   PROPOSAL_PROVIDER_TIMEOUT: "KP 服务未能及时返回裁定，可能是连接中断、服务繁忙或响应超时。行动未提交；请稍后重试原行动。",
   PROPOSAL_PROVIDER_CONFIGURATION: "KP 服务配置不完整或当前模型无法使用，行动未提交。请联系房主或维护者检查模型配置；修改行动描述无法解决这个问题。",
   PROPOSAL_FORM_INVALID: "KP 返回的行动方案格式不符合规则要求，行动未提交。可以补充或修改具体做法后重新提交；若持续发生，请联系维护者检查。",
@@ -125,6 +129,8 @@ export function publicAuthoritativeOutcomeError(outcome: {
   kind: string;
   code?: unknown;
 }): string {
+  const publicCode = publicV3FailureCode(outcome.code);
+  if (publicCode !== undefined && Object.hasOwn(ACTION_FAILURE_MESSAGES, publicCode)) return ACTION_FAILURE_MESSAGES[publicCode];
   if (typeof outcome.code === "string" && Object.hasOwn(ACTION_FAILURE_MESSAGES, outcome.code)) {
     return ACTION_FAILURE_MESSAGES[outcome.code];
   }

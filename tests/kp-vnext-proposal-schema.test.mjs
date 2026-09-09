@@ -2,7 +2,7 @@ import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/propos
 import { VNEXT_SEMANTIC_TEMPLATES } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { expandDeepSeekSchema } from "./fixtures/expand-deepseek-schema.mjs";
+import { expandDeepSeekSchema, schemaVariants } from "./fixtures/expand-deepseek-schema.mjs";
 
 import { deepSeekStrictToolSchemaIssues } from "../app/_runtime/lib/kp/deepseek-strict-tool.ts";
 import { canonicalHash, completeJsonObjectSyntaxEvidence, parseJsonWithUniqueMembers } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
@@ -37,8 +37,8 @@ import {
 import { validateVNextProposalBundle } from "../app/_runtime/lib/kp/vnext/proposal-validator.ts";
 const SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA = expandDeepSeekSchema(TRANSPORT_SCHEMA);
 const DECISION_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.decision.anyOf;
-const DIRECT_STEP_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.steps.items.anyOf;
-const RESULT_SCHEMAS = SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.results.items.anyOf;
+const DIRECT_STEP_SCHEMAS = schemaVariants(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.steps.items);
+const RESULT_SCHEMAS = schemaVariants(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA.properties.results.items);
 const decodeDomainFixture = value => decodeVNextStrictToolBundle(encodeVNextStrictToolBundle(value));
 import {
   composeDefinition,

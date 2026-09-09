@@ -69,7 +69,22 @@ export function proposalProspectiveHandles(value: unknown): readonly string[] {
           }
         });
         records(branch.consequences, effect => {
-          if (effect.kind === "promise") refs(effect.authorityRefs);
+          if (effect.kind === "promise" || effect.kind === "promiseChange") {
+            refs(effect.authorityRefs); ref(effect.promiseeRef); ref(effect.promiseRef);
+            const visitTerms = (value: unknown) => {
+              const terms = record(value);
+              if (!terms) return;
+              refs(terms.subjectRefs);
+              const activation = record(terms.activation);
+              if (activation) refs(activation.subjectRefs);
+              const delivery = record(terms.delivery);
+              if (delivery) {
+                ref(delivery.sourceRef); ref(delivery.itemRef); ref(delivery.destinationRef);
+              }
+              records(terms.parts, visitTerms);
+            };
+            visitTerms(effect.kind === "promise" ? effect.terms : record(effect.change)?.terms);
+          }
           else if (effect.kind === "relationship" || effect.kind === "debt") {
             refs(effect.basisFactRefs);
             if (effect.kind === "relationship") ref(effect.relationshipRef);
