@@ -8,8 +8,9 @@ import { createEventTransition, createScopeProof } from '../app/_runtime/lib/rul
 import { STORY_FACTS_ADMISSION_PLAN_SCHEMA, isStoryFactsAdmissionPlan, isStoryFactBody, isStoryKnowledgeBody,
   isStoryKnowledgeAdmissionMetadata, storyFactAdmissionRef, storyKnowledgeAdmissionRef, prepareStoryFactsAdmission,
   storyFactAdmissionIssue, storyKnowledgeAdmissionIssue, storyAdmissionEvidenceIssue,
-  stepAdmitStoryFacts, remapStoryTemporalContent } from '../app/_runtime/lib/rules/v2/story-facts-admission.ts';
-import { NPC_MATERIALIZATION_PLAN_SCHEMA, applyNpcMaterializedEvent } from '../app/_runtime/lib/rules/v2/npc-materialization.ts';
+  stepAdmitStoryFacts, remapStoryTemporalContent, resolveStoryAdmissionTime } from '../app/_runtime/lib/rules/v2/story-facts-admission.ts';
+import { NPC_MATERIALIZATION_PLAN_SCHEMA, applyNpcMaterializedEvent, npcMaterializationEntityRef } from '../app/_runtime/lib/rules/v2/npc-materialization.ts';
+import { normalizedProspectiveRef } from '../app/_runtime/lib/rules/v2/semantic-definitions.ts';
 import { buildAuthoritativeArchive } from '../app/_runtime/lib/room/archive.ts';
 import { isAtomicWorldInteractionStepsPlan } from '../app/_runtime/lib/rules/v2/world-interaction-model.ts';
 
@@ -140,18 +141,24 @@ function publicFixture(name, options) {
   return refresh(f);
 }
 function atomicInput(f, { createNpc = false } = {}) {
+  const bundleHash = canonicalSha256(f.input.plan);
   const child = { formId: 'materialization.vnext-1', proposalRef: f.input.plan.proposalRef, ruling: 'directSuccess',
     rulesInput: clone(f.input), dependsOn: [], consumes: [], produces: [], outcomeBinding: 'always' };
   const steps = [child];
   if (createNpc) {
-    child.rulesInput.plan.bindings.push({ ref: NPC, authorityRef: NPC, kind: 'entity' });
+    const npcRef = npcMaterializationEntityRef(normalizedProspectiveRef(f.input.rootActionId, bundleHash, 'prospective:boatman'));
+    child.rulesInput.plan.bindings.push({ ref: NPC, authorityRef: npcRef, kind: 'entity' });
+    const knowledge = child.rulesInput.plan.bindings.find(binding => binding.ref === LOCAL_KNOWLEDGE);
+    knowledge.authorityRef = storyKnowledgeAdmissionRef(f.input.plan.preparationHash, LOCAL_KNOWLEDGE, npcRef);
     child.dependsOn = ['proposal:create-boatman']; child.consumes = [{ kind: 'prospective', handle: 'prospective:boatman' }];
+    const producer = npcCreationInput(f);
+    producer.plan.prospectiveRef = npcRef;
     steps.unshift({ formId: 'materialization.vnext-1', proposalRef: 'proposal:create-boatman', ruling: 'directSuccess',
-      rulesInput: npcCreationInput(f), dependsOn: [], consumes: [],
+      rulesInput: producer, dependsOn: [], consumes: [],
       produces: [{ handle: 'prospective:boatman', kind: 'entity', outcomeBinding: 'always' }], outcomeBinding: 'always' });
   }
   return { kind: 'applyAtomicWorldInteractionSteps', rootActionId: f.input.rootActionId, actorCharacterId: ACTOR,
-    bundleHash: canonicalSha256(f.input.plan), contextHash: f.input.plan.contextHash, sharedRuling: 'directSuccess', steps };
+    bundleHash, contextHash: f.input.plan.contextHash, sharedRuling: 'directSuccess', steps };
 }
 
 test('existing NPC acquires later knowledge of an older fact with distinct occurrence and acquisition', () => {
@@ -311,7 +318,8 @@ test('timeline remapping touches only typed retained fact and holder knowledge, 
     const remapped = remapStoryTemporalContent(body, new Map([[oldTimeline, nextTimeline]]));
     assert.equal(remapped.kind, 'remapped');
     const temporal = remapped.value.candidate.occurrence ?? remapped.value.candidate.acquisition;
-    assert.equal(temporal.start.timelineId, nextTimeline);
+    assert.equal(resolveStoryAdmissionTime(temporal, remapped.value.bindings).start.timelineId, nextTimeline);
+    assert.deepEqual(remapped.value.candidate, body.candidate);
     assert.equal(remapped.value.candidate.content, body.candidate.content);
     assert.equal(remapped.value.preparationHash, body.preparationHash);
     assert.equal(remapStoryTemporalContent(body, new Map()).kind, 'rejected');
@@ -373,13 +381,14 @@ test('public atomic admission binds a real new NPC producer without fictional in
   assert.equal(isAtomicWorldInteractionStepsPlan({ ...plan, schema: 'zhuwei.atomic-world-interaction-steps-plan/v1' }), true);
   assert.equal(input.steps[1].rulesInput.plan.readSet.some(binding => binding.ref === NPC), false);
   const result = f.run(input);
+  const npcRef = input.steps[0].rulesInput.plan.prospectiveRef;
   assert.equal(result.events[0].eventType, 'NpcMaterialized');
   assert.ok(result.events.some(event => event.eventType === 'KnowledgeAcquired'));
   assert.equal(result.events.at(-1).eventType, 'AtomicWorldInteractionStepsResolved');
-  assert.equal(f.state.entities[NPC].name, '新入场的老船工');
-  assert.equal(f.state.characterControls[NPC], undefined);
-  const knowledgeRef = storyKnowledgeAdmissionRef(f.input.plan.preparationHash, LOCAL_KNOWLEDGE, NPC);
-  assert.equal(f.state.knowledge[NPC][knowledgeRef].content.candidate.ref, LOCAL_KNOWLEDGE);
+  assert.equal(f.state.entities[npcRef].name, '新入场的老船工');
+  assert.equal(f.state.characterControls[npcRef], undefined);
+  const knowledgeRef = storyKnowledgeAdmissionRef(f.input.plan.preparationHash, LOCAL_KNOWLEDGE, npcRef);
+  assert.equal(f.state.knowledge[npcRef][knowledgeRef].content.candidate.ref, LOCAL_KNOWLEDGE);
   assert.deepEqual(input.steps[1].rulesInput.plan.facts, originalCandidates);
 });
 
@@ -389,9 +398,10 @@ test('atomic failure after the NPC prefix publishes no NPC, fact, knowledge or R
   const result = f.runtime.step(f.profiles, f.state, input);
   assert.equal(result.kind, 'rejected'); assert.match(result.rejection.message, /knowledge-source-time-unproven/);
   assert.deepEqual(result.events, []); assert.deepEqual(f.state, before);
-  assert.equal(f.state.entities[NPC], undefined); assert.equal(f.state.receipts[input.rootActionId], undefined);
+  assert.equal(f.state.entities[input.steps[0].rulesInput.plan.prospectiveRef], undefined); assert.equal(f.state.receipts[input.rootActionId], undefined);
   const forged = atomicInput(f, { createNpc: true });
-  forged.steps[1].rulesInput.plan.readSet.push({ ref: NPC, revisionOrHash: canonicalSha256('fictional revision') });
+  forged.steps[1].rulesInput.plan.readSet.push({ ref: forged.steps[0].rulesInput.plan.prospectiveRef, revisionOrHash: canonicalSha256('fictional revision') });
+  forged.steps[1].rulesInput.plan.readSet.sort((a, b) => a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0);
   const rejected = f.runtime.step(f.profiles, f.state, forged);
   assert.equal(rejected.kind, 'rejected'); assert.match(rejected.rejection.message, /initial read-set member/);
   const missing = atomicInput(f, { createNpc: true }); missing.steps[1].consumes = []; missing.steps[1].dependsOn = [];
@@ -446,8 +456,11 @@ test('historical public initializer remaps all typed retained bodies and exclude
     assert.equal(result.kind, 'initialized', JSON.stringify(result));
     const target = result.genesis.initialState, targetTimeline = characterTimelineId(target, NPC);
     const factRef = storyFactAdmissionRef(f.input.plan.preparationHash, LOCAL_FACT), knowledgeRef = storyKnowledgeAdmissionRef(f.input.plan.preparationHash, LOCAL_KNOWLEDGE, NPC);
-    assert.equal(target.canonicalFacts[factRef].value.candidate.occurrence.start.timelineId, targetTimeline);
-    assert.equal(target.knowledge[NPC][knowledgeRef].content.candidate.acquisition.start.timelineId, targetTimeline);
+    const factBody = target.canonicalFacts[factRef].value, knowledgeBody = target.knowledge[NPC][knowledgeRef].content;
+    assert.equal(resolveStoryAdmissionTime(factBody.candidate.occurrence, factBody.bindings).start.timelineId, targetTimeline);
+    assert.equal(resolveStoryAdmissionTime(knowledgeBody.candidate.acquisition, knowledgeBody.bindings).start.timelineId, targetTimeline);
+    assert.deepEqual(factBody.candidate, source.canonicalFacts[factRef].value.candidate);
+    assert.deepEqual(knowledgeBody.candidate, source.knowledge[NPC][knowledgeRef].content.candidate);
     assert.equal(target.canonicalFacts[factRef].value.preparationHash, f.input.plan.preparationHash);
     assert.equal(Object.hasOwn(target.canonicalFacts[factRef].value.candidate, 'knowledge'), false);
     assert.deepEqual(target.knowledge[targetId], {});
