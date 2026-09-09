@@ -371,7 +371,8 @@ it("knowledge review leaves a due plan untouched and eviction reuses its saved N
   const stub = await initialize("vnext-actor-plan-response-recovery"), c = capture(), root = await seedPlan(stub);
   c.crashAt = "afterActorPlanResponseSaved";
   const input = timeInput("submission:vnext-plan:response-recovery-time");
-  expect(await run(stub, input, c, timedAttempt())).toMatchObject({ kind: "committed" });
+  const attempt = await run(stub, input, c, timedAttempt());
+  expect(attempt, JSON.stringify(attempt)).toMatchObject({ kind: "committed" });
   const saved = await snapshot(stub, root);
   expect(saved.state.campaignRuntime.npcPlans[PLAN].status).toBe("scheduled"); expect(saved.state.canonicalFacts[TRACE]).toBeUndefined();
   expect(saved.invocations).toHaveLength(1); expect(saved.invocations[0]).toMatchObject({ status: "completed" });
