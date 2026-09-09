@@ -4024,3 +4024,11 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 测试：`tests/kp-vnext-promise-subjects.test.mjs` 增加公开/隐藏事实、非听众受诺人、越权 authorityRefs 与 schema 枚举用例，4/4。
 - 验证：typecheck exit 0；社交/承诺/发现相关 10 个 Node 文件 78 过 0 红；Vitest relevance 2/2，promise-lifecycle-room 2 红、npc-plan-formation-room 1 红、provider-room 13 红均与基线逐名相同。
 - 真实批次 round95（源码 7fdfd98）：填写返回空 `{}`，修订稿嵌套 JSON 在 results 收尾前多一个 `}`，needsKp；round96：如上关系事实越界，needsKp。两批 offer 真实 27,725 / 27,821 token，上下文与 round93 同构。见 [round95](agent/vnext-round95-validation.md)、[round96](agent/vnext-round96-validation.md)。
+
+## 2026-09-09 空对象填写改为重发原请求（开发期）
+
+- 症状：round95、round97 填写调用都返回空对象 `{}`（25 个输出 token），统一修订把它当作缺 decision 的可修订稿，让模型在 `correct_kp_proposal_bundle` 的 `revisionJson` 字符串里重写整份草稿，两次都在嵌套 JSON 的分隔符上失手，行动以 needsKp 结束。round96 同一请求直接给出完整草稿，说明原填写请求本身可行。
+- 修改：`proposal-provider.ts` 增加 `vnextProposalTicketIsEmptyDraft`；票据为空对象时 `createVNextProposalRevisionModelInput` 返回原填写请求（同一冻结上下文、同一已加载类型、不再提供补选工具），`evaluateVNextProposalRevisionResponse` 按首稿口径评估重发回复：本地接受即 `locallyAccepted`（repairUsed=true，第 2 次调用），否则 `PROPOSAL_REPAIR_EXHAUSTED`。未解析回复的确认修订路径不变。Room 的阶段证明与审计复用同一函数，自动一致；adapter 遥测阶段记为 `reemit`。这是 SPEC 0016 §7.2 已有的“原稿重发”准入，不增加调用额度。
+- 测试：`tests/kp-vnext-unparsed-revision.test.mjs` 增加重发请求形状与再次空对象即耗尽的用例；provider-room「空社交草稿」用例改为断言重发请求不含 sourceDraft、只带 submit 工具。
+- 验证：typecheck exit 0；修订/schema/承诺主体 6 个 Node 文件 44 过 0 红；Vitest relevance 2/2，provider-room 13 红逐名同基线，空社交草稿用例通过。
+- 真实批次 round97（源码 ff27c1d）：又是空对象加修订稿嵌套 JSON 出错，needsKp。见 [round97 回执](agent/vnext-round97-validation.md)。

@@ -81,7 +81,10 @@ it("an empty social draft retains the natural-language intent and NPC context th
     if (proposals === 1) return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{
       type: "function", function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: "{}" },
     }] } }] };
-    expect(body.sourceDraft).toEqual({});
+    // An empty reply carries no draft: the one remaining call re-sends the
+    // original filling request rather than a correction of nothing.
+    expect(body.sourceDraft).toBeUndefined();
+    expect((request.tools as JsonRecord[]).map(tool => record(tool.function).name)).toEqual([SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
     return toolResponse({ mode: "adjudication", basisRefs: [npcRef], terminal: null,
       adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
       proposals: [{ kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always",

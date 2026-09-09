@@ -10,7 +10,7 @@ import { canonicalHash, isPlainRecord, type JsonRecord } from "./canonical-json"
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "./invocation/assemble";
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invokeCorrectKpProposalBundle,
   vnextProposalHasExecutionRepairBudget, vnextProposalHasThirdCallBudget, createVNextAuthorityRevisionTicket,
-  type VNextProposalBundleRepairTicket } from "./proposal-provider";
+  type VNextProposalBundleRepairTicket, vnextProposalTicketIsEmptyDraft } from "./proposal-provider";
 import type { VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
@@ -76,7 +76,8 @@ export function createVNextKpAdapter(options: Readonly<{
             if (model !== VNEXT_KP_PROFILE.modelId) throw vnextProposalFailure("PROPOSAL_PROVIDER_CONFIGURATION");
             const invocationKind = repairTicket === undefined ? "initial"
               : repairTicket.validationCode === "PROPOSAL_RULES_DIAGNOSTIC" ? "mechanicalRepair" : "schemaRepair";
-            const stage = ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal" : "correction";
+            const stage = ordinal === 1 ? "offer" : repairTicket === undefined ? "expandedProposal"
+              : vnextProposalTicketIsEmptyDraft(repairTicket) ? "reemit" : "correction";
             const assembled = assembleProviderInvocation({
               providerBody: deepSeekRequestBody(model, input) as JsonRecord,
               invocationKind, ledger: INITIAL_REPAIR_LEDGER,

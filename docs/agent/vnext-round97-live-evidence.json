@@ -1,0 +1,196 @@
+{
+  "round": 97,
+  "verifiedAt": "2026-09-09T13:01:39.951893+00:00",
+  "verdict": "First sentence not committed after three calls, the same shape as round95: the filling call answered with an empty {} tool call (25 completion tokens); the server spent the one revision with a precise FIELD_MISSING diagnostic at decision; the correction had to carry a whole draft inside the nested revisionJson string and slipped (json:object-delimiter-expected at offset 1371, a second steps/results pair after the results array closed), so the action ended PROPOSAL_REPAIR_EXHAUSTED / needsKp with zero events. Offer 32,294 estimated / 28,180 real prompt tokens with only Varo's snapshot frozen. Two of the last three fills on this scenario opened with an empty object; both corrections failed on nested JSON. No world effects.",
+  "sourceCommit": "ff27c1d1b17567f328930f6afe25782c92330aa6",
+  "sourceManifestSha256": "9c80ca39386cbab90253d9f81e8e6bd3108eb0e083c6776d28a55d7542a1297e",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v51",
+  "scenario": "hours-scale three sentences (same as rounds 82-91)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "harness": {
+    "localPerHttpCallLimit": 10,
+    "productionCap": "none"
+  },
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round97-npc-http-bdf776ab-16af-4b94-9b3a-5127e6516f3f",
+      "action": "notCommitted",
+      "code": "PROPOSAL_REPAIR_EXHAUSTED",
+      "outcomeKind": "needsKp",
+      "modelCalls": 3,
+      "budgetChecks": {
+        "perHttp": true,
+        "total": true,
+        "money": true
+      }
+    }
+  ],
+  "captures": [
+    {
+      "ordinal": 1,
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 28180,
+      "completionTokens": 46,
+      "cacheHit": 4992,
+      "cacheMiss": 23188,
+      "responseTool": "offer_kp_proposal_bundle",
+      "requestedCapabilities": [
+        "social"
+      ],
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "tools": [
+        "submit_kp_proposal_bundle",
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 35320,
+      "completionTokens": 25,
+      "cacheHit": 5504,
+      "cacheMiss": 29816,
+      "responseTool": "submit_kp_proposal_bundle",
+      "response": "empty object",
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 3,
+      "tools": [
+        "correct_kp_proposal_bundle"
+      ],
+      "promptTokens": 34802,
+      "completionTokens": 680,
+      "cacheHit": 5248,
+      "cacheMiss": 29554,
+      "responseTool": "correct_kp_proposal_bundle",
+      "revisionJson": "JSON slip: Expecting ',' delimiter at 1371 of 1398 (a second steps/results pair after the results array closed)",
+      "diagnosticsGiven": [
+        {
+          "code": "FIELD_MISSING",
+          "constraint": "filling:decision-required",
+          "repair": {
+            "allowed": true,
+            "reason": "uncommitted-proposal-may-be-revised-once"
+          },
+          "expected": {
+            "type": "object"
+          },
+          "actual": {
+            "type": "missing"
+          },
+          "path": [
+            "decision"
+          ],
+          "pathBase": "arguments"
+        }
+      ],
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    }
+  ],
+  "invocations": [
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "estimatedInputTokens": 32294,
+      "allowedInputTokens": 58000,
+      "inputTokens": 28180,
+      "outputTokens": 46,
+      "result": "success",
+      "durationMs": 1427
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 2,
+      "estimatedInputTokens": 39518,
+      "allowedInputTokens": 58000,
+      "inputTokens": 35320,
+      "outputTokens": 25,
+      "result": "success",
+      "durationMs": 2003
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 3,
+      "estimatedInputTokens": 40789,
+      "allowedInputTokens": 58000,
+      "inputTokens": 34802,
+      "outputTokens": 680,
+      "result": "success",
+      "durationMs": 6927
+    }
+  ],
+  "meter": {
+    "calls": 3,
+    "inputTokens": 98302,
+    "outputTokens": 751,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "peakCnyBudgetCharge": 0.301665,
+    "callTelemetryConsistent": true
+  },
+  "pricing": {
+    "window": "off-peak",
+    "chargedAt": "peak",
+    "model": "deepseek-v4-flash",
+    "peakCnyPerMillion": {
+      "hit": "0.10",
+      "miss": "3.0",
+      "output": "9.0"
+    },
+    "offPeakCnyPerMillion": {
+      "hit": "0.05",
+      "miss": "1.5",
+      "output": "4.5"
+    },
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5"
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0,
+    "eventTypes": [],
+    "checkedAt": "2026-09-09T13:00:35.702Z"
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "beforeCount": 389,
+    "afterCount": 389
+  },
+  "servicesShutdown": {
+    "capture": {
+      "pid": 7267,
+      "port": 4320,
+      "startedAt": "2026-09-09T12:59:09.352784+00:00",
+      "stoppedAt": "2026-09-09T13:00:33.361722+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "pid": 7276,
+      "port": 4321,
+      "startedAt": "2026-09-09T12:59:09.544821+00:00",
+      "stoppedAt": "2026-09-09T13:00:33.354080+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  }
+}
