@@ -1,6 +1,7 @@
 import type { NpcMaterializationSource } from "../../rules/v2/npc-materialization";
 import { NPC_MATERIALIZATION_WIRE_SCHEMA } from "./npc-materialization-wire";
-import { STORY_SELECTION_IDS, parseStorySelection, type StorySelection } from "./story-selection";
+import { STORY_SELECTION_IDS, parseStorySelection, storySelectionIds, type StorySelection } from "./story-selection";
+import type { VNextRequiredContext } from "./required-context";
 import { PROMISE_DUE_TIERS } from "../../rules/v2/promise-due";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
 import { abilityOperationSourceSchema, type AbilityOperation } from "../../rules/v2/ability-operation";
@@ -778,13 +779,13 @@ export type VNextProposalSchemaSelection = Readonly<{
 
 /** Retain selected terminal identities; only step families acquire dependencies.
  * The caller validates unique submitted values before this canonical closure. */
-export function closeVNextProposalSchemaRequest(requested: readonly string[]): VNextProposalSchemaSelection {
-  const story = parseStorySelection(requested);
+export function closeVNextProposalSchemaRequest(requested: readonly string[], context?: VNextRequiredContext): VNextProposalSchemaSelection {
+  const story = parseStorySelection(requested, context), storyIds = storySelectionIds(context);
   return Object.freeze({
     ...(story === undefined ? {} : { story }),
     terminalKinds: Object.freeze(VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id))),
     capabilities: closeVNextProposalCapabilities([
-      ...requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !STORY_SELECTION_IDS.includes(id)),
+      ...requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !storyIds.includes(id)),
       // Complete preparation carries candidate selection surfaces. Both the
       // Adapter and the durable stage verifier use this same closure.
       ...(story === undefined ? [] : ["materializeStory", "admitStoryFacts"]),
@@ -805,11 +806,17 @@ export const OFFER_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
     parameters: OFFER_KP_PROPOSAL_BUNDLE_SCHEMA }),
 });
 
-export function createVNextProposalOfferModelInput(message: string) {
+export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
+  return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
+}
+export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext) {
   if (typeof message !== "string" || !message.trim()) throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
   return Object.freeze({ messages: Object.freeze([{ role: "system" as const,
     content: vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) }, { role: "user" as const, content: message }]),
-    tools: Object.freeze([OFFER_KP_PROPOSAL_BUNDLE_TOOL] as const),
+    tools: Object.freeze([{ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL, function: { ...OFFER_KP_PROPOSAL_BUNDLE_TOOL.function,
+      parameters: { ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA, properties: { requestedCapabilities: {
+        ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities,
+        items: { type: "string", enum: [...vnextProposalSchemaRequestIds(context)] } } } } } }] as const),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
 

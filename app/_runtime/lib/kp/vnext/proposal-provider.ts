@@ -22,6 +22,7 @@ import {
   SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS,
+  vnextProposalSchemaRequestIds,
   closeVNextProposalSchemaRequest, type VNextProposalSchemaSelection,
   vnextSelectedProposalDecisionKinds,
   VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
@@ -118,7 +119,7 @@ export type VNextProposalSchemaRequest = Readonly<{ kind: "schemaRequested" }> &
 
 /** The first stage selects schemas only. Never reinterpret or salvage a draft
  * as a selection, including a syntactically repairable former offer shape. */
-export function parseVNextProposalOfferResponse(response: unknown): VNextProposalSchemaRequest {
+export function parseVNextProposalOfferResponse(response: unknown, context?: VNextRequiredContext): VNextProposalSchemaRequest {
   let call: ReturnType<typeof extractSingleToolCall>, raw: unknown;
   try {
     call = extractSingleToolCall(response);
@@ -135,13 +136,14 @@ export function parseVNextProposalOfferResponse(response: unknown): VNextProposa
   ]));
   const requested = raw.requestedCapabilities;
   if (!Array.isArray(requested)) return fieldOutput(requested === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH", "offer:requested-capabilities-array-required", ["requestedCapabilities"], "array", requested);
-  if (requested.length === 0 || requested.length > VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.length) return fieldOutput("VALUE_INVALID", "offer:requested-capabilities-size",
-    ["requestedCapabilities"], { minItems: 1, maxItems: VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS.length }, requested);
+  const allowed = vnextProposalSchemaRequestIds(context);
+  if (requested.length === 0 || requested.length > allowed.length) return fieldOutput("VALUE_INVALID", "offer:requested-capabilities-size",
+    ["requestedCapabilities"], { minItems: 1, maxItems: allowed.length }, requested);
   for (const [index, id] of requested.entries()) {
     if (typeof id !== "string") return fieldOutput("TYPE_MISMATCH", "offer:capability-id-string-required", ["requestedCapabilities", index], { type: "string" }, id);
     if (requested.indexOf(id) !== index) return fieldOutput("VALUE_INVALID", "offer:requested-capabilities-unique", ["requestedCapabilities", index], { uniqueItems: true }, id);
   }
-  try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(requested) }); }
+  try { return deepFreeze({ kind: "schemaRequested", ...closeVNextProposalSchemaRequest(requested, context) }); }
   catch (error) {
     if (error instanceof UnknownVNextProposalCapabilityError) {
       const index = requested.indexOf(error.capabilityId);
@@ -243,9 +245,9 @@ export async function invokeVNextProposalOffer(input: Readonly<{
   const contextHash = input.requiredContext?.binding?.contextHash;
   if (typeof contextHash !== "string" || !contextHash) throw new TypeError("VNEXT_PROPOSAL_CONTEXT_HASH_REQUIRED");
   const response = await input.binding.run(input.modelId,
-    createVNextProposalOfferModelInput(input.message));
+    createVNextProposalOfferModelInput(input.message, input.requiredContext));
   try {
-    return parseVNextProposalOfferResponse(response);
+    return parseVNextProposalOfferResponse(response, input.requiredContext);
   } catch (error) {
     if (!(error instanceof VNextProposalBundleOutputError)) throw error;
     return providerRejected("PROPOSAL_FORM_INVALID", error.diagnostics.map(d => d.constraint), false, 1, error.diagnostics);

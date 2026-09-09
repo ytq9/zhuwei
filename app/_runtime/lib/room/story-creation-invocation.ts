@@ -146,6 +146,7 @@ export type StoryAdmissionBindingInput = Readonly<{
   /** Original creation context on first admission; a separate current
    * context after reuse. The original artifact always remains unchanged. */
   validation: Readonly<{ request: StoryRequest; context: StoryContext }>;
+  priorMappings: import("./story-library-contracts").StoryLibraryMappings;
   selectedMaterialRefs: readonly string[];
   readSet: readonly StoryReadDependency[];
   rulesInputHash: StoryHash;

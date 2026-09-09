@@ -1,4 +1,6 @@
 import { canonicalHash, deepFreeze } from "./canonical-json";
+import type { VNextRequiredContext } from "./required-context";
+import { storyLibraryCatalog } from "../../room/story-library";
 
 /** These select preparation requirements, never a plot, ruling or player
  * commitment. The host derives the goal, authority scope and job identity. */
@@ -14,15 +16,27 @@ export const STORY_SELECTION_CATALOG = deepFreeze([
   { id: "storyPersonal", connection: "personal", description: "与角色已表达的关注有关，不替角色决定人生目标。" },
 ] as const);
 export const STORY_SELECTION_IDS: readonly string[] = Object.freeze(STORY_SELECTION_CATALOG.map(entry => entry.id));
-export type StorySelection = Readonly<{
+export type StoryCreationSelection = Readonly<{
   method: "story.method.local-conflict" | "story.method.archive-investigation";
   scale: "vignette" | "short" | "long";
   connection: "local" | "mainStory" | "personal";
 }>;
-export const STORY_SELECTION_POLICY_HASH = canonicalHash({ version: "zhuwei.story-selection/v1", catalog: STORY_SELECTION_CATALOG });
+export type StorySelection = StoryCreationSelection | Readonly<{ kind: "existing"; libraryRef: string }>;
+export const STORY_SELECTION_POLICY_HASH = canonicalHash({ version: "zhuwei.story-selection/v2", catalog: STORY_SELECTION_CATALOG,
+  reuse: "one-exact-library-reference-from-the-frozen-private-catalog" });
+export const storyReuseSelectionId = (libraryRef: string) => `storyReuse:${libraryRef}`;
+export function storySelectionIds(context?: VNextRequiredContext): readonly string[] {
+  const offers = context ? storyLibraryCatalog(context)?.offers ?? [] : [];
+  return [...STORY_SELECTION_IDS, ...offers.map(offer => storyReuseSelectionId(offer.libraryRef))];
+}
 
-export function parseStorySelection(requested: readonly string[]): StorySelection | undefined {
+export function parseStorySelection(requested: readonly string[], context?: VNextRequiredContext): StorySelection | undefined {
   const selected = STORY_SELECTION_CATALOG.filter(entry => requested.includes(entry.id));
+  const existing = requested.filter(id => id.startsWith("storyReuse:"));
+  if (existing.length) {
+    if (existing.length !== 1 || selected.length || !storySelectionIds(context).includes(existing[0])) throw new TypeError("STORY_SELECTION_INVALID");
+    return deepFreeze({ kind: "existing", libraryRef: existing[0].slice("storyReuse:".length) });
+  }
   if (selected.length === 0) return undefined;
   const methods = selected.filter(entry => "method" in entry);
   const scales = selected.filter(entry => "scale" in entry);

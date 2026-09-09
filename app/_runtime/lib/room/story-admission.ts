@@ -1,7 +1,7 @@
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
 import { lowerVNext2ProposalBundle } from "../kp/vnext/proposal-bundle-lowering";
 import { validateVNextProposalBundle } from "../kp/vnext/proposal-validator";
-import { reviewedDefinitionEntry } from "../kp/vnext/story-materialization";
+import { preparedStoryMappings, reviewedDefinitionEntry } from "../kp/vnext/story-materialization";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { registeredAbilityRecord } from "../rules/profiles/ability-compiler";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
@@ -18,6 +18,8 @@ import type { StoryAdmissionBindingInput, StoryAdmissionBinding, StoryAdmissionR
 import type { StoryHash, StoryPreparation } from "./story-creation/contracts";
 import { validateStoredPreparation, validateStoredReview } from "./story-creation/prompt";
 import { storyReviewPassed } from "./story-creation/review";
+import type { StoryLibraryBinding, StoryLibraryMappings } from "./story-library-contracts";
+import { storyLibraryOwner, validateStoryLibraryEntry } from "./story-library";
 
 const fail = (): never => { throw new TypeError("STORY_ADMISSION_BINDING_INVALID"); };
 const same = (left: unknown, right: unknown) => canonicalHash(left) === canonicalHash(right);
@@ -47,15 +49,24 @@ export function storyFactPlans(input: JsonRecord): StoryFactsAdmissionPlan[] {
 }
 
 export function prepareStoryAdmissionBinding(input: Readonly<{
-  job: StoryJobSnapshot; preparationHash: string; preparedActionId: string; proposal: unknown; rulesInput: JsonRecord;
+  job?: StoryJobSnapshot; library?: StoryLibraryBinding;
+  preparationHash: string; preparedActionId: string; proposal: unknown; rulesInput: JsonRecord;
   requiredContext: VNextRequiredContext; state: AuthoritativeWorldState; profiles?: RuntimeProfileManifest;
 }>): StoryAdmissionBindingInput | undefined {
-  const { job } = input, checkpoint = job.checkpoint, preparation = checkpoint?.revisedDraft ?? checkpoint?.draft;
-  const review = checkpoint?.revisedReview ?? checkpoint?.review;
-  if (checkpoint?.status !== "ready" || !preparation || !review || canonicalHash(preparation) !== input.preparationHash) return fail();
+  const { job, library } = input, checkpoint = job?.checkpoint;
+  if (!!job === !!library) return fail();
+  if (library) {
+    validateStoryLibraryEntry(library.entry, { roomId: input.state.roomId, runtimeEpochId: input.state.runtimeEpochId, branchId: input.state.activeBranchId });
+    const { validationHash, ...body } = library;
+    if (canonicalHash(body) !== validationHash || !same(library.owner, storyLibraryOwner(library.entry))) return fail();
+  }
+  const preparation = library?.entry.artifact.preparation ?? checkpoint?.revisedDraft ?? checkpoint?.draft;
+  const review = library?.entry.artifact.review ?? checkpoint?.revisedReview ?? checkpoint?.review;
+  if (!library && checkpoint?.status !== "ready" || !preparation || !review || canonicalHash(preparation) !== input.preparationHash) return fail();
   validateStoredPreparation(preparation); validateStoredReview(review);
   if (!storyReviewPassed(review) || review.preparationHash !== input.preparationHash
-    || review.contextHash !== preparation.contextHash || preparation.contextHash !== job.context.contextHash) return fail();
+    || review.contextHash !== preparation.contextHash
+    || preparation.contextHash !== (library?.entry.artifact.context ?? job!.context).contextHash) return fail();
   const parsed = validateVNextProposalBundle(input.proposal);
   if (parsed.kind !== "accepted") return fail();
   const selected = new Set<string>();
@@ -81,10 +92,14 @@ export function prepareStoryAdmissionBinding(input: Readonly<{
   if (lowered.kind !== "accepted" || lowered.command.kind !== "rulesStep" || !same(lowered.command.rulesInput, input.rulesInput)) return fail();
   atomicPlan(input.rulesInput);
   const selectedMaterialRefs = [...selected].sort();
-  return { jobId: job.request.jobId, preparationHash: input.preparationHash as StoryHash,
+  const validation = library ? { request: library.currentRequest, context: library.currentContext } : { request: job!.request, context: job!.context };
+  const priorMappings = preparedStoryMappings(input.requiredContext, input.preparationHash);
+  if (!same(priorMappings, library?.mappings ?? { definitions: [], facts: [] })) return fail();
+  return { owner: library?.owner ?? { kind: "creationJob", jobId: job!.request.jobId }, jobId: preparation.jobId,
+    preparationHash: input.preparationHash as StoryHash, validation, priorMappings,
     materialScopeHash: canonicalHash(selectedMaterialRefs) as StoryHash,
-    preparedActionId: input.preparedActionId, contextHash: job.context.contextHash,
-    selectedMaterialRefs, readSet: job.context.readSet, rulesInputHash: canonicalHash(input.rulesInput) as StoryHash };
+    preparedActionId: input.preparedActionId, contextHash: validation.context.contextHash,
+    selectedMaterialRefs, readSet: validation.context.readSet, rulesInputHash: canonicalHash(input.rulesInput) as StoryHash };
 }
 
 export function storyDefinitionAvailable(state: AuthoritativeWorldState, ref: string): boolean {
@@ -107,7 +122,7 @@ export function storyMappedReference(preparation: StoryPreparation, definitions:
 /** Shared persisted DTO closure; it never certifies events or writes facts.
  * The live host and archive additionally verify actual Rules evidence. */
 export function validStoryMaterialBindings(preparation: StoryPreparation, definitions: unknown, facts: unknown,
-  selectedMaterialRefs?: readonly string[]): boolean {
+  selectedMaterialRefs?: readonly string[], priorMappings: StoryLibraryMappings = { definitions: [], facts: [] }): boolean {
   try {
     if (!Array.isArray(definitions) || !Array.isArray(facts)) return false;
     const candidates = new Set<string>(), targets = new Set<string>();
@@ -133,7 +148,7 @@ export function validStoryMaterialBindings(preparation: StoryPreparation, defini
           || ![known.candidateRef, known.holderRef, known.knowledgeRef, known.recordedByEventId].every(text)) return false;
         const proposed = candidate.knowledge.find(item => item.ref === known.candidateRef);
         if (!proposed || proposed.factRef !== candidate.ref
-          || storyMappedReference(preparation, definitions, facts, proposed.holderRef) !== known.holderRef) return false;
+          || storyMappedReference(preparation, [...priorMappings.definitions, ...definitions], [...priorMappings.facts, ...facts], proposed.holderRef) !== known.holderRef) return false;
         add(String(known.candidateRef), `knowledge:${known.holderRef}\u0000${known.knowledgeRef}`);
       }
     }
@@ -246,12 +261,12 @@ export function storyAdmissionReceipt(input: Readonly<{
     });
     const used = new Set([...candidate.subjectRefs, ...candidate.basisRefs, ...candidate.occurrence.basisRefs,
       ...candidate.knowledge.flatMap(value => [value.holderRef, value.sourceRef, ...value.acquisition.basisRefs])]);
-    const definitionRefs = unique(definitions.filter(value => used.has(value.candidateRef)
+    const definitionRefs = unique([...binding.priorMappings.definitions, ...definitions].filter(value => used.has(value.candidateRef)
       || used.has(reviewedDefinitionEntry(preparation, value.candidateRef).produces[0].handle)).flatMap(value => value.definitionRefs));
     return { candidateRef: candidate.ref, factRef, recordedByEventId: matches[0].eventId, definitionRefs, knowledge };
   });
-  if (!validStoryMaterialBindings(preparation, definitions, facts, binding.selectedMaterialRefs)) return fail();
-  return { jobId: binding.jobId, preparationHash: binding.preparationHash, materialScopeHash: binding.materialScopeHash,
+  if (!validStoryMaterialBindings(preparation, definitions, facts, binding.selectedMaterialRefs, binding.priorMappings)) return fail();
+  return { owner: binding.owner, jobId: binding.jobId, preparationHash: binding.preparationHash, materialScopeHash: binding.materialScopeHash,
     preparedActionId: binding.preparedActionId, receiptId: input.receiptId, bindingHash: binding.bindingHash,
     recordedAtEventSeq: input.recordedAtEventSeq, definitions, facts };
 }

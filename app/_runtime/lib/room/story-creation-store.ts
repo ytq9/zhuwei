@@ -13,6 +13,9 @@ import type {
   StoryStoreArchiveResult, StoryStoreArchiveSnapshot, StoryStoreArchiveSource, StoryStoreDispatchQuarantine, StoryStoreRestoreResult,
 } from "./story-creation-invocation";
 import { validStoryMaterialBindings } from "./story-admission";
+import type { StoryAdmissionOwner, StoryLibraryEntry, StoryLibraryMappings } from "./story-library-contracts";
+import { storyHostingArtifact, storyLibraryEntry, storyLibraryMappings, storyLibraryOwner,
+  validStoryAdmissionOwner, validateStoryLibraryEntry } from "./story-library";
 
 type AccountRow = { account_id: string; scope_key: string; kind: string; binding_json: string;
   limits_json: string; spent_json: string; held_json: string };
@@ -26,7 +29,7 @@ type InvocationRow = { invocation_id: string; invocation_key: string; job_id: st
   lease_until: number | null; completed_at: number | null; response_json: string | null;
   usage_json: string | null; completion_hash: StoryHash | null; external_binding_json: string | null };
 type AdmissionBindingRow = { prepared_action_id: string; binding_json: string };
-type MaterialManifestRow = { preparation_hash: StoryHash; job_id: string };
+type MaterialManifestRow = { preparation_hash: StoryHash; job_id: string; owner_json: string };
 
 const DIMENSIONS = ["calls", "inputTokens", "outputTokens", "estimatedCostMicros", "elapsedMs"] as const;
 const STAGES: readonly StoryStage[] = ["draft", "review", "revision", "revisionReview"];
@@ -48,6 +51,9 @@ export class StoryCreationStore {
     /** Synchronous SQL-only callback on this storage. Its writes belong to
      * the same transaction and roll back with a later outer host failure. */
     onMutation?: () => void;
+    /** Read-only immutable manuscripts in this same Room. Current receipt
+     * mappings remain owned by this journal. */
+    library?: { read(libraryRef: string): StoryLibraryEntry | undefined; listEntries(): readonly StoryLibraryEntry[] };
   }) {}
 
   ensureSchema(): void {
@@ -80,7 +86,7 @@ export class StoryCreationStore {
         prepared_action_id TEXT PRIMARY KEY, binding_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS story_creation_material_manifest (
-        preparation_hash TEXT PRIMARY KEY, job_id TEXT NOT NULL
+        preparation_hash TEXT PRIMARY KEY, job_id TEXT NOT NULL, owner_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS story_creation_dispatch_quarantine (
         kind TEXT NOT NULL, reference_id TEXT NOT NULL, PRIMARY KEY (kind, reference_id)
@@ -141,6 +147,12 @@ export class StoryCreationStore {
   readJob(jobId: string): StoryJobSnapshot | undefined {
     const row = this.jobRow(jobId);
     return row === undefined ? undefined : this.snapshot(row);
+  }
+
+  readCreationJob(jobId: string): StoryJobSnapshot | undefined { return this.readJob(jobId); }
+
+  listCreationJobs(): readonly StoryJobSnapshot[] {
+    return this.storage.sql.exec<JobRow>("SELECT * FROM story_creation_jobs ORDER BY job_id").toArray().map(row => this.snapshot(row));
   }
 
   readBudget(accountId: string): StoryBudgetSnapshot | undefined {
@@ -331,13 +343,14 @@ export class StoryCreationStore {
 
   prepareAdmission(input: StoryAdmissionBindingInput): StoryAdmissionBindingResult {
     return this.atomic<StoryAdmissionBindingResult>(() => {
-      this.validateAdmissionBinding(input);
       const binding = { ...input, bindingHash: this.hash(input) };
       const previous = this.readAdmissionBinding(input.preparedActionId);
       if (previous !== undefined) {
+        this.validateAdmissionBinding(input);
         if (this.hash(previous) !== this.hash(binding)) invalid();
         return { kind: "saved", binding: previous };
       }
+      this.validateAdmissionBinding(input, true);
       this.storage.sql.exec(`INSERT INTO story_creation_admission_bindings
         (prepared_action_id, binding_json) VALUES (?, ?)`, input.preparedActionId, this.json(binding));
       return { kind: "saved", binding: structuredClone(binding) };
@@ -369,9 +382,9 @@ export class StoryCreationStore {
       key, input.jobId, input.preparedActionId, this.json(input));
       const manifest = this.storage.sql.exec<MaterialManifestRow>(
         "SELECT * FROM story_creation_material_manifest WHERE preparation_hash = ?", input.preparationHash).toArray()[0];
-      if (manifest !== undefined && manifest.job_id !== input.jobId) invalid();
+      if (manifest !== undefined && (manifest.job_id !== input.jobId || this.hash(parse(manifest.owner_json)) !== this.hash(input.owner))) invalid();
       this.storage.sql.exec(`INSERT OR IGNORE INTO story_creation_material_manifest
-        (preparation_hash, job_id) VALUES (?, ?)`, input.preparationHash, input.jobId);
+        (preparation_hash, job_id, owner_json) VALUES (?, ?, ?)`, input.preparationHash, input.jobId, this.json(input.owner));
       // A later scope may admit more knowledge about an existing candidate;
       // it cannot remap a candidate to another authoritative fact or event.
       this.historyMaterials();
@@ -379,10 +392,11 @@ export class StoryCreationStore {
     });
   }
 
-  readAdmissions(jobId: string): StoryAdmissionReceipt[] {
+  readAdmissions(owner: StoryAdmissionOwner | string): StoryAdmissionReceipt[] {
+    const selected = typeof owner === "string" ? { kind: "creationJob", jobId: owner } : owner;
     return this.storage.sql.exec<{ receipt_json: string }>(
-      "SELECT receipt_json FROM story_creation_admissions WHERE job_id = ? ORDER BY admission_key", jobId)
-      .toArray().map(row => parse<StoryAdmissionReceipt>(row.receipt_json));
+      "SELECT receipt_json FROM story_creation_admissions ORDER BY admission_key")
+      .toArray().map(row => parse<StoryAdmissionReceipt>(row.receipt_json)).filter(value => this.hash(value.owner) === this.hash(selected));
   }
 
   exportHistoryMaterials(): StoryHistoryMaterialResult {
@@ -436,7 +450,6 @@ export class StoryCreationStore {
       }
       for (const binding of snapshot.admissionBindings) {
         const { bindingHash, ...body } = binding;
-        this.validateAdmissionBinding(body);
         if (this.hash(body) !== bindingHash) invalid();
         this.storage.sql.exec(`INSERT INTO story_creation_admission_bindings
           (prepared_action_id, binding_json) VALUES (?, ?)`, binding.preparedActionId, this.json(binding));
@@ -444,8 +457,8 @@ export class StoryCreationStore {
       // Restore the independent manifest before validating all receipts as a
       // whole. Missing data must never be reinterpreted as an empty history.
       for (const row of snapshot.materialManifest) this.storage.sql.exec(`INSERT INTO story_creation_material_manifest
-        (preparation_hash, job_id) VALUES (?, ?)`, row.preparationHash, row.jobId);
-      for (const receipt of snapshot.admissions) {
+        (preparation_hash, job_id, owner_json) VALUES (?, ?, ?)`, row.preparationHash, row.jobId, this.json(row.owner));
+      for (const receipt of [...snapshot.admissions].sort((a, b) => BigInt(a.recordedAtEventSeq) < BigInt(b.recordedAtEventSeq) ? -1 : 1)) {
         this.validateAdmissionReceipt(receipt);
         this.storage.sql.exec(`INSERT INTO story_creation_admissions
           (admission_key, job_id, prepared_action_id, receipt_json) VALUES (?, ?, ?, ?)`,
@@ -476,30 +489,49 @@ export class StoryCreationStore {
       DELETE FROM story_creation_invocations; DELETE FROM story_creation_jobs; DELETE FROM story_creation_accounts;`));
   }
 
-  private readyPreparation(jobId: string, preparationHash: StoryHash): StoryPreparation {
-    const checkpoint = this.readJob(jobId)?.checkpoint;
-    const preparation = checkpoint?.revisedDraft ?? checkpoint?.draft;
-    if (checkpoint?.status !== "ready" || preparation === undefined
-      || !reviewPassed(checkpoint.revisedReview ?? checkpoint.review) || this.hash(preparation) !== preparationHash) invalid();
-    return preparation;
+  private sourceEntry(owner: StoryAdmissionOwner, jobId: string, preparationHash: StoryHash): StoryLibraryEntry {
+    if (!validStoryAdmissionOwner(owner)) invalid();
+    let entry: StoryLibraryEntry | undefined;
+    if (owner.kind === "creationJob") {
+      const job = this.readJob(owner.jobId);
+      if (!job || owner.jobId !== jobId) invalid();
+      const { source } = job.request;
+      entry = storyLibraryEntry({ roomId: source.roomId, runtimeEpochId: source.runtimeEpochId, branchId: source.branchId },
+        storyHostingArtifact(job), { kind: "creationJob", jobId });
+    } else entry = this.ports.library?.read(owner.libraryRef);
+    if (!entry || entry.artifact.preparation.jobId !== jobId || entry.artifact.preparationHash !== preparationHash
+      || this.hash(storyLibraryOwner(entry)) !== this.hash(owner)) invalid("STORY_CONTEXT_INSUFFICIENT");
+    validateStoryLibraryEntry(entry);
+    return entry;
   }
 
-  private validateAdmissionBinding(input: StoryAdmissionBindingInput): void {
-    if (!exact(input, ["jobId", "preparationHash", "materialScopeHash", "preparedActionId", "contextHash",
+  private validateAdmissionBinding(input: StoryAdmissionBindingInput, requireCurrentMappings = false): void {
+    if (!exact(input, ["owner", "jobId", "preparationHash", "materialScopeHash", "preparedActionId", "contextHash", "validation", "priorMappings",
       "selectedMaterialRefs", "readSet", "rulesInputHash"]) || !nonempty(input.preparedActionId)
       || !isHash(input.rulesInputHash) || !uniqueStrings(input.selectedMaterialRefs)
       || this.hash(input.selectedMaterialRefs) !== input.materialScopeHash || !Array.isArray(input.readSet)) invalid();
-    const preparation = this.readyPreparation(input.jobId, input.preparationHash);
-    const job = this.readJob(input.jobId)!;
-    if (input.contextHash !== job.context.contextHash || preparation.contextHash !== input.contextHash) invalid();
+    const entry = this.sourceEntry(input.owner, input.jobId, input.preparationHash), preparation = entry.artifact.preparation;
+    if (!exact(input.validation, ["request", "context"]) || !record(input.validation.context) || !record(input.validation.request)
+      || !exact(input.priorMappings, ["definitions", "facts"])) invalid();
+    const { contextHash, ...context } = input.validation.context;
+    if (this.hash(context) !== contextHash || input.contextHash !== contextHash
+      || input.validation.request.jobId !== input.jobId
+      || this.hash({ roomId: input.validation.request.source.roomId, runtimeEpochId: input.validation.request.source.runtimeEpochId,
+        branchId: input.validation.request.source.branchId }) !== this.hash(entry.room)
+      || !validStoryMaterialBindings(preparation, input.priorMappings.definitions, input.priorMappings.facts)) invalid();
+    const admitted = storyLibraryMappings(entry, this.readAdmissions(input.owner));
+    if (requireCurrentMappings ? this.hash(input.priorMappings) !== this.hash(admitted)
+      : input.priorMappings.definitions.some(value => !admitted.definitions.some(prior => this.hash(value) === this.hash(prior)))
+        || input.priorMappings.facts.some(value => !admitted.facts.some(prior => this.hash(value) === this.hash(prior)))) invalid();
+    const already = new Set([...input.priorMappings.definitions, ...input.priorMappings.facts].map(value => value.candidateRef));
     const candidates = new Set(materialRefs(preparation));
     const selected = new Set(input.selectedMaterialRefs);
-    if (input.selectedMaterialRefs.some(ref => !candidates.has(ref))) invalid();
+    if (input.selectedMaterialRefs.some(ref => !candidates.has(ref) || already.has(ref))) invalid();
     for (const fact of preparation.facts) for (const knowledge of fact.knowledge) {
       if (selected.has(knowledge.ref) && !selected.has(fact.ref)) invalid();
     }
     for (const definition of preparation.definitions) if (selected.has(definition.ref)) {
-      if (definition.dependsOn.some(ref => candidates.has(ref) && !selected.has(ref))) invalid();
+      if (definition.dependsOn.some(ref => candidates.has(ref) && !selected.has(ref) && !already.has(ref))) invalid();
     }
     const reads = new Map<string, StoryAdmissionBindingInput["readSet"][number]>();
     for (const read of input.readSet) {
@@ -511,28 +543,28 @@ export class StoryCreationStore {
       reads.set(key, { kind: read.kind as StoryAdmissionBindingInput["readSet"][number]["kind"],
         ref: read.ref, revision: read.revision, hash: read.hash });
     }
-    for (const required of job.context.readSet) {
+    for (const required of input.validation.context.readSet) {
       const supplied = reads.get(`${required.kind}:${required.ref}`);
       if (supplied === undefined || this.hash(required) !== this.hash(supplied)) invalid();
     }
   }
 
   private validateAdmissionReceipt(input: StoryAdmissionReceipt): void {
-    if (!exact(input, ["jobId", "preparationHash", "materialScopeHash", "preparedActionId", "receiptId", "bindingHash",
+    if (!exact(input, ["owner", "jobId", "preparationHash", "materialScopeHash", "preparedActionId", "receiptId", "bindingHash",
       "recordedAtEventSeq", "definitions", "facts"]) || !nonempty(input.receiptId) || !sequence(input.recordedAtEventSeq)
       || !Array.isArray(input.definitions) || !Array.isArray(input.facts)) invalid();
     const binding = this.readAdmissionBinding(input.preparedActionId);
-    if (binding === undefined || binding.bindingHash !== input.bindingHash || binding.jobId !== input.jobId
+    if (binding === undefined || binding.bindingHash !== input.bindingHash || binding.jobId !== input.jobId || this.hash(binding.owner) !== this.hash(input.owner)
       || binding.preparationHash !== input.preparationHash || binding.materialScopeHash !== input.materialScopeHash) invalid();
     const { bindingHash, ...body } = binding;
     if (this.hash(body) !== bindingHash) invalid();
     this.validateAdmissionBinding(body);
-    const preparation = this.readyPreparation(input.jobId, input.preparationHash);
-    if (!validStoryMaterialBindings(preparation, input.definitions, input.facts, binding.selectedMaterialRefs)) invalid();
+    const preparation = this.sourceEntry(input.owner, input.jobId, input.preparationHash).artifact.preparation;
+    if (!validStoryMaterialBindings(preparation, input.definitions, input.facts, binding.selectedMaterialRefs, binding.priorMappings)) invalid();
   }
 
   private admissionKey(input: StoryAdmissionReceipt): string {
-    return this.hash({ jobId: input.jobId, preparationHash: input.preparationHash, materialScopeHash: input.materialScopeHash });
+    return this.hash({ owner: input.owner, preparationHash: input.preparationHash, materialScopeHash: input.materialScopeHash });
   }
 
   private historyMaterials(): StoryHistoryMaterialSnapshot {
@@ -540,45 +572,35 @@ export class StoryCreationStore {
       "SELECT * FROM story_creation_material_manifest ORDER BY preparation_hash").toArray();
     const admissions = this.storage.sql.exec<{ receipt_json: string }>(
       "SELECT receipt_json FROM story_creation_admissions ORDER BY admission_key").toArray().map(row => parse<StoryAdmissionReceipt>(row.receipt_json));
-    const required = new Set(manifest.map(row => row.preparation_hash));
-    if (admissions.some(value => !required.has(value.preparationHash))) invalid("STORY_CONTEXT_INSUFFICIENT");
-    const preparations: StoryHistoryMaterialSnapshot["preparations"][number][] = [];
-    for (const row of manifest) {
-      const job = this.readJob(row.job_id);
-      const preparation = job?.checkpoint?.revisedDraft ?? job?.checkpoint?.draft;
-      if (job?.checkpoint?.status !== "ready" || preparation === undefined || this.hash(preparation) !== row.preparation_hash) {
-        invalid("STORY_CONTEXT_INSUFFICIENT");
+    const sources = new Map<StoryHash, StoryLibraryEntry>();
+    for (const entry of this.ports.library?.listEntries() ?? []) {
+      validateStoryLibraryEntry(entry);
+      if (entry.origin.kind === "historicalSeed") {
+        if (sources.has(entry.artifact.preparationHash)) invalid();
+        sources.set(entry.artifact.preparationHash, entry);
       }
-      const receipts = admissions.filter(receipt => receipt.preparationHash === row.preparation_hash);
-      if (receipts.length === 0 || receipts.some(receipt => receipt.jobId !== row.job_id)) invalid("STORY_CONTEXT_INSUFFICIENT");
-      for (const receipt of receipts) this.validateAdmissionReceipt(receipt);
-      const merged = new Map<string, StoryAdmittedFactBinding>();
-      const definitions = new Map<string, StoryAdmittedDefinitionBinding>();
-      for (const receipt of receipts) for (const definition of receipt.definitions) {
-        const previous = definitions.get(definition.candidateRef);
-        if (previous !== undefined && this.hash(previous) !== this.hash(definition)) invalid();
-        definitions.set(definition.candidateRef, structuredClone(definition));
-      }
-      for (const receipt of receipts) for (const fact of receipt.facts) {
-        const previous = merged.get(fact.candidateRef);
-        if (previous === undefined) { merged.set(fact.candidateRef, structuredClone(fact)); continue; }
-        if (previous.factRef !== fact.factRef || previous.recordedByEventId !== fact.recordedByEventId
-          || this.hash([...previous.definitionRefs].sort()) !== this.hash([...fact.definitionRefs].sort())) invalid();
-        const knowledge = new Map(previous.knowledge.map(value => [value.candidateRef, value]));
-        for (const value of fact.knowledge) {
-          const prior = knowledge.get(value.candidateRef);
-          if (prior !== undefined && this.hash(prior) !== this.hash(value)) invalid();
-          knowledge.set(value.candidateRef, value);
-        }
-        merged.set(fact.candidateRef, { ...previous, knowledge: [...knowledge.values()].sort(byCandidate) });
-      }
-      const firstSeq = receipts.map(receipt => receipt.recordedAtEventSeq)
-        .reduce((minimum, value) => BigInt(value) < BigInt(minimum) ? value : minimum);
-      preparations.push({ preparation, preparationHash: row.preparation_hash, recordedAtEventSeq: firstSeq,
-        definitions: [...definitions.values()].sort(byCandidate), facts: [...merged.values()].sort(byCandidate) });
-      if (!validStoryMaterialBindings(preparation, [...definitions.values()], [...merged.values()])) invalid();
     }
-    return { preparations, requiredPreparationHashes: manifest.map(row => row.preparation_hash) };
+    for (const row of manifest) {
+      const entry = this.sourceEntry(parse<StoryAdmissionOwner>(row.owner_json), row.job_id, row.preparation_hash);
+      const prior = sources.get(row.preparation_hash);
+      if (prior && prior.entryHash !== entry.entryHash) invalid();
+      sources.set(row.preparation_hash, entry);
+      if (!admissions.some(receipt => receipt.preparationHash === row.preparation_hash
+        && this.hash(receipt.owner) === this.hash(storyLibraryOwner(entry)))) invalid("STORY_CONTEXT_INSUFFICIENT");
+    }
+    if (admissions.some(value => !manifest.some(row => row.preparation_hash === value.preparationHash
+      && row.job_id === value.jobId && this.hash(parse(row.owner_json)) === this.hash(value.owner)))) invalid("STORY_CONTEXT_INSUFFICIENT");
+    const preparations: StoryHistoryMaterialSnapshot["preparations"][number][] = [];
+    for (const [preparationHash, entry] of sources) {
+      const receipts = admissions.filter(value => this.hash(value.owner) === this.hash(storyLibraryOwner(entry)));
+      for (const receipt of receipts) this.validateAdmissionReceipt(receipt);
+      const mappings = storyLibraryMappings(entry, receipts);
+      const firstSeq = entry.origin.kind === "historicalSeed" ? "0" : receipts.map(receipt => receipt.recordedAtEventSeq)
+        .reduce((minimum, value) => BigInt(value) < BigInt(minimum) ? value : minimum);
+      preparations.push({ preparation: entry.artifact.preparation, preparationHash, recordedAtEventSeq: firstSeq, ...mappings });
+    }
+    preparations.sort((a, b) => a.preparationHash.localeCompare(b.preparationHash));
+    return { preparations, requiredPreparationHashes: preparations.map(value => value.preparationHash) };
   }
 
   private captureArchive(source: StoryStoreArchiveSource): StoryStoreArchiveSnapshot {
@@ -605,18 +627,18 @@ export class StoryCreationStore {
       .map(row => parse<StoryAdmissionReceipt>(row.receipt_json));
     const materialManifest = this.storage.sql.exec<MaterialManifestRow>(
       "SELECT * FROM story_creation_material_manifest ORDER BY preparation_hash").toArray()
-      .map(row => ({ preparationHash: row.preparation_hash, jobId: row.job_id }));
+      .map(row => ({ preparationHash: row.preparation_hash, jobId: row.job_id, owner: parse<StoryAdmissionOwner>(row.owner_json) }));
     const unsigned = { format: "zhuwei.story-store-archive/v1" as const, source: structuredClone(source),
-      accounts, jobs, invocations, admissionBindings, admissions, materialManifest };
+      accounts, jobs, invocations, admissionBindings, admissions, materialManifest, hostingArtifacts: this.ports.library?.listEntries() ?? [] };
     return { ...unsigned, snapshotHash: this.hash(unsigned) };
   }
 
   private validateArchive(snapshot: StoryStoreArchiveSnapshot, source: StoryStoreArchiveSource): void {
     if (!exact(source, ["roomId", "runtimeEpochId"]) || !nonempty(source.roomId) || !nonempty(source.runtimeEpochId)
-      || !exact(snapshot, ["format", "source", "accounts", "jobs", "invocations", "admissionBindings", "admissions", "materialManifest", "snapshotHash"])
+      || !exact(snapshot, ["format", "source", "accounts", "jobs", "invocations", "admissionBindings", "admissions", "materialManifest", "hostingArtifacts", "snapshotHash"])
       || snapshot.format !== "zhuwei.story-store-archive/v1" || this.hash(snapshot.source) !== this.hash(source)
       || ![snapshot.accounts, snapshot.jobs, snapshot.invocations, snapshot.admissionBindings,
-        snapshot.admissions, snapshot.materialManifest].every(Array.isArray)) invalid();
+        snapshot.admissions, snapshot.materialManifest, snapshot.hostingArtifacts].every(Array.isArray)) invalid();
     const { snapshotHash, ...body } = snapshot;
     if (this.hash(body) !== snapshotHash) invalid();
     const accounts = new Map<string, StoryStoreArchiveSnapshot["accounts"][number]>();
@@ -758,21 +780,39 @@ export class StoryCreationStore {
       || !uniqueStrings(snapshot.admissions.map(value => value?.preparedActionId))
       || !uniqueStrings(snapshot.admissions.map(value => this.admissionKey(value)))
       || !uniqueStrings(snapshot.materialManifest.map(value => value?.preparationHash))) invalid();
+    const artifacts = new Map(snapshot.hostingArtifacts.map(entry => [entry.libraryRef, entry]));
+    if (artifacts.size !== snapshot.hostingArtifacts.length) invalid();
+    for (const entry of artifacts.values()) {
+      validateStoryLibraryEntry(entry);
+      if (entry.room.roomId !== source.roomId || entry.room.runtimeEpochId !== source.runtimeEpochId) invalid();
+    }
+    const ownerExists = (owner: StoryAdmissionOwner, jobId: string, preparationHash: StoryHash): boolean => {
+      if (!validStoryAdmissionOwner(owner)) return false;
+      if (owner.kind === "creationJob") {
+        const job = jobs.get(owner.jobId), draft = job?.checkpoint?.revisedDraft ?? job?.checkpoint?.draft;
+        return owner.jobId === jobId && draft !== undefined && job?.checkpoint?.status === "ready" && this.hash(draft) === preparationHash;
+      }
+      const entry = artifacts.get(owner.libraryRef);
+      return entry?.origin.kind === "historicalSeed" && entry.artifact.preparationHash === preparationHash && entry.artifact.preparation.jobId === jobId;
+    };
     for (const value of snapshot.admissionBindings) {
-      if (!record(value) || !jobs.has(value.jobId)) invalid("STORY_CONTEXT_INSUFFICIENT");
+      if (!record(value) || !ownerExists(value.owner, value.jobId, value.preparationHash)) invalid("STORY_CONTEXT_INSUFFICIENT");
       const { bindingHash, ...unsigned } = value;
       if (!isHash(bindingHash) || this.hash(unsigned) !== bindingHash) invalid();
     }
-    const manifest = new Map(snapshot.materialManifest.map(value => [value.preparationHash, value.jobId]));
+    const manifest = new Map(snapshot.materialManifest.map(value => [value.preparationHash, value]));
     for (const value of snapshot.materialManifest) {
-      if (!exact(value, ["preparationHash", "jobId"]) || !isHash(value.preparationHash) || !jobs.has(value.jobId)
-        || !snapshot.admissions.some(receipt => receipt.preparationHash === value.preparationHash && receipt.jobId === value.jobId)) {
-        invalid("STORY_CONTEXT_INSUFFICIENT");
-      }
+      if (!exact(value, ["preparationHash", "jobId", "owner"]) || !isHash(value.preparationHash)
+        || !ownerExists(value.owner, value.jobId, value.preparationHash)
+        || !snapshot.admissions.some(receipt => receipt.preparationHash === value.preparationHash && receipt.jobId === value.jobId
+          && this.hash(receipt.owner) === this.hash(value.owner))) invalid("STORY_CONTEXT_INSUFFICIENT");
     }
-    for (const receipt of snapshot.admissions) if (manifest.get(receipt.preparationHash) !== receipt.jobId
-      || !snapshot.admissionBindings.some(binding => binding.preparedActionId === receipt.preparedActionId
-        && binding.bindingHash === receipt.bindingHash)) invalid("STORY_CONTEXT_INSUFFICIENT");
+    for (const receipt of snapshot.admissions) {
+      const manifestEntry = manifest.get(receipt.preparationHash);
+      if (manifestEntry?.jobId !== receipt.jobId || this.hash(manifestEntry.owner) !== this.hash(receipt.owner)
+        || !snapshot.admissionBindings.some(binding => binding.preparedActionId === receipt.preparedActionId
+          && binding.bindingHash === receipt.bindingHash && this.hash(binding.owner) === this.hash(receipt.owner))) invalid("STORY_CONTEXT_INSUFFICIENT");
+    }
   }
 
   private ensureBudget(source: StoryRequest["source"], budget: StoryBudgetPolicy): void {

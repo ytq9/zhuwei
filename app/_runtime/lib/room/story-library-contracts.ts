@@ -87,5 +87,8 @@ export type StoryLibraryBinding = Readonly<{
   mappings: StoryLibraryMappings;
   currentRequest: StoryRequest;
   currentContext: StoryContext;
+  /** These candidates need fresh creative review before admission; other
+   * unchanged material and ordinary player actions remain usable. */
+  blockedCandidateRefs: readonly string[];
   validationHash: StoryHash;
 }>;
