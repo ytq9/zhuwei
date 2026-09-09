@@ -13,7 +13,8 @@ import type {
 type AccountRow = { account_id: string; scope_key: string; kind: string; binding_json: string;
   limits_json: string; spent_json: string; held_json: string };
 type JobRow = { job_id: string; opportunity_key: string; identity_hash: string; input_json: string;
-  request_hash: StoryHash; checkpoint_json: string | null; account_id: string; source_account_id: string; room_account_id: string };
+  request_hash: StoryHash; checkpoint_json: string | null; account_id: string; source_account_id: string; room_account_id: string;
+  unallocated_json: string };
 type InvocationRow = { invocation_id: string; invocation_key: string; job_id: string | null; stage: StoryStage | null;
   attempt_id: string; purpose: string; request_hash: StoryHash; provider_request_json: string; model_ref_json: string;
   reservation_json: string; account_ids_json: string; spent_json: string; held_json: string;
@@ -49,7 +50,8 @@ export class StoryCreationStore {
       CREATE TABLE IF NOT EXISTS story_creation_jobs (
         job_id TEXT PRIMARY KEY, opportunity_key TEXT NOT NULL UNIQUE, identity_hash TEXT NOT NULL,
         input_json TEXT NOT NULL, request_hash TEXT NOT NULL, checkpoint_json TEXT,
-        account_id TEXT NOT NULL, source_account_id TEXT NOT NULL, room_account_id TEXT NOT NULL
+        account_id TEXT NOT NULL, source_account_id TEXT NOT NULL, room_account_id TEXT NOT NULL,
+        unallocated_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS story_creation_invocations (
         invocation_id TEXT PRIMARY KEY, invocation_key TEXT NOT NULL UNIQUE, job_id TEXT, stage TEXT,
@@ -79,17 +81,19 @@ export class StoryCreationStore {
 
   openJob(input: OpenStoryJob): OpenStoryJobResult {
     return this.atomic<OpenStoryJobResult>(() => {
-      const { request, context, budget } = input;
+      const { request, context, budget, stageReservation } = input;
+      const ordinary = request.trigger.kind === "ordinaryResponse";
       if (request.format !== "zhuwei.story-request/v1" || context.format !== "zhuwei.story-context/v1"
         || !nonempty(request.jobId) || !nonempty(request.opportunityId)) invalid();
       const { contextHash, ...contextBody } = context;
       if (this.hash(contextBody) !== contextHash) invalid();
-      if (context.missingRequiredRefs.length > 0) invalid("STORY_CONTEXT_INSUFFICIENT");
+      if (!ordinary && context.missingRequiredRefs.length > 0) invalid("STORY_CONTEXT_INSUFFICIENT");
       if (this.hash(request.budgetPolicyRef) !== this.hash(budget.policyRef)) invalid();
-      if (!positive(budget.job.calls) || budget.job.calls < 2 || budget.job.calls > 4) invalid();
+      if (!ordinary && (budget.job.calls < 2 || budget.job.calls > 4)) invalid();
       this.validateAmount(budget.job); this.validateAmount(budget.source); this.validateAmount(budget.room);
+      this.validateReservation(stageReservation);
       const { jobId: _jobId, ...requestIdentity } = request;
-      const identityHash = this.hash({ request: requestIdentity, context, budget, modelRef: input.modelRef });
+      const identityHash = this.hash({ request: requestIdentity, context, budget, modelRef: input.modelRef, stageReservation });
       const opportunityKey = this.hash({ roomId: request.source.roomId, epoch: request.source.runtimeEpochId,
         branch: request.source.branchId, opportunity: request.opportunityId });
       const existing = this.jobRow(request.jobId) ?? this.storage.sql.exec<JobRow>(
@@ -101,16 +105,16 @@ export class StoryCreationStore {
       this.ensureBudget(request.source, budget);
       this.ensureAccount(`story-job:${request.jobId}`, `job:${request.jobId}`, "job",
         { identityHash, policyRef: budget.policyRef }, budget.job);
-      // Refuse before authoring if even draft + mandatory review cannot fit.
-      for (const id of [request.source.budgetAccountId, budget.roomAccountId]) {
-        const account = this.readBudget(id)!;
-        if (account.spent.calls + account.held.calls + 2 > account.limits.calls) invalid("STORY_BUDGET_EXHAUSTED");
-      }
+      // Protect every dimension of draft + mandatory review atomically, so
+      // another job or ordinary call cannot consume the review's allowance.
+      const unallocated = ordinary ? ZERO : stageAmount(stageReservation, 2);
+      this.changeAccounts([`story-job:${request.jobId}`, request.source.budgetAccountId, budget.roomAccountId],
+        ZERO, ZERO, ZERO, unallocated, !ordinary);
       this.storage.sql.exec(`INSERT INTO story_creation_jobs
         (job_id, opportunity_key, identity_hash, input_json, request_hash, checkpoint_json,
-         account_id, source_account_id, room_account_id) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+         account_id, source_account_id, room_account_id, unallocated_json) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
       request.jobId, opportunityKey, identityHash, this.json(input), this.hash(request),
-      `story-job:${request.jobId}`, request.source.budgetAccountId, budget.roomAccountId);
+      `story-job:${request.jobId}`, request.source.budgetAccountId, budget.roomAccountId, this.json(unallocated));
       return { kind: "opened", job: this.readJob(request.jobId)!, reused: false };
     });
   }
@@ -156,6 +160,7 @@ export class StoryCreationStore {
       if (next.status === "ready" && !reviewPassed(next.revisedReview ?? next.review)) invalid("STORY_CHECKPOINT_CONFLICT");
       this.storage.sql.exec("UPDATE story_creation_jobs SET checkpoint_json = ? WHERE job_id = ?", this.json(next), next.jobId);
       if (next.status !== "preparing") {
+        this.rebookJob(row, ZERO);
         // A reserved call has never received a dispatch permit. Closing its
         // checkpoint can safely release it; dispatched/unknown costs remain.
         for (const pending of this.storage.sql.exec<InvocationRow>(
@@ -177,11 +182,26 @@ export class StoryCreationStore {
       if (row === undefined || !STAGES.includes(request.stage)) invalid();
       const job = this.snapshot(row);
       if (request.requestHash !== row.request_hash || request.contextHash !== job.context.contextHash) invalid();
+      if (job.request.trigger.kind === "ordinaryResponse") invalid("STORY_CHECKPOINT_CONFLICT");
+      this.validateReservation(input.reservation);
+      if (DIMENSIONS.some(field => field !== "calls" && input.reservation[field] > job.stageReservation[field])) invalid("STORY_BUDGET_EXHAUSTED");
       const requestHash = this.hash({ request, providerRequest: input.providerRequest, modelRef: job.modelRef });
       const key = this.hash({ job: request.jobId, stage: request.stage });
       const existing = this.invocationByKey(key);
       if (existing !== undefined) return this.resumeReservation(existing, requestHash, input.reservation);
       if (!stageAllowed(job.checkpoint, request.stage)) invalid("STORY_CHECKPOINT_CONFLICT");
+      let unallocated = parse<StoryBudgetAmount>(row.unallocated_json);
+      if (request.stage === "revision") {
+        if (DIMENSIONS.some(field => unallocated[field] !== 0)) invalid("STORY_CHECKPOINT_CONFLICT");
+        unallocated = stageAmount(job.stageReservation, 2);
+        this.rebookJob(row, unallocated, true);
+      }
+      const remaining = { ...unallocated }, stage = stageAmount(job.stageReservation, 1);
+      for (const field of DIMENSIONS) {
+        remaining[field] -= stage[field];
+        if (!nonnegative(remaining[field])) invalid("STORY_CHECKPOINT_CONFLICT");
+      }
+      this.rebookJob({ ...row, unallocated_json: this.json(unallocated) }, remaining);
       return this.reserve({ key, jobId: request.jobId, stage: request.stage, purpose: request.stage,
         requestHash, providerRequest: input.providerRequest, modelRef: job.modelRef, reservation: input.reservation,
         accountIds: [row.account_id, row.source_account_id, row.room_account_id] });
@@ -226,8 +246,10 @@ export class StoryCreationStore {
       const row = this.ownedInvocation(input), completionHash = this.hash(input.result);
       if (!["completed", "unknown", "failed", "notSent"].includes(input.result.kind)) invalid();
       if (row.completion_hash === completionHash) return { kind: "saved", eligible: row.eligible === 1 };
-      if (row.status !== "started" && !(row.status === "unknown" && input.result.kind === "completed")) invalid();
-      const now = this.now(), result = input.result;
+      const result = input.result;
+      const supplement = (row.status === "completed" || row.status === "failed") && result.kind === row.status;
+      if (row.status !== "started" && !(row.status === "unknown" && result.kind === "completed") && !supplement) invalid();
+      if (supplement && result.kind === "completed" && this.hash(parse(row.response_json!)) !== this.hash(result.response)) invalid();
       const reportedUsage = "usage" in result ? result.usage : undefined;
       this.validateUsage(reportedUsage);
       const priorUsage = row.usage_json === null ? undefined : parse<StoryMeasuredUsage>(row.usage_json);
@@ -239,16 +261,24 @@ export class StoryCreationStore {
       // the provider measurements already preserved for this invocation.
       const usage = priorUsage === undefined && reportedUsage === undefined
         ? undefined : { ...priorUsage, ...reportedUsage };
-      const eligible = this.currentlyEligible(row);
+      if (supplement && this.hash(priorUsage ?? {}) === this.hash(usage ?? {})) {
+        return { kind: "saved", eligible: row.eligible === 1 };
+      }
+      // Billing evidence may arrive after a checkpoint has moved on. It does
+      // not change dispatch eligibility, response, duration, or call count.
+      const completedAt = supplement ? row.completed_at : this.now();
+      if (completedAt === null) invalid();
+      const eligible = supplement ? row.eligible === 1 : this.currentlyEligible(row);
       if (result.kind === "notSent") {
         this.rebook(row, ZERO, ZERO);
       } else {
-        const { spent, held } = this.settlement(row, usage, now);
+        const { spent, held } = this.settlement(row, usage, completedAt);
         this.rebook(row, spent, held);
       }
+      if (result.kind === "failed" && row.job_id !== null) this.rebookJob(this.jobRow(row.job_id)!, ZERO);
       this.storage.sql.exec(`UPDATE story_creation_invocations SET status = ?, eligible = ?, completed_at = ?,
         lease_until = NULL, response_json = ?, usage_json = ?, completion_hash = ? WHERE invocation_id = ?`,
-      result.kind, eligible ? 1 : 0, now, result.kind === "completed" ? this.json(result.response) : null,
+      result.kind, eligible ? 1 : 0, completedAt, result.kind === "completed" ? this.json(result.response) : null,
       usage === undefined ? null : this.json(usage), completionHash, row.invocation_id);
       return { kind: "saved", eligible };
     });
@@ -403,6 +433,12 @@ export class StoryCreationStore {
       this.json(spent), this.json(held), row.invocation_id);
   }
 
+  private rebookJob(row: JobRow, held: StoryBudgetAmount, limit = false): void {
+    this.changeAccounts([row.account_id, row.source_account_id, row.room_account_id], ZERO,
+      parse(row.unallocated_json), ZERO, held, limit);
+    this.storage.sql.exec("UPDATE story_creation_jobs SET unallocated_json = ? WHERE job_id = ?", this.json(held), row.job_id);
+  }
+
   private changeAccounts(ids: string[], oldSpent: StoryBudgetAmount, oldHeld: StoryBudgetAmount,
     spent: StoryBudgetAmount, held: StoryBudgetAmount, limit: boolean): void {
     if (new Set(ids).size !== ids.length) invalid();
@@ -463,7 +499,8 @@ export class StoryCreationStore {
       || !positive(amount.elapsedMs)) invalid();
   }
   private validateUsage(usage: StoryMeasuredUsage | undefined): void {
-    if (usage !== undefined && Object.values(usage).some(value => !nonnegative(value))) invalid();
+    if (usage !== undefined && Object.entries(usage).some(([key, value]) =>
+      !["inputTokens", "outputTokens", "costMicros"].includes(key) || !nonnegative(value))) invalid();
   }
   private hash(value: unknown): StoryHash { return this.ports.hash(value); }
   private json(value: unknown): string {
@@ -482,6 +519,11 @@ export class StoryCreationStore {
     try { return this.storage.transactionSync(operation); }
     catch (error) { if (error instanceof StoreInputError) return { kind: "rejected", code: error.code }; throw error; }
   }
+}
+
+function stageAmount(reservation: StoryInvocationReservation, calls: number): StoryBudgetAmount {
+  return { calls, inputTokens: calls * reservation.inputTokens, outputTokens: calls * reservation.outputTokens,
+    estimatedCostMicros: calls * reservation.estimatedCostMicros, elapsedMs: calls * reservation.elapsedMs };
 }
 
 function reviewPassed(review: StoryCheckpoint["review"]): boolean {

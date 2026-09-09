@@ -28,7 +28,7 @@ function fixture(id = "one", sourceId = "root-one"): OpenStoryJob {
     trigger: { kind: "developGoal", goal: "Investigate the delayed delivery", basisRefs: ["private-memory"] },
     scale: "short", connection: "local", methods: ["conflict"], scope: { sceneIds: ["harbor"], entityIds: ["npc-one"] },
     recipeRefs: [ref("conflict")], workflowRef: ref("story-workflow"), budgetPolicyRef: ref("budget") },
-  context: { ...contextBody, contextHash: hash(contextBody) }, modelRef: ref("model"),
+  context: { ...contextBody, contextHash: hash(contextBody) }, modelRef: ref("model"), stageReservation: reservation,
   budget: { policyRef: ref("budget"), roomAccountId: "room-budget", job: limits(4), source: limits(10), room: limits(20) } };
 }
 const stub = (name: string) => env.ROOMS.getByName(`story-store-${name}`);
@@ -96,6 +96,8 @@ it("keeps one opportunity identity and fixed source/room accounts across job ali
     expect(store.readJob("job-alias")).toBeUndefined();
     expect(store.openJob({ ...input, request: { ...input.request, trigger: { ...input.request.trigger, goal: "changed" } } }))
       .toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
+    expect(store.openJob({ ...input, stageReservation: { ...reservation, inputTokens: 101 } }))
+      .toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
     const next = fixture("two");
     expect(store.openJob({ ...next, request: { ...next.request, source: { ...next.request.source, budgetAccountId: "fresh-source" } } }))
       .toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
@@ -143,21 +145,93 @@ it("reuses a saved response after eviction before checkpoint CAS, with no second
   });
 });
 
-it("atomically enforces source and room call budgets under concurrent reservations from different jobs", async () => {
+it("protects a complete draft and review pair against concurrent jobs and ordinary calls", async () => {
   const room = stub("concurrent"), a = fixture("a", "root-a"), b = fixture("b", "root-b");
   const restrictedA = { ...a, budget: { ...a.budget, room: limits(2) } };
   const restrictedB = { ...b, budget: { ...b.budget, room: limits(2) } };
-  await withStore(room, store => { expect(store.openJob(restrictedA).kind).toBe("opened"); expect(store.openJob(restrictedB).kind).toBe("opened"); });
-  const results = await Promise.all([restrictedA, restrictedB].map(input => withStore(room, store => store.reserveInvocation(modelInput(input)))));
-  expect(results.map(result => result.kind)).toEqual(["reserved", "reserved"]);
+  const results = await Promise.all([restrictedA, restrictedB].map(input => withStore(room, store => store.openJob(input))));
+  expect(results.filter(result => result.kind === "opened")).toHaveLength(1);
+  expect(results.filter(result => result.kind === "rejected"))
+    .toEqual([{ kind: "rejected", code: "STORY_BUDGET_EXHAUSTED" }]);
+  const winner = results[0].kind === "opened" ? restrictedA : restrictedB;
+  const loser = winner === restrictedA ? restrictedB : restrictedA;
+  await evictDurableObject(room);
   await withStore(room, store => {
-    const before = store.readBudget(a.request.source.budgetAccountId);
-    expect(store.reserveExternalInvocation({ source: a.request.source, roomAccountId: a.budget.roomAccountId,
-      invocationKey: "ordinary-call", purpose: "proposal", modelRef: a.modelRef, providerRequest: { message: "ordinary" }, reservation }))
+    const before = store.readBudget(winner.request.source.budgetAccountId);
+    expect(store.reserveExternalInvocation({ source: winner.request.source, roomAccountId: winner.budget.roomAccountId,
+      invocationKey: "ordinary-call", purpose: "proposal", modelRef: winner.modelRef, providerRequest: { message: "ordinary" }, reservation }))
       .toEqual({ kind: "rejected", code: "STORY_BUDGET_EXHAUSTED" });
-    expect(store.readBudget(a.request.source.budgetAccountId)).toEqual(before);
-    expect(store.readBudget(a.budget.roomAccountId)!.held.calls).toBe(2);
+    expect(store.readBudget(winner.request.source.budgetAccountId)).toEqual(before);
+    expect(store.readBudget(winner.budget.roomAccountId)!.held.calls).toBe(2);
+    expect(store.readJob(loser.request.jobId)).toBeUndefined();
+    expect(store.readBudget(loser.request.source.budgetAccountId)).toBeUndefined();
+    readyJob(store, winner);
+    expect(store.readBudget(winner.budget.roomAccountId)).toMatchObject({ spent: { calls: 2 }, held: { calls: 0 } });
   });
+});
+
+it("protects both stages in every source and room dimension and releases only actual reservation slack", async () => {
+  for (const scope of ["source", "room"] as const) for (const field of ["calls", "inputTokens", "outputTokens", "estimatedCostMicros", "elapsedMs"] as const) {
+    const input = fixture("first"), other = fixture("second", scope === "source" ? "root-one" : "root-two");
+    const amount = field === "calls" ? 2 : 2 * reservation[field];
+    const budget = { ...input.budget, [scope]: { ...input.budget[scope], [field]: amount } };
+    const constrained = { ...input, budget }, otherConstrained = { ...other, budget };
+    await withStore(stub(`pair-${scope}-${field}`), store => {
+      expect(store.openJob(constrained).kind).toBe("opened");
+      const before = store.readBudget(budget.roomAccountId);
+      expect(store.openJob(otherConstrained)).toEqual({ kind: "rejected", code: "STORY_BUDGET_EXHAUSTED" });
+      expect(store.readBudget(budget.roomAccountId)).toEqual(before);
+      const smaller = { inputTokens: 50, outputTokens: 100, estimatedCostMicros: 150, elapsedMs: 500 };
+      expect(store.reserveInvocation({ ...modelInput(constrained), reservation: smaller }).kind).toBe("reserved");
+      expect(store.readJob(input.request.jobId)!.usage.held).toEqual({ calls: 2, inputTokens: 150,
+        outputTokens: 300, estimatedCostMicros: 450, elapsedMs: 1_500 });
+      expect(store.checkpoint({ expectedRevision: 0, next: checkpoint(constrained, 1,
+        { status: "rejected", failureCode: "STORY_CONTEXT_STALE" }) }).ok).toBe(true);
+      expect(store.readBudget(budget.roomAccountId)!.held).toEqual({ calls: 0, inputTokens: 0, outputTokens: 0,
+        estimatedCostMicros: 0, elapsedMs: 0 });
+      expect(store.openJob(otherConstrained).kind).toBe("opened");
+    });
+  }
+});
+
+it("rejects an unprotected stage upper bound or an unaffordable mandatory pair without partial writes", async () => {
+  for (const field of ["inputTokens", "outputTokens", "estimatedCostMicros", "elapsedMs"] as const) {
+    const input = fixture(), room = stub(`stage-upper-${field}`);
+    await withStore(room, store => {
+      const low = { ...input, budget: { ...input.budget, job: { ...input.budget.job, [field]: reservation[field] } } };
+      expect(store.openJob(low)).toEqual({ kind: "rejected", code: "STORY_BUDGET_EXHAUSTED" });
+      expect(store.isEmpty()).toBe(true);
+      expect(store.openJob(input).kind).toBe("opened");
+      const before = store.readJob(input.request.jobId);
+      expect(store.reserveInvocation({ ...modelInput(input), reservation: { ...reservation, [field]: reservation[field] + 1 } }))
+        .toEqual({ kind: "rejected", code: "STORY_BUDGET_EXHAUSTED" });
+      expect(store.readJob(input.request.jobId)).toEqual(before);
+    });
+  }
+});
+
+it("ordinary responses need no creative context or unused creative allowance", async () => {
+  const initial = fixture(), room = stub("ordinary-no-story");
+  const { contextHash: _hash, ...contextBody } = { ...initial.context, missingRequiredRefs: ["not-needed-for-an-ordinary-response"] };
+  const input: OpenStoryJob = { ...initial, request: { ...initial.request,
+    trigger: { ...initial.request.trigger, kind: "ordinaryResponse" } },
+    context: { ...contextBody, contextHash: hash(contextBody) },
+    budget: { ...initial.budget, job: limits(1), source: limits(1), room: limits(1) } };
+  await withStore(room, store => {
+    expect(store.openBudget({ source: input.request.source, budget: input.budget }).kind).toBe("opened");
+    expect(store.reserveExternalInvocation({ source: input.request.source, roomAccountId: input.budget.roomAccountId,
+      invocationKey: "ordinary-proposal", purpose: "proposal", modelRef: input.modelRef, providerRequest: {}, reservation }).kind).toBe("reserved");
+    const before = store.readBudget(input.budget.roomAccountId);
+    expect(store.openJob(input).kind).toBe("opened");
+    expect(store.readBudget(input.budget.roomAccountId)).toEqual(before);
+    expect(store.readJob(input.request.jobId)!.usage.held.calls).toBe(0);
+    expect(store.reserveInvocation(modelInput(input))).toEqual({ kind: "rejected", code: "STORY_CHECKPOINT_CONFLICT" });
+    expect(store.checkpoint({ expectedRevision: 0, next: checkpoint(input, 1, { status: "noStory" }) }).ok).toBe(true);
+    expect(store.readBudget(input.budget.roomAccountId)).toEqual(before);
+  });
+  await evictDurableObject(room);
+  expect(await withStore(room, store => store.openJob(input))).toMatchObject({ kind: "opened", reused: true,
+    job: { checkpoint: { status: "noStory" }, usage: { spent: { calls: 0 }, held: { calls: 0 } } } });
 });
 
 it("ordinary proposal and narration reservations share the same persistent source budget with creation", async () => {
@@ -204,7 +278,7 @@ it("issues a dispatch permit once and preserves unknown usage after lease expiry
     expect(store.readInvocation(identity.invocationId)).toMatchObject({ status: "unknown", eligible: true });
     expect(store.readInvocation(identity.invocationId)!.usage).toBeUndefined();
     expect(store.readJob(input.request.jobId)!.usage).toMatchObject({ spent: { calls: 1, inputTokens: 0 },
-      held: { inputTokens: 100, outputTokens: 200, estimatedCostMicros: 300 } });
+      held: { calls: 1, inputTokens: 200, outputTokens: 400, estimatedCostMicros: 600 } });
   }, 2_100);
   await evictDurableObject(room);
   expect(await withStore(room, store => store.startInvocation(identity), 2_500))
@@ -218,7 +292,7 @@ it("releases only a proven unsent reservation, fences its old permit, and keeps 
     const first = reserve(store, input);
     expect(store.startInvocation(first).kind).toBe("ready");
     expect(store.completeInvocation({ ...first, result: { kind: "notSent" } })).toEqual({ kind: "saved", eligible: true });
-    expect(store.readBudget(input.request.source.budgetAccountId)).toMatchObject({ spent: { calls: 0 }, held: { calls: 0, inputTokens: 0 } });
+    expect(store.readBudget(input.request.source.budgetAccountId)).toMatchObject({ spent: { calls: 0 }, held: { calls: 1, inputTokens: 100 } });
     const second = reserve(store, input);
     expect(second.invocationId).toBe(first.invocationId);
     expect(second.capability).not.toBe(first.capability);
@@ -226,7 +300,7 @@ it("releases only a proven unsent reservation, fences its old permit, and keeps 
       .toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
     expect(store.startInvocation(second).kind).toBe("ready");
     expect(store.completeInvocation({ ...second, result: { kind: "completed", response: { text: "original" } } }).kind).toBe("saved");
-    expect(store.readJob(input.request.jobId)!.usage).toMatchObject({ spent: { calls: 1 }, held: { inputTokens: 100, estimatedCostMicros: 300 } });
+    expect(store.readJob(input.request.jobId)!.usage).toMatchObject({ spent: { calls: 1 }, held: { inputTokens: 200, estimatedCostMicros: 600 } });
     expect(store.completeInvocation({ ...second, result: { kind: "completed", response: { text: "changed" } } }))
       .toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
   });
@@ -251,7 +325,7 @@ it("a late completed response can settle unknown billing but cannot progress an 
 });
 
 it("requires saved repairable findings for revision and accounts all four workflow calls", async () => {
-  const room = stub("four-stages"), input = fixture();
+  const room = stub("four-stages"), initial = fixture(), input = { ...initial, budget: { ...initial.budget, room: limits(4) } };
   await withStore(room, store => {
     store.openJob(input);
     expect(store.reserveInvocation(modelInput(input, "revision")))
@@ -262,7 +336,14 @@ it("requires saved repairable findings for revision and accounts all four workfl
     stageComplete(store, input, "review", { reviewResult });
     store.checkpoint({ expectedRevision: 1, next: checkpoint(input, 2, { draft, review: reviewResult }) });
     const revisedDraft = preparation(input, "2"), revisedReview = review(input, revisedDraft);
-    stageComplete(store, input, "revision", { revisedDraft });
+    const revision = reserve(store, input, "revision");
+    expect(store.readBudget(input.budget.roomAccountId)).toMatchObject({ spent: { calls: 2 }, held: { calls: 2 } });
+    expect(store.reserveExternalInvocation({ source: input.request.source, roomAccountId: input.budget.roomAccountId,
+      invocationKey: "steal-rereview", purpose: "narration", modelRef: input.modelRef, providerRequest: {}, reservation }))
+      .toEqual({ kind: "rejected", code: "STORY_BUDGET_EXHAUSTED" });
+    expect(store.startInvocation(revision).kind).toBe("ready");
+    expect(store.completeInvocation({ ...revision, result: { kind: "completed", response: { revisedDraft },
+      usage: { inputTokens: 40, outputTokens: 50, costMicros: 60 } } }).kind).toBe("saved");
     store.checkpoint({ expectedRevision: 2, next: checkpoint(input, 3, { draft, review: reviewResult, revisedDraft }) });
     stageComplete(store, input, "revisionReview", { revisedReview });
     expect(store.checkpoint({ expectedRevision: 3, next: checkpoint(input, 4, {
@@ -275,13 +356,31 @@ it("requires saved repairable findings for revision and accounts all four workfl
   });
 });
 
+it("does not start a revision when its mandatory re-review cannot also fit", async () => {
+  const room = stub("revision-pair-budget"), initial = fixture();
+  const input = { ...initial, budget: { ...initial.budget, room: limits(3) } };
+  await withStore(room, store => {
+    store.openJob(input);
+    const draft = preparation(input), reviewed = review(input, draft, "conflict", true);
+    stageComplete(store, input, "draft", { draft });
+    store.checkpoint({ expectedRevision: 0, next: checkpoint(input, 1, { draft }) });
+    stageComplete(store, input, "review", { reviewed });
+    store.checkpoint({ expectedRevision: 1, next: checkpoint(input, 2, { draft, review: reviewed }) });
+    const before = store.readJob(input.request.jobId);
+    expect(store.reserveInvocation(modelInput(input, "revision")))
+      .toEqual({ kind: "rejected", code: "STORY_BUDGET_EXHAUSTED" });
+    expect(store.readJob(input.request.jobId)).toEqual(before);
+    expect(store.readBudget(input.budget.roomAccountId)).toMatchObject({ spent: { calls: 2 }, held: { calls: 0 } });
+  });
+});
+
 it("merges late partial usage with preserved measurements and rejects conflicting billing evidence", async () => {
   const room = stub("partial-late-usage"), input = fixture();
   const identity = await withStore(room, store => {
     store.openJob(input); const id = reserve(store, input); store.startInvocation(id);
     expect(store.completeInvocation({ ...id, result: { kind: "unknown", usage: { inputTokens: 25, costMicros: 77 } } }).kind).toBe("saved");
     expect(store.readJob(input.request.jobId)!.usage).toMatchObject({
-      spent: { inputTokens: 25, estimatedCostMicros: 77 }, held: { inputTokens: 0, outputTokens: 200, estimatedCostMicros: 0 },
+      spent: { inputTokens: 25, estimatedCostMicros: 77 }, held: { inputTokens: 100, outputTokens: 400, estimatedCostMicros: 300 },
     });
     return id;
   });
@@ -296,8 +395,76 @@ it("merges late partial usage with preserved measurements and rejects conflictin
       usage: { outputTokens: 40 } } })).toEqual({ kind: "saved", eligible: true });
     expect(store.readInvocation(identity.invocationId)!.usage).toEqual({ inputTokens: 25, outputTokens: 40, costMicros: 77 });
     expect(store.readJob(input.request.jobId)!.usage).toMatchObject({ spent: { calls: 1, inputTokens: 25,
-      outputTokens: 40, estimatedCostMicros: 77 }, held: { inputTokens: 0, outputTokens: 0, estimatedCostMicros: 0 } });
+      outputTokens: 40, estimatedCostMicros: 77 }, held: { calls: 1, inputTokens: 100, outputTokens: 200, estimatedCostMicros: 300 } });
   }, 1_500);
+});
+
+it("supplements completed and failed billing monotonically without moving completion time or replay eligibility", async () => {
+  for (const status of ["completed", "failed"] as const) {
+    const room = stub(`supplement-${status}`), input = fixture(), response = { text: "exact original response" };
+    const identity = await withStore(room, store => {
+      store.openJob(input); const id = reserve(store, input); store.startInvocation(id); return id;
+    });
+    const initialResult = status === "completed" ? { kind: status, response, usage: { inputTokens: 25 } }
+      : { kind: status, usage: { inputTokens: 25 } };
+    await withStore(room, store => {
+      expect(store.completeInvocation({ ...identity, result: initialResult })).toEqual({ kind: "saved", eligible: true });
+      if (status === "failed") expect(store.readJob(input.request.jobId)!.usage.held.calls).toBe(0);
+      else {
+        const draft = preparation(input);
+        expect(store.checkpoint({ expectedRevision: 0, next: checkpoint(input, 1, { draft }) }).ok).toBe(true);
+      }
+      expect(store.readJob(input.request.jobId)!.usage.spent.elapsedMs).toBe(50);
+    }, 1_050);
+    await evictDurableObject(room);
+    await withStore(room, store => {
+      const outcome = status === "completed" ? { kind: status, response } : { kind: status };
+      const before = store.readJob(input.request.jobId), original = store.readInvocation(identity.invocationId);
+      expect(store.completeInvocation({ ...identity, result: { ...outcome, usage: { inputTokens: 26, outputTokens: 40 } } }))
+        .toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
+      expect(store.readJob(input.request.jobId)).toEqual(before);
+      expect(store.readInvocation(identity.invocationId)).toEqual(original);
+      if (status === "completed") {
+        expect(store.completeInvocation({ ...identity, result: { kind: "completed", response: { text: "changed" }, usage: { outputTokens: 40 } } }))
+          .toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
+        expect(store.readJob(input.request.jobId)).toEqual(before);
+      }
+      expect(store.completeInvocation({ ...identity, result: { ...outcome, usage: { outputTokens: 40 } } }))
+        .toEqual({ kind: "saved", eligible: true });
+      expect(store.completeInvocation({ ...identity, result: { ...outcome, usage: { costMicros: 70 } } }))
+        .toEqual({ kind: "saved", eligible: true });
+      expect(store.readInvocation(identity.invocationId)).toMatchObject({ eligible: true, completedAt: 1_050,
+        usage: { inputTokens: 25, outputTokens: 40, costMicros: 70 } });
+      const final = store.readJob(input.request.jobId);
+      expect(final!.usage.spent).toEqual({ calls: 1, inputTokens: 25, outputTokens: 40, estimatedCostMicros: 70, elapsedMs: 50 });
+      expect(store.completeInvocation({ ...identity, result: initialResult })).toEqual({ kind: "saved", eligible: true });
+      expect(store.completeInvocation({ ...identity, result: outcome })).toEqual({ kind: "saved", eligible: true });
+      expect(store.readJob(input.request.jobId)).toEqual(final);
+    }, 500_000);
+  }
+});
+
+it("late billing cannot re-enable an abandoned invocation and failure releases the unsent review only", async () => {
+  const room = stub("abandoned-billing"), input = fixture();
+  const identity = await withStore(room, store => {
+    store.openJob(input); const id = reserve(store, input); store.startInvocation(id);
+    expect(store.checkpoint({ expectedRevision: 0, next: checkpoint(input, 1,
+      { status: "rejected", failureCode: "STORY_CONTEXT_STALE" }) }).ok).toBe(true);
+    expect(store.readJob(input.request.jobId)!.usage.held).toEqual({ calls: 0, ...reservation });
+    return id;
+  });
+  await withStore(room, store => {
+    expect(store.completeInvocation({ ...identity, result: { kind: "completed", response: { saved: true } } }))
+      .toEqual({ kind: "saved", eligible: false });
+  }, 1_100);
+  await withStore(room, store => {
+    expect(store.completeInvocation({ ...identity, result: { kind: "completed", response: { saved: true },
+      usage: { inputTokens: 20, outputTokens: 30, costMicros: 40 } } })).toEqual({ kind: "saved", eligible: false });
+    expect(store.readInvocation(identity.invocationId)).toMatchObject({ eligible: false, completedAt: 1_100 });
+    expect(store.readJob(input.request.jobId)!.usage).toMatchObject({ spent: { calls: 1, elapsedMs: 100 },
+      held: { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostMicros: 0, elapsedMs: 0 } });
+    expect(store.startInvocation(identity)).toEqual({ kind: "rejected", code: "STORY_CHECKPOINT_CONFLICT" });
+  }, 900_000);
 });
 
 it("passing or unrepairable reviews do not authorize another creative attempt", async () => {

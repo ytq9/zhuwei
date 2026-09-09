@@ -40,6 +40,7 @@ export type StoryJobSnapshot = Readonly<{
   requestHash: StoryHash;
   modelRef: StoryVersionRef;
   budget: StoryBudgetPolicy;
+  stageReservation: StoryInvocationReservation;
   checkpoint: StoryCheckpoint | null;
   usage: StoryBudgetSnapshot;
 }>;
@@ -48,6 +49,9 @@ export type OpenStoryJob = Readonly<{
   context: StoryContext;
   modelRef: StoryVersionRef;
   budget: StoryBudgetPolicy;
+  /** Trusted transport upper bound for each stage. A mandatory author/review
+   * pair is protected before either stage can consume the shared budget. */
+  stageReservation: StoryInvocationReservation;
 }>;
 export type OpenStoryJobResult =
   | Readonly<{ kind: "opened"; job: StoryJobSnapshot; reused: boolean }>
