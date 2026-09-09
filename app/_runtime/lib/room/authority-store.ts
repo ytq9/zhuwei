@@ -17,6 +17,7 @@ import { canonicalHash, parseJsonWithUniqueMembers } from "../kp/vnext/canonical
 import { isCanonicalAuthorityRecoveryInput } from "./authority-commit-recovery";
 import type { StoryFrozenNpcContext, StoryFrozenNarrationContext } from "./story-archive-host";
 import { storyNpcPendingOwner, storyNpcPendingPreparedActionId, type StoryFrozenNpcPendingContext } from "./story-npc-pending";
+import type { StoryFrozenWorldContext } from "./story-world-event-host";
 import type { AuthoritativeModuleProfile } from "../module/authoritative";
 
 export type { ExperiencedTranscriptMessage };
@@ -136,7 +137,7 @@ export type AuthorityNpcDecisionRow = {
  * absent; a trusted archive retains frozen model premises, not old UI output. */
 export type AuthorityStoryHostContextRow = {
   prepared_action_id: string;
-  context_kind: "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer" | "npcPendingOwner" | "npcPendingOwnerHost";
+  context_kind: "npc" | "narration" | "admission" | "preparationModule" | "npcPending" | "npcPendingAnswer" | "npcPendingOwner" | "npcPendingOwnerHost" | "world" | "worldOutcome";
   context_json: string;
 };
 export type AuthorityStoryHostSnapshot = {
@@ -379,7 +380,7 @@ export class AuthoritativeRoomStore {
       CREATE TABLE IF NOT EXISTS authority_story_host_contexts (
         prepared_action_id TEXT NOT NULL,
         context_kind TEXT NOT NULL CHECK (context_kind IN ('npc', 'narration', 'admission', 'preparationModule',
-          'npcPending', 'npcPendingAnswer', 'npcPendingOwner', 'npcPendingOwnerHost')),
+          'npcPending', 'npcPendingAnswer', 'npcPendingOwner', 'npcPendingOwnerHost', 'world', 'worldOutcome')),
         context_json TEXT NOT NULL,
         PRIMARY KEY (prepared_action_id, context_kind)
       );
@@ -1414,6 +1415,32 @@ export class AuthoritativeRoomStore {
 
   saveStoryNpcContext(input: StoryFrozenNpcContext): void {
     this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "npc", context_json: JSON.stringify(input) });
+  }
+
+  saveStoryWorldContext(input: StoryFrozenWorldContext): void {
+    this.saveStoryHostContext({ prepared_action_id: input.preparedActionId, context_kind: "world", context_json: JSON.stringify(input) });
+  }
+
+  storyWorldContext(preparedActionId: string): StoryFrozenWorldContext | undefined {
+    const row = this.storage.sql.exec<AuthorityStoryHostContextRow>(
+      "SELECT * FROM authority_story_host_contexts WHERE prepared_action_id = ? AND context_kind = 'world'", preparedActionId,
+    ).toArray()[0];
+    return row === undefined ? undefined : parseJsonWithUniqueMembers(row.context_json) as unknown as StoryFrozenWorldContext;
+  }
+
+  pendingStoryWorldContexts(): StoryFrozenWorldContext[] {
+    return this.storage.sql.exec<AuthorityStoryHostContextRow>(`SELECT frozen.* FROM authority_story_host_contexts frozen
+      WHERE frozen.context_kind = 'world' AND NOT EXISTS (
+        SELECT 1 FROM authority_story_host_contexts outcome WHERE outcome.prepared_action_id = frozen.prepared_action_id
+          AND outcome.context_kind = 'worldOutcome') ORDER BY frozen.prepared_action_id`).toArray()
+      .map(row => parseJsonWithUniqueMembers(row.context_json) as unknown as StoryFrozenWorldContext);
+  }
+
+  /** Terminal operational result only. World truth is still in Rules events;
+   * the immutable context and invocation ledger can reconstruct this cache. */
+  saveStoryWorldOutcome(preparedActionId: string, outcome: Record<string, unknown>): void {
+    if (this.storyWorldContext(preparedActionId) === undefined) throw new TypeError("STORY_CONTEXT_INSUFFICIENT");
+    this.saveStoryHostContext({ prepared_action_id: preparedActionId, context_kind: "worldOutcome", context_json: JSON.stringify(outcome) });
   }
 
   saveStoryNpcPendingContext(input: StoryFrozenNpcPendingContext): void {
