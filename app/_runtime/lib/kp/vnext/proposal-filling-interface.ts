@@ -6,6 +6,7 @@ import { vnextEntryProducerContract } from "./proposal-producer-contract";
 import { proposalProspectiveHandles } from "./proposal-reference-slots";
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from "../../rules/profiles/semantic-templates";
 import type { ProposalNpcSourceChoices } from "./proposal-context";
+import { decodeNpcMaterializationWire, encodeNpcMaterializationWire, NpcMaterializationWireError } from "./npc-materialization-wire";
 
 type RecordValue = Record<string, unknown>;
 type Schema = Record<string, any>;
@@ -427,6 +428,14 @@ function decodeStep(value: unknown, path: ProposalDiagnosticPath, checked: boole
   if (!contract) return { ...value }; // The canonical kind diagnostic owns this.
   if (contract.count === 0 && Object.hasOwn(value, "handle")) fail("CONSTRAINT_CONFLICT", "filling:nonproducer-handle", [...path, "handle"], "absent", handle);
   if (!checked) entry.outcomeBinding = "always";
+  if (entry.kind === "materializeNpc") {
+    try { entry.source = decodeNpcMaterializationWire(entry.source); }
+    catch (error) {
+      if (!(error instanceof NpcMaterializationWireError)) throw error;
+      throw new ProposalFillingError(error.diagnostics.map(diagnostic => ({ ...diagnostic,
+        path: [...path, "source", ...(diagnostic.path ?? [])] })));
+    }
+  }
   if (entry.kind === "worldInteraction") {
     rejectOwned(value, ["targetRefs"], path);
     if (!Array.isArray(entry.otherTargetRefs)) fail(entry.otherTargetRefs === undefined ? "FIELD_MISSING" : "TYPE_MISMATCH",
@@ -557,6 +566,7 @@ function encodeStep(value: unknown, checked: boolean, layouts: ResultLayouts): u
       && reference.kind === "existing" && !basisRefs.includes(reference.ref) ? [reference.ref] : []))];
   }
   if (checked) entry.outcomeBinding = outcomeBinding;
+  if (entry.kind === "materializeNpc") entry.source = encodeNpcMaterializationWire(entry.source);
   if (entry.kind === "formActorPlan") delete entry.basisRefs;
   if (entry.kind === "worldInteraction") {
     entry.otherTargetRefs = Array.isArray(entry.targetRefs) && Array.isArray(entry.directTargetRefs)

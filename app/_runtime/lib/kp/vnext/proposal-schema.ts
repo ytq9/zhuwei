@@ -1,4 +1,5 @@
-import { NPC_MATERIALIZATION_SOURCE_SCHEMA, type NpcMaterializationSource } from "../../rules/v2/npc-materialization";
+import type { NpcMaterializationSource } from "../../rules/v2/npc-materialization";
+import { NPC_MATERIALIZATION_WIRE_SCHEMA } from "./npc-materialization-wire";
 import { STORY_SELECTION_IDS, parseStorySelection, type StorySelection } from "./story-selection";
 import { PROMISE_DUE_TIERS } from "../../rules/v2/promise-due";
 import { VNEXT_ACTION_DURATION_TIER_IDS } from "./action-duration";
@@ -1301,8 +1302,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   });
   const materializeNpc = object({ kind: { type: "string", enum: ["materializeNpc"] }, basisRefs,
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("materializeNpc"), outcomeBinding: outcome,
-    sceneRef: refText, source: formationToolSchema(NPC_MATERIALIZATION_SOURCE_SCHEMA),
-    visibilityPolicyRef: { type: "string", enum: ["visibility:public", "visibility:scene-observers"] }, summary: { ...text, maxLength: 2000 } });
+    sceneRef: refText, source: NPC_MATERIALIZATION_WIRE_SCHEMA,
+    visibilityPolicyRef: { type: "string", enum: ["visibility:public", "visibility:scene-observers"] },
+    summary: { ...text, description: "Public summary, at most 2000 characters. The server enforces this bound." } });
   const allVariants = [materializeNpc, ...materializeObjectVariants, worldInteraction, observe, social, formActorPlan, narrativeDetail, ...authored];
   const abilityTerminal = object({ kind: { type: "string", enum: ["abilityOperation"] },
     operation: { ...formationToolSchema(abilityOperationSourceSchema(creatureRefs)),
@@ -1451,7 +1453,9 @@ function decodeVNextSentinels(value: unknown): unknown {
   for (const [key, child] of Object.entries(record)) {
     // Native operation fields have no nullable values. Their target {kind:
     // "none"} is an explicit untargeted operation, not the null wire sentinel.
-    decoded[key] = record.kind === "abilityOperation" && key === "operation"
+    // NPC source fields have already passed their schema-directed codec;
+    // dictionary keys and literal source values must not be reinterpreted.
+    decoded[key] = (record.kind === "abilityOperation" && key === "operation") || (record.kind === "materializeNpc" && key === "source")
       ? structuredClone(child) : decodeVNextSentinels(child);
   }
   // Every wire field offered with a `{kind:"none"}` variant decodes a bare
