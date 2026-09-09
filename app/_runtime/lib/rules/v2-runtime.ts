@@ -397,6 +397,10 @@ function stateItemSystemMatches(
     }
     if (entry.disposition !== "held") return true;
     if (entry.holderRef === null || state.entities[entry.holderRef] === undefined) return false;
+    const holder = state.entities[entry.holderRef];
+    // ItemEntry owns possession even when an NPC has no mechanical loadout.
+    // Equipping still requires the separately validated mechanical contract.
+    if (holder.kind === "npc" && holder.loadout === undefined) return entry.equippedSlot === null;
     const location = loadoutLocations.get(entry.entryId);
     return location !== undefined
       && location.holderRef === entry.holderRef

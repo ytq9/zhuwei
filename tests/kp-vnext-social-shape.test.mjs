@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createVNextProposalBundleSchema } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
+import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
+import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import {
   socialBranchConform,
   socialConsequenceConform,
@@ -12,6 +15,25 @@ function branch() {
     response: { kind: 'speech', text: '我听说城门昨晚关闭了。', motive: '转述自己听到的传闻。',
       basis: [{ kind: 'npcContext', ref: 'knowledge:guard:rumor' }] }, consequences: [] };
 }
+
+test('bound social choices exclude timeline authority and an invented initial retry while retaining existing conversation references', () => {
+  const make = refs => expandDeepSeekSchema(createVNextProposalBundleSchema(['social'], [], [], [],
+    [{ npcRef: 'npc:guard', refs: ['npc:guard', 'character-timeline:npc:guard'] }],
+    { existingRefs: refs, viewerRefs: refs }, ['character:player', 'npc:guard']));
+  const initial = make([]), step = schemaVariants(initial.properties.steps.items).find(v => v.properties.kind.enum.includes('social'));
+  assert.equal(initial.properties.steps.items.type, 'object');
+  assert.equal(initial.properties.results.items.type, 'object');
+  assert.equal(matchesAuthoredSourceSchema({ kind: 'none' }, step.properties.retryChange), true);
+  assert.equal(matchesAuthoredSourceSchema({ kind: 'method', priorThreadRef: 'current-submission', basisRefs: [], explanation: '初次请求。' }, step.properties.retryChange), false);
+  const result = schemaVariants(initial.properties.results.items).find(v => v.properties.kind.enum.includes('social'));
+  const promise = result.properties.newPromises.items;
+  assert.equal(matchesAuthoredSourceSchema(['npc:guard'], promise.properties.authorityRefs), true);
+  assert.equal(matchesAuthoredSourceSchema(['npc:guard', 'character-timeline:npc:guard'], promise.properties.authorityRefs), false);
+  const existing = make(['continuity:conversationThreads:conversation:prior']);
+  const next = schemaVariants(existing.properties.steps.items).find(v => v.properties.kind.enum.includes('social'));
+  assert.equal(matchesAuthoredSourceSchema({ kind: 'method', priorThreadRef: 'conversation:prior', basisRefs: [], explanation: '采用了不同的方法。' }, next.properties.retryChange), true);
+  assert.equal(matchesAuthoredSourceSchema('conversation:prior', next.properties.addressedThreadRef), true);
+});
 const retry = () => ({ priorThreadRef: 'conversation:earlier', kind: 'conditions', basisRefs: ['fact:new-condition'], explanation: '条件发生变化。' });
 
 test('social shape diagnostics locate response, evidence, consequence and retry failures without changing input', () => {
@@ -29,7 +51,7 @@ test('social shape diagnostics locate response, evidence, consequence and retry 
     [socialEvidenceConform, () => ({ kind: 'materializedKnowledge', holderRef: 'npc:guard' }), 'FIELD_MISSING', ['definitionRef']],
     [socialEvidenceConform, () => ({ kind: 'omniscient' }), 'VALUE_INVALID', ['kind']],
     [socialConsequenceConform, () => ({ kind: 'relationship', relationshipRef: null, change: 7, basisFactRefs: [] }), 'TYPE_MISMATCH', ['change']],
-    [socialConsequenceConform, () => ({ kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: [], due: 'none', trace: null }), 'VALUE_INVALID', ['authorityRefs']],
+    [socialConsequenceConform, () => ({ kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: [], due: 'none', terms: { kind: 'result', subjectRefs: ['npc:guard'], delivery: null }, nextStep: null }), 'VALUE_INVALID', ['authorityRefs']],
     [socialConsequenceConform, () => ({ kind: 'debt', obligation: '归还工具。', basisFactRefs: ['fact:loan'] }), 'FIELD_MISSING', ['condition']],
     [socialBranchConform, () => { const v = branch(); v.consequences = [{ kind: 'debt', obligation: '归还工具。', condition: '明日。', basisFactRefs: [7] }]; return v; }, 'TYPE_MISMATCH', ['consequences', 0, 'basisFactRefs', 0]],
     [socialRetryChangeConform, () => ({ ...retry(), kind: 'unknown' }), 'VALUE_INVALID', ['kind']],
@@ -59,7 +81,7 @@ test('social shape validation preserves lies, silence and already legal whitespa
     [socialEvidenceConform, { kind: 'playerExpression' }],
     [socialEvidenceConform, { kind: 'materializedKnowledge', definitionRef: 'prospective:history', holderRef: 'npc:guard' }],
     [socialConsequenceConform, { kind: 'relationship', relationshipRef: null, change: '  更信任对方。  ', basisFactRefs: [] }],
-    [socialConsequenceConform, { kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: ['npc:guard'], due: 'none', trace: null }],
+    [socialConsequenceConform, { kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: ['npc:guard'], due: 'none', terms: { kind: 'result', subjectRefs: ['npc:guard'], delivery: null }, nextStep: null }],
     [socialConsequenceConform, { kind: 'debt', obligation: '归还工具。', condition: '明日。', basisFactRefs: ['fact:loan'] }],
     [socialRetryChangeConform, { ...retry(), kind: 'cost', explanation: '  原 Rules 形状仍允许此类型。  ' }],
   ];

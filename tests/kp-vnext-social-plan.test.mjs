@@ -28,14 +28,15 @@ function fixture(label) {
     initialKnowledge: [NPC, ACTOR].map(characterId => ({ characterId, knowledgeRef: KNOWLEDGE, kind: "sourceClaim", layer: "full",
       content: characterId === NPC ? RESPONSE : "PLAYER-KNOWLEDGE-CANARY", visibility: "private", provenanceChain: ["genesis:message"] })) });
 }
-function input(f, { check = false, promise = false, silence = false, audience = "participants", state = f.state, root = f.rootActionId, due = "none", trace = null } = {}) {
+function input(f, { check = false, promise = false, silence = false, audience = "participants", state = f.state, root = f.rootActionId, due = "none", nextStep = null } = {}) {
   const context = authoritativeNpcDecisionContext(state, f.profiles, NPC);
   assert.ok(context);
   const resolutionId = `resolution:${root}`, expression = "你看到信使往哪里走了吗？", method = "平静询问亲眼见到的行踪。";
   const branch = (failure) => ({ outcomeCode: failure ? "outcome:declined" : "outcome:answered", summary: failure ? "守门人没有接受请求。" : "守门人作出了回应。",
     response: { kind: silence ? "silence" : "speech", text: silence ? "" : failure ? "我现在不想谈论这件事。" : RESPONSE,
       motive: "PRIVATE-NPC-MOTIVE-CANARY", basis: [{ kind: "npcContext", ref: `knowledge:${NPC}:${KNOWLEDGE}` }] },
-    consequences: promise && !failure ? [{ kind: "promise", content: "为来访者打开侧门。", condition: "核实介绍信以后。", authorityRefs: [NPC], due, trace }] : [] });
+    consequences: promise && !failure ? [{ kind: "promise", content: "为来访者打开侧门。", condition: "核实介绍信以后。", authorityRefs: [NPC], due,
+      terms: { kind: "result", subjectRefs: [NPC], delivery: null }, nextStep }] : [] });
   const social = { schema: "zhuwei.social-interaction/vnext-1", npcRef: NPC, threadRef: socialThreadRef(root, resolutionId), addressedThreadRef: null,
     playerExpression: expression, goal: SECRET, communication: "spokenConversation", audience,
     listeners: socialListeners(state, ACTOR, NPC, audience), npcContext: context, retryChange: null,
@@ -65,7 +66,7 @@ test("social direct speech uses the NPC holder, persists a conditional promise, 
   const f = fixture("direct"), command = input(f, { promise: true });
   const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
-  assert.deepEqual(result.events.map(e => e.eventType), ["SourceClaimCreated", "KnowledgeAcquired", "SourceClaimCreated", "KnowledgeAcquired", "PromiseMade", "WorldInteractionResolved"]);
+  assert.deepEqual(result.events.map(e => e.eventType), ["SourceClaimCreated", "KnowledgeAcquired", "SourceClaimCreated", "KnowledgeAcquired", "PromiseMade", "PromiseTermsEstablished", "NpcWorkProposed", "WorldInteractionResolved"]);
   assert.deepEqual(result.state.entities, f.state.entities);
   assert.deepEqual(result.state.campaignRuntime.itemSystem, f.state.campaignRuntime.itemSystem);
   assert.deepEqual(result.state.scenes, f.state.scenes);
@@ -151,7 +152,8 @@ test("malformed social snapshot and foreign failure-branch evidence reject befor
     p => { p.social.npcContext.schema = "e\u0301"; },
     p => { p.social.audience = { toString: null }; },
     p => { p.social.branches.failure.response.basis = [{ kind: "npcContext", ref: `knowledge:${ACTOR}:${KNOWLEDGE}` }]; },
-    p => { p.social.branches.failure.consequences = [{ kind: "promise", content: "交付物品。", condition: "立即。", authorityRefs: [ACTOR], due: "none", trace: null }]; },
+    p => { p.social.branches.failure.consequences = [{ kind: "promise", content: "交付物品。", condition: "立即。", authorityRefs: [ACTOR], due: "none",
+      terms: { kind: "result", subjectRefs: [NPC], delivery: null }, nextStep: null }]; },
   ]) {
     const command = structuredClone(input(f, { check: true })); mutate(command.plan);
     const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
@@ -205,7 +207,7 @@ test("social replay rejects forged result fields, missing marker, altered dice a
     const changed = structuredClone(last); mutate(changed.payload);
     assert.doesNotThrow(() => { assert.equal(f.runtime.replay(f.genesis, [...prefix, changed]).kind, "rejected"); });
   }
-  const removed = prefix.filter(e => e.eventType !== "PromiseMade");
+  const removed = prefix.filter(e => !["PromiseMade", "PromiseTermsEstablished", "NpcWorkProposed"].includes(e.eventType));
   const before = f.runtime.replay(f.genesis, removed);
   assert.equal(before.kind, "replayed", diagnostic(before));
   assert.throws(() => createEventTransition(before.state, f.profiles, { rootActionId: last.rootActionId,
@@ -471,9 +473,8 @@ test("social relationship updates preserve identity and correction restores the 
   replay(f, [...events, ...corrected.events], corrected.state);
 });
 
-test("a promise with a due tier derives the NPC's own timed plan in the same root; none leaves it to context", () => {
-  const TRACE = "账台上多了一份盖印的备案文书。";
-  const f = fixture("promise-due"), command = input(f, { promise: true, due: "1h", trace: TRACE });
+test("promise deadlines and NPC next steps are independent; formation creates no future action or trace", () => {
+  const f = fixture("promise-due"), command = input(f, { promise: true, due: "1h", nextStep: "检查介绍信。" });
   const result = stepActionToDecision(f.runtime, f.profiles, f.state, command);
   assert.equal(result.kind, "committed", diagnostic(result));
   const promise = Object.values(result.state.campaignRuntime.promises)[0];
@@ -481,24 +482,23 @@ test("a promise with a due tier derives the NPC's own timed plan in the same roo
   const plans = Object.values(result.state.campaignRuntime.npcPlans);
   assert.equal(plans.length, 1);
   const plan = plans[0];
-  assert.equal(plan.npcId, NPC); assert.equal(plan.status, "scheduled"); assert.equal(plan.factionRef, null);
-  assert.deepEqual(plan.premiseRefs, [promise.promiseId]);
-  assert.equal(plan.goal, "为来访者打开侧门。"); assert.equal(plan.nextStep, "为来访者打开侧门。");
-  assert.equal(plan.activity.intendedDurationMicros, "3600000000");
-  assert.equal(plan.trace.description, TRACE);
-  assert.equal(plan.alternateTarget.targetRef, f.state.entities[NPC].sceneId);
+  assert.equal(plan.npcId, NPC); assert.equal(plan.status, "planned");
+  assert.deepEqual(plan.premiseRefs, [promise.lifecycle.originalExpressionRef]);
+  assert.equal(plan.goal, "为来访者打开侧门。"); assert.equal(plan.nextStep, "检查介绍信。");
+  assert.equal(plan.activity, undefined); assert.equal(plan.trace, undefined);
   const timelineId = f.state.multiplayerRuntime.characterTimelineIds[NPC] ?? f.state.activeBranchId;
-  assert.equal(plan.due.atFictionMicros, (BigInt(result.state.fictionTimelines[timelineId].nowMicros) + 3600000000n).toString());
+  assert.equal(promise.lifecycle.deadlineFictionMicros, (BigInt(result.state.fictionTimelines[timelineId].nowMicros) + 3600000000n).toString());
   const types = result.events.map(event => event.eventType);
-  assert.ok(types.indexOf("PromiseMade") < types.indexOf("NpcPlanFormed"), types.join(","));
-  assert.ok(types.includes("ActivityStarted"));
-  assert.equal(result.state.campaignRuntime.activities[plan.activity.activityId].status, "active");
-  // The promise's own trace fact does not exist yet: it appears only when the plan executes.
-  assert.equal(result.state.canonicalFacts[plan.trace.factRef], undefined);
+  assert.ok(types.indexOf("PromiseMade") < types.indexOf("NpcWorkProposed"), types.join(","));
+  assert.ok(!types.includes("ActivityStarted"));
+  assert.deepEqual(result.state.campaignRuntime.activities, f.state.campaignRuntime.activities);
+  assert.deepEqual(result.state.canonicalFacts, f.state.canonicalFacts);
   replay(f, result.events, result.state);
-  // The same conversation with due none records the promise and nothing more.
+  // No fixed deadline or selected method still requires an NPC decision, not
+  // an automatic side-door effect or invented work duration.
   const plain = f.runtime.step(f.profiles, f.state, input(f, { promise: true }));
   assert.equal(plain.kind, "committed", diagnostic(plain));
   assert.equal(Object.keys(plain.state.campaignRuntime.promises).length, 1);
-  assert.deepEqual(plain.state.campaignRuntime.npcPlans, {});
+  assert.equal(Object.values(plain.state.campaignRuntime.npcPlans)[0].status, "planned");
+  assert.deepEqual(plain.state.campaignRuntime.activities, f.state.campaignRuntime.activities);
 });

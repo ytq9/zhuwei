@@ -39,9 +39,13 @@ test('the selected provider stage offers physical subjects independently of know
     assert.ok(refs.includes(SCENE)); assert.ok(refs.includes(ACTOR)); assert.ok(!refs.includes(f.knowledgeRef));
     let calls = 0;
     const result = await (stage === 'offer' ? invokeVNextProposalOffer : invokeSubmitKpProposalBundleFirstPass)({
-      modelId: 'test-double', message: '查看周围。', requiredContext: f.requiredContext,
+      modelId: 'test-double', message: JSON.stringify({ requiredContext: proposalModelContext(f.requiredContext) }), requiredContext: f.requiredContext,
       binding: { async run(_model, request) {
         calls++; assertDeepSeekStrictToolModelInput(request);
+        const context = JSON.parse(request.messages[1].content).requiredContext;
+        const scene = context.entries.find(entry => entry.entryRef === SCENE).value;
+        assert.deepEqual(scene.worldDescription, { scene: { name: '蒸汽廊道' } });
+        assert.ok(scene.adjudication.combatScene.geometry);
         const tool = request.tools[0].function;
         for (const field of stage === "offer" ? [] : fields(tool.parameters)) {
           for (const valid of [SCENE, ACTOR, 'prospective:new-object']) assert.equal(matchesAuthoredSourceSchema(valid, field.schema), true);
@@ -97,4 +101,9 @@ test('Room reconstructs the identical subject schema from frozen context and rej
     const altered = structuredClone(request); altered.messages[1].content = content;
     assert.throws(() => assertVNextInvocationTransition({ ...input, request: altered }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
   }
+  const changedDescription = structuredClone(request);
+  const body = JSON.parse(changedDescription.messages[1].content);
+  body.requiredContext.entries.find(entry => entry.entryRef === SCENE).value.worldDescription.scene.name = '凭空新增的场景';
+  changedDescription.messages[1].content = JSON.stringify(body);
+  assert.throws(() => assertVNextInvocationTransition({ ...input, request: changedDescription }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
 });

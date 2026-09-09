@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+export const schemaVariants = schema => schema.anyOf ?? [schema];
+
 /** Test-only semantic expansion: schema assertions inspect the same contract
  * whether the wire shares repeated definitions or keeps them inline. */
 export function expandDeepSeekSchema(schema) {

@@ -1,5 +1,5 @@
 import { canonicalSha256 } from "../profiles/canonical";
-import type { AuthoritativeWorldState, DueActivityDescriptor, JsonRecord } from "./model";
+import type { AuthoritativeWorldState, ActivityDueDescriptor, JsonRecord } from "./model";
 import { characterTimelineId } from "./timeline";
 import { isNonEmptyString, isRecord } from "./validation";
 
@@ -245,7 +245,7 @@ export function dueActorPlanChildRoot(plan: JsonRecord): string | undefined {
 
 /** Uses the same eligibility predicate as resolution. NPC self-selection lets
  * an already scheduled off-screen plan progress without a fabricated player. */
-function actorPlanDescriptors(state: AuthoritativeWorldState, includeFuture: boolean): DueActivityDescriptor[] {
+function actorPlanDescriptors(state: AuthoritativeWorldState, includeFuture: boolean): ActivityDueDescriptor[] {
   return Object.values(state.campaignRuntime.npcPlans).flatMap(plan => {
     if (!isNonEmptyString(plan.npcId)) return [];
     const selected = eligiblePlan(state, plan.npcId, plan, includeFuture);
@@ -262,9 +262,9 @@ function actorPlanDescriptors(state: AuthoritativeWorldState, includeFuture: boo
 }
 
 /** Future scheduling and current due resolution share identical identity/eligibility checks. */
-export function scheduledActorPlanDescriptors(state: AuthoritativeWorldState): DueActivityDescriptor[] {
+export function scheduledActorPlanDescriptors(state: AuthoritativeWorldState): ActivityDueDescriptor[] {
   return actorPlanDescriptors(state, true);
 }
-export function dueActorPlanDescriptors(state: AuthoritativeWorldState): DueActivityDescriptor[] {
+export function dueActorPlanDescriptors(state: AuthoritativeWorldState): ActivityDueDescriptor[] {
   return actorPlanDescriptors(state, false);
 }

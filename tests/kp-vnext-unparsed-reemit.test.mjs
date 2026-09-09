@@ -63,11 +63,12 @@ test('an unparsed draft is re-emitted once and the server contributes no content
     assert.equal(result.invocationCount, 2);
     assert.equal(result.repairUsed, false, 'a re-emit carries nothing over, so it is not a repair');
 
-    // The second call asks the same question: same tool surface, and a body
-    // that names only where the bytes stopped being JSON.
+    // A transport call has no conversation memory. Re-emitting must carry the
+    // same actual question and frozen records, alongside the syntax evidence.
     assert.deepEqual(calls[1].tools, calls[0].tools);
     const body = JSON.parse(calls[1].messages[1].content);
-    assert.deepEqual(Object.keys(body).sort(), ['instruction', 'originalArguments', 'syntaxError']);
+    assert.deepEqual(Object.keys(body).sort(), ['instruction', 'originalArguments', 'requiredContext', 'syntaxError']);
+    assert.deepEqual(body.requiredContext, proposalModelContext(f.requiredContext));
     assert.equal(body.originalArguments, malformed);
     assert.equal(typeof body.syntaxError.reason, 'string');
     assert.ok(Number.isSafeInteger(body.syntaxError.location.offset));
@@ -94,7 +95,8 @@ test('an empty-object arguments call is no draft: re-emitted once, and one membe
     assert.equal(calls.length, 2); assert.equal(result.repairUsed, false);
     assert.deepEqual(calls[1].tools, calls[0].tools);
     const body = JSON.parse(calls[1].messages[1].content);
-    assert.deepEqual(Object.keys(body).sort(), ['instruction', 'originalArguments', 'syntaxError']);
+    assert.deepEqual(Object.keys(body).sort(), ['instruction', 'originalArguments', 'requiredContext', 'syntaxError']);
+    assert.deepEqual(body.requiredContext, proposalModelContext(f.requiredContext));
     assert.equal(body.originalArguments, empty);
     assert.deepEqual(body.syntaxError, { reason: 'json:empty-arguments' });
     for (const invented of ['social', 'directSuccess', NPC, SCENE, 'answered']) assert.equal(body.instruction.includes(invented), false, invented);
@@ -137,7 +139,8 @@ test('Room proves the third call from the saved response, not from the caller', 
     ? saved(1, { choices: [{ message: { tool_calls: [{ type: 'function', function: {
         name: 'offer_kp_proposal_bundle', arguments: JSON.stringify({ requestedCapabilities: ['social'] }) } }] } }] })
     : saved(2, toolResponse(RAW_QUOTE));
-  const request = surface(vnextProposalReemitPrompt(unparsed));
+  const request = surface(vnextProposalReemitPrompt(unparsed, f.requiredContext));
+  assert.deepEqual(JSON.parse(request.messages[1].content).requiredContext, proposalModelContext(f.requiredContext));
   const input = { ordinal: 3, contextHash: f.requiredContext.binding.contextHash,
     bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request };
   assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, f.requiredContext));
@@ -145,7 +148,12 @@ test('Room proves the third call from the saved response, not from the caller', 
   // A ticket cannot accompany a re-emit: no draft ever existed.
   assert.throws(() => assertVNextInvocationTransition({ ...input, repairTicket: { schema: 'x' } }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
   // The body is pinned: neither a plain context body nor an edited diagnostic passes.
-  for (const body of [message, vnextProposalReemitPrompt({ ...unparsed, originalArguments: '{"decision":{}}' })]) {
+  const originalBody = JSON.parse(request.messages[1].content);
+  const { requiredContext: _omitted, ...withoutContext } = originalBody;
+  const differentContext = structuredClone(originalBody);
+  differentContext.requiredContext.intent.text = 'A different action must not replace the frozen question.';
+  for (const body of [message, JSON.stringify(withoutContext), JSON.stringify(differentContext),
+    vnextProposalReemitPrompt({ ...unparsed, originalArguments: '{"decision":{}}' }, f.requiredContext)]) {
     assert.throws(() => assertVNextInvocationTransition({ ...input, request: surface(body) }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
   }
 });

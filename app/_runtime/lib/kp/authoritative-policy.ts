@@ -146,45 +146,23 @@ export function kpStructuredOutputMode(
 }
 
 /**
- * The mode one call may actually use.
- *
- * A Form is selected by which tool the model calls, and DeepSeek's strict beta
- * carries exactly one function per request, so a strict selection call could
- * only exist by dropping Forms the server allowed -- which would change the
- * selection protocol SPEC 0015 6.1 freezes. The profile's opt-in therefore
- * applies to a call that already carries one chosen Form, and the selection
- * call keeps the ordinary transport regardless of the profile.
- *
- * In practice that means the repair is strict: it is also the last call before
- * PROPOSAL_REPAIR_EXHAUSTED, so it is the one where an unenforced schema ends
- * the player's action instead of merely costing a retry.
- */
-/**
- * The transport one already-built request must travel on.
- *
- * Strict output is a property of the individual call, not of the profile: the
- * selection call carries several Forms and cannot be strict, while the repair
- * carries one and is. So the endpoint cannot be chosen from the profile alone
- * -- doing that sends the multi-Form selection call to the beta endpoint,
- * where it is refused before it is ever dispatched.
- *
- * Deriving it from the request keeps the guarantee the profile-level choice
- * was protecting, and strengthens it: a tool that declares `strict` must reach
- * the endpoint that enforces it, and a request that declares nothing must not
- * be sent there claiming it does. Neither can drift from what is on the wire.
+ * Strict belongs to each request, including the vNext submit/selection pair.
+ * Any strict declaration selects the strict transport; its validator rejects
+ * malformed or mixed tool sets before fetch instead of silently downgrading.
+ * Legacy ordinary Form selection carries no strict declaration.
  */
 export function kpRequestDeclaresStrictTool(input: unknown): boolean {
   if (typeof input !== "object" || input === null) return false;
   const tools = (input as { tools?: unknown }).tools;
-  if (!Array.isArray(tools) || tools.length !== 1) return false;
-  const tool = tools[0];
-  if (typeof tool !== "object" || tool === null) return false;
-  const fn = (tool as { function?: unknown }).function;
-  return typeof fn === "object"
-    && fn !== null
-    && (fn as { strict?: unknown }).strict === true;
+  return Array.isArray(tools) && tools.some(tool => {
+    if (typeof tool !== "object" || tool === null) return false;
+    const fn = (tool as { function?: unknown }).function;
+    return typeof fn === "object" && fn !== null
+      && (fn as { strict?: unknown }).strict === true;
+  });
 }
 
+/** Legacy private-Form generation opts into strict only after one Form is selected. */
 export function kpCallStructuredOutputMode(
   profile: Pick<AuthoritativeKpProfile, "modelProfileVersion">,
   allowedFormCount: number,

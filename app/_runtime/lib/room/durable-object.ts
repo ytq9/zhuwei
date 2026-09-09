@@ -1,3 +1,6 @@
+import { promiseReviewModelInput, parsePromiseReview, PROMISE_REVIEW_BINDING_HASH } from "../kp/vnext/promise-review";
+import type { PromiseReviewRequest } from "../rules/v2/promise-lifecycle";
+import { prepareNpcWorkRequest, npcWorkModelInput, npcWorkRulesInput, npcWorkResponseIsEmpty, parseNpcWorkSelection, NPC_WORK_BINDING_HASH, type NpcWorkDecisionRequest } from "../kp/vnext/npc-work";
 import type { LifecycleReadModel } from "../rules/v2/model";
 import { isSupersededTimePassageAdvance, isSupersededLongSpellcastingAdvance, isSupersededActivityProgress, scheduledDeadlinesWithin } from "../rules/v2/due-activities";
 import { activityProgressAvailable, actionActivityCompletionRoot } from "../rules/v2/activity-progress";
@@ -9,7 +12,7 @@ import { usageFrom } from "../kp/authoritative-helpers";
 import { vnextActorPlanDecisionInput, parseVnextActorPlanDecision, VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH } from "../kp/vnext/actor-plan-decision";
 import { assembleProviderInvocation, INITIAL_REPAIR_LEDGER } from "../kp/vnext/invocation/assemble";
 import { VNEXT_KP_PROFILE, VNEXT_PROVIDER_BUDGET } from "../kp/vnext/runtime-policy";
-import type { DueActivityDescriptor, RuleDiagnostic } from "../rules/v2/model";
+import type { ActivityDueDescriptor, DueActivityDescriptor, RuleDiagnostic } from "../rules/v2/model";
 import { characterTimelineId } from "../rules/v2/timeline";
 import { roomNarrationContext } from "./narration-context";
 import { moduleNpcSemanticSeeds } from "../module/npc-semantics";
@@ -968,11 +971,22 @@ function compareEventSeq(left: string, right: string): number {
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
 }
 
-function dueActivityRulesInputKind(due: DueActivityDescriptor): "completeActivity" | "advanceTimePassage" | "advanceLongSpellcasting" | "completeLongSpellcasting" | "advanceActivity" | "completeActionActivity" {
+function dueActivityRulesInputKind(due: ActivityDueDescriptor): "completeActivity" | "advanceTimePassage" | "advanceLongSpellcasting" | "completeLongSpellcasting" | "advanceActivity" | "completeActionActivity" {
   if (due.activityProgress !== undefined) return due.activityProgress.phase !== "complete" ? "advanceActivity"
     : due.activityProgress.completion === "action" ? "completeActionActivity" : "completeActivity";
   if (due.longSpellcasting !== undefined) return due.longSpellcasting.phase === "complete" ? "completeLongSpellcasting" : "advanceLongSpellcasting";
   return due.timePassage === undefined ? "completeActivity" : "advanceTimePassage";
+}
+
+type DueDecisionRequest = DueActorPlanDecisionRequest | PromiseReviewRequest | NpcWorkDecisionRequest;
+function isPromiseReviewRequest(request: DueDecisionRequest): request is PromiseReviewRequest {
+  return "schema" in request && ["zhuwei.promise-review-context/vnext-1", "zhuwei.promise-review-batch/vnext-1"].includes(request.schema);
+}
+function isNpcWorkRequest(request: DueDecisionRequest): request is NpcWorkDecisionRequest {
+  return "schema" in request && request.schema === "zhuwei.npc-work-decision/vnext-1";
+}
+function dueDecisionBindingHash(request: DueDecisionRequest) {
+  return isPromiseReviewRequest(request) ? PROMISE_REVIEW_BINDING_HASH : isNpcWorkRequest(request) ? NPC_WORK_BINDING_HASH : VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH;
 }
 
 export class RoomDurableObject extends DurableObject<Env> {
@@ -1029,7 +1043,23 @@ export class RoomDurableObject extends DurableObject<Env> {
     let actorPlanDue = false;
     if (submission.input_kind === "dueActivity") {
       const work = this.authorityStore.dueWorkByRoot(submission.root_action_id);
-      try { actorPlanDue = work !== undefined && parseJson<DueActivityDescriptor>(work.descriptor_json).actorPlan !== undefined; }
+      try {
+        const due = work === undefined ? undefined : parseJson<DueActivityDescriptor>(work.descriptor_json);
+        if (due?.npcWork || due?.promiseReview) {
+          const continuation = parseJson<JsonObject>(submission.continuation_json!);
+          const request = continuation.actorPlanRequest as DueDecisionRequest;
+          if (due.npcWork && isNpcWorkRequest(request) && request.context.binding.stateHash === vnextCanonicalHash(replay.state)
+            && request.rootActionId === submission.root_action_id && request.plan.planId === due.npcWork.planId) return undefined;
+          if (due.promiseReview && isPromiseReviewRequest(request)) {
+            const current = this.rulesRuntime.project(replay.profiles, replay.state,
+              { kind: "kp", capability: "internal:kp-spatial-evidence" }, due.promiseReview.promiseIds ? { promiseReviewBatchFor: due.promiseReview.promiseIds } : { promiseReviewFor: due.promiseReview.promiseId });
+            if (current.kind === "projected" && "promiseReview" in current && current.promiseReview !== null
+              && vnextCanonicalHash(current.promiseReview) === vnextCanonicalHash(request)) return undefined;
+          }
+          return rejectedAuthority("dueDecisionContextChanged", "The frozen internal decision context changed before commit.");
+        }
+        actorPlanDue = due?.actorPlan !== undefined;
+      }
       catch { return rejectedAuthority("dueActorPlanIntegrityMismatch", "The persisted due Activity descriptor is invalid."); }
     }
     if (actorPlanDue) {
@@ -6009,6 +6039,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const cause = events.at(-1);
     if (cause === undefined || this.vnextAdjudicationBridge === undefined) return;
     const prior = new Set(this.dueActivities(profiles, before).map(due => due.childRootActionId));
+    const afterDue = this.dueActivities(profiles, after);
     for (const work of this.authorityStore.pendingDueWork()) {
       // ActorPlan lifecycle may commit before its frozen mechanical check.
       // Only the final Receipt closes that in-flight independent task.
@@ -6029,12 +6060,20 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
         continue;
       }
-      const status = after.campaignRuntime.activities[work.activity_id]?.status;
+      if (descriptor.promiseReview !== undefined || descriptor.npcWork !== undefined) {
+        if (cause.rootActionId === work.child_root_action_id && after.receipts[work.child_root_action_id]?.status === "committed")
+          this.authorityStore.finishDueWork(work.child_root_action_id, "committed");
+        else if (!afterDue.some(due => due.childRootActionId === work.child_root_action_id)
+          && !hasPendingAuthorityRoot(after, work.child_root_action_id))
+          this.authorityStore.finishDueWork(work.child_root_action_id, "cancelled");
+        continue;
+      }
+      const status = after.campaignRuntime.activities[descriptor.activityId]?.status;
       if (status === "interrupted" || status === "completed") {
         this.authorityStore.finishDueWork(work.child_root_action_id,
           status === "completed" ? "committed" : "cancelled");
       } else {
-        const owner = String(after.campaignRuntime.activities[work.activity_id]?.characterId ?? "");
+        const owner = String(after.campaignRuntime.activities[descriptor.activityId]?.characterId ?? "");
         if (work.next_attempt_at === null && this.authorityViewerForCharacter(before, owner) === undefined
           && this.authorityViewerForCharacter(after, owner) !== undefined) {
           // A missing controller is an event-driven wait. Regaining a trusted
@@ -6044,7 +6083,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
       }
     }
-    for (const due of this.dueActivities(profiles, after)) {
+    for (const due of afterDue) {
       const queued = this.authorityStore.dueWorkByRoot(due.childRootActionId);
       if (due.activityProgress !== undefined && queued?.status === "pending" && queued.next_attempt_at === null
         && !hasPendingAuthorityRoot(after, due.childRootActionId)
@@ -6103,7 +6142,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (!("kind" in context) || context.kind !== "internalDueActivity" || source.kind === "proposal"
       || submission?.principal_id !== null || submission.root_action_id !== context.rootActionId) return false;
     const due = this.verifiedDueActivity(context.rootActionId, replay);
-    const completion = due === undefined ? undefined : replay.state.campaignRuntime.activities[due.activityId]?.completion;
+    const completion = due === undefined || due.activityId === null ? undefined : replay.state.campaignRuntime.activities[due.activityId]?.completion;
     return due !== undefined && (replay.state.entities[due.ownerEntityId]?.kind === "npc"
       || (isJsonRecord(completion) && completion.kind === "timePassage"));
   }
@@ -6139,11 +6178,34 @@ export class RoomDurableObject extends DurableObject<Env> {
       dueActorPlan: structuredClone(projected.dueActorPlan), projection: structuredClone(projected), attempt: 1 };
   }
 
-  private async commitDueActorPlanWork(rootActionId: string, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
+  private async dueDecisionRequest(replay: AuthorityReplay, due: DueActivityDescriptor): Promise<DueDecisionRequest | undefined> {
+    if (due.promiseReview) {
+      const projected = this.rulesRuntime.project(replay.profiles, replay.state,
+        { kind: "kp", capability: "internal:kp-spatial-evidence" }, due.promiseReview.promiseIds ? { promiseReviewBatchFor: due.promiseReview.promiseIds } : { promiseReviewFor: due.promiseReview.promiseId });
+      return projected.kind !== "rejected" && "promiseReview" in projected && projected.promiseReview !== null
+        && vnextCanonicalHash(projected.promiseReview) === due.promiseReview.frameHash ? projected.promiseReview : undefined;
+    }
+    if (due.npcWork) {
+      const moduleProfile = await this.pinnedAuthorityModule(replay);
+      return moduleProfile === undefined ? undefined : prepareNpcWorkRequest(replay.state, replay.profiles, moduleProfile, due.childRootActionId, due.npcWork.planId);
+    }
+    return this.actorPlanRequest(replay, due);
+  }
+  private dueDecisionProviderInput(request: DueDecisionRequest, selectionResponse?: unknown, reemitEmptyNpcResponse = false): Record<string, unknown> {
+    if (!isPromiseReviewRequest(request) && !isNpcWorkRequest(request)) return this.actorPlanProviderInput(request);
+    const input = isPromiseReviewRequest(request) ? promiseReviewModelInput(request)
+      : npcWorkModelInput(request, selectionResponse, reemitEmptyNpcResponse);
+    const assembled = assembleProviderInvocation({ providerBody: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, input) as VNextJsonRecord,
+      invocationKind: "initial", ledger: INITIAL_REPAIR_LEDGER, budgetProfile: VNEXT_PROVIDER_BUDGET });
+    if (assembled.kind === "blocked") throw new TypeError(assembled.code);
+    return assembled.providerBody;
+  }
+
+  private async commitDueDecisionWork(rootActionId: string, actorPlanTransport?: ActorPlanTransport): Promise<AuthorityCommitOutcome> {
     const replay = this.authoritativeReplay();
     const work = this.authorityStore.dueWorkByRoot(rootActionId);
     const due = this.verifiedDueActivity(rootActionId, replay);
-    if (work === undefined || due?.actorPlan === undefined) {
+    if (work === undefined || (due === undefined || (due.actorPlan === undefined && due.promiseReview === undefined && due.npcWork === undefined))) {
       return rejectedAuthority("dueActorPlanIntegrityMismatch", "The persisted ActorPlan obligation is no longer eligible.");
     }
     const recovery = this.authorityStore.proposalRecovery(rootActionId);
@@ -6151,10 +6213,10 @@ export class RoomDurableObject extends DurableObject<Env> {
       { kind: "recovery", row: recovery });
     let submission = this.authorityStore.submissionByPrepared(rootActionId);
     if (submission === undefined) {
-      const request = this.actorPlanRequest(replay, due);
+      const request = await this.dueDecisionRequest(replay, due);
       if (request === undefined) return rejectedAuthority("dueActorPlanIntegrityMismatch", "The selected NPC decision is unavailable.");
       // Validate the exact NPC-only frame before persisting or sending it.
-      try { this.actorPlanProviderInput(request); }
+      try { this.dueDecisionProviderInput(request); }
       catch { return rejectedAuthority("dueActorPlanContextUnavailable", "The NPC limited-knowledge frame is unavailable."); }
       this.authorityStore.transaction(() => {
         if (this.authorityStore.submissionByPrepared(rootActionId) !== undefined) return;
@@ -6171,35 +6233,50 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     if (submission.result_json !== null) return parseJson<AuthorityCommitOutcome>(submission.result_json);
     const continuation = submission.continuation_json === null ? undefined : parseJson<JsonObject>(submission.continuation_json);
-    const request = continuation?.actorPlanRequest as DueActorPlanDecisionRequest | undefined;
+    const request = continuation?.actorPlanRequest as DueDecisionRequest | undefined;
     if (request === undefined) return rejectedAuthority("dueActorPlanContextUnavailable", "The frozen NPC decision is unavailable.");
-    const currentRequest = this.actorPlanRequest(this.authoritativeReplay(), due);
+    const currentRequest = await this.dueDecisionRequest(this.authoritativeReplay(), due);
     let modelInput: Record<string, unknown>;
     try {
-      modelInput = this.actorPlanProviderInput(request);
-      if (currentRequest === undefined || vnextCanonicalHash(this.actorPlanProviderInput(currentRequest)) !== vnextCanonicalHash(modelInput)) {
+      modelInput = this.dueDecisionProviderInput(request);
+      if (currentRequest === undefined || vnextCanonicalHash(this.dueDecisionProviderInput(currentRequest)) !== vnextCanonicalHash(modelInput)) {
         return rejectedAuthority("dueActorPlanContextChanged", "The NPC's frozen premises changed before its decision committed.");
       }
     } catch { return rejectedAuthority("dueActorPlanContextUnavailable", "The frozen NPC decision failed integrity validation."); }
-    const requestHash = vnextCanonicalHash(modelInput), contextHash = vnextCanonicalHash(request);
-    let response: unknown;
-    // Exactly one physical attempt. A prepared request has not been sent;
-    // a running request may have reached the provider and is never resent.
-    for (const ordinal of [1]) {
+    const initialRequestHash = vnextCanonicalHash(modelInput), contextHash = vnextCanonicalHash(request);
+    let response: unknown, selectionResponse: unknown;
+    // A running request may have reached the provider and is never resent.
+    // Only an already saved empty NPC response permits one distinct re-emission
+    // journal row; both physical calls use the same HTTP scope and frozen frame.
+    for (const ordinal of isNpcWorkRequest(request) ? [1, 2, 3] : [1]) {
+      let reemitProof: string | null = null;
+      if (ordinal === 2) {
+        try {
+          parseNpcWorkSelection(response); selectionResponse = response;
+          modelInput = this.dueDecisionProviderInput(request, selectionResponse);
+        } catch { return rejectedAuthority("DUE_DECISION_INVALID", "The saved NPC schema selection is invalid."); }
+        reemitProof = JSON.stringify({ kind: "npcWorkSelection", responseHash: vnextCanonicalHash(selectionResponse) });
+      } else if (ordinal === 3) {
+        if (!npcWorkResponseIsEmpty(response)) break;
+        reemitProof = JSON.stringify({ kind: "emptyNpcWorkResponse", responseHash: vnextCanonicalHash(response),
+          selectionResponseHash: vnextCanonicalHash(selectionResponse) });
+        modelInput = this.dueDecisionProviderInput(request, selectionResponse, true);
+      }
+      const requestHash = vnextCanonicalHash(modelInput);
       let row = this.authorityStore.vnextInvocation(rootActionId, ordinal);
       if (row !== undefined) {
         let savedRequest: unknown;
         try { savedRequest = parseJson(row.request_json); }
         catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC request is invalid."); }
         if (row.request_hash !== requestHash || row.context_hash !== contextHash
-          || row.binding_hash !== VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH
-          || vnextCanonicalHash(savedRequest) !== requestHash) {
+          || row.binding_hash !== dueDecisionBindingHash(request)
+          || vnextCanonicalHash(savedRequest) !== requestHash || row.repair_ticket_json !== reemitProof) {
           return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC invocation does not match its frozen contract.");
         }
         if (row.status === "completed") {
           try { response = parseJson(row.response_json!); }
           catch { return rejectedAuthority("dueActorPlanInvocationIntegrityMismatch", "The saved NPC response is invalid."); }
-          break;
+          continue;
         }
         if (row.status === "rejected") return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The bounded NPC decision was rejected.");
         if (row.status === "running" && row.lease_until > Date.now()) {
@@ -6210,8 +6287,8 @@ export class RoomDurableObject extends DurableObject<Env> {
         }
       }
       row ??= { prepared_action_id: rootActionId, ordinal, context_hash: contextHash,
-        binding_hash: VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH, request_hash: requestHash,
-        request_json: JSON.stringify(modelInput), repair_ticket_json: null, capability: crypto.randomUUID(),
+        binding_hash: dueDecisionBindingHash(request), request_hash: requestHash,
+        request_json: JSON.stringify(modelInput), repair_ticket_json: reemitProof, capability: crypto.randomUUID(),
         lease_until: 0, status: "prepared", response_json: null };
       this.authorityStore.saveVnextInvocation(row);
       this.runAuthorityRecoveryCheckpoint("afterActorPlanInvocationPrepared");
@@ -6231,8 +6308,8 @@ export class RoomDurableObject extends DurableObject<Env> {
               provider: VNEXT_KP_PROFILE.provider, modelId: VNEXT_KP_PROFILE.modelId,
               modelRevision: VNEXT_KP_PROFILE.modelRevision, modelProfileVersion: VNEXT_KP_PROFILE.modelProfileVersion,
               promptPolicyVersion: VNEXT_KP_PROFILE.promptPolicyVersion,
-              schemaVersion: VNEXT_ACTOR_PLAN_DECISION_BINDING_HASH,
-              task: "proposal", invocationPurpose: "actorPlan", rootActionId, attempt: ordinal,
+              schemaVersion: dueDecisionBindingHash(request),
+              task: "proposal", invocationPurpose: isPromiseReviewRequest(request) ? "promiseReview" : isNpcWorkRequest(request) ? "npcWork" : "actorPlan", rootActionId, attempt: ordinal,
               startedAt, endedAt: Date.now(), result, ...usageFrom(response),
             },
           })));
@@ -6272,19 +6349,24 @@ export class RoomDurableObject extends DurableObject<Env> {
         return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The NPC response must be canonical JSON.");
       }
       this.authorityStore.saveVnextInvocation({ ...row, status: "completed", lease_until: 0, response_json: JSON.stringify(response) });
-      this.runAuthorityRecoveryCheckpoint("afterActorPlanResponseSaved");
-      break;
+      this.runAuthorityRecoveryCheckpoint(isNpcWorkRequest(request) && ordinal === 1 ? "afterNpcWorkSelectionSaved" : "afterActorPlanResponseSaved");
     }
-    let decision;
-    try { decision = parseVnextActorPlanDecision(response, request); }
-    catch { return rejectedAuthority("ACTOR_PLAN_DECISION_INVALID", "The saved NPC decision does not satisfy its frozen ActorPlan contract."); }
-    const fresh = this.actorPlanRequest(this.authoritativeReplay(), due);
-    if (fresh === undefined || vnextCanonicalHash(this.actorPlanProviderInput(fresh)) !== requestHash) {
-      return rejectedAuthority("dueActorPlanContextChanged", "The NPC's frozen premises changed while its decision was running.");
+    const fresh = await this.dueDecisionRequest(this.authoritativeReplay(), due);
+    if (fresh === undefined || vnextCanonicalHash(this.dueDecisionProviderInput(fresh)) !== initialRequestHash) {
+      return rejectedAuthority("dueDecisionContextChanged", "The frozen decision premises changed while the response was running.");
     }
-    const { kind: _kind, proposalAttemptId: _attempt, rootActionId: _root, ...decisionFields } = decision;
-    const rulesInput = { kind: "resolveDueActorPlan", ...decisionFields, proposalId: rootActionId,
-      affectedCharacterId: due.ownerEntityId, causedByRootActionId: work.cause_root_action_id };
+    let rulesInput: JsonRecord;
+    try {
+      if (isPromiseReviewRequest(request)) rulesInput = { kind: "resolvePromiseReview", proposalId: rootActionId,
+        promiseId: request.promiseId, frameHash: vnextCanonicalHash(request), judgment: parsePromiseReview(response, request) };
+      else if (isNpcWorkRequest(request)) rulesInput = npcWorkRulesInput(response, request, this.authoritativeReplay().state, replay.profiles, selectionResponse);
+      else {
+        const decision = parseVnextActorPlanDecision(response, request);
+        const { kind: _kind, proposalAttemptId: _attempt, rootActionId: _root, ...decisionFields } = decision;
+        rulesInput = { kind: "resolveDueActorPlan", ...decisionFields, proposalId: rootActionId,
+          affectedCharacterId: due.ownerEntityId, causedByRootActionId: work.cause_root_action_id };
+      }
+    } catch { return rejectedAuthority(due.actorPlan ? "ACTOR_PLAN_DECISION_INVALID" : "DUE_DECISION_INVALID", "The saved decision does not satisfy its frozen contract."); }
     return this.commitAuthoritative({ kind: "internalDueActivity", rootActionId }, rootActionId,
       { kind: "canonicalInput", input: rulesInput as unknown as JsonObject, proposalHash: vnextCanonicalHash(rulesInput) });
   }
@@ -6298,7 +6380,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     const replay = this.authoritativeReplay();
     const frozen = parseJson<DueActivityDescriptor>(work.descriptor_json);
-    if (frozen.actorPlan !== undefined) return this.commitDueActorPlanWork(childRootActionId, actorPlanTransport);
+    if (frozen.actorPlan !== undefined || frozen.promiseReview !== undefined || frozen.npcWork !== undefined) return this.commitDueDecisionWork(childRootActionId, actorPlanTransport);
     const due = this.verifiedDueActivity(childRootActionId, replay);
     if (due === undefined) {
       if (frozen.childRootActionId === childRootActionId && frozen.activityId === work.activity_id
@@ -6308,7 +6390,7 @@ export class RoomDurableObject extends DurableObject<Env> {
         this.authorityStore.finishDueWork(childRootActionId, "cancelled");
         return rejectedAuthority("dueActivitySuperseded", "The authoritative clock superseded this time segment.");
       }
-      const activity = replay.state.campaignRuntime.activities[work.activity_id];
+      const activity = replay.state.campaignRuntime.activities[frozen.activityId];
       if (activity?.status === "interrupted" || activity?.status === "completed") {
         this.authorityStore.finishDueWork(childRootActionId,
           activity.status === "completed" ? "committed" : "cancelled");
@@ -6318,6 +6400,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
       return rejectedAuthority("dueActivityIntegrityMismatch", "The frozen due Activity is no longer eligible.");
     }
+    if (due.activityId === null) return rejectedAuthority("dueActivityIntegrityMismatch", "A private decision cannot enter Activity completion.");
     if (due.longSpellcasting?.phase === "complete"
       && replay.state.receipts[childRootActionId]?.status === "awaitingRandomness"
       && hasPendingAuthorityRoot(replay.state, childRootActionId)
@@ -6325,7 +6408,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return rejectedAuthority("pendingInputUnresolved", "The spell's authorized randomness must resume through its saved answer journal.");
     }
     const viewer = this.authorityViewerForCharacter(replay.state, due.ownerEntityId);
-    const completion = replay.state.campaignRuntime.activities[due.activityId]?.completion;
+    const completion = due.activityId === null ? undefined : replay.state.campaignRuntime.activities[due.activityId]?.completion;
     const internalOwner = replay.state.entities[due.ownerEntityId]?.kind === "npc"
       || (isJsonRecord(completion) && completion.kind === "timePassage");
     if (!internalOwner && viewer === undefined) return rejectedAuthority("dueActivityOwnerUnavailable", "The activity owner has no active controller.");
@@ -6378,7 +6461,8 @@ export class RoomDurableObject extends DurableObject<Env> {
       if (next.next_attempt_at === null || next.next_attempt_at > Date.now()) {
         blockedTimelines.add(next.timeline_id); continue;
       }
-      const actorPlan = parseJson<DueActivityDescriptor>(next.descriptor_json).actorPlan;
+      const decisionWork = parseJson<DueActivityDescriptor>(next.descriptor_json);
+      const actorPlan = decisionWork.actorPlan ?? decisionWork.promiseReview ?? decisionWork.npcWork;
       if (actorPlan !== undefined && actorPlanDecisionTaken) { blockedTimelines.add(next.timeline_id); continue; }
       if (actorPlan !== undefined) actorPlanDecisionTaken = true;
       let outcome: AuthorityCommitOutcome;
@@ -6422,21 +6506,35 @@ export class RoomDurableObject extends DurableObject<Env> {
     // in this request, rather than waiting for another action or an alarm.
     const resumedActivityIds = new Set(this.authorityStore.events().flatMap(event => event.rootActionId === outcome.receipt.rootActionId
       && event.eventType === "ActivityAttentionAcknowledged" ? [String((event.payload as JsonObject).activityId)] : []));
-    const resumesPending = this.authorityStore.pendingDueWork().some(work => resumedActivityIds.has(work.activity_id));
-    if (!causedPending && !resumesPending && this.authorityStore.dueWorkByRoot(outcome.receipt.rootActionId) === undefined) return outcome;
-    for (const work of this.authorityStore.pendingDueWork()) {
-      if (!this.dueWorkDescendsFrom(work, outcome.receipt.rootActionId)) continue;
-      const invocation = this.authorityStore.vnextInvocation(work.child_root_action_id, 1);
-      // Explicit retry can resume a saved response immediately, without any
-      // new provider call. A request never dispatched can use a fresh call
-      // scope; an unknown response never becomes eligible for resampling.
-      if (invocation?.status === "completed"
-        || (actorPlanTransport !== undefined && invocation?.status === "prepared")) {
-        this.authorityStore.deferDueWork(work.child_root_action_id, 0);
+    const resumesPending = this.authorityStore.pendingDueWork().some(work => work.activity_id !== null && resumedActivityIds.has(work.activity_id));
+    const shouldDrain = causedPending || resumesPending || this.authorityStore.dueWorkByRoot(outcome.receipt.rootActionId) !== undefined;
+    let newlySettled: AuthorityCommitOutcome[] = [];
+    if (shouldDrain) {
+      for (const work of this.authorityStore.pendingDueWork()) {
+        if (!this.dueWorkDescendsFrom(work, outcome.receipt.rootActionId)) continue;
+        const invocation = this.authorityStore.vnextInvocation(work.child_root_action_id, 1);
+        // Explicit retry can resume a saved response immediately, without any
+        // new provider call. A request never dispatched can use a fresh call
+        // scope; an unknown response never becomes eligible for resampling.
+        if (invocation?.status === "completed"
+          || (actorPlanTransport !== undefined && invocation?.status === "prepared")) {
+          this.authorityStore.deferDueWork(work.child_root_action_id, 0);
+        }
       }
+      this.runAuthorityRecoveryCheckpoint("afterCauseCommitBeforeDueTail");
+      newlySettled = await this.drainDueActivities(actorPlanTransport);
     }
-    this.runAuthorityRecoveryCheckpoint("afterCauseCommitBeforeDueTail");
-    const dueOutcomes = await this.drainDueActivities(actorPlanTransport);
+    // Publication must see the same child Receipts on initial delivery and
+    // retries. Draining alone forgets already completed descendants, causing
+    // a published child to be reported as notApplicable after reconnect.
+    const committed = new Map<string, AuthorityCommitOutcome>();
+    const transient: AuthorityCommitOutcome[] = [];
+    for (const child of [...this.authorityStore.committedDueDescendantResults(outcome.receipt.rootActionId)
+      .map(value => parseJson<AuthorityCommitOutcome>(value)), ...newlySettled]) {
+      if (child.kind === "committed" || child.kind === "concluded") committed.set(child.receipt.rootActionId, child);
+      else transient.push(child);
+    }
+    const dueOutcomes = [...committed.values(), ...transient];
     return dueOutcomes.length === 0 ? outcome : { ...outcome, dueOutcomes };
   }
 
@@ -7663,8 +7761,12 @@ export class RoomDurableObject extends DurableObject<Env> {
     let rulesInput = adapted.input;
     const dueDescriptor = dueWork === undefined ? undefined : parseJson<DueActivityDescriptor>(dueWork.descriptor_json);
     if (dueWork !== undefined && (rulesInput.proposalId !== dueWork.child_root_action_id
-      || (dueDescriptor?.actorPlan === undefined
-        ? rulesInput.kind !== dueActivityRulesInputKind(dueDescriptor!)
+      || (dueDescriptor?.promiseReview !== undefined
+        ? rulesInput.kind !== "resolvePromiseReview" || rulesInput.promiseId !== dueDescriptor.promiseReview.promiseId || rulesInput.frameHash !== dueDescriptor.promiseReview.frameHash
+        : dueDescriptor?.npcWork !== undefined
+          ? rulesInput.kind !== "resolveNpcWork" || rulesInput.planId !== dueDescriptor.npcWork.planId || rulesInput.planHash !== dueDescriptor.npcWork.planHash
+        : dueDescriptor?.actorPlan === undefined
+        ? dueDescriptor === undefined || dueDescriptor.activityId === null || rulesInput.kind !== dueActivityRulesInputKind(dueDescriptor)
           || rulesInput.activityId !== dueWork.activity_id
         : rulesInput.kind !== "resolveDueActorPlan" || rulesInput.planId !== dueDescriptor.actorPlan.planId
           || rulesInput.affectedCharacterId !== dueDescriptor.ownerEntityId
@@ -7679,7 +7781,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       || (dueDescriptor?.longSpellcasting !== undefined && rulesInput.kind === dueActivityRulesInputKind(dueDescriptor))
       || ["knowledgeReview", "completeActivity", "interruptActivity", "controlActivity", "completeActionActivity",
       "answerPendingInput", "answerFrozenPlayerChoice", "answerGroupRestInvitation", "answerPartyInvitation", "answerPartyMove", "answerSocialResolution",
-      "resolveDueActorPlan", "requestSafetyPause", "adjustSafetyPresentation"].includes(String(rulesInput.kind));
+      "resolveDueActorPlan", "resolvePromiseReview", "resolveNpcWork", "requestSafetyPause", "adjustSafetyPresentation"].includes(String(rulesInput.kind));
     if (!permitsPendingDue && this.vnextAdjudicationBridge !== undefined) {
       const timelineId = characterTimelineId(replay.state, submission.character_id);
       const sceneId = replay.state.entities[submission.character_id]?.sceneId;
@@ -9808,7 +9910,13 @@ export class RoomDurableObject extends DurableObject<Env> {
           "The delivery audience journal is unavailable.",
         );
       }
+      const terminalAudienceIds = new Set(audiences.filter((audience) =>
+        audience.status === "published" || audience.status === "superseded")
+        .map((audience) => audience.audience_id));
       const staleAudienceIds = plan.audiences.flatMap((binding) => {
+        // A newer frame supersedes only an unfinished publication. Completed
+        // audience records keep their result and generation across retries.
+        if (terminalAudienceIds.has(binding.audienceId)) return [];
         const viewerKey = `${binding.principalId}\u001f${binding.characterId}`;
         const watermark = this.authorityStore.deliveryWatermark(viewerKey);
         return watermark !== undefined && compareEventSeq(watermark, row.source_event_seq) > 0

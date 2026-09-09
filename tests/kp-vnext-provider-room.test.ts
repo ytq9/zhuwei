@@ -1,5 +1,6 @@
 import { deepSeekRequestBody } from "../app/_runtime/lib/kp/deepseek";
 import { proposalModelContext } from "../app/_runtime/lib/kp/vnext/proposal-context";
+import { npcDecisionContext } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
 import { encodeVNextStrictToolBundle, createCorrectKpProposalBundleModelInput } from "../app/_runtime/lib/kp/vnext/proposal-schema";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
@@ -57,6 +58,45 @@ const ALICE: Principal = { principal: { id: "principal:provider:alice", sessionV
 const BOB: Principal = { principal: { id: "principal:provider:bob", sessionVersion: 1 } };
 const ACTOR = "character:provider:alice", SOURCE = "definition:provider:control", SCENE = "wake";
 const SUMMARY_PATH = ["proposals", 0, "branches", "success", "summary"];
+
+it("an empty social draft retains the natural-language intent and NPC context through Room commit and restart", async () => {
+  const npcRef = "npc:black-oak-will:lian";
+  const stub = await initialize("provider-social-empty-context");
+  const input: RoomActionInput = { kind: "intent", submissionId: "submission:social-empty-context",
+    text: "我问lian愿意听我说说来意吗。" };
+  const capture: Capture = { selectedCapabilities: ["social"], starts: [], providerRequests: [] };
+  let proposals = 0;
+  const result = await run(stub, input, capture, async request => {
+    proposals++;
+    const body = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
+    expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
+    expect(body.requiredContext.intent.text).toBe(input.text);
+    expect(npcDecisionContext(body.requiredContext.entries, npcRef)).toBeDefined();
+    if (proposals === 1) return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{
+      type: "function", function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: "{}" },
+    }] } }] };
+    expect(body.originalArguments).toBe("{}");
+    return toolResponse({ mode: "adjudication", basisRefs: [npcRef], terminal: null,
+      adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
+      proposals: [{ kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always",
+        sceneRef: SCENE, npcRef, addressedThreadRef: null, goal: "征求对方倾听的意愿。", method: input.text,
+        communication: "spokenConversation", audience: "participants", retryChange: null,
+        branches: { success: { outcomeCode: "reply", summary: "对方示意继续说明。", consequences: [],
+          response: { kind: "speech", text: "请说。", motive: "听取眼前的请求。", basis: [{ kind: "playerExpression" }] } }, failure: null } }],
+    });
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
+  expect(proposals).toBe(2);
+  expect(capture.providerRequests).toHaveLength(3);
+  const committed = await snapshot(stub, capture);
+  expect(committed.invocations.map(row => row.status)).toEqual(["completed", "completed", "completed"]);
+  const saved = JSON.parse(committed.invocations[2]!.request_json);
+  expect(JSON.parse(saved.messages[1].content).requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
+  await evictDurableObject(stub);
+  expect(await run(stub, input, capture, async () => { throw new Error("a completed submission must not call the model again"); })).toEqual(result);
+  expect((await snapshot(stub, capture)).events).toEqual(committed.events);
+  expect(capture.providerRequests).toHaveLength(3);
+});
 
 function record(value: unknown): JsonRecord {
   expect(value).toBeTypeOf("object");
@@ -502,13 +542,17 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               const node = record(value);
               return typeof node.$ref === "string" ? resolve(record(schema.$def)[node.$ref.slice("#/$def/".length)]) : node;
             };
+            const variants = (value: unknown): JsonRecord[] => {
+              const node = resolve(value);
+              return Array.isArray(node.anyOf) ? node.anyOf.map(resolve) : [node];
+            };
             let reorderedNode = schema;
             if (record(schema.properties).decision !== undefined) {
-              const decisions = resolve(record(schema.properties).decision).anyOf as JsonRecord[];
+              const decisions = variants(record(schema.properties).decision);
               const direct = decisions.find(variant => (resolve(record(variant.properties).kind).enum as string[]).includes("directSuccess"));
               if (direct && record(schema.properties).steps !== undefined) {
                 const steps = resolve(record(schema.properties).steps);
-                reorderedNode = resolve((resolve(steps.items).anyOf as JsonRecord[])[0]);
+                reorderedNode = variants(steps.items)[0];
               } else reorderedNode = resolve(decisions[0]);
             }
             if (request.ordinal === 1) {
@@ -1080,7 +1124,7 @@ describe("vNext Provider invocation and Room persistence", () => {
   });
 
   it("retrieves Item and Ability schemas, recovers both saved stages, then corrects and atomically creates and uses the item", async () => {
-    const stub = await initialize("provider-room-schema-retrieval");
+    const stub = await initialize("provider-room-schema-retrieval", undefined, [], { hpCurrent: 7 });
     const capture: Capture = { starts: [], providerRequests: [], failAfterSaveOrdinal: 1 };
     const input = { ...action("submission:provider:retrieve"), text: "从测试控制件旁取出符合场景的药剂并使用。" };
     const before = await snapshot(stub);
@@ -1112,6 +1156,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     };
     expect(await run(stub, input, capture, provider)).toMatchObject({ kind: "retryableFailure", action: "notCommitted" });
     const selected = await snapshot(stub, capture);
+    const frozenContext = structuredClone(capture.prepared!.requiredContext);
     expect(selected.events).toEqual(before.events);
     expect(selected.state).toEqual(before.state);
     expect(capture.providerRequests).toHaveLength(1);
@@ -1123,19 +1168,60 @@ describe("vNext Provider invocation and Room persistence", () => {
     expect(proposed.state).toEqual(before.state);
     expect(capture.providerRequests).toHaveLength(2);
     expect(proposed.invocations.map(row => row.status)).toEqual(["completed", "completed"]);
+    expect(capture.prepared!.requiredContext).toEqual(frozenContext);
     await evictDurableObject(stub);
     const outcome = await run(stub, retry(capture, input), capture, provider);
     expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "committed", action: "committed" });
-    const committed = await snapshot(stub, capture);
+    const waiting = await snapshot(stub, capture);
     expect(capture.providerRequests).toHaveLength(3);
-    expect(committed.invocations.map(row => row.status)).toEqual(["completed", "completed", "completed"]);
-    expect(JSON.parse(committed.invocations[0]!.request_json)).toEqual(capture.providerRequests[0]);
-    expect(JSON.parse(committed.invocations[1]!.request_json)).toEqual(capture.providerRequests[1]);
+    expect(capture.prepared!.requiredContext).toEqual(frozenContext);
+    expect(waiting.invocations.map(row => row.status)).toEqual(["completed", "completed", "completed"]);
+    for (let ordinal = 0; ordinal < 2; ordinal++) {
+      const request = JSON.parse(waiting.invocations[ordinal]!.request_json);
+      expect(request).toEqual(capture.providerRequests[ordinal]);
+      expect(JSON.parse(request.messages[1].content).requiredContext)
+        .toEqual(proposalModelContext(frozenContext as never));
+    }
+    // The timed action has reached its result, but the healing dice still
+    // belong to the player. Its atomic item effects wait for that gesture.
+    expect(waiting.state.campaignRuntime.itemSystem).toEqual(before.state.campaignRuntime.itemSystem);
+    expect(waiting.state.entities[ACTOR].hitPoints).toEqual(before.state.entities[ACTOR].hitPoints);
+    const observation = record(await runInDurableObject(stub, instance => (instance as unknown as Internals).observe(ALICE)));
+    const rolls = observation.pendingPlayerRolls as JsonRecord[];
+    expect(rolls).toHaveLength(1);
+    expect(rolls[0]).toMatchObject({ characterId: ACTOR, kind: "heal", dice: "2d4" });
+    const roll: RoomActionInput = { kind: "roll", submissionId: "submission:provider:retrieve:roll",
+      randomnessId: String(rolls[0].id) };
+    const rollCapture: Capture = { starts: [], providerRequests: [] };
+    const noProvider: Provider = async () => { throw new Error("the frozen item action must not request another proposal"); };
+    expect(await run(stub, roll, rollCapture, noProvider, BOB)).toMatchObject({ kind: "rejected" });
+    expect(await snapshot(stub, capture)).toEqual(waiting);
+    await evictDurableObject(stub);
+    let draws = 0;
+    await runInDurableObject(stub, instance => {
+      (instance as unknown as Internals).authorityRoll = sides => {
+        expect(sides).toBe(4);
+        draws++;
+        return 2;
+      };
+    });
+    expect(await run(stub, roll, rollCapture, noProvider)).toMatchObject({ kind: "committed" });
+    const committed = await snapshot(stub, capture);
     const items = record(record(record(committed.state).campaignRuntime).itemSystem);
     const entries = Object.values(record(items.entries)).map(record);
-    expect(entries.some(entry => entry.quantity === 1)).toBe(true);
-    await run(stub, retry(capture, input), capture, provider);
+    expect(entries).toEqual([expect.objectContaining({ quantity: 1, holderRef: ACTOR, disposition: "held" })]);
+    expect(committed.state.entities[ACTOR].hitPoints).toMatchObject({ current: 13 });
+    expect(draws).toBe(2);
+    expect(committed.invocations).toEqual(waiting.invocations);
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, instance => {
+      (instance as unknown as Internals).authorityRoll = () => { throw new Error("a duplicate must not roll again"); };
+    });
+    expect(await run(stub, roll, rollCapture, noProvider)).toMatchObject({ kind: "committed" });
+    await run(stub, retry(capture, input), capture, noProvider);
+    expect(draws).toBe(2);
     expect(capture.providerRequests).toHaveLength(3);
+    expect(rollCapture.providerRequests).toHaveLength(0);
     expect(await snapshot(stub, capture)).toEqual(committed);
   });
 
@@ -1271,8 +1357,7 @@ describe("vNext Provider invocation and Room persistence", () => {
     const visible = record(sent.requiredContext);
     const frozen = record(capture.prepared!.requiredContext);
     expect(visible).not.toHaveProperty("binding");
-    expect(visible).toMatchObject({ contextHash: record(frozen.binding).contextHash,
-      intent: frozen.intent, entries: frozen.entries, references: frozen.references });
+    expect(visible).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
     expect(capture.starts[0]!.request.contextHash).toBe(record(frozen.binding).contextHash);
     expect(JSON.parse(waiting.invocations[0]!.request_json)).toEqual(capture.providerRequests[0]);
     await evictDurableObject(stub);

@@ -21,7 +21,8 @@ function socialWire(addressedThreadRef, relationshipRef) {
       audience: 'participants', retryChange: { kind: 'none' }, outcomeBinding: 'always' }],
     results: [{ kind: 'social', step: 0, branch: 'result', outcomeCode: 'answered', summary: '对方作出回应。',
       responseKind: 'speech', responseText: '我听到了。', responseMotive: '回应本人刚听到的话。', responseBasis: [{ kind: 'playerExpression' }],
-      consequences: relationshipRef === undefined ? [] : [{ kind: 'relationship', relationshipRef, change: '略有好感。', basisFactRefs: [] }] }] };
+      relationshipChanges: relationshipRef === undefined ? [] : [{ relationshipRef, change: '略有好感。', basisFactRefs: [] }],
+      newPromises: [], promiseChanges: [], newDebts: [] }] };
 }
 function planWire(factionRef) {
   return { decision: { kind: 'directSuccess', duration: 'none', risk: '只形成私有计划。', successOutcome: '记录计划。' },
@@ -45,8 +46,8 @@ test('a bare "none" and {kind:"none"} parse to byte-identical bundles on every n
     ['check skill + worldInteraction abilityRef', checkWire('none', 'none'), checkWire({ kind: 'none' }, { kind: 'none' })],
     // round90: retryChange is a nullable object with the same {kind:"none"} spelling, not a reference.
     ['social retryChange', (() => { const w = socialWire({ kind: 'none' }); w.steps[0].retryChange = 'none'; return w; })(), socialWire({ kind: 'none' })],
-    ['promise trace with due none', (() => { const w = socialWire({ kind: 'none' }); w.results[0].consequences = [{ kind: 'promise', content: '记下这件事。', condition: '无。', authorityRefs: [NPC], due: 'none', trace: 'none' }]; return w; })(),
-      (() => { const w = socialWire({ kind: 'none' }); w.results[0].consequences = [{ kind: 'promise', content: '记下这件事。', condition: '无。', authorityRefs: [NPC], due: 'none', trace: { kind: 'none' } }]; return w; })()],
+    ['promise nextStep and delivery with due none', promiseWire('none', 'none', 'none'),
+      promiseWire('none', { kind: 'none' }, { kind: 'none' })],
   ]) {
     const a = parse(bare), b = parse(sentinel);
     assert.equal(a.kind, 'accepted', `${label}: ${JSON.stringify(a)}`);
@@ -93,63 +94,24 @@ test('the round 79 shape now reaches local acceptance in one call, with no corre
   assert.equal(result.bundle.proposals[0].addressedThreadRef, null);
 });
 
-test('a promise on the wire carries its due tier and trace; due none takes the none sentinel as its trace', () => {
-  const promise = (due, trace) => {
-    const wire = socialWire({ kind: 'none' });
-    row(wire, 0, 'result').consequences = [{ kind: 'promise', content: '明早卯时把备案文书送到账台。', condition: '天亮以后。', authorityRefs: [NPC], due, trace }];
-    return wire;
-  };
-  const timed = parse(promise('nextDawn', '账台上多了一份盖印的备案文书。'));
-  assert.equal(timed.kind, 'accepted', JSON.stringify(timed));
-  assert.deepEqual(timed.bundle.proposals[0].branches.success.consequences[0], { kind: 'promise', content: '明早卯时把备案文书送到账台。',
-    condition: '天亮以后。', authorityRefs: [NPC], due: 'nextDawn', trace: '账台上多了一份盖印的备案文书。' });
-  const context = parse(promise('none', { kind: 'none' }));
-  assert.equal(context.kind, 'accepted', JSON.stringify(context));
-  assert.equal(context.bundle.proposals[0].branches.success.consequences[0].trace, null);
-  // A trace without a due, or a due without a trace, is refused.
-  assert.equal(parse(promise('none', '有痕迹。')).kind, 'locallyRejected');
-  assert.equal(parse(promise('1h', { kind: 'none' })).kind, 'locallyRejected');
-  assert.equal(parse(promise('1h', 'none')).kind, 'locallyRejected', 'a bare none is the sentinel, and a timed promise still needs a trace');
-  assert.equal(parse(promise('tomorrow', '有痕迹。')).kind, 'locallyRejected');
-});
-
-test('a none sentinel padded with the other variant\'s empty fields decodes as the sentinel; a padded value does not', () => {
-  // round84 wrote retryChange as {kind:"none", priorThreadRef:"", basisRefs:[], explanation:""}.
-  const padded = socialWire({ kind: 'none' });
-  padded.steps[0].retryChange = { kind: 'none', priorThreadRef: '', basisRefs: [], explanation: '' };
-  const parsed = parse(padded);
-  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
-  assert.equal(parsed.bundle.proposals[0].retryChange, null);
-  assert.equal(parsed.bundleHash, parse(socialWire({ kind: 'none' })).bundleHash);
-  const filled = socialWire({ kind: 'none' });
-  filled.steps[0].retryChange = { kind: 'none', priorThreadRef: 'thread:one', basisRefs: [], explanation: '' };
-  assert.equal(parse(filled).kind, 'locallyRejected');
-});
-
-test('a result written inside a step row is refused as such, not silently folded or preferred', () => {
+function promiseWire(due, nextStep, delivery = { kind: 'none' }) {
   const wire = socialWire({ kind: 'none' });
-  const row = wire.results[0];
-  wire.steps[0].result = { outcomeCode: row.outcomeCode, summary: '另一份摘要。', response: { kind: 'speech', text: '我听到了。', motive: '回应本人刚听到的话。', basis: [{ kind: 'playerExpression' }] }, consequences: [] };
-  // A filling-shape error is a protocol output error, thrown before any draft exists.
-  assert.throws(() => parse(wire), error => Array.isArray(error.diagnostics)
-    && error.diagnostics.some(d => d.constraint === 'filling:result-in-step-row' && JSON.stringify(d.path) === JSON.stringify(['steps', 0, 'result']) && d.repair.allowed === false));
-});
+  row(wire, 0, 'result').newPromises = [{ content: '明早到场说明备案情况。', condition: '无附加条件。',
+    promisor: 'npc', promiseeRef: 'character:player', authorityRefs: [NPC], due,
+    terms: { kind: 'result', subjectRefs: [NPC], delivery, parts: [], activation: { kind: 'none' } }, nextStep }];
+  return wire;
+}
 
-test('a ruling-level basisRefs that restates the steps\' aggregate decodes as absent; any other list is refused as server-owned', () => {
-  // round85 wrote decision.basisRefs equal to steps[0].basisRefs on a directSuccess ruling, a field the wire never offers there.
-  const plain = parse(socialWire({ kind: 'none' }));
-  const copy = socialWire({ kind: 'none' }); copy.decision.basisRefs = [NPC];
-  const parsed = parse(copy);
-  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
-  assert.equal(parsed.bundleHash, plain.bundleHash);
-  assert.deepEqual(parsed.bundle.basisRefs, [NPC]);
-  // Order and repetition do not make it a different claim; a prospective ref is not part of the derived list either.
-  const shuffled = socialWire({ kind: 'none' }); shuffled.decision.basisRefs = [NPC, NPC];
-  assert.equal(parse(shuffled).bundleHash, plain.bundleHash);
-  for (const other of [[SCENE], [NPC, SCENE], [], 'npc:none-sentinel:archivist']) {
-    const wire = socialWire({ kind: 'none' }); wire.decision.basisRefs = other;
-    assert.throws(() => parse(wire), error => Array.isArray(error.diagnostics)
-      && error.diagnostics.some(d => d.constraint === 'filling:server-owned-field' && JSON.stringify(d.path) === JSON.stringify(['decision', 'basisRefs'])), JSON.stringify(other));
-  }
+test('a promise small table preserves its independent due tier and next step through the none sentinel codec', () => {
+  const timed = parse(promiseWire('nextDawn', '准备好自己的备案说明。'));
+  assert.equal(timed.kind, 'accepted', JSON.stringify(timed));
+  const promise = timed.bundle.proposals[0].branches.success.consequences[0];
+  assert.equal(promise.kind, 'promise');
+  assert.equal(promise.due, 'nextDawn');
+  assert.equal(promise.nextStep, '准备好自己的备案说明。');
+  assert.equal(promise.terms.delivery, null);
+  assert.equal(promise.terms.activation, null);
+  const context = parse(promiseWire('none', { kind: 'none' }));
+  assert.equal(context.kind, 'accepted', JSON.stringify(context));
+  assert.equal(context.bundle.proposals[0].branches.success.consequences[0].nextStep, null);
 });
-

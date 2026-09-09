@@ -12,10 +12,10 @@ const one = (kind: VNextProducerKind): VNextProposalProducerContract => ({ count
 
 /** Shared declaration requirements, not creation authority or world identity. */
 export const VNEXT_PROPOSAL_PRODUCER_CONTRACT = deepFreeze({
-  version: "zhuwei.proposal-producer-contract/v2",
+  version: "zhuwei.proposal-producer-contract/v3",
   entries: {
     observe: none, social: none, formActorPlan: none, worldInteraction: none, commitNarrativeDetail: none,
-    inventoryOperation: none, reviseSemanticDefinition: none,
+    inventoryOperation: none, reviseSemanticDefinition: none, completeObject: none,
     materializeObject: one("semanticDefinition"), materializeItem: one("itemEntry"),
   },
   definitions: { ability: one("abilityDefinition"), hazard: one("hazardDefinition"), item: one("itemDefinition") },
@@ -34,12 +34,4 @@ export function vnextProposalProducerContract(kind: unknown, definitionKind?: un
 
 export function vnextEntryProducerContract(entry: Record<string, unknown>): VNextProposalProducerContract | undefined {
   return vnextProposalProducerContract(entry.kind, isPlainRecord(entry.source) ? entry.source.kind : undefined);
-}
-
-export function vnextProducerWireGuidance(kind: unknown, definitionKind?: unknown): string {
-  const contract = vnextProposalProducerContract(kind, definitionKind);
-  if (!contract) throw new TypeError("PROPOSAL_PRODUCER_CONTRACT_UNAVAILABLE");
-  return contract.count === 0
-    ? "本类操作不创建新对象，无需填写 handle；服务器生成空生产者声明。"
-    : "只填写新对象的本束 prospective handle；生产者类型、结果绑定和依赖由服务器从已选类型及引用生成，不重复声明。";
 }

@@ -403,6 +403,34 @@ function isActorPlanDueRoot(rootActionId: unknown): boolean {
   return typeof rootActionId === "string" && rootActionId.startsWith("actor-plan-due:");
 }
 
+/** Lifecycle bookkeeping has no implied observer. Actual knowledge acquisition
+ * remains the only route from a private verdict to Viewer claims. */
+function isPrivatePromiseLedgerEvent(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
+  const p = recordOrEmpty(event.payload);
+  if (event.eventType === "PromiseChanged") {
+    const life = recordOrEmpty(range.state.campaignRuntime.promises[String(p.promiseId)]?.lifecycle);
+    return event.secrecy === "internal" && event.visibilityPolicyId === "visibility:room-authority-only"
+      && Array.isArray(life.changes) && life.changes.some(change => recordOrEmpty(change).eventId === event.eventId);
+  }
+  if (event.eventType === "CanonicalFactDeclared" && recordOrEmpty(p.fact).kind === "promiseTermsResult")
+    return event.secrecy === "internal" && event.visibilityPolicyId === "visibility:hidden-until-evidence"
+      && range.events.some(candidate => candidate.eventType === "PromiseChanged" && candidate.rootActionId === event.rootActionId);
+  if (event.eventType === "PromiseTermsEstablished" || event.eventType === "PromiseReviewed") {
+    const life = recordOrEmpty(range.state.campaignRuntime.promises[String(p.promiseId)]?.lifecycle);
+    return event.secrecy === "internal" && event.visibilityPolicyId === "visibility:room-authority-only"
+      && (event.eventType === "PromiseTermsEstablished" ? life.formedByEventId === event.eventId
+        : Array.isArray(life.history) && life.history.some(h => recordOrEmpty(h).committedByEventId === event.eventId));
+  }
+  if (event.eventType === "NpcWorkProposed" || event.eventType === "NpcWorkStarted" || event.eventType === "NpcWorkDecision") {
+    const plan = range.state.campaignRuntime.npcPlans[String(p.planId)];
+    return plan?.schema === "zhuwei.npc-work/vnext-1" && event.secrecy === "private"
+      && event.visibilityPolicyId === `visibility:knowledge-holder:${plan.npcId}`;
+  }
+  return event.eventType === "CanonicalFactDeclared" && recordOrEmpty(p.fact).kind === "promiseReviewResult"
+    && event.secrecy === "internal" && event.visibilityPolicyId === "visibility:hidden-until-evidence"
+    && range.events.some(candidate => candidate.eventType === "PromiseReviewed" && candidate.rootActionId === event.rootActionId);
+}
+
 /** A plan's decision, Activity and optional faction record are one private
  * formation family. Their existence is never itself a public action claim. */
 function isPrivateActorPlanFormationEvent(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
@@ -487,6 +515,7 @@ export function committedRangeUsesFrozenRenderableClaims(
 ): boolean {
   return events.some(({ eventType, rootActionId, payload }) =>
     typeof eventType === "string" && (VNEXT_CLAIMS_ROOT_EVENT_TYPES.has(eventType)
+      || ["PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged", "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision"].includes(eventType)
       || (eventType === "NpcPlanFormed" && events.some(event => event.eventType === "ActivityStarted"
         && event.rootActionId === rootActionId && recordOrEmpty(recordOrEmpty(event.payload).completion).kind === "actorPlan"
         && recordOrEmpty(recordOrEmpty(event.payload).completion).planId === recordOrEmpty(payload).planId))
@@ -961,6 +990,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         && !VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES.has(eventType)
         && !isPrivateActorPlanLedgerEvent(event, eventRange)
         && !isPrivateActorPlanFormationEvent(event, range)
+        && !isPrivatePromiseLedgerEvent(event, eventRange)
         && !(eventType === "ActivityInterrupted" && materials.length > materialCountBeforeEvent)) {
         throw new TypeError(`VNEXT_CLAIM_EVENT_UNKNOWN:${eventType}`);
       }
@@ -982,13 +1012,14 @@ export function deriveAuthorityClaimsFromCommittedRange(
     ["FrozenPlayerChoicePrepared", "PlayerChoiceRequested", "PendingInputAnswered"].includes(event.eventType))
     && (range.receipt.status === "awaitingInput" || cancelledChoice);
   const privateActorPlanOnly = range.events.every(event => isPrivateActorPlanLedgerEvent(event, range));
+  const privatePromiseOnly = range.events.length > 0 && range.events.every(event => isPrivatePromiseLedgerEvent(event, range));
   const privateActorPlanFormationOnly = range.events.some(event => isPrivateActorPlanFormationEvent(event, range))
     && range.events.every(event => isPrivateActorPlanFormationEvent(event, range)
       || (event.eventType === "AtomicWorldInteractionStepsResolved" && event.secrecy === "internal"));
   const privateTimePassageProgressOnly = range.events.length > 0 && range.events.every(event =>
     isTimePassageProgressEvent(event, range.eventStates?.get(event.eventId) ? { ...range, ...range.eventStates.get(event.eventId)! } : range)
       || isLongSpellcastingTimeProgressEvent(event, range.eventStates?.get(event.eventId) ? { ...range, ...range.eventStates.get(event.eventId)! } : range));
-  if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly) {
+  if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !privatePromiseOnly) {
     throw new TypeError("VNEXT_CLAIMS_INSUFFICIENT");
   }
 
@@ -997,7 +1028,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
   const pureTimePassageEnding = range.events.length === 1
     && ["ActivityCompleted", "ActivityInterrupted"].includes(range.events[0].eventType)
     && timePassageActivity(range, recordOrEmpty(range.events[0].payload).activityId) !== undefined;
-  if (!isActorPlanDueRoot(range.receipt.rootActionId) && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !pureTimePassageEnding) materials.push({
+  if (!isActorPlanDueRoot(range.receipt.rootActionId) && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !pureTimePassageEnding && !privatePromiseOnly) materials.push({
     claimRef: claimRefForRange(range.receipt.receiptId, "action-committed"),
     kind: "actionCommitted",
     actorRef: range.actorCharacterId,
@@ -1510,7 +1541,7 @@ function semanticDefinitionRevisionClaims(
     }];
   }
 
-  const claims: ClaimMaterial[] = [{
+  const claims: ClaimMaterial[] = payload.completion === true ? [] : [{
     ...base,
     kind: "definitionRevised",
     definitionRef,

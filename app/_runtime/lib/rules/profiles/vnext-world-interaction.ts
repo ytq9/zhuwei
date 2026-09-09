@@ -41,6 +41,14 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
     spec: "SPEC 0016",
     formBoundary: "world-interaction.vnext-1",
     narrativeAuthority: "kp-decides-feasibility-dc-risk-and-causal-branches-from-required-context",
+    objectCompletion: Object.freeze({
+      source: "completeObject-existing-visible-sceneFeature-with-frozen-scope-grant-and-exact-base-template",
+      fields: "description-and-optional-observableState-only-preserve-identity-audience-mechanics-and-geometry",
+      semantics: "establish-undefined-current-properties-not-a-character-action-or-physical-state-transition",
+      ordering: "one-always-completion-per-object-before-in-world-steps-with-original-readset-validation",
+      replay: "exact-frozen-completion-payload-and-required-audited-prefix-before-settlement",
+      projection: "current-sceneFeature-without-definitionRevised-change-claim",
+    }),
     observation: Object.freeze({
       form: "observe.vnext-1", knowledge: "separate-sensory-and-inference-events-through-shared-rules",
       inferenceSources: "held-knowledge-record-hash-or-same-outcome-sensory-index-for-actor",
@@ -88,6 +96,16 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
       receipt: "subjects-derived-from-the-typed-participants-for-projection-and-correction",
       claims: "pure-domain-roots-or-existing-vnext-root-with-precise-event-grant-and-participant-refs",
       expression: "typed-relationship-change-or-directed-unfulfilled-obligation-and-condition",
+    }),
+    promiseLifecycle: Object.freeze({
+      schema: "zhuwei.promise-lifecycle/vnext-1",
+      formation: "original-npc-expression-and-read-bound-terms-independent-fiction-timeline-deadline",
+      execution: "npc-finite-knowledge-proposal-bundle-through-shared-action-activity-materialization-and-inventory",
+      workLifecycle: "real-activity-or-immediate-settlement-start-resolve-interrupt-independent-of-promise-verdict",
+      evidence: "committed-branch-and-timeline-events-with-item-snapshots-source-refs-and-explicit-world-history-coverage",
+      review: "private-frozen-frontier-fulfilled-breached-or-unchanged-history-and-separate-remaining-obligation",
+      isolation: "no-automatic-knowledge-or-notice-from-private-verdict-no-combat-progression",
+      replay: "three-due-work-kinds-and-event-folded-evidence-with-correction-inverse",
     }),
     worldFactMemory: Object.freeze({
       truth: "immutable-definition-body-with-pinned-canonical-instance-and-holder-acquisition-links",
@@ -167,6 +185,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
     defaultEventTypeVersion: "1",
     additions: Object.freeze([
+      "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged", "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
       "KnowledgeReviewed",
       "NarrativeDetailCommitted",
       "NarrativeDetailMaterialized",

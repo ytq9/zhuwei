@@ -7,6 +7,7 @@ import {
   deepFreeze,
 } from "./canonical-json";
 import { normalizedProspectiveRef } from "../../rules/authority-read";
+import { IN_WORLD_ACT_FORM_IDS } from "../../rules/v2/world-interaction-model";
 import type {
   VNextAdjudicationBundle,
   VNextBundleFormId,
@@ -188,6 +189,9 @@ export function deriveVNextProposalBundlePlan(input: Readonly<{
   const edges = new Map<string, string[]>();
   for (const current of entryRefs) {
     const dependencies: string[] = [];
+    if (IN_WORLD_ACT_FORM_IDS.has(formIdForKind(current.entry.kind))) {
+      dependencies.push(...entryRefs.filter(candidate => candidate.entry.kind === "completeObject").map(candidate => candidate.entryRef));
+    }
     const declaredProspective = new Set(
       current.entry.consumes
         .filter((consume): consume is Extract<VNextBundleReference, { kind: "prospective" }> =>

@@ -1,3 +1,4 @@
+import { promiseReviewFrame, promiseReviewRequest, promiseKnownTo } from "./promise-lifecycle";
 import { timePassageSchedule } from "./due-activities";
 import { timePassagePublicInterruptionReason, timePassageTimelineId } from "./time-passage";
 import { projectWorldFact } from "./world-facts";
@@ -286,17 +287,12 @@ function safeRelationshipFor(relationship: JsonRecord): JsonRecord | undefined {
   };
 }
 
-function safePromiseFor(promise: JsonRecord): JsonRecord | undefined {
+function safePromiseFor(promise: JsonRecord, state: AuthoritativeWorldState, viewerCharacterId: string): JsonRecord | undefined {
   if (![promise.promiseId, promise.promisorId, promise.promiseeId, promise.content]
     .every(isNonEmptyString)) return undefined;
-  return {
-    promiseId: promise.promiseId,
-    promisorId: promise.promisorId,
-    promiseeId: promise.promiseeId,
-    content: promise.content,
-    ...(isNonEmptyString(promise.condition) ? { condition: promise.condition } : {}),
-    ...(isNonEmptyString(promise.status) ? { status: promise.status } : {}),
-  };
+  const known = promiseKnownTo(state, promise, viewerCharacterId);
+  return { promiseId: promise.promiseId, promisorId: promise.promisorId, promiseeId: promise.promiseeId,
+    ...(known ?? { content: promise.content, condition: promise.condition, status: promise.status }) };
 }
 
 function safeDebtFor(debt: JsonRecord): JsonRecord | undefined {
@@ -1283,7 +1279,7 @@ function projectAuthoritative(
       promises: Object.values(state.campaignRuntime.promises)
         .filter((promise) => promise.promisorId === character.id || promise.promiseeId === character.id)
         .flatMap((entry) => {
-          const safe = safePromiseFor(entry);
+          const safe = safePromiseFor(entry, state, character.id);
           return safe === undefined ? [] : [safe];
         }),
       debts: Object.values(state.campaignRuntime.debts)
@@ -1461,6 +1457,14 @@ export function projectWorld(
   }
   if (!isAuthoritativeWorldState(state)) {
     return rejected("invalidWorldState", "Projection requires a canonical V5 WorldState.");
+  }
+  if (query?.promiseReviewFor !== undefined || query?.promiseReviewBatchFor !== undefined) {
+    if (!isKpSpatialViewer(viewerValue) || !((hasExactKeys(query, ["promiseReviewFor"]) && isNonEmptyString(query.promiseReviewFor))
+        || (hasExactKeys(query, ["promiseReviewBatchFor"]) && Array.isArray(query.promiseReviewBatchFor) && query.promiseReviewBatchFor.every(isNonEmptyString))))
+      return rejected("viewerUnauthorized", "Promise review requires the internal authority capability.");
+    const frame = promiseReviewRequest(state, query.promiseReviewBatchFor ?? [query.promiseReviewFor!]) ?? null;
+    return { kind: "projected", promiseReview: frame, projectionHash: canonicalSha256(frame),
+      viewer: { kind: "kp", subjectId: "kp" }, stateVersion: state.version, activeBranchId: state.activeBranchId, runtimeProfiles: profiles };
   }
   if (isRecord(query) && Object.hasOwn(query, "dueActivities")) {
     return projectDueActivities(profiles, state, viewerValue, query);

@@ -236,8 +236,9 @@ it("a plain wait uses one selection, one proposal, and deterministic Activity de
   expect(JSON.stringify(observed)).toContain('"kind":"timePassage"');
   expect(JSON.stringify(observed)).toContain('"endedAtFictionMicros"');
   await evictDurableObject(stub);
-  expect(await run(stub, input, c)).toMatchObject({ kind: "committed" });
+  expect(await run(stub, input, c)).toEqual(result);
   expect((await snapshot(stub)).events).toEqual(after.events); expect(c.playerRequests).toHaveLength(2);
+  expect(c.narration).toHaveLength(1); expect(c.httpCalls[1]).toEqual([]);
   expect(timePassageTelemetry(log.mock.calls)).toEqual(telemetry);
   await runInDurableObject(stub, instance => {
     const target = instance as unknown as Internals, { genesis, state } = target.authoritativeReplay();

@@ -12,6 +12,7 @@ export const CONTEXT_OBLIGATIONS = Object.freeze([
   "actor",
   "target",
   "observableSubject",
+  "npcDecision",
   "sourceRecord",
   "instrument",
   "ability",
@@ -116,7 +117,8 @@ export function closeObligations(input: ObligationClosureInput): ObligationClosu
     // scene into everything standing in it is exactly the wide collection this
     // pipeline replaces; members enter through relations, facts or the
     // player's own reference instead. Visible entity membership is separately
-    // seeded as non-expanding observableSubject by the context owner.
+    // seeded as non-expanding observableSubject by the context owner. Visible
+    // NPC decision records load only their own knowledge, not a world graph.
     if (node?.sceneRef !== undefined && node.sceneRef !== item.ref) {
       if (!enqueue({ ref: node.sceneRef, obligation: "geometry" }, item.ref)) return limited(budget);
     }

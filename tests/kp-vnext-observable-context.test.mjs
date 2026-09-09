@@ -10,7 +10,7 @@ import { authorityRevisionOrHash } from '../app/_runtime/lib/rules/v2/authority-
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { freezeAdjudicationContext } from '../app/_runtime/lib/kp/vnext/context/index.ts';
 import { requiredContextReadBindings } from '../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
-import { npcDecisionEntryRef } from '../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
+import { npcDecisionEntryRef, npcDecisionContext } from '../app/_runtime/lib/kp/vnext/context/npc-decision.ts';
 import { encodeVNextStrictToolBundle } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseSubmitKpProposalBundleCandidateArguments } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { VNEXT_SEMANTIC_TEMPLATES } from '../app/_runtime/lib/rules/profiles/semantic-templates.ts';
@@ -20,7 +20,7 @@ import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal
 const NPC = 'npc:unaddressed-witness', HIDDEN = 'npc:concealed', REMOTE = 'npc:different-scope';
 const held = (characterId, content) => ({ characterId, knowledgeRef: 'knowledge:same',
   kind: 'sourceClaim', layer: 'partial', content, visibility: 'private', provenanceChain: ['genesis:private'] });
-function fixture(label) {
+function fixture(label, focusRefs = []) {
   const f = createAuthoredProbeFixture(`observable:${label}`, {
     npcCharacters: [{ id: NPC, name: '斑尾信使' }, { id: HIDDEN, name: '静默访客' }, { id: REMOTE, name: '远方住客' }],
     initialKnowledge: [held(ACTOR, 'ACTOR_KNOWN'), held(OTHER, 'OTHER_PLAYER_PRIVATE'),
@@ -30,7 +30,7 @@ function fixture(label) {
   state.combatRuntime.entities[HIDDEN].visibilityPolicyId = 'visibility:hidden-until-evidence';
   state.entities[REMOTE].sceneId = 'scene:elsewhere';
   state.combatRuntime.entities[REMOTE].sceneId = 'scene:elsewhere';
-  const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId, focusRefs: [], intentText: '我观察周围在场的人现在各自在做什么。' });
+  const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId, focusRefs, intentText: '我观察周围在场的人现在各自在做什么。' });
   return { ...f, state, requiredContext: frozen.context, coverage: frozen.coverage };
 }
 function observe(subjectRef) {
@@ -51,7 +51,76 @@ function lower(f, subjectRef) {
   return lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
 }
 
-test('generic scene observation freezes visible NPC and player subjects without their private decision closure', () => {
+test('model context separates established world descriptions from technical states without losing frozen data', () => {
+  const f = fixture('presentation', [SOURCE]), before = structuredClone(f.requiredContext);
+  const presented = proposalContext.proposalModelContext(f.requiredContext);
+  const valve = presented.entries.find(entry => entry.entryRef === SOURCE).value;
+  assert.deepEqual(valve.worldDescription, { content: { label: '阀门', description: '生锈阀门发出细微嘶鸣。' } });
+  assert.equal(valve.adjudication.content.observableState, 'ready');
+  assert.deepEqual(valve.adjudication.content.mechanicDefinitionRefs, ['feature:probe-valve']);
+  const feature = presented.entries.find(entry => entry.entryRef === 'feature:probe-valve').value;
+  assert.deepEqual(feature.worldDescription, { feature: { label: '供汽阀门' } });
+  assert.equal(feature.adjudication.feature.kind, 'barrier');
+  assert.deepEqual(feature.adjudication.feature.polygon, f.state.combatRuntime.scenes[SCENE].geometry.obstacles[0].polygon);
+  const npc = presented.entries.find(entry => entry.entryRef === NPC).value;
+  assert.deepEqual(npc.worldDescription, { entity: { name: '斑尾信使' } });
+  assert.ok(npc.adjudication.combat.position);
+  const scene = presented.entries.find(entry => entry.entryRef === SCENE).value;
+  assert.deepEqual(scene.worldDescription, { scene: { name: '蒸汽廊道' } });
+  assert.ok(scene.adjudication.combatScene.geometry);
+  // Description fields move once; recombining the presentation must recover
+  // every exact original value, including mechanics, metadata and unknowns.
+  const restored = presented.entries.map(entry => {
+    if (!entry.value?.worldDescription) return entry;
+    const value = structuredClone(entry.value.adjudication);
+    for (const [key, part] of Object.entries(entry.value.worldDescription)) {
+      value[key] = part && typeof part === 'object' ? { ...value[key], ...part } : part;
+    }
+    assert.ok(Object.isFrozen(entry.value.worldDescription));
+    return { ...entry, value };
+  });
+  assert.deepEqual(restored, before.entries);
+  assert.deepEqual(f.requiredContext, before);
+  assert.equal(presented.contextHash, before.binding.contextHash);
+  for (const ref of [HIDDEN, REMOTE, `knowledge:${NPC}:knowledge:same`, npcDecisionEntryRef(NPC)]) {
+    assert.equal(presented.entries.find(entry => entry.entryRef === ref)?.value?.worldDescription, undefined);
+  }
+  assert.doesNotMatch(JSON.stringify(presented), /OTHER_PLAYER_PRIVATE|HIDDEN_PRIVATE|REMOTE_PRIVATE/);
+});
+
+test('unknown state codes never gain an invented appearance or sound in the model presentation', () => {
+  const f = fixture('opaque-state', [SOURCE]), context = structuredClone(f.requiredContext);
+  const source = context.entries.find(entry => entry.entryRef === SOURCE);
+  source.value.content.label = '木板';
+  source.value.content.description = '眼前是一块木板，表面留有三道划痕。';
+  source.value.content.observableState = 'phase:qx_73';
+  source.value.content.affordances = ['mechanic:can_trigger'];
+  const value = proposalContext.proposalModelContext(context).entries.find(entry => entry.entryRef === SOURCE).value;
+  assert.deepEqual(value.worldDescription, { content: { label: '木板', description: source.value.content.description } });
+  assert.equal(value.adjudication.content.observableState, 'phase:qx_73');
+  assert.deepEqual(value.adjudication.content.affordances, ['mechanic:can_trigger']);
+});
+
+test('faithful visual and auditory paraphrases remain valid through parsing, Rules and viewer knowledge', () => {
+  const f = fixture('paraphrase', [SOURCE]), proposal = observe(SOURCE);
+  const branch = proposal.proposals[0].branches.success;
+  const visual = '阀门表面有锈迹。', auditory = '能听见阀门发出轻微的嘶嘶声。';
+  branch.sensoryEvidence = [
+    { observerRef: ACTOR, subjectRef: SOURCE, sense: 'sight', evidence: visual, basisRefs: [SOURCE] },
+    { observerRef: ACTOR, subjectRef: SOURCE, sense: 'hearing', evidence: auditory, basisRefs: [SOURCE] },
+  ];
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(encodeVNextStrictToolBundle(proposal)));
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
+  const lowered = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle });
+  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+  const result = stepActionToDecision(f.runtime, f.profiles, f.state, lowered.command.rulesInput);
+  assert.equal(result.kind, 'committed', JSON.stringify(result));
+  const view = f.runtime.project(f.profiles, result.state, f.viewer);
+  assert.equal(view.kind, 'projected');
+  for (const text of [visual, auditory]) assert.ok(view.knowledge.some(entry => entry.content === text));
+});
+
+test('visible conversational candidates retain their own decision context without expanding hidden or remote subjects', () => {
   const f = fixture('generic');
   for (const ref of [NPC, OTHER]) {
     const entry = f.requiredContext.entries.find(entry => entry.kind === 'known' && entry.entryRef === ref);
@@ -64,11 +133,38 @@ test('generic scene observation freezes visible NPC and player subjects without 
   const refs = proposalContext.proposalObservationSubjectRefs(f.requiredContext);
   for (const ref of [ACTOR, NPC, OTHER, SCENE]) assert.ok(refs.includes(ref), ref);
   for (const ref of [HIDDEN, REMOTE, 'knowledge:same', `knowledge:${ACTOR}:knowledge:same`]) assert.ok(!refs.includes(ref), ref);
-  assert.equal(f.requiredContext.entries.some(entry => entry.entryRef === npcDecisionEntryRef(NPC)), false);
-  assert.doesNotMatch(JSON.stringify(f.requiredContext.entries), /OTHER_PLAYER_PRIVATE|NPC_PRIVATE|HIDDEN_PRIVATE|REMOTE_PRIVATE/);
+  const decision = npcDecisionContext(f.requiredContext.entries, NPC);
+  assert.ok(decision, 'a natural-language reference need not match the exact display name');
+  assert.deepEqual(decision.knowledge.map(entry => entry.entryRef), [`knowledge:${NPC}:knowledge:same`]);
+  assert.doesNotMatch(JSON.stringify(f.requiredContext.entries), /OTHER_PLAYER_PRIVATE|HIDDEN_PRIVATE|REMOTE_PRIVATE/);
+  for (const ref of [HIDDEN, REMOTE]) assert.equal(npcDecisionContext(f.requiredContext.entries, ref), undefined);
   assert.ok(f.coverage.obligations.some(item => item.obligation === 'observableSubject' && item.resolved));
   assert.deepEqual(proposalContext.proposalModelContext(f.requiredContext).references.observationSubjectRefs, refs);
   assert.ok(Object.isFrozen(refs));
+});
+
+test('unnamed and differently written NPC references have the same finite source choices as a named conversation', () => {
+  const f = fixture('natural-conversation');
+  for (const text of ['我问他知道这件事吗。', '我问unaddressed-witness知道这件事吗。', '我问斑尾信使知道这件事吗。']) {
+    const frozen = freezeAuthoredProbeContext(f, f.state, { focusRefs: [], intentText: text });
+    const decision = npcDecisionContext(frozen.context.entries, NPC);
+    assert.ok(decision, text);
+    const bodies = decision.knowledge.map(ref => frozen.context.entries.find(entry => entry.entryRef === ref.entryRef));
+    assert.match(JSON.stringify(bodies), /NPC_PRIVATE/);
+    assert.doesNotMatch(JSON.stringify({ decision, bodies }), /OTHER_PLAYER_PRIVATE|HIDDEN_PRIVATE|REMOTE_PRIVATE|ACTOR_KNOWN/);
+  }
+});
+
+test('an oversized optional NPC knowledge body blocks its speech context while physical observation remains usable', () => {
+  const f = fixture('large-npc-history'), state = structuredClone(f.state);
+  state.knowledge[NPC]['knowledge:same'].content = 'x'.repeat(70_000);
+  const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId,
+    focusRefs: [], intentText: '我看看眼前的人。' });
+  assert.equal(npcDecisionContext(frozen.context.entries, NPC), undefined);
+  assert.equal(frozen.context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).reason, 'notLoaded');
+  const lowered = lower({ ...f, state, requiredContext: frozen.context }, NPC);
+  assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
+  assert.equal(stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput).kind, 'committed');
 });
 
 test('different observed entity kinds follow the same parser, lowering, Rules and player projection path', () => {

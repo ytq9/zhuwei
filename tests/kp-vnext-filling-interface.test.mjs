@@ -11,10 +11,11 @@ import { validateVNextProposalBundle } from '../app/_runtime/lib/kp/vnext/propos
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from '../app/_runtime/lib/rules/profiles/semantic-templates.ts';
-import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
+import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
 import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
 import { itemBundle, hazardBundle } from './fixtures/vnext-authored-bundles.mjs';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
+import { socialResultArgumentDiagnostics } from '../app/_runtime/lib/kp/vnext/proposal-filling-interface.ts';
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const parsed = wire => parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(wire));
@@ -65,6 +66,106 @@ const families = () => [sharedCheckBundle('observe'), sharedCheckBundle('worldIn
   worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story' }),
   worldFactSocialBundle({ sceneRef: 'scene:other', npcRef: 'npc:second', check: true,
     description: '他曾经向乡里的木匠学习修理椅子。', response: '我以前帮木匠修理过椅子。' })];
+
+const socialTables = ['relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts'];
+const socialKinds = ['relationship', 'promise', 'promiseChange', 'debt'];
+function socialTableBundle(checked = false) {
+  const source = worldFactSocialBundle({ sceneRef: 'scene:shared', npcRef: 'npc:story', check: checked });
+  const terms = { kind: 'ongoing', subjectRefs: ['npc:story'], delivery: null, parts: [], activation: null };
+  // Deliberately interleaved internal fixtures; the model tables preserve each
+  // kind's subsequence and assemble kinds in the one documented order.
+  source.proposals[1].branches.success.consequences = [
+    { kind: 'debt', obligation: '归还借用的工具。', condition: '使用后归还。', basisFactRefs: ['fact:loan'] },
+    { kind: 'promise', content: '我会保守这件事。', condition: '立即生效。', promisor: 'npc', promiseeRef: 'character:player',
+      authorityRefs: ['npc:story'], due: '1h', terms, nextStep: null },
+    { kind: 'relationship', relationshipRef: null, change: '愿意继续听取解释。', basisFactRefs: [] },
+    { kind: 'promiseChange', promiseRef: 'continuity:promises:earlier', revision: '1', expressionSource: 'npc',
+      expressionQuote: '我申请延后原约的时间。', disclose: true, change: { kind: 'amend', accepted: true, reason: '依据现有约定同意延期。',
+        content: '继续保密。', condition: '立即生效。', terms, deadlineFictionMicros: '7200000000', releasedParts: [], remaining: true } },
+    { kind: 'promise', content: '我会尊重这次约定。', condition: '立即生效。', promisor: 'npc', promiseeRef: 'character:player',
+      authorityRefs: ['npc:story'], due: '1h', terms, nextStep: null },
+  ];
+  return source;
+}
+
+test('four social tables preserve every typed record, explicit empties and checked or clarification branches', () => {
+  for (const checked of [false, true]) for (const nested of [false, true]) {
+    const source = socialTableBundle(checked), wire = wireFor(nested ? clarification(source) : source);
+    const plans = nested ? wire.decision.choices.map(choice => choice.continuation) : [wire];
+    for (const plan of plans) {
+      plan.results.reverse(); // The decoder uses step/branch, not table order.
+      const success = row(plan, 1, checked ? 'success' : 'result');
+      assert.equal('consequences' in success, false);
+      assert.deepEqual(socialTables.map(field => success[field].length), [1, 2, 1, 1]);
+      for (const field of socialTables) assert.ok(success[field].every(record => !Object.hasOwn(record, 'kind')));
+      if (checked) for (const field of socialTables) assert.deepEqual(row(plan, 1, 'failure')[field], []);
+    }
+    assert.equal(matchesAuthoredSourceSchema(wire, expandDeepSeekSchema(SUBMIT_KP_PROPOSAL_BUNDLE_SCHEMA)), true);
+    const result = parsed(wire); assert.equal(result.kind, 'accepted', JSON.stringify(result));
+    for (const plan of nested ? result.bundle.terminal.choices.map(choice => choice.continuation) : [result.bundle]) {
+      const original = source.proposals[1].branches.success;
+      assert.deepEqual(plan.proposals[1].branches.success.consequences,
+        socialKinds.flatMap(kind => original.consequences.filter(record => record.kind === kind)));
+      assert.deepEqual(plan.proposals[1].branches.success.response, original.response);
+      if (checked) assert.deepEqual(plan.proposals[1].branches.failure.consequences, []);
+    }
+  }
+});
+
+test('each social table must be explicit and typed; mixed legacy records never get silently dropped or repaired', async () => {
+  const original = wireFor(socialTableBundle());
+  for (const field of socialTables) {
+    const missing = clone(original); delete row(missing, 1, 'result')[field];
+    diagnosticAt(missing, ['results', 0, field], 'FIELD_MISSING', 'arguments');
+    await refusesBeforeRepair(missing);
+    const wrongType = clone(original); row(wrongType, 1, 'result')[field] = {};
+    diagnosticAt(wrongType, ['results', 0, field], 'TYPE_MISMATCH', 'arguments');
+    const wrongRow = clone(original); row(wrongRow, 1, 'result')[field] = [null];
+    diagnosticAt(wrongRow, ['results', 0, field, 0], 'TYPE_MISMATCH', 'arguments');
+    const tagged = clone(original); row(tagged, 1, 'result')[field][0].kind = 'debt';
+    diagnosticAt(tagged, ['results', 0, field, 0, 'kind'], 'CONSTRAINT_CONFLICT', 'arguments');
+    await refusesBeforeRepair(tagged);
+  }
+  const legacy = clone(original); row(legacy, 1, 'result').consequences = [];
+  diagnosticAt(legacy, ['results', 0, 'consequences'], 'CONSTRAINT_CONFLICT', 'arguments');
+  await refusesBeforeRepair(legacy);
+  const crossed = clone(original); row(crossed, 1, 'result').newPromises = row(crossed, 1, 'result').newDebts;
+  assert.ok(diagnostics(crossed).some(d => d.pathBase === 'arguments' && d.path[2] === 'newPromises'));
+  await refusesBeforeRepair(crossed);
+  const colliding = socialTableBundle(); colliding.proposals[1].branches.success.newPromises = [];
+  assert.throws(() => wireFor(colliding), /PROPOSAL_RESULT_INTERNAL_FIELD_COLLISION/);
+  const unknown = socialTableBundle(); unknown.proposals[1].branches.success.consequences[0].kind = 'unknown';
+  assert.throws(() => wireFor(unknown), /PROPOSAL_SOCIAL_CONSEQUENCE_KIND_UNAVAILABLE/);
+  const incomplete = socialTableBundle(); delete incomplete.proposals[1].branches.success.consequences;
+  assert.ok(diagnostics(wireFor(incomplete)).length > 0);
+});
+
+test('social table diagnostics locate the submitted row and its local index after grouping, reordering and recovery', async () => {
+  for (const nested of [false, true]) {
+    const source = socialTableBundle(true), wire = wireFor(nested ? clarification(source) : source);
+    const plan = nested ? wire.decision.choices[1].continuation : wire;
+    const prefix = nested ? ['decision', 'choices', 1, 'continuation'] : [];
+    plan.results.reverse();
+    row(plan, 1, 'success').newPromises[1].authorityRefs = [];
+    const detail = diagnosticAt(wire, [...prefix, 'results', 1, 'newPromises', 1, 'authorityRefs'], 'VALUE_INVALID', 'arguments');
+    assert.equal(detail.repair.allowed, false);
+    const replayed = parsed(JSON.parse(JSON.stringify(wire)));
+    assert.deepEqual(replayed.diagnostics, parsed(wire).diagnostics);
+    const canonical = validateVNextProposalBundle(replayed.draft).diagnostics;
+    // An internal consumer without the original table order must retain the
+    // canonical path instead of guessing the row that the model submitted.
+    const consequenceDiagnostics = canonical.filter(d => d.path?.includes('consequences'));
+    assert.ok(consequenceDiagnostics.length > 0);
+    assert.deepEqual(socialResultArgumentDiagnostics(replayed.draft, consequenceDiagnostics), consequenceDiagnostics);
+    assert.deepEqual(socialResultArgumentDiagnostics(replayed.draft, consequenceDiagnostics, wire), replayed.diagnostics);
+    await refusesBeforeRepair(wire);
+  }
+  const overloaded = wireFor(socialTableBundle());
+  const result = row(overloaded, 1, 'result');
+  result.newPromises = Array.from({ length: 14 }, () => clone(result.newPromises[0]));
+  diagnosticAt(overloaded, ['results', 0], 'VALUE_INVALID', 'arguments');
+  await refusesBeforeRepair(overloaded);
+});
 
 test('one explicit result list assembles world and observation collections without changing their contents or ruling', () => {
   for (const kind of ['worldInteraction', 'observe']) {
@@ -131,7 +232,7 @@ test('the advertised decision interface is three flat tables: ruling, steps with
     const plan = schema.properties.decision.anyOf.find(value => value.properties.kind.enum.includes(kind));
     assert.ok(plan); assert.equal('steps' in plan.properties, false);
   }
-  for (const step of schema.properties.steps.items.anyOf) {
+  for (const step of schemaVariants(schema.properties.steps.items)) {
     assert.equal(step.additionalProperties, false);
     assert.deepEqual(step.required, Object.keys(step.properties).sort());
     for (const name of ['consumes', 'produces', 'templateHash', 'communication', 'branches', 'result', 'success', 'failure']) assert.equal(name in step.properties, false);
@@ -143,7 +244,7 @@ test('the advertised decision interface is three flat tables: ruling, steps with
       assert.equal('targetRefs' in step.properties, false);
     }
   }
-  const rows = schema.properties.results.items.anyOf;
+  const rows = schemaVariants(schema.properties.results.items);
   assert.deepEqual(rows.map(row => row.properties.kind.enum[0]).sort(), ['observe', 'social', 'worldInteraction']);
   for (const row of rows) {
     assert.equal(row.additionalProperties, false);
@@ -151,8 +252,17 @@ test('the advertised decision interface is three flat tables: ruling, steps with
     assert.equal(row.properties.step.type, 'integer');
     assert.deepEqual(row.properties.branch.enum, ['result', 'success', 'failure']);
     if (row.properties.kind.enum[0] === 'social') {
-      for (const name of ['responseKind', 'responseText', 'responseMotive', 'responseBasis', 'consequences']) assert.ok(name in row.properties, name);
+      for (const name of ['responseKind', 'responseText', 'responseMotive', 'responseBasis', 'relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts']) assert.ok(name in row.properties, name);
       assert.equal('response' in row.properties, false);
+      assert.equal('consequences' in row.properties, false);
+      for (const field of ['relationshipChanges', 'newPromises', 'promiseChanges', 'newDebts']) {
+        const table = row.properties[field];
+        assert.equal(table.type, 'array');
+        assert.equal(table.items.type, 'object');
+        assert.equal(table.items.additionalProperties, false);
+        assert.deepEqual(table.items.required, Object.keys(table.items.properties).sort());
+        assert.equal('kind' in table.items.properties, false);
+      }
     } else {
       assert.ok('entries' in row.properties);
     }
@@ -160,7 +270,7 @@ test('the advertised decision interface is three flat tables: ruling, steps with
   // A selection without any result-producing step still carries the table, with a row shape no row can take.
   const timerOnly = expandDeepSeekSchema(createVNextProposalBundleSchema(['formActorPlan']));
   assert.deepEqual(Object.keys(timerOnly.properties), ['decision', 'steps', 'results']);
-  assert.deepEqual(timerOnly.properties.results.items.anyOf.map(row => row.properties.kind.enum[0]), ['none']);
+  assert.deepEqual(schemaVariants(timerOnly.properties.results.items).map(row => row.properties.kind.enum[0]), ['none']);
 });
 
 test('different item, hazard, knowledge and interaction families use the same codec and full validator including continuations', () => {
@@ -197,6 +307,24 @@ test('direct results acquire no failure while a check preserves its unique owner
   const duplicate = clone(checked); duplicate.steps[0] = clone(duplicate.steps[1]);
   dropRow(duplicate, 0, 'result'); duplicate.results.push(...duplicate.results.filter(entry => entry.step === 1).map(entry => ({ ...clone(entry), step: 0 })));
   assert.ok(diagnostics(duplicate).some(value => value.code === 'CONSTRAINT_CONFLICT'));
+});
+
+test('inventory operations use their own operation payload and never acquire a parallel result row', async () => {
+  const full = itemBundle(), wire = wireFor(full);
+  assert.deepEqual(wire.results, []);
+  assert.equal(parsed(wire).kind, 'accepted');
+  const index = wire.steps.findIndex(step => step.kind === 'inventoryOperation');
+  const invalid = clone(wire);
+  invalid.results.push({ kind: 'inventoryOperation', step: index, branch: 'result',
+    outcomeCode: 'acquired', summary: 'The item is now held.', consequences: [] });
+  const detail = diagnosticAt(invalid, ['results', 0, 'kind'], 'CONSTRAINT_CONFLICT', 'arguments');
+  assert.equal(detail.constraint, 'filling:result-not-supported-by-type');
+  await refusesBeforeRepair(invalid);
+  // Deleting the bad row alone must not bless the undeclared item handle
+  // seen in the screenshot. A producer is still required in this bundle.
+  const orphan = clone(wire);
+  orphan.steps = [orphan.steps[index]];
+  assert.equal(parsed(orphan).kind, 'locallyRejected');
 });
 
 test('server derives typed producer declarations, prospective dependencies, public source union and exact catalog hashes', () => {

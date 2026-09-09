@@ -297,6 +297,7 @@ export type StoredReceipt = PublicReceipt & {
 };
 
 export type CorrectionEffect =
+  | { kind: "truncatePromiseEvidence"; promiseId: string; beforeLength: number }
   | { kind: "removeFrozenChoiceRoot"; rootActionId: string }
   | { kind: "restoreFictionTime"; timelineId: string; beforeMicros: string }
   | { kind: "restoreScene"; sceneId: string; before: SceneRecord | null }
@@ -885,7 +886,7 @@ export type EventPayloadByType = {
   ItemUniquenessBound: ItemUniquenessBoundPayload;
   ItemIdentified: ItemIdentifiedPayload;
   AuthoredMaterializationResolved: {
-    actorCharacterId:string;contextHash:Sha256Ref;kind:"abilityDefinition"|"hazardDefinition"|"itemDefinition"|"itemEntry";ref:string;summary:string;
+    actorCharacterId:string;contextHash:Sha256Ref;kind:"abilityDefinition"|"hazardDefinition"|"itemDefinition"|"itemEntry";ref:string;summary:string;sourceRefs?:string[];
   };
   WorldInteractionFeasibilityRuled: WorldInteractionFeasibilityRuledPayload;
   EnvironmentFeatureMaterialized: {
@@ -1474,6 +1475,13 @@ export type EventPayloadByType = {
   RelationshipChanged: { relationshipId: string; subjectIds: string[]; change: string; basisFactIds: string[] };
   RelationshipEstablished: { relationshipId: string; sourceRelationshipId: string; subjectIds: string[]; value: string; basisFactIds: string[]; sourceFactId: string; authorizationId: string };
   PromiseMade: { promiseId: string; promisorId: string; promiseeId: string; content: string; condition: string };
+  PromiseTermsEstablished: { promiseId: string; originalExpressionRef: string; terms: import("./promise-lifecycle").PromiseTerms;
+    timelineId: string; fromFictionMicros: string; deadlineFictionMicros: string | null };
+  PromiseReviewed: { promiseId: string; frameHash: Sha256Ref; judgment: import("./promise-lifecycle").PromiseJudgment };
+  PromiseChanged: { promiseId: string; revision: string; expressionRef: string; change: import("./promise-lifecycle").PromiseChange };
+  NpcWorkProposed: { planId: string; promiseId: string; npcId: string; nextStep: string };
+  NpcWorkDecision: { planId: string; planHash: Sha256Ref; decision: import("./npc-work").NpcWorkDecision };
+  NpcWorkStarted: { planId: string; planHash: Sha256Ref };
   PromiseAssumed: { promiseId: string; sourcePromiseId: string; promisorId: string; promiseeId: string; content: string; condition: string; sourceFactId: string; authorizationId: string };
   DebtIncurred: { debtId: string; debtorId: string; creditorId: string; obligation: string; condition: string; basisFactIds: string[] };
   DebtAssumed: { debtId: string; sourceDebtId: string; debtorId: string; creditorId: string; obligation: string; condition: string; basisFactIds: string[]; sourceFactId: string; authorizationId: string };
@@ -1722,6 +1730,8 @@ export type ObserverIncrementalDelta = {
 };
 
 export type ProjectionQuery = {
+  promiseReviewFor?: string;
+  promiseReviewBatchFor?: string[];
   channel?: "realtime" | "history" | "reconnect" | "error" | "candidates" | "voice" | "transcript";
   referenceId?: string;
   observedAtUnixMs?: string;
@@ -1947,13 +1957,7 @@ export type DueActorPlanReadModel =
       dueActorPlanChildRootActionId: null;
     };
 
-export type DueActivityDescriptor = {
-  activityProgress?: { phase: "advance" | "attention" | "complete"; completion: "activity" | "action"; fromFictionMicros: string; toFictionMicros: string };
-  timePassage?: { phase: "advance" | "interrupt" | "blocked"; fromFictionMicros: string; toFictionMicros: string };
-  longSpellcasting?: { phase: "advance" | "blocked" | "complete"; fromFictionMicros: string; toFictionMicros: string };
-  /** A specialized completion shares the same durable obligation queue. */
-  actorPlan?: { planId: string; revision: string; planHash: Sha256Ref };
-  activityId: string;
+type DueWorkIdentity = {
   ownerEntityId: string;
   timelineId: string;
   completionFictionMicros: string;
@@ -1961,6 +1965,31 @@ export type DueActivityDescriptor = {
   activityHash: Sha256Ref;
   sceneIds: string[];
 };
+
+export type ActivityDueDescriptor = DueWorkIdentity & {
+  activityId: string;
+  npcWork?: never;
+  promiseReview?: never;
+  activityProgress?: { phase: "advance" | "attention" | "complete"; completion: "activity" | "action"; fromFictionMicros: string; toFictionMicros: string };
+  timePassage?: { phase: "advance" | "interrupt" | "blocked"; fromFictionMicros: string; toFictionMicros: string };
+  longSpellcasting?: { phase: "advance" | "blocked" | "complete"; fromFictionMicros: string; toFictionMicros: string };
+  /** A specialized completion shares the same durable obligation queue. */
+  actorPlan?: { planId: string; revision: string; planHash: Sha256Ref };
+};
+
+type DecisionDueDescriptor = DueWorkIdentity & {
+  activityId: null;
+  activityProgress?: never;
+  timePassage?: never;
+  longSpellcasting?: never;
+  actorPlan?: never;
+};
+
+/** Private decisions have a real queue identity and cannot masquerade as an Activity. */
+export type DueActivityDescriptor = ActivityDueDescriptor | (DecisionDueDescriptor & (
+  | { npcWork: { planId: string; planHash: Sha256Ref }; promiseReview?: never }
+  | { promiseReview: { promiseId: string; revision: string; frameHash: Sha256Ref; promiseIds?: string[] }; npcWork?: never }
+));
 
 export type DueActivitiesReadModel = {
   kind: "projected";
@@ -1973,6 +2002,8 @@ export type DueActivitiesReadModel = {
 };
 
 export type ProjectionResult =
+  | { kind: "projected"; promiseReview: import("./promise-lifecycle").PromiseReviewRequest | null; projectionHash: Sha256Ref;
+      viewer: { kind: "kp"; subjectId: "kp" }; stateVersion: string; activeBranchId: string; runtimeProfiles: RuntimeProfileManifest }
   | SafeReadModel
   | LifecycleReadModel
   | KpSpatialReadModel

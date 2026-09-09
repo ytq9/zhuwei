@@ -1,4 +1,4 @@
-import { ProposalFillingError, socialSourceArgumentDiagnostics, proposalIntentEchoArgumentDiagnostics, proposalDecisionFieldArgumentPath } from "./proposal-filling-interface";
+import { ProposalFillingError, socialResultArgumentDiagnostics, proposalIntentEchoArgumentDiagnostics, proposalDecisionFieldArgumentPath } from "./proposal-filling-interface";
 import { diagnosticsFromIssues, proposalDiagnostic, diagnosticActual, type ProposalDiagnostic } from "./proposal-diagnostics";
 import type { AuthoritativeModelBinding } from "../authoritative-types";
 import {
@@ -40,12 +40,14 @@ import {
   vnextProposalRepairPlan, vnextProposalRepairDiagnostics, type VNextProposalRepair,
 } from "./proposal-correction";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalCreatureTargetRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices } from "./proposal-context";
+import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalModelContext } from "./proposal-context";
+import { VNEXT_PROPOSAL_GUIDANCE_POLICY } from "./proposal-guidance";
 
 /** The canonical repair proof is unchanged; source diagnostics retain the
  * model's exact choice location after the representation transform. */
 export function vnextProposalModelRepairDiagnostics(...args: Parameters<typeof vnextProposalRepairDiagnostics>) {
-  return proposalIntentEchoArgumentDiagnostics(args[0], socialSourceArgumentDiagnostics(args[0], vnextProposalRepairDiagnostics(...args)));
+  const raw = args[3] === undefined ? undefined : readProposalArguments(args[3], SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME).raw;
+  return proposalIntentEchoArgumentDiagnostics(args[0], socialResultArgumentDiagnostics(args[0], vnextProposalRepairDiagnostics(...args), raw));
 }
 import { validateVNextProposalBundle } from "./proposal-validator";
 import { requiredContextBasisReferences } from "./required-context-runtime";
@@ -53,13 +55,14 @@ import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_PROP
   UnknownVNextProposalCapabilityError, vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 
 export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
-  version: "kp-vnext2-proposal-parser-v51",
-  fillingLayout: "three-flat-tables-decision-steps-results-social-response-flattened-continuations-same-tables-v2",
+  version: "kp-vnext2-proposal-parser-v56",
+  fillingLayout: "three-flat-tables-decision-steps-results-social-four-typed-tables-continuations-same-tables-v3",
+  socialResults: "required-relationshipChanges-newPromises-promiseChanges-newDebts-explicit-empty-arrays-no-mixed-consequences-v1",
   responseBasis: "closed-enum-on-a-plain-array-item-player-expression-as-a-member-anyof-only-with-a-producer-v1",
   offerToolName: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   schemaRetrieval: "full-filling-boundaries-at-selection-then-selected-forms-amendable-once-v5",
   actionDuration: "shared-ruling-duration-tier-none-5min-10min-30min-1h-halfDay-mapped-to-exact-microseconds-none-inside-encounter-v3",
-  promiseDue: "social-promise-due-tier-none-1h-halfDay-day-nextDawn-with-trace-derives-npc-plan-in-same-root-v1",
+  promiseDue: "independent-obligation-deadline-bound-delivery-and-identity-action-promises-queue-deliberation-v3",
   toolName: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   bundleSchema: VNEXT2_PROPOSAL_BUNDLE_SCHEMA,
   correctionToolName: CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -70,9 +73,9 @@ export const VNEXT_PROPOSAL_BUNDLE_PARSER_CONTRACT = Object.freeze({
   rejectsDuplicateJsonMembersAtEveryDepth: true,
   injectsBundleAndCorrectionEnvelopes: true,
   localValidation: "closed-domain-typed-authored-canonical-time-passage-and-npc-plans-v6",
-  referenceSelection: "frozen-authorized-read-bound-basis-and-classed-visible-subjects-v3",
+  referenceSelection: "frozen-authorized-read-bound-basis-classed-subjects-and-item-definitions-v4",
   correctionPolicy: "server-proven-plan-confirmation-exact-number-and-frozen-intent-echo-once-v9",
-  unparsedOutputPolicy: "journal-proved-single-reemit-of-the-same-question-no-server-content-empty-object-is-no-draft-v2",
+  unparsedOutputPolicy: "journal-proved-single-reemit-with-exact-frozen-model-context-empty-object-is-no-draft-v3",
   correctionResponseProtocol: VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL,
 });
 
@@ -365,7 +368,7 @@ function candidateForArguments(raw: unknown, syntaxEvidence?: VNextProposalSynta
       : validated.kind === "rejected" ? validated.code : "PROPOSAL_WIRE_INVALID",
     diagnostics: [
       ...(syntaxEvidence === undefined ? [] : [syntaxDiagnostic(completeJsonObjectSyntaxEvidence(syntaxEvidence.originalArguments).diagnostic)]),
-      ...(validated.kind === "rejected" ? socialSourceArgumentDiagnostics(draft, validated.diagnostics ?? diagnosticsFromIssues(validated.code, validated.issues)) : []),
+      ...(validated.kind === "rejected" ? socialResultArgumentDiagnostics(draft, validated.diagnostics ?? diagnosticsFromIssues(validated.code, validated.issues), raw) : []),
     ],
     issues: [...(syntaxEvidence === undefined ? [] : [completeJsonObjectSyntaxEvidence(syntaxEvidence.originalArguments).issue]),
       ...(validated.kind === "rejected" ? validated.issues : [])],
@@ -437,19 +440,23 @@ export function vnextProposalUnparsedArguments(response: unknown): VNextProposal
 
 /** Both the Provider and Room bind this exact private body to the same saved
  * unparsed response. The server states only where the bytes stopped being JSON;
- * it never restates, guesses or repairs the decision, and the re-emitted draft
- * is validated from scratch like any first draft. */
+ * it never guesses or repairs the decision. Every call is stateless, so it
+ * also carries the same frozen model context, including the original intent.
+ * The re-emitted draft is validated from scratch like any first draft. */
 /** The constraint naming arguments that were exactly an empty object. */
 export const EMPTY_ARGUMENTS_CONSTRAINT = "json:empty-arguments" as const;
 
-export function vnextProposalReemitPrompt(evidence: VNextProposalUnparsedArguments): string {
+export function vnextProposalReemitPrompt(evidence: VNextProposalUnparsedArguments,
+  requiredContext: VNextRequiredContext): string {
   if (evidence.diagnostic.constraint === EMPTY_ARGUMENTS_CONSTRAINT) return JSON.stringify({
-    instruction: "上一次工具调用的 arguments 是一个空对象 {}，没有任何字段，服务器没有得到任何草稿，因此没有任何内容被保留或修复。请用同一个工具、同一份冻结上下文，重新完整提交你原本的决定：decision、steps、results 三个字段都要填，输出必须是合法 JSON。这不是让你改变裁决——重述你本来的决定，不要因为这次失败而换一个更容易写的方案。完整提案仍会从头重验。",
+    requiredContext: proposalModelContext(requiredContext),
+    instruction: VNEXT_PROPOSAL_GUIDANCE_POLICY.recoveryInstructions.emptyArguments,
     syntaxError: { reason: evidence.diagnostic.constraint },
     originalArguments: evidence.originalArguments,
   });
   return JSON.stringify({
-    instruction: "上一次工具调用的 arguments 不是合法 JSON，服务器无法解析出任何草稿，因此没有任何内容被保留或修复。请用同一个工具、同一份冻结上下文，重新完整提交你原本的决定，只需保证输出是合法 JSON：字符串内部的双引号和反斜杠必须转义，不要使用尾随逗号，不要截断；括号必须成对，每个 { 和 [ 恰好对应一个 } 和 ]，结尾不要多出或漏掉 ] 或 }（syntaxError.location 指出上一次出错的位置）。这不是让你改变裁决——重述你本来的决定，不要因为这次失败而换一个更容易写的方案。完整提案仍会从头重验。",
+    requiredContext: proposalModelContext(requiredContext),
+    instruction: VNEXT_PROPOSAL_GUIDANCE_POLICY.recoveryInstructions.unparsedArguments,
     syntaxError: { reason: evidence.diagnostic.constraint, ...(evidence.diagnostic.location === undefined ? {} : { location: evidence.diagnostic.location }) },
     originalArguments: evidence.originalArguments,
   });
@@ -618,7 +625,7 @@ export async function invokeSubmitKpProposalBundleFirstPass(
   const capabilities = closeVNextProposalCapabilities(input.capabilities ?? VNEXT_PROPOSAL_CAPABILITY_IDS);
   const response = await input.binding.run(
     input.modelId,
-    createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext), proposalCreatureTargetRefs(requiredContext), input.amendable === true),
+    createSubmitKpProposalBundleModelInput(input.message, capabilities, proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds, proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext), proposalCreatureTargetRefs(requiredContext), input.amendable === true, proposalItemDefinitionRefs(requiredContext)),
     runOptions,
   );
   if (input.amendable === true) {
@@ -664,7 +671,9 @@ function firstPassForCandidate(candidate: VNextProposalBundleCandidate, required
     })]);
   if (allowedPaths.length === 0 && !((candidate.syntaxEvidence !== undefined)
     && validateVNextProposalBundle(candidate.draft).kind === "accepted")) {
-    const diagnostics = [...new Map(proposalIntentEchoArgumentDiagnostics(candidate.draft, socialSourceArgumentDiagnostics(candidate.draft, [...candidate.diagnostics, ...proofDiagnostics]))
+    const raw = candidate.originalArguments === undefined ? undefined
+      : readProposalArguments(candidate.originalArguments, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME).raw;
+    const diagnostics = [...new Map(proposalIntentEchoArgumentDiagnostics(candidate.draft, socialResultArgumentDiagnostics(candidate.draft, [...candidate.diagnostics, ...proofDiagnostics], raw))
       .map(detail => [canonicalHash(detail), detail])).values()];
     return providerRejected(
       "PROPOSAL_FORM_INVALID",
@@ -766,7 +775,7 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
 export function vnextProposalCorrectionPrompt(candidate: VNextProposalBundleRepairTicket): string {
   return JSON.stringify({
     responseProtocol: VNEXT_PROPOSAL_PLAN_CONFIRMATION_PROTOCOL,
-    instruction: "审核当前冻结草稿、diagnostics、repairPlan及表示证据后，用confirm:'server-plan'明确同意本请求的完整固定修复计划。服务器按同一已重证计划执行所有固定value字段修复及已证明的remove删除，并确认syntaxEvidence，不要求你复制path/value。summaries必须完整且只包含summaryPaths中的每个路径一次；没有自由摘要时填[]。摘要只表达原稿中已有操作，不新增事实、裁决、目标、DC、成本、后果或玩家决定；结构校验不证明自由摘要文字的语义。不得返回changes、固定patch、新Proposal或schema请求。原草稿、冻结上下文和全部裁决保持绑定，完整提案仍会从头重验。",
+    instruction: VNEXT_PROPOSAL_GUIDANCE_POLICY.recoveryInstructions.correction,
     summaryPaths: candidate.repairPlan.filter(change => change.operation !== "remove" && !Object.hasOwn(change, "value")).map(change => change.path),
     baseBundleHash: candidate.bundleHash,
     contextHash: candidate.contextHash,
@@ -804,10 +813,10 @@ export async function invokeReemitKpProposalBundle(
   const capabilities = closeVNextProposalCapabilities(input.capabilities ?? VNEXT_PROPOSAL_CAPABILITY_IDS);
   const response = await input.binding.run(
     input.modelId,
-    createSubmitKpProposalBundleModelInput(vnextProposalReemitPrompt(input.unparsed), capabilities,
+    createSubmitKpProposalBundleModelInput(vnextProposalReemitPrompt(input.unparsed, requiredContext), capabilities,
       proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), input.terminalKinds,
       proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext),
-      proposalCreatureTargetRefs(requiredContext)),
+      proposalCreatureTargetRefs(requiredContext), false, proposalItemDefinitionRefs(requiredContext)),
     input.signal === undefined ? undefined : { signal: input.signal },
   );
   let candidate: VNextProposalBundleCandidate;
