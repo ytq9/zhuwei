@@ -975,11 +975,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     }
     // Safety stops fictional progression. Keep the work durable and re-arm it
     // when the pause is cleared; scheduling an already-due deadline would spin.
-    // Boot-time housekeeping must remain available when a room's interpreter
-    // has been retired. This snapshot is saved atomically with its events.
-    const room = this.authorityStore.room();
-    const dueAlarmAt = room !== undefined
-      && hasActiveSafetyPause(parseJson<AuthoritativeWorldState>(room.state_json))
+    const dueAlarmAt = this.authorityStore.room() !== undefined
+      && hasActiveSafetyPause(this.authoritativeReplay().state)
       ? null : this.authorityStore.dueWorkAlarmAt();
     const candidates = [this.authorityStore.archiveAlarmAt(), dueAlarmAt]
       .filter((value): value is number => value !== null);
@@ -2590,15 +2587,10 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private deletionHost(
     context: unknown,
+    replay: AuthorityReplay,
   ): AuthenticatedAuthorityViewer | undefined {
-    const room = this.authorityStore.room();
-    if (room === undefined) return undefined;
-    // Deletion is a lifecycle operation. Authenticate against the same
-    // committed Room snapshot even when its gameplay runtime is unavailable.
-    const state = parseJson<AuthoritativeWorldState>(room.state_json);
-    if (state.roomId !== room.room_id) return undefined;
-    const authenticated = this.authenticatedAuthorityViewer(context, state);
-    return authenticated?.principalId === state.multiplayerRuntime.hostPrincipalId
+    const authenticated = this.authenticatedAuthorityViewer(context, replay.state);
+    return authenticated?.principalId === replay.state.multiplayerRuntime.hostPrincipalId
       ? authenticated
       : undefined;
   }
@@ -2683,11 +2675,11 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (this.authorityArchiveFlight !== undefined) {
       await this.authorityArchiveFlight.catch(() => undefined);
     }
-    const room = this.authorityStore.room();
-    if (room === undefined) {
+    if (this.authorityStore.room() === undefined) {
       return rejectedAuthority("roomUninitialized", "The authoritative room is not initialized.");
     }
-    const host = this.deletionHost(context);
+    const replay = this.authoritativeReplay();
+    const host = this.deletionHost(context, replay);
     if (host === undefined) {
       return rejectedAuthority(
         "roomDeletionUnauthorized",
@@ -2697,7 +2689,7 @@ export class RoomDurableObject extends DurableObject<Env> {
     const outcome = this.authorityStore.transaction(() => {
       const existing = this.authorityStore.roomDeletion();
       if (existing !== undefined) {
-        return existing.room_id === room.room_id
+        return existing.room_id === replay.state.roomId
           && existing.principal_id === host.principalId
           ? {
               kind: "deletionPrepared" as const,
@@ -2710,13 +2702,13 @@ export class RoomDurableObject extends DurableObject<Env> {
             );
       }
       this.authorityStore.prepareRoomDeletion(
-        room.room_id,
+        replay.state.roomId,
         host.principalId,
         Date.now(),
       );
       return {
         kind: "deletionPrepared" as const,
-        roomId: room.room_id,
+        roomId: replay.state.roomId,
         principalId: host.principalId,
       };
     });
@@ -2736,7 +2728,8 @@ export class RoomDurableObject extends DurableObject<Env> {
     if (this.authorityStore.room() === undefined) {
       return rejectedAuthority("roomUninitialized", "The authoritative room is not initialized.");
     }
-    const host = this.deletionHost(context);
+    const replay = this.authoritativeReplay();
+    const host = this.deletionHost(context, replay);
     if (host === undefined || host.principalId !== marker.principal_id) {
       return rejectedAuthority(
         "roomDeletionUnauthorized",

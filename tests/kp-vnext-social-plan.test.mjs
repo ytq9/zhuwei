@@ -26,7 +26,7 @@ const otherViewer = { kind: "player", principalId: "principal:probe-target", sea
 function fixture(label) {
   return createAuthoredProbeFixture(`social-plan:${label}`, { npcCharacters: [{ id: NPC, name: "守门人" }],
     initialKnowledge: [NPC, ACTOR].map(characterId => ({ characterId, knowledgeRef: KNOWLEDGE, kind: "sourceClaim", layer: "full",
-      content: characterId === NPC ? RESPONSE : "PLAYER-KNOWLEDGE-CANARY 有人捎来消息说侧门夜里不闩。", visibility: "private", provenanceChain: ["genesis:message"] })) });
+      content: characterId === NPC ? RESPONSE : "PLAYER-KNOWLEDGE-CANARY", visibility: "private", provenanceChain: ["genesis:message"] })) });
 }
 function input(f, { check = false, promise = false, silence = false, audience = "participants", state = f.state, root = f.rootActionId, due = "none", nextStep = null } = {}) {
   const context = authoritativeNpcDecisionContext(state, f.profiles, NPC);
@@ -326,7 +326,7 @@ test("social can cite the advertised NPC knowledge directory without aliasing an
   const missing = lowerVNext2ProposalBundle({ ...f, value: parsed.bundle, requiredContext: { ...frozen,
     entries: frozen.entries.filter(entry => entry.entryRef !== `knowledge:${NPC}:${KNOWLEDGE}`) } });
   assert.equal(missing.kind, "rejected");
-  assert.ok(f.state.knowledge[ACTOR]?.[KNOWLEDGE] !== undefined,
+  assert.ok(frozen.entries.some(entry => entry.entryRef === `knowledge:${ACTOR}:${KNOWLEDGE}`),
     "the other holder's same knowledge ID cannot replace the missing NPC body");
   for (const ref of [`knowledge:${ACTOR}:${KNOWLEDGE}`, "knowledge:unknown-holder:unknown-id", "unknown-knowledge"]) {
     const bad = bundle(f);

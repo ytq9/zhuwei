@@ -5,7 +5,6 @@ import { canonicalHash, canonicalUnits, compareCodeUnits, isNonEmptyString, isPl
 import type { KnownContextEntry, KnownAbsentContextEntry, OpenBlankContextEntry } from "../required-context";
 import { parseAbsenceSelector, type AvailabilityRequirement, type OpenBlankAuthorization } from "./availability";
 import type { DiscoveredCandidate } from "./candidate-discovery";
-import type { FactRelevance } from "./fact-relevance";
 import type { ObligationSeed } from "./obligation-closure";
 import {
   normalizePrecedentConditionSignature,
@@ -51,9 +50,6 @@ export function deriveRuntimeContextRequirements(input: Readonly<{
   candidates: readonly DiscoveredCandidate[];
   index: ReferenceIndex;
   budget: ContextWorkBudget;
-  /** Absent for frames that carry every scoped fact, such as an NPC's own
-   * work frame. Player actions supply the action's relevance. */
-  factRelevance?: FactRelevance;
 }>): RuntimeContextRequirementsResult {
   const { state, moduleProfile: profile, index } = input;
   const scopeRef = state.entities[input.actorCharacterId]?.sceneId;
@@ -81,16 +77,8 @@ export function deriveRuntimeContextRequirements(input: Readonly<{
   const location = profile.storyBible.storyAnchors.locations.find((entry) => entry.sceneId === scopeRef);
   const chapter = location === undefined ? undefined : profile.storyBible.storyAnchors.chapters
     .find((entry) => entry.chapterId === location.chapterId);
-  const completeFrame = worldFactConstraints(state, scopeRef);
-  if (completeFrame === undefined) return blocked("criticalUnavailable", "moduleProfile:current-scope-unavailable");
-  // The complete frame remains the versioned membership binding: its hash is
-  // what lowering and Rules compare at commit. The KP reads the constraints
-  // this action can touch; see `createFactRelevance` for what that admits.
-  if (!input.budget.charge("postingVisits", completeFrame.facts.length)) {
-    return blocked("preparationLimit", "factSources:work-budget-exhausted");
-  }
-  const factConstraints = { ...completeFrame,
-    facts: completeFrame.facts.filter((fact) => input.factRelevance?.admits(fact) ?? true) };
+  const factConstraints = worldFactConstraints(state, scopeRef);
+  if (factConstraints === undefined) return blocked("criticalUnavailable", "moduleProfile:current-scope-unavailable");
   const profileContext: KnownContextEntry = {
     kind: "known",
     entryRef: profileRef,
@@ -102,7 +90,6 @@ export function deriveRuntimeContextRequirements(input: Readonly<{
         ...(location === undefined ? [] : [`storyBible.storyAnchors.locations[sceneId=${scopeRef}]`]),
         ...(chapter === undefined ? [] : [`storyBible.storyAnchors.chapters[chapterId=${chapter.chapterId}]`])],
       factConstraints,
-      factConstraintsHash: canonicalHash(completeFrame),
       relevantClueAnchors: profile.storyBible.storyAnchors.clues.filter(clue => location?.clueIds?.includes(clue.clueId)),
       coreTruth: profile.storyBible.coreTruth,
       contentBoundary: profile.storyBible.contentBoundary,
@@ -134,6 +121,9 @@ export function deriveRuntimeContextRequirements(input: Readonly<{
   // Profile binding cannot stand in for a dynamic fact's authority record.
   // Only the typed collection admits sources; a future plan's traceRef or an
   // arbitrary string in prose never proves that a fact currently exists.
+  if (!input.budget.charge("postingVisits", factConstraints.facts.length)) {
+    return blocked("preparationLimit", "factSources:work-budget-exhausted");
+  }
   for (const fact of factConstraints.facts) seeds.push({ ref: fact.id, obligation: "sourceRecord" });
   for (const candidate of input.candidates) {
     const node = index.nodes.get(candidate.ref);

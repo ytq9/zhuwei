@@ -35,8 +35,6 @@ test('bound social choices exclude timeline authority and an invented initial re
   assert.equal(matchesAuthoredSourceSchema('conversation:prior', next.properties.addressedThreadRef), true);
 });
 const retry = () => ({ priorThreadRef: 'conversation:earlier', kind: 'conditions', basisRefs: ['fact:new-condition'], explanation: '条件发生变化。' });
-const promiseWith = terms => ({ kind: 'promise', content: '抄一份副本。', condition: '一个时辰内。', authorityRefs: ['npc:guard'], due: 'none', terms, nextStep: null });
-const filledDelivery = () => ({ sourceRef: 'item-entry:deed', itemRef: null, quantity: 1, destinationKind: 'scene', destinationRef: 'scene:hall' });
 
 test('social shape diagnostics locate response, evidence, consequence and retry failures without changing input', () => {
   const cases = [
@@ -59,16 +57,6 @@ test('social shape diagnostics locate response, evidence, consequence and retry 
     [socialRetryChangeConform, () => ({ ...retry(), kind: 'unknown' }), 'VALUE_INVALID', ['kind']],
     [socialRetryChangeConform, () => ({ ...retry(), explanation: 7 }), 'TYPE_MISMATCH', ['explanation']],
     [socialRetryChangeConform, () => ({ ...retry(), basisRefs: ['fact:new-condition', 'fact:new-condition'] }), 'VALUE_INVALID', ['basisRefs', 1]],
-    // Round99: a filled delivery carrying a kind field, and every other terms slot, is located below terms rather than reported as "terms is invalid".
-    [socialConsequenceConform, () => promiseWith({ kind: 'result', subjectRefs: ['npc:guard'], delivery: { kind: 'scene', ...filledDelivery() } }), 'VALUE_INVALID', ['terms', 'delivery', 'kind']],
-    [socialConsequenceConform, () => promiseWith({ kind: 'result', subjectRefs: ['npc:guard'], delivery: { ...filledDelivery(), quantity: 0 } }), 'VALUE_INVALID', ['terms', 'delivery', 'quantity']],
-    [socialConsequenceConform, () => promiseWith({ kind: 'result', subjectRefs: ['npc:guard'], delivery: { ...filledDelivery(), destinationRef: 7 } }), 'TYPE_MISMATCH', ['terms', 'delivery', 'destinationRef']],
-    [socialConsequenceConform, () => promiseWith({ kind: 'forever', subjectRefs: ['npc:guard'], delivery: null }), 'VALUE_INVALID', ['terms', 'kind']],
-    [socialConsequenceConform, () => promiseWith({ kind: 'result', subjectRefs: [], delivery: null }), 'VALUE_INVALID', ['terms', 'subjectRefs']],
-    [socialConsequenceConform, () => promiseWith({ kind: 'result', subjectRefs: ['npc:guard'], delivery: null, activation: { content: '若我先到。', subjectRefs: ['npc:guard'], requiresKnowledge: 'yes', windowEndFictionMicros: null } }), 'TYPE_MISMATCH', ['terms', 'activation', 'requiresKnowledge']],
-    [socialConsequenceConform, () => promiseWith({ kind: 'result', subjectRefs: ['npc:guard'], delivery: null, activation: { content: '若我先到。', subjectRefs: ['npc:guard'], requiresKnowledge: false } }), 'FIELD_MISSING', ['terms', 'activation', 'windowEndFictionMicros']],
-    [socialConsequenceConform, () => promiseWith({ kind: 'result', subjectRefs: ['npc:guard'], delivery: null, parts: [{ partId: 'a', content: '先看门。', kind: 'attempt', subjectRefs: ['npc:guard'], delivery: null }, { partId: 'a', content: '再报信。', kind: 'attempt', subjectRefs: ['npc:guard'], delivery: null }] }), 'VALUE_INVALID', ['terms', 'parts', 1]],
-    [socialConsequenceConform, () => promiseWith({ kind: 'result', subjectRefs: ['npc:guard'], delivery: null, parts: [{ partId: 'a', content: '先看门。', kind: 'attempt', subjectRefs: ['npc:guard'], delivery: { ...filledDelivery(), destinationKind: 'pocket' } }] }), 'VALUE_INVALID', ['terms', 'parts', 0, 'delivery', 'destinationKind']],
   ];
   for (const [conform, make, code, path] of cases) {
     const value = make(), before = structuredClone(value), diagnostics = [];
@@ -94,7 +82,6 @@ test('social shape validation preserves lies, silence and already legal whitespa
     [socialEvidenceConform, { kind: 'materializedKnowledge', definitionRef: 'prospective:history', holderRef: 'npc:guard' }],
     [socialConsequenceConform, { kind: 'relationship', relationshipRef: null, change: '  更信任对方。  ', basisFactRefs: [] }],
     [socialConsequenceConform, { kind: 'promise', content: '帮助修缮城门。', condition: '明日。', authorityRefs: ['npc:guard'], due: 'none', terms: { kind: 'result', subjectRefs: ['npc:guard'], delivery: null }, nextStep: null }],
-    [socialConsequenceConform, promiseWith({ kind: 'result', subjectRefs: ['npc:guard', 'item-entry:deed'], delivery: filledDelivery(), parts: [{ partId: 'copy', content: '誊抄。', kind: 'attempt', subjectRefs: ['item-entry:deed'], delivery: null }], activation: { content: '若你在厅里等。', subjectRefs: ['npc:guard'], requiresKnowledge: false, windowEndFictionMicros: '3600000000' } })],
     [socialConsequenceConform, { kind: 'debt', obligation: '归还工具。', condition: '明日。', basisFactRefs: ['fact:loan'] }],
     [socialRetryChangeConform, { ...retry(), kind: 'cost', explanation: '  原 Rules 形状仍允许此类型。  ' }],
   ];

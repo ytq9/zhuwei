@@ -9,14 +9,13 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 
 const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有场景对象尚未确定的描述或状态用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 可观察对象的value分为worldDescription与adjudication。worldDescription提供已有名称和描写，不是世界的完整定义。允许忠实改述和符合情境的合理的小描写，无需每个修饰词都有出处。措辞和氛围点缀无需补全；为回答本次问题新确定的对象位置、朝向、构造或工作状态，须在同束completeObject写入原对象，不能只放sensoryEvidence。独立的非因果环境内容用commitNarrativeDetail轻量保存。描写须符合感官、知情权限和玩家意图。
-adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。profileContext.factConstraints.facts只列事实ID与主体，正文见同ID的独立条目；条目不含版本hash，引用一律用entryRef。npc-decision的knowledge只列本次已读取正文的记忆，unloadedKnowledgeCount是未读取的条数，不能引用或转述。references.npcRecall.shown是已加载决策视图的NPC；requestable只有在场一行，须在选择或补选时点名才加载。knowledge-directory条目列出该角色本次未读取记忆的gist；带handle的可在选择或补选时按handle请求正文，没有handle的本次读不到。未读取的记忆不能引用、转述或据以裁决。references.knowledgeRecall.shown是本轮已读取的记忆条目。`;
+adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。`;
 
 const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
 按实际变化组合类型，覆盖复合行动及各澄清分支。定义、实物与库存操作分开；名称、场景描写和知识不是Item ID，空目录没有现成条目。social的回应及社会后果不能代替取物、移动或转交，不能省略动作后用文字宣称完成。
 新故事准备只用目录中的story类型声明方法、规模和联系，不包含剧情内容。准备完成后宿主会提供已审查的私有材料，然后才形成首份行动裁决；没有story选择时沿用当前冻结上下文。
-只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单；技术缺失不包装成世界内拒绝。
-在场NPC里已点名的已默认带完整npc-decision与知识；其余只有在场一行，列在references.npcRecall.requestable。本次处理若牵涉到其中某位（要对话、要看其反应、其立场或知识影响裁决），在requestedNpcRefs里选出，下一阶段才加载其决策视图与知识；没选的不能写进social、formActorPlan或作为来源。表单没有requestedNpcRefs字段时没有人可选。已加载视图的角色（含玩家）本次未读取的记忆列在其knowledge-directory条目里，带handle的可以在requestedKnowledgeRefs里按handle选出，下一阶段带完整正文并可引用；只选当前话题确实需要的，没有handle的记忆本次读不到。`;
+只返回requestedCapabilities目录ID数组，不重复或猜ID，不附加裁决、依据、目标、成本、结果等草稿字段。下一阶段提供所选完整表单；技术缺失不包装成世界内拒绝。`;
 const terminalSelectionDescriptions: Readonly<Record<string, string>> = {
   knowledgeReview: "回顾当前行动角色已经持有的知识，不取得新知识、操作对象或推进时间。",
   passTime: "主动等待或守望，让实际到期事件推进时间；不代替调查、制作、移动或休整。",
@@ -47,7 +46,7 @@ const sharedRuling = planRuling + terminalRuling;
 const filling: Readonly<Record<VNextProposalCapabilityId, string>> = deepFreeze({
   materializeStory: `只引用匹配的已评审准备包，精确选择 candidateRef、preparationHash、目录里的产物 kind 和原 handle。basisRefs 留空，宿主沿普通规则展开完整原定义及依赖；已接入人物保留现有身份。`,
   admitStoryFacts: `选择当前因果场景需要固化的事实 candidateRefs，basisRefs 留空。每项事实和完整知情者集原子接入；新人物或物件依赖先选同束 materializeStory。未来发展仍是计划，好奇和路过不代表承诺。`,
-  materializeNpc: `source 保存完整身份、背景、目标、顾虑、声口和 SRD 2014 机械模板。复用已有人的稳定身份；新的 NPC 不自动拥有知识，知情须另行接入。sceneRef 是授权留白所在场景，位置必须可放置。intrinsicAbilityRefs/itemDefinitionRefs 使用已有或同束前序定义，装备与能力缺失时不能用无效占位；同束新定义须已选 authorAbility、authorItem，未加载时只能引用已有定义或补选一次。`,
+  materializeNpc: `source 保存完整身份、背景、目标、顾虑、声口和 SRD 2014 机械模板。复用已有人的稳定身份；新的 NPC 不自动拥有知识，知情须另行接入。sceneRef 是授权留白所在场景，位置必须可放置。intrinsicAbilityRefs/itemDefinitionRefs 使用已有或同束前序定义，装备与能力缺失时不能用无效占位。`,
   completeObject: `补全已有场景对象尚未确定的描述或当前状态。definitionRef选已有sceneFeature定义；description写保留既有事实的完整世界内描述，observableState写本次新确定的状态，不补状态填none保留原值。description若确定了工作状态，observableState同步填写该状态；不要仍复制含义未定的旧技术标签。技术标签不证明对应世界状态已确定，也不证明角色亲见。仅补全原本是什么，不表示玩家操作或对象刚刚变化；玩家实际改变对象用worldInteraction。只要本次回答新确定了上述对象属性，就填写本步骤，不能因玩家没有触碰对象而省略。补全不随观察检定成败改变，check时outcomeBinding=always；同束observe只记录角色实际看见、听见或推断的部分。无需旧资料证明新内容，但不得覆盖已确定的状态、改身份/受众/几何/机械或代替行动效果；只有修辞改述无需补全。`,
   abilityOperation: `填写decision.kind=abilityOperation及operation，不包directSuccess/check或重填DC、成本、后果。invoke选本人owned-ability-catalog中的注册能力，target按定义选none/creatures/area/directionalArea：creatures限本人可见且意图明确者，区域只选锚点/方向，不列隐藏实际目标。castingMode用normal或定义允许的ritual；无升环、slotLevel或参数覆盖。continue/cancel只选本人longSpellcasting Activity；continue投入当前战斗轮行动，非战斗由due任务推进。未编译/无执行器属技术错误，不换能力或世界拒绝。重大歧义用clarification冻结完整operation，回答后不重新裁决。`,
   materializeObject: `固化KP决定的场景对象、worldFact、location或passage；semanticKind与templateRef对应，模板只给默认语义，创建仍需授权。definition.label/description记录创作内容，已有叙述承诺按原描述及位置承接。已决定具体状态时显式填写observableState；未指定的observableState、affordances用none继承默认。物品机械另走Item合同。
@@ -69,15 +68,15 @@ worldInteraction.abilityRef引用可执行能力：checkKind=attack须本人拥�
 通行用entries中的recordKind=effects、kind=traversePassage及passageRef，并列入directTargetRefs。连接决定位置、方向和耗时，不另填到达数据或重复扣通行时间。closed/blocked须先合法改变；通行成为Activity，完成前仍在原地，不预告到达或泄露目的地内部。`,
   commitNarrativeDetail: `label供检索，description为发布并持久保存的原文，audience选sceneObservers/actorOnly。basisRefs只选该受众可见的viewerEvidenceRefs，服务器另加开放授权。只保存非因果、非机械环境描写，不作为调查结果、危险、资源或行动目标。既有或玩家引用的细节先按原承诺物化。`,
   authorAbility: `用materializeDefinition、source.kind=ability创建可执行机械定义。按schema填写激活、目标/范围、检定、成本、效果和持续时间，描述不代替机械；Rules生成定义身份并编译，不由模型填写最终结算数值。调用已有能力无需重建定义。`,
-  authorHazard: `用materializeDefinition、source.kind=hazard定义trigger、perceptibleSigns、disableMethods和环境后果；攻击、豁免、范围、伤害及状态持续时间引用Ability。危险实例另需场景对象及triggers关系，定义或引用本身不执行危险；本束要新建场景对象或立即操作时须已选materializeObject、worldInteraction。`,
-  authorItem: `用materializeDefinition、source.kind=item创作类别与属性，实物的场景、数量、所有权在materializeItem填写。普通无使用/装备机械物件可用category=object，equipment/use/chargesMaximum/durabilityMaximum按schema填none，equippedAbilityRefs=[]，仍填其余必填属性；仅有实际机械时引用已有Ability，同束新Ability须已选authorAbility，未加载时不能用prospective占位。定义handle用于materializeItem.definitionRef，实物另有handle供inventoryOperation.entryRef引用；定义本身不完成取得或转交。`,
+  authorHazard: `用materializeDefinition、source.kind=hazard定义trigger、perceptibleSigns、disableMethods和环境后果；攻击、豁免、范围、伤害及状态持续时间引用Ability。危险实例另需场景对象及triggers关系，定义或引用本身不执行危险。`,
+  authorItem: `用materializeDefinition、source.kind=item创作类别与属性，实物的场景、数量、所有权在materializeItem填写。普通无使用/装备机械物件可用category=object，equipment/use/chargesMaximum/durabilityMaximum按schema填none，equippedAbilityRefs=[]，仍填其余必填属性；仅有实际机械时引用已有或同束新Ability。定义handle用于materializeItem.definitionRef，实物另有handle供inventoryOperation.entryRef引用；定义本身不完成取得或转交。`,
   materializeItem: `从references.itemDefinitionRefs的精确ID或同束authorItem实际handle创建实物；名称、知识和ItemEntry不是定义，缺定义须选authorItem，不能编造引用。实物先生成在sceneRef场景中，尚无人持有；ownership只登记法律上的所有权，不把物品放进ownerRef手中或背包。亲手交付需要同束先inventoryOperation.acquire拿起实物，再transfer给收件人；放在场景中交付无需假造持有。可见性须符合实际情境：公开动手制作的普通可见物件可用visibility:public，hidden-until-evidence表示尚未获知者看不到实物，不表示“尚未交给玩家”，也不能只凭所有权绕过发现。以另一个handle命名实物。唯一物品用已固化事实uniquenessBasisRef绑定身份，quantity=1，同一来源不能重复生成。`,
   inventoryOperation: `取得、放下、转交、识别、装备、使用、组装/拆解或改变实物生命周期，保留数量、所有权、位置、知识及机械成本。operation只填实际转换，不作意图标记/预备步骤，不填results行。entryRef用冻结ItemEntry或本束materializeItem实际handle；无实例先物化，缺定义先authorItem，不按描写编造引用。复用原实例，部分堆叠拆分由服务器管理。identify仅授予行动者对可达物品的知识。release含取出并放下；operation.kind=use才执行注册Ability并付成本，普通取放无需use或新Ability。带area的use须targetRefs=[]，direction非零，Rules确定实际目标。`,
 });
 
 const stages = deepFreeze({
   offer: selectionAuthority,
-  amendableProposal: `本轮可以提交提案，或补选一次所需类型，二者选一。能用已加载表单完整表达原意图时，直接提交完整提案；若确实需要当前未加载的类型，可以改为调用选择工具一次性补齐所需类型ID。补选只填写requestedCapabilities（需要再加载在场NPC或读取目录里带handle的记忆时，一并填requestedNpcRefs、requestedKnowledgeRefs），不夹带提案、裁决、风险、成本或结果；服务器按并集重新提供表单，原意图与冻结上下文不变。补选只有一次，且只能新增不能删减；补选后的下一轮只允许提交提案。不得用补选改变玩家方法、换一个更容易填的方案或重开裁决。`,
+  amendableProposal: `本轮可以提交提案，或补选一次所需类型，二者选一。能用已加载表单完整表达原意图时，直接提交完整提案；若确实需要当前未加载的类型，可以改为调用选择工具一次性补齐所需类型ID。补选只填写requestedCapabilities，不夹带提案、裁决、风险、成本或结果；服务器按并集重新提供表单，原意图与冻结上下文不变。补选只有一次，且只能新增不能删减；补选后的下一轮只允许提交提案。不得用补选改变玩家方法、换一个更容易填的方案或重开裁决。`,
   expandedProposal: `本轮只能使用已加载的完整表单提交提案，不能再次选择schema，也不能改变玩家方法。`,
   correction: `这是本次尚未生效提案唯一的一次修订。阅读原稿、具体diagnostics（字段路径、预期类型与实际错误）和同一冻结RequiredContext，通过revisionJson返回JSON文档：简单修改用mode=patch和operations（仅add/replace/remove，RFC6901路径），关联变化多时用mode=replaceDraft和完整draft。sourceDraftVersion须原样回填。sourceDraft为null时只准replaceDraft。只修改模型填写的decision/steps/results，允许替换对象、数组、增删步骤，但必须自行同步results.step等对应关系。补丁不局限于报错字段；不能修改身份、权限、冻结上下文或服务端绑定。可补齐缺失字段，也可根据诊断重新判断属性、DC、风险、成本、成败后果和操作组合；无须维持被拒绝草稿的错误裁决。必须完整保留玩家真实目标与做法，遵守授权范围、故事锚点和已固化事实。只能使用本轮已加载类型，不补选、不伪造引用、骰面或既成结果，不把技术错误改成世界拒绝。服务器从头校验整份修订稿并执行Rules预检；再次不合法即失败。此入口只用于尚未交付玩家确认、请求随机或开始执行的提案，已冻结执行的裁决不回到这里。`,
 });
@@ -89,7 +88,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v24", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v22", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

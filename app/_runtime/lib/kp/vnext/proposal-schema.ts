@@ -9,7 +9,7 @@ import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSourc
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
 import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";
-import { type ProposalNpcSourceChoices, proposalNpcRecall, proposalKnowledgeRecall } from "./proposal-context";
+import type { ProposalNpcSourceChoices } from "./proposal-context";
 import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
@@ -21,7 +21,7 @@ import { compactDeepSeekStrictToolSchema } from "../deepseek-strict-schema-compa
 import type { AuthoredDefinitionSource } from "../../rules/v2/authored-materialization";
 import type { ItemOwnership } from "../../rules/v2/items";
 import type { GearSlot } from "../../dnd/gear";
-import { deepFreeze, type JsonRecord, compareCodeUnits } from "./canonical-json";
+import { deepFreeze, type JsonRecord } from "./canonical-json";
 import type { SocialInteractionBranch, SocialRetryChange } from "../../rules/v2/social-interaction";
 import type { ObservationInference } from "../../rules/v2/character-inference";
 import { closeVNextProposalCapabilities, VNEXT_PROPOSAL_CAPABILITIES, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, type VNextProposalCapabilityId } from "./proposal-capabilities";
@@ -666,7 +666,7 @@ export type VNextProposalBundleLoweringResult =
 export function createVNextProposalBundleSchema(capabilities: readonly string[] = VNEXT_PROPOSAL_CAPABILITY_IDS,
   itemEntryRefs?: readonly string[], observationSubjectRefs?: readonly string[], terminalKinds?: readonly string[], npcSources?: ProposalNpcSourceChoices,
   basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[]) {
-  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs, npcSources), terminalKinds, npcSources)));
+  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs), terminalKinds, npcSources)));
 }
 
 /** Selection admission reads the exact same derived wire discriminants. */
@@ -744,21 +744,14 @@ export type VNextProposalSchemaSelection = Readonly<{
   story?: StorySelection;
   capabilities: readonly VNextProposalCapabilityId[];
   terminalKinds: readonly string[];
-  /** Bystander decision views the selection asked to load, sorted unique. */
-  npcRefs: readonly string[];
-  /** Frozen memory bodies the selection asked to read, as entry refs, sorted unique. */
-  knowledgeRefs: readonly string[];
 }>;
 
 /** Retain selected terminal identities; only step families acquire dependencies.
  * The caller validates unique submitted values before this canonical closure. */
-export function closeVNextProposalSchemaRequest(requested: readonly string[], context?: VNextRequiredContext,
-  npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []): VNextProposalSchemaSelection {
+export function closeVNextProposalSchemaRequest(requested: readonly string[], context?: VNextRequiredContext): VNextProposalSchemaSelection {
   const story = parseStorySelection(requested, context), storyIds = storySelectionIds(context);
   return Object.freeze({
     ...(story === undefined ? {} : { story }),
-    npcRefs: Object.freeze([...new Set(npcRefs)].sort(compareCodeUnits)),
-    knowledgeRefs: Object.freeze([...new Set(knowledgeRefs)].sort(compareCodeUnits)),
     terminalKinds: Object.freeze(VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id))),
     capabilities: closeVNextProposalCapabilities([
       ...requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !storyIds.includes(id)),
@@ -781,37 +774,18 @@ export const OFFER_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
     description: "只选择本次完整行动需要的类型目录 ID；唯一字段 requestedCapabilities，不填写任何提案内容。",
     parameters: OFFER_KP_PROPOSAL_BUNDLE_SCHEMA }),
 });
-const OFFER_NPC_RECALL_DESCRIPTION = "在场但决策视图尚未加载的 NPC（见 references.npcRecall.requestable）。选出本次处理牵涉到的：要对话、要看其反应、其立场或知识影响裁决的；已点名的 NPC 已默认加载，不在此列。选中的在下一阶段带完整 npc-decision 与知识；未选的不能写进 social、formActorPlan 或作为来源。不牵涉任何人时填 []。";
-const OFFER_KNOWLEDGE_RECALL_DESCRIPTION = "已加载视图的角色（含玩家）本次未读取的记忆，按 knowledge-directory 条目里的 handle 选择；只选当前话题确实需要正文的，选中的在下一阶段带完整正文并可引用。不需要时填 []。";
-const OFFER_TOOL_DESCRIPTION_WITH_RECALL = "只选择本次完整行动需要的类型目录 ID（requestedCapabilities）；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆（字段存在时才可选）；不填写任何提案内容。";
-
-/** The selection tool, offering the bystander views and the unread memory
- * bodies not yet loaded as further enumerations. With none left to request
- * a field is absent, so an amended round or an addressed sentence never
- * shows an empty enum. Both the Adapter and Room's stage proof build the
- * tool this way. */
-export function offerKpProposalBundleTool(requestableNpcRefs: readonly string[] = [], capabilityIds: readonly string[] = VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS,
-  requestableKnowledgeHandles: readonly string[] = []) {
-  const requestedCapabilities = { ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities, items: { type: "string", enum: [...capabilityIds] } };
-  const properties = { requestedCapabilities,
-    ...(requestableNpcRefs.length === 0 ? {} : { requestedNpcRefs: { type: "array", items: { type: "string", enum: [...requestableNpcRefs] }, description: OFFER_NPC_RECALL_DESCRIPTION } }),
-    ...(requestableKnowledgeHandles.length === 0 ? {} : { requestedKnowledgeRefs: { type: "array", items: { type: "string", enum: [...requestableKnowledgeHandles] }, description: OFFER_KNOWLEDGE_RECALL_DESCRIPTION } }) };
-  const recall = requestableNpcRefs.length > 0 || requestableKnowledgeHandles.length > 0;
-  return Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL, function: Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL.function,
-    ...(recall ? { description: OFFER_TOOL_DESCRIPTION_WITH_RECALL } : {}),
-    parameters: Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA, properties, required: Object.keys(properties) }) }) }) as unknown as typeof OFFER_KP_PROPOSAL_BUNDLE_TOOL;
-}
 
 export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
   return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
 }
 export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext) {
   if (typeof message !== "string" || !message.trim()) throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
-  const requestable = context === undefined ? [] : proposalNpcRecall(context).requestableRefs;
-  const handles = context === undefined ? [] : proposalKnowledgeRecall(context).map(record => record.handle);
   return Object.freeze({ messages: Object.freeze([{ role: "system" as const,
     content: vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) }, { role: "user" as const, content: message }]),
-    tools: Object.freeze([offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles)] as const),
+    tools: Object.freeze([{ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL, function: { ...OFFER_KP_PROPOSAL_BUNDLE_TOOL.function,
+      parameters: { ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA, properties: { requestedCapabilities: {
+        ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities,
+        items: { type: "string", enum: [...vnextProposalSchemaRequestIds(context)] } } } } } }] as const),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
 
@@ -849,10 +823,6 @@ export function createSubmitKpProposalBundleModelInput(
    * selection is amendable once, and never a way to reopen a decision. */
   amendable = false,
   itemDefinitionRefs?: readonly string[],
-  /** Bystander views the selection may still add through its one amendment. */
-  requestableNpcRefs: readonly string[] = [],
-  /** Unread memory handles the selection may still add through its one amendment. */
-  requestableKnowledgeHandles: readonly string[] = [],
 ): StrictToolBundleModelInput {
   if (typeof message !== "string" || message.trim().length === 0) {
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
@@ -863,7 +833,7 @@ export function createSubmitKpProposalBundleModelInput(
   };
   return Object.freeze({
     messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("expandedProposal", capabilities, terminalKinds, amendable) }, { role: "user" as const, content: message }]),
-    tools: Object.freeze(amendable ? [submitTool, offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, requestableKnowledgeHandles)] as const : [submitTool] as const),
+    tools: Object.freeze(amendable ? [submitTool, OFFER_KP_PROPOSAL_BUNDLE_TOOL] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
     max_completion_tokens: 4_000,
@@ -887,7 +857,7 @@ export function createCorrectKpProposalBundleModelInput(
 
 function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId[], itemEntryRefs?: readonly string[],
   observationSubjectRefs?: readonly string[], basisChoices?: VNextBasisReferenceChoices,
-  creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[], npcSources?: ProposalNpcSourceChoices): Record<string, unknown> {
+  creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[]): Record<string, unknown> {
   const object = (properties: Record<string, unknown>) => ({
     type: "object",
     properties,
@@ -1062,31 +1032,15 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   ] };
   const promiseDelivery = { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ sourceRef: nullableRef, itemRef: nullableRef,
     quantity: { type: "integer", minimum: 1 }, destinationKind: { type: "string", enum: ["holder", "scene"] }, destinationRef: refText })],
-    description: "Required for a promise to create, copy or deliver an item, even when the future item does not exist yet. For a future item set itemRef to exactly {kind:'none'}, not the whole delivery. Set sourceRef to exactly {kind:'none'} if there is no original to copy; retain quantity and the actual holder/scene destination. A filled delivery has exactly sourceRef, itemRef, quantity, destinationKind and destinationRef and no kind field. Only non-item obligations use delivery={kind:'none'}." };
-  // What a promise may be about, from the same sets the server admits: the
-  // NPC's own frozen records and knowledge, the physical objects and creatures
-  // it can see, and the scene. A definition or catalog describes a kind of
-  // thing and is never an obligation's subject; round94 died on exactly that.
-  const promiseSubjectChoices = npcSources === undefined && observationSubjectRefs === undefined && itemEntryRefs === undefined && creatureRefs === undefined
-    ? undefined : [...new Set([...(npcSources ?? []).flatMap(source => source.refs), ...(observationSubjectRefs ?? []),
-      ...(itemEntryRefs ?? []), ...(creatureRefs ?? [])])].sort(compareCodeUnits);
-  const promiseSubjectRefs = { ...basisArray(promiseSubjectChoices),
-    description: "Who or what this obligation is about: the promising NPC, the listener, a physical object or creature the NPC can see (an ItemEntry, never an item definition), a record or knowledge of this NPC's frozen context, or the scene." };
-  const promisePart = { kind: { type: "string", enum: ["result", "attempt", "ongoing"] }, subjectRefs: promiseSubjectRefs, delivery: promiseDelivery };
-  // A relationship or debt the NPC forms rests on facts the NPC can see. The
-  // host's own truths are in the KP context but not in the NPC's snapshot;
-  // round96 cited one and Rules could only answer with a bare code.
-  const consequenceFactChoices = npcSources === undefined ? undefined
-    : [...new Set(npcSources.flatMap(source => source.factRefs ?? []))].sort(compareCodeUnits);
-  const basisFactRefs = { ...basisArray(consequenceFactChoices),
-    description: "Canonical facts this NPC itself can see, listed under npcSourceChoices.factRefs for this step's npcRef; [] when the change rests on the conversation alone. A fact only the host knows cannot ground what the NPC does." };
+    description: "Required for a promise to create, copy or deliver an item, even when the future item does not exist yet. For a future item set itemRef to none, not the whole delivery. Set sourceRef to none if there is no original to copy; retain quantity and the actual holder/scene destination. Only non-item obligations use delivery=none." };
+  const promisePart = { kind: { type: "string", enum: ["result", "attempt", "ongoing"] }, subjectRefs: refArray, delivery: promiseDelivery };
   const promiseTerms = { ...object({ ...promisePart,
     parts: { type: "array", items: object({ partId: refText, content: text, ...promisePart }), description: "At most 16 additional independently tracked required parts; empty for one obligation. Keep partId stable when its meaning stays unchanged." },
-    activation: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ content: text, subjectRefs: promiseSubjectRefs,
+    activation: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ content: text, subjectRefs: refArray,
       requiresKnowledge: { type: "boolean" }, windowEndFictionMicros: nullableRef })], description: "An actual condition, distinct from a deadline; require knowledge only if the original promise does. Use none for an unconditional promise." } }),
     description: "All five fields belong INSIDE terms: kind, subjectRefs, delivery, parts, activation. parts and activation are not siblings of terms or nextStep. A single unconditional promise still requires terms.parts=[] and terms.activation={kind:'none'}." };
   const socialConsequence = { anyOf: [
-    object({ kind: { type: "string", enum: ["relationship"] }, relationshipRef: nullableRef, change: text, basisFactRefs }),
+    object({ kind: { type: "string", enum: ["relationship"] }, relationshipRef: nullableRef, change: text, basisFactRefs: refArray }),
     object({ kind: { type: "string", enum: ["promise"] }, content: text, condition: text,
       promisor: { type: "string", enum: ["actor", "npc"], description: "Who actually makes this promise. actor content must be the exact frozen original expression; never turn acceptance, prediction or quoted speech into a new player commitment." },
       promiseeRef: refText,
@@ -1101,7 +1055,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
         content: text, condition: text, terms: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), promiseTerms] },
         deadlineFictionMicros: nullableRef, releasedParts: refArray, remaining: { type: "boolean" } }),
       disclose: { type: "boolean", description: "True only when the effective change is communicated by this actual conversation. A private host ruling does not inform its parties." } }),
-    object({ kind: { type: "string", enum: ["debt"] }, obligation: text, condition: text, basisFactRefs }),
+    object({ kind: { type: "string", enum: ["debt"] }, obligation: text, condition: text, basisFactRefs: refArray }),
   ] };
   const socialBranch = object({ outcomeCode: refText, summary: text,
     response: object({ kind: { type: "string", enum: ["speech", "silence"] },

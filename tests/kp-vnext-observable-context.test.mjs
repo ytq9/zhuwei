@@ -24,7 +24,7 @@ function fixture(label, focusRefs = []) {
   const f = createAuthoredProbeFixture(`observable:${label}`, {
     npcCharacters: [{ id: NPC, name: '斑尾信使' }, { id: HIDDEN, name: '静默访客' }, { id: REMOTE, name: '远方住客' }],
     initialKnowledge: [held(ACTOR, 'ACTOR_KNOWN'), held(OTHER, 'OTHER_PLAYER_PRIVATE'),
-      held(NPC, 'NPC_PRIVATE 这件事情他昨夜亲眼看见了。'), held(HIDDEN, 'HIDDEN_PRIVATE'), held(REMOTE, 'REMOTE_PRIVATE')],
+      held(NPC, 'NPC_PRIVATE'), held(HIDDEN, 'HIDDEN_PRIVATE'), held(REMOTE, 'REMOTE_PRIVATE')],
   });
   const state = structuredClone(f.state);
   state.combatRuntime.entities[HIDDEN].visibilityPolicyId = 'visibility:hidden-until-evidence';
@@ -53,9 +53,7 @@ function lower(f, subjectRef) {
 
 test('model context separates established world descriptions from technical states without losing frozen data', () => {
   const f = fixture('presentation', [SOURCE]), before = structuredClone(f.requiredContext);
-  // The unaddressed witness travels once the selection asks for it; this
-  // presentation check reads the complete view.
-  const presented = proposalContext.proposalModelContext(f.requiredContext, [NPC]);
+  const presented = proposalContext.proposalModelContext(f.requiredContext);
   const valve = presented.entries.find(entry => entry.entryRef === SOURCE).value;
   assert.deepEqual(valve.worldDescription, { content: { label: '阀门', description: '生锈阀门发出细微嘶鸣。' } });
   assert.equal(valve.adjudication.content.observableState, 'ready');
@@ -72,24 +70,16 @@ test('model context separates established world descriptions from technical stat
   assert.ok(scene.adjudication.combatScene.geometry);
   // Description fields move once; recombining the presentation must recover
   // every exact original value, including mechanics, metadata and unknowns.
-  // The presentation keeps every entry in order and carries no server-owned
-  // version hash; Room and lowering read those from the frozen context.
-  // Knowledge catalogs bind versions for Rules and are not sent to the model.
-  const beforeSent = before.entries.filter(entry => !String(entry.entryRef).startsWith('knowledge-catalog:'));
-  assert.deepEqual(presented.entries.map(entry => entry.entryRef), beforeSent.map(entry => entry.entryRef));
-  for (const [index, entry] of beforeSent.entries()) {
-    const shown = presented.entries[index];
-    if (entry.kind !== 'known') { assert.deepEqual(shown, entry); continue; }
-    assert.equal(shown.revisionOrHash, undefined, entry.entryRef);
-    assert.equal(shown.kind, 'known');
-    if (!shown.value?.worldDescription) continue;
-    const value = structuredClone(shown.value.adjudication);
-    for (const [key, part] of Object.entries(shown.value.worldDescription)) {
+  const restored = presented.entries.map(entry => {
+    if (!entry.value?.worldDescription) return entry;
+    const value = structuredClone(entry.value.adjudication);
+    for (const [key, part] of Object.entries(entry.value.worldDescription)) {
       value[key] = part && typeof part === 'object' ? { ...value[key], ...part } : part;
     }
-    assert.ok(Object.isFrozen(shown.value.worldDescription));
-    assert.deepEqual(value, entry.value, entry.entryRef);
-  }
+    assert.ok(Object.isFrozen(entry.value.worldDescription));
+    return { ...entry, value };
+  });
+  assert.deepEqual(restored, before.entries);
   assert.deepEqual(f.requiredContext, before);
   assert.equal(presented.contextHash, before.binding.contextHash);
   for (const ref of [HIDDEN, REMOTE, `knowledge:${NPC}:knowledge:same`, npcDecisionEntryRef(NPC)]) {
@@ -165,23 +155,13 @@ test('unnamed and differently written NPC references have the same finite source
   }
 });
 
-test('an oversized optional NPC knowledge body stays an uncitable directory line while speech and observation remain usable', () => {
+test('an oversized optional NPC knowledge body blocks its speech context while physical observation remains usable', () => {
   const f = fixture('large-npc-history'), state = structuredClone(f.state);
   state.knowledge[NPC]['knowledge:same'].content = 'x'.repeat(70_000);
   const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId,
     focusRefs: [], intentText: '我看看眼前的人。' });
-  const decision = npcDecisionContext(frozen.context.entries, NPC);
-  assert.ok(decision, 'the snapshot keeps its complete directory');
-  assert.deepEqual(decision.unloadedKnowledgeRefs, [`knowledge:${NPC}:knowledge:same`]);
-  assert.deepEqual(proposalContext.proposalNpcSourceChoices(frozen.context).find(choice => choice.npcRef === NPC).refs
-    .filter(ref => ref.startsWith(`knowledge:${NPC}:`)), []);
-  // The model view lists loaded bodies only, counts the rest, and carries the
-  // holder's gist directory; the bystander's view itself travels on request.
-  const presented = proposalContext.proposalModelContext(frozen.context, [NPC]).entries;
-  assert.deepEqual(presented.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge, []);
-  assert.equal(presented.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.unloadedKnowledgeCount, 1);
-  assert.deepEqual(presented.find(entry => entry.entryRef === `knowledge-directory:${NPC}`).value.unloaded.map(record => record.entryRef), [`knowledge:${NPC}:knowledge:same`]);
-  assert.equal(proposalContext.proposalModelContext(frozen.context).entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)), undefined);
+  assert.equal(npcDecisionContext(frozen.context.entries, NPC), undefined);
+  assert.equal(frozen.context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).reason, 'notLoaded');
   const lowered = lower({ ...f, state, requiredContext: frozen.context }, NPC);
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
   assert.equal(stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput).kind, 'committed');

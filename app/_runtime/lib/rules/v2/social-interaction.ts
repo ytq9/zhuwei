@@ -127,51 +127,6 @@ function socialShapeRefs(value: JsonRecord, key: string, diagnostics?: SocialSha
     && socialShapeUnique(entries, [key], diagnostics);
 }
 
-const fictionMicros = (value: unknown): value is string => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
-function promiseDeliveryShapeConform(value: unknown, diagnostics?: SocialShapeDiagnostic[]): boolean {
-  if (value === null) return true;
-  if (!isRecord(value)) return socialShapeFailure(diagnostics, "TYPE_MISMATCH", [], { type: "object", nullable: true }, "social:field-contract");
-  if (!socialShapeKeys(value, ["sourceRef", "itemRef", "quantity", "destinationKind", "destinationRef"], diagnostics)) return false;
-  return [socialShapeRef(value, "sourceRef", diagnostics, true), socialShapeRef(value, "itemRef", diagnostics, true),
-    socialShapeField(value, "quantity", entry => Number.isSafeInteger(entry) && Number(entry) > 0, { type: "number", integer: true, minimum: 1 }, diagnostics),
-    socialShapeEnum(value, "destinationKind", ["holder", "scene"], diagnostics),
-    socialShapeRef(value, "destinationRef", diagnostics)].every(Boolean);
-}
-function promiseActivationShapeConform(value: unknown, diagnostics?: SocialShapeDiagnostic[]): boolean {
-  if (value === null) return true;
-  if (!isRecord(value)) return socialShapeFailure(diagnostics, "TYPE_MISMATCH", [], { type: "object", nullable: true }, "social:field-contract");
-  if (!socialShapeKeys(value, ["content", "subjectRefs", "requiresKnowledge", "windowEndFictionMicros"], diagnostics)) return false;
-  return [socialShapeField(value, "content", isNonEmptyString, { type: "string", minLength: 1, normalization: "NFC" }, diagnostics),
-    socialShapeRefs(value, "subjectRefs", diagnostics, 1),
-    socialShapeField(value, "requiresKnowledge", entry => typeof entry === "boolean", { type: "boolean" }, diagnostics),
-    socialShapeField(value, "windowEndFictionMicros", entry => entry === null || fictionMicros(entry),
-      { type: "string", nullable: true, pattern: "^(0|[1-9][0-9]*)$" }, diagnostics)].every(Boolean);
-}
-function promisePartShapeConform(value: unknown, diagnostics?: SocialShapeDiagnostic[]): boolean {
-  if (!socialShapeObject(value, diagnostics)
-    || !socialShapeKeys(value, ["partId", "content", "kind", "subjectRefs", "delivery"], diagnostics)) return false;
-  return [socialShapeField(value, "partId", isNonEmptyString, { type: "string", minLength: 1, normalization: "NFC" }, diagnostics),
-    socialShapeField(value, "content", isNonEmptyString, { type: "string", minLength: 1, normalization: "NFC" }, diagnostics),
-    socialShapeEnum(value, "kind", ["result", "attempt", "ongoing"], diagnostics), socialShapeRefs(value, "subjectRefs", diagnostics, 1),
-    socialShapeChild(value.delivery, promiseDeliveryShapeConform, ["delivery"], diagnostics)].every(Boolean);
-}
-/** Rules' promiseTermsConform walked field by field so the failing slot is
- * located. Round99 wrote a `kind` into a filled delivery and the KP only
- * learned that the whole terms object was wrong; its one revision guessed.
- * The predicate stays the authority: whatever it refuses still fails here. */
-export function promiseTermsShapeConform(value: unknown, diagnostics?: SocialShapeDiagnostic[]): value is PromiseTerms {
-  if (!socialShapeObject(value, diagnostics) || !socialShapeKeys(value, ["kind", "subjectRefs", "delivery",
-    ...["parts", "activation"].filter(key => Object.hasOwn(value, key))], diagnostics)) return false;
-  const checks = [socialShapeEnum(value, "kind", ["result", "attempt", "ongoing"], diagnostics),
-    socialShapeRefs(value, "subjectRefs", diagnostics, 1),
-    socialShapeChild(value.delivery, promiseDeliveryShapeConform, ["delivery"], diagnostics)];
-  if (value.parts !== undefined) checks.push(socialShapeArray(value, "parts", 0, 16, diagnostics)
-    && (value.parts as unknown[]).every((part, index) => socialShapeChild(part, promisePartShapeConform, ["parts", index], diagnostics))
-    && socialShapeUnique((value.parts as unknown[]).map(part => isRecord(part) ? part.partId : null), ["parts"], diagnostics));
-  if (value.activation !== undefined) checks.push(socialShapeChild(value.activation, promiseActivationShapeConform, ["activation"], diagnostics));
-  return checks.every(Boolean) && (promiseTermsConform(value)
-    || socialShapeFailure(diagnostics, "VALUE_INVALID", [], { type: "object" }, "social:field-contract"));
-}
 export function socialEvidenceConform(value: unknown, diagnostics?: SocialShapeDiagnostic[]): value is SocialEvidence {
   if (!socialShapeObject(value, diagnostics)
     || !socialShapeEnum(value, "kind", ["playerExpression", "npcContext", "materializedKnowledge"], diagnostics)) return false;
@@ -195,7 +150,7 @@ export function socialConsequenceConform(value: unknown, diagnostics?: SocialSha
     && socialShapeText(value, "content", diagnostics) && socialShapeText(value, "condition", diagnostics)
     && socialShapeRefs(value, "authorityRefs", diagnostics, 1)
     && socialShapeEnum(value, "due", [...PROMISE_DUE_TIERS], diagnostics)
-    && socialShapeChild(value.terms, promiseTermsShapeConform, ["terms"], diagnostics)
+    && socialShapeField(value, "terms", promiseTermsConform, { type: "object" }, diagnostics)
     && (value.promisor === undefined || ["actor", "npc"].includes(String(value.promisor)))
     && (value.promiseeRef === undefined || isNonEmptyString(value.promiseeRef))
     && (value.nextStep === null || socialShapeText(value, "nextStep", diagnostics));
@@ -238,22 +193,6 @@ export function socialInteractionPlanConform(value: unknown): value is SocialInt
     && isRecord(value.branches) && hasExactKeys(value.branches, ["success", "failure"])
     && socialBranchConform(value.branches.success) && socialBranchConform(value.branches.failure);
 }
-/** What an NPC's promise may be about: a record or knowledge of its own
- * frozen snapshot, something it can see from its scene, or the scene itself.
- * A definition, catalog or rule profile describes a kind of thing and cannot
- * be the subject of an obligation. Lowering pre-checks the same predicate with
- * the frozen snapshot so the KP gets the field, not just this code. */
-export function socialPromiseSubjectAdmissible(state: AuthoritativeWorldState, npc: Readonly<{ id: string; sceneId: string }>,
-  snapshotRefs: ReadonlySet<string>, ref: string): boolean {
-  return snapshotRefs.has(ref) || ref === npc.sceneId || authoritySpatialRefVisibleTo(state, ref, npc.sceneId, npc.id);
-}
-
-/** A relationship change or debt rests only on canonical facts the NPC's own
- * frozen snapshot holds: what it saw, not what the host knows. */
-export function socialConsequenceBasisAdmissible(state: AuthoritativeWorldState, snapshotRefs: ReadonlySet<string>, ref: string): boolean {
-  return snapshotRefs.has(ref) && Object.hasOwn(state.canonicalFacts, ref);
-}
-
 export function socialThreadRef(root: string, resolutionId: string): string {
   return `conversation:${canonicalSha256({ root, resolutionId }).slice(7)}`;
 }
@@ -341,10 +280,11 @@ export function socialInteractionIssue(state: AuthoritativeWorldState, profiles:
       if (consequence.kind === "promise" && consequence.promiseeRef !== undefined && !social.listeners.includes(consequence.promiseeRef))
         return "social:promise-recipient-unavailable";
       if (consequence.kind === "promise" && promiseTermsRefs(consequence.terms).some(ref =>
-        !socialPromiseSubjectAdmissible(state, npc, allowed, ref)
+        (!allowed.has(ref) && !expected.knowledge.some(k => k.entryRef === ref)
+          && !authoritySpatialRefVisibleTo(state, ref, npc.sceneId, npc.id) && ref !== npc.sceneId)
         || !plan.readSet.some(binding => binding.ref === ref && binding.revisionOrHash === authorityRevisionOrHash(state, ref))))
         return "social:promise-terms-context-unavailable";
-      if (consequence.kind !== "promise" && consequence.basisFactRefs.some(ref => !socialConsequenceBasisAdmissible(state, allowed, ref))) return "social:consequence-basis-unavailable";
+      if (consequence.kind !== "promise" && consequence.basisFactRefs.some(ref => !allowed.has(ref) || !Object.hasOwn(state.canonicalFacts, ref))) return "social:consequence-basis-unavailable";
       const event = socialConsequenceEvent(root, plan, branchName, index);
       if (socialCommitmentIssue(state, event.eventType, event.payload)) return "social:consequence-invalid";
     }

@@ -4,8 +4,6 @@
 
 后续发布准备修复（2026-09-09）：`kpRequestDeclaresStrictTool` 已改为按任一工具的 strict 声明选择严格传输，支持现役 submit/补选双工具；非法混合工具仍在发送前拒绝，不降级普通接口。实际 Provider 路由测试覆盖选择、单工具填写、双工具补选、普通旁白和非法混合，3/3 通过。下文表格保留修复前复现结果；该定向测试使用截获 fetch，不表示已完成生产部署或供应商遵循率验收。
 
-最新代码复核（2026-09-09，基线 `0c26a3d`）：原路由缺陷未复现。[Room 行动入口](../../app/_runtime/lib/room/server.ts) 为 vNext 提案直接注入 strict binding；通用 Provider 继续按请求中的任一 strict 声明分派。[路由回归](../../tests/kp-narration-transport.test.ts) 补入新增草稿修订构造器及两种混合工具顺序，验证实际端点、工具和消息原样传输、非法混合零 fetch，4/4 通过。补选、草稿修订及非法 JSON 恢复的直接消费者测试 16/16 通过；本次未修改运行时代码，未调用真实推理 API，也未核验线上版本。
-
 ## 结论：当前有三种不同入口
 
 | 入口 | 请求方式 | 官方声明与边界 | 来源 |
@@ -63,29 +61,29 @@ Responses API 使用正常 `https://api.deepseek.com` base URL。已读参考页
 - Chat 的 `finish_reason` 枚举为 `stop`、`length`、`content_filter`、`tool_calls`、`insufficient_system_resource`；后者表示推理系统资源不足导致请求中断。`length`、过滤和中断都不能当成完整业务输出。[来源][chat]
 - Responses 使用 `status`（`in_progress`、`completed`、`incomplete`、`failed`）；`incomplete_details.reason` 列 `max_output_tokens`、`content_filter`。流式终点是 `response.completed` / `response.incomplete` / `response.failed`，没有 Chat 的 `data: [DONE]`；`max_output_tokens` 包括可见输出和思考 token。[来源][responses]、[指南][responses-guide]
 
-## 现役接入比较与修复前的路由遗漏
+## 现役接入比较与已复现的路由遗漏
 
 当前本地 [DeepSeek adapter](../../app/_runtime/lib/kp/deepseek.ts) 只有 Chat 的普通与 Beta strict 两个端点，尚无 `/responses` 请求/响应处理。提案选择、填写和修订的 [请求构造器](../../app/_runtime/lib/kp/vnext/proposal-schema.ts) 为工具设置 `strict: true`；当前 [自然旁白生成](../../app/_runtime/lib/kp/narration-vnext.ts) 使用 `response_format: {type: "json_object"}`，旁白审核另用 strict tool。不能把所有阶段都描述为同一种格式化输出。
 
-首次调查发现请求分派存在一个本地遗漏：[provider.ts](../../app/_runtime/lib/kp/provider.ts) 根据 `kpRequestDeclaresStrictTool` 选择端点，但当时的 [authoritative-policy.ts](../../app/_runtime/lib/kp/authoritative-policy.ts) 要求 `tools.length === 1`。允许补选的填写请求同时携带 submit 与 offer 两个 strict 工具，因此被分派到普通 `/chat/completions`，不满足官方 strict 要求的 Beta 入口。严格 adapter 当时已经接受一到两个 strict 工具，错误发生在进入 adapter 之前；现已修复，当前复核结果见文首。
+请求分派存在一个确定的本地遗漏：[provider.ts](../../app/_runtime/lib/kp/provider.ts) 根据 `kpRequestDeclaresStrictTool` 选择端点，但 [authoritative-policy.ts](../../app/_runtime/lib/kp/authoritative-policy.ts) 第 179 行要求 `tools.length === 1`。当前允许补选的填写请求同时携带 submit 与 offer 两个 strict 工具，因此会分派到普通 `/chat/completions`，不满足官方 strict 要求的 Beta 入口。严格 adapter 自己已经接受一到两个 strict 工具，错误发生在进入 adapter 之前。
 
-首次调查以 `npx tsx --eval` 直接导入真实构造器、`assertDeepSeekStrictToolModelInput` 和路由谓词执行一次离线检查（exit 0），没有 fetch：
+本次以 `npx tsx --eval` 直接导入真实构造器、`assertDeepSeekStrictToolModelInput` 和路由谓词执行一次离线检查（exit 0），没有 fetch：
 
-| 实际构造的阶段 | strict 工具数 | strict 请求配置校验 | 修复前路由选择 Beta |
+| 实际构造的阶段 | strict 工具数 | strict 请求配置校验 | 现有路由选择 Beta |
 | --- | ---: | --- | --- |
 | `createVNextProposalOfferModelInput` | 1 | accepted | true |
 | `createSubmitKpProposalBundleModelInput(amendable=false)` | 1 | accepted | true |
 | `createSubmitKpProposalBundleModelInput(amendable=true)` | 2 | accepted | **false** |
 
-首次调查只记录该缺陷，没有修改业务代码。当时的上下文检查测试替身覆盖冻结、Room 保存和恢复，但没有覆盖上述实际供应商分派，不能据此宣称所有请求已正确启用 strict。后续修复及本次复核另以真实构造器、Provider 和截获 fetch 验证分派。
+本次只记录该缺陷，没有修改业务代码。上一轮上下文检查的测试替身覆盖冻结、Room 保存和恢复，但没有覆盖上述实际供应商分派，不能据此宣称所有请求已正确启用 strict。
 
 历史 [round87](vnext-round87-validation.md) / [round89](vnext-round89-validation.md) 还记录过缺少 required 字段的 `{}` 返回；[round84](vnext-round84-validation.md) / [round86](vnext-round86-validation.md) 记录了分支额外字段或引用 enum 违规。这些是旧批次记录，本次未重新调取其私有原始网络请求，也未新增真实调用；不能将本次路由缺陷直接定为每个旧失败的原因，也不能把所有失败统一归因于供应商。
 
-strict 请求分派已修复并完成上述本地复核。若后续评估 Responses，建议用同一份最小 Schema、相同输入，对比 Chat strict 与 Responses JSON Schema。Responses 的完成状态、文本提取和 Schema 方言需要分别验证，现有 `$def` 压缩结果不能仅凭 Chat 支持就直接移用；冻结上下文、唯一 JSON 成员、本地字段/引用/权限校验仍保留。
+后续建议先修复并验证 strict 请求分派，再用同一份最小 Schema、相同输入，对比 Chat strict 与 Responses JSON Schema。Responses 的完成状态、文本提取和 Schema 方言需要分别验证，现有 `$def` 压缩结果不能仅凭 Chat 支持就直接移用；冻结上下文、唯一 JSON 成员、本地字段/引用/权限校验仍保留。
 
 ## 对本项目的证据边界
 
-文档足以证明 DeepSeek 存在上述格式约束接口，并指出接入时必须区分 API 形态；初次离线检查证明了修复前双 strict 工具分派不符合 Beta 接入要求，后续本地传输测试证明了该分派已修复。当前证据不证明复杂 Proposal Schema 的实际通过率或完整游玩结果。若评估 Responses JSON Schema，应将其视为另一协议入口，先核对完成状态、输出提取和本地 Schema 校验，再以有界实测证明具体组合，不能由文档承诺替代验收。
+文档足以证明 DeepSeek 存在上述格式约束接口，并指出接入时必须区分 API 形态；离线检查已证明当前双 strict 工具分派不符合 Beta 接入要求。本次没有证明复杂 Proposal Schema 的实际通过率，也未验证引用、权限或机械结算。若评估 Responses JSON Schema，应将其视为另一协议入口，先核对完成状态、输出提取和本地 Schema 校验，再以有界实测证明具体组合，不能由文档承诺替代验收。
 
 检索入口核对：`/zh-cn/guides/function_calling` 本次虽返回 HTTP 200，正文实际是英文“Your First API Call”，不是当前 Tool Calls 指南；本记录使用导航所指 `/zh-cn/guides/tool_calls/` 及英文对应页。
 

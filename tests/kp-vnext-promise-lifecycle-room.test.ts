@@ -414,14 +414,7 @@ it("an incomplete social table rejects the whole proposal before any promise, re
   delete wire.results[0].newDebts;
   const before = await snapshot(stub);
   const rejected = await run(stub, input, c, bundle, wire);
-  // A missing table is a local form error: it earns the one narrow revision,
-  // and this scripted provider answers that revision with the same incomplete
-  // document, so the action ends as a technical failure. (Before the frozen
-  // context followed the words, this room's filling request already exceeded
-  // the input budget, and that gate was what produced the earlier rejection.)
-  expect(rejected.kind, JSON.stringify(rejected)).toBe("needsKp");
-  expect((rejected as Data).code).toBe("PROPOSAL_REPAIR_EXHAUSTED");
-  expect(c.calls.filter(call => call === "playerProposal")).toHaveLength(3);
+  expect(rejected.kind, JSON.stringify(rejected)).toBe("rejected");
   const after = await snapshot(stub);
   expect(after).toEqual(before); expect(c.narrations).toEqual([]);
   const calls = [...c.calls]; await evictDurableObject(stub);

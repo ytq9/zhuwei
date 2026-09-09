@@ -3,7 +3,7 @@ import { wrapScriptedRevision } from "./fixtures/vnext-revision-response.mjs";
 import { roomServiceCapabilities } from "../app/_runtime/lib/room/archive";
 import { deepSeekRequestBody } from "../app/_runtime/lib/kp/deepseek";
 import { proposalModelContext } from "../app/_runtime/lib/kp/vnext/proposal-context";
-import { npcDecisionContext, npcDecisionEntryRef } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
+import { npcDecisionContext } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
@@ -48,8 +48,6 @@ type Capture = {
   starts: Array<{ request: VNextInvocationRequest; result: VNextInvocationStart }>;
   providerRequests: JsonRecord[];
   selectedCapabilities?: readonly string[];
-  /** Bystander views the fixture selection asks for, when the sentence does not address them by a resolvable name. */
-  selectedNpcRefs?: readonly string[];
   narrationRequests?: JsonRecord[];
   failNarrationOnce?: boolean;
   failNarrationForViewerOnce?: string;
@@ -69,26 +67,18 @@ it("an empty social draft retains the natural-language intent and NPC context th
   const stub = await initialize("provider-social-empty-context");
   const input: RoomActionInput = { kind: "intent", submissionId: "submission:social-empty-context",
     text: "我问lian愿意听我说说来意吗。" };
-  // "lian" is not a spelling discovery resolves, so the selection has to ask
-  // for her view; the filling rounds are then sent the context with it.
-  const capture: Capture = { selectedCapabilities: ["social"], selectedNpcRefs: [npcRef], starts: [], providerRequests: [] };
+  const capture: Capture = { selectedCapabilities: ["social"], starts: [], providerRequests: [] };
   let proposals = 0;
   const result = await run(stub, input, capture, async request => {
     proposals++;
     const body = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
-    expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
+    expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
     expect(body.requiredContext.intent.text).toBe(input.text);
-    // The model view lists the NPC's decision entry without server hashes; the
-    // frozen context Room keeps is what lowering reads as the decision snapshot.
-    expect((body.requiredContext.entries as JsonRecord[]).some(entry => entry.entryRef === npcDecisionEntryRef(npcRef))).toBe(true);
-    expect(npcDecisionContext((capture.prepared!.requiredContext as JsonRecord).entries as never, npcRef)).toBeDefined();
+    expect(npcDecisionContext(body.requiredContext.entries, npcRef)).toBeDefined();
     if (proposals === 1) return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{
       type: "function", function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: "{}" },
     }] } }] };
-    // An empty reply carries no draft: the one remaining call re-sends the
-    // original filling request rather than a correction of nothing.
-    expect(body.sourceDraft).toBeUndefined();
-    expect((request.tools as JsonRecord[]).map(tool => record(tool.function).name)).toEqual([SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+    expect(body.sourceDraft).toEqual({});
     return toolResponse({ mode: "adjudication", basisRefs: [npcRef], terminal: null,
       adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
       proposals: [{ kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always",
@@ -487,12 +477,7 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
         // the callback below supplies only the requested execution/correction.
         const toolName = record((request.tools as JsonRecord[])[0]!.function).name;
         if (capture.selectedCapabilities && toolName === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-          const response = toolResponse({ kind: "schemaRequest", capabilities: capture.selectedCapabilities });
-          if (capture.selectedNpcRefs !== undefined) {
-            const call = record(record((record(record((record(response).choices as unknown[])[0]).message).tool_calls as unknown[])[0]).function);
-            call.arguments = JSON.stringify({ ...JSON.parse(String(call.arguments)), requestedNpcRefs: capture.selectedNpcRefs });
-          }
-          return response;
+          return toolResponse({ kind: "schemaRequest", capabilities: capture.selectedCapabilities });
         }
         const response = await provider(request, target, capture);
         if (capture.selectedCapabilities && toolName === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
@@ -1225,16 +1210,16 @@ describe("vNext Provider invocation and Room persistence", () => {
       const system = record((request.messages as JsonRecord[])[0]).content;
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         expect(system).toBe(vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS));
-        return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorAbility", "authorItem", "materializeItem", "inventoryOperation"] });
+        return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorItem", "materializeItem", "inventoryOperation"] });
       }
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         // The proposal call offers the selection tool as well, so its system
         // prompt is the amendable one. Selection is amendable exactly once.
-        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
+        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities(["authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
         return toolResponse(wire(args), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       }
       expect(name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      expect(system).toBe(vnextProposalSystemPrompt("correction", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
+      expect(system).toBe(vnextProposalSystemPrompt("correction", closeVNextProposalCapabilities(["authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
       const revised = structuredClone(args); revised.proposals[0].summary = "使用药剂的治疗能力已定义。";
       return toolResponse(wire(revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };

@@ -1,14 +1,9 @@
 import { env } from "cloudflare:workers";
 import {
-  evictDurableObject,
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { createVersionedRulesRuntime, project, replay, step, type VersionedRulesRuntime } from "../app/_runtime/lib/rules/v2-runtime";
-import { ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules/profiles/manifests";
-import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical";
-import { AuthoritativeRoomStore } from "../app/_runtime/lib/room/authority-store";
 
 import {
   compileKpFormDraft,
@@ -41,17 +36,6 @@ type DeletionAuthority = DurableObjectStub & {
 
 const HOST = { principal: { id: "principal:deletion-host", sessionVersion: 1 } };
 const PLAYER = { principal: { id: "principal:deletion-player", sessionVersion: 1 } };
-const RETIRED_MANIFEST = {
-  ...ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST,
-  manifest: {
-    profileId: "runtime:deletion-test-retired-v1",
-    profileHash: canonicalSha256({ fixture: "deletion-test-retired-v1", base: ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST }),
-  },
-};
-const RETIRED_RUNTIME = createVersionedRulesRuntime({
-  registrations: [{ manifest: RETIRED_MANIFEST, interpreterKind: "authoritative-v2" }],
-  defaultManifest: RETIRED_MANIFEST.manifest,
-});
 
 function directory(row: DirectoryRow | null): MutableDirectory {
   const mutable: MutableDirectory = {
@@ -80,18 +64,12 @@ function directory(row: DirectoryRow | null): MutableDirectory {
   return mutable;
 }
 
-async function authoritativeRoom(label: string, retiredRuntime = false) {
+async function authoritativeRoom(label: string) {
   const roomId = `room:deletion:${label}:${crypto.randomUUID()}`;
   const authority = env.ROOMS.getByName(roomId) as unknown as DeletionAuthority;
-  if (retiredRuntime) {
-    await runInDurableObject(authority as never, async (instance) => {
-      (instance as unknown as { rulesRuntime: VersionedRulesRuntime }).rulesRuntime = RETIRED_RUNTIME;
-    });
-  }
   const initialized = await authority.initializeAuthoritative({
     roomId,
     moduleId: "black-oak-will",
-    ...(retiredRuntime ? { runtimeProfiles: RETIRED_MANIFEST } : {}),
     members: [
       { principalId: HOST.principal.id, role: "host" },
       { principalId: PLAYER.principal.id, role: "player" },
@@ -159,130 +137,6 @@ function observeProposal(rootActionId: string) {
 }
 
 describe("authoritative-v2 recoverable room deletion", () => {
-  it("allows the canonical host to prepare deletion after the room interpreter is retired", async () => {
-    const { roomId, authority, capabilities } = await authoritativeRoom("retired");
-    const d1 = directory({ id: roomId, host_user_id: HOST.principal.id, status: "deleting" });
-    await installDirectory(authority, d1);
-    await runInDurableObject(authority as never, async (instance) => {
-      // Simulate a deployment that no longer registers this room's manifest,
-      // without changing any of the room's persisted state or identity.
-      const target = instance as unknown as {
-        rulesRuntime: VersionedRulesRuntime;
-        authoritativeReplayCache: unknown;
-      };
-      target.rulesRuntime = { project, replay, step };
-      target.authoritativeReplayCache = undefined;
-    });
-    // A stale directory role must not replace the canonical Room identity.
-    d1.row!.host_user_id = PLAYER.principal.id;
-    await expect(authority.prepareDeletion(capabilities.roomDeletion, PLAYER)).resolves.toMatchObject({
-      kind: "rejected",
-      code: "roomDeletionUnauthorized",
-    });
-    await expect(authority.prepareDeletion(capabilities.roomDeletion, {
-      principal: { ...HOST.principal, sessionVersion: 2 },
-    })).resolves.toMatchObject({ kind: "rejected", code: "roomDeletionUnauthorized" });
-    await expect(authority.prepareDeletion(capabilities.roomDeletion, HOST)).resolves.toMatchObject({
-      kind: "deletionPrepared",
-      roomId,
-      principalId: HOST.principal.id,
-    });
-    await expect(authority.cancelDeletion(capabilities.roomDeletion, HOST)).resolves.toMatchObject({
-      kind: "deletionCancelled",
-    });
-    await runInDurableObject(authority as never, async (instance) => {
-      expect(() => (instance as unknown as { observe(context: unknown): unknown }).observe(HOST))
-        .toThrow("unsupportedProfile");
-    });
-  });
-
-  it("boots a retired room after eviction so host deletion can still complete", async () => {
-    const { roomId, authority, capabilities } = await authoritativeRoom("retired-cold", true);
-    await evictDurableObject(authority as never);
-    await expect(authority.prepareDeletion(capabilities.roomDeletion, HOST)).resolves.toMatchObject({
-      kind: "deletionPrepared",
-      roomId,
-    });
-    const d1 = directory({ id: roomId, host_user_id: HOST.principal.id, status: "deleting" });
-    await installDirectory(authority, d1);
-    await expect(authority.finalizeDeletion(capabilities.roomDeletion)).resolves.toMatchObject({
-      kind: "rejected",
-      code: "roomDirectoryStillPresent",
-    });
-    d1.failReads = true;
-    await expect(authority.finalizeDeletion(capabilities.roomDeletion)).resolves.toMatchObject({
-      kind: "retryableFailure",
-      code: "roomDirectoryUnavailable",
-    });
-    d1.failReads = false;
-    d1.row!.status = "play";
-    await runDurableObjectAlarm(authority as never);
-    await runInDurableObject(authority as never, async (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT * FROM authority_room_deletion").toArray()).toEqual([]);
-      expect(state.storage.sql.exec("SELECT * FROM authority_rooms").toArray()).toHaveLength(1);
-    });
-    d1.row!.status = "deleting";
-    await expect(authority.prepareDeletion(capabilities.roomDeletion, HOST)).resolves.toMatchObject({
-      kind: "deletionPrepared",
-    });
-    await evictDurableObject(authority as never);
-    d1.row = null;
-    await installDirectory(authority, d1);
-    await runDurableObjectAlarm(authority as never);
-    await expect(authority.finalizeDeletion(capabilities.roomDeletion)).resolves.toMatchObject({
-      kind: "deletionFinalized",
-      alreadyFinalized: true,
-    });
-    await expect(authority.observe(HOST)).resolves.toMatchObject({
-      kind: "rejected",
-      code: "roomUninitialized",
-    });
-  });
-
-  it("preserves paused due work and archive scheduling across eviction and deletion cancellation", async () => {
-    const { authority, capabilities } = await authoritativeRoom("paused-cancel");
-    const paused = await authority.prepare(HOST, { kind: "safetyPause", submissionId: "deletion:pause" });
-    expect(paused).toMatchObject({ kind: "prepared", resolutionMode: "authorityDirect" });
-    await expect(authority.commit(HOST, String(paused.preparedActionId), {
-      kind: "authenticatedSafetyPause",
-      rootActionId: paused.rootActionId,
-    })).resolves.toMatchObject({ kind: "committed" });
-
-    const archiveAt = Date.now() + 120_000;
-    const dueAt = archiveAt - 60_000;
-    await runInDurableObject(authority as never, async (_instance, state) => {
-      // Seed scheduler work directly; the paused world itself was committed
-      // through the real authenticated prepare/commit path above.
-      const store = new AuthoritativeRoomStore(state.storage);
-      store.enqueueDueWork({
-        causeRootActionId: "root:deletion-scheduler", causeEventId: "event:deletion-scheduler",
-        activity: {
-          activityId: "activity:deletion-scheduler", ownerEntityId: "character:deletion-host",
-          timelineId: "timeline:deletion-scheduler", completionFictionMicros: "1",
-          childRootActionId: "due:deletion-scheduler", activityHash: canonicalSha256({ fixture: "scheduler" }),
-          sceneIds: ["wake"],
-        },
-      });
-      store.deferDueWork("due:deletion-scheduler", dueAt);
-      store.deferArchive(archiveAt, Date.now());
-    });
-    await evictDurableObject(authority as never);
-    await runInDurableObject(authority as never, async (_instance, state) => {
-      expect(await state.storage.getAlarm()).toBe(archiveAt);
-    });
-    await expect(authority.prepareDeletion(capabilities.roomDeletion, HOST)).resolves.toMatchObject({
-      kind: "deletionPrepared",
-    });
-    await expect(authority.cancelDeletion(capabilities.roomDeletion, HOST)).resolves.toMatchObject({
-      kind: "deletionCancelled",
-    });
-    await runInDurableObject(authority as never, async (_instance, state) => {
-      expect(await state.storage.getAlarm()).toBe(archiveAt);
-      const store = new AuthoritativeRoomStore(state.storage);
-      expect(store.dueWorkByRoot("due:deletion-scheduler")).toMatchObject({ status: "pending", next_attempt_at: dueAt });
-    });
-  });
-
   it("requires the canonical host and freezes action, administration, and archive writes until cancellation", async () => {
     const { authority, capabilities } = await authoritativeRoom("freeze");
     const prepared = await authority.prepare(HOST, intent("submission:deletion:prepared"));

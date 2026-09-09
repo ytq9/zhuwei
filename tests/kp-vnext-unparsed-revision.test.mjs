@@ -40,20 +40,3 @@ test('a parseable empty object receives the same durable revision ticket, with m
   assert.equal(result.kind, 'repairRequired'); assert.deepEqual(result.repairTicket.sourceDraft, {});
   assert.ok(result.repairTicket.diagnostics.some(d => d.code === 'FIELD_MISSING' && d.path[0] === 'decision'));
 });
-
-test('an empty object re-sends the original filling request once, and a full reply then fills the proposal', async () => {
-  const { createVNextProposalRevisionModelInput, evaluateVNextProposalRevisionResponse, vnextProposalTicketIsEmptyDraft } = await import('../app/_runtime/lib/kp/vnext/proposal-provider.ts');
-  const { createSubmitKpProposalBundleModelInput } = await import('../app/_runtime/lib/kp/vnext/proposal-schema.ts');
-  const { proposalModelContext, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalNpcSourceChoices, proposalCreatureTargetRefs, proposalItemDefinitionRefs } = await import('../app/_runtime/lib/kp/vnext/proposal-context.ts');
-  const { requiredContextBasisReferences } = await import('../app/_runtime/lib/kp/vnext/required-context-runtime.ts');
-  const result = await invokeSubmitKpProposalBundleFirstPass({ modelId: 'scripted', message: '检查周围。', requiredContext: context,
-    capabilities: ['observe'], terminalKinds: [], binding: { async run() { return response('{}'); } } });
-  assert.equal(result.kind, 'repairRequired'); assert.equal(vnextProposalTicketIsEmptyDraft(result.repairTicket), true);
-  const reemit = createVNextProposalRevisionModelInput(result.repairTicket, context);
-  assert.deepEqual(reemit.tools.map(tool => tool.function.name), ['submit_kp_proposal_bundle']);
-  assert.equal(reemit.messages[1].content, JSON.stringify({ requiredContext: proposalModelContext(context) }));
-  assert.deepEqual(reemit, createSubmitKpProposalBundleModelInput(reemit.messages[1].content, ['observe'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), [],
-    proposalNpcSourceChoices(context), requiredContextBasisReferences(context), proposalCreatureTargetRefs(context), false, proposalItemDefinitionRefs(context)));
-  const again = evaluateVNextProposalRevisionResponse(response('{}'), result.repairTicket);
-  assert.equal(again.result.kind, 'rejected'); assert.equal(again.result.code, 'PROPOSAL_REPAIR_EXHAUSTED'); assert.equal(again.synthesis, undefined);
-});
