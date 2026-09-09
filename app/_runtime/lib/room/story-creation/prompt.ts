@@ -12,7 +12,7 @@ export const isRecord = (value: unknown): value is Record<string, unknown> => va
 /** A closed, local output vocabulary. This codec describes only our fields;
  * it is neither a rule interpreter nor a general JSON Schema implementation. */
 type Field = { schema: StoryRecord; read(value: unknown, path: string): unknown };
-const fail = (path: string): never => { throw new StoryOutputError(path); };
+function fail(path: string): never { throw new StoryOutputError(path); }
 const text: Field = { schema: { type: "string" }, read(value, path) {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 32_000 ? value : fail(path);
 } };

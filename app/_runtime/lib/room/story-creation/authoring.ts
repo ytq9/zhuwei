@@ -174,12 +174,12 @@ function validContext(context: StoryContext, ports: StoryCreationPorts): boolean
     || !Array.isArray(context.materials) || !Array.isArray(context.readSet) || !Array.isArray(context.timelines)
     || !strings(context.missingRequiredRefs) || !strings(context.supportedCapabilities) || !hashRef(context.contextHash)) return false;
   if (context.materials.some(material => !isRecord(material) || !nonempty(material.ref)
-    || !["anchor", "fact", "npc", "location", "knowledge", "relationship", "plan", "promise", "narrativeCommitment", "definition", "contentBoundary"].includes(material.kind)
-    || !["known", "scopedAbsent", "open", "explicitlyUnknown", "ambiguous", "unavailable"].includes(material.availability)
+    || typeof material.kind !== "string" || !["anchor", "fact", "npc", "location", "knowledge", "relationship", "plan", "promise", "narrativeCommitment", "definition", "contentBoundary"].includes(material.kind)
+    || typeof material.availability !== "string" || !["known", "scopedAbsent", "open", "explicitlyUnknown", "ambiguous", "unavailable"].includes(material.availability)
     || !strings(material.subjectRefs) || !strings(material.basisRefs) || material.content === undefined)
     || new Set(context.materials.map(material => material.ref)).size !== context.materials.length) return false;
   if (context.readSet.some(dependency => !isRecord(dependency) || !nonempty(dependency.ref) || !nonempty(dependency.revision)
-    || !["entity", "collection", "fact", "knowledge", "narrativeCommitment", "timeline"].includes(dependency.kind) || !hashRef(dependency.hash))
+    || typeof dependency.kind !== "string" || !["entity", "collection", "fact", "knowledge", "narrativeCommitment", "timeline"].includes(dependency.kind) || !hashRef(dependency.hash))
     || new Set(context.readSet.map(dependency => dependency.ref)).size !== context.readSet.length) return false;
   if (context.timelines.length === 0 || context.timelines.some(point => !isRecord(point) || !nonempty(point.timelineId)
     || typeof point.micros !== "string" || !/^(0|[1-9][0-9]*)$/u.test(point.micros))

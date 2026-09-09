@@ -3484,3 +3484,15 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 独占路径、定向验证和集成顺序见 story-creation-parallel-implementation.md；Coordinator 单写共享核心和日志。
 - 此 checkpoint 尚无运行实现；仅核对授权、接口、规格引用与 diff whitespace。代码定向测试、组合本地 Room 纵切、typecheck、真实模型与游玩评审均待，不能据此宣告能力完成。
 - 外部操作：无；无 push/部署/远端 migration/新资源；共享核心依赖在途 checkpoint 排队。Worker commit、实际测试退出码和冲突处置在收回时补记。
+
+## 故事内部模块与宿主接缝并行集成（2026-09-09，开发期）
+
+- 目标与能力合同：可信 Room 宿主通过同一版本化接口组合创作方法、完成完整准备/独立评审、有界修订并持久恢复；预算按作业、来源与房间共同限制。历史模块准备权限分离的导出与精确历史种子，不写正史或新房。药船冲突、档案调查、阶段长篇为结构不同样例；最高风险覆盖知识来源/未来知识、并发预算、未知调用与恢复。完整 A01–A13 仍未闭合。
+- 可恢复基线：应用 `5d4c1512488da9e134314589344c613a60aaf26a`，文档 checkpoint `d768e7f`、`0ecfa17`，共享 Interface `fd395a5`。集成目录 `/Users/sanmu/.codex/worktrees/story-integration-01a07fe3/zhuwei-cloudflare`；最终 Coordinator checkpoint 随本记录创建，父提交 `fac83e9`。原目录仍为 `cloudflare/bec5e28`，未覆盖其任何在途源码或规格。
+- Worker 收回：Creation `24adde091fa92a2faf56c648418eefbc279fc123`→`444a447`、`ceadb85a041da5f18acc65ca7c6b1f365aedf999`→`ea75719`；Store `8e8aa2225fb7108e1b953bb37247d4304e3deaa9`→`42d133e`、`071294c13fc90ffccc9c5d034d8abe4966051b38`→`fac83e9`；History `e4d2af1e95a5978307aa7f48e1cb9f71a66674e8`→`857e487`、`9e15dde30a1a8824795aaad8b000a54179764312`→`c1e012a`。均已审查并 cherry-pick，零 Git 冲突；Coordinator 的临时 ordinaryResponse 重复补丁在收回 Store 完整修复前仅撤销自身改动。三 Worker 原 worktree 均有干净可收回提交，未集成到原工作区。
+- 修改与直接消费者：`room/story-creation/**`、`story-creation-store.ts`、`story-creation-invocation.ts`、`story-history/**` 及四组专属测试/fixture；新增 `story-preparation-host.ts`，实际消费 Creation/Store 和现有 DeepSeek strict codec。Host 参与真实 DO SQLite，但 fetch 为本地测试替代。Story History 生产生命周期调用者尚未接入；未改现有 KP/Rules/DO、D1 schema、部署配置或 UI。
+- 交叉审查修复：知识自引、来源循环及可比较的时间倒置在独立评审前拒绝；历史候选先与实际 holder/fact/layer/source 绑定，阻止跨人/跨事实未来知识。预算通过版本绑定的 `stageReservation` 原子保护创作/评审及修订/复审的五维额度；ordinaryResponse 零调用；同结果迟到用量可以单调补证，保持旧响应、资格、时延与调用数。未知费用继续保留预留。
+- 最终定向证据及退出码：Creation `npx tsx --test tests/story-creation.test.mjs` 19/19（0）；Store `npx vitest run tests/story-creation-store.test.ts` 20/20（0）；History `npx tsx --test tests/story-history.test.mjs` 14/14（0）；集成 Host `npx vitest run tests/story-preparation-host.test.ts` 8/8（0）；集成 `npm run typecheck`（0）。初始三 Worker 为 17/14/13、Host 为 5 个通过；审查发现上述缺口后修复并扩充直接反例。首次集成 typecheck（2）暴露 Creation 七条 unknown 收窄错误，已用真实类型守卫与显式 never 函数修复，最终检查通过。首次 Store helper 语法错误和 History fixture 缺少合法 geometry 均在 Worker 内修正，未修改生产规则掩盖失败。
+- 未覆盖与停止边界：这些 61 个目标用例不是完整产品合同、真实模型质量或实际游玩的证明。真实输入触发、上下文/读集、现役 NPC producer、事实与知识原子接入、故事关联、其他调用共用预算、Room 生命周期/归档、幕后虚构时间和新 genesis 均待共享核心接入。A12 只验证种子，尚未验证真实新团结果分歧。
+- 依赖与外部操作：现有“查看日志定位问题”任务占用重叠核心文件；按 `docs/agent/parallel.md` 等待可恢复 checkpoint。跨任务交接请求的单独用户确认仍待答复，未发送消息。无真实 Provider 调用、全量测试、build、push、部署、远端 migration、额外资源或原团数据修改。具体接口、矩阵、审查和恢复顺序见 `docs/agent/story-creation-parallel-implementation.md` 第三轮回执。
+- 最终 diff 已按独占范围审查；集成 `git diff --cached --check` 退出 0。checkpoint 仅包含本任务宿主、目标测试、类型收窄及协调记录，不混入原目录在途修改。
