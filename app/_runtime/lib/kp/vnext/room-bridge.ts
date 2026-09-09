@@ -366,6 +366,8 @@ function loweredTransactionReadSet(
       && rulesInput.kind !== "resolveWorldInteraction"
       && rulesInput.kind !== "materializeDefinition"
       && rulesInput.kind !== "materializeItem"
+      && rulesInput.kind !== "materializeNpc"
+      && rulesInput.kind !== "admitStoryFacts"
       && rulesInput.kind !== "inventoryOperation"
       && rulesInput.kind !== "ruleWorldInteractionFeasibility"
       && rulesInput.kind !== "knowledgeReview"
