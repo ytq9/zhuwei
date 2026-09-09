@@ -4,6 +4,11 @@
   "main": "tests/room-worker.ts",
   "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [{
+    "binding": "STORY_ARCHIVE_TEST_DB",
+    "database_name": "story-archive-test",
+    "database_id": "00000000-0000-0000-0000-000000000013"
+  }],
   "durable_objects": {
     "bindings": [
       {
