@@ -14,7 +14,7 @@ import { buildRoomWorldStoryContext } from "./story-context";
 import { roomStoryBudget } from "./story-runtime-policy";
 import { verifyWorldStoryTrigger, worldStoryRequestInput, worldStorySelectionInvocationBinding,
   parseWorldStorySelection, WORLD_STORY_SELECTION_BINDING_HASH,
-  type RoomWorldStoryCommit, type RoomWorldStoryTrigger, type RoomWorldStorySelection } from "./story-world-event";
+  type RoomWorldStoryCommit, type RoomWorldStoryDueOrigin, type RoomWorldStoryTrigger, type RoomWorldStorySelection } from "./story-world-event";
 import type { DueActivityDescriptor } from "../rules/v2/model";
 
 const hash = (value: unknown): StoryHash => canonicalHash(value) as StoryHash;
@@ -44,6 +44,7 @@ export type StoryFrozenWorldContext = Readonly<{
   preparedActionId: string;
   baseEventSeq: string;
   rulesInput: StoryJson;
+  dueOrigin: RoomWorldStoryDueOrigin | null;
   trigger: RoomWorldStoryTrigger;
   moduleProfile: AuthoritativeModuleProfile;
   library: WorldStoryLibraryWitness;
@@ -79,7 +80,7 @@ function catalog(trigger: RoomWorldStoryTrigger, read: WorldStoryLibraryRead): S
 export function freezeWorldStoryHostContext(input: Readonly<{
   commit: RoomWorldStoryCommit; moduleProfile: AuthoritativeModuleProfile;
   library: WorldStoryLibraryRead; maxContextUnits: number;
-}>, rules: Pick<VersionedRulesRuntime, "step">) {
+}>, rules: Pick<VersionedRulesRuntime, "step"> & Partial<Pick<VersionedRulesRuntime, "replay">>) {
   const verified = verifyWorldStoryTrigger(input.commit, rules);
   if (verified.kind !== "verified") return verified;
   try {
@@ -97,6 +98,7 @@ export function freezeWorldStoryHostContext(input: Readonly<{
     const body = { format: "zhuwei.room-world-story-host-context/v1" as const,
       preparedActionId: worldStoryPreparedActionId(trigger), baseEventSeq: input.commit.beforeState.version,
       rulesInput: structuredClone(input.commit.rulesInput) as StoryJson, trigger,
+      dueOrigin: verified.dueOrigin,
       moduleProfile: structuredClone(input.moduleProfile), library, maxContextUnits: input.maxContextUnits };
     return { kind: "frozen" as const, context: deepFreeze({ ...body, contextHash: hash(body) }) };
   } catch { return { kind: "blocked" as const, code: "STORY_CONTEXT_INSUFFICIENT" as const, issue: "world-host:invalid-frozen-library" }; }
@@ -132,7 +134,7 @@ export function worldStoryHostPreparationInput(frozen: StoryFrozenWorldContext, 
 }
 
 function assertFrozen(value: StoryFrozenWorldContext): void {
-  check(exact(value, ["format", "preparedActionId", "baseEventSeq", "rulesInput", "trigger", "moduleProfile", "library", "maxContextUnits", "contextHash"]));
+  check(exact(value, ["format", "preparedActionId", "baseEventSeq", "rulesInput", "dueOrigin", "trigger", "moduleProfile", "library", "maxContextUnits", "contextHash"]));
   const { contextHash, ...body } = value;
   check(value.format === "zhuwei.room-world-story-host-context/v1" && hash(body) === contextHash
     && value.preparedActionId === worldStoryPreparedActionId(value.trigger) && value.baseEventSeq === value.trigger.before.eventSeq
@@ -190,7 +192,9 @@ export function verifyFrozenWorldStoryHostContext(frozen: StoryFrozenWorldContex
     const afterState = after.state as unknown as AuthoritativeWorldState;
     const events = context.archive.events.filter(event => BigInt(event.eventSeq) > BigInt(frozen.baseEventSeq) && BigInt(event.eventSeq) <= BigInt(through));
     const verified = verifyWorldStoryTrigger({ beforeState, afterState, due: frozen.trigger.due,
-      rulesInput: frozen.rulesInput, committedEvents: events, budgetSource: frozen.trigger.source, profiles: after.profiles }, rules);
+      rulesInput: frozen.rulesInput, committedEvents: events, budgetSource: frozen.trigger.source, profiles: after.profiles,
+      ...(frozen.dueOrigin === null ? {} : { continuationProof: { origin: frozen.dueOrigin,
+        signedGenesis: context.archive.signedGenesis, events: context.archive.events } }) }, rules);
     check(verified.kind === "verified" && same(verified.trigger, frozen.trigger));
     const { moduleRef, ...body } = frozen.moduleProfile;
     check(same(moduleRef, afterState.campaignRuntime.campaign?.moduleRef)

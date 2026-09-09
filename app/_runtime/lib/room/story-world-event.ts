@@ -2,12 +2,12 @@ import { canonicalHash, deepFreeze, isPlainRecord, parseJsonWithUniqueMembers } 
 import { extractSingleToolCall } from "../kp/authoritative-helpers";
 import { AUTHORITATIVE_KP_PROFILE } from "../kp/authoritative-policy";
 import type { StoryCreationSelection } from "../kp/vnext/story-selection";
-import type { AuthoritativeWorldState, EventEnvelope, RuntimeProfileManifest } from "../rules";
+import type { AuthoritativeWorldState, EventEnvelope, RuntimeGenesis, RuntimeProfileManifest } from "../rules";
 import type { DueActivityDescriptor, StoredReceipt } from "../rules/v2/model";
 import type { VersionedRulesRuntime } from "../rules/v2-runtime";
 import { dueActivityDescriptors } from "../rules/v2/due-activities";
 import { hashWorldState } from "../rules/v2/validation";
-import type { StoryFailureCode, StoryHash, StoryRecord, StoryRequest } from "./story-creation";
+import type { StoryFailureCode, StoryHash, StoryJson, StoryRecord, StoryRequest } from "./story-creation";
 import type { StoryExternalInvocationBinding } from "./story-creation-invocation";
 import type { StoryLibraryCatalog } from "./story-library-contracts";
 import { roomModelInvocationBinding, roomStoryBudget, ROOM_STORY_TRANSPORT } from "./story-runtime-policy";
@@ -16,6 +16,21 @@ const hash = (value: unknown): StoryHash => canonicalHash(value) as StoryHash;
 const same = (left: unknown, right: unknown): boolean => hash(left) === hash(right);
 const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 const sorted = (values: readonly string[]): readonly string[] => [...new Set(values)].sort();
+const seq = (value: unknown): value is string => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
+
+/** Compact identity of the actual first due invocation which suspended.
+ * Room retains this once, before later random/choice inputs replace it. */
+export type RoomWorldStoryDueOrigin = Readonly<{
+  baseEventSeq: string;
+  throughEventSeq: string;
+  rulesInput: StoryJson;
+}>;
+export type RoomWorldStoryContinuationProof = Readonly<{
+  origin: RoomWorldStoryDueOrigin;
+  signedGenesis: RuntimeGenesis;
+  /** Actual Room journal, not a list of invented continuation snapshots. */
+  events: readonly EventEnvelope[];
+}>;
 
 /** Private Host evidence, captured around the existing atomic due commit.
  * Replaying the actual Rules input verifies it; a matching hash alone does not.
@@ -30,6 +45,9 @@ export type RoomWorldStoryCommit = Readonly<{
   /** Preserve the complete source identity of an existing player/root chain.
    * Only autonomous world roots get a new worldEvent source/account. */
   budgetSource: StoryRequest["source"];
+  /** Needed only when the real due invocation suspended and its descriptor
+   * is no longer present at the final randomness/reaction step. */
+  continuationProof?: RoomWorldStoryContinuationProof;
 }>;
 export type RoomWorldStoryTrigger = Readonly<{
   schema: "zhuwei.room-world-story-trigger/v1";
@@ -48,14 +66,14 @@ export type RoomWorldStoryTrigger = Readonly<{
   triggerHash: StoryHash;
 }>;
 export type RoomWorldStoryTriggerResult =
-  | Readonly<{ kind: "verified"; trigger: RoomWorldStoryTrigger }>
+  | Readonly<{ kind: "verified"; trigger: RoomWorldStoryTrigger; dueOrigin: RoomWorldStoryDueOrigin | null }>
   | Readonly<{ kind: "notApplicable"; reason: "notNpcWork" | "workNotCompleted" | "noCommittedEvents" }>
   | Readonly<{ kind: "blocked"; code: StoryFailureCode; issue: string }>;
 
 /** Rules still owns eligibility, time, knowledge and every effect. This does
  * not commit, advance a clock, choose a story, or grant an NPC author knowledge. */
 export function verifyWorldStoryTrigger(input: RoomWorldStoryCommit,
-  rules: Pick<VersionedRulesRuntime, "step">): RoomWorldStoryTriggerResult {
+  rules: Pick<VersionedRulesRuntime, "step"> & Partial<Pick<VersionedRulesRuntime, "replay">>): RoomWorldStoryTriggerResult {
   const blocked = (issue: string): RoomWorldStoryTriggerResult => ({ kind: "blocked", code: "STORY_CONTEXT_STALE", issue });
   try {
     const { beforeState: before, afterState: after, due, budgetSource: source } = input;
@@ -66,7 +84,9 @@ export function verifyWorldStoryTrigger(input: RoomWorldStoryCommit,
       || !["playerAction", "worldEvent"].includes(source.kind) || !text(source.sourceId) || !text(source.budgetAccountId)
       || before.roomId !== after.roomId || before.runtimeEpochId !== after.runtimeEpochId || before.activeBranchId !== after.activeBranchId
       || !same(before.runtimeManifestRef, input.profiles.manifest)) return blocked("trigger:source-binding-mismatch");
-    if (!dueActivityDescriptors(before).some(candidate => same(candidate, due))) return blocked("trigger:due-not-authoritative");
+    const currentlyDue = dueActivityDescriptors(before).some(candidate => same(candidate, due));
+    const continuationEvents = currentlyDue ? [] : verifyDueContinuation(input, rules);
+    if (continuationEvents === undefined) return blocked("trigger:due-not-authoritative");
     if (input.committedEvents.length === 0) return { kind: "notApplicable", reason: "noCommittedEvents" };
     const result = rules.step(input.profiles, before, input.rulesInput);
     if (result.kind === "awaitingInput" || result.kind === "awaitingRandomness" || result.kind === "needsKp") {
@@ -96,11 +116,45 @@ export function verifyWorldStoryTrigger(input: RoomWorldStoryCommit,
         branch: before.activeBranchId, rootActionId: due.childRootActionId })}`,
       source: structuredClone(source), actorRef: actor.id, rootActionId: due.childRootActionId, due: structuredClone(due),
       scope: { sceneIds: scenes, entityIds: sorted([actor.id, ...receipt.subjectCharacterIds.filter(ref => after.entities[ref] !== undefined)]) },
-      goal, receipt: structuredClone(receipt), events: structuredClone(input.committedEvents),
+      goal, receipt: structuredClone(receipt), events: structuredClone([...continuationEvents, ...input.committedEvents]),
       before: { stateHash: hashWorldState(before) as StoryHash, eventSeq: before.version },
       after: { stateHash: hashWorldState(after) as StoryHash, eventSeq: after.version }, profilesHash: hash(input.profiles) };
-    return { kind: "verified", trigger: deepFreeze({ ...body, triggerHash: hash(body) }) };
+    return { kind: "verified", trigger: deepFreeze({ ...body, triggerHash: hash(body) }),
+      dueOrigin: currentlyDue ? null : structuredClone(input.continuationProof!.origin) };
   } catch { return blocked("trigger:invalid-authority-evidence"); }
+}
+
+/** Re-run the first due operation against its real historical prefix, then
+ * require the final before-state to be the actual later journal prefix. Rules
+ * replay validates intervening randomness/choice transitions. No plan status,
+ * root string or self-recomputed snapshot hash substitutes for this proof. */
+function verifyDueContinuation(input: RoomWorldStoryCommit,
+  rules: Pick<VersionedRulesRuntime, "step"> & Partial<Pick<VersionedRulesRuntime, "replay">>): readonly EventEnvelope[] | undefined {
+  const proof = input.continuationProof, replay = rules.replay;
+  if (!proof || !replay || !isPlainRecord(proof.origin)
+    || Object.keys(proof.origin).length !== 3 || !Object.hasOwn(proof.origin, "rulesInput")
+    || !seq(proof.origin.baseEventSeq) || !seq(proof.origin.throughEventSeq)
+    || !seq(input.beforeState.version) || !Array.isArray(proof.events)) return undefined;
+  const start = BigInt(proof.origin.baseEventSeq), through = BigInt(proof.origin.throughEventSeq), before = BigInt(input.beforeState.version);
+  if (start >= through || through > before) return undefined;
+  const at = (through: bigint) => replay(proof.signedGenesis, proof.events.filter(event => BigInt(event.eventSeq) <= through));
+  const original = at(start), suspended = at(through), current = at(before);
+  if (original.kind !== "replayed" || suspended.kind !== "replayed" || current.kind !== "replayed"
+    || original.head.eventSeq !== proof.origin.baseEventSeq || suspended.head.eventSeq !== proof.origin.throughEventSeq
+    || current.head.eventSeq !== input.beforeState.version || !same(current.state, input.beforeState)
+    || !same(original.profiles, input.profiles) || !same(suspended.profiles, input.profiles) || !same(current.profiles, input.profiles)) return undefined;
+  const originalState = original.state as unknown as AuthoritativeWorldState;
+  if (!dueActivityDescriptors(originalState).some(candidate => same(candidate, input.due))) return undefined;
+  const result = rules.step(input.profiles, originalState, proof.origin.rulesInput);
+  if ((result.kind !== "awaitingRandomness" && result.kind !== "awaitingInput")
+    || result.receipt.rootActionId !== input.due.childRootActionId || result.events.length === 0
+    || result.events.some(event => event.rootActionId !== input.due.childRootActionId)
+    || !same(result.events, proof.events.filter(event => BigInt(event.eventSeq) > start && BigInt(event.eventSeq) <= through))
+    || !same(result.state, suspended.state)) return undefined;
+  const pending = input.beforeState.receipts[input.due.childRootActionId];
+  if (!pending || !["awaitingInput", "awaitingRandomness"].includes(pending.status)) return undefined;
+  return proof.events.filter(event => BigInt(event.eventSeq) > start && BigInt(event.eventSeq) <= before
+    && event.rootActionId === input.due.childRootActionId);
 }
 
 /** Called with the trusted persisted DTO, including after Room recovery.
