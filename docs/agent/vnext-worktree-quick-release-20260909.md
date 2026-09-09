@@ -1,6 +1,6 @@
 # Worktree 合并与快速发布候选（2026-09-09）
 
-本次授权是“合并worktree文件，提交推送快速部署”。发布采用定向检查和必要构建；没有全量回归或新的真实模型质量验收。远端 migration 与新增受影响的现役 vNext 房间仍需独立确认，当前生产未切换。合并提交 `461dba2bf82747192a94a254ea7a365499e0dc42` 已非 force 推送，生产构建已通过。
+本次授权是“合并worktree文件，提交推送快速部署”，用户随后明确“不保留记录，继续部署”，批准迁移并改为删除前述 1 个受影响房间及其记录。现已部署：版本 `27afcd14-fa83-494f-b84c-0516e89cc8b2` 接收 100% 流量，migration 0013 已应用，首页/登录和静态文件核验通过。实际部署源码是 `0c26a3db9e59fccd08238240a92df35b9e615380`，与构建源码 `461dba2` 仅差两份发布文档。以下保留准备阶段证据，最新执行结果见末节。
 
 ## 来源与合并
 
@@ -62,3 +62,14 @@ Node 组早于最后的故事预算接线；随后 59 项故事 Worker 组覆盖
 - 生成配置仍为 Worker zhuwei、既有 DB/ROOMS/AI/ASSETS 与 room-do-v1，没有新增资源。历史页面 `/table/:code/history` 已进入构建路由；Vinext 对登录/注册的静态路由分类提示不是构建失败。
 - 证据：`build-final.log`、`source-before-build.json`、`build-artifacts.json`、`build-proof.json`。本节及执行日志是构建后的纯文档回执，不改变已验证源码或要求重复构建。
 - 当前停止点仅为远端 migration 与新受影响房间的具体授权；取得决定后按 migration → 版本部署 → 控制面与代表性 HTTP 冒烟串行推进。尚未执行这些操作，也未新增模型采样。
+
+## 批准后生产执行（2026-09-09）
+
+- 用户明确“不保留记录，继续部署”，取代上述保留记录决定；授权对象为此前核验的 1 个新受影响 vNext 房间及相关记录，不扩展为删除其他桌或账号。
+- 再次只读查询时，该 parserHash 对应房间已为 0，房间目录总数从此前 8 变为 7；genesis/events/checkpoints/projection 四类 D1 归档的孤立记录均为 0。浏览器酒馆仅剩此前两个旧 vNext 桌。本轮没有执行删除请求或删除其他房间，也没有取得已消失房间的 Room 清理回执，因此不把既有删除归功于本次操作或宣称独立验证了 DO 物理清理。
+- `CI=1 npx wrangler d1 migrations apply DB --remote` exit 0，仅应用 `0013_smiling_shinobi_shaw.sql`。读回 d1_migrations id=14、applied_at=`2026-09-09 09:56:12`；新表 7 列存在，3 个既有 checkpoint 的新增字段均保持默认 0/null，新故事归档表无记录；再次 migrations list 显示无待执行项。新归档的业务写读已由前述本地真实 D1 用例验证，本轮未在生产植入测试游戏记录。
+- 部署前源码干净、403 个源码/构建输入及113个产物指纹匹配；精确 DEPLOY_SOURCE_SHA=0c26a3db9e59fccd08238240a92df35b9e615380 的 guard exit 0。复用此前成功构建，`CI=1 DEPLOY_SOURCE_SHA=… npx wrangler deploy` exit 0；Worker/DB/ROOMS/AI/ASSETS 与 room-do-v1 不变，无 Secrets 或新资源修改。
+- 控制面：deployment `4311a415-91cd-4bde-ad25-bff913aeadf9`，创建于 `2026-09-09T09:57:54.378531Z`，version `27afcd14-fa83-494f-b84c-0516e89cc8b2` 为 100%。Wrangler 报告 gzip 1,246.68 KiB、startup 224 ms。
+- 最小线上冒烟：通过已启用的本机 HTTP 代理访问 `/`、`/login`、`/_next/static/chunks/index-DSh8mEk1.js`，全部 HTTP 200 / curl exit 0；首页和登录包含对应内容，JS SHA256 与已部署构建产物一致。未改代理、未新增模型调用，未声称完整游戏流程或真实故事质量已验证。
+- 私有证据：`approved-room-target-rows.json`、`approved-cleanup-state.json`、`migrations-apply-approved.log`、`migration-readback.json`、`migrations-after-apply.log`、`deploy-approved.log`、`deployments-after-approved.json`、`smoke-approved.json`，均在原证据目录。
+- 部署后共享工作区出现其他在途测试修改；它们未参与本次部署或回执提交。本次只补记两份发布文档，实际生产源码仍以上述完整 SHA 为准。

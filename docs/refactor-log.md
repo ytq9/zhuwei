@@ -3955,3 +3955,12 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 部署 guard 使用精确 DEPLOY_SOURCE_SHA=461dba2bf82747192a94a254ea7a365499e0dc42，exit 0；npm run build，exit 0。403 个跟踪源码/构建输入前后完全一致，113 个产物 SHA256 保存于 /tmp/zhuwei-release-20260909/。生成 Wrangler 配置保持 zhuwei 与原 DB/ROOMS/AI/ASSETS、room-do-v1；构建包含历史新页面。
 - 构建前已清理两个 incoming 新文件的 EOF 空行，暂存及相对起点的 git diff --check 均 exit 0；纯空白不改变运行时检查结论。当前补记仅两份文档，代码冻结候选不变，不重复 production build。
 - 实际未执行：远端 0013 migration、Worker 部署/切流、上线后冒烟。完成所有已授权且可先执行的合并、修复、定向验证、提交、push 与构建；剩余需要确认增量 migration，以及新增 1 个现役 vNext 房间不能续玩而保留记录的影响。不是部署完成回执。
+
+
+## 2026-09-09 worktree 合并版本获准迁移并完成部署
+
+- 用户决定：“不保留记录，继续部署”，批准先前具体的 0013 远端 migration，并将前述 1 个受影响 vNext 房间改为删除记录。续办只读查询已无该工作流房间，目录8→7；四类 D1 孤立归档均0。本轮未发送删除请求或删除其他桌，没有取得已消失房间的 DO 清理回执，不宣称由本代理完成了既有删除。
+- migration：CI=1 npx wrangler d1 migrations apply DB --remote，exit0，仅0013；读回d1_migrations id14、applied_at 2026-09-09 09:56:12，新表7列，3个既有checkpoint的新字段0/null，新表0行；复查无pending。没有新增生产测试房间、修改账号、Secrets或资源。
+- 冻结与部署：干净cloudflare/0c26a3db9e59fccd08238240a92df35b9e615380已推送，403源码/构建输入与113产物匹配既有构建，精确DEPLOY_SOURCE_SHA guard exit0。复用build运行wrangler deploy，exit0；版本27afcd14-fa83-494f-b84c-0516e89cc8b2，deployment4311a415-91cd-4bde-ad25-bff913aeadf9，控制面确认100%，2026-09-09T09:57:54.378531Z。现有zhuwei、DB/ROOMS/AI/ASSETS及room-do-v1不变。
+- 冒烟：既有本机代理通道下首页、/login及index-DSh8mEk1.js均HTTP200/curl exit0，文案与JS SHA256匹配本地构建。未运行新模型调用、连续游玩或全量门；实际证据见agent/vnext-worktree-quick-release-20260909.md末节及/tmp/zhuwei-release-20260909/。
+- 共享工作区在部署后出现其他在途测试修改，不纳入本次已部署源码与文档回执提交；只提交本节及对应发布报告。用户请求的已构建合并版本部署完成，最终远端main复查随文档push核对，不改变grok.me。
