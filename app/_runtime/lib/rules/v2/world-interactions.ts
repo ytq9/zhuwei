@@ -1356,7 +1356,7 @@ function applyCompiledAtomicWorldInteractionPlan(profiles: RuntimeProfileManifes
   return finishAtomicExecution(profiles, state, plan, "success", executed, []);
 }
 
-function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:AuthoritativeWorldState,profiles?:RuntimeProfileManifest): AtomicCompileResult {
+export function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:AuthoritativeWorldState,profiles?:RuntimeProfileManifest): AtomicCompileResult {
   if (!hasExactKeys(input, [
     "actorCharacterId", "bundleHash", "contextHash", "kind", "rootActionId", "sharedRuling", "steps",
     ...(Object.hasOwn(input, "narrativeMaterializationRefs") ? ["narrativeMaterializationRefs"] : []),
