@@ -30,6 +30,12 @@ import type { AuthoritativeRoomArchive } from "./archive";
 import type { StoryArchiveHostBinding } from "./story-archive";
 import type { StoryStoreArchiveSnapshot } from "./story-creation-invocation";
 import type { StoryHash, StoryRecord } from "./story-creation/contracts";
+import { extractStructuredOutput } from "../kp/authoritative-helpers";
+import { NPC_PENDING_DECISION_TOOL_NAME, validateNpcPendingDecisionOutput } from "../kp/pending-decision-policy";
+import { STORY_NPC_PENDING_BINDING_HASH, storyNpcPendingPreparedActionId, storyNpcPendingRequest,
+  storyNpcPendingProviderRequest, storyNpcPendingCanonicalProven, type StoryFrozenNpcPendingContext,
+  type StoryNpcPendingOwner } from "./story-npc-pending";
+import { isAtomicWorldContinuation } from "../rules/v2/atomic-world-input";
 
 export type StoryFrozenNpcContext = Readonly<{
   preparedActionId: string;
@@ -68,7 +74,9 @@ type ActionPayload = Common & {
   npcContext: StoryFrozenNpcContext | null;
 };
 type NarrationPayload = Common & { format: "zhuwei.story-viewer-narration-host/v1"; narration: StoryFrozenNarrationContext };
-type Payload = ActionPayload | NarrationPayload;
+type NpcPendingPayload = Common & { format: "zhuwei.story-npc-pending-host/v1";
+  pending: StoryFrozenNpcPendingContext; owner: StoryNpcPendingOwner; answer: StoryRecord | null };
+type Payload = ActionPayload | NarrationPayload | NpcPendingPayload;
 type ValidationContext = { archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot };
 
 const same = (left: unknown, right: unknown): boolean => canonicalHash(left) === canonicalHash(right);
@@ -136,11 +144,15 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     check(possible.length === 1);
     if (!grouped.has(possible[0].prepared_action_id)) grouped.set(possible[0].prepared_action_id, []);
   }
+  for (const context of snapshot.contexts.filter(row => row.context_kind === "npcPending")) {
+    if (!grouped.has(context.prepared_action_id)) grouped.set(context.prepared_action_id, []);
+  }
   return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, stages]) => {
     stages.sort((a, b) => a.ordinal - b.ordinal);
     const narration = parsedContext<StoryFrozenNarrationContext>(snapshot, id, "narration");
+    const pending = parsedContext<StoryFrozenNpcPendingContext>(snapshot, id, "npcPending");
     const row = snapshot.submissions.find(row => row.prepared_action_id === id);
-    const root = narration?.request.rootActionId ?? row?.root_action_id;
+    const root = narration?.request.rootActionId ?? pending?.request.rootActionId ?? row?.root_action_id;
     check(text(root));
     const chain = sourceChain(snapshot, root!);
     const sourceRoot = chain.at(-1)?.cause_root_action_id ?? root!;
@@ -148,29 +160,49 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
       && row.binding.source.sourceId === sourceRoot);
     check(account.length === 1);
     const source = account[0].binding.source as StoryArchiveHostBinding["source"];
-    const jobIds = narration !== null ? [] : storySnapshot.jobs.filter(job => same(job.input.request.source, source)
+    const jobIds = narration !== null || pending !== null ? [] : storySnapshot.jobs.filter(job => same(job.input.request.source, source)
       && row?.root_action_id === source.sourceId).map(job => job.input.request.jobId).sort();
     const invocationIds = [...stages.map(stage => stage.invocationId), ...storySnapshot.invocations
       .filter(call => call.invocation.jobId !== null && jobIds.includes(call.invocation.jobId)).map(call => call.invocation.invocationId)].sort();
     let payload: Payload, kind: StoryArchiveHostBinding["kind"];
-    if (narration !== null) {
+    if (pending !== null) {
+      check(narration === null && row === undefined); kind = "npcDecision";
+      const owner = parsedContext<StoryNpcPendingOwner>(snapshot, id, "npcPendingOwner"); check(owner !== null);
+      payload = { format: "zhuwei.story-npc-pending-host/v1", preparedActionId: id, sourceChain: chain, stages, pending, owner: owner!,
+        answer: parsedContext<StoryRecord>(snapshot, id, "npcPendingAnswer") };
+    } else if (narration !== null) {
       check(row === undefined); kind = "viewerNarration";
       payload = { format: "zhuwei.story-viewer-narration-host/v1", preparedActionId: id, sourceChain: chain, stages, narration };
     } else {
       check(row !== undefined);
+      const priorHost = parsedContext<ActionPayload>(snapshot, id, "npcPendingOwnerHost");
       const npcContext = parsedContext<StoryFrozenNpcContext>(snapshot, id, "npc");
       kind = npcContext === null ? "preparedAction" : "npcDecision";
       const saved = snapshot.recoveries.find(row => row.prepared_action_id === id);
       const recovery = saved === undefined ? null : verifiedAuthorityCommitRecovery(saved);
       check(recovery !== undefined);
-      payload = { format: kind === "preparedAction" ? "zhuwei.story-prepared-action-host/v1" : "zhuwei.story-npc-decision-host/v1",
-        preparedActionId: id, sourceChain: chain, stages, submission: submissionDto(row!),
-        scopeVersion: snapshot.scopes.find(scope => scope.scope_id === row!.scene_scope)?.version ?? 0,
-        recovery: saved === undefined ? null : { proposalHash: saved.proposal_hash, recoveryHash: saved.recovery_hash, recovery: recovery! },
-        admissionInput: parsedContext<StoryRecord>(snapshot, id, "admission"),
-        moduleProfile: parsedContext<AuthoritativeModuleProfile>(snapshot, id, "preparationModule")
-          ?? parse<PreparedAuthoritativeAction>(row!.prepared_json).storyPreparation?.moduleProfile ?? null,
-        npcContext };
+      const hasPendingOwner = snapshot.contexts.some(context => context.context_kind === "npcPendingOwner"
+        && parse<StoryNpcPendingOwner>(context.context_json).prepared_action_id === id);
+      // The original waiting status remains in npcPendingOwner. This host is
+      // the frozen model evidence; no absent random batch is reconstructed.
+      const current = { ...row!, status: hasPendingOwner && row!.status === "awaitingRandomness" ? "prepared" : row!.status };
+      const terminal = ["committed", "concluded"].includes(current.status);
+      if (priorHost !== null) {
+        kind = priorHost.npcContext === null ? "preparedAction" : "npcDecision";
+        payload = { ...priorHost, sourceChain: chain, stages,
+          submission: { ...priorHost.submission, status: current.status,
+            originalInput: terminal ? null : priorHost.submission.originalInput },
+          scopeVersion: snapshot.scopes.find(scope => scope.scope_id === row!.scene_scope)?.version ?? priorHost.scopeVersion };
+      } else {
+        payload = { format: kind === "preparedAction" ? "zhuwei.story-prepared-action-host/v1" : "zhuwei.story-npc-decision-host/v1",
+          preparedActionId: id, sourceChain: chain, stages, submission: submissionDto(current),
+          scopeVersion: snapshot.scopes.find(scope => scope.scope_id === row!.scene_scope)?.version ?? 0,
+          recovery: saved === undefined ? null : { proposalHash: saved.proposal_hash, recoveryHash: saved.recovery_hash, recovery: recovery! },
+          admissionInput: parsedContext<StoryRecord>(snapshot, id, "admission"),
+          moduleProfile: parsedContext<AuthoritativeModuleProfile>(snapshot, id, "preparationModule")
+            ?? parse<PreparedAuthoritativeAction>(row!.prepared_json).storyPreparation?.moduleProfile ?? null,
+          npcContext };
+      }
     }
     return { bindingId: id, kind, source, jobIds, invocationIds,
       payload: payload as unknown as StoryRecord, payloadHash: canonicalHash(payload) as StoryHash };
@@ -458,17 +490,88 @@ function validateNarration(binding: StoryArchiveHostBinding, payload: NarrationP
   }
 }
 
+function validateNpcPending(binding: StoryArchiveHostBinding, payload: NpcPendingPayload, context: ValidationContext): void {
+  const frozen = payload.pending;
+  check(keys(frozen, ["preparedActionId", "baseEventSeq", "request", "decision"]));
+  const row = frozen.decision, request = frozen.request;
+  check(keys(row, ["prepared_action_id", "capability", "pending_input_id", "proposal_hash", "wave_index", "input_json", "request_json", "answer_json"])
+    && keys(request, ["preparedActionId", "rootActionId", "capability", "pending", "projection"])
+    && binding.jobIds.length === 0 && payload.stages.length <= 1
+    && [row.prepared_action_id, row.capability, row.pending_input_id, request.rootActionId].every(text)
+    && hash(row.proposal_hash) && Number.isSafeInteger(row.wave_index) && row.wave_index >= -1
+    && row.answer_json === null && typeof row.input_json === "string" && typeof row.request_json === "string"
+    && frozen.preparedActionId === payload.preparedActionId
+    && frozen.preparedActionId === storyNpcPendingPreparedActionId(row.prepared_action_id, row.pending_input_id)
+    && request.preparedActionId === row.prepared_action_id && request.capability === row.capability);
+  const base = prefix(context, frozen.baseEventSeq);
+  check(base.state.activeBranchId === binding.source.branchId);
+  const expected = storyNpcPendingRequest({ state: base.state, profiles: base.profiles,
+    preparedActionId: row.prepared_action_id, rootActionId: request.rootActionId,
+    pendingInputId: row.pending_input_id, capability: row.capability }, VNEXT_RULES_RUNTIME);
+  check(same(expected, request) && same(parse(row.request_json), { pending: expected.pending, projection: expected.projection })
+    && storyNpcPendingCanonicalProven(frozen, base.state));
+  validateNpcPendingOwner(payload, base.state);
+  for (const stage of payload.stages) {
+    check(stage.ordinal === 1 && stage.repairTicket === null
+      && stage.contextHash === canonicalHash(request) && stage.bindingHash === STORY_NPC_PENDING_BINDING_HASH
+      && same(ledgerCall(context, stage.invocationId).invocation.providerRequest,
+        storyNpcPendingProviderRequest(request, VNEXT_KP_PROFILE.modelId)));
+  }
+  if (payload.answer !== null) {
+    check(isPlainRecord(payload.answer) && payload.stages.length === 1);
+    const decision = validateNpcPendingDecisionOutput(extractStructuredOutput(
+      completedResponse(payload, context, 1), NPC_PENDING_DECISION_TOOL_NAME), request);
+    check(same(decision.answer, payload.answer));
+  }
+}
+
+function validateNpcPendingOwner(payload: NpcPendingPayload, state: AuthoritativeWorldState): void {
+  const owner = payload.owner, frozen = payload.pending, row = frozen.decision;
+  check(keys(owner, ["submission_id", "principal_id", "payload_hash", "input_kind", "root_action_id", "prepared_action_id",
+    "character_id", "scene_scope", "prepared_scope_version", "status", "proposal_hash", "scopeVersion"])
+    && [owner.submission_id, owner.input_kind, owner.character_id, owner.scene_scope].every(text)
+    && hash(owner.payload_hash) && owner.proposal_hash === row.proposal_hash
+    && owner.prepared_action_id === row.prepared_action_id && owner.root_action_id === frozen.request.rootActionId
+    && ["prepared", "awaitingRandomness"].includes(owner.status)
+    && Number.isSafeInteger(owner.prepared_scope_version) && owner.prepared_scope_version >= 0
+    && Number.isSafeInteger(owner.scopeVersion) && owner.scopeVersion >= owner.prepared_scope_version);
+  const atomic = state.atomicWorldInteractions?.[owner.root_action_id];
+  check(isAtomicWorldContinuation(atomic) && atomic.plan.actorCharacterId === owner.character_id
+    && state.entities[owner.character_id] !== undefined
+    && owner.scene_scope === `scene:${state.entities[owner.character_id].sceneId}`);
+  const control = state.characterControls[owner.character_id], seat = control === undefined ? undefined : state.seats[control.seatId];
+  if (owner.principal_id === null) check(owner.input_kind === "dueActivity" && state.entities[owner.character_id].kind === "npc");
+  else check(text(owner.principal_id) && state.principals[owner.principal_id] !== undefined
+    && seat?.principalId === owner.principal_id && seat.status === "active");
+  const canonical = parse<StoryRecord>(row.input_json), input = canonical.input as StoryRecord;
+  if (owner.input_kind === "dueActivity") {
+    const work = payload.sourceChain[0];
+    check(work !== undefined && work.child_root_action_id === owner.root_action_id
+      && work.descriptor.ownerEntityId === owner.character_id && work.descriptor.activityId === input.activityId
+      && owner.submission_id === `due-submission:${owner.root_action_id}` && owner.prepared_action_id === owner.root_action_id
+      && input.kind === "completeActionActivity" && owner.payload_hash === canonicalHash(input) && owner.proposal_hash === canonicalHash(input));
+  } else {
+    check(["intent", "answer", "gear", "itemActivity", "environmentInteract", "environmentAbility"].includes(owner.input_kind)
+      && input.kind !== "completeActionActivity");
+  }
+}
+
 /** Mandatory synchronous semantic check used both on archive creation and on
  * trusted recovery. Replays actual prefixes and rebuilds model surfaces. */
 export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding, context: ValidationContext): boolean {
   try {
     check(keys(binding, ["bindingId", "kind", "source", "jobIds", "invocationIds", "payload", "payloadHash"])
       && Array.isArray(binding.jobIds) && Array.isArray(binding.invocationIds) && unique(binding.jobIds) && unique(binding.invocationIds)
-      && binding.jobIds.length + binding.invocationIds.length > 0
+      && (binding.jobIds.length + binding.invocationIds.length > 0
+        || binding.kind === "npcDecision" && binding.payload?.format === "zhuwei.story-npc-pending-host/v1")
       && hash(binding.payloadHash) && canonicalHash(binding.payload) === binding.payloadHash);
     const payload = binding.payload as unknown as Payload;
     check(text(binding.bindingId) && payload.preparedActionId === binding.bindingId);
-    if (binding.kind === "viewerNarration") {
+    if (binding.kind === "npcDecision" && payload.format === "zhuwei.story-npc-pending-host/v1") {
+      check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "pending", "owner", "answer"]));
+      validateSourceChain(binding, payload, context, payload.pending.request.rootActionId);
+      validateStages(binding, payload, context); validateNpcPending(binding, payload, context);
+    } else if (binding.kind === "viewerNarration") {
       check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "narration"]) && payload.format === "zhuwei.story-viewer-narration-host/v1");
       const narration = payload as NarrationPayload;
       validateSourceChain(binding, narration, context, narration.narration.request.rootActionId);
@@ -489,14 +592,15 @@ export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding
 /** The archive validator receives only the actual closed lowered input after
  * validating this host's frozen action and semantic-stage association. */
 export function readStoryArchiveAdmissionRulesInput(binding: StoryArchiveHostBinding, context: ValidationContext): Record<string, unknown> | undefined {
-  if (!validateStoryArchiveHostBinding(binding, context) || binding.kind === "viewerNarration") return undefined;
+  if (!validateStoryArchiveHostBinding(binding, context) || binding.kind === "viewerNarration"
+    || binding.payload.format === "zhuwei.story-npc-pending-host/v1") return undefined;
   const input = (binding.payload as unknown as ActionPayload).admissionInput;
   return input === null ? undefined : structuredClone(input);
 }
 
 /** Pure conversion after validation; duplicate shared operational rows must
  * agree byte-for-byte after canonical serialization before any SQL mutation. */
-export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStore, "restoreStoryArchiveHostSnapshot">,
+export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStore, "restoreStoryArchiveHostSnapshot" | "restoreStoryNpcPendingDecision">,
   bindings: readonly StoryArchiveHostBinding[], context: ValidationContext): void {
   check(unique(bindings.map(binding => binding.bindingId)) && bindings.every(binding => validateStoryArchiveHostBinding(binding, context)));
   const owned = bindings.flatMap(binding => binding.invocationIds);
@@ -504,6 +608,7 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
   const jobs = bindings.flatMap(binding => binding.jobIds);
   check(unique(jobs) && same([...jobs].sort(), context.storySnapshot.jobs.map(job => job.input.request.jobId).sort()));
   const snapshot: AuthorityStoryHostSnapshot = { submissions: [], dueWork: [], recoveries: [], proofs: [], contexts: [], scopes: [] };
+  const pendingPayloads: NpcPendingPayload[] = [];
   const add = <T>(list: T[], row: T, key: (value: T) => string) => {
     const previous = list.find(value => key(value) === key(row));
     if (previous === undefined) list.push(row); else check(same(previous, row));
@@ -526,6 +631,14 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
       snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "narration", context_json: JSON.stringify(payload.narration) });
       continue;
     }
+    if (payload.format === "zhuwei.story-npc-pending-host/v1") {
+      pendingPayloads.push(payload);
+      snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "npcPending", context_json: JSON.stringify(payload.pending) });
+      snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "npcPendingOwner", context_json: JSON.stringify(payload.owner) });
+      if (payload.answer !== null) snapshot.contexts.push({ prepared_action_id: binding.bindingId,
+        context_kind: "npcPendingAnswer", context_json: JSON.stringify(payload.answer) });
+      continue;
+    }
     const { prepared, originalInput, ...row } = payload.submission;
     const continuation = row.status === "committed" || row.status === "concluded" ? null : payload.npcContext !== null
       ? { dueActivity: payload.npcContext.dueActivity, causeRootActionId: payload.npcContext.causeRootActionId,
@@ -539,5 +652,38 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
       if (value !== null) snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: kind, context_json: JSON.stringify(value) });
     }
   }
+  const headPrefix = prefix(context, context.archive.head.eventSeq), head = headPrefix.state;
+  const pendingRows = pendingPayloads.filter(payload => head.combatRuntime.pendingInputs[payload.pending.decision.pending_input_id] !== undefined)
+    .map(payload => {
+      const frozen = payload.pending, row = frozen.decision;
+      check(storyNpcPendingCanonicalProven(frozen, head)); validateNpcPendingOwner(payload, head);
+      check(same(storyNpcPendingRequest({ state: head, profiles: headPrefix.profiles,
+        preparedActionId: row.prepared_action_id, rootActionId: frozen.request.rootActionId,
+        pendingInputId: row.pending_input_id, capability: row.capability }, VNEXT_RULES_RUNTIME), frozen.request));
+      const { scopeVersion, ...identity } = payload.owner;
+      const original = snapshot.submissions.find(value => value.prepared_action_id === row.prepared_action_id);
+      if (original !== undefined) {
+        for (const key of ["submission_id", "principal_id", "payload_hash", "input_kind", "root_action_id", "prepared_action_id",
+          "character_id", "scene_scope", "prepared_scope_version", "proposal_hash"] as const) check(original[key] === identity[key]);
+        const host = bindings.find(value => value.bindingId === row.prepared_action_id);
+        check(host !== undefined && host.payload.format !== "zhuwei.story-npc-pending-host/v1");
+        snapshot.contexts.push({ prepared_action_id: row.prepared_action_id, context_kind: "npcPendingOwnerHost", context_json: JSON.stringify(host!.payload) });
+      }
+      const work = identity.input_kind === "dueActivity" ? payload.sourceChain[0] : undefined;
+      const continuation = work === undefined ? null : { dueActivity: work.descriptor,
+        causeRootActionId: work.cause_root_action_id, causeEventId: work.cause_event_id };
+      // Recovery derives a pending-only operational owner. The old model host
+      // remains private audit evidence; it cannot authorize a new proposal.
+      const restoredOwner = { ...identity, status: "prepared", prepared_json: JSON.stringify({ kind: "prepared",
+        preparedActionId: identity.prepared_action_id, rootActionId: identity.root_action_id,
+        kpProjection: {}, resolutionMode: "authorityDirect" }), continuation_json: continuation === null ? null : JSON.stringify(continuation) };
+      snapshot.submissions = snapshot.submissions.filter(value => value.prepared_action_id !== identity.prepared_action_id);
+      snapshot.submissions.push(restoredOwner);
+      snapshot.recoveries = snapshot.recoveries.filter(value => value.prepared_action_id !== identity.prepared_action_id);
+      add(snapshot.scopes, { scope_id: identity.scene_scope, version: scopeVersion }, value => value.scope_id);
+      return { ...row, answer_json: payload.answer === null ? null : JSON.stringify(payload.answer) };
+    });
+  check(unique(pendingRows.map(row => row.prepared_action_id)));
   store.restoreStoryArchiveHostSnapshot(snapshot);
+  for (const row of pendingRows) store.restoreStoryNpcPendingDecision(row);
 }
