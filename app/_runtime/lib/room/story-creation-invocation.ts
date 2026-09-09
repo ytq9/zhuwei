@@ -162,6 +162,12 @@ export type StoryAdmittedFactBinding = Readonly<{
     recordedByEventId: string;
   }>[];
 }>;
+export type StoryAdmittedDefinitionBinding = Readonly<{
+  candidateRef: string;
+  authorityRef: string;
+  recordedByEventId: string;
+  definitionRefs: readonly string[];
+}>;
 export type StoryAdmissionReceipt = Readonly<{
   jobId: string;
   preparationHash: StoryHash;
@@ -170,6 +176,7 @@ export type StoryAdmissionReceipt = Readonly<{
   receiptId: string;
   bindingHash: StoryHash;
   recordedAtEventSeq: string;
+  definitions: readonly StoryAdmittedDefinitionBinding[];
   facts: readonly StoryAdmittedFactBinding[];
 }>;
 export type StoryAdmissionResult =
@@ -181,6 +188,7 @@ export type StoryHistoryMaterialSnapshot = Readonly<{
     preparation: StoryPreparation;
     preparationHash: StoryHash;
     recordedAtEventSeq: string;
+    definitions: readonly StoryAdmittedDefinitionBinding[];
     facts: readonly StoryAdmittedFactBinding[];
   }>[];
   requiredPreparationHashes: readonly StoryHash[];

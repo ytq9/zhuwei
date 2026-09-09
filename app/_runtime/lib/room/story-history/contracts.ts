@@ -4,6 +4,7 @@ import type {
 } from "../../rules";
 import type { AuthoritativeRoomArchive } from "../archive";
 import type { ExperiencedTranscriptMessage } from "../authority-types";
+import type { StoryAdmittedDefinitionBinding } from "../story-creation-invocation";
 import type {
   StoryFactCandidate, StoryFictionPoint, StoryHash, StoryKnowledgeCandidate,
   StoryPreparation, StoryRecord,
@@ -57,6 +58,7 @@ export type StoryHistoryPreparation = Readonly<{
   preparationHash: StoryHash;
   /** Receipt-backed Room storage position, not an invented world occurrence. */
   recordedAtEventSeq: string;
+  definitions: readonly StoryAdmittedDefinitionBinding[];
   facts: readonly StoryHistoryFactBinding[];
 }>;
 export type StoryHistorySourceMaterial = Readonly<{
