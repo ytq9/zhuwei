@@ -52,6 +52,7 @@ import {
 import { buildReferenceIndex, type ReferenceNode } from "./reference-index";
 import { deriveRuntimeContextRequirements } from "./runtime-requirements";
 import { createFactRelevance } from "./fact-relevance";
+import { createKnowledgeSelector, type KnowledgeSelector } from "./knowledge-relevance";
 import { narrativeContextRequirements } from "./narrative-continuity";
 import { freezeNpcDecisionEntry } from "./npc-decision";
 import {
@@ -223,6 +224,8 @@ export function freezeAdjudicationContext(
     .filter((ref) => input.state.entities[ref]?.kind === "npc"));
   const factRelevance = createFactRelevance({ index, actorCharacterId: input.actorCharacterId,
     candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
+  const selectKnowledge = createKnowledgeSelector({ state: input.state, index, actorCharacterId: input.actorCharacterId,
+    intentText: input.intentText, candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
   const observableSubjects: ObligationSeed[] = [];
   for (const ref of index.refsByScene.get(sceneRef) ?? []) {
     if (!budget.charge("postingVisits", 1)) {
@@ -292,7 +295,7 @@ export function freezeAdjudicationContext(
     // missing ones must remain critical gaps. Other schemas may also name
     // embedded resources or tactical obstacles carried by their parent body.
     dependencies: (ref, obligation, node) =>
-      declaredDependencies(input.state, index, sceneRef, obligation, node, budget)
+      declaredDependencies(input.state, index, sceneRef, obligation, node, budget, selectKnowledge)
         .filter((seed) => index.nodes.has(seed.ref)
           || seed.obligation === "ability" || node?.kind === "campaignDefinition"),
   });
@@ -541,19 +544,27 @@ function declaredDependencies(
   obligation: ContextObligation,
   node: ReferenceNode | undefined,
   budget: ContextWorkBudget,
+  selectKnowledge: KnowledgeSelector,
 ): readonly ObligationSeed[] {
   if (node === undefined || obligation === "observableSubject") return [];
   if (!budget.charge("postingVisits", 1)) return [];
+  // Held knowledge is read by relevance: the holder's complete directory is
+  // frozen inside its catalog and decision snapshot, while only the bodies
+  // this action can touch are seeded (see `createKnowledgeSelector`).
+  const knowledgeSeeds = (holderRef: string, seedObligation: ContextObligation): readonly ObligationSeed[] | undefined => {
+    const refs = index.knowledgeByHolder.get(holderRef) ?? [];
+    if (!budget.charge("postingVisits", refs.length)) return undefined;
+    const loaded = new Set(selectKnowledge(holderRef).loaded.map((knowledgeRef) => `knowledge:${holderRef}:${knowledgeRef}`));
+    return refs.filter((ref) => loaded.has(ref)).map((ref) => ({ ref, obligation: seedObligation }));
+  };
   // This optional, non-expanding slice supports any visible conversation
-  // candidate. It loads only holder-qualified knowledge bodies; the existing
-  // Rules projection supplies and verifies the rest of that NPC's view.
-  // Missing/oversized bodies remain unavailable for speech without making a
+  // candidate. It loads holder-qualified knowledge bodies; the existing Rules
+  // projection supplies and verifies the rest of that NPC's view. Bodies left
+  // unloaded stay directory lines the KP cannot cite, without making a
   // physical observation depend on a bystander's complete private history.
   if (obligation === "npcDecision") {
     if (node.kind !== "entity" || state.entities[node.ref]?.kind !== "npc") return [];
-    const refs = index.knowledgeByHolder.get(node.ref) ?? [];
-    if (!budget.charge("postingVisits", refs.length)) return [];
-    return refs.map(ref => ({ ref, obligation: "npcDecision" }));
+    return knowledgeSeeds(node.ref, "npcDecision") ?? [];
   }
 
   // The actor body already freezes its complete attributes, defense, active
@@ -584,10 +595,8 @@ function declaredDependencies(
         return typeof abilityRef === "string" && (activation === "reaction" || activation === "reactionSpell")
           ? [{ ref: abilityRef, obligation: "reaction" as ContextObligation }] : [];
       }),
-      ...(obligation === "relation" ? [] : index.knowledgeByHolder.get(node.ref) ?? []).map((knowledgeRef) => ({
-        ref: knowledgeRef,
-        obligation: (obligation === "actor" ? "actor" : "fact") as ContextObligation,
-      })),
+      ...(obligation === "relation" ? []
+        : knowledgeSeeds(node.ref, (obligation === "actor" ? "actor" : "fact") as ContextObligation) ?? []),
     ];
   }
 

@@ -16,7 +16,7 @@ import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, IN_WORLD_ACT_FORM_IDS, isAt
 import { lowerFeasibilityPlan } from "./feasibility-lowering";
 import { authoredWorldFactConform, worldFactConstraints, worldFactConstraintsRef } from "../../rules/v2/world-facts";
 import { socialListeners, socialThreadRef, type SocialInteractionPlan } from "../../rules/v2/social-interaction";
-import { npcDecisionContext, npcDecisionEvidenceRef } from "./context/npc-decision";
+import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge } from "./context/npc-decision";
 import { observationKnowledgeIssue } from "../../rules/v2/character-inference";
 import type { WorldInteractionResolutionPlan } from "../../rules/v2/world-interaction-model";
 import { KNOWLEDGE_REVIEW_PLAN_SCHEMA } from "../../rules/v2/knowledge-review";
@@ -849,7 +849,7 @@ function lowerMaterializeObjectEntryV2(
     factBindings.push({ ref: worldFactConstraintsRef(sceneRef), revisionOrHash: canonicalHash(frame) });
     for (const knowledge of worldFact.initialKnowledge) {
       const npc = npcDecisionContext(input.requiredContext.entries, knowledge.holderRef);
-      const allowed = new Set([...(npc?.records.map(r => r.ref) ?? []), ...(npc?.knowledge.map(r => r.entryRef) ?? [])]);
+      const allowed = new Set([...(npc?.records.map(r => r.ref) ?? []), ...(npc ? npcDecisionLoadedKnowledge(npc).map(r => r.entryRef) : [])]);
       if (!npc || !worldFact.subjectRefs.includes(knowledge.holderRef)
         || knowledge.acquisitionBasisRefs.some(ref => !allowed.has(ref))
         || creationBasis.some(ref => !authority.basisRefs.includes(ref) && !allowed.has(ref))) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["world-fact:initial-knowledge-holder-basis-invalid"] };
@@ -962,11 +962,15 @@ function lowerActorPlanFormationEntry(input: VNext2ProposalBundleLoweringInput,
     })],
   });
   if (!context) return deny("CONTEXT_INSUFFICIENT", "npc-plan:npc-decision-context-unavailable", "npcRef", entry.npcRef);
-  const available = [...context.records.map(record => record.ref), ...context.knowledge.map(record => record.entryRef)]
+  const unloadedKnowledge = new Set(context.unloadedKnowledgeRefs ?? []);
+  const unloadedPremise = (ref: string) => unloadedKnowledge.has(ref)
+    || context.knowledge.some(record => record.knowledgeRef === ref && unloadedKnowledge.has(record.entryRef));
+  const available = [...context.records.map(record => record.ref), ...npcDecisionLoadedKnowledge(context).map(record => record.entryRef)]
     .filter(ref => npcActorPlanFormationPremiseRef(context, ref) !== undefined).sort(compareCodeUnits);
   const premiseRefs: string[] = [];
   for (const [index, ref] of entry.premiseRefs.entries()) {
-    const premise = npcActorPlanFormationPremiseRef(context, ref);
+    // A premise the KP never read is not a premise it can form a plan on.
+    const premise = unloadedPremise(ref) ? undefined : npcActorPlanFormationPremiseRef(context, ref);
     if (premise === undefined) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["npc-plan:frozen-own-premise-required"],
       diagnostics: [proposalDiagnostic("REFERENCE_UNAVAILABLE", "npc-plan:frozen-own-premise-required", {
         path: ["proposals", derivedEntry.ordinal, "premiseRefs", index], actual: diagnosticActual(ref),

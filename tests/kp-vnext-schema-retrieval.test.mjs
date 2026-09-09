@@ -149,10 +149,15 @@ test("model-visible shared ruling and area instructions agree with accepted and 
 });
 
 test("Item and Hazard queries close distinct typed dependencies without changing instance names", () => {
-  for (const [id, makeBundle] of [["authorItem", itemBundle], ["authorHazard", hazardBundle]]) {
-    const queried = parseVNextProposalOfferResponse(response(query([id])));
+  // An item with mechanics selects authorAbility itself; a hazard cannot be
+  // expressed without one, so its query closes it. The objects and operation
+  // around a hazard are selected when this bundle actually needs them.
+  for (const [ids, makeBundle] of [[["authorItem", "authorAbility"], itemBundle], [["authorHazard", "materializeObject", "worldInteraction"], hazardBundle]]) {
+    const queried = parseVNextProposalOfferResponse(response(query(ids)));
     assert.equal(queried.kind, "schemaRequested");
     assert.ok(queried.capabilities.includes("authorAbility"));
+    assert.equal(closeVNextProposalCapabilities(["authorItem"]).includes("authorAbility"), false);
+    assert.equal(closeVNextProposalCapabilities(["authorHazard"]).includes("materializeObject"), false);
     const bundle = makeBundle();
     for (const entry of bundle.proposals) {
       if (entry.source?.content.label) entry.source.content.label = "任意更名的实例";
@@ -301,10 +306,11 @@ test("all step decisions and clarification require prior schema selection, inclu
     assert.equal(result.kind, "rejected"); assert.equal(result.repairUsed, false); assert.equal(calls, 1);
     assert.ok(result.diagnostics.some(d => d.constraint === "offer:schema-request-additional-field" && d.repair.allowed === false), JSON.stringify(result));
   }
-  const loaded = parseVNextProposalOfferResponse(response(query(["authorHazard"])));
+  const loaded = parseVNextProposalOfferResponse(response(query(["authorHazard", "materializeObject", "worldInteraction"])));
   const candidate = parseSubmitKpProposalBundleCandidateArguments(choice);
   assert.equal(candidate.kind, "accepted");
   assert.doesNotThrow(() => assertVNextProposalCandidateCapabilities(candidate, loaded.capabilities));
+  assert.throws(() => assertVNextProposalCandidateCapabilities(candidate, parseVNextProposalOfferResponse(response(query(["authorHazard"]))).capabilities));
 });
 
 

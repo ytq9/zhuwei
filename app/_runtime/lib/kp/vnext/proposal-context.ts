@@ -2,7 +2,7 @@ import type { VNextRequiredContext } from "./required-context";
 import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/v2/items";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/v2/semantic-definitions";
 import { isPlainRecord, compareCodeUnits } from "./canonical-json";
-import { npcDecisionContext, npcDecisionEvidenceRef, NPC_DECISION_CONTEXT_SCHEMA } from "../../rules/v2/npc-decision-context";
+import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, NPC_DECISION_CONTEXT_SCHEMA } from "../../rules/v2/npc-decision-context";
 
 // v6 separates world descriptions from adjudication data without changing the
 // frozen authority records, their permission classes or their read bindings.
@@ -19,7 +19,7 @@ export function proposalNpcSourceChoices(context: VNextRequiredContext): Proposa
     const snapshot = npcDecisionContext(context.entries, entry.value.npcRef);
     if (!snapshot) return [];
     const refs = [...new Set([...snapshot.records.map(record => record.ref),
-      ...snapshot.knowledge.map(record => record.entryRef)]
+      ...npcDecisionLoadedKnowledge(snapshot).map(record => record.entryRef)]
       .flatMap(ref => { const resolved = npcDecisionEvidenceRef(snapshot, ref); return resolved === undefined ? [] : [resolved]; }))]
       .sort(compareCodeUnits);
     return [Object.freeze({ npcRef: snapshot.npcRef, refs: Object.freeze(refs) })];
@@ -130,10 +130,13 @@ function worldSubjectModelValue(value: Record<string, unknown>) {
  * read or cite; Room and lowering keep reading the frozen context itself. */
 function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<string>): Record<string, unknown> {
   if (value.schema === NPC_DECISION_CONTEXT_SCHEMA) {
-    const { projectionHash: _projection, ...rest } = value;
+    const { projectionHash: _projection, unloadedKnowledgeRefs, ...rest } = value;
+    const unloaded = new Set(Array.isArray(unloadedKnowledgeRefs) ? unloadedKnowledgeRefs : []);
     return Object.freeze({ ...rest,
+      // A directory line without a loaded body: the NPC holds this memory, but
+      // this action did not read it, so it cannot be cited or paraphrased.
       knowledge: Array.isArray(value.knowledge) ? Object.freeze(value.knowledge.map(record => isPlainRecord(record)
-        ? Object.freeze({ knowledgeRef: record.knowledgeRef, entryRef: record.entryRef }) : record)) : value.knowledge,
+        ? Object.freeze({ knowledgeRef: record.knowledgeRef, entryRef: record.entryRef, loaded: !unloaded.has(String(record.entryRef)) }) : record)) : value.knowledge,
       records: Array.isArray(value.records) ? Object.freeze(value.records.map(record => {
         if (!isPlainRecord(record)) return record;
         const { revisionOrHash: _revision, ...presented } = record;

@@ -161,13 +161,18 @@ test('unnamed and differently written NPC references have the same finite source
   }
 });
 
-test('an oversized optional NPC knowledge body blocks its speech context while physical observation remains usable', () => {
+test('an oversized optional NPC knowledge body stays an uncitable directory line while speech and observation remain usable', () => {
   const f = fixture('large-npc-history'), state = structuredClone(f.state);
   state.knowledge[NPC]['knowledge:same'].content = 'x'.repeat(70_000);
   const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId,
     focusRefs: [], intentText: '我看看眼前的人。' });
-  assert.equal(npcDecisionContext(frozen.context.entries, NPC), undefined);
-  assert.equal(frozen.context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).reason, 'notLoaded');
+  const decision = npcDecisionContext(frozen.context.entries, NPC);
+  assert.ok(decision, 'the snapshot keeps its complete directory');
+  assert.deepEqual(decision.unloadedKnowledgeRefs, [`knowledge:${NPC}:knowledge:same`]);
+  assert.deepEqual(proposalContext.proposalNpcSourceChoices(frozen.context).find(choice => choice.npcRef === NPC).refs
+    .filter(ref => ref.startsWith(`knowledge:${NPC}:`)), []);
+  assert.equal(proposalContext.proposalModelContext(frozen.context).entries
+    .find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge[0].loaded, false);
   const lowered = lower({ ...f, state, requiredContext: frozen.context }, NPC);
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
   assert.equal(stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput).kind, 'committed');

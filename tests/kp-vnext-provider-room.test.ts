@@ -1213,16 +1213,16 @@ describe("vNext Provider invocation and Room persistence", () => {
       const system = record((request.messages as JsonRecord[])[0]).content;
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         expect(system).toBe(vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS));
-        return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorItem", "materializeItem", "inventoryOperation"] });
+        return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorAbility", "authorItem", "materializeItem", "inventoryOperation"] });
       }
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         // The proposal call offers the selection tool as well, so its system
         // prompt is the amendable one. Selection is amendable exactly once.
-        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities(["authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
+        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
         return toolResponse(wire(args), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       }
       expect(name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      expect(system).toBe(vnextProposalSystemPrompt("correction", closeVNextProposalCapabilities(["authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
+      expect(system).toBe(vnextProposalSystemPrompt("correction", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
       const revised = structuredClone(args); revised.proposals[0].summary = "使用药剂的治疗能力已定义。";
       return toolResponse(wire(revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };

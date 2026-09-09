@@ -10,7 +10,7 @@
 
 **2026-09-08 本地实现提交。两处遥测修复和非战斗活动通知机制已完成本地定向验证并纳入本提交，父提交为 `e657162`；本提交后 `cloudflare` 领先本地跟踪引用 `origin/cloudflare` 42 个提交。本次未 fetch、push 或跑新真实批次。** 用户已明确“非战斗状态可以，战斗不可以”，无需重复询问这一边界。玩家普通耗时提案先成为 Activity，休整/活动按实际期限推进，角色合法获知消息后暂停并由原控制者继续或结束，完成结果不提前发放。战斗保留既有回合与反应规则。见[活动回执](docs/agent/vnext-activity-attention-validation.md)、[能力合同](docs/agent/vnext-activity-attention-contract-proposal.md)和[遥测回执](docs/agent/vnext-telemetry-validation.md)。lowering 的直接调用者已按 Activity 阶段迁移并核对，当前定向范围无未解决失败；真实 NPC 主动传话与连续游玩仍未验证。
 
-**2026-09-09 晚追加（本地，未真实验证）：** 生产新房间一句提问即 `PROPOSAL_INPUT_BUDGET_EXCEEDED`，根因是冻结上下文先收集整个场景（全部可见 NPC 私有知识、开场实物全部事实、单字「的」命中别名）。已按 SPEC 0016 §4.3 改成按行动相关性构造并去掉模型视图里的版本 hash：真实黑橡房间点名提问的 offer 估算 44,825→25,730，四类表填写从被拦截到 41,549。本地定向证据与基线红的逐名对照见 [refactor-log](docs/refactor-log.md) 当日末条；**下一批真实 DeepSeek 批次须先复核 offer/填写的 `estimatedInputTokens` 与 usage**，58,000 开发准入上限与 authorItem 一族 13k 的 schema 未动。
+**2026-09-09 晚追加（本地，未真实验证）：** 生产新房间一句提问即 `PROPOSAL_INPUT_BUDGET_EXCEEDED`，根因是冻结上下文先收集整个场景（全部可见 NPC 私有知识、开场实物全部事实、单字「的」命中别名）。已按 SPEC 0016 §4.3 改成按行动相关性构造并去掉模型视图里的版本 hash：真实黑橡房间点名提问的 offer 估算 44,825→25,730，四类表填写从被拦截到 41,549。本地定向证据与基线红的逐名对照见 [refactor-log](docs/refactor-log.md) 当日末条；**下一批真实 DeepSeek 批次须先复核 offer/填写的 `estimatedInputTokens` 与 usage**，58,000 开发准入上限未动。随后用户决定并已本地完成：类型依赖改软（authorItem 一族 schema 12.8k→8.6k）与持有知识分层加载（目录完整、正文按相关性）；选择阶段的动态召回例外暂缓讨论。
 
 此前当日真实批次提供了三类证据：
 

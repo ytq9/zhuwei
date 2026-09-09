@@ -3990,3 +3990,13 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 直接消费者：Room 请求校验（`vnext-proposal-invocation.ts`）与修订票据 hash 均调用同一 `proposalModelContext`；lowering 社交/计划路径继续读冻结上下文；`story-archive-host` 通过。
 - 验证：`npm run typecheck` exit 0；Node 23 个上下文/发现/lowering/故事文件 184 过 4 红，4 红为基线已红（fact-source 2、item-reference-surface 2，基线 worktree 同样失败）；Vitest `kp-vnext-provider-room` 13 红与基线 13 红逐名相同，原「空社交草稿」用例改为按 entryRef 断言模型视图后通过；新增 `tests/kp-vnext-context-relevance-room.test.ts`：点名瓦罗的提问 offer 25,730、四类表填写 41,549、31 条目，旁观 NPC 无决策快照与知识正文，铜钥事实缺席；问铜钥时铜钥事实/定义进入、莉安决策在、瓦罗决策不在；未点名的环顾保留三名 NPC 决策。Room 消费者 7 个文件当前 11 红，基线同机 18 红，逐名对照只有 `kp-vnext-promise-lifecycle-room` 的「不完整社交表」变化：基线的 rejected 来自填写请求超预算，现在进入一次修订后 `needsKp/PROPOSAL_REPAIR_EXHAUSTED`，已按合同改断言。`git diff --check` exit 0。
 - 未覆盖：没有真实 DeepSeek 批次，减量只在本地估算器上成立；`resumes a frozen authored attack` 与 `retrieves Item and Ability schemas` 仍是基线红，后者现在越过预算门后停在陈旧的提示词期望；authorItem 一族工具 schema 单独 13,334 token，schema 压缩与 58,000 开发准入上限未动（DeepSeek V4 Flash 官方上下文 1M）；NPC 知识随游玩累积仍会逐 NPC 全量加载，只是不再对旁观者加载；未部署、未 push。
+
+## 2026-09-09 类型依赖改软与持有知识分层加载（开发期）
+
+- 目标：按用户决定，(一) authorItem/materializeNpc/authorHazard 不再把整族表单自动闭合进填写请求；(二) NPC 与行动者的持有知识改为“目录完整、正文分层”，动态召回（选择阶段带回召回请求）暂缓。
+- 依赖改软：`proposal-capabilities.ts` v6，authorItem 依赖 materializeItem+inventoryOperation，materializeNpc 无依赖，authorHazard 只依赖 authorAbility；目录描述与 `proposal-guidance.ts` 填写边界写明“同束新 Ability/新物品须显式选择，未加载只能引用已有定义，漏选走一次补选”。填写 schema 估算：authorItem 一族 12,846→8,605，authorHazard 16,354→8,107，materializeNpc 16,667→7,136（底座 3,440 不变）。
+- 知识分层：新增 `context/knowledge-relevance.ts`。第一层必载：模组/genesis 来源、来自行动者或行动者听自被点名 NPC 的记录、该 NPC 仍 scheduled 计划的 premiseRefs、24 虚构小时内取得的记录；第二层按正文与措辞（含已发现候选名称与停用词后的独立单字）的词面重合；其余只留目录行。上限 40 条 / 64k 字符仅作防爆。行动者本人知识同样分层，`knowledge-catalog` 目录保持完整。
+- Rules 快照：`npc-decision-context.ts` 的 `NpcDecisionContext` 增加可选 `unloadedKnowledgeRefs`（目录仍列全部记录与版本），缺正文不再整体 unavailable；`npcDecisionEvidenceRef`、`proposalNpcSourceChoices`、lowering 的 basis/premise 集合只接受已冻结正文；提交时 `domain()`/`npcDomain()` 比较不含该字段，旧快照无该字段按全载解释。模型视图知识目录逐条带 `loaded`。
+- 测试：更新 `kp-vnext-schema-retrieval`（依赖改软后显式选择）、`kp-vnext-npc-decision-context`（缺正文=目录行）、`kp-vnext-observable-context`（超长正文=不可引用的目录行）、provider-room 物品用例的显式 authorAbility；新增 `tests/kp-vnext-knowledge-relevance.test.mjs` 4 例。
+- 验证：typecheck exit 0；25 个 Node 上下文/发现/lowering/故事文件 221 过 0 红；schema-retrieval 另 4 红、fact-source 2 红、item-reference-surface 2 红、npc-plan-formation-rules 2 红均在未改代码的 HEAD worktree 同样失败；Vitest relevance 2/2、provider-room 13 红逐名同基线、promise-lifecycle-room 2 红与 npc-plan-formation-room 1 红同基线。`git diff --check` exit 0。
+- 未覆盖：真实批次待跑；fresh 房间的知识全是模组来源，分层减量要在累积对话后才出现；描述上提（第二档 schema 压缩）未做；NPC 工作帧（npc-work）仍全量加载本人知识。
