@@ -3474,3 +3474,13 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 ## 活动与遥测实现本地提交（2026-09-08）
 
 用户明确要求“先把本地实现提交了”。基线为 cloudflare / e657162883b6cde129c405b4d0a2374dfce22094；本提交收录非战斗活动通知、受控继续/结束、恢复与重放修复、ActorPlan/等待遥测、直接消费者测试及对应合同/回执/交接。复用上一节的定向验证，提交准备只改文档状态；未重跑代码测试或进入发布门。暂存区按文件和日志主题选择，独立生命周期、故事创作合同及其 CONTEXT/日志修改保留在工作树；无冲突、无外部操作。本提交使用 conventional commit，父提交固定为上述基线；无 push、部署、migration 或退役，真实模型活动验收仍待后续。
+
+
+## 故事并行共享合同与预算补充批准（2026-09-09）
+
+- 目标：在同一 Room/Rules 权威内模块化完成故事准备、连续性、幕后发展与历史分支；代表性矩阵沿能力合同 A01–A13。
+- 基线：隔离集成 0ecfa173059ddf1e8f1cf55ce2380b61e0ec4c9d；三个 Worker 原基线 d768e7fcc5e3bdb5e833cb2d38069349924f2719。原目录当前 cloudflare/bec5e28 且有无关在途修改，未复制或覆盖。
+- 用户于 2026-09-09 回复“同意”，批准独立故事作业通常两次、最多四次实际调用、共同来源预算及未知不重采样。窄补充 SPEC 0015/0016 及索引，更新决定状态；共享故事 DTO/Ports 固定于 room/story-creation/contracts.ts。
+- 独占路径、定向验证和集成顺序见 story-creation-parallel-implementation.md；Coordinator 单写共享核心和日志。
+- 此 checkpoint 尚无运行实现；仅核对授权、接口、规格引用与 diff whitespace。代码定向测试、组合本地 Room 纵切、typecheck、真实模型与游玩评审均待，不能据此宣告能力完成。
+- 外部操作：无；无 push/部署/远端 migration/新资源；共享核心依赖在途 checkpoint 排队。Worker commit、实际测试退出码和冲突处置在收回时补记。

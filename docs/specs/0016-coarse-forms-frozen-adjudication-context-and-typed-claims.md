@@ -323,6 +323,8 @@ Prospective 可寻址性只能在 `Rules.step` 内部验证。Rules 必须复用
 
 选择至多一次。Room 在外部调用前保存精确请求及 hash，在下一阶段前保存响应；两轮 user 正文逐字绑定同一完整冻结上下文，恢复不重读新世界、不重选能力或版本。第二轮只允许提交 Proposal。普通小表单最多 2 次模型调用，选择与填写用完后不得再调用 correction；实际包含所选执行家族的复杂提案最多 3 次，即一次纯选择、一次 Proposal 和最多一次窄 correction，不得增加第四阶段。额外选择未使用执行家族不能为最终纯小表单取得第三次调用，Adapter 与 Room 从同一原稿证明预算准入。所有实际调用及 Provider 重试均计入 RootAction 调用、token、费用和延迟预算，模型采用的统计认证按本次快速部署决定后置，产品正确性边界不变。未知标识、混合草稿、重复选择、不可闭合定义和预算超限是技术失败，不是 clarification、世界内拒绝或成功结果。
 
+2026-09-09 用户明确批准[完整故事创作的独立调用预算](../agent/story-creation-call-budget-decision.md)。仅在绑定该合同的新开发期 Profile 中，完整故事准备采用独立、版本化作业：初稿与独立审查通常共两次，最多再进行一次必要修订及修订后复审，每份新准备最多四次实际模型调用。解析失败、Provider 重试及其他付费步骤也占用该额度，不能通过换阶段、请求、jobId 或重包装同一机会重置额度。所有调用、token、费用与延迟同时关联来源 RootAction/已提交世界事件的总预算；子额度不解除来源及房间的共同限额，未知 usage 不记为零。结果保存后恢复不再调用，已发出但结果未知不自动重采样。创作修订仅改尚未固化的草稿，不能改玩家意图、锚点、既有事实、叙述承诺或骰前冻结的机械结果。该工作流不是 Proposal 窄修订，也不扩大普通行动现役限额；准备包仍须经正常 Rules 验证、Room 原子接入与 Viewer 投影，额度不足不省略完整材料或独立审查。创作成本不构成世界惩罚，现实等待不推进虚构时间。此补充不改变现役房间解释或授权生产切换。
+
 首份 ProposalBundle 形成一个 bundle-level 语义冻结。修复模型只接收唯一工具 schema、拒绝草稿、合并后的精确诊断、相关有限引用、冻结 hash 和允许修改的字段路径，并只返回这些路径的稀疏 correction；它不重发或重选整个 Bundle。
 
 服务器合并 correction 后必须从头重跑完整 closed-schema、引用、权限、跨字段、produces/consumes、条件支配、循环/规模、lowering 和 Rules 预检。局部修复限制模型填写面，不缩小服务器重验面。修复不得改变玩家 goal/method、已确认重大目标、Ruling、风险、成本或 outcome binding；一次修复仍非法时返回 `PROPOSAL_REPAIR_EXHAUSTED`，整束保持未提交。Context 缺失/超预算、Provider schema 配置、网络、限流和超时不消耗模型语义修复机会，也不能改走 clarification。
@@ -474,7 +476,7 @@ schema 补取扩展按 2026-09-07 简化接口的执行决定验证：知识回�
 
 ## 12. 对 SPEC 0015 的窄 supersede 与 Interface 深化
 
-本规格不整篇替代 `SPEC 0015`。其静态 RAG 权威重读、首份 Proposal + 最多一次窄修订与语义冻结、body-only Narration、action/narration 双状态、逐受众发布、Model Profile、日志白名单、D1 派生索引和 V5 历史发布事实继续有效；2026-09-06 用户批准的唯一调用预算扩展是 §7.2 的一次纯 schema 补取，普通路径最多 2 次，补取路径最多 3 次且全部计入预算。旧 Catalog、compound/DAG 与详细环境模型仍按原范围窄取代；RequiredContext 与 Claims 行是对既有原则的深化，不否定其原约束。全部处理只适用于未来绑定本规格完整 Profile 的房间：
+本规格不整篇替代 `SPEC 0015`。其静态 RAG 权威重读、首份 Proposal + 最多一次窄修订与语义冻结、body-only Narration、action/narration 双状态、逐受众发布、Model Profile、日志白名单、D1 派生索引和 V5 历史发布事实继续有效；2026-09-06 用户批准的 Proposal 调用预算扩展是 §7.2 的一次纯 schema 补取，普通路径最多 2 次，补取路径最多 3 次且全部计入预算。旧 Catalog、compound/DAG 与详细环境模型仍按原范围窄取代；RequiredContext 与 Claims 行是对既有原则的深化，不否定其原约束。全部处理只适用于未来绑定本规格完整 Profile 的房间：
 
 | 处理 | SPEC 0015 原条款 | 原合同的目标/缺口 | 本规格裁定 | 仍保留内容 |
 | --- | --- | --- | --- | --- |
@@ -482,6 +484,7 @@ schema 补取扩展按 2026-09-07 简化接口的执行决定验证：知识回�
 | **窄取代** | §6.2 的 compound 升级；§6.3 `CausalActionProgram` 复合拓扑 | 模型通过 compound stages/conditions 表达复合依赖 | §7 的服务器私有 ProposalBundle；依赖从 produces/consumes、生命周期和 outcome binding 确定性导出，模型不填 DAG | 一次首 Proposal + 最多一次窄修订、语义冻结、整束预检、单 RootAction/Receipt |
 | **用户批准的窄修订** | §6.1 的总调用两次上限 | 完整 schema 每次发送；无纯 schema 补取阶段 | 2026-09-06 批准 §7.2：初次单一 strict 工具可直接提交或仅请求能力标识，按冻结注册表闭合依赖后只允许最终 Proposal | 普通最多 2 次；补取最多 3 次且全部计预算；仅一份 Proposal 与一次窄修订；补取无裁决、草稿或副作用；同请求恢复、技术失败不变成世界内拒绝 |
 | **深化** | §4.1 RequiredContext 最小权威切片 | 已要求包含相关 mechanics、动态定义、continuity 与先例，但未把认知权限和事务读取显式分开 | §4 的 `epistemicRefs/readSetRefs`、冻结元数据和最小充分正文 | Planner/RAG 不可删除 Required、Context 不等于完整 WorldState |
+| **用户批准的独立例外** | §6.1 普通 Proposal 限额的适用范围 | 完整故事草稿与独立评审不能作为机械窄修订 | 2026-09-09 批准 §7.2 的版本化故事作业：通常两次，最多四次实际调用 | 普通行动限额与语义冻结不变；全部关联来源总预算；已存复用、未知不重采样；正常 Rules/Room/Viewer 接入 |
 | **窄取代** | §11 与 §19.11–12 | `environmental-stunt`、详细材质/尺寸/高度、对象 AC/耐久/阈值、有限状态图及统一 `state-only/area-hazard` 模式作为开放环境的主要表达 | §5–7 的简单 `materialDescription`、少量类型化关系、KP 可行性判断和有限 Rules 原语；真实 Hazard/Area 只在游戏后果确实需要且已有原语时使用 | 不按对象名/archetype 派发；实际区域目标仍只由 Rules/Geometry 计算；不按队伍等级削弱危险 |
 | **深化及用户批准的窄修订** | §7 的 `renderableClaims` 输入约定 | 已要求 Narration 只依据冻结 claims，但 Claim vocabulary 与唯一生成 seam 尚未充分固定；旧限制不允许尚未机械固化的环境创作 | §8 固定 `project(viewer, committedRange) → FrozenRenderableClaims` 交接；2026-09-05 随 SPEC 0001 批准非机械环境叙述承诺，发布前持久保存，玩家引用或产生因果影响前再固化 | 机械结果唯一权威、body-only、Grounding、Audience、连续性和 Narration 失败不回滚行动 |
 

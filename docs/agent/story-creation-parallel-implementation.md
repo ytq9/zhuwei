@@ -38,6 +38,24 @@
 
 公共 contracts.ts、宿主 Adapter、Rules、Room DO、共享类型/存储、归档接入、公开输入/投影与执行日志由协调者单写。以上文件归属待共享 Interface checkpoint 后成为正式代码派工范围，避免 Worker 各自发明不兼容类型。
 
-需用户裁定的当前唯一问题见[完整故事调用预算补充](story-creation-call-budget-decision.md)：现役 SPEC 0015 §6 / SPEC 0016 §7.2 的 Proposal 选择/填写/窄修订限制，尚未表达独立故事创作与评审作业。准备增加有界子额度，保持普通行动合同与同源总预算。
+第一轮暂停时的预算问题见[完整故事调用预算补充](story-creation-call-budget-decision.md)：现役 SPEC 0015 §6 / SPEC 0016 §7.2 的 Proposal 选择/填写/窄修订限制，尚未表达独立故事创作与评审作业。准备增加有界子额度，保持普通行动合同与同源总预算。
 
 恢复顺序：取得具体预算裁定 → 更新直接规格与共享类型/Interface → 创建公共 checkpoint → 三 Worker 在原 worktree 继续独占实现 → 协调者串行集成共享核心与真实产品纵切 → 代表性验收。没有完成代码、集成或可玩性验证前不报告能力完成。
+
+## 第二轮：2026-09-09 预算批准与独立实现
+
+用户明确回复“同意”，批准调用预算补充。SPEC 0015 §§6.1、17、SPEC 0016 §§7.2、12 及规格索引已作窄补充；普通 Proposal 限制不因故事作业扩大。
+
+共享 Interface 固定在 `app/_runtime/lib/room/story-creation/contracts.ts`：`prepareStory(request, context, checkpoint, ports)` 返回完整准备/评审或精确等待/拒绝。请求、上下文、配方、草稿与审查分别绑定；宿主注入 hash、持久调用及 CAS checkpoint；时间依据区分发生与取得。History 复用准备包类型，自己的导出/分支 Interface 归其独占目录。Store 通过同一个 SQLite 接入宿主端口，不成为正史写者。
+
+| Worker | 唯一所有权 | 指定验证 |
+| --- | --- | --- |
+| creation | `app/_runtime/lib/room/story-creation/{index,authoring,review,recipes,prompt}.ts`；`tests/story-creation.test.mjs`；`tests/fixtures/story-creation.mjs` | `npx tsx --test tests/story-creation.test.mjs`，涵盖 A01/A02/A03、有限知识矛盾拒绝、完整评审/一轮修订、保存恢复及配方停用 |
+| journal | `app/_runtime/lib/room/story-creation-store.ts`、`story-creation-invocation.ts`；`tests/story-creation-store.test.ts` | `npx vitest run tests/story-creation-store.test.ts`，涵盖同身份/CAS、共同预算、未知不重发、迟到、计量未知和外层事务回滚 |
+| history | `app/_runtime/lib/room/story-history/**`；`tests/story-history.test.mjs`、`tests/fixtures/story-history.mjs` | `npx tsx --test tests/story-history.test.mjs`，涵盖 A11/A12、合法切点、异步地区时钟、知情取得筛选与越权/更正/缺失拒绝 |
+
+Coordinator 单写 contracts.ts、Host Adapter、KP/Rules/Room/HTTP/共享存储/归档/规格/执行日志。三个 Worker 不修改这些文件、不全量测试或单独 typecheck；接口不适用时报告最小调整，由协调者更新共享 checkpoint。定向检查允许在代码变化或明确失败修复后重跑，不能挑选成功输出。
+
+集成依赖次序：共享合同 → 三路独立实现与各自 commit → 审查并依次收回 Creation、Store、History → 核心宿主接入与真实本地能力矩阵 → 一次公共类型检查。新的 Rules/Room 共享改动目前与原工作区在途开发重叠：原目录 HEAD 为 bec5e28，尚有未提交的上下文/NPC/Promise 等修改。独立新模块继续推进；依赖部分等可恢复 checkpoint 后针对差量集成，不从旧基线覆盖主目录。
+
+本轮仍处于开发期，不 push、部署、远端 migration、新建远端资源或改变现役房间解释。确定性模块测试不是模型质量、真实游玩或完整合同通过证据。
