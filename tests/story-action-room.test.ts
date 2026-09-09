@@ -15,23 +15,16 @@ import { ActorPlanTransportCapability } from "../app/_runtime/lib/room/actor-pla
 import type { StoryPreparationReady } from "../app/_runtime/lib/room/story-action-context";
 import type { StoryCreationStore } from "../app/_runtime/lib/room/story-creation-store";
 import type { StoryLibraryStore } from "../app/_runtime/lib/room/story-library-store";
-import type { StoryRequest, StoryContext, StoryPreparation } from "../app/_runtime/lib/room/story-creation/contracts";
 import type { VNextInvocationCompletion, VNextInvocationRequest, VNextInvocationStart } from "../app/_runtime/lib/room/vnext-proposal-invocation";
 import type { AuthoritativeWorldState, RuntimeProfileManifest, RuntimeGenesis } from "../app/_runtime/lib/rules";
-import { characterTimelineId } from "../app/_runtime/lib/rules/v2/timeline";
-import { storyFixture, storyReviewBody, storyResponse } from "./fixtures/story-creation.mjs";
-import { npcStorySource } from "./fixtures/kp-vnext-story-materialization.mjs";
+import { storyReviewBody, storyResponse } from "./fixtures/story-creation.mjs";
 import { inspectStoryPreparation } from "../app/_runtime/lib/room/story-creation/review";
 import { compileAtomicWorldInteractionPlan } from "../app/_runtime/lib/rules/v2/world-interactions";
 import { isStoryFactsAdmissionPlan } from "../app/_runtime/lib/rules/v2/story-facts-admission";
 import { isCanonicalReadSet } from "../app/_runtime/lib/rules/v2/world-interaction-model";
 
-type Json = Record<string, unknown>;
-const ALICE = { principal: { id: "principal:story-room:alice", sessionVersion: 1 } };
-const ACTOR = "character:story-room:alice", SCENE = "wake";
-const LIAN = "npc:black-oak-will:lian", VARO = "npc:black-oak-will:varo";
-const FACT = "candidate:registration-fact", NEW_NPC = "candidate:archivist", HANDLE = "prospective:story-archivist";
-const PRIVATE = "NPC_ONLY_STORY_MEMORY_船单豁免栏遗漏，但不知道遗漏原因";
+import { ALICE, ACTOR, SCENE, LIAN, VARO, FACT, NEW_NPC, HANDLE, PRIVATE, record, draft, bundle, response, initialize, type Json } from "./fixtures/story-action-room";
+
 type Internals = RoomAuthorityCapability & {
   storyStore: StoryCreationStore;
   storyLibraryStore: StoryLibraryStore;
@@ -40,70 +33,6 @@ type Internals = RoomAuthorityCapability & {
   beginVNextProposalInvocation(context: typeof ALICE, id: string, request: VNextInvocationRequest): Promise<VNextInvocationStart>;
   completeVNextProposalInvocation(context: typeof ALICE, id: string, result: VNextInvocationCompletion): Promise<{kind:string}>;
 };
-function record(value: unknown): Json {
-  expect(value).not.toBeNull(); expect(typeof value).toBe("object"); expect(Array.isArray(value)).toBe(false);
-  return value as Json;
-}
-function substitute<T>(value: T, refs: Map<string, string>): T {
-  if (typeof value === "string") return (refs.get(value) ?? value) as T;
-  if (Array.isArray(value)) return value.map(item => substitute(item, refs)) as T;
-  return value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key,item]) => [key,substitute(item,refs)])) as T : value;
-}
-const response = (name: string, value: unknown) => ({ choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{
-  type: "function", function: { name, arguments: JSON.stringify(value) },
-}] } }], usage: { prompt_tokens: 100, completion_tokens: 200 } });
-
-async function initialize(suffix: string) {
-  const roomId = `story-action-room:${suffix}`, stub = env.VNEXT_ROOMS.getByName(roomId);
-  const result = await stub.initializeAuthoritative({ roomId, moduleId: "black-oak-will",
-    members: [{ principalId: ALICE.principal.id, role: "host" }], characters: [{ characterId: ACTOR,
-      controllerPrincipalId: ALICE.principal.id, staticCard: { name: "码头来客", sceneId: SCENE,
-        level: 3, classId: "fighter", raceId: "human", subclassId: "champion",
-        scores: { str:12,dex:14,con:12,int:10,wis:12,cha:10 }, proficiency:2,skills:["perception"],
-        resources:{hitDice:{max:3,used:0}},hp:{current:20,max:20,temp:0},ac:13,speed:30,equipped:{},backpack:[] } }],
-
-  } as never);
-  expect(result,JSON.stringify(result)).toMatchObject({created:true});
-  return {stub,capabilities:record(record(result).serviceCapabilities)};
-}
-
-/** Scripted model outcomes test protocol/Room authority, not literary quality. */
-function draft(input: {request:StoryRequest;context:StoryContext}, state:AuthoritativeWorldState, newNpc:boolean) {
-  const held = (npc:string) => `knowledge:${npc}:${Object.keys(state.knowledge[npc])[0]}`;
-  const anchor = input.context.materials.find(value=>value.ref.startsWith("profile-context:"))!.ref;
-  expect(input.context.materials.some(value=>value.ref===SCENE)).toBe(true);
-  const refs = new Map([["anchor:requisition",anchor],["record:ledger",SCENE],
-    ["record:receipt",VARO],["unknown:boatman-culprit",LIAN],["fact:calendar",SCENE],
-    ["scene:harbor",SCENE],["scene:archive",SCENE],["npc:boatman",LIAN],["npc:clerk",VARO],
-    ["open:local-history",`story-context:open:${SCENE}`],["timeline:local",characterTimelineId(state,ACTOR)],
-    ["knowledge:boatman-order",held(LIAN)],["knowledge:clerk-register",held(VARO)]]);
-  const body = substitute(storyFixture(newNpc ? "investigation" : "conflict").body,refs);
-  body.existingFactRefs = [anchor];
-  body.participants[0].label = newNpc ? "许录" : "莉安·黑橡";
-  body.participants[1].label = "书记官瓦罗";
-  const now = state.fictionTimelines[characterTimelineId(state,ACTOR)].nowMicros;
-  body.facts[0].occurrence.start.micros = now;
-  body.facts[0].occurrence.basisRefs = [SCENE];
-  body.facts[0].knowledge[0].acquisition.start.micros = now;
-  body.facts[0].knowledge[0].acquisition.basisRefs = [SCENE];
-  body.facts[0].knowledge[0].sourceRef = FACT;
-  body.facts[0].knowledge[0].content = PRIVATE;
-  if (newNpc) {
-    const source = npcStorySource();
-    source.position = {x:"600",y:"480",elevation:"0"};
-    const producer = {kind:"materializeNpc",basisRefs:[SCENE,anchor],
-      consumes:[{kind:"existing",ref:SCENE},{kind:"existing",ref:anchor}],
-      produces:[{kind:"entity",handle:HANDLE,outcomeBinding:"always"}],outcomeBinding:"always",sceneRef:SCENE,
-      source,visibilityPolicyRef:"visibility:scene-observers",summary:"档案员带着原卷抵达。"};
-    body.definitions[0] = {ref:NEW_NPC,kind:"npc",capability:"materializeNpc",
-      payload:{steps:record(encodeVNextStrictToolBundle(bundle([producer]))).steps},dependsOn:[SCENE,anchor]} as never;
-  }
-  return body;
-}
-function bundle(proposals:unknown[]) {
-  return {mode:"adjudication",basisRefs:[SCENE],terminal:null,
-    adjudication:{kind:"directSuccess",durationMicros:"0",risk:"只固化已经成立的背景与人物知情。",successOutcome:"保留实际依据。"},proposals};
-}
 type Capture={calls:string[];newNpc:boolean;reuse?:string;failDraft?:boolean;diagnostics?:unknown;providerError?:string;inspection?:unknown;admissionError?:string;projectionError?:unknown};
 async function run(stub:ReturnType<typeof env.VNEXT_ROOMS.getByName>, input:RoomActionInput, capture:Capture) {
   return runInDurableObject(stub,async instance=>{
