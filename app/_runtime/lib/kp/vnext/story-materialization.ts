@@ -203,7 +203,10 @@ export function lowerStoryFactSelection(input: Readonly<{
   const authority = materializationAuthorityBasis({ context, state,
     scopeRef: state.entities[input.actorCharacterId]?.sceneId, kind: "worldFact" });
   if (authority.kind !== "accepted") return fail(authority.issues[0]);
-  const readSet = [...readBindings.values()].filter(value => authorityRevisionOrHash(state, value.ref) !== null)
+  // Lookup aliases can name the same frozen knowledge record. Rules reads
+  // retain one binding per actual authority ref, regardless of lookup key.
+  const actualReads = new Map([...readBindings.values()].map(value => [value.ref, value]));
+  const readSet = [...actualReads.values()].filter(value => authorityRevisionOrHash(state, value.ref) !== null)
     .sort((a, b) => a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0);
   const knowledgeBoundaries = Object.values(state.canonicalFacts).flatMap(record => {
     if (!isStoryKnowledgeBoundaryValue(record.value)) return [];

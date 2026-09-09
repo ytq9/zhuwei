@@ -23,6 +23,8 @@ import { storyFixture, storyReviewBody, storyResponse } from "./fixtures/story-c
 import { npcStorySource } from "./fixtures/kp-vnext-story-materialization.mjs";
 import { inspectStoryPreparation } from "../app/_runtime/lib/room/story-creation/review";
 import { compileAtomicWorldInteractionPlan } from "../app/_runtime/lib/rules/v2/world-interactions";
+import { isStoryFactsAdmissionPlan } from "../app/_runtime/lib/rules/v2/story-facts-admission";
+import { isCanonicalReadSet } from "../app/_runtime/lib/rules/v2/world-interaction-model";
 
 type Json = Record<string, unknown>;
 const ALICE = { principal: { id: "principal:story-room:alice", sessionVersion: 1 } };
@@ -102,13 +104,30 @@ function bundle(proposals:unknown[]) {
   return {mode:"adjudication",basisRefs:[SCENE],terminal:null,
     adjudication:{kind:"directSuccess",durationMicros:"0",risk:"只固化已经成立的背景与人物知情。",successOutcome:"保留实际依据。"},proposals};
 }
-type Capture={calls:string[];newNpc:boolean;reuse?:string;failDraft?:boolean;diagnostics?:unknown;providerError?:string;inspection?:unknown;admissionError?:string};
+type Capture={calls:string[];newNpc:boolean;reuse?:string;failDraft?:boolean;diagnostics?:unknown;providerError?:string;inspection?:unknown;admissionError?:string;projectionError?:unknown};
 async function run(stub:ReturnType<typeof env.VNEXT_ROOMS.getByName>, input:RoomActionInput, capture:Capture) {
   return runInDurableObject(stub,async instance=>{
     const target=instance as unknown as Internals;
+    const projectionHooks = instance as unknown as { authorityAudienceBindings: (...args:unknown[])=>Json;
+      authorityViewerForCharacter:(state:unknown,id:unknown)=>unknown; rulesRuntime:{project:(...args:unknown[])=>unknown} };
+    const audiences = projectionHooks.authorityAudienceBindings.bind(instance);
+    projectionHooks.authorityAudienceBindings = (...args) => {
+      const result = audiences(...args);
+      if (result.kind === "rejected") {
+        const [profiles,state,actorCharacterId,receiptId,,priorState,events] = args;
+        capture.projectionError = projectionHooks.rulesRuntime.project(profiles,state,projectionHooks.authorityViewerForCharacter(state,actorCharacterId),
+          {committedRange:{receiptId,actorCharacterId,priorState,events}});
+      }
+      return result;
+    };
     const hooks=instance as unknown as {storyAdmissionPreparation:(...args:unknown[])=>unknown};
     const admit=hooks.storyAdmissionPreparation.bind(instance);
-    hooks.storyAdmissionPreparation=(...args)=>{try{return admit(...args);}catch(error){capture.admissionError=`${error instanceof Error?error.stack:String(error)}; compiler:${JSON.stringify(compileAtomicWorldInteractionPlan(args[1] as never))}`;throw error;}};
+    hooks.storyAdmissionPreparation=(...args)=>{try{return admit(...args);}catch(error){
+      const raw = args[1] as Json;
+      const atomic = raw.kind === "startActionActivity" ? raw.completionInput as Json : raw;
+      const plans = (atomic.steps as Json[]).filter(step=>(step.rulesInput as Json).kind === "admitStoryFacts").map(step=>(step.rulesInput as Json).plan as Json);
+      capture.admissionError=`${error instanceof Error?error.stack:String(error)}; compiler:${JSON.stringify(compileAtomicWorldInteractionPlan(args[1] as never))}; plans:${JSON.stringify(plans.map(plan=>({
+        ...plan, readSet:(plan.readSet as Json[]).filter(read=>!isCanonicalReadSet([read])), canonicalReads:isCanonicalReadSet(plan.readSet), validPlan:isStoryFactsAdmissionPlan(plan)})))}`;throw error;}};
     const ai={async run(_model:string,request:Json):Promise<unknown>{
       const tool=record(record((request.tools as Json[])[0]).function).name as string;
       capture.calls.push(tool);
@@ -177,7 +196,7 @@ describe("story creation through the actual vNext Room boundary",()=>{
     const input:RoomActionInput={kind:"intent",submissionId:"submission:story:initial",
       text:"我想与莉安 lian、瓦罗 varo 一起核对临时征船登记和运输签收资料，主动调查目前的差异。"};
     const result=await run(f.stub,input,capture);
-    expect(result,JSON.stringify({result,calls:capture.calls,providerError:capture.providerError,admissionError:capture.admissionError,inspection:capture.inspection,diagnostics:capture.diagnostics})).toMatchObject({kind:"committed"});
+    expect(result,JSON.stringify({result,calls:capture.calls,providerError:capture.providerError,projectionError:capture.projectionError,admissionError:capture.admissionError,inspection:capture.inspection,diagnostics:capture.diagnostics})).toMatchObject({kind:"committed"});
     expect(capture.calls).toEqual([OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,"submit_story_preparation","review_story_preparation",SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
     const saved=await snapshot(f.stub);
     expect(saved.jobs).toHaveLength(1);expect(saved.library).toHaveLength(1);
