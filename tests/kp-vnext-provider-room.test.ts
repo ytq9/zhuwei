@@ -3,7 +3,7 @@ import { wrapScriptedRevision } from "./fixtures/vnext-revision-response.mjs";
 import { roomServiceCapabilities } from "../app/_runtime/lib/room/archive";
 import { deepSeekRequestBody } from "../app/_runtime/lib/kp/deepseek";
 import { proposalModelContext } from "../app/_runtime/lib/kp/vnext/proposal-context";
-import { npcDecisionContext } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
+import { npcDecisionContext, npcDecisionEntryRef } from "../app/_runtime/lib/kp/vnext/context/npc-decision";
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
@@ -74,11 +74,17 @@ it("an empty social draft retains the natural-language intent and NPC context th
     const body = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
     expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
     expect(body.requiredContext.intent.text).toBe(input.text);
-    expect(npcDecisionContext(body.requiredContext.entries, npcRef)).toBeDefined();
+    // The model view lists the NPC's decision entry without server hashes; the
+    // frozen context Room keeps is what lowering reads as the decision snapshot.
+    expect((body.requiredContext.entries as JsonRecord[]).some(entry => entry.entryRef === npcDecisionEntryRef(npcRef))).toBe(true);
+    expect(npcDecisionContext((capture.prepared!.requiredContext as JsonRecord).entries as never, npcRef)).toBeDefined();
     if (proposals === 1) return { choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{
       type: "function", function: { name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: "{}" },
     }] } }] };
-    expect(body.sourceDraft).toEqual({});
+    // An empty reply carries no draft: the one remaining call re-sends the
+    // original filling request rather than a correction of nothing.
+    expect(body.sourceDraft).toBeUndefined();
+    expect((request.tools as JsonRecord[]).map(tool => record(tool.function).name)).toEqual([SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
     return toolResponse({ mode: "adjudication", basisRefs: [npcRef], terminal: null,
       adjudication: { kind: "directSuccess", durationMicros: "300000000", risk: "普通的开场问答。", successOutcome: "对方回应问候。" },
       proposals: [{ kind: "social", basisRefs: [npcRef], consumes: [], produces: [], outcomeBinding: "always",
@@ -1210,16 +1216,16 @@ describe("vNext Provider invocation and Room persistence", () => {
       const system = record((request.messages as JsonRecord[])[0]).content;
       if (name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         expect(system).toBe(vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS));
-        return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorItem", "materializeItem", "inventoryOperation"] });
+        return toolResponse({ kind: "schemaRequest", capabilities: ["knowledgeReview", "authorAbility", "authorItem", "materializeItem", "inventoryOperation"] });
       }
       if (name === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
         // The proposal call offers the selection tool as well, so its system
         // prompt is the amendable one. Selection is amendable exactly once.
-        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities(["authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
+        expect(system).toBe(vnextProposalSystemPrompt("expandedProposal", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"], true));
         return toolResponse(wire(args), SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
       }
       expect(name).toBe(CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
-      expect(system).toBe(vnextProposalSystemPrompt("correction", closeVNextProposalCapabilities(["authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
+      expect(system).toBe(vnextProposalSystemPrompt("correction", closeVNextProposalCapabilities(["authorAbility", "authorItem", "materializeItem", "inventoryOperation"]), ["knowledgeReview"]));
       const revised = structuredClone(args); revised.proposals[0].summary = "使用药剂的治疗能力已定义。";
       return toolResponse(wire(revised), CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME);
     };

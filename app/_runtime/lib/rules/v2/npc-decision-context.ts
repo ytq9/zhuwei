@@ -25,9 +25,22 @@ export type NpcDecisionContext = Readonly<{
   npcRef: string;
   projectionHash: string;
   knowledgeCatalogRef: string;
+  /** The complete held-knowledge directory: every record's ref and version. */
   knowledge: readonly Readonly<{ knowledgeRef: string; entryRef: string; revisionOrHash: string }>[];
   records: readonly NpcDecisionRecord[];
+  /** Directory members whose bodies this snapshot did not freeze. The KP
+   * read nothing of them and may cite nothing of them; Rules comparisons of
+   * the decision domain exclude this field, because it describes what was
+   * read, not what the NPC knows. Absent on snapshots frozen before bodies
+   * were tiered, which loaded every body. */
+  unloadedKnowledgeRefs?: readonly string[];
 }>;
+
+/** Directory members whose bodies were frozen with the snapshot. */
+export function npcDecisionLoadedKnowledge(context: NpcDecisionContext): NpcDecisionContext["knowledge"] {
+  const unloaded = new Set(context.unloadedKnowledgeRefs ?? []);
+  return context.knowledge.filter(record => !unloaded.has(record.entryRef));
+}
 
 export function npcDecisionEntryRef(npcRef: string): string { return `npc-decision:${npcRef}`; }
 
@@ -35,9 +48,10 @@ export function npcDecisionEntryRef(npcRef: string): string { return `npc-decisi
  * local to its explicit npcRef; the complete holder body was checked when
  * npcDecisionContext accepted the snapshot. Never search another holder. */
 export function npcDecisionEvidenceRef(context: NpcDecisionContext, ref: string): string | undefined {
+  const loaded = npcDecisionLoadedKnowledge(context);
   if (context.records.some(record => record.ref === ref)
-    || context.knowledge.some(record => record.entryRef === ref)) return ref;
-  return context.knowledge.find(record => record.knowledgeRef === ref)?.entryRef;
+    || loaded.some(record => record.entryRef === ref)) return ref;
+  return loaded.find(record => record.knowledgeRef === ref)?.entryRef;
 }
 
 /** Consumes the separately requested Rules NPC projection from this prepare.
@@ -97,6 +111,7 @@ export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles:
         || !faction.memberRefs.includes(npcRef) || !add(`continuity:factions:${faction.factionId}`, "faction", faction)) return unavailable("invalidProjection");
     }
     const knowledge: { knowledgeRef: string; entryRef: string; revisionOrHash: string }[] = [];
+    const unloadedKnowledgeRefs: string[] = [];
     for (const record of projection.knowledge) {
       if (!isPlainRecord(record) || typeof record.knowledgeRef !== "string" || record.characterId !== npcRef
         || !Object.hasOwn(state.knowledge[npcRef] ?? {}, record.knowledgeRef)
@@ -104,8 +119,13 @@ export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles:
       const ref = `knowledge:${npcRef}:${record.knowledgeRef}`;
       const loaded = entries.find(entry => entry.entryRef === ref);
       const revisionOrHash = authorityRevisionOrHash(state, ref);
-      if (loaded?.kind !== "known") return unavailable("notLoaded");
-      if (revisionOrHash === null || loaded.revisionOrHash !== revisionOrHash
+      if (revisionOrHash === null) return unavailable("invalidProjection");
+      // The directory binds every record's version. A body the caller did not
+      // freeze -- because this action's relevance did not select it, or the
+      // record exceeded the per-entry cap -- stays a directory line the KP
+      // cannot cite; it never becomes an empty mind or an unavailable snapshot.
+      if (loaded?.kind !== "known") { unloadedKnowledgeRefs.push(ref); }
+      else if (loaded.revisionOrHash !== revisionOrHash
         || canonicalHash(loaded.value) !== canonicalHash(record)) return unavailable("invalidProjection");
       // The body already belongs to the holder-namespaced context entry. This
       // directory binds it without copying it into a second model-facing body.
@@ -130,7 +150,8 @@ export function freezeNpcDecisionEntry(state: AuthoritativeWorldState, profiles:
     }
     const value: NpcDecisionContext = freezeSnapshot({ schema: NPC_DECISION_CONTEXT_SCHEMA, npcRef, projectionHash,
       knowledgeCatalogRef, knowledge: knowledge.sort((a, b) => a.entryRef < b.entryRef ? -1 : 1),
-      records: records.sort((a, b) => a.ref < b.ref ? -1 : 1) });
+      records: records.sort((a, b) => a.ref < b.ref ? -1 : 1),
+      ...(unloadedKnowledgeRefs.length === 0 ? {} : { unloadedKnowledgeRefs: unloadedKnowledgeRefs.sort() }) });
     return freezeSnapshot({ kind: "known", entryRef, revisionOrHash: canonicalHash(value), value });
   } catch {
     // A malformed non-JSON projection is unavailable evidence, never an
@@ -145,7 +166,8 @@ export function npcDecisionContextConform(value: unknown): value is NpcDecisionC
   try {
     if (!isPlainRecord(value) || value.schema !== NPC_DECISION_CONTEXT_SCHEMA
       || typeof value.npcRef !== "string" || value.npcRef.length === 0
-      || !exactKeys(value, ["schema", "npcRef", "projectionHash", "knowledgeCatalogRef", "knowledge", "records"])
+      || !exactKeys(value, ["schema", "npcRef", "projectionHash", "knowledgeCatalogRef", "knowledge", "records",
+        ...(Object.hasOwn(value, "unloadedKnowledgeRefs") ? ["unloadedKnowledgeRefs"] : [])])
       || !hash(value.projectionHash) || value.knowledgeCatalogRef !== `knowledge-catalog:${value.npcRef}`) return false;
     // Reject non-JSON and noncanonical embedded projected values as data errors.
     canonicalHash(value);
@@ -174,6 +196,12 @@ export function npcDecisionContextConform(value: unknown): value is NpcDecisionC
       && catalogRecords.some(member => isPlainRecord(member) && member.knowledgeRef === record.knowledgeRef
         && member.recordRef === record.entryRef && member.recordHash === record.revisionOrHash))
       || new Set(value.knowledge.map(record => (record as { entryRef: string }).entryRef)).size !== value.knowledge.length) return false;
+    if (Object.hasOwn(value, "unloadedKnowledgeRefs")) {
+      const unloaded = value.unloadedKnowledgeRefs;
+      const directory = new Set(value.knowledge.map(record => (record as { entryRef: string }).entryRef));
+      if (!Array.isArray(unloaded) || unloaded.length === 0 || new Set(unloaded).size !== unloaded.length
+        || unloaded.some((ref, index) => typeof ref !== "string" || !directory.has(ref) || (index > 0 && !(String(unloaded[index - 1]) < ref)))) return false;
+    }
     return true;
   } catch { return false; }
 }
@@ -184,7 +212,7 @@ export function npcDecisionContext(entries: readonly NpcDecisionSourceEntry[], n
     if (!entry || !npcDecisionContextConform(entry.value) || entry.value.npcRef !== npcRef
       || entry.revisionOrHash !== canonicalHash(entry.value)) return undefined;
     const value = entry.value;
-    if (!value.knowledge.every(record => entries.some(loaded => loaded.kind === "known" && loaded.entryRef === record.entryRef
+    if (!npcDecisionLoadedKnowledge(value).every(record => entries.some(loaded => loaded.kind === "known" && loaded.entryRef === record.entryRef
       && loaded.revisionOrHash === record.revisionOrHash && isPlainRecord(loaded.value)
       && loaded.value.characterId === npcRef && loaded.value.knowledgeRef === record.knowledgeRef
       && canonicalHash(loaded.value) === record.revisionOrHash))) return undefined;

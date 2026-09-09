@@ -462,9 +462,28 @@ export function parseCorrectKpProposalBundleResponse(response: unknown, source: 
 
 /** Shared by the Adapter and Room audit: pure synthesis plus complete local
  * validation. Lowering/Rules still run through Room before any effect. */
+/** An empty object is a reply that carries no draft. There is nothing to
+ * revise, so the one remaining call re-sends the original filling request
+ * instead of asking the model to author a whole draft inside an escaped JSON
+ * string: rounds 95 and 97 both lost that draft to a delimiter slip. */
+export function vnextProposalTicketIsEmptyDraft(ticket: Pick<VNextProposalBundleRepairTicket, "sourceDraft">): boolean {
+  return ticket.sourceDraft !== null && Object.keys(ticket.sourceDraft).length === 0;
+}
+
 export function evaluateVNextProposalRevisionResponse(response: unknown, ticket: VNextProposalBundleRepairTicket): Readonly<{
   synthesis?: ProposalRevisionSynthesis; result: VNextProposalBundleProviderResult;
 }> {
+  if (vnextProposalTicketIsEmptyDraft(ticket)) {
+    try {
+      const candidate = vnextProposalRevisionCandidate(response, ticket.capabilities, ticket.terminalKinds);
+      if (candidate.kind !== "accepted") return { result: providerRejected("PROPOSAL_REPAIR_EXHAUSTED", candidate.issues, true, 2, candidate.diagnostics) };
+      return { result: deepFreeze({ kind: "locallyAccepted", bundle: candidate.bundle, bundleHash: candidate.bundleHash,
+        repairUsed: true, invocationCount: 2 }) };
+    } catch (error) {
+      if (!(error instanceof VNextProposalBundleOutputError)) throw error;
+      return { result: providerRejected("PROPOSAL_REPAIR_EXHAUSTED", error.diagnostics.map(d => d.constraint), true, 2, error.diagnostics) };
+    }
+  }
   let synthesis: ProposalRevisionSynthesis | undefined;
   try {
     synthesis = revisionSynthesis(response, ticket);
@@ -611,6 +630,13 @@ export async function invokeCorrectKpProposalBundle(input: Readonly<{
 }
 
 export function createVNextProposalRevisionModelInput(ticket: VNextProposalBundleRepairTicket, requiredContext: VNextRequiredContext) {
+  // The re-emit is the original filling request with the same frozen context
+  // and the same loaded types; the selection can no longer be amended.
+  if (vnextProposalTicketIsEmptyDraft(ticket)) return createSubmitKpProposalBundleModelInput(
+    JSON.stringify({ requiredContext: proposalModelContext(requiredContext) }), ticket.capabilities,
+    proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), ticket.terminalKinds,
+    proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext),
+    proposalCreatureTargetRefs(requiredContext), false, proposalItemDefinitionRefs(requiredContext));
   return createCorrectKpProposalBundleModelInput(vnextProposalCorrectionPrompt(ticket, requiredContext), ticket.capabilities,
     proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), ticket.terminalKinds,
     proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext),

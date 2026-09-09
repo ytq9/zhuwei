@@ -70,16 +70,22 @@ test('model context separates established world descriptions from technical stat
   assert.ok(scene.adjudication.combatScene.geometry);
   // Description fields move once; recombining the presentation must recover
   // every exact original value, including mechanics, metadata and unknowns.
-  const restored = presented.entries.map(entry => {
-    if (!entry.value?.worldDescription) return entry;
-    const value = structuredClone(entry.value.adjudication);
-    for (const [key, part] of Object.entries(entry.value.worldDescription)) {
+  // The presentation keeps every entry in order and carries no server-owned
+  // version hash; Room and lowering read those from the frozen context.
+  assert.deepEqual(presented.entries.map(entry => entry.entryRef), before.entries.map(entry => entry.entryRef));
+  for (const [index, entry] of before.entries.entries()) {
+    const shown = presented.entries[index];
+    if (entry.kind !== 'known') { assert.deepEqual(shown, entry); continue; }
+    assert.equal(shown.revisionOrHash, undefined, entry.entryRef);
+    assert.equal(shown.kind, 'known');
+    if (!shown.value?.worldDescription) continue;
+    const value = structuredClone(shown.value.adjudication);
+    for (const [key, part] of Object.entries(shown.value.worldDescription)) {
       value[key] = part && typeof part === 'object' ? { ...value[key], ...part } : part;
     }
-    assert.ok(Object.isFrozen(entry.value.worldDescription));
-    return { ...entry, value };
-  });
-  assert.deepEqual(restored, before.entries);
+    assert.ok(Object.isFrozen(shown.value.worldDescription));
+    assert.deepEqual(value, entry.value, entry.entryRef);
+  }
   assert.deepEqual(f.requiredContext, before);
   assert.equal(presented.contextHash, before.binding.contextHash);
   for (const ref of [HIDDEN, REMOTE, `knowledge:${NPC}:knowledge:same`, npcDecisionEntryRef(NPC)]) {
@@ -155,13 +161,18 @@ test('unnamed and differently written NPC references have the same finite source
   }
 });
 
-test('an oversized optional NPC knowledge body blocks its speech context while physical observation remains usable', () => {
+test('an oversized optional NPC knowledge body stays an uncitable directory line while speech and observation remain usable', () => {
   const f = fixture('large-npc-history'), state = structuredClone(f.state);
   state.knowledge[NPC]['knowledge:same'].content = 'x'.repeat(70_000);
   const frozen = freezeAuthoredProbeContext(f, state, { rootActionId: f.rootActionId,
     focusRefs: [], intentText: '我看看眼前的人。' });
-  assert.equal(npcDecisionContext(frozen.context.entries, NPC), undefined);
-  assert.equal(frozen.context.entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).reason, 'notLoaded');
+  const decision = npcDecisionContext(frozen.context.entries, NPC);
+  assert.ok(decision, 'the snapshot keeps its complete directory');
+  assert.deepEqual(decision.unloadedKnowledgeRefs, [`knowledge:${NPC}:knowledge:same`]);
+  assert.deepEqual(proposalContext.proposalNpcSourceChoices(frozen.context).find(choice => choice.npcRef === NPC).refs
+    .filter(ref => ref.startsWith(`knowledge:${NPC}:`)), []);
+  assert.equal(proposalContext.proposalModelContext(frozen.context).entries
+    .find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge[0].loaded, false);
   const lowered = lower({ ...f, state, requiredContext: frozen.context }, NPC);
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
   assert.equal(stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput).kind, 'committed');

@@ -1,6 +1,7 @@
 import { NPC_MATERIALIZATION_PLAN_SCHEMA, npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
 import { expandStorySelections, lowerStoryFactSelection, StoryMaterializationError, type StoryMaterialSelection } from "./story-materialization";
 import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
+import { socialConsequenceBasisAdmissible, socialPromiseSubjectAdmissible } from "../../rules/v2/social-interaction";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,
@@ -16,7 +17,7 @@ import { ATOMIC_WORLD_INTERACTION_STEPS_PLAN_SCHEMA, IN_WORLD_ACT_FORM_IDS, isAt
 import { lowerFeasibilityPlan } from "./feasibility-lowering";
 import { authoredWorldFactConform, worldFactConstraints, worldFactConstraintsRef } from "../../rules/v2/world-facts";
 import { socialListeners, socialThreadRef, type SocialInteractionPlan } from "../../rules/v2/social-interaction";
-import { npcDecisionContext, npcDecisionEvidenceRef } from "./context/npc-decision";
+import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge } from "./context/npc-decision";
 import { observationKnowledgeIssue } from "../../rules/v2/character-inference";
 import type { WorldInteractionResolutionPlan } from "../../rules/v2/world-interaction-model";
 import { KNOWLEDGE_REVIEW_PLAN_SCHEMA } from "../../rules/v2/knowledge-review";
@@ -49,7 +50,7 @@ import { deriveVNextProposalBundlePlan } from "./proposal-graph";
 import { validateVNextProposalBundle } from "./proposal-validator";
 import { diagnosticActual, proposalDiagnostic, type ProposalDiagnostic } from "./proposal-diagnostics";
 import { socialResultArgumentDiagnostics } from "./proposal-filling-interface";
-import { proposalNpcSourceChoices } from "./proposal-context";
+import { proposalItemEntryRefs, proposalNpcSourceChoices, proposalObservationSubjectRefs } from "./proposal-context";
 import { requiredContextViewerRefs } from "./required-context-runtime";
 import type { VNextRequiredContext } from "./required-context";
 import {
@@ -844,12 +845,12 @@ function lowerMaterializeObjectEntryV2(
     const profile = input.requiredContext.entries.find(e => e.kind === "known" && authority.basisRefs.includes(e.entryRef)
       && isPlainRecord(e.value) && Object.hasOwn(e.value, "factConstraints"));
     if (!frame || frame.missingParentRefs.length > 0 || profile?.kind !== "known" || !isPlainRecord(profile.value)
-      || canonicalHash(profile.value.factConstraints) !== canonicalHash(frame)
+      || profile.value.factConstraintsHash !== canonicalHash(frame)
       || worldFact.subjectRefs.some(ref => !frame.subjectRefs.includes(ref) || input.state.entities[ref]?.kind === "player")) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["world-fact:constraint-frame-unavailable-or-changed"] };
     factBindings.push({ ref: worldFactConstraintsRef(sceneRef), revisionOrHash: canonicalHash(frame) });
     for (const knowledge of worldFact.initialKnowledge) {
       const npc = npcDecisionContext(input.requiredContext.entries, knowledge.holderRef);
-      const allowed = new Set([...(npc?.records.map(r => r.ref) ?? []), ...(npc?.knowledge.map(r => r.entryRef) ?? [])]);
+      const allowed = new Set([...(npc?.records.map(r => r.ref) ?? []), ...(npc ? npcDecisionLoadedKnowledge(npc).map(r => r.entryRef) : [])]);
       if (!npc || !worldFact.subjectRefs.includes(knowledge.holderRef)
         || knowledge.acquisitionBasisRefs.some(ref => !allowed.has(ref))
         || creationBasis.some(ref => !authority.basisRefs.includes(ref) && !allowed.has(ref))) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["world-fact:initial-knowledge-holder-basis-invalid"] };
@@ -962,11 +963,15 @@ function lowerActorPlanFormationEntry(input: VNext2ProposalBundleLoweringInput,
     })],
   });
   if (!context) return deny("CONTEXT_INSUFFICIENT", "npc-plan:npc-decision-context-unavailable", "npcRef", entry.npcRef);
-  const available = [...context.records.map(record => record.ref), ...context.knowledge.map(record => record.entryRef)]
+  const unloadedKnowledge = new Set(context.unloadedKnowledgeRefs ?? []);
+  const unloadedPremise = (ref: string) => unloadedKnowledge.has(ref)
+    || context.knowledge.some(record => record.knowledgeRef === ref && unloadedKnowledge.has(record.entryRef));
+  const available = [...context.records.map(record => record.ref), ...npcDecisionLoadedKnowledge(context).map(record => record.entryRef)]
     .filter(ref => npcActorPlanFormationPremiseRef(context, ref) !== undefined).sort(compareCodeUnits);
   const premiseRefs: string[] = [];
   for (const [index, ref] of entry.premiseRefs.entries()) {
-    const premise = npcActorPlanFormationPremiseRef(context, ref);
+    // A premise the KP never read is not a premise it can form a plan on.
+    const premise = unloadedPremise(ref) ? undefined : npcActorPlanFormationPremiseRef(context, ref);
     if (premise === undefined) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["npc-plan:frozen-own-premise-required"],
       diagnostics: [proposalDiagnostic("REFERENCE_UNAVAILABLE", "npc-plan:frozen-own-premise-required", {
         path: ["proposals", derivedEntry.ordinal, "premiseRefs", index], actual: diagnosticActual(ref),
@@ -1002,6 +1007,28 @@ function lowerActorPlanFormationEntry(input: VNext2ProposalBundleLoweringInput,
     actorCharacterId: input.actorCharacterId, plan: plan as unknown as JsonRecord } };
 }
 
+/** Every ref slot inside promise terms with its path relative to the terms
+ * object, in the same order Rules reads them. */
+function promiseSubjectSlots(terms: Readonly<{ subjectRefs: readonly string[]; delivery: Readonly<{ sourceRef: string | null; itemRef: string | null; destinationRef: string }> | null;
+  parts?: readonly Readonly<{ subjectRefs: readonly string[]; delivery: Readonly<{ sourceRef: string | null; itemRef: string | null; destinationRef: string }> | null }>[];
+  activation?: Readonly<{ subjectRefs: readonly string[] }> | null }>): readonly (readonly [readonly (string | number)[], string])[] {
+  const slots: (readonly [readonly (string | number)[], string])[] = [];
+  const delivery = (base: readonly (string | number)[], value: typeof terms.delivery) => {
+    if (value === null || value === undefined) return;
+    if (value.sourceRef !== null) slots.push([[...base, "delivery", "sourceRef"], value.sourceRef]);
+    if (value.itemRef !== null) slots.push([[...base, "delivery", "itemRef"], value.itemRef]);
+    slots.push([[...base, "delivery", "destinationRef"], value.destinationRef]);
+  };
+  terms.subjectRefs.forEach((ref, index) => slots.push([["subjectRefs", index], ref]));
+  (terms.activation?.subjectRefs ?? []).forEach((ref, index) => slots.push([["activation", "subjectRefs", index], ref]));
+  (terms.parts ?? []).forEach((part, partIndex) => {
+    part.subjectRefs.forEach((ref, index) => slots.push([["parts", partIndex, "subjectRefs", index], ref]));
+    delivery(["parts", partIndex], part.delivery);
+  });
+  delivery([], terms.delivery);
+  return slots;
+}
+
 function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNextSocialEntry,
   derivedEntry: VNextDerivedBundleEntry, bundlePlan: VNextDerivedBundlePlan,
   ruling: VNextDirectSuccessRuling | VNextCheckRuling): VNext2EntryLoweringResult {
@@ -1028,6 +1055,59 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
   if (invalidBasis.length > 0) return {
     kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: ["social:foreign-npc-basis"],
     diagnostics: Object.freeze(invalidBasis),
+  };
+  // A promise's subject must be something this NPC can bind itself to. Rules
+  // enforces the same predicate at commit; checking it here names the exact
+  // slot and the admissible refs, which a bare Rules code cannot.
+  const npc = input.state.entities[entry.npcRef];
+  const snapshotSubjectRefs = new Set([...context.records.map(record => record.ref),
+    ...npcDecisionLoadedKnowledge(context).map(record => record.entryRef)]);
+  const admissibleSubjects = npc === undefined ? [] : [...new Set([...snapshotSubjectRefs, npc.sceneId,
+    ...proposalObservationSubjectRefs(input.requiredContext).filter(ref => socialPromiseSubjectAdmissible(input.state, npc, snapshotSubjectRefs, ref)),
+    ...proposalItemEntryRefs(input.requiredContext).filter(ref => socialPromiseSubjectAdmissible(input.state, npc, snapshotSubjectRefs, ref))])].sort(compareCodeUnits);
+  // The same holds for every other consequence slot Rules checks against the
+  // NPC's snapshot: a relationship or debt cites facts the NPC can see, a
+  // promise names a listener, and an NPC binds only itself.
+  const snapshotFactRefs = context.records.filter(record => record.kind === "fact").map(record => record.ref).sort(compareCodeUnits);
+  const listeners = npc === undefined ? [] : socialListeners(input.state, input.actorCharacterId, entry.npcRef, entry.audience);
+  const authorityChoices = npc === undefined ? [] : [...new Set([npc.id, ...(npc.semanticDefinitionRef === undefined ? [] : [npc.semanticDefinitionRef]),
+    ...context.records.filter(record => ["self", "identity", "plan"].includes(record.kind)).map(record => record.ref)])].sort(compareCodeUnits);
+  const invalidSlots: ProposalDiagnostic[] = [];
+  const invalid = (constraint: string, path: readonly (string | number)[], ref: string, source: string, refs: readonly string[]) =>
+    invalidSlots.push(proposalDiagnostic("REFERENCE_UNAVAILABLE", constraint, {
+      path: [...path], expected: { npcRef: entry.npcRef, source, refs }, actual: diagnosticActual(ref),
+      repair: { allowed: true, reason: "uncommitted-proposal-may-be-revised-once" },
+    }));
+  for (const branchName of ["success", "failure"] as const) {
+    entry.branches[branchName]?.consequences.forEach((consequence, consequenceIndex) => {
+      const base = ["proposals", derivedEntry.ordinal, "branches", branchName, "consequences", consequenceIndex] as const;
+      if (consequence.kind === "relationship" || consequence.kind === "debt") {
+        consequence.basisFactRefs.forEach((ref, index) => {
+          if (!socialConsequenceBasisAdmissible(input.state, snapshotSubjectRefs, ref))
+            invalid("social:consequence-basis-unavailable", [...base, "basisFactRefs", index], ref, "npcSnapshotVisibleFacts", snapshotFactRefs);
+        });
+        return;
+      }
+      if (consequence.kind === "promise") {
+        if (consequence.promiseeRef !== undefined && !listeners.includes(consequence.promiseeRef))
+          invalid("social:promise-recipient-unavailable", [...base, "promiseeRef"], consequence.promiseeRef, "socialListeners", listeners);
+        if (consequence.promisor !== "actor") consequence.authorityRefs.forEach((ref, index) => {
+          if (!authorityChoices.includes(ref)) invalid("social:promise-authority-unavailable", [...base, "authorityRefs", index], ref, "npcSelfIdentityOrPlan", authorityChoices);
+        });
+      }
+      const terms = consequence.kind === "promise" ? consequence.terms
+        : consequence.kind === "promiseChange" ? consequence.change.terms : undefined;
+      if (terms === undefined || terms === null) return;
+      const prefix: (string | number)[] = consequence.kind === "promise" ? ["terms"] : ["change", "terms"];
+      for (const [tail, ref] of promiseSubjectSlots(terms)) {
+        if (npc !== undefined && socialPromiseSubjectAdmissible(input.state, npc, snapshotSubjectRefs, ref)) continue;
+        invalid("social:promise-terms-context-unavailable", [...base, ...prefix, ...tail], ref, "npcSnapshotRecordsVisibleObjectsOrScene", admissibleSubjects);
+      }
+    });
+  }
+  if (invalidSlots.length > 0) return {
+    kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID", issues: [...new Set(invalidSlots.map(detail => detail.constraint))],
+    diagnostics: Object.freeze(invalidSlots),
   };
   const resolveBranch = (value: VNextSocialEntry["branches"]["success"]) => ({ ...value,
     response: { ...value.response, basis: value.response.basis.map(evidence => evidence.kind === "npcContext"

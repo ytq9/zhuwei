@@ -3,7 +3,7 @@ import test from "node:test";
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from "../tools/lib/vnext-authored-probe-fixture.mjs";
 import { createDefinitionSnapshot, storedSemanticDefinition } from "../app/_runtime/lib/rules/v2/semantic-definitions.ts";
 import { canonicalHash } from "../app/_runtime/lib/kp/vnext/canonical-json.ts";
-import { freezeNpcDecisionEntry, npcDecisionContext, npcDecisionEntryRef } from "../app/_runtime/lib/kp/vnext/context/npc-decision.ts";
+import { freezeNpcDecisionEntry, npcDecisionContext, npcDecisionEntryRef, npcDecisionEvidenceRef } from "../app/_runtime/lib/kp/vnext/context/npc-decision.ts";
 import { freezeAdjudicationContext } from "../app/_runtime/lib/kp/vnext/context/index.ts";
 import { authorityRevisionOrHash } from "../app/_runtime/lib/rules/v2/authority-bindings.ts";
 
@@ -100,9 +100,19 @@ test("a trustworthy empty knowledge collection differs from missing projection, 
   assert.deepEqual(npcDecisionContext(emptyContext.entries, NPC).knowledge, []);
   assert.equal(known(empty, emptyContext, undefined).kind, "known", "default helper requests the real projection");
   assert.equal(freezeNpcDecisionEntry(empty.state, empty.profiles, NPC, undefined, emptyContext.entries).reason, "notLoaded");
+  // A body the caller did not freeze stays a directory line: the snapshot is
+  // still complete and verifiable, the KP simply cannot cite that memory.
   const f = fixture("missing"), context = freeze(f), withoutBody = context.entries.filter(entry => entry.entryRef !== `knowledge:${NPC}:${SHARED}`);
-  assert.equal(freezeNpcDecisionEntry(f.state, f.profiles, NPC, project(f), withoutBody).reason, "notLoaded");
-  assert.equal(npcDecisionContext(withoutBody, NPC), undefined);
+  const partial = freezeNpcDecisionEntry(f.state, f.profiles, NPC, project(f), withoutBody);
+  assert.equal(partial.kind, "known");
+  assert.deepEqual(partial.value.unloadedKnowledgeRefs, [`knowledge:${NPC}:${SHARED}`]);
+  assert.deepEqual(partial.value.knowledge.map(entry => entry.entryRef), [`knowledge:${NPC}:${SHARED}`]);
+  const read = npcDecisionContext([...withoutBody.filter(entry => entry.entryRef !== npcDecisionEntryRef(NPC)), partial], NPC);
+  assert.ok(read, "a snapshot with unloaded bodies still reads");
+  assert.equal(npcDecisionEvidenceRef(read, `knowledge:${NPC}:${SHARED}`), undefined, "an unloaded body is not citable evidence");
+  assert.equal(npcDecisionEvidenceRef(read, SHARED), undefined);
+  assert.equal(freezeNpcDecisionEntry(f.state, f.profiles, NPC, project(f), [...withoutBody,
+    { kind: "known", entryRef: `knowledge:${NPC}:${SHARED}`, revisionOrHash: canonicalHash({ forged: true }), value: { forged: true } }]).reason, "invalidProjection");
   for (const projection of [{}, { ...project(f), runtimeProfiles: undefined }, { ...project(f), stateVersion: "999" },
     { ...project(f), viewer: { kind: "npc", subjectId: OTHER } }, { ...project(f), visibleFacts: [undefined] }]) {
     assert.equal(known(f, context, projection).reason, "invalidProjection");

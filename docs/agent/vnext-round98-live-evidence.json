@@ -1,0 +1,557 @@
+{
+  "round": 98,
+  "verifiedAt": "2026-09-09T15:54:08.260540+00:00",
+  "verdict": "Two of three sentences committed on 75ab7d6. Sentence 1 (7 calls): offer 32,294 estimated / 28,292 real prompt tokens; the filling reply was an empty {} (25 completion tokens); the server re-sent the original filling request (submit tool only, same frozen context) and the model returned a full social draft (811 completion tokens) that lowered, passed Rules and committed: Varo confirmed the sealed document and asked who the copy is for and why; no promise, no plan; 300,000,000 micros of fiction time. Sentence 2 (4 calls): offer 39,673 / 36,220, filling 35,159 / 33,112; the one-hour wait committed with no activities and no due work. Sentence 3 was never sent: the 20-minute batch window expired while the operator session was paused by a rate limit, and the runner threw BATCH_DEADLINE_RESERVE_EXCEEDED before any HTTP. 11 calls, 204,015 prompt / 1,869 completion tokens, CNY 0.628866 at peak tariff, telemetry consistent; replay exact at state version 11 with 11 events; 389 source files unchanged. Observation: the activity-start narration of sentence 1 (public message 2) said Varo agreed, which the social result narration (message 3) contradicts; the review passed it with every check green.",
+  "sourceCommit": "75ab7d6da91f1b82d0ddaa8dc7ee1728f9bfce82",
+  "sourceManifestSha256": "a094980af063a6629f88f2b8e1877a88ba2c3cf4f2b94635a22b7f95cd709974",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v57",
+  "scenario": "hours-scale three sentences (same as rounds 82-91)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 2,
+  "unattemptedIntents": 1,
+  "harness": {
+    "localPerHttpCallLimit": 10,
+    "productionCap": "none",
+    "batchDurationMs": 1200000,
+    "deadlineAt": "2026-09-09T13:25:52.822000+00:00"
+  },
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round98-npc-http-4610be07-3ff8-4bc7-a7e1-86dc90b65458",
+      "action": "committed",
+      "narration": "published",
+      "code": null,
+      "outcomeKind": null,
+      "modelCalls": 7,
+      "budgetChecks": {
+        "perHttp": true,
+        "total": true,
+        "money": true
+      }
+    },
+    {
+      "ordinal": 2,
+      "submissionId": "vnext-round98-npc-http-9e0c98e4-b329-4d43-9197-0e1e6da863d3",
+      "action": "committed",
+      "narration": "published",
+      "code": null,
+      "outcomeKind": null,
+      "modelCalls": 4,
+      "budgetChecks": {
+        "perHttp": true,
+        "total": true,
+        "money": true
+      }
+    },
+    {
+      "ordinal": 3,
+      "submissionId": "vnext-round98-npc-http-8a978613-e7f6-4a8c-ae20-17272854eb9b",
+      "action": null,
+      "narration": null,
+      "code": null,
+      "outcomeKind": null,
+      "modelCalls": 0,
+      "budgetChecks": null,
+      "httpSent": false,
+      "harnessError": "BATCH_DEADLINE_RESERVE_EXCEEDED",
+      "attemptedAt": "2026-09-09T15:29:10.937Z"
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "wait",
+      "reason": "首句已提交并发布：瓦罗确认所指文书，反问要替谁收、办什么用，没有答应也没有拒绝抄副本；没有新承诺或计划。玩家原定的一个多小时等待仍是合法的下一句，公开回复没有排除它。",
+      "publicEvidence": [
+        {
+          "messageIndex": 3,
+          "quote": "瓦罗回应说自己是镇公所的书记官"
+        }
+      ],
+      "observed": {
+        "fictionTimeMicros": "300000000",
+        "planIds": [],
+        "promiseIds": []
+      },
+      "interpretation": "public-response-permits-fixed-wait",
+      "formationEventIds": [],
+      "reviewedAt": "2026-09-09T13:07:02.417Z",
+      "publicTableHash": "69433b478868e43efb9c01081339077d4459bc90b413f0b896fd7446def0124b",
+      "authoritySnapshotHash": "0af9297404d9cf5de08790b82ee24d9359bbae6753114a48d03aef3834e2e6c9"
+    },
+    {
+      "afterAction": 2,
+      "next": "pending",
+      "reason": "第二句（等一个多小时）已提交并发布：公开叙述只说等了一个小时、没有别的事发生；首句闸门记录的计划与承诺均为空，因此等待期间没有任何已登记计划可执行，也没有到期执行事件。行动者时间线从 300000000 推进到 3900000000 微秒，正好一小时。按预定分支进入 pending：第三句原样去账台查看副本。",
+      "publicEvidence": [
+        {
+          "messageIndex": 5,
+          "quote": "你在厅里等了一个小时"
+        }
+      ],
+      "observed": {
+        "fictionTimeMicros": "3600000000"
+      },
+      "interpretation": "wait-ended-before-execution",
+      "reviewedAt": "2026-09-09T15:28:43.992Z",
+      "publicTableHash": "682735e753452b25362d60db9f97c32d4dda7f1d379830d3ec77ed91badaf83b",
+      "authoritySnapshotHash": "51aef533db78ac7744fc5c347ec7e60c949f165473fc4e3d5b2575ec717f1c88"
+    }
+  ],
+  "coverage": "waited-without-plan",
+  "stopped": true,
+  "captures": [
+    {
+      "ordinal": 1,
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 28292,
+      "completionTokens": 55,
+      "cacheHit": 4992,
+      "cacheMiss": 23300,
+      "responseTool": "offer_kp_proposal_bundle",
+      "requestedCapabilities": [
+        "materializeObject",
+        "observe",
+        "social"
+      ],
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "tools": [
+        "submit_kp_proposal_bundle",
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 44503,
+      "completionTokens": 25,
+      "cacheHit": 1536,
+      "cacheMiss": 42967,
+      "responseTool": "submit_kp_proposal_bundle",
+      "response": "empty object",
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 3,
+      "tools": [
+        "submit_kp_proposal_bundle"
+      ],
+      "promptTokens": 44140,
+      "completionTokens": 811,
+      "cacheHit": 1536,
+      "cacheMiss": 42604,
+      "responseTool": "submit_kp_proposal_bundle",
+      "draft": {
+        "decision": "directSuccess",
+        "steps": [
+          "social"
+        ],
+        "newPromises": 0,
+        "argumentChars": 1706
+      },
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 4,
+      "tools": [],
+      "promptTokens": 1920,
+      "completionTokens": 104,
+      "cacheHit": 1408,
+      "cacheMiss": 512,
+      "purpose": "initialNarration",
+      "responseChars": 82,
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "角色开始进行这项耗时活动",
+        "完成结果尚未结算",
+        "本次行动已经由权威状态提交"
+      ]
+    },
+    {
+      "ordinal": 5,
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "promptTokens": 3129,
+      "completionTokens": 165,
+      "cacheHit": 1536,
+      "cacheMiss": 1593,
+      "purpose": "narrationReview",
+      "responseTool": "review_frozen_narration",
+      "review": {
+        "checks": {
+          "results": "pass",
+          "continuity": "pass",
+          "attribution": "pass",
+          "agency": "pass",
+          "presentation": "pass"
+        },
+        "issues": []
+      },
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "角色开始进行这项耗时活动",
+        "完成结果尚未结算",
+        "本次行动已经由权威状态提交"
+      ],
+      "candidateChars": 71
+    },
+    {
+      "ordinal": 6,
+      "tools": [],
+      "promptTokens": 2986,
+      "completionTokens": 165,
+      "cacheHit": 1408,
+      "cacheMiss": 1578,
+      "purpose": "initialNarration",
+      "responseChars": 146,
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "该角色的活动已完成",
+        "旅行守卫声称（尚未由这条记录证实）：我走到账台旁，向瓦罗点头：“我叫旅行守卫",
+        "旅行守卫声称（尚未由这条记录证实）：这份备案文书，能否请您在一个小时内抄一份副本送到账台",
+        "旅行守卫声称（尚未由这条记录证实）：我就在厅里等",
+        "旅行守卫声称（尚未由这条记录证实）：”",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：「先报个名号是稳妥的，旅行守卫",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：我是瓦罗，镇公所的书记官",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：你说『这份备案』——指的是我按在账台上这份盖印文书吧",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：一个小时内送到账台的副本，你是要替谁收、办什么用",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：镇上的记录不能落到我还没弄清来路的人手里",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：」",
+        "这次交谈已完成",
+        "本次行动已经由权威状态提交"
+      ]
+    },
+    {
+      "ordinal": 7,
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "promptTokens": 4498,
+      "completionTokens": 183,
+      "cacheHit": 1536,
+      "cacheMiss": 2962,
+      "purpose": "narrationReview",
+      "responseTool": "review_frozen_narration",
+      "review": {
+        "checks": {
+          "results": "pass",
+          "continuity": "pass",
+          "attribution": "pass",
+          "agency": "pass",
+          "presentation": "pass"
+        },
+        "issues": []
+      },
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "该角色的活动已完成",
+        "旅行守卫声称（尚未由这条记录证实）：我走到账台旁，向瓦罗点头：“我叫旅行守卫",
+        "旅行守卫声称（尚未由这条记录证实）：这份备案文书，能否请您在一个小时内抄一份副本送到账台",
+        "旅行守卫声称（尚未由这条记录证实）：我就在厅里等",
+        "旅行守卫声称（尚未由这条记录证实）：”",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：「先报个名号是稳妥的，旅行守卫",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：我是瓦罗，镇公所的书记官",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：你说『这份备案』——指的是我按在账台上这份盖印文书吧",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：一个小时内送到账台的副本，你是要替谁收、办什么用",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：镇上的记录不能落到我还没弄清来路的人手里",
+        "书记官瓦罗传达的主张（尚未由这条记录证实）：」",
+        "这次交谈已完成",
+        "本次行动已经由权威状态提交"
+      ],
+      "candidateChars": 135
+    },
+    {
+      "ordinal": 8,
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 36220,
+      "completionTokens": 47,
+      "cacheHit": 4992,
+      "cacheMiss": 31228,
+      "responseTool": "offer_kp_proposal_bundle",
+      "requestedCapabilities": [
+        "passTime"
+      ],
+      "contextEntries": 44,
+      "npcDecisionSnapshots": [
+        "lian",
+        "naes",
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 9,
+      "tools": [
+        "submit_kp_proposal_bundle",
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 33112,
+      "completionTokens": 58,
+      "cacheHit": 896,
+      "cacheMiss": 32216,
+      "responseTool": "submit_kp_proposal_bundle",
+      "draft": {
+        "decision": "passTime",
+        "steps": [],
+        "newPromises": 0,
+        "argumentChars": 66
+      },
+      "contextEntries": 44,
+      "npcDecisionSnapshots": [
+        "lian",
+        "naes",
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 10,
+      "tools": [],
+      "promptTokens": 2040,
+      "completionTokens": 90,
+      "cacheHit": 1408,
+      "cacheMiss": 632,
+      "purpose": "initialNarration",
+      "responseChars": 30,
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "等待已结束，实际经过 3600 秒，原计划为 3600 秒"
+      ]
+    },
+    {
+      "ordinal": 11,
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "promptTokens": 3175,
+      "completionTokens": 166,
+      "cacheHit": 1536,
+      "cacheMiss": 1639,
+      "purpose": "narrationReview",
+      "responseTool": "review_frozen_narration",
+      "review": {
+        "checks": {
+          "results": "pass",
+          "continuity": "pass",
+          "attribution": "pass",
+          "agency": "pass",
+          "presentation": "pass"
+        },
+        "issues": []
+      },
+      "narrationFacts": [
+        "作用目标：旅行守卫",
+        "等待已结束，实际经过 3600 秒，原计划为 3600 秒"
+      ],
+      "candidateChars": 19
+    }
+  ],
+  "invocations": [
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "estimatedInputTokens": 32294,
+      "allowedInputTokens": 58000,
+      "inputTokens": 28292,
+      "outputTokens": 55,
+      "result": "success",
+      "durationMs": 1388
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 2,
+      "estimatedInputTokens": 48914,
+      "allowedInputTokens": 58000,
+      "inputTokens": 44503,
+      "outputTokens": 25,
+      "result": "success",
+      "durationMs": 1953
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 3,
+      "estimatedInputTokens": 48418,
+      "allowedInputTokens": 58000,
+      "inputTokens": 44140,
+      "outputTokens": 811,
+      "result": "success",
+      "durationMs": 8786
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "initialNarration",
+      "modelInputTokens": 1920,
+      "modelOutputTokens": 104,
+      "durationMs": 1906
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "narrationReview",
+      "modelInputTokens": 3129,
+      "modelOutputTokens": 165,
+      "durationMs": 2403
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "initialNarration",
+      "modelInputTokens": 2986,
+      "modelOutputTokens": 165,
+      "durationMs": 2539
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "narrationReview",
+      "modelInputTokens": 4498,
+      "modelOutputTokens": 183,
+      "durationMs": 3041
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "estimatedInputTokens": 39673,
+      "allowedInputTokens": 58000,
+      "inputTokens": 36220,
+      "outputTokens": 47,
+      "result": "success",
+      "durationMs": 3910
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 2,
+      "estimatedInputTokens": 35159,
+      "allowedInputTokens": 58000,
+      "inputTokens": 33112,
+      "outputTokens": 58,
+      "result": "success",
+      "durationMs": 3984
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "initialNarration",
+      "modelInputTokens": 2040,
+      "modelOutputTokens": 90,
+      "durationMs": 5522
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "narrationReview",
+      "modelInputTokens": 3175,
+      "modelOutputTokens": 166,
+      "durationMs": 6039
+    }
+  ],
+  "meter": {
+    "calls": 11,
+    "inputTokens": 204015,
+    "outputTokens": 1869,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "peakCnyBudgetCharge": 0.628866,
+    "callTelemetryConsistent": true,
+    "capBlockedInvocations": 0
+  },
+  "pricing": {
+    "window": "off-peak",
+    "chargedAt": "peak",
+    "model": "deepseek-v4-flash",
+    "peakCnyPerMillion": {
+      "hit": "0.10",
+      "miss": "3.0",
+      "output": "9.0"
+    },
+    "offPeakCnyPerMillion": {
+      "hit": "0.05",
+      "miss": "1.5",
+      "output": "4.5"
+    },
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5"
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "11",
+    "events": 11,
+    "eventTypes": [
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "WorldInteractionResolved",
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted"
+    ],
+    "checkedAt": "2026-09-09T15:30:10.964Z"
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "beforeCount": 389,
+    "afterCount": 389
+  },
+  "servicesShutdown": {
+    "capture": {
+      "pid": 8060,
+      "port": 4320,
+      "startedAt": "2026-09-09T13:05:46.944348+00:00",
+      "stoppedAt": "2026-09-09T15:30:07.870222+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "pid": 8069,
+      "port": 4321,
+      "startedAt": "2026-09-09T13:05:47.130872+00:00",
+      "stoppedAt": "2026-09-09T15:30:07.756281+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  },
+  "narrationObservation": {
+    "publicMessageIndex": 2,
+    "captureOrdinal": 4,
+    "purpose": "initialNarration for activityStarted",
+    "materialFacts": [
+      "作用目标：旅行守卫",
+      "角色开始进行这项耗时活动",
+      "完成结果尚未结算",
+      "本次行动已经由权威状态提交"
+    ],
+    "claimNotInMaterial": "瓦罗应下此事后，你便在厅中等待",
+    "contradictedByMessageIndex": 3,
+    "reviewCaptureOrdinal": 5,
+    "reviewChecks": {
+      "results": "pass",
+      "continuity": "pass",
+      "attribution": "pass",
+      "agency": "pass",
+      "presentation": "pass"
+    },
+    "authorityState": "no promise, no plan; the contradiction is confined to the published narration",
+    "category": "narrativeContradiction (observation only; both sentences committed; unrelated to this batch's changes)"
+  },
+  "batchEnd": {
+    "reason": "harness deadline",
+    "detail": "session limit paused the operator between gate2 preparation and the third action; runner.mjs action threw BATCH_DEADLINE_RESERVE_EXCEEDED in requireRemainingBudget before sendAction; session records action 3 with transportOrHarnessError and zero model calls",
+    "productFailure": false,
+    "followUp": "round99 on the same commit"
+  }
+}
