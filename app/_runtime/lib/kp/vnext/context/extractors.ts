@@ -69,6 +69,17 @@ export type ExtractionResult =
     }>
   | Readonly<{ kind: "preparationLimit" }>;
 
+/** Single characters that stand alone in nearly every sentence as particles,
+ * pronouns, prepositions, conjunctions, adverbs, copulas, modal verbs or the
+ * most generic verbs. None of them addresses a compound name by one character
+ * the way 「钥」 addresses 「铜钥」; letting 「的」 query every alias containing
+ * it turned most questions into a match for most named objects. */
+export const HAN_ALIAS_QUERY_STOP_WORDS: readonly string[] = Object.freeze([
+  ..."的了着过是在有和与及或把被让给向对从到于以而等之也都又就才还再只很太更最不没别请要想会能可该得",
+  ..."我你他她它们这那哪谁什么些个位看问说听拿去来走做用找",
+].sort(compareCodeUnits));
+const HAN_ALIAS_QUERY_STOP_WORD_SET: ReadonlySet<string> = new Set(HAN_ALIAS_QUERY_STOP_WORDS);
+
 export function retrievalProfile(
   profileRef: string,
   tokenizer: TokenizerProfile,
@@ -115,7 +126,8 @@ export function retrievalProfile(
       profileRef,
       tokenizer: normalizedTokenizer,
       extractors: normalizedExtractors,
-      hanAliasPolicy: "intl-zh-word-query-single-character-alias/v1",
+      hanAliasPolicy: "intl-zh-word-query-single-character-alias/v2",
+      hanAliasQueryStopWords: HAN_ALIAS_QUERY_STOP_WORDS,
     }),
     tokenizer: normalizedTokenizer,
     extractors: normalizedExtractors,
@@ -247,12 +259,16 @@ export function extractTerms(
   });
 }
 
+
 /** Query-only word boundaries keep a character inside an unrelated compound
- * from becoming a standalone alias query. This retrieves candidates, not intent. */
+ * from becoming a standalone alias query, and the stop set above keeps a
+ * standalone function word from becoming one. This retrieves candidates, not
+ * intent. */
 export function singleHanQueryWords(text: string): readonly string[] {
   const segmenter = new Intl.Segmenter("zh", { granularity: "word" });
   return [...new Set([...segmenter.segment(text.normalize("NFC"))]
-    .filter(segment => segment.isWordLike && /^\p{Script=Han}$/u.test(segment.segment))
+    .filter(segment => segment.isWordLike && /^\p{Script=Han}$/u.test(segment.segment)
+      && !HAN_ALIAS_QUERY_STOP_WORD_SET.has(segment.segment))
     .map(segment => segment.segment))].sort(compareCodeUnits);
 }
 

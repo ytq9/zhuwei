@@ -62,6 +62,9 @@ export type ObligationClosureInput = Readonly<{
   seeds: readonly ObligationSeed[];
   budget: ContextWorkBudget;
   dependencies?: DependencyResolver;
+  /** Whether a canonical fact may enter through the given co-subject. Absent
+   * admits every fact asserted about a closed ref. */
+  admitFact?: (factRef: string, viaRef: string) => boolean;
 }>;
 
 /**
@@ -153,6 +156,7 @@ export function closeObligations(input: ObligationClosureInput): ObligationClosu
     }
 
     for (const factRef of index.factsBySubject.get(item.ref) ?? []) {
+      if (input.admitFact !== undefined && !input.admitFact(factRef, item.ref)) continue;
       if (!enqueue({ ref: factRef, obligation: "fact" }, item.ref)) return limited(budget);
     }
 

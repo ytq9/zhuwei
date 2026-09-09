@@ -51,6 +51,7 @@ import {
 } from "./obligation-closure";
 import { buildReferenceIndex, type ReferenceNode } from "./reference-index";
 import { deriveRuntimeContextRequirements } from "./runtime-requirements";
+import { createFactRelevance } from "./fact-relevance";
 import { narrativeContextRequirements } from "./narrative-continuity";
 import { freezeNpcDecisionEntry } from "./npc-decision";
 import {
@@ -175,25 +176,6 @@ export function freezeAdjudicationContext(
     return blocked("preparationLimit", ["referenceIndex:work-budget-exhausted"], budget);
   }
   const index = indexed.index;
-  // A generic request can refer to people already in view without naming them.
-  // Freeze their exact records using the same visibility/spatial predicate as
-  // Rules. This membership read is bounded and does not select action targets
-  // or expand bystander relations. A visible NPC can be addressed by a pronoun
-  // or another spelling that lexical discovery cannot resolve. Its finite
-  // decision view must already be available before KP chooses whom to address.
-  const observableSubjects: ObligationSeed[] = [];
-  for (const ref of index.refsByScene.get(sceneRef) ?? []) {
-    if (!budget.charge("postingVisits", 1)) {
-      return blocked("preparationLimit", ["observableSubjects:work-budget-exhausted"], budget);
-    }
-    const node = index.nodes.get(ref);
-    if (node?.kind === "entity" && indexedSpatialRefVisibleTo(input.state, node, sceneRef, input.actorCharacterId)) {
-      observableSubjects.push({ ref, obligation: "observableSubject" });
-      if (input.state.entities[ref]?.kind === "npc") {
-        observableSubjects.push({ ref, obligation: "npcDecision" });
-      }
-    }
-  }
 
   const precedent = input.precedentApplicability === undefined
     ? undefined
@@ -226,6 +208,34 @@ export function freezeAdjudicationContext(
   if (discovered.kind !== "discovered") {
     return blocked("preparationLimit", ["candidateDiscovery:work-budget-exhausted"], budget);
   }
+  // A generic request can refer to people already in view without naming them.
+  // Freeze their exact records using the same visibility/spatial predicate as
+  // Rules. This membership read is bounded and does not select action targets
+  // or expand bystander relations. A visible NPC can be addressed by a pronoun
+  // or another spelling that lexical discovery cannot resolve, so while the
+  // words resolve to no NPC at all every visible NPC keeps its finite decision
+  // view. Once they do address one or more NPCs (name, alias, exact ref,
+  // description or UI focus), bystanders keep only their observable records:
+  // their private knowledge is not this action's decisive material (SPEC 0016
+  // §4.2–4.3), and loading all of it for every visible NPC is what let a plain
+  // question outgrow one provider request.
+  const addressedNpcRefs = new Set([...discovered.candidates.map(({ ref }) => ref), ...(input.focusRefs ?? [])]
+    .filter((ref) => input.state.entities[ref]?.kind === "npc"));
+  const factRelevance = createFactRelevance({ index, actorCharacterId: input.actorCharacterId,
+    candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
+  const observableSubjects: ObligationSeed[] = [];
+  for (const ref of index.refsByScene.get(sceneRef) ?? []) {
+    if (!budget.charge("postingVisits", 1)) {
+      return blocked("preparationLimit", ["observableSubjects:work-budget-exhausted"], budget);
+    }
+    const node = index.nodes.get(ref);
+    if (node?.kind === "entity" && indexedSpatialRefVisibleTo(input.state, node, sceneRef, input.actorCharacterId)) {
+      observableSubjects.push({ ref, obligation: "observableSubject" });
+      if (input.state.entities[ref]?.kind === "npc" && (addressedNpcRefs.size === 0 || addressedNpcRefs.has(ref))) {
+        observableSubjects.push({ ref, obligation: "npcDecision" });
+      }
+    }
+  }
 
   const narrative = narrativeContextRequirements({
     state: input.state, index, actorRef: input.actorCharacterId, sceneRef,
@@ -240,6 +250,7 @@ export function freezeAdjudicationContext(
     candidates: discovered.candidates,
     index,
     budget,
+    factRelevance,
   });
   if (runtimeResult?.kind === "blocked") {
     return blocked(runtimeResult.reason, [runtimeResult.issue], budget);
@@ -273,6 +284,10 @@ export function freezeAdjudicationContext(
       [...precedentRefs(precedent), ...selectedPrecedentRefs]), ...runtimeSeeds, ...narrative.seeds, ...observableSubjects]
       .filter(({ ref }) => index.nodes.has(ref)),
     budget,
+    admitFact: (factRef, viaRef) => {
+      const subjectRefs = index.nodes.get(factRef)?.subjectRefs;
+      return subjectRefs === undefined || factRelevance.admits({ subjectRefs }, viaRef);
+    },
     // Ability refs and hazard dependencies address independent frozen records:
     // missing ones must remain critical gaps. Other schemas may also name
     // embedded resources or tactical obstacles carried by their parent body.

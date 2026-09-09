@@ -70,16 +70,22 @@ test('model context separates established world descriptions from technical stat
   assert.ok(scene.adjudication.combatScene.geometry);
   // Description fields move once; recombining the presentation must recover
   // every exact original value, including mechanics, metadata and unknowns.
-  const restored = presented.entries.map(entry => {
-    if (!entry.value?.worldDescription) return entry;
-    const value = structuredClone(entry.value.adjudication);
-    for (const [key, part] of Object.entries(entry.value.worldDescription)) {
+  // The presentation keeps every entry in order and carries no server-owned
+  // version hash; Room and lowering read those from the frozen context.
+  assert.deepEqual(presented.entries.map(entry => entry.entryRef), before.entries.map(entry => entry.entryRef));
+  for (const [index, entry] of before.entries.entries()) {
+    const shown = presented.entries[index];
+    if (entry.kind !== 'known') { assert.deepEqual(shown, entry); continue; }
+    assert.equal(shown.revisionOrHash, undefined, entry.entryRef);
+    assert.equal(shown.kind, 'known');
+    if (!shown.value?.worldDescription) continue;
+    const value = structuredClone(shown.value.adjudication);
+    for (const [key, part] of Object.entries(shown.value.worldDescription)) {
       value[key] = part && typeof part === 'object' ? { ...value[key], ...part } : part;
     }
-    assert.ok(Object.isFrozen(entry.value.worldDescription));
-    return { ...entry, value };
-  });
-  assert.deepEqual(restored, before.entries);
+    assert.ok(Object.isFrozen(shown.value.worldDescription));
+    assert.deepEqual(value, entry.value, entry.entryRef);
+  }
   assert.deepEqual(f.requiredContext, before);
   assert.equal(presented.contextHash, before.binding.contextHash);
   for (const ref of [HIDDEN, REMOTE, `knowledge:${NPC}:knowledge:same`, npcDecisionEntryRef(NPC)]) {

@@ -9,7 +9,7 @@ export type VNextProposalStage = "offer" | "expandedProposal" | "correction";
 
 const contextUse = `KP先决定授权留白中的新事实，再用相应提案固化；世界状态承接本次创作，无需旧记录预先证明新内容。新对象用materializeObject，已有场景对象尚未确定的描述或状态用completeObject，不另建同名对象；补全须与锚点、固化事实和叙述承诺一致。创作世界不等于替玩家行动，原地看和听不能扩写为走近、触摸或操作。
 可观察对象的value分为worldDescription与adjudication。worldDescription提供已有名称和描写，不是世界的完整定义。允许忠实改述和符合情境的合理的小描写，无需每个修饰词都有出处。措辞和氛围点缀无需补全；为回答本次问题新确定的对象位置、朝向、构造或工作状态，须在同束completeObject写入原对象，不能只放sensoryEvidence。独立的非因果环境内容用commitNarrativeDetail轻量保存。描写须符合感官、知情权限和玩家意图。
-adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。`;
+adjudication的几何、机械和状态供裁决核对，Geometry按其unit解释。未知技术码即使位于observableState，也不能自动作为感官依据；KP可以创作其尚未确定的世界含义，并同步记录。其他记录按原类型、知情者和时态使用。profileContext.factConstraints.facts只列事实ID与主体，正文见同ID的独立条目；条目不含版本hash，引用一律用entryRef。`;
 
 const selectionAuthority = `你是烛帷的跑团KP，规则仅用D&D 5e 2014 / SRD 5.1。当前只选择完整原意图需要的填写类型，不裁决、回应或起草提案。
 依据已冻结且获授权的RequiredContext，保留事实归属、本人知识及known/knownAbsent/openBlank/ambiguous/unavailable边界；目录不授予世界权限，不猜未读取事实或改变玩家方法。
@@ -88,7 +88,7 @@ const recoveryInstructions = deepFreeze({
 /** All selectable guidance and defaults are pinned, including unloaded blocks.
  * Assembly uses the same typed closure as schema selection, never action text. */
 export const VNEXT_PROPOSAL_GUIDANCE_POLICY = deepFreeze({
-  version: "zhuwei.proposal-guidance/v22", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
+  version: "zhuwei.proposal-guidance/v23", selection: "flat-type-selection-with-exact-terminal-and-step-surface/v4",
   storySelection: STORY_SELECTION_POLICY_HASH, selectionAuthority, contextUse, terminalSelectionDescriptions, terminalFilling, authority, planRuling, sharedRuling, terminalRuling, filling, stages, recoveryInstructions, catalog: VNEXT_PROPOSAL_CAPABILITIES, producerContract: VNEXT_PROPOSAL_PRODUCER_CONTRACT,
   templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG,
 });

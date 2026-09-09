@@ -3964,3 +3964,29 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 冻结与部署：干净cloudflare/0c26a3db9e59fccd08238240a92df35b9e615380已推送，403源码/构建输入与113产物匹配既有构建，精确DEPLOY_SOURCE_SHA guard exit0。复用build运行wrangler deploy，exit0；版本27afcd14-fa83-494f-b84c-0516e89cc8b2，deployment4311a415-91cd-4bde-ad25-bff913aeadf9，控制面确认100%，2026-09-09T09:57:54.378531Z。现有zhuwei、DB/ROOMS/AI/ASSETS及room-do-v1不变。
 - 冒烟：既有本机代理通道下首页、/login及index-DSh8mEk1.js均HTTP200/curl exit0，文案与JS SHA256匹配本地构建。未运行新模型调用、连续游玩或全量门；实际证据见agent/vnext-worktree-quick-release-20260909.md末节及/tmp/zhuwei-release-20260909/。
 - 共享工作区在部署后出现其他在途测试修改，不纳入本次已部署源码与文档回执提交；只提交本节及对应发布报告。用户请求的已构建合并版本部署完成，最终远端main复查随文档push核对，不改变grok.me。
+
+
+## 2026-09-09 DeepSeek strict 分派最新代码复核（开发期）
+
+- 症状与根因复核：用户要求基于后续修改重查并修好格式化输出接入。基线 cloudflare/0c26a3d 已包含 8395406 的路由修复：任一工具声明 strict 即走 Beta，原 tools.length===1 缺陷未复现；本轮未重复改运行时代码。此前研究段落仍以现在时描述历史缺陷，现明确标注修复前结果与当前证据。
+- 修改与连带检查：tests/kp-narration-transport.test.ts 用新增 createCorrectKpProposalBundleModelInput 接入真实 Provider/fetch 截获，验证选择、单工具填写、双工具补选、草稿修订的 Beta 端点与消息/Schema 原样传输；混合工具的两种顺序均精确拒绝且零 fetch，普通 JSON 旁白及 strict 审核继续通过。直接消费者 proposal-provider 的选择/填写/修订共用现役构造器；Room server 为 vNext 提案直接注入 strict binding，旁白用通用分派；没有持久化或公开投影变化。同步 docs/agent/deepseek-structured-output-research-20260909.md。
+- 实际验证：修改前 npx vitest run tests/kp-narration-transport.test.ts 为 3/3、exit 0；修改后同命令 4/4、exit 0。npx tsx --test tests/kp-vnext-selection-amendment.test.mjs tests/kp-vnext-proposal-revision.test.mjs tests/kp-vnext-unparsed-revision.test.mjs 为 16/16、exit 0，覆盖补选次数、源草稿/冻结上下文绑定、原子修订、重复成员与截断拒绝。日志 /tmp/zhuwei-deepseek-routing-20260909-{before,final}.log 与 /tmp/zhuwei-deepseek-consumers-20260909-final.log。研究文档 11 个本地链接有效，git diff --check exit 0，最终差量检查通过。
+- 未覆盖范围：截获 fetch 的本地验证不代表供应商实际输出遵循率、完整游玩或线上版本核验。本次零真实 API 调用，无 API 迁移、全量回归、typecheck（未改共享类型/签名）、build、commit、push、部署或远端数据操作；共享目录其他任务改动保留。
+
+
+## 2026-09-09 修复旧运行时房间无法准备删除（开发期）
+
+- 症状与根因：用户在酒馆删旧房收到“房间权威暂时无法准备删除，请稍后再试”。table/server 的 prepare RPC 异常映射到该文案；Room prepareDeletion/cancelDeletion 为核验房主调用完整 Rules replay，旧 manifest 不受当前解释器支持时抛 unsupportedProfile。构造器的 scheduleExpiryAlarm 同样调用 replay，冷启动先触发 inputGateBroken，删除 RPC 甚至无法进入。本地温启动与真实 eviction 两条失败路径均复现，保留 red 日志；未将此推断成已读取该次线上堆栈。
+- 修改与直接消费者：仅修改 app/_runtime/lib/room/durable-object.ts 的删除鉴权与定时器恢复，读取同一 Room 在提交事件时原子保存的 state_json，保留 canonical host、可信 principal/sessionVersion、活动席位及 roomId 一致性验证。正常 prepare/commit/observe 的版本和回放验证保持原有行为；删除仍经 capability、封存、D1 确认目录不存在及原有清理/重试路径。table/server、room/server 的删除/撤销/完成调用合同和公开文案不变，没有补回旧解释器、重绑状态或从 D1 授予权限。
+- 定向证据：新增测试修改前 `npx vitest run tests/room-deletion-v2.test.ts -t 'interpreter is retired'` exit 1，prepareDeletion 抛 unsupportedProfile；使用只在初始化时注册的有效测试 manifest 后，`-t 'boots a retired room'` exit 1，构造器同错并触发 DO reset。最终 `npx vitest run tests/room-deletion-v2.test.ts` 6/6 exit 0，覆盖旧版本温/冷启动删除、非法角色/会话拒绝、旧房游玩仍拒绝、撤销、目录保留/不可用时不清除、恢复/丢失 finalize 后 alarm 清理和幂等；暂停状态经真实 prepare/commit 保存，再验证 eviction/撤销删除保留 due work 并继续归档定时器。`npx tsx --test tests/room-deletion-orchestration-v2.test.mjs` 2/2 exit 0，仅计作既有编排顺序/清理覆盖的源码检查。
+- 连带对照：附加既有 provider-room 的暂停 due alarm 用例和 archive-do-resume 的 bound runtime 用例均失败；在 cloudflare/0c26a3db9e59fccd08238240a92df35b9e615380 完整源码隔离副本运行同两例，也以相同断言失败（dueWork 为 0、归档 pending 未清），exit 1，未改写这些断言或称其通过。新测试最初从 RPC 断言预期 observe 异常造成测试运行器未处理拒绝，改在 runInDurableObject 内捕获同一公开 observe 的预期异常；最终 6 例无未处理错误。当前修改不涉及共享类型、公开签名或 schema，不额外运行 typecheck/全量测试。
+- 证据与未覆盖：日志 /tmp/zhuwei-room-deletion-{red,cold-red,fixed,validation,baseline,final,orchestration}.log，隔离基线位置见 /tmp/zhuwei-room-deletion-baseline-path。目标最终 diff 与空白检查通过；同目录其他任务的研究、transport 测试和执行日志修改保留。本轮未提交、push、build、部署、远端 migration、真实模型调用或删除线上房间；尚未验证生产页面删除成功。
+
+## 2026-09-09 冻结上下文按行动相关性收缩与模型视图去哈希（开发期）
+
+- 症状：生产新房间一句普通提问即返回 `PROPOSAL_INPUT_BUDGET_EXCEEDED`。本地用真实黑橡模组房间复现：offer 请求估算 44,825 token（上限 58,000），选两类表填写 55,009，选四类表直接被拦截；上下文 60 条目、35,062 token，其中模组 profile-context 7,329、三名在场 NPC 决策快照 7,876 加 17 条 NPC 知识正文 4,536、六件开场实物的事实/定义/实例约 6,300、条目与快照内的版本 hash 约 3,000。round91（9 月 8 日）同类 offer 只有 24,560，差额来自 9 日的开场准备材料。
+- 根因：`context/index.ts` 对每个可见 NPC 一律加载 `npcDecision`（完整私有知识）；`runtime-requirements.ts` 把场景约束框内全部事实作为 sourceRecord 种子，`obligation-closure.ts` 又从场景共主体把全部实物事实拉回；`extractors.ts` 把「的」「是」等独立单字当作别名查询，几乎任何句子都命中含这些字的实物别名。这三处与 SPEC 0016 §4.3「先检索再闭包」相反，是先收集整个场景再依赖总量上限。
+- 修改：新增 `context/fact-relevance.ts`：实物事实只在闭包到达该实物本身，或玩家措辞、UI focus、行动者持有物触及其主体时进入；`runtime-requirements.ts` 用同一判定过滤 profile-context 的 `factConstraints.facts` 并保存完整框 hash `factConstraintsHash`，`proposal-bundle-lowering.ts` 的 worldFact 校验改比该 hash（Rules 读集仍绑定完整框）；`obligation-closure.ts` 增加 `admitFact` 钩子。`context/index.ts` 先做候选发现，措辞点名一个或多个 NPC 时旁观者只保留可观察记录，未点名时维持全部可见 NPC 决策视图。`extractors.ts` 单字别名查询停用词表并升级 hanAliasPolicy v2。`proposal-context.ts` 模型视图 vnext-7：去掉条目、NPC 快照、知识目录的版本 hash，约束框事实改列 ID 指向同名条目；`proposal-guidance.ts` v23 补一句说明。npc-work 帧不传相关性判定，NPC 工作帧不变。
+- 直接消费者：Room 请求校验（`vnext-proposal-invocation.ts`）与修订票据 hash 均调用同一 `proposalModelContext`；lowering 社交/计划路径继续读冻结上下文；`story-archive-host` 通过。
+- 验证：`npm run typecheck` exit 0；Node 23 个上下文/发现/lowering/故事文件 184 过 4 红，4 红为基线已红（fact-source 2、item-reference-surface 2，基线 worktree 同样失败）；Vitest `kp-vnext-provider-room` 13 红与基线 13 红逐名相同，原「空社交草稿」用例改为按 entryRef 断言模型视图后通过；新增 `tests/kp-vnext-context-relevance-room.test.ts`：点名瓦罗的提问 offer 25,730、四类表填写 41,549、31 条目，旁观 NPC 无决策快照与知识正文，铜钥事实缺席；问铜钥时铜钥事实/定义进入、莉安决策在、瓦罗决策不在；未点名的环顾保留三名 NPC 决策。Room 消费者 7 个文件当前 11 红，基线同机 18 红，逐名对照只有 `kp-vnext-promise-lifecycle-room` 的「不完整社交表」变化：基线的 rejected 来自填写请求超预算，现在进入一次修订后 `needsKp/PROPOSAL_REPAIR_EXHAUSTED`，已按合同改断言。`git diff --check` exit 0。
+- 未覆盖：没有真实 DeepSeek 批次，减量只在本地估算器上成立；`resumes a frozen authored attack` 与 `retrieves Item and Ability schemas` 仍是基线红，后者现在越过预算门后停在陈旧的提示词期望；authorItem 一族工具 schema 单独 13,334 token，schema 压缩与 58,000 开发准入上限未动（DeepSeek V4 Flash 官方上下文 1M）；NPC 知识随游玩累积仍会逐 NPC 全量加载，只是不再对旁观者加载；未部署、未 push。

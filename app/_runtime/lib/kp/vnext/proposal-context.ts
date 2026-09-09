@@ -6,7 +6,7 @@ import { npcDecisionContext, npcDecisionEvidenceRef, NPC_DECISION_CONTEXT_SCHEMA
 
 // v6 separates world descriptions from adjudication data without changing the
 // frozen authority records, their permission classes or their read bindings.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-6" as const;
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-7" as const;
 
 export type ProposalNpcSourceChoices = readonly Readonly<{ npcRef: string; refs: readonly string[] }>[];
 
@@ -124,19 +124,60 @@ function worldSubjectModelValue(value: Record<string, unknown>) {
   });
 }
 
+/** Presentation only: server-owned version hashes leave, and a fact body that
+ * already has its own entry is not repeated inside the module constraint
+ * frame. Nothing here changes which facts, records or knowledge the model may
+ * read or cite; Room and lowering keep reading the frozen context itself. */
+function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<string>): Record<string, unknown> {
+  if (value.schema === NPC_DECISION_CONTEXT_SCHEMA) {
+    const { projectionHash: _projection, ...rest } = value;
+    return Object.freeze({ ...rest,
+      knowledge: Array.isArray(value.knowledge) ? Object.freeze(value.knowledge.map(record => isPlainRecord(record)
+        ? Object.freeze({ knowledgeRef: record.knowledgeRef, entryRef: record.entryRef }) : record)) : value.knowledge,
+      records: Array.isArray(value.records) ? Object.freeze(value.records.map(record => {
+        if (!isPlainRecord(record)) return record;
+        const { revisionOrHash: _revision, ...presented } = record;
+        return Object.freeze({ ...presented,
+          value: isPlainRecord(record.value) ? modelEntryValue(record.value, known) : record.value });
+      })) : value.records });
+  }
+  if (value.schema === "zhuwei.held-knowledge-catalog/v1" && Array.isArray(value.records)) {
+    return Object.freeze({ ...value, records: Object.freeze(value.records.map(record => {
+      if (!isPlainRecord(record)) return record;
+      const { recordHash: _hash, ...presented } = record;
+      return Object.freeze(presented);
+    })) });
+  }
+  if (isPlainRecord(value.factConstraints) && Array.isArray(value.factConstraints.facts)) {
+    const { factConstraintsHash: _frame, ...rest } = value;
+    return Object.freeze({ ...rest, factConstraints: Object.freeze({ ...value.factConstraints,
+      facts: Object.freeze(value.factConstraints.facts.map(fact =>
+        isPlainRecord(fact) && typeof fact.id === "string" && known.has(fact.id)
+          ? Object.freeze({ id: fact.id, kind: fact.kind, subjectRefs: fact.subjectRefs, entryRef: fact.id }) : fact)) }) });
+  }
+  return value;
+}
+
 /** Model-facing representation of the same frozen context. Every fact,
- * availability state, entry version and permission directory is retained.
- * Room keeps the full binding and validates it when journaling and committing;
- * the model neither chooses nor reproduces those server-owned identities. */
+ * availability state and permission directory is retained; server-owned
+ * version hashes are not, and a fact body carried by its own entry is listed
+ * by id inside the constraint frame. Room keeps the full binding and validates
+ * it when journaling and committing; the model neither chooses nor reproduces
+ * those server-owned identities. */
 export function proposalModelContext(context: VNextRequiredContext) {
   const subjects = new Set(proposalObservationSubjectRefs(context));
+  const known = new Set(context.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
   return Object.freeze({
     schema: VNEXT_PROPOSAL_CONTEXT_SCHEMA,
     contextHash: context.binding.contextHash,
     intent: context.intent,
-    entries: Object.freeze(context.entries.map(entry => entry.kind === "known"
-      && subjects.has(entry.entryRef) && isPlainRecord(entry.value)
-      ? Object.freeze({ ...entry, value: worldSubjectModelValue(entry.value) }) : entry)),
+    entries: Object.freeze(context.entries.map(entry => {
+      if (entry.kind !== "known") return entry;
+      const { revisionOrHash: _revision, ...presented } = entry;
+      const value = !isPlainRecord(entry.value) ? entry.value
+        : subjects.has(entry.entryRef) ? worldSubjectModelValue(entry.value) : modelEntryValue(entry.value, known);
+      return Object.freeze({ ...presented, value });
+    })),
     references: Object.freeze({ ...context.references, observationSubjectRefs: proposalObservationSubjectRefs(context),
       npcSourceChoices: proposalNpcSourceChoices(context), itemEntryRefs: proposalItemEntryRefs(context),
       itemDefinitionRefs: proposalItemDefinitionRefs(context) }),

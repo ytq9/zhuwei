@@ -844,7 +844,7 @@ function lowerMaterializeObjectEntryV2(
     const profile = input.requiredContext.entries.find(e => e.kind === "known" && authority.basisRefs.includes(e.entryRef)
       && isPlainRecord(e.value) && Object.hasOwn(e.value, "factConstraints"));
     if (!frame || frame.missingParentRefs.length > 0 || profile?.kind !== "known" || !isPlainRecord(profile.value)
-      || canonicalHash(profile.value.factConstraints) !== canonicalHash(frame)
+      || profile.value.factConstraintsHash !== canonicalHash(frame)
       || worldFact.subjectRefs.some(ref => !frame.subjectRefs.includes(ref) || input.state.entities[ref]?.kind === "player")) return { kind: "rejected", code: "CONTEXT_INSUFFICIENT", issues: ["world-fact:constraint-frame-unavailable-or-changed"] };
     factBindings.push({ ref: worldFactConstraintsRef(sceneRef), revisionOrHash: canonicalHash(frame) });
     for (const knowledge of worldFact.initialKnowledge) {
