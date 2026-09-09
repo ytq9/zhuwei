@@ -1,5 +1,6 @@
 import { createAuthoredProbeFixture, freezeAuthoredProbeContext, PROBE_ACTOR, PROBE_TARGET, PROBE_SCENE } from "../../tools/lib/vnext-authored-probe-fixture.mjs";
 import { canonicalHash } from "../../app/_runtime/lib/kp/vnext/canonical-json.ts";
+import { hashWorldState } from "../../app/_runtime/lib/rules/v2/validation.ts";
 import { authorityRevisionOrHash } from "../../app/_runtime/lib/rules/v2/authority-bindings.ts";
 import { createStoryRecipes, STORY_CREATION_WORKFLOW_REF } from "../../app/_runtime/lib/room/story-creation/index.ts";
 
@@ -78,7 +79,7 @@ export function storyContextFixture(kind = "conflict") {
 export function refreshTrigger(input) {
   const context = structuredClone(input.requiredContext);
   const { contextHash: _old, ...binding } = context.binding;
-  binding.stateHash = canonicalHash(input.state);
+  binding.stateHash = hashWorldState(input.state);
   binding.baseEventSeq = input.state.version;
   context.binding = { ...binding, contextHash: canonicalHash({ ...context, binding }) };
   return { ...input, requiredContext: context };
