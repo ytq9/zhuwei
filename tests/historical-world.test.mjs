@@ -20,6 +20,40 @@ function rehashArchive(value) {
   value.archiveHash = canonicalSha256(body);
 }
 
+test("public Rules step initializes historical genesis and replay preserves later target changes independently", async () => {
+  for (const semanticFact of [false, true]) {
+    const f = await createHistoricalWorldFixture({ semanticFact }), source = structuredClone(f.archive);
+    const result = f.runtime.step(undefined, undefined, f.input);
+    assert.equal(result.kind, "initialized", JSON.stringify(result));
+    assert.equal(isHistoricalOrigin(result.genesis.historicalOrigin), true);
+    assert.deepEqual(result.events, []);
+    const restored = f.runtime.replay(structuredClone(result.genesis), []);
+    assert.equal(restored.kind, "replayed", JSON.stringify(restored));
+    assert.deepEqual(restored.state, result.genesis.initialState);
+    assert.deepEqual(restored.profiles, result.profiles);
+    assert.equal(restored.state.roomId, f.input.roomId);
+    assert.equal(restored.state.canonicalFacts["fact:historical:future"], undefined);
+    assert.equal(restored.state.knowledge[ARCHIVIST][f.factRef], undefined);
+    const changed = f.runtime.step(result.profiles, restored.state, {
+      kind: "declareCanonicalFact", proposalId: "root:public-history:choice",
+      fact: { factId: "fact:public-history:outcome", factKind: "worldOutcome", subjectRefs: [BOATMAN],
+        value: "新身份说服守军归还药船。", source: "characterAction", causalParentIds: [f.factRef], visibilityPolicy: "public" },
+    });
+    assert.equal(changed.kind, "committed", JSON.stringify(changed));
+    const replayed = f.runtime.replay(structuredClone(result.genesis), structuredClone(changed.events));
+    assert.equal(replayed.kind, "replayed", JSON.stringify(replayed));
+    assert.deepEqual(replayed.state, changed.state);
+    assert.deepEqual(f.archive, source);
+    const original = f.runtime.replay(f.genesis, f.events);
+    assert.equal(original.kind, "replayed", JSON.stringify(original));
+    assert.deepEqual(original.state, f.state);
+    assert.equal(original.state.canonicalFacts["fact:public-history:outcome"], undefined);
+    const forged = structuredClone(result.genesis);
+    forged.historicalOrigin.identity.seedHash = canonicalSha256("a different historical identity");
+    assert.equal(f.runtime.replay(forged, []).kind, "rejected");
+  }
+});
+
 test("historical genesis preserves two clocks, late past truth and only already acquired knowledge", async () => {
   const f = await createHistoricalWorldFixture(), before = structuredClone({ state: f.state, events: f.events, genesis: f.genesis });
   const result = initialized(f), state = result.genesis.initialState;
