@@ -41,6 +41,8 @@ import { STORY_NPC_PENDING_BINDING_HASH, storyNpcPendingPreparedActionId, storyN
   storyNpcPendingProviderRequest, storyNpcPendingCanonicalProven, type StoryFrozenNpcPendingContext,
   type StoryNpcPendingOwner } from "./story-npc-pending";
 import { isAtomicWorldContinuation } from "../rules/v2/atomic-world-input";
+import { exportWorldStoryHostBinding, validateWorldStoryHostPayload,
+  type StoryFrozenWorldContext, type WorldStoryHostPayload } from "./story-world-event-host";
 
 export type StoryFrozenNpcContext = Readonly<{
   preparedActionId: string;
@@ -81,7 +83,7 @@ type ActionPayload = Common & {
 type NarrationPayload = Common & { format: "zhuwei.story-viewer-narration-host/v1"; narration: StoryFrozenNarrationContext };
 type NpcPendingPayload = Common & { format: "zhuwei.story-npc-pending-host/v1";
   pending: StoryFrozenNpcPendingContext; owner: StoryNpcPendingOwner; answer: StoryRecord | null };
-type Payload = ActionPayload | NarrationPayload | NpcPendingPayload;
+type Payload = ActionPayload | NarrationPayload | NpcPendingPayload | WorldStoryHostPayload;
 type ValidationContext = { archive: AuthoritativeRoomArchive; storySnapshot: StoryStoreArchiveSnapshot };
 
 const same = (left: unknown, right: unknown): boolean => canonicalHash(left) === canonicalHash(right);
@@ -133,6 +135,16 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
   storySnapshot: StoryStoreArchiveSnapshot): readonly StoryArchiveHostBinding[] {
   const snapshot = store.storyArchiveHostSnapshot();
   const grouped = new Map<string, Stage[]>();
+  const worldOwners = new Map<string, string>();
+  for (const row of snapshot.contexts.filter(row => row.context_kind === "world")) {
+    const world = parse<StoryFrozenWorldContext>(row.context_json);
+    check(world.preparedActionId === row.prepared_action_id && !grouped.has(row.prepared_action_id));
+    grouped.set(row.prepared_action_id, []);
+    const binding = exportWorldStoryHostBinding(world, { sourceChain: [], stages: [], storySnapshot });
+    for (const jobId of binding.jobIds) {
+      check(!worldOwners.has(jobId)); worldOwners.set(jobId, row.prepared_action_id);
+    }
+  }
   for (const proof of snapshot.proofs) {
     const call = storySnapshot.invocations.find(row => row.invocation.invocationId === proof.invocation_id);
     check(call?.externalBinding !== null && call !== undefined);
@@ -145,6 +157,7 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     grouped.set(proof.prepared_action_id, stages);
   }
   for (const job of storySnapshot.jobs) {
+    if (worldOwners.has(job.input.request.jobId)) continue;
     const possible = snapshot.submissions.filter(row => row.root_action_id === job.input.request.source.sourceId && row.input_kind === "intent");
     check(possible.length === 1);
     if (!grouped.has(possible[0].prepared_action_id)) grouped.set(possible[0].prepared_action_id, []);
@@ -156,8 +169,9 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
     stages.sort((a, b) => a.ordinal - b.ordinal);
     const narration = parsedContext<StoryFrozenNarrationContext>(snapshot, id, "narration");
     const pending = parsedContext<StoryFrozenNpcPendingContext>(snapshot, id, "npcPending");
+    const world = parsedContext<StoryFrozenWorldContext>(snapshot, id, "world");
     const row = snapshot.submissions.find(row => row.prepared_action_id === id);
-    const root = narration?.request.rootActionId ?? pending?.request.rootActionId ?? row?.root_action_id;
+    const root = world?.trigger.due.childRootActionId ?? narration?.request.rootActionId ?? pending?.request.rootActionId ?? row?.root_action_id;
     check(text(root));
     const chain = sourceChain(snapshot, root!);
     const sourceRoot = chain.at(-1)?.cause_root_action_id ?? root!;
@@ -165,8 +179,12 @@ export function exportStoryArchiveHostBindings(store: Pick<AuthoritativeRoomStor
       && row.binding.source.sourceId === sourceRoot);
     check(account.length === 1);
     const source = account[0].binding.source as StoryArchiveHostBinding["source"];
+    if (world !== null) {
+      check(narration === null && pending === null && row === undefined && same(source, world.trigger.source));
+      return exportWorldStoryHostBinding(world, { sourceChain: chain, stages, storySnapshot });
+    }
     const jobIds = narration !== null || pending !== null ? [] : storySnapshot.jobs.filter(job => same(job.input.request.source, source)
-      && row?.root_action_id === source.sourceId).map(job => job.input.request.jobId).sort();
+      && row?.root_action_id === source.sourceId && !worldOwners.has(job.input.request.jobId)).map(job => job.input.request.jobId).sort();
     const invocationIds = [...stages.map(stage => stage.invocationId), ...storySnapshot.invocations
       .filter(call => call.invocation.jobId !== null && jobIds.includes(call.invocation.jobId)).map(call => call.invocation.invocationId)].sort();
     let payload: Payload, kind: StoryArchiveHostBinding["kind"];
@@ -632,11 +650,15 @@ export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding
     check(keys(binding, ["bindingId", "kind", "source", "jobIds", "invocationIds", "payload", "payloadHash"])
       && Array.isArray(binding.jobIds) && Array.isArray(binding.invocationIds) && unique(binding.jobIds) && unique(binding.invocationIds)
       && (binding.jobIds.length + binding.invocationIds.length > 0
-        || binding.kind === "npcDecision" && binding.payload?.format === "zhuwei.story-npc-pending-host/v1")
+        || binding.kind === "npcDecision" && ["zhuwei.story-npc-pending-host/v1", "zhuwei.story-world-event-host/v1"].includes(String(binding.payload?.format)))
       && hash(binding.payloadHash) && canonicalHash(binding.payload) === binding.payloadHash);
     const payload = binding.payload as unknown as Payload;
     check(text(binding.bindingId) && payload.preparedActionId === binding.bindingId);
-    if (binding.kind === "npcDecision" && payload.format === "zhuwei.story-npc-pending-host/v1") {
+    if (binding.kind === "npcDecision" && payload.format === "zhuwei.story-world-event-host/v1") {
+      validateSourceChain(binding, payload, context, payload.world.trigger.due.childRootActionId);
+      validModule(payload.world.moduleProfile, prefix(context, payload.world.trigger.after.eventSeq).state);
+      check(validateWorldStoryHostPayload(binding, context, VNEXT_RULES_RUNTIME));
+    } else if (binding.kind === "npcDecision" && payload.format === "zhuwei.story-npc-pending-host/v1") {
       check(keys(payload, ["format", "preparedActionId", "sourceChain", "stages", "pending", "owner", "answer"]));
       validateSourceChain(binding, payload, context, payload.pending.request.rootActionId);
       validateStages(binding, payload, context); validateNpcPending(binding, payload, context);
@@ -662,7 +684,7 @@ export function validateStoryArchiveHostBinding(binding: StoryArchiveHostBinding
  * validating this host's frozen action and semantic-stage association. */
 export function readStoryArchiveAdmissionRulesInput(binding: StoryArchiveHostBinding, context: ValidationContext): Record<string, unknown> | undefined {
   if (!validateStoryArchiveHostBinding(binding, context) || binding.kind === "viewerNarration"
-    || binding.payload.format === "zhuwei.story-npc-pending-host/v1") return undefined;
+    || binding.payload.format === "zhuwei.story-npc-pending-host/v1" || binding.payload.format === "zhuwei.story-world-event-host/v1") return undefined;
   const input = (binding.payload as unknown as ActionPayload).admissionInput;
   return input === null ? undefined : structuredClone(input);
 }
@@ -706,6 +728,10 @@ export function restoreStoryArchiveHostBindings(store: Pick<AuthoritativeRoomSto
       snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "npcPendingOwner", context_json: JSON.stringify(payload.owner) });
       if (payload.answer !== null) snapshot.contexts.push({ prepared_action_id: binding.bindingId,
         context_kind: "npcPendingAnswer", context_json: JSON.stringify(payload.answer) });
+      continue;
+    }
+    if (payload.format === "zhuwei.story-world-event-host/v1") {
+      snapshot.contexts.push({ prepared_action_id: binding.bindingId, context_kind: "world", context_json: JSON.stringify(payload.world) });
       continue;
     }
     const { prepared, originalInput, ...row } = payload.submission;
