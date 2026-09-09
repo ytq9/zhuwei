@@ -3805,3 +3805,11 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 远端只读与边界：Wrangler 4.125.0/whoami exit 0；Worker zhuwei 当前 c4ef49ba-aa04-4969-aec4-95fde807f5c1 为 100%。DB/zhuwei-dev 无待执行 migration，未改 D1 schema、配置、依赖、Secrets 或资源。读取真实房间绑定后确认 2 个 vNext play 房间的旧 workflow 不被新配置接受；直接部署会阻断其续玩。AGENTS.md 第 5 行排除 vNext 后续新房的退役，第 90 行要求冻结 manifest 解释，因此先完成候选构建与已授权 push，生产切换等明确范围决定；没有静默改绑或删除房间。
 - 证据：docs/agent/vnext-quick-release-20260909.md；/var/folders/lc/5bh5fpv155qbvf0cg04z59300000gn/T/zhuwei-quick-deploy-20260909-lfqmka6h/ 保存完整检查日志、原基线对照、源指纹、远端清单与兼容性结果。当前尚未部署；提交/push 的实际 SHA 和后续处置续记。本次不重开真实采样，不宣称承诺漏登记、含糊状态文案、完整游玩或统计稳定性已解决。
 - 候选回执：99 文件提交为 8395406db3912cfc3480946f9520982921693a5e；git push origin HEAD:cloudflare exit 0，从 649c801 前进至该提交，同时包含既有本地 bec5e28 组队修复。DEPLOY_SOURCE_SHA 指定该 SHA 的 verify-deploy-config exit 0，源码干净；再次 ls-remote 验证 cloudflare 指向候选、main 仍为 cf7dbddab8cfb36365734fe96c42d82456fa1d0e。尚未调用 wrangler deploy，已就两个现有 vNext 房间会无法续玩的具体影响请求范围确认；其数据、账号及当前生产版本均未修改。后续仅文档回执提交不使已验证构建代码失效。
+
+## 2026-09-09 用户确认房间影响后完成快速部署
+
+- 授权与源码：用户明确回复“可以”，同意 2 个旧工作流 vNext 房间不能继续游玩、记录保留后部署。实际部署 HEAD 为已非 force 推送的 cloudflare/5b5fa317b4071c4af8b304a473bf1bef036a9ef7；与代码候选 8395406db3912cfc3480946f9520982921693a5e 仅差 2 份文档，部署前工作区干净、远端 HEAD 一致，604 个构建输入无漂移，105 个产物保存 SHA256。未删除房间、改绑 manifest 或修改账号资料。
+- 实际命令：携带完整 HEAD 的 `node cloudflare/verify-deploy-config.mjs` exit 0；复用已验证 build 后 `npx wrangler deploy` exit 0，使用 redirected dist/server/wrangler.json。现有 Worker zhuwei 与 ROOMS/DB/AI/ASSETS 绑定不变，未执行远端 migration、Secret 修改或新建资源。
+- 生产结果：2026-09-09T05:24:48.370789Z 创建 deployment 43799532-d883-44fd-b91a-6f17a59e2acd，版本由 c4ef49ba-aa04-4969-aec4-95fde807f5c1 切到 6f1b038d-d4eb-4636-91e2-39051982f357。`npx wrangler deployments list --json` exit 0，确认新版本 100% 流量。
+- 最小冒烟：本机默认到 workers.dev 的连接约 8 秒超时，curl exit 28、HTTP 000；一次改用既有系统代理后，首页、/login 和该页引用的 index-CFvAdctp.js 均 HTTP 200、curl exit 0，页面文字正确，线上 JS 与本次构建 SHA256 一致。没有改代理设置，没有把传输失败当 Worker 故障而改代码。未测试登录后游玩或追加真实模型调用。
+- 证据与限制：同一 zhuwei-quick-deploy-20260909-lfqmka6h 目录保存用户批准/源码核验、deploy.log、命令退出码、产物指纹、deployment/version 与 public-smoke.json；发布报告更新实际完成状态。沿用上一节定向检查和 build 证据，不重跑已通过检查；12 项基线 Worker 失败、承诺漏登记和状态文案等限制仍保留，不宣称完整游玩或统计稳定性完成。部署后仅本日志和发布报告变更，差量检查后提交并非 force 推送回执，远端 main 按实测基线复核不变。
