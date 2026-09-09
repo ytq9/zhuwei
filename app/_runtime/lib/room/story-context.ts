@@ -5,6 +5,7 @@ import { requiredContextBasisReferences } from "../kp/vnext/required-context-run
 import { parseAbsenceSelector } from "../kp/vnext/context/availability";
 import type { AuthoritativeWorldState } from "../rules/authority-read";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
+import { isRegisteredAbilityRecord } from "../rules/profiles/ability-compiler";
 import { authorityRevisionOrHash } from "../rules/authority-read";
 import { authorityCharacterTimeline, authorityEntityComposite, authorityGeometryFeatureComposite } from "../rules/v2/authority-bindings";
 import { isWorldFactPointer, worldFactDefinition } from "../rules/v2/world-facts";
@@ -284,6 +285,17 @@ function sourceDirectory(state: AuthoritativeWorldState): Map<string, Source> {
     if (directory.has(ref)) fail(`authority:duplicate-reference:${ref}`);
     directory.set(ref, { ref, kind, value, subjects, links, required, category, ...(owner === undefined ? {} : { owner }) });
   }
+  function addCatalogDefinition(ref: string, value: unknown, category: string) {
+    const existing = directory.get(ref);
+    if (!existing) { add(ref, "definition", value, [], [], [], category); return; }
+    // DefinitionRegistered and NpcMaterialized intentionally index one frozen
+    // definition in both runtimes. Their identity is the validated definition
+    // and compiler artifact, not the catalog that happens to contain it.
+    if (existing.kind !== "definition" || !["definition", "itemDefinition", "abilityDefinition"].includes(existing.category)
+      || catalogDefinitionHash(ref, existing.value) !== catalogDefinitionHash(ref, value)) {
+      fail(`authority:conflicting-definition:${ref}`, "STORY_IDENTITY_CONFLICT");
+    }
+  }
   for (const [ref, entity] of Object.entries(state.entities)) add(ref, entity.kind === "npc" ? "npc" : "fact",
     { ...authorityEntityComposite(state, ref), name: entity.name }, [ref], [entity.sceneId],
     [entity.sceneId, ...(entity.semanticDefinitionRef ? [entity.semanticDefinitionRef] : [])], "entity");
@@ -353,11 +365,12 @@ function sourceDirectory(state: AuthoritativeWorldState): Map<string, Source> {
   const items = state.campaignRuntime.itemSystem;
   for (const [ref, item] of Object.entries(items.entries)) add(ref, "definition", item,
     [item.holderRef, item.sceneRef].filter(text), [], [item.definitionRef], "item");
-  for (const [ref, definition] of Object.entries(items.definitions)) add(ref, "definition", definition, [], [], [], "itemDefinition");
-  for (const [ref, definition] of Object.entries(state.combatRuntime.definitions)) add(ref, "definition", definition, [], [], [], "abilityDefinition");
+  for (const [ref, definition] of Object.entries(items.definitions)) addCatalogDefinition(ref, definition, "itemDefinition");
+  for (const [ref, definition] of Object.entries(state.combatRuntime.definitions)) addCatalogDefinition(ref, definition, "abilityDefinition");
   for (const [ref, entity] of Object.entries(state.combatRuntime.entities)) {
     const source = directory.get(ref);
-    if (source) source.required = [...source.required, ...strings(entity.abilityRefs)];
+    if (source) source.required = [...source.required, ...strings(entity.abilityRefs),
+      ...(text(entity.mechanicalDefinitionRef) ? [entity.mechanicalDefinitionRef] : [])];
   }
   // Stored continuity records sometimes name their own collection IDs rather
   // than the context's qualified refs. Resolve only an exact, unique alias;
@@ -369,6 +382,18 @@ function sourceDirectory(state: AuthoritativeWorldState): Map<string, Source> {
     source.required = sorted(source.required.map(normalize));
   }
   return directory;
+}
+
+function catalogDefinitionHash(ref: string, value: unknown): StoryHash {
+  if (!isPlainRecord(value) || value.definitionId !== ref) return fail(`authority:invalid-definition:${ref}`);
+  if (["compilerProfile", "compiledHash", "mechanicGraph", "referenceClosure"].some(key => Object.hasOwn(value, key))) {
+    if (!isRegisteredAbilityRecord(value)) return fail(`authority:invalid-compiled-definition:${ref}`);
+    return hash({ definitionId: ref, definitionHash: value.definitionHash, compilerProfile: value.compilerProfile,
+      compiledHash: value.compiledHash, referenceClosure: value.referenceClosure });
+  }
+  // Mechanical templates, semantic definitions and item definitions already
+  // use the same canonical record representation in their authority indexes.
+  return hash(value);
 }
 
 /** These fields are declared identity/reference slots in the stored domain
