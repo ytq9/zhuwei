@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildRoomStoryContext, buildRoomWorldStoryContext, validateRoomStoryContext } from '../app/_runtime/lib/room/story-context.ts';
 import { verifyWorldStoryTrigger, worldStoryRequestInput } from '../app/_runtime/lib/room/story-world-event.ts';
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
-import { worldStoryFixture, WORLD_TRACE } from './fixtures/story-world-event.mjs';
+import { worldStoryFixture, worldStoryEmptyCatalog, WORLD_TRACE } from './fixtures/story-world-event.mjs';
 import { storyContextFixture, refreshTrigger, fact, ACTOR, BOATMAN, ARCHIVIST, CLERK, OTHER, HARBOR, ARCHIVE } from './fixtures/story-context.mjs';
 
 const entry = (context, ref) => context.materials.find(material => material.ref === ref);
@@ -11,7 +11,7 @@ function worldInput(f = worldStoryFixture()) {
   const commit = f.commitInput(), result = verifyWorldStoryTrigger(commit, f.runtime);
   assert.equal(result.kind, 'verified', JSON.stringify(result));
   const selected = worldStoryRequestInput(result.trigger, { method: 'story.method.archive-investigation', scale: 'short', connection: 'local' });
-  return { ...f, state: commit.afterState, trigger: result.trigger,
+  return { ...f, state: commit.afterState, trigger: result.trigger, libraryCatalog: worldStoryEmptyCatalog(result.trigger),
     request: { ...f.request, source: selected.source, trigger: selected.trigger, scope: selected.scope } };
 }
 function readyWorld(input) {

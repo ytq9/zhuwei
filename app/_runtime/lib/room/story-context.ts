@@ -10,7 +10,9 @@ import { authorityRevisionOrHash } from "../rules/authority-read";
 import { authorityCharacterTimeline, authorityEntityComposite, authorityGeometryFeatureComposite } from "../rules/v2/authority-bindings";
 import { isWorldFactPointer, worldFactDefinition } from "../rules/v2/world-facts";
 import { hashWorldState } from "../rules/v2/validation";
-import { worldStoryTriggerMatchesAuthority, type RoomWorldStoryTrigger } from "./story-world-event";
+import { worldStoryTriggerMatchesAuthority, worldStoryLibraryCatalogValid, type RoomWorldStoryTrigger } from "./story-world-event";
+import type { StoryLibraryCatalog } from "./story-library-contracts";
+import { STORY_LIBRARY_CATALOG_REF } from "./story-library";
 import type { StoryCapabilityDescription, StoryContext, StoryContextMaterial, StoryFailureCode,
   StoryHash, StoryJson, StoryReadDependency, StoryRequest } from "./story-creation";
 
@@ -32,6 +34,7 @@ export type RoomStoryContextResult =
 export type RoomWorldStoryContextInput = Omit<RoomStoryContextInput, "requiredContext"> & Readonly<{
   /** Verified and persisted by the Room around a real terminal due commit. */
   trigger: RoomWorldStoryTrigger;
+  libraryCatalog: StoryLibraryCatalog;
 }>;
 export type RoomStoryContextValidationInput = Readonly<{
   request: StoryRequest;
@@ -59,13 +62,13 @@ const MAX_VISITS = 200_000;
 const MAX_RECORDS = 10_000;
 type Binding = Readonly<{ actorRef: string; requestHash: StoryHash; maxUnits: number }> & (
   | Readonly<{ schema: "zhuwei.room-story-context-binding/v1"; requiredContextHash: string }>
-  | Readonly<{ schema: "zhuwei.room-world-story-context-binding/v1"; triggerRef: string; triggerHash: StoryHash }>
+  | Readonly<{ schema: "zhuwei.room-world-story-context-binding/v1"; triggerRef: string; triggerHash: StoryHash; libraryCatalogHash: StoryHash }>
 );
 type Source = { ref: string; kind: StoryContextMaterial["kind"]; value: unknown;
   subjects: readonly string[]; links: readonly string[]; required: readonly string[];
   owner?: string; category: string };
 type WorldInput = Pick<RoomStoryContextInput, "request" | "state" | "profiles" | "moduleProfile" | "capabilityDescriptions">
-  & Readonly<{ worldTrigger?: RoomWorldStoryTrigger }>;
+  & Readonly<{ worldTrigger?: RoomWorldStoryTrigger; libraryCatalog?: StoryLibraryCatalog }>;
 
 class ContextBlocked extends Error {
   constructor(readonly code: StoryFailureCode, readonly issue: string) { super(issue); }
@@ -116,6 +119,7 @@ export function buildRoomWorldStoryContext(input: RoomWorldStoryContextInput): R
     return { kind: "ready", context: collect({ ...input, worldTrigger: input.trigger }, {
       schema: "zhuwei.room-world-story-context-binding/v1", actorRef: input.trigger.actorRef,
       triggerRef: input.trigger.triggerRef, triggerHash: input.trigger.triggerHash,
+      libraryCatalogHash: input.libraryCatalog.catalogHash,
       requestHash: hash(input.request), maxUnits: input.maxUnits,
     }) };
   } catch (error) {
@@ -137,17 +141,20 @@ export function validateRoomStoryContext(input: RoomStoryContextValidationInput)
     if (bindings.length !== 1 || bindings[0]?.kind !== "contentBoundary" || !isPlainRecord(binding)
       || !text(binding.actorRef) || binding.requestHash !== hash(input.request)
       || !Number.isSafeInteger(binding.maxUnits) || Number(binding.maxUnits) <= 0) return conflict([BINDING_REF]);
-    let worldTrigger: RoomWorldStoryTrigger | undefined;
+    let worldTrigger: RoomWorldStoryTrigger | undefined, libraryCatalog: StoryLibraryCatalog | undefined;
     if (binding.schema === "zhuwei.room-story-context-binding/v1") {
       if (!text(binding.requiredContextHash)) return conflict([BINDING_REF]);
     } else if (binding.schema === "zhuwei.room-world-story-context-binding/v1") {
       const sources = input.context.materials.filter(material => material.ref === binding.triggerRef);
       if (!text(binding.triggerRef) || !text(binding.triggerHash) || sources.length !== 1 || sources[0]?.kind !== "fact") return conflict([BINDING_REF]);
       worldTrigger = sources[0].content as unknown as RoomWorldStoryTrigger;
+      const catalogs = input.context.materials.filter(material => material.ref === STORY_LIBRARY_CATALOG_REF);
+      if (catalogs.length !== 1 || catalogs[0].kind !== "contentBoundary" || !text(binding.libraryCatalogHash)) return conflict([BINDING_REF]);
+      libraryCatalog = catalogs[0].content as unknown as StoryLibraryCatalog;
     } else return conflict([BINDING_REF]);
     const capabilityDescriptions = input.context.materials.filter(material => material.ref.startsWith(CAPABILITY_PREFIX))
       .map(material => material.content as unknown as StoryCapabilityDescription);
-    const current = collect({ ...input, capabilityDescriptions, ...(worldTrigger === undefined ? {} : { worldTrigger }) }, binding as unknown as Binding);
+    const current = collect({ ...input, capabilityDescriptions, ...(worldTrigger === undefined ? {} : { worldTrigger, libraryCatalog }) }, binding as unknown as Binding);
     const expected = new Map(input.context.readSet.map(dep => [dep.ref, hash(dep)]));
     const actual = new Map(current.readSet.map(dep => [dep.ref, hash(dep)]));
     const changedRefs = sorted([...expected.keys(), ...actual.keys()]).filter(ref => expected.get(ref) !== actual.get(ref));
@@ -173,6 +180,8 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
   if (binding.schema === "zhuwei.room-world-story-context-binding/v1") {
     if (!worldTrigger || worldTrigger.triggerRef !== binding.triggerRef || worldTrigger.triggerHash !== binding.triggerHash
       || worldTrigger.actorRef !== binding.actorRef || !worldStoryTriggerMatchesAuthority(worldTrigger, state, profiles)
+      || !input.libraryCatalog || input.libraryCatalog.catalogHash !== binding.libraryCatalogHash
+      || !worldStoryLibraryCatalogValid(worldTrigger, input.libraryCatalog)
       || hash(request.source) !== hash(worldTrigger.source) || request.trigger.kind !== "causalDevelopment"
       || request.trigger.goal !== worldTrigger.goal || hash(request.scope) !== hash(worldTrigger.scope)
       || hash(request.trigger.basisRefs) !== hash([worldTrigger.triggerRef, worldTrigger.actorRef, ...worldTrigger.scope.sceneIds])) {
@@ -250,6 +259,10 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
   if (worldTrigger !== undefined) {
     add(material(worldTrigger.triggerRef, "fact", worldTrigger, [worldTrigger.actorRef, ...worldTrigger.scope.sceneIds], []));
     lock(worldTrigger.triggerRef, "collection", { trigger: worldTrigger, receipt: state.receipts[worldTrigger.rootActionId] });
+    // A frozen operational inventory informs reuse and writing choices. It
+    // grants no world fact, candidate existence, or NPC knowledge.
+    add(material(STORY_LIBRARY_CATALOG_REF, "contentBoundary", input.libraryCatalog!, [], []));
+    lock(STORY_LIBRARY_CATALOG_REF, "collection", input.libraryCatalog!);
   }
   add(material("story-context:content-boundary", "contentBoundary", module.storyBible.contentBoundary, [], [profileRef]));
   // Every loaded location brings its real residents and its independent

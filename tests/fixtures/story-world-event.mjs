@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import { storyContextFixture, ARCHIVIST, ARCHIVE, BOATMAN, HARBOR } from './story-context.mjs';
 import { dueActorPlanChildRoot } from '../../app/_runtime/lib/rules/v2/actor-plans.ts';
 import { dueActivityDescriptors } from '../../app/_runtime/lib/rules/v2/due-activities.ts';
+import { buildStoryLibraryCatalogForScope } from '../../app/_runtime/lib/room/story-library.ts';
 
 export const WORLD_PLAN = 'plan:story:remote-work', WORLD_ACTIVITY = 'activity:story:remote-work';
 export const WORLD_TRACE = 'fact:story:remote-trace';
+export const worldStoryEmptyCatalog = trigger => buildStoryLibraryCatalogForScope({
+  room: { roomId: trigger.source.roomId, runtimeEpochId: trigger.source.runtimeEpochId, branchId: trigger.source.branchId },
+  scopeRefs: [...trigger.scope.sceneIds, ...trigger.scope.entityIds], entries: [], jobs: [],
+});
 export function worldStoryFixture({ faction = false, decision = 'execute' } = {}) {
   const f = storyContextFixture('investigation'), factionRef = faction ? 'faction:story:archive' : null;
   // Supply the remote scene's tactical fixture as well, so the ordinary NPC

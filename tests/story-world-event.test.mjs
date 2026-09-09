@@ -9,7 +9,7 @@ import { roomModelInvocationBinding } from '../app/_runtime/lib/room/story-runti
 import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { assertDeepSeekStrictToolSchema } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { scheduledActorPlanDescriptors } from '../app/_runtime/lib/rules/v2/actor-plans.ts';
-import { worldStoryFixture, WORLD_PLAN, WORLD_TRACE } from './fixtures/story-world-event.mjs';
+import { worldStoryFixture, worldStoryEmptyCatalog, WORLD_PLAN, WORLD_TRACE } from './fixtures/story-world-event.mjs';
 import { ACTOR, ARCHIVIST, HARBOR, ARCHIVE } from './fixtures/story-context.mjs';
 
 const selection = { method: 'story.method.archive-investigation', scale: 'short', connection: 'local' };
@@ -83,7 +83,7 @@ test('the routing tool selects requirements only and cannot write a draft, inven
   const npc = f.runtime.project(f.profiles, input.afterState, npcViewer), before = canonicalHash(npc);
   assert.equal(npc.kind, 'projected');
   assertDeepSeekStrictToolSchema(WORLD_STORY_SELECTION_TOOL.function.parameters);
-  const model = worldStorySelectionModelInput(trigger);
+  const model = worldStorySelectionModelInput(trigger, worldStoryEmptyCatalog(trigger));
   assert.deepEqual(model.tools, [WORLD_STORY_SELECTION_TOOL]);
   assert.equal(model.max_completion_tokens, 1000);
   assert.deepEqual(parseWorldStorySelection(response({ kind: 'prepareStory', reason: '真实登记冲突值得调查。', selection })),
@@ -105,7 +105,7 @@ test('context selection shares the NPC source ledger and an unknown response can
     const existing = roomModelInvocationBinding(input.afterState, trigger.source.sourceId, 'existing-npc-decision', 'npc',
       { model: 'deepseek-v4-flash', max_completion_tokens: 1000, messages: [] });
     assert.equal(store.openBudget(existing).kind, 'opened');
-    const binding = worldStorySelectionInvocationBinding(input.afterState, f.profiles, trigger);
+    const binding = worldStorySelectionInvocationBinding(input.afterState, f.profiles, trigger, worldStoryEmptyCatalog(trigger));
     assert.deepEqual(binding.source, existing.source);
     assert.equal(binding.purpose, 'context');
     const { budget, ...external } = binding;
