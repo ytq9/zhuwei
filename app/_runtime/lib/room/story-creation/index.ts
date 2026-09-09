@@ -2,6 +2,7 @@
  * are supplied by the trusted host; results are private preparation materials,
  * never world writes or directly publishable player text. */
 export { prepareStory } from "./authoring";
+export { validateStoryInspectionFailure } from "./inspection-failure";
 export { createStoryRecipes } from "./recipes";
 export { STORY_CREATION_WORKFLOW, STORY_CREATION_WORKFLOW_REF } from "./prompt";
 export { storyReviewAllowsRevision, storyReviewPassed } from "./review";

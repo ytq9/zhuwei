@@ -2,13 +2,14 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { StoryCreationStore } from "../app/_runtime/lib/room/story-creation-store";
-import { storyFixture } from "./fixtures/story-creation.mjs";
+import { storyFixture, storyResponse } from "./fixtures/story-creation.mjs";
+import { prepareStory } from "../app/_runtime/lib/room/story-creation";
 import { STORY_REVIEW_CATEGORIES } from "../app/_runtime/lib/room/story-creation/review";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical";
 import { createStoryAdmissionFixture, NEW_NPC, FACT, KNOWLEDGE, factSelector } from "./fixtures/kp-vnext-story-materialization.mjs";
 import { storyLibraryFixture, freezeStoryReuse, admitStoryReuse } from "./fixtures/story-library.mjs";
 import type {
-  StoryCheckpoint, StoryContext, StoryHash, StoryModelRequest, StoryPreparation,
+  StoryCheckpoint, StoryContext, StoryCreationPorts, StoryHash, StoryModelRequest, StoryPreparation,
   StoryReview, StoryStage, StoryVersionRef,
 } from "../app/_runtime/lib/room/story-creation/contracts";
 import type {
@@ -741,6 +742,75 @@ it("freezes the selected material closure, final Rules input and full context de
     expect(store.recordAdmission(secondReceipt).kind).toBe("rejected");
     expect(store.exportHistoryMaterials()).toMatchObject({ kind: "available", preparations: [{ recordedAtEventSeq: "1",
       facts: [{ candidateRef: "candidate-fact", knowledge: receipt.facts[0].knowledge }] }] });
+  });
+});
+
+it("inspection diagnostics bind SQLite checkpoints and archive recovery to the original completed response", async () => {
+  const f = storyFixture(), base = fixture("inspection"), invalidBody = structuredClone(f.body);
+  invalidBody.participants[0].knowledgeRefs.push("knowledge:clerk-register");
+  const response = storyResponse(invalidBody, "draft"), validResponse = storyResponse(f.body, "draft");
+  const input: OpenStoryJob = { ...base, request: f.request, context: f.context,
+    budget: { ...base.budget, policyRef: f.request.budgetPolicyRef } };
+  const source = { roomId: input.request.source.roomId, runtimeEpochId: input.request.source.runtimeEpochId }, room = stub("inspection-diagnostic");
+  const saved = await withStore(room, async store => {
+    expect(store.openJob(input).kind).toBe("opened");
+    const ports: StoryCreationPorts = { recipes: f.recipes, hash,
+      async invoke(request) {
+        expect(request.stage).toBe("draft");
+        stageComplete(store, input, request.stage, response);
+        return { kind: "completed", response };
+      },
+      async saveCheckpoint(expectedRevision, next) {
+        if (next.inspectionFailure) {
+          const before = store.readJob(input.request.jobId);
+          const forged = { ...next, inspectionFailure: { ...next.inspectionFailure, candidateHash: hash("substituted-candidate") } };
+          expect(store.checkpoint({ expectedRevision, next: forged })).toEqual({ ok: false, code: "STORY_CHECKPOINT_CONFLICT" });
+          expect(store.readJob(input.request.jobId)).toEqual(before);
+        }
+        return store.checkpoint({ expectedRevision, next });
+      },
+    };
+    const result = await prepareStory(input.request, input.context, null, ports);
+    expect(result).toMatchObject({ kind: "rejected", code: "STORY_OUTPUT_INVALID",
+      checkpoint: { status: "rejected", inspectionFailure: { stage: "draft" } } });
+    const checkpoint = store.readJob(input.request.jobId)!.checkpoint!;
+    expect(checkpoint).toEqual(result.checkpoint);
+    expect(checkpoint.draft).toBeUndefined();
+    expect(store.checkpoint({ expectedRevision: checkpoint.revision - 1, next: checkpoint })).toEqual({ ok: true, checkpoint });
+    const archived = store.archiveSnapshot(source);
+    expect(archived.kind).toBe("available");
+    if (archived.kind !== "available") throw new Error("expected inspection archive");
+    expect(store.exportHistoryMaterials()).toEqual({ kind: "available", preparations: [], requiredPreparationHashes: [] });
+    return { snapshot: archived.snapshot, checkpoint, result, usage: store.readJob(input.request.jobId)!.usage };
+  });
+  await evictDurableObject(room);
+  await withStore(room, store => expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot }));
+  for (const mode of ["diagnostic", "response"] as const) {
+    const jobs = mode === "diagnostic" ? saved.snapshot.jobs.map(job => ({ ...job, checkpoint: { ...saved.checkpoint,
+      inspectionFailure: { ...saved.checkpoint.inspectionFailure!, candidateHash: hash("another-invalid-candidate") } } })) : saved.snapshot.jobs;
+    const invocations = mode === "response" ? saved.snapshot.invocations.map(row => ({ ...row,
+      invocation: { ...row.invocation, response: validResponse },
+      completionHash: hash({ kind: "completed", response: validResponse, usage: row.invocation.usage }) })) : saved.snapshot.invocations;
+    const { snapshotHash: _old, ...body } = { ...saved.snapshot, jobs, invocations };
+    const snapshot = { ...body, snapshotHash: hash(body) };
+    await withStore(stub(`inspection-forged-${mode}`), store => {
+      expect(store.restoreArchiveSnapshot({ source, snapshot, quarantine: dispatchQuarantine(snapshot) }))
+        .toEqual({ kind: "rejected", code: "STORY_CHECKPOINT_CONFLICT" });
+      expect(store.isEmpty()).toBe(true);
+    });
+  }
+  await withStore(stub("inspection-restored"), async (store, storage) => {
+    expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot, quarantine: dispatchQuarantine(saved.snapshot) }).kind).toBe("restored");
+    const recovered = await prepareStory(input.request, input.context, store.readJob(input.request.jobId)!.checkpoint,
+      { recipes: f.recipes, hash, async invoke() { throw new Error("recovery must not invoke"); },
+        async saveCheckpoint() { throw new Error("recovery must not save another checkpoint"); } });
+    expect(recovered).toEqual(saved.result);
+    expect(store.readJob(input.request.jobId)!.usage).toEqual(saved.usage);
+    expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot });
+    storage.sql.exec("UPDATE story_creation_invocations SET response_json = ? WHERE job_id = ?", JSON.stringify(validResponse), input.request.jobId);
+    expect(store.archiveSnapshot(source)).toEqual({ kind: "rejected", code: "STORY_CHECKPOINT_CONFLICT" });
+    expect(store.checkpoint({ expectedRevision: saved.checkpoint.revision - 1, next: saved.checkpoint }))
+      .toEqual({ ok: false, code: "STORY_CHECKPOINT_CONFLICT" });
   });
 });
 

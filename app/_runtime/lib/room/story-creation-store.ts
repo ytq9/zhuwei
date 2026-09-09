@@ -14,6 +14,7 @@ import type {
 } from "./story-creation-invocation";
 import { validStoryMaterialBindings } from "./story-admission";
 import { StoryOutputError } from "./story-creation/prompt";
+import { validateStoryInspectionFailure } from "./story-creation";
 import type { StoryAdmissionOwner, StoryLibraryEntry, StoryLibraryMappings } from "./story-library-contracts";
 import { storyHostingArtifact, storyLibraryEntry, storyLibraryMappings, storyLibraryOwner,
   validStoryAdmissionOwner, validateStoryLibraryEntry } from "./story-library";
@@ -166,8 +167,16 @@ export class StoryCreationStore {
       const { expectedRevision, next } = input, row = this.jobRow(next.jobId);
       if (row === undefined) invalid("STORY_CHECKPOINT_CONFLICT");
       const previous = row.checkpoint_json === null ? null : parse<StoryCheckpoint>(row.checkpoint_json);
-      if (previous !== null && this.hash(previous) === this.hash(next)) return { ok: true as const, checkpoint: previous };
       const job = this.snapshot(row);
+      if (Object.hasOwn(next, "inspectionFailure")) {
+        const invocations = STAGES.flatMap(stage => {
+          const saved = this.stageInvocation(next.jobId, stage);
+          return saved === undefined ? [] : [this.readInvocation(saved.invocation_id)!];
+        });
+        try { validateStoryInspectionFailure(next, { request: job.request, context: job.context,
+          invocations, hash: value => this.hash(value) }); } catch { invalid("STORY_CHECKPOINT_CONFLICT"); }
+      }
+      if (previous !== null && this.hash(previous) === this.hash(next)) return { ok: true as const, checkpoint: previous };
       if (!nonnegative(expectedRevision) || !positive(next.revision) || next.revision !== expectedRevision + 1
         || (previous?.revision ?? 0) !== expectedRevision || next.requestHash !== row.request_hash
         || next.contextHash !== job.context.contextHash || next.format !== "zhuwei.story-checkpoint/v1"
@@ -775,6 +784,12 @@ export class StoryCreationStore {
           call.usage, call.completedAt!);
       if (this.hash(row.spent) !== this.hash(expected.spent) || this.hash(row.held) !== this.hash(expected.held)) invalid();
       add(row.accountIds, row.spent, row.held);
+    }
+    for (const job of jobs.values()) {
+      if (job.checkpoint === null || !Object.hasOwn(job.checkpoint, "inspectionFailure")) continue;
+      try { validateStoryInspectionFailure(job.checkpoint, { request: job.input.request, context: job.input.context,
+        invocations: snapshot.invocations.map(row => row.invocation), hash: value => this.hash(value) }); }
+      catch { invalid("STORY_CHECKPOINT_CONFLICT"); }
     }
     for (const row of snapshot.accounts) if (this.hash(row.spent) !== this.hash(totals.get(row.accountId)!.spent)
       || this.hash(row.held) !== this.hash(totals.get(row.accountId)!.held)) invalid();

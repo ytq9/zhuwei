@@ -3,8 +3,8 @@ import type { StoryCheckpoint, StoryContext, StoryCreationPorts, StoryFailureCod
 import { isRecord, readStoryModelResponse, storyModelRequest, STORY_CREATION_WORKFLOW_REF,
   type StoryPreparationBody, type StoryReviewBody } from "./prompt";
 import { selectStoryRecipes } from "./recipes";
-import { inspectStoryPreparation, storyCapabilityDescription, storyReviewAllowsRevision, storyReviewPassed, validateStoryReview,
-  STORY_REVIEW_CATEGORIES } from "./review";
+import { inspectStoryPreparation, storyCapabilityDescription, storyReviewAllowsRevision, storyReviewPassed, validateStoryReview } from "./review";
+import { validateStoryInspectionFailure } from "./inspection-failure";
 
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(nonempty) && new Set(value).size === value.length;
@@ -151,25 +151,7 @@ function validateCheckpoint(checkpoint: StoryCheckpoint, request: StoryRequest, 
   if (checkpoint.review) validateStoryReview(checkpoint.review, checkpoint.draft!, context, ports.hash);
   if (checkpoint.revisedReview) validateStoryReview(checkpoint.revisedReview, checkpoint.revisedDraft!, context, ports.hash);
   if (checkpoint.revisedDraft && (!checkpoint.review || !storyReviewAllowsRevision(checkpoint.review))) invalid();
-  if (Object.hasOwn(checkpoint, "inspectionFailure")) {
-    const failure = checkpoint.inspectionFailure;
-    if (checkpoint.status !== "rejected"
-      || !["STORY_OUTPUT_INVALID", "STORY_CHECKPOINT_CONFLICT", "STORY_IDENTITY_CONFLICT", "STORY_CONTEXT_INSUFFICIENT", "STORY_CAPABILITY_UNSUPPORTED"].includes(checkpoint.failureCode!)
-      || !isRecord(failure) || Object.keys(failure).sort().join() !== "candidateHash,findings,stage"
-      || !hashRef(failure.candidateHash) || !Array.isArray(failure.findings) || failure.findings.length === 0
-      || !["draft", "revision"].includes(failure.stage)) invalid();
-    if (failure!.stage === "draft"
-      ? checkpoint.draft !== undefined || checkpoint.review !== undefined || checkpoint.revisedDraft !== undefined || checkpoint.revisedReview !== undefined
-      : !checkpoint.draft || !checkpoint.review || storyReviewPassed(checkpoint.review) || !storyReviewAllowsRevision(checkpoint.review)
-        || checkpoint.revisedDraft !== undefined || checkpoint.revisedReview !== undefined) invalid();
-    for (const finding of failure!.findings) {
-      if (!isRecord(finding) || Object.keys(finding).sort().join() !== "candidatePaths,category,constraintRefs,explanation,repairable,verdict"
-        || !STORY_REVIEW_CATEGORIES.includes(finding.category) || finding.verdict !== "conflict" || finding.repairable !== false
-        || !nonempty(finding.explanation) || !Array.isArray(finding.candidatePaths) || finding.candidatePaths.length === 0
-        || finding.candidatePaths.some(path => !nonempty(path) || !path.startsWith("/") || /~(?:[^01]|$)/u.test(path))
-        || !Array.isArray(finding.constraintRefs) || finding.constraintRefs.some(ref => !nonempty(ref))) invalid();
-    }
-  }
+  validateStoryInspectionFailure(checkpoint);
   const final = checkpoint.revisedReview ?? checkpoint.review;
   if (checkpoint.status === "ready" && (!final || !storyReviewPassed(final))) invalid();
   if (checkpoint.status === "preparing" && final && (storyReviewPassed(final)

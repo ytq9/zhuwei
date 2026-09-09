@@ -13,6 +13,8 @@ import { storyHostingArtifact, storyLibraryEntry, storyLibraryOwner, validStoryA
   validateStoryLibraryGenesis } from "./story-library";
 import { validateStoredReview } from "./story-creation/prompt";
 import { storyReviewPassed } from "./story-creation/review";
+import { validateStoryInspectionFailure } from "./story-creation";
+import { canonicalHash } from "../kp/vnext/canonical-json";
 
 /** The host supplies its versioned prepared-action/NPC/narration DTO and
  * validates that exact DTO again on restore. No SQL or arbitrary Rules input
@@ -172,6 +174,12 @@ async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: Autho
         || call.purpose !== bound.purpose || !same(call.providerRequest, bound.providerRequest)
         || !same(call.modelRef, bound.modelRef) || await archiveSha256(bound) !== call.requestHash) invalid();
     }
+  }
+  for (const job of jobs.values()) {
+    if (job.checkpoint === null || !Object.hasOwn(job.checkpoint, "inspectionFailure")) continue;
+    try { validateStoryInspectionFailure(job.checkpoint, { request: job.input.request, context: job.input.context,
+      invocations: snapshot.invocations.map(row => row.invocation), hash: value => canonicalHash(value) as StoryHash }); }
+    catch { invalid(); }
   }
   const artifacts = ids(snapshot.hostingArtifacts, value => value.libraryRef);
   for (const entry of artifacts.values()) {
