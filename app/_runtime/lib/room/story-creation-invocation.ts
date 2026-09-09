@@ -1,6 +1,6 @@
 import type {
   StoryCheckpoint, StoryContext, StoryFailureCode, StoryHash, StoryModelRequest,
-  StoryRecord, StoryRequest, StoryStage, StoryVersionRef,
+  StoryPreparation, StoryReadDependency, StoryRecord, StoryRequest, StoryStage, StoryVersionRef,
 } from "./story-creation/contracts";
 
 /** Budget amounts are finite admission limits. Token/cost reservations are
@@ -118,13 +118,114 @@ export type ReserveExternalStoryInvocation = Readonly<{
   providerRequest: StoryRecord;
   reservation: StoryInvocationReservation;
 }>;
+export type StoryExternalInvocationRead =
+  | Readonly<{ kind: "found"; invocation: StoryInvocationSnapshot }>
+  | Readonly<{ kind: "missing" }>
+  | StoryStoreFailure;
+export type StoryExternalInvocationBinding = ReserveExternalStoryInvocation & Readonly<{
+  budget: StoryBudgetPolicy;
+}>;
+export type StoryExternalInvocationBeginResult =
+  | Extract<StartStoryInvocationResult, { kind: "ready" }>
+  | Readonly<{ kind: "completed"; invocationId: string; response: unknown }>
+  | Readonly<{ kind: "waiting"; invocationId: string; code: StoryFailureCode }>
+  | StoryStoreFailure;
+
+/** Frozen before Rules commit. The host supplies the final canonical Rules
+ * input hash and its complete transactional read set. This is a binding to a
+ * reviewed candidate selection, never permission to append world facts. */
+export type StoryAdmissionBindingInput = Readonly<{
+  jobId: string;
+  preparationHash: StoryHash;
+  materialScopeHash: StoryHash;
+  preparedActionId: string;
+  contextHash: StoryHash;
+  selectedMaterialRefs: readonly string[];
+  readSet: readonly StoryReadDependency[];
+  rulesInputHash: StoryHash;
+}>;
+export type StoryAdmissionBinding = StoryAdmissionBindingInput & Readonly<{ bindingHash: StoryHash }>;
+export type StoryAdmissionBindingResult =
+  | Readonly<{ kind: "saved"; binding: StoryAdmissionBinding }>
+  | StoryStoreFailure;
+/** Actual host-verified Rules references, not candidate identifiers copied
+ * into a second fact store. The mapping has the Story History input shape. */
+export type StoryAdmittedFactBinding = Readonly<{
+  candidateRef: string;
+  factRef: string;
+  recordedByEventId: string;
+  definitionRefs: readonly string[];
+  knowledge: readonly Readonly<{
+    candidateRef: string;
+    holderRef: string;
+    knowledgeRef: string;
+    recordedByEventId: string;
+  }>[];
+}>;
 export type StoryAdmissionReceipt = Readonly<{
   jobId: string;
   preparationHash: StoryHash;
   materialScopeHash: StoryHash;
   preparedActionId: string;
   receiptId: string;
+  bindingHash: StoryHash;
+  recordedAtEventSeq: string;
+  facts: readonly StoryAdmittedFactBinding[];
 }>;
 export type StoryAdmissionResult =
   | Readonly<{ kind: "saved"; admission: StoryAdmissionReceipt }>
+  | StoryStoreFailure;
+
+export type StoryHistoryMaterialSnapshot = Readonly<{
+  preparations: readonly Readonly<{
+    preparation: StoryPreparation;
+    preparationHash: StoryHash;
+    recordedAtEventSeq: string;
+    facts: readonly StoryAdmittedFactBinding[];
+  }>[];
+  requiredPreparationHashes: readonly StoryHash[];
+}>;
+export type StoryHistoryMaterialResult =
+  | (Readonly<{ kind: "available" }> & StoryHistoryMaterialSnapshot)
+  | StoryStoreFailure;
+
+export type StoryStoreArchiveSource = Readonly<{ roomId: string; runtimeEpochId: string }>;
+/** Private same-room disaster recovery, including unfinished jobs, budget
+ * holds and dispatch permits. This is broader than admitted history material:
+ * only the trusted system archive may store it. Never use it as a Viewer
+ * export or import it into a historical branch/new room or epoch. Provider
+ * bodies contain exact model inputs, not transport headers or credentials. */
+export type StoryStoreArchiveSnapshot = Readonly<{
+  format: "zhuwei.story-store-archive/v1";
+  source: StoryStoreArchiveSource;
+  accounts: readonly Readonly<{
+    accountId: string; scopeKey: string; kind: "job" | "source" | "room";
+    binding: StoryRecord; limits: StoryBudgetAmount; spent: StoryBudgetAmount; held: StoryBudgetAmount;
+  }>[];
+  jobs: readonly Readonly<{
+    input: OpenStoryJob; opportunityKey: string; identityHash: StoryHash; requestHash: StoryHash;
+    checkpoint: StoryCheckpoint | null; unallocated: StoryBudgetAmount;
+  }>[];
+  invocations: readonly Readonly<{
+    invocation: StoryInvocationSnapshot;
+    invocationKey: string;
+    externalBinding: ReserveExternalStoryInvocation | null;
+    accountIds: readonly string[];
+    spent: StoryBudgetAmount;
+    held: StoryBudgetAmount;
+    capability: string;
+    leaseUntil: number | null;
+    completionHash: StoryHash | null;
+  }>[];
+  admissionBindings: readonly StoryAdmissionBinding[];
+  admissions: readonly StoryAdmissionReceipt[];
+  /** Independent inventory detects missing preparation or admission rows. */
+  materialManifest: readonly Readonly<{ preparationHash: StoryHash; jobId: string }>[];
+  snapshotHash: StoryHash;
+}>;
+export type StoryStoreArchiveResult =
+  | Readonly<{ kind: "available"; snapshot: StoryStoreArchiveSnapshot }>
+  | StoryStoreFailure;
+export type StoryStoreRestoreResult =
+  | Readonly<{ kind: "restored"; snapshotHash: StoryHash }>
   | StoryStoreFailure;

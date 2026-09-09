@@ -9,7 +9,7 @@ import type {
 } from "../app/_runtime/lib/room/story-creation/contracts";
 import type {
   OpenStoryJob, StoryBudgetAmount, StoryInvocationIdentity, StoryInvocationReservation,
-  ReserveStoryInvocation, StoryAdmissionReceipt,
+  ReserveStoryInvocation, StoryAdmissionBindingInput, StoryAdmissionReceipt,
 } from "../app/_runtime/lib/room/story-creation-invocation";
 
 const hash = (value: unknown) => canonicalSha256(value) as StoryHash;
@@ -76,14 +76,33 @@ function checkpoint(input: OpenStoryJob, revision: number, fields: Partial<Story
   return { format: "zhuwei.story-checkpoint/v1", jobId: input.request.jobId, revision,
     requestHash: hash(input.request), contextHash: input.context.contextHash, status: "preparing", ...fields };
 }
-function readyJob(store: StoryCreationStore, input: OpenStoryJob) {
+function readyJob(store: StoryCreationStore, input: OpenStoryJob, draft = preparation(input)) {
   expect(store.openJob(input).kind).toBe("opened");
-  const draft = preparation(input), reviewed = review(input, draft);
+  const reviewed = review(input, draft);
   stageComplete(store, input, "draft", { draft });
   expect(store.checkpoint({ expectedRevision: 0, next: checkpoint(input, 1, { draft }) }).ok).toBe(true);
   stageComplete(store, input, "review", { reviewed });
   expect(store.checkpoint({ expectedRevision: 1, next: checkpoint(input, 2, { draft, review: reviewed, status: "ready" }) }).ok).toBe(true);
   return draft;
+}
+function admissionDraft(input: OpenStoryJob): StoryPreparation {
+  const time = { kind: "at" as const, start: { timelineId: "timeline-one", micros: "0" }, end: null, basisRefs: ["private-memory"] };
+  return { ...preparation(input), facts: [{ ref: "candidate-fact", layer: "worldTruth", content: "The cargo was delayed",
+    subjectRefs: ["npc-one"], occurrence: time, basisRefs: ["private-memory"], creationBasis: "existingEvidence",
+    knowledge: [{ ref: "candidate-knowledge", holderRef: "npc-one", factRef: "candidate-fact", layer: "truth",
+      content: "PRIVATE_STORY_CANARY", sourceRef: "private-memory", acquisition: time, explanation: "The witness was present" }] }] };
+}
+function admissionInput(input: OpenStoryJob, draft: StoryPreparation, selectedMaterialRefs = ["candidate-fact", "candidate-knowledge"]): StoryAdmissionBindingInput {
+  return { jobId: input.request.jobId, preparationHash: hash(draft), materialScopeHash: hash(selectedMaterialRefs),
+    preparedActionId: "prepared-one", contextHash: input.context.contextHash, selectedMaterialRefs,
+    readSet: input.context.readSet, rulesInputHash: hash({ operation: "test-normal-rules-input" }) };
+}
+function admissionReceipt(binding: StoryAdmissionBindingInput): StoryAdmissionReceipt {
+  return { jobId: binding.jobId, preparationHash: binding.preparationHash, materialScopeHash: binding.materialScopeHash,
+    preparedActionId: binding.preparedActionId, receiptId: `receipt:${binding.preparedActionId}`, bindingHash: hash(binding),
+    recordedAtEventSeq: "1", facts: [{ candidateRef: "candidate-fact", factRef: "fact:actual", recordedByEventId: "event:fact",
+      definitionRefs: ["definition:existing-npc"], knowledge: binding.selectedMaterialRefs.includes("candidate-knowledge")
+        ? [{ candidateRef: "candidate-knowledge", holderRef: "npc-one", knowledgeRef: "knowledge:actual", recordedByEventId: "event:knowledge" }] : [] }] };
 }
 
 it("keeps one opportunity identity and fixed source/room accounts across job aliases and attempted resets", async () => {
@@ -499,14 +518,16 @@ it("stores actual over-reservation usage honestly and blocks subsequent calls in
 it("admission references roll back with the outer Room SQLite transaction and remain idempotent", async () => {
   const room = stub("admission"), input = fixture();
   await withStore(room, (store, storage) => {
-    const draft = readyJob(store, input);
-    const admission: StoryAdmissionReceipt = { jobId: input.request.jobId, preparationHash: hash(draft),
-      materialScopeHash: hash(["one-fact"]), preparedActionId: "prepared-one", receiptId: "receipt-one" };
+    const draft = readyJob(store, input, admissionDraft(input));
+    const binding = admissionInput(input, draft), admission = admissionReceipt(binding);
+    expect(store.recordAdmission(admission)).toEqual({ kind: "rejected", code: "STORY_IDENTITY_CONFLICT" });
+    expect(store.prepareAdmission(binding)).toEqual({ kind: "saved", binding: { ...binding, bindingHash: hash(binding) } });
     expect(() => storage.transactionSync(() => {
       expect(store.recordAdmission(admission).kind).toBe("saved");
       throw new Error("injected outer commit failure");
     })).toThrow("injected outer commit failure");
     expect(store.readAdmissions(input.request.jobId)).toEqual([]);
+    expect(store.exportHistoryMaterials()).toEqual({ kind: "available", preparations: [], requiredPreparationHashes: [] });
     expect(store.recordAdmission(admission)).toEqual({ kind: "saved", admission });
     expect(store.recordAdmission(admission)).toEqual({ kind: "saved", admission });
     expect(store.recordAdmission({ ...admission, receiptId: "different-receipt" }))
@@ -520,4 +541,113 @@ it("admission references roll back with the outer Room SQLite transaction and re
     store.clearForRoomDeletion();
     expect(store.isEmpty()).toBe(true);
   });
+});
+
+it("freezes the selected material closure, final Rules input and full context dependencies before admission", async () => {
+  const initial = fixture(), { contextHash: _hash, ...body } = initial.context;
+  const contextBody = { ...body, readSet: [{ kind: "entity" as const, ref: "npc-one", revision: "7", hash: hash("npc-revision-7") }] };
+  const input = { ...initial, context: { ...contextBody, contextHash: hash(contextBody) } };
+  await withStore(stub("admission-selection"), store => {
+    const draft = readyJob(store, input, admissionDraft(input)), first = admissionInput(input, draft, ["candidate-fact"]);
+    for (const changed of [
+      { ...first, readSet: [] },
+      { ...first, selectedMaterialRefs: ["candidate-knowledge"], materialScopeHash: hash(["candidate-knowledge"]) },
+      { ...first, selectedMaterialRefs: ["missing"], materialScopeHash: hash(["missing"]) },
+      { ...first, selectedMaterialRefs: ["candidate-fact", "candidate-fact"], materialScopeHash: hash(["candidate-fact", "candidate-fact"]) },
+    ]) expect(store.prepareAdmission(changed).kind).toBe("rejected");
+    expect(store.readAdmissionBinding(first.preparedActionId)).toBeUndefined();
+    expect(store.prepareAdmission(first).kind).toBe("saved");
+    expect(store.prepareAdmission(first)).toEqual({ kind: "saved", binding: { ...first, bindingHash: hash(first) } });
+    expect(store.prepareAdmission({ ...first, rulesInputHash: hash("different-rules") }).kind).toBe("rejected");
+    expect(store.prepareAdmission(admissionInput(input, draft)).kind).toBe("rejected");
+    const receipt = admissionReceipt(first);
+    expect(store.recordAdmission({ ...receipt, facts: [] }).kind).toBe("rejected");
+    expect(store.recordAdmission({ ...receipt, bindingHash: hash("different-binding") }).kind).toBe("rejected");
+    expect(store.recordAdmission({ ...receipt, facts: admissionReceipt(admissionInput(input, draft)).facts }).kind).toBe("rejected");
+    expect(store.recordAdmission(receipt).kind).toBe("saved");
+    const exported = store.exportHistoryMaterials();
+    expect(exported).toMatchObject({ kind: "available", requiredPreparationHashes: [hash(draft)],
+      preparations: [{ preparation: draft, facts: [{ candidateRef: "candidate-fact", knowledge: [] }] }] });
+    const second = { ...admissionInput(input, draft), preparedActionId: "prepared-knowledge", rulesInputHash: hash("new-input") };
+    expect(store.prepareAdmission(second).kind).toBe("saved");
+    const secondReceipt = { ...admissionReceipt(second), recordedAtEventSeq: "3" };
+    const wrongHolder = { ...secondReceipt, facts: secondReceipt.facts.map(fact => ({ ...fact,
+      knowledge: fact.knowledge.map(knowledge => ({ ...knowledge, holderRef: "unrelated-npc" })) })) };
+    expect(store.recordAdmission(wrongHolder).kind).toBe("rejected");
+    expect(store.recordAdmission(secondReceipt).kind).toBe("saved");
+    expect(store.exportHistoryMaterials()).toMatchObject({ kind: "available", preparations: [{ recordedAtEventSeq: "1",
+      facts: [{ candidateRef: "candidate-fact", knowledge: secondReceipt.facts[0].knowledge }] }] });
+  });
+});
+
+it("does not reinterpret lost admitted preparation or receipt material as an empty history", async () => {
+  for (const missing of ["job", "admission"] as const) {
+    const input = fixture();
+    await withStore(stub(`missing-${missing}`), (store, storage) => {
+      const draft = readyJob(store, input, admissionDraft(input)), binding = admissionInput(input, draft);
+      expect(store.prepareAdmission(binding).kind).toBe("saved");
+      expect(store.recordAdmission(admissionReceipt(binding)).kind).toBe("saved");
+      storage.sql.exec(missing === "job" ? "DELETE FROM story_creation_jobs" : "DELETE FROM story_creation_admissions");
+      expect(store.exportHistoryMaterials()).toEqual({ kind: "rejected", code: "STORY_CONTEXT_INSUFFICIENT" });
+      expect(store.archiveSnapshot({ roomId: input.request.source.roomId, runtimeEpochId: input.request.source.runtimeEpochId }).kind).toBe("rejected");
+      store.clearForRoomDeletion();
+      expect(store.isEmpty()).toBe(true);
+    });
+  }
+});
+
+it("archives and restores exact same-room operational state without replenishing budgets or making pending sends ready", async () => {
+  const input = fixture(), pending = fixture("pending", "root-pending"), room = stub("archive-roundtrip");
+  const source = { roomId: input.request.source.roomId, runtimeEpochId: input.request.source.runtimeEpochId };
+  const saved = await withStore(room, store => {
+    const draft = readyJob(store, input, admissionDraft(input)), binding = admissionInput(input, draft);
+    expect(store.prepareAdmission(binding).kind).toBe("saved");
+    expect(store.recordAdmission(admissionReceipt(binding)).kind).toBe("saved");
+    expect(store.openJob(pending).kind).toBe("opened");
+    const started = reserve(store, pending);
+    expect(store.startInvocation(started).kind).toBe("ready");
+    const unknown = store.reserveExternalInvocation({ source: pending.request.source, roomAccountId: pending.budget.roomAccountId,
+      invocationKey: "unknown-npc", purpose: "npc", modelRef: pending.modelRef, providerRequest: { private: "npc-decision" }, reservation });
+    if (unknown.kind !== "reserved") throw new Error("expected external reservation");
+    store.startInvocation(unknown); store.completeInvocation({ ...unknown, result: { kind: "unknown" } });
+    const archived = store.archiveSnapshot(source);
+    expect(archived.kind).toBe("available");
+    if (archived.kind !== "available") throw new Error("expected archive");
+    expect(store.restoreArchiveSnapshot({ source, snapshot: archived.snapshot }).kind).toBe("rejected");
+    return { snapshot: archived.snapshot, started, unknown, materials: store.exportHistoryMaterials() };
+  });
+  await evictDurableObject(room);
+  await withStore(room, (store, storage) => {
+    expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot });
+    store.clearForRoomDeletion();
+    for (const other of [{ ...source, roomId: "other-room" }, { ...source, runtimeEpochId: "other-epoch" }]) {
+      expect(store.restoreArchiveSnapshot({ source: other, snapshot: saved.snapshot }).kind).toBe("rejected");
+      expect(store.isEmpty()).toBe(true);
+    }
+    const { snapshotHash: _hash, ...body } = saved.snapshot;
+    const missing = { ...body, jobs: body.jobs.filter(job => job.input.request.jobId !== input.request.jobId) };
+    expect(store.restoreArchiveSnapshot({ source, snapshot: { ...missing, snapshotHash: hash(missing) } }).kind).toBe("rejected");
+    expect(store.isEmpty()).toBe(true);
+    const materialMissing = { ...body, admissions: [] };
+    expect(store.restoreArchiveSnapshot({ source, snapshot: { ...materialMissing, snapshotHash: hash(materialMissing) } }))
+      .toEqual({ kind: "rejected", code: "STORY_CONTEXT_INSUFFICIENT" });
+    expect(store.isEmpty()).toBe(true);
+    expect(() => storage.transactionSync(() => {
+      expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot }).kind).toBe("restored");
+      throw new Error("outer archive restore interrupted");
+    })).toThrow("outer archive restore interrupted");
+    expect(store.isEmpty()).toBe(true);
+    expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot }))
+      .toEqual({ kind: "restored", snapshotHash: saved.snapshot.snapshotHash });
+    expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot });
+    expect(store.exportHistoryMaterials()).toEqual(saved.materials);
+    expect(store.readInvocation(saved.started.invocationId)?.status).toBe("started");
+    expect(store.readInvocation(saved.unknown.invocationId)?.status).toBe("unknown");
+    expect(store.startInvocation(saved.unknown)).toEqual({ kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" });
+    expect(store.startInvocation(saved.started)).toEqual({ kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" });
+    expect(store.readBudget(pending.budget.roomAccountId)?.spent.calls).toBe(4);
+    expect(storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM authority_events").one().count).toBe(0);
+    store.clearForRoomDeletion();
+    expect(store.isEmpty()).toBe(true);
+  }, 9_000);
 });
