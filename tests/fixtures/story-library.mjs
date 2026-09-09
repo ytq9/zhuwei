@@ -48,7 +48,7 @@ export function admitStoryReuse(f, library, frozen, selectors) {
   assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed));
   const proposal = parsed.bundle;
   const lowered = lowerVNext2ProposalBundle({ value: proposal, requiredContext: frozen.context,
-    state: f.state, profiles: f.profiles, rootActionId, actorCharacterId: ACTOR });
+    state: f.state, profiles: f.profiles, rootActionId, actorCharacterId: f.actorCharacterId ?? ACTOR });
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
   const rulesInput = lowered.command.rulesInput;
   const body = prepareStoryAdmissionBinding({ library: frozen.binding.library, preparationHash: f.preparationHash,

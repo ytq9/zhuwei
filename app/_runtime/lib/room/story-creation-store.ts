@@ -13,6 +13,7 @@ import type {
   StoryStoreArchiveResult, StoryStoreArchiveSnapshot, StoryStoreArchiveSource, StoryStoreDispatchQuarantine, StoryStoreRestoreResult,
 } from "./story-creation-invocation";
 import { validStoryMaterialBindings } from "./story-admission";
+import { StoryOutputError } from "./story-creation/prompt";
 import type { StoryAdmissionOwner, StoryLibraryEntry, StoryLibraryMappings } from "./story-library-contracts";
 import { storyHostingArtifact, storyLibraryEntry, storyLibraryMappings, storyLibraryOwner,
   validStoryAdmissionOwner, validateStoryLibraryEntry } from "./story-library";
@@ -385,8 +386,8 @@ export class StoryCreationStore {
       if (manifest !== undefined && (manifest.job_id !== input.jobId || this.hash(parse(manifest.owner_json)) !== this.hash(input.owner))) invalid();
       this.storage.sql.exec(`INSERT OR IGNORE INTO story_creation_material_manifest
         (preparation_hash, job_id, owner_json) VALUES (?, ?, ?)`, input.preparationHash, input.jobId, this.json(input.owner));
-      // A later scope may admit more knowledge about an existing candidate;
-      // it cannot remap a candidate to another authoritative fact or event.
+      // Later scopes can admit other prepared facts or definitions, while
+      // earlier candidate identities keep their authoritative fact and event.
       this.historyMaterials();
       return { kind: "saved", admission: structuredClone(input) };
     });
@@ -494,7 +495,7 @@ export class StoryCreationStore {
     let entry: StoryLibraryEntry | undefined;
     if (owner.kind === "creationJob") {
       const job = this.readJob(owner.jobId);
-      if (!job) invalid("STORY_CONTEXT_INSUFFICIENT");
+      if (!job || job.checkpoint?.status !== "ready") invalid("STORY_CONTEXT_INSUFFICIENT");
       if (owner.jobId !== jobId) invalid();
       const { source } = job.request;
       entry = storyLibraryEntry({ roomId: source.roomId, runtimeEpochId: source.runtimeEpochId, branchId: source.branchId },
@@ -1059,7 +1060,12 @@ export class StoryCreationStore {
   }
   private atomic<T>(operation: () => T): T | StoryStoreFailure {
     try { return this.transaction(operation); }
-    catch (error) { if (error instanceof StoreInputError) return { kind: "rejected", code: error.code }; throw error; }
+    catch (error) {
+      if (error instanceof StoreInputError) return { kind: "rejected", code: error.code };
+      if (error instanceof StoryOutputError) return { kind: "rejected", code: "STORY_OUTPUT_INVALID" };
+      if (error instanceof TypeError && error.message === "STORY_LIBRARY_BINDING_INVALID") return { kind: "rejected", code: "STORY_IDENTITY_CONFLICT" };
+      throw error;
+    }
   }
 }
 

@@ -5,7 +5,8 @@ import { StoryCreationStore } from "../app/_runtime/lib/room/story-creation-stor
 import { storyFixture } from "./fixtures/story-creation.mjs";
 import { STORY_REVIEW_CATEGORIES } from "../app/_runtime/lib/room/story-creation/review";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical";
-import { createStoryAdmissionFixture, NEW_NPC, FACT, KNOWLEDGE } from "./fixtures/kp-vnext-story-materialization.mjs";
+import { createStoryAdmissionFixture, NEW_NPC, FACT, KNOWLEDGE, factSelector } from "./fixtures/kp-vnext-story-materialization.mjs";
+import { storyLibraryFixture, freezeStoryReuse, admitStoryReuse } from "./fixtures/story-library.mjs";
 import type {
   StoryCheckpoint, StoryContext, StoryHash, StoryModelRequest, StoryPreparation,
   StoryReview, StoryStage, StoryVersionRef,
@@ -663,6 +664,48 @@ it("retains a definition-only admission and rejects a later scope trying to rema
   });
 });
 
+it("restores chronological current-room reuse receipts when a later fact depends on an earlier admitted NPC", async () => {
+  const f = await createStoryAdmissionFixture("store-later-npc-fact", { newNpc: true, definitionOnly: true });
+  const defaults = fixture(), input: OpenStoryJob = { ...defaults, request: f.request, context: f.storyContext,
+    budget: { ...defaults.budget, policyRef: f.request.budgetPolicyRef } };
+  const room = stub("later-npc-fact"), source = { roomId: f.state.roomId, runtimeEpochId: f.state.runtimeEpochId };
+  const before = await withStore(room, store => {
+    readyJob(store, input, f.preparation);
+    const { bindingHash: _bindingHash, ...binding } = f.binding;
+    expect(store.prepareAdmission(binding).kind).toBe("saved");
+    expect(store.recordAdmission(f.admission).kind).toBe("saved");
+    return store.readBudget(input.budget.roomAccountId);
+  });
+  await evictDurableObject(room);
+  const library = storyLibraryFixture(f), frozen = freezeStoryReuse(f, library);
+  const later = admitStoryReuse(f, library, frozen, [factSelector(f)]);
+  const saved = await withStore(room, store => {
+    const { bindingHash: _bindingHash, ...body } = later.binding;
+    expect(store.prepareAdmission(body)).toEqual({ kind: "saved", binding: later.binding });
+    expect(store.recordAdmission(later.admission)).toEqual({ kind: "saved", admission: later.admission });
+    expect(store.readBudget(input.budget.roomAccountId)).toEqual(before);
+    const archived = store.archiveSnapshot(source);
+    if (archived.kind !== "available") throw new Error(JSON.stringify(archived));
+    const materials = store.exportHistoryMaterials();
+    expect(materials).toMatchObject({ kind: "available", preparations: [{ definitions: f.admission.definitions,
+      facts: later.admission.facts }] });
+    store.clearForRoomDeletion();
+    return { snapshot: archived.snapshot, quarantine: dispatchQuarantine(archived.snapshot), materials };
+  });
+  await withStore(room, store => {
+    expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot, quarantine: saved.quarantine }))
+      .toEqual({ kind: "restored", snapshotHash: saved.snapshot.snapshotHash });
+    expect(store.exportHistoryMaterials()).toEqual(saved.materials);
+    expect(store.readAdmissions(input.request.jobId)).toHaveLength(2);
+    expect(store.readBudget(input.budget.roomAccountId)).toEqual(before);
+    expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot });
+    const { bindingHash: _bindingHash, ...body } = later.binding;
+    expect(store.prepareAdmission(body)).toEqual({ kind: "saved", binding: later.binding });
+    expect(store.recordAdmission(later.admission)).toEqual({ kind: "saved", admission: later.admission });
+    expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot });
+  });
+});
+
 it("freezes the selected material closure, final Rules input and full context dependencies before admission", async () => {
   const initial = fixture(), { contextHash: _hash, ...body } = initial.context;
   const contextBody = { ...body, readSet: [{ kind: "entity" as const, ref: "npc-one", revision: "7", hash: hash("npc-revision-7") }] };
@@ -715,6 +758,25 @@ it("does not reinterpret lost admitted preparation or receipt material as an emp
       expect(store.isEmpty()).toBe(true);
     });
   }
+});
+
+it("rejects an unfinished or malformed saved manuscript without masking a storage failure", async () => {
+  const input = fixture("malformed-manuscript"), draft = admissionDraft(input), binding = admissionInput(input, draft);
+  await withStore(stub("unfinished-manuscript"), store => {
+    expect(store.openJob(input).kind).toBe("opened");
+    expect(store.prepareAdmission(binding)).toEqual({ kind: "rejected", code: "STORY_CONTEXT_INSUFFICIENT" });
+  });
+  await withStore(stub("malformed-manuscript"), (store, storage) => {
+    readyJob(store, input, draft);
+    expect(store.prepareAdmission(binding).kind).toBe("saved");
+    expect(store.recordAdmission(admissionReceipt(binding)).kind).toBe("saved");
+    const malformed = { ...store.readJob(input.request.jobId)!.checkpoint!, draft: { ...draft, title: null } };
+    storage.sql.exec("UPDATE story_creation_jobs SET checkpoint_json = ? WHERE job_id = ?", JSON.stringify(malformed), input.request.jobId);
+    expect(store.exportHistoryMaterials()).toEqual({ kind: "rejected", code: "STORY_OUTPUT_INVALID" });
+    expect(store.readAdmissions(input.request.jobId)).toHaveLength(1);
+    storage.sql.exec("DROP TABLE story_creation_material_manifest");
+    expect(() => store.exportHistoryMaterials()).toThrow(/no such table/);
+  });
 });
 
 it("archives and restores exact same-room operational state without replenishing budgets or making pending sends ready", async () => {

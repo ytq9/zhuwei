@@ -51,7 +51,7 @@ export function bundle(proposals) {
 /** Synthetic draft/reviewer outcomes exercise the real preparation codec.
  * They are deterministic protocol evidence, never a model quality verdict.
  * All grants and contexts come from the real authority freezer/Room builders. */
-export async function createStoryMaterializationFixture(name, { newNpc = false, definitions = [] } = {}) {
+export async function createStoryMaterializationFixture(name, { newNpc = false, definitions = [], worldOptions = {} } = {}) {
   const f = createAuthoredProbeFixture(`story-materialization:${name}`, {
     npcCharacters: [{ id: BOATMAN, name: '林舟' }, { id: CLERK, name: '周吏' }],
     canonicalFacts: [
@@ -63,6 +63,7 @@ export async function createStoryMaterializationFixture(name, { newNpc = false, 
     initialKnowledge: [[BOATMAN, 'knowledge:boatman-order', '船夫知道自己的船被暂扣。'],
       [CLERK, 'knowledge:clerk-register', '吏员知道征用登记的保管处。']].map(([characterId, knowledgeRef, content]) => ({
       characterId, knowledgeRef, content, kind: 'sourceClaim', layer: 'full', visibility: 'private', provenanceChain: ['genesis:held-information'] })),
+    ...worldOptions,
   });
   f.events = [];
   f.run = input => {
@@ -126,8 +127,8 @@ export const factSelector = f => ({ kind: 'admitStoryFacts', preparationHash: f.
 export const npcSelector = f => ({ kind: 'materializeStory', source: { kind: 'entity', preparationHash: f.preparationHash, candidateRef: NEW_NPC },
   basisRefs: [], consumes: [], produces: [{ handle: HANDLE, kind: 'entity', outcomeBinding: 'always' }], outcomeBinding: 'always', summary: '接入原准备包中的档案员。' });
 
-export async function createStoryAdmissionFixture(name, { newNpc = false, definitionOnly = false, definitions = [] } = {}) {
-  const f = await createStoryMaterializationFixture(name, { newNpc, definitions });
+export async function createStoryAdmissionFixture(name, { newNpc = false, definitionOnly = false, definitions = [], worldOptions = {} } = {}) {
+  const f = await createStoryMaterializationFixture(name, { newNpc, definitions, worldOptions });
   const selectors = definitions.map(value => ({ kind: 'materializeStory', source: { kind: value.producer.produces[0].kind,
     preparationHash: f.preparationHash, candidateRef: value.ref }, basisRefs: [], consumes: [],
     produces: clone(value.producer.produces), outcomeBinding: 'always', summary: value.producer.summary }));
