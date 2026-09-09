@@ -3947,3 +3947,11 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 实际检查：npm ci --no-audit --no-fund；npm run db:generate（无新增漂移）；Node 18 个直接消费者目标文件 162/162；Worker 修订目标组 33/33、25 非目标；故事/账本/D1 组 59/59；真实认证历史 HTTP 2/2；opening 初始化组 4/4、35 非目标；npm run typecheck；git diff --check，最终均 exit 0。Node 组早于最后故事预算接线，随后故事 Worker 组覆盖该增量；检查配置与文档更新不使此前运行时证据失效。不是全量回归，未增加真实 Provider 调用。
 - 远端只读：当前 zhuwei 版本 6f1b038d-d4eb-4636-91e2-39051982f357 仍 100%；DB 唯一待处理 0013_smiling_shinobi_shaw.sql，只新增归档表和两列，本地真实迁移/写读已通过。生产源 5b5fa31 与候选对相同房间绑定进行 hasWorkflow 比较，新增 1 个现役 vNext 房间不能续玩，此前获准停用的两个已在线上被拒绝。未改绑或删除房间、账号或归档，远端 migration 与新增房间影响待单独确认。
 - 回执：[合并快速发布候选](agent/vnext-worktree-quick-release-20260909.md)；原始日志、兼容性聚合和失败记录位于 /tmp/zhuwei-release-20260909/。远端 main 实测 cf7dbddab8cfb36365734fe96c42d82456fa1d0e，保持不变。下一步仅执行已获授权的合并提交、非 force push 与构建，生产切换等具体前置决定；不将未执行部署记为完成。
+
+
+## 2026-09-09 worktree 合并已推送、部署候选已构建
+
+- 合并提交 461dba2bf82747192a94a254ea7a365499e0dc42，父提交 221dff9 / 77f4e18；git commit 与 git push origin HEAD:cloudflare 均 exit 0，未 force。推送后 ls-remote 确认 cloudflare=461dba2、main=cf7dbddab8cfb36365734fe96c42d82456fa1d0e，未改 main 或 grok.me。
+- 部署 guard 使用精确 DEPLOY_SOURCE_SHA=461dba2bf82747192a94a254ea7a365499e0dc42，exit 0；npm run build，exit 0。403 个跟踪源码/构建输入前后完全一致，113 个产物 SHA256 保存于 /tmp/zhuwei-release-20260909/。生成 Wrangler 配置保持 zhuwei 与原 DB/ROOMS/AI/ASSETS、room-do-v1；构建包含历史新页面。
+- 构建前已清理两个 incoming 新文件的 EOF 空行，暂存及相对起点的 git diff --check 均 exit 0；纯空白不改变运行时检查结论。当前补记仅两份文档，代码冻结候选不变，不重复 production build。
+- 实际未执行：远端 0013 migration、Worker 部署/切流、上线后冒烟。完成所有已授权且可先执行的合并、修复、定向验证、提交、push 与构建；剩余需要确认增量 migration，以及新增 1 个现役 vNext 房间不能续玩而保留记录的影响。不是部署完成回执。

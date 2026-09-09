@@ -1,6 +1,6 @@
 # Worktree 合并与快速发布候选（2026-09-09）
 
-本次授权是“合并worktree文件，提交推送快速部署”。发布采用定向检查和必要构建；没有全量回归或新的真实模型质量验收。远端 migration 与新增受影响的现役 vNext 房间仍需独立确认，当前生产未切换。
+本次授权是“合并worktree文件，提交推送快速部署”。发布采用定向检查和必要构建；没有全量回归或新的真实模型质量验收。远端 migration 与新增受影响的现役 vNext 房间仍需独立确认，当前生产未切换。合并提交 `461dba2bf82747192a94a254ea7a365499e0dc42` 已非 force 推送，生产构建已通过。
 
 ## 来源与合并
 
@@ -52,4 +52,13 @@ Node 组早于最后的故事预算接线；随后 59 项故事 Worker 组覆盖
 - 三轮修订、¥0.30、60 秒和普通调用 5/6 次未启用。
 - 原任务中普通大型 Item+Ability / NPC 来源扩展的前置输入预算缺口没有完整复验，未宣称解决。
 - 本轮未新增真实 DeepSeek 调用、连续游玩、浏览器质量验收、完整测试/Lint 或统计认证；历史受控模型证据不代表真实故事质量。
-- 提交推送、生产构建及后续部署结果在执行后补记。
+- 生产 migration、Worker 切流和发布后冒烟尚未执行。
+
+## 已完成的提交、推送与构建
+
+- 合并提交：`461dba2bf82747192a94a254ea7a365499e0dc42`；两个父提交为 `221dff9a63b13233289872e0494639d4b08e12cb` 和 `77f4e1827627a6044068a43ccac4caba886e9bbf`。工作树干净。
+- `git push origin HEAD:cloudflare` exit 0；随后 `git ls-remote` 确认远端 cloudflare 为合并提交、main 仍为 `cf7dbddab8cfb36365734fe96c42d82456fa1d0e`。
+- `DEPLOY_SOURCE_SHA=461dba2bf82747192a94a254ea7a365499e0dc42 node cloudflare/verify-deploy-config.mjs` exit 0；`npm run build` exit 0。403 个跟踪源码/构建输入前后 SHA256 一致，113 个构建产物指纹已保存。
+- 生成配置仍为 Worker zhuwei、既有 DB/ROOMS/AI/ASSETS 与 room-do-v1，没有新增资源。历史页面 `/table/:code/history` 已进入构建路由；Vinext 对登录/注册的静态路由分类提示不是构建失败。
+- 证据：`build-final.log`、`source-before-build.json`、`build-artifacts.json`、`build-proof.json`。本节及执行日志是构建后的纯文档回执，不改变已验证源码或要求重复构建。
+- 当前停止点仅为远端 migration 与新受影响房间的具体授权；取得决定后按 migration → 版本部署 → 控制面与代表性 HTTP 冒烟串行推进。尚未执行这些操作，也未新增模型采样。
