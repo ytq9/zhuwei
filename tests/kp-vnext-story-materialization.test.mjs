@@ -20,12 +20,28 @@ function refPaths(value, path = []) {
   if (!value || typeof value !== 'object') return [];
   return Object.entries(value).flatMap(([key, entry]) => key === '$ref' ? [[...path, key]] : refPaths(entry, [...path, key]));
 }
+function expandPayloadSchema(schema) {
+  const expand = (value, active = []) => {
+    if (Array.isArray(value)) return value.map(item => expand(item, active));
+    if (!value || typeof value !== 'object') return value;
+    if (typeof value.$ref === 'string') {
+      assert.ok(value.$ref.startsWith('#/$def/'));
+      assert.ok(!active.includes(value.$ref), 'acyclic local schema');
+      const target = schema.$def?.[value.$ref.slice('#/$def/'.length)];
+      assert.ok(target, `missing schema dependency: ${value.$ref}`);
+      return expand(target, [...active, value.$ref]);
+    }
+    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== '$def')
+      .map(([key, item]) => [key, expand(item, active)]));
+  };
+  return expand(schema);
+}
 
 test('production capability payload contracts are self-contained', () => {
   const descriptions = roomStoryCapabilityDescriptions();
   assert.ok(descriptions.some(value => value.capability === 'materializeNpc'));
   for (const description of descriptions) {
-    assert.deepEqual(refPaths(description.schema), [], description.capability);
+    assert.deepEqual(refPaths(expandPayloadSchema(description.schema)), [], description.capability);
     assert.equal(description.schema.additionalProperties, false);
     assert.deepEqual(description.schema.required, ['steps']);
     assert.equal(description.schema.properties.steps.minItems, 1);
@@ -57,7 +73,7 @@ test('materializeStory selects the exact prepared NPC producer and admits its fa
   const f = await createStoryMaterializationFixture('new-npc', { newNpc: true });
   const candidate = f.preparation.definitions.find(value => value.ref === NEW_NPC);
   const capability = f.capabilityDescriptions.find(value => value.capability === candidate.capability), diagnostics = [];
-  assert.equal(matchesAuthoredSourceSchema(candidate.payload, capability.schema, diagnostics), true, JSON.stringify(diagnostics));
+  assert.equal(matchesAuthoredSourceSchema(candidate.payload, expandPayloadSchema(capability.schema), diagnostics), true, JSON.stringify(diagnostics));
   const [decoded] = decodeVNextStoryDefinitionSteps(candidate.payload.steps);
   assert.equal(decoded.kind, 'materializeNpc'); assert.deepEqual(decoded.source, npcStorySource());
   const before = structuredClone(f.state), original = structuredClone(f.preparation);

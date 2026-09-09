@@ -1,6 +1,7 @@
 import type { AuthoritativeModelBinding } from "../kp/authoritative-types";
 import { assertDeepSeekStrictToolModelInput, deepSeekRequestBody, DeepSeekApiError } from "../kp/deepseek";
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
+import { conservativeInputTokens } from "../kp/vnext/invocation/budget";
 import { prepareStory } from "./story-creation";
 import type {
   StoryContext, StoryHash, StoryModelRequest, StoryPreparationResult,
@@ -26,7 +27,7 @@ const hash = (value: unknown): StoryHash => canonicalHash(value) as StoryHash;
 export function storyTransportRef(policy: StoryTransportPolicy): StoryVersionRef {
   return {
     id: "zhuwei.story-deepseek-strict-transport", version: "1",
-    hash: hash({ codec: "deepseek-strict-tool/v1", policy }),
+    hash: hash({ codec: "deepseek-strict-tool/v1", inputCounter: "conservative-v1", policy }),
   };
 }
 
@@ -61,9 +62,10 @@ export async function prepareRoomStory(input: Readonly<{
       // must not consume a paid call or turn into a retry with a weaker tool.
       try { assertDeepSeekStrictToolModelInput(body); }
       catch { return { kind: "rejected", code: "STORY_CAPABILITY_UNSUPPORTED" }; }
-      // UTF-8 bytes are a conservative admission estimate for current model
-      // text. This is deliberately labelled an estimate, not tokenizer usage.
-      const estimatedInputTokens = new TextEncoder().encode(JSON.stringify(body)).byteLength;
+      // Use the same versioned estimate as the shared source ledger. Count
+      // the assembled request, including prompts and schemas, exactly once.
+      // Actual Provider usage remains separate from this admission estimate.
+      const estimatedInputTokens = conservativeInputTokens(JSON.stringify(body));
       if (estimatedInputTokens > transport.maxInputTokens) {
         return { kind: "rejected", code: "STORY_BUDGET_EXHAUSTED" };
       }

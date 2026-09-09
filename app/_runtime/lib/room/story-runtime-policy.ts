@@ -13,16 +13,21 @@ import type { StoryExternalInvocationBinding, StoryMeasuredUsage } from "./story
 export const ROOM_STORY_TRANSPORT = deepFreeze({
   modelId: AUTHORITATIVE_KP_PROFILE.modelId,
   modelRevision: AUTHORITATIVE_KP_PROFILE.modelRevision,
-  maxInputTokens: 48_000, maxOutputTokens: 12_000, timeoutMs: 45_000,
+  // The complete registered-module request measures about 67k estimated
+  // input tokens after lossless schema compaction. Reserve room for the
+  // independent review and the one permitted revision without truncating it.
+  maxInputTokens: 96_000, maxOutputTokens: 12_000, timeoutMs: 45_000,
   estimatedInputMicrosPerMillion: 8_000_000,
   estimatedOutputMicrosPerMillion: 16_000_000,
 } satisfies StoryTransportPolicy);
 const amounts = (calls: number) => ({ calls, inputTokens: calls * ROOM_STORY_TRANSPORT.maxInputTokens,
   outputTokens: calls * ROOM_STORY_TRANSPORT.maxOutputTokens,
-  estimatedCostMicros: calls * 576_000, elapsedMs: calls * ROOM_STORY_TRANSPORT.timeoutMs });
+  estimatedCostMicros: calls * Math.ceil((ROOM_STORY_TRANSPORT.maxInputTokens * ROOM_STORY_TRANSPORT.estimatedInputMicrosPerMillion
+    + ROOM_STORY_TRANSPORT.maxOutputTokens * ROOM_STORY_TRANSPORT.estimatedOutputMicrosPerMillion) / 1_000_000),
+  elapsedMs: calls * ROOM_STORY_TRANSPORT.timeoutMs });
 const limits = deepFreeze({ job: amounts(4), source: amounts(24), room: amounts(1_024) });
 export const ROOM_STORY_BUDGET_REF = deepFreeze({ id: "zhuwei.room-story-budget", version: "1",
-  hash: canonicalHash({ transport: ROOM_STORY_TRANSPORT, limits }) as StoryHash });
+  hash: canonicalHash({ transport: ROOM_STORY_TRANSPORT, inputCounter: "conservative-v1", limits }) as StoryHash });
 export function roomStoryBudget(source: StoryRequest["source"]): StoryBudgetPolicy {
   return { policyRef: ROOM_STORY_BUDGET_REF,
     roomAccountId: `model-budget:${source.roomId}:${source.runtimeEpochId}`, ...limits };

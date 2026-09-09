@@ -1,5 +1,6 @@
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
 import { createVNextProposalBundleSchema } from "../kp/vnext/proposal-schema";
+import { compactDeepSeekStrictToolSchema } from "../kp/deepseek-strict-schema-compaction";
 import { VNEXT_PROPOSAL_CAPABILITIES, type VNextProposalCapabilityId } from "../kp/vnext/proposal-capabilities";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import type { StoryCreationSelection, StorySelection } from "../kp/vnext/story-selection";
@@ -64,8 +65,19 @@ export function roomStoryCapabilityDescriptions(): readonly StoryCapabilityDescr
         && Array.isArray(value.properties.source.properties.kind.enum)
         && value.properties.source.properties.kind.enum.includes(capabilityEntry.definitionKind))));
     if (!selected.length) throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
-    return { capability, schema: { type: "object", additionalProperties: false,
-      properties: { steps: { type: "array", minItems: 1, maxItems: 1, items: selected.length === 1 ? selected[0] : { anyOf: selected } } }, required: ["steps"] } as StoryRecord,
+    // Selection needs expanded nodes, but the author can read the same
+    // complete contract through shared definitions. Preserve every constraint
+    // without repeatedly sending the expanded mechanical vocabulary.
+    const payloadSchema = { type: "object", additionalProperties: false,
+      properties: { steps: { type: "array", items: selected.length === 1 ? selected[0] : { anyOf: selected } } }, required: ["steps"] };
+    const compact = compactDeepSeekStrictToolSchema(payloadSchema);
+    if (!isPlainRecord(compact.properties) || !isPlainRecord(compact.properties.steps)
+      || compact.properties.steps.type !== "array") throw new TypeError("STORY_CAPABILITY_UNSUPPORTED");
+    // This is an authored-payload contract in the context, not a Provider
+    // tool. Its single-step cardinality is enforced by the host parser.
+    compact.properties.steps.minItems = 1;
+    compact.properties.steps.maxItems = 1;
+    return { capability, schema: compact as StoryRecord,
       instructions: "payload.steps 精确包含一个所示正常定义/NPC/物件操作，outcomeBinding 必须 always。复合机械拆为相互依赖的 definitions；局部 handle 在整份故事中唯一且稳定，正文精确保存。不要写裁决、骰面、已执行结果或任意状态补丁。" };
   });
 }
