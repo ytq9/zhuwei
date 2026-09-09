@@ -6,13 +6,18 @@ import { validateStoryLibraryEntry } from "./story-library";
 /** Host-owned immutable manuscripts, in the same Room SQLite transaction.
  * This table stores no NPC state, evolving mapping, invocation or budget. */
 export class StoryLibraryStore {
-  constructor(private readonly storage: DurableObjectStorage, private readonly room: StoryLibraryRoom,
+  constructor(private readonly storage: DurableObjectStorage, private readonly roomSource: StoryLibraryRoom | (() => StoryLibraryRoom),
     private readonly ports: { onMutation?: () => void } = {}) {}
+
+  private get room(): StoryLibraryRoom { return typeof this.roomSource === "function" ? this.roomSource() : this.roomSource; }
 
   ensureSchema(): void {
     this.storage.sql.exec(`CREATE TABLE IF NOT EXISTS story_hosting_library (
       library_ref TEXT PRIMARY KEY, entry_json TEXT NOT NULL
     )`);
+  }
+  isEmpty(): boolean {
+    return this.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM story_hosting_library").one().count === 0;
   }
   read(libraryRef: string): StoryLibraryEntry | undefined {
     const row = this.storage.sql.exec<{ entry_json: string }>(
@@ -58,7 +63,7 @@ export class StoryLibraryStore {
   }
   clearForRoomDeletion(): void {
     this.storage.transactionSync(() => {
-      if (!this.listEntries().length) return;
+      if (this.isEmpty()) return;
       this.storage.sql.exec("DELETE FROM story_hosting_library"); this.ports.onMutation?.();
     });
   }
