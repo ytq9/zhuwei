@@ -291,7 +291,7 @@ export class RoomStoryHistory implements RoomStoryHistoryModule {
         || !same(value.sourceArchive, snapshot.envelope.archive)
         || authorizationBindingHash !== canonicalHash({ purpose: "historicalBranch", request })
         || verificationHash !== canonicalHash({ purpose, contentHash: canonicalHash(value) })) return unavailable();
-      const content = canonicalHash(value);
+      const content = canonicalHash(value) as StoryHash;
       if (verifiedContent !== content) {
         const initialized = this.ports.rulesRuntime.step(undefined, undefined, {
           kind: "initializeHistoricalWorld", schema: "zhuwei.historical-world-initialization/v1",
