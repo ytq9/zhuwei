@@ -25,7 +25,8 @@ export type StoryLibraryMappings = Readonly<{
 export type StoryLibraryOrigin =
   | Readonly<{ kind: "creationJob"; jobId: string }>
   | Readonly<{ kind: "historicalSeed"; source: StoryHistorySource; seedHash: StoryHash;
-      cutEventSeq: string; baseline: StoryLibraryMappings }>;
+      cutEventSeq: string; baseline: StoryLibraryMappings;
+      timelineBindings: readonly Readonly<{ sourceTimelineId: string; targetTimelineId: string }>[] }>;
 
 /** Only historical seed mappings are retained here, as immutable source
  * evidence. Current maps always come from the current Room's Rules receipts. */

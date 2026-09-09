@@ -6,6 +6,8 @@ import type { StoryContext, StoryPreparation, StoryReview, StoryHash } from "./s
 import type { StoryAdmissionOwner, StoryLibraryBinding } from "./story-library-contracts";
 import { validateStoredReview } from "./story-creation/prompt";
 import { storyReviewPassed } from "./story-creation/review";
+import { storyLibraryOwner, validateStoryLibraryEntry } from "./story-library";
+import { validStoryMaterialBindings } from "./story-admission";
 
 export type StoryPreparationBinding = Readonly<{
   format: "zhuwei.story-preparation-ready/v1";
@@ -47,6 +49,17 @@ export function bindStoryPreparationContext(input: Readonly<{
   const entryRef = `story-preparation:${preparationHash}`;
   const original = input.selectionContext;
   if (!input.library && input.storyContext.contextHash !== input.preparation.contextHash) return { kind: "rejected" as const, code: "STORY_CONTEXT_STALE" as const };
+  if (input.library) {
+    try {
+      const { validationHash, ...body } = input.library;
+      validateStoryLibraryEntry(input.library.entry, { roomId: input.state.roomId, runtimeEpochId: input.state.runtimeEpochId, branchId: input.state.activeBranchId });
+      if (canonicalHash(body) !== validationHash || canonicalHash(input.library.currentContext) !== canonicalHash(input.storyContext)
+        || canonicalHash(input.library.entry.artifact.preparation) !== preparationHash
+        || canonicalHash(input.library.entry.artifact.review) !== canonicalHash(input.review)
+        || canonicalHash(input.library.owner) !== canonicalHash(storyLibraryOwner(input.library.entry))
+        || !validStoryMaterialBindings(input.preparation, input.library.mappings.definitions, input.library.mappings.facts)) throw new TypeError();
+    } catch { return { kind: "rejected" as const, code: "STORY_LIBRARY_BINDING_INVALID" as const }; }
+  }
   const entries = new Map(original.entries.map(entry => [entry.entryRef, entry]));
   const authorityRefs = new Set(original.references.citations.authorityBasisRefs);
   const nonCitableRefs = new Set(original.references.citations.nonCitableRefs);
@@ -74,10 +87,21 @@ export function bindStoryPreparationContext(input: Readonly<{
     } else if (material?.availability === "known") authorityRefs.add(dependency.ref);
     else nonCitableRefs.add(dependency.ref);
   }
+  const timelineBindings = input.library?.entry.origin.kind === "historicalSeed" ? input.library.entry.origin.timelineBindings : [];
+  for (const mapped of timelineBindings) {
+    const ref = `fiction-timeline:${mapped.targetTimelineId}`, revisionOrHash = authorityRevisionOrHash(input.state, ref);
+    if (revisionOrHash === null) return { kind: "rejected" as const, code: "STORY_CONTEXT_STALE" as const };
+    const existing = entries.get(ref);
+    if (existing && (existing.kind !== "known" || existing.revisionOrHash !== revisionOrHash)) return { kind: "rejected" as const, code: "STORY_CONTEXT_STALE" as const };
+    entries.set(ref, { kind: "known", entryRef: ref, revisionOrHash, value: {
+      timeline: input.state.fictionTimelines[mapped.targetTimelineId] as unknown as JsonValue,
+      causalFrontier: input.state.multiplayerRuntime.causalFrontiers[mapped.targetTimelineId] as unknown as JsonValue ?? null } });
+    nonCitableRefs.add(ref);
+  }
   const { contextHash: _prior, ...binding } = original.binding;
   const value = { schema: "zhuwei.prepared-story-context/v1", nature: "reviewedCandidateOnly",
     preparation: input.preparation, preparationHash, review: input.review,
-    ...(input.library ? { admitted: input.library.mappings, blockedCandidateRefs: input.library.blockedCandidateRefs,
+    ...(input.library ? { admitted: input.library.mappings, timelineBindings, blockedCandidateRefs: input.library.blockedCandidateRefs,
       revalidationHash: input.library.validationHash, currentContextHash: input.library.currentContext.contextHash } : {}) };
   const built = buildRequiredContext({ intent: original.intent, binding,
     entries: [...entries.values(), { kind: "known", entryRef, revisionOrHash: canonicalHash(value), value: value as unknown as JsonValue }],

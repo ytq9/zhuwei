@@ -10,6 +10,11 @@ export class StoryLibraryStore {
     private readonly ports: { onMutation?: () => void } = {}) {}
 
   private get room(): StoryLibraryRoom { return typeof this.roomSource === "function" ? this.roomSource() : this.roomSource; }
+  private validate(entry: unknown): asserts entry is StoryLibraryEntry {
+    validateStoryLibraryEntry(entry);
+    const room = this.room;
+    if (entry.room.roomId !== room.roomId || entry.room.runtimeEpochId !== room.runtimeEpochId) throw new TypeError("STORY_LIBRARY_BINDING_INVALID");
+  }
 
   ensureSchema(): void {
     this.storage.sql.exec(`CREATE TABLE IF NOT EXISTS story_hosting_library (
@@ -23,7 +28,7 @@ export class StoryLibraryStore {
     const row = this.storage.sql.exec<{ entry_json: string }>(
       "SELECT entry_json FROM story_hosting_library WHERE library_ref = ?", libraryRef).toArray()[0];
     if (!row) return undefined;
-    const entry: unknown = JSON.parse(row.entry_json); validateStoryLibraryEntry(entry, this.room);
+    const entry: unknown = JSON.parse(row.entry_json); this.validate(entry);
     if (entry.libraryRef !== libraryRef) throw new TypeError("STORY_LIBRARY_BINDING_INVALID");
     return entry;
   }
@@ -32,7 +37,7 @@ export class StoryLibraryStore {
       .toArray().map(row => this.read(row.library_ref)!);
   }
   save(entry: StoryLibraryEntry): { kind: "saved"; entry: StoryLibraryEntry } {
-    validateStoryLibraryEntry(entry, this.room);
+    this.validate(entry);
     return this.storage.transactionSync(() => {
       const previous = this.read(entry.libraryRef);
       if (previous) {
@@ -54,7 +59,7 @@ export class StoryLibraryStore {
       || snapshot.format !== "zhuwei.story-library-snapshot/v1" || canonicalHash(body) !== snapshotHash
       || canonicalHash(snapshot.room) !== canonicalHash(this.room) || !Array.isArray(snapshot.entries)
       || new Set(snapshot.entries.map(entry => entry.libraryRef)).size !== snapshot.entries.length) throw new TypeError("STORY_LIBRARY_BINDING_INVALID");
-    snapshot.entries.forEach(entry => validateStoryLibraryEntry(entry, this.room));
+    snapshot.entries.forEach(entry => this.validate(entry));
     this.storage.transactionSync(() => {
       if (this.listEntries().length) throw new TypeError("STORY_LIBRARY_BINDING_INVALID");
       snapshot.entries.forEach(entry => this.save(entry));

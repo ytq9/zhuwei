@@ -64,7 +64,7 @@ async function fixture(variant = "boat", withDefinitions = false) {
   const hostBindings = [{ bindingId: preparedActionId, kind: "preparedAction", source, jobIds: [jobId], invocationIds,
     payload, payloadHash: await archiveSha256(payload) }];
   const snapshot = { format: "zhuwei.story-store-archive/v1", source: { roomId: source.roomId, runtimeEpochId: source.runtimeEpochId },
-    accounts, jobs, invocations, admissionBindings, admissions, materialManifest: [{ preparationHash: world.preparationHash, jobId }] };
+    accounts, jobs, invocations, admissionBindings, admissions, hostingArtifacts: [], materialManifest: [{ preparationHash: world.preparationHash, jobId, owner: world.binding.owner }] };
   await rehashSnapshot(snapshot);
   const unrelated = world.run({ kind: "resolveFreeAction", proposalId: "root:story:future", characterId: ACTOR,
     goal: "整理材料", method: "逐项归档", feasibility: { kind: "directSuccess", publicBasis: "材料已经齐全。" }, outcome: { fictionTimeCostMicros: "10" } });

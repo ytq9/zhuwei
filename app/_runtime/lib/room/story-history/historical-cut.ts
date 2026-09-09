@@ -1,5 +1,5 @@
 import type { AuthoritativeWorldState, EventEnvelope } from "../../rules";
-import { archiveSha256, canonicalJson } from "../archive";
+import { archiveSha256, canonicalJson, type AuthoritativeRoomArchive } from "../archive";
 import type { StoryTemporalBasis } from "../story-creation/contracts";
 import type {
   StoryHistoricalCut, StoryHistoricalFact, StoryHistoricalKnowledge,
@@ -10,6 +10,10 @@ import { storyDefinitionAvailable, storyMappedReference } from "../story-admissi
 import { reviewedDefinitionEntry } from "../../kp/vnext/story-materialization";
 import { isNpcMaterializedPayload } from "../../rules/v2/npc-materialization";
 import { isSemanticDefinitionMaterializedPayload } from "../../rules/v2/semantic-definitions";
+import { isStoryFactBody, isStoryKnowledgeBody } from "../../rules/v2/story-facts-admission";
+import { isHistoricalOrigin } from "../../rules/v2/historical-world";
+import { validateStoryGenesisMappings } from "../story-library";
+import type { StoryLibraryMappings } from "../story-library-contracts";
 
 type TemporalPosition = "established" | "after" | "unresolved";
 
@@ -32,6 +36,14 @@ function temporalPosition(basis: StoryTemporalBasis, state: AuthoritativeWorldSt
   if (basis.end === null || basis.end.timelineId !== basis.start.timelineId) return "unresolved";
   if (BigInt(basis.end.micros) <= cut) return "established";
   return start > cut ? "after" : "unresolved";
+}
+
+function currentTemporalBasis(basis: StoryTemporalBasis, body: unknown): StoryTemporalBasis {
+  if (!isStoryFactBody(body) && !isStoryKnowledgeBody(body)) return basis;
+  const actual = (ref: string) => body.bindings.find(value => value.ref === ref)?.authorityRef ?? ref;
+  return { ...basis, start: { ...basis.start, timelineId: actual(basis.start.timelineId) },
+    end: basis.end ? { ...basis.end, timelineId: actual(basis.end.timelineId) } : null,
+    basisRefs: basis.basisRefs.map(actual) };
 }
 
 export function hasUnresolvedCut(state: AuthoritativeWorldState): boolean {
@@ -69,13 +81,27 @@ export function selectHistoricalSupplements(input: {
   sourceState: AuthoritativeWorldState;
   cutState: AuthoritativeWorldState;
   cutEventSeq: string;
+  genesis?: AuthoritativeRoomArchive["signedGenesis"];
 }): { kind: "selected"; lateFacts: StoryHistoricalFact[]; preparations: StoryHistoryPreparation[] } | StoryHistoryRejection {
   const byEvent = new Map(input.events.map(event => [event.eventId, event]));
   const cutSeq = BigInt(input.cutEventSeq);
   const result: StoryHistoricalFact[] = [];
   const preparations: StoryHistoryPreparation[] = [];
   const seenFacts = new Set<string>(), seenKnowledge = new Set<string>();
+  const baselines = new Map<string, StoryLibraryMappings>();
   for (const material of input.preparations) {
+    const baseline = { definitions: material.definitions.filter(value => !byEvent.has(value.recordedByEventId)),
+      facts: material.facts.filter(value => !byEvent.has(value.recordedByEventId)).map(value => ({ ...value,
+        knowledge: value.knowledge.filter(known => !byEvent.has(known.recordedByEventId)) })) };
+    if (baseline.definitions.length || baseline.facts.length) {
+      if (!input.genesis || !isHistoricalOrigin(input.genesis.historicalOrigin)) return rejected("STORY_HISTORY_BINDING_INVALID");
+      try { validateStoryGenesisMappings(material.preparation, baseline, input.genesis.initialState as AuthoritativeWorldState); }
+      catch { return rejected("STORY_HISTORY_BINDING_INVALID"); }
+    }
+    baselines.set(material.preparationHash, baseline);
+  }
+  for (const material of input.preparations) {
+    const baseline = baselines.get(material.preparationHash)!;
     const seenDefinitions = new Set<string>();
     for (const mapping of material.definitions) {
       const event = byEvent.get(mapping.recordedByEventId), source = reviewedDefinitionEntry(material.preparation, mapping.candidateRef);
@@ -89,11 +115,14 @@ export function selectHistoricalSupplements(input: {
             && isRecord(payload) && isRecord(payload.entry) && payload.entry.entryId === mapping.authorityRef
             : source.kind === "materializeDefinition" && ["DefinitionRegistered", "ItemDefinitionRegistered"].includes(String(event?.eventType))
               && isRecord(payload) && isRecord(payload.definition) && payload.definition.definitionId === mapping.authorityRef;
-      if (!matches || !event || seenDefinitions.has(mapping.authorityRef)
+      const inherited = baseline.definitions.some(value => canonicalJson(value) === canonicalJson(mapping));
+      if ((!matches || !event) && !inherited || seenDefinitions.has(mapping.authorityRef)
         || mapping.definitionRefs.some(ref => !storyDefinitionAvailable(input.sourceState, ref))) return rejected("STORY_HISTORY_BINDING_INVALID");
       seenDefinitions.add(mapping.authorityRef);
     }
-    const retained = (eventId: string) => { const event = byEvent.get(eventId); return event !== undefined && BigInt(event.eventSeq) <= cutSeq; };
+    const inheritedEvents = new Set([...baseline.definitions.map(value => value.recordedByEventId),
+      ...baseline.facts.flatMap(value => [value.recordedByEventId, ...value.knowledge.map(known => known.recordedByEventId)])]);
+    const retained = (eventId: string) => { const event = byEvent.get(eventId); return event !== undefined ? BigInt(event.eventSeq) <= cutSeq : inheritedEvents.has(eventId); };
     const definitions = material.definitions.filter(mapping => retained(mapping.recordedByEventId));
     const facts = material.facts.filter(mapping => retained(mapping.recordedByEventId)).map(mapping => ({ ...mapping,
       knowledge: mapping.knowledge.filter(known => retained(known.recordedByEventId)) }));
@@ -105,17 +134,19 @@ export function selectHistoricalSupplements(input: {
     const candidate = material.preparation.facts.find(fact => fact.ref === binding.candidateRef)!;
     const factEvent = byEvent.get(binding.recordedByEventId);
     const fact = input.sourceState.canonicalFacts[binding.factRef];
-    if (!factEvent || !fact || fact.validFromEventSeq !== factEvent.eventSeq
+    const baseline = baselines.get(material.preparationHash)!.facts.find(value => value.candidateRef === binding.candidateRef);
+    if (!fact || (!factEvent ? !baseline || canonicalJson(input.genesis?.initialState.canonicalFacts[fact.id]) !== canonicalJson(fact)
+      : fact.validFromEventSeq !== factEvent.eventSeq)
       || fact.branchId !== input.sourceState.activeBranchId || seenFacts.has(fact.id)) {
       return rejected("STORY_HISTORY_BINDING_INVALID");
     }
     seenFacts.add(fact.id);
     const existing = input.cutState.canonicalFacts[fact.id];
-    const factIsLate = BigInt(factEvent.eventSeq) > cutSeq;
+    const factIsLate = factEvent !== undefined && BigInt(factEvent.eventSeq) > cutSeq;
     if (!factIsLate && (!existing || canonicalJson(existing) !== canonicalJson(fact))) {
       return rejected("STORY_HISTORY_CUT_UNSUPPORTED");
     }
-    const occurrence = temporalPosition(candidate.occurrence, input.cutState);
+    const occurrence = temporalPosition(currentTemporalBasis(candidate.occurrence, fact.value), input.cutState);
     if (occurrence === "unresolved") return rejected("STORY_HISTORY_TIME_UNRESOLVED");
     if (occurrence === "after") continue;
     const knowledge: StoryHistoricalKnowledge[] = [];
@@ -125,7 +156,8 @@ export function selectHistoricalSupplements(input: {
       const event = byEvent.get(granted.recordedByEventId);
       const record = input.sourceState.knowledge[granted.holderRef]?.[granted.knowledgeRef];
       const key = `${granted.holderRef}\u0000${granted.knowledgeRef}`;
-      if (!item || !event || !record || record.acquiredByEventId !== event.eventId
+      const inherited = baseline?.knowledge.some(value => canonicalJson(value) === canonicalJson(granted)) === true;
+      if (!item || !record || (!event ? !inherited : record.acquiredByEventId !== event.eventId)
         || storyMappedReference(material.preparation, material.definitions, material.facts, item.holderRef) !== granted.holderRef || item.factRef !== candidate.ref
         || record.characterId !== granted.holderRef || record.knowledgeRef !== granted.knowledgeRef
         || record.objectKind !== ({ truth: "canonicalFact", sensoryEvidence: "sensoryEvidence",
@@ -135,13 +167,14 @@ export function selectHistoricalSupplements(input: {
         return rejected("STORY_HISTORY_BINDING_INVALID");
       }
       candidateKnowledgeRefs.add(item.ref); seenKnowledge.add(key);
-      const position = temporalPosition(item.acquisition, input.cutState);
+      const position = temporalPosition(currentTemporalBasis(item.acquisition, record.content), input.cutState);
       if (position === "unresolved") return rejected("STORY_HISTORY_TIME_UNRESOLVED");
-      if (position === "after" || BigInt(event.eventSeq) <= cutSeq) continue;
+      if (position === "after" || !event || BigInt(event.eventSeq) <= cutSeq) continue;
       if (!input.cutState.entities[granted.holderRef]) return rejected("STORY_HISTORY_CUT_UNSUPPORTED");
       knowledge.push({ candidate: structuredClone(item), record: structuredClone(record), recordedBy: structuredClone(event) });
     }
     if (!factIsLate && knowledge.length === 0) continue;
+    if (!factEvent) return rejected("STORY_HISTORY_CUT_UNSUPPORTED");
     const definitions: StoryHistoricalFact["definitions"] = {};
     for (const ref of binding.definitionRefs) {
       const definition = input.sourceState.campaignRuntime.definitions[ref]

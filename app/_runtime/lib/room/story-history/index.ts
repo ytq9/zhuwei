@@ -177,7 +177,7 @@ export async function prepareHistoricalBranch(
       return rejected("STORY_HISTORY_IDENTITY_UNSUPPORTED");
     }
     const selected = selectHistoricalSupplements({
-      preparations, events: archive.events, sourceState: loaded.state, cutState, cutEventSeq: cut.eventSeq,
+      preparations, events: archive.events, sourceState: loaded.state, cutState, cutEventSeq: cut.eventSeq, genesis: archive.signedGenesis,
     });
     if (selected.kind === "rejected") return selected;
     const value: StoryHistoricalVerification = {

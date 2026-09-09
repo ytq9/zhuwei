@@ -2,6 +2,8 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { StoryCreationStore } from "../app/_runtime/lib/room/story-creation-store";
+import { storyFixture } from "./fixtures/story-creation.mjs";
+import { STORY_REVIEW_CATEGORIES } from "../app/_runtime/lib/room/story-creation/review";
 import { canonicalSha256 } from "../app/_runtime/lib/rules/profiles/canonical";
 import { createStoryAdmissionFixture, NEW_NPC, FACT, KNOWLEDGE } from "./fixtures/kp-vnext-story-materialization.mjs";
 import type {
@@ -66,17 +68,17 @@ function stageComplete(store: StoryCreationStore, input: OpenStoryJob, stage: St
   return identity;
 }
 function preparation(input: OpenStoryJob, version: "1" | "2" = "1"): StoryPreparation {
-  return { format: "zhuwei.story-preparation/v1", jobId: input.request.jobId, version,
+  return { ...storyFixture("conflict").body, format: "zhuwei.story-preparation/v1", jobId: input.request.jobId, version,
     requestHash: hash(input.request), contextHash: input.context.contextHash, recipeRefs: input.request.recipeRefs,
     title: "PRIVATE_STORY_CANARY", cause: "Local shortage", centralQuestion: "Who receives the delivery?",
     worldConnection: "Existing harbor dispute", existingFactRefs: ["private-memory"], facts: [], participants: [],
-    definitions: [], opportunities: [], scenes: [], evidence: [], developments: [], resolutions: [], stages: [],
+    definitions: [], evidence: [], developments: [], stages: [],
     notApplicable: [], hostingNotes: "Fixture for storage boundaries; quality is evaluated by Story Creation." };
 }
 function review(input: OpenStoryJob, draft: StoryPreparation, verdict: "pass" | "conflict" = "pass", repairable = false): StoryReview {
   return { format: "zhuwei.story-review/v1", preparationHash: hash(draft), contextHash: input.context.contextHash,
-    findings: [{ category: "worldConsistency", verdict, candidatePaths: ["cause"], constraintRefs: ["private-memory"],
-      explanation: "PRIVATE_STORY_CANARY", repairable }], recipeCriteria: [] };
+    findings: STORY_REVIEW_CATEGORIES.map(category => ({ category, verdict, candidatePaths: ["/cause"], constraintRefs: ["private-memory"],
+      explanation: "PRIVATE_STORY_CANARY", repairable })), recipeCriteria: [{ recipeId: input.request.recipeRefs[0].id, criterion: "storage-protocol-fixture", verdict }] };
 }
 function checkpoint(input: OpenStoryJob, revision: number, fields: Partial<StoryCheckpoint> = {}): StoryCheckpoint {
   return { format: "zhuwei.story-checkpoint/v1", jobId: input.request.jobId, revision,
@@ -99,12 +101,13 @@ function admissionDraft(input: OpenStoryJob): StoryPreparation {
       content: "PRIVATE_STORY_CANARY", sourceRef: "private-memory", acquisition: time, explanation: "The witness was present" }] }] };
 }
 function admissionInput(input: OpenStoryJob, draft: StoryPreparation, selectedMaterialRefs = ["candidate-fact", "candidate-knowledge"]): StoryAdmissionBindingInput {
-  return { jobId: input.request.jobId, preparationHash: hash(draft), materialScopeHash: hash(selectedMaterialRefs),
+  return { owner: { kind: "creationJob", jobId: input.request.jobId }, jobId: input.request.jobId, preparationHash: hash(draft), materialScopeHash: hash(selectedMaterialRefs),
+    validation: { request: input.request, context: input.context }, priorMappings: { definitions: [], facts: [] },
     preparedActionId: "prepared-one", contextHash: input.context.contextHash, selectedMaterialRefs,
     readSet: input.context.readSet, rulesInputHash: hash({ operation: "test-normal-rules-input" }) };
 }
 function admissionReceipt(binding: StoryAdmissionBindingInput): StoryAdmissionReceipt {
-  return { jobId: binding.jobId, preparationHash: binding.preparationHash, materialScopeHash: binding.materialScopeHash,
+  return { owner: binding.owner, jobId: binding.jobId, preparationHash: binding.preparationHash, materialScopeHash: binding.materialScopeHash,
     preparedActionId: binding.preparedActionId, receiptId: `receipt:${binding.preparedActionId}`, bindingHash: hash(binding),
     recordedAtEventSeq: "1", definitions: [], facts: [{ candidateRef: "candidate-fact", factRef: "fact:actual", recordedByEventId: "event:fact",
       definitionRefs: ["definition:existing-npc"], knowledge: binding.selectedMaterialRefs.includes("candidate-knowledge")

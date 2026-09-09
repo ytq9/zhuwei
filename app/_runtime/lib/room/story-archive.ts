@@ -7,7 +7,10 @@ import type {
 } from "./story-creation-invocation";
 import type { StoryHash, StoryPreparation, StoryRecord, StoryRequest } from "./story-creation/contracts";
 import { exact, hash, isRecord, sequence, text, uniqueStrings, validPreparation } from "./story-history/validation";
-import { storyAdmissionReceipt } from "./story-admission";
+import { storyAdmissionReceipt, validStoryMaterialBindings } from "./story-admission";
+import type { StoryAdmissionOwner, StoryLibraryEntry } from "./story-library-contracts";
+import { storyHostingArtifact, storyLibraryEntry, storyLibraryOwner, validStoryAdmissionOwner, validateStoryLibraryEntry,
+  validateStoryLibraryGenesis } from "./story-library";
 import { validateStoredReview } from "./story-creation/prompt";
 import { storyReviewPassed } from "./story-creation/review";
 
@@ -113,11 +116,11 @@ function passed(checkpoint: StoryStoreArchiveSnapshot["jobs"][number]["checkpoin
 }
 
 async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: AuthoritativeRoomArchive) {
-  if (!exact(snapshot, ["format", "source", "accounts", "jobs", "invocations", "admissionBindings", "admissions", "materialManifest", "snapshotHash"])
+  if (!exact(snapshot, ["format", "source", "accounts", "jobs", "invocations", "admissionBindings", "admissions", "materialManifest", "hostingArtifacts", "snapshotHash"])
     || snapshot.format !== "zhuwei.story-store-archive/v1"
     || !same(snapshot.source, { roomId: archive.roomId, runtimeEpochId: archive.signedGenesis.runtimeEpochId })
     || ![snapshot.accounts, snapshot.jobs, snapshot.invocations, snapshot.admissionBindings,
-      snapshot.admissions, snapshot.materialManifest].every(Array.isArray)) invalid();
+      snapshot.admissions, snapshot.materialManifest, snapshot.hostingArtifacts].every(Array.isArray)) invalid();
   const { snapshotHash, ...body } = snapshot;
   if (!hash(snapshotHash) || await archiveSha256(body) !== snapshotHash) invalid();
   const accounts = ids(snapshot.accounts, value => value.accountId);
@@ -170,38 +173,68 @@ async function checkSnapshot(snapshot: StoryStoreArchiveSnapshot, archive: Autho
         || !same(call.modelRef, bound.modelRef) || await archiveSha256(bound) !== call.requestHash) invalid();
     }
   }
+  const artifacts = ids(snapshot.hostingArtifacts, value => value.libraryRef);
+  for (const entry of artifacts.values()) {
+    try {
+      validateStoryLibraryEntry(entry);
+      if (entry.room.roomId !== archive.roomId || entry.room.runtimeEpochId !== archive.signedGenesis.runtimeEpochId) invalid();
+      if (entry.origin.kind === "historicalSeed") validateStoryLibraryGenesis(entry, archive.signedGenesis);
+      else {
+        const job = jobs.get(entry.origin.jobId);
+        if (!job || !same(storyHostingArtifact({ ...job.input, checkpoint: job.checkpoint }), entry.artifact)) invalid();
+      }
+    } catch { invalid("STORY_ARCHIVE_MATERIALS_MISSING"); }
+  }
+  const sourceEntry = (owner: StoryAdmissionOwner, jobId: string, preparationHash: StoryHash): StoryLibraryEntry => {
+    if (!validStoryAdmissionOwner(owner)) return invalid();
+    let entry: StoryLibraryEntry | undefined;
+    if (owner.kind === "creationJob") {
+      const job = jobs.get(owner.jobId);
+      if (!job || jobId !== owner.jobId || !passed(job.checkpoint)) return invalid("STORY_ARCHIVE_MATERIALS_MISSING");
+      const { source } = job.input.request;
+      entry = storyLibraryEntry({ roomId: source.roomId, runtimeEpochId: source.runtimeEpochId, branchId: source.branchId },
+        storyHostingArtifact({ ...job.input, checkpoint: job.checkpoint }), { kind: "creationJob", jobId });
+    } else entry = artifacts.get(owner.libraryRef);
+    if (!entry || entry.artifact.preparationHash !== preparationHash || entry.artifact.preparation.jobId !== jobId
+      || !same(storyLibraryOwner(entry), owner)) return invalid("STORY_ARCHIVE_MATERIALS_MISSING");
+    return entry;
+  };
   const bindings = ids(snapshot.admissionBindings, value => value.preparedActionId);
   for (const binding of bindings.values()) {
-    if (!exact(binding, ["jobId", "preparationHash", "materialScopeHash", "preparedActionId", "contextHash", "selectedMaterialRefs", "readSet", "rulesInputHash", "bindingHash"])
-      || !uniqueStrings(binding.selectedMaterialRefs) || !Array.isArray(binding.readSet) || !hash(binding.rulesInputHash)) invalid();
-    const { bindingHash, ...body } = binding;
-    const job = jobs.get(binding.jobId), draft = job?.checkpoint?.revisedDraft ?? job?.checkpoint?.draft;
-    if (job === undefined || draft === undefined || !passed(job.checkpoint)) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
-    if (await archiveSha256(body) !== bindingHash || await archiveSha256(draft) !== binding.preparationHash
-      || binding.contextHash !== job.input.context.contextHash
-      || await archiveSha256(binding.selectedMaterialRefs) !== binding.materialScopeHash) invalid();
+    if (!exact(binding, ["owner", "jobId", "preparationHash", "materialScopeHash", "preparedActionId", "contextHash", "validation", "priorMappings",
+      "selectedMaterialRefs", "readSet", "rulesInputHash", "bindingHash"])
+      || !uniqueStrings(binding.selectedMaterialRefs) || !Array.isArray(binding.readSet) || !hash(binding.rulesInputHash)
+      || !exact(binding.validation, ["request", "context"]) || !isRecord(binding.validation.context)
+      || !exact(binding.priorMappings, ["definitions", "facts"])) invalid();
+    const { bindingHash, ...body } = binding, entry = sourceEntry(binding.owner, binding.jobId, binding.preparationHash);
+    const draft = entry.artifact.preparation, { contextHash, ...context } = binding.validation.context;
+    if (await archiveSha256(body) !== bindingHash || await archiveSha256(context) !== contextHash || binding.contextHash !== contextHash
+      || !source(binding.validation.request.source) || !sourceMatchesRoom(binding.validation.request.source, archive)
+      || binding.validation.request.source.branchId !== entry.room.branchId
+      || await archiveSha256(binding.selectedMaterialRefs) !== binding.materialScopeHash
+      || !validStoryMaterialBindings(draft, binding.priorMappings.definitions, binding.priorMappings.facts)) invalid();
     const refs = candidateRefs(draft);
     if (binding.selectedMaterialRefs.some(ref => !refs.has(ref))
-      || job.input.context.readSet.some(required => !binding.readSet.some(read => same(read, required)))) invalid();
+      || binding.validation.context.readSet.some(required => !binding.readSet.some(read => same(read, required)))) invalid();
   }
   const manifest = ids(snapshot.materialManifest, value => value.preparationHash);
   const admissions = ids(snapshot.admissions, value => value.preparedActionId);
   for (const entry of manifest.values()) {
-    if (!exact(entry, ["preparationHash", "jobId"]) || !hash(entry.preparationHash) || !jobs.has(entry.jobId)
-      || !snapshot.admissions.some(receipt => receipt.jobId === entry.jobId && receipt.preparationHash === entry.preparationHash)) {
-      invalid("STORY_ARCHIVE_MATERIALS_MISSING");
-    }
+    if (!exact(entry, ["preparationHash", "jobId", "owner"]) || !hash(entry.preparationHash)
+      || !snapshot.admissions.some(receipt => receipt.jobId === entry.jobId && receipt.preparationHash === entry.preparationHash
+        && same(receipt.owner, entry.owner))) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
+    sourceEntry(entry.owner, entry.jobId, entry.preparationHash);
   }
   for (const admission of admissions.values()) {
-    if (!exact(admission, ["jobId", "preparationHash", "materialScopeHash", "preparedActionId", "receiptId", "bindingHash", "recordedAtEventSeq", "definitions", "facts"])
+    if (!exact(admission, ["owner", "jobId", "preparationHash", "materialScopeHash", "preparedActionId", "receiptId", "bindingHash", "recordedAtEventSeq", "definitions", "facts"])
       || !text(admission.receiptId) || !sequence(admission.recordedAtEventSeq)
       || !Array.isArray(admission.definitions) || !Array.isArray(admission.facts)) invalid();
-    const bound = bindings.get(admission.preparedActionId);
-    if (bound === undefined || manifest.get(admission.preparationHash)?.jobId !== admission.jobId) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
-    if (bound.bindingHash !== admission.bindingHash || bound.jobId !== admission.jobId
+    const bound = bindings.get(admission.preparedActionId), declared = manifest.get(admission.preparationHash);
+    if (bound === undefined || declared?.jobId !== admission.jobId || !same(declared.owner, admission.owner)) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
+    if (bound.bindingHash !== admission.bindingHash || bound.jobId !== admission.jobId || !same(bound.owner, admission.owner)
       || bound.preparationHash !== admission.preparationHash || bound.materialScopeHash !== admission.materialScopeHash) invalid();
   }
-  return { accounts, jobs, invocations, bindings, admissions, manifest };
+  return { accounts, jobs, invocations, bindings, admissions, manifest, artifacts, sourceEntry };
 }
 
 function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<typeof checkSnapshot>>, ports: StoryArchivePorts) {
@@ -231,8 +264,8 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
     host.jobIds.includes(job.input.request.jobId) && same(host.source, job.input.request.source))) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
   for (const binding of checked.bindings.values()) {
     const host = hosts.get(binding.preparedActionId);
-    if (host === undefined || !host.jobIds.includes(binding.jobId) || host.kind === "viewerNarration"
-      || host.source.branchId !== checked.jobs.get(binding.jobId)!.input.request.source.branchId) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
+    if (host === undefined || host.kind === "viewerNarration"
+      || !same(host.source, binding.validation.request.source)) invalid("STORY_ARCHIVE_HOST_BINDING_INVALID");
   }
   return { hosts, owners };
 }
@@ -240,13 +273,21 @@ function checkHosts(envelope: StoryRoomArchive, checked: Awaited<ReturnType<type
 async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<ReturnType<typeof checkSnapshot>>, ports: StoryArchivePorts): Promise<StoryHistoryMaterialSnapshot> {
   const archive = envelope.archive, receiptRefs = ids(archive.receiptRefs, value => value.receiptId);
   const material = new Map<string, StoryHistoryMaterialSnapshot["preparations"][number]>();
+  for (const entry of checked.artifacts.values()) if (entry.origin.kind === "historicalSeed") {
+    if (material.has(entry.artifact.preparationHash)) invalid();
+    material.set(entry.artifact.preparationHash, { preparation: entry.artifact.preparation,
+      preparationHash: entry.artifact.preparationHash, recordedAtEventSeq: "0", ...entry.origin.baseline });
+  }
   const prefixes = new Map<string, AuthoritativeWorldState>();
   const receipts = [...checked.admissions.values()].sort((a, b) => BigInt(a.recordedAtEventSeq) < BigInt(b.recordedAtEventSeq)
     ? -1 : BigInt(a.recordedAtEventSeq) > BigInt(b.recordedAtEventSeq) ? 1 : a.preparedActionId.localeCompare(b.preparedActionId));
   for (const admission of receipts) {
     if (BigInt(admission.recordedAtEventSeq) > BigInt(archive.head.eventSeq)) invalid();
-    const job = checked.jobs.get(admission.jobId)!, binding = checked.bindings.get(admission.preparedActionId)!;
-    const preparation = (job.checkpoint!.revisedDraft ?? job.checkpoint!.draft)!;
+    const entry = checked.sourceEntry(admission.owner, admission.jobId, admission.preparationHash);
+    const binding = checked.bindings.get(admission.preparedActionId)!;
+    const preparation = entry.artifact.preparation;
+    const previous = material.get(admission.preparationHash);
+    if (!same(binding.priorMappings, { definitions: previous?.definitions ?? [], facts: previous?.facts ?? [] })) invalid();
     const part = { preparation, preparationHash: admission.preparationHash, recordedAtEventSeq: admission.recordedAtEventSeq,
       definitions: admission.definitions, facts: admission.facts };
     if (!await validPreparation(part, archive.head.eventSeq)) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
@@ -290,9 +331,9 @@ async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<Retu
       definitions: [...definitions.values()].sort((a, b) => a.candidateRef.localeCompare(b.candidateRef)),
       facts: [...facts.values()].sort((a, b) => a.candidateRef.localeCompare(b.candidateRef)) });
   }
-  if (material.size !== checked.manifest.size) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
+  if ([...checked.manifest.keys()].some(ref => !material.has(ref))) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
   return { preparations: [...material.values()].sort((a, b) => a.preparationHash.localeCompare(b.preparationHash)),
-    requiredPreparationHashes: [...checked.manifest.keys()].sort() as StoryHash[] };
+    requiredPreparationHashes: [...material.keys()].sort() as StoryHash[] };
 }
 
 /** Pure preparation only. This never restores a Store, grants a send permit,

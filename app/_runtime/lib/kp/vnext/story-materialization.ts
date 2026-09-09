@@ -164,6 +164,18 @@ export function lowerStoryFactSelection(input: Readonly<{
   if (!isPlainRecord(moduleRef) || typeof moduleRef.profileId !== "string") return fail("story:module-pin-unavailable");
   const pin = `profile-context:${moduleRef.profileId}`;
   const readBindings = requiredContextReadBindings(context);
+  const wrapper = context.entries.find(value => value.entryRef === `story-preparation:${entry.preparationHash}`)!;
+  const timelineBindings = wrapper.kind === "known" && isPlainRecord(wrapper.value) && Array.isArray(wrapper.value.timelineBindings)
+    ? wrapper.value.timelineBindings : [];
+  const timelineRefs = new Set(selected.flatMap(fact => [fact.occurrence.start.timelineId, fact.occurrence.end?.timelineId,
+    ...fact.knowledge.flatMap(value => [value.acquisition.start.timelineId, value.acquisition.end?.timelineId])]).filter((value): value is string => value !== undefined));
+  for (const value of timelineBindings) {
+    if (!isPlainRecord(value) || typeof value.sourceTimelineId !== "string" || typeof value.targetTimelineId !== "string") return fail("story:timeline-bindings-invalid");
+    if (!timelineRefs.has(value.sourceTimelineId)) continue;
+    const readRef = `fiction-timeline:${value.targetTimelineId}`;
+    if (!readBindings.has(readRef) || authorityRevisionOrHash(state, readRef) === null) return fail("story:unfrozen-admitted-timeline");
+    add(value.sourceTimelineId, value.targetTimelineId, "basis");
+  }
   const saved = preparedStoryMappings(context, entry.preparationHash);
   for (const [ref, authorityRef] of savedIdentities(preparation, saved)) {
     // Current state and read evidence must prove every reused identity; the
