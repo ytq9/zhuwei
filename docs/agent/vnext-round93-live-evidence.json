@@ -1,0 +1,335 @@
+{
+  "round": 93,
+  "verifiedAt": "2026-09-09T12:25:54.892581+00:00",
+  "verdict": "First sentence committed and its player-root narration published on the relevance-frozen context (848bf25 + d18288a): the offer request measured 32,289 estimated / 27,811 real prompt tokens with only Varo's decision snapshot frozen (Lian and Naes bystanders excluded), the filling request 39,007 / 34,383 with [social] selected. Varo agreed to copy the will: PromiseMade, PromiseTermsEstablished and NpcWorkProposed committed, NPC work selected [authorItem, materializeItem, inventoryOperation] and filled in the same HTTP. The reply-root narration was generated but its review hit the local 7-call cap (batch harness only; production sets no cap), leaving that root retryable; the runner then refused its own recovery because it counted the cap-blocked review as a telemetry inconsistency. No second or third sentence. Round92 before it stopped at setup on stale snapshot SQL with zero model calls.",
+  "sourceCommit": "d18288a6648ca86500e7fe8bc6199bbab07c2c15",
+  "sourceManifestSha256": "9b9ee7b9ff2f16505e4d4cb9cdfeac6a551ba7b7019ae0f7c9f4d2a8bcc47a6a",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v51",
+  "scenario": "hours-scale three sentences (same as rounds 82-91)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round93-npc-http-67d65d5f-d533-42ef-ba1d-e11c36a358e0",
+      "action": "committed",
+      "narration": "retryableFailure",
+      "modelCalls": 7,
+      "budgetChecks": {
+        "perHttp": true,
+        "total": true,
+        "money": true
+      }
+    }
+  ],
+  "captures": [
+    {
+      "ordinal": 1,
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "thinking": "disabled",
+      "promptTokens": 27811,
+      "completionTokens": 46,
+      "cacheHit": 0,
+      "cacheMiss": 27811,
+      "responseTool": "offer_kp_proposal_bundle",
+      "requestedCapabilities": [
+        "social"
+      ],
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ],
+      "factEntries": 3,
+      "knowledgeEntries": 8
+    },
+    {
+      "ordinal": 2,
+      "tools": [
+        "submit_kp_proposal_bundle",
+        "offer_kp_proposal_bundle"
+      ],
+      "thinking": "disabled",
+      "promptTokens": 34383,
+      "completionTokens": 983,
+      "cacheHit": 896,
+      "cacheMiss": 33487,
+      "responseTool": "submit_kp_proposal_bundle",
+      "decision": "directSuccess",
+      "steps": [
+        "social"
+      ],
+      "results": [
+        "social"
+      ],
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ],
+      "factEntries": 3,
+      "knowledgeEntries": 8
+    },
+    {
+      "ordinal": 3,
+      "tools": [
+        "select_npc_work_schema"
+      ],
+      "thinking": "disabled",
+      "promptTokens": 10578,
+      "completionTokens": 57,
+      "cacheHit": 0,
+      "cacheMiss": 10578,
+      "responseTool": "select_npc_work_schema",
+      "requestedCapabilities": [
+        "authorItem",
+        "materializeItem",
+        "inventoryOperation"
+      ],
+      "contextEntries": 28,
+      "npcDecisionSnapshots": [],
+      "factEntries": 0,
+      "knowledgeEntries": 7
+    },
+    {
+      "ordinal": 4,
+      "tools": [
+        "submit_kp_proposal_bundle"
+      ],
+      "thinking": "disabled",
+      "promptTokens": 22787,
+      "completionTokens": 653,
+      "cacheHit": 896,
+      "cacheMiss": 21891,
+      "responseTool": "submit_kp_proposal_bundle",
+      "decision": "directSuccess",
+      "steps": [
+        "materializeDefinition",
+        "materializeItem"
+      ],
+      "results": [],
+      "contextEntries": 28,
+      "npcDecisionSnapshots": [],
+      "factEntries": 0,
+      "knowledgeEntries": 7
+    },
+    {
+      "ordinal": 5,
+      "tools": [],
+      "thinking": "enabled",
+      "promptTokens": 1900,
+      "completionTokens": 247,
+      "cacheHit": 1408,
+      "cacheMiss": 492,
+      "responseKind": "json_object"
+    },
+    {
+      "ordinal": 6,
+      "tools": [
+        "review_frozen_narration"
+      ],
+      "thinking": "disabled",
+      "promptTokens": 3085,
+      "completionTokens": 168,
+      "cacheHit": 1536,
+      "cacheMiss": 1549,
+      "responseTool": "review_frozen_narration"
+    },
+    {
+      "ordinal": 7,
+      "tools": [],
+      "thinking": "enabled",
+      "promptTokens": 3245,
+      "completionTokens": 108,
+      "cacheHit": 1408,
+      "cacheMiss": 1837,
+      "responseKind": "json_object"
+    }
+  ],
+  "invocations": [
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "estimatedInputTokens": 32289,
+      "allowedInputTokens": 58000,
+      "inputTokens": 27811,
+      "outputTokens": 46,
+      "durationMs": 1981,
+      "result": "success"
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 2,
+      "estimatedInputTokens": 39007,
+      "allowedInputTokens": 58000,
+      "inputTokens": 34383,
+      "outputTokens": 983,
+      "durationMs": 8060,
+      "result": "success"
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "npcWork",
+      "modelResult": "success",
+      "durationMs": 909
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "npcWork",
+      "modelResult": "success",
+      "durationMs": 5664
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "initialNarration",
+      "modelResult": "success",
+      "durationMs": 3056
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "narrationReview",
+      "modelResult": "success",
+      "durationMs": 1173
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "initialNarration",
+      "modelResult": "success",
+      "durationMs": 1580
+    },
+    {
+      "eventName": "room.model.invocation.completed",
+      "modelInvocationPurpose": "narrationReview",
+      "modelResult": "modelTransient",
+      "durationMs": 34
+    }
+  ],
+  "authorityAfterBatch": {
+    "stateVersion": "11",
+    "events": [
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "PromiseMade",
+      "PromiseTermsEstablished",
+      "NpcWorkProposed",
+      "WorldInteractionResolved"
+    ],
+    "knowledgeCounts": {
+      "character:73df97cf-e0ad-44d3-a5bf-fb60d33c961f": 5,
+      "npc:black-oak-will:echo": 3,
+      "npc:black-oak-will:lian": 6,
+      "npc:black-oak-will:naes": 6,
+      "npc:black-oak-will:varo": 7
+    },
+    "promises": [
+      {
+        "promisorId": "npc:black-oak-will:varo",
+        "status": "active"
+      }
+    ],
+    "npcPlans": [
+      {
+        "npcId": "npc:black-oak-will:varo",
+        "status": "planned"
+      }
+    ]
+  },
+  "recovery": {
+    "attempted": true,
+    "sent": false,
+    "error": "BATCH_BUDGET_EXCEEDED",
+    "capability": {
+      "kind": "available",
+      "capability": "publish-capability:0c3f329c-647d-4631-9bd3-89bdd718243a",
+      "state": "retryableFailure",
+      "failureCode": "NARRATION_PROVIDER_TIMEOUT"
+    }
+  },
+  "meter": {
+    "calls": 7,
+    "inputTokens": 103789,
+    "outputTokens": 2262,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "peakCnyBudgetCharge": 0.331725,
+    "callTelemetryConsistent": false
+  },
+  "pricing": {
+    "window": "off-peak",
+    "chargedAt": "peak",
+    "model": "deepseek-v4-flash",
+    "peakCnyPerMillion": {
+      "hit": "0.10",
+      "miss": "3.0",
+      "output": "9.0"
+    },
+    "offPeakCnyPerMillion": {
+      "hit": "0.05",
+      "miss": "1.5",
+      "output": "4.5"
+    },
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5"
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "11",
+    "events": 11,
+    "eventTypes": [
+      "ActivityStarted",
+      "FictionTimeAdvanced",
+      "ActivityCompleted",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "SourceClaimCreated",
+      "KnowledgeAcquired",
+      "PromiseMade",
+      "PromiseTermsEstablished",
+      "NpcWorkProposed",
+      "WorldInteractionResolved"
+    ],
+    "checkedAt": "2026-09-09T12:24:03.768Z"
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "beforeCount": 389,
+    "afterCount": 389
+  },
+  "servicesShutdown": {
+    "capture": {
+      "pid": 3622,
+      "port": 4320,
+      "startedAt": "2026-09-09T12:20:16.019252+00:00",
+      "role": "capture",
+      "stoppedAt": "2026-09-09T12:24:02.233758+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCode": null,
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "pid": 3631,
+      "port": 4321,
+      "startedAt": "2026-09-09T12:20:16.206540+00:00",
+      "role": "game",
+      "stoppedAt": "2026-09-09T12:24:02.119311+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCode": null,
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  },
+  "round92": {
+    "status": "setup-failed",
+    "modelCalls": 0,
+    "reason": "snapshot-authority.py queried the retired authority_vnext_invocations table"
+  }
+}

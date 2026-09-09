@@ -4000,3 +4000,10 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 测试：更新 `kp-vnext-schema-retrieval`（依赖改软后显式选择）、`kp-vnext-npc-decision-context`（缺正文=目录行）、`kp-vnext-observable-context`（超长正文=不可引用的目录行）、provider-room 物品用例的显式 authorAbility；新增 `tests/kp-vnext-knowledge-relevance.test.mjs` 4 例。
 - 验证：typecheck exit 0；25 个 Node 上下文/发现/lowering/故事文件 221 过 0 红；schema-retrieval 另 4 红、fact-source 2 红、item-reference-surface 2 红、npc-plan-formation-rules 2 红均在未改代码的 HEAD worktree 同样失败；Vitest relevance 2/2、provider-room 13 红逐名同基线、promise-lifecycle-room 2 红与 npc-plan-formation-room 1 红同基线。`git diff --check` exit 0。
 - 未覆盖：真实批次待跑；fresh 房间的知识全是模组来源，分层减量要在累积对话后才出现；描述上提（第二档 schema 压缩）未做；NPC 工作帧（npc-work）仍全量加载本人知识。
+
+## 2026-09-09 真实批次 round92–94（相关性冻结上下文首次真实验证）
+
+- round92：setup 在初态快照停在已退役的 `authority_vnext_invocations` 表名，0 次模型调用；脚本改查 `story_creation_invocations`。
+- round93：首句提交。offer 估算 32,289 / 真实 27,811，填写 39,007 / 34,383；上下文 39 条目，只冻结瓦罗一个决策快照，实物事实 3 条。瓦罗答应抄副本，承诺与 NPC 工作同 HTTP 内选择填写（10,578 / 22,787）。回复根旁白审核撞到跑批工具的本地 7 次上限（生产无此上限），未发布；跑批脚本又把该空审核算成遥测不一致而拒绝了自己的恢复请求。7 次调用，¥0.331725（峰值计），replay 精确，11 事件。见 [round93 回执](agent/vnext-round93-validation.md)。
+- round94：本地上限 10，脚本单独计数被拦事件。首句填写稿把 `item-definition:…:first-will` 写进承诺主体，Rules 预检 `social:promise-terms-context-unavailable` 拒绝，诊断无字段路径，替换稿原样保留，3 次调用后 needsKp，0 事件。上下文与 round93 完全同构，与本次改动无关。¥0.315663（峰值计）。见 [round94 回执](agent/vnext-round94-validation.md)。
+- 三批合计 10 次真实调用、201,390 输入 / 4,802 输出、峰值价 ¥0.647388，实际处于空闲时段。真实/估算比稳定在 0.86–0.88。第二、三句在两批里都没有跑到，不能据此声称完整场景通过。
