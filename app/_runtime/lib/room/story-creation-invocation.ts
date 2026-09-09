@@ -190,6 +190,13 @@ export type StoryHistoryMaterialResult =
   | StoryStoreFailure;
 
 export type StoryStoreArchiveSource = Readonly<{ roomId: string; runtimeEpochId: string }>;
+/** Derived by the trusted archive validator before same-room restoration.
+ * Fences survive eviction without rewriting the archived invocation ledger. */
+export type StoryStoreDispatchQuarantine = Readonly<{
+  invocationIds: readonly string[];
+  sourceBudgetAccountIds: readonly string[];
+  enforcement?: "hostRequiredBeforeRestoreExposure";
+}>;
 /** Private same-room disaster recovery, including unfinished jobs, budget
  * holds and dispatch permits. This is broader than admitted history material:
  * only the trusted system archive may store it. Never use it as a Viewer

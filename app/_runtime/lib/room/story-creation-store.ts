@@ -10,7 +10,7 @@ import type {
   StoryInvocationReservation, StoryInvocationResult, StoryInvocationSnapshot,
   StoryInvocationStatus, StoryJobSnapshot, StoryMeasuredUsage, StoryStoreFailure,
   StoryExternalInvocationRead, StoryHistoryMaterialResult, StoryHistoryMaterialSnapshot,
-  StoryStoreArchiveResult, StoryStoreArchiveSnapshot, StoryStoreArchiveSource, StoryStoreRestoreResult,
+  StoryStoreArchiveResult, StoryStoreArchiveSnapshot, StoryStoreArchiveSource, StoryStoreDispatchQuarantine, StoryStoreRestoreResult,
 } from "./story-creation-invocation";
 
 type AccountRow = { account_id: string; scope_key: string; kind: string; binding_json: string;
@@ -44,6 +44,9 @@ const nonempty = (value: unknown): value is string => typeof value === "string" 
 export class StoryCreationStore {
   constructor(private readonly storage: DurableObjectStorage, private readonly ports: {
     hash(value: unknown): StoryHash; now?: () => number; newId?: () => string;
+    /** Synchronous SQL-only callback on this storage. Its writes belong to
+     * the same transaction and roll back with a later outer host failure. */
+    onMutation?: () => void;
   }) {}
 
   ensureSchema(): void {
@@ -77,6 +80,9 @@ export class StoryCreationStore {
       );
       CREATE TABLE IF NOT EXISTS story_creation_material_manifest (
         preparation_hash TEXT PRIMARY KEY, job_id TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS story_creation_dispatch_quarantine (
+        kind TEXT NOT NULL, reference_id TEXT NOT NULL, PRIMARY KEY (kind, reference_id)
       );
     `);
   }
@@ -113,6 +119,7 @@ export class StoryCreationStore {
         if (existing.opportunity_key !== opportunityKey || existing.identity_hash !== identityHash) invalid();
         return { kind: "opened", job: this.snapshot(existing), reused: true };
       }
+      if (this.sourceQuarantined(request.source.budgetAccountId)) invalid("STORY_INVOCATION_UNKNOWN");
       this.ensureBudget(request.source, budget);
       this.ensureAccount(`story-job:${request.jobId}`, `job:${request.jobId}`, "job",
         { identityHash, policyRef: budget.policyRef }, budget.job);
@@ -172,10 +179,12 @@ export class StoryCreationStore {
       this.storage.sql.exec("UPDATE story_creation_jobs SET checkpoint_json = ? WHERE job_id = ?", this.json(next), next.jobId);
       if (next.status !== "preparing") {
         this.rebookJob(row, ZERO);
-        // A reserved call has never received a dispatch permit. Closing its
-        // checkpoint can safely release it; dispatched/unknown costs remain.
+        // Local reservations have not received a permit. An archived
+        // reservation may have dispatched after backup capture, so its
+        // quarantine retains the original hold even when closing this job.
         for (const pending of this.storage.sql.exec<InvocationRow>(
           "SELECT * FROM story_creation_invocations WHERE job_id = ? AND status = 'reserved'", next.jobId).toArray()) {
+          if (this.invocationQuarantined(pending)) continue;
           this.rebook(pending, ZERO, ZERO);
           this.storage.sql.exec("UPDATE story_creation_invocations SET status = 'notSent' WHERE invocation_id = ?", pending.invocation_id);
         }
@@ -200,6 +209,7 @@ export class StoryCreationStore {
       const key = this.hash({ job: request.jobId, stage: request.stage });
       const existing = this.invocationByKey(key);
       if (existing !== undefined) return this.resumeReservation(existing, requestHash, input.reservation);
+      if (this.sourceQuarantined(row.source_account_id)) invalid("STORY_INVOCATION_UNKNOWN");
       if (!stageAllowed(job.checkpoint, request.stage)) invalid("STORY_CHECKPOINT_CONFLICT");
       let unallocated = parse<StoryBudgetAmount>(row.unallocated_json);
       if (request.stage === "revision") {
@@ -225,6 +235,7 @@ export class StoryCreationStore {
       const requestHash = this.hash(input), key = this.hash({ source: this.sourceKey(input.source), key: input.invocationKey });
       const existing = this.invocationByKey(key);
       if (existing !== undefined) return this.resumeReservation(existing, requestHash, input.reservation);
+      if (this.sourceQuarantined(input.source.budgetAccountId)) invalid("STORY_INVOCATION_UNKNOWN");
       return this.reserve({ key, jobId: null, stage: null, purpose: input.purpose, requestHash,
         providerRequest: input.providerRequest, modelRef: input.modelRef, reservation: input.reservation,
         accountIds: [input.source.budgetAccountId, input.roomAccountId], externalBinding: input });
@@ -248,6 +259,9 @@ export class StoryCreationStore {
   startInvocation(input: StoryInvocationIdentity): StartStoryInvocationResult {
     return this.atomic<StartStoryInvocationResult>(() => {
       const row = this.ownedInvocation(input);
+      if (["reserved", "started", "unknown", "notSent"].includes(row.status) && this.invocationQuarantined(row)) {
+        return { kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" };
+      }
       if (row.status !== "reserved") return this.resumeResult(row);
       if (!this.currentlyEligible(row)) invalid("STORY_CHECKPOINT_CONFLICT");
       const now = this.now(), reserve = parse<StoryInvocationReservation>(row.reservation_json);
@@ -384,11 +398,14 @@ export class StoryCreationStore {
   }
 
   /** Host authentication, Room emptiness, signed archive/head validation and
-   * the outer restore transaction belong to the Room adapter. */
-  restoreArchiveSnapshot(input: { source: StoryStoreArchiveSource; snapshot: StoryStoreArchiveSnapshot }): StoryStoreRestoreResult {
+   * the outer restore transaction belong to the Room adapter. Restored send
+   * fences are committed before this returns; no old permit is reactivated. */
+  restoreArchiveSnapshot(input: { source: StoryStoreArchiveSource; snapshot: StoryStoreArchiveSnapshot;
+    quarantine: StoryStoreDispatchQuarantine }): StoryStoreRestoreResult {
     return this.atomic<StoryStoreRestoreResult>(() => {
       if (!this.isEmpty()) invalid();
       this.validateArchive(input.snapshot, input.source);
+      this.validateQuarantine(input.snapshot, input.quarantine);
       const snapshot = input.snapshot;
       for (const row of snapshot.accounts) {
         this.storage.sql.exec(`INSERT INTO story_creation_accounts
@@ -418,8 +435,10 @@ export class StoryCreationStore {
       }
       for (const binding of snapshot.admissionBindings) {
         const { bindingHash, ...body } = binding;
-        const result = this.prepareAdmission(body);
-        if (result.kind !== "saved" || result.binding.bindingHash !== bindingHash) invalid();
+        this.validateAdmissionBinding(body);
+        if (this.hash(body) !== bindingHash) invalid();
+        this.storage.sql.exec(`INSERT INTO story_creation_admission_bindings
+          (prepared_action_id, binding_json) VALUES (?, ?)`, binding.preparedActionId, this.json(binding));
       }
       // Restore the independent manifest before validating all receipts as a
       // whole. Missing data must never be reinterpreted as an empty history.
@@ -434,6 +453,10 @@ export class StoryCreationStore {
       this.historyMaterials();
       // No replay of reserve/start/complete is permitted during restoration.
       if (this.captureArchive(input.source).snapshotHash !== snapshot.snapshotHash) invalid();
+      for (const id of input.quarantine.invocationIds) this.storage.sql.exec(
+        "INSERT INTO story_creation_dispatch_quarantine (kind, reference_id) VALUES ('invocation', ?)", id);
+      for (const id of input.quarantine.sourceBudgetAccountIds) this.storage.sql.exec(
+        "INSERT INTO story_creation_dispatch_quarantine (kind, reference_id) VALUES ('source', ?)", id);
       return { kind: "restored", snapshotHash: snapshot.snapshotHash };
     });
   }
@@ -442,11 +465,12 @@ export class StoryCreationStore {
     return this.storage.sql.exec<{ count: number }>(`SELECT
       (SELECT COUNT(*) FROM story_creation_accounts) + (SELECT COUNT(*) FROM story_creation_jobs)
       + (SELECT COUNT(*) FROM story_creation_invocations) + (SELECT COUNT(*) FROM story_creation_admissions)
-      + (SELECT COUNT(*) FROM story_creation_admission_bindings) + (SELECT COUNT(*) FROM story_creation_material_manifest) AS count`).one().count === 0;
+      + (SELECT COUNT(*) FROM story_creation_admission_bindings) + (SELECT COUNT(*) FROM story_creation_material_manifest)
+      + (SELECT COUNT(*) FROM story_creation_dispatch_quarantine) AS count`).one().count === 0;
   }
 
   clearForRoomDeletion(): void {
-    this.storage.transactionSync(() => this.storage.sql.exec(`DELETE FROM story_creation_material_manifest;
+    this.transaction(() => this.storage.sql.exec(`DELETE FROM story_creation_dispatch_quarantine; DELETE FROM story_creation_material_manifest;
       DELETE FROM story_creation_admissions; DELETE FROM story_creation_admission_bindings;
       DELETE FROM story_creation_invocations; DELETE FROM story_creation_jobs; DELETE FROM story_creation_accounts;`));
   }
@@ -824,6 +848,9 @@ export class StoryCreationStore {
 
   private resumeReservation(row: InvocationRow, requestHash: StoryHash, reservation: StoryInvocationReservation): StoryInvocationResult {
     if (row.request_hash !== requestHash || this.hash(parse(row.reservation_json)) !== this.hash(reservation)) invalid();
+    if (["reserved", "started", "unknown", "notSent"].includes(row.status) && this.invocationQuarantined(row)) {
+      return { kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" };
+    }
     if (row.status === "notSent") {
       if (!this.currentlyEligible(row)) invalid("STORY_CHECKPOINT_CONFLICT");
       this.rebook(row, ZERO, { ...reservation, calls: 1 }, true);
@@ -874,6 +901,29 @@ export class StoryCreationStore {
     if (row.job_id === null) return true;
     const job = this.readJob(row.job_id);
     return job !== undefined && row.stage !== null && stageAllowed(job.checkpoint, row.stage);
+  }
+
+  private validateQuarantine(snapshot: StoryStoreArchiveSnapshot, quarantine: StoryStoreDispatchQuarantine): void {
+    if (!exact(quarantine, ["invocationIds", "sourceBudgetAccountIds"], ["enforcement"])
+      || (quarantine.enforcement !== undefined && quarantine.enforcement !== "hostRequiredBeforeRestoreExposure")
+      || !uniqueStrings(quarantine.invocationIds) || !uniqueStrings(quarantine.sourceBudgetAccountIds)) invalid();
+    const pending = new Set(snapshot.invocations.filter(row => ["reserved", "started", "unknown", "notSent"].includes(row.invocation.status))
+      .map(row => row.invocation.invocationId));
+    if (pending.size !== quarantine.invocationIds.length || quarantine.invocationIds.some(id => !pending.has(id))) invalid();
+    const sources = new Set(quarantine.sourceBudgetAccountIds);
+    if (quarantine.sourceBudgetAccountIds.some(id => !snapshot.accounts.some(row => row.accountId === id && row.kind === "source"))
+      || snapshot.jobs.some(row => !sources.has(row.input.request.source.budgetAccountId))
+      || snapshot.invocations.some(row => row.externalBinding !== null && !sources.has(row.externalBinding.source.budgetAccountId))) invalid();
+  }
+
+  private sourceQuarantined(accountId: string): boolean {
+    return this.storage.sql.exec("SELECT reference_id FROM story_creation_dispatch_quarantine WHERE kind = 'source' AND reference_id = ?", accountId)
+      .toArray().length > 0;
+  }
+
+  private invocationQuarantined(row: InvocationRow): boolean {
+    return this.storage.sql.exec("SELECT reference_id FROM story_creation_dispatch_quarantine WHERE kind = 'invocation' AND reference_id = ?", row.invocation_id)
+      .toArray().length > 0 || parse<string[]>(row.account_ids_json).some(id => this.sourceQuarantined(id));
   }
 
   private rebook(row: InvocationRow, spent: StoryBudgetAmount, held: StoryBudgetAmount, limit = false): void {
@@ -975,8 +1025,17 @@ export class StoryCreationStore {
     return now;
   }
   private newId(): string { return (this.ports.newId ?? (() => crypto.randomUUID()))(); }
+  private transaction<T>(operation: () => T): T {
+    return this.storage.transactionSync(() => {
+      const before = this.storage.sql.exec<{ count: number }>("SELECT total_changes() AS count").one().count;
+      const result = operation();
+      const after = this.storage.sql.exec<{ count: number }>("SELECT total_changes() AS count").one().count;
+      if (after !== before) this.ports.onMutation?.();
+      return result;
+    });
+  }
   private atomic<T>(operation: () => T): T | StoryStoreFailure {
-    try { return this.storage.transactionSync(operation); }
+    try { return this.transaction(operation); }
     catch (error) { if (error instanceof StoreInputError) return { kind: "rejected", code: error.code }; throw error; }
   }
 }

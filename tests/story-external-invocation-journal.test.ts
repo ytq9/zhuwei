@@ -136,3 +136,73 @@ it("begin and the host protocol mapping roll back in one outer Room transaction"
     expect(journal.begin(input).kind).toBe("ready");
   });
 });
+
+it("restored external calls preserve completed data and quarantine every pending status and changed semantic key", async () => {
+  const room = stub("archive-quarantine"), completedInput = binding();
+  let permits = 0;
+  const saved = await withJournal(room, (journal, store) => {
+    const completed = journal.begin(completedInput);
+    if (completed.kind !== "ready") throw new Error("expected initial permit");
+    permits++;
+    journal.complete(completedInput, { ...completed, result: { kind: "completed", response: { original: true },
+      usage: { inputTokens: 10, outputTokens: 20, costMicros: 30 } } });
+    const pending = ["reserved", "started", "unknown", "notSent"].map(status => {
+      const input = { ...binding(), invocationKey: `pending:${status}` };
+      const { budget: _budget, ...request } = input;
+      const identity = status === "reserved" ? store.reserveExternalInvocation(request) : journal.begin(input);
+      if (identity.kind !== "ready" && identity.kind !== "reserved") throw new Error("expected initial reservation or permit");
+      if (identity.kind === "ready") permits++;
+      if (status === "unknown" || status === "notSent") {
+        expect(journal.complete(input, { ...identity, result: { kind: status } }).kind).toBe("saved");
+      }
+      return { input, identity, status };
+    });
+    const source = { roomId: completedInput.source.roomId, runtimeEpochId: completedInput.source.runtimeEpochId };
+    const archived = store.archiveSnapshot(source);
+    if (archived.kind !== "available") throw new Error("expected archive");
+    store.clearForRoomDeletion();
+    return { source, snapshot: archived.snapshot, completed, pending, quarantine: {
+      invocationIds: pending.map(value => value.identity.invocationId), sourceBudgetAccountIds: [completedInput.source.budgetAccountId],
+    } };
+  });
+  const originalPermits = permits;
+  await withJournal(room, (_journal, _store, storage) => {
+    let mutations = 0;
+    const store = new StoryCreationStore(storage, { hash, now: () => 90_000, onMutation: () => { mutations++; } });
+    expect(store.restoreArchiveSnapshot({ source: saved.source, snapshot: saved.snapshot, quarantine: saved.quarantine }).kind).toBe("restored");
+    expect(mutations).toBe(1);
+    const journal = createStoryExternalInvocationJournal(store);
+    expect(journal.begin(completedInput)).toEqual({ kind: "completed", invocationId: saved.completed.invocationId, response: { original: true } });
+    for (const { input, identity, status } of saved.pending) {
+      const result = journal.begin(input);
+      if (result.kind === "ready") permits++;
+      expect(result).toEqual({ kind: "waiting", invocationId: identity.invocationId, code: "STORY_INVOCATION_UNKNOWN" });
+      expect(store.startInvocation(identity)).toEqual({ kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" });
+      expect(journal.read(input, identity.invocationId)).toMatchObject({ kind: "found", invocation: { status } });
+    }
+    for (const purpose of ["proposal", "narration", "npc", "context"] as const) {
+      const input = { ...binding(purpose), invocationKey: `unseen-after-restore:${purpose}` };
+      const result = journal.begin(input);
+      if (result.kind === "ready") permits++;
+      expect(result).toEqual({ kind: "rejected", code: "STORY_INVOCATION_UNKNOWN" });
+      expect(journal.read(input)).toEqual({ kind: "missing" });
+    }
+    expect(permits).toBe(originalPermits); expect(mutations).toBe(1);
+    expect(store.archiveSnapshot(saved.source)).toEqual({ kind: "available", snapshot: saved.snapshot });
+    const unknown = saved.pending.find(value => value.status === "unknown")!;
+    expect(journal.complete(unknown.input, { ...unknown.identity, result: { kind: "completed", response: { late: true } } }).kind).toBe("saved");
+    expect(mutations).toBe(2);
+    expect(journal.begin(unknown.input)).toEqual({ kind: "completed", invocationId: unknown.identity.invocationId, response: { late: true } });
+    expect(journal.begin({ ...completedInput, invocationKey: "still-fenced-after-late-result" }))
+      .toEqual({ kind: "rejected", code: "STORY_INVOCATION_UNKNOWN" });
+    expect(mutations).toBe(2); expect(permits).toBe(originalPermits);
+  });
+  await evictDurableObject(room);
+  await withJournal(room, (journal, store) => {
+    const before = store.readBudget(completedInput.source.budgetAccountId);
+    expect(journal.begin({ ...completedInput, invocationKey: "unseen-after-eviction" }))
+      .toEqual({ kind: "rejected", code: "STORY_INVOCATION_UNKNOWN" });
+    expect(journal.begin(completedInput)).toMatchObject({ kind: "completed", response: { original: true } });
+    expect(store.readBudget(completedInput.source.budgetAccountId)).toEqual(before);
+  }, 900_000);
+});

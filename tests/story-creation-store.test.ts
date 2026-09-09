@@ -9,7 +9,7 @@ import type {
 } from "../app/_runtime/lib/room/story-creation/contracts";
 import type {
   OpenStoryJob, StoryBudgetAmount, StoryInvocationIdentity, StoryInvocationReservation,
-  ReserveStoryInvocation, StoryAdmissionBindingInput, StoryAdmissionReceipt,
+  ReserveStoryInvocation, StoryAdmissionBindingInput, StoryAdmissionReceipt, StoryStoreArchiveSnapshot, StoryStoreDispatchQuarantine,
 } from "../app/_runtime/lib/room/story-creation-invocation";
 
 const hash = (value: unknown) => canonicalSha256(value) as StoryHash;
@@ -32,6 +32,11 @@ function fixture(id = "one", sourceId = "root-one"): OpenStoryJob {
   budget: { policyRef: ref("budget"), roomAccountId: "room-budget", job: limits(4), source: limits(10), room: limits(20) } };
 }
 const stub = (name: string) => env.ROOMS.getByName(`story-store-${name}`);
+function dispatchQuarantine(snapshot: StoryStoreArchiveSnapshot): StoryStoreDispatchQuarantine {
+  return { enforcement: "hostRequiredBeforeRestoreExposure",
+    invocationIds: snapshot.invocations.filter(row => ["reserved", "started", "unknown", "notSent"].includes(row.invocation.status))
+      .map(row => row.invocation.invocationId), sourceBudgetAccountIds: snapshot.accounts.filter(row => row.kind === "source").map(row => row.accountId) };
+}
 type Stub = ReturnType<typeof stub>;
 async function withStore<T>(room: Stub, callback: (store: StoryCreationStore, storage: DurableObjectStorage) => T, now = 1_000): Promise<T> {
   return runInDurableObject(room, (_instance, context) => {
@@ -127,6 +132,57 @@ it("keeps one opportunity identity and fixed source/room accounts across job ali
   });
   await evictDurableObject(room);
   expect(await withStore(room, store => store.openJob(input))).toMatchObject({ kind: "opened", reused: true });
+});
+
+it("marks only successful SQL mutations inside the same transaction and keeps idempotent reads clean", async () => {
+  const input = fixture();
+  await runInDurableObject(stub("mutation-callback"), (_instance, context) => {
+    const storage = context.storage;
+    storage.sql.exec("CREATE TABLE story_dirty_test (changes INTEGER NOT NULL); INSERT INTO story_dirty_test VALUES (0)");
+    const dirty = () => storage.sql.exec<{ changes: number }>("SELECT changes FROM story_dirty_test").one().changes;
+    const onMutation = () => { storage.sql.exec("UPDATE story_dirty_test SET changes = changes + 1"); };
+    const store = new StoryCreationStore(storage, { hash, now: () => 1_000, onMutation });
+    store.ensureSchema(); store.ensureSchema(); store.clearForRoomDeletion();
+    store.readJob(input.request.jobId); store.readBudget(input.budget.roomAccountId); store.exportHistoryMaterials();
+    expect(dirty()).toBe(0);
+    expect(store.openJob(input).kind).toBe("opened"); expect(dirty()).toBe(1);
+    expect(store.openJob(input)).toMatchObject({ kind: "opened", reused: true });
+    expect(store.openBudget({ source: input.request.source, budget: input.budget }).kind).toBe("opened");
+    expect(dirty()).toBe(1);
+    const identity = reserve(store, input); expect(dirty()).toBe(2);
+    expect(store.reserveInvocation(modelInput(input))).toMatchObject({ kind: "reserved", ...identity });
+    expect(dirty()).toBe(2);
+    expect(store.startInvocation(identity).kind).toBe("ready"); expect(dirty()).toBe(3);
+    expect(store.startInvocation(identity).kind).toBe("waiting"); expect(dirty()).toBe(3);
+    const draft = preparation(input), completion = { ...identity, result: { kind: "completed" as const, response: { draft } } };
+    expect(store.completeInvocation(completion).kind).toBe("saved"); expect(dirty()).toBe(4);
+    expect(store.completeInvocation(completion).kind).toBe("saved");
+    expect(store.reserveInvocation(modelInput(input))).toEqual({ kind: "completed", response: { draft } });
+    const next = checkpoint(input, 1, { draft });
+    expect(store.checkpoint({ expectedRevision: 0, next }).ok).toBe(true); expect(dirty()).toBe(5);
+    expect(store.checkpoint({ expectedRevision: 0, next }).ok).toBe(true);
+    expect(store.checkpoint({ expectedRevision: 1, next: { ...next, revision: 9 } }).ok).toBe(false);
+    const source = { roomId: input.request.source.roomId, runtimeEpochId: input.request.source.runtimeEpochId };
+    expect(store.archiveSnapshot(source).kind).toBe("available"); expect(dirty()).toBe(5);
+    const other = fixture("rollback", "root-rollback");
+    expect(() => storage.transactionSync(() => {
+      expect(store.openJob(other).kind).toBe("opened"); expect(dirty()).toBe(6);
+      throw new Error("host write failed after Store mutation");
+    })).toThrow("host write failed after Store mutation");
+    expect(dirty()).toBe(5); expect(store.readJob(other.request.jobId)).toBeUndefined();
+    const failing = new StoryCreationStore(storage, { hash, onMutation() { onMutation(); throw new Error("dirty generation write failed"); } });
+    expect(() => failing.openJob(other)).toThrow("dirty generation write failed");
+    expect(dirty()).toBe(5); expect(store.readJob(other.request.jobId)).toBeUndefined();
+    const archived = store.archiveSnapshot(source);
+    if (archived.kind !== "available") throw new Error("expected archive");
+    store.clearForRoomDeletion(); expect(dirty()).toBe(6);
+    store.clearForRoomDeletion(); expect(dirty()).toBe(6);
+    const quarantine = dispatchQuarantine(archived.snapshot);
+    expect(store.restoreArchiveSnapshot({ source, snapshot: archived.snapshot, quarantine }).kind).toBe("restored");
+    expect(dirty()).toBe(7);
+    expect(store.restoreArchiveSnapshot({ source, snapshot: archived.snapshot, quarantine }).kind).toBe("rejected");
+    expect(dirty()).toBe(7);
+  });
 });
 
 it("refuses missing context and nonfinite budget policy before storing a job", async () => {
@@ -613,31 +669,32 @@ it("archives and restores exact same-room operational state without replenishing
     const archived = store.archiveSnapshot(source);
     expect(archived.kind).toBe("available");
     if (archived.kind !== "available") throw new Error("expected archive");
-    expect(store.restoreArchiveSnapshot({ source, snapshot: archived.snapshot }).kind).toBe("rejected");
-    return { snapshot: archived.snapshot, started, unknown, materials: store.exportHistoryMaterials() };
+    const quarantine = dispatchQuarantine(archived.snapshot);
+    expect(store.restoreArchiveSnapshot({ source, snapshot: archived.snapshot, quarantine }).kind).toBe("rejected");
+    return { snapshot: archived.snapshot, quarantine, started, unknown, materials: store.exportHistoryMaterials() };
   });
   await evictDurableObject(room);
   await withStore(room, (store, storage) => {
     expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot });
     store.clearForRoomDeletion();
     for (const other of [{ ...source, roomId: "other-room" }, { ...source, runtimeEpochId: "other-epoch" }]) {
-      expect(store.restoreArchiveSnapshot({ source: other, snapshot: saved.snapshot }).kind).toBe("rejected");
+      expect(store.restoreArchiveSnapshot({ source: other, snapshot: saved.snapshot, quarantine: saved.quarantine }).kind).toBe("rejected");
       expect(store.isEmpty()).toBe(true);
     }
     const { snapshotHash: _hash, ...body } = saved.snapshot;
     const missing = { ...body, jobs: body.jobs.filter(job => job.input.request.jobId !== input.request.jobId) };
-    expect(store.restoreArchiveSnapshot({ source, snapshot: { ...missing, snapshotHash: hash(missing) } }).kind).toBe("rejected");
+    expect(store.restoreArchiveSnapshot({ source, snapshot: { ...missing, snapshotHash: hash(missing) }, quarantine: saved.quarantine }).kind).toBe("rejected");
     expect(store.isEmpty()).toBe(true);
     const materialMissing = { ...body, admissions: [] };
-    expect(store.restoreArchiveSnapshot({ source, snapshot: { ...materialMissing, snapshotHash: hash(materialMissing) } }))
+    expect(store.restoreArchiveSnapshot({ source, snapshot: { ...materialMissing, snapshotHash: hash(materialMissing) }, quarantine: saved.quarantine }))
       .toEqual({ kind: "rejected", code: "STORY_CONTEXT_INSUFFICIENT" });
     expect(store.isEmpty()).toBe(true);
     expect(() => storage.transactionSync(() => {
-      expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot }).kind).toBe("restored");
+      expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot, quarantine: saved.quarantine }).kind).toBe("restored");
       throw new Error("outer archive restore interrupted");
     })).toThrow("outer archive restore interrupted");
     expect(store.isEmpty()).toBe(true);
-    expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot }))
+    expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot, quarantine: saved.quarantine }))
       .toEqual({ kind: "restored", snapshotHash: saved.snapshot.snapshotHash });
     expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot });
     expect(store.exportHistoryMaterials()).toEqual(saved.materials);
@@ -650,4 +707,71 @@ it("archives and restores exact same-room operational state without replenishing
     store.clearForRoomDeletion();
     expect(store.isEmpty()).toBe(true);
   }, 9_000);
+});
+
+it("same-room restore fences every pending story stage and its next stage while retaining completed responses", async () => {
+  const room = stub("quarantined-story-stages"), finished = fixture("finished", "root-finished");
+  const source = { roomId: finished.request.source.roomId, runtimeEpochId: finished.request.source.runtimeEpochId };
+  const saved = await withStore(room, store => {
+    const draft = preparation(finished);
+    store.openJob(finished); const completed = stageComplete(store, finished, "draft", { draft });
+    store.checkpoint({ expectedRevision: 0, next: checkpoint(finished, 1, { draft }) });
+    const stages = ["reserved", "started", "unknown", "notSent"].map(status => {
+      const input = fixture(status, `root-${status}`); store.openJob(input); const identity = reserve(store, input);
+      if (status !== "reserved") store.startInvocation(identity);
+      if (status === "unknown" || status === "notSent") store.completeInvocation({ ...identity, result: { kind: status } });
+      return { input, identity, status };
+    });
+    const archived = store.archiveSnapshot(source);
+    if (archived.kind !== "available") throw new Error("expected archive");
+    store.clearForRoomDeletion();
+    return { snapshot: archived.snapshot, quarantine: dispatchQuarantine(archived.snapshot), stages, completed, draft };
+  });
+  await withStore(room, (store, storage) => {
+    for (const quarantine of [
+      { ...saved.quarantine, invocationIds: saved.quarantine.invocationIds.slice(1) },
+      { ...saved.quarantine, sourceBudgetAccountIds: saved.quarantine.sourceBudgetAccountIds.filter(id => id !== finished.request.source.budgetAccountId) },
+      { ...saved.quarantine, sourceBudgetAccountIds: [...saved.quarantine.sourceBudgetAccountIds, "unknown-source-account"] },
+    ]) {
+      expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot, quarantine }).kind).toBe("rejected");
+      expect(store.isEmpty()).toBe(true);
+    }
+    const { snapshotHash: _hash, ...forged } = structuredClone(saved.snapshot);
+    const call = forged.invocations.find(row => row.invocation.status === "unknown")!;
+    const manipulated = { ...call.held, inputTokens: call.held.inputTokens - 1 };
+    Object.assign(call, { held: manipulated });
+    for (const account of forged.accounts.filter(row => call.accountIds.includes(row.accountId))) {
+      Object.assign(account, { held: { ...account.held, inputTokens: account.held.inputTokens - 1 } });
+    }
+    expect(store.restoreArchiveSnapshot({ source, snapshot: { ...forged, snapshotHash: hash(forged) }, quarantine: saved.quarantine }).kind).toBe("rejected");
+    expect(store.isEmpty()).toBe(true);
+    expect(store.restoreArchiveSnapshot({ source, snapshot: saved.snapshot, quarantine: saved.quarantine }).kind).toBe("restored");
+    const before = store.archiveSnapshot(source);
+    expect(store.startInvocation(saved.completed)).toEqual({ kind: "completed", response: { draft: saved.draft } });
+    expect(store.reserveInvocation(modelInput(finished))).toEqual({ kind: "completed", response: { draft: saved.draft } });
+    expect(store.reserveInvocation(modelInput(finished, "review"))).toEqual({ kind: "rejected", code: "STORY_INVOCATION_UNKNOWN" });
+    const alternate = { ...finished, request: { ...finished.request, jobId: "job-new-key", opportunityId: "opportunity-new-key" } };
+    expect(store.openJob(alternate)).toEqual({ kind: "rejected", code: "STORY_INVOCATION_UNKNOWN" });
+    expect(store.readJob(alternate.request.jobId)).toBeUndefined();
+    for (const stage of saved.stages) {
+      expect(store.reserveInvocation(modelInput(stage.input))).toEqual({ kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" });
+      expect(store.startInvocation(stage.identity)).toEqual({ kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" });
+      expect(store.readInvocation(stage.identity.invocationId)?.status).toBe(stage.status);
+    }
+    expect(store.archiveSnapshot(source)).toEqual(before);
+    expect(storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM authority_events").one().count).toBe(0);
+  }, 9_000);
+  await evictDurableObject(room);
+  await withStore(room, (store, storage) => {
+    const pending = saved.stages.find(stage => stage.status === "reserved")!, before = store.readInvocation(pending.identity.invocationId);
+    expect(store.startInvocation(pending.identity)).toEqual({ kind: "waiting", code: "STORY_INVOCATION_UNKNOWN" });
+    expect(store.archiveSnapshot(source)).toEqual({ kind: "available", snapshot: saved.snapshot });
+    expect(store.checkpoint({ expectedRevision: 0, next: checkpoint(pending.input, 1, { status: "rejected", failureCode: "STORY_CONTEXT_STALE" }) }).ok).toBe(true);
+    expect(store.readInvocation(pending.identity.invocationId)).toMatchObject({ ...before, eligible: false });
+    expect(store.readJob(pending.input.request.jobId)?.usage.held).toEqual({ ...reservation, calls: 1 });
+    storage.sql.exec(`DELETE FROM story_creation_accounts; DELETE FROM story_creation_jobs; DELETE FROM story_creation_invocations;
+      DELETE FROM story_creation_admissions; DELETE FROM story_creation_admission_bindings; DELETE FROM story_creation_material_manifest;`);
+    expect(store.isEmpty()).toBe(false);
+    store.clearForRoomDeletion(); expect(store.isEmpty()).toBe(true);
+  }, 90_000);
 });
