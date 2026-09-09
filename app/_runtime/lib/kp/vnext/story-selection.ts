@@ -1,6 +1,6 @@
 import { canonicalHash, deepFreeze } from "./canonical-json";
 import type { VNextRequiredContext } from "./required-context";
-import { storyLibraryCatalog } from "../../room/story-library";
+import { storyLibraryCatalog } from "../../room/story-library-catalog";
 
 /** These select preparation requirements, never a plot, ruling or player
  * commitment. The host derives the goal, authority scope and job identity. */

@@ -26,6 +26,9 @@ export type StoryLibraryOrigin =
   | Readonly<{ kind: "creationJob"; jobId: string }>
   | Readonly<{ kind: "historicalSeed"; source: StoryHistorySource; seedHash: StoryHash;
       cutEventSeq: string; baseline: StoryLibraryMappings;
+      /** Hash-verifiable provenance, without source events/jobs/accounts.
+       * Each child genesis commits its parent's genesisHash. */
+      timelineGenesisChain: readonly import("./archive").AuthoritativeRoomArchive["signedGenesis"][];
       timelineBindings: readonly Readonly<{ sourceTimelineId: string; targetTimelineId: string }>[] }>;
 
 /** Only historical seed mappings are retained here, as immutable source

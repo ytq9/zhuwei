@@ -65,6 +65,26 @@ export function bindStoryPreparationContext(input: Readonly<{
   const nonCitableRefs = new Set(original.references.citations.nonCitableRefs);
   const npcKnowledge = new Map(original.references.citations.npcKnowledge.map(value => [value.npcRef, new Set(value.refs)]));
   const materials = new Map(input.storyContext.materials.map(material => [material.ref, material]));
+  // A previously produced but unequipped Ability/item definition need not be
+  // discoverable from the actor's current equipment or scene graph. The
+  // receipt mapping selects its real identity; freeze that exact current
+  // record before normal producer dependency/Rules validation can use it.
+  const savedRefs = new Set(input.library?.mappings.definitions.flatMap(value => [value.authorityRef, ...value.definitionRefs]) ?? []);
+  for (const ref of savedRefs) {
+    const revisionOrHash = authorityRevisionOrHash(input.state, ref);
+    if (revisionOrHash === null) continue;
+    const existing = entries.get(ref);
+    if (existing) {
+      if (existing.kind !== "known" || existing.revisionOrHash !== revisionOrHash) return { kind: "rejected" as const, code: "STORY_CONTEXT_STALE" as const };
+      continue;
+    }
+    const value = input.state.entities[ref] ?? input.state.canonicalFacts[ref] ?? input.state.campaignRuntime.definitions[ref]
+      ?? input.state.combatRuntime.definitions[ref] ?? input.state.campaignRuntime.itemSystem.definitions[ref]
+      ?? input.state.campaignRuntime.itemSystem.entries[ref];
+    if (value === undefined) return { kind: "rejected" as const, code: "STORY_CONTEXT_INSUFFICIENT" as const };
+    entries.set(ref, { kind: "known", entryRef: ref, revisionOrHash, value: value as unknown as JsonValue });
+    nonCitableRefs.add(ref);
+  }
   for (const dependency of input.storyContext.readSet) {
     const revision = authorityRevisionOrHash(input.state, dependency.ref);
     // Story-only query witnesses are rechecked by Room, not offered as

@@ -15,7 +15,8 @@ import type { StoryArchiveValidationResult } from "./story-archive";
 import type { StoryAdmissionOwner, StoryHostingArtifact, StoryLibraryCatalog, StoryLibraryEntry, StoryLibraryJournal,
   StoryLibraryMappings, StoryLibraryOffer, StoryLibraryOrigin, StoryLibraryResolution, StoryLibraryRoom } from "./story-library-contracts";
 
-export const STORY_LIBRARY_CATALOG_REF = "story-library:catalog";
+import { validStoryAdmissionOwner } from "./story-library-catalog";
+export { STORY_LIBRARY_CATALOG_REF, storyLibraryCatalog, validStoryAdmissionOwner } from "./story-library-catalog";
 const hash = (value: unknown) => canonicalHash(value) as StoryHash;
 const same = (left: unknown, right: unknown) => hash(left) === hash(right);
 const isHash = (value: unknown): value is StoryHash => typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value);
@@ -23,10 +24,6 @@ const exact = (value: unknown, keys: readonly string[]): value is Record<string,
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 const fail = (): never => { throw new TypeError("STORY_LIBRARY_BINDING_INVALID"); };
 const emptyMappings = (): StoryLibraryMappings => ({ definitions: [], facts: [] });
-export function validStoryAdmissionOwner(value: unknown): value is StoryAdmissionOwner {
-  return exact(value, ["kind", "jobId"]) && value.kind === "creationJob" && typeof value.jobId === "string" && value.jobId.length > 0
-    || exact(value, ["kind", "libraryRef"]) && value.kind === "hostingArtifact" && isHash(value.libraryRef);
-}
 export const storyLibraryRef = (request: StoryRequest): StoryHash => hash({ source: {
   roomId: request.source.roomId, runtimeEpochId: request.source.runtimeEpochId, branchId: request.source.branchId }, opportunityId: request.opportunityId });
 export const storyLibraryOwner = (entry: StoryLibraryEntry): StoryAdmissionOwner => entry.origin.kind === "creationJob"
@@ -81,11 +78,12 @@ export function validateStoryLibraryEntry(value: unknown, room?: StoryLibraryRoo
       || !same(entry.room, { roomId: entry.artifact.request.source.roomId,
         runtimeEpochId: entry.artifact.request.source.runtimeEpochId, branchId: entry.artifact.request.source.branchId })) return fail();
   } else if (origin.kind === "historicalSeed") {
-    if (!exact(origin, ["kind", "source", "seedHash", "cutEventSeq", "baseline", "timelineBindings"]) || !isHash(origin.seedHash)
+    if (!exact(origin, ["kind", "source", "seedHash", "cutEventSeq", "baseline", "timelineBindings", "timelineGenesisChain"]) || !isHash(origin.seedHash)
       || !/^(0|[1-9][0-9]*)$/u.test(origin.cutEventSeq) || !exact(origin.source, ["roomId", "runtimeEpochId", "branchId", "archiveHash"])
       || !isHash(origin.source.archiveHash) || !exact(origin.baseline, ["definitions", "facts"])
       || !validStoryMaterialBindings(entry.artifact.preparation, origin.baseline.definitions, origin.baseline.facts)
       || !Array.isArray(origin.timelineBindings) || new Set(origin.timelineBindings.map(value => value.sourceTimelineId)).size !== origin.timelineBindings.length
+      || !Array.isArray(origin.timelineGenesisChain) || origin.timelineGenesisChain.length < 2
       || origin.timelineBindings.some(value => !exact(value, ["sourceTimelineId", "targetTimelineId"])
         || ![value.sourceTimelineId, value.targetTimelineId].every(value => typeof value === "string" && value.length > 0))
       || entry.libraryRef !== hash({ source: origin.source, preparationHash: entry.artifact.preparationHash, seedHash: origin.seedHash })) return fail();
@@ -164,24 +162,6 @@ export function buildStoryLibraryCatalogForScope(input: { room: StoryLibraryRoom
   return deepFreeze({ ...body, catalogHash: hash(body) });
 }
 
-export function storyLibraryCatalog(context: VNextRequiredContext): StoryLibraryCatalog | undefined {
-  const rows = context.entries.filter(value => value.entryRef === STORY_LIBRARY_CATALOG_REF);
-  if (!rows.length) return undefined;
-  const row = rows[0], value = row.kind === "known" ? row.value : undefined;
-  if (rows.length !== 1 || row.kind !== "known" || !exact(value, ["format", "room", "offers", "catalogHash"])
-    || value.format !== "zhuwei.story-library-catalog/v1" || !Array.isArray(value.offers)
-    || row.revisionOrHash !== hash(value) || !context.references.citations.nonCitableRefs.includes(STORY_LIBRARY_CATALOG_REF)) return fail();
-  const catalog = value as unknown as StoryLibraryCatalog, { catalogHash, ...body } = catalog;
-  if (hash(body) !== catalogHash || catalog.room.runtimeEpochId !== context.binding.roomEpochRef
-    || new Set(catalog.offers.map(offer => offer.libraryRef)).size !== catalog.offers.length
-    || catalog.offers.some(offer => !exact(offer, ["libraryRef", "opportunityId", "owner", "status", "preparationHash", "title", "centralQuestion", "sceneRefs", "entityRefs"])
-      || !isHash(offer.libraryRef) || !validStoryAdmissionOwner(offer.owner)
-      || !["preparing", "ready", "rejected", "noStory"].includes(offer.status)
-      || !(offer.preparationHash === null || isHash(offer.preparationHash))
-      || ![offer.opportunityId, offer.title, offer.centralQuestion].every(value => typeof value === "string" && value.length > 0)
-      || ![offer.sceneRefs, offer.entityRefs].every(refs => Array.isArray(refs) && refs.every(value => typeof value === "string" && value.length > 0)))) return fail();
-  return deepFreeze(structuredClone(catalog));
-}
 
 export function resolveStoryLibrarySelection(input: { libraryRef: string; catalog: StoryLibraryCatalog;
   entries: readonly StoryLibraryEntry[]; journal: StoryLibraryJournal }): StoryLibraryResolution {
@@ -226,15 +206,11 @@ export function extractHistoricalHostingArtifacts(input: { room: StoryLibraryRoo
     const inherited = validated.envelope.storySnapshot.hostingArtifacts.find(entry => entry.artifact.preparationHash === material.preparationHash);
     if (!artifact) artifact = inherited?.artifact;
     if (!artifact || artifact.preparationHash !== material.preparationHash || !same(artifact.preparation, material.preparation)) return fail();
-    const previous = inherited?.origin.kind === "historicalSeed" ? new Map(inherited.origin.timelineBindings.map(value => [value.sourceTimelineId, value.targetTimelineId])) : new Map<string, string>();
-    const timelineBindings = artifact.context.timelines.map(value => {
-      const sourceTimelineId = value.timelineId, actualSource = previous.get(sourceTimelineId) ?? sourceTimelineId;
-      const target = origin.timelineMap.find(value => value.sourceTimelineId === actualSource);
-      if (!target) return fail();
-      return { sourceTimelineId, targetTimelineId: target.targetTimelineId };
-    }).sort((a, b) => a.sourceTimelineId.localeCompare(b.sourceTimelineId));
+    if (inherited?.origin.kind === "historicalSeed") validateStoryLibraryGenesis(inherited, seed.sourceGenesis);
+    const timelineGenesisChain = [...(inherited?.origin.kind === "historicalSeed" ? inherited.origin.timelineGenesisChain : [seed.sourceGenesis]), input.targetGenesis];
+    const timelineBindings = deriveStoryTimelineBindings(artifact, timelineGenesisChain, input.targetGenesis);
     const entry = storyLibraryEntry(input.room, artifact, { kind: "historicalSeed", source: seed.source, seedHash,
-      cutEventSeq: seed.cut.eventSeq, baseline: { definitions: material.definitions, facts: material.facts }, timelineBindings });
+      cutEventSeq: seed.cut.eventSeq, baseline: { definitions: material.definitions, facts: material.facts }, timelineBindings, timelineGenesisChain });
     validateStoryLibraryGenesis(entry, input.targetGenesis);
     return entry;
   }));
@@ -250,10 +226,36 @@ export function validateStoryLibraryGenesis(entry: StoryLibraryEntry, genesis: A
   if (!isHistoricalOrigin(actual) || origin.cutEventSeq !== actual.cut.eventSeq
     || !same(origin.source, { roomId: actual.source.roomId, runtimeEpochId: actual.source.runtimeEpochId,
       branchId: actual.source.branchId, archiveHash: actual.source.archiveHash })
-    || !same([...entry.artifact.context.timelines.map(value => value.timelineId)].sort(), origin.timelineBindings.map(value => value.sourceTimelineId).sort())
+    || !same(origin.timelineBindings, deriveStoryTimelineBindings(entry.artifact, origin.timelineGenesisChain, genesis))
     || origin.timelineBindings.some(value => !state.fictionTimelines[value.targetTimelineId]
       || actual.timelineMap.some(mapped => mapped.sourceTimelineId === value.sourceTimelineId && mapped.targetTimelineId !== value.targetTimelineId))) return fail();
   validateStoryGenesisMappings(entry.artifact.preparation, origin.baseline, state);
+}
+
+function deriveStoryTimelineBindings(artifact: StoryHostingArtifact,
+  chain: readonly AuthoritativeRoomArchive["signedGenesis"][], target: AuthoritativeRoomArchive["signedGenesis"]) {
+  if (chain.length < 2 || !same(chain.at(-1), target)
+    || chain[0].roomId !== artifact.request.source.roomId || chain[0].runtimeEpochId !== artifact.request.source.runtimeEpochId) return fail();
+  const seen = new Set<string>();
+  for (let index = 0; index < chain.length; index++) {
+    const genesis = chain[index], { genesisHash, ...body } = genesis;
+    if (hash(body) !== genesisHash || seen.has(genesisHash)) return fail();
+    seen.add(genesisHash);
+    if (index > 0) {
+      const origin = genesis.historicalOrigin, previous = chain[index - 1];
+      if (!isHistoricalOrigin(origin) || origin.source.genesisHash !== previous.genesisHash
+        || origin.source.roomId !== previous.roomId || origin.source.runtimeEpochId !== previous.runtimeEpochId) return fail();
+    }
+  }
+  return artifact.context.timelines.map(point => {
+    let actual = point.timelineId;
+    for (const genesis of chain.slice(1)) {
+      const found = genesis.historicalOrigin!.timelineMap.find(value => value.sourceTimelineId === actual);
+      if (!found) return fail();
+      actual = found.targetTimelineId;
+    }
+    return { sourceTimelineId: point.timelineId, targetTimelineId: actual };
+  }).sort((a, b) => a.sourceTimelineId.localeCompare(b.sourceTimelineId));
 }
 
 export function validateStoryGenesisMappings(preparation: import("./story-creation/contracts").StoryPreparation,

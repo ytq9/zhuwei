@@ -494,7 +494,8 @@ export class StoryCreationStore {
     let entry: StoryLibraryEntry | undefined;
     if (owner.kind === "creationJob") {
       const job = this.readJob(owner.jobId);
-      if (!job || owner.jobId !== jobId) invalid();
+      if (!job) invalid("STORY_CONTEXT_INSUFFICIENT");
+      if (owner.jobId !== jobId) invalid();
       const { source } = job.request;
       entry = storyLibraryEntry({ roomId: source.roomId, runtimeEpochId: source.runtimeEpochId, branchId: source.branchId },
         storyHostingArtifact(job), { kind: "creationJob", jobId });
@@ -528,7 +529,7 @@ export class StoryCreationStore {
     const selected = new Set(input.selectedMaterialRefs);
     if (input.selectedMaterialRefs.some(ref => !candidates.has(ref) || already.has(ref))) invalid();
     for (const fact of preparation.facts) for (const knowledge of fact.knowledge) {
-      if (selected.has(knowledge.ref) && !selected.has(fact.ref)) invalid();
+      if (selected.has(knowledge.ref) !== selected.has(fact.ref)) invalid();
     }
     for (const definition of preparation.definitions) if (selected.has(definition.ref)) {
       if (definition.dependsOn.some(ref => candidates.has(ref) && !selected.has(ref) && !already.has(ref))) invalid();

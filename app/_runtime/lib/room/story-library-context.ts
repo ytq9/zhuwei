@@ -41,27 +41,49 @@ export function storyLibraryBlockedCandidates(entry: StoryLibraryEntry, mappings
   const prior = new Map(original.materials.map(value => [value.ref, value]));
   const now = new Map(current.materials.map(value => [value.ref, value]));
   const admitted = new Set([...mappings.definitions, ...mappings.facts].map(value => value.candidateRef));
+  const admittedAuthority = new Set([...mappings.definitions.flatMap(value => [value.authorityRef, ...value.definitionRefs]),
+    ...mappings.facts.flatMap(value => [value.factRef, ...value.knowledge.flatMap(known => [known.knowledgeRef,
+      `knowledge:${known.holderRef}:${known.knowledgeRef}`])])]);
+  const actorMeaning = (material: StoryContextMaterial) => {
+    const content = material.content;
+    return isPlainRecord(content) && isPlainRecord(content.entity)
+      ? { kind: content.entity.kind, name: content.entity.name, tenureStatus: content.entity.tenureStatus }
+      : content;
+  };
   const changed = (ref: string): boolean => {
     const before = prior.get(ref); if (!before) return false;
     const actual = now.get(ref);
     if (!actual || actual.availability !== before.availability) return true;
+    if (before.kind === "npc") return hash(actorMeaning(before)) !== hash(actorMeaning(actual));
     // Time, current entity mechanics and mutable NPC plans are read anew by
     // normal filling/Rules. Established evidence and explicit constraints are
     // never allowed to change meaning under an old reviewed candidate.
     return ["fact", "anchor", "knowledge", "relationship", "promise", "narrativeCommitment", "definition", "contentBoundary"].includes(before.kind)
       && hash(meaning(before)) !== hash(meaning(actual));
   };
+  // Re-evaluate collection meaning as well as named records. A newly related
+  // fact/person/commitment cannot disappear merely because the old manuscript
+  // did not know its ID. Own committed additions are already proven mappings.
+  const deltas = current.materials.filter(material => !admittedAuthority.has(material.ref)
+    && ["fact", "anchor", "knowledge", "relationship", "promise", "narrativeCommitment", "plan", "npc"].includes(material.kind)
+    && (!prior.has(material.ref) || changed(material.ref)));
+  const collectionChanged = (refs: readonly string[]) => {
+    const selected = new Set(refs);
+    for (const value of mappings.definitions) if (selected.has(value.candidateRef)) selected.add(value.authorityRef);
+    return deltas.some(material => selected.has(material.ref) || material.subjectRefs.some(ref => selected.has(ref)));
+  };
   const blocked = new Set<string>();
   const coreChanged = preparation.existingFactRefs.some(changed)
     || hash(original.moduleRef) !== hash(current.moduleRef) || hash(original.runtimeRef) !== hash(current.runtimeRef);
   for (const candidate of preparation.definitions) if (!admitted.has(candidate.ref)) {
     const producer = reviewedDefinitionEntry(preparation, candidate.ref);
-    if (coreChanged || [...candidate.dependsOn, ...producer.basisRefs].some(changed)) blocked.add(candidate.ref);
+    const refs = [...candidate.dependsOn, ...producer.basisRefs];
+    if (coreChanged || refs.some(changed) || collectionChanged(refs)) blocked.add(candidate.ref);
   }
   for (const fact of preparation.facts) if (!admitted.has(fact.ref)) {
     const refs = [...fact.basisRefs, ...fact.subjectRefs, ...fact.occurrence.basisRefs,
       ...fact.knowledge.flatMap(value => [value.holderRef, value.sourceRef, ...value.acquisition.basisRefs])];
-    if (coreChanged || refs.some(changed)) blocked.add(fact.ref);
+    if (coreChanged || refs.some(changed) || collectionChanged(refs)) blocked.add(fact.ref);
   }
   let expanded = true;
   while (expanded) { expanded = false;

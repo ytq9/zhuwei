@@ -78,7 +78,7 @@ function preparation(input: OpenStoryJob, version: "1" | "2" = "1"): StoryPrepar
 function review(input: OpenStoryJob, draft: StoryPreparation, verdict: "pass" | "conflict" = "pass", repairable = false): StoryReview {
   return { format: "zhuwei.story-review/v1", preparationHash: hash(draft), contextHash: input.context.contextHash,
     findings: STORY_REVIEW_CATEGORIES.map(category => ({ category, verdict, candidatePaths: ["/cause"], constraintRefs: ["private-memory"],
-      explanation: "PRIVATE_STORY_CANARY", repairable })), recipeCriteria: [{ recipeId: input.request.recipeRefs[0].id, criterion: "storage-protocol-fixture", verdict }] };
+      explanation: "PRIVATE_STORY_CANARY", repairable })), recipeCriteria: [{ recipeId: input.request.recipeRefs[0].id, criterion: "storage-protocol-fixture", verdict, explanation: "Protocol fixture review covers the declared storage material." }] };
 }
 function checkpoint(input: OpenStoryJob, revision: number, fields: Partial<StoryCheckpoint> = {}): StoryCheckpoint {
   return { format: "zhuwei.story-checkpoint/v1", jobId: input.request.jobId, revision,
@@ -648,7 +648,7 @@ it("retains a definition-only admission and rejects a later scope trying to rema
     const selectedMaterialRefs = [NEW_NPC, FACT, KNOWLEDGE].sort();
     const next = { ...binding, selectedMaterialRefs, materialScopeHash: hash(selectedMaterialRefs),
       preparedActionId: "prepared:forged-remapping", rulesInputHash: hash("forged-new-scope") };
-    expect(store.prepareAdmission(next).kind).toBe("saved");
+    expect(store.prepareAdmission(next).kind).toBe("rejected");
     // This is deliberately fabricated external evidence. Store validates the
     // merged identity closure; only the host can certify actual Rules events.
     const rebound: StoryAdmissionReceipt = { ...f.admission, materialScopeHash: next.materialScopeHash,
@@ -668,9 +668,10 @@ it("freezes the selected material closure, final Rules input and full context de
   const contextBody = { ...body, readSet: [{ kind: "entity" as const, ref: "npc-one", revision: "7", hash: hash("npc-revision-7") }] };
   const input = { ...initial, context: { ...contextBody, contextHash: hash(contextBody) } };
   await withStore(stub("admission-selection"), store => {
-    const draft = readyJob(store, input, admissionDraft(input)), first = admissionInput(input, draft, ["candidate-fact"]);
+    const draft = readyJob(store, input, admissionDraft(input)), first = admissionInput(input, draft);
     for (const changed of [
       { ...first, readSet: [] },
+      { ...first, selectedMaterialRefs: ["candidate-fact"], materialScopeHash: hash(["candidate-fact"]) },
       { ...first, selectedMaterialRefs: ["candidate-knowledge"], materialScopeHash: hash(["candidate-knowledge"]) },
       { ...first, selectedMaterialRefs: ["missing"], materialScopeHash: hash(["missing"]) },
       { ...first, selectedMaterialRefs: ["candidate-fact", "candidate-fact"], materialScopeHash: hash(["candidate-fact", "candidate-fact"]) },
@@ -679,24 +680,24 @@ it("freezes the selected material closure, final Rules input and full context de
     expect(store.prepareAdmission(first).kind).toBe("saved");
     expect(store.prepareAdmission(first)).toEqual({ kind: "saved", binding: { ...first, bindingHash: hash(first) } });
     expect(store.prepareAdmission({ ...first, rulesInputHash: hash("different-rules") }).kind).toBe("rejected");
-    expect(store.prepareAdmission(admissionInput(input, draft)).kind).toBe("rejected");
+    expect(store.prepareAdmission(admissionInput(input, draft, ["candidate-fact"])).kind).toBe("rejected");
     const receipt = admissionReceipt(first);
     expect(store.recordAdmission({ ...receipt, facts: [] }).kind).toBe("rejected");
     expect(store.recordAdmission({ ...receipt, bindingHash: hash("different-binding") }).kind).toBe("rejected");
-    expect(store.recordAdmission({ ...receipt, facts: admissionReceipt(admissionInput(input, draft)).facts }).kind).toBe("rejected");
+    expect(store.recordAdmission({ ...receipt, facts: receipt.facts.map(fact => ({ ...fact, knowledge: [] })) }).kind).toBe("rejected");
     expect(store.recordAdmission(receipt).kind).toBe("saved");
     const exported = store.exportHistoryMaterials();
     expect(exported).toMatchObject({ kind: "available", requiredPreparationHashes: [hash(draft)],
-      preparations: [{ preparation: draft, facts: [{ candidateRef: "candidate-fact", knowledge: [] }] }] });
+      preparations: [{ preparation: draft, facts: [{ candidateRef: "candidate-fact", knowledge: receipt.facts[0].knowledge }] }] });
     const second = { ...admissionInput(input, draft), preparedActionId: "prepared-knowledge", rulesInputHash: hash("new-input") };
-    expect(store.prepareAdmission(second).kind).toBe("saved");
+    expect(store.prepareAdmission(second).kind).toBe("rejected");
     const secondReceipt = { ...admissionReceipt(second), recordedAtEventSeq: "3" };
     const wrongHolder = { ...secondReceipt, facts: secondReceipt.facts.map(fact => ({ ...fact,
       knowledge: fact.knowledge.map(knowledge => ({ ...knowledge, holderRef: "unrelated-npc" })) })) };
     expect(store.recordAdmission(wrongHolder).kind).toBe("rejected");
-    expect(store.recordAdmission(secondReceipt).kind).toBe("saved");
+    expect(store.recordAdmission(secondReceipt).kind).toBe("rejected");
     expect(store.exportHistoryMaterials()).toMatchObject({ kind: "available", preparations: [{ recordedAtEventSeq: "1",
-      facts: [{ candidateRef: "candidate-fact", knowledge: secondReceipt.facts[0].knowledge }] }] });
+      facts: [{ candidateRef: "candidate-fact", knowledge: receipt.facts[0].knowledge }] }] });
   });
 });
 
