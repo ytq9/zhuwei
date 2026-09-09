@@ -8,7 +8,7 @@ import type { AuthoritativeWorldState, EventPayloadByType, JsonRecord, Knowledge
 import type { NpcMaterializationAccumulator } from "./npc-materialization";
 import { rejected } from "./results";
 import { isStoryTemporalBasis, isStoryTemporalEvidence, storyTemporalEvidenceIssue, storyTemporalEvidenceRef,
-  storyTemporalKnowledgeKind, storyTemporalPosition, type StoryTemporalBasis, type StoryTemporalEvidence } from "./story-temporal-evidence";
+  storyTemporalKnowledgeKind, storyTemporalPosition, storyTemporalReferenceAvailable, type StoryTemporalBasis, type StoryTemporalEvidence } from "./story-temporal-evidence";
 import { characterTimelineId } from "./timeline";
 import { hasExactKeys, isRecord, isSha256 } from "./validation";
 import { isCanonicalReadSet, type VersionedAuthorityBinding } from "./world-interaction-model";
@@ -180,9 +180,7 @@ function nowBasis(state: AuthoritativeWorldState, holderRef: string): StoryTempo
     end: null, basisRefs: [holderRef] };
 }
 function temporalRefAvailable(state: AuthoritativeWorldState, reference: string): boolean {
-  return state.entities[reference] !== undefined || state.scenes[reference] !== undefined || state.canonicalFacts[reference] !== undefined
-    || state.campaignRuntime.definitions[reference] !== undefined || sourceClaimAtRef(state, reference) !== undefined
-    || knowledgeAtRef(state, reference) !== undefined;
+  return storyTemporalReferenceAvailable(state, reference);
 }
 function sourceClaimAtRef(state: AuthoritativeWorldState, reference: string): JsonRecord | undefined {
   const claimRef = reference.startsWith("continuity:sourceClaims:") ? reference.slice("continuity:sourceClaims:".length) : reference;

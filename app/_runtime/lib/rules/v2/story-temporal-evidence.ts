@@ -1,5 +1,6 @@
 import type { AuthoritativeWorldState, KnowledgeRecord } from "./model";
 import type { Sha256Ref } from "../profiles/types";
+import { heldKnowledgeRecord } from "./knowledge-records";
 
 /** Frozen occurrence/acquisition evidence. This protocol belongs to Rules;
  * Story proposals and archive preparation records do not grant it authority. */
@@ -89,12 +90,17 @@ export function storyTemporalPosition(basis: StoryTemporalBasis, state: Authorit
   return start > now ? "after" : "unresolved";
 }
 
-function basisAvailable(state: AuthoritativeWorldState, ref: string): boolean {
-  return Object.hasOwn(state.canonicalFacts, ref) || Object.hasOwn(state.entities, ref)
+export function storyTemporalReferenceAvailable(state: AuthoritativeWorldState, ref: string): boolean {
+  if (Object.hasOwn(state.canonicalFacts, ref) || Object.hasOwn(state.entities, ref)
     || Object.hasOwn(state.scenes, ref) || Object.hasOwn(state.campaignRuntime.definitions, ref)
     || Object.hasOwn(state.campaignRuntime.sourceClaims, ref)
-    || Object.entries(state.knowledge).some(([holder, entries]) => Object.hasOwn(entries, ref)
-      || Object.keys(entries).some(key => ref === `knowledge:${holder}:${key}`));
+    || ref.startsWith("continuity:sourceClaims:")
+      && Object.hasOwn(state.campaignRuntime.sourceClaims, ref.slice("continuity:sourceClaims:".length))) return true;
+  // Bare aliases must identify one actual holder; qualified aliases preserve
+  // exactly that holder instead of selecting the first matching record.
+  return Object.entries(state.knowledge).flatMap(([holder, entries]) => Object.keys(entries).filter(key =>
+    [key, `knowledge:${holder}:${key}`, `npc-knowledge:${holder}:${key}`].includes(ref)
+      && heldKnowledgeRecord(state, holder, key) !== undefined)).length === 1;
 }
 
 export function storyTemporalKnowledgeMatches(state: AuthoritativeWorldState, value: StoryTemporalEvidence,
@@ -117,11 +123,11 @@ export function storyTemporalEvidenceIssue(state: AuthoritativeWorldState, value
   const fact = state.canonicalFacts[value.factRef];
   if (!fact || fact.kind === "storyTemporalEvidence" || fact.branchId !== state.activeBranchId) return "story-time:fact-unavailable";
   if (storyTemporalPosition(value.occurrence, state) !== "established"
-    || !value.occurrence.basisRefs.every(ref => basisAvailable(state, ref))) return "story-time:occurrence-unavailable";
+    || !value.occurrence.basisRefs.every(ref => storyTemporalReferenceAvailable(state, ref))) return "story-time:occurrence-unavailable";
   for (const binding of value.knowledge) {
     if (!storyTemporalKnowledgeMatches(state, value, binding)) return "story-time:knowledge-binding-invalid";
     if (storyTemporalPosition(binding.acquisition, state) !== "established"
-      || !binding.acquisition.basisRefs.every(ref => basisAvailable(state, ref))) return "story-time:acquisition-unavailable";
+      || !binding.acquisition.basisRefs.every(ref => storyTemporalReferenceAvailable(state, ref))) return "story-time:acquisition-unavailable";
     // Require a provable ordering for retrospective knowledge. Prose claiming
     // a cause cannot resolve overlapping or unspecified acquisition bounds.
     const occurrenceThrough = value.occurrence.end?.micros ?? value.occurrence.start.micros;

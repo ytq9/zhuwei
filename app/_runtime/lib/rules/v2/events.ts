@@ -1,4 +1,5 @@
 import { isNpcMaterializedPayload, applyNpcMaterializedEvent } from "./npc-materialization";
+import { isStoryKnowledgeAdmissionMetadata, storyKnowledgeAdmissionIssue } from "./story-facts-admission";
 import { actionActivityForRoot } from "./activity-progress";
 import { applyPromiseLifecycleEvent, recordPromiseEvidence, promiseTermsConform, promiseJudgmentConform, promiseChangeConform } from "./promise-lifecycle";
 import { applyNpcWorkEvent, recordNpcWorkActivityOutcome, npcWorkDecisionConform } from "./npc-work";
@@ -1268,7 +1269,8 @@ function isTypedPayload(eventType: EventType, value: unknown): boolean {
         "layer",
         "objectKind",
         "visibility",
-      ], ["sourceCharacterId"])
+      ], ["sourceCharacterId", "storyAdmission"])
+        && (value.storyAdmission === undefined || isStoryKnowledgeAdmissionMetadata(value.storyAdmission))
         && isNonEmptyString(value.characterId)
         && isNonEmptyString(value.knowledgeRef)
         && ["sensoryEvidence", "sourceClaim", "characterInference", "canonicalFact"]
@@ -2864,6 +2866,12 @@ function foldEventInternal(
       if (!(payload.characterId in state.entities) || !(payload.causeFactId in state.canonicalFacts)) {
         throw new TypeError("knowledge acquisition reference is not available");
       }
+      if (payload.storyAdmission !== undefined || isRecord(payload.content) && payload.content.schema === "zhuwei.story-knowledge-body/v1") {
+        const issue = storyKnowledgeAdmissionIssue(state, payload, event.rootActionId);
+        if (issue || event.secrecy !== "private" || event.visibilityPolicyId !== `visibility:knowledge-holder:${payload.characterId}`) {
+          throw new TypeError(issue ?? "story-admission:private-holder-projection-required");
+        }
+      }
       if (isWorldFactPointer(payload.content)) {
         const fact = state.canonicalFacts[payload.causeFactId];
         const definition = fact && worldFactDefinition(state, fact);
@@ -2889,7 +2897,7 @@ function foldEventInternal(
         acquiredByEventId: event.eventId,
         acquiredAtFictionMicros: event.fictionInstantMicros,
         sourceCharacterId: payload.sourceCharacterId ?? null,
-        provenanceChain: [payload.causeFactId, event.eventId],
+        provenanceChain: [...new Set([payload.causeFactId, ...(payload.storyAdmission ? [payload.storyAdmission.sourceRef] : []), event.eventId])],
       };
       break;
     }

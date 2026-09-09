@@ -810,6 +810,7 @@ export type KnowledgeAcquiredPayload = {
   };
   visibility: KnowledgeRecord["visibility"];
   sourceCharacterId?: string;
+  storyAdmission?: import("./story-facts-admission").StoryKnowledgeAdmissionMetadata;
 } | {
   characterId: string;
   sourceCharacterId: string;

@@ -1,4 +1,5 @@
 import { canonicalSha256 } from "../profiles/canonical";
+import { remapStoryTemporalContent } from "./story-facts-admission";
 import { resolveRuntimeProfileManifest, type RuntimeProfileRegistry } from "../profiles/registry";
 import type { Sha256Ref } from "../profiles/types";
 import { initializeAuthoritativeWorld } from "./actions";
@@ -10,7 +11,7 @@ import { rejected } from "./results";
 import { allocateDynamicCombatantSpawn } from "./spatial-spawn";
 import { createDefinitionSnapshot, isStoredSemanticDefinition, storedSemanticDefinition, type StoredSemanticDefinition } from "./semantic-definitions";
 import { isStoryTemporalEvidence, storyTemporalEvidenceIssue, storyTemporalEvidenceRef,
-  storyTemporalPosition, type StoryTemporalEvidence, type StoryTemporalKnowledge } from "./story-temporal-evidence";
+  storyTemporalPosition, storyTemporalReferenceAvailable, type StoryTemporalEvidence, type StoryTemporalKnowledge } from "./story-temporal-evidence";
 import { hasExactKeys, hashWorldState, isAuthoritativeWorldState, isNonEmptyString, isRecord,
   isRuntimeGenesis, isSha256 } from "./validation";
 import { isWorldFactPointer, worldFactDefinition, worldFactPointer, type AuthoredWorldFact } from "./world-facts";
@@ -145,11 +146,7 @@ function inputConform(value: unknown): value is InitializeHistoricalWorldInput {
 }
 
 function refAvailable(state: AuthoritativeWorldState, ref: string): boolean {
-  return Object.hasOwn(state.entities, ref) || Object.hasOwn(state.scenes, ref) || Object.hasOwn(state.canonicalFacts, ref)
-    || Object.hasOwn(state.campaignRuntime.definitions, ref) || Object.hasOwn(state.campaignRuntime.sourceClaims, ref)
-    || Object.hasOwn(state.campaignRuntime.itemSystem.entries, ref)
-    || Object.entries(state.knowledge).some(([holder, entries]) => Object.hasOwn(entries, ref)
-      || Object.keys(entries).some(key => ref === `knowledge:${holder}:${key}`));
+  return storyTemporalReferenceAvailable(state, ref) || Object.hasOwn(state.campaignRuntime.itemSystem.entries, ref);
 }
 
 function containsTemporalBinding(value: unknown): boolean {
@@ -380,6 +377,19 @@ export function initializeHistoricalWorld(registry: RuntimeProfileRegistry, prof
       || Object.values(target.knowledge).some(entries => Object.values(entries).some(k => temporalRefs.has(k.knowledgeRef)
         || k.provenanceChain.some(ref => temporalRefs.has(ref))))) return rejected("invalidInitialization", "Historical temporal dossiers were used as playable facts.");
     for (const ref of temporalRefs) delete target.canonicalFacts[ref];
+    // Apply the same closed temporal protocols to both replayed cut records
+    // and later admitted historical supplements. Source audit hashes remain
+    // in historicalOrigin; prose and arbitrary JSON keys are not rewritten.
+    for (const fact of Object.values(target.canonicalFacts)) {
+      const remapped = remapStoryTemporalContent(fact.value, mapping);
+      if (remapped.kind === "rejected") return rejected("invalidInitialization", remapped.code);
+      fact.value = remapped.value;
+    }
+    for (const entries of Object.values(target.knowledge)) for (const held of Object.values(entries)) {
+      const remapped = remapStoryTemporalContent(held.content, mapping);
+      if (remapped.kind === "rejected") return rejected("invalidInitialization", remapped.code);
+      held.content = remapped.value;
+    }
     const focusSource = timelineMap.find(m => m.targetTimelineId === fictionTimelineIdForScene(input.activeBranchId, input.cut.focusSceneId));
     if (!focusSource) return rejected("causalFrontierConflict", "Historical starting scene lacks an established clock.");
     const fresh = initializeAuthoritativeWorld(resolved.profiles, undefined, undefined, {

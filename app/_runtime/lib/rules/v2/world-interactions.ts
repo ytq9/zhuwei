@@ -1,4 +1,5 @@
 import { stepMaterializeNpc, isNpcMaterializationPlan, npcMaterializationDefinitionRefs } from "./npc-materialization";
+import { isStoryFactsAdmissionPlan, stepAdmitStoryFacts, type StoryFactsAdmissionInput } from "./story-facts-admission";
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
 import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
@@ -201,6 +202,7 @@ export function stepVNextWorldInteraction(
     && input.kind !== "resolveWorldInteraction"
     && input.kind !== "materializeSemanticDefinition"
     && input.kind !== "materializeNpc"
+    && input.kind !== "admitStoryFacts"
     && input.kind !== "ruleWorldInteractionFeasibility"
     && input.kind !== "applyAtomicWorldInteractionSteps"
     && input.kind !== "startActionActivity"
@@ -217,6 +219,7 @@ export function stepVNextWorldInteraction(
     );
   }
   if (input.kind === "materializeNpc") return stepMaterializeNpc(profiles, state, input, { appendTransition });
+  if (input.kind === "admitStoryFacts") return stepAdmitStoryFacts(profiles, state, input, { appendTransition });
   if(input.kind==="inventoryOperation")return stepInventoryOperation(profiles,state,input);
   if (input.kind === "startActionActivity") return startActionActivity(profiles, state, input);
   if (input.kind === "completeActionActivity") return completeActionActivity(profiles, state, input);
@@ -1495,6 +1498,11 @@ function compileAtomicWorldInteractionPlan(input: JsonRecord,state?:Authoritativ
     if (rulesInput.kind === "materializeSemanticDefinition" && rulesInput.plan.semanticKind === "worldFact" && raw.outcomeBinding !== "always") {
       return atomicCompileRejected("world-fact:history-must-be-unconditional");
     }
+    if (rulesInput.kind === "admitStoryFacts" && (raw.outcomeBinding !== "always"
+      || state && (!authorityReadSetMatches(state, rulesInput.plan.readSet)
+        || rulesInput.plan.readSet.some(binding => authorityRevisionOrHash(state, binding.ref) === null)))) {
+      return atomicCompileRejected("story-admission:history-requires-unconditional-frozen-existing-reads");
+    }
     if (rulesInput.kind === "resolveWorldInteraction" && rulesInput.plan.social) {
       for (const branch of Object.values(rulesInput.plan.social.branches)) for (const evidence of branch.response.basis) {
         if (evidence.kind !== "materializedKnowledge") continue;
@@ -1628,6 +1636,28 @@ function resolveAtomicRulesInput(
       && (PROSPECTIVE_HANDLE_PATTERN.test(entry.ref)
         || prospectiveAuthorityRefs.has(entry.ref)))) {
     return atomicCompileRejected("Prospective references cannot masquerade as an initial read-set member.");
+  }
+  if (raw.kind === "admitStoryFacts") {
+    if (!isStoryFactsAdmissionPlan(raw.plan)) return atomicCompileRejected("story-admission:noncanonical-plan");
+    // Authoring candidates are a reviewed commitment. Only the host binding
+    // table resolves local handles; never rewrite the candidate's holder,
+    // source, prose or temporal basis while normalizing the atomic input.
+    const plan = structuredClone(raw.plan), used = new Set<string>();
+    for (const entry of plan.bindings) {
+      const matches = [...bindings].filter(([handle, producer]) => entry.authorityRef === handle || entry.authorityRef === producer.definitionRef);
+      if (matches.length > 1) return atomicCompileRejected("story-admission:ambiguous-producer-binding");
+      const match = matches[0];
+      if (match) {
+        used.add(match[0]);
+        Object.assign(entry, { authorityRef: match[1].definitionRef });
+      } else if (PROSPECTIVE_HANDLE_PATTERN.test(entry.authorityRef)) {
+        return atomicCompileRejected("story-admission:unproduced-authority-binding");
+      }
+    }
+    if (used.size !== declaredHandles.size || [...used].some(handle => !declaredHandles.has(handle))) {
+      return atomicCompileRejected("story-admission:bindings-must-consume-their-real-producers");
+    }
+    return { kind: "accepted", rulesInput: { ...raw, plan } as StoryFactsAdmissionInput };
   }
   const usedHandles = new Set<string>();
   let unresolvedHandle: string | undefined;
@@ -1782,6 +1812,7 @@ function atomicRulesInputMatchesStep(
     || input.actorCharacterId !== actorCharacterId
     || input.plan.contextHash !== contextHash) return false;
   if (input.kind === "materializeNpc") return formId === MATERIALIZATION_FORM_ID && isNpcMaterializationPlan(input.plan);
+  if (input.kind === "admitStoryFacts") return formId === MATERIALIZATION_FORM_ID && isStoryFactsAdmissionPlan(input.plan);
   if (input.kind === "formNpcActorPlan") return formId === "objective-continuity.vnext-1" && isNpcActorPlanFormationPlan(input.plan);
   if (input.kind === "performAbilityOperation") return formId === "combat.vnext-1" && isAbilityOperationPlan(input.plan);
   if (input.kind === "commitNarrativeDetail") return formId === MATERIALIZATION_FORM_ID && isNarrativeDetailPlan(input.plan);
@@ -1876,6 +1907,10 @@ function executeAtomicWorldInteractionBranch(
     Object.assign(step.rulesInput,{plan: {...step.rulesInput.plan,readSet:step.rulesInput.plan.readSet.map(binding=>({
       ref:binding.ref,revisionOrHash:authorityRevisionOrHash(accumulator.state,binding.ref)??binding.revisionOrHash,
     }))} as typeof step.rulesInput.plan});
+    if (step.rulesInput.kind === "admitStoryFacts") {
+      const issue = extendStoryAdmissionNpcPrefix(accumulator, plan, stepIndex, step);
+      if (issue) return { kind: "rejected", result: rejected("causalFrontierConflict", issue) };
+    }
     const applies = step.outcomeBinding === "always"
       || (step.outcomeBinding === "onSuccess" ? branch === "success" : branch === "failure");
     if (!applies) {
@@ -2107,6 +2142,48 @@ function fulfillAtomicNativeRandomness(profiles: RuntimeProfileManifest, state: 
     randomnessResults }) ?? rejected("invalidRulesInput", "The Item Ability continuation cannot execute.");
 }
 
+/** Newly created NPC reads are bound only after an actual producer event in
+ * this atomic prefix. Frozen source reads stay distinct from derived reads;
+ * callers cannot invent a revision for an entity absent at preparation. */
+function extendStoryAdmissionNpcPrefix(accumulator: TransitionAccumulator, plan: AtomicWorldInteractionStepsPlan,
+  stepIndex: number, step: AtomicWorldInteractionStep): string | undefined {
+  if (step.rulesInput.kind !== "admitStoryFacts") return undefined;
+  const source = accumulator.source ?? accumulator.state, input = step.rulesInput;
+  const original = plan.steps[stepIndex].rulesInput;
+  if (original.kind !== "admitStoryFacts" || !authorityReadSetMatches(source, original.plan.readSet)
+    || original.plan.readSet.some(binding => authorityRevisionOrHash(source, binding.ref) === null)) {
+    return "story-admission:initial-reads-must-bind-existing-authority";
+  }
+  const readSet = new Map(input.plan.readSet.map(binding => [binding.ref, binding]));
+  for (const binding of input.plan.bindings) {
+    if (binding.kind !== "entity" || source.entities[binding.authorityRef] !== undefined) continue;
+    const producer = plan.steps.slice(0, stepIndex).find(candidate => candidate.rulesInput.kind === "materializeNpc"
+      && candidate.rulesInput.plan.prospectiveRef === binding.authorityRef
+      && step.consumes.some(consume => consume.kind === "prospective" && candidate.produces.some(produced => produced.handle === consume.handle)));
+    if (!producer || producer.rulesInput.kind !== "materializeNpc" || producer.outcomeBinding !== "always") {
+      return "story-admission:missing-unconditional-npc-producer";
+    }
+    const producerInput = producer.rulesInput;
+    const event = accumulator.events.find(event => event.eventType === "NpcMaterialized" && event.rootActionId === plan.rootActionId
+      && (event.payload as EventPayloadByType["NpcMaterialized"]).plan.prospectiveRef === binding.authorityRef);
+    const payload = event?.payload as EventPayloadByType["NpcMaterialized"] | undefined;
+    const entity = accumulator.state.entities[binding.authorityRef];
+    if (!payload || payload.actorCharacterId !== plan.actorCharacterId || !entity?.semanticDefinitionRef
+      || canonicalSha256(payload.plan.source) !== canonicalSha256(producerInput.plan.source)
+      || payload.plan.contextHash !== plan.contextHash || payload.plan.sceneRef !== entity.sceneId) {
+      return "story-admission:npc-producer-event-unavailable";
+    }
+    for (const reference of [entity.id, entity.semanticDefinitionRef, `character-timeline:${entity.id}`, `knowledge-catalog:${entity.id}`]) {
+      const revisionOrHash = authorityRevisionOrHash(accumulator.state, reference);
+      if (revisionOrHash === null) return "story-admission:npc-derived-read-unavailable";
+      readSet.set(reference, { ref: reference, revisionOrHash });
+      accumulator.transactionCreatedAuthorityRefs?.add(reference);
+    }
+  }
+  Object.assign(input, { plan: { ...input.plan, readSet: [...readSet.values()].sort((a, b) => a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) } });
+  return undefined;
+}
+
 function applyAtomicStep(
   profiles: RuntimeProfileManifest,
   accumulator: TransitionAccumulator,
@@ -2125,6 +2202,7 @@ function applyAtomicStep(
       receipt: accumulator.state.receipts[rulesInput.rootActionId]!, mechanicalResult: { kind: "npcActorPlanFormed" } };
   }
   if (rulesInput.kind === "materializeNpc") return stepMaterializeNpc(profiles, accumulator.state, rulesInput, { ...options, appendTransition });
+  if (rulesInput.kind === "admitStoryFacts") return stepAdmitStoryFacts(profiles, accumulator.state, rulesInput, { ...options, appendTransition });
   if (rulesInput.kind === "commitNarrativeDetail") return commitNarrativeDetail(profiles, accumulator.state, rulesInput, options);
   if(rulesInput.kind==="materializeDefinition"||rulesInput.kind==="materializeItem")return applyAuthoredMaterialization(profiles,accumulator.state,rulesInput,options);
   if (rulesInput.kind === "materializeSemanticDefinition") {
@@ -2572,7 +2650,7 @@ function isAtomicProducedReferences(
       || typeof entry.handle !== "string"
       || !PROSPECTIVE_HANDLE_PATTERN.test(entry.handle)
       || handles.has(entry.handle)
-      || !["semanticDefinition", "canonicalFact", "relation", "itemEntry", "abilityDefinition", "hazardDefinition", "itemDefinition"].includes(String(entry.kind))
+      || !["entity", "semanticDefinition", "canonicalFact", "relation", "itemEntry", "abilityDefinition", "hazardDefinition", "itemDefinition"].includes(String(entry.kind))
       || !isOutcomeBinding(entry.outcomeBinding)) return false;
     handles.add(entry.handle);
     return true;
