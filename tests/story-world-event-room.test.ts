@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { createVNextKpAdapter } from "../app/_runtime/lib/kp/vnext/adapter";
+import { createVNextModelCallScope } from "../app/_runtime/lib/kp/vnext/model-call-scope";
 import { ACTOR_PLAN_DECISION_TOOL_NAME } from "../app/_runtime/lib/kp/actor-plan-policy";
 import { encodeVNextStrictToolBundle, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from "../app/_runtime/lib/kp/vnext/proposal-schema";
 import type { AuthoritativeKpAdapter } from "../app/_runtime/lib/kp/authoritative-types";
@@ -79,7 +80,7 @@ async function seedPlan(stub: Stub) {
 }
 
 type Capture = { calls: string[]; requests: { tool: string; input: Json }[];
-  selection?: "noStory" | "unknown"; failDraft?: boolean; reuse?: string; error?: string; crashAfterWorldBegin?: boolean };
+  selection?: "noStory" | "unknown"; failDraft?: boolean; reuse?: string; error?: string; crashAfterWorldBegin?: boolean; callLimit?: string };
 const capture = (): Capture => ({ calls: [], requests: [] });
 function binding(target: Internals, c: Capture) {
   return { async run(_model: string, input: Json): Promise<unknown> {
@@ -122,7 +123,9 @@ function binding(target: Internals, c: Capture) {
 
 async function run(stub: Stub, input: RoomActionInput, c: Capture) {
   return runInDurableObject(stub, async instance => {
-    const target = instance as unknown as Internals, ai = binding(target, c), transport = new ActorPlanTransportCapability(ai);
+    const target = instance as unknown as Internals;
+    const scope = createVNextModelCallScope({ roomId: "story-world-room", limit: c.callLimit, emit() {} });
+    const ai = scope.bind(binding(target, c)), transport = new ActorPlanTransportCapability(ai);
     if (c.crashAfterWorldBegin) {
       // Interrupt after the actual durable send permit exists and before the
       // selector transport starts. The journal and its lease are not mocked.
@@ -186,6 +189,32 @@ async function resumeWorldPreparation(stub: Stub, c: Capture) {
 }
 
 describe("committed world events through the actual Room host", () => {
+  it("a new submission resumes an unsent due decision before judging the next local action", async () => {
+    const f = await initialize("world-budget-new-action"), root = await seedPlan(f.stub), c = capture();
+    c.callLimit = "2"; c.selection = "noStory";
+    const first = await run(f.stub, timeInput("submission:world-room:budget-first"), c);
+    const paused = await snapshot(f.stub);
+    expect(first).toMatchObject({ kind: "committed", action: "committed" });
+    expect(paused.due).toMatchObject([{ child_root_action_id: root, next_attempt_at: null }]);
+    expect(paused.story.invocations.filter(row => row.invocation.purpose === "npc"))
+      .toMatchObject([{ invocation: { status: "notSent" } }]);
+    expect(c.calls).toEqual([OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+    await evictDurableObject(f.stub);
+    c.callLimit = undefined;
+    const next = await run(f.stub, timeInput("submission:world-room:budget-next"), c);
+    const after = await snapshot(f.stub);
+    const evidence = { first: { kind: first.kind, action: record(first).action, deliveryPending: record(first).deliveryPending },
+      next: { kind: next.kind, code: record(next).code }, calls: c.calls,
+      due: after.due.map(row => ({ root: row.child_root_action_id, next: row.next_attempt_at })),
+      npcInvocations: after.story.invocations.filter(row => row.invocation.purpose === "npc").map(row => row.invocation.status),
+      planStatus: after.state.campaignRuntime.npcPlans[PLAN].status,
+      traceExists: TRACE in after.state.canonicalFacts };
+    expect(next, JSON.stringify(evidence)).toMatchObject({ kind: "committed" });
+    expect(after.due).toEqual([]);
+    expect(after.events.filter(event => event.rootActionId === root && event.eventType === "NpcActionCommitted")).toHaveLength(1);
+    expect(after.state.canonicalFacts[TRACE].value).toMatchObject({ description: TRACE_TEXT });
+  }, 30_000);
+
   it("a real NPC due prepares a ready library story and the later player reuses it without more author calls", async () => {
     const f = await initialize("world-ready"), root = await seedPlan(f.stub), before = await snapshot(f.stub), c = capture();
     const input = timeInput("submission:world-room:ready"), result = await run(f.stub, input, c), saved = await snapshot(f.stub);
