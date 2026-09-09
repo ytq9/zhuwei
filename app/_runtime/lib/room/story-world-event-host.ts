@@ -12,6 +12,7 @@ import { buildStoryLibraryCatalogForScope } from "./story-library";
 import { createStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { buildRoomWorldStoryContext } from "./story-context";
 import { roomStoryBudget } from "./story-runtime-policy";
+import { storyReviewAllowsRevision } from "./story-creation/review";
 import { verifyWorldStoryTrigger, worldStoryRequestInput, worldStorySelectionInvocationBinding,
   parseWorldStorySelection, WORLD_STORY_SELECTION_BINDING_HASH,
   type RoomWorldStoryCommit, type RoomWorldStoryDueOrigin, type RoomWorldStoryTrigger, type RoomWorldStorySelection } from "./story-world-event";
@@ -142,12 +143,26 @@ function assertFrozen(value: StoryFrozenWorldContext): void {
     && exact(value.library, ["catalog", "jobs", "entries", "admissionHashes"]));
 }
 
-function checkpointPrefix(captured: StoryCheckpoint | null, current: StoryCheckpoint | null): boolean {
-  if (captured === null) return true;
-  if (current === null || captured.revision > current.revision || captured.revision < 1) return false;
-  if (captured.status !== "preparing" || captured.revision === current.revision) return same(captured, current);
-  return Object.keys(captured).every(key => ["revision", "status"].includes(key)
-    || same((captured as unknown as Record<string, unknown>)[key], (current as unknown as Record<string, unknown>)[key]));
+function checkpointPrefix(captured: unknown, current: StoryCheckpoint | null): StoryCheckpoint | null {
+  if (captured === null) return null;
+  check(isPlainRecord(captured) && current !== null && typeof captured.revision === "number"
+    && Number.isSafeInteger(captured.revision) && captured.revision >= 1 && captured.revision <= current.revision);
+  if (captured.status !== "preparing" || captured.revision === current.revision) {
+    check(same(captured, current)); return current;
+  }
+  // Reconstruct a typed prefix only from immutable fields in the actual
+  // journal checkpoint. Equality then rejects absent required fields, extra
+  // fields or modified nested drafts/reviews rather than casting a witness.
+  const prefix: StoryCheckpoint = {
+    format: current.format, jobId: current.jobId, revision: captured.revision,
+    requestHash: current.requestHash, contextHash: current.contextHash, status: "preparing",
+    ...(Object.hasOwn(captured, "draft") && current.draft !== undefined ? { draft: current.draft } : {}),
+    ...(Object.hasOwn(captured, "review") && current.review !== undefined ? { review: current.review } : {}),
+    ...(Object.hasOwn(captured, "revisedDraft") && current.revisedDraft !== undefined ? { revisedDraft: current.revisedDraft } : {}),
+  };
+  check((prefix.review === undefined || (prefix.draft !== undefined && storyReviewAllowsRevision(prefix.review)))
+    && (prefix.revisedDraft === undefined || prefix.review !== undefined) && same(captured, prefix));
+  return prefix;
 }
 
 function reconstructLibrary(frozen: StoryFrozenWorldContext, snapshot: StoryStoreArchiveSnapshot): WorldStoryLibraryRead {
@@ -157,8 +172,9 @@ function reconstructLibrary(frozen: StoryFrozenWorldContext, snapshot: StoryStor
   const jobs = witness.jobs.map(observed => {
     check(exact(observed, ["jobId", "checkpoint"]));
     const actual = snapshot.jobs.filter(job => job.input.request.jobId === observed.jobId);
-    check(actual.length === 1 && checkpointPrefix(observed.checkpoint, actual[0].checkpoint));
-    return { request: actual[0].input.request, context: actual[0].input.context, checkpoint: observed.checkpoint };
+    check(actual.length === 1);
+    const checkpoint = checkpointPrefix(observed.checkpoint, actual[0].checkpoint);
+    return { request: actual[0].input.request, context: actual[0].input.context, checkpoint };
   });
   const entries = witness.entries.map(observed => {
     check(exact(observed, ["libraryRef", "entryHash"]));

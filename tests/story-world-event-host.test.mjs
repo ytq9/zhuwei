@@ -191,3 +191,33 @@ test('an actual existing opportunity is frozen for selector and author and never
     assert.equal(verifyFrozenWorldStoryHostContext(forged, context(s, f), f.runtime).kind, 'blocked');
   } finally { s.db.close(); }
 });
+
+test('a frozen preparing checkpoint remains a complete typed prefix when the actual job later terminates', async () => {
+  const f = await fixture(), s = stores();
+  try {
+    const preparation = worldStoryHostPreparationInput(f.frozen, selection, f.state, f.profiles);
+    assert.equal(preparation.kind, 'ready');
+    const job = openPreparation(s, preparation), first = { format: 'zhuwei.story-checkpoint/v1', jobId: job.request.jobId,
+      revision: 1, requestHash: job.requestHash, contextHash: job.context.contextHash, status: 'preparing' };
+    assert.equal(s.story.checkpoint({ expectedRevision: 0, next: first }).ok, true);
+    const frozen = freezeWorldStoryHostContext({ commit: f.commit, moduleProfile: f.moduleProfile,
+      library: { ...emptyLibrary(), jobs: [s.story.readJob(job.request.jobId)] }, maxContextUnits: f.maxUnits }, f.runtime);
+    assert.equal(frozen.kind, 'frozen');
+    assert.equal(verifyFrozenWorldStoryHostContext(frozen.context, context(s, f), f.runtime).kind, 'verified');
+    assert.equal(s.story.checkpoint({ expectedRevision: 1, next: { ...first, revision: 2,
+      status: 'rejected', failureCode: 'STORY_OUTPUT_INVALID' } }).ok, true);
+    const saved = context(s, f);
+    assert.equal(verifyFrozenWorldStoryHostContext(frozen.context, saved, f.runtime).kind, 'verified');
+    for (const change of [
+      checkpoint => { delete checkpoint.contextHash; },
+      checkpoint => { checkpoint.format = 'forged-checkpoint'; },
+      checkpoint => { checkpoint.revision = 0; },
+      checkpoint => { checkpoint.extra = 'undeclared'; },
+      checkpoint => { checkpoint.review = {}; },
+      checkpoint => { checkpoint.failureCode = 'STORY_OUTPUT_INVALID'; },
+    ]) {
+      const forged = structuredClone(frozen.context); change(forged.library.jobs[0].checkpoint); rehashFrozen(forged);
+      assert.equal(verifyFrozenWorldStoryHostContext(forged, saved, f.runtime).kind, 'blocked');
+    }
+  } finally { s.db.close(); }
+});
