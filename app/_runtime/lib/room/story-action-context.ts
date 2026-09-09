@@ -3,10 +3,14 @@ import { buildRequiredContext, type VNextRequiredContext, type KnownContextEntry
 import { canonicalHash, deepFreeze, isPlainRecord, type JsonValue } from "../kp/vnext/canonical-json";
 import { authorityRevisionOrHash, type AuthoritativeWorldState } from "../rules/authority-read";
 import type { StoryContext, StoryPreparation, StoryReview, StoryHash } from "./story-creation/contracts";
+import type { StoryAdmissionOwner, StoryLibraryBinding } from "./story-library-contracts";
 
 export type StoryPreparationBinding = Readonly<{
   format: "zhuwei.story-preparation-ready/v1";
   jobId: string;
+  admissionOwner: StoryAdmissionOwner;
+  /** Present only when selected through the frozen library directory. */
+  library?: StoryLibraryBinding;
   preparationHash: StoryHash;
   reviewHash: StoryHash;
   moduleProfile: AuthoritativeModuleProfile;

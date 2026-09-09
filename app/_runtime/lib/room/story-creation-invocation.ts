@@ -2,6 +2,7 @@ import type {
   StoryCheckpoint, StoryContext, StoryFailureCode, StoryHash, StoryModelRequest,
   StoryPreparation, StoryReadDependency, StoryRecord, StoryRequest, StoryStage, StoryVersionRef,
 } from "./story-creation/contracts";
+import type { StoryAdmissionOwner, StoryLibraryEntry } from "./story-library-contracts";
 
 /** Budget amounts are finite admission limits. Token/cost reservations are
  * estimates, not a claim about the provider's final invoice. */
@@ -135,11 +136,16 @@ export type StoryExternalInvocationBeginResult =
  * input hash and its complete transactional read set. This is a binding to a
  * reviewed candidate selection, never permission to append world facts. */
 export type StoryAdmissionBindingInput = Readonly<{
+  owner: StoryAdmissionOwner;
+  /** Authorship provenance, not a claim that a historical job is active. */
   jobId: string;
   preparationHash: StoryHash;
   materialScopeHash: StoryHash;
   preparedActionId: string;
   contextHash: StoryHash;
+  /** Original creation context on first admission; a separate current
+   * context after reuse. The original artifact always remains unchanged. */
+  validation: Readonly<{ request: StoryRequest; context: StoryContext }>;
   selectedMaterialRefs: readonly string[];
   readSet: readonly StoryReadDependency[];
   rulesInputHash: StoryHash;
@@ -169,6 +175,7 @@ export type StoryAdmittedDefinitionBinding = Readonly<{
   definitionRefs: readonly string[];
 }>;
 export type StoryAdmissionReceipt = Readonly<{
+  owner: StoryAdmissionOwner;
   jobId: string;
   preparationHash: StoryHash;
   materialScopeHash: StoryHash;
@@ -213,6 +220,8 @@ export type StoryStoreDispatchQuarantine = Readonly<{
 export type StoryStoreArchiveSnapshot = Readonly<{
   format: "zhuwei.story-store-archive/v1";
   source: StoryStoreArchiveSource;
+  /** Immutable library evidence only; never historical jobs or call ledgers. */
+  hostingArtifacts: readonly StoryLibraryEntry[];
   accounts: readonly Readonly<{
     accountId: string; scopeKey: string; kind: "job" | "source" | "room";
     binding: StoryRecord; limits: StoryBudgetAmount; spent: StoryBudgetAmount; held: StoryBudgetAmount;
@@ -235,7 +244,7 @@ export type StoryStoreArchiveSnapshot = Readonly<{
   admissionBindings: readonly StoryAdmissionBinding[];
   admissions: readonly StoryAdmissionReceipt[];
   /** Independent inventory detects missing preparation or admission rows. */
-  materialManifest: readonly Readonly<{ preparationHash: StoryHash; jobId: string }>[];
+  materialManifest: readonly Readonly<{ preparationHash: StoryHash; jobId: string; owner: StoryAdmissionOwner }>[];
   snapshotHash: StoryHash;
 }>;
 export type StoryStoreArchiveResult =
