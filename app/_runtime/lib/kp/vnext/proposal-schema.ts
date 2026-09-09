@@ -1032,7 +1032,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   ] };
   const promiseDelivery = { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ sourceRef: nullableRef, itemRef: nullableRef,
     quantity: { type: "integer", minimum: 1 }, destinationKind: { type: "string", enum: ["holder", "scene"] }, destinationRef: refText })],
-    description: "Required for a promise to create, copy or deliver an item, even when the future item does not exist yet. For a future item set itemRef to none, not the whole delivery. Set sourceRef to none if there is no original to copy; retain quantity and the actual holder/scene destination. Only non-item obligations use delivery=none." };
+    description: "Required for a promise to create, copy or deliver an item, even when the future item does not exist yet. For a future item set itemRef to exactly {kind:'none'}, not the whole delivery. Set sourceRef to exactly {kind:'none'} if there is no original to copy; retain quantity and the actual holder/scene destination. A filled delivery has exactly sourceRef, itemRef, quantity, destinationKind and destinationRef and no kind field. Only non-item obligations use delivery={kind:'none'}." };
   // What a promise may be about, from the same sets the server admits: the
   // NPC's own frozen records and knowledge, the physical objects and creatures
   // it can see, and the scene. A definition or catalog describes a kind of

@@ -79,6 +79,32 @@ test('lowering accepts admissible subjects and names the exact slot of an inadmi
   assert.deepEqual(mapped[0].path, ['results', 0, 'newPromises', 0, 'terms', 'subjectRefs', 1]);
 });
 
+test('round99: a kind inside a filled delivery and a bare "none" reference are located below terms on the results table', () => {
+  const f = fixture('round99');
+  const delivery = { sourceRef: VALVE, itemRef: null, quantity: 1, destinationKind: 'scene', destinationRef: SCENE };
+  const domain = bundle([promise({ kind: 'result', subjectRefs: [NPC, VALVE], delivery, parts: [], activation: null })]);
+  assert.equal(lower(f, domain).lowered.kind, 'accepted');
+  // The model padded the filled delivery with a kind field. The validator now
+  // names that field instead of the whole terms object.
+  const padded = structuredClone(encodeVNextStrictToolBundle(domain));
+  const slot = padded.results[0].newPromises[0].terms.delivery;
+  assert.equal(slot.sourceRef, VALVE);
+  padded.results[0].newPromises[0].terms.delivery = { kind: 'scene', ...slot };
+  const rejected = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(padded));
+  assert.equal(rejected.kind, 'locallyRejected', JSON.stringify(rejected).slice(0, 800));
+  assert.deepEqual(rejected.diagnostics.map(d => [d.code, d.constraint, d.path]),
+    [['VALUE_INVALID', 'social:additional-field', ['results', 0, 'newPromises', 0, 'terms', 'delivery', 'kind']]]);
+  assert.deepEqual(rejected.diagnostics[0].expected, { allowedFields: ['sourceRef', 'itemRef', 'quantity', 'destinationKind', 'destinationRef'] });
+  // The bare word "none" is read as the {kind:'none'} sentinel by the wire
+  // decoder, so the rest of round99's draft lowers once the kind field goes.
+  const bare = structuredClone(encodeVNextStrictToolBundle(domain));
+  bare.results[0].newPromises[0].terms.delivery.itemRef = 'none';
+  const parsed = parseSubmitKpProposalBundleCandidateArguments(JSON.stringify(bare));
+  assert.equal(parsed.kind, 'accepted', JSON.stringify(parsed).slice(0, 800));
+  assert.equal(parsed.bundle.proposals[0].branches.success.consequences[0].terms.delivery.itemRef, null);
+  assert.equal(lowerVNext2ProposalBundle({ ...f, value: parsed.bundle }).kind, 'accepted');
+});
+
 test('the filling schema offers only admissible promise subjects, in terms, parts and activation alike', () => {
   const f = fixture('schema'), context = f.requiredContext;
   const schema = createVNextProposalBundleSchema(['social'], proposalItemEntryRefs(context), proposalObservationSubjectRefs(context), [],

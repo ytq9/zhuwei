@@ -4032,3 +4032,11 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 测试：`tests/kp-vnext-unparsed-revision.test.mjs` 增加重发请求形状与再次空对象即耗尽的用例；provider-room「空社交草稿」用例改为断言重发请求不含 sourceDraft、只带 submit 工具。
 - 验证：typecheck exit 0；修订/schema/承诺主体 6 个 Node 文件 44 过 0 红；Vitest relevance 2/2，provider-room 13 红逐名同基线，空社交草稿用例通过。
 - 真实批次 round97（源码 ff27c1d）：又是空对象加修订稿嵌套 JSON 出错，needsKp。见 [round97 回执](agent/vnext-round97-validation.md)。
+
+## 2026-09-09 承诺 terms 形状诊断逐字段定位（开发期）
+
+- 症状：round99 填写稿的承诺 `terms.delivery` 多写了一个 `kind:"scene"`（工具 schema 的已填 delivery 分支只有五个字段且 additionalProperties=false，DeepSeek 严格模式没有强制 anyOf），`socialConsequenceConform` 用裸谓词调 `promiseTermsConform`，嵌套失败被压成一条只指到 `results/0/newPromises/0/terms` 的 `VALUE_INVALID social:field-contract`，把整个 terms 对象当 actual；模型唯一一次修订把 `delivery.kind` 改成 `none`（仍是多余字段），第二次评估同样诊断，`PROPOSAL_REPAIR_EXHAUSTED`。草稿其余部分（主体、交付绑定、承诺对象、授权）都在准入集合内；字符串 `"none"` 解码时已按 `{kind:'none'}` 哨兵读成 null。
+- 修改：`social-interaction.ts` 新增 `promiseTermsShapeConform`（delivery/parts/activation 逐字段，用同一组 socialShape 助手，路径相对 terms；末尾仍以 `promiseTermsConform` 为准，谓词拒绝的一律不放行），`socialConsequenceConform` 改用 `socialShapeChild(value.terms, …, ["terms"])`。validator 与 `socialResultArgumentDiagnostics` 不变，wire 路径自动成为 `results/行/newPromises/行/terms/delivery/kind`，expected 列出允许字段。`proposal-schema.ts` 的 delivery 描述改为明确的 `{kind:'none'}` 写法并说明已填 delivery 恰有五个字段、不带 kind。lowering 未改（曾试加字面量 `"none"` 哨兵诊断，因解码已容错而撤回）。
+- 测试：`kp-vnext-social-shape` 增加 9 条定位用例（delivery 多字段/quantity/destinationRef、terms.kind、subjectRefs、activation 两条、parts 重复 partId、parts 内 delivery）与一条完整合法 terms；`kp-vnext-promise-subjects` 增加 round99 形状用例：多写 kind 经 parse 得 `results/0/newPromises/0/terms/delivery/kind` 且 expected.allowedFields 五项；字面量 `"none"` 解码为 null 且草稿可 lowering。
+- 验证：typecheck exit 0；social-shape/promise-subjects/unparsed-revision 12/12；promise-lifecycle 24、social-plan 17、hazard-lifecycle 23、social-commitments 6、social-resolution-v5 3、promise-due 2、prompt-contract 10、story-archive-host 8、social-source-selection 5 全过；npc-plan-formation-rules 2 红、schema-retrieval 4 红逐名同基线；Vitest provider-room 13 红逐名同基线，promise-lifecycle-room 2 红同基线，relevance 2/2。
+- 真实批次：round98（源码 75ab7d6）首句填写空对象后重发原请求即提交，第二句等待提交，第三句因批次 20 分钟窗口在会话被限流暂停期间过期未发（harness 时限，非产品故障）；round99（同一提交）首句如上述 needsKp。见 [round98 回执](agent/vnext-round98-validation.md)、[round99 回执](agent/vnext-round99-validation.md)。

@@ -1,0 +1,310 @@
+{
+  "round": 99,
+  "verifiedAt": "2026-09-09T15:54:08.283430+00:00",
+  "verdict": "First sentence not committed after three calls on 75ab7d6 (the same commit as round98): offer 32,294 / 28,083 selected social; the filling reply was a full draft (1,136 completion tokens) with one promise whose delivery carried a kind field ({kind:'scene', sourceRef:<the sealed document entry>, itemRef:'none', quantity:1, destinationKind:'scene', destinationRef:'wake'}); the validator reported only VALUE_INVALID social:field-contract at results/0/newPromises/0/terms with the whole object as actual, because socialConsequenceConform called promiseTermsConform as a bare predicate; the one revision patched delivery.kind to 'none' (still an extra field) and the second evaluation gave the same terms-level diagnostic, so the action ended PROPOSAL_REPAIR_EXHAUSTED / needsKp with zero events. The rest of the draft was admissible: subjects, delivery bindings, promisee and authority were all in the admitted sets, and the wire decoder already reads a bare 'none' as the none sentinel. CNY 0.309249 at peak tariff; replay exact at state version 0; 389 source files unchanged. Fixed after the batch: promise terms are now walked field by field, so the same draft would be told terms/delivery/kind is an additional field with the five allowed fields listed.",
+  "sourceCommit": "75ab7d6da91f1b82d0ddaa8dc7ee1728f9bfce82",
+  "sourceManifestSha256": "24d13ea5ae7ca7d565eb48230fde3a80599fecf8df6e263ddd6d9c2297b4e08c",
+  "parserContractVersion": "kp-vnext2-proposal-parser-v57",
+  "scenario": "hours-scale three sentences (same as rounds 82-91)",
+  "normalAuthenticatedSetup": true,
+  "fixtureUsed": false,
+  "attemptedIntents": 1,
+  "unattemptedIntents": 2,
+  "harness": {
+    "localPerHttpCallLimit": 10,
+    "productionCap": "none",
+    "batchDurationMs": 1200000,
+    "deadlineAt": "2026-09-09T15:57:16.838000+00:00"
+  },
+  "actions": [
+    {
+      "ordinal": 1,
+      "submissionId": "vnext-round99-npc-http-5937710b-7765-4989-8901-9986f3f5658b",
+      "action": "notCommitted",
+      "narration": "notApplicable",
+      "code": "PROPOSAL_REPAIR_EXHAUSTED",
+      "outcomeKind": "needsKp",
+      "modelCalls": 3,
+      "budgetChecks": {
+        "perHttp": true,
+        "total": true,
+        "money": true
+      }
+    }
+  ],
+  "gates": [
+    {
+      "afterAction": 1,
+      "next": "stop",
+      "category": "formatFailure",
+      "reason": "首句 3 次调用后 PROPOSAL_REPAIR_EXHAUSTED / needsKp，0 事件。填写给出完整社交草稿（含一条承诺），terms.delivery 写成 {kind:\"scene\", sourceRef:<item-entry>, itemRef:\"none\", quantity:1, destinationKind:\"scene\", destinationRef:\"wake\"}：多了 kind 字段、itemRef 用了字符串 none 而非 {kind:'none'}。服务端诊断只指到 results/0/newPromises/0/terms 整个对象（VALUE_INVALID social:field-contract），没有子字段路径；修订把 delivery.kind 改成 none 仍不过。这是草稿形状不符合字段合同且诊断缺路径，不是 Rules 拒绝，也不是叙事矛盾。首个技术失败停止新行动。",
+      "publicEvidence": [],
+      "reviewedAt": "2026-09-09T15:41:02.338Z",
+      "publicTableHash": "d643520bc94962f52758ff219a7ff1dde9ed8b64425c8e65f947b3c5481c7f96",
+      "authoritySnapshotHash": "b38c7fad4badd90207018eaf17921a2f2e1726d73f40804c7ea914ea6668da7d"
+    }
+  ],
+  "coverage": "formatFailure",
+  "stopped": true,
+  "captures": [
+    {
+      "ordinal": 1,
+      "tools": [
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 28083,
+      "completionTokens": 46,
+      "cacheHit": 4992,
+      "cacheMiss": 23091,
+      "responseTool": "offer_kp_proposal_bundle",
+      "requestedCapabilities": [
+        "social"
+      ],
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "tools": [
+        "submit_kp_proposal_bundle",
+        "offer_kp_proposal_bundle"
+      ],
+      "promptTokens": 35206,
+      "completionTokens": 1136,
+      "cacheHit": 5504,
+      "cacheMiss": 29702,
+      "responseTool": "submit_kp_proposal_bundle",
+      "draft": {
+        "decision": "directSuccess",
+        "steps": [
+          "social"
+        ],
+        "newPromises": 1,
+        "argumentChars": 2234,
+        "firstPromiseDelivery": {
+          "kind": "scene",
+          "destinationKind": "scene",
+          "sourceRef": "item-entry:unique:b8c287821ebc046eb3d4af00e132ad5d",
+          "itemRef": "none",
+          "quantity": 1,
+          "destinationRef": "wake"
+        }
+      },
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ]
+    },
+    {
+      "ordinal": 3,
+      "tools": [
+        "correct_kp_proposal_bundle"
+      ],
+      "promptTokens": 35846,
+      "completionTokens": 134,
+      "cacheHit": 5248,
+      "cacheMiss": 30598,
+      "responseTool": "correct_kp_proposal_bundle",
+      "revision": {
+        "mode": "patch",
+        "operations": [
+          {
+            "op": "replace",
+            "path": "/results/0/newPromises/0/terms/delivery/kind",
+            "value": "none"
+          }
+        ]
+      },
+      "diagnosticsGiven": [
+        {
+          "code": "VALUE_INVALID",
+          "constraint": "social:field-contract",
+          "repair": {
+            "allowed": true,
+            "reason": "uncommitted-proposal-may-be-revised-once"
+          },
+          "expected": {
+            "type": "object"
+          },
+          "actual": {
+            "type": "object",
+            "sourcePath": [
+              "results",
+              0,
+              "newPromises",
+              0,
+              "terms"
+            ],
+            "value": {
+              "kind": "result",
+              "subjectRefs": [
+                "npc:black-oak-will:varo",
+                "item-entry:unique:b8c287821ebc046eb3d4af00e132ad5d",
+                "character:bce32dfb-0ac2-4382-85b0-8c763cb5ddf3"
+              ],
+              "delivery": {
+                "kind": "scene",
+                "destinationKind": "scene",
+                "sourceRef": "item-entry:unique:b8c287821ebc046eb3d4af00e132ad5d",
+                "itemRef": "none",
+                "quantity": 1,
+                "destinationRef": "wake"
+              },
+              "parts": [],
+              "activation": {
+                "kind": "none"
+              }
+            }
+          },
+          "path": [
+            "results",
+            0,
+            "newPromises",
+            0,
+            "terms"
+          ],
+          "pathBase": "arguments"
+        }
+      ],
+      "contextEntries": 39,
+      "npcDecisionSnapshots": [
+        "varo"
+      ],
+      "sourceDraftPresent": true
+    }
+  ],
+  "invocations": [
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 1,
+      "estimatedInputTokens": 32294,
+      "allowedInputTokens": 58000,
+      "inputTokens": 28083,
+      "outputTokens": 46,
+      "result": "success",
+      "durationMs": 6171
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 2,
+      "estimatedInputTokens": 39518,
+      "allowedInputTokens": 58000,
+      "inputTokens": 35206,
+      "outputTokens": 1136,
+      "result": "success",
+      "durationMs": 12260
+    },
+    {
+      "eventName": "kp.vnext.invocation",
+      "ordinal": 3,
+      "estimatedInputTokens": 42180,
+      "allowedInputTokens": 58000,
+      "inputTokens": 35846,
+      "outputTokens": 134,
+      "result": "success",
+      "durationMs": 6131
+    }
+  ],
+  "meter": {
+    "calls": 3,
+    "inputTokens": 99135,
+    "outputTokens": 1316,
+    "unknownInputCalls": 0,
+    "unknownOutputCalls": 0,
+    "peakCnyBudgetCharge": 0.309249,
+    "callTelemetryConsistent": true,
+    "capBlockedInvocations": 0
+  },
+  "pricing": {
+    "window": "off-peak",
+    "chargedAt": "peak",
+    "model": "deepseek-v4-flash",
+    "peakCnyPerMillion": {
+      "hit": "0.10",
+      "miss": "3.0",
+      "output": "9.0"
+    },
+    "offPeakCnyPerMillion": {
+      "hit": "0.05",
+      "miss": "1.5",
+      "output": "4.5"
+    },
+    "pageSha256": "899affbdbc33d0be620d8dea59e86f5036c11b5410b14d060b8d2874c74f38e5"
+  },
+  "replay": {
+    "pinnedProfilesMatch": true,
+    "replayKind": "replayed",
+    "exactState": true,
+    "stateVersion": "0",
+    "events": 0,
+    "eventTypes": [],
+    "checkedAt": "2026-09-09T15:41:08.255Z"
+  },
+  "sourceEnd": {
+    "allEqual": true,
+    "branchUnchanged": true,
+    "headUnchanged": true,
+    "beforeCount": 389,
+    "afterCount": 389
+  },
+  "servicesShutdown": {
+    "capture": {
+      "pid": 15347,
+      "port": 4320,
+      "startedAt": "2026-09-09T15:37:01.262667+00:00",
+      "stoppedAt": "2026-09-09T15:41:04.907990+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    },
+    "game": {
+      "pid": 15356,
+      "port": 4321,
+      "startedAt": "2026-09-09T15:37:01.452963+00:00",
+      "stoppedAt": "2026-09-09T15:41:04.793840+00:00",
+      "signalRequested": "SIGTERM",
+      "exitCodeReason": "detached process exit status unavailable; process and port verified absent"
+    }
+  },
+  "finalEvaluation": {
+    "auditOrdinal": 3,
+    "validationCode": "PROPOSAL_REPAIR_EXHAUSTED",
+    "preflight": {
+      "kind": "notRun",
+      "reason": "local-validation-rejected"
+    },
+    "diagnosticPaths": [
+      [
+        "results",
+        0,
+        "newPromises",
+        0,
+        "terms"
+      ]
+    ],
+    "repair": {
+      "allowed": false,
+      "reason": "revision-requires-room-admission"
+    },
+    "patchedDelivery": {
+      "kind": "none",
+      "destinationKind": "scene",
+      "sourceRef": "item-entry:unique:b8c287821ebc046eb3d4af00e132ad5d",
+      "itemRef": "none",
+      "quantity": 1,
+      "destinationRef": "wake"
+    }
+  },
+  "rootCause": "social-interaction.ts socialConsequenceConform validated terms with socialShapeField(value, 'terms', promiseTermsConform, {type:'object'}), a bare predicate; every nested failure collapsed to one VALUE_INVALID at terms. The tool schema's filled-delivery variant has exactly five fields with additionalProperties false, but DeepSeek strict mode did not enforce the anyOf, so the extra kind reached the server.",
+  "fix": {
+    "files": [
+      "app/_runtime/lib/rules/v2/social-interaction.ts (promiseTermsShapeConform; socialConsequenceConform uses socialShapeChild for terms)",
+      "app/_runtime/lib/kp/vnext/proposal-schema.ts (delivery description: {kind:'none'} sentinel spelled out; filled delivery has exactly five fields and no kind)",
+      "tests/kp-vnext-social-shape.test.mjs",
+      "tests/kp-vnext-promise-subjects.test.mjs"
+    ],
+    "commit": "the commit that records this batch",
+    "verifiedLocally": "typecheck; 12/12 shape+subjects+revision; other social/promise Node suites green or baseline-identical; provider-room 13 and promise-lifecycle-room 2 reds baseline-identical"
+  }
+}
