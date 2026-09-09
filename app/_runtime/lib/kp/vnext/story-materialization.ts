@@ -1,7 +1,7 @@
 import { authorityRevisionOrHash, normalizedProspectiveRef, type AuthoritativeWorldState, type JsonRecord } from "../../rules/authority-read";
 import { STORY_FACTS_ADMISSION_PLAN_SCHEMA, storyFactAdmissionRef, storyKnowledgeAdmissionRef,
   isStoryKnowledgeBoundaryValue, type StoryAdmissionBinding, type StoryFactsAdmissionPlan } from "../../rules/v2/story-facts-admission";
-import type { StoryPreparation, StoryFactCandidate } from "../../room/story-creation/contracts";
+import type { StoryPreparation, StoryFactCandidate, StoryReview } from "../../room/story-creation/contracts";
 import { storyReviewPassed } from "../../room/story-creation/review";
 import { validateStoredReview } from "../../room/story-creation/prompt";
 import { npcMaterializationEntityRef } from "../../rules/v2/npc-materialization";
@@ -30,7 +30,7 @@ export function preparedStory(context: VNextRequiredContext, preparationHash: st
     || entry.revisionOrHash !== canonicalHash(entry.value) || entry.value.preparationHash !== preparationHash
     || !isPlainRecord(entry.value.preparation) || canonicalHash(entry.value.preparation) !== preparationHash
     || !isPlainRecord(entry.value.review)) return fail("story:reviewed-preparation-unavailable");
-  const preparation = entry.value.preparation as unknown as StoryPreparation, review = entry.value.review;
+  const preparation = entry.value.preparation as unknown as StoryPreparation, review = entry.value.review as unknown as StoryReview;
   try { validateStoredReview(review); } catch { return fail("story:independent-review-required"); }
   if (review.preparationHash !== preparationHash || review.contextHash !== preparation.contextHash
     || !storyReviewPassed(review)) {

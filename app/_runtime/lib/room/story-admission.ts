@@ -12,7 +12,7 @@ import { compileAtomicWorldInteractionPlan } from "../rules/v2/world-interaction
 import type { AtomicWorldInteractionStep } from "../rules/v2/world-interaction-model";
 import { isStoryFactBody, isStoryFactsAdmissionPlan, isStoryKnowledgeBody, isStoryKnowledgeAdmissionMetadata,
   storyFactAdmissionRef, storyKnowledgeAdmissionRef, type StoryFactsAdmissionPlan } from "../rules/v2/story-facts-admission";
-import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "../rules";
+import type { AuthoritativeWorldState, EventEnvelope, JsonRecord } from "../rules/v2/model";
 import type { StoryAdmissionBindingInput, StoryAdmissionBinding, StoryAdmissionReceipt, StoryJobSnapshot,
   StoryAdmittedDefinitionBinding, StoryAdmittedFactBinding } from "./story-creation-invocation";
 import type { StoryHash, StoryPreparation } from "./story-creation/contracts";
@@ -224,19 +224,22 @@ export function storyAdmissionReceipt(input: Readonly<{
       || fact.value.candidateHash !== canonicalHash(candidate) || !same(fact.value.candidate, core)
       || fact.value.proposalRef !== plan.proposalRef || fact.value.contextHash !== plan.contextHash
       || fact.value.rootActionId !== receipt.rootActionId || !same(fact.subjectRefs, candidate.subjectRefs.map(actual))) return fail();
-    const matches = events.filter(value => value.eventSeq === fact.validFromEventSeq && value.eventType === "CanonicalFactDeclared"
-      && isPlainRecord(value.payload.fact) && value.payload.fact.id === factRef && same(value.payload.fact.value, fact.value));
+    const matches = events.filter(value => { const payload: unknown = value.payload;
+      return value.eventSeq === fact.validFromEventSeq && value.eventType === "CanonicalFactDeclared"
+        && isPlainRecord(payload) && isPlainRecord(payload.fact) && payload.fact.id === factRef && same(payload.fact.value, fact.value); });
     if (matches.length !== 1) return fail();
     const knowledge = candidate.knowledge.map(value => {
       const holderRef = actual(value.holderRef), knowledgeRef = storyKnowledgeAdmissionRef(binding.preparationHash, value.ref, holderRef);
       const record = state.knowledge[holderRef]?.[knowledgeRef];
-      const evidence = record && events.filter(item => item.eventId === record.acquiredByEventId && item.eventType === "KnowledgeAcquired"
-        && item.payload.characterId === holderRef && item.payload.knowledgeRef === knowledgeRef && same(item.payload.content, record.content));
+      const evidence = record && events.filter(item => { const payload: unknown = item.payload;
+        return item.eventId === record.acquiredByEventId && item.eventType === "KnowledgeAcquired" && isPlainRecord(payload)
+          && payload.characterId === holderRef && payload.knowledgeRef === knowledgeRef && same(payload.content, record.content); });
       if (!record || evidence?.length !== 1 || !isStoryKnowledgeBody(record.content)
         || record.characterId !== holderRef || record.content.preparationHash !== binding.preparationHash
         || !same(record.content.candidate, value) || !record.provenanceChain.includes(factRef)
         || !record.provenanceChain.includes(actual(value.sourceRef))) return fail();
-      const metadata = evidence[0].payload.storyAdmission;
+      const payload: unknown = evidence[0].payload;
+      const metadata = isPlainRecord(payload) ? payload.storyAdmission : undefined;
       if (!isStoryKnowledgeAdmissionMetadata(metadata) || metadata.preparationHash !== binding.preparationHash
         || metadata.candidateRef !== value.ref || metadata.factRef !== factRef || metadata.sourceRef !== actual(value.sourceRef)) return fail();
       return { candidateRef: value.ref, holderRef, knowledgeRef, recordedByEventId: evidence[0].eventId };

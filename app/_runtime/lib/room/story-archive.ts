@@ -1,4 +1,5 @@
-import type { AuthoritativeWorldState, JsonRecord, replay } from "../rules";
+import type { AuthoritativeWorldState, replay } from "../rules";
+import type { JsonRecord } from "../rules/v2/model";
 import { archiveSha256, canonicalJson, validateAuthoritativeArchive, type AuthoritativeRoomArchive } from "./archive";
 import type {
   StoryAdmittedDefinitionBinding, StoryAdmittedFactBinding, StoryHistoryMaterialSnapshot,

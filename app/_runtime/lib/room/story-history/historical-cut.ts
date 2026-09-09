@@ -79,7 +79,7 @@ export function selectHistoricalSupplements(input: {
     const seenDefinitions = new Set<string>();
     for (const mapping of material.definitions) {
       const event = byEvent.get(mapping.recordedByEventId), source = reviewedDefinitionEntry(material.preparation, mapping.candidateRef);
-      const payload = event?.payload;
+      const payload: unknown = event?.payload;
       const matches = source.kind === "materializeNpc" ? event?.eventType === "NpcMaterialized"
         && isNpcMaterializedPayload(payload) && payload.plan.prospectiveRef === mapping.authorityRef
         && input.sourceState.entities[mapping.authorityRef]?.kind === "npc"
