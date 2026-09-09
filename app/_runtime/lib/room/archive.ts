@@ -551,6 +551,7 @@ type AuthoritativeArchiveCursorProbe = {
   checkpoint_event_hash: string | null;
   checkpoint_state_hash: string | null;
   checkpoint_active_branch_id: string | null;
+  checkpoint_story_content_hash: string | null;
   checkpoint_materialized_event_hash: string | null;
   checkpoint_materialized_state_hash: string | null;
   checkpoint_materialized_branch_id: string | null;
@@ -603,6 +604,10 @@ async function assertArchiveProgressMaterializedInD1(
         FROM authoritative_room_archive_checkpoint
         WHERE room_id = ?1 AND runtime_epoch_id = ?2
         LIMIT 1) AS checkpoint_active_branch_id,
+      (SELECT story_content_hash
+        FROM authoritative_room_archive_checkpoint
+        WHERE room_id = ?1 AND runtime_epoch_id = ?2
+        LIMIT 1) AS checkpoint_story_content_hash,
       (SELECT event_hash
         FROM authoritative_room_event_archive
         WHERE room_id = ?1 AND runtime_epoch_id = ?2
@@ -955,6 +960,9 @@ export async function appendAuthoritativeArchiveToD1(
   const progress = normalizeArchiveProgress(archive, persistedProgress);
   const probe = await assertArchiveProgressMaterializedInD1(db, archive, progress);
   await assertCheckpointIsSafe(db, probe, archive, replayArchive);
+  if (operationalCheckpoint === undefined && typeof probe.checkpoint_story_content_hash === "string") {
+    throw new TypeError("A complete room archive checkpoint cannot be replaced by world rows alone.");
+  }
   let operationalMatches = true;
   if (operationalCheckpoint !== undefined) {
     if (!Number.isSafeInteger(operationalCheckpoint.generation) || operationalCheckpoint.generation < 0
