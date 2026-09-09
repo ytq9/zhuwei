@@ -479,10 +479,12 @@ export class StoryCreationStore {
     const reads = new Map<string, StoryAdmissionBindingInput["readSet"][number]>();
     for (const read of input.readSet) {
       if (!exact(read, ["kind", "ref", "revision", "hash"]) || !nonempty(read.ref) || !nonempty(read.revision)
-        || !isHash(read.hash) || !["entity", "collection", "fact", "knowledge", "narrativeCommitment", "timeline"].includes(read.kind)) invalid();
+        || !isHash(read.hash) || !nonempty(read.kind)
+        || !["entity", "collection", "fact", "knowledge", "narrativeCommitment", "timeline"].includes(read.kind)) invalid();
       const key = `${read.kind}:${read.ref}`;
       if (reads.has(key)) invalid();
-      reads.set(key, read);
+      reads.set(key, { kind: read.kind as StoryAdmissionBindingInput["readSet"][number]["kind"],
+        ref: read.ref, revision: read.revision, hash: read.hash });
     }
     for (const required of job.context.readSet) {
       const supplied = reads.get(`${required.kind}:${required.ref}`);
@@ -507,7 +509,7 @@ export class StoryCreationStore {
     const factTargets = new Set<string>(), knowledgeTargets = new Set<string>();
     for (const fact of input.facts) {
       if (!exact(fact, ["candidateRef", "factRef", "recordedByEventId", "definitionRefs", "knowledge"])
-        || !nonempty(fact.factRef) || !nonempty(fact.recordedByEventId) || !uniqueStrings(fact.definitionRefs)
+        || !nonempty(fact.candidateRef) || !nonempty(fact.factRef) || !nonempty(fact.recordedByEventId) || !uniqueStrings(fact.definitionRefs)
         || !Array.isArray(fact.knowledge) || factRefs.has(fact.candidateRef) || factTargets.has(fact.factRef)
         || !selected.has(fact.candidateRef)) invalid();
       const candidate = facts.get(fact.candidateRef);
@@ -515,6 +517,7 @@ export class StoryCreationStore {
       factRefs.add(fact.candidateRef); factTargets.add(fact.factRef);
       for (const knowledge of fact.knowledge) {
         if (!exact(knowledge, ["candidateRef", "holderRef", "knowledgeRef", "recordedByEventId"])
+          || !nonempty(knowledge.candidateRef) || !nonempty(knowledge.holderRef)
           || !nonempty(knowledge.knowledgeRef) || !nonempty(knowledge.recordedByEventId)
           || knowledgeRefs.has(knowledge.candidateRef) || knowledgeTargets.has(knowledge.knowledgeRef)
           || !selected.has(knowledge.candidateRef)) invalid();
