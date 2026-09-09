@@ -783,7 +783,12 @@ export function closeVNextProposalSchemaRequest(requested: readonly string[]): V
   return Object.freeze({
     ...(story === undefined ? {} : { story }),
     terminalKinds: Object.freeze(VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id))),
-    capabilities: closeVNextProposalCapabilities(requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !STORY_SELECTION_IDS.includes(id))),
+    capabilities: closeVNextProposalCapabilities([
+      ...requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !STORY_SELECTION_IDS.includes(id)),
+      // Complete preparation carries candidate selection surfaces. Both the
+      // Adapter and the durable stage verifier use this same closure.
+      ...(story === undefined ? [] : ["materializeStory", "admitStoryFacts"]),
+    ]),
   });
 }
 

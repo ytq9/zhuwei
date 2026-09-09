@@ -3,7 +3,7 @@ import { canonicalHash, deepFreeze } from "./canonical-json";
 /** These select preparation requirements, never a plot, ruling or player
  * commitment. The host derives the goal, authority scope and job identity. */
 export const STORY_SELECTION_CATALOG = deepFreeze([
-  { id: "storyPreparation", description: "玩家正在追求值得完整展开的新目标，或已有真实因果需要新故事准备时选择。普通询问、拒绝和即时小事正常回应；先复用冻结上下文已有故事，不为闲聊批量写稿。还须各选一个创作方法、规模和联系，以及本次实际行动所需的正常填写类型。" },
+  { id: "storyPreparation", description: "玩家正在追求值得完整展开的新目标，或已有真实因果需要新故事准备时选择。普通询问、拒绝和即时小事正常回应；先复用冻结上下文已有故事，不为闲聊批量写稿。还须各选一个创作方法、规模和联系，以及本次实际行动所需的正常填写类型。准备后自动提供 materializeStory/admitStoryFacts 选择原候选，禁止重新改写已经评审的内容。" },
   { id: "storyMethodConflict", method: "story.method.local-conflict", description: "以人物利益和可改变的冲突为主要玩法。" },
   { id: "storyMethodInvestigation", method: "story.method.archive-investigation", description: "以档案、证词及独立证据交叉验证为主要玩法。" },
   { id: "storyVignette", scale: "vignette", description: "可在一个具体局势内收束的小插曲，仍需完整准备与审查。" },
