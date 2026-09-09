@@ -10,6 +10,7 @@ import { authorityRevisionOrHash } from "../rules/authority-read";
 import { authorityCharacterTimeline, authorityEntityComposite, authorityGeometryFeatureComposite } from "../rules/v2/authority-bindings";
 import { isWorldFactPointer, worldFactDefinition } from "../rules/v2/world-facts";
 import { hashWorldState } from "../rules/v2/validation";
+import { worldStoryTriggerMatchesAuthority, type RoomWorldStoryTrigger } from "./story-world-event";
 import type { StoryCapabilityDescription, StoryContext, StoryContextMaterial, StoryFailureCode,
   StoryHash, StoryJson, StoryReadDependency, StoryRequest } from "./story-creation";
 
@@ -28,6 +29,10 @@ export type RoomStoryContextInput = Readonly<{
 export type RoomStoryContextResult =
   | Readonly<{ kind: "ready"; context: StoryContext }>
   | Readonly<{ kind: "blocked"; code: StoryFailureCode; issues: readonly string[] }>;
+export type RoomWorldStoryContextInput = Omit<RoomStoryContextInput, "requiredContext"> & Readonly<{
+  /** Verified and persisted by the Room around a real terminal due commit. */
+  trigger: RoomWorldStoryTrigger;
+}>;
 export type RoomStoryContextValidationInput = Readonly<{
   request: StoryRequest;
   context: StoryContext;
@@ -52,12 +57,15 @@ const asJson = (value: unknown): StoryJson => { hash(value); return structuredCl
 // can escape if a connected graph or an authority scan exhausts them.
 const MAX_VISITS = 200_000;
 const MAX_RECORDS = 10_000;
-type Binding = Readonly<{ schema: "zhuwei.room-story-context-binding/v1"; actorRef: string;
-  requestHash: StoryHash; requiredContextHash: string; maxUnits: number }>;
+type Binding = Readonly<{ actorRef: string; requestHash: StoryHash; maxUnits: number }> & (
+  | Readonly<{ schema: "zhuwei.room-story-context-binding/v1"; requiredContextHash: string }>
+  | Readonly<{ schema: "zhuwei.room-world-story-context-binding/v1"; triggerRef: string; triggerHash: StoryHash }>
+);
 type Source = { ref: string; kind: StoryContextMaterial["kind"]; value: unknown;
   subjects: readonly string[]; links: readonly string[]; required: readonly string[];
   owner?: string; category: string };
-type WorldInput = Pick<RoomStoryContextInput, "request" | "state" | "profiles" | "moduleProfile" | "capabilityDescriptions">;
+type WorldInput = Pick<RoomStoryContextInput, "request" | "state" | "profiles" | "moduleProfile" | "capabilityDescriptions">
+  & Readonly<{ worldTrigger?: RoomWorldStoryTrigger }>;
 
 class ContextBlocked extends Error {
   constructor(readonly code: StoryFailureCode, readonly issue: string) { super(issue); }
@@ -97,6 +105,25 @@ export function buildRoomStoryContext(input: RoomStoryContextInput): RoomStoryCo
   }
 }
 
+/** An independent author view after real world work. No fabricated player
+ * intent/RequiredContext and no full-story knowledge for the acting NPC. */
+export function buildRoomWorldStoryContext(input: RoomWorldStoryContextInput): RoomStoryContextResult {
+  try {
+    if (!Number.isSafeInteger(input.maxUnits) || input.maxUnits <= 0) fail("budget:positive-safe-integer-required", "STORY_BUDGET_EXHAUSTED");
+    if (!worldStoryTriggerMatchesAuthority(input.trigger, input.state, input.profiles, true)) {
+      fail("trigger:world-authority-snapshot-mismatch", "STORY_CONTEXT_STALE");
+    }
+    return { kind: "ready", context: collect({ ...input, worldTrigger: input.trigger }, {
+      schema: "zhuwei.room-world-story-context-binding/v1", actorRef: input.trigger.actorRef,
+      triggerRef: input.trigger.triggerRef, triggerHash: input.trigger.triggerHash,
+      requestHash: hash(input.request), maxUnits: input.maxUnits,
+    }) };
+  } catch (error) {
+    return { kind: "blocked", code: error instanceof ContextBlocked ? error.code : "STORY_CONTEXT_INSUFFICIENT",
+      issues: [error instanceof ContextBlocked ? error.issue : "context:invalid-world-authority-material"] };
+  }
+}
+
 /** Recompute the same typed queries, including empty membership witnesses.
  * Room calls this again in its atomic admission transaction. A whole-state
  * version change alone is not a conflict, and a caller cannot omit a lock to
@@ -108,12 +135,19 @@ export function validateRoomStoryContext(input: RoomStoryContextValidationInput)
     const bindings = input.context.materials.filter(material => material.ref === BINDING_REF);
     const binding = bindings[0]?.content;
     if (bindings.length !== 1 || bindings[0]?.kind !== "contentBoundary" || !isPlainRecord(binding)
-      || binding.schema !== "zhuwei.room-story-context-binding/v1" || !text(binding.actorRef)
-      || binding.requestHash !== hash(input.request) || !text(binding.requiredContextHash)
+      || !text(binding.actorRef) || binding.requestHash !== hash(input.request)
       || !Number.isSafeInteger(binding.maxUnits) || Number(binding.maxUnits) <= 0) return conflict([BINDING_REF]);
+    let worldTrigger: RoomWorldStoryTrigger | undefined;
+    if (binding.schema === "zhuwei.room-story-context-binding/v1") {
+      if (!text(binding.requiredContextHash)) return conflict([BINDING_REF]);
+    } else if (binding.schema === "zhuwei.room-world-story-context-binding/v1") {
+      const sources = input.context.materials.filter(material => material.ref === binding.triggerRef);
+      if (!text(binding.triggerRef) || !text(binding.triggerHash) || sources.length !== 1 || sources[0]?.kind !== "fact") return conflict([BINDING_REF]);
+      worldTrigger = sources[0].content as unknown as RoomWorldStoryTrigger;
+    } else return conflict([BINDING_REF]);
     const capabilityDescriptions = input.context.materials.filter(material => material.ref.startsWith(CAPABILITY_PREFIX))
       .map(material => material.content as unknown as StoryCapabilityDescription);
-    const current = collect({ ...input, capabilityDescriptions }, binding as unknown as Binding);
+    const current = collect({ ...input, capabilityDescriptions, ...(worldTrigger === undefined ? {} : { worldTrigger }) }, binding as unknown as Binding);
     const expected = new Map(input.context.readSet.map(dep => [dep.ref, hash(dep)]));
     const actual = new Map(current.readSet.map(dep => [dep.ref, hash(dep)]));
     const changedRefs = sorted([...expected.keys(), ...actual.keys()]).filter(ref => expected.get(ref) !== actual.get(ref));
@@ -135,6 +169,16 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
   if (hash(module.moduleRef) !== hash(state.campaignRuntime.campaign?.moduleRef)) fail("source:module-binding-mismatch", "STORY_CONTEXT_STALE");
   const { moduleRef, ...moduleBody } = module;
   if (hash({ ...moduleBody, moduleRef: { profileId: moduleRef.profileId } }) !== moduleRef.profileHash) fail("source:module-content-integrity");
+  const worldTrigger = input.worldTrigger;
+  if (binding.schema === "zhuwei.room-world-story-context-binding/v1") {
+    if (!worldTrigger || worldTrigger.triggerRef !== binding.triggerRef || worldTrigger.triggerHash !== binding.triggerHash
+      || worldTrigger.actorRef !== binding.actorRef || !worldStoryTriggerMatchesAuthority(worldTrigger, state, profiles)
+      || hash(request.source) !== hash(worldTrigger.source) || request.trigger.kind !== "causalDevelopment"
+      || request.trigger.goal !== worldTrigger.goal || hash(request.scope) !== hash(worldTrigger.scope)
+      || hash(request.trigger.basisRefs) !== hash([worldTrigger.triggerRef, worldTrigger.actorRef, ...worldTrigger.scope.sceneIds])) {
+      fail("trigger:world-source-binding-mismatch", "STORY_CONTEXT_STALE");
+    }
+  } else if (worldTrigger !== undefined) fail("trigger:unexpected-world-source");
   for (const ref of request.scope.sceneIds) if (!state.scenes[ref]) fail(`scope:location-unavailable:${ref}`);
   for (const ref of [...request.scope.entityIds, binding.actorRef]) if (!state.entities[ref]) fail(`scope:entity-unavailable:${ref}`);
   if (new Set(request.scope.sceneIds).size !== request.scope.sceneIds.length
@@ -153,6 +197,7 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
     if (selected.size >= MAX_RECORDS) fail("closure:record-limit", "STORY_BUDGET_EXHAUSTED");
     selected.set(source.ref, source);
     subjects.add(source.ref);
+    if (source.category === "location") scopedScenes.add(source.ref);
     if (source.kind === "npc") subjects.add(source.ref);
     // A loaded record's typed identity/dependency fields, never strings in
     // prose, connect it to other records. Embedded resources remain in place.
@@ -202,7 +247,36 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
   lock(profileRef, "fact");
   add(material(BINDING_REF, "contentBoundary", binding, [], []));
   lock(BINDING_REF, "collection", { binding, request, profiles });
+  if (worldTrigger !== undefined) {
+    add(material(worldTrigger.triggerRef, "fact", worldTrigger, [worldTrigger.actorRef, ...worldTrigger.scope.sceneIds], []));
+    lock(worldTrigger.triggerRef, "collection", { trigger: worldTrigger, receipt: state.receipts[worldTrigger.rootActionId] });
+  }
   add(material("story-context:content-boundary", "contentBoundary", module.storyBible.contentBoundary, [], [profileRef]));
+  // Every loaded location brings its real residents and its independent
+  // present frontier. Reading another place never advances/synchronizes it.
+  for (const sceneRef of sorted(scopedScenes)) {
+    const frontiers = Object.entries(state.multiplayerRuntime.causalFrontiers)
+      .filter(([, frontier]) => frontier.sceneId === sceneRef).sort(([left], [right]) => compareCodeUnits(left, right));
+    if (frontiers.length === 0) fail(`timeline:scene-frontier-unavailable:${sceneRef}`);
+    const witnesses = frontiers.map(([timelineId, frontier]) => {
+      const timeline = state.fictionTimelines[timelineId];
+      if (!timeline || timeline.branchId !== state.activeBranchId || frontier.timelineId !== timelineId
+        || frontier.branchId !== state.activeBranchId || frontier.nowMicros !== timeline.nowMicros
+        || !/^(0|[1-9][0-9]*)$/.test(timeline.nowMicros)
+        || !(frontier.eventHeadId === null || text(frontier.eventHeadId))
+        || !Array.isArray(frontier.causalParentTimelineIds) || frontier.causalParentTimelineIds.some(parent =>
+          typeof parent !== "string" || state.fictionTimelines[parent]?.branchId !== state.activeBranchId)) {
+        fail(`timeline:invalid-scene-frontier:${sceneRef}:${timelineId}`);
+      }
+      timelines.set(timelineId, timeline.nowMicros);
+      return { timelineId, timeline, frontier };
+    });
+    const ref = `story-context:scene-frontiers:${sceneRef}`;
+    const witness = { sceneRef, witnesses,
+      temporalMeaning: "independent-current-frontiers;not-synchronized;parent-timeline-ids-do-not-grant-historical-content" };
+    add(material(ref, "fact", witness, [sceneRef], [sceneRef]));
+    lock(ref, "timeline", witness);
+  }
   for (const ref of sorted(scopedScenes)) {
     if (module.storyBible.openBlanks.length === 0) continue;
     add(material(`story-context:open:${ref}`, "fact", { scopeRef: ref, moduleRef,
@@ -229,6 +303,9 @@ function collect(input: WorldInput, binding: Binding): StoryContext {
     const timeline = authorityCharacterTimeline(state, ref);
     if (!timeline || !timeline.timeline || timeline.timeline.branchId !== state.activeBranchId
       || !/^(0|[1-9][0-9]*)$/.test(timeline.timeline.nowMicros)) return fail(`timeline:current-binding-unavailable:${ref}`);
+    if (state.multiplayerRuntime.causalFrontiers[timeline.timelineId]?.sceneId !== entity.sceneId) {
+      fail(`timeline:entity-scene-frontier-mismatch:${ref}`);
+    }
     timelines.set(timeline.timelineId, timeline.timeline.nowMicros);
     lock(`character-timeline:${ref}`, "timeline");
     if (entity.kind !== "npc" && ref !== binding.actorRef) continue;
