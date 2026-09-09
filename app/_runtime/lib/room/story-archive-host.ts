@@ -3,6 +3,11 @@ import { buildRequiredContext, type VNextRequiredContext } from "../kp/vnext/req
 import { assertVNextInvocationTransition, type VNextInvocationRequest } from "./vnext-proposal-invocation";
 import { parseVNextProposalOfferResponse } from "../kp/vnext/proposal-provider";
 import { bindStoryPreparationContext } from "./story-action-context";
+import { bindStoryLibrarySelection, roomStoryReuseRequest } from "./story-library-context";
+import { buildStoryLibraryCatalog, storyHostingArtifact, storyLibraryCatalog, storyLibraryMappings,
+  storyLibraryOwner, validateStoryLibraryEntry, validateStoryLibraryGenesis } from "./story-library";
+import type { StoryLibraryBinding } from "./story-library-contracts";
+import type { StorySelection } from "../kp/vnext/story-selection";
 import { roomStoryRequest, roomStoryCapabilityDescriptions } from "./story-action-request";
 import { buildRoomStoryContext } from "./story-context";
 import { roomModelInvocationBinding, roomStoryBudget } from "./story-runtime-policy";
@@ -366,7 +371,8 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
       requestHash: stage.requestHash, request, ...(stage.repairTicket === null ? {} : { repairTicket: stage.repairTicket }) } as VNextInvocationRequest,
       ordinal => priorStage(payload, context, ordinal), frozen!, prepared.storyPreparation);
   }
-  const offer = binding.jobIds.length ? parseVNextProposalOfferResponse(completedResponse(payload, context, 1)) : undefined;
+  const offer = binding.jobIds.length || prepared.storyPreparation !== undefined
+    ? parseVNextProposalOfferResponse(completedResponse(payload, context, 1), original) : undefined;
   for (const jobId of binding.jobIds) {
     const job = context.storySnapshot.jobs.find(job => job.input.request.jobId === jobId);
     check(job !== undefined && offer?.story !== undefined && payload.moduleProfile !== null);
@@ -379,6 +385,11 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
   }
   if (prepared.storyPreparation !== undefined) {
     const bound = prepared.storyPreparation;
+    check(offer?.story !== undefined && payload.moduleProfile !== null);
+    if (bound.library !== undefined) {
+      validatePreparedLibrary(bound.library, offer!.story!, original, frozen!, payload.moduleProfile!, base, context, bound);
+      return;
+    }
     const job = context.storySnapshot.jobs.find(job => job.input.request.jobId === bound.jobId);
     check(job !== undefined && binding.jobIds.includes(bound.jobId) && job.checkpoint?.status === "ready" && payload.moduleProfile !== null);
     const preparation = job!.checkpoint!.revisedDraft ?? job!.checkpoint!.draft;
@@ -388,6 +399,64 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
       storyContext: job!.input.context, state: base.state, maxUnits: 48_000 });
     check(built.kind === "ready" && same(built.binding, bound) && same(built.context, frozen));
   }
+}
+
+/** Reuse owns a current action and read set, while the exact reviewed source
+ * remains immutable. A historical source job is provenance, never a required
+ * operational job or a spending permit in this Room. */
+function validatePreparedLibrary(library: StoryLibraryBinding, selection: StorySelection,
+  original: VNextRequiredContext, frozen: VNextRequiredContext, moduleProfile: AuthoritativeModuleProfile,
+  base: ReturnType<typeof prefix>, context: ValidationContext,
+  bound: NonNullable<PreparedAuthoritativeAction["storyPreparation"]>): void {
+  const entry = library.entry, room = { roomId: base.state.roomId, runtimeEpochId: base.state.runtimeEpochId, branchId: base.state.activeBranchId };
+  validateStoryLibraryEntry(entry, room);
+  const saved = context.storySnapshot.hostingArtifacts.filter(value => value.libraryRef === entry.libraryRef);
+  check(saved.length === 1 && same(saved[0], entry));
+  const sourceJobId = entry.origin.kind === "creationJob" ? entry.origin.jobId : undefined;
+  const sourceJob = sourceJobId === undefined ? undefined
+    : context.storySnapshot.jobs.find(job => job.input.request.jobId === sourceJobId);
+  if (entry.origin.kind === "creationJob") {
+    check(sourceJob !== undefined && same(storyHostingArtifact({ ...sourceJob!.input, checkpoint: sourceJob!.checkpoint }), entry.artifact));
+  } else validateStoryLibraryGenesis(entry, context.archive.signedGenesis);
+
+  const owner = storyLibraryOwner(entry);
+  const receipts = context.storySnapshot.admissions.filter(receipt => same(receipt.owner, owner)
+    && BigInt(receipt.recordedAtEventSeq) <= BigInt(original.binding.baseEventSeq));
+  const mappings = storyLibraryMappings(entry, receipts);
+  if ("libraryRef" in selection) {
+    const catalog = storyLibraryCatalog(original), selected = catalog?.offers.find(offer => offer.libraryRef === selection.libraryRef);
+    check(catalog !== undefined && same(catalog!.room, room) && selected !== undefined && selection.libraryRef === entry.libraryRef
+      && selected!.opportunityId === entry.artifact.request.opportunityId && same(selected!.owner, owner));
+    if (selected!.status === "ready") {
+      const rebuilt = buildStoryLibraryCatalog({ room, requiredContext: original, entries: [entry], jobs: [],
+        journal: { readAdmissions: () => receipts } });
+      check(rebuilt.offers.length === 1 && same(rebuilt.offers[0], selected));
+    } else {
+      // The initial offer may have frozen an unfinished creation job which
+      // subsequently completed. Its final archive cannot replace that offer.
+      check(selected!.status === "preparing" && sourceJob !== undefined && selected!.preparationHash === null
+        && same(selected!.sceneRefs, sourceJob!.input.request.scope.sceneIds)
+        && same(selected!.entityRefs, sourceJob!.input.request.scope.entityIds));
+      const versions = [sourceJob!.checkpoint?.draft, sourceJob!.checkpoint?.revisedDraft].filter(value => value !== undefined);
+      check(selected!.title === sourceJob!.input.request.trigger.goal && selected!.centralQuestion === sourceJob!.input.request.trigger.goal
+        || versions.some(value => selected!.title === value!.title && selected!.centralQuestion === value!.centralQuestion));
+    }
+  } else {
+    // A repeated create offer resolves the same stable opportunity to its
+    // ready job. The new source root belongs to reuse, not original authorship.
+    const requested = roomStoryRequest(original, base.state, selection), authored = entry.artifact.request;
+    check(entry.origin.kind === "creationJob" && requested.jobId === authored.jobId && requested.opportunityId === authored.opportunityId
+      && requested.scale === authored.scale && requested.connection === authored.connection && same(requested.methods, authored.methods));
+  }
+  const currentRequest = roomStoryReuseRequest(original, base.state, entry, mappings);
+  const marker = library.currentContext.materials.find(material => material.ref === "story-context:binding")?.content;
+  check(isPlainRecord(marker) && Number.isSafeInteger(marker.maxUnits));
+  const current = buildRoomStoryContext({ request: currentRequest, requiredContext: original, state: base.state, profiles: base.profiles,
+    moduleProfile, capabilityDescriptions: roomStoryCapabilityDescriptions(), maxUnits: Number((marker as StoryRecord).maxUnits) });
+  check(current.kind === "ready");
+  const rebuilt = bindStoryLibrarySelection({ entry, mappings, currentRequest, currentContext: current.context,
+    selectionContext: original, moduleProfile, state: base.state, profiles: base.profiles, maxUnits: 48_000 });
+  check(rebuilt.kind === "ready" && same(rebuilt.binding, bound) && same(rebuilt.context, frozen));
 }
 function npcWork(request: StoryFrozenNpcContext["request"]): request is NpcWorkDecisionRequest {
   return "schema" in request && request.schema === "zhuwei.npc-work-decision/vnext-1";

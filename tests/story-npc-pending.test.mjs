@@ -4,7 +4,8 @@ import { canonicalHash } from '../app/_runtime/lib/kp/vnext/canonical-json.ts';
 import { AUTHORITATIVE_KP_PROFILE } from '../app/_runtime/lib/kp/authoritative-policy.ts';
 import { createJournaledNarrationAdapter } from '../app/_runtime/lib/room/story-narration.ts';
 import { storyNpcPendingRequest, storyNpcPendingCanonicalProven, freezeStoryNpcPendingContext } from '../app/_runtime/lib/room/story-npc-pending.ts';
-import { exportStoryArchiveHostBindings, validateStoryArchiveHostBinding, restoreStoryArchiveHostBindings } from '../app/_runtime/lib/room/story-archive-host.ts';
+import { exportStoryArchiveHostBindings, validateStoryArchiveHostBinding, restoreStoryArchiveHostBindings,
+  readStoryArchiveAdmissionRulesInput } from '../app/_runtime/lib/room/story-archive-host.ts';
 import { buildStoryArchive, validateStoryArchive } from '../app/_runtime/lib/room/story-archive.ts';
 import { pendingFixture, pendingStores, pendingArchive, pendingSnapshot, sourceOf, beginPending,
   completePending, freezePending, pendingResponse, ACTOR, TARGET } from './fixtures/story-npc-pending.mjs';
@@ -178,7 +179,8 @@ test('complete story archive envelope validates zero, completed and unknown pend
     const f = pendingFixture(`envelope-${outcome}`);
     if (outcome !== 'zero') completePending(f, f.saved, { kind: 'decline' }, { outcome });
     const context = await pendingArchive(f), hostBindings = exportStoryArchiveHostBindings(f.s.authority, context.storySnapshot);
-    const ports = { replay: f.runtime.replay, validateHostBinding: validateStoryArchiveHostBinding };
+    const ports = { replay: f.runtime.replay, validateHostBinding: validateStoryArchiveHostBinding,
+      readAdmissionRulesInput: readStoryArchiveAdmissionRulesInput };
     const built = await buildStoryArchive({ ...context, hostBindings, generation: '1' }, ports);
     assert.equal(built.kind, 'prepared', JSON.stringify(built));
     const verified = await validateStoryArchive(built.envelope, ports);
