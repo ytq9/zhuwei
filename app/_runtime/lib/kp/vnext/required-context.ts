@@ -142,6 +142,29 @@ export type RequiredContextReferenceDirectory = Readonly<{
     itemRefs: readonly string[];
     semanticRefs: readonly string[];
   }>;
+  /** NPCs whose decision views were frozen for this action. A "default" view
+   * belongs to an addressed NPC and travels with every model request; a
+   * "requestable" one belongs to a bystander and travels only after the
+   * selection stage names it. `entryRefs` are the frozen entries that follow
+   * the view: the decision snapshot and the knowledge bodies loaded for it.
+   * Room and lowering always read the complete frozen context. */
+  npcRecall?: readonly RequiredContextNpcRecall[];
+  /** Memory bodies frozen for a holder whose complete memory travels with
+   * the freeze (the actor and every addressed NPC) but which the topic did
+   * not reach. They stay on the server until the selection names their
+   * handle, the short label the holder's knowledge directory shows. */
+  knowledgeRecall?: readonly RequiredContextKnowledgeRecall[];
+}>;
+
+export type RequiredContextNpcRecall = Readonly<{
+  npcRef: string;
+  role: "default" | "requestable";
+  entryRefs: readonly string[];
+}>;
+
+export type RequiredContextKnowledgeRecall = Readonly<{
+  holderRef: string;
+  records: readonly Readonly<{ handle: string; entryRef: string }>[];
 }>;
 
 export type RequiredContextBindingInput = Readonly<{
@@ -203,6 +226,7 @@ export function buildRequiredContext(input: RequiredContextInput): RequiredConte
     const references = normalizeReferenceDirectory(input.references);
     const binding = normalizeBinding(input.binding);
     assertEntriesHaveCitationClass(entries, references);
+    assertRecallEntriesExist(entries, references);
     for (const ref of intent.narrativeMaterializationRefs ?? []) {
       if (!entries.some((entry) => entry.kind === "known" && entry.entryRef === ref)
         || !references.citations.viewerEvidenceRefs.includes(ref)) {
@@ -458,6 +482,35 @@ function normalizeReferenceDirectory(
   if (npcKnowledge.some((entry, index) => index > 0 && entry.npcRef === npcKnowledge[index - 1]!.npcRef)) {
     throw new TypeError("references.npcKnowledge:duplicate-npc-ref");
   }
+  const npcRecall = (references.npcRecall ?? []).map((entry) => {
+    assertRef(entry.npcRef, "references.npcRecall.npcRef");
+    if (entry.role !== "default" && entry.role !== "requestable") {
+      throw new TypeError(`references.npcRecall:${entry.npcRef}:role-invalid`);
+    }
+    return Object.freeze({ npcRef: entry.npcRef, role: entry.role,
+      entryRefs: sortedUniqueStrings(entry.entryRefs, `${entry.npcRef}.recallEntryRefs`) });
+  }).sort((left, right) => compareCodeUnits(left.npcRef, right.npcRef));
+  if (npcRecall.some((entry, index) => index > 0 && entry.npcRef === npcRecall[index - 1]!.npcRef)) {
+    throw new TypeError("references.npcRecall:duplicate-npc-ref");
+  }
+  const handles = new Set<string>(), recallRefs = new Set<string>();
+  const knowledgeRecall = (references.knowledgeRecall ?? []).map((entry) => {
+    assertRef(entry.holderRef, "references.knowledgeRecall.holderRef");
+    const records = entry.records.map((record) => {
+      if (typeof record.handle !== "string" || !/^m[1-9][0-9]*$/u.test(record.handle) || handles.has(record.handle)) {
+        throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:handle-invalid`);
+      }
+      assertRef(record.entryRef, `references.knowledgeRecall.${entry.holderRef}.entryRef`);
+      if (recallRefs.has(record.entryRef)) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:duplicate-entry-ref`);
+      handles.add(record.handle); recallRefs.add(record.entryRef);
+      return Object.freeze({ handle: record.handle, entryRef: record.entryRef });
+    });
+    if (records.length === 0) throw new TypeError(`references.knowledgeRecall:${entry.holderRef}:records-required`);
+    return Object.freeze({ holderRef: entry.holderRef, records: Object.freeze(records) });
+  }).sort((left, right) => compareCodeUnits(left.holderRef, right.holderRef));
+  if (knowledgeRecall.some((entry, index) => index > 0 && entry.holderRef === knowledgeRecall[index - 1]!.holderRef)) {
+    throw new TypeError("references.knowledgeRecall:duplicate-holder-ref");
+  }
   const normalized = deepFreeze({
     citations: {
       viewerEvidenceRefs: sortedUniqueStrings(
@@ -479,6 +532,8 @@ function normalizeReferenceDirectory(
       itemRefs: sortedUniqueStrings(references.domains.itemRefs, "references.itemRefs"),
       semanticRefs: sortedUniqueStrings(references.domains.semanticRefs, "references.semanticRefs"),
     },
+    npcRecall: Object.freeze(npcRecall),
+    knowledgeRecall: Object.freeze(knowledgeRecall),
   }) as RequiredContextReferenceDirectory;
   return normalized;
 }
@@ -496,6 +551,24 @@ function assertEntriesHaveCitationClass(
   for (const entry of entries) {
     if (entry.kind === "known" && !classified.has(entry.entryRef)) {
       throw new TypeError(`entry:${entry.entryRef}:citation-class-missing`);
+    }
+  }
+}
+
+function assertRecallEntriesExist(
+  entries: readonly RequiredContextEntry[],
+  references: RequiredContextReferenceDirectory,
+): void {
+  const refs = new Set(entries.flatMap((entry) =>
+    typeof (entry as { entryRef?: unknown }).entryRef === "string" ? [(entry as { entryRef: string }).entryRef] : []));
+  for (const recall of references.npcRecall ?? []) {
+    for (const ref of recall.entryRefs) {
+      if (!refs.has(ref)) throw new TypeError(`references.npcRecall:${recall.npcRef}:entry-missing:${ref}`);
+    }
+  }
+  for (const recall of references.knowledgeRecall ?? []) {
+    for (const record of recall.records) {
+      if (!refs.has(record.entryRef)) throw new TypeError(`references.knowledgeRecall:${recall.holderRef}:entry-missing:${record.entryRef}`);
     }
   }
 }

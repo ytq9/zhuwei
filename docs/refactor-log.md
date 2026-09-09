@@ -4033,6 +4033,13 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 验证：typecheck exit 0；修订/schema/承诺主体 6 个 Node 文件 44 过 0 红；Vitest relevance 2/2，provider-room 13 红逐名同基线，空社交草稿用例通过。
 - 真实批次 round97（源码 ff27c1d）：又是空对象加修订稿嵌套 JSON 出错，needsKp。见 [round97 回执](agent/vnext-round97-validation.md)。
 
+## 2026-09-09 DiceFrame 填表与物品生成对照调查（文档）
+
+- 目标：按用户提供的 DiceFrame 仓库比较物品生成、模型填写和可借鉴设计；外部源码固定为 `3f5bb016e5aef14dd056ad33ec67b6d11df0311a`，烛帷本地读取基线 `75ab7d6da91f1b82d0ddaa8dc7ee1728f9bfce82`，已有工作区修改保留。
+- 修改：新增 [源码调查](agent/diceframe-comparison-research-20260909.md)，区分正文状态标签、JSON 内容生成和高级规则小工具三条路径，以及新旧运行时共享状态应用、物品设定/库存/可执行机械之间的边界；提出填写减负、能力标记和角色可见性检查器建议。直接消费者为后续方案讨论，未修改产品规格或运行时代码。
+- 验证：离线脚本核对 30 个来源目标、行锚点、引用定义和空白，exit 0；定向 `git diff --check`，exit 0；已检查最终文档内容和 diff。
+- 未覆盖：未启动外部项目、运行代码测试、调用真实模型或核验部署，不据源码断言模型成功率、性能或完整生产能力；无 commit、push 或部署。
+
 ## 2026-09-09 承诺 terms 形状诊断逐字段定位（开发期）
 
 - 症状：round99 填写稿的承诺 `terms.delivery` 多写了一个 `kind:"scene"`（工具 schema 的已填 delivery 分支只有五个字段且 additionalProperties=false，DeepSeek 严格模式没有强制 anyOf），`socialConsequenceConform` 用裸谓词调 `promiseTermsConform`，嵌套失败被压成一条只指到 `results/0/newPromises/0/terms` 的 `VALUE_INVALID social:field-contract`，把整个 terms 对象当 actual；模型唯一一次修订把 `delivery.kind` 改成 `none`（仍是多余字段），第二次评估同样诊断，`PROPOSAL_REPAIR_EXHAUSTED`。草稿其余部分（主体、交付绑定、承诺对象、授权）都在准入集合内；字符串 `"none"` 解码时已按 `{kind:'none'}` 哨兵读成 null。
@@ -4040,4 +4047,19 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 测试：`kp-vnext-social-shape` 增加 9 条定位用例（delivery 多字段/quantity/destinationRef、terms.kind、subjectRefs、activation 两条、parts 重复 partId、parts 内 delivery）与一条完整合法 terms；`kp-vnext-promise-subjects` 增加 round99 形状用例：多写 kind 经 parse 得 `results/0/newPromises/0/terms/delivery/kind` 且 expected.allowedFields 五项；字面量 `"none"` 解码为 null 且草稿可 lowering。
 - 验证：typecheck exit 0；social-shape/promise-subjects/unparsed-revision 12/12；promise-lifecycle 24、social-plan 17、hazard-lifecycle 23、social-commitments 6、social-resolution-v5 3、promise-due 2、prompt-contract 10、story-archive-host 8、social-source-selection 5 全过；npc-plan-formation-rules 2 红、schema-retrieval 4 红逐名同基线；Vitest provider-room 13 红逐名同基线，promise-lifecycle-room 2 红同基线，relevance 2/2。
 - 真实批次：round98（源码 75ab7d6）首句填写空对象后重发原请求即提交，第二句等待提交，第三句因批次 20 分钟窗口在会话被限流暂停期间过期未发（harness 时限，非产品故障）；round99（同一提交）首句如上述 needsKp。见 [round98 回执](agent/vnext-round98-validation.md)、[round99 回执](agent/vnext-round99-validation.md)。
+
+## 2026-09-10 物品档案与差异填写交接（文档）
+
+- 目标：按用户请求交接“常见物品完整档案、相似模板查找、引用加差异生成”的能力开发；明确现有零散装备数据与底层接口不等于已经有可用档案库。
+- 修改：新增 [handoff](agent/handoff-item-template-library.md)，记录用户原话、调查基线、内容覆盖与通用机制两部分交付、模型填写边界、现役权威链、代表性验收和直接源码入口；未实施功能或修改已批准规格。
+- 验证：16 个本地链接与文档空白检查 exit 0；新文件 `git diff --no-index --check` exit 1（相对空文件有差异，无空白告警）；执行日志 `git diff --check` exit 0；已核对全文与用户目标。纯文档未运行代码测试。
+- 未覆盖：没有完成档案内容建设、KP 调用、真实模型验证或上线；没有创建新任务、commit、push 或部署。接手任务重新核对工作区。
 - 真实批次 round100（源码 20a1545）：前两句直接提交（填写一次成稿，无承诺），第三句「去账台看副本」填写与重发原请求都回空对象，needsKp；该句无人被点名，三位 NPC 快照全冻结，填写请求估算 53,695 逼近 58k 门槛，属搁置待议的动态召回范围。承诺诊断修复未被触发。见 [round100 回执](agent/vnext-round100-validation.md)。
+
+## 2026-09-10 DiceFrame 知识上下文与本地请求长度调查（文档）
+
+- 目标：回答 DiceFrame 如何控制角色知识上下文，并与烛帷当前长度来源比较；外部固定 `3f5bb016`，本地源码读取 `9d6e4b1`。
+- 修改：新增 [知识上下文调查](agent/diceframe-knowledge-context-research-20260910.md)，区分主 GM 的世界书/全局记忆召回、角色桌外问答权限过滤与 NPC 决策上下文；记录当前未点名则加载全部可见 NPC、知识第一档范围宽的实际接缝与尚未实施的建议。
+- 证据：重新读取 round100 基线 `20a1545` 的第 2/12 次原始请求，user 消息 60,238→85,302 字符，NPC 快照 1→3、knowledge 条目 8→24；两类序列化条目增长 25,093 字符。Provider prompt tokens 34,633→49,071 包含整个请求，不能全算知识；没有据此断言空对象的因果。
+- 验证：10 个固定源码链接/行锚点、5 个本地链接与空白检查 exit 0；已审阅文档。纯文档未运行代码测试或新模型调用。
+- 未覆盖：没有运行 DiceFrame、核验当前生产请求或实施动态召回；保持用户既有暂缓安排，不修改产品规格与业务代码，无 push/部署。

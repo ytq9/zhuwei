@@ -77,6 +77,9 @@ export type ExtractionResult =
 export const HAN_ALIAS_QUERY_STOP_WORDS: readonly string[] = Object.freeze([
   ..."的了着过是在有和与及或把被让给向对从到于以而等之也都又就才还再只很太更最不没别请要想会能可该得",
   ..."我你他她它们这那哪谁什么些个位看问说听拿去来走做用找",
+  // Generic single characters a segmenter leaves standing alone ("守夜人" → "人",
+  // "那座桥" → "座"): as a lone query word each reaches nearly every memory.
+  ..."人事座前后里边上下中间处时年月日家",
 ].sort(compareCodeUnits));
 const HAN_ALIAS_QUERY_STOP_WORD_SET: ReadonlySet<string> = new Set(HAN_ALIAS_QUERY_STOP_WORDS);
 
@@ -126,7 +129,7 @@ export function retrievalProfile(
       profileRef,
       tokenizer: normalizedTokenizer,
       extractors: normalizedExtractors,
-      hanAliasPolicy: "intl-zh-word-query-single-character-alias/v2",
+      hanAliasPolicy: "intl-zh-word-query-single-character-alias/v3",
       hanAliasQueryStopWords: HAN_ALIAS_QUERY_STOP_WORDS,
     }),
     tokenizer: normalizedTokenizer,

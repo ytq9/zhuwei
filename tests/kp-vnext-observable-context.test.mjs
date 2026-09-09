@@ -24,7 +24,7 @@ function fixture(label, focusRefs = []) {
   const f = createAuthoredProbeFixture(`observable:${label}`, {
     npcCharacters: [{ id: NPC, name: '斑尾信使' }, { id: HIDDEN, name: '静默访客' }, { id: REMOTE, name: '远方住客' }],
     initialKnowledge: [held(ACTOR, 'ACTOR_KNOWN'), held(OTHER, 'OTHER_PLAYER_PRIVATE'),
-      held(NPC, 'NPC_PRIVATE'), held(HIDDEN, 'HIDDEN_PRIVATE'), held(REMOTE, 'REMOTE_PRIVATE')],
+      held(NPC, 'NPC_PRIVATE 这件事情他昨夜亲眼看见了。'), held(HIDDEN, 'HIDDEN_PRIVATE'), held(REMOTE, 'REMOTE_PRIVATE')],
   });
   const state = structuredClone(f.state);
   state.combatRuntime.entities[HIDDEN].visibilityPolicyId = 'visibility:hidden-until-evidence';
@@ -53,7 +53,9 @@ function lower(f, subjectRef) {
 
 test('model context separates established world descriptions from technical states without losing frozen data', () => {
   const f = fixture('presentation', [SOURCE]), before = structuredClone(f.requiredContext);
-  const presented = proposalContext.proposalModelContext(f.requiredContext);
+  // The unaddressed witness travels once the selection asks for it; this
+  // presentation check reads the complete view.
+  const presented = proposalContext.proposalModelContext(f.requiredContext, [NPC]);
   const valve = presented.entries.find(entry => entry.entryRef === SOURCE).value;
   assert.deepEqual(valve.worldDescription, { content: { label: '阀门', description: '生锈阀门发出细微嘶鸣。' } });
   assert.equal(valve.adjudication.content.observableState, 'ready');
@@ -72,8 +74,10 @@ test('model context separates established world descriptions from technical stat
   // every exact original value, including mechanics, metadata and unknowns.
   // The presentation keeps every entry in order and carries no server-owned
   // version hash; Room and lowering read those from the frozen context.
-  assert.deepEqual(presented.entries.map(entry => entry.entryRef), before.entries.map(entry => entry.entryRef));
-  for (const [index, entry] of before.entries.entries()) {
+  // Knowledge catalogs bind versions for Rules and are not sent to the model.
+  const beforeSent = before.entries.filter(entry => !String(entry.entryRef).startsWith('knowledge-catalog:'));
+  assert.deepEqual(presented.entries.map(entry => entry.entryRef), beforeSent.map(entry => entry.entryRef));
+  for (const [index, entry] of beforeSent.entries()) {
     const shown = presented.entries[index];
     if (entry.kind !== 'known') { assert.deepEqual(shown, entry); continue; }
     assert.equal(shown.revisionOrHash, undefined, entry.entryRef);
@@ -171,8 +175,13 @@ test('an oversized optional NPC knowledge body stays an uncitable directory line
   assert.deepEqual(decision.unloadedKnowledgeRefs, [`knowledge:${NPC}:knowledge:same`]);
   assert.deepEqual(proposalContext.proposalNpcSourceChoices(frozen.context).find(choice => choice.npcRef === NPC).refs
     .filter(ref => ref.startsWith(`knowledge:${NPC}:`)), []);
-  assert.equal(proposalContext.proposalModelContext(frozen.context).entries
-    .find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge[0].loaded, false);
+  // The model view lists loaded bodies only, counts the rest, and carries the
+  // holder's gist directory; the bystander's view itself travels on request.
+  const presented = proposalContext.proposalModelContext(frozen.context, [NPC]).entries;
+  assert.deepEqual(presented.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.knowledge, []);
+  assert.equal(presented.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)).value.unloadedKnowledgeCount, 1);
+  assert.deepEqual(presented.find(entry => entry.entryRef === `knowledge-directory:${NPC}`).value.unloaded.map(record => record.entryRef), [`knowledge:${NPC}:knowledge:same`]);
+  assert.equal(proposalContext.proposalModelContext(frozen.context).entries.find(entry => entry.entryRef === npcDecisionEntryRef(NPC)), undefined);
   const lowered = lower({ ...f, state, requiredContext: frozen.context }, NPC);
   assert.equal(lowered.kind, 'accepted', JSON.stringify(lowered));
   assert.equal(stepActionToDecision(f.runtime, f.profiles, state, lowered.command.rulesInput).kind, 'committed');

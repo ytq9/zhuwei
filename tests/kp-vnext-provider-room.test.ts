@@ -48,6 +48,8 @@ type Capture = {
   starts: Array<{ request: VNextInvocationRequest; result: VNextInvocationStart }>;
   providerRequests: JsonRecord[];
   selectedCapabilities?: readonly string[];
+  /** Bystander views the fixture selection asks for, when the sentence does not address them by a resolvable name. */
+  selectedNpcRefs?: readonly string[];
   narrationRequests?: JsonRecord[];
   failNarrationOnce?: boolean;
   failNarrationForViewerOnce?: string;
@@ -67,12 +69,14 @@ it("an empty social draft retains the natural-language intent and NPC context th
   const stub = await initialize("provider-social-empty-context");
   const input: RoomActionInput = { kind: "intent", submissionId: "submission:social-empty-context",
     text: "我问lian愿意听我说说来意吗。" };
-  const capture: Capture = { selectedCapabilities: ["social"], starts: [], providerRequests: [] };
+  // "lian" is not a spelling discovery resolves, so the selection has to ask
+  // for her view; the filling rounds are then sent the context with it.
+  const capture: Capture = { selectedCapabilities: ["social"], selectedNpcRefs: [npcRef], starts: [], providerRequests: [] };
   let proposals = 0;
   const result = await run(stub, input, capture, async request => {
     proposals++;
     const body = JSON.parse(String(record((request.messages as JsonRecord[])[1]).content));
-    expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never));
+    expect(body.requiredContext).toEqual(proposalModelContext(capture.prepared!.requiredContext as never, [npcRef]));
     expect(body.requiredContext.intent.text).toBe(input.text);
     // The model view lists the NPC's decision entry without server hashes; the
     // frozen context Room keeps is what lowering reads as the decision snapshot.
@@ -483,7 +487,12 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
         // the callback below supplies only the requested execution/correction.
         const toolName = record((request.tools as JsonRecord[])[0]!.function).name;
         if (capture.selectedCapabilities && toolName === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
-          return toolResponse({ kind: "schemaRequest", capabilities: capture.selectedCapabilities });
+          const response = toolResponse({ kind: "schemaRequest", capabilities: capture.selectedCapabilities });
+          if (capture.selectedNpcRefs !== undefined) {
+            const call = record(record((record(record((record(response).choices as unknown[])[0]).message).tool_calls as unknown[])[0]).function);
+            call.arguments = JSON.stringify({ ...JSON.parse(String(call.arguments)), requestedNpcRefs: capture.selectedNpcRefs });
+          }
+          return response;
         }
         const response = await provider(request, target, capture);
         if (capture.selectedCapabilities && toolName === SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME) {

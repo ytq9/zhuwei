@@ -9,7 +9,7 @@ import { assertRepairTicket,
 import { authorityProposalDiagnostics, type ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
 import type { VNextProposalBundle } from "../kp/vnext/proposal-schema";
 import { createVNextProposalOfferModelInput, createSubmitKpProposalBundleModelInput, VNEXT_INITIAL_PROPOSAL_DECISION_KINDS } from "../kp/vnext/proposal-schema";
-import { proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalObservationSubjectRefs, proposalModelContext, proposalNpcSourceChoices } from "../kp/vnext/proposal-context";
+import { proposalContextView, proposalCreatureTargetRefs, proposalItemDefinitionRefs, proposalItemEntryRefs, proposalKnowledgeRecall, proposalNpcRecall, proposalObservationSubjectRefs, proposalModelContext, proposalNpcSourceChoices } from "../kp/vnext/proposal-context";
 import { requiredContextBasisReferences } from "../kp/vnext/required-context-runtime";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import { canonicalHash, isPlainRecord } from "../kp/vnext/canonical-json";
@@ -57,7 +57,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   const selectionContext = storyBinding?.selectionContext ?? requiredContext;
   const surfaceContext = input.ordinal === 1 ? selectionContext : requiredContext;
   const assertSurface = (tools: unknown, stage: VNextProposalStage, capabilities?: readonly VNextProposalCapabilityId[],
-    terminalKinds?: readonly string[], expectedUserBody?: string, amendable = false) => {
+    terminalKinds?: readonly string[], expectedUserBody?: string, amendable = false, npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []) => {
     // Keep property presentation pinned as well as structural meaning.
     if (JSON.stringify(input.request.tools) !== JSON.stringify(tools)) invalid();
     const messages = input.request.messages;
@@ -68,7 +68,7 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       || canonicalHash(messages[0]) !== canonicalHash({ role: "system", content: vnextProposalSystemPrompt(stage, capabilities, terminalKinds, amendable) })
       || (expectedUserBody !== undefined
         ? messages[1].content !== expectedUserBody
-        : stage !== "correction" && messages[1].content !== JSON.stringify({ requiredContext: proposalModelContext(surfaceContext) }))) invalid();
+        : stage !== "correction" && messages[1].content !== JSON.stringify({ requiredContext: proposalModelContext(surfaceContext, npcRefs, knowledgeRefs) }))) invalid();
   };
   if (input.ordinal === 1) {
     if (input.repairTicket !== undefined) invalid();
@@ -83,28 +83,34 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   }
   const first = parseVNextProposalOfferResponse(response(1), selectionContext);
   if ((first.story !== undefined) !== (storyBinding !== undefined)) invalid();
+  // The filling surface is built over the frozen context less the bystander
+  // views the selection did not name, exactly as the Provider built it.
   const submitTools = (capabilities: readonly VNextProposalCapabilityId[],
-    terminalKinds: readonly string[], amendable: boolean) =>
-    createSubmitKpProposalBundleModelInput("bound", capabilities,
-      proposalItemEntryRefs(requiredContext), proposalObservationSubjectRefs(requiredContext), terminalKinds,
-      proposalNpcSourceChoices(requiredContext), requiredContextBasisReferences(requiredContext),
-      proposalCreatureTargetRefs(requiredContext), amendable, proposalItemDefinitionRefs(requiredContext)).tools;
+    terminalKinds: readonly string[], amendable: boolean, npcRefs: readonly string[], knowledgeRefs: readonly string[]) => {
+    const view = proposalContextView(requiredContext, npcRefs, knowledgeRefs);
+    const requestable = proposalNpcRecall(requiredContext).requestableRefs.filter(ref => !npcRefs.includes(ref));
+    const handles = proposalKnowledgeRecall(requiredContext).filter(record => !knowledgeRefs.includes(record.entryRef)).map(record => record.handle);
+    return createSubmitKpProposalBundleModelInput("bound", capabilities,
+      proposalItemEntryRefs(view), proposalObservationSubjectRefs(view), terminalKinds,
+      proposalNpcSourceChoices(view), requiredContextBasisReferences(view),
+      proposalCreatureTargetRefs(view), amendable, proposalItemDefinitionRefs(view), amendable ? requestable : [], amendable ? handles : []).tools;
+  };
   if (input.ordinal === 2) {
     if (input.repairTicket !== undefined) invalid();
-    assertSurface(submitTools(first.capabilities, first.terminalKinds, true), "expandedProposal", first.capabilities, first.terminalKinds, undefined, true);
+    assertSurface(submitTools(first.capabilities, first.terminalKinds, true, first.npcRefs, first.knowledgeRefs), "expandedProposal", first.capabilities, first.terminalKinds, undefined, true, first.npcRefs, first.knowledgeRefs);
     return;
   }
   /** Settles one saved proposal response: the only legal continuations are one
    * re-emit of a draft that never parsed, or one correction of a repairable
    * one. Both are proved from the saved bytes, never asserted by the caller. */
   const settle = (saved: unknown, capabilities: readonly VNextProposalCapabilityId[],
-    terminalKinds: readonly string[]): void => {
+    terminalKinds: readonly string[], npcRefs: readonly string[], knowledgeRefs: readonly string[]): void => {
     assertRepairTicket(input.repairTicket, input.contextHash, requiredContext);
     const unparsed = vnextProposalUnparsedArguments(saved);
     let expected: VNextProposalBundleRepairTicket;
     if (unparsed !== undefined) {
       if (!vnextProposalHasThirdCallBudget(capabilities)) return invalid();
-      expected = createVNextUnparsedRevisionTicket(unparsed, requiredContext, capabilities, terminalKinds);
+      expected = createVNextUnparsedRevisionTicket(unparsed, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs);
     } else {
       const candidate = vnextProposalRevisionCandidate(saved, capabilities, terminalKinds);
       const draft = candidate.kind === "accepted" ? candidate.bundle as unknown as JsonRecord : candidate.draft;
@@ -113,8 +119,8 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
       if (candidate.kind === "accepted") {
         const diagnostics = proveRulesRejection?.(candidate.bundle);
         if (diagnostics === undefined || diagnostics.length === 0) return invalid();
-        expected = createVNextAuthorityRevisionTicket(saved, requiredContext, capabilities, terminalKinds, diagnostics);
-      } else expected = createRepairTicket(candidate, requiredContext, capabilities, terminalKinds);
+        expected = createVNextAuthorityRevisionTicket(saved, requiredContext, capabilities, terminalKinds, diagnostics, npcRefs, knowledgeRefs);
+      } else expected = createRepairTicket(candidate, requiredContext, capabilities, terminalKinds, npcRefs, knowledgeRefs);
     }
     if (canonicalHash(expected) !== canonicalHash(input.repairTicket)) return invalid();
     const modelInput = createVNextProposalRevisionModelInput(input.repairTicket, requiredContext);
@@ -123,17 +129,18 @@ export function assertVNextInvocationTransition(input: VNextInvocationRequest,
   };
   // An amendment at the proposal call is a union of types, derived here from
   // the saved response and the original selection alone.
-  const amendment = vnextProposalAmendmentRequest(response(2), first.capabilities, first.terminalKinds);
+  const amendment = vnextProposalAmendmentRequest(response(2), first.capabilities, first.terminalKinds, first.npcRefs, requiredContext, first.knowledgeRefs);
   if (input.ordinal === 3) {
-    if (amendment === undefined) return settle(response(2), first.capabilities, first.terminalKinds);
+    if (amendment === undefined) return settle(response(2), first.capabilities, first.terminalKinds, first.npcRefs, first.knowledgeRefs);
     if (input.repairTicket !== undefined) invalid();
-    // The amended round fills the same frozen context and cannot amend again.
-    assertSurface(submitTools(amendment.amendedCapabilities, amendment.amendedTerminalKinds, false), "expandedProposal",
-      amendment.amendedCapabilities, amendment.amendedTerminalKinds);
+    // The amended round fills the same frozen context, sent with the enlarged
+    // view, and cannot amend again.
+    assertSurface(submitTools(amendment.amendedCapabilities, amendment.amendedTerminalKinds, false, amendment.amendedNpcRefs, amendment.amendedKnowledgeRefs), "expandedProposal",
+      amendment.amendedCapabilities, amendment.amendedTerminalKinds, undefined, false, amendment.amendedNpcRefs, amendment.amendedKnowledgeRefs);
     return;
   }
   if (input.ordinal !== 4 || amendment === undefined) return invalid();
-  settle(response(3), amendment.amendedCapabilities, amendment.amendedTerminalKinds);
+  settle(response(3), amendment.amendedCapabilities, amendment.amendedTerminalKinds, amendment.amendedNpcRefs, amendment.amendedKnowledgeRefs);
 }
 
 /** A pure Rules preflight may prove a technical rejection, never a successful
