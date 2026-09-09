@@ -24,7 +24,7 @@ const response = decision => ({ choices: [{ message: { tool_calls: [{ type: 'fun
 
 /** The baseline has an explicitly seeded NPC plan; its cause, due commit,
  * trace and archive prefixes are produced by actual public Rules commands. */
-async function fixture(outcome, { faction = false } = {}) {
+async function fixture(outcome, { faction = false, continuation } = {}) {
   const f = worldStoryFixture({ faction }), s = pendingStores();
   const moduleProfile = await authoritativeModuleProfile('black-oak-will');
   const initialState = clone(f.state);
@@ -40,10 +40,30 @@ async function fixture(outcome, { faction = false } = {}) {
   assert.equal(cause.kind, 'committed', JSON.stringify(cause));
   const due = dueActivityDescriptors(cause.state).find(value => value.actorPlan?.planId === WORLD_PLAN); assert.ok(due);
   s.authority.enqueueDueWork({ causeRootActionId: cause.receipt.rootActionId, causeEventId: cause.events.at(-1).eventId, activity: due });
-  const result = f.resolve(cause.state); s.authority.finishDueWork(due.childRootActionId, 'committed');
-  const events = [...cause.events, ...result.events], replayed = f.runtime.replay(genesis, events);
+  let result, commit, events;
+  if (continuation) {
+    const rulesInput = { ...f.rulesInput, mechanicalProposal: { ...(continuation === 'save'
+      ? { operation: 'resolveNoncombatSave', saveAbility: 'wis' }
+      : { operation: 'resolveNoncombatCheck', ability: 'wis', skill: 'perception' }),
+      dc: 12, mode: 'normal', duration: { unit: 'second', value: 1 }, frozenCosts: [], success: [], failure: [] } };
+    const suspended = f.runtime.step(f.profiles, cause.state, rulesInput);
+    assert.equal(suspended.kind, 'awaitingRandomness', JSON.stringify(suspended));
+    assert.equal(dueActivityDescriptors(suspended.state).length, 0, 'the completed Activity no longer supplies its due descriptor');
+    const finalInput = { kind: 'fulfillAuthoritativeRandomness', continuation: suspended.continuation, rolls: [17] };
+    result = f.runtime.step(f.profiles, suspended.state, finalInput);
+    assert.equal(result.kind, 'committed', JSON.stringify(result));
+    events = [...cause.events, ...suspended.events, ...result.events];
+    commit = { ...f.commitInput(result, suspended.state), due, rulesInput: finalInput,
+      continuationProof: { origin: { baseEventSeq: cause.state.version, throughEventSeq: suspended.state.version, rulesInput },
+        signedGenesis: genesis, events } };
+  } else {
+    result = f.resolve(cause.state); events = [...cause.events, ...result.events];
+    commit = { ...f.commitInput(result, cause.state), due };
+  }
+  s.authority.finishDueWork(due.childRootActionId, 'committed');
+  const replayed = f.runtime.replay(genesis, events);
   assert.equal(replayed.kind, 'replayed', JSON.stringify(replayed)); assert.deepEqual(replayed.state, result.state);
-  const frozen = freezeWorldStoryHostContext({ commit: { ...f.commitInput(result, cause.state), due }, moduleProfile,
+  const frozen = freezeWorldStoryHostContext({ commit, moduleProfile,
     library: { entries: [], jobs: [], admissions: [] }, maxContextUnits: 48_000 }, f.runtime);
   assert.equal(frozen.kind, 'frozen', JSON.stringify(frozen));
   const world = frozen.context, state = result.state, external = worldStoryHostInvocationBinding(world, state, f.profiles);
@@ -80,12 +100,14 @@ async function fixture(outcome, { faction = false } = {}) {
     ports: { replay: f.runtime.replay, validateHostBinding: validateStoryArchiveHostBinding, readAdmissionRulesInput: readStoryArchiveAdmissionRulesInput } };
 }
 
-for (const outcome of ['zero', 'completed', 'unknown', 'job']) test(`world ${outcome}: full private envelope restores its source chain and journal without publishing or redispatching`, async () => {
-  const f = await fixture(outcome, { faction: outcome === 'completed' });
+for (const [outcome, continuation] of [['zero'], ['completed'], ['unknown'], ['job'], ['job', 'check'], ['unknown', 'save']]) {
+test(`world ${[outcome, continuation].filter(Boolean).join(' ')}: full private envelope restores its source chain and journal without publishing or redispatching`, async () => {
+  const f = await fixture(outcome, { faction: outcome === 'completed', continuation });
   assert.equal(f.bindings.length, 1); assert.equal(f.bindings[0].payload.format, 'zhuwei.story-world-event-host/v1');
   assert.equal(f.bindings[0].payload.sourceChain.length, 1);
   assert.equal(f.bindings[0].payload.sourceChain[0].cause_event_id, f.cause.events.at(-1).eventId);
   assert.equal(f.bindings[0].jobIds.length, outcome === 'job' ? 1 : 0);
+  assert.equal(f.world.dueOrigin === null, continuation === undefined);
   assert.equal(f.s.authority.storyArchiveHostSnapshot().submissions.length, 0, 'world creation does not invent an intent submission');
   assert.ok(f.state.canonicalFacts[WORLD_TRACE]);
   assert.equal(validateStoryArchiveHostBinding(f.bindings[0], f.context), true);
@@ -110,14 +132,17 @@ for (const outcome of ['zero', 'completed', 'unknown', 'job']) test(`world ${out
     assert.equal(restored.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table);
   }
 });
+}
 
 test('rehashed world context cannot erase due-work causality, take another source budget or alter the completed Rules decision', async () => {
-  const f = await fixture('job');
+  const f = await fixture('job', { continuation: 'check' });
   for (const mutate of [
     value => { value.payload.sourceChain = []; },
     value => { value.payload.sourceChain[0].cause_event_id = f.result.events.at(-1).eventId; },
     value => { value.source.sourceId = 'root:unrelated'; },
     value => { value.payload.world.rulesInput.decision = 'cancel'; value.payload.world.rulesInput.reason = '伪造取消'; },
+    value => { value.payload.world.dueOrigin = null; },
+    value => { value.payload.world.dueOrigin.rulesInput.mechanicalProposal.dc = 13; },
     value => { value.jobIds = []; },
     value => { value.payload.stages[0].contextHash = canonicalHash('ordinary NPC projection'); },
   ]) {
