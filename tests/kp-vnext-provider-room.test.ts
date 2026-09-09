@@ -549,7 +549,8 @@ async function run(stub: Awaited<ReturnType<typeof initialize>>, input: RoomActi
               const direct = decisions.find(variant => (resolve(record(variant.properties).kind).enum as string[]).includes("directSuccess"));
               if (direct && record(schema.properties).steps !== undefined) {
                 const steps = resolve(record(schema.properties).steps);
-                reorderedNode = resolve((resolve(steps.items).anyOf as JsonRecord[])[0]);
+                const item = resolve(steps.items);
+                reorderedNode = resolve(Array.isArray(item.anyOf) ? item.anyOf[0] : item);
               } else reorderedNode = resolve(decisions[0]);
             }
             if (request.ordinal === 1) {
