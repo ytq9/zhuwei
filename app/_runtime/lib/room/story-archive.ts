@@ -285,6 +285,8 @@ async function checkAdmissions(envelope: StoryRoomArchive, checked: Awaited<Retu
         || (!inReceipt(event) && (previous === undefined || !same(factIdentity(previous), factIdentity(mapping))))
         || previous !== undefined && !same(factIdentity(previous), factIdentity(mapping))
         || mapping.definitionRefs.some(ref => state!.campaignRuntime.definitions[ref] === undefined)) invalid();
+      if (isRecord(fact.value) && typeof fact.value.definitionRef === "string"
+        && !mapping.definitionRefs.includes(fact.value.definitionRef)) invalid("STORY_ARCHIVE_MATERIALS_MISSING");
       admitted.add(mapping.candidateRef); recordedFacts.set(candidateKey, mapping);
       for (const knowledge of mapping.knowledge) {
         const item = candidate.knowledge.find(value => value.ref === knowledge.candidateRef);

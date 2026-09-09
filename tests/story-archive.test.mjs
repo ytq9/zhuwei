@@ -24,8 +24,32 @@ async function rehashEnvelope(envelope) {
   envelope.contentHash = await archiveSha256(body);
 }
 
-async function fixture(variant = "boat") {
+async function fixture(variant = "boat", withDefinitions = false) {
   const world = await createHistoryFixture(variant);
+  if (withDefinitions) {
+    const material = world.preparations[0], candidate = material.preparation.facts[0];
+    const definitionRefs = ["definition:archive:river-guild", "definition:archive:unrelated-guild"];
+    for (const definitionId of definitionRefs) world.run({ kind: "registerDynamicDefinition", proposalId: `root:${definitionId}`,
+      definition: { definitionId, definitionKind: "faction", revision: "1", rulesBasis: "zhuwei-product-ruling",
+        visibilityPolicyRef: "visibility:scene-observers", content: { factionId: `faction:${definitionId}`, name: "地方行会",
+          goal: "处理行会事务", memberRefs: candidate.subjectRefs, resourceRefs: [] } } });
+    const factRef = "fact:archive:guild-involvement";
+    world.run({ kind: "declareCanonicalFact", proposalId: "root:archive:guild-involvement", fact: { factId: factRef,
+      factKind: "hiddenReality", subjectRefs: candidate.subjectRefs, value: { definitionRef: definitionRefs[0], description: candidate.content },
+      source: "dynamicMaterialization", causalParentIds: ["fact:history:origin"], visibilityPolicy: "hiddenUntilEvidence" } });
+    for (const item of candidate.knowledge) {
+      item.sourceRef = factRef;
+      world.run({ kind: "acquireSensoryEvidence", proposalId: `root:archive:guild-knowledge:${item.holderRef}`,
+        characterId: item.holderRef, factId: factRef, sense: "hearing", clarity: "obvious", publicEvidence: item.content });
+    }
+    const record = world.state.canonicalFacts[factRef];
+    material.facts = [{ candidateRef: candidate.ref, factRef,
+      recordedByEventId: world.events.find(event => event.eventSeq === record.validFromEventSeq).eventId,
+      definitionRefs: [definitionRefs[0]], knowledge: candidate.knowledge.map(item => {
+        const knowledge = Object.values(world.state.knowledge[item.holderRef]).find(value => value.provenanceChain.includes(factRef));
+        return { candidateRef: item.ref, holderRef: item.holderRef, knowledgeRef: knowledge.knowledgeRef, recordedByEventId: knowledge.acquiredByEventId };
+      }) }];
+  }
   const policyRef = await ref("budget"), modelRef = await ref("model"), jobId = `job:archive:${variant}`;
   const source = { roomId: world.state.roomId, runtimeEpochId: world.state.runtimeEpochId, branchId: world.state.activeBranchId,
     kind: variant === "boat" ? "playerAction" : "worldEvent", sourceId: "source:creative-opportunity", budgetAccountId: "budget:source" };
@@ -189,6 +213,18 @@ test("admission event and knowledge holder substitutions fail even when all surr
     if (mode === "extraKnowledge") admissions[0].facts[0].knowledge = admissions[1].facts[0].knowledge;
     await rehashEnvelope(envelope);
     assert.deepEqual(await validateStoryArchive(envelope, value.ports), { kind: "rejected", code: "STORY_ARCHIVE_BINDING_INVALID" });
+  }
+});
+
+test("admitted facts must retain their actual definition pointer in the archived material closure", async () => {
+  const value = await fixture("boat", true), prepared = await buildStoryArchive(value.input, value.ports);
+  assert.equal(prepared.kind, "prepared", JSON.stringify(prepared));
+  assert.deepEqual(prepared.historyMaterials.preparations[0].facts[0].definitionRefs, ["definition:archive:river-guild"]);
+  for (const definitionRefs of [[], ["definition:archive:unrelated-guild"]]) {
+    const envelope = structuredClone(prepared.envelope);
+    for (const admission of envelope.storySnapshot.admissions) admission.facts[0].definitionRefs = definitionRefs;
+    await rehashEnvelope(envelope);
+    assert.deepEqual(await validateStoryArchive(envelope, value.ports), { kind: "rejected", code: "STORY_ARCHIVE_MATERIALS_MISSING" });
   }
 });
 
