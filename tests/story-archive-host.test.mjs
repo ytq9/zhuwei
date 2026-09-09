@@ -267,7 +267,7 @@ test('unfinished StoryJob is owned by the actual offer, pinned module and rebuil
     moduleProfile, capabilityDescriptions: roomStoryCapabilityDescriptions(), maxUnits: 48_000 });
   assert.equal(built.kind, 'ready', JSON.stringify(built.kind === 'blocked' ? built.issues : undefined));
   stage(s, { state: f.state, sourceRoot: root, preparedId, contextHash: frozen.context.binding.contextHash,
-    request: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(frozen.context) }))),
+    request: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(frozen.context) }), frozen.context)),
     response: { choices: [{ message: { tool_calls: [{ type: 'function', function: { name: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
       arguments: JSON.stringify({ requestedCapabilities: ['worldInteraction', 'storyPreparation', 'storyMethodConflict', 'storyShort', 'storyLocal'] }) } }] } }] } });
   const opened = s.story.openJob({ request, context: built.context, modelRef: storyTransportRef(ROOM_STORY_TRANSPORT), budget: roomStoryBudget(request.source),
@@ -294,7 +294,7 @@ test('a committed submission retains its terminal identity without restoring its
     prepared: { kind: 'prepared', preparedActionId: preparedId, rootActionId: f.rootActionId, requiredContext: frozen,
       resolutionMode: 'kpProposal', phase: 'playerIntent', kpProjection: f.runtime.project(f.profiles, f.state, { kind: 'kp', capability: 'internal:kp-spatial-evidence' }) } });
   stage(s, { state: f.state, sourceRoot: f.rootActionId, preparedId, contextHash: frozen.binding.contextHash,
-    request: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(frozen) }))) });
+    request: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(frozen) }), frozen)) });
   s.authority.finishSubmission(preparedId, 'committed', canonicalHash(makePromiseInput(f, f.state, { nextStep: null })),
     { kind: 'committed', receipt: committed.receipt, deliveries: [{ body: 'PUBLISHED_DELIVERY_CANARY' }] });
   const checkedContext = { ...context, storySnapshot: storySnapshot(s, f.state) }, bindings = exportStoryArchiveHostBindings(s.authority, checkedContext.storySnapshot);

@@ -42,7 +42,7 @@ async function initialize(name: string) {
 
 /** Drives one intent through the real Room prepare and adapter, answering the
  * selection with the given families and stopping at the filling request. */
-async function measure(name: string, text: string, capabilities: readonly string[]) {
+async function measure(name: string, text: string, capabilities: readonly string[], npcRefs: readonly string[] = []) {
   const stub = await initialize(name);
   const requests: R[] = [];
   let prepared: R | undefined;
@@ -65,8 +65,9 @@ async function measure(name: string, text: string, capabilities: readonly string
       requests.push(structuredClone(request as R));
       const tool = String(((request.tools as R[])[0].function as R).name);
       if (tool === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME) {
+        const offersRecall = Object.hasOwn((((request.tools as R[])[0].function as R).parameters as R).properties as R, "requestedNpcRefs");
         return { choices: [{ message: { tool_calls: [{ type: "function", function: { name: tool,
-          arguments: JSON.stringify({ requestedCapabilities: capabilities }) } }] } }] };
+          arguments: JSON.stringify({ requestedCapabilities: capabilities, ...(offersRecall ? { requestedNpcRefs: npcRefs } : {}) }) } }] } }] };
       }
       throw Object.assign(new Error("measured"), { status: 400 });
     } } });
@@ -77,10 +78,16 @@ async function measure(name: string, text: string, capabilities: readonly string
   const context = prepared === undefined ? undefined : (prepared.requiredContext as R | undefined);
   const modelContext = bodies.length === 0 ? undefined
     : (JSON.parse(String(((bodies[0].messages as R[])[1]).content)) as R).requiredContext as R;
-  return { outcome: outcome as R, bodies, context, modelContext, totals: bodies.map(body => tokens(JSON.stringify(body))) };
+  const fillContext = bodies.length < 2 ? undefined
+    : (JSON.parse(String(((bodies[1].messages as R[])[1]).content)) as R).requiredContext as R;
+  return { outcome: outcome as R, bodies, context, modelContext, fillContext, totals: bodies.map(body => tokens(JSON.stringify(body))) };
 }
 
 const entryRefs = (context: R | undefined) => (context?.entries as R[] | undefined ?? []).map(entry => String(entry.entryRef));
+/** The NPCs the freeze found in view: every one of them has a frozen decision view. */
+const visibleNpcs = (context: R | undefined) => (context?.entries as R[] | undefined ?? [])
+  .filter(entry => entry.kind === "known" && String(entry.entryRef).startsWith("npc:black-oak-will:") && ((entry.value as R).entity as R | undefined)?.kind === "npc")
+  .map(entry => String(entry.entryRef)).sort();
 
 it("a plain question retains visible respondents and applies the input budget to the complete request", async () => {
   const run = await measure("relevance-addressed", "我环顾大厅，问瓦罗：这里到底发生了什么事？",
@@ -94,14 +101,37 @@ it("a plain question retains visible respondents and applies the input budget to
     expect(run.outcome.code).toBe("PROPOSAL_INPUT_BUDGET_EXCEEDED");
   }
   const refs = entryRefs(run.context);
-  expect(refs).toContain(npcDecisionEntryRef(VARO));
-  // Lexical matches do not prove who the player is addressing.
-  for (const npc of [LIAN, NAES]) {
+  const sent = (run.modelContext!.entries as R[]).map(entry => String(entry.entryRef));
+  // Every visible view is frozen and verified; only the addressed one is sent.
+  // Bystanders stay observable subjects with exact records, but their decision
+  // views and knowledge bodies wait for the selection to ask for them.
+  const bystanders = visibleNpcs(run.context).filter(npc => npc !== VARO);
+  expect(bystanders).toEqual(expect.arrayContaining([LIAN, NAES]));
+  for (const npc of visibleNpcs(run.context)) expect(refs).toContain(npcDecisionEntryRef(npc));
+  expect(sent).toContain(npcDecisionEntryRef(VARO));
+  for (const npc of bystanders) {
     expect(refs).toContain(npcDecisionEntryRef(npc));
     expect(refs).toContain(npc);
-    expect(refs.some(ref => ref.startsWith(`knowledge:${npc}:`))).toBe(true);
+    expect(sent).toContain(npc);
+    expect(sent).not.toContain(npcDecisionEntryRef(npc));
+    expect(sent.some(ref => ref.startsWith(`knowledge:${npc}:`) || ref === `knowledge-directory:${npc}`)).toBe(false);
   }
-  expect(refs.some(ref => ref.startsWith(`knowledge:${VARO}:`))).toBe(true);
+  // Varo's complete memory is frozen once; the model is sent the bodies the
+  // topic reaches, and the rest wait behind a handle directory.
+  const varoView = ((run.context!.entries as R[]).find(entry => entry.entryRef === npcDecisionEntryRef(VARO))!.value as R);
+  expect(varoView.unloadedKnowledgeRefs).toBeUndefined();
+  const hidden = new Set((((run.context!.references as R).knowledgeRecall as R[]).find(entry => entry.holderRef === VARO)?.records as R[] | undefined ?? []).map(record => String(record.entryRef)));
+  for (const record of varoView.knowledge as R[]) {
+    expect(refs).toContain(String(record.entryRef));
+    expect(sent.includes(String(record.entryRef))).toBe(!hidden.has(String(record.entryRef)));
+  }
+  const directory = (run.context!.entries as R[]).find(entry => entry.entryRef === `knowledge-directory:${VARO}`);
+  expect(directory === undefined ? [] : ((directory.value as R).unloaded as R[]).map(record => record.entryRef)).toEqual([...hidden].sort());
+  expect((run.modelContext!.references as R).npcRecall).toEqual({ shown: [VARO], requestable: bystanders });
+  expect(((((run.bodies[0].tools as R[])[0].function as R).parameters as R).properties as R).requestedNpcRefs).toMatchObject({ items: { enum: bystanders } });
+  const handles = (((run.modelContext!.references as R).knowledgeRecall as R).requestable as string[]);
+  expect(handles.length).toBeGreaterThanOrEqual(hidden.size);
+  if (handles.length > 0) expect(((((run.bodies[0].tools as R[])[0].function as R).parameters as R).properties as R).requestedKnowledgeRefs).toMatchObject({ items: { enum: handles } });
   // Opening item truths stay out until the words reach the item.
   expect(refs).not.toContain(COPPER_KEY_FACT);
   expect(refs).not.toContain(COPPER_KEY_DEFINITION);
@@ -114,7 +144,7 @@ it("a plain question retains visible respondents and applies the input budget to
   expect(presented).not.toContain('"projectionHash"');
   expect(presented).not.toContain('"recordHash"');
   expect(presented).not.toContain('"factConstraintsHash"');
-  expect((run.modelContext!.entries as R[]).map(entry => entry.entryRef)).toEqual(refs);
+  expect(sent.every(ref => refs.includes(ref))).toBe(true);
   const bySchema = new Map<string, { count: number; tokens: number }>();
   for (const entry of run.modelContext!.entries as R[]) {
     const value = entry.value as R | undefined;
@@ -131,13 +161,37 @@ it("a question about an opening item freezes that item's truth, and an unaddress
   const itemRefs = entryRefs(item.context);
   expect(itemRefs).toContain(COPPER_KEY_FACT);
   expect(itemRefs).toContain(COPPER_KEY_DEFINITION);
-  expect(itemRefs).toContain(npcDecisionEntryRef(LIAN));
-  expect(itemRefs).toContain(npcDecisionEntryRef(VARO));
   expect(itemRefs).not.toContain("fact:module:black-oak-will:oak-leaf");
+  const itemSent = (item.modelContext!.entries as R[]).map(entry => String(entry.entryRef));
+  expect(itemSent).toContain(npcDecisionEntryRef(LIAN));
+  expect(itemSent).not.toContain(npcDecisionEntryRef(VARO));
+  expect((item.modelContext!.references as R).npcRecall).toEqual({ shown: [LIAN], requestable: visibleNpcs(item.context).filter(npc => npc !== LIAN) });
   const generic = await measure("relevance-generic", "我环顾大厅，看看这里都有谁，他们在做什么。", ["observe"]);
   const genericRefs = entryRefs(generic.context);
-  for (const npc of [VARO, LIAN, NAES]) expect(genericRefs).toContain(npcDecisionEntryRef(npc));
-  expect(generic.totals[0], `generic offer ${generic.totals[0]}`).toBeLessThan(allowedInputTokens(VNEXT_PROVIDER_BUDGET));
-  console.info(JSON.stringify({ measure: "item", offerTokens: item.totals[0], fillTokens: item.totals[1] },
-  ) + JSON.stringify({ measure: "generic", offerTokens: generic.totals[0], fillTokens: generic.totals[1] }));
-}, 60_000);
+  // Every visible view is frozen and verified, none is sent until asked for.
+  const everyone = visibleNpcs(generic.context);
+  expect(everyone).toEqual(expect.arrayContaining([VARO, LIAN, NAES]));
+  for (const npc of everyone) expect(genericRefs).toContain(npcDecisionEntryRef(npc));
+  const sent = (generic.modelContext!.entries as R[]).map(entry => String(entry.entryRef));
+  for (const npc of everyone) {
+    expect(sent).not.toContain(npcDecisionEntryRef(npc));
+    expect(sent.some(ref => ref.startsWith(`knowledge:${npc}:`))).toBe(false);
+    expect(sent).toContain(npc);
+  }
+  expect((generic.modelContext!.references as R).npcRecall).toEqual({ shown: [], requestable: everyone });
+  expect(((((generic.bodies[0].tools as R[])[0].function as R).parameters as R).properties as R).requestedNpcRefs).toMatchObject({ items: { enum: everyone } });
+  expect(generic.totals[0], `generic offer ${generic.totals[0]}`).toBeLessThan(30_000);
+  // The same sentence with the selection asking for Varo: his view and memory
+  // travel to the filling request, the other two stay roster lines.
+  const recall = await measure("relevance-recall", "我环顾大厅，看看这里都有谁，他们在做什么。", ["observe", "social"], [VARO]);
+  const filled = (recall.fillContext!.entries as R[]).map(entry => String(entry.entryRef));
+  expect(filled).toContain(npcDecisionEntryRef(VARO));
+  expect(filled).not.toContain(npcDecisionEntryRef(LIAN));
+  expect(filled).not.toContain(npcDecisionEntryRef(NAES));
+  expect((recall.fillContext!.references as R).npcRecall).toEqual({ shown: [VARO], requestable: visibleNpcs(recall.context).filter(npc => npc !== VARO) });
+  expect(((recall.fillContext!.references as R).npcSourceChoices as R[]).map(choice => choice.npcRef)).toEqual([VARO]);
+  expect(recall.totals[1], `recall fill ${recall.totals[1]}`).toBeLessThan(allowedInputTokens(VNEXT_PROVIDER_BUDGET));
+  console.info(JSON.stringify({ measure: "item", offerTokens: item.totals[0], fillTokens: item.totals[1] })
+    + JSON.stringify({ measure: "generic", offerTokens: generic.totals[0], fillTokens: generic.totals[1] })
+    + JSON.stringify({ measure: "recall", offerTokens: recall.totals[0], fillTokens: recall.totals[1] }));
+}, 90_000);

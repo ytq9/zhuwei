@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAuthoredProbeFixture, PROBE_ACTOR as ACTOR, PROBE_SCENE as SCENE } from '../tools/lib/vnext-authored-probe-fixture.mjs';
-import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalObservationSubjectRefs, proposalItemEntryRefs, proposalCreatureTargetRefs, proposalNpcSourceChoices, proposalModelContext, proposalNpcRecall, proposalKnowledgeRecall, proposalContextView, proposalItemDefinitionRefs } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { requiredContextBasisReferences } from '../app/_runtime/lib/kp/vnext/required-context-runtime.ts';
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { createVNextProposalBundleSchema, createSubmitKpProposalBundleModelInput } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
@@ -79,10 +79,14 @@ test('Room reconstructs the identical subject schema from frozen context and rej
   // test a request the provider never sends.
   // Ordinal 2 offers the selection tool alongside the proposal, so the surface
   // Room reconstructs must be the amendable one the provider actually sends.
+  // The provider builds the forms over the frozen context less the bystander
+  // views and unread bodies the selection did not name; so does Room.
+  const view = proposalContextView(f.requiredContext);
   const surface = (subjectRefs, creatureRefs) => createSubmitKpProposalBundleModelInput(message, ['observe'],
-    proposalItemEntryRefs(f.requiredContext), subjectRefs, [],
-    proposalNpcSourceChoices(f.requiredContext), requiredContextBasisReferences(f.requiredContext), creatureRefs, true);
-  const request = surface(proposalObservationSubjectRefs(f.requiredContext), proposalCreatureTargetRefs(f.requiredContext));
+    proposalItemEntryRefs(view), subjectRefs, [],
+    proposalNpcSourceChoices(view), requiredContextBasisReferences(view), creatureRefs, true, proposalItemDefinitionRefs(view),
+    proposalNpcRecall(f.requiredContext).requestableRefs, proposalKnowledgeRecall(f.requiredContext, []).map(record => record.handle));
+  const request = surface(proposalObservationSubjectRefs(view), proposalCreatureTargetRefs(view));
   const input = { ordinal: 2, contextHash: f.requiredContext.binding.contextHash,
     bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request };
   const prior = () => ({ status: 'completed', context_hash: input.contextHash, binding_hash: input.bindingHash,
@@ -90,7 +94,7 @@ test('Room reconstructs the identical subject schema from frozen context and rej
       name: 'offer_kp_proposal_bundle', arguments: JSON.stringify({ requestedCapabilities: ['observe'] }),
     } }] } }] }) });
   assert.doesNotThrow(() => assertVNextInvocationTransition(input, prior, f.requiredContext));
-  const changed = surface([...proposalObservationSubjectRefs(f.requiredContext), f.knowledgeRef], proposalCreatureTargetRefs(f.requiredContext));
+  const changed = surface([...proposalObservationSubjectRefs(view), f.knowledgeRef], proposalCreatureTargetRefs(view));
   assert.throws(() => assertVNextInvocationTransition({ ...input, request: changed }, prior, f.requiredContext), /PROPOSAL_REPAIR_EXHAUSTED/);
   // An observe request carries no ability terminal, so the creature surface is
   // not part of this schema and cannot silently widen it. The ability terminal

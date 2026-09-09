@@ -1,12 +1,87 @@
 import type { VNextRequiredContext } from "./required-context";
 import { ITEM_DEFINITION_SCHEMA, ITEM_ENTRY_SCHEMA } from "../../rules/v2/items";
 import { VNEXT_STORED_SEMANTIC_DEFINITION_SCHEMA } from "../../rules/v2/semantic-definitions";
-import { isPlainRecord, compareCodeUnits } from "./canonical-json";
+import { isPlainRecord, compareCodeUnits, canonicalHash } from "./canonical-json";
 import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionLoadedKnowledge, NPC_DECISION_CONTEXT_SCHEMA } from "../../rules/v2/npc-decision-context";
 
 // v6 separates world descriptions from adjudication data without changing the
 // frozen authority records, their permission classes or their read bindings.
-export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-7" as const;
+// v8 sends a bystander's decision view only after the selection names it and
+// lists an NPC's knowledge by loaded bodies alone.
+export const VNEXT_PROPOSAL_CONTEXT_SCHEMA = "zhuwei.proposal-context/vnext-8" as const;
+
+export type ProposalNpcRecall = Readonly<{ defaultRefs: readonly string[]; requestableRefs: readonly string[] }>;
+
+/** Which frozen NPC views the selection stage may still ask for. */
+export function proposalNpcRecall(context: VNextRequiredContext): ProposalNpcRecall {
+  const recall = context.references.npcRecall ?? [];
+  return Object.freeze({
+    defaultRefs: Object.freeze(recall.filter(entry => entry.role === "default").map(entry => entry.npcRef)),
+    requestableRefs: Object.freeze(recall.filter(entry => entry.role === "requestable").map(entry => entry.npcRef)),
+  });
+}
+
+export type ProposalKnowledgeHandle = Readonly<{ handle: string; entryRef: string; holderRef: string }>;
+
+/** The frozen bodies the topic did not reach, by the handle the holder's
+ * directory shows; the selection names handles, the context holds refs. Only
+ * a holder whose view is sent (the actor, an addressed NPC, a requested one)
+ * offers handles: a bystander's memory follows its view. */
+export function proposalKnowledgeRecall(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = []): readonly ProposalKnowledgeHandle[] {
+  const hidden = new Set((context.references.npcRecall ?? [])
+    .filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef));
+  return Object.freeze((context.references.knowledgeRecall ?? []).flatMap(entry => hidden.has(entry.holderRef) ? []
+    : entry.records.map(record => Object.freeze({ handle: record.handle, entryRef: record.entryRef, holderRef: entry.holderRef }))));
+}
+
+/** The same frozen context with what the selection has not asked for left
+ * out: the decision snapshots and bodies of bystanders it did not name, and
+ * the frozen memory bodies of complete-memory holders the topic did not
+ * reach. Those leave the entries and the citation directory, and a decision
+ * snapshot lists them as unread, while presence records stay. Nothing is
+ * added, and the binding is untouched, so Room and lowering keep reading the
+ * complete frozen context; only what the model is sent, and what its forms
+ * may cite, follows the selection. */
+export function proposalContextView(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
+  requestedKnowledgeRefs: readonly string[] = []): VNextRequiredContext {
+  const hiddenNpcs = (context.references.npcRecall ?? [])
+    .filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef));
+  const hiddenBodies = new Set((context.references.knowledgeRecall ?? []).flatMap(entry => entry.records)
+    .filter(record => !requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef));
+  if (hiddenNpcs.length === 0 && hiddenBodies.size === 0) return context;
+  const hidden = new Set([...hiddenNpcs.flatMap(entry => entry.entryRefs), ...hiddenBodies]);
+  const hiddenNpcRefs = new Set(hiddenNpcs.map(entry => entry.npcRef));
+  const actorPrefix = `knowledge:${context.intent.actorRef}:`;
+  const hiddenActorKnowledgeRefs = new Set([...hiddenBodies].filter(ref => ref.startsWith(actorPrefix)).map(ref => ref.slice(actorPrefix.length)));
+  const keep = (ref: string) => !hidden.has(ref) && !hiddenActorKnowledgeRefs.has(ref);
+  const citations = context.references.citations;
+  return Object.freeze({ ...context,
+    entries: Object.freeze(context.entries.flatMap(entry => {
+      if (!keep(entry.entryRef)) return [];
+      // A decision snapshot whose frozen bodies are withheld lists them as
+      // unread, so the same reader that serves Rules serves this view.
+      if (entry.kind === "known" && isPlainRecord(entry.value) && entry.value.schema === NPC_DECISION_CONTEXT_SCHEMA
+        && typeof entry.value.npcRef === "string" && Array.isArray(entry.value.knowledge)) {
+        const withheld = entry.value.knowledge.flatMap(record => isPlainRecord(record) && typeof record.entryRef === "string"
+          && hiddenBodies.has(record.entryRef) ? [record.entryRef] : []);
+        if (withheld.length === 0) return [entry];
+        const unloaded = Array.isArray(entry.value.unloadedKnowledgeRefs) ? entry.value.unloadedKnowledgeRefs as string[] : [];
+        // The reader binds a snapshot to the hash of its value; this derived
+        // view is read through the same reader, so it carries its own hash.
+        const value = Object.freeze({ ...entry.value,
+          unloadedKnowledgeRefs: Object.freeze([...new Set([...unloaded, ...withheld])].sort(compareCodeUnits)) });
+        return [Object.freeze({ ...entry, value, revisionOrHash: canonicalHash(value) })];
+      }
+      return [entry];
+    })),
+    references: Object.freeze({ ...context.references,
+      citations: Object.freeze({ ...citations,
+        viewerEvidenceRefs: Object.freeze(citations.viewerEvidenceRefs.filter(keep)),
+        authorityBasisRefs: Object.freeze(citations.authorityBasisRefs.filter(keep)),
+        nonCitableRefs: Object.freeze(citations.nonCitableRefs.filter(keep)),
+        npcKnowledge: Object.freeze(citations.npcKnowledge.flatMap(entry => hiddenNpcRefs.has(entry.npcRef) ? []
+          : [Object.freeze({ ...entry, refs: Object.freeze(entry.refs.filter(keep)) })])) }) }) });
+}
 
 /** `refs`: what this NPC's speech may cite. `factRefs`: the canonical facts
  * the NPC itself can see, the only admissible basis for a relationship or
@@ -137,10 +212,12 @@ function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<stri
     const { projectionHash: _projection, unloadedKnowledgeRefs, ...rest } = value;
     const unloaded = new Set(Array.isArray(unloadedKnowledgeRefs) ? unloadedKnowledgeRefs : []);
     return Object.freeze({ ...rest,
-      // A directory line without a loaded body: the NPC holds this memory, but
-      // this action did not read it, so it cannot be cited or paraphrased.
-      knowledge: Array.isArray(value.knowledge) ? Object.freeze(value.knowledge.map(record => isPlainRecord(record)
-        ? Object.freeze({ knowledgeRef: record.knowledgeRef, entryRef: record.entryRef, loaded: !unloaded.has(String(record.entryRef)) }) : record)) : value.knowledge,
+      // Only memories whose bodies this action read are listed; the NPC holds
+      // `unloadedKnowledgeCount` more that cannot be cited or paraphrased. The
+      // complete directory stays in the frozen entry for Rules to verify.
+      knowledge: Array.isArray(value.knowledge) ? Object.freeze(value.knowledge.flatMap(record => isPlainRecord(record)
+        ? (unloaded.has(String(record.entryRef)) ? [] : [Object.freeze({ knowledgeRef: record.knowledgeRef, entryRef: record.entryRef })]) : [record])) : value.knowledge,
+      unloadedKnowledgeCount: unloaded.size,
       records: Array.isArray(value.records) ? Object.freeze(value.records.map(record => {
         if (!isPlainRecord(record)) return record;
         const { revisionOrHash: _revision, ...presented } = record;
@@ -170,23 +247,36 @@ function modelEntryValue(value: Record<string, unknown>, known: ReadonlySet<stri
  * version hashes are not, and a fact body carried by its own entry is listed
  * by id inside the constraint frame. Room keeps the full binding and validates
  * it when journaling and committing; the model neither chooses nor reproduces
- * those server-owned identities. */
-export function proposalModelContext(context: VNextRequiredContext) {
-  const subjects = new Set(proposalObservationSubjectRefs(context));
-  const known = new Set(context.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
+ * those server-owned identities. `requestedNpcRefs` are the bystander views
+ * the selection named; the rest keep only their observable presence record,
+ * and references.npcRecall lists who can still be asked for. */
+export function proposalModelContext(context: VNextRequiredContext, requestedNpcRefs: readonly string[] = [],
+  requestedKnowledgeRefs: readonly string[] = []) {
+  const view = proposalContextView(context, requestedNpcRefs, requestedKnowledgeRefs);
+  const recall = context.references.npcRecall ?? [];
+  const shown = recall.filter(entry => entry.role === "default" || requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef);
+  const requestable = recall.filter(entry => entry.role === "requestable" && !requestedNpcRefs.includes(entry.npcRef)).map(entry => entry.npcRef);
+  const handles = proposalKnowledgeRecall(context, requestedNpcRefs);
+  const subjects = new Set(proposalObservationSubjectRefs(view));
+  const known = new Set(view.entries.flatMap(entry => entry.kind === "known" ? [entry.entryRef] : []));
   return Object.freeze({
     schema: VNEXT_PROPOSAL_CONTEXT_SCHEMA,
-    contextHash: context.binding.contextHash,
-    intent: context.intent,
-    entries: Object.freeze(context.entries.map(entry => {
+    contextHash: view.binding.contextHash,
+    intent: view.intent,
+    // A holder's knowledge catalog binds versions for Rules; the model reads
+    // the loaded bodies and the gist directory instead.
+    entries: Object.freeze(view.entries.filter(entry => !(entry.kind === "known" && entry.entryRef.startsWith("knowledge-catalog:"))).map(entry => {
       if (entry.kind !== "known") return entry;
       const { revisionOrHash: _revision, ...presented } = entry;
       const value = !isPlainRecord(entry.value) ? entry.value
         : subjects.has(entry.entryRef) ? worldSubjectModelValue(entry.value) : modelEntryValue(entry.value, known);
       return Object.freeze({ ...presented, value });
     })),
-    references: Object.freeze({ ...context.references, observationSubjectRefs: proposalObservationSubjectRefs(context),
-      npcSourceChoices: proposalNpcSourceChoices(context), itemEntryRefs: proposalItemEntryRefs(context),
-      itemDefinitionRefs: proposalItemDefinitionRefs(context) }),
+    references: Object.freeze({ ...view.references, npcRecall: Object.freeze({ shown: Object.freeze(shown), requestable: Object.freeze(requestable) }),
+      knowledgeRecall: Object.freeze({ shown: Object.freeze(handles.filter(record => requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.entryRef)),
+        requestable: Object.freeze(handles.filter(record => !requestedKnowledgeRefs.includes(record.entryRef)).map(record => record.handle)) }),
+      observationSubjectRefs: proposalObservationSubjectRefs(view),
+      npcSourceChoices: proposalNpcSourceChoices(view), itemEntryRefs: proposalItemEntryRefs(view),
+      itemDefinitionRefs: proposalItemDefinitionRefs(view) }),
   });
 }

@@ -9,7 +9,7 @@ import { NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA, type NpcActorPlanFormationSourc
 import { vnextProposalProducerContract, VNEXT_PRODUCER_KINDS, type VNextProposalProducerContract, type VNextProducerKind } from "./proposal-producer-contract";
 import { proposalFillingSchema, encodeProposalFilling, decodeProposalFilling, decodeProposalMaterialSteps } from "./proposal-filling-interface";
 import type { ProposalDiagnostic } from "./proposal-diagnostics";
-import type { ProposalNpcSourceChoices } from "./proposal-context";
+import { type ProposalNpcSourceChoices, proposalNpcRecall, proposalKnowledgeRecall } from "./proposal-context";
 import type { VNextBasisReferenceChoices } from "./required-context-runtime";
 import type { AuthoredWorldFact } from "../../rules/v2/world-facts";
 import type { DynamicPassage } from "../../rules/v2/dynamic-locations";
@@ -744,14 +744,21 @@ export type VNextProposalSchemaSelection = Readonly<{
   story?: StorySelection;
   capabilities: readonly VNextProposalCapabilityId[];
   terminalKinds: readonly string[];
+  /** Bystander decision views the selection asked to load, sorted unique. */
+  npcRefs: readonly string[];
+  /** Frozen memory bodies the selection asked to read, as entry refs, sorted unique. */
+  knowledgeRefs: readonly string[];
 }>;
 
 /** Retain selected terminal identities; only step families acquire dependencies.
  * The caller validates unique submitted values before this canonical closure. */
-export function closeVNextProposalSchemaRequest(requested: readonly string[], context?: VNextRequiredContext): VNextProposalSchemaSelection {
+export function closeVNextProposalSchemaRequest(requested: readonly string[], context?: VNextRequiredContext,
+  npcRefs: readonly string[] = [], knowledgeRefs: readonly string[] = []): VNextProposalSchemaSelection {
   const story = parseStorySelection(requested, context), storyIds = storySelectionIds(context);
   return Object.freeze({
     ...(story === undefined ? {} : { story }),
+    npcRefs: Object.freeze([...new Set(npcRefs)].sort(compareCodeUnits)),
+    knowledgeRefs: Object.freeze([...new Set(knowledgeRefs)].sort(compareCodeUnits)),
     terminalKinds: Object.freeze(VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.filter(id => requested.includes(id))),
     capabilities: closeVNextProposalCapabilities([
       ...requested.filter(id => !VNEXT_INITIAL_PROPOSAL_DECISION_KINDS.includes(id) && !storyIds.includes(id)),
@@ -774,18 +781,37 @@ export const OFFER_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
     description: "只选择本次完整行动需要的类型目录 ID；唯一字段 requestedCapabilities，不填写任何提案内容。",
     parameters: OFFER_KP_PROPOSAL_BUNDLE_SCHEMA }),
 });
+const OFFER_NPC_RECALL_DESCRIPTION = "在场但决策视图尚未加载的 NPC（见 references.npcRecall.requestable）。选出本次处理牵涉到的：要对话、要看其反应、其立场或知识影响裁决的；已点名的 NPC 已默认加载，不在此列。选中的在下一阶段带完整 npc-decision 与知识；未选的不能写进 social、formActorPlan 或作为来源。不牵涉任何人时填 []。";
+const OFFER_KNOWLEDGE_RECALL_DESCRIPTION = "已加载视图的角色（含玩家）本次未读取的记忆，按 knowledge-directory 条目里的 handle 选择；只选当前话题确实需要正文的，选中的在下一阶段带完整正文并可引用。不需要时填 []。";
+const OFFER_TOOL_DESCRIPTION_WITH_RECALL = "只选择本次完整行动需要的类型目录 ID（requestedCapabilities）；requestedNpcRefs 选出需要加载决策视图的在场 NPC，requestedKnowledgeRefs 按目录 handle 选出需要读取正文的记忆（字段存在时才可选）；不填写任何提案内容。";
+
+/** The selection tool, offering the bystander views and the unread memory
+ * bodies not yet loaded as further enumerations. With none left to request
+ * a field is absent, so an amended round or an addressed sentence never
+ * shows an empty enum. Both the Adapter and Room's stage proof build the
+ * tool this way. */
+export function offerKpProposalBundleTool(requestableNpcRefs: readonly string[] = [], capabilityIds: readonly string[] = VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS,
+  requestableKnowledgeHandles: readonly string[] = []) {
+  const requestedCapabilities = { ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities, items: { type: "string", enum: [...capabilityIds] } };
+  const properties = { requestedCapabilities,
+    ...(requestableNpcRefs.length === 0 ? {} : { requestedNpcRefs: { type: "array", items: { type: "string", enum: [...requestableNpcRefs] }, description: OFFER_NPC_RECALL_DESCRIPTION } }),
+    ...(requestableKnowledgeHandles.length === 0 ? {} : { requestedKnowledgeRefs: { type: "array", items: { type: "string", enum: [...requestableKnowledgeHandles] }, description: OFFER_KNOWLEDGE_RECALL_DESCRIPTION } }) };
+  const recall = requestableNpcRefs.length > 0 || requestableKnowledgeHandles.length > 0;
+  return Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL, function: Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL.function,
+    ...(recall ? { description: OFFER_TOOL_DESCRIPTION_WITH_RECALL } : {}),
+    parameters: Object.freeze({ ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA, properties, required: Object.keys(properties) }) }) }) as unknown as typeof OFFER_KP_PROPOSAL_BUNDLE_TOOL;
+}
 
 export function vnextProposalSchemaRequestIds(context?: VNextRequiredContext): readonly string[] {
   return [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, ...storySelectionIds(context).filter(id => !STORY_SELECTION_IDS.includes(id))];
 }
 export function createVNextProposalOfferModelInput(message: string, context?: VNextRequiredContext) {
   if (typeof message !== "string" || !message.trim()) throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
+  const requestable = context === undefined ? [] : proposalNpcRecall(context).requestableRefs;
+  const handles = context === undefined ? [] : proposalKnowledgeRecall(context, []).map(record => record.handle);
   return Object.freeze({ messages: Object.freeze([{ role: "system" as const,
     content: vnextProposalSystemPrompt("offer", [], VNEXT_INITIAL_PROPOSAL_DECISION_KINDS) }, { role: "user" as const, content: message }]),
-    tools: Object.freeze([{ ...OFFER_KP_PROPOSAL_BUNDLE_TOOL, function: { ...OFFER_KP_PROPOSAL_BUNDLE_TOOL.function,
-      parameters: { ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA, properties: { requestedCapabilities: {
-        ...OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties.requestedCapabilities,
-        items: { type: "string", enum: [...vnextProposalSchemaRequestIds(context)] } } } } } }] as const),
+    tools: Object.freeze([offerKpProposalBundleTool(requestable, vnextProposalSchemaRequestIds(context), handles)] as const),
     tool_choice: "required" as const, parallel_tool_calls: false as const, max_completion_tokens: 4_000 });
 }
 
@@ -823,6 +849,10 @@ export function createSubmitKpProposalBundleModelInput(
    * selection is amendable once, and never a way to reopen a decision. */
   amendable = false,
   itemDefinitionRefs?: readonly string[],
+  /** Bystander views the selection may still add through its one amendment. */
+  requestableNpcRefs: readonly string[] = [],
+  /** Unread memory handles the selection may still add through its one amendment. */
+  requestableKnowledgeHandles: readonly string[] = [],
 ): StrictToolBundleModelInput {
   if (typeof message !== "string" || message.trim().length === 0) {
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
@@ -833,7 +863,7 @@ export function createSubmitKpProposalBundleModelInput(
   };
   return Object.freeze({
     messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("expandedProposal", capabilities, terminalKinds, amendable) }, { role: "user" as const, content: message }]),
-    tools: Object.freeze(amendable ? [submitTool, OFFER_KP_PROPOSAL_BUNDLE_TOOL] as const : [submitTool] as const),
+    tools: Object.freeze(amendable ? [submitTool, offerKpProposalBundleTool(requestableNpcRefs, VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS, requestableKnowledgeHandles)] as const : [submitTool] as const),
     tool_choice: "required",
     parallel_tool_calls: false,
     max_completion_tokens: 4_000,

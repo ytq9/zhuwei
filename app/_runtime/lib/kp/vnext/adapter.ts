@@ -14,7 +14,7 @@ import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, invoke
 import type { VNextProposalBundle } from "./proposal-schema";
 import { vnextProposalCapabilityForEntry, type VNextProposalCapabilityId } from "./proposal-capabilities";
 import type { VNextRequiredContext } from "./required-context";
-import { proposalModelContext } from "./proposal-context";
+import { proposalModelContext, proposalNpcRecall } from "./proposal-context";
 import { VNEXT_KP_PROFILE, VNEXT_KP_WORKFLOW_HASH, VNEXT_PROVIDER_BUDGET, VNEXT_STORY_PROVIDER_BUDGET } from "./runtime-policy";
 
 type VNextProposalRequest = {
@@ -163,12 +163,16 @@ export function createVNextKpAdapter(options: Readonly<{
         }
         requiredContext = prepared.context;
         storyPreparation = prepared.binding;
-        message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext) });
       } else if (request.storyPreparation !== undefined) throw vnextProposalFailure("STORY_IDENTITY_CONFLICT");
+      // The filling rounds are sent the frozen context less the bystander views
+      // the selection did not name; Room and lowering keep the whole context.
+      const npcRefs = offer.npcRefs, knowledgeRefs = offer.knowledgeRefs;
+      message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext, npcRefs, knowledgeRefs) });
       const submit = async (ordinal: 2 | 3, capabilities: readonly VNextProposalCapabilityId[],
-        terminalKinds: readonly string[], amendable: boolean) =>
+        terminalKinds: readonly string[], amendable: boolean, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]) =>
         invokeSubmitKpProposalBundleFirstPass({ binding: await boundInvocation(ordinal),
-          modelId: VNEXT_KP_PROFILE.modelId, message, requiredContext, capabilities, terminalKinds, amendable });
+          modelId: VNEXT_KP_PROFILE.modelId, message, requiredContext, capabilities, terminalKinds, amendable,
+          npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs });
       const budgetExhausted = (constraint: string, code: string,
         issues: readonly string[], diagnostics: readonly ProposalDiagnostic[], calls: number): never => {
         throw vnextProposalFailure(code, false, undefined, {
@@ -184,7 +188,7 @@ export function createVNextKpAdapter(options: Readonly<{
       // selection has none, so an unparsed or repairable draft fails closed.
       const settle = async (result: Awaited<ReturnType<typeof submit>>,
         capabilities: readonly VNextProposalCapabilityId[], terminalKinds: readonly string[],
-        last: 3 | 4): Promise<VNextProposalBundle> => {
+        last: 3 | 4, selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]): Promise<VNextProposalBundle> => {
         if (request.attempt === 2 && result.kind !== "locallyAccepted") {
           // A local revision or re-emit already spent this selection's one
           // remaining call. Rules cannot open another revision afterwards.
@@ -219,7 +223,7 @@ export function createVNextKpAdapter(options: Readonly<{
               diagnostics.map(detail => detail.constraint), diagnostics, last - 1);
           }
           const repairTicket = createVNextAuthorityRevisionTicket(responses.get(last - 1), requiredContext,
-            capabilities, terminalKinds, diagnostics);
+            capabilities, terminalKinds, diagnostics, selectedNpcRefs, selectedKnowledgeRefs);
           const corrected = await invokeCorrectKpProposalBundle({ binding: await boundInvocation(last, repairTicket),
             modelId: VNEXT_KP_PROFILE.modelId, requiredContext, repairTicket });
           if (corrected.kind === "rejected") throw vnextProposalFailure(corrected.code, false, undefined,
@@ -232,7 +236,7 @@ export function createVNextKpAdapter(options: Readonly<{
       // are recorded side by side: a capability selected and then dropped at
       // filling (round78/80/81 lost "observe" this way) must leave a trace.
       const traced = (bundle: VNextProposalBundle, capabilities: readonly VNextProposalCapabilityId[],
-        terminalKinds: readonly string[]): VNextProposalBundle => {
+        terminalKinds: readonly string[], selectedNpcRefs: readonly string[], selectedKnowledgeRefs: readonly string[]): VNextProposalBundle => {
         try {
           const used = new Set<string>();
           for (const entry of bundle.proposals) { const id = vnextProposalCapabilityForEntry(entry); if (id !== undefined) used.add(id); }
@@ -240,17 +244,20 @@ export function createVNextKpAdapter(options: Readonly<{
           const selected = [...capabilities, ...terminalKinds];
           options.onInvocation?.({ eventName: "kp.vnext.selection", preparedActionId: request.preparedActionId,
             rootActionId: request.rootActionId, contextHash: requiredContext.binding.contextHash,
-            selected, used: selected.filter(id => used.has(id)), unused: selected.filter(id => !used.has(id)) });
+            selected, used: selected.filter(id => used.has(id)), unused: selected.filter(id => !used.has(id)),
+            npcRefs: selectedNpcRefs, knowledgeRefs: selectedKnowledgeRefs, npcRecall: proposalNpcRecall(requiredContext) });
         } catch { /* telemetry cannot change the accepted Bundle */ }
         return bundle;
       };
-      const first = await submit(2, offer.capabilities, offer.terminalKinds, true);
-      if (first.kind !== "amendmentRequested") return traced(await settle(first, offer.capabilities, offer.terminalKinds, 3), offer.capabilities, offer.terminalKinds);
-      // Selection is amended by union once, operations and terminals together.
-      // The frozen context is unchanged and the amended round cannot amend again.
-      const { amendedCapabilities, amendedTerminalKinds } = first.amendment;
-      return traced(await settle(await submit(3, amendedCapabilities, amendedTerminalKinds, false),
-        amendedCapabilities, amendedTerminalKinds, 4), amendedCapabilities, amendedTerminalKinds);
+      const first = await submit(2, offer.capabilities, offer.terminalKinds, true, npcRefs, knowledgeRefs);
+      if (first.kind !== "amendmentRequested") return traced(await settle(first, offer.capabilities, offer.terminalKinds, 3, npcRefs, knowledgeRefs), offer.capabilities, offer.terminalKinds, npcRefs, knowledgeRefs);
+      // Selection is amended by union once: operations, terminals, bystander
+      // views and unread memories together. The frozen context is unchanged;
+      // the amended round is sent the enlarged view and cannot amend again.
+      const { amendedCapabilities, amendedTerminalKinds, amendedNpcRefs, amendedKnowledgeRefs } = first.amendment;
+      message = JSON.stringify({ requiredContext: proposalModelContext(requiredContext, amendedNpcRefs, amendedKnowledgeRefs) });
+      return traced(await settle(await submit(3, amendedCapabilities, amendedTerminalKinds, false, amendedNpcRefs, amendedKnowledgeRefs),
+        amendedCapabilities, amendedTerminalKinds, 4, amendedNpcRefs, amendedKnowledgeRefs), amendedCapabilities, amendedTerminalKinds, amendedNpcRefs, amendedKnowledgeRefs);
     },
     narrate: options.narrationAdapter.narrate,
     decideDueActorPlan: options.narrationAdapter.decideDueActorPlan,

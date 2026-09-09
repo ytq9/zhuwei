@@ -13,8 +13,7 @@ import {
   canonicalUnits,
   compareCodeUnits,
   isPlainRecord,
-  type JsonValue,
-} from "../canonical-json";
+  type JsonValue, canonicalHash } from "../canonical-json";
 import {
   buildRequiredContext,
   type ProfileBinding,
@@ -52,9 +51,9 @@ import {
 import { buildReferenceIndex, type ReferenceNode } from "./reference-index";
 import { deriveRuntimeContextRequirements } from "./runtime-requirements";
 import { createFactRelevance } from "./fact-relevance";
-import { createKnowledgeSelector, type KnowledgeSelector } from "./knowledge-relevance";
+import { createKnowledgeSelector, type KnowledgeSelector, KNOWLEDGE_DIRECTORY_SCHEMA, knowledgeDirectoryEntryRef, knowledgeGist } from "./knowledge-relevance";
 import { narrativeContextRequirements } from "./narrative-continuity";
-import { freezeNpcDecisionEntry } from "./npc-decision";
+import { freezeNpcDecisionEntry, NPC_DECISION_CONTEXT_SCHEMA, npcDecisionEntryRef } from "./npc-decision";
 import {
   createContextWorkBudget,
   VNEXT_CONTEXT_WORK_BUDGET,
@@ -213,18 +212,18 @@ export function freezeAdjudicationContext(
   // Freeze their exact records using the same visibility/spatial predicate as
   // Rules. This membership read is bounded and does not select action targets
   // or expand bystander relations. A named NPC can be the conversation topic,
-  // not its addressee; lexical discovery cannot safely exclude the other
-  // visible respondents. Keep their finite views until addressees are known.
+  // not its addressee, so every visible NPC keeps a finite decision view with
+  // its complete memory frozen; the NPCs the words address (name, alias,
+  // exact ref, description or UI focus) are sent with every model request,
+  // the others only once the selection names them, and each holder's bodies
+  // are sent by topic with the rest behind a handle directory (SPEC 0016
+  // §4.2–4.3). Nothing decisive is truncated: it waits, verified, on request.
+  const addressedNpcRefs = new Set([...discovered.candidates.map(({ ref }) => ref), ...(input.focusRefs ?? [])]
+    .filter((ref) => input.state.entities[ref]?.kind === "npc"));
   const factRelevance = createFactRelevance({ index, actorCharacterId: input.actorCharacterId,
     candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
-  const knowledgeSelector = createKnowledgeSelector({ state: input.state, index, actorCharacterId: input.actorCharacterId,
+  const selectKnowledge = createKnowledgeSelector({ state: input.state, index, actorCharacterId: input.actorCharacterId,
     intentText: input.intentText, candidates: discovered.candidates, focusRefs: input.focusRefs ?? [] });
-  const knowledgeOverflows = new Set<string>();
-  const selectKnowledge: KnowledgeSelector = holderRef => {
-    const selection = knowledgeSelector(holderRef);
-    if (selection.kind === "budgetExceeded") knowledgeOverflows.add(holderRef);
-    return selection;
-  };
   const observableSubjects: ObligationSeed[] = [];
   for (const ref of index.refsByScene.get(sceneRef) ?? []) {
     if (!budget.charge("postingVisits", 1)) {
@@ -233,6 +232,9 @@ export function freezeAdjudicationContext(
     const node = index.nodes.get(ref);
     if (node?.kind === "entity" && indexedSpatialRefVisibleTo(input.state, node, sceneRef, input.actorCharacterId)) {
       observableSubjects.push({ ref, obligation: "observableSubject" });
+      // Every visible NPC's decision view is frozen and verified; whether it
+      // is sent is the selection's choice (references.npcRecall), so a
+      // sentence that names one NPC can still reach another through it.
       if (input.state.entities[ref]?.kind === "npc") {
         observableSubjects.push({ ref, obligation: "npcDecision" });
       }
@@ -300,10 +302,6 @@ export function freezeAdjudicationContext(
   });
   if (closed.kind !== "closed") {
     return blocked("preparationLimit", ["obligationClosure:work-budget-exhausted"], budget);
-  }
-  if (knowledgeOverflows.size > 0) {
-    return blocked("contextBudgetExceeded", [...knowledgeOverflows].sort(compareCodeUnits)
-      .map(holderRef => `knowledge:${holderRef}:relevance-budget-exceeded`), budget);
   }
 
   const entries: RequiredContextEntry[] = [];
@@ -433,6 +431,46 @@ export function freezeAdjudicationContext(
       ? { kind: "unavailable", entryRef: decision.entryRef, reason: "truncated", critical: false } : decision);
     citations.set(decision.entryRef, "nonCitable");
   }
+  // The rest of each holder's memory stays on the server. The model receives
+  // a short directory of what it was not sent (ref and a gist) so the KP can
+  // tell whether the topic reaches more than it read; an unlisted body is
+  // never citable, and reading one later takes a new freeze.
+  const directoryHolders = [...new Set([input.actorCharacterId, ...entries.flatMap((entry) => entry.kind === "known"
+    && isPlainRecord(entry.value) && entry.value.schema === NPC_DECISION_CONTEXT_SCHEMA && typeof entry.value.npcRef === "string"
+    ? [entry.value.npcRef] : [])])].sort(compareCodeUnits);
+  const knowledgeRecall: { holderRef: string; records: { handle: string; entryRef: string }[] }[] = [];
+  let handleOrdinal = 0;
+  for (const holderRef of directoryHolders) {
+    const unloaded = selectKnowledge(holderRef).unloaded;
+    if (unloaded.length === 0) continue;
+    const frozenBodies = new Set(entries.flatMap((entry) => entry.kind === "known" && entry.entryRef.startsWith(`knowledge:${holderRef}:`) ? [entry.entryRef] : []));
+    const records = unloaded.map((knowledgeRef) => {
+      const entryRef = `knowledge:${holderRef}:${knowledgeRef}`;
+      // A frozen body the topic did not reach gets a handle the selection can
+      // name; a body that was never frozen is a bare directory line.
+      const handle = frozenBodies.has(entryRef) ? `m${++handleOrdinal}` : undefined;
+      return { knowledgeRef, entryRef, gist: knowledgeGist(input.state.knowledge[holderRef]?.[knowledgeRef]), ...(handle === undefined ? {} : { handle }) };
+    });
+    const value = { schema: KNOWLEDGE_DIRECTORY_SCHEMA, holderRef, unloaded: records };
+    const entryRef = knowledgeDirectoryEntryRef(holderRef);
+    entries.push(Object.freeze({ kind: "known", entryRef, revisionOrHash: canonicalHash(value), value }));
+    citations.set(entryRef, "nonCitable");
+    const recallRecords = records.flatMap((record) => record.handle === undefined ? [] : [{ handle: record.handle, entryRef: record.entryRef }]);
+    if (recallRecords.length > 0) knowledgeRecall.push({ holderRef, records: recallRecords });
+  }
+  // Which frozen NPC views travel with every model request and which wait for
+  // the selection stage to name them. An addressed NPC is decisive material
+  // (SPEC 0016 §4.3) and is shown from the selection on; a bystander's view is
+  // frozen and verified here but sent only once the selection asks for it, so
+  // a sentence that names nobody no longer carries every visible NPC's memory.
+  const addressedForRecall = addressedNpcRefs;
+  const npcRecall = [...new Set(entries.flatMap((entry) => entry.kind === "known" && isPlainRecord(entry.value)
+    && entry.value.schema === NPC_DECISION_CONTEXT_SCHEMA && typeof entry.value.npcRef === "string" ? [entry.value.npcRef] : []))]
+    .sort(compareCodeUnits)
+    .map((npcRef) => ({ npcRef, role: addressedForRecall.has(npcRef) ? "default" as const : "requestable" as const,
+      entryRefs: entries.flatMap((entry) => entry.entryRef === npcDecisionEntryRef(npcRef)
+        || entry.entryRef === knowledgeDirectoryEntryRef(npcRef)
+        || entry.entryRef.startsWith(`knowledge:${npcRef}:`) ? [entry.entryRef] : []).sort(compareCodeUnits) }));
   const built = buildRequiredContext({
     intent: {
       submissionRef: input.submissionRef,
@@ -443,7 +481,7 @@ export function freezeAdjudicationContext(
       }),
     },
     entries,
-    references: referenceDirectory(input.state, input.actorCharacterId, citations, domains),
+    references: { ...referenceDirectory(input.state, input.actorCharacterId, citations, domains), npcRecall, knowledgeRecall },
     binding: {
       roomEpochRef: input.state.runtimeEpochId,
       rootActionId: input.rootActionId,
@@ -556,16 +594,17 @@ function declaredDependencies(
 ): readonly ObligationSeed[] {
   if (node === undefined || obligation === "observableSubject") return [];
   if (!budget.charge("postingVisits", 1)) return [];
-  // Held knowledge is read by relevance: the holder's complete directory is
-  // frozen inside its catalog and decision snapshot, while only the bodies
-  // this action can touch are seeded (see `createKnowledgeSelector`).
+  // Held knowledge is frozen whole with the holder's view and sent by
+  // relevance: the directory and decision snapshot bind every record, the
+  // selector (see `createKnowledgeSelector`) decides which bodies the model
+  // is sent, and the rest wait behind handles. `selectKnowledge` is kept in
+  // this signature for the directory built after closure.
   const knowledgeSeeds = (holderRef: string, seedObligation: ContextObligation): readonly ObligationSeed[] | undefined => {
     const refs = index.knowledgeByHolder.get(holderRef) ?? [];
     if (!budget.charge("postingVisits", refs.length)) return undefined;
-    const selection = selectKnowledge(holderRef);
-    if (selection.kind === "budgetExceeded") return [];
-    const loaded = new Set(selection.loaded.map((knowledgeRef) => `knowledge:${holderRef}:${knowledgeRef}`));
-    return refs.filter((ref) => loaded.has(ref)).map((ref) => ({ ref, obligation: seedObligation }));
+    // Every body of a holder whose view is frozen is frozen with it; the
+    // selector decides what is sent, never what exists (see the directory).
+    return refs.map((ref) => ({ ref, obligation: seedObligation }));
   };
   // This optional, non-expanding slice supports any visible conversation
   // candidate. It loads holder-qualified knowledge bodies; the existing Rules

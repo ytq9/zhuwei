@@ -4072,3 +4072,15 @@ round90 首句：完整草稿带承诺（due 1h + trace），`retryChange` 写�
 - 审查修正 `da1baad`：知识上限静默截断改为明确阻断，已选知识重读保持关键性并覆盖 UTF-8 字节上限；撤回将话题 NPC 当唯一交谈对象的排除策略。修改 context/index、knowledge-relevance 及三个直接测试，冻结/Provider/lowering 为直接消费者。规范 1 项、规格 2 项（两项独立问题）均经复核闭合，未修改规格或实现动态召回。
 - 验证：最终 typecheck exit 0；知识/可观察上下文 17/17 exit 0，档案复核组 25/25 exit 0；真实 Room 定向 4/4 exit 0；删除 6/6、strict 传输 4/4 已通过。扩展 Node 4 红、Worker 19 红，完整旧基线分别 4 红/22 红，最终失败名称无新增；其中 6 项失败位置变化，不能称完全相同或全部正常。测试初始失败、修正及日志路径见[审查报告](agent/push-review-20260910.md)。最终 diff/空白检查通过；本报告与日志随获授权非 force 重推收回，推送后复查远端。
 - 未覆盖：既有预算/恢复失败、完整游玩与角色知识长度问题仍未解决；无完整回归、build、真实模型、部署、migration 或数据删除。Claude 半成品完整保留，未接手。
+
+## 2026-09-10 选择阶段召回 NPC 视图与记忆正文（开发期）
+
+- 背景：round100 第三句无人点名，三位 NPC 决策视图与全部知识正文进入上下文，填写请求估算 53,695，模型两次空对象。用户要求：点名的 NPC 默认召回，其他 NPC 由模型在需要时再调；记忆按当前话题取材，其余留在服务器、只给简短目录，需要时按目录取原文；不用时间窗或条数硬限。
+- 冻结层（`context/index.ts`）：所有可见 NPC 都冻结决策视图（与 `da1baad` 一致），每位有视图的持有者（玩家与全部可见 NPC）的记忆正文全部冻结并核验；`references.npcRecall` 记录默认（点名）/可请求角色及其条目集，`references.knowledgeRecall` 记录话题未触及正文的 handle（m1…）；每位持有者新增 `knowledge-directory:<holder>` 条目（未发送记忆的 gist 与 handle，nonCitable）。`knowledge-relevance.ts` vnext-2：正文只按话题重叠排序发送，计划前提例外；上限只约束默认发送量，超出部分保留 handle，不再阻断（撤回 `da1baad` 的选择器 budgetExceeded；单条正文超字节仍阻断并保留其用例）。单字查询词停用表补入「人事座前后里边上下中间处时年月日家」（策略 v3）。
+- 发送层（`proposal-context.ts` vnext-8）：`proposalContextView(context, npcRefs, knowledgeRefs)` 在同一冻结上下文上去掉未请求的旁观者视图/正文与未请求的 handle 正文（决策条目改写 `unloadedKnowledgeRefs` 并重算 hash，读取器照常校验），`proposalModelContext` 据此呈现并给出 `references.npcRecall{shown,requestable}` 与 `knowledgeRecall{shown,requestable}`；知识目录（knowledge-catalog）不再发给模型；在场条目保持完整。
+- 协议：offer 工具新增 `requestedNpcRefs`（可请求 NPC 枚举）与 `requestedKnowledgeRefs`（已发送持有者的 handle 枚举），无候选时字段不出现；补选按并集追加两者；票据记录 `npcRefs`/`knowledgeRefs` 并以相应视图算 `modelContextHash`；Room 阶段证明按同一选择重算表面。guidance v24。
+- 效果（真实黑橡房间 Vitest 计量）：点名句 offer 26,262 / 四族填写 42,303；无人点名 offer 20,710（round100 为 42,093）、只 observe 填写 22,401；请求瓦罗后 observe+social 填写 31,957（round100 为 53,695）。
+- 与 `da1baad` 的关系：全冻结与保留可能回应者两项照收；「话题知识超 40 条/64k 即阻断」改为 handle 目录（冻结上下文无截断）；单条超字节阻断保留。
+- 未完成：可请求 NPC 的正文只有在其视图被请求后才提供 handle（同一次补选里不能同时请求 NPC 与其记忆）；目录随记忆线性增长未封顶；round98 观察到的旁白矛盾未处理。
+- 验证：typecheck exit 0。Node：knowledge-relevance 7/7、npc-recall 5/5、observable-context 11/11、observation-reference-surface 3/3、story-archive-host 8/8、social-plan 17/17、selection-amendment 5、proposal-revision 8、unparsed-revision 4、filling-interface 19、prompt-contract 10、social-source-selection 5、npc-decision-context 7 全过；npc-plan-formation-rules 2、item-reference-surface 2、schema-retrieval 4 红同基线。Vitest：relevance-room 2/2；provider-room 13、promise-lifecycle-room 2、time-passage 3、actor-plan-due 3、ability-operation 3、dynamic-locations 1、social-room-randomness 2、npc-plan-formation-room 1 红逐名同基线 `229993a`（HEAD worktree 实测）。
+- 过程：本改动 01:39 被另一会话整体提交为 `7a261d0` 并推送，随后撤回并只收回已完成提交；本次从 `7a261d0` 的 17 路径差量在 `229993a` 上重建，合并审查修正后再验证。

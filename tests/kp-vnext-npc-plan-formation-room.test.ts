@@ -44,7 +44,7 @@ const DESCRIPTION = "门框上多了一条刚系好的蓝色布带。";
 type Stub = ReturnType<typeof env.VNEXT_ROOMS.getByName>;
 type Capture = { playerRequests: RecordValue[]; actorRequests: RecordValue[]; narration: RecordValue[];
   actorCalls: Record<string, number>; draws: number; crashAt?: string; decision?: RecordValue; failActor?: boolean;
-  selectedCapabilities?: readonly string[]; callLimit?: string; countNarrationCalls?: boolean; httpCalls: string[][];
+  selectedCapabilities?: readonly string[]; selectedNpcRefs?: readonly string[]; callLimit?: string; countNarrationCalls?: boolean; httpCalls: string[][];
   proposalArguments?: (request: RecordValue) => unknown; preparedActionId?: string;
   invocationRequests: VNextInvocationRequest[]; invocationStarts: VNextInvocationStart[] };
 const capture = (): Capture => ({ playerRequests: [], actorRequests: [], narration: [], actorCalls: {}, draws: 0, httpCalls: [], invocationRequests: [], invocationStarts: [] });
@@ -138,7 +138,7 @@ async function run(stub: Stub, input: RoomActionInput, c: Capture, response?: un
       if (response === undefined && c.proposalArguments === undefined) throw new Error("a durable player proposal must be reused");
       const name = String(record(record((request.tools as RecordValue[])[0]).function).name);
       const argumentsValue = name === OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME && c.selectedCapabilities
-        ? JSON.stringify({ requestedCapabilities: c.selectedCapabilities })
+        ? JSON.stringify({ requestedCapabilities: c.selectedCapabilities, ...(c.selectedNpcRefs ? { requestedNpcRefs: c.selectedNpcRefs } : {}) })
         : c.proposalArguments === undefined ? JSON.stringify(encodeVNextStrictToolBundle(response)) : c.proposalArguments(request);
       return { choices: [{ message: { tool_calls: [{ type: "function", function: { name,
         arguments: argumentsValue } }] } }] };

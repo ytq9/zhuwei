@@ -1,5 +1,4 @@
 import type { AuthoritativeWorldState, KnowledgeRecord } from "../../../rules/v2/model";
-import { characterTimelineId } from "../../../rules/v2/timeline";
 import { compareCodeUnits } from "../canonical-json";
 import type { DiscoveredCandidate } from "./candidate-discovery";
 import { singleHanQueryWords, tokenize, VNEXT_RETRIEVAL_PROFILE, type RetrievalProfile } from "./extractors";
@@ -25,26 +24,47 @@ import type { ReferenceIndex } from "./reference-index";
  */
 export type KnowledgeRelevanceProfile = Readonly<{
   profileRef: string;
-  recentFictionMicros: bigint;
   maxLoadedRecords: number;
   maxLoadedCharacters: number;
+  /** Code points of a memory's content shown in the holder's directory of
+   * bodies this action did not read. */
+  gistCharacters: number;
 }>;
 
+// vnext-2: bodies travel by the current topic. Neither authored background
+// nor a fiction-time window nor a record count loads a body on its own; the
+// words of the action (and the names they reached) do, and a scheduled plan's
+// premises do because the plan cannot be judged without them. Who the holder
+// is, what it wants and how it stands with the actor are records of its
+// decision view, not memories, and always travel with it. Everything else
+// stays on the server behind a short directory (see `knowledgeGist`).
 export const VNEXT_KNOWLEDGE_RELEVANCE_PROFILE: KnowledgeRelevanceProfile = Object.freeze({
-  profileRef: "zhuwei.knowledge-relevance/vnext-1",
-  recentFictionMicros: 24n * 60n * 60n * 1_000_000n,
+  profileRef: "zhuwei.knowledge-relevance/vnext-2",
   maxLoadedRecords: 40,
   maxLoadedCharacters: 64_000,
+  gistCharacters: 24,
 });
 
+export const KNOWLEDGE_DIRECTORY_SCHEMA = "zhuwei.knowledge-directory/vnext-1" as const;
+export function knowledgeDirectoryEntryRef(holderRef: string): string {
+  return `knowledge-directory:${holderRef}`;
+}
+/** The opening of a memory's content: enough to tell what it is about, not
+ * enough to narrate from. Deterministic over the record alone. */
+export function knowledgeGist(record: Readonly<{ content: unknown }> | undefined, profile: KnowledgeRelevanceProfile = VNEXT_KNOWLEDGE_RELEVANCE_PROFILE): string {
+  if (record === undefined) return "";
+  const text = (typeof record.content === "string" ? record.content : JSON.stringify(record.content) ?? "").normalize("NFC").replace(/\s+/gu, " ").trim();
+  const points = [...text];
+  return points.length <= profile.gistCharacters ? text : points.slice(0, profile.gistCharacters).join("") + "…";
+}
+
 export type KnowledgeSelection = Readonly<{
-  kind: "selected";
   holderRef: string;
-  /** Knowledge refs (holder-local) whose bodies are frozen, in load order. */
+  /** Knowledge refs (holder-local) whose bodies are sent by default, in order. */
   loaded: readonly string[];
-  /** Knowledge refs left as directory lines. */
+  /** Knowledge refs left to the directory: frozen with the view, sent on request. */
   unloaded: readonly string[];
-}> | Readonly<{ kind: "budgetExceeded"; holderRef: string }>;
+}>;
 
 export type KnowledgeSelector = (holderRef: string) => KnowledgeSelection;
 
@@ -77,14 +97,12 @@ export function createKnowledgeSelector(input: Readonly<{
     const cached = cache.get(holderRef);
     if (cached !== undefined) return cached;
     const records = Object.values(state.knowledge[holderRef] ?? {});
-    const timelineId = characterTimelineId(state, holderRef);
-    const now = timelineId === undefined ? undefined : BigInt(state.fictionTimelines[timelineId]?.nowMicros ?? "0");
     const premises = new Set<string>();
     for (const plan of Object.values(state.campaignRuntime.npcPlans ?? {}) as readonly Record<string, unknown>[]) {
       if (plan.npcId !== holderRef || plan.status !== "scheduled" || !Array.isArray(plan.premiseRefs)) continue;
       for (const ref of plan.premiseRefs) if (typeof ref === "string") premises.add(ref);
     }
-    const scored = records.map((record) => ({ record, tier: tier(record, premises, now), score: overlap(record) }))
+    const scored = records.map((record) => ({ record, tier: tier(record, premises), score: overlap(record) }))
       .filter(({ tier, score }) => tier === 1 || score > 0)
       .sort((left, right) => left.tier - right.tier || right.score - left.score
         || compareMicros(right.record.acquiredAtFictionMicros, left.record.acquiredAtFictionMicros)
@@ -93,29 +111,25 @@ export function createKnowledgeSelector(input: Readonly<{
     let characters = 0;
     for (const { record } of scored) {
       const size = JSON.stringify(record.content).length;
-      if (loaded.length >= profile.maxLoadedRecords || characters + size > profile.maxLoadedCharacters) {
-        const exceeded = Object.freeze({ kind: "budgetExceeded" as const, holderRef });
-        cache.set(holderRef, exceeded);
-        return exceeded;
-      }
+      // Past the caps the remaining topical bodies stay requestable by handle;
+      // nothing is lost, the default view just stops growing.
+      if (loaded.length >= profile.maxLoadedRecords || characters + size > profile.maxLoadedCharacters) break;
       loaded.push(record.knowledgeRef);
       characters += size;
     }
     const chosen = new Set(loaded);
-    const selection = Object.freeze({ kind: "selected" as const, holderRef, loaded: Object.freeze(loaded),
+    const selection = Object.freeze({ holderRef, loaded: Object.freeze(loaded),
       unloaded: Object.freeze(records.map(({ knowledgeRef }) => knowledgeRef).filter((ref) => !chosen.has(ref)).sort(compareCodeUnits)) });
     cache.set(holderRef, selection);
     return selection;
   };
 
-  function tier(record: KnowledgeRecord, premises: ReadonlySet<string>, now: bigint | undefined): 1 | 2 {
-    if (record.acquiredByEventId.startsWith("genesis:")
-      || record.provenanceChain.some((step) => step.startsWith("module:") || step.startsWith("definition-catalog:") || step.startsWith("genesis:"))) return 1;
-    if (record.sourceCharacterId === input.actorCharacterId || record.characterId === input.actorCharacterId && addressed.has(record.sourceCharacterId ?? "")) return 1;
-    if (premises.has(record.knowledgeRef) || premises.has(`knowledge:${record.characterId}:${record.knowledgeRef}`)) return 1;
-    if (now !== undefined && /^(0|[1-9][0-9]*)$/u.test(record.acquiredAtFictionMicros)
-      && now - BigInt(record.acquiredAtFictionMicros) <= profile.recentFictionMicros) return 1;
-    return 2;
+  // Only a scheduled plan's premises travel regardless of the words; every
+  // other body, authored background and old conversation alike, travels when
+  // the topic reaches it. The current exchange itself is a continuity record
+  // of the decision view, not a memory body, so it is never lost here.
+  function tier(record: KnowledgeRecord, premises: ReadonlySet<string>): 1 | 2 {
+    return premises.has(record.knowledgeRef) || premises.has(`knowledge:${record.characterId}:${record.knowledgeRef}`) ? 1 : 2;
   }
   function overlap(record: KnowledgeRecord): number {
     const text = typeof record.content === "string" ? record.content : JSON.stringify(record.content);
