@@ -202,6 +202,15 @@ export type StoryFailureCode =
   | "STORY_INVOCATION_PENDING" | "STORY_INVOCATION_UNKNOWN" | "STORY_PROVIDER_FAILED"
   | "STORY_IDENTITY_CONFLICT" | "STORY_CHECKPOINT_CONFLICT";
 
+/** Private evidence of a failed structural inspection. candidateHash names
+ * the host-bound candidate reconstructed from the saved invocation response; it is
+ * not a usable draft, world fact, review verdict or player-facing message. */
+export type StoryInspectionFailure = Readonly<{
+  stage: "draft" | "revision";
+  candidateHash: StoryHash;
+  findings: readonly StoryReviewFinding[];
+}>;
+
 export type StoryCheckpoint = Readonly<{
   format: "zhuwei.story-checkpoint/v1";
   jobId: string;
@@ -215,6 +224,7 @@ export type StoryCheckpoint = Readonly<{
   revisedDraft?: StoryPreparation;
   revisedReview?: StoryReview;
   failureCode?: StoryFailureCode;
+  inspectionFailure?: StoryInspectionFailure;
 }>;
 export type StoryModelRequest = Readonly<{
   jobId: string;

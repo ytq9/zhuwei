@@ -182,7 +182,57 @@ test("structural preparation checks reject incomplete stories, dangling referenc
     assert.equal(result.kind, "rejected", JSON.stringify(result)); assert.equal(h.calls.length, 1, "invalid preparation never reaches reviewer or becomes ready");
   }
   const f = storyFixture("long"); f.body.stages.pop(); const h = harness(f);
-  assert.equal((await h.run()).code, "STORY_OUTPUT_INVALID"); assert.equal(h.calls.length, 1);
+  const result = await h.run();
+  assert.equal(result.code, "STORY_OUTPUT_INVALID"); assert.equal(h.calls.length, 1);
+  assert.equal(result.checkpoint.draft, undefined); assert.equal(result.checkpoint.review, undefined);
+  assert.equal(result.checkpoint.inspectionFailure.stage, "draft");
+  assert.equal(result.checkpoint.inspectionFailure.candidateHash, hashStory({ ...f.body,
+    format: "zhuwei.story-preparation/v1", jobId: f.request.jobId, version: "1", requestHash: hashStory(f.request),
+    contextHash: f.context.contextHash, recipeRefs: f.request.recipeRefs }));
+  assert.deepEqual(result.checkpoint.inspectionFailure.findings.map(finding => finding.candidatePaths), [["/stages"]]);
+  assert.match(result.checkpoint.inspectionFailure.findings[0].explanation, /长篇/);
+  assert.deepEqual(await h.run(), result, "the private failure and its exact location survive recovery");
+  assert.equal(h.requests.length, 1, "recovery does not even re-enter the invocation port");
+});
+
+test("a structurally failed revision preserves the original draft/review and rejects malformed diagnostic recovery", async () => {
+  const f = storyFixture(), review = structuredClone(f.review), invalidRevision = structuredClone(f.body);
+  Object.assign(review.findings[0], { verdict: "conflict", repairable: true, explanation: "需要补充取得信息的具体场景依据。" });
+  invalidRevision.participants[0].knowledgeRefs.push("knowledge:clerk-register");
+  const h = harness(f, { response: request => storyResponse(request.stage === "review" ? review
+    : request.stage === "revision" ? invalidRevision : f.body, request.stage) });
+  const result = await h.run(), checkpoint = result.checkpoint;
+  assert.equal(result.code, "STORY_OUTPUT_INVALID"); assert.equal(checkpoint.status, "rejected");
+  assert.deepEqual(h.calls, ["draft", "review", "revision"]);
+  assert.deepEqual(checkpoint.draft.facts, f.body.facts); assert.deepEqual(checkpoint.review.findings, review.findings);
+  assert.equal(checkpoint.revisedDraft, undefined); assert.equal(checkpoint.revisedReview, undefined);
+  assert.equal(checkpoint.inspectionFailure.stage, "revision");
+  assert.equal(checkpoint.inspectionFailure.candidateHash, hashStory({ ...invalidRevision,
+    format: "zhuwei.story-preparation/v1", jobId: f.request.jobId, version: "2", requestHash: hashStory(f.request),
+    contextHash: f.context.contextHash, recipeRefs: f.request.recipeRefs }));
+  assert.deepEqual(checkpoint.inspectionFailure.findings.map(finding => ({ category: finding.category,
+    paths: finding.candidatePaths, refs: finding.constraintRefs })), [{ category: "knowledge",
+      paths: ["/participants/0/knowledgeRefs"], refs: ["knowledge:clerk-register"] }]);
+  assert.deepEqual(await h.run(), result);
+  for (const mutate of [
+    saved => { saved.inspectionFailure.stage = "draft"; },
+    saved => { saved.inspectionFailure.stage = "review"; },
+    saved => { saved.inspectionFailure.candidateHash = "not-a-hash"; },
+    saved => { saved.inspectionFailure.findings = []; },
+    saved => { saved.inspectionFailure.findings[0].candidatePaths = ["/bad~9path"]; },
+    saved => { saved.inspectionFailure.findings[0].constraintRefs = [42]; },
+    saved => { saved.inspectionFailure.findings[0].verdict = "pass"; },
+    saved => { saved.inspectionFailure.findings[0].repairable = true; },
+    saved => { saved.inspectionFailure.authorityWrite = true; },
+    saved => { saved.inspectionFailure = null; },
+    saved => { saved.status = "preparing"; delete saved.failureCode; },
+    saved => { saved.failureCode = "STORY_PROVIDER_FAILED"; },
+  ]) {
+    const changed = structuredClone(checkpoint); mutate(changed);
+    const restored = await prepareStory(f.request, f.context, changed, h.ports);
+    assert.equal(restored.kind, "rejected"); assert.equal(restored.code, "STORY_CHECKPOINT_CONFLICT");
+  }
+  assert.equal(h.requests.length, 3, "invalid diagnostics cannot restart a stage or buy another review");
 });
 
 test("new NPCs require actual definitions and cannot become same-name substitutes for existing NPCs", async () => {
