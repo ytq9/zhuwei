@@ -56,13 +56,18 @@ export function TableClient({ code, userName }: { code: string; userName: string
         }
       >
         {q.isError && (
-          <p
+          <div
             role="alert"
             data-table-sync-error
             className="mb-3 shrink-0 rounded-[14px] border border-danger/40 bg-danger/10 px-4 py-2 text-sm text-danger"
           >
-            桌面同步暂时中断，正在自动重试。已经提交的行动不会因此重复执行。
-          </p>
+            <p>{q.error.message}</p>
+            <p className="mt-1 text-xs">桌面会继续尝试同步；读取状态不会重复执行已提交的行动。</p>
+            <Button type="button" size="sm" className="mt-2" disabled={q.isFetching}
+              onClick={() => void q.refetch()}>
+              {q.isFetching ? "正在刷新……" : "刷新桌面"}
+            </Button>
+          </div>
         )}
         {q.isLoading && !data && (
           <section

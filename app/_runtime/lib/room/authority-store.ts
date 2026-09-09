@@ -73,7 +73,9 @@ export type AuthorityDueWorkRow = {
   descriptor_json: string;
   timeline_id: string;
   completion_fiction_micros: string;
-  activity_id: string;
+  activity_id: string | null;
+  work_kind: "activity" | "npcWork" | "promiseReview";
+  work_ref: string;
   status: "pending" | "committed" | "cancelled";
   next_attempt_at: number | null;
 };
@@ -182,7 +184,7 @@ export type AuthorityExperiencedMessageRow = {
   viewer_key: string;
   message_id: string;
   scene_ids_json: string;
-  kind: "player" | "kp";
+  kind: "player" | "kp" | "roll";
   speaker_character_id: string | null;
   speaker_name: string;
   body: string;
@@ -330,7 +332,9 @@ export class AuthoritativeRoomStore {
         descriptor_json TEXT NOT NULL,
         timeline_id TEXT NOT NULL,
         completion_fiction_micros TEXT NOT NULL,
-        activity_id TEXT NOT NULL,
+        activity_id TEXT,
+        work_kind TEXT NOT NULL DEFAULT 'activity',
+        work_ref TEXT NOT NULL,
         next_attempt_at INTEGER,
         status TEXT NOT NULL CHECK (status IN ('pending', 'committed', 'cancelled'))
       );
@@ -377,7 +381,7 @@ export class AuthoritativeRoomStore {
         randomness_id TEXT NOT NULL,
         principal_id TEXT NOT NULL,
         character_id TEXT NOT NULL,
-        PRIMARY KEY (prepared_action_id, randomness_id)
+        PRIMARY KEY (prepared_action_id, randomness_id, character_id)
       );
       CREATE TABLE IF NOT EXISTS authority_scope_versions (
         scope_id TEXT PRIMARY KEY,
@@ -436,7 +440,7 @@ export class AuthoritativeRoomStore {
         viewer_key TEXT NOT NULL,
         message_id TEXT NOT NULL,
         scene_ids_json TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN ('player', 'kp')),
+        kind TEXT NOT NULL CHECK (kind IN ('player', 'kp', 'roll')),
         speaker_character_id TEXT,
         speaker_name TEXT NOT NULL,
         body TEXT NOT NULL,
@@ -500,6 +504,66 @@ export class AuthoritativeRoomStore {
         prepared_at INTEGER NOT NULL
       );
     `);
+    const authorizationColumns = this.storage.sql.exec<{ name: string; pk: number }>(
+      "PRAGMA table_info(authority_randomness_authorizations)",
+    ).toArray();
+    if (!authorizationColumns.some(column => column.name === "character_id" && column.pk > 0)) {
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_randomness_authorizations RENAME TO authority_randomness_authorizations_single_owner;
+        CREATE TABLE authority_randomness_authorizations (
+          prepared_action_id TEXT NOT NULL, randomness_id TEXT NOT NULL,
+          principal_id TEXT NOT NULL, character_id TEXT NOT NULL,
+          PRIMARY KEY (prepared_action_id, randomness_id, character_id)
+        );
+        INSERT INTO authority_randomness_authorizations
+          SELECT prepared_action_id, randomness_id, principal_id, character_id FROM authority_randomness_authorizations_single_owner;
+        DROP TABLE authority_randomness_authorizations_single_owner;
+      `));
+    }
+    const transcriptSchema = this.storage.sql.exec<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authority_experienced_messages'",
+    ).one().sql;
+    if (!transcriptSchema.includes("'roll'")) {
+      // SQLite cannot extend a CHECK in place. Keep every message and ordinal
+      // while adding the derived dice-message kind in one local transaction.
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_experienced_messages RENAME TO authority_experienced_messages_before_dice;
+        CREATE TABLE authority_experienced_messages (
+          ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
+          viewer_key TEXT NOT NULL, message_id TEXT NOT NULL, scene_ids_json TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('player', 'kp', 'roll')),
+          speaker_character_id TEXT, speaker_name TEXT NOT NULL, body TEXT NOT NULL,
+          source_event_seq TEXT NOT NULL, receipt_id TEXT NOT NULL
+        );
+        INSERT INTO authority_experienced_messages
+          SELECT ordinal, viewer_key, message_id, scene_ids_json, kind, speaker_character_id,
+            speaker_name, body, source_event_seq, receipt_id FROM authority_experienced_messages_before_dice;
+        DROP TABLE authority_experienced_messages_before_dice;
+        CREATE UNIQUE INDEX authority_experienced_messages_identity_idx ON authority_experienced_messages(viewer_key, message_id);
+        CREATE INDEX authority_experienced_messages_viewer_order_idx ON authority_experienced_messages(viewer_key, ordinal);
+      `));
+    }
+    const dueColumns = this.storage.sql.exec<{ name: string }>("PRAGMA table_info(authority_due_work)").toArray();
+    if (!dueColumns.some(column => column.name === "work_kind")) {
+      // Preserve the exact descriptors, roots, causes and retry states of all
+      // outstanding work while removing the Activity-only storage constraint.
+      this.storage.transactionSync(() => this.storage.sql.exec(`
+        ALTER TABLE authority_due_work RENAME TO authority_due_work_activity_only;
+        DROP INDEX authority_due_work_pending_idx;
+        CREATE TABLE authority_due_work (
+          child_root_action_id TEXT PRIMARY KEY, cause_root_action_id TEXT NOT NULL,
+          cause_event_id TEXT NOT NULL, descriptor_json TEXT NOT NULL, timeline_id TEXT NOT NULL,
+          completion_fiction_micros TEXT NOT NULL, activity_id TEXT,
+          work_kind TEXT NOT NULL DEFAULT 'activity', work_ref TEXT NOT NULL,
+          next_attempt_at INTEGER, status TEXT NOT NULL CHECK (status IN ('pending', 'committed', 'cancelled'))
+        );
+        INSERT INTO authority_due_work SELECT child_root_action_id, cause_root_action_id, cause_event_id,
+          descriptor_json, timeline_id, completion_fiction_micros, activity_id, 'activity', activity_id,
+          next_attempt_at, status FROM authority_due_work_activity_only;
+        DROP TABLE authority_due_work_activity_only;
+        CREATE INDEX authority_due_work_pending_idx ON authority_due_work(status, timeline_id);
+      `));
+    }
     const principalColumn = this.storage.sql.exec<{ name: string; notnull: number }>(
       "PRAGMA table_info(authority_submissions)",
     ).toArray().find(column => column.name === "principal_id");
@@ -1045,10 +1109,12 @@ export class AuthoritativeRoomStore {
     const due = input.activity;
     this.storage.sql.exec(`INSERT INTO authority_due_work (
       child_root_action_id, cause_root_action_id, cause_event_id, descriptor_json,
-      timeline_id, completion_fiction_micros, activity_id, status, next_attempt_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0) ON CONFLICT(child_root_action_id) DO NOTHING`,
+      timeline_id, completion_fiction_micros, activity_id, work_kind, work_ref, status, next_attempt_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0) ON CONFLICT(child_root_action_id) DO NOTHING`,
     due.childRootActionId, input.causeRootActionId, input.causeEventId, JSON.stringify(due),
-    due.timelineId, due.completionFictionMicros, due.activityId);
+    due.timelineId, due.completionFictionMicros, due.activityId,
+    due.promiseReview ? "promiseReview" : due.npcWork ? "npcWork" : "activity",
+    due.promiseReview ? due.promiseReview.promiseId : due.npcWork ? due.npcWork.planId : due.activityId);
   }
 
   dueWorkByRoot(rootActionId: string): AuthorityDueWorkRow | undefined {
@@ -1060,7 +1126,29 @@ export class AuthoritativeRoomStore {
   pendingDueWork(): AuthorityDueWorkRow[] {
     return this.storage.sql.exec<AuthorityDueWorkRow>(`SELECT * FROM authority_due_work WHERE status = 'pending'
       ORDER BY length(completion_fiction_micros), completion_fiction_micros,
-      COALESCE(json_extract(descriptor_json, '$.actorPlan.planId'), activity_id)`).toArray();
+      CASE work_kind WHEN 'promiseReview' THEN 1 ELSE 0 END,
+      COALESCE(json_extract(descriptor_json, '$.actorPlan.planId'), work_ref)`).toArray();
+  }
+
+  /** Reconstruct delivery children from committed causal work, including
+   * descendants completed by an earlier HTTP request. No outcomes are copied
+   * into a second ledger and UNION terminates even a corrupt cyclic chain. */
+  committedDueDescendantResults(rootActionId: string): string[] {
+    return this.storage.sql.exec<{ result_json: string }>(`
+      WITH RECURSIVE descendants(child_root_action_id) AS (
+        SELECT child_root_action_id FROM authority_due_work WHERE cause_root_action_id = ?
+        UNION
+        SELECT work.child_root_action_id FROM authority_due_work work
+        JOIN descendants parent ON work.cause_root_action_id = parent.child_root_action_id
+      )
+      SELECT submission.result_json FROM descendants
+      JOIN authority_due_work work USING (child_root_action_id)
+      JOIN authority_submissions submission ON submission.root_action_id = work.child_root_action_id
+      WHERE work.status = 'committed' AND submission.result_json IS NOT NULL
+        AND work.child_root_action_id != ?
+      ORDER BY length(json_extract(submission.result_json, '$.receipt.eventRange.first')),
+        json_extract(submission.result_json, '$.receipt.eventRange.first'), work.child_root_action_id
+    `, rootActionId, rootActionId).toArray().map(row => row.result_json);
   }
 
   finishDueWork(rootActionId: string, status: "committed" | "cancelled"): void {
@@ -1440,7 +1528,7 @@ export class AuthoritativeRoomStore {
       `INSERT INTO authority_randomness_authorizations (
          prepared_action_id, randomness_id, principal_id, character_id
        ) VALUES (?, ?, ?, ?)
-       ON CONFLICT(prepared_action_id, randomness_id) DO NOTHING`,
+       ON CONFLICT(prepared_action_id, randomness_id, character_id) DO NOTHING`,
       input.prepared_action_id,
       input.randomness_id,
       input.principal_id,

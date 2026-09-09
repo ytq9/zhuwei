@@ -2,6 +2,7 @@ import { row, rowIndex, dropRow, nestedDecision } from './fixtures/vnext-wire-ta
 import { encodeVNextStrictToolBundle } from "../app/_runtime/lib/kp/vnext/proposal-schema.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { closeVNextProposalCapabilities, VNEXT_INITIAL_PROPOSAL_CAPABILITIES, VNEXT_PROPOSAL_CAPABILITY_IDS, VNEXT_PROPOSAL_CAPABILITIES,
   vnextProposalCapabilityForEntry } from "../app/_runtime/lib/kp/vnext/proposal-capabilities.ts";
 import { createVNextProposalBundleSchema, createVNextProposalOfferModelInput, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -11,7 +12,7 @@ import { assertVNextProposalCandidateCapabilities, parseSubmitKpProposalBundleCa
   parseVNextProposalOfferResponse, invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass, VNextProposalBundleOutputError } from "../app/_runtime/lib/kp/vnext/proposal-provider.ts";
 import { assertDeepSeekStrictToolModelInput } from "../app/_runtime/lib/kp/deepseek.ts";
 import { deepSeekStrictToolSchemaIssues } from "../app/_runtime/lib/kp/deepseek-strict-tool.ts";
-import { expandDeepSeekSchema } from "./fixtures/expand-deepseek-schema.mjs";
+import { expandDeepSeekSchema, schemaVariants } from "./fixtures/expand-deepseek-schema.mjs";
 import { itemBundle, hazardBundle } from "./fixtures/vnext-authored-bundles.mjs";
 import { VNEXT_PROPOSAL_GUIDANCE_POLICY, vnextProposalSystemPrompt } from "../app/_runtime/lib/kp/vnext/proposal-guidance.ts";
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from "../app/_runtime/lib/rules/profiles/semantic-templates.ts";
@@ -31,6 +32,19 @@ function decisionSchema(expanded, kind) {
   const variant = expanded.properties.decision.anyOf.find(entry => entry.properties.kind.enum.includes(kind));
   assert.ok(variant, `missing decision variant ${kind}`);
   return variant;
+}
+function withoutProducerAvailabilityGuidance(schema) {
+  const value = structuredClone(schema);
+  function visit(node) {
+    if (!node || typeof node !== "object") return;
+    const basis = node.properties?.basisRefs;
+    if (typeof basis?.description === "string") basis.description = basis.description
+      .replace(" A proposal may also cite an exact handle declared by a supported same-bundle producer through its typed reference slots; the server derives and validates the matching dependency.", "")
+      .replace(" No same-bundle producer type was selected; use existing choices only.", "");
+    for (const child of Object.values(node)) visit(child);
+  }
+  visit(value);
+  return value;
 }
 
 test("selected schemas preserve exact full-contract variants and resolve all strict references", () => {
@@ -52,13 +66,16 @@ test("selected schemas preserve exact full-contract variants and resolve all str
     }
     // Steps and results are root tables shared by both rulings; the ruling
     // variants themselves carry no steps. Every selected row must be one of
-    // the full contract's rows, with the social basis narrowed to the selection.
-    for (const variant of expanded.properties.steps.items.anyOf) {
-      assert.ok(full.properties.steps.items.anyOf.some(original => JSON.stringify(original) === JSON.stringify(variant)), `${id}:step`);
+    // the full contract's rows. Producer availability guidance and the social
+    // response-basis choices reflect the selected producer types.
+    for (const variant of schemaVariants(expanded.properties.steps.items)) {
+      assert.ok(schemaVariants(full.properties.steps.items).some(original => isDeepStrictEqual(
+        withoutProducerAvailabilityGuidance(original), withoutProducerAvailabilityGuidance(variant))), `${id}:step`);
     }
-    for (const variant of expanded.properties.results.items.anyOf) {
-      const original = full.properties.results.items.anyOf.find(original => variant.properties.kind.enum.includes("social")
-        ? original.properties.kind.enum.includes("social") : JSON.stringify(original) === JSON.stringify(variant));
+    for (const variant of schemaVariants(expanded.properties.results.items)) {
+      const original = schemaVariants(full.properties.results.items).find(original => variant.properties.kind.enum.includes("social")
+        ? original.properties.kind.enum.includes("social") : isDeepStrictEqual(
+          withoutProducerAvailabilityGuidance(original), withoutProducerAvailabilityGuidance(variant)));
       if (variant.properties.kind.enum.includes("none")) continue;
       assert.ok(original, `${id}:result`);
       const expected = structuredClone(original);
@@ -70,15 +87,15 @@ test("selected schemas preserve exact full-contract variants and resolve all str
         else assert.deepEqual(selectedItems, completeSource, "social-only selection cannot reference an unselected world-fact producer");
         expected.properties.responseBasis.items = selectedItems;
       }
-      assert.deepEqual(variant, expected, `${id}:result`);
+      assert.deepEqual(withoutProducerAvailabilityGuidance(variant), withoutProducerAvailabilityGuidance(expected), `${id}:result`);
     }
     for (const kind of ["directSuccess", "check"]) {
       assert.deepEqual(decisionSchema(expanded, kind), decisionSchema(full, kind), `${id}:${kind}`);
       const continuations = decisionSchema(expanded, "clarification").properties.choices.items.properties.continuation.anyOf;
       const continuation = continuations.find(entry => entry.properties.kind.enum.includes(kind));
       assert.ok(continuation, `${id}:${kind} clarification must retain a nested continuation`);
-      for (const variant of continuation.properties.steps.items.anyOf) {
-        assert.ok(expanded.properties.steps.items.anyOf.some(step => step.properties.kind.enum[0] === variant.properties.kind.enum[0]),
+      for (const variant of schemaVariants(continuation.properties.steps.items)) {
+        assert.ok(schemaVariants(expanded.properties.steps.items).some(step => step.properties.kind.enum[0] === variant.properties.kind.enum[0]),
           `${id}:${kind} continuation step kinds match the selected steps`);
       }
     }
@@ -99,7 +116,9 @@ test("every advertised capability loads its complete filling guidance and only a
     for (const id of VNEXT_PROPOSAL_CAPABILITY_IDS) {
       assert.equal(prompt.includes(VNEXT_PROPOSAL_GUIDANCE_POLICY.filling[id]), loaded.includes(id), id);
     }
-    assert.equal(prompt.includes(JSON.stringify(VNEXT_SEMANTIC_TEMPLATE_CATALOG)), loaded.includes("materializeObject"));
+    const defaults = { templates: VNEXT_SEMANTIC_TEMPLATE_CATALOG.templates.map(({ templateRef, semanticKind, defaults }) =>
+      ({ templateRef, semanticKind, defaults })) };
+    assert.equal(prompt.includes(JSON.stringify(defaults)), loaded.includes("materializeObject"));
     assert.equal(vnextProposalSystemPrompt("expandedProposal", [...loaded].reverse()), prompt);
   }
   assert.equal(vnextProposalSystemPrompt("offer", ["authorHazard"]), vnextProposalSystemPrompt("offer"));
@@ -241,7 +260,7 @@ test("final proposal rejects unloaded authoring or a second query without spendi
 });
 
 
-test("the first stage has one flat selection field and no executable union or filling instructions", () => {
+test("the first stage has one flat selection field and full type boundaries without an executable union", () => {
   assert.deepEqual(VNEXT_INITIAL_PROPOSAL_CAPABILITIES, []);
   assert.deepEqual(Object.keys(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.properties), ["requestedCapabilities"]);
   assert.deepEqual(OFFER_KP_PROPOSAL_BUNDLE_SCHEMA.required, ["requestedCapabilities"]);
@@ -254,8 +273,8 @@ test("the first stage has one flat selection field and no executable union or fi
   // authority and the decision-filling rules stay out of this stage.
   for (const text of [VNEXT_PROPOSAL_GUIDANCE_POLICY.authority, VNEXT_PROPOSAL_GUIDANCE_POLICY.terminalRuling,
     VNEXT_PROPOSAL_GUIDANCE_POLICY.planRuling]) assert.equal(prompt.includes(text), false);
-  // It does carry every type's filling boundary, because this is the only
-  // moment the composition can be chosen. A one-line summary cannot show that
+  // It carries every type's filling boundary before the initial selection.
+  // An amendment can add missing types once; a one-line summary cannot show that
   // a promised future act needs its own plan and its own time passage.
   for (const text of Object.values(VNEXT_PROPOSAL_GUIDANCE_POLICY.filling)) assert.ok(prompt.includes(text));
   for (const id of VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS) assert.ok(prompt.includes(`"id":"${id}"`));

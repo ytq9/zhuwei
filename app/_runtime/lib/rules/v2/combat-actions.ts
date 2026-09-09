@@ -6133,11 +6133,13 @@ function appendAbilityRecovery(
       const before = Number(healing ? target.hitPoints.current : target.hitPoints.temporary ?? 0);
       const after = healing ? Math.min(Number(target.hitPoints.maximum), before + amount) : Math.max(before, amount);
       results[targetId] = { rolled: amount, ...(healing ? { applied: after - before } : {}), before, after };
+      const rollResult = { sourceEntityId: String(operation.sourceEntityId), formula: effect.formula,
+        rolls: [...(faces.get(`${healing ? "healing" : "temporary-hit-points"}:${operation.abilityRef}`) ?? [])], total: amount };
       const drafts: Draft[] = healing ? [
         ...(after > before ? interruptStableRecoveryDrafts(result.state, targetId, { kind: "healing", sourceDefinitionId: operation.abilityRef }) : []),
-        { eventType: "HealingResolved", payload: { entityId: targetId, before: String(before), after: String(after) } },
+        { eventType: "HealingResolved", payload: { entityId: targetId, before: String(before), after: String(after), rollResult } },
       ] : [{ eventType: "TemporaryHitPointsGranted", payload: {
-        entityId: targetId, sourceDefinitionId: String(operation.abilityRef), before: String(before), after: String(after),
+        entityId: targetId, sourceDefinitionId: String(operation.abilityRef), before: String(before), after: String(after), rollResult,
       } }];
       result = appendTransitions(result, sequence("committed", profiles, result.state, root, drafts));
     }

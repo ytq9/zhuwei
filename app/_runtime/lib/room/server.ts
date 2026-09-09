@@ -130,11 +130,11 @@ export async function runAuthoritativeRoomAction(input: {
       where id = ${input.roomId}
     `
   )[0];
-  const profile = roomRuntimeConfiguration(env).profileByBinding(
+  const profile = roomRuntimeConfiguration().profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const requestedProfile = roomRuntimeConfiguration().profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
@@ -144,7 +144,7 @@ export async function runAuthoritativeRoomAction(input: {
   const boundModuleProfile = binding === undefined
     ? undefined
     : await observedRoomModuleProfile(binding.module_id, bindingObservation);
-  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
+  const v3Binding = roomRuntimeConfiguration().validateRoomBinding({
     binding,
     roomProfile: profile,
     requestedProfile,
@@ -282,18 +282,18 @@ export async function retryAuthoritativeViewerNarration(input: {
       from rooms where id = ${input.roomId}
     `
   )[0];
-  const roomProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const roomProfile = roomRuntimeConfiguration().profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
-  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const requestedProfile = roomRuntimeConfiguration().profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
   const observation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
-  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
+  const v3Binding = roomRuntimeConfiguration().validateRoomBinding({
     binding,
     roomProfile,
     requestedProfile,
@@ -435,14 +435,14 @@ export async function runAuthoritativeRoomCorrection(
       where id = ${input.roomId}
     `
   )[0];
-  const profile = roomRuntimeConfiguration(env).profileByBinding(
+  const profile = roomRuntimeConfiguration().profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
   const correctionObservation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(binding.host_user_id));
-  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
+  const v3Binding = roomRuntimeConfiguration().validateRoomBinding({
     binding,
     roomProfile: profile,
     expectedModuleRef: binding === undefined
@@ -773,22 +773,6 @@ export type AuthoritativePartyAction =
       fictionTimeCostMicros: string;
     };
 
-type AuthenticatedPartyProposal =
-  | { kind: "authenticatedPartyAction"; action: "inviteMember"; targetCharacterId: string }
-  | { kind: "authenticatedPartyAction"; action: "cancelInvitation"; pendingInputId: string }
-  | { kind: "authenticatedPartyAction"; action: "leave" }
-  | {
-      kind: "authenticatedPartyAction";
-      action: "transferLeadership";
-      targetCharacterId: string;
-    }
-  | {
-      kind: "authenticatedPartyAction";
-      action: "proposeMove" | "moveIndividually";
-      destinationSceneId: string;
-      fictionTimeCostMicros: string;
-    };
-
 function projectedPendingInput(
   observation: unknown,
   kind: "partyInvitation" | "partyMoveConsent",
@@ -832,7 +816,7 @@ export async function runAuthoritativePartyAction(input: {
   submissionId: string;
   action: AuthoritativePartyAction;
 }) {
-  const requestedProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const requestedProfile = roomRuntimeConfiguration().profileByBinding(
     input.modelId,
     input.modelProfileVersion,
   );
@@ -845,7 +829,7 @@ export async function runAuthoritativePartyAction(input: {
       where id = ${input.roomId}
     `
   )[0];
-  const roomProfile = roomRuntimeConfiguration(env).profileByBinding(
+  const roomProfile = roomRuntimeConfiguration().profileByBinding(
     binding?.kp_model,
     binding?.kp_model_profile,
   );
@@ -855,7 +839,7 @@ export async function runAuthoritativePartyAction(input: {
   const partyObservation = binding === undefined
     ? undefined
     : await roomStub(input.roomId).observe(trustedRoomPrincipal(input.userId));
-  const v3Binding = roomRuntimeConfiguration(env).validateRoomBinding({
+  const v3Binding = roomRuntimeConfiguration().validateRoomBinding({
     binding,
     roomProfile,
     requestedProfile,
@@ -869,7 +853,6 @@ export async function runAuthoritativePartyAction(input: {
   }
   const profile = roomProfile;
   let action: RoomActionInput;
-  let proposal: AuthenticatedPartyProposal | undefined;
   switch (input.action.kind) {
     case "invite": {
       const targetCharacterId = projectedActiveCharacterId(
@@ -884,14 +867,13 @@ export async function runAuthoritativePartyAction(input: {
         };
       }
       action = {
-        kind: "intent",
+        kind: "party",
         submissionId: input.submissionId,
-        text: `我邀请 ${targetCharacterId} 同行。`,
-      };
-      proposal = {
-        kind: "authenticatedPartyAction",
-        action: "inviteMember",
-        targetCharacterId,
+        displayText: `我邀请 ${targetCharacterId} 同行。`,
+        command: {
+          action: "inviteMember",
+          targetCharacterId,
+        },
       };
       break;
     }
@@ -909,14 +891,13 @@ export async function runAuthoritativePartyAction(input: {
         };
       }
       action = {
-        kind: "intent",
+        kind: "party",
         submissionId: input.submissionId,
-        text: "我取消自己尚未得到回应的同行邀请。",
-      };
-      proposal = {
-        kind: "authenticatedPartyAction",
-        action: "cancelInvitation",
-        pendingInputId,
+        displayText: "我取消自己尚未得到回应的同行邀请。",
+        command: {
+          action: "cancelInvitation",
+          pendingInputId,
+        },
       };
       break;
     }
@@ -939,16 +920,15 @@ export async function runAuthoritativePartyAction(input: {
         pendingInputId,
         answer: { accept: input.action.accept },
       };
-      proposal = undefined;
       break;
     }
     case "leave":
       action = {
-        kind: "intent",
+        kind: "party",
         submissionId: input.submissionId,
-        text: "我明确离开当前同行队伍，之后独自行动。",
+        displayText: "我明确离开当前同行队伍，之后独自行动。",
+        command: { action: "leave" },
       };
-      proposal = { kind: "authenticatedPartyAction", action: "leave" };
       break;
     case "transferLeadership": {
       const targetCharacterId = projectedActiveCharacterId(
@@ -963,42 +943,39 @@ export async function runAuthoritativePartyAction(input: {
         };
       }
       action = {
-        kind: "intent",
+        kind: "party",
         submissionId: input.submissionId,
-        text: `我把同行队伍的组织权交给 ${targetCharacterId}。`,
-      };
-      proposal = {
-        kind: "authenticatedPartyAction",
-        action: "transferLeadership",
-        targetCharacterId,
+        displayText: `我把同行队伍的组织权交给 ${targetCharacterId}。`,
+        command: {
+          action: "transferLeadership",
+          targetCharacterId,
+        },
       };
       break;
     }
     case "proposeMove": {
       action = {
-        kind: "intent",
+        kind: "party",
         submissionId: input.submissionId,
-        text: `我组织同行者一起前往 ${input.action.destinationSceneId}。`,
-      };
-      proposal = {
-        kind: "authenticatedPartyAction",
-        action: "proposeMove",
-        destinationSceneId: input.action.destinationSceneId,
-        fictionTimeCostMicros: input.action.fictionTimeCostMicros,
+        displayText: `我组织同行者一起前往 ${input.action.destinationSceneId}。`,
+        command: {
+          action: "proposeMove",
+          destinationSceneId: input.action.destinationSceneId,
+          fictionTimeCostMicros: input.action.fictionTimeCostMicros,
+        },
       };
       break;
     }
     case "moveIndividually": {
       action = {
-        kind: "intent",
+        kind: "party",
         submissionId: input.submissionId,
-        text: `我独自前往 ${input.action.destinationSceneId}。`,
-      };
-      proposal = {
-        kind: "authenticatedPartyAction",
-        action: "moveIndividually",
-        destinationSceneId: input.action.destinationSceneId,
-        fictionTimeCostMicros: input.action.fictionTimeCostMicros,
+        displayText: `我独自前往 ${input.action.destinationSceneId}。`,
+        command: {
+          action: "moveIndividually",
+          destinationSceneId: input.action.destinationSceneId,
+          fictionTimeCostMicros: input.action.fictionTimeCostMicros,
+        },
       };
       break;
     }
@@ -1020,10 +997,7 @@ export async function runAuthoritativePartyAction(input: {
     action,
   }, {
     propose: async () => {
-      if (proposal === undefined) {
-        throw new Error("Authenticated party answers must resolve without a KP proposal.");
-      }
-      return structuredClone(proposal);
+      throw new Error("Authenticated party commands and answers must resolve without a KP proposal.");
     },
     decideDueActorPlan: (request) => narration.decideDueActorPlan(
       request as unknown as DueActorPlanDecisionRequest,

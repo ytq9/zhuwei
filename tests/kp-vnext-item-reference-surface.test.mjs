@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { proposalItemEntryRefs } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
+import { proposalItemDefinitionRefs, proposalItemEntryRefs, proposalModelContext } from '../app/_runtime/lib/kp/vnext/proposal-context.ts';
 import { invokeVNextProposalOffer, invokeSubmitKpProposalBundleFirstPass } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { createVNextProposalBundleSchema } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
@@ -48,6 +48,65 @@ function entryField(schema) {
       return fields;
     });
 }
+
+function definitionFields(schema) {
+  const fields = [];
+  const collect = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.properties?.kind?.enum?.includes('materializeItem')) fields.push(node.properties.definitionRef);
+    for (const child of Object.values(node)) collect(child);
+  };
+  collect(expandDeepSeekSchema(schema));
+  assert.ok(fields.length > 0, 'item materialization and continuations retain definition references');
+  return fields;
+}
+
+test('the provider binds item materialization to exact frozen definitions, never labels or item instances', async () => {
+  const frozen = context('leaf');
+  frozen.entries.push(
+    { kind: 'known', entryRef: 'hidden:definition', value: { schema: 'zhuwei.item-definition/v1', definitionId: 'hidden:definition' } },
+    { kind: 'known', entryRef: 'wrong:definition', value: { schema: 'zhuwei.item-definition/v1', definitionId: 'different:definition' } },
+    { kind: 'known', entryRef: 'authority:definition', value: { schema: 'zhuwei.item-definition/v1', definitionId: 'authority:definition' } },
+  );
+  frozen.references.citations.viewerEvidenceRefs.push('wrong:definition');
+  frozen.references.citations.authorityBasisRefs.push('authority:definition');
+  const before = structuredClone(frozen);
+  const refs = proposalItemDefinitionRefs(frozen);
+  assert.deepEqual(refs, ['authority:definition', 'leaf:definition']);
+  assert.ok(Object.isFrozen(refs));
+  assert.deepEqual(proposalModelContext(frozen).references.itemDefinitionRefs, refs);
+  assert.deepEqual(proposalModelContext(frozen).references.itemEntryRefs, proposalItemEntryRefs(frozen));
+  let calls = 0;
+  await invokeSubmitKpProposalBundleFirstPass({ modelId: 'test-double', message: '拿起叶片。',
+    requiredContext: frozen, capabilities: ['materializeItem'],
+    binding: { async run(_model, request) {
+      calls++;
+      assertDeepSeekStrictToolModelInput(request);
+      for (const field of definitionFields(request.tools[0].function.parameters)) {
+        for (const valid of [...refs, 'prospective:authored-definition']) {
+          assert.equal(matchesAuthoredSourceSchema(valid, field), true, valid);
+        }
+        for (const invalid of ['黑橡叶', 'leaf:floor', 'hidden:definition', 'wrong:definition', 'unavailable:entry']) {
+          assert.equal(matchesAuthoredSourceSchema(invalid, field), false, invalid);
+        }
+      }
+      return { choices: [{ message: { tool_calls: [{ type: 'function', function: {
+        name: request.tools[0].function.name, arguments: '{}',
+      } }] } }] };
+    } },
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(frozen, before);
+});
+
+test('an empty definition directory permits same-bundle authoring without inventing an existing definition', () => {
+  const schema = createVNextProposalBundleSchema(['materializeItem'], [], [], undefined, [], undefined, [], []);
+  for (const field of definitionFields(schema)) {
+    assert.equal(matchesAuthoredSourceSchema('prospective:new-definition', field), true);
+    assert.equal(matchesAuthoredSourceSchema('黑橡叶', field), false);
+    assert.equal(matchesAuthoredSourceSchema('unknown:definition', field), false);
+  }
+});
 
 test('inventory reference selection uses frozen visible ItemEntry identity across different instances', () => {
   for (const label of ['stack-a', 'unique-object-b']) {

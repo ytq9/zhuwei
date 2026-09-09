@@ -1,9 +1,11 @@
+import type { PartyActionInput } from "./party-action";
 import type { RuleDiagnostic } from "../rules/v2/model";
 import type { TacticalPosition } from "../rules/tactical-projection";
 import type { RuntimeProfileManifest } from "../rules";
 import type { ProfileRef } from "../rules/profiles/types";
 import type { VNextRequiredContext } from "../kp/vnext/required-context";
 import type { ProposalDiagnostic } from "../kp/vnext/proposal-diagnostics";
+import type { NarrationPublicFailureCode } from "../kp/public-failure-codes";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -48,6 +50,7 @@ export type InitializeAuthoritativeRoomInput = {
 };
 
 export type AuthoritativeActionInput =
+  | PartyActionInput
   | {
       kind: "intent";
       submissionId: string;
@@ -224,7 +227,7 @@ export type ExperiencedTranscriptMessage = {
   ordinal: number;
   messageId: string;
   sceneIds: string[];
-  kind: "player" | "kp";
+  kind: "player" | "kp" | "roll";
   speakerCharacterId: string | null;
   speakerName: string;
   body: string;
@@ -289,6 +292,7 @@ export type ViewerNarrationRecovery = {
   kind: "available";
   capability: string;
   state: "pending" | "rejected" | "retryableFailure";
+  failureCode?: NarrationPublicFailureCode;
 };
 
 /** One frozen, viewer-owned randomness request that is waiting only for the

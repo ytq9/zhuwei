@@ -252,7 +252,7 @@ test("authoritative HTTP poll, reconnect, ACK, and voice expose only the caller'
 
   const malformedAction = await api(hostCookie, "sendAction", null);
   assert.equal(malformedAction.status, 500);
-  assert.deepEqual(malformedAction.body, { error: "桌面暂时无法响应，请稍后再试。" });
+  assert.deepEqual(malformedAction.body, { error: "游戏服务处理请求时发生内部错误，具体原因尚未确认。请先刷新桌面核对结果；若持续出现，请将操作时间和步骤反馈给维护者。" });
   assert.doesNotMatch(JSON.stringify(malformedAction.body), /Cannot read|TypeError|stack|SQL/i);
 
   const guessedByPlayer = await api(playerCookie, "speakNarration", {
@@ -391,6 +391,27 @@ test("authoritative HTTP poll, reconnect, ACK, and voice expose only the caller'
       JSON.stringify(projection.body.state),
       /controllerPrincipalId|internalCandidates|privateWindowState/,
     );
+  }
+
+  const duplicateInvitation = await api(hostCookie, "inviteSquad", {
+    code, targetUserId: playerPoll.body.me.userId, submissionId: invitationSubmissionId,
+  });
+  assert.deepEqual(duplicateInvitation.body, invitation.body);
+  const cannotAnswerForPlayer = await api(hostCookie, "answerSquad", {
+    code, accept: true, submissionId: `submission:http-unauthorized-party-answer:${crypto.randomUUID()}`,
+  });
+  assert.equal(cannotAnswerForPlayer.body.action, "notCommitted");
+  const acceptedInvitation = await api(playerCookie, "answerSquad", {
+    code, accept: true, submissionId: `submission:http-party-answer:${crypto.randomUUID()}`,
+  });
+  assert.equal(acceptedInvitation.body.action, "committed", JSON.stringify(acceptedInvitation.body));
+  for (const cookie of [hostCookie, playerCookie]) {
+    const joinedParty = await api(cookie, "fetchTable", code);
+    assert.equal(joinedParty.body.state.squadInvite, null);
+    assert.equal(joinedParty.body.state.squads.length, 1);
+    assert.equal(joinedParty.body.state.squads[0].captain, hostPoll.body.me.userId);
+    assert.deepEqual(joinedParty.body.state.squads[0].ids.toSorted(),
+      [hostPoll.body.me.userId, playerPoll.body.me.userId].toSorted());
   }
 
   await setLocalRoomRuleset(roomId, "unknown-future-ruleset-v999");

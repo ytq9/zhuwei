@@ -1,6 +1,6 @@
 import type { AuthoritativeKpProfile } from "../kp/authoritative-types";
 import {
-  authoritativeKpProfileByBinding, authoritativeKpProfileByModelId,
+  authoritativeKpProfileByBinding,
   hasExactV3KpWorkflowManifest, isV3AuthoritativeKpProfile,
   PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON, runtimeManifestForExactV3KpWorkflow,
 } from "../kp/authoritative-policy";
@@ -28,20 +28,19 @@ function isExactVNextProfile(profile: AuthoritativeKpProfile | undefined): boole
   return profile !== undefined && exactJson(profile, VNEXT_KP_PROFILE);
 }
 
-/** Request-time host configuration. No client input or module-level env read
- * selects a generation, and enabling local vNext never reinterprets V3 rooms. */
-export function roomRuntimeConfiguration(environment: unknown) {
-  const localVNext = isRecord(environment) && environment.ZHUWEI_VNEXT_LOCAL === "true";
+/** New rooms use vNext. Persisted rooms resolve only their exact frozen
+ * generation; neither request data nor a local flag can reinterpret them. */
+export function roomRuntimeConfiguration() {
   const acceptsProfile = (profile: AuthoritativeKpProfile) =>
-    isV3AuthoritativeKpProfile(profile) || localVNext && isExactVNextProfile(profile);
+    isV3AuthoritativeKpProfile(profile) || isExactVNextProfile(profile);
   const hasWorkflow = (value: unknown): value is string =>
-    hasExactV3KpWorkflowManifest(value) || localVNext && value === VNEXT_KP_WORKFLOW_MANIFEST_JSON;
+    hasExactV3KpWorkflowManifest(value) || value === VNEXT_KP_WORKFLOW_MANIFEST_JSON;
   const hasGenerationBinding = (profile: AuthoritativeKpProfile, workflow: unknown) =>
     hasExactV3KpGenerationBinding(profile, workflow)
-    || localVNext && isExactVNextProfile(profile) && workflow === VNEXT_KP_WORKFLOW_MANIFEST_JSON;
+    || isExactVNextProfile(profile) && workflow === VNEXT_KP_WORKFLOW_MANIFEST_JSON;
 
   function validateRoomBinding(input: RoomBindingInput): V3RoomBindingValidation {
-    if (!localVNext || !isExactVNextProfile(input.roomProfile)) return validateV3RoomBinding(input);
+    if (!isExactVNextProfile(input.roomProfile)) return validateV3RoomBinding(input);
     const binding = input.binding;
     if (binding === undefined || binding.ruleset_version !== AUTHORITATIVE_RULESET_VERSION
       || binding.kp_model !== VNEXT_KP_PROFILE.modelId
@@ -67,24 +66,22 @@ export function roomRuntimeConfiguration(environment: unknown) {
   }
 
   return Object.freeze({
-    localVNext,
     profileByModelId(model: unknown): AuthoritativeKpProfile | undefined {
-      return localVNext ? model === VNEXT_KP_PROFILE.modelId ? VNEXT_KP_PROFILE : undefined
-        : authoritativeKpProfileByModelId(model);
+      return model === VNEXT_KP_PROFILE.modelId ? VNEXT_KP_PROFILE : undefined;
     },
     profileByBinding(model: unknown, version: unknown): AuthoritativeKpProfile | undefined {
-      if (localVNext && model === VNEXT_KP_PROFILE.modelId && version === VNEXT_KP_PROFILE.modelProfileVersion) return VNEXT_KP_PROFILE;
+      if (model === VNEXT_KP_PROFILE.modelId && version === VNEXT_KP_PROFILE.modelProfileVersion) return VNEXT_KP_PROFILE;
       return authoritativeKpProfileByBinding(model, version);
     },
     acceptsProfile,
     hasWorkflow,
     hasGenerationBinding,
     workflowForProfile(profile: AuthoritativeKpProfile): string | undefined {
-      if (localVNext && isExactVNextProfile(profile)) return VNEXT_KP_WORKFLOW_MANIFEST_JSON;
+      if (isExactVNextProfile(profile)) return VNEXT_KP_WORKFLOW_MANIFEST_JSON;
       return isV3AuthoritativeKpProfile(profile) ? PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON : undefined;
     },
     runtimeManifestForWorkflow(value: unknown) {
-      if (localVNext && value === VNEXT_KP_WORKFLOW_MANIFEST_JSON) return VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST;
+      if (value === VNEXT_KP_WORKFLOW_MANIFEST_JSON) return VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST;
       return runtimeManifestForExactV3KpWorkflow(value);
     },
     validateRoomBinding,

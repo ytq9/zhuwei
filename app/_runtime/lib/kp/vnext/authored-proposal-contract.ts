@@ -13,6 +13,7 @@ const object = (properties: Record<string, AuthoredSourceSchema>): AuthoredSourc
 });
 const values = (...entries: string[]): AuthoredSourceSchema => ({ type: "string", enum: entries });
 const ref: AuthoredSourceSchema = { type: "string", pattern: "^\\S+$" };
+const prospectiveRef: AuthoredSourceSchema = { type: "string", pattern: "^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" };
 const itemEntryRef: AuthoredSourceSchema = { ...ref,
   description: "Exact physical ItemEntry entryId, or a consumed same-bundle prospective itemEntry handle. ItemDefinition IDs describe a type and cannot identify the item being operated on. For acquire select the source entry on the ground, not a destination stack already held." };
 const quantity: AuthoredSourceSchema = { type: "integer", minimum: 1, maximum: 1_000_000 };
@@ -31,7 +32,7 @@ export const INVENTORY_OPERATION_SOURCE_SCHEMA: AuthoredSourceSchema = {
   { ...object({ kind: values("assemble"), label: { type: "string", pattern: "^[\\s\\S]{1,500}$" },
     description: { type: "string", pattern: "^[\\s\\S]{1,4000}$" }, components: { type: "array", description: "Two to sixteen distinct existing components.",
       items: object({ entryRef: itemEntryRef, quantity, recoverable: { type: "boolean" } }) } }),
-    description: "Persist an ordinary assembly of existing unequipped held components in the current scene. State only each original component's quantity and whether dismantling can recover it. No new ItemDefinition or Ability is needed. This instant operation is outside active encounters only; combat handling requires separate adjudication of its action and costs. It does not advance time or create automatic damage, resource, or trigger effects." },
+    description: "Assemble 2–16 distinct existing unequipped held components in this scene; record quantities and recoverability. No new ItemDefinition or Ability. Outside active encounters only; combat handling needs its own legal action and costs. The enclosing Proposal decision freezes the action duration; this operation adds no separate time, damage, resource or trigger effect." },
   object({ kind: values("disassemble"), assemblyRef: { ...ref, description: "Existing active assemblyRef from frozen context; dismantling restores only the original recoverable components, with their current condition and counters." } }),
   object({ kind: values("acquire"), entryRef: itemEntryRef, quantity }),
   object({ kind: values("identify"), entryRef: itemEntryRef }),
@@ -51,9 +52,8 @@ export const INVENTORY_OPERATION_SOURCE_SCHEMA: AuthoredSourceSchema = {
  * dependency graph proves their producer kind before execution. */
 function inventoryOperationSchema(entryRefs?: readonly string[]): AuthoredSourceSchema {
   if (entryRefs === undefined) return INVENTORY_OPERATION_SOURCE_SCHEMA;
-  const prospective: AuthoredSourceSchema = { type: "string", pattern: "^prospective:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" };
   const selectedRef: AuthoredSourceSchema = { description: itemEntryRef.description,
-    anyOf: [...(entryRefs.length ? [{ type: "string" as const, enum: [...entryRefs] }] : []), prospective] };
+    anyOf: [...(entryRefs.length ? [{ type: "string" as const, enum: [...entryRefs] }] : []), prospectiveRef] };
   return { ...INVENTORY_OPERATION_SOURCE_SCHEMA,
     anyOf: INVENTORY_OPERATION_SOURCE_SCHEMA.anyOf!.map(variant => {
       const properties = { ...variant.properties };
@@ -86,16 +86,22 @@ function strict(schema: AuthoredSourceSchema): AuthoredSourceSchema {
 }
 export function authoredProposalVariants(input: Record<string, unknown>,
   produces: (kind: string, definitionKind?: string) => Record<string, unknown>,
-  entryRefs?: readonly string[]): AuthoredSourceSchema[] {
+  entryRefs?: readonly string[], definitionRefs?: readonly string[]): AuthoredSourceSchema[] {
   const common = input as Record<string, AuthoredSourceSchema>;
   const summary: AuthoredSourceSchema = { type: "string", pattern: "[\\s\\S]+" };
   const visibilityPolicyRef = values("visibility:public", "visibility:scene-observers", "visibility:hidden-until-evidence", "visibility:narrative-audience");
+  const definitionRef: AuthoredSourceSchema = {
+    ...(definitionRefs === undefined ? ref : { anyOf: [
+      ...(definitionRefs.length ? [values(...definitionRefs)] : []), prospectiveRef,
+    ] }),
+    description: "Exact ItemDefinition ID from frozen itemDefinitionRefs, or the handle declared by a real same-bundle authorItem step. Never an object label, ItemEntry ID or knowledge ref. If no matching definition is listed, select authorItem and create its definition before materializing the item.",
+  };
   return [
     ...([
       ["ability", AUTHORED_ABILITY_SOURCE_SCHEMA], ["hazard", AUTHORED_HAZARD_CONTENT_SCHEMA], ["item", AUTHORED_ITEM_CONTENT_SCHEMA],
     ] as const).map(([kind, content]) => strict(object({ ...common, kind: values("materializeDefinition"), produces: produces("materializeDefinition", kind) as AuthoredSourceSchema, source: object({ kind: values(kind), content }), visibilityPolicyRef, summary }))),
-    strict(object({ ...common, kind: values("materializeItem"), produces: produces("materializeItem") as AuthoredSourceSchema, definitionRef: ref, sceneRef: ref, quantity, ownership: AUTHORED_ITEM_OWNERSHIP_SCHEMA, visibilityPolicyRef, summary })),
-    strict(object({ ...common, kind: values("materializeItem"), produces: produces("materializeItem") as AuthoredSourceSchema, definitionRef: ref, sceneRef: ref, quantity, ownership: AUTHORED_ITEM_OWNERSHIP_SCHEMA, visibilityPolicyRef, summary, uniquenessBasisRef: ref })),
+    strict(object({ ...common, kind: values("materializeItem"), produces: produces("materializeItem") as AuthoredSourceSchema, definitionRef, sceneRef: ref, quantity, ownership: AUTHORED_ITEM_OWNERSHIP_SCHEMA, visibilityPolicyRef, summary })),
+    strict(object({ ...common, kind: values("materializeItem"), produces: produces("materializeItem") as AuthoredSourceSchema, definitionRef, sceneRef: ref, quantity, ownership: AUTHORED_ITEM_OWNERSHIP_SCHEMA, visibilityPolicyRef, summary, uniquenessBasisRef: ref })),
     strict(object({ ...common, produces: produces("inventoryOperation") as AuthoredSourceSchema, kind: values("inventoryOperation"), operation: inventoryOperationSchema(entryRefs), summary })),
   ];
 }

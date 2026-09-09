@@ -6,7 +6,7 @@ import { invokeSubmitKpProposalBundleFirstPass, parseSubmitKpProposalBundleCandi
 import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
 import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import { npcDecisionEntryRef } from '../app/_runtime/lib/rules/v2/npc-decision-context.ts';
-import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
+import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
 
 const NPC = 'npc:basis:archivist';
 function fixture(name) {
@@ -26,7 +26,7 @@ const response = wire => ({ choices: [{ message: { tool_calls: [{ type: 'functio
   name: SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, arguments: JSON.stringify(wire),
 } }] } }] });
 const decision = (schema, kind = 'directSuccess') => expandDeepSeekSchema(schema).properties.decision.anyOf.find(value => value.properties.kind.enum.includes(kind));
-const step = (schema, kind) => expandDeepSeekSchema(schema).properties.steps.items.anyOf.find(value => value.properties.kind.enum.includes(kind));
+const step = (schema, kind) => schemaVariants(expandDeepSeekSchema(schema).properties.steps.items).find(value => value.properties.kind.enum.includes(kind));
 
 test('the real Provider basis selector excludes a read-bound NPC wrapper; original draft still fails the original lowerer', async () => {
   const f = fixture('wrapper'), wrapper = npcDecisionEntryRef(NPC), wire = encodeVNextStrictToolBundle(social([NPC, wrapper]));

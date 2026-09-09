@@ -93,6 +93,33 @@ test("Claims use the state immediately before recovery and do not attribute anot
   assert.equal(healthTransitions.some(change => change.before.hitPoints.current === 10), false);
 });
 
+test("healing capacity uses its exact event frame and remains private across interleaved healing", () => {
+  const fixture = createAuthoredProbeFixture("interleaved-healing-capacity");
+  const activityId = "activity:healing-capacity";
+  fixture.state.campaignRuntime.activities[activityId] = { activityId, characterId: ACTOR, activityKind: "inspection",
+    startedAtFictionMicros: "0", intendedDurationMicros: HOUR, status: "active" };
+  const root = `activity-due:${activityId}:${HOUR}`;
+  const first = transition(fixture, fixture.state, root, "TemporaryHitPointsGranted",
+    { entityId: ACTOR, before: "0", after: "4", sourceDefinitionId: "ability:temporary-ward" });
+  const intervening = transition(fixture, first.state, "root:other-healing", "HealingResolved",
+    { entityId: ACTOR, before: "10", after: "13" });
+  const healing = transition(fixture, intervening.state, root, "HealingResolved",
+    { entityId: ACTOR, before: "13", after: "14" });
+  const last = transition(fixture, healing.state, root, "ActivityCompleted", { activityId });
+  const journal = [first.event, intervening.event, healing.event, last.event];
+  const result = project(fixture, fixture.state, last, journal);
+  assert.equal(result.kind, "projected");
+  const recovery = result.renderableClaims.claims.find(claim => claim.outcomeCode === "healed");
+  assert.match(recovery.summary, /实际恢复了 1 点生命值/u);
+  const capacity = result.renderableClaims.claims.find(claim => claim.outcomeCode === "healingCapacity");
+  assert.match(capacity.summary, /治疗前生命值为 13\/20，治疗后生命值为 14\/20/u);
+  assert.doesNotMatch(capacity.summary, /10\/20/u);
+  const other = project(fixture, fixture.state, last, journal, { kind: "player", principalId: "principal:probe-target",
+    seatId: "seat:probe-target", sessionVersion: 1, characterId: OTHER });
+  assert.equal(other.kind, "projected");
+  assert.equal(other.renderableClaims.claims.some(claim => claim.outcomeCode === "healingCapacity"), false);
+});
+
 test("an observer arriving between root events does not retroactively receive an earlier private scene result", () => {
   const fixture = createAuthoredProbeFixture("interleaved-arrival");
   const elsewhere = "scene:elsewhere";

@@ -10,6 +10,7 @@ function hasExactKeys(v: Record<string, unknown>, keys: readonly string[]): bool
 /** Authored truth and the reason someone knows it are frozen together. The
  * semantic judgment is KP's, not a claim that hashes prove prose consistent. */
 export type AuthoredWorldFact = Readonly<{
+  historyCoverage?: WorldHistoryCoverage | null;
   subjectRefs: readonly string[];
   occurrence: string;
   initialKnowledge: readonly Readonly<{
@@ -17,11 +18,28 @@ export type AuthoredWorldFact = Readonly<{
   }>[];
   consistency: Readonly<{ judgment: "compatible" | "conflict" | "uncertain"; explanation: string }>;
 }>;
+export type WorldHistoryCoverage = {
+  timelineId: string; fromFictionMicros: string; throughFictionMicros: string; subjectRefs: string[];
+};
+export function worldHistoryCoverageConform(value: unknown): value is WorldHistoryCoverage {
+  return isRecord(value) && hasExactKeys(value, ["timelineId", "fromFictionMicros", "throughFictionMicros", "subjectRefs"])
+    && isNonEmptyString(value.timelineId) && typeof value.fromFictionMicros === "string" && /^(0|[1-9][0-9]*)$/.test(value.fromFictionMicros)
+    && typeof value.throughFictionMicros === "string" && /^(0|[1-9][0-9]*)$/.test(value.throughFictionMicros)
+    && BigInt(value.fromFictionMicros) <= BigInt(value.throughFictionMicros) && refs(value.subjectRefs) && value.subjectRefs.length > 0;
+}
+export function worldHistoryCoverageAvailable(state: AuthoritativeWorldState, fact: AuthoredWorldFact): boolean {
+  const coverage = fact.historyCoverage;
+  return coverage === null || coverage === undefined || (worldHistoryCoverageConform(coverage)
+    && state.fictionTimelines[coverage.timelineId]?.branchId === state.activeBranchId
+    && BigInt(coverage.throughFictionMicros) <= BigInt(state.fictionTimelines[coverage.timelineId].nowMicros)
+    && coverage.subjectRefs.every(ref => fact.subjectRefs.includes(ref)));
+}
 const text = (v: unknown): v is string => isNonEmptyString(v) && v.length <= 4_000;
 const refs = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 128
   && v.every(isNonEmptyString) && new Set(v).size === v.length;
 export function authoredWorldFactConform(v: unknown): v is AuthoredWorldFact {
-  return isRecord(v) && hasExactKeys(v, ["subjectRefs", "occurrence", "initialKnowledge", "consistency"])
+  return isRecord(v) && hasExactKeys(v, ["subjectRefs", "occurrence", "initialKnowledge", "consistency", ...(Object.hasOwn(v, "historyCoverage") ? ["historyCoverage"] : [])])
+    && (v.historyCoverage === undefined || v.historyCoverage === null || worldHistoryCoverageConform(v.historyCoverage))
     && refs(v.subjectRefs) && v.subjectRefs.length > 0 && text(v.occurrence)
     && Array.isArray(v.initialKnowledge) && v.initialKnowledge.length <= 16
     && v.initialKnowledge.every(k => isRecord(k) && hasExactKeys(k, ["holderRef", "acquisitionBasisRefs", "acquisitionExplanation"])

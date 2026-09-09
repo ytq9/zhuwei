@@ -1,15 +1,14 @@
 import { isAbilityOperationPlan, stepAbilityOperation } from "./ability-operation";
-import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation, prepareNpcActorPlanFormation } from "./npc-plan-formation";
+import { npcActorPlanFormationIds, isNpcActorPlanFormationPlan, frozenNpcActorPlanFormationIssue, prepareFrozenNpcActorPlanFormation } from "./npc-plan-formation";
 import { rebindFrozenSocialPrefix } from "./world-interaction-prefix";
 import { dynamicMaterializationIssue, passageFactRef, locationSceneRef, passageTraversalMatches, dynamicPassageConform, passageActivityPayload } from "./dynamic-locations";
 import { partyDepartureEvents } from "./multiplayer-actions";
 import { isFrozenPlayerChoicePlan, isFrozenPlayerChoiceAnswerInput, frozenChoiceForRoot, frozenChoiceReadSet, frozenChoiceReadSetMatches,
   frozenChoicePublicOptions, selectedFrozenContinuation, type FrozenPlayerChoicePlan, type FrozenPlayerChoiceRecord,
   type FrozenPlayerChoiceRefusalCosts, isFrozenPlayerChoiceContinuationInput, type FrozenPlayerChoiceContinuationInput } from "./frozen-player-choice";
-import { authoredWorldFactConform, worldFactConstraints, worldFactConstraintsRef, worldFactRef, worldFactPointer } from "./world-facts";
+import { authoredWorldFactConform, worldHistoryCoverageAvailable, worldFactConstraints, worldFactConstraintsRef, worldFactRef, worldFactPointer } from "./world-facts";
 import { authoritativeNpcDecisionContext } from "./npc-decision-context";
-import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope, socialConsequenceEvent } from "./social-interaction";
-import { promiseDueDurationMicros } from "./promise-due";
+import { extendSocialMaterializedContext, socialInteractionIssue, socialInteractionDrafts, socialDraftScope } from "./social-interaction";
 import { characterTimelineId } from "./timeline";
 import { heldKnowledgeRecord } from "./knowledge-records";
 import { ATOMIC_ACCEPTED_COST_PURPOSE, worldInteractionItemCostPayload, worldInteractionResourceCostPayload } from "./world-interaction-costs";
@@ -387,6 +386,8 @@ function applyAuthoredMaterialization(profiles:RuntimeProfileManifest,state:Auth
   if(!options?.skipDuplicateCheck&&input.rootActionId in state.receipts)return rejected("duplicateRootAction","The materialization root already exists.");
   if(state.entities[input.actorCharacterId]?.tenureStatus!=="active"||!authorityReadSetMatches(state,plan.readSet))return rejected("causalFrontierConflict","The authoring actor or read set is unavailable.");
   if(![...plan.basisRefs,...plan.sourceRefs].every(ref=>authorityRefExists(state,ref)))return rejected("privateOrUnknownReference","A materialization basis or source is unavailable.");
+  if (plan.sourceRefs.some(ref => !plan.readSet.some(binding => binding.ref === ref)))
+    return rejected("causalFrontierConflict", "Every materialization source must retain its frozen read binding.");
   let materializedRef:string;
   let materializedKind:EventPayloadByType["AuthoredMaterializationResolved"]["kind"];
   if(input.kind==="materializeDefinition") {
@@ -466,7 +467,7 @@ function applyAuthoredMaterialization(profiles:RuntimeProfileManifest,state:Auth
     accumulator.transactionCreatedAuthorityRefs?.add(materialized.entryRef);
   }
   appendTransition(accumulator,profiles,input.rootActionId,{eventType:"AuthoredMaterializationResolved",
-    payload:{actorCharacterId:input.actorCharacterId,contextHash:plan.contextHash as `sha256:${string}`,kind:materializedKind,ref:materializedRef,summary:plan.summary},
+    payload:{actorCharacterId:input.actorCharacterId,contextHash:plan.contextHash as `sha256:${string}`,kind:materializedKind,ref:materializedRef,summary:plan.summary,sourceRefs:[...plan.sourceRefs]},
     reads:[materializedRef],writes:[`receipt:${input.rootActionId}`],visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal"});
   return {kind:"committed",events:accumulator.events,state:accumulator.state,cache:accumulator.state,stateHash:accumulator.events.at(-1)!.stateHashAfter,
     scopeProof:accumulator.scopeProof!,receipt:accumulator.state.receipts[input.rootActionId]!,mechanicalResult:{kind:input.kind,summary:plan.summary}};
@@ -663,7 +664,7 @@ function materializeSemanticDefinition(
   if (dynamicIssue !== undefined) return rejected("privateOrUnknownReference", dynamicIssue);
   if (plan.semanticKind === "worldFact") {
     const fact = plan.content.worldFact, frame = worldFactConstraints(accumulator.state, actor.sceneId);
-    if (!authoredWorldFactConform(fact) || fact.consistency.judgment !== "compatible" || !frame || frame.missingParentRefs.length > 0
+    if (!authoredWorldFactConform(fact) || !worldHistoryCoverageAvailable(accumulator.state, fact) || fact.consistency.judgment !== "compatible" || !frame || frame.missingParentRefs.length > 0
       || fact.subjectRefs.some(ref => !frame.subjectRefs.includes(ref) || accumulator.state.entities[ref]?.kind === "player")
       || !plan.readSet.some(read => read.ref === worldFactConstraintsRef(actor.sceneId) && read.revisionOrHash === canonicalSha256(frame))) {
       return rejected("privateOrUnknownReference", "world-fact:compatible-frozen-constraints-required");
@@ -1218,7 +1219,7 @@ function startCompiledActionActivity(profiles: RuntimeProfileManifest, state: Au
   root: string, plan: AtomicWorldInteractionStepsPlan): StepResult {
   const duration = atomicWorldInteractionFictionTimeMicros(plan);
   if (plan.rootActionId !== actionActivityCompletionRoot(root) || duration === undefined
-    || state.entities[plan.actorCharacterId]?.kind !== "player"
+    || !["player", "npc"].includes(state.entities[plan.actorCharacterId]?.kind)
     || activeEncounter(state, plan.actorCharacterId) !== undefined
     || Object.values(state.campaignRuntime.activities).some(activity => activity.characterId === plan.actorCharacterId && activity.status === "active")) {
     return rejected("missingPrerequisite", "A sustained action needs an available noncombat actor and a distinct completion root.");
@@ -3074,6 +3075,7 @@ function applyBranchEffects(
             occurrenceId:`${key}:target:${target.targetRef}`,sourceRef:effect.sourceDefinitionRef,targetRef:target.targetRef,hit:outcome.hit});
           if (pending !== undefined) return pending;
         }
+        applied.push(...outcome.rollResults);
         if(outcome.components.some(component=>component.rolled>0)) {
           const damageApplied = applyDamageEffect(accumulator,profiles,rootActionId,{
             sourceDefinitionRef:effect.sourceDefinitionRef,zoneRef:effect.zoneRef,relationRefs:target.relationRefs,
@@ -3196,44 +3198,6 @@ function applyDamageEffect(accumulator:TransitionAccumulator,profiles:RuntimePro
     hitPointDamage:resolution.hitPointDamage,damagePacketHash:canonicalSha256(packet)};
 }
 
-function derivePromisePlans(
-  accumulator: TransitionAccumulator,
-  profiles: RuntimeProfileManifest,
-  rootActionId: string,
-  plan: WorldInteractionResolutionPlan,
-  branchName: "success" | "failure",
-): StepResult | undefined {
-  const social = plan.social!;
-  const npc = accumulator.state.entities[social.npcRef];
-  const timelineId = characterTimelineId(accumulator.state, social.npcRef);
-  for (const [index, effect] of social.branches[branchName].consequences.entries()) {
-    if (effect.kind !== "promise" || effect.due === "none") continue;
-    if (npc === undefined || timelineId === undefined || effect.trace === null) {
-      return rejected("invalidRulesInput", "promise:due-plan-requires-the-npc-timeline-and-a-trace");
-    }
-    const duration = promiseDueDurationMicros(accumulator.state, timelineId, effect.due);
-    if (duration === undefined) continue;
-    const payload = socialConsequenceEvent(rootActionId, plan, branchName, index).payload;
-    if (!("promiseId" in payload)) continue;
-    const promiseId = payload.promiseId;
-    const ids = npcActorPlanFormationIds(rootActionId, promiseId);
-    const prepared = prepareNpcActorPlanFormation(accumulator.state, {
-      kind: "formNpcActorPlan", npcId: social.npcRef, factionRef: null, planId: ids.planId,
-      goal: effect.content, nextStep: effect.content, premiseRefs: [promiseId], resourceRefs: [],
-      activity: { activityId: ids.activityId, activityKind: "npcActorPlan", intendedDurationMicros: duration },
-      due: { kind: "fictionTime", atFictionMicros: (BigInt(accumulator.state.fictionTimelines[timelineId].nowMicros) + BigInt(duration)).toString() },
-      trigger: null,
-      trace: { factRef: ids.traceFactRef, description: effect.trace, visibilityPolicyRef: "visibility:scene-observers" },
-      alternateTarget: { targetRef: npc.sceneId, reason: "承诺时所在的场景；到期时不在此处则改在此处理。" },
-    });
-    if (prepared.kind === "rejected") return rejected("invalidRulesInput", `promise:due-plan:${prepared.rejection.message}`);
-    for (const draft of prepared.drafts) {
-      appendTransition(accumulator, profiles, rootActionId, { ...draft, reads: draft.reads ?? [], writes: draft.writes ?? [] });
-    }
-  }
-  return undefined;
-}
-
 function finalizeInteraction(
   accumulator: TransitionAccumulator,
   profiles: RuntimeProfileManifest,
@@ -3257,11 +3221,6 @@ function finalizeInteraction(
         reads: plan.readSet.map(record => record.ref), ...scope });
       if (draft.eventType === "SourceClaimCreated") sourceEvents.set(draft.payload.claimId, accumulator.events.at(-1)!.eventId);
     }
-    // A promise the KP gave a due tier becomes this NPC's own timed plan in
-    // the same root, with the freshly folded promise as its premise: the
-    // hours-scale promise contract's second layer. "none" stays in context.
-    const derived = derivePromisePlans(accumulator, profiles, rootActionId, plan, branchName);
-    if (derived !== undefined) return derived;
   }
   branch.sensoryEvidence.forEach((evidence, index) => {
     const factId = sensoryEvidenceFactId(rootActionId, plan.resolutionId, branchName, index);

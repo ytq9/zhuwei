@@ -1,3 +1,4 @@
+import { promiseTermsRefs } from "../../rules/v2/promise-lifecycle";
 import { ABILITY_OPERATION_PLAN_SCHEMA, ABILITY_OPERATION_FORM_ID, abilityOperationReadRefs } from "../../rules/v2/ability-operation";
 import { NPC_ACTOR_PLAN_FORMATION_PLAN_SCHEMA, npcActorPlanFormationIds,
   npcActorPlanFormationPremiseRef, npcActorPlanFormationResourceRefs, npcActorPlanFormationReadRefs,
@@ -241,7 +242,7 @@ function lowerBundle(input: VNext2ProposalBundleLoweringInput,
     // Derive the child's identities before lowering any proposal or handle.
     // The authenticated parent context was checked above. Only this private
     // lowering view changes its execution root; model references stay intact.
-    const activityRoot = input.state.entities[input.actorCharacterId]?.kind === "player"
+    const activityRoot = ["player", "npc"].includes(input.state.entities[input.actorCharacterId]?.kind)
       && (ruling.kind === "directSuccess" || ruling.kind === "check") && ruling.durationMicros !== "0"
       ? input.rootActionId : undefined;
     if (activityRoot !== undefined) {
@@ -968,7 +969,10 @@ function lowerSocialEntry(input: VNext2ProposalBundleLoweringInput, entry: VNext
     ...context.knowledge.map(({ entryRef, revisionOrHash }) => ({ ref: entryRef, revisionOrHash }))];
   const snapshotRefs = new Set(snapshotBindings.map(record => record.ref));
   const selected = selectPlanReadSet(input.requiredContext, [...plan.readSet.map(record => record.ref),
-    `character-timeline:${input.actorCharacterId}`, ...(entry.retryChange?.basisRefs ?? [])].filter(ref => !snapshotRefs.has(ref)));
+    `character-timeline:${input.actorCharacterId}`, ...(entry.retryChange?.basisRefs ?? []),
+    ...[resolvedBranches.success, resolvedBranches.failure].flatMap(branch => branch?.consequences.flatMap(effect =>
+      effect.kind === "promise" ? [...promiseTermsRefs(effect.terms), ...(effect.promiseeRef ? [effect.promiseeRef] : [])]
+        : effect.kind === "promiseChange" ? [effect.promiseRef, ...(effect.change.terms ? promiseTermsRefs(effect.change.terms) : [])] : []) ?? [])].filter(ref => !snapshotRefs.has(ref)));
   if (selected.kind === "rejected") return selected;
   // The verified NPC snapshot also owns frozen version bindings for its
   // catalog and timeline; these need not be duplicated as top-level entries.
@@ -1208,12 +1212,13 @@ function lowerAuthoredEntry(
       : { createsInstance: entry.source.kind === "hazard" }),
   });
   if (authority?.kind === "rejected") return authority;
-  const narrativeSources = narrativeSourceRefs(input.state, [
+  const sourceRefs = [...new Set([
     ...entry.basisRefs,
     ...entry.consumes.flatMap(consume => consume.kind === "existing" ? [consume.ref] : []),
-  ]);
+  ])];
+  const narrativeSources = narrativeSourceRefs(input.state, sourceRefs);
   const creationBasis = [...new Set([...entry.basisRefs, ...narrativeSources, ...(authority?.basisRefs ?? [])])];
-  const dependencyRefs = [input.actorCharacterId, ...creationBasis, ...authoredReferenceSlots(entry),
+  const dependencyRefs = [input.actorCharacterId, ...creationBasis, ...sourceRefs, ...authoredReferenceSlots(entry),
     ...(entry.kind === "inventoryOperation" && isItemAssemblyOperation(entry.operation)
       ? itemAssemblyReadRefs(input.state, input.actorCharacterId, entry.operation) : [])]
     .filter((ref) => !LOCAL_HANDLE_PATTERN.test(ref));
@@ -1232,7 +1237,7 @@ function lowerAuthoredEntry(
   if (visibilityPolicyRef === undefined) return { kind: "rejected", code: "PROPOSAL_REFERENCE_INVALID",
     issues: ["narrative:materialization-audience-unavailable"] };
   const authoring = { ...common, bundleHash: plan.referenceNamespaceHash, handle: produced.handle,
-    sourceRefs: narrativeSources, visibilityPolicyRef };
+    sourceRefs, visibilityPolicyRef };
   return { kind: "accepted", rulesInput: {
     kind: entry.kind, rootActionId: input.rootActionId, actorCharacterId: input.actorCharacterId,
     plan: entry.kind === "materializeDefinition"

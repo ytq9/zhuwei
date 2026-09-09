@@ -89,6 +89,19 @@ export function eventFictionTimelineId(
   rootActionId: string,
 ): string {
   const record = payload as JsonRecord;
+  // A review stays on the obligation's frozen timeline even if a participant
+  // has since joined another scene whose clock is further ahead.
+  const promiseId = _eventType === "PromiseReviewed" || _eventType === "PromiseChanged" ? record.promiseId
+    : _eventType === "CanonicalFactDeclared" && record.fact !== null && typeof record.fact === "object" && !Array.isArray(record.fact)
+      && ["promiseReviewResult", "promiseTermsResult"].includes(String((record.fact as JsonRecord).kind))
+      ? ((record.fact as JsonRecord).value as JsonRecord)?.promiseId : undefined;
+  if (typeof promiseId === "string") {
+    const life = state.campaignRuntime.promises[promiseId]?.lifecycle as JsonRecord | undefined;
+    if (life?.schema === "zhuwei.promise-lifecycle/vnext-1" && typeof life.timelineId === "string"
+      && life.timelineId in state.fictionTimelines) return life.timelineId;
+  }
+  if (_eventType === "PromiseTermsEstablished" && typeof record.timelineId === "string"
+    && record.timelineId in state.fictionTimelines) return record.timelineId;
   if (["FictionTimeAdvanced", "ActivityInterrupted", "ActivityCompleted", "ActivityAttentionRequested", "ActivityAttentionAcknowledged"].includes(_eventType)
     && typeof record.activityId === "string") {
     const activity = state.campaignRuntime.activities[record.activityId];

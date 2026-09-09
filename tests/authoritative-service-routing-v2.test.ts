@@ -1,5 +1,6 @@
-import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { describe, expect, it, vi } from "vitest";
+import type { PartyCommand } from "../app/_runtime/lib/room/party-action";
 
 import { handleRoomAction } from "../app/_runtime/lib/room/action";
 import { roomServiceCapabilities } from "../app/_runtime/lib/room/archive";
@@ -51,6 +52,25 @@ async function administer(
     roomServiceCapabilities().roomAdministration,
     command,
   );
+}
+
+async function eventCount(authority: ReturnType<typeof env.ROOMS.getByName>) {
+  return runInDurableObject(authority, (instance) =>
+    (instance as unknown as { authorityStore: { events(): unknown[] } }).authorityStore.events().length);
+}
+
+async function partyCommand(
+  authority: ReturnType<typeof env.ROOMS.getByName>,
+  userId: string,
+  command: PartyCommand,
+) {
+  return handleRoomAction({
+    principal: principal(userId), authority,
+    kp: {
+      propose: async () => { throw new Error("party command must not request a KP proposal"); },
+      narrate: async () => ({ body: "同行安排已经更新。" }),
+    },
+  }, { kind: "party", submissionId: `submission:party:${crypto.randomUUID()}`, command });
 }
 
 describe("authoritative-v2 production Room service routing", () => {
@@ -109,27 +129,105 @@ describe("authoritative-v2 production Room service routing", () => {
     }));
   });
 
+  it("binds party commands before commit and rejects model or caller actor injection", async () => {
+    const authority = await seedRoom(roomId("party-binding"));
+    const command = { action: "inviteMember" as const, targetCharacterId: characterId("principal:bob") };
+    const prepared = await authority.prepare(principal("principal:alice"), {
+      kind: "party", submissionId: "submission:party:binding", command,
+    });
+    expect(prepared).toMatchObject({ kind: "prepared", resolutionMode: "authorityDirect" });
+    expect(prepared).not.toHaveProperty("requiredContext");
+    if (prepared.kind !== "prepared") throw new Error("party preparation rejected");
+    const before = await eventCount(authority);
+    expect(await authority.commit(principal("principal:alice"), prepared.preparedActionId, {
+      kind: "authenticatedPartyAction", rootActionId: prepared.rootActionId,
+      action: "inviteMember", targetCharacterId: characterId("principal:alice"),
+    })).toMatchObject({ kind: "rejected", code: "invalidMechanicalProposal" });
+    expect(await eventCount(authority)).toBe(before);
+    const forged = {
+      kind: "party" as const, submissionId: "submission:party:forged-actor",
+      command: { ...command, inviterCharacterId: characterId("principal:bob") },
+    };
+    expect(await authority.prepare(principal("principal:alice"), forged))
+      .toMatchObject({ kind: "rejected", code: "invalidActionInput" });
+    expect(await eventCount(authority)).toBe(before);
+    const intent = await authority.prepare(principal("principal:alice"), {
+      kind: "intent", submissionId: "submission:party:fake-model-capability", text: "我邀请博林同行。",
+    });
+    expect(intent).toMatchObject({ kind: "prepared", resolutionMode: "kpProposal" });
+    if (intent.kind !== "prepared") throw new Error("intent preparation rejected");
+    expect(await authority.commit(principal("principal:alice"), intent.preparedActionId, {
+      kind: "authenticatedPartyAction", rootActionId: intent.rootActionId,
+    })).toMatchObject({ kind: "needsKp" });
+    expect(await eventCount(authority)).toBe(before);
+  });
+
+  it("cancels a party invitation and preserves Rules authority for leadership and leave", async () => {
+    const authority = await seedRoom(roomId("party-management"));
+    const alice = "principal:alice", bob = "principal:bob";
+    expect(await partyCommand(authority, alice, {
+      action: "inviteMember", targetCharacterId: characterId(bob),
+    })).toMatchObject({ kind: "awaitingInput" });
+    const observed = await authority.observe(principal(bob)) as {
+      readModel: { pendingInputs: Array<{ kind: string; pendingInputId: string }> };
+    };
+    const invitationId = observed.readModel.pendingInputs.find(p => p.kind === "partyInvitation")!.pendingInputId;
+    expect(await partyCommand(authority, alice, { action: "cancelInvitation", pendingInputId: invitationId }))
+      .toMatchObject({ kind: "committed" });
+    expect(await authority.prepare(principal(bob), {
+      kind: "answer", submissionId: "submission:party:cancelled-answer",
+      pendingInputId: invitationId, answer: { accept: true },
+    })).toMatchObject({ kind: "rejected", code: "pendingInputUnauthorized" });
+
+    expect(await partyCommand(authority, alice, { action: "inviteMember", targetCharacterId: characterId(bob) }))
+      .toMatchObject({ kind: "awaitingInput" });
+    const current = await authority.observe(principal(bob)) as typeof observed;
+    const pendingInputId = current.readModel.pendingInputs.find(p => p.kind === "partyInvitation")!.pendingInputId;
+    const prepared = await authority.prepare(principal(bob), {
+      kind: "answer", submissionId: "submission:party:management-accept", pendingInputId, answer: { accept: true },
+    });
+    if (prepared.kind !== "prepared") throw new Error("party answer preparation rejected");
+    expect(await authority.commit(principal(bob), prepared.preparedActionId, {
+      kind: "authenticatedPendingAnswer", rootActionId: prepared.rootActionId,
+    })).toMatchObject({ kind: "committed" });
+    const before = await eventCount(authority);
+    expect(await partyCommand(authority, bob, { action: "transferLeadership", targetCharacterId: characterId(bob) }))
+      .toMatchObject({ kind: "rejected" });
+    expect(await eventCount(authority)).toBe(before);
+    expect(await partyCommand(authority, alice, { action: "transferLeadership", targetCharacterId: characterId(bob) }))
+      .toMatchObject({ kind: "committed" });
+    expect(await authority.observe(principal(bob))).toMatchObject({
+      readModel: { partyGroups: [expect.objectContaining({ leaderCharacterId: characterId(bob) })] },
+    });
+    expect(await partyCommand(authority, alice, { action: "leave" })).toMatchObject({ kind: "committed" });
+    expect(await authority.observe(principal(alice))).toMatchObject({ readModel: { partyGroups: [] } });
+  });
+
   it("runs party invitations and answers through the same Room Action transaction", async () => {
     const id = roomId("party");
     const authority = await seedRoom(id);
 
-    expect(await handleRoomAction({
+    const propose = vi.fn(async () => { throw new Error("party buttons must not request a KP proposal"); });
+    const context = {
       principal: principal("principal:alice"),
       authority,
-      kp: {
-        propose: async () => ({
-          kind: "authenticatedPartyAction",
-          action: "inviteMember",
-          targetCharacterId: characterId("principal:bob"),
-        }),
-        narrate: async () => ({ body: "同行邀请已经提交。" }),
-      },
-    }, {
-      kind: "intent",
+      kp: { propose, narrate: async () => ({ body: "同行邀请已经提交。" }) },
+    };
+    const input = {
+      kind: "party" as const,
       submissionId: "submission:party:invite:1",
-      characterId: characterId("principal:alice"),
-      text: "我邀请博林同行。",
-    })).toMatchObject({ kind: "awaitingInput" });
+      command: { action: "inviteMember" as const, targetCharacterId: characterId("principal:bob") },
+    };
+    const invitation = await handleRoomAction(context, input);
+    expect(invitation).toMatchObject({ kind: "awaitingInput" });
+    expect(propose).not.toHaveBeenCalled();
+    const eventsAfterInvite = await eventCount(authority);
+    await evictDurableObject(authority);
+    expect(await handleRoomAction(context, input)).toEqual(invitation);
+    expect(await eventCount(authority)).toBe(eventsAfterInvite);
+    expect(await handleRoomAction(context, {
+      ...input, command: { action: "inviteMember", targetCharacterId: characterId("principal:alice") },
+    })).toMatchObject({ kind: "rejected", code: "idempotencyPayloadMismatch" });
 
     const pending = await authority.observe(principal("principal:bob")) as {
       readModel?: { pendingInputs?: Array<{ pendingInputId: string; kind: string }> };
@@ -138,8 +236,14 @@ describe("authoritative-v2 production Room service routing", () => {
       (entry) => entry.kind === "partyInvitation",
     )?.pendingInputId;
     expect(pendingInputId).toBeTypeOf("string");
+    expect(await authority.prepare(principal("principal:alice"), {
+      kind: "answer", submissionId: "submission:party:unauthorized-answer",
+      pendingInputId: pendingInputId!, answer: { accept: true },
+    })).toMatchObject({ kind: "rejected", code: "pendingInputUnauthorized" });
+    expect(await eventCount(authority)).toBe(eventsAfterInvite);
 
-    expect(await handleRoomAction({
+
+    const accepted = await handleRoomAction({
       principal: principal("principal:bob"),
       authority,
       kp: {
@@ -153,7 +257,8 @@ describe("authoritative-v2 production Room service routing", () => {
       submissionId: "submission:party:answer:2",
       pendingInputId: pendingInputId!,
       answer: { accept: true },
-    })).toMatchObject({ kind: "committed" });
+    });
+    expect(accepted, JSON.stringify(accepted)).toMatchObject({ kind: "committed" });
 
     const bob = await authority.observe(principal("principal:bob")) as {
       readModel?: {

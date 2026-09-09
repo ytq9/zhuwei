@@ -8,7 +8,7 @@ import type {
   JsonRecord,
 } from "./model";
 import { applyWorldEffectEvent, isWorldEffectRecord, isWorldEffectRecordCandidate, synchronizeWorldEffectSuspensions } from "./world-effects";
-import { resolveCreatureDamage, worldDamageTarget } from "./damage";
+import { parseDamageFormula, resolveCreatureDamage, worldDamageTarget } from "./damage";
 import { conditionMovementPermission, conditionMovementCost, conditionSpeed, conditionDamageDefense } from "./condition-mechanics";
 import {
   hasExactKeys,
@@ -243,7 +243,17 @@ export function validateCombatEventPayload(eventType: EventType, value: JsonReco
       && (value.phaseTasks === undefined
         || (Array.isArray(value.phaseTasks) && value.phaseTasks.every(phaseTask)));
   }
-  if (!hasExactKeys(value, KEYS[type])) return false;
+  const formulaRoll = (type === "HealingResolved" || type === "TemporaryHitPointsGranted") && Object.hasOwn(value, "rollResult");
+  if (!hasExactKeys(value, [...KEYS[type], ...(formulaRoll ? ["rollResult"] : [])])) return false;
+  if (formulaRoll) {
+    const result = value.rollResult;
+    const formula = isRecord(result) ? parseDamageFormula(result.formula) : undefined;
+    if (!isRecord(result) || !hasExactKeys(result, ["sourceEntityId", "formula", "rolls", "total"])
+      || !isNonEmptyString(result.sourceEntityId) || formula === undefined || !Array.isArray(result.rolls)
+      || result.rolls.length !== formula.count
+      || !result.rolls.every(face => Number.isSafeInteger(face) && Number(face) >= 1 && Number(face) <= formula.sides)
+      || result.total !== Math.max(0, result.rolls.reduce<number>((sum, face) => sum + Number(face), 0) + formula.modifier)) return false;
+  }
   switch (type) {
     case "EntityMaterialized": return isRecord(value.entity) && isNonEmptyString(value.entity.entityId);
     case "EncounterStarted": return isRecord(value.encounter) && isNonEmptyString(value.encounter.encounterId);

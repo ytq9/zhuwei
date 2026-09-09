@@ -660,8 +660,8 @@ export type VNextProposalBundleCorrectionResult =
  */
 export function createVNextProposalBundleSchema(capabilities: readonly string[] = VNEXT_PROPOSAL_CAPABILITY_IDS,
   itemEntryRefs?: readonly string[], observationSubjectRefs?: readonly string[], terminalKinds?: readonly string[], npcSources?: ProposalNpcSourceChoices,
-  basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[]) {
-  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs), terminalKinds, npcSources)));
+  basisChoices?: VNextBasisReferenceChoices, creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[]) {
+  return Object.freeze(compactDeepSeekStrictToolSchema(proposalFillingSchema(makeStrictBundleSchema(closeVNextProposalCapabilities(capabilities), itemEntryRefs, observationSubjectRefs, basisChoices, creatureRefs, itemDefinitionRefs), terminalKinds, npcSources)));
 }
 
 /** Selection admission reads the exact same derived wire discriminants. */
@@ -755,7 +755,7 @@ export function closeVNextProposalSchemaRequest(requested: readonly string[]): V
 export const OFFER_KP_PROPOSAL_BUNDLE_SCHEMA = Object.freeze({
   type: "object", additionalProperties: false,
   properties: { requestedCapabilities: { type: "array", items: { type: "string", enum: [...VNEXT_PROPOSAL_SCHEMA_REQUEST_IDS] },
-    description: "Select all required catalog types once. This selects filling schemas only and contains no draft, ruling, target, cost or outcome." } },
+    description: "Select the required catalog types for this selection stage. This selects filling schemas only and contains no draft, ruling, target, cost or outcome." } },
   required: ["requestedCapabilities"],
 });
 export const OFFER_KP_PROPOSAL_BUNDLE_TOOL = Object.freeze({
@@ -806,13 +806,14 @@ export function createSubmitKpProposalBundleModelInput(
    * a type this selection lacks can still say so. The amended round drops it:
    * selection is amendable once, and never a way to reopen a decision. */
   amendable = false,
+  itemDefinitionRefs?: readonly string[],
 ): StrictToolBundleModelInput {
   if (typeof message !== "string" || message.trim().length === 0) {
     throw new TypeError("SUBMIT_KP_PROPOSAL_BUNDLE_MESSAGE_REQUIRED");
   }
   const submitTool = { ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL,
     function: Object.freeze({ ...SUBMIT_KP_PROPOSAL_BUNDLE_TOOL.function,
-      parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs) }),
+      parameters: createVNextProposalBundleSchema(capabilities, itemEntryRefs, observationSubjectRefs, terminalKinds, npcSources, basisChoices, creatureRefs, itemDefinitionRefs) }),
   };
   return Object.freeze({
     messages: Object.freeze([{ role: "system" as const, content: vnextProposalSystemPrompt("expandedProposal", capabilities, terminalKinds, amendable) }, { role: "user" as const, content: message }]),
@@ -846,7 +847,7 @@ export function createCorrectKpProposalBundleModelInput(
 
 function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId[], itemEntryRefs?: readonly string[],
   observationSubjectRefs?: readonly string[], basisChoices?: VNextBasisReferenceChoices,
-  creatureRefs?: readonly string[]): Record<string, unknown> {
+  creatureRefs?: readonly string[], itemDefinitionRefs?: readonly string[]): Record<string, unknown> {
   const object = (properties: Record<string, unknown>) => ({
     type: "object",
     properties,
@@ -990,7 +991,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
       type: "string",
       enum: ["sight", "hearing", "smell", "touch", "taste", "special"],
     },
-    evidence: { ...text, description: "Only information directly perceived by this observer and supported by these basis records. Interpretations of past events, causes, timing or motives belong in observe.characterInferences with evidence and confidence, not sensoryEvidence. Preserve established positions, dimensions, quantities, and properties. Propose new nonmechanical environmental descriptions as separate commitNarrativeDetail entries so their original wording is saved before publication. New consequential objects or facts must first be explicitly materialized within an open-blank grant; this field does not create either authority records or narrative commitments." },
+    evidence: { ...text, description: "Describe supported perception in natural language, preserving established layout, quantities and visible state. Internal field names, IDs, state/category codes and raw geometry coordinates are not sensory evidence; express only their perceivable appearance, sound or spatial meaning. Interpretations belong in an observe result's entries with recordKind=characterInferences, evidence and confidence. This text creates no world facts or narrative commitments: consequential content requires authorized materialization; new nonmechanical description uses a separate commitNarrativeDetail step." },
     basisRefs: { ...basisRefs, description: `${basisRefs.description} Cite records supporting the contents of this evidence, not merely a nearby scene. A known absence requires an actual scoped absence record; an open blank does not prove presence or absence.` },
   });
   const inference = object({
@@ -998,7 +999,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
     confidence: { ...text, description: "State uncertainty and limits justified by the evidence; do not upgrade an interpretation into observed truth." },
     evidence: { type: "array", items: { anyOf: [
       object({ kind: { type: "string", enum: ["heldKnowledge"] }, ref: { ...refText, description: "Exact raw knowledgeRef held by the acting character in the frozen knowledge catalog, never a world object ID or another character's private record." } }),
-      object({ kind: { type: "string", enum: ["sensoryEvidence"] }, index: { type: "integer", minimum: 0, description: "Zero-based index into THIS outcome branch's sensoryEvidence; its observer must be the acting character." } }),
+      object({ kind: { type: "string", enum: ["sensoryEvidence"] }, index: { type: "integer", minimum: 0, description: "Zero-based index counting only recordKind=sensoryEvidence entries in this outcome branch, not all entries. The evidence's observerRef must be the acting character." } }),
     ] } },
   });
   const observeBranch = object({ outcomeCode: refText, summary: text,
@@ -1019,28 +1020,51 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
       definitionRef: { ...refText, description: "Only the prospective handle of an always-bound worldFact producer in this same bundle, also declared in consumes. Never an existing knowledgeRef, knowledge entryRef or older definition ID. For already-held knowledge choose kind=npcContext and its ref field. This variant requires actual canonical creation and initial knowledge for the holder before speech." },
       holderRef: { ...refText, description: "The responding npcRef; this same NPC must be an explicit initialKnowledge holder of the new worldFact." } }),
   ] };
+  const promiseDelivery = { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ sourceRef: nullableRef, itemRef: nullableRef,
+    quantity: { type: "integer", minimum: 1 }, destinationKind: { type: "string", enum: ["holder", "scene"] }, destinationRef: refText })],
+    description: "Required for a promise to create, copy or deliver an item, even when the future item does not exist yet. For a future item set itemRef to none, not the whole delivery. Set sourceRef to none if there is no original to copy; retain quantity and the actual holder/scene destination. Only non-item obligations use delivery=none." };
+  const promisePart = { kind: { type: "string", enum: ["result", "attempt", "ongoing"] }, subjectRefs: refArray, delivery: promiseDelivery };
+  const promiseTerms = { ...object({ ...promisePart,
+    parts: { type: "array", items: object({ partId: refText, content: text, ...promisePart }), description: "At most 16 additional independently tracked required parts; empty for one obligation. Keep partId stable when its meaning stays unchanged." },
+    activation: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({ content: text, subjectRefs: refArray,
+      requiresKnowledge: { type: "boolean" }, windowEndFictionMicros: nullableRef })], description: "An actual condition, distinct from a deadline; require knowledge only if the original promise does. Use none for an unconditional promise." } }),
+    description: "All five fields belong INSIDE terms: kind, subjectRefs, delivery, parts, activation. parts and activation are not siblings of terms or nextStep. A single unconditional promise still requires terms.parts=[] and terms.activation={kind:'none'}." };
   const socialConsequence = { anyOf: [
     object({ kind: { type: "string", enum: ["relationship"] }, relationshipRef: nullableRef, change: text, basisFactRefs: refArray }),
     object({ kind: { type: "string", enum: ["promise"] }, content: text, condition: text,
-      authorityRefs: { ...refArray, description: "Who may commit this NPC to the promise: at least this NPC's own npcRef (never empty); its identity definition ref or one of its own self/identity/plan records may be added. Never the player, another NPC, or a scene." },
-      due: { type: "string", enum: [...PROMISE_DUE_TIERS], description: "When the promised act must happen at the latest, as one coarse tier from now. Pick a tier other than \"none\" only when the act would happen without the player's attention, be seen elsewhere, or change authoritative state (a delivery, a door, an NPC going somewhere); the server then derives this NPC's own timed plan in the same commit and executes it when due. \"none\" keeps the promise in conversation only. nextDawn is the next morning." },
-      trace: { anyOf: [text, object({ kind: { type: "string", enum: ["none"] } })], description: "For a due tier other than none: one sentence of the visible mark the act leaves in the world once done (what someone at the scene would find). Exactly {kind:'none'} when due is none." } }),
+      promisor: { type: "string", enum: ["actor", "npc"], description: "Who actually makes this promise. actor content must be the exact frozen original expression; never turn acceptance, prediction or quoted speech into a new player commitment." },
+      promiseeRef: refText,
+      authorityRefs: { ...basisArray(creatureRefs),
+        description: "Exactly one identity: the promising NPC's npcRef, or the frozen actorRef for actor. A timeline, catalog, knowledge record or rule profile is not a promisor and cannot grant authority. Never commit a third party or invent player consent." },
+      due: { type: "string", enum: [...PROMISE_DUE_TIERS], description: "The obligation's deadline from now, independent of work duration. none means no fixed deadline; ongoing duties may still be reviewed. Preserve whether the spoken terms mean by or after." },
+      terms: promiseTerms,
+      nextStep: { anyOf: [text, object({ kind: { type: "string", enum: ["none"] } })], description: "For an NPC undertaking an action such as writing or delivery, state its immediate intended work or decision. This queues a limited-knowledge decision, not an action or an assumed completion. Ongoing conduct without work and player promises use none. The actual action freezes its own method, duration and effects when it starts." } }),
+    object({ kind: { type: "string", enum: ["promiseChange"] }, promiseRef: refText, revision: refText,
+      expressionSource: { type: "string", enum: ["actor", "npc"] }, expressionQuote: text,
+      change: object({ kind: { type: "string", enum: ["amend", "release", "refusal", "method"] }, accepted: { type: "boolean" }, reason: text,
+        content: text, condition: text, terms: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), promiseTerms] },
+        deadlineFictionMicros: nullableRef, releasedParts: refArray, remaining: { type: "boolean" } }),
+      disclose: { type: "boolean", description: "True only when the effective change is communicated by this actual conversation. A private host ruling does not inform its parties." } }),
     object({ kind: { type: "string", enum: ["debt"] }, obligation: text, condition: text, basisFactRefs: refArray }),
   ] };
   const socialBranch = object({ outcomeCode: refText, summary: text,
     response: object({ kind: { type: "string", enum: ["speech", "silence"] },
-      text: { type: "string", description: "Only words actually spoken by this NPC, without stage directions or physical actions; use an empty string only for silence. KP may author unrecorded personal history consistent with established background and canon; newly authored content does not require a pre-existing citation proving that same content. Existing references identify relevant constraints or held knowledge. Record new true history through canonical creation; speech alone remains an attributed source claim. Statements may be true, mistaken, exaggerated, outdated or deliberately deceptive; conflict with world truth alone does not invalidate attributed speech. Freeze the NPC's information basis and private motive or mistaken belief before execution; do not retrofit a lie to excuse an inconsistent draft. Preserve uncertainty, explicit unknowns and access limits. Neither private motives nor the player's unspoken goal become spoken or known facts." },
-      motive: { ...text, description: "Private NPC decision rationale consistent with this NPC's knowledge, character, established background and authority; not public narration. An unrecorded background detail is open to KP authorship, while an explicit lack of knowledge is a constraint." },
+      text: { type: "string", description: "Only this NPC's spoken words; empty only for silence. No stage directions, unexecuted actions or private motive. Speech is an attributed claim, not proof of its content; follow the social guidance for knowledge, new history and deception." },
+      motive: { ...text, description: "Private reason grounded in this NPC's knowledge, identity and circumstances, including intended deception or mistaken belief. Never spoken text." },
       basis: { type: "array", items: socialEvidence } }),
-    consequences: { type: "array", items: socialConsequence, description: "Only relations between actor and NPC, or this NPC's own promise/debt to the actor. A promise records future conduct; it does not open a door, transfer an item, create world truth or commit the player to conduct. Physical fulfillment requires its own legal operation." },
+    consequences: { type: "array", items: socialConsequence, description: "Record actual undertakings and grounded changes. KP decides acceptance, scope and cause without a fixed mutual-approval rule; preserve original expressions and past breaches. A changed plan is not automatically a changed promise. Never invent player consent/payment. Physical fulfillment still needs its real operation." },
   });
+  const conversationRefs = basisChoices?.existingRefs.filter(ref => ref.startsWith("continuity:conversationThreads:"))
+    .map(ref => ref.slice("continuity:conversationThreads:".length));
+  const conversationRef = conversationRefs === undefined ? refText : { type: "string", enum: conversationRefs };
+  const noRetry = object({ kind: { type: "string", enum: ["none"] } });
   const social = object({ kind: { type: "string", enum: ["social"] }, basisRefs,
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("social"), outcomeBinding: outcome,
     sceneRef: refText, npcRef: { ...refText, description: "An existing NPC with a complete, server-frozen npc-decision context. The server derives listeners and preserves the original player expression." },
-    addressedThreadRef: nullableRef, goal: text, method: text, communication: { type: "string", enum: ["spokenConversation"] },
+    addressedThreadRef: conversationRefs?.length === 0 ? noRetry : { anyOf: [noRetry, conversationRef] }, goal: text, method: text, communication: { type: "string", enum: ["spokenConversation"] },
     audience: { type: "string", enum: ["participants", "sceneListeners"] },
-    retryChange: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }),
-      object({ kind: { type: "string", enum: ["method", "conditions", "situation"] }, priorThreadRef: refText,
+    retryChange: conversationRefs?.length === 0 ? noRetry : { anyOf: [noRetry,
+      object({ kind: { type: "string", enum: ["method", "conditions", "situation"] }, priorThreadRef: conversationRef,
         basisRefs, explanation: { ...text, description: "Explain a substantive change from the addressed failed attempt. Rephrasing the same request is not a new attempt. Cite changed concrete conditions for conditions/situation; method requires an actually different approach." } })] },
     branches: object({ success: socialBranch, failure: { anyOf: [socialBranch, object({ kind: { type: "string", enum: ["none"] } })] } }),
   });
@@ -1104,6 +1128,9 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
       ...(semanticKind === "passage" ? { passage: object({ fromLocationRef: refText, toLocationRef: refText,
         bidirectional: { type: "boolean" }, traversal: text, travelDurationMicros: text }) } : {}),
       ...(semanticKind === "worldFact" ? { worldFact: object({
+        historyCoverage: { anyOf: [object({ kind: { type: "string", enum: ["none"] } }), object({
+          timelineId: refText, fromFictionMicros: text, throughFictionMicros: text, subjectRefs: refArray })],
+          description: "Only for an explicitly established account covering a whole past interval and its subjects, including negative conduct. Never infer this coverage from no search results or include future or unresolved time. Ordinary point facts use none." },
         subjectRefs: refArray, occurrence: { ...text, description: "When the actual event or experience happened, distinct from this turn when it is committed." },
         initialKnowledge: { type: "array", items: object({ holderRef: refText, acquisitionBasisRefs: refArray,
           acquisitionExplanation: { ...text, description: "Why this NPC knows this new fact. Cite its own context as constraints, not a prior copy of the new proposition. Hearing a claim establishes hearing it, not that its content is true." } }) },
@@ -1242,7 +1269,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   const authored = authoredProposalVariants({
     basisRefs, consumes: { type: "array", items: { anyOf: references } },
     outcomeBinding: outcome,
-  }, produced, itemEntryRefs);
+  }, produced, itemEntryRefs, itemDefinitionRefs);
   const formation = formationToolSchema(NPC_ACTOR_PLAN_FORMATION_SOURCE_SCHEMA).properties as Record<string, Record<string, unknown>>;
   const formActorPlan = object({ kind: { type: "string", enum: ["formActorPlan"] }, basisRefs,
     consumes: { type: "array", items: { anyOf: references } }, produces: produced("formActorPlan"), outcomeBinding: outcome,
@@ -1280,7 +1307,7 @@ function makeStrictBundleSchema(capabilities: readonly VNextProposalCapabilityId
   // its steps are facets of the same act, not a sequence.
   // One coarse tier on the wire; the codec maps it to the domain's exact microseconds.
   const actionDuration = { type: "string", enum: [...VNEXT_ACTION_DURATION_TIER_IDS],
-    description: "Fictional time this whole action takes, as one coarse tier. Pick a tier whenever the character performs an act (talking, looking, handling, operating); exactly \"none\" when the bundle merely authors world content, and also whenever the actor is inside an active encounter (combat): there the turn economy carries the time and the clock moves only by rounds. This is the act itself, not any waiting afterwards -- waiting is passTime. 5min: a reply, a glance, handling an item, a short exchange. 10min: examining one place closely, searching a room, a longer conversation. 30min: a thorough search, a negotiation. 1h: a long walk, a wide search. halfDay: an activity spanning most of a day. When unsure, shorter. The server advances this actor's timeline by the tier before the results and shows it to scene observers." };
+    description: "Freeze the whole act's fictional duration. none only for pure authoring/plan formation or an active encounter, where rounds carry time. 5min: a reply, glance or brief handling; 10min: close inspection, room search or longer exchange; 30min: thorough search or negotiation; 1h: long walk or wide search; halfDay: most of a day. When unsure, shorter. Later waiting is separate passTime." };
   const sharedAdjudication = {
       description: "The one shared ruling for all proposals. Required as directSuccess or check when mode=adjudication, including bundles containing only authoring or inventory operations. directSuccess requires every outcomeBinding=always and every observe/social/worldInteraction failure={kind:'none'}. check requires exactly one observe, social or worldInteraction with outcomeBinding=always and complete success/failure branches; additional observe/social/worldInteraction consequences have failure={kind:'none'} and run according to their outcomeBinding without another check.",
       anyOf: [
@@ -1410,13 +1437,12 @@ function decodeVNextSentinels(value: unknown): unknown {
   // object. The reference grammar reserves the word, so the string can only
   // mean the sentinel; round 79 lost a batch to two reference fields this
   // list did not yet name, and round 90 to retryChange, a nullable object
-  // spelled exactly the same way on the wire. A promise trace is text or the
-  // sentinel; a bare "none" there is the sentinel, and the domain validator
-  // still refuses it whenever the due tier demands a trace.
+  // spelled exactly the same way on the wire. Promise next steps and optional
+  // delivery/coverage bindings use the same declared sentinel convention.
   for (const key of [
     "abilityRef", "skill", "subjectRef", "sourceRef", "targetRef", "actionHint", "ref",
     "sceneRef", "visibilityFactId", "addressedThreadRef", "relationshipRef", "factionRef",
-    "retryChange", "trace",
+    "retryChange", "nextStep", "itemRef", "delivery", "historyCoverage", "activation", "terms", "deadlineFictionMicros", "windowEndFictionMicros",
   ]) {
     if (decoded[key] === "none") decoded[key] = null;
   }

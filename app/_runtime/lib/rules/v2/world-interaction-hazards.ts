@@ -7,7 +7,7 @@ import { combatAttackBonus, attackArmorClass } from "../profiles/attack-resoluti
 import { WORLD_DAMAGE_PROFILE_REGISTRY } from "../profiles/world-interaction-registry";
 import type { RuntimeProfileManifest } from "../profiles/types";
 import type { AuthoritativeWorldState, JsonRecord } from "./model";
-import type { WorldInteractionBranch, WorldInteractionRegisteredHazardEffect, WorldInteractionResolutionPlan } from "./world-interaction-model";
+import type { AppliedWorldInteractionEffect, WorldInteractionBranch, WorldInteractionRegisteredHazardEffect, WorldInteractionResolutionPlan } from "./world-interaction-model";
 import type { WorldInteractionDiceSpec } from "./world-interaction-randomness";
 import { parseDamageFormula, rolledDamageComponents, worldDamageTarget } from "./damage";
 import { environmentHazardMechanics } from "./environment-hazards";
@@ -274,7 +274,8 @@ export function hazardConcentrationDrafts(state:AuthoritativeWorldState,targetRe
       visibilityPolicyId:"visibility:room-authority-only",secrecy:"internal" as const}]:[])];
 }
 
-export function hazardDamageForTarget(mechanics:HazardMechanics,key:string,targetRef:string,specs:readonly WorldInteractionDiceSpec[],faces:ReadonlyMap<string,readonly number[]>,currentState:AuthoritativeWorldState):{components:Array<{type:string;rolled:number}>;affected:boolean;critical:boolean;hit:boolean} {
+export function hazardDamageForTarget(mechanics:HazardMechanics,key:string,targetRef:string,specs:readonly WorldInteractionDiceSpec[],faces:ReadonlyMap<string,readonly number[]>,currentState:AuthoritativeWorldState):{components:Array<{type:string;rolled:number}>;affected:boolean;critical:boolean;hit:boolean;rollResults:AppliedWorldInteractionEffect[]} {
+  const rollResults: AppliedWorldInteractionEffect[] = [];
   const specFor=(kind:string)=>specs.find(spec=>spec.purposeKey===`${key}:${kind}:${targetRef}`);
   const saveSpec=specFor("save"), attackSpec=specFor("attack");
   let saved=false, hit=true, critical=false;
@@ -286,6 +287,10 @@ export function hazardDamageForTarget(mechanics:HazardMechanics,key:string,targe
       if(rolls===undefined)throw new TypeError("frozen hazard save faces unavailable");
       const selected=conditionRollFace(rolls,condition.mode);
       saved=selected+Number(saveSpec.frozenParameters.modifier)>=Number(saveSpec.frozenParameters.dc);
+      const modifier=Number(saveSpec.frozenParameters.modifier);
+      rollResults.push({kind:"rollResult",characterId:targetRef,rollKind:"save",
+        rolls:condition.mode==="normal"?[rolls[0]]:[...rolls],selectedRoll:selected,
+        modifier,total:selected+modifier,succeeded:saved});
     }
   }
   if(mechanics.attack!==null) {
@@ -303,6 +308,10 @@ export function hazardDamageForTarget(mechanics:HazardMechanics,key:string,targe
     // its ability to attack within this transaction; only its consequence stops.
     hit=condition.allowed&&attackSpec.frozenParameters.blocked!==true&&(roll===20||(roll!==1&&roll+Number(attackSpec.frozenParameters.modifier)>=armorClass));
     critical=hit&&(roll===20||condition.criticalIfHit);
+    if(condition.allowed&&attackSpec.frozenParameters.blocked!==true)rollResults.push({kind:"rollResult",
+      characterId:sourceRef,rollKind:"attack",rolls:condition.mode==="normal"?[attackFaces[0]]:[...attackFaces],
+      selectedRoll:roll,modifier:Number(attackSpec.frozenParameters.modifier),
+      total:roll+Number(attackSpec.frozenParameters.modifier),succeeded:hit});
   }
   const components=[...mechanics.fixedDamage];
   for(const [index,value] of (Array.isArray(mechanics.definition.damage)?mechanics.definition.damage:[]).entries()) {
@@ -312,5 +321,5 @@ export function hazardDamageForTarget(mechanics:HazardMechanics,key:string,targe
     if(critical)rolled.rolled+=(faces.get(`${key}:critical:${index}:${targetRef}`)??[]).reduce((sum,face)=>sum+face,0);
     components.push(rolled);
   }
-  return {components:components.map(c=>({...c,rolled:!hit?0:!saved?c.rolled:mechanics.save?.halfOnSuccess===true?Math.floor(c.rolled/2):0})),affected:hit&&!saved,critical,hit};
+  return {components:components.map(c=>({...c,rolled:!hit?0:!saved?c.rolled:mechanics.save?.halfOnSuccess===true?Math.floor(c.rolled/2):0})),affected:hit&&!saved,critical,hit,rollResults};
 }

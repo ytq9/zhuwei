@@ -1,3 +1,5 @@
+import { isPartyCommand, type PartyActionInput } from "./party-action";
+import { proposalPublicFailureCode, narrationPublicFailureCode, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
 import { frozenNarrationContextConform } from "../kp/narration-context";
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from "../rules/profiles/manifests";
 import type { ProfileRef } from "../rules/profiles/types";
@@ -12,6 +14,7 @@ import {
 type UnknownRecord = Record<string, unknown>;
 
 export type RoomActionInput =
+  | PartyActionInput
   | {
       kind: "intent";
       submissionId: string;
@@ -245,45 +248,6 @@ type DeliveryPlan = {
   audiences: DeliveryAudience[];
 };
 
-const PROPOSAL_PUBLIC_FAILURE_CODES = [
-  "PROPOSAL_PROVIDER_TIMEOUT",
-  "PROPOSAL_FORM_INVALID",
-  "PROPOSAL_REFERENCE_INVALID",
-  "PROPOSAL_RULES_DIAGNOSTIC",
-  "PROPOSAL_REPAIR_EXHAUSTED",
-  "CONTEXT_INSUFFICIENT",
-  "CONTEXT_BUDGET_EXCEEDED",
-  "PROPOSAL_INPUT_BUDGET_EXCEEDED",
-  "PROPOSAL_PROVIDER_CONFIGURATION",
-  "PROPOSAL_INVOCATION_IN_PROGRESS",
-] as const;
-
-const NARRATION_PUBLIC_FAILURE_CODES = [
-  "NARRATION_PROVIDER_TIMEOUT",
-  "NARRATION_PROVIDER_REJECTED",
-  "NARRATION_BODY_INVALID",
-  "NARRATION_GROUNDING_REJECTED",
-  "NARRATION_CONTEXT_BUDGET_EXCEEDED",
-  "NARRATION_PUBLICATION_FAILED",
-] as const;
-
-type ProposalPublicFailureCode = typeof PROPOSAL_PUBLIC_FAILURE_CODES[number];
-type NarrationPublicFailureCode = typeof NARRATION_PUBLIC_FAILURE_CODES[number];
-
-const PROPOSAL_PUBLIC_FAILURE_CODE_SET = new Set<string>(PROPOSAL_PUBLIC_FAILURE_CODES);
-const NARRATION_PUBLIC_FAILURE_CODE_SET = new Set<string>(NARRATION_PUBLIC_FAILURE_CODES);
-
-function proposalPublicFailureCode(value: unknown): ProposalPublicFailureCode | undefined {
-  return typeof value === "string" && PROPOSAL_PUBLIC_FAILURE_CODE_SET.has(value)
-    ? value as ProposalPublicFailureCode
-    : undefined;
-}
-
-function narrationPublicFailureCode(value: unknown): NarrationPublicFailureCode | undefined {
-  return typeof value === "string" && NARRATION_PUBLIC_FAILURE_CODE_SET.has(value)
-    ? value as NarrationPublicFailureCode
-    : undefined;
-}
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -370,6 +334,17 @@ function rebuildInput(input: unknown): RoomActionInput | InternalRoomActionOutco
       return rejectedValidation("掷骰请求缺少 submissionId 或 randomnessId。");
     }
     return { kind: "roll", submissionId, randomnessId };
+  }
+
+  if (input.kind === "party") {
+    const submissionId = requiredString(input, "submissionId");
+    if (!submissionId || !hasOnlyKeys(input, ["kind", "submissionId", "command"], ["displayText"])
+      || (input.displayText !== undefined && !requiredString(input, "displayText"))
+      || !isPartyCommand(input.command)) {
+      return rejectedValidation("组队操作参数不完整或包含不支持的字段，请刷新后重试。");
+    }
+    return { kind: "party", submissionId, command: structuredClone(input.command),
+      ...(input.displayText === undefined ? {} : { displayText: requiredString(input, "displayText")! }) };
   }
 
   if (input.kind === "gear") {
@@ -1844,6 +1819,7 @@ async function handleRoomActionInternal(
   if (
     (
       activeInput.kind === "answer"
+      || activeInput.kind === "party"
       || activeInput.kind === "gear"
       || activeInput.kind === "itemActivity"
       || activeInput.kind === "environmentInteract"
@@ -1866,6 +1842,8 @@ async function handleRoomActionInternal(
         {
           kind: activeInput.kind === "answer"
             ? "authenticatedPendingAnswer"
+            : activeInput.kind === "party"
+              ? "authenticatedPartyAction"
             : activeInput.kind === "gear"
               ? "authenticatedGearAction"
               : activeInput.kind === "itemActivity"

@@ -438,6 +438,16 @@ export type AppliedWorldInteractionEffect =
       amountAfter: number;
     }>
   | Readonly<{
+      kind: "rollResult";
+      characterId: string;
+      rollKind: "save" | "attack";
+      rolls: readonly number[];
+      selectedRoll: number;
+      modifier: number;
+      total: number;
+      succeeded: boolean;
+    }>
+  | Readonly<{
       kind: "damage";
       sourceDefinitionRef: string;
       targetRef: string;
@@ -1054,6 +1064,14 @@ function resolvedCheckSucceeded(
 
 export function isAppliedEffect(value: unknown): value is AppliedWorldInteractionEffect {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "rollResult") return hasExactKeys(value,
+    ["kind", "characterId", "rollKind", "rolls", "selectedRoll", "modifier", "total", "succeeded"])
+    && isRef(value.characterId) && (value.rollKind === "save" || value.rollKind === "attack")
+    && Array.isArray(value.rolls) && (value.rolls.length === 1 || value.rolls.length === 2)
+    && value.rolls.every(roll => Number.isSafeInteger(roll) && Number(roll) >= 1 && Number(roll) <= 20)
+    && [value.selectedRoll, value.modifier, value.total].every(Number.isSafeInteger)
+    && value.rolls.includes(value.selectedRoll) && value.total === Number(value.selectedRoll) + Number(value.modifier)
+    && typeof value.succeeded === "boolean";
   if (value.kind === "passageTraversalStarted") return hasExactKeys(value, ["kind", "activityId", "passage"])
     && isRef(value.activityId) && passageTraversalBindingConform(value.passage);
   if (value.kind === "itemCost") {

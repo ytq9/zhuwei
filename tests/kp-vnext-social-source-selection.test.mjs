@@ -9,7 +9,7 @@ import { npcDecisionContext, npcDecisionEvidenceRef, npcDecisionEntryRef } from 
 import { encodeVNextStrictToolBundle, decodeVNextStrictToolBundle, createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { parseSubmitKpProposalBundleCandidateArguments, invokeSubmitKpProposalBundleWithOneCorrection } from '../app/_runtime/lib/kp/vnext/proposal-provider.ts';
 import { lowerVNext2ProposalBundle } from '../app/_runtime/lib/kp/vnext/proposal-bundle-lowering.ts';
-import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
+import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 
@@ -63,7 +63,7 @@ test('selected social schema offers frozen refs and only selected producer-backe
     const schema = createVNextProposalBundleSchema(materialize ? ['social', 'materializeObject'] : ['social'], [], [], [], choices);
     assert.deepEqual(deepSeekStrictToolSchemaIssues(schema), []);
     const full = expandDeepSeekSchema(schema);
-    const social = full.properties.results.items.anyOf.find(value => value.properties.kind.enum.includes('social'));
+    const social = schemaVariants(full.properties.results.items).find(value => value.properties.kind.enum.includes('social'));
     // Round 86: the closed set sits on the array item itself, playerExpression a member of it; an anyOf appears only to admit a selected producer's handle.
     const items = social.properties.responseBasis.items;
     const source = { type: 'string', enum: [...[...new Set(choices.flatMap(value => value.refs))].sort(), 'playerExpression'] };

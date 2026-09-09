@@ -403,6 +403,34 @@ function isActorPlanDueRoot(rootActionId: unknown): boolean {
   return typeof rootActionId === "string" && rootActionId.startsWith("actor-plan-due:");
 }
 
+/** Lifecycle bookkeeping has no implied observer. Actual knowledge acquisition
+ * remains the only route from a private verdict to Viewer claims. */
+function isPrivatePromiseLedgerEvent(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
+  const p = recordOrEmpty(event.payload);
+  if (event.eventType === "PromiseChanged") {
+    const life = recordOrEmpty(range.state.campaignRuntime.promises[String(p.promiseId)]?.lifecycle);
+    return event.secrecy === "internal" && event.visibilityPolicyId === "visibility:room-authority-only"
+      && Array.isArray(life.changes) && life.changes.some(change => recordOrEmpty(change).eventId === event.eventId);
+  }
+  if (event.eventType === "CanonicalFactDeclared" && recordOrEmpty(p.fact).kind === "promiseTermsResult")
+    return event.secrecy === "internal" && event.visibilityPolicyId === "visibility:hidden-until-evidence"
+      && range.events.some(candidate => candidate.eventType === "PromiseChanged" && candidate.rootActionId === event.rootActionId);
+  if (event.eventType === "PromiseTermsEstablished" || event.eventType === "PromiseReviewed") {
+    const life = recordOrEmpty(range.state.campaignRuntime.promises[String(p.promiseId)]?.lifecycle);
+    return event.secrecy === "internal" && event.visibilityPolicyId === "visibility:room-authority-only"
+      && (event.eventType === "PromiseTermsEstablished" ? life.formedByEventId === event.eventId
+        : Array.isArray(life.history) && life.history.some(h => recordOrEmpty(h).committedByEventId === event.eventId));
+  }
+  if (event.eventType === "NpcWorkProposed" || event.eventType === "NpcWorkStarted" || event.eventType === "NpcWorkDecision") {
+    const plan = range.state.campaignRuntime.npcPlans[String(p.planId)];
+    return plan?.schema === "zhuwei.npc-work/vnext-1" && event.secrecy === "private"
+      && event.visibilityPolicyId === `visibility:knowledge-holder:${plan.npcId}`;
+  }
+  return event.eventType === "CanonicalFactDeclared" && recordOrEmpty(p.fact).kind === "promiseReviewResult"
+    && event.secrecy === "internal" && event.visibilityPolicyId === "visibility:hidden-until-evidence"
+    && range.events.some(candidate => candidate.eventType === "PromiseReviewed" && candidate.rootActionId === event.rootActionId);
+}
+
 /** A plan's decision, Activity and optional faction record are one private
  * formation family. Their existence is never itself a public action claim. */
 function isPrivateActorPlanFormationEvent(event: EventEnvelope, range: VerifiedClaimCommittedRange): boolean {
@@ -487,6 +515,7 @@ export function committedRangeUsesFrozenRenderableClaims(
 ): boolean {
   return events.some(({ eventType, rootActionId, payload }) =>
     typeof eventType === "string" && (VNEXT_CLAIMS_ROOT_EVENT_TYPES.has(eventType)
+      || ["PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged", "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision"].includes(eventType)
       || (eventType === "NpcPlanFormed" && events.some(event => event.eventType === "ActivityStarted"
         && event.rootActionId === rootActionId && recordOrEmpty(recordOrEmpty(event.payload).completion).kind === "actorPlan"
         && recordOrEmpty(recordOrEmpty(event.payload).completion).planId === recordOrEmpty(payload).planId))
@@ -736,7 +765,20 @@ export function deriveAuthorityClaimsFromCommittedRange(
         }
         materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "recovery", { authorityRefs: [stringField(payload, "sourceDefinitionId")] }),
           kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: eventType === "HealingResolved" ? "healed" : "temporaryHitPointsGranted",
-          summary: `目标的${eventType === "HealingResolved" ? "生命值" : "临时生命值"}由 ${before} 变为 ${after}。${consequences.join("")}` });
+          summary: `目标的${eventType === "HealingResolved" ? "生命值" : "临时生命值"}由 ${before} 变为 ${after}。${eventType === "HealingResolved" ? `本次实际恢复了 ${after - before} 点生命值。` : ""}${consequences.join("")}` });
+        // An observed healing event does not authorize the target's private
+        // maximum HP. Freeze its explanation from this event's frame only,
+        // and expose it through the existing character-controller grant.
+        const priorHp = recordOrEmpty(priorEntity?.hitPoints), nextHp = recordOrEmpty(nextEntity?.hitPoints);
+        const priorMaximum = finiteNumber(priorHp.maximum);
+        const nextMaximum = finiteNumber(nextHp.maximum);
+        if (eventType === "HealingResolved" && priorMaximum !== undefined && nextMaximum !== undefined
+          && finiteNumber(priorHp.current) === before && finiteNumber(nextHp.current) === after) {
+          materials.push({ ...eventClaimBaseWithSeparatedBasis(event, "healing-capacity", {
+            materialVisibilityPolicyRef: `visibility:character-controller:${targetRef}`,
+          }), kind: "mechanicalOutcome", targetRefs: [targetRef], outcomeCode: "healingCapacity",
+          summary: `治疗前生命值为 ${before}/${priorMaximum}，治疗后生命值为 ${after}/${nextMaximum}。${before === priorMaximum ? "治疗前生命值已达到上限。" : ""}` });
+        }
         break;
       }
       case "FictionTimeAdvanced": {
@@ -850,18 +892,21 @@ export function deriveAuthorityClaimsFromCommittedRange(
         const actorRef = stringField(payload, "entityId") ?? stringField(payload, "characterId");
         const resourceRef = stringField(payload, "resourceId");
         if (actorRef === undefined || resourceRef === undefined) break;
-        const after = finiteNumber(payload.resourceAfter) ?? finiteNumber(payload.after);
-        const amount = eventType === "ResourceUsed" || eventType === "ResourceReserved" ? finiteNumber(payload.amount) : undefined;
+        const frame = eventState ?? (range.events.length === 1 ? range : undefined);
+        const after = finiteNumber(payload.resourceAfter) ?? finiteNumber(payload.after)
+          ?? finiteNumber(frame?.state.entities[actorRef]?.resources?.[resourceRef]);
+        const amount = eventType === "ResourceChanged" ? undefined : finiteNumber(payload.amount);
+        const label = resourceDisplayName(resourceRef) ?? "该资源";
         materials.push({
           ...eventClaimBase(event, `resource:${resourceRef}`),
           kind: "mechanicalOutcome",
           actorRef,
           outcomeCode: "resourceChanged",
           summary: amount !== undefined
-            ? `${resourceDisplayName(resourceRef) ?? "该资源"}消耗了 ${amount}。`
+            ? `${label}消耗了 ${amount}。${after === undefined ? "" : `${label}的剩余数量为 ${after}。`}`
             : after === undefined
-            ? "该资源已经消耗。"
-            : `该资源的剩余数量为 ${after}。`,
+            ? `${label}已经消耗。`
+            : `${label}的剩余数量为 ${after}。`,
         });
         break;
       }
@@ -945,6 +990,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
         && !VNEXT_NON_RENDERABLE_LEDGER_EVENT_TYPES.has(eventType)
         && !isPrivateActorPlanLedgerEvent(event, eventRange)
         && !isPrivateActorPlanFormationEvent(event, range)
+        && !isPrivatePromiseLedgerEvent(event, eventRange)
         && !(eventType === "ActivityInterrupted" && materials.length > materialCountBeforeEvent)) {
         throw new TypeError(`VNEXT_CLAIM_EVENT_UNKNOWN:${eventType}`);
       }
@@ -966,13 +1012,14 @@ export function deriveAuthorityClaimsFromCommittedRange(
     ["FrozenPlayerChoicePrepared", "PlayerChoiceRequested", "PendingInputAnswered"].includes(event.eventType))
     && (range.receipt.status === "awaitingInput" || cancelledChoice);
   const privateActorPlanOnly = range.events.every(event => isPrivateActorPlanLedgerEvent(event, range));
+  const privatePromiseOnly = range.events.length > 0 && range.events.every(event => isPrivatePromiseLedgerEvent(event, range));
   const privateActorPlanFormationOnly = range.events.some(event => isPrivateActorPlanFormationEvent(event, range))
     && range.events.every(event => isPrivateActorPlanFormationEvent(event, range)
       || (event.eventType === "AtomicWorldInteractionStepsResolved" && event.secrecy === "internal"));
   const privateTimePassageProgressOnly = range.events.length > 0 && range.events.every(event =>
     isTimePassageProgressEvent(event, range.eventStates?.get(event.eventId) ? { ...range, ...range.eventStates.get(event.eventId)! } : range)
       || isLongSpellcastingTimeProgressEvent(event, range.eventStates?.get(event.eventId) ? { ...range, ...range.eventStates.get(event.eventId)! } : range));
-  if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly) {
+  if (requireClosedVNextCoverage && materials.length === 0 && !privateDefinitionOnly && !privateChoiceOnly && !privateActorPlanOnly && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !privatePromiseOnly) {
     throw new TypeError("VNEXT_CLAIMS_INSUFFICIENT");
   }
 
@@ -981,7 +1028,7 @@ export function deriveAuthorityClaimsFromCommittedRange(
   const pureTimePassageEnding = range.events.length === 1
     && ["ActivityCompleted", "ActivityInterrupted"].includes(range.events[0].eventType)
     && timePassageActivity(range, recordOrEmpty(range.events[0].payload).activityId) !== undefined;
-  if (!isActorPlanDueRoot(range.receipt.rootActionId) && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !pureTimePassageEnding) materials.push({
+  if (!isActorPlanDueRoot(range.receipt.rootActionId) && !privateActorPlanFormationOnly && !privateTimePassageProgressOnly && !pureTimePassageEnding && !privatePromiseOnly) materials.push({
     claimRef: claimRefForRange(range.receipt.receiptId, "action-committed"),
     kind: "actionCommitted",
     actorRef: range.actorCharacterId,

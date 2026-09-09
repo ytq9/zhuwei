@@ -131,3 +131,11 @@ Coordinator 曾先修 Store 的普通回应预算门，随后由 Store 作者将
 依[并行规则](parallel.md)“依赖在途修复的问题等待 checkpoint”，共享核心接入排队。获准协调并取得可恢复交接后，按差量接入；SPEC 0015/0016 必须保留原任务更新后的普通选择补选合同，仅合入本任务的故事调用例外，不能用旧基线整文件覆盖。
 
 后续依次完成：真实 KP 触发和授权上下文/读取集复核；实际 NPC/事实/取得时间 producer；正常 Proposal → Rules → Room Receipt → Viewer 接入及故事关联；普通调用共同预算和 Room 初始化/删除/归档；虚构时间的幕后发展；授权导出与新身份 genesis；A01–A13 所需真实模型和游玩证据。当前无部署、push、远端 migration、新资源或现役房间解释变更。
+
+## 第四轮：共享核心基线收回（2026-09-09）
+
+用户确认“可以，目前没有其他任务在写”，允许继续共享核心集成。已向“查看日志定位问题”发送只读交接；该回复仅补充证据，不再是本轮授权阻塞。主目录 cloudflare/bec5e28c44f3c815a341c2f1e425cfaaeb65acf9 的已提交和未提交内容通过临时 index 制成可恢复快照 `9c48ea79237232efb04224c22b0c7671dcf67e92`（`refs/codex/story-core-snapshot-bangw_44`），核对主目录 HEAD/index/文件未变。快照不代表其继承的真实模型问题已经通过。
+
+隔离协调者从 `edfcdf97c977289314ffb4f1c96bfd78204d50b3` 合入快照。源码自动合并；六处文档冲突保留四份已批准故事文件、SPEC 0016 最新普通补选语义和自动合入的故事预算例外，执行日志保留双方记录。没有改变主目录、生产、远端或实际房间。
+
+新基线定向检查：`npm run typecheck` exit 0；`npx tsx --test tests/story-history.test.mjs` 14/14 exit 0；`npx vitest run tests/story-preparation-host.test.ts` 8/8 exit 0。下一轮由三 Worker 只读收敛完整故事上下文、统一调用/生命周期存储与历史 genesis 接缝，协调者单写共享类型、KP/Rules/DO/table 入口。独立模块仍不代表完整产品验收。

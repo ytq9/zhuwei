@@ -36,6 +36,34 @@ const toolCall = (name, args) => ({ choices: [{ finish_reason: 'tool_calls', mes
 const amendmentResponse = ids => toolCall(OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify({ requestedCapabilities: ids }));
 const submitResponse = bundle => toolCall(SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, JSON.stringify(encodeVNextStrictToolBundle(bundle)));
 
+test('proposal instructions agree with the offered selection permission for operation and terminal forms', () => {
+  for (const [capabilities, terminalKinds] of [[['authorItem'], []], [['social'], []], [[], ['knowledgeReview']]]) {
+    for (const amendable of [true, false]) {
+      const request = createSubmitKpProposalBundleModelInput('冻结上下文', capabilities, [], [], terminalKinds,
+        [], { existingRefs: [], viewerRefs: [] }, [], amendable);
+      assertDeepSeekStrictToolModelInput(request);
+      const prompt = request.messages[0].content;
+      assert.deepEqual(request.tools.map(tool => tool.function.name), amendable
+        ? [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME, OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME]
+        : [SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME]);
+      if (amendable) {
+        assert.match(prompt, /补选只有一次/);
+        assert.doesNotMatch(prompt, /不能索取schema|不能再次选择schema/);
+      } else {
+        assert.match(prompt, /不能再次选择schema/);
+        assert.doesNotMatch(prompt, /可以改为调用选择工具|补选只有一次/);
+      }
+      // Shared authority/filling prose must not grant selection independently
+      // of the stage that also controls the actual tool surface.
+      assert.doesNotMatch(prompt, /缺少schema时补取|缺少需要的类型时在允许的阶段补取/);
+      for (const tool of request.tools) {
+        const description = tool.function.parameters.properties?.requestedCapabilities?.description;
+        if (description) assert.doesNotMatch(description, /Select all required catalog types once/);
+      }
+    }
+  }
+});
+
 test('the proposal call can amend its own selection once, by union', async () => {
   const f = fixture('union'), requests = [];
   const first = await invokeSubmitKpProposalBundleFirstPass({
@@ -110,7 +138,9 @@ test('Room proves the amended round and the fourth call from the saved responses
     input(3, surface(amended.amendedCapabilities, false)), prior(amendmentAt2), ctx));
   // The original selection is no longer the right surface, and the amended
   // round may not offer another amendment.
-  for (const wrong of [surface(['social'], false), surface(amended.amendedCapabilities, true)]) {
+  const mismatchedPrompt = { ...surface(amended.amendedCapabilities, false),
+    messages: surface(amended.amendedCapabilities, true).messages };
+  for (const wrong of [surface(['social'], false), surface(amended.amendedCapabilities, true), mismatchedPrompt]) {
     assert.throws(() => assertVNextInvocationTransition(input(3, wrong), prior(amendmentAt2), ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
   }
   // No draft exists, so no ticket may accompany the amended round.
@@ -138,4 +168,6 @@ test('the amendable proposal surface is what Room reconstructs at ordinal 2', ()
     bindingHash: 'sha256:fixture', requestHash: 'sha256:fixture', request });
   assert.doesNotThrow(() => assertVNextInvocationTransition(at2(surface(true)), prior, ctx));
   assert.throws(() => assertVNextInvocationTransition(at2(surface(false)), prior, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
+  assert.throws(() => assertVNextInvocationTransition(
+    at2({ ...surface(true), messages: surface(false).messages }), prior, ctx), /PROPOSAL_REPAIR_EXHAUSTED/);
 });

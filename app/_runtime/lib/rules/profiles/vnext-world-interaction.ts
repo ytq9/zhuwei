@@ -89,6 +89,16 @@ export const WORLD_INTERACTION_PROFILE_DOCUMENT: CanonicalProfileDocument = Obje
       claims: "pure-domain-roots-or-existing-vnext-root-with-precise-event-grant-and-participant-refs",
       expression: "typed-relationship-change-or-directed-unfulfilled-obligation-and-condition",
     }),
+    promiseLifecycle: Object.freeze({
+      schema: "zhuwei.promise-lifecycle/vnext-1",
+      formation: "original-npc-expression-and-read-bound-terms-independent-fiction-timeline-deadline",
+      execution: "npc-finite-knowledge-proposal-bundle-through-shared-action-activity-materialization-and-inventory",
+      workLifecycle: "real-activity-or-immediate-settlement-start-resolve-interrupt-independent-of-promise-verdict",
+      evidence: "committed-branch-and-timeline-events-with-item-snapshots-source-refs-and-explicit-world-history-coverage",
+      review: "private-frozen-frontier-fulfilled-breached-or-unchanged-history-and-separate-remaining-obligation",
+      isolation: "no-automatic-knowledge-or-notice-from-private-verdict-no-combat-progression",
+      replay: "three-due-work-kinds-and-event-folded-evidence-with-correction-inverse",
+    }),
     worldFactMemory: Object.freeze({
       truth: "immutable-definition-body-with-pinned-canonical-instance-and-holder-acquisition-links",
       consistency: "kp-same-call-semantic-judgment-over-frozen-scope-membership-identity-facts-and-anchors-not-hash-as-semantic-proof",
@@ -167,6 +177,7 @@ export const VNEXT_STAGE3_EVENT_SCHEMA_PROFILE_DOCUMENT: CanonicalProfileDocumen
     authoritativeEnvelope: "zhuwei.room-world-event/v2",
     defaultEventTypeVersion: "1",
     additions: Object.freeze([
+      "PromiseTermsEstablished", "PromiseReviewed", "PromiseChanged", "NpcWorkProposed", "NpcWorkStarted", "NpcWorkDecision",
       "KnowledgeReviewed",
       "NarrativeDetailCommitted",
       "NarrativeDetailMaterialized",

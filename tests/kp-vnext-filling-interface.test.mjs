@@ -11,7 +11,7 @@ import { validateVNextProposalBundle } from '../app/_runtime/lib/kp/vnext/propos
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
 import { matchesAuthoredSourceSchema } from '../app/_runtime/lib/rules/v2/authored-materialization.ts';
 import { VNEXT_SEMANTIC_TEMPLATE_CATALOG } from '../app/_runtime/lib/rules/profiles/semantic-templates.ts';
-import { expandDeepSeekSchema } from './fixtures/expand-deepseek-schema.mjs';
+import { expandDeepSeekSchema, schemaVariants } from './fixtures/expand-deepseek-schema.mjs';
 import { sharedCheckBundle } from './fixtures/vnext-shared-check.mjs';
 import { itemBundle, hazardBundle } from './fixtures/vnext-authored-bundles.mjs';
 import { worldFactSocialBundle } from './fixtures/vnext-world-facts.mjs';
@@ -131,7 +131,7 @@ test('the advertised decision interface is three flat tables: ruling, steps with
     const plan = schema.properties.decision.anyOf.find(value => value.properties.kind.enum.includes(kind));
     assert.ok(plan); assert.equal('steps' in plan.properties, false);
   }
-  for (const step of schema.properties.steps.items.anyOf) {
+  for (const step of schemaVariants(schema.properties.steps.items)) {
     assert.equal(step.additionalProperties, false);
     assert.deepEqual(step.required, Object.keys(step.properties).sort());
     for (const name of ['consumes', 'produces', 'templateHash', 'communication', 'branches', 'result', 'success', 'failure']) assert.equal(name in step.properties, false);
@@ -143,7 +143,7 @@ test('the advertised decision interface is three flat tables: ruling, steps with
       assert.equal('targetRefs' in step.properties, false);
     }
   }
-  const rows = schema.properties.results.items.anyOf;
+  const rows = schemaVariants(schema.properties.results.items);
   assert.deepEqual(rows.map(row => row.properties.kind.enum[0]).sort(), ['observe', 'social', 'worldInteraction']);
   for (const row of rows) {
     assert.equal(row.additionalProperties, false);
@@ -160,7 +160,7 @@ test('the advertised decision interface is three flat tables: ruling, steps with
   // A selection without any result-producing step still carries the table, with a row shape no row can take.
   const timerOnly = expandDeepSeekSchema(createVNextProposalBundleSchema(['formActorPlan']));
   assert.deepEqual(Object.keys(timerOnly.properties), ['decision', 'steps', 'results']);
-  assert.deepEqual(timerOnly.properties.results.items.anyOf.map(row => row.properties.kind.enum[0]), ['none']);
+  assert.deepEqual(schemaVariants(timerOnly.properties.results.items).map(row => row.properties.kind.enum[0]), ['none']);
 });
 
 test('different item, hazard, knowledge and interaction families use the same codec and full validator including continuations', () => {
@@ -197,6 +197,24 @@ test('direct results acquire no failure while a check preserves its unique owner
   const duplicate = clone(checked); duplicate.steps[0] = clone(duplicate.steps[1]);
   dropRow(duplicate, 0, 'result'); duplicate.results.push(...duplicate.results.filter(entry => entry.step === 1).map(entry => ({ ...clone(entry), step: 0 })));
   assert.ok(diagnostics(duplicate).some(value => value.code === 'CONSTRAINT_CONFLICT'));
+});
+
+test('inventory operations use their own operation payload and never acquire a parallel result row', async () => {
+  const full = itemBundle(), wire = wireFor(full);
+  assert.deepEqual(wire.results, []);
+  assert.equal(parsed(wire).kind, 'accepted');
+  const index = wire.steps.findIndex(step => step.kind === 'inventoryOperation');
+  const invalid = clone(wire);
+  invalid.results.push({ kind: 'inventoryOperation', step: index, branch: 'result',
+    outcomeCode: 'acquired', summary: 'The item is now held.', consequences: [] });
+  const detail = diagnosticAt(invalid, ['results', 0, 'kind'], 'CONSTRAINT_CONFLICT', 'arguments');
+  assert.equal(detail.constraint, 'filling:result-not-supported-by-type');
+  await refusesBeforeRepair(invalid);
+  // Deleting the bad row alone must not bless the undeclared item handle
+  // seen in the screenshot. A producer is still required in this bundle.
+  const orphan = clone(wire);
+  orphan.steps = [orphan.steps[index]];
+  assert.equal(parsed(orphan).kind, 'locallyRejected');
 });
 
 test('server derives typed producer declarations, prospective dependencies, public source union and exact catalog hashes', () => {

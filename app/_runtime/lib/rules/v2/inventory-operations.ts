@@ -219,7 +219,7 @@ export function planInventoryTransition(
   const itemSystem = state.campaignRuntime.itemSystem;
   const entry = itemSystem.entries[operation.entryRef];
   if (entry?.assemblyRef !== undefined) return { error: "itemComponentOccupied" };
-  if (actor?.tenureStatus !== "active" || actor.loadout === undefined
+  if (actor?.tenureStatus !== "active" || (actor.loadout === undefined && (actor.kind !== "npc" || operation.kind === "equip"))
     || state.scenes[actor.sceneId] === undefined) return { error: "inventoryReferenceUnavailable" };
   // Missing and unavailable ground entries expose the same contract metadata.
   // Check availability before actor/scene errors can reveal a hidden instance.
@@ -271,7 +271,8 @@ export function planInventoryTransition(
       break;
     case "transfer": {
       const recipient = state.entities[operation.targetCharacterRef];
-      if (recipient?.tenureStatus !== "active" || recipient.sceneId !== actor.sceneId || recipient.loadout === undefined || entry.holderRef === null) return { error: "inventoryRecipientUnavailable" };
+      if (recipient?.tenureStatus !== "active" || recipient.sceneId !== actor.sceneId
+        || (recipient.loadout === undefined && recipient.kind !== "npc") || entry.holderRef === null) return { error: "inventoryRecipientUnavailable" };
       affected.add(recipient.id);
       result = move((id) => transferItemQuantity(itemSystem, { entryId: entry.entryId, fromHolderRef: entry.holderRef!, toHolderRef: recipient.id, quantity: operation.quantity, ownershipDisposition: operation.ownershipDisposition, ...(id === undefined ? {} : { targetEntryId: id }) }));
       break;
@@ -360,6 +361,9 @@ export function stepInventoryOperation(
   const catalog = structuredClone(state.combatRuntime.definitions);
   for (const holderRef of transition.affectedHolderRefs) {
     const holder = state.entities[holderRef];
+    // A narrative NPC can carry an actual ItemEntry without acquiring invented
+    // AC, speed or equipment abilities. Mechanical holders keep their cache.
+    if (holder.kind === "npc" && holder.loadout === undefined) continue;
     const derived = inventoryHolderLoadout(state, holder, transition.itemSystem);
     if ("error" in derived) return rejected("invalidWorldState", derived.error);
     const nextHolder = { ...structuredClone(holder), loadout: derived.loadout };

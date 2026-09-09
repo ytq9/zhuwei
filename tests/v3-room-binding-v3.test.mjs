@@ -114,7 +114,7 @@ test("current private-tool protocol and workflow hashes freeze the exact tool/ru
     PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE.protocolHash,
     "fnv1a64:9afffc8be976225a",
   );
-  assert.equal(PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST.workflowHash, "fnv1a64:e3abe4c1ff669b12");
+  assert.equal(PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST.workflowHash, "fnv1a64:5bd32769048e99a2");
   assert.equal(
     PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST.proposalProtocolRef,
     PRIVATE_FORM_NARROW_TOOLS_PROTOCOL_PROFILE.protocolRef,
@@ -197,7 +197,7 @@ test("correction and party reject V3 binding failures before constructing a mode
     tableServer.indexOf("export const startGame"),
     tableServer.indexOf("export const sendAction"),
   );
-  assert.match(startGame, /roomRuntimeConfiguration\(env\)\.hasWorkflow/u);
+  assert.match(startGame, /roomRuntimeConfiguration\(\)\.hasWorkflow/u);
   assert.match(startGame, /canonicalJson\(initialized\.runtimeProfiles\)/u);
   assert.ok(
     startGame.indexOf("canonicalJson(initialized.runtimeProfiles)")

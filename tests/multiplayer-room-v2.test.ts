@@ -361,15 +361,13 @@ async function commitAuthenticatedPartyAction(
   text: string,
   proposal: AuthenticatedPartyProposal,
 ) {
-  const action = prepared(await stub.prepare(context, {
-    kind: "intent",
-    submissionId,
-    text,
-  }));
+  const { kind: _kind, ...command } = proposal;
+  const action = prepared(await stub.prepare(context, { kind: "party", submissionId, command, displayText: text }));
+  expect(action.resolutionMode).toBe("authorityDirect");
   return record(await stub.commit(
     context,
     action.preparedActionId,
-    { ...structuredClone(proposal), rootActionId: action.rootActionId },
+    { kind: "authenticatedPartyAction", rootActionId: action.rootActionId },
   ), "authenticated party commit");
 }
 

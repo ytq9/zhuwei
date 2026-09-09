@@ -314,6 +314,7 @@ describe("V3 viewer-local narration recovery", () => {
     expect(failedObservation.narrationRecovery).toMatchObject({
       kind: "available",
       state: "rejected",
+      failureCode: "NARRATION_GROUNDING_REJECTED",
     });
     expect(failedObservation.presentationHold).toEqual({ knowledgeRefs: [knowledgeRef] });
     const failedTable = projectAuthoritativeTableObservation({
@@ -452,8 +453,9 @@ describe("V3 viewer-local narration recovery", () => {
       kind: "available",
       capability: expect.stringMatching(/^publish-capability:/u),
       state: "retryableFailure",
+      failureCode: "NARRATION_PROVIDER_TIMEOUT",
     });
-    expect(Object.keys(recovery)).toEqual(["kind", "capability", "state"]);
+    expect(Object.keys(recovery)).toEqual(["kind", "capability", "state", "failureCode"]);
     expect(JSON.stringify(recovery)).not.toMatch(/audience|projection|receipt|generation|alice/iu);
     const projected = projectAuthoritativeTableObservation({
       userId: BOB.principal.id,
@@ -769,6 +771,7 @@ describe("V3 viewer-local narration recovery", () => {
       kind: "available",
       capability,
       state: "retryableFailure",
+      failureCode: "NARRATION_PROVIDER_TIMEOUT",
     });
     const formerProjected = projectAuthoritativeTableObservation({
       userId: BOB.principal.id,

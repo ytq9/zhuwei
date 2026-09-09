@@ -36,6 +36,7 @@ import {
 } from "./claims";
 import { rejected } from "./results";
 import { spatialRecordVisibleTo } from "./spatial-visibility";
+import { observerDiceResults } from "./dice-results";
 import { characterTimelineId } from "./timeline";
 import {
   hashWorldState,
@@ -1056,6 +1057,13 @@ function viewerClaimDisplayNames(
         add(ref, definition.name ?? definition.label ?? definition.displayName);
       }
     }
+    const controlled: unknown = projection.controlledCharacter;
+    const combat = isRecord(controlled) ? controlled.combat : undefined;
+    if (isRecord(combat) && isRecord(combat.definitions)) {
+      for (const [ref, definition] of Object.entries(combat.definitions)) {
+        if (isRecord(definition)) add(ref, definition.name ?? definition.label ?? definition.displayName);
+      }
+    }
     for (const assembly of projection.visibleAssemblies ?? []) add(assembly.assemblyRef, assembly.label);
     if (Array.isArray(projection.visibleItems)) {
       for (const item of projection.visibleItems) {
@@ -1353,6 +1361,7 @@ function observerCommittedDelta(
   after: SafeReadModel,
   range: VerifiedCommittedRange | undefined,
   projectCurrent: CurrentProjectionProjector,
+  diceEvidenceEvents = range?.events,
 ): ObserverCommittedDelta | "invalid" | undefined {
   if (range === undefined) return undefined;
   if (range.interleaved && range.eventStates !== undefined) {
@@ -1364,7 +1373,7 @@ function observerCommittedDelta(
       if (eventProjection.kind === "rejected" && eventProjection.rejection.code !== "viewerUnauthorized") return "invalid";
       if (eventProjection.kind === "rejected" || isKpSpatialReadModel(eventProjection) || isLifecycleReadModel(eventProjection)) continue;
       const delta = observerCommittedDelta(profiles, frame.state, viewerValue, eventProjection,
-        { ...range, priorState: frame.priorState, events: [event], interleaved: false }, projectCurrent);
+        { ...range, priorState: frame.priorState, events: [event], interleaved: false }, projectCurrent, diceEvidenceEvents);
       if (delta === "invalid") return "invalid";
       if (delta !== undefined) changes.push(...delta.changes);
     }
@@ -1402,6 +1411,8 @@ function observerCommittedDelta(
   const correctionChanges = correction ? publicCorrectionChanges(range) : [];
   const changes = [
     ...correctionChanges,
+    ...(correction ? [] : observerDiceResults(state, range.events, viewerCharacterId, event =>
+      visibilityPolicyVisibleToViewer(event.visibilityPolicyId, event.payload, state, range, viewerValue, viewerCharacterId), diceEvidenceEvents)),
     ...eventChanges,
     ...socialChanges,
     ...dynamicEntities,

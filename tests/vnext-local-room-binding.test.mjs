@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { NEW_ROOM_KP_MODELS } from "../app/_runtime/lib/kp/models.ts";
 import { roomRuntimeConfiguration } from "../app/_runtime/lib/room/runtime-configuration.ts";
 import {
   AUTHORITATIVE_KP_PROFILES, authoritativeKpProfileByBinding,
@@ -13,7 +14,7 @@ import { VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST } from "../app/_runtime/lib/rules
 import { AUTHORITATIVE_RULESET_VERSION } from "../app/_runtime/lib/rules/ruleset.ts";
 
 const moduleProfile = await authoritativeModuleProfile("black-oak-will");
-const local = roomRuntimeConfiguration({ ZHUWEI_VNEXT_LOCAL: "true" });
+const local = roomRuntimeConfiguration();
 
 function validBinding(profile = VNEXT_KP_PROFILE) {
   const vNext = profile === VNEXT_KP_PROFILE;
@@ -32,27 +33,26 @@ function validBinding(profile = VNEXT_KP_PROFILE) {
   };
 }
 
-test("only the exact server opt-in enables vNext; the production model and workflow registry remain unchanged", () => {
-  for (const flag of [undefined, false, true, "false", "TRUE", "1"]) {
-    const configuration = roomRuntimeConfiguration({ ZHUWEI_VNEXT_LOCAL: flag });
-    assert.equal(configuration.localVNext, false);
-    assert.equal(configuration.profileByBinding(VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion), undefined);
-    assert.equal(configuration.acceptsProfile(VNEXT_KP_PROFILE), false);
-    assert.equal(configuration.hasWorkflow(VNEXT_KP_WORKFLOW_MANIFEST_JSON), false);
-    assert.equal(configuration.runtimeManifestForWorkflow(VNEXT_KP_WORKFLOW_MANIFEST_JSON), undefined);
-    assert.equal(configuration.validateRoomBinding(validBinding()).kind, "invalid");
-    for (const profile of AUTHORITATIVE_KP_PROFILES) {
-      assert.equal(configuration.profileByModelId(profile.modelId), profile);
-      assert.equal(configuration.profileByBinding(profile.modelId, profile.modelProfileVersion), profile);
-      assert.equal(configuration.workflowForProfile(profile), PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON);
-      assert.equal(configuration.runtimeManifestForWorkflow(PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON), ENVIRONMENT_V5_RUNTIME_PROFILE_MANIFEST);
-      assert.deepEqual(configuration.validateRoomBinding(validBinding(profile)), { kind: "valid" });
-    }
+test("production new rooms use the exact vNext workflow and the public model choice agrees", () => {
+  const configuration = roomRuntimeConfiguration();
+  assert.deepEqual(NEW_ROOM_KP_MODELS.map(model => model.id), [VNEXT_KP_PROFILE.modelId]);
+  assert.equal(configuration.profileByModelId(VNEXT_KP_PROFILE.modelId), VNEXT_KP_PROFILE);
+  assert.equal(configuration.profileByModelId("deepseek-v4-pro"), undefined);
+  assert.equal(configuration.profileByBinding(VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion), VNEXT_KP_PROFILE);
+  assert.equal(configuration.acceptsProfile(VNEXT_KP_PROFILE), true);
+  assert.equal(configuration.hasWorkflow(VNEXT_KP_WORKFLOW_MANIFEST_JSON), true);
+  assert.equal(configuration.runtimeManifestForWorkflow(VNEXT_KP_WORKFLOW_MANIFEST_JSON), VNEXT_STAGE3_RUNTIME_PROFILE_MANIFEST);
+  assert.deepEqual(configuration.validateRoomBinding(validBinding()), { kind: "valid" });
+  for (const profile of AUTHORITATIVE_KP_PROFILES) {
+    assert.equal(configuration.profileByBinding(profile.modelId, profile.modelProfileVersion), profile);
+    assert.equal(configuration.workflowForProfile(profile), PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON);
+    assert.deepEqual(configuration.validateRoomBinding(validBinding(profile)), { kind: "valid" });
   }
-  assert.equal(authoritativeKpProfileByBinding(VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion), undefined);
+  assert.equal(authoritativeKpProfileByBinding(VNEXT_KP_PROFILE.modelId, VNEXT_KP_PROFILE.modelProfileVersion), undefined,
+    "the legacy profile lookup must not silently reinterpret a persisted generation");
 });
 
-test("local creation binds the one approved model while complete persisted V3 and vNext generations stay distinct", () => {
+test("new room creation binds the one approved model while complete persisted V3 and vNext generations stay distinct", () => {
   assert.equal(local.profileByModelId(VNEXT_KP_PROFILE.modelId), VNEXT_KP_PROFILE);
   assert.equal(local.profileByModelId("deepseek-v4-pro"), undefined, "an unsupported local model is rejected, never silently replaced");
   assert.equal(local.profileByModelId("client-selected-profile"), undefined);
@@ -75,7 +75,7 @@ test("local creation binds the one approved model while complete persisted V3 an
   assert.equal(local.hasGenerationBinding(altered, VNEXT_KP_WORKFLOW_MANIFEST_JSON), false);
 });
 
-test("local validation checks the full frozen model, workflow, planner, runtime, and module before authority use", () => {
+test("validation checks the full frozen model, workflow, planner, runtime, and module before authority use", () => {
   assert.deepEqual(local.validateRoomBinding(validBinding()), { kind: "valid" });
   for (const [violation, mutate] of [
     ["modelProfile", value => { value.binding.kp_model = "deepseek-v4-pro"; }],
@@ -99,13 +99,12 @@ test("local validation checks the full frozen model, workflow, planner, runtime,
   }
 });
 
-test("configuration reads host opt-in at each request and never accepts a player runtime or profile field", () => {
-  const environment = { ZHUWEI_VNEXT_LOCAL: "true" };
-  const firstRequest = roomRuntimeConfiguration(environment);
-  environment.ZHUWEI_VNEXT_LOCAL = "false";
-  const nextRequest = roomRuntimeConfiguration(environment);
-  assert.equal(firstRequest.localVNext, true);
-  assert.equal(nextRequest.localVNext, false);
-  assert.equal(nextRequest.hasWorkflow(VNEXT_KP_WORKFLOW_MANIFEST_JSON), false);
-  assert.equal(roomRuntimeConfiguration({ runtime: "vnext", profile: VNEXT_KP_PROFILE }).localVNext, false);
+test("client values and retired local opt-in flags cannot downgrade the new-room generation", () => {
+  for (const value of [undefined, {}, { ZHUWEI_VNEXT_LOCAL: "false" }, { ZHUWEI_VNEXT_LOCAL: "true" },
+    { runtime: "v3", profile: AUTHORITATIVE_KP_PROFILES[0] }]) {
+    const configuration = roomRuntimeConfiguration(value);
+    assert.equal(configuration.profileByModelId(VNEXT_KP_PROFILE.modelId), VNEXT_KP_PROFILE);
+    assert.equal(configuration.workflowForProfile(VNEXT_KP_PROFILE), VNEXT_KP_WORKFLOW_MANIFEST_JSON);
+    assert.equal(configuration.hasGenerationBinding(VNEXT_KP_PROFILE, PRIVATE_TOOLS_KP_WORKFLOW_MANIFEST_JSON), false);
+  }
 });

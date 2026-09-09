@@ -6,11 +6,24 @@ import { frozenNarrationReviewContext } from '../app/_runtime/lib/kp/narration-v
 import { handleRoomAction, handleViewerNarrationRecovery } from '../app/_runtime/lib/room/action.ts';
 import { deriveAuthorityClaims, projectRenderableClaims } from '../app/_runtime/lib/rules/v2/claims.ts';
 import { INDEPENDENT_BODY_DELIVERY_PROTOCOL_PROFILE } from '../app/_runtime/lib/rules/profiles/manifests.ts';
-import { publicNarrationFailureReason, publicNarrationRecoveryReason, publicV3FailureCode } from '../app/_runtime/lib/table/authoritative.ts';
+import { publicNarrationFailureReason, publicNarrationRecoveryReason, publicV3FailureCode, publicAuthoritativeOutcomeError } from '../app/_runtime/lib/table/authoritative.ts';
 import { buildRoomTelemetryEvent, failureCodeIsRetryable } from '../app/_runtime/lib/room/telemetry.ts';
 
 const principal = { id: 'principal:reader', sessionVersion: 1 }, actor = 'character:reader';
 const BODY = '你把两面玻璃镜放在桌上。', SECRET = 'PRIVATE_PROVIDER_REQUEST_CANARY';
+test('vNext follow-up failures expose closed categories without disclosing private decision context', () => {
+  for (const [internal, visible] of [['DUE_DECISION_INVALID', 'FOLLOWUP_DECISION_INVALID'],
+    ['ACTOR_PLAN_DECISION_INVALID', 'FOLLOWUP_DECISION_INVALID'],
+    ['ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN', 'FOLLOWUP_DECISION_OUTCOME_UNKNOWN']]) {
+    assert.equal(publicV3FailureCode(internal), visible);
+    const event = buildRoomTelemetryEvent({ failure: { code: internal, message: SECRET } });
+    assert.equal(event.errorCode, visible);
+    const message = publicAuthoritativeOutcomeError({ kind: 'rejected', code: internal, message: SECRET });
+    assert.match(message, /已暂停|执行已暂停/);
+    assert.doesNotMatch(JSON.stringify({ event, message }), new RegExp(SECRET));
+  }
+  assert.equal(publicV3FailureCode(SECRET), undefined);
+});
 function fixture() {
   const receipt = { rootActionId: 'root:provider-failure', receiptId: 'receipt:provider-failure', status: 'committed' };
   const renderableClaims = projectRenderableClaims(deriveAuthorityClaims({ ...receipt, materials: [{

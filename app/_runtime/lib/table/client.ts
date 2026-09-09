@@ -4,17 +4,7 @@ import type { TableSnap } from "@/components/play-table";
 import type { CharacterSheet } from "@/lib/dnd/types";
 import type { KpModelId } from "@/lib/kp/models";
 import { callWithStableSubmission } from "@/lib/table/authoritative-client";
-
-async function call<T>(command: string, data?: unknown): Promise<T> {
-  const response = await fetch("/api/game", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ command, data }),
-  });
-  const payload = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? "桌面暂时没有回应");
-  return payload;
-}
+import { callGame as call } from "@/lib/platform/game-client";
 
 type Args = { data: any };
 type Result = any;

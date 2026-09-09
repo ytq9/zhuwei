@@ -56,6 +56,7 @@ type Authority = {
   initializeAuthoritative(input: unknown): Promise<unknown>;
   prepare(principal: unknown, input: unknown): Promise<unknown>;
   commit(principal: unknown, preparedActionId: string, proposal: unknown): Promise<unknown>;
+  resumePlayerRandomness(principal: unknown, randomnessId: string): Promise<unknown>;
   observe(principal: unknown, query?: unknown): Promise<unknown>;
   acknowledge(principal: unknown, deliveryId: string): Promise<unknown>;
   deliveryPublicationStatus(query: unknown): Promise<unknown>;
@@ -612,6 +613,7 @@ function instrumentAuthority(
       counters.commit += 1;
       return target.commit(principal, preparedActionId, proposal);
     },
+    resumePlayerRandomness: (principal, randomnessId) => target.resumePlayerRandomness(principal, randomnessId),
     observe: (principal, query) => target.observe(principal, query),
     acknowledge: (principal, deliveryId) => target.acknowledge(principal, deliveryId),
     deliveryPublicationStatus: (query) => target.deliveryPublicationStatus(query),
@@ -1753,6 +1755,86 @@ async function initializeNpcShieldMechanics(authority: Authority) {
     expect(target.authoritativeReplay().state).toEqual(result.state);
   });
 }
+
+describe("explicit player dice through Room", () => {
+  it("player dice: an authored item's recovery dice also wait for its player and show the committed faces", async () => {
+    const { authority } = await initializeRoom("kp-vnext-item-player-gesture", 10);
+    await initializeNpcShieldMechanics(authority);
+    const bundle = authoredRoomBundle("item");
+    (bundle.adjudication as JsonRecord).durationMicros = "0";
+    const counters = emptyActionCounters(), prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(() => bundle, prepared, undefined, false);
+    const started = await runAction({ authority, principal: ALICE,
+      action: intent("submission:item-player-gesture", "在吊灯铁链下拾取并使用药剂。"), kp, counters, prepared });
+    expect(started, JSON.stringify(started)).toMatchObject({ kind: "awaitingPlayerRoll" });
+    const rolls = record(await authority.observe(ALICE), "item dice").pendingPlayerRolls as JsonRecord[];
+    expect(rolls).toHaveLength(1); expect(rolls[0]).toMatchObject({ characterId: ALICE_ID, kind: "heal", dice: "2d4" });
+    expect(counters.rolls).toBe(0);
+    expect(await authority.resumePlayerRandomness(BOB, String(rolls[0].id))).toMatchObject({ kind: "rejected" });
+    const action: RoomActionInput = { kind: "roll", submissionId: "submission:item-roll", randomnessId: String(rolls[0].id) };
+    expect(await runAction({ authority, principal: ALICE, action, kp, counters, prepared, rolls: [2, 3], dieSides: [4, 4] }))
+      .toMatchObject({ kind: "committed" });
+    const messages = record(await authority.observe(ALICE), "item result").transcript as JsonRecord[];
+    expect(messages.filter(message => message.kind === "roll").map(message => message.body))
+      .toEqual([expect.stringContaining("2d4+2 [2, 3]，合计 7")]);
+    const after = await roomSnapshot(authority);
+    await evictDurableObject(authority as never);
+    await runAction({ authority, principal: ALICE, action, kp, counters, prepared });
+    expect((await roomSnapshot(authority)).events).toEqual(after.events); expect(counters.rolls).toBe(2);
+  });
+
+  it("player dice: each controller confirms their part of a shared check and hazard save", async () => {
+    const { authority } = await initializeRoom("kp-vnext-shared-player-gestures");
+    await initializeNpcShieldMechanics(authority);
+    const refs: Record<string, string> = { "character:probe-actor": ALICE_ID, "character:probe-target": BOB_ID,
+      "scene:probe-gallery": SCENE_REF, "definition:probe-valve": CHAIN_REF, "definition:probe-steam-zone": IMPACT_ZONE_REF };
+    const bundle = JSON.parse(JSON.stringify(hazardBundle()),
+      (_key, value) => typeof value === "string" ? refs[value] ?? value : value) as JsonRecord;
+    bundle.adjudication = { ...ALCOVE_SHARED_CHECK_V2, durationMicros: "0" };
+    record(record(record((bundle.proposals as JsonRecord[])[0].source, "ability source").content, "ability content").target, "ability target").rangeInches = "1200";
+    const interaction = (bundle.proposals as JsonRecord[])[2];
+    record(interaction.branches, "branches").failure = { outcomeCode: "outcome:unchanged", summary: "控制装置没有转动。",
+      effects: [], sensoryEvidence: [], pressures: [], opportunities: [] };
+    const counters = emptyActionCounters(), prepared: PreparedCapture = { all: [] };
+    const kp = new DeterministicKp(() => bundle, prepared, undefined, false);
+    const action = intent("submission:shared-player-gestures", "我转动吊灯铁链的控制装置，鲍勃准备躲开吊灯下方的危险。");
+    const started = await runAction({ authority, principal: ALICE, action, kp, counters, prepared });
+    expect(started, JSON.stringify(started)).toMatchObject({ kind: "awaitingPlayerRoll" });
+    const alice = record(await authority.observe(ALICE), "Alice waiting");
+    const bob = record(await authority.observe(BOB), "Bob waiting");
+    const aliceRolls = alice.pendingPlayerRolls as JsonRecord[], bobRolls = bob.pendingPlayerRolls as JsonRecord[];
+    expect(aliceRolls).toHaveLength(1); expect(bobRolls).toHaveLength(1);
+    expect(aliceRolls[0]).toMatchObject({ characterId: ALICE_ID, kind: "check", dice: "1d20" });
+    expect(bobRolls[0]).toMatchObject({ characterId: BOB_ID, kind: "save", dice: "d20" });
+    expect(bobRolls[0].id).toBe(aliceRolls[0].id);
+    expect(counters.rolls).toBe(0);
+    const randomnessId = String(aliceRolls[0].id);
+    const aliceGesture: RoomActionInput = { kind: "roll", submissionId: "submission:alice-roll", randomnessId };
+    expect(await runAction({ authority, principal: ALICE, action: aliceGesture, kp, counters, prepared }))
+      .toMatchObject({ kind: "awaitingPlayerRoll" });
+    expect(record(await authority.observe(ALICE), "Alice confirmed").pendingPlayerRolls).toEqual([]);
+    const targetRolls = record(await authority.observe(BOB), "Bob not confirmed").pendingPlayerRolls as JsonRecord[];
+    expect(targetRolls).toHaveLength(1);
+    expect(targetRolls[0]).toMatchObject({ characterId: BOB_ID, kind: "save", dice: "d20" });
+    await runAction({ authority, principal: ALICE, action: aliceGesture, kp, counters, prepared });
+    expect(counters.rolls).toBe(0);
+    await evictDurableObject(authority as never);
+    const bobGesture: RoomActionInput = { kind: "roll", submissionId: "submission:bob-roll", randomnessId: String(targetRolls[0].id) };
+    const result = await runAction({ authority, principal: BOB, action: bobGesture, kp, counters, prepared,
+      rolls: [18, 2, 2, 20, 1, 2, 20], dieSides: [20, 6, 8, 20, 20, 20, 20] });
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "committed" });
+    const after = await roomSnapshot(authority);
+    expect(eventsOf(after, "WorldInteractionResolved")).toHaveLength(1);
+    expect(eventPayload(eventsOf(after, "WorldInteractionResolved")[0]).actorCharacterId).toBe(ALICE_ID);
+    expect((record(await authority.observe(BOB), "Bob result").transcript as JsonRecord[])
+      .some(message => message.kind === "roll" && String(message.body).includes("豁免检定"))).toBe(true);
+    const proposalCount = kp.counters.propose, draws = counters.rolls;
+    await runAction({ authority, principal: BOB, action: bobGesture, kp, counters, prepared });
+    await runAction({ authority, principal: ALICE, action: aliceGesture, kp, counters, prepared });
+    expect((await roomSnapshot(authority)).events).toEqual(after.events);
+    expect(counters.rolls).toBe(draws); expect(kp.counters.propose).toBe(proposalCount);
+  });
+});
 
 describe("atomic NPC candidate decisions through Room", () => {
   it("uses the prior hazard's private HP change for the next Shield decision and resumes once after model failure", async () => {

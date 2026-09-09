@@ -9,7 +9,7 @@ import { authorityRevisionOrHash } from "./authority-bindings";
  * is awake. Only knowledge already acquired by the character can notify it. */
 export function activityProgressBinding(state: AuthoritativeWorldState, characterId: string): JsonRecord | undefined {
   const timelineId = characterTimelineId(state, characterId);
-  if (timelineId === undefined || state.entities[characterId]?.kind !== "player") return undefined;
+  if (timelineId === undefined || !["player", "npc"].includes(state.entities[characterId]?.kind)) return undefined;
   return { timelineId, sourceSceneId: state.entities[characterId].sceneId,
     timelineAtStart: structuredClone(state.fictionTimelines[timelineId]),
     acknowledgedKnowledgeRefs: Object.keys(state.knowledge[characterId] ?? {}).sort() };
@@ -34,7 +34,7 @@ export function activityProgressAvailable(state: AuthoritativeWorldState, activi
  * do not enter this causal knowledge channel. Self-authored claims do not
  * interrupt their author. This selector never acquires knowledge itself. */
 export function activityNoticeKnowledgeRefs(state: AuthoritativeWorldState, activity: JsonRecord): string[] {
-  if (!activityProgressAvailable(state, activity) || isRecord(activity.attention)) return [];
+  if (state.entities[String(activity.characterId)]?.kind !== "player" || !activityProgressAvailable(state, activity) || isRecord(activity.attention)) return [];
   const binding = activity.progression as JsonRecord;
   const acknowledged = new Set(Array.isArray(binding.acknowledgedKnowledgeRefs) ? binding.acknowledgedKnowledgeRefs : []);
   return Object.values(state.knowledge[String(activity.characterId)] ?? {}).filter(knowledge =>

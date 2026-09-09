@@ -3,6 +3,7 @@ import { canonicalProfileBytes, canonicalSha256 } from "./canonical";
 import type { ProfileRef, Sha256Ref } from "./types";
 import type { JsonRecord } from "../v2/model";
 import { isRecord } from "../v2/validation";
+import { spellById } from "../../dnd/catalog";
 
 export type MechanicOpFamily =
   | "Guard"
@@ -830,6 +831,7 @@ export function frozenRegisteredAbilityOperation(
 
 /** Safe summary for a viewer already authorized to know the definition. */
 export function projectRegisteredAbility(value: JsonRecord): JsonRecord {
+  const spellName = typeof value.sourceSpellId === "string" ? spellById(value.sourceSpellId)?.name : undefined;
   const visibleKeys = [
     "activation",
     "aliases",
@@ -844,8 +846,11 @@ export function projectRegisteredAbility(value: JsonRecord): JsonRecord {
     "rulesBasis",
     "tags",
   ] as const;
-  return Object.fromEntries(visibleKeys.flatMap((key) =>
-    value[key] === undefined ? [] : [[key, structuredClone(value[key])]]));
+  return {
+    ...Object.fromEntries(visibleKeys.flatMap((key) =>
+      value[key] === undefined ? [] : [[key, structuredClone(value[key])]])),
+    ...(spellName === undefined ? {} : { name: spellName }),
+  };
 }
 
 export function isAbilityDefinitionCandidate(value: unknown): boolean {

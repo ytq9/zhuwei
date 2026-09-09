@@ -11,6 +11,7 @@ import { createVNextProposalBundleSchema, SUBMIT_KP_PROPOSAL_BUNDLE_TOOL_NAME,
   CORRECT_KP_PROPOSAL_BUNDLE_TOOL_NAME } from '../app/_runtime/lib/kp/vnext/proposal-schema.ts';
 import { VNEXT_STAGE3_ROOM_ADJUDICATION_BRIDGE as bridge, vnext2CommandToRoomLowering } from '../app/_runtime/lib/kp/vnext/room-bridge.ts';
 import { deepSeekStrictToolSchemaIssues } from '../app/_runtime/lib/kp/deepseek-strict-tool.ts';
+import { frozenRenderableClaimsConform } from '../app/_runtime/lib/rules/v2/claims.ts';
 
 // Registered definitions exercise the generic protocol, not production spell
 // catalog completeness. Production registered-spell tests cover that boundary.
@@ -112,6 +113,67 @@ test('registered immediate healing uses native dice and resource mechanics throu
   assert.equal(f.state.combatRuntime.entities[ACTOR].resources['spellSlot:1'].current, '1');
   assert.equal(f.events.filter(event => event.eventType === 'ResourceSpent').length, 1);
   assert.equal(f.events.filter(event => event.eventType === 'HealingResolved').length, 1);
+});
+
+function precisionProjection(f, priorState, done, viewer = f.viewer) {
+  const projected = f.runtime.project(f.profiles, f.state, viewer, { channel: 'realtime', committedRange: {
+    receiptId: done.receipt.receiptId, actorCharacterId: ACTOR, priorState, events: f.events,
+  } });
+  assert.equal(projected.kind, 'projected', JSON.stringify(projected));
+  assert.equal(frozenRenderableClaimsConform(projected.renderableClaims), true);
+  return projected.renderableClaims;
+}
+
+for (const [name, hp, expectedHp] of [['full', 24, 24], ['injured', 10, 13], ['capped', 23, 24]]) {
+  test(`narration precision preserves the named spell cost and actual ${name} healing through public Rules`, () => {
+    const f = fixture(`precision-${name}`, { sourceSpellId: 'cure' }, state => {
+      state.entities[ACTOR].hitPoints = { current: hp, maximum: 24, temporary: 0 };
+      state.combatRuntime.entities[ACTOR].hitPoints = { current: String(hp), maximum: '24', temporary: '0' };
+      state.entities[ACTOR].resources.slot1 = 4;
+      state.entities[ACTOR].resourceMaximums.slot1 = 4;
+      state.combatRuntime.entities[ACTOR].resources['spellSlot:1'] = { current: '4', maximum: '4' };
+      state.entities[ACTOR].resources.slot2 = 2;
+      state.entities[ACTOR].resourceMaximums.slot2 = 2;
+      state.combatRuntime.entities[ACTOR].resources['spellSlot:2'] = { current: '2', maximum: '2' };
+      // Full HP does not remove an independently established condition.
+      state.combatRuntime.entities[ACTOR].conditions.poisoned = true;
+    });
+    const prior = structuredClone(f.state), done = fulfill(f, perform(f));
+    assert.equal(done.kind, 'committed');
+    const claims = precisionProjection(f, prior, done);
+    const cost = claims.claims.find(claim => claim.outcomeCode === 'resourceChanged');
+    assert.match(cost.summary, /1 环法术位.*消耗.*1.*剩余.*3/u);
+    assert.doesNotMatch(cost.summary, /2 环|该资源/u);
+    const healed = claims.claims.find(claim => claim.outcomeCode === 'healed');
+    assert.match(healed.summary, new RegExp(`实际恢复了 ${expectedHp - hp} 点生命值`, 'u'));
+    const capacity = claims.claims.find(claim => claim.outcomeCode === 'healingCapacity');
+    assert.ok(capacity);
+    assert.match(capacity.summary, new RegExp(`${expectedHp}/24`, 'u'));
+    if (hp === 24) assert.match(capacity.summary, /治疗前.*已达.*上限/u);
+    else assert.doesNotMatch(capacity.summary, /治疗前.*已达.*上限/u);
+    assert.equal(claims.claims.find(claim => claim.kind === 'abilityEffectApplied').abilityName, '治愈伤口');
+    assert.equal(f.state.combatRuntime.entities[ACTOR].conditions.poisoned, true);
+    assert.equal(f.state.entities[ACTOR].resources.slot2, 2);
+    assert.deepEqual(precisionProjection(f, prior, done), claims);
+    const other = precisionProjection(f, prior, done, { kind: 'player', principalId: 'principal:probe-target',
+      seatId: 'seat:probe-target', sessionVersion: 1, characterId: TARGET });
+    assert.equal(other.claims.some(claim => claim.outcomeCode === 'healingCapacity'), false);
+    assert.equal(other.claims.some(claim => claim.abilityName === '治愈伤口'), false,
+      'The caster\'s private ability catalog is not another Viewer\'s name source.');
+  });
+}
+
+test('narration precision names a class resource through the same committed cost path', () => {
+  const f = fixture('precision-class', { activation: { kind: 'action' },
+    costs: [{ kind: 'classResource', resourceId: 'resource:channel-divinity', amount: '1' }] }, state => {
+    state.entities[ACTOR].resources.channel = 2;
+    state.entities[ACTOR].resourceMaximums.channel = 2;
+    state.combatRuntime.entities[ACTOR].resources['resource:channel-divinity'] = { current: '2', maximum: '2' };
+  });
+  const prior = structuredClone(f.state), done = fulfill(f, perform(f));
+  const cost = precisionProjection(f, prior, done).claims.find(claim => claim.outcomeCode === 'resourceChanged');
+  assert.match(cost.summary, /引导神力.*消耗.*1.*剩余.*1/u);
+  assert.doesNotMatch(cost.summary, /法术位|该资源/u);
 });
 
 test('long and ritual starts use the same native decision and exact Activity cancellation', () => {

@@ -1,6 +1,6 @@
+import { PROPOSAL_PUBLIC_FAILURE_CODES, NARRATION_PUBLIC_FAILURE_CODES, narrationPublicFailureCode, type NarrationPublicFailureCode } from "../kp/public-failure-codes";
 import { characterInferenceContentText } from "../rules/v2/character-inference";
 import { AUTHORITATIVE_RULESET_VERSION } from "../rules/ruleset";
-import { failureCodeIsRetryable } from "../room/telemetry";
 import { classById } from "../dnd/catalog";
 import { characterProficiencyProfileEnabled } from "../rules/profiles/character-proficiency";
 import type { RuntimeProfileManifest } from "../rules/profiles/types";
@@ -12,18 +12,8 @@ import {
 type JsonRecord = Record<string, unknown>;
 
 export const V3_PUBLIC_FAILURE_CODES = [
-  "PROPOSAL_PROVIDER_TIMEOUT",
-  "PROPOSAL_FORM_INVALID",
-  "PROPOSAL_REFERENCE_INVALID",
-  "PROPOSAL_RULES_DIAGNOSTIC",
-  "PROPOSAL_REPAIR_EXHAUSTED",
-  "CONTEXT_INSUFFICIENT",
-  "NARRATION_PROVIDER_TIMEOUT",
-  "NARRATION_PROVIDER_REJECTED",
-  "NARRATION_BODY_INVALID",
-  "NARRATION_GROUNDING_REJECTED",
-  "NARRATION_CONTEXT_BUDGET_EXCEEDED",
-  "NARRATION_PUBLICATION_FAILED",
+  ...PROPOSAL_PUBLIC_FAILURE_CODES,
+  ...NARRATION_PUBLIC_FAILURE_CODES,
 ] as const;
 
 export type V3PublicFailureCode = typeof V3_PUBLIC_FAILURE_CODES[number];
@@ -31,6 +21,8 @@ export type V3PublicFailureCode = typeof V3_PUBLIC_FAILURE_CODES[number];
 const V3_PUBLIC_FAILURE_CODE_SET = new Set<string>(V3_PUBLIC_FAILURE_CODES);
 
 export function publicV3FailureCode(value: unknown): V3PublicFailureCode | undefined {
+  if (value === "DUE_DECISION_INVALID" || value === "ACTOR_PLAN_DECISION_INVALID") return "FOLLOWUP_DECISION_INVALID";
+  if (value === "ACTOR_PLAN_DECISION_OUTCOME_UNKNOWN") return "FOLLOWUP_DECISION_OUTCOME_UNKNOWN";
   return typeof value === "string" && V3_PUBLIC_FAILURE_CODE_SET.has(value)
     ? value as V3PublicFailureCode
     : undefined;
@@ -55,52 +47,97 @@ export function publicNarrationFailureReason(value: unknown): string {
   }
 }
 
-export function publicNarrationRecoveryReason(value: unknown): string {
+export function publicNarrationRecoveryReason(value: unknown, failure?: unknown): string {
+  const failureCode = value === "pending" ? undefined : narrationPublicFailureCode(failure);
+  if (failureCode !== undefined) {
+    const recovery = failureCode === "NARRATION_CONTEXT_BUDGET_EXCEEDED"
+      ? "请联系维护者检查回复容量；反复重试通常无法解决。"
+      : failureCode === "NARRATION_PROVIDER_REJECTED"
+        ? "可点击“重试 KP 回复”；持续被拒绝时，请联系维护者检查 KP 服务权限或请求限制。"
+        : "请点击“重试 KP 回复”；若同样的错误持续出现，请联系维护者。";
+    return `${publicNarrationFailureReason(failureCode)}。${recovery}`;
+  }
   switch (value) {
     case "pending":
-      return "KP 回复仍在处理，或上次连接在完成前中断。";
+      return "KP 回复仍在处理中，请等待桌面更新。";
     case "rejected":
-      return "KP 服务请求被拒绝，或回复未通过检查。";
+      return "KP 服务请求被拒绝，或回复未通过检查，具体原因尚未确认。可点击“重试 KP 回复”；持续失败时请联系维护者。";
     case "retryableFailure":
-      return "KP 服务或回复发布暂时失败；这不代表一定等待超时。";
+      return "KP 服务或回复发布失败，具体原因尚未确认。请点击“重试 KP 回复”；持续失败时请联系维护者。";
     default:
-      return "KP 回复暂未完成，原因尚未确认。";
+      return "KP 回复暂未完成，原因尚未确认。请刷新桌面查看当前状态。";
   }
 }
+
+// These explanations come from closed server-owned categories, never from
+// model output, internal exception text, candidate details or another viewer.
+const ACTION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  FOLLOWUP_DECISION_INVALID: "后续世界行动的裁定未通过检查，相关执行已暂停；已经发生的事实仍保留。请联系维护者检查，反复提交新行动无法解决。",
+  FOLLOWUP_DECISION_OUTCOME_UNKNOWN: "后续世界行动的模型响应未能可靠保存，系统已暂停相关执行，以免重复处理。已经发生的事实仍保留，请联系维护者检查。",
+  PROPOSAL_PROVIDER_TIMEOUT: "KP 服务未能及时返回裁定，可能是连接中断、服务繁忙或响应超时。行动未提交；请稍后重试原行动。",
+  PROPOSAL_PROVIDER_CONFIGURATION: "KP 服务配置不完整或当前模型无法使用，行动未提交。请联系房主或维护者检查模型配置；修改行动描述无法解决这个问题。",
+  PROPOSAL_FORM_INVALID: "KP 返回的行动方案格式不符合规则要求，行动未提交。可以补充或修改具体做法后重新提交；若持续发生，请联系维护者检查。",
+  PROPOSAL_REFERENCE_INVALID: "KP 方案中引用的对象或能力无法核对，行动未提交。请确认你指的是当前可见的哪个目标；目标已明确仍报错时，请联系维护者。",
+  PROPOSAL_REPAIR_EXHAUSTED: "KP 没能把这项行动整理成可以裁定的形式，行动未提交。原样重试会得到同样的结果；请补充具体做法后再提交。描述已明确仍失败时，请联系维护者。",
+  PROPOSAL_RULES_DIAGNOSTIC: "KP 提出的执行方案没有通过规则检查，行动未提交。请检查当前目标、条件和资源并调整做法；原样重试不会改变这份方案。若条件本来满足，请联系维护者。",
+  CONTEXT_INSUFFICIENT: "系统未能取得裁定这项行动所需的信息，行动未提交。请刷新桌面并补充具体目标或做法；信息已明确仍失败时，请联系维护者。",
+  CONTEXT_BUDGET_EXCEEDED: "本次裁定需要加载的资料超出处理容量，行动未提交。请联系维护者检查；这通常不能靠反复点击重试解决。",
+  PROPOSAL_INPUT_BUDGET_EXCEEDED: "本次行动请求超出模型的处理容量，行动未提交。请缩短重复描述，保留目标和关键做法；仍失败时请联系维护者。",
+  PROPOSAL_INVOCATION_IN_PROGRESS: "这条行动的裁定仍在处理中，当前尚未取得最终结果。请保留原行动并等待桌面更新，不要重复提交新行动。",
+  modelTransient: "KP 服务暂时未返回有效响应，行动未提交。请稍后重试原行动；持续失败时请联系维护者。",
+  modelPermanent: "当前 KP 模型无法使用，行动未提交。请联系房主或维护者检查模型配置与服务权限。",
+  quotaExhausted: "KP 服务的可用额度不足，本次裁定没有完成。请联系房主或维护者检查额度，恢复后再重试原行动。",
+  scopeConflict: "处理期间相关角色或场景状态已经变化，本次行动未提交。请刷新桌面，按最新状态重新确认目标和做法。",
+  spatialStateChanged: "战术空间已经变化，本次移动未提交。请刷新地图并重新选择路径。",
+  causalFrontierConflict: "相关角色的时间进度尚未对齐，本次行动未提交。请等待相关行动完成、刷新桌面后再试。",
+  authorityTransient: "房间服务暂时没有确认处理结果。请先刷新桌面查看状态，再使用原操作的重试入口恢复，避免另发相同行动。",
+  projectionFailure: "系统未能把处理结果核对为你可见的桌面信息，当前无法确认完整显示结果。请刷新桌面查看状态；持续出现时请联系维护者，勿反复发起相同行动。",
+  projectionIntegrity: "桌面信息的完整性核对未通过，系统暂未展示这批结果。请刷新桌面重新读取；持续出现时请联系维护者。",
+  referenceUnavailable: "本次操作指向的对象或待处理选项当前不可用。请刷新桌面，只选择当前展示且由你操作的目标；问题持续时请联系房主。",
+  narrationRecoveryUnavailable: "这条 KP 回复已送达、已被后续回复替代，或当前账号无法恢复它。请刷新桌面查看最新回复。",
+  viewerNarrationRecoveryRequired: "你还有一条已经结算、但尚未送达的 KP 回复。请先点击“重试 KP 回复”，再继续新行动。",
+  unauthenticated: "登录会话已失效，本次操作未获授权。请重新登录，再打开这间房。",
+  seatInactive: "你当前不在这间房的有效席位中。请回酒馆使用房间码重新加入。",
+  viewerUnauthorized: "当前账号没有执行这项操作的权限。请刷新桌面确认角色控制权，或联系房主处理。",
+  notController: "这项操作需要由该角色的控制者完成。请刷新桌面确认你当前控制的角色。",
+  roomAdministrationUnauthorized: "这项房间管理操作需要房主权限。请联系房主处理。",
+  insufficientResource: "当前可用资源不足，行动未提交。请检查人物卡中的法术位、次数或物品数量，再选择可用的行动。",
+  missingPrerequisite: "当前尚未满足这项行动的必要条件，行动未提交。请检查目标、距离、装备和角色状态，再调整做法。",
+  bonusActionSpellRestriction2014: "本回合的施法组合不符合附赠动作施法限制，行动未提交。使用附赠动作法术后，本回合其他法术只能是施法时间为一个动作的戏法。",
+  pendingInputUnresolved: "还有一个需要先回答的选择，行动未提交。请先完成桌面当前显示的选择或掷骰。",
+  unchangedRetry: "这项行动的相关条件没有变化，不能直接重复同一检定。请改变做法或先创造新的条件。",
+  movementUnavailable: "当前状态下无法完成这条移动路径。请按地图中已知的道路、障碍和可用移动距离重新选择。",
+  presentationUnavailable: "当前回复无法安全显示。请刷新桌面读取已确认的结果；持续出现时请联系维护者。",
+  validation: "这次操作的输入有缺项或格式不正确，未被接受。请检查并重新选择必填选项；页面自动填写的操作仍报错时，请刷新后联系维护者。",
+  invalidRulesInput: "这次操作的参数未通过规则检查，行动未提交。请重新选择当前可用的目标和选项；仍失败时请联系维护者。",
+  invalidActionInput: "这次行动缺少有效参数或提交标识，服务端没有接受请求。请刷新页面并重新选择操作；仍失败时请联系维护者。",
+  invalidPendingResolution: "这次选择的回答格式无效，服务端没有接受请求。请刷新桌面，使用当前显示的选项重新回答。",
+  unsupportedPendingResolution: "当前选项不支持这种回答方式。请刷新桌面，使用页面显示的按钮或选项操作；仍失败时请联系维护者。",
+  readSetConflict: "处理期间行动依据的状态已经更新。请刷新桌面，按当前信息重新确认目标和做法。",
+  requiredContextUnavailable: "裁定所需的房间信息当前无法读取。请刷新桌面后再试；持续出现时请联系维护者。",
+  profileIntegrityMismatch: "本桌的规则或模型配置未通过完整性检查，系统已停止本次处理。请联系维护者检查房间配置；反复提交行动无法解决。",
+  invalidRulesResult: "规则服务没有返回可确认的结果。请刷新桌面查看当前状态；持续出现时请联系维护者，勿反复发起相同行动。",
+  narrationPredecessorPending: "前一条 KP 回复还未送达，当前回复需按顺序恢复。请刷新桌面，先处理当前显示的回复。",
+  idempotencyPayloadMismatch: "重试时的行动内容与原提交不一致。请用原操作的恢复入口重试；要改变做法，请先确认原行动结果。",
+  roomDeleting: "这间房正在删除，已停止接受操作。请返回酒馆查看房间列表。",
+  unsupportedOperation: "系统目前还不能执行这种操作，行动未提交。请尝试当前已支持的做法，并把这次操作反馈给维护者。",
+  unsupportedMechanicPrimitive: "这项效果包含系统尚未支持的规则，行动未提交。请联系维护者确认支持范围。",
+  correctionRequired: "系统发现需要更正的既有结果，无法直接继续这项行动。请联系房主或维护者核对相关行动记录后处理。",
+};
 
 export function publicAuthoritativeOutcomeError(outcome: {
   kind: string;
   code?: unknown;
 }): string {
-  // `needsKp` covers both a structural rejection of this exact draft and a
-  // transient upstream fault, and only the second is cleared by resubmitting
-  // the same text. Telling a player to retry an exhausted repair sends them
-  // back into the identical failure, so the permanent codes ask for a
-  // different action instead of a repeat of this one.
-  if (outcome.code === "PROPOSAL_REPAIR_EXHAUSTED") {
-    return "KP 没能把这项行动整理成可以裁定的形式，行动未提交。"
-      + "原样重试会得到同样的结果；请换一种说法，或补一句你具体想怎么做";
-  }
-  if (outcome.code === "PROPOSAL_RULES_DIAGNOSTIC") {
-    return "这项行动在规则上还不成立，行动未提交。"
-      + "请调整做法或目标后再试，原样重试不会改变结果";
-  }
-  if (outcome.kind === "needsKp" && !failureCodeIsRetryable(outcome.code)) {
-    return "KP 没能裁定这项行动，行动未提交；请换一种说法后再试";
+  const publicCode = publicV3FailureCode(outcome.code);
+  if (publicCode !== undefined && Object.hasOwn(ACTION_FAILURE_MESSAGES, publicCode)) return ACTION_FAILURE_MESSAGES[publicCode];
+  if (typeof outcome.code === "string" && Object.hasOwn(ACTION_FAILURE_MESSAGES, outcome.code)) {
+    return ACTION_FAILURE_MESSAGES[outcome.code];
   }
   if (outcome.kind === "needsKp") {
-    return "KP 需要重新裁定这项行动，请稍后用同一行动重试";
+    return "KP 尚未完成这项行动的裁定，服务端没有提供可公开的具体原因。请先刷新桌面查看状态；问题持续时，请把本次操作反馈给维护者。";
   }
-  if (outcome.code === "modelTransient" || outcome.code === "PROPOSAL_PROVIDER_TIMEOUT") {
-    return "KP 模型暂时不可用或响应超时，行动未提交；可用同一行动重试";
-  }
-  if (outcome.code === "quotaExhausted") {
-    return "KP 模型额度暂不可用，行动未提交；请在额度恢复后用同一行动重试";
-  }
-  if (outcome.code === "authorityTransient") {
-    return "房间权威暂时不可用，行动未提交；可用同一行动重试";
-  }
-  return "这项行动暂时没有提交，请稍后重试";
+  return "这次操作未能完成，服务端没有提供可公开的具体原因。请先刷新桌面确认结果；如需重试，请使用原操作的重试入口，问题持续时联系维护者。";
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -117,11 +154,12 @@ function viewerNarrationRecovery(value: unknown): {
   kind: "available";
   capability: string;
   state: "pending" | "rejected" | "retryableFailure";
+  failureCode?: NarrationPublicFailureCode;
 } | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)
     || value.kind !== "available"
-    || Object.keys(value).sort().join("\u0000") !== "capability\u0000kind\u0000state"
+    || Object.keys(value).some(key => !["kind", "capability", "state", "failureCode"].includes(key))
     || !["pending", "rejected", "retryableFailure"].includes(String(value.state))) {
     throw new TypeError("Authoritative narration recovery projection is invalid.");
   }
@@ -129,10 +167,15 @@ function viewerNarrationRecovery(value: unknown): {
   if (capability === undefined || capability.length > 200) {
     throw new TypeError("Authoritative narration recovery capability is invalid.");
   }
+  const failureCode = narrationPublicFailureCode(value.failureCode);
+  if (value.failureCode !== undefined && (failureCode === undefined || value.state === "pending")) {
+    throw new TypeError("Authoritative narration recovery failure code is invalid.");
+  }
   return {
     kind: "available",
     capability,
     state: value.state as "pending" | "rejected" | "retryableFailure",
+    ...(failureCode === undefined ? {} : { failureCode }),
   };
 }
 
@@ -218,7 +261,7 @@ function pendingPlayerRolls(
 type ExperiencedTableMessage = {
   id: string;
   user_id: string | null;
-  kind: "say" | "narrate";
+  kind: "say" | "narrate" | "roll";
   name: string;
   body: string;
   created_at: string;
@@ -238,7 +281,7 @@ function experiencedTableMessages(value: unknown, trustedUserId: string): Experi
       ? "player"
       : entry.kind === "kp" || entry.speakerKind === "kp"
         ? "kp"
-        : undefined;
+        : entry.kind === "roll" ? "roll" : undefined;
     const sceneIds = Array.isArray(entry.sceneIds)
       ? [...new Set(entry.sceneIds.map(nonEmptyString).filter((sceneId): sceneId is string => Boolean(sceneId)))]
       : [];
@@ -247,7 +290,7 @@ function experiencedTableMessages(value: unknown, trustedUserId: string): Experi
     return [{
       id,
       user_id: speakerKind === "player" ? trustedUserId : null,
-      kind: speakerKind === "player" ? ("say" as const) : ("narrate" as const),
+      kind: speakerKind === "player" ? ("say" as const) : speakerKind === "roll" ? ("roll" as const) : ("narrate" as const),
       name,
       body,
       created_at: "",

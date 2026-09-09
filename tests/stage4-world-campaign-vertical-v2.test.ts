@@ -716,19 +716,19 @@ describe("Stage 4 world/campaign responsibility-interface verticals", () => {
     );
     expect(destroyed.kind, JSON.stringify(destroyed)).toBe("committed");
 
-    const arrived = await act(
-      room.authority,
-      CAROL,
-      "submission:stage4:carol-arrives-after-letter",
-      "我从庭院来到灵堂，但信已经烧毁。",
-      (rootActionId) => ({
-        kind: "authenticatedPartyAction",
-        action: "moveIndividually",
-        destinationSceneId: "wake",
-        fictionTimeCostMicros: "60000000",
-        rootActionId,
-      }),
-    );
+    const arrived = record(await handleRoomAction({
+      principal: CAROL,
+      authority: room.authority,
+      kp: {
+        propose: async () => { throw new Error("movement button must not request a KP proposal"); },
+        narrate: async () => ({ body: "权威世界已经按已提交结果变化。" }),
+      },
+    }, {
+      kind: "party",
+      submissionId: "submission:stage4:carol-arrives-after-letter",
+      displayText: "我从庭院来到灵堂，但信已经烧毁。",
+      command: { action: "moveIndividually", destinationSceneId: "wake", fictionTimeCostMicros: "60000000" },
+    }), "party arrival");
     expect(arrived.kind, JSON.stringify(arrived)).toBe("committed");
     const arrivalEvents = rootEvents(
       await archiveEvents(room.authority, room.archiveCapability),
