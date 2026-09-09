@@ -264,8 +264,8 @@ test('unfinished StoryJob is owned by the actual offer, pinned module and rebuil
   s.authority.saveStoryPreparationModule(preparedId, moduleProfile);
   const request = roomStoryRequest(frozen.context, f.state, { method: 'story.method.local-conflict', scale: 'short', connection: 'local' });
   const built = buildRoomStoryContext({ request, requiredContext: frozen.context, state: f.state, profiles: f.profiles,
-    moduleProfile, capabilityDescriptions: roomStoryCapabilityDescriptions(), maxUnits: 32_000 });
-  assert.equal(built.kind, 'ready');
+    moduleProfile, capabilityDescriptions: roomStoryCapabilityDescriptions(), maxUnits: 48_000 });
+  assert.equal(built.kind, 'ready', JSON.stringify(built.kind === 'blocked' ? built.issues : undefined));
   stage(s, { state: f.state, sourceRoot: root, preparedId, contextHash: frozen.context.binding.contextHash,
     request: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(frozen.context) }))),
     response: { choices: [{ message: { tool_calls: [{ type: 'function', function: { name: OFFER_KP_PROPOSAL_BUNDLE_TOOL_NAME,
@@ -282,4 +282,26 @@ test('unfinished StoryJob is owned by the actual offer, pinned module and rebuil
   assert.equal(validateStoryArchiveHostBinding(rehash(altered), context), false);
   const missing = structuredClone(bindings[0]); missing.jobIds = [];
   assert.throws(() => restoreStoryArchiveHostBindings(stores().authority, [rehash(missing)], context), /HOST_BINDING_INVALID/);
+});
+
+test('a committed submission retains its terminal identity without restoring its prior published result', async () => {
+  const { f, s, committed, context } = await narrationFixture();
+  const frozen = f.requiredContext, preparedId = frozen.binding.preparedActionId;
+  const originalInput = { kind: 'intent', submissionId: frozen.intent.submissionRef, text: frozen.intent.text };
+  s.authority.insertSubmission({ submissionId: frozen.intent.submissionRef, principalId: f.viewer.principalId,
+    payloadHash: canonicalHash(originalInput), inputKind: 'intent', rootActionId: f.rootActionId, preparedActionId: preparedId,
+    characterId: ACTOR, sceneScope: `scene:${SCENE}`, preparedScopeVersion: 0, continuation: { originalInput },
+    prepared: { kind: 'prepared', preparedActionId: preparedId, rootActionId: f.rootActionId, requiredContext: frozen,
+      resolutionMode: 'kpProposal', phase: 'playerIntent', kpProjection: f.runtime.project(f.profiles, f.state, { kind: 'kp', capability: 'internal:kp-spatial-evidence' }) } });
+  stage(s, { state: f.state, sourceRoot: f.rootActionId, preparedId, contextHash: frozen.binding.contextHash,
+    request: deepSeekRequestBody(VNEXT_KP_PROFILE.modelId, createVNextProposalOfferModelInput(JSON.stringify({ requiredContext: proposalModelContext(frozen) }))) });
+  s.authority.finishSubmission(preparedId, 'committed', canonicalHash(makePromiseInput(f, f.state, { nextStep: null })),
+    { kind: 'committed', receipt: committed.receipt, deliveries: [{ body: 'PUBLISHED_DELIVERY_CANARY' }] });
+  const checkedContext = { ...context, storySnapshot: storySnapshot(s, f.state) }, bindings = exportStoryArchiveHostBindings(s.authority, checkedContext.storySnapshot);
+  assert.equal(bindings.every(binding => validateStoryArchiveHostBinding(binding, checkedContext)), true);
+  assert.equal(JSON.stringify(bindings).includes('PUBLISHED_DELIVERY_CANARY'), false);
+  const restored = stores(); restoreStoryArchiveHostBindings(restored.authority, bindings, checkedContext);
+  const row = restored.authority.submissionByRoot(f.rootActionId);
+  assert.equal(row.status, 'committed'); assert.equal(row.result_json, null); assert.equal(row.continuation_json, null);
+  assert.equal(restored.db.prepare('SELECT COUNT(*) AS n FROM authority_delivery_slots').get().n, 0);
 });

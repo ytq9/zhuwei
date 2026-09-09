@@ -296,11 +296,16 @@ function validateSubmission(payload: ActionPayload, context: ValidationContext):
     check(verifiedAuthorityCommitRecovery({ prepared_action_id: row.prepared_action_id, proposal_hash: payload.recovery.proposalHash,
       recovery_hash: payload.recovery.recoveryHash, recovery_json: JSON.stringify(payload.recovery.recovery) }) !== undefined);
     check(row.proposal_hash === null || row.proposal_hash === payload.recovery.proposalHash);
+    const input = payload.recovery.recovery.rulesInput;
+    if (input.rootActionId !== undefined) check(input.rootActionId === row.root_action_id);
+    if (input.proposalId !== undefined) check(input.proposalId === row.root_action_id);
+    if (input.actorCharacterId !== undefined) check(input.actorCharacterId === row.character_id);
   }
   const admission = context.storySnapshot.admissionBindings.find(value => value.preparedActionId === row.prepared_action_id);
   check((admission === undefined) === (payload.admissionInput === null));
   if (admission !== undefined) {
     check(isCanonicalAuthorityRecoveryInput(payload.admissionInput) && canonicalHash(payload.admissionInput) === admission.rulesInputHash);
+    check(payload.admissionInput.rootActionId === row.root_action_id && payload.admissionInput.actorCharacterId === row.character_id);
     if (payload.recovery !== null) check(same(payload.recovery.recovery.rulesInput, payload.admissionInput));
   }
 }
@@ -313,6 +318,8 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
   check(frozen!.binding.preparedActionId === payload.preparedActionId && frozen!.binding.rootActionId === prepared.rootActionId
     && frozen!.intent.submissionRef === payload.submission.submission_id && frozen!.intent.actorRef === payload.submission.character_id
     && base.state.entities[frozen!.intent.actorRef]?.kind === "player" && base.state.activeBranchId === binding.source.branchId);
+  const control = base.state.characterControls[frozen!.intent.actorRef];
+  check(control !== undefined && base.state.seats[control.seatId]?.principalId === payload.submission.principal_id);
   const projected = project(base.profiles, base.state, { kind: "kp", capability: "internal:kp-spatial-evidence" });
   check(projected.kind !== "rejected" && projected.projectionHash === frozen!.binding.projectionHash
     && isPlainRecord(prepared.kpProjection) && prepared.kpProjection.projectionHash === projected.projectionHash
@@ -345,7 +352,8 @@ function validatePrepared(binding: StoryArchiveHostBinding, payload: ActionPaylo
     const preparation = job!.checkpoint!.revisedDraft ?? job!.checkpoint!.draft;
     const review = job!.checkpoint!.revisedReview ?? job!.checkpoint!.review;
     check(preparation !== undefined && review !== undefined);
-    const built = bindStoryPreparationContext({ selectionContext: original, moduleProfile: payload.moduleProfile!, preparation: preparation!, review: review!, maxUnits: 48_000 });
+    const built = bindStoryPreparationContext({ selectionContext: original, moduleProfile: payload.moduleProfile!, preparation: preparation!, review: review!,
+      storyContext: job!.input.context, state: base.state, maxUnits: 48_000 });
     check(built.kind === "ready" && same(built.binding, bound) && same(built.context, frozen));
   }
 }
@@ -422,11 +430,16 @@ function validateNarration(binding: StoryArchiveHostBinding, payload: NarrationP
   check(receipt !== undefined && receipt.rootActionId === request.rootActionId && receipt.activeBranchId === binding.source.branchId
     && isPlainRecord(request.receipt) && request.receipt.receiptId === receipt.receiptId && request.receipt.rootActionId === receipt.rootActionId);
   check(receipt.eventRange !== null && text(receipt.actorCharacterId));
-  check(keys(request.receipt, ["receiptId", "rootActionId", "status", "runtimeEpochId", "activeBranchId", "eventRange", "scopeVersions", "randomnessCommitments"],
+  // A Room restored from its ordinary event archive holds the exact minimal
+  // ReceiptReference until a fresh action commits a full public receipt.
+  const referenceReceipt = keys(request.receipt, ["receiptId", "rootActionId", "status", "activeBranchId", "eventRange", "scopeVersions", "randomnessCommitmentHash"],
+    ["actorCharacterId", "correctionId"]) && same(request.receipt, receipt);
+  check(referenceReceipt || keys(request.receipt, ["receiptId", "rootActionId", "status", "runtimeEpochId", "activeBranchId", "eventRange", "scopeVersions", "randomnessCommitments"],
     ["actorCharacterId", "pendingInputId", "correctionId", "projectionHash", "meaningfulFailure", "newOptions", "resolutionDisposition"])
     && request.receipt.status === receipt.status && request.receipt.runtimeEpochId === binding.source.runtimeEpochId
     && request.receipt.activeBranchId === receipt.activeBranchId && request.receipt.actorCharacterId === receipt.actorCharacterId
-    && same(request.receipt.scopeVersions, receipt.scopeVersions) && canonicalHash(request.receipt.randomnessCommitments) === receipt.randomnessCommitmentHash);
+    && same(request.receipt.scopeVersions, receipt.scopeVersions) && canonicalHash(request.receipt.randomnessCommitments) === receipt.randomnessCommitmentHash
+    && isPlainRecord(request.receipt.eventRange) && request.receipt.eventRange.first === receipt.eventRange.first && request.receipt.eventRange.last === receipt.eventRange.last);
   const range = receipt.eventRange, before = prefix(context, (BigInt(range.first) - 1n).toString()), after = prefix(context, range.last);
   const [principalId, characterId, ...extra] = request.viewerKey.split("\u001f");
   check(text(principalId) && text(characterId) && extra.length === 0);
